@@ -16,22 +16,12 @@ is listed in [ROADMAP.md](ROADMAP.md) and lands through pull requests.
 
 ## Status
 
-| Lot | Content | Branch |
-|---|---|---|
-| 0 | Governance, license, CI, clippy | `cursor/lot-0-gouvernance-a775` |
-| 1 | Ellipsoid, errors, angles | `cursor/lot-1-ellipsoide-a775` |
-| 2 | Transverse Mercator and UTM | `cursor/lot-2-tmerc-a775` |
-| 3 | Lambert Conformal Conic and Lambert-93 | `cursor/lot-3-lambert-a775` |
-| 4 | AVX2 batch Transverse Mercator and timing | `cursor/lot-4-simd-bench-a775` |
-| 5 | AVX2 batch Lambert-93 | `cursor/lot-5-lambert-avx-a775` |
-| 6 | Mercator and Web Mercator | `cursor/lot-6-mercator-a775` |
-| 7 | 7-parameter Helmert | `cursor/lot-7-helmert-a775` |
+Ported: exact Transverse Mercator / UTM, Lambert-93, Mercator and Web
+Mercator, 7-parameter Helmert. Each module has a porting sheet in
+[docs/](docs/). The next lots are in [ROADMAP.md](ROADMAP.md).
 
-Lots 1 to 7 are stacked pull requests. Review them in order.
-**Only the maintainer merges.** The PR descriptions are in
-[docs/LOTS.md](docs/LOTS.md): the agent's temporary forge cannot open
-them, and the session's GitHub token is not allowed to create
-`RandazzoMaxime/proj-rs`.
+The batch path (`forward_batch`) uses AVX2 and glibc's libmvec on Linux
+x86_64. Every other target builds and runs the scalar loop.
 
 ## Running
 
@@ -41,15 +31,25 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-features
 ```
 
-Lot 4 compares the crate against `libproj` (`libproj-dev`, `proj-bin`):
-
-```bash
-cargo test --all-features
-cargo run --release --features bench --bin proj-rs-bench
-```
+`tests/agree_cs2cs.rs` calls PROJ's `cs2cs`, so the tests need PROJ 9.4 on
+the `PATH` (`proj-bin` on Debian / Ubuntu).
 
 Rust 1.83 or newer. Lints come from
 [BeautifulRust](https://github.com/morganlinton/BeautifulRust).
+
+## Progress bench
+
+`src/bin/bench.rs` times every ported operation, in nanoseconds per point,
+on fixed grids. `bench/record.sh` runs it and appends one line to
+`bench/history.jsonl` with the commit and the machine name, so every lot can
+be measured against the previous ones:
+
+```bash
+BENCH_MACHINE=my-box bench/record.sh
+```
+
+Compare only lines from the same machine, and pin the process
+(`taskset -c 0`) for stable numbers.
 
 ## Contributing
 

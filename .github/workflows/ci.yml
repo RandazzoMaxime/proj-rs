@@ -1,0 +1,30 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    strategy:
+      matrix:
+        # Linux runs the AVX2 + libmvec batch path; Windows checks the scalar build.
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      # Ubuntu 24.04 ships PROJ 9.4, the reference version of every port.
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y proj-bin
+      - if: runner.os == 'Windows'
+        run: |
+          C:\Miniconda\condabin\conda.bat install -y -c conda-forge proj=9.4
+          echo "C:\Miniconda\Library\bin" >> $env:GITHUB_PATH
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo test --all-features
+      # The bench is not timed in CI (shared runners are noisy), only built.
+      - run: cargo build --release --bin proj-rs-bench
