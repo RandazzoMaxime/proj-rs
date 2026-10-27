@@ -5,7 +5,7 @@ edition = "2021"
 rust-version = "1.83"
 license = "MIT"
 publish = false
-description = "Portage Rust de PROJ : UTM (Transverse Mercator exact) et Lambert-93."
+description = "Rust port of PROJ: exact Transverse Mercator (UTM) and Lambert-93."
 readme = "README.md"
 repository = "https://github.com/RandazzoMaxime/proj-rs"
 
