@@ -56,8 +56,8 @@ pub(crate) unsafe fn store4(data: &mut [f64], index: usize, value: __m256d) {
 /// Le fil d'exécution doit supporter AVX.
 #[target_feature(enable = "avx2,fma")]
 pub(crate) unsafe fn sqrt4(value: __m256d) -> __m256d {
-    // SAFETY: sqrtpd est une instruction AVX, disponible sous la cible `avx2`.
-    unsafe { _mm256_sqrt_pd(value) }
+    // sqrtpd est une instruction AVX, disponible sous la cible `avx2`.
+    _mm256_sqrt_pd(value)
 }
 
 macro_rules! libmvec1 {

@@ -350,11 +350,11 @@ impl Tmerc {
             _mm256_add_pd, _mm256_div_pd, _mm256_mul_pd, _mm256_set1_pd, _mm256_sub_pd,
         };
 
-        // SAFETY: AVX2 kernel. Slice loads and stores stay inside `i..i+4`.
         #[expect(
             clippy::multiple_unsafe_ops_per_block,
             reason = "one Poder/Engsager formula; a block per intrinsic would hide it"
         )]
+        // SAFETY: AVX2 kernel. Slice loads and stores stay inside `i..i+4`.
         unsafe {
             let deg = _mm256_set1_pd(std::f64::consts::PI / 180.0);
             let lon_r = _mm256_mul_pd(load4(lon_deg, i), deg);

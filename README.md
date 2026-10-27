@@ -5,6 +5,10 @@ The goal is the same observable behavior as PROJ 9.4 on the ported
 conversions, with a Rust API (`Result`, enums, no error codes and no `NaN`
 sentinel on the scalar path).
 
+The target is a drop-in replacement for users of the
+[`proj`](https://github.com/georust/proj) crate: same API, one line changed in
+`Cargo.toml`, no C library to build. See [ROADMAP.md](ROADMAP.md).
+
 The first scope is what metropolitan France needs:
 
 - **UTM** — exact Transverse Mercator by Poder / Engsager, PROJ 9.4's default
