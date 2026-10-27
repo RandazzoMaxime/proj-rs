@@ -1,8 +1,8 @@
 # PROJ-RS
 
 Open source port of [PROJ](https://github.com/OSGeo/PROJ) to Rust.
-The goal is the same observable behavior as PROJ 9.4 on the ported
-conversions, with a Rust API (`Result`, enums, no error codes and no `NaN`
+The goal is the same observable behavior as the latest PROJ (9.9) on the
+ported conversions, with a Rust API (`Result`, enums, no error codes and no `NaN`
 sentinel on the scalar path).
 
 The target is a drop-in replacement for users of the
@@ -11,7 +11,7 @@ The target is a drop-in replacement for users of the
 
 The first scope is what metropolitan France needs:
 
-- **UTM** — exact Transverse Mercator by Poder / Engsager, PROJ 9.4's default
+- **UTM** — exact Transverse Mercator by Poder / Engsager, PROJ's default
   `tmerc_default_algo = poder_engsager`.
 - **Lambert-93** — ellipsoidal Lambert Conformal Conic on GRS80.
 
@@ -35,8 +35,8 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-features
 ```
 
-`tests/agree_cs2cs.rs` calls PROJ's `cs2cs`, so the tests need PROJ 9.4 on
-the `PATH` (`proj-bin` on Debian / Ubuntu).
+`tests/agree_cs2cs.rs` calls PROJ's `cs2cs`, so the tests need PROJ on the
+`PATH` (9.4 today, 9.9 once lot 8 lands; see [ROADMAP.md](ROADMAP.md)) (`proj-bin` on Debian / Ubuntu).
 
 Rust 1.83 or newer. Lints come from
 [BeautifulRust](https://github.com/morganlinton/BeautifulRust).
