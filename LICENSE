@@ -19,3 +19,11 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+
+Les algorithmes de projection portés depuis PROJ restent couverts par la
+licence MIT de PROJ (https://github.com/OSGeo/PROJ), Copyright (c) les auteurs
+de PROJ. Le Transverse Mercator exact reprend les séries de Knud Poder et
+Karsten Engsager. L'inverse de la latitude conforme suit GeographicLib /
+Charles Karney, tel que livré dans PROJ.

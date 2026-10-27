@@ -1,0 +1,4 @@
+/target
+/native/bench
+**/*.o
+*.tmp

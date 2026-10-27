@@ -1,0 +1,7 @@
+# Copié depuis BeautifulRust (MIT) : https://github.com/morganlinton/BeautifulRust
+# Un paramètre booléen est illisible à l'appel. Enum ou deux méthodes.
+max-fn-params-bools = 0
+
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-print-in-tests = true
