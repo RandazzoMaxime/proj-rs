@@ -1,39 +1,33 @@
 # PROJ-RS
 
-Portage open source de [PROJ](https://github.com/OSGeo/PROJ) vers Rust.
-Le dépôt vise le même comportement observable que PROJ 9.4 sur les conversions
-portées, avec une API Rust (`Result`, enums, pas de codes d'erreur ni de `NaN`
-sentinel sur le chemin scalaire).
+Open source port of [PROJ](https://github.com/OSGeo/PROJ) to Rust.
+The goal is the same observable behavior as PROJ 9.4 on the ported
+conversions, with a Rust API (`Result`, enums, no error codes and no `NaN`
+sentinel on the scalar path).
 
-Le premier périmètre est celui qui sert en France métropolitaine :
+The target is a drop-in replacement for users of the
+[`proj`](https://github.com/georust/proj) crate: same API, one line changed in
+`Cargo.toml`, no C library to build. See [ROADMAP.md](ROADMAP.md).
 
-- **UTM** — Transverse Mercator exact de Poder / Engsager, le défaut
-  `tmerc_default_algo = poder_engsager` de PROJ 9.4.
-- **Lambert-93** — Lambert conforme conique ellipsoïdal sur GRS80.
+The first scope is what metropolitan France needs:
 
-Le reste (base EPSG, grilles NTv2, WKT, pipelines, les autres projections)
-est listé dans [ROADMAP.md](ROADMAP.md) et s'ajoute par pull request.
+- **UTM** — exact Transverse Mercator by Poder / Engsager, PROJ 9.4's default
+  `tmerc_default_algo = poder_engsager`.
+- **Lambert-93** — ellipsoidal Lambert Conformal Conic on GRS80.
 
-## État
+Everything else (EPSG database, NTv2 grids, WKT, pipelines, other projections)
+is listed in [ROADMAP.md](ROADMAP.md) and lands through pull requests.
 
-| Lot | Contenu | Branche |
-|---|---|---|
-| 0 | Gouvernance, licence, CI, clippy | `cursor/lot-0-gouvernance-a775` |
-| 1 | Ellipsoïde, erreurs, angles | `cursor/lot-1-ellipsoide-a775` |
-| 2 | Transverse Mercator et UTM | `cursor/lot-2-tmerc-a775` |
-| 3 | Lambert conforme et Lambert-93 | `cursor/lot-3-lambert-a775` |
-| 4 | Lot AVX2 du Transverse Mercator et chrono | `cursor/lot-4-simd-bench-a775` |
-| 5 | Lot AVX2 de Lambert-93 | `cursor/lot-5-lambert-avx-a775` |
-| 6 | Mercator et Web Mercator | `cursor/lot-6-mercator-a775` |
-| 7 | Helmert à 7 paramètres | `cursor/lot-7-helmert-a775` |
+## Status
 
-Les lots 1 à 7 sont des pull requests empilées. On les relit dans l'ordre.
-**Seul le mainteneur fusionne.** Les textes de PR sont dans
-[docs/LOTS.md](docs/LOTS.md) : la forge temporaire de l'agent ne peut pas
-les ouvrir, et le jeton GitHub de la session n'a pas le droit de créer
-`RandazzoMaxime/proj-rs`.
+Ported: exact Transverse Mercator / UTM, Lambert-93, Mercator and Web
+Mercator, 7-parameter Helmert. Each module has a porting sheet in
+[docs/](docs/). The next lots are in [ROADMAP.md](ROADMAP.md).
 
-## Lancer
+The batch path (`forward_batch`) uses AVX2 and glibc's libmvec on Linux
+x86_64. Every other target builds and runs the scalar loop.
+
+## Running
 
 ```bash
 cargo fmt --check
@@ -41,22 +35,32 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-features
 ```
 
-Le lot 4 compare le crate à `libproj` (`libproj-dev`, `proj-bin`) :
+`tests/agree_cs2cs.rs` calls PROJ's `cs2cs`, so the tests need PROJ 9.4 on
+the `PATH` (`proj-bin` on Debian / Ubuntu).
 
-```bash
-cargo test --all-features
-cargo run --release --features bench --bin proj-rs-bench
-```
-
-Rust 1.83 ou plus récent. Les lints viennent de
+Rust 1.83 or newer. Lints come from
 [BeautifulRust](https://github.com/morganlinton/BeautifulRust).
 
-## Contribuer
+## Progress bench
 
-Toute modification passe par une pull request. La procédure, le format d'une PR
-de lot, et la règle de fusion sont dans [CONTRIBUTING.md](CONTRIBUTING.md).
+`src/bin/bench.rs` times every ported operation, in nanoseconds per point,
+on fixed grids. `bench/record.sh` runs it and appends one line to
+`bench/history.jsonl` with the commit and the machine name, so every lot can
+be measured against the previous ones:
 
-## Licence
+```bash
+BENCH_MACHINE=my-box bench/record.sh
+```
 
-MIT. Les formules reprises de PROJ restent sous la licence MIT de PROJ.
-Voir [LICENSE](LICENSE).
+Compare only lines from the same machine, and pin the process
+(`taskset -c 0`) for stable numbers.
+
+## Contributing
+
+Every change goes through a pull request. The procedure, the format of a lot
+PR, and the merge rule are in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+
+MIT. Formulas taken from PROJ remain under PROJ's MIT license.
+See [LICENSE](LICENSE).

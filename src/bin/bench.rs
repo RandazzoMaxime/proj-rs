@@ -1,10 +1,17 @@
-//! Chrono du lot direct, même grilles que le comparatif libproj.
+//! Progress benchmark: one case per ported operation, one JSON line on stdout.
 //!
-//! Métrique : pire grille, nanosecondes par point. Chaque grille est la
-//! médiane de 3 essais, chaque essai la médiane de 11 passes d'un million
-//! de points. Épingler le processus (`taskset -c 0`) avant de comparer.
+//! Metric: nanoseconds per point. Each case is the median of 3 trials, each
+//! trial the median of 11 passes over a million points. Pin the process
+//! (`taskset -c 0`) before comparing runs. `bench/record.sh` appends the line
+//! to `bench/history.jsonl` with the commit and the machine.
+//!
+//! A new lot adds its cases. Never rename a case: the history is keyed by name.
 
-use proj_rs::{Ellipsoid, Hemisphere, Lcc, Tmerc, UtmZone};
+use proj_rs::{
+    Ellipsoid, Helmert, HelmertConvention, HelmertParams, Hemisphere, Lcc, Mercator, Projected,
+    Tmerc, UtmZone,
+};
+use std::fmt::Write as _;
 use std::hint::black_box;
 use std::time::Instant;
 
@@ -12,81 +19,29 @@ const N: usize = 1_000_000;
 const REPEATS: usize = 11;
 const TRIALS: usize = 3;
 
-struct Fix {
-    name: &'static str,
-    seed: u64,
-    lon0: f64,
-    lon1: f64,
-    lat0: f64,
-    lat1: f64,
-    kind: Kind,
-}
-
-enum Kind {
-    Utm31,
-    Lambert93,
-}
-
-const FIXTURES: [Fix; 3] = [
-    Fix {
-        name: "utm31_center",
-        seed: 1,
-        lon0: 2.0,
-        lon1: 4.0,
-        lat0: 43.0,
-        lat1: 50.0,
-        kind: Kind::Utm31,
-    },
-    Fix {
-        name: "utm31_edge",
-        seed: 2,
-        lon0: 0.05,
-        lon1: 0.55,
-        lat0: 43.0,
-        lat1: 50.0,
-        kind: Kind::Utm31,
-    },
-    Fix {
-        name: "lambert93",
-        seed: 3,
-        lon0: -4.5,
-        lon1: 8.0,
-        lat0: 41.5,
-        lat1: 51.0,
-        kind: Kind::Lambert93,
-    },
-];
-
-fn next_unit(state: &mut u64) -> f64 {
-    *state = state
-        .wrapping_mul(6_364_136_223_846_793_005)
-        .wrapping_add(1);
-    let bits = *state >> 11;
-    // 53 bits de mantisse. La valeur tient dans la plage exacte d'un f64.
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "the top 53 bits of the LCG are an exact integer in f64"
-    )]
-    #[expect(
-        clippy::as_conversions,
-        reason = "no infallible From<u64> for f64; the value is at most 2^53"
-    )]
-    {
-        (bits as f64) * (1.0 / 9_007_199_254_740_992.0)
-    }
-}
-
-fn fill(fix: &Fix) -> (Vec<f64>, Vec<f64>) {
-    let mut state = fix.seed;
-    let mut lon = vec![0.0; N];
-    let mut lat = vec![0.0; N];
-    let dl = fix.lon1 - fix.lon0;
-    let dp = fix.lat1 - fix.lat0;
-    for i in 0..N {
-        lon[i] = fix.lon0 + next_unit(&mut state) * dl;
-        lat[i] = fix.lat0 + next_unit(&mut state) * dp;
-    }
-    (lon, lat)
+/// `N` points drawn uniformly in a lon/lat box, degrees.
+fn grid(seed: u64, lon: (f64, f64), lat: (f64, f64)) -> (Vec<f64>, Vec<f64>) {
+    let mut state = seed;
+    let mut unit = || {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1);
+        #[expect(
+            clippy::cast_precision_loss,
+            clippy::as_conversions,
+            reason = "the top 53 bits of the LCG are an exact integer in f64"
+        )]
+        let u = ((state >> 11) as f64) / 9_007_199_254_740_992.0;
+        u
+    };
+    (0..N)
+        .map(|_| {
+            (
+                lon.0 + unit() * (lon.1 - lon.0),
+                lat.0 + unit() * (lat.1 - lat.0),
+            )
+        })
+        .unzip()
 }
 
 fn median(values: &mut [f64]) -> f64 {
@@ -96,11 +51,8 @@ fn median(values: &mut [f64]) -> f64 {
 
 #[expect(
     clippy::cast_precision_loss,
-    reason = "N is 1_000_000, which is exactly representable as f64"
-)]
-#[expect(
     clippy::as_conversions,
-    reason = "no infallible From<usize> for f64; N fits in the mantissa"
+    reason = "N is 1_000_000, exactly representable as f64"
 )]
 fn time_stable(mut run: impl FnMut()) -> f64 {
     let mut trials = [0.0; TRIALS];
@@ -117,6 +69,34 @@ fn time_stable(mut run: impl FnMut()) -> f64 {
     median(&mut trials)
 }
 
+/// Times `op` on every point. Its result is summed so the call is not elided.
+fn per_point<T: Copy>(points: &[T], op: impl Fn(T) -> f64) -> f64 {
+    time_stable(|| {
+        black_box(points.iter().map(|&p| op(black_box(p))).sum::<f64>());
+    })
+}
+
+type Batch<'a> = &'a dyn Fn(&[f64], &[f64], &mut [f64], &mut [f64]);
+type Forward<'a> = &'a dyn Fn((f64, f64)) -> Option<Projected>;
+
+/// Forward and inverse cases of one projection on one grid.
+fn scalar_pair(
+    cases: &mut Vec<(String, f64)>,
+    name: &str,
+    points: &[(f64, f64)],
+    forward: Forward<'_>,
+    inverse: &dyn Fn(Projected) -> Option<f64>,
+) {
+    let xy: Vec<Projected> = points.iter().filter_map(|&p| forward(p)).collect();
+    assert_eq!(xy.len(), N, "every {name} bench point is inside the domain");
+    let fwd = per_point(points, |p| forward(p).map_or(0.0, |q| q.east));
+    cases.push((format!("{name}_forward"), fwd));
+    cases.push((
+        format!("{name}_inverse"),
+        per_point(&xy, |p| inverse(p).unwrap_or(0.0)),
+    ));
+}
+
 #[expect(
     clippy::print_stdout,
     reason = "the benchmark's product is this JSON record on stdout"
@@ -125,42 +105,102 @@ fn main() {
     let zone = UtmZone::try_new(31).expect("zone 31");
     let utm = Tmerc::utm(zone, Hemisphere::North, Ellipsoid::wgs84()).expect("utm");
     let l93 = Lcc::lambert93();
-    let mut east = vec![0.0; N];
-    let mut north = vec![0.0; N];
-    let mut worst = 0.0_f64;
-    let mut rows = String::new();
+    let web = Mercator::web();
+    let helmert = Helmert::try_new(HelmertParams {
+        translation_x: -168.0,
+        translation_y: -60.0,
+        translation_z: 320.0,
+        rotation_x_arcsec: 0.1,
+        rotation_y_arcsec: -0.2,
+        rotation_z_arcsec: 0.3,
+        scale_ppm: 1.5,
+        convention: HelmertConvention::PositionVector,
+    })
+    .expect("helmert");
 
-    for (index, fix) in FIXTURES.iter().enumerate() {
-        let (lon, lat) = fill(fix);
-        let ns = match fix.kind {
-            Kind::Utm31 => time_stable(|| {
-                utm.forward_batch(
-                    black_box(&lon),
-                    black_box(&lat),
-                    black_box(&mut east),
-                    black_box(&mut north),
-                );
-            }),
-            Kind::Lambert93 => time_stable(|| {
-                l93.forward_batch(
-                    black_box(&lon),
-                    black_box(&lat),
-                    black_box(&mut east),
-                    black_box(&mut north),
-                );
-            }),
-        };
-        worst = worst.max(ns);
-        if index > 0 {
-            rows.push(',');
-        }
-        rows.push_str(&format!(
-            "{{\"name\":\"{}\",\"ns_per_point\":{ns:.6}}}",
-            fix.name
-        ));
+    let utm_center = grid(1, (2.0, 4.0), (43.0, 50.0));
+    let utm_edge = grid(2, (0.05, 0.55), (43.0, 50.0));
+    let france = grid(3, (-4.5, 8.0), (41.5, 51.0));
+    let world = grid(4, (-180.0, 180.0), (-85.0, 85.0));
+    let zip = |g: &(Vec<f64>, Vec<f64>)| -> Vec<(f64, f64)> {
+        g.0.iter().copied().zip(g.1.iter().copied()).collect()
+    };
+
+    let mut cases = Vec::new();
+    // Lots 2, 3, 6: scalar paths.
+    scalar_pair(
+        &mut cases,
+        "utm31",
+        &zip(&utm_center),
+        &|(lon, lat)| utm.forward(lon, lat).ok(),
+        &|p| utm.inverse(p).ok().map(|g| g.lat_deg),
+    );
+    scalar_pair(
+        &mut cases,
+        "lambert93",
+        &zip(&france),
+        &|(lon, lat)| l93.forward(lon, lat).ok(),
+        &|p| l93.inverse(p).ok().map(|g| g.lat_deg),
+    );
+    scalar_pair(
+        &mut cases,
+        "webmerc",
+        &zip(&world),
+        &|(lon, lat)| web.forward(lon, lat).ok(),
+        &|p| web.inverse(p).ok().map(|g| g.lat_deg),
+    );
+
+    // Lots 4, 5: batch paths (AVX2 on Linux glibc, scalar loop elsewhere).
+    let (mut east, mut north) = (vec![0.0; N], vec![0.0; N]);
+    let batches: [(&str, Batch<'_>, _); 3] = [
+        (
+            "utm31_batch_center",
+            &|a, b, c, d| utm.forward_batch(a, b, c, d),
+            &utm_center,
+        ),
+        (
+            "utm31_batch_edge",
+            &|a, b, c, d| utm.forward_batch(a, b, c, d),
+            &utm_edge,
+        ),
+        (
+            "lambert93_batch",
+            &|a, b, c, d| l93.forward_batch(a, b, c, d),
+            &france,
+        ),
+    ];
+    for (name, batch, (lon, lat)) in batches {
+        let ns = time_stable(|| batch(black_box(lon), black_box(lat), &mut east, &mut north));
+        black_box((&east, &north));
+        cases.push((name.to_owned(), ns));
     }
 
+    // Lot 7: Helmert on geocentric coordinates around France.
+    let xyz: Vec<(f64, f64, f64)> = zip(&france)
+        .iter()
+        .map(|&(lon, lat)| (4_200_000.0 + lon * 1e3, 170_000.0, 4_780_000.0 + lat * 1e3))
+        .collect();
+    cases.push((
+        "helmert7_apply".to_owned(),
+        per_point(&xyz, |(x, y, z)| helmert.apply(x, y, z).0),
+    ));
+
+    let mut rows = String::new();
+    for (name, ns) in &cases {
+        let sep = if rows.is_empty() { "" } else { "," };
+        write!(
+            rows,
+            "{sep}{{\"name\":\"{name}\",\"ns_per_point\":{ns:.6}}}"
+        )
+        .expect("String write");
+    }
+    let simd = cfg!(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_env = "gnu"
+    ));
     println!(
-        "{{\"impl\":\"proj-rs\",\"n\":{N},\"repeats\":{REPEATS},\"trials\":{TRIALS},\"worst_ns_per_point\":{worst:.6},\"fixtures\":[{rows}]}}"
+        "{{\"impl\":\"proj-rs\",\"version\":\"{}\",\"simd_build\":{simd},\"n\":{N},\"cases\":[{rows}]}}",
+        proj_rs::VERSION
     );
 }
