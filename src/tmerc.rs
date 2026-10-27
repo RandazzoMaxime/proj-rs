@@ -275,7 +275,7 @@ impl Tmerc {
         );
         assert_eq!(east.len(), n, "easting length {0} != {n}", east.len());
         assert_eq!(north.len(), n, "northing length {0} != {n}", north.len());
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", target_os = "linux", target_env = "gnu"))]
         if std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma") {
             // SAFETY: AVX2 and FMA were just detected on this CPU.
             unsafe { self.forward_batch_avx2(lon_deg, lat_deg, east, north) };
@@ -295,7 +295,7 @@ impl Tmerc {
     /// # Safety
     ///
     /// Le fil d'exécution doit supporter AVX2 et FMA.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_os = "linux", target_env = "gnu"))]
     #[target_feature(enable = "avx2,fma")]
     unsafe fn forward_batch_avx2(
         &self,
@@ -327,7 +327,7 @@ impl Tmerc {
     /// # Safety
     ///
     /// AVX2 et FMA requis. `i + 4` ne dépasse aucune des quatre tranches.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_os = "linux", target_env = "gnu"))]
     #[target_feature(enable = "avx2,fma")]
     #[expect(
         clippy::similar_names,
@@ -575,10 +575,6 @@ fn clens(a: &[f64; ORDER], arg_r: f64) -> f64 {
     arg_r.sin() * hr
 }
 
-#[expect(
-    clippy::similar_names,
-    reason = "hr/hi are the real and imaginary Clenshaw accumulators from PROJ clenS"
-)]
 fn clenshaw_complex(
     a: &[f64; ORDER],
     sin_arg_r: f64,

@@ -30,8 +30,7 @@ Un lot est une pull request qui porte un seul sujet. Les sujets ouverts sont
 dans [ROADMAP.md](ROADMAP.md). Ouvrir une issue « Je prends le lot N » avant
 de coder évite deux ports du même module.
 
-La branche part du lot précédent, pas de `main`, tant que la pile n'est pas
-fusionnée. Le nom indique le lot : `lot-5-webmerc`.
+La branche part de `main`. Le nom indique le lot : `lot-8-cart`.
 
 ## Ce qu'une PR de port doit contenir
 
@@ -46,6 +45,9 @@ Le port suit le skill
 4. Garder l'algorithme. Un changement d'algorithme se justifie dans la PR.
 5. Joindre un `docs/PORTING-<module>.md` : correspondance des fonctions, des
    tests, écarts volontaires, quirks conservés, commandes lancées.
+6. Ajouter les cas du lot à `src/bin/bench.rs` et une ligne à
+   `bench/history.jsonl` via `bench/record.sh`. Ne jamais renommer un cas
+   existant : l'historique est indexé par nom.
 
 Le modèle de pull request rappelle ces sections. Le remplir fait partie de
 la revue.

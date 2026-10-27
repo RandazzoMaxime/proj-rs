@@ -1,6 +1,7 @@
-//! PROJ-RS — portage Rust de [PROJ](https://github.com/OSGeo/PROJ).
+//! PROJ-RS — Rust port of [PROJ](https://github.com/OSGeo/PROJ).
 //!
-//! Les lots 2 et 3 portent l'UTM (Transverse Mercator exact) et Lambert-93.
+//! Ported so far: exact Transverse Mercator (UTM), Lambert-93, Mercator and
+//! 7-parameter Helmert. See `ROADMAP.md`.
 
 mod angle;
 mod coord;
@@ -9,7 +10,7 @@ mod error;
 mod helmert;
 mod lcc;
 mod merc;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_os = "linux", target_env = "gnu"))]
 mod simd;
 mod tmerc;
 

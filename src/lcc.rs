@@ -205,7 +205,7 @@ impl Lcc {
         assert_eq!(lat_deg.len(), n, "latitude length {} != {n}", lat_deg.len());
         assert_eq!(east.len(), n, "easting length {} != {n}", east.len());
         assert_eq!(north.len(), n, "northing length {} != {n}", north.len());
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", target_os = "linux", target_env = "gnu"))]
         if std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma") {
             // SAFETY: AVX2 and FMA were just detected on this CPU.
             unsafe { self.forward_batch_avx2(lon_deg, lat_deg, east, north) };
@@ -225,7 +225,7 @@ impl Lcc {
     /// # Safety
     ///
     /// Le fil d'exécution doit supporter AVX2 et FMA.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_os = "linux", target_env = "gnu"))]
     #[target_feature(enable = "avx2,fma")]
     unsafe fn forward_batch_avx2(
         &self,
@@ -257,7 +257,7 @@ impl Lcc {
     /// # Safety
     ///
     /// AVX2 et FMA requis. `i + 4` ne dépasse aucune des quatre tranches.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_os = "linux", target_env = "gnu"))]
     #[target_feature(enable = "avx2,fma")]
     unsafe fn forward4(
         &self,
