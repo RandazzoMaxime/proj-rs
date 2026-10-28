@@ -417,4 +417,63 @@ mod tests {
         let back = auxlat_convert(chi, &to_phi);
         assert!((back - phi).abs() < 1e-14, "{back}");
     }
+
+    /// PROJ `test/unit/pj_phi2_test.cpp`, `PjPhi2Test.Basic`.
+    #[test]
+    fn pj_phi2_basic() {
+        let pi = std::f64::consts::PI;
+        let half = FRAC_PI_2;
+        let inf = f64::INFINITY;
+        let nan = f64::NAN;
+        let phi = |ts, e| phi2(ts, e).expect("phi2");
+
+        assert_eq!(phi(0.0, 0.0), half);
+        assert_eq!(phi(1.0, 0.0), 0.0);
+        assert_eq!(phi(inf, 0.0), -half);
+        assert_eq!(phi(-0.0, 0.0), -half);
+        assert_eq!(phi(-1.0, 0.0), 0.0);
+        assert_eq!(phi(-inf, 0.0), half);
+
+        let e = 0.2;
+        assert_eq!(phi(0.0, e), half);
+        assert_eq!(phi(1.0, e), 0.0);
+        assert_eq!(phi(inf, e), -half);
+        assert_eq!(phi(-0.0, e), -half);
+        assert_eq!(phi(-1.0, e), 0.0);
+        assert_eq!(phi(-inf, e), half);
+
+        for (ts, eccentricity) in [
+            (nan, 0.0),
+            (nan, e),
+            (0.0, nan),
+            (1.0, nan),
+            (inf, nan),
+            (-0.0, nan),
+            (-1.0, nan),
+            (-inf, nan),
+            (nan, nan),
+        ] {
+            assert!(
+                phi2(ts, eccentricity).is_ok_and(f64::is_nan),
+                "{ts} {eccentricity}"
+            );
+        }
+
+        let near = |ts: f64, eccentricity: f64, expect: f64| {
+            let got = phi(ts, eccentricity);
+            assert!((got - expect).abs() <= 1e-12, "{got} vs {expect}");
+        };
+        near(1.0 / (3.0_f64.sqrt() + 2.0), 0.0, pi / 3.0);
+        near(1.0 / (2.0_f64.sqrt() + 1.0), 0.0, pi / 4.0);
+        near(1.0 / 3.0_f64.sqrt(), 0.0, pi / 6.0);
+        near(3.0_f64.sqrt() + 2.0, 0.0, -pi / 3.0);
+        near(2.0_f64.sqrt() + 1.0, 0.0, -pi / 4.0);
+        near(3.0_f64.sqrt(), 0.0, -pi / 6.0);
+        near(0.277_491_743_770_270_234_13, e, pi / 3.0);
+        near(0.426_177_881_191_041_929_95, e, pi / 4.0);
+        near(0.589_053_024_486_267_260_64, e, pi / 6.0);
+        near(3.603_710_821_853_783_308_9, e, -pi / 3.0);
+        near(2.346_438_058_224_171_293_5, e, -pi / 4.0);
+        near(1.697_640_039_913_441_184_9, e, -pi / 6.0);
+    }
 }

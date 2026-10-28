@@ -99,20 +99,36 @@ pub(crate) fn build(
 }
 
 fn resolve(name: &str) -> Result<PathBuf, CreateError> {
+    let name = cdn_name(name).unwrap_or(name);
     if name.starts_with("http://") || name.starts_with("https://") {
-        return Err(CreateError::Unsupported("remote model"));
+        return Err(CreateError::IllegalValue("file"));
+    }
+    if let Some(path) = crate::gridpath::resolve(name) {
+        return Ok(path);
     }
     for candidate in candidates(name) {
         if candidate.is_file() {
             return Ok(candidate);
         }
     }
-    Err(CreateError::Unsupported("model file"))
+    Err(CreateError::IllegalValue("file"))
+}
+
+/// `https://cdn.proj.org/<file>` is the file of that name under the grid search path.
+fn cdn_name(name: &str) -> Option<&str> {
+    let rest = name.strip_prefix("https://cdn.proj.org/")?;
+    if rest.is_empty() || rest.contains('/') || rest.contains('\\') || rest.contains('?') {
+        return None;
+    }
+    Some(rest)
 }
 
 fn read_resource(name: &str) -> Result<Vec<u8>, CreateError> {
-    let path = resolve(name)?;
-    let bytes = std::fs::read(&path).map_err(|_| CreateError::IllegalValue("file"))?;
+    let bytes = if let Ok(path) = resolve(name) {
+        std::fs::read(&path).map_err(|_| CreateError::IllegalValue("file"))?
+    } else {
+        crate::network::fetch_missing(name).ok_or(CreateError::IllegalValue("file"))?
+    };
     if bytes.len() > 100 * 1024 * 1024 {
         return Err(CreateError::IllegalValue("file"));
     }
@@ -129,6 +145,14 @@ fn candidates(name: &str) -> Vec<PathBuf> {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         out.push(root.join("data").join(name));
         out.push(root.join(name));
+        for directory in crate::gridpath::directories() {
+            out.push(directory.join(name));
+            if let Some(file_name) = given.file_name() {
+                if file_name != given.as_os_str() {
+                    out.push(directory.join(file_name));
+                }
+            }
+        }
     }
     for variable in ["PROJ_DATA", "PROJ_LIB"] {
         if let Some(value) = std::env::var_os(variable) {

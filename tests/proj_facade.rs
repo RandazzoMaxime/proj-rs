@@ -102,16 +102,40 @@ fn database_crs_edges_and_grid_pairs() {
 }
 
 #[test]
-fn network_and_grid_methods_fail() {
+fn network_and_grid_methods_follow_the_builder() {
     let mut builder = ProjBuilder::new();
-    assert!(builder.enable_network(true).is_err());
-    assert!(builder.set_url_endpoint("https://example.invalid").is_err());
-    assert!(builder.set_search_paths("C:/no/grids").is_err());
-    assert!(builder.grid_cache_enable(true).is_err());
     assert!(!builder.network_enabled());
+    assert_eq!(
+        builder.get_url_endpoint().expect("default endpoint"),
+        "https://cdn.proj.org"
+    );
+    assert_eq!(builder.enable_network(true).expect("on"), 1);
+    assert!(builder.network_enabled());
+    assert_eq!(builder.enable_network(false).expect("off"), 0);
+    assert!(!builder.network_enabled());
+    builder
+        .set_url_endpoint("https://example.invalid")
+        .expect("endpoint");
+    assert_eq!(
+        builder.get_url_endpoint().expect("endpoint"),
+        "https://example.invalid"
+    );
+    builder.set_search_paths("C:/no/grids").expect("path");
+    assert!(builder
+        .lib_info()
+        .expect("info")
+        .searchpath
+        .contains("C:/no/grids"));
+    builder.grid_cache_enable(false).expect("cache off");
+    builder.grid_cache_enable(true).expect("cache on");
     let proj = builder
         .proj_known_crs("EPSG:4326", "EPSG:2154", None)
         .expect("pair");
+    assert!(!proj.network_enabled());
+    assert_eq!(
+        proj.get_url_endpoint().expect("built endpoint"),
+        "https://example.invalid"
+    );
     assert!(proj.area_of_use().is_err());
     assert!(proj.to_projjson(None, None, None).is_err());
 }

@@ -12,10 +12,16 @@
     clippy::too_many_arguments,
     reason = "PROJ sources are transcribed with their coefficients and branches"
 )]
-//! PROJ-RS — Rust port of [PROJ](https://github.com/OSGeo/PROJ).
+//! PROJ-RS — Rust port of [PROJ](https://github.com/OSGeo/PROJ) 9.9.
 //!
-//! Ported so far: exact Transverse Mercator (UTM), Lambert-93, Mercator and
-//! 7-parameter Helmert. See `ROADMAP.md`.
+//! The goal is the same observable behavior as PROJ 9.9, with `Result` and
+//! enums instead of error codes. Build an operation from a PROJ string with
+//! [`Operation::create`], or use the georust `proj`-compatible [`Proj`] facade.
+//! EPSG codes resolve from the embedded PROJ 9.9 database. An unknown method
+//! or a missing grid is an error at creation, never a coordinate.
+//!
+//! See `README.md` for the conformance status and `ROADMAP.md` for what is
+//! left.
 
 mod angle;
 mod coord;
@@ -27,9 +33,12 @@ mod error;
 #[cfg(feature = "geo-types")]
 mod geo_impl;
 mod geodesic;
+mod gridpath;
 mod helmert;
+pub mod iso19111;
 mod lcc;
 mod merc;
+mod network;
 mod ported;
 mod proj;
 mod projdb;
@@ -77,6 +86,21 @@ pub use coord::{Geographic, Projected};
 pub use ellipsoid::Ellipsoid;
 pub use error::{EllipsoidError, ProjectionError};
 pub use helmert::{Helmert, HelmertConvention, HelmertParams};
+pub use iso19111::{
+    AlternativeGridNames, AuthorityFactory, AuthorityObject, Axis, BoundCRS, CartesianCS,
+    CompoundCRS, ConcatenatedOperation, ConcatenatedStep, Conversion, CoordinateOperation,
+    create_crs_from_proj_string, create_from_user_input,
+    CoordinateOperationContext, CoordinateOperationFactory, CoordinateSystem, Crs, CrsInfo,
+    DatabaseContext, Datum, DatumEnsemble, DeprecatedCodes, DerivedConversion, DerivedProjectedCRS,
+    EllipsoidalCS, EllipsoidalHeightPolicy,
+    EngineeringCRS, EngineeringDatum, Equivalence, FactoryError, GeocentricCRS, GeodeticCRS,
+    GeodeticReferenceFrame, GeographicCRS, Identifier, IntermediateCrsUse, LinunitPolicy, Meridian,
+    ObjectDomain, ObjectType, OpProps, OperationMethod, OperationParameter, OperationParameterValue,
+    OrdinalCS, OutputAxisRule, Parameter, ParameterValue, PrimeMeridian, ProjectedCRS, SphericalCS,
+    Transformation, UnitKind,
+    UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame, WktConvention, WktDialect,
+    WktFormatter, WktLines, WktNode, WktObject, WktParser, WktStrictness,
+};
 pub use lcc::{Cone, Lcc};
 pub use merc::Mercator;
 pub use tmerc::{Hemisphere, Tmerc, UtmZone};
