@@ -92,6 +92,7 @@ pub use iso19111::{
     create_crs_from_proj_string, create_from_user_input,
     CoordinateOperationContext, CoordinateOperationFactory, CoordinateSystem, Crs, CrsInfo,
     DatabaseContext, Datum, DatumEnsemble, DeprecatedCodes, DerivedConversion, DerivedProjectedCRS,
+    DerivedVerticalCRS,
     EllipsoidalCS, EllipsoidalHeightPolicy,
     EngineeringCRS, EngineeringDatum, Equivalence, FactoryError, GeocentricCRS, GeodeticCRS,
     GeodeticReferenceFrame, GeographicCRS, Identifier, IntermediateCrsUse, LinunitPolicy, Meridian,

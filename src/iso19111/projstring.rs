@@ -90,6 +90,7 @@ impl Crs {
             Self::Bound(crs) => &crs.identified.remarks,
             Self::Engineering(crs) => &crs.identified.remarks,
             Self::DerivedProjected(crs) => &crs.identified.remarks,
+            Self::DerivedVertical(crs) => &crs.identified.remarks,
         }
     }
 }

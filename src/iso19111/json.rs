@@ -169,7 +169,10 @@ impl Crs {
         match self {
             Self::Geographic(crs) => write_geographic(&mut writer, crs, db)?,
             Self::Geodetic(_) | Self::Projected(_) | Self::Vertical(_) | Self::Compound(_)
-            | Self::Bound(_) | Self::Engineering(_) | Self::DerivedProjected(_) => {
+            | Self::Bound(_)
+            | Self::Engineering(_)
+            | Self::DerivedProjected(_)
+            | Self::DerivedVertical(_) => {
                 return Err(FactoryError::Format(format!(
                     "PROJJSON export is not built for {}",
                     self.name()

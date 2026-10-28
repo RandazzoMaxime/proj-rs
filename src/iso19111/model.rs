@@ -2782,6 +2782,57 @@ impl DerivedProjectedCRS {
     }
 }
 
+/// Derived vertical CRS.
+#[derive(Clone, Debug)]
+pub struct DerivedVerticalCRS {
+    pub(crate) identified: Identified,
+    pub(crate) base: VerticalCRS,
+    pub(crate) conversion: Conversion,
+    pub(crate) coordinate_system: VerticalCS,
+}
+
+impl DerivedVerticalCRS {
+    /// Derived vertical CRS over `base`.
+    #[must_use]
+    pub fn create(
+        name: impl Into<String>,
+        base: VerticalCRS,
+        conversion: Conversion,
+        coordinate_system: VerticalCS,
+    ) -> Self {
+        Self {
+            identified: Identified::named(name),
+            base,
+            conversion,
+            coordinate_system,
+        }
+    }
+
+    /// Name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.identified.name
+    }
+
+    /// Base vertical CRS.
+    #[must_use]
+    pub fn base_crs(&self) -> &VerticalCRS {
+        &self.base
+    }
+
+    /// Deriving conversion.
+    #[must_use]
+    pub fn deriving_conversion(&self) -> &Conversion {
+        &self.conversion
+    }
+
+    /// Coordinate system of the derived CRS.
+    #[must_use]
+    pub fn coordinate_system(&self) -> &VerticalCS {
+        &self.coordinate_system
+    }
+}
+
 /// Compound CRS, normally horizontal plus vertical.
 #[derive(Clone, Debug)]
 pub struct CompoundCRS {
@@ -2949,6 +3000,8 @@ pub enum Crs {
     Engineering(EngineeringCRS),
     /// Derived projected CRS.
     DerivedProjected(DerivedProjectedCRS),
+    /// Derived vertical CRS.
+    DerivedVertical(DerivedVerticalCRS),
 }
 
 impl Crs {
@@ -2964,6 +3017,7 @@ impl Crs {
             Self::Bound(crs) => crs.name(),
             Self::Engineering(crs) => crs.name(),
             Self::DerivedProjected(crs) => crs.name(),
+            Self::DerivedVertical(crs) => crs.name(),
         }
     }
 
@@ -2979,6 +3033,7 @@ impl Crs {
             Self::Bound(crs) => &crs.identified.identifiers,
             Self::Engineering(crs) => &crs.identified.identifiers,
             Self::DerivedProjected(crs) => &crs.identified.identifiers,
+            Self::DerivedVertical(crs) => &crs.identified.identifiers,
         }
     }
 
@@ -3006,12 +3061,13 @@ impl Crs {
             Self::Bound(crs) => crs.identified.deprecated,
             Self::Engineering(crs) => crs.identified.deprecated,
             Self::DerivedProjected(crs) => crs.identified.deprecated,
+            Self::DerivedVertical(crs) => crs.identified.deprecated,
         }
     }
 
     pub(crate) fn is_horizontal(&self) -> bool {
         match self {
-            Self::Vertical(_) => false,
+            Self::Vertical(_) | Self::DerivedVertical(_) => false,
             Self::Compound(crs) => crs.components.iter().any(Self::is_horizontal),
             Self::Bound(crs) => crs.source.is_horizontal(),
             _ => true,

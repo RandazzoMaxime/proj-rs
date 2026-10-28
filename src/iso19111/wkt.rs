@@ -591,6 +591,12 @@ pub(crate) fn export_crs(crs: &Crs, formatter: &mut WktFormatter) -> Result<(), 
                 crs.name()
             )));
         }
+        Crs::DerivedVertical(crs) => {
+            return Err(FactoryError::Format(format!(
+                "derived vertical CRS {} has no WKT export in this build",
+                crs.name()
+            )));
+        }
     }
     Ok(())
 }

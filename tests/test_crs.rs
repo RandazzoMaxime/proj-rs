@@ -5,7 +5,8 @@
 use proj_rs::{
     create_crs_from_proj_string, create_from_user_input, AuthorityFactory, Axis, CartesianCS,
     Meridian,
-    Conversion, CoordinateSystem, Crs, DatabaseContext, Datum, DatumEnsemble, EllipsoidalCS,
+    CompoundCRS, Conversion, CoordinateSystem, Crs, DatabaseContext, Datum, DatumEnsemble,
+    DerivedProjectedCRS, DerivedVerticalCRS, EllipsoidalCS,
     EllipsoidalHeightPolicy, Equivalence, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS,
     LinunitPolicy, OpProps, OutputAxisRule, PrimeMeridian, ProjectedCRS, RealizationMethod,
     UnitKind, UnitOfMeasure,
@@ -4057,4 +4058,54 @@ VDATUM[\"Ordnance Datum Newlyn\",
     );
     assert!(datum.is_equivalent_to(&datum));
     assert!(!datum.is_equivalent_to_datum(&Datum::Geodetic(GeodeticReferenceFrame::epsg_6326())));
+}
+
+fn unimplemented_conversion() -> Conversion {
+    Conversion::create_with_method("PROJ unimplemented", "", "", Vec::new())
+}
+
+fn derived_projected() -> DerivedProjectedCRS {
+    DerivedProjectedCRS::create(
+        "derived projectedCRS",
+        utm_31n(),
+        unimplemented_conversion(),
+        CoordinateSystem::Cartesian(CartesianCS::create_easting_northing(UnitOfMeasure::metre())),
+    )
+}
+
+fn derived_vertical() -> DerivedVerticalCRS {
+    DerivedVerticalCRS::create(
+        "Derived vertCRS",
+        odn_height(),
+        unimplemented_conversion(),
+        VerticalCS::create_gravity_related_height(UnitOfMeasure::metre()),
+    )
+}
+
+#[test]
+fn crs_compound_crs_valid() {
+    let vertical = Crs::Vertical(odn_height());
+    assert!(CompoundCRS::create(
+        "",
+        vec![Crs::Geographic(GeographicCRS::epsg_4326()), vertical.clone()],
+    )
+    .is_ok());
+    assert!(CompoundCRS::create(
+        "",
+        vec![Crs::Projected(utm_31n()), vertical.clone()],
+    )
+    .is_ok());
+    assert!(CompoundCRS::create(
+        "",
+        vec![Crs::DerivedProjected(derived_projected()), vertical],
+    )
+    .is_ok());
+    assert!(CompoundCRS::create(
+        "",
+        vec![
+            Crs::DerivedProjected(derived_projected()),
+            Crs::DerivedVertical(derived_vertical()),
+        ],
+    )
+    .is_ok());
 }
