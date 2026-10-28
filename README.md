@@ -286,7 +286,7 @@ The times below are whole programs, text reading and printing included.
 |---|---:|---:|
 | Install size, with shared libraries | 21.5 MB | **14.8 MB** (1.4× lighter) |
 | Install size, `cs2cs` + `libproj` + `proj.db` only | **13.1 MB** | 14.8 MB |
-| Files to ship | `cs2cs`, `libproj.so`, `proj.db`, 13 shared libraries | **one executable** |
+| Files to ship | `cs2cs`, `libproj.so`, `proj.db`, 13 shared libraries | **one executable**, plus system OpenSSL (grid download) |
 | Needs a C++ runtime, SQLite, libtiff, libcurl | yes | **no** (bundled or not used) |
 
 | Run (lower is better) | libproj 9.4 | proj-rs |
