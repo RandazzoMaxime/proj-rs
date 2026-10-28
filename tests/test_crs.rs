@@ -4009,3 +4009,27 @@ VERTCRS[\"unnamed\",
             LENGTHUNIT[\"metre\",1]]]"
     );
 }
+
+#[test]
+fn crs_vertical_crs_ensemble_exception_in_create() {
+    let height = VerticalCS::create_gravity_related_height(UnitOfMeasure::metre());
+    let missing = VerticalCRS::create_with("", None, None, height.clone()).expect_err("anchors");
+    assert_eq!(
+        missing.to_string(),
+        "One of Datum or DatumEnsemble should be defined"
+    );
+    let ensemble = DatumEnsemble::create(
+        "",
+        vec![
+            Datum::Geodetic(GeodeticReferenceFrame::epsg_6326()),
+            Datum::Geodetic(GeodeticReferenceFrame::epsg_6326()),
+        ],
+        100.0,
+    )
+    .expect("geodetic ensemble");
+    let wrong = VerticalCRS::create_with("", None, Some(ensemble), height).expect_err("kind");
+    assert_eq!(
+        wrong.to_string(),
+        "Ensemble should contain VerticalReferenceFrame"
+    );
+}

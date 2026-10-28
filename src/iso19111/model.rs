@@ -2600,20 +2600,48 @@ impl VerticalCRS {
         ensemble: DatumEnsemble,
         coordinate_system: VerticalCS,
     ) -> Result<Self, FactoryError> {
-        if ensemble.members().is_empty()
-            || ensemble
+        Self::create_with(name, None, Some(ensemble), coordinate_system)
+    }
+
+    /// One of `datum` or `ensemble` is set, and an ensemble is vertical.
+    ///
+    /// # Errors
+    ///
+    /// Both anchors are missing, both are set, or the ensemble is not vertical.
+    pub fn create_with(
+        name: impl Into<String>,
+        datum: Option<VerticalReferenceFrame>,
+        ensemble: Option<DatumEnsemble>,
+        coordinate_system: VerticalCS,
+    ) -> Result<Self, FactoryError> {
+        match (&datum, &ensemble) {
+            (None, None) => {
+                return Err(FactoryError::Invalid(
+                    "One of Datum or DatumEnsemble should be defined".to_owned(),
+                ));
+            }
+            (Some(_), Some(_)) => {
+                return Err(FactoryError::Invalid(
+                    "Datum and DatumEnsemble should not be defined".to_owned(),
+                ));
+            }
+            _ => {}
+        }
+        if let Some(ensemble) = &ensemble {
+            let vertical = ensemble
                 .members()
-                .iter()
-                .any(|member| !matches!(member, Datum::Vertical(_)))
-        {
-            return Err(FactoryError::Invalid(
-                "Ensemble should contain VerticalReferenceFrame".to_owned(),
-            ));
+                .first()
+                .is_some_and(|member| matches!(member, Datum::Vertical(_)));
+            if !vertical {
+                return Err(FactoryError::Invalid(
+                    "Ensemble should contain VerticalReferenceFrame".to_owned(),
+                ));
+            }
         }
         Ok(Self {
             identified: Identified::named(name),
-            datum: None,
-            ensemble: Some(ensemble),
+            datum,
+            ensemble,
             coordinate_system,
             geoid_models: Vec::new(),
         })
