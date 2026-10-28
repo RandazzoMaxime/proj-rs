@@ -17,7 +17,7 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader, Write};
 use std::process::ExitCode;
 
-use proj_rs::{Area, Proj};
+use proj_rs::{Area, CrsPipeline, Operation, Proj, Xyzt};
 use rusqlite::Connection;
 
 const RELEASE: &str = "Rel. 9.9.0, September 15th, 2026";
@@ -71,8 +71,8 @@ fn main() -> ExitCode {
             return exit_code(error.code);
         }
     };
-    let proj = match Proj::new_known_crs(&source, &target, area) {
-        Ok(proj) => proj,
+    let engine = match build_engine(&source, &target, area) {
+        Ok(engine) => engine,
         Err(error) => {
             report(
                 &prog,
@@ -83,6 +83,7 @@ fn main() -> ExitCode {
             return ExitCode::from(3);
         }
     };
+    let lat_first = engine.lat_first() && dst_side.layout == Layout::DegreeLongLat;
     let _selection = (
         opts.authority.as_deref(),
         opts.accuracy,
@@ -102,7 +103,7 @@ fn main() -> ExitCode {
         let _ = writeln!(stdout, "{target}");
     }
     let job = Job {
-        proj: &proj,
+        engine: &engine,
         style: &style,
         echo: opts.echo,
         reverse_out: opts.reverse_out,
@@ -112,6 +113,7 @@ fn main() -> ExitCode {
         dst_dynamic: dst_side.dynamic,
         degree_in: src_side.layout == Layout::DegreeLongLat,
         reverse_in: opts.reverse_in,
+        lat_first,
     };
     if opts.files.is_empty() {
         return read_buf(io::stdin().lock(), &job, &mut stdout);
@@ -143,7 +145,7 @@ fn main() -> ExitCode {
     reason = "each bool is one cs2cs input or output switch"
 )]
 struct Job<'a> {
-    proj: &'a Proj,
+    engine: &'a Engine,
     style: &'a Style,
     echo: bool,
     reverse_out: bool,
@@ -153,6 +155,8 @@ struct Job<'a> {
     dst_dynamic: bool,
     degree_in: bool,
     reverse_in: bool,
+    /// Geographic output whose first axis is latitude. DMS then prints N/S first.
+    lat_first: bool,
 }
 
 fn read_buf<R: BufRead>(reader: R, job: &Job<'_>, stdout: &mut impl Write) -> ExitCode {
@@ -212,8 +216,8 @@ fn emit_line(line: &str, slot: LineSlot, job: &Job<'_>, stdout: &mut impl Write)
     let drawn = if parsed.bad {
         Drawn::Failed(parsed.z)
     } else {
-        match job.proj.convert((parsed.x, parsed.y)) {
-            Ok((x, y)) => Drawn::Value(x, y, parsed.z),
+        match job.engine.apply(parsed.x, parsed.y, parsed.z) {
+            Ok((x, y, z)) => Drawn::Value(x, y, z),
             Err(_) => Drawn::Failed(f64::INFINITY),
         }
     };
@@ -241,12 +245,14 @@ fn render_point(job: &Job<'_>, drawn: Drawn, echo_prefix: &str, tail: &str) -> S
         Drawn::Value(x, y, z) => {
             match job.style.xy {
                 XyStyle::Dms { fract, form } => {
-                    let (left, right, left_pos, left_neg, right_pos, right_neg) = if job.reverse_out
-                    {
-                        (y, x, 'N', 'S', 'E', 'W')
-                    } else {
-                        (x, y, 'E', 'W', 'N', 'S')
-                    };
+                    let (left, right, left_pos, left_neg, right_pos, right_neg) =
+                        if job.lat_first && !job.reverse_out {
+                            (x, y, 'N', 'S', 'E', 'W')
+                        } else if job.reverse_out {
+                            (y, x, 'N', 'S', 'E', 'W')
+                        } else {
+                            (x, y, 'E', 'W', 'N', 'S')
+                        };
                     out.push_str(&rtodms(left, left_pos, left_neg, fract, form));
                     out.push('\t');
                     out.push_str(&rtodms(right, right_pos, right_neg, fract, form));
@@ -265,6 +271,251 @@ fn render_point(job: &Job<'_>, drawn: Drawn, echo_prefix: &str, tail: &str) -> S
     out.push_str(&format_number(&job.style.z, z));
     out.push_str(tail);
     out
+}
+
+enum Engine {
+    /// Two `+proj` definitions. Inverse of the source, then forward of the target.
+    /// Height and a geocentric third axis go through the operations.
+    Pair(Box<SidePair>),
+    /// Two EPSG codes. The pipeline already speaks authority axis order and units.
+    Pipe(CrsPipeline),
+    /// Names and mixed definitions. The facade is two-dimensional; height is copied.
+    Facade(Box<Proj>),
+}
+
+impl Engine {
+    fn lat_first(&self) -> bool {
+        match self {
+            Self::Pipe(pipe) => pipe.lat_or_northing_first,
+            Self::Pair(_) | Self::Facade(_) => false,
+        }
+    }
+
+    fn apply(&self, x: f64, y: f64, z: f64) -> Result<(f64, f64, f64), ()> {
+        match self {
+            Self::Pair(pair) => pair.apply(x, y, z).map(|coord| (coord.x, coord.y, coord.z)),
+            Self::Pipe(pipe) => pipe
+                .operation
+                .forward(Xyzt { x, y, z, t: 0.0 })
+                .map(|coord| (coord.x, coord.y, coord.z))
+                .map_err(|_| ()),
+            Self::Facade(proj) => proj.convert((x, y)).map(|(x, y)| (x, y, z)).map_err(|_| ()),
+        }
+    }
+}
+
+fn build_engine(source: &str, target: &str, area: Option<Area>) -> Result<Engine, String> {
+    if projish(source) && projish(target) {
+        return SidePair::open(source, target)
+            .map(Box::new)
+            .map(Engine::Pair);
+    }
+    if epsg_token(source) && epsg_token(target) {
+        if let Ok(pipe) = CrsPipeline::create(source, target) {
+            return Ok(Engine::Pipe(pipe));
+        }
+    }
+    Proj::new_known_crs(source, target, area)
+        .map(Box::new)
+        .map(Engine::Facade)
+        .map_err(|error| error.to_string())
+}
+
+fn projish(definition: &str) -> bool {
+    explicit_proj(definition).is_some() || definition.contains("init=") || definition.contains("proj=")
+}
+
+fn epsg_token(text: &str) -> bool {
+    let text = text.trim();
+    let Some((auth, code)) = text.split_once(':') else {
+        return false;
+    };
+    auth.eq_ignore_ascii_case("EPSG") && !code.is_empty() && code.chars().all(|ch| ch.is_ascii_digit())
+}
+
+struct SidePair {
+    source: Operation,
+    target: Operation,
+    src_scale: Option<f64>,
+    dst_scale: Option<f64>,
+    src_geoc: Option<Operation>,
+    dst_geoc: Option<Operation>,
+}
+
+impl SidePair {
+    fn open(source: &str, target: &str) -> Result<Self, String> {
+        // A raw ellipse on one side does not pull in the other side's
+        // `+towgs84` or `+datum` grid. Both sides must name a datum.
+        let source_def = if names_datum(source) && !names_datum(target) {
+            strip_datum(source)
+        } else {
+            source.to_owned()
+        };
+        let target_def = if names_datum(target) && !names_datum(source) {
+            strip_datum(target)
+        } else {
+            target.to_owned()
+        };
+        let (source_op, src_scale, src_geoc) = open_side(&source_def)?;
+        let (target_op, dst_scale, dst_geoc) = open_side(&target_def)?;
+        Ok(Self {
+            source: source_op,
+            target: target_op,
+            src_scale,
+            dst_scale,
+            src_geoc,
+            dst_geoc,
+        })
+    }
+
+    fn apply(&self, x: f64, y: f64, z: f64) -> Result<Xyzt, ()> {
+        let mut coord = Xyzt { x, y, z, t: 0.0 };
+        if let Some(scale) = self.src_scale {
+            coord.x *= scale;
+            coord.y *= scale;
+        }
+        if let Some(geoc) = &self.src_geoc {
+            coord = geoc.inverse(coord).map_err(|_| ())?;
+        }
+        coord = self.source.inverse(coord).map_err(|_| ())?;
+        coord = self.target.forward(coord).map_err(|_| ())?;
+        if let Some(geoc) = &self.dst_geoc {
+            coord = geoc.forward(coord).map_err(|_| ())?;
+        }
+        if let Some(scale) = self.dst_scale {
+            let out = 1.0 / scale;
+            coord.x *= out;
+            coord.y *= out;
+        }
+        Ok(coord)
+    }
+}
+
+fn open_side(definition: &str) -> Result<(Operation, Option<f64>, Option<Operation>), String> {
+    let name = explicit_proj(definition);
+    let geographic = matches!(
+        name.as_deref(),
+        Some("latlong" | "longlat" | "latlon" | "lonlat")
+    );
+    let geoc = geographic && has_flag(definition, "geoc");
+    let cleaned = if geoc {
+        strip_flag(definition, "geoc")
+    } else {
+        definition.to_owned()
+    };
+    let operation = Operation::create(&cleaned).map_err(|error| error.to_string())?;
+    let angular = geographic
+        || (operation.angular_input(false) && operation.angular_output(false));
+    let scale = if angular {
+        Some(if grad_units(&cleaned) {
+            std::f64::consts::PI / 200.0
+        } else {
+            std::f64::consts::PI / 180.0
+        })
+    } else {
+        None
+    };
+    let geoc_op = if geoc {
+        Some(Operation::create(&geoc_definition(&cleaned)).map_err(|error| error.to_string())?)
+    } else {
+        None
+    };
+    Ok((operation, scale, geoc_op))
+}
+
+fn names_datum(definition: &str) -> bool {
+    definition.split_whitespace().any(|token| {
+        let bare = token.trim_start_matches('+');
+        bare.starts_with("datum=")
+            || bare.starts_with("towgs84=")
+            || bare == "towgs84"
+            || bare.starts_with("nadgrids=")
+            || bare == "nadgrids"
+    })
+}
+
+fn strip_datum(definition: &str) -> String {
+    let mut parts = Vec::new();
+    for token in definition.split_whitespace() {
+        let bare = token.trim_start_matches('+');
+        if bare.starts_with("towgs84=") || bare == "towgs84" || bare.starts_with("nadgrids=") || bare == "nadgrids"
+        {
+            continue;
+        }
+        if let Some(name) = bare.strip_prefix("datum=") {
+            if let Some(ellps) = datum_ellipsoid(name) {
+                parts.push(format!("+ellps={ellps}"));
+            }
+            continue;
+        }
+        parts.push(token.to_owned());
+    }
+    parts.join(" ")
+}
+
+fn datum_ellipsoid(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "WGS84" => "WGS84",
+        "NAD83" | "GRS80" => "GRS80",
+        "GGRS87" => "GRS80",
+        "NAD27" => "clrk66",
+        "potsdam" => "bessel",
+        "carthage" => "clrk80ign",
+        "hermannskogel" => "bessel",
+        "ire65" => "mod_airy",
+        "nzgd49" => "intl",
+        "OSGB36" => "airy",
+        _ => return None,
+    })
+}
+
+fn has_flag(definition: &str, flag: &str) -> bool {
+    definition.split_whitespace().any(|token| {
+        let bare = token.trim_start_matches('+');
+        bare == flag
+    })
+}
+
+fn strip_flag(definition: &str, flag: &str) -> String {
+    definition
+        .split_whitespace()
+        .filter(|token| token.trim_start_matches('+') != flag)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn grad_units(definition: &str) -> bool {
+    definition.split_whitespace().any(|token| {
+        let bare = token.trim_start_matches('+');
+        matches!(
+            bare,
+            "units=grad" | "units=grads" | "units=gon" | "units=g"
+        )
+    })
+}
+
+fn geoc_definition(definition: &str) -> String {
+    let mut parts = vec!["+proj=geoc".to_owned()];
+    for token in definition.split_whitespace() {
+        let bare = token.trim_start_matches('+');
+        let keep = bare.starts_with("ellps=")
+            || bare.starts_with("datum=")
+            || bare.starts_with("a=")
+            || bare.starts_with("b=")
+            || bare.starts_with("rf=")
+            || bare.starts_with("f=")
+            || bare.starts_with("es=")
+            || bare.starts_with("e=")
+            || bare.starts_with("R=");
+        if keep {
+            if token.starts_with('+') {
+                parts.push((*token).to_owned());
+            } else {
+                parts.push(format!("+{token}"));
+            }
+        }
+    }
+    parts.join(" ")
 }
 
 struct Parsed {

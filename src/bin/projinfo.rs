@@ -63,7 +63,7 @@ fn run(args: &[String]) -> Result<String, Report> {
             "-q can only be used with a single output format".to_owned(),
         ));
     }
-    Ok(render(&crs, &options))
+    render(&crs, &options).map_err(Report::Plain)
 }
 
 fn usage() -> &'static str {
@@ -75,7 +75,10 @@ fn usage() -> &'static str {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Dialect {
     Proj,
+    Wkt2_2015,
     Wkt2_2019,
+    Wkt1Gdal,
+    Wkt1Esri,
     ProjJson,
 }
 
@@ -93,7 +96,10 @@ impl Options {
         let mut version = false;
         let mut quiet = false;
         let mut proj = false;
+        let mut wkt2015 = false;
         let mut wkt = false;
+        let mut wkt1 = false;
+        let mut wkt1_esri = false;
         let mut json = false;
         let mut saw_format = false;
         let mut code = None;
@@ -113,9 +119,21 @@ impl Options {
                     .ok_or_else(|| "missing value for -o".to_owned())?;
                 saw_format = true;
                 for piece in value.split(',') {
+                    if piece.eq_ignore_ascii_case("all") {
+                        proj = true;
+                        wkt2015 = true;
+                        wkt = true;
+                        wkt1 = true;
+                        wkt1_esri = true;
+                        json = true;
+                        continue;
+                    }
                     match classify_dialect(piece)? {
                         Some(Dialect::Proj) => proj = true,
+                        Some(Dialect::Wkt2_2015) => wkt2015 = true,
                         Some(Dialect::Wkt2_2019) => wkt = true,
+                        Some(Dialect::Wkt1Gdal) => wkt1 = true,
+                        Some(Dialect::Wkt1Esri) => wkt1_esri = true,
                         Some(Dialect::ProjJson) => json = true,
                         None => {
                             proj = true;
@@ -145,8 +163,17 @@ impl Options {
         if proj {
             dialects.push(Dialect::Proj);
         }
+        if wkt2015 {
+            dialects.push(Dialect::Wkt2_2015);
+        }
         if wkt {
             dialects.push(Dialect::Wkt2_2019);
+        }
+        if wkt1 {
+            dialects.push(Dialect::Wkt1Gdal);
+        }
+        if wkt1_esri {
+            dialects.push(Dialect::Wkt1Esri);
         }
         if json {
             dialects.push(Dialect::ProjJson);
@@ -168,12 +195,8 @@ impl Options {
 fn classify_dialect(text: &str) -> Result<Option<Dialect>, String> {
     let folded = text.trim().to_ascii_lowercase();
     const UNSUPPORTED: &[&str] = &[
-        "all",
         "wkt_all",
         "wkt-all",
-        "wkt2_2015",
-        "wkt2-2015",
-        "wkt2:2015",
         "wkt2_2015_simplified",
         "wkt2-2015_simplified",
         "wkt2:2015_simplified",
@@ -183,12 +206,6 @@ fn classify_dialect(text: &str) -> Result<Option<Dialect>, String> {
         "wkt2_2018_simplified",
         "wkt2-2018_simplified",
         "wkt2:2018_simplified",
-        "wkt1_gdal",
-        "wkt1-gdal",
-        "wkt1:gdal",
-        "wkt1_esri",
-        "wkt1-esri",
-        "wkt1:esri",
         "sql",
     ];
     if UNSUPPORTED.contains(&folded.as_str()) {
@@ -196,10 +213,14 @@ fn classify_dialect(text: &str) -> Result<Option<Dialect>, String> {
     }
     Ok(match folded.as_str() {
         "default" => None,
+        "all" => None,
         "proj" => Some(Dialect::Proj),
+        "wkt2_2015" | "wkt2-2015" | "wkt2:2015" => Some(Dialect::Wkt2_2015),
         "wkt2_2019" | "wkt2-2019" | "wkt2:2019" | "wkt2_2018" | "wkt2-2018" | "wkt2:2018" => {
             Some(Dialect::Wkt2_2019)
         }
+        "wkt1_gdal" | "wkt1-gdal" | "wkt1:gdal" => Some(Dialect::Wkt1Gdal),
+        "wkt1_esri" | "wkt1-esri" | "wkt1:esri" => Some(Dialect::Wkt1Esri),
         "projjson" => Some(Dialect::ProjJson),
         _ => return Err(format!("unrecognized value for option -o: {text}")),
     })
@@ -655,7 +676,16 @@ fn load_fixed_usage(connection: &Connection, extent: &str, scope: &str) -> Resul
         .map_err(|error| format!("EPSG:4326 extent: {error}"))
 }
 
-fn render(crs: &GeoCrs, options: &Options) -> String {
+fn factory_wkt(code: &str, convention: proj_rs::WktConvention) -> Result<String, String> {
+    let db = proj_rs::DatabaseContext::create().map_err(|error| error.to_string())?;
+    let crs = proj_rs::AuthorityFactory::create(&db, "EPSG")
+        .create_coordinate_reference_system(code)
+        .map_err(|error| error.to_string())?;
+    crs.export_to_wkt(&mut proj_rs::WktFormatter::create(convention).with_database(db))
+        .map_err(|error| error.to_string())
+}
+
+fn render(crs: &GeoCrs, options: &Options) -> Result<String, String> {
     let mut blocks = Vec::new();
     if crs.deprecated {
         blocks.push("Warning: object is deprecated".to_owned());
@@ -665,19 +695,33 @@ fn render(crs: &GeoCrs, options: &Options) -> String {
             Dialect::Proj => proj_string(crs),
             Dialect::Wkt2_2019 => wkt_crs(crs),
             Dialect::ProjJson => json_crs(crs),
+            Dialect::Wkt2_2015 => factory_wkt(&crs.code, proj_rs::WktConvention::Wkt2_2015)?,
+            Dialect::Wkt1Gdal => {
+                let mut text = factory_wkt(&crs.code, proj_rs::WktConvention::Wkt1Gdal)?;
+                text.push('\n');
+                text
+            }
+            Dialect::Wkt1Esri => {
+                let mut text = factory_wkt(&crs.code, proj_rs::WktConvention::Wkt1Esri)?;
+                text.push('\n');
+                text
+            }
         };
         if options.quiet {
             blocks.push(body);
         } else {
             let header = match dialect {
                 Dialect::Proj => "PROJ.4 string:",
+                Dialect::Wkt2_2015 => "WKT2:2015 string:",
                 Dialect::Wkt2_2019 => "WKT2:2019 string:",
+                Dialect::Wkt1Gdal => "WKT1:GDAL string:",
+                Dialect::Wkt1Esri => "WKT1:ESRI string:",
                 Dialect::ProjJson => "PROJJSON:",
             };
             blocks.push(format!("{header}\n{body}"));
         }
     }
-    blocks.join("\n\n")
+    Ok(blocks.join("\n\n"))
 }
 
 fn proj_string(crs: &GeoCrs) -> String {
@@ -1459,9 +1503,8 @@ mod tests {
 
     #[test]
     fn unsupported_dialect_is_an_error() {
-        let error = classify_dialect("WKT1:GDAL").expect_err("dialect");
-        assert!(error.contains("cannot write dialect"), "{error}");
-        assert!(classify_dialect("SQL").is_err());
+        assert!(classify_dialect("WKT1:GDAL").is_ok());
+        assert!(classify_dialect("SQL").expect_err("sql").contains("cannot write dialect"));
         assert!(classify_dialect("all").is_err());
         assert_eq!(
             classify_dialect("WKT2:2019").expect("wkt"),

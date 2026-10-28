@@ -1222,6 +1222,25 @@ struct Bound {
     swap: bool,
     earth: Earth,
     height: Height,
+    /// Prime meridian, degrees east of Greenwich. Zero leaves the pipeline unchanged.
+    pm_deg: f64,
+    /// Angular unit of a geographic CRS. Projected and geocentric bounds keep degrees.
+    angle: AngleUnit,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AngleUnit {
+    Degree,
+    Grad,
+}
+
+impl AngleUnit {
+    fn proj(self) -> &'static str {
+        match self {
+            Self::Degree => "deg",
+            Self::Grad => "grad",
+        }
+    }
 }
 
 enum Height {
@@ -1288,7 +1307,8 @@ fn geodetic_bound(
         |row| Ok((column_text(row, 0)?, column_text(row, 1)?)),
     )?;
     let earth = earth_of(connection, code)?;
-    require_greenwich(connection, &earth)?;
+    let pm_deg = prime_degrees(connection, &earth)?;
+    let angle = angular_unit(connection, code)?;
     let axes = axes_of(connection, &cs_auth, &cs_code)?;
     let (horizontal, plane) = match crs_type {
         "geographic 2D" | "geographic 3D" => (Horizontal::Geographic, Plane::Geographic),
@@ -1310,6 +1330,8 @@ fn geodetic_bound(
         swap,
         earth,
         height,
+        pm_deg,
+        angle,
     })
 }
 
@@ -1378,27 +1400,26 @@ fn projected_bound(connection: &Connection, code: u32) -> Result<Bound, rusqlite
     )?;
     let axes = axes_of(connection, &cs_auth, &cs_code)?;
     let swap = axis_swap(&axes, Plane::Projected)?;
-    require_greenwich(
-        connection,
-        &Earth {
-            a: loaded.a,
-            rf: loaded.rf,
-            b: loaded.b,
-            datum_auth: loaded.datum_auth.clone(),
-            datum_code: loaded.datum_code.clone(),
-        },
-    )?;
+    let earth = Earth {
+        a: loaded.a,
+        rf: loaded.rf,
+        b: loaded.b,
+        datum_auth: loaded.datum_auth,
+        datum_code: loaded.datum_code,
+    };
+    let pm_deg = prime_degrees(connection, &earth)?;
+    let mut definition = loaded.definition;
+    if pm_deg.abs() > 1e-12 {
+        definition.push_str(" +pm=");
+        definition.push_str(&format_f64(pm_deg));
+    }
     Ok(Bound {
-        horizontal: Horizontal::Projected(loaded.definition),
+        horizontal: Horizontal::Projected(definition),
         swap,
-        earth: Earth {
-            a: loaded.a,
-            rf: loaded.rf,
-            b: loaded.b,
-            datum_auth: loaded.datum_auth,
-            datum_code: loaded.datum_code,
-        },
+        earth,
         height: Height::None,
+        pm_deg,
+        angle: AngleUnit::Degree,
     })
 }
 
@@ -1477,22 +1498,55 @@ fn axis_swap(axes: &[AxisKind], plane: Plane) -> Result<bool, rusqlite::Error> {
     Ok(swap)
 }
 
-fn require_greenwich(connection: &Connection, earth: &Earth) -> Result<(), rusqlite::Error> {
-    let longitude = connection.query_row(
-        "SELECT pm.longitude
+fn prime_degrees(connection: &Connection, earth: &Earth) -> Result<f64, rusqlite::Error> {
+    let (longitude, conv, name) = connection.query_row(
+        "SELECT pm.longitude, u.conv_factor, u.name
          FROM geodetic_datum d
          JOIN prime_meridian pm
            ON pm.auth_name = d.prime_meridian_auth_name AND pm.code = d.prime_meridian_code
+         JOIN unit_of_measure u
+           ON u.auth_name = pm.uom_auth_name AND u.code = pm.uom_code
          WHERE d.auth_name = ?1 AND d.code = ?2",
         params![earth.datum_auth, earth.datum_code],
-        |row| column_f64(row, 0),
+        |row| {
+            Ok((
+                column_f64(row, 0)?,
+                column_f64_opt(row, 1)?,
+                column_text(row, 2)?,
+            ))
+        },
     )?;
-    if longitude.abs() > 1e-8 {
-        return Err(unsupported(format!(
-            "prime meridian {longitude} is not built"
-        )));
+    to_degrees(longitude, conv, &name).map_err(unsupported)
+}
+
+fn angular_unit(connection: &Connection, code: u32) -> Result<AngleUnit, rusqlite::Error> {
+    let found = connection
+        .query_row(
+            "SELECT u.name, u.conv_factor
+             FROM geodetic_crs g
+             JOIN axis a
+               ON a.coordinate_system_auth_name = g.coordinate_system_auth_name
+              AND a.coordinate_system_code = g.coordinate_system_code
+             JOIN unit_of_measure u
+               ON u.auth_name = a.uom_auth_name AND u.code = a.uom_code
+             WHERE g.auth_name = 'EPSG' AND g.code = ?1
+             ORDER BY a.coordinate_system_order
+             LIMIT 1",
+            params![i64::from(code)],
+            |row| Ok((column_text(row, 0)?, column_f64_opt(row, 1)?)),
+        )
+        .optional()?;
+    let Some((name, conv)) = found else {
+        return Ok(AngleUnit::Degree);
+    };
+    let folded = name.to_ascii_lowercase();
+    if folded.contains("grad") || folded == "gon" {
+        return Ok(AngleUnit::Grad);
     }
-    Ok(())
+    if conv.is_some_and(|factor| (factor - std::f64::consts::PI / 200.0).abs() < 1e-12) {
+        return Ok(AngleUnit::Grad);
+    }
+    Ok(AngleUnit::Degree)
 }
 
 fn same_datum(left: &Earth, right: &Earth) -> bool {
@@ -1557,7 +1611,15 @@ fn push_to_angular(steps: &mut Vec<String>, bound: &Bound) {
             if bound.swap {
                 steps.push("+proj=axisswap +order=2,1".to_owned());
             }
-            steps.push("+proj=unitconvert +xy_in=deg +xy_out=rad".to_owned());
+            steps.push(format!(
+                "+proj=unitconvert +xy_in={} +xy_out=rad",
+                bound.angle.proj()
+            ));
+            // Longitude in the CRS is relative to its prime meridian. The rest of
+            // the pipeline speaks Greenwich radians.
+            if bound.pm_deg.abs() > 1e-12 {
+                steps.push(format!("+inv +proj=longlat +pm={}", format_f64(bound.pm_deg)));
+            }
         }
         Horizontal::Projected(definition) => {
             if bound.swap {
@@ -1572,7 +1634,13 @@ fn push_to_angular(steps: &mut Vec<String>, bound: &Bound) {
 fn push_from_angular(steps: &mut Vec<String>, bound: &Bound) {
     match &bound.horizontal {
         Horizontal::Geographic => {
-            steps.push("+proj=unitconvert +xy_in=rad +xy_out=deg".to_owned());
+            if bound.pm_deg.abs() > 1e-12 {
+                steps.push(format!("+proj=longlat +pm={}", format_f64(bound.pm_deg)));
+            }
+            steps.push(format!(
+                "+proj=unitconvert +xy_in=rad +xy_out={}",
+                bound.angle.proj()
+            ));
             if bound.swap {
                 steps.push("+proj=axisswap +order=2,1".to_owned());
             }

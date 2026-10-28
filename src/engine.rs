@@ -536,6 +536,11 @@ fn ell_err(error: EllipsoidError) -> CreateError {
 }
 
 fn spherify(params: &Params, earth: Ellipsoid, phi0: f64) -> Result<Ellipsoid, CreateError> {
+    // `+r_a=<radius>` is the sphere radius the healpix tests pass explicitly.
+    if let Some(text) = params.text("r_a") {
+        let radius = proj_number(text).ok_or(CreateError::IllegalValue("r_a"))?;
+        return Ellipsoid::try_from_a_es(radius, 0.0).map_err(ell_err);
+    }
     let es = earth.es();
     let a = earth.a();
     let b = earth.b();
@@ -1180,6 +1185,7 @@ const GLOBAL_KEYS: &[&str] = &[
     "es",
     "e",
     "R",
+    "r_a",
     "R_A",
     "R_V",
     "R_a",

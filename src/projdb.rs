@@ -1,5 +1,6 @@
 //! Embedded PROJ 9.9.0 `proj.db`, opened once from the crate bytes.
 
+use std::fmt;
 use std::sync::{Mutex, OnceLock};
 
 use rusqlite::Connection;
@@ -15,12 +16,35 @@ pub(crate) enum DbFail {
     Sql(rusqlite::Error),
 }
 
+impl fmt::Display for DbFail {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Open(message) => formatter.write_str(message),
+            Self::Sql(error) => write!(formatter, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for DbFail {}
+
 fn open_embedded() -> Result<Mutex<Connection>, String> {
-    let mut connection = Connection::open_in_memory().map_err(|error| error.to_string())?;
-    connection
-        .deserialize_bytes(rusqlite::MAIN_DB, PROJ_DB)
-        .map_err(|error| error.to_string())?;
-    Ok(Mutex::new(connection))
+    open_memory()
+        .map(Mutex::new)
+        .map_err(|error| error.to_string())
+}
+
+fn open_memory() -> Result<Connection, rusqlite::Error> {
+    let mut connection = Connection::open_in_memory()?;
+    connection.deserialize_bytes(rusqlite::MAIN_DB, PROJ_DB)?;
+    Ok(connection)
+}
+
+/// A private connection to the embedded `proj.db`.
+///
+/// Each call deserializes the bytes. The shared slot used by [`with_db`] stays
+/// free, so an ISO 19111 factory can nest queries without taking that lock.
+pub(crate) fn open_connection() -> Result<Connection, DbFail> {
+    open_memory().map_err(|error| DbFail::Open(error.to_string()))
 }
 
 fn slot() -> &'static Result<Mutex<Connection>, String> {

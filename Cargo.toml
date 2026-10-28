@@ -25,6 +25,10 @@ path = "src/bin/cs2cs.rs"
 name = "projinfo"
 path = "src/bin/projinfo.rs"
 
+[[bin]]
+name = "proj"
+path = "src/bin/proj.rs"
+
 [features]
 geo-types = ["dep:geo-types"]
 
