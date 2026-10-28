@@ -123,7 +123,7 @@ The same goes for the CLI cases in [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md
 
 | Suite | Ported and passing | Not yet | |
 |---|---:|---:|:-:|
-| PROJ C++ unit tests | 241 | 1,138 | 🟡 |
+| PROJ C++ unit tests | 243 | 1,136 | 🟡 |
 | `cct` CLI cases | 18 | 0 | ✅ |
 | `cs2cs` CLI cases | 86 | 57 | 🟡 |
 | `proj` CLI cases | 2 | 2 | 🟡 |
@@ -139,7 +139,7 @@ The same goes for the CLI cases in [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md
 | PROJ file | Ported and passing | Not yet |
 |---|---:|---:|
 | `test_c_api.cpp` | 33 | 109 |
-| `test_crs.cpp` | 77 | 122 |
+| `test_crs.cpp` | 79 | 120 |
 | `test_factory.cpp` | 43 | 70 |
 | `test_io.cpp` | 35 | 419 |
 | `test_operation.cpp` | 20 | 144 |
@@ -151,8 +151,10 @@ WKT and the operation factory, which the `gie` suite barely touches.
 
 </details>
 
-The CLI counts come from the ledger committed in the repository. A fresh
-Linux checkout without grids matches two fewer `cs2cs` cases.
+These counts are as of 2026-10-28. The two ledgers are the live numbers, since
+unit tests are ported every day. The CLI counts come from the ledger committed
+in the repository; a fresh Linux checkout without grids matches two fewer
+`cs2cs` cases.
 
 ## Quick start
 
