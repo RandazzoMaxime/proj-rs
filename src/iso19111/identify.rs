@@ -13,7 +13,7 @@ use super::factory::{AuthorityFactory, DatabaseContext, ExistingProjectedQuery, 
 use super::model::{
     Axis, CartesianCS, Conversion, Crs, Datum, DatumEnsemble, Ellipsoid, GeodeticCRS,
     GeodeticReferenceFrame, GeographicCRS, Identified, Identifier, Measure, ParameterValue,
-    ProjectedCRS, UnitOfMeasure,
+    ProjectedCRS, UnitOfMeasure, VerticalCRS,
 };
 
 const UNKNOWN_BASED_ON: &str = "Unknown based on ";
@@ -1152,6 +1152,77 @@ fn easting_northing_metre(cs: &CartesianCS) -> bool {
         && axes[0].unit().name() == "metre"
         && (axes[0].unit().conversion_to_si() - 1.0).abs() <= 1e-10
         && axes[1].unit().name() == "metre"
+}
+
+impl VerticalCRS {
+    /// `VerticalCRS::identify`.
+    ///
+    /// A missing factory returns nothing. A compatible identifier is checked
+    /// against the database and returned at once. Otherwise an exact name is
+    /// tried, then an approximate name.
+    #[must_use]
+    pub fn identify_with(&self, factory: Option<&AuthorityFactory>) -> Vec<(Crs, i32)> {
+        let Some(factory) = factory else {
+            return Vec::new();
+        };
+        let name = self.name();
+        if compatible_authority(self.identifiers(), factory) {
+            for identifier in self.identifiers() {
+                if !(factory.authority().is_empty()
+                    || identifier.code_space() == factory.authority())
+                {
+                    continue;
+                }
+                let looked = AuthorityFactory::create(factory.database_context(), identifier.code_space())
+                    .create_vertical_crs(identifier.code());
+                if let Ok(found) = looked {
+                    let confidence = if self.is_equivalent_to_with(&found, Equivalence::Equivalent) {
+                        100
+                    } else {
+                        25
+                    };
+                    return vec![(Crs::Vertical(found), confidence)];
+                }
+            }
+            return Vec::new();
+        }
+        if insignificant(name) {
+            return Vec::new();
+        }
+        let mut hits: Vec<(VerticalCRS, i32)> = Vec::new();
+        for mode in [NameMatch::Exact, NameMatch::Approximate] {
+            let Ok(found) = factory.create_vertical_crs_by_name(name, mode) else {
+                continue;
+            };
+            for candidate in found {
+                if self.is_equivalent_to_with(&candidate, Equivalence::Equivalent) {
+                    if candidate.name() == name {
+                        return vec![(Crs::Vertical(candidate), 100)];
+                    }
+                    hits.push((candidate, 90));
+                } else {
+                    hits.push((candidate, 25));
+                }
+            }
+            if !hits.is_empty() {
+                break;
+            }
+        }
+        hits.sort_by(|left, right| {
+            right
+                .1
+                .cmp(&left.1)
+                .then_with(|| (right.0.name() == name).cmp(&(left.0.name() == name)))
+                .then_with(|| left.0.name().cmp(right.0.name()))
+        });
+        if hits.len() >= 2 {
+            let highest = hits[0].1;
+            hits.retain(|hit| hit.1 == highest);
+        }
+        hits.into_iter()
+            .map(|(crs, confidence)| (Crs::Vertical(crs), confidence))
+            .collect()
+    }
 }
 
 fn stamp_promoted(identified: &mut Identified) {

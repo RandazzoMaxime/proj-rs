@@ -682,6 +682,20 @@ impl NamedAuthorityObject for ProjectedCRS {
     }
 }
 
+impl NamedAuthorityObject for VerticalCRS {
+    fn name(&self) -> &str {
+        VerticalCRS::name(self)
+    }
+
+    fn identifiers(&self) -> &[Identifier] {
+        VerticalCRS::identifiers(self)
+    }
+
+    fn load(factory: &AuthorityFactory, code: &str) -> Result<Self, FactoryError> {
+        factory.create_vertical_crs(code)
+    }
+}
+
 impl NamedAuthorityObject for GeodeticReferenceFrame {
     fn name(&self) -> &str {
         GeodeticReferenceFrame::name(self)
@@ -1664,6 +1678,23 @@ impl AuthorityFactory {
         mode: NameMatch,
     ) -> Result<Vec<(ProjectedCRS, String)>, FactoryError> {
         self.objects_from_name(name, "projected_crs", mode)
+    }
+
+    /// Vertical CRS whose official name or alias matches `name`.
+    ///
+    /// # Errors
+    ///
+    /// The database rejects the statement.
+    pub(crate) fn create_vertical_crs_by_name(
+        &self,
+        name: &str,
+        mode: NameMatch,
+    ) -> Result<Vec<VerticalCRS>, FactoryError> {
+        Ok(self
+            .objects_from_name(name, "vertical_crs", mode)?
+            .into_iter()
+            .map(|(crs, _)| crs)
+            .collect())
     }
 
     /// Geodetic datums whose official name or alias matches `name`.

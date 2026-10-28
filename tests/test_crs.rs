@@ -3908,3 +3908,70 @@ PARAMETER[\"Vertical_Shift\",0.0],\
 PARAMETER[\"Direction\",1.0],UNIT[\"Meter\",1.0]]"
     );
 }
+
+fn vertical_like(source: &VerticalCRS, name: &str, code: Option<&str>) -> VerticalCRS {
+    let mut crs = VerticalCRS::create(
+        name,
+        source.datum().expect("datum").clone(),
+        source.coordinate_system().clone(),
+    );
+    if let Some(code) = code {
+        crs = crs.with_identifier("EPSG", code);
+    }
+    crs
+}
+
+fn vertical_hit(hits: &[(Crs, i32)]) -> Vec<(String, i32)> {
+    hits.iter()
+        .map(|(crs, confidence)| {
+            let Crs::Vertical(crs) = crs else {
+                panic!("identify returned a vertical CRS");
+            };
+            let code = crs.identifiers().first().expect("id").code().to_owned();
+            (code, *confidence)
+        })
+        .collect()
+}
+
+#[test]
+fn crs_vertical_crs_identify_db() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let factory = AuthorityFactory::create(&db, "EPSG");
+    let source = factory.create_vertical_crs("7651").expect("EPSG:7651");
+    assert_eq!(
+        vertical_hit(&source.identify_with(Some(&factory))),
+        vec![("7651".to_owned(), 100)]
+    );
+    assert!(source.identify_with(None).is_empty());
+
+    let missing = vertical_like(&source, source.name(), Some("1"));
+    assert!(missing.identify_with(Some(&factory)).is_empty());
+
+    let wrong = vertical_like(&source, source.name(), Some("7652"));
+    assert_eq!(
+        vertical_hit(&wrong.identify_with(Some(&factory))),
+        vec![("7652".to_owned(), 25)]
+    );
+
+    let named = vertical_like(&source, source.name(), None);
+    assert_eq!(
+        vertical_hit(&named.identify_with(Some(&factory))),
+        vec![("7651".to_owned(), 100)]
+    );
+
+    let equivalent_name = vertical_like(&source, "Kumul_34_height", None);
+    assert_eq!(
+        vertical_hit(&equivalent_name.identify_with(Some(&factory))),
+        vec![("7651".to_owned(), 90)]
+    );
+
+    let other = factory.create_vertical_crs("7652").expect("EPSG:7652");
+    let mismatched = vertical_like(&other, "Kumul_34_height", None);
+    assert_eq!(
+        vertical_hit(&mismatched.identify_with(Some(&factory))),
+        vec![("7651".to_owned(), 25)]
+    );
+
+    let unmatched = vertical_like(&source, "no match", None);
+    assert!(unmatched.identify_with(Some(&factory)).is_empty());
+}

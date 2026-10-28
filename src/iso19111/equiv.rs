@@ -254,7 +254,13 @@ impl VerticalCRS {
     /// Strict vertical-CRS equivalence.
     #[must_use]
     pub fn is_equivalent_to(&self, other: &Self) -> bool {
-        same_name(self.name(), other.name())
+        self.is_equivalent_to_with(other, Equivalence::Strict)
+    }
+
+    /// `Equivalent` does not require the CRS name to match.
+    #[must_use]
+    pub fn is_equivalent_to_with(&self, other: &Self, criterion: Equivalence) -> bool {
+        (criterion != Equivalence::Strict || same_name(self.name(), other.name()))
             && vertical_anchor(self, other)
             && cs_axes_match(
                 std::slice::from_ref(self.coordinate_system().axis()),
