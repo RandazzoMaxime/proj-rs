@@ -5,13 +5,27 @@ edition = "2021"
 rust-version = "1.83"
 license = "MIT"
 publish = false
-description = "Rust port of PROJ: exact Transverse Mercator (UTM) and Lambert-93."
+description = "Rust port of PROJ 9.9: projections, pipelines, and an embedded proj.db."
 readme = "README.md"
 repository = "https://github.com/RandazzoMaxime/proj-rs"
 
 [[bin]]
 name = "proj-rs-bench"
 path = "src/bin/bench.rs"
+
+[features]
+geo-types = ["dep:geo-types"]
+
+[build-dependencies]
+cc = "1.1"
+
+[dependencies]
+geo-types = { version = "0.7.16", optional = true }
+# 0.37 is edition 2021 and does not declare a rust-version above 1.83.
+# `serialize` opens the embedded proj.db with `deserialize_bytes`.
+rusqlite = { version = "0.37.0", features = ["bundled", "serialize"] }
+# GeoTIFF grids. `deflate` only: the test grids are uncompressed, deflate, or deflate+predictor.
+tiff = { version = "0.10.3", default-features = false, features = ["deflate"] }
 
 [profile.release]
 opt-level = 3
@@ -27,7 +41,9 @@ rust_2018_idioms = { level = "warn", priority = -1 }
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }
-pedantic = { level = "warn", priority = -1 }
+# Group `allow(clippy::pedantic)` in source does not override a warn here on
+# this toolchain, and the transcribed PROJ coefficients are intentionally long.
+pedantic = { level = "allow", priority = -1 }
 unwrap_used = "warn"
 expect_used = "allow"
 panic_in_result_fn = "warn"

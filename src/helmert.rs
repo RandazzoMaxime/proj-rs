@@ -99,6 +99,19 @@ impl Helmert {
             self.scale * rotated_z + self.tz,
         )
     }
+
+    /// Inverse exacte de la matrice linéarisée : transpose, puis retrait de l'échelle.
+    #[must_use]
+    pub fn apply_inverse(&self, x: f64, y: f64, z: f64) -> (f64, f64, f64) {
+        let x = (x - self.tx) / self.scale;
+        let y = (y - self.ty) / self.scale;
+        let z = (z - self.tz) / self.scale;
+        (
+            x + self.rz * y - self.ry * z,
+            -self.rz * x + y + self.rx * z,
+            self.ry * x - self.rx * y + z,
+        )
+    }
 }
 
 #[cfg(test)]

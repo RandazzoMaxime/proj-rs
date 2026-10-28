@@ -103,6 +103,61 @@ impl Ellipsoid {
     pub fn ra(self) -> f64 {
         self.ra
     }
+
+    /// `1 − e²`.
+    #[must_use]
+    pub fn one_es(self) -> f64 {
+        1.0 - self.es
+    }
+
+    /// Demi-petit axe, mètres.
+    #[must_use]
+    pub fn b(self) -> f64 {
+        self.a * (1.0 - self.f)
+    }
+
+    /// Carré de la seconde excentricité, `e'² = e² / (1 − e²)`.
+    #[must_use]
+    pub fn e2s(self) -> f64 {
+        self.es / (1.0 - self.es)
+    }
+
+    /// Sphère de rayon `radius`, ou ellipsoïde défini par `a` et `e²`.
+    ///
+    /// `es == 0` est une sphère. C'est le cas `+R` et `+a` sans aplatissement
+    /// de PROJ, que [`Self::try_new`] refuse parce qu'`rf` n'est pas fini.
+    ///
+    /// # Errors
+    ///
+    /// [`EllipsoidError::NonFiniteParameter`] si une entrée n'est pas finie,
+    /// [`EllipsoidError::NonPositiveSemiMajorAxis`] si `a` n'est pas strictement
+    /// positif, [`EllipsoidError::InvalidFlattening`] si `es` n'est pas dans
+    /// `[0, 1)`.
+    pub fn try_from_a_es(a: f64, es: f64) -> Result<Self, EllipsoidError> {
+        if !a.is_finite() || !es.is_finite() {
+            return Err(EllipsoidError::NonFiniteParameter);
+        }
+        if a <= 0.0 {
+            return Err(EllipsoidError::NonPositiveSemiMajorAxis);
+        }
+        if !(0.0..1.0).contains(&es) {
+            return Err(EllipsoidError::InvalidFlattening);
+        }
+        let f = if es == 0.0 {
+            0.0
+        } else {
+            1.0 - (1.0 - es).sqrt()
+        };
+        let n = if f == 0.0 { 0.0 } else { f / (2.0 - f) };
+        Ok(Self {
+            a,
+            f,
+            es,
+            e: es.sqrt(),
+            n,
+            ra: 1.0 / a,
+        })
+    }
 }
 
 #[cfg(test)]
