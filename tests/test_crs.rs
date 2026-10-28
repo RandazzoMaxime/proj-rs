@@ -4198,3 +4198,24 @@ COMPOUNDCRS[\"horizontal + vertical\",
     ID[\"codespace\",\"code\"]]"
     );
 }
+
+#[test]
+fn crs_compound_crs_is_equivalent_to() {
+    let crs = CompoundCRS::create(
+        "horizontal + vertical",
+        vec![Crs::Projected(utm_31n()), Crs::Vertical(odn_height())],
+    )
+    .expect("compound");
+    assert!(crs.is_equivalent_to(&crs));
+    assert!(crs.clone().is_equivalent_to(&crs));
+    assert!(!Crs::Compound(crs.clone()).is_equivalent_to(&Crs::Geographic(GeographicCRS::epsg_4326())));
+    let other = CompoundCRS::create(
+        "",
+        vec![
+            Crs::Geographic(GeographicCRS::epsg_4326()),
+            Crs::Vertical(odn_height()),
+        ],
+    )
+    .expect("other");
+    assert!(!crs.is_equivalent_to(&other));
+}
