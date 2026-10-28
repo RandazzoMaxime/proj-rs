@@ -103,13 +103,14 @@ impl GeographicCRS {
 impl Crs {
     /// `CRS::identify`.
     ///
-    /// Geographic and geodetic CRS use [`GeodeticCRS::identify_with`]. Other
-    /// kinds have no match.
+    /// Geographic and geodetic CRS use [`GeodeticCRS::identify_with`]. A
+    /// projected CRS uses the UTM shortcut. Other kinds have no match.
     #[must_use]
     pub fn identify_with(&self, factory: Option<&AuthorityFactory>) -> Vec<(Crs, i32)> {
         match self {
             Self::Geographic(crs) => crs.identify_with(factory),
             Self::Geodetic(crs) => crs.identify_with(factory),
+            Self::Projected(crs) => crs.identify_with(factory),
             _ => Vec::new(),
         }
     }
@@ -646,10 +647,9 @@ impl ProjectedCRS {
     /// An exact CRS name is confidence 100.
     #[must_use]
     pub fn identify_with(&self, factory: Option<&AuthorityFactory>) -> Vec<(Crs, i32)> {
-        let Some(factory) = factory else {
-            return Vec::new();
-        };
-        if !(factory.authority().is_empty() || factory.authority() == "EPSG") {
+        if factory.is_some_and(|factory| {
+            !(factory.authority().is_empty() || factory.authority() == "EPSG")
+        }) {
             return Vec::new();
         }
         let Some((zone, hemisphere)) = self.conversion.utm_zone() else {
@@ -658,7 +658,7 @@ impl ProjectedCRS {
         if !easting_northing_metre(&self.coordinate_system) {
             return Vec::new();
         }
-        let base = self.base.identify_with(Some(factory));
+        let base = self.base.identify_with(factory);
         if base.len() != 1 || base[0].1 < 70 {
             return Vec::new();
         }

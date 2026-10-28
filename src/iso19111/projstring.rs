@@ -3,6 +3,7 @@
 //! Datum codes 6326, 6267, and 6269 become `+datum=`. Anything else is
 //! `+ellps` plus `+pm` when the prime meridian is not Greenwich.
 
+use super::buildop::OpProps;
 use super::model::{
     Axis, CartesianCS, Conversion, Crs, Datum, DatumEnsemble, Ellipsoid, EllipsoidalCS, FactoryError,
     GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified, Identifier,
@@ -584,7 +585,48 @@ pub fn create_crs_from_proj_string(definition: &str) -> Result<Crs, FactoryError
     if matches!(proj, "longlat" | "lonlat" | "latlong") {
         return geographic_from_proj(&tokens);
     }
+    if proj == "utm" {
+        return utm_from_proj(&tokens);
+    }
     projected_from_proj(&tokens, proj)
+}
+
+fn utm_from_proj(tokens: &[(String, String)]) -> Result<Crs, FactoryError> {
+    let zone = token(tokens, "zone").parse::<i32>().map_err(|_| {
+        FactoryError::Invalid("invalid UTM zone".to_owned())
+    })?;
+    let conversion = if has_token(tokens, "south") {
+        Conversion::create_utm_south(&OpProps::new(), zone)
+    } else {
+        Conversion::create_utm_north(&OpProps::new(), zone)
+    }?;
+    let geographic = geographic_base(tokens)?;
+    Ok(Crs::Projected(ProjectedCRS::create(
+        "unknown",
+        GeodeticCRS::Geographic(geographic),
+        conversion,
+        CartesianCS::create_easting_northing(UnitOfMeasure::metre()),
+    )))
+}
+
+fn geographic_base(tokens: &[(String, String)]) -> Result<GeographicCRS, FactoryError> {
+    Ok(GeographicCRS {
+        identified: Identified::named("unknown"),
+        datum: Some(datum_from_proj(tokens)?),
+        ensemble: None,
+        coordinate_system: EllipsoidalCS {
+            identified: Identified::default(),
+            axes: vec![
+                geographic_axis('e', UnitOfMeasure::degree())?,
+                geographic_axis('n', UnitOfMeasure::degree())?,
+            ],
+        },
+        implicit_cs: true,
+    })
+}
+
+fn has_token(tokens: &[(String, String)], key: &str) -> bool {
+    tokens.iter().any(|(name, _)| name == key)
 }
 
 fn geographic_from_proj(tokens: &[(String, String)]) -> Result<Crs, FactoryError> {
@@ -622,20 +664,7 @@ fn projected_from_proj(tokens: &[(String, String)], proj: &str) -> Result<Crs, F
     let method = projection_method(proj, tokens).ok_or_else(|| {
         FactoryError::Invalid(format!("unknown +proj={proj} cannot be imported as a CRS"))
     })?;
-    let datum = datum_from_proj(tokens)?;
-    let geographic = GeographicCRS {
-        identified: Identified::named("unknown"),
-        datum: Some(datum),
-        ensemble: None,
-        coordinate_system: EllipsoidalCS {
-            identified: Identified::default(),
-            axes: vec![
-                geographic_axis('e', UnitOfMeasure::degree())?,
-                geographic_axis('n', UnitOfMeasure::degree())?,
-            ],
-        },
-        implicit_cs: true,
-    };
+    let geographic = geographic_base(tokens)?;
     let parameters = method
         .params
         .iter()

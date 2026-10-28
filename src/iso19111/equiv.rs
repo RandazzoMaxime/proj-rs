@@ -315,10 +315,18 @@ fn geographic_equivalent(
     if criterion == Equivalence::Strict && !same_name(left.name(), right.name()) {
         return false;
     }
-    if geographic_anchor(left, right)
-        && cs_axes_match(
+    let anchored = if criterion == Equivalence::Strict {
+        geographic_anchor(left, right)
+    } else {
+        // Non-strict comparison uses `datumNonNull`, so an ensemble matches
+        // the datum `asDatum` would build.
+        frames_as_datum(left, right)
+    };
+    if anchored
+        && axes_for_criterion(
             left.coordinate_system().axes(),
             right.coordinate_system().axes(),
+            criterion,
         )
     {
         return true;
@@ -334,7 +342,29 @@ fn geographic_equivalent(
     } else {
         return false;
     }
-    geographic_anchor(left, right) && cs_axes_match(left.coordinate_system().axes(), &swapped)
+    anchored
+        && axes_for_criterion(
+            left.coordinate_system().axes(),
+            &swapped,
+            Equivalence::Equivalent,
+        )
+}
+
+fn frames_as_datum(left: &GeographicCRS, right: &GeographicCRS) -> bool {
+    match (anchor_frame(left), anchor_frame(right)) {
+        (Some(left), Some(right)) => frame_equivalent(&left, &right),
+        _ => false,
+    }
+}
+
+fn anchor_frame(crs: &GeographicCRS) -> Option<GeodeticReferenceFrame> {
+    if let Some(datum) = crs.datum() {
+        return Some(datum.clone());
+    }
+    match crs.datum_ensemble()?.as_datum() {
+        Some(Datum::Geodetic(frame)) => Some(frame),
+        _ => None,
+    }
 }
 
 fn geographic_anchor(left: &GeographicCRS, right: &GeographicCRS) -> bool {
@@ -648,13 +678,14 @@ impl GeodeticCRS {
 impl Crs {
     /// `CRS::identify` with no authority factory.
     ///
-    /// Geographic and geodetic CRS use [`GeodeticCRS::identify`]. Other kinds
-    /// have no hardcoded candidate.
+    /// Geographic and geodetic CRS use [`GeodeticCRS::identify`]. A projected
+    /// CRS uses the hardcoded UTM candidates. Other kinds have none.
     #[must_use]
     pub fn identify(&self) -> Vec<(Crs, i32)> {
         match self {
             Self::Geographic(crs) => Self::Geodetic(GeodeticCRS::Geographic(crs.clone())).identify(),
             Self::Geodetic(crs) => crs.identify(),
+            Self::Projected(crs) => crs.identify_with(None),
             _ => Vec::new(),
         }
     }

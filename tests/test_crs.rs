@@ -2261,6 +2261,97 @@ fn crs_projected_crs_krovak_with_approximate_alpha_as_proj_string() {
 }
 
 #[test]
+fn crs_projected_crs_identify_no_db() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let factory = AuthorityFactory::create(&db, "EPSG");
+    let unnamed = utm_projected("", GeographicCRS::epsg_4326(), 1, UtmSide::North);
+    let found = Crs::Projected(unnamed).identify();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].0.authority_code("EPSG").expect("code").code(), "32601");
+    assert_eq!(found[0].1, 70);
+    let official = factory.create_projected_crs("32601").expect("32601");
+    let Crs::Projected(found_crs) = &found[0].0 else {
+        panic!("identified UTM is projected");
+    };
+    assert!(found_crs.is_equivalent_to_with(&official, Equivalence::Equivalent));
+
+    let named = Crs::Projected(utm_projected(
+        "WGS 84 / UTM zone 60S",
+        GeographicCRS::epsg_4326(),
+        60,
+        UtmSide::South,
+    ));
+    let found = named.identify();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].0.authority_code("EPSG").expect("code").code(), "32760");
+    assert_eq!(found[0].1, 100);
+    let official = factory.create_projected_crs("32760").expect("32760");
+    let Crs::Projected(found_crs) = &found[0].0 else {
+        panic!("identified UTM is projected");
+    };
+    assert!(found_crs.is_equivalent_to_with(&official, Equivalence::Equivalent));
+
+    let nad27 = Crs::Projected(utm_projected(
+        "NAD27_UTM_zone_11N",
+        GeographicCRS::epsg_4267(),
+        11,
+        UtmSide::North,
+    ));
+    let found = nad27.identify();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].0.authority_code("EPSG").expect("code").code(), "26711");
+    assert_eq!(found[0].1, 90);
+    let official = factory.create_projected_crs("26711").expect("26711");
+    let Crs::Projected(found_crs) = &found[0].0 else {
+        panic!("identified UTM is projected");
+    };
+    assert!(found_crs.is_equivalent_to_with(&official, Equivalence::Equivalent));
+
+    let nad83 = Crs::Projected(utm_projected("", GeographicCRS::epsg_4269(), 11, UtmSide::North));
+    let found = nad83.identify();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].0.authority_code("EPSG").expect("code").code(), "26911");
+    assert_eq!(found[0].1, 70);
+    let official = factory.create_projected_crs("26911").expect("26911");
+    let Crs::Projected(found_crs) = &found[0].0 else {
+        panic!("identified UTM is projected");
+    };
+    assert!(found_crs.is_equivalent_to_with(&official, Equivalence::Equivalent));
+
+    let parsed = create_crs_from_proj_string("+proj=utm +zone=31 +datum=WGS84 +type=crs").expect("utm");
+    let Crs::Projected(parsed_projected) = &parsed else {
+        panic!("+proj=utm is a projected CRS");
+    };
+    let found = parsed.identify();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].0.authority_code("EPSG").expect("code").code(), "32631");
+    assert_eq!(found[0].1, 70);
+    let Crs::Projected(found_crs) = &found[0].0 else {
+        panic!("identified UTM is projected");
+    };
+    assert!(found_crs.is_equivalent_to_with(parsed_projected, Equivalence::ExceptAxisOrder));
+}
+
+enum UtmSide {
+    North,
+    South,
+}
+
+fn utm_projected(name: &str, base: GeographicCRS, zone: i32, side: UtmSide) -> ProjectedCRS {
+    let conversion = match side {
+        UtmSide::North => Conversion::create_utm_north(&OpProps::new(), zone),
+        UtmSide::South => Conversion::create_utm_south(&OpProps::new(), zone),
+    }
+    .expect("utm");
+    ProjectedCRS::create(
+        name,
+        GeodeticCRS::Geographic(base),
+        conversion,
+        CartesianCS::create_easting_northing(UnitOfMeasure::metre()),
+    )
+}
+
+#[test]
 fn crs_geographic3d_nad83_as_wkt1_esri_database() {
     let db = DatabaseContext::create().expect("proj.db");
     let mut parser = WktParser::new();
