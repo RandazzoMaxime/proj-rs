@@ -1941,7 +1941,8 @@ impl WktParser {
             .child(&["BASEGEOGCRS", "BASEGEODCRS", "GEOGCS"])
             .ok_or_else(|| invalid("missing base geodetic CRS"))?;
         let mut props = self.build_properties(node)?;
-        if self.esri {
+        // A guessed ESRI dialect is known before the datum node sets `esri`.
+        if self.esri || self.maybe_esri {
             if let Some((official, _, _)) = self.alias(&props.name, "projected_crs") {
                 props.name = official;
             }
@@ -2902,5 +2903,59 @@ impl BoundEdit for BoundCRS {
 
     fn identified_mut(&mut self) -> &mut Identified {
         &mut self.identified
+    }
+}
+
+impl AuthorityFactory {
+    /// Projected CRS, including an ESRI row stored only as `text_definition`.
+    ///
+    /// # Errors
+    ///
+    /// The code is missing, or the stored WKT is not a projected CRS.
+    pub fn create_projected_crs(&self, code: &str) -> Result<ProjectedCRS, FactoryError> {
+        match self.create_projected_crs_from_columns(code) {
+            Ok(crs) => Ok(crs),
+            Err(error) => self.projected_from_text(code).or(Err(error)),
+        }
+    }
+
+    fn projected_from_text(&self, code: &str) -> Result<ProjectedCRS, FactoryError> {
+        let Some(text) = self
+            .database_context()
+            .text_definition("projected_crs", self.authority(), code)
+        else {
+            return Err(FactoryError::missing(
+                "projected CRS",
+                self.authority(),
+                code,
+            ));
+        };
+        if !text.starts_with("PROJCS") {
+            return Err(FactoryError::wrap(
+                "projected CRS",
+                self.authority(),
+                code,
+                "text_definition is not expanded",
+            ));
+        }
+        let mut parser = WktParser::new();
+        parser.attach_database(self.database_context().clone());
+        let object = parser.create_from_wkt(&text)?;
+        let Some(Crs::Projected(crs)) = object.crs().cloned() else {
+            return Err(FactoryError::wrap(
+                "projected CRS",
+                self.authority(),
+                code,
+                "text_definition is not a projected CRS",
+            ));
+        };
+        let already = crs.identifiers().iter().any(|identifier| {
+            identifier.code_space() == self.authority() && identifier.code() == code
+        });
+        if already {
+            Ok(crs)
+        } else {
+            Ok(crs.with_identifier(self.authority(), code))
+        }
     }
 }

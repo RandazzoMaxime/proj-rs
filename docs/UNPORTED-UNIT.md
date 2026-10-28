@@ -7,8 +7,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_crs.cpp
 
-- `crs.projectedCRS_with_other_deprecated_crs_of_same_name_as_WKT1_ESRI`
-- `crs.projectedCRS_with_ESRI_code_as_WKT1_ESRI`
 - `crs.projectedCRS_from_WKT1_ESRI_as_WKT1_ESRI`
 - `crs.projectedCRS_from_WKT1_ESRI_as_WKT1_ESRI_s_jtsk03_krovak_east_north`
 - `crs.projectedCRS_from_EPSG_as_WKT1_ESRI_s_jtsk03_krovak_east_north`

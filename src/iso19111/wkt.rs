@@ -4,6 +4,7 @@
 //! `WKTFormatter` in PROJ `src/iso19111/io.cpp`.
 
 use super::factory::{AuthorityFactory, DatabaseContext};
+use super::wkt_import::WktParser;
 /// Whether the node being opened carries an authority identifier.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NodeId {
@@ -774,6 +775,10 @@ fn export_spherical(
 }
 
 fn export_projected(crs: &ProjectedCRS, formatter: &mut WktFormatter) -> Result<(), FactoryError> {
+    if let Some(text) = esri_projected_text(crs, formatter) {
+        formatter.result.push_str(&text);
+        return Ok(());
+    }
     let axes = &crs.coordinate_system.axes;
     if axes.len() == 3 && !(formatter.wkt2 && formatter.keywords_2019) {
         if !formatter.wkt2 && !formatter.esri && formatter.allow_ellipsoidal_height {
@@ -1914,6 +1919,35 @@ fn esri_geographic_name(
         name.insert_str(0, "GCS_");
     }
     name
+}
+
+/// ESRI WKT1 of an object whose database row is a `PROJCS` `text_definition`.
+fn esri_projected_text(crs: &ProjectedCRS, formatter: &WktFormatter) -> Option<String> {
+    if !formatter.esri || formatter.wkt2 {
+        return None;
+    }
+    let db = formatter.db.as_ref()?;
+    let identifier = crs
+        .identifiers()
+        .iter()
+        .find(|identifier| identifier.code_space() == "ESRI")?;
+    let text = db.text_definition("projected_crs", "ESRI", identifier.code())?;
+    if !text.starts_with("PROJCS") {
+        return None;
+    }
+    let mut parser = WktParser::new();
+    parser.attach_database(db.clone());
+    let Ok(object) = parser.create_from_wkt(&text) else {
+        return None;
+    };
+    let Some(Crs::Projected(parsed)) = object.crs().cloned() else {
+        return None;
+    };
+    if crs.is_equivalent_to(&parsed) {
+        Some(text)
+    } else {
+        None
+    }
 }
 
 fn esri_projected_name(identified: &Identified, formatter: &WktFormatter) -> String {

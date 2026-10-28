@@ -210,6 +210,26 @@ impl DatabaseContext {
         Ok(rows.into_iter().map(|row| row[0].text()).collect())
     }
 
+    /// `text_definition` for one authority object, when the column is set.
+    pub(crate) fn text_definition(&self, table: &str, authority: &str, code: &str) -> Option<String> {
+        let table = match table {
+            "projected_crs" | "geodetic_crs" | "conversion" => table,
+            _ => return None,
+        };
+        let sql = format!(
+            "SELECT text_definition FROM \"{table}\" WHERE auth_name = ? AND code = ?"
+        );
+        let Ok(rows) = self.query(&sql, &[authority.to_owned(), code.to_owned()]) else {
+            return None;
+        };
+        let text = rows.first()?.first()?.text();
+        if text.is_empty() {
+            None
+        } else {
+            Some(text)
+        }
+    }
+
     pub(crate) fn alias_from_official_name(
         &self,
         official_name: &str,
@@ -1733,13 +1753,19 @@ impl AuthorityFactory {
         })
     }
 
-    /// Projected CRS.
+    /// Projected CRS built from the relational columns.
+    ///
+    /// A row whose only definition is `text_definition` is expanded by
+    /// [`Self::create_projected_crs`].
     ///
     /// # Errors
     ///
     /// The code is missing, the coordinate system is not cartesian, or
-    /// `text_definition` is set.
-    pub fn create_projected_crs(&self, code: &str) -> Result<ProjectedCRS, FactoryError> {
+    /// `text_definition` is set without a coordinate system and conversion.
+    pub(crate) fn create_projected_crs_from_columns(
+        &self,
+        code: &str,
+    ) -> Result<ProjectedCRS, FactoryError> {
         let row = self
             .one(
                 "SELECT name, coordinate_system_auth_name, coordinate_system_code, \

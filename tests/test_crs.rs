@@ -1389,6 +1389,63 @@ PROJCS[\"WGS 84 / UTM zone 31N\",
 }
 
 #[test]
+fn crs_projected_crs_with_other_deprecated_crs_of_same_name_as_wkt1_esri() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let crs = AuthorityFactory::create(&db, "EPSG")
+        .create_projected_crs("3800")
+        .expect("EPSG:3800");
+    let expected = "\
+PROJCS[\"NAD_1927_3TM_120\",GEOGCS[\"GCS_North_American_1927\",\
+DATUM[\"D_North_American_1927\",\
+SPHEROID[\"Clarke_1866\",6378206.4,294.978698213898]],\
+PRIMEM[\"Greenwich\",0.0],UNIT[\"Degree\",0.0174532925199433]],\
+PROJECTION[\"Transverse_Mercator\"],\
+PARAMETER[\"False_Easting\",0.0],\
+PARAMETER[\"False_Northing\",0.0],\
+PARAMETER[\"Central_Meridian\",-120.0],\
+PARAMETER[\"Scale_Factor\",0.9999],\
+PARAMETER[\"Latitude_Of_Origin\",0.0],UNIT[\"Meter\",1.0]]";
+    let wkt = Crs::Projected(crs)
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Esri).with_database(db.clone()))
+        .expect("wkt");
+    assert_eq!(wkt, expected);
+    let parsed = WktParser::new()
+        .attach_database(db.clone())
+        .create_from_wkt(&wkt)
+        .expect("parse")
+        .crs()
+        .expect("crs")
+        .clone();
+    assert_eq!(parsed.name(), "NAD27 / Alberta 3TM ref merid 120 W");
+    let again = parsed
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Esri).with_database(db))
+        .expect("wkt");
+    assert_eq!(again, expected);
+}
+
+#[test]
+fn crs_projected_crs_with_esri_code_as_wkt1_esri() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let crs = AuthorityFactory::create(&db, "ESRI")
+        .create_projected_crs("102113")
+        .expect("ESRI:102113");
+    let wkt = Crs::Projected(crs)
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Esri).with_database(db))
+        .expect("wkt");
+    assert_eq!(
+        wkt,
+        "PROJCS[\"WGS_1984_Web_Mercator\",\
+GEOGCS[\"GCS_WGS_1984_Major_Auxiliary_Sphere\",\
+DATUM[\"D_WGS_1984_Major_Auxiliary_Sphere\",\
+SPHEROID[\"WGS_1984_Major_Auxiliary_Sphere\",6378137.0,0.0]],\
+PRIMEM[\"Greenwich\",0.0],UNIT[\"Degree\",0.0174532925199433]],\
+PROJECTION[\"Mercator\"],PARAMETER[\"False_Easting\",0.0],\
+PARAMETER[\"False_Northing\",0.0],PARAMETER[\"Central_Meridian\",0.0],\
+PARAMETER[\"Standard_Parallel_1\",0.0],UNIT[\"Meter\",1.0]]"
+    );
+}
+
+#[test]
 fn crs_projected_crs_3d_as_wkt1_gdal_with_ellipsoidal_height_as_vertical_crs() {
     let db = DatabaseContext::create().expect("proj.db");
     let crs = AuthorityFactory::create(&db, "EPSG")
