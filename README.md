@@ -42,7 +42,7 @@ install.
 | Pipelines, `cart`, Helmert, Molodensky, `unitconvert`, `affine`, `axisswap` | ✅ | `+proj=pipeline` with `+step` and `+inv`, exercised across PROJ's suite (`more_builtins`, `4D-API_cs2cs-style`, `axisswap`, `unitconvert`) |
 | Grid shifts, `tinshift`, deformation models | 🟡 | Pass against the grids vendored with the suite. PROJ-data grids are fetched on demand and are not stored in git |
 | Embedded `proj.db` and EPSG resolution | ✅ | Built from the PROJ 9.9.0 SQL, opened in memory with `rusqlite` |
-| ISO 19111 model and WKT | 🟡 | CRS model, authority factory, WKT1 and WKT2 import and export. See [`docs/CRS-API.md`](docs/CRS-API.md) |
+| ISO 19111 model, WKT and PROJJSON | 🟡 | CRS model, authority factory, CRS identification against `proj.db`, WKT1 and WKT2 import and export, PROJJSON. See [`docs/CRS-API.md`](docs/CRS-API.md) |
 | georust `proj` facade | 🟡 | `Proj`, `ProjBuilder`, `Coord`, `Transform`, `Area`, errors and the `geo-types` feature exist. georust's own tests are not run against it yet |
 | Command-line tools | 🟡 | `cct`, `cs2cs`, `proj`, `projinfo` over the library; 121 of 276 PROJ CLI cases match |
 | SIMD batch path | ✅ | AVX2 on x86-64. Other targets run the scalar loop |
@@ -123,7 +123,7 @@ The same goes for the CLI cases in [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md
 
 | Suite | Ported and passing | Not yet | |
 |---|---:|---:|:-:|
-| PROJ C++ unit tests | 218 | 1,161 | 🟡 |
+| PROJ C++ unit tests | 241 | 1,138 | 🟡 |
 | `cct` CLI cases | 18 | 0 | ✅ |
 | `cs2cs` CLI cases | 86 | 57 | 🟡 |
 | `proj` CLI cases | 2 | 2 | 🟡 |
@@ -139,7 +139,7 @@ The same goes for the CLI cases in [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md
 | PROJ file | Ported and passing | Not yet |
 |---|---:|---:|
 | `test_c_api.cpp` | 33 | 109 |
-| `test_crs.cpp` | 54 | 145 |
+| `test_crs.cpp` | 77 | 122 |
 | `test_factory.cpp` | 43 | 70 |
 | `test_io.cpp` | 35 | 419 |
 | `test_operation.cpp` | 20 | 144 |

@@ -46,7 +46,7 @@ grid download, and the `cct`, `cs2cs`, `proj` and `projinfo` binaries.
 | Order | Topic | Where it stands |
 |---|---|---|
 | 1 | **A fresh checkout that is green** | Tests that need a PROJ-data grid should skip with a message instead of failing, and CI should install PROJ 9.9 and provide the grids. Without grids the `gie` suite is 6,693 / 6,856 |
-| 2 | **ISO 19111 and the PROJ unit tests** | 218 ported, **1,161** named `TEST()`s open. Largest: `test_io` (419), `test_operationfactory` (274), `test_crs` (145), `test_operation` (144), `test_c_api` (109). List: [`docs/UNPORTED-UNIT.md`](docs/UNPORTED-UNIT.md) |
+| 2 | **ISO 19111 and the PROJ unit tests** | 241 ported, **1,138** named `TEST()`s open. Largest: `test_io` (419), `test_operationfactory` (274), `test_operation` (144), `test_crs` (122), `test_c_api` (109). List: [`docs/UNPORTED-UNIT.md`](docs/UNPORTED-UNIT.md) |
 | 3 | **CLI parity** | 155 of 276 PROJ CLI cases do not match yet: `projinfo` 96, `cs2cs` 57, `proj` 2. In `cs2cs` the biggest groups are CRS names that do not resolve and numeric differences; `+proj=sch` is not ported. List: [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md) |
 | 4 | **Portable batch path** | The AVX2 path covers x86-64 on Linux glibc (libmvec) and Windows (CRT). Other targets run the scalar loop |
 | 5 | **georust facade parity** | Run georust's own tests against the facade in CI, add the differential test, then finish the drop-in claim |
