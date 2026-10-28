@@ -3,9 +3,10 @@
 //! Each function is one `TEST()` name. WKT text is the expected string from that test.
 
 use proj_rs::{
-    Axis, CartesianCS, Crs, DatabaseContext, Datum, DatumEnsemble, EllipsoidalCS, Equivalence,
-    GeodeticReferenceFrame, GeographicCRS, OutputAxisRule, UnitOfMeasure, VerticalReferenceFrame,
-    WktConvention, WktFormatter, WktLines, WktStrictness,
+    AuthorityFactory, Axis, CartesianCS, Conversion, CoordinateSystem, Crs, DatabaseContext, Datum,
+    DatumEnsemble, EllipsoidalCS, EllipsoidalHeightPolicy, Equivalence, GeodeticCRS,
+    GeodeticReferenceFrame, GeographicCRS, OpProps, OutputAxisRule, ProjectedCRS, UnitOfMeasure,
+    VerticalReferenceFrame, WktConvention, WktFormatter, WktLines, WktParser, WktStrictness,
 };
 
 fn export(crs: &GeographicCRS, convention: WktConvention) -> String {
@@ -17,6 +18,26 @@ fn export(crs: &GeographicCRS, convention: WktConvention) -> String {
 fn export_db(crs: &Crs, convention: WktConvention, db: DatabaseContext) -> String {
     crs.export_to_wkt(&mut WktFormatter::create(convention).with_database(db))
         .expect("wkt")
+}
+
+#[test]
+fn crs_epsg_4901_as_wkt1_esri_with_primem_unit_name_morphing() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let crs = AuthorityFactory::create(&db, "EPSG")
+        .create_coordinate_reference_system("4901")
+        .expect("EPSG:4901");
+    let wkt = crs
+        .export_to_wkt(
+            &mut WktFormatter::create(WktConvention::Wkt1Esri).with_database(db),
+        )
+        .expect("WKT1 ESRI");
+    assert_eq!(
+        wkt,
+        "GEOGCS[\"GCS_ATF_Paris\",DATUM[\"D_ATF\",\
+SPHEROID[\"Plessis_1817\",6376523.0,308.64]],\
+PRIMEM[\"Paris_RGS\",2.33720833333333],\
+UNIT[\"Grad\",0.0157079632679489]]"
+    );
 }
 
 #[test]
@@ -443,6 +464,447 @@ GEOGCS[\"WGS 84\",
     AXIS[\"Longitude\",EAST],
     AXIS[\"Ellipsoidal height\",UP],
     AUTHORITY[\"EPSG\",\"4979\"]]"
+    );
+}
+
+#[test]
+fn crs_epsg_4979_as_wkt1_gdal_with_ellipsoidal_height_as_vertical_crs() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let mut formatter = WktFormatter::create(WktConvention::Wkt1Gdal).with_database(db);
+    formatter.set_ellipsoidal_height(EllipsoidalHeightPolicy::AllowAsVertical);
+    let wkt = Crs::Geographic(GeographicCRS::epsg_4979())
+        .export_to_wkt(&mut formatter)
+        .expect("wkt");
+    assert_eq!(
+        wkt,
+        "\
+COMPD_CS[\"WGS 84 + Ellipsoid (metre)\",
+    GEOGCS[\"WGS 84\",
+        DATUM[\"WGS_1984\",
+            SPHEROID[\"WGS 84\",6378137,298.257223563,
+                AUTHORITY[\"EPSG\",\"7030\"]],
+            AUTHORITY[\"EPSG\",\"6326\"]],
+        PRIMEM[\"Greenwich\",0,
+            AUTHORITY[\"EPSG\",\"8901\"]],
+        UNIT[\"degree\",0.0174532925199433,
+            AUTHORITY[\"EPSG\",\"9122\"]],
+        AUTHORITY[\"EPSG\",\"4326\"]],
+    VERT_CS[\"Ellipsoid (metre)\",
+        VERT_DATUM[\"Ellipsoid\",2002],
+        UNIT[\"metre\",1,
+            AUTHORITY[\"EPSG\",\"9001\"]],
+        AXIS[\"Ellipsoidal height\",UP]]]"
+    );
+}
+
+#[test]
+fn crs_geographic3d_crs_as_wkt1_esri_database() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let crs = AuthorityFactory::create(&db, "EPSG")
+        .create_coordinate_reference_system("7087")
+        .expect("EPSG:7087");
+    let wkt = crs
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Esri).with_database(db))
+        .expect("wkt");
+    assert_eq!(
+        wkt,
+        "GEOGCS[\"RGTAAF07_(lon-lat)_3D\",\
+DATUM[\"D_Reseau_Geodesique_des_Terres_Australes_et_Antarctiques_Francaises_2007\",\
+SPHEROID[\"GRS_1980\",6378137.0,298.257222101]],\
+PRIMEM[\"Greenwich\",0.0],\
+UNIT[\"Degree\",0.0174532925199433],\
+LINUNIT[\"Meter\",1.0]]"
+    );
+}
+
+#[test]
+fn crs_iau_1000_as_wkt2() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let crs = AuthorityFactory::create(&db, "IAU_2015")
+        .create_coordinate_reference_system("1000")
+        .expect("IAU_2015:1000");
+    let wkt = crs
+        .export_to_wkt(
+            &mut WktFormatter::create(WktConvention::Wkt2_2019).with_database(db.clone()),
+        )
+        .expect("wkt");
+    assert!(
+        wkt.contains("ID[\"IAU\",1000,2015]"),
+        "missing IAU versioned id in {wkt}"
+    );
+    let again = WktParser::new()
+        .create_from_wkt(&wkt)
+        .expect("parse IAU WKT")
+        .crs()
+        .expect("crs")
+        .clone();
+    let wkt2 = again
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2019).with_database(db))
+        .expect("wkt");
+    assert!(
+        wkt2.contains("ID[\"IAU\",1000,2015]"),
+        "missing IAU versioned id after import in {wkt2}"
+    );
+}
+
+fn geocentric_4328() -> GeodeticCRS {
+    GeodeticCRS::create(
+        "WGS 84",
+        Some(GeodeticReferenceFrame::epsg_6326()),
+        None,
+        CoordinateSystem::Cartesian(CartesianCS::create_geocentric(UnitOfMeasure::metre())),
+    )
+    .expect("geocentric")
+    .with_identifier("EPSG", "4328")
+}
+
+#[test]
+fn crs_geodetic_crs_both_datum_datum_ensemble_null() {
+    let error = GeodeticCRS::create(
+        "",
+        None,
+        None,
+        CoordinateSystem::Cartesian(CartesianCS::create_geocentric(UnitOfMeasure::metre())),
+    );
+    assert!(error.is_err());
+}
+
+#[test]
+fn crs_geodetic_crs_both_datum_datum_ensemble_non_null() {
+    let ensemble = DatumEnsemble::create(
+        "",
+        vec![
+            Datum::Geodetic(GeodeticReferenceFrame::epsg_6326()),
+            Datum::Geodetic(GeodeticReferenceFrame::epsg_6326()),
+        ],
+        100.0,
+    )
+    .expect("ensemble");
+    let error = GeodeticCRS::create(
+        "",
+        Some(GeodeticReferenceFrame::epsg_6326()),
+        Some(ensemble),
+        CoordinateSystem::Cartesian(CartesianCS::create_geocentric(UnitOfMeasure::metre())),
+    );
+    assert!(error.is_err());
+}
+
+#[test]
+fn crs_geocentric_crs_as_wkt2() {
+    let crs = geocentric_4328();
+    let expected = "\
+GEODCRS[\"WGS 84\",
+    DATUM[\"World Geodetic System 1984\",
+        ELLIPSOID[\"WGS 84\",6378137,298.257223563,
+            LENGTHUNIT[\"metre\",1]]],
+    PRIMEM[\"Greenwich\",0,
+        ANGLEUNIT[\"degree\",0.0174532925199433]],
+    CS[Cartesian,3],
+        AXIS[\"(X)\",geocentricX,
+            ORDER[1],
+            LENGTHUNIT[\"metre\",1]],
+        AXIS[\"(Y)\",geocentricY,
+            ORDER[2],
+            LENGTHUNIT[\"metre\",1]],
+        AXIS[\"(Z)\",geocentricZ,
+            ORDER[3],
+            LENGTHUNIT[\"metre\",1]],
+    ID[\"EPSG\",4328]]";
+    let wkt2 = Crs::Geodetic(crs.clone())
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2015))
+        .expect("wkt2");
+    assert_eq!(wkt2, expected);
+    let wkt2019 = Crs::Geodetic(crs.clone())
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2019))
+        .expect("wkt2 2019");
+    assert_eq!(wkt2019, expected);
+    assert!(crs.is_equivalent_to(&crs));
+    assert!(crs.clone().is_equivalent_to(&crs));
+    assert!(!Crs::Geodetic(crs).is_equivalent_to(&Crs::Geographic(GeographicCRS::epsg_4326())));
+}
+
+#[test]
+fn crs_geocentric_crs_as_wkt2_simplified() {
+    let wkt = Crs::Geodetic(geocentric_4328())
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2015Simplified))
+        .expect("wkt");
+    assert_eq!(
+        wkt,
+        "\
+GEODCRS[\"WGS 84\",
+    DATUM[\"World Geodetic System 1984\",
+        ELLIPSOID[\"WGS 84\",6378137,298.257223563]],
+    CS[Cartesian,3],
+        AXIS[\"(X)\",geocentricX],
+        AXIS[\"(Y)\",geocentricY],
+        AXIS[\"(Z)\",geocentricZ],
+        UNIT[\"metre\",1],
+    ID[\"EPSG\",4328]]"
+    );
+}
+
+#[test]
+fn crs_geocentric_crs_as_wkt1_gdal() {
+    let wkt = Crs::Geodetic(geocentric_4328())
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Gdal))
+        .expect("wkt");
+    assert_eq!(
+        wkt,
+        "\
+GEOCCS[\"WGS 84\",
+    DATUM[\"WGS_1984\",
+        SPHEROID[\"WGS 84\",6378137,298.257223563,
+            AUTHORITY[\"EPSG\",\"7030\"]],
+        AUTHORITY[\"EPSG\",\"6326\"]],
+    PRIMEM[\"Greenwich\",0,
+        AUTHORITY[\"EPSG\",\"8901\"]],
+    UNIT[\"metre\",1,
+        AUTHORITY[\"EPSG\",\"9001\"]],
+    AXIS[\"Geocentric X\",OTHER],
+    AXIS[\"Geocentric Y\",OTHER],
+    AXIS[\"Geocentric Z\",NORTH],
+    AUTHORITY[\"EPSG\",\"4328\"]]"
+    );
+}
+
+#[test]
+fn crs_epsg_4978_as_wkt1_gdal_with_database() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let wkt = Crs::Geodetic(GeodeticCRS::epsg_4978())
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Gdal).with_database(db))
+        .expect("wkt");
+    assert_eq!(
+        wkt,
+        "\
+GEOCCS[\"WGS 84\",
+    DATUM[\"WGS_1984\",
+        SPHEROID[\"WGS 84\",6378137,298.257223563,
+            AUTHORITY[\"EPSG\",\"7030\"]],
+        AUTHORITY[\"EPSG\",\"6326\"]],
+    PRIMEM[\"Greenwich\",0,
+        AUTHORITY[\"EPSG\",\"8901\"]],
+    UNIT[\"metre\",1,
+        AUTHORITY[\"EPSG\",\"9001\"]],
+    AXIS[\"Geocentric X\",OTHER],
+    AXIS[\"Geocentric Y\",OTHER],
+    AXIS[\"Geocentric Z\",NORTH],
+    AUTHORITY[\"EPSG\",\"4978\"]]"
+    );
+}
+
+#[test]
+fn crs_geocentric_crs_as_proj_string() {
+    assert_eq!(
+        geocentric_4328().export_to_proj_string().expect("proj"),
+        "+proj=geocent +datum=WGS84 +units=m +no_defs +type=crs"
+    );
+}
+
+fn utm_31n() -> ProjectedCRS {
+    let conversion = Conversion::create_utm_north(&OpProps::new(), 31).expect("utm");
+    ProjectedCRS::create(
+        "WGS 84 / UTM zone 31N",
+        GeodeticCRS::Geographic(GeographicCRS::epsg_4326()),
+        conversion,
+        CartesianCS::create_easting_northing(UnitOfMeasure::metre()),
+    )
+    .with_identifier("EPSG", "32631")
+}
+
+fn export_projected(crs: &ProjectedCRS, convention: WktConvention) -> String {
+    Crs::Projected(crs.clone())
+        .export_to_wkt(&mut WktFormatter::create(convention))
+        .expect("wkt")
+}
+
+#[test]
+fn crs_projected_crs_as_wkt2() {
+    assert_eq!(
+        export_projected(&utm_31n(), WktConvention::Wkt2_2015),
+        "\
+PROJCRS[\"WGS 84 / UTM zone 31N\",
+    BASEGEODCRS[\"WGS 84\",
+        DATUM[\"World Geodetic System 1984\",
+            ELLIPSOID[\"WGS 84\",6378137,298.257223563,
+                LENGTHUNIT[\"metre\",1]]],
+        PRIMEM[\"Greenwich\",0,
+            ANGLEUNIT[\"degree\",0.0174532925199433]]],
+    CONVERSION[\"UTM zone 31N\",
+        METHOD[\"Transverse Mercator\",
+            ID[\"EPSG\",9807]],
+        PARAMETER[\"Latitude of natural origin\",0,
+            ANGLEUNIT[\"degree\",0.0174532925199433],
+            ID[\"EPSG\",8801]],
+        PARAMETER[\"Longitude of natural origin\",3,
+            ANGLEUNIT[\"degree\",0.0174532925199433],
+            ID[\"EPSG\",8802]],
+        PARAMETER[\"Scale factor at natural origin\",0.9996,
+            SCALEUNIT[\"unity\",1],
+            ID[\"EPSG\",8805]],
+        PARAMETER[\"False easting\",500000,
+            LENGTHUNIT[\"metre\",1],
+            ID[\"EPSG\",8806]],
+        PARAMETER[\"False northing\",0,
+            LENGTHUNIT[\"metre\",1],
+            ID[\"EPSG\",8807]]],
+    CS[Cartesian,2],
+        AXIS[\"(E)\",east,
+            ORDER[1],
+            LENGTHUNIT[\"metre\",1]],
+        AXIS[\"(N)\",north,
+            ORDER[2],
+            LENGTHUNIT[\"metre\",1]],
+    ID[\"EPSG\",32631]]"
+    );
+}
+
+#[test]
+fn crs_projected_crs_as_wkt2_2019() {
+    assert_eq!(
+        export_projected(&utm_31n(), WktConvention::Wkt2_2019),
+        "\
+PROJCRS[\"WGS 84 / UTM zone 31N\",
+    BASEGEOGCRS[\"WGS 84\",
+        DATUM[\"World Geodetic System 1984\",
+            ELLIPSOID[\"WGS 84\",6378137,298.257223563,
+                LENGTHUNIT[\"metre\",1]]],
+        PRIMEM[\"Greenwich\",0,
+            ANGLEUNIT[\"degree\",0.0174532925199433]],
+        ID[\"EPSG\",4326]],
+    CONVERSION[\"UTM zone 31N\",
+        METHOD[\"Transverse Mercator\",
+            ID[\"EPSG\",9807]],
+        PARAMETER[\"Latitude of natural origin\",0,
+            ANGLEUNIT[\"degree\",0.0174532925199433],
+            ID[\"EPSG\",8801]],
+        PARAMETER[\"Longitude of natural origin\",3,
+            ANGLEUNIT[\"degree\",0.0174532925199433],
+            ID[\"EPSG\",8802]],
+        PARAMETER[\"Scale factor at natural origin\",0.9996,
+            SCALEUNIT[\"unity\",1],
+            ID[\"EPSG\",8805]],
+        PARAMETER[\"False easting\",500000,
+            LENGTHUNIT[\"metre\",1],
+            ID[\"EPSG\",8806]],
+        PARAMETER[\"False northing\",0,
+            LENGTHUNIT[\"metre\",1],
+            ID[\"EPSG\",8807]]],
+    CS[Cartesian,2],
+        AXIS[\"(E)\",east,
+            ORDER[1],
+            LENGTHUNIT[\"metre\",1]],
+        AXIS[\"(N)\",north,
+            ORDER[2],
+            LENGTHUNIT[\"metre\",1]],
+    ID[\"EPSG\",32631]]"
+    );
+}
+
+#[test]
+fn crs_projected_crs_as_wkt2_simplified() {
+    assert_eq!(
+        export_projected(&utm_31n(), WktConvention::Wkt2_2015Simplified),
+        "\
+PROJCRS[\"WGS 84 / UTM zone 31N\",
+    BASEGEODCRS[\"WGS 84\",
+        DATUM[\"World Geodetic System 1984\",
+            ELLIPSOID[\"WGS 84\",6378137,298.257223563]],
+        UNIT[\"degree\",0.0174532925199433]],
+    CONVERSION[\"UTM zone 31N\",
+        METHOD[\"Transverse Mercator\"],
+        PARAMETER[\"Latitude of natural origin\",0],
+        PARAMETER[\"Longitude of natural origin\",3],
+        PARAMETER[\"Scale factor at natural origin\",0.9996],
+        PARAMETER[\"False easting\",500000],
+        PARAMETER[\"False northing\",0]],
+    CS[Cartesian,2],
+        AXIS[\"(E)\",east],
+        AXIS[\"(N)\",north],
+        UNIT[\"metre\",1],
+    ID[\"EPSG\",32631]]"
+    );
+}
+
+#[test]
+fn crs_projected_crs_as_wkt2_2019_simplified() {
+    assert_eq!(
+        export_projected(&utm_31n(), WktConvention::Wkt2_2019Simplified),
+        "\
+PROJCRS[\"WGS 84 / UTM zone 31N\",
+    BASEGEOGCRS[\"WGS 84\",
+        DATUM[\"World Geodetic System 1984\",
+            ELLIPSOID[\"WGS 84\",6378137,298.257223563]],
+        UNIT[\"degree\",0.0174532925199433]],
+    CONVERSION[\"UTM zone 31N\",
+        METHOD[\"Transverse Mercator\"],
+        PARAMETER[\"Latitude of natural origin\",0],
+        PARAMETER[\"Longitude of natural origin\",3],
+        PARAMETER[\"Scale factor at natural origin\",0.9996],
+        PARAMETER[\"False easting\",500000],
+        PARAMETER[\"False northing\",0]],
+    CS[Cartesian,2],
+        AXIS[\"(E)\",east],
+        AXIS[\"(N)\",north],
+        UNIT[\"metre\",1],
+    ID[\"EPSG\",32631]]"
+    );
+}
+
+#[test]
+fn crs_projected_crs_as_wkt1_gdal() {
+    let expected = "\
+PROJCS[\"WGS 84 / UTM zone 31N\",
+    GEOGCS[\"WGS 84\",
+        DATUM[\"WGS_1984\",
+            SPHEROID[\"WGS 84\",6378137,298.257223563,
+                AUTHORITY[\"EPSG\",\"7030\"]],
+            AUTHORITY[\"EPSG\",\"6326\"]],
+        PRIMEM[\"Greenwich\",0,
+            AUTHORITY[\"EPSG\",\"8901\"]],
+        UNIT[\"degree\",0.0174532925199433,
+            AUTHORITY[\"EPSG\",\"9122\"]],
+        AUTHORITY[\"EPSG\",\"4326\"]],
+    PROJECTION[\"Transverse_Mercator\"],
+    PARAMETER[\"latitude_of_origin\",0],
+    PARAMETER[\"central_meridian\",3],
+    PARAMETER[\"scale_factor\",0.9996],
+    PARAMETER[\"false_easting\",500000],
+    PARAMETER[\"false_northing\",0],
+    UNIT[\"metre\",1,
+        AUTHORITY[\"EPSG\",\"9001\"]],
+    AXIS[\"Easting\",EAST],
+    AXIS[\"Northing\",NORTH],
+    AUTHORITY[\"EPSG\",\"32631\"]]";
+    assert_eq!(
+        export_projected(&utm_31n(), WktConvention::Wkt1Gdal),
+        expected
+    );
+    let mut formatter = WktFormatter::create(WktConvention::Wkt1Gdal);
+    formatter.set_output_axis(OutputAxisRule::Yes);
+    let forced = Crs::Projected(utm_31n())
+        .export_to_wkt(&mut formatter)
+        .expect("wkt");
+    assert_eq!(forced, expected);
+}
+
+#[test]
+fn crs_projected_crs_as_wkt1_esri() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let wkt = Crs::Projected(utm_31n())
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Esri).with_database(db))
+        .expect("wkt");
+    assert_eq!(
+        wkt,
+        "PROJCS[\"WGS_1984_UTM_Zone_31N\",GEOGCS[\"GCS_WGS_1984\",\
+DATUM[\"D_WGS_1984\",SPHEROID[\"WGS_1984\",6378137.0,298.257223563]],\
+PRIMEM[\"Greenwich\",0.0],UNIT[\"Degree\",0.0174532925199433]],\
+PROJECTION[\"Transverse_Mercator\"],\
+PARAMETER[\"False_Easting\",500000.0],\
+PARAMETER[\"False_Northing\",0.0],\
+PARAMETER[\"Central_Meridian\",3.0],\
+PARAMETER[\"Scale_Factor\",0.9996],\
+PARAMETER[\"Latitude_Of_Origin\",0.0],\
+UNIT[\"Meter\",1.0]]"
     );
 }
 

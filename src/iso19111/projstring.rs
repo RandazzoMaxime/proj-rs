@@ -4,8 +4,8 @@
 //! `+ellps` plus `+pm` when the prime meridian is not Greenwich.
 
 use super::model::{
-    Datum, DatumEnsemble, Ellipsoid, FactoryError, GeodeticCRS, GeographicCRS, Identifier,
-    PrimeMeridian, UnitOfMeasure,
+    Axis, Datum, DatumEnsemble, Ellipsoid, FactoryError, GeocentricCRS, GeodeticCRS,
+    GeodeticReferenceFrame, GeographicCRS, Identifier, PrimeMeridian, UnitOfMeasure,
 };
 
 impl GeographicCRS {
@@ -17,18 +17,50 @@ impl GeographicCRS {
 }
 
 impl GeodeticCRS {
-    /// `exportToPROJString` for a geographic CRS.
+    /// `exportToPROJString` for a geographic or metre geocentric CRS.
     ///
     /// # Errors
     ///
-    /// The CRS is geocentric or spherical. Those strings are not built here.
+    /// The CRS is spherical, or geocentric in a unit other than the metre.
     pub fn export_to_proj_string(&self) -> Result<String, FactoryError> {
         match self {
             Self::Geographic(crs) => Ok(crs.export_to_proj_string()),
-            _ => Err(FactoryError::Format(
-                "this geodetic CRS has no PROJ string in this build".to_owned(),
+            Self::Geocentric(crs) => crs.export_to_proj_string(),
+            Self::Spherical(_) => Err(FactoryError::Format(
+                "a spherical CRS has no PROJ string in this build".to_owned(),
             )),
         }
+    }
+}
+
+impl GeocentricCRS {
+    /// `+proj=geocent` when the cartesian unit is the metre.
+    ///
+    /// # Errors
+    ///
+    /// The unit is not the metre. PROJ builds that case only as a pipeline step.
+    pub fn export_to_proj_string(&self) -> Result<String, FactoryError> {
+        let unit = self
+            .coordinate_system
+            .axes()
+            .first()
+            .map(Axis::unit)
+            .ok_or_else(|| FactoryError::Format("a geocentric CRS has no axis".to_owned()))?;
+        if unit.name() != "metre" {
+            return Err(FactoryError::Format(
+                "geocentric CRS PROJ export requires a metre unit".to_owned(),
+            ));
+        }
+        let mut parts = vec!["+proj=geocent".to_owned()];
+        if let Some(token) = self.datum().and_then(datum_code_token) {
+            parts.push(format!("+datum={token}"));
+        } else if let Some(datum) = self.datum() {
+            parts.push(ellipsoid_proj(datum.ellipsoid()));
+        }
+        parts.push("+units=m".to_owned());
+        parts.push("+no_defs".to_owned());
+        parts.push("+type=crs".to_owned());
+        Ok(parts.join(" "))
     }
 }
 
@@ -53,13 +85,20 @@ fn geographic_proj(crs: &GeographicCRS) -> String {
 }
 
 fn datum_token(crs: &GeographicCRS) -> Option<&'static str> {
-    let code = crs
-        .datum()
-        .and_then(|datum| epsg_code(datum.identifiers()))
-        .or_else(|| {
-            crs.datum_ensemble()
-                .and_then(|ensemble| epsg_code(ensemble.identifiers()))
-        })?;
+    crs.datum()
+        .and_then(datum_code_token)
+        .or_else(|| crs.datum_ensemble().and_then(ensemble_code_token))
+}
+
+fn datum_code_token(datum: &GeodeticReferenceFrame) -> Option<&'static str> {
+    epsg_code(datum.identifiers()).and_then(proj_datum_name)
+}
+
+fn ensemble_code_token(ensemble: &DatumEnsemble) -> Option<&'static str> {
+    epsg_code(ensemble.identifiers()).and_then(proj_datum_name)
+}
+
+fn proj_datum_name(code: &str) -> Option<&'static str> {
     match code {
         "6326" => Some("WGS84"),
         "6267" => Some("NAD27"),

@@ -5,9 +5,10 @@
 //! geographic latitude/longitude swap.
 
 use super::model::{
-    Axis, CompoundCRS, Conversion, CoordinateSystem, Crs, Datum, DatumEnsemble, Ellipsoid,
-    EngineeringCRS, EngineeringDatum, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS,
-    Parameter, ParameterValue, PrimeMeridian, ProjectedCRS, VerticalCRS, VerticalReferenceFrame,
+    ensemble_name_as_datum, Axis, CompoundCRS, Conversion, CoordinateSystem, Crs, Datum,
+    DatumEnsemble, Ellipsoid, EngineeringCRS, EngineeringDatum, GeodeticCRS,
+    GeodeticReferenceFrame, GeographicCRS, Identified, Parameter, ParameterValue, PrimeMeridian,
+    ProjectedCRS, VerticalCRS, VerticalReferenceFrame,
 };
 
 /// How much two ISO 19111 objects may differ and still compare equal.
@@ -45,6 +46,9 @@ impl GeographicCRS {
     }
 
     /// True when this 2D CRS is the horizontal part of `other`.
+    ///
+    /// Axes match on direction and unit, which is PROJ's `EQUIVALENT` criterion.
+    /// An ensemble is compared as the datum `asDatum` would build.
     #[must_use]
     pub fn is_2d_part_of_3d(&self, other: &Self) -> bool {
         let left = self.coordinate_system().axes();
@@ -52,13 +56,40 @@ impl GeographicCRS {
         if left.len() != 2 || right.len() != 3 {
             return false;
         }
-        axis_equivalent(&left[0], &right[0])
-            && axis_equivalent(&left[1], &right[1])
-            && match (self.datum(), other.datum()) {
-                (Some(left), Some(right)) => frame_equivalent(left, right),
+        axis_direction_unit(&left[0], &right[0])
+            && axis_direction_unit(&left[1], &right[1])
+            && match (datum_frame(self), datum_frame(other)) {
+                (Some(left), Some(right)) => frame_equivalent(&left, &right),
                 _ => false,
             }
     }
+}
+
+fn axis_direction_unit(left: &Axis, right: &Axis) -> bool {
+    left.direction() == right.direction()
+        && left.unit().name() == right.unit().name()
+        && left.unit().factor == right.unit().factor
+        && left.unit().kind() == right.unit().kind()
+        && meridian_value(left) == meridian_value(right)
+}
+
+fn datum_frame(crs: &GeographicCRS) -> Option<GeodeticReferenceFrame> {
+    if let Some(datum) = crs.datum() {
+        return Some(datum.clone());
+    }
+    let ensemble = crs.datum_ensemble()?;
+    let member = ensemble.members().iter().find_map(|member| match member {
+        Datum::Geodetic(frame) => Some(frame),
+        _ => None,
+    })?;
+    let name = ensemble_name_as_datum(ensemble.name()).unwrap_or(ensemble.name());
+    Some(GeodeticReferenceFrame {
+        identified: Identified::named(name),
+        ellipsoid: member.ellipsoid().clone(),
+        prime_meridian: member.prime_meridian().clone(),
+        frame_epoch: None,
+        deformation_model: None,
+    })
 }
 
 impl GeodeticReferenceFrame {

@@ -1161,6 +1161,31 @@ impl CartesianCS {
         Self::create_allowing_mixed_units(axes)
     }
 
+    /// Geocentric X, Y, Z in `unit`.
+    #[must_use]
+    pub fn create_geocentric(unit: UnitOfMeasure) -> Self {
+        Self {
+            identified: Identified::default(),
+            axes: vec![
+                Axis::new("Geocentric X", "X", "geocentricX", unit.clone()),
+                Axis::new("Geocentric Y", "Y", "geocentricY", unit.clone()),
+                Axis::new("Geocentric Z", "Z", "geocentricZ", unit),
+            ],
+        }
+    }
+
+    /// Easting then northing, in `unit`.
+    #[must_use]
+    pub fn create_easting_northing(unit: UnitOfMeasure) -> Self {
+        Self {
+            identified: Identified::default(),
+            axes: vec![
+                Axis::new("Easting", "E", "east", unit.clone()),
+                Axis::new("Northing", "N", "north", unit),
+            ],
+        }
+    }
+
     /// Cartesian system whose axes may use different units.
     ///
     /// # Errors
@@ -1727,6 +1752,26 @@ impl CoordinateOperation {
             Self::Concatenated(operation) => &operation.identified.identifiers,
         }
     }
+
+    /// Stated accuracy in metres, when the database has one.
+    #[must_use]
+    pub fn accuracy(&self) -> Option<f64> {
+        match self {
+            Self::Conversion(_) => None,
+            Self::Transformation(operation) => operation.accuracy(),
+            Self::Concatenated(operation) => operation.accuracy(),
+        }
+    }
+
+    /// Scope and area of use.
+    #[must_use]
+    pub fn domains(&self) -> &[ObjectDomain] {
+        match self {
+            Self::Conversion(operation) => &operation.identified.domains,
+            Self::Transformation(operation) => &operation.identified.domains,
+            Self::Concatenated(operation) => &operation.identified.domains,
+        }
+    }
 }
 
 /// Geographic CRS: ellipsoidal CS plus a geodetic datum or ensemble.
@@ -2054,6 +2099,98 @@ impl GeodeticCRS {
         }
     }
 
+    /// Geographic, geocentric, or spherical CRS.
+    ///
+    /// Exactly one of `datum` and `ensemble` is set. A cartesian system is
+    /// geocentric. An ellipsoidal system is geographic.
+    ///
+    /// # Errors
+    ///
+    /// Both anchors are missing, both are set, the ensemble is not geodetic,
+    /// or the coordinate system is not geographic, geocentric, or spherical.
+    pub fn create(
+        name: impl Into<String>,
+        datum: Option<GeodeticReferenceFrame>,
+        ensemble: Option<DatumEnsemble>,
+        cs: CoordinateSystem,
+    ) -> Result<Self, FactoryError> {
+        match (&datum, &ensemble) {
+            (None, None) => {
+                return Err(FactoryError::Invalid(
+                    "One of Datum or DatumEnsemble should be defined".to_owned(),
+                ));
+            }
+            (Some(_), Some(_)) => {
+                return Err(FactoryError::Invalid(
+                    "Datum and DatumEnsemble should not be defined".to_owned(),
+                ));
+            }
+            _ => {}
+        }
+        if let Some(ensemble) = &ensemble {
+            if !matches!(ensemble.members().first(), Some(Datum::Geodetic(_))) {
+                return Err(FactoryError::Invalid(
+                    "Ensemble should contain GeodeticReferenceFrame".to_owned(),
+                ));
+            }
+        }
+        let identified = Identified::named(name);
+        let crs = match cs {
+            CoordinateSystem::Ellipsoidal(coordinate_system) => {
+                Self::Geographic(GeographicCRS {
+                    identified,
+                    datum,
+                    ensemble,
+                    coordinate_system,
+                })
+            }
+            CoordinateSystem::Cartesian(coordinate_system) => Self::Geocentric(GeocentricCRS {
+                identified,
+                datum,
+                ensemble,
+                coordinate_system,
+            }),
+            CoordinateSystem::Spherical(coordinate_system) => Self::Spherical(SphericalGeodeticCRS {
+                identified,
+                datum,
+                ensemble,
+                coordinate_system,
+            }),
+            _ => {
+                return Err(FactoryError::Invalid(
+                    "a geodetic CRS uses an ellipsoidal, cartesian, or spherical coordinate system"
+                        .to_owned(),
+                ));
+            }
+        };
+        Ok(crs)
+    }
+
+    /// Attach one authority identifier.
+    #[must_use]
+    pub fn with_identifier(mut self, code_space: &str, code: &str) -> Self {
+        let identified = match &mut self {
+            Self::Geographic(crs) => &mut crs.identified,
+            Self::Geocentric(crs) => &mut crs.identified,
+            Self::Spherical(crs) => &mut crs.identified,
+        };
+        identified
+            .identifiers
+            .push(Identifier::new(code_space, code));
+        self
+    }
+
+    /// WGS 84 geocentric, EPSG:4978.
+    #[must_use]
+    pub fn epsg_4978() -> Self {
+        Self::Geocentric(GeocentricCRS {
+            identified: Identified::named("WGS 84").with_id("EPSG", "4978"),
+            datum: Some(GeodeticReferenceFrame::epsg_6326()),
+            ensemble: None,
+            coordinate_system: CartesianCS::create_geocentric(UnitOfMeasure::metre()),
+        })
+    }
+
     /// Coordinate system of this geodetic CRS.
     #[must_use]
     pub fn coordinate_system(&self) -> CoordinateSystem {
@@ -2136,6 +2273,15 @@ impl ProjectedCRS {
     #[must_use]
     pub fn deriving_conversion(&self) -> &Conversion {
         &self.conversion
+    }
+
+    /// Attach one authority identifier.
+    #[must_use]
+    pub fn with_identifier(mut self, code_space: &str, code: &str) -> Self {
+        self.identified
+            .identifiers
+            .push(Identifier::new(code_space, code));
+        self
     }
 
     /// Projected coordinate system.

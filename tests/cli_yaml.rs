@@ -388,8 +388,9 @@ fn run_in(case: &Case, bin: &str, scratch: &Path) -> Result<(), String> {
     let tmp = scratch.join("tmp");
     fs::create_dir_all(&tmp).map_err(|error| error.to_string())?;
     let tmp_text = tmp.to_string_lossy().replace('\\', "/");
+    let pwd = scratch.to_string_lossy().replace('\\', "/");
     for source in &case.tmp_copies {
-        let source = subst(source, &tmp_text);
+        let source = subst(source, &tmp_text, &pwd);
         let from = PathBuf::from(&source);
         let name = from
             .file_name()
@@ -397,7 +398,7 @@ fn run_in(case: &Case, bin: &str, scratch: &Path) -> Result<(), String> {
         fs::copy(&from, tmp.join(name)).map_err(|error| format!("copy {source}: {error}"))?;
     }
     for (name, content) in &case.files {
-        let name = subst(name, &tmp_text);
+        let name = subst(name, &tmp_text, &pwd);
         let path = scratch.join(&name);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|error| error.to_string())?;
@@ -411,7 +412,7 @@ fn run_in(case: &Case, bin: &str, scratch: &Path) -> Result<(), String> {
     let args: Vec<String> = case
         .args
         .iter()
-        .map(|arg| subst(arg, &tmp_text))
+        .map(|arg| subst(arg, &tmp_text, &pwd))
         .collect();
     let mut command = Command::new(bin);
     command
@@ -422,7 +423,7 @@ fn run_in(case: &Case, bin: &str, scratch: &Path) -> Result<(), String> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     for (key, value) in case.global_env.iter().chain(case.env.iter()) {
-        command.env(key, subst_env(value, &tmp_text));
+        command.env(key, subst_env(value, &tmp_text, &pwd));
     }
     let mut child = command.spawn().map_err(|error| error.to_string())?;
     if let Some(stdin) = child.stdin.as_mut() {
@@ -459,11 +460,24 @@ fn run_in(case: &Case, bin: &str, scratch: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn subst(text: &str, tmp: &str) -> String {
-    text.replace("$tmpdir", tmp).replace("${tmpdir}", tmp)
+fn proj_data_dir() -> String {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("data")
+        .to_string_lossy()
+        .replace('\\', "/")
 }
 
-fn subst_env(value: &str, tmp: &str) -> String {
+fn subst(text: &str, tmp: &str, pwd: &str) -> String {
+    let data = proj_data_dir();
+    text.replace("${PROJ_DATA}", &data)
+        .replace("$PROJ_DATA", &data)
+        .replace("${PWD}", pwd)
+        .replace("$PWD", pwd)
+        .replace("${tmpdir}", tmp)
+        .replace("$tmpdir", tmp)
+}
+
+fn subst_env(value: &str, tmp: &str, pwd: &str) -> String {
     // PROJ joins search paths with `:`. Windows needs `;` before `$tmpdir` expands
     // to a drive letter, or that colon would be rewritten too.
     let value = if std::path::MAIN_SEPARATOR == '\\' {
@@ -471,7 +485,7 @@ fn subst_env(value: &str, tmp: &str) -> String {
     } else {
         value.to_owned()
     };
-    subst(&value, tmp)
+    subst(&value, tmp, pwd)
 }
 
 fn apply_step(step: &Step, text: &mut String) {

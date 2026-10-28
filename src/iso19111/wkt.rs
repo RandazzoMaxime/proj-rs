@@ -3,7 +3,7 @@
 //! Node order, identifier suppression, and the simplified omissions follow
 //! `WKTFormatter` in PROJ `src/iso19111/io.cpp`.
 
-use super::factory::DatabaseContext;
+use super::factory::{AuthorityFactory, DatabaseContext};
 /// Whether the node being opened carries an authority identifier.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NodeId {
@@ -85,7 +85,7 @@ pub enum WktStrictness {
 pub enum EllipsoidalHeightPolicy {
     /// Do not build a compound CRS from ellipsoidal height.
     Reject,
-    /// Permit the compound-CRS attempt. This build still reports that it is not emitted.
+    /// Write a WKT1 `COMPD_CS` whose vertical CRS is the ellipsoidal height.
     AllowAsVertical,
 }
 
@@ -384,18 +384,36 @@ impl WktFormatter {
             return;
         }
         for identifier in identifiers {
+            let (code_space, version) = self.split_authority(&identifier.code_space);
             self.start_node(if self.wkt2 { "ID" } else { "AUTHORITY" }, NodeId::Absent);
-            self.add_quoted(&identifier.code_space);
+            self.add_quoted(&code_space);
             if self.wkt2 && is_integer_code(&identifier.code) {
                 self.add_raw(&identifier.code);
             } else {
                 self.add_quoted(&identifier.code);
+            }
+            if let Some(version) = version.filter(|_| self.wkt2) {
+                if is_number_token(&version) {
+                    self.add_raw(&version);
+                } else {
+                    self.add_quoted(&version);
+                }
             }
             self.end_node();
             if !self.wkt2 {
                 break;
             }
         }
+    }
+
+    /// `IAU_2015` becomes authority `IAU` and version `2015` when `proj.db` says so.
+    fn split_authority(&self, code_space: &str) -> (String, Option<String>) {
+        if let Some(db) = &self.db {
+            if let Some((authority, version)) = db.authority_and_version(code_space) {
+                return (authority, Some(version));
+            }
+        }
+        (code_space.to_owned(), None)
     }
 
     fn export_unit(&mut self, unit: &UnitOfMeasure, keyword: Option<&str>) {
@@ -529,8 +547,7 @@ fn export_ellipsoidal_height_compound(
     crs: &GeographicCRS,
     formatter: &mut WktFormatter,
 ) -> Result<(), FactoryError> {
-    let mut flat = crs.clone();
-    flat.coordinate_system.axes.truncate(2);
+    let flat = horizontal_for_compound(crs, formatter);
     let Some(height) = crs.coordinate_system.axes.get(2) else {
         return Err(FactoryError::Format(
             "a geographic 3D CRS has no ellipsoidal height axis".to_owned(),
@@ -559,6 +576,24 @@ fn export_ellipsoidal_height_compound(
     export_vertical(&vertical, formatter)?;
     formatter.end_node();
     Ok(())
+}
+
+/// PROJ demotes a geographic 3D CRS to the database 2D CRS of the same name
+/// when that 2D CRS is the horizontal part. Otherwise the copy has no authority.
+fn horizontal_for_compound(crs: &GeographicCRS, formatter: &WktFormatter) -> GeographicCRS {
+    if let (Some(db), Some(identifier)) = (&formatter.db, crs.identifiers().first()) {
+        if let Ok(Some(found)) = AuthorityFactory::create(db, identifier.code_space())
+            .create_geographic_2d_crs_from_name(crs.name())
+        {
+            if found.is_2d_part_of_3d(crs) {
+                return found;
+            }
+        }
+    }
+    let mut flat = crs.clone();
+    flat.coordinate_system.axes.truncate(2);
+    flat.identified.identifiers.clear();
+    flat
 }
 
 fn export_geographic(
@@ -737,7 +772,9 @@ fn export_projected(crs: &ProjectedCRS, formatter: &mut WktFormatter) -> Result<
             formatter.axis_angular.pop();
         }
         if formatter.keywords_2019 && !(formatter.id_on_top_only && top_has_id(formatter)) {
+            formatter.output_id.push(true);
             formatter.format_ids(crs.base.identifiers());
+            formatter.output_id.pop();
         }
         formatter.end_node();
     } else {
@@ -1396,6 +1433,23 @@ fn export_conversion_wkt1(
             parameter_number(conversion, "8807")?,
         )?;
     } else {
+        if formatter.esri && conversion.method.code == "9807" {
+            formatter.start_node("PROJECTION", NodeId::Absent);
+            formatter.add_quoted("Transverse_Mercator");
+            formatter.end_node();
+            for (name, code) in [
+                ("False_Easting", "8806"),
+                ("False_Northing", "8807"),
+                ("Central_Meridian", "8802"),
+                ("Scale_Factor", "8805"),
+                ("Latitude_Of_Origin", "8801"),
+            ] {
+                write_wkt1_parameter(formatter, name, parameter_number(conversion, code)?)?;
+            }
+            formatter.output_id.pop();
+            formatter.output_unit.pop();
+            return Ok(());
+        }
         if conversion.method.code == "9804" {
             let latitude = parameter_number(conversion, "8801").unwrap_or(0.0);
             if latitude != 0.0 {
@@ -1535,8 +1589,9 @@ fn add_measure(measure: &Measure, formatter: &mut WktFormatter) -> Result<(), Fa
                 .cloned()
                 .unwrap_or_else(UnitOfMeasure::degree);
             let omit = formatter.omit_parameter_unit_if_axis
-                && measure.unit.name() != "unity"
-                && (measure.unit.same_name(&linear) || measure.unit.same_name(&angular));
+                && (measure.unit.name() == "unity"
+                    || measure.unit.same_name(&linear)
+                    || measure.unit.same_name(&angular));
             if !omit {
                 formatter.export_unit(&measure.unit, None);
             }
@@ -1922,6 +1977,13 @@ fn morph_name_to_esri(name: &str) -> String {
 
 fn is_integer_code(code: &str) -> bool {
     !code.is_empty() && code.chars().all(|ch| ch.is_ascii_digit())
+}
+
+fn is_number_token(text: &str) -> bool {
+    !text.is_empty()
+        && text
+            .chars()
+            .all(|ch| ch.is_ascii_digit() || ch == '.' || ch == '-' || ch == '+')
 }
 
 fn format_number(value: f64, formatter: &WktFormatter) -> String {

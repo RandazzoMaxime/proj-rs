@@ -163,6 +163,19 @@ impl DatabaseContext {
         Ok(out)
     }
 
+    /// `(auth_name, version)` for a code space such as `IAU_2015`.
+    pub(crate) fn authority_and_version(&self, versioned: &str) -> Option<(String, String)> {
+        let rows = self
+            .query(
+                "SELECT auth_name, version FROM versioned_auth_name_mapping \
+                 WHERE versioned_auth_name = ?",
+                &[versioned.to_owned()],
+            )
+            .ok()?;
+        let row = rows.first()?;
+        Some((row[0].text(), row[1].text()))
+    }
+
     pub(crate) fn aliases(
         &self,
         authority: &str,
@@ -1072,6 +1085,45 @@ impl AuthorityFactory {
                 code,
             )),
         }
+    }
+
+    /// First geographic 2D CRS whose official name or alias is `name`.
+    ///
+    /// The order is `createObjectsFromName`: non-deprecated official names,
+    /// then aliases. A CRS this factory cannot build is skipped.
+    ///
+    /// # Errors
+    ///
+    /// The database rejects the statement.
+    pub fn create_geographic_2d_crs_from_name(
+        &self,
+        name: &str,
+    ) -> Result<Option<GeographicCRS>, FactoryError> {
+        let rows = self.db.query(
+            "SELECT code FROM (\
+                SELECT code, name, deprecated, 0 AS is_alias FROM geodetic_crs \
+                WHERE type = 'geographic 2D' AND name = ? COLLATE NOCASE AND auth_name = ? \
+                UNION \
+                SELECT ov.code, a.alt_name AS name, ov.deprecated, 1 AS is_alias \
+                FROM geodetic_crs ov \
+                JOIN alias_name a ON ov.auth_name = a.auth_name AND ov.code = a.code \
+                WHERE a.source != 'EPSG_OLD' AND a.table_name = 'geodetic_crs' \
+                AND ov.type = 'geographic 2D' AND a.alt_name = ? COLLATE NOCASE \
+                AND ov.auth_name = ?\
+             ) ORDER BY deprecated, is_alias, length(name), name, code",
+            &[
+                name.to_owned(),
+                self.authority.clone(),
+                name.to_owned(),
+                self.authority.clone(),
+            ],
+        )?;
+        for row in rows {
+            if let Ok(crs) = self.create_geographic_crs(&row[0].text()) {
+                return Ok(Some(crs));
+            }
+        }
+        Ok(None)
     }
 
     /// Vertical CRS.

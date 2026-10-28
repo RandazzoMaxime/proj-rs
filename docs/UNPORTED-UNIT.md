@@ -7,13 +7,9 @@ and `PORT-NOTES-tests.md`.
 
 ## test_crs.cpp
 
-- `crs.EPSG_4901_as_WKT1_ESRI_with_PRIMEM_unit_name_morphing`
-- `crs.EPSG_4979_as_WKT1_GDAL_with_ellipsoidal_height_as_vertical_crs`
-- `crs.geographic3D_crs_as_WKT1_ESRI_database`
 - `crs.geographic3D_NAD83_as_WKT1_ESRI_database`
 - `crs.implicit_compound_ESRI_104024_plus_115844_as_WKT1_ESRI_with_database`
 - `crs.implicit_compound_ESRI_104971_to_3D_as_WKT1_ESRI_with_database`
-- `crs.IAU_1000_as_WKT2`
 - `crs.IAU_1000_as_PROJJSON`
 - `crs.EPSG_27561_projected_with_geodetic_in_grad_as_PROJ_string_and_WKT1`
 - `crs.EPSG_3040_projected_northing_easting_as_PROJ_string`
@@ -26,25 +22,14 @@ and `PORT-NOTES-tests.md`.
 - `crs.EPSG_5482_projected_south_pole_south_west`
 - `crs.spherical_mercator_on_sphere_to_WKT1`
 - `crs.mercator_variant_A_lat0_non_zero_to_WKT1`
-- `crs.geodetic_crs_both_datum_datum_ensemble_null`
-- `crs.geodetic_crs_both_datum_datum_ensemble_non_null`
-- `crs.geocentricCRS_as_WKT2`
-- `crs.geocentricCRS_as_WKT2_simplified`
-- `crs.geocentricCRS_as_WKT1_GDAL`
-- `crs.EPSG_4978_as_WKT1_GDAL_with_database`
-- `crs.geocentricCRS_as_PROJ_string`
+
 - `crs.geocentricCRS_non_meter_unit_as_PROJ_string`
 - `crs.geocentricCRS_unsupported_unit_as_PROJ_string`
 - `crs.geodeticcrs_identify_no_db`
 - `crs.geodeticcrs_identify_db`
 - `crs.projectedCRS_derivingConversion`
 - `crs.projectedCRS_shallowClone`
-- `crs.projectedCRS_as_WKT2`
-- `crs.projectedCRS_as_WKT2_2019`
-- `crs.projectedCRS_as_WKT2_simplified`
-- `crs.projectedCRS_as_WKT2_2019_simplified`
-- `crs.projectedCRS_as_WKT1_GDAL`
-- `crs.projectedCRS_as_WKT1_ESRI`
+
 - `crs.projectedCRS_3D_as_WKT1_GDAL_with_ellipsoidal_height_as_vertical_crs`
 - `crs.projectedCRS_with_other_deprecated_crs_of_same_name_as_WKT1_ESRI`
 - `crs.projectedCRS_with_ESRI_code_as_WKT1_ESRI`
