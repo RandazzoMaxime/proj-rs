@@ -7,7 +7,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_crs.cpp
 
-- `crs.compoundCRS_as_WKT1_GDAL`
 - `crs.compoundCRS_as_PROJ_string`
 - `crs.compoundCRS_no_name_provided`
 - `crs.compoundCRS_identify_db`

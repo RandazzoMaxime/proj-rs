@@ -4219,3 +4219,51 @@ fn crs_compound_crs_is_equivalent_to() {
     .expect("other");
     assert!(!crs.is_equivalent_to(&other));
 }
+
+#[test]
+fn crs_compound_crs_as_wkt1_gdal() {
+    let crs = CompoundCRS::create(
+        "horizontal + vertical",
+        vec![Crs::Projected(utm_31n()), Crs::Vertical(odn_height())],
+    )
+    .expect("compound")
+    .with_identifier("codespace", "code");
+    let wkt = Crs::Compound(crs)
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Gdal))
+        .expect("wkt");
+    assert_eq!(
+        wkt,
+        "\
+COMPD_CS[\"horizontal + vertical\",
+    PROJCS[\"WGS 84 / UTM zone 31N\",
+        GEOGCS[\"WGS 84\",
+            DATUM[\"WGS_1984\",
+                SPHEROID[\"WGS 84\",6378137,298.257223563,
+                    AUTHORITY[\"EPSG\",\"7030\"]],
+                AUTHORITY[\"EPSG\",\"6326\"]],
+            PRIMEM[\"Greenwich\",0,
+                AUTHORITY[\"EPSG\",\"8901\"]],
+            UNIT[\"degree\",0.0174532925199433,
+                AUTHORITY[\"EPSG\",\"9122\"]],
+            AUTHORITY[\"EPSG\",\"4326\"]],
+        PROJECTION[\"Transverse_Mercator\"],
+        PARAMETER[\"latitude_of_origin\",0],
+        PARAMETER[\"central_meridian\",3],
+        PARAMETER[\"scale_factor\",0.9996],
+        PARAMETER[\"false_easting\",500000],
+        PARAMETER[\"false_northing\",0],
+        UNIT[\"metre\",1,
+            AUTHORITY[\"EPSG\",\"9001\"]],
+        AXIS[\"Easting\",EAST],
+        AXIS[\"Northing\",NORTH],
+        AUTHORITY[\"EPSG\",\"32631\"]],
+    VERT_CS[\"ODN height\",
+        VERT_DATUM[\"Ordnance Datum Newlyn\",2005,
+            AUTHORITY[\"EPSG\",\"5101\"]],
+        UNIT[\"metre\",1,
+            AUTHORITY[\"EPSG\",\"9001\"]],
+        AXIS[\"Gravity-related height\",UP],
+        AUTHORITY[\"EPSG\",\"5701\"]],
+    AUTHORITY[\"codespace\",\"code\"]]"
+    );
+}
