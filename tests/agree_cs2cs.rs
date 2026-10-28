@@ -4,8 +4,27 @@ use proj_rs::{Cone, Ellipsoid, Hemisphere, Lcc, Tmerc, UtmZone};
 use std::io::Write;
 use std::process::{Command, Stdio};
 
+fn proj_cs2cs() -> std::path::PathBuf {
+    // `cargo test` puts `target/` on `PATH`. Our own `cs2cs` binary lives
+    // there and must not shadow the PROJ install this test compares against.
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let name = if cfg!(windows) { "cs2cs.exe" } else { "cs2cs" };
+    if let Some(path) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path) {
+            if dir.starts_with(&manifest) {
+                continue;
+            }
+            let candidate = dir.join(name);
+            if candidate.is_file() {
+                return candidate;
+            }
+        }
+    }
+    std::path::PathBuf::from("cs2cs")
+}
+
 fn cs2cs(from: &str, to: &str, lon: f64, lat: f64) -> (f64, f64) {
-    let mut child = Command::new("cs2cs")
+    let mut child = Command::new(proj_cs2cs())
         .args(["-d", "8", from, "+to", to])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
