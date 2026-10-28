@@ -177,11 +177,13 @@ pub(crate) fn operation_proj_string(source: &Crs, target: &Crs) -> Result<String
     {
         steps.push("+proj=unitconvert +xy_in=deg +xy_out=rad".to_owned());
     }
-    let mut projection = projected.deriving_conversion().export_to_proj_string()?;
-    if let Some(ellipsoid) = base.ellipsoid() {
-        projection.push(' ');
-        projection.push_str(&ellipsoid_proj(ellipsoid));
+    // A non-Greenwich source is inverted `longlat` before the projection.
+    // Greenwich omits that step (`omitProjLongLatIfPossible`).
+    if let Some(step) = inverse_longlat(base) {
+        steps.push(step);
     }
+    let mut projection = projected.deriving_conversion().export_to_proj_string()?;
+    append_ellps_pm(&mut projection, base);
     steps.push(projection);
     if let Some(order) = projected_axis_order(projected) {
         steps.push(format!("+proj=axisswap +order={order}"));
@@ -471,9 +473,40 @@ fn prime_meridian_proj(meridian: &PrimeMeridian) -> Option<String> {
     }
     let degrees = meridian.longitude().convert_to(&UnitOfMeasure::degree());
     if degrees == 0.0 {
-        None
-    } else {
-        Some(format!("+pm={degrees}"))
+        return None;
+    }
+    // PROJ names a meridian when its longitude matches `proj_list_prime_meridians`
+    // within 1e-10 radian. Ferro is 17°40' west.
+    let ferro: f64 = -(17.0 + 40.0 / 60.0);
+    let radians = degrees.to_radians();
+    if meridian.name().eq_ignore_ascii_case("ferro")
+        || epsg_code(meridian.identifiers()) == Some("8902")
+        || (radians - ferro.to_radians()).abs() < 1e-10
+    {
+        return Some("+pm=ferro".to_owned());
+    }
+    Some(format!("+pm={degrees}"))
+}
+
+/// Inverted geographic step emitted when the source prime meridian is not Greenwich.
+fn inverse_longlat(geographic: &GeographicCRS) -> Option<String> {
+    let meridian = meridian_of(geographic)?;
+    prime_meridian_proj(meridian)?;
+    let mut step = String::from("+inv +proj=longlat");
+    append_ellps_pm(&mut step, geographic);
+    Some(step)
+}
+
+fn append_ellps_pm(step: &mut String, geographic: &GeographicCRS) {
+    if let Some(ellipsoid) = geographic.ellipsoid() {
+        step.push(' ');
+        step.push_str(&ellipsoid_proj(ellipsoid));
+    }
+    if let Some(meridian) = meridian_of(geographic) {
+        if let Some(clause) = prime_meridian_proj(meridian) {
+            step.push(' ');
+            step.push_str(&clause);
+        }
     }
 }
 
@@ -498,6 +531,7 @@ fn ellipsoid_proj(ellipsoid: &Ellipsoid) -> String {
 
 fn well_known_ellps(major: f64, inverse: Option<f64>, minor: Option<f64>) -> Option<&'static str> {
     const TABLE: &[(&str, f64, f64, bool)] = &[
+        ("bessel", 6_377_397.155, 299.152_812_8, true),
         ("GRS80", 6_378_137.0, 298.257_222_101, true),
         ("clrk66", 6_378_206.4, 6_356_583.8, false),
         ("clrk80", 6_378_249.145, 293.4663, true),
