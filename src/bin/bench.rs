@@ -11,7 +11,6 @@ use proj_rs::{
     bench_definition, Ellipsoid, Helmert, HelmertConvention, HelmertParams, Hemisphere, Lcc,
     Mercator, Operation, Projected, Tmerc, UtmZone, Xyzt, PORTED,
 };
-use std::ffi::{c_char, c_void, CString};
 use std::fmt::Write as _;
 use std::hint::black_box;
 use std::time::Instant;
@@ -269,7 +268,22 @@ fn catalogue_cases() -> Vec<(String, f64)> {
         .collect()
 }
 
+type ProjGrid<'a> = (&'a str, &'a str, &'a (Vec<f64>, Vec<f64>));
+
+fn libproj_ratios(grids: &[ProjGrid<'_>]) -> Vec<(String, f64)> {
+    #[cfg(not(link_libproj))]
+    {
+        let _ = grids;
+        return Vec::new();
+    }
+    #[cfg(link_libproj)]
+    {
+        libproj_ratios_linked(grids)
+    }
+}
+
 /// `PJ_COORD` as four `f64`. `proj_trans` reads `x` and `y` for a classic projection.
+#[cfg(link_libproj)]
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct PjCoord {
@@ -279,18 +293,22 @@ struct PjCoord {
     t: f64,
 }
 
+#[cfg(link_libproj)]
 #[link(name = "proj")]
 unsafe extern "C" {
-    fn proj_context_create() -> *mut c_void;
-    fn proj_context_destroy(ctx: *mut c_void);
-    fn proj_create(ctx: *mut c_void, definition: *const c_char) -> *mut c_void;
-    fn proj_destroy(pj: *mut c_void) -> *mut c_void;
-    fn proj_trans(pj: *mut c_void, direction: i32, coord: PjCoord) -> PjCoord;
+    fn proj_context_create() -> *mut std::ffi::c_void;
+    fn proj_context_destroy(ctx: *mut std::ffi::c_void);
+    fn proj_create(
+        ctx: *mut std::ffi::c_void,
+        definition: *const std::ffi::c_char,
+    ) -> *mut std::ffi::c_void;
+    fn proj_destroy(pj: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+    fn proj_trans(pj: *mut std::ffi::c_void, direction: i32, coord: PjCoord) -> PjCoord;
 }
 
-type ProjGrid<'a> = (&'a str, &'a str, &'a (Vec<f64>, Vec<f64>));
-
-fn libproj_ratios(grids: &[ProjGrid<'_>]) -> Vec<(String, f64)> {
+#[cfg(link_libproj)]
+fn libproj_ratios_linked(grids: &[ProjGrid<'_>]) -> Vec<(String, f64)> {
+    use std::ffi::CString;
     // SAFETY: OSGeo4W proj.dll creates one context. It is destroyed before return.
     let ctx = unsafe { proj_context_create() };
     assert!(!ctx.is_null(), "proj_context_create");

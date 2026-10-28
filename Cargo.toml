@@ -16,6 +16,9 @@ path = "src/bin/bench.rs"
 [features]
 geo-types = ["dep:geo-types"]
 
+[build-dependencies]
+cc = "1.1"
+
 [dependencies]
 geo-types = { version = "0.7.16", optional = true }
 # 0.37 is edition 2021 and does not declare a rust-version above 1.83.
