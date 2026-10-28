@@ -4280,3 +4280,13 @@ fn crs_compound_crs_as_proj_string() {
         "+proj=utm +zone=31 +datum=WGS84 +units=m +vunits=m +no_defs +type=crs"
     );
 }
+
+#[test]
+fn crs_compound_crs_no_name_provided() {
+    let crs = CompoundCRS::create(
+        "",
+        vec![Crs::Projected(utm_31n()), Crs::Vertical(odn_height())],
+    )
+    .expect("compound");
+    assert_eq!(crs.name(), "WGS 84 / UTM zone 31N + ODN height");
+}

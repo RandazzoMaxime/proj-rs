@@ -2862,6 +2862,23 @@ impl CompoundCRS {
                 "components of the compound CRS do not belong to one of the allowed combinations of http://docs.opengeospatial.org/as/18-005r5/18-005r5.html#34".to_owned(),
             ));
         }
+        let given = name.into();
+        let name = if given.is_empty() {
+            components
+                .iter()
+                .map(|crs| {
+                    let component = crs.name();
+                    if component.is_empty() {
+                        "unnamed".to_owned()
+                    } else {
+                        component.to_owned()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" + ")
+        } else {
+            given
+        };
         Ok(Self {
             identified: Identified::named(name),
             components,
