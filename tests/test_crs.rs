@@ -4,10 +4,12 @@
 
 use proj_rs::{
     create_crs_from_proj_string, create_from_user_input, AuthorityFactory, Axis, CartesianCS,
+    Meridian,
     Conversion, CoordinateSystem, Crs, DatabaseContext, Datum, DatumEnsemble, EllipsoidalCS,
     EllipsoidalHeightPolicy, Equivalence, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS,
     LinunitPolicy, OpProps, OutputAxisRule, PrimeMeridian, ProjectedCRS, UnitKind, UnitOfMeasure,
-    VerticalReferenceFrame, WktConvention, WktDialect, WktFormatter, WktLines, WktParser,
+    VerticalCRS, VerticalCS, VerticalReferenceFrame, WktConvention, WktDialect, WktFormatter,
+    WktLines, WktParser,
     WktStrictness,
 };
 
@@ -3365,4 +3367,544 @@ fn crs_projected_crs_identify_db() {
     );
     let bessel_res = bessel.identify_with(Some(&all));
     assert_eq!(bessel_res.len(), 13, "{}", identified_codes(&bessel_res));
+}
+
+#[test]
+fn crs_projected_crs_identify_wrong_auth_name_case() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let all = AuthorityFactory::create(&db, "");
+    let mut parser = WktParser::new();
+    parser.attach_database(db);
+    parser.set_strictness(WktStrictness::Lenient);
+    let crs = parser
+        .create_from_wkt(
+            "PROJCS[\"World_Cylindrical_Equal_Area\",\
+             GEOGCS[\"GCS_WGS_1984\",\
+             DATUM[\"D_WGS_1984\",SPHEROID[\"WGS_1984\",6378137.0,298.257223563]],\
+             PRIMEM[\"Greenwich\",0.0],\
+             UNIT[\"Degree\",0.0174532925199433]],\
+             PROJECTION[\"Cylindrical_Equal_Area\"],\
+             PARAMETER[\"False_Easting\",0.0],\
+             PARAMETER[\"False_Northing\",0.0],\
+             PARAMETER[\"Central_Meridian\",0.0],\
+             PARAMETER[\"Standard_Parallel_1\",0.0],UNIT[\"Meter\",1.0],\
+             AUTHORITY[\"Esri\",54034]]",
+        )
+        .expect("wkt")
+        .crs()
+        .cloned()
+        .expect("crs");
+    let Crs::Projected(crs) = crs else {
+        panic!("the WKT is a projected CRS");
+    };
+    let res = crs.identify_with(Some(&all));
+    assert_eq!(res.len(), 1, "{}", identified_codes(&res));
+    let identifiers = res[0].0.identifiers();
+    assert_eq!(identifiers.len(), 1);
+    assert_eq!(identifiers[0].code_space(), "ESRI");
+    assert_eq!(identifiers[0].code(), "54034");
+}
+
+#[test]
+fn crs_mercator_1sp_as_wkt1_esri() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let crs = create_crs_from_proj_string(
+        "+proj=merc +lon_0=110 +k=0.997 +x_0=3900000 +y_0=900000 +ellps=bessel +type=crs",
+    )
+    .expect("proj");
+    let wkt = crs
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Esri).with_database(db))
+        .expect("wkt");
+    assert_eq!(
+        wkt,
+        "PROJCS[\"unknown\",GEOGCS[\"GCS_unknown\",\
+DATUM[\"D_Unknown_based_on_Bessel_1841_ellipsoid\",\
+SPHEROID[\"Bessel_1841\",6377397.155,299.1528128]],\
+PRIMEM[\"Greenwich\",0.0],\
+UNIT[\"Degree\",0.0174532925199433]],\
+PROJECTION[\"Mercator\"],\
+PARAMETER[\"False_Easting\",3900000.0],\
+PARAMETER[\"False_Northing\",900000.0],\
+PARAMETER[\"Central_Meridian\",110.0],\
+PARAMETER[\"Standard_Parallel_1\",4.45405154589748],\
+UNIT[\"Meter\",1.0]]"
+    );
+}
+
+fn esri_from_proj(definition: &str) -> String {
+    let db = DatabaseContext::create().expect("proj.db");
+    create_crs_from_proj_string(definition)
+        .unwrap_or_else(|error| panic!("{definition}: {error}"))
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Esri).with_database(db))
+        .expect("wkt")
+}
+
+const WGS84_GEOGCS: &str = "GEOGCS[\"GCS_unknown\",DATUM[\"D_WGS_1984\",SPHEROID[\"WGS_1984\",6378137.0,298.257223563]],PRIMEM[\"Greenwich\",0.0],UNIT[\"Degree\",0.0174532925199433]]";
+
+const BESSEL_GEOGCS: &str = "GEOGCS[\"GCS_unknown\",DATUM[\"D_Unknown_based_on_Bessel_1841_ellipsoid\",SPHEROID[\"Bessel_1841\",6377397.155,299.1528128]],PRIMEM[\"Greenwich\",0.0],UNIT[\"Degree\",0.0174532925199433]]";
+
+#[test]
+fn crs_plate_carree_as_wkt1_esri() {
+    let wkt = esri_from_proj("+title=my Plate carree +proj=eqc +type=crs");
+    assert_eq!(
+        wkt,
+        format!(
+            "PROJCS[\"my_Plate_carree\",{WGS84_GEOGCS},PROJECTION[\"Plate_Carree\"],PARAMETER[\"False_Easting\",0.0],PARAMETER[\"False_Northing\",0.0],PARAMETER[\"Central_Meridian\",0.0],UNIT[\"Meter\",1.0]]"
+        )
+    );
+}
+
+#[test]
+fn crs_equidistant_cylindrical_as_wkt1_esri() {
+    let wkt = esri_from_proj("+proj=eqc +type=crs");
+    assert_eq!(
+        wkt,
+        format!(
+            "PROJCS[\"unknown\",{WGS84_GEOGCS},PROJECTION[\"Equidistant_Cylindrical\"],PARAMETER[\"False_Easting\",0.0],PARAMETER[\"False_Northing\",0.0],PARAMETER[\"Central_Meridian\",0.0],PARAMETER[\"Standard_Parallel_1\",0.0],UNIT[\"Meter\",1.0]]"
+        )
+    );
+}
+
+#[test]
+fn crs_hotine_oblique_mercator_azimuth_natural_origin_as_wkt1_esri() {
+    let wkt = esri_from_proj("+proj=omerc +no_uoff +gamma=295 +alpha=295 +type=crs");
+    assert_eq!(
+        wkt,
+        format!(
+            "PROJCS[\"unknown\",{WGS84_GEOGCS},PROJECTION[\"Hotine_Oblique_Mercator_Azimuth_Natural_Origin\"],PARAMETER[\"False_Easting\",0.0],PARAMETER[\"False_Northing\",0.0],PARAMETER[\"Scale_Factor\",1.0],PARAMETER[\"Azimuth\",-65.0],PARAMETER[\"Longitude_Of_Center\",0.0],PARAMETER[\"Latitude_Of_Center\",0.0],UNIT[\"Meter\",1.0]]"
+        )
+    );
+}
+
+#[test]
+fn crs_rectified_skew_orthomorphic_natural_origin_as_wkt1_esri() {
+    let wkt = esri_from_proj("+proj=omerc +no_uoff +gamma=3 +alpha=2 +type=crs");
+    assert_eq!(
+        wkt,
+        format!(
+            "PROJCS[\"unknown\",{WGS84_GEOGCS},PROJECTION[\"Rectified_Skew_Orthomorphic_Natural_Origin\"],PARAMETER[\"False_Easting\",0.0],PARAMETER[\"False_Northing\",0.0],PARAMETER[\"Scale_Factor\",1.0],PARAMETER[\"Azimuth\",2.0],PARAMETER[\"Longitude_Of_Center\",0.0],PARAMETER[\"Latitude_Of_Center\",0.0],PARAMETER[\"XY_Plane_Rotation\",3.0],UNIT[\"Meter\",1.0]]"
+        )
+    );
+}
+
+#[test]
+fn crs_hotine_oblique_mercator_azimuth_center_as_wkt1_esri() {
+    let wkt = esri_from_proj("+proj=omerc +gamma=2 +alpha=2 +type=crs");
+    assert_eq!(
+        wkt,
+        format!(
+            "PROJCS[\"unknown\",{WGS84_GEOGCS},PROJECTION[\"Hotine_Oblique_Mercator_Azimuth_Center\"],PARAMETER[\"False_Easting\",0.0],PARAMETER[\"False_Northing\",0.0],PARAMETER[\"Scale_Factor\",1.0],PARAMETER[\"Azimuth\",2.0],PARAMETER[\"Longitude_Of_Center\",0.0],PARAMETER[\"Latitude_Of_Center\",0.0],UNIT[\"Meter\",1.0]]"
+        )
+    );
+}
+
+#[test]
+fn crs_rectified_skew_orthomorphic_center_as_wkt1_esri() {
+    let wkt = esri_from_proj("+proj=omerc +gamma=3 +alpha=2 +type=crs");
+    assert_eq!(
+        wkt,
+        format!(
+            "PROJCS[\"unknown\",{WGS84_GEOGCS},PROJECTION[\"Rectified_Skew_Orthomorphic_Center\"],PARAMETER[\"False_Easting\",0.0],PARAMETER[\"False_Northing\",0.0],PARAMETER[\"Scale_Factor\",1.0],PARAMETER[\"Azimuth\",2.0],PARAMETER[\"Longitude_Of_Center\",0.0],PARAMETER[\"Latitude_Of_Center\",0.0],PARAMETER[\"XY_Plane_Rotation\",3.0],UNIT[\"Meter\",1.0]]"
+        )
+    );
+}
+
+#[test]
+fn crs_gauss_kruger_as_wkt1_esri() {
+    let wkt = esri_from_proj("+title=my Gauss Kruger +proj=tmerc +type=crs");
+    assert_eq!(
+        wkt,
+        format!(
+            "PROJCS[\"my_Gauss_Kruger\",{WGS84_GEOGCS},PROJECTION[\"Gauss_Kruger\"],PARAMETER[\"False_Easting\",0.0],PARAMETER[\"False_Northing\",0.0],PARAMETER[\"Central_Meridian\",0.0],PARAMETER[\"Scale_Factor\",1.0],PARAMETER[\"Latitude_Of_Origin\",0.0],UNIT[\"Meter\",1.0]]"
+        )
+    );
+}
+
+#[test]
+fn crs_stereographic_north_pole_as_wkt1_esri() {
+    let wkt = esri_from_proj("+proj=stere +lat_0=90 +lat_ts=70 +type=crs");
+    assert_eq!(
+        wkt,
+        format!(
+            "PROJCS[\"unknown\",{WGS84_GEOGCS},PROJECTION[\"Stereographic_North_Pole\"],PARAMETER[\"False_Easting\",0.0],PARAMETER[\"False_Northing\",0.0],PARAMETER[\"Central_Meridian\",0.0],PARAMETER[\"Standard_Parallel_1\",70.0],UNIT[\"Meter\",1.0]]"
+        )
+    );
+}
+
+#[test]
+fn crs_stereographic_south_pole_as_wkt1_esri() {
+    let wkt = esri_from_proj("+proj=stere +lat_0=-90 +lat_ts=-70 +type=crs");
+    assert_eq!(
+        wkt,
+        format!(
+            "PROJCS[\"unknown\",{WGS84_GEOGCS},PROJECTION[\"Stereographic_South_Pole\"],PARAMETER[\"False_Easting\",0.0],PARAMETER[\"False_Northing\",0.0],PARAMETER[\"Central_Meridian\",0.0],PARAMETER[\"Standard_Parallel_1\",-70.0],UNIT[\"Meter\",1.0]]"
+        )
+    );
+}
+
+#[test]
+fn crs_krovak_north_orientated_as_wkt1_esri() {
+    let wkt = esri_from_proj("+proj=krovak +type=crs");
+    assert_eq!(
+        wkt,
+        format!(
+            "PROJCS[\"unknown\",{BESSEL_GEOGCS},PROJECTION[\"Krovak\"],PARAMETER[\"False_Easting\",0.0],PARAMETER[\"False_Northing\",0.0],PARAMETER[\"Pseudo_Standard_Parallel_1\",78.5],PARAMETER[\"Scale_Factor\",0.9999],PARAMETER[\"Azimuth\",30.2881397527778],PARAMETER[\"Longitude_Of_Center\",24.8333333333333],PARAMETER[\"Latitude_Of_Center\",49.5],PARAMETER[\"X_Scale\",-1.0],PARAMETER[\"Y_Scale\",1.0],PARAMETER[\"XY_Plane_Rotation\",90.0],UNIT[\"Meter\",1.0]]"
+        )
+    );
+}
+
+#[test]
+fn crs_krovak_as_wkt1_esri() {
+    let wkt = esri_from_proj("+proj=krovak +axis=swu +type=crs");
+    assert_eq!(
+        wkt,
+        format!(
+            "PROJCS[\"unknown\",{BESSEL_GEOGCS},PROJECTION[\"Krovak\"],PARAMETER[\"False_Easting\",0.0],PARAMETER[\"False_Northing\",0.0],PARAMETER[\"Pseudo_Standard_Parallel_1\",78.5],PARAMETER[\"Scale_Factor\",0.9999],PARAMETER[\"Azimuth\",30.2881397527778],PARAMETER[\"Longitude_Of_Center\",24.8333333333333],PARAMETER[\"Latitude_Of_Center\",49.5],PARAMETER[\"X_Scale\",1.0],PARAMETER[\"Y_Scale\",1.0],PARAMETER[\"XY_Plane_Rotation\",0.0],UNIT[\"Meter\",1.0]]"
+        )
+    );
+}
+
+#[test]
+fn crs_lcc_1sp_as_wkt1_esri() {
+    let wkt = esri_from_proj("+proj=lcc +lat_1=1 +lat_0=1 +k=0.9 +type=crs");
+    assert_eq!(
+        wkt,
+        format!(
+            "PROJCS[\"unknown\",{WGS84_GEOGCS},PROJECTION[\"Lambert_Conformal_Conic\"],PARAMETER[\"False_Easting\",0.0],PARAMETER[\"False_Northing\",0.0],PARAMETER[\"Central_Meridian\",0.0],PARAMETER[\"Standard_Parallel_1\",1.0],PARAMETER[\"Scale_Factor\",0.9],PARAMETER[\"Latitude_Of_Origin\",1.0],UNIT[\"Meter\",1.0]]"
+        )
+    );
+}
+
+#[test]
+fn crs_lcc_2sp_as_wkt1_esri() {
+    let wkt = esri_from_proj("+proj=lcc +lat_0=1.5 +lat_1=1 +lat_2=2 +type=crs");
+    assert_eq!(
+        wkt,
+        format!(
+            "PROJCS[\"unknown\",{WGS84_GEOGCS},PROJECTION[\"Lambert_Conformal_Conic\"],PARAMETER[\"False_Easting\",0.0],PARAMETER[\"False_Northing\",0.0],PARAMETER[\"Central_Meridian\",0.0],PARAMETER[\"Standard_Parallel_1\",1.0],PARAMETER[\"Standard_Parallel_2\",2.0],PARAMETER[\"Latitude_Of_Origin\",1.5],UNIT[\"Meter\",1.0]]"
+        )
+    );
+}
+
+#[test]
+fn crs_esri_wkt1_to_esri_wkt1() {
+    let input = "PROJCS[\"NAD_1983_CORS96_StatePlane_North_Carolina_FIPS_3200_Ft_US\",\
+GEOGCS[\"GCS_NAD_1983_CORS96\",DATUM[\"D_NAD_1983_CORS96\",\
+SPHEROID[\"GRS_1980\",6378137.0,298.257222101]],\
+PRIMEM[\"Greenwich\",0.0],UNIT[\"Degree\",0.0174532925199433]],\
+PROJECTION[\"Lambert_Conformal_Conic\"],\
+PARAMETER[\"False_Easting\",2000000.0],\
+PARAMETER[\"False_Northing\",0.0],\
+PARAMETER[\"Central_Meridian\",-79.0],\
+PARAMETER[\"Standard_Parallel_1\",34.33333333333334],\
+PARAMETER[\"Standard_Parallel_2\",36.16666666666666],\
+PARAMETER[\"Latitude_Of_Origin\",33.75],\
+UNIT[\"Foot_US\",0.3048006096012192]]";
+    let mut parser = WktParser::new();
+    let object = parser.create_from_wkt(input).expect("wkt");
+    let Crs::Projected(crs) = object.crs().cloned().expect("crs") else {
+        panic!("the WKT is a projected CRS");
+    };
+    let db = DatabaseContext::create().expect("proj.db");
+    let wkt = Crs::Projected(crs)
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Esri).with_database(db))
+        .expect("wkt");
+    assert_eq!(
+        wkt,
+        "PROJCS[\"NAD_1983_CORS96_StatePlane_North_Carolina_FIPS_3200_Ft_US\",\
+GEOGCS[\"GCS_NAD_1983_CORS96\",DATUM[\"D_NAD_1983_CORS96\",\
+SPHEROID[\"GRS_1980\",6378137.0,298.257222101]],\
+PRIMEM[\"Greenwich\",0.0],UNIT[\"Degree\",0.0174532925199433]],\
+PROJECTION[\"Lambert_Conformal_Conic\"],\
+PARAMETER[\"False_Easting\",2000000.0],\
+PARAMETER[\"False_Northing\",0.0],\
+PARAMETER[\"Central_Meridian\",-79.0],\
+PARAMETER[\"Standard_Parallel_1\",34.3333333333333],\
+PARAMETER[\"Standard_Parallel_2\",36.1666666666667],\
+PARAMETER[\"Latitude_Of_Origin\",33.75],\
+UNIT[\"Foot_US\",0.304800609601219]]"
+    );
+}
+
+#[test]
+fn datum_cs_with_meridian() {
+    let east = Axis::create("Easting", "X", "south", UnitOfMeasure::metre())
+        .with_meridian(Meridian::create(90.0));
+    let north = Axis::create("Northing", "Y", "south", UnitOfMeasure::metre())
+        .with_meridian(Meridian::create(180.0));
+    let cs = CartesianCS::create(vec![east, north]).expect("cs");
+    let mut formatter = WktFormatter::create(WktConvention::Wkt2_2019);
+    formatter.hide_identifiers().expect("ids");
+    let wkt = cs.export_to_wkt(&mut formatter).expect("wkt");
+    assert_eq!(
+        wkt,
+        "CS[Cartesian,2],\n    \
+AXIS[\"easting (X)\",south,\n        \
+MERIDIAN[90,\n            \
+ANGLEUNIT[\"degree\",0.0174532925199433]],\n        \
+ORDER[1],\n        \
+LENGTHUNIT[\"metre\",1]],\n    \
+AXIS[\"northing (Y)\",south,\n        \
+MERIDIAN[180,\n            \
+ANGLEUNIT[\"degree\",0.0174532925199433]],\n        \
+ORDER[2],\n        \
+LENGTHUNIT[\"metre\",1]]"
+    );
+}
+
+#[test]
+fn crs_scope_area_bbox_remark() {
+    let input = "GEODETICCRS[\"JGD2000\",\
+DATUM[\"Japanese Geodetic Datum 2000\",\
+  ELLIPSOID[\"GRS 1980\",6378137,298.257222101]],\
+CS[Cartesian,3],\
+  AXIS[\"(X)\",geocentricX],\
+  AXIS[\"(Y)\",geocentricY],\
+  AXIS[\"(Z)\",geocentricZ],\
+  LENGTHUNIT[\"metre\",1.0],\
+SCOPE[\"Geodesy, topographic mapping and cadastre\"],\
+AREA[\"Japan\"],\
+BBOX[17.09,122.38,46.05,157.64],\
+VERTICALEXTENT[-10000,10000],\
+TIMEEXTENT[2002-04-01,2011-10-21],\
+ID[\"EPSG\",4946],\n\
+REMARK[\"some_remark\"]]";
+    let mut parser = WktParser::new();
+    let object = parser.create_from_wkt(input).expect("wkt");
+    let Crs::Geodetic(GeodeticCRS::Geocentric(crs)) = object.crs().cloned().expect("crs") else {
+        panic!("the WKT is a geocentric CRS");
+    };
+    assert_eq!(crs.domains().len(), 1);
+    let domain = &crs.domains()[0];
+    assert_eq!(
+        domain.scope(),
+        Some("Geodesy, topographic mapping and cadastre")
+    );
+    assert_eq!(domain.description(), Some("Japan"));
+    assert_eq!(domain.south_bound_latitude(), Some(17.09));
+    assert_eq!(domain.west_bound_longitude(), Some(122.38));
+    assert_eq!(domain.north_bound_latitude(), Some(46.05));
+    assert_eq!(domain.east_bound_longitude(), Some(157.64));
+    assert_eq!(domain.vertical_minimum(), Some(-10_000.0));
+    assert_eq!(domain.vertical_maximum(), Some(10_000.0));
+    assert_eq!(
+        domain.vertical_unit().map(UnitOfMeasure::name),
+        Some("metre")
+    );
+    assert_eq!(domain.temporal_start(), Some("2002-04-01"));
+    assert_eq!(domain.temporal_stop(), Some("2011-10-21"));
+    let wkt = Crs::Geodetic(GeodeticCRS::Geocentric(crs))
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2015))
+        .expect("wkt");
+    assert_eq!(
+        wkt,
+        "\
+GEODCRS[\"JGD2000\",
+    DATUM[\"Japanese Geodetic Datum 2000\",
+        ELLIPSOID[\"GRS 1980\",6378137,298.257222101,
+            LENGTHUNIT[\"metre\",1]]],
+    PRIMEM[\"Greenwich\",0,
+        ANGLEUNIT[\"degree\",0.0174532925199433]],
+    CS[Cartesian,3],
+        AXIS[\"(X)\",geocentricX,
+            ORDER[1],
+            LENGTHUNIT[\"metre\",1]],
+        AXIS[\"(Y)\",geocentricY,
+            ORDER[2],
+            LENGTHUNIT[\"metre\",1]],
+        AXIS[\"(Z)\",geocentricZ,
+            ORDER[3],
+            LENGTHUNIT[\"metre\",1]],
+    SCOPE[\"Geodesy, topographic mapping and cadastre\"],
+    AREA[\"Japan\"],
+    BBOX[17.09,122.38,46.05,157.64],
+    VERTICALEXTENT[-10000,10000,
+        LENGTHUNIT[\"metre\",1]],
+    TIMEEXTENT[2002-04-01,2011-10-21],
+    ID[\"EPSG\",4946],
+    REMARK[\"some_remark\"]]"
+    );
+}
+
+#[test]
+fn crs_usage() {
+    let input = "GEODETICCRS[\"JGD2000\",\
+DATUM[\"Japanese Geodetic Datum 2000\",\
+  ELLIPSOID[\"GRS 1980\",6378137,298.257222101]],\
+CS[Cartesian,3],\
+  AXIS[\"(X)\",geocentricX],\
+  AXIS[\"(Y)\",geocentricY],\
+  AXIS[\"(Z)\",geocentricZ],\
+  LENGTHUNIT[\"metre\",1.0],\
+USAGE[SCOPE[\"scope\"],AREA[\"area.\"]]]";
+    let mut parser = WktParser::new();
+    let object = parser.create_from_wkt(input).expect("wkt");
+    let crs = object.crs().cloned().expect("crs");
+    let wkt = crs
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2019))
+        .expect("wkt");
+    assert_eq!(
+        wkt,
+        "\
+GEODCRS[\"JGD2000\",
+    DATUM[\"Japanese Geodetic Datum 2000\",
+        ELLIPSOID[\"GRS 1980\",6378137,298.257222101,
+            LENGTHUNIT[\"metre\",1,
+                ID[\"EPSG\",9001]]]],
+    PRIMEM[\"Greenwich\",0,
+        ANGLEUNIT[\"degree\",0.0174532925199433],
+        ID[\"EPSG\",8901]],
+    CS[Cartesian,3],
+        AXIS[\"(X)\",geocentricX,
+            ORDER[1],
+            LENGTHUNIT[\"metre\",1]],
+        AXIS[\"(Y)\",geocentricY,
+            ORDER[2],
+            LENGTHUNIT[\"metre\",1]],
+        AXIS[\"(Z)\",geocentricZ,
+            ORDER[3],
+            LENGTHUNIT[\"metre\",1]],
+    USAGE[
+        SCOPE[\"scope\"],
+        AREA[\"area.\"]]]"
+    );
+}
+
+#[test]
+fn crs_multiple_id() {
+    let crs = GeodeticCRS::create(
+        "WGS 84",
+        Some(GeodeticReferenceFrame::epsg_6326()),
+        None,
+        CoordinateSystem::Cartesian(CartesianCS::create_geocentric(UnitOfMeasure::metre())),
+    )
+    .expect("crs")
+    .with_identifier("authorityA", "codeA")
+    .with_identifier("authorityB", "codeB");
+    let wkt = Crs::Geodetic(crs)
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2015Simplified))
+        .expect("wkt");
+    assert_eq!(
+        wkt,
+        "\
+GEODCRS[\"WGS 84\",
+    DATUM[\"World Geodetic System 1984\",
+        ELLIPSOID[\"WGS 84\",6378137,298.257223563]],
+    CS[Cartesian,3],
+        AXIS[\"(X)\",geocentricX],
+        AXIS[\"(Y)\",geocentricY],
+        AXIS[\"(Z)\",geocentricZ],
+        UNIT[\"metre\",1],
+    ID[\"authorityA\",\"codeA\"],
+    ID[\"authorityB\",\"codeB\"]]"
+    );
+}
+
+fn odn_height() -> VerticalCRS {
+    let datum = VerticalReferenceFrame::named("Ordnance Datum Newlyn").with_identifier("EPSG", "5101");
+    VerticalCRS::create(
+        "ODN height",
+        datum,
+        VerticalCS::create_gravity_related_height(UnitOfMeasure::metre()),
+    )
+    .with_identifier("EPSG", "5701")
+}
+
+#[test]
+fn crs_vertical_crs_as_wkt2() {
+    let crs = odn_height();
+    assert!(crs.is_equivalent_to(&crs));
+    assert!(crs.clone().is_equivalent_to(&crs));
+    assert!(!Crs::Vertical(crs.clone()).is_equivalent_to(&Crs::Geographic(GeographicCRS::epsg_4326())));
+    let wkt = Crs::Vertical(crs)
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2015))
+        .expect("wkt");
+    assert_eq!(
+        wkt,
+        "\
+VERTCRS[\"ODN height\",
+    VDATUM[\"Ordnance Datum Newlyn\"],
+    CS[vertical,1],
+        AXIS[\"gravity-related height (H)\",up,
+            LENGTHUNIT[\"metre\",1]],
+    ID[\"EPSG\",5701]]"
+    );
+}
+
+#[test]
+fn crs_vertical_crs_as_wkt1_gdal() {
+    let wkt = Crs::Vertical(odn_height())
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Gdal))
+        .expect("wkt");
+    assert_eq!(
+        wkt,
+        "\
+VERT_CS[\"ODN height\",
+    VERT_DATUM[\"Ordnance Datum Newlyn\",2005,
+        AUTHORITY[\"EPSG\",\"5101\"]],
+    UNIT[\"metre\",1,
+        AUTHORITY[\"EPSG\",\"9001\"]],
+    AXIS[\"Gravity-related height\",UP],
+    AUTHORITY[\"EPSG\",\"5701\"]]"
+    );
+}
+
+#[test]
+fn crs_vertical_crs_as_wkt1_esri() {
+    let wkt = Crs::Vertical(odn_height())
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Esri))
+        .expect("wkt");
+    assert_eq!(
+        wkt,
+        "VERTCS[\"ODN_height\",VDATUM[\"Ordnance_Datum_Newlyn\"],PARAMETER[\"Vertical_Shift\",0.0],PARAMETER[\"Direction\",1.0],UNIT[\"Meter\",1.0]]"
+    );
+}
+
+#[test]
+fn crs_vertical_crs_as_wkt1_esri_context() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let wkt = Crs::Vertical(odn_height())
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Esri).with_database(db))
+        .expect("wkt");
+    assert_eq!(
+        wkt,
+        "VERTCS[\"Newlyn\",VDATUM[\"Ordnance_Datum_Newlyn\"],PARAMETER[\"Vertical_Shift\",0.0],PARAMETER[\"Direction\",1.0],UNIT[\"Meter\",1.0]]"
+    );
+}
+
+#[test]
+fn crs_vertical_crs_down_as_wkt1_esri() {
+    let input = "VERTCS[\"Caspian\",VDATUM[\"Caspian_Sea\"],\
+PARAMETER[\"Vertical_Shift\",0.0],\
+PARAMETER[\"Direction\",-1.0],UNIT[\"Meter\",1.0]]";
+    let mut parser = WktParser::new();
+    let object = parser.create_from_wkt(input).expect("wkt");
+    let Crs::Vertical(crs) = object.crs().cloned().expect("crs") else {
+        panic!("the WKT is a vertical CRS");
+    };
+    let wkt = Crs::Vertical(crs)
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Esri))
+        .expect("wkt");
+    assert_eq!(wkt, input);
+}
+
+#[test]
+fn crs_vertical_crs_esri_115834_as_wkt1_esri_with_database() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let crs = AuthorityFactory::create(&db, "ESRI")
+        .create_coordinate_reference_system("115834")
+        .expect("ESRI:115834");
+    let wkt = crs
+        .export_to_wkt(
+            &mut WktFormatter::create(WktConvention::Wkt1Esri).with_database(db),
+        )
+        .expect("wkt");
+    assert_eq!(
+        wkt,
+        "VERTCS[\"NAD83(CSRS)v5\",\
+DATUM[\"North_American_Datum_of_1983_(CSRS)_version_5\",\
+SPHEROID[\"GRS_1980\",6378137.0,298.257222101]],\
+PARAMETER[\"Vertical_Shift\",0.0],\
+PARAMETER[\"Direction\",1.0],UNIT[\"Meter\",1.0]]"
+    );
 }

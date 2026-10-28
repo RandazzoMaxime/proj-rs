@@ -35,7 +35,8 @@ fn node_from_text(text: &str) -> NodeId {
 }
 
 use super::model::{
-    ensemble_name_as_datum, Axis, BoundCRS, CompoundCRS, Conversion, CoordinateSystem, Crs, Datum,
+    ensemble_name_as_datum, Axis, BoundCRS, CartesianCS, CompoundCRS, Conversion, CoordinateSystem,
+    Crs, Datum,
     DatumEnsemble, Ellipsoid, EngineeringCRS, EngineeringDatum, FactoryError, GeocentricCRS,
     GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified, Identifier, Measure,
     OperationMethod, Parameter, ParameterValue, PrimeMeridian, ProjectedCRS, Transformation,
@@ -146,6 +147,8 @@ pub struct WktFormatter {
     axis_angular: Vec<UnitOfMeasure>,
     abridged: bool,
     db: Option<DatabaseContext>,
+    /// Projected CRS name, used when an ESRI method depends on it.
+    esri_object_name: String,
 }
 
 impl WktFormatter {
@@ -194,6 +197,7 @@ impl WktFormatter {
             axis_angular: vec![UnitOfMeasure::degree()],
             abridged: false,
             db: None,
+            esri_object_name: String::new(),
         }
     }
 
@@ -489,6 +493,53 @@ impl WktFormatter {
             self.add_number(east);
             self.end_node();
         }
+        if let (Some(minimum), Some(maximum)) = (domain.vertical_min, domain.vertical_max) {
+            self.start_node("VERTICALEXTENT", NodeId::Absent);
+            self.add_number(minimum);
+            self.add_number(maximum);
+            let unit = domain
+                .vertical_unit
+                .clone()
+                .unwrap_or_else(UnitOfMeasure::metre);
+            self.export_unit(&unit, None);
+            self.end_node();
+        }
+        if let (Some(start), Some(stop)) = (&domain.temporal_start, &domain.temporal_stop) {
+            self.start_node("TIMEEXTENT", NodeId::Absent);
+            self.add_datetime(start);
+            self.add_datetime(stop);
+            self.end_node();
+        }
+    }
+
+    /// ISO-8601 values stay bare. Anything else, including a space, is quoted.
+    fn add_datetime(&mut self, text: &str) {
+        let iso = text
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_digit())
+            && !text.contains(' ');
+        if iso {
+            self.add_raw(text);
+        } else {
+            self.add_quoted(text);
+        }
+    }
+}
+
+impl CartesianCS {
+    /// Write this coordinate system into `formatter` and return the WKT.
+    ///
+    /// # Errors
+    ///
+    /// The formatter is in a state that cannot emit a node. Export of a
+    /// cartesian system itself does not fail.
+    pub fn export_to_wkt(&self, formatter: &mut WktFormatter) -> Result<String, FactoryError> {
+        export_cs(
+            &CoordinateSystem::Cartesian(self.clone()),
+            formatter,
+        );
+        Ok(std::mem::take(&mut formatter.result))
     }
 }
 
@@ -855,7 +906,11 @@ fn export_projected(crs: &ProjectedCRS, formatter: &mut WktFormatter) -> Result<
     } else {
         BaseShape::NotSphere
     };
-    export_conversion(&crs.conversion, formatter, base_shape)?;
+    let mercator_b = esri_mercator_variant_b(crs, formatter);
+    let conversion = mercator_b.as_ref().unwrap_or(&crs.conversion);
+    formatter.esri_object_name = crs.name().to_owned();
+    export_conversion(conversion, formatter, base_shape)?;
+    formatter.esri_object_name.clear();
     formatter.axis_angular.pop();
     formatter.axis_linear.pop();
     if !formatter.wkt2 {
@@ -937,16 +992,22 @@ fn export_vertical(crs: &VerticalCRS, formatter: &mut WktFormatter) -> Result<()
     if formatter.esri {
         if let Some(alias) = esri_alias(&crs.identified, "vertical_crs", formatter) {
             name = alias;
-        } else {
+        } else if !esri_official_name(&name, "vertical_crs", formatter) {
             name = morph_name_to_esri(&name);
         }
     }
     formatter.start_node(keyword, node_from_ids(&crs.identified.identifiers));
     formatter.add_quoted(&name);
-    if let Some(datum) = &crs.datum {
-        export_vertical_datum(datum, formatter);
-    } else if let Some(ensemble) = &crs.ensemble {
-        export_vertical_ensemble(ensemble, formatter);
+    let geodetic_datum = formatter.esri
+        && crs.datum.as_ref().is_some_and(|datum| {
+            datum.wkt1_type == "2002" && export_esri_geodetic_vertical_datum(datum, formatter)
+        });
+    if !geodetic_datum {
+        if let Some(datum) = &crs.datum {
+            export_vertical_datum(datum, formatter);
+        } else if let Some(ensemble) = &crs.ensemble {
+            export_vertical_ensemble(ensemble, formatter);
+        }
     }
     if formatter.esri {
         formatter.start_node("PARAMETER", NodeId::Absent);
@@ -1181,6 +1242,26 @@ fn export_ensemble_as_datum(ensemble: &DatumEnsemble, formatter: &mut WktFormatt
         };
         export_geodetic_datum(&synthetic, formatter);
     }
+}
+
+/// ESRI writes a type-2002 vertical datum as the geodetic datum of the same name.
+fn export_esri_geodetic_vertical_datum(
+    datum: &VerticalReferenceFrame,
+    formatter: &mut WktFormatter,
+) -> bool {
+    let Some(db) = formatter.db.clone() else {
+        return false;
+    };
+    let Ok(frames) =
+        AuthorityFactory::create(&db, "").create_geodetic_datums_by_name(datum.name())
+    else {
+        return false;
+    };
+    let Some(frame) = frames.first() else {
+        return false;
+    };
+    export_geodetic_datum(frame, formatter);
+    true
 }
 
 fn export_vertical_datum(datum: &VerticalReferenceFrame, formatter: &mut WktFormatter) {
@@ -1552,8 +1633,14 @@ fn export_conversion_wkt1(
             return Ok(());
         }
         if formatter.esri && conversion.method.code == "9807" {
+            let lowered = formatter.esri_object_name.to_ascii_lowercase();
+            let gauss = lowered.contains("gauss") || formatter.esri_object_name.contains("GK_");
             formatter.start_node("PROJECTION", NodeId::Absent);
-            formatter.add_quoted("Transverse_Mercator");
+            formatter.add_quoted(if gauss {
+                "Gauss_Kruger"
+            } else {
+                "Transverse_Mercator"
+            });
             formatter.end_node();
             for (name, code) in [
                 ("False_Easting", "8806"),
@@ -1650,16 +1737,106 @@ fn export_conversion_wkt1(
     Ok(())
 }
 
+/// Mercator variant A becomes variant B for ESRI WKT.
+///
+/// The standard parallel is `acos(sqrt((1-e²)/((1/k²)-e²)))`.
+fn esri_mercator_variant_b(crs: &ProjectedCRS, formatter: &WktFormatter) -> Option<Conversion> {
+    if !formatter.esri || crs.conversion.method.code != "9804" {
+        return None;
+    }
+    let ellipsoid = crs.base.ellipsoid()?;
+    let k0 = parameter_number(&crs.conversion, "8805").ok()?;
+    if !(k0 > 0.0 && k0 <= 1.0 + 1e-10) {
+        return None;
+    }
+    let latitude_origin = parameter_number(&crs.conversion, "8801").unwrap_or(0.0);
+    if latitude_origin != 0.0 {
+        return None;
+    }
+    let flattening = ellipsoid.inverse_flattening();
+    let eccentricity_squared = if flattening == 0.0 {
+        0.0
+    } else {
+        let factor = 1.0 / flattening;
+        factor * (2.0 - factor)
+    };
+    if eccentricity_squared < 0.0 {
+        return None;
+    }
+    let latitude = if k0 >= 1.0 {
+        0.0
+    } else {
+        let inside = (1.0 - eccentricity_squared) / ((1.0 / (k0 * k0)) - eccentricity_squared);
+        inside.sqrt().acos().to_degrees()
+    };
+    let longitude = parameter_number(&crs.conversion, "8802").unwrap_or(0.0);
+    let easting = parameter_number(&crs.conversion, "8806").unwrap_or(0.0);
+    let northing = parameter_number(&crs.conversion, "8807").unwrap_or(0.0);
+    Some(Conversion {
+        identified: Identified::named("unknown"),
+        method: OperationMethod::named_code(
+            "Mercator (variant B)".to_owned(),
+            "EPSG".to_owned(),
+            "9805".to_owned(),
+        ),
+        parameters: vec![
+            measure_parameter("Latitude of 1st standard parallel", "8823", latitude, UnitOfMeasure::degree()),
+            measure_parameter("Longitude of natural origin", "8802", longitude, UnitOfMeasure::degree()),
+            measure_parameter("False easting", "8806", easting, UnitOfMeasure::metre()),
+            measure_parameter("False northing", "8807", northing, UnitOfMeasure::metre()),
+        ],
+        version: None,
+    })
+}
+
+fn measure_parameter(name: &str, code: &str, value: f64, unit: UnitOfMeasure) -> Parameter {
+    Parameter {
+        name: name.to_owned(),
+        code_space: "EPSG".to_owned(),
+        code: code.to_owned(),
+        value: ParameterValue::Measure(Measure { value, unit }),
+    }
+}
+
 /// ESRI parameter order, including fixed values such as `X_Scale`.
 fn export_esri_mapped_conversion(conversion: &Conversion, formatter: &mut WktFormatter) -> bool {
+    let azimuth = parameter_number(conversion, "8813").unwrap_or(0.0);
+    let skew = parameter_number(conversion, "8814").unwrap_or(0.0);
+    let parallel = parameter_number(conversion, "8832").unwrap_or(0.0);
+    let origin = parameter_number(conversion, "8801").unwrap_or(0.0);
+    let azimuth_skew = if (azimuth - skew).abs() < 1e-15 {
+        super::esriparam::AzimuthSkew::Same
+    } else {
+        super::esriparam::AzimuthSkew::Different
+    };
+    if let Some((name, params)) = super::esriparam::esri_wkt1_variant(
+        &conversion.method.code,
+        &formatter.esri_object_name,
+        azimuth_skew,
+        parallel,
+        origin,
+    ) {
+        write_esri_parameters(name, params, conversion, formatter);
+        return true;
+    }
     let code = conversion.method.code.parse::<i32>().unwrap_or(0);
     let Some(mapping) = super::esriparam::esri_mapping_for_method(&conversion.method.name, code) else {
         return false;
     };
+    write_esri_parameters(mapping.esri_name, mapping.params, conversion, formatter);
+    true
+}
+
+fn write_esri_parameters(
+    name: &str,
+    params: &[super::esriparam::EsriParam],
+    conversion: &Conversion,
+    formatter: &mut WktFormatter,
+) {
     formatter.start_node("PROJECTION", NodeId::Absent);
-    formatter.add_quoted(mapping.esri_name);
+    formatter.add_quoted(name);
     formatter.end_node();
-    for param in mapping.params {
+    for param in params {
         formatter.start_node("PARAMETER", NodeId::Absent);
         formatter.add_quoted(param.esri_name);
         if let Some(wkt2_name) = param.wkt2_name {
@@ -1680,7 +1857,6 @@ fn export_esri_mapped_conversion(conversion: &Conversion, formatter: &mut WktFor
         }
         formatter.end_node();
     }
-    true
 }
 
 fn esri_parameter_number(

@@ -645,6 +645,48 @@ fn utm_from_proj(tokens: &[(String, String)]) -> Result<Crs, FactoryError> {
     )))
 }
 
+fn geographic_for_projected(
+    tokens: &[(String, String)],
+    proj: &str,
+) -> Result<GeographicCRS, FactoryError> {
+    Ok(GeographicCRS {
+        identified: Identified::named("unknown"),
+        datum: Some(datum_for_projected(tokens, proj)?),
+        ensemble: None,
+        coordinate_system: EllipsoidalCS {
+            identified: Identified::default(),
+            axes: vec![
+                geographic_axis('e', UnitOfMeasure::degree())?,
+                geographic_axis('n', UnitOfMeasure::degree())?,
+            ],
+        },
+        implicit_cs: true,
+    })
+}
+
+fn datum_for_projected(
+    tokens: &[(String, String)],
+    proj: &str,
+) -> Result<GeodeticReferenceFrame, FactoryError> {
+    let bare = token(tokens, "datum").is_empty()
+        && token(tokens, "ellps").is_empty()
+        && token(tokens, "a").is_empty()
+        && token(tokens, "b").is_empty()
+        && token(tokens, "rf").is_empty();
+    if bare && (proj == "krovak" || proj == "mod_krovak") {
+        return Ok(GeodeticReferenceFrame::create(
+            "Unknown based on Bessel 1841 ellipsoid",
+            Ellipsoid::create_flattened_sphere("Bessel 1841", 6_377_397.155, 299.152_812_8),
+            PrimeMeridian::greenwich(),
+        ));
+    }
+    match datum_from_proj(tokens) {
+        Ok(datum) => Ok(datum),
+        Err(_) if bare => Ok(GeodeticReferenceFrame::epsg_6326()),
+        Err(error) => Err(error),
+    }
+}
+
 fn geographic_base(tokens: &[(String, String)]) -> Result<GeographicCRS, FactoryError> {
     Ok(GeographicCRS {
         identified: Identified::named("unknown"),
@@ -700,7 +742,7 @@ fn projected_from_proj(tokens: &[(String, String)], proj: &str) -> Result<Crs, F
     let method = projection_method(proj, tokens).ok_or_else(|| {
         FactoryError::Invalid(format!("unknown +proj={proj} cannot be imported as a CRS"))
     })?;
-    let geographic = geographic_base(tokens)?;
+    let geographic = geographic_for_projected(tokens, proj)?;
     let linear = linear_unit_from_proj(tokens);
     let mut parameters = Vec::new();
     for param in method.params {
@@ -728,8 +770,10 @@ fn projected_from_proj(tokens: &[(String, String)], proj: &str) -> Result<Crs, F
         parameters,
         version: None,
     };
+    let title = token(tokens, "title");
+    let name = if title.is_empty() { "unknown" } else { title };
     let mut crs = ProjectedCRS::create(
-        "unknown",
+        name,
         GeodeticCRS::Geographic(geographic),
         conversion,
         CartesianCS::create_easting_northing(linear),
@@ -754,6 +798,20 @@ fn projection_method(
             return super::parammap::method_by_code(9812);
         }
         return super::parammap::method_by_code(9815);
+    }
+    if proj == "stere" {
+        let latitude = token(tokens, "lat_0").parse::<f64>().unwrap_or(0.0);
+        if (latitude.abs() - 90.0).abs() < 1e-10 {
+            let scale = {
+                let k = token(tokens, "k");
+                if k.is_empty() { token(tokens, "k_0") } else { k }
+            };
+            let parallel = token(tokens, "lat_ts");
+            if !parallel.is_empty() && (scale.is_empty() || scale.parse::<f64>().ok() == Some(1.0)) {
+                return super::parammap::method_by_code(9829);
+            }
+            return super::parammap::method_by_code(9810);
+        }
     }
     if proj == "lcc" {
         let lat_0 = token(tokens, "lat_0");
@@ -882,17 +940,74 @@ fn krovak_default(epsg_code: i32) -> Option<f64> {
 }
 
 fn proj_tokens(definition: &str) -> Vec<(String, String)> {
-    definition
-        .split_whitespace()
-        .filter_map(|raw| {
-            let raw = raw.trim_start_matches('+');
-            if raw.is_empty() {
-                return None;
-            }
-            let (key, value) = raw.split_once('=').unwrap_or((raw, ""));
-            Some((key.to_owned(), value.to_owned()))
-        })
-        .collect()
+    let definition = quote_title(definition);
+    let chars: Vec<char> = definition.chars().collect();
+    let mut tokens = Vec::new();
+    let mut index = 0;
+    while index < chars.len() {
+        while index < chars.len() && chars[index].is_whitespace() {
+            index += 1;
+        }
+        if index >= chars.len() {
+            break;
+        }
+        if chars[index] == '+' {
+            index += 1;
+        }
+        let start = index;
+        while index < chars.len() && chars[index] != '=' && !chars[index].is_whitespace() {
+            index += 1;
+        }
+        let key: String = chars[start..index].iter().collect();
+        if key.is_empty() {
+            continue;
+        }
+        if index < chars.len() && chars[index] == '=' {
+            index += 1;
+            let value = if index < chars.len() && chars[index] == '"' {
+                index += 1;
+                let value_start = index;
+                while index < chars.len() && chars[index] != '"' {
+                    index += 1;
+                }
+                let value: String = chars[value_start..index].iter().collect();
+                if index < chars.len() && chars[index] == '"' {
+                    index += 1;
+                }
+                value
+            } else {
+                let value_start = index;
+                while index < chars.len() && !chars[index].is_whitespace() {
+                    index += 1;
+                }
+                chars[value_start..index].iter().collect()
+            };
+            tokens.push((key, value));
+        } else {
+            tokens.push((key, String::new()));
+        }
+    }
+    tokens
+}
+
+/// `+title=my Plate carree +proj=eqc` keeps the words up to the next `+`.
+fn quote_title(definition: &str) -> String {
+    let trimmed = definition.trim_start();
+    let Some(after) = trimmed.strip_prefix("+title=") else {
+        return definition.to_owned();
+    };
+    if after.starts_with('"') {
+        return definition.to_owned();
+    }
+    let Some(plus) = after.find(" +") else {
+        return definition.to_owned();
+    };
+    if !after[..plus].contains(' ') {
+        return definition.to_owned();
+    }
+    let title = &after[..plus];
+    let tail = &after[plus..];
+    format!("+title=\"{title}\"{tail}")
 }
 
 fn token<'a>(tokens: &'a [(String, String)], key: &str) -> &'a str {

@@ -7,32 +7,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_crs.cpp
 
-- `crs.projectedCRS_identify_wrong_auth_name_case`
-- `crs.mercator_1SP_as_WKT1_ESRI`
-- `crs.Plate_Carree_as_WKT1_ESRI`
-- `crs.Equidistant_Cylindrical_as_WKT1_ESRI`
-- `crs.Hotine_Oblique_Mercator_Azimuth_Natural_Origin_as_WKT1_ESRI`
-- `crs.Rectified_Skew_Orthomorphic_Natural_Origin_as_WKT1_ESRI`
-- `crs.Hotine_Oblique_Mercator_Azimuth_Center_as_WKT1_ESRI`
-- `crs.Rectified_Skew_Orthomorphic_Center_as_WKT1_ESRI`
-- `crs.Gauss_Kruger_as_WKT1_ESRI`
-- `crs.Stereographic_North_Pole_as_WKT1_ESRI`
-- `crs.Stereographic_South_Pole_as_WKT1_ESRI`
-- `crs.Krovak_North_Orientated_as_WKT1_ESRI`
-- `crs.Krovak_as_WKT1_ESRI`
-- `crs.LCC_1SP_as_WKT1_ESRI`
-- `crs.LCC_2SP_as_WKT1_ESRI`
-- `crs.ESRI_WKT1_to_ESRI_WKT1`
-- `datum.cs_with_MERIDIAN`
-- `crs.scope_area_bbox_remark`
-- `crs.usage`
-- `crs.multiple_ID`
-- `crs.verticalCRS_as_WKT2`
-- `crs.verticalCRS_as_WKT1_GDAL`
-- `crs.verticalCRS_as_WKT1_ESRI`
-- `crs.verticalCRS_as_WKT1_ESRI_context`
-- `crs.verticalCRS_down_as_WKT1_ESRI`
-- `crs.verticalCRS_ESRI_115834_as_WKT1_ESRI_with_database`
 - `crs.verticalCRS_identify_db`
 - `crs.verticalCRS_datum_ensemble`
 - `crs.VerticalCRS_ensemble_exception_in_create`

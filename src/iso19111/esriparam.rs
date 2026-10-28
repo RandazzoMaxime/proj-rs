@@ -278,6 +278,13 @@ const DOUBLE_STEREO: &[EsriParam] = &[
     },
 ];
 
+const MERCATOR: &[EsriParam] = &[
+    EsriParam { esri_name: "False_Easting", wkt2_name: Some("False easting"), epsg_code: 8806, fixed_value: "0.0", is_fixed_value: false },
+    EsriParam { esri_name: "False_Northing", wkt2_name: Some("False northing"), epsg_code: 8807, fixed_value: "0.0", is_fixed_value: false },
+    EsriParam { esri_name: "Central_Meridian", wkt2_name: Some("Longitude of natural origin"), epsg_code: 8802, fixed_value: "0.0", is_fixed_value: false },
+    EsriParam { esri_name: "Standard_Parallel_1", wkt2_name: Some("Latitude of 1st standard parallel"), epsg_code: 8823, fixed_value: "0.0", is_fixed_value: false },
+];
+
 const KROVAK_ALT1: &[EsriParam] = &[
     EsriParam {
         esri_name: "False_Easting",
@@ -426,6 +433,12 @@ const KROVAK_ALT2: &[EsriParam] = &[
 
 static ESRI_METHODS: &[EsriMethod] = &[
     EsriMethod {
+        esri_name: "Mercator",
+        wkt2_name: "Mercator (variant B)",
+        epsg_code: 9805,
+        params: MERCATOR,
+    },
+    EsriMethod {
         esri_name: "Lambert_Conformal_Conic",
         wkt2_name: "Lambert Conic Conformal (1SP)",
         epsg_code: 9801,
@@ -536,6 +549,101 @@ pub(crate) fn select_esri_mapping(
         }
     }
     chosen
+}
+
+const PLATE_CARREE: &[EsriParam] = &[
+    EsriParam { esri_name: "False_Easting", wkt2_name: Some("False easting"), epsg_code: 8806, fixed_value: "0.0", is_fixed_value: false },
+    EsriParam { esri_name: "False_Northing", wkt2_name: Some("False northing"), epsg_code: 8807, fixed_value: "0.0", is_fixed_value: false },
+    EsriParam { esri_name: "Central_Meridian", wkt2_name: Some("Longitude of natural origin"), epsg_code: 8802, fixed_value: "0.0", is_fixed_value: false },
+];
+
+const EQUIDISTANT_CYLINDRICAL: &[EsriParam] = &[
+    EsriParam { esri_name: "False_Easting", wkt2_name: Some("False easting"), epsg_code: 8806, fixed_value: "0.0", is_fixed_value: false },
+    EsriParam { esri_name: "False_Northing", wkt2_name: Some("False northing"), epsg_code: 8807, fixed_value: "0.0", is_fixed_value: false },
+    EsriParam { esri_name: "Central_Meridian", wkt2_name: Some("Longitude of natural origin"), epsg_code: 8802, fixed_value: "0.0", is_fixed_value: false },
+    EsriParam { esri_name: "Standard_Parallel_1", wkt2_name: Some("Latitude of 1st standard parallel"), epsg_code: 8823, fixed_value: "0.0", is_fixed_value: false },
+];
+
+const HOTINE_NATURAL: &[EsriParam] = &[
+    EsriParam { esri_name: "False_Easting", wkt2_name: Some("False easting"), epsg_code: 8806, fixed_value: "0.0", is_fixed_value: false },
+    EsriParam { esri_name: "False_Northing", wkt2_name: Some("False northing"), epsg_code: 8807, fixed_value: "0.0", is_fixed_value: false },
+    EsriParam { esri_name: "Scale_Factor", wkt2_name: Some("Scale factor at projection centre"), epsg_code: 8815, fixed_value: "0.0", is_fixed_value: false },
+    EsriParam { esri_name: "Azimuth", wkt2_name: Some("Azimuth at projection centre"), epsg_code: 8813, fixed_value: "0.0", is_fixed_value: false },
+    EsriParam { esri_name: "Longitude_Of_Center", wkt2_name: Some("Longitude of projection centre"), epsg_code: 8812, fixed_value: "0.0", is_fixed_value: false },
+    EsriParam { esri_name: "Latitude_Of_Center", wkt2_name: Some("Latitude of projection centre"), epsg_code: 8811, fixed_value: "0.0", is_fixed_value: false },
+];
+
+const HOTINE_CENTER: &[EsriParam] = &[
+    EsriParam { esri_name: "False_Easting", wkt2_name: Some("Easting at projection centre"), epsg_code: 8816, fixed_value: "0.0", is_fixed_value: false },
+    EsriParam { esri_name: "False_Northing", wkt2_name: Some("Northing at projection centre"), epsg_code: 8817, fixed_value: "0.0", is_fixed_value: false },
+    EsriParam { esri_name: "Scale_Factor", wkt2_name: Some("Scale factor at projection centre"), epsg_code: 8815, fixed_value: "0.0", is_fixed_value: false },
+    EsriParam { esri_name: "Azimuth", wkt2_name: Some("Azimuth at projection centre"), epsg_code: 8813, fixed_value: "0.0", is_fixed_value: false },
+    EsriParam { esri_name: "Longitude_Of_Center", wkt2_name: Some("Longitude of projection centre"), epsg_code: 8812, fixed_value: "0.0", is_fixed_value: false },
+    EsriParam { esri_name: "Latitude_Of_Center", wkt2_name: Some("Latitude of projection centre"), epsg_code: 8811, fixed_value: "0.0", is_fixed_value: false },
+];
+
+const RSO_NATURAL: &[EsriParam] = &[
+    EsriParam { esri_name: "False_Easting", wkt2_name: Some("False easting"), epsg_code: 8806, fixed_value: "0.0", is_fixed_value: false },
+    EsriParam { esri_name: "False_Northing", wkt2_name: Some("False northing"), epsg_code: 8807, fixed_value: "0.0", is_fixed_value: false },
+    EsriParam { esri_name: "Scale_Factor", wkt2_name: Some("Scale factor at projection centre"), epsg_code: 8815, fixed_value: "0.0", is_fixed_value: false },
+    EsriParam { esri_name: "Azimuth", wkt2_name: Some("Azimuth at projection centre"), epsg_code: 8813, fixed_value: "0.0", is_fixed_value: false },
+    EsriParam { esri_name: "Longitude_Of_Center", wkt2_name: Some("Longitude of projection centre"), epsg_code: 8812, fixed_value: "0.0", is_fixed_value: false },
+    EsriParam { esri_name: "Latitude_Of_Center", wkt2_name: Some("Latitude of projection centre"), epsg_code: 8811, fixed_value: "0.0", is_fixed_value: false },
+    EsriParam { esri_name: "XY_Plane_Rotation", wkt2_name: Some("Angle from Rectified to Skew Grid"), epsg_code: 8814, fixed_value: "0.0", is_fixed_value: false },
+];
+
+const RSO_CENTER: &[EsriParam] = &[
+    EsriParam { esri_name: "False_Easting", wkt2_name: Some("Easting at projection centre"), epsg_code: 8816, fixed_value: "0.0", is_fixed_value: false },
+    EsriParam { esri_name: "False_Northing", wkt2_name: Some("Northing at projection centre"), epsg_code: 8817, fixed_value: "0.0", is_fixed_value: false },
+    EsriParam { esri_name: "Scale_Factor", wkt2_name: Some("Scale factor at projection centre"), epsg_code: 8815, fixed_value: "0.0", is_fixed_value: false },
+    EsriParam { esri_name: "Azimuth", wkt2_name: Some("Azimuth at projection centre"), epsg_code: 8813, fixed_value: "0.0", is_fixed_value: false },
+    EsriParam { esri_name: "Longitude_Of_Center", wkt2_name: Some("Longitude of projection centre"), epsg_code: 8812, fixed_value: "0.0", is_fixed_value: false },
+    EsriParam { esri_name: "Latitude_Of_Center", wkt2_name: Some("Latitude of projection centre"), epsg_code: 8811, fixed_value: "0.0", is_fixed_value: false },
+    EsriParam { esri_name: "XY_Plane_Rotation", wkt2_name: Some("Angle from Rectified to Skew Grid"), epsg_code: 8814, fixed_value: "0.0", is_fixed_value: false },
+];
+
+const STEREO_POLE: &[EsriParam] = &[
+    EsriParam { esri_name: "False_Easting", wkt2_name: Some("False easting"), epsg_code: 8806, fixed_value: "0.0", is_fixed_value: false },
+    EsriParam { esri_name: "False_Northing", wkt2_name: Some("False northing"), epsg_code: 8807, fixed_value: "0.0", is_fixed_value: false },
+    EsriParam { esri_name: "Central_Meridian", wkt2_name: Some("Longitude of origin"), epsg_code: 8833, fixed_value: "0.0", is_fixed_value: false },
+    EsriParam { esri_name: "Standard_Parallel_1", wkt2_name: Some("Latitude of standard parallel"), epsg_code: 8832, fixed_value: "0.0", is_fixed_value: false },
+];
+
+/// Whether Hotine azimuth and the rectified-to-skew angle are the same value.
+pub(crate) enum AzimuthSkew {
+    /// `|azimuth - skew| < 1e-15`.
+    Same,
+    /// The two angles differ, so ESRI uses a rectified skew method.
+    Different,
+}
+
+/// ESRI method name chosen from the conversion and the projected CRS name.
+pub(crate) fn esri_wkt1_variant(
+    method_code: &str,
+    crs_name: &str,
+    azimuth_skew: AzimuthSkew,
+    standard_parallel: f64,
+    natural_origin: f64,
+) -> Option<(&'static str, &'static [EsriParam])> {
+    let plate = crs_name.to_ascii_lowercase().contains("plate carree");
+    let same_azimuth = matches!(azimuth_skew, AzimuthSkew::Same);
+    match method_code {
+        "1028" | "1029" if plate && natural_origin.abs() < 1e-15 => {
+            Some(("Plate_Carree", PLATE_CARREE))
+        }
+        "1028" | "1029" => Some(("Equidistant_Cylindrical", EQUIDISTANT_CYLINDRICAL)),
+        "9812" if same_azimuth => {
+            Some(("Hotine_Oblique_Mercator_Azimuth_Natural_Origin", HOTINE_NATURAL))
+        }
+        "9812" => Some(("Rectified_Skew_Orthomorphic_Natural_Origin", RSO_NATURAL)),
+        "9815" if same_azimuth => {
+            Some(("Hotine_Oblique_Mercator_Azimuth_Center", HOTINE_CENTER))
+        }
+        "9815" => Some(("Rectified_Skew_Orthomorphic_Center", RSO_CENTER)),
+        "9829" if standard_parallel > 0.0 => Some(("Stereographic_North_Pole", STEREO_POLE)),
+        "9829" => Some(("Stereographic_South_Pole", STEREO_POLE)),
+        _ => None,
+    }
 }
 
 fn find_value(values: &[(String, f64)], name: &str) -> Option<f64> {

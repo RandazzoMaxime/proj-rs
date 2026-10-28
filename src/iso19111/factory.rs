@@ -371,7 +371,7 @@ impl DatabaseContext {
         let table = match table {
             "geographic_2D_crs" | "geographic_3D_crs" | "geodetic_crs" => "geodetic_crs",
             "geodetic_datum" | "ellipsoid" | "prime_meridian" | "projected_crs"
-            | "vertical_datum" => table,
+            | "vertical_datum" | "vertical_crs" => table,
             _ => return false,
         };
         let sql = format!("SELECT COUNT(*) FROM \"{table}\" WHERE name = ? AND auth_name = 'ESRI'");
@@ -782,6 +782,15 @@ fn trim_zeros(text: &str) -> String {
     trimmed
 }
 
+fn canonical_authority(authority: String) -> String {
+    for known in ["EPSG", "ESRI", "PROJ"] {
+        if authority.eq_ignore_ascii_case(known) {
+            return known.to_owned();
+        }
+    }
+    authority
+}
+
 fn canonical_object_name(name: &str) -> String {
     name.chars()
         .filter(|ch| !matches!(ch, ' ' | '_' | '-' | '/' | '(' | ')' | '.' | '&' | ','))
@@ -870,11 +879,14 @@ pub struct AuthorityFactory {
 
 impl AuthorityFactory {
     /// Factory for `authority`. An empty authority does not filter operation searches.
+    ///
+    /// `EPSG`, `ESRI`, and `PROJ` are matched without regard to case, and the
+    /// stored name is the canonical spelling. `Esri` is therefore `ESRI`.
     #[must_use]
     pub fn create(db: &DatabaseContext, authority: impl Into<String>) -> Self {
         Self {
             db: db.clone(),
-            authority: authority.into(),
+            authority: canonical_authority(authority.into()),
         }
     }
 
@@ -3743,6 +3755,11 @@ fn domain_from_extent(
         west: bbox.1,
         north: bbox.2,
         east: bbox.3,
+        vertical_min: None,
+        vertical_max: None,
+        vertical_unit: None,
+        temporal_start: None,
+        temporal_stop: None,
     })
 }
 

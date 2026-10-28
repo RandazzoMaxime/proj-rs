@@ -115,6 +115,11 @@ pub struct ObjectDomain {
     pub(crate) west: Option<f64>,
     pub(crate) north: Option<f64>,
     pub(crate) east: Option<f64>,
+    pub(crate) vertical_min: Option<f64>,
+    pub(crate) vertical_max: Option<f64>,
+    pub(crate) vertical_unit: Option<UnitOfMeasure>,
+    pub(crate) temporal_start: Option<String>,
+    pub(crate) temporal_stop: Option<String>,
 }
 
 impl ObjectDomain {
@@ -160,6 +165,36 @@ impl ObjectDomain {
         self.south
     }
 
+    /// Lower bound of the vertical extent, in [`Self::vertical_unit`].
+    #[must_use]
+    pub fn vertical_minimum(&self) -> Option<f64> {
+        self.vertical_min
+    }
+
+    /// Upper bound of the vertical extent, in [`Self::vertical_unit`].
+    #[must_use]
+    pub fn vertical_maximum(&self) -> Option<f64> {
+        self.vertical_max
+    }
+
+    /// Unit of the vertical extent. PROJ uses the metre when WKT omits one.
+    #[must_use]
+    pub fn vertical_unit(&self) -> Option<&UnitOfMeasure> {
+        self.vertical_unit.as_ref()
+    }
+
+    /// Start of the temporal extent.
+    #[must_use]
+    pub fn temporal_start(&self) -> Option<&str> {
+        self.temporal_start.as_deref()
+    }
+
+    /// End of the temporal extent.
+    #[must_use]
+    pub fn temporal_stop(&self) -> Option<&str> {
+        self.temporal_stop.as_deref()
+    }
+
     /// Same description and bounding box. Scope is not part of an extent.
     #[must_use]
     pub fn is_equivalent_to(&self, other: &Self) -> bool {
@@ -168,6 +203,10 @@ impl ObjectDomain {
             && same_optional(self.west, other.west)
             && same_optional(self.north, other.north)
             && same_optional(self.east, other.east)
+            && same_optional(self.vertical_min, other.vertical_min)
+            && same_optional(self.vertical_max, other.vertical_max)
+            && self.temporal_start == other.temporal_start
+            && self.temporal_stop == other.temporal_stop
     }
 }
 
@@ -221,7 +260,7 @@ impl Default for Identified {
 }
 
 /// Linear, angular, scale, or time unit, with its factor to the SI unit.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct UnitOfMeasure {
     pub(crate) name: String,
     pub(crate) factor: f64,
@@ -836,6 +875,15 @@ impl VerticalReferenceFrame {
         self.identified.anchor_epoch
     }
 
+    /// Attach one authority identifier.
+    #[must_use]
+    pub fn with_identifier(mut self, code_space: &str, code: &str) -> Self {
+        self.identified
+            .identifiers
+            .push(Identifier::new(code_space, code));
+        self
+    }
+
     /// Deformation model name of a dynamic vertical datum.
     #[must_use]
     pub fn deformation_model(&self) -> Option<&str> {
@@ -1044,6 +1092,14 @@ pub struct Meridian {
 }
 
 impl Meridian {
+    /// Meridian whose longitude is `degrees` east of Greenwich.
+    #[must_use]
+    pub fn create(degrees: f64) -> Self {
+        Self {
+            longitude: Measure::angle(degrees),
+        }
+    }
+
     /// Longitude of the meridian.
     #[must_use]
     pub fn longitude(&self) -> &Measure {
@@ -1109,6 +1165,13 @@ impl Axis {
         unit: UnitOfMeasure,
     ) -> Self {
         Self::new(name, abbreviation, direction, unit)
+    }
+
+    /// Attach the meridian used by a `North along` or `South along` axis.
+    #[must_use]
+    pub fn with_meridian(mut self, meridian: Meridian) -> Self {
+        self.meridian = Some(meridian);
+        self
     }
 
     pub(crate) fn new(
@@ -1277,6 +1340,15 @@ pub struct VerticalCS {
 }
 
 impl VerticalCS {
+    /// Gravity-related height, abbreviation `H`, direction `up`.
+    #[must_use]
+    pub fn create_gravity_related_height(unit: UnitOfMeasure) -> Self {
+        Self {
+            identified: Identified::default(),
+            axis: Axis::new("Gravity-related height", "H", "up", unit),
+        }
+    }
+
     /// The single axis.
     #[must_use]
     pub fn axis(&self) -> &Axis {
@@ -2500,6 +2572,31 @@ impl VerticalCRS {
     #[must_use]
     pub fn domains(&self) -> &[ObjectDomain] {
         &self.identified.domains
+    }
+
+    /// Vertical CRS bound to one vertical datum.
+    #[must_use]
+    pub fn create(
+        name: impl Into<String>,
+        datum: VerticalReferenceFrame,
+        coordinate_system: VerticalCS,
+    ) -> Self {
+        Self {
+            identified: Identified::named(name),
+            datum: Some(datum),
+            ensemble: None,
+            coordinate_system,
+            geoid_models: Vec::new(),
+        }
+    }
+
+    /// Attach one authority identifier.
+    #[must_use]
+    pub fn with_identifier(mut self, code_space: &str, code: &str) -> Self {
+        self.identified
+            .identifiers
+            .push(Identifier::new(code_space, code));
+        self
     }
 }
 

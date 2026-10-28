@@ -265,6 +265,12 @@ fn as_f64(node: &WktNode) -> Result<f64, FactoryError> {
         .map_err(|_| invalid(format!("not a number: {text}")))
 }
 
+struct ParsedVerticalExtent {
+    minimum: f64,
+    maximum: f64,
+    unit: UnitOfMeasure,
+}
+
 struct Props {
     name: String,
     identifiers: Vec<Identifier>,
@@ -870,7 +876,14 @@ impl WktParser {
         let scope = node.child(&["SCOPE"]);
         let area = node.child(&["AREA"]);
         let bbox = node.child(&["BBOX"]);
-        if scope.is_none() && area.is_none() && bbox.is_none() {
+        let vertical = node.child(&["VERTICALEXTENT"]);
+        let temporal = node.child(&["TIMEEXTENT"]);
+        if scope.is_none()
+            && area.is_none()
+            && bbox.is_none()
+            && vertical.is_none()
+            && temporal.is_none()
+        {
             return Ok(None);
         }
         let scope = scope
@@ -899,6 +912,18 @@ impl WktParser {
         } else {
             (None, None, None, None)
         };
+        // PROJ attaches vertical and temporal extents only when AREA or BBOX is present.
+        let has_extent = area.is_some() || bbox.is_some();
+        let vertical = if has_extent {
+            self.vertical_extent(vertical)?
+        } else {
+            None
+        };
+        let (temporal_start, temporal_stop) = if has_extent {
+            Self::temporal_extent(temporal)?
+        } else {
+            (None, None)
+        };
         Ok(Some(ObjectDomain {
             scope,
             area,
@@ -906,8 +931,56 @@ impl WktParser {
             west,
             north,
             east,
+            vertical_min: vertical.as_ref().map(|extent| extent.minimum),
+            vertical_max: vertical.as_ref().map(|extent| extent.maximum),
+            vertical_unit: vertical.map(|extent| extent.unit),
+            temporal_start,
+            temporal_stop,
         }))
     }
+
+    fn vertical_extent(
+        &mut self,
+        node: Option<&WktNode>,
+    ) -> Result<Option<ParsedVerticalExtent>, FactoryError> {
+        let Some(node) = node else {
+            return Ok(None);
+        };
+        if node.children.len() != 2 && node.children.len() != 3 {
+            return Err(invalid(
+                "not the required number of children in VERTICALEXTENT node",
+            ));
+        }
+        let minimum = as_f64(&node.children[0])?;
+        let maximum = as_f64(&node.children[1])?;
+        let unit = if node.children.len() == 3 {
+            self.build_unit(&node.children[2], UnitKind::Linear)?
+        } else {
+            UnitOfMeasure::metre()
+        };
+        Ok(Some(ParsedVerticalExtent {
+            minimum,
+            maximum,
+            unit,
+        }))
+    }
+
+    fn temporal_extent(
+        node: Option<&WktNode>,
+    ) -> Result<(Option<String>, Option<String>), FactoryError> {
+    let Some(node) = node else {
+        return Ok((None, None));
+    };
+    if node.children.len() != 2 {
+        return Err(invalid(
+            "not the required number of children in TIMEEXTENT node",
+        ));
+    }
+    Ok((
+        Some(strip_quotes(&node.children[0])),
+        Some(strip_quotes(&node.children[1])),
+    ))
+}
 
     fn build_unit(
         &mut self,
