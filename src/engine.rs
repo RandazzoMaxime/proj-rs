@@ -28,6 +28,10 @@ mod datum_ops;
 #[path = "projections/nkg.rs"]
 mod nkg;
 
+// `+towgs84`, `+nadgrids`, `+geoidgrids`, and `+axis` around a classic step.
+#[path = "projections/legacy.rs"]
+mod legacy;
+
 const EPS_LAT: f64 = 1e-12;
 
 /// Four-dimensional coordinate. Angular axes are radians inside an operation.
@@ -157,6 +161,11 @@ impl Params {
                         return Err(CreateError::IllegalValue("parameter"));
                     }
                     push_first(&mut items, key, Some(value.to_owned()));
+                } else if comma_continuation(&items, token) {
+                    // `towgs84 = 1, 2, 3` survives as separate tokens after `=`.
+                    if let Some((_, Some(value))) = items.last_mut() {
+                        value.push_str(token);
+                    }
                 } else {
                     push_first(&mut items, token, None);
                 }
@@ -177,6 +186,16 @@ impl Params {
         self.items
             .iter()
             .map(|(key, value)| (key.as_str(), value.as_deref()))
+    }
+
+    fn insert_missing(&mut self, key: &str, value: Option<String>) {
+        if !self.flag(key) {
+            self.items.push((key.to_owned(), value));
+        }
+    }
+
+    fn remove(&mut self, key: &str) {
+        self.items.retain(|(name, _)| name != key);
     }
 
     /// The key is present, with or without a value.
@@ -258,6 +277,18 @@ impl Params {
     fn keys(&self) -> impl Iterator<Item = &str> {
         self.items.iter().map(|(key, _)| key.as_str())
     }
+}
+
+fn comma_continuation(items: &[(String, Option<String>)], token: &str) -> bool {
+    let Some((_, Some(value))) = items.last() else {
+        return false;
+    };
+    if !value.ends_with(',') {
+        return false;
+    }
+    token.starts_with('-')
+        || token.starts_with('+')
+        || token.chars().next().is_some_and(|ch| ch.is_ascii_digit())
 }
 
 fn shrink_equals(input: &str) -> String {
@@ -581,12 +612,95 @@ fn latitude_radius(
     Ok(radius)
 }
 
+enum DatumShift {
+    /// Ellipsoid only. WGS84 and NAD83 stay this way: a zero `towgs84` on
+    /// GRS80 would otherwise run a cartesian conversion.
+    None,
+    Towgs84(&'static str),
+    Nadgrids(&'static str),
+}
+
+fn datum_record(name: &str) -> Option<(&'static str, DatumShift)> {
+    Some(match name {
+        "WGS84" => ("WGS84", DatumShift::None),
+        "NAD83" | "GRS80" => ("GRS80", DatumShift::None),
+        "GGRS87" => ("GRS80", DatumShift::Towgs84("-199.87,74.79,246.62")),
+        "NAD27" => (
+            "clrk66",
+            DatumShift::Nadgrids("@conus,@alaska,@ntv2_0.gsb,@ntv1_can.dat"),
+        ),
+        "potsdam" => ("bessel", DatumShift::Nadgrids("@BETA2007.gsb")),
+        "carthage" => ("clrk80ign", DatumShift::Towgs84("-263.0,6.0,431.0")),
+        "hermannskogel" => (
+            "bessel",
+            DatumShift::Towgs84("577.326,90.129,463.919,5.137,1.474,5.297,2.4232"),
+        ),
+        "ire65" => (
+            "mod_airy",
+            DatumShift::Towgs84("482.530,-130.596,564.557,-1.042,-0.214,-0.631,8.15"),
+        ),
+        "nzgd49" => (
+            "intl",
+            DatumShift::Towgs84("59.47,-5.04,187.44,0.47,-0.1,1.024,-4.5993"),
+        ),
+        "OSGB36" => (
+            "airy",
+            DatumShift::Towgs84("446.448,-125.157,542.060,0.1502,0.2470,0.8421,-20.4894"),
+        ),
+        _ => return None,
+    })
+}
+
 fn datum_ellipsoid(name: &str) -> Result<Ellipsoid, CreateError> {
-    match name {
-        "WGS84" => Ok(Ellipsoid::wgs84()),
-        "NAD83" | "GRS80" => Ok(Ellipsoid::grs80()),
-        _ => Err(CreateError::Unsupported("datum shift")),
+    let Some((ellps, _)) = datum_record(name) else {
+        return Err(CreateError::IllegalValue("datum"));
+    };
+    named_ellipsoid(ellps)
+}
+
+fn prepare_params(params: &mut Params) -> Result<(), CreateError> {
+    expand_init(params)?;
+    expand_datum(params)?;
+    Ok(())
+}
+
+fn expand_init(params: &mut Params) -> Result<(), CreateError> {
+    let Some(spec) = params.text("init").map(str::to_owned) else {
+        return Ok(());
+    };
+    let definition = crate::crs::init_definition(&spec)?;
+    let extra = Params::parse(&definition)?;
+    for (key, value) in extra.items {
+        if key == "no_defs" {
+            continue;
+        }
+        params.insert_missing(&key, value);
     }
+    params.remove("init");
+    Ok(())
+}
+
+fn expand_datum(params: &mut Params) -> Result<(), CreateError> {
+    let Some(name) = params.text("datum").map(str::to_owned) else {
+        return Ok(());
+    };
+    let Some((ellps, shift)) = datum_record(&name) else {
+        return Err(CreateError::IllegalValue("datum"));
+    };
+    if !params.flag("ellps") && !params.flag("a") && !params.flag("R") {
+        params.insert_missing("ellps", Some(ellps.to_owned()));
+    }
+    match shift {
+        DatumShift::None => {}
+        DatumShift::Towgs84(text) if !params.flag("towgs84") && !params.flag("nadgrids") => {
+            params.insert_missing("towgs84", Some(text.to_owned()));
+        }
+        DatumShift::Nadgrids(text) if !params.flag("nadgrids") && !params.flag("towgs84") => {
+            params.insert_missing("nadgrids", Some(text.to_owned()));
+        }
+        DatumShift::Towgs84(_) | DatumShift::Nadgrids(_) => {}
+    }
+    Ok(())
 }
 
 fn named_ellipsoid(name: &str) -> Result<Ellipsoid, CreateError> {
@@ -888,13 +1002,13 @@ impl Operation {
                 step: std::sync::Arc::from(step),
             });
         }
-        let params = Params::parse(definition)?;
+        let mut params = Params::parse(definition)?;
         let name = params.text("proj").unwrap_or("").to_owned();
         if name.is_empty() {
             return Err(if definition.contains("proj=") {
                 CreateError::MissingArgument("proj")
             } else {
-                CreateError::Unsupported("authority string")
+                CreateError::IllegalValue("proj")
             });
         }
         if name == "pipeline" {
@@ -902,9 +1016,13 @@ impl Operation {
                 step: std::sync::Arc::from(build_pipeline(definition)?),
             });
         }
+        prepare_params(&mut params)?;
+        let name = params.text("proj").unwrap_or("").to_owned();
+        if name.is_empty() {
+            return Err(CreateError::MissingArgument("proj"));
+        }
         let frame = Frame::from_params(&params)?;
-        let step = build_step(&name, &params, &frame)?;
-        check_keys(&name, &params)?;
+        let step = finish_step(&name, &params, &frame)?;
         Ok(Self { step })
     }
 
@@ -1007,6 +1125,16 @@ fn catalogue() -> &'static [Built] {
 
 type SharedStep = std::sync::Arc<dyn Step>;
 
+fn finish_step(name: &str, params: &Params, frame: &Frame) -> Result<SharedStep, CreateError> {
+    let inner = build_step(name, params, frame)?;
+    check_keys(name, params)?;
+    if legacy::applies(name, params) {
+        legacy::wrap(inner, params, frame)
+    } else {
+        Ok(inner)
+    }
+}
+
 fn build_step(name: &str, params: &Params, frame: &Frame) -> Result<SharedStep, CreateError> {
     if let Some(spec) = catalogue().iter().find(|spec| spec.name == name) {
         return Ok(std::sync::Arc::from((spec.build)(params, frame)?));
@@ -1081,6 +1209,10 @@ const GLOBAL_KEYS: &[&str] = &[
     "inv",
     "omit_fwd",
     "omit_inv",
+    "step",
+    "towgs84",
+    "nadgrids",
+    "geoidgrids",
 ];
 
 const CATALOGUE: &[Built] = &[
@@ -1711,7 +1843,8 @@ where
     I: Fn(Projected) -> Result<Geographic, ProjectionError> + Send + Sync,
 {
     fn forward(&self, coord: Coord) -> Result<Coord, TransformError> {
-        let projected = (self.forward_xy)(coord.x, coord.y)?;
+        // `pm=` is subtracted before the kernel, as in `fwd_prepare`.
+        let projected = (self.forward_xy)(coord.x - self.frame.from_greenwich, coord.y)?;
         Ok(Coord {
             x: self.frame.fr_meter * projected.east,
             y: self.frame.fr_meter * projected.north,
@@ -1726,7 +1859,7 @@ where
             north: self.frame.to_meter * coord.y,
         })?;
         Ok(Coord {
-            x: geographic.lon_deg.to_radians(),
+            x: geographic.lon_deg.to_radians() + self.frame.from_greenwich,
             y: geographic.lat_deg.to_radians(),
             z: self.frame.vto_meter * coord.z - self.frame.z0,
             t: coord.t,
@@ -2037,24 +2170,20 @@ fn build_pipeline(definition: &str) -> Result<Pipeline, CreateError> {
                 step_params.items.push((key.clone(), value.clone()));
             }
         }
+        prepare_params(&mut step_params)?;
         let inverted = step_params.flag("inv");
         // Presence, not the value. PROJ's `bomit_fwd` is the same test.
         let omit_fwd = step_params.flag("omit_fwd");
         let omit_inv = step_params.flag("omit_inv");
         let name = step_params.text("proj").unwrap_or("").to_owned();
-        if step_params.flag("init") || step_params.flag("towgs84") || name == "pipeline" {
-            return Err(if name == "pipeline" {
-                CreateError::IllegalValue("pipeline")
-            } else {
-                CreateError::Unsupported("init database")
-            });
+        if name == "pipeline" {
+            return Err(CreateError::IllegalValue("pipeline"));
         }
         if name.is_empty() {
             return Err(CreateError::MissingArgument("proj"));
         }
         let step_frame = Frame::from_params(&step_params)?;
-        let step = build_step(&name, &step_params, &step_frame)?;
-        check_keys(&name, &step_params)?;
+        let step = finish_step(&name, &step_params, &step_frame)?;
         steps.push(PipeStep {
             inverted,
             omit_fwd,
@@ -2258,7 +2387,11 @@ fn assemble_dms(text: &str) -> Option<f64> {
         if let Some((seconds, next)) = take_number(cursor) {
             degrees += seconds.abs() / 3600.0;
             cursor = next.trim_start();
-            if cursor.starts_with('"') || cursor.starts_with('s') || cursor.starts_with('S') {
+            // A lone `S` is south, not the seconds marker. `45.6S` is the gie case.
+            if cursor.starts_with('"')
+                || ((cursor.starts_with('s') || cursor.starts_with('S'))
+                    && hemisphere(cursor).is_none())
+            {
                 cursor = cursor[1..].trim_start();
             }
         }

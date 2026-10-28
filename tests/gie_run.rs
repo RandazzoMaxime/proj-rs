@@ -209,7 +209,11 @@ fn dispatch(
                 state.tolerance = value;
             }
         }
-        "require_grid" => state.skip_rest = true,
+        "require_grid" => {
+            if !grid_present(args) {
+                state.skip_rest = true;
+            }
+        }
         "crs_src" => {
             state.crs_src = args.to_owned();
             open_crs(state);
@@ -561,6 +565,34 @@ fn decorative(line: &str) -> bool {
         return false;
     }
     line.chars().take(5).filter(|ch| *ch == first).count() >= 5
+}
+
+/// Same directories as `gridpath::directories`. A require_grid name may be a
+/// bare filename.
+fn grid_present(name: &str) -> bool {
+    let name = name.trim();
+    if name.is_empty() {
+        return false;
+    }
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let directories = [
+        root.join("data").join("grids"),
+        root.join("tests").join("gie").join("tests"),
+        root.join("data").join("tests"),
+        root.join("tests").join("gie"),
+    ];
+    let file_name = std::path::Path::new(name);
+    for directory in &directories {
+        if directory.join(name).is_file() {
+            return true;
+        }
+        if let Some(bare) = file_name.file_name() {
+            if directory.join(bare).is_file() {
+                return true;
+            }
+        }
+    }
+    file_name.is_file()
 }
 
 fn split_tag(line: &str) -> (String, String) {

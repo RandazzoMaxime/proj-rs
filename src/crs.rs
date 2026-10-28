@@ -3,10 +3,11 @@
 //! EPSG codes are read from the embedded PROJ 9.9.0 `proj.db`. Axis order on
 //! the public boundary is longitude, latitude and easting, northing. A
 //! conversion or datum step is built only when every operation is one this
-//! crate already accepts. A grid, a deformation model, or any other method
-//! returns [`ProjCreateError`] and no coordinate. [`epsg_pipeline`] is the
-//! EPSG-axis form of that rule, including a time-dependent Helmert when the
-//! registered operation is one the Helmert kernel already accepts.
+//! crate already accepts. A grid is applied when its file is on the search
+//! path. A missing grid, a deformation model, or any other method returns
+//! [`ProjCreateError`] and no coordinate. [`epsg_pipeline`] is the EPSG-axis
+//! form of that rule, including a time-dependent Helmert when the registered
+//! operation is one the Helmert kernel already accepts.
 
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
@@ -1081,8 +1082,39 @@ fn real_to_i64(value: f64) -> i64 {
 /// PROJ pipeline from `source` to `target`, both `EPSG:` codes.
 ///
 /// The boolean is true when the destination's first axis is latitude or
-/// northing. A grid, or a method this crate does not build, is
-/// [`CreateError::Unsupported`] and not a coordinate.
+/// northing. A missing grid, or a method this crate does not build, is
+/// [`CreateError::Unsupported`] and not a coordinate. A grid file that is
+/// present is part of the pipeline.
+/// Expand `+init=epsg:CODE` or the one NAD27 state-plane section the gie suite uses.
+///
+/// # Errors
+///
+/// [`CreateError::IllegalValue`] when the section is not a CRS this crate builds.
+pub(crate) fn init_definition(spec: &str) -> Result<String, CreateError> {
+    let spec = spec.trim();
+    if let Some(zone) = spec.strip_prefix("nad27:") {
+        if zone == "3901" {
+            return Ok(
+                "proj=lcc datum=NAD27 lon_0=-81 lat_1=34d58 lat_2=33d46 lat_0=33 x_0=609601.2192024384 y_0=0"
+                    .to_owned(),
+            );
+        }
+        return Err(CreateError::IllegalValue("init"));
+    }
+    let code = spec
+        .strip_prefix("epsg:")
+        .or_else(|| spec.strip_prefix("EPSG:"))
+        .ok_or(CreateError::IllegalValue("init"))?;
+    let code: u32 = code
+        .parse()
+        .map_err(|_| CreateError::IllegalValue("init"))?;
+    match with_db(|connection| load_crs(connection, code)) {
+        Ok(loaded) => Ok(loaded.definition),
+        Err(DbFail::Open(_)) => Err(CreateError::Unsupported("proj.db")),
+        Err(DbFail::Sql(_)) => Err(CreateError::IllegalValue("init")),
+    }
+}
+
 pub(crate) fn epsg_pipeline(source: &str, target: &str) -> Result<(String, bool), CreateError> {
     let source =
         authority_code(source.trim()).ok_or(CreateError::Unsupported("authority string"))?;
@@ -1160,12 +1192,13 @@ fn pipeline_of(
 ) -> Result<(String, bool), rusqlite::Error> {
     let src = bound_of(connection, source)?;
     let dst = bound_of(connection, target)?;
-    let helmert = if same_datum(&src.earth, &dst.earth) {
+    let datum = if same_datum(&src.earth, &dst.earth) {
         None
     } else {
         Some(require_bridge(connection, &src.earth, &dst.earth)?)
     };
-    let steps = assemble(&src, &dst, helmert);
+    let vertical = vertical_step(connection, &src, &dst)?;
+    let steps = assemble(&src, &dst, datum, vertical);
     let text = pipeline_string(&dst.earth, &steps);
     let lat_or_northing_first = dst.swap && !matches!(dst.horizontal, Horizontal::Geocentric);
     Ok((text, lat_or_northing_first))
@@ -1175,6 +1208,13 @@ struct Bound {
     horizontal: Horizontal,
     swap: bool,
     earth: Earth,
+    height: Height,
+}
+
+enum Height {
+    None,
+    Ellipsoidal,
+    Vertical { auth: String, code: String },
 }
 
 enum Horizontal {
@@ -1216,6 +1256,7 @@ fn bound_of(connection: &Connection, code: u32) -> Result<Bound, rusqlite::Error
     match table.as_str() {
         "geodetic_crs" => geodetic_bound(connection, code, &crs_type),
         "projected_crs" => projected_bound(connection, code),
+        "compound_crs" => compound_bound(connection, code),
         _ => Err(unsupported(format!(
             "EPSG:{code} ({crs_type}) is not built"
         ))),
@@ -1246,11 +1287,72 @@ fn geodetic_bound(
         }
     };
     let swap = axis_swap(&axes, plane)?;
+    let height = if crs_type == "geographic 3D" {
+        Height::Ellipsoidal
+    } else {
+        Height::None
+    };
     Ok(Bound {
         horizontal,
         swap,
         earth,
+        height,
     })
+}
+
+fn compound_bound(connection: &Connection, code: u32) -> Result<Bound, rusqlite::Error> {
+    let (horiz_auth, horiz_code, vert_auth, vert_code) = connection.query_row(
+        "SELECT horiz_crs_auth_name, horiz_crs_code, vertical_crs_auth_name, vertical_crs_code
+         FROM compound_crs WHERE auth_name = 'EPSG' AND code = ?1",
+        params![i64::from(code)],
+        |row| {
+            Ok((
+                column_text(row, 0)?,
+                column_text(row, 1)?,
+                column_text(row, 2)?,
+                column_text(row, 3)?,
+            ))
+        },
+    )?;
+    if horiz_auth != "EPSG" || vert_auth != "EPSG" {
+        return Err(unsupported(format!(
+            "EPSG:{code} compound authorities are not built"
+        )));
+    }
+    let horiz = horiz_code
+        .parse::<i64>()
+        .map_err(|_| unsupported(format!("EPSG:{code} horizontal code is not numeric")))?;
+    let mut bound = bound_of(connection, u32_code(horiz)?)?;
+    if !matches!(bound.height, Height::None) {
+        return Err(unsupported(format!(
+            "EPSG:{code} horizontal CRS is not a 2D CRS"
+        )));
+    }
+    require_up(connection, &vert_auth, &vert_code)?;
+    bound.height = Height::Vertical {
+        auth: vert_auth,
+        code: vert_code,
+    };
+    Ok(bound)
+}
+
+fn require_up(connection: &Connection, auth: &str, code: &str) -> Result<(), rusqlite::Error> {
+    let orientation = connection.query_row(
+        "SELECT a.orientation FROM vertical_crs v
+         JOIN axis a
+           ON a.coordinate_system_auth_name = v.coordinate_system_auth_name
+          AND a.coordinate_system_code = v.coordinate_system_code
+         WHERE v.auth_name = ?1 AND v.code = ?2",
+        params![auth, code],
+        |row| column_text(row, 0),
+    )?;
+    if orientation.eq_ignore_ascii_case("up") {
+        Ok(())
+    } else {
+        Err(unsupported(format!(
+            "vertical axis `{orientation}` is not built"
+        )))
+    }
 }
 
 fn projected_bound(connection: &Connection, code: u32) -> Result<Bound, rusqlite::Error> {
@@ -1283,6 +1385,7 @@ fn projected_bound(connection: &Connection, code: u32) -> Result<Bound, rusqlite
             datum_auth: loaded.datum_auth,
             datum_code: loaded.datum_code,
         },
+        height: Height::None,
     })
 }
 
@@ -1385,13 +1488,27 @@ fn same_datum(left: &Earth, right: &Earth) -> bool {
         && left.datum_code == right.datum_code
 }
 
-fn assemble(src: &Bound, dst: &Bound, helmert: Option<String>) -> Vec<String> {
+enum DatumStep {
+    Helmert(String),
+    HorizontalGrid(String),
+}
+
+fn assemble(
+    src: &Bound,
+    dst: &Bound,
+    datum: Option<DatumStep>,
+    vertical: Option<String>,
+) -> Vec<String> {
     let mut steps = Vec::new();
     let src_geocentric = matches!(src.horizontal, Horizontal::Geocentric);
     let dst_geocentric = matches!(dst.horizontal, Horizontal::Geocentric);
     if !src_geocentric {
         push_to_angular(&mut steps, src);
     }
+    let helmert = match &datum {
+        Some(DatumStep::Helmert(step)) => Some(step.clone()),
+        _ => None,
+    };
     if helmert.is_some() || dst_geocentric || src_geocentric {
         if !src_geocentric {
             steps.push(cart_step(CartSense::Forward, &src.earth));
@@ -1401,9 +1518,18 @@ fn assemble(src: &Bound, dst: &Bound, helmert: Option<String>) -> Vec<String> {
         }
         if !dst_geocentric {
             steps.push(cart_step(CartSense::Inverse, &dst.earth));
+            if let Some(vertical) = vertical {
+                steps.push(vertical);
+            }
             push_from_angular(&mut steps, dst);
         }
     } else {
+        if let Some(DatumStep::HorizontalGrid(step)) = datum {
+            steps.push(step);
+        }
+        if let Some(vertical) = vertical {
+            steps.push(vertical);
+        }
         push_from_angular(&mut steps, dst);
     }
     if steps.is_empty() {
@@ -1491,17 +1617,37 @@ struct UnitFactors {
     year: f64,
 }
 
+struct DatumChoice {
+    accuracy: f64,
+    rank: u8,
+    step: DatumStep,
+}
+
 fn require_bridge(
     connection: &Connection,
     from: &Earth,
     to: &Earth,
-) -> Result<String, rusqlite::Error> {
+) -> Result<DatumStep, rusqlite::Error> {
     let from_datums = datum_family(connection, &from.datum_auth, &from.datum_code)?;
     let to_datums = datum_family(connection, &to.datum_auth, &to.datum_code)?;
     let allowed = allowed_authorities(connection)?;
     let helmerts = helmert_candidates(connection, &from_datums, &to_datums, &allowed)?;
+    let mut choices: Vec<DatumChoice> = helmerts
+        .into_iter()
+        .map(|item| DatumChoice {
+            accuracy: item.accuracy,
+            rank: item.rank,
+            step: DatumStep::Helmert(item.step),
+        })
+        .collect();
+    choices.extend(horizontal_grids(
+        connection,
+        &from_datums,
+        &to_datums,
+        &allowed,
+    )?);
     let blockers = blockers_of(connection, &from_datums, &to_datums, &allowed)?;
-    let helmert = helmerts.into_iter().min_by(|left, right| {
+    let choice = choices.into_iter().min_by(|left, right| {
         left.accuracy
             .total_cmp(&right.accuracy)
             .then(left.rank.cmp(&right.rank))
@@ -1509,9 +1655,9 @@ fn require_bridge(
     let blocker = blockers
         .into_iter()
         .min_by(|left, right| left.accuracy.total_cmp(&right.accuracy));
-    let helmert_accuracy = helmert.as_ref().map(|item| item.accuracy);
+    let choice_accuracy = choice.as_ref().map(|item| item.accuracy);
     if let Some(blocker) = blocker {
-        let wins = helmert_accuracy.is_none_or(|accuracy| blocker.accuracy < accuracy);
+        let wins = choice_accuracy.is_none_or(|accuracy| blocker.accuracy < accuracy);
         if wins {
             return Err(unsupported(if blocker.grid {
                 "grid step".to_owned()
@@ -1520,12 +1666,229 @@ fn require_bridge(
             }));
         }
     }
-    helmert.map(|item| item.step).ok_or_else(|| {
+    choice.map(|item| item.step).ok_or_else(|| {
         unsupported(format!(
             "EPSG datum {} to {} needs a grid, a deformation model, or a method this crate does not build",
             from.datum_code, to.datum_code
         ))
     })
+}
+
+fn horizontal_grids(
+    connection: &Connection,
+    from_datums: &[(String, String)],
+    to_datums: &[(String, String)],
+    allowed: &[String],
+) -> Result<Vec<DatumChoice>, rusqlite::Error> {
+    let mut binds = Vec::new();
+    let from_sql = datum_predicate("s", from_datums, &mut binds);
+    let to_sql = datum_predicate("t", to_datums, &mut binds);
+    let from_rev = datum_predicate("t", from_datums, &mut binds);
+    let to_rev = datum_predicate("s", to_datums, &mut binds);
+    let sql = format!(
+        "SELECT g.auth_name, g.accuracy,
+                s.datum_auth_name, s.datum_code,
+                t.datum_auth_name, t.datum_code,
+                a.proj_grid_name, a.inverse_direction
+         FROM grid_transformation g
+         JOIN geodetic_crs s
+           ON s.auth_name = g.source_crs_auth_name AND s.code = g.source_crs_code
+         JOIN geodetic_crs t
+           ON t.auth_name = g.target_crs_auth_name AND t.code = g.target_crs_code
+         JOIN grid_alternatives a ON a.original_grid_name = g.grid_name
+         WHERE g.deprecated = 0
+           AND a.proj_method = 'hgridshift'
+           AND ((({from_sql}) AND ({to_sql})) OR (({from_rev}) AND ({to_rev})))"
+    );
+    let mut statement = connection.prepare(&sql)?;
+    let mapped = statement.query_map(rusqlite::params_from_iter(binds.iter()), |row| {
+        Ok((
+            column_text(row, 0)?,
+            column_f64_opt(row, 1)?.unwrap_or(f64::MAX),
+            column_text(row, 2)?,
+            column_text(row, 3)?,
+            column_text(row, 4)?,
+            column_text(row, 5)?,
+            column_text(row, 6)?,
+            column_i64(row, 7)? != 0,
+        ))
+    })?;
+    let mut choices = Vec::new();
+    for row in mapped {
+        let (
+            auth,
+            accuracy,
+            source_auth,
+            source_code,
+            target_auth,
+            target_code,
+            grid,
+            inverse_file,
+        ) = row?;
+        let Some(rank) = authority_kept(&auth, allowed) else {
+            continue;
+        };
+        if crate::gridpath::resolve(&grid).is_none() {
+            continue;
+        }
+        let forward = datum_listed(from_datums, &source_auth, &source_code)
+            && datum_listed(to_datums, &target_auth, &target_code);
+        let reverse = datum_listed(from_datums, &target_auth, &target_code)
+            && datum_listed(to_datums, &source_auth, &source_code);
+        if forward == reverse {
+            continue;
+        }
+        let inverse = inverse_file ^ !forward;
+        let step = if inverse {
+            format!("+inv +proj=hgridshift +grids={grid}")
+        } else {
+            format!("+proj=hgridshift +grids={grid}")
+        };
+        choices.push(DatumChoice {
+            accuracy,
+            rank,
+            step: DatumStep::HorizontalGrid(step),
+        });
+    }
+    Ok(choices)
+}
+
+fn datum_listed(datums: &[(String, String)], auth: &str, code: &str) -> bool {
+    datums
+        .iter()
+        .any(|(item_auth, item_code)| item_auth == auth && item_code == code)
+}
+
+fn vertical_step(
+    connection: &Connection,
+    src: &Bound,
+    dst: &Bound,
+) -> Result<Option<String>, rusqlite::Error> {
+    let (earth, vertical_auth, vertical_code, ellip_to_vert) = match (&src.height, &dst.height) {
+        (Height::Ellipsoidal, Height::Vertical { auth, code }) => (&src.earth, auth, code, true),
+        (Height::Vertical { auth, code }, Height::Ellipsoidal) => (&dst.earth, auth, code, false),
+        (
+            Height::Vertical {
+                auth: left_auth,
+                code: left_code,
+            },
+            Height::Vertical {
+                auth: right_auth,
+                code: right_code,
+            },
+        ) if left_auth == right_auth && left_code == right_code => {
+            return Ok(None);
+        }
+        (Height::Vertical { .. }, Height::Vertical { .. }) => {
+            return Err(unsupported("grid step".to_owned()));
+        }
+        _ => return Ok(None),
+    };
+    let family = datum_family(connection, &earth.datum_auth, &earth.datum_code)?;
+    let allowed = allowed_authorities(connection)?;
+    let mut statement = connection.prepare(
+        "SELECT g.auth_name, g.accuracy,
+                g.source_crs_auth_name, g.source_crs_code,
+                g.target_crs_auth_name, g.target_crs_code,
+                s.datum_auth_name, s.datum_code,
+                t.datum_auth_name, t.datum_code,
+                a.proj_grid_name, a.inverse_direction
+         FROM grid_transformation g
+         JOIN grid_alternatives a ON a.original_grid_name = g.grid_name
+         LEFT JOIN geodetic_crs s
+           ON s.auth_name = g.source_crs_auth_name AND s.code = g.source_crs_code
+         LEFT JOIN geodetic_crs t
+           ON t.auth_name = g.target_crs_auth_name AND t.code = g.target_crs_code
+         WHERE g.deprecated = 0
+           AND a.proj_method = 'geoid_like'
+           AND ((g.target_crs_auth_name = ?1 AND g.target_crs_code = ?2)
+             OR (g.source_crs_auth_name = ?1 AND g.source_crs_code = ?2))",
+    )?;
+    let mapped = statement.query_map(params![vertical_auth, vertical_code], |row| {
+        Ok((
+            column_text(row, 0)?,
+            column_f64_opt(row, 1)?.unwrap_or(f64::MAX),
+            column_text(row, 2)?,
+            column_text(row, 3)?,
+            column_text(row, 4)?,
+            column_text(row, 5)?,
+            column_text_opt(row, 6)?,
+            column_text_opt(row, 7)?,
+            column_text_opt(row, 8)?,
+            column_text_opt(row, 9)?,
+            column_text(row, 10)?,
+            column_i64(row, 11)? != 0,
+        ))
+    })?;
+    let mut best_available: Option<(f64, u8, String)> = None;
+    let mut best_missing = f64::MAX;
+    for row in mapped {
+        let (
+            auth,
+            accuracy,
+            source_auth,
+            source_code,
+            target_auth,
+            target_code,
+            source_datum_auth,
+            source_datum_code,
+            target_datum_auth,
+            target_datum_code,
+            grid,
+            inverse_file,
+        ) = row?;
+        let Some(rank) = authority_kept(&auth, &allowed) else {
+            continue;
+        };
+        let target_is_vertical = target_auth == *vertical_auth && target_code == *vertical_code;
+        let source_is_vertical = source_auth == *vertical_auth && source_code == *vertical_code;
+        let (datum_auth, datum_code, registered_ellip_to_vert) = if target_is_vertical {
+            (source_datum_auth, source_datum_code, true)
+        } else if source_is_vertical {
+            (target_datum_auth, target_datum_code, false)
+        } else {
+            continue;
+        };
+        let (Some(datum_auth), Some(datum_code)) = (datum_auth, datum_code) else {
+            continue;
+        };
+        if !datum_listed(&family, &datum_auth, &datum_code) {
+            continue;
+        }
+        if crate::gridpath::resolve(&grid).is_none() {
+            if accuracy < best_missing {
+                best_missing = accuracy;
+            }
+            continue;
+        }
+        // EPSG Geographic3D to gravity-related height is the inverse of
+        // `+proj=vgridshift +multiplier=1` (that forward step adds the grid).
+        let applying_forward = registered_ellip_to_vert == ellip_to_vert;
+        let inverse = inverse_file ^ applying_forward;
+        let step = if inverse {
+            format!("+inv +proj=vgridshift +grids={grid} +multiplier=1")
+        } else {
+            format!("+proj=vgridshift +grids={grid} +multiplier=1")
+        };
+        let replace = best_available
+            .as_ref()
+            .is_none_or(|(best_accuracy, best_rank, _)| {
+                accuracy < *best_accuracy || (accuracy == *best_accuracy && rank < *best_rank)
+            });
+        if replace {
+            best_available = Some((accuracy, rank, step));
+        }
+    }
+    if let Some((accuracy, _, step)) = best_available {
+        if best_missing < accuracy {
+            return Err(unsupported("grid step".to_owned()));
+        }
+        return Ok(Some(step));
+    }
+    if best_missing < f64::MAX {
+        return Err(unsupported("grid step".to_owned()));
+    }
+    Err(unsupported("grid step".to_owned()))
 }
 
 struct HelmertRaw {

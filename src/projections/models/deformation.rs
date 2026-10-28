@@ -82,19 +82,22 @@ fn load_list(text: &str, generic: bool) -> Result<Vec<Grid>, CreateError> {
         }
         match super::read_resource(name) {
             Ok(bytes) => {
-                let grid = super::grid::open_named(name, &bytes)
-                    .ok_or(CreateError::IllegalValue("grids"))?;
+                let Some(grid) = super::grid::open_named(name, &bytes) else {
+                    // A known suffix that is not a shift grid is an illegal file.
+                    // A bare name that is not one stays a missing-grid error.
+                    return Err(CreateError::IllegalValue("grids"));
+                };
                 if generic && grid.samples < 3 {
                     return Err(CreateError::IllegalValue("grids"));
                 }
                 grids.push(grid);
             }
-            Err(CreateError::Unsupported(_)) if optional => {}
+            Err(CreateError::IllegalValue("file") | CreateError::Unsupported(_)) if optional => {}
             Err(error) => return Err(error),
         }
     }
     if grids.is_empty() {
-        return Err(CreateError::Unsupported("model file"));
+        return Err(CreateError::IllegalValue("grids"));
     }
     Ok(grids)
 }
@@ -303,11 +306,38 @@ fn sample_horizontal(grids: &[Grid], lam: f64, phi: f64) -> Result<(f64, f64), T
         x -= 2.0 * std::f64::consts::PI;
     }
     let y = phi - grid.south;
-    let (east, north) = hgrid_interpolate(grid, x, y)?;
-    Ok((east, north))
+    let (east_band, north_band, factor) = horizontal_layout(grid);
+    let (east, north) = hgrid_interpolate(grid, x, y, east_band, north_band)?;
+    Ok((east * factor, north * factor))
 }
 
-fn hgrid_interpolate(grid: &Grid, x: f64, y: f64) -> Result<(f64, f64), TransformError> {
+fn horizontal_layout(grid: &Grid) -> (usize, usize, f64) {
+    let mut east = 0usize;
+    let mut north = 1usize;
+    for sample in 0..grid.samples {
+        match grid.description(sample) {
+            "longitude_offset" | "east_velocity" | "east" => east = sample,
+            "latitude_offset" | "north_velocity" | "north" => north = sample,
+            _ => {}
+        }
+    }
+    // `pj_hgrid_value` converts arc-seconds to radians. Millimetres stay raw;
+    // the caller divides by 1000 either way.
+    let factor = match grid.unit(east) {
+        "arc-second" | "arc-seconds per year" => (std::f64::consts::PI / 180.0) / 3600.0,
+        "degree" => std::f64::consts::PI / 180.0,
+        _ => 1.0,
+    };
+    (east, north, factor)
+}
+
+fn hgrid_interpolate(
+    grid: &Grid,
+    x: f64,
+    y: f64,
+    east_band: usize,
+    north_band: usize,
+) -> Result<(f64, f64), TransformError> {
     let lam = x / grid.res_x;
     let phi = y / grid.res_y;
     let mut ix = trunc_i32(lam.floor());
@@ -346,10 +376,10 @@ fn hgrid_interpolate(grid: &Grid, x: f64, y: f64) -> Result<(f64, f64), Transfor
     }
     let ix = index(ix)?;
     let iy = index(iy)?;
-    let s00 = node(grid, ix, iy)?;
-    let s10 = node(grid, ix + 1, iy)?;
-    let s01 = node(grid, ix, iy + 1)?;
-    let s11 = node(grid, ix + 1, iy + 1)?;
+    let s00 = node(grid, ix, iy, east_band, north_band)?;
+    let s10 = node(grid, ix + 1, iy, east_band, north_band)?;
+    let s01 = node(grid, ix, iy + 1, east_band, north_band)?;
+    let s11 = node(grid, ix + 1, iy + 1, east_band, north_band)?;
     let m10 = frct_x * (1.0 - frct_y);
     let m11 = frct_x * frct_y;
     let m01 = (1.0 - frct_x) * frct_y;
@@ -360,10 +390,22 @@ fn hgrid_interpolate(grid: &Grid, x: f64, y: f64) -> Result<(f64, f64), Transfor
     ))
 }
 
-fn node(grid: &Grid, x: usize, y: usize) -> Result<(f64, f64), TransformError> {
+fn node(
+    grid: &Grid,
+    x: usize,
+    y: usize,
+    east_band: usize,
+    north_band: usize,
+) -> Result<(f64, f64), TransformError> {
     Ok((
-        f64::from(grid.value(x, y, 0).ok_or(TransformError::OutsideGrid)?),
-        f64::from(grid.value(x, y, 1).ok_or(TransformError::OutsideGrid)?),
+        f64::from(
+            grid.value(x, y, east_band)
+                .ok_or(TransformError::OutsideGrid)?,
+        ),
+        f64::from(
+            grid.value(x, y, north_band)
+                .ok_or(TransformError::OutsideGrid)?,
+        ),
     ))
 }
 

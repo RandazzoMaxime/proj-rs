@@ -27,6 +27,7 @@ mod error;
 #[cfg(feature = "geo-types")]
 mod geo_impl;
 mod geodesic;
+mod gridpath;
 mod helmert;
 mod lcc;
 mod merc;

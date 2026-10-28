@@ -10,10 +10,12 @@ mod ntv2;
 
 use std::collections::BTreeMap;
 use std::f64::consts::{PI, TAU};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::angle::adjlon;
-use crate::engine::{Coord, CreateError, Frame, IoKind, Params, Step, TransformError};
+use crate::engine::{
+    cartesian_to_geodetic, Coord, CreateError, Frame, IoKind, Params, Step, TransformError,
+};
 
 const REL: f64 = 1e-5;
 const ARCSEC: f64 = (PI / 180.0) / 3600.0;
@@ -224,6 +226,7 @@ pub(crate) fn extra_keys(name: &str) -> Option<&'static [&'static str]> {
         "hgridshift" => Some(&["grids", "t_epoch", "t_final"]),
         "vgridshift" => Some(&["grids", "multiplier", "t_epoch", "t_final"]),
         "gridshift" => Some(&["grids", "interpolation", "no_z_transform", "coord_type"]),
+        "xyzgridshift" => Some(&["grids", "grid_ref", "multiplier"]),
         _ => None,
     }
 }
@@ -237,6 +240,7 @@ pub(crate) fn build(
         "hgridshift" => Ok(Some(Box::new(horizontal(params, frame)?))),
         "vgridshift" => Ok(Some(Box::new(vertical(params, frame)?))),
         "gridshift" => Ok(Some(Box::new(generic(params, frame)?))),
+        "xyzgridshift" => Ok(Some(Box::new(xyz_shift(params, frame)?))),
         _ => Ok(None),
     }
 }
@@ -386,7 +390,7 @@ fn load_all(
 
 fn as_create(fail: Fail) -> CreateError {
     match fail {
-        Fail::Missing => CreateError::Unsupported("grid"),
+        Fail::Missing => CreateError::IllegalValue("grids"),
         Fail::Invalid => CreateError::IllegalValue("grids"),
     }
 }
@@ -403,7 +407,14 @@ fn open_horizontal(name: &str) -> Result<GridSet, Fail> {
     if geotiff::is_tiff(&bytes) {
         return GridSet::from_tiff_horizontal(&bytes);
     }
+    if is_ctable2(&bytes) {
+        return GridSet::from_ctable2(&bytes);
+    }
     Err(Fail::Invalid)
+}
+
+fn is_ctable2(bytes: &[u8]) -> bool {
+    bytes.len() >= 10 && &bytes[..10] == b"CTABLE V2."
 }
 
 fn open_vertical(name: &str) -> Result<GridSet, Fail> {
@@ -414,7 +425,18 @@ fn open_vertical(name: &str) -> Result<GridSet, Fail> {
     if geotiff::is_tiff(&bytes) {
         return GridSet::from_tiff_vertical(&bytes);
     }
+    if gtx_name(name) {
+        return GridSet::from_gtx(&bytes);
+    }
     Err(Fail::Invalid)
+}
+
+fn gtx_name(name: &str) -> bool {
+    name.rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(name)
+        .to_ascii_lowercase()
+        .ends_with(".gtx")
 }
 
 fn open_generic(name: &str) -> Result<GridSet, Fail> {
@@ -434,23 +456,7 @@ fn read_grid(name: &str) -> Result<Vec<u8>, Fail> {
 }
 
 fn resolve_grid(name: &str) -> Option<PathBuf> {
-    let direct = Path::new(name);
-    if direct.is_file() {
-        return Some(direct.to_path_buf());
-    }
-    let gie = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("gie");
-    let nested = gie.join(name);
-    if nested.is_file() {
-        return Some(nested);
-    }
-    let tests = gie.join("tests").join(name);
-    if tests.is_file() {
-        return Some(tests);
-    }
-    let bare = gie.join("tests").join(Path::new(name).file_name()?);
-    bare.is_file().then_some(bare)
+    crate::gridpath::resolve(name)
 }
 
 impl GridSet {
@@ -639,6 +645,149 @@ impl GridSet {
             }
             set.insert(node_from_ifd(ifd, None, None), Attach::Extent);
         }
+        if set.roots.is_empty() {
+            return Err(Fail::Invalid);
+        }
+        Ok(set)
+    }
+
+    fn from_gtx(bytes: &[u8]) -> Result<Self, Fail> {
+        if bytes.len() < 40 {
+            return Err(Fail::Invalid);
+        }
+        let yorigin = be_f64(bytes, 0)?;
+        let mut xorigin = be_f64(bytes, 8)?;
+        let ystep = be_f64(bytes, 16)?;
+        let xstep = be_f64(bytes, 24)?;
+        let rows = be_i32(bytes, 32)?;
+        let columns = be_i32(bytes, 36)?;
+        if columns <= 0
+            || rows <= 0
+            || !(-360.0..=360.0).contains(&xorigin)
+            || !(-90.0..=90.0).contains(&yorigin)
+            || xstep <= 0.0
+            || ystep <= 0.0
+        {
+            return Err(Fail::Invalid);
+        }
+        if xorigin >= 180.0 {
+            xorigin -= 360.0;
+        }
+        let width_us = usize::try_from(columns).map_err(|_| Fail::Invalid)?;
+        let height_us = usize::try_from(rows).map_err(|_| Fail::Invalid)?;
+        let count = width_us.checked_mul(height_us).ok_or(Fail::Invalid)?;
+        let data = bytes.get(40..40 + count * 4).ok_or(Fail::Invalid)?;
+        let mut samples = Vec::with_capacity(count);
+        for index in 0..count {
+            let mut value = be_f32(data, index * 4)?;
+            // Official GTX nodata. Stored as NaN so bilinear skips the corner.
+            if (f64::from(value) + 88.8888).abs() < 1e-3 {
+                value = f32::NAN;
+            }
+            samples.push(value);
+        }
+        let deg = PI / 180.0;
+        let west = xorigin * deg;
+        let south = yorigin * deg;
+        let res_x = xstep * deg;
+        let res_y = ystep * deg;
+        let east = west + res_x * (f64::from(columns) - 1.0);
+        let north = south + res_y * (f64::from(rows) - 1.0);
+        let extent = Extent::try_new(Domain::Geographic, west, south, east, north, res_x, res_y)
+            .map_err(|()| Fail::Invalid)?;
+        let mut set = Self::fresh();
+        set.insert(
+            Node {
+                width: columns,
+                height: rows,
+                extent,
+                bottom_up: true,
+                spp: 1,
+                samples,
+                scale: Vec::new(),
+                offset: Vec::new(),
+                nodata: Some(f32::NAN),
+                meta: BTreeMap::new(),
+                grid_name: String::new(),
+                parent_name: String::new(),
+                children: Vec::new(),
+                inherit: None,
+                horizontal: None,
+                vertical: Some(0),
+            },
+            Attach::Extent,
+        );
+        if set.roots.is_empty() {
+            return Err(Fail::Invalid);
+        }
+        Ok(set)
+    }
+
+    fn from_ctable2(bytes: &[u8]) -> Result<Self, Fail> {
+        if bytes.len() < 160 || &bytes[..10] != b"CTABLE V2." {
+            return Err(Fail::Invalid);
+        }
+        let west = le_f64(bytes, 96)?;
+        let south = le_f64(bytes, 104)?;
+        let res_x = le_f64(bytes, 112)?;
+        let res_y = le_f64(bytes, 120)?;
+        let width = le_i32(bytes, 128)?;
+        let height = le_i32(bytes, 132)?;
+        if width <= 0
+            || height <= 0
+            || west.abs() > 4.0 * PI
+            || south.abs() > PI + 1e-5
+            || res_x <= 1e-10
+            || res_y <= 1e-10
+        {
+            return Err(Fail::Invalid);
+        }
+        let count = usize::try_from(width)
+            .ok()
+            .and_then(|w| usize::try_from(height).ok().and_then(|h| w.checked_mul(h)))
+            .ok_or(Fail::Invalid)?;
+        let data = bytes.get(160..).ok_or(Fail::Invalid)?;
+        if data.len() < count * 8 {
+            return Err(Fail::Invalid);
+        }
+        // First float is longitude, second is latitude. Already radians.
+        let mut samples = Vec::with_capacity(count * 2);
+        for index in 0..count {
+            samples.push(le_f32(data, index * 8)?);
+            samples.push(le_f32(data, index * 8 + 4)?);
+        }
+        // PROJ sets north from `(height - 1) * resX`, not `resY`.
+        let east = west + res_x * (f64::from(width) - 1.0);
+        let north = south + res_x * (f64::from(height) - 1.0);
+        let extent = Extent::try_new(Domain::Geographic, west, south, east, north, res_x, res_y)
+            .map_err(|()| Fail::Invalid)?;
+        let mut set = Self::fresh();
+        set.insert(
+            Node {
+                width,
+                height,
+                extent,
+                bottom_up: true,
+                spp: 2,
+                samples,
+                scale: Vec::new(),
+                offset: Vec::new(),
+                nodata: None,
+                meta: BTreeMap::new(),
+                grid_name: String::new(),
+                parent_name: String::new(),
+                children: Vec::new(),
+                inherit: None,
+                horizontal: Some(HorizSpec {
+                    lat: 1,
+                    lon: 0,
+                    to_radian: 1.0,
+                    positive_east: true,
+                }),
+                vertical: None,
+            },
+            Attach::Extent,
+        );
         if set.roots.is_empty() {
             return Err(Fail::Invalid);
         }
@@ -1355,11 +1504,14 @@ fn wrap_mod(value: f64, width: f64) -> f64 {
 }
 
 fn v_sample(node: &Node, lon: f64, lat: f64) -> Result<f64, TransformError> {
+    bilinear_sample(node, node.vertical.unwrap_or(0), lon, lat)
+}
+
+fn bilinear_sample(node: &Node, sample: usize, lon: f64, lat: f64) -> Result<f64, TransformError> {
     let extent = node.extent;
     if !extent.geographic {
         return Err(TransformError::OutsideGrid);
     }
-    let sample = node.vertical.unwrap_or(0);
     let width = f64::from(node.width);
     let mut grid_x = (lon - extent.west) * extent.inv_x;
     if lon < extent.west {
@@ -1755,5 +1907,196 @@ impl Generic {
             z: coord.z - shift.z,
             t: coord.t,
         })
+    }
+}
+
+fn le_f64(bytes: &[u8], offset: usize) -> Result<f64, Fail> {
+    let slice = bytes.get(offset..offset + 8).ok_or(Fail::Invalid)?;
+    let mut raw = [0_u8; 8];
+    raw.copy_from_slice(slice);
+    Ok(f64::from_le_bytes(raw))
+}
+
+fn le_f32(bytes: &[u8], offset: usize) -> Result<f32, Fail> {
+    let slice = bytes.get(offset..offset + 4).ok_or(Fail::Invalid)?;
+    let mut raw = [0_u8; 4];
+    raw.copy_from_slice(slice);
+    Ok(f32::from_le_bytes(raw))
+}
+
+fn le_i32(bytes: &[u8], offset: usize) -> Result<i32, Fail> {
+    let slice = bytes.get(offset..offset + 4).ok_or(Fail::Invalid)?;
+    let mut raw = [0_u8; 4];
+    raw.copy_from_slice(slice);
+    Ok(i32::from_le_bytes(raw))
+}
+
+fn be_f64(bytes: &[u8], offset: usize) -> Result<f64, Fail> {
+    let slice = bytes.get(offset..offset + 8).ok_or(Fail::Invalid)?;
+    let mut raw = [0_u8; 8];
+    raw.copy_from_slice(slice);
+    Ok(f64::from_be_bytes(raw))
+}
+
+fn be_f32(bytes: &[u8], offset: usize) -> Result<f32, Fail> {
+    let slice = bytes.get(offset..offset + 4).ok_or(Fail::Invalid)?;
+    let mut raw = [0_u8; 4];
+    raw.copy_from_slice(slice);
+    Ok(f32::from_be_bytes(raw))
+}
+
+fn be_i32(bytes: &[u8], offset: usize) -> Result<i32, Fail> {
+    let slice = bytes.get(offset..offset + 4).ok_or(Fail::Invalid)?;
+    let mut raw = [0_u8; 4];
+    raw.copy_from_slice(slice);
+    Ok(i32::from_be_bytes(raw))
+}
+
+struct XyzShift {
+    sets: Vec<GridSet>,
+    /// `grid_ref=input_crs`. `output_crs` iterates on the forward path.
+    grid_ref_is_input: bool,
+    multiplier: f64,
+    earth: crate::Ellipsoid,
+    a: f64,
+    es: f64,
+}
+
+fn xyz_shift(params: &Params, frame: &Frame) -> Result<XyzShift, CreateError> {
+    let sets = load_all(required_grids(params)?, open_generic)?;
+    if sets.is_empty() {
+        return Err(CreateError::IllegalValue("grids"));
+    }
+    let grid_ref_is_input = match params.text("grid_ref") {
+        None => true,
+        Some("input_crs") => true,
+        Some("output_crs") => false,
+        Some(_) => return Err(CreateError::IllegalValue("grid_ref")),
+    };
+    let multiplier = params.number("multiplier")?.unwrap_or(1.0);
+    if !multiplier.is_finite() {
+        return Err(CreateError::IllegalValue("multiplier"));
+    }
+    for set in &sets {
+        if set.null {
+            continue;
+        }
+        for node in &set.nodes {
+            if node.spp < 3 {
+                return Err(CreateError::IllegalValue("grids"));
+            }
+            let (x_band, y_band, z_band) = translation_bands(node);
+            for band in [x_band, y_band, z_band] {
+                let unit = node.own_meta(i32_band(band), "UNITTYPE");
+                if !unit.is_empty() && unit != "metre" {
+                    return Err(CreateError::IllegalValue("grids"));
+                }
+            }
+        }
+    }
+    Ok(XyzShift {
+        sets,
+        grid_ref_is_input,
+        multiplier,
+        earth: frame.earth,
+        a: frame.earth.a(),
+        es: frame.earth.es(),
+    })
+}
+
+fn i32_band(band: usize) -> i32 {
+    i32::try_from(band).unwrap_or(0)
+}
+
+fn translation_bands(node: &Node) -> (usize, usize, usize) {
+    let mut x_band = 0usize;
+    let mut y_band = 1usize;
+    let mut z_band = 2usize;
+    for band in 0..node.spp {
+        match node.own_meta(i32_band(band), "DESCRIPTION").as_str() {
+            "x_translation" => x_band = band,
+            "y_translation" => y_band = band,
+            "z_translation" => z_band = band,
+            _ => {}
+        }
+    }
+    (x_band, y_band, z_band)
+}
+
+fn grid_delta(shift: &XyzShift, lam: f64, phi: f64) -> Result<(f64, f64, f64), TransformError> {
+    let Some(located) = find_horizontal(&shift.sets, lam, phi) else {
+        return Err(TransformError::OutsideGrid);
+    };
+    let Located::At(set, id) = located else {
+        return Ok((0.0, 0.0, 0.0));
+    };
+    let node = &set.nodes[id];
+    let (x_band, y_band, z_band) = translation_bands(node);
+    let scale = shift.multiplier;
+    Ok((
+        bilinear_sample(node, x_band, lam, phi)? * scale,
+        bilinear_sample(node, y_band, lam, phi)? * scale,
+        bilinear_sample(node, z_band, lam, phi)? * scale,
+    ))
+}
+
+fn direct_xyz(shift: &XyzShift, mut coord: Coord, factor: f64) -> Result<Coord, TransformError> {
+    let (lam, phi, _) = cartesian_to_geodetic(shift.earth, coord.x, coord.y, coord.z);
+    let (dx, dy, dz) = grid_delta(shift, lam, phi)?;
+    coord.x += factor * dx;
+    coord.y += factor * dy;
+    coord.z += factor * dz;
+    Ok(coord)
+}
+
+fn iterative_xyz(shift: &XyzShift, input: Coord, factor: f64) -> Result<Coord, TransformError> {
+    let mut point = input;
+    for _ in 0..10 {
+        let (lam, phi, _) = cartesian_to_geodetic(shift.earth, point.x, point.y, point.z);
+        let (dx, dy, dz) = grid_delta(shift, lam, phi)?;
+        let dx = factor * dx;
+        let dy = factor * dy;
+        let dz = factor * dz;
+        let err = (point.x - input.x - dx).powi(2)
+            + (point.y - input.y - dy).powi(2)
+            + (point.z - input.z - dz).powi(2);
+        point.x = input.x + dx;
+        point.y = input.y + dy;
+        point.z = input.z + dz;
+        if err < 1e-10 {
+            break;
+        }
+    }
+    point.t = input.t;
+    Ok(point)
+}
+
+impl Step for XyzShift {
+    fn forward(&self, coord: Coord) -> Result<Coord, TransformError> {
+        if self.grid_ref_is_input {
+            direct_xyz(self, coord, 1.0)
+        } else {
+            iterative_xyz(self, coord, 1.0)
+        }
+    }
+
+    fn inverse(&self, coord: Coord) -> Result<Coord, TransformError> {
+        if self.grid_ref_is_input {
+            iterative_xyz(self, coord, -1.0)
+        } else {
+            direct_xyz(self, coord, -1.0)
+        }
+    }
+
+    fn input_kind(&self) -> IoKind {
+        IoKind::Cartesian
+    }
+
+    fn output_kind(&self) -> IoKind {
+        IoKind::Cartesian
+    }
+
+    fn distance_ellipsoid(&self) -> (f64, f64) {
+        (self.a, self.es)
     }
 }
