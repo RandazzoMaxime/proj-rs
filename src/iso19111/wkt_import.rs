@@ -585,6 +585,19 @@ impl WktParser {
             index = skip_space(wkt, index + 1);
             let (vertical_node, _) = parse_node(wkt, index, 0)?;
             let vertical = self.build_vertical(&vertical_node)?;
+            if vertical
+                .datum
+                .as_ref()
+                .is_some_and(|datum| datum.wkt1_type == "2002")
+            {
+                if let Crs::Geographic(geographic) = &horizontal {
+                    if geographic.coordinate_system.axes.len() == 2 {
+                        return Ok(WktObject::Crs(Crs::Geographic(
+                            promote_ellipsoidal_height(geographic.clone(), &vertical),
+                        )));
+                    }
+                }
+            }
             let name = format!("{} + {}", horizontal.name(), vertical.name());
             let compound = CompoundCRS {
                 identified: Identified::named(name),
@@ -1395,6 +1408,9 @@ impl WktParser {
                     datum,
                     ensemble,
                     coordinate_system,
+                    implicit_cs: ci_eq(keyword, "GEOGCS")
+                        && node.count_named("AXIS") == 0
+                        && node.child(&["CS"]).is_none(),
                 };
                 self.reconcile_geographic_id(&mut crs, node);
                 let object = if !self.towgs84.is_empty() {
@@ -1463,6 +1479,12 @@ impl WktParser {
                     .to_owned(),
             );
             crs.identified.identifiers.clear();
+            return;
+        }
+        // No axis and no unit of its own: PROJ keeps the authority coordinate
+        // system, so a degree axis carries `EPSG:9122`.
+        if !had_unit && !had_axis {
+            crs.coordinate_system = db_crs.coordinate_system().clone();
         }
     }
 
@@ -1858,13 +1880,29 @@ impl WktParser {
     fn build_vertical(&mut self, node: &WktNode) -> Result<VerticalCRS, FactoryError> {
         let datum_node = node.child(&["VDATUM", "VERT_DATUM", "VERTICALDATUM", "VRF"]);
         let ensemble_node = node.child(&["ENSEMBLE"]);
-        if datum_node.is_none() && ensemble_node.is_none() {
+        let geodetic_in_vertcs = if ci_eq(&node.value, "VERTCS") {
+            node.child(&["DATUM"])
+        } else {
+            None
+        };
+        if datum_node.is_none() && ensemble_node.is_none() && geodetic_in_vertcs.is_none() {
             return Err(invalid("Missing VDATUM or ENSEMBLE node"));
         }
         let props = self.build_properties(node)?;
         let dynamic = node.child(&["DYNAMIC"]);
         let cs_node = node.child(&["CS"]);
-        let datum = if let Some(datum_node) = datum_node {
+        let datum = if let Some(datum_node) = geodetic_in_vertcs {
+            let built = self.build_geodetic_datum(datum_node, greenwich(), None)?;
+            let WktObject::GeodeticDatum(frame) = built else {
+                return Err(invalid("VERTCS DATUM is not a geodetic datum"));
+            };
+            Some(VerticalReferenceFrame {
+                identified: Identified::named(frame.name()),
+                wkt1_type: "2002".to_owned(),
+                frame_epoch: None,
+                deformation_model: None,
+            })
+        } else if let Some(datum_node) = datum_node {
             Some(self.build_vertical_datum(datum_node, dynamic)?)
         } else {
             None
@@ -2353,6 +2391,22 @@ enum EnsembleBody {
 enum AxisFrame {
     Geocentric,
     Other,
+}
+
+fn promote_ellipsoidal_height(mut geographic: GeographicCRS, vertical: &VerticalCRS) -> GeographicCRS {
+    let down = vertical.coordinate_system.axis.direction() == "down";
+    let (name, abbreviation, direction) = if down {
+        ("Ellipsoidal depth", "d", "down")
+    } else {
+        ("Ellipsoidal height", "h", "up")
+    };
+    geographic.coordinate_system.axes.push(Axis::new(
+        name,
+        abbreviation,
+        direction,
+        vertical.coordinate_system.axis.unit().clone(),
+    ));
+    geographic
 }
 
 fn greenwich() -> PrimeMeridian {

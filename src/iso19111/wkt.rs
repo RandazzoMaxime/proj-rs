@@ -498,7 +498,7 @@ impl Conversion {
     ///
     /// WKT1 has no spelling for the method, or a parameter cannot be written.
     pub fn export_to_wkt(&self, formatter: &mut WktFormatter) -> Result<String, FactoryError> {
-        export_conversion(self, formatter)?;
+        export_conversion(self, formatter, BaseShape::NotSphere)?;
         Ok(std::mem::take(&mut formatter.result))
     }
 }
@@ -616,9 +616,7 @@ fn export_geographic(
         ));
     }
     if !formatter.wkt2 && formatter.esri && three_d && !formatter.allow_linunit {
-        let mut flat = crs.clone();
-        flat.coordinate_system.axes.truncate(2);
-        return export_geographic(&flat, formatter);
+        return export_esri_geographic_3d_as_vertcs(crs, formatter);
     }
     let keyword = if formatter.wkt2 {
         if formatter.keywords_2019 {
@@ -660,6 +658,53 @@ fn export_geographic(
         formatter,
     );
     formatter.base_usage(&crs.identified);
+    formatter.end_node();
+    Ok(())
+}
+
+/// ESRI has no `LINUNIT`. A geographic 3D CRS is `GEOGCS` plus `VERTCS`.
+fn export_esri_geographic_3d_as_vertcs(
+    crs: &GeographicCRS,
+    formatter: &mut WktFormatter,
+) -> Result<(), FactoryError> {
+    let mut flat = crs.clone();
+    flat.coordinate_system.axes.truncate(2);
+    export_geographic(&flat, formatter)?;
+    let Some(height) = crs.coordinate_system.axes.get(2) else {
+        return Err(FactoryError::Format(
+            "a geographic 3D CRS has no ellipsoidal height axis".to_owned(),
+        ));
+    };
+    let mut vert_name = if let Some(datum) = crs.datum.as_ref() {
+        wkt1_datum_name(&datum.identified, formatter)
+    } else if let Some(ensemble) = crs.ensemble.as_ref() {
+        wkt1_datum_name(&ensemble.identified, formatter)
+    } else {
+        crs.name().to_owned()
+    };
+    if let Some(rest) = vert_name.strip_prefix("GCS_") {
+        vert_name = rest.to_owned();
+    }
+    formatter.start_node("VERTCS", NodeId::Absent);
+    formatter.add_quoted(&vert_name);
+    if let Some(datum) = crs.datum.as_ref() {
+        export_geodetic_datum(datum, formatter);
+    } else if let Some(ensemble) = crs.ensemble.as_ref() {
+        export_ensemble_as_datum(ensemble, formatter);
+    }
+    formatter.start_node("PARAMETER", NodeId::Absent);
+    formatter.add_quoted("Vertical_Shift");
+    formatter.add_number(0.0);
+    formatter.end_node();
+    formatter.start_node("PARAMETER", NodeId::Absent);
+    formatter.add_quoted("Direction");
+    formatter.add_number(if height.direction() == "down" {
+        -1.0
+    } else {
+        1.0
+    });
+    formatter.end_node();
+    formatter.export_unit(height.unit(), None);
     formatter.end_node();
     Ok(())
 }
@@ -731,6 +776,9 @@ fn export_spherical(
 fn export_projected(crs: &ProjectedCRS, formatter: &mut WktFormatter) -> Result<(), FactoryError> {
     let axes = &crs.coordinate_system.axes;
     if axes.len() == 3 && !(formatter.wkt2 && formatter.keywords_2019) {
+        if !formatter.wkt2 && !formatter.esri && formatter.allow_ellipsoidal_height {
+            return export_projected_ellipsoidal_height(crs, formatter);
+        }
         return Err(FactoryError::Format(
             "a projected 3D CRS can only be exported as WKT2:2019".to_owned(),
         ));
@@ -797,7 +845,12 @@ fn export_projected(crs: &ProjectedCRS, formatter: &mut WktFormatter) -> Result<
         formatter.axis_linear.push(linear.clone());
     }
     formatter.axis_angular.push(angular);
-    export_conversion(&crs.conversion, formatter)?;
+    let base_shape = if crs.base.ellipsoid().is_some_and(Ellipsoid::is_sphere) {
+        BaseShape::Sphere
+    } else {
+        BaseShape::NotSphere
+    };
+    export_conversion(&crs.conversion, formatter, base_shape)?;
     formatter.axis_angular.pop();
     formatter.axis_linear.pop();
     if !formatter.wkt2 {
@@ -819,6 +872,50 @@ fn export_projected(crs: &ProjectedCRS, formatter: &mut WktFormatter) -> Result<
     );
     formatter.output_axis = previous;
     formatter.base_usage(&crs.identified);
+    formatter.end_node();
+    Ok(())
+}
+
+/// WKT1 GDAL writes a projected 3D CRS as `COMPD_CS` plus `VERT_CS["Ellipsoid"]`.
+fn export_projected_ellipsoidal_height(
+    crs: &ProjectedCRS,
+    formatter: &mut WktFormatter,
+) -> Result<(), FactoryError> {
+    let mut flat = crs.demote_to_2d(formatter.db.as_ref());
+    if let Some(db) = &formatter.db {
+        let found = flat.identify_with(Some(&AuthorityFactory::create(db, "EPSG")));
+        if found.len() == 1 && found[0].1 == 100 {
+            if let Crs::Projected(official) = &found[0].0 {
+                flat = official.clone();
+            }
+        }
+    }
+    let Some(height) = crs.coordinate_system.axes.get(2) else {
+        return Err(FactoryError::Format(
+            "a projected 3D CRS has no ellipsoidal height axis".to_owned(),
+        ));
+    };
+    let vertical_name = format!("Ellipsoid ({})", height.unit().name());
+    let compound_name = format!("{} + {vertical_name}", flat.name());
+    let vertical = VerticalCRS {
+        identified: Identified::named(vertical_name),
+        datum: Some(VerticalReferenceFrame {
+            identified: Identified::named("Ellipsoid"),
+            wkt1_type: "2002".to_owned(),
+            frame_epoch: None,
+            deformation_model: None,
+        }),
+        ensemble: None,
+        coordinate_system: VerticalCS {
+            identified: Identified::default(),
+            axis: height.clone(),
+        },
+        geoid_models: Vec::new(),
+    };
+    formatter.start_node("COMPD_CS", NodeId::Absent);
+    formatter.add_quoted(&compound_name);
+    export_projected(&flat, formatter)?;
+    export_vertical(&vertical, formatter)?;
     formatter.end_node();
     Ok(())
 }
@@ -1378,12 +1475,22 @@ fn export_axis(axis: &Axis, order: usize, abbrev: AxisAbbrev, formatter: &mut Wk
     formatter.end_node();
 }
 
+/// Whether the projected base ellipsoid is a sphere.
+///
+/// A bool parameter is rejected by `max-fn-params-bools`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BaseShape {
+    Sphere,
+    NotSphere,
+}
+
 fn export_conversion(
     conversion: &Conversion,
     formatter: &mut WktFormatter,
+    base_shape: BaseShape,
 ) -> Result<(), FactoryError> {
     if !formatter.wkt2 && formatter.esri {
-        export_conversion_wkt1(conversion, formatter)?;
+        export_conversion_wkt1(conversion, formatter, base_shape)?;
         return Ok(());
     }
     if formatter.wkt2 {
@@ -1400,12 +1507,13 @@ fn export_conversion(
         formatter.end_node();
         return Ok(());
     }
-    export_conversion_wkt1(conversion, formatter)
+    export_conversion_wkt1(conversion, formatter, base_shape)
 }
 
 fn export_conversion_wkt1(
     conversion: &Conversion,
     formatter: &mut WktFormatter,
+    base_shape: BaseShape,
 ) -> Result<(), FactoryError> {
     formatter.output_unit.push(false);
     formatter.output_id.push(false);
@@ -1450,13 +1558,58 @@ fn export_conversion_wkt1(
             formatter.output_unit.pop();
             return Ok(());
         }
-        if conversion.method.code == "9804" {
+        if formatter.esri && conversion.method.code == "9801" {
+            formatter.start_node("PROJECTION", NodeId::Absent);
+            formatter.add_quoted("Lambert_Conformal_Conic");
+            formatter.end_node();
+            for (name, code, wkt2_name) in [
+                ("False_Easting", "8806", "False easting"),
+                ("False_Northing", "8807", "False northing"),
+                ("Central_Meridian", "8802", "Longitude of natural origin"),
+                ("Standard_Parallel_1", "8801", "Latitude of natural origin"),
+                ("Scale_Factor", "8805", "Scale factor at natural origin"),
+                ("Latitude_Of_Origin", "8801", "Latitude of natural origin"),
+            ] {
+                write_wkt1_parameter(
+                    formatter,
+                    name,
+                    parameter_on_axis(conversion, code, wkt2_name, formatter)?,
+                )?;
+            }
+            formatter.output_id.pop();
+            formatter.output_unit.pop();
+            return Ok(());
+        }
+        if conversion.method.code == "9804"
+            || (base_shape == BaseShape::Sphere && conversion.method.code == "1026")
+        {
             let latitude = parameter_number(conversion, "8801").unwrap_or(0.0);
             if latitude != 0.0 {
                 return Err(FactoryError::Format(
-                    "unsupported value for Latitude of natural origin".to_owned(),
+                    "Unsupported value for Latitude of natural origin".to_owned(),
                 ));
             }
+        }
+        if !formatter.esri && base_shape == BaseShape::Sphere && conversion.method.code == "1026" {
+            formatter.start_node("PROJECTION", NodeId::Absent);
+            formatter.add_quoted("Mercator_1SP");
+            formatter.end_node();
+            let mercator_a = super::parammap::method_by_code(9804);
+            for parameter in &conversion.parameters {
+                if parameter.code == "8801" {
+                    continue;
+                }
+                let Some(name) = wkt1_parameter_name(mercator_a, parameter) else {
+                    continue;
+                };
+                formatter.start_node("PARAMETER", NodeId::Absent);
+                formatter.add_quoted(&name);
+                add_parameter_value(parameter, formatter)?;
+                formatter.end_node();
+            }
+            formatter.output_id.pop();
+            formatter.output_unit.pop();
+            return Ok(());
         }
         formatter.start_node("PROJECTION", NodeId::Absent);
         formatter.add_quoted(&wkt1_method_name(&conversion.method)?);
@@ -1636,7 +1789,7 @@ fn export_operation(
 ) -> Result<(), FactoryError> {
     match operation {
         super::model::CoordinateOperation::Conversion(conversion) => {
-            export_conversion(conversion, formatter)
+            export_conversion(conversion, formatter, BaseShape::NotSphere)
         }
         super::model::CoordinateOperation::Transformation(transformation) => {
             export_transformation(transformation, formatter)
@@ -1813,7 +1966,12 @@ fn wkt1_datum_name(identified: &Identified, formatter: &WktFormatter) -> String 
         .identifiers
         .first()
         .is_some_and(|identifier| identifier.code_space == "EPSG");
-    if epsg {
+    let matched = identified.identifiers.is_empty()
+        && formatter
+            .db
+            .as_ref()
+            .is_some_and(|db| db.single_epsg_geodetic_datum(&name));
+    if epsg || matched {
         name = morph_name_to_esri(&name);
     }
     if name == "World_Geodetic_System_1984" {
@@ -1937,6 +2095,44 @@ fn parameter_number(conversion: &Conversion, code: &str) -> Result<f64, FactoryE
             _ => None,
         })
         .ok_or_else(|| FactoryError::Format(format!("missing conversion parameter {code}")))
+}
+
+fn parameter_on_axis(
+    conversion: &Conversion,
+    code: &str,
+    wkt2_name: &str,
+    formatter: &WktFormatter,
+) -> Result<f64, FactoryError> {
+    let measure = conversion
+        .parameters
+        .iter()
+        .find(|parameter| {
+            parameter.code == code || names_match(&parameter.name, wkt2_name)
+        })
+        .and_then(|parameter| match &parameter.value {
+            ParameterValue::Measure(measure) => Some(measure),
+            _ => None,
+        })
+        .ok_or_else(|| FactoryError::Format(format!("missing conversion parameter {wkt2_name}")))?;
+    match measure.unit.kind {
+        UnitKind::Linear => {
+            let target = formatter
+                .axis_linear
+                .last()
+                .cloned()
+                .unwrap_or_else(UnitOfMeasure::metre);
+            Ok(measure.convert_to(&target))
+        }
+        UnitKind::Angular => {
+            let target = formatter
+                .axis_angular
+                .last()
+                .cloned()
+                .unwrap_or_else(UnitOfMeasure::degree);
+            Ok(measure.convert_to(&target))
+        }
+        _ => Ok(measure.si_value()),
+    }
 }
 
 fn write_wkt1_parameter(

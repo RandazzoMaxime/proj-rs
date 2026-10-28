@@ -12,7 +12,8 @@ use super::model::{
     ensemble_name_as_datum, Axis, CartesianCS, CompoundCRS, ConcatenatedOperation,
     ConcatenatedStep, Conversion, CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble,
     DerivedProjectedCRS, Ellipsoid, EllipsoidalCS, EngineeringCRS, EngineeringDatum, FactoryError,
-    GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified, Measure,
+    GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified, Identifier,
+    Measure,
     Meridian, ObjectDomain, OperationMethod, OrdinalCS, Parameter, ParameterValue, PrimeMeridian,
     ProjectedCRS, SphericalCS, Transformation, UnitKind, UnitOfMeasure, VerticalCRS, VerticalCS,
     VerticalReferenceFrame,
@@ -163,6 +164,18 @@ impl DatabaseContext {
         Ok(out)
     }
 
+    /// `IAU_2015` for authority `IAU` and version `2015`.
+    pub(crate) fn versioned_authority(&self, authority: &str, version: &str) -> Option<String> {
+        let rows = self
+            .query(
+                "SELECT versioned_auth_name FROM versioned_auth_name_mapping \
+                 WHERE auth_name = ? AND version = ?",
+                &[authority.to_owned(), version.to_owned()],
+            )
+            .ok()?;
+        rows.first().map(|row| row[0].text())
+    }
+
     /// `(auth_name, version)` for a code space such as `IAU_2015`.
     pub(crate) fn authority_and_version(&self, versioned: &str) -> Option<(String, String)> {
         let rows = self
@@ -232,6 +245,91 @@ impl DatabaseContext {
             }
         }
         Ok(String::new())
+    }
+
+    /// Official name of one object, or empty when the row is missing.
+    pub(crate) fn object_name(&self, table: &str, authority: &str, code: &str) -> String {
+        let table = genuine_table(table);
+        let Ok(rows) = self.query(
+            &format!("SELECT name FROM \"{table}\" WHERE auth_name = ? AND code = ?"),
+            &[authority.to_owned(), code.to_owned()],
+        ) else {
+            return String::new();
+        };
+        rows.first().map(|row| row[0].text()).unwrap_or_default()
+    }
+
+    /// Alias names from `alias_name`.
+    ///
+    /// An empty authority or code resolves the object by `official_name` the way
+    /// `DatabaseContext::getAliases` does: the first non-deprecated official row,
+    /// or the single EPSG/PROJ alias when the official name is absent.
+    pub(crate) fn get_aliases(
+        &self,
+        authority: &str,
+        code: &str,
+        official_name: &str,
+        table: &str,
+        source: &str,
+    ) -> Vec<String> {
+        let genuine = genuine_table(table);
+        let (authority, code) = if authority.is_empty() || code.is_empty() {
+            let mut sql = format!("SELECT auth_name, code FROM \"{genuine}\" WHERE name = ?");
+            if table == "geodetic_crs" || table == "geographic_2D_crs" {
+                sql.push_str(" AND type = 'geographic 2D'");
+            } else if table == "geographic_3D_crs" {
+                sql.push_str(" AND type = 'geographic 3D'");
+            }
+            sql.push_str(" ORDER BY deprecated");
+            let Ok(mut rows) = self.query(&sql, &[official_name.to_owned()]) else {
+                return Vec::new();
+            };
+            if rows.is_empty() {
+                let Ok(alias_rows) = self.query(
+                    "SELECT auth_name, code FROM alias_name WHERE table_name = ? AND alt_name = ? \
+                     AND source IN ('EPSG', 'PROJ')",
+                    &[genuine.to_owned(), official_name.to_owned()],
+                ) else {
+                    return Vec::new();
+                };
+                if alias_rows.len() != 1 {
+                    return Vec::new();
+                }
+                rows = alias_rows;
+            }
+            let Some(row) = rows.first() else {
+                return Vec::new();
+            };
+            (row[0].text(), row[1].text())
+        } else {
+            (authority.to_owned(), code.to_owned())
+        };
+        let mut sql = "SELECT alt_name FROM alias_name WHERE table_name = ? AND auth_name = ? AND code = ?"
+            .to_owned();
+        let mut params = vec![genuine.to_owned(), authority, code];
+        if source == "not EPSG_OLD" {
+            sql.push_str(" AND source != 'EPSG_OLD'");
+        } else if !source.is_empty() {
+            sql.push_str(" AND source = ?");
+            params.push(source.to_owned());
+        }
+        self.query(&sql, &params)
+            .map(|rows| rows.into_iter().map(|row| row[0].text()).collect())
+            .unwrap_or_default()
+    }
+
+    /// True when `name` is the official name of exactly one EPSG geodetic datum.
+    ///
+    /// WKT1 GDAL then morphs that name (spaces and parentheses) the way
+    /// `importFromEPSG` did, even when the WKT datum carries no identifier.
+    pub(crate) fn single_epsg_geodetic_datum(&self, name: &str) -> bool {
+        let Ok(rows) = self.query(
+            "SELECT auth_name FROM geodetic_datum WHERE name = ? COLLATE NOCASE",
+            &[name.to_owned()],
+        ) else {
+            return false;
+        };
+        rows.len() == 1 && rows[0][0].text() == "EPSG"
     }
 
     /// True when `name` is the official name of exactly one ESRI object in `table`.
@@ -446,6 +544,92 @@ fn genuine_table(table: &str) -> &str {
     }
 }
 
+/// How [`AuthorityFactory::create_geodetic_crs_by_name`] compares a name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NameMatch {
+    /// Official name or alias, case-insensitive.
+    Exact,
+    /// The searched text is a substring of the name or of its canonical form.
+    Approximate,
+}
+
+struct NameRow {
+    authority: String,
+    code: String,
+    matched_name: String,
+    deprecated: bool,
+}
+
+struct BuiltObject<T> {
+    matched_name: String,
+    object: T,
+}
+
+trait NamedAuthorityObject: Sized {
+    fn name(&self) -> &str;
+    fn identifiers(&self) -> &[Identifier];
+    fn load(factory: &AuthorityFactory, code: &str) -> Result<Self, FactoryError>;
+}
+
+impl NamedAuthorityObject for GeodeticCRS {
+    fn name(&self) -> &str {
+        GeodeticCRS::name(self)
+    }
+
+    fn identifiers(&self) -> &[Identifier] {
+        GeodeticCRS::identifiers(self)
+    }
+
+    fn load(factory: &AuthorityFactory, code: &str) -> Result<Self, FactoryError> {
+        factory.create_geodetic_crs(code)
+    }
+}
+
+impl NamedAuthorityObject for GeodeticReferenceFrame {
+    fn name(&self) -> &str {
+        GeodeticReferenceFrame::name(self)
+    }
+
+    fn identifiers(&self) -> &[Identifier] {
+        GeodeticReferenceFrame::identifiers(self)
+    }
+
+    fn load(factory: &AuthorityFactory, code: &str) -> Result<Self, FactoryError> {
+        factory.create_geodetic_datum(code)
+    }
+}
+
+fn canonical_object_name(name: &str) -> String {
+    name.chars()
+        .filter(|ch| !matches!(ch, ' ' | '_' | '-' | '/' | '(' | ')' | '.' | '&' | ','))
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn equivalent_object_name(left: &str, right: &str) -> bool {
+    canonical_object_name(left) == canonical_object_name(right)
+}
+
+fn approximate_name(candidate: &str, searched: &str, canonical_searched: &str) -> bool {
+    candidate
+        .to_ascii_lowercase()
+        .contains(&searched.to_ascii_lowercase())
+        || canonical_object_name(candidate).contains(canonical_searched)
+}
+
+fn semi_minor_si(ellipsoid: &Ellipsoid) -> f64 {
+    if let Some(minor) = ellipsoid.semi_minor_axis() {
+        return minor.si_value();
+    }
+    let major = ellipsoid.semi_major_axis().si_value();
+    let flattening = ellipsoid.inverse_flattening();
+    if flattening == 0.0 {
+        major
+    } else {
+        major * (1.0 - 1.0 / flattening)
+    }
+}
+
 #[derive(Clone, Debug)]
 enum Cell {
     Empty,
@@ -515,6 +699,12 @@ impl AuthorityFactory {
     #[must_use]
     pub fn authority(&self) -> &str {
         &self.authority
+    }
+
+    /// Database this factory reads.
+    #[must_use]
+    pub fn database_context(&self) -> &DatabaseContext {
+        &self.db
     }
 
     fn child(&self, authority: &str) -> Self {
@@ -1099,18 +1289,41 @@ impl AuthorityFactory {
         &self,
         name: &str,
     ) -> Result<Option<GeographicCRS>, FactoryError> {
-        let rows = self.db.query(
+        self.geographic_crs_from_name(name, "geographic 2D")
+    }
+
+    /// First geographic 3D CRS whose official name or alias is `name`.
+    ///
+    /// # Errors
+    ///
+    /// The database rejects the statement.
+    pub fn create_geographic_3d_crs_from_name(
+        &self,
+        name: &str,
+    ) -> Result<Option<GeographicCRS>, FactoryError> {
+        self.geographic_crs_from_name(name, "geographic 3D")
+    }
+
+    fn geographic_crs_from_name(
+        &self,
+        name: &str,
+        crs_type: &str,
+    ) -> Result<Option<GeographicCRS>, FactoryError> {
+        let sql = format!(
             "SELECT code FROM (\
                 SELECT code, name, deprecated, 0 AS is_alias FROM geodetic_crs \
-                WHERE type = 'geographic 2D' AND name = ? COLLATE NOCASE AND auth_name = ? \
+                WHERE type = '{crs_type}' AND name = ? COLLATE NOCASE AND auth_name = ? \
                 UNION \
                 SELECT ov.code, a.alt_name AS name, ov.deprecated, 1 AS is_alias \
                 FROM geodetic_crs ov \
                 JOIN alias_name a ON ov.auth_name = a.auth_name AND ov.code = a.code \
                 WHERE a.source != 'EPSG_OLD' AND a.table_name = 'geodetic_crs' \
-                AND ov.type = 'geographic 2D' AND a.alt_name = ? COLLATE NOCASE \
+                AND ov.type = '{crs_type}' AND a.alt_name = ? COLLATE NOCASE \
                 AND ov.auth_name = ?\
-             ) ORDER BY deprecated, is_alias, length(name), name, code",
+             ) ORDER BY deprecated, is_alias, length(name), name, code"
+        );
+        let rows = self.db.query(
+            &sql,
             &[
                 name.to_owned(),
                 self.authority.clone(),
@@ -1124,6 +1337,276 @@ impl AuthorityFactory {
             }
         }
         Ok(None)
+    }
+
+    /// Non-deprecated geodetic CRS that use this datum.
+    ///
+    /// `crs_type` is `geographic 2D`, `geographic 3D`, or `geocentric`. An empty
+    /// type does not filter `geodetic_crs.type`.
+    ///
+    /// # Errors
+    ///
+    /// The database rejects the statement. A code this factory cannot build is
+    /// skipped.
+    pub fn create_geodetic_crs_from_datum(
+        &self,
+        datum_auth: &str,
+        datum_code: &str,
+        crs_type: &str,
+    ) -> Result<Vec<GeodeticCRS>, FactoryError> {
+        let mut sql = "SELECT auth_name, code FROM geodetic_crs WHERE \
+             datum_auth_name = ? AND datum_code = ? AND deprecated = 0"
+            .to_owned();
+        let mut params = vec![datum_auth.to_owned(), datum_code.to_owned()];
+        if !self.authority.is_empty() {
+            sql.push_str(" AND auth_name = ?");
+            params.push(self.authority.clone());
+        }
+        if !crs_type.is_empty() {
+            sql.push_str(" AND type = ?");
+            params.push(crs_type.to_owned());
+        }
+        sql.push_str(" ORDER BY auth_name, code");
+        self.collect_geodetic_crs(&sql, &params)
+    }
+
+    /// Non-deprecated geodetic CRS whose datum uses this ellipsoid.
+    ///
+    /// # Errors
+    ///
+    /// The database rejects the statement. A code this factory cannot build is
+    /// skipped.
+    pub fn create_geodetic_crs_from_ellipsoid(
+        &self,
+        ellipsoid_auth: &str,
+        ellipsoid_code: &str,
+        crs_type: &str,
+    ) -> Result<Vec<GeodeticCRS>, FactoryError> {
+        let mut sql = "SELECT geodetic_crs.auth_name, geodetic_crs.code FROM geodetic_crs \
+             JOIN geodetic_datum ON geodetic_crs.datum_auth_name = geodetic_datum.auth_name \
+             AND geodetic_crs.datum_code = geodetic_datum.code WHERE \
+             geodetic_datum.ellipsoid_auth_name = ? AND geodetic_datum.ellipsoid_code = ? \
+             AND geodetic_datum.deprecated = 0 AND geodetic_crs.deprecated = 0"
+            .to_owned();
+        let mut params = vec![ellipsoid_auth.to_owned(), ellipsoid_code.to_owned()];
+        if !self.authority.is_empty() {
+            sql.push_str(" AND geodetic_crs.auth_name = ?");
+            params.push(self.authority.clone());
+        }
+        if !crs_type.is_empty() {
+            sql.push_str(" AND geodetic_crs.type = ?");
+            params.push(crs_type.to_owned());
+        }
+        self.collect_geodetic_crs(&sql, &params)
+    }
+
+    /// Ellipsoids with the same semi-major axis and inverse flattening.
+    ///
+    /// This is `createEllipsoidFromExisting`. The match is relative `1e-10` on
+    /// `a` and on either `b` or `1/f`.
+    ///
+    /// # Errors
+    ///
+    /// The database rejects the statement.
+    pub fn create_ellipsoid_from_existing(
+        &self,
+        ellipsoid: &Ellipsoid,
+    ) -> Result<Vec<Ellipsoid>, FactoryError> {
+        let major = ellipsoid.semi_major_axis().si_value();
+        let minor = semi_minor_si(ellipsoid);
+        let flattening = ellipsoid.inverse_flattening();
+        let rows = self.db.query(
+            "SELECT auth_name, code FROM ellipsoid WHERE \
+             abs(semi_major_axis - ?) < 1e-10 * abs(semi_major_axis) AND \
+             ((semi_minor_axis IS NOT NULL AND abs(semi_minor_axis - ?) < 1e-10 * abs(semi_minor_axis)) OR \
+             (inv_flattening IS NOT NULL AND abs(inv_flattening - ?) < 1e-10 * abs(inv_flattening)))",
+            &[major.to_string(), minor.to_string(), flattening.to_string()],
+        )?;
+        let mut found = Vec::new();
+        for row in rows {
+            if let Ok(ellipsoid) = self.child(&row[0].text()).create_ellipsoid(&row[1].text()) {
+                found.push(ellipsoid);
+            }
+        }
+        Ok(found)
+    }
+
+    /// Geodetic CRS whose official name or alias matches `name`.
+    ///
+    /// Exact mode is `name = ? COLLATE NOCASE` on the official name and on
+    /// aliases other than `EPSG_OLD`. Approximate mode keeps a name when the
+    /// searched text, or its canonical form, is a substring. Deprecated rows are
+    /// dropped once a non-deprecated row has been seen. When an exact official
+    /// name matched, only those official-name matches are returned.
+    ///
+    /// # Errors
+    ///
+    /// The database rejects the statement.
+    pub(crate) fn create_geodetic_crs_by_name(
+        &self,
+        name: &str,
+        mode: NameMatch,
+    ) -> Result<Vec<GeodeticCRS>, FactoryError> {
+        self.objects_from_name(name, "geodetic_crs", mode)
+    }
+
+    /// Geodetic datums whose official name or alias matches `name`.
+    ///
+    /// An ensemble code is returned as the datum `createGeodeticDatum` builds,
+    /// with the non-ensemble name. The match is exact.
+    ///
+    /// # Errors
+    ///
+    /// The database rejects the statement.
+    pub(crate) fn create_geodetic_datums_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Vec<GeodeticReferenceFrame>, FactoryError> {
+        self.objects_from_name(name, "geodetic_datum", NameMatch::Exact)
+    }
+
+    fn objects_from_name<T>(
+        &self,
+        name: &str,
+        table: &str,
+        mode: NameMatch,
+    ) -> Result<Vec<T>, FactoryError>
+    where
+        T: NamedAuthorityObject,
+    {
+        let canonical = canonical_object_name(name);
+        if canonical.chars().count() <= 1 {
+            return Ok(Vec::new());
+        }
+        let rows = self.name_rows(table, name, mode)?;
+        let mut seen = BTreeSet::new();
+        let mut built: Vec<BuiltObject<T>> = Vec::new();
+        let mut first = true;
+        let mut first_deprecated = false;
+        let mut exact_official = 0usize;
+        let mut exact_alias = 0usize;
+        for row in rows {
+            if mode == NameMatch::Approximate && !approximate_name(&row.matched_name, name, &canonical)
+            {
+                continue;
+            }
+            let key = format!("{}\u{0}{}", row.authority, row.code);
+            if !seen.insert(key) {
+                continue;
+            }
+            if first {
+                first_deprecated = row.deprecated;
+                first = false;
+            }
+            if row.deprecated && !built.is_empty() && !first_deprecated {
+                break;
+            }
+            let Ok(object) = T::load(&self.child(&row.authority), &row.code) else {
+                continue;
+            };
+            if equivalent_object_name(object.name(), name) {
+                exact_official += 1;
+            } else if equivalent_object_name(&row.matched_name, name) {
+                exact_alias += 1;
+            }
+            built.push(BuiltObject {
+                matched_name: row.matched_name,
+                object,
+            });
+        }
+        if mode == NameMatch::Exact && exact_official + exact_alias >= 1 {
+            let alias_only = exact_official == 0;
+            built.retain(|item| {
+                equivalent_object_name(item.object.name(), name)
+                    || (alias_only && equivalent_object_name(&item.matched_name, name))
+            });
+        }
+        built.sort_by(|left, right| {
+            left.object
+                .name()
+                .len()
+                .cmp(&right.object.name().len())
+                .then_with(|| left.object.identifiers().len().cmp(&right.object.identifiers().len()))
+                .then_with(|| {
+                    left.object
+                        .identifiers()
+                        .iter()
+                        .zip(right.object.identifiers())
+                        .find_map(|(left_id, right_id)| {
+                            let space = left_id.code_space().cmp(right_id.code_space());
+                            if space != std::cmp::Ordering::Equal {
+                                return Some(space);
+                            }
+                            let code = left_id.code().cmp(right_id.code());
+                            if code != std::cmp::Ordering::Equal {
+                                return Some(code);
+                            }
+                            None
+                        })
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+        });
+        Ok(built.into_iter().map(|item| item.object).collect())
+    }
+
+    fn name_rows(
+        &self,
+        table: &str,
+        name: &str,
+        mode: NameMatch,
+    ) -> Result<Vec<NameRow>, FactoryError> {
+        let mut sql = String::from("SELECT auth_name, code, name, deprecated, is_alias FROM (");
+        let mut params = Vec::new();
+        sql.push_str(&format!(
+            "SELECT auth_name, code, name, deprecated, 0 AS is_alias FROM \"{table}\" WHERE 1 = 1 "
+        ));
+        if mode == NameMatch::Exact {
+            sql.push_str("AND name = ? COLLATE NOCASE ");
+            params.push(name.to_owned());
+        }
+        if !self.authority.is_empty() {
+            sql.push_str("AND auth_name = ? ");
+            params.push(self.authority.clone());
+        }
+        sql.push_str(&format!(
+            "UNION SELECT ov.auth_name, ov.code, a.alt_name AS name, ov.deprecated, 1 AS is_alias \
+             FROM \"{table}\" ov JOIN alias_name a ON ov.auth_name = a.auth_name AND ov.code = a.code \
+             WHERE a.source != 'EPSG_OLD' AND a.table_name = '{table}' "
+        ));
+        if mode == NameMatch::Exact {
+            sql.push_str("AND a.alt_name = ? COLLATE NOCASE ");
+            params.push(name.to_owned());
+        }
+        if !self.authority.is_empty() {
+            sql.push_str("AND ov.auth_name = ? ");
+            params.push(self.authority.clone());
+        }
+        sql.push_str(") ORDER BY deprecated, is_alias, length(name), name");
+        let rows = self.db.query(&sql, &params)?;
+        Ok(rows
+            .into_iter()
+            .map(|row| NameRow {
+                authority: row[0].text(),
+                code: row[1].text(),
+                matched_name: row[2].text(),
+                deprecated: row[3].text() == "1",
+            })
+            .collect())
+    }
+
+    fn collect_geodetic_crs(
+        &self,
+        sql: &str,
+        params: &[String],
+    ) -> Result<Vec<GeodeticCRS>, FactoryError> {
+        let rows = self.db.query(sql, params)?;
+        let mut found = Vec::new();
+        for row in rows {
+            if let Ok(crs) = self.child(&row[0].text()).create_geodetic_crs(&row[1].text()) {
+                found.push(crs);
+            }
+        }
+        Ok(found)
     }
 
     /// Vertical CRS.
@@ -1647,6 +2130,7 @@ impl AuthorityFactory {
                 datum,
                 ensemble,
                 coordinate_system,
+                implicit_cs: false,
             }),
             ("geocentric", CoordinateSystem::Cartesian(coordinate_system)) => {
                 GeodeticCRS::Geocentric(GeocentricCRS {
@@ -2623,6 +3107,22 @@ impl CoordinateOperationFactory {
     #[must_use]
     pub fn create() -> Self {
         Self
+    }
+
+    /// PROJ string of the operation from `source` to `target` when no database is required.
+    ///
+    /// A projected `target` whose base is `source` is the deriving conversion,
+    /// wrapped as the pipeline PROJ emits for a north-east geographic source.
+    ///
+    /// # Errors
+    ///
+    /// The pair is not that projection, or a step cannot be written.
+    pub fn create_operation_proj_string(
+        &self,
+        source: &Crs,
+        target: &Crs,
+    ) -> Result<String, FactoryError> {
+        super::projstring::operation_proj_string(source, target)
     }
 
     /// Operations from `source` to `target`.

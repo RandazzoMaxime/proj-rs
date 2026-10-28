@@ -4,8 +4,10 @@
 //! `WktFormatter`). See `docs/CRS-API.md`.
 
 mod buildop;
+mod json;
 mod equiv;
 mod factory;
+mod identify;
 mod model;
 mod parammap;
 mod projstring;
@@ -13,6 +15,8 @@ mod wkt;
 mod wkt_import;
 
 pub use equiv::Equivalence;
+pub use json::create_from_user_input;
+pub use projstring::create_crs_from_proj_string;
 pub use factory::{
     AlternativeGridNames, AuthorityFactory, AuthorityObject, CoordinateOperationContext,
     CoordinateOperationFactory, CrsInfo, DatabaseContext, DeprecatedCodes, IntermediateCrsUse,
@@ -21,7 +25,8 @@ pub use factory::{
 pub use buildop::OpProps;
 pub use model::{
     Axis, BoundCRS, CartesianCS, CompoundCRS, ConcatenatedOperation, ConcatenatedStep, Conversion,
-    CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble, Ellipsoid, EllipsoidalCS,
+    CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble, DerivedConversion, Ellipsoid,
+    EllipsoidalCS,
     DerivedProjectedCRS, EngineeringCRS, EngineeringDatum, FactoryError, GeocentricCRS, GeodeticCRS,
     GeodeticReferenceFrame, GeographicCRS, Identifier, Meridian, ObjectDomain, OperationMethod,
     OperationParameter, OperationParameterValue, OrdinalCS, Parameter, ParameterValue,

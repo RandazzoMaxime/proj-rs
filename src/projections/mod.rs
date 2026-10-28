@@ -16,6 +16,7 @@ mod cea;
 mod chamb;
 mod col_urban;
 mod conversions;
+pub(crate) use conversions::linear_proj_unit;
 mod ellip;
 mod eqc;
 mod eqdc;

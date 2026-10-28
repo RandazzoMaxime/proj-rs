@@ -65,6 +65,28 @@ impl GeographicCRS {
     }
 }
 
+/// Datum or ensemble-as-datum matches, and the angular unit matches.
+///
+/// This is the base check of `createOperation` from a geographic CRS to a
+/// projected CRS of that datum. An ensemble is compared as `asDatum`.
+pub(crate) fn same_geographic_base(left: &GeographicCRS, right: &GeographicCRS) -> bool {
+    let (Some(left_frame), Some(right_frame)) = (datum_frame(left), datum_frame(right)) else {
+        return false;
+    };
+    if !frame_equivalent(&left_frame, &right_frame) {
+        return false;
+    }
+    match (
+        left.coordinate_system().axes().first().map(Axis::unit),
+        right.coordinate_system().axes().first().map(Axis::unit),
+    ) {
+        (Some(left_unit), Some(right_unit)) => {
+            left_unit.name() == right_unit.name() && left_unit.factor == right_unit.factor
+        }
+        _ => false,
+    }
+}
+
 fn axis_direction_unit(left: &Axis, right: &Axis) -> bool {
     left.direction() == right.direction()
         && left.unit().name() == right.unit().name()
@@ -394,10 +416,10 @@ fn ellipsoid_equivalent(left: &Ellipsoid, right: &Ellipsoid) -> bool {
         }
 }
 
-fn meridian_equivalent(left: &PrimeMeridian, right: &PrimeMeridian) -> bool {
+pub(crate) fn meridian_equivalent(left: &PrimeMeridian, right: &PrimeMeridian) -> bool {
     same_name(left.name(), right.name())
         && left.longitude().value() == right.longitude().value()
-        && left.longitude().unit().name() == right.longitude().unit().name()
+        && same_name(left.longitude().unit().name(), right.longitude().unit().name())
 }
 
 fn coordinate_system_equivalent(left: &CoordinateSystem, right: &CoordinateSystem) -> bool {
@@ -463,7 +485,181 @@ fn same_name(left: &str, right: &str) -> bool {
     left.eq_ignore_ascii_case(right)
 }
 
-fn same_epoch(left: Option<f64>, right: Option<f64>) -> bool {
+/// `Identifier::isEquivalentName`: case-insensitive, ignoring space, `_`, `-`,
+/// `/`, parentheses, `.`, `&`, and `,`.
+pub(crate) fn equivalent_name(left: &str, right: &str) -> bool {
+    folded_name(left) == folded_name(right)
+}
+
+fn folded_name(name: &str) -> String {
+    name.chars()
+        .filter(|ch| !matches!(ch, ' ' | '_' | '-' | '/' | '(' | ')' | '.' | '&' | ','))
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+impl GeodeticCRS {
+    /// `GeodeticCRS::identify` with no authority factory.
+    ///
+    /// The candidates are the hardcoded EPSG:4326, EPSG:4267, and EPSG:4269.
+    /// A database search is `identify` with a factory, which is a later test.
+    #[must_use]
+    pub fn identify(&self) -> Vec<(Crs, i32)> {
+        let name = self.name();
+        let axis_order = match self {
+            Self::Geographic(crs) if crs.implicit_cs => IdentifyAxisOrder::Implicit,
+            _ => IdentifyAxisOrder::Exact,
+        };
+        let candidates = [
+            Self::Geographic(GeographicCRS::epsg_4326()),
+            Self::Geographic(GeographicCRS::epsg_4267()),
+            Self::Geographic(GeographicCRS::epsg_4269()),
+        ];
+        for candidate in candidates {
+            let candidate_name = candidate.name();
+            let name_equal = name == candidate_name;
+            let name_equivalent = equivalent_name(name, candidate_name);
+            let equivalent = identify_equivalent(self, &candidate, axis_order);
+            let confidence = if name_equivalent && equivalent {
+                if name_equal { 100 } else { 90 }
+            } else if name_equal && !equivalent {
+                25
+            } else if equivalent {
+                70
+            } else {
+                continue;
+            };
+            return vec![(candidate_as_crs(candidate), confidence)];
+        }
+        Vec::new()
+    }
+}
+
+impl Crs {
+    /// `CRS::identify` with no authority factory.
+    ///
+    /// Geographic and geodetic CRS use [`GeodeticCRS::identify`]. Other kinds
+    /// have no hardcoded candidate.
+    #[must_use]
+    pub fn identify(&self) -> Vec<(Crs, i32)> {
+        match self {
+            Self::Geographic(crs) => Self::Geodetic(GeodeticCRS::Geographic(crs.clone())).identify(),
+            Self::Geodetic(crs) => crs.identify(),
+            _ => Vec::new(),
+        }
+    }
+}
+
+fn candidate_as_crs(crs: GeodeticCRS) -> Crs {
+    match crs {
+        GeodeticCRS::Geographic(crs) => Crs::Geographic(crs),
+        other => Crs::Geodetic(other),
+    }
+}
+
+/// Whether identification may treat a latitude/longitude swap as the same CS.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IdentifyAxisOrder {
+    /// Axis directions must line up in order.
+    Exact,
+    /// A geographic latitude/longitude swap still matches.
+    Implicit,
+}
+
+fn identify_equivalent(
+    this: &GeodeticCRS,
+    candidate: &GeodeticCRS,
+    axis_order: IdentifyAxisOrder,
+) -> bool {
+    identify_anchors(this, candidate) && identify_axes_match(this, candidate, axis_order)
+}
+
+fn identify_anchors(this: &GeodeticCRS, candidate: &GeodeticCRS) -> bool {
+    match (this, candidate) {
+        (GeodeticCRS::Geographic(left), GeodeticCRS::Geographic(right)) => {
+            geographic_anchor(left, right)
+        }
+        (GeodeticCRS::Geocentric(left), GeodeticCRS::Geocentric(right)) => {
+            match (left.datum(), right.datum()) {
+                (Some(left_datum), Some(right_datum)) => frame_equivalent(left_datum, right_datum),
+                _ => false,
+            }
+        }
+        _ => false,
+    }
+}
+
+/// Axis direction and unit match for identification.
+///
+/// Datum equivalence is separate: the no-database path uses names, and the
+/// database path also accepts aliases.
+pub(crate) fn identify_axes_match(
+    this: &GeodeticCRS,
+    candidate: &GeodeticCRS,
+    axis_order: IdentifyAxisOrder,
+) -> bool {
+    match (this, candidate) {
+        (GeodeticCRS::Geographic(left), GeodeticCRS::Geographic(right)) => {
+            geographic_axes_for_identify(left, right, axis_order)
+        }
+        (GeodeticCRS::Geocentric(left), GeodeticCRS::Geocentric(right)) => directions_and_units(
+            left.coordinate_system().axes(),
+            right.coordinate_system().axes(),
+        ),
+        _ => false,
+    }
+}
+
+/// Ellipsoid size matches. Names are not compared.
+///
+/// This is `Ellipsoid::_isEquivalentTo` with `EQUIVALENT`: semi-major axis and
+/// inverse flattening within a relative `1e-10`.
+pub(crate) fn ellipsoid_parameters_match(left: &Ellipsoid, right: &Ellipsoid) -> bool {
+    let major = left.semi_major_axis().si_value();
+    let other_major = right.semi_major_axis().si_value();
+    if (major - other_major).abs() > 1e-10 * major.abs() {
+        return false;
+    }
+    let flattening = left.inverse_flattening();
+    let other = right.inverse_flattening();
+    let scale = flattening.abs().max(1.0);
+    (flattening - other).abs() <= 1e-10 * scale
+}
+
+fn geographic_axes_for_identify(
+    left: &GeographicCRS,
+    right: &GeographicCRS,
+    axis_order: IdentifyAxisOrder,
+) -> bool {
+    let left_axes = left.coordinate_system().axes();
+    let right_axes = right.coordinate_system().axes();
+    if directions_and_units(left_axes, right_axes) {
+        return true;
+    }
+    axis_order == IdentifyAxisOrder::Implicit
+        && left_axes.len() == 2
+        && right_axes.len() == 2
+        && direction_and_unit(&left_axes[0], &right_axes[1])
+        && direction_and_unit(&left_axes[1], &right_axes[0])
+}
+
+pub(crate) fn directions_and_units(left: &[Axis], right: &[Axis]) -> bool {
+    left.len() == right.len()
+        && left
+            .iter()
+            .zip(right)
+            .all(|(left, right)| direction_and_unit(left, right))
+}
+
+fn direction_and_unit(left: &Axis, right: &Axis) -> bool {
+    let scale = left.unit().conversion_to_si().abs();
+    left.direction() == right.direction()
+        && left.unit().kind() == right.unit().kind()
+        && (left.unit().conversion_to_si() - right.unit().conversion_to_si()).abs()
+            <= 1e-10 * scale
+}
+
+pub(crate) fn same_epoch(left: Option<f64>, right: Option<f64>) -> bool {
     match (left, right) {
         (Some(left), Some(right)) => left == right,
         (None, None) => true,

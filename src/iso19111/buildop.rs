@@ -19,7 +19,7 @@ enum TmercApprox {
 
 /// Northern or southern UTM hemisphere.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum UtmHemisphere {
+pub(crate) enum UtmHemisphere {
     North,
     South,
 }
@@ -595,7 +595,7 @@ impl super::model::Conversion {
         Ok(parts.join(" "))
     }
 
-    fn utm_zone(&self) -> Option<(i32, UtmHemisphere)> {
+    pub(crate) fn utm_zone(&self) -> Option<(i32, UtmHemisphere)> {
         if self.method.code != "9807" {
             return None;
         }
@@ -659,12 +659,19 @@ impl super::model::Conversion {
     }
 
     fn measure_of_code(&self, code: i32) -> Option<&Measure> {
-        self.parameters.iter().find_map(|parameter| {
+        let by_code = self.parameters.iter().find_map(|parameter| {
             if parameter.code.parse::<i32>().ok() == Some(code) {
-                match &parameter.value {
-                    ParameterValue::Measure(measure) => Some(measure),
-                    _ => None,
-                }
+                measure_ref(&parameter.value)
+            } else {
+                None
+            }
+        });
+        if by_code.is_some() {
+            return by_code;
+        }
+        self.parameters.iter().find_map(|parameter| {
+            if epsg_code_of_parameter_name(&parameter.name) == Some(code) {
+                measure_ref(&parameter.value)
             } else {
                 None
             }
@@ -1829,6 +1836,25 @@ fn lookup_method(method: &OperationMethod) -> Option<&'static MethodMap> {
         }
     }
     parammap::method_by_name(&method.name)
+}
+
+fn measure_ref(value: &ParameterValue) -> Option<&Measure> {
+    match value {
+        ParameterValue::Measure(measure) => Some(measure),
+        _ => None,
+    }
+}
+
+fn epsg_code_of_parameter_name(name: &str) -> Option<i32> {
+    parammap::PROJECTION_METHODS
+        .iter()
+        .chain(parammap::OTHER_METHODS)
+        .find_map(|method| {
+            method.params.iter().find_map(|param| {
+                (param.epsg_code != 0 && names_match(param.wkt2_name, name))
+                    .then_some(param.epsg_code)
+            })
+        })
 }
 
 fn push_aux(parts: &mut Vec<String>, aux: &str) {

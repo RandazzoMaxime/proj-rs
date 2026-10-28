@@ -248,6 +248,18 @@ pub enum UnitKind {
 }
 
 impl UnitOfMeasure {
+    /// Unit named `name`, converting to the SI unit of `kind` by `factor`.
+    #[must_use]
+    pub fn new(name: impl Into<String>, factor: f64, kind: UnitKind) -> Self {
+        Self {
+            name: name.into(),
+            factor,
+            kind,
+            code_space: String::new(),
+            code: String::new(),
+        }
+    }
+
     /// SI metre, EPSG:9001.
     #[must_use]
     pub fn metre() -> Self {
@@ -480,6 +492,28 @@ impl Ellipsoid {
         self.inverse_flattening == Some(0.0)
     }
 
+    /// Flattened sphere with no authority code.
+    ///
+    /// This is `Ellipsoid::createFlattenedSphere` for a name that is not in
+    /// `proj.db`. An empty name stays empty.
+    #[must_use]
+    pub fn create_flattened_sphere(
+        name: impl Into<String>,
+        semi_major_metre: f64,
+        inverse_flattening: f64,
+    ) -> Self {
+        Self {
+            identified: Identified::named(name),
+            semi_major: Measure {
+                value: semi_major_metre,
+                unit: UnitOfMeasure::metre(),
+            },
+            inverse_flattening: Some(inverse_flattening),
+            semi_minor: None,
+            body: "Earth".to_owned(),
+        }
+    }
+
     /// WGS 84, EPSG:7030.
     #[must_use]
     pub fn wgs84() -> Self {
@@ -681,6 +715,25 @@ impl GeodeticReferenceFrame {
             Ellipsoid::clarke_1866(),
             PrimeMeridian::greenwich(),
         )
+    }
+
+    /// Geodetic datum with no anchor and no epoch.
+    ///
+    /// This is `GeodeticReferenceFrame::create` when the property map only
+    /// carries a name. An empty name stays empty.
+    #[must_use]
+    pub fn create(
+        name: impl Into<String>,
+        ellipsoid: Ellipsoid,
+        prime_meridian: PrimeMeridian,
+    ) -> Self {
+        Self {
+            identified: Identified::named(name),
+            ellipsoid,
+            prime_meridian,
+            frame_epoch: None,
+            deformation_model: None,
+        }
     }
 
     /// Datum with an empty name, the WGS 84 ellipsoid, and Greenwich.
@@ -1781,6 +1834,8 @@ pub struct GeographicCRS {
     pub(crate) datum: Option<GeodeticReferenceFrame>,
     pub(crate) ensemble: Option<DatumEnsemble>,
     pub(crate) coordinate_system: EllipsoidalCS,
+    /// WKT1 `GEOGCS` without `AXIS` nodes. Identification then ignores axis order.
+    pub(crate) implicit_cs: bool,
 }
 
 impl GeographicCRS {
@@ -1826,6 +1881,7 @@ impl GeographicCRS {
             datum,
             ensemble,
             coordinate_system,
+            implicit_cs: false,
         })
     }
 
@@ -1857,6 +1913,25 @@ impl GeographicCRS {
     #[must_use]
     pub fn coordinate_system(&self) -> &EllipsoidalCS {
         &self.coordinate_system
+    }
+
+    /// Add an ellipsoidal-height axis in metres.
+    ///
+    /// A CRS that is already 3D is returned unchanged. This is
+    /// `GeographicCRS::promoteTo3D` when the database has no 3D CRS of the same name.
+    #[must_use]
+    pub fn promote_to_3d(&self) -> Self {
+        if self.coordinate_system.axes.len() != 2 {
+            return self.clone();
+        }
+        let mut crs = self.clone();
+        crs.coordinate_system.axes.push(Axis::new(
+            "Ellipsoidal height",
+            "h",
+            "up",
+            UnitOfMeasure::metre(),
+        ));
+        crs
     }
 
     /// Ellipsoid of the datum, or of the first ensemble member.
@@ -1962,6 +2037,7 @@ impl GeographicCRS {
             datum: Some(GeodeticReferenceFrame::epsg_6326()),
             ensemble: None,
             coordinate_system: EllipsoidalCS::create_longitude_latitude(UnitOfMeasure::degree()),
+            implicit_cs: false,
         }
     }
 
@@ -1976,6 +2052,7 @@ impl GeographicCRS {
             datum: Some(datum),
             ensemble: None,
             coordinate_system,
+            implicit_cs: false,
         }
     }
 }
@@ -2142,6 +2219,7 @@ impl GeodeticCRS {
                     datum,
                     ensemble,
                     coordinate_system,
+                    implicit_cs: false,
                 })
             }
             CoordinateSystem::Cartesian(coordinate_system) => Self::Geocentric(GeocentricCRS {
@@ -2225,6 +2303,36 @@ impl GeodeticCRS {
     }
 }
 
+/// One call of [`ProjectedCRS::deriving_operation`].
+///
+/// The conversion is a copy. `source` is the base CRS and `target` is the projected CRS.
+#[derive(Debug)]
+pub struct DerivedConversion<'a> {
+    conversion: Conversion,
+    source: &'a GeodeticCRS,
+    target: &'a ProjectedCRS,
+}
+
+impl<'a> DerivedConversion<'a> {
+    /// Base CRS of the projected CRS. PROJ's `sourceCRS()` on a deriving conversion.
+    #[must_use]
+    pub fn source_crs(&self) -> &'a GeodeticCRS {
+        self.source
+    }
+
+    /// Projected CRS that owns this conversion.
+    #[must_use]
+    pub fn target_crs(&self) -> &'a ProjectedCRS {
+        self.target
+    }
+
+    /// The copied conversion. A later call is a different object.
+    #[must_use]
+    pub fn conversion(&self) -> &Conversion {
+        &self.conversion
+    }
+}
+
 /// Projected CRS.
 #[derive(Clone, Debug)]
 pub struct ProjectedCRS {
@@ -2282,6 +2390,19 @@ impl ProjectedCRS {
             .identifiers
             .push(Identifier::new(code_space, code));
         self
+    }
+
+    /// Copy of the deriving conversion, with this CRS as its target.
+    ///
+    /// Each call returns a new conversion. The target of that copy is this CRS,
+    /// which is what `derivingConversion()` does after `ProjectedCRS::create`.
+    #[must_use]
+    pub fn deriving_operation(&self) -> DerivedConversion<'_> {
+        DerivedConversion {
+            conversion: self.conversion.clone(),
+            source: &self.base,
+            target: self,
+        }
     }
 
     /// Projected coordinate system.
@@ -2511,6 +2632,49 @@ impl CompoundCRS {
     #[must_use]
     pub fn components(&self) -> &[Crs] {
         &self.components
+    }
+
+    /// `CompoundCRS::createLax`: a geographic CRS plus an ellipsoidal-height
+    /// vertical CRS (`VERT_DATUM` type `2002`) becomes one geographic 3D CRS.
+    ///
+    /// The promoted CRS keeps the horizontal name and drops authority codes.
+    /// PROJ's other lax case, a second geographic CRS equivalent to the first,
+    /// is not handled here.
+    ///
+    /// # Errors
+    ///
+    /// The components are not a valid compound CRS.
+    pub fn create_lax(
+        name: impl Into<String>,
+        components: Vec<Crs>,
+    ) -> Result<Crs, FactoryError> {
+        if let [Crs::Geographic(horizontal), Crs::Vertical(vertical)] = components.as_slice() {
+            if horizontal.coordinate_system.axes.len() == 2
+                && vertical
+                    .datum
+                    .as_ref()
+                    .is_some_and(|datum| datum.wkt1_type == "2002")
+            {
+                let axis = vertical.coordinate_system.axis();
+                let mut promoted = horizontal.clone();
+                promoted.identified.identifiers.clear();
+                let metre_up = axis.direction() == "up"
+                    && axis.unit().kind() == UnitKind::Linear
+                    && (axis.unit().conversion_to_si() - 1.0).abs() < 1e-12;
+                if !metre_up {
+                    promoted.identified.name =
+                        format!("{} ({})", horizontal.name(), vertical.name());
+                }
+                promoted.coordinate_system.axes.push(Axis::new(
+                    "Ellipsoidal height",
+                    "h",
+                    axis.direction(),
+                    axis.unit().clone(),
+                ));
+                return Ok(Crs::Geographic(promoted));
+            }
+        }
+        Ok(Crs::Compound(Self::create(name, components)?))
     }
 
     /// Usages recorded for this CRS.
