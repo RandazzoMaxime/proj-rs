@@ -1671,6 +1671,62 @@ UNIT[\"metre\",1]]";
 }
 
 #[test]
+fn crs_projected_crs_3d_is_wkt1_equivalent_to_wkt2() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let wkt1 = "\
+PROJCS[\"WGS 84 / UTM zone 16N [EGM08-1]\",\
+GEOGCS[\"WGS 84 / UTM zone 16N [EGM08-1]\",\
+DATUM[\"WGS84\",SPHEROID[\"WGS84\",6378137.000,298.257223563,\
+AUTHORITY[\"EPSG\",\"7030\"]],AUTHORITY[\"EPSG\",\"6326\"]],\
+PRIMEM[\"Greenwich\",0.0000000000000000,\
+AUTHORITY[\"EPSG\",\"8901\"]],\
+UNIT[\"Degree\",0.01745329251994329547,\
+AUTHORITY[\"EPSG\",\"9102\"]],AUTHORITY[\"EPSG\",\"32616\"]],\
+UNIT[\"Meter\",1.00000000000000000000,\
+AUTHORITY[\"EPSG\",\"9001\"]],\
+PROJECTION[\"Transverse_Mercator\"],\
+PARAMETER[\"latitude_of_origin\",0.0000000000000000],\
+PARAMETER[\"central_meridian\",-87.0000000002777938],\
+PARAMETER[\"scale_factor\",0.9996000000000000],\
+PARAMETER[\"false_easting\",500000.000],\
+PARAMETER[\"false_northing\",0.000],\
+AXIS[\"Easting\",EAST],\
+AXIS[\"Northing\",NORTH],\
+AXIS[\"Height\",UP],\
+AUTHORITY[\"EPSG\",\"32616\"]]";
+    let mut parser = WktParser::new();
+    parser.set_strictness(WktStrictness::Lenient);
+    parser.attach_database(db.clone());
+    let crs = parser
+        .create_from_wkt(wkt1)
+        .expect("wkt1")
+        .crs()
+        .expect("projected")
+        .clone();
+    let Crs::Projected(projected) = crs else {
+        panic!("the WKT1 object is a projected CRS");
+    };
+    let wkt2 = Crs::Projected(projected.clone())
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2019))
+        .expect("wkt2");
+    let mut parser = WktParser::new();
+    parser.attach_database(db);
+    let again = parser
+        .create_from_wkt(&wkt2)
+        .expect("parse wkt2")
+        .crs()
+        .expect("projected")
+        .clone();
+    let Crs::Projected(again) = again else {
+        panic!("the WKT2 object is a projected CRS: {wkt2}");
+    };
+    assert!(
+        projected.is_equivalent_to_with(&again, Equivalence::ExceptAxisOrder),
+        "WKT1 projected 3D is not equivalent to its WKT2 form:\n{wkt2}"
+    );
+}
+
+#[test]
 fn crs_projected_crs_3d_as_wkt1_gdal_with_ellipsoidal_height_as_vertical_crs() {
     let db = DatabaseContext::create().expect("proj.db");
     let crs = AuthorityFactory::create(&db, "EPSG")

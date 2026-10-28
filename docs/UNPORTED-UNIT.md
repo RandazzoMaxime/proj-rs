@@ -7,7 +7,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_crs.cpp
 
-- `crs.projectedCRS_3D_is_WKT1_equivalent_to_WKT2`
 - `crs.projectedCRS_Krovak_EPSG_5221_as_PROJ_string`
 - `crs.projectedCRS_Krovak_with_approximate_alpha_as_PROJ_string`
 - `crs.projectedCRS_identify_no_db`

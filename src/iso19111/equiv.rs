@@ -222,12 +222,30 @@ impl ProjectedCRS {
     /// Strict projected equivalence.
     #[must_use]
     pub fn is_equivalent_to(&self, other: &Self) -> bool {
-        same_name(self.name(), other.name())
-            && geodetic_equivalent(self.base_crs(), other.base_crs(), Equivalence::Strict)
-            && conversion_equivalent(self.deriving_conversion(), other.deriving_conversion())
-            && cs_axes_match(
+        self.is_equivalent_to_with(other, Equivalence::Strict)
+    }
+
+    /// `isEquivalentTo` with `criterion`.
+    ///
+    /// `Equivalent` does not require the projected CRS name. `ExceptAxisOrder`
+    /// compares the base geographic CRS with a latitude/longitude swap allowed,
+    /// and compares the projected axes by direction and unit.
+    #[must_use]
+    pub fn is_equivalent_to_with(&self, other: &Self, criterion: Equivalence) -> bool {
+        let standard = standard_criterion(criterion);
+        if criterion == Equivalence::Strict && !same_name(self.name(), other.name()) {
+            return false;
+        }
+        geodetic_equivalent(self.base_crs(), other.base_crs(), criterion)
+            && conversion_equivalent_with(
+                self.deriving_conversion(),
+                other.deriving_conversion(),
+                standard,
+            )
+            && axes_for_criterion(
                 self.coordinate_system().axes(),
                 other.coordinate_system().axes(),
+                standard,
             )
     }
 }
@@ -455,15 +473,107 @@ fn meridian_value(axis: &Axis) -> Option<f64> {
     axis.meridian().map(|meridian| meridian.longitude().value())
 }
 
+fn standard_criterion(criterion: Equivalence) -> Equivalence {
+    if criterion == Equivalence::ExceptAxisOrder {
+        Equivalence::Equivalent
+    } else {
+        criterion
+    }
+}
+
 fn conversion_equivalent(left: &Conversion, right: &Conversion) -> bool {
-    same_name(left.name(), right.name())
-        && left.method().code() == right.method().code()
-        && left.parameters().len() == right.parameters().len()
-        && left
-            .parameters()
-            .iter()
-            .zip(right.parameters())
-            .all(|(left, right)| parameter_equivalent(left, right))
+    conversion_equivalent_with(left, right, Equivalence::Strict)
+}
+
+fn conversion_equivalent_with(
+    left: &Conversion,
+    right: &Conversion,
+    criterion: Equivalence,
+) -> bool {
+    if criterion == Equivalence::Strict {
+        return same_name(left.name(), right.name())
+            && left.method().code() == right.method().code()
+            && left.parameters().len() == right.parameters().len()
+            && left
+                .parameters()
+                .iter()
+                .zip(right.parameters())
+                .all(|(left, right)| parameter_equivalent(left, right));
+    }
+    if !methods_equivalent(left.method(), right.method()) {
+        return false;
+    }
+    if left.parameters().len() != right.parameters().len() {
+        return false;
+    }
+    let mut used = vec![false; right.parameters().len()];
+    for parameter in left.parameters() {
+        let mut found = false;
+        for (index, other) in right.parameters().iter().enumerate() {
+            if used[index] {
+                continue;
+            }
+            if parameter_equivalent_with(parameter, other) {
+                used[index] = true;
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return false;
+        }
+    }
+    true
+}
+
+fn methods_equivalent(left: &super::model::OperationMethod, right: &super::model::OperationMethod) -> bool {
+    let left_code = left.code();
+    let right_code = right.code();
+    (!left_code.is_empty() && left_code == right_code) || equivalent_name(left.name(), right.name())
+}
+
+fn parameter_equivalent_with(left: &Parameter, right: &Parameter) -> bool {
+    let same_parameter = (!left.code().is_empty() && left.code() == right.code())
+        || equivalent_name(left.name(), right.name());
+    if !same_parameter {
+        return false;
+    }
+    match (left.value(), right.value()) {
+        (ParameterValue::Measure(left), ParameterValue::Measure(right)) => {
+            measures_close(left, right)
+        }
+        (ParameterValue::String(left), ParameterValue::String(right)) => left == right,
+        (ParameterValue::Integer(left), ParameterValue::Integer(right)) => left == right,
+        (ParameterValue::Filename(left), ParameterValue::Filename(right)) => left == right,
+        (ParameterValue::Boolean(left), ParameterValue::Boolean(right)) => left == right,
+        _ => false,
+    }
+}
+
+/// PROJ compares non-strict measures with a relative error of `2e-10` on the SI value.
+fn measures_close(left: &super::model::Measure, right: &super::model::Measure) -> bool {
+    let left_si = left.si_value();
+    let right_si = right.si_value();
+    if left_si.is_infinite() && right_si.is_infinite() {
+        return left_si.is_sign_positive() == right_si.is_sign_positive();
+    }
+    (left_si - right_si).abs() <= 2e-10 * left_si.abs()
+}
+
+fn axes_for_criterion(left: &[Axis], right: &[Axis], criterion: Equivalence) -> bool {
+    if criterion == Equivalence::Strict {
+        return cs_axes_match(left, right);
+    }
+    left.len() == right.len()
+        && left.iter().zip(right).all(|(left, right)| {
+            left.direction() == right.direction() && units_close(left.unit(), right.unit())
+        })
+}
+
+fn units_close(left: &super::model::UnitOfMeasure, right: &super::model::UnitOfMeasure) -> bool {
+    left.kind() == right.kind()
+        && (left.conversion_to_si() - right.conversion_to_si()).abs()
+            <= 1e-10 * left.conversion_to_si().abs()
 }
 
 fn parameter_equivalent(left: &Parameter, right: &Parameter) -> bool {
