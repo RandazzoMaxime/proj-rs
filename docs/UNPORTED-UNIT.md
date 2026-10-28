@@ -7,7 +7,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_crs.cpp
 
-- `crs.verticalCRS_datum_ensemble`
 - `crs.VerticalCRS_ensemble_exception_in_create`
 - `datum.vdatum_with_anchor`
 - `crs.compoundCRS_valid`

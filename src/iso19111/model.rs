@@ -2590,6 +2590,35 @@ impl VerticalCRS {
         }
     }
 
+    /// Vertical CRS bound to a vertical datum ensemble.
+    ///
+    /// # Errors
+    ///
+    /// A member is not a vertical datum.
+    pub fn from_ensemble(
+        name: impl Into<String>,
+        ensemble: DatumEnsemble,
+        coordinate_system: VerticalCS,
+    ) -> Result<Self, FactoryError> {
+        if ensemble.members().is_empty()
+            || ensemble
+                .members()
+                .iter()
+                .any(|member| !matches!(member, Datum::Vertical(_)))
+        {
+            return Err(FactoryError::Invalid(
+                "Ensemble should contain VerticalReferenceFrame".to_owned(),
+            ));
+        }
+        Ok(Self {
+            identified: Identified::named(name),
+            datum: None,
+            ensemble: Some(ensemble),
+            coordinate_system,
+            geoid_models: Vec::new(),
+        })
+    }
+
     /// Attach one authority identifier.
     #[must_use]
     pub fn with_identifier(mut self, code_space: &str, code: &str) -> Self {

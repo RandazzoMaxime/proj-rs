@@ -3975,3 +3975,37 @@ fn crs_vertical_crs_identify_db() {
     let unmatched = vertical_like(&source, "no match", None);
     assert!(unmatched.identify_with(Some(&factory)).is_empty());
 }
+
+#[test]
+fn crs_vertical_crs_datum_ensemble() {
+    let ensemble = DatumEnsemble::create(
+        "",
+        vec![
+            Datum::Vertical(VerticalReferenceFrame::named("vdatum1")),
+            Datum::Vertical(VerticalReferenceFrame::named("vdatum2")),
+        ],
+        100.0,
+    )
+    .expect("ensemble");
+    let crs = VerticalCRS::from_ensemble(
+        "unnamed",
+        ensemble,
+        VerticalCS::create_gravity_related_height(UnitOfMeasure::metre()),
+    )
+    .expect("crs");
+    let mut formatter = WktFormatter::create(WktConvention::Wkt2_2019);
+    formatter.simul_cur_node_has_id();
+    let wkt = Crs::Vertical(crs).export_to_wkt(&mut formatter).expect("wkt");
+    assert_eq!(
+        wkt,
+        "\
+VERTCRS[\"unnamed\",
+    ENSEMBLE[\"unnamed\",
+        MEMBER[\"vdatum1\"],
+        MEMBER[\"vdatum2\"],
+        ENSEMBLEACCURACY[100]],
+    CS[vertical,1],
+        AXIS[\"gravity-related height (H)\",up,
+            LENGTHUNIT[\"metre\",1]]]"
+    );
+}
