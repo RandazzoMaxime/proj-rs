@@ -250,28 +250,31 @@ the operation fails to build, with a clear error.
 fixed grids. `bench/record.sh` appends one line per run to
 [`bench/history.jsonl`](bench/history.jsonl) with the commit and machine name,
 so each change can be measured against the last.
+To include the libproj comparison, point `PROJ_LIB_DIR` at the folder holding
+`libproj.so` (or `proj.lib`) when building.
 
-The two timing columns come from **different machines**: do not read them as a
-speedup. `ratio` is this port's time divided by OSGeo4W libproj on the same
-grid, so below 1 means this port is faster. The 2026-10-28 column was recorded
-when the suite had 2,743 passing cases and has not been re-run since.
+Measured on **one machine**, so the columns can be compared: a cloud VM
+(Intel Xeon @ 2.30 GHz, 2 vCPU, Linux), one core pinned with `taskset -c 1`,
+`batch_path=avx2`, one million points, median of 11 repeats. libproj is the
+Ubuntu 24.04 build, **PROJ 9.4.0**, called through `proj_trans` on the same
+points. `ratio` is this port's time divided by libproj's, so below 1 means this
+port is faster. Two back-to-back runs agree within about 8%.
 
-| Case | 2026-10-27 scalar | 2026-10-28 AVX2 | libproj | ratio |
+| Case | proj-rs, one point at a time | proj-rs, batch (AVX2) | libproj 9.4 | ratio |
 |---|---:|---:|---:|---:|
-| UTM 31 forward | 81.5 | 82.2 | 113.4 | 0.72 |
-| UTM 31 inverse | 79.0 | 90.1 | | |
-| Lambert-93 forward | 50.3 | 54.7 | 91.3 | 0.60 |
-| Lambert-93 inverse | 138.5 | 163.3 | | |
-| Web Mercator forward | 19.3 | 41.5 | 67.7 | 0.61 |
-| Web Mercator inverse | 25.0 | 35.6 | | |
-| UTM batch, zone center | 80.0 | 50.2 | | |
-| UTM batch, zone edge | 75.0 | 44.3 | | |
-| Lambert-93 batch | 47.5 | 34.2 | | |
-| Helmert 7-parameter | 7.3 | 7.1 | | |
+| UTM 31 forward | 86.7 | 31.4 | 100.7 | **0.86** (batch 0.31) |
+| UTM 31 inverse | 97.6 | 31.4 (edge) | | |
+| Lambert-93 forward | 62.9 | 19.6 | 79.5 | **0.79** (batch 0.25) |
+| Lambert-93 inverse | 208.3 | | | |
+| Web Mercator forward | 44.4 | | 56.4 | **0.79** |
+| Web Mercator inverse | 33.2 | | | |
+| Helmert 7-parameter | 9.2 | | | |
 
-Nanoseconds per point, one million points. The first column is
-`maxime-win11-nosimd` at `b405008`. The second is `RANDAZZOPROD`,
-`batch_path=avx2`, at dirty `16408a8`.
+Nanoseconds per point. The batch column is `utm31_batch_center`,
+`lambert93_batch`; the UTM inverse row shows the zone-edge batch. libproj has no
+batch path to compare with, so the batch ratio is against its one-point call.
+Run on `dev` at the commit recorded in
+[`bench/history.jsonl`](bench/history.jsonl).
 
 <details>
 <summary><b>Ten slowest operations</b> (same run, 128-point catalogue grid)</summary>
@@ -280,16 +283,16 @@ Nanoseconds per point, one million points. The first column is
 
 | Operation | ns/point |
 |---|---:|
-| `gnom` | 396.9 |
-| `aeqd` | 394.5 |
-| `lsat` | 356.3 |
-| `misrsom` | 343.8 |
-| `dsea` | 248.4 |
-| `isea` | 194.5 |
-| `ivea` | 193.0 |
-| `calcofi` | 180.5 |
-| `tsea` | 176.6 |
-| `mod_krovak` | 157.0 |
+| `gnom` | 642.7 |
+| `aeqd` | 595.4 |
+| `misrsom` | 466.3 |
+| `lsat` | 449.6 |
+| `dsea` | 361.7 |
+| `isea` | 287.2 |
+| `tsea` | 274.2 |
+| `ivea` | 266.1 |
+| `spilhaus` | 224.9 |
+| `calcofi` | 205.8 |
 
 </details>
 
@@ -297,7 +300,7 @@ Record your own row, and compare only lines from the same machine, with the
 process pinned (`taskset -c 0`) for stable numbers:
 
 ```bash
-BENCH_MACHINE=my-box bench/record.sh
+PROJ_LIB_DIR=/usr/lib/x86_64-linux-gnu BENCH_MACHINE=my-box bench/record.sh
 ```
 
 ## Reproduce these numbers

@@ -26,10 +26,23 @@ fn main() {
         .warnings(false)
         .compile("geodesic");
 
-    let proj_lib = PathBuf::from(r"C:\Users\maxim\AppData\Local\Programs\OSGeo4W\lib");
-    if proj_lib.join("proj.lib").is_file() {
-        println!("cargo:rustc-link-search=native={}", proj_lib.display());
-        println!("cargo:rustc-link-lib=dylib=proj");
-        println!("cargo:rustc-cfg=link_libproj");
+    // The bench compares against libproj when it can link it. Point
+    // PROJ_LIB_DIR at the folder holding proj.lib or libproj.so; the OSGeo4W
+    // folder is still tried on the maintainer's Windows machine.
+    println!("cargo:rerun-if-env-changed=PROJ_LIB_DIR");
+    let mut candidates: Vec<PathBuf> = std::env::var_os("PROJ_LIB_DIR")
+        .map(PathBuf::from)
+        .into_iter()
+        .collect();
+    candidates.push(PathBuf::from(
+        r"C:\Users\maxim\AppData\Local\Programs\OSGeo4W\lib",
+    ));
+    for proj_lib in candidates {
+        if proj_lib.join("proj.lib").is_file() || proj_lib.join("libproj.so").is_file() {
+            println!("cargo:rustc-link-search=native={}", proj_lib.display());
+            println!("cargo:rustc-link-lib=dylib=proj");
+            println!("cargo:rustc-cfg=link_libproj");
+            break;
+        }
     }
 }
