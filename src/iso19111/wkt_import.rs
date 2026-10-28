@@ -1422,6 +1422,7 @@ impl WktParser {
                     wkt1_type: "2005".to_owned(),
                     frame_epoch: None,
                     deformation_model: None,
+                    realization_method: None,
                 }));
             }
         }
@@ -2039,6 +2040,7 @@ impl WktParser {
             wkt1_type,
             frame_epoch,
             deformation_model,
+            realization_method: None,
         })
     }
 
@@ -2066,6 +2068,7 @@ impl WktParser {
                 wkt1_type: "2002".to_owned(),
                 frame_epoch: None,
                 deformation_model: None,
+                realization_method: None,
             })
         } else if let Some(datum_node) = datum_node {
             Some(self.build_vertical_datum(datum_node, dynamic)?)

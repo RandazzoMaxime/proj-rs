@@ -7,7 +7,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_crs.cpp
 
-- `datum.vdatum_with_anchor`
 - `crs.compoundCRS_valid`
 - `crs.compoundCRS_invalid`
 - `crs.compoundCRS_as_WKT2`

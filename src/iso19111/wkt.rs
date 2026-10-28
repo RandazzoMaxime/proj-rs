@@ -614,6 +614,7 @@ fn export_ellipsoidal_height_compound(
             wkt1_type: "2002".to_owned(),
             frame_epoch: None,
             deformation_model: None,
+            realization_method: None,
         }),
         ensemble: None,
         coordinate_system: VerticalCS {
@@ -964,6 +965,7 @@ fn export_projected_ellipsoidal_height(
             wkt1_type: "2002".to_owned(),
             frame_epoch: None,
             deformation_model: None,
+            realization_method: None,
         }),
         ensemble: None,
         coordinate_system: VerticalCS {
@@ -1140,6 +1142,18 @@ pub(crate) fn export_datum_standalone(
         export_prime_meridian(&datum.prime_meridian, formatter);
     }
     Ok(std::mem::take(&mut formatter.result))
+}
+
+impl VerticalReferenceFrame {
+    /// Write this vertical datum.
+    ///
+    /// # Errors
+    ///
+    /// The formatter cannot represent a value on the datum.
+    pub fn export_to_wkt(&self, formatter: &mut WktFormatter) -> Result<String, FactoryError> {
+        export_vertical_datum(self, formatter);
+        Ok(std::mem::take(&mut formatter.result))
+    }
 }
 
 impl GeodeticReferenceFrame {
@@ -1323,6 +1337,7 @@ fn export_vertical_ensemble(ensemble: &DatumEnsemble, formatter: &mut WktFormatt
             wkt1_type: "2005".to_owned(),
             frame_epoch: None,
             deformation_model: None,
+            realization_method: None,
         };
         export_vertical_datum(&datum, formatter);
     } else {

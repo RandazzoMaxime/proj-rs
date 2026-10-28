@@ -2683,6 +2683,7 @@ impl AuthorityFactory {
                 Some(row[2].f64()?)
             },
             deformation_model: None,
+            realization_method: None,
         }))
     }
 

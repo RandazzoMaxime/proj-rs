@@ -523,6 +523,7 @@ fn frame_equivalent(left: &GeodeticReferenceFrame, right: &GeodeticReferenceFram
 fn vertical_equivalent(left: &VerticalReferenceFrame, right: &VerticalReferenceFrame) -> bool {
     same_name(left.name(), right.name())
         && same_epoch(left.frame_reference_epoch(), right.frame_reference_epoch())
+        && left.realization_method() == right.realization_method()
 }
 
 fn ensemble_equivalent(left: &DatumEnsemble, right: &DatumEnsemble) -> bool {

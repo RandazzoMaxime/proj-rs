@@ -31,7 +31,7 @@ pub use model::{
     DerivedProjectedCRS, EngineeringCRS, EngineeringDatum, FactoryError, GeocentricCRS, GeodeticCRS,
     GeodeticReferenceFrame, GeographicCRS, Identifier, Meridian, ObjectDomain, OperationMethod,
     OperationParameter, OperationParameterValue, OrdinalCS, Parameter, ParameterValue,
-    PrimeMeridian, ProjectedCRS, SphericalCS, Transformation,
+    PrimeMeridian, ProjectedCRS, RealizationMethod, SphericalCS, Transformation,
     UnitKind, UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame,
 };
 pub use wkt::{

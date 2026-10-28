@@ -7,7 +7,8 @@ use proj_rs::{
     Meridian,
     Conversion, CoordinateSystem, Crs, DatabaseContext, Datum, DatumEnsemble, EllipsoidalCS,
     EllipsoidalHeightPolicy, Equivalence, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS,
-    LinunitPolicy, OpProps, OutputAxisRule, PrimeMeridian, ProjectedCRS, UnitKind, UnitOfMeasure,
+    LinunitPolicy, OpProps, OutputAxisRule, PrimeMeridian, ProjectedCRS, RealizationMethod,
+    UnitKind, UnitOfMeasure,
     VerticalCRS, VerticalCS, VerticalReferenceFrame, WktConvention, WktDialect, WktFormatter,
     WktLines, WktParser,
     WktStrictness,
@@ -4032,4 +4033,28 @@ fn crs_vertical_crs_ensemble_exception_in_create() {
         wrong.to_string(),
         "Ensemble should contain VerticalReferenceFrame"
     );
+}
+
+#[test]
+fn datum_vdatum_with_anchor() {
+    let datum = VerticalReferenceFrame::named("Ordnance Datum Newlyn")
+        .with_identifier("EPSG", "5101")
+        .with_anchor("my anchor")
+        .with_realization(RealizationMethod::Levelling);
+    assert_eq!(
+        datum.realization_method(),
+        Some(RealizationMethod::Levelling)
+    );
+    let wkt = datum
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2015))
+        .expect("wkt");
+    assert_eq!(
+        wkt,
+        "\
+VDATUM[\"Ordnance Datum Newlyn\",
+    ANCHOR[\"my anchor\"],
+    ID[\"EPSG\",5101]]"
+    );
+    assert!(datum.is_equivalent_to(&datum));
+    assert!(!datum.is_equivalent_to_datum(&Datum::Geodetic(GeodeticReferenceFrame::epsg_6326())));
 }

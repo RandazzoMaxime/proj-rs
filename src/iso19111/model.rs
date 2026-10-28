@@ -811,6 +811,17 @@ impl GeodeticReferenceFrame {
     }
 }
 
+/// How a vertical datum is realized. ISO 19111 `RealizationMethod`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RealizationMethod {
+    /// Levelling.
+    Levelling,
+    /// Geoid model.
+    Geoid,
+    /// Tidal surface.
+    Tidal,
+}
+
 /// Vertical datum.
 #[derive(Clone, Debug)]
 pub struct VerticalReferenceFrame {
@@ -819,6 +830,7 @@ pub struct VerticalReferenceFrame {
     pub(crate) wkt1_type: String,
     pub(crate) frame_epoch: Option<f64>,
     pub(crate) deformation_model: Option<String>,
+    pub(crate) realization_method: Option<RealizationMethod>,
 }
 
 impl VerticalReferenceFrame {
@@ -830,6 +842,7 @@ impl VerticalReferenceFrame {
             wkt1_type: "2005".to_owned(),
             frame_epoch: None,
             deformation_model: None,
+            realization_method: None,
         }
     }
 
@@ -882,6 +895,26 @@ impl VerticalReferenceFrame {
             .identifiers
             .push(Identifier::new(code_space, code));
         self
+    }
+
+    /// Anchor definition, the WKT `ANCHOR` node.
+    #[must_use]
+    pub fn with_anchor(mut self, anchor: impl Into<String>) -> Self {
+        self.identified.anchor = Some(anchor.into());
+        self
+    }
+
+    /// Realization method. It is not written in WKT.
+    #[must_use]
+    pub fn with_realization(mut self, method: RealizationMethod) -> Self {
+        self.realization_method = Some(method);
+        self
+    }
+
+    /// Realization method, when one was set.
+    #[must_use]
+    pub fn realization_method(&self) -> Option<RealizationMethod> {
+        self.realization_method
     }
 
     /// Deformation model name of a dynamic vertical datum.
@@ -1065,6 +1098,7 @@ impl DatumEnsemble {
                 wkt1_type: "2005".to_owned(),
                 frame_epoch: None,
                 deformation_model: None,
+                realization_method: None,
             })),
             Datum::Engineering(_) => None,
         }

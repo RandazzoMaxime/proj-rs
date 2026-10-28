@@ -95,6 +95,7 @@ pub use iso19111::{
     EllipsoidalCS, EllipsoidalHeightPolicy,
     EngineeringCRS, EngineeringDatum, Equivalence, FactoryError, GeocentricCRS, GeodeticCRS,
     GeodeticReferenceFrame, GeographicCRS, Identifier, IntermediateCrsUse, LinunitPolicy, Meridian,
+    RealizationMethod,
     ObjectDomain, ObjectType, OpProps, OperationMethod, OperationParameter, OperationParameterValue,
     OrdinalCS, OutputAxisRule, Parameter, ParameterValue, PrimeMeridian, ProjectedCRS, SphericalCS,
     Transformation, UnitKind,
