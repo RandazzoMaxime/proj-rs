@@ -45,6 +45,8 @@ fn cs2cs_proj_string_matches_utm() {
     let text = run(
         env!("CARGO_BIN_EXE_cs2cs"),
         &[
+            "-d",
+            "8",
             "+proj=latlong",
             "+ellps=WGS84",
             "+to",
@@ -70,7 +72,7 @@ fn cs2cs_epsg_pair_matches_utm() {
     let (east, north) = utm_point();
     let text = run(
         env!("CARGO_BIN_EXE_cs2cs"),
-        &["EPSG:4326", "EPSG:32631"],
+        &["-d", "8", "EPSG:4326", "EPSG:32631"],
         "3 46.5\n",
     );
     let mut numbers = text.split_whitespace();
@@ -82,6 +84,78 @@ fn cs2cs_epsg_pair_matches_utm() {
         .expect("north number");
     assert!(metres(got_east, east), "{got_east} vs {east}");
     assert!(metres(got_north, north), "{got_north} vs {north}");
+}
+
+#[test]
+fn cs2cs_d_changes_printed_precision() {
+    let args = [
+        "+proj=latlong",
+        "+ellps=WGS84",
+        "+to",
+        "+proj=utm",
+        "+zone=31",
+        "+ellps=WGS84",
+    ];
+    let coarse = run(env!("CARGO_BIN_EXE_cs2cs"), &args, "3 46.5\n");
+    let mut fine_args = vec!["-d", "8"];
+    fine_args.extend_from_slice(&args);
+    let fine = run(env!("CARGO_BIN_EXE_cs2cs"), &fine_args, "3 46.5\n");
+    let places = |text: &str, index: usize| {
+        text.split_whitespace()
+            .nth(index)
+            .expect("number")
+            .split('.')
+            .nth(1)
+            .expect("fraction")
+            .len()
+    };
+    assert_eq!(places(&coarse, 0), 2, "{coarse}");
+    assert_eq!(places(&coarse, 1), 2, "{coarse}");
+    assert_eq!(places(&coarse, 2), 2, "{coarse}");
+    assert_eq!(places(&fine, 0), 8, "{fine}");
+    assert_eq!(places(&fine, 1), 8, "{fine}");
+    assert_eq!(places(&fine, 2), 8, "{fine}");
+    assert_ne!(coarse, fine);
+}
+
+#[test]
+fn cs2cs_dms_roundtrip_and_constant_width() {
+    let pair = [
+        "+proj=latlong",
+        "+ellps=WGS84",
+        "+to",
+        "+proj=latlong",
+        "+ellps=WGS84",
+    ];
+    let text = run(
+        env!("CARGO_BIN_EXE_cs2cs"),
+        &pair,
+        "79d58'00.000\"W 37d02'00.000\"N 0\n",
+    );
+    assert_eq!(text, "79d58'W\t37d2'N 0.000\n");
+    let mut wide = vec!["-W0"];
+    wide.extend_from_slice(&pair);
+    let text = run(env!("CARGO_BIN_EXE_cs2cs"), &wide, "0 0\n");
+    assert_eq!(text, "0d00'00\"E\t0d00'00\"N 0.000\n");
+    let mut eight = vec!["-d", "8"];
+    eight.extend_from_slice(&pair);
+    let text = run(env!("CARGO_BIN_EXE_cs2cs"), &eight, "1 2 3\n");
+    assert_eq!(text, "1.00000000\t2.00000000 3.00000000\n");
+}
+
+#[test]
+fn cs2cs_bad_w_exits_with_proj_message() {
+    let output = Command::new(env!("CARGO_BIN_EXE_cs2cs"))
+        .args(["-W9"])
+        .output()
+        .expect("spawn");
+    assert_eq!(output.status.code(), Some(1));
+    let err = String::from_utf8(output.stderr).expect("utf-8");
+    assert!(
+        err.contains("-W argument missing or not in range [0,8]"),
+        "{err}"
+    );
+    assert!(err.contains("program abnormally terminated"), "{err}");
 }
 
 #[test]
@@ -101,4 +175,142 @@ fn cct_proj_string_matches_utm() {
         .expect("north number");
     assert!(metres(got_east, east), "{got_east} vs {east}");
     assert!(metres(got_north, north), "{got_north} vs {north}");
+}
+
+#[test]
+fn cct_yaml_decimals_height_time_pipeline_and_output_file() {
+    let cases = [
+        (
+            &["-d", "8", "+proj=merc", "+R=1"][..],
+            "90 45 0\n",
+            "   1.57079633     0.88137359    0.00000000           inf\n",
+        ),
+        (
+            &[
+                "-z",
+                "0",
+                "-t",
+                "0",
+                "+proj=pipeline",
+                "+step",
+                "+proj=unitconvert",
+                "+xy_in=deg",
+                "+xy_out=rad",
+            ][..],
+            "0.5 2\n",
+            "  0.5000000000    2.0000000000        0.0000        0.0000\n",
+        ),
+        (
+            &[
+                "-z",
+                "0",
+                "-t",
+                "0",
+                "+proj=pipeline",
+                "+step",
+                "+proj=unitconvert",
+                "+xy_in=deg",
+                "+xy_out=deg",
+            ][..],
+            "0.5 2\n",
+            "  0.5000000000    2.0000000000        0.0000        0.0000\n",
+        ),
+        (
+            &[
+                "-z",
+                "0",
+                "-t",
+                "0",
+                "+proj=pipeline",
+                "+step",
+                "+proj=unitconvert",
+                "+xy_in=m",
+                "+xy_out=km",
+            ][..],
+            "0.5 2\n",
+            "       0.0005         0.0020        0.0000        0.0000\n",
+        ),
+        (
+            &[
+                "-d",
+                "6",
+                "-z",
+                "0",
+                "-t",
+                "0",
+                "+proj=pipeline",
+                "+step",
+                "+proj=unitconvert",
+                "+xy_in=deg",
+                "+xy_out=rad",
+            ][..],
+            "0.5 2\n",
+            "      0.500000        2.000000      0.000000        0.0000\n",
+        ),
+        (
+            &[
+                "-d",
+                "6",
+                "-z",
+                "0",
+                "-t",
+                "0",
+                "+proj=pipeline",
+                "+step",
+                "+proj=unitconvert",
+                "+xy_in=deg",
+                "+xy_out=deg",
+            ][..],
+            "0.5 2\n",
+            "      0.500000        2.000000      0.000000        0.0000\n",
+        ),
+        (
+            &[
+                "-d",
+                "6",
+                "-z",
+                "0",
+                "-t",
+                "0",
+                "+proj=pipeline",
+                "+step",
+                "+proj=unitconvert",
+                "+xy_in=m",
+                "+xy_out=km",
+            ][..],
+            "0.5 2\n",
+            "     0.000500       0.002000      0.000000        0.0000\n",
+        ),
+    ];
+    for (args, input, expected) in cases {
+        let text = run(env!("CARGO_BIN_EXE_cct"), args, input);
+        assert_eq!(text, expected, "{args:?}");
+    }
+
+    let path = std::env::temp_dir().join(format!("proj-rs-cct-{}.txt", std::process::id()));
+    let path_text = path.to_str().expect("temp path is utf-8");
+    let stdout = run(
+        env!("CARGO_BIN_EXE_cct"),
+        &[
+            "-o",
+            path_text,
+            "-z",
+            "0",
+            "-t",
+            "0",
+            "+proj=pipeline",
+            "+step",
+            "+proj=unitconvert",
+            "+xy_in=m",
+            "+xy_out=km",
+        ],
+        "0.5 2\n",
+    );
+    assert_eq!(stdout, "");
+    let file = std::fs::read_to_string(&path).expect("output file");
+    assert_eq!(
+        file, "       0.0005         0.0020        0.0000        0.0000\n",
+        "cct -o file"
+    );
+    std::fs::remove_file(&path).expect("remove output file");
 }

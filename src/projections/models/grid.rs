@@ -107,11 +107,15 @@ pub(super) fn open_named(name: &str, bytes: &[u8]) -> Option<Grid> {
         open_gtx(bytes)
     } else if name_ends(name, ".ct2") {
         open_ctable2(bytes)
-    } else if name_ends(name, ".tif") || name_ends(name, ".tiff") {
+    } else if name_ends(name, ".tif") || name_ends(name, ".tiff") || is_le_tiff(bytes) {
         open_tiff(bytes)
     } else {
         None
     }
+}
+
+fn is_le_tiff(bytes: &[u8]) -> bool {
+    bytes.len() >= 4 && bytes[0] == b'I' && bytes[1] == b'I' && bytes[2] == 42 && bytes[3] == 0
 }
 
 fn open_gtx(bytes: &[u8]) -> Option<Grid> {

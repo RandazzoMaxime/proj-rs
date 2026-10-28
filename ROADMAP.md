@@ -1,29 +1,61 @@
 # Roadmap
 
-The reference is the latest PROJ release, **PROJ 9.9.0**. Lots 0 to 7 were
-ported from 9.4; lot 8 moves them to 9.9. A new PROJ release opens a lot
-that diffs the ported sources and moves the reference again.
+The reference is the latest PROJ release, **PROJ 9.9.0**. A new PROJ release
+opens a lot that diffs the ported sources and moves the reference again.
 
 Each row is a lot: one pull request, one topic, one `docs/PORTING-*.md` sheet
-when the lot translates C or C++. Lots merge in table order. Only the
-maintainer merges (see [CONTRIBUTING.md](CONTRIBUTING.md)).
+when the lot translates C or C++. Only the maintainer merges (see
+[CONTRIBUTING.md](CONTRIBUTING.md)).
 
 Every lot adds its cases to the progress bench (`src/bin/bench.rs`) and
 appends a run to `bench/history.jsonl` with `bench/record.sh`. A lot that
 slows an existing case says so in its PR.
 
-## Landed (PR #1)
+✅ done and verified &nbsp;·&nbsp; 🟡 done with a known gap &nbsp;·&nbsp; ⬜ open
 
-| Lot | Topic | Ported from PROJ 9.4 |
+## Landed
+
+| Lot | Topic | | Notes |
+|---|---|:-:|---|
+| 0 | Governance, CI, lints | ✅ | |
+| 1 | Ellipsoid, errors, longitude reduction | ✅ | |
+| 2 | Exact Transverse Mercator and UTM | ✅ | `tmerc.cpp`, `PODER_ENGSAGER` |
+| 3 | Lambert Conformal Conic and Lambert-93 | ✅ | `lcc.cpp`, `tsfn.cpp`, `phi2.cpp` |
+| 4 | AVX2 batch Transverse Mercator, progress bench | ✅ | |
+| 5 | AVX2 batch Lambert-93 | ✅ | |
+| 6 | Mercator and Web Mercator | ✅ | |
+| 7 | 7-parameter Helmert | ✅ | |
+| 8 | Move the reference to PROJ 9.9 | 🟡 | Behavior is checked against the PROJ 9.9.0 `gie` suite and the CLIs report 9.9.0. `PORTING-tmerc`, `-lcc`, `-merc` and `-helmert` still cite PROJ 9.4 |
+| 9 | PROJ string parser | ✅ | `Operation::create` in `src/engine.rs`. An unknown `+proj` is a creation error |
+| 10 | `gie` runner, vendored PROJ 9.9 suite, ratchet | ✅ | `tests/gie_run.rs`, `tests/gie/passing.txt` |
+| 11 | Geodetic ↔ geocentric cartesian (`cart`) | ✅ | |
+| 12 | libproj baseline in the bench | 🟡 | `build.rs` links libproj only when an import library sits at one fixed Windows path, so the `ratio` column is not reproducible elsewhere |
+| 13 | Pipeline engine (`+proj=pipeline`, `+inv`, `+step`) | ✅ | |
+| 14 | georust `proj` facade | 🟡 | The API surface and `geo-types` feature exist (`src/proj.rs`, `tests/proj_facade.rs`). georust's own tests and examples are not yet run against it, and no differential test compares the two crates |
+| 15 | Built-in CRS table for `new_known_crs` | ✅ | Replaced by something larger: the full PROJ 9.9 `proj.db` is embedded and opened with `rusqlite` |
+| 16 | Approximate Transverse Mercator | ✅ | `src/tmerc_approx.rs` |
+| 17 | Lambert Azimuthal Equal Area | ✅ | `src/projections/laea.rs` |
+
+Landed outside the lot sequence, in the PROJ 9.9 port: the rest of the
+projection catalogue (**189 operations** build and run), grid shifts, `tinshift`,
+deformation models, the ISO 19111 model with WKT import and export, on-demand
+grid download, and the `cct`, `cs2cs`, `proj` and `projinfo` binaries.
+
+## What is left
+
+| Order | Topic | Where it stands |
 |---|---|---|
-| 0 | Governance, CI, lints | — |
-| 1 | Ellipsoid, errors, longitude reduction | `a`, `rf` parameters |
-| 2 | Exact Transverse Mercator and UTM | `src/projections/tmerc.cpp` (`PODER_ENGSAGER`) |
-| 3 | Lambert Conformal Conic and Lambert-93 | `src/projections/lcc.cpp`, `tsfn.cpp`, `phi2.cpp` |
-| 4 | AVX2 batch Transverse Mercator, progress bench | `tmerc.cpp`, 4 points per call |
-| 5 | AVX2 batch Lambert-93 | `lcc_e_forward`, 4 points per call |
-| 6 | Mercator and Web Mercator | `src/projections/merc.cpp` |
-| 7 | 7-parameter Helmert | `+proj=helmert` |
+| 1 | **A fresh checkout that is green** | Tests that need a PROJ-data grid should skip with a message instead of failing, and CI should install PROJ 9.9 and provide the grids. Without grids the `gie` suite is 6,693 / 6,856 |
+| 2 | **ISO 19111 and the PROJ unit tests** | 243 ported, **1,136** named `TEST()`s open (2026-10-28). Largest: `test_io` (419), `test_operationfactory` (274), `test_operation` (144), `test_crs` (120), `test_c_api` (109). List: [`docs/UNPORTED-UNIT.md`](docs/UNPORTED-UNIT.md) |
+| 3 | **CLI parity** | 155 of 276 PROJ CLI cases do not match yet: `projinfo` 96, `cs2cs` 57, `proj` 2. In `cs2cs` the biggest groups are CRS names that do not resolve and numeric differences; `+proj=sch` is not ported. List: [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md) |
+| 4 | **Portable batch path** | The AVX2 path covers x86-64 on Linux glibc (libmvec) and Windows (CRT). Other targets run the scalar loop |
+| 5 | **georust facade parity** | Run georust's own tests against the facade in CI, add the differential test, then finish the drop-in claim |
+| 6 | **Grid-dependent operations in CI** | Cache the PROJ-data grids so the 163 grid-dependent `gie` cases run on every pull request, and cover the network-backed `tinshift` cases |
+
+Anything under "What is left" is open to the community. Claim it in an issue
+before opening the PR, stay on PROJ 9.9 behavior, ship a `docs/PORTING-*.md`,
+and update the matching ledger (`tests/gie/passing.txt`,
+`docs/UNPORTED-UNIT.md` or `docs/UNPORTED-CLI.md`).
 
 ## Goal: drop-in for `georust/proj` users
 
@@ -35,12 +67,12 @@ code:
 proj = { package = "proj-rs", git = "https://github.com/RandazzoMaxime/proj-rs" }
 ```
 
-So the crate exposes the same surface as `proj` 0.31 (built on libproj 9.6; proj-rs follows PROJ 9.9 underneath):
-`Proj::new`, `Proj::new_known_crs`, `convert`, `project`, `convert_array`,
-`project_array`, the `Coord` trait, the `Transform` trait and the `geo-types`
-feature, `ProjBuilder`, `ProjError`, `ProjCreateError`, `Area`. What
-proj-rs cannot do yet returns an error at creation time, never a wrong
-result. Lots 9, 13, 14 and 15 build that surface.
+The crate exposes the same surface as `proj` 0.31 (built on libproj 9.6;
+proj-rs follows PROJ 9.9 underneath): `Proj::new`, `Proj::new_known_crs`,
+`convert`, `project`, `convert_array`, `project_array`, the `Coord` trait, the
+`Transform` trait and the `geo-types` feature, `ProjBuilder`, `ProjError`,
+`ProjCreateError`, `Area`. What proj-rs cannot do returns an error at creation
+time, never a wrong result.
 
 ## Yardstick: PROJ's own test suite
 
@@ -50,46 +82,22 @@ PROJ 9.9 describes its behavior in `test/gie/*.gie`: declarative files
 `expect failure errno …`) that `gie` runs. They are vendored unchanged under
 `tests/gie/` (MIT, with PROJ's notice) and run by a Rust runner.
 
-- Every `operation` proj-rs cannot build yet counts as **skipped**, never as
+- Every `operation` proj-rs cannot build counts as **skipped**, never as
   passed. The runner prints passed / failed / skipped per file.
-- **Ratchet.** `tests/gie/passing.txt` holds the number of passing cases.
-  CI fails if the count drops, and also if it rises without the file being
+- **Ratchet.** `tests/gie/passing.txt` holds the number of passing cases. The
+  test fails if the count drops, and also if it rises without the file being
   updated, so every lot commits its progress.
 - **Failed is not skipped.** A case whose operation builds but whose result is
   off is a failure and blocks the PR. Tolerances are the ones in the `.gie`
   file, never loosened.
 - `bench/record.sh` also writes the pass count to `bench/history.jsonl`, so
   speed and coverage are tracked together.
-- Not ported: `test/unit` (gtest on the C API, which proj-rs does not have;
-  the behavior it checks is mostly also in the `.gie` files) and `test/cli`
-  (the `cs2cs` / `cct` executables, out of scope).
+- `builtins.gie` passes in full: 2,597 / 2,597.
 
-After lot 10, the next lots are picked from the runner's output: the
-`operation` with the most skipped cases goes first, one projection or
-conversion per lot, until `builtins.gie` passes in full.
+The PROJ C++ unit tests and CLI cases are tracked by name, in
+`docs/UNPORTED-UNIT.md` and `docs/UNPORTED-CLI.md`. A case leaves its ledger
+when it passes. For the CLI cases the test enforces it: a case that used to
+pass and now fails makes `tests/cli_yaml.rs` fail.
 
-## Next, in order
-
-| Lot | Topic | Source | Why here |
-|---|---|---|---|
-| 8 | Move the reference to PROJ 9.9 | PROJ 9.9.0 (2026-09-15) | Every port follows the latest PROJ. Since 9.4, `tmerc.cpp` and `phi2.cpp` changed with [#4446](https://github.com/OSGeo/PROJ/pull/4446) (uniform conversions between auxiliary latitudes): re-port `setup_exact` and `pj_sinhpsi2tanphi` from 9.9 and update `PORTING-tmerc.md` / `PORTING-lcc.md`. `lcc.cpp`, `merc.cpp`, `tsfn.cpp`, `msfn.cpp`, `helmert.cpp` did not change: only their references move. CI installs PROJ 9.9 (conda-forge on both runners; Ubuntu 24.04 apt ships 9.4) and every `cs2cs` reference value is regenerated with 9.9. |
-| 9 | PROJ string parser | PROJ `src/init.cpp`, `src/param.cpp` | `+proj=utm +zone=31 +ellps=WGS84` → a ported operation. Unknown `+proj` or parameter is a creation error. Every `.gie` case and `Proj::new` start with it. |
-| 10 | `gie` runner and vendored PROJ 9.9 suite | PROJ `test/gie/`, `src/apps/gie.cpp` | The yardstick above, with its ratchet. Lands before any new projection so each later lot is measured by it. |
-| 11 | Geodetic ↔ geocentric cartesian | PROJ `src/conversions/cart.cpp` | Helmert (lot 7) works on X/Y/Z. Without `cart` it cannot transform a lon/lat point. |
-| 12 | libproj baseline in the bench | `proj_trans_generic` via FFI, bench binary only | Times PROJ on the same grids, so each case reads as a ratio to PROJ, not just a number. |
-| 13 | Pipeline engine (`+proj=pipeline`, `+inv`, `+step`) | PROJ `src/pipeline.cpp` | Introduces the shared operation trait. `forward` takes a `Geographic` there, which removes the two bare `f64` and the lon/lat swap risk. Unlocks many `.gie` cases. |
-| 14 | georust `proj` facade | georust `proj` 0.31 public API | `Proj`, `ProjBuilder`, `Coord`, `Transform`, errors, `geo-types` feature, same signatures. Its own tests and examples run against proj-rs in CI, and a differential test compares both crates on Linux. `ProjBuilder` network and grid methods return an error. |
-| 15 | Built-in CRS table for `new_known_crs` | EPSG registry, ported CRSs only | EPSG:4326, 4258, 4978, 2154, 3857, 326xx and 327xx, with the axis order `proj` gives after `proj_normalize_for_visualization` (lon, lat). No SQLite database. |
-| 16 | Approximate Transverse Mercator (Evenden / Snyder) | `approx` branch of `tmerc.cpp` | Also the sphere path that lot 2 refuses. |
-| 17 | Lambert Azimuthal Equal Area | `src/projections/laea.cpp` | |
-| 18 | Portable batch path | AVX2 batch without glibc libmvec | Today the AVX2 path only builds on Linux glibc. Windows and macOS run the scalar loop. |
-| 19+ | The rest of PROJ, one operation per lot | `test/gie/*.gie`, most skipped first | Ordered by the runner, not by this table. |
-
-Lots 16 and later are open to the community. Claim one in an issue before
-opening the PR, stay on PROJ 9.9 behavior, ship a `docs/PORTING-*.md`, and
-bump `tests/gie/passing.txt`.
-
-Out of scope until a lot claims it explicitly: the full EPSG database (lot 13
-only embeds the ported CRSs), NTv2 grids,
-WKT / PROJJSON parsing, the remaining projections. A lot does not add them
-"while we're at it".
+A lot does not add anything "while we're at it". If it is not in the table, it
+gets its own lot.

@@ -170,7 +170,9 @@ impl Kernel for Krovak {
     }
 }
 
-const KEYS: &[&str] = &["czech"];
+/// `+alpha` is the EPSG colatitude of the cone axis. PROJ accepts it and does
+/// not read it: the cone constant is computed from `lat_0`.
+const KEYS: &[&str] = &["czech", "alpha"];
 
 pub(crate) fn extra_keys(name: &str) -> Option<&'static [&'static str]> {
     match name {

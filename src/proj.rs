@@ -2,8 +2,10 @@
 //!
 //! [`Proj::new`] builds a PROJ string, an `EPSG:` code, or a minimal WKT or
 //! PROJJSON geographic or projected CRS. [`Proj::new_known_crs`] builds a
-//! transform between EPSG CRS looked up in the embedded `proj.db`. Network and
-//! grid access return an error. An unknown operation returns an error at creation.
+//! transform between EPSG CRS looked up in the embedded `proj.db`. Network
+//! grid download follows `proj.ini`: off unless `PROJ_NETWORK` or
+//! [`ProjBuilder::enable_network`] turns it on. An unknown operation returns
+//! an error at creation.
 
 use std::error::Error;
 use std::ffi::NulError;
@@ -283,7 +285,7 @@ pub struct Info {
     pub release: String,
     /// Version string.
     pub version: String,
-    /// Grid search path. Empty: this port does not search for grids.
+    /// Extra grid search path set on the builder. Empty when none was added.
     pub searchpath: String,
 }
 
@@ -376,6 +378,7 @@ pub struct Proj {
     area: Option<Area>,
     /// `new_known_crs` owns an area slot. [`Proj::area_set_bbox`] records into it.
     known: bool,
+    net: crate::network::GridContext,
 }
 
 impl Proj {
@@ -397,29 +400,14 @@ impl Proj {
         }
         if is_epsg(definition) {
             let crs = Crs::parse(definition)?;
-            return Ok(Self {
-                body: Body::Single(crs),
-                definition: definition.to_owned(),
-                area: None,
-                known: false,
-            });
+            return Ok(built(Body::Single(crs), definition.to_owned(), None));
         }
         if crate::crs_text::is_crs_text(definition) {
             let crs = Crs::from_well_known(definition)?;
-            return Ok(Self {
-                body: Body::Single(crs),
-                definition: definition.to_owned(),
-                area: None,
-                known: false,
-            });
+            return Ok(built(Body::Single(crs), definition.to_owned(), None));
         }
         let op = Operation::create(definition).map_err(from_create)?;
-        Ok(Self {
-            body: Body::Native(op),
-            definition: definition.to_owned(),
-            area: None,
-            known: false,
-        })
+        Ok(built(Body::Native(op), definition.to_owned(), None))
     }
 
     /// Transform from `from` to `to`.
@@ -445,16 +433,15 @@ impl Proj {
         let source = Crs::parse(from)?;
         let target = Crs::parse(to)?;
         let bridge = source.datum_bridge(&target)?;
-        Ok(Self {
-            body: Body::Between {
+        Ok(built(
+            Body::Between {
                 source,
                 target,
                 bridge,
             },
-            definition: format!("{from} -> {to}"),
+            format!("{from} -> {to}"),
             area,
-            known: true,
-        })
+        ))
     }
 
     /// Build the transform from `self` to `target_crs`.
@@ -490,16 +477,15 @@ impl Proj {
             ));
         };
         let bridge = source.datum_bridge(target)?;
-        Ok(Self {
-            body: Body::Between {
+        Ok(built(
+            Body::Between {
                 source: source.clone(),
                 target: target.clone(),
                 bridge,
             },
-            definition: format!("{} -> {}", self.definition, target_crs.definition),
+            format!("{} -> {}", self.definition, target_crs.definition),
             area,
-            known: true,
-        })
+        ))
     }
 
     /// Coordinate metadata objects are not built.
@@ -571,22 +557,23 @@ impl Proj {
     ///
     /// Never. The result is the in-crate version, not a libproj query.
     pub fn lib_info(&self) -> Result<Info, ProjError> {
-        Ok(port_info())
+        Ok(port_info(&self.net.searchpath()))
     }
 
-    /// Network access is off. This port does not download grids.
+    /// Whether this object was built with network grid download enabled.
     #[must_use]
     pub fn network_enabled(&self) -> bool {
-        false
+        self.net.enabled
     }
 
-    /// Grid download endpoint.
+    /// Grid download endpoint in effect when this object was built.
     ///
     /// # Errors
     ///
-    /// Always [`ProjError::Network`].
+    /// Never. The default is `https://cdn.proj.org` when `proj.ini` and
+    /// `PROJ_NETWORK_ENDPOINT` do not set one.
     pub fn get_url_endpoint(&self) -> Result<String, ProjError> {
-        Err(ProjError::Network)
+        Ok(self.net.endpoint.clone())
     }
 
     /// Project geodetic coordinates.
@@ -869,15 +856,30 @@ impl TryFrom<(&str, &str)> for Proj {
     }
 }
 
-/// Builder for a [`Proj`]. Grid and network settings return an error.
-#[derive(Clone, Debug, Default)]
-pub struct ProjBuilder;
+/// Builder for a [`Proj`]. Network, endpoint, cache, and search paths apply
+/// to the object it builds.
+#[derive(Clone, Debug)]
+pub struct ProjBuilder {
+    net: crate::network::GridContext,
+}
+
+impl Default for ProjBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl ProjBuilder {
     /// Create a builder.
+    ///
+    /// Network access starts from `proj.ini` (off) unless `PROJ_NETWORK` is
+    /// `ON`, `YES`, or `TRUE`. The endpoint starts at `https://cdn.proj.org`
+    /// unless `proj.ini` or `PROJ_NETWORK_ENDPOINT` sets one.
     #[must_use]
     pub fn new() -> Self {
-        Self
+        Self {
+            net: crate::network::GridContext::load(),
+        }
     }
 
     /// Build from a PROJ string. Same outcome as [`Proj::new`].
@@ -886,7 +888,7 @@ impl ProjBuilder {
     ///
     /// [`ProjCreateError`] from [`Proj::new`].
     pub fn proj(self, definition: &str) -> Result<Proj, ProjCreateError> {
-        Proj::new(definition)
+        crate::network::with_context(&self.net, || Proj::new(definition))
     }
 
     /// Build a CRS-to-CRS transform. Same outcome as [`Proj::new_known_crs`].
@@ -900,7 +902,7 @@ impl ProjBuilder {
         to: &str,
         area: Option<Area>,
     ) -> Result<Proj, ProjCreateError> {
-        Proj::new_known_crs(from, to, area)
+        crate::network::with_context(&self.net, || Proj::new_known_crs(from, to, area))
     }
 
     /// Builder form of [`Proj::create_crs_to_crs_from_pj`].
@@ -915,66 +917,114 @@ impl ProjBuilder {
         area: Option<Area>,
         options: Option<Vec<&str>>,
     ) -> Result<Proj, ProjCreateError> {
-        source_crs.create_crs_to_crs_from_pj(target_crs, area, options)
+        crate::network::with_context(&self.net, || {
+            source_crs.create_crs_to_crs_from_pj(target_crs, area, options)
+        })
     }
 
-    /// Enable network grid download.
+    /// Enable or disable network grid download.
+    ///
+    /// This overrides `proj.ini` and `PROJ_NETWORK` for objects built from
+    /// this builder. `1` means access is on, `0` means it is off.
     ///
     /// # Errors
     ///
-    /// Always [`ProjError::Network`]. No coordinate is produced.
+    /// Never. The HTTP client is part of this build.
     #[expect(
         clippy::fn_params_excessive_bools,
         reason = "georust proj 0.31 enable_network takes a bool"
     )]
-    pub fn enable_network(&mut self, _enable: bool) -> Result<u8, ProjError> {
-        Err(ProjError::Network)
+    pub fn enable_network(&mut self, enable: bool) -> Result<u8, ProjError> {
+        self.net.enabled = enable;
+        Ok(u8::from(enable))
     }
 
-    /// Whether network access is on. It is never on.
+    /// Whether network access is on for objects built from this builder.
     #[must_use]
     pub fn network_enabled(&self) -> bool {
-        false
+        self.net.enabled
     }
 
     /// Grid download endpoint.
     ///
     /// # Errors
     ///
-    /// Always [`ProjError::Network`].
+    /// Never. The default is `https://cdn.proj.org`.
     pub fn get_url_endpoint(&self) -> Result<String, ProjError> {
-        Err(ProjError::Network)
+        Ok(self.net.endpoint.clone())
     }
 
     /// Set the grid download endpoint.
     ///
+    /// This overrides `proj.ini` and `PROJ_NETWORK_ENDPOINT`. A missing grid
+    /// is requested at `endpoint + "/" + filename`.
+    ///
     /// # Errors
     ///
-    /// Always [`ProjError::Network`].
-    pub fn set_url_endpoint(&mut self, _endpoint: &str) -> Result<(), ProjError> {
-        Err(ProjError::Network)
+    /// [`ProjError::Creation`] when `endpoint` contains an interior nul.
+    pub fn set_url_endpoint(&mut self, endpoint: &str) -> Result<(), ProjError> {
+        let _checked = std::ffi::CString::new(endpoint).map_err(ProjError::Creation)?;
+        self.net.endpoint = endpoint.to_owned();
+        Ok(())
     }
 
-    /// Add a grid search path.
+    /// Add a grid search path, keeping paths already added.
+    ///
+    /// Built-in data directories stay in front. The added path is searched
+    /// after them, then the download cache.
     ///
     /// # Errors
     ///
-    /// Always [`ProjError::Path`]. This port does not read grids.
-    pub fn set_search_paths<P: AsRef<Path>>(&mut self, _newpath: P) -> Result<(), ProjError> {
-        Err(ProjError::Path)
+    /// [`ProjError::Path`] when `newpath` is not valid UTF-8 or contains a nul.
+    pub fn set_search_paths<P: AsRef<Path>>(&mut self, newpath: P) -> Result<(), ProjError> {
+        let path = newpath.as_ref();
+        let text = path.to_str().ok_or(ProjError::Path)?;
+        if text.contains('\0') {
+            return Err(ProjError::Path);
+        }
+        self.net.push_search_path(path.to_path_buf());
+        Ok(())
     }
 
-    /// Enable the grid chunk cache.
+    /// Directory downloaded grids are written to.
+    ///
+    /// This is PROJ's user-writable directory. The directory is created when
+    /// it does not exist. Tests point it at a temporary folder.
     ///
     /// # Errors
     ///
-    /// Always [`ProjError::Network`]. The cache is not built.
+    /// [`ProjError::Path`] when `path` is not valid UTF-8, contains a nul, or
+    /// the directory cannot be made.
+    pub fn set_user_writable_directory<P: AsRef<Path>>(
+        &mut self,
+        path: P,
+    ) -> Result<(), ProjError> {
+        let path = path.as_ref();
+        let text = path.to_str().ok_or(ProjError::Path)?;
+        if text.contains('\0') {
+            return Err(ProjError::Path);
+        }
+        std::fs::create_dir_all(path).map_err(|_| ProjError::Path)?;
+        self.net.set_cache_dir(path.to_path_buf());
+        Ok(())
+    }
+
+    /// Enable or disable the local cache of downloaded grids.
+    ///
+    /// The cache is on by default (`cache_enabled` in `proj.ini`). When it is
+    /// off, a fetch is not written to disk and a previously cached file is
+    /// not reused.
+    ///
+    /// # Errors
+    ///
+    /// Never.
     #[expect(
         clippy::fn_params_excessive_bools,
         reason = "georust proj 0.31 grid_cache_enable takes a bool"
     )]
-    pub fn grid_cache_enable(&mut self, _enable: bool) -> Result<(), ProjError> {
-        Err(ProjError::Network)
+    pub fn grid_cache_enable(&mut self, enable: bool) -> Result<(), ProjError> {
+        self.net.cache_enabled = enable;
+        Ok(())
     }
 
     /// Version of the PROJ release this port follows.
@@ -983,7 +1033,7 @@ impl ProjBuilder {
     ///
     /// Never. The result is the in-crate version.
     pub fn lib_info(&self) -> Result<Info, ProjError> {
-        Ok(port_info())
+        Ok(port_info(&self.net.searchpath()))
     }
 }
 
@@ -999,14 +1049,25 @@ enum Report {
     Conversion,
 }
 
-fn port_info() -> Info {
+fn port_info(searchpath: &str) -> Info {
     Info {
         major: 9,
         minor: 9,
         patch: 0,
         release: "9.9.0".to_owned(),
         version: "9.9.0".to_owned(),
-        searchpath: String::new(),
+        searchpath: searchpath.to_owned(),
+    }
+}
+
+fn built(body: Body, definition: String, area: Option<Area>) -> Proj {
+    let known = matches!(body, Body::Between { .. });
+    Proj {
+        body,
+        definition,
+        area,
+        known,
+        net: crate::network::context(),
     }
 }
 

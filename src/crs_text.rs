@@ -722,12 +722,12 @@ impl<'a> WktParser<'a> {
 }
 
 #[derive(Clone)]
-#[expect(
-    dead_code,
-    reason = "JSON literals are accepted so a PROJJSON document can be parsed"
-)]
-enum Value {
+pub(crate) enum Value {
     Null,
+    #[expect(
+        dead_code,
+        reason = "PROJJSON true and false are accepted even when no reader uses the flag yet"
+    )]
     Bool(bool),
     Number(f64),
     String(String),
@@ -736,10 +736,10 @@ enum Value {
 }
 
 #[derive(Clone)]
-struct Object(Vec<(String, Value)>);
+pub(crate) struct Object(Vec<(String, Value)>);
 
 impl Object {
-    fn get(&self, key: &str) -> Option<&Value> {
+    pub(crate) fn get(&self, key: &str) -> Option<&Value> {
         self.0
             .iter()
             .find(|(name, _)| name == key)
@@ -748,28 +748,28 @@ impl Object {
 }
 
 impl Value {
-    fn as_object(&self) -> Option<&Object> {
+    pub(crate) fn as_object(&self) -> Option<&Object> {
         match self {
             Self::Object(object) => Some(object),
             _ => None,
         }
     }
 
-    fn as_array(&self) -> Option<&[Value]> {
+    pub(crate) fn as_array(&self) -> Option<&[Value]> {
         match self {
             Self::Array(items) => Some(items),
             _ => None,
         }
     }
 
-    fn as_str(&self) -> Option<&str> {
+    pub(crate) fn as_str(&self) -> Option<&str> {
         match self {
             Self::String(text) => Some(text),
             _ => None,
         }
     }
 
-    fn as_f64(&self) -> Option<f64> {
+    pub(crate) fn as_f64(&self) -> Option<f64> {
         match self {
             Self::Number(value) => Some(*value),
             Self::String(text) => text.parse().ok(),
@@ -778,7 +778,7 @@ impl Value {
     }
 }
 
-fn parse_json(text: &str) -> Result<Value, String> {
+pub(crate) fn parse_json(text: &str) -> Result<Value, String> {
     let mut parser = JsonParser {
         bytes: text.as_bytes(),
         index: 0,

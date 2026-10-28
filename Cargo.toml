@@ -13,6 +13,22 @@ repository = "https://github.com/RandazzoMaxime/proj-rs"
 name = "proj-rs-bench"
 path = "src/bin/bench.rs"
 
+[[bin]]
+name = "cct"
+path = "src/bin/cct.rs"
+
+[[bin]]
+name = "cs2cs"
+path = "src/bin/cs2cs.rs"
+
+[[bin]]
+name = "projinfo"
+path = "src/bin/projinfo.rs"
+
+[[bin]]
+name = "proj"
+path = "src/bin/proj.rs"
+
 [features]
 geo-types = ["dep:geo-types"]
 
@@ -26,6 +42,13 @@ geo-types = { version = "0.7.16", optional = true }
 rusqlite = { version = "0.37.0", features = ["bundled", "serialize"] }
 # GeoTIFF grids. `deflate` only: the test grids are uncompressed, deflate, or deflate+predictor.
 tiff = { version = "0.10.3", default-features = false, features = ["deflate"] }
+# HTTPS grid download. 0.2.14 is rust-version 1.80 and uses SChannel on Windows.
+# A small HTTP/1.1 client sits on top so the tree does not pull ureq's ICU stack.
+native-tls = "0.2.14"
+
+[dev-dependencies]
+# YAML CLI cases. 0.9.34 is already in the offline registry.
+serde_yaml = "=0.9.34"
 
 [profile.release]
 opt-level = 3

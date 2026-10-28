@@ -2,3 +2,4 @@
 /native/bench
 **/*.o
 *.tmp
+/data/grids/

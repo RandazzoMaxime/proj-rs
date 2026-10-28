@@ -7,9 +7,8 @@
 //! (`update_parameters`, approximate `build_rot_matrix`). The registry rows are
 //! `data/sql/nkg.sql`.
 //!
-//! A step that names a grid (`deformation`, `xyzgridshift`, `+grids=`) is an
-//! error. This crate does not download PROJ-data and does not apply the other
-//! steps in its place.
+//! A PROJ-string step, including `+proj=deformation` and `+proj=xyzgridshift`,
+//! is built when its grid file is on disk. A missing grid is an error.
 
 use crate::engine::{Coord, CreateError, Frame, IoKind, Operation, Params, Step, TransformError};
 use crate::helmert::{Helmert, HelmertConvention, HelmertParams};
@@ -632,22 +631,20 @@ fn read_other(connection: &Connection, auth: &str, code: &str) -> Result<Found, 
             ))
         },
     )?;
-    if grid_name.is_some() {
+    let Some(method_name) = method_name else {
+        return Ok(if grid_name.is_some() {
+            Found::Grid
+        } else {
+            Found::Unsupported("authority string")
+        });
+    };
+    if method_code.as_deref() == Some("PROJString") && method_auth.as_deref() == Some("PROJ") {
+        return Ok(Found::Ready(vec![Link::Proj(Sense::Forward, method_name)]));
+    }
+    if grid_name.is_some() || needs_grid(&method_name) {
         return Ok(Found::Grid);
     }
-    let Some(method_name) = method_name else {
-        return Ok(Found::Unsupported("authority string"));
-    };
-    if needs_grid(&method_name)
-        || method_code.as_deref() != Some("PROJString")
-        || method_auth.as_deref() != Some("PROJ")
-    {
-        if needs_grid(&method_name) {
-            return Ok(Found::Grid);
-        }
-        return Ok(Found::Unsupported("authority string"));
-    }
-    Ok(Found::Ready(vec![Link::Proj(Sense::Forward, method_name)]))
+    Ok(Found::Unsupported("authority string"))
 }
 
 fn needs_grid(definition: &str) -> bool {
@@ -764,9 +761,6 @@ fn bake(link: Link) -> Result<Baked, CreateError> {
     match link {
         Link::Helmert(sense, shift) => Ok(Baked::Helmert(sense, shift)),
         Link::Proj(sense, text) => {
-            if needs_grid(&text) {
-                return Err(CreateError::Unsupported("grid"));
-            }
             // A nested NKG string would re-enter this loader. None of the
             // registry rows do that; reject it instead of recursing.
             if urn_code(&text).is_some() || is_proj_nkg(&text) {
@@ -1015,7 +1009,15 @@ mod tests {
     }
 
     #[test]
-    fn gie_urns_need_a_grid() {
+    fn gie_urns_build_when_the_grid_is_present() {
+        let anchor =
+            Operation::create("urn:ogc:def:coordinateOperation:NKG::ITRF2000_TO_NKG_ETRF00")
+                .expect("anchor");
+        let got = anchor.forward(point()).expect("forward");
+        let limit = 1e-3;
+        assert!((got.x - 3_541_657.931_1).abs() < limit, "{}", got.x);
+        assert!((got.y - 948_983.798_0).abs() < limit, "{}", got.y);
+        assert!((got.z - 5_201_383.222_7).abs() < limit, "{}", got.z);
         let codes = [
             "ITRF2000_TO_NKG_ETRF00",
             "ITRF2000_TO_DK",
@@ -1047,8 +1049,7 @@ mod tests {
         assert_eq!(codes.len(), 26);
         for code in codes {
             let urn = format!("urn:ogc:def:coordinateOperation:NKG::{code}");
-            let error = Operation::create(&urn).expect_err(code);
-            assert_eq!(error, CreateError::Unsupported("grid"), "{code}");
+            Operation::create(&urn).unwrap_or_else(|error| panic!("{code}: {error}"));
         }
     }
 
