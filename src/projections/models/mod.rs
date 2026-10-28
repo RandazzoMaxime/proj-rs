@@ -103,6 +103,9 @@ fn resolve(name: &str) -> Result<PathBuf, CreateError> {
     if name.starts_with("http://") || name.starts_with("https://") {
         return Err(CreateError::IllegalValue("file"));
     }
+    if let Some(path) = crate::gridpath::resolve(name) {
+        return Ok(path);
+    }
     for candidate in candidates(name) {
         if candidate.is_file() {
             return Ok(candidate);
@@ -121,8 +124,11 @@ fn cdn_name(name: &str) -> Option<&str> {
 }
 
 fn read_resource(name: &str) -> Result<Vec<u8>, CreateError> {
-    let path = resolve(name)?;
-    let bytes = std::fs::read(&path).map_err(|_| CreateError::IllegalValue("file"))?;
+    let bytes = if let Ok(path) = resolve(name) {
+        std::fs::read(&path).map_err(|_| CreateError::IllegalValue("file"))?
+    } else {
+        crate::network::fetch_missing(name).ok_or(CreateError::IllegalValue("file"))?
+    };
     if bytes.len() > 100 * 1024 * 1024 {
         return Err(CreateError::IllegalValue("file"));
     }

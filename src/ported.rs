@@ -165,6 +165,7 @@ pub const PORTED: &[&str] = &[
     "tinshift",
     "tissot",
     "tmerc",
+    "tmerczoned",
     "tobmerc",
     "topocentric",
     "tpeqd",
@@ -257,6 +258,7 @@ pub fn bench_definition(name: &str) -> String {
             "+proj=molodensky +a=6378160 +rf=298.25 +da=0 +df=0 +dx=0 +dy=0 +dz=0".to_owned()
         }
         "molobadekas" => "+proj=molobadekas +convention=position_vector".to_owned(),
+        "tmerczoned" => "+proj=tmerczoned +width=6 +k=0.9996 +ellps=WGS84".to_owned(),
         "webmerc" => "+proj=webmerc +ellps=WGS84".to_owned(),
         "nkg" => "urn:ogc:def:coordinateOperation:NKG::P1_2008_DK".to_owned(),
         "noop" => "+proj=noop".to_owned(),

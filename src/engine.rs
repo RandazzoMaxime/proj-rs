@@ -1003,6 +1003,8 @@ impl Operation {
             });
         }
         let mut params = Params::parse(definition)?;
+        // `+init=epsg:CODE` expands to a proj string before the name is required.
+        expand_init(&mut params)?;
         let name = params.text("proj").unwrap_or("").to_owned();
         if name.is_empty() {
             return Err(if definition.contains("proj=") {

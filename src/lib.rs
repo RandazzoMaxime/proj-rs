@@ -31,6 +31,7 @@ mod gridpath;
 mod helmert;
 mod lcc;
 mod merc;
+mod network;
 mod ported;
 mod proj;
 mod projdb;

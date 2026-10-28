@@ -60,6 +60,7 @@ mod spheroid;
 mod spilhaus;
 mod stere;
 mod sterea;
+mod tmerczoned;
 mod topocentric;
 mod tpeqd;
 
@@ -121,6 +122,7 @@ pub(crate) fn extra_keys(name: &str) -> Option<&'static [&'static str]> {
         .or_else(|| spilhaus::extra_keys(name))
         .or_else(|| stere::extra_keys(name))
         .or_else(|| sterea::extra_keys(name))
+        .or_else(|| tmerczoned::extra_keys(name))
         .or_else(|| tpeqd::extra_keys(name))
         .or_else(|| topocentric::extra_keys(name))
     {
@@ -197,6 +199,7 @@ pub(crate) fn build(
         .or(stere::build(name, params, frame)?)
         .or(sterea::build(name, params, frame)?)
         .or(tpeqd::build(name, params, frame)?)
+        .or(tmerczoned::build(name, params, frame)?)
         .or(topocentric::build(name, params, frame)?)
     {
         return Ok(Some(step));

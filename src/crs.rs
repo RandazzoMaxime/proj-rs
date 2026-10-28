@@ -543,6 +543,7 @@ fn method_spec(method: i64) -> Option<MethodSpec> {
     };
     Some(match method {
         9807 | 1111 => spec("tmerc", &[], false),
+        9824 => spec("tmerczoned", &[], false),
         9822 => spec("aea", &[], false),
         9801 | 1102 | 9802 | 9803 | 1051 => spec("lcc", &[], false),
         1125 | 9832 => spec("aeqd", &[], false),
@@ -604,6 +605,12 @@ fn param_use(method: i64, param: i64) -> ParamUse {
     if method == 1051 && param == 1038 {
         return ParamUse::Key("k_0");
     }
+    if method == 9824 && param == 8830 {
+        return ParamUse::Key("lon_0");
+    }
+    if method == 9824 && param == 8831 {
+        return ParamUse::Key("width");
+    }
     match param {
         8801 | 8821 | 8811 | 8834 => ParamUse::Key("lat_0"),
         8802 | 8822 | 8812 | 8833 | 8835 => ParamUse::Key("lon_0"),
@@ -638,8 +645,14 @@ fn to_degrees(value: f64, conv: Option<f64>, name: &str) -> Result<f64, String> 
     if conv.is_none() || name.to_ascii_lowercase().contains("sexagesimal") {
         return sexagesimal_to_degrees(value);
     }
-    let radians = value * conv.unwrap_or(1.0);
-    Ok(radians.to_degrees())
+    let conv = conv.unwrap_or(1.0);
+    // A degree unit's factor is π/180, but not bit-identical to `f64::to_radians`.
+    // Multiplying and converting back turns -180 into -179.99999999999983, which
+    // pushes the antimeridian into the wrong transverse-mercator zone.
+    if (conv - std::f64::consts::PI / 180.0).abs() < 1e-12 {
+        return Ok(value);
+    }
+    Ok((value * conv).to_degrees())
 }
 
 fn sexagesimal_to_degrees(value: f64) -> Result<f64, String> {
@@ -1728,7 +1741,7 @@ fn horizontal_grids(
         let Some(rank) = authority_kept(&auth, allowed) else {
             continue;
         };
-        if crate::gridpath::resolve(&grid).is_none() {
+        if !crate::gridpath::available(&grid) {
             continue;
         }
         let forward = datum_listed(from_datums, &source_auth, &source_code)
@@ -1855,7 +1868,7 @@ fn vertical_step(
         if !datum_listed(&family, &datum_auth, &datum_code) {
             continue;
         }
-        if crate::gridpath::resolve(&grid).is_none() {
+        if !crate::gridpath::available(&grid) {
             if accuracy < best_missing {
                 best_missing = accuracy;
             }

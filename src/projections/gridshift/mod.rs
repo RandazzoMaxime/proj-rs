@@ -2,15 +2,15 @@
 //!
 //! Ports of PROJ 9.9 `src/transformations/hgridshift.cpp`,
 //! `vgridshift.cpp`, `gridshift.cpp`, and the NTv2 / GeoTIFF readers in
-//! `src/grids.cpp`. A named grid that is not vendored under `tests/gie` is an
-//! error at creation (`Unsupported`), never a coordinate.
+//! `src/grids.cpp`. A named grid that is not on disk is an error at creation
+//! when the network is off, never a coordinate. When the network is on,
+//! `decide_download` may fetch it into the cache before the file is opened.
 
 mod geotiff;
 mod ntv2;
 
 use std::collections::BTreeMap;
 use std::f64::consts::{PI, TAU};
-use std::path::PathBuf;
 
 use crate::angle::adjlon;
 use crate::engine::{
@@ -451,12 +451,7 @@ fn open_generic(name: &str) -> Result<GridSet, Fail> {
 }
 
 fn read_grid(name: &str) -> Result<Vec<u8>, Fail> {
-    let path = resolve_grid(name).ok_or(Fail::Missing)?;
-    std::fs::read(path).map_err(|_| Fail::Missing)
-}
-
-fn resolve_grid(name: &str) -> Option<PathBuf> {
-    crate::gridpath::resolve(name)
+    crate::gridpath::read(name).ok_or(Fail::Missing)
 }
 
 impl GridSet {
