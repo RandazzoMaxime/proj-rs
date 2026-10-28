@@ -8,12 +8,17 @@
 //! A new lot adds its cases. Never rename a case: the history is keyed by name.
 
 use proj_rs::{
-    Ellipsoid, Helmert, HelmertConvention, HelmertParams, Hemisphere, Lcc, Mercator, Projected,
-    Tmerc, UtmZone,
+    bench_definition, Ellipsoid, Helmert, HelmertConvention, HelmertParams, Hemisphere, Lcc,
+    Mercator, Operation, Projected, Tmerc, UtmZone, Xyzt, PORTED,
 };
+use std::ffi::{c_char, c_void, CString};
 use std::fmt::Write as _;
 use std::hint::black_box;
 use std::time::Instant;
+
+const GIE_PASSES: &str = include_str!("../../tests/gie/passing.txt");
+/// Catalogue transforms use a short grid. The historical cases stay at [`N`].
+const CATALOGUE_N: usize = 128;
 
 const N: usize = 1_000_000;
 const REPEATS: usize = 11;
@@ -49,12 +54,7 @@ fn median(values: &mut [f64]) -> f64 {
     values[values.len() / 2]
 }
 
-#[expect(
-    clippy::cast_precision_loss,
-    clippy::as_conversions,
-    reason = "N is 1_000_000, exactly representable as f64"
-)]
-fn time_stable(mut run: impl FnMut()) -> f64 {
+fn time_stable(count: usize, mut run: impl FnMut()) -> f64 {
     let mut trials = [0.0; TRIALS];
     for trial in &mut trials {
         run();
@@ -62,7 +62,13 @@ fn time_stable(mut run: impl FnMut()) -> f64 {
         for sample in &mut samples {
             let start = Instant::now();
             run();
-            *sample = start.elapsed().as_secs_f64() * 1e9 / N as f64;
+            #[expect(
+                clippy::cast_precision_loss,
+                clippy::as_conversions,
+                reason = "the point count is at most 1_000_000 and fits in f64"
+            )]
+            let n = count as f64;
+            *sample = start.elapsed().as_secs_f64() * 1e9 / n;
         }
         *trial = median(&mut samples);
     }
@@ -71,7 +77,7 @@ fn time_stable(mut run: impl FnMut()) -> f64 {
 
 /// Times `op` on every point. Its result is summed so the call is not elided.
 fn per_point<T: Copy>(points: &[T], op: impl Fn(T) -> f64) -> f64 {
-    time_stable(|| {
+    time_stable(points.len(), || {
         black_box(points.iter().map(|&p| op(black_box(p))).sum::<f64>());
     })
 }
@@ -170,7 +176,9 @@ fn main() {
         ),
     ];
     for (name, batch, (lon, lat)) in batches {
-        let ns = time_stable(|| batch(black_box(lon), black_box(lat), &mut east, &mut north));
+        let ns = time_stable(lon.len(), || {
+            batch(black_box(lon), black_box(lat), &mut east, &mut north);
+        });
         black_box((&east, &north));
         cases.push((name.to_owned(), ns));
     }
@@ -185,6 +193,21 @@ fn main() {
         per_point(&xyz, |(x, y, z)| helmert.apply(x, y, z).0),
     ));
 
+    cases.extend(catalogue_cases());
+    let ratios = libproj_ratios(&[
+        ("utm31_forward", "+proj=utm +zone=31 +ellps=WGS84", &utm_center),
+        (
+            "lambert93_forward",
+            "+proj=lcc +lat_0=46.5 +lat_1=49 +lat_2=44 +lon_0=3 +x_0=700000 +y_0=6600000 +ellps=GRS80",
+            &france,
+        ),
+        (
+            "webmerc_forward",
+            "+proj=merc +a=6378137 +b=6378137 +lat_ts=0 +lon_0=0 +k=1",
+            &world,
+        ),
+    ]);
+
     let mut rows = String::new();
     for (name, ns) in &cases {
         let sep = if rows.is_empty() { "" } else { "," };
@@ -194,13 +217,129 @@ fn main() {
         )
         .expect("String write");
     }
-    let simd = cfg!(all(
-        target_arch = "x86_64",
-        target_os = "linux",
-        target_env = "gnu"
-    ));
+    let batch_path = proj_rs::batch_path();
+    let simd = batch_path == "avx2";
+    let passes = GIE_PASSES.trim();
+    let mut ratio_rows = String::new();
+    for (name, proj_ns) in &ratios {
+        let ours = cases
+            .iter()
+            .find(|(case, _)| case == name)
+            .map(|(_, ns)| *ns)
+            .expect(name);
+        let ratio = ours / proj_ns;
+        let sep = if ratio_rows.is_empty() { "" } else { "," };
+        write!(
+            ratio_rows,
+            "{sep}{{\"name\":\"{name}\",\"libproj_ratio\":{ratio:.6},\"libproj_ns\":{proj_ns:.6}}}"
+        )
+        .expect("String write");
+    }
     println!(
-        "{{\"impl\":\"proj-rs\",\"version\":\"{}\",\"simd_build\":{simd},\"n\":{N},\"cases\":[{rows}]}}",
+        "{{\"impl\":\"proj-rs\",\"version\":\"{}\",\"simd_build\":{simd},\"batch_path\":\"{batch_path}\",\"passes\":{passes},\"n\":{N},\"libproj\":[{ratio_rows}],\"cases\":[{rows}]}}",
         proj_rs::VERSION
     );
+}
+
+fn catalogue_cases() -> Vec<(String, f64)> {
+    let (lon, lat) = grid(5, (2.0, 4.0), (43.0, 48.0));
+    let lon = &lon[..CATALOGUE_N];
+    let lat = &lat[..CATALOGUE_N];
+    PORTED
+        .iter()
+        .map(|name| {
+            let definition = bench_definition(name);
+            let operation = Operation::create(&definition).expect(name);
+            let points: Vec<Xyzt> = lon
+                .iter()
+                .zip(lat)
+                .map(|(&lon_deg, &lat_deg)| {
+                    if operation.angular_input(false) {
+                        Xyzt::xy(lon_deg.to_radians(), lat_deg.to_radians())
+                    } else {
+                        Xyzt::xy(lon_deg, lat_deg)
+                    }
+                })
+                .collect();
+            let ns = per_point(&points, |coord| {
+                operation.forward(coord).map_or(0.0, |out| out.x)
+            });
+            (format!("op_{name}"), ns)
+        })
+        .collect()
+}
+
+/// `PJ_COORD` as four `f64`. `proj_trans` reads `x` and `y` for a classic projection.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct PjCoord {
+    x: f64,
+    y: f64,
+    z: f64,
+    t: f64,
+}
+
+#[link(name = "proj")]
+unsafe extern "C" {
+    fn proj_context_create() -> *mut c_void;
+    fn proj_context_destroy(ctx: *mut c_void);
+    fn proj_create(ctx: *mut c_void, definition: *const c_char) -> *mut c_void;
+    fn proj_destroy(pj: *mut c_void) -> *mut c_void;
+    fn proj_trans(pj: *mut c_void, direction: i32, coord: PjCoord) -> PjCoord;
+}
+
+type ProjGrid<'a> = (&'a str, &'a str, &'a (Vec<f64>, Vec<f64>));
+
+fn libproj_ratios(grids: &[ProjGrid<'_>]) -> Vec<(String, f64)> {
+    // SAFETY: OSGeo4W proj.dll creates one context. It is destroyed before return.
+    let ctx = unsafe { proj_context_create() };
+    assert!(!ctx.is_null(), "proj_context_create");
+    let mut ratios = Vec::new();
+    for (name, definition, (lon, lat)) in grids {
+        let text = CString::new(*definition).expect("definition");
+        // SAFETY: `text` is a nul-terminated definition. `ctx` is the context above.
+        let pj = unsafe { proj_create(ctx, text.as_ptr()) };
+        assert!(!pj.is_null(), "proj_create {definition}");
+        if *name == "utm31_forward" {
+            // SAFETY: `pj` is the UTM zone 31 projection just created.
+            let out = unsafe {
+                proj_trans(
+                    pj,
+                    1,
+                    PjCoord {
+                        x: 3.0_f64.to_radians(),
+                        y: 0.0,
+                        z: 0.0,
+                        t: 0.0,
+                    },
+                )
+            };
+            assert!(
+                (out.x - 500_000.0).abs() < 1.0,
+                "libproj UTM easting {}, ABI or definition is wrong",
+                out.x
+            );
+        }
+        let points: Vec<PjCoord> = lon
+            .iter()
+            .zip(lat)
+            .map(|(&lon_deg, &lat_deg)| PjCoord {
+                x: lon_deg.to_radians(),
+                y: lat_deg.to_radians(),
+                z: 0.0,
+                t: 0.0,
+            })
+            .collect();
+        let ns = per_point(&points, |coord| {
+            // SAFETY: `pj` is live and `coord` is a 32-byte `PJ_COORD`.
+            let out = unsafe { proj_trans(pj, 1, coord) };
+            out.x
+        });
+        // SAFETY: `pj` was created in this loop and is not used again.
+        unsafe { proj_destroy(pj) };
+        ratios.push(((*name).to_owned(), ns));
+    }
+    // SAFETY: `ctx` was created at the start of this function.
+    unsafe { proj_context_destroy(ctx) };
+    ratios
 }

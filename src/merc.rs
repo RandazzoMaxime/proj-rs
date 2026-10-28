@@ -6,7 +6,6 @@ use crate::angle::adjlon;
 use crate::lcc::{phi2, tsfn};
 use crate::{Ellipsoid, Geographic, Projected, ProjectionError};
 
-const EPS10: f64 = 1e-10;
 /// Rayon de sphère du Web Mercator (EPSG:3857), le `a` de WGS 84.
 const WEB_RADIUS: f64 = 6_378_137.0;
 
@@ -41,6 +40,39 @@ impl Mercator {
             y0: 0.0,
             model: Model::Sphere,
         }
+    }
+
+    /// Mercator sphérique de rayon `radius`.
+    ///
+    /// # Errors
+    ///
+    /// [`ProjectionError::NonFinite`] si un paramètre ne l'est pas,
+    /// [`ProjectionError::InvalidScale`] si `k0` est nul,
+    /// [`ProjectionError::NonFinite`] si `radius` n'est pas strictement positif.
+    pub fn try_sphere(
+        radius: f64,
+        lon0_deg: f64,
+        k0: f64,
+        x0: f64,
+        y0: f64,
+    ) -> Result<Self, ProjectionError> {
+        if !radius.is_finite() || radius <= 0.0 {
+            return Err(ProjectionError::NonFinite);
+        }
+        if ![lon0_deg, x0, y0].iter().all(|value| value.is_finite()) {
+            return Err(ProjectionError::NonFinite);
+        }
+        if !k0.is_finite() || k0 == 0.0 {
+            return Err(ProjectionError::InvalidScale);
+        }
+        Ok(Self {
+            a: radius,
+            k0,
+            lam0: lon0_deg.to_radians(),
+            x0,
+            y0,
+            model: Model::Sphere,
+        })
     }
 
     /// Mercator ellipsoïdal, `+proj=merc +ellps=…`.
@@ -100,11 +132,11 @@ impl Mercator {
             });
         }
         let phi = lat_rad.clamp(-half, half);
-        if (phi.abs() - half).abs() <= EPS10 {
-            return Err(ProjectionError::OutsideDomain);
-        }
         let lam = adjlon(adjlon(lon_rad) - self.lam0);
         let (x, y) = self.fwd_unit(lam, phi);
+        if !x.is_finite() || !y.is_finite() {
+            return Err(ProjectionError::OutsideDomain);
+        }
         Ok(Projected {
             east: self.a * x + self.x0,
             north: self.a * y + self.y0,
@@ -129,10 +161,7 @@ impl Mercator {
 
     fn fwd_unit(&self, lam: f64, phi: f64) -> (f64, f64) {
         let y = match self.model {
-            Model::Sphere => {
-                let quarter = std::f64::consts::FRAC_PI_4;
-                (quarter + 0.5 * phi).tan().ln()
-            }
+            Model::Sphere => phi.tan().asinh(),
             Model::Ellipsoid { e } => -tsfn(phi, phi.sin(), e).ln(),
         };
         (self.k0 * lam, self.k0 * y)
@@ -142,10 +171,7 @@ impl Mercator {
         let lam = x / self.k0;
         let north = y / self.k0;
         let phi = match self.model {
-            Model::Sphere => {
-                let half = std::f64::consts::FRAC_PI_2;
-                half - 2.0 * (-north).exp().atan()
-            }
+            Model::Sphere => north.sinh().atan(),
             Model::Ellipsoid { e } => phi2((-north).exp(), e),
         };
         (lam, phi)
@@ -206,8 +232,11 @@ mod tests {
     }
 
     #[test]
-    fn pole_is_outside_domain() {
-        let err = Mercator::web().forward(0.0, 90.0).expect_err("pole");
-        assert_eq!(err, ProjectionError::OutsideDomain);
+    fn pole_latitude_is_a_large_finite_northing() {
+        let xy = Mercator::web()
+            .forward(0.0, 90.0)
+            .expect("PROJ 9.9 merc keeps tan(pi/2) finite");
+        assert!(xy.north.abs() > 1.0e8, "{}", xy.north);
+        assert!(xy.north.is_finite());
     }
 }

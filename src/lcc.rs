@@ -87,6 +87,12 @@ impl Lcc {
         if !k0.is_finite() || k0 == 0.0 {
             return Err(ProjectionError::InvalidScale);
         }
+        // PROJ rejects an eccentricity this close to 1 inside the cone setup
+        // (the oss-fuzz latitude that divides by zero). A real ellipsoid is far
+        // from that.
+        if ell.es() > 0.999 {
+            return Err(ProjectionError::DegenerateCone);
+        }
         let phi1 = lat1_deg.to_radians();
         let phi2 = lat2_deg.to_radians();
         let phi0 = lat0_deg.to_radians();
@@ -126,6 +132,9 @@ impl Lcc {
             rho0 = 0.0;
         } else {
             rho0 *= tsfn(phi0, phi0.sin(), ell.e()).powf(n);
+        }
+        if !n.is_finite() || n == 0.0 || !rho0.is_finite() || !c.is_finite() {
+            return Err(ProjectionError::DegenerateCone);
         }
         Ok(Self {
             a: ell.a(),
@@ -205,7 +214,7 @@ impl Lcc {
         assert_eq!(lat_deg.len(), n, "latitude length {} != {n}", lat_deg.len());
         assert_eq!(east.len(), n, "easting length {} != {n}", east.len());
         assert_eq!(north.len(), n, "northing length {} != {n}", north.len());
-        #[cfg(all(target_arch = "x86_64", target_os = "linux", target_env = "gnu"))]
+        #[cfg(target_arch = "x86_64")]
         if std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma") {
             // SAFETY: AVX2 and FMA were just detected on this CPU.
             unsafe { self.forward_batch_avx2(lon_deg, lat_deg, east, north) };
@@ -225,7 +234,7 @@ impl Lcc {
     /// # Safety
     ///
     /// Le fil d'exécution doit supporter AVX2 et FMA.
-    #[cfg(all(target_arch = "x86_64", target_os = "linux", target_env = "gnu"))]
+    #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2,fma")]
     unsafe fn forward_batch_avx2(
         &self,
@@ -257,7 +266,7 @@ impl Lcc {
     /// # Safety
     ///
     /// AVX2 et FMA requis. `i + 4` ne dépasse aucune des quatre tranches.
-    #[cfg(all(target_arch = "x86_64", target_os = "linux", target_env = "gnu"))]
+    #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2,fma")]
     unsafe fn forward4(
         &self,
@@ -475,6 +484,25 @@ mod tests {
     fn assert_meters(got: Projected, east: f64, north: f64) {
         assert!((got.east - east).abs() < 1e-6, "east {}", got.east);
         assert!((got.north - north).abs() < 1e-6, "north {}", got.north);
+    }
+
+    #[test]
+    fn ossfuzz_flat_ellipsoid_is_rejected() {
+        let a = 6_378_137.0;
+        let b = 0.2;
+        let f = (a - b) / a;
+        let ell = Ellipsoid::try_from_a_es(a, f * (2.0 - f)).expect("axes");
+        let cone = Cone {
+            lon0_deg: 0.0,
+            lat0_deg: 0.0,
+            lat1_deg: 2.0 + 32.0 / 60.0,
+            lat2_deg: 0.0,
+            x0: 0.0,
+            y0: 0.0,
+            k0: 1.0,
+        };
+        let built = Lcc::try_new(ell, cone);
+        assert!(built.is_err(), "{built:?}");
     }
 
     #[test]

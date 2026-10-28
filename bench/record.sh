@@ -8,6 +8,7 @@ commit=$(git rev-parse --short HEAD)
 dirty=$(git diff --quiet HEAD -- src && echo false || echo true)
 machine="${BENCH_MACHINE:-$(hostname)}"
 date=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-line="{\"date\":\"$date\",\"commit\":\"$commit\",\"dirty\":$dirty,\"machine\":\"$machine\",\"result\":$result}"
+passes=$(tr -d '[:space:]' < tests/gie/passing.txt)
+line="{\"date\":\"$date\",\"commit\":\"$commit\",\"dirty\":$dirty,\"machine\":\"$machine\",\"passes\":$passes,\"result\":$result}"
 echo "$line" >> bench/history.jsonl
 echo "$line"

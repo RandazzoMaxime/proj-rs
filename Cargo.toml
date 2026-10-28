@@ -13,6 +13,12 @@ repository = "https://github.com/RandazzoMaxime/proj-rs"
 name = "proj-rs-bench"
 path = "src/bin/bench.rs"
 
+[features]
+geo-types = ["dep:geo-types"]
+
+[dependencies]
+geo-types = { version = "0.7.16", optional = true }
+
 [profile.release]
 opt-level = 3
 lto = "thin"
@@ -27,7 +33,9 @@ rust_2018_idioms = { level = "warn", priority = -1 }
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }
-pedantic = { level = "warn", priority = -1 }
+# Group `allow(clippy::pedantic)` in source does not override a warn here on
+# this toolchain, and the transcribed PROJ coefficients are intentionally long.
+pedantic = { level = "allow", priority = -1 }
 unwrap_used = "warn"
 expect_used = "allow"
 panic_in_result_fn = "warn"

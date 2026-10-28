@@ -5,6 +5,7 @@
 
 use std::arch::x86_64::{__m256d, _mm256_loadu_pd, _mm256_sqrt_pd, _mm256_storeu_pd};
 
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
 #[link(name = "mvec")]
 extern "C" {
     fn _ZGVdN4v_sin();
@@ -60,6 +61,7 @@ pub(crate) unsafe fn sqrt4(value: __m256d) -> __m256d {
     _mm256_sqrt_pd(value)
 }
 
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
 macro_rules! libmvec1 {
     ($name:ident, $symbol:ident, $doc:literal) => {
         #[doc = $doc]
@@ -102,16 +104,22 @@ macro_rules! libmvec1 {
     };
 }
 
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
 libmvec1!(sin4, _ZGVdN4v_sin, "Quatre sinus.");
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
 libmvec1!(cos4, _ZGVdN4v_cos, "Quatre cosinus.");
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
 libmvec1!(log4, _ZGVdN4v_log, "Quatre logarithmes naturels.");
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
 libmvec1!(exp4, _ZGVdN4v_exp, "Quatre exponentielles.");
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
 libmvec1!(atanh4, _ZGVdN4v_atanh, "Quatre arctanh.");
 
 /// Quatre `atan2(y, x)`, même ordre que `f64::atan2`.
 /// # Safety
 ///
 /// Le fil d'exécution doit supporter AVX2.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
 #[target_feature(enable = "avx2,fma")]
 pub(crate) unsafe fn atan2_4(y: __m256d, x: __m256d) -> __m256d {
     let r: __m256d;
@@ -141,4 +149,103 @@ pub(crate) unsafe fn atan2_4(y: __m256d, x: __m256d) -> __m256d {
         );
     }
     r
+}
+
+/// Transcendantales du CRT, une voie à la fois. Le reste du noyau reste en AVX2.
+///
+/// # Safety
+///
+/// Le fil d'exécution doit supporter AVX2.
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+#[target_feature(enable = "avx2,fma")]
+unsafe fn map1(value: __m256d, function: fn(f64) -> f64) -> __m256d {
+    let mut lanes = [0.0; 4];
+    // SAFETY: quatre f64, et cette fonction exige AVX2.
+    unsafe { store4(&mut lanes, 0, value) };
+    for lane in &mut lanes {
+        *lane = function(*lane);
+    }
+    // SAFETY: `lanes` a quatre éléments.
+    unsafe { load4(&lanes, 0) }
+}
+
+/// Quatre sinus du CRT.
+///
+/// # Safety
+///
+/// Le fil d'exécution doit supporter AVX2.
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+#[target_feature(enable = "avx2,fma")]
+pub(crate) unsafe fn sin4(value: __m256d) -> __m256d {
+    // SAFETY: même cible AVX2 que `map1`.
+    unsafe { map1(value, f64::sin) }
+}
+
+/// Quatre cosinus du CRT.
+///
+/// # Safety
+///
+/// Le fil d'exécution doit supporter AVX2.
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+#[target_feature(enable = "avx2,fma")]
+pub(crate) unsafe fn cos4(value: __m256d) -> __m256d {
+    // SAFETY: même cible AVX2 que `map1`.
+    unsafe { map1(value, f64::cos) }
+}
+
+/// Quatre logarithmes naturels du CRT.
+///
+/// # Safety
+///
+/// Le fil d'exécution doit supporter AVX2. Chaque voie est strictement positive.
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+#[target_feature(enable = "avx2,fma")]
+pub(crate) unsafe fn log4(value: __m256d) -> __m256d {
+    // SAFETY: même cible AVX2 que `map1`.
+    unsafe { map1(value, f64::ln) }
+}
+
+/// Quatre exponentielles du CRT.
+///
+/// # Safety
+///
+/// Le fil d'exécution doit supporter AVX2.
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+#[target_feature(enable = "avx2,fma")]
+pub(crate) unsafe fn exp4(value: __m256d) -> __m256d {
+    // SAFETY: même cible AVX2 que `map1`.
+    unsafe { map1(value, f64::exp) }
+}
+
+/// Quatre arctanh du CRT.
+///
+/// # Safety
+///
+/// Le fil d'exécution doit supporter AVX2. Chaque voie est dans (-1, 1).
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+#[target_feature(enable = "avx2,fma")]
+pub(crate) unsafe fn atanh4(value: __m256d) -> __m256d {
+    // SAFETY: même cible AVX2 que `map1`.
+    unsafe { map1(value, f64::atanh) }
+}
+
+/// Quatre `atan2(y, x)` du CRT.
+///
+/// # Safety
+///
+/// Le fil d'exécution doit supporter AVX2.
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+#[target_feature(enable = "avx2,fma")]
+pub(crate) unsafe fn atan2_4(y: __m256d, x: __m256d) -> __m256d {
+    let mut ys = [0.0; 4];
+    let mut xs = [0.0; 4];
+    // SAFETY: quatre f64, et cette fonction exige AVX2.
+    unsafe { store4(&mut ys, 0, y) };
+    // SAFETY: quatre f64, et cette fonction exige AVX2.
+    unsafe { store4(&mut xs, 0, x) };
+    for index in 0..4 {
+        ys[index] = ys[index].atan2(xs[index]);
+    }
+    // SAFETY: `ys` a quatre éléments.
+    unsafe { load4(&ys, 0) }
 }
