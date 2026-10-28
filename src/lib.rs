@@ -12,10 +12,16 @@
     clippy::too_many_arguments,
     reason = "PROJ sources are transcribed with their coefficients and branches"
 )]
-//! PROJ-RS — Rust port of [PROJ](https://github.com/OSGeo/PROJ).
+//! PROJ-RS — Rust port of [PROJ](https://github.com/OSGeo/PROJ) 9.9.
 //!
-//! Ported so far: exact Transverse Mercator (UTM), Lambert-93, Mercator and
-//! 7-parameter Helmert. See `ROADMAP.md`.
+//! The goal is the same observable behavior as PROJ 9.9, with `Result` and
+//! enums instead of error codes. Build an operation from a PROJ string with
+//! [`Operation::create`], or use the georust `proj`-compatible [`Proj`] facade.
+//! EPSG codes resolve from the embedded PROJ 9.9 database. An unknown method
+//! or a missing grid is an error at creation, never a coordinate.
+//!
+//! See `README.md` for the conformance status and `ROADMAP.md` for what is
+//! left.
 
 mod angle;
 mod coord;
