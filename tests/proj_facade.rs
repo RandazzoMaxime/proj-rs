@@ -72,6 +72,36 @@ fn utm_and_web_mercator_codes() {
 }
 
 #[test]
+fn database_crs_edges_and_grid_pairs() {
+    proj_rs::Proj::new("EPSG:4258").expect("4258");
+    proj_rs::Proj::new("EPSG:4978").expect("4978");
+    proj_rs::Proj::new("EPSG:32601").expect("32601");
+    proj_rs::Proj::new("EPSG:32660").expect("32660");
+    proj_rs::Proj::new("EPSG:32701").expect("32701");
+    proj_rs::Proj::new("EPSG:32760").expect("32760");
+    let same = Proj::new_known_crs("EPSG:4326", "EPSG:4258", None).expect("4258 pair");
+    let xy = same.convert((2.0_f64, 49.0_f64)).expect("identity");
+    assert!((xy.0 - 2.0).abs() < 1e-9, "{}", xy.0);
+    assert!((xy.1 - 49.0).abs() < 1e-9, "{}", xy.1);
+    let geocentric = Proj::new_known_crs("EPSG:4326", "EPSG:4978", None).expect("4978 pair");
+    let xyz = geocentric.convert((0.0_f64, 0.0_f64)).expect("cart");
+    assert!(metres(xyz.0, 6_378_137.0), "{}", xyz.0);
+    let shifted = Proj::new_known_crs("EPSG:4230", "EPSG:4326", None).expect("ed50");
+    let moved = shifted.convert((3.0_f64, 46.0_f64)).expect("helmert");
+    assert!(
+        (moved.0 - 3.0).abs() > 1e-6 || (moved.1 - 46.0).abs() > 1e-6,
+        "{moved:?}"
+    );
+    let grid = Proj::new_known_crs("EPSG:4267", "EPSG:4269", None).expect_err("nad");
+    let text = grid.to_string();
+    assert!(
+        text.contains("grid") || text.contains("not build"),
+        "{text}"
+    );
+    assert!(Proj::new("EPSG:5773").is_err());
+}
+
+#[test]
 fn network_and_grid_methods_fail() {
     let mut builder = ProjBuilder::new();
     assert!(builder.enable_network(true).is_err());
@@ -84,6 +114,61 @@ fn network_and_grid_methods_fail() {
         .expect("pair");
     assert!(proj.area_of_use().is_err());
     assert!(proj.to_projjson(None, None, None).is_err());
+}
+
+#[test]
+fn wkt_and_projjson_build_a_geographic_or_projected_crs() {
+    let wkt = concat!(
+        r#"GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],"#,
+        r#"PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]]"#
+    );
+    let projected = concat!(
+        r#"PROJCS["UTM zone 31N",GEOGCS["WGS 84",DATUM["WGS_1984","#,
+        r#"SPHEROID["WGS 84",6378137,298.257223563]],PRIMEM["Greenwich",0],"#,
+        r#"UNIT["degree",0.0174532925199433]],PROJECTION["Transverse_Mercator"],"#,
+        r#"PARAMETER["latitude_of_origin",0],PARAMETER["central_meridian",3],"#,
+        r#"PARAMETER["scale_factor",0.9996],PARAMETER["false_easting",500000],"#,
+        r#"PARAMETER["false_northing",0],UNIT["metre",1]]"#
+    );
+    let source = Proj::new(wkt).expect("wkt");
+    assert_eq!(source.as_wkt(None, None).expect("as_wkt"), wkt);
+    assert!(source.to_projjson(None, None, None).is_err());
+    let target = Proj::new(projected).expect("projcs");
+    let pair = source
+        .create_crs_to_crs_from_pj(&target, None, None)
+        .expect("pair");
+    let xy = pair.convert((3.0_f64, 0.0_f64)).expect("origin");
+    assert!(metres(xy.0, 500_000.0), "{}", xy.0);
+    assert!(metres(xy.1, 0.0), "{}", xy.1);
+
+    let json = concat!(
+        r#"{"type":"ProjectedCRS","base_crs":{"type":"GeographicCRS","datum":{"ellipsoid":"#,
+        r#"{"semi_major_axis":6378137,"inverse_flattening":298.257223563}}},"conversion":"#,
+        r#"{"method":{"name":"Transverse Mercator"},"parameters":["#,
+        r#"{"name":"Latitude of natural origin","value":0},"#,
+        r#"{"name":"Longitude of natural origin","value":3},"#,
+        r#"{"name":"Scale factor at natural origin","value":0.9996},"#,
+        r#"{"name":"False easting","value":500000},"#,
+        r#"{"name":"False northing","value":0}]}}"#
+    );
+    let from_json = Proj::new(json).expect("projjson");
+    assert_eq!(from_json.to_projjson(None, None, None).expect("json"), json);
+    assert!(from_json.as_wkt(None, None).is_err());
+    let json_pair = source
+        .create_crs_to_crs_from_pj(&from_json, None, None)
+        .expect("json pair");
+    let xy = json_pair.convert((3.0_f64, 0.0_f64)).expect("origin");
+    assert!(metres(xy.0, 500_000.0), "{}", xy.0);
+
+    assert!(Proj::new(r#"{"type":"CompoundCRS"}"#).is_err());
+    assert!(Proj::new(
+        r#"PROJCS["nope",GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]],PROJECTION["Not_A_Method"],UNIT["metre",1]]"#
+    )
+    .is_err());
+    assert!(Proj::new("EPSG:4326")
+        .expect("4326")
+        .as_wkt(None, None)
+        .is_err());
 }
 
 #[test]

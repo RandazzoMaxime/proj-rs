@@ -14,7 +14,8 @@
 //! is the ratchet: the live pass count must equal that file.
 
 use proj_rs::{
-    lpz_dist, parse_gie_coord, xyz_dist, CreateError, Operation, StepError as TransformError, Xyzt,
+    lpz_dist, parse_gie_coord, xyz_dist, CreateError, CrsPipeline, Operation,
+    StepError as TransformError, Xyzt,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -41,6 +42,12 @@ struct OpState {
     tolerance: f64,
     accepted: Xyzt,
     skip_rest: bool,
+    crs_src: String,
+    crs_dst: String,
+    /// `crs_src` / `crs_dst`. Degree output is compared on the ellipsoid.
+    crs_pair: bool,
+    /// Destination first axis is latitude or northing.
+    swap_xy: bool,
 }
 
 fn main_counts() -> (Counts, Vec<(String, Counts)>, Vec<String>) {
@@ -84,6 +91,10 @@ fn run_gie(text: &str) -> (Counts, Vec<String>) {
         tolerance: 5e-4,
         accepted: Xyzt::xy(0.0, 0.0),
         skip_rest: false,
+        crs_src: String::new(),
+        crs_dst: String::new(),
+        crs_pair: false,
+        swap_xy: false,
     };
     let mut lines = text.lines().peekable();
     let mut strict = false;
@@ -163,6 +174,10 @@ fn dispatch(
             state.tolerance = 5e-4;
             state.skip_rest = false;
             state.accepted = Xyzt::xy(0.0, 0.0);
+            state.crs_pair = false;
+            state.swap_xy = false;
+            state.crs_src.clear();
+            state.crs_dst.clear();
             match Operation::create(args) {
                 Ok(operation) => {
                     state.operation = Some(operation);
@@ -195,6 +210,14 @@ fn dispatch(
             }
         }
         "require_grid" => state.skip_rest = true,
+        "crs_src" => {
+            state.crs_src = args.to_owned();
+            open_crs(state);
+        }
+        "crs_dst" => {
+            state.crs_dst = args.to_owned();
+            open_crs(state);
+        }
         "accept" => {
             if let Some((coord, _)) = parse_gie_coord(args) {
                 state.accepted = coord;
@@ -205,6 +228,71 @@ fn dispatch(
         "skip" => state.skip_rest = true,
         _ => {}
     }
+}
+
+fn open_crs(state: &mut OpState) {
+    if state.crs_src.is_empty() || state.crs_dst.is_empty() {
+        return;
+    }
+    // gie keeps the previous accept. The second 4979 case expects before it accepts.
+    let source = std::mem::take(&mut state.crs_src);
+    let target = std::mem::take(&mut state.crs_dst);
+    state.inverse = false;
+    state.tolerance = 5e-4;
+    state.skip_rest = false;
+    state.crs_pair = false;
+    state.swap_xy = false;
+    state.definition = format!("{source} -> {target}");
+    match CrsPipeline::create(&source, &target) {
+        Ok(built) => {
+            state.swap_xy = built.lat_or_northing_first;
+            state.crs_pair = true;
+            state.operation = Some(built.operation);
+            state.readiness = Readiness::Ready;
+        }
+        Err(
+            CreateError::UnknownProj(_)
+            | CreateError::UnknownParameter(_)
+            | CreateError::Unsupported(_),
+        ) => {
+            state.operation = None;
+            state.readiness = Readiness::Unsupported;
+        }
+        Err(CreateError::IllegalValue(_) | CreateError::MissingArgument(_)) => {
+            state.operation = None;
+            state.readiness = Readiness::Rejected;
+        }
+    }
+}
+
+fn deviation(
+    state: &OpState,
+    operation: &Operation,
+    mut got: Xyzt,
+    mut expected: Xyzt,
+    inverse: bool,
+) -> f64 {
+    if got.x.is_nan() && expected.x.is_nan() {
+        return 0.0;
+    }
+    if operation.angular_output(inverse) {
+        expected = deg_to_rad(expected);
+        let (a, es) = operation.distance_ellipsoid();
+        return lpz_dist(a, es, expected, got);
+    }
+    // CRS pipelines leave degrees in the CRS axis order. gie converts those to
+    // radians and swaps a latitude-first axis before the geodesic distance.
+    if state.crs_pair && operation.degree_output(inverse) {
+        expected = deg_to_rad(expected);
+        got = deg_to_rad(got);
+        if state.swap_xy {
+            std::mem::swap(&mut expected.x, &mut expected.y);
+            std::mem::swap(&mut got.x, &mut got.y);
+        }
+        let (a, es) = operation.distance_ellipsoid();
+        return lpz_dist(a, es, expected, got);
+    }
+    xyz_dist(expected, got)
 }
 
 fn score_expect(args: &str, state: &OpState, counts: &mut Counts, notes: &mut Vec<String>) {
@@ -241,7 +329,7 @@ fn score_expect(args: &str, state: &OpState, counts: &mut Counts, notes: &mut Ve
         counts.failed += 1;
         return;
     };
-    let Some((mut expected, dims)) = parse_gie_coord(args) else {
+    let Some((expected, dims)) = parse_gie_coord(args) else {
         counts.failed += 1;
         notes.push(format!("could not parse expect {args}"));
         return;
@@ -271,15 +359,7 @@ fn score_expect(args: &str, state: &OpState, counts: &mut Counts, notes: &mut Ve
     if dims < 3 {
         got.z = 0.0;
     }
-    let distance = if got.x.is_nan() && expected.x.is_nan() {
-        0.0
-    } else if operation.angular_output(inverse) {
-        expected = deg_to_rad(expected);
-        let (a, es) = operation.distance_ellipsoid();
-        lpz_dist(a, es, expected, got)
-    } else {
-        xyz_dist(expected, got)
-    };
+    let distance = deviation(state, operation, got, expected, inverse);
     if distance <= state.tolerance {
         counts.passed += 1;
     } else {
@@ -388,6 +468,8 @@ fn transform(state: &OpState) -> Result<Xyzt, TransformError> {
 fn errno_name(error: TransformError) -> &'static str {
     match error {
         TransformError::OutsideDomain => "coord_transfm_outside_projection_domain",
+        TransformError::OutsideGrid => "coord_transfm_outside_grid",
+        TransformError::MissingTime => "coord_transfm_missing_time",
         TransformError::InvalidCoord => "coord_transfm_invalid_coord",
         TransformError::NoInverse => "no_inverse_op",
         TransformError::NonFinite => "coord_transfm_invalid_coord",

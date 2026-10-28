@@ -119,7 +119,7 @@ pub(crate) fn phi2(ts: f64, e: f64) -> Result<f64, ()> {
 }
 
 /// `tan φ` from `sinh ψ`, GeographicLib's `tauf` as ported in `phi2.cpp`.
-fn sinhpsi2tanphi(taup: f64, e: f64) -> Result<f64, ()> {
+pub(crate) fn sinhpsi2tanphi(taup: f64, e: f64) -> Result<f64, ()> {
     let rooteps = f64::EPSILON.sqrt();
     let tol = rooteps / 10.0;
     let tmax = 2.0 / rooteps;

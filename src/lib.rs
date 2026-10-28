@@ -20,6 +20,7 @@
 mod angle;
 mod coord;
 mod crs;
+mod crs_text;
 mod ellipsoid;
 mod engine;
 mod error;
@@ -31,6 +32,7 @@ mod lcc;
 mod merc;
 mod ported;
 mod proj;
+mod projdb;
 mod projections;
 mod projmath;
 #[cfg(target_arch = "x86_64")]
@@ -40,7 +42,7 @@ mod tmerc_approx;
 mod transform;
 
 pub use engine::{
-    lpz_dist, parse_gie_coord, xyz_dist, Coord as Xyzt, CreateError, Operation,
+    lpz_dist, parse_gie_coord, xyz_dist, Coord as Xyzt, CreateError, CrsPipeline, Operation,
     TransformError as StepError,
 };
 pub use ported::{bench_definition, PORTED};
@@ -52,7 +54,8 @@ pub use transform::{Transform, TransformError};
 pub mod wkt {
     //! WKT export types from georust `proj` 0.31.
     //!
-    //! [`crate::Proj::as_wkt`] returns an error. The types exist so callers can name them.
+    //! [`crate::Proj::as_wkt`] returns WKT stored for an EPSG code, or the WKT
+    //! text passed to [`crate::Proj::new`]. It does not invent a dialect.
 
     pub use crate::proj::{WktOptions, WktOutputAxis, WktVersion};
 }

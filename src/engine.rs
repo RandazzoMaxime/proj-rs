@@ -14,11 +14,19 @@ use crate::angle::adjlon;
 
 use crate::tmerc_approx::ApproxTmerc;
 use crate::{
-    Cone, Ellipsoid, EllipsoidError, Geographic, Helmert, HelmertConvention, HelmertParams,
-    Hemisphere, Lcc, Mercator, Projected, ProjectionError, Tmerc, UtmZone,
+    Cone, Ellipsoid, EllipsoidError, Geographic, Hemisphere, Lcc, Mercator, Projected,
+    ProjectionError, Tmerc, UtmZone,
 };
 use std::f64::consts::{FRAC_PI_2, PI};
 use std::fmt;
+use std::sync::Mutex;
+
+#[path = "projections/datum_ops.rs"]
+mod datum_ops;
+
+// NKG URNs are database coordinate operations, not `+proj` names.
+#[path = "projections/nkg.rs"]
+mod nkg;
 
 const EPS_LAT: f64 = 1e-12;
 
@@ -82,6 +90,10 @@ impl std::error::Error for CreateError {}
 pub enum TransformError {
     /// PROJ would return `HUGE_VAL` and `coord_transfm_outside_projection_domain`.
     OutsideDomain,
+    /// PROJ `coord_transfm_outside_grid`: the point is not covered by a shift grid.
+    OutsideGrid,
+    /// PROJ `PROJ_ERR_COORD_TRANSFM_MISSING_TIME`.
+    MissingTime,
     /// This direction is not defined.
     NoInverse,
     /// Latitude or longitude is not usable.
@@ -94,6 +106,8 @@ impl fmt::Display for TransformError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::OutsideDomain => "point is outside the projection domain",
+            Self::OutsideGrid => "point is outside the grid",
+            Self::MissingTime => "coordinate is missing a time",
             Self::NoInverse => "inverse is not available",
             Self::InvalidCoord => "coordinate is invalid",
             Self::NonFinite => "coordinate is not finite",
@@ -330,6 +344,8 @@ pub(crate) struct Frame {
     pub geoc: bool,
     /// Prime meridian, radians east of Greenwich.
     pub from_greenwich: f64,
+    /// Longitude wrap centre, radians. `None` keeps the principal range.
+    pub lon_wrap: Option<f64>,
 }
 
 impl Frame {
@@ -359,6 +375,16 @@ impl Frame {
         };
         let from_greenwich = prime_meridian(params)?;
         let earth = spherify(params, earth, phi0)?;
+        let lon_wrap = if params.flag("lon_wrap") {
+            let center = params.radians("lon_wrap")?.unwrap_or(0.0);
+            // init.cpp: `!(fabs(center) < 10 * 2 * pi)`, which is also false for NaN.
+            if !(center.abs() < 20.0 * PI) {
+                return Err(CreateError::IllegalValue("lon_wrap"));
+            }
+            Some(center)
+        } else {
+            None
+        };
         Ok(Self {
             earth,
             lam0,
@@ -374,6 +400,7 @@ impl Frame {
             over: params.flag("over"),
             geoc: params.flag("geoc"),
             from_greenwich,
+            lon_wrap,
         })
     }
 }
@@ -497,11 +524,61 @@ fn spherify(params: &Params, earth: Ellipsoid, phi0: f64) -> Result<Ellipsoid, C
         let _ = phi0;
         a * (1.0 - es).sqrt()
     } else if params.flag("R_lat_a") || params.flag("R_lat_g") {
-        return Err(CreateError::Unsupported("R_lat spherification"));
+        // `ellps_spherification` walks R_A, R_V, R_a, R_g, R_h, R_lat_a,
+        // R_lat_g, R_C and keeps the first hit. R_lat_a wins over R_lat_g.
+        let (key, kind) = if params.flag("R_lat_a") {
+            ("R_lat_a", LatitudeMean::Arithmetic)
+        } else {
+            ("R_lat_g", LatitudeMean::Geometric)
+        };
+        latitude_radius(params, a, es, key, kind)?
     } else {
         return Ok(earth);
     };
     Ellipsoid::try_from_a_es(radius, 0.0).map_err(ell_err)
+}
+
+/// Which mean of the meridional and prime-vertical radii `R_lat_*` asks for.
+enum LatitudeMean {
+    Arithmetic,
+    Geometric,
+}
+
+/// Sphere radius at one latitude. PROJ `ellps_spherification` cases 5 and 6.
+fn latitude_radius(
+    params: &Params,
+    a: f64,
+    es: f64,
+    key: &'static str,
+    kind: LatitudeMean,
+) -> Result<f64, CreateError> {
+    let phi = match params.radians(key) {
+        Ok(Some(phi)) => phi,
+        // A bare flag has no `=`. PROJ then runs dmstor on the key text, which
+        // returns 0.
+        Ok(None) => 0.0,
+        Err(_) => return Err(CreateError::IllegalValue(key)),
+    };
+    // Same test as `fabs(t) > M_HALFPI`. NaN fails it in C++ and falls through;
+    // a non-finite radius is rejected below.
+    if phi.abs() > FRAC_PI_2 {
+        return Err(CreateError::IllegalValue(key));
+    }
+    let sinphi = phi.sin();
+    let t = 1.0 - es * sinphi * sinphi;
+    if t == 0.0 {
+        return Err(CreateError::IllegalValue(key));
+    }
+    let radius = match kind {
+        // (M + N) / 2, with M the meridional radius and N the prime vertical.
+        LatitudeMean::Arithmetic => a * (1.0 - es + t) / (2.0 * t * t.sqrt()),
+        // sqrt(M * N).
+        LatitudeMean::Geometric => a * (1.0 - es).sqrt() / t,
+    };
+    if !radius.is_finite() || radius <= 0.0 {
+        return Err(CreateError::IllegalValue(key));
+    }
+    Ok(radius)
 }
 
 fn datum_ellipsoid(name: &str) -> Result<Ellipsoid, CreateError> {
@@ -665,11 +742,42 @@ fn prime_meridian(params: &Params) -> Result<f64, CreateError> {
 /// What a step reads or writes. Pipelines refuse to join different kinds.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum IoKind {
+    /// Radians. `gie` converts degrees on this side.
     Angular,
+    /// Degrees. `gie` leaves the numbers alone. Not the same as [`Self::Angular`].
+    Degrees,
     Projected,
     Cartesian,
     /// Same unit as the neighbouring step. Axis swap uses this.
     Any,
+}
+
+/// Four independent coordinate stacks owned by one pipeline.
+///
+/// PROJ keeps these on the pipeline object (`pipeline.cpp`, `stack[4]`). A
+/// push or pop with no pipeline parent does not see this and leaves the
+/// coordinate unchanged.
+#[derive(Debug)]
+pub(crate) struct PipelineStack {
+    axes: [Vec<f64>; 4],
+}
+
+impl PipelineStack {
+    fn new() -> Self {
+        Self {
+            axes: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+        }
+    }
+
+    /// Save one axis. `axis` is 0..4.
+    pub(crate) fn push_axis(&mut self, axis: usize, value: f64) {
+        self.axes[axis].push(value);
+    }
+
+    /// Pop one axis. An empty axis returns [`None`] and the coordinate stays.
+    pub(crate) fn pop_axis(&mut self, axis: usize) -> Option<f64> {
+        self.axes[axis].pop()
+    }
 }
 
 /// One forward or inverse step.
@@ -699,6 +807,16 @@ pub(crate) trait Step: Send + Sync {
         self.output_kind() == IoKind::Angular
     }
 
+    /// Forward input is degrees. `gie` does not convert this side.
+    fn degree_input_forward(&self) -> bool {
+        self.input_kind() == IoKind::Degrees
+    }
+
+    /// Forward output is degrees. `gie` converts this side before a geodesic distance.
+    fn degree_output_forward(&self) -> bool {
+        self.output_kind() == IoKind::Degrees
+    }
+
     /// Unit of the forward input.
     fn input_kind(&self) -> IoKind;
 
@@ -707,6 +825,39 @@ pub(crate) trait Step: Send + Sync {
 
     /// Semi-major axis and `e²` used when an angular error is turned into metres.
     fn distance_ellipsoid(&self) -> (f64, f64);
+
+    /// `true` when this step reads the pipeline coordinate stack.
+    fn needs_pipeline_stack(&self) -> bool {
+        false
+    }
+
+    /// Forward while a pipeline holds the coordinate stack.
+    ///
+    /// # Errors
+    ///
+    /// [`TransformError`] from [`Self::forward`] when this step ignores the stack.
+    fn forward_in_pipeline(
+        &self,
+        coord: Coord,
+        stack: &mut PipelineStack,
+    ) -> Result<Coord, TransformError> {
+        let _ = stack;
+        self.forward(coord)
+    }
+
+    /// Inverse while a pipeline holds the coordinate stack.
+    ///
+    /// # Errors
+    ///
+    /// [`TransformError`] from [`Self::inverse`] when this step ignores the stack.
+    fn inverse_in_pipeline(
+        &self,
+        coord: Coord,
+        stack: &mut PipelineStack,
+    ) -> Result<Coord, TransformError> {
+        let _ = stack;
+        self.inverse(coord)
+    }
 }
 
 /// A built operation.
@@ -728,7 +879,15 @@ impl Operation {
     ///
     /// [`CreateError`] when `+proj` or a parameter is unknown or illegal.
     /// Nothing is returned that would transform a coordinate anyway.
+    ///
+    /// `urn:ogc:def:coordinateOperation:NKG::` is read from `proj.db`. A step
+    /// that needs a grid is [`CreateError::Unsupported`], not a coordinate.
     pub fn create(definition: &str) -> Result<Self, CreateError> {
+        if let Some(step) = nkg::from_definition(definition)? {
+            return Ok(Self {
+                step: std::sync::Arc::from(step),
+            });
+        }
         let params = Params::parse(definition)?;
         let name = params.text("proj").unwrap_or("").to_owned();
         if name.is_empty() {
@@ -787,10 +946,50 @@ impl Operation {
         }
     }
 
+    /// Whether this direction writes degrees rather than radians.
+    #[must_use]
+    pub fn degree_output(&self, inverse: bool) -> bool {
+        if inverse {
+            self.step.degree_input_forward()
+        } else {
+            self.step.degree_output_forward()
+        }
+    }
+
     /// Ellipsoid used to turn an angular miss into metres.
     #[must_use]
     pub fn distance_ellipsoid(&self) -> (f64, f64) {
         self.step.distance_ellipsoid()
+    }
+}
+
+/// Transform between two EPSG CRS, in the axis order stored in `proj.db`.
+///
+/// Built by [`CrsPipeline::create`]. Inputs are degrees or metres. A degree
+/// output is still degrees, so a geodesic check converts it first.
+#[derive(Clone, Debug)]
+pub struct CrsPipeline {
+    /// Pipeline. Every step is an operation this crate already builds.
+    pub operation: Operation,
+    /// Destination first axis is latitude or northing.
+    pub lat_or_northing_first: bool,
+}
+
+impl CrsPipeline {
+    /// Look the pair up in `proj.db` and emit a pipeline.
+    ///
+    /// # Errors
+    ///
+    /// [`CreateError::Unsupported`] when a step is a grid, a deformation
+    /// model, or a method this crate does not build. No coordinate is returned
+    /// for that pair.
+    pub fn create(source: &str, target: &str) -> Result<Self, CreateError> {
+        let (definition, lat_or_northing_first) = crate::crs::epsg_pipeline(source, target)?;
+        let operation = Operation::create(&definition)?;
+        Ok(Self {
+            operation,
+            lat_or_northing_first,
+        })
     }
 }
 
@@ -812,6 +1011,9 @@ fn build_step(name: &str, params: &Params, frame: &Frame) -> Result<SharedStep, 
     if let Some(spec) = catalogue().iter().find(|spec| spec.name == name) {
         return Ok(std::sync::Arc::from((spec.build)(params, frame)?));
     }
+    if let Some(step) = datum_ops::build(name, params, frame)? {
+        return Ok(std::sync::Arc::from(step));
+    }
     if let Some(step) = crate::projections::build(name, params, frame)? {
         return Ok(std::sync::Arc::from(step));
     }
@@ -823,6 +1025,7 @@ fn check_keys(name: &str, params: &Params) -> Result<(), CreateError> {
         .iter()
         .find(|spec| spec.name == name)
         .map(|spec| spec.keys)
+        .or_else(|| datum_ops::extra_keys(name))
         .or_else(|| crate::projections::extra_keys(name));
     let Some(extra) = extra else {
         return Ok(());
@@ -908,7 +1111,7 @@ const CATALOGUE: &[Built] = &[
     },
     Built {
         name: "helmert",
-        keys: &["x", "y", "z", "rx", "ry", "rz", "s", "convention"],
+        keys: datum_ops::HELMERT_KEYS,
         build: build_helmert,
     },
     Built {
@@ -1297,33 +1500,7 @@ fn build_merc(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateErr
 }
 
 fn build_helmert(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateError> {
-    let rotation = params.number("rx")?.unwrap_or(0.0)
-        + params.number("ry")?.unwrap_or(0.0)
-        + params.number("rz")?.unwrap_or(0.0);
-    if rotation != 0.0 && !params.flag("convention") {
-        return Err(CreateError::MissingArgument("convention"));
-    }
-    let convention = match params.text("convention").unwrap_or("position_vector") {
-        "position_vector" => HelmertConvention::PositionVector,
-        "coordinate_frame" => HelmertConvention::CoordinateFrame,
-        _ => return Err(CreateError::IllegalValue("convention")),
-    };
-    let helmert = Helmert::try_new(HelmertParams {
-        translation_x: params.number("x")?.unwrap_or(0.0),
-        translation_y: params.number("y")?.unwrap_or(0.0),
-        translation_z: params.number("z")?.unwrap_or(0.0),
-        rotation_x_arcsec: params.number("rx")?.unwrap_or(0.0),
-        rotation_y_arcsec: params.number("ry")?.unwrap_or(0.0),
-        rotation_z_arcsec: params.number("rz")?.unwrap_or(0.0),
-        scale_ppm: params.number("s")?.unwrap_or(0.0),
-        convention,
-    })
-    .map_err(|_| CreateError::IllegalValue("helmert"))?;
-    Ok(Box::new(HelmertStep {
-        helmert,
-        a: frame.earth.a(),
-        es: frame.earth.es(),
-    }))
+    datum_ops::build("helmert", params, frame)?.ok_or(CreateError::IllegalValue("helmert"))
 }
 
 fn build_cart(_params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateError> {
@@ -1427,7 +1604,8 @@ impl<K: Kernel + 'static> Step for Classic<K> {
     }
 }
 
-fn prepare_forward(
+/// Angular forward prepare: latitude gate, `lon_0`, prime meridian, geocentric latitude.
+pub(crate) fn prepare_forward(
     frame: &Frame,
     mut lon: f64,
     mut lat: f64,
@@ -1465,7 +1643,31 @@ fn prepare_forward(
     Ok((lon, lat))
 }
 
-fn geographic_to_geocentric(phi: f64, one_es: f64) -> f64 {
+/// `fwd_finalize` for radian output: `center + adjlon(lam - center)`.
+pub(crate) fn wrap_longitude(center: Option<f64>, lam: f64) -> f64 {
+    let Some(center) = center else {
+        return lam;
+    };
+    if !lam.is_finite() {
+        return lam;
+    }
+    center + adjlon(lam - center)
+}
+
+/// Inverse finalize for a radian output: put `lon_0` and the prime meridian back.
+pub(crate) fn finish_angular(frame: &Frame, mut lam: f64, mut phi: f64) -> (f64, f64) {
+    lam = lam + frame.from_greenwich + frame.lam0;
+    if !frame.over {
+        lam = adjlon(lam);
+    }
+    if frame.geoc {
+        phi = geographic_to_geocentric(phi, frame.earth.one_es());
+    }
+    (lam, phi)
+}
+
+/// Geographic latitude to geocentric: `atan((1 - e^2) tan phi)`.
+pub(crate) fn geographic_to_geocentric(phi: f64, one_es: f64) -> f64 {
     let limit = FRAC_PI_2 - 1e-9;
     if phi > limit || phi < -limit || one_es == 1.0 {
         phi
@@ -1474,7 +1676,7 @@ fn geographic_to_geocentric(phi: f64, one_es: f64) -> f64 {
     }
 }
 
-fn geocentric_to_geographic(phi: f64, one_es: f64) -> f64 {
+pub(crate) fn geocentric_to_geographic(phi: f64, one_es: f64) -> f64 {
     let limit = FRAC_PI_2 - 1e-9;
     if phi > limit || phi < -limit || one_es == 1.0 {
         phi
@@ -1541,46 +1743,6 @@ where
 
     fn distance_ellipsoid(&self) -> (f64, f64) {
         (self.frame.earth.a(), self.frame.earth.es())
-    }
-}
-
-struct HelmertStep {
-    helmert: Helmert,
-    a: f64,
-    es: f64,
-}
-
-impl Step for HelmertStep {
-    fn forward(&self, coord: Coord) -> Result<Coord, TransformError> {
-        let (x, y, z) = self.helmert.apply(coord.x, coord.y, coord.z);
-        Ok(Coord {
-            x,
-            y,
-            z,
-            t: coord.t,
-        })
-    }
-
-    fn inverse(&self, coord: Coord) -> Result<Coord, TransformError> {
-        let (x, y, z) = self.helmert.apply_inverse(coord.x, coord.y, coord.z);
-        Ok(Coord {
-            x,
-            y,
-            z,
-            t: coord.t,
-        })
-    }
-
-    fn input_kind(&self) -> IoKind {
-        IoKind::Cartesian
-    }
-
-    fn output_kind(&self) -> IoKind {
-        IoKind::Cartesian
-    }
-
-    fn distance_ellipsoid(&self) -> (f64, f64) {
-        (self.a, self.es)
     }
 }
 
@@ -1711,7 +1873,7 @@ impl Step for LongLat {
     fn forward(&self, coord: Coord) -> Result<Coord, TransformError> {
         let (lam, phi) = prepare_forward(&self.frame, coord.x, coord.y)?;
         Ok(Coord {
-            x: lam,
+            x: wrap_longitude(self.frame.lon_wrap, lam),
             y: phi,
             z: self.frame.vfr_meter * (coord.z + self.frame.z0),
             t: coord.t,
@@ -1748,30 +1910,81 @@ impl Step for LongLat {
     }
 }
 
+struct PipeStep {
+    inverted: bool,
+    omit_fwd: bool,
+    omit_inv: bool,
+    inner: std::sync::Arc<dyn Step>,
+}
+
 struct Pipeline {
-    steps: Vec<(bool, std::sync::Arc<dyn Step>)>,
+    steps: Vec<PipeStep>,
+    stack: Mutex<PipelineStack>,
+    uses_stack: bool,
     a: f64,
     es: f64,
 }
 
+impl Pipeline {
+    fn lock_stack(&self) -> std::sync::MutexGuard<'_, PipelineStack> {
+        self.stack
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
 impl Step for Pipeline {
     fn forward(&self, mut coord: Coord) -> Result<Coord, TransformError> {
-        for (inverted, step) in &self.steps {
-            coord = if *inverted {
-                step.inverse(coord)?
+        if !self.uses_stack {
+            for step in &self.steps {
+                if step.omit_fwd {
+                    continue;
+                }
+                coord = if step.inverted {
+                    step.inner.inverse(coord)?
+                } else {
+                    step.inner.forward(coord)?
+                };
+            }
+            return Ok(coord);
+        }
+        let mut stack = self.lock_stack();
+        for step in &self.steps {
+            if step.omit_fwd {
+                continue;
+            }
+            coord = if step.inverted {
+                step.inner.inverse_in_pipeline(coord, &mut stack)?
             } else {
-                step.forward(coord)?
+                step.inner.forward_in_pipeline(coord, &mut stack)?
             };
         }
         Ok(coord)
     }
 
     fn inverse(&self, mut coord: Coord) -> Result<Coord, TransformError> {
-        for (inverted, step) in self.steps.iter().rev() {
-            coord = if *inverted {
-                step.forward(coord)?
+        if !self.uses_stack {
+            for step in self.steps.iter().rev() {
+                if step.omit_inv {
+                    continue;
+                }
+                coord = if step.inverted {
+                    step.inner.forward(coord)?
+                } else {
+                    step.inner.inverse(coord)?
+                };
+            }
+            return Ok(coord);
+        }
+        let mut stack = self.lock_stack();
+        for step in self.steps.iter().rev() {
+            if step.omit_inv {
+                continue;
+            }
+            coord = if step.inverted {
+                step.inner.forward_in_pipeline(coord, &mut stack)?
             } else {
-                step.inverse(coord)?
+                step.inner.inverse_in_pipeline(coord, &mut stack)?
             };
         }
         Ok(coord)
@@ -1780,7 +1993,7 @@ impl Step for Pipeline {
     fn input_kind(&self) -> IoKind {
         self.steps
             .iter()
-            .map(|(inverted, step)| kind_in(*inverted, step.as_ref()))
+            .map(|step| kind_in(step.inverted, step.inner.as_ref()))
             .find(|kind| *kind != IoKind::Any)
             .unwrap_or(IoKind::Projected)
     }
@@ -1789,7 +2002,7 @@ impl Step for Pipeline {
         self.steps
             .iter()
             .rev()
-            .map(|(inverted, step)| kind_out(*inverted, step.as_ref()))
+            .map(|step| kind_out(step.inverted, step.inner.as_ref()))
             .find(|kind| *kind != IoKind::Any)
             .unwrap_or(IoKind::Projected)
     }
@@ -1825,6 +2038,9 @@ fn build_pipeline(definition: &str) -> Result<Pipeline, CreateError> {
             }
         }
         let inverted = step_params.flag("inv");
+        // Presence, not the value. PROJ's `bomit_fwd` is the same test.
+        let omit_fwd = step_params.flag("omit_fwd");
+        let omit_inv = step_params.flag("omit_inv");
         let name = step_params.text("proj").unwrap_or("").to_owned();
         if step_params.flag("init") || step_params.flag("towgs84") || name == "pipeline" {
             return Err(if name == "pipeline" {
@@ -1839,31 +2055,39 @@ fn build_pipeline(definition: &str) -> Result<Pipeline, CreateError> {
         let step_frame = Frame::from_params(&step_params)?;
         let step = build_step(&name, &step_params, &step_frame)?;
         check_keys(&name, &step_params)?;
-        steps.push((inverted, step));
+        steps.push(PipeStep {
+            inverted,
+            omit_fwd,
+            omit_inv,
+            inner: step,
+        });
     }
     // `+inv` on the pipeline inverts the whole chain: reverse order and toggle
     // each step. A step that already carries `+inv` is toggled back.
+    // `omit_fwd` / `omit_inv` name a direction of that chain, so they swap.
     if header_params.flag("inv") {
         steps.reverse();
-        for (inverted, _) in &mut steps {
-            *inverted = !*inverted;
+        for step in &mut steps {
+            step.inverted = !step.inverted;
+            std::mem::swap(&mut step.omit_fwd, &mut step.omit_inv);
         }
     }
     if steps.is_empty() {
         return Err(CreateError::IllegalValue("pipeline"));
     }
+    let uses_stack = steps.iter().any(|step| step.inner.needs_pipeline_stack());
     for pair in steps.windows(2) {
-        let (left_inv, left) = &pair[0];
-        let (right_inv, right) = &pair[1];
         if !kinds_compatible(
-            kind_out(*left_inv, left.as_ref()),
-            kind_in(*right_inv, right.as_ref()),
+            kind_out(pair[0].inverted, pair[0].inner.as_ref()),
+            kind_in(pair[1].inverted, pair[1].inner.as_ref()),
         ) {
             return Err(CreateError::IllegalValue("pipeline"));
         }
     }
     Ok(Pipeline {
         steps,
+        stack: Mutex::new(PipelineStack::new()),
+        uses_stack,
         a: frame.earth.a(),
         es: frame.earth.es(),
     })
@@ -2193,5 +2417,42 @@ mod tests {
     fn dms_and_underscores() {
         assert!((parse_dms_degrees("17d40'W").expect("ferro") + 17.0 + 40.0 / 60.0).abs() < 1e-12);
         assert!((proj_number("10_018_754.1714").expect("num") - 10_018_754.171_4).abs() < 1e-6);
+    }
+
+    #[test]
+    fn r_lat_matches_ellipsoid_gie_and_r_c_ignores_lat_0() {
+        let point = Coord::xy(12.0_f64.to_radians(), 55.0_f64.to_radians());
+        let arithmetic = Operation::create("+proj=merc +ellps=GRS80 +R_lat_a=60").expect("R_lat_a");
+        let got = arithmetic.forward(point).expect("forward");
+        assert!((got.x - 1_338_073.743_626_891_9).abs() < 1e-8, "{}", got.x);
+        assert!((got.y - 7_374_210.092_480_332_6).abs() < 1e-8, "{}", got.y);
+        let geometric = Operation::create("+proj=merc +ellps=GRS80 +R_lat_g=60").expect("R_lat_g");
+        let got = geometric.forward(point).expect("forward");
+        assert!((got.x - 1_338_073.269_610_159_3).abs() < 1e-8, "{}", got.x);
+        assert!((got.y - 7_374_207.480_143_763_1).abs() < 1e-8, "{}", got.y);
+        let collapsed = Operation::create("+proj=merc +a=1E77 +R_lat_a=90 +b=1");
+        assert!(matches!(collapsed, Err(CreateError::IllegalValue(_))));
+        let at_origin = Operation::create("+proj=merc +R_C +ellps=WGS84").expect("R_C");
+        let at_45 = Operation::create("+proj=merc +R_C +ellps=WGS84 +lat_0=45").expect("R_C lat");
+        let sample = Coord::xy(2.0_f64.to_radians(), 49.0_f64.to_radians());
+        let origin = at_origin.forward(sample).expect("origin");
+        let shifted = at_45.forward(sample).expect("lat_0");
+        assert!((origin.x - shifted.x).abs() < 1e-6);
+        assert!((origin.y - shifted.y).abs() < 1e-6);
+    }
+
+    #[test]
+    fn pipeline_omit_skips_only_the_named_direction() {
+        let merc = Operation::create("+proj=merc +ellps=WGS84").expect("merc");
+        let input = Coord::xy(0.2, 0.3);
+        let projected = merc.forward(input).expect("merc forward");
+        let omit_fwd = Operation::create("+proj=pipeline +step +proj=merc +ellps=WGS84 +omit_fwd")
+            .expect("omit_fwd");
+        let skipped = omit_fwd.forward(input).expect("omit forward");
+        assert!((skipped.x - input.x).abs() < 1e-15);
+        assert!((skipped.y - input.y).abs() < 1e-15);
+        let back = omit_fwd.inverse(projected).expect("omit_fwd inverse");
+        assert!((back.x - input.x).abs() < 1e-9);
+        assert!((back.y - input.y).abs() < 1e-9);
     }
 }

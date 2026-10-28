@@ -1,8 +1,9 @@
 //! georust `proj` 0.31 facade over the ported operations.
 //!
-//! [`Proj::new`] builds a PROJ string. [`Proj::new_known_crs`] builds a
-//! transform between the named CRS in this crate. Network and grid access
-//! return an error. An unknown operation returns an error at creation.
+//! [`Proj::new`] builds a PROJ string, an `EPSG:` code, or a minimal WKT or
+//! PROJJSON geographic or projected CRS. [`Proj::new_known_crs`] builds a
+//! transform between EPSG CRS looked up in the embedded `proj.db`. Network and
+//! grid access return an error. An unknown operation returns an error at creation.
 
 use std::error::Error;
 use std::ffi::NulError;
@@ -353,7 +354,14 @@ enum Body {
     /// [`Proj::new`] of a PROJ operation. Angular axes are radians.
     Native(Operation),
     /// [`Proj::new_known_crs`]. Angular axes are degrees.
-    Between { source: Crs, target: Crs },
+    ///
+    /// `bridge` is a PROJ pipeline from source geodetic radians to target
+    /// geodetic radians. It is absent when no datum step is required.
+    Between {
+        source: Crs,
+        target: Crs,
+        bridge: Option<Operation>,
+    },
     /// [`Proj::new`] of one named CRS. Not itself a transform.
     Single(Crs),
 }
@@ -371,15 +379,17 @@ pub struct Proj {
 }
 
 impl Proj {
-    /// Build a transform from a PROJ string, or one CRS from an `EPSG:` code.
+    /// Build a transform from a PROJ string, one CRS from an `EPSG:` code, or
+    /// a minimal WKT or PROJJSON geographic or projected CRS.
     ///
     /// For a classic projection, [`Self::project`] and [`Self::convert`] take
-    /// that operation's native units. Angular axes are radians.
+    /// that operation's native units. Angular axes are radians. An `EPSG:`
+    /// code, WKT, or PROJJSON builds one CRS, not a transform.
     ///
     /// # Errors
     ///
     /// [`ProjCreateError`] when the string is empty, contains a nul, or names
-    /// an operation or parameter this port does not build.
+    /// an operation, CRS, or conversion method this port does not build.
     pub fn new(definition: &str) -> Result<Self, ProjCreateError> {
         reject_nul(definition)?;
         if definition.trim().is_empty() {
@@ -387,6 +397,15 @@ impl Proj {
         }
         if is_epsg(definition) {
             let crs = Crs::parse(definition)?;
+            return Ok(Self {
+                body: Body::Single(crs),
+                definition: definition.to_owned(),
+                area: None,
+                known: false,
+            });
+        }
+        if crate::crs_text::is_crs_text(definition) {
+            let crs = Crs::from_well_known(definition)?;
             return Ok(Self {
                 body: Body::Single(crs),
                 definition: definition.to_owned(),
@@ -405,16 +424,17 @@ impl Proj {
 
     /// Transform from `from` to `to`.
     ///
-    /// Each side is an `EPSG:` code in the built-in table, or a PROJ string for
-    /// one geographic, projected, or geocentric CRS. Longitude, latitude order
-    /// is degrees. Easting, northing and geocentric axes are metres.
+    /// Each side is an `EPSG:` code in `proj.db`, or a PROJ string for one
+    /// geographic, projected, or geocentric CRS. Longitude, latitude order is
+    /// degrees. Easting, northing and geocentric axes are metres.
     ///
-    /// `area` is stored and does not select a grid. This port has one operation
-    /// per pair.
+    /// `area` is stored and does not select a grid. A datum step is emitted as
+    /// a PROJ pipeline only when every step is an operation this crate builds.
     ///
     /// # Errors
     ///
-    /// [`ProjCreateError`] when either CRS is outside the table or does not build.
+    /// [`ProjCreateError`] when either CRS is unknown, or the operation needs a
+    /// grid, a deformation model, or a method this crate does not build.
     pub fn new_known_crs(
         from: &str,
         to: &str,
@@ -424,8 +444,13 @@ impl Proj {
         reject_nul(to)?;
         let source = Crs::parse(from)?;
         let target = Crs::parse(to)?;
+        let bridge = source.datum_bridge(&target)?;
         Ok(Self {
-            body: Body::Between { source, target },
+            body: Body::Between {
+                source,
+                target,
+                bridge,
+            },
             definition: format!("{from} -> {to}"),
             area,
             known: true,
@@ -464,10 +489,12 @@ impl Proj {
                 "target is not a single CRS".to_owned(),
             ));
         };
+        let bridge = source.datum_bridge(target)?;
         Ok(Self {
             body: Body::Between {
                 source: source.clone(),
                 target: target.clone(),
+                bridge,
             },
             definition: format!("{} -> {}", self.definition, target_crs.definition),
             area,
@@ -507,8 +534,8 @@ impl Proj {
     ///
     /// # Errors
     ///
-    /// [`ProjError::UnknownAreaOfUse`]. The built-in table does not carry
-    /// extents, and this method does not invent one.
+    /// [`ProjError::UnknownAreaOfUse`]. Extents in `proj.db` are not reported,
+    /// and this method does not invent one.
     pub fn area_of_use(&self) -> Result<(Option<Area>, Option<String>), ProjError> {
         Err(ProjError::UnknownAreaOfUse)
     }
@@ -704,31 +731,39 @@ impl Proj {
         ])
     }
 
-    /// PROJJSON export is not built.
+    /// PROJJSON stored for an EPSG code, or the PROJJSON text passed to [`Self::new`].
+    ///
+    /// `multiline`, `indentation_width`, and `schema` are accepted and ignored:
+    /// the text is returned as stored. A CRS-to-CRS transform has none.
     ///
     /// # Errors
     ///
-    /// Always [`ProjError::ExportToJson`].
+    /// [`ProjError::ExportToJson`] when this object was not loaded from a
+    /// PROJJSON string and `proj.db` has no PROJJSON column or value for it.
     pub fn to_projjson(
         &self,
         _multiline: Option<bool>,
         _indentation_width: Option<usize>,
         _schema: Option<&str>,
     ) -> Result<String, ProjError> {
-        Err(ProjError::ExportToJson)
+        crate::crs::stored_projjson(&self.definition).ok_or(ProjError::ExportToJson)
     }
 
-    /// WKT export is not built.
+    /// WKT stored for an EPSG code, or the WKT text passed to [`Self::new`].
+    ///
+    /// `version` and `options` select a dialect this port does not write. When
+    /// a stored string exists it is returned unchanged.
     ///
     /// # Errors
     ///
-    /// Always [`ProjError::ExportToWkt`].
+    /// [`ProjError::ExportToWkt`] when this object was not loaded from WKT and
+    /// `proj.db` has no WKT column or value for it.
     pub fn as_wkt(
         &self,
         _version: Option<WktVersion>,
         _options: Option<WktOptions>,
     ) -> Result<String, ProjError> {
-        Err(ProjError::ExportToWkt)
+        crate::crs::stored_wkt(&self.definition).ok_or(ProjError::ExportToWkt)
     }
 
     fn has_inverse(&self) -> bool {
@@ -737,8 +772,13 @@ impl Proj {
             Body::Native(op) => {
                 !matches!(op.inverse(Xyzt::xy(0.0, 0.0)), Err(StepError::NoInverse))
             }
-            Body::Between { source, target } => {
-                direction_exists(source, target) && direction_exists(target, source)
+            Body::Between {
+                source,
+                target,
+                bridge,
+            } => {
+                direction_exists(source, target, bridge.as_ref(), Way::Forward)
+                    && direction_exists(target, source, bridge.as_ref(), Way::Inverse)
             }
         }
     }
@@ -788,14 +828,19 @@ impl Proj {
                     Way::Forward => op.forward(coord),
                 }
             }
-            Body::Between { source, target } => {
-                let (source, target) = match way {
-                    Way::Inverse => (target, source),
-                    Way::Forward => (source, target),
+            Body::Between {
+                source,
+                target,
+                bridge,
+            } => {
+                let (source, target, bridge_way) = match way {
+                    Way::Inverse => (target, source, Way::Inverse),
+                    Way::Forward => (source, target, Way::Forward),
                 };
-                source
-                    .to_geodetic(x, y)
-                    .and_then(|coord| target.geodetic_out(coord))
+                source.to_geodetic(x, y).and_then(|coord| {
+                    apply_bridge(bridge.as_ref(), coord, bridge_way)
+                        .and_then(|coord| target.geodetic_out(coord))
+                })
             }
         };
         match mapped {
@@ -987,11 +1032,21 @@ fn from_create(error: CreateError) -> ProjCreateError {
 }
 
 /// A sample point outside the domain still means the inverse exists.
-fn direction_exists(source: &Crs, target: &Crs) -> bool {
+fn direction_exists(source: &Crs, target: &Crs, bridge: Option<&Operation>, way: Way) -> bool {
     !matches!(
-        source
-            .to_geodetic(0.0, 0.0)
-            .and_then(|coord| target.geodetic_out(coord)),
+        source.to_geodetic(0.0, 0.0).and_then(|coord| {
+            apply_bridge(bridge, coord, way).and_then(|coord| target.geodetic_out(coord))
+        }),
         Err(StepError::NoInverse)
     )
+}
+
+fn apply_bridge(bridge: Option<&Operation>, coord: Xyzt, way: Way) -> Result<Xyzt, StepError> {
+    let Some(bridge) = bridge else {
+        return Ok(coord);
+    };
+    match way {
+        Way::Inverse => bridge.inverse(coord),
+        Way::Forward => bridge.forward(coord),
+    }
 }
