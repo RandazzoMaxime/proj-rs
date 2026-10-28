@@ -1446,6 +1446,33 @@ PARAMETER[\"Standard_Parallel_1\",0.0],UNIT[\"Meter\",1.0]]"
 }
 
 #[test]
+fn crs_projected_crs_from_wkt1_esri_as_wkt1_esri() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let esri_wkt = "\
+PROJCS[\"WGS_1984_Web_Mercator\",\
+GEOGCS[\"GCS_WGS_1984_Major_Auxiliary_Sphere\",\
+DATUM[\"D_WGS_1984_Major_Auxiliary_Sphere\",\
+SPHEROID[\"WGS_1984_Major_Auxiliary_Sphere\",6378137.0,0.0]],\
+PRIMEM[\"Greenwich\",0.0],UNIT[\"Degree\",0.0174532925199433]],\
+PROJECTION[\"Mercator\"],PARAMETER[\"False_Easting\",0.0],\
+PARAMETER[\"False_Northing\",0.0],PARAMETER[\"Central_Meridian\",0.0],\
+PARAMETER[\"Standard_Parallel_1\",0.0],UNIT[\"Meter\",1.0]]";
+    let mut parser = WktParser::new();
+    parser.attach_database(db.clone());
+    let crs = parser
+        .create_from_wkt(esri_wkt)
+        .expect("wkt")
+        .crs()
+        .expect("crs")
+        .clone();
+    assert!(matches!(crs, Crs::Projected(_)));
+    let exported = crs
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Esri).with_database(db))
+        .expect("export");
+    assert_eq!(exported, esri_wkt);
+}
+
+#[test]
 fn crs_projected_crs_3d_as_wkt1_gdal_with_ellipsoidal_height_as_vertical_crs() {
     let db = DatabaseContext::create().expect("proj.db");
     let crs = AuthorityFactory::create(&db, "EPSG")

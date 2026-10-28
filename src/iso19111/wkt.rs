@@ -1628,9 +1628,12 @@ fn export_conversion_wkt1(
                     }
                 }
             }
-            let Some(name) = wkt1_parameter_name(mapped, parameter) else {
+            let Some(mut name) = wkt1_parameter_name(mapped, parameter) else {
                 continue;
             };
+            if formatter.esri {
+                name = esri_wkt1_parameter_name(&name);
+            }
             formatter.start_node("PARAMETER", NodeId::Absent);
             formatter.add_quoted(&name);
             add_parameter_value(parameter, formatter)?;
@@ -2057,6 +2060,22 @@ fn canonical_name(name: &str) -> String {
         .filter(|ch| !matches!(ch, ' ' | '_' | '-' | '/' | '{' | '}'))
         .flat_map(|ch| ch.to_lowercase())
         .collect()
+}
+
+fn esri_wkt1_parameter_name(name: &str) -> String {
+    match name {
+        "latitude_of_origin" => "Latitude_Of_Origin",
+        "central_meridian" => "Central_Meridian",
+        "scale_factor" => "Scale_Factor",
+        "false_easting" => "False_Easting",
+        "false_northing" => "False_Northing",
+        "standard_parallel_1" => "Standard_Parallel_1",
+        "standard_parallel_2" => "Standard_Parallel_2",
+        "azimuth" => "Azimuth",
+        "rectified_grid_angle" => "Rectified_Grid_Angle",
+        _ => return name.to_owned(),
+    }
+    .to_owned()
 }
 
 fn wkt1_method_name(method: &OperationMethod) -> Result<String, FactoryError> {
