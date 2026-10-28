@@ -4,6 +4,7 @@
 //! `WktFormatter`). See `docs/CRS-API.md`.
 
 mod buildop;
+mod esriparam;
 mod json;
 mod equiv;
 mod factory;

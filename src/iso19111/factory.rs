@@ -207,7 +207,14 @@ impl DatabaseContext {
                 source.to_owned(),
             ],
         )?;
-        Ok(rows.into_iter().map(|row| row[0].text()).collect())
+        let mut names: Vec<String> = rows.into_iter().map(|row| row[0].text()).collect();
+        if source == "ESRI" {
+            if let Some(unique) = unique_esri_alias(&names) {
+                names.clear();
+                names.push(unique);
+            }
+        }
+        Ok(names)
     }
 
     /// `text_definition` for one authority object, when the column is set.
@@ -488,37 +495,55 @@ impl DatabaseContext {
         Ok(rows.into_iter().map(|row| row[0].text()).collect())
     }
 
-    /// Geodetic datum whose name or alias matches `name` ignoring case, spaces, and underscores.
+    /// Datum named like `name` the way WKT1 `identifyFromName` does.
+    ///
+    /// Official names and aliases other than `EPSG_OLD` are compared with
+    /// spaces and underscores folded away. An ensemble is returned under its
+    /// non-ensemble name. `EPSG_OLD` aliases are not candidates: they point at
+    /// many national realisations of one old name.
     pub(crate) fn geodetic_datum_equivalent(&self, name: &str) -> Option<(String, String, String)> {
-        let key = canonical_datum_key(name);
+        let key = canonical_object_name(name);
         if key.is_empty() {
             return None;
         }
-        let by_name = self.query(
-            "SELECT name, auth_name, code FROM geodetic_datum \
-             WHERE REPLACE(REPLACE(LOWER(name), '_', ''), ' ', '') = ? \
-             ORDER BY deprecated, CASE WHEN auth_name = 'EPSG' THEN 0 ELSE 1 END \
-             LIMIT 1",
-            std::slice::from_ref(&key),
-        );
-        if let Ok(rows) = by_name {
-            if let Some(row) = rows.first() {
-                return Some((row[0].text(), row[1].text(), row[2].text()));
+        let mut hits = Vec::new();
+        let official = self
+            .query(
+                "SELECT auth_name, code, name, 0 FROM geodetic_datum WHERE deprecated = 0",
+                &[],
+            )
+            .unwrap_or_default();
+        let aliases = self
+            .query(
+                "SELECT g.auth_name, g.code, a.alt_name, 1 FROM geodetic_datum g \
+                 JOIN alias_name a ON g.auth_name = a.auth_name AND g.code = a.code \
+                 WHERE a.table_name = 'geodetic_datum' AND a.source != 'EPSG_OLD' \
+                 AND g.deprecated = 0",
+                &[],
+            )
+            .unwrap_or_default();
+        for row in official.into_iter().chain(aliases) {
+            let matched = row[2].text();
+            if canonical_object_name(&matched) != key {
+                continue;
             }
+            let alias_rank = row[3].text().parse::<i32>().unwrap_or(1);
+            hits.push((alias_rank, matched, row[0].text(), row[1].text()));
         }
-        let by_alias = self.query(
-            "SELECT g.name, g.auth_name, g.code FROM alias_name a \
-             JOIN geodetic_datum g ON g.auth_name = a.auth_name AND g.code = a.code \
-             WHERE a.table_name = 'geodetic_datum' \
-             AND REPLACE(REPLACE(LOWER(a.alt_name), '_', ''), ' ', '') = ? \
-             ORDER BY g.deprecated LIMIT 1",
-            std::slice::from_ref(&key),
-        );
-        let Ok(rows) = by_alias else {
+        hits.sort_by(|left, right| {
+            left.0
+                .cmp(&right.0)
+                .then_with(|| left.1.len().cmp(&right.1.len()))
+                .then_with(|| left.1.cmp(&right.1))
+        });
+        let (_, matched, authority, code) = hits.into_iter().next()?;
+        let loaded = AuthorityFactory::create(self, &authority)
+            .create_geodetic_datum(&code)
+            .ok()?;
+        if !equivalent_object_name(loaded.name(), name) && !equivalent_object_name(&matched, name) {
             return None;
-        };
-        rows.first()
-            .map(|row| (row[0].text(), row[1].text(), row[2].text()))
+        }
+        Some((loaded.name().to_owned(), authority, code))
     }
 
     /// Celestial bodies of ellipsoids whose name is `name` or starts with `name`.
@@ -549,11 +574,28 @@ impl DatabaseContext {
     }
 }
 
-fn canonical_datum_key(name: &str) -> String {
-    name.chars()
-        .filter(|ch| !matches!(ch, ' ' | '_' | '-'))
-        .flat_map(|ch| ch.to_lowercase())
-        .collect()
+/// Two ESRI spellings of one name that contains `[` : keep the bracketed form.
+///
+/// `scripts/build_db_from_esri.py` stores both `S-JTSK_[JTSK03]` and
+/// `S_JTSK_JTSK03`. PROJ `getUniqueEsriAlias` returns the first spelling.
+fn unique_esri_alias(names: &[String]) -> Option<String> {
+    if names.len() != 2 {
+        return None;
+    }
+    let mut first = names[0].clone();
+    let mut second = names[1].clone();
+    if second.contains('[') {
+        std::mem::swap(&mut first, &mut second);
+    }
+    let folded: String = first
+        .chars()
+        .filter_map(|ch| match ch {
+            '[' | ']' => None,
+            '-' => Some('_'),
+            other => Some(other),
+        })
+        .collect();
+    if folded == second { Some(first) } else { None }
 }
 
 fn genuine_table(table: &str) -> &str {

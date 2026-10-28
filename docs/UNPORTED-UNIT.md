@@ -7,12 +7,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_crs.cpp
 
-- `crs.projectedCRS_from_WKT1_ESRI_as_WKT1_ESRI_s_jtsk03_krovak_east_north`
-- `crs.projectedCRS_from_EPSG_as_WKT1_ESRI_s_jtsk03_krovak_east_north`
-- `crs.projectedCRS_from_EPSG_with_deprecated_ESRI_name_as_WKT1_ESRI`
-- `crs.projectedCRS_from_WKT1_ETRS89_with_db`
-- `crs.projectedCRS_from_WKT1_ESRI_ETRS89_with_db`
-
 - `crs.projectedCRS_3D_is_WKT1_equivalent_to_WKT2`
 - `crs.projectedCRS_Krovak_EPSG_5221_as_PROJ_string`
 - `crs.projectedCRS_Krovak_with_approximate_alpha_as_PROJ_string`

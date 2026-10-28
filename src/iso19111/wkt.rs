@@ -1546,6 +1546,11 @@ fn export_conversion_wkt1(
             parameter_number(conversion, "8807")?,
         )?;
     } else {
+        if formatter.esri && export_esri_mapped_conversion(conversion, formatter) {
+            formatter.output_id.pop();
+            formatter.output_unit.pop();
+            return Ok(());
+        }
         if formatter.esri && conversion.method.code == "9807" {
             formatter.start_node("PROJECTION", NodeId::Absent);
             formatter.add_quoted("Transverse_Mercator");
@@ -1643,6 +1648,81 @@ fn export_conversion_wkt1(
     formatter.output_id.pop();
     formatter.output_unit.pop();
     Ok(())
+}
+
+/// ESRI parameter order, including fixed values such as `X_Scale`.
+fn export_esri_mapped_conversion(conversion: &Conversion, formatter: &mut WktFormatter) -> bool {
+    let code = conversion.method.code.parse::<i32>().unwrap_or(0);
+    let Some(mapping) = super::esriparam::esri_mapping_for_method(&conversion.method.name, code) else {
+        return false;
+    };
+    formatter.start_node("PROJECTION", NodeId::Absent);
+    formatter.add_quoted(mapping.esri_name);
+    formatter.end_node();
+    for param in mapping.params {
+        formatter.start_node("PARAMETER", NodeId::Absent);
+        formatter.add_quoted(param.esri_name);
+        if let Some(wkt2_name) = param.wkt2_name {
+            let code_text = if param.epsg_code == 0 {
+                String::new()
+            } else {
+                param.epsg_code.to_string()
+            };
+            match esri_parameter_number(conversion, &code_text, wkt2_name, formatter) {
+                Some(value) => formatter.add_number(value),
+                None if param.esri_name.to_ascii_lowercase().contains("scale") => {
+                    formatter.add_number(1.0);
+                }
+                None => formatter.add_number(0.0),
+            }
+        } else {
+            formatter.add_raw(param.fixed_value);
+        }
+        formatter.end_node();
+    }
+    true
+}
+
+fn esri_parameter_number(
+    conversion: &Conversion,
+    code: &str,
+    wkt2_name: &str,
+    formatter: &WktFormatter,
+) -> Option<f64> {
+    let parameter = conversion.parameters.iter().find(|parameter| {
+        (!code.is_empty() && parameter.code == code) || names_match(&parameter.name, wkt2_name)
+    })?;
+    let ParameterValue::Measure(measure) = &parameter.value else {
+        return None;
+    };
+    match measure.unit.kind {
+        UnitKind::Linear => {
+            let target = formatter
+                .axis_linear
+                .last()
+                .cloned()
+                .unwrap_or_else(UnitOfMeasure::metre);
+            Some(measure.convert_to(&target))
+        }
+        UnitKind::Angular => {
+            let target = formatter
+                .axis_angular
+                .last()
+                .cloned()
+                .unwrap_or_else(UnitOfMeasure::degree);
+            let mut value = measure.convert_to(&target);
+            let degree = UnitOfMeasure::degree();
+            if (target.factor - degree.factor).abs() < 1e-15 {
+                if value > 180.0 {
+                    value -= 360.0;
+                } else if value < -180.0 {
+                    value += 360.0;
+                }
+            }
+            Some(value)
+        }
+        _ => Some(measure.si_value()),
+    }
 }
 
 fn export_method(method: &OperationMethod, formatter: &mut WktFormatter) -> Result<(), FactoryError> {

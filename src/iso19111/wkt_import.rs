@@ -2075,6 +2075,11 @@ impl WktParser {
         if projection.children.is_empty() {
             return Err(invalid("not enough children in PROJECTION node"));
         }
+        if self.esri || self.maybe_esri {
+            if let Some(conversion) = self.conversion_from_esri(node, projection, &linear, &angular)? {
+                return Ok(conversion);
+            }
+        }
         let mut method_name = strip_quotes(&projection.children[0]);
         let mut parameters = self.parameters_of(node, &linear, &angular)?;
         if ci_eq(&method_name, "Mercator_1SP")
@@ -2109,6 +2114,105 @@ impl WktParser {
             parameters,
             version: None,
         })
+    }
+
+    /// ESRI `PROJECTION` whose fixed parameters select one WKT2 method.
+    ///
+    /// `Krovak` plus a projected name containing `_East_North` is Krovak north
+    /// orientated (EPSG:1041), even when the scale parameters were absent.
+    fn conversion_from_esri(
+        &mut self,
+        node: &WktNode,
+        projection: &WktNode,
+        linear: &UnitOfMeasure,
+        angular: &UnitOfMeasure,
+    ) -> Result<Option<Conversion>, FactoryError> {
+        let esri_name = strip_quotes(&projection.children[0]);
+        let mut values = Vec::new();
+        for child in &node.children {
+            if !ci_eq(&child.value, "PARAMETER") {
+                continue;
+            }
+            if child.children.len() < 2 {
+                return Err(invalid("not enough children in PARAMETER node"));
+            }
+            let Ok(number) = as_f64(&child.children[1]) else {
+                return Ok(None);
+            };
+            values.push((strip_quotes(&child.children[0]), number));
+        }
+        let certainty = if self.maybe_esri {
+            super::esriparam::EsriCertainty::Maybe
+        } else {
+            super::esriparam::EsriCertainty::Known
+        };
+        let Some(mapping) = super::esriparam::select_esri_mapping(&esri_name, &values, certainty) else {
+            return Ok(None);
+        };
+        let crs_name = node
+            .children
+            .first()
+            .map(strip_quotes)
+            .unwrap_or_default();
+        let mut wkt2_name = mapping.wkt2_name;
+        let mut code = mapping.epsg_code;
+        if ci_eq(&esri_name, "Krovak") && crs_name.contains("_East_North") {
+            wkt2_name = "Krovak (North Orientated)";
+            code = 1041;
+        }
+        let Some(method) = super::parammap::method_by_code(code)
+            .filter(|method| method.wkt2_name == wkt2_name)
+            .or_else(|| super::parammap::method_by_name(wkt2_name))
+        else {
+            return Ok(None);
+        };
+        let mut parameters = Vec::new();
+        for param in method.params {
+            let Some(esri_param) = mapping
+                .params
+                .iter()
+                .find(|candidate| candidate.wkt2_name == Some(param.wkt2_name))
+            else {
+                continue;
+            };
+            let Some(value) = values
+                .iter()
+                .find(|(name, _)| ci_eq(name, esri_param.esri_name))
+                .map(|(_, value)| *value)
+            else {
+                continue;
+            };
+            let Some(unit) = guess_parameter_unit(param.wkt2_name, linear, angular) else {
+                continue;
+            };
+            let (code_space, param_code) = if param.epsg_code == 0 {
+                (String::new(), String::new())
+            } else {
+                ("EPSG".to_owned(), param.epsg_code.to_string())
+            };
+            parameters.push(Parameter {
+                name: param.wkt2_name.to_owned(),
+                code_space,
+                code: param_code,
+                value: ParameterValue::Measure(Measure { value, unit }),
+            });
+        }
+        let (code_space, method_code) = if code == 0 {
+            (String::new(), String::new())
+        } else {
+            ("EPSG".to_owned(), code.to_string())
+        };
+        Ok(Some(Conversion {
+            identified: Identified::named("unknown"),
+            method: OperationMethod {
+                name: wkt2_name.to_owned(),
+                code_space,
+                code: method_code,
+                parameters: Vec::new(),
+            },
+            parameters,
+            version: None,
+        }))
     }
 
     fn parameters_of(
