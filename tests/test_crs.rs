@@ -4267,3 +4267,16 @@ COMPD_CS[\"horizontal + vertical\",
     AUTHORITY[\"codespace\",\"code\"]]"
     );
 }
+
+#[test]
+fn crs_compound_crs_as_proj_string() {
+    let crs = CompoundCRS::create(
+        "horizontal + vertical",
+        vec![Crs::Projected(utm_31n()), Crs::Vertical(odn_height())],
+    )
+    .expect("compound");
+    assert_eq!(
+        crs.export_to_proj_string().expect("proj"),
+        "+proj=utm +zone=31 +datum=WGS84 +units=m +vunits=m +no_defs +type=crs"
+    );
+}

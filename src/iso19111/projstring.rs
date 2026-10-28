@@ -5,7 +5,7 @@
 
 use super::buildop::OpProps;
 use super::model::{
-    Axis, CartesianCS, Conversion, Crs, Datum, DatumEnsemble, Ellipsoid, EllipsoidalCS,
+    Axis, CartesianCS, CompoundCRS, Conversion, Crs, Datum, DatumEnsemble, Ellipsoid, EllipsoidalCS,
     FactoryError, GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified,
     Identifier, Measure, OperationMethod, Parameter, ParameterValue, PrimeMeridian, ProjectedCRS,
     UnitKind, UnitOfMeasure,
@@ -110,6 +110,83 @@ fn apply_axis_reversal(identified: &mut Identified) {
         }
         identified.remarks = remarks;
     }
+}
+
+impl CompoundCRS {
+    /// `exportToPROJString` for a horizontal CRS plus a vertical CRS.
+    ///
+    /// The vertical unit is `+vunits` and is written before `+no_defs`.
+    ///
+    /// # Errors
+    ///
+    /// The horizontal component cannot be written as a PROJ string.
+    pub fn export_to_proj_string(&self) -> Result<String, FactoryError> {
+        let mut text = String::new();
+        for component in &self.components {
+            match component {
+                Crs::Projected(crs) => push_clause(&mut text, &crs.export_to_proj_string()?),
+                Crs::Geographic(crs) => push_clause(&mut text, &crs.export_to_proj_string()),
+                Crs::Geodetic(crs) => push_clause(&mut text, &crs.export_to_proj_string()?),
+                Crs::Vertical(crs) => {
+                    insert_vertical_unit(&mut text, crs.coordinate_system().axis().unit());
+                }
+                Crs::DerivedVertical(crs) => {
+                    insert_vertical_unit(&mut text, crs.coordinate_system().axis().unit());
+                }
+                _ => {}
+            }
+        }
+        if !text.contains("+type=crs") {
+            push_clause(&mut text, "+no_defs +type=crs");
+        }
+        Ok(text)
+    }
+}
+
+fn push_clause(text: &mut String, clause: &str) {
+    if clause.is_empty() {
+        return;
+    }
+    if !text.is_empty() && !text.ends_with(' ') {
+        text.push(' ');
+    }
+    text.push_str(clause);
+}
+
+fn insert_vertical_unit(text: &mut String, unit: &UnitOfMeasure) {
+    let Some(clause) = vertical_unit_clause(unit) else {
+        return;
+    };
+    if let Some(index) = text.find(" +no_defs") {
+        text.insert_str(index, &format!(" {clause}"));
+    } else {
+        push_clause(text, &clause);
+    }
+}
+
+fn vertical_unit_clause(unit: &UnitOfMeasure) -> Option<String> {
+    match unit.name() {
+        "metre" => Some("+vunits=m".to_owned()),
+        "foot" | "Foot" => Some("+vunits=ft".to_owned()),
+        "US survey foot" => Some("+vunits=us-ft".to_owned()),
+        _ if unit.kind() == UnitKind::Linear => {
+            Some(format!("+vto_meter={}", trim_proj_number(unit.conversion_to_si())))
+        }
+        _ => None,
+    }
+}
+
+fn trim_proj_number(value: f64) -> String {
+    let mut text = format!("{value}");
+    if text.contains('.') {
+        while text.ends_with('0') {
+            text.pop();
+        }
+        if text.ends_with('.') {
+            text.pop();
+        }
+    }
+    text
 }
 
 impl ProjectedCRS {
