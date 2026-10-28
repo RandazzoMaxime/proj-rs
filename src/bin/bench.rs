@@ -274,7 +274,7 @@ fn libproj_ratios(grids: &[ProjGrid<'_>]) -> Vec<(String, f64)> {
     #[cfg(not(link_libproj))]
     {
         let _ = grids;
-        return Vec::new();
+        Vec::new()
     }
     #[cfg(link_libproj)]
     {
