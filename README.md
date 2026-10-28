@@ -275,6 +275,35 @@ a libproj time are not compared yet.
 Run on `dev` at the commit recorded in
 [`bench/history.jsonl`](bench/history.jsonl).
 
+### Weight, start-up and memory
+
+Same machine, same method, the `cs2cs` of each side (this port's, and
+`proj-bin` 9.4 from Ubuntu). On 1,000,000 random points over France the two
+programs print the **same text, to the millimetre**, so the comparison is fair.
+The times below are whole programs, text reading and printing included.
+
+| Footprint | libproj 9.4 | proj-rs |
+|---|---:|---:|
+| Install size, with shared libraries | 21.5 MB | **14.8 MB** (1.4× lighter) |
+| Install size, `cs2cs` + `libproj` + `proj.db` only | **13.1 MB** | 14.8 MB |
+| Files to ship | `cs2cs`, `libproj.so`, `proj.db`, 13 shared libraries | **one executable** |
+| Needs a C++ runtime, SQLite, libtiff, libcurl | yes | **no** (bundled or not used) |
+
+| Run (lower is better) | libproj 9.4 | proj-rs |
+|---|---:|---:|
+| Start, 1 point, `EPSG:2154` (reads the database) | 26.4 ms | **14.1 ms** (1.9× faster) |
+| Start, 1 point, PROJ string | 13.2 ms | **2.5 ms** (5.3× faster) |
+| 1,000,000 points, `EPSG:2154` | 1,264 ms | **811 ms** (1.6× faster) |
+| 1,000,000 points, PROJ string | 1,321 ms | **886 ms** (1.5× faster) |
+| Peak memory, `EPSG:2154` | 20.0 MB | **15.0 MB** (1.3× lighter) |
+| Peak memory, PROJ string | 17.5 MB | **13.1 MB** (1.3× lighter) |
+
+Memory does not grow with the number of points: the million-point runs peak
+where the one-point runs do, because both programs stream. This port embeds its
+10.6 MB `proj.db` in the executable, so the file alone is slightly bigger than
+libproj plus its database; it wins once the libraries libproj depends on are
+counted. Reproduce with `cargo build --release --bin cs2cs && python3 bench/footprint.py`.
+
 <details>
 <summary><b>Ten slowest operations</b> (same run, 128-point catalogue grid)</summary>
 
