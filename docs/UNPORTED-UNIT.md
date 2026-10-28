@@ -7,7 +7,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_crs.cpp
 
-- `crs.projectedCRS_Krovak_with_approximate_alpha_as_PROJ_string`
 - `crs.projectedCRS_identify_no_db`
 - `crs.projectedCRS_identify_db`
 - `crs.projectedCRS_identify_wrong_auth_name_case`

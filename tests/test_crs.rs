@@ -2243,6 +2243,24 @@ fn crs_projected_crs_krovak_epsg_5221_as_proj_string() {
 }
 
 #[test]
+fn crs_projected_crs_krovak_with_approximate_alpha_as_proj_string() {
+    let crs = create_crs_from_proj_string(
+        "+proj=krovak +lat_0=49.5 +lon_0=42.5 +alpha=30.28813972222222 +k=0.9999 +x_0=0 +y_0=0 +ellps=bessel +pm=ferro +units=m +no_defs +type=crs",
+    )
+    .expect("crs");
+    let Crs::Projected(projected) = &crs else {
+        panic!("+proj=krovak is a projected CRS");
+    };
+    let source = Crs::Geodetic(projected.base_crs().clone());
+    assert_eq!(
+        proj_rs::CoordinateOperationFactory::create()
+            .create_operation_proj_string(&source, &crs)
+            .expect("operation"),
+        "+proj=pipeline +step +proj=unitconvert +xy_in=deg +xy_out=rad +step +inv +proj=longlat +ellps=bessel +pm=ferro +step +proj=krovak +lat_0=49.5 +lon_0=42.5 +alpha=30.2881397222222 +k=0.9999 +x_0=0 +y_0=0 +ellps=bessel +pm=ferro"
+    );
+}
+
+#[test]
 fn crs_geographic3d_nad83_as_wkt1_esri_database() {
     let db = DatabaseContext::create().expect("proj.db");
     let mut parser = WktParser::new();

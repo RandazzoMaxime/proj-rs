@@ -4,9 +4,10 @@
 //! `+ellps` plus `+pm` when the prime meridian is not Greenwich.
 
 use super::model::{
-    Axis, Crs, Datum, DatumEnsemble, Ellipsoid, EllipsoidalCS, FactoryError, GeocentricCRS,
-    GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified, Identifier, PrimeMeridian,
-    ProjectedCRS, UnitKind, UnitOfMeasure,
+    Axis, CartesianCS, Conversion, Crs, Datum, DatumEnsemble, Ellipsoid, EllipsoidalCS, FactoryError,
+    GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified, Identifier,
+    Measure, OperationMethod, Parameter, ParameterValue, PrimeMeridian, ProjectedCRS, UnitKind,
+    UnitOfMeasure,
 };
 
 impl GeographicCRS {
@@ -559,29 +560,36 @@ fn well_known_ellps(major: f64, inverse: Option<f64>, minor: Option<f64>) -> Opt
         .map(|(name, _, _, _)| *name)
 }
 
-/// `PROJStringParser::createFromPROJString` for a single `+proj=longlat` CRS.
+/// `PROJStringParser::createFromPROJString` for one step.
 ///
-/// The CRS name is `unknown`. `+datum=WGS84`, `NAD83`, and `NAD27` use the
-/// built-in frames. `+ellps=GRS80` or `WGS84` builds an `Unknown based on`
-/// datum. `+a` and `+rf` build an unnamed ellipsoid. The coordinate system is
+/// `+proj=longlat` (or `lonlat` / `latlong`) builds a geographic CRS named
+/// `unknown`. `+datum=WGS84`, `NAD83`, and `NAD27` use the built-in frames.
+/// `+ellps=GRS80`, `WGS84`, or `bessel` builds an `Unknown based on` datum.
+/// `+a` and `+rf` build an unnamed ellipsoid. The coordinate system is
 /// implicit, so identification accepts a latitude/longitude swap. The default
 /// axis order is longitude then latitude; `+axis=` replaces the first two
 /// letters.
 ///
+/// Any other single `+proj=` that has a parameter map builds a projected CRS
+/// on that geographic base. `+proj=krovak` without `+axis=swu` is Krovak north
+/// orientated. A missing Krovak parameter uses the `krovak.cpp` default.
+///
 /// # Errors
 ///
-/// The string is not one longlat step, a datum or ellipsoid is unknown, or a
-/// number does not parse.
+/// The projection is unknown, a datum or ellipsoid is unknown, or a number
+/// does not parse.
 pub fn create_crs_from_proj_string(definition: &str) -> Result<Crs, FactoryError> {
     let tokens = proj_tokens(definition);
     let proj = token(&tokens, "proj");
-    if !matches!(proj, "longlat" | "lonlat" | "latlong") {
-        return Err(FactoryError::Invalid(
-            "only +proj=longlat can be imported as a CRS here".to_owned(),
-        ));
+    if matches!(proj, "longlat" | "lonlat" | "latlong") {
+        return geographic_from_proj(&tokens);
     }
-    let datum = datum_from_proj(&tokens)?;
-    let axis = token(&tokens, "axis");
+    projected_from_proj(&tokens, proj)
+}
+
+fn geographic_from_proj(tokens: &[(String, String)]) -> Result<Crs, FactoryError> {
+    let datum = datum_from_proj(tokens)?;
+    let axis = token(tokens, "axis");
     let axes = if axis.is_empty() {
         vec![
             geographic_axis('e', UnitOfMeasure::degree())?,
@@ -608,6 +616,140 @@ pub fn create_crs_from_proj_string(definition: &str) -> Result<Crs, FactoryError
         },
         implicit_cs: true,
     }))
+}
+
+fn projected_from_proj(tokens: &[(String, String)], proj: &str) -> Result<Crs, FactoryError> {
+    let method = projection_method(proj, tokens).ok_or_else(|| {
+        FactoryError::Invalid(format!("unknown +proj={proj} cannot be imported as a CRS"))
+    })?;
+    let datum = datum_from_proj(tokens)?;
+    let geographic = GeographicCRS {
+        identified: Identified::named("unknown"),
+        datum: Some(datum),
+        ensemble: None,
+        coordinate_system: EllipsoidalCS {
+            identified: Identified::default(),
+            axes: vec![
+                geographic_axis('e', UnitOfMeasure::degree())?,
+                geographic_axis('n', UnitOfMeasure::degree())?,
+            ],
+        },
+        implicit_cs: true,
+    };
+    let parameters = method
+        .params
+        .iter()
+        .map(|param| proj_parameter(proj, param, tokens))
+        .collect::<Result<Vec<_>, _>>()?;
+    let code = if method.epsg_code == 0 {
+        String::new()
+    } else {
+        method.epsg_code.to_string()
+    };
+    let conversion = Conversion {
+        identified: Identified::named("unknown"),
+        method: OperationMethod {
+            name: method.wkt2_name.to_owned(),
+            code_space: if code.is_empty() {
+                String::new()
+            } else {
+                "EPSG".to_owned()
+            },
+            code,
+            parameters: Vec::new(),
+        },
+        parameters,
+        version: None,
+    };
+    Ok(Crs::Projected(ProjectedCRS::create(
+        "unknown",
+        GeodeticCRS::Geographic(geographic),
+        conversion,
+        CartesianCS::create_easting_northing(UnitOfMeasure::metre()),
+    )))
+}
+
+fn projection_method(
+    proj: &str,
+    tokens: &[(String, String)],
+) -> Option<&'static super::parammap::MethodMap> {
+    let axis = token(tokens, "axis");
+    if proj == "krovak" && axis == "swu" {
+        return super::parammap::method_by_code(9819);
+    }
+    if proj == "mod_krovak" && axis == "swu" {
+        return super::parammap::method_by_code(1042);
+    }
+    super::parammap::PROJECTION_METHODS
+        .iter()
+        .find(|method| method.proj_name == Some(proj))
+}
+
+fn proj_parameter(
+    proj: &str,
+    param: &super::parammap::ParamMap,
+    tokens: &[(String, String)],
+) -> Result<Parameter, FactoryError> {
+    let value = proj_param_value(proj, param, tokens)?;
+    let unit = match param.unit {
+        UnitKind::Angular => UnitOfMeasure::degree(),
+        UnitKind::Linear => UnitOfMeasure::metre(),
+        UnitKind::Scale => UnitOfMeasure::unity(),
+        _ => UnitOfMeasure::unity(),
+    };
+    let (code_space, code) = if param.epsg_code == 0 {
+        (String::new(), String::new())
+    } else {
+        ("EPSG".to_owned(), param.epsg_code.to_string())
+    };
+    Ok(Parameter {
+        name: param.wkt2_name.to_owned(),
+        code_space,
+        code,
+        value: ParameterValue::Measure(Measure { value, unit }),
+    })
+}
+
+fn proj_param_value(
+    proj: &str,
+    param: &super::parammap::ParamMap,
+    tokens: &[(String, String)],
+) -> Result<f64, FactoryError> {
+    if let Some(proj_name) = param.proj_name {
+        let raw = if proj_name == "k" || proj_name == "k_0" {
+            let scale = token(tokens, "k");
+            if scale.is_empty() {
+                token(tokens, "k_0")
+            } else {
+                scale
+            }
+        } else {
+            token(tokens, proj_name)
+        };
+        if !raw.is_empty() {
+            return raw.parse::<f64>().map_err(|_| {
+                FactoryError::Invalid(format!("invalid value for {proj_name}"))
+            });
+        }
+    }
+    if proj == "krovak" || proj == "mod_krovak" {
+        if let Some(value) = krovak_default(param.epsg_code) {
+            return Ok(value);
+        }
+    }
+    Ok(0.0)
+}
+
+/// Defaults from `krovak.cpp`, used when the PROJ string omits the parameter.
+fn krovak_default(epsg_code: i32) -> Option<f64> {
+    match epsg_code {
+        8811 => Some(49.5),
+        8833 => Some(24.833_333_333_333_333),
+        1036 => Some(30.288_139_752_777_778),
+        8818 => Some(78.5),
+        8819 => Some(0.9999),
+        _ => None,
+    }
 }
 
 fn proj_tokens(definition: &str) -> Vec<(String, String)> {
@@ -642,19 +784,27 @@ fn datum_from_proj(tokens: &[(String, String)]) -> Result<GeodeticReferenceFrame
             other => Err(FactoryError::Invalid(format!("unknown datum {other}"))),
         };
     }
+    let meridian = prime_meridian_from_token(token(tokens, "pm"))?;
     let ellps = token(tokens, "ellps");
     if ellps == "WGS84" {
         return Ok(GeodeticReferenceFrame::create(
             "Unknown based on WGS 84 ellipsoid",
             Ellipsoid::wgs84(),
-            PrimeMeridian::greenwich(),
+            meridian,
         ));
     }
     if ellps == "GRS80" {
         return Ok(GeodeticReferenceFrame::create(
             "Unknown based on GRS 1980 ellipsoid",
             Ellipsoid::grs80(),
-            PrimeMeridian::greenwich(),
+            meridian,
+        ));
+    }
+    if ellps == "bessel" {
+        return Ok(GeodeticReferenceFrame::create(
+            "Unknown based on Bessel 1841 ellipsoid",
+            Ellipsoid::create_flattened_sphere("Bessel 1841", 6_377_397.155, 299.152_812_8),
+            meridian,
         ));
     }
     let major = token(tokens, "a");
@@ -669,12 +819,40 @@ fn datum_from_proj(tokens: &[(String, String)]) -> Result<GeodeticReferenceFrame
         return Ok(GeodeticReferenceFrame::create(
             "unknown",
             Ellipsoid::create_flattened_sphere("unknown", major, flattening),
-            PrimeMeridian::greenwich(),
+            meridian,
         ));
     }
     Err(FactoryError::Invalid(
         "a longlat CRS needs +datum, +ellps, or +a and +rf".to_owned(),
     ))
+}
+
+fn prime_meridian_from_token(pm: &str) -> Result<PrimeMeridian, FactoryError> {
+    if pm.is_empty() || pm.eq_ignore_ascii_case("greenwich") {
+        return Ok(PrimeMeridian::greenwich());
+    }
+    if pm.eq_ignore_ascii_case("ferro") {
+        return Ok(PrimeMeridian {
+            identified: Identified::named("Ferro"),
+            longitude: Measure {
+                value: -(17.0 + 40.0 / 60.0),
+                unit: UnitOfMeasure::degree(),
+            },
+        });
+    }
+    if pm.eq_ignore_ascii_case("paris") {
+        return Ok(PrimeMeridian::paris());
+    }
+    let degrees = pm.parse::<f64>().map_err(|_| {
+        FactoryError::Invalid(format!("unknown prime meridian {pm}"))
+    })?;
+    Ok(PrimeMeridian {
+        identified: Identified::named("unknown"),
+        longitude: Measure {
+            value: degrees,
+            unit: UnitOfMeasure::degree(),
+        },
+    })
 }
 
 fn geographic_axis(letter: char, unit: UnitOfMeasure) -> Result<Axis, FactoryError> {
