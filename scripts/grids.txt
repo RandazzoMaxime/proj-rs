@@ -1,0 +1,22 @@
+# Grids from https://cdn.proj.org that the test suite reads. One file per line.
+# Names checked against grid_alternatives in data/proj.db.
+au_ga_AUSGeoid2020_20180201.tif
+be_ign_bd72lb72_etrs89lb08.tif
+be_ign_hBG18.tif
+ca_nrc_ntv1_can.tif
+ca_nrc_ntv2_0.tif
+ca_que_mern_na27na83.tif
+de_adv_BETA2007.tif
+es_cat_icgc_100800401.tif
+fr_ign_RAF18.tif
+fr_ign_RAF20.tif
+fr_ign_gr3df97a.tif
+se_lantmateriet_SWEN17_RH2000.tif
+us_nga_egm08_25.tif
+us_nga_egm96_15.tif
+us_noaa_alaska.tif
+us_noaa_conus.tif
+us_noaa_g2012ba0.tif
+us_noaa_g2018u0.tif
+us_noaa_nadcon5_nad27_nad83_1986_alaska.tif
+us_noaa_nadcon5_nad27_nad83_1986_conus.tif

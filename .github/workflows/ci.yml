@@ -23,6 +23,15 @@ jobs:
         run: |
           C:\Miniconda\condabin\conda.bat install -y -c conda-forge proj=9.4
           echo "C:\Miniconda\Library\bin" >> $env:GITHUB_PATH
+      # Grids the tests read (scripts/grids.txt). Cached between runs; the key
+      # changes only when the list does.
+      - uses: actions/cache@v4
+        with:
+          path: data/grids
+          key: grids-${{ hashFiles('scripts/grids.txt') }}
+      - name: Download missing grids
+        shell: bash
+        run: scripts/fetch-grids.sh
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo test --all-features
