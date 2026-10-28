@@ -3,7 +3,7 @@
 //! The statements are the ones in PROJ `src/iso19111/factory.cpp`. A missing
 //! code is an error. A `text_definition` is not turned into a coordinate.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use rusqlite::{types::ValueRef, Connection};
@@ -13,10 +13,9 @@ use super::model::{
     ConcatenatedStep, Conversion, CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble,
     DerivedProjectedCRS, Ellipsoid, EllipsoidalCS, EngineeringCRS, EngineeringDatum, FactoryError,
     GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified, Identifier,
-    Measure,
-    Meridian, ObjectDomain, OperationMethod, OrdinalCS, Parameter, ParameterValue, PrimeMeridian,
-    ProjectedCRS, SphericalCS, Transformation, UnitKind, UnitOfMeasure, VerticalCRS, VerticalCS,
-    VerticalReferenceFrame,
+    Measure, Meridian, ObjectDomain, OperationMethod, OrdinalCS, Parameter, ParameterValue,
+    PrimeMeridian, ProjectedCRS, SphericalCS, Transformation, UnitKind, UnitOfMeasure, VerticalCRS,
+    VerticalCS, VerticalReferenceFrame,
 };
 use crate::projdb;
 
@@ -218,14 +217,18 @@ impl DatabaseContext {
     }
 
     /// `text_definition` for one authority object, when the column is set.
-    pub(crate) fn text_definition(&self, table: &str, authority: &str, code: &str) -> Option<String> {
+    pub(crate) fn text_definition(
+        &self,
+        table: &str,
+        authority: &str,
+        code: &str,
+    ) -> Option<String> {
         let table = match table {
             "projected_crs" | "geodetic_crs" | "conversion" => table,
             _ => return None,
         };
-        let sql = format!(
-            "SELECT text_definition FROM \"{table}\" WHERE auth_name = ? AND code = ?"
-        );
+        let sql =
+            format!("SELECT text_definition FROM \"{table}\" WHERE auth_name = ? AND code = ?");
         let Ok(rows) = self.query(&sql, &[authority.to_owned(), code.to_owned()]) else {
             return None;
         };
@@ -331,8 +334,9 @@ impl DatabaseContext {
         } else {
             (authority.to_owned(), code.to_owned())
         };
-        let mut sql = "SELECT alt_name FROM alias_name WHERE table_name = ? AND auth_name = ? AND code = ?"
-            .to_owned();
+        let mut sql =
+            "SELECT alt_name FROM alias_name WHERE table_name = ? AND auth_name = ? AND code = ?"
+                .to_owned();
         let mut params = vec![genuine.to_owned(), authority, code];
         if source == "not EPSG_OLD" {
             sql.push_str(" AND source != 'EPSG_OLD'");
@@ -387,9 +391,8 @@ impl DatabaseContext {
         table: &str,
         source: &str,
     ) -> Option<(String, String, String)> {
-        let mut sql = String::from(
-            "SELECT table_name, auth_name, code FROM alias_name WHERE alt_name = ?",
-        );
+        let mut sql =
+            String::from("SELECT table_name, auth_name, code FROM alias_name WHERE alt_name = ?");
         let mut params = vec![alias.to_owned()];
         if !table.is_empty() {
             sql.push_str(" AND table_name = ?");
@@ -441,8 +444,7 @@ impl DatabaseContext {
         let Ok(rows) = self.query(&sql, &[name.to_owned()]) else {
             return None;
         };
-        rows.first()
-            .map(|row| (row[0].text(), row[1].text()))
+        rows.first().map(|row| (row[0].text(), row[1].text()))
     }
 
     /// True when `name` is a row in `geodetic_datum`.
@@ -559,12 +561,7 @@ impl DatabaseContext {
              AND ellipsoid.celestial_body_code = celestial_body.code \
              WHERE ellipsoid.name = ? OR ellipsoid.name LIKE ? OR ellipsoid.name LIKE ? \
              ORDER BY CASE WHEN ellipsoid.name = ? THEN 0 ELSE 1 END, ellipsoid.deprecated",
-            &[
-                name.to_owned(),
-                like_space,
-                like_paren,
-                name.to_owned(),
-            ],
+            &[name.to_owned(), like_space, like_paren, name.to_owned()],
         ) else {
             return Vec::new();
         };
@@ -595,7 +592,11 @@ fn unique_esri_alias(names: &[String]) -> Option<String> {
             other => Some(other),
         })
         .collect();
-    if folded == second { Some(first) } else { None }
+    if folded == second {
+        Some(first)
+    } else {
+        None
+    }
 }
 
 fn genuine_table(table: &str) -> &str {
@@ -613,6 +614,26 @@ pub(crate) enum NameMatch {
     Exact,
     /// The searched text is a substring of the name or of its canonical form.
     Approximate,
+}
+
+/// Filters for `AuthorityFactory::createProjectedCRSFromExisting`.
+pub(crate) struct ExistingProjectedQuery {
+    /// Semi-major axis in metres.
+    pub semi_major: f64,
+    /// EPSG method code. Empty skips the search.
+    pub method_code: String,
+    /// WKT2 method name, used in a `text_definition` pattern.
+    pub method_name: String,
+    /// `+proj=` name, used in a `text_definition` pattern.
+    pub proj_name: String,
+    /// Authority and code of candidate base geodetic CRS.
+    pub base_ids: Vec<(String, String)>,
+    /// `(1-based index, EPSG code, low, high)` for a degree parameter.
+    pub angles: Vec<(usize, String, f64, f64)>,
+    /// Swapped standard parallels of Lambert conic conformal 2SP.
+    ///
+    /// `(index of first, index of second, latitude 1, latitude 2)`.
+    pub parallel_swap: Option<(usize, usize, f64, f64)>,
 }
 
 struct NameRow {
@@ -647,6 +668,20 @@ impl NamedAuthorityObject for GeodeticCRS {
     }
 }
 
+impl NamedAuthorityObject for ProjectedCRS {
+    fn name(&self) -> &str {
+        ProjectedCRS::name(self)
+    }
+
+    fn identifiers(&self) -> &[Identifier] {
+        ProjectedCRS::identifiers(self)
+    }
+
+    fn load(factory: &AuthorityFactory, code: &str) -> Result<Self, FactoryError> {
+        factory.create_projected_crs(code)
+    }
+}
+
 impl NamedAuthorityObject for GeodeticReferenceFrame {
     fn name(&self) -> &str {
         GeodeticReferenceFrame::name(self)
@@ -659,6 +694,92 @@ impl NamedAuthorityObject for GeodeticReferenceFrame {
     fn load(factory: &AuthorityFactory, code: &str) -> Result<Self, FactoryError> {
         factory.create_geodetic_datum(code)
     }
+}
+
+fn auth_code_clause(ids: &[(String, String)], prefix: &str) -> String {
+    let mut by_authority: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for (authority, code) in ids {
+        by_authority
+            .entry(authority.as_str())
+            .or_default()
+            .push(code.as_str());
+    }
+    let mut sql = String::from("(");
+    for (index, (_authority, codes)) in by_authority.iter().enumerate() {
+        if index > 0 {
+            sql.push_str(" OR ");
+        }
+        sql.push_str("( ");
+        sql.push_str(prefix);
+        sql.push_str("auth_name = ? AND ");
+        sql.push_str(prefix);
+        sql.push_str("code IN (");
+        for (code_index, _) in codes.iter().enumerate() {
+            if code_index > 0 {
+                sql.push(',');
+            }
+            sql.push('?');
+        }
+        sql.push_str("))");
+    }
+    sql.push(')');
+    sql
+}
+
+fn push_auth_codes(ids: &[(String, String)], params: &mut Vec<String>) {
+    let mut by_authority: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for (authority, code) in ids {
+        by_authority
+            .entry(authority.as_str())
+            .or_default()
+            .push(code.as_str());
+    }
+    for (authority, codes) in by_authority {
+        params.push(authority.to_owned());
+        for code in codes {
+            params.push(code.to_owned());
+        }
+    }
+}
+
+fn push_projected(
+    found: &mut Vec<ProjectedCRS>,
+    seen: &mut BTreeSet<String>,
+    factory: &AuthorityFactory,
+    rows: &[Vec<Cell>],
+) {
+    for row in rows {
+        let key = format!("{}\u{0}{}", row[0].text(), row[1].text());
+        if !seen.insert(key) {
+            continue;
+        }
+        if let Ok(crs) = factory
+            .child(&row[0].text())
+            .create_projected_crs(&row[1].text())
+        {
+            found.push(crs);
+        }
+    }
+}
+
+fn like_escape(text: &str) -> String {
+    text.replace('\\', "\\\\")
+        .replace('_', "\\_")
+        .replace('%', "\\%")
+}
+
+fn trim_zeros(text: &str) -> String {
+    if !text.contains('.') {
+        return text.to_owned();
+    }
+    let mut trimmed = text.to_owned();
+    while trimmed.ends_with('0') {
+        trimmed.pop();
+    }
+    if trimmed.ends_with('.') {
+        trimmed.pop();
+    }
+    trimmed
 }
 
 fn canonical_object_name(name: &str) -> String {
@@ -1509,7 +1630,28 @@ impl AuthorityFactory {
         name: &str,
         mode: NameMatch,
     ) -> Result<Vec<GeodeticCRS>, FactoryError> {
-        self.objects_from_name(name, "geodetic_crs", mode)
+        Ok(self
+            .objects_from_name(name, "geodetic_crs", mode)?
+            .into_iter()
+            .map(|(crs, _)| crs)
+            .collect())
+    }
+
+    /// Projected CRS whose official name or alias matches `name`, with the name
+    /// the match was made on.
+    ///
+    /// The matched name is the official name or the alias. Identification uses
+    /// it for the equivalent-name confidence.
+    ///
+    /// # Errors
+    ///
+    /// The database rejects the statement.
+    pub(crate) fn create_projected_crs_by_name(
+        &self,
+        name: &str,
+        mode: NameMatch,
+    ) -> Result<Vec<(ProjectedCRS, String)>, FactoryError> {
+        self.objects_from_name(name, "projected_crs", mode)
     }
 
     /// Geodetic datums whose official name or alias matches `name`.
@@ -1524,7 +1666,11 @@ impl AuthorityFactory {
         &self,
         name: &str,
     ) -> Result<Vec<GeodeticReferenceFrame>, FactoryError> {
-        self.objects_from_name(name, "geodetic_datum", NameMatch::Exact)
+        Ok(self
+            .objects_from_name(name, "geodetic_datum", NameMatch::Exact)?
+            .into_iter()
+            .map(|(datum, _)| datum)
+            .collect())
     }
 
     fn objects_from_name<T>(
@@ -1532,7 +1678,7 @@ impl AuthorityFactory {
         name: &str,
         table: &str,
         mode: NameMatch,
-    ) -> Result<Vec<T>, FactoryError>
+    ) -> Result<Vec<(T, String)>, FactoryError>
     where
         T: NamedAuthorityObject,
     {
@@ -1548,7 +1694,8 @@ impl AuthorityFactory {
         let mut exact_official = 0usize;
         let mut exact_alias = 0usize;
         for row in rows {
-            if mode == NameMatch::Approximate && !approximate_name(&row.matched_name, name, &canonical)
+            if mode == NameMatch::Approximate
+                && !approximate_name(&row.matched_name, name, &canonical)
             {
                 continue;
             }
@@ -1588,7 +1735,12 @@ impl AuthorityFactory {
                 .name()
                 .len()
                 .cmp(&right.object.name().len())
-                .then_with(|| left.object.identifiers().len().cmp(&right.object.identifiers().len()))
+                .then_with(|| {
+                    left.object
+                        .identifiers()
+                        .len()
+                        .cmp(&right.object.identifiers().len())
+                })
                 .then_with(|| {
                     left.object
                         .identifiers()
@@ -1608,7 +1760,10 @@ impl AuthorityFactory {
                         .unwrap_or(std::cmp::Ordering::Equal)
                 })
         });
-        Ok(built.into_iter().map(|item| item.object).collect())
+        Ok(built
+            .into_iter()
+            .map(|item| (item.object, item.matched_name))
+            .collect())
     }
 
     fn name_rows(
@@ -1664,7 +1819,10 @@ impl AuthorityFactory {
         let rows = self.db.query(sql, params)?;
         let mut found = Vec::new();
         for row in rows {
-            if let Ok(crs) = self.child(&row[0].text()).create_geodetic_crs(&row[1].text()) {
+            if let Ok(crs) = self
+                .child(&row[0].text())
+                .create_geodetic_crs(&row[1].text())
+            {
                 found.push(crs);
             }
         }
@@ -1849,7 +2007,149 @@ impl AuthorityFactory {
             base,
             conversion,
             coordinate_system,
+            implicit_cs: false,
         })
+    }
+
+    /// Projected CRS that share this conversion method, ellipsoid size, and
+    /// roughly the same angular parameters.
+    ///
+    /// This is `createProjectedCRSFromExisting`. An equivalent name, when one
+    /// matches, is the only result. Otherwise every row is returned when the
+    /// query found at most 200, plus `text_definition` rows under the same cap.
+    ///
+    /// # Errors
+    ///
+    /// The database rejects the statement.
+    pub(crate) fn create_projected_crs_from_existing(
+        &self,
+        crs_name: &str,
+        query: &ExistingProjectedQuery,
+    ) -> Result<Vec<ProjectedCRS>, FactoryError> {
+        if query.method_code.is_empty() || query.method_code == "0" {
+            return Ok(Vec::new());
+        }
+        let mut sql = String::from(
+            "SELECT projected_crs.auth_name, projected_crs.code, projected_crs.name \
+             FROM projected_crs \
+             JOIN conversion_table conv ON \
+             projected_crs.conversion_auth_name = conv.auth_name AND \
+             projected_crs.conversion_code = conv.code \
+             JOIN geodetic_crs gcrs ON \
+             gcrs.auth_name = projected_crs.geodetic_crs_auth_name AND \
+             gcrs.code = projected_crs.geodetic_crs_code \
+             JOIN geodetic_datum datum ON \
+             datum.auth_name = gcrs.datum_auth_name AND \
+             datum.code = gcrs.datum_code \
+             JOIN ellipsoid ellps ON \
+             ellps.auth_name = datum.ellipsoid_auth_name AND \
+             ellps.code = datum.ellipsoid_code \
+             WHERE abs(ellps.semi_major_axis - ?) <= 1e-4 * ellps.semi_major_axis \
+             AND projected_crs.deprecated = 0 AND ",
+        );
+        let mut params = vec![query.semi_major.to_string()];
+        if !query.base_ids.is_empty() {
+            sql.push_str(&auth_code_clause(
+                &query.base_ids,
+                "projected_crs.geodetic_crs_",
+            ));
+            push_auth_codes(&query.base_ids, &mut params);
+            sql.push_str(" AND ");
+        }
+        sql.push_str("conv.method_auth_name = 'EPSG' AND conv.method_code = ?");
+        params.push(query.method_code.clone());
+        for (index, code, low, high) in &query.angles {
+            sql.push_str(&format!(
+                " AND conv.param{index}_code = ? AND conv.param{index}_auth_name = 'EPSG' \
+                 AND conv.param{index}_value BETWEEN ? AND ?"
+            ));
+            params.push(code.clone());
+            params.push(low.to_string());
+            params.push(high.to_string());
+        }
+        if let Some((first, second, latitude, other)) = query.parallel_swap {
+            sql.push_str(&format!(
+                " AND conv.param{first}_code = ? AND conv.param{first}_auth_name = 'EPSG' \
+                 AND conv.param{second}_code = ? AND conv.param{second}_auth_name = 'EPSG' AND ("
+            ));
+            params.push("8823".to_owned());
+            params.push("8824".to_owned());
+            for (index, (lat_1, lat_2)) in [(latitude, other), (other, latitude)]
+                .into_iter()
+                .enumerate()
+            {
+                if index == 1 {
+                    sql.push_str(" OR ");
+                }
+                sql.push_str(&format!(
+                    "(conv.param{first}_value BETWEEN ? AND ? AND conv.param{second}_value BETWEEN ? AND ?)"
+                ));
+                params.push((lat_1 - 1.0).to_string());
+                params.push((lat_1 + 1.0).to_string());
+                params.push((lat_2 - 1.0).to_string());
+                params.push((lat_2 + 1.0).to_string());
+            }
+            sql.push(')');
+        }
+        if !self.authority.is_empty() {
+            sql.push_str(" AND projected_crs.auth_name = ?");
+            params.push(self.authority.clone());
+        }
+        let rows = self.db.query(&sql, &params)?;
+        let mut named = Vec::new();
+        for row in &rows {
+            if equivalent_object_name(&row[2].text(), crs_name) {
+                if let Ok(crs) = self
+                    .child(&row[0].text())
+                    .create_projected_crs(&row[1].text())
+                {
+                    named.push(crs);
+                }
+            }
+        }
+        if !named.is_empty() {
+            return Ok(named);
+        }
+        let mut found = Vec::new();
+        let mut seen = BTreeSet::new();
+        if rows.len() <= 200 {
+            push_projected(&mut found, &mut seen, self, &rows);
+        }
+        let text_rows = self.text_projected_candidates(query)?;
+        if text_rows.len() <= 200 {
+            push_projected(&mut found, &mut seen, self, &text_rows);
+        }
+        Ok(found)
+    }
+
+    fn text_projected_candidates(
+        &self,
+        query: &ExistingProjectedQuery,
+    ) -> Result<Vec<Vec<Cell>>, FactoryError> {
+        let mut sql = String::from(
+            "SELECT auth_name, code FROM projected_crs WHERE deprecated = 0 \
+             AND conversion_auth_name IS NULL AND ",
+        );
+        let mut params = Vec::new();
+        if !query.base_ids.is_empty() {
+            sql.push_str(&auth_code_clause(&query.base_ids, "geodetic_crs_"));
+            push_auth_codes(&query.base_ids, &mut params);
+            sql.push_str(" AND ");
+        }
+        let major = trim_zeros(&format!("{:.10}", query.semi_major));
+        sql.push_str("(text_definition LIKE ? ESCAPE '\\'");
+        params.push(format!("%,{major}%{}%", like_escape(&query.method_name)));
+        if !query.proj_name.is_empty() {
+            sql.push_str(" OR (text_definition LIKE ? AND text_definition LIKE ?)");
+            params.push(format!("%proj={}%", query.proj_name));
+            params.push(format!("%={major}%"));
+        }
+        sql.push(')');
+        if !self.authority.is_empty() {
+            sql.push_str(" AND auth_name = ?");
+            params.push(self.authority.clone());
+        }
+        self.db.query(&sql, &params)
     }
 
     /// Derived projected CRS.

@@ -5,10 +5,10 @@
 
 use super::buildop::OpProps;
 use super::model::{
-    Axis, CartesianCS, Conversion, Crs, Datum, DatumEnsemble, Ellipsoid, EllipsoidalCS, FactoryError,
-    GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified, Identifier,
-    Measure, OperationMethod, Parameter, ParameterValue, PrimeMeridian, ProjectedCRS, UnitKind,
-    UnitOfMeasure,
+    Axis, CartesianCS, Conversion, Crs, Datum, DatumEnsemble, Ellipsoid, EllipsoidalCS,
+    FactoryError, GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified,
+    Identifier, Measure, OperationMethod, Parameter, ParameterValue, PrimeMeridian, ProjectedCRS,
+    UnitKind, UnitOfMeasure,
 };
 
 impl GeographicCRS {
@@ -233,9 +233,7 @@ fn geocentric_operation(source: &Crs, target: &GeocentricCRS) -> Result<String, 
     }
     steps.push(cart);
     if let Some(unit) = target.coordinate_system.axes().first().map(Axis::unit) {
-        if unit.kind() == UnitKind::Linear
-            && (unit.conversion_to_si() - 1.0).abs() > 1e-10
-        {
+        if unit.kind() == UnitKind::Linear && (unit.conversion_to_si() - 1.0).abs() > 1e-10 {
             let out = crate::projections::linear_proj_unit(unit.conversion_to_si())
                 .map(str::to_owned)
                 .unwrap_or_else(|| super::wkt::format_g(unit.conversion_to_si(), 15));
@@ -411,7 +409,8 @@ fn datum_code_token(datum: &GeodeticReferenceFrame) -> Option<&'static str> {
         datum.ellipsoid().semi_major_axis().si_value(),
         (datum.ellipsoid().inverse_flattening() != 0.0)
             .then_some(datum.ellipsoid().inverse_flattening()),
-        datum.ellipsoid()
+        datum
+            .ellipsoid()
             .semi_minor_axis()
             .map(super::model::Measure::si_value),
     )?;
@@ -582,6 +581,9 @@ fn well_known_ellps(major: f64, inverse: Option<f64>, minor: Option<f64>) -> Opt
 pub fn create_crs_from_proj_string(definition: &str) -> Result<Crs, FactoryError> {
     let tokens = proj_tokens(definition);
     let proj = token(&tokens, "proj");
+    if proj == "pipeline" {
+        return crs_from_pipeline(&tokens);
+    }
     if matches!(proj, "longlat" | "lonlat" | "latlong") {
         return geographic_from_proj(&tokens);
     }
@@ -591,10 +593,44 @@ pub fn create_crs_from_proj_string(definition: &str) -> Result<Crs, FactoryError
     projected_from_proj(&tokens, proj)
 }
 
+fn crs_from_pipeline(tokens: &[(String, String)]) -> Result<Crs, FactoryError> {
+    let mut steps = Vec::new();
+    let mut current = Vec::new();
+    let mut started = false;
+    for (key, value) in tokens {
+        if key == "step" {
+            if started && !current.is_empty() {
+                steps.push(std::mem::take(&mut current));
+            }
+            started = true;
+            continue;
+        }
+        if started {
+            current.push((key.clone(), value.clone()));
+        }
+    }
+    if !current.is_empty() {
+        steps.push(current);
+    }
+    let step = steps.into_iter().find(|step| {
+        let proj = token(step, "proj");
+        !matches!(
+            proj,
+            "axisswap" | "unitconvert" | "push" | "pop" | "longlat" | "lonlat" | "latlong" | ""
+        )
+    });
+    let Some(step) = step else {
+        return Err(FactoryError::Invalid(
+            "a pipeline CRS needs a projection step".to_owned(),
+        ));
+    };
+    projected_from_proj(&step, token(&step, "proj"))
+}
+
 fn utm_from_proj(tokens: &[(String, String)]) -> Result<Crs, FactoryError> {
-    let zone = token(tokens, "zone").parse::<i32>().map_err(|_| {
-        FactoryError::Invalid("invalid UTM zone".to_owned())
-    })?;
+    let zone = token(tokens, "zone")
+        .parse::<i32>()
+        .map_err(|_| FactoryError::Invalid("invalid UTM zone".to_owned()))?;
     let conversion = if has_token(tokens, "south") {
         Conversion::create_utm_south(&OpProps::new(), zone)
     } else {
@@ -665,11 +701,13 @@ fn projected_from_proj(tokens: &[(String, String)], proj: &str) -> Result<Crs, F
         FactoryError::Invalid(format!("unknown +proj={proj} cannot be imported as a CRS"))
     })?;
     let geographic = geographic_base(tokens)?;
-    let parameters = method
-        .params
-        .iter()
-        .map(|param| proj_parameter(proj, param, tokens))
-        .collect::<Result<Vec<_>, _>>()?;
+    let linear = linear_unit_from_proj(tokens);
+    let mut parameters = Vec::new();
+    for param in method.params {
+        if let Some(parameter) = proj_parameter(proj, param, tokens, &linear)? {
+            parameters.push(parameter);
+        }
+    }
     let code = if method.epsg_code == 0 {
         String::new()
     } else {
@@ -690,12 +728,14 @@ fn projected_from_proj(tokens: &[(String, String)], proj: &str) -> Result<Crs, F
         parameters,
         version: None,
     };
-    Ok(Crs::Projected(ProjectedCRS::create(
+    let mut crs = ProjectedCRS::create(
         "unknown",
         GeodeticCRS::Geographic(geographic),
         conversion,
-        CartesianCS::create_easting_northing(UnitOfMeasure::metre()),
-    )))
+        CartesianCS::create_easting_northing(linear),
+    );
+    crs.implicit_cs = true;
+    Ok(Crs::Projected(crs))
 }
 
 fn projection_method(
@@ -709,20 +749,67 @@ fn projection_method(
     if proj == "mod_krovak" && axis == "swu" {
         return super::parammap::method_by_code(1042);
     }
+    if proj == "omerc" {
+        if has_token(tokens, "no_uoff") || has_token(tokens, "no_off") {
+            return super::parammap::method_by_code(9812);
+        }
+        return super::parammap::method_by_code(9815);
+    }
+    if proj == "lcc" {
+        let lat_0 = token(tokens, "lat_0");
+        let lat_1 = token(tokens, "lat_1");
+        let lat_2 = token(tokens, "lat_2");
+        if lat_2.is_empty() && !lat_0.is_empty() && !lat_1.is_empty() {
+            if lat_0 == lat_1 {
+                return super::parammap::method_by_code(9801);
+            }
+            return super::parammap::method_by_code(1102);
+        }
+        let mut scale = token(tokens, "k");
+        if scale.is_empty() {
+            scale = token(tokens, "k_0");
+        }
+        if !scale.is_empty() && scale.parse::<f64>().ok() != Some(1.0) {
+            return super::parammap::method_by_code(1051);
+        }
+        return super::parammap::method_by_code(9802);
+    }
     super::parammap::PROJECTION_METHODS
         .iter()
         .find(|method| method.proj_name == Some(proj))
+}
+
+fn linear_unit_from_proj(tokens: &[(String, String)]) -> UnitOfMeasure {
+    let to_meter = token(tokens, "to_meter");
+    if !to_meter.is_empty() {
+        if let Ok(factor) = to_meter.parse::<f64>() {
+            return UnitOfMeasure::new("unknown", factor, UnitKind::Linear);
+        }
+    }
+    match token(tokens, "units") {
+        "ft" | "foot" => UnitOfMeasure::foot(),
+        "us-ft" | "us-foot" => UnitOfMeasure::new("US survey foot", 12.0 / 39.37, UnitKind::Linear),
+        _ => UnitOfMeasure::metre(),
+    }
 }
 
 fn proj_parameter(
     proj: &str,
     param: &super::parammap::ParamMap,
     tokens: &[(String, String)],
-) -> Result<Parameter, FactoryError> {
-    let value = proj_param_value(proj, param, tokens)?;
+    linear: &UnitOfMeasure,
+) -> Result<Option<Parameter>, FactoryError> {
+    let Some(mut value) = proj_param_value(proj, param, tokens)? else {
+        return Ok(None);
+    };
     let unit = match param.unit {
         UnitKind::Angular => UnitOfMeasure::degree(),
-        UnitKind::Linear => UnitOfMeasure::metre(),
+        UnitKind::Linear => {
+            if linear.conversion_to_si() != 0.0 {
+                value /= linear.conversion_to_si();
+            }
+            linear.clone()
+        }
         UnitKind::Scale => UnitOfMeasure::unity(),
         _ => UnitOfMeasure::unity(),
     };
@@ -731,19 +818,19 @@ fn proj_parameter(
     } else {
         ("EPSG".to_owned(), param.epsg_code.to_string())
     };
-    Ok(Parameter {
+    Ok(Some(Parameter {
         name: param.wkt2_name.to_owned(),
         code_space,
         code,
         value: ParameterValue::Measure(Measure { value, unit }),
-    })
+    }))
 }
 
 fn proj_param_value(
     proj: &str,
     param: &super::parammap::ParamMap,
     tokens: &[(String, String)],
-) -> Result<f64, FactoryError> {
+) -> Result<Option<f64>, FactoryError> {
     if let Some(proj_name) = param.proj_name {
         let raw = if proj_name == "k" || proj_name == "k_0" {
             let scale = token(tokens, "k");
@@ -756,17 +843,30 @@ fn proj_param_value(
             token(tokens, proj_name)
         };
         if !raw.is_empty() {
-            return raw.parse::<f64>().map_err(|_| {
-                FactoryError::Invalid(format!("invalid value for {proj_name}"))
-            });
+            return raw
+                .parse::<f64>()
+                .map(Some)
+                .map_err(|_| FactoryError::Invalid(format!("invalid value for {proj_name}")));
+        }
+    }
+    if proj == "omerc" && param.proj_name == Some("gamma") {
+        let alpha = token(tokens, "alpha");
+        if !alpha.is_empty() {
+            return alpha
+                .parse::<f64>()
+                .map(Some)
+                .map_err(|_| FactoryError::Invalid("invalid value for alpha".to_owned()));
         }
     }
     if proj == "krovak" || proj == "mod_krovak" {
         if let Some(value) = krovak_default(param.epsg_code) {
-            return Ok(value);
+            return Ok(Some(value));
         }
     }
-    Ok(0.0)
+    if param.unit == UnitKind::Scale {
+        return Ok(Some(1.0));
+    }
+    Ok(Some(0.0))
 }
 
 /// Defaults from `krovak.cpp`, used when the PROJ string omits the parameter.
@@ -836,15 +936,48 @@ fn datum_from_proj(tokens: &[(String, String)]) -> Result<GeodeticReferenceFrame
             meridian,
         ));
     }
+    if ellps == "clrk80" {
+        return Ok(GeodeticReferenceFrame::create(
+            "Unknown based on Clarke 1880 mod. ellipsoid",
+            Ellipsoid::create_flattened_sphere("Clarke 1880 mod.", 6_378_249.145, 293.4663),
+            meridian,
+        ));
+    }
     let major = token(tokens, "a");
+    let minor = token(tokens, "b");
+    if !major.is_empty() && !minor.is_empty() {
+        let major = major
+            .parse::<f64>()
+            .map_err(|_| FactoryError::Invalid("Invalid a value".to_owned()))?;
+        let minor = minor
+            .parse::<f64>()
+            .map_err(|_| FactoryError::Invalid("Invalid b value".to_owned()))?;
+        return Ok(GeodeticReferenceFrame::create(
+            "unknown",
+            Ellipsoid {
+                identified: Identified::named("unknown"),
+                semi_major: Measure {
+                    value: major,
+                    unit: UnitOfMeasure::metre(),
+                },
+                inverse_flattening: None,
+                semi_minor: Some(Measure {
+                    value: minor,
+                    unit: UnitOfMeasure::metre(),
+                }),
+                body: "Earth".to_owned(),
+            },
+            meridian,
+        ));
+    }
     let flattening = token(tokens, "rf");
     if !major.is_empty() && !flattening.is_empty() {
-        let major = major.parse::<f64>().map_err(|_| {
-            FactoryError::Invalid("Invalid a value".to_owned())
-        })?;
-        let flattening = flattening.parse::<f64>().map_err(|_| {
-            FactoryError::Invalid("Invalid rf value".to_owned())
-        })?;
+        let major = major
+            .parse::<f64>()
+            .map_err(|_| FactoryError::Invalid("Invalid a value".to_owned()))?;
+        let flattening = flattening
+            .parse::<f64>()
+            .map_err(|_| FactoryError::Invalid("Invalid rf value".to_owned()))?;
         return Ok(GeodeticReferenceFrame::create(
             "unknown",
             Ellipsoid::create_flattened_sphere("unknown", major, flattening),
@@ -872,9 +1005,9 @@ fn prime_meridian_from_token(pm: &str) -> Result<PrimeMeridian, FactoryError> {
     if pm.eq_ignore_ascii_case("paris") {
         return Ok(PrimeMeridian::paris());
     }
-    let degrees = pm.parse::<f64>().map_err(|_| {
-        FactoryError::Invalid(format!("unknown prime meridian {pm}"))
-    })?;
+    let degrees = pm
+        .parse::<f64>()
+        .map_err(|_| FactoryError::Invalid(format!("unknown prime meridian {pm}")))?;
     Ok(PrimeMeridian {
         identified: Identified::named("unknown"),
         longitude: Measure {

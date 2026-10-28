@@ -22,33 +22,445 @@ pub(crate) struct EsriMethod {
     pub(crate) params: &'static [EsriParam],
 }
 
+const LCC_1SP: &[EsriParam] = &[
+    EsriParam {
+        esri_name: "False_Easting",
+        wkt2_name: Some("False easting"),
+        epsg_code: 8806,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "False_Northing",
+        wkt2_name: Some("False northing"),
+        epsg_code: 8807,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "Central_Meridian",
+        wkt2_name: Some("Longitude of natural origin"),
+        epsg_code: 8802,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "Standard_Parallel_1",
+        wkt2_name: Some("Latitude of natural origin"),
+        epsg_code: 8801,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "Scale_Factor",
+        wkt2_name: Some("Scale factor at natural origin"),
+        epsg_code: 8805,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "Latitude_Of_Origin",
+        wkt2_name: Some("Latitude of natural origin"),
+        epsg_code: 8801,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+];
+
+const LCC_2SP: &[EsriParam] = &[
+    EsriParam {
+        esri_name: "False_Easting",
+        wkt2_name: Some("Easting at false origin"),
+        epsg_code: 8826,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "False_Northing",
+        wkt2_name: Some("Northing at false origin"),
+        epsg_code: 8827,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "Central_Meridian",
+        wkt2_name: Some("Longitude of false origin"),
+        epsg_code: 8822,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "Standard_Parallel_1",
+        wkt2_name: Some("Latitude of 1st standard parallel"),
+        epsg_code: 8823,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "Standard_Parallel_2",
+        wkt2_name: Some("Latitude of 2nd standard parallel"),
+        epsg_code: 8824,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "Latitude_Of_Origin",
+        wkt2_name: Some("Latitude of false origin"),
+        epsg_code: 8821,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+];
+
+const LCC_2SP_SCALE: &[EsriParam] = &[
+    EsriParam {
+        esri_name: "False_Easting",
+        wkt2_name: Some("Easting at false origin"),
+        epsg_code: 8826,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "False_Northing",
+        wkt2_name: Some("Northing at false origin"),
+        epsg_code: 8827,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "Central_Meridian",
+        wkt2_name: Some("Longitude of false origin"),
+        epsg_code: 8822,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "Standard_Parallel_1",
+        wkt2_name: Some("Latitude of 1st standard parallel"),
+        epsg_code: 8823,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "Standard_Parallel_2",
+        wkt2_name: Some("Latitude of 2nd standard parallel"),
+        epsg_code: 8824,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "Scale_Factor",
+        wkt2_name: None,
+        epsg_code: 0,
+        fixed_value: "1.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "Latitude_Of_Origin",
+        wkt2_name: Some("Latitude of false origin"),
+        epsg_code: 8821,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+];
+
+const ALBERS: &[EsriParam] = &[
+    EsriParam {
+        esri_name: "False_Easting",
+        wkt2_name: Some("Easting at false origin"),
+        epsg_code: 8826,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "False_Northing",
+        wkt2_name: Some("Northing at false origin"),
+        epsg_code: 8827,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "Central_Meridian",
+        wkt2_name: Some("Longitude of false origin"),
+        epsg_code: 8822,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "Standard_Parallel_1",
+        wkt2_name: Some("Latitude of 1st standard parallel"),
+        epsg_code: 8823,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "Standard_Parallel_2",
+        wkt2_name: Some("Latitude of 2nd standard parallel"),
+        epsg_code: 8824,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "Latitude_Of_Origin",
+        wkt2_name: Some("Latitude of false origin"),
+        epsg_code: 8821,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+];
+
+const LAEA: &[EsriParam] = &[
+    EsriParam {
+        esri_name: "False_Easting",
+        wkt2_name: Some("False easting"),
+        epsg_code: 8806,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "False_Northing",
+        wkt2_name: Some("False northing"),
+        epsg_code: 8807,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "Central_Meridian",
+        wkt2_name: Some("Longitude of natural origin"),
+        epsg_code: 8802,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "Latitude_Of_Origin",
+        wkt2_name: Some("Latitude of natural origin"),
+        epsg_code: 8801,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+];
+
+const DOUBLE_STEREO: &[EsriParam] = &[
+    EsriParam {
+        esri_name: "False_Easting",
+        wkt2_name: Some("False easting"),
+        epsg_code: 8806,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "False_Northing",
+        wkt2_name: Some("False northing"),
+        epsg_code: 8807,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "Central_Meridian",
+        wkt2_name: Some("Longitude of natural origin"),
+        epsg_code: 8802,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "Scale_Factor",
+        wkt2_name: Some("Scale factor at natural origin"),
+        epsg_code: 8805,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "Latitude_Of_Origin",
+        wkt2_name: Some("Latitude of natural origin"),
+        epsg_code: 8801,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+];
+
 const KROVAK_ALT1: &[EsriParam] = &[
-    EsriParam { esri_name: "False_Easting", wkt2_name: Some("False easting"), epsg_code: 8806, fixed_value: "0.0", is_fixed_value: false },
-    EsriParam { esri_name: "False_Northing", wkt2_name: Some("False northing"), epsg_code: 8807, fixed_value: "0.0", is_fixed_value: false },
-    EsriParam { esri_name: "Pseudo_Standard_Parallel_1", wkt2_name: Some("Latitude of pseudo standard parallel"), epsg_code: 8818, fixed_value: "0.0", is_fixed_value: false },
-    EsriParam { esri_name: "Scale_Factor", wkt2_name: Some("Scale factor on pseudo standard parallel"), epsg_code: 8819, fixed_value: "0.0", is_fixed_value: false },
-    EsriParam { esri_name: "Azimuth", wkt2_name: Some("Co-latitude of cone axis"), epsg_code: 1036, fixed_value: "0.0", is_fixed_value: false },
-    EsriParam { esri_name: "Longitude_Of_Center", wkt2_name: Some("Longitude of origin"), epsg_code: 8833, fixed_value: "0.0", is_fixed_value: false },
-    EsriParam { esri_name: "Latitude_Of_Center", wkt2_name: Some("Latitude of projection centre"), epsg_code: 8811, fixed_value: "0.0", is_fixed_value: false },
-    EsriParam { esri_name: "X_Scale", wkt2_name: None, epsg_code: 0, fixed_value: "1.0", is_fixed_value: false },
-    EsriParam { esri_name: "Y_Scale", wkt2_name: None, epsg_code: 0, fixed_value: "1.0", is_fixed_value: false },
-    EsriParam { esri_name: "XY_Plane_Rotation", wkt2_name: None, epsg_code: 0, fixed_value: "0.0", is_fixed_value: false },
+    EsriParam {
+        esri_name: "False_Easting",
+        wkt2_name: Some("False easting"),
+        epsg_code: 8806,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "False_Northing",
+        wkt2_name: Some("False northing"),
+        epsg_code: 8807,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "Pseudo_Standard_Parallel_1",
+        wkt2_name: Some("Latitude of pseudo standard parallel"),
+        epsg_code: 8818,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "Scale_Factor",
+        wkt2_name: Some("Scale factor on pseudo standard parallel"),
+        epsg_code: 8819,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "Azimuth",
+        wkt2_name: Some("Co-latitude of cone axis"),
+        epsg_code: 1036,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "Longitude_Of_Center",
+        wkt2_name: Some("Longitude of origin"),
+        epsg_code: 8833,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "Latitude_Of_Center",
+        wkt2_name: Some("Latitude of projection centre"),
+        epsg_code: 8811,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "X_Scale",
+        wkt2_name: None,
+        epsg_code: 0,
+        fixed_value: "1.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "Y_Scale",
+        wkt2_name: None,
+        epsg_code: 0,
+        fixed_value: "1.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "XY_Plane_Rotation",
+        wkt2_name: None,
+        epsg_code: 0,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
 ];
 
 const KROVAK_ALT2: &[EsriParam] = &[
-    EsriParam { esri_name: "False_Easting", wkt2_name: Some("False easting"), epsg_code: 8806, fixed_value: "0.0", is_fixed_value: false },
-    EsriParam { esri_name: "False_Northing", wkt2_name: Some("False northing"), epsg_code: 8807, fixed_value: "0.0", is_fixed_value: false },
-    EsriParam { esri_name: "Pseudo_Standard_Parallel_1", wkt2_name: Some("Latitude of pseudo standard parallel"), epsg_code: 8818, fixed_value: "0.0", is_fixed_value: false },
-    EsriParam { esri_name: "Scale_Factor", wkt2_name: Some("Scale factor on pseudo standard parallel"), epsg_code: 8819, fixed_value: "0.0", is_fixed_value: false },
-    EsriParam { esri_name: "Azimuth", wkt2_name: Some("Co-latitude of cone axis"), epsg_code: 1036, fixed_value: "0.0", is_fixed_value: false },
-    EsriParam { esri_name: "Longitude_Of_Center", wkt2_name: Some("Longitude of origin"), epsg_code: 8833, fixed_value: "0.0", is_fixed_value: false },
-    EsriParam { esri_name: "Latitude_Of_Center", wkt2_name: Some("Latitude of projection centre"), epsg_code: 8811, fixed_value: "0.0", is_fixed_value: false },
-    EsriParam { esri_name: "X_Scale", wkt2_name: None, epsg_code: 0, fixed_value: "-1.0", is_fixed_value: false },
-    EsriParam { esri_name: "Y_Scale", wkt2_name: None, epsg_code: 0, fixed_value: "1.0", is_fixed_value: false },
-    EsriParam { esri_name: "XY_Plane_Rotation", wkt2_name: None, epsg_code: 0, fixed_value: "90.0", is_fixed_value: false },
+    EsriParam {
+        esri_name: "False_Easting",
+        wkt2_name: Some("False easting"),
+        epsg_code: 8806,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "False_Northing",
+        wkt2_name: Some("False northing"),
+        epsg_code: 8807,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "Pseudo_Standard_Parallel_1",
+        wkt2_name: Some("Latitude of pseudo standard parallel"),
+        epsg_code: 8818,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "Scale_Factor",
+        wkt2_name: Some("Scale factor on pseudo standard parallel"),
+        epsg_code: 8819,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "Azimuth",
+        wkt2_name: Some("Co-latitude of cone axis"),
+        epsg_code: 1036,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "Longitude_Of_Center",
+        wkt2_name: Some("Longitude of origin"),
+        epsg_code: 8833,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "Latitude_Of_Center",
+        wkt2_name: Some("Latitude of projection centre"),
+        epsg_code: 8811,
+        fixed_value: "0.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "X_Scale",
+        wkt2_name: None,
+        epsg_code: 0,
+        fixed_value: "-1.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "Y_Scale",
+        wkt2_name: None,
+        epsg_code: 0,
+        fixed_value: "1.0",
+        is_fixed_value: false,
+    },
+    EsriParam {
+        esri_name: "XY_Plane_Rotation",
+        wkt2_name: None,
+        epsg_code: 0,
+        fixed_value: "90.0",
+        is_fixed_value: false,
+    },
 ];
 
 static ESRI_METHODS: &[EsriMethod] = &[
+    EsriMethod {
+        esri_name: "Lambert_Conformal_Conic",
+        wkt2_name: "Lambert Conic Conformal (1SP)",
+        epsg_code: 9801,
+        params: LCC_1SP,
+    },
+    EsriMethod {
+        esri_name: "Lambert_Conformal_Conic",
+        wkt2_name: "Lambert Conic Conformal (2SP)",
+        epsg_code: 9802,
+        params: LCC_2SP,
+    },
+    EsriMethod {
+        esri_name: "Lambert_Conformal_Conic",
+        wkt2_name: "Lambert Conic Conformal (2SP)",
+        epsg_code: 9802,
+        params: LCC_2SP_SCALE,
+    },
+    EsriMethod {
+        esri_name: "Albers",
+        wkt2_name: "Albers Equal Area",
+        epsg_code: 9822,
+        params: ALBERS,
+    },
+    EsriMethod {
+        esri_name: "Lambert_Azimuthal_Equal_Area",
+        wkt2_name: "Lambert Azimuthal Equal Area",
+        epsg_code: 9820,
+        params: LAEA,
+    },
+    EsriMethod {
+        esri_name: "Double_Stereographic",
+        wkt2_name: "Oblique Stereographic",
+        epsg_code: 9809,
+        params: DOUBLE_STEREO,
+    },
     EsriMethod {
         esri_name: "Krovak",
         wkt2_name: "Krovak",
@@ -72,7 +484,10 @@ pub(crate) enum EsriCertainty {
 }
 
 /// First mapping whose EPSG code or WKT2 name matches, in table order.
-pub(crate) fn esri_mapping_for_method(wkt2_name: &str, epsg_code: i32) -> Option<&'static EsriMethod> {
+pub(crate) fn esri_mapping_for_method(
+    wkt2_name: &str,
+    epsg_code: i32,
+) -> Option<&'static EsriMethod> {
     ESRI_METHODS.iter().find(|mapping| {
         (epsg_code != 0 && mapping.epsg_code == epsg_code) || ci_eq(wkt2_name, mapping.wkt2_name)
     })
@@ -86,7 +501,10 @@ pub(crate) fn select_esri_mapping(
 ) -> Option<&'static EsriMethod> {
     let mut chosen: Option<&EsriMethod> = None;
     let mut best_match = -1;
-    for mapping in ESRI_METHODS.iter().filter(|mapping| ci_eq(mapping.esri_name, projection)) {
+    for mapping in ESRI_METHODS
+        .iter()
+        .filter(|mapping| ci_eq(mapping.esri_name, projection))
+    {
         let mut match_count = 0;
         let mut unmatch_count = 0;
         let mut rejected = false;
@@ -110,7 +528,8 @@ pub(crate) fn select_esri_mapping(
         if rejected {
             continue;
         }
-        let maybe_too_sparse = matches!(certainty, EsriCertainty::Maybe) && unmatch_count >= match_count;
+        let maybe_too_sparse =
+            matches!(certainty, EsriCertainty::Maybe) && unmatch_count >= match_count;
         if match_count > best_match && !maybe_too_sparse {
             chosen = Some(mapping);
             best_match = match_count;

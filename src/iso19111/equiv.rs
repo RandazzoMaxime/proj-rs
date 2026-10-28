@@ -7,8 +7,8 @@
 use super::model::{
     ensemble_name_as_datum, Axis, CompoundCRS, Conversion, CoordinateSystem, Crs, Datum,
     DatumEnsemble, Ellipsoid, EngineeringCRS, EngineeringDatum, GeodeticCRS,
-    GeodeticReferenceFrame, GeographicCRS, Identified, Parameter, ParameterValue, PrimeMeridian,
-    ProjectedCRS, VerticalCRS, VerticalReferenceFrame,
+    GeodeticReferenceFrame, GeographicCRS, Identified, Measure, Parameter, ParameterValue,
+    PrimeMeridian, ProjectedCRS, VerticalCRS, VerticalReferenceFrame,
 };
 
 /// How much two ISO 19111 objects may differ and still compare equal.
@@ -352,9 +352,62 @@ fn geographic_equivalent(
 
 fn frames_as_datum(left: &GeographicCRS, right: &GeographicCRS) -> bool {
     match (anchor_frame(left), anchor_frame(right)) {
-        (Some(left), Some(right)) => frame_equivalent(&left, &right),
+        (Some(left), Some(right)) => frame_close(&left, &right),
         _ => false,
     }
+}
+
+fn frame_close(left: &GeodeticReferenceFrame, right: &GeodeticReferenceFrame) -> bool {
+    same_name(left.name(), right.name())
+        && same_epoch(left.frame_reference_epoch(), right.frame_reference_epoch())
+        && ellipsoid_close(left.ellipsoid(), right.ellipsoid())
+        && meridian_equivalent(left.prime_meridian(), right.prime_meridian())
+}
+
+fn ellipsoid_close(left: &Ellipsoid, right: &Ellipsoid) -> bool {
+    same_name(left.name(), right.name()) && ellipsoid_numbers_close(left, right)
+}
+
+fn ellipsoid_numbers_close(left: &Ellipsoid, right: &Ellipsoid) -> bool {
+    if !measure_within(left.semi_major_axis(), right.semi_major_axis(), 1e-10) {
+        return false;
+    }
+    if let (Some(left_minor), Some(right_minor)) = (left.semi_minor_axis(), right.semi_minor_axis())
+    {
+        if !measure_within(left_minor, right_minor, 1e-10) {
+            return false;
+        }
+    }
+    if let (Some(left_flat), Some(right_flat)) = (
+        left.declared_inverse_flattening(),
+        right.declared_inverse_flattening(),
+    ) {
+        if (left_flat - right_flat).abs() > 1e-10 * left_flat.abs() {
+            return false;
+        }
+    }
+    let left_minor = computed_minor_axis(left);
+    let right_minor = computed_minor_axis(right);
+    (left_minor - right_minor).abs() <= 1e-10 * left_minor.abs()
+}
+
+fn computed_minor_axis(ellipsoid: &Ellipsoid) -> f64 {
+    if let Some(minor) = ellipsoid.semi_minor_axis() {
+        return minor.si_value();
+    }
+    let major = ellipsoid.semi_major_axis().si_value();
+    let flattening = ellipsoid.inverse_flattening();
+    if flattening == 0.0 {
+        major
+    } else {
+        major * (1.0 - 1.0 / flattening)
+    }
+}
+
+fn measure_within(left: &Measure, right: &Measure, relative: f64) -> bool {
+    let left_si = left.si_value();
+    let right_si = right.si_value();
+    (left_si - right_si).abs() <= relative * left_si.abs()
 }
 
 fn anchor_frame(crs: &GeographicCRS) -> Option<GeodeticReferenceFrame> {
@@ -402,8 +455,43 @@ fn geodetic_equivalent(left: &GeodeticCRS, right: &GeodeticCRS, criterion: Equiv
                     right.coordinate_system().axes(),
                 )
         }
+        (GeodeticCRS::Spherical(_), GeodeticCRS::Spherical(_))
+        | (GeodeticCRS::Geographic(_), GeodeticCRS::Spherical(_))
+        | (GeodeticCRS::Spherical(_), GeodeticCRS::Geographic(_))
+            if criterion != Equivalence::Strict =>
+        {
+            planetodetic_cross(left, right, criterion)
+        }
         _ => false,
     }
+}
+
+fn planetodetic_cross(left: &GeodeticCRS, right: &GeodeticCRS, criterion: Equivalence) -> bool {
+    let (Some(left_frame), Some(right_frame)) = (left.datum(), right.datum()) else {
+        return false;
+    };
+    if !frame_close(left_frame, right_frame) {
+        return false;
+    }
+    let left_axes = body_axes(left);
+    let right_axes = body_axes(right);
+    if axes_for_criterion(&left_axes, &right_axes, Equivalence::Equivalent) {
+        return true;
+    }
+    if criterion != Equivalence::ExceptAxisOrder || left_axes.len() != 2 || right_axes.len() != 2 {
+        return false;
+    }
+    let mut swapped = right_axes;
+    swapped.swap(0, 1);
+    axes_for_criterion(&left_axes, &swapped, Equivalence::Equivalent)
+}
+
+fn body_axes(crs: &GeodeticCRS) -> Vec<Axis> {
+    crs.coordinate_system()
+        .axes()
+        .into_iter()
+        .cloned()
+        .collect()
 }
 
 fn vertical_anchor(left: &VerticalCRS, right: &VerticalCRS) -> bool {
@@ -467,7 +555,10 @@ fn ellipsoid_equivalent(left: &Ellipsoid, right: &Ellipsoid) -> bool {
 pub(crate) fn meridian_equivalent(left: &PrimeMeridian, right: &PrimeMeridian) -> bool {
     same_name(left.name(), right.name())
         && left.longitude().value() == right.longitude().value()
-        && same_name(left.longitude().unit().name(), right.longitude().unit().name())
+        && same_name(
+            left.longitude().unit().name(),
+            right.longitude().unit().name(),
+        )
 }
 
 fn coordinate_system_equivalent(left: &CoordinateSystem, right: &CoordinateSystem) -> bool {
@@ -536,6 +627,10 @@ fn conversion_equivalent_with(
     if left.parameters().len() != right.parameters().len() {
         return false;
     }
+    parameters_match(left, right) || lcc_parallels_swapped(left, right)
+}
+
+fn parameters_match(left: &Conversion, right: &Conversion) -> bool {
     let mut used = vec![false; right.parameters().len()];
     for parameter in left.parameters() {
         let mut found = false;
@@ -556,7 +651,70 @@ fn conversion_equivalent_with(
     true
 }
 
-fn methods_equivalent(left: &super::model::OperationMethod, right: &super::model::OperationMethod) -> bool {
+/// Lambert conic conformal 2SP gives the same projection if the standard
+/// parallels are exchanged.
+fn lcc_parallels_swapped(left: &Conversion, right: &Conversion) -> bool {
+    if left.method().code() != "9802" || right.method().code() != "9802" {
+        return false;
+    }
+    let Some(left_first) = parameter_by_code(left, "8823") else {
+        return false;
+    };
+    let Some(left_second) = parameter_by_code(left, "8824") else {
+        return false;
+    };
+    let Some(right_first) = parameter_by_code(right, "8823") else {
+        return false;
+    };
+    let Some(right_second) = parameter_by_code(right, "8824") else {
+        return false;
+    };
+    if !measures_of(left_first, right_second) || !measures_of(left_second, right_first) {
+        return false;
+    }
+    let mut used = vec![false; right.parameters().len()];
+    for parameter in left.parameters() {
+        if parameter.code() == "8823" || parameter.code() == "8824" {
+            continue;
+        }
+        let mut found = false;
+        for (index, other) in right.parameters().iter().enumerate() {
+            if used[index] || other.code() == "8823" || other.code() == "8824" {
+                continue;
+            }
+            if parameter_equivalent_with(parameter, other) {
+                used[index] = true;
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return false;
+        }
+    }
+    true
+}
+
+fn parameter_by_code<'a>(conversion: &'a Conversion, code: &str) -> Option<&'a Parameter> {
+    conversion
+        .parameters()
+        .iter()
+        .find(|parameter| parameter.code() == code)
+}
+
+fn measures_of(left: &Parameter, right: &Parameter) -> bool {
+    match (left.value(), right.value()) {
+        (ParameterValue::Measure(left), ParameterValue::Measure(right)) => {
+            measures_close(left, right)
+        }
+        _ => false,
+    }
+}
+
+fn methods_equivalent(
+    left: &super::model::OperationMethod,
+    right: &super::model::OperationMethod,
+) -> bool {
     let left_code = left.code();
     let right_code = right.code();
     (!left_code.is_empty() && left_code == right_code) || equivalent_name(left.name(), right.name())
@@ -661,7 +819,11 @@ impl GeodeticCRS {
             let name_equivalent = equivalent_name(name, candidate_name);
             let equivalent = identify_equivalent(self, &candidate, axis_order);
             let confidence = if name_equivalent && equivalent {
-                if name_equal { 100 } else { 90 }
+                if name_equal {
+                    100
+                } else {
+                    90
+                }
             } else if name_equal && !equivalent {
                 25
             } else if equivalent {
@@ -683,7 +845,9 @@ impl Crs {
     #[must_use]
     pub fn identify(&self) -> Vec<(Crs, i32)> {
         match self {
-            Self::Geographic(crs) => Self::Geodetic(GeodeticCRS::Geographic(crs.clone())).identify(),
+            Self::Geographic(crs) => {
+                Self::Geodetic(GeodeticCRS::Geographic(crs.clone())).identify()
+            }
             Self::Geodetic(crs) => crs.identify(),
             Self::Projected(crs) => crs.identify_with(None),
             _ => Vec::new(),
@@ -796,8 +960,7 @@ fn direction_and_unit(left: &Axis, right: &Axis) -> bool {
     let scale = left.unit().conversion_to_si().abs();
     left.direction() == right.direction()
         && left.unit().kind() == right.unit().kind()
-        && (left.unit().conversion_to_si() - right.unit().conversion_to_si()).abs()
-            <= 1e-10 * scale
+        && (left.unit().conversion_to_si() - right.unit().conversion_to_si()).abs() <= 1e-10 * scale
 }
 
 pub(crate) fn same_epoch(left: Option<f64>, right: Option<f64>) -> bool {

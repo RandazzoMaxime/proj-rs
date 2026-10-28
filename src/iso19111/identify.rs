@@ -7,12 +7,13 @@
 use super::buildop::{OpProps, UtmHemisphere};
 use super::equiv::{
     directions_and_units, ellipsoid_parameters_match, equivalent_name, identify_axes_match,
-    meridian_equivalent, same_epoch, IdentifyAxisOrder,
+    meridian_equivalent, same_epoch, Equivalence, IdentifyAxisOrder,
 };
-use super::factory::{AuthorityFactory, DatabaseContext, NameMatch};
+use super::factory::{AuthorityFactory, DatabaseContext, ExistingProjectedQuery, NameMatch};
 use super::model::{
-    Axis, CartesianCS, Conversion, Crs, Datum, DatumEnsemble, GeodeticCRS, GeodeticReferenceFrame,
-    GeographicCRS, Identified, Identifier, ProjectedCRS, UnitOfMeasure,
+    Axis, CartesianCS, Conversion, Crs, Datum, DatumEnsemble, Ellipsoid, GeodeticCRS,
+    GeodeticReferenceFrame, GeographicCRS, Identified, Identifier, Measure, ParameterValue,
+    ProjectedCRS, UnitOfMeasure,
 };
 
 const UNKNOWN_BASED_ON: &str = "Unknown based on ";
@@ -59,11 +60,18 @@ impl GeodeticCRS {
                         if crs.name() == name {
                             return vec![(to_crs(crs), 100)];
                         }
-                        let confidence = if equivalent_name(name, crs.name()) { 90 } else { 70 };
+                        let confidence = if equivalent_name(name, crs.name()) {
+                            90
+                        } else {
+                            70
+                        };
                         hits.push(Hit { crs, confidence });
                         above_25 = true;
                     } else {
-                        hits.push(Hit { crs, confidence: 25 });
+                        hits.push(Hit {
+                            crs,
+                            confidence: 25,
+                        });
                     }
                 }
                 if !hits.is_empty() {
@@ -154,7 +162,9 @@ fn axis_order(crs: &GeodeticCRS) -> IdentifyAxisOrder {
 fn geodetic_type(crs: &GeodeticCRS) -> &'static str {
     match crs {
         GeodeticCRS::Geocentric(_) => "geocentric",
-        GeodeticCRS::Geographic(crs) if crs.coordinate_system().axes().len() == 2 => "geographic 2D",
+        GeodeticCRS::Geographic(crs) if crs.coordinate_system().axes().len() == 2 => {
+            "geographic 2D"
+        }
         GeodeticCRS::Geographic(_) => "geographic 3D",
         GeodeticCRS::Spherical(_) => "",
     }
@@ -309,10 +319,8 @@ fn search_by_ellipsoid(
                 };
                 let ellipsoid_matches =
                     ellipsoid_parameters_match(candidate_frame.ellipsoid(), ellipsoid);
-                let meridian_matches = meridian_equivalent(
-                    candidate_frame.prime_meridian(),
-                    frame.prime_meridian(),
-                );
+                let meridian_matches =
+                    meridian_equivalent(candidate_frame.prime_meridian(), frame.prime_meridian());
                 let axes_match = order == IdentifyAxisOrder::Implicit
                     || directions_and_units(&this_axes, &axis_list(&candidate));
                 if ellipsoid_matches && meridian_matches && axes_match {
@@ -331,37 +339,35 @@ fn sort_hits(crs: &GeodeticCRS, db: &DatabaseContext, hits: &mut [Hit]) {
     let axes = axis_list(crs);
     let name = crs.name();
     hits.sort_by(|left, right| {
-        right.confidence.cmp(&left.confidence).then_with(|| {
-            prefer(
-                left.crs.name() == name,
-                right.crs.name() == name,
-            )
-        })
-        .then_with(|| {
-            prefer(
-                frame_matches(frame.as_ref(), &left.crs, db),
-                frame_matches(frame.as_ref(), &right.crs, db),
-            )
-        })
-        .then_with(|| {
-            prefer(
-                directions_and_units(&axes, &axis_list(&left.crs)),
-                directions_and_units(&axes, &axis_list(&right.crs)),
-            )
-        })
-        .then_with(|| {
-            prefer(
-                axis_list(&left.crs).len() == axes.len(),
-                axis_list(&right.crs).len() == axes.len(),
-            )
-        })
-        .then_with(|| {
-            prefer(
-                ellipsoid_name_is_crs_name(&left.crs),
-                ellipsoid_name_is_crs_name(&right.crs),
-            )
-        })
-        .then_with(|| left.crs.name().cmp(right.crs.name()))
+        right
+            .confidence
+            .cmp(&left.confidence)
+            .then_with(|| prefer(left.crs.name() == name, right.crs.name() == name))
+            .then_with(|| {
+                prefer(
+                    frame_matches(frame.as_ref(), &left.crs, db),
+                    frame_matches(frame.as_ref(), &right.crs, db),
+                )
+            })
+            .then_with(|| {
+                prefer(
+                    directions_and_units(&axes, &axis_list(&left.crs)),
+                    directions_and_units(&axes, &axis_list(&right.crs)),
+                )
+            })
+            .then_with(|| {
+                prefer(
+                    axis_list(&left.crs).len() == axes.len(),
+                    axis_list(&right.crs).len() == axes.len(),
+                )
+            })
+            .then_with(|| {
+                prefer(
+                    ellipsoid_name_is_crs_name(&left.crs),
+                    ellipsoid_name_is_crs_name(&right.crs),
+                )
+            })
+            .then_with(|| left.crs.name().cmp(right.crs.name()))
     });
 }
 
@@ -389,8 +395,7 @@ fn frame_matches(
 }
 
 fn ellipsoid_name_is_crs_name(crs: &GeodeticCRS) -> bool {
-    owning_frame(crs)
-        .is_some_and(|frame| equivalent_name(frame.ellipsoid().name(), crs.name()))
+    owning_frame(crs).is_some_and(|frame| equivalent_name(frame.ellipsoid().name(), crs.name()))
 }
 
 fn db_equivalent(
@@ -534,11 +539,12 @@ impl GeographicCRS {
                 if let Ok(Some(found)) = AuthorityFactory::create(db, identifier.code_space())
                     .create_geographic_3d_crs_from_name(self.name())
                 {
-                    let height_matches = found.coordinate_system().axes().get(2).is_some_and(|axis| {
-                        axis.direction() == "up"
-                            && axis.unit().kind() == super::model::UnitKind::Linear
-                            && (axis.unit().conversion_to_si() - 1.0).abs() <= 1e-10
-                    });
+                    let height_matches =
+                        found.coordinate_system().axes().get(2).is_some_and(|axis| {
+                            axis.direction() == "up"
+                                && axis.unit().kind() == super::model::UnitKind::Linear
+                                && (axis.unit().conversion_to_si() - 1.0).abs() <= 1e-10
+                        });
                     if height_matches && self.is_2d_part_of_3d(&found) {
                         return found;
                     }
@@ -589,9 +595,7 @@ impl ProjectedCRS {
             return self.clone();
         }
         let base = match &self.base {
-            GeodeticCRS::Geographic(crs) => {
-                GeodeticCRS::Geographic(crs.promote_to_3d_with_db(db))
-            }
+            GeodeticCRS::Geographic(crs) => GeodeticCRS::Geographic(crs.promote_to_3d_with_db(db)),
             other => other.clone(),
         };
         let unit = self.coordinate_system.axes[0].unit().clone();
@@ -614,6 +618,7 @@ impl ProjectedCRS {
             base,
             conversion: self.conversion.clone(),
             coordinate_system,
+            implicit_cs: self.implicit_cs,
         }
     }
 
@@ -637,33 +642,42 @@ impl ProjectedCRS {
             base,
             conversion: self.conversion.clone(),
             coordinate_system,
+            implicit_cs: self.implicit_cs,
         }
     }
 
-    /// `ProjectedCRS::identify` for a UTM zone on WGS 84, NAD27, or NAD83.
+    /// `ProjectedCRS::identify`.
     ///
-    /// One base match at confidence 70 or more, an easting/northing metre
-    /// system, and a transverse Mercator with UTM parameters returns that zone.
-    /// An exact CRS name is confidence 100.
+    /// A UTM zone on WGS 84, NAD27, or NAD83 is returned without searching
+    /// when the factory is missing, empty, or EPSG. Any other factory looks
+    /// the CRS up by code, then by name, then by conversion and ellipsoid.
     #[must_use]
     pub fn identify_with(&self, factory: Option<&AuthorityFactory>) -> Vec<(Crs, i32)> {
+        if let Some(hit) = self.utm_shortcut(factory) {
+            return vec![hit];
+        }
+        let Some(factory) = factory else {
+            return Vec::new();
+        };
+        self.identify_in_database(factory)
+    }
+
+    fn utm_shortcut(&self, factory: Option<&AuthorityFactory>) -> Option<(Crs, i32)> {
         if factory.is_some_and(|factory| {
             !(factory.authority().is_empty() || factory.authority() == "EPSG")
         }) {
-            return Vec::new();
+            return None;
         }
-        let Some((zone, hemisphere)) = self.conversion.utm_zone() else {
-            return Vec::new();
-        };
+        let (zone, hemisphere) = self.conversion.utm_zone()?;
         if !easting_northing_metre(&self.coordinate_system) {
-            return Vec::new();
+            return None;
         }
         let base = self.base.identify_with(factory);
         if base.len() != 1 || base[0].1 < 70 {
-            return Vec::new();
+            return None;
         }
         let Crs::Geographic(base_crs) = &base[0].0 else {
-            return Vec::new();
+            return None;
         };
         let (name, code) = if base_crs.is_equivalent_to(&GeographicCRS::epsg_4326()) {
             utm_name_code("WGS 84 / UTM zone ", zone, hemisphere, 32_600, 32_700)
@@ -688,15 +702,13 @@ impl ProjectedCRS {
             };
             (format!("NAD83 / UTM zone {zone}N"), code)
         } else {
-            return Vec::new();
+            return None;
         };
         let conversion = match hemisphere {
             UtmHemisphere::North => Conversion::create_utm_north(&OpProps::new(), zone),
             UtmHemisphere::South => Conversion::create_utm_south(&OpProps::new(), zone),
         };
-        let Ok(conversion) = conversion else {
-            return Vec::new();
-        };
+        let conversion = conversion.ok()?;
         let crs = ProjectedCRS::create(
             name.clone(),
             GeodeticCRS::Geographic(match code {
@@ -715,8 +727,408 @@ impl ProjectedCRS {
         } else {
             70
         };
-        vec![(Crs::Projected(crs), confidence)]
+        Some((Crs::Projected(crs), confidence))
     }
+
+    fn identify_in_database(&self, factory: &AuthorityFactory) -> Vec<(Crs, i32)> {
+        let db = factory.database_context();
+        let mut hits = Vec::new();
+        let name = self.name();
+        let insignificant_name = insignificant(name);
+        let mut found_equivalent_name = false;
+        let mut has_non_matching_id = false;
+        if compatible_authority(self.identifiers(), factory) {
+            for identifier in self.identifiers() {
+                if !(factory.authority().is_empty()
+                    || identifier.code_space() == factory.authority())
+                {
+                    continue;
+                }
+                let looked = AuthorityFactory::create(db, identifier.code_space())
+                    .create_projected_crs(identifier.code());
+                if let Ok(found) = looked {
+                    let matched = self.is_equivalent_to_with(&found, Equivalence::ExceptAxisOrder);
+                    hits.push(ProjectedHit {
+                        crs: found,
+                        confidence: if matched { 100 } else { 25 },
+                    });
+                    if matched {
+                        return finish_projected(hits);
+                    }
+                }
+            }
+            has_non_matching_id = true;
+        } else if !insignificant_name {
+            let Some(semi_major) = self
+                .base
+                .ellipsoid()
+                .map(|ellipsoid| ellipsoid.semi_major_axis().si_value())
+            else {
+                return Vec::new();
+            };
+            for mode in [NameMatch::Exact, NameMatch::Approximate] {
+                let Ok(objects) = factory.create_projected_crs_by_name(name, mode) else {
+                    break;
+                };
+                for (crs, matched_name) in objects {
+                    let eq_name = equivalent_name(name, &matched_name);
+                    found_equivalent_name |= eq_name;
+                    let Some(other_major) = crs
+                        .base_crs()
+                        .ellipsoid()
+                        .map(|ellipsoid| ellipsoid.semi_major_axis().si_value())
+                    else {
+                        continue;
+                    };
+                    if (semi_major - other_major).abs() <= 1e-4 * semi_major.abs() {
+                        let confidence = add_projected(
+                            self,
+                            &mut hits,
+                            crs,
+                            CandidateMatch {
+                                equivalent_name: eq_name,
+                                non_matching_id: false,
+                            },
+                        );
+                        if confidence == 100 {
+                            return finish_projected(hits);
+                        }
+                    }
+                }
+                if !hits.is_empty() {
+                    break;
+                }
+            }
+        }
+        sort_projected(name, &mut hits);
+        if !found_equivalent_name && (hits.is_empty() || hits[0].confidence < 50) {
+            let mut known = Vec::new();
+            for hit in &hits {
+                if let Some(identifier) = hit.crs.identifiers().first() {
+                    known.push((
+                        identifier.code_space().to_owned(),
+                        identifier.code().to_owned(),
+                    ));
+                }
+            }
+            if let Ok(candidates) =
+                factory.create_projected_crs_from_existing(name, &existing_query(self, factory))
+            {
+                for crs in candidates {
+                    if let Some(identifier) = crs.identifiers().first() {
+                        if known.iter().any(|(space, code)| {
+                            space == identifier.code_space() && code == identifier.code()
+                        }) {
+                            continue;
+                        }
+                    }
+                    add_projected(
+                        self,
+                        &mut hits,
+                        crs,
+                        CandidateMatch {
+                            equivalent_name: insignificant_name,
+                            non_matching_id: has_non_matching_id,
+                        },
+                    );
+                }
+            }
+            sort_projected(name, &mut hits);
+        }
+        if hits.len() >= 2 {
+            let highest = hits[0].confidence;
+            hits.retain(|hit| hit.confidence == highest);
+        }
+        finish_projected(hits)
+    }
+}
+
+struct ProjectedHit {
+    crs: ProjectedCRS,
+    confidence: i32,
+}
+
+fn finish_projected(hits: Vec<ProjectedHit>) -> Vec<(Crs, i32)> {
+    hits.into_iter()
+        .map(|hit| (Crs::Projected(hit.crs), hit.confidence))
+        .collect()
+}
+
+fn sort_projected(name: &str, hits: &mut [ProjectedHit]) {
+    hits.sort_by(|left, right| {
+        right
+            .confidence
+            .cmp(&left.confidence)
+            .then_with(|| {
+                let left_exact = left.crs.name() == name;
+                let right_exact = right.crs.name() == name;
+                right_exact.cmp(&left_exact)
+            })
+            .then_with(|| left.crs.name().cmp(right.crs.name()))
+    });
+}
+
+struct CandidateMatch {
+    equivalent_name: bool,
+    non_matching_id: bool,
+}
+
+fn add_projected(
+    crs: &ProjectedCRS,
+    hits: &mut Vec<ProjectedHit>,
+    candidate: ProjectedCRS,
+    matched: CandidateMatch,
+) -> i32 {
+    let left_datum = datum_label(crs.base_crs());
+    let right_datum = datum_label(candidate.base_crs());
+    let left_unknown = left_datum == "unknown";
+    let right_unknown = right_datum == "unknown";
+    let datum_xor = (left_unknown && !right_unknown) || (!left_unknown && right_unknown);
+    let conversion_matches = crs
+        .deriving_conversion()
+        .is_equivalent_to_with(candidate.deriving_conversion(), Equivalence::Equivalent);
+    let full = crs.is_equivalent_to_with(&candidate, Equivalence::ExceptAxisOrder);
+    let implicit = crs.implicit_cs
+        && unit_matches(crs, &candidate)
+        && crs
+            .base_crs()
+            .is_equivalent_to_with(candidate.base_crs(), Equivalence::ExceptAxisOrder)
+        && conversion_matches;
+    let confidence = if (full || implicit) && !datum_xor {
+        if candidate.name() == crs.name() {
+            hits.clear();
+            if matched.non_matching_id {
+                70
+            } else {
+                100
+            }
+        } else if matched.equivalent_name {
+            90
+        } else {
+            70
+        }
+    } else if ellipsoids_match(crs.base_crs().ellipsoid(), candidate.base_crs().ellipsoid())
+        && conversion_matches
+    {
+        let cs_matches =
+            cartesian_equivalent(crs.coordinate_system(), candidate.coordinate_system())
+                || (crs.implicit_cs && unit_matches(crs, &candidate));
+        if cs_matches {
+            if !datum_is_significant(&left_datum) || left_datum == right_datum {
+                70
+            } else {
+                60
+            }
+        } else {
+            50
+        }
+    } else {
+        25
+    };
+    hits.push(ProjectedHit {
+        crs: candidate,
+        confidence,
+    });
+    confidence
+}
+
+fn datum_label(crs: &GeodeticCRS) -> String {
+    if let Some(datum) = crs.datum() {
+        return datum.name().to_owned();
+    }
+    if let Some(ensemble) = crs.datum_ensemble() {
+        if let Some(Datum::Geodetic(frame)) = ensemble.as_datum() {
+            return frame.name().to_owned();
+        }
+        return ensemble.name().to_owned();
+    }
+    String::new()
+}
+
+fn datum_is_significant(name: &str) -> bool {
+    !name.to_ascii_lowercase().starts_with("unknown") && name != "unnamed"
+}
+
+fn unit_matches(left: &ProjectedCRS, right: &ProjectedCRS) -> bool {
+    match (
+        left.coordinate_system().axes().first(),
+        right.coordinate_system().axes().first(),
+    ) {
+        (Some(left), Some(right)) => units_near(left.unit(), right.unit()),
+        _ => false,
+    }
+}
+
+fn units_near(left: &UnitOfMeasure, right: &UnitOfMeasure) -> bool {
+    (left.conversion_to_si() - right.conversion_to_si()).abs()
+        <= 1e-10 * left.conversion_to_si().abs()
+}
+
+fn cartesian_equivalent(left: &CartesianCS, right: &CartesianCS) -> bool {
+    let left = left.axes();
+    let right = right.axes();
+    left.len() == right.len()
+        && left.iter().zip(right).all(|(left, right)| {
+            left.direction() == right.direction() && units_near(left.unit(), right.unit())
+        })
+}
+
+fn ellipsoids_match(left: Option<&Ellipsoid>, right: Option<&Ellipsoid>) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => ellipsoid_shape(left, right),
+        _ => false,
+    }
+}
+
+fn ellipsoid_shape(left: &Ellipsoid, right: &Ellipsoid) -> bool {
+    if left.name() == "Clarke 1880 mod." || right.name() == "Clarke 1880 mod." {
+        let major_left = left.semi_major_axis().si_value();
+        let major_right = right.semi_major_axis().si_value();
+        let flat_left = left.inverse_flattening();
+        let flat_right = right.inverse_flattening();
+        return (major_left - major_right).abs() < 1e-8 * major_left.abs()
+            && (flat_left - flat_right).abs() < 1e-5 * flat_left.abs();
+    }
+    if !measures_near(left.semi_major_axis(), right.semi_major_axis()) {
+        return false;
+    }
+    if let (Some(left_minor), Some(right_minor)) = (left.semi_minor_axis(), right.semi_minor_axis())
+    {
+        if !measures_near(left_minor, right_minor) {
+            return false;
+        }
+    }
+    if let (Some(left_flat), Some(right_flat)) = (
+        left.declared_inverse_flattening(),
+        right.declared_inverse_flattening(),
+    ) {
+        if (left_flat - right_flat).abs() > 2e-10 * left_flat.abs() {
+            return false;
+        }
+    }
+    let left_minor = computed_minor(left);
+    let right_minor = computed_minor(right);
+    (left_minor - right_minor).abs() <= 2e-10 * left_minor.abs()
+}
+
+fn computed_minor(ellipsoid: &Ellipsoid) -> f64 {
+    if let Some(minor) = ellipsoid.semi_minor_axis() {
+        return minor.si_value();
+    }
+    let major = ellipsoid.semi_major_axis().si_value();
+    let flattening = ellipsoid.inverse_flattening();
+    if flattening == 0.0 {
+        major
+    } else {
+        major * (1.0 - 1.0 / flattening)
+    }
+}
+
+fn measures_near(left: &Measure, right: &Measure) -> bool {
+    let left_si = left.si_value();
+    let right_si = right.si_value();
+    (left_si - right_si).abs() <= 2e-10 * left_si.abs()
+}
+
+fn existing_query(crs: &ProjectedCRS, factory: &AuthorityFactory) -> ExistingProjectedQuery {
+    let semi_major = crs
+        .base_crs()
+        .ellipsoid()
+        .map(|ellipsoid| ellipsoid.semi_major_axis().si_value())
+        .unwrap_or(0.0);
+    let method = crs.deriving_conversion().method();
+    let mut angles = Vec::new();
+    let mut first_parallel = None;
+    let mut second_parallel = None;
+    let degree = crs
+        .base_crs()
+        .coordinate_system()
+        .axes()
+        .first()
+        .is_some_and(|axis| {
+            (axis.unit().conversion_to_si() - UnitOfMeasure::degree().conversion_to_si()).abs()
+                <= 1e-10 * UnitOfMeasure::degree().conversion_to_si()
+        });
+    if degree {
+        for (index, parameter) in crs.deriving_conversion().parameters().iter().enumerate() {
+            let ParameterValue::Measure(measure) = parameter.value() else {
+                break;
+            };
+            if parameter.code().is_empty() {
+                break;
+            }
+            let slot = index + 1;
+            if method.code() == "9802" && parameter.code() == "8823" {
+                first_parallel = Some((slot, measure.value()));
+                continue;
+            }
+            if method.code() == "9802" && parameter.code() == "8824" {
+                second_parallel = Some((slot, measure.value()));
+                continue;
+            }
+            let is_degree = (measure.unit().conversion_to_si()
+                - UnitOfMeasure::degree().conversion_to_si())
+            .abs()
+                <= 1e-10 * UnitOfMeasure::degree().conversion_to_si();
+            if is_degree {
+                angles.push((
+                    slot,
+                    parameter.code().to_owned(),
+                    measure.value() - 1.0,
+                    measure.value() + 1.0,
+                ));
+            }
+        }
+    }
+    let parallel_swap = match (first_parallel, second_parallel) {
+        (Some((first, latitude)), Some((second, other))) => Some((first, second, latitude, other)),
+        _ => None,
+    };
+    ExistingProjectedQuery {
+        semi_major,
+        method_code: method.code().to_owned(),
+        method_name: method.name().to_owned(),
+        proj_name: String::new(),
+        base_ids: base_identifiers(crs.base_crs(), factory),
+        angles,
+        parallel_swap,
+    }
+}
+
+fn base_identifiers(base: &GeodeticCRS, factory: &AuthorityFactory) -> Vec<(String, String)> {
+    let mut ids = identifiers_of(&base.identify_with(Some(factory)));
+    if let GeodeticCRS::Geographic(geographic) = base {
+        let axes = geographic.coordinate_system().axes();
+        if axes.len() >= 2 {
+            let north_east = matches!(
+                (axes[0].direction(), axes[1].direction()),
+                ("north", "east") | ("east", "north")
+            );
+            if north_east {
+                let mut swapped = geographic.clone();
+                swapped.coordinate_system.axes.swap(0, 1);
+                ids.extend(identifiers_of(
+                    &GeodeticCRS::Geographic(swapped).identify_with(Some(factory)),
+                ));
+            }
+        }
+    }
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
+fn identifiers_of(hits: &[(Crs, i32)]) -> Vec<(String, String)> {
+    let mut ids = Vec::new();
+    for (crs, _) in hits {
+        if let Some(identifier) = crs.identifiers().first() {
+            ids.push((
+                identifier.code_space().to_owned(),
+                identifier.code().to_owned(),
+            ));
+        }
+    }
+    ids
 }
 
 fn utm_name_code(

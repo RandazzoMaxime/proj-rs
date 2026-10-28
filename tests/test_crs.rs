@@ -3,11 +3,12 @@
 //! Each function is one `TEST()` name. WKT text is the expected string from that test.
 
 use proj_rs::{
-    AuthorityFactory, Axis, CartesianCS, Conversion, CoordinateSystem, Crs, DatabaseContext, Datum,
-    DatumEnsemble, EllipsoidalCS, EllipsoidalHeightPolicy, Equivalence, GeodeticCRS,
-    LinunitPolicy, GeodeticReferenceFrame, GeographicCRS, OpProps, OutputAxisRule, PrimeMeridian,
-    ProjectedCRS, UnitKind, UnitOfMeasure, VerticalReferenceFrame, WktConvention, WktFormatter,
-    WktLines, WktParser, WktStrictness, create_crs_from_proj_string, create_from_user_input,
+    create_crs_from_proj_string, create_from_user_input, AuthorityFactory, Axis, CartesianCS,
+    Conversion, CoordinateSystem, Crs, DatabaseContext, Datum, DatumEnsemble, EllipsoidalCS,
+    EllipsoidalHeightPolicy, Equivalence, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS,
+    LinunitPolicy, OpProps, OutputAxisRule, PrimeMeridian, ProjectedCRS, UnitKind, UnitOfMeasure,
+    VerticalReferenceFrame, WktConvention, WktDialect, WktFormatter, WktLines, WktParser,
+    WktStrictness,
 };
 
 fn export(crs: &GeographicCRS, convention: WktConvention) -> String {
@@ -28,9 +29,7 @@ fn crs_epsg_4901_as_wkt1_esri_with_primem_unit_name_morphing() {
         .create_coordinate_reference_system("4901")
         .expect("EPSG:4901");
     let wkt = crs
-        .export_to_wkt(
-            &mut WktFormatter::create(WktConvention::Wkt1Esri).with_database(db),
-        )
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Esri).with_database(db))
         .expect("WKT1 ESRI");
     assert_eq!(
         wkt,
@@ -559,7 +558,10 @@ fn crs_iau_1000_as_projjson() {
         json.contains("\"authority\": \"IAU\","),
         "missing IAU authority in {json}"
     );
-    assert!(json.contains("\"code\": 1000,"), "missing IAU code in {json}");
+    assert!(
+        json.contains("\"code\": 1000,"),
+        "missing IAU code in {json}"
+    );
     assert!(
         json.contains("\"version\": 2015"),
         "missing IAU version in {json}"
@@ -653,7 +655,9 @@ GEODCRS[\"WGS 84\",
 #[test]
 fn crs_geocentric_crs_as_wkt2_simplified() {
     let wkt = Crs::Geodetic(geocentric_4328())
-        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2015Simplified))
+        .export_to_wkt(&mut WktFormatter::create(
+            WktConvention::Wkt2_2015Simplified,
+        ))
         .expect("wkt");
     assert_eq!(
         wkt,
@@ -778,7 +782,10 @@ fn crs_geodeticcrs_identify_no_db() {
 
     let wgs84 = Crs::Geographic(GeographicCRS::epsg_4326());
     canonical(wgs84.identify(), 100);
-    canonical(Crs::Geodetic(GeodeticCRS::Geographic(GeographicCRS::epsg_4326())).identify(), 100);
+    canonical(
+        Crs::Geodetic(GeodeticCRS::Geographic(GeographicCRS::epsg_4326())).identify(),
+        100,
+    );
 
     let named = GeographicCRS::create(
         "WGS 84",
@@ -1000,20 +1007,22 @@ fn crs_geodeticcrs_identify_db() {
         GeodeticReferenceFrame::epsg_6326(),
         UnitOfMeasure::degree(),
     )
-        .with_identifier("EPSG", "i_dont_exist");
+    .with_identifier("EPSG", "i_dont_exist");
     assert!(missing_name.identify_with(Some(&factory)).is_empty());
 
-    let from_datum = create_crs_from_proj_string("+proj=longlat +datum=WGS84 +type=crs").expect("wgs84");
+    let from_datum =
+        create_crs_from_proj_string("+proj=longlat +datum=WGS84 +type=crs").expect("wgs84");
     let found = from_datum.identify_with(Some(&factory));
     assert_eq!(found.len(), 1);
     assert_eq!(epsg_code(&found[0].0), ("EPSG", "4326"));
     assert_eq!(found[0].1, 70);
 
-    let from_ellps = create_crs_from_proj_string("+proj=longlat +ellps=GRS80 +type=crs").expect("grs80");
+    let from_ellps =
+        create_crs_from_proj_string("+proj=longlat +ellps=GRS80 +type=crs").expect("grs80");
     let found = from_ellps.identify_with(Some(&factory));
-    assert!(found.iter().any(|(crs, confidence)| {
-        epsg_code(crs) == ("EPSG", "7844") && *confidence == 60
-    }));
+    assert!(found
+        .iter()
+        .any(|(crs, confidence)| { epsg_code(crs) == ("EPSG", "7844") && *confidence == 60 }));
 
     let gda_with_id = wkt_crs(GDA2020_WITH_ID, None);
     let found = gda_with_id.identify_with(Some(&all));
@@ -1637,7 +1646,12 @@ AXIS[\"Northing\",NORTH],\
 AXIS[\"Easting\",EAST]]";
     let mut parser = WktParser::new();
     parser.attach_database(db);
-    let crs = parser.create_from_wkt(wkt).expect("wkt").crs().expect("crs").clone();
+    let crs = parser
+        .create_from_wkt(wkt)
+        .expect("wkt")
+        .crs()
+        .expect("crs")
+        .clone();
     let Crs::Projected(projected) = crs else {
         panic!("ETRS89 / UTM zone 32N (N-E) is a projected CRS");
     };
@@ -1662,7 +1676,12 @@ PARAMETER[\"false_northing\",3210000],\
 UNIT[\"metre\",1]]";
     let mut parser = WktParser::new();
     parser.attach_database(db);
-    let crs = parser.create_from_wkt(wkt).expect("wkt").crs().expect("crs").clone();
+    let crs = parser
+        .create_from_wkt(wkt)
+        .expect("wkt")
+        .crs()
+        .expect("crs")
+        .clone();
     let Crs::Projected(projected) = crs else {
         panic!("ETRS89 / ETRS-LAEA is a projected CRS");
     };
@@ -1735,7 +1754,9 @@ fn crs_projected_crs_3d_as_wkt1_gdal_with_ellipsoidal_height_as_vertical_crs() {
         .promote_to_3d(Some(&db));
     let mut formatter = WktFormatter::create(WktConvention::Wkt1Gdal).with_database(db);
     formatter.set_ellipsoidal_height(EllipsoidalHeightPolicy::AllowAsVertical);
-    let wkt = Crs::Projected(crs).export_to_wkt(&mut formatter).expect("wkt");
+    let wkt = Crs::Projected(crs)
+        .export_to_wkt(&mut formatter)
+        .expect("wkt");
     assert_eq!(
         wkt,
         "\
@@ -1826,8 +1847,10 @@ PROJCRS[\"NTF (Paris) / Lambert Nord France\",
     );
     let db = DatabaseContext::create().expect("proj.db");
     assert_eq!(
-        crs.export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Gdal).with_database(db.clone()))
-            .expect("wkt1"),
+        crs.export_to_wkt(
+            &mut WktFormatter::create(WktConvention::Wkt1Gdal).with_database(db.clone())
+        )
+        .expect("wkt1"),
         "PROJCS[\"NTF (Paris) / Lambert Nord France\",\n    \
 GEOGCS[\"NTF (Paris)\",\n        \
 DATUM[\"Nouvelle_Triangulation_Francaise_Paris\",\n            \
@@ -2165,8 +2188,12 @@ PROJCRS[\"test\",
         .expect("projected")
         .clone();
     let db = DatabaseContext::create().expect("proj.db");
-    let exported = crs.export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Gdal).with_database(db));
-    assert!(exported.is_err(), "a non-zero latitude of origin is not WKT1 Mercator");
+    let exported =
+        crs.export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Gdal).with_database(db));
+    assert!(
+        exported.is_err(),
+        "a non-zero latitude of origin is not WKT1 Mercator"
+    );
 }
 
 #[test]
@@ -2183,8 +2210,9 @@ fn crs_projected_crs_deriving_conversion() {
 fn crs_projected_crs_shallow_clone() {
     let crs = utm_31n();
     assert!(crs.is_equivalent_to(&crs));
-    assert!(!Crs::Projected(crs.clone())
-        .is_equivalent_to(&Crs::Geographic(GeographicCRS::epsg_4326())));
+    assert!(
+        !Crs::Projected(crs.clone()).is_equivalent_to(&Crs::Geographic(GeographicCRS::epsg_4326()))
+    );
     let clone = crs.clone();
     assert!(clone.is_equivalent_to(&crs));
     assert!(std::ptr::eq(
@@ -2267,7 +2295,10 @@ fn crs_projected_crs_identify_no_db() {
     let unnamed = utm_projected("", GeographicCRS::epsg_4326(), 1, UtmSide::North);
     let found = Crs::Projected(unnamed).identify();
     assert_eq!(found.len(), 1);
-    assert_eq!(found[0].0.authority_code("EPSG").expect("code").code(), "32601");
+    assert_eq!(
+        found[0].0.authority_code("EPSG").expect("code").code(),
+        "32601"
+    );
     assert_eq!(found[0].1, 70);
     let official = factory.create_projected_crs("32601").expect("32601");
     let Crs::Projected(found_crs) = &found[0].0 else {
@@ -2283,7 +2314,10 @@ fn crs_projected_crs_identify_no_db() {
     ));
     let found = named.identify();
     assert_eq!(found.len(), 1);
-    assert_eq!(found[0].0.authority_code("EPSG").expect("code").code(), "32760");
+    assert_eq!(
+        found[0].0.authority_code("EPSG").expect("code").code(),
+        "32760"
+    );
     assert_eq!(found[0].1, 100);
     let official = factory.create_projected_crs("32760").expect("32760");
     let Crs::Projected(found_crs) = &found[0].0 else {
@@ -2299,7 +2333,10 @@ fn crs_projected_crs_identify_no_db() {
     ));
     let found = nad27.identify();
     assert_eq!(found.len(), 1);
-    assert_eq!(found[0].0.authority_code("EPSG").expect("code").code(), "26711");
+    assert_eq!(
+        found[0].0.authority_code("EPSG").expect("code").code(),
+        "26711"
+    );
     assert_eq!(found[0].1, 90);
     let official = factory.create_projected_crs("26711").expect("26711");
     let Crs::Projected(found_crs) = &found[0].0 else {
@@ -2307,10 +2344,18 @@ fn crs_projected_crs_identify_no_db() {
     };
     assert!(found_crs.is_equivalent_to_with(&official, Equivalence::Equivalent));
 
-    let nad83 = Crs::Projected(utm_projected("", GeographicCRS::epsg_4269(), 11, UtmSide::North));
+    let nad83 = Crs::Projected(utm_projected(
+        "",
+        GeographicCRS::epsg_4269(),
+        11,
+        UtmSide::North,
+    ));
     let found = nad83.identify();
     assert_eq!(found.len(), 1);
-    assert_eq!(found[0].0.authority_code("EPSG").expect("code").code(), "26911");
+    assert_eq!(
+        found[0].0.authority_code("EPSG").expect("code").code(),
+        "26911"
+    );
     assert_eq!(found[0].1, 70);
     let official = factory.create_projected_crs("26911").expect("26911");
     let Crs::Projected(found_crs) = &found[0].0 else {
@@ -2318,13 +2363,17 @@ fn crs_projected_crs_identify_no_db() {
     };
     assert!(found_crs.is_equivalent_to_with(&official, Equivalence::Equivalent));
 
-    let parsed = create_crs_from_proj_string("+proj=utm +zone=31 +datum=WGS84 +type=crs").expect("utm");
+    let parsed =
+        create_crs_from_proj_string("+proj=utm +zone=31 +datum=WGS84 +type=crs").expect("utm");
     let Crs::Projected(parsed_projected) = &parsed else {
         panic!("+proj=utm is a projected CRS");
     };
     let found = parsed.identify();
     assert_eq!(found.len(), 1);
-    assert_eq!(found[0].0.authority_code("EPSG").expect("code").code(), "32631");
+    assert_eq!(
+        found[0].0.authority_code("EPSG").expect("code").code(),
+        "32631"
+    );
     assert_eq!(found[0].1, 70);
     let Crs::Projected(found_crs) = &found[0].0 else {
         panic!("identified UTM is projected");
@@ -2725,4 +2774,595 @@ fn crs_epsg_2008_projcrs_deprecated_as_wkt1_gdal() {
         wkt.starts_with("PROJCS[\"NAD27(CGQ77) / SCoPQ zone 2 (deprecated)\""),
         "{wkt}"
     );
+}
+
+fn identified_codes(res: &[(Crs, i32)]) -> String {
+    res.iter()
+        .map(|(crs, confidence)| {
+            let id = crs.identifiers().first().map_or_else(
+                || crs.name().to_owned(),
+                |identifier| format!("{}:{}", identifier.code_space(), identifier.code()),
+            );
+            format!("{id}/{confidence}")
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn epsg_of(crs: &Crs) -> i32 {
+    crs.identifiers()
+        .iter()
+        .find(|identifier| identifier.code_space() == "EPSG")
+        .and_then(|identifier| identifier.code().parse().ok())
+        .unwrap_or(0)
+}
+
+fn expect_one(label: &str, res: &[(Crs, i32)], code: i32, confidence: i32) {
+    assert_eq!(res.len(), 1, "{label}: {}", identified_codes(res));
+    assert_eq!(epsg_of(&res[0].0), code, "{label}");
+    assert_eq!(res[0].1, confidence, "{label}");
+}
+
+fn expect_contains(label: &str, res: &[(Crs, i32)], code: &str, confidence: i32) {
+    let found = res.iter().any(|(crs, found_confidence)| {
+        crs.identifiers()
+            .first()
+            .is_some_and(|identifier| identifier.code() == code && *found_confidence == confidence)
+    });
+    assert!(found, "{label}: {}", identified_codes(res));
+}
+
+fn projected_wkt(db: &DatabaseContext, wkt: &str) -> ProjectedCRS {
+    let mut parser = WktParser::new();
+    parser.attach_database(db.clone());
+    let crs = parser
+        .create_from_wkt(wkt)
+        .unwrap_or_else(|error| panic!("{error}"))
+        .crs()
+        .cloned()
+        .unwrap_or_else(|| panic!("wkt is not a CRS"));
+    let Crs::Projected(crs) = crs else {
+        panic!("wkt is not projected: {}", crs.name());
+    };
+    crs
+}
+
+fn projected_proj(definition: &str) -> ProjectedCRS {
+    let crs = create_crs_from_proj_string(definition)
+        .unwrap_or_else(|error| panic!("{definition}: {error}"));
+    let Crs::Projected(crs) = crs else {
+        panic!("{definition} is not projected");
+    };
+    crs
+}
+
+fn retitled(source: &ProjectedCRS, name: &str, code: Option<&str>) -> ProjectedCRS {
+    let mut crs = ProjectedCRS::create(
+        name,
+        source.base_crs().clone(),
+        source.deriving_conversion().clone(),
+        source.coordinate_system().clone(),
+    );
+    if let Some(code) = code {
+        crs = crs.with_identifier("EPSG", code);
+    }
+    crs
+}
+
+#[test]
+fn crs_projected_crs_identify_db() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let epsg = AuthorityFactory::create(&db, "EPSG");
+    let ignf = AuthorityFactory::create(&db, "IGNF");
+    let all = AuthorityFactory::create(&db, "");
+
+    let crs = epsg.create_projected_crs("2172").expect("2172");
+    expect_one("code 2172", &crs.identify_with(Some(&epsg)), 2172, 100);
+    assert_eq!(crs.identify_with(Some(&all)).len(), 1, "anonymous");
+    assert_eq!(crs.identify_with(Some(&ignf)).len(), 0, "IGNF");
+
+    let ignf_crs = ignf
+        .create_projected_crs("ETRS89UTM28")
+        .expect("ETRS89UTM28");
+    expect_one(
+        "IGNF ETRS89UTM28",
+        &ignf_crs.identify_with(Some(&epsg)),
+        25828,
+        70,
+    );
+
+    let source = epsg.create_projected_crs("2172").expect("2172");
+    let renamed = retitled(&source, "Pulkovo 1942(58) / Poland zone II", Some("1"));
+    expect_one(
+        "missing code",
+        &renamed.identify_with(Some(&epsg)),
+        2172,
+        70,
+    );
+    let wrong_code = retitled(&source, "Pulkovo 1942(58) / Poland zone II", Some("32631"));
+    expect_one(
+        "wrong code",
+        &wrong_code.identify_with(Some(&epsg)),
+        2172,
+        70,
+    );
+    let exact = retitled(&source, "Pulkovo 1942(58) / Poland zone II", None);
+    expect_one("exact name", &exact.identify_with(Some(&epsg)), 2172, 100);
+    let equivalent = retitled(&source, "Pulkovo_1942_58_Poland_zone_II", None);
+    expect_one(
+        "equivalent name",
+        &equivalent.identify_with(Some(&epsg)),
+        2172,
+        90,
+    );
+    let fake = retitled(&source, "i am a faked name", None);
+    expect_one("properties", &fake.identify_with(Some(&epsg)), 2172, 70);
+    let other = epsg.create_projected_crs("3375").expect("3375");
+    let mismatched = retitled(&other, "Pulkovo 1942(58) / Poland zone II", None);
+    expect_one(
+        "name only",
+        &mismatched.identify_with(Some(&epsg)),
+        2172,
+        25,
+    );
+
+    let pipeline = projected_proj(
+        "+type=crs +proj=pipeline +step +proj=axisswap +order=2,1 +step \
+         +proj=unitconvert +xy_in=deg +xy_out=rad +step +proj=omerc \
+         +no_uoff +lat_0=4 +lonc=102.25 +alpha=323.025796466667 \
+         +gamma=323.130102361111 +k=0.99984 +x_0=804671 +y_0=0 +ellps=GRS80",
+    );
+    expect_one(
+        "omerc pipeline",
+        &pipeline.identify_with(Some(&epsg)),
+        3375,
+        70,
+    );
+    let omerc = projected_proj(
+        "+proj=omerc +no_uoff +lat_0=4 +lonc=102.25 \
+         +alpha=323.025796466667 +gamma=323.130102361111 +k=0.99984 \
+         +x_0=804671 +y_0=0 +ellps=GRS80 +type=crs",
+    );
+    expect_one("omerc", &omerc.identify_with(Some(&epsg)), 3375, 70);
+
+    let northing = projected_wkt(
+        &db,
+        "PROJCS[\"ETRS89 / UTM zone 32N (N-E)\",GEOGCS[\"ETRS89\",\
+         DATUM[\"European_Terrestrial_Reference_System_1989\",\
+         SPHEROID[\"GRS 1980\",6378137,298.257222101]],\
+         PRIMEM[\"Greenwich\",0],UNIT[\"degree\",0.0174532925199433]],\
+         PROJECTION[\"Transverse_Mercator\"],\
+         PARAMETER[\"latitude_of_origin\",0],PARAMETER[\"central_meridian\",9],\
+         PARAMETER[\"scale_factor\",0.9996],PARAMETER[\"false_easting\",500000],\
+         PARAMETER[\"false_northing\",0],UNIT[\"metre\",1],\
+         AXIS[\"Northing\",NORTH],AXIS[\"Easting\",EAST]]",
+    );
+    expect_one(
+        "northing easting",
+        &northing.identify_with(Some(&epsg)),
+        3044,
+        100,
+    );
+    let easting = projected_wkt(
+        &db,
+        "PROJCS[\"ETRS89 / UTM zone 32N (N-E)\",GEOGCS[\"ETRS89\",\
+         DATUM[\"European_Terrestrial_Reference_System_1989\",\
+         SPHEROID[\"GRS 1980\",6378137,298.257222101]],\
+         PRIMEM[\"Greenwich\",0],UNIT[\"degree\",0.0174532925199433]],\
+         PROJECTION[\"Transverse_Mercator\"],\
+         PARAMETER[\"latitude_of_origin\",0],PARAMETER[\"central_meridian\",9],\
+         PARAMETER[\"scale_factor\",0.9996],PARAMETER[\"false_easting\",500000],\
+         PARAMETER[\"false_northing\",0],UNIT[\"metre\",1],\
+         AXIS[\"Easting\",EAST], AXIS[\"Northing\",NORTH]]",
+    );
+    expect_one("wrong axis", &easting.identify_with(Some(&epsg)), 3044, 50);
+    let no_axis = projected_wkt(
+        &db,
+        "PROJCS[\"ETRS89 / UTM zone 32N (N-E)\",GEOGCS[\"ETRS89\",\
+         DATUM[\"European_Terrestrial_Reference_System_1989\",\
+         SPHEROID[\"GRS 1980\",6378137,298.257222101]],\
+         PRIMEM[\"Greenwich\",0],UNIT[\"degree\",0.0174532925199433]],\
+         PROJECTION[\"Transverse_Mercator\"],\
+         PARAMETER[\"latitude_of_origin\",0],PARAMETER[\"central_meridian\",9],\
+         PARAMETER[\"scale_factor\",0.9996],PARAMETER[\"false_easting\",500000],\
+         PARAMETER[\"false_northing\",0],UNIT[\"metre\",1]]",
+    );
+    expect_one(
+        "implicit axis",
+        &no_axis.identify_with(Some(&epsg)),
+        3044,
+        100,
+    );
+
+    let lcc = projected_wkt(
+        &db,
+        "PROJCS[\"Lambert Conformal Conic\",GEOGCS[\"grs80\",\
+         DATUM[\"D_North_American_1983\",\
+         SPHEROID[\"Geodetic_Reference_System_1980\",6378137,298.257222101]],\
+         PRIMEM[\"Greenwich\",0],UNIT[\"Degree\",0.017453292519943295]],\
+         PROJECTION[\"Lambert_Conformal_Conic\"],\
+         PARAMETER[\"standard_parallel_1\",34.33333333333334],\
+         PARAMETER[\"standard_parallel_2\",36.16666666666666],\
+         PARAMETER[\"latitude_of_origin\",33.75],\
+         PARAMETER[\"central_meridian\",-79],\
+         PARAMETER[\"false_easting\",609601.22],\
+         PARAMETER[\"false_northing\",0],UNIT[\"Meter\",1]]",
+    );
+    expect_one("ESRI lcc", &lcc.identify_with(Some(&epsg)), 32119, 70);
+
+    let generic = projected_proj("+proj=tmerc +datum=WGS84 +type=crs");
+    assert_eq!(generic.identify_with(Some(&epsg)).len(), 0, "generic tmerc");
+
+    let feet = projected_proj(
+        "+proj=lcc +lat_0=43.5 +lon_0=-93.95 +lat_1=43.5666666666667 \
+         +lat_2=43.8 +x_0=152400.30480061 +y_0=30480.0609601219 \
+         +a=6378521.049 +rf=298.257222100883 +units=us-ft +type=crs",
+    );
+    expect_contains("ESRI 103729", &feet.identify_with(Some(&all)), "103729", 70);
+
+    let xian = projected_proj(
+        "+proj=tmerc +lat_0=0 +lon_0=75 +k=1 +x_0=13500000 +y_0=0 \
+         +a=6378140 +b=6356755.288157528 +units=m +type=crs",
+    );
+    expect_one("EPSG 2327", &xian.identify_with(Some(&epsg)), 2327, 70);
+    let clarke = projected_proj(
+        "+proj=tmerc +lat_0=29.02626833333333 +lon_0=46.5 \
+         +k=0.9994 +x_0=800000 +y_0=0 +ellps=clrk80 +units=m +type=crs",
+    );
+    expect_one("EPSG 6646", &clarke.identify_with(Some(&epsg)), 6646, 70);
+
+    let albers = projected_wkt(
+        &db,
+        "PROJCS[\"USA_Contiguous_Albers_Equal_Area_Conic_USGS_version\",\
+         GEOGCS[\"GCS_North_American_1983\",DATUM[\"D_North_American_1983\",\
+         SPHEROID[\"GRS_1980\",6378137.0,298.257222101]],PRIMEM[\"Greenwich\",0.0],\
+         UNIT[\"Degree\",0.0174532925199433]],PROJECTION[\"Albers\"],\
+         PARAMETER[\"False_Easting\",0.0],PARAMETER[\"False_Northing\",0.0],\
+         PARAMETER[\"Central_Meridian\",-96.0],PARAMETER[\"Standard_Parallel_1\",29.5],\
+         PARAMETER[\"Standard_Parallel_2\",45.5],PARAMETER[\"Latitude_Of_Origin\",23.0],\
+         UNIT[\"Foot_US\",0.3048006096012192]]",
+    );
+    expect_contains(
+        "ESRI 102039",
+        &albers.identify_with(Some(&all)),
+        "102039",
+        50,
+    );
+
+    let nz = projected_wkt(
+        &db,
+        "PROJCS[\"NZGD2000_New_Zealand_Transverse_Mercator_2000\",\
+         GEOGCS[\"GCS_NZGD2000\",DATUM[\"New_Zealand_Geodetic_Datum_2000\",\
+         SPHEROID[\"GRS 1980\",6378137,298.2572221010042,AUTHORITY[\"EPSG\",\"7019\"]],\
+         AUTHORITY[\"EPSG\",\"6167\"]],PRIMEM[\"Greenwich\",0],\
+         UNIT[\"degree\",0.0174532925199433]],PROJECTION[\"Transverse_Mercator\"],\
+         PARAMETER[\"latitude_of_origin\",0],PARAMETER[\"central_meridian\",173],\
+         PARAMETER[\"scale_factor\",0.9996],PARAMETER[\"false_easting\",1600000],\
+         PARAMETER[\"false_northing\",10000000],UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]]]",
+    );
+    expect_one("NZGD2000", &nz.identify_with(Some(&all)), 2193, 90);
+
+    let colorado = projected_wkt(
+        &db,
+        "PROJCS[\"NAD_1983_HARN_StatePlane_Colorado_North_FIPS_0501\",\
+         GEOGCS[\"GCS_North_American_1983_HARN\",DATUM[\"D_North_American_1983_HARN\",\
+         SPHEROID[\"GRS_1980\",6378137.0,298.257222101]],PRIMEM[\"Greenwich\",0.0],\
+         UNIT[\"Degree\",0.0174532925199433]],PROJECTION[\"Lambert_Conformal_Conic\"],\
+         PARAMETER[\"False_Easting\",3000000.000316083],\
+         PARAMETER[\"False_Northing\",999999.999996],\
+         PARAMETER[\"Central_Meridian\",-105.5],\
+         PARAMETER[\"Standard_Parallel_1\",39.71666666666667],\
+         PARAMETER[\"Standard_Parallel_2\",40.78333333333333],\
+         PARAMETER[\"Latitude_Of_Origin\",39.33333333333334],\
+         UNIT[\"Foot_US\",0.3048006096012192]]",
+    );
+    expect_one(
+        "colorado feet",
+        &colorado.identify_with(Some(&all)),
+        2876,
+        100,
+    );
+
+    let japan = projected_wkt(
+        &db,
+        "PROJCS[\"JGD2011_Japan_Zone_2\",GEOGCS[\"GCS_JGD_2011\",\
+         DATUM[\"D_JGD_2011\",SPHEROID[\"GRS_1980\",6378137.0,298.257222101]],\
+         PRIMEM[\"Greenwich\",0.0],UNIT[\"Degree\",0.0174532925199433]],\
+         PROJECTION[\"Transverse_Mercator\"],PARAMETER[\"False_Easting\",0.0],\
+         PARAMETER[\"False_Northing\",0.0],PARAMETER[\"Central_Meridian\",131],\
+         PARAMETER[\"Scale_Factor\",0.9999],PARAMETER[\"Latitude_Of_Origin\",33],\
+         UNIT[\"Meter\",1.0]]",
+    );
+    expect_one("JGD2011", &japan.identify_with(Some(&epsg)), 6670, 90);
+
+    let pei = projected_wkt(
+        &db,
+        "PROJCS[\"NAD_1983_CSRS_Prince_Edward_Island\",\
+         GEOGCS[\"GCS_North_American_1983_CSRS\",\
+         DATUM[\"D_North_American_1983_CSRS\",\
+         SPHEROID[\"GRS_1980\",6378137.0,298.257222101]],\
+         PRIMEM[\"Greenwich\",0.0],UNIT[\"Degree\",0.0174532925199433]],\
+         PROJECTION[\"Double_Stereographic\"],PARAMETER[\"False_Easting\",400000.0],\
+         PARAMETER[\"False_Northing\",800000.0],PARAMETER[\"Central_Meridian\",-63.0],\
+         PARAMETER[\"Scale_Factor\",0.999912],PARAMETER[\"Latitude_Of_Origin\",47.25],\
+         UNIT[\"Meter\",1.0]]",
+    );
+    expect_one("PEI", &pei.identify_with(Some(&all)), 2954, 100);
+
+    let swapped = projected_wkt(
+        &db,
+        "PROJCS[\"foo\",GEOGCS[\"RGF93\",DATUM[\"Reseau_Geodesique_Francais_1993\",\
+         SPHEROID[\"GRS 1980\",6378137,298.257222101]],PRIMEM[\"Greenwich\",0],\
+         UNIT[\"degree\",0.0174532925199433]],\
+         PROJECTION[\"Lambert_Conformal_Conic_2SP\"],\
+         PARAMETER[\"latitude_of_origin\",46.5],PARAMETER[\"central_meridian\",3],\
+         PARAMETER[\"standard_parallel_1\",44],PARAMETER[\"standard_parallel_2\",49],\
+         PARAMETER[\"false_easting\",700000],PARAMETER[\"false_northing\",6600000],\
+         UNIT[\"metre\",1]]",
+    );
+    expect_one(
+        "swapped parallels",
+        &swapped.identify_with(Some(&epsg)),
+        2154,
+        70,
+    );
+
+    let latvia = projected_wkt(
+        &db,
+        "PROJCS[\"LKS92_Latvia_TM\",GEOGCS[\"GCS_LKS92\",DATUM[\"D_Latvia_1992\",\
+         SPHEROID[\"GRS_1980\",6378137,298.257222101]],PRIMEM[\"Greenwich\",0],\
+         UNIT[\"Degree\",0.017453292519943295]],PROJECTION[\"Transverse_Mercator\"],\
+         PARAMETER[\"latitude_of_origin\",0],PARAMETER[\"central_meridian\",24],\
+         PARAMETER[\"scale_factor\",0.9996],PARAMETER[\"false_easting\",500000],\
+         PARAMETER[\"false_northing\",-6000000],UNIT[\"Meter\",1]]",
+    );
+    expect_one("Latvia", &latvia.identify_with(Some(&epsg)), 3059, 90);
+
+    let wrong_datum = projected_wkt(
+        &db,
+        "PROJCS[\"WGS_1984_UTM_Zone_31N\",GEOGCS[\"GCS_WGS_1984\",\
+         DATUM[\"wrong_datum_name\",SPHEROID[\"WGS_1984\",6378137.0,298.257223563]],\
+         PRIMEM[\"Greenwich\",0.0],UNIT[\"Degree\",0.0174532925199433]],\
+         PROJECTION[\"Transverse_Mercator\"],PARAMETER[\"False_Easting\",500000.0],\
+         PARAMETER[\"False_Northing\",0.0],PARAMETER[\"Central_Meridian\",3.0],\
+         PARAMETER[\"Scale_Factor\",0.9996],PARAMETER[\"Latitude_Of_Origin\",0.0],\
+         UNIT[\"Meter\",1.0]]",
+    );
+    expect_one(
+        "wrong datum",
+        &wrong_datum.identify_with(Some(&epsg)),
+        32631,
+        60,
+    );
+
+    let laea = projected_wkt(
+        &db,
+        "PROJCS[\"ETRS89_LAEA_Europe\",GEOGCS[\"GCS_ETRS_1989\",\
+         DATUM[\"D_ETRS_1989\",SPHEROID[\"GRS_1980\",6378137.0,298.257222101]],\
+         PRIMEM[\"Greenwich\",0.0],UNIT[\"Degree\",0.0174532925199433]],\
+         PROJECTION[\"Lambert_Azimuthal_Equal_Area\"],\
+         PARAMETER[\"false_easting\",4321000.0],PARAMETER[\"false_northing\",3210000.0],\
+         PARAMETER[\"central_meridian\",10.0],PARAMETER[\"latitude_of_origin\",52.0],\
+         UNIT[\"Meter\",1.0]]",
+    );
+    expect_one("LAEA", &laea.identify_with(Some(&all)), 3035, 90);
+
+    let lambert93 = projected_wkt(
+        &db,
+        "PROJCS[\"RGF93_Lambert_93\",GEOGCS[\"GCS_RGF_1993\",\
+         DATUM[\"D_RGF_1993\",SPHEROID[\"GRS_1980\",6378137.0,298.257222101]],\
+         PRIMEM[\"Greenwich\",0.0],UNIT[\"Degree\",0.0174532925199433]],\
+         PROJECTION[\"Lambert_Conformal_Conic\"],PARAMETER[\"False_Easting\",700000.0],\
+         PARAMETER[\"False_Northing\",6600000.0],PARAMETER[\"Central_Meridian\",3.0],\
+         PARAMETER[\"Standard_Parallel_1\",44.0],PARAMETER[\"Standard_Parallel_2\",49.0],\
+         PARAMETER[\"Latitude_Of_Origin\",46.5],UNIT[\"Meter\",1.0]]",
+    );
+    expect_contains(
+        "Lambert 93",
+        &lambert93.identify_with(Some(&all)),
+        "2154",
+        90,
+    );
+
+    let ensemble = "PROJCRS[\"WGS 84 / UTM zone 31N\",BASEGEOGCRS[\"WGS 84\",\
+         ENSEMBLE[\"World Geodetic System 1984 ensemble\",\
+         MEMBER[\"World Geodetic System 1984 (Transit)\",ID[\"EPSG\",1166]],\
+         MEMBER[\"World Geodetic System 1984 (G730)\",ID[\"EPSG\",1152]],\
+         MEMBER[\"World Geodetic System 1984 (G873)\",ID[\"EPSG\",1153]],\
+         MEMBER[\"World Geodetic System 1984 (G1150)\",ID[\"EPSG\",1154]],\
+         MEMBER[\"World Geodetic System 1984 (G1674)\",ID[\"EPSG\",1155]],\
+         MEMBER[\"World Geodetic System 1984 (G1762)\",ID[\"EPSG\",1156]],\
+         ELLIPSOID[\"WGS 84\",6378137,298.257223563,LENGTHUNIT[\"metre\",1]],\
+         ENSEMBLEACCURACY[2]]],CONVERSION[\"UTM zone 31N\",\
+         METHOD[\"Transverse Mercator\",ID[\"EPSG\",9807]],\
+         PARAMETER[\"Latitude of natural origin\",0,ANGLEUNIT[\"degree\",0.0174532925199433]],\
+         PARAMETER[\"Longitude of natural origin\",3,ANGLEUNIT[\"degree\",0.0174532925199433]],\
+         PARAMETER[\"Scale factor at natural origin\",0.9996,SCALEUNIT[\"unity\",1]],\
+         PARAMETER[\"False easting\",500000,LENGTHUNIT[\"metre\",1]],\
+         PARAMETER[\"False northing\",0,LENGTHUNIT[\"metre\",1]]],\
+         CS[Cartesian,2],AXIS[\"Easting (E)\",east,ORDER[1]],\
+         AXIS[\"Northing (N)\",north,ORDER[2]],LENGTHUNIT[\"metre\",1]]";
+    let ensemble_crs = WktParser::new()
+        .create_from_wkt(ensemble)
+        .expect("ensemble")
+        .crs()
+        .cloned()
+        .expect("crs");
+    let Crs::Projected(ensemble_crs) = ensemble_crs else {
+        panic!("ensemble WKT");
+    };
+    expect_one(
+        "ensemble",
+        &ensemble_crs.identify_with(Some(&all)),
+        32631,
+        100,
+    );
+    let unknown_ensemble = ensemble
+        .replace("PROJCRS[\"WGS 84 / UTM zone 31N\"", "PROJCRS[\"unknown\"")
+        .replace("BASEGEOGCRS[\"WGS 84\"", "BASEGEOGCRS[\"unknown\"");
+    let unknown_crs = WktParser::new()
+        .create_from_wkt(&unknown_ensemble)
+        .expect("unknown ensemble")
+        .crs()
+        .cloned()
+        .expect("crs");
+    let Crs::Projected(unknown_crs) = unknown_crs else {
+        panic!("unknown ensemble WKT");
+    };
+    let unknown_res = unknown_crs.identify_with(Some(&epsg));
+    assert_eq!(
+        unknown_res.len(),
+        1,
+        "unknown ensemble: {}",
+        identified_codes(&unknown_res)
+    );
+    assert_eq!(epsg_of(&unknown_res[0].0), 32631);
+    assert!(unknown_res[0].1 >= 70, "{}", unknown_res[0].1);
+
+    let krovak = "PROJCS[\"S-JTSK_[JTSK03]_Krovak_East_North\",GEOGCS[\"S-JTSK_[JTSK03]\",\
+         DATUM[\"S-JTSK_[JTSK03]\",SPHEROID[\"Bessel_1841\",6377397.155,299.1528128]],\
+         PRIMEM[\"Greenwich\",0.0],UNIT[\"Degree\",0.0174532925199433]],\
+         PROJECTION[\"Krovak\"],PARAMETER[\"False_Easting\",0.0],\
+         PARAMETER[\"False_Northing\",0.0],PARAMETER[\"Pseudo_Standard_Parallel_1\",78.5],\
+         PARAMETER[\"Scale_Factor\",0.9999],PARAMETER[\"Azimuth\",30.2881397527778],\
+         PARAMETER[\"Longitude_Of_Center\",24.8333333333333],\
+         PARAMETER[\"Latitude_Of_Center\",49.5],PARAMETER[\"X_Scale\",-1.0],\
+         PARAMETER[\"Y_Scale\",1.0],PARAMETER[\"XY_Plane_Rotation\",90.0],UNIT[\"Meter\",1.0]]";
+    assert_eq!(WktParser::guess_dialect(krovak), WktDialect::Wkt1Esri);
+    let krovak = projected_wkt(&db, krovak);
+    expect_one(
+        "Krovak East North",
+        &krovak.identify_with(Some(&all)),
+        8353,
+        100,
+    );
+
+    let pseudo = projected_wkt(
+        &db,
+        "PROJCS[\"ETRS_1989_UTM_Zone_32N_6Stellen\",GEOGCS[\"GCS_ETRS_1989\",\
+         DATUM[\"D_ETRS_1989\",SPHEROID[\"GRS_1980\",6378137.0,298.257222101]],\
+         PRIMEM[\"Greenwich\",0.0],UNIT[\"Degree\",0.0174532925199433]],\
+         PROJECTION[\"Transverse_Mercator\"],PARAMETER[\"False_Easting\",500000.0],\
+         PARAMETER[\"False_Northing\",0.0],PARAMETER[\"Central_Meridian\",9.0],\
+         PARAMETER[\"Scale_Factor\",0.9996],PARAMETER[\"Latitude_Of_Origin\",0.0],\
+         UNIT[\"Meter\",1.0],AUTHORITY[\"ESRI\",\"102328\"]]",
+    );
+    let pseudo_res = pseudo.identify_with(Some(&all));
+    assert!(!pseudo_res.is_empty(), "pseudo ESRI");
+    assert_eq!(
+        epsg_of(&pseudo_res[0].0),
+        25832,
+        "{}",
+        identified_codes(&pseudo_res)
+    );
+    assert_eq!(pseudo_res[0].1, 70);
+
+    let mercury = projected_wkt(
+        &db,
+        "PROJCRS[\"unknown\",BASEGEODCRS[\"Mercury (2015) / Ocentric\",\
+         DATUM[\"Mercury (2015)\",ELLIPSOID[\"Mercury (2015)\",2440530,1075.12334801762,\
+         LENGTHUNIT[\"metre\",1]],ANCHOR[\"Hun Kal: 20 W.0\"]],\
+         PRIMEM[\"Reference Meridian\",0,ANGLEUNIT[\"degree\",0.0174532925199433]],\
+         ID[\"IAU\",19902,2015]],CONVERSION[\"Equirectangular, clon = 0\",\
+         METHOD[\"Equidistant Cylindrical\",ID[\"EPSG\",1028]],\
+         PARAMETER[\"Latitude of 1st standard parallel\",0,\
+         ANGLEUNIT[\"degree\",0.0174532925199433],ID[\"EPSG\",8823]],\
+         PARAMETER[\"Longitude of natural origin\",0,\
+         ANGLEUNIT[\"degree\",0.0174532925199433],ID[\"EPSG\",8802]],\
+         PARAMETER[\"False easting\",0,LENGTHUNIT[\"metre\",1],ID[\"EPSG\",8806]],\
+         PARAMETER[\"False northing\",0,LENGTHUNIT[\"metre\",1],ID[\"EPSG\",8807]]],\
+         CS[Cartesian,2],AXIS[\"(E)\",east,ORDER[1],LENGTHUNIT[\"metre\",1]],\
+         AXIS[\"(N)\",north,ORDER[2],LENGTHUNIT[\"metre\",1]]]",
+    );
+    let mercury_res = mercury.identify_with(Some(&all));
+    assert!(!mercury_res.is_empty(), "mercury");
+    let mercury_id = mercury_res[0].0.identifiers().first().expect("id");
+    assert_eq!(mercury_id.code(), "19912");
+    assert_eq!(mercury_id.code_space(), "IAU_2015");
+    assert_eq!(mercury_res[0].1, 90);
+
+    let korea = projected_wkt(
+        &db,
+        "PROJCS[\"Korea_2000_Korea_Central_Belt_2010\",GEOGCS[\"GCS_Korea_2000\",\
+         DATUM[\"D_Korea_2000\",SPHEROID[\"GRS_1980\",6378137.0,298.257222101]],\
+         PRIMEM[\"Greenwich\",0.0],UNIT[\"Degree\",0.0174532925199433]],\
+         PROJECTION[\"Transverse_Mercator\"],PARAMETER[\"False_Easting\",200000.0],\
+         PARAMETER[\"False_Northing\",600000.0],PARAMETER[\"Central_Meridian\",127.0],\
+         PARAMETER[\"Scale_Factor\",1.0],PARAMETER[\"Latitude_Of_Origin\",38.0],\
+         UNIT[\"Meter\",1.0]]",
+    );
+    let korea_res = korea.identify_with(Some(&all));
+    assert!(!korea_res.is_empty(), "korea");
+    let korea_id = korea_res[0].0.identifiers().first().expect("id");
+    assert_eq!(korea_id.code(), "5186", "{}", identified_codes(&korea_res));
+    assert_eq!(korea_id.code_space(), "EPSG");
+    assert_eq!(korea_res[0].1, 100);
+
+    let arizona = projected_wkt(
+        &db,
+        "PROJCS[\"NAD_1983_StatePlane_Arizona_Central_FIPS_0202_IntlFeet\",\
+         GEOGCS[\"GCS_North_American_1983\",DATUM[\"D_North_American_1983\",\
+         SPHEROID[\"GRS_1980\",6378137.0,298.257222101]],PRIMEM[\"Greenwich\",0.0],\
+         UNIT[\"Degree\",0.0174532925199433]],PROJECTION[\"Transverse_Mercator\"],\
+         PARAMETER[\"False_Easting\",700000.0],PARAMETER[\"False_Northing\",0.0],\
+         PARAMETER[\"Central_Meridian\",-111.9166666666667],\
+         PARAMETER[\"Scale_Factor\",0.9999],PARAMETER[\"Latitude_Of_Origin\",31.0],\
+         UNIT[\"Foot\",0.3048]]",
+    );
+    let arizona_res = arizona.identify_with(Some(&all));
+    assert!(!arizona_res.is_empty(), "arizona");
+    let arizona_id = arizona_res[0].0.identifiers().first().expect("id");
+    assert_eq!(
+        arizona_id.code(),
+        "2223",
+        "{}",
+        identified_codes(&arizona_res)
+    );
+    assert_eq!(arizona_id.code_space(), "EPSG");
+    assert_eq!(arizona_res[0].1, 70);
+
+    let portugal = projected_wkt(
+        &db,
+        "PROJCS[\"ETRS89 / Portugal TM06\",GEOGCS[\"ETRS89\",\
+         DATUM[\"European Terrestrial Reference System 1989\",\
+         SPHEROID[\"GRS 1980\",6378137.0,298.257222101,AUTHORITY[\"EPSG\",\"7019\"]],\
+         AUTHORITY[\"EPSG\",\"6258\"]],PRIMEM[\"Greenwich\",0.0,AUTHORITY[\"EPSG\",\"8901\"]],\
+         UNIT[\"degree\",0.017453292519943295],AXIS[\"Geodetic latitude\",NORTH],\
+         AXIS[\"Geodetic longitude\",EAST],AUTHORITY[\"EPSG\",\"4258\"]],\
+         PROJECTION[\"Transverse_Mercator\",AUTHORITY[\"EPSG\",\"9807\"]],\
+         PARAMETER[\"central_meridian\",-8.133108333333334],\
+         PARAMETER[\"latitude_of_origin\",39.66825833333334],\
+         PARAMETER[\"scale_factor\",1.0],PARAMETER[\"false_easting\",0.0],\
+         PARAMETER[\"false_northing\",0.0],UNIT[\"m\",1.0],\
+         AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH],AUTHORITY[\"EPSG\",\"3763\"]]",
+    );
+    let portugal_res = portugal.identify_with(Some(&epsg));
+    assert!(!portugal_res.is_empty(), "portugal");
+    let portugal_id = portugal_res[0].0.identifiers().first().expect("id");
+    assert_eq!(
+        portugal_id.code(),
+        "3763",
+        "{}",
+        identified_codes(&portugal_res)
+    );
+    assert_eq!(portugal_id.code_space(), "EPSG");
+    assert_eq!(portugal_res[0].1, 100);
+
+    let bessel = projected_wkt(
+        &db,
+        "PROJCRS[\"Transverse Mercator\",BASEGEOGCRS[\"DE_DHDN (whole country, 2001) to ETRS89\",\
+         DATUM[\"DE_DHDN (whole country, 2001) to ETRS89\",\
+         ELLIPSOID[\"Bessel\",6377397.155,299.15281310608,LENGTHUNIT[\"metre\",1]]],\
+         PRIMEM[\"Greenwich\",0,ANGLEUNIT[\"degree\",0.0174532925199433]]],\
+         CONVERSION[\"Transverse Mercator\",METHOD[\"Transverse Mercator\",ID[\"EPSG\",9807]],\
+         PARAMETER[\"Latitude of natural origin\",0,ANGLEUNIT[\"degree\",0.0174532925199433],ID[\"EPSG\",8801]],\
+         PARAMETER[\"Longitude of natural origin\",12,ANGLEUNIT[\"degree\",0.0174532925199433],ID[\"EPSG\",8802]],\
+         PARAMETER[\"Scale factor at natural origin\",1,SCALEUNIT[\"unity\",1],ID[\"EPSG\",8805]],\
+         PARAMETER[\"False easting\",4500000,LENGTHUNIT[\"metre\",1],ID[\"EPSG\",8806]],\
+         PARAMETER[\"False northing\",0,LENGTHUNIT[\"metre\",1],ID[\"EPSG\",8807]]],\
+         CS[Cartesian,2],AXIS[\"easting\",east,ORDER[1],LENGTHUNIT[\"meters\",1]],\
+         AXIS[\"northing\",north,ORDER[2],LENGTHUNIT[\"meters\",1]]]",
+    );
+    let bessel_res = bessel.identify_with(Some(&all));
+    assert_eq!(bessel_res.len(), 13, "{}", identified_codes(&bessel_res));
 }
