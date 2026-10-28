@@ -2843,20 +2843,23 @@ pub struct CompoundCRS {
 impl CompoundCRS {
     /// Build a compound CRS.
     ///
+    /// The first two components must be one of the pairs in OGC 18-005r5 §34:
+    /// a 2D geographic, projected, or derived projected CRS with a vertical CRS,
+    /// or an engineering CRS of at most two axes with a vertical CRS.
+    ///
     /// # Errors
     ///
-    /// Fewer than two components are given. PROJ also rejects two horizontal
-    /// CRS; that check is `compoundCRS_invalid`.
+    /// Fewer than two components are given, or the pair is not allowed.
+    /// Those failures are `compoundCRS_invalid`.
     pub fn create(name: impl Into<String>, components: Vec<Crs>) -> Result<Self, FactoryError> {
         if components.len() < 2 {
             return Err(FactoryError::Invalid(
-                "a compound CRS needs at least two components".to_owned(),
+                "compound CRS should have at least 2 components".to_owned(),
             ));
         }
-        let horizontal = components.iter().filter(|crs| crs.is_horizontal()).count();
-        if horizontal > 1 {
+        if !compound_pair_allowed(&components[0], &components[1]) {
             return Err(FactoryError::Invalid(
-                "a compound CRS cannot contain two horizontal CRS".to_owned(),
+                "components of the compound CRS do not belong to one of the allowed combinations of http://docs.opengeospatial.org/as/18-005r5/18-005r5.html#34".to_owned(),
             ));
         }
         Ok(Self {
@@ -3072,6 +3075,32 @@ impl Crs {
             Self::Bound(crs) => crs.source.is_horizontal(),
             _ => true,
         }
+    }
+}
+
+fn compound_pair_allowed(first: &Crs, second: &Crs) -> bool {
+    let first = match first {
+        Crs::Bound(crs) => crs.source_crs(),
+        other => other,
+    };
+    let second = match second {
+        Crs::Bound(crs) => crs.source_crs(),
+        other => other,
+    };
+    let vertical = matches!(second, Crs::Vertical(_) | Crs::DerivedVertical(_));
+    let vertical_or_height = vertical
+        || matches!(
+            second,
+            Crs::Engineering(crs) if crs.coordinate_system().axes().len() == 1
+        );
+    match first {
+        Crs::Geographic(crs) if crs.coordinate_system().axes().len() == 2 => vertical_or_height,
+        Crs::Projected(crs) if crs.coordinate_system().axes().len() == 2 => vertical_or_height,
+        Crs::DerivedProjected(crs) if crs.coordinate_system().axes().len() == 2 => {
+            vertical_or_height
+        }
+        Crs::Engineering(crs) if crs.coordinate_system().axes().len() <= 2 => vertical,
+        _ => false,
     }
 }
 

@@ -4109,3 +4109,36 @@ fn crs_compound_crs_valid() {
     )
     .is_ok());
 }
+
+#[test]
+fn crs_compound_crs_invalid() {
+    let too_few = CompoundCRS::create("", Vec::new()).expect_err("empty");
+    assert_eq!(
+        too_few.to_string(),
+        "compound CRS should have at least 2 components"
+    );
+    let single = CompoundCRS::create("", vec![Crs::Projected(utm_31n())]).expect_err("one");
+    assert_eq!(
+        single.to_string(),
+        "compound CRS should have at least 2 components"
+    );
+    let two_geographic = CompoundCRS::create(
+        "",
+        vec![
+            Crs::Geographic(GeographicCRS::epsg_4326()),
+            Crs::Geographic(GeographicCRS::epsg_4326()),
+        ],
+    )
+    .expect_err("two geographic");
+    let rejected = "components of the compound CRS do not belong to one of the allowed combinations of http://docs.opengeospatial.org/as/18-005r5/18-005r5.html#34";
+    assert_eq!(two_geographic.to_string(), rejected);
+    let geographic_3d = CompoundCRS::create(
+        "",
+        vec![
+            Crs::Geographic(GeographicCRS::epsg_4979()),
+            Crs::Vertical(odn_height()),
+        ],
+    )
+    .expect_err("geographic 3D");
+    assert_eq!(geographic_3d.to_string(), rejected);
+}
