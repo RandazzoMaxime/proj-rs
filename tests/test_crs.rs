@@ -4142,3 +4142,59 @@ fn crs_compound_crs_invalid() {
     .expect_err("geographic 3D");
     assert_eq!(geographic_3d.to_string(), rejected);
 }
+
+#[test]
+fn crs_compound_crs_as_wkt2() {
+    let crs = CompoundCRS::create(
+        "horizontal + vertical",
+        vec![Crs::Projected(utm_31n()), Crs::Vertical(odn_height())],
+    )
+    .expect("compound")
+    .with_identifier("codespace", "code");
+    let wkt = Crs::Compound(crs)
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2015))
+        .expect("wkt");
+    assert_eq!(
+        wkt,
+        "\
+COMPOUNDCRS[\"horizontal + vertical\",
+    PROJCRS[\"WGS 84 / UTM zone 31N\",
+        BASEGEODCRS[\"WGS 84\",
+            DATUM[\"World Geodetic System 1984\",
+                ELLIPSOID[\"WGS 84\",6378137,298.257223563,
+                    LENGTHUNIT[\"metre\",1]]],
+            PRIMEM[\"Greenwich\",0,
+                ANGLEUNIT[\"degree\",0.0174532925199433]]],
+        CONVERSION[\"UTM zone 31N\",
+            METHOD[\"Transverse Mercator\",
+                ID[\"EPSG\",9807]],
+            PARAMETER[\"Latitude of natural origin\",0,
+                ANGLEUNIT[\"degree\",0.0174532925199433],
+                ID[\"EPSG\",8801]],
+            PARAMETER[\"Longitude of natural origin\",3,
+                ANGLEUNIT[\"degree\",0.0174532925199433],
+                ID[\"EPSG\",8802]],
+            PARAMETER[\"Scale factor at natural origin\",0.9996,
+                SCALEUNIT[\"unity\",1],
+                ID[\"EPSG\",8805]],
+            PARAMETER[\"False easting\",500000,
+                LENGTHUNIT[\"metre\",1],
+                ID[\"EPSG\",8806]],
+            PARAMETER[\"False northing\",0,
+                LENGTHUNIT[\"metre\",1],
+                ID[\"EPSG\",8807]]],
+        CS[Cartesian,2],
+            AXIS[\"(E)\",east,
+                ORDER[1],
+                LENGTHUNIT[\"metre\",1]],
+            AXIS[\"(N)\",north,
+                ORDER[2],
+                LENGTHUNIT[\"metre\",1]]],
+    VERTCRS[\"ODN height\",
+        VDATUM[\"Ordnance Datum Newlyn\"],
+        CS[vertical,1],
+            AXIS[\"gravity-related height (H)\",up,
+                LENGTHUNIT[\"metre\",1]]],
+    ID[\"codespace\",\"code\"]]"
+    );
+}

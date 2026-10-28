@@ -2886,6 +2886,15 @@ impl CompoundCRS {
         &self.components
     }
 
+    /// Attach one authority identifier.
+    #[must_use]
+    pub fn with_identifier(mut self, code_space: &str, code: &str) -> Self {
+        self.identified
+            .identifiers
+            .push(Identifier::new(code_space, code));
+        self
+    }
+
     /// `CompoundCRS::createLax`: a geographic CRS plus an ellipsoidal-height
     /// vertical CRS (`VERT_DATUM` type `2002`) becomes one geographic 3D CRS.
     ///
