@@ -257,22 +257,21 @@ Measured on **one machine**, so the columns can be compared: a cloud VM
 (Intel Xeon @ 2.30 GHz, 2 vCPU, Linux), one core pinned with `taskset -c 1`,
 `batch_path=avx2`, one million points, median of 11 repeats. libproj is the
 Ubuntu 24.04 build, **PROJ 9.4.0**, called through `proj_trans` on the same
-points. `ratio` is this port's time divided by libproj's, so below 1 means this
-port is faster. Two back-to-back runs agree within about 8%.
+points. "N× faster" is libproj's time divided by this port's. Two back-to-back runs agree within about 8%.
 
-| Case | proj-rs, one point at a time | proj-rs, batch (AVX2) | libproj 9.4 | ratio |
-|---|---:|---:|---:|---:|
-| UTM 31 forward | 86.7 | 31.4 | 100.7 | **0.86** (batch 0.31) |
-| UTM 31 inverse | 97.6 | 31.4 (edge) | | |
-| Lambert-93 forward | 62.9 | 19.6 | 79.5 | **0.79** (batch 0.25) |
-| Lambert-93 inverse | 208.3 | | | |
-| Web Mercator forward | 44.4 | | 56.4 | **0.79** |
-| Web Mercator inverse | 33.2 | | | |
-| Helmert 7-parameter | 9.2 | | | |
+| Case (ns per point, lower is better) | libproj 9.4 | proj-rs, one point at a time | proj-rs, batch (AVX2) |
+|---|---:|---:|---:|
+| UTM 31 forward | 100.7 | **86.7** (1.2× faster) | **31.4** (3.2× faster) |
+| Lambert-93 forward | 79.5 | **62.9** (1.3× faster) | **19.6** (4.1× faster) |
+| Web Mercator forward | 56.4 | **44.4** (1.3× faster) | |
+| UTM 31 inverse | | 97.6 | 31.4 (zone edge) |
+| Lambert-93 inverse | | 208.3 | |
+| Web Mercator inverse | | 33.2 | |
+| Helmert 7-parameter | | 9.2 | |
 
-Nanoseconds per point. The batch column is `utm31_batch_center`,
-`lambert93_batch`; the UTM inverse row shows the zone-edge batch. libproj has no
-batch path to compare with, so the batch ratio is against its one-point call.
+The batch column is `utm31_batch_center` and `lambert93_batch`. libproj has no
+batch path, so batch speedups compare against its one-point call. Rows without
+a libproj time are not compared yet.
 Run on `dev` at the commit recorded in
 [`bench/history.jsonl`](bench/history.jsonl).
 
