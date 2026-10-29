@@ -4993,3 +4993,22 @@ fn crs_wkt1_vert_datum_extension_to_wkt2() {
         expected
     );
 }
+
+#[test]
+fn crs_wkt1_vert_datum_extension_to_proj_string() {
+    let wkt = "VERT_CS[\"EGM2008 geoid height\",\n    VERT_DATUM[\"EGM2008 geoid\",2005,\n        EXTENSION[\"PROJ4_GRIDS\",\"egm08_25.gtx\"],\n        AUTHORITY[\"EPSG\",\"1027\"]],\n    UNIT[\"metre\",1,\n        AUTHORITY[\"EPSG\",\"9001\"]],\n    AXIS[\"Up\",UP],\n    AUTHORITY[\"EPSG\",\"3855\"]]";
+    let mut parser = WktParser::new();
+    let parsed = parser
+        .create_from_wkt(wkt)
+        .expect("wkt")
+        .crs()
+        .expect("crs")
+        .clone();
+    let Crs::Bound(crs) = parsed else {
+        panic!("a vertical PROJ4_GRIDS extension builds a bound CRS");
+    };
+    assert_eq!(
+        crs.export_to_proj_string().expect("proj"),
+        "+geoidgrids=egm08_25.gtx +geoid_crs=WGS84 +vunits=m +no_defs +type=crs"
+    );
+}

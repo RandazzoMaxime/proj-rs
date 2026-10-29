@@ -7,7 +7,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_crs.cpp
 
-- `crs.WKT1_VERT_DATUM_EXTENSION_to_PROJ_string`
 - `crs.extractGeographicCRS`
 - `crs.extractVerticalCRS`
 - `crs.derivedGeographicCRS_basic`

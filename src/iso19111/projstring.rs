@@ -231,6 +231,7 @@ impl BoundCRS {
                 projected_bound_proj(crs, towgs84.as_deref(), nadgrids.as_deref())
             }
             Crs::Geodetic(crs) => crs.export_to_proj_string(),
+            Crs::Vertical(crs) => vertical_bound_proj(crs, bound_geoid_grids(self).as_deref()),
             _ => Err(FactoryError::Format(
                 "this bound CRS has no PROJ string in this build".to_owned(),
             )),
@@ -319,6 +320,21 @@ fn geographic_bound_proj(
     parts.push("+no_defs".to_owned());
     parts.push("+type=crs".to_owned());
     parts.join(" ")
+}
+
+fn vertical_bound_proj(crs: &VerticalCRS, grid: Option<&str>) -> Result<String, FactoryError> {
+    let Some(grid) = grid else {
+        return Err(FactoryError::Format(
+            "this bound CRS has no PROJ string in this build".to_owned(),
+        ));
+    };
+    let mut text = format!("+geoidgrids={grid} +geoid_crs=WGS84");
+    if let Some(clause) = vertical_unit_clause(crs.coordinate_system().axis().unit()) {
+        text.push(' ');
+        text.push_str(&clause);
+    }
+    text.push_str(" +no_defs +type=crs");
+    Ok(text)
 }
 
 fn projected_bound_proj(
