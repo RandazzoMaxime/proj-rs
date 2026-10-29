@@ -5049,3 +5049,28 @@ fn crs_extract_geographic_crs() {
     assert!(from_compound.is_equivalent_to(&wgs84));
     assert_eq!(from_compound.identifiers()[0].code(), "4326");
 }
+
+#[test]
+fn crs_extract_vertical_crs() {
+    assert!(Crs::Geographic(GeographicCRS::epsg_4326())
+        .extract_vertical_crs()
+        .is_none());
+    let vertical = odn_height();
+    let projected = ProjectedCRS::create(
+        "WGS 84 / UTM zone 31N",
+        GeodeticCRS::Geographic(GeographicCRS::epsg_4326()),
+        Conversion::create_utm_north(&OpProps::new(), 31).expect("utm"),
+        CartesianCS::create_easting_northing(UnitOfMeasure::metre()),
+    )
+    .with_identifier("EPSG", "32631");
+    let compound = CompoundCRS::create(
+        "horizontal + vertical",
+        vec![Crs::Projected(projected), Crs::Vertical(vertical.clone())],
+    )
+    .expect("compound")
+    .with_identifier("codespace", "code");
+    let found = Crs::Compound(compound)
+        .extract_vertical_crs()
+        .expect("vertical");
+    assert!(found.is_equivalent_to(&vertical));
+}

@@ -3298,6 +3298,31 @@ impl Crs {
         }
     }
 
+    /// `CRS::extractVerticalCRS`.
+    ///
+    /// The vertical CRS inside a vertical, derived vertical, compound, or bound
+    /// CRS. A geographic CRS has none.
+    #[must_use]
+    pub fn extract_vertical_crs(&self) -> Option<VerticalCRS> {
+        match self {
+            Self::Vertical(crs) => Some(crs.clone()),
+            Self::DerivedVertical(crs) => Some(VerticalCRS {
+                identified: crs.identified.clone(),
+                datum: crs.base.datum.clone(),
+                ensemble: crs.base.ensemble.clone(),
+                coordinate_system: crs.coordinate_system.clone(),
+                geoid_models: crs.base.geoid_models.clone(),
+            }),
+            Self::Compound(crs) => crs.components().iter().find_map(Self::extract_vertical_crs),
+            Self::Bound(crs) => crs.source_crs().extract_vertical_crs(),
+            Self::Geographic(_)
+            | Self::Geodetic(_)
+            | Self::Projected(_)
+            | Self::Engineering(_)
+            | Self::DerivedProjected(_) => None,
+        }
+    }
+
     /// Authority identifiers.
     #[must_use]
     pub fn identifiers(&self) -> &[Identifier] {
