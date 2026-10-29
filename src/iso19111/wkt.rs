@@ -38,7 +38,8 @@ use super::model::{
     ensemble_name_as_datum, Axis, BoundCRS, CartesianCS, CompoundCRS, Conversion,
     CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble, DerivedGeodeticCRS,
     ParametricCRS,
-    DerivedGeographicCRS, DerivedProjectedCRS, TemporalCRS, TemporalDatum,
+    DerivedGeographicCRS, DerivedProjectedCRS, DerivedVerticalCRS, TemporalCRS,
+    TemporalDatum,
     Ellipsoid, EngineeringCRS, EngineeringDatum, FactoryError, GeocentricCRS, GeodeticCRS,
     GeodeticReferenceFrame, GeographicCRS, Identified, Identifier, Measure, OperationMethod,
     Parameter, ParameterValue, PrimeMeridian, ProjectedCRS, Transformation, UnitKind,
@@ -598,12 +599,7 @@ pub(crate) fn export_crs(crs: &Crs, formatter: &mut WktFormatter) -> Result<(), 
         Crs::Bound(crs) => export_bound(crs, formatter)?,
         Crs::Engineering(crs) => export_engineering(crs, formatter)?,
         Crs::DerivedProjected(crs) => export_derived_projected(crs, formatter)?,
-        Crs::DerivedVertical(crs) => {
-            return Err(FactoryError::Format(format!(
-                "derived vertical CRS {} has no WKT export in this build",
-                crs.name()
-            )));
-        }
+        Crs::DerivedVertical(crs) => export_derived_vertical(crs, formatter)?,
         Crs::DerivedGeographic(crs) => export_derived_geographic(crs, formatter)?,
         Crs::DerivedGeodetic(crs) => export_derived_geodetic(crs, formatter)?,
         Crs::Temporal(crs) => export_temporal(crs, formatter)?,
@@ -1079,6 +1075,68 @@ fn export_deriving_conversion(
     formatter.format_ids(conversion.identifiers());
     formatter.end_node();
     Ok(())
+}
+
+/// `DerivedVerticalCRS::_exportToWKT`.
+///
+/// WKT1 exports a change of vertical unit or a height/depth reversal as an
+/// ordinary vertical CRS: the derived name, the base datum, and this
+/// coordinate system. Any other derivation is refused. The base stored here is
+/// a vertical CRS, so the walk in PROJ stops after this conversion.
+fn export_derived_vertical(
+    crs: &DerivedVerticalCRS,
+    formatter: &mut WktFormatter,
+) -> Result<(), FactoryError> {
+    if !formatter.wkt2 {
+        if vertical_unit_change(crs.conversion.method().code()) {
+            let as_vertical = VerticalCRS {
+                identified: crs.identified.clone(),
+                datum: crs.base.datum.clone(),
+                ensemble: None,
+                coordinate_system: crs.coordinate_system.clone(),
+                geoid_models: Vec::new(),
+            };
+            return export_vertical(&as_vertical, formatter);
+        }
+        return Err(FactoryError::Format(
+            "DerivedVerticalCRS can only be exported to WKT2".to_owned(),
+        ));
+    }
+    formatter.start_node("VERTCRS", node_from_ids(&crs.identified.identifiers));
+    formatter.add_quoted(crs.name());
+    let base_has_id = !crs.base.identifiers().is_empty();
+    formatter.start_node(
+        "BASEVERTCRS",
+        if formatter.keywords_2019 && base_has_id {
+            NodeId::Present
+        } else {
+            NodeId::Absent
+        },
+    );
+    formatter.add_quoted(crs.base.name());
+    if let Some(datum) = &crs.base.datum {
+        export_vertical_datum(datum, formatter);
+    } else if let Some(ensemble) = &crs.base.ensemble {
+        export_vertical_ensemble(ensemble, formatter);
+    }
+    if formatter.keywords_2019 && !(formatter.id_on_top_only && top_has_id(formatter)) {
+        formatter.output_id.push(true);
+        formatter.format_ids(crs.base.identifiers());
+        formatter.output_id.pop();
+    }
+    formatter.end_node();
+    export_deriving_conversion(&crs.conversion, formatter)?;
+    export_cs(
+        &CoordinateSystem::Vertical(crs.coordinate_system.clone()),
+        formatter,
+    );
+    formatter.base_usage(&crs.identified);
+    formatter.end_node();
+    Ok(())
+}
+
+fn vertical_unit_change(code: &str) -> bool {
+    matches!(code, "1069" | "1104" | "1068")
 }
 
 fn export_projected(crs: &ProjectedCRS, formatter: &mut WktFormatter) -> Result<(), FactoryError> {

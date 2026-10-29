@@ -7,10 +7,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_crs.cpp
 
-- `crs.derivedVerticalCRS_basic`
-- `crs.DerivedVerticalCRS_WKT2`
-- `crs.DerivedVerticalCRS_WKT1`
-- `crs.DerivedVerticalCRS_WKT1_when_simple_derivation`
 - `crs.DerivedEngineeringCRS_WKT2`
 - `crs.DerivedEngineeringCRS_WKT1`
 - `crs.DerivedParametricCRS_WKT2`

@@ -4091,7 +4091,7 @@ fn derived_vertical() -> DerivedVerticalCRS {
     DerivedVerticalCRS::create(
         "Derived vertCRS",
         odn_height(),
-        unimplemented_conversion(),
+        Conversion::create("unnamed", "PROJ unimplemented", Vec::new()),
         VerticalCS::create_gravity_related_height(UnitOfMeasure::metre()),
     )
 }
@@ -4155,6 +4155,79 @@ fn crs_derived_projected_crs_wkt2_2015() {
     let exported = Crs::DerivedProjected(derived_projected_wkt())
         .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2015));
     assert!(exported.is_err());
+}
+
+#[test]
+fn crs_derived_vertical_crs_basic() {
+    let derived = derived_vertical();
+    assert!(derived.is_equivalent_to(&derived));
+    assert!(derived.clone().is_equivalent_to(&derived));
+    assert!(Crs::DerivedVertical(derived.clone())
+        .is_equivalent_to(&Crs::DerivedVertical(derived.clone())));
+    assert!(!Crs::DerivedVertical(derived.clone())
+        .is_equivalent_to(&Crs::Geographic(GeographicCRS::epsg_4326())));
+    assert!(!Crs::DerivedVertical(derived.clone())
+        .is_equivalent_to(&Crs::Vertical(derived.base_crs().clone())));
+    assert!(!Crs::Vertical(derived.base_crs().clone())
+        .is_equivalent_to(&Crs::DerivedVertical(derived)));
+}
+
+#[test]
+fn crs_derived_vertical_crs_wkt2() {
+    let wkt = Crs::DerivedVertical(derived_vertical())
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2015))
+        .expect("wkt2");
+    assert_eq!(
+        wkt,
+        "\
+VERTCRS[\"Derived vertCRS\",
+    BASEVERTCRS[\"ODN height\",
+        VDATUM[\"Ordnance Datum Newlyn\",
+            ID[\"EPSG\",5101]]],
+    DERIVINGCONVERSION[\"unnamed\",
+        METHOD[\"PROJ unimplemented\"]],
+    CS[vertical,1],
+        AXIS[\"gravity-related height (H)\",up,
+            LENGTHUNIT[\"metre\",1,
+                ID[\"EPSG\",9001]]]]"
+    );
+}
+
+#[test]
+fn crs_derived_vertical_crs_wkt1() {
+    let exported = Crs::DerivedVertical(derived_vertical())
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Gdal));
+    assert_eq!(
+        exported.expect_err("wkt1").to_string(),
+        "DerivedVerticalCRS can only be exported to WKT2"
+    );
+}
+
+#[test]
+fn crs_derived_vertical_crs_wkt1_when_simple_derivation() {
+    let conversion = Conversion::create_change_vertical_unit_no_conv_factor(
+        &OpProps::new().name("Vertical Axis Unit Conversion"),
+    )
+    .expect("conversion");
+    let derived = DerivedVerticalCRS::create(
+        "Derived vertCRS",
+        odn_height(),
+        conversion,
+        VerticalCS::create_gravity_related_height(UnitOfMeasure::foot()),
+    );
+    let wkt = Crs::DerivedVertical(derived)
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Gdal))
+        .expect("wkt1");
+    assert_eq!(
+        wkt,
+        "\
+VERT_CS[\"Derived vertCRS\",
+    VERT_DATUM[\"Ordnance Datum Newlyn\",2005,
+        AUTHORITY[\"EPSG\",\"5101\"]],
+    UNIT[\"foot\",0.3048,
+        AUTHORITY[\"EPSG\",\"9002\"]],
+    AXIS[\"Gravity-related height\",UP]]"
+    );
 }
 
 fn date_time_temporal() -> TemporalCRS {
