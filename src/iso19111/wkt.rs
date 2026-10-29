@@ -607,6 +607,12 @@ pub(crate) fn export_crs(crs: &Crs, formatter: &mut WktFormatter) -> Result<(), 
             )));
         }
         Crs::DerivedGeographic(crs) => export_derived_geographic(crs, formatter)?,
+        Crs::DerivedGeodetic(crs) => {
+            return Err(FactoryError::Format(format!(
+                "derived geodetic CRS {} has no WKT export in this build",
+                crs.name()
+            )));
+        }
     }
     Ok(())
 }

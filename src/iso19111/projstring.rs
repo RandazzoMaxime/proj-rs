@@ -95,6 +95,7 @@ impl Crs {
             Self::DerivedProjected(crs) => &crs.identified.remarks,
             Self::DerivedVertical(crs) => &crs.identified.remarks,
             Self::DerivedGeographic(crs) => &crs.identified.remarks,
+            Self::DerivedGeodetic(crs) => &crs.identified.remarks,
         }
     }
 }

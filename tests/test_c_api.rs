@@ -100,6 +100,7 @@ fn crs_kind(crs: &Crs) -> &'static str {
         Crs::Projected(_) => "projected",
         Crs::DerivedProjected(_) => "derived projected",
         Crs::DerivedGeographic(_) => "derived geographic",
+        Crs::DerivedGeodetic(_) => "derived geodetic",
         Crs::DerivedVertical(_) => "derived vertical",
         Crs::Vertical(_) => "vertical",
         Crs::Compound(_) => "compound",
@@ -987,6 +988,7 @@ fn crs_domains(crs: &Crs) -> &[ObjectDomain] {
         Crs::Engineering(crs) => crs.domains(),
         Crs::DerivedProjected(_)
         | Crs::DerivedGeographic(_)
+        | Crs::DerivedGeodetic(_)
         | Crs::DerivedVertical(_)
         | Crs::Bound(_) => &[],
     }
@@ -1007,6 +1009,7 @@ fn body_of_crs(crs: &Crs) -> Option<&'static str> {
         Crs::DerivedProjected(crs) => body_of_crs(&Crs::Projected(crs.base_crs().clone())),
         Crs::DerivedVertical(crs) => body_of_crs(&Crs::Vertical(crs.base_crs().clone())),
         Crs::DerivedGeographic(crs) => body_of_crs(&Crs::Geographic(crs.base_crs().clone())),
+        Crs::DerivedGeodetic(crs) => body_of_crs(&Crs::Geodetic(crs.base_crs().clone())),
     }
 }
 

@@ -8,7 +8,8 @@ use proj_rs::{
     CartesianCS, CoordinateOperation, CoordinateOperationFactory, IntermediateCrsUse, Measure,
     Meridian, Parameter, ParameterValue,
     CompoundCRS, Conversion, CoordinateSystem, Crs, DatabaseContext, Datum, DatumEnsemble,
-    DerivedGeographicCRS, DerivedProjectedCRS, DerivedVerticalCRS, EllipsoidalCS,
+    DerivedGeodeticCRS, DerivedGeographicCRS, DerivedProjectedCRS, DerivedVerticalCRS,
+    EllipsoidalCS,
     EllipsoidalHeightPolicy, Equivalence, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS,
     LinunitPolicy, OpProps, OutputAxisRule, PrimeMeridian, ProjectedCRS, RealizationMethod,
     Transformation, UnitKind, UnitOfMeasure,
@@ -5299,4 +5300,24 @@ GEODCRS[\"WGS 84 Translated\",
         operation,
         "+proj=affine +xoff=0.5 +s11=1 +s12=0 +yoff=2.5 +s21=0 +s22=1"
     );
+}
+
+fn derived_geodetic() -> DerivedGeodeticCRS {
+    DerivedGeodeticCRS::create(
+        "Derived geodetic CRS",
+        GeodeticCRS::Geographic(GeographicCRS::epsg_4326()),
+        Conversion::create("Some conversion", "Some method", Vec::new()),
+        CartesianCS::create_geocentric(UnitOfMeasure::metre()),
+    )
+}
+
+#[test]
+fn crs_derived_geodetic_crs_basic() {
+    let derived = derived_geodetic();
+    assert!(derived.is_equivalent_to(&derived));
+    assert!(!Crs::DerivedGeodetic(derived.clone()).is_equivalent_to(&Crs::Geodetic(
+        derived.base_crs().clone()
+    )));
+    assert!(!Crs::Geodetic(derived.base_crs().clone())
+        .is_equivalent_to(&Crs::DerivedGeodetic(derived)));
 }

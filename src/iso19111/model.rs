@@ -2836,6 +2836,60 @@ impl DerivedProjectedCRS {
     }
 }
 
+/// Derived geodetic CRS.
+///
+/// The base is a geodetic CRS. The coordinate system is cartesian, as in
+/// `DerivedGeodeticCRS::create` with `CartesianCS::createGeocentric`.
+#[derive(Clone, Debug)]
+pub struct DerivedGeodeticCRS {
+    pub(crate) identified: Identified,
+    pub(crate) base: GeodeticCRS,
+    pub(crate) conversion: Conversion,
+    pub(crate) coordinate_system: CartesianCS,
+}
+
+impl DerivedGeodeticCRS {
+    /// `DerivedGeodeticCRS::create`.
+    #[must_use]
+    pub fn create(
+        name: impl Into<String>,
+        base: GeodeticCRS,
+        conversion: Conversion,
+        coordinate_system: CartesianCS,
+    ) -> Self {
+        Self {
+            identified: Identified::named(name),
+            base,
+            conversion,
+            coordinate_system,
+        }
+    }
+
+    /// Name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.identified.name
+    }
+
+    /// Base geodetic CRS.
+    #[must_use]
+    pub fn base_crs(&self) -> &GeodeticCRS {
+        &self.base
+    }
+
+    /// Deriving conversion.
+    #[must_use]
+    pub fn deriving_conversion(&self) -> &Conversion {
+        &self.conversion
+    }
+
+    /// Cartesian coordinate system.
+    #[must_use]
+    pub fn coordinate_system(&self) -> &CartesianCS {
+        &self.coordinate_system
+    }
+}
+
 /// Derived geographic CRS: a geographic base, a deriving conversion, and an ellipsoidal CS.
 #[derive(Clone, Debug)]
 pub struct DerivedGeographicCRS {
@@ -3325,6 +3379,8 @@ pub enum Crs {
     DerivedProjected(DerivedProjectedCRS),
     /// Derived geographic CRS.
     DerivedGeographic(DerivedGeographicCRS),
+    /// Derived geodetic CRS.
+    DerivedGeodetic(DerivedGeodeticCRS),
     /// Derived vertical CRS.
     DerivedVertical(DerivedVerticalCRS),
 }
@@ -3343,6 +3399,7 @@ impl Crs {
             Self::Engineering(crs) => crs.name(),
             Self::DerivedProjected(crs) => crs.name(),
             Self::DerivedGeographic(crs) => crs.name(),
+            Self::DerivedGeodetic(crs) => crs.name(),
             Self::DerivedVertical(crs) => crs.name(),
         }
     }
@@ -3377,6 +3434,7 @@ impl Crs {
             Self::Vertical(_)
             | Self::Engineering(_)
             | Self::DerivedGeographic(_)
+            | Self::DerivedGeodetic(_)
             | Self::DerivedVertical(_) => None,
         }
     }
@@ -3403,7 +3461,8 @@ impl Crs {
             | Self::Projected(_)
             | Self::Engineering(_)
             | Self::DerivedProjected(_)
-            | Self::DerivedGeographic(_) => None,
+            | Self::DerivedGeographic(_)
+            | Self::DerivedGeodetic(_) => None,
         }
     }
 
@@ -3420,6 +3479,7 @@ impl Crs {
             Self::Engineering(crs) => &crs.identified.identifiers,
             Self::DerivedProjected(crs) => &crs.identified.identifiers,
             Self::DerivedGeographic(crs) => &crs.identified.identifiers,
+            Self::DerivedGeodetic(crs) => &crs.identified.identifiers,
             Self::DerivedVertical(crs) => &crs.identified.identifiers,
         }
     }
@@ -3446,6 +3506,7 @@ impl Crs {
             Self::Engineering(crs) => &crs.identified,
             Self::DerivedProjected(crs) => &crs.identified,
             Self::DerivedGeographic(crs) => &crs.identified,
+            Self::DerivedGeodetic(crs) => &crs.identified,
             Self::DerivedVertical(crs) => &crs.identified,
         }
     }
@@ -3465,6 +3526,7 @@ impl Crs {
             Self::Engineering(crs) => &mut crs.identified,
             Self::DerivedProjected(crs) => &mut crs.identified,
             Self::DerivedGeographic(crs) => &mut crs.identified,
+            Self::DerivedGeodetic(crs) => &mut crs.identified,
             Self::DerivedVertical(crs) => &mut crs.identified,
         }
     }
@@ -3494,6 +3556,7 @@ impl Crs {
             Self::Engineering(crs) => crs.identified.deprecated,
             Self::DerivedProjected(crs) => crs.identified.deprecated,
             Self::DerivedGeographic(crs) => crs.identified.deprecated,
+            Self::DerivedGeodetic(crs) => crs.identified.deprecated,
             Self::DerivedVertical(crs) => crs.identified.deprecated,
         }
     }
