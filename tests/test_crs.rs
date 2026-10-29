@@ -4499,3 +4499,88 @@ fn crs_bound_crs_to_wkt2() {
     assert!(crs.clone().is_equivalent_to(&crs));
     assert!(!Crs::Bound(crs).is_equivalent_to(&Crs::Geographic(GeographicCRS::epsg_4326())));
 }
+
+#[test]
+fn crs_bound_crs_with_usage() {
+    let wkt = r#"BOUNDCRS[
+    SOURCECRS[
+        PROJCRS["Monte Mario / Italy zone 2",
+            BASEGEOGCRS["Monte Mario",
+                DATUM["Monte Mario",
+                    ELLIPSOID["International 1924",6378388,297,
+                        LENGTHUNIT["metre",1]]],
+                PRIMEM["Greenwich",0,
+                    ANGLEUNIT["degree",0.0174532925199433]],
+                ID["EPSG",4265]],
+            CONVERSION["unnamed",
+                METHOD["Transverse Mercator",
+                    ID["EPSG",9807]],
+                PARAMETER["Latitude of natural origin",0,
+                    ANGLEUNIT["degree",0.0174532925199433],
+                    ID["EPSG",8801]],
+                PARAMETER["Longitude of natural origin",15,
+                    ANGLEUNIT["degree",0.0174532925199433],
+                    ID["EPSG",8802]],
+                PARAMETER["Scale factor at natural origin",0.9996,
+                    SCALEUNIT["unity",1],
+                    ID["EPSG",8805]],
+                PARAMETER["False easting",2520000,
+                    LENGTHUNIT["metre",1],
+                    ID["EPSG",8806]],
+                PARAMETER["False northing",0,
+                    LENGTHUNIT["metre",1],
+                    ID["EPSG",8807]]],
+            CS[Cartesian,2],
+                AXIS["x",east,
+                    ORDER[1],
+                    LENGTHUNIT["metre",1]],
+                AXIS["y",north,
+                    ORDER[2],
+                    LENGTHUNIT["metre",1]],
+            ID["EPSG",3004]]],
+    TARGETCRS[
+        GEOGCRS["WGS 84",
+            DATUM["World Geodetic System 1984",
+                ELLIPSOID["WGS 84",6378137,298.257223563,
+                    LENGTHUNIT["metre",1]]],
+            PRIMEM["Greenwich",0,
+                ANGLEUNIT["degree",0.0174532925199433]],
+            CS[ellipsoidal,2],
+                AXIS["geodetic latitude (Lat)",north,
+                    ORDER[1],
+                    ANGLEUNIT["degree",0.0174532925199433]],
+                AXIS["geodetic longitude (Lon)",east,
+                    ORDER[2],
+                    ANGLEUNIT["degree",0.0174532925199433]],
+            ID["EPSG",4326]]],
+    ABRIDGEDTRANSFORMATION["Transformation from Monte Mario to WGS84",
+        METHOD["Position Vector transformation (geog2D domain)",
+            ID["EPSG",9606]],
+        PARAMETER["X-axis translation",-50.2,
+            ID["EPSG",8605]],
+        PARAMETER["Y-axis translation",-50.4,
+            ID["EPSG",8606]],
+        PARAMETER["Z-axis translation",84.8,
+            ID["EPSG",8607]],
+        PARAMETER["X-axis rotation",-0.69,
+            ID["EPSG",8608]],
+        PARAMETER["Y-axis rotation",-2.012,
+            ID["EPSG",8609]],
+        PARAMETER["Z-axis rotation",0.459,
+            ID["EPSG",8610]],
+        PARAMETER["Scale difference",0.99997192,
+            ID["EPSG",8611]]],
+    USAGE[
+        SCOPE["unknown"],
+        AREA["Italy - Sicily onshore"],
+        BBOX[36.59,12.36,38.35,15.71]]]"#;
+    let crs = wkt_crs(wkt, None);
+    let Crs::Bound(bound) = &crs else {
+        panic!("the WKT is a bound CRS");
+    };
+    assert_eq!(bound.name(), "Monte Mario / Italy zone 2");
+    let got = crs
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2019))
+        .expect("wkt");
+    assert_eq!(got, wkt);
+}

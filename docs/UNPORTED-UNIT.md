@@ -7,7 +7,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_crs.cpp
 
-- `crs.boundCRS_with_usage`
 - `crs.boundCRS_crs_link`
 - `crs.boundCRS_to_WKT1`
 - `crs.boundCRS_geographicCRS_to_PROJ_string`

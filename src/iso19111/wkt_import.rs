@@ -2593,8 +2593,6 @@ impl WktParser {
     }
 
     fn build_bound(&mut self, node: &WktNode) -> Result<WktObject, FactoryError> {
-        let props = self.build_properties_without_name(node);
-        let _ = props;
         let source = self.wrapped_crs(node, "SOURCECRS")?;
         let target = self.wrapped_crs(node, "TARGETCRS")?;
         let operation = node
@@ -2606,11 +2604,22 @@ impl WktParser {
             target,
             CoordinateOperation::Transformation(transformation),
         );
-        if let Ok(props) = self.build_properties(node) {
-            if !props.name.is_empty() {
+        let quoted_name = node
+            .children
+            .first()
+            .is_some_and(|child| child.value.starts_with('"'));
+        let props = if quoted_name {
+            self.build_properties(node).ok()
+        } else {
+            self.build_properties_without_name(node).ok()
+        };
+        if let Some(props) = props {
+            if quoted_name && !props.name.is_empty() {
                 bound.identified_mut().name = props.name;
             }
             bound.identified_mut().identifiers = props.identifiers;
+            bound.identified_mut().domains = props.domains;
+            bound.identified_mut().remarks = props.remarks;
         }
         Ok(WktObject::Crs(Crs::Bound(bound)))
     }
@@ -3067,6 +3076,9 @@ fn guess_parameter_unit(
             code: String::new(),
         });
     }
+    if ci_contains(name, "rotation") {
+        return Some(UnitOfMeasure::arc_second());
+    }
     if ci_contains(name, "latitude")
         || ci_contains(name, "longitude")
         || ci_contains(name, "meridian")
@@ -3074,7 +3086,6 @@ fn guess_parameter_unit(
         || ci_contains(name, "azimuth")
         || ci_contains(name, "angle")
         || ci_contains(name, "heading")
-        || ci_contains(name, "rotation")
     {
         return Some(angular.clone());
     }
