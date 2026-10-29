@@ -7,8 +7,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_crs.cpp
 
-- `crs.boundCRS_geographicCRS_to_PROJ_string`
-- `crs.boundCRS_projectedCRS_to_PROJ_string`
 - `crs.boundCRS_nadcon_to_PROJ_string_usePROJAlternativeGridNames_false`
 - `crs.boundCRS_nadcon_to_PROJ_string_usePROJAlternativeGridNames_true`
 - `crs.boundCRS_identify_db`

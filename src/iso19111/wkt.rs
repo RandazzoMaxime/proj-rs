@@ -1106,7 +1106,7 @@ fn export_bound(crs: &BoundCRS, formatter: &mut WktFormatter) -> Result<(), Fact
     Ok(())
 }
 
-fn wkt1_towgs84(crs: &BoundCRS) -> Option<Vec<f64>> {
+pub(crate) fn wkt1_towgs84(crs: &BoundCRS) -> Option<Vec<f64>> {
     let hub = crs.target_crs();
     let wgs84 = matches!(hub, Crs::Geographic(_) | Crs::Geodetic(_))
         && hub.name().eq_ignore_ascii_case("WGS 84");

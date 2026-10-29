@@ -4665,3 +4665,49 @@ PROJCS[\"my PROJCRS\",
         expected
     );
 }
+
+#[test]
+fn crs_bound_crs_geographic_crs_to_proj_string() {
+    let geographic = GeographicCRS::create(
+        "my GEOGCRS",
+        Some(GeodeticReferenceFrame::epsg_6326()),
+        None,
+        EllipsoidalCS::create_latitude_longitude(UnitOfMeasure::degree()),
+    )
+    .expect("geographic");
+    let crs = BoundCRS::create_from_towgs84(
+        Crs::Geographic(geographic),
+        &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0],
+    )
+    .expect("bound");
+    assert_eq!(
+        crs.export_to_proj_string().expect("proj"),
+        "+proj=longlat +ellps=WGS84 +towgs84=1,2,3,4,5,6,7 +no_defs +type=crs"
+    );
+}
+
+#[test]
+fn crs_bound_crs_projected_crs_to_proj_string() {
+    let geographic = GeographicCRS::create(
+        "my GEOGCRS",
+        Some(GeodeticReferenceFrame::epsg_6326()),
+        None,
+        EllipsoidalCS::create_latitude_longitude(UnitOfMeasure::degree()),
+    )
+    .expect("geographic");
+    let projected = ProjectedCRS::create(
+        "my PROJCRS",
+        GeodeticCRS::Geographic(geographic),
+        Conversion::create_utm_north(&OpProps::new(), 31).expect("utm"),
+        CartesianCS::create_easting_northing(UnitOfMeasure::metre()),
+    );
+    let crs = BoundCRS::create_from_towgs84(
+        Crs::Projected(projected),
+        &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0],
+    )
+    .expect("bound");
+    assert_eq!(
+        crs.export_to_proj_string().expect("proj"),
+        "+proj=utm +zone=31 +ellps=WGS84 +towgs84=1,2,3,4,5,6,7 +units=m +no_defs +type=crs"
+    );
+}

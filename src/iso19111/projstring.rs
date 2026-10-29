@@ -5,7 +5,7 @@
 
 use super::buildop::OpProps;
 use super::model::{
-    Axis, CartesianCS, CompoundCRS, Conversion, Crs, Datum, DatumEnsemble, Ellipsoid, EllipsoidalCS,
+    Axis, BoundCRS, CartesianCS, CompoundCRS, Conversion, Crs, Datum, DatumEnsemble, Ellipsoid, EllipsoidalCS,
     FactoryError, GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified,
     Identifier, Measure, OperationMethod, Parameter, ParameterValue, PrimeMeridian, ProjectedCRS,
     UnitKind, UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame,
@@ -187,6 +187,86 @@ fn trim_proj_number(value: f64) -> String {
         }
     }
     text
+}
+
+impl BoundCRS {
+    /// `exportToPROJString` for a bound CRS whose hub is WGS 84.
+    ///
+    /// A Helmert transformation is `+ellps` plus `+towgs84`, not `+datum`.
+    ///
+    /// # Errors
+    ///
+    /// The source CRS has no PROJ string, or the transformation is not TOWGS84.
+    pub fn export_to_proj_string(&self) -> Result<String, FactoryError> {
+        let towgs84 = super::wkt::wkt1_towgs84(self);
+        match self.source_crs() {
+            Crs::Geographic(crs) => Ok(geographic_bound_proj(crs, towgs84.as_deref())),
+            Crs::Projected(crs) => projected_bound_proj(crs, towgs84.as_deref()),
+            Crs::Geodetic(crs) => crs.export_to_proj_string(),
+            _ => Err(FactoryError::Format(
+                "this bound CRS has no PROJ string in this build".to_owned(),
+            )),
+        }
+    }
+}
+
+fn geographic_bound_proj(crs: &GeographicCRS, towgs84: Option<&[f64]>) -> String {
+    let Some(values) = towgs84 else {
+        return crs.export_to_proj_string();
+    };
+    let mut parts = vec!["+proj=longlat".to_owned()];
+    if let Some(ellipsoid) = ellipsoid_of(crs) {
+        parts.push(ellipsoid_proj(ellipsoid));
+    }
+    if let Some(meridian) = meridian_of(crs) {
+        if let Some(clause) = prime_meridian_proj(meridian) {
+            parts.push(clause);
+        }
+    }
+    parts.push(format!("+towgs84={}", format_towgs84(values)));
+    parts.push("+no_defs".to_owned());
+    parts.push("+type=crs".to_owned());
+    parts.join(" ")
+}
+
+fn projected_bound_proj(crs: &ProjectedCRS, towgs84: Option<&[f64]>) -> Result<String, FactoryError> {
+    let Some(values) = towgs84 else {
+        return crs.export_to_proj_string();
+    };
+    let mut text = crs.deriving_conversion().export_to_proj_string()?;
+    text.push(' ');
+    text.push_str(&ellipsoid_datum_clause(crs.base_crs()));
+    text.push_str(" +towgs84=");
+    text.push_str(&format_towgs84(values));
+    if let Some(unit) = crs.coordinate_system().axes().first().map(Axis::unit) {
+        if let Some(clause) = linear_unit_clause(unit) {
+            text.push(' ');
+            text.push_str(&clause);
+        }
+    }
+    text.push_str(" +no_defs +type=crs");
+    Ok(text)
+}
+
+fn ellipsoid_datum_clause(crs: &GeodeticCRS) -> String {
+    let mut parts = Vec::new();
+    if let Some(ellipsoid) = crs.ellipsoid() {
+        parts.push(ellipsoid_proj(ellipsoid));
+    }
+    if let Some(meridian) = crs.prime_meridian() {
+        if let Some(clause) = prime_meridian_proj(meridian) {
+            parts.push(clause);
+        }
+    }
+    parts.join(" ")
+}
+
+fn format_towgs84(values: &[f64]) -> String {
+    values
+        .iter()
+        .map(|value| trim_proj_number(*value))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 impl ProjectedCRS {
