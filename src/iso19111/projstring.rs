@@ -6,8 +6,9 @@
 use super::buildop::OpProps;
 use super::factory::DatabaseContext;
 use super::model::{
-    Axis, BoundCRS, CartesianCS, CompoundCRS, Conversion, CoordinateOperation, Crs, Datum,
-    DatumEnsemble, DerivedGeographicCRS, Ellipsoid, EllipsoidalCS, FactoryError, GeocentricCRS,
+    Axis, BoundCRS, CartesianCS, CompoundCRS, Conversion, CoordinateOperation, CoordinateSystem, Crs,
+    Datum, DatumEnsemble, DerivedGeographicCRS, DerivedProjectedCRS, Ellipsoid, EllipsoidalCS,
+    FactoryError, GeocentricCRS,
     GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified, Identifier, Measure,
     OperationMethod, Parameter, ParameterValue, PrimeMeridian, ProjectedCRS, Transformation,
     UnitKind,
@@ -68,13 +69,38 @@ impl ProjectedCRS {
     }
 }
 
+impl DerivedProjectedCRS {
+    /// `normalizeForVisualization` for a derived projected CRS.
+    ///
+    /// North-then-east becomes east-then-north. A third up axis stays last.
+    #[must_use]
+    pub fn normalize_for_visualization(&self) -> Self {
+        let CoordinateSystem::Cartesian(cs) = &self.coordinate_system else {
+            return self.clone();
+        };
+        if cartesian_axis_order(cs.axes()).is_none() {
+            return self.clone();
+        }
+        let mut crs = self.clone();
+        let CoordinateSystem::Cartesian(cs) = &mut crs.coordinate_system else {
+            return crs;
+        };
+        cs.axes.swap(0, 1);
+        apply_axis_reversal(&mut crs.identified);
+        crs
+    }
+}
+
 impl Crs {
-    /// `normalizeForVisualization` for a geographic or projected CRS.
+    /// `normalizeForVisualization` for a geographic, projected, or derived projected CRS.
     #[must_use]
     pub fn normalize_for_visualization(&self) -> Self {
         match self {
             Self::Geographic(crs) => Self::Geographic(crs.normalize_for_visualization()),
             Self::Projected(crs) => Self::Projected(crs.normalize_for_visualization()),
+            Self::DerivedProjected(crs) => {
+                Self::DerivedProjected(crs.normalize_for_visualization())
+            }
             other => other.clone(),
         }
     }
@@ -479,6 +505,9 @@ pub(crate) fn operation_proj_string(source: &Crs, target: &Crs) -> Result<String
     if let Crs::DerivedGeographic(derived) = target {
         return derived_geographic_operation(source, derived);
     }
+    if let Crs::DerivedProjected(derived) = target {
+        return derived_projected_operation(source, derived);
+    }
     let Crs::Projected(projected) = target else {
         return Err(FactoryError::Format(
             "this operation is not a projection of the source CRS".to_owned(),
@@ -649,6 +678,79 @@ fn derived_geographic_operation(
     Ok(pipeline(&steps))
 }
 
+/// Geographic source into a derived projected CRS.
+///
+/// The base projected pipeline comes first. The deriving conversion, the
+/// linear unit of the derived axes, and their order follow.
+fn derived_projected_operation(
+    source: &Crs,
+    derived: &DerivedProjectedCRS,
+) -> Result<String, FactoryError> {
+    let projected = derived.base_crs();
+    let Some(geographic) = geographic_of(source) else {
+        return Err(FactoryError::Format(
+            "the source CRS is not geographic".to_owned(),
+        ));
+    };
+    let GeodeticCRS::Geographic(base) = projected.base_crs() else {
+        return Err(FactoryError::Format(
+            "the projected CRS base is not geographic".to_owned(),
+        ));
+    };
+    if !super::equiv::same_geographic_base(geographic, base) {
+        return Err(FactoryError::Format(
+            "the source CRS is not the base of the projected CRS".to_owned(),
+        ));
+    }
+    let mut steps = Vec::new();
+    if let Some(order) = geographic_axis_order(geographic) {
+        steps.push(format!("+proj=axisswap +order={order}"));
+    }
+    if degree_axis(geographic) {
+        steps.push("+proj=unitconvert +xy_in=deg +xy_out=rad".to_owned());
+    }
+    if let Some(step) = inverse_longlat(base) {
+        steps.push(step);
+    }
+    let mut projection = projected.deriving_conversion().export_to_proj_string()?;
+    append_ellps_pm(&mut projection, base);
+    steps.push(projection);
+    if let Some(order) = projected_axis_order(projected) {
+        steps.push(format!("+proj=axisswap +order={order}"));
+    }
+    steps.push(custom_proj_clause(derived.deriving_conversion())?);
+    let CoordinateSystem::Cartesian(cs) = derived.coordinate_system() else {
+        return Err(FactoryError::Format(
+            "a derived projected CRS uses a cartesian coordinate system".to_owned(),
+        ));
+    };
+    let from = projected.coordinate_system().axes().first().map(Axis::unit);
+    let to = cs.axes().first().map(Axis::unit);
+    if let (Some(from), Some(to)) = (from, to) {
+        if let Some(step) = linear_unit_convert(from, to) {
+            steps.push(step);
+        }
+    }
+    if let Some(order) = cartesian_axis_order(cs.axes()) {
+        steps.push(format!("+proj=axisswap +order={order}"));
+    }
+    Ok(pipeline(&steps))
+}
+
+fn linear_unit_convert(from: &UnitOfMeasure, to: &UnitOfMeasure) -> Option<String> {
+    if from.kind() != UnitKind::Linear || to.kind() != UnitKind::Linear {
+        return None;
+    }
+    if (from.conversion_to_si() - to.conversion_to_si()).abs()
+        <= 1e-10 * from.conversion_to_si().abs()
+    {
+        return None;
+    }
+    let inn = crate::projections::linear_proj_unit(from.conversion_to_si())?;
+    let out = crate::projections::linear_proj_unit(to.conversion_to_si())?;
+    Some(format!("+proj=unitconvert +xy_in={inn} +xy_out={out}"))
+}
+
 fn degree_axis(crs: &GeographicCRS) -> bool {
     crs.coordinate_system()
         .axes()
@@ -759,6 +861,30 @@ fn projected_axis_order(crs: &ProjectedCRS) -> Option<String> {
         && axes[1].name().to_ascii_lowercase().starts_with("easting");
     if northing_easting && (first == "north" || first == "south") {
         Some("2,1".to_owned())
+    } else {
+        None
+    }
+}
+
+/// Horizontal order of a cartesian CS. East-then-north needs no swap.
+fn cartesian_axis_order(axes: &[Axis]) -> Option<String> {
+    if axes.len() < 2 {
+        return None;
+    }
+    let first = axes[0].direction();
+    let second = axes[1].direction();
+    if first == "east" && second == "north" {
+        return None;
+    }
+    if first == second {
+        return None;
+    }
+    let left = axis_slot(first)?;
+    let right = axis_slot(second)?;
+    if axes.len() >= 3 && axes[2].direction() == "up" {
+        Some(format!("{left},{right},3"))
+    } else if axes.len() == 2 {
+        Some(format!("{left},{right}"))
     } else {
         None
     }

@@ -4937,6 +4937,70 @@ fn roundtrip_wkt2_2019(crs: &Crs) -> Crs {
         .clone()
 }
 
+fn northing_easting_derived() -> DerivedProjectedCRS {
+    DerivedProjectedCRS::create(
+        "derived projectedCRS",
+        utm_31n(),
+        Conversion::create("unnamed", "PROJ unimplemented", Vec::new()),
+        CoordinateSystem::Cartesian(
+            CartesianCS::create(vec![
+                Axis::create("Northing", "N", "north", UnitOfMeasure::foot()),
+                Axis::create("Easting", "E", "east", UnitOfMeasure::foot()),
+            ])
+            .expect("northing easting"),
+        ),
+    )
+}
+
+#[test]
+fn crs_normalize_for_visualization_derivedprojected_operation() {
+    let source = Crs::Geographic(GeographicCRS::epsg_4326());
+    let target = Crs::DerivedProjected(northing_easting_derived());
+    let operation = CoordinateOperationFactory::create()
+        .create_operation_proj_string(&source, &target)
+        .expect("operation");
+    assert_eq!(
+        operation,
+        "+proj=pipeline +step +proj=axisswap +order=2,1 +step +proj=unitconvert +xy_in=deg +xy_out=rad +step +proj=utm +zone=31 +ellps=WGS84 +step +proj=unimplemented +step +proj=unitconvert +xy_in=m +xy_out=ft +step +proj=axisswap +order=2,1"
+    );
+    let normalized = CoordinateOperationFactory::create()
+        .create_operation_proj_string(
+            &source.normalize_for_visualization(),
+            &target.normalize_for_visualization(),
+        )
+        .expect("normalized operation");
+    assert_eq!(
+        normalized,
+        "+proj=pipeline +step +proj=unitconvert +xy_in=deg +xy_out=rad +step +proj=utm +zone=31 +ellps=WGS84 +step +proj=unimplemented +step +proj=unitconvert +xy_in=m +xy_out=ft"
+    );
+}
+
+#[test]
+fn crs_normalize_for_visualization_derivedprojected() {
+    let derived = northing_easting_derived();
+    let CoordinateSystem::Cartesian(cs) = derived.coordinate_system() else {
+        panic!("the derived projected CRS is cartesian");
+    };
+    assert_eq!(cs.axes()[0].direction(), "north");
+    assert_eq!(cs.axes()[1].direction(), "east");
+    let normalized = derived.normalize_for_visualization();
+    let CoordinateSystem::Cartesian(cs) = normalized.coordinate_system() else {
+        panic!("the normalized CRS stays cartesian");
+    };
+    assert_eq!(cs.axes()[0].direction(), "east");
+    assert_eq!(cs.axes()[1].direction(), "north");
+    let promoted = derived
+        .promote_to_3d(None)
+        .normalize_for_visualization();
+    let CoordinateSystem::Cartesian(cs) = promoted.coordinate_system() else {
+        panic!("the promoted CRS stays cartesian");
+    };
+    assert_eq!(cs.axes().len(), 3);
+    assert_eq!(cs.axes()[0].direction(), "east");
+    assert_eq!(cs.axes()[1].direction(), "north");
+    assert_eq!(cs.axes()[2].direction(), "up");
+}
+
 #[test]
 fn crs_date_time_temporal_crs_wkt2() {
     let crs = date_time_temporal();
