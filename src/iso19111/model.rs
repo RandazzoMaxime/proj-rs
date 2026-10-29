@@ -303,6 +303,18 @@ impl UnitOfMeasure {
         }
     }
 
+    /// `UnitOfMeasure::NONE`. A date-time axis carries this unit.
+    #[must_use]
+    pub fn none() -> Self {
+        Self {
+            name: String::new(),
+            factor: 1.0,
+            kind: UnitKind::None,
+            code_space: String::new(),
+            code: String::new(),
+        }
+    }
+
     /// SI metre, EPSG:9001.
     #[must_use]
     pub fn metre() -> Self {
@@ -1456,10 +1468,6 @@ impl OrdinalCS {
 
 /// Coordinate system, one of the kinds `proj.db` stores on a CRS.
 #[derive(Clone, Debug)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "a vertical system stores its axis inline; the others keep axes in a Vec"
-)]
 pub enum CoordinateSystem {
     /// Latitude and longitude, optionally with ellipsoidal height.
     Ellipsoidal(EllipsoidalCS),
@@ -1473,6 +1481,8 @@ pub enum CoordinateSystem {
     Ordinal(OrdinalCS),
     /// Affine axes. WKT writes `CS[affine,N]`.
     Affine(CartesianCS),
+    /// Date-time axis. WKT2:2015 writes `temporal`; WKT2:2019 writes `TemporalDateTime`.
+    DateTimeTemporal(DateTimeTemporalCS),
 }
 
 impl CoordinateSystem {
@@ -1486,6 +1496,7 @@ impl CoordinateSystem {
             Self::Spherical(cs) => cs.axes.iter().collect(),
             Self::Ordinal(cs) => cs.axes.iter().collect(),
             Self::Affine(cs) => cs.axes.iter().collect(),
+            Self::DateTimeTemporal(cs) => vec![&cs.axis],
         }
     }
 
@@ -1497,6 +1508,7 @@ impl CoordinateSystem {
             Self::Spherical(cs) => &cs.identified,
             Self::Ordinal(cs) => &cs.identified,
             Self::Affine(cs) => &cs.identified,
+            Self::DateTimeTemporal(cs) => &cs.identified,
         }
     }
 
@@ -1514,7 +1526,126 @@ impl CoordinateSystem {
             Self::Spherical(_) => "spherical",
             Self::Ordinal(_) => "ordinal",
             Self::Affine(_) => "affine",
+            Self::DateTimeTemporal(_) => "temporal",
         }
+    }
+}
+
+/// One date-time axis. WKT2:2019 names the CS `TemporalDateTime`.
+#[derive(Clone, Debug)]
+pub struct DateTimeTemporalCS {
+    pub(crate) identified: Identified,
+    pub(crate) axis: Axis,
+}
+
+impl DateTimeTemporalCS {
+    /// `DateTimeTemporalCS::create`.
+    #[must_use]
+    pub fn create(axis: Axis) -> Self {
+        Self {
+            identified: Identified::default(),
+            axis,
+        }
+    }
+
+    /// The time axis.
+    #[must_use]
+    pub fn axis(&self) -> &Axis {
+        &self.axis
+    }
+}
+
+/// Temporal datum: a calendar and the origin of temporal coordinates.
+#[derive(Clone, Debug)]
+pub struct TemporalDatum {
+    pub(crate) identified: Identified,
+    pub(crate) origin: String,
+    /// Calendar name. PROJ's default is `proleptic Gregorian`.
+    pub(crate) calendar: String,
+}
+
+impl TemporalDatum {
+    /// `TemporalDatum::create`.
+    ///
+    /// `calendar` is `proleptic Gregorian` for the Gregorian calendar used by
+    /// `dateTimeTemporalCRS_WKT2`.
+    #[must_use]
+    pub fn create(
+        name: impl Into<String>,
+        origin: impl Into<String>,
+        calendar: impl Into<String>,
+    ) -> Self {
+        Self {
+            identified: Identified::named(name),
+            origin: origin.into(),
+            calendar: calendar.into(),
+        }
+    }
+
+    /// Name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.identified.name
+    }
+
+    /// Temporal origin, as written in WKT.
+    #[must_use]
+    pub fn origin(&self) -> &str {
+        &self.origin
+    }
+
+    /// Calendar of the origin.
+    #[must_use]
+    pub fn calendar(&self) -> &str {
+        &self.calendar
+    }
+}
+
+/// Temporal CRS: a temporal datum and a date-time coordinate system.
+#[derive(Clone, Debug)]
+pub struct TemporalCRS {
+    pub(crate) identified: Identified,
+    pub(crate) datum: TemporalDatum,
+    pub(crate) coordinate_system: DateTimeTemporalCS,
+}
+
+impl TemporalCRS {
+    /// `TemporalCRS::create`.
+    #[must_use]
+    pub fn create(
+        name: impl Into<String>,
+        datum: TemporalDatum,
+        coordinate_system: DateTimeTemporalCS,
+    ) -> Self {
+        Self {
+            identified: Identified::named(name),
+            datum,
+            coordinate_system,
+        }
+    }
+
+    /// Name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.identified.name
+    }
+
+    /// Temporal datum.
+    #[must_use]
+    pub fn datum(&self) -> &TemporalDatum {
+        &self.datum
+    }
+
+    /// Date-time coordinate system.
+    #[must_use]
+    pub fn coordinate_system(&self) -> &DateTimeTemporalCS {
+        &self.coordinate_system
+    }
+
+    /// Usage domains.
+    #[must_use]
+    pub fn domains(&self) -> &[ObjectDomain] {
+        &self.identified.domains
     }
 }
 
@@ -3383,6 +3514,8 @@ pub enum Crs {
     DerivedGeodetic(DerivedGeodeticCRS),
     /// Derived vertical CRS.
     DerivedVertical(DerivedVerticalCRS),
+    /// Temporal CRS.
+    Temporal(TemporalCRS),
 }
 
 impl Crs {
@@ -3401,6 +3534,7 @@ impl Crs {
             Self::DerivedGeographic(crs) => crs.name(),
             Self::DerivedGeodetic(crs) => crs.name(),
             Self::DerivedVertical(crs) => crs.name(),
+            Self::Temporal(crs) => crs.name(),
         }
     }
 
@@ -3435,7 +3569,8 @@ impl Crs {
             | Self::Engineering(_)
             | Self::DerivedGeographic(_)
             | Self::DerivedGeodetic(_)
-            | Self::DerivedVertical(_) => None,
+            | Self::DerivedVertical(_)
+            | Self::Temporal(_) => None,
         }
     }
 
@@ -3462,7 +3597,8 @@ impl Crs {
             | Self::Engineering(_)
             | Self::DerivedProjected(_)
             | Self::DerivedGeographic(_)
-            | Self::DerivedGeodetic(_) => None,
+            | Self::DerivedGeodetic(_)
+            | Self::Temporal(_) => None,
         }
     }
 
@@ -3481,6 +3617,7 @@ impl Crs {
             Self::DerivedGeographic(crs) => &crs.identified.identifiers,
             Self::DerivedGeodetic(crs) => &crs.identified.identifiers,
             Self::DerivedVertical(crs) => &crs.identified.identifiers,
+            Self::Temporal(crs) => &crs.identified.identifiers,
         }
     }
 
@@ -3508,6 +3645,7 @@ impl Crs {
             Self::DerivedGeographic(crs) => &crs.identified,
             Self::DerivedGeodetic(crs) => &crs.identified,
             Self::DerivedVertical(crs) => &crs.identified,
+            Self::Temporal(crs) => &crs.identified,
         }
     }
 
@@ -3528,6 +3666,7 @@ impl Crs {
             Self::DerivedGeographic(crs) => &mut crs.identified,
             Self::DerivedGeodetic(crs) => &mut crs.identified,
             Self::DerivedVertical(crs) => &mut crs.identified,
+            Self::Temporal(crs) => &mut crs.identified,
         }
     }
 
@@ -3558,12 +3697,13 @@ impl Crs {
             Self::DerivedGeographic(crs) => crs.identified.deprecated,
             Self::DerivedGeodetic(crs) => crs.identified.deprecated,
             Self::DerivedVertical(crs) => crs.identified.deprecated,
+            Self::Temporal(crs) => crs.identified.deprecated,
         }
     }
 
     pub(crate) fn is_horizontal(&self) -> bool {
         match self {
-            Self::Vertical(_) | Self::DerivedVertical(_) => false,
+            Self::Vertical(_) | Self::DerivedVertical(_) | Self::Temporal(_) => false,
             Self::Compound(crs) => crs.components.iter().any(Self::is_horizontal),
             Self::Bound(crs) => crs.source.is_horizontal(),
             _ => true,

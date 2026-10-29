@@ -37,7 +37,7 @@ fn node_from_text(text: &str) -> NodeId {
 use super::model::{
     ensemble_name_as_datum, Axis, BoundCRS, CartesianCS, CompoundCRS, Conversion,
     CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble, DerivedGeodeticCRS,
-    DerivedGeographicCRS, DerivedProjectedCRS,
+    DerivedGeographicCRS, DerivedProjectedCRS, TemporalCRS, TemporalDatum,
     Ellipsoid, EngineeringCRS, EngineeringDatum, FactoryError, GeocentricCRS, GeodeticCRS,
     GeodeticReferenceFrame, GeographicCRS, Identified, Identifier, Measure, OperationMethod,
     Parameter, ParameterValue, PrimeMeridian, ProjectedCRS, Transformation, UnitKind,
@@ -604,6 +604,7 @@ pub(crate) fn export_crs(crs: &Crs, formatter: &mut WktFormatter) -> Result<(), 
         }
         Crs::DerivedGeographic(crs) => export_derived_geographic(crs, formatter)?,
         Crs::DerivedGeodetic(crs) => export_derived_geodetic(crs, formatter)?,
+        Crs::Temporal(crs) => export_temporal(crs, formatter)?,
     }
     Ok(())
 }
@@ -1684,6 +1685,62 @@ fn export_vertical_ensemble(ensemble: &DatumEnsemble, formatter: &mut WktFormatt
     }
 }
 
+/// `TemporalCRS::_exportToWKT`.
+fn export_temporal(crs: &TemporalCRS, formatter: &mut WktFormatter) -> Result<(), FactoryError> {
+    if !formatter.wkt2 {
+        return Err(FactoryError::Format(
+            "TemporalCRS can only be exported to WKT2".to_owned(),
+        ));
+    }
+    formatter.start_node("TIMECRS", node_from_ids(&crs.identified.identifiers));
+    formatter.add_quoted(crs.name());
+    export_temporal_datum(&crs.datum, formatter)?;
+    export_cs(
+        &CoordinateSystem::DateTimeTemporal(crs.coordinate_system.clone()),
+        formatter,
+    );
+    formatter.base_usage(&crs.identified);
+    formatter.end_node();
+    Ok(())
+}
+
+/// `TemporalDatum::_exportToWKT`.
+///
+/// An ISO-8601 origin is written without quotes: `TIMEORIGIN[0000-01-01]`.
+fn export_temporal_datum(
+    datum: &TemporalDatum,
+    formatter: &mut WktFormatter,
+) -> Result<(), FactoryError> {
+    if !formatter.wkt2 {
+        return Err(FactoryError::Format(
+            "TemporalDatum can only be exported to WKT2".to_owned(),
+        ));
+    }
+    formatter.start_node("TDATUM", node_from_ids(&datum.identified.identifiers));
+    formatter.add_quoted(datum.name());
+    if formatter.keywords_2019 {
+        formatter.start_node("CALENDAR", NodeId::Absent);
+        formatter.add_quoted(datum.calendar());
+        formatter.end_node();
+    }
+    if !datum.origin().is_empty() {
+        formatter.start_node("TIMEORIGIN", NodeId::Absent);
+        if iso8601_origin(datum.origin()) {
+            formatter.add_raw(datum.origin());
+        } else {
+            formatter.add_quoted(datum.origin());
+        }
+        formatter.end_node();
+    }
+    formatter.end_node();
+    Ok(())
+}
+
+/// PROJ treats a non-empty token that starts with a digit and contains no space as ISO-8601.
+fn iso8601_origin(text: &str) -> bool {
+    text.starts_with(|ch: char| ch.is_ascii_digit()) && !text.contains(' ')
+}
+
 fn export_engineering_datum(datum: &EngineeringDatum, formatter: &mut WktFormatter) {
     let keyword = if formatter.wkt2 {
         "EDATUM"
@@ -1786,7 +1843,11 @@ fn export_cs(cs: &CoordinateSystem, formatter: &mut WktFormatter) {
     let axes = cs.axes();
     if formatter.wkt2 {
         formatter.start_node("CS", node_from_ids(&cs.identified().identifiers));
-        formatter.add_raw(cs.wkt2_type());
+        let type_name = match cs {
+            CoordinateSystem::DateTimeTemporal(_) if formatter.keywords_2019 => "TemporalDateTime",
+            other => other.wkt2_type(),
+        };
+        formatter.add_raw(type_name);
         formatter.add_raw(&axes.len().to_string());
         formatter.end_node();
         formatter.start_node("", NodeId::Absent);

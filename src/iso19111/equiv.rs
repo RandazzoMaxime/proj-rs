@@ -7,7 +7,7 @@
 use super::model::{
     ensemble_name_as_datum, Axis, BoundCRS, CompoundCRS, Conversion, CoordinateOperation,
     CoordinateSystem, Crs, Datum, DatumEnsemble, DerivedGeodeticCRS, DerivedGeographicCRS,
-    DerivedProjectedCRS, Ellipsoid,
+    DerivedProjectedCRS, Ellipsoid, TemporalCRS, TemporalDatum,
     EngineeringCRS,
     EngineeringDatum, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified, Measure,
     Parameter, ParameterValue, PrimeMeridian, ProjectedCRS, Transformation, VerticalCRS,
@@ -221,6 +221,43 @@ impl DerivedProjectedCRS {
                 &other.conversion,
                 standard_criterion(criterion),
             )
+            && axes_for_criterion(&left, &right, criterion)
+    }
+}
+
+impl TemporalDatum {
+    /// Strict temporal-datum equivalence.
+    #[must_use]
+    pub fn is_equivalent_to(&self, other: &Self) -> bool {
+        self.is_equivalent_to_with(other, Equivalence::Strict)
+    }
+
+    /// `TemporalDatum::_isEquivalentTo`.
+    #[must_use]
+    pub fn is_equivalent_to_with(&self, other: &Self, criterion: Equivalence) -> bool {
+        (criterion != Equivalence::Strict || same_name(self.name(), other.name()))
+            && self.origin == other.origin
+            && self.calendar == other.calendar
+    }
+}
+
+impl TemporalCRS {
+    /// Strict temporal equivalence.
+    #[must_use]
+    pub fn is_equivalent_to(&self, other: &Self) -> bool {
+        self.is_equivalent_to_with(other, Equivalence::Strict)
+    }
+
+    /// `TemporalCRS::_isEquivalentTo`.
+    ///
+    /// A different CRS kind is not equivalent. The datum origin and calendar
+    /// are compared exactly. Strict comparison also requires both names.
+    #[must_use]
+    pub fn is_equivalent_to_with(&self, other: &Self, criterion: Equivalence) -> bool {
+        let left = [self.coordinate_system.axis.clone()];
+        let right = [other.coordinate_system.axis.clone()];
+        (criterion != Equivalence::Strict || same_name(self.name(), other.name()))
+            && self.datum.is_equivalent_to_with(&other.datum, criterion)
             && axes_for_criterion(&left, &right, criterion)
     }
 }
@@ -488,6 +525,7 @@ impl Crs {
             (Self::DerivedProjected(left), Self::DerivedProjected(right)) => {
                 left.is_equivalent_to(right)
             }
+            (Self::Temporal(left), Self::Temporal(right)) => left.is_equivalent_to(right),
             _ => false,
         }
     }

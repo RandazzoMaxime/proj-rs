@@ -8,7 +8,8 @@ use proj_rs::{
     CartesianCS, CoordinateOperation, CoordinateOperationFactory, IntermediateCrsUse, Measure,
     Meridian, Parameter, ParameterValue,
     CompoundCRS, Conversion, CoordinateSystem, Crs, DatabaseContext, Datum, DatumEnsemble,
-    DerivedGeodeticCRS, DerivedGeographicCRS, DerivedProjectedCRS, DerivedVerticalCRS,
+    DateTimeTemporalCS, DerivedGeodeticCRS, DerivedGeographicCRS, DerivedProjectedCRS,
+    DerivedVerticalCRS, TemporalCRS, TemporalDatum,
     EllipsoidalCS,
     EllipsoidalHeightPolicy, Equivalence, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS,
     LinunitPolicy, OpProps, OutputAxisRule, PrimeMeridian, ProjectedCRS, RealizationMethod,
@@ -4153,6 +4154,46 @@ fn crs_derived_projected_crs_wkt2_2015() {
     let exported = Crs::DerivedProjected(derived_projected_wkt())
         .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2015));
     assert!(exported.is_err());
+}
+
+fn date_time_temporal() -> TemporalCRS {
+    TemporalCRS::create(
+        "Temporal CRS",
+        TemporalDatum::create(
+            "Gregorian calendar",
+            "0000-01-01",
+            "proleptic Gregorian",
+        ),
+        DateTimeTemporalCS::create(Axis::create(
+            "Time",
+            "T",
+            "future",
+            UnitOfMeasure::none(),
+        )),
+    )
+}
+
+#[test]
+fn crs_date_time_temporal_crs_wkt2() {
+    let crs = date_time_temporal();
+    let wkt = Crs::Temporal(crs.clone())
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2015))
+        .expect("wkt2");
+    assert_eq!(
+        wkt,
+        "\
+TIMECRS[\"Temporal CRS\",
+    TDATUM[\"Gregorian calendar\",
+        TIMEORIGIN[0000-01-01]],
+    CS[temporal,1],
+        AXIS[\"time (T)\",future]]"
+    );
+    let wkt1 = Crs::Temporal(crs.clone())
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Gdal));
+    assert!(wkt1.is_err());
+    assert!(crs.is_equivalent_to(&crs));
+    assert!(crs.clone().is_equivalent_to(&crs));
+    assert!(!Crs::Temporal(crs).is_equivalent_to(&Crs::Vertical(odn_height())));
 }
 
 #[test]
