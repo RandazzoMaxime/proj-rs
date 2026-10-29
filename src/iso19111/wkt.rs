@@ -2009,6 +2009,9 @@ fn add_measure(measure: &Measure, formatter: &mut WktFormatter) -> Result<(), Fa
                 };
                 formatter.add_number(measure.convert_to(&seconds));
             }
+            UnitKind::Scale if measure.unit.name() == "parts per million" => {
+                formatter.add_number(1.0 + measure.value * 1e-6);
+            }
             _ => formatter.add_number(measure.value),
         }
         return Ok(());

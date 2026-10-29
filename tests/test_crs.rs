@@ -3,8 +3,8 @@
 //! Each function is one `TEST()` name. WKT text is the expected string from that test.
 
 use proj_rs::{
-    create_crs_from_proj_string, create_from_user_input, AuthorityFactory, Axis, CartesianCS,
-    Meridian,
+    create_crs_from_proj_string, create_from_user_input, AuthorityFactory, Axis, BoundCRS,
+    CartesianCS, CoordinateOperation, Measure, Meridian, ParameterValue,
     CompoundCRS, Conversion, CoordinateSystem, Crs, DatabaseContext, Datum, DatumEnsemble,
     DerivedProjectedCRS, DerivedVerticalCRS, EllipsoidalCS,
     EllipsoidalHeightPolicy, Equivalence, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS,
@@ -4405,4 +4405,97 @@ fn crs_compound_crs_identify_db() {
     assert_eq!(found.components().len(), 2);
     assert_eq!(epsg_number(&found.components()[0]), 4326);
     assert_eq!(epsg_number(&found.components()[1]), 5703);
+}
+
+fn compact_wkt(text: &str) -> String {
+    text.chars().filter(|ch| !ch.is_whitespace()).collect()
+}
+
+fn measure_of(value: &ParameterValue) -> &Measure {
+    let ParameterValue::Measure(measure) = value else {
+        panic!("parameter is a measure");
+    };
+    measure
+}
+
+#[test]
+fn crs_bound_crs_to_wkt2() {
+    let geographic = GeographicCRS::create(
+        "my GEOGCRS",
+        Some(GeodeticReferenceFrame::epsg_6326()),
+        None,
+        EllipsoidalCS::create_latitude_longitude(UnitOfMeasure::degree()),
+    )
+    .expect("geographic");
+    let projected = ProjectedCRS::create(
+        "my PROJCRS",
+        GeodeticCRS::Geographic(geographic),
+        Conversion::create_utm_north(&OpProps::new(), 31).expect("utm"),
+        CartesianCS::create_easting_northing(UnitOfMeasure::metre()),
+    );
+    let crs = BoundCRS::create_from_towgs84(Crs::Projected(projected.clone()), &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0])
+        .expect("bound");
+    assert_eq!(crs.source_crs().name(), projected.name());
+    assert_eq!(crs.target_crs().name(), GeographicCRS::epsg_4326().name());
+    let transformation = crs.transformation();
+    let CoordinateOperation::Transformation(transformation) = transformation else {
+        panic!("transformation");
+    };
+    assert_eq!(
+        transformation.source_crs().expect("source").name(),
+        projected.base_crs().name()
+    );
+    assert_eq!(
+        transformation.target_crs().expect("target").name(),
+        GeographicCRS::epsg_4326().name()
+    );
+    let parameters = transformation.parameters();
+    assert_eq!(parameters.len(), 7);
+    let expected = [
+        ("8605", "X-axis translation", UnitOfMeasure::metre(), 1.0),
+        ("8606", "Y-axis translation", UnitOfMeasure::metre(), 2.0),
+        ("8607", "Z-axis translation", UnitOfMeasure::metre(), 3.0),
+        ("8608", "X-axis rotation", UnitOfMeasure::arc_second(), 4.0),
+        ("8609", "Y-axis rotation", UnitOfMeasure::arc_second(), 5.0),
+        ("8610", "Z-axis rotation", UnitOfMeasure::arc_second(), 6.0),
+        (
+            "8611",
+            "Scale difference",
+            UnitOfMeasure::parts_per_million(),
+            7.0,
+        ),
+    ];
+    for (parameter, (code, name, unit, value)) in parameters.iter().zip(expected) {
+        assert_eq!(parameter.code(), code);
+        assert_eq!(parameter.name(), name);
+        let measure = measure_of(parameter.value());
+        assert_eq!(measure.unit(), &unit);
+        assert_eq!(measure.value(), value);
+    }
+    let source_wkt = Crs::Projected(projected)
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2015))
+        .expect("source");
+    let target_wkt = Crs::Geographic(GeographicCRS::epsg_4326())
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2015))
+        .expect("target");
+    let expected_wkt = format!(
+        "BOUNDCRS[SOURCECRS[{source_wkt}],\nTARGETCRS[{target_wkt}],\n\
+         ABRIDGEDTRANSFORMATION[\"Transformation from my GEOGCRS to WGS84\",\n\
+         METHOD[\"Position Vector transformation (geog2D domain)\",\n\
+         ID[\"EPSG\",9606]],\n\
+         PARAMETER[\"X-axis translation\",1,\nID[\"EPSG\",8605]],\n\
+         PARAMETER[\"Y-axis translation\",2,\nID[\"EPSG\",8606]],\n\
+         PARAMETER[\"Z-axis translation\",3,\nID[\"EPSG\",8607]],\n\
+         PARAMETER[\"X-axis rotation\",4,\nID[\"EPSG\",8608]],\n\
+         PARAMETER[\"Y-axis rotation\",5,\nID[\"EPSG\",8609]],\n\
+         PARAMETER[\"Z-axis rotation\",6,\nID[\"EPSG\",8610]],\n\
+         PARAMETER[\"Scale difference\",1.000007,\nID[\"EPSG\",8611]]]]"
+    );
+    let got = Crs::Bound(crs.clone())
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2015))
+        .expect("wkt");
+    assert_eq!(compact_wkt(&got), compact_wkt(&expected_wkt));
+    assert!(crs.is_equivalent_to(&crs));
+    assert!(crs.clone().is_equivalent_to(&crs));
+    assert!(!Crs::Bound(crs).is_equivalent_to(&Crs::Geographic(GeographicCRS::epsg_4326())));
 }

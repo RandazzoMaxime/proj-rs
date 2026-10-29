@@ -347,6 +347,30 @@ impl UnitOfMeasure {
         }
     }
 
+    /// Arc-second, EPSG:9104. One degree divided by 3600.
+    #[must_use]
+    pub fn arc_second() -> Self {
+        Self {
+            name: "arc-second".to_owned(),
+            factor: std::f64::consts::PI / 180.0 / 3600.0,
+            kind: UnitKind::Angular,
+            code_space: "EPSG".to_owned(),
+            code: "9104".to_owned(),
+        }
+    }
+
+    /// Parts per million, EPSG:9202.
+    #[must_use]
+    pub fn parts_per_million() -> Self {
+        Self {
+            name: "parts per million".to_owned(),
+            factor: 1e-6,
+            kind: UnitKind::Scale,
+            code_space: "EPSG".to_owned(),
+            code: "9202".to_owned(),
+        }
+    }
+
     /// Scale of unity. It has no authority code, so WKT omits an id on it.
     #[must_use]
     pub fn unity() -> Self {
@@ -3004,6 +3028,110 @@ impl BoundCRS {
     pub fn transformation(&self) -> &CoordinateOperation {
         &self.transformation
     }
+
+    /// `BoundCRS::createFromTOWGS84`.
+    ///
+    /// The transformation source is the geodetic CRS inside `source`. Three
+    /// parameters are geocentric translations. Seven parameters are a position
+    /// vector. The hub is WGS 84 geographic when the source is geographic.
+    ///
+    /// # Errors
+    ///
+    /// `parameters` has a length other than 3 or 7, or `source` has no
+    /// geodetic CRS.
+    pub fn create_from_towgs84(source: Crs, parameters: &[f64]) -> Result<Self, FactoryError> {
+        if parameters.len() != 3 && parameters.len() != 7 {
+            return Err(FactoryError::Invalid(
+                "Invalid number of elements in TOWGS84Parameters".to_owned(),
+            ));
+        }
+        let geodetic = geodetic_body(&source).ok_or_else(|| {
+            FactoryError::Invalid(
+                "Cannot find GeodeticCRS in sourceCRS of TOWGS84 transformation".to_owned(),
+            )
+        })?;
+        let target = if matches!(
+            geodetic,
+            Crs::Geographic(_) | Crs::Geodetic(GeodeticCRS::Spherical(_))
+        ) {
+            Crs::Geographic(GeographicCRS::epsg_4326())
+        } else {
+            Crs::Geodetic(GeodeticCRS::epsg_4978())
+        };
+        let (method_name, method_code) = if parameters.len() == 3 {
+            ("Geocentric translations (geog2D domain)", "9603")
+        } else if matches!(geodetic, Crs::Geographic(ref crs) if crs.coordinate_system().axes().len() == 2)
+        {
+            ("Position Vector transformation (geog2D domain)", "9606")
+        } else if matches!(geodetic, Crs::Geographic(_)) {
+            ("Position Vector transformation (geog3D domain)", "1037")
+        } else {
+            ("Position Vector transformation (geocentric domain)", "1033")
+        };
+        let transformation = CoordinateOperation::Transformation(Transformation {
+            identified: Identified::named(format!(
+                "Transformation from {} to WGS84",
+                geodetic.name()
+            )),
+            method: OperationMethod {
+                name: method_name.to_owned(),
+                code_space: "EPSG".to_owned(),
+                code: method_code.to_owned(),
+                parameters: Vec::new(),
+            },
+            parameters: towgs84_parameters(parameters),
+            source: Some(Box::new(geodetic)),
+            target: Some(Box::new(target.clone())),
+            interpolation: None,
+            accuracy: None,
+            version: None,
+            point_motion: false,
+            inverted: false,
+        });
+        Ok(Self::create(source, target, transformation))
+    }
+}
+
+fn geodetic_body(crs: &Crs) -> Option<Crs> {
+    match crs {
+        Crs::Geographic(crs) => Some(Crs::Geographic(crs.clone())),
+        Crs::Geodetic(crs) => Some(match crs {
+            GeodeticCRS::Geographic(crs) => Crs::Geographic(crs.clone()),
+            other => Crs::Geodetic(other.clone()),
+        }),
+        Crs::Projected(crs) => geodetic_body(&match crs.base_crs() {
+            GeodeticCRS::Geographic(crs) => Crs::Geographic(crs.clone()),
+            other => Crs::Geodetic(other.clone()),
+        }),
+        Crs::Bound(crs) => geodetic_body(crs.source_crs()),
+        _ => None,
+    }
+}
+
+fn towgs84_parameters(values: &[f64]) -> Vec<Parameter> {
+    let specs = [
+        ("X-axis translation", "8605", UnitOfMeasure::metre()),
+        ("Y-axis translation", "8606", UnitOfMeasure::metre()),
+        ("Z-axis translation", "8607", UnitOfMeasure::metre()),
+        ("X-axis rotation", "8608", UnitOfMeasure::arc_second()),
+        ("Y-axis rotation", "8609", UnitOfMeasure::arc_second()),
+        ("Z-axis rotation", "8610", UnitOfMeasure::arc_second()),
+        (
+            "Scale difference",
+            "8611",
+            UnitOfMeasure::parts_per_million(),
+        ),
+    ];
+    values
+        .iter()
+        .zip(specs)
+        .map(|(value, (name, code, unit))| Parameter {
+            name: name.to_owned(),
+            code_space: "EPSG".to_owned(),
+            code: code.to_owned(),
+            value: ParameterValue::Measure(Measure { value: *value, unit }),
+        })
+        .collect()
 }
 
 /// Coordinate reference system.

@@ -5,10 +5,11 @@
 //! geographic latitude/longitude swap.
 
 use super::model::{
-    ensemble_name_as_datum, Axis, CompoundCRS, Conversion, CoordinateSystem, Crs, Datum,
-    DatumEnsemble, Ellipsoid, EngineeringCRS, EngineeringDatum, GeodeticCRS,
-    GeodeticReferenceFrame, GeographicCRS, Identified, Measure, Parameter, ParameterValue,
-    PrimeMeridian, ProjectedCRS, VerticalCRS, VerticalReferenceFrame,
+    ensemble_name_as_datum, Axis, BoundCRS, CompoundCRS, Conversion, CoordinateOperation,
+    CoordinateSystem, Crs, Datum, DatumEnsemble, Ellipsoid, EngineeringCRS, EngineeringDatum,
+    GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified, Measure, Parameter,
+    ParameterValue, PrimeMeridian, ProjectedCRS, Transformation, VerticalCRS,
+    VerticalReferenceFrame,
 };
 
 /// How much two ISO 19111 objects may differ and still compare equal.
@@ -325,6 +326,58 @@ pub(crate) fn crs_equivalent(left: &Crs, right: &Crs, criterion: Equivalence) ->
     }
 }
 
+impl BoundCRS {
+    /// Strict bound-CRS equivalence.
+    #[must_use]
+    pub fn is_equivalent_to(&self, other: &Self) -> bool {
+        same_name(self.name(), other.name())
+            && self.source_crs().is_equivalent_to(other.source_crs())
+            && self.target_crs().is_equivalent_to(other.target_crs())
+            && same_operation(self.transformation(), other.transformation())
+    }
+}
+
+fn same_operation(left: &CoordinateOperation, right: &CoordinateOperation) -> bool {
+    match (left, right) {
+        (CoordinateOperation::Transformation(left), CoordinateOperation::Transformation(right)) => {
+            same_transformation(left, right)
+        }
+        (CoordinateOperation::Conversion(left), CoordinateOperation::Conversion(right)) => {
+            left.is_equivalent_to(right)
+        }
+        _ => false,
+    }
+}
+
+fn same_transformation(left: &Transformation, right: &Transformation) -> bool {
+    same_name(left.name(), right.name())
+        && left.method().name() == right.method().name()
+        && left.method().code() == right.method().code()
+        && left.parameters().len() == right.parameters().len()
+        && left
+            .parameters()
+            .iter()
+            .zip(right.parameters())
+            .all(|(left, right)| {
+                left.name() == right.name()
+                    && left.code() == right.code()
+                    && parameter_values_equal(left.value(), right.value())
+            })
+}
+
+fn parameter_values_equal(left: &ParameterValue, right: &ParameterValue) -> bool {
+    match (left, right) {
+        (ParameterValue::Measure(left), ParameterValue::Measure(right)) => {
+            left.value() == right.value() && left.unit().name() == right.unit().name()
+        }
+        (ParameterValue::String(left), ParameterValue::String(right))
+        | (ParameterValue::Filename(left), ParameterValue::Filename(right)) => left == right,
+        (ParameterValue::Integer(left), ParameterValue::Integer(right)) => left == right,
+        (ParameterValue::Boolean(left), ParameterValue::Boolean(right)) => left == right,
+        _ => false,
+    }
+}
+
 impl Crs {
     /// Strict equivalence. A different CRS kind is not equivalent.
     #[must_use]
@@ -340,6 +393,7 @@ impl Crs {
             (Self::Vertical(left), Self::Vertical(right)) => left.is_equivalent_to(right),
             (Self::Engineering(left), Self::Engineering(right)) => left.is_equivalent_to(right),
             (Self::Compound(left), Self::Compound(right)) => left.is_equivalent_to(right),
+            (Self::Bound(left), Self::Bound(right)) => left.is_equivalent_to(right),
             _ => false,
         }
     }

@@ -30,7 +30,7 @@ pub use model::{
     EllipsoidalCS,
     DerivedProjectedCRS, DerivedVerticalCRS, EngineeringCRS, EngineeringDatum, FactoryError,
     GeocentricCRS, GeodeticCRS,
-    GeodeticReferenceFrame, GeographicCRS, Identifier, Meridian, ObjectDomain, OperationMethod,
+    GeodeticReferenceFrame, GeographicCRS, Identifier, Measure, Meridian, ObjectDomain, OperationMethod,
     OperationParameter, OperationParameterValue, OrdinalCS, Parameter, ParameterValue,
     PrimeMeridian, ProjectedCRS, RealizationMethod, SphericalCS, Transformation,
     UnitKind, UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame,
