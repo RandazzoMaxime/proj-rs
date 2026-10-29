@@ -10,7 +10,8 @@ use proj_rs::{
     CompoundCRS, Conversion, CoordinateSystem, Crs, DatabaseContext, Datum, DatumEnsemble,
     DateTimeTemporalCS, DerivedGeodeticCRS, DerivedGeographicCRS, DerivedProjectedCRS,
     TemporalCountCS, TemporalMeasureCS, ParametricCRS, ParametricCS, ParametricDatum,
-    DerivedVerticalCRS, DerivedEngineeringCRS, DerivedParametricCRS, TemporalCRS, TemporalDatum,
+    DerivedVerticalCRS, DerivedEngineeringCRS, DerivedParametricCRS, DerivedTemporalCRS,
+    TemporalCRS, TemporalDatum,
     EllipsoidalCS, EngineeringCRS, EngineeringDatum,
     EllipsoidalHeightPolicy, Equivalence, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS,
     LinunitPolicy, OpProps, OutputAxisRule, PrimeMeridian, ProjectedCRS, RealizationMethod,
@@ -4304,6 +4305,56 @@ fn date_time_temporal() -> TemporalCRS {
             UnitOfMeasure::none(),
         )),
     )
+}
+
+fn derived_temporal() -> DerivedTemporalCRS {
+    let base = date_time_temporal();
+    let coordinate_system = base.coordinate_system().clone();
+    DerivedTemporalCRS::create(
+        "Derived TemporalCRS",
+        base,
+        Conversion::create("unnamed", "PROJ unimplemented", Vec::new()),
+        coordinate_system,
+    )
+}
+
+#[test]
+fn crs_derive_temporal_crs_wkt2() {
+    let derived = derived_temporal();
+    assert!(derived.is_equivalent_to(&derived));
+    assert!(derived.clone().is_equivalent_to(&derived));
+    assert!(!Crs::DerivedTemporal(derived.clone())
+        .is_equivalent_to(&Crs::Geographic(GeographicCRS::epsg_4326())));
+    assert!(derived
+        .coordinate_system()
+        .is_equivalent_to(date_time_temporal().coordinate_system()));
+    assert!(derived.datum().is_equivalent_to(date_time_temporal().datum()));
+    let wkt = Crs::DerivedTemporal(derived)
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2019))
+        .expect("wkt2-2019");
+    assert_eq!(
+        wkt,
+        "\
+TIMECRS[\"Derived TemporalCRS\",
+    BASETIMECRS[\"Temporal CRS\",
+        TDATUM[\"Gregorian calendar\",
+            CALENDAR[\"proleptic Gregorian\"],
+            TIMEORIGIN[0000-01-01]]],
+    DERIVINGCONVERSION[\"unnamed\",
+        METHOD[\"PROJ unimplemented\"]],
+    CS[TemporalDateTime,1],
+        AXIS[\"time (T)\",future]]"
+    );
+}
+
+#[test]
+fn crs_derive_temporal_crs_wkt1() {
+    let exported = Crs::DerivedTemporal(derived_temporal())
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Gdal));
+    assert_eq!(
+        exported.expect_err("wkt1").to_string(),
+        "DerivedTemporalCRS can only be exported to WKT2"
+    );
 }
 
 #[test]

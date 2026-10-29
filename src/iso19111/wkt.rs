@@ -39,7 +39,7 @@ use super::model::{
     CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble, DerivedGeodeticCRS,
     ParametricCRS,
     DerivedGeographicCRS, DerivedProjectedCRS, DerivedVerticalCRS, DerivedEngineeringCRS,
-    DerivedParametricCRS,
+    DerivedParametricCRS, DerivedTemporalCRS,
     TemporalCRS,
     TemporalDatum,
     Ellipsoid, EngineeringCRS, EngineeringDatum, FactoryError, GeocentricCRS, GeodeticCRS,
@@ -604,6 +604,7 @@ pub(crate) fn export_crs(crs: &Crs, formatter: &mut WktFormatter) -> Result<(), 
         Crs::DerivedVertical(crs) => export_derived_vertical(crs, formatter)?,
         Crs::DerivedEngineering(crs) => export_derived_engineering(crs, formatter)?,
         Crs::DerivedParametric(crs) => export_derived_parametric(crs, formatter)?,
+        Crs::DerivedTemporal(crs) => export_derived_temporal(crs, formatter)?,
         Crs::DerivedGeographic(crs) => export_derived_geographic(crs, formatter)?,
         Crs::DerivedGeodetic(crs) => export_derived_geodetic(crs, formatter)?,
         Crs::Temporal(crs) => export_temporal(crs, formatter)?,
@@ -1218,6 +1219,44 @@ fn export_derived_parametric(
         &CoordinateSystem::Parametric(crs.coordinate_system.clone()),
         formatter,
     );
+    formatter.base_usage(&crs.identified);
+    formatter.end_node();
+    Ok(())
+}
+
+/// `DerivedTemporalCRS::_exportToWKT`.
+///
+/// WKT1 is refused. WKT2:2019 writes `CALENDAR` and `CS[TemporalDateTime,1]`.
+fn export_derived_temporal(
+    crs: &DerivedTemporalCRS,
+    formatter: &mut WktFormatter,
+) -> Result<(), FactoryError> {
+    if !formatter.wkt2 {
+        return Err(FactoryError::Format(
+            "DerivedTemporalCRS can only be exported to WKT2".to_owned(),
+        ));
+    }
+    formatter.start_node("TIMECRS", node_from_ids(&crs.identified.identifiers));
+    formatter.add_quoted(crs.name());
+    let base_has_id = !crs.base.identified.identifiers.is_empty();
+    formatter.start_node(
+        "BASETIMECRS",
+        if formatter.keywords_2019 && base_has_id {
+            NodeId::Present
+        } else {
+            NodeId::Absent
+        },
+    );
+    formatter.add_quoted(crs.base.name());
+    export_temporal_datum(crs.base.datum(), formatter)?;
+    if formatter.keywords_2019 && !(formatter.id_on_top_only && top_has_id(formatter)) {
+        formatter.output_id.push(true);
+        formatter.format_ids(&crs.base.identified.identifiers);
+        formatter.output_id.pop();
+    }
+    formatter.end_node();
+    export_deriving_conversion(&crs.conversion, formatter)?;
+    export_cs(&crs.coordinate_system, formatter);
     formatter.base_usage(&crs.identified);
     formatter.end_node();
     Ok(())

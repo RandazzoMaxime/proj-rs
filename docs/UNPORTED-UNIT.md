@@ -7,8 +7,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_crs.cpp
 
-- `crs.DeriveTemporalCRS_WKT2`
-- `crs.DeriveTemporalCRS_WKT1`
 - `crs.crs_createBoundCRSToWGS84IfPossible`
 - `crs.crs_stripVerticalComponent`
 - `crs.crs_alterGeodeticCRS`

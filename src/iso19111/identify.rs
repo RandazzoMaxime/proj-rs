@@ -1592,6 +1592,7 @@ fn concatenated_helmert<'a>(
             | Crs::DerivedGeodetic(_)
             | Crs::DerivedEngineering(_)
             | Crs::DerivedParametric(_)
+            | Crs::DerivedTemporal(_)
     );
     if !(first_is_rotation || (derived && first_is_conversion)) {
         return None;

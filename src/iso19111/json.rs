@@ -177,6 +177,7 @@ impl Crs {
             | Self::DerivedGeodetic(_)
             | Self::DerivedEngineering(_)
             | Self::DerivedParametric(_)
+            | Self::DerivedTemporal(_)
             | Self::Temporal(_)
             | Self::Parametric(_) => {
                 return Err(FactoryError::Format(format!(
