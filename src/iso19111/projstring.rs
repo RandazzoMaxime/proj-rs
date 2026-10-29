@@ -7,10 +7,11 @@ use super::buildop::OpProps;
 use super::factory::DatabaseContext;
 use super::model::{
     Axis, BoundCRS, CartesianCS, CompoundCRS, Conversion, CoordinateOperation, Crs, Datum,
-    DatumEnsemble, Ellipsoid, EllipsoidalCS, Transformation,
-    FactoryError, GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified,
-    Identifier, Measure, OperationMethod, Parameter, ParameterValue, PrimeMeridian, ProjectedCRS,
-    UnitKind, UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame,
+    DatumEnsemble, DerivedGeographicCRS, Ellipsoid, EllipsoidalCS, FactoryError, GeocentricCRS,
+    GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified, Identifier, Measure,
+    OperationMethod, Parameter, ParameterValue, PrimeMeridian, ProjectedCRS, Transformation,
+    UnitKind,
+    UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame,
 };
 
 impl GeographicCRS {
@@ -423,6 +424,9 @@ pub(crate) fn operation_proj_string(source: &Crs, target: &Crs) -> Result<String
     if let Crs::Geodetic(GeodeticCRS::Geocentric(geocentric)) = target {
         return geocentric_operation(source, geocentric);
     }
+    if let Crs::DerivedGeographic(derived) = target {
+        return derived_geographic_operation(source, derived);
+    }
     let Crs::Projected(projected) = target else {
         return Err(FactoryError::Format(
             "this operation is not a projection of the source CRS".to_owned(),
@@ -519,6 +523,129 @@ fn geocentric_operation(source: &Crs, target: &GeocentricCRS) -> Result<String, 
         }
     }
     Ok(pipeline(&steps))
+}
+
+/// `DerivedGeographicCRS::_exportToPROJString` when the method is `PROJ ob_tran`.
+impl DerivedGeographicCRS {
+    /// PROJ string of a pole rotation whose method name starts with `PROJ ob_tran`.
+    ///
+    /// # Errors
+    ///
+    /// The method is not one of the `o_proj=longlat` forms PROJ accepts on a CRS.
+    pub fn export_to_proj_string(&self) -> Result<String, FactoryError> {
+        if !ob_tran_longlat(self.deriving_conversion().method().name()) {
+            return Err(FactoryError::Format(
+                "DerivedGeographicCRS cannot be exported to PROJ string".to_owned(),
+            ));
+        }
+        let mut text = custom_proj_clause(self.deriving_conversion())?;
+        text.push(' ');
+        if let Some(token) = datum_token(self.base_crs()) {
+            text.push_str("+datum=");
+            text.push_str(token);
+        } else {
+            text.push_str(&crs_datum_clause(&GeodeticCRS::Geographic(
+                self.base_crs().clone(),
+            )));
+        }
+        text.push_str(" +no_defs +type=crs");
+        Ok(text)
+    }
+}
+
+/// Operation from a geographic base into the derived geographic CRS.
+///
+/// The source steps are the inversion of the base angular conversion. The
+/// target steps are that conversion forward again, after `+ellps`.
+fn derived_geographic_operation(
+    source: &Crs,
+    derived: &DerivedGeographicCRS,
+) -> Result<String, FactoryError> {
+    let Some(geographic) = geographic_of(source) else {
+        return Err(FactoryError::Format(
+            "the source CRS is not geographic".to_owned(),
+        ));
+    };
+    if !geographic.is_equivalent_to(derived.base_crs()) {
+        return Err(FactoryError::Format(
+            "the source CRS is not the base of the derived geographic CRS".to_owned(),
+        ));
+    }
+    let mut steps = Vec::new();
+    if let Some(order) = geographic_axis_order(geographic) {
+        steps.push(format!("+proj=axisswap +order={order}"));
+    }
+    if degree_axis(geographic) {
+        steps.push("+proj=unitconvert +xy_in=deg +xy_out=rad".to_owned());
+    }
+    if let Some(step) = inverse_longlat(geographic) {
+        steps.push(step);
+    }
+    let mut projection = custom_proj_clause(derived.deriving_conversion())?;
+    append_ellps_pm(&mut projection, derived.base_crs());
+    steps.push(projection);
+    if degree_axis(derived.base_crs()) {
+        steps.push("+proj=unitconvert +xy_in=rad +xy_out=deg".to_owned());
+    }
+    if let Some(order) = geographic_axis_order(derived.base_crs()) {
+        steps.push(format!("+proj=axisswap +order={order}"));
+    }
+    Ok(pipeline(&steps))
+}
+
+fn degree_axis(crs: &GeographicCRS) -> bool {
+    crs.coordinate_system()
+        .axes()
+        .first()
+        .is_some_and(|axis| axis.unit().name() == "degree")
+}
+
+/// `createPROJExtensionFromCustomProj` for a method named `PROJ <step> ...`.
+fn custom_proj_clause(conversion: &Conversion) -> Result<String, FactoryError> {
+    let method = conversion.method().name();
+    let Some(rest) = method.strip_prefix("PROJ ") else {
+        return Err(FactoryError::Format(format!(
+            "Unsupported conversion method: {method}"
+        )));
+    };
+    let mut tokens = rest.split_whitespace();
+    let Some(step) = tokens.next() else {
+        return Err(FactoryError::Format(format!(
+            "Unsupported conversion method: {method}"
+        )));
+    };
+    let mut parts = vec![format!("+proj={step}")];
+    for token in tokens {
+        if let Some((key, value)) = token.split_once('=') {
+            parts.push(format!("+{key}={value}"));
+        } else if !token.is_empty() {
+            parts.push(format!("+{token}"));
+        }
+    }
+    for parameter in conversion.parameters() {
+        let ParameterValue::Measure(measure) = parameter.value() else {
+            continue;
+        };
+        let number = match measure.unit().kind() {
+            UnitKind::Linear => trim_proj_number(measure.si_value()),
+            // A degree value stays the number written in WKT. Converting
+            // through the SI factor turns -30 into -29.999999999999996.
+            UnitKind::Angular if measure.unit().name().eq_ignore_ascii_case("degree") => {
+                trim_proj_number(measure.value())
+            }
+            UnitKind::Angular => trim_proj_number(measure.convert_to(&UnitOfMeasure::degree())),
+            _ => trim_proj_number(measure.value()),
+        };
+        parts.push(format!("+{}={number}", parameter.name()));
+    }
+    Ok(parts.join(" "))
+}
+
+fn ob_tran_longlat(method: &str) -> bool {
+    method.starts_with("PROJ ob_tran o_proj=longlat")
+        || method.starts_with("PROJ ob_tran o_proj=lonlat")
+        || method.starts_with("PROJ ob_tran o_proj=latlon")
+        || method.starts_with("PROJ ob_tran o_proj=latlong")
 }
 
 fn pipeline(steps: &[String]) -> String {

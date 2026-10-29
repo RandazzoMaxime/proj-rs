@@ -7,7 +7,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_crs.cpp
 
-- `crs.derivedGeographicCRS_to_PROJ`
 - `crs.derivedGeographicCRS_with_affine_transform_to_PROJ`
 - `crs.derivedGeodeticCRS_basic`
 - `crs.derivedGeodeticCRS_WKT2`

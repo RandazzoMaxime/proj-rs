@@ -5,7 +5,8 @@
 use proj_rs::{
     create_crs_from_proj_string, create_from_user_input, AlternativeGridNames, AuthorityFactory,
     Axis, BoundCRS,
-    CartesianCS, CoordinateOperation, IntermediateCrsUse, Measure, Meridian, Parameter, ParameterValue,
+    CartesianCS, CoordinateOperation, CoordinateOperationFactory, IntermediateCrsUse, Measure,
+    Meridian, Parameter, ParameterValue,
     CompoundCRS, Conversion, CoordinateSystem, Crs, DatabaseContext, Datum, DatumEnsemble,
     DerivedGeographicCRS, DerivedProjectedCRS, DerivedVerticalCRS, EllipsoidalCS,
     EllipsoidalHeightPolicy, Equivalence, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS,
@@ -5198,4 +5199,51 @@ fn crs_derived_geographic_crs_wkt1() {
     let exported = Crs::DerivedGeographic(atlantic_pole())
         .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Gdal));
     assert!(exported.is_err());
+}
+
+#[test]
+fn crs_derived_geographic_crs_to_proj() {
+    let wkt = "\
+GEODCRS[\"WMO Atlantic Pole\",
+    BASEGEODCRS[\"WGS 84\",
+        DATUM[\"World Geodetic System 1984\",
+            ELLIPSOID[\"WGS 84\",6378137,298.257223563,
+                LENGTHUNIT[\"metre\",1]]],
+        PRIMEM[\"Greenwich\",0,
+            ANGLEUNIT[\"degree\",0.0174532925199433]]],
+    DERIVINGCONVERSION[\"unnamed\",
+        METHOD[\"PROJ ob_tran o_proj=longlat\"],
+        PARAMETER[\"o_lat_p\",52,
+            UNIT[\"degree\",0.0174532925199433]],
+        PARAMETER[\"o_lon_p\",-30,
+            UNIT[\"degree\",0.0174532925199433]],
+        PARAMETER[\"lon_0\",-25,
+            UNIT[\"degree\",0.0174532925199433]]],
+    CS[ellipsoidal,2],
+        AXIS[\"latitude\",north,
+            ORDER[1],
+            ANGLEUNIT[\"degree\",0.0174532925199433]],
+        AXIS[\"longitude\",east,
+            ORDER[2],
+            ANGLEUNIT[\"degree\",0.0174532925199433]]]";
+    let crs = WktParser::new()
+        .create_from_wkt(wkt)
+        .expect("parse")
+        .crs()
+        .expect("crs")
+        .clone();
+    let Crs::DerivedGeographic(derived) = &crs else {
+        panic!("parsed CRS is not a derived geographic CRS");
+    };
+    assert_eq!(
+        derived.export_to_proj_string().expect("proj"),
+        "+proj=ob_tran +o_proj=longlat +o_lat_p=52 +o_lon_p=-30 +lon_0=-25 +datum=WGS84 +no_defs +type=crs"
+    );
+    let operation = CoordinateOperationFactory::create()
+        .create_operation_proj_string(&Crs::Geographic(derived.base_crs().clone()), &crs)
+        .expect("operation");
+    assert_eq!(
+        operation,
+        "+proj=pipeline +step +proj=axisswap +order=2,1 +step +proj=unitconvert +xy_in=deg +xy_out=rad +step +proj=ob_tran +o_proj=longlat +o_lat_p=52 +o_lon_p=-30 +lon_0=-25 +ellps=WGS84 +step +proj=unitconvert +xy_in=rad +xy_out=deg +step +proj=axisswap +order=2,1"
+    );
 }

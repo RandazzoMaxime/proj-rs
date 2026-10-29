@@ -7,12 +7,12 @@
 use super::factory::{AuthorityFactory, DatabaseContext, NameMatch};
 use super::model::{
     Axis, BoundCRS, CartesianCS, CompoundCRS, ConcatenatedOperation, ConcatenatedStep, Conversion,
-    CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble, Ellipsoid, EllipsoidalCS,
-    EngineeringCRS, EngineeringDatum, FactoryError, GeocentricCRS, GeodeticCRS,
-    GeodeticReferenceFrame, GeographicCRS, GeoidModel, Identified, Identifier, Measure, Meridian,
-    ObjectDomain, OperationMethod, OrdinalCS, Parameter, ParameterValue, PrimeMeridian,
-    ProjectedCRS, SphericalCS, SphericalGeodeticCRS, Transformation, UnitKind, UnitOfMeasure,
-    VerticalCRS, VerticalCS, VerticalReferenceFrame,
+    CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble, DerivedGeographicCRS,
+    Ellipsoid, EllipsoidalCS, EngineeringCRS, EngineeringDatum, FactoryError, GeocentricCRS,
+    GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, GeoidModel, Identified, Identifier,
+    Measure, Meridian, ObjectDomain, OperationMethod, OrdinalCS, Parameter, ParameterValue,
+    PrimeMeridian, ProjectedCRS, SphericalCS, SphericalGeodeticCRS, Transformation, UnitKind,
+    UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame,
 };
 
 const EARTH_RADIUS: f64 = 6_375_000.0;
@@ -706,7 +706,7 @@ impl WktParser {
         let name = node.value.as_str();
         if is_geodetic_keyword(name) {
             if node.child(&["BASEGEOGCRS", "BASEGEODCRS"]).is_some() {
-                return Err(invalid("derived geodetic CRS is not parsed in this build"));
+                return self.build_derived_geographic(node);
             }
             let object = self.build_geodetic_crs(node)?;
             return self.attach_datum_grids(object);
@@ -1516,6 +1516,42 @@ impl WktParser {
         ensemble.identified.identifiers = props.identifiers;
         ensemble.identified.remarks = props.remarks;
         Ok(ensemble)
+    }
+
+    /// `GEODCRS` / `GEOGCRS` with `BASEGEODCRS` and an ellipsoidal CS.
+    ///
+    /// A cartesian derived geodetic CRS stays unparsed until that test is ported.
+    fn build_derived_geographic(&mut self, node: &WktNode) -> Result<WktObject, FactoryError> {
+        let Some(base_node) = node.child(&["BASEGEOGCRS", "BASEGEODCRS"]) else {
+            return Err(invalid("derived geodetic CRS is not parsed in this build"));
+        };
+        let WktObject::Crs(Crs::Geographic(base)) = self.build_geodetic_crs(base_node)? else {
+            return Err(invalid("derived geodetic CRS is not parsed in this build"));
+        };
+        let Some(conversion_node) = node.child(&["DERIVINGCONVERSION"]) else {
+            return Err(invalid("missing DERIVINGCONVERSION"));
+        };
+        let angular = base
+            .coordinate_system
+            .axes
+            .first()
+            .map(|axis| axis.unit().clone())
+            .unwrap_or_else(UnitOfMeasure::degree);
+        let conversion =
+            self.build_conversion(conversion_node, UnitOfMeasure::metre(), angular)?;
+        let cs = self.build_cs(node.child(&["CS"]), node, UnitOfMeasure::degree())?;
+        let CoordinateSystem::Ellipsoidal(coordinate_system) = cs else {
+            return Err(invalid("derived geodetic CRS is not parsed in this build"));
+        };
+        let props = self.build_properties(node)?;
+        Ok(WktObject::Crs(Crs::DerivedGeographic(
+            DerivedGeographicCRS {
+                identified: props.identified(),
+                base,
+                conversion,
+                coordinate_system,
+            },
+        )))
     }
 
     fn build_geodetic_crs(&mut self, node: &WktNode) -> Result<WktObject, FactoryError> {
