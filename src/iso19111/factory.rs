@@ -38,6 +38,17 @@ pub enum AlternativeGridNames {
     Proj,
 }
 
+/// PROJ substitute for one official grid file name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct GridAlternative {
+    /// `grid_alternatives.proj_grid_name`.
+    pub proj_grid_name: String,
+    /// `GTiff`, `NTv2`, `NTv1`, or `CTable2`.
+    pub format: String,
+    /// The grid is applied in the reverse direction.
+    pub inverse: bool,
+}
+
 /// Whether a coordinate-operation search may chain through a named pivot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IntermediateCrsUse {
@@ -196,6 +207,30 @@ impl DatabaseContext {
             out.push(cells);
         }
         Ok(out)
+    }
+
+    /// First `grid_alternatives` row for an official grid file name.
+    ///
+    /// This is `DatabaseContext::lookForGridAlternative`. An empty PROJ name
+    /// is ignored. `inverse` is true when `inverse_direction` is 1.
+    pub(crate) fn grid_alternative(&self, official_name: &str) -> Option<GridAlternative> {
+        let rows = self
+            .query(
+                "SELECT proj_grid_name, proj_grid_format, inverse_direction \
+                 FROM grid_alternatives WHERE original_grid_name = ? AND proj_grid_name <> ''",
+                &[official_name.to_owned()],
+            )
+            .ok()?;
+        let row = rows.first()?;
+        let name = row[0].text();
+        if name.is_empty() {
+            return None;
+        }
+        Some(GridAlternative {
+            proj_grid_name: name,
+            format: row[1].text(),
+            inverse: row[2].text() == "1",
+        })
     }
 
     /// `IAU_2015` for authority `IAU` and version `2015`.

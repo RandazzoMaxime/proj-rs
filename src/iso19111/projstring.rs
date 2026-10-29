@@ -4,8 +4,10 @@
 //! `+ellps` plus `+pm` when the prime meridian is not Greenwich.
 
 use super::buildop::OpProps;
+use super::factory::DatabaseContext;
 use super::model::{
-    Axis, BoundCRS, CartesianCS, CompoundCRS, Conversion, Crs, Datum, DatumEnsemble, Ellipsoid, EllipsoidalCS,
+    Axis, BoundCRS, CartesianCS, CompoundCRS, Conversion, CoordinateOperation, Crs, Datum,
+    DatumEnsemble, Ellipsoid, EllipsoidalCS, Transformation,
     FactoryError, GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified,
     Identifier, Measure, OperationMethod, Parameter, ParameterValue, PrimeMeridian, ProjectedCRS,
     UnitKind, UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame,
@@ -198,9 +200,33 @@ impl BoundCRS {
     ///
     /// The source CRS has no PROJ string, or the transformation is not TOWGS84.
     pub fn export_to_proj_string(&self) -> Result<String, FactoryError> {
+        self.proj_string(None)
+    }
+
+    /// `exportToPROJString` with a formatter that carries `proj.db`.
+    ///
+    /// A NADCON latitude file is replaced by its PROJ grid alternative before
+    /// `+nadgrids` is written.
+    ///
+    /// # Errors
+    ///
+    /// The source CRS has no PROJ string.
+    pub fn export_to_proj_string_with_database(
+        &self,
+        db: &DatabaseContext,
+    ) -> Result<String, FactoryError> {
+        self.proj_string(Some(db))
+    }
+
+    fn proj_string(&self, db: Option<&DatabaseContext>) -> Result<String, FactoryError> {
         let towgs84 = super::wkt::wkt1_towgs84(self);
+        let nadgrids = nadgrids_name(self, db);
         match self.source_crs() {
-            Crs::Geographic(crs) => Ok(geographic_bound_proj(crs, towgs84.as_deref())),
+            Crs::Geographic(crs) => Ok(geographic_bound_proj(
+                crs,
+                towgs84.as_deref(),
+                nadgrids.as_deref(),
+            )),
             Crs::Projected(crs) => projected_bound_proj(crs, towgs84.as_deref()),
             Crs::Geodetic(crs) => crs.export_to_proj_string(),
             _ => Err(FactoryError::Format(
@@ -210,10 +236,52 @@ impl BoundCRS {
     }
 }
 
-fn geographic_bound_proj(crs: &GeographicCRS, towgs84: Option<&[f64]>) -> String {
-    let Some(values) = towgs84 else {
-        return crs.export_to_proj_string();
+fn nadgrids_name(crs: &BoundCRS, db: Option<&DatabaseContext>) -> Option<String> {
+    if !crs.target_crs().name().eq_ignore_ascii_case("WGS 84") {
+        return None;
+    }
+    let CoordinateOperation::Transformation(transformation) = crs.transformation() else {
+        return None;
     };
+    let official = filename_parameter(transformation, "8657")
+        .or_else(|| filename_parameter(transformation, "8656"))?;
+    let Some(db) = db else {
+        return Some(official);
+    };
+    let Some(alternative) = db.grid_alternative(&official) else {
+        return Some(official);
+    };
+    let usable = matches!(
+        alternative.format.as_str(),
+        "GTiff" | "NTv2" | "NTv1" | "CTable2"
+    ) && !alternative.inverse;
+    if usable {
+        Some(alternative.proj_grid_name)
+    } else {
+        Some(official)
+    }
+}
+
+fn filename_parameter(transformation: &Transformation, code: &str) -> Option<String> {
+    transformation.parameters().iter().find_map(|parameter| {
+        if parameter.code() != code {
+            return None;
+        }
+        match parameter.value() {
+            ParameterValue::Filename(name) if !name.is_empty() => Some(name.clone()),
+            _ => None,
+        }
+    })
+}
+
+fn geographic_bound_proj(
+    crs: &GeographicCRS,
+    towgs84: Option<&[f64]>,
+    nadgrids: Option<&str>,
+) -> String {
+    if towgs84.is_none() && nadgrids.is_none() {
+        return crs.export_to_proj_string();
+    }
     let mut parts = vec!["+proj=longlat".to_owned()];
     if let Some(ellipsoid) = ellipsoid_of(crs) {
         parts.push(ellipsoid_proj(ellipsoid));
@@ -223,7 +291,12 @@ fn geographic_bound_proj(crs: &GeographicCRS, towgs84: Option<&[f64]>) -> String
             parts.push(clause);
         }
     }
-    parts.push(format!("+towgs84={}", format_towgs84(values)));
+    if let Some(values) = towgs84 {
+        parts.push(format!("+towgs84={}", format_towgs84(values)));
+    }
+    if let Some(grid) = nadgrids {
+        parts.push(format!("+nadgrids={grid}"));
+    }
     parts.push("+no_defs".to_owned());
     parts.push("+type=crs".to_owned());
     parts.join(" ")

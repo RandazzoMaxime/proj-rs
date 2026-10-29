@@ -3,7 +3,8 @@
 //! Each function is one `TEST()` name. WKT text is the expected string from that test.
 
 use proj_rs::{
-    create_crs_from_proj_string, create_from_user_input, AuthorityFactory, Axis, BoundCRS,
+    create_crs_from_proj_string, create_from_user_input, AlternativeGridNames, AuthorityFactory,
+    Axis, BoundCRS,
     CartesianCS, CoordinateOperation, IntermediateCrsUse, Measure, Meridian, ParameterValue,
     CompoundCRS, Conversion, CoordinateSystem, Crs, DatabaseContext, Datum, DatumEnsemble,
     DerivedProjectedCRS, DerivedVerticalCRS, EllipsoidalCS,
@@ -4709,5 +4710,25 @@ fn crs_bound_crs_projected_crs_to_proj_string() {
     assert_eq!(
         crs.export_to_proj_string().expect("proj"),
         "+proj=utm +zone=31 +ellps=WGS84 +towgs84=1,2,3,4,5,6,7 +units=m +no_defs +type=crs"
+    );
+}
+
+#[test]
+fn crs_bound_crs_nadcon_to_proj_string_use_proj_alternative_grid_names_false() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let operation = AuthorityFactory::create(&db, "EPSG")
+        .create_coordinate_operation("15851", AlternativeGridNames::Official)
+        .expect("EPSG:15851");
+    let CoordinateOperation::Transformation(transformation) = operation else {
+        panic!("EPSG:15851 is a transformation");
+    };
+    let crs = BoundCRS::create(
+        Crs::Geographic(GeographicCRS::epsg_4267()),
+        Crs::Geographic(GeographicCRS::epsg_4326()),
+        CoordinateOperation::Transformation(transformation),
+    );
+    assert_eq!(
+        crs.export_to_proj_string_with_database(&db).expect("proj"),
+        "+proj=longlat +ellps=clrk66 +nadgrids=us_noaa_conus.tif +no_defs +type=crs"
     );
 }
