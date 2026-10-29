@@ -4615,3 +4615,53 @@ fn crs_bound_crs_crs_link() {
     let canonical = linked.canonical_bound_crs().expect("projected canonical bound");
     assert!(canonical.source_crs().is_equivalent_to(&projected));
 }
+
+#[test]
+fn crs_bound_crs_to_wkt1() {
+    let geographic = GeographicCRS::create(
+        "my GEOGCRS",
+        Some(GeodeticReferenceFrame::epsg_6326()),
+        None,
+        EllipsoidalCS::create_latitude_longitude(UnitOfMeasure::degree()),
+    )
+    .expect("geographic");
+    let projected = ProjectedCRS::create(
+        "my PROJCRS",
+        GeodeticCRS::Geographic(geographic),
+        Conversion::create_utm_north(&OpProps::new(), 31).expect("utm"),
+        CartesianCS::create_easting_northing(UnitOfMeasure::metre()),
+    );
+    let crs = BoundCRS::create_from_towgs84(
+        Crs::Projected(projected),
+        &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0],
+    )
+    .expect("bound");
+    let expected = "\
+PROJCS[\"my PROJCRS\",
+    GEOGCS[\"my GEOGCRS\",
+        DATUM[\"WGS_1984\",
+            SPHEROID[\"WGS 84\",6378137,298.257223563,
+                AUTHORITY[\"EPSG\",\"7030\"]],
+            TOWGS84[1,2,3,4,5,6,7],
+            AUTHORITY[\"EPSG\",\"6326\"]],
+        PRIMEM[\"Greenwich\",0,
+            AUTHORITY[\"EPSG\",\"8901\"]],
+        UNIT[\"degree\",0.0174532925199433,
+            AUTHORITY[\"EPSG\",\"9122\"]]],
+    PROJECTION[\"Transverse_Mercator\"],
+    PARAMETER[\"latitude_of_origin\",0],
+    PARAMETER[\"central_meridian\",3],
+    PARAMETER[\"scale_factor\",0.9996],
+    PARAMETER[\"false_easting\",500000],
+    PARAMETER[\"false_northing\",0],
+    UNIT[\"metre\",1,
+        AUTHORITY[\"EPSG\",\"9001\"]],
+    AXIS[\"Easting\",EAST],
+    AXIS[\"Northing\",NORTH]]";
+    assert_eq!(
+        Crs::Bound(crs)
+            .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Gdal))
+            .expect("wkt"),
+        expected
+    );
+}

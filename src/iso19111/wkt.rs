@@ -35,8 +35,8 @@ fn node_from_text(text: &str) -> NodeId {
 }
 
 use super::model::{
-    ensemble_name_as_datum, Axis, BoundCRS, CartesianCS, CompoundCRS, Conversion, CoordinateSystem,
-    Crs, Datum,
+    ensemble_name_as_datum, Axis, BoundCRS, CartesianCS, CompoundCRS, Conversion,
+    CoordinateOperation, CoordinateSystem, Crs, Datum,
     DatumEnsemble, Ellipsoid, EngineeringCRS, EngineeringDatum, FactoryError, GeocentricCRS,
     GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified, Identifier, Measure,
     OperationMethod, Parameter, ParameterValue, PrimeMeridian, ProjectedCRS, Transformation,
@@ -146,6 +146,8 @@ pub struct WktFormatter {
     axis_linear: Vec<UnitOfMeasure>,
     axis_angular: Vec<UnitOfMeasure>,
     abridged: bool,
+    /// Seven WKT1 `TOWGS84` values, set while a bound CRS exports its source.
+    towgs84: Vec<f64>,
     db: Option<DatabaseContext>,
     /// Projected CRS name, used when an ESRI method depends on it.
     esri_object_name: String,
@@ -196,6 +198,7 @@ impl WktFormatter {
             axis_linear: vec![UnitOfMeasure::metre()],
             axis_angular: vec![UnitOfMeasure::degree()],
             abridged: false,
+            towgs84: Vec::new(),
             db: None,
             esri_object_name: String::new(),
         }
@@ -1090,9 +1093,62 @@ fn export_bound(crs: &BoundCRS, formatter: &mut WktFormatter) -> Result<(), Fact
         formatter.end_node();
         return Ok(());
     }
-    Err(FactoryError::Format(
-        "WKT1 bound CRS export requires a WGS 84 hub and TOWGS84 parameters".to_owned(),
-    ))
+    let Some(params) = wkt1_towgs84(crs) else {
+        return Err(FactoryError::Format(
+            "WKT1 bound CRS export requires a WGS 84 hub and TOWGS84 parameters".to_owned(),
+        ));
+    };
+    if !formatter.esri {
+        formatter.towgs84 = params;
+    }
+    export_crs(&crs.source, formatter)?;
+    formatter.towgs84.clear();
+    Ok(())
+}
+
+fn wkt1_towgs84(crs: &BoundCRS) -> Option<Vec<f64>> {
+    let hub = crs.target_crs();
+    let wgs84 = matches!(hub, Crs::Geographic(_) | Crs::Geodetic(_))
+        && hub.name().eq_ignore_ascii_case("WGS 84");
+    if !wgs84 {
+        return None;
+    }
+    let CoordinateOperation::Transformation(transformation) = crs.transformation() else {
+        return None;
+    };
+    let position_vector = transformation.method().code() == "9606"
+        || transformation.method().name().contains("Position Vector");
+    if !position_vector {
+        return None;
+    }
+    let mut params = [0.0; 7];
+    let mut found = [false; 7];
+    for parameter in transformation.parameters() {
+        let Some(index) = (match parameter.code() {
+            "8605" => Some(0usize),
+            "8606" => Some(1),
+            "8607" => Some(2),
+            "8608" => Some(3),
+            "8609" => Some(4),
+            "8610" => Some(5),
+            "8611" => Some(6),
+            _ => None,
+        }) else {
+            continue;
+        };
+        let ParameterValue::Measure(measure) = parameter.value() else {
+            continue;
+        };
+        params[index] = if index < 3 {
+            measure.si_value()
+        } else if index < 6 {
+            measure.convert_to(&UnitOfMeasure::arc_second())
+        } else {
+            measure.convert_to(&UnitOfMeasure::parts_per_million())
+        };
+        found[index] = true;
+    }
+    found.iter().all(|present| *present).then(|| params.to_vec())
 }
 
 fn export_engineering(
@@ -1214,6 +1270,13 @@ fn export_geodetic_datum(datum: &GeodeticReferenceFrame, formatter: &mut WktForm
                 formatter.end_node();
             }
         }
+    } else if formatter.towgs84.len() == 7 {
+        let values = formatter.towgs84.clone();
+        formatter.start_node("TOWGS84", NodeId::Absent);
+        for value in values {
+            formatter.add_number(value);
+        }
+        formatter.end_node();
     }
     formatter.format_ids(&datum.identified.identifiers);
     formatter.end_node();
