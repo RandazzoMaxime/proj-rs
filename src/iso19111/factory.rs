@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use rusqlite::{types::ValueRef, Connection};
 
-use super::equiv::folded_name;
+use super::equiv::{folded_name, Equivalence};
 use super::model::{
     ensemble_name_as_datum, Axis, BoundCRS, CartesianCS, CompoundCRS, ConcatenatedOperation,
     ConcatenatedStep, Conversion, CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble,
@@ -4078,6 +4078,17 @@ impl CoordinateOperationFactory {
         Self
     }
 
+    /// `createOperation` with no authority factory.
+    ///
+    /// A projected target is its deriving conversion, preceded by a ballpark
+    /// geographic offset when the source is not the base CRS. Nothing is
+    /// looked up in `proj.db`.
+    #[must_use]
+    pub fn create_operation(&self, source: &Crs, target: &Crs) -> Option<CoordinateOperation> {
+        let _ = self;
+        synthesized_operation(source, target)
+    }
+
     /// PROJ string of the operation from `source` to `target` when no database is required.
     ///
     /// A projected `target` whose base is `source` is the deriving conversion,
@@ -4182,6 +4193,112 @@ impl CoordinateOperationFactory {
         }
         Ok(found)
     }
+}
+
+/// Operation synthesized without `proj.db`.
+///
+/// A projected target chains a ballpark geographic offset, when the source
+/// is not its base, in front of the deriving conversion. That is
+/// `createOperation` with a null authority factory.
+fn synthesized_operation(source: &Crs, target: &Crs) -> Option<CoordinateOperation> {
+    let Crs::Projected(projected) = target else {
+        return None;
+    };
+    let base = geodetic_as_crs(projected.base_crs());
+    let conversion = CoordinateOperation::Conversion(projected.deriving_conversion().clone());
+    let mut steps = Vec::new();
+    if !same_geographic(source, &base) {
+        let ballpark = ballpark_geographic_offset(source, &base)?;
+        steps.push(ConcatenatedStep {
+            operation: CoordinateOperation::Transformation(ballpark),
+            reverse: false,
+        });
+    }
+    steps.push(ConcatenatedStep {
+        operation: conversion,
+        reverse: false,
+    });
+    let name = steps
+        .iter()
+        .map(|step| step.operation.name())
+        .collect::<Vec<_>>()
+        .join(" + ");
+    Some(CoordinateOperation::Concatenated(ConcatenatedOperation {
+        identified: Identified::named(name),
+        steps,
+        source: Some(Box::new(source.clone())),
+        target: Some(Box::new(target.clone())),
+        accuracy: None,
+        version: None,
+    }))
+}
+
+fn geodetic_as_crs(crs: &GeodeticCRS) -> Crs {
+    match crs {
+        GeodeticCRS::Geographic(crs) => Crs::Geographic(crs.clone()),
+        other => Crs::Geodetic(other.clone()),
+    }
+}
+
+fn same_geographic(source: &Crs, base: &Crs) -> bool {
+    match (source, base) {
+        (Crs::Geographic(source), Crs::Geographic(base))
+        | (Crs::Geodetic(GeodeticCRS::Geographic(source)), Crs::Geographic(base))
+        | (Crs::Geographic(source), Crs::Geodetic(GeodeticCRS::Geographic(base))) => {
+            source.is_equivalent_to_with(base, Equivalence::Equivalent)
+        }
+        _ => false,
+    }
+}
+
+fn ballpark_geographic_offset(source: &Crs, target: &Crs) -> Option<Transformation> {
+    if !matches!(
+        (source, target),
+        (Crs::Geographic(_), Crs::Geographic(_))
+            | (Crs::Geodetic(GeodeticCRS::Geographic(_)), Crs::Geographic(_))
+            | (Crs::Geographic(_), Crs::Geodetic(GeodeticCRS::Geographic(_)))
+    ) {
+        return None;
+    }
+    let same = same_geographic(source, target);
+    let kind = if same {
+        "Null geographic offset"
+    } else {
+        "Ballpark geographic offset"
+    };
+    Some(Transformation {
+        identified: Identified::named(format!(
+            "{kind} from {} to {}",
+            source.name(),
+            target.name()
+        )),
+        method: OperationMethod::named_code(
+            "Geographic2D offsets".to_owned(),
+            "EPSG".to_owned(),
+            "9619".to_owned(),
+        ),
+        parameters: vec![
+            Parameter {
+                name: "Latitude offset".to_owned(),
+                code_space: "EPSG".to_owned(),
+                code: "8601".to_owned(),
+                value: ParameterValue::angle(0.0),
+            },
+            Parameter {
+                name: "Longitude offset".to_owned(),
+                code_space: "EPSG".to_owned(),
+                code: "8602".to_owned(),
+                value: ParameterValue::angle(0.0),
+            },
+        ],
+        source: Some(Box::new(source.clone())),
+        target: Some(Box::new(target.clone())),
+        interpolation: None,
+        accuracy: same.then_some(0.0),
+        version: None,
+        point_motion: false,
+        inverted: false,
+    })
 }
 
 fn same_authority(source: &Crs, base: &GeodeticCRS) -> bool {

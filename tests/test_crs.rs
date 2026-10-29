@@ -5041,6 +5041,24 @@ fn crs_normalize_for_visualization_bound() {
     assert_eq!(normalized_operation, normalized_proj);
 }
 
+#[test]
+fn crs_projected_normalize_for_visualization_do_not_mess_deriving_conversion() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let proj = AuthorityFactory::create(&db, "EPSG")
+        .create_projected_crs("3035")
+        .expect("EPSG:3035");
+    let before = proj.deriving_conversion().clone();
+    let source = Crs::Geographic(GeographicCRS::epsg_4326());
+    let operation = CoordinateOperationFactory::create()
+        .create_operation(&source, &Crs::Projected(proj.clone()))
+        .expect("operation");
+    let _normalized = operation
+        .normalize_for_visualization()
+        .expect("normalize");
+    assert!(proj.deriving_conversion().is_equivalent_to(&before));
+    deriving_conversion_still_targets(&proj);
+}
+
 fn deriving_conversion_still_targets(crs: &ProjectedCRS) {
     let again = crs.deriving_operation();
     assert!(std::ptr::eq(again.target_crs(), crs));

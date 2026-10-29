@@ -2213,6 +2213,106 @@ impl ConcatenatedOperation {
     }
 }
 
+impl CoordinateOperation {
+    /// `CoordinateOperation::normalizeForVisualization`.
+    ///
+    /// Axis reversals are new steps. The deriving conversion stored on a CRS
+    /// is left unchanged.
+    ///
+    /// # Errors
+    ///
+    /// The operation has no source or target CRS.
+    pub fn normalize_for_visualization(&self) -> Result<Self, FactoryError> {
+        let (source, target) = operation_endpoints(self).ok_or_else(|| {
+            FactoryError::Invalid(
+                "Cannot retrieve source or target CRS".to_owned(),
+            )
+        })?;
+        let swap_source = needs_visualization_swap(source);
+        let swap_target = needs_visualization_swap(target);
+        if !swap_source && !swap_target {
+            return Ok(self.clone());
+        }
+        let mut steps = Vec::new();
+        if swap_source {
+            steps.push(ConcatenatedStep {
+                operation: CoordinateOperation::Conversion(axis_order_change_2d()),
+                reverse: false,
+            });
+        }
+        steps.extend(flattened_steps(self));
+        if swap_target {
+            steps.push(ConcatenatedStep {
+                operation: CoordinateOperation::Conversion(axis_order_change_2d()),
+                reverse: false,
+            });
+        }
+        let mut name = self.name().to_owned();
+        if !name.is_empty() {
+            name.push_str(" (with axis order normalized for visualization)");
+        }
+        Ok(Self::Concatenated(ConcatenatedOperation {
+            identified: Identified::named(name),
+            steps,
+            source: Some(Box::new(source.normalize_for_visualization())),
+            target: Some(Box::new(target.normalize_for_visualization())),
+            accuracy: self.accuracy(),
+            version: None,
+        }))
+    }
+}
+
+fn operation_endpoints(operation: &CoordinateOperation) -> Option<(&Crs, &Crs)> {
+    match operation {
+        CoordinateOperation::Concatenated(operation) => {
+            Some((operation.source_crs()?, operation.target_crs()?))
+        }
+        CoordinateOperation::Transformation(operation) => {
+            Some((operation.source_crs()?, operation.target_crs()?))
+        }
+        CoordinateOperation::Conversion(_) => None,
+    }
+}
+
+fn flattened_steps(operation: &CoordinateOperation) -> Vec<ConcatenatedStep> {
+    match operation {
+        CoordinateOperation::Concatenated(operation) => operation.steps.clone(),
+        other => vec![ConcatenatedStep {
+            operation: other.clone(),
+            reverse: false,
+        }],
+    }
+}
+
+fn needs_visualization_swap(crs: &Crs) -> bool {
+    let axes: Vec<&Axis> = match crs {
+        Crs::Geographic(crs) => crs.coordinate_system().axes().iter().collect(),
+        Crs::Geodetic(GeodeticCRS::Geographic(crs)) => {
+            crs.coordinate_system().axes().iter().collect()
+        }
+        Crs::Projected(crs) => crs.coordinate_system().axes().iter().collect(),
+        _ => return false,
+    };
+    axes.len() >= 2
+        && !(axes[0].direction() == "east" && axes[1].direction() == "north")
+        && axes[0].direction() != axes[1].direction()
+}
+
+fn axis_order_change_2d() -> Conversion {
+    let mut conversion = Conversion::create(
+        "axis order change (2D)",
+        "Axis Order Reversal (2D)",
+        Vec::new(),
+    );
+    conversion
+        .identified
+        .identifiers
+        .push(Identifier::new("EPSG", "15498"));
+    conversion.method.code_space = "EPSG".to_owned();
+    conversion.method.code = "9843".to_owned();
+    conversion
+}
+
 /// Coordinate operation returned by the factories.
 #[derive(Clone, Debug)]
 pub enum CoordinateOperation {
