@@ -4372,6 +4372,33 @@ fn crs_default_identify_method() {
 }
 
 #[test]
+fn crs_parametric_crs_wkt2() {
+    let crs = parametric_crs();
+    assert!(crs.is_equivalent_to(&crs));
+    assert!(crs.clone().is_equivalent_to(&crs));
+    assert!(!Crs::Parametric(crs.clone()).is_equivalent_to(&Crs::Vertical(odn_height())));
+    let wkt = Crs::Parametric(crs)
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2015))
+        .expect("wkt2");
+    assert_eq!(
+        wkt,
+        "\
+PARAMETRICCRS[\"Parametric CRS\",
+    PDATUM[\"Parametric datum\"],
+    CS[parametric,1],
+        AXIS[\"pressure (hPa)\",up,
+            PARAMETRICUNIT[\"HectoPascal\",100]]]"
+    );
+}
+
+#[test]
+fn crs_parametric_crs_wkt1() {
+    let exported = Crs::Parametric(parametric_crs())
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Gdal));
+    assert!(exported.is_err());
+}
+
+#[test]
 fn crs_engineering_crs_unknown_equivalence() {
     let gpkg = "\
 ENGCRS[\"Undefined Cartesian SRS with unknown unit\",
