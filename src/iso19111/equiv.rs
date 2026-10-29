@@ -7,7 +7,7 @@
 use super::model::{
     ensemble_name_as_datum, Axis, BoundCRS, CompoundCRS, Conversion, CoordinateOperation,
     CoordinateSystem, Crs, Datum, DatumEnsemble, DerivedGeodeticCRS, DerivedGeographicCRS,
-    DerivedProjectedCRS, Ellipsoid, TemporalCRS, TemporalDatum,
+    DerivedProjectedCRS, Ellipsoid, ParametricCRS, ParametricDatum, TemporalCRS, TemporalDatum,
     EngineeringCRS,
     EngineeringDatum, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified, Measure,
     Parameter, ParameterValue, PrimeMeridian, ProjectedCRS, Transformation, VerticalCRS,
@@ -142,6 +142,27 @@ impl VerticalReferenceFrame {
     #[must_use]
     pub fn is_equivalent_to_datum(&self, other: &Datum) -> bool {
         matches!(other, Datum::Vertical(datum) if vertical_equivalent(self, datum))
+    }
+}
+
+impl ParametricDatum {
+    /// Strict parametric-datum equivalence.
+    #[must_use]
+    pub fn is_equivalent_to(&self, other: &Self) -> bool {
+        same_name(self.name(), other.name())
+    }
+}
+
+impl ParametricCRS {
+    /// Strict parametric equivalence.
+    #[must_use]
+    pub fn is_equivalent_to(&self, other: &Self) -> bool {
+        same_name(self.name(), other.name())
+            && self.datum.is_equivalent_to(&other.datum)
+            && coordinate_system_equivalent(
+                &CoordinateSystem::Parametric(self.coordinate_system.clone()),
+                &CoordinateSystem::Parametric(other.coordinate_system.clone()),
+            )
     }
 }
 
@@ -589,6 +610,7 @@ impl Crs {
                 left.is_equivalent_to(right)
             }
             (Self::Temporal(left), Self::Temporal(right)) => left.is_equivalent_to(right),
+            (Self::Parametric(left), Self::Parametric(right)) => left.is_equivalent_to(right),
             _ => false,
         }
     }

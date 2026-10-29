@@ -175,7 +175,8 @@ impl Crs {
             | Self::DerivedVertical(_)
             | Self::DerivedGeographic(_)
             | Self::DerivedGeodetic(_)
-            | Self::Temporal(_) => {
+            | Self::Temporal(_)
+            | Self::Parametric(_) => {
                 return Err(FactoryError::Format(format!(
                     "PROJJSON export is not built for {}",
                     self.name()

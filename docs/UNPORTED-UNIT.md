@@ -7,7 +7,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_crs.cpp
 
-- `crs.default_identify_method`
 - `crs.parametricCRS_WKT2`
 - `crs.parametricCRS_WKT1`
 - `crs.derivedVerticalCRS_basic`

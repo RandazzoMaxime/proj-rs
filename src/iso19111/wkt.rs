@@ -37,6 +37,7 @@ fn node_from_text(text: &str) -> NodeId {
 use super::model::{
     ensemble_name_as_datum, Axis, BoundCRS, CartesianCS, CompoundCRS, Conversion,
     CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble, DerivedGeodeticCRS,
+    ParametricCRS,
     DerivedGeographicCRS, DerivedProjectedCRS, TemporalCRS, TemporalDatum,
     Ellipsoid, EngineeringCRS, EngineeringDatum, FactoryError, GeocentricCRS, GeodeticCRS,
     GeodeticReferenceFrame, GeographicCRS, Identified, Identifier, Measure, OperationMethod,
@@ -443,6 +444,7 @@ impl WktFormatter {
                 (true, UnitKind::Angular) => "ANGLEUNIT",
                 (true, UnitKind::Scale) => "SCALEUNIT",
                 (true, UnitKind::Time) => "TIMEUNIT",
+                (true, UnitKind::Parametric) => "PARAMETRICUNIT",
                 _ => "UNIT",
             }
         };
@@ -605,6 +607,7 @@ pub(crate) fn export_crs(crs: &Crs, formatter: &mut WktFormatter) -> Result<(), 
         Crs::DerivedGeographic(crs) => export_derived_geographic(crs, formatter)?,
         Crs::DerivedGeodetic(crs) => export_derived_geodetic(crs, formatter)?,
         Crs::Temporal(crs) => export_temporal(crs, formatter)?,
+        Crs::Parametric(crs) => export_parametric(crs, formatter)?,
     }
     Ok(())
 }
@@ -1683,6 +1686,27 @@ fn export_vertical_ensemble(ensemble: &DatumEnsemble, formatter: &mut WktFormatt
     } else {
         export_ensemble(ensemble, formatter);
     }
+}
+
+/// `ParametricCRS::_exportToWKT`.
+fn export_parametric(crs: &ParametricCRS, formatter: &mut WktFormatter) -> Result<(), FactoryError> {
+    if !formatter.wkt2 {
+        return Err(FactoryError::Format(
+            "ParametricCRS can only be exported to WKT2".to_owned(),
+        ));
+    }
+    formatter.start_node("PARAMETRICCRS", node_from_ids(&crs.identified.identifiers));
+    formatter.add_quoted(crs.name());
+    formatter.start_node("PDATUM", node_from_ids(&crs.datum.identified.identifiers));
+    formatter.add_quoted(crs.datum.name());
+    formatter.end_node();
+    export_cs(
+        &CoordinateSystem::Parametric(crs.coordinate_system.clone()),
+        formatter,
+    );
+    formatter.base_usage(&crs.identified);
+    formatter.end_node();
+    Ok(())
 }
 
 /// `TemporalCRS::_exportToWKT`.

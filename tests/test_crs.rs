@@ -9,7 +9,7 @@ use proj_rs::{
     Meridian, Parameter, ParameterValue,
     CompoundCRS, Conversion, CoordinateSystem, Crs, DatabaseContext, Datum, DatumEnsemble,
     DateTimeTemporalCS, DerivedGeodeticCRS, DerivedGeographicCRS, DerivedProjectedCRS,
-    TemporalCountCS, TemporalMeasureCS,
+    TemporalCountCS, TemporalMeasureCS, ParametricCRS, ParametricCS, ParametricDatum,
     DerivedVerticalCRS, TemporalCRS, TemporalDatum,
     EllipsoidalCS, EngineeringCRS, EngineeringDatum,
     EllipsoidalHeightPolicy, Equivalence, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS,
@@ -4351,6 +4351,24 @@ LOCAL_CS[\"Engineering CRS\",
     AXIS[\"Easting\",EAST],
     AXIS[\"Northing\",NORTH]]"
     );
+}
+
+fn parametric_crs() -> ParametricCRS {
+    ParametricCRS::create(
+        "Parametric CRS",
+        ParametricDatum::create("Parametric datum"),
+        ParametricCS::create(Axis::create(
+            "pressure",
+            "hPa",
+            "up",
+            UnitOfMeasure::new("HectoPascal", 100.0, UnitKind::Parametric),
+        )),
+    )
+}
+
+#[test]
+fn crs_default_identify_method() {
+    assert!(Crs::Parametric(parametric_crs()).identify().is_empty());
 }
 
 #[test]

@@ -286,6 +286,8 @@ pub enum UnitKind {
     Time,
     /// No conversion, used by an ordinal axis.
     None,
+    /// A parametric quantity, such as pressure. The factor is toward the pascal when that is the SI unit used by the axis.
+    Parametric,
     /// A database type this crate does not classify.
     Unknown,
 }
@@ -1495,6 +1497,8 @@ pub enum CoordinateSystem {
     TemporalCount(TemporalCountCS),
     /// Real-valued time. WKT2:2015 writes `temporal`; WKT2:2019 writes `TemporalMeasure`.
     TemporalMeasure(TemporalMeasureCS),
+    /// One parametric axis, for example pressure.
+    Parametric(ParametricCS),
 }
 
 impl CoordinateSystem {
@@ -1511,6 +1515,7 @@ impl CoordinateSystem {
             Self::DateTimeTemporal(cs) => vec![&cs.axis],
             Self::TemporalCount(cs) => vec![&cs.axis],
             Self::TemporalMeasure(cs) => vec![&cs.axis],
+            Self::Parametric(cs) => vec![&cs.axis],
         }
     }
 
@@ -1525,6 +1530,7 @@ impl CoordinateSystem {
             Self::DateTimeTemporal(cs) => &cs.identified,
             Self::TemporalCount(cs) => &cs.identified,
             Self::TemporalMeasure(cs) => &cs.identified,
+            Self::Parametric(cs) => &cs.identified,
         }
     }
 
@@ -1545,6 +1551,7 @@ impl CoordinateSystem {
             Self::DateTimeTemporal(_) | Self::TemporalCount(_) | Self::TemporalMeasure(_) => {
                 "temporal"
             }
+            Self::Parametric(_) => "parametric",
         }
     }
 }
@@ -1591,6 +1598,30 @@ impl TemporalMeasureCS {
     }
 
     /// The measure axis.
+    #[must_use]
+    pub fn axis(&self) -> &Axis {
+        &self.axis
+    }
+}
+
+/// One parametric axis. WKT writes `CS[parametric,1]`.
+#[derive(Clone, Debug)]
+pub struct ParametricCS {
+    pub(crate) identified: Identified,
+    pub(crate) axis: Axis,
+}
+
+impl ParametricCS {
+    /// `ParametricCS::create`.
+    #[must_use]
+    pub fn create(axis: Axis) -> Self {
+        Self {
+            identified: Identified::default(),
+            axis,
+        }
+    }
+
+    /// The parametric axis.
     #[must_use]
     pub fn axis(&self) -> &Axis {
         &self.axis
@@ -3605,6 +3636,76 @@ fn towgs84_parameters(values: &[f64]) -> Vec<Parameter> {
         .collect()
 }
 
+/// Parametric datum, for example a pressure datum.
+#[derive(Clone, Debug)]
+pub struct ParametricDatum {
+    pub(crate) identified: Identified,
+}
+
+impl ParametricDatum {
+    /// `ParametricDatum::create`.
+    #[must_use]
+    pub fn create(name: impl Into<String>) -> Self {
+        Self {
+            identified: Identified::named(name),
+        }
+    }
+
+    /// Name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.identified.name
+    }
+}
+
+/// Parametric CRS, for example pressure.
+#[derive(Clone, Debug)]
+pub struct ParametricCRS {
+    pub(crate) identified: Identified,
+    pub(crate) datum: ParametricDatum,
+    pub(crate) coordinate_system: ParametricCS,
+}
+
+impl ParametricCRS {
+    /// `ParametricCRS::create`.
+    #[must_use]
+    pub fn create(
+        name: impl Into<String>,
+        datum: ParametricDatum,
+        coordinate_system: ParametricCS,
+    ) -> Self {
+        Self {
+            identified: Identified::named(name),
+            datum,
+            coordinate_system,
+        }
+    }
+
+    /// Name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.identified.name
+    }
+
+    /// Parametric datum.
+    #[must_use]
+    pub fn datum(&self) -> &ParametricDatum {
+        &self.datum
+    }
+
+    /// Parametric coordinate system.
+    #[must_use]
+    pub fn coordinate_system(&self) -> &ParametricCS {
+        &self.coordinate_system
+    }
+
+    /// Usage domains.
+    #[must_use]
+    pub fn domains(&self) -> &[ObjectDomain] {
+        &self.identified.domains
+    }
+}
+
 /// Coordinate reference system.
 #[derive(Clone, Debug)]
 #[expect(
@@ -3636,6 +3737,8 @@ pub enum Crs {
     DerivedVertical(DerivedVerticalCRS),
     /// Temporal CRS.
     Temporal(TemporalCRS),
+    /// Parametric CRS.
+    Parametric(ParametricCRS),
 }
 
 impl Crs {
@@ -3655,6 +3758,7 @@ impl Crs {
             Self::DerivedGeodetic(crs) => crs.name(),
             Self::DerivedVertical(crs) => crs.name(),
             Self::Temporal(crs) => crs.name(),
+            Self::Parametric(crs) => crs.name(),
         }
     }
 
@@ -3690,7 +3794,8 @@ impl Crs {
             | Self::DerivedGeographic(_)
             | Self::DerivedGeodetic(_)
             | Self::DerivedVertical(_)
-            | Self::Temporal(_) => None,
+            | Self::Temporal(_)
+            | Self::Parametric(_) => None,
         }
     }
 
@@ -3718,7 +3823,8 @@ impl Crs {
             | Self::DerivedProjected(_)
             | Self::DerivedGeographic(_)
             | Self::DerivedGeodetic(_)
-            | Self::Temporal(_) => None,
+            | Self::Temporal(_)
+            | Self::Parametric(_) => None,
         }
     }
 
@@ -3738,6 +3844,7 @@ impl Crs {
             Self::DerivedGeodetic(crs) => &crs.identified.identifiers,
             Self::DerivedVertical(crs) => &crs.identified.identifiers,
             Self::Temporal(crs) => &crs.identified.identifiers,
+            Self::Parametric(crs) => &crs.identified.identifiers,
         }
     }
 
@@ -3766,6 +3873,7 @@ impl Crs {
             Self::DerivedGeodetic(crs) => &crs.identified,
             Self::DerivedVertical(crs) => &crs.identified,
             Self::Temporal(crs) => &crs.identified,
+            Self::Parametric(crs) => &crs.identified,
         }
     }
 
@@ -3787,6 +3895,7 @@ impl Crs {
             Self::DerivedGeodetic(crs) => &mut crs.identified,
             Self::DerivedVertical(crs) => &mut crs.identified,
             Self::Temporal(crs) => &mut crs.identified,
+            Self::Parametric(crs) => &mut crs.identified,
         }
     }
 
@@ -3818,12 +3927,15 @@ impl Crs {
             Self::DerivedGeodetic(crs) => crs.identified.deprecated,
             Self::DerivedVertical(crs) => crs.identified.deprecated,
             Self::Temporal(crs) => crs.identified.deprecated,
+            Self::Parametric(crs) => crs.identified.deprecated,
         }
     }
 
     pub(crate) fn is_horizontal(&self) -> bool {
         match self {
-            Self::Vertical(_) | Self::DerivedVertical(_) | Self::Temporal(_) => false,
+            Self::Vertical(_) | Self::DerivedVertical(_) | Self::Temporal(_) | Self::Parametric(_) => {
+                false
+            }
             Self::Compound(crs) => crs.components.iter().any(Self::is_horizontal),
             Self::Bound(crs) => crs.source.is_horizontal(),
             _ => true,
