@@ -1624,7 +1624,10 @@ fn export_engineering(
     let keyword = if formatter.wkt2 { "ENGCRS" } else { "LOCAL_CS" };
     formatter.start_node(keyword, node_from_ids(&crs.identified.identifiers));
     formatter.add_quoted(crs.name());
-    if formatter.wkt2 || !crs.datum.name().is_empty() {
+    let datum_name = crs.datum.name();
+    if formatter.wkt2
+        || (!datum_name.is_empty() && datum_name != "Unknown engineering datum")
+    {
         export_engineering_datum(&crs.datum, formatter);
     }
     if !formatter.wkt2 {

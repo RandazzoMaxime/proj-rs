@@ -4543,6 +4543,139 @@ fn crs_alter_geodetic_crs() {
 }
 
 #[test]
+fn crs_alter_cs_linear_unit() {
+    let unit = UnitOfMeasure::new("my unit", 2.0, UnitKind::Linear);
+    let projected = Crs::Projected(utm_31n()).alter_cs_linear_unit(&unit);
+    let Crs::Projected(projected) = projected else {
+        panic!("the projected CRS stays projected");
+    };
+    assert_eq!(projected.coordinate_system().axes().len(), 2);
+    for axis in projected.coordinate_system().axes() {
+        assert_eq!(axis.unit().name(), "my unit");
+        assert_eq!(axis.unit().conversion_to_si(), 2.0);
+    }
+    let derived = Crs::DerivedProjected(derived_projected()).alter_cs_linear_unit(&unit);
+    let Crs::DerivedProjected(derived) = derived else {
+        panic!("the derived projected CRS stays derived projected");
+    };
+    let CoordinateSystem::Cartesian(cs) = derived.coordinate_system() else {
+        panic!("the derived projected CRS stays cartesian");
+    };
+    assert_eq!(cs.axes().len(), 2);
+    for axis in cs.axes() {
+        assert_eq!(axis.unit().name(), "my unit");
+        assert_eq!(axis.unit().conversion_to_si(), 2.0);
+    }
+    let northing_easting = DerivedProjectedCRS::create(
+        "derived projectedCRS",
+        utm_31n(),
+        Conversion::create("unnamed", "PROJ unimplemented", Vec::new()),
+        CoordinateSystem::Cartesian(
+            CartesianCS::create(vec![
+                Axis::create("Northing", "N", "north", UnitOfMeasure::foot()),
+                Axis::create("Easting", "E", "east", UnitOfMeasure::foot()),
+            ])
+            .expect("northing easting"),
+        ),
+    );
+    let altered = Crs::DerivedProjected(northing_easting).alter_cs_linear_unit(&unit);
+    let Crs::DerivedProjected(altered) = altered else {
+        panic!("northing/easting stays a derived projected CRS");
+    };
+    let CoordinateSystem::Cartesian(cs) = altered.coordinate_system() else {
+        panic!("northing/easting stays cartesian");
+    };
+    assert_eq!(cs.axes().len(), 2);
+    assert_eq!(cs.axes()[0].unit().name(), "my unit");
+    assert_eq!(cs.axes()[0].direction(), "north");
+    assert_eq!(cs.axes()[0].unit().conversion_to_si(), 2.0);
+    assert_eq!(cs.axes()[1].unit().name(), "my unit");
+    assert_eq!(cs.axes()[1].direction(), "east");
+    assert_eq!(cs.axes()[1].unit().conversion_to_si(), 2.0);
+    let geocentric = Crs::Geodetic(GeodeticCRS::epsg_4978()).alter_cs_linear_unit(&unit);
+    let Crs::Geodetic(GeodeticCRS::Geocentric(geocentric)) = geocentric else {
+        panic!("EPSG:4978 stays geocentric");
+    };
+    assert_eq!(geocentric.coordinate_system().axes().len(), 3);
+    for axis in geocentric.coordinate_system().axes() {
+        assert_eq!(axis.unit().name(), "my unit");
+        assert_eq!(axis.unit().conversion_to_si(), 2.0);
+    }
+    let geographic = Crs::Geographic(GeographicCRS::epsg_4979()).alter_cs_linear_unit(&unit);
+    let Crs::Geographic(geographic) = geographic else {
+        panic!("EPSG:4979 stays geographic");
+    };
+    let axes = geographic.coordinate_system().axes();
+    assert_eq!(axes.len(), 3);
+    assert_ne!(axes[0].unit().name(), "my unit");
+    assert_ne!(axes[0].unit().conversion_to_si(), 2.0);
+    assert_ne!(axes[1].unit().name(), "my unit");
+    assert_ne!(axes[1].unit().conversion_to_si(), 2.0);
+    assert_eq!(axes[2].unit().name(), "my unit");
+    assert_eq!(axes[2].unit().conversion_to_si(), 2.0);
+    let vertical = Crs::Vertical(odn_height()).alter_cs_linear_unit(&unit);
+    let Crs::Vertical(vertical) = vertical else {
+        panic!("the vertical CRS stays vertical");
+    };
+    assert_eq!(vertical.coordinate_system().axis().unit().name(), "my unit");
+    assert_eq!(vertical.coordinate_system().axis().unit().conversion_to_si(), 2.0);
+    let engineering = WktParser::new()
+        .create_from_wkt("LOCAL_CS[\"foo\"]")
+        .expect("local")
+        .crs()
+        .expect("crs")
+        .clone();
+    let altered = engineering.alter_cs_linear_unit(&unit);
+    let mut formatter = WktFormatter::create(WktConvention::Wkt1Gdal);
+    formatter.set_lines(WktLines::Single);
+    assert_eq!(
+        altered.export_to_wkt(&mut formatter).expect("wkt1"),
+        "LOCAL_CS[\"foo\",UNIT[\"my unit\",2],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH]]"
+    );
+    let compound = CompoundCRS::create(
+        "horizontal + vertical",
+        vec![Crs::Projected(utm_31n()), Crs::Vertical(odn_height())],
+    )
+    .expect("compound");
+    let altered = Crs::Compound(compound).alter_cs_linear_unit(&unit);
+    let Crs::Compound(altered) = altered else {
+        panic!("the compound CRS stays compound");
+    };
+    assert_eq!(altered.components().len(), 2);
+    for component in altered.components() {
+        let axis = match component {
+            Crs::Projected(crs) => crs.coordinate_system().axes()[0].unit().clone(),
+            Crs::Vertical(crs) => crs.coordinate_system().axis().unit().clone(),
+            _ => panic!("a compound component is projected or vertical"),
+        };
+        assert_eq!(axis.name(), "my unit");
+        assert_eq!(axis.conversion_to_si(), 2.0);
+    }
+    let bound = Crs::Bound(
+        BoundCRS::create_from_towgs84(
+            Crs::Projected(utm_31n()),
+            &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0],
+        )
+        .expect("bound"),
+    )
+    .alter_cs_linear_unit(&unit);
+    let Crs::Bound(bound) = bound else {
+        panic!("the bound CRS stays bound");
+    };
+    let Crs::Projected(projected) = bound.source_crs() else {
+        panic!("the bound source stays projected");
+    };
+    for axis in projected.coordinate_system().axes() {
+        assert_eq!(axis.unit().name(), "my unit");
+        assert_eq!(axis.unit().conversion_to_si(), 2.0);
+    }
+    let parametric = Crs::Parametric(parametric_crs());
+    assert!(parametric
+        .alter_cs_linear_unit(&unit)
+        .is_equivalent_to(&parametric));
+}
+
+#[test]
 fn crs_date_time_temporal_crs_wkt2() {
     let crs = date_time_temporal();
     let wkt = Crs::Temporal(crs.clone())

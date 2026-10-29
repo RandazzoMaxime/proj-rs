@@ -7,7 +7,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_crs.cpp
 
-- `crs.crs_alterCSLinearUnit`
 - `crs.alterParametersLinearUnit`
 - `crs.getNonDeprecated`
 - `crs.promoteTo3D_and_demoteTo2D`

@@ -2748,8 +2748,10 @@ impl WktParser {
                 identified: datum_props.identified(),
             }
         } else if ci_eq(&node.value, "LOCAL_CS") {
+            // GDAL emits `LOCAL_CS["foo"]` without `LOCAL_DATUM`. PROJ stores
+            // the unknown engineering datum and omits it from WKT1.
             EngineeringDatum {
-                identified: Identified::named(props.name.clone()),
+                identified: Identified::named("Unknown engineering datum"),
             }
         } else {
             return Err(invalid("missing EDATUM"));

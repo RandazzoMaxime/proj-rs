@@ -15,7 +15,7 @@ use super::factory::{
 };
 use super::model::{
     Axis, BoundCRS, CartesianCS, CompoundCRS, Conversion, CoordinateOperation, CoordinateSystem, Crs,
-    Datum, DerivedProjectedCRS,
+    Datum, DerivedProjectedCRS, EngineeringCRS, GeocentricCRS,
     DatumEnsemble, Ellipsoid, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified,
     Identifier, Measure, ParameterValue, ProjectedCRS, Transformation, UnitOfMeasure, VerticalCRS,
 };
@@ -196,6 +196,72 @@ impl Crs {
         }
     }
 
+    /// `CRS::alterCSLinearUnit`.
+    ///
+    /// Cartesian axes take `unit`. A geographic 3D CRS changes only the height
+    /// axis. A parametric CRS is unchanged.
+    #[must_use]
+    pub fn alter_cs_linear_unit(&self, unit: &UnitOfMeasure) -> Self {
+        match self {
+            Self::Projected(crs) => Self::Projected(ProjectedCRS {
+                identified: Identified::named(crs.name()),
+                base: crs.base.clone(),
+                conversion: crs.conversion.clone(),
+                coordinate_system: cartesian_with_unit(&crs.coordinate_system, unit),
+                implicit_cs: crs.implicit_cs,
+            }),
+            Self::Geodetic(GeodeticCRS::Geocentric(crs)) => {
+                Self::Geodetic(GeodeticCRS::Geocentric(GeocentricCRS {
+                    identified: Identified::named(crs.name()),
+                    datum: crs.datum.clone(),
+                    ensemble: crs.ensemble.clone(),
+                    coordinate_system: cartesian_with_unit(&crs.coordinate_system, unit),
+                }))
+            }
+            Self::Geographic(crs) if crs.coordinate_system().axes().len() == 3 => {
+                Self::Geographic(geographic_with_linear_unit(crs, unit))
+            }
+            Self::Geodetic(GeodeticCRS::Geographic(crs))
+                if crs.coordinate_system().axes().len() == 3 =>
+            {
+                Self::Geographic(geographic_with_linear_unit(crs, unit))
+            }
+            Self::Vertical(crs) => Self::Vertical(vertical_with_unit(crs, unit)),
+            Self::Engineering(crs) => engineering_with_unit(crs, unit),
+            Self::DerivedProjected(crs) => {
+                let coordinate_system = match &crs.coordinate_system {
+                    CoordinateSystem::Cartesian(cs) => {
+                        CoordinateSystem::Cartesian(cartesian_with_unit(cs, unit))
+                    }
+                    other => other.clone(),
+                };
+                Self::DerivedProjected(DerivedProjectedCRS {
+                    identified: Identified::named(crs.name()),
+                    base: crs.base.clone(),
+                    conversion: crs.conversion.clone(),
+                    coordinate_system,
+                })
+            }
+            Self::Compound(crs) => {
+                let components = crs
+                    .components()
+                    .iter()
+                    .map(|component| component.alter_cs_linear_unit(unit))
+                    .collect();
+                CompoundCRS::create(crs.name(), components)
+                    .map(Self::Compound)
+                    .unwrap_or_else(|_| self.clone())
+            }
+            Self::Bound(crs) => Self::Bound(BoundCRS {
+                identified: Identified::named(crs.name()),
+                source: Box::new(crs.source_crs().alter_cs_linear_unit(unit)),
+                target: crs.target.clone(),
+                transformation: crs.transformation.clone(),
+            }),
+            _ => self.clone(),
+        }
+    }
+
     /// `isEquivalentTo` with `EQUIVALENT` and a database for datum aliases.
     ///
     /// The CRS name is not required to match. Axis comparison is direction and
@@ -208,6 +274,52 @@ impl Crs {
         };
         db_equivalent(&left, &right, IdentifyAxisOrder::Exact, db)
     }
+}
+
+fn cartesian_with_unit(cs: &CartesianCS, unit: &UnitOfMeasure) -> CartesianCS {
+    let mut cs = cs.clone();
+    for axis in &mut cs.axes {
+        axis.unit = unit.clone();
+    }
+    cs
+}
+
+fn geographic_with_linear_unit(crs: &GeographicCRS, unit: &UnitOfMeasure) -> GeographicCRS {
+    let name = crs.name().to_owned();
+    let mut crs = crs.clone();
+    if let Some(axis) = crs.coordinate_system.axes.get_mut(2) {
+        axis.unit = unit.clone();
+    }
+    crs.identified = Identified::named(name);
+    crs
+}
+
+fn vertical_with_unit(crs: &VerticalCRS, unit: &UnitOfMeasure) -> VerticalCRS {
+    let name = crs.name().to_owned();
+    let mut crs = crs.clone();
+    crs.coordinate_system.axis.unit = unit.clone();
+    crs.identified = Identified::named(name);
+    crs
+}
+
+fn engineering_with_unit(crs: &EngineeringCRS, unit: &UnitOfMeasure) -> Crs {
+    let name = crs.name().to_owned();
+    let coordinate_system = match &crs.coordinate_system {
+        CoordinateSystem::Cartesian(cs) => {
+            CoordinateSystem::Cartesian(cartesian_with_unit(cs, unit))
+        }
+        CoordinateSystem::Vertical(cs) => {
+            let mut cs = cs.clone();
+            cs.axis.unit = unit.clone();
+            CoordinateSystem::Vertical(cs)
+        }
+        _ => return Crs::Engineering(crs.clone()),
+    };
+    Crs::Engineering(EngineeringCRS {
+        identified: Identified::named(name),
+        datum: crs.datum.clone(),
+        coordinate_system,
+    })
 }
 
 fn as_geodetic(crs: &Crs) -> Option<GeodeticCRS> {
