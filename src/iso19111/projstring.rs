@@ -101,6 +101,7 @@ impl Crs {
             Self::DerivedProjected(crs) => {
                 Self::DerivedProjected(crs.normalize_for_visualization())
             }
+            Self::Bound(crs) => Self::Bound(crs.normalize_for_visualization()),
             other => other.clone(),
         }
     }
@@ -264,6 +265,17 @@ impl BoundCRS {
         db: &DatabaseContext,
     ) -> Result<String, FactoryError> {
         self.proj_string(Some(db))
+    }
+
+    /// `normalizeForVisualization` for a bound CRS.
+    ///
+    /// The source CRS axes become east-then-north. The hub and the
+    /// transformation stay.
+    #[must_use]
+    pub fn normalize_for_visualization(&self) -> Self {
+        let mut crs = self.clone();
+        crs.source = Box::new(crs.source.normalize_for_visualization());
+        crs
     }
 
     fn proj_string(&self, db: Option<&DatabaseContext>) -> Result<String, FactoryError> {
@@ -508,6 +520,9 @@ pub(crate) fn operation_proj_string(source: &Crs, target: &Crs) -> Result<String
     if let Crs::DerivedProjected(derived) = target {
         return derived_projected_operation(source, derived);
     }
+    if let Crs::Bound(bound) = target {
+        return bound_hub_operation(source, bound);
+    }
     let Crs::Projected(projected) = target else {
         return Err(FactoryError::Format(
             "this operation is not a projection of the source CRS".to_owned(),
@@ -749,6 +764,130 @@ fn linear_unit_convert(from: &UnitOfMeasure, to: &UnitOfMeasure) -> Option<Strin
     let inn = crate::projections::linear_proj_unit(from.conversion_to_si())?;
     let out = crate::projections::linear_proj_unit(to.conversion_to_si())?;
     Some(format!("+proj=unitconvert +xy_in={inn} +xy_out={out}"))
+}
+
+/// Operation from a WGS 84 geographic CRS into a bound CRS whose hub is WGS 84.
+///
+/// The pipeline is the inverse of the bound Helmert, then the source CRS
+/// longitude/latitude in its own angular unit.
+fn bound_hub_operation(source: &Crs, bound: &BoundCRS) -> Result<String, FactoryError> {
+    let Some(geographic) = geographic_of(source) else {
+        return Err(FactoryError::Format(
+            "the source CRS is not geographic".to_owned(),
+        ));
+    };
+    let Some(hub) = geographic_of(bound.target_crs()) else {
+        return Err(FactoryError::Format(
+            "the bound hub is not geographic".to_owned(),
+        ));
+    };
+    if !super::equiv::same_geographic_base(geographic, hub) {
+        return Err(FactoryError::Format(
+            "the source CRS is not the hub of the bound CRS".to_owned(),
+        ));
+    }
+    let Some(base) = geographic_of(bound.source_crs()) else {
+        return Err(FactoryError::Format(
+            "the bound source is not geographic".to_owned(),
+        ));
+    };
+    let Some(towgs84) = super::wkt::wkt1_towgs84(bound) else {
+        return Err(FactoryError::Format(
+            "the bound transformation is not a Helmert to WGS 84".to_owned(),
+        ));
+    };
+    let inverse: Vec<f64> = towgs84.iter().map(|value| -value).collect();
+    let mut steps = Vec::new();
+    if let Some(order) = geographic_axis_order(geographic) {
+        steps.push(format!("+proj=axisswap +order={order}"));
+    }
+    if degree_axis(geographic) {
+        steps.push("+proj=unitconvert +xy_in=deg +xy_out=rad".to_owned());
+    }
+    steps.push("+proj=push +v_3".to_owned());
+    steps.push(cart_step("+proj=cart", hub));
+    steps.push(helmert_step(&inverse));
+    steps.push(cart_step("+inv +proj=cart", base));
+    steps.push("+proj=pop +v_3".to_owned());
+    let mut longlat = cart_step("+proj=longlat", base);
+    longlat.push_str(&pm_clause(base));
+    steps.push(longlat);
+    if let Some(step) = angular_out_of_radians(base) {
+        steps.push(step);
+    }
+    if let Some(order) = geographic_axis_order(base) {
+        steps.push(format!("+proj=axisswap +order={order}"));
+    }
+    Ok(pipeline(&steps))
+}
+
+fn cart_step(prefix: &str, geographic: &GeographicCRS) -> String {
+    let mut step = prefix.to_owned();
+    if let Some(ellipsoid) = geographic.ellipsoid() {
+        step.push(' ');
+        step.push_str(&ellipsoid_proj(ellipsoid));
+    }
+    step
+}
+
+fn pm_clause(geographic: &GeographicCRS) -> String {
+    meridian_of(geographic)
+        .and_then(prime_meridian_proj)
+        .map(|clause| format!(" {clause}"))
+        .unwrap_or_default()
+}
+
+fn helmert_step(values: &[f64]) -> String {
+    let number = |value: f64| {
+        if value == 0.0 {
+            "0".to_owned()
+        } else {
+            trim_proj_number(value)
+        }
+    };
+    let mut step = format!(
+        "+proj=helmert +x={} +y={} +z={}",
+        number(values.first().copied().unwrap_or(0.0)),
+        number(values.get(1).copied().unwrap_or(0.0)),
+        number(values.get(2).copied().unwrap_or(0.0))
+    );
+    let rotation = values.get(3).copied().unwrap_or(0.0) != 0.0
+        || values.get(4).copied().unwrap_or(0.0) != 0.0
+        || values.get(5).copied().unwrap_or(0.0) != 0.0
+        || values.get(6).copied().unwrap_or(0.0) != 0.0;
+    if rotation {
+        step.push_str(&format!(
+            " +rx={} +ry={} +rz={} +s={}",
+            number(values.get(3).copied().unwrap_or(0.0)),
+            number(values.get(4).copied().unwrap_or(0.0)),
+            number(values.get(5).copied().unwrap_or(0.0)),
+            number(values.get(6).copied().unwrap_or(0.0))
+        ));
+    }
+    step
+}
+
+fn angular_out_of_radians(crs: &GeographicCRS) -> Option<String> {
+    let unit = crs.coordinate_system().axes().first()?.unit();
+    if unit.kind() != UnitKind::Angular {
+        return None;
+    }
+    let out = angular_proj_unit(unit.conversion_to_si())?;
+    if out == "rad" {
+        return None;
+    }
+    Some(format!("+proj=unitconvert +xy_in=rad +xy_out={out}"))
+}
+
+fn angular_proj_unit(factor: f64) -> Option<&'static str> {
+    const UNITS: &[(&str, f64)] = &[
+        ("deg", std::f64::consts::PI / 180.0),
+        ("grad", std::f64::consts::PI / 200.0),
+        ("rad", 1.0),
+    ];
+    UNITS.iter().find_map(|(name, value)| {
+        ((factor - value).abs() <= 1e-10 * value.abs()).then_some(*name)
+    })
 }
 
 fn degree_axis(crs: &GeographicCRS) -> bool {

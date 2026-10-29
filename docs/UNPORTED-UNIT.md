@@ -7,7 +7,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_crs.cpp
 
-- `crs.normalizeForVisualization_bound`
 - `crs.projected_normalizeForVisualization_do_not_mess_deriving_conversion`
 - `crs.projected_promoteTo3D_do_not_mess_deriving_conversion`
 - `crs.projected_demoteTo2D_do_not_mess_deriving_conversion`

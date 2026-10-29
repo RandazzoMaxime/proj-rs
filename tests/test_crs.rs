@@ -5002,6 +5002,46 @@ fn crs_normalize_for_visualization_derivedprojected() {
 }
 
 #[test]
+fn crs_normalize_for_visualization_bound() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let ntf = AuthorityFactory::create(&db, "EPSG")
+        .create_coordinate_reference_system("4807")
+        .expect("4807");
+    let bound = ntf.create_bound_crs_to_wgs84_if_possible(Some(&db), IntermediateCrsUse::Never);
+    assert!(!bound.is_equivalent_to(&ntf));
+    let source = Crs::Geographic(GeographicCRS::epsg_4326());
+    let operation = CoordinateOperationFactory::create()
+        .create_operation_proj_string(&source, &bound)
+        .expect("operation");
+    let normalized_proj = "\
++proj=pipeline +step +proj=axisswap +order=2,1 +step \
++proj=unitconvert +xy_in=deg +xy_out=rad +step +proj=push +v_3 +step \
++proj=cart +ellps=WGS84 +step +proj=helmert +x=168 +y=60 +z=-320 \
++step +inv +proj=cart +ellps=clrk80ign +step +proj=pop +v_3 +step \
++proj=longlat +ellps=clrk80ign +pm=paris +step +proj=unitconvert \
++xy_in=rad +xy_out=grad";
+    assert_eq!(
+        operation,
+        format!("{normalized_proj} +step +proj=axisswap +order=2,1")
+    );
+    let normalized = bound.normalize_for_visualization();
+    let Crs::Bound(normalized_bound) = &normalized else {
+        panic!("the normalized CRS stays bound");
+    };
+    let Crs::Geographic(base) = normalized_bound.source_crs() else {
+        panic!("the bound source stays geographic");
+    };
+    let axes = base.coordinate_system().axes();
+    assert_eq!(axes.len(), 2);
+    assert_eq!(axes[0].direction(), "east");
+    assert_eq!(axes[1].direction(), "north");
+    let normalized_operation = CoordinateOperationFactory::create()
+        .create_operation_proj_string(&source, &normalized)
+        .expect("normalized operation");
+    assert_eq!(normalized_operation, normalized_proj);
+}
+
+#[test]
 fn crs_date_time_temporal_crs_wkt2() {
     let crs = date_time_temporal();
     let wkt = Crs::Temporal(crs.clone())
