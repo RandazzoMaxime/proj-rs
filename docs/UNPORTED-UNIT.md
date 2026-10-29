@@ -7,7 +7,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_crs.cpp
 
-- `crs.crs_stripVerticalComponent`
 - `crs.crs_alterGeodeticCRS`
 - `crs.crs_alterCSLinearUnit`
 - `crs.alterParametersLinearUnit`

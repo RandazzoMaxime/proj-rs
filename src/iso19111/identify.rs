@@ -14,7 +14,8 @@ use super::factory::{
     ExistingProjectedQuery, NameMatch,
 };
 use super::model::{
-    Axis, BoundCRS, CartesianCS, CompoundCRS, Conversion, CoordinateOperation, Crs, Datum,
+    Axis, BoundCRS, CartesianCS, CompoundCRS, Conversion, CoordinateOperation, CoordinateSystem, Crs,
+    Datum, DerivedProjectedCRS,
     DatumEnsemble, Ellipsoid, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified,
     Identifier, Measure, ParameterValue, ProjectedCRS, Transformation, UnitOfMeasure, VerticalCRS,
 };
@@ -129,6 +130,23 @@ impl Crs {
             Self::Compound(crs) => crs.identify_with(factory),
             Self::Bound(crs) => crs.identify_with(factory),
             _ => Vec::new(),
+        }
+    }
+
+    /// `CRS::stripVerticalComponent`, an alias of `demoteTo2D` with no database.
+    ///
+    /// A geographic or projected CRS loses its third axis. A CRS that is already
+    /// 2D is returned unchanged. Other kinds are returned unchanged.
+    #[must_use]
+    pub fn strip_vertical_component(&self) -> Self {
+        match self {
+            Self::Geographic(crs) => Self::Geographic(crs.demote_to_2d(None)),
+            Self::Geodetic(GeodeticCRS::Geographic(crs)) => {
+                Self::Geographic(crs.demote_to_2d(None))
+            }
+            Self::Projected(crs) => Self::Projected(crs.demote_to_2d(None)),
+            Self::DerivedProjected(crs) => Self::DerivedProjected(crs.demote_to_2d(None)),
+            other => other.clone(),
         }
     }
 
@@ -670,7 +688,58 @@ impl ProjectedCRS {
         };
         self.identify_in_database(factory)
     }
+}
 
+impl DerivedProjectedCRS {
+    /// `CRS::promoteTo3D` for a derived projected CRS.
+    ///
+    /// A cartesian system of two axes gains an ellipsoidal-height axis in the
+    /// unit of the first axis. The projected base is promoted with no database.
+    #[must_use]
+    pub fn promote_to_3d(&self) -> Self {
+        let CoordinateSystem::Cartesian(cs) = &self.coordinate_system else {
+            return self.clone();
+        };
+        if cs.axes().len() != 2 {
+            return self.clone();
+        }
+        let unit = cs.axes()[0].unit().clone();
+        let mut coordinate_system = cs.clone();
+        coordinate_system
+            .axes
+            .push(Axis::new("Ellipsoidal height", "h", "up", unit));
+        Self {
+            identified: Identified::named(self.name()),
+            base: self.base.promote_to_3d(None),
+            conversion: self.conversion.clone(),
+            coordinate_system: CoordinateSystem::Cartesian(coordinate_system),
+        }
+    }
+
+    /// `DerivedProjectedCRS::demoteTo2D`.
+    ///
+    /// A cartesian system of three axes keeps the first two. The projected base
+    /// is demoted with `db`.
+    #[must_use]
+    pub fn demote_to_2d(&self, db: Option<&DatabaseContext>) -> Self {
+        let CoordinateSystem::Cartesian(cs) = &self.coordinate_system else {
+            return self.clone();
+        };
+        if cs.axes().len() != 3 {
+            return self.clone();
+        }
+        let mut coordinate_system = cs.clone();
+        coordinate_system.axes.truncate(2);
+        Self {
+            identified: Identified::named(self.name()),
+            base: self.base.demote_to_2d(db),
+            conversion: self.conversion.clone(),
+            coordinate_system: CoordinateSystem::Cartesian(coordinate_system),
+        }
+    }
+}
+
+impl ProjectedCRS {
     fn utm_shortcut(&self, factory: Option<&AuthorityFactory>) -> Option<(Crs, i32)> {
         if factory.is_some_and(|factory| {
             !(factory.authority().is_empty() || factory.authority() == "EPSG")

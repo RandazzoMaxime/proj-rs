@@ -4467,6 +4467,46 @@ fn crs_create_bound_crs_to_wgs84_if_possible() {
 }
 
 #[test]
+fn crs_strip_vertical_component() {
+    let stripped = Crs::Geographic(GeographicCRS::epsg_4979()).strip_vertical_component();
+    let Crs::Geographic(geographic) = stripped else {
+        panic!("EPSG:4979 stays a geographic CRS");
+    };
+    assert_eq!(geographic.coordinate_system().axes().len(), 2);
+    let wgs84 = Crs::Geographic(GeographicCRS::epsg_4326());
+    assert!(wgs84.strip_vertical_component().is_equivalent_to(&wgs84));
+    let projected = ProjectedCRS::create(
+        "",
+        GeodeticCRS::Geographic(GeographicCRS::epsg_4326()),
+        Conversion::create_utm_north(&OpProps::new(), 31).expect("utm"),
+        CartesianCS::create(vec![
+            Axis::create("Easting", "E", "east", UnitOfMeasure::metre()),
+            Axis::create("Northing", "N", "north", UnitOfMeasure::metre()),
+            Axis::create("Height", "z", "up", UnitOfMeasure::metre()),
+        ])
+        .expect("cartesian"),
+    );
+    let stripped = Crs::Projected(projected).strip_vertical_component();
+    let Crs::Projected(projected) = stripped else {
+        panic!("the 3D projected CRS stays projected");
+    };
+    assert_eq!(projected.coordinate_system().axes().len(), 2);
+    let promoted = derived_projected().promote_to_3d();
+    let CoordinateSystem::Cartesian(cs) = promoted.coordinate_system() else {
+        panic!("the promoted derived projected CRS stays cartesian");
+    };
+    assert_eq!(cs.axes().len(), 3);
+    let stripped = Crs::DerivedProjected(promoted).strip_vertical_component();
+    let Crs::DerivedProjected(derived) = stripped else {
+        panic!("the derived projected CRS stays derived projected");
+    };
+    let CoordinateSystem::Cartesian(cs) = derived.coordinate_system() else {
+        panic!("the stripped derived projected CRS stays cartesian");
+    };
+    assert_eq!(cs.axes().len(), 2);
+}
+
+#[test]
 fn crs_date_time_temporal_crs_wkt2() {
     let crs = date_time_temporal();
     let wkt = Crs::Temporal(crs.clone())
