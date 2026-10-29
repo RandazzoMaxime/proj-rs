@@ -15,11 +15,12 @@ use super::factory::{
 };
 use super::model::{
     Axis, BoundCRS, CartesianCS, CompoundCRS, Conversion, CoordinateOperation, CoordinateSystem, Crs,
-    Datum, DerivedProjectedCRS, EngineeringCRS, FactoryError, GeocentricCRS,
+    Datum, DerivedGeographicCRS, DerivedProjectedCRS, EngineeringCRS, FactoryError, GeocentricCRS,
     DatumEnsemble, Ellipsoid, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified,
     Identifier, LinearParameterScale, Measure, Parameter, ParameterValue, ProjectedCRS, Transformation,
     UnitKind, UnitOfMeasure, VerticalCRS,
 };
+use super::wkt::transformation_towgs84;
 
 const UNKNOWN_BASED_ON: &str = "Unknown based on ";
 
@@ -147,6 +148,44 @@ impl Crs {
             }
             Self::Projected(crs) => Self::Projected(crs.demote_to_2d(None)),
             Self::DerivedProjected(crs) => Self::DerivedProjected(crs.demote_to_2d(None)),
+            other => other.clone(),
+        }
+    }
+
+    /// `CRS::promoteTo3D` with an empty new name.
+    ///
+    /// A geographic CRS may be replaced by the same-name 3D CRS from `db`.
+    /// A bound CRS with a TOWGS84 transformation also promotes its hub and
+    /// that transformation. Other kinds are unchanged.
+    #[must_use]
+    pub fn promote_to_3d(&self, db: Option<&DatabaseContext>) -> Self {
+        match self {
+            Self::Geographic(crs) => Self::Geographic(crs.promote_to_3d_with_db(db)),
+            Self::Geodetic(GeodeticCRS::Geographic(crs)) => {
+                Self::Geographic(crs.promote_to_3d_with_db(db))
+            }
+            Self::Projected(crs) => Self::Projected(crs.promote_to_3d(db)),
+            Self::DerivedGeographic(crs) => Self::DerivedGeographic(crs.promote_to_3d(db)),
+            Self::DerivedProjected(crs) => Self::DerivedProjected(crs.promote_to_3d(db)),
+            Self::Bound(crs) => Self::Bound(crs.promote_to_3d(db)),
+            other => other.clone(),
+        }
+    }
+
+    /// `CRS::demoteTo2D` with an empty new name.
+    ///
+    /// A compound CRS becomes its first component. A bound CRS with a TOWGS84
+    /// transformation also demotes its hub and that transformation.
+    #[must_use]
+    pub fn demote_to_2d(&self, db: Option<&DatabaseContext>) -> Self {
+        match self {
+            Self::Geographic(crs) => Self::Geographic(crs.demote_to_2d(db)),
+            Self::Geodetic(GeodeticCRS::Geographic(crs)) => Self::Geographic(crs.demote_to_2d(db)),
+            Self::Projected(crs) => Self::Projected(crs.demote_to_2d(db)),
+            Self::DerivedGeographic(crs) => Self::DerivedGeographic(crs.demote_to_2d(db)),
+            Self::DerivedProjected(crs) => Self::DerivedProjected(crs.demote_to_2d(db)),
+            Self::Bound(crs) => Self::Bound(crs.demote_to_2d(db)),
+            Self::Compound(crs) if crs.components().len() >= 2 => crs.components()[0].clone(),
             other => other.clone(),
         }
     }
@@ -952,9 +991,9 @@ impl DerivedProjectedCRS {
     /// `CRS::promoteTo3D` for a derived projected CRS.
     ///
     /// A cartesian system of two axes gains an ellipsoidal-height axis in the
-    /// unit of the first axis. The projected base is promoted with no database.
+    /// unit of the first axis. The projected base is promoted with `db`.
     #[must_use]
-    pub fn promote_to_3d(&self) -> Self {
+    pub fn promote_to_3d(&self, db: Option<&DatabaseContext>) -> Self {
         let CoordinateSystem::Cartesian(cs) = &self.coordinate_system else {
             return self.clone();
         };
@@ -968,7 +1007,7 @@ impl DerivedProjectedCRS {
             .push(Axis::new("Ellipsoidal height", "h", "up", unit));
         Self {
             identified: Identified::named(self.name()),
-            base: self.base.promote_to_3d(None),
+            base: self.base.promote_to_3d(db),
             conversion: self.conversion.clone(),
             coordinate_system: CoordinateSystem::Cartesian(coordinate_system),
         }
@@ -994,6 +1033,114 @@ impl DerivedProjectedCRS {
             conversion: self.conversion.clone(),
             coordinate_system: CoordinateSystem::Cartesian(coordinate_system),
         }
+    }
+}
+
+impl DerivedGeographicCRS {
+    /// `CRS::promoteTo3D` for a derived geographic CRS.
+    ///
+    /// The height axis is metres, upwards. The geographic base is promoted
+    /// with `db`.
+    #[must_use]
+    pub fn promote_to_3d(&self, db: Option<&DatabaseContext>) -> Self {
+        if self.coordinate_system.axes.len() != 2 {
+            return self.clone();
+        }
+        let mut coordinate_system = self.coordinate_system.clone();
+        coordinate_system.axes.push(Axis::new(
+            "Ellipsoidal height",
+            "h",
+            "up",
+            UnitOfMeasure::metre(),
+        ));
+        Self {
+            identified: Identified::named(self.name()),
+            base: self.base.promote_to_3d_with_db(db),
+            conversion: self.conversion.clone(),
+            coordinate_system,
+        }
+    }
+
+    /// `DerivedGeographicCRS::demoteTo2D`.
+    ///
+    /// Three ellipsoidal axes keep the first two. The geographic base is
+    /// demoted with `db`.
+    #[must_use]
+    pub fn demote_to_2d(&self, db: Option<&DatabaseContext>) -> Self {
+        if self.coordinate_system.axes.len() != 3 {
+            return self.clone();
+        }
+        let mut coordinate_system = self.coordinate_system.clone();
+        coordinate_system.axes.truncate(2);
+        Self {
+            identified: Identified::named(self.name()),
+            base: self.base.demote_to_2d(db),
+            conversion: self.conversion.clone(),
+            coordinate_system,
+        }
+    }
+}
+
+impl BoundCRS {
+    /// `CRS::promoteTo3D` for a bound CRS.
+    ///
+    /// A TOWGS84 transformation promotes the hub and the transformation CRSs.
+    /// Any other transformation keeps them.
+    #[must_use]
+    pub fn promote_to_3d(&self, db: Option<&DatabaseContext>) -> Self {
+        let source = self.source.promote_to_3d(db);
+        let CoordinateOperation::Transformation(transformation) = &self.transformation else {
+            return Self::create(source, (*self.target).clone(), self.transformation.clone());
+        };
+        if transformation_towgs84(transformation).is_none() {
+            return Self::create(source, (*self.target).clone(), self.transformation.clone());
+        }
+        Self::create(
+            source,
+            self.target.promote_to_3d(db),
+            CoordinateOperation::Transformation(transformation.promote_to_3d(db)),
+        )
+    }
+
+    /// `CRS::demoteTo2D` for a bound CRS.
+    #[must_use]
+    pub fn demote_to_2d(&self, db: Option<&DatabaseContext>) -> Self {
+        let source = self.source.demote_to_2d(db);
+        let CoordinateOperation::Transformation(transformation) = &self.transformation else {
+            return Self::create(source, (*self.target).clone(), self.transformation.clone());
+        };
+        if transformation_towgs84(transformation).is_none() {
+            return Self::create(source, (*self.target).clone(), self.transformation.clone());
+        }
+        Self::create(
+            source,
+            self.target.demote_to_2d(db),
+            CoordinateOperation::Transformation(transformation.demote_to_2d(db)),
+        )
+    }
+}
+
+impl Transformation {
+    fn promote_to_3d(&self, db: Option<&DatabaseContext>) -> Self {
+        let mut transformation = self.clone();
+        if let Some(source) = &transformation.source {
+            transformation.source = Some(Box::new(source.promote_to_3d(db)));
+        }
+        if let Some(target) = &transformation.target {
+            transformation.target = Some(Box::new(target.promote_to_3d(db)));
+        }
+        transformation
+    }
+
+    fn demote_to_2d(&self, db: Option<&DatabaseContext>) -> Self {
+        let mut transformation = self.clone();
+        if let Some(source) = &transformation.source {
+            transformation.source = Some(Box::new(source.demote_to_2d(db)));
+        }
+        if let Some(target) = &transformation.target {
+            transformation.target = Some(Box::new(target.demote_to_2d(db)));
+        }
+        transformation
     }
 }
 

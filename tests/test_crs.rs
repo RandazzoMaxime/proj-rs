@@ -4492,7 +4492,7 @@ fn crs_strip_vertical_component() {
         panic!("the 3D projected CRS stays projected");
     };
     assert_eq!(projected.coordinate_system().axes().len(), 2);
-    let promoted = derived_projected().promote_to_3d();
+    let promoted = derived_projected().promote_to_3d(None);
     let CoordinateSystem::Cartesian(cs) = promoted.coordinate_system() else {
         panic!("the promoted derived projected CRS stays cartesian");
     };
@@ -4750,6 +4750,191 @@ fn replacement_codes(factory: &AuthorityFactory, db: &DatabaseContext, code: &st
             format!("{}:{}", id.code_space(), id.code())
         })
         .collect()
+}
+
+#[test]
+fn crs_promote_to_3d_and_demote_to_2d() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let geographic = Crs::Geographic(GeographicCRS::epsg_4326());
+    let promoted = geographic.promote_to_3d(None);
+    assert_eq!(geographic_axes(&promoted), 3);
+    assert!(promoted.promote_to_3d(None).is_equivalent_to(&promoted));
+    let promoted = geographic.promote_to_3d(Some(&db));
+    assert_eq!(geographic_axes(&promoted), 3);
+    assert!(!promoted.identifiers().is_empty());
+    let demoted = promoted.demote_to_2d(Some(&db));
+    assert_eq!(geographic_axes(&demoted), 2);
+    assert!(!demoted.identifiers().is_empty());
+
+    let projected = Crs::Projected(utm_31n());
+    let promoted = projected.promote_to_3d(None);
+    let Crs::Projected(projected_3d) = &promoted else {
+        panic!("the promoted CRS stays projected");
+    };
+    assert_eq!(projected_3d.coordinate_system().axes().len(), 3);
+    assert_eq!(projected_3d.base_crs().coordinate_system().axes().len(), 3);
+    let again = roundtrip_wkt2_2019(&promoted);
+    let Crs::Projected(again) = &again else {
+        panic!("the WKT2:2019 object stays projected");
+    };
+    assert_eq!(again.coordinate_system().axes().len(), 3);
+    assert_eq!(again.base_crs().coordinate_system().axes().len(), 3);
+    assert!(promoted.promote_to_3d(None).is_equivalent_to(&promoted));
+    let demoted = promoted.demote_to_2d(None);
+    let Crs::Projected(demoted) = &demoted else {
+        panic!("the demoted CRS stays projected");
+    };
+    assert_eq!(demoted.coordinate_system().axes().len(), 2);
+    assert_eq!(demoted.base_crs().coordinate_system().axes().len(), 2);
+
+    let promoted = projected.promote_to_3d(Some(&db));
+    let Crs::Projected(projected_3d) = &promoted else {
+        panic!("the database promotion stays projected");
+    };
+    assert_eq!(projected_3d.coordinate_system().axes().len(), 3);
+    assert_eq!(projected_3d.base_crs().coordinate_system().axes().len(), 3);
+    assert!(!projected_3d.base_crs().identifiers().is_empty());
+    let demoted = promoted.demote_to_2d(Some(&db));
+    let Crs::Projected(demoted) = &demoted else {
+        panic!("the database demotion stays projected");
+    };
+    assert_eq!(demoted.coordinate_system().axes().len(), 2);
+    assert_eq!(demoted.base_crs().coordinate_system().axes().len(), 2);
+    assert!(!demoted.base_crs().identifiers().is_empty());
+
+    let bound = Crs::Bound(
+        BoundCRS::create_from_towgs84(
+            Crs::Projected(utm_31n()),
+            &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0],
+        )
+        .expect("bound"),
+    );
+    let promoted = bound.promote_to_3d(Some(&db));
+    let Crs::Bound(promoted_bound) = &promoted else {
+        panic!("the promoted bound CRS stays bound");
+    };
+    let Crs::Projected(source) = promoted_bound.source_crs() else {
+        panic!("the bound source stays projected");
+    };
+    assert_eq!(source.coordinate_system().axes().len(), 3);
+    assert_eq!(geographic_axes(promoted_bound.target_crs()), 3);
+    let CoordinateOperation::Transformation(transformation) = promoted_bound.transformation()
+    else {
+        panic!("the binding operation stays a transformation");
+    };
+    assert_eq!(
+        geographic_axes(transformation.source_crs().expect("source")),
+        3
+    );
+    assert_eq!(
+        geographic_axes(transformation.target_crs().expect("target")),
+        3
+    );
+    let demoted = promoted.demote_to_2d(None);
+    let Crs::Bound(demoted) = &demoted else {
+        panic!("the demoted bound CRS stays bound");
+    };
+    let Crs::Projected(source) = demoted.source_crs() else {
+        panic!("the demoted source stays projected");
+    };
+    assert_eq!(source.coordinate_system().axes().len(), 2);
+    assert_eq!(geographic_axes(demoted.target_crs()), 2);
+    let CoordinateOperation::Transformation(transformation) = demoted.transformation() else {
+        panic!("the demoted binding operation stays a transformation");
+    };
+    assert_eq!(
+        geographic_axes(transformation.source_crs().expect("source")),
+        2
+    );
+    assert_eq!(
+        geographic_axes(transformation.target_crs().expect("target")),
+        2
+    );
+
+    let compound = Crs::Compound(
+        CompoundCRS::create(
+            "horizontal + vertical",
+            vec![Crs::Projected(utm_31n()), Crs::Vertical(odn_height())],
+        )
+        .expect("compound"),
+    );
+    assert!(matches!(compound.demote_to_2d(None), Crs::Projected(_)));
+
+    let derived = atlantic_pole();
+    let promoted = Crs::DerivedGeographic(derived.clone()).promote_to_3d(Some(&db));
+    let Crs::DerivedGeographic(promoted_derived) = &promoted else {
+        panic!("the promoted CRS stays derived geographic");
+    };
+    assert_eq!(promoted_derived.base_crs().coordinate_system().axes().len(), 3);
+    assert_eq!(promoted_derived.coordinate_system().axes().len(), 3);
+    assert!(promoted.promote_to_3d(None).is_equivalent_to(&promoted));
+    let demoted = promoted.demote_to_2d(Some(&db));
+    let Crs::DerivedGeographic(demoted_derived) = &demoted else {
+        panic!("the demoted CRS stays derived geographic");
+    };
+    assert_eq!(demoted_derived.base_crs().coordinate_system().axes().len(), 2);
+    assert_eq!(demoted_derived.coordinate_system().axes().len(), 2);
+    assert!(demoted_derived.is_equivalent_to_with(&derived, Equivalence::Equivalent));
+    assert!(demoted.demote_to_2d(None).is_equivalent_to(&demoted));
+
+    let derived = derived_projected();
+    let promoted = Crs::DerivedProjected(derived.clone()).promote_to_3d(Some(&db));
+    let Crs::DerivedProjected(promoted_derived) = &promoted else {
+        panic!("the promoted CRS stays derived projected");
+    };
+    assert_eq!(
+        promoted_derived
+            .base_crs()
+            .coordinate_system()
+            .axes()
+            .len(),
+        3
+    );
+    let CoordinateSystem::Cartesian(cs) = promoted_derived.coordinate_system() else {
+        panic!("the derived projected CRS stays cartesian");
+    };
+    assert_eq!(cs.axes().len(), 3);
+    assert!(promoted.promote_to_3d(None).is_equivalent_to(&promoted));
+    let again = roundtrip_wkt2_2019(&promoted);
+    let Crs::DerivedProjected(again) = &again else {
+        panic!("the WKT2:2019 object stays derived projected");
+    };
+    assert_eq!(again.base_crs().coordinate_system().axes().len(), 3);
+    let CoordinateSystem::Cartesian(cs) = again.coordinate_system() else {
+        panic!("the imported derived projected CRS stays cartesian");
+    };
+    assert_eq!(cs.axes().len(), 3);
+    let demoted = promoted.demote_to_2d(Some(&db));
+    let Crs::DerivedProjected(demoted_derived) = &demoted else {
+        panic!("the demoted CRS stays derived projected");
+    };
+    assert_eq!(demoted_derived.base_crs().coordinate_system().axes().len(), 2);
+    let CoordinateSystem::Cartesian(cs) = demoted_derived.coordinate_system() else {
+        panic!("the demoted derived projected CRS stays cartesian");
+    };
+    assert_eq!(cs.axes().len(), 2);
+    assert!(demoted_derived.is_equivalent_to_with(&derived, Equivalence::Equivalent));
+    assert!(demoted.demote_to_2d(None).is_equivalent_to(&demoted));
+}
+
+fn geographic_axes(crs: &Crs) -> usize {
+    match crs {
+        Crs::Geographic(crs) => crs.coordinate_system().axes().len(),
+        Crs::Geodetic(GeodeticCRS::Geographic(crs)) => crs.coordinate_system().axes().len(),
+        _ => panic!("expected a geographic CRS"),
+    }
+}
+
+fn roundtrip_wkt2_2019(crs: &Crs) -> Crs {
+    let wkt = crs
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2019))
+        .expect("wkt2-2019");
+    WktParser::new()
+        .create_from_wkt(&wkt)
+        .expect("parse")
+        .crs()
+        .expect("crs")
+        .clone()
 }
 
 #[test]

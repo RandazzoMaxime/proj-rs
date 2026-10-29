@@ -8,6 +8,7 @@ use super::factory::{AuthorityFactory, DatabaseContext, NameMatch};
 use super::model::{
     Axis, BoundCRS, CartesianCS, CompoundCRS, ConcatenatedOperation, ConcatenatedStep, Conversion,
     CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble, DerivedGeographicCRS,
+    DerivedProjectedCRS,
     Ellipsoid, EllipsoidalCS, EngineeringCRS, EngineeringDatum, FactoryError, GeocentricCRS,
     GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, GeoidModel, Identified, Identifier,
     Measure, Meridian, ObjectDomain, OperationMethod, OrdinalCS, Parameter, ParameterValue,
@@ -714,6 +715,9 @@ impl WktParser {
         if ci_eq(name, "PROJCS") || ci_eq(name, "PROJCRS") || ci_eq(name, "PROJECTEDCRS") {
             let object = self.build_projected(node)?;
             return self.attach_datum_grids(object);
+        }
+        if ci_eq(name, "DERIVEDPROJCRS") {
+            return self.build_derived_projected(node);
         }
         if ci_eq(name, "VERTCRS")
             || ci_eq(name, "VERTICALCRS")
@@ -2292,6 +2296,13 @@ impl WktParser {
             return Err(invalid("projected CRS requires a Cartesian CS"));
         };
         self.rename_esri_projected(&mut props, &original_name, &coordinate_system);
+        if coordinate_system.axes.len() == 3 {
+            if let GeodeticCRS::Geographic(crs) = &base {
+                if crs.coordinate_system().axes().len() == 2 {
+                    base = GeodeticCRS::Geographic(crs.promote_to_3d_with_db(self.db.as_ref()));
+                }
+            }
+        }
         let linear = coordinate_system
             .axes
             .first()
@@ -2315,6 +2326,50 @@ impl WktParser {
             return self.bind_towgs84(Crs::Projected(crs));
         }
         Ok(WktObject::Crs(Crs::Projected(crs)))
+    }
+
+    /// `DERIVEDPROJCRS`: a projected base, a deriving conversion, and a cartesian CS.
+    ///
+    /// A 3-axis derived CRS promotes a 2-axis base, which is how a WKT2:2019
+    /// export that omits the base CS still round-trips as 3D.
+    fn build_derived_projected(&mut self, node: &WktNode) -> Result<WktObject, FactoryError> {
+        let base_node = node
+            .child(&["BASEPROJCRS"])
+            .ok_or_else(|| invalid("missing BASEPROJCRS"))?;
+        let WktObject::Crs(Crs::Projected(mut base)) = self.build_projected(base_node)? else {
+            return Err(invalid("BASEPROJCRS is not a projected CRS"));
+        };
+        let conversion_node = node
+            .child(&["DERIVINGCONVERSION"])
+            .ok_or_else(|| invalid("missing DERIVINGCONVERSION"))?;
+        let angular = base
+            .base_crs()
+            .coordinate_system()
+            .axes()
+            .first()
+            .map(|axis| axis.unit().clone())
+            .unwrap_or_else(UnitOfMeasure::degree);
+        let linear = base
+            .coordinate_system()
+            .axes()
+            .first()
+            .map(|axis| axis.unit().clone())
+            .unwrap_or_else(UnitOfMeasure::metre);
+        let conversion = self.build_conversion(conversion_node, linear, angular)?;
+        let cs = self.build_cs(node.child(&["CS"]), node, UnitOfMeasure::degree())?;
+        let CoordinateSystem::Cartesian(coordinate_system) = cs else {
+            return Err(invalid("derived projected CRS requires a Cartesian CS"));
+        };
+        if coordinate_system.axes.len() == 3 && base.coordinate_system().axes().len() == 2 {
+            base = base.promote_to_3d(self.db.as_ref());
+        }
+        let props = self.build_properties(node)?;
+        Ok(WktObject::Crs(Crs::DerivedProjected(DerivedProjectedCRS {
+            identified: props.identified(),
+            base,
+            conversion,
+            coordinate_system: CoordinateSystem::Cartesian(coordinate_system),
+        })))
     }
 
     fn projected_bound(
