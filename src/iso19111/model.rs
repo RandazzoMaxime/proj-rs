@@ -1483,6 +1483,8 @@ pub enum CoordinateSystem {
     Affine(CartesianCS),
     /// Date-time axis. WKT2:2015 writes `temporal`; WKT2:2019 writes `TemporalDateTime`.
     DateTimeTemporal(DateTimeTemporalCS),
+    /// Integer time count. WKT2:2015 writes `temporal`; WKT2:2019 writes `TemporalCount`.
+    TemporalCount(TemporalCountCS),
 }
 
 impl CoordinateSystem {
@@ -1497,6 +1499,7 @@ impl CoordinateSystem {
             Self::Ordinal(cs) => cs.axes.iter().collect(),
             Self::Affine(cs) => cs.axes.iter().collect(),
             Self::DateTimeTemporal(cs) => vec![&cs.axis],
+            Self::TemporalCount(cs) => vec![&cs.axis],
         }
     }
 
@@ -1509,6 +1512,7 @@ impl CoordinateSystem {
             Self::Ordinal(cs) => &cs.identified,
             Self::Affine(cs) => &cs.identified,
             Self::DateTimeTemporal(cs) => &cs.identified,
+            Self::TemporalCount(cs) => &cs.identified,
         }
     }
 
@@ -1526,8 +1530,32 @@ impl CoordinateSystem {
             Self::Spherical(_) => "spherical",
             Self::Ordinal(_) => "ordinal",
             Self::Affine(_) => "affine",
-            Self::DateTimeTemporal(_) => "temporal",
+            Self::DateTimeTemporal(_) | Self::TemporalCount(_) => "temporal",
         }
+    }
+}
+
+/// One integer time-count axis. WKT2:2019 names the CS `TemporalCount`.
+#[derive(Clone, Debug)]
+pub struct TemporalCountCS {
+    pub(crate) identified: Identified,
+    pub(crate) axis: Axis,
+}
+
+impl TemporalCountCS {
+    /// `TemporalCountCS::create`.
+    #[must_use]
+    pub fn create(axis: Axis) -> Self {
+        Self {
+            identified: Identified::default(),
+            axis,
+        }
+    }
+
+    /// The count axis.
+    #[must_use]
+    pub fn axis(&self) -> &Axis {
+        &self.axis
     }
 }
 
@@ -1601,21 +1629,47 @@ impl TemporalDatum {
     }
 }
 
-/// Temporal CRS: a temporal datum and a date-time coordinate system.
+/// Temporal CRS: a temporal datum and a temporal coordinate system.
 #[derive(Clone, Debug)]
 pub struct TemporalCRS {
     pub(crate) identified: Identified,
     pub(crate) datum: TemporalDatum,
-    pub(crate) coordinate_system: DateTimeTemporalCS,
+    pub(crate) coordinate_system: CoordinateSystem,
 }
 
 impl TemporalCRS {
-    /// `TemporalCRS::create`.
+    /// `TemporalCRS::create` for a date-time axis.
     #[must_use]
     pub fn create(
         name: impl Into<String>,
         datum: TemporalDatum,
         coordinate_system: DateTimeTemporalCS,
+    ) -> Self {
+        Self::from_cs(
+            name,
+            datum,
+            CoordinateSystem::DateTimeTemporal(coordinate_system),
+        )
+    }
+
+    /// `TemporalCRS::create` for an integer time count.
+    #[must_use]
+    pub fn create_count(
+        name: impl Into<String>,
+        datum: TemporalDatum,
+        coordinate_system: TemporalCountCS,
+    ) -> Self {
+        Self::from_cs(
+            name,
+            datum,
+            CoordinateSystem::TemporalCount(coordinate_system),
+        )
+    }
+
+    fn from_cs(
+        name: impl Into<String>,
+        datum: TemporalDatum,
+        coordinate_system: CoordinateSystem,
     ) -> Self {
         Self {
             identified: Identified::named(name),
@@ -1636,9 +1690,9 @@ impl TemporalCRS {
         &self.datum
     }
 
-    /// Date-time coordinate system.
+    /// Temporal coordinate system.
     #[must_use]
-    pub fn coordinate_system(&self) -> &DateTimeTemporalCS {
+    pub fn coordinate_system(&self) -> &CoordinateSystem {
         &self.coordinate_system
     }
 

@@ -254,9 +254,11 @@ impl TemporalCRS {
     /// are compared exactly. Strict comparison also requires both names.
     #[must_use]
     pub fn is_equivalent_to_with(&self, other: &Self, criterion: Equivalence) -> bool {
-        let left = [self.coordinate_system.axis.clone()];
-        let right = [other.coordinate_system.axis.clone()];
+        let left: Vec<Axis> = self.coordinate_system.axes().into_iter().cloned().collect();
+        let right: Vec<Axis> = other.coordinate_system.axes().into_iter().cloned().collect();
         (criterion != Equivalence::Strict || same_name(self.name(), other.name()))
+            && std::mem::discriminant(&self.coordinate_system)
+                == std::mem::discriminant(&other.coordinate_system)
             && self.datum.is_equivalent_to_with(&other.datum, criterion)
             && axes_for_criterion(&left, &right, criterion)
     }

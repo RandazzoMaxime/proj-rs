@@ -9,6 +9,7 @@ use proj_rs::{
     Meridian, Parameter, ParameterValue,
     CompoundCRS, Conversion, CoordinateSystem, Crs, DatabaseContext, Datum, DatumEnsemble,
     DateTimeTemporalCS, DerivedGeodeticCRS, DerivedGeographicCRS, DerivedProjectedCRS,
+    TemporalCountCS,
     DerivedVerticalCRS, TemporalCRS, TemporalDatum,
     EllipsoidalCS,
     EllipsoidalHeightPolicy, Equivalence, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS,
@@ -4210,6 +4211,38 @@ TIMECRS[\"Temporal CRS\",
         TIMEORIGIN[0000-01-01]],
     CS[TemporalDateTime,1],
         AXIS[\"time (T)\",future]]"
+    );
+}
+
+#[test]
+fn crs_temporal_count_crs_with_conv_factor_wkt2_2019() {
+    let crs = TemporalCRS::create_count(
+        "GPS milliseconds",
+        TemporalDatum::create(
+            "GPS time origin",
+            "1980-01-01T00:00:00.0Z",
+            "proleptic Gregorian",
+        ),
+        TemporalCountCS::create(Axis::create(
+            "",
+            "T",
+            "future",
+            UnitOfMeasure::new("milliseconds (ms)", 0.001, UnitKind::Time),
+        )),
+    );
+    let wkt = Crs::Temporal(crs)
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2019))
+        .expect("wkt2-2019");
+    assert_eq!(
+        wkt,
+        "\
+TIMECRS[\"GPS milliseconds\",
+    TDATUM[\"GPS time origin\",
+        CALENDAR[\"proleptic Gregorian\"],
+        TIMEORIGIN[1980-01-01T00:00:00.0Z]],
+    CS[TemporalCount,1],
+        AXIS[\"(T)\",future,
+            TIMEUNIT[\"milliseconds (ms)\",0.001]]]"
     );
 }
 

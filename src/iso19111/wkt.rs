@@ -1695,10 +1695,7 @@ fn export_temporal(crs: &TemporalCRS, formatter: &mut WktFormatter) -> Result<()
     formatter.start_node("TIMECRS", node_from_ids(&crs.identified.identifiers));
     formatter.add_quoted(crs.name());
     export_temporal_datum(&crs.datum, formatter)?;
-    export_cs(
-        &CoordinateSystem::DateTimeTemporal(crs.coordinate_system.clone()),
-        formatter,
-    );
+    export_cs(&crs.coordinate_system, formatter);
     formatter.base_usage(&crs.identified);
     formatter.end_node();
     Ok(())
@@ -1845,6 +1842,7 @@ fn export_cs(cs: &CoordinateSystem, formatter: &mut WktFormatter) {
         formatter.start_node("CS", node_from_ids(&cs.identified().identifiers));
         let type_name = match cs {
             CoordinateSystem::DateTimeTemporal(_) if formatter.keywords_2019 => "TemporalDateTime",
+            CoordinateSystem::TemporalCount(_) if formatter.keywords_2019 => "TemporalCount",
             other => other.wkt2_type(),
         };
         formatter.add_raw(type_name);
@@ -1916,8 +1914,10 @@ fn export_axis(axis: &Axis, order: usize, abbrev: AxisAbbrev, formatter: &mut Wk
         if !latitude {
             if geocentric || easting_northing {
                 designation = format!("({})", axis.abbreviation());
-            } else if !designation.is_empty() {
-                designation.push(' ');
+            } else {
+                if !designation.is_empty() {
+                    designation.push(' ');
+                }
                 designation.push('(');
                 designation.push_str(axis.abbreviation());
                 designation.push(')');

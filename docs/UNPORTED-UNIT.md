@@ -7,7 +7,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_crs.cpp
 
-- `crs.temporalCountCRSWithConvFactor_WKT2_2019`
 - `crs.temporalCountCRSWithoutConvFactor_WKT2_2019`
 - `crs.temporalMeasureCRSWithoutConvFactor_WKT2_2019`
 - `crs.engineeringCRS_WKT2`

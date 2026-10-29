@@ -92,6 +92,7 @@ pub use iso19111::{
     create_crs_from_proj_string, create_from_user_input,
     CoordinateOperationContext, CoordinateOperationFactory, CoordinateSystem, Crs, CrsInfo,
     DatabaseContext, DateTimeTemporalCS, Datum, DatumEnsemble, DeprecatedCodes, DerivedConversion,
+    TemporalCountCS,
     DerivedGeodeticCRS, TemporalCRS, TemporalDatum,
     DerivedGeographicCRS, DerivedProjectedCRS, DerivedVerticalCRS,
     EllipsoidalCS, EllipsoidalHeightPolicy,

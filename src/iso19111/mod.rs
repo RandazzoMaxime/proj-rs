@@ -29,6 +29,7 @@ pub use model::{
     CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble, DerivedConversion, Ellipsoid,
     EllipsoidalCS,
     DateTimeTemporalCS, DerivedGeodeticCRS, DerivedGeographicCRS, DerivedProjectedCRS,
+    TemporalCountCS,
     DerivedVerticalCRS, TemporalCRS, TemporalDatum,
     EngineeringCRS, EngineeringDatum,
     FactoryError,
