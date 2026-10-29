@@ -4197,6 +4197,23 @@ TIMECRS[\"Temporal CRS\",
 }
 
 #[test]
+fn crs_date_time_temporal_crs_wkt2_2019() {
+    let wkt = Crs::Temporal(date_time_temporal())
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2019))
+        .expect("wkt2-2019");
+    assert_eq!(
+        wkt,
+        "\
+TIMECRS[\"Temporal CRS\",
+    TDATUM[\"Gregorian calendar\",
+        CALENDAR[\"proleptic Gregorian\"],
+        TIMEORIGIN[0000-01-01]],
+    CS[TemporalDateTime,1],
+        AXIS[\"time (T)\",future]]"
+    );
+}
+
+#[test]
 fn crs_compound_crs_valid() {
     let vertical = Crs::Vertical(odn_height());
     assert!(CompoundCRS::create(
