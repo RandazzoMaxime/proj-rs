@@ -971,6 +971,14 @@ pub struct EngineeringDatum {
 }
 
 impl EngineeringDatum {
+    /// `EngineeringDatum::create`.
+    #[must_use]
+    pub fn create(name: impl Into<String>) -> Self {
+        Self {
+            identified: Identified::named(name),
+        }
+    }
+
     /// Name.
     #[must_use]
     pub fn name(&self) -> &str {
@@ -2983,6 +2991,20 @@ pub struct EngineeringCRS {
 }
 
 impl EngineeringCRS {
+    /// `EngineeringCRS::create`.
+    #[must_use]
+    pub fn create(
+        name: impl Into<String>,
+        datum: EngineeringDatum,
+        coordinate_system: CoordinateSystem,
+    ) -> Self {
+        Self {
+            identified: Identified::named(name),
+            datum,
+            coordinate_system,
+        }
+    }
+
     /// Name.
     #[must_use]
     pub fn name(&self) -> &str {

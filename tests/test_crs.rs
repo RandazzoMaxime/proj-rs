@@ -11,7 +11,7 @@ use proj_rs::{
     DateTimeTemporalCS, DerivedGeodeticCRS, DerivedGeographicCRS, DerivedProjectedCRS,
     TemporalCountCS, TemporalMeasureCS,
     DerivedVerticalCRS, TemporalCRS, TemporalDatum,
-    EllipsoidalCS,
+    EllipsoidalCS, EngineeringCRS, EngineeringDatum,
     EllipsoidalHeightPolicy, Equivalence, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS,
     LinunitPolicy, OpProps, OutputAxisRule, PrimeMeridian, ProjectedCRS, RealizationMethod,
     Transformation, UnitKind, UnitOfMeasure,
@@ -4299,6 +4299,40 @@ TIMECRS[\"Decimal Years CE\",
     CS[TemporalMeasure,1],
         AXIS[\"decimal years (a)\",future,
             TIMEUNIT[\"year\"]]]"
+    );
+}
+
+fn engineering_crs() -> EngineeringCRS {
+    EngineeringCRS::create(
+        "Engineering CRS",
+        EngineeringDatum::create("Engineering datum"),
+        CoordinateSystem::Cartesian(CartesianCS::create_easting_northing(UnitOfMeasure::metre())),
+    )
+}
+
+#[test]
+fn crs_engineering_crs_wkt2() {
+    let crs = engineering_crs();
+    assert!(crs.is_equivalent_to(&crs));
+    assert!(crs.clone().is_equivalent_to(&crs));
+    assert!(!Crs::Engineering(crs.clone()).is_equivalent_to(&Crs::Vertical(odn_height())));
+    let wkt = Crs::Engineering(crs)
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2015))
+        .expect("wkt2");
+    assert_eq!(
+        wkt,
+        "\
+ENGCRS[\"Engineering CRS\",
+    EDATUM[\"Engineering datum\"],
+    CS[Cartesian,2],
+        AXIS[\"(E)\",east,
+            ORDER[1],
+            LENGTHUNIT[\"metre\",1,
+                ID[\"EPSG\",9001]]],
+        AXIS[\"(N)\",north,
+            ORDER[2],
+            LENGTHUNIT[\"metre\",1,
+                ID[\"EPSG\",9001]]]]"
     );
 }
 
