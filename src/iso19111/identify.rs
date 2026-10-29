@@ -11,7 +11,7 @@ use super::equiv::{
 };
 use super::factory::{AuthorityFactory, DatabaseContext, ExistingProjectedQuery, NameMatch};
 use super::model::{
-    Axis, CartesianCS, Conversion, Crs, Datum, DatumEnsemble, Ellipsoid, GeodeticCRS,
+    Axis, CartesianCS, CompoundCRS, Conversion, Crs, Datum, DatumEnsemble, Ellipsoid, GeodeticCRS,
     GeodeticReferenceFrame, GeographicCRS, Identified, Identifier, Measure, ParameterValue,
     ProjectedCRS, UnitOfMeasure, VerticalCRS,
 };
@@ -112,13 +112,16 @@ impl Crs {
     /// `CRS::identify`.
     ///
     /// Geographic and geodetic CRS use [`GeodeticCRS::identify_with`]. A
-    /// projected CRS uses the UTM shortcut. Other kinds have no match.
+    /// projected CRS uses the UTM shortcut. A vertical or compound CRS is
+    /// looked up in the factory. Other kinds have no match.
     #[must_use]
     pub fn identify_with(&self, factory: Option<&AuthorityFactory>) -> Vec<(Crs, i32)> {
         match self {
             Self::Geographic(crs) => crs.identify_with(factory),
             Self::Geodetic(crs) => crs.identify_with(factory),
             Self::Projected(crs) => crs.identify_with(factory),
+            Self::Vertical(crs) => crs.identify_with(factory),
+            Self::Compound(crs) => crs.identify_with(factory),
             _ => Vec::new(),
         }
     }
@@ -1223,6 +1226,175 @@ impl VerticalCRS {
             .map(|(crs, confidence)| (Crs::Vertical(crs), confidence))
             .collect()
     }
+}
+
+impl CompoundCRS {
+    /// `CompoundCRS::identify`.
+    ///
+    /// A missing factory returns nothing. A compatible code is checked and
+    /// returned at once: 100 when the database object is equivalent, 25 when
+    /// the code exists but the definition differs, and nothing when the code
+    /// is absent. Otherwise an exact name is tried, then an approximate name.
+    /// 100 is an exact name and an equivalent definition, 90 an equivalent
+    /// name, 70 equivalent components with a different name, and 25 a name
+    /// resemblance only.
+    #[must_use]
+    pub fn identify_with(&self, factory: Option<&AuthorityFactory>) -> Vec<(Crs, i32)> {
+        let Some(factory) = factory else {
+            return Vec::new();
+        };
+        let name = self.name();
+        let insignificant_name = insignificant(name);
+        let mut found_equivalent_name = false;
+        let mut hits: Vec<(CompoundCRS, i32)> = Vec::new();
+        if compatible_authority(self.identifiers(), factory) {
+            for identifier in self.identifiers() {
+                if !(factory.authority().is_empty()
+                    || identifier.code_space() == factory.authority())
+                {
+                    continue;
+                }
+                let looked = AuthorityFactory::create(factory.database_context(), identifier.code_space())
+                    .create_compound_crs(identifier.code());
+                if let Ok(found) = looked {
+                    let confidence = if compounds_match(self, &found) { 100 } else { 25 };
+                    return vec![(Crs::Compound(found), confidence)];
+                }
+            }
+        } else if !insignificant_name {
+            for mode in [NameMatch::Exact, NameMatch::Approximate] {
+                let Ok(found) = factory.create_compound_crs_by_name(name, mode) else {
+                    break;
+                };
+                for candidate in found {
+                    let eq_name = equivalent_name(name, candidate.name());
+                    found_equivalent_name |= eq_name;
+                    if compounds_match(self, &candidate) {
+                        if candidate.name() == name {
+                            return vec![(Crs::Compound(candidate), 100)];
+                        }
+                        hits.push((candidate, if eq_name { 90 } else { 70 }));
+                    } else {
+                        hits.push((candidate, 25));
+                    }
+                }
+                if !hits.is_empty() {
+                    break;
+                }
+            }
+        }
+        sort_compounds(name, &mut hits);
+        if self.identifiers().is_empty()
+            && !found_equivalent_name
+            && (hits.is_empty() || hits[0].1 < 50)
+        {
+            let mut known = Vec::new();
+            for (candidate, _) in &hits {
+                if let Some(identifier) = candidate.identifiers().first() {
+                    known.push((
+                        identifier.code_space().to_owned(),
+                        identifier.code().to_owned(),
+                    ));
+                }
+            }
+            if let Ok(candidates) = factory.create_compound_crs_from_existing(self) {
+                for candidate in candidates {
+                    if let Some(identifier) = candidate.identifiers().first() {
+                        if known.iter().any(|(space, code)| {
+                            space == identifier.code_space() && code == identifier.code()
+                        }) {
+                            continue;
+                        }
+                    }
+                    let confidence = if compounds_match(self, &candidate) {
+                        if insignificant_name { 90 } else { 70 }
+                    } else {
+                        25
+                    };
+                    hits.push((candidate, confidence));
+                }
+            }
+            sort_compounds(name, &mut hits);
+            if hits.len() == 1 && hits[0].1 == 90 && name == hits[0].0.name() {
+                hits[0].1 = 100;
+            }
+        }
+        if self.identifiers().is_empty() && hits.is_empty() && self.components().len() == 2 {
+            let horizontal = self.components()[0].identify_with(Some(factory));
+            let vertical = self.components()[1].identify_with(Some(factory));
+            if horizontal.len() == 1
+                && vertical.len() == 1
+                && horizontal[0].1 >= 70
+                && vertical[0].1 >= 70
+            {
+                let synthesized = format!(
+                    "{} + {}",
+                    horizontal[0].0.name(),
+                    vertical[0].0.name()
+                );
+                if let Ok(crs) = CompoundCRS::create(
+                    synthesized,
+                    vec![horizontal[0].0.clone(), vertical[0].0.clone()],
+                ) {
+                    let name_score = if name == crs.name() {
+                        100
+                    } else if equivalent_name(name, crs.name()) {
+                        90
+                    } else {
+                        70
+                    };
+                    let confidence = name_score.min(horizontal[0].1).min(vertical[0].1);
+                    hits.push((crs, confidence));
+                }
+            }
+        }
+        if hits.len() >= 2 {
+            let highest = hits[0].1;
+            hits.retain(|hit| hit.1 == highest);
+        }
+        hits.into_iter()
+            .map(|(crs, confidence)| (Crs::Compound(crs), confidence))
+            .collect()
+    }
+}
+
+fn compounds_match(left: &CompoundCRS, right: &CompoundCRS) -> bool {
+    left.is_equivalent_to_with(right, compound_criterion(left))
+}
+
+fn compound_criterion(crs: &CompoundCRS) -> Equivalence {
+    let implicit = crs
+        .components()
+        .first()
+        .is_some_and(component_has_implicit_cs);
+    if implicit {
+        Equivalence::ExceptAxisOrder
+    } else {
+        Equivalence::Equivalent
+    }
+}
+
+fn component_has_implicit_cs(crs: &Crs) -> bool {
+    match crs {
+        Crs::Geographic(crs) => crs.implicit_cs,
+        Crs::Geodetic(GeodeticCRS::Geographic(crs)) => crs.implicit_cs,
+        Crs::Projected(crs) => {
+            crs.implicit_cs
+                || matches!(crs.base_crs(), GeodeticCRS::Geographic(base) if base.implicit_cs)
+        }
+        Crs::Bound(crs) => component_has_implicit_cs(crs.source_crs()),
+        _ => false,
+    }
+}
+
+fn sort_compounds(name: &str, hits: &mut [(CompoundCRS, i32)]) {
+    hits.sort_by(|left, right| {
+        right
+            .1
+            .cmp(&left.1)
+            .then_with(|| (right.0.name() == name).cmp(&(left.0.name() == name)))
+            .then_with(|| left.0.name().cmp(right.0.name()))
+    });
 }
 
 fn stamp_promoted(identified: &mut Identified) {

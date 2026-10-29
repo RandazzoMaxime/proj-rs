@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use rusqlite::{types::ValueRef, Connection};
 
+use super::equiv::folded_name;
 use super::model::{
     ensemble_name_as_datum, Axis, CartesianCS, CompoundCRS, ConcatenatedOperation,
     ConcatenatedStep, Conversion, CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble,
@@ -696,6 +697,20 @@ impl NamedAuthorityObject for VerticalCRS {
     }
 }
 
+impl NamedAuthorityObject for CompoundCRS {
+    fn name(&self) -> &str {
+        CompoundCRS::name(self)
+    }
+
+    fn identifiers(&self) -> &[Identifier] {
+        CompoundCRS::identifiers(self)
+    }
+
+    fn load(factory: &AuthorityFactory, code: &str) -> Result<Self, FactoryError> {
+        factory.create_compound_crs(code)
+    }
+}
+
 impl NamedAuthorityObject for GeodeticReferenceFrame {
     fn name(&self) -> &str {
         GeodeticReferenceFrame::name(self)
@@ -738,6 +753,42 @@ fn auth_code_clause(ids: &[(String, String)], prefix: &str) -> String {
     }
     sql.push(')');
     sql
+}
+
+fn append_component_codes(
+    sql: &mut String,
+    params: &mut Vec<String>,
+    hits: &[(Crs, i32)],
+    prefix: &str,
+) -> bool {
+    if hits.is_empty() {
+        return true;
+    }
+    let ids = component_hit_ids(hits);
+    if ids.is_empty() {
+        return false;
+    }
+    sql.push_str(" AND ");
+    sql.push_str(&auth_code_clause(&ids, prefix));
+    push_auth_codes(&ids, params);
+    true
+}
+
+fn component_hit_ids(hits: &[(Crs, i32)]) -> Vec<(String, String)> {
+    let mut ids = Vec::new();
+    for (crs, _) in hits {
+        let identifiers = match crs {
+            Crs::Bound(bound) => bound.source_crs().identifiers(),
+            other => other.identifiers(),
+        };
+        if let Some(identifier) = identifiers.first() {
+            ids.push((
+                identifier.code_space().to_owned(),
+                identifier.code().to_owned(),
+            ));
+        }
+    }
+    ids
 }
 
 fn push_auth_codes(ids: &[(String, String)], params: &mut Vec<String>) {
@@ -806,10 +857,7 @@ fn canonical_authority(authority: String) -> String {
 }
 
 fn canonical_object_name(name: &str) -> String {
-    name.chars()
-        .filter(|ch| !matches!(ch, ' ' | '_' | '-' | '/' | '(' | ')' | '.' | '&' | ','))
-        .flat_map(char::to_lowercase)
-        .collect()
+    folded_name(name)
 }
 
 fn equivalent_object_name(left: &str, right: &str) -> bool {
@@ -1695,6 +1743,73 @@ impl AuthorityFactory {
             .into_iter()
             .map(|(crs, _)| crs)
             .collect())
+    }
+
+    /// Compound CRS whose official name or alias matches `name`.
+    ///
+    /// # Errors
+    ///
+    /// The database rejects the statement.
+    pub(crate) fn create_compound_crs_by_name(
+        &self,
+        name: &str,
+        mode: NameMatch,
+    ) -> Result<Vec<CompoundCRS>, FactoryError> {
+        Ok(self
+            .objects_from_name(name, "compound_crs", mode)?
+            .into_iter()
+            .map(|(crs, _)| crs)
+            .collect())
+    }
+
+    /// Compound CRS that use the same horizontal and vertical codes as `crs`.
+    ///
+    /// This is `AuthorityFactory::createCompoundCRSFromExisting`. Candidates
+    /// come from identifying each component. Deprecated rows are left out.
+    ///
+    /// # Errors
+    ///
+    /// The database rejects the statement.
+    pub(crate) fn create_compound_crs_from_existing(
+        &self,
+        crs: &CompoundCRS,
+    ) -> Result<Vec<CompoundCRS>, FactoryError> {
+        if crs.components().len() != 2 {
+            return Ok(Vec::new());
+        }
+        let horizontal = crs.components()[0].identify_with(Some(self));
+        let vertical = crs.components()[1].identify_with(Some(self));
+        if horizontal.is_empty() && vertical.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut sql =
+            String::from("SELECT auth_name, code FROM compound_crs WHERE deprecated = 0");
+        let mut params = Vec::new();
+        if !append_component_codes(&mut sql, &mut params, &horizontal, "horiz_crs_")
+            && !horizontal.is_empty()
+        {
+            return Ok(Vec::new());
+        }
+        if !append_component_codes(&mut sql, &mut params, &vertical, "vertical_crs_")
+            && !vertical.is_empty()
+        {
+            return Ok(Vec::new());
+        }
+        if !self.authority.is_empty() {
+            sql.push_str(" AND auth_name = ?");
+            params.push(self.authority.clone());
+        }
+        let rows = self.db.query(&sql, &params)?;
+        let mut found = Vec::new();
+        for row in rows {
+            if let Ok(compound) = self
+                .child(&row[0].text())
+                .create_compound_crs(&row[1].text())
+            {
+                found.push(compound);
+            }
+        }
+        Ok(found)
     }
 
     /// Geodetic datums whose official name or alias matches `name`.

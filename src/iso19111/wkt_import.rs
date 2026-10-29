@@ -2055,7 +2055,14 @@ impl WktParser {
         if datum_node.is_none() && ensemble_node.is_none() && geodetic_in_vertcs.is_none() {
             return Err(invalid("Missing VDATUM or ENSEMBLE node"));
         }
-        let props = self.build_properties(node)?;
+        let mut props = self.build_properties(node)?;
+        if (self.esri || self.maybe_esri) && !node.children.is_empty() {
+            if let Some((official, _, _)) =
+                self.alias(&strip_quotes(&node.children[0]), "vertical_crs")
+            {
+                props.name = official;
+            }
+        }
         let dynamic = node.child(&["DYNAMIC"]);
         let cs_node = node.child(&["CS"]);
         let datum = if let Some(datum_node) = geodetic_in_vertcs {

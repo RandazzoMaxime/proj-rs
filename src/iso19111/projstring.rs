@@ -8,7 +8,7 @@ use super::model::{
     Axis, CartesianCS, CompoundCRS, Conversion, Crs, Datum, DatumEnsemble, Ellipsoid, EllipsoidalCS,
     FactoryError, GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified,
     Identifier, Measure, OperationMethod, Parameter, ParameterValue, PrimeMeridian, ProjectedCRS,
-    UnitKind, UnitOfMeasure,
+    UnitKind, UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame,
 };
 
 impl GeographicCRS {
@@ -662,13 +662,17 @@ pub fn create_crs_from_proj_string(definition: &str) -> Result<Crs, FactoryError
     if proj == "pipeline" {
         return crs_from_pipeline(&tokens);
     }
-    if matches!(proj, "longlat" | "lonlat" | "latlong") {
-        return geographic_from_proj(&tokens);
+    let crs = if matches!(proj, "longlat" | "lonlat" | "latlong") {
+        geographic_from_proj(&tokens)?
+    } else if proj == "utm" {
+        utm_from_proj(&tokens)?
+    } else {
+        projected_from_proj(&tokens, proj)?
+    };
+    if has_token(&tokens, "geoidgrids") {
+        return compound_with_geoid(&tokens, crs);
     }
-    if proj == "utm" {
-        return utm_from_proj(&tokens);
-    }
-    projected_from_proj(&tokens, proj)
+    Ok(crs)
 }
 
 fn crs_from_pipeline(tokens: &[(String, String)]) -> Result<Crs, FactoryError> {
@@ -783,6 +787,19 @@ fn geographic_base(tokens: &[(String, String)]) -> Result<GeographicCRS, Factory
 
 fn has_token(tokens: &[(String, String)], key: &str) -> bool {
     tokens.iter().any(|(name, _)| name == key)
+}
+
+fn compound_with_geoid(tokens: &[(String, String)], horizontal: Crs) -> Result<Crs, FactoryError> {
+    let grids = token(tokens, "geoidgrids");
+    let vertical = VerticalCRS::create(
+        "unknown",
+        VerticalReferenceFrame::named(format!("unknown using geoidgrids={grids}")),
+        VerticalCS::create_gravity_related_height(UnitOfMeasure::metre()),
+    );
+    Ok(Crs::Compound(CompoundCRS::create(
+        "unknown",
+        vec![horizontal, Crs::Vertical(vertical)],
+    )?))
 }
 
 fn geographic_from_proj(tokens: &[(String, String)]) -> Result<Crs, FactoryError> {
@@ -1126,6 +1143,13 @@ fn datum_from_proj(tokens: &[(String, String)]) -> Result<GeodeticReferenceFrame
         return Ok(GeodeticReferenceFrame::create(
             "Unknown based on Bessel 1841 ellipsoid",
             Ellipsoid::create_flattened_sphere("Bessel 1841", 6_377_397.155, 299.152_812_8),
+            meridian,
+        ));
+    }
+    if ellps == "krass" {
+        return Ok(GeodeticReferenceFrame::create(
+            "Unknown based on Krassovsky, 1940 ellipsoid",
+            Ellipsoid::create_flattened_sphere("Krassovsky, 1940", 6_378_245.0, 298.3),
             meridian,
         ));
     }

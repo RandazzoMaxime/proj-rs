@@ -7,7 +7,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_crs.cpp
 
-- `crs.compoundCRS_identify_db`
 - `crs.boundCRS_to_WKT2`
 - `crs.boundCRS_with_usage`
 - `crs.boundCRS_crs_link`

@@ -4290,3 +4290,119 @@ fn crs_compound_crs_no_name_provided() {
     .expect("compound");
     assert_eq!(crs.name(), "WGS 84 / UTM zone 31N + ODN height");
 }
+
+fn compound_like(source: &CompoundCRS, name: &str, code: Option<&str>) -> CompoundCRS {
+    let crs = CompoundCRS::create(name, source.components().to_vec()).expect("compound");
+    match code {
+        Some(code) => crs.with_identifier("EPSG", code),
+        None => crs,
+    }
+}
+
+fn epsg_number(crs: &Crs) -> i32 {
+    crs.authority_code("EPSG")
+        .and_then(|identifier| identifier.code().parse().ok())
+        .unwrap_or(0)
+}
+
+fn compound_codes(hits: &[(Crs, i32)]) -> Vec<(i32, i32)> {
+    hits.iter()
+        .map(|(crs, confidence)| (epsg_number(crs), *confidence))
+        .collect()
+}
+
+#[test]
+fn crs_compound_crs_identify_db() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let factory = AuthorityFactory::create(&db, "EPSG");
+    let source = factory.create_compound_crs("8769").expect("EPSG:8769");
+    assert_eq!(
+        compound_codes(&source.identify_with(Some(&factory))),
+        vec![(8769, 100)]
+    );
+    assert!(source.identify_with(None).is_empty());
+
+    let missing = compound_like(&source, source.name(), Some("1"));
+    assert!(missing.identify_with(Some(&factory)).is_empty());
+
+    let wrong = compound_like(&source, source.name(), Some("8770"));
+    assert_eq!(
+        compound_codes(&wrong.identify_with(Some(&factory))),
+        vec![(8770, 25)]
+    );
+
+    let named = compound_like(&source, source.name(), None);
+    assert_eq!(
+        compound_codes(&named.identify_with(Some(&factory))),
+        vec![(8769, 100)]
+    );
+
+    let equivalent = compound_like(&source, "NAD83_Ohio_North_ftUS_NAVD88_height_ftUS", None);
+    assert_eq!(
+        compound_codes(&equivalent.identify_with(Some(&factory))),
+        vec![(8769, 90)]
+    );
+
+    let other = factory.create_compound_crs("8770").expect("EPSG:8770");
+    let mismatched = compound_like(&other, "NAD83_Ohio_North_ftUS_NAVD88_height_ftUS", None);
+    assert_eq!(
+        compound_codes(&mismatched.identify_with(Some(&factory))),
+        vec![(8769, 25)]
+    );
+
+    let unrelated = compound_like(&source, "unrelated name", None);
+    assert_eq!(
+        compound_codes(&unrelated.identify_with(Some(&factory))),
+        vec![(8769, 70)]
+    );
+
+    let geoid = create_crs_from_proj_string(
+        "+proj=tmerc +lat_0=0 +lon_0=72.05 +k=1 +x_0=3500000 \
+         +y_0=-5811057.63 +ellps=krass \
+         +towgs84=23.57,-140.95,-79.8,0,-0.35,-0.79,-0.22 \
+         +geoidgrids=egm08_25.gtx +units=m +no_defs +type=crs",
+    )
+    .expect("geoidgrids");
+    let Crs::Compound(geoid) = geoid else {
+        panic!("geoidgrids PROJ string is a compound CRS");
+    };
+    let _ = geoid.identify_with(Some(&factory));
+
+    let osgb = factory.create_compound_crs("7405").expect("EPSG:7405");
+    let wkt = Crs::Compound(osgb)
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Esri).with_database(db.clone()))
+        .expect("esri");
+    let mut parser = WktParser::new();
+    parser.attach_database(db.clone());
+    let imported = parser
+        .create_from_wkt(&wkt)
+        .expect("import")
+        .crs()
+        .expect("crs")
+        .clone();
+    assert_eq!(
+        compound_codes(&imported.identify_with(Some(&factory))),
+        vec![(7405, 100)]
+    );
+
+    let navd = create_from_user_input("EPSG:4326+5703", &db).expect("4326+5703");
+    let wkt = navd
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Esri).with_database(db))
+        .expect("esri");
+    let parsed = parser
+        .create_from_wkt(&wkt)
+        .expect("import")
+        .crs()
+        .expect("crs")
+        .clone();
+    let hits = parsed.identify_with(Some(&factory));
+    assert_eq!(hits.len(), 1);
+    assert_eq!(epsg_number(&hits[0].0), 0);
+    assert_eq!(hits[0].1, 100);
+    let Crs::Compound(found) = &hits[0].0 else {
+        panic!("synthesized compound");
+    };
+    assert_eq!(found.components().len(), 2);
+    assert_eq!(epsg_number(&found.components()[0]), 4326);
+    assert_eq!(epsg_number(&found.components()[1]), 5703);
+}

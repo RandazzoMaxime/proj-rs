@@ -257,14 +257,16 @@ impl VerticalCRS {
         self.is_equivalent_to_with(other, Equivalence::Strict)
     }
 
-    /// `Equivalent` does not require the CRS name to match.
+    /// `Equivalent` does not require the CRS name to match. Axis comparison
+    /// is then direction and unit, as in `CoordinateSystemAxis::_isEquivalentTo`.
     #[must_use]
     pub fn is_equivalent_to_with(&self, other: &Self, criterion: Equivalence) -> bool {
         (criterion != Equivalence::Strict || same_name(self.name(), other.name()))
             && vertical_anchor(self, other)
-            && cs_axes_match(
+            && axes_for_criterion(
                 std::slice::from_ref(self.coordinate_system().axis()),
                 std::slice::from_ref(other.coordinate_system().axis()),
+                criterion,
             )
     }
 }
@@ -283,13 +285,43 @@ impl CompoundCRS {
     /// Strict compound equivalence.
     #[must_use]
     pub fn is_equivalent_to(&self, other: &Self) -> bool {
-        same_name(self.name(), other.name())
-            && self.components().len() == other.components().len()
+        self.is_equivalent_to_with(other, Equivalence::Strict)
+    }
+
+    /// `Equivalent` compares components and does not require the compound name.
+    #[must_use]
+    pub fn is_equivalent_to_with(&self, other: &Self, criterion: Equivalence) -> bool {
+        if criterion == Equivalence::Strict && !same_name(self.name(), other.name()) {
+            return false;
+        }
+        self.components().len() == other.components().len()
             && self
                 .components()
                 .iter()
                 .zip(other.components())
-                .all(|(left, right)| left.is_equivalent_to(right))
+                .all(|(left, right)| crs_equivalent(left, right, criterion))
+    }
+}
+
+pub(crate) fn crs_equivalent(left: &Crs, right: &Crs, criterion: Equivalence) -> bool {
+    match (left, right) {
+        (Crs::Geographic(left), Crs::Geographic(right)) => {
+            left.is_equivalent_to_with(right, criterion)
+        }
+        (Crs::Geodetic(left), Crs::Geodetic(right)) => left.is_equivalent_to_with(right, criterion),
+        (Crs::Geodetic(GeodeticCRS::Geographic(left)), Crs::Geographic(right))
+        | (Crs::Geographic(left), Crs::Geodetic(GeodeticCRS::Geographic(right))) => {
+            left.is_equivalent_to_with(right, criterion)
+        }
+        (Crs::Projected(left), Crs::Projected(right)) => {
+            left.is_equivalent_to_with(right, criterion)
+        }
+        (Crs::Vertical(left), Crs::Vertical(right)) => left.is_equivalent_to_with(right, criterion),
+        (Crs::Engineering(left), Crs::Engineering(right)) => {
+            criterion == Equivalence::Strict && left.is_equivalent_to(right)
+        }
+        (Crs::Compound(left), Crs::Compound(right)) => left.is_equivalent_to_with(right, criterion),
+        _ => false,
     }
 }
 
@@ -791,16 +823,32 @@ fn same_name(left: &str, right: &str) -> bool {
 }
 
 /// `Identifier::isEquivalentName`: case-insensitive, ignoring space, `_`, `-`,
-/// `/`, parentheses, `.`, `&`, and `,`.
+/// `/`, parentheses, `.`, `&`, and `,`. The sequence ` + ` is dropped when
+/// more text follows, so a compound name matches its underscore form.
 pub(crate) fn equivalent_name(left: &str, right: &str) -> bool {
     folded_name(left) == folded_name(right)
 }
 
-fn folded_name(name: &str) -> String {
-    name.chars()
-        .filter(|ch| !matches!(ch, ' ' | '_' | '-' | '/' | '(' | ')' | '.' | '&' | ','))
-        .flat_map(char::to_lowercase)
-        .collect()
+pub(crate) fn folded_name(name: &str) -> String {
+    let chars: Vec<char> = name.chars().collect();
+    let mut folded = String::new();
+    let mut index = 0;
+    while index < chars.len() {
+        if chars[index] == ' '
+            && index + 3 < chars.len()
+            && chars[index + 1] == '+'
+            && chars[index + 2] == ' '
+        {
+            index += 3;
+            continue;
+        }
+        let ch = chars[index];
+        if !matches!(ch, ' ' | '_' | '-' | '/' | '(' | ')' | '.' | '&' | ',') {
+            folded.extend(ch.to_lowercase());
+        }
+        index += 1;
+    }
+    folded
 }
 
 impl GeodeticCRS {
