@@ -5012,3 +5012,40 @@ fn crs_wkt1_vert_datum_extension_to_proj_string() {
         "+geoidgrids=egm08_25.gtx +geoid_crs=WGS84 +vunits=m +no_defs +type=crs"
     );
 }
+
+#[test]
+fn crs_extract_geographic_crs() {
+    let wgs84 = GeographicCRS::epsg_4326();
+    let from_geographic = Crs::Geographic(wgs84.clone())
+        .extract_geographic_crs()
+        .expect("EPSG:4326");
+    assert!(from_geographic.is_equivalent_to(&wgs84));
+    assert_eq!(from_geographic.identifiers()[0].code(), "4326");
+
+    let projected = ProjectedCRS::create(
+        "WGS 84 / UTM zone 31N",
+        GeodeticCRS::Geographic(GeographicCRS::epsg_4326()),
+        Conversion::create_utm_north(&OpProps::new(), 31).expect("utm"),
+        CartesianCS::create_easting_northing(UnitOfMeasure::metre()),
+    )
+    .with_identifier("EPSG", "32631");
+    let from_projected = Crs::Projected(projected)
+        .extract_geographic_crs()
+        .expect("UTM base");
+    assert!(from_projected.is_equivalent_to(&wgs84));
+    assert_eq!(from_projected.identifiers()[0].code(), "4326");
+
+    let compound = CompoundCRS::create(
+        "",
+        vec![
+            Crs::Geographic(GeographicCRS::epsg_4326()),
+            Crs::Vertical(odn_height()),
+        ],
+    )
+    .expect("compound");
+    let from_compound = Crs::Compound(compound)
+        .extract_geographic_crs()
+        .expect("horizontal");
+    assert!(from_compound.is_equivalent_to(&wgs84));
+    assert_eq!(from_compound.identifiers()[0].code(), "4326");
+}

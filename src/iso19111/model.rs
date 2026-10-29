@@ -3267,6 +3267,37 @@ impl Crs {
         }
     }
 
+    /// `CRS::extractGeographicCRS`.
+    ///
+    /// The geographic CRS inside a geographic, projected, compound, bound, or
+    /// derived projected CRS. A geocentric or vertical CRS has none.
+    #[must_use]
+    pub fn extract_geographic_crs(&self) -> Option<GeographicCRS> {
+        match self.extract_geodetic_crs()? {
+            GeodeticCRS::Geographic(crs) => Some(crs),
+            _ => None,
+        }
+    }
+
+    /// `CRS::extractGeodeticCRS`.
+    ///
+    /// The first geodetic CRS inside this object. A compound CRS uses its
+    /// first component that has one. A bound CRS uses its source.
+    #[must_use]
+    pub fn extract_geodetic_crs(&self) -> Option<GeodeticCRS> {
+        match self {
+            Self::Geographic(crs) => Some(GeodeticCRS::Geographic(crs.clone())),
+            Self::Geodetic(crs) => Some(crs.clone()),
+            Self::Projected(crs) => Some(crs.base_crs().clone()),
+            Self::Compound(crs) => crs.components().iter().find_map(Self::extract_geodetic_crs),
+            Self::Bound(crs) => crs.source_crs().extract_geodetic_crs(),
+            Self::DerivedProjected(crs) => {
+                Self::Projected(crs.base_crs().clone()).extract_geodetic_crs()
+            }
+            Self::Vertical(_) | Self::Engineering(_) | Self::DerivedVertical(_) => None,
+        }
+    }
+
     /// Authority identifiers.
     #[must_use]
     pub fn identifiers(&self) -> &[Identifier] {
