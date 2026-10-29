@@ -36,11 +36,11 @@ fn node_from_text(text: &str) -> NodeId {
 
 use super::model::{
     ensemble_name_as_datum, Axis, BoundCRS, CartesianCS, CompoundCRS, Conversion,
-    CoordinateOperation, CoordinateSystem, Crs, Datum,
-    DatumEnsemble, Ellipsoid, EngineeringCRS, EngineeringDatum, FactoryError, GeocentricCRS,
-    GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified, Identifier, Measure,
-    OperationMethod, Parameter, ParameterValue, PrimeMeridian, ProjectedCRS, Transformation,
-    UnitKind, UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame,
+    CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble, DerivedGeographicCRS,
+    Ellipsoid, EngineeringCRS, EngineeringDatum, FactoryError, GeocentricCRS, GeodeticCRS,
+    GeodeticReferenceFrame, GeographicCRS, Identified, Identifier, Measure, OperationMethod,
+    Parameter, ParameterValue, PrimeMeridian, ProjectedCRS, Transformation, UnitKind,
+    UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame,
 };
 
 /// WKT dialect.
@@ -606,12 +606,7 @@ pub(crate) fn export_crs(crs: &Crs, formatter: &mut WktFormatter) -> Result<(), 
                 crs.name()
             )));
         }
-        Crs::DerivedGeographic(crs) => {
-            return Err(FactoryError::Format(format!(
-                "derived geographic CRS {} has no WKT export in this build",
-                crs.name()
-            )));
-        }
+        Crs::DerivedGeographic(crs) => export_derived_geographic(crs, formatter)?,
     }
     Ok(())
 }
@@ -843,6 +838,89 @@ fn export_spherical(
     }
     export_cs(&CoordinateSystem::Spherical(cs.clone()), formatter);
     formatter.base_usage(identified);
+    formatter.end_node();
+    Ok(())
+}
+
+/// `DerivedGeographicCRS::_exportToWKT`.
+///
+/// The base node is marked as carrying an identifier whenever the base has
+/// one. WKT2:2015 then suppresses datum and prime-meridian identifiers without
+/// printing `ID["EPSG",4326]`. WKT2:2019 prints that identifier.
+fn export_derived_geographic(
+    crs: &DerivedGeographicCRS,
+    formatter: &mut WktFormatter,
+) -> Result<(), FactoryError> {
+    if !formatter.wkt2 {
+        return Err(FactoryError::Format(
+            "DerivedGeographicCRS can only be exported to WKT2".to_owned(),
+        ));
+    }
+    let keyword = if formatter.keywords_2019 {
+        "GEOGCRS"
+    } else {
+        "GEODCRS"
+    };
+    formatter.start_node(keyword, node_from_ids(&crs.identified.identifiers));
+    formatter.add_quoted(crs.name());
+    let base_keyword = if formatter.keywords_2019 {
+        "BASEGEOGCRS"
+    } else {
+        "BASEGEODCRS"
+    };
+    let base_has_id = !crs.base.identifiers().is_empty();
+    formatter.start_node(
+        base_keyword,
+        if base_has_id {
+            NodeId::Present
+        } else {
+            NodeId::Absent
+        },
+    );
+    formatter.add_quoted(crs.base.name());
+    let angular = crs
+        .base
+        .coordinate_system
+        .axes
+        .first()
+        .map(|axis| axis.unit().clone());
+    if let Some(unit) = &angular {
+        formatter.axis_angular.push(unit.clone());
+    }
+    export_geodetic_anchor(
+        crs.base.datum.as_ref(),
+        crs.base.ensemble.as_ref(),
+        formatter,
+    );
+    if let Some(meridian) = geodetic_meridian(crs.base.datum.as_ref(), crs.base.ensemble.as_ref())
+    {
+        export_prime_meridian(meridian, formatter);
+    }
+    if angular.is_some() {
+        formatter.axis_angular.pop();
+    }
+    if formatter.keywords_2019 && !(formatter.id_on_top_only && top_has_id(formatter)) {
+        formatter.output_id.push(true);
+        formatter.format_ids(crs.base.identifiers());
+        formatter.output_id.pop();
+    }
+    formatter.end_node();
+    formatter.start_node(
+        "DERIVINGCONVERSION",
+        node_from_ids(crs.conversion.identifiers()),
+    );
+    formatter.add_quoted(crs.conversion.name());
+    export_method(crs.conversion.method(), formatter)?;
+    for parameter in crs.conversion.parameters() {
+        export_parameter(parameter, formatter)?;
+    }
+    formatter.format_ids(crs.conversion.identifiers());
+    formatter.end_node();
+    export_cs(
+        &CoordinateSystem::Ellipsoidal(crs.coordinate_system.clone()),
+        formatter,
+    );
+    formatter.base_usage(&crs.identified);
     formatter.end_node();
     Ok(())
 }

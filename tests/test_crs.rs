@@ -5111,3 +5111,91 @@ fn crs_derived_geographic_crs_basic() {
     assert!(!Crs::Geographic(derived.base_crs().clone())
         .is_equivalent_to(&Crs::DerivedGeographic(derived)));
 }
+
+#[test]
+fn crs_derived_geographic_crs_wkt2() {
+    let derived = atlantic_pole();
+    let wkt = Crs::DerivedGeographic(derived.clone())
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2015))
+        .expect("wkt2");
+    assert_eq!(
+        wkt,
+        "\
+GEODCRS[\"WMO Atlantic Pole\",
+    BASEGEODCRS[\"WGS 84\",
+        DATUM[\"World Geodetic System 1984\",
+            ELLIPSOID[\"WGS 84\",6378137,298.257223563,
+                LENGTHUNIT[\"metre\",1]]],
+        PRIMEM[\"Greenwich\",0,
+            ANGLEUNIT[\"degree\",0.0174532925199433]]],
+    DERIVINGCONVERSION[\"Atlantic pole\",
+        METHOD[\"Pole rotation\"],
+        PARAMETER[\"Latitude of rotated pole\",52,
+            ANGLEUNIT[\"degree\",0.0174532925199433,
+                ID[\"EPSG\",9122]]],
+        PARAMETER[\"Longitude of rotated pole\",-30,
+            ANGLEUNIT[\"degree\",0.0174532925199433,
+                ID[\"EPSG\",9122]]],
+        PARAMETER[\"Axis rotation\",-25,
+            ANGLEUNIT[\"degree\",0.0174532925199433,
+                ID[\"EPSG\",9122]]]],
+    CS[ellipsoidal,2],
+        AXIS[\"latitude\",north,
+            ORDER[1],
+            ANGLEUNIT[\"degree\",0.0174532925199433,
+                ID[\"EPSG\",9122]]],
+        AXIS[\"longitude\",east,
+            ORDER[2],
+            ANGLEUNIT[\"degree\",0.0174532925199433,
+                ID[\"EPSG\",9122]]]]"
+    );
+    assert!(derived.is_equivalent_to(&derived));
+    assert!(derived.clone().is_equivalent_to(&derived));
+    assert!(!Crs::DerivedGeographic(derived).is_equivalent_to(&Crs::Vertical(odn_height())));
+}
+
+#[test]
+fn crs_derived_geographic_crs_wkt2_2019() {
+    let wkt = Crs::DerivedGeographic(atlantic_pole())
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2019))
+        .expect("wkt2-2019");
+    assert_eq!(
+        wkt,
+        "\
+GEOGCRS[\"WMO Atlantic Pole\",
+    BASEGEOGCRS[\"WGS 84\",
+        DATUM[\"World Geodetic System 1984\",
+            ELLIPSOID[\"WGS 84\",6378137,298.257223563,
+                LENGTHUNIT[\"metre\",1]]],
+        PRIMEM[\"Greenwich\",0,
+            ANGLEUNIT[\"degree\",0.0174532925199433]],
+        ID[\"EPSG\",4326]],
+    DERIVINGCONVERSION[\"Atlantic pole\",
+        METHOD[\"Pole rotation\"],
+        PARAMETER[\"Latitude of rotated pole\",52,
+            ANGLEUNIT[\"degree\",0.0174532925199433,
+                ID[\"EPSG\",9122]]],
+        PARAMETER[\"Longitude of rotated pole\",-30,
+            ANGLEUNIT[\"degree\",0.0174532925199433,
+                ID[\"EPSG\",9122]]],
+        PARAMETER[\"Axis rotation\",-25,
+            ANGLEUNIT[\"degree\",0.0174532925199433,
+                ID[\"EPSG\",9122]]]],
+    CS[ellipsoidal,2],
+        AXIS[\"latitude\",north,
+            ORDER[1],
+            ANGLEUNIT[\"degree\",0.0174532925199433,
+                ID[\"EPSG\",9122]]],
+        AXIS[\"longitude\",east,
+            ORDER[2],
+            ANGLEUNIT[\"degree\",0.0174532925199433,
+                ID[\"EPSG\",9122]]]]"
+    );
+}
+
+#[test]
+fn crs_derived_geographic_crs_wkt1() {
+    let exported = Crs::DerivedGeographic(atlantic_pole())
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Gdal));
+    assert!(exported.is_err());
+}
