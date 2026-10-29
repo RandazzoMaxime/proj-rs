@@ -94,7 +94,7 @@ pub use iso19111::{
     DatabaseContext, DateTimeTemporalCS, Datum, DatumEnsemble, DeprecatedCodes, DerivedConversion,
     TemporalCountCS, TemporalMeasureCS, ParametricCRS, ParametricCS, ParametricDatum,
     DerivedGeodeticCRS, TemporalCRS, TemporalDatum,
-    DerivedGeographicCRS, DerivedProjectedCRS, DerivedVerticalCRS,
+    DerivedGeographicCRS, DerivedProjectedCRS, DerivedVerticalCRS, DerivedEngineeringCRS,
     EllipsoidalCS, EllipsoidalHeightPolicy,
     EngineeringCRS, EngineeringDatum, Equivalence, FactoryError, GeocentricCRS, GeodeticCRS,
     GeodeticReferenceFrame, GeographicCRS, Identifier, IntermediateCrsUse, LinunitPolicy, Meridian,

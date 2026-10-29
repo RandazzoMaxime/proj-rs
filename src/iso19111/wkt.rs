@@ -38,7 +38,8 @@ use super::model::{
     ensemble_name_as_datum, Axis, BoundCRS, CartesianCS, CompoundCRS, Conversion,
     CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble, DerivedGeodeticCRS,
     ParametricCRS,
-    DerivedGeographicCRS, DerivedProjectedCRS, DerivedVerticalCRS, TemporalCRS,
+    DerivedGeographicCRS, DerivedProjectedCRS, DerivedVerticalCRS, DerivedEngineeringCRS,
+    TemporalCRS,
     TemporalDatum,
     Ellipsoid, EngineeringCRS, EngineeringDatum, FactoryError, GeocentricCRS, GeodeticCRS,
     GeodeticReferenceFrame, GeographicCRS, Identified, Identifier, Measure, OperationMethod,
@@ -600,6 +601,7 @@ pub(crate) fn export_crs(crs: &Crs, formatter: &mut WktFormatter) -> Result<(), 
         Crs::Engineering(crs) => export_engineering(crs, formatter)?,
         Crs::DerivedProjected(crs) => export_derived_projected(crs, formatter)?,
         Crs::DerivedVertical(crs) => export_derived_vertical(crs, formatter)?,
+        Crs::DerivedEngineering(crs) => export_derived_engineering(crs, formatter)?,
         Crs::DerivedGeographic(crs) => export_derived_geographic(crs, formatter)?,
         Crs::DerivedGeodetic(crs) => export_derived_geodetic(crs, formatter)?,
         Crs::Temporal(crs) => export_temporal(crs, formatter)?,
@@ -1130,6 +1132,44 @@ fn export_derived_vertical(
         &CoordinateSystem::Vertical(crs.coordinate_system.clone()),
         formatter,
     );
+    formatter.base_usage(&crs.identified);
+    formatter.end_node();
+    Ok(())
+}
+
+/// `DerivedEngineeringCRS::_exportToWKT`.
+///
+/// Only WKT2:2019 is accepted. The message is the PROJ formatting exception.
+fn export_derived_engineering(
+    crs: &DerivedEngineeringCRS,
+    formatter: &mut WktFormatter,
+) -> Result<(), FactoryError> {
+    if !formatter.wkt2 || !formatter.keywords_2019 {
+        return Err(FactoryError::Format(
+            "DerivedEngineeringCRS can only be exported to WKT2:2019".to_owned(),
+        ));
+    }
+    formatter.start_node("ENGCRS", node_from_ids(&crs.identified.identifiers));
+    formatter.add_quoted(crs.name());
+    let base_has_id = !crs.base.identifiers().is_empty();
+    formatter.start_node(
+        "BASEENGCRS",
+        if base_has_id {
+            NodeId::Present
+        } else {
+            NodeId::Absent
+        },
+    );
+    formatter.add_quoted(crs.base.name());
+    export_engineering_datum(crs.base.datum(), formatter);
+    if !(formatter.id_on_top_only && top_has_id(formatter)) {
+        formatter.output_id.push(true);
+        formatter.format_ids(crs.base.identifiers());
+        formatter.output_id.pop();
+    }
+    formatter.end_node();
+    export_deriving_conversion(&crs.conversion, formatter)?;
+    export_cs(&crs.coordinate_system, formatter);
     formatter.base_usage(&crs.identified);
     formatter.end_node();
     Ok(())

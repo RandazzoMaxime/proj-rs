@@ -7,8 +7,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_crs.cpp
 
-- `crs.DerivedEngineeringCRS_WKT2`
-- `crs.DerivedEngineeringCRS_WKT1`
 - `crs.DerivedParametricCRS_WKT2`
 - `crs.DerivedParametricCRS_WKT1`
 - `crs.DeriveTemporalCRS_WKT2`

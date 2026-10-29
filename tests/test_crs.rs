@@ -10,7 +10,7 @@ use proj_rs::{
     CompoundCRS, Conversion, CoordinateSystem, Crs, DatabaseContext, Datum, DatumEnsemble,
     DateTimeTemporalCS, DerivedGeodeticCRS, DerivedGeographicCRS, DerivedProjectedCRS,
     TemporalCountCS, TemporalMeasureCS, ParametricCRS, ParametricCS, ParametricDatum,
-    DerivedVerticalCRS, TemporalCRS, TemporalDatum,
+    DerivedVerticalCRS, DerivedEngineeringCRS, TemporalCRS, TemporalDatum,
     EllipsoidalCS, EngineeringCRS, EngineeringDatum,
     EllipsoidalHeightPolicy, Equivalence, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS,
     LinunitPolicy, OpProps, OutputAxisRule, PrimeMeridian, ProjectedCRS, RealizationMethod,
@@ -4227,6 +4227,65 @@ VERT_CS[\"Derived vertCRS\",
     UNIT[\"foot\",0.3048,
         AUTHORITY[\"EPSG\",\"9002\"]],
     AXIS[\"Gravity-related height\",UP]]"
+    );
+}
+
+fn derived_engineering() -> DerivedEngineeringCRS {
+    DerivedEngineeringCRS::create(
+        "Derived EngineeringCRS",
+        engineering_crs(),
+        Conversion::create("unnamed", "PROJ unimplemented", Vec::new()),
+        CoordinateSystem::Cartesian(CartesianCS::create_easting_northing(UnitOfMeasure::metre())),
+    )
+}
+
+#[test]
+fn crs_derived_engineering_crs_wkt2() {
+    let derived = derived_engineering();
+    assert!(derived.is_equivalent_to(&derived));
+    assert!(derived.clone().is_equivalent_to(&derived));
+    assert!(!Crs::DerivedEngineering(derived.clone())
+        .is_equivalent_to(&Crs::Geographic(GeographicCRS::epsg_4326())));
+    assert!(derived.coordinate_system().is_equivalent_to(&CoordinateSystem::Cartesian(
+        CartesianCS::create_easting_northing(UnitOfMeasure::metre())
+    )));
+    assert!(derived.datum().is_equivalent_to(engineering_crs().datum()));
+    let wkt = Crs::DerivedEngineering(derived)
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2019))
+        .expect("wkt2-2019");
+    assert_eq!(
+        wkt,
+        "\
+ENGCRS[\"Derived EngineeringCRS\",
+    BASEENGCRS[\"Engineering CRS\",
+        EDATUM[\"Engineering datum\"]],
+    DERIVINGCONVERSION[\"unnamed\",
+        METHOD[\"PROJ unimplemented\"]],
+    CS[Cartesian,2],
+        AXIS[\"(E)\",east,
+            ORDER[1],
+            LENGTHUNIT[\"metre\",1,
+                ID[\"EPSG\",9001]]],
+        AXIS[\"(N)\",north,
+            ORDER[2],
+            LENGTHUNIT[\"metre\",1,
+                ID[\"EPSG\",9001]]]]"
+    );
+    let rejected = Crs::DerivedEngineering(derived_engineering())
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2015));
+    assert_eq!(
+        rejected.expect_err("wkt2-2015").to_string(),
+        "DerivedEngineeringCRS can only be exported to WKT2:2019"
+    );
+}
+
+#[test]
+fn crs_derived_engineering_crs_wkt1() {
+    let exported = Crs::DerivedEngineering(derived_engineering())
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Gdal));
+    assert_eq!(
+        exported.expect_err("wkt1").to_string(),
+        "DerivedEngineeringCRS can only be exported to WKT2:2019"
     );
 }
 

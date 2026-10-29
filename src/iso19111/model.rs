@@ -3274,6 +3274,71 @@ impl DerivedVerticalCRS {
     }
 }
 
+/// Derived engineering CRS.
+///
+/// The base is an engineering CRS. The coordinate system replaces the base one.
+#[derive(Clone, Debug)]
+pub struct DerivedEngineeringCRS {
+    pub(crate) identified: Identified,
+    pub(crate) base: EngineeringCRS,
+    pub(crate) conversion: Conversion,
+    pub(crate) coordinate_system: CoordinateSystem,
+}
+
+impl DerivedEngineeringCRS {
+    /// `DerivedEngineeringCRS::create`.
+    #[must_use]
+    pub fn create(
+        name: impl Into<String>,
+        base: EngineeringCRS,
+        conversion: Conversion,
+        coordinate_system: CoordinateSystem,
+    ) -> Self {
+        Self {
+            identified: Identified::named(name),
+            base,
+            conversion,
+            coordinate_system,
+        }
+    }
+
+    /// Name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.identified.name
+    }
+
+    /// Base engineering CRS.
+    #[must_use]
+    pub fn base_crs(&self) -> &EngineeringCRS {
+        &self.base
+    }
+
+    /// Deriving conversion.
+    #[must_use]
+    pub fn deriving_conversion(&self) -> &Conversion {
+        &self.conversion
+    }
+
+    /// Coordinate system of the derived CRS.
+    #[must_use]
+    pub fn coordinate_system(&self) -> &CoordinateSystem {
+        &self.coordinate_system
+    }
+
+    /// Engineering datum inherited from the base CRS.
+    #[must_use]
+    pub fn datum(&self) -> &EngineeringDatum {
+        self.base.datum()
+    }
+
+    /// Usage domains.
+    #[must_use]
+    pub fn domains(&self) -> &[ObjectDomain] {
+        &self.identified.domains
+    }
+}
+
 /// Compound CRS, normally horizontal plus vertical.
 #[derive(Clone, Debug)]
 pub struct CompoundCRS {
@@ -3735,6 +3800,8 @@ pub enum Crs {
     DerivedGeodetic(DerivedGeodeticCRS),
     /// Derived vertical CRS.
     DerivedVertical(DerivedVerticalCRS),
+    /// Derived engineering CRS.
+    DerivedEngineering(DerivedEngineeringCRS),
     /// Temporal CRS.
     Temporal(TemporalCRS),
     /// Parametric CRS.
@@ -3757,6 +3824,7 @@ impl Crs {
             Self::DerivedGeographic(crs) => crs.name(),
             Self::DerivedGeodetic(crs) => crs.name(),
             Self::DerivedVertical(crs) => crs.name(),
+            Self::DerivedEngineering(crs) => crs.name(),
             Self::Temporal(crs) => crs.name(),
             Self::Parametric(crs) => crs.name(),
         }
@@ -3794,6 +3862,7 @@ impl Crs {
             | Self::DerivedGeographic(_)
             | Self::DerivedGeodetic(_)
             | Self::DerivedVertical(_)
+            | Self::DerivedEngineering(_)
             | Self::Temporal(_)
             | Self::Parametric(_) => None,
         }
@@ -3823,6 +3892,7 @@ impl Crs {
             | Self::DerivedProjected(_)
             | Self::DerivedGeographic(_)
             | Self::DerivedGeodetic(_)
+            | Self::DerivedEngineering(_)
             | Self::Temporal(_)
             | Self::Parametric(_) => None,
         }
@@ -3843,6 +3913,7 @@ impl Crs {
             Self::DerivedGeographic(crs) => &crs.identified.identifiers,
             Self::DerivedGeodetic(crs) => &crs.identified.identifiers,
             Self::DerivedVertical(crs) => &crs.identified.identifiers,
+            Self::DerivedEngineering(crs) => &crs.identified.identifiers,
             Self::Temporal(crs) => &crs.identified.identifiers,
             Self::Parametric(crs) => &crs.identified.identifiers,
         }
@@ -3872,6 +3943,7 @@ impl Crs {
             Self::DerivedGeographic(crs) => &crs.identified,
             Self::DerivedGeodetic(crs) => &crs.identified,
             Self::DerivedVertical(crs) => &crs.identified,
+            Self::DerivedEngineering(crs) => &crs.identified,
             Self::Temporal(crs) => &crs.identified,
             Self::Parametric(crs) => &crs.identified,
         }
@@ -3894,6 +3966,7 @@ impl Crs {
             Self::DerivedGeographic(crs) => &mut crs.identified,
             Self::DerivedGeodetic(crs) => &mut crs.identified,
             Self::DerivedVertical(crs) => &mut crs.identified,
+            Self::DerivedEngineering(crs) => &mut crs.identified,
             Self::Temporal(crs) => &mut crs.identified,
             Self::Parametric(crs) => &mut crs.identified,
         }
@@ -3926,6 +3999,7 @@ impl Crs {
             Self::DerivedGeographic(crs) => crs.identified.deprecated,
             Self::DerivedGeodetic(crs) => crs.identified.deprecated,
             Self::DerivedVertical(crs) => crs.identified.deprecated,
+            Self::DerivedEngineering(crs) => crs.identified.deprecated,
             Self::Temporal(crs) => crs.identified.deprecated,
             Self::Parametric(crs) => crs.identified.deprecated,
         }

@@ -7,7 +7,8 @@
 use super::model::{
     ensemble_name_as_datum, Axis, BoundCRS, CompoundCRS, Conversion, CoordinateOperation,
     CoordinateSystem, Crs, Datum, DatumEnsemble, DerivedGeodeticCRS, DerivedGeographicCRS,
-    DerivedProjectedCRS, DerivedVerticalCRS, Ellipsoid, ParametricCRS, ParametricDatum,
+    DerivedProjectedCRS, DerivedVerticalCRS, DerivedEngineeringCRS, Ellipsoid, ParametricCRS,
+    ParametricDatum,
     TemporalCRS, TemporalDatum,
     EngineeringCRS,
     EngineeringDatum, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified, Measure,
@@ -302,6 +303,32 @@ impl TemporalCRS {
     }
 }
 
+impl DerivedEngineeringCRS {
+    /// Strict derived-engineering equivalence.
+    #[must_use]
+    pub fn is_equivalent_to(&self, other: &Self) -> bool {
+        self.is_equivalent_to_with(other, Equivalence::Strict)
+    }
+
+    /// `DerivedEngineeringCRS::_isEquivalentTo`.
+    ///
+    /// A different CRS kind is not equivalent. The base uses `criterion`. The
+    /// deriving conversion uses the standard criterion.
+    #[must_use]
+    pub fn is_equivalent_to_with(&self, other: &Self, criterion: Equivalence) -> bool {
+        let left: Vec<Axis> = self.coordinate_system.axes().into_iter().cloned().collect();
+        let right: Vec<Axis> = other.coordinate_system.axes().into_iter().cloned().collect();
+        (criterion != Equivalence::Strict || same_name(self.name(), other.name()))
+            && self.base.is_equivalent_to_with(&other.base, criterion)
+            && conversion_equivalent_with(
+                &self.conversion,
+                &other.conversion,
+                standard_criterion(criterion),
+            )
+            && axes_for_criterion(&left, &right, criterion)
+    }
+}
+
 impl DerivedVerticalCRS {
     /// Strict derived-vertical equivalence.
     #[must_use]
@@ -556,6 +583,9 @@ pub(crate) fn crs_equivalent(left: &Crs, right: &Crs, criterion: Equivalence) ->
         (Crs::DerivedVertical(left), Crs::DerivedVertical(right)) => {
             left.is_equivalent_to_with(right, criterion)
         }
+        (Crs::DerivedEngineering(left), Crs::DerivedEngineering(right)) => {
+            left.is_equivalent_to_with(right, criterion)
+        }
         (Crs::Engineering(left), Crs::Engineering(right)) => {
             criterion == Equivalence::Strict && left.is_equivalent_to(right)
         }
@@ -642,6 +672,9 @@ impl Crs {
                 left.is_equivalent_to(right)
             }
             (Self::DerivedVertical(left), Self::DerivedVertical(right)) => {
+                left.is_equivalent_to(right)
+            }
+            (Self::DerivedEngineering(left), Self::DerivedEngineering(right)) => {
                 left.is_equivalent_to(right)
             }
             (Self::Temporal(left), Self::Temporal(right)) => left.is_equivalent_to(right),

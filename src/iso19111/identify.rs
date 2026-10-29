@@ -1590,6 +1590,7 @@ fn concatenated_helmert<'a>(
             | Crs::DerivedVertical(_)
             | Crs::DerivedGeographic(_)
             | Crs::DerivedGeodetic(_)
+            | Crs::DerivedEngineering(_)
     );
     if !(first_is_rotation || (derived && first_is_conversion)) {
         return None;
