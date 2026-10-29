@@ -5041,6 +5041,61 @@ fn crs_normalize_for_visualization_bound() {
     assert_eq!(normalized_operation, normalized_proj);
 }
 
+fn deriving_conversion_still_targets(crs: &ProjectedCRS) {
+    let again = crs.deriving_operation();
+    assert!(std::ptr::eq(again.target_crs(), crs));
+}
+
+#[test]
+fn crs_projected_promote_to_3d_do_not_mess_deriving_conversion() {
+    let crs = utm_31n();
+    let before = crs.deriving_conversion().clone();
+    let _ = crs.promote_to_3d(None);
+    assert!(crs.deriving_conversion().is_equivalent_to(&before));
+    deriving_conversion_still_targets(&crs);
+}
+
+#[test]
+fn crs_projected_demote_to_2d_do_not_mess_deriving_conversion() {
+    let crs = utm_31n().promote_to_3d(None);
+    let before = crs.deriving_conversion().clone();
+    let _ = crs.demote_to_2d(None);
+    assert!(crs.deriving_conversion().is_equivalent_to(&before));
+    deriving_conversion_still_targets(&crs);
+}
+
+#[test]
+fn crs_projected_alter_geodetic_crs_do_not_mess_deriving_conversion() {
+    let crs = utm_31n();
+    let before = crs.deriving_conversion().clone();
+    let geographic = match crs.base_crs() {
+        GeodeticCRS::Geographic(crs) => crs.clone(),
+        _ => panic!("UTM 31N is geographic"),
+    };
+    let _ = Crs::Projected(crs.clone()).alter_geodetic_crs(&GeodeticCRS::Geographic(geographic));
+    assert!(crs.deriving_conversion().is_equivalent_to(&before));
+    deriving_conversion_still_targets(&crs);
+}
+
+#[test]
+fn crs_projected_alter_cs_linear_unit_do_not_mess_deriving_conversion() {
+    let crs = utm_31n();
+    let before = crs.deriving_conversion().clone();
+    let unit = UnitOfMeasure::new("my unit", 2.0, UnitKind::Linear);
+    let _ = Crs::Projected(crs.clone()).alter_cs_linear_unit(&unit);
+    assert!(crs.deriving_conversion().is_equivalent_to(&before));
+    deriving_conversion_still_targets(&crs);
+}
+
+#[test]
+fn crs_projected_alter_parameters_linear_unit_do_not_mess_deriving_conversion() {
+    let crs = utm_31n();
+    let before = crs.deriving_conversion().clone();
+    let _ = crs.alter_parameters_linear_unit(&UnitOfMeasure::metre(), LinearParameterScale::KeepNumber);
+    assert!(crs.deriving_conversion().is_equivalent_to(&before));
+    deriving_conversion_still_targets(&crs);
+}
+
 #[test]
 fn crs_date_time_temporal_crs_wkt2() {
     let crs = date_time_temporal();

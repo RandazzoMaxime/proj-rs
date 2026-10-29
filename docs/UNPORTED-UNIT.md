@@ -8,11 +8,6 @@ and `PORT-NOTES-tests.md`.
 ## test_crs.cpp
 
 - `crs.projected_normalizeForVisualization_do_not_mess_deriving_conversion`
-- `crs.projected_promoteTo3D_do_not_mess_deriving_conversion`
-- `crs.projected_demoteTo2D_do_not_mess_deriving_conversion`
-- `crs.projected_alterGeodeticCRS_do_not_mess_deriving_conversion`
-- `crs.projected_alterCSLinearUnit_do_not_mess_deriving_conversion`
-- `crs.projected_alterParametersLinearUnit_do_not_mess_deriving_conversion`
 - `crs.projected_is_equivalent_to_with_proj4_extension`
 - `crs.is_dynamic`
 - `crs.norway_ntm`
