@@ -97,6 +97,7 @@ impl Crs {
             Self::DerivedGeographic(crs) => &crs.identified.remarks,
             Self::DerivedGeodetic(crs) => &crs.identified.remarks,
             Self::DerivedEngineering(crs) => &crs.identified.remarks,
+            Self::DerivedParametric(crs) => &crs.identified.remarks,
             Self::Temporal(crs) => &crs.identified.remarks,
             Self::Parametric(crs) => &crs.identified.remarks,
         }

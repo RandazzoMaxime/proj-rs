@@ -105,6 +105,7 @@ fn crs_kind(crs: &Crs) -> &'static str {
         Crs::Parametric(_) => "parametric",
         Crs::DerivedVertical(_) => "derived vertical",
         Crs::DerivedEngineering(_) => "derived engineering",
+        Crs::DerivedParametric(_) => "derived parametric",
         Crs::Vertical(_) => "vertical",
         Crs::Compound(_) => "compound",
         Crs::Engineering(_) => "engineering",
@@ -994,6 +995,7 @@ fn crs_domains(crs: &Crs) -> &[ObjectDomain] {
         | Crs::DerivedGeodetic(_)
         | Crs::DerivedVertical(_)
         | Crs::DerivedEngineering(_)
+        | Crs::DerivedParametric(_)
         | Crs::Bound(_) => &[],
         Crs::Temporal(crs) => crs.domains(),
         Crs::Parametric(crs) => crs.domains(),
@@ -1017,6 +1019,7 @@ fn body_of_crs(crs: &Crs) -> Option<&'static str> {
         Crs::DerivedGeographic(crs) => body_of_crs(&Crs::Geographic(crs.base_crs().clone())),
         Crs::DerivedGeodetic(crs) => body_of_crs(&Crs::Geodetic(crs.base_crs().clone())),
         Crs::DerivedEngineering(crs) => body_of_crs(&Crs::Engineering(crs.base_crs().clone())),
+        Crs::DerivedParametric(crs) => body_of_crs(&Crs::Parametric(crs.base_crs().clone())),
         Crs::Temporal(_) | Crs::Parametric(_) => None,
     }
 }

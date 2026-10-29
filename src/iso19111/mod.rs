@@ -30,7 +30,7 @@ pub use model::{
     EllipsoidalCS,
     DateTimeTemporalCS, DerivedGeodeticCRS, DerivedGeographicCRS, DerivedProjectedCRS,
     TemporalCountCS, TemporalMeasureCS, ParametricCRS, ParametricCS, ParametricDatum,
-    DerivedVerticalCRS, DerivedEngineeringCRS, TemporalCRS, TemporalDatum,
+    DerivedVerticalCRS, DerivedEngineeringCRS, DerivedParametricCRS, TemporalCRS, TemporalDatum,
     EngineeringCRS, EngineeringDatum,
     FactoryError,
     GeocentricCRS, GeodeticCRS,

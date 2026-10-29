@@ -3771,6 +3771,71 @@ impl ParametricCRS {
     }
 }
 
+/// Derived parametric CRS.
+///
+/// The base is a parametric CRS. The coordinate system replaces the base one.
+#[derive(Clone, Debug)]
+pub struct DerivedParametricCRS {
+    pub(crate) identified: Identified,
+    pub(crate) base: ParametricCRS,
+    pub(crate) conversion: Conversion,
+    pub(crate) coordinate_system: ParametricCS,
+}
+
+impl DerivedParametricCRS {
+    /// `DerivedParametricCRS::create`.
+    #[must_use]
+    pub fn create(
+        name: impl Into<String>,
+        base: ParametricCRS,
+        conversion: Conversion,
+        coordinate_system: ParametricCS,
+    ) -> Self {
+        Self {
+            identified: Identified::named(name),
+            base,
+            conversion,
+            coordinate_system,
+        }
+    }
+
+    /// Name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.identified.name
+    }
+
+    /// Base parametric CRS.
+    #[must_use]
+    pub fn base_crs(&self) -> &ParametricCRS {
+        &self.base
+    }
+
+    /// Deriving conversion.
+    #[must_use]
+    pub fn deriving_conversion(&self) -> &Conversion {
+        &self.conversion
+    }
+
+    /// Coordinate system of the derived CRS.
+    #[must_use]
+    pub fn coordinate_system(&self) -> &ParametricCS {
+        &self.coordinate_system
+    }
+
+    /// Parametric datum inherited from the base CRS.
+    #[must_use]
+    pub fn datum(&self) -> &ParametricDatum {
+        self.base.datum()
+    }
+
+    /// Usage domains.
+    #[must_use]
+    pub fn domains(&self) -> &[ObjectDomain] {
+        &self.identified.domains
+    }
+}
+
 /// Coordinate reference system.
 #[derive(Clone, Debug)]
 #[expect(
@@ -3802,6 +3867,8 @@ pub enum Crs {
     DerivedVertical(DerivedVerticalCRS),
     /// Derived engineering CRS.
     DerivedEngineering(DerivedEngineeringCRS),
+    /// Derived parametric CRS.
+    DerivedParametric(DerivedParametricCRS),
     /// Temporal CRS.
     Temporal(TemporalCRS),
     /// Parametric CRS.
@@ -3825,6 +3892,7 @@ impl Crs {
             Self::DerivedGeodetic(crs) => crs.name(),
             Self::DerivedVertical(crs) => crs.name(),
             Self::DerivedEngineering(crs) => crs.name(),
+            Self::DerivedParametric(crs) => crs.name(),
             Self::Temporal(crs) => crs.name(),
             Self::Parametric(crs) => crs.name(),
         }
@@ -3863,6 +3931,7 @@ impl Crs {
             | Self::DerivedGeodetic(_)
             | Self::DerivedVertical(_)
             | Self::DerivedEngineering(_)
+            | Self::DerivedParametric(_)
             | Self::Temporal(_)
             | Self::Parametric(_) => None,
         }
@@ -3893,6 +3962,7 @@ impl Crs {
             | Self::DerivedGeographic(_)
             | Self::DerivedGeodetic(_)
             | Self::DerivedEngineering(_)
+            | Self::DerivedParametric(_)
             | Self::Temporal(_)
             | Self::Parametric(_) => None,
         }
@@ -3914,6 +3984,7 @@ impl Crs {
             Self::DerivedGeodetic(crs) => &crs.identified.identifiers,
             Self::DerivedVertical(crs) => &crs.identified.identifiers,
             Self::DerivedEngineering(crs) => &crs.identified.identifiers,
+            Self::DerivedParametric(crs) => &crs.identified.identifiers,
             Self::Temporal(crs) => &crs.identified.identifiers,
             Self::Parametric(crs) => &crs.identified.identifiers,
         }
@@ -3944,6 +4015,7 @@ impl Crs {
             Self::DerivedGeodetic(crs) => &crs.identified,
             Self::DerivedVertical(crs) => &crs.identified,
             Self::DerivedEngineering(crs) => &crs.identified,
+            Self::DerivedParametric(crs) => &crs.identified,
             Self::Temporal(crs) => &crs.identified,
             Self::Parametric(crs) => &crs.identified,
         }
@@ -3967,6 +4039,7 @@ impl Crs {
             Self::DerivedGeodetic(crs) => &mut crs.identified,
             Self::DerivedVertical(crs) => &mut crs.identified,
             Self::DerivedEngineering(crs) => &mut crs.identified,
+            Self::DerivedParametric(crs) => &mut crs.identified,
             Self::Temporal(crs) => &mut crs.identified,
             Self::Parametric(crs) => &mut crs.identified,
         }
@@ -4000,6 +4073,7 @@ impl Crs {
             Self::DerivedGeodetic(crs) => crs.identified.deprecated,
             Self::DerivedVertical(crs) => crs.identified.deprecated,
             Self::DerivedEngineering(crs) => crs.identified.deprecated,
+            Self::DerivedParametric(crs) => crs.identified.deprecated,
             Self::Temporal(crs) => crs.identified.deprecated,
             Self::Parametric(crs) => crs.identified.deprecated,
         }
@@ -4007,7 +4081,11 @@ impl Crs {
 
     pub(crate) fn is_horizontal(&self) -> bool {
         match self {
-            Self::Vertical(_) | Self::DerivedVertical(_) | Self::Temporal(_) | Self::Parametric(_) => {
+            Self::Vertical(_)
+            | Self::DerivedVertical(_)
+            | Self::Temporal(_)
+            | Self::Parametric(_)
+            | Self::DerivedParametric(_) => {
                 false
             }
             Self::Compound(crs) => crs.components.iter().any(Self::is_horizontal),

@@ -95,6 +95,7 @@ pub use iso19111::{
     TemporalCountCS, TemporalMeasureCS, ParametricCRS, ParametricCS, ParametricDatum,
     DerivedGeodeticCRS, TemporalCRS, TemporalDatum,
     DerivedGeographicCRS, DerivedProjectedCRS, DerivedVerticalCRS, DerivedEngineeringCRS,
+    DerivedParametricCRS,
     EllipsoidalCS, EllipsoidalHeightPolicy,
     EngineeringCRS, EngineeringDatum, Equivalence, FactoryError, GeocentricCRS, GeodeticCRS,
     GeodeticReferenceFrame, GeographicCRS, Identifier, IntermediateCrsUse, LinunitPolicy, Meridian,

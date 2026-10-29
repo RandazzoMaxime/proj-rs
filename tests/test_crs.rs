@@ -10,7 +10,7 @@ use proj_rs::{
     CompoundCRS, Conversion, CoordinateSystem, Crs, DatabaseContext, Datum, DatumEnsemble,
     DateTimeTemporalCS, DerivedGeodeticCRS, DerivedGeographicCRS, DerivedProjectedCRS,
     TemporalCountCS, TemporalMeasureCS, ParametricCRS, ParametricCS, ParametricDatum,
-    DerivedVerticalCRS, DerivedEngineeringCRS, TemporalCRS, TemporalDatum,
+    DerivedVerticalCRS, DerivedEngineeringCRS, DerivedParametricCRS, TemporalCRS, TemporalDatum,
     EllipsoidalCS, EngineeringCRS, EngineeringDatum,
     EllipsoidalHeightPolicy, Equivalence, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS,
     LinunitPolicy, OpProps, OutputAxisRule, PrimeMeridian, ProjectedCRS, RealizationMethod,
@@ -4528,6 +4528,53 @@ fn crs_parametric_crs_wkt1() {
     let exported = Crs::Parametric(parametric_crs())
         .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Gdal));
     assert!(exported.is_err());
+}
+
+fn derived_parametric() -> DerivedParametricCRS {
+    DerivedParametricCRS::create(
+        "Derived ParametricCRS",
+        parametric_crs(),
+        Conversion::create("unnamed", "PROJ unimplemented", Vec::new()),
+        parametric_crs().coordinate_system().clone(),
+    )
+}
+
+#[test]
+fn crs_derived_parametric_crs_wkt2() {
+    let derived = derived_parametric();
+    assert!(derived.is_equivalent_to(&derived));
+    assert!(derived.clone().is_equivalent_to(&derived));
+    assert!(!Crs::DerivedParametric(derived.clone())
+        .is_equivalent_to(&Crs::Geographic(GeographicCRS::epsg_4326())));
+    assert!(CoordinateSystem::Parametric(derived.coordinate_system().clone()).is_equivalent_to(
+        &CoordinateSystem::Parametric(parametric_crs().coordinate_system().clone())
+    ));
+    assert!(derived.datum().is_equivalent_to(parametric_crs().datum()));
+    let wkt = Crs::DerivedParametric(derived)
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2019))
+        .expect("wkt2-2019");
+    assert_eq!(
+        wkt,
+        "\
+PARAMETRICCRS[\"Derived ParametricCRS\",
+    BASEPARAMCRS[\"Parametric CRS\",
+        PDATUM[\"Parametric datum\"]],
+    DERIVINGCONVERSION[\"unnamed\",
+        METHOD[\"PROJ unimplemented\"]],
+    CS[parametric,1],
+        AXIS[\"pressure (hPa)\",up,
+            PARAMETRICUNIT[\"HectoPascal\",100]]]"
+    );
+}
+
+#[test]
+fn crs_derived_parametric_crs_wkt1() {
+    let exported = Crs::DerivedParametric(derived_parametric())
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Gdal));
+    assert_eq!(
+        exported.expect_err("wkt1").to_string(),
+        "DerivedParametricCRS can only be exported to WKT2"
+    );
 }
 
 #[test]

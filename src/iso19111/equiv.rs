@@ -7,7 +7,8 @@
 use super::model::{
     ensemble_name_as_datum, Axis, BoundCRS, CompoundCRS, Conversion, CoordinateOperation,
     CoordinateSystem, Crs, Datum, DatumEnsemble, DerivedGeodeticCRS, DerivedGeographicCRS,
-    DerivedProjectedCRS, DerivedVerticalCRS, DerivedEngineeringCRS, Ellipsoid, ParametricCRS,
+    DerivedProjectedCRS, DerivedVerticalCRS, DerivedEngineeringCRS, DerivedParametricCRS, Ellipsoid,
+    ParametricCRS,
     ParametricDatum,
     TemporalCRS, TemporalDatum,
     EngineeringCRS,
@@ -303,6 +304,48 @@ impl TemporalCRS {
     }
 }
 
+impl DerivedParametricCRS {
+    /// Strict derived-parametric equivalence.
+    #[must_use]
+    pub fn is_equivalent_to(&self, other: &Self) -> bool {
+        self.is_equivalent_to_with(other, Equivalence::Strict)
+    }
+
+    /// `DerivedParametricCRS::_isEquivalentTo`.
+    ///
+    /// A different CRS kind is not equivalent. The base uses `criterion`. The
+    /// deriving conversion uses the standard criterion.
+    #[must_use]
+    pub fn is_equivalent_to_with(&self, other: &Self, criterion: Equivalence) -> bool {
+        (criterion != Equivalence::Strict || same_name(self.name(), other.name()))
+            && parametric_base_equivalent(&self.base, &other.base, criterion)
+            && conversion_equivalent_with(
+                &self.conversion,
+                &other.conversion,
+                standard_criterion(criterion),
+            )
+            && axes_for_criterion(
+                std::slice::from_ref(self.coordinate_system.axis()),
+                std::slice::from_ref(other.coordinate_system.axis()),
+                criterion,
+            )
+    }
+}
+
+fn parametric_base_equivalent(
+    left: &ParametricCRS,
+    right: &ParametricCRS,
+    criterion: Equivalence,
+) -> bool {
+    (criterion != Equivalence::Strict || same_name(left.name(), right.name()))
+        && left.datum().is_equivalent_to(right.datum())
+        && axes_for_criterion(
+            std::slice::from_ref(left.coordinate_system().axis()),
+            std::slice::from_ref(right.coordinate_system().axis()),
+            criterion,
+        )
+}
+
 impl DerivedEngineeringCRS {
     /// Strict derived-engineering equivalence.
     #[must_use]
@@ -586,6 +629,9 @@ pub(crate) fn crs_equivalent(left: &Crs, right: &Crs, criterion: Equivalence) ->
         (Crs::DerivedEngineering(left), Crs::DerivedEngineering(right)) => {
             left.is_equivalent_to_with(right, criterion)
         }
+        (Crs::DerivedParametric(left), Crs::DerivedParametric(right)) => {
+            left.is_equivalent_to_with(right, criterion)
+        }
         (Crs::Engineering(left), Crs::Engineering(right)) => {
             criterion == Equivalence::Strict && left.is_equivalent_to(right)
         }
@@ -675,6 +721,9 @@ impl Crs {
                 left.is_equivalent_to(right)
             }
             (Self::DerivedEngineering(left), Self::DerivedEngineering(right)) => {
+                left.is_equivalent_to(right)
+            }
+            (Self::DerivedParametric(left), Self::DerivedParametric(right)) => {
                 left.is_equivalent_to(right)
             }
             (Self::Temporal(left), Self::Temporal(right)) => left.is_equivalent_to(right),
