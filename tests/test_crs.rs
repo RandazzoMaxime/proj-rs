@@ -10,7 +10,7 @@ use proj_rs::{
     DerivedProjectedCRS, DerivedVerticalCRS, EllipsoidalCS,
     EllipsoidalHeightPolicy, Equivalence, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS,
     LinunitPolicy, OpProps, OutputAxisRule, PrimeMeridian, ProjectedCRS, RealizationMethod,
-    UnitKind, UnitOfMeasure,
+    Transformation, UnitKind, UnitOfMeasure,
     VerticalCRS, VerticalCS, VerticalReferenceFrame, WktConvention, WktDialect, WktFormatter,
     WktLines, WktParser,
     WktStrictness,
@@ -4869,4 +4869,58 @@ fn crs_bound_crs_identify_db() {
     assert_eq!(epsg_number(bound.source_crs()), 27572);
     assert_eq!(bound.transformation().name(), "NTF to WGS 84 (1)");
     assert_eq!(confidence, 100);
+}
+
+fn geocentric_translation(source: Crs, target: Crs) -> CoordinateOperation {
+    let transformation = Transformation::create(
+        &OpProps::new(),
+        source,
+        target,
+        None,
+        "Geocentric translations (geog2D domain)",
+        Vec::new(),
+        Vec::new(),
+        None,
+    )
+    .expect("transformation");
+    CoordinateOperation::Transformation(transformation)
+}
+
+#[test]
+fn crs_incompatible_bound_crs_hub_crs_to_wkt1() {
+    let source = Crs::Geographic(GeographicCRS::epsg_4326());
+    let hub = Crs::Geographic(GeographicCRS::epsg_4807());
+    let crs = BoundCRS::create(
+        source.clone(),
+        hub.clone(),
+        geocentric_translation(source, hub),
+    );
+    assert!(Crs::Bound(crs)
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Gdal))
+        .is_err());
+}
+
+#[test]
+fn crs_incompatible_bound_crs_transformation_to_wkt1() {
+    let source = Crs::Geographic(GeographicCRS::epsg_4807());
+    let hub = Crs::Geographic(GeographicCRS::epsg_4326());
+    let transformation = Transformation::create(
+        &OpProps::new(),
+        source.clone(),
+        hub.clone(),
+        None,
+        "",
+        Vec::new(),
+        Vec::new(),
+        None,
+    )
+    .expect("transformation");
+    let crs = BoundCRS::create(
+        source,
+        hub,
+        CoordinateOperation::Transformation(transformation),
+    );
+    assert!(Crs::Bound(crs)
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Gdal))
+        .is_err());
 }
