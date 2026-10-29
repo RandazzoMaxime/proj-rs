@@ -6,7 +6,8 @@
 
 use super::model::{
     ensemble_name_as_datum, Axis, BoundCRS, CompoundCRS, Conversion, CoordinateOperation,
-    CoordinateSystem, Crs, Datum, DatumEnsemble, DerivedGeodeticCRS, DerivedGeographicCRS, Ellipsoid,
+    CoordinateSystem, Crs, Datum, DatumEnsemble, DerivedGeodeticCRS, DerivedGeographicCRS,
+    DerivedProjectedCRS, Ellipsoid,
     EngineeringCRS,
     EngineeringDatum, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified, Measure,
     Parameter, ParameterValue, PrimeMeridian, ProjectedCRS, Transformation, VerticalCRS,
@@ -195,6 +196,32 @@ impl CoordinateSystem {
     #[must_use]
     pub fn is_equivalent_to(&self, other: &Self) -> bool {
         coordinate_system_equivalent(self, other)
+    }
+}
+
+impl DerivedProjectedCRS {
+    /// Strict derived-projected equivalence.
+    #[must_use]
+    pub fn is_equivalent_to(&self, other: &Self) -> bool {
+        self.is_equivalent_to_with(other, Equivalence::Strict)
+    }
+
+    /// `isEquivalentTo` with `criterion`.
+    ///
+    /// A different CRS kind is not equivalent. The base projected CRS uses
+    /// `criterion`. The deriving conversion uses the standard criterion.
+    #[must_use]
+    pub fn is_equivalent_to_with(&self, other: &Self, criterion: Equivalence) -> bool {
+        let left: Vec<Axis> = self.coordinate_system.axes().into_iter().cloned().collect();
+        let right: Vec<Axis> = other.coordinate_system.axes().into_iter().cloned().collect();
+        (criterion != Equivalence::Strict || same_name(self.name(), other.name()))
+            && self.base.is_equivalent_to_with(&other.base, criterion)
+            && conversion_equivalent_with(
+                &self.conversion,
+                &other.conversion,
+                standard_criterion(criterion),
+            )
+            && axes_for_criterion(&left, &right, criterion)
     }
 }
 
@@ -456,6 +483,9 @@ impl Crs {
                 left.is_equivalent_to(right)
             }
             (Self::DerivedGeodetic(left), Self::DerivedGeodetic(right)) => {
+                left.is_equivalent_to(right)
+            }
+            (Self::DerivedProjected(left), Self::DerivedProjected(right)) => {
                 left.is_equivalent_to(right)
             }
             _ => false,

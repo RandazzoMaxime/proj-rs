@@ -37,7 +37,7 @@ fn node_from_text(text: &str) -> NodeId {
 use super::model::{
     ensemble_name_as_datum, Axis, BoundCRS, CartesianCS, CompoundCRS, Conversion,
     CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble, DerivedGeodeticCRS,
-    DerivedGeographicCRS,
+    DerivedGeographicCRS, DerivedProjectedCRS,
     Ellipsoid, EngineeringCRS, EngineeringDatum, FactoryError, GeocentricCRS, GeodeticCRS,
     GeodeticReferenceFrame, GeographicCRS, Identified, Identifier, Measure, OperationMethod,
     Parameter, ParameterValue, PrimeMeridian, ProjectedCRS, Transformation, UnitKind,
@@ -595,12 +595,7 @@ pub(crate) fn export_crs(crs: &Crs, formatter: &mut WktFormatter) -> Result<(), 
         Crs::Compound(crs) => export_compound(crs, formatter)?,
         Crs::Bound(crs) => export_bound(crs, formatter)?,
         Crs::Engineering(crs) => export_engineering(crs, formatter)?,
-        Crs::DerivedProjected(crs) => {
-            return Err(FactoryError::Format(format!(
-                "derived projected CRS {} has no WKT export in this build",
-                crs.name()
-            )));
-        }
+        Crs::DerivedProjected(crs) => export_derived_projected(crs, formatter)?,
         Crs::DerivedVertical(crs) => {
             return Err(FactoryError::Format(format!(
                 "derived vertical CRS {} has no WKT export in this build",
@@ -840,6 +835,100 @@ fn export_spherical(
     }
     export_cs(&CoordinateSystem::Spherical(cs.clone()), formatter);
     formatter.base_usage(identified);
+    formatter.end_node();
+    Ok(())
+}
+
+/// `DerivedProjectedCRS::_exportToWKT`.
+///
+/// Only WKT2:2019 is accepted. The projected base is `BASEPROJCRS`. Its
+/// geodetic node carries no authority identifier. The base projected
+/// identifier is written when the derived CRS itself has none.
+fn export_derived_projected(
+    crs: &DerivedProjectedCRS,
+    formatter: &mut WktFormatter,
+) -> Result<(), FactoryError> {
+    if !(formatter.wkt2 && formatter.keywords_2019) {
+        return Err(FactoryError::Format(
+            "DerivedProjectedCRS can only be exported to WKT2:2019".to_owned(),
+        ));
+    }
+    formatter.start_node(
+        "DERIVEDPROJCRS",
+        node_from_ids(&crs.identified.identifiers),
+    );
+    formatter.add_quoted(crs.name());
+    let base = &crs.base;
+    let base_has_id = !base.identifiers().is_empty();
+    formatter.start_node(
+        "BASEPROJCRS",
+        if base_has_id {
+            NodeId::Present
+        } else {
+            NodeId::Absent
+        },
+    );
+    formatter.add_quoted(base.name());
+    let geodetic = base.base_crs();
+    let geodetic_keyword = if matches!(geodetic, GeodeticCRS::Geographic(_)) {
+        "BASEGEOGCRS"
+    } else {
+        "BASEGEODCRS"
+    };
+    let geodetic_has_id = !geodetic.identifiers().is_empty();
+    formatter.start_node(
+        geodetic_keyword,
+        if geodetic_has_id {
+            NodeId::Present
+        } else {
+            NodeId::Absent
+        },
+    );
+    formatter.add_quoted(geodetic.name());
+    let angular = base_angular_unit(geodetic);
+    formatter.axis_angular.push(angular.clone());
+    export_base_datum(geodetic, formatter);
+    if formatter.omit_parameter_unit_if_axis {
+        formatter.export_unit(&angular, None);
+    }
+    if let Some(meridian) = geodetic.prime_meridian() {
+        export_prime_meridian(meridian, formatter);
+    }
+    formatter.axis_angular.pop();
+    formatter.end_node();
+    let linear = base.coordinate_system.axes().first().map(Axis::unit).cloned();
+    if let Some(unit) = &linear {
+        formatter.axis_linear.push(unit.clone());
+    }
+    formatter.axis_angular.push(angular);
+    let base_shape = if geodetic.ellipsoid().is_some_and(Ellipsoid::is_sphere) {
+        BaseShape::Sphere
+    } else {
+        BaseShape::NotSphere
+    };
+    export_conversion(base.deriving_conversion(), formatter, base_shape)?;
+    formatter.axis_angular.pop();
+    if linear.is_some() {
+        formatter.axis_linear.pop();
+    }
+    let metre = base
+        .coordinate_system
+        .axes()
+        .first()
+        .is_some_and(|axis| axis.unit().name() == "metre");
+    if !metre && base.identifiers().is_empty() {
+        export_cs(
+            &CoordinateSystem::Cartesian(base.coordinate_system.clone()),
+            formatter,
+        );
+    }
+    if crs.identified.identifiers.is_empty() && !base.identifiers().is_empty() {
+        formatter.format_ids(base.identifiers());
+    }
+    formatter.end_node();
+    export_deriving_conversion(crs.deriving_conversion(), formatter)?;
+    export_cs(&crs.coordinate_system, formatter);
+    formatter.base_usage(&crs.identified);
     formatter.end_node();
     Ok(())
 }
