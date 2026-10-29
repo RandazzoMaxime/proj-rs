@@ -4337,6 +4337,23 @@ ENGCRS[\"Engineering CRS\",
 }
 
 #[test]
+fn crs_engineering_crs_wkt1() {
+    let wkt = Crs::Engineering(engineering_crs())
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Gdal))
+        .expect("wkt1");
+    assert_eq!(
+        wkt,
+        "\
+LOCAL_CS[\"Engineering CRS\",
+    LOCAL_DATUM[\"Engineering datum\",32767],
+    UNIT[\"metre\",1,
+        AUTHORITY[\"EPSG\",\"9001\"]],
+    AXIS[\"Easting\",EAST],
+    AXIS[\"Northing\",NORTH]]"
+    );
+}
+
+#[test]
 fn crs_compound_crs_valid() {
     let vertical = Crs::Vertical(odn_height());
     assert!(CompoundCRS::create(

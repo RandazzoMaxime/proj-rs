@@ -7,7 +7,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_crs.cpp
 
-- `crs.engineeringCRS_WKT1`
 - `crs.engineeringCRS_unknown_equivalence`
 - `crs.default_identify_method`
 - `crs.parametricCRS_WKT2`
