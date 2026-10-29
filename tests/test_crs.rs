@@ -4732,3 +4732,23 @@ fn crs_bound_crs_nadcon_to_proj_string_use_proj_alternative_grid_names_false() {
         "+proj=longlat +ellps=clrk66 +nadgrids=us_noaa_conus.tif +no_defs +type=crs"
     );
 }
+
+#[test]
+fn crs_bound_crs_nadcon_to_proj_string_use_proj_alternative_grid_names_true() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let operation = AuthorityFactory::create(&db, "EPSG")
+        .create_coordinate_operation("15851", AlternativeGridNames::Proj)
+        .expect("EPSG:15851");
+    let CoordinateOperation::Transformation(transformation) = operation else {
+        panic!("EPSG:15851 is a transformation");
+    };
+    let crs = BoundCRS::create(
+        Crs::Geographic(GeographicCRS::epsg_4267()),
+        Crs::Geographic(GeographicCRS::epsg_4326()),
+        CoordinateOperation::Transformation(transformation),
+    );
+    assert_eq!(
+        crs.export_to_proj_string().expect("proj"),
+        "+proj=longlat +ellps=clrk66 +nadgrids=us_noaa_conus.tif +no_defs +type=crs"
+    );
+}

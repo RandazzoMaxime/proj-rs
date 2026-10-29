@@ -7,7 +7,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_crs.cpp
 
-- `crs.boundCRS_nadcon_to_PROJ_string_usePROJAlternativeGridNames_true`
 - `crs.boundCRS_identify_db`
 - `crs.incompatible_boundCRS_hubCRS_to_WKT1`
 - `crs.incompatible_boundCRS_transformation_to_WKT1`
