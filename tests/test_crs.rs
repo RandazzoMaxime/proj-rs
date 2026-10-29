@@ -4247,6 +4247,34 @@ TIMECRS[\"GPS milliseconds\",
 }
 
 #[test]
+fn crs_temporal_count_crs_without_conv_factor_wkt2_2019() {
+    let crs = TemporalCRS::create_count(
+        "Calendar hours from 1979-12-29",
+        TemporalDatum::create("29 December 1979", "1979-12-29T00", "proleptic Gregorian"),
+        TemporalCountCS::create(Axis::create(
+            "Time",
+            "",
+            "future",
+            UnitOfMeasure::new("hour", 0.0, UnitKind::Time),
+        )),
+    );
+    let wkt = Crs::Temporal(crs)
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2019))
+        .expect("wkt2-2019");
+    assert_eq!(
+        wkt,
+        "\
+TIMECRS[\"Calendar hours from 1979-12-29\",
+    TDATUM[\"29 December 1979\",
+        CALENDAR[\"proleptic Gregorian\"],
+        TIMEORIGIN[1979-12-29T00]],
+    CS[TemporalCount,1],
+        AXIS[\"time\",future,
+            TIMEUNIT[\"hour\"]]]"
+    );
+}
+
+#[test]
 fn crs_compound_crs_valid() {
     let vertical = Crs::Vertical(odn_height());
     assert!(CompoundCRS::create(
