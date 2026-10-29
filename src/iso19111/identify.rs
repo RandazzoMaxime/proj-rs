@@ -150,6 +150,52 @@ impl Crs {
         }
     }
 
+    /// `CRS::alterGeodeticCRS`.
+    ///
+    /// A geodetic or geographic CRS is replaced by `geodetic`. A projected CRS
+    /// keeps its conversion and axes and takes `geodetic` as its base. A
+    /// compound CRS alters each component. A vertical CRS is unchanged.
+    #[must_use]
+    pub fn alter_geodetic_crs(&self, geodetic: &GeodeticCRS) -> Self {
+        match self {
+            Self::Geographic(_) | Self::Geodetic(_) => match geodetic {
+                GeodeticCRS::Geographic(crs) => Self::Geographic(crs.clone()),
+                other => Self::Geodetic(other.clone()),
+            },
+            Self::Projected(crs) => Self::Projected(ProjectedCRS {
+                identified: Identified::named(crs.name()),
+                base: geodetic.clone(),
+                conversion: crs.conversion.clone(),
+                coordinate_system: crs.coordinate_system.clone(),
+                implicit_cs: crs.implicit_cs,
+            }),
+            Self::DerivedProjected(crs) => {
+                let Crs::Projected(base) =
+                    Crs::Projected(crs.base.clone()).alter_geodetic_crs(geodetic)
+                else {
+                    return self.clone();
+                };
+                Self::DerivedProjected(DerivedProjectedCRS {
+                    identified: Identified::named(crs.name()),
+                    base,
+                    conversion: crs.conversion.clone(),
+                    coordinate_system: crs.coordinate_system.clone(),
+                })
+            }
+            Self::Compound(crs) => {
+                let components = crs
+                    .components()
+                    .iter()
+                    .map(|component| component.alter_geodetic_crs(geodetic))
+                    .collect();
+                CompoundCRS::create(crs.name(), components)
+                    .map(Self::Compound)
+                    .unwrap_or_else(|_| self.clone())
+            }
+            other => other.clone(),
+        }
+    }
+
     /// `isEquivalentTo` with `EQUIVALENT` and a database for datum aliases.
     ///
     /// The CRS name is not required to match. Axis comparison is direction and

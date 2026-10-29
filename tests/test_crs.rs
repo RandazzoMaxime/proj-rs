@@ -4507,6 +4507,42 @@ fn crs_strip_vertical_component() {
 }
 
 #[test]
+fn crs_alter_geodetic_crs() {
+    let target = GeodeticCRS::Geographic(GeographicCRS::epsg_4979());
+    let geographic = Crs::Geographic(GeographicCRS::epsg_4326()).alter_geodetic_crs(&target);
+    assert!(geographic.is_equivalent_to(&Crs::Geographic(GeographicCRS::epsg_4979())));
+    let projected = Crs::Projected(utm_31n()).alter_geodetic_crs(&target);
+    let Crs::Projected(projected) = projected else {
+        panic!("the projected CRS stays projected");
+    };
+    assert!(Crs::Geodetic(projected.base_crs().clone())
+        .is_equivalent_to(&Crs::Geographic(GeographicCRS::epsg_4979())));
+    let compound = CompoundCRS::create(
+        "horizontal + vertical",
+        vec![Crs::Projected(utm_31n()), Crs::Vertical(odn_height())],
+    )
+    .expect("compound");
+    let altered = Crs::Compound(compound).alter_geodetic_crs(&target);
+    let Crs::Compound(altered) = altered else {
+        panic!("the compound CRS stays compound");
+    };
+    let geographic = altered.components()[0]
+        .extract_geographic_crs()
+        .expect("geographic");
+    assert!(geographic.is_equivalent_to(&GeographicCRS::epsg_4979()));
+    let vertical = Crs::Vertical(odn_height());
+    assert!(vertical
+        .alter_geodetic_crs(&target)
+        .is_equivalent_to(&vertical));
+    let derived = Crs::DerivedProjected(derived_projected()).alter_geodetic_crs(&target);
+    let Crs::DerivedProjected(derived) = derived else {
+        panic!("the derived projected CRS stays derived projected");
+    };
+    assert!(Crs::Geodetic(derived.base_crs().base_crs().clone())
+        .is_equivalent_to(&Crs::Geographic(GeographicCRS::epsg_4979())));
+}
+
+#[test]
 fn crs_date_time_temporal_crs_wkt2() {
     let crs = date_time_temporal();
     let wkt = Crs::Temporal(crs.clone())
