@@ -7,7 +7,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_crs.cpp
 
-- `crs.projected_is_equivalent_to_with_proj4_extension`
 - `crs.is_dynamic`
 - `crs.norway_ntm`
 - `crs.ETRF2000_PL_CS92`

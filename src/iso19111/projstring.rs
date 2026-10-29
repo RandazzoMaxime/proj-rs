@@ -1314,7 +1314,7 @@ pub fn create_crs_from_proj_string(definition: &str) -> Result<Crs, FactoryError
     } else if proj == "utm" {
         utm_from_proj(&tokens)?
     } else {
-        projected_from_proj(&tokens, proj)?
+        projected_from_proj(&tokens, proj, definition)?
     };
     if has_token(&tokens, "towgs84") {
         let values = towgs84_values(token(&tokens, "towgs84"))?;
@@ -1372,7 +1372,7 @@ fn crs_from_pipeline(tokens: &[(String, String)]) -> Result<Crs, FactoryError> {
             "a pipeline CRS needs a projection step".to_owned(),
         ));
     };
-    projected_from_proj(&step, token(&step, "proj"))
+    projected_from_proj(&step, token(&step, "proj"), "")
 }
 
 fn utm_from_proj(tokens: &[(String, String)]) -> Result<Crs, FactoryError> {
@@ -1499,8 +1499,16 @@ fn geographic_from_proj(tokens: &[(String, String)]) -> Result<Crs, FactoryError
     }))
 }
 
-fn projected_from_proj(tokens: &[(String, String)], proj: &str) -> Result<Crs, FactoryError> {
-    let method = projection_method(proj, tokens).ok_or_else(|| {
+fn projected_from_proj(
+    tokens: &[(String, String)],
+    proj: &str,
+    definition: &str,
+) -> Result<Crs, FactoryError> {
+    let method = projection_method(proj, tokens);
+    if method.is_none() && proj == "omerc" && has_token(tokens, "no_rot") {
+        return omerc_no_rot(tokens, definition);
+    }
+    let method = method.ok_or_else(|| {
         FactoryError::Invalid(format!("unknown +proj={proj} cannot be imported as a CRS"))
     })?;
     let geographic = geographic_for_projected(tokens, proj)?;
@@ -1543,6 +1551,84 @@ fn projected_from_proj(tokens: &[(String, String)], proj: &str) -> Result<Crs, F
     Ok(Crs::Projected(crs))
 }
 
+/// `+proj=omerc +no_rot` has no EPSG method. The step stays `PROJ omerc no_rot`
+/// and the original string is the CRS extension.
+fn omerc_no_rot(tokens: &[(String, String)], definition: &str) -> Result<Crs, FactoryError> {
+    let geographic = geographic_for_projected(tokens, "omerc")?;
+    let linear = linear_unit_from_proj(tokens);
+    let mut method_name = String::from("PROJ omerc");
+    let mut parameters = Vec::new();
+    for (key, value) in tokens {
+        if matches!(
+            key.as_str(),
+            "wktext"
+                | "no_defs"
+                | "datum"
+                | "ellps"
+                | "a"
+                | "b"
+                | "R"
+                | "f"
+                | "rf"
+                | "towgs84"
+                | "nadgrids"
+                | "geoidgrids"
+                | "units"
+                | "to_meter"
+                | "vunits"
+                | "vto_meter"
+                | "type"
+                | "proj"
+                | "title"
+        ) {
+            continue;
+        }
+        if value.is_empty() {
+            method_name.push(' ');
+            method_name.push_str(key);
+            continue;
+        }
+        if value.starts_with(|ch: char| ch.is_ascii_alphabetic()) {
+            method_name.push(' ');
+            method_name.push_str(key);
+            method_name.push('=');
+            method_name.push_str(value);
+            continue;
+        }
+        let number = value
+            .parse::<f64>()
+            .map_err(|_| FactoryError::Invalid(format!("invalid value for {key}")))?;
+        let (unit, number) = if matches!(key.as_str(), "x_0" | "y_0" | "h" | "h_0") {
+            (linear.clone(), number)
+        } else if matches!(key.as_str(), "k" | "k_0") {
+            (UnitOfMeasure::unity(), number)
+        } else {
+            (UnitOfMeasure::degree(), number)
+        };
+        parameters.push(Parameter {
+            name: key.clone(),
+            code_space: String::new(),
+            code: String::new(),
+            value: ParameterValue::Measure(Measure {
+                value: number,
+                unit,
+            }),
+        });
+    }
+    let title = token(tokens, "title");
+    let name = if title.is_empty() { "unknown" } else { title };
+    let mut crs = ProjectedCRS::create(
+        name,
+        GeodeticCRS::Geographic(geographic),
+        Conversion::create("unknown", method_name, parameters),
+        CartesianCS::create_easting_northing(linear),
+    );
+    crs.implicit_cs = true;
+    crs.extension_proj4 = definition.to_owned();
+    crs.identified.remarks = format!("PROJ CRS string: {definition}");
+    Ok(Crs::Projected(crs))
+}
+
 fn projection_method(
     proj: &str,
     tokens: &[(String, String)],
@@ -1555,6 +1641,10 @@ fn projection_method(
         return super::parammap::method_by_code(1042);
     }
     if proj == "omerc" {
+        // `+no_rot` is not a WKT method. The whole string is kept as an extension.
+        if has_token(tokens, "no_rot") {
+            return None;
+        }
         if has_token(tokens, "no_uoff") || has_token(tokens, "no_off") {
             return super::parammap::method_by_code(9812);
         }

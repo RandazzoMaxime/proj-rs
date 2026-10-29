@@ -527,7 +527,15 @@ impl ProjectedCRS {
         if criterion == Equivalence::Strict && !same_name(self.name(), other.name()) {
             return false;
         }
-        geodetic_equivalent(self.base_crs(), other.base_crs(), criterion)
+        // A PROJ string has no geographic axes. Equivalence then ignores that order.
+        let base_criterion = if criterion == Equivalence::Equivalent
+            && (base_implicit(self.base_crs()) || base_implicit(other.base_crs()))
+        {
+            Equivalence::ExceptAxisOrder
+        } else {
+            criterion
+        };
+        geodetic_equivalent(self.base_crs(), other.base_crs(), base_criterion)
             && conversion_equivalent_with(
                 self.deriving_conversion(),
                 other.deriving_conversion(),
@@ -538,7 +546,20 @@ impl ProjectedCRS {
                 other.coordinate_system().axes(),
                 standard,
             )
+            && proj4_extensions_equivalent(&self.extension_proj4, &other.extension_proj4)
     }
+}
+
+fn base_implicit(crs: &GeodeticCRS) -> bool {
+    match crs {
+        GeodeticCRS::Geographic(crs) => crs.implicit_cs,
+        _ => false,
+    }
+}
+
+/// Both absent, or both present. The strings themselves are not compared.
+fn proj4_extensions_equivalent(left: &str, right: &str) -> bool {
+    left.is_empty() == right.is_empty()
 }
 
 impl VerticalCRS {

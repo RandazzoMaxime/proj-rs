@@ -2888,6 +2888,8 @@ pub struct ProjectedCRS {
     /// Identification then treats the projected axes as matching when the unit
     /// matches, even if the official axis order differs.
     pub(crate) implicit_cs: bool,
+    /// Original PROJ string kept when a step such as `+no_rot` has no WKT method.
+    pub(crate) extension_proj4: String,
 }
 
 impl ProjectedCRS {
@@ -2905,6 +2907,7 @@ impl ProjectedCRS {
             conversion,
             coordinate_system,
             implicit_cs: false,
+            extension_proj4: String::new(),
         }
     }
 
@@ -2918,6 +2921,12 @@ impl ProjectedCRS {
     #[must_use]
     pub fn identifiers(&self) -> &[Identifier] {
         &self.identified.identifiers
+    }
+
+    /// PROJ string kept beside the WKT conversion, or empty.
+    #[must_use]
+    pub fn extension_proj4(&self) -> &str {
+        &self.extension_proj4
     }
 
     /// Base geodetic CRS.

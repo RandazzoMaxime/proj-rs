@@ -5059,6 +5059,49 @@ fn crs_projected_normalize_for_visualization_do_not_mess_deriving_conversion() {
     deriving_conversion_still_targets(&proj);
 }
 
+#[test]
+fn crs_projected_is_equivalent_to_with_proj4_extension() {
+    let definition = "+proj=omerc +lat_0=50 +alpha=50.0 +no_rot +a=6378144.0 +b=6356759.0 +lon_0=8.0 +type=crs";
+    let crs = create_crs_from_proj_string(definition).expect("omerc");
+    let Crs::Projected(crs1) = crs else {
+        panic!("+proj=omerc is a projected CRS");
+    };
+    let wkt = Crs::Projected(crs1.clone())
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2019))
+        .expect("wkt2-2019");
+    let parsed = WktParser::new().create_from_wkt(&wkt).expect("parse");
+    let from_wkt = parsed.crs().expect("crs").clone();
+    let Crs::Projected(from_wkt) = from_wkt else {
+        panic!("the WKT object stays projected");
+    };
+    assert!(crs1.is_equivalent_to_with(&from_wkt, Equivalence::Equivalent));
+    let reordered = create_crs_from_proj_string(
+        "+proj=omerc +lat_0=50 +no_rot +alpha=50.0 +a=6378144.0 +b=6356759.0 +lon_0=8.0 +type=crs",
+    )
+    .expect("reordered");
+    let Crs::Projected(crs2) = reordered else {
+        panic!("the reordered string stays projected");
+    };
+    assert!(crs1.is_equivalent_to_with(&crs2, Equivalence::Equivalent));
+    let without = create_crs_from_proj_string(
+        "+proj=omerc +lat_0=50 +alpha=50.0 +a=6378144.0 +b=6356759.0 +lon_0=8.0 +type=crs",
+    )
+    .expect("without no_rot");
+    let Crs::Projected(without) = without else {
+        panic!("omerc without +no_rot stays projected");
+    };
+    assert!(!crs1.is_equivalent_to_with(&without, Equivalence::Equivalent));
+    assert!(!without.is_equivalent_to_with(&crs1, Equivalence::Equivalent));
+    let different = create_crs_from_proj_string(
+        "+proj=omerc +lat_0=50 +alpha=49.0 +no_rot +a=6378144.0 +b=6356759.0 +lon_0=8.0 +type=crs",
+    )
+    .expect("different alpha");
+    let Crs::Projected(different) = different else {
+        panic!("the different azimuth stays projected");
+    };
+    assert!(!crs1.is_equivalent_to_with(&different, Equivalence::Equivalent));
+}
+
 fn deriving_conversion_still_targets(crs: &ProjectedCRS) {
     let again = crs.deriving_operation();
     assert!(std::ptr::eq(again.target_crs(), crs));

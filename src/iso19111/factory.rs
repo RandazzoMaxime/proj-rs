@@ -2608,6 +2608,7 @@ impl AuthorityFactory {
             conversion,
             coordinate_system,
             implicit_cs: false,
+            extension_proj4: String::new(),
         })
     }
 

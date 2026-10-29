@@ -208,6 +208,7 @@ impl Crs {
                 conversion: crs.conversion.clone(),
                 coordinate_system: crs.coordinate_system.clone(),
                 implicit_cs: crs.implicit_cs,
+                extension_proj4: crs.extension_proj4.clone(),
             }),
             Self::DerivedProjected(crs) => {
                 let Crs::Projected(base) =
@@ -249,6 +250,7 @@ impl Crs {
                 conversion: crs.conversion.clone(),
                 coordinate_system: cartesian_with_unit(&crs.coordinate_system, unit),
                 implicit_cs: crs.implicit_cs,
+                extension_proj4: crs.extension_proj4.clone(),
             }),
             Self::Geodetic(GeodeticCRS::Geocentric(crs)) => {
                 Self::Geodetic(GeodeticCRS::Geocentric(GeocentricCRS {
@@ -362,6 +364,7 @@ impl ProjectedCRS {
             conversion: self.conversion.alter_parameters_linear_unit(unit, scale),
             coordinate_system: self.coordinate_system.clone(),
             implicit_cs: self.implicit_cs,
+            extension_proj4: self.extension_proj4.clone(),
         }
     }
 }
@@ -943,6 +946,7 @@ impl ProjectedCRS {
             conversion: self.conversion.clone(),
             coordinate_system,
             implicit_cs: self.implicit_cs,
+            extension_proj4: self.extension_proj4.clone(),
         }
     }
 
@@ -967,6 +971,7 @@ impl ProjectedCRS {
             conversion: self.conversion.clone(),
             coordinate_system,
             implicit_cs: self.implicit_cs,
+            extension_proj4: self.extension_proj4.clone(),
         }
     }
 

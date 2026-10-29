@@ -278,6 +278,15 @@ fn strip_quotes(node: &WktNode) -> String {
     }
 }
 
+fn proj4_extension_from_remarks(remarks: &str) -> String {
+    let prefix = "PROJ CRS string: ";
+    let Some(rest) = remarks.find(prefix).map(|index| &remarks[index + prefix.len()..]) else {
+        return String::new();
+    };
+    let end = rest.find(". ").unwrap_or(rest.len());
+    rest[..end].to_owned()
+}
+
 fn as_f64(node: &WktNode) -> Result<f64, FactoryError> {
     let text = node.value.trim();
     if text.is_empty() || text.starts_with('"') {
@@ -2321,6 +2330,7 @@ impl WktParser {
             conversion,
             coordinate_system,
             implicit_cs: node.count_named("AXIS") == 0,
+            extension_proj4: proj4_extension_from_remarks(&props.remarks),
         };
         if !self.towgs84.is_empty() {
             return self.bind_towgs84(Crs::Projected(crs));
@@ -2407,6 +2417,7 @@ impl WktParser {
             conversion,
             coordinate_system,
             implicit_cs: node.count_named("AXIS") == 0,
+            extension_proj4: proj4_extension_from_remarks(&props.remarks),
         };
         let mut bound = bound;
         *bound.source_crs_mut() = Crs::Projected(projected);
