@@ -561,6 +561,16 @@ impl super::model::Conversion {
                 return Ok(parts.join(" "));
             }
         }
+        if code == 9624 {
+            let mut parts = vec!["+proj=affine".to_owned()];
+            push_number(&mut parts, "xoff", self.raw_value(8623));
+            push_number(&mut parts, "s11", self.raw_value(8624));
+            push_number(&mut parts, "s12", self.raw_value(8625));
+            push_number(&mut parts, "yoff", self.raw_value(8639));
+            push_number(&mut parts, "s21", self.raw_value(8640));
+            push_number(&mut parts, "s22", self.raw_value(8641));
+            return Ok(parts.join(" "));
+        }
         let Some(proj_name) = mapped.proj_name else {
             return Err(FactoryError::Format(format!(
                 "Unsupported conversion method: {}",
@@ -630,6 +640,11 @@ impl super::model::Conversion {
         let zone_number =
             (1..=60).find(|candidate| (f64::from(*candidate) - zone).abs() < 1e-10)?;
         Some((zone_number, hemisphere))
+    }
+
+    /// `parameterValueMeasure(code).value()`, the number in the parameter's unit.
+    fn raw_value(&self, code: i32) -> f64 {
+        self.measure_of_code(code).map(Measure::value).unwrap_or(0.0)
     }
 
     pub(crate) fn numeric_degrees(&self, code: i32) -> f64 {

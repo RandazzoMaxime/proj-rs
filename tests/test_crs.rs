@@ -5247,3 +5247,56 @@ GEODCRS[\"WMO Atlantic Pole\",
         "+proj=pipeline +step +proj=axisswap +order=2,1 +step +proj=unitconvert +xy_in=deg +xy_out=rad +step +proj=ob_tran +o_proj=longlat +o_lat_p=52 +o_lon_p=-30 +lon_0=-25 +ellps=WGS84 +step +proj=unitconvert +xy_in=rad +xy_out=deg +step +proj=axisswap +order=2,1"
     );
 }
+
+#[test]
+fn crs_derived_geographic_crs_with_affine_transform_to_proj() {
+    let wkt = "\
+GEODCRS[\"WGS 84 Translated\",
+    BASEGEODCRS[\"WGS 84\",
+        DATUM[\"World Geodetic System 1984\",
+            ELLIPSOID[\"WGS 84\",6378137,298.257223563,
+                LENGTHUNIT[\"metre\",1]]],
+        PRIMEM[\"Greenwich\",0]],
+    DERIVINGCONVERSION[\"Translation\",
+        METHOD[\"Affine parametric transformation\",
+            ID[\"EPSG\",9624]],
+        PARAMETER[\"A0\",0.5,
+            ANGLEUNIT[\"degree\",0.0174532925199433],
+            ID[\"EPSG\",8623]],
+        PARAMETER[\"A1\",1,
+            SCALEUNIT[\"coefficient\",1],
+            ID[\"EPSG\",8624]],
+        PARAMETER[\"A2\",0,
+            SCALEUNIT[\"coefficient\",1],
+            ID[\"EPSG\",8625]],
+        PARAMETER[\"B0\",2.5,
+            ANGLEUNIT[\"degree\",0.0174532925199433],
+            ID[\"EPSG\",8639]],
+        PARAMETER[\"B1\",0,
+            SCALEUNIT[\"coefficient\",1],
+            ID[\"EPSG\",8640]],
+        PARAMETER[\"B2\",1,
+            SCALEUNIT[\"coefficient\",1],
+            ID[\"EPSG\",8641]]],
+    CS[ellipsoidal,2],
+        AXIS[\"latitude\",north],
+        AXIS[\"longitude\",east],
+        ANGLEUNIT[\"degree\",0.0174532925199433]]";
+    let crs = WktParser::new()
+        .create_from_wkt(wkt)
+        .expect("parse")
+        .crs()
+        .expect("crs")
+        .clone();
+    let Crs::DerivedGeographic(derived) = &crs else {
+        panic!("parsed CRS is not a derived geographic CRS");
+    };
+    assert!(derived.deriving_conversion().validate_parameters().is_empty());
+    let operation = CoordinateOperationFactory::create()
+        .create_operation_proj_string(&Crs::Geographic(derived.base_crs().clone()), &crs)
+        .expect("operation");
+    assert_eq!(
+        operation,
+        "+proj=affine +xoff=0.5 +s11=1 +s12=0 +yoff=2.5 +s21=0 +s22=1"
+    );
+}

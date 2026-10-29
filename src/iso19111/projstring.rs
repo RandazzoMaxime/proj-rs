@@ -571,6 +571,10 @@ fn derived_geographic_operation(
             "the source CRS is not the base of the derived geographic CRS".to_owned(),
         ));
     }
+    // Affine parametric transformation does not add axis or unit steps.
+    if derived.deriving_conversion().method().code() == "9624" {
+        return derived.deriving_conversion().export_to_proj_string();
+    }
     let mut steps = Vec::new();
     if let Some(order) = geographic_axis_order(geographic) {
         steps.push(format!("+proj=axisswap +order={order}"));
