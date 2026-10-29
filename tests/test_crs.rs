@@ -4971,3 +4971,25 @@ fn crs_wkt1_vert_datum_extension_to_wkt1() {
         wkt
     );
 }
+
+#[test]
+fn crs_wkt1_vert_datum_extension_to_wkt2() {
+    let wkt = "VERT_CS[\"EGM2008 geoid height\",\n    VERT_DATUM[\"EGM2008 geoid\",2005,\n        EXTENSION[\"PROJ4_GRIDS\",\"egm08_25.gtx\"],\n        AUTHORITY[\"EPSG\",\"1027\"]],\n    UNIT[\"metre\",1,\n        AUTHORITY[\"EPSG\",\"9001\"]],\n    AXIS[\"Up\",UP],\n    AUTHORITY[\"EPSG\",\"3855\"]]";
+    let expected = "BOUNDCRS[\n    SOURCECRS[\n        VERTCRS[\"EGM2008 geoid height\",\n            VDATUM[\"EGM2008 geoid\"],\n            CS[vertical,1],\n                AXIS[\"up\",up,\n                    LENGTHUNIT[\"metre\",1]],\n            ID[\"EPSG\",3855]]],\n    TARGETCRS[\n        GEODCRS[\"WGS 84\",\n            DATUM[\"World Geodetic System 1984\",\n                ELLIPSOID[\"WGS 84\",6378137,298.257223563,\n                    LENGTHUNIT[\"metre\",1]]],\n            PRIMEM[\"Greenwich\",0,\n                ANGLEUNIT[\"degree\",0.0174532925199433]],\n            CS[ellipsoidal,3],\n                AXIS[\"latitude\",north,\n                    ORDER[1],\n                    ANGLEUNIT[\"degree\",0.0174532925199433]],\n                AXIS[\"longitude\",east,\n                    ORDER[2],\n                    ANGLEUNIT[\"degree\",0.0174532925199433]],\n                AXIS[\"ellipsoidal height\",up,\n                    ORDER[3],\n                    LENGTHUNIT[\"metre\",1]],\n            ID[\"EPSG\",4979]]],\n    ABRIDGEDTRANSFORMATION[\"EGM2008 geoid height to WGS 84 ellipsoidal height\",\n        METHOD[\"GravityRelatedHeight to Geographic3D\"],\n        PARAMETERFILE[\"Geoid (height correction) model file\",\"egm08_25.gtx\",\n            ID[\"EPSG\",8666]]]]";
+    let mut parser = WktParser::new();
+    let parsed = parser
+        .create_from_wkt(wkt)
+        .expect("wkt")
+        .crs()
+        .expect("crs")
+        .clone();
+    let Crs::Bound(crs) = parsed else {
+        panic!("a vertical PROJ4_GRIDS extension builds a bound CRS");
+    };
+    assert_eq!(
+        Crs::Bound(crs)
+            .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2015))
+            .expect("wkt2"),
+        expected
+    );
+}
