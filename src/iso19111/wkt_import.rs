@@ -21,6 +21,27 @@ const DEGREE_SI: f64 = std::f64::consts::PI / 180.0;
 const US_FOOT: f64 = 12.0 / 39.37;
 const REL_UNIT: f64 = 1e-10;
 
+fn proj4_grids(node: &WktNode) -> Option<String> {
+    let extension = node.child(&["EXTENSION"])?;
+    if extension.children.len() != 2 {
+        return None;
+    }
+    if !ci_eq(&strip_quotes(&extension.children[0]), "PROJ4_GRIDS") {
+        return None;
+    }
+    let name = strip_quotes(&extension.children[1]);
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
+}
+
+fn legacy_geoid_bundle(name: &str) -> bool {
+    name == "g2003conus.gtx,g2003alaska.gtx,g2003h01.gtx,g2003p01.gtx"
+        || name == "g2012a_conus.gtx,g2012a_alaska.gtx,g2012a_guam.gtx,g2012a_hawaii.gtx,g2012a_puertorico.gtx,g2012a_samoa.gtx"
+}
+
 fn invalid(message: impl Into<String>) -> FactoryError {
     FactoryError::Invalid(message.into())
 }
@@ -699,7 +720,16 @@ impl WktParser {
             || ci_eq(name, "VERT_CS")
             || ci_eq(name, "VERTCS")
         {
-            return Ok(WktObject::Crs(Crs::Vertical(self.build_vertical(node)?)));
+            let vertical = self.build_vertical(node)?;
+            let grid = node
+                .child(&["VDATUM", "VERT_DATUM", "VERTICALDATUM", "VRF"])
+                .and_then(proj4_grids);
+            if let Some(grid) = grid.filter(|name| !legacy_geoid_bundle(name)) {
+                return Ok(WktObject::Crs(Crs::Bound(
+                    BoundCRS::create_from_geoid_grids(Crs::Vertical(vertical), &grid),
+                )));
+            }
+            return Ok(WktObject::Crs(Crs::Vertical(vertical)));
         }
         if ci_eq(name, "COMPOUNDCRS") || ci_eq(name, "COMPD_CS") {
             return self.build_compound(node);

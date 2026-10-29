@@ -150,6 +150,8 @@ pub struct WktFormatter {
     towgs84: Vec<f64>,
     /// WKT1 `EXTENSION["PROJ4_GRIDS", ...]` written on the datum.
     h_datum_extension: String,
+    /// WKT1 `EXTENSION["PROJ4_GRIDS", ...]` written on the vertical datum.
+    v_datum_extension: String,
     db: Option<DatabaseContext>,
     /// Projected CRS name, used when an ESRI method depends on it.
     esri_object_name: String,
@@ -202,6 +204,7 @@ impl WktFormatter {
             abridged: false,
             towgs84: Vec::new(),
             h_datum_extension: String::new(),
+            v_datum_extension: String::new(),
             db: None,
             esri_object_name: String::new(),
         }
@@ -1096,6 +1099,12 @@ fn export_bound(crs: &BoundCRS, formatter: &mut WktFormatter) -> Result<(), Fact
         formatter.end_node();
         return Ok(());
     }
+    if let Some(grid) = super::projstring::bound_geoid_grids(crs) {
+        formatter.v_datum_extension = grid;
+        export_crs(&crs.source, formatter)?;
+        formatter.v_datum_extension.clear();
+        return Ok(());
+    }
     if let Some(grid) = super::projstring::bound_nadgrids(crs, formatter.db.as_ref()) {
         formatter.h_datum_extension = grid;
         export_crs(&crs.source, formatter)?;
@@ -1409,6 +1418,13 @@ fn export_vertical_datum(datum: &VerticalReferenceFrame, formatter: &mut WktForm
         }
     } else if !formatter.esri {
         formatter.add_raw(&datum.wkt1_type);
+        if !formatter.v_datum_extension.is_empty() {
+            let grid = formatter.v_datum_extension.clone();
+            formatter.start_node("EXTENSION", NodeId::Absent);
+            formatter.add_quoted("PROJ4_GRIDS");
+            formatter.add_quoted(&grid);
+            formatter.end_node();
+        }
     }
     formatter.format_ids(&datum.identified.identifiers);
     formatter.end_node();

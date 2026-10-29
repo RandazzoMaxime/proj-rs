@@ -238,6 +238,19 @@ impl BoundCRS {
     }
 }
 
+pub(crate) fn bound_geoid_grids(crs: &BoundCRS) -> Option<String> {
+    if !matches!(crs.source_crs(), Crs::Vertical(_)) {
+        return None;
+    }
+    if !crs.target_crs().name().eq_ignore_ascii_case("WGS 84") {
+        return None;
+    }
+    let CoordinateOperation::Transformation(transformation) = crs.transformation() else {
+        return None;
+    };
+    filename_parameter(transformation, "8666")
+}
+
 pub(crate) fn bound_nadgrids(crs: &BoundCRS, db: Option<&DatabaseContext>) -> Option<String> {
     nadgrids_name(crs, db)
 }

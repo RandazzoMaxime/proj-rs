@@ -3144,6 +3144,41 @@ impl BoundCRS {
         });
         Ok(Self::create(source, target, transformation))
     }
+
+    /// Bound vertical CRS from a WKT1 `PROJ4_GRIDS` geoid file.
+    ///
+    /// The hub is WGS 84 geographic 3D. The method is the gravity-related
+    /// height to geographic 3D transformation.
+    pub fn create_from_geoid_grids(source: Crs, filename: &str) -> Self {
+        let target = Crs::Geographic(GeographicCRS::epsg_4979());
+        let transformation = CoordinateOperation::Transformation(Transformation {
+            identified: Identified::named(format!(
+                "{} to {} ellipsoidal height",
+                source.name(),
+                target.name()
+            )),
+            method: OperationMethod {
+                name: "GravityRelatedHeight to Geographic3D".to_owned(),
+                code_space: String::new(),
+                code: String::new(),
+                parameters: Vec::new(),
+            },
+            parameters: vec![Parameter {
+                name: "Geoid (height correction) model file".to_owned(),
+                code_space: "EPSG".to_owned(),
+                code: "8666".to_owned(),
+                value: ParameterValue::Filename(filename.to_owned()),
+            }],
+            source: Some(Box::new(source.clone())),
+            target: Some(Box::new(target.clone())),
+            interpolation: None,
+            accuracy: None,
+            version: None,
+            point_motion: false,
+            inverted: false,
+        });
+        Self::create(source, target, transformation)
+    }
 }
 
 fn geodetic_body(crs: &Crs) -> Option<Crs> {
