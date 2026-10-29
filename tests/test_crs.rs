@@ -5358,3 +5358,44 @@ GEODCRS[\"Derived geodetic CRS\",
     assert!(derived.clone().is_equivalent_to(&derived));
     assert!(!Crs::DerivedGeodetic(derived).is_equivalent_to(&Crs::Vertical(odn_height())));
 }
+
+#[test]
+fn crs_derived_geodetic_crs_wkt2_2019() {
+    let wkt = Crs::DerivedGeodetic(derived_geodetic())
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2019))
+        .expect("wkt2-2019");
+    assert_eq!(
+        wkt,
+        "\
+GEODCRS[\"Derived geodetic CRS\",
+    BASEGEOGCRS[\"WGS 84\",
+        DATUM[\"World Geodetic System 1984\",
+            ELLIPSOID[\"WGS 84\",6378137,298.257223563,
+                LENGTHUNIT[\"metre\",1]]],
+        PRIMEM[\"Greenwich\",0,
+            ANGLEUNIT[\"degree\",0.0174532925199433]],
+        ID[\"EPSG\",4326]],
+    DERIVINGCONVERSION[\"Some conversion\",
+        METHOD[\"Some method\"]],
+    CS[Cartesian,3],
+        AXIS[\"(X)\",geocentricX,
+            ORDER[1],
+            LENGTHUNIT[\"metre\",1,
+                ID[\"EPSG\",9001]]],
+        AXIS[\"(Y)\",geocentricY,
+            ORDER[2],
+            LENGTHUNIT[\"metre\",1,
+                ID[\"EPSG\",9001]]],
+        AXIS[\"(Z)\",geocentricZ,
+            ORDER[3],
+            LENGTHUNIT[\"metre\",1,
+                ID[\"EPSG\",9001]]]]"
+    );
+}
+
+#[test]
+fn crs_derived_geodetic_crs_wkt1() {
+    let exported = Crs::DerivedGeodetic(derived_geodetic())
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Gdal));
+    assert!(exported.is_err());
+}

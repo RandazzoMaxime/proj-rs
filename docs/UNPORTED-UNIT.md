@@ -7,8 +7,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_crs.cpp
 
-- `crs.derivedGeodeticCRS_WKT2_2019`
-- `crs.derivedGeodeticCRS_WKT1`
 - `crs.derivedProjectedCRS_WKT2_2019`
 - `crs.derivedProjectedCRS_WKT2_2015`
 - `crs.dateTimeTemporalCRS_WKT2`
