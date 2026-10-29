@@ -227,13 +227,19 @@ impl BoundCRS {
                 towgs84.as_deref(),
                 nadgrids.as_deref(),
             )),
-            Crs::Projected(crs) => projected_bound_proj(crs, towgs84.as_deref()),
+            Crs::Projected(crs) => {
+                projected_bound_proj(crs, towgs84.as_deref(), nadgrids.as_deref())
+            }
             Crs::Geodetic(crs) => crs.export_to_proj_string(),
             _ => Err(FactoryError::Format(
                 "this bound CRS has no PROJ string in this build".to_owned(),
             )),
         }
     }
+}
+
+pub(crate) fn bound_nadgrids(crs: &BoundCRS, db: Option<&DatabaseContext>) -> Option<String> {
+    nadgrids_name(crs, db)
 }
 
 fn nadgrids_name(crs: &BoundCRS, db: Option<&DatabaseContext>) -> Option<String> {
@@ -302,15 +308,24 @@ fn geographic_bound_proj(
     parts.join(" ")
 }
 
-fn projected_bound_proj(crs: &ProjectedCRS, towgs84: Option<&[f64]>) -> Result<String, FactoryError> {
-    let Some(values) = towgs84 else {
+fn projected_bound_proj(
+    crs: &ProjectedCRS,
+    towgs84: Option<&[f64]>,
+    nadgrids: Option<&str>,
+) -> Result<String, FactoryError> {
+    if towgs84.is_none() && nadgrids.is_none() {
         return crs.export_to_proj_string();
-    };
+    }
     let mut text = crs.deriving_conversion().export_to_proj_string()?;
     text.push(' ');
     text.push_str(&ellipsoid_datum_clause(crs.base_crs()));
-    text.push_str(" +towgs84=");
-    text.push_str(&format_towgs84(values));
+    if let Some(grid) = nadgrids {
+        text.push_str(" +nadgrids=");
+        text.push_str(grid);
+    } else if let Some(values) = towgs84 {
+        text.push_str(" +towgs84=");
+        text.push_str(&format_towgs84(values));
+    }
     if let Some(unit) = crs.coordinate_system().axes().first().map(Axis::unit) {
         if let Some(clause) = linear_unit_clause(unit) {
             text.push(' ');
@@ -566,7 +581,7 @@ fn crs_datum_clause(crs: &GeodeticCRS) -> String {
 
 fn linear_unit_clause(unit: &UnitOfMeasure) -> Option<String> {
     match unit.name() {
-        "metre" => Some("+units=m".to_owned()),
+        "metre" | "meter" | "Meter" => Some("+units=m".to_owned()),
         "foot" | "Foot" => Some("+units=ft".to_owned()),
         "US survey foot" => Some("+units=us-ft".to_owned()),
         _ => None,
@@ -764,6 +779,7 @@ fn ellipsoid_proj(ellipsoid: &Ellipsoid) -> String {
 fn well_known_ellps(major: f64, inverse: Option<f64>, minor: Option<f64>) -> Option<&'static str> {
     const TABLE: &[(&str, f64, f64, bool)] = &[
         ("bessel", 6_377_397.155, 299.152_812_8, true),
+        ("intl", 6_378_388.0, 297.0, true),
         ("GRS80", 6_378_137.0, 298.257_222_101, true),
         ("clrk66", 6_378_206.4, 6_356_583.8, false),
         ("clrk80", 6_378_249.145, 293.4663, true),

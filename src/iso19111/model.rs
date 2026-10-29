@@ -3105,6 +3105,45 @@ impl BoundCRS {
         });
         Ok(Self::create(source, target, transformation))
     }
+
+    /// `BoundCRS::createFromNadgrids`.
+    ///
+    /// The hub is WGS 84. The transformation is NTv2 with the grid file name.
+    ///
+    /// # Errors
+    ///
+    /// `source` has no geodetic CRS.
+    pub fn create_from_nadgrids(source: Crs, filename: &str) -> Result<Self, FactoryError> {
+        let geographic = geodetic_body(&source).ok_or_else(|| {
+            FactoryError::Invalid(
+                "Cannot find GeodeticCRS in sourceCRS of NAD grids transformation".to_owned(),
+            )
+        })?;
+        let target = Crs::Geographic(GeographicCRS::epsg_4326());
+        let transformation = CoordinateOperation::Transformation(Transformation {
+            identified: Identified::named(format!("{} to WGS84", geographic.name())),
+            method: OperationMethod {
+                name: "NTv2".to_owned(),
+                code_space: "EPSG".to_owned(),
+                code: "9615".to_owned(),
+                parameters: Vec::new(),
+            },
+            parameters: vec![Parameter {
+                name: "Latitude and longitude difference file".to_owned(),
+                code_space: "EPSG".to_owned(),
+                code: "8656".to_owned(),
+                value: ParameterValue::Filename(filename.to_owned()),
+            }],
+            source: Some(Box::new(geographic)),
+            target: Some(Box::new(target.clone())),
+            interpolation: None,
+            accuracy: None,
+            version: None,
+            point_motion: false,
+            inverted: false,
+        });
+        Ok(Self::create(source, target, transformation))
+    }
 }
 
 fn geodetic_body(crs: &Crs) -> Option<Crs> {

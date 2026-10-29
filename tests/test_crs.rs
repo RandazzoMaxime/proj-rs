@@ -4924,3 +4924,29 @@ fn crs_incompatible_bound_crs_transformation_to_wkt1() {
         .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Gdal))
         .is_err());
 }
+
+#[test]
+fn crs_wkt1_datum_extension_to_wkt1_and_proj_string() {
+    let wkt = "PROJCS[\"unnamed\",\n    GEOGCS[\"International 1909 (Hayford)\",\n        DATUM[\"unknown\",\n            SPHEROID[\"intl\",6378388,297],\n            EXTENSION[\"PROJ4_GRIDS\",\"nzgd2kgrid0005.gsb\"]],\n        PRIMEM[\"Greenwich\",0],\n        UNIT[\"degree\",0.0174532925199433]],\n    PROJECTION[\"New_Zealand_Map_Grid\"],\n    PARAMETER[\"latitude_of_origin\",-41],\n    PARAMETER[\"central_meridian\",173],\n    PARAMETER[\"false_easting\",2510000],\n    PARAMETER[\"false_northing\",6023150],\n    UNIT[\"Meter\",1],\n    AXIS[\"Easting\",EAST],\n    AXIS[\"Northing\",NORTH]]";
+    let mut parser = WktParser::new();
+    let parsed = parser
+        .create_from_wkt(wkt)
+        .expect("wkt")
+        .crs()
+        .expect("crs")
+        .clone();
+    let Crs::Bound(crs) = parsed else {
+        panic!("PROJ4_GRIDS builds a bound CRS");
+    };
+    assert_eq!(
+        Crs::Bound(crs.clone())
+            .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Gdal))
+            .expect("wkt1"),
+        wkt
+    );
+    assert_eq!(
+        crs.export_to_proj_string().expect("proj"),
+        "+proj=nzmg +lat_0=-41 +lon_0=173 +x_0=2510000 +y_0=6023150 \
+         +ellps=intl +nadgrids=nzgd2kgrid0005.gsb +units=m +no_defs +type=crs"
+    );
+}

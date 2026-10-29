@@ -663,16 +663,36 @@ impl WktParser {
         }
     }
 
+    /// `EXTENSION["PROJ4_GRIDS", ...]` on a horizontal datum becomes a bound CRS.
+    fn attach_datum_grids(&mut self, object: WktObject) -> Result<WktObject, FactoryError> {
+        if self.grids.is_empty() {
+            return Ok(object);
+        }
+        let WktObject::Crs(crs) = object else {
+            return Ok(object);
+        };
+        if matches!(crs, Crs::Bound(_)) {
+            self.grids.clear();
+            return Ok(WktObject::Crs(crs));
+        }
+        let grids = std::mem::take(&mut self.grids);
+        Ok(WktObject::Crs(Crs::Bound(BoundCRS::create_from_nadgrids(
+            crs, &grids,
+        )?)))
+    }
+
     fn build_object(&mut self, node: &WktNode) -> Result<WktObject, FactoryError> {
         let name = node.value.as_str();
         if is_geodetic_keyword(name) {
             if node.child(&["BASEGEOGCRS", "BASEGEODCRS"]).is_some() {
                 return Err(invalid("derived geodetic CRS is not parsed in this build"));
             }
-            return self.build_geodetic_crs(node);
+            let object = self.build_geodetic_crs(node)?;
+            return self.attach_datum_grids(object);
         }
         if ci_eq(name, "PROJCS") || ci_eq(name, "PROJCRS") || ci_eq(name, "PROJECTEDCRS") {
-            return self.build_projected(node);
+            let object = self.build_projected(node)?;
+            return self.attach_datum_grids(object);
         }
         if ci_eq(name, "VERTCRS")
             || ci_eq(name, "VERTICALCRS")

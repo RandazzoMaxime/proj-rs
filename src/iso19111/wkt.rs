@@ -148,6 +148,8 @@ pub struct WktFormatter {
     abridged: bool,
     /// Seven WKT1 `TOWGS84` values, set while a bound CRS exports its source.
     towgs84: Vec<f64>,
+    /// WKT1 `EXTENSION["PROJ4_GRIDS", ...]` written on the datum.
+    h_datum_extension: String,
     db: Option<DatabaseContext>,
     /// Projected CRS name, used when an ESRI method depends on it.
     esri_object_name: String,
@@ -199,6 +201,7 @@ impl WktFormatter {
             axis_angular: vec![UnitOfMeasure::degree()],
             abridged: false,
             towgs84: Vec::new(),
+            h_datum_extension: String::new(),
             db: None,
             esri_object_name: String::new(),
         }
@@ -1093,6 +1096,12 @@ fn export_bound(crs: &BoundCRS, formatter: &mut WktFormatter) -> Result<(), Fact
         formatter.end_node();
         return Ok(());
     }
+    if let Some(grid) = super::projstring::bound_nadgrids(crs, formatter.db.as_ref()) {
+        formatter.h_datum_extension = grid;
+        export_crs(&crs.source, formatter)?;
+        formatter.h_datum_extension.clear();
+        return Ok(());
+    }
     let Some(params) = wkt1_towgs84(crs) else {
         return Err(FactoryError::Format(
             "WKT1 bound CRS export requires a WGS 84 hub and TOWGS84 parameters".to_owned(),
@@ -1270,13 +1279,22 @@ fn export_geodetic_datum(datum: &GeodeticReferenceFrame, formatter: &mut WktForm
                 formatter.end_node();
             }
         }
-    } else if formatter.towgs84.len() == 7 {
-        let values = formatter.towgs84.clone();
-        formatter.start_node("TOWGS84", NodeId::Absent);
-        for value in values {
-            formatter.add_number(value);
+    } else {
+        if formatter.towgs84.len() == 7 {
+            let values = formatter.towgs84.clone();
+            formatter.start_node("TOWGS84", NodeId::Absent);
+            for value in values {
+                formatter.add_number(value);
+            }
+            formatter.end_node();
         }
-        formatter.end_node();
+        if !formatter.h_datum_extension.is_empty() {
+            let grid = formatter.h_datum_extension.clone();
+            formatter.start_node("EXTENSION", NodeId::Absent);
+            formatter.add_quoted("PROJ4_GRIDS");
+            formatter.add_quoted(&grid);
+            formatter.end_node();
+        }
     }
     formatter.format_ids(&datum.identified.identifiers);
     formatter.end_node();
