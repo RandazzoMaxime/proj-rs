@@ -15,7 +15,7 @@ use super::factory::{
 };
 use super::model::{
     Axis, BoundCRS, CartesianCS, CompoundCRS, Conversion, CoordinateOperation, CoordinateSystem, Crs,
-    Datum, DerivedProjectedCRS, EngineeringCRS, GeocentricCRS,
+    Datum, DerivedProjectedCRS, EngineeringCRS, FactoryError, GeocentricCRS,
     DatumEnsemble, Ellipsoid, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified,
     Identifier, LinearParameterScale, Measure, Parameter, ParameterValue, ProjectedCRS, Transformation,
     UnitKind, UnitOfMeasure, VerticalCRS,
@@ -261,6 +261,35 @@ impl Crs {
             }),
             _ => self.clone(),
         }
+    }
+
+    /// `CRS::getNonDeprecated`.
+    ///
+    /// The first identifier is looked up in `deprecation`. A CRS with no
+    /// identifier, or a type other than geodetic, projected, vertical, or
+    /// compound, has no substitute.
+    ///
+    /// # Errors
+    ///
+    /// The database query fails, or a replacement code cannot be built.
+    pub fn get_non_deprecated(&self, db: &DatabaseContext) -> Result<Vec<Self>, FactoryError> {
+        let identifiers = self.identifiers();
+        let Some(id) = identifiers.first() else {
+            return Ok(Vec::new());
+        };
+        let table = match self {
+            Self::Geographic(_) | Self::Geodetic(_) => "geodetic_crs",
+            Self::Projected(_) => "projected_crs",
+            Self::Vertical(_) => "vertical_crs",
+            Self::Compound(_) => "compound_crs",
+            _ => return Ok(Vec::new()),
+        };
+        let mut replacements = Vec::new();
+        for (authority, code) in db.non_deprecated(table, id.code_space(), id.code())? {
+            let factory = AuthorityFactory::create(db, &authority);
+            replacements.push(factory.create_coordinate_reference_system(&code)?);
+        }
+        Ok(replacements)
     }
 
     /// `isEquivalentTo` with `EQUIVALENT` and a database for datum aliases.

@@ -7,7 +7,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_crs.cpp
 
-- `crs.getNonDeprecated`
 - `crs.promoteTo3D_and_demoteTo2D`
 - `crs.normalizeForVisualization_derivedprojected_operation`
 - `crs.normalizeForVisualization_bound`

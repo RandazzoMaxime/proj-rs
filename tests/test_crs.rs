@@ -4707,6 +4707,52 @@ fn crs_alter_parameters_linear_unit() {
 }
 
 #[test]
+fn crs_get_non_deprecated() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let factory = AuthorityFactory::create(&db, "EPSG");
+    let unnamed = Crs::Projected(ProjectedCRS::create(
+        "",
+        GeodeticCRS::Geographic(GeographicCRS::epsg_4326()),
+        Conversion::create_utm_north(&OpProps::new(), 31).expect("utm"),
+        CartesianCS::create_easting_northing(UnitOfMeasure::metre()),
+    ));
+    assert!(unnamed.get_non_deprecated(&db).expect("list").is_empty());
+    let current = factory
+        .create_coordinate_reference_system("4326")
+        .expect("4326");
+    assert!(current.get_non_deprecated(&db).expect("list").is_empty());
+    let bound = Crs::Bound(
+        BoundCRS::create_from_towgs84(
+            Crs::Projected(utm_31n()),
+            &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0],
+        )
+        .expect("bound"),
+    );
+    assert!(bound.get_non_deprecated(&db).expect("list").is_empty());
+    assert_eq!(
+        replacement_codes(&factory, &db, "4226"),
+        ["EPSG:4142", "EPSG:4143"]
+    );
+    assert_eq!(replacement_codes(&factory, &db, "26591"), ["EPSG:3003"]);
+    assert_eq!(replacement_codes(&factory, &db, "5704"), ["EPSG:5736"]);
+    assert_eq!(replacement_codes(&factory, &db, "7401"), ["EPSG:7411"]);
+}
+
+fn replacement_codes(factory: &AuthorityFactory, db: &DatabaseContext, code: &str) -> Vec<String> {
+    factory
+        .create_coordinate_reference_system(code)
+        .expect(code)
+        .get_non_deprecated(db)
+        .expect("replacements")
+        .iter()
+        .map(|crs| {
+            let id = &crs.identifiers()[0];
+            format!("{}:{}", id.code_space(), id.code())
+        })
+        .collect()
+}
+
+#[test]
 fn crs_date_time_temporal_crs_wkt2() {
     let crs = date_time_temporal();
     let wkt = Crs::Temporal(crs.clone())

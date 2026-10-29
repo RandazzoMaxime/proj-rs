@@ -552,6 +552,36 @@ impl DatabaseContext {
         Ok(out)
     }
 
+    /// Rows of `deprecation` for one object.
+    ///
+    /// A `PROJ` source replaces every other source. Otherwise every row is kept,
+    /// in table order.
+    pub(crate) fn non_deprecated(
+        &self,
+        table: &str,
+        auth: &str,
+        code: &str,
+    ) -> Result<Vec<(String, String)>, FactoryError> {
+        let rows = self.query(
+            "SELECT replacement_auth_name, replacement_code, source \
+             FROM deprecation \
+             WHERE table_name = ? AND deprecated_auth_name = ? AND deprecated_code = ?",
+            &[table.to_owned(), auth.to_owned(), code.to_owned()],
+        )?;
+        let proj: Vec<(String, String)> = rows
+            .iter()
+            .filter(|row| row[2].text() == "PROJ")
+            .map(|row| (row[0].text(), row[1].text()))
+            .collect();
+        if !proj.is_empty() {
+            return Ok(proj);
+        }
+        Ok(rows
+            .iter()
+            .map(|row| (row[0].text(), row[1].text()))
+            .collect())
+    }
+
     /// First `grid_alternatives` row for an official grid file name.
     ///
     /// This is `DatabaseContext::lookForGridAlternative`. An empty PROJ name
