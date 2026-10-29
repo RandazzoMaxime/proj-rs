@@ -6,9 +6,9 @@
 
 use super::model::{
     ensemble_name_as_datum, Axis, BoundCRS, CompoundCRS, Conversion, CoordinateOperation,
-    CoordinateSystem, Crs, Datum, DatumEnsemble, Ellipsoid, EngineeringCRS, EngineeringDatum,
-    GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified, Measure, Parameter,
-    ParameterValue, PrimeMeridian, ProjectedCRS, Transformation, VerticalCRS,
+    CoordinateSystem, Crs, Datum, DatumEnsemble, DerivedGeographicCRS, Ellipsoid, EngineeringCRS,
+    EngineeringDatum, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified, Measure,
+    Parameter, ParameterValue, PrimeMeridian, ProjectedCRS, Transformation, VerticalCRS,
     VerticalReferenceFrame,
 };
 
@@ -194,6 +194,35 @@ impl CoordinateSystem {
     #[must_use]
     pub fn is_equivalent_to(&self, other: &Self) -> bool {
         coordinate_system_equivalent(self, other)
+    }
+}
+
+impl DerivedGeographicCRS {
+    /// Strict derived-geographic equivalence.
+    #[must_use]
+    pub fn is_equivalent_to(&self, other: &Self) -> bool {
+        self.is_equivalent_to_with(other, Equivalence::Strict)
+    }
+
+    /// `isEquivalentTo` with `criterion`.
+    ///
+    /// A different CRS kind is not equivalent. The base uses `criterion`. The
+    /// deriving conversion uses the standard criterion, so axis order does not
+    /// change how parameters compare.
+    #[must_use]
+    pub fn is_equivalent_to_with(&self, other: &Self, criterion: Equivalence) -> bool {
+        (criterion != Equivalence::Strict || same_name(self.name(), other.name()))
+            && self.base.is_equivalent_to_with(&other.base, criterion)
+            && conversion_equivalent_with(
+                &self.conversion,
+                &other.conversion,
+                standard_criterion(criterion),
+            )
+            && axes_for_criterion(
+                self.coordinate_system.axes(),
+                other.coordinate_system.axes(),
+                criterion,
+            )
     }
 }
 
@@ -394,6 +423,9 @@ impl Crs {
             (Self::Engineering(left), Self::Engineering(right)) => left.is_equivalent_to(right),
             (Self::Compound(left), Self::Compound(right)) => left.is_equivalent_to(right),
             (Self::Bound(left), Self::Bound(right)) => left.is_equivalent_to(right),
+            (Self::DerivedGeographic(left), Self::DerivedGeographic(right)) => {
+                left.is_equivalent_to(right)
+            }
             _ => false,
         }
     }

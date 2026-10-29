@@ -5,9 +5,9 @@
 use proj_rs::{
     create_crs_from_proj_string, create_from_user_input, AlternativeGridNames, AuthorityFactory,
     Axis, BoundCRS,
-    CartesianCS, CoordinateOperation, IntermediateCrsUse, Measure, Meridian, ParameterValue,
+    CartesianCS, CoordinateOperation, IntermediateCrsUse, Measure, Meridian, Parameter, ParameterValue,
     CompoundCRS, Conversion, CoordinateSystem, Crs, DatabaseContext, Datum, DatumEnsemble,
-    DerivedProjectedCRS, DerivedVerticalCRS, EllipsoidalCS,
+    DerivedGeographicCRS, DerivedProjectedCRS, DerivedVerticalCRS, EllipsoidalCS,
     EllipsoidalHeightPolicy, Equivalence, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS,
     LinunitPolicy, OpProps, OutputAxisRule, PrimeMeridian, ProjectedCRS, RealizationMethod,
     Transformation, UnitKind, UnitOfMeasure,
@@ -5073,4 +5073,41 @@ fn crs_extract_vertical_crs() {
         .extract_vertical_crs()
         .expect("vertical");
     assert!(found.is_equivalent_to(&vertical));
+}
+
+fn atlantic_pole() -> DerivedGeographicCRS {
+    DerivedGeographicCRS::create(
+        "WMO Atlantic Pole",
+        GeographicCRS::epsg_4326(),
+        Conversion::create(
+            "Atlantic pole",
+            "Pole rotation",
+            vec![
+                Parameter::new(
+                    "Latitude of rotated pole",
+                    ParameterValue::Measure(Measure::angle(52.0)),
+                ),
+                Parameter::new(
+                    "Longitude of rotated pole",
+                    ParameterValue::Measure(Measure::angle(-30.0)),
+                ),
+                Parameter::new(
+                    "Axis rotation",
+                    ParameterValue::Measure(Measure::angle(-25.0)),
+                ),
+            ],
+        ),
+        EllipsoidalCS::create_latitude_longitude(UnitOfMeasure::degree()),
+    )
+}
+
+#[test]
+fn crs_derived_geographic_crs_basic() {
+    let derived = atlantic_pole();
+    assert!(derived.is_equivalent_to(&derived));
+    assert!(!Crs::DerivedGeographic(derived.clone()).is_equivalent_to(&Crs::Geographic(
+        derived.base_crs().clone()
+    )));
+    assert!(!Crs::Geographic(derived.base_crs().clone())
+        .is_equivalent_to(&Crs::DerivedGeographic(derived)));
 }

@@ -1586,7 +1586,7 @@ fn concatenated_helmert<'a>(
     let first_is_conversion = matches!(steps[0].operation(), CoordinateOperation::Conversion(_));
     let derived = matches!(
         candidate,
-        Crs::DerivedProjected(_) | Crs::DerivedVertical(_)
+        Crs::DerivedProjected(_) | Crs::DerivedVertical(_) | Crs::DerivedGeographic(_)
     );
     if !(first_is_rotation || (derived && first_is_conversion)) {
         return None;

@@ -93,6 +93,7 @@ impl Crs {
             Self::Engineering(crs) => &crs.identified.remarks,
             Self::DerivedProjected(crs) => &crs.identified.remarks,
             Self::DerivedVertical(crs) => &crs.identified.remarks,
+            Self::DerivedGeographic(crs) => &crs.identified.remarks,
         }
     }
 }

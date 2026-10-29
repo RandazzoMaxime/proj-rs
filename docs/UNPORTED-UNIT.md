@@ -7,7 +7,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_crs.cpp
 
-- `crs.derivedGeographicCRS_basic`
 - `crs.derivedGeographicCRS_WKT2`
 - `crs.derivedGeographicCRS_WKT2_2019`
 - `crs.derivedGeographicCRS_WKT1`

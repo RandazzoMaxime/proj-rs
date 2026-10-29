@@ -1730,6 +1730,17 @@ impl Parameter {
     pub fn value(&self) -> &ParameterValue {
         &self.value
     }
+
+    /// Parameter with `name` and a numeric value. It has no authority code.
+    #[must_use]
+    pub fn new(name: impl Into<String>, value: ParameterValue) -> Self {
+        Self {
+            name: name.into(),
+            code_space: String::new(),
+            code: String::new(),
+            value,
+        }
+    }
 }
 
 /// Map projection or other conversion.
@@ -1770,6 +1781,21 @@ impl Conversion {
     #[must_use]
     pub fn version(&self) -> Option<&str> {
         self.version.as_deref()
+    }
+
+    /// Conversion with `name`, a method of `method_name`, and `parameters`.
+    #[must_use]
+    pub fn create(
+        name: impl Into<String>,
+        method_name: impl Into<String>,
+        parameters: Vec<Parameter>,
+    ) -> Self {
+        Self {
+            identified: Identified::named(name),
+            method: OperationMethod::create(method_name, Vec::new()),
+            parameters,
+            version: None,
+        }
     }
 }
 
@@ -2810,6 +2836,57 @@ impl DerivedProjectedCRS {
     }
 }
 
+/// Derived geographic CRS: a geographic base, a deriving conversion, and an ellipsoidal CS.
+#[derive(Clone, Debug)]
+pub struct DerivedGeographicCRS {
+    pub(crate) identified: Identified,
+    pub(crate) base: GeographicCRS,
+    pub(crate) conversion: Conversion,
+    pub(crate) coordinate_system: EllipsoidalCS,
+}
+
+impl DerivedGeographicCRS {
+    /// `DerivedGeographicCRS::create`.
+    #[must_use]
+    pub fn create(
+        name: impl Into<String>,
+        base: GeographicCRS,
+        conversion: Conversion,
+        coordinate_system: EllipsoidalCS,
+    ) -> Self {
+        Self {
+            identified: Identified::named(name),
+            base,
+            conversion,
+            coordinate_system,
+        }
+    }
+
+    /// Name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.identified.name
+    }
+
+    /// Base geographic CRS.
+    #[must_use]
+    pub fn base_crs(&self) -> &GeographicCRS {
+        &self.base
+    }
+
+    /// Deriving conversion.
+    #[must_use]
+    pub fn deriving_conversion(&self) -> &Conversion {
+        &self.conversion
+    }
+
+    /// Ellipsoidal coordinate system.
+    #[must_use]
+    pub fn coordinate_system(&self) -> &EllipsoidalCS {
+        &self.coordinate_system
+    }
+}
+
 /// Derived vertical CRS.
 #[derive(Clone, Debug)]
 pub struct DerivedVerticalCRS {
@@ -3246,6 +3323,8 @@ pub enum Crs {
     Engineering(EngineeringCRS),
     /// Derived projected CRS.
     DerivedProjected(DerivedProjectedCRS),
+    /// Derived geographic CRS.
+    DerivedGeographic(DerivedGeographicCRS),
     /// Derived vertical CRS.
     DerivedVertical(DerivedVerticalCRS),
 }
@@ -3263,6 +3342,7 @@ impl Crs {
             Self::Bound(crs) => crs.name(),
             Self::Engineering(crs) => crs.name(),
             Self::DerivedProjected(crs) => crs.name(),
+            Self::DerivedGeographic(crs) => crs.name(),
             Self::DerivedVertical(crs) => crs.name(),
         }
     }
@@ -3294,7 +3374,10 @@ impl Crs {
             Self::DerivedProjected(crs) => {
                 Self::Projected(crs.base_crs().clone()).extract_geodetic_crs()
             }
-            Self::Vertical(_) | Self::Engineering(_) | Self::DerivedVertical(_) => None,
+            Self::Vertical(_)
+            | Self::Engineering(_)
+            | Self::DerivedGeographic(_)
+            | Self::DerivedVertical(_) => None,
         }
     }
 
@@ -3319,7 +3402,8 @@ impl Crs {
             | Self::Geodetic(_)
             | Self::Projected(_)
             | Self::Engineering(_)
-            | Self::DerivedProjected(_) => None,
+            | Self::DerivedProjected(_)
+            | Self::DerivedGeographic(_) => None,
         }
     }
 
@@ -3335,6 +3419,7 @@ impl Crs {
             Self::Bound(crs) => &crs.identified.identifiers,
             Self::Engineering(crs) => &crs.identified.identifiers,
             Self::DerivedProjected(crs) => &crs.identified.identifiers,
+            Self::DerivedGeographic(crs) => &crs.identified.identifiers,
             Self::DerivedVertical(crs) => &crs.identified.identifiers,
         }
     }
@@ -3360,6 +3445,7 @@ impl Crs {
             Self::Bound(crs) => &crs.identified,
             Self::Engineering(crs) => &crs.identified,
             Self::DerivedProjected(crs) => &crs.identified,
+            Self::DerivedGeographic(crs) => &crs.identified,
             Self::DerivedVertical(crs) => &crs.identified,
         }
     }
@@ -3378,6 +3464,7 @@ impl Crs {
             Self::Bound(crs) => &mut crs.identified,
             Self::Engineering(crs) => &mut crs.identified,
             Self::DerivedProjected(crs) => &mut crs.identified,
+            Self::DerivedGeographic(crs) => &mut crs.identified,
             Self::DerivedVertical(crs) => &mut crs.identified,
         }
     }
@@ -3406,6 +3493,7 @@ impl Crs {
             Self::Bound(crs) => crs.identified.deprecated,
             Self::Engineering(crs) => crs.identified.deprecated,
             Self::DerivedProjected(crs) => crs.identified.deprecated,
+            Self::DerivedGeographic(crs) => crs.identified.deprecated,
             Self::DerivedVertical(crs) => crs.identified.deprecated,
         }
     }
