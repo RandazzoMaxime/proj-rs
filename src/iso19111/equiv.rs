@@ -149,6 +149,22 @@ impl EngineeringDatum {
     /// Strict engineering-datum equivalence.
     #[must_use]
     pub fn is_equivalent_to(&self, other: &Self) -> bool {
+        self.is_equivalent_to_with(other, Equivalence::Strict)
+    }
+
+    /// `EngineeringDatum::_isEquivalentTo`.
+    ///
+    /// Outside strict comparison, an empty name and `Unknown engineering datum`
+    /// are the same datum. That is the GPKG and GeoTIFF pair in
+    /// `engineeringCRS_unknown_equivalence`.
+    #[must_use]
+    pub fn is_equivalent_to_with(&self, other: &Self, criterion: Equivalence) -> bool {
+        if criterion != Equivalence::Strict
+            && unknown_engineering_datum(self.name())
+            && unknown_engineering_datum(other.name())
+        {
+            return true;
+        }
         same_name(self.name(), other.name())
     }
 
@@ -400,10 +416,55 @@ impl EngineeringCRS {
     /// Strict engineering-CRS equivalence.
     #[must_use]
     pub fn is_equivalent_to(&self, other: &Self) -> bool {
-        same_name(self.name(), other.name())
-            && self.datum().is_equivalent_to(other.datum())
-            && coordinate_system_equivalent(self.coordinate_system(), other.coordinate_system())
+        self.is_equivalent_to_with(other, Equivalence::Strict)
     }
+
+    /// `EngineeringCRS::_isEquivalentTo`.
+    ///
+    /// `Equivalent` does not require the CRS name. It treats an unspecified
+    /// X/Y pair as the same cartesian system as easting/northing.
+    #[must_use]
+    pub fn is_equivalent_to_with(&self, other: &Self, criterion: Equivalence) -> bool {
+        if criterion == Equivalence::Strict && !same_name(self.name(), other.name()) {
+            return false;
+        }
+        self.datum().is_equivalent_to_with(other.datum(), criterion)
+            && (coordinate_system_equivalent(self.coordinate_system(), other.coordinate_system())
+                || (criterion != Equivalence::Strict
+                    && engineering_xy_matches_en(self.coordinate_system(), other.coordinate_system())))
+    }
+}
+
+/// Unspecified X/Y is the same engineering grid as easting/northing.
+fn engineering_xy_matches_en(left: &CoordinateSystem, right: &CoordinateSystem) -> bool {
+    let (CoordinateSystem::Cartesian(left), CoordinateSystem::Cartesian(right)) = (left, right)
+    else {
+        return false;
+    };
+    let left_axes = left.axes();
+    let right_axes = right.axes();
+    if left_axes.len() != 2 || right_axes.len() != 2 {
+        return false;
+    }
+    let left_unspecified = left_axes[0].direction() == "unspecified"
+        && left_axes[1].direction() == "unspecified";
+    let right_unspecified = right_axes[0].direction() == "unspecified"
+        && right_axes[1].direction() == "unspecified";
+    if !left_unspecified && !right_unspecified {
+        return false;
+    }
+    (left_axes[0].name() == "X"
+        && right_axes[0].name() == "Easting"
+        && left_axes[1].name() == "Y"
+        && right_axes[1].name() == "Northing")
+        || (right_axes[0].name() == "X"
+            && left_axes[0].name() == "Easting"
+            && right_axes[1].name() == "Y"
+            && left_axes[1].name() == "Northing")
+}
+
+fn unknown_engineering_datum(name: &str) -> bool {
+    name.is_empty() || name == "Unknown engineering datum"
 }
 
 impl CompoundCRS {

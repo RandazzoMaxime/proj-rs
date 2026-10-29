@@ -4354,6 +4354,54 @@ LOCAL_CS[\"Engineering CRS\",
 }
 
 #[test]
+fn crs_engineering_crs_unknown_equivalence() {
+    let gpkg = "\
+ENGCRS[\"Undefined Cartesian SRS with unknown unit\",
+    EDATUM[\"\"],
+    CS[Cartesian,2],
+        AXIS[\"(E)\",east,
+            ORDER[1],
+            LENGTHUNIT[\"metre\",1,
+                ID[\"EPSG\",9001]]],
+        AXIS[\"(N)\",north,
+            ORDER[2],
+            LENGTHUNIT[\"metre\",1,
+                ID[\"EPSG\",9001]]]]";
+    let geotiff = "\
+ENGCRS[\"Undefined Cartesian SRS with unknown unit\",
+    EDATUM[\"Unknown engineering datum\"],
+    CS[Cartesian,2],
+        AXIS[\"x\",unspecified,
+            ORDER[1],
+            LENGTHUNIT[\"metre\",1,
+                ID[\"EPSG\",9001]]],
+        AXIS[\"y\",unspecified,
+            ORDER[2],
+            LENGTHUNIT[\"metre\",1,
+                ID[\"EPSG\",9001]]]]";
+    let Crs::Engineering(from_gpkg) = WktParser::new()
+        .create_from_wkt(gpkg)
+        .expect("gpkg")
+        .crs()
+        .expect("crs")
+        .clone()
+    else {
+        panic!("GPKG WKT is not an engineering CRS");
+    };
+    let Crs::Engineering(from_geotiff) = WktParser::new()
+        .create_from_wkt(geotiff)
+        .expect("geotiff")
+        .crs()
+        .expect("crs")
+        .clone()
+    else {
+        panic!("GeoTIFF WKT is not an engineering CRS");
+    };
+    assert!(from_gpkg.is_equivalent_to_with(&from_geotiff, Equivalence::Equivalent));
+    assert!(from_geotiff.is_equivalent_to_with(&from_gpkg, Equivalence::Equivalent));
+}
+
+#[test]
 fn crs_compound_crs_valid() {
     let vertical = Crs::Vertical(odn_height());
     assert!(CompoundCRS::create(
