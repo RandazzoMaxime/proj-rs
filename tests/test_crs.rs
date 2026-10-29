@@ -4149,6 +4149,13 @@ DERIVEDPROJCRS[\"derived projectedCRS\",
 }
 
 #[test]
+fn crs_derived_projected_crs_wkt2_2015() {
+    let exported = Crs::DerivedProjected(derived_projected_wkt())
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2015));
+    assert!(exported.is_err());
+}
+
+#[test]
 fn crs_compound_crs_valid() {
     let vertical = Crs::Vertical(odn_height());
     assert!(CompoundCRS::create(
