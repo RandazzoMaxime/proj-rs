@@ -36,7 +36,8 @@ fn node_from_text(text: &str) -> NodeId {
 
 use super::model::{
     ensemble_name_as_datum, Axis, BoundCRS, CartesianCS, CompoundCRS, Conversion,
-    CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble, DerivedGeographicCRS,
+    CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble, DerivedGeodeticCRS,
+    DerivedGeographicCRS,
     Ellipsoid, EngineeringCRS, EngineeringDatum, FactoryError, GeocentricCRS, GeodeticCRS,
     GeodeticReferenceFrame, GeographicCRS, Identified, Identifier, Measure, OperationMethod,
     Parameter, ParameterValue, PrimeMeridian, ProjectedCRS, Transformation, UnitKind,
@@ -607,12 +608,7 @@ pub(crate) fn export_crs(crs: &Crs, formatter: &mut WktFormatter) -> Result<(), 
             )));
         }
         Crs::DerivedGeographic(crs) => export_derived_geographic(crs, formatter)?,
-        Crs::DerivedGeodetic(crs) => {
-            return Err(FactoryError::Format(format!(
-                "derived geodetic CRS {} has no WKT export in this build",
-                crs.name()
-            )));
-        }
+        Crs::DerivedGeodetic(crs) => export_derived_geodetic(crs, formatter)?,
     }
     Ok(())
 }
@@ -911,22 +907,83 @@ fn export_derived_geographic(
         formatter.output_id.pop();
     }
     formatter.end_node();
-    formatter.start_node(
-        "DERIVINGCONVERSION",
-        node_from_ids(crs.conversion.identifiers()),
-    );
-    formatter.add_quoted(crs.conversion.name());
-    export_method(crs.conversion.method(), formatter)?;
-    for parameter in crs.conversion.parameters() {
-        export_parameter(parameter, formatter)?;
-    }
-    formatter.format_ids(crs.conversion.identifiers());
-    formatter.end_node();
+    export_deriving_conversion(&crs.conversion, formatter)?;
     export_cs(
         &CoordinateSystem::Ellipsoidal(crs.coordinate_system.clone()),
         formatter,
     );
     formatter.base_usage(&crs.identified);
+    formatter.end_node();
+    Ok(())
+}
+
+/// `DerivedGeodeticCRS::_exportToWKT`.
+///
+/// The outer keyword stays `GEODCRS` in WKT2:2019. `BASEGEOGCRS` is used only
+/// when the base is geographic and the 2019 keywords are on.
+fn export_derived_geodetic(
+    crs: &DerivedGeodeticCRS,
+    formatter: &mut WktFormatter,
+) -> Result<(), FactoryError> {
+    if !formatter.wkt2 {
+        return Err(FactoryError::Format(
+            "DerivedGeodeticCRS can only be exported to WKT2".to_owned(),
+        ));
+    }
+    formatter.start_node("GEODCRS", node_from_ids(&crs.identified.identifiers));
+    formatter.add_quoted(crs.name());
+    let base_keyword = if formatter.keywords_2019 && matches!(crs.base, GeodeticCRS::Geographic(_))
+    {
+        "BASEGEOGCRS"
+    } else {
+        "BASEGEODCRS"
+    };
+    let base_has_id = !crs.base.identifiers().is_empty();
+    formatter.start_node(
+        base_keyword,
+        if base_has_id {
+            NodeId::Present
+        } else {
+            NodeId::Absent
+        },
+    );
+    formatter.add_quoted(crs.base.name());
+    formatter.axis_angular.push(base_angular_unit(&crs.base));
+    export_base_datum(&crs.base, formatter);
+    if let Some(meridian) = crs.base.prime_meridian() {
+        export_prime_meridian(meridian, formatter);
+    }
+    formatter.axis_angular.pop();
+    if formatter.keywords_2019 && !(formatter.id_on_top_only && top_has_id(formatter)) {
+        formatter.output_id.push(true);
+        formatter.format_ids(crs.base.identifiers());
+        formatter.output_id.pop();
+    }
+    formatter.end_node();
+    export_deriving_conversion(&crs.conversion, formatter)?;
+    export_cs(
+        &CoordinateSystem::Cartesian(crs.coordinate_system.clone()),
+        formatter,
+    );
+    formatter.base_usage(&crs.identified);
+    formatter.end_node();
+    Ok(())
+}
+
+fn export_deriving_conversion(
+    conversion: &Conversion,
+    formatter: &mut WktFormatter,
+) -> Result<(), FactoryError> {
+    formatter.start_node(
+        "DERIVINGCONVERSION",
+        node_from_ids(conversion.identifiers()),
+    );
+    formatter.add_quoted(conversion.name());
+    export_method(conversion.method(), formatter)?;
+    for parameter in conversion.parameters() {
+        export_parameter(parameter, formatter)?;
+    }
+    formatter.format_ids(conversion.identifiers());
     formatter.end_node();
     Ok(())
 }
