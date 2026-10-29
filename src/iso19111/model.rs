@@ -1485,6 +1485,8 @@ pub enum CoordinateSystem {
     DateTimeTemporal(DateTimeTemporalCS),
     /// Integer time count. WKT2:2015 writes `temporal`; WKT2:2019 writes `TemporalCount`.
     TemporalCount(TemporalCountCS),
+    /// Real-valued time. WKT2:2015 writes `temporal`; WKT2:2019 writes `TemporalMeasure`.
+    TemporalMeasure(TemporalMeasureCS),
 }
 
 impl CoordinateSystem {
@@ -1500,6 +1502,7 @@ impl CoordinateSystem {
             Self::Affine(cs) => cs.axes.iter().collect(),
             Self::DateTimeTemporal(cs) => vec![&cs.axis],
             Self::TemporalCount(cs) => vec![&cs.axis],
+            Self::TemporalMeasure(cs) => vec![&cs.axis],
         }
     }
 
@@ -1513,6 +1516,7 @@ impl CoordinateSystem {
             Self::Affine(cs) => &cs.identified,
             Self::DateTimeTemporal(cs) => &cs.identified,
             Self::TemporalCount(cs) => &cs.identified,
+            Self::TemporalMeasure(cs) => &cs.identified,
         }
     }
 
@@ -1530,7 +1534,9 @@ impl CoordinateSystem {
             Self::Spherical(_) => "spherical",
             Self::Ordinal(_) => "ordinal",
             Self::Affine(_) => "affine",
-            Self::DateTimeTemporal(_) | Self::TemporalCount(_) => "temporal",
+            Self::DateTimeTemporal(_) | Self::TemporalCount(_) | Self::TemporalMeasure(_) => {
+                "temporal"
+            }
         }
     }
 }
@@ -1553,6 +1559,30 @@ impl TemporalCountCS {
     }
 
     /// The count axis.
+    #[must_use]
+    pub fn axis(&self) -> &Axis {
+        &self.axis
+    }
+}
+
+/// One real-valued time axis. WKT2:2019 names the CS `TemporalMeasure`.
+#[derive(Clone, Debug)]
+pub struct TemporalMeasureCS {
+    pub(crate) identified: Identified,
+    pub(crate) axis: Axis,
+}
+
+impl TemporalMeasureCS {
+    /// `TemporalMeasureCS::create`.
+    #[must_use]
+    pub fn create(axis: Axis) -> Self {
+        Self {
+            identified: Identified::default(),
+            axis,
+        }
+    }
+
+    /// The measure axis.
     #[must_use]
     pub fn axis(&self) -> &Axis {
         &self.axis
@@ -1649,6 +1679,20 @@ impl TemporalCRS {
             name,
             datum,
             CoordinateSystem::DateTimeTemporal(coordinate_system),
+        )
+    }
+
+    /// `TemporalCRS::create` for a real-valued time measure.
+    #[must_use]
+    pub fn create_measure(
+        name: impl Into<String>,
+        datum: TemporalDatum,
+        coordinate_system: TemporalMeasureCS,
+    ) -> Self {
+        Self::from_cs(
+            name,
+            datum,
+            CoordinateSystem::TemporalMeasure(coordinate_system),
         )
     }
 

@@ -9,7 +9,7 @@ use proj_rs::{
     Meridian, Parameter, ParameterValue,
     CompoundCRS, Conversion, CoordinateSystem, Crs, DatabaseContext, Datum, DatumEnsemble,
     DateTimeTemporalCS, DerivedGeodeticCRS, DerivedGeographicCRS, DerivedProjectedCRS,
-    TemporalCountCS,
+    TemporalCountCS, TemporalMeasureCS,
     DerivedVerticalCRS, TemporalCRS, TemporalDatum,
     EllipsoidalCS,
     EllipsoidalHeightPolicy, Equivalence, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS,
@@ -4271,6 +4271,34 @@ TIMECRS[\"Calendar hours from 1979-12-29\",
     CS[TemporalCount,1],
         AXIS[\"time\",future,
             TIMEUNIT[\"hour\"]]]"
+    );
+}
+
+#[test]
+fn crs_temporal_measure_crs_without_conv_factor_wkt2_2019() {
+    let crs = TemporalCRS::create_measure(
+        "Decimal Years CE",
+        TemporalDatum::create("Common Era", "0000", "proleptic Gregorian"),
+        TemporalMeasureCS::create(Axis::create(
+            "Decimal years",
+            "a",
+            "future",
+            UnitOfMeasure::new("year", 0.0, UnitKind::Time),
+        )),
+    );
+    let wkt = Crs::Temporal(crs)
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2019))
+        .expect("wkt2-2019");
+    assert_eq!(
+        wkt,
+        "\
+TIMECRS[\"Decimal Years CE\",
+    TDATUM[\"Common Era\",
+        CALENDAR[\"proleptic Gregorian\"],
+        TIMEORIGIN[0000]],
+    CS[TemporalMeasure,1],
+        AXIS[\"decimal years (a)\",future,
+            TIMEUNIT[\"year\"]]]"
     );
 }
 

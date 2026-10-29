@@ -1843,6 +1843,7 @@ fn export_cs(cs: &CoordinateSystem, formatter: &mut WktFormatter) {
         let type_name = match cs {
             CoordinateSystem::DateTimeTemporal(_) if formatter.keywords_2019 => "TemporalDateTime",
             CoordinateSystem::TemporalCount(_) if formatter.keywords_2019 => "TemporalCount",
+            CoordinateSystem::TemporalMeasure(_) if formatter.keywords_2019 => "TemporalMeasure",
             other => other.wkt2_type(),
         };
         formatter.add_raw(type_name);
