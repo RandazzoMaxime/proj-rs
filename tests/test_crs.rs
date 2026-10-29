@@ -4,7 +4,7 @@
 
 use proj_rs::{
     create_crs_from_proj_string, create_from_user_input, AuthorityFactory, Axis, BoundCRS,
-    CartesianCS, CoordinateOperation, Measure, Meridian, ParameterValue,
+    CartesianCS, CoordinateOperation, IntermediateCrsUse, Measure, Meridian, ParameterValue,
     CompoundCRS, Conversion, CoordinateSystem, Crs, DatabaseContext, Datum, DatumEnsemble,
     DerivedProjectedCRS, DerivedVerticalCRS, EllipsoidalCS,
     EllipsoidalHeightPolicy, Equivalence, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS,
@@ -4583,4 +4583,35 @@ fn crs_bound_crs_with_usage() {
         .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2019))
         .expect("wkt");
     assert_eq!(got, wkt);
+}
+
+fn towgs84_bound(base: Crs) -> BoundCRS {
+    BoundCRS::create_from_towgs84(base, &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]).expect("towgs84")
+}
+
+#[test]
+fn crs_bound_crs_crs_link() {
+    let nad27 = Crs::Geographic(GeographicCRS::epsg_4267());
+    let linked = {
+        let bound = towgs84_bound(nad27.clone());
+        assert!(bound
+            .source_crs()
+            .is_equivalent_to(&nad27));
+        assert!(bound.source_crs().canonical_bound_crs().is_none());
+        bound.base_crs_with_canonical_bound()
+    };
+    assert!(linked.is_equivalent_to(&nad27));
+    let canonical = linked.canonical_bound_crs().expect("canonical bound");
+    assert!(canonical.source_crs().is_equivalent_to(&nad27));
+    assert!(linked
+        .create_bound_crs_to_wgs84_if_possible(None, IntermediateCrsUse::Never)
+        .is_equivalent_to(&Crs::Bound(canonical.clone())));
+
+    let projected = Crs::Projected(utm_31n());
+    let linked = {
+        let bound = towgs84_bound(projected.clone());
+        bound.base_crs_with_canonical_bound()
+    };
+    let canonical = linked.canonical_bound_crs().expect("projected canonical bound");
+    assert!(canonical.source_crs().is_equivalent_to(&projected));
 }

@@ -10,7 +10,7 @@ use rusqlite::{types::ValueRef, Connection};
 
 use super::equiv::folded_name;
 use super::model::{
-    ensemble_name_as_datum, Axis, CartesianCS, CompoundCRS, ConcatenatedOperation,
+    ensemble_name_as_datum, Axis, BoundCRS, CartesianCS, CompoundCRS, ConcatenatedOperation,
     ConcatenatedStep, Conversion, CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble,
     DerivedProjectedCRS, Ellipsoid, EllipsoidalCS, EngineeringCRS, EngineeringDatum, FactoryError,
     GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified, Identifier,
@@ -45,6 +45,40 @@ pub enum IntermediateCrsUse {
     Allow,
     /// Return only a direct operation or a deriving conversion.
     Never,
+}
+
+impl Crs {
+    /// `CRS::createBoundCRSToWGS84IfPossible`.
+    ///
+    /// A bound CRS whose hub is WGS 84 is returned as itself. A CRS that
+    /// carries a canonical bound CRS to WGS 84 returns that bound CRS. Without
+    /// a database, any other CRS is returned unchanged. `db` and `intermediate`
+    /// select a Helmert transformation when this crate grows that search.
+    #[must_use]
+    pub fn create_bound_crs_to_wgs84_if_possible(
+        &self,
+        db: Option<&DatabaseContext>,
+        intermediate: IntermediateCrsUse,
+    ) -> Self {
+        let _ = (db, intermediate);
+        if let Self::Bound(bound) = self {
+            if hub_is_wgs84(bound) {
+                return self.clone();
+            }
+        }
+        if let Some(bound) = self.canonical_bound_crs() {
+            if hub_is_wgs84(bound) {
+                return Self::Bound(bound.clone());
+            }
+        }
+        self.clone()
+    }
+}
+
+fn hub_is_wgs84(bound: &BoundCRS) -> bool {
+    bound
+        .target_crs()
+        .is_equivalent_to(&Crs::Geographic(GeographicCRS::epsg_4326()))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

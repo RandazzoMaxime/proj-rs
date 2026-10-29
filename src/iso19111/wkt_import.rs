@@ -291,6 +291,7 @@ impl Props {
             anchor: None,
             anchor_epoch: None,
             publication_date: None,
+            canonical_bound: None,
         }
     }
 }

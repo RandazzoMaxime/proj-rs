@@ -229,6 +229,9 @@ pub(crate) struct Identified {
     pub(crate) anchor: Option<String>,
     pub(crate) anchor_epoch: Option<f64>,
     pub(crate) publication_date: Option<String>,
+    /// Bound CRS that expresses this CRS, set by
+    /// [`BoundCRS::base_crs_with_canonical_bound`].
+    pub(crate) canonical_bound: Option<Box<BoundCRS>>,
 }
 
 impl Identified {
@@ -242,6 +245,7 @@ impl Identified {
             anchor: None,
             anchor_epoch: None,
             publication_date: None,
+            canonical_bound: None,
         }
     }
 
@@ -3029,6 +3033,17 @@ impl BoundCRS {
         &self.transformation
     }
 
+    /// `BoundCRS::baseCRSWithCanonicalBoundCRS`.
+    ///
+    /// A clone of the source CRS that points back at a clone of this bound CRS.
+    /// The link remains after this bound CRS is dropped.
+    #[must_use]
+    pub fn base_crs_with_canonical_bound(&self) -> Crs {
+        let mut base = self.source_crs().clone();
+        base.identified_mut().canonical_bound = Some(Box::new(self.clone()));
+        base
+    }
+
     /// `BoundCRS::createFromTOWGS84`.
     ///
     /// The transformation source is the geodetic CRS inside `source`. Three
@@ -3191,6 +3206,49 @@ impl Crs {
             Self::Engineering(crs) => &crs.identified.identifiers,
             Self::DerivedProjected(crs) => &crs.identified.identifiers,
             Self::DerivedVertical(crs) => &crs.identified.identifiers,
+        }
+    }
+
+    /// `CRS::canonicalBoundCRS`. Absent unless this CRS was returned by
+    /// [`BoundCRS::base_crs_with_canonical_bound`].
+    #[must_use]
+    pub fn canonical_bound_crs(&self) -> Option<&BoundCRS> {
+        self.identified().canonical_bound.as_deref()
+    }
+
+    fn identified(&self) -> &Identified {
+        match self {
+            Self::Geographic(crs) => &crs.identified,
+            Self::Geodetic(crs) => match crs {
+                GeodeticCRS::Geographic(crs) => &crs.identified,
+                GeodeticCRS::Geocentric(crs) => &crs.identified,
+                GeodeticCRS::Spherical(crs) => &crs.identified,
+            },
+            Self::Projected(crs) => &crs.identified,
+            Self::Vertical(crs) => &crs.identified,
+            Self::Compound(crs) => &crs.identified,
+            Self::Bound(crs) => &crs.identified,
+            Self::Engineering(crs) => &crs.identified,
+            Self::DerivedProjected(crs) => &crs.identified,
+            Self::DerivedVertical(crs) => &crs.identified,
+        }
+    }
+
+    fn identified_mut(&mut self) -> &mut Identified {
+        match self {
+            Self::Geographic(crs) => &mut crs.identified,
+            Self::Geodetic(crs) => match crs {
+                GeodeticCRS::Geographic(crs) => &mut crs.identified,
+                GeodeticCRS::Geocentric(crs) => &mut crs.identified,
+                GeodeticCRS::Spherical(crs) => &mut crs.identified,
+            },
+            Self::Projected(crs) => &mut crs.identified,
+            Self::Vertical(crs) => &mut crs.identified,
+            Self::Compound(crs) => &mut crs.identified,
+            Self::Bound(crs) => &mut crs.identified,
+            Self::Engineering(crs) => &mut crs.identified,
+            Self::DerivedProjected(crs) => &mut crs.identified,
+            Self::DerivedVertical(crs) => &mut crs.identified,
         }
     }
 
