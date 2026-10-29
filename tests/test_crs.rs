@@ -14,7 +14,8 @@ use proj_rs::{
     TemporalCRS, TemporalDatum,
     EllipsoidalCS, EngineeringCRS, EngineeringDatum,
     EllipsoidalHeightPolicy, Equivalence, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS,
-    LinunitPolicy, OpProps, OutputAxisRule, PrimeMeridian, ProjectedCRS, RealizationMethod,
+    LinearParameterScale, LinunitPolicy, OpProps, OutputAxisRule, PrimeMeridian, ProjectedCRS,
+    RealizationMethod,
     Transformation, UnitKind, UnitOfMeasure,
     VerticalCRS, VerticalCS, VerticalReferenceFrame, WktConvention, WktDialect, WktFormatter,
     WktLines, WktParser,
@@ -4673,6 +4674,36 @@ fn crs_alter_cs_linear_unit() {
     assert!(parametric
         .alter_cs_linear_unit(&unit)
         .is_equivalent_to(&parametric));
+}
+
+#[test]
+fn crs_alter_parameters_linear_unit() {
+    let unit = UnitOfMeasure::new("my unit", 2.0, UnitKind::Unknown);
+    let kept = utm_31n().alter_parameters_linear_unit(&unit, LinearParameterScale::KeepNumber);
+    let mut formatter = WktFormatter::create(WktConvention::Wkt2_2015);
+    formatter.set_lines(WktLines::Single);
+    let wkt = Crs::Projected(kept)
+        .export_to_wkt(&mut formatter)
+        .expect("wkt");
+    assert!(
+        wkt.contains("PARAMETER[\"Longitude of natural origin\",3"),
+        "{wkt}"
+    );
+    assert!(
+        wkt.contains("PARAMETER[\"False easting\",500000,UNIT[\"my unit\",2]"),
+        "{wkt}"
+    );
+    let converted =
+        utm_31n().alter_parameters_linear_unit(&unit, LinearParameterScale::ConvertValue);
+    let mut formatter = WktFormatter::create(WktConvention::Wkt2_2015);
+    formatter.set_lines(WktLines::Single);
+    let wkt = Crs::Projected(converted)
+        .export_to_wkt(&mut formatter)
+        .expect("wkt");
+    assert!(
+        wkt.contains("PARAMETER[\"False easting\",250000,UNIT[\"my unit\",2]"),
+        "{wkt}"
+    );
 }
 
 #[test]

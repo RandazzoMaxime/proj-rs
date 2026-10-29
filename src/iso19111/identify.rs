@@ -17,7 +17,8 @@ use super::model::{
     Axis, BoundCRS, CartesianCS, CompoundCRS, Conversion, CoordinateOperation, CoordinateSystem, Crs,
     Datum, DerivedProjectedCRS, EngineeringCRS, GeocentricCRS,
     DatumEnsemble, Ellipsoid, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified,
-    Identifier, Measure, ParameterValue, ProjectedCRS, Transformation, UnitOfMeasure, VerticalCRS,
+    Identifier, LinearParameterScale, Measure, Parameter, ParameterValue, ProjectedCRS, Transformation,
+    UnitKind, UnitOfMeasure, VerticalCRS,
 };
 
 const UNKNOWN_BASED_ON: &str = "Unknown based on ";
@@ -274,6 +275,76 @@ impl Crs {
         };
         db_equivalent(&left, &right, IdentifyAxisOrder::Exact, db)
     }
+}
+
+impl ProjectedCRS {
+    /// `ProjectedCRS::alterParametersLinearUnit`.
+    ///
+    /// Linear parameter values take `unit`. Angular and scale parameters stay.
+    /// The conversion is renamed `unknown` when a value changes, matching PROJ.
+    #[must_use]
+    pub fn alter_parameters_linear_unit(
+        &self,
+        unit: &UnitOfMeasure,
+        scale: LinearParameterScale,
+    ) -> Self {
+        Self {
+            identified: Identified::named(self.name()),
+            base: self.base.clone(),
+            conversion: self.conversion.alter_parameters_linear_unit(unit, scale),
+            coordinate_system: self.coordinate_system.clone(),
+            implicit_cs: self.implicit_cs,
+        }
+    }
+}
+
+impl Conversion {
+    fn alter_parameters_linear_unit(
+        &self,
+        unit: &UnitOfMeasure,
+        scale: LinearParameterScale,
+    ) -> Self {
+        let mut changed = false;
+        let parameters = self
+            .parameters
+            .iter()
+            .map(|parameter| match &parameter.value {
+                ParameterValue::Measure(measure)
+                    if measure.unit.kind == UnitKind::Linear
+                        && !units_equivalent(&measure.unit, unit) =>
+                {
+                    changed = true;
+                    let value = match scale {
+                        LinearParameterScale::KeepNumber => measure.value,
+                        LinearParameterScale::ConvertValue => measure.convert_to(unit),
+                    };
+                    Parameter {
+                        name: parameter.name.clone(),
+                        code_space: parameter.code_space.clone(),
+                        code: parameter.code.clone(),
+                        value: ParameterValue::Measure(Measure {
+                            value,
+                            unit: unit.clone(),
+                        }),
+                    }
+                }
+                _ => parameter.clone(),
+            })
+            .collect();
+        if !changed {
+            return self.clone();
+        }
+        Self {
+            identified: Identified::named("unknown"),
+            method: self.method.clone(),
+            parameters,
+            version: None,
+        }
+    }
+}
+
+fn units_equivalent(left: &UnitOfMeasure, right: &UnitOfMeasure) -> bool {
+    (left.factor - right.factor).abs() <= 1e-10 * left.factor.abs()
 }
 
 fn cartesian_with_unit(cs: &CartesianCS, unit: &UnitOfMeasure) -> CartesianCS {

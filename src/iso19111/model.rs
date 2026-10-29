@@ -292,6 +292,17 @@ pub enum UnitKind {
     Unknown,
 }
 
+/// How [`ProjectedCRS::alter_parameters_linear_unit`] rewrites a linear measure.
+///
+/// PROJ takes this as a boolean. A boolean parameter is rejected here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LinearParameterScale {
+    /// Keep the number and replace only the unit.
+    KeepNumber,
+    /// Rewrite the number so it means the same length in the new unit.
+    ConvertValue,
+}
+
 impl UnitOfMeasure {
     /// Unit named `name`, converting to the SI unit of `kind` by `factor`.
     #[must_use]
