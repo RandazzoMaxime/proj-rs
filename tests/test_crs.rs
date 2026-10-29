@@ -4358,6 +4358,115 @@ fn crs_derive_temporal_crs_wkt1() {
 }
 
 #[test]
+fn crs_create_bound_crs_to_wgs84_if_possible() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let epsg = AuthorityFactory::create(&db, "EPSG");
+    let unchanged = [
+        "4326", "32631", "5670", "3844", "2171", "4269", "5340", "6316", "2936",
+    ];
+    for code in unchanged {
+        let crs = epsg
+            .create_coordinate_reference_system(code)
+            .unwrap_or_else(|_| panic!("EPSG:{code}"));
+        let bound = crs.create_bound_crs_to_wgs84_if_possible(Some(&db), IntermediateCrsUse::Never);
+        assert!(bound.is_equivalent_to(&crs), "EPSG:{code} stays itself");
+    }
+    let ntf = epsg
+        .create_coordinate_reference_system("4807")
+        .expect("4807");
+    let ntf_bound = ntf.create_bound_crs_to_wgs84_if_possible(Some(&db), IntermediateCrsUse::Never);
+    assert!(!ntf_bound.is_equivalent_to(&ntf));
+    assert!(ntf_bound
+        .create_bound_crs_to_wgs84_if_possible(Some(&db), IntermediateCrsUse::Never)
+        .is_equivalent_to(&ntf_bound));
+    let Crs::Bound(ntf_bound) = ntf_bound else {
+        panic!("NTF (Paris) is a bound CRS");
+    };
+    assert_eq!(
+        ntf_bound.export_to_proj_string().expect("proj"),
+        "+proj=longlat +ellps=clrk80ign +pm=paris +towgs84=-168,-60,320,0,0,0,0 +no_defs +type=crs"
+    );
+    let compound = create_from_user_input("EPSG:4326+3855", &db).expect("compound");
+    let compound_bound =
+        compound.create_bound_crs_to_wgs84_if_possible(Some(&db), IntermediateCrsUse::Never);
+    assert!(!compound_bound.is_equivalent_to(&compound));
+    assert!(compound_bound
+        .create_bound_crs_to_wgs84_if_possible(Some(&db), IntermediateCrsUse::Never)
+        .is_equivalent_to(&compound_bound));
+    let Crs::Compound(compound_bound) = compound_bound else {
+        panic!("EGM2008 compound stays a compound CRS");
+    };
+    assert_eq!(
+        compound_bound.export_to_proj_string().expect("proj"),
+        "+proj=longlat +datum=WGS84 +geoidgrids=us_nga_egm08_25.tif +geoid_crs=WGS84 +vunits=m +no_defs +type=crs"
+    );
+    let vertical = Crs::Vertical(odn_height());
+    assert!(vertical
+        .create_bound_crs_to_wgs84_if_possible(Some(&db), IntermediateCrsUse::Never)
+        .is_equivalent_to(&vertical));
+    let handmade = Crs::Compound(
+        CompoundCRS::create(
+            "horizontal + vertical",
+            vec![Crs::Projected(utm_31n()), Crs::Vertical(odn_height())],
+        )
+        .expect("compound")
+        .with_identifier("codespace", "code"),
+    );
+    assert!(handmade
+        .create_bound_crs_to_wgs84_if_possible(Some(&db), IntermediateCrsUse::Never)
+        .is_equivalent_to(&handmade));
+    let ignf = AuthorityFactory::create(&db, "IGNF");
+    let stereo = ignf
+        .create_coordinate_reference_system("TERA50STEREO")
+        .expect("TERA50STEREO");
+    let stereo_bound =
+        stereo.create_bound_crs_to_wgs84_if_possible(Some(&db), IntermediateCrsUse::Never);
+    let Crs::Bound(stereo_bound) = stereo_bound else {
+        panic!("TERA50STEREO is a bound CRS");
+    };
+    assert_eq!(
+        stereo_bound.export_to_proj_string().expect("proj"),
+        "+proj=stere +lat_0=-90 +lon_0=140 +k=0.960272946 +x_0=300000 +y_0=-2299363.482 +ellps=intl +towgs84=324.8,153.6,172.1,0,0,0,0 +units=m +no_defs +type=crs"
+    );
+    let geocentric = ignf
+        .create_coordinate_reference_system("PGP50")
+        .expect("PGP50");
+    let geocentric_bound =
+        geocentric.create_bound_crs_to_wgs84_if_possible(Some(&db), IntermediateCrsUse::Never);
+    let Crs::Bound(geocentric_bound) = geocentric_bound else {
+        panic!("PGP50 is a bound CRS");
+    };
+    assert_eq!(
+        geocentric_bound.export_to_proj_string().expect("proj"),
+        "+proj=geocent +ellps=intl +towgs84=324.8,153.6,172.1,0,0,0,0 +units=m +no_defs +type=crs"
+    );
+    let gda = epsg
+        .create_coordinate_reference_system("7842")
+        .expect("7842");
+    let started = std::time::Instant::now();
+    let _ = gda.create_bound_crs_to_wgs84_if_possible(Some(&db), IntermediateCrsUse::Never);
+    assert!(started.elapsed().as_millis() <= 500);
+    let pulkovo = epsg
+        .create_coordinate_reference_system("2936")
+        .expect("2936");
+    let wkt = pulkovo
+        .export_to_wkt(
+            &mut WktFormatter::create(WktConvention::Wkt1Gdal).with_database(db.clone()),
+        )
+        .expect("wkt1");
+    let parsed = WktParser::new()
+        .attach_database(db.clone())
+        .create_from_wkt(&wkt)
+        .expect("parse")
+        .crs()
+        .expect("crs")
+        .clone();
+    assert!(parsed
+        .create_bound_crs_to_wgs84_if_possible(Some(&db), IntermediateCrsUse::Never)
+        .is_equivalent_to(&parsed));
+}
+
+#[test]
 fn crs_date_time_temporal_crs_wkt2() {
     let crs = date_time_temporal();
     let wkt = Crs::Temporal(crs.clone())

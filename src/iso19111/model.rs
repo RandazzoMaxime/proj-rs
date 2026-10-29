@@ -4038,6 +4038,12 @@ impl Crs {
         }
     }
 
+    /// Usage domains copied from the authority object.
+    #[must_use]
+    pub fn domains(&self) -> &[ObjectDomain] {
+        &self.identified().domains
+    }
+
     /// Authority identifiers.
     #[must_use]
     pub fn identifiers(&self) -> &[Identifier] {

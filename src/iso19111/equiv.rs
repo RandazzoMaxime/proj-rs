@@ -669,6 +669,7 @@ pub(crate) fn crs_equivalent(left: &Crs, right: &Crs, criterion: Equivalence) ->
             criterion == Equivalence::Strict && left.is_equivalent_to(right)
         }
         (Crs::Compound(left), Crs::Compound(right)) => left.is_equivalent_to_with(right, criterion),
+        (Crs::Bound(left), Crs::Bound(right)) => left.is_equivalent_to(right),
         _ => false,
     }
 }

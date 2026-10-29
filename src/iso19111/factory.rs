@@ -62,16 +62,15 @@ impl Crs {
     /// `CRS::createBoundCRSToWGS84IfPossible`.
     ///
     /// A bound CRS whose hub is WGS 84 is returned as itself. A CRS that
-    /// carries a canonical bound CRS to WGS 84 returns that bound CRS. Without
-    /// a database, any other CRS is returned unchanged. `db` and `intermediate`
-    /// select a Helmert transformation when this crate grows that search.
+    /// carries a canonical bound CRS to WGS 84 returns that bound CRS. With a
+    /// database, a single Helmert to WGS 84, or a single known geoid grid,
+    /// becomes a bound CRS. Several candidates, or none, leave the CRS unchanged.
     #[must_use]
     pub fn create_bound_crs_to_wgs84_if_possible(
         &self,
         db: Option<&DatabaseContext>,
         intermediate: IntermediateCrsUse,
     ) -> Self {
-        let _ = (db, intermediate);
         if let Self::Bound(bound) = self {
             if hub_is_wgs84(bound) {
                 return self.clone();
@@ -82,7 +81,41 @@ impl Crs {
                 return Self::Bound(bound.clone());
             }
         }
-        self.clone()
+        if let Self::Compound(compound) = self {
+            let components = compound.components();
+            if components.len() == 2 {
+                let horizontal =
+                    components[0].create_bound_crs_to_wgs84_if_possible(db, intermediate);
+                let vertical =
+                    components[1].create_bound_crs_to_wgs84_if_possible(db, intermediate);
+                if !horizontal.is_equivalent_to(&components[0])
+                    || !vertical.is_equivalent_to(&components[1])
+                {
+                    if let Ok(rebuilt) = CompoundCRS::create(
+                        compound.name(),
+                        vec![horizontal, vertical],
+                    ) {
+                        return Self::Compound(rebuilt);
+                    }
+                }
+            }
+            return self.clone();
+        }
+        let Some(db) = db else {
+            return self.clone();
+        };
+        if several_domains_block_a_single_helmert(self) {
+            return self.clone();
+        }
+        if let Self::Vertical(_) = self {
+            return bind_vertical_grid(self, db).unwrap_or_else(|| self.clone());
+        }
+        // `Allow` still keeps only a direct Helmert. A pivot chain is another
+        // candidate, and this method returns a bound CRS only when one remains.
+        match intermediate {
+            IntermediateCrsUse::Never | IntermediateCrsUse::Allow => {}
+        }
+        bind_helmert_to_wgs84(self, db).unwrap_or_else(|| self.clone())
     }
 }
 
@@ -90,6 +123,316 @@ fn hub_is_wgs84(bound: &BoundCRS) -> bool {
     bound
         .target_crs()
         .is_equivalent_to(&Crs::Geographic(GeographicCRS::epsg_4326()))
+}
+
+fn several_domains_block_a_single_helmert(crs: &Crs) -> bool {
+    let domains = crs.domains();
+    if domains.len() < 2 {
+        return false;
+    }
+    if domains.len() > 2 {
+        return true;
+    }
+    !extent_contains(&domains[0], &domains[1]) && !extent_contains(&domains[1], &domains[0])
+}
+
+fn extent_contains(outer: &ObjectDomain, inner: &ObjectDomain) -> bool {
+    let Some(south) = outer.south_bound_latitude() else {
+        return false;
+    };
+    let Some(west) = outer.west_bound_longitude() else {
+        return false;
+    };
+    let Some(north) = outer.north_bound_latitude() else {
+        return false;
+    };
+    let Some(east) = outer.east_bound_longitude() else {
+        return false;
+    };
+    let Some(inner_south) = inner.south_bound_latitude() else {
+        return false;
+    };
+    let Some(inner_west) = inner.west_bound_longitude() else {
+        return false;
+    };
+    let Some(inner_north) = inner.north_bound_latitude() else {
+        return false;
+    };
+    let Some(inner_east) = inner.east_bound_longitude() else {
+        return false;
+    };
+    south <= inner_south && north >= inner_north && west <= inner_west && east >= inner_east
+}
+
+fn wgs84_geographic(crs: &GeographicCRS) -> bool {
+    if crs.datum().is_some_and(|datum| datum.name() == "unknown") {
+        return false;
+    }
+    crs.identifiers().iter().any(|identifier| {
+        identifier.code_space().eq_ignore_ascii_case("EPSG") && identifier.code() == "4326"
+    }) || crs.is_equivalent_to(&GeographicCRS::epsg_4326())
+}
+
+fn wgs84_geocentric(crs: &GeodeticCRS) -> bool {
+    if crs.datum().is_some_and(|datum| datum.name() == "unknown") {
+        return false;
+    }
+    crs.identifiers().iter().any(|identifier| {
+        identifier.code_space().eq_ignore_ascii_case("EPSG") && identifier.code() == "4978"
+    }) || crs.is_equivalent_to(&GeodeticCRS::epsg_4978())
+}
+
+fn bind_helmert_to_wgs84(crs: &Crs, db: &DatabaseContext) -> Option<Crs> {
+    let (source_auth, source_code, hub) = if let Some(geographic) = crs.extract_geographic_crs() {
+        if wgs84_geographic(&geographic) {
+            return None;
+        }
+        let identifier = geographic.identifiers().first()?;
+        (
+            identifier.code_space().to_owned(),
+            identifier.code().to_owned(),
+            Crs::Geographic(GeographicCRS::epsg_4326()),
+        )
+    } else {
+        let geodetic = crs.extract_geodetic_crs()?;
+        if wgs84_geocentric(&geodetic) {
+            return None;
+        }
+        let identifier = geodetic.identifiers().first()?;
+        (
+            identifier.code_space().to_owned(),
+            identifier.code().to_owned(),
+            Crs::Geodetic(GeodeticCRS::epsg_4978()),
+        )
+    };
+    let hub_auth = hub
+        .identifiers()
+        .first()
+        .map(|identifier| identifier.code_space().to_owned())?;
+    let hub_code = hub
+        .identifiers()
+        .first()
+        .map(|identifier| identifier.code().to_owned())?;
+    let source_authority = crs
+        .identifiers()
+        .first()
+        .map(|identifier| identifier.code_space().to_owned())
+        .unwrap_or_default();
+    for authority in allowed_authorities(db, &source_authority) {
+        let operations = operations_between(
+            db,
+            authority_filter(&authority),
+            &source_auth,
+            &source_code,
+            &hub_auth,
+            &hub_code,
+            AlternativeGridNames::Official,
+        )
+        .unwrap_or_default();
+        let mut candidate = None;
+        let mut count = 0;
+        for operation in &operations {
+            if let Some(transformation) = helmert_from_operation(operation, crs) {
+                count += 1;
+                if candidate.is_none() {
+                    candidate = Some(transformation);
+                }
+            }
+        }
+        if count == 1 {
+            if let Some(transformation) = candidate {
+                return Some(Crs::Bound(BoundCRS::create(
+                    crs.clone(),
+                    hub,
+                    CoordinateOperation::Transformation(transformation),
+                )));
+            }
+        }
+    }
+    None
+}
+
+fn bind_vertical_grid(crs: &Crs, db: &DatabaseContext) -> Option<Crs> {
+    let identifier = crs.identifiers().first()?;
+    let hub = Crs::Geographic(GeographicCRS::epsg_4979());
+    for authority in allowed_authorities(db, identifier.code_space()) {
+        let operations = operations_between(
+            db,
+            authority_filter(&authority),
+            "EPSG",
+            "4979",
+            identifier.code_space(),
+            identifier.code(),
+            AlternativeGridNames::Official,
+        )
+        .unwrap_or_default();
+        let mut candidate = None;
+        let mut ambiguous = false;
+        for operation in operations {
+            let CoordinateOperation::Transformation(transformation) = operation else {
+                continue;
+            };
+            if transformation.name().starts_with("Ballpark") {
+                continue;
+            }
+            let Some(rewritten) = known_geoid_transformation(db, &transformation) else {
+                continue;
+            };
+            if candidate.is_some() {
+                ambiguous = true;
+                break;
+            }
+            candidate = Some(rewritten);
+        }
+        if ambiguous {
+            continue;
+        }
+        if let Some(transformation) = candidate {
+            return Some(Crs::Bound(BoundCRS::create(
+                crs.clone(),
+                hub,
+                CoordinateOperation::Transformation(transformation),
+            )));
+        }
+    }
+    None
+}
+
+fn helmert_from_operation(
+    operation: &CoordinateOperation,
+    crs: &Crs,
+) -> Option<Transformation> {
+    match operation {
+        CoordinateOperation::Transformation(transformation) => usable_helmert(transformation),
+        CoordinateOperation::Concatenated(concatenated) => {
+            let steps = concatenated.steps();
+            if steps.len() != 2 || steps[0].is_reverse() || steps[1].is_reverse() {
+                return None;
+            }
+            let derived = matches!(
+                crs,
+                Crs::DerivedGeographic(_)
+                    | Crs::DerivedGeodetic(_)
+                    | Crs::DerivedProjected(_)
+                    | Crs::DerivedVertical(_)
+                    | Crs::DerivedEngineering(_)
+                    | Crs::DerivedParametric(_)
+                    | Crs::DerivedTemporal(_)
+            );
+            let first_is_rotation = match steps[0].operation() {
+                CoordinateOperation::Transformation(transformation) => {
+                    transformation.method().code() == "9601"
+                }
+                CoordinateOperation::Conversion(_) => derived,
+                _ => false,
+            };
+            if !first_is_rotation {
+                return None;
+            }
+            match steps[1].operation() {
+                CoordinateOperation::Transformation(transformation) => usable_helmert(transformation),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+fn usable_helmert(transformation: &Transformation) -> Option<Transformation> {
+    if transformation.name().starts_with("Ballpark geo") {
+        return None;
+    }
+    super::wkt::transformation_towgs84(transformation)?;
+    Some(transformation.clone())
+}
+
+fn known_geoid_transformation(
+    db: &DatabaseContext,
+    transformation: &Transformation,
+) -> Option<Transformation> {
+    let mut copy = transformation.clone();
+    let mut grids = 0;
+    for parameter in &mut copy.parameters {
+        let ParameterValue::Filename(name) = &parameter.value else {
+            continue;
+        };
+        if name.is_empty() {
+            continue;
+        }
+        grids += 1;
+        let proj_name = known_proj_grid(db, name)?;
+        parameter.value = ParameterValue::Filename(proj_name);
+    }
+    (grids > 0).then_some(copy)
+}
+
+fn known_proj_grid(db: &DatabaseContext, name: &str) -> Option<String> {
+    let rows = db
+        .query(
+            "SELECT proj_grid_name, open_license, url, package_name FROM grid_alternatives \
+             WHERE original_grid_name = ? OR proj_grid_name = ?",
+            &[name.to_owned(), name.to_owned()],
+        )
+        .ok()?;
+    rows.into_iter().find_map(|row| {
+        let proj_name = row[0].text();
+        let open = row[1].flag();
+        let url = row[2].text();
+        let package = row[3].text();
+        let known = !package.is_empty() || (!url.is_empty() && open);
+        (known && !proj_name.is_empty()).then_some(proj_name)
+    })
+}
+
+fn authority_filter(authority: &str) -> &str {
+    if authority == "any" { "" } else { authority }
+}
+
+fn allowed_authorities(db: &DatabaseContext, source_auth: &str) -> Vec<String> {
+    let specific = db.query(
+        "SELECT allowed_authorities FROM authority_to_authority_preference \
+         WHERE source_auth_name = ? AND target_auth_name = 'EPSG'",
+        &[source_auth.to_owned()],
+    );
+    if let Some(names) = preference_list(specific) {
+        return names;
+    }
+    let source_any = db.query(
+        "SELECT allowed_authorities FROM authority_to_authority_preference \
+         WHERE source_auth_name = ? AND target_auth_name = 'any'",
+        &[source_auth.to_owned()],
+    );
+    if let Some(names) = preference_list(source_any) {
+        return names;
+    }
+    let target_epsg = db.query(
+        "SELECT allowed_authorities FROM authority_to_authority_preference \
+         WHERE source_auth_name = 'any' AND target_auth_name = 'EPSG'",
+        &[],
+    );
+    if let Some(names) = preference_list(target_epsg) {
+        return names;
+    }
+    let any = db.query(
+        "SELECT allowed_authorities FROM authority_to_authority_preference \
+         WHERE source_auth_name = 'any' AND target_auth_name = 'any'",
+        &[],
+    );
+    preference_list(any).unwrap_or_else(|| vec![String::new()])
+}
+
+fn preference_list(rows: Result<Vec<Vec<Cell>>, FactoryError>) -> Option<Vec<String>> {
+    let rows = rows.ok()?;
+    let text = rows.first()?.first()?.text();
+    if text.is_empty() {
+        return None;
+    }
+    Some(
+        text.split(',')
+            .map(|part| part.trim().to_owned())
+            .filter(|part| !part.is_empty())
+            .collect(),
+    )
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

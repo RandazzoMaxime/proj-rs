@@ -143,6 +143,20 @@ impl CompoundCRS {
                 Crs::DerivedVertical(crs) => {
                     insert_vertical_unit(&mut text, crs.coordinate_system().axis().unit());
                 }
+                Crs::Bound(crs) => {
+                    if let Some(grid) = bound_geoid_grids(crs) {
+                        insert_before_no_defs(
+                            &mut text,
+                            &format!("+geoidgrids={grid} +geoid_crs=WGS84"),
+                        );
+                        if let Crs::Vertical(vertical) = crs.source_crs() {
+                            insert_vertical_unit(
+                                &mut text,
+                                vertical.coordinate_system().axis().unit(),
+                            );
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -238,6 +252,9 @@ impl BoundCRS {
             Crs::Projected(crs) => {
                 projected_bound_proj(crs, towgs84.as_deref(), nadgrids.as_deref())
             }
+            Crs::Geodetic(GeodeticCRS::Geocentric(crs)) => {
+                geocentric_bound_proj(crs, towgs84.as_deref())
+            }
             Crs::Geodetic(crs) => crs.export_to_proj_string(),
             Crs::Vertical(crs) => vertical_bound_proj(crs, bound_geoid_grids(self).as_deref()),
             _ => Err(FactoryError::Format(
@@ -328,6 +345,35 @@ fn geographic_bound_proj(
     parts.push("+no_defs".to_owned());
     parts.push("+type=crs".to_owned());
     parts.join(" ")
+}
+
+fn geocentric_bound_proj(
+    crs: &GeocentricCRS,
+    towgs84: Option<&[f64]>,
+) -> Result<String, FactoryError> {
+    let Some(values) = towgs84 else {
+        return crs.export_to_proj_string();
+    };
+    let mut parts = vec!["+proj=geocent".to_owned()];
+    if let Some(datum) = crs.datum() {
+        parts.push(ellipsoid_proj(datum.ellipsoid()));
+        if let Some(clause) = prime_meridian_proj(datum.prime_meridian()) {
+            parts.push(clause);
+        }
+    }
+    parts.push(format!("+towgs84={}", format_towgs84(values)));
+    parts.push("+units=m".to_owned());
+    parts.push("+no_defs".to_owned());
+    parts.push("+type=crs".to_owned());
+    Ok(parts.join(" "))
+}
+
+fn insert_before_no_defs(text: &mut String, clause: &str) {
+    if let Some(index) = text.find(" +no_defs") {
+        text.insert_str(index, &format!(" {clause}"));
+    } else {
+        push_clause(text, clause);
+    }
 }
 
 fn vertical_bound_proj(crs: &VerticalCRS, grid: Option<&str>) -> Result<String, FactoryError> {

@@ -1559,9 +1559,20 @@ pub(crate) fn wkt1_towgs84(crs: &BoundCRS) -> Option<Vec<f64>> {
     let CoordinateOperation::Transformation(transformation) = crs.transformation() else {
         return None;
     };
-    let position_vector = transformation.method().code() == "9606"
-        || transformation.method().name().contains("Position Vector");
-    if !position_vector {
+    transformation_towgs84(transformation)
+}
+
+/// Seven `+towgs84` values, position-vector convention.
+///
+/// Geocentric translations fill the rotations and the scale with zero.
+/// A coordinate-frame rotation flips the sign of the three angles.
+pub(crate) fn transformation_towgs84(transformation: &Transformation) -> Option<Vec<f64>> {
+    let name = transformation.method().name().to_ascii_lowercase();
+    let translations = name.contains("geocentric translations");
+    let position_vector =
+        transformation.method().code() == "9606" || name.contains("position vector");
+    let coordinate_frame = name.contains("coordinate frame");
+    if !translations && !position_vector && !coordinate_frame {
         return None;
     }
     let mut params = [0.0; 7];
@@ -1582,16 +1593,28 @@ pub(crate) fn wkt1_towgs84(crs: &BoundCRS) -> Option<Vec<f64>> {
         let ParameterValue::Measure(measure) = parameter.value() else {
             continue;
         };
-        params[index] = if index < 3 {
+        let mut value = if index < 3 {
             measure.si_value()
         } else if index < 6 {
             measure.convert_to(&UnitOfMeasure::arc_second())
         } else {
             measure.convert_to(&UnitOfMeasure::parts_per_million())
         };
+        if coordinate_frame && (3..6).contains(&index) {
+            value = -value;
+        }
+        if value == 0.0 {
+            value = 0.0;
+        }
+        params[index] = value;
         found[index] = true;
     }
-    found.iter().all(|present| *present).then(|| params.to_vec())
+    let complete = if translations {
+        found[0] && found[1] && found[2]
+    } else {
+        found.iter().all(|present| *present)
+    };
+    complete.then(|| params.to_vec())
 }
 
 fn export_engineering(
