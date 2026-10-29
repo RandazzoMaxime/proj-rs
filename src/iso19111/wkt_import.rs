@@ -1322,7 +1322,14 @@ impl WktParser {
                 if let Ok(loaded) =
                     AuthorityFactory::create(&db, id.code_space()).create_geodetic_datum(id.code())
                 {
-                    if raw_name.contains('_')
+                    // A datum name that is not itself in proj.db takes the
+                    // official name of its AUTHORITY code. `WGS 1984` is that
+                    // case for EPSG:6326.
+                    let name_is_known = AuthorityFactory::create(&db, "")
+                        .create_geodetic_datums_by_name(&raw_name)
+                        .is_ok_and(|found| !found.is_empty());
+                    if !name_is_known
+                        || raw_name.contains('_')
                         || canonical_name(&props.name) == canonical_name(loaded.name())
                     {
                         props.name = loaded.name().to_owned();
@@ -1627,13 +1634,13 @@ impl WktParser {
         let transformation = Transformation {
             identified: Identified::named("Transformation to WGS84"),
             method: OperationMethod {
-                name: if values.iter().skip(3).any(|value| *value != 0.0) {
+                name: if values.len() == 7 {
                     "Position Vector transformation (geog2D domain)".to_owned()
                 } else {
                     "Geocentric translations (geog2D domain)".to_owned()
                 },
                 code_space: "EPSG".to_owned(),
-                code: if values.iter().skip(3).any(|value| *value != 0.0) {
+                code: if values.len() == 7 {
                     "9606".to_owned()
                 } else {
                     "9603".to_owned()
@@ -2233,7 +2240,12 @@ impl WktParser {
         let Crs::Geographic(base_geo) = bound.source_crs().clone() else {
             return Err(invalid("bound base is not geographic"));
         };
-        let angular = UnitOfMeasure::degree();
+        let angular = base_geo
+            .coordinate_system()
+            .axes()
+            .first()
+            .map(|axis| axis.unit().clone())
+            .unwrap_or_else(UnitOfMeasure::degree);
         let cs = self.build_cs(node.child(&["CS"]), node, angular.clone())?;
         let CoordinateSystem::Cartesian(coordinate_system) = cs else {
             return Err(invalid("projected CRS requires a Cartesian CS"));

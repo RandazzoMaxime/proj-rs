@@ -7,7 +7,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_crs.cpp
 
-- `crs.boundCRS_identify_db`
 - `crs.incompatible_boundCRS_hubCRS_to_WKT1`
 - `crs.incompatible_boundCRS_transformation_to_WKT1`
 - `crs.WKT1_DATUM_EXTENSION_to_WKT1_and_PROJ_string`

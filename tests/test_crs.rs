@@ -4752,3 +4752,121 @@ fn crs_bound_crs_nadcon_to_proj_string_use_proj_alternative_grid_names_true() {
         "+proj=longlat +ellps=clrk66 +nadgrids=us_noaa_conus.tif +no_defs +type=crs"
     );
 }
+
+fn one_bound(found: Vec<(Crs, i32)>) -> (BoundCRS, i32) {
+    assert_eq!(found.len(), 1);
+    let (crs, confidence) = found.into_iter().next().expect("one hit");
+    let Crs::Bound(bound) = crs else {
+        panic!("identified object is a bound CRS");
+    };
+    (bound, confidence)
+}
+
+fn bound_from_wkt(db: &DatabaseContext, wkt: &str) -> Crs {
+    let mut parser = WktParser::new();
+    parser.attach_database(db.clone());
+    parser
+        .create_from_wkt(wkt)
+        .expect("wkt")
+        .crs()
+        .expect("crs")
+        .clone()
+}
+
+fn transformation_method_code(bound: &BoundCRS) -> String {
+    let CoordinateOperation::Transformation(transformation) = bound.transformation() else {
+        panic!("binding operation is a transformation");
+    };
+    transformation.method().code().to_owned()
+}
+
+#[test]
+fn crs_bound_crs_identify_db() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let factory = AuthorityFactory::create(&db, "EPSG");
+
+    let tmerc = create_crs_from_proj_string(
+        "+proj=tmerc +lat_0=-37.76111111111111 +lon_0=176.4661111111111 +k=1 \
+         +x_0=400000 +y_0=800000 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +type=crs",
+    )
+    .expect("tmerc");
+    assert!(matches!(tmerc, Crs::Bound(_)));
+    let (bound, confidence) = one_bound(tmerc.identify_with(Some(&factory)));
+    assert_eq!(epsg_number(bound.source_crs()), 2106);
+    assert_eq!(bound.transformation().name(), "NZGD2000 to WGS 84 (1)");
+    assert_eq!(confidence, 70);
+
+    let ohio = bound_from_wkt(
+        &db,
+        "PROJCS[\"NAD83 / Ohio North\",GEOGCS[\"NAD83\",\
+         DATUM[\"North_American_Datum_1983\",SPHEROID[\"GRS 1980\",\
+         6378137,298.257222101,AUTHORITY[\"EPSG\",\"7019\"]],\
+         TOWGS84[0,0,0,0,0,0,0],AUTHORITY[\"EPSG\",\"6269\"]],\
+         PRIMEM[\"Greenwich\",0,AUTHORITY[\"EPSG\",\"8901\"]],\
+         UNIT[\"degree\",0.0174532925199433, AUTHORITY[\"EPSG\",\"9122\"]],\
+         AUTHORITY[\"EPSG\",\"4269\"]],\
+         PROJECTION[\"Lambert_Conformal_Conic_2SP\"],\
+         PARAMETER[\"standard_parallel_1\",41.7],\
+         PARAMETER[\"standard_parallel_2\",40.43333333333333],\
+         PARAMETER[\"latitude_of_origin\",39.66666666666666],\
+         PARAMETER[\"central_meridian\",-82.5],\
+         PARAMETER[\"false_easting\",1968503.937007874],\
+         PARAMETER[\"false_northing\",0],\
+         UNIT[\"International Foot\",0.3048,AUTHORITY[\"EPSG\",\"9002\"]],\
+         AXIS[\"X\",EAST],AXIS[\"Y\",NORTH],AUTHORITY[\"EPSG\",\"32122\"]]",
+    );
+    assert!(matches!(ohio, Crs::Bound(_)));
+    let (bound, confidence) = one_bound(ohio.identify_with(Some(&factory)));
+    assert_eq!(confidence, 25);
+    assert_eq!(epsg_number(bound.source_crs()), 32122);
+    assert_eq!(transformation_method_code(&bound), "9603");
+
+    let indian = create_crs_from_proj_string(
+        "+proj=utm +zone=48 +a=6377276.345 +b=6356075.41314024 \
+         +towgs84=198,881,317,0,0,0,0 +units=m +no_defs +type=crs",
+    )
+    .expect("utm");
+    assert!(matches!(indian, Crs::Bound(_)));
+    let (bound, confidence) = one_bound(indian.identify_with(Some(&factory)));
+    assert_eq!(epsg_number(bound.source_crs()), 3148);
+    assert_eq!(confidence, 70);
+
+    let wgs84 = bound_from_wkt(
+        &db,
+        "GEOGCS[\"WGS84 Coordinate System\",DATUM[\"WGS 1984\",\
+         SPHEROID[\"WGS 1984\",6378137,298.257223563],\
+         TOWGS84[0,0,0,0,0,0,0],AUTHORITY[\"EPSG\",\"6326\"]],\
+         PRIMEM[\"Greenwich\",0],UNIT[\"degree\",0.0174532925199433],\
+         AUTHORITY[\"EPSG\",\"4326\"]]",
+    );
+    assert!(matches!(wgs84, Crs::Bound(_)));
+    let (bound, confidence) = one_bound(wgs84.identify_with(Some(&factory)));
+    assert_eq!(confidence, 100);
+    assert_eq!(epsg_number(bound.source_crs()), 4326);
+    assert_eq!(transformation_method_code(&bound), "9606");
+
+    let ntf = bound_from_wkt(
+        &db,
+        "PROJCS[\"NTF (Paris) / Lambert zone II\",\
+         GEOGCS[\"NTF (Paris)\",\
+         DATUM[\"Nouvelle_Triangulation_Francaise_Paris\",\
+         SPHEROID[\"Clarke 1880 (IGN)\",6378249.2,293.4660212936269,\
+         AUTHORITY[\"EPSG\",\"7011\"]],TOWGS84[-168,-60,320,0,0,0,0],\
+         AUTHORITY[\"EPSG\",\"6807\"]],PRIMEM[\"Paris\",2.33722917,\
+         AUTHORITY[\"EPSG\",\"8903\"]],UNIT[\"grad\",0.01570796326794897,\
+         AUTHORITY[\"EPSG\",\"9105\"]],AUTHORITY[\"EPSG\",\"4807\"]],\
+         PROJECTION[\"Lambert_Conformal_Conic_1SP\"],\
+         PARAMETER[\"latitude_of_origin\",52],\
+         PARAMETER[\"central_meridian\",0],\
+         PARAMETER[\"scale_factor\",0.99987742],\
+         PARAMETER[\"false_easting\",600000],\
+         PARAMETER[\"false_northing\",2200000],\
+         UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]],\
+         AXIS[\"X\",EAST],AXIS[\"Y\",NORTH],AUTHORITY[\"EPSG\",\"27572\"]]",
+    );
+    assert!(matches!(ntf, Crs::Bound(_)));
+    let (bound, confidence) = one_bound(ntf.identify_with(Some(&factory)));
+    assert_eq!(epsg_number(bound.source_crs()), 27572);
+    assert_eq!(bound.transformation().name(), "NTF to WGS 84 (1)");
+    assert_eq!(confidence, 100);
+}

@@ -815,17 +815,36 @@ pub fn create_crs_from_proj_string(definition: &str) -> Result<Crs, FactoryError
     if proj == "pipeline" {
         return crs_from_pipeline(&tokens);
     }
-    let crs = if matches!(proj, "longlat" | "lonlat" | "latlong") {
+    let mut crs = if matches!(proj, "longlat" | "lonlat" | "latlong") {
         geographic_from_proj(&tokens)?
     } else if proj == "utm" {
         utm_from_proj(&tokens)?
     } else {
         projected_from_proj(&tokens, proj)?
     };
+    if has_token(&tokens, "towgs84") {
+        let values = towgs84_values(token(&tokens, "towgs84"))?;
+        crs = Crs::Bound(BoundCRS::create_from_towgs84(crs, &values)?);
+    }
     if has_token(&tokens, "geoidgrids") {
         return compound_with_geoid(&tokens, crs);
     }
     Ok(crs)
+}
+
+fn towgs84_values(raw: &str) -> Result<Vec<f64>, FactoryError> {
+    if raw.is_empty() {
+        return Err(FactoryError::Invalid(
+            "Invalid number of elements in TOWGS84Parameters".to_owned(),
+        ));
+    }
+    raw.split(',')
+        .map(|part| {
+            part.parse::<f64>().map_err(|_| {
+                FactoryError::Invalid("Invalid number of elements in TOWGS84Parameters".to_owned())
+            })
+        })
+        .collect()
 }
 
 fn crs_from_pipeline(tokens: &[(String, String)]) -> Result<Crs, FactoryError> {

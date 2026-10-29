@@ -9,11 +9,14 @@ use super::equiv::{
     directions_and_units, ellipsoid_parameters_match, equivalent_name, identify_axes_match,
     meridian_equivalent, same_epoch, Equivalence, IdentifyAxisOrder,
 };
-use super::factory::{AuthorityFactory, DatabaseContext, ExistingProjectedQuery, NameMatch};
+use super::factory::{
+    AuthorityFactory, CoordinateOperationContext, CoordinateOperationFactory, DatabaseContext,
+    ExistingProjectedQuery, NameMatch,
+};
 use super::model::{
-    Axis, CartesianCS, CompoundCRS, Conversion, Crs, Datum, DatumEnsemble, Ellipsoid, GeodeticCRS,
-    GeodeticReferenceFrame, GeographicCRS, Identified, Identifier, Measure, ParameterValue,
-    ProjectedCRS, UnitOfMeasure, VerticalCRS,
+    Axis, BoundCRS, CartesianCS, CompoundCRS, Conversion, CoordinateOperation, Crs, Datum,
+    DatumEnsemble, Ellipsoid, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified,
+    Identifier, Measure, ParameterValue, ProjectedCRS, Transformation, UnitOfMeasure, VerticalCRS,
 };
 
 const UNKNOWN_BASED_ON: &str = "Unknown based on ";
@@ -113,7 +116,9 @@ impl Crs {
     ///
     /// Geographic and geodetic CRS use [`GeodeticCRS::identify_with`]. A
     /// projected CRS uses the UTM shortcut. A vertical or compound CRS is
-    /// looked up in the factory. Other kinds have no match.
+    /// looked up in the factory. A bound CRS whose hub is WGS 84 identifies
+    /// its source, then keeps the database transformation to WGS 84 when the
+    /// Helmert parameters match. Other kinds have no match.
     #[must_use]
     pub fn identify_with(&self, factory: Option<&AuthorityFactory>) -> Vec<(Crs, i32)> {
         match self {
@@ -122,6 +127,7 @@ impl Crs {
             Self::Projected(crs) => crs.identify_with(factory),
             Self::Vertical(crs) => crs.identify_with(factory),
             Self::Compound(crs) => crs.identify_with(factory),
+            Self::Bound(crs) => crs.identify_with(factory),
             _ => Vec::new(),
         }
     }
@@ -1395,6 +1401,274 @@ fn sort_compounds(name: &str, hits: &mut [(CompoundCRS, i32)]) {
             .then_with(|| (right.0.name() == name).cmp(&(left.0.name() == name)))
             .then_with(|| left.0.name().cmp(right.0.name()))
     });
+}
+
+const BALLPARK_GEOCENTRIC_TRANSLATION: &str = "Ballpark geocentric translation";
+const NULL_GEOGRAPHIC_OFFSET: &str = "Null geographic offset";
+const HELMERT_CODES: [&str; 7] = ["8605", "8606", "8607", "8608", "8609", "8610", "8611"];
+
+impl BoundCRS {
+    /// `BoundCRS::identify`.
+    ///
+    /// A missing factory, or a hub that is not WGS 84 geographic, returns
+    /// nothing. Otherwise each identified source is paired with the registered
+    /// transformation to EPSG:4326 whose Helmert parameters match this bound
+    /// CRS. A null `+towgs84` against WGS 84 itself keeps the original
+    /// position-vector transformation. A longitude rotation followed by a
+    /// Helmert, as in NTF (Paris), keeps that Helmert.
+    #[must_use]
+    pub fn identify_with(&self, factory: Option<&AuthorityFactory>) -> Vec<(Crs, i32)> {
+        let Some(factory) = factory else {
+            return Vec::new();
+        };
+        if !self
+            .target_crs()
+            .is_equivalent_to(&Crs::Geographic(GeographicCRS::epsg_4326()))
+        {
+            return Vec::new();
+        }
+        let reference = helmert_tuple_of(self.transformation());
+        let context =
+            CoordinateOperationContext::create(factory.database_context(), factory.authority());
+        let mut matched = Vec::new();
+        let mut fallback = Vec::new();
+        for (candidate, confidence) in self.source_crs().identify_with(Some(factory)) {
+            let Some(geodetic) = geodetic_candidate(&candidate) else {
+                continue;
+            };
+            let ops = CoordinateOperationFactory::create()
+                .create_operations(
+                    &geodetic,
+                    &Crs::Geographic(GeographicCRS::epsg_4326()),
+                    &context,
+                )
+                .unwrap_or_default();
+            let found = select_bound_operation(&ops, &candidate, reference, &geodetic);
+            match found {
+                Some(BoundMatch::KeepOriginal) => {
+                    matched.push(bound_result(
+                        candidate,
+                        self.target_crs(),
+                        self.transformation().clone(),
+                        confidence,
+                    ));
+                }
+                Some(BoundMatch::Replacement(operation)) => {
+                    matched.push(bound_result(
+                        candidate,
+                        self.target_crs(),
+                        *operation,
+                        confidence,
+                    ));
+                }
+                None => {
+                    fallback.push(bound_result(
+                        candidate,
+                        self.target_crs(),
+                        self.transformation().clone(),
+                        confidence.min(70),
+                    ));
+                }
+            }
+        }
+        if matched.is_empty() {
+            fallback
+        } else {
+            matched
+        }
+    }
+}
+
+enum BoundMatch {
+    Replacement(Box<CoordinateOperation>),
+    KeepOriginal,
+}
+
+fn select_bound_operation(
+    ops: &[CoordinateOperation],
+    candidate: &Crs,
+    reference: Option<[f64; 7]>,
+    geodetic: &Crs,
+) -> Option<BoundMatch> {
+    let reference_is_null = reference.is_some_and(tuple_is_null);
+    if ops.is_empty() && reference_is_null && is_wgs84_geographic(geodetic) {
+        return Some(BoundMatch::KeepOriginal);
+    }
+    for operation in ops {
+        if synthetic_operation(operation.name()) {
+            if reference_is_null {
+                return Some(BoundMatch::KeepOriginal);
+            }
+            continue;
+        }
+        let Some(reference) = reference else {
+            continue;
+        };
+        if let Some(transformation) = matching_helmert(operation, candidate, reference) {
+            return Some(BoundMatch::Replacement(Box::new(
+                CoordinateOperation::Transformation(transformation),
+            )));
+        }
+    }
+    None
+}
+
+fn bound_result(
+    candidate: Crs,
+    hub: &Crs,
+    operation: CoordinateOperation,
+    confidence: i32,
+) -> (Crs, i32) {
+    (
+        Crs::Bound(BoundCRS::create(candidate, hub.clone(), operation)),
+        confidence,
+    )
+}
+
+fn geodetic_candidate(crs: &Crs) -> Option<Crs> {
+    match crs {
+        Crs::Projected(projected) => Some(geodetic_as_crs(projected.base_crs())),
+        Crs::Geographic(geographic) => Some(Crs::Geographic(geographic.clone())),
+        Crs::Geodetic(geodetic) => Some(geodetic_as_crs(geodetic)),
+        _ => None,
+    }
+}
+
+fn geodetic_as_crs(crs: &GeodeticCRS) -> Crs {
+    match crs {
+        GeodeticCRS::Geographic(geographic) => Crs::Geographic(geographic.clone()),
+        other => Crs::Geodetic(other.clone()),
+    }
+}
+
+fn is_wgs84_geographic(crs: &Crs) -> bool {
+    let geographic = match crs {
+        Crs::Geographic(geographic) => geographic,
+        Crs::Geodetic(GeodeticCRS::Geographic(geographic)) => geographic,
+        _ => return false,
+    };
+    geographic.identifiers().iter().any(|identifier| {
+        identifier.code_space().eq_ignore_ascii_case("EPSG") && identifier.code() == "4326"
+    }) || geographic
+        .is_equivalent_to_with(&GeographicCRS::epsg_4326(), Equivalence::ExceptAxisOrder)
+}
+
+fn synthetic_operation(name: &str) -> bool {
+    name.starts_with(BALLPARK_GEOCENTRIC_TRANSLATION) || name.starts_with(NULL_GEOGRAPHIC_OFFSET)
+}
+
+fn matching_helmert(
+    operation: &CoordinateOperation,
+    candidate: &Crs,
+    reference: [f64; 7],
+) -> Option<Transformation> {
+    if let CoordinateOperation::Transformation(transformation) = operation {
+        if helmert_matches(transformation, reference) {
+            return Some(transformation.clone());
+        }
+    }
+    concatenated_helmert(operation, candidate, reference).cloned()
+}
+
+fn concatenated_helmert<'a>(
+    operation: &'a CoordinateOperation,
+    candidate: &Crs,
+    reference: [f64; 7],
+) -> Option<&'a Transformation> {
+    let CoordinateOperation::Concatenated(concatenated) = operation else {
+        return None;
+    };
+    let steps = concatenated.steps();
+    if steps.len() != 2 || steps[0].is_reverse() || steps[1].is_reverse() {
+        return None;
+    }
+    let first_is_rotation = method_code(steps[0].operation()) == Some("9601");
+    let first_is_conversion = matches!(steps[0].operation(), CoordinateOperation::Conversion(_));
+    let derived = matches!(
+        candidate,
+        Crs::DerivedProjected(_) | Crs::DerivedVertical(_)
+    );
+    if !(first_is_rotation || (derived && first_is_conversion)) {
+        return None;
+    }
+    let CoordinateOperation::Transformation(transformation) = steps[1].operation() else {
+        return None;
+    };
+    if transformation.name().starts_with("Ballpark geo") {
+        return None;
+    }
+    helmert_matches(transformation, reference).then_some(transformation)
+}
+
+fn method_code(operation: &CoordinateOperation) -> Option<&str> {
+    match operation {
+        CoordinateOperation::Transformation(transformation) => Some(transformation.method().code()),
+        CoordinateOperation::Conversion(conversion) => Some(conversion.method().code()),
+        CoordinateOperation::Concatenated(_) => None,
+    }
+}
+
+fn helmert_matches(transformation: &Transformation, reference: [f64; 7]) -> bool {
+    let Some(tuple) = helmert_tuple(transformation) else {
+        return false;
+    };
+    tuple
+        .iter()
+        .zip(reference)
+        .all(|(left, right)| (left - right).abs() <= 1e-6)
+}
+
+fn helmert_tuple_of(operation: &CoordinateOperation) -> Option<[f64; 7]> {
+    match operation {
+        CoordinateOperation::Transformation(transformation) => helmert_tuple(transformation),
+        _ => None,
+    }
+}
+
+fn helmert_tuple(transformation: &Transformation) -> Option<[f64; 7]> {
+    let has_translation = transformation
+        .parameters()
+        .iter()
+        .any(|parameter| matches!(parameter.code(), "8605" | "8606" | "8607"));
+    if !has_translation {
+        return None;
+    }
+    let mut tuple = [0.0; 7];
+    for parameter in transformation.parameters() {
+        let Some(slot) = HELMERT_CODES
+            .iter()
+            .position(|code| parameter.code() == *code)
+        else {
+            continue;
+        };
+        let ParameterValue::Measure(measure) = parameter.value() else {
+            continue;
+        };
+        tuple[slot] = helmert_component(slot, measure);
+    }
+    Some(tuple)
+}
+
+fn helmert_component(slot: usize, measure: &Measure) -> f64 {
+    if slot <= 2 {
+        return measure.si_value();
+    }
+    if slot == 6 {
+        let factor = measure.unit().conversion_to_si();
+        if factor == 0.0 || (factor - 1e-6).abs() <= 1e-15 {
+            return measure.value();
+        }
+        return measure.si_value() / 1e-6;
+    }
+    if measure.unit().code() == "9104" || measure.unit().conversion_to_si() == 0.0 {
+        return measure.value();
+    }
+    let arc_second = std::f64::consts::PI / 180.0 / 3600.0;
+    measure.si_value() / arc_second
+}
+
+fn tuple_is_null(tuple: [f64; 7]) -> bool {
+    tuple.iter().all(|value| value.abs() <= 1e-9)
 }
 
 fn stamp_promoted(identified: &mut Identified) {
