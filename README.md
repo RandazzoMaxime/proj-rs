@@ -125,7 +125,7 @@ The same goes for the CLI cases in [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md
 
 | Suite | Ported and passing | Not yet | |
 |---|---:|---:|:-:|
-| PROJ C++ unit tests | 243 | 1,136 | 🟡 |
+| PROJ C++ unit tests | 264 | 1,114 | 🟡 |
 | `cct` CLI cases | 18 | 0 | ✅ |
 | `cs2cs` CLI cases | 84 | 59 | 🟡 |
 | `proj` CLI cases | 2 | 2 | 🟡 |
