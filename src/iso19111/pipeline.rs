@@ -55,6 +55,9 @@ pub(crate) struct PipelineFormatter {
     optimize_units: bool,
     /// `(official name, PROJ name)` of each grid the database renames.
     grid_names: Vec<(String, String)>,
+    /// Whether the grid and deformation methods write their steps. Off, they are
+    /// unimplemented, so the candidate selection of `cs2cs` is unchanged.
+    grid_steps: bool,
 }
 
 impl PipelineFormatter {
@@ -65,6 +68,16 @@ impl PipelineFormatter {
             grid_names,
             ..Self::default()
         }
+    }
+
+    /// Lets the grid and deformation methods write their steps.
+    pub(crate) fn with_grid_steps(mut self) -> Self {
+        self.grid_steps = true;
+        self
+    }
+
+    pub(crate) fn grid_steps(&self) -> bool {
+        self.grid_steps
     }
 
     /// The name a grid is written under.

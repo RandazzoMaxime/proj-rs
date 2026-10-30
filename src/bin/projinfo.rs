@@ -1005,7 +1005,7 @@ fn candidates(options: &Options) -> Result<String, String> {
         }
     }
     if options.quiet && !operations.is_empty() {
-        return Ok(operation_bodies(&source, &operations[0], options));
+        return Ok(operation_bodies(&db, &source, &operations[0], options));
     }
     let mut out = format!("Candidate operations found: {}\n{note}", operations.len());
     for (index, operation) in operations.iter().enumerate() {
@@ -1022,7 +1022,7 @@ fn candidates(options: &Options) -> Result<String, String> {
             continue;
         }
         if options.dialects.contains(&Dialect::Proj) {
-            if let Some(proj) = operation_proj(&source, operation, proj_lines(options)) {
+            if let Some(proj) = operation_proj(&db, &source, operation, proj_lines(options)) {
                 out.push_str("\nPROJ string:\n");
                 out.push_str(&proj);
                 out.push('\n');
@@ -1142,13 +1142,14 @@ fn wkt_lines(options: &Options) -> proj_rs::WktLines {
 
 /// The text `-q` prints for one object: its PROJ string, then its WKT2:2019, with no headers.
 fn operation_bodies(
+    db: &proj_rs::DatabaseContext,
     source: &proj_rs::Crs,
     operation: &proj_rs::CoordinateOperation,
     options: &Options,
 ) -> String {
     let mut out = String::new();
     if options.dialects.contains(&Dialect::Proj) {
-        if let Some(proj) = operation_proj(source, operation, proj_lines(options)) {
+        if let Some(proj) = operation_proj(db, source, operation, proj_lines(options)) {
             out.push_str(&proj);
             out.push('\n');
         }
@@ -1257,18 +1258,16 @@ fn operation_heading(operation: &proj_rs::CoordinateOperation) -> String {
 }
 
 fn operation_proj(
+    db: &proj_rs::DatabaseContext,
     source: &proj_rs::Crs,
     operation: &proj_rs::CoordinateOperation,
     lines: proj_rs::ProjLines,
 ) -> Option<String> {
     match operation {
         proj_rs::CoordinateOperation::Conversion(conversion) => conversion_proj(source, conversion),
-        proj_rs::CoordinateOperation::Transformation(transformation) => {
-            transformation.export_to_proj_string(lines).ok()
-        }
-        proj_rs::CoordinateOperation::Concatenated(concatenated) => {
-            concatenated.export_to_proj_string(lines).ok()
-        }
+        _ => operation
+            .export_to_proj_string_with_database(db, lines)
+            .ok(),
     }
 }
 

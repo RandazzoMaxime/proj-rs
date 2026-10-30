@@ -24,6 +24,18 @@ fn export(code: &str) -> Result<String, String> {
     }
 }
 
+/// As [`export`], with the database of the context, so grid names read as PROJ writes them.
+fn export_with_database(code: &str) -> Result<String, String> {
+    let db = DatabaseContext::create().map_err(|error| error.to_string())?;
+    let factory = AuthorityFactory::create(&db, "EPSG");
+    let operation = factory
+        .create_coordinate_operation(code, AlternativeGridNames::Official)
+        .map_err(|error| error.to_string())?;
+    operation
+        .export_to_proj_string_with_database(&db, ProjLines::Multi)
+        .map_err(|error| error.to_string())
+}
+
 #[test]
 fn geog2d_geocentric_translations_9603() {
     let text = export("1055").expect("export");
@@ -249,4 +261,182 @@ fn concatenated_helmert_with_pm() {
 fn molodensky_badekas_step_is_unimplemented() {
     let error = export("5192").expect_err("a Molodensky-Badekas step is not written");
     assert!(error.contains("Unimplemented"), "{error}");
+}
+
+// Grid and deformation methods: `projinfo -k operation EPSG:<code> -o PROJ -q` from PROJ 9.9.0.
+
+#[test]
+fn geoid_1048_5656() {
+    let text = export_with_database("5656").expect("export");
+    assert_eq!(
+        text,
+        r#"+proj=pipeline
+  +step +proj=axisswap +order=2,1
+  +step +proj=unitconvert +xy_in=deg +xy_out=rad
+  +step +inv +proj=vgridshift +grids=au_ga_AUSGeoid09_V1.01.tif +multiplier=1
+  +step +proj=unitconvert +xy_in=rad +xy_out=deg
+  +step +proj=axisswap +order=2,1"#
+    );
+}
+
+#[test]
+fn geoid_1048_8451() {
+    let text = export_with_database("8451").expect("export");
+    assert_eq!(
+        text,
+        r#"+proj=pipeline
+  +step +proj=axisswap +order=2,1
+  +step +proj=unitconvert +xy_in=deg +xy_out=rad
+  +step +inv +proj=vgridshift +grids=au_ga_AUSGeoid2020_20180201.tif
+        +multiplier=1
+  +step +proj=unitconvert +xy_in=rad +xy_out=deg
+  +step +proj=axisswap +order=2,1"#
+    );
+}
+
+#[test]
+fn geoid_1103_9708() {
+    let text = export_with_database("9708").expect("export");
+    assert_eq!(
+        text,
+        r#"+proj=pipeline
+  +step +proj=axisswap +order=2,1
+  +step +proj=unitconvert +xy_in=deg +xy_out=rad
+  +step +inv +proj=vgridshift +grids=us_nga_egm96_15.tif +multiplier=1
+  +step +proj=unitconvert +xy_in=rad +xy_out=deg
+  +step +proj=axisswap +order=2,1"#
+    );
+}
+
+#[test]
+fn geoid_1072_9916() {
+    let text = export_with_database("9916").expect("export");
+    assert_eq!(
+        text,
+        r#"+proj=pipeline
+  +step +proj=axisswap +order=2,1
+  +step +proj=unitconvert +xy_in=deg +xy_out=rad
+  +step +inv +proj=vgridshift +grids=uk_os_OSGM15_Belfast.tif +multiplier=1
+  +step +proj=unitconvert +xy_in=rad +xy_out=deg
+  +step +proj=axisswap +order=2,1"#
+    );
+}
+
+#[test]
+fn vertical_1084_9312() {
+    let text = export_with_database("9312").expect("export");
+    assert_eq!(
+        text,
+        r#"+proj=vgridshift +grids=nz_linz_auckht1946-nzvd2016.tif +multiplier=1"#
+    );
+}
+
+#[test]
+fn vertical_1085_9553() {
+    let text = export_with_database("9553").expect("export");
+    assert_eq!(
+        text,
+        r#"+proj=vgridshift +grids=pt_2019z.asc +multiplier=1"#
+    );
+}
+
+#[test]
+fn vertical_1101_9662() {
+    let text = export_with_database("9662").expect("export");
+    assert_eq!(
+        text,
+        r#"+proj=vgridshift +grids=gugik-evrf2007.txt +multiplier=1"#
+    );
+}
+
+#[test]
+fn vertcon_9658_7969() {
+    let text = export_with_database("7969").expect("export");
+    assert_eq!(
+        text,
+        r#"+proj=vgridshift +grids=us_noaa_vertconw.tif +multiplier=1"#
+    );
+}
+
+#[test]
+fn vertical_1080_9275() {
+    let text = export_with_database("9275").expect("export");
+    assert_eq!(
+        text,
+        r#"+proj=vgridshift +grids=at_bev_GV_Hoehengrid_V1.tif +multiplier=1"#
+    );
+}
+
+#[test]
+fn nrcan_1126_10518() {
+    let text = export_with_database("10518").expect("export");
+    assert_eq!(
+        text,
+        r#"+proj=vgridshift +grids=ca_nrc_HT2_1997_CGG2013a.tif +multiplier=-1"#
+    );
+}
+
+#[test]
+fn defmodel_1079_9084() {
+    let text = export_with_database("9084").expect("export");
+    assert_eq!(
+        text,
+        r#"+proj=pipeline
+  +step +proj=axisswap +order=2,1
+  +step +proj=unitconvert +xy_in=deg +z_in=m +xy_out=rad +z_out=m
+  +step +inv +proj=defmodel +model=nz_linz_nzgd2000-20000101.json
+  +step +proj=unitconvert +xy_in=rad +z_in=m +xy_out=deg +z_out=m
+  +step +proj=axisswap +order=2,1"#
+    );
+}
+
+#[test]
+fn hgridshift_9615_1295() {
+    let text = export_with_database("1295").expect("export");
+    assert_eq!(
+        text,
+        r#"+proj=pipeline
+  +step +proj=axisswap +order=2,1
+  +step +proj=unitconvert +xy_in=deg +xy_out=rad
+  +step +proj=hgridshift +grids=RGNC1991_NEA74Noumea.gsb
+  +step +proj=unitconvert +xy_in=rad +xy_out=deg
+  +step +proj=axisswap +order=2,1"#
+    );
+}
+
+#[test]
+fn hgridshift_9614_1312() {
+    let text = export_with_database("1312").expect("export");
+    assert_eq!(
+        text,
+        r#"+proj=pipeline
+  +step +proj=axisswap +order=2,1
+  +step +proj=unitconvert +xy_in=deg +xy_out=rad
+  +step +proj=hgridshift +grids=ca_nrc_ntv1_can.tif
+  +step +proj=unitconvert +xy_in=rad +xy_out=deg
+  +step +proj=axisswap +order=2,1"#
+    );
+}
+
+#[test]
+fn tinshift_1138_10703() {
+    let text = export_with_database("10703").expect("export");
+    assert_eq!(
+        text,
+        r#"+proj=pipeline
+  +step +proj=axisswap +order=2,1
+  +step +proj=tinshift +file=fi_nls_ykj_etrs35fin.json"#
+    );
+}
+
+#[test]
+fn tinshift_1145_10854() {
+    let text = export_with_database("10854").expect("export");
+    assert_eq!(
+        text,
+        r#"+proj=pipeline
+  +step +proj=axisswap +order=2,1
+  +step +proj=tinshift +file=no_kv_ETRS89NO_NGO48_TIN.json
+  +step +proj=axisswap +order=2,1"#
+    );
 }

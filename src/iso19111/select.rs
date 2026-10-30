@@ -293,7 +293,7 @@ fn proj_grids(
 
 /// `(official name, PROJ name)` of the grids of `operation` that the database
 /// renames, as `substitutePROJAlternativeGridNames` writes them.
-fn proj_grid_names(
+pub(crate) fn proj_grid_names(
     operation: &CoordinateOperation,
     db: &DatabaseContext,
 ) -> Result<Vec<(String, String)>, FactoryError> {
