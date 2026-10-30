@@ -705,7 +705,7 @@ fn expand_datum(params: &mut Params) -> Result<(), CreateError> {
 }
 
 fn named_ellipsoid(name: &str) -> Result<Ellipsoid, CreateError> {
-    let Some((_, first, second, rf)) = PJ_ELLPS.iter().find(|(id, ..)| *id == name) else {
+    let Some((_, _, first, second, rf)) = PJ_ELLPS.iter().find(|(id, ..)| *id == name) else {
         return Err(CreateError::IllegalValue("ellps"));
     };
     let built = if *rf {

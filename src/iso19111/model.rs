@@ -648,6 +648,30 @@ impl Ellipsoid {
         }
     }
 
+    /// Ellipsoid given by its two semi-axes, with no authority code.
+    ///
+    /// This is `Ellipsoid::createTwoAxis` for a name that is not in `proj.db`.
+    #[must_use]
+    pub fn create_two_axis(
+        name: impl Into<String>,
+        semi_major_metre: f64,
+        semi_minor_metre: f64,
+    ) -> Self {
+        Self {
+            identified: Identified::named(name),
+            semi_major: Measure {
+                value: semi_major_metre,
+                unit: UnitOfMeasure::metre(),
+            },
+            inverse_flattening: None,
+            semi_minor: Some(Measure {
+                value: semi_minor_metre,
+                unit: UnitOfMeasure::metre(),
+            }),
+            body: "Earth".to_owned(),
+        }
+    }
+
     /// WGS 84, EPSG:7030.
     #[must_use]
     pub fn wgs84() -> Self {
@@ -2745,12 +2769,13 @@ pub struct CompoundCRS {
 }
 
 impl CompoundCRS {
-    /// Build a compound CRS.
+    /// Build a compound CRS. An empty name becomes the component names joined
+    /// with ` + `.
     ///
     /// # Errors
     ///
-    /// Fewer than two components are given. PROJ also rejects two horizontal
-    /// CRS; that check is `compoundCRS_invalid`.
+    /// Fewer than two components are given, two horizontal CRS are given, or a
+    /// 3D geographic CRS is combined with a vertical CRS.
     pub fn create(name: impl Into<String>, components: Vec<Crs>) -> Result<Self, FactoryError> {
         if components.len() < 2 {
             return Err(FactoryError::Invalid(
@@ -2763,6 +2788,25 @@ impl CompoundCRS {
                 "a compound CRS cannot contain two horizontal CRS".to_owned(),
             ));
         }
+        let geographic_3d = components
+            .iter()
+            .any(|crs| matches!(crs, Crs::Geographic(g) if g.coordinate_system.axes.len() == 3));
+        let vertical = components.iter().any(|crs| matches!(crs, Crs::Vertical(_)));
+        if geographic_3d && vertical {
+            return Err(FactoryError::Invalid(
+                "a 3D geographic CRS cannot be combined with a vertical CRS".to_owned(),
+            ));
+        }
+        let name = name.into();
+        let name = if name.is_empty() {
+            components
+                .iter()
+                .map(Crs::name)
+                .collect::<Vec<_>>()
+                .join(" + ")
+        } else {
+            name
+        };
         Ok(Self {
             identified: Identified::named(name),
             components,
