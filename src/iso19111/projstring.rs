@@ -496,12 +496,7 @@ fn towgs84_clause(values: &[f64; 7]) -> String {
 }
 
 fn linear_unit_clause(unit: &UnitOfMeasure) -> Option<String> {
-    match unit.name() {
-        "metre" => Some("+units=m".to_owned()),
-        "foot" | "Foot" => Some("+units=ft".to_owned()),
-        "US survey foot" => Some("+units=us-ft".to_owned()),
-        _ => None,
-    }
+    linear_proj_unit(unit.conversion_to_si()).map(|id| format!("+units={id}"))
 }
 
 impl GeocentricCRS {

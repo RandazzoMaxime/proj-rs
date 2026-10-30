@@ -1550,3 +1550,190 @@ fn io_projparse_longlat_pm_overriding_datum() {
     assert_eq!(datum.name(), "Unknown based on WGS 84 ellipsoid");
     assert_eq!(datum.prime_meridian().name(), "Ferro");
 }
+
+// `WKTParser` on WKT1 `PROJCS` with a single projection: the PROJ string it
+// exports, and the axis names and directions it gets.
+
+const WKT1_WGS84_GEOGCS: &str = "GEOGCS[\"unknown\",\
+    DATUM[\"WGS_1984\",\
+        SPHEROID[\"WGS 84\",6378137,298.257223563,AUTHORITY[\"EPSG\",\"7030\"]],\
+        AUTHORITY[\"EPSG\",\"6326\"]],\
+    PRIMEM[\"Greenwich\",0,AUTHORITY[\"EPSG\",\"8901\"]],\
+    UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]]]";
+
+fn wkt1_polar_stereographic(parameters: &str) -> String {
+    format!(
+        "PROJCS[\"unknown\",{WKT1_WGS84_GEOGCS},\
+         PROJECTION[\"Polar_Stereographic\"],{parameters},\
+         UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]]]"
+    )
+}
+
+fn projected_from_wkt1(wkt: &str) -> proj_rs::ProjectedCRS {
+    parse(wkt).projected().expect("crs").clone()
+}
+
+fn projected_proj_string(crs: &proj_rs::ProjectedCRS) -> String {
+    crs.export_to_proj_string().expect("PROJ string")
+}
+
+#[test]
+fn wkt_parse_wkt1_mercator_1sp_with_latitude_origin_0() {
+    let crs = projected_from_wkt1(
+        "PROJCS[\"unnamed\",\
+            GEOGCS[\"WGS 84\",\
+                DATUM[\"unknown\",SPHEROID[\"WGS84\",6378137,298.257223563]],\
+                PRIMEM[\"Greenwich\",0],\
+                UNIT[\"degree\",0.0174532925199433]],\
+            PROJECTION[\"Mercator_1SP\"],\
+            PARAMETER[\"latitude_of_origin\",0],\
+            PARAMETER[\"central_meridian\",0],\
+            PARAMETER[\"scale_factor\",1],\
+            PARAMETER[\"false_easting\",0],\
+            PARAMETER[\"false_northing\",0],\
+            UNIT[\"Meter\",1],\
+            AXIS[\"Easting\",EAST],\
+            AXIS[\"Northing\",NORTH]]",
+    );
+    let mut formatter = WktFormatter::create(WktConvention::Wkt1Gdal);
+    let wkt = Crs::Projected(crs)
+        .export_to_wkt(&mut formatter)
+        .expect("WKT1");
+    assert!(wkt.contains("Mercator_1SP"), "{wkt}");
+}
+
+#[test]
+fn wkt_parse_wkt1_mercator_1sp_without_scale_factor() {
+    // See https://github.com/OSGeo/PROJ/issues/1700
+    let wkt = "PROJCS[\"unnamed\",\
+        GEOGCS[\"WGS 84\",\
+            DATUM[\"unknown\",SPHEROID[\"WGS84\",6378137,298.257223563]],\
+            PRIMEM[\"Greenwich\",0],\
+            UNIT[\"degree\",0.0174532925199433]],\
+        PROJECTION[\"Mercator_1SP\"],\
+        PARAMETER[\"central_meridian\",0],\
+        PARAMETER[\"false_easting\",0],\
+        PARAMETER[\"false_northing\",0],\
+        UNIT[\"Meter\",1],\
+        AXIS[\"Easting\",EAST],\
+        AXIS[\"Northing\",NORTH]]";
+    let mut parser = WktParser::new();
+    parser
+        .set_strictness(proj_rs::WktStrictness::Lenient)
+        .attach_database(DatabaseContext::create().expect("proj.db"));
+    let obj = parser.create_from_wkt(wkt).expect("wkt");
+    assert!(!parser.warnings().is_empty());
+
+    let crs = obj.projected().expect("crs").clone();
+    let mut formatter = WktFormatter::create(WktConvention::Wkt1Gdal);
+    let got = Crs::Projected(crs.clone())
+        .export_to_wkt(&mut formatter)
+        .expect("WKT1");
+    assert!(got.contains("PARAMETER[\"scale_factor\",1]"), "{got}");
+    assert_eq!(
+        projected_proj_string(&crs),
+        "+proj=merc +lon_0=0 +k=1 +x_0=0 +y_0=0 +ellps=WGS84 +units=m +no_defs +type=crs"
+    );
+}
+
+#[test]
+fn wkt_parse_wkt1_polar_stereographic_latitude_of_origin_70() {
+    let crs = projected_from_wkt1(&wkt1_polar_stereographic(
+        "PARAMETER[\"latitude_of_origin\",70],\
+         PARAMETER[\"central_meridian\",2],\
+         PARAMETER[\"false_easting\",3],\
+         PARAMETER[\"false_northing\",4],",
+    ));
+    assert_eq!(
+        projected_proj_string(&crs),
+        "+proj=stere +lat_0=90 +lat_ts=70 +lon_0=2 +x_0=3 +y_0=4 +datum=WGS84 +units=m +no_defs +type=crs"
+    );
+
+    let axes = crs.coordinate_system().axes();
+    assert_eq!(axes[0].name(), "Easting");
+    assert_eq!(axes[0].direction(), "south");
+    assert_eq!(axes[1].name(), "Northing");
+    assert_eq!(axes[1].direction(), "south");
+}
+
+#[test]
+fn wkt_parse_wkt1_polar_stereographic_latitude_of_origin_minus_70() {
+    let crs = projected_from_wkt1(&wkt1_polar_stereographic(
+        "PARAMETER[\"latitude_of_origin\",-70],\
+         PARAMETER[\"central_meridian\",2],\
+         PARAMETER[\"false_easting\",3],\
+         PARAMETER[\"false_northing\",4],",
+    ));
+    let axes = crs.coordinate_system().axes();
+    assert_eq!(axes[0].name(), "Easting");
+    assert_eq!(axes[0].direction(), "north");
+    assert_eq!(axes[1].name(), "Northing");
+    assert_eq!(axes[1].direction(), "north");
+}
+
+#[test]
+fn wkt_parse_wkt1_polar_stereographic_latitude_of_origin_90() {
+    let crs = projected_from_wkt1(&wkt1_polar_stereographic(
+        "PARAMETER[\"latitude_of_origin\",90],\
+         PARAMETER[\"central_meridian\",2],\
+         PARAMETER[\"false_easting\",3],\
+         PARAMETER[\"false_northing\",4],",
+    ));
+    assert_eq!(
+        projected_proj_string(&crs),
+        "+proj=stere +lat_0=90 +lat_ts=90 +lon_0=2 +x_0=3 +y_0=4 +datum=WGS84 +units=m +no_defs +type=crs"
+    );
+}
+
+#[test]
+fn wkt_parse_wkt1_polar_stereographic_latitude_of_origin_90_scale_factor_1() {
+    let crs = projected_from_wkt1(&wkt1_polar_stereographic(
+        "PARAMETER[\"latitude_of_origin\",90],\
+         PARAMETER[\"central_meridian\",2],\
+         PARAMETER[\"scale_factor\",1],\
+         PARAMETER[\"false_easting\",3],\
+         PARAMETER[\"false_northing\",4],",
+    ));
+    assert_eq!(
+        projected_proj_string(&crs),
+        "+proj=stere +lat_0=90 +lat_ts=90 +lon_0=2 +x_0=3 +y_0=4 +datum=WGS84 +units=m +no_defs +type=crs"
+    );
+}
+
+#[test]
+fn wkt_parse_wkt1_polar_stereographic_scale_factor() {
+    let crs = projected_from_wkt1(&wkt1_polar_stereographic(
+        "PARAMETER[\"latitude_of_origin\",90],\
+         PARAMETER[\"central_meridian\",2],\
+         PARAMETER[\"scale_factor\",0.99],\
+         PARAMETER[\"false_easting\",3],\
+         PARAMETER[\"false_northing\",4],",
+    ));
+    assert_eq!(
+        projected_proj_string(&crs),
+        "+proj=stere +lat_0=90 +lon_0=2 +k=0.99 +x_0=3 +y_0=4 +datum=WGS84 +units=m +no_defs +type=crs"
+    );
+}
+
+#[test]
+fn wkt_parse_wkt1_spherical_cross_track_height() {
+    let crs = projected_from_wkt1(
+        "PROJCS[\"unknown\",\
+            GEOGCS[\"unknown\",\
+                DATUM[\"WGS_1984\",\
+                    SPHEROID[\"WGS 84\",6378137,298.257223563,AUTHORITY[\"EPSG\",\"7030\"]],\
+                    AUTHORITY[\"EPSG\",\"6326\"]],\
+                PRIMEM[\"Greenwich\",0,AUTHORITY[\"EPSG\",\"8901\"]],\
+                UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]]],\
+            PROJECTION[\"Spherical_Cross_Track_Height\"],\
+            PARAMETER[\"peg_point_latitude\",1],\
+            PARAMETER[\"peg_point_longitude\",2],\
+            PARAMETER[\"peg_point_heading\",3],\
+            PARAMETER[\"peg_point_height\",4],\
+            UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]]]",
+    );
+    assert_eq!(
+        projected_proj_string(&crs),
+        "+proj=sch +plat_0=1 +plon_0=2 +phdg_0=3 +h_0=4 +datum=WGS84 +units=m +no_defs +type=crs"
+    );
+}

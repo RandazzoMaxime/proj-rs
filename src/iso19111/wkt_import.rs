@@ -2065,7 +2065,7 @@ impl WktParser {
             .map(|axis| axis.unit().clone())
             .unwrap_or_else(UnitOfMeasure::degree);
         let cs = self.build_cs(node.child(&["CS"]), node, angular.clone())?;
-        let CoordinateSystem::Cartesian(coordinate_system) = cs else {
+        let CoordinateSystem::Cartesian(mut coordinate_system) = cs else {
             return Err(invalid("projected CRS requires a Cartesian CS"));
         };
         let linear = coordinate_system
@@ -2080,6 +2080,11 @@ impl WktParser {
         } else {
             return Err(invalid("missing CONVERSION"));
         };
+        if node.child(&["CS"]).is_none() && node.children_named("AXIS").is_empty() {
+            if let Some(pole) = polar_pole_cs(&conversion, &coordinate_system) {
+                coordinate_system = pole;
+            }
+        }
         let crs = ProjectedCRS {
             identified: props.identified(),
             base,
@@ -2175,6 +2180,28 @@ impl WktParser {
         }
         let mut method_name = strip_quotes(&projection.children[0]);
         let mut parameters = self.parameters_of(node, &linear, &angular)?;
+        let polar_variant_b = ci_eq(&method_name, "Polar_Stereographic")
+            && parameters
+                .iter()
+                .any(|parameter| ci_eq(parameter.name(), "latitude_of_origin"))
+            && parameters
+                .iter()
+                .filter(|parameter| ci_eq(parameter.name(), "scale_factor"))
+                .all(is_one_measure);
+        if polar_variant_b {
+            parameters.retain(|parameter| !ci_eq(parameter.name(), "scale_factor"));
+            for parameter in &mut parameters {
+                if ci_eq(&parameter.name, "latitude_of_origin") {
+                    parameter.name = "Latitude of standard parallel".to_owned();
+                    parameter.code = "8832".to_owned();
+                    parameter.code_space = "EPSG".to_owned();
+                } else if ci_eq(&parameter.name, "central_meridian") {
+                    parameter.name = "Longitude of origin".to_owned();
+                    parameter.code = "8833".to_owned();
+                    parameter.code_space = "EPSG".to_owned();
+                }
+            }
+        }
         if ci_eq(&method_name, "Mercator_1SP") && !has_center_latitude(node) {
             let origin = parameters
                 .iter()
@@ -2197,7 +2224,11 @@ impl WktParser {
                 parameter("Latitude of natural origin", "8801", 0.0, &angular),
             );
         }
-        let (mapped_name, code) = wkt1_method(&method_name);
+        let (mapped_name, code) = if polar_variant_b {
+            ("Polar Stereographic (variant B)", "9829")
+        } else {
+            wkt1_method(&method_name)
+        };
         if !code.is_empty() {
             method_name = mapped_name.to_owned();
         }
@@ -2209,6 +2240,22 @@ impl WktParser {
                     parameter.code = code.to_owned();
                 }
             }
+        }
+        let scale_expected = code
+            .parse()
+            .ok()
+            .and_then(super::parammap::method_by_code)
+            .is_some_and(|method| method.params.iter().any(|param| param.epsg_code == 8805));
+        if scale_expected && !parameters.iter().any(|parameter| parameter.code == "8805") {
+            self.recover(
+                "The WKT string lacks a value for Scale factor at natural origin. Default it to 1.",
+            )?;
+            parameters.push(parameter(
+                "Scale factor at natural origin",
+                "8805",
+                1.0,
+                &UnitOfMeasure::unity(),
+            ));
         }
         Ok(Conversion {
             identified: Identified::named("unknown"),
@@ -2796,6 +2843,44 @@ fn easting_northing(unit: UnitOfMeasure) -> CartesianCS {
             Axis::new("Northing", "N", "north", unit),
         ],
     }
+}
+
+/// Axes PROJ gives a polar stereographic CRS whose WKT1 has no `AXIS`: both
+/// point south at the north pole and north at the south pole. Variant A needs
+/// a pole as latitude of origin, variant B takes the sign of its standard
+/// parallel.
+fn polar_pole_cs(conversion: &Conversion, cs: &CartesianCS) -> Option<CartesianCS> {
+    let (lat_code, pole_only) = match conversion.method.code.as_str() {
+        "9810" => ("8801", true),
+        "9829" => ("8832", false),
+        _ => return None,
+    };
+    let parameter = conversion
+        .parameters
+        .iter()
+        .find(|parameter| parameter.code == lat_code)?;
+    let ParameterValue::Measure(measure) = &parameter.value else {
+        return None;
+    };
+    let degrees = measure.value * measure.unit.factor / UnitOfMeasure::degree().factor;
+    if pole_only && (degrees.abs() - 90.0).abs() >= 1e-10 {
+        return None;
+    }
+    let direction = if degrees > 0.0 {
+        "south"
+    } else if degrees < 0.0 {
+        "north"
+    } else {
+        return None;
+    };
+    let unit = cs.axes.first()?.unit.clone();
+    Some(CartesianCS {
+        identified: Identified::default(),
+        axes: vec![
+            Axis::new("Easting", "E", direction, unit.clone()),
+            Axis::new("Northing", "N", direction, unit),
+        ],
+    })
 }
 
 fn guess_parameter_unit(
