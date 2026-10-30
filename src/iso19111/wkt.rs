@@ -1554,6 +1554,9 @@ fn export_conversion(
         formatter.add_quoted(conversion.name());
         export_method(&conversion.method, formatter)?;
         for parameter in &conversion.parameters {
+            if omitted_zero_parameter(conversion, parameter) {
+                continue;
+            }
             export_parameter(parameter, formatter)?;
         }
         formatter.format_ids(&conversion.identified.identifiers);
@@ -1561,6 +1564,19 @@ fn export_conversion(
         return Ok(());
     }
     export_conversion_wkt1(conversion, formatter, base_shape)
+}
+
+/// PROJ leaves out a zero latitude of origin in Equidistant Cylindrical, and a
+/// zero false easting or northing in Vertical Perspective, because EPSG does not
+/// list them for those methods.
+fn omitted_zero_parameter(conversion: &Conversion, parameter: &Parameter) -> bool {
+    let zero =
+        matches!(&parameter.value, ParameterValue::Measure(measure) if measure.si_value() == 0.0);
+    match (conversion.method.code.as_str(), parameter.code.as_str()) {
+        ("1028" | "1029", "8801") => zero,
+        ("9838", "8806" | "8807") => zero,
+        _ => false,
+    }
 }
 
 fn export_conversion_wkt1(
@@ -1669,12 +1685,8 @@ fn export_conversion_wkt1(
         formatter.end_node();
         let mapped = lookup_method(&conversion.method);
         for parameter in &conversion.parameters {
-            if conversion.method.code == "1029" && parameter.code == "8801" {
-                if let ParameterValue::Measure(measure) = &parameter.value {
-                    if measure.si_value() == 0.0 {
-                        continue;
-                    }
-                }
+            if omitted_zero_parameter(conversion, parameter) {
+                continue;
             }
             let Some(mut name) = wkt1_parameter_name(mapped, parameter) else {
                 continue;

@@ -517,7 +517,16 @@ impl super::model::Conversion {
                 ));
             }
         }
-        if code == 9804 {
+        if code == 9805 {
+            if let Some(scale) = self.measure_of_code(8805) {
+                if (scale.si_value() - 1.0).abs() > 1e-10 {
+                    return Err(FactoryError::Format(
+                        "Unexpected presence of scale factor in Mercator (variant B)".to_owned(),
+                    ));
+                }
+            }
+        }
+        if code == 9804 || code == 9805 {
             let latitude = self.numeric_degrees(8801);
             if latitude != 0.0 {
                 return Err(FactoryError::Format(
@@ -1303,7 +1312,13 @@ impl super::model::Conversion {
         Self::from_name(
             props,
             "Equidistant Cylindrical",
-            angles_lengths(latitude, longitude, false_easting, false_northing),
+            vec![
+                ParameterValue::angle(latitude),
+                ParameterValue::angle(0.0),
+                ParameterValue::angle(longitude),
+                ParameterValue::length(false_easting),
+                ParameterValue::length(false_northing),
+            ],
         )
     }
 
@@ -1322,7 +1337,13 @@ impl super::model::Conversion {
         Self::from_name(
             props,
             "Equidistant Cylindrical (Spherical)",
-            angles_lengths(latitude, longitude, false_easting, false_northing),
+            vec![
+                ParameterValue::angle(latitude),
+                ParameterValue::angle(0.0),
+                ParameterValue::angle(longitude),
+                ParameterValue::length(false_easting),
+                ParameterValue::length(false_northing),
+            ],
         )
     }
 
@@ -1605,6 +1626,92 @@ impl super::model::Conversion {
             vec![
                 ParameterValue::angle(latitude),
                 ParameterValue::angle(longitude),
+                ParameterValue::length(false_easting),
+                ParameterValue::length(false_northing),
+            ],
+        )
+    }
+
+    /// Hotine Oblique Mercator Two Point Natural Origin. It has no EPSG method code.
+    ///
+    /// # Errors
+    ///
+    /// The method map is missing.
+    pub fn create_hotine_oblique_mercator_two_point_natural_origin(
+        props: &OpProps,
+        latitude_centre: f64,
+        latitude_1: f64,
+        longitude_1: f64,
+        latitude_2: f64,
+        longitude_2: f64,
+        scale: f64,
+        easting: f64,
+        northing: f64,
+    ) -> Result<Self, FactoryError> {
+        Self::from_name(
+            props,
+            "Hotine Oblique Mercator Two Point Natural Origin",
+            vec![
+                ParameterValue::angle(latitude_centre),
+                ParameterValue::angle(latitude_1),
+                ParameterValue::angle(longitude_1),
+                ParameterValue::angle(latitude_2),
+                ParameterValue::angle(longitude_2),
+                ParameterValue::scale(scale),
+                ParameterValue::length(easting),
+                ParameterValue::length(northing),
+            ],
+        )
+    }
+
+    /// International Map of the World Polyconic. It has no EPSG method code.
+    ///
+    /// # Errors
+    ///
+    /// The method map is missing.
+    pub fn create_international_map_world_polyconic(
+        props: &OpProps,
+        longitude: f64,
+        latitude_1: f64,
+        latitude_2: f64,
+        false_easting: f64,
+        false_northing: f64,
+    ) -> Result<Self, FactoryError> {
+        Self::from_name(
+            props,
+            "International Map of the World Polyconic",
+            vec![
+                ParameterValue::angle(longitude),
+                ParameterValue::angle(latitude_1),
+                ParameterValue::angle(latitude_2),
+                ParameterValue::length(false_easting),
+                ParameterValue::length(false_northing),
+            ],
+        )
+    }
+
+    /// Laborde Oblique Mercator, EPSG:9813.
+    ///
+    /// # Errors
+    ///
+    /// The method map is missing.
+    pub fn create_laborde_oblique_mercator(
+        props: &OpProps,
+        latitude: f64,
+        longitude: f64,
+        azimuth: f64,
+        scale: f64,
+        false_easting: f64,
+        false_northing: f64,
+    ) -> Result<Self, FactoryError> {
+        Self::from_code(
+            props,
+            9813,
+            vec![
+                ParameterValue::angle(latitude),
+                ParameterValue::angle(longitude),
+                ParameterValue::angle(azimuth),
+                ParameterValue::scale(scale),
                 ParameterValue::length(false_easting),
                 ParameterValue::length(false_northing),
             ],
