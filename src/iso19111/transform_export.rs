@@ -4,10 +4,15 @@
 //!
 //! Written here: affine (2D, 3D, similarity), Cartesian grid offsets, longitude
 //! rotation, axis-order reversal, height/depth reversal, geographic/geocentric
-//! conversion, change of vertical unit, and the Helmert family (geocentric
+//! conversion, change of vertical unit, the Helmert family (geocentric
 //! translations, position vector, coordinate frame, and their time-dependent
-//! forms). Any other method is `Unimplemented`, the error PROJ raises for a
-//! method its exporter lacks.
+//! forms), and the grid methods: `hgridshift` (NTv1, NTv2), `vgridshift` (geoid
+//! and vertical grids), `defmodel` (New Zealand), and the `tinshift` JSON methods
+//! on projected CRS (1138) and geographic 2D (1145). The grid methods are written
+//! only by [`CoordinateOperation::export_to_proj_string_with_database`], the export
+//! `projinfo` uses; the `cs2cs` selection still sees them as unimplemented. Any
+//! other method is `Unimplemented`, the error PROJ raises for a method its
+//! exporter lacks.
 //!
 //! Coordinate epochs are not stored by this crate, so PROJ's `set` steps for a
 //! source or target epoch are never written.
@@ -16,10 +21,11 @@ use std::f64::consts::PI;
 
 use super::buildop::names_match;
 use super::equiv::Equivalence;
+use super::factory::DatabaseContext;
 use super::model::{
     Axis, ConcatenatedOperation, CoordinateOperation, CoordinateSystem, Crs, Ellipsoid,
     FactoryError, GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Measure,
-    ParameterValue, ProjectedCRS, Transformation, UnitKind, UnitOfMeasure,
+    ParameterValue, ProjectedCRS, Transformation, UnitKind, UnitOfMeasure, VerticalCRS,
 };
 use super::pipeline::{proj_number, PipelineFormatter, ProjLines};
 use super::projstring::{
@@ -49,6 +55,30 @@ const METHOD_LONGITUDE_ROTATION: i32 = 9601;
 const METHOD_GEOGRAPHIC2D_OFFSETS: i32 = 9619;
 const METHOD_GEOGRAPHIC3D_OFFSETS: i32 = 9660;
 const METHOD_GEOCENTRIC_GRID_IGN: i32 = 1087;
+const METHOD_NTV1: i32 = 9614;
+const METHOD_NTV2: i32 = 9615;
+const METHOD_VERTCON: i32 = 9658;
+const METHOD_NRCAN_BYN: i32 = 1112;
+const METHOD_NRCAN_GEOID_DIFFERENCE: i32 = 1126;
+const METHOD_NEW_ZEALAND_DEFORMATION_MODEL: i32 = 1079;
+const METHOD_TIN_CARTESIAN: i32 = 1138;
+const METHOD_TIN_GEOGRAPHIC2D: i32 = 1145;
+const PARAMETER_LAT_LON_DIFFERENCE_FILE: i32 = 8656;
+const PARAMETER_GEOID_CORRECTION_FILENAME: i32 = 8666;
+const PARAMETER_VERTICAL_OFFSET_FILE: i32 = 8732;
+const PARAMETER_GEOID_MODEL_DIFFERENCE_FILE: i32 = 1063;
+const PARAMETER_POINT_MOTION_VELOCITY_GRID_FILE: i32 = 1050;
+const PARAMETER_TIN_OFFSET_FILE: i32 = 1064;
+
+/// `Geographic3D to GravityRelatedHeight` methods, the codes `isGeographic3DToGravityRelatedHeight` lists.
+const GEOG3D_TO_HEIGHT_METHODS: [i32; 42] = [
+    1025, 1030, 1045, 1047, 1048, 1050, 1059, 1088, 1060, 1072, 1073, 1081, 1083, 1089, 1090, 1091,
+    1092, 1093, 1094, 1095, 1096, 1097, 1098, 1100, 1103, 1105, 1109, 1110, 1115, 1118, 1122, 1124,
+    1126, 1127, 1128, 1135, 9661, 9662, 9663, 9664, 9665, 9635,
+];
+
+/// Vertical grid methods that write `vgridshift` with the multiplier 1, or -1 for NRCan (`isRegularVerticalGridMethod`).
+const REGULAR_VERTICAL_GRID_METHODS: [i32; 6] = [1071, 1080, 1084, 1085, 1129, 1101];
 
 impl Transformation {
     /// `exportToPROJString` of a transformation: the pipeline PROJ writes for its method.
@@ -94,6 +124,34 @@ impl Transformation {
         } else {
             export_forward(self, self.source_crs(), self.target_crs(), formatter)
         }
+    }
+}
+
+impl CoordinateOperation {
+    /// `exportToPROJString` of a transformation or concatenated operation, with the database
+    /// of the formatter: each grid the database renames is written under its PROJ name, as
+    /// `substitutePROJAlternativeGridNames` does before the grid steps.
+    ///
+    /// # Errors
+    ///
+    /// The operation is a conversion, which needs its CRS pair, or a step cannot be written.
+    pub fn export_to_proj_string_with_database(
+        &self,
+        db: &DatabaseContext,
+        lines: ProjLines,
+    ) -> Result<String, FactoryError> {
+        let names = super::select::proj_grid_names(self, db)?;
+        let mut formatter = PipelineFormatter::with_grid_names(names).with_grid_steps();
+        match self {
+            Self::Transformation(transformation) => transformation.export_steps(&mut formatter)?,
+            Self::Concatenated(concatenated) => concatenated.export_steps(&mut formatter)?,
+            Self::Conversion(_) => {
+                return Err(FactoryError::Format(
+                    "a conversion has no PROJ string without its CRS pair".to_owned(),
+                ))
+            }
+        }
+        Ok(formatter.finish(lines))
     }
 }
 
@@ -195,6 +253,9 @@ fn export_forward(
     if code == METHOD_GEOCENTRIC_GRID_IGN {
         return geocentric_grid(operation, source, target, formatter);
     }
+    if grid_shift(operation, source, target, formatter)? {
+        return Ok(());
+    }
     formatter.set_optimize_units();
     if let Some(kind) = helmert_kind(operation) {
         return helmert(operation, kind, source, target, formatter);
@@ -269,6 +330,291 @@ fn geocentric_grid(
     formatter.add_step("pop");
     formatter.add_flag("v_3");
     angular_unit_and_axis_swap(target.coordinate_system().axes(), formatter)
+}
+
+/// The grid and deformation methods of `exportToPROJStringGeneric`. `Ok(false)` when
+/// the method is none of them, or its file parameter is absent, so the caller goes on.
+fn grid_shift(
+    operation: &Transformation,
+    source: Option<&Crs>,
+    target: Option<&Crs>,
+    formatter: &mut PipelineFormatter,
+) -> Result<bool, FactoryError> {
+    if !formatter.grid_steps() {
+        return Ok(false);
+    }
+    Ok(horizontal_grid_shift(operation, source, target, formatter)?
+        || geoid_grid_shift(operation, source, target, formatter)?
+        || vertical_grid_shift(operation, formatter)?
+        || deformation_grid_shift(operation, source, target, formatter)?
+        || tin_shift(operation, source, target, formatter)?)
+}
+
+/// The file of the parameter with EPSG code `code`, when it is a file name.
+fn file_by_code(operation: &Transformation, code: i32) -> Option<String> {
+    operation.parameters().iter().find_map(|parameter| {
+        if parameter.code() != code.to_string() {
+            return None;
+        }
+        match parameter.value() {
+            ParameterValue::Filename(name) => Some(name.clone()),
+            _ => None,
+        }
+    })
+}
+
+/// The vertical CRS of a target: itself, or the vertical component of a compound CRS.
+fn vertical_of(crs: &Crs) -> Option<&VerticalCRS> {
+    match crs {
+        Crs::Vertical(vertical) => Some(vertical),
+        Crs::Compound(compound) => compound.components().iter().find_map(|component| {
+            if let Crs::Vertical(vertical) = component {
+                Some(vertical)
+            } else {
+                None
+            }
+        }),
+        _ => None,
+    }
+}
+
+/// `hgridshift` for NTv1 and NTv2, between the angular unit and axis steps of each geographic CRS.
+fn horizontal_grid_shift(
+    operation: &Transformation,
+    source: Option<&Crs>,
+    target: Option<&Crs>,
+    formatter: &mut PipelineFormatter,
+) -> Result<bool, FactoryError> {
+    let code = epsg_method_code(operation);
+    if code != METHOD_NTV1 && code != METHOD_NTV2 {
+        return Ok(false);
+    }
+    let Some(file) = file_by_code(operation, PARAMETER_LAT_LON_DIFFERENCE_FILE) else {
+        return Ok(false);
+    };
+    let method = operation.method().name();
+    let source = source
+        .and_then(extract_geographic)
+        .ok_or_else(|| geographic_required(method))?;
+    let target = target
+        .and_then(extract_geographic)
+        .ok_or_else(|| geographic_required(method))?;
+    let grid = formatter.grid_name(&file);
+    formatter.start_inversion();
+    angular_unit_and_axis_swap(source.coordinate_system().axes(), formatter)?;
+    formatter.stop_inversion();
+    formatter.add_step("hgridshift");
+    formatter.add_param("grids", &grid);
+    angular_unit_and_axis_swap(target.coordinate_system().axes(), formatter)?;
+    Ok(true)
+}
+
+/// `vgridshift` for a geographic 3D to gravity-related height method (`Geog3D to GravityRelatedHeight`),
+/// with the horizontal steps of the geographic CRS and the axis reversal of a depth.
+fn geoid_grid_shift(
+    operation: &Transformation,
+    source: Option<&Crs>,
+    target: Option<&Crs>,
+    formatter: &mut PipelineFormatter,
+) -> Result<bool, FactoryError> {
+    let code = epsg_method_code(operation);
+    let method = operation.method().name();
+    let by_name = method
+        .to_ascii_lowercase()
+        .starts_with("geographic3d to gravityrelatedheight");
+    if !by_name && !GEOG3D_TO_HEIGHT_METHODS.contains(&code) {
+        return Ok(false);
+    }
+    let Some(file) = file_by_code(operation, PARAMETER_GEOID_CORRECTION_FILENAME) else {
+        return Ok(false);
+    };
+    let source = source
+        .and_then(extract_geographic)
+        .ok_or_else(|| geographic_required(method))?;
+    let vertical = target.and_then(vertical_of).ok_or_else(|| {
+        FactoryError::Format(format!(
+            "Can apply {method} only to a target CRS that has a VerticalCRS"
+        ))
+    })?;
+    let grid = formatter.grid_name(&file);
+    let axes = source.coordinate_system().axes();
+    formatter.start_inversion();
+    horizontal_unit_and_axis_swap(axes, formatter)?;
+    formatter.stop_inversion();
+    formatter.start_inversion();
+    if vertical
+        .coordinate_system()
+        .axis()
+        .direction()
+        .eq_ignore_ascii_case("down")
+    {
+        formatter.add_step("axisswap");
+        formatter.add_param("order", "1,2,-3");
+    }
+    formatter.add_step("vgridshift");
+    formatter.add_param("grids", &grid);
+    formatter.add_number("multiplier", 1.0);
+    formatter.stop_inversion();
+    horizontal_unit_and_axis_swap(axes, formatter)?;
+    Ok(true)
+}
+
+/// `vgridshift` for a vertical grid: VERTCON, the regular methods, and NRCan (`multiplier` -1).
+/// A grid file named `.tif` takes the multiplier 1, a VERTCON `.gtx` grid the millimetre 0.001.
+fn vertical_grid_shift(
+    operation: &Transformation,
+    formatter: &mut PipelineFormatter,
+) -> Result<bool, FactoryError> {
+    let code = epsg_method_code(operation);
+    if code == METHOD_VERTCON {
+        let Some(file) = file_by_code(operation, PARAMETER_VERTICAL_OFFSET_FILE) else {
+            return Ok(false);
+        };
+        let grid = formatter.grid_name(&file);
+        let multiplier = if grid.contains(".tif") { 1.0 } else { 0.001 };
+        formatter.add_step("vgridshift");
+        formatter.add_param("grids", &grid);
+        formatter.add_number("multiplier", multiplier);
+        return Ok(true);
+    }
+    let reverse = code == METHOD_NRCAN_BYN || code == METHOD_NRCAN_GEOID_DIFFERENCE;
+    if !reverse && !REGULAR_VERTICAL_GRID_METHODS.contains(&code) {
+        return Ok(false);
+    }
+    let file = file_by_code(operation, PARAMETER_VERTICAL_OFFSET_FILE)
+        .or_else(|| file_by_code(operation, PARAMETER_GEOID_MODEL_DIFFERENCE_FILE));
+    let Some(file) = file else {
+        return Ok(false);
+    };
+    let grid = formatter.grid_name(&file);
+    formatter.add_step("vgridshift");
+    formatter.add_param("grids", &grid);
+    formatter.add_number("multiplier", if reverse { -1.0 } else { 1.0 });
+    Ok(true)
+}
+
+/// `defmodel` for the New Zealand deformation model, between the geographic CRS of each side.
+fn deformation_grid_shift(
+    operation: &Transformation,
+    source: Option<&Crs>,
+    target: Option<&Crs>,
+    formatter: &mut PipelineFormatter,
+) -> Result<bool, FactoryError> {
+    if epsg_method_code(operation) != METHOD_NEW_ZEALAND_DEFORMATION_MODEL {
+        return Ok(false);
+    }
+    let Some(file) = file_by_code(operation, PARAMETER_POINT_MOTION_VELOCITY_GRID_FILE) else {
+        return Ok(false);
+    };
+    let method = operation.method().name();
+    let source = source
+        .and_then(geographic_of)
+        .ok_or_else(|| geographic_required(method))?;
+    let target = target
+        .and_then(geographic_of)
+        .ok_or_else(|| geographic_required(method))?;
+    formatter.start_inversion();
+    angular_unit_and_axis_swap(source.coordinate_system().axes(), formatter)?;
+    formatter.stop_inversion();
+    let model = formatter.grid_name(&file);
+    formatter.start_inversion();
+    formatter.add_step("defmodel");
+    formatter.add_param("model", &model);
+    formatter.stop_inversion();
+    angular_unit_and_axis_swap(target.coordinate_system().axes(), formatter)?;
+    Ok(true)
+}
+
+/// `tinshift` on projected CRS (method 1138), or on geographic 2D CRS in degrees (method 1145).
+fn tin_shift(
+    operation: &Transformation,
+    source: Option<&Crs>,
+    target: Option<&Crs>,
+    formatter: &mut PipelineFormatter,
+) -> Result<bool, FactoryError> {
+    let code = epsg_method_code(operation);
+    if code == METHOD_TIN_CARTESIAN {
+        let Some(file) = file_by_code(operation, PARAMETER_TIN_OFFSET_FILE) else {
+            return Ok(false);
+        };
+        let method = operation.method().name();
+        let source = match source {
+            Some(Crs::Projected(projected)) => projected,
+            _ => {
+                return Err(FactoryError::Format(format!(
+                    "Can apply {method} only to ProjectedCRS"
+                )))
+            }
+        };
+        let target = match target {
+            Some(Crs::Projected(projected)) => projected,
+            _ => {
+                return Err(FactoryError::Format(format!(
+                    "Can apply {method} only to ProjectedCRS"
+                )))
+            }
+        };
+        formatter.start_inversion();
+        projected_unit_and_axis_swap(source, formatter);
+        formatter.stop_inversion();
+        formatter.add_step("tinshift");
+        formatter.add_param("file", &formatter.grid_name(&file));
+        projected_unit_and_axis_swap(target, formatter);
+        return Ok(true);
+    }
+    if code == METHOD_TIN_GEOGRAPHIC2D {
+        let Some(file) = file_by_code(operation, PARAMETER_TIN_OFFSET_FILE) else {
+            return Ok(false);
+        };
+        let method = operation.method().name();
+        let degrees = |crs: &GeographicCRS| {
+            crs.coordinate_system()
+                .axes()
+                .first()
+                .is_some_and(|axis| units_equivalent(axis.unit(), &UnitOfMeasure::degree()))
+        };
+        let source = source
+            .and_then(geographic_of)
+            .filter(|crs| degrees(crs))
+            .ok_or_else(|| {
+                FactoryError::Format(format!(
+                    "Can apply {method} only to source GeographicCRS with degree axis unit"
+                ))
+            })?;
+        let target = target
+            .and_then(geographic_of)
+            .filter(|crs| degrees(crs))
+            .ok_or_else(|| {
+                FactoryError::Format(format!(
+                    "Can apply {method} only to target GeographicCRS with degree axis unit"
+                ))
+            })?;
+        formatter.start_inversion();
+        axis_swap(source.coordinate_system().axes(), formatter);
+        formatter.stop_inversion();
+        formatter.add_step("tinshift");
+        formatter.add_param("file", &formatter.grid_name(&file));
+        axis_swap(target.coordinate_system().axes(), formatter);
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+/// `addAngularUnitConvertAndAxisSwap` with the height unit left out: the `pushOmitZUnitConversion` form.
+fn horizontal_unit_and_axis_swap(
+    axes: &[Axis],
+    formatter: &mut PipelineFormatter,
+) -> Result<(), FactoryError> {
+    let Some(first) = axes.first() else {
+        return Err(FactoryError::Format(
+            "a geographic CRS has no axis".to_owned(),
+        ));
+    };
+    formatter.add_step("unitconvert");
+    formatter.add_param("xy_in", "rad");
+    formatter.add_param("xy_out", &unit_text(first.unit()));
+    axis_swap(axes, formatter);
+    Ok(())
 }
 
 fn unimplemented(operation: &Transformation) -> FactoryError {
