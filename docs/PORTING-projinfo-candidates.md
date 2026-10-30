@@ -10,8 +10,9 @@ test (`--spatial-test`, and the automatic note), `--crs-extent-use`,
 registry query is `AuthorityFactory::createFromCoordinateReferenceSystemCodes`
 in `factory.cpp`.
 
-Not covered: the grids and deformation models (another lot), the ballpark
-operations, the datum pivot, and the compound and vertical paths. See below.
+Not covered: the grids and deformation models (another lot), the datum pivot,
+and the compound and vertical paths. The ballpark operations of two same-kind
+geodetic CRS are covered by `PORTING-projinfo-pivot-ballpark.md`. See below.
 
 ## API mapping
 
@@ -56,8 +57,6 @@ Each cause was checked against the reference output for the case unless marked.
 
 | Cases | Reference | Cause |
 |---|---|---|
-| 11, 12 | Ballpark geographic offset NAD27 to NAD83 (World) | `createOperationsGeodToGeod` does not synthesize the ballpark operation. |
-| 34 | Ballpark geocentric translation, then EPSG:9225 | Same, for geocentric CRS (`createBallparkGeocentricTranslation`). |
 | 13, 14 | `DERIVED_FROM(EPSG):` prefix on some ids, `, at least one grid missing` suffix | The suffix needs grid availability, which is the grids lot. The prefix is not investigated. |
 | 16, 31 | `Inverse of UTM zone 31N + ...` | `Conversion` has no inverse, so a registry conversion read in reverse is dropped. |
 | 25, 27, 38, 39 | Vertical or height operations | The vertical and geoid paths (`createOperationsVertToGeog`, `createOperationsGeogToVertFromGeoid`) are not ported. Not investigated per case. |
@@ -67,12 +66,13 @@ Each cause was checked against the reference output for the case unless marked.
 | 88, 89, 90 | `Conversion from ... (geocentric) + ...` chains | Same datum-pivot path, with geocentric conversions. Not investigated per case. |
 | 84 | `Canada velocity grid` step | Grid lot (deformation grid). |
 | 106 | `+proj=noop` for a same CRS | Not investigated. |
-| 107 | Ballpark geographic offset NAD83(CSRS) to NAD83(CSRS)v2 | Same as 11, 12. |
 
 ## Deliberate differences
 
-- **Ballpark operations** are not synthesized. Cases with a ballpark result
-  stay open.
+- **Ballpark operations** are synthesized for a geographic pair or a geocentric
+  pair of different datums, and the candidate list drops them under
+  `--hide-ballpark`. The same-datum null offsets, the prime meridian shift, and
+  the geographic/geocentric pairs are not. See `PORTING-projinfo-pivot-ballpark.md`.
 - **Only registry operations, the deriving conversion, and the pivots of
   `CoordinateOperationContext::set_intermediate_crs`** are candidates. No
   datum-pivot, compound, or vertical path.
@@ -81,12 +81,12 @@ Each cause was checked against the reference output for the case unless marked.
   PROJ returns its inverse.
 - **Supersession** is always applied, as PROJ does by default. `--show-superseded`
   is not implemented.
-- **Sort**: candidates keep the registry order (pseudo area, then accuracy).
-  PROJ's `SortFunction` (grid availability, step count, PROJ exportability)
-  is not ported. No closed case depends on it yet.
-- **Not ported**: `removeSyntheticNullTransforms`, `removeUninterestingOps`,
-  `removeDuplicateOps`, and the `hasOpThatContainsAreaOfInterestAndNoGrid`
-  flag they read.
+- **Sort**: `create_operations` orders the candidates with the `SortFunction`
+  port that cs2cs uses (`select::sort_candidates`). Its area is the extent
+  intersected with the CRS extents, not with an area of interest.
+- **Not ported**: `removeUninterestingOps`, `removeDuplicateOps`.
+  `removeSyntheticNullTransforms` and the `hasOpThatContainsAreaOfInterestAndNoGrid`
+  flag it reads are ported (ballpark lot).
 - **`BoundingBox::intersection`** handles boxes that do not cross the
   antimeridian. PROJ's intersection for a box that crosses it is not ported.
 - **Accuracy text**: a database `REAL` accuracy keeps SQLite's text (`1.0`,
@@ -102,3 +102,6 @@ Each cause was checked against the reference output for the case unless marked.
   that was passing on `main`, in any yaml suite.
 - `cargo fmt --check` and `cargo clippy --all-targets --all-features -- -D warnings`: clean.
 - `cargo test --all-features --no-fail-fast`: every test binary reports 0 failed.
+- Ballpark lot (`PORTING-projinfo-pivot-ballpark.md`): 50 open `projinfo` rows
+  on `origin/main`, 46 after it. Cases 11, 12, 34 and 107 closed. Across all yaml
+  suites, 90 open rows before, 82 after, none newly open.

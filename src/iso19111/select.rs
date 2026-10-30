@@ -150,7 +150,7 @@ fn characteristics(
         grids_known,
         step_count: step_count(operation),
         proj_step_count,
-        approx: name.starts_with("Ballpark "),
+        approx: operation.has_ballpark_transformation(),
         ballpark_vertical: name.contains(BALLPARK_VERTICAL_TRANSFORMATION),
         null: is_null_transformation(&name),
         xyz_gridshift,
@@ -188,7 +188,7 @@ fn pseudo_area_of(
     }
 }
 
-fn grid_names(operation: &CoordinateOperation) -> Vec<String> {
+pub(crate) fn grid_names(operation: &CoordinateOperation) -> Vec<String> {
     let mut names = Vec::new();
     collect_grids(operation, &mut names);
     names
@@ -233,7 +233,7 @@ fn proj_steps(text: &str) -> usize {
         .count()
 }
 
-fn is_null_transformation(name: &str) -> bool {
+pub(crate) fn is_null_transformation(name: &str) -> bool {
     if name.contains(" + ") {
         return false;
     }
@@ -387,6 +387,26 @@ fn ntf_preference(a: &str, b: &str) -> Option<bool> {
         }
     }
     None
+}
+
+/// `operations` in `SortFunction` order, as `createOperations` returns them.
+pub(crate) fn sort_candidates(
+    operations: Vec<CoordinateOperation>,
+    db: &DatabaseContext,
+    source: &Crs,
+    target: &Crs,
+) -> Vec<CoordinateOperation> {
+    let ranked = operations
+        .into_iter()
+        .map(|operation| {
+            let characteristics = characteristics(&operation, db, source, target);
+            (operation, characteristics)
+        })
+        .collect();
+    sort(ranked)
+        .into_iter()
+        .map(|(operation, _)| operation)
+        .collect()
 }
 
 /// Insertion sort on `precedes`. Each candidate is placed before the first

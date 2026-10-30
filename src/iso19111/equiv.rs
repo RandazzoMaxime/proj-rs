@@ -96,10 +96,38 @@ fn axis_direction_unit(left: &Axis, right: &Axis) -> bool {
 }
 
 fn datum_frame(crs: &GeographicCRS) -> Option<GeodeticReferenceFrame> {
-    if let Some(datum) = crs.datum() {
+    frame_of(crs.datum(), crs.datum_ensemble())
+}
+
+/// The datum of a geographic or geocentric CRS, or its ensemble as a datum.
+pub(crate) fn geodetic_frame(crs: &Crs) -> Option<GeodeticReferenceFrame> {
+    match crs {
+        Crs::Geographic(crs) => datum_frame(crs),
+        Crs::Geodetic(crs) => frame_of(crs.datum(), crs.datum_ensemble()),
+        _ => None,
+    }
+}
+
+/// `isSameGeodeticDatum`: the datums of two geodetic CRS, or their ensembles as datums, are
+/// equivalent. An `unknown` datum matches only another `unknown` datum.
+pub(crate) fn same_geodetic_datum(left: &Crs, right: &Crs) -> bool {
+    let (Some(left), Some(right)) = (geodetic_frame(left), geodetic_frame(right)) else {
+        return false;
+    };
+    if (left.identified.name == "unknown") != (right.identified.name == "unknown") {
+        return false;
+    }
+    frame_equivalent(&left, &right)
+}
+
+fn frame_of(
+    datum: Option<&GeodeticReferenceFrame>,
+    ensemble: Option<&DatumEnsemble>,
+) -> Option<GeodeticReferenceFrame> {
+    if let Some(datum) = datum {
         return Some(datum.clone());
     }
-    let ensemble = crs.datum_ensemble()?;
+    let ensemble = ensemble?;
     let member = ensemble.members().iter().find_map(|member| match member {
         Datum::Geodetic(frame) => Some(frame),
         _ => None,

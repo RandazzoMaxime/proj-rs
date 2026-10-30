@@ -1980,6 +1980,22 @@ impl CoordinateOperation {
         }
     }
 
+    /// PROJ's `hasBallparkTransformation`: a transformation whose name says ballpark,
+    /// or a concatenated operation with such a step.
+    #[must_use]
+    pub fn has_ballpark_transformation(&self) -> bool {
+        match self {
+            Self::Conversion(_) => false,
+            Self::Transformation(operation) => {
+                operation.name().to_ascii_lowercase().contains("ballpark")
+            }
+            Self::Concatenated(operation) => operation
+                .steps
+                .iter()
+                .any(|step| step.operation.has_ballpark_transformation()),
+        }
+    }
+
     /// Stated accuracy as the database wrote it, when it kept the text.
     #[must_use]
     pub fn accuracy_text(&self) -> Option<&str> {

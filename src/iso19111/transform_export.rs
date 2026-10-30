@@ -45,6 +45,8 @@ const METHOD_CHANGE_VERTICAL_UNIT: i32 = 1069;
 const METHOD_HEIGHT_DEPTH_REVERSAL: i32 = 1068;
 const METHOD_CARTESIAN_GRID_OFFSETS: i32 = 9656;
 const METHOD_LONGITUDE_ROTATION: i32 = 9601;
+const METHOD_GEOGRAPHIC2D_OFFSETS: i32 = 9619;
+const METHOD_GEOGRAPHIC3D_OFFSETS: i32 = 9660;
 
 impl Transformation {
     /// `exportToPROJString` of a transformation: the pipeline PROJ writes for its method.
@@ -159,6 +161,9 @@ fn export_forward(
     }
     if code == METHOD_LONGITUDE_ROTATION {
         return longitude_rotation(operation, source, target, formatter);
+    }
+    if code == METHOD_GEOGRAPHIC2D_OFFSETS || code == METHOD_GEOGRAPHIC3D_OFFSETS {
+        return null_geographic_offset(operation, formatter);
     }
     if code == METHOD_HEIGHT_DEPTH_REVERSAL {
         formatter.add_step("axisswap");
@@ -344,6 +349,22 @@ fn invalid_geographic_geocentric() -> FactoryError {
     FactoryError::Format(
         "Invalid nature of source and/or targetCRS for Geographic/Geocentric conversion".to_owned(),
     )
+}
+
+/// `Geographic2D offsets` and `Geographic3D offsets` with zero offsets, the null offset
+/// PROJ writes as `noop`. Non-zero offsets are not ported.
+fn null_geographic_offset(
+    operation: &Transformation,
+    formatter: &mut PipelineFormatter,
+) -> Result<(), FactoryError> {
+    if [8601, 8602, 8603]
+        .iter()
+        .any(|&code| si_value(operation, code) != 0.0)
+    {
+        return Err(unimplemented(operation));
+    }
+    formatter.add_step("noop");
+    Ok(())
 }
 
 fn change_vertical_unit(
