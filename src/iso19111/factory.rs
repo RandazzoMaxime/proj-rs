@@ -193,6 +193,19 @@ impl DatabaseContext {
             .collect())
     }
 
+    /// The rows of `sql` as text, with `params` bound in order.
+    pub(crate) fn text_rows(
+        &self,
+        sql: &str,
+        params: &[String],
+    ) -> Result<Vec<Vec<String>>, FactoryError> {
+        Ok(self
+            .query(sql, params)?
+            .iter()
+            .map(|row| row.iter().map(Cell::text).collect())
+            .collect())
+    }
+
     fn query(&self, sql: &str, params: &[String]) -> Result<Vec<Vec<Cell>>, FactoryError> {
         let guard = self.lock();
         let mut statement = guard

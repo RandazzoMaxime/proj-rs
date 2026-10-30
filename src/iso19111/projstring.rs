@@ -4,10 +4,11 @@
 //! `+ellps` plus `+pm` when the prime meridian is not Greenwich.
 
 use super::model::{
-    Axis, Crs, Datum, DatumEnsemble, Ellipsoid, EllipsoidalCS, FactoryError, GeocentricCRS,
-    GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified, Identifier, PrimeMeridian,
-    ProjectedCRS, UnitKind, UnitOfMeasure,
+    Axis, CartesianCS, Conversion, Crs, Datum, DatumEnsemble, Ellipsoid, EllipsoidalCS,
+    FactoryError, GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified,
+    Identifier, ParameterValue, PrimeMeridian, ProjectedCRS, UnitKind, UnitOfMeasure,
 };
+use super::parammap::{MethodMap, OTHER_METHODS, PROJECTION_METHODS};
 
 impl Ellipsoid {
     /// `exportToPROJString` for an ellipsoid: `+ellps=` for a known name,
@@ -569,9 +570,7 @@ pub fn create_crs_from_proj_string(definition: &str) -> Result<Crs, FactoryError
     let tokens = proj_tokens(definition);
     let proj = token(&tokens, "proj");
     if !matches!(proj, "longlat" | "lonlat" | "latlong") {
-        return Err(FactoryError::Invalid(
-            "only +proj=longlat can be imported as a CRS here".to_owned(),
-        ));
+        return projected_from_proj_string(&tokens);
     }
     let datum = datum_from_proj(&tokens)?;
     let axis = token(&tokens, "axis");
@@ -680,4 +679,101 @@ fn geographic_axis(letter: char, unit: UnitOfMeasure) -> Result<Axis, FactoryErr
             "Unhandled axis letter {letter}"
         ))),
     }
+}
+
+/// Keys of a PROJ string that name the datum, the units, or the output, not
+/// a parameter of a projection method.
+const NON_METHOD_KEYS: &[&str] = &[
+    "proj", "datum", "ellps", "a", "b", "rf", "f", "R", "towgs84", "units", "no_defs", "type",
+    "axis",
+];
+
+/// `PROJStringParser` for a projected CRS with `+proj=` naming a method. The
+/// method is the first one whose PROJ parameters cover every key; each of its
+/// parameters takes the key's value, or PROJ's default (1 for a scale, 0 for
+/// an angle or length). The CRS is `unknown`, on the `+datum`/`+ellps`
+/// geographic CRS, with easting and northing in metres.
+fn projected_from_proj_string(tokens: &[(String, String)]) -> Result<Crs, FactoryError> {
+    let proj = token(tokens, "proj");
+    let units = token(tokens, "units");
+    if !units.is_empty() && units != "m" {
+        return Err(FactoryError::Invalid(format!("unsupported +units={units}")));
+    }
+    let methods: Vec<&MethodMap> = PROJECTION_METHODS
+        .iter()
+        .chain(OTHER_METHODS)
+        .filter(|method| method.proj_name == Some(proj))
+        .collect();
+    let covers = |method: &MethodMap| {
+        tokens.iter().all(|(key, _)| {
+            NON_METHOD_KEYS.contains(&key.as_str())
+                || method
+                    .params
+                    .iter()
+                    .any(|param| param.proj_name == Some(key.as_str()))
+                || (key == "k_0" && method.params.iter().any(|p| p.proj_name == Some("k")))
+        })
+    };
+    let Some(method) = methods.iter().copied().find(|method| covers(method)) else {
+        return Err(FactoryError::Invalid(format!(
+            "unsupported +proj={proj} for a CRS"
+        )));
+    };
+    let mut parameters = Vec::new();
+    for param in method.params {
+        let key = param.proj_name.unwrap_or("");
+        let given = tokens
+            .iter()
+            .find(|(name, _)| name == key || (key == "k" && name == "k_0"))
+            .map(|(_, value)| value.as_str());
+        let default = if param.unit == UnitKind::Scale {
+            1.0
+        } else {
+            0.0
+        };
+        let value = match given {
+            Some(text) => text
+                .parse::<f64>()
+                .map_err(|_| FactoryError::Invalid(format!("+{key} is not a number: {text}")))?,
+            None => default,
+        };
+        let value = match param.unit {
+            UnitKind::Angular => ParameterValue::angle(value),
+            UnitKind::Scale => ParameterValue::scale(value),
+            _ => ParameterValue::length(value),
+        };
+        parameters.push(Conversion::parameter(
+            param.wkt2_name,
+            "EPSG",
+            &param.epsg_code.to_string(),
+            value,
+        ));
+    }
+    let mut conversion = Conversion::create_with_method(
+        method.wkt2_name,
+        "EPSG",
+        &method.epsg_code.to_string(),
+        parameters,
+    );
+    conversion.identified = Identified::named("unknown");
+    let datum = datum_from_proj(tokens)?;
+    let base = GeographicCRS {
+        identified: Identified::named("unknown"),
+        datum: Some(datum),
+        ensemble: None,
+        coordinate_system: EllipsoidalCS {
+            identified: Identified::default(),
+            axes: vec![
+                geographic_axis('e', UnitOfMeasure::degree())?,
+                geographic_axis('n', UnitOfMeasure::degree())?,
+            ],
+        },
+        implicit_cs: true,
+    };
+    Ok(Crs::Projected(ProjectedCRS::create(
+        "unknown",
+        GeodeticCRS::Geographic(base),
+        conversion,
+        CartesianCS::create_easting_northing(UnitOfMeasure::metre()),
+    )))
 }
