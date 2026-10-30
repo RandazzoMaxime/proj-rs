@@ -4136,10 +4136,16 @@ impl CoordinateOperationFactory {
         if direct_empty && is_geodetic(source) && is_geodetic(target) {
             found.extend(datum_pivot_operations(source, target, context));
         }
+        if found.is_empty() {
+            found.extend(super::compound::vertical_to_vertical(source, target));
+        }
         found.extend(super::compound::compound_to_geog3d(
             self, source, target, context,
         )?);
         found.extend(super::compound::geog_to_compound(
+            self, source, target, context,
+        )?);
+        found.extend(super::compound::compound_to_compound(
             self, source, target, context,
         )?);
         if is_geodetic(source)

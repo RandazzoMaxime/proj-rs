@@ -108,7 +108,7 @@ promotion, as in PROJ.
 | Cases | Cause |
 |---|---|
 | `cs2cs` `#118`–`#121` (`--only-best`, `PROJ_ONLY_BEST_DEFAULT`, `only_best_default=on`) | `cs2cs` ignores `--only-best`: `opts.only_best` is read into `_selection` (`src/bin/cs2cs.rs`). PROJ returns the first candidate's error instead of falling back, and the ballpark is printed here. This is selection, outside this lot. |
-| `cs2cs` `#126`–`#128` (`EPSG:4326+5773` to `EPSG:4326+5782`) | Compound target: `createOperationsCompoundToCompound` is not ported. The factory returns 0 candidates for the pair (`projinfo -s EPSG:4326+5773 -t EPSG:4326+5782`), where PROJ gives `Inverse of WGS 84 to EGM96 height (1) + ETRS89-ESP [REGENTE] to Alicante height (1)…`. |
+| `cs2cs` `#126`–`#128` (`EPSG:4326+5773` to `EPSG:4326+5782`) | Compound target: `createOperationsCompoundToCompound` is partly ported (`docs/PORTING-compound-to-compound.md`). `#127` passes. `#126` and `#128` need the geoid branch and an interpolation CRS, not ported. |
 | `projinfo` `#32` (`EPSG:32631` to `EPSG:4326+3855 --3d`) | Projected source: the derived-CRS path (`createOperationsDerivedTo`) and the inverse of the UTM conversion are not ported. |
 | `projinfo` `#108` (`EPSG:4979` to `EPSG:10645`) | Projected horizontal component (`Saba Transverse Mercator 2020`): same cause as `#32`. |
 

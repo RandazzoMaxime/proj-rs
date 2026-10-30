@@ -1,21 +1,24 @@
 //! The vertical branch of PROJ's `createOperationsCompoundToGeog`
 //! (`coordinateoperationfactory.cpp`): a compound CRS of a geographic CRS and a
-//! vertical CRS, to a 3D geographic CRS.
+//! vertical CRS, to a 3D geographic CRS. Also `createOperationsCompoundToCompound`
+//! for two compound CRS with the same geographic part, and the ballpark of
+//! `createOperationsVertToVert`.
 //!
 //! Not ported: the interpolation CRS of a vertical operation
 //! (`createHorizVerticalHorizPROJBased`, which the vertical operation then
 //! skips), the geographic CRS of a horizontal operation that differs from the
 //! target (`geogCRSTmp`), the change of vertical unit when the two datums are
-//! the same, and the extent check of a concatenated candidate.
+//! the same, the extent check of a concatenated candidate, and the geoid
+//! trigger and three-pass selection of `createOperationsCompoundToCompound`.
 
 use super::buildop::OpProps;
-use super::equiv::{geodetic_frame, same_geodetic_datum};
+use super::equiv::{geodetic_frame, same_geodetic_datum, Equivalence};
 use super::factory::{
     crs_extent, geographic_of, world_extent, CoordinateOperationContext, CoordinateOperationFactory,
 };
 use super::model::{
-    ConcatenatedOperation, ConcatenatedStep, CoordinateOperation, Crs, GeographicCRS, Identified,
-    ParameterValue, Transformation, VerticalCRS,
+    Axis, ConcatenatedOperation, ConcatenatedStep, CoordinateOperation, Crs, GeographicCRS,
+    Identified, ParameterValue, Transformation, VerticalCRS,
 };
 use super::FactoryError;
 
@@ -94,6 +97,61 @@ pub(super) fn geog_to_compound(
         .iter()
         .map(CoordinateOperation::inverse)
         .collect())
+}
+
+/// `createOperationsCompoundToCompound`, for two compound CRS whose geographic parts are
+/// equivalent: each vertical operation, with its horizontal part null. Only a vertical
+/// operation with no interpolation CRS, or one whose interpolation CRS is that geographic
+/// CRS, is kept. The others need `createHorizVerticalHorizPROJBased`, not ported.
+pub(super) fn compound_to_compound(
+    factory: &CoordinateOperationFactory,
+    source: &Crs,
+    target: &Crs,
+    context: &CoordinateOperationContext,
+) -> Result<Vec<CoordinateOperation>, FactoryError> {
+    let (Crs::Compound(src), Crs::Compound(dst)) = (source, target) else {
+        return Ok(Vec::new());
+    };
+    let ([src_horizontal, src_vertical], [dst_horizontal, dst_vertical]) =
+        (src.components(), dst.components())
+    else {
+        return Ok(Vec::new());
+    };
+    let (Some(geog_src), Some(geog_dst)) =
+        (geographic_of(src_horizontal), geographic_of(dst_horizontal))
+    else {
+        return Ok(Vec::new());
+    };
+    if !geog_src.is_equivalent_to_with(geog_dst, Equivalence::Equivalent)
+        || src_vertical.name() == dst_vertical.name()
+    {
+        return Ok(Vec::new());
+    }
+
+    let vertical_ops = factory.create_candidates(src_vertical, dst_vertical, context)?;
+    Ok(vertical_ops
+        .iter()
+        .filter(|operation| horizontal_is_null(operation, geog_src))
+        .map(|operation| retarget(operation, source, target))
+        .collect())
+}
+
+/// Whether a vertical operation leaves the horizontal part null: no interpolation CRS, or
+/// the geographic CRS of the horizontal part. A conversion never has one.
+fn horizontal_is_null(operation: &CoordinateOperation, geog: &GeographicCRS) -> bool {
+    match operation {
+        CoordinateOperation::Transformation(transformation) => {
+            match transformation.interpolation_crs() {
+                None => true,
+                Some(Crs::Geographic(interpolation)) => {
+                    interpolation.is_equivalent_to_with(geog, Equivalence::Equivalent)
+                }
+                Some(_) => false,
+            }
+        }
+        CoordinateOperation::Conversion(_) => true,
+        CoordinateOperation::Concatenated(_) => false,
+    }
 }
 
 /// `createOperationsCompoundToGeog` for a 2D geographic target: the operations of the
@@ -187,18 +245,10 @@ fn vertical_ballpark(
     geog_dst: &GeographicCRS,
     target: &Crs,
 ) -> Option<CoordinateOperation> {
-    let src_axis = vertical_crs.coordinate_system().axis();
-    let conv_src = src_axis.unit().conversion_to_si();
-    let dst_axis = geog_dst.coordinate_system().axes().get(2);
-    let conv_dst = dst_axis.map_or(1.0, |axis| axis.unit().conversion_to_si());
-    if conv_dst == 0.0 {
-        return None;
-    }
-    let dst_up = dst_axis.is_none_or(|axis| axis.direction() == "up");
-    let dst_down = dst_axis.is_some_and(|axis| axis.direction() == "down");
-    let src_up = src_axis.direction() == "up";
-    let src_down = src_axis.direction() == "down";
-    let reversal = (src_up && dst_down) || (src_down && dst_up);
+    let scale = ballpark_scale(
+        vertical_crs.coordinate_system().axis(),
+        geog_dst.coordinate_system().axes().get(2),
+    )?;
 
     let vertical_datum = vertical_datum_name(vertical_crs);
     let same_datum = match (vertical_datum.as_deref(), target_datum) {
@@ -210,8 +260,6 @@ fn vertical_ballpark(
         return None;
     }
 
-    let factor = conv_src / conv_dst;
-    let scale = if reversal { -factor } else { factor };
     let name = format!(
         "Transformation from {} to {} (ballpark vertical transformation, without ellipsoid height to vertical height correction)",
         vertical.name(),
@@ -231,6 +279,58 @@ fn vertical_ballpark(
     )
     .ok()
     .map(CoordinateOperation::Transformation)
+}
+
+/// `createOperationsVertToVert`: the ballpark change of vertical unit between two vertical
+/// CRS of different datums. Two CRS of the same datum, where PROJ builds a conversion, are
+/// not ported.
+pub(super) fn vertical_to_vertical(source: &Crs, target: &Crs) -> Option<CoordinateOperation> {
+    let (Crs::Vertical(src), Crs::Vertical(dst)) = (source, target) else {
+        return None;
+    };
+    if vertical_datum_name(src) == vertical_datum_name(dst) {
+        return None;
+    }
+    let scale = ballpark_scale(
+        src.coordinate_system().axis(),
+        Some(dst.coordinate_system().axis()),
+    )?;
+    let name = format!(
+        "Transformation from {} to {} (ballpark vertical transformation)",
+        source.name(),
+        target.name()
+    );
+    let domain = match (crs_extent(source), crs_extent(target)) {
+        (Some(left), Some(right)) if left == right => left,
+        _ => world_extent(),
+    };
+    Transformation::create_from_code(
+        &OpProps::new().name(name),
+        source.clone(),
+        target.clone(),
+        1069,
+        vec![ParameterValue::scale(scale)],
+        domain,
+    )
+    .ok()
+    .map(CoordinateOperation::Transformation)
+}
+
+/// The scale of a change of vertical unit from `src` to `dst`, where `dst` is `None` for a
+/// 2D geographic target. Negated on a height/depth reversal. `None` when the target unit is 0.
+fn ballpark_scale(src: &Axis, dst: Option<&Axis>) -> Option<f64> {
+    let conv_src = src.unit().conversion_to_si();
+    let conv_dst = dst.map_or(1.0, |axis| axis.unit().conversion_to_si());
+    if conv_dst == 0.0 {
+        return None;
+    }
+    let dst_up = dst.is_none_or(|axis| axis.direction() == "up");
+    let dst_down = dst.is_some_and(|axis| axis.direction() == "down");
+    let src_up = src.direction() == "up";
+    let src_down = src.direction() == "down";
+    let reversal = (src_up && dst_down) || (src_down && dst_up);
+    let factor = conv_src / conv_dst;
+    Some(if reversal { -factor } else { factor })
 }
 
 /// `createOperationsGeogToGeog` for two geographic CRS of the same datum, prime
