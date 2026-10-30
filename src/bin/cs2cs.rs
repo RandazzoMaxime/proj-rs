@@ -305,6 +305,11 @@ impl Engine {
 }
 
 fn build_engine(source: &str, target: &str, area: Option<Area>) -> Result<Engine, String> {
+    if area.is_none() && !projish(source) && !projish(target) {
+        if let Some(pipe) = select_pipeline(source, target) {
+            return Ok(Engine::Pipe(pipe));
+        }
+    }
     let source = &canonical_side(source);
     let target = &canonical_side(target);
     if projish(source) && projish(target) {
@@ -321,6 +326,18 @@ fn build_engine(source: &str, target: &str, area: Option<Area>) -> Result<Engine
         .map(Box::new)
         .map(Engine::Facade)
         .map_err(|error| error.to_string())
+}
+
+/// The operation PROJ's `proj_create_crs_to_crs` picks for the pair, or `None`
+/// when that selection fails and the caller keeps its previous path.
+fn select_pipeline(source: &str, target: &str) -> Option<CrsPipeline> {
+    let (definition, lat_or_northing_first) =
+        proj_rs::iso19111::best_pipeline(source, target).ok()?;
+    let operation = Operation::create(&definition).ok()?;
+    Some(CrsPipeline {
+        operation,
+        lat_or_northing_first,
+    })
 }
 
 /// A name or compound that the library resolves to EPSG codes becomes that

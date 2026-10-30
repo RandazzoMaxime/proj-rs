@@ -4075,7 +4075,7 @@ impl CoordinateOperationFactory {
 }
 
 /// The extent of a CRS: its first usage, or for a compound CRS the intersection of its components.
-fn crs_extent(crs: &Crs) -> Option<ObjectDomain> {
+pub(crate) fn crs_extent(crs: &Crs) -> Option<ObjectDomain> {
     if let Crs::Compound(compound) = crs {
         let mut extent: Option<ObjectDomain> = None;
         for component in compound.components() {
@@ -4093,7 +4093,7 @@ fn crs_extent(crs: &Crs) -> Option<ObjectDomain> {
 }
 
 /// Extent of an operation: its first usage, or the intersection of its steps for a concatenated one.
-fn operation_extent(operation: &CoordinateOperation) -> Option<ObjectDomain> {
+pub(crate) fn operation_extent(operation: &CoordinateOperation) -> Option<ObjectDomain> {
     if matches!(operation, CoordinateOperation::Conversion(_)) {
         return Some(world_extent());
     }

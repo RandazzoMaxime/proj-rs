@@ -228,13 +228,8 @@ pub(crate) fn operation_proj_string(source: &Crs, target: &Crs) -> Result<String
     if let Some(order) = geographic_axis_order(geographic) {
         steps.push(format!("+proj=axisswap +order={order}"));
     }
-    if geographic
-        .coordinate_system()
-        .axes()
-        .first()
-        .is_some_and(|axis| axis.unit().name() == "degree")
-    {
-        steps.push("+proj=unitconvert +xy_in=deg +xy_out=rad".to_owned());
+    if let Some(step) = angular_to_radians(geographic) {
+        steps.push(step.to_owned());
     }
     let mut projection = projected.deriving_conversion().export_to_proj_string()?;
     if let Some(ellipsoid) = base.ellipsoid() {
@@ -246,6 +241,16 @@ pub(crate) fn operation_proj_string(source: &Crs, target: &Crs) -> Result<String
         steps.push(format!("+proj=axisswap +order={order}"));
     }
     Ok(pipeline(&steps))
+}
+
+/// The `unitconvert` step that turns the geographic axes into radians, or
+/// `None` when they already are.
+fn angular_to_radians(geographic: &GeographicCRS) -> Option<&'static str> {
+    match geographic.coordinate_system().axes().first()?.unit().name() {
+        "degree" => Some("+proj=unitconvert +xy_in=deg +xy_out=rad"),
+        "grad" => Some("+proj=unitconvert +xy_in=grad +xy_out=rad"),
+        _ => None,
+    }
 }
 
 /// Geographic source to a geocentric target: axis swap, degrees to radians,
@@ -269,13 +274,8 @@ fn geocentric_operation(source: &Crs, target: &GeocentricCRS) -> Result<String, 
     if let Some(order) = geographic_axis_order(geographic) {
         steps.push(format!("+proj=axisswap +order={order}"));
     }
-    if geographic
-        .coordinate_system()
-        .axes()
-        .first()
-        .is_some_and(|axis| axis.unit().name() == "degree")
-    {
-        steps.push("+proj=unitconvert +xy_in=deg +xy_out=rad".to_owned());
+    if let Some(step) = angular_to_radians(geographic) {
+        steps.push(step.to_owned());
     }
     let mut cart = String::from("+proj=cart");
     if let Some(datum) = target.datum() {
