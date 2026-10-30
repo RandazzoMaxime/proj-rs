@@ -1610,6 +1610,9 @@ impl Step for Horizontal {
 impl Horizontal {
     fn apply(&self, coord: Coord, way: Way) -> Result<Coord, TransformError> {
         let inverse = matches!(way, Way::Inverse);
+        if !self.sets.is_empty() && self.sets.iter().all(|set| set.null) {
+            return Ok(coord);
+        }
         let coord = geographic_in(coord)?;
         if self.sets.is_empty() {
             return Ok(coord);

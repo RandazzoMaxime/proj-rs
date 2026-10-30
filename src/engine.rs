@@ -1581,10 +1581,23 @@ fn build_merc(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateErr
         Mercator::try_ellipsoid(frame.earth, frame.lam0.to_degrees(), k0, frame.x0, frame.y0)
             .map_err(|_| CreateError::IllegalValue("k_0"))?
     };
+    let over = frame.over;
     Ok(Box::new(NativeProjected::new(
         frame,
-        move |lon, lat| merc.forward(lon.to_degrees(), lat.to_degrees()),
-        move |xy| merc.inverse(xy),
+        move |lon, lat| {
+            if over {
+                merc.forward_rad_over(lon, lat)
+            } else {
+                merc.forward(lon.to_degrees(), lat.to_degrees())
+            }
+        },
+        move |xy| {
+            if over {
+                merc.inverse_over(xy)
+            } else {
+                merc.inverse(xy)
+            }
+        },
     )))
 }
 
