@@ -10,7 +10,7 @@ use super::model::{
     GeographicCRS, Identified, Identifier, ParameterValue, PrimeMeridian, ProjectedCRS, UnitKind,
     UnitOfMeasure, VerticalCRS,
 };
-use super::parammap::{MethodMap, OTHER_METHODS, PROJECTION_METHODS};
+use super::parammap::{MethodMap, ParamMap, OTHER_METHODS, PROJECTION_METHODS};
 use super::pipeline::proj_number;
 use super::wkt::format_g;
 use crate::ellipsoid::PJ_ELLPS;
@@ -679,7 +679,7 @@ fn well_known_ellps(major: f64, inverse: Option<f64>, minor: Option<f64>) -> Opt
     let inverse = inverse.or_else(|| minor.filter(|b| *b != major).map(|b| major / (major - b)));
     PJ_ELLPS
         .iter()
-        .find(|(_, table_major, second, is_inverse)| {
+        .find(|(_, _, table_major, second, is_inverse)| {
             if (major - table_major).abs() >= 1e-10 * table_major.abs() {
                 return false;
             }
@@ -689,7 +689,7 @@ fn well_known_ellps(major: f64, inverse: Option<f64>, minor: Option<f64>) -> Opt
                 minor.is_some_and(|value| (value - second).abs() < 1e-10 * second.abs())
             }
         })
-        .map(|(name, _, _, _)| *name)
+        .map(|(id, _, _, _, _)| *id)
 }
 
 /// `PROJStringParser::createFromPROJString` for a single `+proj=longlat` CRS.
@@ -743,14 +743,12 @@ pub fn create_crs_from_proj_string(definition: &str) -> Result<Crs, FactoryError
 
 fn proj_tokens(definition: &str) -> Vec<(String, String)> {
     definition
-        .split_whitespace()
-        .filter_map(|raw| {
-            let raw = raw.trim_start_matches('+');
-            if raw.is_empty() {
-                return None;
-            }
+        .split('+')
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+        .map(|raw| {
             let (key, value) = raw.split_once('=').unwrap_or((raw, ""));
-            Some((key.to_owned(), value.to_owned()))
+            (key.trim().to_owned(), value.trim().to_owned())
         })
         .collect()
 }
@@ -788,6 +786,9 @@ fn datum_from_proj(tokens: &[(String, String)]) -> Result<GeodeticReferenceFrame
             PrimeMeridian::greenwich(),
         ));
     }
+    if !ellps.is_empty() {
+        return named_ellipsoid_datum(ellps);
+    }
     let major = token(tokens, "a");
     let flattening = token(tokens, "rf");
     if !major.is_empty() && !flattening.is_empty() {
@@ -803,8 +804,30 @@ fn datum_from_proj(tokens: &[(String, String)]) -> Result<GeodeticReferenceFrame
             PrimeMeridian::greenwich(),
         ));
     }
-    Err(FactoryError::Invalid(
-        "a longlat CRS needs +datum, +ellps, or +a and +rf".to_owned(),
+    if !major.is_empty() || !flattening.is_empty() {
+        return Err(FactoryError::Invalid(
+            "+a and +rf must be given together".to_owned(),
+        ));
+    }
+    Ok(GeodeticReferenceFrame::epsg_6326())
+}
+
+/// `buildDatum` for `+ellps=` with a name from PROJ's table. The datum is
+/// `Unknown based on <name> ellipsoid`, and the ellipsoid has no authority code.
+fn named_ellipsoid_datum(id: &str) -> Result<GeodeticReferenceFrame, FactoryError> {
+    let (_, name, major, second, is_inverse) = PJ_ELLPS
+        .iter()
+        .find(|(ellps, ..)| *ellps == id)
+        .ok_or_else(|| FactoryError::Invalid(format!("unknown ellipsoid {id}")))?;
+    let ellipsoid = if *is_inverse {
+        Ellipsoid::create_flattened_sphere(*name, *major, *second)
+    } else {
+        Ellipsoid::create_two_axis(*name, *major, *second)
+    };
+    Ok(GeodeticReferenceFrame::create(
+        format!("Unknown based on {name} ellipsoid"),
+        ellipsoid,
+        PrimeMeridian::greenwich(),
     ))
 }
 
@@ -820,18 +843,110 @@ fn geographic_axis(letter: char, unit: UnitOfMeasure) -> Result<Axis, FactoryErr
     }
 }
 
-/// Keys of a PROJ string that name the datum, the units, or the output, not
-/// a parameter of a projection method.
+/// Keys of a PROJ string that name the datum, the units, the title, or the
+/// output, not a parameter of a projection method.
 const NON_METHOD_KEYS: &[&str] = &[
     "proj", "datum", "ellps", "a", "b", "rf", "f", "R", "towgs84", "units", "no_defs", "type",
-    "axis",
+    "axis", "title",
 ];
 
+/// `+k` and `+k_0` name the same parameter.
+fn same_param(given: &str, proj_name: &str) -> bool {
+    given == proj_name || (is_scale_key(given) && is_scale_key(proj_name))
+}
+
+fn is_scale_key(key: &str) -> bool {
+    key == "k" || key == "k_0"
+}
+
+/// The value of the first token that names the PROJ parameter `key`.
+fn param_token<'a>(tokens: &'a [(String, String)], key: &str) -> Option<&'a str> {
+    tokens
+        .iter()
+        .find(|(name, _)| same_param(name, key))
+        .map(|(_, value)| value.as_str())
+}
+
+/// The EPSG method that `buildProjectedCRS` forces when the PROJ name alone
+/// does not decide it. `None` keeps the first method whose parameters cover
+/// every key. Pseudo-Mercator, the no-rotation and two-point variants of
+/// `omerc`, and non-polar `stere` are not decided here.
+fn forced_method_code(proj: &str, tokens: &[(String, String)]) -> Option<i32> {
+    let present = |key: &str| param_token(tokens, key).is_some();
+    let number = |key: &str| param_token(tokens, key).and_then(|text| text.parse::<f64>().ok());
+    let k = number("k");
+    match proj {
+        "lcc" if !present("lat_2") && present("lat_0") && present("lat_1") => {
+            Some(if number("lat_0") == number("lat_1") {
+                9801
+            } else {
+                1102
+            })
+        }
+        "lcc" if k.is_some_and(|k| k != 1.0) => Some(1051),
+        "lcc" => Some(9802),
+        "omerc" if present("no_rot") => None,
+        "omerc" if present("no_uoff") || present("no_off") => Some(9812),
+        "omerc" if present("lat_1") && present("lon_1") && present("lat_2") && present("lon_2") => {
+            None
+        }
+        "omerc" => Some(9815),
+        "merc" if present("lat_ts") => Some(9805),
+        "merc" => Some(9804),
+        "stere" => {
+            let polar = number("lat_0").is_some_and(|lat| (lat.abs() - 90.0).abs() < 1e-10);
+            if !polar {
+                return None;
+            }
+            if present("lat_ts") && k.is_none_or(|k| (k - 1.0).abs() < 1e-10) {
+                Some(9829)
+            } else {
+                Some(9810)
+            }
+        }
+        "krovak" | "mod_krovak" => {
+            let swu = param_token(tokens, "axis") == Some("swu");
+            let czech = present("czech");
+            ((swu && !czech) || (czech && !present("axis"))).then_some(if proj == "krovak" {
+                9819
+            } else {
+                1042
+            })
+        }
+        _ => None,
+    }
+}
+
+/// The value PROJ uses when a parameter is not given: 1 for a scale, 0 for an
+/// angle or length. `krovak` and `omerc` have their own defaults.
+fn parameter_default(proj: &str, param: &ParamMap, tokens: &[(String, String)]) -> f64 {
+    if proj == "omerc" && param.proj_name == Some("gamma") {
+        return param_token(tokens, "alpha")
+            .and_then(|text| text.parse().ok())
+            .unwrap_or(0.0);
+    }
+    if matches!(proj, "krovak" | "mod_krovak") {
+        match param.epsg_code {
+            8811 => return 49.5,
+            8833 => return 24.833_333_333_333_333,
+            1036 => return 30.288_139_752_777_777_76,
+            8818 => return 78.5,
+            8819 => return 0.9999,
+            _ => {}
+        }
+    }
+    if param.unit == UnitKind::Scale {
+        1.0
+    } else {
+        0.0
+    }
+}
+
 /// `PROJStringParser` for a projected CRS with `+proj=` naming a method. The
-/// method is the first one whose PROJ parameters cover every key; each of its
-/// parameters takes the key's value, or PROJ's default (1 for a scale, 0 for
-/// an angle or length). The CRS is `unknown`, on the `+datum`/`+ellps`
-/// geographic CRS, with easting and northing in metres.
+/// method is the one `forced_method_code` selects, else the first one whose
+/// PROJ parameters cover every key. Each parameter takes the key's value, or
+/// `parameter_default`. The CRS is named by `+title=`, or `unknown`, on the
+/// `+datum`/`+ellps` geographic CRS, with easting and northing in metres.
 fn projected_from_proj_string(tokens: &[(String, String)]) -> Result<Crs, FactoryError> {
     let proj = token(tokens, "proj");
     let units = token(tokens, "units");
@@ -849,11 +964,17 @@ fn projected_from_proj_string(tokens: &[(String, String)]) -> Result<Crs, Factor
                 || method
                     .params
                     .iter()
-                    .any(|param| param.proj_name == Some(key.as_str()))
-                || (key == "k_0" && method.params.iter().any(|p| p.proj_name == Some("k")))
+                    .any(|param| param.proj_name.is_some_and(|name| same_param(key, name)))
         })
     };
-    let Some(method) = methods.iter().copied().find(|method| covers(method)) else {
+    let forced = forced_method_code(proj, tokens).and_then(|code| {
+        methods
+            .iter()
+            .copied()
+            .find(|method| method.epsg_code == code)
+    });
+    let Some(method) = forced.or_else(|| methods.iter().copied().find(|method| covers(method)))
+    else {
         return Err(FactoryError::Invalid(format!(
             "unsupported +proj={proj} for a CRS"
         )));
@@ -861,20 +982,11 @@ fn projected_from_proj_string(tokens: &[(String, String)]) -> Result<Crs, Factor
     let mut parameters = Vec::new();
     for param in method.params {
         let key = param.proj_name.unwrap_or("");
-        let given = tokens
-            .iter()
-            .find(|(name, _)| name == key || (key == "k" && name == "k_0"))
-            .map(|(_, value)| value.as_str());
-        let default = if param.unit == UnitKind::Scale {
-            1.0
-        } else {
-            0.0
-        };
-        let value = match given {
+        let value = match param_token(tokens, key) {
             Some(text) => text
                 .parse::<f64>()
                 .map_err(|_| FactoryError::Invalid(format!("+{key} is not a number: {text}")))?,
-            None => default,
+            None => parameter_default(proj, param, tokens),
         };
         let value = match param.unit {
             UnitKind::Angular => ParameterValue::angle(value),
@@ -895,7 +1007,15 @@ fn projected_from_proj_string(tokens: &[(String, String)]) -> Result<Crs, Factor
         parameters,
     );
     conversion.identified = Identified::named("unknown");
-    let datum = datum_from_proj(tokens)?;
+    let krovak_default = matches!(proj, "krovak" | "mod_krovak")
+        && ["datum", "ellps", "a", "rf"]
+            .iter()
+            .all(|key| token(tokens, key).is_empty());
+    let datum = if krovak_default {
+        named_ellipsoid_datum("bessel")?
+    } else {
+        datum_from_proj(tokens)?
+    };
     let base = GeographicCRS {
         identified: Identified::named("unknown"),
         datum: Some(datum),
@@ -909,8 +1029,11 @@ fn projected_from_proj_string(tokens: &[(String, String)]) -> Result<Crs, Factor
         },
         implicit_cs: true,
     };
+    let name = param_token(tokens, "title")
+        .filter(|title| !title.is_empty())
+        .unwrap_or("unknown");
     Ok(Crs::Projected(ProjectedCRS::create(
-        "unknown",
+        name,
         GeodeticCRS::Geographic(base),
         conversion,
         CartesianCS::create_easting_northing(UnitOfMeasure::metre()),
