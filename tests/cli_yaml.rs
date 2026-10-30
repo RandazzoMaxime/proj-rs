@@ -119,7 +119,13 @@ fn load(path: &Path, file: &str) -> Vec<Case> {
         .collect()
 }
 
-fn one_case(file: &str, exe: &str, global_env: &[(String, String)], index: usize, case: &Value) -> Case {
+fn one_case(
+    file: &str,
+    exe: &str,
+    global_env: &[(String, String)],
+    index: usize,
+    case: &Value,
+) -> Case {
     let comment = case
         .get("comment")
         .and_then(Value::as_str)
@@ -432,7 +438,9 @@ fn run_in(case: &Case, bin: &str, scratch: &Path) -> Result<(), String> {
             .write_all(case.input.as_bytes())
             .map_err(|error| error.to_string())?;
     }
-    let output = child.wait_with_output().map_err(|error| error.to_string())?;
+    let output = child
+        .wait_with_output()
+        .map_err(|error| error.to_string())?;
     let code = output.status.code().unwrap_or(1);
     if code != case.exitcode {
         return Err(format!(
@@ -567,9 +575,7 @@ fn compare_text(expected: &str, got: &str) -> Result<(), String> {
     let expected_lines = content_lines(expected);
     let got_lines = content_lines(got);
     if expected_lines != got_lines {
-        return Err(format!(
-            "text mismatch\nexpected:\n{expected}\ngot:\n{got}"
-        ));
+        return Err(format!("text mismatch\nexpected:\n{expected}\ngot:\n{got}"));
     }
     Ok(())
 }

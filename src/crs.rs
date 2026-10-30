@@ -1618,7 +1618,10 @@ fn push_to_angular(steps: &mut Vec<String>, bound: &Bound) {
             // Longitude in the CRS is relative to its prime meridian. The rest of
             // the pipeline speaks Greenwich radians.
             if bound.pm_deg.abs() > 1e-12 {
-                steps.push(format!("+inv +proj=longlat +pm={}", format_f64(bound.pm_deg)));
+                steps.push(format!(
+                    "+inv +proj=longlat +pm={}",
+                    format_f64(bound.pm_deg)
+                ));
             }
         }
         Horizontal::Projected(definition) => {
@@ -1873,7 +1876,7 @@ fn vertical_step(
                 g.target_crs_auth_name, g.target_crs_code,
                 s.datum_auth_name, s.datum_code,
                 t.datum_auth_name, t.datum_code,
-                a.proj_grid_name, a.inverse_direction
+                a.proj_grid_name, a.inverse_direction, g.name
          FROM grid_transformation g
          JOIN grid_alternatives a ON a.original_grid_name = g.grid_name
          LEFT JOIN geodetic_crs s
@@ -1899,9 +1902,10 @@ fn vertical_step(
             column_text_opt(row, 9)?,
             column_text(row, 10)?,
             column_i64(row, 11)? != 0,
+            column_text(row, 12)?,
         ))
     })?;
-    let mut best_available: Option<(f64, u8, String)> = None;
+    let mut best_available: Option<(f64, u8, String, String)> = None;
     let mut best_missing = f64::MAX;
     for row in mapped {
         let (
@@ -1917,6 +1921,7 @@ fn vertical_step(
             target_datum_code,
             grid,
             inverse_file,
+            name,
         ) = row?;
         let Some(rank) = authority_kept(&auth, &allowed) else {
             continue;
@@ -1951,16 +1956,20 @@ fn vertical_step(
         } else {
             format!("+proj=vgridshift +grids={grid} +multiplier=1")
         };
-        let replace = best_available
-            .as_ref()
-            .is_none_or(|(best_accuracy, best_rank, _)| {
-                accuracy < *best_accuracy || (accuracy == *best_accuracy && rank < *best_rank)
-            });
+        let replace =
+            best_available
+                .as_ref()
+                .is_none_or(|(best_accuracy, best_rank, best_name, _)| {
+                    accuracy < *best_accuracy
+                        || (accuracy == *best_accuracy
+                            && (rank < *best_rank
+                                || (rank == *best_rank && name_first(&name, best_name))))
+                });
         if replace {
-            best_available = Some((accuracy, rank, step));
+            best_available = Some((accuracy, rank, name, step));
         }
     }
-    if let Some((accuracy, _, step)) = best_available {
+    if let Some((accuracy, _, _, step)) = best_available {
         if best_missing < accuracy {
             return Err(unsupported("grid step".to_owned()));
         }
@@ -1970,6 +1979,11 @@ fn vertical_step(
         return Err(unsupported("grid step".to_owned()));
     }
     Err(unsupported("grid step".to_owned()))
+}
+
+/// PROJ's last tie-break between operations: the shorter name, then the greater one.
+fn name_first(name: &str, other: &str) -> bool {
+    name.len() < other.len() || (name.len() == other.len() && name > other)
 }
 
 struct HelmertRaw {

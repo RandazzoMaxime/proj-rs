@@ -404,7 +404,9 @@ fn operation_from_wkt(object: WktObject) -> Result<Operation, String> {
         WktObject::Conversion(conversion) => conversion
             .export_to_proj_string()
             .map_err(|error| error.to_string())
-            .and_then(|definition| Operation::create(&definition).map_err(|error| error.to_string())),
+            .and_then(|definition| {
+                Operation::create(&definition).map_err(|error| error.to_string())
+            }),
         WktObject::Transformation(transformation) => {
             let definition = transformation_proj(&transformation)?;
             Operation::create(&definition).map_err(|error| error.to_string())
@@ -436,31 +438,76 @@ fn transformation_proj(transformation: &Transformation) -> Result<String, String
         _ => "",
     };
     let mut parts = vec!["+proj=helmert".to_owned()];
-    push_len(&mut parts, "x", measure(transformation, "8605", "X-axis translation"));
-    push_len(&mut parts, "y", measure(transformation, "8606", "Y-axis translation"));
-    push_len(&mut parts, "z", measure(transformation, "8607", "Z-axis translation"));
-    push_arcsec(&mut parts, "rx", measure(transformation, "8608", "X-axis rotation"));
-    push_arcsec(&mut parts, "ry", measure(transformation, "8609", "Y-axis rotation"));
-    push_arcsec(&mut parts, "rz", measure(transformation, "8610", "Z-axis rotation"));
-    push_ppm(&mut parts, "s", measure(transformation, "8611", "Scale difference"));
-    let rates = measure(transformation, "1040", "Rate of change of X-axis translation").is_some()
+    push_len(
+        &mut parts,
+        "x",
+        measure(transformation, "8605", "X-axis translation"),
+    );
+    push_len(
+        &mut parts,
+        "y",
+        measure(transformation, "8606", "Y-axis translation"),
+    );
+    push_len(
+        &mut parts,
+        "z",
+        measure(transformation, "8607", "Z-axis translation"),
+    );
+    push_arcsec(
+        &mut parts,
+        "rx",
+        measure(transformation, "8608", "X-axis rotation"),
+    );
+    push_arcsec(
+        &mut parts,
+        "ry",
+        measure(transformation, "8609", "Y-axis rotation"),
+    );
+    push_arcsec(
+        &mut parts,
+        "rz",
+        measure(transformation, "8610", "Z-axis rotation"),
+    );
+    push_ppm(
+        &mut parts,
+        "s",
+        measure(transformation, "8611", "Scale difference"),
+    );
+    let rates = measure(
+        transformation,
+        "1040",
+        "Rate of change of X-axis translation",
+    )
+    .is_some()
         || measure(transformation, "1043", "Rate of change of X-axis rotation").is_some()
         || measure(transformation, "1047", "Parameter reference epoch").is_some();
     if rates {
         push_len(
             &mut parts,
             "dx",
-            measure(transformation, "1040", "Rate of change of X-axis translation"),
+            measure(
+                transformation,
+                "1040",
+                "Rate of change of X-axis translation",
+            ),
         );
         push_len(
             &mut parts,
             "dy",
-            measure(transformation, "1041", "Rate of change of Y-axis translation"),
+            measure(
+                transformation,
+                "1041",
+                "Rate of change of Y-axis translation",
+            ),
         );
         push_len(
             &mut parts,
             "dz",
-            measure(transformation, "1042", "Rate of change of Z-axis translation"),
+            measure(
+                transformation,
+                "1042",
+                "Rate of change of Z-axis translation",
+            ),
         );
         push_arcsec(
             &mut parts,
@@ -521,9 +568,11 @@ fn param_pair(
             return None;
         }
         match parameter.value() {
-            ParameterValue::Measure(measure) => {
-                Some((measure.value(), measure.si_value(), measure.unit().name().to_owned()))
-            }
+            ParameterValue::Measure(measure) => Some((
+                measure.value(),
+                measure.si_value(),
+                measure.unit().name().to_owned(),
+            )),
             _ => None,
         }
     })

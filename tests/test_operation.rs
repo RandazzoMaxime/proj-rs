@@ -116,10 +116,7 @@ fn operation_operation_parameter_value() {
     assert!(!pair11.is_equivalent_to(&pair21));
 }
 
-fn sample_transformation(
-    method_param: &str,
-    file_name: &str,
-) -> Transformation {
+fn sample_transformation(method_param: &str, file_name: &str) -> Transformation {
     Transformation::create(
         &props(),
         Crs::Geographic(GeographicCRS::epsg_4326()),
@@ -184,9 +181,21 @@ fn operation_single_operation_different_order() {
         )
         .expect("transformation")
     };
-    let sop1 = build("ignored1", ["paramName", "paramName2"], ["foo.bin", "foo2.bin"]);
-    let sop2 = build("ignored2", ["paramName2", "paramName"], ["foo2.bin", "foo.bin"]);
-    let sop3 = build("ignored3", ["paramName", "paramName2"], ["foo2.bin", "foo.bin"]);
+    let sop1 = build(
+        "ignored1",
+        ["paramName", "paramName2"],
+        ["foo.bin", "foo2.bin"],
+    );
+    let sop2 = build(
+        "ignored2",
+        ["paramName2", "paramName"],
+        ["foo2.bin", "foo.bin"],
+    );
+    let sop3 = build(
+        "ignored3",
+        ["paramName", "paramName2"],
+        ["foo2.bin", "foo.bin"],
+    );
     assert!(!sop1.is_equivalent_to(&sop2));
     assert!(sop1.is_equivalent_to_with(&sop2, Equivalence::Equivalent));
     assert!(!sop1.is_equivalent_to_with(&sop3, Equivalence::Equivalent));
@@ -234,9 +243,13 @@ PARAMETER[\"false_northing\",10000000]"
 
 #[test]
 fn operation_tmerc_export() {
-    let conv = Conversion::create_transverse_mercator(&props(), 1.0, 2.0, 3.0, 4.0, 5.0).expect("tmerc");
+    let conv =
+        Conversion::create_transverse_mercator(&props(), 1.0, 2.0, 3.0, 4.0, 5.0).expect("tmerc");
     assert!(conv.validate_parameters().is_empty());
-    assert_eq!(proj(&conv), "+proj=tmerc +lat_0=1 +lon_0=2 +k=3 +x_0=4 +y_0=5");
+    assert_eq!(
+        proj(&conv),
+        "+proj=tmerc +lat_0=1 +lon_0=2 +k=3 +x_0=4 +y_0=5"
+    );
     assert_eq!(
         conv.export_to_proj_string_approx_tmerc().expect("approx"),
         "+proj=tmerc +approx +lat_0=1 +lon_0=2 +k=3 +x_0=4 +y_0=5"
@@ -277,10 +290,14 @@ PARAMETER[\"false_northing\",5]"
 
 #[test]
 fn operation_gstmerc_export() {
-    let conv = Conversion::create_gauss_schreiber_transverse_mercator(&props(), 1.0, 2.0, 3.0, 4.0, 5.0)
-        .expect("gstmerc");
+    let conv =
+        Conversion::create_gauss_schreiber_transverse_mercator(&props(), 1.0, 2.0, 3.0, 4.0, 5.0)
+            .expect("gstmerc");
     assert!(conv.validate_parameters().is_empty());
-    assert_eq!(proj(&conv), "+proj=gstmerc +lat_0=1 +lon_0=2 +k_0=3 +x_0=4 +y_0=5");
+    assert_eq!(
+        proj(&conv),
+        "+proj=gstmerc +lat_0=1 +lon_0=2 +k_0=3 +x_0=4 +y_0=5"
+    );
     assert_eq!(
         wkt2(&conv),
         "\
@@ -328,7 +345,8 @@ fn operation_tmerc_south_oriented_export() {
 
 #[test]
 fn operation_mercator_variant_a_export() {
-    let conv = Conversion::create_mercator_variant_a(&props(), 0.0, 1.0, 2.0, 3.0, 4.0).expect("merc");
+    let conv =
+        Conversion::create_mercator_variant_a(&props(), 0.0, 1.0, 2.0, 3.0, 4.0).expect("merc");
     assert!(conv.validate_parameters().is_empty());
     assert_eq!(proj(&conv), "+proj=merc +lon_0=1 +k=2 +x_0=3 +y_0=4");
     assert_eq!(
@@ -366,16 +384,20 @@ PARAMETER[\"false_northing\",4]"
 
 #[test]
 fn operation_mercator_variant_a_export_latitude_origin_non_zero() {
-    let conv = Conversion::create_mercator_variant_a(&props(), 10.0, 1.0, 2.0, 3.0, 4.0).expect("merc");
+    let conv =
+        Conversion::create_mercator_variant_a(&props(), 10.0, 1.0, 2.0, 3.0, 4.0).expect("merc");
     assert!(conv.export_to_proj_string().is_err());
 }
 
 #[test]
 fn operation_lcc1sp_export() {
-    let conv =
-        Conversion::create_lambert_conic_conformal_1sp(&props(), 1.0, 2.0, 3.0, 4.0, 5.0).expect("lcc");
+    let conv = Conversion::create_lambert_conic_conformal_1sp(&props(), 1.0, 2.0, 3.0, 4.0, 5.0)
+        .expect("lcc");
     assert!(conv.validate_parameters().is_empty());
-    assert_eq!(proj(&conv), "+proj=lcc +lat_1=1 +lat_0=1 +lon_0=2 +k_0=3 +x_0=4 +y_0=5");
+    assert_eq!(
+        proj(&conv),
+        "+proj=lcc +lat_1=1 +lat_0=1 +lon_0=2 +k_0=3 +x_0=4 +y_0=5"
+    );
     assert_eq!(
         wkt2(&conv),
         "\
@@ -460,7 +482,8 @@ fn operation_validate_parameters() {
         ]
     );
 
-    let wrong_code = Conversion::create_with_method("Change of Vertical Unit", "EPSG", "1234", Vec::new());
+    let wrong_code =
+        Conversion::create_with_method("Change of Vertical Unit", "EPSG", "1234", Vec::new());
     assert_eq!(
         wrong_code.validate_parameters(),
         vec![

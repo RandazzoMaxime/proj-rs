@@ -510,7 +510,9 @@ fn c_api_proj_create_from_database() {
         other => panic!("expected a transformation, got {}", other.name()),
     }
     match epsg().create_coordinate_reference_system("i_do_not_exist") {
-        Err(FactoryError::NotFound { authority, code, .. }) => {
+        Err(FactoryError::NotFound {
+            authority, code, ..
+        }) => {
             assert_eq!(authority, "EPSG");
             assert_eq!(code, "i_do_not_exist");
         }
@@ -531,23 +533,41 @@ fn c_api_proj_crs() {
     let rf = ellipsoid.inverse_flattening();
     assert_eq!(rf, 298.257_223_563);
     let semi_minor = 6_378_137.0 * (1.0 - 1.0 / rf);
-    assert!((semi_minor - 6_356_752.314_245_18).abs() < 1e-9, "{semi_minor}");
+    assert!(
+        (semi_minor - 6_356_752.314_245_18).abs() < 1e-9,
+        "{semi_minor}"
+    );
     assert!(ellipsoid.semi_minor_axis().is_none());
     assert_eq!(ellipsoid.identifiers()[0].code(), "7030");
 }
 
 #[test]
 fn c_api_proj_get_celestial_body_name() {
-    assert_eq!(body_of_crs(&epsg().create_coordinate_reference_system("4326").unwrap()), Some("Earth"));
-    assert_eq!(body_of_crs(&epsg().create_coordinate_reference_system("32631").unwrap()), Some("Earth"));
-    assert_eq!(body_of_crs(&epsg().create_coordinate_reference_system("3855").unwrap()), Some("Earth"));
-    assert_eq!(body_of_crs(&epsg().create_coordinate_reference_system("9518").unwrap()), Some("Earth"));
+    assert_eq!(
+        body_of_crs(&epsg().create_coordinate_reference_system("4326").unwrap()),
+        Some("Earth")
+    );
+    assert_eq!(
+        body_of_crs(&epsg().create_coordinate_reference_system("32631").unwrap()),
+        Some("Earth")
+    );
+    assert_eq!(
+        body_of_crs(&epsg().create_coordinate_reference_system("3855").unwrap()),
+        Some("Earth")
+    );
+    assert_eq!(
+        body_of_crs(&epsg().create_coordinate_reference_system("9518").unwrap()),
+        Some("Earth")
+    );
     assert_eq!(
         epsg().create_datum("6267").unwrap().ellipsoid_body(),
         Some("Earth".to_owned())
     );
     let ensemble = epsg().create_datum_ensemble("6326").expect("ensemble");
-    assert_eq!(ensemble.members()[0].ellipsoid_body().as_deref(), Some("Earth"));
+    assert_eq!(
+        ensemble.members()[0].ellipsoid_body().as_deref(),
+        Some("Earth")
+    );
     assert_eq!(
         epsg().create_datum("1027").unwrap().ellipsoid_body(),
         Some("Earth".to_owned())
@@ -569,10 +589,19 @@ fn c_api_proj_get_celestial_body_name() {
 #[test]
 fn c_api_proj_get_prime_meridian() {
     let projected = synthetic_utm();
-    let meridian = projected.base_crs().datum().expect("datum").prime_meridian();
+    let meridian = projected
+        .base_crs()
+        .datum()
+        .expect("datum")
+        .prime_meridian();
     assert_eq!(meridian.name(), "Greenwich");
     assert_eq!(meridian.longitude().value(), 0.0);
-    assert!((meridian.longitude().unit().conversion_to_si() - UnitOfMeasure::degree().conversion_to_si()).abs() < 1e-10);
+    assert!(
+        (meridian.longitude().unit().conversion_to_si()
+            - UnitOfMeasure::degree().conversion_to_si())
+        .abs()
+            < 1e-10
+    );
     assert_eq!(meridian.longitude().unit().name(), "degree");
     let _ = PrimeMeridian::greenwich();
 }
@@ -602,7 +631,10 @@ fn c_api_proj_get_source_target_crs_transformation() {
     let CoordinateOperation::Transformation(operation) = bound.transformation() else {
         panic!("transformation");
     };
-    assert_eq!(operation.source_crs().expect("source").name(), "NTF (Paris)");
+    assert_eq!(
+        operation.source_crs().expect("source").name(),
+        "NTF (Paris)"
+    );
     assert_eq!(operation.target_crs().expect("target").name(), "WGS 84");
 }
 
@@ -615,7 +647,10 @@ fn c_api_proj_get_source_crs_of_projected_crs() {
 #[test]
 fn c_api_proj_get_source_target_crs_conversion_without_crs() {
     let conversion = epsg().create_conversion("16031").expect("16031");
-    assert!(conversion.parameters().iter().all(|parameter| parameter.name() != "source"));
+    assert!(conversion
+        .parameters()
+        .iter()
+        .all(|parameter| parameter.name() != "source"));
 }
 
 #[test]
@@ -996,8 +1031,12 @@ fn body_of_crs(crs: &Crs) -> Option<&'static str> {
             .ellipsoid()
             .map(|ellipsoid| ellipsoid.celestial_body())
             .map(body_static),
-        Crs::Geographic(crs) => crs.ellipsoid().map(|ellipsoid| body_static(ellipsoid.celestial_body())),
-        Crs::Geodetic(crs) => crs.ellipsoid().map(|ellipsoid| body_static(ellipsoid.celestial_body())),
+        Crs::Geographic(crs) => crs
+            .ellipsoid()
+            .map(|ellipsoid| body_static(ellipsoid.celestial_body())),
+        Crs::Geodetic(crs) => crs
+            .ellipsoid()
+            .map(|ellipsoid| body_static(ellipsoid.celestial_body())),
         Crs::Bound(crs) => body_of_crs(crs.source_crs()),
         Crs::DerivedProjected(crs) => body_of_crs(&Crs::Projected(crs.base_crs().clone())),
     }

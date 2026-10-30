@@ -59,11 +59,18 @@ impl GeodeticCRS {
                         if crs.name() == name {
                             return vec![(to_crs(crs), 100)];
                         }
-                        let confidence = if equivalent_name(name, crs.name()) { 90 } else { 70 };
+                        let confidence = if equivalent_name(name, crs.name()) {
+                            90
+                        } else {
+                            70
+                        };
                         hits.push(Hit { crs, confidence });
                         above_25 = true;
                     } else {
-                        hits.push(Hit { crs, confidence: 25 });
+                        hits.push(Hit {
+                            crs,
+                            confidence: 25,
+                        });
                     }
                 }
                 if !hits.is_empty() {
@@ -153,7 +160,9 @@ fn axis_order(crs: &GeodeticCRS) -> IdentifyAxisOrder {
 fn geodetic_type(crs: &GeodeticCRS) -> &'static str {
     match crs {
         GeodeticCRS::Geocentric(_) => "geocentric",
-        GeodeticCRS::Geographic(crs) if crs.coordinate_system().axes().len() == 2 => "geographic 2D",
+        GeodeticCRS::Geographic(crs) if crs.coordinate_system().axes().len() == 2 => {
+            "geographic 2D"
+        }
         GeodeticCRS::Geographic(_) => "geographic 3D",
         GeodeticCRS::Spherical(_) => "",
     }
@@ -308,10 +317,8 @@ fn search_by_ellipsoid(
                 };
                 let ellipsoid_matches =
                     ellipsoid_parameters_match(candidate_frame.ellipsoid(), ellipsoid);
-                let meridian_matches = meridian_equivalent(
-                    candidate_frame.prime_meridian(),
-                    frame.prime_meridian(),
-                );
+                let meridian_matches =
+                    meridian_equivalent(candidate_frame.prime_meridian(), frame.prime_meridian());
                 let axes_match = order == IdentifyAxisOrder::Implicit
                     || directions_and_units(&this_axes, &axis_list(&candidate));
                 if ellipsoid_matches && meridian_matches && axes_match {
@@ -330,37 +337,35 @@ fn sort_hits(crs: &GeodeticCRS, db: &DatabaseContext, hits: &mut [Hit]) {
     let axes = axis_list(crs);
     let name = crs.name();
     hits.sort_by(|left, right| {
-        right.confidence.cmp(&left.confidence).then_with(|| {
-            prefer(
-                left.crs.name() == name,
-                right.crs.name() == name,
-            )
-        })
-        .then_with(|| {
-            prefer(
-                frame_matches(frame.as_ref(), &left.crs, db),
-                frame_matches(frame.as_ref(), &right.crs, db),
-            )
-        })
-        .then_with(|| {
-            prefer(
-                directions_and_units(&axes, &axis_list(&left.crs)),
-                directions_and_units(&axes, &axis_list(&right.crs)),
-            )
-        })
-        .then_with(|| {
-            prefer(
-                axis_list(&left.crs).len() == axes.len(),
-                axis_list(&right.crs).len() == axes.len(),
-            )
-        })
-        .then_with(|| {
-            prefer(
-                ellipsoid_name_is_crs_name(&left.crs),
-                ellipsoid_name_is_crs_name(&right.crs),
-            )
-        })
-        .then_with(|| left.crs.name().cmp(right.crs.name()))
+        right
+            .confidence
+            .cmp(&left.confidence)
+            .then_with(|| prefer(left.crs.name() == name, right.crs.name() == name))
+            .then_with(|| {
+                prefer(
+                    frame_matches(frame.as_ref(), &left.crs, db),
+                    frame_matches(frame.as_ref(), &right.crs, db),
+                )
+            })
+            .then_with(|| {
+                prefer(
+                    directions_and_units(&axes, &axis_list(&left.crs)),
+                    directions_and_units(&axes, &axis_list(&right.crs)),
+                )
+            })
+            .then_with(|| {
+                prefer(
+                    axis_list(&left.crs).len() == axes.len(),
+                    axis_list(&right.crs).len() == axes.len(),
+                )
+            })
+            .then_with(|| {
+                prefer(
+                    ellipsoid_name_is_crs_name(&left.crs),
+                    ellipsoid_name_is_crs_name(&right.crs),
+                )
+            })
+            .then_with(|| left.crs.name().cmp(right.crs.name()))
     });
 }
 
@@ -388,8 +393,7 @@ fn frame_matches(
 }
 
 fn ellipsoid_name_is_crs_name(crs: &GeodeticCRS) -> bool {
-    owning_frame(crs)
-        .is_some_and(|frame| equivalent_name(frame.ellipsoid().name(), crs.name()))
+    owning_frame(crs).is_some_and(|frame| equivalent_name(frame.ellipsoid().name(), crs.name()))
 }
 
 fn db_equivalent(
@@ -533,11 +537,12 @@ impl GeographicCRS {
                 if let Ok(Some(found)) = AuthorityFactory::create(db, identifier.code_space())
                     .create_geographic_3d_crs_from_name(self.name())
                 {
-                    let height_matches = found.coordinate_system().axes().get(2).is_some_and(|axis| {
-                        axis.direction() == "up"
-                            && axis.unit().kind() == super::model::UnitKind::Linear
-                            && (axis.unit().conversion_to_si() - 1.0).abs() <= 1e-10
-                    });
+                    let height_matches =
+                        found.coordinate_system().axes().get(2).is_some_and(|axis| {
+                            axis.direction() == "up"
+                                && axis.unit().kind() == super::model::UnitKind::Linear
+                                && (axis.unit().conversion_to_si() - 1.0).abs() <= 1e-10
+                        });
                     if height_matches && self.is_2d_part_of_3d(&found) {
                         return found;
                     }
@@ -588,9 +593,7 @@ impl ProjectedCRS {
             return self.clone();
         }
         let base = match &self.base {
-            GeodeticCRS::Geographic(crs) => {
-                GeodeticCRS::Geographic(crs.promote_to_3d_with_db(db))
-            }
+            GeodeticCRS::Geographic(crs) => GeodeticCRS::Geographic(crs.promote_to_3d_with_db(db)),
             other => other.clone(),
         };
         let unit = self.coordinate_system.axes[0].unit().clone();

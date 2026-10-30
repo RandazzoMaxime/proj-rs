@@ -105,7 +105,7 @@ fn name_ends(name: &str, suffix: &str) -> bool {
 pub(super) fn open_named(name: &str, bytes: &[u8]) -> Option<Grid> {
     if name_ends(name, ".gtx") {
         open_gtx(bytes)
-    } else if name_ends(name, ".ct2") {
+    } else if name_ends(name, ".ct2") || bytes.starts_with(b"CTABLE V2.") {
         open_ctable2(bytes)
     } else if name_ends(name, ".tif") || name_ends(name, ".tiff") || is_le_tiff(bytes) {
         open_tiff(bytes)

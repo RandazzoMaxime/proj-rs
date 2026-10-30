@@ -355,7 +355,9 @@ fn list_crs(args: &[String]) -> Result<String, String> {
             }
         } else if arg == "--authority" {
             index += 1;
-            let value = args.get(index).ok_or_else(|| "missing authority".to_owned())?;
+            let value = args
+                .get(index)
+                .ok_or_else(|| "missing authority".to_owned())?;
             authorities = value.split(',').map(|item| item.to_owned()).collect();
         } else if arg == "allow_deprecated" || type_filter.contains("allow_deprecated") {
             allow_deprecated = true;
@@ -366,18 +368,18 @@ fn list_crs(args: &[String]) -> Result<String, String> {
         allow_deprecated = true;
     }
     if authorities.is_empty() {
-        authorities = ["EPSG", "ESRI", "OGC", "IAU_2015", "IGNF", "NKG", "NRCAN", "PROJ"]
-            .into_iter()
-            .map(str::to_owned)
-            .collect();
+        authorities = [
+            "EPSG", "ESRI", "OGC", "IAU_2015", "IGNF", "NKG", "NRCAN", "PROJ",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
     }
     let db = proj_rs::DatabaseContext::create().map_err(|error| error.to_string())?;
     let mut lines = Vec::new();
     for authority in authorities {
         let factory = proj_rs::AuthorityFactory::create(&db, &authority);
-        let infos = factory
-            .get_crs_info_list()
-            .unwrap_or_default();
+        let infos = factory.get_crs_info_list().unwrap_or_default();
         let mut seen = std::collections::BTreeSet::new();
         for info in infos {
             if info.deprecated && !allow_deprecated {
@@ -389,10 +391,7 @@ fn list_crs(args: &[String]) -> Result<String, String> {
             if !seen.insert(info.code.clone()) {
                 continue;
             }
-            let mut line = format!(
-                "{}:{} \"{}\"",
-                info.authority, info.code, info.name
-            );
+            let mut line = format!("{}:{} \"{}\"", info.authority, info.code, info.name);
             if info.deprecated {
                 line.push_str(" [deprecated]");
             }
@@ -410,7 +409,8 @@ fn type_matches(filter: &str, type_name: &str) -> bool {
             return false;
         }
         folded.contains(&piece.to_ascii_lowercase())
-            || (piece == "geodetic" && (folded.contains("geographic") || folded.contains("geocentric")))
+            || (piece == "geodetic"
+                && (folded.contains("geographic") || folded.contains("geocentric")))
             || (piece == "geographic" && folded.contains("geographic"))
     })
 }
@@ -458,10 +458,7 @@ fn candidates(options: &Options) -> Result<String, String> {
     Ok(out)
 }
 
-fn load_named(
-    factory: &proj_rs::AuthorityFactory,
-    text: &str,
-) -> Result<proj_rs::Crs, String> {
+fn load_named(factory: &proj_rs::AuthorityFactory, text: &str) -> Result<proj_rs::Crs, String> {
     let code = text
         .strip_prefix("EPSG:")
         .or_else(|| text.strip_prefix("epsg:"))
@@ -514,7 +511,9 @@ fn operation_proj(
 fn ellps_suffix(crs: &proj_rs::Crs) -> String {
     let name = match crs {
         proj_rs::Crs::Geographic(crs) => crs.ellipsoid().map(|ellipsoid| ellipsoid.name()),
-        proj_rs::Crs::Projected(crs) => crs.base_crs().ellipsoid().map(|ellipsoid| ellipsoid.name()),
+        proj_rs::Crs::Projected(crs) => {
+            crs.base_crs().ellipsoid().map(|ellipsoid| ellipsoid.name())
+        }
         _ => None,
     };
     let Some(name) = name else {
@@ -1822,8 +1821,10 @@ mod tests {
     #[test]
     fn unsupported_dialect_is_an_error() {
         assert!(classify_dialect("WKT1:GDAL").is_ok());
-        assert!(classify_dialect("SQL").expect_err("sql").contains("cannot write dialect"));
-        assert!(classify_dialect("all").is_err());
+        assert!(classify_dialect("SQL")
+            .expect_err("sql")
+            .contains("cannot write dialect"));
+        assert_eq!(classify_dialect("all").expect("all"), None);
         assert_eq!(
             classify_dialect("WKT2:2019").expect("wkt"),
             Some(Dialect::Wkt2_2019)

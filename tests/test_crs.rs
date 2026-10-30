@@ -3,11 +3,11 @@
 //! Each function is one `TEST()` name. WKT text is the expected string from that test.
 
 use proj_rs::{
-    AuthorityFactory, Axis, CartesianCS, Conversion, CoordinateSystem, Crs, DatabaseContext, Datum,
-    DatumEnsemble, EllipsoidalCS, EllipsoidalHeightPolicy, Equivalence, GeodeticCRS,
-    LinunitPolicy, GeodeticReferenceFrame, GeographicCRS, OpProps, OutputAxisRule, PrimeMeridian,
-    ProjectedCRS, UnitKind, UnitOfMeasure, VerticalReferenceFrame, WktConvention, WktFormatter,
-    WktLines, WktParser, WktStrictness, create_crs_from_proj_string, create_from_user_input,
+    create_crs_from_proj_string, create_from_user_input, AuthorityFactory, Axis, CartesianCS,
+    Conversion, CoordinateSystem, Crs, DatabaseContext, Datum, DatumEnsemble, EllipsoidalCS,
+    EllipsoidalHeightPolicy, Equivalence, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS,
+    LinunitPolicy, OpProps, OutputAxisRule, PrimeMeridian, ProjectedCRS, UnitKind, UnitOfMeasure,
+    VerticalReferenceFrame, WktConvention, WktFormatter, WktLines, WktParser, WktStrictness,
 };
 
 fn export(crs: &GeographicCRS, convention: WktConvention) -> String {
@@ -28,9 +28,7 @@ fn crs_epsg_4901_as_wkt1_esri_with_primem_unit_name_morphing() {
         .create_coordinate_reference_system("4901")
         .expect("EPSG:4901");
     let wkt = crs
-        .export_to_wkt(
-            &mut WktFormatter::create(WktConvention::Wkt1Esri).with_database(db),
-        )
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Esri).with_database(db))
         .expect("WKT1 ESRI");
     assert_eq!(
         wkt,
@@ -559,7 +557,10 @@ fn crs_iau_1000_as_projjson() {
         json.contains("\"authority\": \"IAU\","),
         "missing IAU authority in {json}"
     );
-    assert!(json.contains("\"code\": 1000,"), "missing IAU code in {json}");
+    assert!(
+        json.contains("\"code\": 1000,"),
+        "missing IAU code in {json}"
+    );
     assert!(
         json.contains("\"version\": 2015"),
         "missing IAU version in {json}"
@@ -653,7 +654,9 @@ GEODCRS[\"WGS 84\",
 #[test]
 fn crs_geocentric_crs_as_wkt2_simplified() {
     let wkt = Crs::Geodetic(geocentric_4328())
-        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2015Simplified))
+        .export_to_wkt(&mut WktFormatter::create(
+            WktConvention::Wkt2_2015Simplified,
+        ))
         .expect("wkt");
     assert_eq!(
         wkt,
@@ -778,7 +781,10 @@ fn crs_geodeticcrs_identify_no_db() {
 
     let wgs84 = Crs::Geographic(GeographicCRS::epsg_4326());
     canonical(wgs84.identify(), 100);
-    canonical(Crs::Geodetic(GeodeticCRS::Geographic(GeographicCRS::epsg_4326())).identify(), 100);
+    canonical(
+        Crs::Geodetic(GeodeticCRS::Geographic(GeographicCRS::epsg_4326())).identify(),
+        100,
+    );
 
     let named = GeographicCRS::create(
         "WGS 84",
@@ -1000,20 +1006,22 @@ fn crs_geodeticcrs_identify_db() {
         GeodeticReferenceFrame::epsg_6326(),
         UnitOfMeasure::degree(),
     )
-        .with_identifier("EPSG", "i_dont_exist");
+    .with_identifier("EPSG", "i_dont_exist");
     assert!(missing_name.identify_with(Some(&factory)).is_empty());
 
-    let from_datum = create_crs_from_proj_string("+proj=longlat +datum=WGS84 +type=crs").expect("wgs84");
+    let from_datum =
+        create_crs_from_proj_string("+proj=longlat +datum=WGS84 +type=crs").expect("wgs84");
     let found = from_datum.identify_with(Some(&factory));
     assert_eq!(found.len(), 1);
     assert_eq!(epsg_code(&found[0].0), ("EPSG", "4326"));
     assert_eq!(found[0].1, 70);
 
-    let from_ellps = create_crs_from_proj_string("+proj=longlat +ellps=GRS80 +type=crs").expect("grs80");
+    let from_ellps =
+        create_crs_from_proj_string("+proj=longlat +ellps=GRS80 +type=crs").expect("grs80");
     let found = from_ellps.identify_with(Some(&factory));
-    assert!(found.iter().any(|(crs, confidence)| {
-        epsg_code(crs) == ("EPSG", "7844") && *confidence == 60
-    }));
+    assert!(found
+        .iter()
+        .any(|(crs, confidence)| { epsg_code(crs) == ("EPSG", "7844") && *confidence == 60 }));
 
     let gda_with_id = wkt_crs(GDA2020_WITH_ID, None);
     let found = gda_with_id.identify_with(Some(&all));
@@ -1481,7 +1489,9 @@ fn crs_projected_crs_3d_as_wkt1_gdal_with_ellipsoidal_height_as_vertical_crs() {
         .promote_to_3d(Some(&db));
     let mut formatter = WktFormatter::create(WktConvention::Wkt1Gdal).with_database(db);
     formatter.set_ellipsoidal_height(EllipsoidalHeightPolicy::AllowAsVertical);
-    let wkt = Crs::Projected(crs).export_to_wkt(&mut formatter).expect("wkt");
+    let wkt = Crs::Projected(crs)
+        .export_to_wkt(&mut formatter)
+        .expect("wkt");
     assert_eq!(
         wkt,
         "\
@@ -1572,8 +1582,10 @@ PROJCRS[\"NTF (Paris) / Lambert Nord France\",
     );
     let db = DatabaseContext::create().expect("proj.db");
     assert_eq!(
-        crs.export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Gdal).with_database(db.clone()))
-            .expect("wkt1"),
+        crs.export_to_wkt(
+            &mut WktFormatter::create(WktConvention::Wkt1Gdal).with_database(db.clone())
+        )
+        .expect("wkt1"),
         "PROJCS[\"NTF (Paris) / Lambert Nord France\",\n    \
 GEOGCS[\"NTF (Paris)\",\n        \
 DATUM[\"Nouvelle_Triangulation_Francaise_Paris\",\n            \
@@ -1911,8 +1923,12 @@ PROJCRS[\"test\",
         .expect("projected")
         .clone();
     let db = DatabaseContext::create().expect("proj.db");
-    let exported = crs.export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Gdal).with_database(db));
-    assert!(exported.is_err(), "a non-zero latitude of origin is not WKT1 Mercator");
+    let exported =
+        crs.export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Gdal).with_database(db));
+    assert!(
+        exported.is_err(),
+        "a non-zero latitude of origin is not WKT1 Mercator"
+    );
 }
 
 #[test]
@@ -1929,8 +1945,9 @@ fn crs_projected_crs_deriving_conversion() {
 fn crs_projected_crs_shallow_clone() {
     let crs = utm_31n();
     assert!(crs.is_equivalent_to(&crs));
-    assert!(!Crs::Projected(crs.clone())
-        .is_equivalent_to(&Crs::Geographic(GeographicCRS::epsg_4326())));
+    assert!(
+        !Crs::Projected(crs.clone()).is_equivalent_to(&Crs::Geographic(GeographicCRS::epsg_4326()))
+    );
     let clone = crs.clone();
     assert!(clone.is_equivalent_to(&crs));
     assert!(std::ptr::eq(

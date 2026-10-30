@@ -2164,14 +2164,18 @@ impl GeodeticCRS {
     pub fn ellipsoid(&self) -> Option<&Ellipsoid> {
         match self {
             Self::Geographic(crs) => crs.ellipsoid(),
-            Self::Geocentric(crs) => crs.datum().map(GeodeticReferenceFrame::ellipsoid).or_else(|| {
-                crs.ensemble.as_ref().and_then(|ensemble| {
-                    ensemble.members().iter().find_map(|member| match member {
-                        Datum::Geodetic(frame) => Some(frame.ellipsoid()),
-                        _ => None,
+            Self::Geocentric(crs) => {
+                crs.datum()
+                    .map(GeodeticReferenceFrame::ellipsoid)
+                    .or_else(|| {
+                        crs.ensemble.as_ref().and_then(|ensemble| {
+                            ensemble.members().iter().find_map(|member| match member {
+                                Datum::Geodetic(frame) => Some(frame.ellipsoid()),
+                                _ => None,
+                            })
+                        })
                     })
-                })
-            }),
+            }
             Self::Spherical(crs) => crs.datum.as_ref().map(GeodeticReferenceFrame::ellipsoid),
         }
     }
@@ -2213,27 +2217,27 @@ impl GeodeticCRS {
         }
         let identified = Identified::named(name);
         let crs = match cs {
-            CoordinateSystem::Ellipsoidal(coordinate_system) => {
-                Self::Geographic(GeographicCRS {
-                    identified,
-                    datum,
-                    ensemble,
-                    coordinate_system,
-                    implicit_cs: false,
-                })
-            }
+            CoordinateSystem::Ellipsoidal(coordinate_system) => Self::Geographic(GeographicCRS {
+                identified,
+                datum,
+                ensemble,
+                coordinate_system,
+                implicit_cs: false,
+            }),
             CoordinateSystem::Cartesian(coordinate_system) => Self::Geocentric(GeocentricCRS {
                 identified,
                 datum,
                 ensemble,
                 coordinate_system,
             }),
-            CoordinateSystem::Spherical(coordinate_system) => Self::Spherical(SphericalGeodeticCRS {
-                identified,
-                datum,
-                ensemble,
-                coordinate_system,
-            }),
+            CoordinateSystem::Spherical(coordinate_system) => {
+                Self::Spherical(SphericalGeodeticCRS {
+                    identified,
+                    datum,
+                    ensemble,
+                    coordinate_system,
+                })
+            }
             _ => {
                 return Err(FactoryError::Invalid(
                     "a geodetic CRS uses an ellipsoidal, cartesian, or spherical coordinate system"
@@ -2644,10 +2648,7 @@ impl CompoundCRS {
     /// # Errors
     ///
     /// The components are not a valid compound CRS.
-    pub fn create_lax(
-        name: impl Into<String>,
-        components: Vec<Crs>,
-    ) -> Result<Crs, FactoryError> {
+    pub fn create_lax(name: impl Into<String>, components: Vec<Crs>) -> Result<Crs, FactoryError> {
         if let [Crs::Geographic(horizontal), Crs::Vertical(vertical)] = components.as_slice() {
             if horizontal.coordinate_system.axes.len() == 2
                 && vertical

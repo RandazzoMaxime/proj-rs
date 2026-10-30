@@ -73,7 +73,7 @@ fn cs2cs_epsg_pair_matches_utm() {
     let text = run(
         env!("CARGO_BIN_EXE_cs2cs"),
         &["-d", "8", "EPSG:4326", "EPSG:32631"],
-        "3 46.5\n",
+        "46.5 3\n",
     );
     let mut numbers = text.split_whitespace();
     let got_east: f64 = numbers.next().expect("east").parse().expect("east number");

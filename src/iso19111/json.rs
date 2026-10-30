@@ -168,8 +168,13 @@ impl Crs {
         writer.string(SCHEMA);
         match self {
             Self::Geographic(crs) => write_geographic(&mut writer, crs, db)?,
-            Self::Geodetic(_) | Self::Projected(_) | Self::Vertical(_) | Self::Compound(_)
-            | Self::Bound(_) | Self::Engineering(_) | Self::DerivedProjected(_) => {
+            Self::Geodetic(_)
+            | Self::Projected(_)
+            | Self::Vertical(_)
+            | Self::Compound(_)
+            | Self::Bound(_)
+            | Self::Engineering(_)
+            | Self::DerivedProjected(_) => {
                 return Err(FactoryError::Format(format!(
                     "PROJJSON export is not built for {}",
                     self.name()
@@ -348,10 +353,7 @@ pub fn create_from_user_input(text: &str, db: &DatabaseContext) -> Result<Crs, F
 /// `AUTH:CODE`, `AUTH:CODE+CODE`, or `AUTH:CODE+AUTH:CODE` with no spaces.
 ///
 /// Anything else returns `Ok(None)` so the caller can try WKT.
-fn crs_from_authority_code(
-    text: &str,
-    db: &DatabaseContext,
-) -> Result<Option<Crs>, FactoryError> {
+fn crs_from_authority_code(text: &str, db: &DatabaseContext) -> Result<Option<Crs>, FactoryError> {
     if text.contains([' ', '\t']) {
         return Ok(None);
     }
@@ -363,7 +365,9 @@ fn crs_from_authority_code(
         }
         let parts: Vec<&str> = tokens[1].split('+').collect();
         if parts.len() == 2 {
-            return Ok(Some(implicit_compound(&factory, parts[0], &factory, parts[1])?));
+            return Ok(Some(implicit_compound(
+                &factory, parts[0], &factory, parts[1],
+            )?));
         }
         return Err(FactoryError::missing("CRS", tokens[0], tokens[1]));
     }
@@ -597,7 +601,10 @@ fn read_ellipsoidal_cs(object: &Object) -> Result<EllipsoidalCS, FactoryError> {
 }
 
 fn read_unit(object: &Object) -> Result<UnitOfMeasure, FactoryError> {
-    let name = object.get("name").and_then(Value::as_str).unwrap_or("degree");
+    let name = object
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("degree");
     if name.eq_ignore_ascii_case("degree") {
         return Ok(UnitOfMeasure::degree());
     }

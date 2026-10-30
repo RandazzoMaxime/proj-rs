@@ -229,9 +229,7 @@ fn geocentric_operation(source: &Crs, target: &GeocentricCRS) -> Result<String, 
     }
     steps.push(cart);
     if let Some(unit) = target.coordinate_system.axes().first().map(Axis::unit) {
-        if unit.kind() == UnitKind::Linear
-            && (unit.conversion_to_si() - 1.0).abs() > 1e-10
-        {
+        if unit.kind() == UnitKind::Linear && (unit.conversion_to_si() - 1.0).abs() > 1e-10 {
             let out = crate::projections::linear_proj_unit(unit.conversion_to_si())
                 .map(str::to_owned)
                 .unwrap_or_else(|| super::wkt::format_g(unit.conversion_to_si(), 15));
@@ -407,7 +405,8 @@ fn datum_code_token(datum: &GeodeticReferenceFrame) -> Option<&'static str> {
         datum.ellipsoid().semi_major_axis().si_value(),
         (datum.ellipsoid().inverse_flattening() != 0.0)
             .then_some(datum.ellipsoid().inverse_flattening()),
-        datum.ellipsoid()
+        datum
+            .ellipsoid()
             .semi_minor_axis()
             .map(super::model::Measure::si_value),
     )?;
@@ -626,12 +625,12 @@ fn datum_from_proj(tokens: &[(String, String)]) -> Result<GeodeticReferenceFrame
     let major = token(tokens, "a");
     let flattening = token(tokens, "rf");
     if !major.is_empty() && !flattening.is_empty() {
-        let major = major.parse::<f64>().map_err(|_| {
-            FactoryError::Invalid("Invalid a value".to_owned())
-        })?;
-        let flattening = flattening.parse::<f64>().map_err(|_| {
-            FactoryError::Invalid("Invalid rf value".to_owned())
-        })?;
+        let major = major
+            .parse::<f64>()
+            .map_err(|_| FactoryError::Invalid("Invalid a value".to_owned()))?;
+        let flattening = flattening
+            .parse::<f64>()
+            .map_err(|_| FactoryError::Invalid("Invalid rf value".to_owned()))?;
         return Ok(GeodeticReferenceFrame::create(
             "unknown",
             Ellipsoid::create_flattened_sphere("unknown", major, flattening),

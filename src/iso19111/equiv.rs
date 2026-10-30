@@ -419,7 +419,10 @@ fn ellipsoid_equivalent(left: &Ellipsoid, right: &Ellipsoid) -> bool {
 pub(crate) fn meridian_equivalent(left: &PrimeMeridian, right: &PrimeMeridian) -> bool {
     same_name(left.name(), right.name())
         && left.longitude().value() == right.longitude().value()
-        && same_name(left.longitude().unit().name(), right.longitude().unit().name())
+        && same_name(
+            left.longitude().unit().name(),
+            right.longitude().unit().name(),
+        )
 }
 
 fn coordinate_system_equivalent(left: &CoordinateSystem, right: &CoordinateSystem) -> bool {
@@ -521,7 +524,11 @@ impl GeodeticCRS {
             let name_equivalent = equivalent_name(name, candidate_name);
             let equivalent = identify_equivalent(self, &candidate, axis_order);
             let confidence = if name_equivalent && equivalent {
-                if name_equal { 100 } else { 90 }
+                if name_equal {
+                    100
+                } else {
+                    90
+                }
             } else if name_equal && !equivalent {
                 25
             } else if equivalent {
@@ -543,7 +550,9 @@ impl Crs {
     #[must_use]
     pub fn identify(&self) -> Vec<(Crs, i32)> {
         match self {
-            Self::Geographic(crs) => Self::Geodetic(GeodeticCRS::Geographic(crs.clone())).identify(),
+            Self::Geographic(crs) => {
+                Self::Geodetic(GeodeticCRS::Geographic(crs.clone())).identify()
+            }
             Self::Geodetic(crs) => crs.identify(),
             _ => Vec::new(),
         }
@@ -655,8 +664,7 @@ fn direction_and_unit(left: &Axis, right: &Axis) -> bool {
     let scale = left.unit().conversion_to_si().abs();
     left.direction() == right.direction()
         && left.unit().kind() == right.unit().kind()
-        && (left.unit().conversion_to_si() - right.unit().conversion_to_si()).abs()
-            <= 1e-10 * scale
+        && (left.unit().conversion_to_si() - right.unit().conversion_to_si()).abs() <= 1e-10 * scale
 }
 
 pub(crate) fn same_epoch(left: Option<f64>, right: Option<f64>) -> bool {
