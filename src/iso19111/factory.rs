@@ -530,17 +530,43 @@ impl DatabaseContext {
         Ok(rows.into_iter().next().map(|row| row[0].text()))
     }
 
-    /// `CREATE` statements stored in `sqlite_master`, in row order.
+    /// The `CREATE` statements of the tables, then the views, then the
+    /// triggers, each ending in `;`, followed by the layout version rows.
     ///
     /// # Errors
     ///
     /// The database rejects the statement.
     pub fn database_structure(&self) -> Result<Vec<String>, FactoryError> {
-        let rows = self.query(
-            "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY rowid",
-            &[],
-        )?;
-        Ok(rows.into_iter().map(|row| row[0].text()).collect())
+        let mut statements = Vec::new();
+        for kind in [
+            "'table' AND name NOT LIKE 'sqlite_stat%'",
+            "'view'",
+            "'trigger'",
+        ] {
+            let rows = self.query(
+                &format!("SELECT sql||';' FROM sqlite_master WHERE type = {kind} ORDER BY rowid"),
+                &[],
+            )?;
+            statements.extend(rows.into_iter().map(|row| row[0].text()));
+        }
+        let major = self.layout_version("DATABASE.LAYOUT.VERSION.MAJOR")?;
+        if major > 0 {
+            let minor = self.layout_version("DATABASE.LAYOUT.VERSION.MINOR")?;
+            statements.push(format!(
+                "INSERT INTO metadata VALUES('DATABASE.LAYOUT.VERSION.MAJOR',{major});"
+            ));
+            statements.push(format!(
+                "INSERT INTO metadata VALUES('DATABASE.LAYOUT.VERSION.MINOR',{minor});"
+            ));
+        }
+        Ok(statements)
+    }
+
+    fn layout_version(&self, key: &str) -> Result<i64, FactoryError> {
+        Ok(self
+            .metadata(key)?
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0))
     }
 
     /// Geodetic datum whose name or alias matches `name` ignoring case, spaces, and underscores.
@@ -616,7 +642,7 @@ fn genuine_table(table: &str) -> &str {
 
 /// How [`AuthorityFactory::create_geodetic_crs_by_name`] compares a name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum NameMatch {
+pub enum NameMatch {
     /// Official name or alias, case-insensitive.
     Exact,
     /// The searched text is a substring of the name or of its canonical form.
@@ -624,6 +650,7 @@ pub(crate) enum NameMatch {
 }
 
 struct NameRow {
+    table: String,
     authority: String,
     code: String,
     matched_name: String,
@@ -638,7 +665,6 @@ struct BuiltObject<T> {
 trait NamedAuthorityObject: Sized {
     fn name(&self) -> &str;
     fn identifiers(&self) -> &[Identifier];
-    fn load(factory: &AuthorityFactory, code: &str) -> Result<Self, FactoryError>;
 }
 
 impl NamedAuthorityObject for GeodeticCRS {
@@ -648,10 +674,6 @@ impl NamedAuthorityObject for GeodeticCRS {
 
     fn identifiers(&self) -> &[Identifier] {
         GeodeticCRS::identifiers(self)
-    }
-
-    fn load(factory: &AuthorityFactory, code: &str) -> Result<Self, FactoryError> {
-        factory.create_geodetic_crs(code)
     }
 }
 
@@ -663,10 +685,187 @@ impl NamedAuthorityObject for GeodeticReferenceFrame {
     fn identifiers(&self) -> &[Identifier] {
         GeodeticReferenceFrame::identifiers(self)
     }
+}
 
-    fn load(factory: &AuthorityFactory, code: &str) -> Result<Self, FactoryError> {
-        factory.create_geodetic_datum(code)
+impl AuthorityObject {
+    /// The object's name, or `""` for a kind that has none in this port.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        NamedAuthorityObject::name(self)
     }
+
+    /// Whether the object is deprecated. Every other kind is not.
+    #[must_use]
+    pub fn is_deprecated(&self) -> bool {
+        match self {
+            Self::Crs(crs) => crs.is_deprecated(),
+            Self::Ellipsoid(object) => object.identified.deprecated,
+            Self::Datum(Datum::Geodetic(object)) => object.identified.deprecated,
+            Self::Datum(Datum::Vertical(object)) => object.identified.deprecated,
+            Self::Datum(Datum::Engineering(object)) => object.identified.deprecated,
+            Self::DatumEnsemble(object) => object.identified.deprecated,
+            Self::Extent(_) | Self::Unit(_) | Self::PrimeMeridian(_) | Self::Operation(_) => false,
+        }
+    }
+}
+
+impl NamedAuthorityObject for AuthorityObject {
+    fn name(&self) -> &str {
+        match self {
+            Self::Ellipsoid(object) => object.name(),
+            Self::Datum(Datum::Geodetic(object)) => object.name(),
+            Self::Datum(Datum::Vertical(object)) => object.name(),
+            Self::Datum(Datum::Engineering(object)) => object.name(),
+            Self::DatumEnsemble(object) => object.name(),
+            Self::Crs(object) => object.name(),
+            Self::Extent(_) | Self::Unit(_) | Self::PrimeMeridian(_) | Self::Operation(_) => "",
+        }
+    }
+
+    fn identifiers(&self) -> &[Identifier] {
+        match self {
+            Self::Ellipsoid(object) => object.identifiers(),
+            Self::Datum(Datum::Geodetic(object)) => object.identifiers(),
+            Self::Datum(Datum::Vertical(object)) => object.identifiers(),
+            Self::Datum(Datum::Engineering(object)) => object.identifiers(),
+            Self::DatumEnsemble(object) => object.identifiers(),
+            Self::Crs(object) => object.identifiers(),
+            Self::Extent(_) | Self::Unit(_) | Self::PrimeMeridian(_) | Self::Operation(_) => &[],
+        }
+    }
+}
+
+/// The tables a name search reads, as `table` or `table:filter`. `filter` is
+/// `ensemble`, `frame`, or a CRS type, as `createObjectsFromNameEx` picks them.
+fn name_keys(types: &[ObjectType], name: &str) -> Vec<&'static str> {
+    let hide_vertical = name.starts_with("D_");
+    if types.is_empty() {
+        let mut keys = vec![
+            "ellipsoid",
+            "geodetic_datum",
+            "engineering_datum",
+            "geodetic_crs",
+            "projected_crs",
+            "derived_projected_crs",
+            "vertical_crs",
+            "compound_crs",
+            "engineering_crs",
+        ];
+        if !hide_vertical {
+            keys.push("vertical_datum");
+        }
+        return keys;
+    }
+    let mut keys: Vec<&'static str> = Vec::new();
+    let mut want = |kind: ObjectType, found: &[&'static str]| {
+        if types.contains(&kind) {
+            for &key in found {
+                if !keys.contains(&key) {
+                    keys.push(key);
+                }
+            }
+        }
+    };
+    want(ObjectType::Ellipsoid, &["ellipsoid"]);
+    want(
+        ObjectType::Datum,
+        if hide_vertical {
+            &["geodetic_datum"]
+        } else {
+            &["geodetic_datum", "vertical_datum", "engineering_datum"]
+        },
+    );
+    want(ObjectType::GeodeticReferenceFrame, &["geodetic_datum"]);
+    want(
+        ObjectType::DynamicGeodeticReferenceFrame,
+        &["geodetic_datum:frame"],
+    );
+    want(ObjectType::VerticalReferenceFrame, &["vertical_datum"]);
+    want(
+        ObjectType::DynamicVerticalReferenceFrame,
+        &["vertical_datum:frame"],
+    );
+    want(ObjectType::EngineeringDatum, &["engineering_datum"]);
+    want(
+        ObjectType::DatumEnsemble,
+        &["geodetic_datum:ensemble", "vertical_datum:ensemble"],
+    );
+    want(
+        ObjectType::Crs,
+        &[
+            "geodetic_crs",
+            "projected_crs",
+            "vertical_crs",
+            "compound_crs",
+            "engineering_crs",
+            "derived_projected_crs",
+        ],
+    );
+    want(ObjectType::GeodeticCrs, &["geodetic_crs"]);
+    want(ObjectType::GeocentricCrs, &["geodetic_crs:geocentric"]);
+    want(
+        ObjectType::GeographicCrs,
+        &["geodetic_crs:geographic 2D", "geodetic_crs:geographic 3D"],
+    );
+    want(ObjectType::Geographic2dCrs, &["geodetic_crs:geographic 2D"]);
+    want(ObjectType::Geographic3dCrs, &["geodetic_crs:geographic 3D"]);
+    want(ObjectType::ProjectedCrs, &["projected_crs"]);
+    want(ObjectType::DerivedProjectedCrs, &["derived_projected_crs"]);
+    want(ObjectType::VerticalCrs, &["vertical_crs"]);
+    want(ObjectType::CompoundCrs, &["compound_crs"]);
+    want(ObjectType::EngineeringCrs, &["engineering_crs"]);
+    keys
+}
+
+fn name_filter_sql(prefix: &str, filter: &str) -> String {
+    match filter {
+        "" => String::new(),
+        "ensemble" => format!("AND {prefix}ensemble_accuracy IS NOT NULL "),
+        "frame" => format!("AND {prefix}frame_reference_epoch IS NOT NULL "),
+        crs_type => format!("AND {prefix}type = '{crs_type}' "),
+    }
+}
+
+fn load_named(
+    factory: &AuthorityFactory,
+    row: &NameRow,
+    types: &[ObjectType],
+) -> Result<AuthorityObject, FactoryError> {
+    let (table, filter) = row
+        .table
+        .split_once(':')
+        .unwrap_or((row.table.as_str(), ""));
+    let code = row.code.as_str();
+    let ensemble_allowed = types.is_empty() || types.contains(&ObjectType::DatumEnsemble);
+    Ok(match (table, filter) {
+        ("ellipsoid", _) => AuthorityObject::Ellipsoid(factory.create_ellipsoid(code)?),
+        ("geodetic_datum", "ensemble") | ("vertical_datum", "ensemble") => {
+            AuthorityObject::DatumEnsemble(factory.create_datum_ensemble(code)?)
+        }
+        ("geodetic_datum", "") if ensemble_allowed => match factory.create_datum_ensemble(code) {
+            Ok(ensemble) => AuthorityObject::DatumEnsemble(ensemble),
+            Err(_) => AuthorityObject::Datum(Datum::Geodetic(factory.create_geodetic_datum(code)?)),
+        },
+        ("geodetic_datum", _) => {
+            AuthorityObject::Datum(Datum::Geodetic(factory.create_geodetic_datum(code)?))
+        }
+        ("vertical_datum", _) => {
+            AuthorityObject::Datum(Datum::Vertical(factory.create_vertical_datum(code)?))
+        }
+        ("engineering_datum", _) => {
+            AuthorityObject::Datum(Datum::Engineering(factory.create_engineering_datum(code)?))
+        }
+        (
+            "geodetic_crs"
+            | "projected_crs"
+            | "vertical_crs"
+            | "compound_crs"
+            | "engineering_crs"
+            | "derived_projected_crs",
+            _,
+        ) => AuthorityObject::Crs(factory.create_coordinate_reference_system(code)?),
+        _ => return Err(FactoryError::missing("object", &row.authority, code)),
+    })
 }
 
 fn canonical_object_name(name: &str) -> String {
@@ -1517,7 +1716,9 @@ impl AuthorityFactory {
         name: &str,
         mode: NameMatch,
     ) -> Result<Vec<GeodeticCRS>, FactoryError> {
-        self.objects_from_name(name, "geodetic_crs", mode)
+        self.objects_from_name(name, &["geodetic_crs"], mode, 0, |factory, row| {
+            factory.create_geodetic_crs(&row.code)
+        })
     }
 
     /// Geodetic datums whose official name or alias matches `name`.
@@ -1532,14 +1733,74 @@ impl AuthorityFactory {
         &self,
         name: &str,
     ) -> Result<Vec<GeodeticReferenceFrame>, FactoryError> {
-        self.objects_from_name(name, "geodetic_datum", NameMatch::Exact)
+        self.objects_from_name(
+            name,
+            &["geodetic_datum"],
+            NameMatch::Exact,
+            0,
+            |factory, row| factory.create_geodetic_datum(&row.code),
+        )
+    }
+
+    /// Objects whose official name or alias matches `name`, as PROJ's
+    /// `createObjectsFromName` returns them. An empty `types` searches every
+    /// table. `limit` caps an exact search; `0` means no cap.
+    ///
+    /// Ellipsoids, datums, datum ensembles, and CRSs are loaded. Prime
+    /// meridians and coordinate operations are not: their rows are skipped.
+    ///
+    /// # Errors
+    ///
+    /// The database rejects the statement.
+    pub fn create_objects_from_name(
+        &self,
+        name: &str,
+        types: &[ObjectType],
+        mode: NameMatch,
+        limit: usize,
+    ) -> Result<Vec<AuthorityObject>, FactoryError> {
+        let keys = name_keys(types, name);
+        self.objects_from_name(name, &keys, mode, limit, |factory, row| {
+            load_named(factory, row, types)
+        })
+    }
+
+    /// Extents whose name matches `name`, as `(authority, code)` pairs.
+    /// An approximate match is a substring match.
+    ///
+    /// # Errors
+    ///
+    /// The database rejects the statement.
+    pub fn list_area_of_use_from_name(
+        &self,
+        name: &str,
+        mode: NameMatch,
+    ) -> Result<Vec<(String, String)>, FactoryError> {
+        let mut sql = String::from("SELECT auth_name, code FROM extent WHERE deprecated = 0 AND ");
+        let mut params = Vec::new();
+        if !self.authority.is_empty() {
+            sql.push_str("auth_name = ? AND ");
+            params.push(self.authority.clone());
+        }
+        sql.push_str("name LIKE ?");
+        params.push(match mode {
+            NameMatch::Exact => name.to_owned(),
+            NameMatch::Approximate => format!("%{name}%"),
+        });
+        let rows = self.db.query(&sql, &params)?;
+        Ok(rows
+            .into_iter()
+            .map(|row| (row[0].text(), row[1].text()))
+            .collect())
     }
 
     fn objects_from_name<T>(
         &self,
         name: &str,
-        table: &str,
+        tables: &[&str],
         mode: NameMatch,
+        limit: usize,
+        load: impl Fn(&Self, &NameRow) -> Result<T, FactoryError>,
     ) -> Result<Vec<T>, FactoryError>
     where
         T: NamedAuthorityObject,
@@ -1548,7 +1809,7 @@ impl AuthorityFactory {
         if canonical.chars().count() <= 1 {
             return Ok(Vec::new());
         }
-        let rows = self.name_rows(table, name, mode)?;
+        let rows = self.name_rows(tables, name, mode, limit)?;
         let mut seen = BTreeSet::new();
         let mut built: Vec<BuiltObject<T>> = Vec::new();
         let mut first = true;
@@ -1572,7 +1833,7 @@ impl AuthorityFactory {
             if row.deprecated && !built.is_empty() && !first_deprecated {
                 break;
             }
-            let Ok(object) = T::load(&self.child(&row.authority), &row.code) else {
+            let Ok(object) = load(&self.child(&row.authority), &row) else {
                 continue;
             };
             if equivalent_object_name(object.name(), name) {
@@ -1627,45 +1888,61 @@ impl AuthorityFactory {
 
     fn name_rows(
         &self,
-        table: &str,
+        keys: &[&str],
         name: &str,
         mode: NameMatch,
+        limit: usize,
     ) -> Result<Vec<NameRow>, FactoryError> {
-        let mut sql = String::from("SELECT auth_name, code, name, deprecated, is_alias FROM (");
+        let mut sql =
+            String::from("SELECT table_name, auth_name, code, name, deprecated, is_alias FROM (");
         let mut params = Vec::new();
-        sql.push_str(&format!(
-            "SELECT auth_name, code, name, deprecated, 0 AS is_alias FROM \"{table}\" WHERE 1 = 1 "
-        ));
-        if mode == NameMatch::Exact {
-            sql.push_str("AND name = ? COLLATE NOCASE ");
-            params.push(name.to_owned());
-        }
-        if !self.authority.is_empty() {
-            sql.push_str("AND auth_name = ? ");
-            params.push(self.authority.clone());
-        }
-        sql.push_str(&format!(
-            "UNION SELECT ov.auth_name, ov.code, a.alt_name AS name, ov.deprecated, 1 AS is_alias \
-             FROM \"{table}\" ov JOIN alias_name a ON ov.auth_name = a.auth_name AND ov.code = a.code \
-             WHERE a.source != 'EPSG_OLD' AND a.table_name = '{table}' "
-        ));
-        if mode == NameMatch::Exact {
-            sql.push_str("AND a.alt_name = ? COLLATE NOCASE ");
-            params.push(name.to_owned());
-        }
-        if !self.authority.is_empty() {
-            sql.push_str("AND ov.auth_name = ? ");
-            params.push(self.authority.clone());
+        for (index, key) in keys.iter().enumerate() {
+            let (table, filter) = key.split_once(':').unwrap_or((key, ""));
+            if index > 0 {
+                sql.push_str("UNION ");
+            }
+            sql.push_str(&format!(
+                "SELECT '{key}' AS table_name, auth_name, code, name, deprecated, 0 AS is_alias \
+                 FROM \"{table}\" WHERE 1 = 1 {}",
+                name_filter_sql("", filter)
+            ));
+            if mode == NameMatch::Exact {
+                sql.push_str("AND name = ? COLLATE NOCASE ");
+                params.push(name.to_owned());
+            }
+            if !self.authority.is_empty() {
+                sql.push_str("AND auth_name = ? ");
+                params.push(self.authority.clone());
+            }
+            sql.push_str(&format!(
+                "UNION SELECT '{key}' AS table_name, ov.auth_name, ov.code, a.alt_name AS name, \
+                 ov.deprecated, 1 AS is_alias FROM \"{table}\" ov \
+                 JOIN alias_name a ON ov.auth_name = a.auth_name AND ov.code = a.code \
+                 WHERE a.source != 'EPSG_OLD' AND a.table_name = '{table}' {}",
+                name_filter_sql("ov.", filter)
+            ));
+            if mode == NameMatch::Exact {
+                sql.push_str("AND a.alt_name = ? COLLATE NOCASE ");
+                params.push(name.to_owned());
+            }
+            if !self.authority.is_empty() {
+                sql.push_str("AND ov.auth_name = ? ");
+                params.push(self.authority.clone());
+            }
         }
         sql.push_str(") ORDER BY deprecated, is_alias, length(name), name");
+        if limit > 0 && mode == NameMatch::Exact {
+            sql.push_str(&format!(" LIMIT {limit}"));
+        }
         let rows = self.db.query(&sql, &params)?;
         Ok(rows
             .into_iter()
             .map(|row| NameRow {
-                authority: row[0].text(),
-                code: row[1].text(),
-                matched_name: row[2].text(),
-                deprecated: row[3].text() == "1",
+                table: row[0].text(),
+                authority: row[1].text(),
+                code: row[2].text(),
+                matched_name: row[3].text(),
+                deprecated: row[4].text() == "1",
             })
             .collect())
     }

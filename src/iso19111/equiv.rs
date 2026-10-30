@@ -490,7 +490,7 @@ fn same_name(left: &str, right: &str) -> bool {
 
 /// `Identifier::isEquivalentName`: case-insensitive, ignoring space, `_`, `-`,
 /// `/`, parentheses, `.`, `&`, and `,`.
-pub(crate) fn equivalent_name(left: &str, right: &str) -> bool {
+pub fn equivalent_name(left: &str, right: &str) -> bool {
     folded_name(left) == folded_name(right)
 }
 

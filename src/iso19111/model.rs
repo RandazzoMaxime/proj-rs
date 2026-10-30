@@ -2792,6 +2792,21 @@ impl Crs {
         }
     }
 
+    /// Usages recorded for this CRS.
+    #[must_use]
+    pub fn domains(&self) -> &[ObjectDomain] {
+        match self {
+            Self::Geographic(crs) => crs.domains(),
+            Self::Geodetic(crs) => crs.domains(),
+            Self::Projected(crs) => crs.domains(),
+            Self::Vertical(crs) => crs.domains(),
+            Self::Compound(crs) => crs.domains(),
+            Self::Bound(crs) => &crs.identified.domains,
+            Self::Engineering(crs) => &crs.identified.domains,
+            Self::DerivedProjected(crs) => &crs.identified.domains,
+        }
+    }
+
     /// First authority code whose code space matches `authority`, ignoring case.
     #[must_use]
     pub fn authority_code(&self, authority: &str) -> Option<&Identifier> {

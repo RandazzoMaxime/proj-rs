@@ -713,3 +713,40 @@ fn factory_authority_factory_create_coordinate_reference_system() {
         proj_rs::Crs::Compound(_)
     ));
 }
+
+#[test]
+fn factory_create_objects_from_name_finds_the_ellipsoid_by_name() {
+    let factory = epsg();
+    let found = factory
+        .create_objects_from_name(
+            "WGS 84",
+            &[proj_rs::ObjectType::Ellipsoid],
+            proj_rs::NameMatch::Exact,
+            10,
+        )
+        .expect("search");
+    let wgs84 = found
+        .iter()
+        .find(|object| object.name() == "WGS 84")
+        .expect("WGS 84 ellipsoid");
+    assert!(!wgs84.is_deprecated());
+}
+
+#[test]
+fn database_structure_lists_tables_then_layout_version() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let statements = db.database_structure().expect("structure");
+    assert!(statements[0].starts_with("CREATE TABLE metadata("));
+    assert!(statements[0].ends_with(';'));
+    let tail = &statements[statements.len() - 2..];
+    assert!(tail[0].starts_with("INSERT INTO metadata VALUES('DATABASE.LAYOUT.VERSION.MAJOR',"));
+    assert!(tail[1].starts_with("INSERT INTO metadata VALUES('DATABASE.LAYOUT.VERSION.MINOR',"));
+}
+
+#[test]
+fn ellipsoid_proj_string_is_radius_for_a_sphere() {
+    let ellipsoid = epsg().create_ellipsoid("7035").expect("7035");
+    assert_eq!(ellipsoid.export_to_proj_string(), "+R=6371000");
+    let wgs84 = epsg().create_ellipsoid("7030").expect("7030");
+    assert_eq!(wgs84.export_to_proj_string(), "+ellps=WGS84");
+}
