@@ -53,11 +53,26 @@ pub(crate) struct PipelineFormatter {
     /// Drops `unitconvert` steps that change nothing, as PROJ does once a
     /// Helmert step is written.
     optimize_units: bool,
+    /// `(official name, PROJ name)` of each grid the database renames.
+    grid_names: Vec<(String, String)>,
 }
 
 impl PipelineFormatter {
-    pub(crate) fn new() -> Self {
-        Self::default()
+    /// A formatter that writes each grid under its PROJ name, as
+    /// `substitutePROJAlternativeGridNames` does with a database context.
+    pub(crate) fn with_grid_names(grid_names: Vec<(String, String)>) -> Self {
+        Self {
+            grid_names,
+            ..Self::default()
+        }
+    }
+
+    /// The name a grid is written under.
+    pub(crate) fn grid_name(&self, name: &str) -> String {
+        self.grid_names
+            .iter()
+            .find(|(original, _)| original == name)
+            .map_or_else(|| name.to_owned(), |(_, proj)| proj.clone())
     }
 
     pub(crate) fn add_step(&mut self, name: &str) {

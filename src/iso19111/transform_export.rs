@@ -15,6 +15,7 @@
 use std::f64::consts::PI;
 
 use super::buildop::names_match;
+use super::equiv::Equivalence;
 use super::model::{
     Axis, ConcatenatedOperation, CoordinateOperation, CoordinateSystem, Crs, Ellipsoid,
     FactoryError, GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Measure,
@@ -47,6 +48,7 @@ const METHOD_CARTESIAN_GRID_OFFSETS: i32 = 9656;
 const METHOD_LONGITUDE_ROTATION: i32 = 9601;
 const METHOD_GEOGRAPHIC2D_OFFSETS: i32 = 9619;
 const METHOD_GEOGRAPHIC3D_OFFSETS: i32 = 9660;
+const METHOD_GEOCENTRIC_GRID_IGN: i32 = 1087;
 
 impl Transformation {
     /// `exportToPROJString` of a transformation: the pipeline PROJ writes for its method.
@@ -56,7 +58,17 @@ impl Transformation {
     /// The method is not one this crate writes, the operation is a point motion,
     /// or an endpoint is not a geodetic CRS the method needs.
     pub fn export_to_proj_string(&self, lines: ProjLines) -> Result<String, FactoryError> {
-        let mut formatter = PipelineFormatter::new();
+        self.export_to_proj_string_with(lines, Vec::new())
+    }
+
+    /// As [`Self::export_to_proj_string`], each grid written under the PROJ name
+    /// `grid_names` gives it.
+    pub(crate) fn export_to_proj_string_with(
+        &self,
+        lines: ProjLines,
+        grid_names: Vec<(String, String)>,
+    ) -> Result<String, FactoryError> {
+        let mut formatter = PipelineFormatter::with_grid_names(grid_names);
         self.export_steps(&mut formatter)?;
         Ok(formatter.finish(lines))
     }
@@ -94,7 +106,17 @@ impl ConcatenatedOperation {
     /// A step has no PROJ string in this crate: a conversion step, or a
     /// transformation method this crate does not write.
     pub fn export_to_proj_string(&self, lines: ProjLines) -> Result<String, FactoryError> {
-        let mut formatter = PipelineFormatter::new();
+        self.export_to_proj_string_with(lines, Vec::new())
+    }
+
+    /// As [`Self::export_to_proj_string`], each grid written under the PROJ name
+    /// `grid_names` gives it.
+    pub(crate) fn export_to_proj_string_with(
+        &self,
+        lines: ProjLines,
+        grid_names: Vec<(String, String)>,
+    ) -> Result<String, FactoryError> {
+        let mut formatter = PipelineFormatter::with_grid_names(grid_names);
         self.export_steps(&mut formatter)?;
         Ok(formatter.finish(lines))
     }
@@ -170,11 +192,83 @@ fn export_forward(
         formatter.add_param("order", "1,2,-3");
         return Ok(());
     }
+    if code == METHOD_GEOCENTRIC_GRID_IGN {
+        return geocentric_grid(operation, source, target, formatter);
+    }
     formatter.set_optimize_units();
     if let Some(kind) = helmert_kind(operation) {
         return helmert(operation, kind, source, target, formatter);
     }
     Err(unimplemented(operation))
+}
+
+/// The first grid file of a grid method: the file PROJ looks up.
+fn primary_grid(operation: &Transformation) -> Result<String, FactoryError> {
+    operation
+        .parameters()
+        .iter()
+        .find_map(|parameter| match parameter.value() {
+            ParameterValue::Filename(name) => Some(name.clone()),
+            _ => None,
+        })
+        .ok_or_else(|| FactoryError::Format(format!("{} has no grid file", operation.name())))
+}
+
+fn geographic_required(method: &str) -> FactoryError {
+    FactoryError::Format(format!("Can apply {method} only to GeographicCRS"))
+}
+
+/// `xyzgridshift` for a geocentric translation grid
+/// (`exportToPROJStringGeneric`). The shift is applied in geocentric
+/// coordinates on the ellipsoid of the interpolation CRS, which is the source
+/// or the target.
+fn geocentric_grid(
+    operation: &Transformation,
+    source: Option<&Crs>,
+    target: Option<&Crs>,
+    formatter: &mut PipelineFormatter,
+) -> Result<(), FactoryError> {
+    let grid = formatter.grid_name(&primary_grid(operation)?);
+    let source = source
+        .and_then(geographic_of)
+        .ok_or_else(|| geographic_required("xyzgridshift"))?;
+    let target = target
+        .and_then(geographic_of)
+        .ok_or_else(|| geographic_required("xyzgridshift"))?;
+    let interpolation = operation.interpolation_crs().and_then(geographic_of);
+    let on_target = interpolation
+        .is_some_and(|crs| crs.is_equivalent_to_with(target, Equivalence::ExceptAxisOrder));
+    let on_source = interpolation
+        .is_some_and(|crs| crs.is_equivalent_to_with(source, Equivalence::ExceptAxisOrder));
+    if !on_source && !on_target {
+        return Err(FactoryError::Format(
+            "interpolation CRS should be the source or target CRS".to_owned(),
+        ));
+    }
+    formatter.start_inversion();
+    angular_unit_and_axis_swap(source.coordinate_system().axes(), formatter)?;
+    formatter.stop_inversion();
+    formatter.add_step("push");
+    formatter.add_flag("v_3");
+    formatter.add_step("cart");
+    ellipsoid_steps(ellipsoid_of(source), formatter);
+    formatter.add_step("xyzgridshift");
+    formatter.add_param("grids", &grid);
+    formatter.add_param(
+        "grid_ref",
+        if on_target { "output_crs" } else { "input_crs" },
+    );
+    ellipsoid_steps(
+        ellipsoid_of(if on_target { target } else { source }),
+        formatter,
+    );
+    formatter.start_inversion();
+    formatter.add_step("cart");
+    ellipsoid_steps(ellipsoid_of(target), formatter);
+    formatter.stop_inversion();
+    formatter.add_step("pop");
+    formatter.add_flag("v_3");
+    angular_unit_and_axis_swap(target.coordinate_system().axes(), formatter)
 }
 
 fn unimplemented(operation: &Transformation) -> FactoryError {
