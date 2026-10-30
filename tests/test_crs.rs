@@ -2374,7 +2374,6 @@ fn esri_wkt1_from_proj_string(definition: &str) -> String {
 }
 
 #[test]
-#[ignore = "WKT1 ESRI method and parameter names (esriparammappings.cpp) are not ported"]
 fn crs_mercator_1sp_as_wkt1_esri() {
     assert_eq!(
         esri_wkt1_from_proj_string(
@@ -2385,7 +2384,6 @@ fn crs_mercator_1sp_as_wkt1_esri() {
 }
 
 #[test]
-#[ignore = "WKT1 ESRI method and parameter names (esriparammappings.cpp) are not ported"]
 fn crs_plate_carree_as_wkt1_esri() {
     assert_eq!(
         esri_wkt1_from_proj_string("+title=my Plate carree +proj=eqc +type=crs"),
@@ -2394,7 +2392,6 @@ fn crs_plate_carree_as_wkt1_esri() {
 }
 
 #[test]
-#[ignore = "WKT1 ESRI method and parameter names (esriparammappings.cpp) are not ported"]
 fn crs_equidistant_cylindrical_as_wkt1_esri() {
     assert_eq!(
         esri_wkt1_from_proj_string("+proj=eqc +type=crs"),
@@ -2403,7 +2400,6 @@ fn crs_equidistant_cylindrical_as_wkt1_esri() {
 }
 
 #[test]
-#[ignore = "WKT1 ESRI method and parameter names (esriparammappings.cpp) are not ported"]
 fn crs_hotine_oblique_mercator_azimuth_natural_origin_as_wkt1_esri() {
     assert_eq!(
         esri_wkt1_from_proj_string("+proj=omerc +no_uoff +gamma=295 +alpha=295 +type=crs"),
@@ -2412,7 +2408,6 @@ fn crs_hotine_oblique_mercator_azimuth_natural_origin_as_wkt1_esri() {
 }
 
 #[test]
-#[ignore = "WKT1 ESRI method and parameter names (esriparammappings.cpp) are not ported"]
 fn crs_rectified_skew_orthomorphic_natural_origin_as_wkt1_esri() {
     assert_eq!(
         esri_wkt1_from_proj_string("+proj=omerc +no_uoff +gamma=3 +alpha=2 +type=crs"),
@@ -2421,7 +2416,6 @@ fn crs_rectified_skew_orthomorphic_natural_origin_as_wkt1_esri() {
 }
 
 #[test]
-#[ignore = "WKT1 ESRI method and parameter names (esriparammappings.cpp) are not ported"]
 fn crs_hotine_oblique_mercator_azimuth_center_as_wkt1_esri() {
     assert_eq!(
         esri_wkt1_from_proj_string("+proj=omerc +gamma=2 +alpha=2 +type=crs"),
@@ -2430,7 +2424,6 @@ fn crs_hotine_oblique_mercator_azimuth_center_as_wkt1_esri() {
 }
 
 #[test]
-#[ignore = "WKT1 ESRI method and parameter names (esriparammappings.cpp) are not ported"]
 fn crs_rectified_skew_orthomorphic_center_as_wkt1_esri() {
     assert_eq!(
         esri_wkt1_from_proj_string("+proj=omerc +gamma=3 +alpha=2 +type=crs"),
@@ -2439,7 +2432,6 @@ fn crs_rectified_skew_orthomorphic_center_as_wkt1_esri() {
 }
 
 #[test]
-#[ignore = "WKT1 ESRI method and parameter names (esriparammappings.cpp) are not ported"]
 fn crs_gauss_kruger_as_wkt1_esri() {
     assert_eq!(
         esri_wkt1_from_proj_string("+title=my Gauss Kruger +proj=tmerc +type=crs"),
@@ -2448,7 +2440,6 @@ fn crs_gauss_kruger_as_wkt1_esri() {
 }
 
 #[test]
-#[ignore = "WKT1 ESRI method and parameter names (esriparammappings.cpp) are not ported"]
 fn crs_stereographic_north_pole_as_wkt1_esri() {
     assert_eq!(
         esri_wkt1_from_proj_string("+proj=stere +lat_0=90 +lat_ts=70 +type=crs"),
@@ -2457,7 +2448,6 @@ fn crs_stereographic_north_pole_as_wkt1_esri() {
 }
 
 #[test]
-#[ignore = "WKT1 ESRI method and parameter names (esriparammappings.cpp) are not ported"]
 fn crs_stereographic_south_pole_as_wkt1_esri() {
     assert_eq!(
         esri_wkt1_from_proj_string("+proj=stere +lat_0=-90 +lat_ts=-70 +type=crs"),
@@ -2466,7 +2456,6 @@ fn crs_stereographic_south_pole_as_wkt1_esri() {
 }
 
 #[test]
-#[ignore = "WKT1 ESRI method and parameter names (esriparammappings.cpp) are not ported"]
 fn crs_krovak_north_orientated_as_wkt1_esri() {
     assert_eq!(
         esri_wkt1_from_proj_string("+proj=krovak +type=crs"),
@@ -2475,7 +2464,6 @@ fn crs_krovak_north_orientated_as_wkt1_esri() {
 }
 
 #[test]
-#[ignore = "WKT1 ESRI method and parameter names (esriparammappings.cpp) are not ported"]
 fn crs_krovak_as_wkt1_esri() {
     assert_eq!(
         esri_wkt1_from_proj_string("+proj=krovak +axis=swu +type=crs"),
@@ -2492,7 +2480,6 @@ fn crs_lcc_1sp_as_wkt1_esri() {
 }
 
 #[test]
-#[ignore = "WKT1 ESRI method and parameter names (esriparammappings.cpp) are not ported"]
 fn crs_lcc_2sp_as_wkt1_esri() {
     assert_eq!(
         esri_wkt1_from_proj_string("+proj=lcc +lat_0=1.5 +lat_1=1 +lat_2=2 +type=crs"),

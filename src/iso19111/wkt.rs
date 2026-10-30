@@ -3,6 +3,9 @@
 //! Node order, identifier suppression, and the simplified omissions follow
 //! `WKTFormatter` in PROJ `src/iso19111/io.cpp`.
 
+use super::esri_parammap::{
+    esri_method, find_parameter, mercator_variant_b, squared_eccentricity, EsriChoice, EsriParam,
+};
 use super::factory::{AuthorityFactory, DatabaseContext};
 use super::wkt_import::WktParser;
 /// Whether the node being opened carries an authority identifier.
@@ -499,7 +502,7 @@ impl Conversion {
     ///
     /// WKT1 has no spelling for the method, or a parameter cannot be written.
     pub fn export_to_wkt(&self, formatter: &mut WktFormatter) -> Result<String, FactoryError> {
-        export_conversion(self, formatter, BaseShape::NotSphere)?;
+        export_conversion(self, formatter, BaseShape::NotSphere, None)?;
         Ok(std::mem::take(&mut formatter.result))
     }
 }
@@ -855,7 +858,11 @@ fn export_projected(crs: &ProjectedCRS, formatter: &mut WktFormatter) -> Result<
     } else {
         BaseShape::NotSphere
     };
-    export_conversion(&crs.conversion, formatter, base_shape)?;
+    let owner = OwnerCrs {
+        name: &crs.identified.name,
+        squared_eccentricity: crs.base.ellipsoid().map(squared_eccentricity),
+    };
+    export_conversion(&crs.conversion, formatter, base_shape, Some(owner))?;
     formatter.axis_angular.pop();
     formatter.axis_linear.pop();
     if !formatter.wkt2 {
@@ -1537,13 +1544,22 @@ enum BaseShape {
     NotSphere,
 }
 
+/// The CRS a conversion is exported with. The WKT1 ESRI method choice reads its
+/// name, and its base ellipsoid for a Mercator variant A conversion.
+#[derive(Clone, Copy)]
+struct OwnerCrs<'a> {
+    name: &'a str,
+    squared_eccentricity: Option<f64>,
+}
+
 fn export_conversion(
     conversion: &Conversion,
     formatter: &mut WktFormatter,
     base_shape: BaseShape,
+    owner: Option<OwnerCrs<'_>>,
 ) -> Result<(), FactoryError> {
     if !formatter.wkt2 && formatter.esri {
-        export_conversion_wkt1(conversion, formatter, base_shape)?;
+        export_conversion_wkt1(conversion, formatter, base_shape, owner)?;
         return Ok(());
     }
     if formatter.wkt2 {
@@ -1563,7 +1579,7 @@ fn export_conversion(
         formatter.end_node();
         return Ok(());
     }
-    export_conversion_wkt1(conversion, formatter, base_shape)
+    export_conversion_wkt1(conversion, formatter, base_shape, owner)
 }
 
 /// PROJ leaves out a zero latitude of origin in Equidistant Cylindrical, and a
@@ -1583,9 +1599,31 @@ fn export_conversion_wkt1(
     conversion: &Conversion,
     formatter: &mut WktFormatter,
     base_shape: BaseShape,
+    owner: Option<OwnerCrs<'_>>,
 ) -> Result<(), FactoryError> {
+    if formatter.esri {
+        let squared = owner.and_then(|owner| owner.squared_eccentricity);
+        if let Some(variant_b) = mercator_variant_b(conversion, squared)? {
+            return export_conversion(&variant_b, formatter, base_shape, owner);
+        }
+    }
     formatter.output_unit.push(false);
     formatter.output_id.push(false);
+    if formatter.esri {
+        let sphere = base_shape == BaseShape::Sphere && conversion.method.code == "1026";
+        let code = conversion.method.code.parse::<i32>().unwrap_or(0);
+        let (name, code) = if sphere {
+            ("Mercator (variant A)", 9804)
+        } else {
+            (conversion.method.name(), code)
+        };
+        if let Some(choice) = esri_method(conversion, name, code, owner.map(|owner| owner.name)) {
+            export_esri_method(conversion, &choice, formatter);
+            formatter.output_id.pop();
+            formatter.output_unit.pop();
+            return Ok(());
+        }
+    }
     if conversion.method.code == "1024" {
         formatter.start_node("PROJECTION", NodeId::Absent);
         formatter.add_quoted("Mercator_1SP");
@@ -1610,45 +1648,6 @@ fn export_conversion_wkt1(
             parameter_number(conversion, "8807")?,
         )?;
     } else {
-        if formatter.esri && conversion.method.code == "9807" {
-            formatter.start_node("PROJECTION", NodeId::Absent);
-            formatter.add_quoted("Transverse_Mercator");
-            formatter.end_node();
-            for (name, code) in [
-                ("False_Easting", "8806"),
-                ("False_Northing", "8807"),
-                ("Central_Meridian", "8802"),
-                ("Scale_Factor", "8805"),
-                ("Latitude_Of_Origin", "8801"),
-            ] {
-                write_wkt1_parameter(formatter, name, parameter_number(conversion, code)?)?;
-            }
-            formatter.output_id.pop();
-            formatter.output_unit.pop();
-            return Ok(());
-        }
-        if formatter.esri && conversion.method.code == "9801" {
-            formatter.start_node("PROJECTION", NodeId::Absent);
-            formatter.add_quoted("Lambert_Conformal_Conic");
-            formatter.end_node();
-            for (name, code, wkt2_name) in [
-                ("False_Easting", "8806", "False easting"),
-                ("False_Northing", "8807", "False northing"),
-                ("Central_Meridian", "8802", "Longitude of natural origin"),
-                ("Standard_Parallel_1", "8801", "Latitude of natural origin"),
-                ("Scale_Factor", "8805", "Scale factor at natural origin"),
-                ("Latitude_Of_Origin", "8801", "Latitude of natural origin"),
-            ] {
-                write_wkt1_parameter(
-                    formatter,
-                    name,
-                    parameter_on_axis(conversion, code, wkt2_name, formatter)?,
-                )?;
-            }
-            formatter.output_id.pop();
-            formatter.output_unit.pop();
-            return Ok(());
-        }
         if conversion.method.code == "9804"
             || (base_shape == BaseShape::Sphere && conversion.method.code == "1026")
         {
@@ -1703,6 +1702,76 @@ fn export_conversion_wkt1(
     formatter.output_id.pop();
     formatter.output_unit.pop();
     Ok(())
+}
+
+/// The `PROJECTION` and `PARAMETER` nodes of an ESRI method (PROJ `_exportToWKT`).
+fn export_esri_method(conversion: &Conversion, choice: &EsriChoice, formatter: &mut WktFormatter) {
+    formatter.start_node("PROJECTION", NodeId::Absent);
+    formatter.add_quoted(choice.name);
+    formatter.end_node();
+    for param in choice.params {
+        formatter.start_node("PARAMETER", NodeId::Absent);
+        match *param {
+            EsriParam::Value {
+                esri_name,
+                wkt2_name,
+                epsg_code,
+            } => {
+                formatter.add_quoted(esri_name);
+                write_esri_value(conversion, esri_name, wkt2_name, epsg_code, formatter);
+            }
+            EsriParam::Fixed { esri_name, text } => {
+                formatter.add_quoted(esri_name);
+                formatter.add_raw(text);
+            }
+        }
+        formatter.end_node();
+    }
+}
+
+/// An ESRI parameter value in the axis units. A missing parameter is 1 for a
+/// scale name and 0 otherwise.
+fn write_esri_value(
+    conversion: &Conversion,
+    esri_name: &str,
+    wkt2_name: &str,
+    epsg_code: i32,
+    formatter: &mut WktFormatter,
+) {
+    let Some(ParameterValue::Measure(measure)) =
+        find_parameter(conversion, wkt2_name, epsg_code).map(|parameter| &parameter.value)
+    else {
+        let scale = esri_name.to_ascii_lowercase().contains("scale");
+        formatter.add_number(if scale { 1.0 } else { 0.0 });
+        return;
+    };
+    match measure.unit.kind {
+        UnitKind::Linear => {
+            let target = formatter
+                .axis_linear
+                .last()
+                .cloned()
+                .unwrap_or_else(UnitOfMeasure::metre);
+            formatter.add_number(measure.convert_to(&target));
+        }
+        UnitKind::Angular => {
+            let target = formatter
+                .axis_angular
+                .last()
+                .cloned()
+                .unwrap_or_else(UnitOfMeasure::degree);
+            let mut angle = measure.convert_to(&target);
+            if target.factor == UnitOfMeasure::degree().factor {
+                if angle > 180.0 {
+                    angle -= 360.0;
+                } else if angle < -180.0 {
+                    angle += 360.0;
+                }
+            }
+            formatter.add_number(angle);
+        }
+        _ => formatter.add_number(measure.si_value()),
+    }
 }
 
 fn export_method(
@@ -1860,7 +1929,7 @@ fn export_operation(
 ) -> Result<(), FactoryError> {
     match operation {
         super::model::CoordinateOperation::Conversion(conversion) => {
-            export_conversion(conversion, formatter, BaseShape::NotSphere)
+            export_conversion(conversion, formatter, BaseShape::NotSphere, None)
         }
         super::model::CoordinateOperation::Transformation(transformation) => {
             export_transformation(transformation, formatter)
@@ -2209,42 +2278,6 @@ fn parameter_number(conversion: &Conversion, code: &str) -> Result<f64, FactoryE
             _ => None,
         })
         .ok_or_else(|| FactoryError::Format(format!("missing conversion parameter {code}")))
-}
-
-fn parameter_on_axis(
-    conversion: &Conversion,
-    code: &str,
-    wkt2_name: &str,
-    formatter: &WktFormatter,
-) -> Result<f64, FactoryError> {
-    let measure = conversion
-        .parameters
-        .iter()
-        .find(|parameter| parameter.code == code || names_match(&parameter.name, wkt2_name))
-        .and_then(|parameter| match &parameter.value {
-            ParameterValue::Measure(measure) => Some(measure),
-            _ => None,
-        })
-        .ok_or_else(|| FactoryError::Format(format!("missing conversion parameter {wkt2_name}")))?;
-    match measure.unit.kind {
-        UnitKind::Linear => {
-            let target = formatter
-                .axis_linear
-                .last()
-                .cloned()
-                .unwrap_or_else(UnitOfMeasure::metre);
-            Ok(measure.convert_to(&target))
-        }
-        UnitKind::Angular => {
-            let target = formatter
-                .axis_angular
-                .last()
-                .cloned()
-                .unwrap_or_else(UnitOfMeasure::degree);
-            Ok(measure.convert_to(&target))
-        }
-        _ => Ok(measure.si_value()),
-    }
 }
 
 fn write_wkt1_parameter(
