@@ -6,8 +6,6 @@
 //! component is stored as `target_z - source_z`, which is what the JSON parser
 //! does before `TINShiftJSONEvaluator`.
 
-use std::path::Path;
-
 use rusqlite::Connection;
 
 use super::json::{self, Value};
@@ -49,8 +47,8 @@ pub(super) fn build(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, Cre
         return Err(CreateError::MissingArgument("file"));
     }
     let tin = if has_suffix(file, ".gpkg") {
-        let path = super::resolve(file)?;
-        load_gpkg(&path)?
+        let bytes = super::read_resource(file)?;
+        load_gpkg(&bytes)?
     } else {
         let bytes = super::read_resource(file)?;
         if bytes.len() > 100 * 1024 * 1024 {
@@ -213,8 +211,17 @@ fn index_of(value: &Value) -> Option<usize> {
     Some(number as usize)
 }
 
-fn load_gpkg(path: &Path) -> Result<Tin, CreateError> {
-    let connection = Connection::open(path).map_err(|_| CreateError::IllegalValue("file"))?;
+fn load_gpkg(bytes: &[u8]) -> Result<Tin, CreateError> {
+    let mut connection =
+        Connection::open_in_memory().map_err(|_| CreateError::IllegalValue("file"))?;
+    connection
+        .deserialize_read_exact(
+            rusqlite::MAIN_DB,
+            std::io::Cursor::new(bytes),
+            bytes.len(),
+            true,
+        )
+        .map_err(|_| CreateError::IllegalValue("file"))?;
     let metadata: String = connection
         .query_row(
             "SELECT metadata FROM gpkg_metadata WHERE md_standard_uri = 'https://proj.org'",

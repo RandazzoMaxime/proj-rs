@@ -109,7 +109,9 @@ impl Options {
                 factors = true;
             } else if arg == "-f" {
                 index += 1;
-                let text = args.get(index).ok_or_else(|| "missing -f value".to_owned())?;
+                let text = args
+                    .get(index)
+                    .ok_or_else(|| "missing -f value".to_owned())?;
                 precision = precision_of(text)?;
             } else if arg.starts_with('+') {
                 plus.push(arg.to_owned());
@@ -162,7 +164,10 @@ fn precision_of(text: &str) -> Result<usize, String> {
 }
 
 enum Job {
-    Native { operation: Operation, degrees_out: bool },
+    Native {
+        operation: Operation,
+        degrees_out: bool,
+    },
     Epsg(CrsPipeline),
 }
 
@@ -175,7 +180,8 @@ impl Job {
         if options.definition.is_empty() {
             return Err("missing projection".to_owned());
         }
-        let operation = Operation::create(&options.definition).map_err(|error| error.to_string())?;
+        let operation =
+            Operation::create(&options.definition).map_err(|error| error.to_string())?;
         let degrees_out = operation.angular_output(false)
             || options.definition.contains("o_proj=lat")
             || options.definition.contains("o_proj=long");

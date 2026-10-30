@@ -1,5 +1,6 @@
 //! Embedded PROJ 9.9.0 `proj.db`, opened once from the crate bytes.
 
+use std::cell::Cell;
 use std::fmt;
 use std::sync::{Mutex, OnceLock};
 
@@ -61,9 +62,34 @@ fn slot() -> &'static Result<Mutex<Connection>, String> {
 pub(crate) fn with_db<T>(
     body: impl FnOnce(&Connection) -> Result<T, rusqlite::Error>,
 ) -> Result<T, DbFail> {
+    if HELD.with(Cell::get) {
+        let connection = open_connection()?;
+        return body(&connection).map_err(DbFail::Sql);
+    }
     let guard = match slot() {
         Ok(mutex) => mutex.lock().unwrap_or_else(|poison| poison.into_inner()),
         Err(message) => return Err(DbFail::Open(message.clone())),
     };
+    let _held = Held::set();
     body(&guard).map_err(DbFail::Sql)
+}
+
+thread_local! {
+    static HELD: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Marks the shared connection as taken by this thread, until dropped.
+struct Held;
+
+impl Held {
+    fn set() -> Self {
+        HELD.with(|held| held.set(true));
+        Self
+    }
+}
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        HELD.with(|held| held.set(false));
+    }
 }

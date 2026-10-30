@@ -104,9 +104,14 @@ impl OperationMethod {
         }
         let mut used = vec![false; other.parameters.len()];
         for parameter in &self.parameters {
-            let Some(index) = other.parameters.iter().enumerate().position(|(index, other)| {
-                !used[index] && parameter.is_equivalent_to_with(other, criterion)
-            }) else {
+            let Some(index) = other
+                .parameters
+                .iter()
+                .enumerate()
+                .position(|(index, other)| {
+                    !used[index] && parameter.is_equivalent_to_with(other, criterion)
+                })
+            else {
                 return false;
             };
             used[index] = true;
@@ -345,7 +350,9 @@ impl super::model::Conversion {
         if values_equivalent(&self.parameters, &other.parameters, criterion) {
             return true;
         }
-        self.method.code == "9802" && other.method.code == "9802" && lcc2sp_parallels_swapped(self, other)
+        self.method.code == "9802"
+            && other.method.code == "9802"
+            && lcc2sp_parallels_swapped(self, other)
     }
 
     /// Build a conversion whose method name and code are supplied explicitly.
@@ -373,12 +380,7 @@ impl super::model::Conversion {
 
     /// Parameter value used by [`Self::create_with_method`].
     #[must_use]
-    pub fn parameter(
-        name: &str,
-        code_space: &str,
-        code: &str,
-        value: ParameterValue,
-    ) -> Parameter {
+    pub fn parameter(name: &str, code_space: &str, code: &str, value: ParameterValue) -> Parameter {
         Parameter {
             name: name.to_owned(),
             code_space: code_space.to_owned(),
@@ -426,7 +428,10 @@ impl super::model::Conversion {
                     || have.name.eq_ignore_ascii_case(param.wkt2_name)
             });
             let Some(index) = found else {
-                messages.push(format!("Cannot find expected parameter {}", param.wkt2_name));
+                messages.push(format!(
+                    "Cannot find expected parameter {}",
+                    param.wkt2_name
+                ));
                 continue;
             };
             matched[index] = true;
@@ -542,7 +547,11 @@ impl super::model::Conversion {
                 push_number(&mut parts, "lat_0", self.numeric_degrees(8811));
                 push_number(&mut parts, "lon_0", self.numeric_degrees(8812));
                 push_number(&mut parts, "k_0", self.numeric_si(8815));
-                let (x_code, y_code) = if code == 9812 { (8806, 8807) } else { (8816, 8817) };
+                let (x_code, y_code) = if code == 9812 {
+                    (8806, 8807)
+                } else {
+                    (8816, 8817)
+                };
                 push_number(&mut parts, "x_0", self.numeric_si(x_code));
                 push_number(&mut parts, "y_0", self.numeric_si(y_code));
                 return Ok(parts.join(" "));
@@ -576,13 +585,19 @@ impl super::model::Conversion {
         }
         if code == 9829 {
             let latitude = self.numeric_degrees(8832);
-            push_number(&mut parts, "lat_0", if latitude >= 0.0 { 90.0 } else { -90.0 });
+            push_number(
+                &mut parts,
+                "lat_0",
+                if latitude >= 0.0 { 90.0 } else { -90.0 },
+            );
         }
         for param in mapped.params {
             let Some(proj_name) = param.proj_name else {
                 continue;
             };
-            if param.epsg_code == 8814 && self.measure_of(param).is_none() && matches!(code, 9812 | 9815)
+            if param.epsg_code == 8814
+                && self.measure_of(param).is_none()
+                && matches!(code, 9812 | 9815)
             {
                 continue;
             }
@@ -707,10 +722,13 @@ impl super::model::Conversion {
         Self::from_mapped(props, mapped, values)
     }
 
-    fn from_name(props: &OpProps, name: &str, values: Vec<ParameterValue>) -> Result<Self, FactoryError> {
-        let mapped = parammap::method_by_name(name).ok_or_else(|| {
-            FactoryError::Invalid(format!("unknown operation method {name}"))
-        })?;
+    fn from_name(
+        props: &OpProps,
+        name: &str,
+        values: Vec<ParameterValue>,
+    ) -> Result<Self, FactoryError> {
+        let mapped = parammap::method_by_name(name)
+            .ok_or_else(|| FactoryError::Invalid(format!("unknown operation method {name}")))?;
         Self::from_mapped(props, mapped, values)
     }
 
@@ -755,7 +773,11 @@ impl super::model::Conversion {
         };
         Ok(Self {
             identified: identified_from(props, mapped.wkt2_name),
-            method: OperationMethod::named_code(mapped.wkt2_name.to_owned(), method_space, method_code),
+            method: OperationMethod::named_code(
+                mapped.wkt2_name.to_owned(),
+                method_space,
+                method_code,
+            ),
             parameters,
             version: None,
         })
@@ -919,7 +941,11 @@ impl super::model::Conversion {
         false_easting: f64,
         false_northing: f64,
     ) -> Result<Self, FactoryError> {
-        Self::from_code(props, 9816, angles_lengths(latitude, longitude, false_easting, false_northing))
+        Self::from_code(
+            props,
+            9816,
+            angles_lengths(latitude, longitude, false_easting, false_northing),
+        )
     }
 
     /// Albers Equal Area, EPSG:9822.
@@ -1311,7 +1337,11 @@ impl super::model::Conversion {
         false_easting: f64,
         false_northing: f64,
     ) -> Result<Self, FactoryError> {
-        Self::from_name(props, "Gall Stereographic", long_lengths(longitude, false_easting, false_northing))
+        Self::from_name(
+            props,
+            "Gall Stereographic",
+            long_lengths(longitude, false_easting, false_northing),
+        )
     }
 
     /// Goode Homolosine.
@@ -1325,7 +1355,11 @@ impl super::model::Conversion {
         false_easting: f64,
         false_northing: f64,
     ) -> Result<Self, FactoryError> {
-        Self::from_name(props, "Goode Homolosine", long_lengths(longitude, false_easting, false_northing))
+        Self::from_name(
+            props,
+            "Goode Homolosine",
+            long_lengths(longitude, false_easting, false_northing),
+        )
     }
 
     /// Interrupted Goode Homolosine.
@@ -1663,7 +1697,11 @@ impl super::model::Conversion {
         false_easting: f64,
         false_northing: f64,
     ) -> Result<Self, FactoryError> {
-        Self::from_name(props, "Mollweide", long_lengths(longitude, false_easting, false_northing))
+        Self::from_name(
+            props,
+            "Mollweide",
+            long_lengths(longitude, false_easting, false_northing),
+        )
     }
 
     /// Polar Stereographic variant A, EPSG:9810.
@@ -1724,7 +1762,9 @@ impl super::model::Conversion {
     /// # Errors
     ///
     /// The method map is missing.
-    pub fn create_change_vertical_unit_no_conv_factor(props: &OpProps) -> Result<Self, FactoryError> {
+    pub fn create_change_vertical_unit_no_conv_factor(
+        props: &OpProps,
+    ) -> Result<Self, FactoryError> {
         Self::from_code(props, 1104, Vec::new())
     }
 
@@ -1790,7 +1830,12 @@ fn long_lengths(longitude: f64, false_easting: f64, false_northing: f64) -> Vec<
 }
 
 fn identified_from(props: &OpProps, default_name: &str) -> Identified {
-    let mut identified = Identified::named(props.name.clone().unwrap_or_else(|| default_name.to_owned()));
+    let mut identified = Identified::named(
+        props
+            .name
+            .clone()
+            .unwrap_or_else(|| default_name.to_owned()),
+    );
     if let (Some(space), Some(code)) = (&props.code_space, &props.code) {
         identified = identified.with_id(space, code);
     }
@@ -1798,7 +1843,10 @@ fn identified_from(props: &OpProps, default_name: &str) -> Identified {
     identified
 }
 
-fn lcc2sp_parallels_swapped(left: &super::model::Conversion, right: &super::model::Conversion) -> bool {
+fn lcc2sp_parallels_swapped(
+    left: &super::model::Conversion,
+    right: &super::model::Conversion,
+) -> bool {
     let near = |a: f64, b: f64| (a - b).abs() <= 1e-10 * a.abs().max(1.0);
     near(left.numeric_degrees(8823), right.numeric_degrees(8824))
         && near(left.numeric_degrees(8824), right.numeric_degrees(8823))

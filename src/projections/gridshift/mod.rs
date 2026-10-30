@@ -777,7 +777,7 @@ impl GridSet {
                     lat: 1,
                     lon: 0,
                     to_radian: 1.0,
-                    positive_east: true,
+                    positive_east: false,
                 }),
                 vertical: None,
             },

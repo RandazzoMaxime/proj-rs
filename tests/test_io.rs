@@ -739,6 +739,9 @@ fn wkt_parse_esri_geogcs_datum_spheroid_name_hardcoded_substitution() {
     .expect("crs")
     .clone();
     assert_eq!(crs.name(), "WGS 84");
-    assert_eq!(crs.datum().expect("datum").name(), "World Geodetic System 1984");
+    assert_eq!(
+        crs.datum().expect("datum").name(),
+        "World Geodetic System 1984"
+    );
     assert_eq!(crs.ellipsoid().expect("ellipsoid").name(), "WGS 84");
 }

@@ -13,10 +13,9 @@ use super::model::{
     ConcatenatedStep, Conversion, CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble,
     DerivedProjectedCRS, Ellipsoid, EllipsoidalCS, EngineeringCRS, EngineeringDatum, FactoryError,
     GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified, Identifier,
-    Measure,
-    Meridian, ObjectDomain, OperationMethod, OrdinalCS, Parameter, ParameterValue, PrimeMeridian,
-    ProjectedCRS, SphericalCS, Transformation, UnitKind, UnitOfMeasure, VerticalCRS, VerticalCS,
-    VerticalReferenceFrame,
+    Measure, Meridian, ObjectDomain, OperationMethod, OrdinalCS, Parameter, ParameterValue,
+    PrimeMeridian, ProjectedCRS, SphericalCS, Transformation, UnitKind, UnitOfMeasure, VerticalCRS,
+    VerticalCS, VerticalReferenceFrame,
 };
 use crate::projdb;
 
@@ -211,14 +210,18 @@ impl DatabaseContext {
     }
 
     /// `text_definition` for one authority object, when the column is set.
-    pub(crate) fn text_definition(&self, table: &str, authority: &str, code: &str) -> Option<String> {
+    pub(crate) fn text_definition(
+        &self,
+        table: &str,
+        authority: &str,
+        code: &str,
+    ) -> Option<String> {
         let table = match table {
             "projected_crs" | "geodetic_crs" | "conversion" => table,
             _ => return None,
         };
-        let sql = format!(
-            "SELECT text_definition FROM \"{table}\" WHERE auth_name = ? AND code = ?"
-        );
+        let sql =
+            format!("SELECT text_definition FROM \"{table}\" WHERE auth_name = ? AND code = ?");
         let Ok(rows) = self.query(&sql, &[authority.to_owned(), code.to_owned()]) else {
             return None;
         };
@@ -324,8 +327,9 @@ impl DatabaseContext {
         } else {
             (authority.to_owned(), code.to_owned())
         };
-        let mut sql = "SELECT alt_name FROM alias_name WHERE table_name = ? AND auth_name = ? AND code = ?"
-            .to_owned();
+        let mut sql =
+            "SELECT alt_name FROM alias_name WHERE table_name = ? AND auth_name = ? AND code = ?"
+                .to_owned();
         let mut params = vec![genuine.to_owned(), authority, code];
         if source == "not EPSG_OLD" {
             sql.push_str(" AND source != 'EPSG_OLD'");
@@ -380,9 +384,8 @@ impl DatabaseContext {
         table: &str,
         source: &str,
     ) -> Option<(String, String, String)> {
-        let mut sql = String::from(
-            "SELECT table_name, auth_name, code FROM alias_name WHERE alt_name = ?",
-        );
+        let mut sql =
+            String::from("SELECT table_name, auth_name, code FROM alias_name WHERE alt_name = ?");
         let mut params = vec![alias.to_owned()];
         if !table.is_empty() {
             sql.push_str(" AND table_name = ?");
@@ -434,8 +437,7 @@ impl DatabaseContext {
         let Ok(rows) = self.query(&sql, &[name.to_owned()]) else {
             return None;
         };
-        rows.first()
-            .map(|row| (row[0].text(), row[1].text()))
+        rows.first().map(|row| (row[0].text(), row[1].text()))
     }
 
     /// True when `name` is a row in `geodetic_datum`.
@@ -534,12 +536,7 @@ impl DatabaseContext {
              AND ellipsoid.celestial_body_code = celestial_body.code \
              WHERE ellipsoid.name = ? OR ellipsoid.name LIKE ? OR ellipsoid.name LIKE ? \
              ORDER BY CASE WHEN ellipsoid.name = ? THEN 0 ELSE 1 END, ellipsoid.deprecated",
-            &[
-                name.to_owned(),
-                like_space,
-                like_paren,
-                name.to_owned(),
-            ],
+            &[name.to_owned(), like_space, like_paren, name.to_owned()],
         ) else {
             return Vec::new();
         };
@@ -1506,7 +1503,8 @@ impl AuthorityFactory {
         let mut exact_official = 0usize;
         let mut exact_alias = 0usize;
         for row in rows {
-            if mode == NameMatch::Approximate && !approximate_name(&row.matched_name, name, &canonical)
+            if mode == NameMatch::Approximate
+                && !approximate_name(&row.matched_name, name, &canonical)
             {
                 continue;
             }
@@ -1546,7 +1544,12 @@ impl AuthorityFactory {
                 .name()
                 .len()
                 .cmp(&right.object.name().len())
-                .then_with(|| left.object.identifiers().len().cmp(&right.object.identifiers().len()))
+                .then_with(|| {
+                    left.object
+                        .identifiers()
+                        .len()
+                        .cmp(&right.object.identifiers().len())
+                })
                 .then_with(|| {
                     left.object
                         .identifiers()
@@ -1622,7 +1625,10 @@ impl AuthorityFactory {
         let rows = self.db.query(sql, params)?;
         let mut found = Vec::new();
         for row in rows {
-            if let Ok(crs) = self.child(&row[0].text()).create_geodetic_crs(&row[1].text()) {
+            if let Ok(crs) = self
+                .child(&row[0].text())
+                .create_geodetic_crs(&row[1].text())
+            {
                 found.push(crs);
             }
         }

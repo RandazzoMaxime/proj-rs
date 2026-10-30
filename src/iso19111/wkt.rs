@@ -1645,7 +1645,10 @@ fn export_conversion_wkt1(
     Ok(())
 }
 
-fn export_method(method: &OperationMethod, formatter: &mut WktFormatter) -> Result<(), FactoryError> {
+fn export_method(
+    method: &OperationMethod,
+    formatter: &mut WktFormatter,
+) -> Result<(), FactoryError> {
     let keyword = if formatter.wkt2 {
         "METHOD"
     } else {
@@ -2038,9 +2041,7 @@ fn lookup_method(method: &OperationMethod) -> Option<&'static super::parammap::M
         let named = super::parammap::PROJECTION_METHODS
             .iter()
             .chain(super::parammap::OTHER_METHODS)
-            .find(|mapped| {
-                mapped.epsg_code == code && names_match(mapped.wkt2_name, &method.name)
-            });
+            .find(|mapped| mapped.epsg_code == code && names_match(mapped.wkt2_name, &method.name));
         if named.is_some() {
             return named;
         }
@@ -2159,9 +2160,7 @@ fn parameter_on_axis(
     let measure = conversion
         .parameters
         .iter()
-        .find(|parameter| {
-            parameter.code == code || names_match(&parameter.name, wkt2_name)
-        })
+        .find(|parameter| parameter.code == code || names_match(&parameter.name, wkt2_name))
         .and_then(|parameter| match &parameter.value {
             ParameterValue::Measure(measure) => Some(measure),
             _ => None,

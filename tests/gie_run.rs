@@ -50,6 +50,18 @@ struct OpState {
     swap_xy: bool,
 }
 
+/// Files PROJ runs only when the network is on: `test/CMakeLists.txt` adds them
+/// with `PROJ_NETWORK=ON` and no test without it.
+const NETWORK_FILES: &[&str] = &["nkg.gie", "epsg_grid.gie", "tinshift_gpkg_network.gie"];
+
+fn network_enabled() -> bool {
+    std::env::var("PROJ_NETWORK").is_ok_and(|value| {
+        value.eq_ignore_ascii_case("on")
+            || value.eq_ignore_ascii_case("yes")
+            || value.eq_ignore_ascii_case("true")
+    })
+}
+
 fn main_counts() -> (Counts, Vec<(String, Counts)>, Vec<String>) {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/gie");
     let mut files: Vec<_> = fs::read_dir(&root)
@@ -67,6 +79,9 @@ fn main_counts() -> (Counts, Vec<(String, Counts)>, Vec<String>) {
             .expect("file name")
             .to_string_lossy()
             .into_owned();
+        if !network_enabled() && NETWORK_FILES.contains(&name.as_str()) {
+            continue;
+        }
         let text = fs::read_to_string(&path).expect("read gie");
         let (counts, notes) = run_gie(&text);
         for note in notes {
@@ -574,6 +589,9 @@ fn grid_present(name: &str) -> bool {
     if name.is_empty() {
         return false;
     }
+    if network_enabled() {
+        return true;
+    }
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let directories = [
         root.join("data").join("grids"),
@@ -639,14 +657,22 @@ fn vendored_gie_ratchet() {
     );
     assert!(failures.is_empty(), "{}", failures.join("\n"));
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/gie/passing.txt");
+    let mode = if network_enabled() {
+        "network"
+    } else {
+        "offline"
+    };
     let expected: u64 = fs::read_to_string(&path)
         .expect("passing.txt")
-        .trim()
-        .parse()
-        .expect("passing count");
+        .lines()
+        .find_map(|line| {
+            let mut fields = line.split_whitespace();
+            (fields.next() == Some(mode)).then(|| fields.next()?.parse().ok())?
+        })
+        .expect("passing.txt has no count for this mode");
     assert_eq!(
         total.passed, expected,
-        "update tests/gie/passing.txt to the live pass count"
+        "update the {mode} line of tests/gie/passing.txt to the live pass count"
     );
     let builtins = per_file
         .iter()

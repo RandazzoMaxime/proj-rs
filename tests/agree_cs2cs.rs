@@ -4,27 +4,38 @@ use proj_rs::{Cone, Ellipsoid, Hemisphere, Lcc, Tmerc, UtmZone};
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-fn proj_cs2cs() -> std::path::PathBuf {
+/// The PROJ `cs2cs` on `PATH`, if there is one. `PROJ_CS2CS_REQUIRED` turns a
+/// missing binary into a failure, as the CI does.
+#[expect(
+    clippy::print_stderr,
+    reason = "the skip is reported to the reader of the test output"
+)]
+fn proj_cs2cs() -> Option<std::path::PathBuf> {
     // `cargo test` puts `target/` on `PATH`. Our own `cs2cs` binary lives
     // there and must not shadow the PROJ install this test compares against.
     let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let name = if cfg!(windows) { "cs2cs.exe" } else { "cs2cs" };
-    if let Some(path) = std::env::var_os("PATH") {
-        for dir in std::env::split_paths(&path) {
+    let found = std::env::var_os("PATH").and_then(|path| {
+        std::env::split_paths(&path).find_map(|dir| {
             if dir.starts_with(&manifest) {
-                continue;
+                return None;
             }
             let candidate = dir.join(name);
-            if candidate.is_file() {
-                return candidate;
-            }
-        }
+            candidate.is_file().then_some(candidate)
+        })
+    });
+    if found.is_none() {
+        assert!(
+            std::env::var_os("PROJ_CS2CS_REQUIRED").is_none(),
+            "PROJ_CS2CS_REQUIRED is set but no PROJ cs2cs is on PATH"
+        );
+        eprintln!("skipped: no PROJ cs2cs on PATH");
     }
-    std::path::PathBuf::from("cs2cs")
+    found
 }
 
-fn cs2cs(from: &str, to: &str, lon: f64, lat: f64) -> (f64, f64) {
-    let mut child = Command::new(proj_cs2cs())
+fn cs2cs(program: &std::path::Path, from: &str, to: &str, lon: f64, lat: f64) -> (f64, f64) {
+    let mut child = Command::new(program)
         .args(["-d", "8", from, "+to", to])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -52,9 +63,13 @@ fn cs2cs(from: &str, to: &str, lon: f64, lat: f64) -> (f64, f64) {
 
 #[test]
 fn eiffel_matches_cs2cs() {
+    let Some(program) = proj_cs2cs() else {
+        return;
+    };
     let zone = UtmZone::try_new(31).expect("zone");
     let utm = Tmerc::utm(zone, Hemisphere::North, Ellipsoid::wgs84()).expect("utm");
     let (east, north) = cs2cs(
+        &program,
         "+proj=latlong +ellps=WGS84",
         "+proj=utm +zone=31 +ellps=WGS84",
         2.2945,
@@ -66,6 +81,7 @@ fn eiffel_matches_cs2cs() {
 
     let lcc = Lcc::try_new(Ellipsoid::grs80(), Cone::lambert93()).expect("l93");
     let (east, north) = cs2cs(
+        &program,
         "+proj=latlong +ellps=GRS80",
         "+proj=lcc +lat_1=49 +lat_2=44 +lat_0=46.5 +lon_0=3 +x_0=700000 +y_0=6600000 +ellps=GRS80",
         2.2945,

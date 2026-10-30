@@ -322,7 +322,9 @@ fn build_engine(source: &str, target: &str, area: Option<Area>) -> Result<Engine
 }
 
 fn projish(definition: &str) -> bool {
-    explicit_proj(definition).is_some() || definition.contains("init=") || definition.contains("proj=")
+    explicit_proj(definition).is_some()
+        || definition.contains("init=")
+        || definition.contains("proj=")
 }
 
 fn epsg_token(text: &str) -> bool {
@@ -330,7 +332,9 @@ fn epsg_token(text: &str) -> bool {
     let Some((auth, code)) = text.split_once(':') else {
         return false;
     };
-    auth.eq_ignore_ascii_case("EPSG") && !code.is_empty() && code.chars().all(|ch| ch.is_ascii_digit())
+    auth.eq_ignore_ascii_case("EPSG")
+        && !code.is_empty()
+        && code.chars().all(|ch| ch.is_ascii_digit())
 }
 
 struct SidePair {
@@ -404,8 +408,7 @@ fn open_side(definition: &str) -> Result<(Operation, Option<f64>, Option<Operati
         definition.to_owned()
     };
     let operation = Operation::create(&cleaned).map_err(|error| error.to_string())?;
-    let angular = geographic
-        || (operation.angular_input(false) && operation.angular_output(false));
+    let angular = geographic || (operation.angular_input(false) && operation.angular_output(false));
     let scale = if angular {
         Some(if grad_units(&cleaned) {
             std::f64::consts::PI / 200.0
@@ -438,7 +441,10 @@ fn strip_datum(definition: &str) -> String {
     let mut parts = Vec::new();
     for token in definition.split_whitespace() {
         let bare = token.trim_start_matches('+');
-        if bare.starts_with("towgs84=") || bare == "towgs84" || bare.starts_with("nadgrids=") || bare == "nadgrids"
+        if bare.starts_with("towgs84=")
+            || bare == "towgs84"
+            || bare.starts_with("nadgrids=")
+            || bare == "nadgrids"
         {
             continue;
         }
@@ -487,10 +493,7 @@ fn strip_flag(definition: &str, flag: &str) -> String {
 fn grad_units(definition: &str) -> bool {
     definition.split_whitespace().any(|token| {
         let bare = token.trim_start_matches('+');
-        matches!(
-            bare,
-            "units=grad" | "units=grads" | "units=gon" | "units=g"
-        )
+        matches!(bare, "units=grad" | "units=grads" | "units=gon" | "units=g")
     })
 }
 
