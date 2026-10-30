@@ -15,8 +15,8 @@ use super::model::{
     VerticalCRS, VerticalCS, VerticalReferenceFrame,
 };
 
-const EARTH_RADIUS: f64 = 6_375_000.0;
-const BODY_RELATIVE: f64 = 0.007;
+pub(crate) const EARTH_RADIUS: f64 = 6_375_000.0;
+pub(crate) const BODY_RELATIVE: f64 = 0.007;
 const DEGREE_SI: f64 = std::f64::consts::PI / 180.0;
 const US_FOOT: f64 = 12.0 / 39.37;
 const REL_UNIT: f64 = 1e-10;
