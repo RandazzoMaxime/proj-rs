@@ -416,6 +416,31 @@ pub fn create_from_user_input(text: &str, db: &DatabaseContext) -> Result<Crs, F
         .ok_or_else(|| FactoryError::Invalid("WKT is not a CRS".to_owned()))
 }
 
+/// The `EPSG:CODE` text of a CRS that `text` names, or `EPSG:A+B` for a
+/// compound of two EPSG CRS. `None` when the CRS has no EPSG identity.
+///
+/// # Errors
+///
+/// `text` does not name a CRS this crate can build.
+pub fn epsg_identity(text: &str, db: &DatabaseContext) -> Result<Option<String>, FactoryError> {
+    let crs = create_from_user_input(text, db)?;
+    if let Some(code) = epsg_code_of(&crs) {
+        return Ok(Some(format!("EPSG:{code}")));
+    }
+    if let Crs::Compound(compound) = &crs {
+        let parts: Vec<Option<String>> = compound.components().iter().map(epsg_code_of).collect();
+        if let [Some(first), Some(second)] = parts.as_slice() {
+            return Ok(Some(format!("EPSG:{first}+{second}")));
+        }
+    }
+    Ok(None)
+}
+
+fn epsg_code_of(crs: &Crs) -> Option<String> {
+    crs.authority_code("EPSG")
+        .map(|identifier| identifier.code().to_owned())
+}
+
 /// A CRS named `text`, or `A + B` for two named CRS, as PROJ's
 /// `createFromUserInput` does for names. An exact name first; several matches
 /// keep the 2D one, then the 3D one, and anything else is an error.
