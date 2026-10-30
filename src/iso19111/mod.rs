@@ -14,6 +14,7 @@ mod model;
 mod parammap;
 mod pipeline;
 mod projstring;
+mod select;
 mod transform_export;
 mod wkt;
 mod wkt_import;
@@ -40,6 +41,7 @@ pub use model::{
 };
 pub use pipeline::ProjLines;
 pub use projstring::create_crs_from_proj_string;
+pub use select::best_pipeline;
 pub use wkt::{
     EllipsoidalHeightPolicy, LinunitPolicy, OutputAxisRule, WktConvention, WktFormatter, WktLines,
     WktStrictness,
