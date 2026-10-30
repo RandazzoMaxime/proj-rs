@@ -144,7 +144,7 @@ The same goes for the CLI cases in [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md
 | `test_crs.cpp` | 79 | 120 |
 | `test_factory.cpp` | 55 | 58 |
 | `test_io.cpp` | 35 | 419 |
-| `test_operation.cpp` | 20 | 144 |
+| `test_operation.cpp` | 60 | 102 |
 | `test_operationfactory.cpp` | 0 | 274 |
 | Other unit files ([`tests/proj_unit.rs`](tests/proj_unit.rs)) | 33 | n/a |
 

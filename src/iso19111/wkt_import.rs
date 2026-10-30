@@ -2174,6 +2174,18 @@ impl WktParser {
         }
         let mut method_name = strip_quotes(&projection.children[0]);
         let mut parameters = self.parameters_of(node, &linear, &angular)?;
+        if ci_eq(&method_name, "Mercator_1SP") && !has_center_latitude(node) {
+            let origin = parameters
+                .iter()
+                .position(|parameter| ci_eq(parameter.name(), "latitude_of_origin"));
+            if let Some(index) = origin.filter(|index| non_zero_measure(&parameters[*index])) {
+                method_name = "Mercator_2SP".to_owned();
+                parameters[index].name = "standard_parallel_1".to_owned();
+                parameters.retain(|parameter| {
+                    !(ci_eq(parameter.name(), "scale_factor") && is_one_measure(parameter))
+                });
+            }
+        }
         if ci_eq(&method_name, "Mercator_1SP")
             && !parameters
                 .iter()
@@ -2814,6 +2826,26 @@ fn guess_parameter_unit(
         return Some(linear.clone());
     }
     None
+}
+
+/// GDAL WKT1 Mercator_1SP with a non-zero `latitude_of_origin` is Mercator
+/// variant B (https://trac.osgeo.org/gdal/ticket/3026), as in PROJ `io.cpp`.
+fn has_center_latitude(node: &WktNode) -> bool {
+    node.children.iter().any(|child| {
+        ci_eq(&child.value, "PARAMETER")
+            && child
+                .children
+                .first()
+                .is_some_and(|name| ci_eq(&strip_quotes(name), "center_latitude"))
+    })
+}
+
+fn non_zero_measure(parameter: &Parameter) -> bool {
+    matches!(&parameter.value, ParameterValue::Measure(measure) if measure.value != 0.0)
+}
+
+fn is_one_measure(parameter: &Parameter) -> bool {
+    matches!(&parameter.value, ParameterValue::Measure(measure) if measure.value == 1.0)
 }
 
 fn parameter(name: &str, code: &str, value: f64, unit: &UnitOfMeasure) -> Parameter {
