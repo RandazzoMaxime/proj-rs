@@ -640,21 +640,14 @@ and `PORT-NOTES-tests.md`.
 ## test_operationfactory.cpp
 
 - `operation.geogCRS_to_geogCRS`
-- `operation.geogCRS_to_geogCRS_context_default`
 - `operation.geogCRS_to_geogCRS_context_match_by_name`
-- `operation.geogCRS_to_geogCRS_context_filter_accuracy`
-- `operation.geogCRS_to_geogCRS_context_filter_bbox`
-- `operation.geogCRS_to_geogCRS_context_incompatible_area`
 - `operation.geogCRS_to_geogCRS_context_inverse_needed`
 - `operation.geogCRS_to_geogCRS_context_ntv1_ntv2_ctable2`
 - `operation.geogCRS_to_geogCRS_context_NAD27_to_WGS84`
 - `operation.geogCRS_to_geogCRS_context_NAD27_to_WGS84_G1762`
-- `operation.geogCRS_to_geogCRS_context_WGS84_G1674_to_WGS84_G1762`
-- `operation.geogCRS_to_geogCRS_context_EPSG_4240_Indian1975_to_EPSG_4326`
 - `operation.geogCRS_to_geogCRS_context_helmert_geog3D_crs`
 - `operation.geogCRS_to_geogCRS_context_helmert_geocentric_3D`
 - `operation.geogCRS_to_geogCRS_context_helmert_geog3D_to_geocentirc`
-- `operation.geogCRS_to_geogCRS_context_invalid_EPSG_ID`
 - `operation.geogCRS_to_geogCRS_context_datum_ensemble`
 - `operation.geogCRS_to_geogCRS_context_incompatible_celestial_body`
 - `operation.geogCRS_to_geogCRS_context_incompatible_celestial_body_but_same_radius`
@@ -668,7 +661,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.geog3DCRS_to_geog2DCRS_plus_vertCRS_depth_context`
 - `operation.geogCRS_to_geogCRS_noop`
 - `operation.geogCRS_to_geogCRS_longitude_rotation`
-- `operation.geogCRS_to_geogCRS_longitude_rotation_context`
 - `operation.geogCRS_to_geogCRS_context_lonlat_vs_latlon_crs`
 - `operation.geogCRS_to_geogCRS_context_concatenated_operation`
 - `operation.geogCRS_to_geogCRS_context_concatenated_operation_Egypt1907_to_WGS84`
@@ -677,7 +669,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.geogCRS_to_geogCRS_geographic_offset_context`
 - `operation.geogCRS_to_geogCRS_CH1903_to_CH1903plus_context`
 - `operation.geogCRS_to_geogCRS_init_IGNF_to_init_IGNF_context`
-- `operation.geogCRS_to_geogCRS_context_deprecated`
 - `operation.geogCRS_to_geogCRS_3D`
 - `operation.geogCRS_3D_lat_long_non_metre_to_geogCRS_longlat`
 - `operation.geogCRS_without_id_to_geogCRS_3D_context`
