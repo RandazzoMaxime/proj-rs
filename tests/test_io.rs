@@ -3,8 +3,8 @@
 //! Each function is one `TEST()` name. Expected text is copied from that test.
 
 use proj_rs::{
-    DatabaseContext, UnitOfMeasure, WktConvention, WktDialect, WktFormatter, WktNode, WktObject,
-    WktParser,
+    create_crs_from_proj_string, Crs, DatabaseContext, GeographicCRS, UnitOfMeasure, WktConvention,
+    WktDialect, WktFormatter, WktNode, WktObject, WktParser,
 };
 
 fn parse(wkt: &str) -> WktObject {
@@ -1140,4 +1140,413 @@ fn wkt_parse_invalid_local_cs() {
     refused(
         "LOCAL_CS[\"name\",LOCAL_DATUM[\"name\",1234],AXIS[\"Geodetic latitude\",NORTH],AXIS[\"Geodetic longitude\",EAST],AXIS[\"Ellipsoidal height\",UP]]",
     );
+}
+
+// `PROJStringParser().createFromPROJString` for `+proj=longlat`, exported to WKT2.
+
+fn proj_crs(definition: &str) -> Crs {
+    create_crs_from_proj_string(definition).expect("PROJ string")
+}
+
+fn proj_geographic(definition: &str) -> GeographicCRS {
+    match proj_crs(definition) {
+        Crs::Geographic(crs) => crs,
+        _ => panic!("not a geographic CRS: {definition}"),
+    }
+}
+
+fn proj_wkt2(definition: &str) -> String {
+    let mut formatter = WktFormatter::create(WktConvention::Wkt2_2015);
+    proj_crs(definition)
+        .export_to_wkt(&mut formatter)
+        .expect("WKT2")
+}
+
+fn proj_wkt2_simul(definition: &str) -> String {
+    let mut formatter = WktFormatter::create(WktConvention::Wkt2_2015);
+    formatter.simul_cur_node_has_id();
+    proj_crs(definition)
+        .export_to_wkt(&mut formatter)
+        .expect("WKT2")
+}
+
+fn lines(parts: &[&str]) -> String {
+    parts.join("\n")
+}
+
+#[test]
+fn io_projparse_longlat() {
+    let expected = lines(&[
+        "GEODCRS[\"unknown\",",
+        "    DATUM[\"World Geodetic System 1984\",",
+        "        ELLIPSOID[\"WGS 84\",6378137,298.257223563,",
+        "            LENGTHUNIT[\"metre\",1]],",
+        "        ID[\"EPSG\",6326]],",
+        "    PRIMEM[\"Greenwich\",0,",
+        "        ANGLEUNIT[\"degree\",0.0174532925199433],",
+        "        ID[\"EPSG\",8901]],",
+        "    CS[ellipsoidal,2],",
+        "        AXIS[\"longitude\",east,",
+        "            ORDER[1],",
+        "            ANGLEUNIT[\"degree\",0.0174532925199433,",
+        "                ID[\"EPSG\",9122]]],",
+        "        AXIS[\"latitude\",north,",
+        "            ORDER[2],",
+        "            ANGLEUNIT[\"degree\",0.0174532925199433,",
+        "                ID[\"EPSG\",9122]]]]",
+    ]);
+    for definition in [
+        "+proj=longlat +type=crs",
+        "+proj=longlat +datum=WGS84 +type=crs",
+    ] {
+        assert_eq!(proj_wkt2(definition), expected, "{definition}");
+    }
+}
+
+#[test]
+fn io_projparse_longlat_datum_nad83() {
+    let expected = lines(&[
+        "GEODCRS[\"unknown\",",
+        "    DATUM[\"North American Datum 1983\",",
+        "        ELLIPSOID[\"GRS 1980\",6378137,298.257222101,",
+        "            LENGTHUNIT[\"metre\",1]],",
+        "        ID[\"EPSG\",6269]],",
+        "    PRIMEM[\"Greenwich\",0,",
+        "        ANGLEUNIT[\"degree\",0.0174532925199433],",
+        "        ID[\"EPSG\",8901]],",
+        "    CS[ellipsoidal,2],",
+        "        AXIS[\"longitude\",east,",
+        "            ORDER[1],",
+        "            ANGLEUNIT[\"degree\",0.0174532925199433,",
+        "                ID[\"EPSG\",9122]]],",
+        "        AXIS[\"latitude\",north,",
+        "            ORDER[2],",
+        "            ANGLEUNIT[\"degree\",0.0174532925199433,",
+        "                ID[\"EPSG\",9122]]]]",
+    ]);
+    assert_eq!(proj_wkt2("+proj=longlat +datum=NAD83 +type=crs"), expected);
+}
+
+#[test]
+fn io_projparse_longlat_datum_nad27() {
+    let expected = lines(&[
+        "GEODCRS[\"unknown\",",
+        "    DATUM[\"North American Datum 1927\",",
+        "        ELLIPSOID[\"Clarke 1866\",6378206.4,294.978698213898,",
+        "            LENGTHUNIT[\"metre\",1]],",
+        "        ID[\"EPSG\",6267]],",
+        "    PRIMEM[\"Greenwich\",0,",
+        "        ANGLEUNIT[\"degree\",0.0174532925199433],",
+        "        ID[\"EPSG\",8901]],",
+        "    CS[ellipsoidal,2],",
+        "        AXIS[\"longitude\",east,",
+        "            ORDER[1],",
+        "            ANGLEUNIT[\"degree\",0.0174532925199433,",
+        "                ID[\"EPSG\",9122]]],",
+        "        AXIS[\"latitude\",north,",
+        "            ORDER[2],",
+        "            ANGLEUNIT[\"degree\",0.0174532925199433,",
+        "                ID[\"EPSG\",9122]]]]",
+    ]);
+    assert_eq!(proj_wkt2("+proj=longlat +datum=NAD27 +type=crs"), expected);
+}
+
+#[test]
+fn io_projparse_longlat_datum_other() {
+    let expected = lines(&[
+        "GEODCRS[\"unknown\",",
+        "    DATUM[\"Carthage\",",
+        "        ELLIPSOID[\"Clarke 1880 (IGN)\",6378249.2,293.4660213,",
+        "            LENGTHUNIT[\"metre\",1]],",
+        "        ID[\"EPSG\",6223]],",
+        "    PRIMEM[\"Greenwich\",0,",
+        "        ANGLEUNIT[\"degree\",0.0174532925199433],",
+        "        ID[\"EPSG\",8901]],",
+        "    CS[ellipsoidal,2],",
+        "        AXIS[\"longitude\",east,",
+        "            ORDER[1],",
+        "            ANGLEUNIT[\"degree\",0.0174532925199433,",
+        "                ID[\"EPSG\",9122]]],",
+        "        AXIS[\"latitude\",north,",
+        "            ORDER[2],",
+        "            ANGLEUNIT[\"degree\",0.0174532925199433,",
+        "                ID[\"EPSG\",9122]]]]",
+    ]);
+    assert_eq!(
+        proj_wkt2("+proj=longlat +datum=carthage +type=crs"),
+        expected
+    );
+}
+
+#[test]
+fn io_projparse_longlat_ellps_wgs84() {
+    let expected = lines(&[
+        "GEODCRS[\"unknown\",",
+        "    DATUM[\"Unknown based on WGS 84 ellipsoid\",",
+        "        ELLIPSOID[\"WGS 84\",6378137,298.257223563,",
+        "            LENGTHUNIT[\"metre\",1]]],",
+        "    PRIMEM[\"Greenwich\",0,",
+        "        ANGLEUNIT[\"degree\",0.0174532925199433]],",
+        "    CS[ellipsoidal,2],",
+        "        AXIS[\"longitude\",east,",
+        "            ORDER[1],",
+        "            ANGLEUNIT[\"degree\",0.0174532925199433]],",
+        "        AXIS[\"latitude\",north,",
+        "            ORDER[2],",
+        "            ANGLEUNIT[\"degree\",0.0174532925199433]]]",
+    ]);
+    assert_eq!(
+        proj_wkt2_simul("+proj=longlat +ellps=WGS84 +type=crs"),
+        expected
+    );
+}
+
+#[test]
+fn io_projparse_longlat_ellps_grs80() {
+    let expected = lines(&[
+        "GEODCRS[\"unknown\",",
+        "    DATUM[\"Unknown based on GRS 1980 ellipsoid\",",
+        "        ELLIPSOID[\"GRS 1980\",6378137,298.257222101,",
+        "            LENGTHUNIT[\"metre\",1]]],",
+        "    PRIMEM[\"Greenwich\",0,",
+        "        ANGLEUNIT[\"degree\",0.0174532925199433]],",
+        "    CS[ellipsoidal,2],",
+        "        AXIS[\"longitude\",east,",
+        "            ORDER[1],",
+        "            ANGLEUNIT[\"degree\",0.0174532925199433]],",
+        "        AXIS[\"latitude\",north,",
+        "            ORDER[2],",
+        "            ANGLEUNIT[\"degree\",0.0174532925199433]]]",
+    ]);
+    assert_eq!(
+        proj_wkt2_simul("+proj=longlat +ellps=GRS80 +type=crs"),
+        expected
+    );
+}
+
+#[test]
+fn io_projparse_longlat_a_b() {
+    let expected = lines(&[
+        "GEODCRS[\"unknown\",",
+        "    DATUM[\"unknown\",",
+        "        ELLIPSOID[\"unknown\",2,4,",
+        "            LENGTHUNIT[\"metre\",1]]],",
+        "    PRIMEM[\"Reference meridian\",0,",
+        "        ANGLEUNIT[\"degree\",0.0174532925199433]],",
+        "    CS[ellipsoidal,2],",
+        "        AXIS[\"longitude\",east,",
+        "            ORDER[1],",
+        "            ANGLEUNIT[\"degree\",0.0174532925199433]],",
+        "        AXIS[\"latitude\",north,",
+        "            ORDER[2],",
+        "            ANGLEUNIT[\"degree\",0.0174532925199433]]]",
+    ]);
+    assert_eq!(
+        proj_wkt2_simul("+proj=longlat +a=2 +b=1.5 +type=crs"),
+        expected
+    );
+    let crs = proj_geographic("+proj=longlat +a=2 +b=1.5 +type=crs");
+    let ellipsoid = crs.datum().expect("datum").ellipsoid();
+    assert_eq!(ellipsoid.celestial_body(), "Non-Earth body");
+}
+
+#[test]
+fn io_projparse_longlat_a_rf_wgs84() {
+    let expected = lines(&[
+        "GEODCRS[\"unknown\",",
+        "    DATUM[\"Unknown based on WGS 84 ellipsoid\",",
+        "        ELLIPSOID[\"WGS 84\",6378137,298.257223563,",
+        "            LENGTHUNIT[\"metre\",1]]],",
+        "    PRIMEM[\"Greenwich\",0,",
+        "        ANGLEUNIT[\"degree\",0.0174532925199433]],",
+        "    CS[ellipsoidal,2],",
+        "        AXIS[\"longitude\",east,",
+        "            ORDER[1],",
+        "            ANGLEUNIT[\"degree\",0.0174532925199433]],",
+        "        AXIS[\"latitude\",north,",
+        "            ORDER[2],",
+        "            ANGLEUNIT[\"degree\",0.0174532925199433]]]",
+    ]);
+    assert_eq!(
+        proj_wkt2_simul("+proj=longlat +a=6378137 +rf=298.257223563 +type=crs"),
+        expected
+    );
+    let crs = proj_geographic("+proj=longlat +a=6378137 +rf=298.257223563 +type=crs");
+    assert_eq!(
+        crs.datum().expect("datum").ellipsoid().celestial_body(),
+        "Earth"
+    );
+}
+
+#[test]
+fn io_projparse_longlat_a_rf() {
+    let expected = lines(&[
+        "GEODCRS[\"unknown\",",
+        "    DATUM[\"unknown\",",
+        "        ELLIPSOID[\"unknown\",2,4,",
+        "            LENGTHUNIT[\"metre\",1]]],",
+        "    PRIMEM[\"Reference meridian\",0,",
+        "        ANGLEUNIT[\"degree\",0.0174532925199433]],",
+        "    CS[ellipsoidal,2],",
+        "        AXIS[\"longitude\",east,",
+        "            ORDER[1],",
+        "            ANGLEUNIT[\"degree\",0.0174532925199433]],",
+        "        AXIS[\"latitude\",north,",
+        "            ORDER[2],",
+        "            ANGLEUNIT[\"degree\",0.0174532925199433]]]",
+    ]);
+    assert_eq!(
+        proj_wkt2_simul("+proj=longlat +a=2 +rf=4 +type=crs"),
+        expected
+    );
+}
+
+#[test]
+fn io_projparse_longlat_a_f_zero() {
+    let expected = lines(&[
+        "GEODCRS[\"unknown\",",
+        "    DATUM[\"unknown\",",
+        "        ELLIPSOID[\"unknown\",2,0,",
+        "            LENGTHUNIT[\"metre\",1]]],",
+        "    PRIMEM[\"Reference meridian\",0,",
+        "        ANGLEUNIT[\"degree\",0.0174532925199433]],",
+        "    CS[ellipsoidal,2],",
+        "        AXIS[\"longitude\",east,",
+        "            ORDER[1],",
+        "            ANGLEUNIT[\"degree\",0.0174532925199433]],",
+        "        AXIS[\"latitude\",north,",
+        "            ORDER[2],",
+        "            ANGLEUNIT[\"degree\",0.0174532925199433]]]",
+    ]);
+    assert_eq!(
+        proj_wkt2_simul("+proj=longlat +a=2 +f=0 +type=crs"),
+        expected
+    );
+}
+
+#[test]
+fn io_projparse_longlat_a_f_non_zero() {
+    let crs = proj_geographic("+proj=longlat +a=2 +f=0.5 +type=crs");
+    let ellipsoid = crs.datum().expect("datum").ellipsoid();
+    assert_eq!(ellipsoid.semi_major_axis().si_value(), 2.0);
+    assert_eq!(ellipsoid.inverse_flattening(), 2.0);
+}
+
+#[test]
+fn io_projparse_longlat_a_e() {
+    let crs = proj_geographic("+proj=longlat +a=2 +e=0.5 +type=crs");
+    let ellipsoid = crs.datum().expect("datum").ellipsoid();
+    assert_eq!(ellipsoid.semi_major_axis().si_value(), 2.0);
+    let rf = ellipsoid.inverse_flattening();
+    assert!((rf - 7.46410161513775).abs() < 1e-14, "{rf}");
+}
+
+#[test]
+fn io_projparse_longlat_a_es() {
+    let crs = proj_geographic("+proj=longlat +a=2 +es=0.5 +type=crs");
+    let ellipsoid = crs.datum().expect("datum").ellipsoid();
+    assert_eq!(ellipsoid.semi_major_axis().si_value(), 2.0);
+    let rf = ellipsoid.inverse_flattening();
+    assert!((rf - 3.414213562373096).abs() < 1e-14, "{rf}");
+}
+
+#[test]
+fn io_projparse_longlat_r() {
+    let crs = proj_geographic("+proj=longlat +R=2 +type=crs");
+    let ellipsoid = crs.datum().expect("datum").ellipsoid();
+    assert!(ellipsoid.is_sphere());
+    assert_eq!(ellipsoid.semi_major_axis().si_value(), 2.0);
+}
+
+#[test]
+fn io_projparse_longlat_a() {
+    let crs = proj_geographic("+proj=longlat +a=2 +type=crs");
+    let ellipsoid = crs.datum().expect("datum").ellipsoid();
+    assert!(ellipsoid.is_sphere());
+    assert_eq!(ellipsoid.semi_major_axis().si_value(), 2.0);
+}
+
+#[test]
+fn io_projparse_longlat_a_override_ellps() {
+    let crs = proj_geographic("+proj=longlat +a=2 +ellps=WGS84 +type=crs");
+    let ellipsoid = crs.datum().expect("datum").ellipsoid();
+    assert!(!ellipsoid.is_sphere());
+    assert_eq!(ellipsoid.semi_major_axis().si_value(), 2.0);
+    assert_eq!(ellipsoid.inverse_flattening(), 298.257223563);
+}
+
+#[test]
+fn io_projparse_longlat_pm_paris() {
+    let expected = lines(&[
+        "GEODCRS[\"unknown\",",
+        "    DATUM[\"Unknown based on WGS 84 ellipsoid\",",
+        "        ELLIPSOID[\"WGS 84\",6378137,298.257223563,",
+        "            LENGTHUNIT[\"metre\",1]]],",
+        "    PRIMEM[\"Paris\",2.5969213,",
+        "        ANGLEUNIT[\"grad\",0.015707963267949]],",
+        "    CS[ellipsoidal,2],",
+        "        AXIS[\"longitude\",east,",
+        "            ORDER[1],",
+        "            ANGLEUNIT[\"degree\",0.0174532925199433]],",
+        "        AXIS[\"latitude\",north,",
+        "            ORDER[2],",
+        "            ANGLEUNIT[\"degree\",0.0174532925199433]]]",
+    ]);
+    assert_eq!(
+        proj_wkt2_simul("+proj=longlat +pm=paris +type=crs"),
+        expected
+    );
+}
+
+#[test]
+fn io_projparse_longlat_pm_ferro() {
+    let expected = lines(&[
+        "GEODCRS[\"unknown\",",
+        "    DATUM[\"Unknown based on Bessel 1841 ellipsoid\",",
+        "        ELLIPSOID[\"Bessel 1841\",6377397.155,299.1528128,",
+        "            LENGTHUNIT[\"metre\",1]]],",
+        "    PRIMEM[\"Ferro\",-17.6666666666667,",
+        "        ANGLEUNIT[\"degree\",0.0174532925199433]],",
+        "    CS[ellipsoidal,2],",
+        "        AXIS[\"longitude\",east,",
+        "            ORDER[1],",
+        "            ANGLEUNIT[\"degree\",0.0174532925199433]],",
+        "        AXIS[\"latitude\",north,",
+        "            ORDER[2],",
+        "            ANGLEUNIT[\"degree\",0.0174532925199433]]]",
+    ]);
+    assert_eq!(
+        proj_wkt2_simul("+proj=longlat +ellps=bessel +pm=ferro +type=crs"),
+        expected
+    );
+}
+
+#[test]
+fn io_projparse_longlat_pm_numeric() {
+    let expected = lines(&[
+        "GEODCRS[\"unknown\",",
+        "    DATUM[\"Unknown based on WGS 84 ellipsoid\",",
+        "        ELLIPSOID[\"WGS 84\",6378137,298.257223563,",
+        "            LENGTHUNIT[\"metre\",1]]],",
+        "    PRIMEM[\"unknown\",2.5,",
+        "        ANGLEUNIT[\"degree\",0.0174532925199433]],",
+        "    CS[ellipsoidal,2],",
+        "        AXIS[\"longitude\",east,",
+        "            ORDER[1],",
+        "            ANGLEUNIT[\"degree\",0.0174532925199433]],",
+        "        AXIS[\"latitude\",north,",
+        "            ORDER[2],",
+        "            ANGLEUNIT[\"degree\",0.0174532925199433]]]",
+    ]);
+    assert_eq!(proj_wkt2_simul("+proj=longlat +pm=2.5 +type=crs"), expected);
+}
+
+#[test]
+fn io_projparse_longlat_pm_overriding_datum() {
+    // The ellipsoid of a datum named by its code is kept, and the given prime
+    // meridian replaces the datum's own. This is a GDAL regression case.
+    let crs = proj_geographic("+proj=longlat +datum=WGS84 +pm=ferro +type=crs");
+    let datum = crs.datum().expect("datum");
+    assert_eq!(datum.name(), "Unknown based on WGS 84 ellipsoid");
+    assert_eq!(datum.prime_meridian().name(), "Ferro");
 }

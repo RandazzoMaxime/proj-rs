@@ -7,14 +7,111 @@ use super::bound::hub_is_wgs84;
 use super::model::{
     Axis, BoundCRS, CartesianCS, Conversion, CoordinateOperation, Crs, Datum, DatumEnsemble,
     Ellipsoid, EllipsoidalCS, FactoryError, GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame,
-    GeographicCRS, Identified, Identifier, ParameterValue, PrimeMeridian, ProjectedCRS, UnitKind,
-    UnitOfMeasure, VerticalCRS,
+    GeographicCRS, Identified, Identifier, Measure, ParameterValue, PrimeMeridian, ProjectedCRS,
+    UnitKind, UnitOfMeasure, VerticalCRS,
 };
 use super::parammap::{MethodMap, ParamMap, OTHER_METHODS, PROJECTION_METHODS};
 use super::pipeline::proj_number;
 use super::wkt::format_g;
+use super::wkt_import::{BODY_RELATIVE, EARTH_RADIUS};
 use crate::ellipsoid::PJ_ELLPS;
 use crate::projections::{angular_proj_unit, linear_proj_unit};
+
+/// PROJ's `proj_list_prime_meridians`, in degrees, for `+pm=NAME`.
+const PRIME_MERIDIANS: &[(&str, f64)] = &[
+    ("greenwich", 0.0),
+    ("lisbon", -(9.0 + 7.0 / 60.0 + 54.862 / 3600.0)),
+    ("paris", 2.0 + 20.0 / 60.0 + 14.025 / 3600.0),
+    ("bogota", -(74.0 + 4.0 / 60.0 + 51.3 / 3600.0)),
+    ("madrid", -(3.0 + 41.0 / 60.0 + 16.58 / 3600.0)),
+    ("rome", 12.0 + 27.0 / 60.0 + 8.4 / 3600.0),
+    ("bern", 7.0 + 26.0 / 60.0 + 22.5 / 3600.0),
+    ("jakarta", 106.0 + 48.0 / 60.0 + 27.79 / 3600.0),
+    ("ferro", -17.0 - 40.0 / 60.0),
+    ("brussels", 4.0 + 22.0 / 60.0 + 4.71 / 3600.0),
+    ("stockholm", 18.0 + 3.0 / 60.0 + 29.8 / 3600.0),
+    ("athens", 23.0 + 42.0 / 60.0 + 58.815 / 3600.0),
+    ("oslo", 10.0 + 43.0 / 60.0 + 22.5 / 3600.0),
+    ("copenhagen", 12.0 + 34.0 / 60.0 + 40.35 / 3600.0),
+];
+
+/// One row of PROJ's `datumDescs`, for `+datum=NAME`. The `gcsName` and
+/// `gcsCode` columns are not used by the PROJ string parser.
+struct DatumDesc {
+    proj_name: &'static str,
+    datum_name: &'static str,
+    datum_code: &'static str,
+    ellipsoid_name: &'static str,
+    ellipsoid_code: &'static str,
+    a: f64,
+    inverse_flattening: f64,
+}
+
+const DATUM_DESCS: &[DatumDesc] = &[
+    DatumDesc {
+        proj_name: "GGRS87",
+        datum_name: "Greek Geodetic Reference System 1987",
+        datum_code: "6121",
+        ellipsoid_name: "GRS 1980",
+        ellipsoid_code: "7019",
+        a: 6_378_137.0,
+        inverse_flattening: 298.257_222_101,
+    },
+    DatumDesc {
+        proj_name: "potsdam",
+        datum_name: "Deutsches Hauptdreiecksnetz",
+        datum_code: "6314",
+        ellipsoid_name: "Bessel 1841",
+        ellipsoid_code: "7004",
+        a: 6_377_397.155,
+        inverse_flattening: 299.152_812_8,
+    },
+    DatumDesc {
+        proj_name: "carthage",
+        datum_name: "Carthage",
+        datum_code: "6223",
+        ellipsoid_name: "Clarke 1880 (IGN)",
+        ellipsoid_code: "7011",
+        a: 6_378_249.2,
+        inverse_flattening: 293.466_021_3,
+    },
+    DatumDesc {
+        proj_name: "hermannskogel",
+        datum_name: "Militar-Geographische Institut",
+        datum_code: "6312",
+        ellipsoid_name: "Bessel 1841",
+        ellipsoid_code: "7004",
+        a: 6_377_397.155,
+        inverse_flattening: 299.152_812_8,
+    },
+    DatumDesc {
+        proj_name: "ire65",
+        datum_name: "TM65",
+        datum_code: "6299",
+        ellipsoid_name: "Airy Modified 1849",
+        ellipsoid_code: "7002",
+        a: 6_377_340.189,
+        inverse_flattening: 299.324_964_6,
+    },
+    DatumDesc {
+        proj_name: "nzgd49",
+        datum_name: "New Zealand Geodetic Datum 1949",
+        datum_code: "6272",
+        ellipsoid_name: "International 1924",
+        ellipsoid_code: "7022",
+        a: 6_378_388.0,
+        inverse_flattening: 297.0,
+    },
+    DatumDesc {
+        proj_name: "OSGB36",
+        datum_name: "OSGB 1936",
+        datum_code: "6277",
+        ellipsoid_name: "Airy 1830",
+        ellipsoid_code: "7001",
+        a: 6_377_563.396,
+        inverse_flattening: 299.324_964_6,
+    },
+];
 
 /// What a bound CRS adds to the PROJ string of its base CRS.
 #[derive(Clone, Copy, Debug, Default)]
@@ -608,22 +705,6 @@ pub(crate) fn prime_meridian_radians_params(radians: f64) -> Option<(&'static st
 /// `PrimeMeridian::getPROJStringWellKnownName`: the name of the prime meridian
 /// of `datums.cpp` at `radians`, within `1e-10` radian.
 pub(crate) fn well_known_pm_name(radians: f64) -> Option<&'static str> {
-    const PRIME_MERIDIANS: &[(&str, f64)] = &[
-        ("greenwich", 0.0),
-        ("lisbon", -(9.0 + 7.0 / 60.0 + 54.862 / 3600.0)),
-        ("paris", 2.0 + 20.0 / 60.0 + 14.025 / 3600.0),
-        ("bogota", -(74.0 + 4.0 / 60.0 + 51.3 / 3600.0)),
-        ("madrid", -(3.0 + 41.0 / 60.0 + 16.58 / 3600.0)),
-        ("rome", 12.0 + 27.0 / 60.0 + 8.4 / 3600.0),
-        ("bern", 7.0 + 26.0 / 60.0 + 22.5 / 3600.0),
-        ("jakarta", 106.0 + 48.0 / 60.0 + 27.79 / 3600.0),
-        ("ferro", -17.0 - 40.0 / 60.0),
-        ("brussels", 4.0 + 22.0 / 60.0 + 4.71 / 3600.0),
-        ("stockholm", 18.0 + 3.0 / 60.0 + 29.8 / 3600.0),
-        ("athens", 23.0 + 42.0 / 60.0 + 58.815 / 3600.0),
-        ("oslo", 10.0 + 43.0 / 60.0 + 22.5 / 3600.0),
-        ("copenhagen", 12.0 + 34.0 / 60.0 + 40.35 / 3600.0),
-    ];
     PRIME_MERIDIANS
         .iter()
         .find(|(_, degrees)| (radians - degrees.to_radians()).abs() < 1e-10)
@@ -674,6 +755,15 @@ pub(crate) fn proj_unit_name(unit: &UnitOfMeasure) -> Option<&'static str> {
 /// table with the same semi-major axis and the same inverse flattening or minor
 /// axis. A missing one is derived from the other.
 fn well_known_ellps(major: f64, inverse: Option<f64>, minor: Option<f64>) -> Option<&'static str> {
+    well_known_ellps_entry(major, inverse, minor).map(|(id, ..)| *id)
+}
+
+/// [`well_known_ellps`] with the whole `proj_ellps` row, so the name is available.
+fn well_known_ellps_entry(
+    major: f64,
+    inverse: Option<f64>,
+    minor: Option<f64>,
+) -> Option<&'static (&'static str, &'static str, f64, f64, bool)> {
     let inverse = inverse.filter(|value| *value != 0.0);
     let minor = minor.or_else(|| inverse.map(|value| major * (1.0 - 1.0 / value)));
     let inverse = inverse.or_else(|| minor.filter(|b| *b != major).map(|b| major / (major - b)));
@@ -689,7 +779,6 @@ fn well_known_ellps(major: f64, inverse: Option<f64>, minor: Option<f64>) -> Opt
                 minor.is_some_and(|value| (value - second).abs() < 1e-10 * second.abs())
             }
         })
-        .map(|(id, _, _, _, _)| *id)
 }
 
 /// `PROJStringParser::createFromPROJString` for a single `+proj=longlat` CRS.
@@ -761,73 +850,328 @@ fn token<'a>(tokens: &'a [(String, String)], key: &str) -> &'a str {
         .unwrap_or("")
 }
 
+/// `PROJStringParser::Private::buildDatum`. `+R` takes precedence. Then
+/// `+datum=` or `+ellps=` gives a base datum, and `+a`, `+b`, `+rf`, `+f`, `+e`,
+/// and `+es` override its numbers. With no base, the datum is WGS 84.
 fn datum_from_proj(tokens: &[(String, String)]) -> Result<GeodeticReferenceFrame, FactoryError> {
+    let meridian = prime_meridian_from_proj(tokens)?;
+    let radius = token(tokens, "R");
+    if !radius.is_empty() {
+        let radius = parse_proj_number(radius, "Invalid R value")?;
+        return Ok(frame_from_ellipsoid(sphere("unknown", radius), &meridian));
+    }
     let datum = token(tokens, "datum");
-    if !datum.is_empty() {
-        return match datum {
-            "WGS84" => Ok(GeodeticReferenceFrame::epsg_6326()),
-            "NAD83" => Ok(GeodeticReferenceFrame::epsg_6269()),
-            "NAD27" => Ok(GeodeticReferenceFrame::epsg_6267()),
-            other => Err(FactoryError::Invalid(format!("unknown datum {other}"))),
-        };
-    }
     let ellps = token(tokens, "ellps");
-    if ellps == "WGS84" {
-        return Ok(GeodeticReferenceFrame::create(
-            "Unknown based on WGS 84 ellipsoid",
-            Ellipsoid::wgs84(),
-            PrimeMeridian::greenwich(),
+    let a_text = token(tokens, "a");
+    let b_text = token(tokens, "b");
+    let rf_text = token(tokens, "rf");
+    let f_text = token(tokens, "f");
+    let e_text = token(tokens, "e");
+    let es_text = token(tokens, "es");
+    let numeric = [a_text, b_text, rf_text, f_text, e_text, es_text]
+        .iter()
+        .any(|text| !text.is_empty());
+
+    let mut a = -1.0;
+    let mut b = -1.0;
+    let mut rf = -1.0;
+    if !datum.is_empty() || !ellps.is_empty() {
+        let base = if datum.is_empty() {
+            named_ellipsoid_datum(ellps, &meridian)?
+        } else {
+            named_datum(datum, &meridian)?
+        };
+        if !numeric {
+            return Ok(base);
+        }
+        let base_ellipsoid = base.ellipsoid();
+        a = base_ellipsoid.semi_major_axis().si_value();
+        if !datum.is_empty() {
+            rf = base_ellipsoid.inverse_flattening();
+        } else if let Some(minor) = base_ellipsoid.semi_minor_axis() {
+            b = minor.si_value();
+        } else {
+            rf = base_ellipsoid.inverse_flattening();
+        }
+    }
+    if !a_text.is_empty() {
+        a = parse_proj_number(a_text, "Invalid a value")?;
+    }
+
+    if a > 0.0 && (b > 0.0 || !b_text.is_empty()) {
+        if !b_text.is_empty() {
+            b = parse_proj_number(b_text, "Invalid b value")?;
+        }
+        return Ok(frame_from_ellipsoid(
+            identified_ellipsoid(a, Shape::TwoAxis(b)),
+            &meridian,
         ));
     }
-    if ellps == "GRS80" {
-        return Ok(GeodeticReferenceFrame::create(
-            "Unknown based on GRS 1980 ellipsoid",
-            Ellipsoid::grs80(),
-            PrimeMeridian::greenwich(),
+    if a > 0.0 && (rf >= 0.0 || !rf_text.is_empty()) {
+        if !rf_text.is_empty() {
+            rf = parse_proj_number(rf_text, "Invalid rf value")?;
+        }
+        return Ok(frame_from_ellipsoid(
+            identified_ellipsoid(a, Shape::Flattened(rf)),
+            &meridian,
         ));
     }
-    if !ellps.is_empty() {
-        return named_ellipsoid_datum(ellps);
-    }
-    let major = token(tokens, "a");
-    let flattening = token(tokens, "rf");
-    if !major.is_empty() && !flattening.is_empty() {
-        let major = major
-            .parse::<f64>()
-            .map_err(|_| FactoryError::Invalid("Invalid a value".to_owned()))?;
-        let flattening = flattening
-            .parse::<f64>()
-            .map_err(|_| FactoryError::Invalid("Invalid rf value".to_owned()))?;
-        return Ok(GeodeticReferenceFrame::create(
-            "unknown",
-            Ellipsoid::create_flattened_sphere("unknown", major, flattening),
-            PrimeMeridian::greenwich(),
+    if a > 0.0 && !f_text.is_empty() {
+        let f = parse_proj_number(f_text, "Invalid f value")?;
+        return Ok(frame_from_ellipsoid(
+            identified_ellipsoid(a, Shape::Flattened(inverse_flattening_of(f))),
+            &meridian,
         ));
     }
-    if !major.is_empty() || !flattening.is_empty() {
-        return Err(FactoryError::Invalid(
-            "+a and +rf must be given together".to_owned(),
+    if a > 0.0 && !e_text.is_empty() {
+        let e = parse_proj_number(e_text, "Invalid e value")?;
+        let f = 1.0 - e.asin().cos();
+        return Ok(frame_from_ellipsoid(
+            identified_ellipsoid(a, Shape::Flattened(inverse_flattening_of(f))),
+            &meridian,
         ));
     }
-    Ok(GeodeticReferenceFrame::epsg_6326())
+    if a > 0.0 && !es_text.is_empty() {
+        let es = parse_proj_number(es_text, "Invalid es value")?;
+        let f = 1.0 - (1.0 - es).sqrt();
+        return Ok(frame_from_ellipsoid(
+            identified_ellipsoid(a, Shape::Flattened(inverse_flattening_of(f))),
+            &meridian,
+        ));
+    }
+    if a > 0.0 && b_text.is_empty() && rf_text.is_empty() && e_text.is_empty() && es_text.is_empty()
+    {
+        return Ok(frame_from_ellipsoid(sphere("unknown", a), &meridian));
+    }
+    for (text, key) in [
+        (b_text, "b"),
+        (rf_text, "rf"),
+        (f_text, "f"),
+        (e_text, "e"),
+        (es_text, "es"),
+    ] {
+        if !text.is_empty() && a_text.is_empty() {
+            return Err(FactoryError::Invalid(format!("{key} found, but a missing")));
+        }
+    }
+    Ok(override_meridian(
+        GeodeticReferenceFrame::epsg_6326(),
+        &meridian,
+    ))
 }
 
-/// `buildDatum` for `+ellps=` with a name from PROJ's table. The datum is
-/// `Unknown based on <name> ellipsoid`, and the ellipsoid has no authority code.
-fn named_ellipsoid_datum(id: &str) -> Result<GeodeticReferenceFrame, FactoryError> {
-    let (_, name, major, second, is_inverse) = PJ_ELLPS
-        .iter()
-        .find(|(ellps, ..)| *ellps == id)
-        .ok_or_else(|| FactoryError::Invalid(format!("unknown ellipsoid {id}")))?;
-    let ellipsoid = if *is_inverse {
-        Ellipsoid::create_flattened_sphere(*name, *major, *second)
+fn parse_proj_number(text: &str, message: &str) -> Result<f64, FactoryError> {
+    text.parse::<f64>()
+        .map_err(|_| FactoryError::Invalid(message.to_owned()))
+}
+
+/// `+f` and `+e`/`+es` give a flattening. A zero flattening is a sphere, which
+/// PROJ stores with an inverse flattening of zero.
+fn inverse_flattening_of(flattening: f64) -> f64 {
+    if flattening == 0.0 {
+        0.0
     } else {
-        Ellipsoid::create_two_axis(*name, *major, *second)
+        1.0 / flattening
+    }
+}
+
+/// `buildPrimeMeridian`. `None` is Greenwich, the default.
+fn prime_meridian_from_proj(
+    tokens: &[(String, String)],
+) -> Result<Option<PrimeMeridian>, FactoryError> {
+    let text = token(tokens, "pm");
+    if text.is_empty() {
+        return Ok(None);
+    }
+    if let Ok(degrees) = text.parse::<f64>() {
+        return Ok(Some(prime_meridian_named("unknown", degrees)));
+    }
+    if text == "paris" {
+        return Ok(Some(PrimeMeridian::paris()));
+    }
+    let (_, degrees) = PRIME_MERIDIANS
+        .iter()
+        .find(|(id, _)| *id == text)
+        .ok_or_else(|| FactoryError::Invalid(format!("unknown pm {text}")))?;
+    let mut name = text.to_owned();
+    if let Some(first) = name.get_mut(0..1) {
+        first.make_ascii_uppercase();
+    }
+    Ok(Some(prime_meridian_named(&name, *degrees)))
+}
+
+fn prime_meridian_named(name: &str, degrees: f64) -> PrimeMeridian {
+    PrimeMeridian {
+        identified: Identified::named(name),
+        longitude: Measure {
+            value: degrees,
+            unit: UnitOfMeasure::degree(),
+        },
+    }
+}
+
+fn meridian_or_greenwich(meridian: &Option<PrimeMeridian>) -> PrimeMeridian {
+    meridian.clone().unwrap_or_else(PrimeMeridian::greenwich)
+}
+
+/// `fixupPrimeMeridan`: a Greenwich meridian on a body other than Earth is the
+/// reference meridian.
+fn meridian_for(ellipsoid: &Ellipsoid, meridian: &Option<PrimeMeridian>) -> PrimeMeridian {
+    match meridian {
+        Some(meridian) => meridian.clone(),
+        None if ellipsoid.celestial_body() != "Earth" => {
+            prime_meridian_named("Reference meridian", 0.0)
+        }
+        None => PrimeMeridian::greenwich(),
+    }
+}
+
+/// `overridePmIfNeeded`: a datum named by its code keeps its ellipsoid, and a
+/// given prime meridian replaces its own. The datum is renamed after the
+/// ellipsoid.
+fn override_meridian(
+    frame: GeodeticReferenceFrame,
+    meridian: &Option<PrimeMeridian>,
+) -> GeodeticReferenceFrame {
+    match meridian {
+        None => frame,
+        Some(meridian) => {
+            let ellipsoid = frame.ellipsoid().clone();
+            GeodeticReferenceFrame::create(
+                format!("Unknown based on {} ellipsoid", ellipsoid.name()),
+                ellipsoid,
+                meridian.clone(),
+            )
+        }
+    }
+}
+
+/// `createGRF`: an ellipsoid with the name `unknown` gives an `unknown` datum.
+fn frame_from_ellipsoid(
+    ellipsoid: Ellipsoid,
+    meridian: &Option<PrimeMeridian>,
+) -> GeodeticReferenceFrame {
+    let name = if ellipsoid.name() == "unknown" {
+        "unknown".to_owned()
+    } else {
+        format!("Unknown based on {} ellipsoid", ellipsoid.name())
+    };
+    let meridian = meridian_for(&ellipsoid, meridian);
+    GeodeticReferenceFrame::create(name, ellipsoid, meridian)
+}
+
+/// `Ellipsoid::guessBodyName` without a database: Earth when `a` is close to
+/// the mean Earth radius, otherwise a non-Earth body.
+fn guess_body(semi_major: f64) -> String {
+    if (semi_major - EARTH_RADIUS).abs() < BODY_RELATIVE * EARTH_RADIUS {
+        "Earth".to_owned()
+    } else {
+        "Non-Earth body".to_owned()
+    }
+}
+
+/// A sphere of radius `radius`, on the body `guess_body` names.
+fn sphere(name: &str, radius: f64) -> Ellipsoid {
+    let mut ellipsoid = Ellipsoid::create_flattened_sphere(name, radius, 0.0);
+    ellipsoid.body = guess_body(radius);
+    ellipsoid
+}
+
+/// The shape of an ellipsoid given by two numbers after its semi-major axis.
+#[derive(Clone, Copy)]
+enum Shape {
+    /// Inverse flattening.
+    Flattened(f64),
+    /// Semi-minor axis.
+    TwoAxis(f64),
+}
+
+/// `->identify()` on a two-axis or flattened ellipsoid. A match in `proj_ellps`
+/// takes its name and values. Otherwise the ellipsoid stays `unknown` on the
+/// body `guess_body` names.
+fn identified_ellipsoid(major: f64, shape: Shape) -> Ellipsoid {
+    let entry = match shape {
+        Shape::Flattened(inverse) => well_known_ellps_entry(major, Some(inverse), None),
+        Shape::TwoAxis(minor) => well_known_ellps_entry(major, None, Some(minor)),
+    };
+    let mut ellipsoid = match (entry, shape) {
+        (Some((_, name, table_major, second, true)), _) => {
+            Ellipsoid::create_flattened_sphere(*name, *table_major, *second)
+        }
+        (Some((_, name, table_major, second, false)), _) => {
+            Ellipsoid::create_two_axis(*name, *table_major, *second)
+        }
+        (None, Shape::Flattened(inverse)) => {
+            Ellipsoid::create_flattened_sphere("unknown", major, inverse)
+        }
+        (None, Shape::TwoAxis(minor)) => Ellipsoid::create_two_axis("unknown", major, minor),
+    };
+    if entry.is_none() {
+        ellipsoid.body = guess_body(major);
+    }
+    ellipsoid
+}
+
+/// `buildDatum` for `+datum=`. `WGS84`, `NAD83`, and `NAD27` are the EPSG frames.
+/// Other names come from PROJ's `datumDescs` table, with their EPSG codes.
+fn named_datum(
+    datum: &str,
+    meridian: &Option<PrimeMeridian>,
+) -> Result<GeodeticReferenceFrame, FactoryError> {
+    let frame = match datum {
+        "WGS84" => GeodeticReferenceFrame::epsg_6326(),
+        "NAD83" => GeodeticReferenceFrame::epsg_6269(),
+        "NAD27" => GeodeticReferenceFrame::epsg_6267(),
+        other => {
+            let desc = DATUM_DESCS
+                .iter()
+                .find(|desc| desc.proj_name == other)
+                .ok_or_else(|| FactoryError::Invalid(format!("unknown datum {other}")))?;
+            let mut ellipsoid = Ellipsoid::create_flattened_sphere(
+                desc.ellipsoid_name,
+                desc.a,
+                desc.inverse_flattening,
+            );
+            ellipsoid.identified =
+                Identified::named(desc.ellipsoid_name).with_id("EPSG", desc.ellipsoid_code);
+            let mut frame = GeodeticReferenceFrame::create(
+                desc.datum_name,
+                ellipsoid,
+                meridian_or_greenwich(meridian),
+            );
+            frame.identified = Identified::named(desc.datum_name).with_id("EPSG", desc.datum_code);
+            return Ok(frame);
+        }
+    };
+    Ok(override_meridian(frame, meridian))
+}
+
+/// `buildDatum` for `+ellps=`. `WGS84` and `GRS80` are named ellipsoids. Other
+/// names come from PROJ's `proj_ellps` table.
+fn named_ellipsoid_datum(
+    ellps: &str,
+    meridian: &Option<PrimeMeridian>,
+) -> Result<GeodeticReferenceFrame, FactoryError> {
+    let (name, ellipsoid) = match ellps {
+        "WGS84" => ("WGS 84", Ellipsoid::wgs84()),
+        "GRS80" => ("GRS 1980", Ellipsoid::grs80()),
+        _ => {
+            let (_, name, major, second, is_inverse) = PJ_ELLPS
+                .iter()
+                .find(|(id, ..)| *id == ellps)
+                .ok_or_else(|| FactoryError::Invalid(format!("unknown ellipsoid {ellps}")))?;
+            let ellipsoid = if *is_inverse {
+                Ellipsoid::create_flattened_sphere(*name, *major, *second)
+            } else {
+                Ellipsoid::create_two_axis(*name, *major, *second)
+            };
+            (*name, ellipsoid)
+        }
     };
     Ok(GeodeticReferenceFrame::create(
         format!("Unknown based on {name} ellipsoid"),
         ellipsoid,
-        PrimeMeridian::greenwich(),
+        meridian_or_greenwich(meridian),
     ))
 }
 
@@ -1012,7 +1356,7 @@ fn projected_from_proj_string(tokens: &[(String, String)]) -> Result<Crs, Factor
             .iter()
             .all(|key| token(tokens, key).is_empty());
     let datum = if krovak_default {
-        named_ellipsoid_datum("bessel")?
+        named_ellipsoid_datum("bessel", &None)?
     } else {
         datum_from_proj(tokens)?
     };
