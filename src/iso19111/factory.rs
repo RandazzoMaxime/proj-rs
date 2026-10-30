@@ -140,6 +140,59 @@ impl DatabaseContext {
         Ok(())
     }
 
+    /// CRS whose name, or alias, equals `name` ignoring case, as PROJ's
+    /// exact pass of `createObjectsFromName` finds them. Deprecated rows are
+    /// found only when the name ends with ` (deprecated)`.
+    ///
+    /// Returns `(authority, code)` pairs in PROJ's order: deprecated last,
+    /// direct names before aliases, then shorter names first.
+    pub(crate) fn crs_codes_named(
+        &self,
+        name: &str,
+    ) -> Result<Vec<(String, String)>, FactoryError> {
+        const TABLES: [&str; 6] = [
+            "geodetic_crs",
+            "projected_crs",
+            "derived_projected_crs",
+            "vertical_crs",
+            "compound_crs",
+            "engineering_crs",
+        ];
+        let (name, deprecated) = match name.strip_suffix(" (deprecated)") {
+            Some(stripped) => (stripped, true),
+            None => (name, false),
+        };
+        let deprecated = i64::from(deprecated);
+        let mut parts = Vec::new();
+        let mut params = Vec::new();
+        for table in TABLES {
+            parts.push(format!(
+                "SELECT auth_name, code, name, deprecated, 0 AS is_alias FROM {table} \
+                 WHERE name = ? COLLATE NOCASE AND deprecated = ?"
+            ));
+            params.push(name.to_owned());
+            params.push(deprecated.to_string());
+            parts.push(format!(
+                "SELECT ov.auth_name, ov.code, a.alt_name, ov.deprecated, 1 AS is_alias \
+                 FROM {table} ov JOIN alias_name a \
+                 ON ov.auth_name = a.auth_name AND ov.code = a.code \
+                 WHERE a.source != 'EPSG_OLD' AND a.table_name = '{table}' \
+                 AND a.alt_name = ? COLLATE NOCASE AND ov.deprecated = ?"
+            ));
+            params.push(name.to_owned());
+            params.push(deprecated.to_string());
+        }
+        let sql = format!(
+            "SELECT auth_name, code FROM ({}) ORDER BY deprecated, is_alias, length(name), name LIMIT 10",
+            parts.join(" UNION ALL ")
+        );
+        let rows = self.query(&sql, &params)?;
+        Ok(rows
+            .iter()
+            .map(|row| (row[0].text(), row[1].text()))
+            .collect())
+    }
+
     fn query(&self, sql: &str, params: &[String]) -> Result<Vec<Vec<Cell>>, FactoryError> {
         let guard = self.lock();
         let mut statement = guard

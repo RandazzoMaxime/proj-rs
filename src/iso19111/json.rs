@@ -402,6 +402,11 @@ pub fn create_from_user_input(text: &str, db: &DatabaseContext) -> Result<Crs, F
     if let Some(crs) = crs_from_authority_code(text, db)? {
         return Ok(crs);
     }
+    if !text.contains(['[', '+', ':']) || text.contains(" + ") {
+        if let Some(crs) = crs_from_name(text, db)? {
+            return Ok(crs);
+        }
+    }
     let mut parser = WktParser::new();
     parser.attach_database(db.clone());
     parser
@@ -409,6 +414,61 @@ pub fn create_from_user_input(text: &str, db: &DatabaseContext) -> Result<Crs, F
         .crs()
         .cloned()
         .ok_or_else(|| FactoryError::Invalid("WKT is not a CRS".to_owned()))
+}
+
+/// A CRS named `text`, or `A + B` for two named CRS, as PROJ's
+/// `createFromUserInput` does for names. An exact name first; several matches
+/// keep the 2D one, then the 3D one, and anything else is an error.
+fn crs_from_name(text: &str, db: &DatabaseContext) -> Result<Option<Crs>, FactoryError> {
+    if let Some((left, right)) = text.split_once(" + ") {
+        let (Some(first), Some(second)) = (
+            crs_named_one(left.trim(), db)?,
+            crs_named_one(right.trim(), db)?,
+        ) else {
+            return Ok(None);
+        };
+        return Ok(Some(Crs::Compound(CompoundCRS::create(
+            format!("{} + {}", first.name(), second.name()),
+            vec![first, second],
+        )?)));
+    }
+    crs_named_one(text, db)
+}
+
+fn crs_named_one(text: &str, db: &DatabaseContext) -> Result<Option<Crs>, FactoryError> {
+    let codes = db.crs_codes_named(text)?;
+    let mut found = Vec::new();
+    for (authority, code) in &codes {
+        found.push(
+            AuthorityFactory::create(db, authority).create_coordinate_reference_system(code)?,
+        );
+    }
+    match found.len() {
+        0 => Ok(None),
+        1 => Ok(found.pop()),
+        _ => {
+            for dimension in [2, 3] {
+                if let Some(crs) = found
+                    .iter()
+                    .find(|crs| geographic_dimension(crs) == dimension)
+                {
+                    return Ok(Some(crs.clone()));
+                }
+            }
+            let names: Vec<&str> = found.iter().map(Crs::name).collect();
+            Err(FactoryError::Invalid(format!(
+                "several objects matching this name: {}",
+                names.join(", ")
+            )))
+        }
+    }
+}
+
+fn geographic_dimension(crs: &Crs) -> usize {
+    match crs {
+        Crs::Geographic(geographic) => geographic.coordinate_system().axes().len(),
+        _ => 2,
+    }
 }
 
 /// `AUTH:CODE`, `AUTH:CODE+CODE`, or `AUTH:CODE+AUTH:CODE` with no spaces.
