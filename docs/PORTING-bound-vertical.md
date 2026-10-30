@@ -39,7 +39,7 @@ No PROJ unit test is ported for these functions. The behaviour is checked by the
 
 ## Deliberate differences
 
-- **No spatial filter.** PROJ's `createOperations` gets the extent of the CRS (`extentResolved`). The Rust `create_operations` does not filter by extent. So the candidate count is taken over every operation the database holds for the pair. Cases where PROJ's extent leaves one candidate and the Rust list holds several do not bind. `#83` (MGI 1901, several Helmert operations) stays open for this reason.
+- **No CRS extent in the candidate search.** PROJ passes the extent of the CRS to `createOperations` (`CoordinateOperationContext::create(authFactory, extent, 0.0)`), so the candidates are those whose area of use meets it. `create_bound_crs_to_wgs84_if_possible` passes no area of interest, so the count is taken over every operation the database holds for the pair. The spatial filter itself is on main (#25). `#83` (MGI 1901, several Helmert operations) stays open because of this.
 - **Compound CRS.** PROJ binds each component of a compound CRS. Not ported: a compound CRS is returned as it is.
 - **Concatenated candidates.** PROJ also accepts a concatenated operation whose second step is a Helmert (NTF, EPSG:4807). Not ported.
 - **Geocentric CRS.** PROJ binds a geocentric CRS to EPSG:4978. Not ported: returned as it is.
@@ -58,11 +58,11 @@ No PROJ unit test is ported for these functions. The behaviour is checked by the
 
 ## Verification
 
-Run on this branch, rebased on `origin/main` at `eaaf929`:
+Run on this branch, rebased on `origin/main` at `3c727d1` (#25):
 
 - `cargo fmt --check`: clean.
 - `cargo clippy --all-targets --all-features -- -D warnings`: clean.
 - `cargo test --all-features --no-fail-fast` with `PATH=…/proj-ref/bin`, `PROJ_CS2CS_REQUIRED=1`, `PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY=YES`: all test binaries `ok`, exit 0.
-- `cargo test --test cli_yaml` on this branch: `ok`, no regression. Open cases on `origin/main`: 59 projinfo, 43 cs2cs. On this branch: 57 projinfo, 43 cs2cs. The two projinfo cases that close are `#110` and `#24`, and no case opens.
+- `cargo test --test cli_yaml` on this branch: `ok`, no regression. Open cases on `origin/main` (3c727d1): 52 projinfo, 43 cs2cs, 0 cct, 0 proj. On this branch: 50 projinfo, 43 cs2cs. The two projinfo cases that close are `#110` and `#24`, and no case opens. Before #25 (eaaf929), main had 59 projinfo.
 
 `docs/UNPORTED-CLI.md` is rewritten by the harness and is not part of this lot.
