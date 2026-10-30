@@ -727,6 +727,11 @@ impl WktParser {
             )?));
         }
         if ci_eq(name, "COORDINATEOPERATION") {
+            for keyword in ["SOURCECRS", "TARGETCRS"] {
+                if node.child(&[keyword]).is_none() {
+                    return Err(invalid(format!("missing {keyword}")));
+                }
+            }
             return Ok(WktObject::Transformation(self.build_transformation(node)?));
         }
         if ci_eq(name, "CONCATENATEDOPERATION") {
