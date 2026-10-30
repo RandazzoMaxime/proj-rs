@@ -297,10 +297,11 @@ fn geographic_equivalent(
     if criterion == Equivalence::Strict && !same_name(left.name(), right.name()) {
         return false;
     }
-    if geographic_anchor(left, right)
-        && cs_axes_match(
+    if geographic_anchor(left, right, criterion)
+        && cs_axes_match_for(
             left.coordinate_system().axes(),
             right.coordinate_system().axes(),
+            criterion,
         )
     {
         return true;
@@ -316,10 +317,17 @@ fn geographic_equivalent(
     } else {
         return false;
     }
-    geographic_anchor(left, right) && cs_axes_match(left.coordinate_system().axes(), &swapped)
+    geographic_anchor(left, right, criterion)
+        && cs_axes_match_for(left.coordinate_system().axes(), &swapped, criterion)
 }
 
-fn geographic_anchor(left: &GeographicCRS, right: &GeographicCRS) -> bool {
+fn geographic_anchor(left: &GeographicCRS, right: &GeographicCRS, criterion: Equivalence) -> bool {
+    if criterion != Equivalence::Strict {
+        return match (datum_frame(left), datum_frame(right)) {
+            (Some(left), Some(right)) => frame_equivalent(&left, &right),
+            _ => false,
+        };
+    }
     match (
         left.datum(),
         right.datum(),
@@ -438,6 +446,24 @@ fn cs_axes_match(left: &[Axis], right: &[Axis]) -> bool {
             .all(|(left, right)| axis_equivalent(left, right))
 }
 
+/// Axes match for `criterion`. A strict check also compares name, abbreviation,
+/// and meridian. The other criteria compare direction and unit only, as
+/// PROJ's `CoordinateSystemAxis::_isEquivalentTo` does.
+fn cs_axes_match_for(left: &[Axis], right: &[Axis], criterion: Equivalence) -> bool {
+    if criterion == Equivalence::Strict {
+        return cs_axes_match(left, right);
+    }
+    left.len() == right.len()
+        && left.iter().zip(right).all(|(left, right)| {
+            let (left_si, right_si) = (
+                left.unit().conversion_to_si(),
+                right.unit().conversion_to_si(),
+            );
+            left.direction() == right.direction()
+                && (left_si - right_si).abs() <= 1e-10 * left_si.abs()
+        })
+}
+
 fn cs_axes_match_refs(left: &[&Axis], right: &[&Axis]) -> bool {
     left.len() == right.len()
         && left
@@ -489,7 +515,7 @@ fn same_name(left: &str, right: &str) -> bool {
 }
 
 /// `Identifier::isEquivalentName`: case-insensitive, ignoring space, `_`, `-`,
-/// `/`, parentheses, `.`, `&`, and `,`.
+/// `/`, parentheses, `.`, `&`, and `,`, and writing accented letters as ASCII.
 pub fn equivalent_name(left: &str, right: &str) -> bool {
     folded_name(left) == folded_name(right)
 }
@@ -498,7 +524,20 @@ fn folded_name(name: &str) -> String {
     name.chars()
         .filter(|ch| !matches!(ch, ' ' | '_' | '-' | '/' | '(' | ')' | '.' | '&' | ','))
         .flat_map(char::to_lowercase)
+        .map(|ch| accent_ascii(ch).unwrap_or(ch))
         .collect()
+}
+
+/// The ASCII letter that PROJ's `isEquivalentName` writes for an accented one.
+fn accent_ascii(ch: char) -> Option<char> {
+    Some(match ch {
+        'á' | 'ä' => 'a',
+        'ě' | 'è' | 'é' | 'ë' => 'e',
+        'í' => 'i',
+        'ô' | 'ö' => 'o',
+        'ç' => 'c',
+        _ => return None,
+    })
 }
 
 impl GeodeticCRS {
@@ -586,7 +625,7 @@ fn identify_equivalent(
 fn identify_anchors(this: &GeodeticCRS, candidate: &GeodeticCRS) -> bool {
     match (this, candidate) {
         (GeodeticCRS::Geographic(left), GeodeticCRS::Geographic(right)) => {
-            geographic_anchor(left, right)
+            geographic_anchor(left, right, Equivalence::Strict)
         }
         (GeodeticCRS::Geocentric(left), GeodeticCRS::Geocentric(right)) => {
             match (left.datum(), right.datum()) {

@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use rusqlite::{types::ValueRef, Connection};
 
+use super::equiv::equivalent_name;
 use super::model::{
     ensemble_name_as_datum, Axis, CartesianCS, CompoundCRS, ConcatenatedOperation,
     ConcatenatedStep, Conversion, CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble,
@@ -543,6 +544,72 @@ impl DatabaseContext {
         Ok(rows.into_iter().next().map(|row| row[0].text()))
     }
 
+    /// Repairs a TOWGS84 clause whose rotation signs are reversed.
+    ///
+    /// `params` holds `tx, ty, tz, rx, ry, rz, scale_difference`. When these
+    /// values match an EPSG Coordinate Frame rotation (9607) and no Position
+    /// Vector (9606) row, the rotation terms are negated and `true` is returned.
+    /// The values are left alone otherwise.
+    ///
+    /// # Errors
+    ///
+    /// The database rejects the statement.
+    pub fn to_wgs84_autocorrect_wrong_values(
+        &self,
+        params: &mut [f64; 7],
+    ) -> Result<bool, FactoryError> {
+        if params[3..6].iter().all(|rotation| *rotation == 0.0) {
+            return Ok(false);
+        }
+        let methods = self.towgs84_methods(params)?;
+        if !methods.iter().any(|code| code == "9607") || methods.iter().any(|code| code == "9606") {
+            return Ok(false);
+        }
+        let mut reversed = *params;
+        for rotation in &mut reversed[3..6] {
+            *rotation = -*rotation;
+        }
+        if !self.towgs84_methods(&reversed)?.is_empty() {
+            return Ok(false);
+        }
+        params[3..6].copy_from_slice(&reversed[3..6]);
+        Ok(true)
+    }
+
+    /// Method codes of the EPSG Helmert rows that match `params`.
+    fn towgs84_methods(&self, params: &[f64; 7]) -> Result<Vec<String>, FactoryError> {
+        let guard = self.lock();
+        let mut statement = guard
+            .prepare(
+                "SELECT DISTINCT CAST(method_code AS TEXT) \
+                 FROM helmert_transformation_table WHERE \
+                 abs(tx - ?) <= 1e-8 * abs(tx) AND \
+                 abs(ty - ?) <= 1e-8 * abs(ty) AND \
+                 abs(tz - ?) <= 1e-8 * abs(tz) AND \
+                 abs(rx - ?) <= 1e-8 * abs(rx) AND \
+                 abs(ry - ?) <= 1e-8 * abs(ry) AND \
+                 abs(rz - ?) <= 1e-8 * abs(rz) AND \
+                 abs(scale_difference - ?) <= 1e-8 * abs(scale_difference) AND \
+                 method_auth_name = 'EPSG' AND \
+                 method_code IN (9606, 9607) AND \
+                 translation_uom_auth_name = 'EPSG' AND \
+                 translation_uom_code = 9001 AND \
+                 rotation_uom_auth_name = 'EPSG' AND \
+                 rotation_uom_code = 9104 AND \
+                 scale_difference_uom_auth_name = 'EPSG' AND \
+                 scale_difference_uom_code = 9202 AND \
+                 deprecated = 0",
+            )
+            .map_err(|error| FactoryError::Sql(error.to_string()))?;
+        let rows = statement
+            .query_map(rusqlite::params_from_iter(params.iter()), |row| {
+                row.get::<_, String>(0)
+            })
+            .map_err(|error| FactoryError::Sql(error.to_string()))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| FactoryError::Sql(error.to_string()))
+    }
+
     /// The `CREATE` statements of the tables, then the views, then the
     /// triggers, each ending in `;`, followed by the layout version rows.
     ///
@@ -660,6 +727,15 @@ pub enum NameMatch {
     Exact,
     /// The searched text is a substring of the name or of its canonical form.
     Approximate,
+}
+
+/// How [`AuthorityFactory::official_name_from_alias`] compares an alias with `alt_name`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NameSpelling {
+    /// The alias is the stored `alt_name`, character for character.
+    Exact,
+    /// Case, spaces, and underscores are ignored, as [`equivalent_name`] does.
+    Equivalent,
 }
 
 struct NameRow {
@@ -2239,6 +2315,9 @@ impl AuthorityFactory {
     ///
     /// The code is missing or the type is not handled.
     pub fn create_coordinate_reference_system(&self, code: &str) -> Result<Crs, FactoryError> {
+        if self.authority == "OGC" && code == "84" {
+            return self.create_coordinate_reference_system("CRS84");
+        }
         let row = self
             .one(
                 "SELECT type FROM crs_view WHERE auth_name = ? AND code = ?",
@@ -2377,7 +2456,7 @@ impl AuthorityFactory {
             LEFT JOIN geodetic_datum gd ON gd.auth_name = c.datum_auth_name AND gd.code = c.datum_code \
             LEFT JOIN ellipsoid e ON e.auth_name = gd.ellipsoid_auth_name AND e.code = gd.ellipsoid_code \
             LEFT JOIN celestial_body cb ON cb.auth_name = e.celestial_body_auth_name AND cb.code = e.celestial_body_code \
-            WHERE c.auth_name = ? \
+            WHERE (?1 = '' OR c.auth_name = ?1) \
             UNION ALL SELECT c.auth_name, c.code, c.name, 'projected', c.deprecated, \
             a.west_lon, a.south_lat, a.east_lon, a.north_lat, a.description, cm.name, cb.name \
             FROM projected_crs c \
@@ -2390,47 +2469,37 @@ impl AuthorityFactory {
             LEFT JOIN geodetic_datum gd ON gd.auth_name = gcrs.datum_auth_name AND gd.code = gcrs.datum_code \
             LEFT JOIN ellipsoid e ON e.auth_name = gd.ellipsoid_auth_name AND e.code = gd.ellipsoid_code \
             LEFT JOIN celestial_body cb ON cb.auth_name = e.celestial_body_auth_name AND cb.code = e.celestial_body_code \
-            WHERE c.auth_name = ? \
+            WHERE (?1 = '' OR c.auth_name = ?1) \
             UNION ALL SELECT c.auth_name, c.code, c.name, 'vertical', c.deprecated, \
             a.west_lon, a.south_lat, a.east_lon, a.north_lat, a.description, NULL, 'Earth' \
             FROM vertical_crs c \
             LEFT JOIN usage u ON u.object_table_name = 'vertical_crs' AND u.object_auth_name = c.auth_name \
             AND u.object_code = c.code \
             LEFT JOIN extent a ON a.auth_name = u.extent_auth_name AND a.code = u.extent_code \
-            WHERE c.auth_name = ? \
+            WHERE (?1 = '' OR c.auth_name = ?1) \
             UNION ALL SELECT c.auth_name, c.code, c.name, 'compound', c.deprecated, \
             a.west_lon, a.south_lat, a.east_lon, a.north_lat, a.description, NULL, 'Earth' \
             FROM compound_crs c \
             LEFT JOIN usage u ON u.object_table_name = 'compound_crs' AND u.object_auth_name = c.auth_name \
             AND u.object_code = c.code \
             LEFT JOIN extent a ON a.auth_name = u.extent_auth_name AND a.code = u.extent_code \
-            WHERE c.auth_name = ? \
+            WHERE (?1 = '' OR c.auth_name = ?1) \
             UNION ALL SELECT c.auth_name, c.code, c.name, 'engineering', c.deprecated, \
             a.west_lon, a.south_lat, a.east_lon, a.north_lat, a.description, NULL, 'Earth' \
             FROM engineering_crs c \
             LEFT JOIN usage u ON u.object_table_name = 'engineering_crs' AND u.object_auth_name = c.auth_name \
             AND u.object_code = c.code \
             LEFT JOIN extent a ON a.auth_name = u.extent_auth_name AND a.code = u.extent_code \
-            WHERE c.auth_name = ? \
+            WHERE (?1 = '' OR c.auth_name = ?1) \
             UNION ALL SELECT c.auth_name, c.code, c.name, 'derived projected', c.deprecated, \
             a.west_lon, a.south_lat, a.east_lon, a.north_lat, a.description, NULL, 'Earth' \
             FROM derived_projected_crs c \
             LEFT JOIN usage u ON u.object_table_name = 'derived_projected_crs' AND u.object_auth_name = c.auth_name \
             AND u.object_code = c.code \
             LEFT JOIN extent a ON a.auth_name = u.extent_auth_name AND a.code = u.extent_code \
-            WHERE c.auth_name = ?\
+            WHERE (?1 = '' OR c.auth_name = ?1)\
             ) r ORDER BY auth_name, code";
-        let rows = self.db.query(
-            sql,
-            &[
-                auth.clone(),
-                auth.clone(),
-                auth.clone(),
-                auth.clone(),
-                auth.clone(),
-                auth,
-            ],
-        )?;
+        let rows = self.db.query(sql, &[auth])?;
         let mut list = Vec::with_capacity(rows.len());
         for row in rows {
             let bbox = if row[5].empty() {
@@ -2454,6 +2523,234 @@ impl AuthorityFactory {
             });
         }
         Ok(list)
+    }
+
+    /// Geoid models that apply to the vertical CRS `code`, by name, sorted.
+    ///
+    /// # Errors
+    ///
+    /// The database rejects the statement.
+    pub fn get_geoid_models(&self, code: &str) -> Result<Vec<String>, FactoryError> {
+        let mut sql = "SELECT DISTINCT GM0.name \
+             FROM geoid_model GM0 \
+             INNER JOIN grid_transformation GT0 \
+             ON GT0.code = GM0.operation_code \
+             AND GT0.auth_name = GM0.operation_auth_name \
+             AND GT0.deprecated = 0 \
+             INNER JOIN vertical_crs VC0 \
+             ON VC0.code = GT0.target_crs_code \
+             AND VC0.auth_name = GT0.target_crs_auth_name \
+             INNER JOIN vertical_crs VC1 \
+             ON VC1.datum_code = VC0.datum_code \
+             AND VC1.datum_auth_name = VC0.datum_auth_name \
+             AND VC1.code = ?"
+            .to_owned();
+        let mut params = vec![code.to_owned()];
+        if !self.authority.is_empty() {
+            sql.push_str(" AND GT0.target_crs_auth_name = ?");
+            params.push(self.authority.clone());
+        }
+        sql.push_str(" ORDER BY 1");
+        let rows = self.db.query(&sql, &params)?;
+        Ok(rows.into_iter().map(|row| row[0].text()).collect())
+    }
+
+    /// Units of measure, in authority then code order.
+    ///
+    /// `category` is the PROJ category: `linear`, `angular`, or `scale`,
+    /// with `_per_time` when the name says so. Other types are kept as stored.
+    ///
+    /// # Errors
+    ///
+    /// The database rejects the statement.
+    pub fn get_unit_list(&self) -> Result<Vec<UnitInfo>, FactoryError> {
+        let mut sql = String::from(
+            "SELECT auth_name, code, name, type, conv_factor, proj_short_name, deprecated \
+             FROM unit_of_measure",
+        );
+        let mut params = Vec::new();
+        if !self.authority.is_empty() {
+            sql.push_str(" WHERE auth_name = ?");
+            params.push(self.authority.clone());
+        }
+        sql.push_str(" ORDER BY auth_name, code");
+        let rows = self.db.query(&sql, &params)?;
+        let mut list = Vec::with_capacity(rows.len());
+        for row in rows {
+            let name = row[2].text();
+            let per_time = name.contains(" per ");
+            let category = match row[3].text().as_str() {
+                "length" if per_time => "linear_per_time".to_owned(),
+                "length" => "linear".to_owned(),
+                "angle" if per_time => "angular_per_time".to_owned(),
+                "angle" => "angular".to_owned(),
+                "scale" if name.contains(" per year") || name.contains(" per second") => {
+                    "scale_per_time".to_owned()
+                }
+                "scale" => "scale".to_owned(),
+                other => other.to_owned(),
+            };
+            list.push(UnitInfo {
+                authority: row[0].text(),
+                code: row[1].text(),
+                name,
+                category,
+                conv_factor: if row[4].empty() { 0.0 } else { row[4].f64()? },
+                proj_short_name: row[5].text(),
+                deprecated: row[6].flag(),
+            });
+        }
+        Ok(list)
+    }
+
+    /// Celestial bodies, in authority then name order.
+    ///
+    /// # Errors
+    ///
+    /// The database rejects the statement.
+    pub fn get_celestial_body_list(&self) -> Result<Vec<CelestialBodyInfo>, FactoryError> {
+        let mut sql = String::from("SELECT auth_name, name FROM celestial_body");
+        let mut params = Vec::new();
+        if !self.authority.is_empty() {
+            sql.push_str(" WHERE auth_name = ?");
+            params.push(self.authority.clone());
+        }
+        sql.push_str(" ORDER BY auth_name, name");
+        let rows = self.db.query(&sql, &params)?;
+        Ok(rows
+            .into_iter()
+            .map(|row| CelestialBodyInfo {
+                authority: row[0].text(),
+                name: row[1].text(),
+            })
+            .collect())
+    }
+
+    /// Official name of the object that `alias` names, or `None` when no alias matches.
+    ///
+    /// `table` and `source` narrow the search when non-empty. A source of
+    /// `ESRI` also matches `ESRI_OLD`. The official name comes from the row
+    /// with the smallest `deprecated` flag.
+    ///
+    /// # Errors
+    ///
+    /// The database rejects a statement.
+    pub fn official_name_from_alias(
+        &self,
+        alias: &str,
+        table: Option<&str>,
+        source: Option<&str>,
+        spelling: NameSpelling,
+    ) -> Result<Option<OfficialName>, FactoryError> {
+        let table = table.filter(|table| !table.is_empty());
+        let source = source.filter(|source| !source.is_empty());
+        match spelling {
+            NameSpelling::Equivalent => {
+                let mut sql =
+                    String::from("SELECT table_name, auth_name, code, alt_name FROM alias_name");
+                let mut params = Vec::new();
+                match (table, source) {
+                    (Some(table), Some(source)) => {
+                        sql.push_str(" WHERE table_name = ? AND source = ?");
+                        params.extend([table.to_owned(), source.to_owned()]);
+                    }
+                    (Some(table), None) => {
+                        sql.push_str(" WHERE table_name = ?");
+                        params.push(table.to_owned());
+                    }
+                    (None, Some(source)) => {
+                        sql.push_str(" WHERE source = ?");
+                        params.push(source.to_owned());
+                    }
+                    (None, None) => {}
+                }
+                let rows = self.db.query(&sql, &params)?;
+                for row in rows {
+                    if equivalent_name(&row[3].text(), alias) {
+                        return self.official_for_alias_row(
+                            &row[0].text(),
+                            &row[1].text(),
+                            &row[2].text(),
+                        );
+                    }
+                }
+                Ok(None)
+            }
+            NameSpelling::Exact => {
+                let mut sql = String::from(
+                    "SELECT table_name, auth_name, code FROM alias_name WHERE alt_name = ?",
+                );
+                let mut params = vec![alias.to_owned()];
+                if let Some(table) = table {
+                    sql.push_str(" AND table_name = ?");
+                    params.push(table.to_owned());
+                }
+                match source {
+                    Some("ESRI") => sql.push_str(" AND source IN ('ESRI', 'ESRI_OLD')"),
+                    Some(source) => {
+                        sql.push_str(" AND source = ?");
+                        params.push(source.to_owned());
+                    }
+                    None => {}
+                }
+                let rows = self.db.query(&sql, &params)?;
+                let mut best: Option<(bool, OfficialName)> = None;
+                for row in rows {
+                    let found =
+                        self.official_rows(&row[0].text(), &row[1].text(), &row[2].text())?;
+                    for (name, deprecated) in found {
+                        match &best {
+                            Some((rank, _)) if *rank <= deprecated => {}
+                            _ => best = Some((deprecated, name)),
+                        }
+                    }
+                }
+                Ok(best.map(|(_, name)| name))
+            }
+        }
+    }
+
+    fn official_for_alias_row(
+        &self,
+        table: &str,
+        auth_name: &str,
+        code: &str,
+    ) -> Result<Option<OfficialName>, FactoryError> {
+        Ok(self
+            .official_rows(table, auth_name, code)?
+            .into_iter()
+            .next()
+            .map(|(name, _)| name))
+    }
+
+    /// Name row of `table` for `auth_name`:`code`, with its deprecated flag.
+    fn official_rows(
+        &self,
+        table: &str,
+        auth_name: &str,
+        code: &str,
+    ) -> Result<Vec<(OfficialName, bool)>, FactoryError> {
+        let sql = format!(
+            "SELECT name, deprecated FROM \"{}\" WHERE auth_name = ? AND code = ?",
+            table.replace('"', "\"\"")
+        );
+        let rows = self
+            .db
+            .query(&sql, &[auth_name.to_owned(), code.to_owned()])?;
+        Ok(rows
+            .into_iter()
+            .map(|row| {
+                (
+                    OfficialName {
+                        name: row[0].text(),
+                        table_name: table.to_owned(),
+                        auth_name: auth_name.to_owned(),
+                        code: code.to_owned(),
+                    },
+                    row[1].flag(),
+                )
+            })
+            .collect())
     }
 
     fn geodetic_crs(
@@ -3329,6 +3626,67 @@ pub struct CrsInfo {
     pub projection_method_name: String,
     /// Celestial body.
     pub celestial_body_name: String,
+}
+
+impl CrsInfo {
+    /// The object type PROJ reports as `info.type`. A geodetic CRS that is
+    /// neither geographic nor geocentric (`other` in the database) is `GeodeticCrs`.
+    #[must_use]
+    pub fn object_type(&self) -> ObjectType {
+        match self.type_name.as_str() {
+            "geographic 2D" => ObjectType::Geographic2dCrs,
+            "geographic 3D" => ObjectType::Geographic3dCrs,
+            "geocentric" => ObjectType::GeocentricCrs,
+            "projected" => ObjectType::ProjectedCrs,
+            "vertical" => ObjectType::VerticalCrs,
+            "compound" => ObjectType::CompoundCrs,
+            "engineering" => ObjectType::EngineeringCrs,
+            "derived projected" => ObjectType::DerivedProjectedCrs,
+            _ => ObjectType::GeodeticCrs,
+        }
+    }
+}
+
+/// One row of `unit_of_measure`, as `AuthorityFactory::getUnitList` reports it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UnitInfo {
+    /// Authority name.
+    pub authority: String,
+    /// Code.
+    pub code: String,
+    /// Name.
+    pub name: String,
+    /// `linear`, `linear_per_time`, `angular`, `angular_per_time`, `scale`,
+    /// or `scale_per_time`; other stored types are kept as they are.
+    pub category: String,
+    /// Conversion factor to the SI unit, or 0 when the database has none.
+    pub conv_factor: f64,
+    /// Short name used by PROJ.
+    pub proj_short_name: String,
+    /// Deprecated flag.
+    pub deprecated: bool,
+}
+
+/// One row of `celestial_body`, as `AuthorityFactory::getCelestialBodyList` reports it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CelestialBodyInfo {
+    /// Authority name.
+    pub authority: String,
+    /// Name.
+    pub name: String,
+}
+
+/// An official name found from an alias, with the object it belongs to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OfficialName {
+    /// Official name.
+    pub name: String,
+    /// Table holding the object, such as `geodetic_crs`.
+    pub table_name: String,
+    /// Authority name of the object.
+    pub auth_name: String,
+    /// Code of the object.
+    pub code: String,
 }
 
 /// Which codes [`AuthorityFactory::get_authority_codes`] lists.

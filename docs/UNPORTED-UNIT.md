@@ -143,7 +143,6 @@ and `PORT-NOTES-tests.md`.
 - `factory.AuthorityFactory_createCoordinateOperation_grid_transformation_one_parameter`
 - `factory.AuthorityFactory_createCoordinateOperation_grid_transformation_two_parameter`
 - `factory.AuthorityFactory_createCoordinateOperation_other_transformation`
-- `factory.AuthorityFactory_test_uom_9110`
 - `factory.AuthorityFactory_affine_parametric_transform`
 - `factory.AuthorityFactory_10566_issue_4212`
 - `factory.AuthorityFactory_createCoordinateOperation_concatenated_operation`
@@ -157,12 +156,10 @@ and `PORT-NOTES-tests.md`.
 - `factory.AuthorityFactory_createCoordinateOperation_conversion`
 - `factory.AuthorityFactory_createCoordinateOperation_point_motion_operation`
 - `factory.AuthorityFactory_getAuthorityCodes`
-- `factory.AuthorityFactory_getDescriptionText`
 - `factory.AuthorityFactory_IAU_2015`
 - `FactoryWithTmpDatabase.AuthorityFactory_test_with_fake_EPSG_database`
 - `factory.AuthorityFactory_createFromCoordinateReferenceSystemCodes`
 - `factory.AuthorityFactory_createFromCoordinateReferenceSystemCodes_anonymous_authority`
-- `factory.AuthorityFactory_getAvailableGeoidmodels`
 - `FactoryWithTmpDatabase.AuthorityFactory_test_inversion_first_and_last_steps_of_concat_op`
 - `FactoryWithTmpDatabase.AuthorityFactory_test_with_fake_EPSG_and_OTHER_database`
 - `FactoryWithTmpDatabase.AuthorityFactory_test_sorting_of_coordinate_operations`
@@ -175,7 +172,6 @@ and `PORT-NOTES-tests.md`.
 - `FactoryWithTmpDatabase.AuthorityFactory_wkt_based_transformation`
 - `FactoryWithTmpDatabase.AuthorityFactory_wkt_based_transformation_not_wkt`
 - `FactoryWithTmpDatabase.AuthorityFactory_wkt_based_transformation_not_co_wkt`
-- `factory.AuthorityFactory_EPSG_4326_approximate_equivalent_to_builtin`
 - `FactoryWithTmpDatabase.getAuthorities`
 - `FactoryWithTmpDatabase.lookForGridInfo`
 - `FactoryWithTmpDatabase.lookForGridInfo_from_old_name_with_new_grid_available`
@@ -186,20 +182,12 @@ and `PORT-NOTES-tests.md`.
 - `factory.attachExtraDatabases_none`
 - `factory.attachExtraDatabases_auxiliary`
 - `factory.attachExtraDatabases_auxiliary_error`
-- `factory.getOfficialNameFromAlias`
 - `FactoryWithTmpDatabase.createOperations_exact_transform_not_whole_area`
 - `FactoryWithTmpDatabase.check_fixup_direction_concatenated_inverse_map_projection`
 - `factory.createObjectsFromName`
-- `factory.getMetadata`
-- `factory.listAreaOfUseFromName`
-- `factory.getCRSInfoList`
-- `factory.getUnitList`
-- `factory.getCelestialBodyList`
 - `factory.objectInsertion`
 - `factory.ogc_timecrs`
-- `factory.ogc_crs`
 - `factory.getPointMotionOperationsFor`
-- `factory.toWGS84AutocorrectWrongValues`
 
 ## test_io.cpp
 

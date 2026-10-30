@@ -89,17 +89,17 @@ pub use helmert::{Helmert, HelmertConvention, HelmertParams};
 pub use iso19111::{
     create_crs_from_proj_string, create_from_user_input, epsg_identity, equivalent_name,
     insert_statements, AlternativeGridNames, AuthorityFactory, AuthorityObject, Axis, BoundCRS,
-    CartesianCS, CompoundCRS, ConcatenatedOperation, ConcatenatedStep, Conversion,
-    CoordinateOperation, CoordinateOperationContext, CoordinateOperationFactory, CoordinateSystem,
-    Crs, CrsInfo, DatabaseContext, Datum, DatumEnsemble, DeprecatedCodes, DerivedConversion,
-    DerivedProjectedCRS, EllipsoidalCS, EllipsoidalHeightPolicy, EngineeringCRS, EngineeringDatum,
-    Equivalence, FactoryError, GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS,
-    Identifier, IntermediateCrsUse, LinunitPolicy, Meridian, NameMatch, ObjectDomain, ObjectType,
-    OpProps, OperationMethod, OperationParameter, OperationParameterValue, OrdinalCS,
-    OutputAxisRule, Parameter, ParameterValue, PrimeMeridian, ProjLines, ProjectedCRS, SphericalCS,
-    Transformation, UnitKind, UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame,
-    WktConvention, WktDialect, WktFormatter, WktLines, WktNode, WktObject, WktParser,
-    WktStrictness,
+    CartesianCS, CelestialBodyInfo, CompoundCRS, ConcatenatedOperation, ConcatenatedStep,
+    Conversion, CoordinateOperation, CoordinateOperationContext, CoordinateOperationFactory,
+    CoordinateSystem, Crs, CrsInfo, DatabaseContext, Datum, DatumEnsemble, DeprecatedCodes,
+    DerivedConversion, DerivedProjectedCRS, EllipsoidalCS, EllipsoidalHeightPolicy, EngineeringCRS,
+    EngineeringDatum, Equivalence, FactoryError, GeocentricCRS, GeodeticCRS,
+    GeodeticReferenceFrame, GeographicCRS, Identifier, IntermediateCrsUse, LinunitPolicy, Meridian,
+    NameMatch, NameSpelling, ObjectDomain, ObjectType, OfficialName, OpProps, OperationMethod,
+    OperationParameter, OperationParameterValue, OrdinalCS, OutputAxisRule, Parameter,
+    ParameterValue, PrimeMeridian, ProjLines, ProjectedCRS, SphericalCS, Transformation, UnitInfo,
+    UnitKind, UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame, WktConvention,
+    WktDialect, WktFormatter, WktLines, WktNode, WktObject, WktParser, WktStrictness,
 };
 pub use lcc::{Cone, Lcc};
 pub use merc::Mercator;
