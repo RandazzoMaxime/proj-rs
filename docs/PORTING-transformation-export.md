@@ -108,8 +108,8 @@ Sources, PROJ 9.9.0 (`src/iso19111/`):
 
 The export is not what blocks most open cases. Counts from `docs/UNPORTED-CLI.md` for this lot:
 
-- `projinfo`: 65 open before, 64 after (`test_projinfo.yaml#105`).
-- `cs2cs`: 48 open before, 48 after. `cs2cs` does not reach the operation factory: `Proj::new_known_crs` picks its datum step from the Helmert table of `proj.db` (`Crs::datum_bridge`), so an exported operation is never used by it. Routing `cs2cs` through `CoordinateOperationFactory::create_operations` is a separate lot, with its own risk to the cases that pass today.
+- `projinfo`: 60 open before, 59 after, out of 111 (`test_projinfo.yaml#105`). Measured on `main` at `a748dec`, the base of this lot after the rebase.
+- `cs2cs`: 45 open before, 45 after, out of 143. `cs2cs` does not reach the operation factory: `Proj::new_known_crs` picks its datum step from the Helmert table of `proj.db` (`Crs::datum_bridge`), so an exported operation is never used by it. Routing `cs2cs` through `CoordinateOperationFactory::create_operations` is a separate lot, with its own risk to the cases that pass today.
 - `projinfo` candidate lists are the main gap behind the rest: for instance `-s EPSG:5613 -t EPSG:4977` gives 0 candidates against 2 in PROJ, and `-s "WGS 84 (G1150) + EGM2008 height" -t "WGS 84 (G1674) + EGM2008 height" -q` gives 0 candidates where PROJ prints a pipeline. The factory does not split a compound CRS into its components, and `-s EPSG:4326 -t EPSG:4204` gives 0 because it does not list the inverse of a registered operation (the registered direction is `EPSG:4204 → EPSG:4326`).
 - `test_projinfo.yaml#86`, `#38`, `#39`, `#27`, `#26`, `#52`–`#57`, `#58`–`#64` also need grid shifts or deformation models (`vgridshift`, `hgridshift`, `defmodel`, `tinshift`), which this crate does not write.
 

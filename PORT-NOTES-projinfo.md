@@ -35,7 +35,7 @@ A deprecated object prints `Warning: object is deprecated` first.
 
 ## Covered by the yaml suite
 
-`tests/cli_yaml/test_projinfo.yaml`: 47 of 111 cases match
+`tests/cli_yaml/test_projinfo.yaml`: 52 of 111 cases match
 (`docs/UNPORTED-CLI.md` lists the other 65, with the reason for each).
 The list, kind, completion, database-structure, search-path and remote-data
 options are in `docs/PORTING-projinfo-lists.md`.
