@@ -3,7 +3,8 @@
 //! Each function is one `TEST()` name. Values are the ones the C++ test asserts.
 
 use proj_rs::{
-    AuthorityFactory, AuthorityObject, CoordinateOperation, DatabaseContext, FactoryError, UnitKind,
+    AuthorityFactory, AuthorityObject, CoordinateOperation, Crs, DatabaseContext, Equivalence,
+    FactoryError, GeographicCRS, NameMatch, NameSpelling, ObjectType, UnitKind,
 };
 
 fn epsg() -> AuthorityFactory {
@@ -14,6 +15,10 @@ fn epsg() -> AuthorityFactory {
 fn esri() -> AuthorityFactory {
     let db = DatabaseContext::create().expect("proj.db");
     AuthorityFactory::create(&db, "ESRI")
+}
+
+fn db() -> DatabaseContext {
+    DatabaseContext::create().expect("proj.db")
 }
 
 fn is_missing(error: &FactoryError) -> bool {
@@ -749,4 +754,371 @@ fn ellipsoid_proj_string_is_radius_for_a_sphere() {
     assert_eq!(ellipsoid.export_to_proj_string(), "+R=6371000");
     let wgs84 = epsg().create_ellipsoid("7030").expect("7030");
     assert_eq!(wgs84.export_to_proj_string(), "+ellps=WGS84");
+}
+
+/// PROJ's `ComparePROJString`: same token count, same keys, numbers within 1e-14 relative.
+fn assert_proj_string_matches(got: &str, expected: &str) {
+    let got_tokens: Vec<&str> = got.split(' ').collect();
+    let expected_tokens: Vec<&str> = expected.split(' ').collect();
+    assert_eq!(
+        got_tokens.len(),
+        expected_tokens.len(),
+        "{got} vs {expected}"
+    );
+    for (g, e) in got_tokens.iter().zip(&expected_tokens) {
+        match (g.split_once('='), e.split_once('=')) {
+            (Some((gk, gv)), Some((ek, ev))) => {
+                assert_eq!(gk, ek, "{got} vs {expected}");
+                match (gv.parse::<f64>(), ev.parse::<f64>()) {
+                    (Ok(gn), Ok(en)) => {
+                        assert!((gn - en).abs() <= 1e-14 * gn.abs(), "{got} vs {expected}")
+                    }
+                    _ => assert_eq!(gv, ev, "{got} vs {expected}"),
+                }
+            }
+            _ => assert_eq!(g, e, "{got} vs {expected}"),
+        }
+    }
+}
+
+#[test]
+fn factory_get_metadata() {
+    let db = DatabaseContext::create().expect("proj.db");
+    assert_eq!(db.metadata("i_do_not_exist").expect("query"), None);
+    assert_eq!(
+        db.metadata("IGNF.VERSION").expect("query").as_deref(),
+        Some("3.1.0")
+    );
+}
+
+#[test]
+fn factory_ogc_crs() {
+    let factory = AuthorityFactory::create(&db(), "OGC");
+    factory
+        .create_coordinate_reference_system("CRS84")
+        .expect("CRS84");
+    factory
+        .create_coordinate_reference_system("84")
+        .expect("84");
+    factory
+        .create_coordinate_reference_system("CRS27")
+        .expect("CRS27");
+    factory
+        .create_coordinate_reference_system("CRS83")
+        .expect("CRS83");
+}
+
+#[test]
+fn factory_authority_factory_get_description_text() {
+    let factory = epsg();
+    assert!(is_missing(
+        &factory.get_description_text("-1").expect_err("missing")
+    ));
+    assert_eq!(
+        factory.get_description_text("10000").expect("10000"),
+        "ETRS89-FRA [RGF93 v1] to NGF-IGN69 height (1)"
+    );
+    // Several objects share code 4326, including an area of use; the CRS wins.
+    assert_eq!(
+        factory.get_description_text("4326").expect("4326"),
+        "WGS 84"
+    );
+}
+
+#[test]
+fn factory_authority_factory_epsg_4326_approximate_equivalent_to_builtin() {
+    let crs = match epsg()
+        .create_coordinate_reference_system("4326")
+        .expect("4326")
+    {
+        Crs::Geographic(crs) => crs,
+        other => panic!("expected a geographic CRS, got {other:?}"),
+    };
+    assert!(crs.is_equivalent_to_with(&GeographicCRS::epsg_4326(), Equivalence::Equivalent));
+}
+
+#[test]
+fn factory_authority_factory_test_uom_9110() {
+    let crs = epsg().create_projected_crs("2172").expect("2172");
+    assert_proj_string_matches(
+        &crs.export_to_proj_string().expect("PROJ string"),
+        "+proj=sterea +lat_0=53.0019444444444 +lon_0=21.5027777777778 \
+         +k=0.9998 +x_0=4603000 +y_0=5806000 +ellps=krass +units=m \
+         +no_defs +type=crs",
+    );
+}
+
+#[test]
+fn factory_list_area_of_use_from_name() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let factory = AuthorityFactory::create(&db, "");
+    let exact = factory
+        .list_area_of_use_from_name("Denmark - onshore", NameMatch::Exact)
+        .expect("exact");
+    assert_eq!(exact, vec![("EPSG".to_owned(), "3237".to_owned())]);
+    let approximate = factory
+        .list_area_of_use_from_name("Denmark", NameMatch::Approximate)
+        .expect("approximate");
+    assert!(approximate.len() > 1);
+    let none = factory
+        .list_area_of_use_from_name("no where land", NameMatch::Exact)
+        .expect("none");
+    assert!(none.is_empty());
+}
+
+#[test]
+fn factory_get_crs_info_list() {
+    let db = db();
+    let all = AuthorityFactory::create(&db, "")
+        .get_crs_info_list()
+        .expect("all");
+    assert!(all.len() > 1);
+    assert!(all.iter().any(|info| info.authority == "EPSG"));
+    assert!(all.iter().any(|info| info.authority == "IGNF"));
+    let iau = all
+        .iter()
+        .find(|info| info.authority == "IAU_2015" && info.code == "19902")
+        .expect("IAU_2015:19902");
+    assert_eq!(iau.object_type(), ObjectType::GeodeticCrs);
+
+    let epsg_list = AuthorityFactory::create(&db, "EPSG")
+        .get_crs_info_list()
+        .expect("EPSG");
+    assert!(epsg_list.iter().all(|info| info.authority == "EPSG"));
+
+    let find = |code: &str| {
+        epsg_list
+            .iter()
+            .find(|info| info.code == code)
+            .unwrap_or_else(|| panic!("EPSG:{code}"))
+    };
+    let wgs84 = find("4326");
+    assert_eq!(wgs84.name, "WGS 84");
+    assert_eq!(wgs84.object_type(), ObjectType::Geographic2dCrs);
+    assert!(!wgs84.deprecated);
+    assert_eq!(wgs84.west_lon, Some(-180.0));
+    assert_eq!(wgs84.south_lat, Some(-90.0));
+    assert_eq!(wgs84.east_lon, Some(180.0));
+    assert_eq!(wgs84.north_lat, Some(90.0));
+    assert!(wgs84.area_name.starts_with("World"), "{}", wgs84.area_name);
+    assert!(wgs84.projection_method_name.is_empty());
+
+    let soudan = find("4296");
+    assert_eq!(soudan.west_lon, None);
+
+    let geocentric = find("4978");
+    assert_eq!(geocentric.name, "WGS 84");
+    assert_eq!(geocentric.object_type(), ObjectType::GeocentricCrs);
+
+    let geographic_3d = find("4979");
+    assert_eq!(geographic_3d.name, "WGS 84");
+    assert_eq!(geographic_3d.object_type(), ObjectType::Geographic3dCrs);
+
+    let utm = find("32631");
+    assert_eq!(utm.name, "WGS 84 / UTM zone 31N");
+    assert_eq!(utm.object_type(), ObjectType::ProjectedCrs);
+    assert!(!utm.deprecated);
+    assert_eq!(utm.west_lon, Some(0.0));
+    assert_eq!(utm.south_lat, Some(0.0));
+    assert_eq!(utm.east_lon, Some(6.0));
+    assert_eq!(utm.north_lat, Some(84.0));
+    assert!(utm
+        .area_name
+        .starts_with("Between 0\u{b0}E and 6\u{b0}E, northern hemisphere"));
+    assert_eq!(utm.projection_method_name, "Transverse Mercator");
+
+    let geoid = find("3855");
+    assert_eq!(geoid.name, "EGM2008 height");
+    assert_eq!(geoid.object_type(), ObjectType::VerticalCrs);
+
+    let compound = find("6871");
+    assert_eq!(
+        compound.name,
+        "WGS 84 / Pseudo-Mercator +  EGM2008 geoid height"
+    );
+    assert_eq!(compound.object_type(), ObjectType::CompoundCrs);
+}
+
+#[test]
+fn factory_get_unit_list() {
+    let db = db();
+    let all = AuthorityFactory::create(&db, "")
+        .get_unit_list()
+        .expect("all");
+    assert!(all.iter().any(|info| info.authority == "EPSG"));
+    assert!(all.iter().any(|info| info.authority == "PROJ"));
+    let find = |code: &str| {
+        all.iter()
+            .find(|info| info.authority == "EPSG" && info.code == code)
+            .unwrap_or_else(|| panic!("EPSG:{code}"))
+    };
+    let mm_year = find("1027");
+    assert_eq!(mm_year.name, "millimetres per year");
+    assert_eq!(mm_year.category, "linear_per_time");
+    let ppb = find("1028");
+    assert_eq!(ppb.name, "parts per billion");
+    assert_eq!(ppb.category, "scale");
+    let mas_year = find("1032");
+    assert_eq!(mas_year.name, "milliarc-seconds per year");
+    assert_eq!(mas_year.category, "angular_per_time");
+    let unity_second = find("1036");
+    assert_eq!(unity_second.name, "unity per second");
+    assert_eq!(unity_second.category, "scale_per_time");
+    let metre = find("9001");
+    assert_eq!(metre.name, "metre");
+    assert_eq!(metre.category, "linear");
+    assert_eq!(metre.conv_factor, 1.0);
+    assert_eq!(metre.proj_short_name, "m");
+    assert!(!metre.deprecated);
+    let radian = find("9101");
+    assert_eq!(radian.name, "radian");
+    assert_eq!(radian.category, "angular");
+    assert!(!radian.deprecated);
+
+    let epsg_only = AuthorityFactory::create(&db, "EPSG")
+        .get_unit_list()
+        .expect("EPSG");
+    assert!(epsg_only.len() > 1);
+    assert!(epsg_only.iter().all(|info| info.authority == "EPSG"));
+}
+
+#[test]
+fn factory_get_celestial_body_list() {
+    let db = db();
+    let all = AuthorityFactory::create(&db, "")
+        .get_celestial_body_list()
+        .expect("all");
+    assert!(all.len() > 1);
+    assert!(all.iter().any(|info| info.authority == "ESRI"));
+    assert!(all
+        .iter()
+        .any(|info| info.authority == "PROJ" && info.name == "Earth"));
+
+    let esri = AuthorityFactory::create(&db, "ESRI")
+        .get_celestial_body_list()
+        .expect("ESRI");
+    assert!(esri.len() > 1);
+    assert!(esri.iter().all(|info| info.authority == "ESRI"));
+}
+
+#[test]
+fn factory_to_wgs84_autocorrect_wrong_values() {
+    let db = db();
+    let mut unchanged = [1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 0.0];
+    assert!(!db
+        .to_wgs84_autocorrect_wrong_values(&mut unchanged)
+        .expect("query"));
+    assert_eq!(unchanged, [1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 0.0]);
+
+    // Incorrect parameters for EPSG:15929: WGS84 -> Belgian Lambert 72, PROJ issue 4170.
+    let mut wrong = [
+        -106.8686, 52.2978, -103.7239, -0.3366, 0.457, -1.8422, -1.2747,
+    ];
+    assert!(db
+        .to_wgs84_autocorrect_wrong_values(&mut wrong)
+        .expect("query"));
+    assert_eq!(
+        wrong,
+        [-106.8686, 52.2978, -103.7239, 0.3366, -0.457, 1.8422, -1.2747]
+    );
+
+    // Almost incorrect: tx differs from the database row by more than 1e-8 relative.
+    let mut almost = [-106.0, 52.2978, -103.7239, -0.3366, 0.457, -1.8422, -1.2747];
+    assert!(!db
+        .to_wgs84_autocorrect_wrong_values(&mut almost)
+        .expect("query"));
+    assert_eq!(
+        almost,
+        [-106.0, 52.2978, -103.7239, -0.3366, 0.457, -1.8422, -1.2747]
+    );
+
+    // Correct position vector transformation, EPSG:15869 (DHDN to WGS 84 (3)).
+    let mut correct_pv = [612.4, 77.0, 440.2, -0.054, 0.057, -2.797, 2.55];
+    assert!(!db
+        .to_wgs84_autocorrect_wrong_values(&mut correct_pv)
+        .expect("query"));
+    assert_eq!(
+        correct_pv,
+        [612.4, 77.0, 440.2, -0.054, 0.057, -2.797, 2.55]
+    );
+
+    // Correct coordinate frame rotation for EPSG:15929.
+    let mut correct_cf = [
+        -106.8686, 52.2978, -103.7239, 0.3366, -0.457, 1.8422, -1.2747,
+    ];
+    assert!(!db
+        .to_wgs84_autocorrect_wrong_values(&mut correct_cf)
+        .expect("query"));
+    assert_eq!(
+        correct_cf,
+        [-106.8686, 52.2978, -103.7239, 0.3366, -0.457, 1.8422, -1.2747]
+    );
+}
+
+#[test]
+fn factory_authority_factory_get_available_geoidmodels() {
+    let factory = epsg();
+    assert!(factory.get_geoid_models("4326").expect("4326").is_empty());
+
+    let navd88 = |code: &str| {
+        let models = factory.get_geoid_models(code).expect(code);
+        assert!(models.iter().any(|model| model == "GEOID12B"), "{code}");
+        assert!(models.iter().any(|model| model == "GEOID18"), "{code}");
+        assert!(!models.iter().any(|model| model == "OSGM15"), "{code}");
+    };
+    for code in ["5703", "6360", "8228", "6357", "6358"] {
+        navd88(code);
+    }
+
+    for code in ["5701", "5732"] {
+        let models = factory.get_geoid_models(code).expect(code);
+        assert!(!models.iter().any(|model| model == "GEOID12B"), "{code}");
+        assert!(!models.iter().any(|model| model == "GEOID18"), "{code}");
+        assert!(models.iter().any(|model| model == "OSGM15"), "{code}");
+    }
+}
+
+#[test]
+fn factory_get_official_name_from_alias() {
+    let factory = AuthorityFactory::create(&db(), "");
+    let found = factory
+        .official_name_from_alias("GCS_WGS_1984", None, None, NameSpelling::Exact)
+        .expect("query")
+        .expect("WGS 84");
+    assert_eq!(found.name, "WGS 84");
+    assert_eq!(found.table_name, "geodetic_crs");
+    assert_eq!(found.auth_name, "EPSG");
+    assert_eq!(found.code, "4326");
+
+    let found = factory
+        .official_name_from_alias(
+            "GCS_WGS_1984",
+            Some("geodetic_crs"),
+            Some("ESRI"),
+            NameSpelling::Exact,
+        )
+        .expect("query")
+        .expect("WGS 84");
+    assert_eq!(found.name, "WGS 84");
+    assert_eq!(found.auth_name, "EPSG");
+    assert_eq!(found.code, "4326");
+
+    assert!(factory
+        .official_name_from_alias("no match", None, None, NameSpelling::Exact)
+        .expect("query")
+        .is_none());
+
+    let found = factory
+        .official_name_from_alias(
+            "System_Jednotne_Trigonometricke_Site_Katastralni_Ferro",
+            Some("geodetic_datum"),
+            None,
+            NameSpelling::Equivalent,
+        )
+        .expect("query")
+        .expect("Ferro");
+    assert_eq!(
+        found.name,
+        "System of the Unified Trigonometrical Cadastral Network (Ferro)"
+    );
 }
