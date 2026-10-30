@@ -305,6 +305,8 @@ impl Engine {
 }
 
 fn build_engine(source: &str, target: &str, area: Option<Area>) -> Result<Engine, String> {
+    let source = &canonical_side(source);
+    let target = &canonical_side(target);
     if projish(source) && projish(target) {
         return SidePair::open(source, target)
             .map(Box::new)
@@ -321,6 +323,21 @@ fn build_engine(source: &str, target: &str, area: Option<Area>) -> Result<Engine
         .map_err(|error| error.to_string())
 }
 
+/// A name or compound that the library resolves to EPSG codes becomes that
+/// code, so the EPSG pipeline builder can take it.
+fn canonical_side(text: &str) -> String {
+    if epsg_token(text) || projish(text) {
+        return text.to_owned();
+    }
+    let Ok(db) = proj_rs::DatabaseContext::create() else {
+        return text.to_owned();
+    };
+    match proj_rs::epsg_identity(text, &db) {
+        Ok(Some(identity)) => identity,
+        _ => text.to_owned(),
+    }
+}
+
 fn projish(definition: &str) -> bool {
     explicit_proj(definition).is_some()
         || definition.contains("init=")
@@ -334,7 +351,9 @@ fn epsg_token(text: &str) -> bool {
     };
     auth.eq_ignore_ascii_case("EPSG")
         && !code.is_empty()
-        && code.chars().all(|ch| ch.is_ascii_digit())
+        && code
+            .split('+')
+            .all(|part| !part.is_empty() && part.chars().all(|ch| ch.is_ascii_digit()))
 }
 
 struct SidePair {

@@ -21,7 +21,7 @@ pub use factory::{
     CoordinateOperationFactory, CrsInfo, DatabaseContext, DeprecatedCodes, IntermediateCrsUse,
     ObjectType,
 };
-pub use json::create_from_user_input;
+pub use json::{create_from_user_input, epsg_identity};
 pub use model::{
     Axis, BoundCRS, CartesianCS, CompoundCRS, ConcatenatedOperation, ConcatenatedStep, Conversion,
     CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble, DerivedConversion,
