@@ -103,6 +103,12 @@ fn export(
         CoordinateOperation::Concatenated(concatenated) => {
             concatenated.export_to_proj_string(ProjLines::Single)
         }
+        CoordinateOperation::Conversion(conversion) if conversion.inverted => {
+            Err(FactoryError::Format(format!(
+                "inverse conversion {} has no PROJ string in this crate",
+                conversion.name()
+            )))
+        }
         CoordinateOperation::Conversion(_) => {
             super::projstring::operation_proj_string(source, target)
         }

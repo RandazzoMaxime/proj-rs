@@ -2289,6 +2289,7 @@ impl AuthorityFactory {
             },
             parameters,
             version: None,
+            inverted: false,
         })
     }
 
@@ -3528,6 +3529,7 @@ impl AuthorityFactory {
                 method: transformation.method,
                 parameters: transformation.parameters,
                 version: transformation.version,
+                inverted: false,
             }));
         }
         Ok(CoordinateOperation::Transformation(transformation))
@@ -3579,6 +3581,7 @@ impl AuthorityFactory {
             target: Some(Box::new(target)),
             accuracy,
             version: optional_text(&row[7].text()),
+            computed_name: false,
         })
     }
 
@@ -3939,6 +3942,12 @@ impl CoordinateOperationContext {
         }
     }
 
+    /// `disallowEmptyIntersection`: an operation whose extents do not meet is not built,
+    /// unless the CRS extents are not used at all.
+    pub(super) fn disallows_empty_intersection(&self) -> bool {
+        !matches!(self.crs_extent_use, CrsExtentUse::Ignore)
+    }
+
     /// Pivot CRS codes, as `(authority, code)` pairs.
     pub fn set_intermediate_crs(&mut self, intermediates: Vec<(String, String)>) -> &mut Self {
         self.intermediates = intermediates;
@@ -4027,6 +4036,19 @@ impl CoordinateOperationFactory {
         target: &Crs,
         context: &CoordinateOperationContext,
     ) -> Result<Vec<CoordinateOperation>, FactoryError> {
+        let found = self.create_candidates(source, target, context)?;
+        Ok(select_candidates(found, source, target, context))
+    }
+
+    /// PROJ's private `createOperations`: the candidates before the area, spatial, and
+    /// accuracy filters. Only [`Self::create_operations`] applies them, once, so that the
+    /// operations a derived CRS chains are not filtered twice.
+    pub(super) fn create_candidates(
+        &self,
+        source: &Crs,
+        target: &Crs,
+        context: &CoordinateOperationContext,
+    ) -> Result<Vec<CoordinateOperation>, FactoryError> {
         let mut found = Vec::new();
         let mut direct_empty = true;
         if let Crs::Projected(projected) = target {
@@ -4098,9 +4120,17 @@ impl CoordinateOperationFactory {
                             target: None,
                             accuracy: None,
                             version: None,
+                            computed_name: true,
                         }));
                     }
                 }
+            }
+        }
+        if found.is_empty() {
+            if let Some(derived) =
+                super::derived::derived_candidates(self, source, target, context)?
+            {
+                return Ok(derived);
             }
         }
         if direct_empty && is_geodetic(source) && is_geodetic(target) {
@@ -4123,23 +4153,38 @@ impl CoordinateOperationFactory {
         {
             found.extend(ballpark_operations(source, target));
         }
-        let filtered = filter_and_sort(
-            found,
-            context,
-            source_extent.as_ref(),
-            target_extent.as_ref(),
-        );
-        let mut sorted =
-            super::select::sort_candidates(filtered.operations, &context.db, source, target);
-        let synthetic_last = sorted.last().is_some_and(|operation| {
-            operation.has_ballpark_transformation()
-                || super::select::is_null_transformation(operation.name())
-        });
-        if filtered.contains_area_without_grid && sorted.len() > 1 && synthetic_last {
-            sorted.pop();
-        }
-        Ok(sorted)
+        Ok(found)
     }
+}
+
+/// The public call's filters and order: area, spatial test, accuracy, ballpark use, then
+/// the sort, and the last synthetic operation dropped when a sorted list has a better one.
+fn select_candidates(
+    found: Vec<CoordinateOperation>,
+    source: &Crs,
+    target: &Crs,
+    context: &CoordinateOperationContext,
+) -> Vec<CoordinateOperation> {
+    let (source_extent, target_extent) = match context.crs_extent_use {
+        CrsExtentUse::Ignore => (None, None),
+        _ => (crs_extent(source), crs_extent(target)),
+    };
+    let filtered = filter_and_sort(
+        found,
+        context,
+        source_extent.as_ref(),
+        target_extent.as_ref(),
+    );
+    let mut sorted =
+        super::select::sort_candidates(filtered.operations, &context.db, source, target);
+    let synthetic_last = sorted.last().is_some_and(|operation| {
+        operation.has_ballpark_transformation()
+            || super::select::is_null_transformation(operation.name())
+    });
+    if filtered.contains_area_without_grid && sorted.len() > 1 && synthetic_last {
+        sorted.pop();
+    }
+    sorted
 }
 
 /// The extent of a CRS: its first usage, or for a compound CRS the intersection of its components.
@@ -4184,10 +4229,18 @@ pub(crate) fn operation_extent(operation: &CoordinateOperation) -> Option<Object
     extent
 }
 
-/// Intersection of two extents' boxes, or `None` when they are disjoint. An extent without a box keeps the other.
-fn intersect_extents(sofar: ObjectDomain, part: ObjectDomain) -> Option<ObjectDomain> {
+/// `Extent::intersection`: an extent that contains the other is kept whole, with its
+/// description; otherwise the common box, which has none. `None` when the boxes are disjoint.
+/// An extent without a box keeps the other.
+pub(super) fn intersect_extents(sofar: ObjectDomain, part: ObjectDomain) -> Option<ObjectDomain> {
     match (sofar.bounding_box(), part.bounding_box()) {
         (Some(left), Some(right)) => {
+            if left.contains(&right) {
+                return Some(part);
+            }
+            if right.contains(&left) {
+                return Some(sofar);
+            }
             Some(ObjectDomain::from_bounding_box(left.intersection(&right)?))
         }
         _ => Some(sofar),
@@ -4525,7 +4578,7 @@ fn datum_pivot_operations(
                     .into_iter()
                     .flatten()
                     .collect();
-                pivot_concatenation(steps)
+                CoordinateOperation::Concatenated(pivot_concatenation(steps))
             })
             .collect();
         if !linked.is_empty() {
@@ -4599,7 +4652,7 @@ fn geographic_geocentric(geographic: &Crs, geocentric: &Crs) -> Option<Transform
 /// A concatenated operation of the pivot legs, with the sum of the step accuracies as
 /// `ConcatenatedOperation::createComputeMetadata` does. A step with no accuracy leaves it
 /// unknown.
-fn pivot_concatenation(steps: Vec<CoordinateOperation>) -> CoordinateOperation {
+pub(super) fn pivot_concatenation(steps: Vec<CoordinateOperation>) -> ConcatenatedOperation {
     let name = steps
         .iter()
         .map(CoordinateOperation::name)
@@ -4612,7 +4665,7 @@ fn pivot_concatenation(steps: Vec<CoordinateOperation>) -> CoordinateOperation {
             other => other.accuracy(),
         })
         .sum::<Option<f64>>();
-    CoordinateOperation::Concatenated(ConcatenatedOperation {
+    ConcatenatedOperation {
         identified: Identified::named(name),
         steps: steps
             .into_iter()
@@ -4625,7 +4678,8 @@ fn pivot_concatenation(steps: Vec<CoordinateOperation>) -> CoordinateOperation {
         target: None,
         accuracy,
         version: None,
-    })
+        computed_name: true,
+    }
 }
 
 /// `getAccuracy` against `desired`: unknown accuracy is never allowed when a target is set.
