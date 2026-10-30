@@ -184,6 +184,7 @@ struct Options {
     spatial_test: Option<SpatialTest>,
     crs_extent_use: Option<proj_rs::CrsExtentUse>,
     accuracy: Option<f64>,
+    hide_ballpark: bool,
     output_id: Option<(String, String)>,
     all: bool,
 }
@@ -234,6 +235,7 @@ impl Options {
         let mut spatial_test = None;
         let mut crs_extent_use = None;
         let mut accuracy = None;
+        let mut hide_ballpark = false;
         let mut output_id = None;
         let mut all = false;
         let mut sql = false;
@@ -251,6 +253,8 @@ impl Options {
                 single_line = true;
             } else if arg == "--summary" {
                 summary = true;
+            } else if arg == "--hide-ballpark" {
+                hide_ballpark = true;
             } else if matches!(
                 arg,
                 "--grid-check"
@@ -264,7 +268,6 @@ impl Options {
             } else if matches!(
                 arg,
                 "--3d"
-                    | "--hide-ballpark"
                     | "--show-superseded"
                     | "--normalize-axis-order"
                     | "--boundcrs-to-wgs84"
@@ -477,6 +480,7 @@ impl Options {
             spatial_test,
             crs_extent_use,
             accuracy,
+            hide_ballpark,
             output_id,
             all,
         })
@@ -1100,7 +1104,12 @@ fn candidate_operations(
         .set_area_of_interest(area.cloned())
         .set_spatial_criterion(criterion)
         .set_crs_extent_use(options.crs_extent_use.unwrap_or_default())
-        .set_desired_accuracy(options.accuracy.unwrap_or(0.0));
+        .set_desired_accuracy(options.accuracy.unwrap_or(0.0))
+        .set_ballpark_use(if options.hide_ballpark {
+            proj_rs::BallparkUse::Forbid
+        } else {
+            proj_rs::BallparkUse::Allow
+        });
     proj_rs::CoordinateOperationFactory::create()
         .create_operations(source, target, &context)
         .map_err(|error| error.to_string())
@@ -1162,11 +1171,16 @@ fn operation_heading(operation: &proj_rs::CoordinateOperation) -> String {
     };
     let domain = operation.domains().first();
     let mut line = format!("{id}, {}, {accuracy}", operation.name());
-    if let Some(area) = domain.and_then(proj_rs::ObjectDomain::area) {
-        line.push_str(", ");
-        line.push_str(area.trim_end_matches('.'));
+    match domain.and_then(proj_rs::ObjectDomain::area) {
+        Some(area) => {
+            line.push_str(", ");
+            line.push_str(area);
+        }
+        None => line.push_str(", unknown domain of validity"),
     }
-    line.push('.');
+    if operation.has_ballpark_transformation() {
+        line.push_str(", has ballpark transformation");
+    }
     line
 }
 
@@ -1236,12 +1250,9 @@ fn operation_wkt(
     operation: &proj_rs::CoordinateOperation,
     lines: proj_rs::WktLines,
 ) -> Result<String, String> {
-    let proj_rs::CoordinateOperation::Conversion(conversion) = operation else {
-        return Err("not a conversion".to_owned());
-    };
     let mut formatter = proj_rs::WktFormatter::create(proj_rs::WktConvention::Wkt2_2019);
     formatter.set_lines(lines);
-    conversion
+    operation
         .export_to_wkt(&mut formatter)
         .map_err(|error| error.to_string())
 }

@@ -89,8 +89,8 @@ pub use helmert::{Helmert, HelmertConvention, HelmertParams};
 pub use iso19111::{
     create_crs_from_proj_string, create_from_user_input, epsg_identity, equivalent_name,
     equivalent_name_bigger_differences, insert_statements, AlternativeGridNames, AuthorityFactory,
-    AuthorityObject, Axis, BoundCRS, BoundingBox, CartesianCS, CelestialBodyInfo, CompoundCRS,
-    ConcatenatedOperation, ConcatenatedStep, Conversion, CoordinateOperation,
+    AuthorityObject, Axis, BallparkUse, BoundCRS, BoundingBox, CartesianCS, CelestialBodyInfo,
+    CompoundCRS, ConcatenatedOperation, ConcatenatedStep, Conversion, CoordinateOperation,
     CoordinateOperationContext, CoordinateOperationFactory, CoordinateSystem, Crs, CrsExtentUse,
     CrsInfo, DatabaseContext, Datum, DatumEnsemble, DeprecatedCodes, DerivedConversion,
     DerivedProjectedCRS, EllipsoidalCS, EllipsoidalHeightPolicy, EngineeringCRS, EngineeringDatum,

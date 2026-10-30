@@ -4,9 +4,10 @@
 //! version on the way out, and joined again on the way in, using
 //! `versioned_auth_name_mapping`.
 
+use super::equiv;
 use super::factory::{AuthorityFactory, DatabaseContext};
 use super::model::{
-    Axis, CompoundCRS, Crs, DatumEnsemble, Ellipsoid, EllipsoidalCS, FactoryError,
+    Axis, CompoundCRS, Crs, DatumEnsemble, Ellipsoid, EllipsoidalCS, FactoryError, GeodeticCRS,
     GeodeticReferenceFrame, GeographicCRS, Identified, Identifier, Measure, PrimeMeridian,
     UnitOfMeasure,
 };
@@ -482,9 +483,24 @@ fn crs_named_one(text: &str, db: &DatabaseContext) -> Result<Option<Crs>, Factor
             for dimension in [2, 3] {
                 if let Some(crs) = found
                     .iter()
-                    .find(|crs| geographic_dimension(crs) == dimension)
+                    .find(|crs| geographic_dimension(crs) == Some(dimension))
                 {
                     return Ok(Some(crs.clone()));
+                }
+            }
+            for bigger_differences in [false, true] {
+                let equivalent: Vec<&Crs> = found
+                    .iter()
+                    .filter(|crs| {
+                        if bigger_differences {
+                            equiv::equivalent_name_bigger_differences(crs.name(), text)
+                        } else {
+                            equiv::equivalent_name(crs.name(), text)
+                        }
+                    })
+                    .collect();
+                if let [only] = equivalent.as_slice() {
+                    return Ok(Some((*only).clone()));
                 }
             }
             let names: Vec<&str> = found.iter().map(Crs::name).collect();
@@ -496,10 +512,13 @@ fn crs_named_one(text: &str, db: &DatabaseContext) -> Result<Option<Crs>, Factor
     }
 }
 
-fn geographic_dimension(crs: &Crs) -> usize {
+/// The axis count of a geographic CRS. A geocentric CRS is not one.
+fn geographic_dimension(crs: &Crs) -> Option<usize> {
     match crs {
-        Crs::Geographic(geographic) => geographic.coordinate_system().axes().len(),
-        _ => 2,
+        Crs::Geographic(geographic) | Crs::Geodetic(GeodeticCRS::Geographic(geographic)) => {
+            Some(geographic.coordinate_system().axes().len())
+        }
+        _ => None,
     }
 }
 

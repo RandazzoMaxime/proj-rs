@@ -8,7 +8,8 @@ use std::sync::{Arc, Mutex};
 
 use rusqlite::{types::ValueRef, Connection};
 
-use super::equiv::equivalent_name;
+use super::buildop::OpProps;
+use super::equiv::{equivalent_name, geodetic_frame, same_geodetic_datum};
 use super::model::{
     ensemble_name_as_datum, Axis, BoundingBox, CartesianCS, CompoundCRS, ConcatenatedOperation,
     ConcatenatedStep, Conversion, CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble,
@@ -45,6 +46,15 @@ pub enum IntermediateCrsUse {
     Allow,
     /// Return only a direct operation or a deriving conversion.
     Never,
+}
+
+/// Whether operations with a ballpark transformation are candidates.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BallparkUse {
+    /// Ballpark operations are kept, as PROJ does by default.
+    Allow,
+    /// Ballpark operations are dropped (`--hide-ballpark`).
+    Forbid,
 }
 
 /// How an operation extent is compared with the area of interest.
@@ -3876,6 +3886,7 @@ pub struct CoordinateOperationContext {
     spatial_criterion: SpatialCriterion,
     crs_extent_use: CrsExtentUse,
     desired_accuracy: f64,
+    ballpark: BallparkUse,
 }
 
 impl CoordinateOperationContext {
@@ -3891,6 +3902,7 @@ impl CoordinateOperationContext {
             spatial_criterion: SpatialCriterion::default(),
             crs_extent_use: CrsExtentUse::default(),
             desired_accuracy: 0.0,
+            ballpark: BallparkUse::Allow,
         }
     }
 
@@ -3927,6 +3939,12 @@ impl CoordinateOperationContext {
     /// Accuracy in metres an operation must meet. Zero keeps every operation.
     pub fn set_desired_accuracy(&mut self, accuracy: f64) -> &mut Self {
         self.desired_accuracy = accuracy;
+        self
+    }
+
+    /// Whether operations with a ballpark transformation are candidates.
+    pub fn set_ballpark_use(&mut self, policy: BallparkUse) -> &mut Self {
+        self.ballpark = policy;
         self
     }
 }
@@ -3992,85 +4010,93 @@ impl CoordinateOperationFactory {
             source_extent.as_ref().and_then(ObjectDomain::bounding_box),
             target_extent.as_ref().and_then(ObjectDomain::bounding_box),
         );
-        let Some(source_id) = source
-            .authority_code("EPSG")
-            .or_else(|| source.identifiers().first())
-        else {
-            return Ok(filter_and_sort(
-                found,
-                context,
-                source_extent.as_ref(),
-                target_extent.as_ref(),
-            ));
-        };
-        let Some(target_id) = target
-            .authority_code("EPSG")
-            .or_else(|| target.identifiers().first())
-        else {
-            return Ok(filter_and_sort(
-                found,
-                context,
-                source_extent.as_ref(),
-                target_extent.as_ref(),
-            ));
-        };
-        found.extend(operations_between(
-            &context.db,
-            &context.authority,
-            (source_id.code_space(), source_id.code()),
-            (target_id.code_space(), target_id.code()),
-            boxes,
-            RegistrySearch::Both,
-        )?);
-        if context.allow_intermediate {
-            for (pivot_auth, pivot_code) in &context.intermediates {
-                let first = operations_between(
-                    &context.db,
-                    &context.authority,
-                    (source_id.code_space(), source_id.code()),
-                    (pivot_auth, pivot_code),
-                    boxes,
-                    RegistrySearch::Both,
-                )?;
-                let second = operations_between(
-                    &context.db,
-                    &context.authority,
-                    (pivot_auth, pivot_code),
-                    (target_id.code_space(), target_id.code()),
-                    boxes,
-                    RegistrySearch::Both,
-                )?;
-                if let (Some(left), Some(right)) = (first.first(), second.first()) {
-                    found.push(CoordinateOperation::Concatenated(ConcatenatedOperation {
-                        identified: Identified::named(format!(
-                            "{} + {}",
-                            left.name(),
-                            right.name()
-                        )),
-                        steps: vec![
-                            ConcatenatedStep {
-                                operation: left.clone(),
-                                reverse: false,
-                            },
-                            ConcatenatedStep {
-                                operation: right.clone(),
-                                reverse: false,
-                            },
-                        ],
-                        source: None,
-                        target: None,
-                        accuracy: None,
-                        version: None,
-                    }));
+        if let (Some(source_id), Some(target_id)) = (
+            source
+                .authority_code("EPSG")
+                .or_else(|| source.identifiers().first()),
+            target
+                .authority_code("EPSG")
+                .or_else(|| target.identifiers().first()),
+        ) {
+            found.extend(operations_between(
+                &context.db,
+                &context.authority,
+                (source_id.code_space(), source_id.code()),
+                (target_id.code_space(), target_id.code()),
+                boxes,
+                RegistrySearch::Both,
+            )?);
+            if context.allow_intermediate {
+                for (pivot_auth, pivot_code) in &context.intermediates {
+                    let first = operations_between(
+                        &context.db,
+                        &context.authority,
+                        (source_id.code_space(), source_id.code()),
+                        (pivot_auth, pivot_code),
+                        boxes,
+                        RegistrySearch::Both,
+                    )?;
+                    let second = operations_between(
+                        &context.db,
+                        &context.authority,
+                        (pivot_auth, pivot_code),
+                        (target_id.code_space(), target_id.code()),
+                        boxes,
+                        RegistrySearch::Both,
+                    )?;
+                    if let (Some(left), Some(right)) = (first.first(), second.first()) {
+                        found.push(CoordinateOperation::Concatenated(ConcatenatedOperation {
+                            identified: Identified::named(format!(
+                                "{} + {}",
+                                left.name(),
+                                right.name()
+                            )),
+                            steps: vec![
+                                ConcatenatedStep {
+                                    operation: left.clone(),
+                                    reverse: false,
+                                },
+                                ConcatenatedStep {
+                                    operation: right.clone(),
+                                    reverse: false,
+                                },
+                            ],
+                            source: None,
+                            target: None,
+                            accuracy: None,
+                            version: None,
+                        }));
+                    }
                 }
             }
         }
-        Ok(filter_and_sort(
+        if is_geodetic(source)
+            && is_geodetic(target)
+            && !has_perfect_accuracy_result(
+                &found,
+                context,
+                source_extent.as_ref(),
+                target_extent.as_ref(),
+            )
+        {
+            found.extend(ballpark_operations(source, target));
+        }
+        let filtered = filter_and_sort(
             found,
             context,
             source_extent.as_ref(),
             target_extent.as_ref(),
-        ))
+        );
+        let mut sorted =
+            super::select::sort_candidates(filtered.operations, &context.db, source, target);
+        let synthetic_last = sorted.last().is_some_and(|operation| {
+            operation.has_ballpark_transformation()
+                || super::select::is_null_transformation(operation.name())
+        });
+        if filtered.contains_area_without_grid && sorted.len() > 1 && synthetic_last {
+            sorted.pop();
+        }
+        Ok(sorted)
     }
 }
 
@@ -4159,12 +4185,19 @@ fn extent_pseudo_area(extent: &ObjectDomain) -> f64 {
 }
 
 /// `FilterResults` with `andSort`: keeps the operations that match the area of interest and accuracy.
+/// Operations kept by [`filter_and_sort`], and whether a kept-or-not operation with no
+/// grid and no ballpark contains the area: PROJ's `hasOpThatContainsAreaOfInterestAndNoGrid`.
+struct Filtered {
+    operations: Vec<CoordinateOperation>,
+    contains_area_without_grid: bool,
+}
+
 fn filter_and_sort(
     operations: Vec<CoordinateOperation>,
     context: &CoordinateOperationContext,
     extent1: Option<&ObjectDomain>,
     extent2: Option<&ObjectDomain>,
-) -> Vec<CoordinateOperation> {
+) -> Filtered {
     let area = match (&context.area_of_interest, context.crs_extent_use) {
         (Some(area), _) => Some(area.clone()),
         (None, CrsExtentUse::Intersection) => match (extent1, extent2) {
@@ -4199,8 +4232,15 @@ fn filter_and_sort(
     let mut result = Vec::new();
     let mut has_with_extent = false;
     let mut has_without_extent = false;
+    let mut contains_area_without_grid = false;
+    let no_grid = |operation: &CoordinateOperation| {
+        !operation.has_ballpark_transformation() && super::select::grid_names(operation).is_empty()
+    };
     for operation in &operations {
         if !accuracy_allowed(operation, context.desired_accuracy) {
+            continue;
+        }
+        if context.ballpark == BallparkUse::Forbid && operation.has_ballpark_transformation() {
             continue;
         }
         if let Some(area) = &area {
@@ -4215,6 +4255,9 @@ fn filter_and_sort(
             }
             has_with_extent = true;
             let contains = extent_contains(&extent, area);
+            if contains && no_grid(operation) {
+                contains_area_without_grid = true;
+            }
             match context.spatial_criterion {
                 SpatialCriterion::StrictContainment if !contains => continue,
                 SpatialCriterion::PartialIntersection if !extent_intersects(&extent, area) => {
@@ -4230,6 +4273,9 @@ fn filter_and_sort(
             has_with_extent = true;
             let contains_source = extent1.is_none_or(|source| extent_contains(&extent, source));
             let contains_target = extent2.is_none_or(|target| extent_contains(&extent, target));
+            if contains_source && contains_target && no_grid(operation) {
+                contains_area_without_grid = true;
+            }
             match context.spatial_criterion {
                 SpatialCriterion::StrictContainment if !(contains_source && contains_target) => {
                     continue
@@ -4248,13 +4294,136 @@ fn filter_and_sort(
         }
         result.push(operation.clone());
     }
-    if result.is_empty() && (!has_with_extent || has_without_extent) {
-        return operations
+    let operations = if result.is_empty() && (!has_with_extent || has_without_extent) {
+        operations
             .into_iter()
             .filter(|operation| accuracy_allowed(operation, context.desired_accuracy))
-            .collect();
+            .filter(|operation| {
+                context.ballpark == BallparkUse::Allow || !operation.has_ballpark_transformation()
+            })
+            .collect()
+    } else {
+        result
+    };
+    Filtered {
+        operations,
+        contains_area_without_grid,
     }
-    result
+}
+
+/// `hasPerfectAccuracyResult`: an operation of `operations` that the strict containment
+/// filter keeps, with an accuracy of exactly 0.
+fn has_perfect_accuracy_result(
+    operations: &[CoordinateOperation],
+    context: &CoordinateOperationContext,
+    extent1: Option<&ObjectDomain>,
+    extent2: Option<&ObjectDomain>,
+) -> bool {
+    let mut strict = context.clone();
+    strict.spatial_criterion = SpatialCriterion::StrictContainment;
+    filter_and_sort(operations.to_vec(), &strict, extent1, extent2)
+        .operations
+        .iter()
+        .any(|operation| {
+            let accuracy = match operation {
+                CoordinateOperation::Conversion(_) => 0.0,
+                _ => operation.accuracy().unwrap_or(-1.0),
+            };
+            accuracy == 0.0
+        })
+}
+
+/// Geographic or geocentric CRS, not spherical: the ones `createOperationsGeodToGeod` handles.
+fn is_geodetic(crs: &Crs) -> bool {
+    matches!(
+        crs,
+        Crs::Geographic(_) | Crs::Geodetic(GeodeticCRS::Geographic(_) | GeodeticCRS::Geocentric(_))
+    )
+}
+
+/// The geographic CRS, whichever of the two spellings the CRS was read with.
+fn geographic_of(crs: &Crs) -> Option<&GeographicCRS> {
+    match crs {
+        Crs::Geographic(crs) | Crs::Geodetic(GeodeticCRS::Geographic(crs)) => Some(crs),
+        _ => None,
+    }
+}
+
+/// The ballpark operation of `createOperationsGeodToGeod` between two CRS of different
+/// datums: a geographic offset between geographic CRS, or a geocentric translation between
+/// geocentric CRS. A null offset (same datum), a prime meridian shift, a geographic to
+/// geocentric pair, and a vertical unit change are not ported, and give nothing here.
+fn ballpark_operations(source: &Crs, target: &Crs) -> Vec<CoordinateOperation> {
+    if same_geodetic_datum(source, target) {
+        return Vec::new();
+    }
+    let (name, code, values, domain) = match (geographic_of(source), geographic_of(target)) {
+        (Some(left), Some(right)) => {
+            let meridian = |crs: &Crs| {
+                geodetic_frame(crs).map(|frame| frame.prime_meridian().longitude().si_value())
+            };
+            if meridian(source) != meridian(target) {
+                return Vec::new();
+            }
+            let three_d = left.coordinate_system().axes().len() == 3
+                || right.coordinate_system().axes().len() == 3;
+            let (code, values) = if three_d {
+                (
+                    9660,
+                    vec![
+                        ParameterValue::angle(0.0),
+                        ParameterValue::angle(0.0),
+                        ParameterValue::length(0.0),
+                    ],
+                )
+            } else {
+                (
+                    9619,
+                    vec![ParameterValue::angle(0.0), ParameterValue::angle(0.0)],
+                )
+            };
+            let domain = match (crs_extent(source), crs_extent(target)) {
+                (Some(left), Some(right)) if left == right => left,
+                _ => world_extent(),
+            };
+            (
+                format!(
+                    "Ballpark geographic offset from {} to {}",
+                    source.name(),
+                    target.name()
+                ),
+                code,
+                values,
+                domain,
+            )
+        }
+        _ => match (source, target) {
+            (
+                Crs::Geodetic(GeodeticCRS::Geocentric(_)),
+                Crs::Geodetic(GeodeticCRS::Geocentric(_)),
+            ) => (
+                format!(
+                    "Ballpark geocentric translation from {} to {}",
+                    source.name(),
+                    target.name()
+                ),
+                1031,
+                vec![ParameterValue::length(0.0); 3],
+                world_extent(),
+            ),
+            _ => return Vec::new(),
+        },
+    };
+    Transformation::create_from_code(
+        &OpProps::new().name(name),
+        source.clone(),
+        target.clone(),
+        code,
+        values,
+        domain,
+    )
+    .map(|operation| vec![CoordinateOperation::Transformation(operation)])
+    .unwrap_or_default()
 }
 
 /// `getAccuracy` against `desired`: unknown accuracy is never allowed when a target is set.

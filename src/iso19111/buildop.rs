@@ -4,7 +4,7 @@
 
 use super::equiv::Equivalence;
 use super::model::{
-    Crs, FactoryError, Identified, Measure, OperationMethod, OperationParameter,
+    Crs, FactoryError, Identified, Measure, ObjectDomain, OperationMethod, OperationParameter,
     OperationParameterValue, Parameter, ParameterValue, Transformation, UnitKind,
 };
 use super::parammap::{self, MethodMap, ParamMap};
@@ -207,12 +207,50 @@ impl Transformation {
         })
     }
 
+    /// Transformation with the method of EPSG `code`, `values` in its parameter
+    /// order, and `domain` as its usage. Used for the ballpark operations.
+    ///
+    /// # Errors
+    ///
+    /// The method is not in the PROJ method maps, or `values` does not match its parameters.
+    pub(crate) fn create_from_code(
+        props: &OpProps,
+        source: Crs,
+        target: Crs,
+        code: i32,
+        values: Vec<ParameterValue>,
+        domain: ObjectDomain,
+    ) -> Result<Self, FactoryError> {
+        let mapped = parammap::method_by_code(code).ok_or_else(|| {
+            FactoryError::Invalid(format!("unknown operation method EPSG:{code}"))
+        })?;
+        let (method, parameters) = mapped_method(mapped, values)?;
+        let mut identified = identified_from(props, mapped.wkt2_name);
+        identified.domains = vec![domain];
+        Ok(Self {
+            identified,
+            method,
+            parameters,
+            source: Some(Box::new(source)),
+            target: Some(Box::new(target)),
+            interpolation: None,
+            accuracy: None,
+            accuracy_text: None,
+            version: None,
+            point_motion: false,
+            inverted: false,
+        })
+    }
+
     /// Inverse transformation: swapped CRS and an `Inverse of` name.
     #[must_use]
     pub fn inverse(&self) -> Self {
         let mut inverse = self.clone();
         inverse.inverted = !self.inverted;
         std::mem::swap(&mut inverse.source, &mut inverse.target);
+        for identifier in &mut inverse.identified.identifiers {
+            identifier.code_space = inverse_code_space(&identifier.code_space);
+        }
         if self.inverted {
             inverse.identified.name = self
                 .name()
@@ -250,6 +288,18 @@ impl Transformation {
             && crs_option(self.interpolation_crs(), other.interpolation_crs())
             && self.accuracy == other.accuracy
             && self.inverted == other.inverted
+    }
+}
+
+/// The code space of an inverse operation's identifier: `EPSG` becomes `INVERSE(EPSG)`,
+/// and an `INVERSE(...)` one goes back to its authority, as `addModifiedIdentifier` does.
+fn inverse_code_space(code_space: &str) -> String {
+    match code_space
+        .strip_prefix("INVERSE(")
+        .and_then(|rest| rest.strip_suffix(')'))
+    {
+        Some(authority) => authority.to_owned(),
+        None => format!("INVERSE({code_space})"),
     }
 }
 
@@ -747,47 +797,10 @@ impl super::model::Conversion {
         mapped: &MethodMap,
         values: Vec<ParameterValue>,
     ) -> Result<Self, FactoryError> {
-        if values.len() != mapped.params.len() {
-            return Err(FactoryError::Invalid(
-                "Inconsistent number of parameters and parameter values".to_owned(),
-            ));
-        }
-        let parameters = mapped
-            .params
-            .iter()
-            .zip(values)
-            .map(|(param, value)| Parameter {
-                name: param.wkt2_name.to_owned(),
-                code_space: if param.epsg_code == 0 {
-                    String::new()
-                } else {
-                    "EPSG".to_owned()
-                },
-                code: if param.epsg_code == 0 {
-                    String::new()
-                } else {
-                    param.epsg_code.to_string()
-                },
-                value,
-            })
-            .collect();
-        let method_code = if mapped.epsg_code == 0 {
-            String::new()
-        } else {
-            mapped.epsg_code.to_string()
-        };
-        let method_space = if method_code.is_empty() {
-            String::new()
-        } else {
-            "EPSG".to_owned()
-        };
+        let (method, parameters) = mapped_method(mapped, values)?;
         Ok(Self {
             identified: identified_from(props, mapped.wkt2_name),
-            method: OperationMethod::named_code(
-                mapped.wkt2_name.to_owned(),
-                method_space,
-                method_code,
-            ),
+            method,
             parameters,
             version: None,
         })
@@ -1897,6 +1910,50 @@ impl super::model::Conversion {
     ) -> Result<Self, FactoryError> {
         Self::from_name(props, name, values)
     }
+}
+
+/// The method and parameters of `mapped`, with `values` in parameter order.
+fn mapped_method(
+    mapped: &MethodMap,
+    values: Vec<ParameterValue>,
+) -> Result<(OperationMethod, Vec<Parameter>), FactoryError> {
+    if values.len() != mapped.params.len() {
+        return Err(FactoryError::Invalid(
+            "Inconsistent number of parameters and parameter values".to_owned(),
+        ));
+    }
+    let parameters = mapped
+        .params
+        .iter()
+        .zip(values)
+        .map(|(param, value)| Parameter {
+            name: param.wkt2_name.to_owned(),
+            code_space: if param.epsg_code == 0 {
+                String::new()
+            } else {
+                "EPSG".to_owned()
+            },
+            code: if param.epsg_code == 0 {
+                String::new()
+            } else {
+                param.epsg_code.to_string()
+            },
+            value,
+        })
+        .collect();
+    let method_code = if mapped.epsg_code == 0 {
+        String::new()
+    } else {
+        mapped.epsg_code.to_string()
+    };
+    let method_space = if method_code.is_empty() {
+        String::new()
+    } else {
+        "EPSG".to_owned()
+    };
+    let method =
+        OperationMethod::named_code(mapped.wkt2_name.to_owned(), method_space, method_code);
+    Ok((method, parameters))
 }
 
 fn angles_scale_lengths(

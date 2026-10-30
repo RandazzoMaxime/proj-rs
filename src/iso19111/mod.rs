@@ -22,7 +22,7 @@ mod wkt_import;
 pub use buildop::OpProps;
 pub use equiv::{equivalent_name, equivalent_name_bigger_differences, Equivalence};
 pub use factory::{
-    AlternativeGridNames, AuthorityFactory, AuthorityObject, CelestialBodyInfo,
+    AlternativeGridNames, AuthorityFactory, AuthorityObject, BallparkUse, CelestialBodyInfo,
     CoordinateOperationContext, CoordinateOperationFactory, CrsExtentUse, CrsInfo, DatabaseContext,
     DeprecatedCodes, IntermediateCrsUse, NameMatch, NameSpelling, ObjectType, OfficialName,
     SpatialCriterion, UnitInfo,

@@ -145,6 +145,8 @@ pub struct WktFormatter {
     axis_linear: Vec<UnitOfMeasure>,
     axis_angular: Vec<UnitOfMeasure>,
     abridged: bool,
+    /// Nesting of `pushDisableUsage`: while positive, no `USAGE` or `REMARK` is written.
+    usage_disabled: usize,
     db: Option<DatabaseContext>,
 }
 
@@ -193,6 +195,7 @@ impl WktFormatter {
             axis_linear: vec![UnitOfMeasure::metre()],
             axis_angular: vec![UnitOfMeasure::degree()],
             abridged: false,
+            usage_disabled: 0,
             db: None,
         }
     }
@@ -451,7 +454,8 @@ impl WktFormatter {
     }
 
     fn base_usage(&mut self, identified: &Identified) {
-        if self.wkt2 && self.output_id_now() {
+        let usage = self.wkt2 && self.output_id_now() && self.usage_disabled == 0;
+        if usage {
             if self.keywords_2019 {
                 for domain in &identified.domains {
                     self.start_node("USAGE", NodeId::Absent);
@@ -463,7 +467,7 @@ impl WktFormatter {
             }
         }
         self.format_ids(&identified.identifiers);
-        if self.wkt2 && self.output_id_now() && !identified.remarks.is_empty() {
+        if usage && !identified.remarks.is_empty() {
             self.start_node("REMARK", NodeId::Absent);
             self.add_quoted(&identified.remarks);
             self.end_node();
@@ -500,6 +504,19 @@ impl Conversion {
     /// WKT1 has no spelling for the method, or a parameter cannot be written.
     pub fn export_to_wkt(&self, formatter: &mut WktFormatter) -> Result<String, FactoryError> {
         export_conversion(self, formatter, BaseShape::NotSphere)?;
+        Ok(std::mem::take(&mut formatter.result))
+    }
+}
+
+impl super::model::CoordinateOperation {
+    /// Write this operation into `formatter` and return the WKT. A concatenated
+    /// operation has no single-node spelling here and is refused.
+    ///
+    /// # Errors
+    ///
+    /// The operation cannot be written in the formatter's convention.
+    pub fn export_to_wkt(&self, formatter: &mut WktFormatter) -> Result<String, FactoryError> {
+        export_operation(self, formatter)?;
         Ok(std::mem::take(&mut formatter.result))
     }
 }
@@ -1871,6 +1888,23 @@ fn export_operation(
     }
 }
 
+fn export_transformation_crs(
+    transformation: &Transformation,
+    formatter: &mut WktFormatter,
+) -> Result<(), FactoryError> {
+    if let Some(source) = &transformation.source {
+        formatter.start_node("SOURCECRS", NodeId::Absent);
+        export_crs(source, formatter)?;
+        formatter.end_node();
+    }
+    if let Some(target) = &transformation.target {
+        formatter.start_node("TARGETCRS", NodeId::Absent);
+        export_crs(target, formatter)?;
+        formatter.end_node();
+    }
+    Ok(())
+}
+
 fn export_transformation(
     transformation: &Transformation,
     formatter: &mut WktFormatter,
@@ -1900,16 +1934,11 @@ fn export_transformation(
         }
     }
     if !formatter.abridged {
-        if let Some(source) = &transformation.source {
-            formatter.start_node("SOURCECRS", NodeId::Absent);
-            export_crs(source, formatter)?;
-            formatter.end_node();
-        }
-        if let Some(target) = &transformation.target {
-            formatter.start_node("TARGETCRS", NodeId::Absent);
-            export_crs(target, formatter)?;
-            formatter.end_node();
-        }
+        let disabled = usize::from(!transformation.identified.domains.is_empty());
+        formatter.usage_disabled += disabled;
+        let exported = export_transformation_crs(transformation, formatter);
+        formatter.usage_disabled -= disabled;
+        exported?;
     }
     export_method(&transformation.method, formatter)?;
     for parameter in &transformation.parameters {
