@@ -1049,11 +1049,44 @@ fn equivalent_object_name(left: &str, right: &str) -> bool {
     canonical_object_name(left) == canonical_object_name(right)
 }
 
+/// `Identifier::canonicalizeName` as the approximate name match compares it:
+/// lower case, separators dropped, ` + ` dropped, and `19dd` read as `dd`, so
+/// `ITRF1993` matches `ITRF93`.
+fn canonical_search_name(name: &str) -> String {
+    let chars: Vec<char> = name.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let ch = chars[i].to_ascii_lowercase();
+        if ch == ' ' && chars.get(i + 1) == Some(&'+') && chars.get(i + 2) == Some(&' ') {
+            i += 3;
+            continue;
+        }
+        if ch == '1'
+            && out
+                .chars()
+                .last()
+                .is_some_and(|last| !last.is_ascii_digit())
+            && chars.get(i + 1) == Some(&'9')
+            && chars.get(i + 2).is_some_and(char::is_ascii_digit)
+            && chars.get(i + 3).is_some_and(char::is_ascii_digit)
+        {
+            i += 2;
+            continue;
+        }
+        if !matches!(ch, ' ' | '_' | '-' | '/' | '(' | ')' | '.' | '&' | ',') {
+            out.push(ch);
+        }
+        i += 1;
+    }
+    out
+}
+
 fn approximate_name(candidate: &str, searched: &str, canonical_searched: &str) -> bool {
     candidate
         .to_ascii_lowercase()
         .contains(&searched.to_ascii_lowercase())
-        || canonical_object_name(candidate).contains(canonical_searched)
+        || canonical_search_name(candidate).contains(canonical_searched)
 }
 
 fn semi_minor_si(ellipsoid: &Ellipsoid) -> f64 {
@@ -1975,7 +2008,7 @@ impl AuthorityFactory {
     where
         T: NamedAuthorityObject,
     {
-        let canonical = canonical_object_name(name);
+        let canonical = canonical_search_name(name);
         if canonical.chars().count() <= 1 {
             return Ok(Vec::new());
         }
