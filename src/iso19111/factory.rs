@@ -4073,6 +4073,12 @@ impl CoordinateOperationFactory {
         if direct_empty && is_geodetic(source) && is_geodetic(target) {
             found.extend(datum_pivot_operations(source, target, context));
         }
+        found.extend(super::compound::compound_to_geog3d(
+            self, source, target, context,
+        )?);
+        found.extend(super::compound::geog_to_compound(
+            self, source, target, context,
+        )?);
         if is_geodetic(source)
             && is_geodetic(target)
             && !has_perfect_accuracy_result(
@@ -4155,7 +4161,7 @@ fn intersect_extents(sofar: ObjectDomain, part: ObjectDomain) -> Option<ObjectDo
     }
 }
 
-fn world_extent() -> ObjectDomain {
+pub(super) fn world_extent() -> ObjectDomain {
     ObjectDomain {
         scope: None,
         area: Some("World".to_owned()),
@@ -4345,7 +4351,7 @@ fn is_geodetic(crs: &Crs) -> bool {
 }
 
 /// The geographic CRS, whichever of the two spellings the CRS was read with.
-fn geographic_of(crs: &Crs) -> Option<&GeographicCRS> {
+pub(super) fn geographic_of(crs: &Crs) -> Option<&GeographicCRS> {
     match crs {
         Crs::Geographic(crs) | Crs::Geodetic(GeodeticCRS::Geographic(crs)) => Some(crs),
         _ => None,

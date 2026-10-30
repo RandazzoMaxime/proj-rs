@@ -185,6 +185,7 @@ struct Options {
     crs_extent_use: Option<proj_rs::CrsExtentUse>,
     accuracy: Option<f64>,
     hide_ballpark: bool,
+    promote_3d: bool,
     output_id: Option<(String, String)>,
     all: bool,
 }
@@ -236,6 +237,7 @@ impl Options {
         let mut crs_extent_use = None;
         let mut accuracy = None;
         let mut hide_ballpark = false;
+        let mut promote_3d = false;
         let mut output_id = None;
         let mut all = false;
         let mut sql = false;
@@ -255,6 +257,8 @@ impl Options {
                 summary = true;
             } else if arg == "--hide-ballpark" {
                 hide_ballpark = true;
+            } else if arg == "--3d" {
+                promote_3d = true;
             } else if matches!(
                 arg,
                 "--grid-check"
@@ -267,8 +271,7 @@ impl Options {
                 index += 1;
             } else if matches!(
                 arg,
-                "--3d"
-                    | "--show-superseded"
+                "--show-superseded"
                     | "--normalize-axis-order"
                     | "--boundcrs-to-wgs84"
                     | "--allow-ellipsoidal-height-as-vertical-crs"
@@ -481,6 +484,7 @@ impl Options {
             crs_extent_use,
             accuracy,
             hide_ballpark,
+            promote_3d,
             output_id,
             all,
         })
@@ -968,6 +972,11 @@ fn candidates(options: &Options) -> Result<String, String> {
     let target_text = options.target.as_deref().unwrap_or("");
     let source = load_named(&db, source_text)?;
     let target = load_named(&db, target_text)?;
+    let (source, target) = if options.promote_3d {
+        (source, target)
+    } else {
+        promote_by_name(&db, source_text, target_text, source, target)
+    };
     let area = candidate_area(&db, options)?;
     let spatial_test = options.spatial_test.unwrap_or_default();
     let operations =
@@ -1155,6 +1164,69 @@ fn operation_bodies(
 
 fn load_named(db: &proj_rs::DatabaseContext, text: &str) -> Result<proj_rs::Crs, String> {
     proj_rs::create_from_user_input(text, db).map_err(|error| error.to_string())
+}
+
+/// `outputOperations` in `projinfo_lib.cpp`: a CRS given by its name is promoted
+/// to the 3D CRS of the same name when the other CRS is 3D, as in
+/// `projinfo -s "WGS 84" -t "WGS 84 + EGM96 height"`. The promoted CRS is kept
+/// only when the database gives it an identifier.
+fn promote_by_name(
+    db: &proj_rs::DatabaseContext,
+    source_text: &str,
+    target_text: &str,
+    source: proj_rs::Crs,
+    target: proj_rs::Crs,
+) -> (proj_rs::Crs, proj_rs::Crs) {
+    if is_3d(&target)
+        && !is_3d(&source)
+        && !source.identifiers().is_empty()
+        && proj_rs::equivalent_name(source_text, source.name())
+    {
+        let promoted = promote(db, &source);
+        if !promoted.identifiers().is_empty() {
+            return (promoted, target);
+        }
+    } else if is_3d(&source)
+        && !is_3d(&target)
+        && !target.identifiers().is_empty()
+        && proj_rs::equivalent_name(target_text, target.name())
+    {
+        let promoted = promote(db, &target);
+        if !promoted.identifiers().is_empty() {
+            return (source, promoted);
+        }
+    }
+    (source, target)
+}
+
+/// `is3DCRS` in `projinfo_lib.cpp`.
+fn is_3d(crs: &proj_rs::Crs) -> bool {
+    match crs {
+        proj_rs::Crs::Compound(_) => true,
+        proj_rs::Crs::Geographic(geographic)
+        | proj_rs::Crs::Geodetic(proj_rs::GeodeticCRS::Geographic(geographic)) => {
+            geographic.coordinate_system().axes().len() == 3
+        }
+        proj_rs::Crs::Projected(projected) => projected.coordinate_system().axes().len() == 3,
+        _ => false,
+    }
+}
+
+fn promote(db: &proj_rs::DatabaseContext, crs: &proj_rs::Crs) -> proj_rs::Crs {
+    match crs {
+        proj_rs::Crs::Geographic(geographic) => {
+            proj_rs::Crs::Geographic(geographic.promote_to_3d_with_db(Some(db)))
+        }
+        proj_rs::Crs::Geodetic(proj_rs::GeodeticCRS::Geographic(geographic)) => {
+            proj_rs::Crs::Geodetic(proj_rs::GeodeticCRS::Geographic(
+                geographic.promote_to_3d_with_db(Some(db)),
+            ))
+        }
+        proj_rs::Crs::Projected(projected) => {
+            proj_rs::Crs::Projected(projected.promote_to_3d(Some(db)))
+        }
+        other => other.clone(),
+    }
 }
 
 fn operation_heading(operation: &proj_rs::CoordinateOperation) -> String {

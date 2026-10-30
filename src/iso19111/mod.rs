@@ -5,6 +5,7 @@
 
 mod bound;
 mod buildop;
+mod compound;
 mod equiv;
 mod esri_parammap;
 mod factory;
