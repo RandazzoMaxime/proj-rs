@@ -117,6 +117,14 @@ impl Crs {
         }
     }
 
+    pub(crate) fn is_geographic(&self) -> bool {
+        self.kind == Kind::Geographic
+    }
+
+    pub(crate) fn is_geocentric(&self) -> bool {
+        self.kind == Kind::Geocentric
+    }
+
     /// Geodetic radians on this CRS's ellipsoid, height in `z`.
     ///
     /// `z` is the third public axis: height, geocentric Z, or topocentric Up.

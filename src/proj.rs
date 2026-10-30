@@ -12,6 +12,10 @@ use std::ffi::NulError;
 use std::fmt;
 use std::path::Path;
 
+mod bounds;
+
+use bounds::Dims;
+
 use crate::crs::Crs;
 use crate::engine::Operation;
 use crate::engine::TransformError as StepError;
@@ -595,7 +599,11 @@ impl Proj {
         C: Coord<F>,
         F: CoordinateType,
     {
-        let way = if inverse { Way::Inverse } else { Way::Forward };
+        let way = if inverse {
+            Direction::Inverse
+        } else {
+            Direction::Forward
+        };
         let (x, y) = self.map_point(point.x(), point.y(), way, Report::Projection)?;
         Ok(C::from_xy(F::from_f64(x)?, F::from_f64(y)?))
     }
@@ -625,7 +633,7 @@ impl Proj {
     ///
     /// [`ProjError`] when the object is not a transform or the point has no image.
     pub fn convert_xyz(&self, x: f64, y: f64, z: f64) -> Result<(f64, f64, f64), ProjError> {
-        let coord = self.map_xyz(x, y, z, Way::Forward, Report::Projection)?;
+        let coord = self.map_xyz(x, y, z, Direction::Forward, Report::Projection)?;
         Ok((coord.x, coord.y, coord.z))
     }
 
@@ -639,7 +647,7 @@ impl Proj {
         C: Coord<F>,
         F: CoordinateType,
     {
-        self.fill_array(points, Way::Forward)
+        self.fill_array(points, Direction::Forward)
     }
 
     /// Project a slice in place.
@@ -660,17 +668,22 @@ impl Proj {
         C: Coord<F>,
         F: CoordinateType,
     {
-        let way = if inverse { Way::Inverse } else { Way::Forward };
+        let way = if inverse {
+            Direction::Inverse
+        } else {
+            Direction::Forward
+        };
         self.fill_array(points, way)
     }
 
-    /// Forward bounds of a rectangle, densifying each edge.
+    /// Bounds of a rectangle after a forward transform, densifying each edge.
     ///
-    /// `densify_pts` is the number of extra samples on each edge.
+    /// Shorthand for [`Self::transform_bounds_in`] with [`Direction::Forward`].
     ///
     /// # Errors
     ///
-    /// [`ProjError`] when `densify_pts` is negative or a sample has no image.
+    /// [`ProjError`] when `densify_pts` is out of range, or the transform
+    /// cannot tell the output's axis order.
     pub fn transform_bounds<F>(
         &self,
         left: F,
@@ -682,54 +695,65 @@ impl Proj {
     where
         F: CoordinateType,
     {
-        if densify_pts < 0 {
-            return Err(ProjError::Conversion(
-                "densify_pts must be zero or positive".to_owned(),
-            ));
-        }
-        let left = left.into_f64()?;
-        let bottom = bottom.into_f64()?;
-        let right = right.into_f64()?;
-        let top = top.into_f64()?;
-        let steps = usize::try_from(densify_pts)
-            .map_err(|_| ProjError::Conversion("densify_pts does not fit usize".to_owned()))?
-            + 1;
-        let mut min_x = f64::INFINITY;
-        let mut min_y = f64::INFINITY;
-        let mut max_x = f64::NEG_INFINITY;
-        let mut max_y = f64::NEG_INFINITY;
-        let edges = [
-            (left, bottom, right, bottom),
-            (right, bottom, right, top),
-            (right, top, left, top),
-            (left, top, left, bottom),
-        ];
-        for (x0, y0, x1, y1) in edges {
-            for step in 0..steps {
-                #[expect(
-                    clippy::cast_precision_loss,
-                    clippy::as_conversions,
-                    reason = "densify_pts is a small edge count and fits exactly in f64"
-                )]
-                let t = step as f64 / steps as f64;
-                let (x, y) = self.map_f64(
-                    x0 + (x1 - x0) * t,
-                    y0 + (y1 - y0) * t,
-                    Way::Forward,
-                    Report::Conversion,
-                )?;
-                min_x = min_x.min(x);
-                min_y = min_y.min(y);
-                max_x = max_x.max(x);
-                max_y = max_y.max(y);
-            }
-        }
+        self.transform_bounds_in(Direction::Forward, left, bottom, right, top, densify_pts)
+    }
+
+    /// Bounds of a rectangle after a transform in `direction`, PROJ's
+    /// `proj_trans_bounds`.
+    ///
+    /// The rectangle is in the input axis order: longitude, latitude for a
+    /// geographic input, as [`Self::convert`]. The result is
+    /// `[min_x, min_y, max_x, max_y]` in the output order. When the output is
+    /// geographic and the box crosses the antimeridian, `min_x > max_x`. When
+    /// it contains a pole, the range is the full `-180..180` on that side.
+    /// Points with no image are skipped, as PROJ does.
+    ///
+    /// # Errors
+    ///
+    /// [`ProjError`] when `densify_pts` is outside `0..=10000`, is below 2 for a
+    /// geographic output, or the output axis order is unknown.
+    pub fn transform_bounds_in<F>(
+        &self,
+        direction: Direction,
+        left: F,
+        bottom: F,
+        right: F,
+        top: F,
+        densify_pts: i32,
+    ) -> Result<[F; 4], ProjError>
+    where
+        F: CoordinateType,
+    {
+        let min = [left.into_f64()?, bottom.into_f64()?, 0.0];
+        let max = [right.into_f64()?, top.into_f64()?, 0.0];
+        let (lo, hi) = self.bounds(direction, min, max, densify_pts, Dims::Two)?;
         Ok([
-            F::from_f64(min_x)?,
-            F::from_f64(min_y)?,
-            F::from_f64(max_x)?,
-            F::from_f64(max_y)?,
+            F::from_f64(lo[0])?,
+            F::from_f64(lo[1])?,
+            F::from_f64(hi[0])?,
+            F::from_f64(hi[1])?,
         ])
+    }
+
+    /// Bounds of a box after a transform in `direction`, PROJ's
+    /// `proj_trans_bounds_3D`.
+    ///
+    /// `min` and `max` are `[x, y, z]` in the input axis order. The result is
+    /// `(min, max)` in the output order. Each height plane is walked on its own,
+    /// and a geocentric input is walked as its full box boundary. Otherwise the
+    /// same rules as [`Self::transform_bounds_in`] apply.
+    ///
+    /// # Errors
+    ///
+    /// [`ProjError`] as for [`Self::transform_bounds_in`].
+    pub fn transform_bounds_3d(
+        &self,
+        direction: Direction,
+        min: [f64; 3],
+        max: [f64; 3],
+        densify_pts: i32,
+    ) -> Result<([f64; 3], [f64; 3]), ProjError> {
+        self.bounds(direction, min, max, densify_pts, Dims::Three)
     }
 
     /// PROJJSON stored for an EPSG code, or the PROJJSON text passed to [`Self::new`].
@@ -778,13 +802,17 @@ impl Proj {
                 target,
                 bridge,
             } => {
-                direction_exists(source, target, bridge.as_ref(), Way::Forward)
-                    && direction_exists(target, source, bridge.as_ref(), Way::Inverse)
+                direction_exists(source, target, bridge.as_ref(), Direction::Forward)
+                    && direction_exists(target, source, bridge.as_ref(), Direction::Inverse)
             }
         }
     }
 
-    fn fill_array<'a, C, F>(&self, points: &'a mut [C], way: Way) -> Result<&'a mut [C], ProjError>
+    fn fill_array<'a, C, F>(
+        &self,
+        points: &'a mut [C],
+        way: Direction,
+    ) -> Result<&'a mut [C], ProjError>
     where
         C: Coord<F>,
         F: CoordinateType,
@@ -804,18 +832,31 @@ impl Proj {
         &self,
         x: F,
         y: F,
-        way: Way,
+        way: Direction,
         report: Report,
     ) -> Result<(f64, f64), ProjError> {
         self.map_f64(x.into_f64()?, y.into_f64()?, way, report)
     }
 
-    fn map_f64(&self, x: f64, y: f64, way: Way, report: Report) -> Result<(f64, f64), ProjError> {
+    fn map_f64(
+        &self,
+        x: f64,
+        y: f64,
+        way: Direction,
+        report: Report,
+    ) -> Result<(f64, f64), ProjError> {
         let coord = self.map_xyz(x, y, 0.0, way, report)?;
         Ok((coord.x, coord.y))
     }
 
-    fn map_xyz(&self, x: f64, y: f64, z: f64, way: Way, report: Report) -> Result<Xyzt, ProjError> {
+    fn map_xyz(
+        &self,
+        x: f64,
+        y: f64,
+        z: f64,
+        way: Direction,
+        report: Report,
+    ) -> Result<Xyzt, ProjError> {
         let mapped = match &self.body {
             Body::Single(_) => {
                 return Err(match report {
@@ -830,8 +871,8 @@ impl Proj {
             Body::Native(op) => {
                 let coord = Xyzt { x, y, z, t: 0.0 };
                 match way {
-                    Way::Inverse => op.inverse(coord),
-                    Way::Forward => op.forward(coord),
+                    Direction::Inverse => op.inverse(coord),
+                    Direction::Forward => op.forward(coord),
                 }
             }
             Body::Between {
@@ -840,8 +881,8 @@ impl Proj {
                 bridge,
             } => {
                 let (source, target, bridge_way) = match way {
-                    Way::Inverse => (target, source, Way::Inverse),
-                    Way::Forward => (source, target, Way::Forward),
+                    Direction::Inverse => (target, source, Direction::Inverse),
+                    Direction::Forward => (source, target, Direction::Forward),
                 };
                 source.to_geodetic(x, y, z).and_then(|coord| {
                     apply_bridge(bridge.as_ref(), coord, bridge_way)
@@ -1053,10 +1094,22 @@ impl ProjBuilder {
     }
 }
 
-#[derive(Clone, Copy)]
-enum Way {
+/// Direction of a transform: [`Self::Forward`] is the source-to-target way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Direction {
+    /// From the source to the target, as [`Proj::convert`].
     Forward,
+    /// From the target back to the source, as [`Proj::project`] with `inverse`.
     Inverse,
+}
+
+impl Direction {
+    fn opposite(self) -> Self {
+        match self {
+            Self::Forward => Self::Inverse,
+            Self::Inverse => Self::Forward,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1109,7 +1162,12 @@ fn from_create(error: CreateError) -> ProjCreateError {
 }
 
 /// A sample point outside the domain still means the inverse exists.
-fn direction_exists(source: &Crs, target: &Crs, bridge: Option<&Operation>, way: Way) -> bool {
+fn direction_exists(
+    source: &Crs,
+    target: &Crs,
+    bridge: Option<&Operation>,
+    way: Direction,
+) -> bool {
     !matches!(
         source.to_geodetic(0.0, 0.0, 0.0).and_then(|coord| {
             apply_bridge(bridge, coord, way).and_then(|coord| target.geodetic_out(coord))
@@ -1118,12 +1176,16 @@ fn direction_exists(source: &Crs, target: &Crs, bridge: Option<&Operation>, way:
     )
 }
 
-fn apply_bridge(bridge: Option<&Operation>, coord: Xyzt, way: Way) -> Result<Xyzt, StepError> {
+fn apply_bridge(
+    bridge: Option<&Operation>,
+    coord: Xyzt,
+    way: Direction,
+) -> Result<Xyzt, StepError> {
     let Some(bridge) = bridge else {
         return Ok(coord);
     };
     match way {
-        Way::Inverse => bridge.inverse(coord),
-        Way::Forward => bridge.forward(coord),
+        Direction::Inverse => bridge.inverse(coord),
+        Direction::Forward => bridge.forward(coord),
     }
 }

@@ -5,9 +5,9 @@
 
 use proj_rs::{
     AlternativeGridNames, AuthorityFactory, BoundCRS, CartesianCS, Conversion, CoordinateOperation,
-    CoordinateSystem, Crs, DatabaseContext, Datum, DeprecatedCodes, DerivedProjectedCRS,
+    CoordinateSystem, Crs, DatabaseContext, Datum, DeprecatedCodes, DerivedProjectedCRS, Direction,
     EllipsoidalHeightPolicy, FactoryError, GeodeticCRS, GeographicCRS, LinunitPolicy, ObjectDomain,
-    ObjectType, OpProps, OperationParameter, OutputAxisRule, ParameterValue, PrimeMeridian,
+    ObjectType, OpProps, OperationParameter, OutputAxisRule, ParameterValue, PrimeMeridian, Proj,
     ProjectedCRS, Transformation, UnitOfMeasure, WktConvention, WktDialect, WktFormatter, WktLines,
     WktObject, WktParser, WktStrictness,
 };
@@ -1073,4 +1073,429 @@ impl BodyOfDatum for Datum {
             Self::Engineering(_) => None,
         }
     }
+}
+
+fn near(got: f64, expect: f64, tol: f64) {
+    assert!((got - expect).abs() <= tol, "{got} vs {expect} (tol {tol})");
+}
+
+#[test]
+fn c_api_proj_trans_bounds_antimeridian_xy() {
+    let proj = Proj::new_known_crs("EPSG:4167", "EPSG:3851", None).expect("pair");
+    let [left, bottom, right, top] = proj
+        .transform_bounds_in(Direction::Forward, 160.6, -55.95, -171.2, -25.88, 21)
+        .expect("forward");
+    near(left, 1_722_483.900_174_921, 1.0);
+    near(bottom, 5_228_058.614_342_093_5, 1.0);
+    near(right, 4_624_385.494_808_555, 1.0);
+    near(top, 8_692_574.544_944_234, 1.0);
+    let [left, bottom, right, top] = proj
+        .transform_bounds_in(
+            Direction::Inverse,
+            1_722_483.900_174_921,
+            5_228_058.614_342_093_5,
+            4_624_385.494_808_555,
+            8_692_574.544_944_234,
+            21,
+        )
+        .expect("inverse");
+    near(left, 153.2799922, 1.0);
+    near(bottom, -56.7471249, 1.0);
+    near(right, -162.1813873, 1.0);
+    near(top, -24.6148194, 1.0);
+}
+
+#[test]
+fn c_api_proj_trans_bounds_antimeridian() {
+    let proj = Proj::new_known_crs("EPSG:4167", "EPSG:3851", None).expect("pair");
+    let [left, bottom, right, top] = proj
+        .transform_bounds_in(Direction::Forward, 160.6, -55.95, -171.2, -25.88, 21)
+        .expect("forward");
+    near(left, 1_722_483.900_174_921, 1.0);
+    near(bottom, 5_228_058.614_342_093_5, 1.0);
+    near(right, 4_624_385.494_808_555, 1.0);
+    near(top, 8_692_574.544_944_234, 1.0);
+    let [left, bottom, right, top] = proj
+        .transform_bounds_in(
+            Direction::Inverse,
+            1_722_483.900_174_921,
+            5_228_058.614_342_093_5,
+            4_624_385.494_808_555,
+            8_692_574.544_944_234,
+            21,
+        )
+        .expect("inverse");
+    near(left, 153.2799922, 1.0);
+    near(bottom, -56.7471249, 1.0);
+    near(right, -162.1813873, 1.0);
+    near(top, -24.6148194, 1.0);
+}
+
+#[test]
+fn c_api_proj_trans_bounds_beyond_global_bounds() {
+    let proj = Proj::new_known_crs("EPSG:6933", "EPSG:4326", None).expect("pair");
+    let [left, bottom, right, top] = proj
+        .transform_bounds_in(
+            Direction::Forward,
+            -17_367_531.320_312_5,
+            -7_314_541.199_218_75,
+            17_367_531.320_312_5,
+            7_314_541.199_218_75,
+            21,
+        )
+        .expect("forward");
+    near(left, -180.0, 1.0);
+    near(bottom, -85.044_599_411_309_9, 1.0);
+    near(right, 180.0, 1.0);
+    near(top, 85.044_599_411_309_9, 1.0);
+}
+
+#[test]
+fn c_api_proj_trans_bounds_noop_geographic() {
+    let proj = Proj::new_known_crs("EPSG:4284", "EPSG:4284", None).expect("pair");
+    let [left, bottom, right, top] = proj
+        .transform_bounds_in(Direction::Forward, 19.57, 35.14, -168.97, 81.91, 21)
+        .expect("forward");
+    near(left, 19.57, 1.0);
+    near(bottom, 35.14, 1.0);
+    near(right, -168.97, 1.0);
+    near(top, 81.91, 1.0);
+}
+
+#[test]
+fn c_api_proj_trans_bounds_north_pole_xy() {
+    let proj = Proj::new_known_crs("EPSG:32661", "EPSG:4326", None).expect("pair");
+    let [left, bottom, right, top] = proj
+        .transform_bounds_in(
+            Direction::Forward,
+            -1_371_213.762_542_935_6,
+            -1_405_880.717_371_31,
+            5_371_213.762_542_935,
+            5_405_880.717_371_31,
+            21,
+        )
+        .expect("forward");
+    near(left, -180.0, 1.0);
+    near(bottom, 48.656, 1.0);
+    near(right, 180.0, 1.0);
+    near(top, 90.0, 1.0);
+    let [left, bottom, right, top] = proj
+        .transform_bounds_in(Direction::Inverse, -180.0, 60.0, 180.0, 90.0, 21)
+        .expect("inverse");
+    near(left, -1_371_213.76, 1.0);
+    near(bottom, -1_405_880.72, 1.0);
+    near(right, 5_371_213.76, 1.0);
+    near(top, 5_405_880.72, 1.0);
+}
+
+#[test]
+fn c_api_proj_trans_bounds_north_pole() {
+    let proj = Proj::new_known_crs("EPSG:32661", "EPSG:4326", None).expect("pair");
+    let [left, bottom, right, top] = proj
+        .transform_bounds_in(
+            Direction::Forward,
+            -1_371_213.762_542_935_6,
+            -1_405_880.717_371_31,
+            5_371_213.762_542_935,
+            5_405_880.717_371_31,
+            21,
+        )
+        .expect("forward");
+    near(left, -180.0, 1.0);
+    near(bottom, 48.656, 1.0);
+    near(right, 180.0, 1.0);
+    near(top, 90.0, 1.0);
+    let [left, bottom, right, top] = proj
+        .transform_bounds_in(Direction::Inverse, -180.0, 60.0, 180.0, 90.0, 21)
+        .expect("inverse");
+    near(left, -1_371_213.76, 1.0);
+    near(bottom, -1_405_880.72, 1.0);
+    near(right, 5_371_213.76, 1.0);
+    near(top, 5_405_880.72, 1.0);
+}
+
+#[test]
+fn c_api_proj_trans_bounds_south_pole_xy() {
+    let proj = Proj::new_known_crs("EPSG:32761", "EPSG:4326", None).expect("pair");
+    let [left, bottom, right, top] = proj
+        .transform_bounds_in(
+            Direction::Forward,
+            -1_371_213.762_542_935_6,
+            -1_405_880.717_371_31,
+            5_371_213.762_542_935,
+            5_405_880.717_371_31,
+            21,
+        )
+        .expect("forward");
+    near(left, -180.0, 1.0);
+    near(bottom, -90.0, 1.0);
+    near(right, 180.0, 1.0);
+    near(top, -48.656, 1.0);
+    let [left, bottom, right, top] = proj
+        .transform_bounds_in(Direction::Inverse, -180.0, -90.0, 180.0, -60.0, 21)
+        .expect("inverse");
+    near(left, -1_371_213.76, 1.0);
+    near(bottom, -1_405_880.72, 1.0);
+    near(right, 5_371_213.76, 1.0);
+    near(top, 5_405_880.72, 1.0);
+}
+
+#[test]
+fn c_api_proj_trans_bounds_south_pole() {
+    let proj = Proj::new_known_crs("EPSG:32761", "EPSG:4326", None).expect("pair");
+    let [left, bottom, right, top] = proj
+        .transform_bounds_in(
+            Direction::Forward,
+            -1_371_213.762_542_935_6,
+            -1_405_880.717_371_31,
+            5_371_213.762_542_935,
+            5_405_880.717_371_31,
+            21,
+        )
+        .expect("forward");
+    near(left, -180.0, 1.0);
+    near(bottom, -90.0, 1.0);
+    near(right, 180.0, 1.0);
+    near(top, -48.656, 1.0);
+    let [left, bottom, right, top] = proj
+        .transform_bounds_in(Direction::Inverse, -180.0, -90.0, 180.0, -60.0, 21)
+        .expect("inverse");
+    near(left, -1_371_213.76, 1.0);
+    near(bottom, -1_405_880.72, 1.0);
+    near(right, 5_371_213.76, 1.0);
+    near(top, 5_405_880.72, 1.0);
+}
+
+#[test]
+fn c_api_proj_trans_bounds_from_pipeline_lon_lat_to_x_y() {
+    let proj = Proj::new(
+        "+proj=pipeline +step +proj=unitconvert +xy_in=deg +xy_out=rad +step \
+         +proj=push +v_3 +step +proj=cart +ellps=WGS84 +step +inv \
+         +proj=helmert +x=2.329 +y=-147.042 +z=-92.08 +rx=0.309 +ry=-0.325 \
+         +rz=-0.497 +s=5.69 +convention=coordinate_frame +step +inv +proj=cart \
+         +ellps=krass +step +proj=pop +v_3 +step +proj=sterea +lat_0=46 \
+         +lon_0=25 +k=0.99975 +x_0=500000 +y_0=500000 +ellps=krass",
+    )
+    .expect("pipeline");
+    let [left, bottom, right, top] = proj
+        .transform_bounds_in(Direction::Inverse, 4e5, 4e5, 4.5e5, 4.5e5, 21)
+        .expect("inverse");
+    near(left, 23.717708, 1e-6);
+    near(bottom, 45.092624, 1e-6);
+    near(right, 24.363125, 1e-6);
+    near(top, 45.547942, 1e-6);
+    let [left, bottom, right, top] = proj
+        .transform_bounds_in(
+            Direction::Forward,
+            23.717708,
+            45.092624,
+            24.363125,
+            45.547942,
+            21,
+        )
+        .expect("forward");
+    near(left, 4e5, 1e3);
+    near(bottom, 4e5, 1e3);
+    near(right, 4.5e5, 1e3);
+    near(top, 4.5e5, 1e3);
+}
+
+#[test]
+fn c_api_proj_trans_bounds_from_pipeline_lat_lon_to_x_y() {
+    let proj = Proj::new(
+        "+proj=pipeline +step +proj=axisswap +order=2,1 +step \
+         +proj=unitconvert +xy_in=deg +xy_out=rad +step +proj=push +v_3 +step \
+         +proj=cart +ellps=WGS84 +step +inv +proj=helmert +x=2.329 +y=-147.042 \
+         +z=-92.08 +rx=0.309 +ry=-0.325 +rz=-0.497 +s=5.69 \
+         +convention=coordinate_frame +step +inv +proj=cart +ellps=krass +step \
+         +proj=pop +v_3 +step +proj=sterea +lat_0=46 +lon_0=25 +k=0.99975 \
+         +x_0=500000 +y_0=500000 +ellps=krass +step +proj=axisswap +order=2,1",
+    )
+    .expect("pipeline");
+    let [left, bottom, right, top] = proj
+        .transform_bounds_in(Direction::Inverse, 4e5, 4e5, 4.5e5, 4.5e5, 21)
+        .expect("inverse");
+    near(left, 45.092624, 1e-6);
+    near(bottom, 23.717708, 1e-6);
+    near(right, 45.547942, 1e-6);
+    near(top, 24.363125, 1e-6);
+    let [left, bottom, right, top] = proj
+        .transform_bounds_in(
+            Direction::Forward,
+            45.092624,
+            23.717708,
+            45.547942,
+            24.363125,
+            21,
+        )
+        .expect("forward");
+    near(left, 4e5, 1e3);
+    near(bottom, 4e5, 1e3);
+    near(right, 4.5e5, 1e3);
+    near(top, 4.5e5, 1e3);
+}
+
+#[test]
+fn c_api_proj_trans_bounds_from_pipeline_x_y_to_lon_lat() {
+    let proj = Proj::new(
+        "+proj=pipeline +step +inv +proj=sterea +lat_0=46 +lon_0=25 +k=0.99975 \
+         +x_0=500000 +y_0=500000 +ellps=krass +step +proj=push +v_3 +step \
+         +proj=cart +ellps=krass +step +proj=helmert +x=2.329 +y=-147.042 \
+         +z=-92.08 +rx=0.309 +ry=-0.325 +rz=-0.497 +s=5.69 \
+         +convention=coordinate_frame +step +inv +proj=cart +ellps=WGS84 +step \
+         +proj=pop +v_3 +step +proj=unitconvert +xy_in=rad +xy_out=deg",
+    )
+    .expect("pipeline");
+    let [left, bottom, right, top] = proj
+        .transform_bounds_in(Direction::Forward, 4e5, 4e5, 4.5e5, 4.5e5, 21)
+        .expect("forward");
+    near(left, 23.717708, 1e-6);
+    near(bottom, 45.092624, 1e-6);
+    near(right, 24.363125, 1e-6);
+    near(top, 45.547942, 1e-6);
+    let [left, bottom, right, top] = proj
+        .transform_bounds_in(
+            Direction::Inverse,
+            23.717708,
+            45.092624,
+            24.363125,
+            45.547942,
+            21,
+        )
+        .expect("inverse");
+    near(left, 4e5, 1e3);
+    near(bottom, 4e5, 1e3);
+    near(right, 4.5e5, 1e3);
+    near(top, 4.5e5, 1e3);
+}
+
+#[test]
+fn c_api_proj_trans_bounds_from_pipeline_x_y_to_lat_lon() {
+    let proj = Proj::new(
+        "+proj=pipeline +step +proj=axisswap +order=2,1 +step +inv \
+         +proj=sterea +lat_0=46 +lon_0=25 +k=0.99975 +x_0=500000 +y_0=500000 \
+         +ellps=krass +step +proj=push +v_3 +step +proj=cart +ellps=krass \
+         +step +proj=helmert +x=2.329 +y=-147.042 +z=-92.08 +rx=0.309 \
+         +ry=-0.325 +rz=-0.497 +s=5.69 +convention=coordinate_frame +step +inv \
+         +proj=cart +ellps=WGS84 +step +proj=pop +v_3 +step +proj=unitconvert \
+         +xy_in=rad +xy_out=deg +step +proj=axisswap +order=2,1",
+    )
+    .expect("pipeline");
+    let [left, bottom, right, top] = proj
+        .transform_bounds_in(Direction::Forward, 4e5, 4e5, 4.5e5, 4.5e5, 21)
+        .expect("forward");
+    near(left, 45.092624, 1e-6);
+    near(bottom, 23.717708, 1e-6);
+    near(right, 45.547942, 1e-6);
+    near(top, 24.363125, 1e-6);
+    let [left, bottom, right, top] = proj
+        .transform_bounds_in(
+            Direction::Inverse,
+            45.092624,
+            23.717708,
+            45.547942,
+            24.363125,
+            21,
+        )
+        .expect("inverse");
+    near(left, 4e5, 1e3);
+    near(bottom, 4e5, 1e3);
+    near(right, 4.5e5, 1e3);
+    near(top, 4.5e5, 1e3);
+}
+
+#[test]
+fn c_api_proj_trans_bounds_3d_densify_0_geog3d_to_proj2d() {
+    let proj = Proj::new_known_crs(
+        "EPSG:4979",
+        "+proj=laea +lat_0=45 +lon_0=-100 +x_0=0 +y_0=0 +a=6370997 +b=6370997 +units=m +no_defs",
+        None,
+    )
+    .expect("pair");
+    let (min, max) = proj
+        .transform_bounds_3d(
+            Direction::Forward,
+            [-120.0, 40.0, 0.0],
+            [-80.0, 64.0, 100.0],
+            0,
+        )
+        .expect("3D");
+    near(min[0], -1_684_649.413_38, 1.0);
+    near(min[1], -350_356.813_77, 1.0);
+    near(max[0], 1_684_649.413_38, 1.0);
+    near(max[1], 2_234_551.185_59, 1.0);
+    assert_eq!(min[2], 0.0);
+    assert_eq!(max[2], 100.0);
+}
+
+#[test]
+fn c_api_proj_trans_bounds_3d_noop() {
+    let proj = Proj::new_known_crs("EPSG:4979", "EPSG:4979", None).expect("pair");
+    let (min, max) = proj
+        .transform_bounds_3d(
+            Direction::Forward,
+            [-120.0, 40.0, 0.0],
+            [-80.0, 64.0, 100.0],
+            0,
+        )
+        .expect("3D");
+    assert_eq!(min[0], -120.0);
+    assert_eq!(min[1], 40.0);
+    assert_eq!(max[0], -80.0);
+    assert_eq!(max[1], 64.0);
+    assert_eq!(min[2], 0.0);
+    assert_eq!(max[2], 100.0);
+}
+
+#[test]
+fn c_api_proj_trans_bounds_3d_inverse_of_geog3d_to_geocentric() {
+    let proj = Proj::new_known_crs("EPSG:4978", "EPSG:4979", None).expect("pair");
+    let (min, max) = proj
+        .transform_bounds_3d(Direction::Inverse, [2.0, 49.0, 0.0], [3.0, 50.0, 100.0], 0)
+        .expect("3D");
+    near(min[0], 4_102_234.41, 1.0);
+    near(max[0], 4_189_946.59, 1.0);
+    near(min[1], 143_362.39, 1.0);
+    near(max[1], 219_418.53, 1.0);
+    near(min[2], 4_790_558.75, 1.0);
+    near(max[2], 4_862_865.64, 1.0);
+}
+
+#[test]
+fn c_api_proj_trans_bounds_3d_geocentric_to_geog3d() {
+    let proj = Proj::new_known_crs("EPSG:4978", "EPSG:4979", None).expect("pair");
+    let (min, max) = proj
+        .transform_bounds_3d(
+            Direction::Forward,
+            [4_102_234.41, 143_362.39, 4_790_558.75],
+            [4_189_946.59, 219_418.53, 4_862_865.64],
+            2,
+        )
+        .expect("3D");
+    near(min[0], 2.0, 0.15);
+    near(min[1], 49.0, 0.15);
+    near(max[0], 3.0, 0.15);
+    near(max[1], 50.0, 0.15);
+    near(min[2], -57_187.0, 1.0);
+    near(max[2], 56_862.2, 1.0);
+}
+
+#[test]
+fn c_api_proj_trans_bounds_3d_geocentric_to_geog2d_lon_lat_ordered() {
+    let proj = Proj::new_known_crs("EPSG:4978", "+proj=longlat +datum=WGS84 +type=crs", None)
+        .expect("pair");
+    let (min, max) = proj
+        .transform_bounds_3d(
+            Direction::Forward,
+            [4_102_234.41, 143_362.39, 4_790_558.75],
+            [4_189_946.59, 219_418.53, 4_862_865.64],
+            2,
+        )
+        .expect("3D");
+    near(min[0], 2.0, 0.15);
+    near(min[1], 49.0, 0.15);
+    near(max[0], 3.0, 0.15);
+    near(max[1], 50.0, 0.15);
+    near(min[2], -57_187.0, 1.0);
+    near(max[2], 56_862.2, 1.0);
 }
