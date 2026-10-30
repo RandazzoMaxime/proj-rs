@@ -9,7 +9,6 @@ PROJ 9.9.0 sources: `test/unit` and `test/cli`. The Rust tests call `Operation` 
 A case is not executed, and is listed in `docs/UNPORTED-CLI.md`, when:
 
 - the executable is `proj`, `geod`, `gie`, or `projsync` (no such binary);
-- the executable is `projinfo` (WKT export is not built);
 - it needs a flag, an input file, DMS input, a third axis, `+pm` / `+geoc`, an authority other than `EPSG:`, grad CRS `EPSG:4807`, stderr text, or a non-zero status.
 
 `test_proj.yaml` is entirely in that list.

@@ -1,22 +1,60 @@
 # projinfo
 
-New files:
+The binary is the Cargo target `projinfo` (`src/bin/projinfo.rs`). It reads the
+embedded `data/proj.db` through the library's ISO 19111 layer.
 
-- `src/bin/projinfo.rs`
-- `PORT-NOTES-projinfo.md`
+## How it describes an object
 
-The binary is the Cargo target `projinfo`. It reads the embedded `data/proj.db` (already in the tree; not a new file). `src/lib.rs` is unchanged.
+`projinfo <object>` calls `create_from_user_input` (the same entry point as
+`projinfo_lib.cpp`), then renders the requested formats with the library:
 
-Covered, for a geographic EPSG code the database can describe (checked against PROJ 9.9.0 `test/cli/test_projinfo.yaml` for EPSG:4326):
+| `-o` value | Library call |
+|---|---|
+| default, `PROJ` | `Crs::export_to_proj_string` |
+| `WKT2:2019`, `WKT2_2019` | `Crs::export_to_wkt` with `WktConvention::Wkt2_2019` |
+| `WKT2:2015`, `WKT2_2015` | `Crs::export_to_wkt` with `WktConvention::Wkt2_2015` |
+| `WKT1:GDAL`, `WKT1:ESRI` | `Crs::export_to_wkt` with the WKT1 conventions |
+| `PROJJSON` | `Crs::export_to_json` |
+| `all` | every format above, in PROJ's order |
 
-- `--version` prints `projinfo: Rel. 9.9.0, September 15th, 2026`
-- no `-o`, or `-o default`: PROJ string and WKT2:2019
-- `-o PROJ`
-- `-o WKT2:2019` (also `WKT2_2019`, `WKT2-2019`, and the WKT2:2018 aliases)
-- `-o PROJJSON`
+A deprecated object prints `Warning: object is deprecated` first.
+`-o SQL` and the simplified WKT forms exit 1 with `cannot write dialect ...`.
 
-`-o` values this port does not write (`WKT1:GDAL`, `WKT1:ESRI`, `WKT2:2015`, simplified WKT, `SQL`, `all`, `WKT_ALL`) exit 1 with `cannot write dialect ...`. An unknown `-o` token is an unrecognized value.
+## Library fixes this lot needed (`src/iso19111/`)
 
-Not built: CRS pairs (`-s`/`-t`), name lookup, WKT1, WKT2:2015, SQL, operations, grids, completion, and non-geographic objects. A projected or vertical code is an error, not a guessed coordinate.
+- `Crs::export_to_proj_string` (`projstring.rs`): one entry point for geographic,
+  geocentric, and projected CRS. It did not exist for the `Crs` enum.
+- `ENSEMBLEACCURACY` and the PROJJSON `accuracy` are the text stored in `proj.db`:
+  `2.0`, not `2`. The text is read with `CAST(... AS TEXT)`, because the
+  column is REAL and a Rust `f64` drops the `.0`. A built ensemble keeps the
+  number formatting (`100`), as PROJ does for a number it was given.
+- PROJJSON ensembles: members are `name` and `id` only; the ensemble carries an
+  `ellipsoid` without an `id`; `accuracy` is a string; the axis `unit` is a name
+  for `degree` and `metre`, an object otherwise; a CRS writes its first usage as
+  `scope`, `area`, and `bbox`.
 
-C++ read first: `src/apps/projinfo.cpp`, `src/apps/projinfo_lib.cpp`, and the WKT/JSON exporters under `src/iso19111/` (`crs.cpp`, `datum.cpp`, `coordinatesystem.cpp`, `common.cpp`, `io.cpp`, `factory.cpp`). EPSG:4326 still uses extent 1262 (`World.`) rather than the later country-list extent, as `AuthorityFactory` does.
+## Covered by the yaml suite
+
+`tests/cli_yaml/test_projinfo.yaml`: 16 of 111 cases match
+(`docs/UNPORTED-CLI.md` lists the other 95, with the reason for each).
+
+## Not built yet, by family
+
+- **Name lookup**: `NAD27`, `WGS 84 + EGM96 height`, `KKJ`, `GDA94`, and other
+  object names. `create_from_user_input` only takes codes, PROJ strings, WKT,
+  and PROJJSON. PROJ also searches the names.
+- **Operation search** (`-s` / `-t`): the candidate list and its per-operation
+  output. The factory exists (`CoordinateOperationFactory::create_operations`);
+  the formatting, the `--spatial-test`, `--area`, `--bbox`, and `--summary`
+  options, and PROJ's ordering are not all matched yet.
+- **`--list-crs`** with its filters (`--area`, `--bbox`, types), and `-k`
+  (`ellipsoid`, `datum`, `ensemble`, `operation`).
+- **Implicit compounds** written with `+` (`EPSG:4326+3855`).
+- **Completion** (`projinfo completion ...`), `--dump-db-structure`,
+  `--searchpaths`, `--remote-data`.
+- **WKT1 input** without a `PRIMEM` node (`GEOGCS should have a PRIMEM node`).
+
+## Preserved quirks
+
+- `projinfo` writes exit 1 with the usage text on an unknown option, as PROJ does.
+- `Too many parameters: <arg>` names the third positional argument.

@@ -44,7 +44,7 @@ install.
 | Embedded `proj.db` and EPSG resolution | ✅ | Built from the PROJ 9.9.0 SQL, opened in memory with `rusqlite` |
 | ISO 19111 model, WKT and PROJJSON | 🟡 | CRS model, authority factory, CRS identification against `proj.db`, WKT1 and WKT2 import and export, PROJJSON. See [`docs/CRS-API.md`](docs/CRS-API.md) |
 | georust `proj` facade | 🟡 | `Proj`, `ProjBuilder`, `Coord`, `Transform`, `Area`, errors and the `geo-types` feature exist. georust's own tests are not run against it yet |
-| Command-line tools | 🟡 | `cct`, `cs2cs`, `proj`, `projinfo` over the library; 121 of 276 PROJ CLI cases match |
+| Command-line tools | 🟡 | `cct`, `cs2cs`, `proj`, `projinfo` over the library; 122 of 276 PROJ CLI cases match |
 | SIMD batch path | ✅ | AVX2 on x86-64. Other targets run the scalar loop |
 
 ✅ done and verified &nbsp;·&nbsp; 🟡 working, with known gaps listed below
@@ -129,7 +129,7 @@ The same goes for the CLI cases in [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md
 | `cct` CLI cases | 18 | 0 | ✅ |
 | `cs2cs` CLI cases | 86 | 57 | 🟡 |
 | `proj` CLI cases | 2 | 2 | 🟡 |
-| `projinfo` CLI cases | 15 | 96 | 🔴 |
+| `projinfo` CLI cases | 16 | 95 | 🔴 |
 
 ✅ complete &nbsp;·&nbsp; 🟡 partial &nbsp;·&nbsp; 🔴 mostly open
 

@@ -1161,7 +1161,10 @@ fn export_ensemble(ensemble: &DatumEnsemble, formatter: &mut WktFormatter) {
         export_ellipsoid(frame.ellipsoid(), formatter);
     }
     formatter.start_node("ENSEMBLEACCURACY", NodeId::Absent);
-    formatter.add_number(ensemble.accuracy);
+    match &ensemble.accuracy_text {
+        Some(text) => formatter.add_raw(text),
+        None => formatter.add_number(ensemble.accuracy),
+    }
     formatter.end_node();
     formatter.format_ids(&ensemble.identified.identifiers);
     formatter.end_node();

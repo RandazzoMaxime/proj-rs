@@ -64,6 +64,23 @@ impl ProjectedCRS {
 }
 
 impl Crs {
+    /// `exportToPROJString` for the CRS kinds PROJ writes as one string: geographic,
+    /// geocentric, and projected.
+    ///
+    /// # Errors
+    ///
+    /// Any other kind, or a CRS whose parts cannot be written as PROJ text.
+    pub fn export_to_proj_string(&self) -> Result<String, FactoryError> {
+        match self {
+            Self::Geographic(crs) => Ok(crs.export_to_proj_string()),
+            Self::Geodetic(crs) => crs.export_to_proj_string(),
+            Self::Projected(crs) => crs.export_to_proj_string(),
+            _ => Err(FactoryError::Format(
+                "this CRS kind has no PROJ string export".to_owned(),
+            )),
+        }
+    }
+
     /// `normalizeForVisualization` for a geographic or projected CRS.
     #[must_use]
     pub fn normalize_for_visualization(&self) -> Self {

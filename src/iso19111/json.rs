@@ -204,8 +204,42 @@ fn write_geographic(
     }
     writer.key("coordinate_system");
     write_ellipsoidal_cs(writer, crs.coordinate_system());
+    write_domain(writer, crs.domains());
     write_id(writer, crs.identifiers(), db);
     Ok(())
+}
+
+/// The first usage, as PROJ writes it: scope, area, and bounding box.
+fn write_domain(writer: &mut Writer, domains: &[super::model::ObjectDomain]) {
+    let Some(domain) = domains.first() else {
+        return;
+    };
+    if let Some(scope) = domain.scope() {
+        writer.key("scope");
+        writer.string(scope);
+    }
+    if let Some(area) = domain.area() {
+        writer.key("area");
+        writer.string(area);
+    }
+    if let (Some(south), Some(west), Some(north), Some(east)) = (
+        domain.south_bound_latitude(),
+        domain.west_bound_longitude(),
+        domain.north_bound_latitude(),
+        domain.east_bound_longitude(),
+    ) {
+        writer.key("bbox");
+        writer.start_object();
+        writer.key("south_latitude");
+        writer.number(south);
+        writer.key("west_longitude");
+        writer.number(west);
+        writer.key("north_latitude");
+        writer.number(north);
+        writer.key("east_longitude");
+        writer.number(east);
+        writer.end_object();
+    }
 }
 
 fn write_datum(writer: &mut Writer, datum: &GeodeticReferenceFrame, db: &DatabaseContext) {
@@ -230,12 +264,34 @@ fn write_ensemble(writer: &mut Writer, ensemble: &DatumEnsemble, db: &DatabaseCo
     writer.start_array();
     for member in ensemble.members() {
         if let super::model::Datum::Geodetic(frame) = member {
-            write_datum(writer, frame, db);
+            // PROJ writes an ensemble member as its name and id only.
+            writer.start_object();
+            writer.key("name");
+            writer.string(frame.name());
+            write_id(writer, frame.identifiers(), db);
+            writer.end_object();
         }
     }
     writer.end_array();
+    if let Some(super::model::Datum::Geodetic(frame)) = ensemble.members().first() {
+        // The ensemble's ellipsoid is written without an id.
+        let ellipsoid = frame.ellipsoid();
+        writer.key("ellipsoid");
+        writer.start_object();
+        writer.key("name");
+        writer.string(ellipsoid.name());
+        writer.key("semi_major_axis");
+        writer.number(ellipsoid.semi_major_axis().si_value());
+        writer.key("inverse_flattening");
+        writer.number(ellipsoid.inverse_flattening());
+        writer.end_object();
+    }
     writer.key("accuracy");
-    writer.number(ensemble.positional_accuracy());
+    // The accuracy is the text stored in proj.db, so a whole value reads "2.0".
+    match ensemble.accuracy_text.as_deref() {
+        Some(text) => writer.string(text),
+        None => writer.string(&super::wkt::format_g(ensemble.positional_accuracy(), 15)),
+    }
     write_id(writer, ensemble.identifiers(), db);
     writer.end_object();
 }
@@ -276,12 +332,17 @@ fn write_ellipsoidal_cs(writer: &mut Writer, cs: &EllipsoidalCS) {
         writer.key("direction");
         writer.string(axis.direction());
         writer.key("unit");
-        writer.start_object();
-        writer.key("name");
-        writer.string(axis.unit().name());
-        writer.key("conversion_factor");
-        writer.number(axis.unit().conversion_to_si());
-        writer.end_object();
+        // PROJ writes the two everyday units by name; any other unit as an object.
+        if matches!(axis.unit().name(), "degree" | "metre") {
+            writer.string(axis.unit().name());
+        } else {
+            writer.start_object();
+            writer.key("name");
+            writer.string(axis.unit().name());
+            writer.key("conversion_factor");
+            writer.number(axis.unit().conversion_to_si());
+            writer.end_object();
+        }
         writer.end_object();
     }
     writer.end_array();
