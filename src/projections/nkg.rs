@@ -7,9 +7,9 @@
 //! (`update_parameters`, approximate `build_rot_matrix`). The registry rows are
 //! `data/sql/nkg.sql`.
 //!
-//! A step that needs a grid, such as `+proj=deformation` or `+proj=xyzgridshift`
-//! or any `+grids=`, rejects the whole URN with `Unsupported("grid")`. The crate
-//! does not read grid files for NKG.
+//! A PROJ-string step, including `+proj=deformation` and `+proj=xyzgridshift`,
+//! is built when its grid file is on disk or fetchable with the network. A
+//! missing grid is `Unsupported("grid")`, never a coordinate.
 
 use crate::engine::{Coord, CreateError, Frame, IoKind, Operation, Params, Step, TransformError};
 use crate::helmert::{Helmert, HelmertConvention, HelmertParams};
@@ -639,13 +639,30 @@ fn read_other(connection: &Connection, auth: &str, code: &str) -> Result<Found, 
             Found::Unsupported("authority string")
         });
     };
+    if method_code.as_deref() == Some("PROJString") && method_auth.as_deref() == Some("PROJ") {
+        if !grids_available(&method_name) {
+            return Ok(Found::Grid);
+        }
+        return Ok(Found::Ready(vec![Link::Proj(Sense::Forward, method_name)]));
+    }
     if grid_name.is_some() || needs_grid(&method_name) {
         return Ok(Found::Grid);
     }
-    if method_code.as_deref() == Some("PROJString") && method_auth.as_deref() == Some("PROJ") {
-        return Ok(Found::Ready(vec![Link::Proj(Sense::Forward, method_name)]));
-    }
     Ok(Found::Unsupported("authority string"))
+}
+
+/// `false` when a required grid named by `+grids=`, `+xy_grids=`, or `+z_grids=`
+/// is neither on disk nor fetchable. Optional (`@`) grids never block.
+fn grids_available(definition: &str) -> bool {
+    definition
+        .split_whitespace()
+        .filter_map(|token| {
+            let (key, value) = token.trim_start_matches('+').split_once('=')?;
+            matches!(key, "grids" | "xy_grids" | "z_grids").then_some(value)
+        })
+        .flat_map(|value| value.split(','))
+        .filter(|name| !name.is_empty() && !name.starts_with('@'))
+        .all(crate::gridpath::available)
 }
 
 fn needs_grid(definition: &str) -> bool {

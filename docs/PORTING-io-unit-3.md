@@ -34,16 +34,20 @@ vérifier `needs_grid`. L'étape `+proj=deformation +grids=…` partait donc dan
 
 ### Correction
 
-- `read_other` vérifie `grid_name` et `needs_grid` avant la branche
-  `PROJString`. Le comportement change seulement pour les URN NKG qui exigent
-  une grille : l'erreur passe de `IllegalValue("file")` à `Unsupported("grid")`.
-- Le commentaire d'en-tête de `nkg.rs` décrit ce rejet, au lieu d'une lecture
-  de grille sur disque.
+- Une étape `PROJString` qui nomme une grille (`+grids=`, `+xy_grids=`,
+  `+z_grids=`) est construite si chaque grille requise (sans `@`) est présente
+  ou téléchargeable (`gridpath::available`). Sinon l'URN renvoie
+  `Unsupported("grid")`. Le contrôle est fait par `grids_available`, dans
+  `read_other`.
+- Ce contrôle était absent de l'état précédent. Le premier correctif refusait
+  toutes les URN à grille, même avec la grille présente. La CI `gie_run` avec
+  `PROJ_NETWORK=ON` a alors échoué : `nkg.gie` tombait de 33 à 0 cas réussis,
+  et le total de 6 856 à 6 823. Le correctif actuel rétablit ce compte.
 - Le test `urns_without_a_grid_build_and_grid_urns_are_refused` remplace le
   test ignoré. Il construit les 14 URN sans grille et vérifie que les 26 URN
-  avec grille renvoient `Unsupported("grid")`. Il n'utilise pas le réseau.
-- `tests/gie/nkg.gie` n'est pas modifié. Le runner gie ignore `Unsupported("grid")`,
-  donc son nombre de cas réussis ne change pas.
+  avec grille renvoient `Unsupported("grid")`. Il tourne hors réseau, comme
+  l'étape `cargo test --all-features` de la CI.
+- `tests/gie/nkg.gie` n'est pas modifié.
 
 ## 2. Géocentrique WKT
 
@@ -114,7 +118,9 @@ PATH=<proj-ref>/bin:$PATH PROJ_CS2CS_REQUIRED=1 \
   PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY=YES \
   cargo test --all-features --no-fail-fast                         # EXIT 0, 0 failed, 0 ignored
 #   tests/test_io.rs : 89 passed (84 avant)
-#   tests/gie_run.rs : 1 passed
+#   tests/gie_run.rs : 1 passed (hors réseau)
+PROJ_NETWORK=ON PROJ_USER_WRITABLE_DIRECTORY=<cache> \
+  cargo test --all-features --test gie_run -- --nocapture          # nkg.gie passed=33; total passed=6856
 ```
 
 Recompte du ledger `test_io.cpp` : 370 → 365. Total ouvert : 990 → 985. Portés
