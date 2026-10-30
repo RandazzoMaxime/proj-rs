@@ -37,6 +37,7 @@ From `test_c_api.cpp`, the cases that build a projection or pipeline this crate 
 - `proj_trans_bounds_densify_0`, `proj_trans_bounds_densify_100`, and `proj_trans_bounds_normalized` — Lambert azimuthal equal area via `Proj::transform_bounds`. This API is already longitude, latitude, so the normalized case is the same box.
 - `proj_trans_bounds_3d_geog3D_to_geocentric` — the eight corners through `+proj=cart`.
 - `proj_coordoperation_requires_per_coordinate_input_time` — a Helmert rate uses the epoch, a plain Helmert does not, deformation with `+t_epoch` and a NaN time fails, `+dt` does not report a missing time, and defmodel requires a finite time.
+- `proj_trans_bounds_*` (17 of the 22 `TEST()`s; the other five are blocked, see `docs/PORTING-c-api-unit.md`) — `Proj::transform_bounds_in` and `Proj::transform_bounds_3d`, the box walk of `trans_bounds.cpp`. The authority-order cases are read in the crate's longitude, latitude order; the expected numbers are the same.
 
 Every other `TEST()` name in `test_crs.cpp`, `test_factory.cpp`, `test_io.cpp`, `test_operation.cpp`, `test_operationfactory.cpp`, and `test_c_api.cpp` is in `docs/UNPORTED-UNIT.md`. Those tests assert WKT, PROJJSON, database identity, or ISO 19111 object structure. They do not become a coordinate, and this crate does not write WKT.
 

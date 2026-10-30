@@ -56,7 +56,8 @@ pub use engine::{
 };
 pub use ported::{bench_definition, PORTED};
 pub use proj::{
-    Area, Coord, CoordinateType, Info, Proj, ProjBuilder, ProjCreateError, ProjError, ProjInfo,
+    Area, Coord, CoordinateType, Direction, Info, Proj, ProjBuilder, ProjCreateError, ProjError,
+    ProjInfo,
 };
 pub use transform::{Transform, TransformError};
 
