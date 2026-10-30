@@ -1635,6 +1635,23 @@ fn assemble(
     let mut steps = Vec::new();
     let src_geocentric = matches!(src.horizontal, Horizontal::Geocentric);
     let dst_geocentric = matches!(dst.horizontal, Horizontal::Geocentric);
+    if let Some(DatumStep::HorizontalGrid(step)) = &datum {
+        if src_geocentric {
+            steps.push(cart_step(CartSense::Inverse, &src.earth));
+        } else {
+            push_to_angular(&mut steps, src);
+        }
+        steps.push(step.clone());
+        if dst_geocentric {
+            steps.push(cart_step(CartSense::Forward, &dst.earth));
+        } else {
+            if let Some(vertical) = vertical {
+                steps.push(vertical);
+            }
+            push_from_angular(&mut steps, dst);
+        }
+        return steps;
+    }
     if !src_geocentric {
         push_to_angular(&mut steps, src);
     }
@@ -1657,9 +1674,6 @@ fn assemble(
             push_from_angular(&mut steps, dst);
         }
     } else {
-        if let Some(DatumStep::HorizontalGrid(step)) = datum {
-            steps.push(step);
-        }
         if let Some(vertical) = vertical {
             steps.push(vertical);
         }
@@ -1797,6 +1811,7 @@ fn require_bridge(
         &allowed,
     )?);
     let blockers = blockers_of(connection, &from_datums, &to_datums, &allowed)?;
+    let grid_missing = blockers.iter().any(|blocker| blocker.grid);
     let choice = choices.into_iter().min_by(|left, right| {
         left.accuracy
             .total_cmp(&right.accuracy)
@@ -1804,24 +1819,23 @@ fn require_bridge(
     });
     let blocker = blockers
         .into_iter()
+        .filter(|blocker| !blocker.grid)
         .min_by(|left, right| left.accuracy.total_cmp(&right.accuracy));
     let choice_accuracy = choice.as_ref().map(|item| item.accuracy);
     if let Some(blocker) = blocker {
         let wins = choice_accuracy.is_none_or(|accuracy| blocker.accuracy < accuracy);
         if wins {
-            return Err(unsupported(if blocker.grid {
-                "grid step".to_owned()
-            } else {
-                "method is not built".to_owned()
-            }));
+            return Err(unsupported("method is not built".to_owned()));
         }
     }
-    choice.map(|item| item.step).ok_or_else(|| {
-        unsupported(format!(
+    match choice {
+        Some(item) => Ok(item.step),
+        None if grid_missing => Err(unsupported("grid step".to_owned())),
+        None => Err(unsupported(format!(
             "EPSG datum {} to {} needs a grid, a deformation model, or a method this crate does not build",
             from.datum_code, to.datum_code
-        ))
-    })
+        ))),
+    }
 }
 
 fn horizontal_grids(
@@ -2578,7 +2592,7 @@ fn safe_ident(name: &str) -> bool {
 #[cfg(test)]
 mod epsg_pipeline_tests {
     use super::epsg_pipeline;
-    use crate::engine::{Coord, CreateError, Operation};
+    use crate::engine::{Coord, Operation};
 
     fn forward(source: &str, target: &str, coord: Coord) -> (String, Coord) {
         let (definition, _) = epsg_pipeline(source, target).unwrap_or_else(|error| {
@@ -2654,8 +2668,13 @@ mod epsg_pipeline_tests {
     }
 
     #[test]
-    fn nad_grid_is_not_a_coordinate() {
-        let error = epsg_pipeline("EPSG:4267", "EPSG:4269").expect_err("nad");
-        assert!(matches!(error, CreateError::Unsupported("grid")), "{error}");
+    fn nad_grid_resolves_through_its_old_name() {
+        // `us_noaa_conus.tif` is written `conus` in the fixtures. PROJ opens it
+        // by that old name (`getOldProjGridName`), so the grid is available.
+        let (definition, _) = epsg_pipeline("EPSG:4267", "EPSG:4269").expect("nad");
+        assert!(
+            definition.contains("+proj=hgridshift +grids=us_noaa_conus.tif"),
+            "{definition}"
+        );
     }
 }

@@ -7,20 +7,26 @@
 
 use std::path::{Path, PathBuf};
 
-pub(crate) fn directories() -> [PathBuf; 4] {
+/// The fixture directories are searched only when `PROJ_DATA` is unset. A
+/// run that names its own data directory must not find a grid the vendored
+/// fixtures add, or the grid-missing cases would succeed.
+pub(crate) fn directories() -> Vec<PathBuf> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    [
-        root.join("data").join("grids"),
-        root.join("tests").join("gie").join("tests"),
-        root.join("data").join("tests"),
-        root.join("tests").join("gie"),
-    ]
+    let mut dirs = vec![root.join("data").join("grids")];
+    if std::env::var_os("PROJ_DATA").is_none_or(|value| value.is_empty()) {
+        dirs.extend([
+            root.join("tests").join("gie").join("tests"),
+            root.join("data").join("tests"),
+            root.join("tests").join("gie"),
+        ]);
+    }
+    dirs
 }
 
 /// First existing file for `name`, including a `grid_alternatives` rename.
 pub(crate) fn resolve(name: &str) -> Option<PathBuf> {
     locate(name).or_else(|| {
-        let alternate = crate::network::proj_grid_filename(name)?;
+        let alternate = crate::network::grid_alternate(name)?;
         if alternate == name {
             None
         } else {
@@ -68,7 +74,7 @@ fn locate(name: &str) -> Option<PathBuf> {
 }
 
 fn search_directories() -> Vec<PathBuf> {
-    let mut dirs = Vec::from(directories());
+    let mut dirs = directories();
     dirs.extend(crate::network::search_paths());
     if let Some(cache) = crate::network::cache_dir_if_enabled() {
         dirs.push(cache);

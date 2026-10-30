@@ -65,8 +65,18 @@ pub(crate) fn fetch_missing(name: &str) -> Option<Vec<u8>> {
     Some(bytes)
 }
 
+/// The name PROJ retries a missing grid with: `getProjGridName` for a short
+/// name, `getOldProjGridName` for a `.tif` name, as `open_resource_file` does.
+pub(crate) fn grid_alternate(name: &str) -> Option<String> {
+    if name.contains(".tif") {
+        old_grid_filename(name)
+    } else {
+        proj_grid_filename(name)
+    }
+}
+
 /// `proj_grid_name` for an old short name such as `alaska`.
-pub(crate) fn proj_grid_filename(name: &str) -> Option<String> {
+fn proj_grid_filename(name: &str) -> Option<String> {
     if !bare_short_name(name) {
         return None;
     }
@@ -74,6 +84,23 @@ pub(crate) fn proj_grid_filename(name: &str) -> Option<String> {
         connection.query_row(
             "SELECT proj_grid_name FROM grid_alternatives \
              WHERE old_proj_grid_name = ?1 AND proj_grid_name <> ''",
+            [name],
+            |row| row.get(0),
+        )
+    })
+    .ok()
+}
+
+/// The official name of a `.tif` grid that PROJ renamed, such as
+/// `BETA2007.gsb` for `de_adv_BETA2007.tif`.
+fn old_grid_filename(name: &str) -> Option<String> {
+    if !plain_name(name) || !name.contains(".tif") {
+        return None;
+    }
+    crate::projdb::with_db(|connection| {
+        connection.query_row(
+            "SELECT old_proj_grid_name FROM grid_alternatives \
+             WHERE proj_grid_name = ?1 AND old_proj_grid_name <> ''",
             [name],
             |row| row.get(0),
         )
@@ -235,10 +262,13 @@ fn join_endpoint(endpoint: &str, file: &str) -> Option<String> {
 }
 
 fn bare_short_name(name: &str) -> bool {
+    plain_name(name) && !name.contains(".tif")
+}
+
+fn plain_name(name: &str) -> bool {
     !name.is_empty()
         && !name.contains('/')
         && !name.contains('\\')
-        && !name.contains(".tif")
         && !is_http(name)
         && !is_explicit_path(name)
 }
@@ -494,14 +524,33 @@ fn header_value<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a s
         .map(|(_, value)| value.as_str())
 }
 
+/// The user-writable directory, as `proj_context_get_user_writable_directory`
+/// picks it. It is not the temporary directory: grids saved there would
+/// change the results of runs that expect them absent.
 fn default_user_dir() -> PathBuf {
     if let Some(dir) = nonempty_env("PROJ_USER_WRITABLE_DIRECTORY") {
         return PathBuf::from(dir);
     }
-    if let Some(local) = nonempty_env("LOCALAPPDATA") {
+    if cfg!(windows) {
+        let local = nonempty_env("LOCALAPPDATA")
+            .or_else(|| nonempty_env("TEMP"))
+            .unwrap_or_else(|| "c:/users".to_owned());
         return PathBuf::from(local).join("proj");
     }
-    std::env::temp_dir().join("proj")
+    if let Some(xdg) = std::env::var_os("XDG_DATA_HOME") {
+        return PathBuf::from(xdg).join("proj");
+    }
+    match nonempty_env("HOME") {
+        Some(home) if cfg!(target_os = "macos") => PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join("proj"),
+        Some(home) => PathBuf::from(home)
+            .join(".local")
+            .join("share")
+            .join("proj"),
+        None => PathBuf::from("/tmp").join("proj"),
+    }
 }
 
 fn read_proj_ini() -> Option<String> {
