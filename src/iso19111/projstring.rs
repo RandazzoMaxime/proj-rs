@@ -9,6 +9,9 @@ use super::model::{
     Identifier, ParameterValue, PrimeMeridian, ProjectedCRS, UnitKind, UnitOfMeasure,
 };
 use super::parammap::{MethodMap, OTHER_METHODS, PROJECTION_METHODS};
+use super::pipeline::proj_number;
+use crate::ellipsoid::PJ_ELLPS;
+use crate::projections::{angular_proj_unit, linear_proj_unit};
 
 impl Ellipsoid {
     /// `exportToPROJString` for an ellipsoid: `+ellps=` for a known name,
@@ -277,7 +280,7 @@ fn pipeline(steps: &[String]) -> String {
     format!("+proj=pipeline {body}")
 }
 
-fn geographic_of(crs: &Crs) -> Option<&GeographicCRS> {
+pub(crate) fn geographic_of(crs: &Crs) -> Option<&GeographicCRS> {
     match crs {
         Crs::Geographic(crs) => Some(crs),
         Crs::Geodetic(GeodeticCRS::Geographic(crs)) => Some(crs),
@@ -304,7 +307,7 @@ fn geographic_axis_order(crs: &GeographicCRS) -> Option<String> {
 ///
 /// East-then-north needs none. A polar CRS whose axes are both north or both
 /// south, named northing then easting, swaps as `2,1` (UPS North and South).
-fn projected_axis_order(crs: &ProjectedCRS) -> Option<String> {
+pub(crate) fn projected_axis_order(crs: &ProjectedCRS) -> Option<String> {
     let axes = crs.coordinate_system().axes();
     if axes.len() < 2 {
         return None;
@@ -468,21 +471,23 @@ fn epsg_code(identifiers: &[Identifier]) -> Option<&str> {
         .map(Identifier::code)
 }
 
-fn ellipsoid_of(crs: &GeographicCRS) -> Option<&Ellipsoid> {
+pub(crate) fn ellipsoid_of(crs: &GeographicCRS) -> Option<&Ellipsoid> {
     if let Some(datum) = crs.datum() {
         return Some(datum.ellipsoid());
     }
     geodetic_member(crs.datum_ensemble()?).map(super::model::GeodeticReferenceFrame::ellipsoid)
 }
 
-fn meridian_of(crs: &GeographicCRS) -> Option<&PrimeMeridian> {
+pub(crate) fn meridian_of(crs: &GeographicCRS) -> Option<&PrimeMeridian> {
     if let Some(datum) = crs.datum() {
         return Some(datum.prime_meridian());
     }
     geodetic_member(crs.datum_ensemble()?).map(super::model::GeodeticReferenceFrame::prime_meridian)
 }
 
-fn geodetic_member(ensemble: &DatumEnsemble) -> Option<&super::model::GeodeticReferenceFrame> {
+pub(crate) fn geodetic_member(
+    ensemble: &DatumEnsemble,
+) -> Option<&super::model::GeodeticReferenceFrame> {
     ensemble.members().iter().find_map(|member| match member {
         Datum::Geodetic(frame) => Some(frame),
         _ => None,
@@ -490,20 +495,65 @@ fn geodetic_member(ensemble: &DatumEnsemble) -> Option<&super::model::GeodeticRe
 }
 
 fn prime_meridian_proj(meridian: &PrimeMeridian) -> Option<String> {
-    if meridian.name().eq_ignore_ascii_case("paris")
-        || epsg_code(meridian.identifiers()) == Some("8903")
-    {
-        return Some("+pm=paris".to_owned());
+    prime_meridian_params(meridian).map(|(key, value)| format!("+{key}={value}"))
+}
+
+/// `PrimeMeridian::_exportToPROJString`: the well-known name when the longitude
+/// is one, otherwise the longitude in degrees. Greenwich writes nothing.
+pub(crate) fn prime_meridian_params(meridian: &PrimeMeridian) -> Option<(&'static str, String)> {
+    prime_meridian_radians_params(meridian.longitude().si_value())
+}
+
+/// [`prime_meridian_params`] for a longitude in radians.
+pub(crate) fn prime_meridian_radians_params(radians: f64) -> Option<(&'static str, String)> {
+    if radians == 0.0 {
+        return None;
     }
-    let degrees = meridian.longitude().convert_to(&UnitOfMeasure::degree());
-    if degrees == 0.0 {
-        None
-    } else {
-        Some(format!("+pm={degrees}"))
+    if let Some(name) = well_known_pm_name(radians) {
+        return Some(("pm", name.to_owned()));
     }
+    Some((
+        "pm",
+        proj_number(radians / UnitOfMeasure::degree().conversion_to_si()),
+    ))
+}
+
+/// `PrimeMeridian::getPROJStringWellKnownName`: the name of the prime meridian
+/// of `datums.cpp` at `radians`, within `1e-10` radian.
+pub(crate) fn well_known_pm_name(radians: f64) -> Option<&'static str> {
+    const PRIME_MERIDIANS: &[(&str, f64)] = &[
+        ("greenwich", 0.0),
+        ("lisbon", -(9.0 + 7.0 / 60.0 + 54.862 / 3600.0)),
+        ("paris", 2.0 + 20.0 / 60.0 + 14.025 / 3600.0),
+        ("bogota", -(74.0 + 4.0 / 60.0 + 51.3 / 3600.0)),
+        ("madrid", -(3.0 + 41.0 / 60.0 + 16.58 / 3600.0)),
+        ("rome", 12.0 + 27.0 / 60.0 + 8.4 / 3600.0),
+        ("bern", 7.0 + 26.0 / 60.0 + 22.5 / 3600.0),
+        ("jakarta", 106.0 + 48.0 / 60.0 + 27.79 / 3600.0),
+        ("ferro", -17.0 - 40.0 / 60.0),
+        ("brussels", 4.0 + 22.0 / 60.0 + 4.71 / 3600.0),
+        ("stockholm", 18.0 + 3.0 / 60.0 + 29.8 / 3600.0),
+        ("athens", 23.0 + 42.0 / 60.0 + 58.815 / 3600.0),
+        ("oslo", 10.0 + 43.0 / 60.0 + 22.5 / 3600.0),
+        ("copenhagen", 12.0 + 34.0 / 60.0 + 40.35 / 3600.0),
+    ];
+    PRIME_MERIDIANS
+        .iter()
+        .find(|(_, degrees)| (radians - degrees.to_radians()).abs() < 1e-10)
+        .map(|(name, _)| *name)
 }
 
 fn ellipsoid_proj(ellipsoid: &Ellipsoid) -> String {
+    ellipsoid_params(ellipsoid)
+        .iter()
+        .map(|(key, value)| format!("+{key}={value}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// `Ellipsoid::_exportToPROJString`: `ellps` for a known ellipsoid, otherwise
+/// `R` for a sphere, or `a` with `rf` or `b`.
+pub(crate) fn ellipsoid_params(ellipsoid: &Ellipsoid) -> Vec<(&'static str, String)> {
     let metres = ellipsoid.semi_major_axis().si_value();
     let inverse = ellipsoid.inverse_flattening();
     let flattening = (inverse != 0.0).then_some(inverse);
@@ -511,34 +561,36 @@ fn ellipsoid_proj(ellipsoid: &Ellipsoid) -> String {
         .semi_minor_axis()
         .map(super::model::Measure::si_value);
     if let Some(name) = well_known_ellps(metres, flattening, minor) {
-        return format!("+ellps={name}");
+        return vec![("ellps", name.to_owned())];
     }
     if ellipsoid.is_sphere() {
-        format!("+R={metres}")
-    } else if let Some(inverse) = flattening {
-        format!("+a={metres} +rf={inverse}")
+        vec![("R", proj_number(metres))]
+    } else if let (Some(inverse), Some(_)) = (flattening, ellipsoid.declared_inverse_flattening()) {
+        vec![("a", proj_number(metres)), ("rf", proj_number(inverse))]
     } else if let Some(minor) = minor {
-        format!("+a={metres} +b={minor}")
+        vec![("a", proj_number(metres)), ("b", proj_number(minor))]
     } else {
-        format!("+R={metres}")
+        vec![("R", proj_number(metres))]
     }
 }
 
+/// Linear or angular PROJ unit name of `unit`, or `None` when PROJ has no name for it.
+pub(crate) fn proj_unit_name(unit: &UnitOfMeasure) -> Option<&'static str> {
+    match unit.kind() {
+        UnitKind::Linear => linear_proj_unit(unit.conversion_to_si()),
+        UnitKind::Angular => angular_proj_unit(unit.conversion_to_si()),
+        _ => None,
+    }
+}
+
+/// `Ellipsoid::lookForProjWellKnownEllps`: the first named ellipsoid of PROJ's
+/// table with the same semi-major axis and the same inverse flattening or minor
+/// axis. A missing one is derived from the other.
 fn well_known_ellps(major: f64, inverse: Option<f64>, minor: Option<f64>) -> Option<&'static str> {
-    const TABLE: &[(&str, f64, f64, bool)] = &[
-        ("GRS80", 6_378_137.0, 298.257_222_101, true),
-        ("clrk66", 6_378_206.4, 6_356_583.8, false),
-        ("clrk80", 6_378_249.145, 293.4663, true),
-        ("clrk80ign", 6_378_249.2, 293.466_021_293_626_9, true),
-        ("WGS84", 6_378_137.0, 298.257_223_563, true),
-        ("sphere", 6_370_997.0, 6_370_997.0, false),
-    ];
-    let minor = minor.or_else(|| {
-        inverse
-            .filter(|value| *value != 0.0)
-            .map(|value| major * (1.0 - 1.0 / value))
-    });
-    TABLE
+    let inverse = inverse.filter(|value| *value != 0.0);
+    let minor = minor.or_else(|| inverse.map(|value| major * (1.0 - 1.0 / value)));
+    let inverse = inverse.or_else(|| minor.filter(|b| *b != major).map(|b| major / (major - b)));
+    PJ_ELLPS
         .iter()
         .find(|(_, table_major, second, is_inverse)| {
             if (major - table_major).abs() >= 1e-10 * table_major.abs() {

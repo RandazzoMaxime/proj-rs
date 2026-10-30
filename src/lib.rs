@@ -96,7 +96,7 @@ pub use iso19111::{
     Equivalence, FactoryError, GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS,
     Identifier, IntermediateCrsUse, LinunitPolicy, Meridian, NameMatch, ObjectDomain, ObjectType,
     OpProps, OperationMethod, OperationParameter, OperationParameterValue, OrdinalCS,
-    OutputAxisRule, Parameter, ParameterValue, PrimeMeridian, ProjectedCRS, SphericalCS,
+    OutputAxisRule, Parameter, ParameterValue, PrimeMeridian, ProjLines, ProjectedCRS, SphericalCS,
     Transformation, UnitKind, UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame,
     WktConvention, WktDialect, WktFormatter, WktLines, WktNode, WktObject, WktParser,
     WktStrictness,

@@ -2315,7 +2315,7 @@ pub(crate) fn format_g(value: f64, precision: usize) -> String {
         .and_then(|text| text.parse::<i32>().ok())
         .unwrap_or(0);
     let mut body = if exponent < -4 || exponent >= i32::try_from(precision).unwrap_or(i32::MAX) {
-        scientific
+        c_exponent(&scientific)
     } else {
         let fraction = (i32::try_from(precision).unwrap_or(15) - 1 - exponent).max(0);
         let fraction = usize::try_from(fraction).unwrap_or(0);
@@ -2329,6 +2329,16 @@ pub(crate) fn format_g(value: f64, precision: usize) -> String {
     } else {
         body
     }
+}
+
+/// Rust writes `e-5`; C writes the sign and at least two digits, `e-05`.
+fn c_exponent(scientific: &str) -> String {
+    let Some((mantissa, exponent)) = scientific.split_once('e') else {
+        return scientific.to_owned();
+    };
+    let exponent = exponent.parse::<i32>().unwrap_or(0);
+    let sign = if exponent < 0 { '-' } else { '+' };
+    format!("{mantissa}e{sign}{:02}", exponent.abs())
 }
 
 fn strip_trailing_zeros(text: &mut String) {

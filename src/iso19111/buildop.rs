@@ -8,7 +8,7 @@ use super::model::{
     OperationParameterValue, Parameter, ParameterValue, Transformation, UnitKind,
 };
 use super::parammap::{self, MethodMap, ParamMap};
-use super::wkt::format_g;
+use super::pipeline::proj_number;
 
 /// Whether transverse Mercator export inserts `+approx`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -324,7 +324,7 @@ fn identified_names_match(left: &str, right: &str, criterion: Equivalence) -> bo
         || (left == "unnamed" && right == "unknown")
 }
 
-fn names_match(left: &str, right: &str) -> bool {
+pub(super) fn names_match(left: &str, right: &str) -> bool {
     canonical(left) == canonical(right)
 }
 
@@ -1915,20 +1915,4 @@ fn push_aux(parts: &mut Vec<String>, aux: &str) {
 
 fn push_number(parts: &mut Vec<String>, name: &str, value: f64) {
     parts.push(format!("+{name}={}", proj_number(value)));
-}
-
-fn proj_number(mut value: f64) -> String {
-    if value == 0.0 {
-        return "0".to_owned();
-    }
-    let scaled = value * 10.0;
-    let nearest = scaled.round();
-    if (scaled - nearest).abs() < 1e-8 {
-        value = nearest / 10.0;
-    }
-    let mut text = format_g(value, 15);
-    if text.contains("9999999999") {
-        text = format_g(value, 14);
-    }
-    text
 }
