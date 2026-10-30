@@ -123,6 +123,29 @@ impl Mercator {
         if !lon_rad.is_finite() {
             return Err(ProjectionError::NonFinite);
         }
+        self.project(adjlon(adjlon(lon_rad) - self.lam0), lat_rad)
+    }
+
+    /// Radians absolus vers mètres, sans réduire `lon - lon_0` dans `[-π, π]`.
+    ///
+    /// C'est le cas de `+over` : `pj_fwd` ne ramène pas la longitude, et
+    /// Mercator est linéaire en longitude, donc `x` suit la longitude d'entrée.
+    ///
+    /// # Errors
+    ///
+    /// Mêmes cas que [`Self::forward`].
+    pub fn forward_rad_over(
+        &self,
+        lon_rad: f64,
+        lat_rad: f64,
+    ) -> Result<Projected, ProjectionError> {
+        if !lon_rad.is_finite() {
+            return Err(ProjectionError::NonFinite);
+        }
+        self.project(lon_rad - self.lam0, lat_rad)
+    }
+
+    fn project(&self, lam: f64, lat_rad: f64) -> Result<Projected, ProjectionError> {
         let half = std::f64::consts::FRAC_PI_2;
         if !lat_rad.is_finite() || lat_rad.abs() > half + 1e-12 {
             return Err(if lat_rad.is_finite() {
@@ -132,7 +155,6 @@ impl Mercator {
             });
         }
         let phi = lat_rad.clamp(-half, half);
-        let lam = adjlon(adjlon(lon_rad) - self.lam0);
         let (x, y) = self.fwd_unit(lam, phi);
         if !x.is_finite() || !y.is_finite() {
             return Err(ProjectionError::OutsideDomain);
@@ -155,6 +177,23 @@ impl Mercator {
         let (lam, phi) = self.inv_unit((xy.east - self.x0) / self.a, (xy.north - self.y0) / self.a);
         Ok(Geographic {
             lon_deg: adjlon(lam + self.lam0).to_degrees(),
+            lat_deg: phi.to_degrees(),
+        })
+    }
+
+    /// Mètres vers degrés, sans ramener la longitude dans `[-180, 180]`. Réciproque de
+    /// [`Self::forward_rad_over`].
+    ///
+    /// # Errors
+    ///
+    /// [`ProjectionError::NonFinite`] si une coordonnée ne l'est pas.
+    pub fn inverse_over(&self, xy: Projected) -> Result<Geographic, ProjectionError> {
+        if !xy.is_finite() {
+            return Err(ProjectionError::NonFinite);
+        }
+        let (lam, phi) = self.inv_unit((xy.east - self.x0) / self.a, (xy.north - self.y0) / self.a);
+        Ok(Geographic {
+            lon_deg: (lam + self.lam0).to_degrees(),
             lat_deg: phi.to_degrees(),
         })
     }
