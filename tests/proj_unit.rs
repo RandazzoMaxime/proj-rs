@@ -879,3 +879,26 @@ fn c_api_time_dependent_operations() {
         })
         .is_ok());
 }
+
+#[test]
+fn sch_matches_cs2cs_and_round_trips() {
+    // cs2cs 9.9.0: `+proj=latlong +datum=WGS84 +to +proj=sch +plat_0=30
+    // +plon_0=45 +phdg_0=-12 +ellps=WGS84 -f %.9f`, input `10 60 100`.
+    let op =
+        Operation::create("+proj=sch +plat_0=30 +plon_0=45 +phdg_0=-12 +ellps=WGS84").expect("sch");
+    let input = Xyzt {
+        x: rad(10.0),
+        y: rad(60.0),
+        z: 100.0,
+        t: 0.0,
+    };
+    let got = op.forward(input).expect("forward");
+    near(got.x, 4_111_770.028_648_399, 1e-6);
+    near(got.y, 1_076_239.118_408_572, 1e-6);
+    near(got.z, 3_769.576_684_201, 1e-6);
+    let back = op.inverse(got).expect("inverse");
+    near(back.x, input.x, 1e-12);
+    near(back.y, input.y, 1e-12);
+    near(back.z, input.z, 1e-6);
+    assert!(Operation::create("+proj=sch +plat_0=30 +plon_0=45 +ellps=WGS84").is_err());
+}

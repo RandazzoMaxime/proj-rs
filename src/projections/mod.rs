@@ -52,6 +52,7 @@ mod qsc;
 mod robin;
 mod rouss;
 mod s2;
+mod sch;
 mod simple;
 mod som;
 mod sphere2;
@@ -115,6 +116,7 @@ pub(crate) fn extra_keys(name: &str) -> Option<&'static [&'static str]> {
         .or_else(|| robin::extra_keys(name))
         .or_else(|| rouss::extra_keys(name))
         .or_else(|| s2::extra_keys(name))
+        .or_else(|| sch::extra_keys(name))
         .or_else(|| som::extra_keys(name))
         .or_else(|| sphere2::extra_keys(name))
         .or_else(|| sphere3::extra_keys(name))
@@ -191,6 +193,7 @@ pub(crate) fn build(
         .or(robin::build(name, params, frame)?)
         .or(rouss::build(name, params, frame)?)
         .or(s2::build(name, params, frame)?)
+        .or(sch::build(name, params, frame)?)
         .or(som::build(name, params, frame)?)
         .or(sphere2::build(name, params, frame)?)
         .or(sphere3::build(name, params, frame)?)

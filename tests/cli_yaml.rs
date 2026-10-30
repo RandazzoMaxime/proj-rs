@@ -613,6 +613,15 @@ fn compare_numbers(expected: &str, got: &str) -> Result<(), String> {
             .filter(|token| *token != "*" && !token.eq_ignore_ascii_case("inf"))
             .filter_map(token_number)
             .collect();
+        if expect_numbers.is_empty() && got_numbers.is_empty() {
+            if expect_line
+                .split_whitespace()
+                .ne(got_line.split_whitespace())
+            {
+                return Err(format!("expected {expect_line}\ngot {got_line}"));
+            }
+            continue;
+        }
         if expect_numbers.is_empty() || got_numbers.is_empty() {
             return Err(format!(
                 "no numbers\nexpected {expect_line}\ngot {got_line}"
