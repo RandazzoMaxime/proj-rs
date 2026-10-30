@@ -61,8 +61,10 @@ Each cause was checked against the reference output for the case unless marked.
 | 16, 31 | `Inverse of UTM zone 31N + ...` | `Conversion` has no inverse, so a registry conversion read in reverse is dropped. |
 | 25, 27, 38, 39 | Vertical or height operations | The vertical and geoid paths (`createOperationsVertToGeog`, `createOperationsGeogToVertFromGeoid`) are not ported. Not investigated per case. |
 | 26 | 3 candidates, ours 2 | Probably the vertical path as above. Not investigated. |
-| 29, 30, 32 | `WGS 84 + EGM96 height`, `EPSG:4326+3855` | Compound CRS: `createOperationsCompoundToGeog` is not ported. |
-| 36, 37, 68, 108 | Concatenated operations through a datum | `createOperationsWithDatumPivot` is not ported. |
+| 29, 30 | `WGS 84 + EGM96 height` | Closed by the compound lot: the name promotion and the vertical branch of `createOperationsCompoundToGeog`, see `PORTING-compound-resolution.md`. |
+| 32 | `EPSG:4326+3855 --3d` from a projected CRS | Projected source: `createOperationsDerivedTo` is not ported (`PORTING-compound-resolution.md`). |
+| 36, 37, 68 | Concatenated operations through a datum | `createOperationsWithDatumPivot` is not ported. |
+| 108 | `EPSG:4979` to a projected compound CRS | Projected horizontal component, same cause as 32. |
 | 88, 89, 90 | `Conversion from ... (geocentric) + ...` chains | Same datum-pivot path, with geocentric conversions. Not investigated per case. |
 | 84 | `Canada velocity grid` step | Grid lot (deformation grid). |
 | 106 | `+proj=noop` for a same CRS | Not investigated. |
@@ -75,7 +77,8 @@ Each cause was checked against the reference output for the case unless marked.
   the geographic/geocentric pairs are not. See `PORTING-projinfo-pivot-ballpark.md`.
 - **Only registry operations, the deriving conversion, and the pivots of
   `CoordinateOperationContext::set_intermediate_crs`** are candidates. No
-  datum-pivot, compound, or vertical path.
+  datum-pivot or derived-CRS path. The vertical branch of compound CRS is
+  partial (`PORTING-compound-resolution.md`).
 - **Inverses** are built for registry transformations only (`Transformation::inverse`).
   A reverse-direction registry conversion or concatenation is dropped, where
   PROJ returns its inverse.
