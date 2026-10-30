@@ -3995,6 +3995,7 @@ impl CoordinateOperationFactory {
         context: &CoordinateOperationContext,
     ) -> Result<Vec<CoordinateOperation>, FactoryError> {
         let mut found = Vec::new();
+        let mut direct_empty = true;
         if let Crs::Projected(projected) = target {
             if same_authority(source, projected.base_crs()) {
                 found.push(CoordinateOperation::Conversion(
@@ -4018,14 +4019,13 @@ impl CoordinateOperationFactory {
                 .authority_code("EPSG")
                 .or_else(|| target.identifiers().first()),
         ) {
-            found.extend(operations_between(
-                &context.db,
-                &context.authority,
+            found.extend(direct_registry_operations(
+                context,
                 (source_id.code_space(), source_id.code()),
                 (target_id.code_space(), target_id.code()),
                 boxes,
-                RegistrySearch::Both,
             )?);
+            direct_empty = found.is_empty();
             if context.allow_intermediate {
                 for (pivot_auth, pivot_code) in &context.intermediates {
                     let first = operations_between(
@@ -4069,6 +4069,9 @@ impl CoordinateOperationFactory {
                     }
                 }
             }
+        }
+        if direct_empty && is_geodetic(source) && is_geodetic(target) {
+            found.extend(datum_pivot_operations(source, target, context));
         }
         if is_geodetic(source)
             && is_geodetic(target)
@@ -4426,6 +4429,166 @@ fn ballpark_operations(source: &Crs, target: &Crs) -> Vec<CoordinateOperation> {
     .unwrap_or_default()
 }
 
+/// The registered pass of `createOperationsWithDatumPivot`. Two geodetic CRS of different
+/// datums with no registered operation between them are linked through a geodetic CRS of
+/// each datum that has one. The first pair with a registered operation wins, the pair whose
+/// names match the requested CRS first, as PROJ orders them.
+///
+/// Not ported: the passes that recurse through a third CRS, the epoch-change operations
+/// (`PointMotionOperation`), and the preferred-authority order of the candidates.
+fn datum_pivot_operations(
+    source: &Crs,
+    target: &Crs,
+    context: &CoordinateOperationContext,
+) -> Vec<CoordinateOperation> {
+    let (Some(source_datum), Some(target_datum)) = (datum_identity(source), datum_identity(target))
+    else {
+        return Vec::new();
+    };
+    if same_geodetic_datum(source, target) {
+        return Vec::new();
+    }
+    let authority = AuthorityFactory::create(&context.db, context.authority.clone());
+    let candidates_source = candidate_geodetic_crs(&authority, &source_datum);
+    let candidates_target = candidate_geodetic_crs(&authority, &target_datum);
+    let mut pairs: Vec<(&Crs, &Crs)> = candidates_source
+        .iter()
+        .flat_map(|left| candidates_target.iter().map(move |right| (left, right)))
+        .collect();
+    pairs.sort_by_key(|(left, right)| {
+        u8::from(!(left.name() == source.name() && right.name() == target.name()))
+    });
+    for (left, right) in pairs {
+        let (Some(first), Some(third)) = (pivot_leg(source, left), pivot_leg(right, target)) else {
+            continue;
+        };
+        let boxes = (
+            crs_extent(left)
+                .as_ref()
+                .and_then(ObjectDomain::bounding_box),
+            crs_extent(right)
+                .as_ref()
+                .and_then(ObjectDomain::bounding_box),
+        );
+        let second =
+            direct_registry_operations(context, identity_of(left), identity_of(right), boxes)
+                .unwrap_or_default();
+        let linked: Vec<CoordinateOperation> = second
+            .into_iter()
+            .filter(|operation| {
+                matches!(
+                    operation,
+                    CoordinateOperation::Transformation(_) | CoordinateOperation::Concatenated(_)
+                )
+            })
+            .map(|operation| {
+                let steps = [first.clone(), Some(operation), third.clone()]
+                    .into_iter()
+                    .flatten()
+                    .collect();
+                pivot_concatenation(steps)
+            })
+            .collect();
+        if !linked.is_empty() {
+            return linked;
+        }
+    }
+    Vec::new()
+}
+
+/// Authority code of the datum of a geodetic CRS, the key its candidates are read with.
+fn datum_identity(crs: &Crs) -> Option<(String, String)> {
+    let frame = geodetic_frame(crs)?;
+    let identifier = frame.identifiers().first()?;
+    Some((
+        identifier.code_space().to_owned(),
+        identifier.code().to_owned(),
+    ))
+}
+
+/// Authority code of a CRS, as `(codeSpace, code)`.
+fn identity_of(crs: &Crs) -> (&str, &str) {
+    crs.identifiers().first().map_or(("", ""), |identifier| {
+        (identifier.code_space(), identifier.code())
+    })
+}
+
+/// Non-deprecated geodetic CRS of the datum, in the database order.
+fn candidate_geodetic_crs(authority: &AuthorityFactory, datum: &(String, String)) -> Vec<Crs> {
+    authority
+        .create_geodetic_crs_from_datum(&datum.0, &datum.1, "")
+        .unwrap_or_default()
+        .into_iter()
+        .map(Crs::from)
+        .collect()
+}
+
+/// One leg of the datum pivot, from `from` to `to` on the same datum. `Some(None)`: the two
+/// CRS are both geographic or both geocentric, so the leg is the identity. `None`: the pair
+/// cannot be linked, and the candidate pair is skipped.
+fn pivot_leg(from: &Crs, to: &Crs) -> Option<Option<CoordinateOperation>> {
+    match (geographic_of(from).is_some(), geographic_of(to).is_some()) {
+        (true, true) | (false, false) => Some(None),
+        (true, false) => geographic_geocentric(from, to)
+            .map(|operation| Some(CoordinateOperation::Transformation(operation))),
+        (false, true) => geographic_geocentric(to, from)
+            .map(|operation| Some(CoordinateOperation::Transformation(operation.inverse()))),
+    }
+}
+
+/// The geographic/geocentric conversion, EPSG:9602, as a transformation that keeps both CRS,
+/// so the PROJ string export can read the ellipsoid of each side.
+fn geographic_geocentric(geographic: &Crs, geocentric: &Crs) -> Option<Transformation> {
+    let name = format!(
+        "Conversion from {} to {}",
+        geographic.name(),
+        geocentric.name()
+    );
+    let mut conversion = Transformation::create_from_code(
+        &OpProps::new().name(name),
+        geographic.clone(),
+        geocentric.clone(),
+        9602,
+        Vec::new(),
+        crs_extent(geographic).unwrap_or_else(world_extent),
+    )
+    .ok()?;
+    conversion.accuracy = Some(0.0);
+    Some(conversion)
+}
+
+/// A concatenated operation of the pivot legs, with the sum of the step accuracies as
+/// `ConcatenatedOperation::createComputeMetadata` does. A step with no accuracy leaves it
+/// unknown.
+fn pivot_concatenation(steps: Vec<CoordinateOperation>) -> CoordinateOperation {
+    let name = steps
+        .iter()
+        .map(CoordinateOperation::name)
+        .collect::<Vec<_>>()
+        .join(" + ");
+    let accuracy = steps
+        .iter()
+        .map(|step| match step {
+            CoordinateOperation::Conversion(_) => Some(0.0),
+            other => other.accuracy(),
+        })
+        .sum::<Option<f64>>();
+    CoordinateOperation::Concatenated(ConcatenatedOperation {
+        identified: Identified::named(name),
+        steps: steps
+            .into_iter()
+            .map(|operation| ConcatenatedStep {
+                operation,
+                reverse: false,
+            })
+            .collect(),
+        source: None,
+        target: None,
+        accuracy,
+        version: None,
+    })
+}
+
 /// `getAccuracy` against `desired`: unknown accuracy is never allowed when a target is set.
 fn accuracy_allowed(operation: &CoordinateOperation, desired: f64) -> bool {
     if desired == 0.0 {
@@ -4470,6 +4633,82 @@ enum RegistrySearch {
     /// Both directions, with inverses of the reverse rows, superseded rows
     /// dropped, and rows restricted to the CRS extents when some intersect.
     Both,
+}
+
+/// Registered operations between two CRS read in the authorities of `findOpsInRegistryDirect`.
+/// The authorities are tried in order, and the search stops at the first one with operations,
+/// except `PROJ` whose operations are kept while the next authority is read too.
+fn direct_registry_operations(
+    context: &CoordinateOperationContext,
+    source: (&str, &str),
+    target: (&str, &str),
+    crs_boxes: (Option<BoundingBox>, Option<BoundingBox>),
+) -> Result<Vec<CoordinateOperation>, FactoryError> {
+    let mut found = Vec::new();
+    for authority in candidate_authorities(&context.db, &context.authority, source.0, target.0)? {
+        found.extend(operations_between(
+            &context.db,
+            &authority,
+            source,
+            target,
+            crs_boxes,
+            RegistrySearch::Both,
+        )?);
+        if authority != "PROJ" && !found.is_empty() {
+            break;
+        }
+    }
+    Ok(found)
+}
+
+/// `getCandidateAuthorities`: the authorities a direct search reads, in order. An authority
+/// the context names is the only one. Otherwise the table `authority_to_authority_preference`
+/// gives the list for the pair of CRS authorities, so that `ESRI` operations are not read for
+/// an `EPSG` pair. `""` stands for every authority.
+fn candidate_authorities(
+    db: &DatabaseContext,
+    authority: &str,
+    source: &str,
+    target: &str,
+) -> Result<Vec<String>, FactoryError> {
+    let unrestricted = |name: &str| {
+        if name == "any" {
+            String::new()
+        } else {
+            name.to_owned()
+        }
+    };
+    if !authority.is_empty() {
+        return Ok(vec![unrestricted(authority)]);
+    }
+    let lookups = [
+        (
+            "SELECT allowed_authorities FROM authority_to_authority_preference \
+             WHERE source_auth_name = ? AND target_auth_name = ?",
+            vec![source.to_owned(), target.to_owned()],
+        ),
+        (
+            "SELECT allowed_authorities FROM authority_to_authority_preference \
+             WHERE source_auth_name = ? AND target_auth_name = 'any'",
+            vec![source.to_owned()],
+        ),
+        (
+            "SELECT allowed_authorities FROM authority_to_authority_preference \
+             WHERE source_auth_name = 'any' AND target_auth_name = ?",
+            vec![target.to_owned()],
+        ),
+        (
+            "SELECT allowed_authorities FROM authority_to_authority_preference \
+             WHERE source_auth_name = 'any' AND target_auth_name = 'any'",
+            Vec::new(),
+        ),
+    ];
+    for (sql, params) in lookups {
+        if let Some(row) = db.query(sql, &params)?.first() {
+            return Ok(row[0].text().split(',').map(unrestricted).collect());
+        }
+    }
+    Ok(vec![String::new()])
 }
 
 /// Registered operations between two CRS, as `createFromCoordinateReferenceSystemCodes`.

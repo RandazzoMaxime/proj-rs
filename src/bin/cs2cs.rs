@@ -109,8 +109,9 @@ fn main() -> ExitCode {
         reverse_out: opts.reverse_out,
         error_text: &opts.error_text,
         tag: opts.tag,
-        src_dynamic: src_side.dynamic,
-        dst_dynamic: dst_side.dynamic,
+        src_dynamic: src_side.dynamic && opts.source_epoch.is_none(),
+        dst_dynamic: dst_side.dynamic && opts.target_epoch.is_none(),
+        epoch: opts.source_epoch.or(opts.target_epoch),
         degree_in: src_side.layout == Layout::DegreeLongLat,
         reverse_in: opts.reverse_in,
         lat_first,
@@ -157,6 +158,8 @@ struct Job<'a> {
     reverse_in: bool,
     /// Geographic output whose first axis is latitude. DMS then prints N/S first.
     lat_first: bool,
+    /// `--s_epoch`, else `--t_epoch`. It replaces the input time, as PROJ's `set v_4` does.
+    epoch: Option<f64>,
 }
 
 fn read_buf<R: BufRead>(reader: R, job: &Job<'_>, stdout: &mut impl Write) -> ExitCode {
@@ -216,7 +219,8 @@ fn emit_line(line: &str, slot: LineSlot, job: &Job<'_>, stdout: &mut impl Write)
     let drawn = if parsed.bad {
         Drawn::Failed(parsed.z)
     } else {
-        match job.engine.apply(parsed.x, parsed.y, parsed.z) {
+        let t = job.epoch.unwrap_or(parsed.t);
+        match job.engine.apply(parsed.x, parsed.y, parsed.z, t) {
             Ok((x, y, z)) => Drawn::Value(x, y, z),
             Err(_) => Drawn::Failed(f64::INFINITY),
         }
@@ -291,12 +295,14 @@ impl Engine {
         }
     }
 
-    fn apply(&self, x: f64, y: f64, z: f64) -> Result<(f64, f64, f64), ()> {
+    fn apply(&self, x: f64, y: f64, z: f64, t: f64) -> Result<(f64, f64, f64), ()> {
         match self {
-            Self::Pair(pair) => pair.apply(x, y, z).map(|coord| (coord.x, coord.y, coord.z)),
+            Self::Pair(pair) => pair
+                .apply(x, y, z, t)
+                .map(|coord| (coord.x, coord.y, coord.z)),
             Self::Pipe(pipe) => pipe
                 .operation
-                .forward(Xyzt { x, y, z, t: 0.0 })
+                .forward(Xyzt { x, y, z, t })
                 .map(|coord| (coord.x, coord.y, coord.z))
                 .map_err(|_| ()),
             Self::Facade(proj) => proj.convert_xyz(x, y, z).map_err(|_| ()),
@@ -408,8 +414,8 @@ impl SidePair {
         })
     }
 
-    fn apply(&self, x: f64, y: f64, z: f64) -> Result<Xyzt, ()> {
-        let mut coord = Xyzt { x, y, z, t: 0.0 };
+    fn apply(&self, x: f64, y: f64, z: f64, t: f64) -> Result<Xyzt, ()> {
+        let mut coord = Xyzt { x, y, z, t };
         if let Some(scale) = self.src_scale {
             coord.x *= scale;
             coord.y *= scale;
@@ -561,6 +567,8 @@ struct Parsed {
     x: f64,
     y: f64,
     z: f64,
+    /// Input time, or `+inf` when the line has none, as PROJ's `HUGE_VAL`.
+    t: f64,
     tail: usize,
     had_time: bool,
     bad: bool,
@@ -583,6 +591,11 @@ fn parse_point(line: &str, text: AxisText, order: AxisOrder) -> Parsed {
     let (y, i2) = read_axis(line, i1, text);
     let (z, i3) = read_number(line, i2);
     let had_time = read_number_consumed(line, i3);
+    let t = if had_time {
+        read_number(line, i3).0
+    } else {
+        f64::INFINITY
+    };
     let mut x = x;
     let mut y = y;
     if !y.is_finite() {
@@ -596,6 +609,7 @@ fn parse_point(line: &str, text: AxisText, order: AxisOrder) -> Parsed {
         x,
         y,
         z,
+        t,
         tail: i3,
         had_time,
         bad,
