@@ -181,7 +181,9 @@ struct Options {
     authorities: Vec<String>,
     area: Option<String>,
     bbox: Option<String>,
-    spatial_test: SpatialTest,
+    spatial_test: Option<SpatialTest>,
+    crs_extent_use: Option<proj_rs::CrsExtentUse>,
+    accuracy: Option<f64>,
     output_id: Option<(String, String)>,
     all: bool,
 }
@@ -229,7 +231,9 @@ impl Options {
         let mut authorities = Vec::new();
         let mut area = None;
         let mut bbox = None;
-        let mut spatial_test = SpatialTest::default();
+        let mut spatial_test = None;
+        let mut crs_extent_use = None;
+        let mut accuracy = None;
         let mut output_id = None;
         let mut all = false;
         let mut sql = false;
@@ -250,9 +254,7 @@ impl Options {
             } else if matches!(
                 arg,
                 "--grid-check"
-                    | "--crs-extent-use"
                     | "--pivot-crs"
-                    | "--accuracy"
                     | "--main-db-path"
                     | "--aux-db-path"
                     | "--s_epoch"
@@ -270,6 +272,32 @@ impl Options {
                     | "--identify"
                     | "--c-ify"
             ) {
+            } else if arg == "--crs-extent-use" {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| format!("missing value for {arg}"))?;
+                crs_extent_use = Some(match value.to_ascii_lowercase().as_str() {
+                    "none" => proj_rs::CrsExtentUse::Ignore,
+                    "both" => proj_rs::CrsExtentUse::Both,
+                    "intersection" => proj_rs::CrsExtentUse::Intersection,
+                    "smallest" => proj_rs::CrsExtentUse::Smallest,
+                    _ => {
+                        return Err(format!(
+                            "Unrecognized value for option --crs-extent-use: {value}"
+                        ))
+                    }
+                });
+            } else if arg == "--accuracy" {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| format!("missing value for {arg}"))?;
+                accuracy = Some(
+                    value
+                        .parse::<f64>()
+                        .map_err(|_| format!("Invalid value for option --accuracy: {value}"))?,
+                );
             } else if arg == "--output-id" {
                 index += 1;
                 let value = args
@@ -325,7 +353,7 @@ impl Options {
                 let value = args
                     .get(index)
                     .ok_or_else(|| format!("missing value for {arg}"))?;
-                spatial_test = match value.to_ascii_lowercase().as_str() {
+                spatial_test = Some(match value.to_ascii_lowercase().as_str() {
                     "contains" => SpatialTest::Contains,
                     "intersects" => SpatialTest::Intersects,
                     _ => {
@@ -333,7 +361,7 @@ impl Options {
                             "Unrecognized value for option --spatial-test: {value}"
                         ))
                     }
-                };
+                });
             } else if arg == "-s" || arg == "--source-crs" {
                 index += 1;
                 source = Some(
@@ -447,6 +475,8 @@ impl Options {
             area,
             bbox,
             spatial_test,
+            crs_extent_use,
+            accuracy,
             output_id,
             all,
         })
@@ -694,7 +724,7 @@ fn vertical_suggestions(db: &proj_rs::DatabaseContext, horizontal: &str) -> Resu
     let [domain] = crs.domains() else {
         return Ok(String::new());
     };
-    if GeoBox::of_domain(domain).is_none() {
+    if domain.bounding_box().is_none() {
         return Ok(String::new());
     }
     let vertical_authority = crs
@@ -814,7 +844,7 @@ fn list_crs(
             if !types.is_empty() && !types.contains(&info.type_name.as_str()) {
                 continue;
             }
-            if !scope.admits(&info, options.spatial_test) {
+            if !scope.admits(&info, options.spatial_test.unwrap_or_default()) {
                 continue;
             }
             let mut line = format!("{}:{} \"{}\"", info.authority, info.code, info.name);
@@ -833,7 +863,7 @@ enum Scope {
     Anywhere,
     /// An extent. A CRS without a bbox is dropped; an extent without a box
     /// keeps every CRS that has one.
-    Extent(Option<GeoBox>),
+    Extent(Option<proj_rs::BoundingBox>),
     /// Several areas matched the name: a CRS is kept when its area of use
     /// contains the text, ignoring case.
     AreaName(String),
@@ -844,7 +874,7 @@ impl Scope {
         match self {
             Self::Anywhere => true,
             Self::Extent(filter) => {
-                let Some(crs_box) = GeoBox::of_info(info) else {
+                let Some(crs_box) = crs_box(info) else {
                     return false;
                 };
                 match (filter, spatial_test) {
@@ -876,7 +906,7 @@ fn scope(db: &proj_rs::DatabaseContext, options: &Options) -> Result<Scope, Repo
         let domain = proj_rs::AuthorityFactory::create(db, parts[0])
             .create_extent(parts[1])
             .map_err(plain)?;
-        return Ok(Scope::Extent(GeoBox::of_domain(&domain)));
+        return Ok(Scope::Extent(domain.bounding_box()));
     }
     let factory = proj_rs::AuthorityFactory::create(db, "");
     let mut matches = factory
@@ -896,101 +926,22 @@ fn scope(db: &proj_rs::DatabaseContext, options: &Options) -> Result<Scope, Repo
         let domain = proj_rs::AuthorityFactory::create(db, authority.as_str())
             .create_extent(code)
             .map_err(plain)?;
-        return Ok(Scope::Extent(GeoBox::of_domain(&domain)));
+        return Ok(Scope::Extent(domain.bounding_box()));
     }
     Ok(Scope::AreaName(area.clone()))
 }
 
-/// A geographic bounding box in degrees, as `GeographicBoundingBox` holds it.
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct GeoBox {
-    west: f64,
-    south: f64,
-    east: f64,
-    north: f64,
+/// The bounding box of a CRS from `--list-crs`, when it has one.
+fn crs_box(info: &proj_rs::CrsInfo) -> Option<proj_rs::BoundingBox> {
+    Some(proj_rs::BoundingBox::new(
+        info.west_lon?,
+        info.south_lat?,
+        info.east_lon?,
+        info.north_lat?,
+    ))
 }
 
-impl GeoBox {
-    fn of_info(info: &proj_rs::CrsInfo) -> Option<Self> {
-        Some(Self {
-            west: info.west_lon?,
-            south: info.south_lat?,
-            east: info.east_lon?,
-            north: info.north_lat?,
-        })
-    }
-
-    fn of_domain(domain: &proj_rs::ObjectDomain) -> Option<Self> {
-        Some(Self {
-            west: domain.west_bound_longitude()?,
-            south: domain.south_bound_latitude()?,
-            east: domain.east_bound_longitude()?,
-            north: domain.north_bound_latitude()?,
-        })
-    }
-
-    /// `GeographicBoundingBox::contains`, with the antimeridian rules of PROJ.
-    fn contains(&self, other: &Self) -> bool {
-        let (w, e, s, n) = (self.west, self.east, self.south, self.north);
-        let (ow, oe) = (other.west, other.east);
-        if !(s <= other.south && n >= other.north) {
-            return false;
-        }
-        if w == -180.0 && e == 180.0 {
-            return ow != oe;
-        }
-        if ow == -180.0 && oe == 180.0 {
-            return false;
-        }
-        if w < e {
-            ow < oe && w <= ow && e >= oe
-        } else if ow < oe {
-            ow >= w || oe <= e
-        } else {
-            w <= ow && e >= oe
-        }
-    }
-
-    /// `GeographicBoundingBox::intersects`, with the antimeridian rules of PROJ.
-    fn intersects(&self, other: &Self) -> bool {
-        let (w, e) = (self.west, self.east);
-        let (ow, oe) = (other.west, other.east);
-        if self.north < other.south || self.south > other.north {
-            return false;
-        }
-        if w == -180.0 && e == 180.0 && ow > oe {
-            return true;
-        }
-        if ow == -180.0 && oe == 180.0 && w > e {
-            return true;
-        }
-        if w <= e {
-            if ow <= oe {
-                return w.max(ow) < e.min(oe);
-            }
-            if ow > 180.0 || oe < -180.0 {
-                return false;
-            }
-            let east_part = Self {
-                west: ow,
-                east: 180.0,
-                ..*other
-            };
-            let west_part = Self {
-                west: -180.0,
-                east: oe,
-                ..*other
-            };
-            return self.intersects(&east_part) || self.intersects(&west_part);
-        }
-        if ow <= oe {
-            return other.intersects(self);
-        }
-        true
-    }
-}
-
-fn parse_bbox(text: &str) -> Result<GeoBox, String> {
+fn parse_bbox(text: &str) -> Result<proj_rs::BoundingBox, String> {
     if text.split(',').count() != 4 {
         return Err(format!(
             "Incorrect number of values for option --bbox: {text}"
@@ -1004,12 +955,7 @@ fn parse_bbox(text: &str) -> Result<GeoBox, String> {
     let [west, south, east, north] = values.as_slice() else {
         return Err(format!("Invalid value for option --bbox: {text}"));
     };
-    Ok(GeoBox {
-        west: *west,
-        south: *south,
-        east: *east,
-        north: *north,
-    })
+    Ok(proj_rs::BoundingBox::new(*west, *south, *east, *north))
 }
 
 fn candidates(options: &Options) -> Result<String, String> {
@@ -1018,19 +964,43 @@ fn candidates(options: &Options) -> Result<String, String> {
     let target_text = options.target.as_deref().unwrap_or("");
     let source = load_named(&db, source_text)?;
     let target = load_named(&db, target_text)?;
-    let context = proj_rs::CoordinateOperationContext::create(&db, "EPSG");
-    let operations = proj_rs::CoordinateOperationFactory::create()
-        .create_operations(&source, &target, &context)
-        .map_err(|error| error.to_string())?;
+    let area = candidate_area(&db, options)?;
+    let spatial_test = options.spatial_test.unwrap_or_default();
+    let operations =
+        candidate_operations(&db, &source, &target, options, area.as_ref(), spatial_test)?;
+    let mut note = String::new();
+    if options.spatial_test.is_none() {
+        if let Ok(partial) = candidate_operations(
+            &db,
+            &source,
+            &target,
+            options,
+            area.as_ref(),
+            SpatialTest::Intersects,
+        ) {
+            if partial.len() > operations.len() {
+                note = format!(
+                    "Note: using '--spatial-test intersects' would bring more results ({})\n",
+                    partial.len()
+                );
+            } else if let ([only], [first]) = (partial.as_slice(), operations.as_slice()) {
+                if only.name() != first.name() {
+                    note = "Note: using '--spatial-test intersects' would bring more relevant results.\n"
+                        .to_owned();
+                }
+            }
+        }
+    }
     if options.quiet && !operations.is_empty() {
         return Ok(operation_bodies(&source, &operations[0], options));
     }
-    let mut out = format!("Candidate operations found: {}\n", operations.len());
-    if !options.summary {
-        out.push_str("-------------------------------------\n");
-    }
+    let mut out = format!("Candidate operations found: {}\n{note}", operations.len());
     for (index, operation) in operations.iter().enumerate() {
         if !options.summary {
+            if index > 0 {
+                out.push('\n');
+            }
+            out.push_str("-------------------------------------\n");
             out.push_str(&format!("Operation No. {}:\n\n", index + 1));
         }
         out.push_str(&operation_heading(operation));
@@ -1054,6 +1024,86 @@ fn candidates(options: &Options) -> Result<String, String> {
         }
     }
     Ok(out)
+}
+
+/// The area of interest of the candidates, as `makeBboxFilter` resolves it with several matches an error.
+fn candidate_area(
+    db: &proj_rs::DatabaseContext,
+    options: &Options,
+) -> Result<Option<proj_rs::ObjectDomain>, String> {
+    if let Some(bbox) = &options.bbox {
+        let bbox = parse_bbox(bbox)?;
+        return Ok(Some(proj_rs::ObjectDomain::from_bounding_box(bbox)));
+    }
+    let Some(area) = &options.area else {
+        return Ok(None);
+    };
+    let retrieval = |error: proj_rs::FactoryError| match error {
+        proj_rs::FactoryError::NotFound { object, .. } => {
+            format!("Area of use retrieval failed: {object} not found")
+        }
+        other => format!("Area of use retrieval failed: {other}"),
+    };
+    let parts: Vec<&str> = area.split(':').collect();
+    if !area.contains(' ') && parts.len() == 2 {
+        let domain = proj_rs::AuthorityFactory::create(db, parts[0])
+            .create_extent(parts[1])
+            .map_err(retrieval)?;
+        return Ok(Some(domain));
+    }
+    let factory = proj_rs::AuthorityFactory::create(db, "");
+    let mut matches = factory
+        .list_area_of_use_from_name(area, proj_rs::NameMatch::Exact)
+        .map_err(retrieval)?;
+    if matches.len() != 1 {
+        matches = factory
+            .list_area_of_use_from_name(area, proj_rs::NameMatch::Approximate)
+            .map_err(retrieval)?;
+    }
+    match matches.as_slice() {
+        [] => Err("No area of use matching provided name".to_owned()),
+        [(authority, code)] => proj_rs::AuthorityFactory::create(db, authority.as_str())
+            .create_extent(code)
+            .map(Some)
+            .map_err(retrieval),
+        several => {
+            let mut text = "Several candidates area of use matching provided name :\n".to_owned();
+            for (authority, code) in several {
+                let domain = proj_rs::AuthorityFactory::create(db, authority.as_str())
+                    .create_extent(code)
+                    .map_err(retrieval)?;
+                text.push_str(&format!(
+                    "  {authority}:{code} : {}\n",
+                    domain.description().unwrap_or_default()
+                ));
+            }
+            Err(text)
+        }
+    }
+}
+
+/// The candidate operations between two CRS for the area, spatial test and options given.
+fn candidate_operations(
+    db: &proj_rs::DatabaseContext,
+    source: &proj_rs::Crs,
+    target: &proj_rs::Crs,
+    options: &Options,
+    area: Option<&proj_rs::ObjectDomain>,
+    spatial_test: SpatialTest,
+) -> Result<Vec<proj_rs::CoordinateOperation>, String> {
+    let criterion = match spatial_test {
+        SpatialTest::Contains => proj_rs::SpatialCriterion::StrictContainment,
+        SpatialTest::Intersects => proj_rs::SpatialCriterion::PartialIntersection,
+    };
+    let mut context = proj_rs::CoordinateOperationContext::create(db, "EPSG");
+    context
+        .set_area_of_interest(area.cloned())
+        .set_spatial_criterion(criterion)
+        .set_crs_extent_use(options.crs_extent_use.unwrap_or_default())
+        .set_desired_accuracy(options.accuracy.unwrap_or(0.0));
+    proj_rs::CoordinateOperationFactory::create()
+        .create_operations(source, target, &context)
+        .map_err(|error| error.to_string())
 }
 
 fn proj_lines(options: &Options) -> proj_rs::ProjLines {
@@ -1104,13 +1154,14 @@ fn operation_heading(operation: &proj_rs::CoordinateOperation) -> String {
         .first()
         .map(|identifier| format!("{}:{}", identifier.code_space(), identifier.code()))
         .unwrap_or_else(|| "unknown id".to_owned());
-    let accuracy = match operation.accuracy() {
-        Some(value) if value.fract() == 0.0 => format!("{}", value.trunc()),
-        Some(value) => format!("{value}"),
-        None => "0".to_owned(),
+    let accuracy = match (operation.accuracy_text(), operation.accuracy(), operation) {
+        (Some(text), _, _) => format!("{text} m"),
+        (None, Some(value), _) => format!("{value} m"),
+        (None, None, proj_rs::CoordinateOperation::Conversion(_)) => "0 m".to_owned(),
+        _ => "unknown accuracy".to_owned(),
     };
     let domain = operation.domains().first();
-    let mut line = format!("{id}, {}, {accuracy} m", operation.name());
+    let mut line = format!("{id}, {}, {accuracy}", operation.name());
     if let Some(area) = domain.and_then(proj_rs::ObjectDomain::area) {
         line.push_str(", ");
         line.push_str(area.trim_end_matches('.'));
@@ -1557,13 +1608,8 @@ mod tests {
         assert!(text.contains("ENSEMBLEACCURACY[2.0]]"));
     }
 
-    fn well_formed(west: f64, south: f64, east: f64, north: f64) -> GeoBox {
-        GeoBox {
-            west,
-            south,
-            east,
-            north,
-        }
+    fn well_formed(west: f64, south: f64, east: f64, north: f64) -> proj_rs::BoundingBox {
+        proj_rs::BoundingBox::new(west, south, east, north)
     }
 
     #[test]

@@ -200,6 +200,7 @@ impl Transformation {
             target: Some(Box::new(target)),
             interpolation: interpolation.map(Box::new),
             accuracy,
+            accuracy_text: None,
             version: None,
             point_motion: false,
             inverted: false,

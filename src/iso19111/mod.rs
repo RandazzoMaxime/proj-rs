@@ -21,20 +21,21 @@ pub use buildop::OpProps;
 pub use equiv::{equivalent_name, Equivalence};
 pub use factory::{
     AlternativeGridNames, AuthorityFactory, AuthorityObject, CelestialBodyInfo,
-    CoordinateOperationContext, CoordinateOperationFactory, CrsInfo, DatabaseContext,
+    CoordinateOperationContext, CoordinateOperationFactory, CrsExtentUse, CrsInfo, DatabaseContext,
     DeprecatedCodes, IntermediateCrsUse, NameMatch, NameSpelling, ObjectType, OfficialName,
-    UnitInfo,
+    SpatialCriterion, UnitInfo,
 };
 pub use insert::insert_statements;
 pub use json::{create_from_user_input, epsg_identity};
 pub use model::{
-    Axis, BoundCRS, CartesianCS, CompoundCRS, ConcatenatedOperation, ConcatenatedStep, Conversion,
-    CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble, DerivedConversion,
-    DerivedProjectedCRS, Ellipsoid, EllipsoidalCS, EngineeringCRS, EngineeringDatum, FactoryError,
-    GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identifier, Meridian,
-    ObjectDomain, OperationMethod, OperationParameter, OperationParameterValue, OrdinalCS,
-    Parameter, ParameterValue, PrimeMeridian, ProjectedCRS, SphericalCS, Transformation, UnitKind,
-    UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame,
+    Axis, BoundCRS, BoundingBox, CartesianCS, CompoundCRS, ConcatenatedOperation, ConcatenatedStep,
+    Conversion, CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble,
+    DerivedConversion, DerivedProjectedCRS, Ellipsoid, EllipsoidalCS, EngineeringCRS,
+    EngineeringDatum, FactoryError, GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame,
+    GeographicCRS, Identifier, Meridian, ObjectDomain, OperationMethod, OperationParameter,
+    OperationParameterValue, OrdinalCS, Parameter, ParameterValue, PrimeMeridian, ProjectedCRS,
+    SphericalCS, Transformation, UnitKind, UnitOfMeasure, VerticalCRS, VerticalCS,
+    VerticalReferenceFrame,
 };
 pub use pipeline::ProjLines;
 pub use projstring::create_crs_from_proj_string;

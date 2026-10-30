@@ -18,7 +18,7 @@ Covered options: `--list-crs`, `-k` (`ellipsoid`, `datum`, `ensemble`, and
 | `main_projinfo` option loop | `Options::parse` (`src/bin/projinfo.rs`), then `run` in PROJ's order |
 | `suggestCompletion(args)` | `complete_shell`, `completion_phrase`, `vertical_suggestions` |
 | `listCRS` loop and `makeBboxFilter` | `list_crs`, `scope`, `Scope::admits` |
-| `GeographicBoundingBox::contains` / `intersects` | `GeoBox::contains` / `GeoBox::intersects` (CLI only) |
+| `GeographicBoundingBox::contains` / `intersects` | `BoundingBox::contains` / `BoundingBox::intersects` (`src/iso19111/model.rs`) |
 | `buildObject` with `-k` | `build_object`, `named_object` |
 | `outputObject` for a non-CRS object | `render`, `proj_text`, `wkt` over `AuthorityObject` |
 | `DatabaseContext::getDatabaseStructure` | `DatabaseContext::database_structure` (`src/iso19111/factory.rs`) |

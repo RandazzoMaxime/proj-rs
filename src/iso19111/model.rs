@@ -169,6 +169,140 @@ impl ObjectDomain {
             && same_optional(self.north, other.north)
             && same_optional(self.east, other.east)
     }
+
+    /// Extent with no description and the bounding box `bbox`, as an area of interest.
+    #[must_use]
+    pub fn from_bounding_box(bbox: BoundingBox) -> Self {
+        Self {
+            scope: None,
+            area: None,
+            south: Some(bbox.south),
+            west: Some(bbox.west),
+            north: Some(bbox.north),
+            east: Some(bbox.east),
+        }
+    }
+
+    /// The bounding box, when all four bounds are recorded.
+    #[must_use]
+    pub fn bounding_box(&self) -> Option<BoundingBox> {
+        Some(BoundingBox {
+            west: self.west?,
+            south: self.south?,
+            east: self.east?,
+            north: self.north?,
+        })
+    }
+}
+
+/// Geographic bounding box in degrees, as PROJ's `GeographicBoundingBox` holds it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BoundingBox {
+    west: f64,
+    south: f64,
+    east: f64,
+    north: f64,
+}
+
+impl BoundingBox {
+    /// Box from its bounds in degrees. A west bound east of the east bound crosses the antimeridian.
+    #[must_use]
+    pub fn new(west: f64, south: f64, east: f64, north: f64) -> Self {
+        Self {
+            west,
+            south,
+            east,
+            north,
+        }
+    }
+
+    /// `GeographicBoundingBox::contains`, with the antimeridian rules of PROJ.
+    #[must_use]
+    pub fn contains(&self, other: &Self) -> bool {
+        let (w, e, s, n) = (self.west, self.east, self.south, self.north);
+        let (ow, oe) = (other.west, other.east);
+        if !(s <= other.south && n >= other.north) {
+            return false;
+        }
+        if w == -180.0 && e == 180.0 {
+            return ow != oe;
+        }
+        if ow == -180.0 && oe == 180.0 {
+            return false;
+        }
+        if w < e {
+            ow < oe && w <= ow && e >= oe
+        } else if ow < oe {
+            ow >= w || oe <= e
+        } else {
+            w <= ow && e >= oe
+        }
+    }
+
+    /// `GeographicBoundingBox::intersects`, with the antimeridian rules of PROJ.
+    #[must_use]
+    pub fn intersects(&self, other: &Self) -> bool {
+        let (w, e) = (self.west, self.east);
+        let (ow, oe) = (other.west, other.east);
+        if self.north < other.south || self.south > other.north {
+            return false;
+        }
+        if w == -180.0 && e == 180.0 && ow > oe {
+            return true;
+        }
+        if ow == -180.0 && oe == 180.0 && w > e {
+            return true;
+        }
+        if w <= e {
+            if ow <= oe {
+                return w.max(ow) < e.min(oe);
+            }
+            if ow > 180.0 || oe < -180.0 {
+                return false;
+            }
+            let east_part = Self {
+                west: ow,
+                east: 180.0,
+                ..*other
+            };
+            let west_part = Self {
+                west: -180.0,
+                east: oe,
+                ..*other
+            };
+            return self.intersects(&east_part) || self.intersects(&west_part);
+        }
+        if ow <= oe {
+            return other.intersects(self);
+        }
+        true
+    }
+
+    /// `getPseudoArea`: the integral of cos(latitude) over the box, with longitudes in degrees.
+    #[must_use]
+    pub fn pseudo_area(&self) -> f64 {
+        let mut east = self.east;
+        if self.west > east {
+            east += 360.0;
+        }
+        (east - self.west) * ((self.north.to_radians()).sin() - (self.south.to_radians()).sin())
+    }
+
+    /// Common part of two boxes that do not cross the antimeridian, or `None` when they are disjoint.
+    #[must_use]
+    pub fn intersection(&self, other: &Self) -> Option<Self> {
+        if self.contains(other) {
+            return Some(*other);
+        }
+        if other.contains(self) {
+            return Some(*self);
+        }
+        let west = self.west.max(other.west);
+        let east = self.east.min(other.east);
+        let south = self.south.max(other.south);
+        let north = self.north.min(other.north);
+        (west <= east && south <= north).then(|| Self::new(west, south, east, north))
+    }
 }
 
 fn same_optional(left: Option<f64>, right: Option<f64>) -> bool {
@@ -1653,6 +1787,8 @@ pub struct Transformation {
     pub(crate) target: Option<Box<Crs>>,
     pub(crate) interpolation: Option<Box<Crs>>,
     pub(crate) accuracy: Option<f64>,
+    /// The accuracy as the database wrote it, such as `1.0`.
+    pub(crate) accuracy_text: Option<String>,
     pub(crate) version: Option<String>,
     pub(crate) point_motion: bool,
     pub(crate) inverted: bool,
@@ -1817,6 +1953,15 @@ impl CoordinateOperation {
             Self::Conversion(_) => None,
             Self::Transformation(operation) => operation.accuracy(),
             Self::Concatenated(operation) => operation.accuracy(),
+        }
+    }
+
+    /// Stated accuracy as the database wrote it, when it kept the text.
+    #[must_use]
+    pub fn accuracy_text(&self) -> Option<&str> {
+        match self {
+            Self::Transformation(operation) => operation.accuracy_text.as_deref(),
+            Self::Conversion(_) | Self::Concatenated(_) => None,
         }
     }
 
