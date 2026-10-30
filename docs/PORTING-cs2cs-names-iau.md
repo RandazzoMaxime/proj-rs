@@ -70,11 +70,15 @@ of its CRS (`export_to_proj_string`) and goes through the PROJ-string path of
 
 ## Open cases in this lot
 
-- `test_cs2cs_various.yaml#95` and `#96` (`--authority PROJ ITRF96 ITRF2014`,
-  GH-2442) were already failing on `origin/main` and still fail. They are an
-  operation-selection question about `--authority`, not a name lookup.
-- The other open `cs2cs` cases are listed in `docs/UNPORTED-CLI.md`. The
-  `--only-best`, `--accuracy`, and `--no-ballpark` cases belong to another lot.
+- `test_cs2cs_various.yaml#95` and `#96` (`ITRF96 ITRF2014`, with and without
+  `--authority PROJ`) pass on `origin/main` and still pass. They are not
+  affected by this lot.
+- Open after this lot: 29 `cs2cs` cases, listed in `docs/UNPORTED-CLI.md`.
+  Six of them (`#102`, `#103`, `#126`, `#127`, `#139`, `#143`) fail with
+  `unknown CRS` on compound EPSG codes such as `EPSG:4326+5773`: `Crs::parse`
+  in `src/crs.rs` accepts one EPSG code, so `Proj::new_known_crs` rejects them.
+  The `--accuracy` and `--no-ballpark` cases (`#97`, `#98`) belong to another
+  lot.
 
 ## Verification
 
