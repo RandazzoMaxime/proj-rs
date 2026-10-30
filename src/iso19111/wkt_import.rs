@@ -2165,6 +2165,7 @@ impl WktParser {
             },
             parameters,
             version: props.version,
+            inverted: false,
         })
     }
 
@@ -2271,6 +2272,7 @@ impl WktParser {
             },
             parameters,
             version: None,
+            inverted: false,
         })
     }
 
@@ -2550,6 +2552,7 @@ impl WktParser {
             target: None,
             accuracy: None,
             version: props.version,
+            computed_name: false,
         })
     }
 }

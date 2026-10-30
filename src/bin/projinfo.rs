@@ -973,7 +973,7 @@ fn candidates(options: &Options) -> Result<String, String> {
     let source = load_named(&db, source_text)?;
     let target = load_named(&db, target_text)?;
     let (source, target) = if options.promote_3d {
-        (source, target)
+        (promote(&db, &source), promote(&db, &target))
     } else {
         promote_by_name(&db, source_text, target_text, source, target)
     };

@@ -23,7 +23,7 @@ const NULL_GEOGRAPHIC_OFFSET: &str = "Null geographic offset";
 
 /// Candidates of the vertical branch for `source` to `target`. Empty for any
 /// pair that is not a two-component compound of a geographic and a vertical
-/// CRS, to a 3D geographic CRS.
+/// CRS, to a 3D geographic CRS. To a 2D geographic CRS, the horizontal part alone.
 pub(super) fn compound_to_geog3d(
     factory: &CoordinateOperationFactory,
     source: &Crs,
@@ -36,12 +36,12 @@ pub(super) fn compound_to_geog3d(
     let Some(geog_dst) = geographic_of(target) else {
         return Ok(Vec::new());
     };
-    if geog_dst.coordinate_system().axes().len() != 3 {
-        return Ok(Vec::new());
-    }
     let [horizontal, vertical] = compound.components() else {
         return Ok(Vec::new());
     };
+    if geog_dst.coordinate_system().axes().len() != 3 {
+        return horizontal_only(factory, source, target, horizontal, context);
+    }
     let (Some(geog_src), Crs::Vertical(vertical_crs)) = (geographic_of(horizontal), vertical)
     else {
         return Ok(Vec::new());
@@ -80,8 +80,7 @@ pub(super) fn compound_to_geog3d(
 }
 
 /// The reverse of [`compound_to_geog3d`], for a geographic source and a compound
-/// target (`applyInverse` of PROJ's dispatch). Only transformations are inverted:
-/// a conversion or a concatenated operation has no inverse here.
+/// target (`applyInverse` of PROJ's dispatch).
 pub(super) fn geog_to_compound(
     factory: &CoordinateOperationFactory,
     source: &Crs,
@@ -92,13 +91,30 @@ pub(super) fn geog_to_compound(
         return Ok(Vec::new());
     }
     Ok(compound_to_geog3d(factory, target, source, context)?
-        .into_iter()
-        .filter_map(|operation| match operation {
-            CoordinateOperation::Transformation(transformation) => Some(
-                CoordinateOperation::Transformation(transformation.inverse()),
-            ),
-            _ => None,
-        })
+        .iter()
+        .map(CoordinateOperation::inverse)
+        .collect())
+}
+
+/// `createOperationsCompoundToGeog` for a 2D geographic target: the operations of the
+/// horizontal part to the target, the vertical part dropped. A null offset when there are none.
+fn horizontal_only(
+    factory: &CoordinateOperationFactory,
+    source: &Crs,
+    target: &Crs,
+    horizontal: &Crs,
+    context: &CoordinateOperationContext,
+) -> Result<Vec<CoordinateOperation>, FactoryError> {
+    if geographic_of(horizontal).is_none() {
+        return Ok(Vec::new());
+    }
+    let mut operations = factory.create_candidates(horizontal, target, context)?;
+    if operations.is_empty() {
+        operations.extend(null_offset(horizontal, target));
+    }
+    Ok(operations
+        .iter()
+        .map(|operation| retarget(operation, source, target))
         .collect())
 }
 
@@ -132,6 +148,7 @@ fn combine(
         target: Some(Box::new(target.clone())),
         accuracy: None,
         version: None,
+        computed_name: true,
     })
 }
 

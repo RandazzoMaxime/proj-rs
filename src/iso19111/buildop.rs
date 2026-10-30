@@ -4,7 +4,8 @@
 
 use super::equiv::Equivalence;
 use super::model::{
-    Crs, FactoryError, Identified, Measure, ObjectDomain, OperationMethod, OperationParameter,
+    ConcatenatedOperation, ConcatenatedStep, Conversion, CoordinateOperation, Crs, FactoryError,
+    Identified, Measure, ObjectDomain, OperationMethod, OperationParameter,
     OperationParameterValue, Parameter, ParameterValue, Transformation, UnitKind,
 };
 use super::parammap::{self, MethodMap, ParamMap};
@@ -251,15 +252,11 @@ impl Transformation {
         for identifier in &mut inverse.identified.identifiers {
             identifier.code_space = inverse_code_space(&identifier.code_space);
         }
-        if self.inverted {
-            inverse.identified.name = self
-                .name()
-                .strip_prefix("Inverse of ")
-                .unwrap_or(self.name())
-                .to_owned();
+        inverse.identified.name = if self.inverted {
+            uninverse_name(self.name())
         } else {
-            inverse.identified.name = format!("Inverse of {}", self.name());
-        }
+            inverse_name(self.name())
+        };
         inverse
     }
 
@@ -300,6 +297,97 @@ fn inverse_code_space(code_space: &str) -> String {
     {
         Some(authority) => authority.to_owned(),
         None => format!("INVERSE({code_space})"),
+    }
+}
+
+/// The name of the inverse of an operation that is not inverted yet.
+fn inverse_name(name: &str) -> String {
+    format!("Inverse of {name}")
+}
+
+/// The name of the inverse of an inverted operation: the `Inverse of ` prefix is removed.
+fn uninverse_name(name: &str) -> String {
+    name.strip_prefix("Inverse of ").unwrap_or(name).to_owned()
+}
+
+/// `createPropertiesForInverse` for a stored concatenated operation: the `Inverse of`
+/// prefix is removed, or added with the name quoted when it joins steps with ` + `.
+fn concatenated_inverse_name(name: &str) -> String {
+    if let Some(rest) = name.strip_prefix("Inverse of ") {
+        return rest
+            .strip_prefix('\'')
+            .and_then(|quoted| quoted.strip_suffix('\''))
+            .unwrap_or(rest)
+            .to_owned();
+    }
+    if name.contains(" + ") {
+        format!("Inverse of '{name}'")
+    } else {
+        format!("Inverse of {name}")
+    }
+}
+
+impl Conversion {
+    /// The inverse conversion, as `InverseConversion`: the same method and parameters, an
+    /// `Inverse of` name, and `INVERSE(...)` identifiers.
+    #[must_use]
+    pub(crate) fn inverse(&self) -> Self {
+        let mut inverse = self.clone();
+        inverse.inverted = !self.inverted;
+        for identifier in &mut inverse.identified.identifiers {
+            identifier.code_space = inverse_code_space(&identifier.code_space);
+        }
+        inverse.identified.name = if self.inverted {
+            uninverse_name(self.name())
+        } else {
+            inverse_name(self.name())
+        };
+        inverse
+    }
+}
+
+impl ConcatenatedOperation {
+    /// The inverse concatenated operation: the steps in reverse order, each inverted, and
+    /// the source and target swapped. A computed name is rebuilt from the inverted steps.
+    #[must_use]
+    pub(crate) fn inverse(&self) -> Self {
+        let steps: Vec<ConcatenatedStep> = self
+            .steps
+            .iter()
+            .rev()
+            .map(|step| ConcatenatedStep {
+                operation: step.operation.inverse(),
+                reverse: step.reverse,
+            })
+            .collect();
+        let mut inverse = self.clone();
+        inverse.identified.name = if self.computed_name {
+            steps
+                .iter()
+                .map(|step| step.operation.name())
+                .collect::<Vec<_>>()
+                .join(" + ")
+        } else {
+            concatenated_inverse_name(self.name())
+        };
+        inverse.steps = steps;
+        std::mem::swap(&mut inverse.source, &mut inverse.target);
+        for identifier in &mut inverse.identified.identifiers {
+            identifier.code_space = inverse_code_space(&identifier.code_space);
+        }
+        inverse
+    }
+}
+
+impl CoordinateOperation {
+    /// The operation from the target to the source.
+    #[must_use]
+    pub(crate) fn inverse(&self) -> Self {
+        match self {
+            Self::Conversion(operation) => Self::Conversion(operation.inverse()),
+            Self::Transformation(operation) => Self::Transformation(operation.inverse()),
+            Self::Concatenated(operation) => Self::Concatenated(operation.inverse()),
+        }
     }
 }
 
@@ -426,6 +514,7 @@ impl super::model::Conversion {
             ),
             parameters,
             version: None,
+            inverted: false,
         }
     }
 
@@ -531,8 +620,9 @@ impl super::model::Conversion {
     ///
     /// # Errors
     ///
-    /// The method cannot be written as a PROJ string, or a parameter value is
-    /// outside the range PROJ accepts.
+    /// The method cannot be written as a PROJ string, a parameter value is outside the
+    /// range PROJ accepts, or the conversion is an inverse, whose `+inv` form (with its
+    /// axis steps for the target CRS) is not written yet.
     pub fn export_to_proj_string(&self) -> Result<String, FactoryError> {
         self.export_to_proj_inner(TmercApprox::No)
     }
@@ -547,6 +637,12 @@ impl super::model::Conversion {
     }
 
     fn export_to_proj_inner(&self, approx_tmerc: TmercApprox) -> Result<String, FactoryError> {
+        if self.inverted {
+            return Err(FactoryError::Format(format!(
+                "inverse conversion {} has no PROJ string in this crate",
+                self.name()
+            )));
+        }
         let mapped = lookup_method(&self.method).ok_or_else(|| {
             FactoryError::Format(format!(
                 "Unsupported conversion method: {}",
@@ -803,6 +899,7 @@ impl super::model::Conversion {
             method,
             parameters,
             version: None,
+            inverted: false,
         })
     }
 

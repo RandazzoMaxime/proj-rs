@@ -1767,6 +1767,7 @@ pub struct Conversion {
     pub(crate) method: OperationMethod,
     pub(crate) parameters: Vec<Parameter>,
     pub(crate) version: Option<String>,
+    pub(crate) inverted: bool,
 }
 
 impl Conversion {
@@ -1898,6 +1899,8 @@ pub struct ConcatenatedOperation {
     pub(crate) target: Option<Box<Crs>>,
     pub(crate) accuracy: Option<f64>,
     pub(crate) version: Option<String>,
+    /// The name is the steps' names joined by ` + `, as `createComputeMetadata` sets it.
+    pub(crate) computed_name: bool,
 }
 
 impl ConcatenatedOperation {
