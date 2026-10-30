@@ -45,7 +45,7 @@ fn run(args: &[String]) -> Result<String, Report> {
             .map(|text| text.trim_end_matches('\n').to_owned())
             .map_err(Report::Plain);
     }
-    let options = Options::parse(args).map_err(Report::Usage)?;
+    let mut options = Options::parse(args).map_err(Report::Usage)?;
     if options.help {
         return Ok(usage().to_owned());
     }
@@ -64,7 +64,20 @@ fn run(args: &[String]) -> Result<String, Report> {
         ));
     }
     if options.dump_db_structure && options.positional == 1 && !options.format_given {
-        return Err(Report::Plain("cannot write dialect SQL".to_owned()));
+        options.dialects = vec![Dialect::Sql];
+        options.quiet = true;
+    }
+    if options.dialects.contains(&Dialect::Sql) && options.output_id.is_none() {
+        if !options.all {
+            return Err(Report::Plain(
+                "ERROR: --output-id AUTH:CODE must be specified when SQL output is enabled."
+                    .to_owned(),
+            ));
+        }
+        eprintln!(
+            "WARNING: SQL output disable since --output-id AUTH:CODE has not been specified."
+        );
+        options.dialects.retain(|dialect| *dialect != Dialect::Sql);
     }
     let mut lines = Vec::new();
     if options.dump_db_structure {
@@ -141,6 +154,7 @@ enum Dialect {
     Wkt1Gdal,
     Wkt1Esri,
     ProjJson,
+    Sql,
 }
 
 #[expect(
@@ -168,6 +182,8 @@ struct Options {
     area: Option<String>,
     bbox: Option<String>,
     spatial_test: SpatialTest,
+    output_id: Option<(String, String)>,
+    all: bool,
 }
 
 /// The `-k` value: which kind of object a name or code describes.
@@ -214,6 +230,9 @@ impl Options {
         let mut area = None;
         let mut bbox = None;
         let mut spatial_test = SpatialTest::default();
+        let mut output_id = None;
+        let mut all = false;
+        let mut sql = false;
         let mut positional = 0;
         let mut index = 0;
         while index < args.len() {
@@ -249,9 +268,18 @@ impl Options {
                     | "--boundcrs-to-wgs84"
                     | "--allow-ellipsoidal-height-as-vertical-crs"
                     | "--identify"
-                    | "--output-id"
                     | "--c-ify"
             ) {
+            } else if arg == "--output-id" {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| format!("missing value for {arg}"))?;
+                let tokens: Vec<&str> = value.split(':').collect();
+                let [authority, code] = tokens.as_slice() else {
+                    return Err("Invalid value for option --output-id".to_owned());
+                };
+                output_id = Some(((*authority).to_owned(), (*code).to_owned()));
             } else if arg == "--searchpaths" {
                 searchpaths = true;
             } else if arg == "--remote-data" {
@@ -328,6 +356,8 @@ impl Options {
                 saw_format = true;
                 for piece in value.split(',') {
                     if piece.eq_ignore_ascii_case("all") {
+                        all = true;
+                        sql = true;
                         proj = true;
                         wkt2015 = true;
                         wkt = true;
@@ -343,6 +373,7 @@ impl Options {
                         Some(Dialect::Wkt1Gdal) => wkt1 = true,
                         Some(Dialect::Wkt1Esri) => wkt1_esri = true,
                         Some(Dialect::ProjJson) => json = true,
+                        Some(Dialect::Sql) => sql = true,
                         None => {
                             proj = true;
                             wkt = true;
@@ -389,6 +420,9 @@ impl Options {
         if json {
             dialects.push(Dialect::ProjJson);
         }
+        if sql {
+            dialects.push(Dialect::Sql);
+        }
         if saw_format && dialects.is_empty() && !help && !version {
             return Err("no output format remains enabled".to_owned());
         }
@@ -413,6 +447,8 @@ impl Options {
             area,
             bbox,
             spatial_test,
+            output_id,
+            all,
         })
     }
 }
@@ -443,7 +479,6 @@ fn classify_dialect(text: &str) -> Result<Option<Dialect>, String> {
         "wkt2_2018_simplified",
         "wkt2-2018_simplified",
         "wkt2:2018_simplified",
-        "sql",
     ];
     if UNSUPPORTED.contains(&folded.as_str()) {
         return Err(format!("cannot write dialect {text}"));
@@ -459,6 +494,7 @@ fn classify_dialect(text: &str) -> Result<Option<Dialect>, String> {
         "wkt1_gdal" | "wkt1-gdal" | "wkt1:gdal" => Some(Dialect::Wkt1Gdal),
         "wkt1_esri" | "wkt1-esri" | "wkt1:esri" => Some(Dialect::Wkt1Esri),
         "projjson" => Some(Dialect::ProjJson),
+        "sql" => Some(Dialect::Sql),
         _ => return Err(format!("unrecognized value for option -o: {text}")),
     })
 }
@@ -1351,6 +1387,13 @@ fn render(
                 }
                 _ => return Err("cannot write PROJJSON for this object".to_owned()),
             },
+            Dialect::Sql => match sql_text(object, db, options) {
+                Ok(body) => body,
+                Err(error) => {
+                    eprintln!("Error when exporting to SQL: {error}");
+                    continue;
+                }
+            },
             Dialect::Wkt2_2015 => wkt(object, db, proj_rs::WktConvention::Wkt2_2015)?,
             Dialect::Wkt2_2019 => wkt(object, db, proj_rs::WktConvention::Wkt2_2019)?,
             Dialect::Wkt1Gdal => {
@@ -1373,11 +1416,36 @@ fn render(
                 Dialect::Wkt1Gdal => "WKT1:GDAL string:",
                 Dialect::Wkt1Esri => "WKT1:ESRI string:",
                 Dialect::ProjJson => "PROJJSON:",
+                Dialect::Sql => "SQL:",
             };
-            blocks.push(format!("{header}\n{body}"));
+            blocks.push(if body.is_empty() {
+                header.to_owned()
+            } else {
+                format!("{header}\n{body}")
+            });
         }
     }
     Ok(blocks.join("\n\n"))
+}
+
+/// The insert statements for `object` under `--output-id`, one per line. An
+/// object that is already known under that name has none.
+fn sql_text(
+    object: &proj_rs::AuthorityObject,
+    db: &proj_rs::DatabaseContext,
+    options: &Options,
+) -> Result<String, String> {
+    let Some((authority, code)) = options.output_id.as_ref() else {
+        return Err("--output-id AUTH:CODE must be specified".to_owned());
+    };
+    let allowed = if options.authorities.is_empty() {
+        vec!["EPSG".to_owned(), "PROJ".to_owned()]
+    } else {
+        options.authorities.clone()
+    };
+    let statements = proj_rs::insert_statements(db, object, authority, code, &allowed)
+        .map_err(|error| error.to_string())?;
+    Ok(statements.join("\n"))
 }
 
 /// The PROJ string of `object`. A datum has none, so it prints no block.
@@ -1417,9 +1485,10 @@ mod tests {
     #[test]
     fn unsupported_dialect_is_an_error() {
         assert!(classify_dialect("WKT1:GDAL").is_ok());
-        assert!(classify_dialect("SQL")
-            .expect_err("sql")
+        assert!(classify_dialect("WKT_ALL")
+            .expect_err("wkt all")
             .contains("cannot write dialect"));
+        assert_eq!(classify_dialect("SQL").expect("sql"), Some(Dialect::Sql));
         assert_eq!(classify_dialect("all").expect("all"), None);
         assert_eq!(
             classify_dialect("WKT2:2019").expect("wkt"),

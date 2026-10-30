@@ -10,6 +10,7 @@ use super::model::{
     GeodeticReferenceFrame, GeographicCRS, Identified, Identifier, Measure, PrimeMeridian,
     UnitOfMeasure,
 };
+use super::projstring::create_crs_from_proj_string;
 use super::wkt_import::WktParser;
 use crate::crs_text::{self, Object, Value};
 
@@ -385,7 +386,8 @@ fn is_integer_token(text: &str) -> bool {
     !text.is_empty() && text.chars().all(|ch| ch.is_ascii_digit())
 }
 
-/// `createFromUserInput` for an authority code, PROJJSON (`{...}`), and WKT.
+/// `createFromUserInput` for an authority code, PROJJSON (`{...}`), a PROJ
+/// string, and WKT.
 ///
 /// `AUTH:code` and `AUTH:horizontal+vertical` (including
 /// `AUTH:code+AUTH:code`) are resolved in `db`. A `+` between two codes of
@@ -393,11 +395,16 @@ fn is_integer_token(text: &str) -> bool {
 ///
 /// # Errors
 ///
-/// The text is not an authority code, PROJJSON this importer accepts, or WKT for a CRS.
+/// The text is not an authority code, PROJJSON this importer accepts, a PROJ
+/// string this importer accepts, or WKT for a CRS.
 pub fn create_from_user_input(text: &str, db: &DatabaseContext) -> Result<Crs, FactoryError> {
     let text = text.trim();
     if text.starts_with('{') {
         return import_json(text, db);
+    }
+    let bare = text.strip_prefix('+').unwrap_or(text);
+    if bare.starts_with("proj=") || text.contains(" +proj=") || text.contains(" proj=") {
+        return create_crs_from_proj_string(text);
     }
     if let Some(crs) = crs_from_authority_code(text, db)? {
         return Ok(crs);

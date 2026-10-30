@@ -7,6 +7,7 @@ mod buildop;
 mod equiv;
 mod factory;
 mod identify;
+mod insert;
 mod json;
 mod model;
 mod parammap;
@@ -21,6 +22,7 @@ pub use factory::{
     CoordinateOperationFactory, CrsInfo, DatabaseContext, DeprecatedCodes, IntermediateCrsUse,
     NameMatch, ObjectType,
 };
+pub use insert::insert_statements;
 pub use json::{create_from_user_input, epsg_identity};
 pub use model::{
     Axis, BoundCRS, CartesianCS, CompoundCRS, ConcatenatedOperation, ConcatenatedStep, Conversion,
