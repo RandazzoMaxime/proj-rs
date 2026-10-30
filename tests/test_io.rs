@@ -745,3 +745,399 @@ fn wkt_parse_esri_geogcs_datum_spheroid_name_hardcoded_substitution() {
     );
     assert_eq!(crs.ellipsoid().expect("ellipsoid").name(), "WGS 84");
 }
+
+#[test]
+fn wkt_parse_invalid() {
+    refused("");
+    refused("A");
+    refused("UNKNOWN[\"foo\"]");
+    refused("INVALID[");
+    refused("INVALID[]");
+}
+
+#[test]
+fn wkt_parse_invalid_spheroid() {
+    parse("SPHEROID[\"x\",1,0.5]");
+    refused("SPHEROID[\"x\"]");
+    refused("SPHEROID[\"x\",\"1\",0.5]");
+    refused("SPHEROID[\"x\",1,\"0.5\"]");
+}
+
+#[test]
+fn wkt_parse_invalid_datum() {
+    parse("DATUM[\"x\",SPHEROID[\"x\",1,0.5]]");
+    refused("DATUM[\"x\"]");
+    refused("DATUM[\"x\",FOO[]]");
+}
+
+#[test]
+fn wkt_parse_invalid_ensemble() {
+    refused("ENSEMBLE[]");
+    refused("ENSEMBLE[\"x\"]");
+    refused("ENSEMBLE[\"x\",MEMBER[\"vdatum1\"],MEMBER[\"vdatum2\"]]");
+    refused("ENSEMBLE[\"x\",MEMBER[],MEMBER[\"vdatum2\"],ENSEMBLEACCURACY[\"100\"]]");
+    refused("ENSEMBLE[\"x\",MEMBER[\"vdatum1\"],MEMBER[\"vdatum2\"],ENSEMBLEACCURACY[]]");
+    refused("ENSEMBLE[\"x\",ENSEMBLEACCURACY[\"100\"]]");
+}
+
+const BBOX_CRS_HEAD: &str = "GEOGCRS[\"x\",DATUM[\"x\",ELLIPSOID[\"x\",1,0.5,\
+LENGTHUNIT[\"metre\",1,ID[\"EPSG\",9001]]]],\
+PRIMEM[\"x\",0,ANGLEUNIT[\"degree\",0.0174532925199433]],\
+CS[ellipsoidal,2],AXIS[\"longitude\",east,ORDER[1],\
+ANGLEUNIT[\"degree\",0.0174532925199433]],\
+AXIS[\"latitude\",north,ORDER[2],\
+ANGLEUNIT[\"degree\",0.0174532925199433]],";
+
+#[test]
+fn wkt_parse_invalid_bbox() {
+    parse(&format!(
+        "{BBOX_CRS_HEAD}USAGE[SCOPE[\"unknown\"],BBOX[1,2,3,4]]]"
+    ));
+    refused(&format!(
+        "{BBOX_CRS_HEAD}USAGE[SCOPE[\"unknown\"],BBOX[1,2,3]]]"
+    ));
+    refused(&format!(
+        "{BBOX_CRS_HEAD}USAGE[SCOPE[\"unknown\"],BBOX[1,2,3,a]]]"
+    ));
+    refused(&format!(
+        "{BBOX_CRS_HEAD}USAGE[SCOPE[\"unknown\"],BBOX[1,2,-1,4]]]"
+    ));
+}
+
+#[test]
+fn wkt_parse_invalid_geogcs() {
+    let datum = "DATUM[\"x\",SPHEROID[\"x\",1,0.5]]";
+    let unit = "UNIT[\"degree\",0.0174532925199433]";
+    parse(&format!("GEOGCS[\"x\",{datum},PRIMEM[\"x\",0],{unit}]"));
+
+    refused(&format!("GEOGCS[\"x\",{datum},{unit}]"));
+    refused(&format!("GEOGCS[\"x\",{datum},PRIMEM[\"x\",0]]"));
+    refused("GEOGCS[\"x\"]");
+    refused("GEOGCS[\"x\",FOO[]]");
+    refused(&format!(
+        "GEOGCS[\"x\",DATUM[\"x\"],PRIMEM[\"x\",0],{unit}]"
+    ));
+    refused(&format!(
+        "GEOGCS[\"x\",{datum},PRIMEM[\"x\",0],{unit},AUTHORITY[\"x\"]]"
+    ));
+
+    let mut lenient = WktParser::new();
+    lenient.set_strictness(proj_rs::WktStrictness::Lenient);
+    lenient
+        .create_from_wkt(&format!(
+            "GEOGCS[\"x\",{datum},PRIMEM[\"x\",0],{unit},AUTHORITY[\"x\"]]"
+        ))
+        .expect("AUTHORITY is ignored when not strict");
+
+    refused(&format!("GEOGCS[\"x\",{datum},PRIMEM[\"x\",\"a\"],{unit}]"));
+    refused(&format!("GEOGCS[\"x\",{datum},PRIMEM[\"x\"],{unit}]"));
+
+    parse(&format!(
+        "GEOGCS[\"x\",{datum},PRIMEM[\"x\",0],{unit},AXIS[\"latitude\",NORTH],AXIS[\"longitude\",EAST]]"
+    ));
+
+    refused(&format!(
+        "GEOGCS[\"x\",{datum},PRIMEM[\"x\",0],{unit},AXIS[\"latitude\",NORTH]]"
+    ));
+    refused(&format!(
+        "GEOGCS[\"x\",{datum},PRIMEM[\"x\",0],{unit},AXIS[\"latitude\",NORTH],AXIS[\"longitude\"]]"
+    ));
+}
+
+#[test]
+fn wkt_parse_invalid_unit() {
+    let start = "GEODCRS[\"x\",DATUM[\"x\",SPHEROID[\"x\",1,0.5]],CS[ellipsoidal,2],AXIS[\"latitude\",north],AXIS[\"longitude\",east],";
+    parse(&format!("{start}UNIT[\"degree\",0.0174532925199433]]"));
+    refused(&format!("{start}UNIT[\"x\"]]]"));
+    refused(&format!("{start}UNIT[\"x\",\"invalid\"]]]"));
+    refused(&format!("{start}UNIT[\"x\",1,ID[\"x\"]]]]"));
+}
+
+#[test]
+fn wkt_parse_invalid_geoccs() {
+    let datum = "DATUM[\"x\",SPHEROID[\"x\",1,0.5]]";
+    parse(&format!(
+        "GEOCCS[\"x\",{datum},PRIMEM[\"x\",0],UNIT[\"metre\",1]]"
+    ));
+
+    refused(&format!("GEOCCS[\"x\",{datum},UNIT[\"metre\",1]]"));
+    refused(&format!("GEOCCS[\"x\",{datum},PRIMEM[\"x\",0]]"));
+    refused(&format!(
+        "GEOCCS[\"x\",{datum},PRIMEM[\"x\",0],UNIT[\"degree\",0.0174532925199433],AXIS[\"latitude\",NORTH],AXIS[\"longitude\",EAST]]"
+    ));
+    refused(
+        "GEOCCS[\"WGS 84\",DATUM[\"World Geodetic System 1984\",\
+ELLIPSOID[\"WGS 84\",6378274,298.257223564,LENGTHUNIT[\"metre\",1]]],\
+CS[ellipsoidal,2],AXIS[\"geodetic latitude (Lat)\",north,ANGLEUNIT[\"degree\",0.0174532925199433]],\
+AXIS[\"geodetic longitude (Lon)\",east,ANGLEUNIT[\"degree\",0.0174532925199433]]]",
+    );
+    refused(&format!(
+        "GEOCCS[\"x\",{datum},PRIMEM[\"x\",0],UNIT[\"metre\",1],AXIS[\"Geocentric X\",OTHER],AXIS[\"Geocentric Y\",OTHER]]"
+    ));
+}
+
+#[test]
+fn wkt_parse_invalid_cs_of_geodcrs() {
+    let start = "GEODCRS[\"x\",DATUM[\"x\",SPHEROID[\"x\",1,0.5]]";
+    refused(&format!("{start}]"));
+    refused(&format!("{start},CS[x]]"));
+    refused(&format!("{start},CS[x,2]]"));
+    refused(&format!("{start},CS[ellipsoidal,0]]"));
+    refused(&format!("{start},CS[ellipsoidal,\"x\"]]"));
+    refused(&format!(
+        "{start},CS[invalid,2],AXIS[\"latitude\",north],AXIS[\"longitude\",east]]"
+    ));
+    parse(&format!(
+        "{start},CS[ellipsoidal,2],AXIS[\"latitude\",north],AXIS[\"longitude\",east],UNIT[\"degree\",0.0174532925199433]]"
+    ));
+    refused(&format!(
+        "{start},CS[Cartesian,2],AXIS[\"latitude\",north],AXIS[\"longitude\",east],UNIT[\"degree\",0.0174532925199433]]"
+    ));
+    refused(&format!(
+        "{start},CS[ellipsoidal,2],AXIS[\"latitude\",north],UNIT[\"degree\",0.0174532925199433]]"
+    ));
+    refused(&format!(
+        "{start},CS[ellipsoidal,2],AXIS[\"latitude\",north],AXIS[\"longitude\"],UNIT[\"degree\",0.0174532925199433]]"
+    ));
+    refused(&format!(
+        "{start},CS[ellipsoidal,2],AXIS[\"latitude\",north,ORDER[]],AXIS[\"longitude\",east],UNIT[\"degree\",0.0174532925199433]]"
+    ));
+    refused(&format!(
+        "{start},CS[ellipsoidal,2],AXIS[\"latitude\",north,ORDER[\"x\"]],AXIS[\"longitude\",east],UNIT[\"degree\",0.0174532925199433]]"
+    ));
+    refused(&format!(
+        "{start},CS[ellipsoidal,2],AXIS[\"latitude\",north,ORDER[2]],AXIS[\"longitude\",east],UNIT[\"degree\",0.0174532925199433]]"
+    ));
+    refused(&format!(
+        "{start},CS[vertical,1],\n        AXIS[\"gravity-related height (H)\",up],\n        UNIT[\"metre\",1]]"
+    ));
+}
+
+#[test]
+fn wkt_parse_invalid_cs_of_geographiccrs() {
+    refused(
+        "GEOGRAPHICCRS[\"x\",DATUM[\"x\",SPHEROID[\"x\",1,0.5]],\
+CS[Cartesian,3],AXIS[\"(X)\",geocentricX],AXIS[\"(Y)\",geocentricY],AXIS[\"(Z)\",geocentricZ]]",
+    );
+}
+
+#[test]
+fn wkt_parse_invalid_dynamic() {
+    let prefix = "GEOGCRS[\"WGS 84 (G1762)\",";
+    let suffix = "TRF[\"World Geodetic System 1984 (G1762)\",\
+ELLIPSOID[\"WGS 84\",6378137,298.257223563]],\
+CS[ellipsoidal,3],\
+AXIS[\"(lat)\",north,ANGLEUNIT[\"degree\",0.0174532925199433]],\
+AXIS[\"(lon)\",east,ANGLEUNIT[\"degree\",0.0174532925199433]],\
+AXIS[\"ellipsoidal height (h)\",up,LENGTHUNIT[\"metre\",1.0]]]";
+    parse(&format!("{prefix}DYNAMIC[FRAMEEPOCH[2015]],{suffix}"));
+    refused(&format!("{prefix}DYNAMIC[],{suffix}"));
+    refused(&format!("{prefix}DYNAMIC[FRAMEEPOCH[]],{suffix}"));
+    refused(&format!(
+        "{prefix}DYNAMIC[FRAMEEPOCH[\"invalid\"]],{suffix}"
+    ));
+}
+
+#[test]
+fn wkt_parse_invalid_projcrs() {
+    refused("PROJCRS[\"WGS 84 / UTM zone 31N\"]");
+
+    let start = "PROJCRS[\"WGS 84 / UTM zone 31N\",BASEGEOGCRS[\"WGS 84\",DATUM[\"WGS_1984\",ELLIPSOID[\"WGS 84\",6378137,298.257223563]],UNIT[\"degree\",0.0174532925199433]]";
+    refused(&format!("{start}]"));
+    refused(&format!("{start},CONVERSION[\"x\"]]"));
+    refused(&format!("{start},CONVERSION[\"x\",METHOD[]]]"));
+    refused(&format!(
+        "{start},CONVERSION[\"x\",METHOD[\"y\"],PARAMETER[\"z\"]]]"
+    ));
+    refused(&format!(
+        "{start},CONVERSION[\"x\",METHOD[\"y\"],PARAMETER[\"z\",\"foo\"]]]"
+    ));
+    refused(&format!("{start},CONVERSION[\"x\",METHOD[\"y\"]]]"));
+    refused(&format!(
+        "{start},CONVERSION[\"x\",METHOD[\"y\"]],CS[ellipsoidal,2],AXIS[\"latitude\",north],AXIS[\"longitude\",east]]"
+    ));
+    refused(&format!(
+        "{start},CONVERSION[\"x\",METHOD[\"y\"]],CS[Cartesian,2],AXIS[\"easting (X)\",south,MERIDIAN[90]],AXIS[\"northing (Y)\",south]]"
+    ));
+    refused(&format!(
+        "{start},CONVERSION[\"x\",METHOD[\"y\"]],CS[Cartesian,2],AXIS[\"easting (X)\",south,MERIDIAN[\"x\",UNIT[\"degree\",0.0174532925199433]]],AXIS[\"northing (Y)\",south]]"
+    ));
+}
+
+#[test]
+fn wkt_parse_invalid_projcs() {
+    let start = "PROJCS[\"WGS 84 / UTM zone 31N\",\n\
+    GEOGCS[\"WGS 84\",\n\
+        DATUM[\"WGS_1984\",\n\
+            SPHEROID[\"WGS 84\",6378137,298.257223563,\n\
+                AUTHORITY[\"EPSG\",\"7030\"]],\n\
+            AUTHORITY[\"EPSG\",\"6326\"]],\n\
+        PRIMEM[\"x\",0],\n\
+        UNIT[\"degree\",0.0174532925199433,\n\
+            AUTHORITY[\"EPSG\",\"9122\"]],\n\
+        AXIS[\"latitude\",NORTH],\n\
+        AXIS[\"longitude\",EAST],\n\
+        AUTHORITY[\"EPSG\",\"4326\"]]\n";
+    refused(&format!("{start}]"));
+    refused(&format!("{start},PROJECTION[],UNIT[\"metre\",1]]"));
+    refused(&format!(
+        "{start},PROJECTION[\"x\"],PARAMETER[\"z\"],UNIT[\"metre\",1]]"
+    ));
+    parse(&format!(
+        "{start},PROJECTION[\"x\"],PARAMETER[\"z\",1],UNIT[\"metre\",1]]"
+    ));
+    refused(&format!("{start},PROJECTION[\"x\"],PARAMETER[\"z\",1]]"));
+}
+
+#[test]
+fn wkt_parse_invalid_vertcrs() {
+    refused("VERTCRS[\"foo\",CS[vertical,1],AXIS[\"x\",up]]");
+    refused("VERTCRS[\"foo\",VDATUM[\"bar\"]]");
+    refused(
+        "VERTCRS[\"foo\",VDATUM[\"bar\"],CS[ellipsoidal,2],AXIS[\"latitude\",north],AXIS[\"longitude\",east]]",
+    );
+    refused(
+        "VERTCRS[\"foo\",VDATUM[\"bar\"],CS[vertical,2],AXIS[\"latitude\",north],AXIS[\"longitude\",east]]",
+    );
+}
+
+#[test]
+fn wkt_parse_invalid_esri_vertcs() {
+    refused(
+        "GEOGCS[\"GCS_WGS_1984\",DATUM[\"D_WGS_1984\",SPHEROID[\"WGS_1984\",6378137.0,298.257223563]],\
+PRIMEM[\"Greenwich\",0.0],UNIT[\"Degree\",0.0174532925199433]],\
+VERTCS[\"EGM96_Geoid\",VDATUM,PARAMETER[\"Vertical_Shift\",0.0],PARAMETER[\"Direction\",1.0],UNIT[\"Meter\",1.0]]",
+    );
+}
+
+#[test]
+fn wkt_parse_invalid_vert_cs() {
+    parse("VERT_CS[\"x\",VERT_DATUM[\"y\",2005],UNIT[\"metre\",1]]");
+    refused("VERT_CS[\"x\",UNIT[\"metre\",1]]");
+    refused("VERT_CS[\"x\",VERT_DATUM[\"y\",2005]]");
+}
+
+fn wkt2_of(crs: &proj_rs::Crs) -> String {
+    crs.export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2015))
+        .expect("wkt")
+}
+
+fn wkt2_without_ids(crs: &proj_rs::Crs) -> String {
+    let mut formatter = WktFormatter::create(WktConvention::Wkt2_2015);
+    formatter.hide_identifiers().expect("hide identifiers");
+    crs.export_to_wkt(&mut formatter).expect("wkt")
+}
+
+#[test]
+fn wkt_parse_invalid_coordinateoperation() {
+    let src = wkt2_without_ids(&proj_rs::Crs::Geographic(
+        proj_rs::GeographicCRS::epsg_4326(),
+    ));
+    let dst = wkt2_without_ids(&proj_rs::Crs::Geographic(
+        proj_rs::GeographicCRS::epsg_4807(),
+    ));
+    let tail = "METHOD[\"operationMethodName\"],PARAMETERFILE[\"paramName\",\"foo.bin\"]]";
+    parse(&format!(
+        "COORDINATEOPERATION[\"transformationName\",SOURCECRS[{src}],TARGETCRS[{dst}],{tail}"
+    ));
+    refused(&format!(
+        "COORDINATEOPERATION[\"transformationName\",TARGETCRS[{dst}],{tail}"
+    ));
+    refused(&format!(
+        "COORDINATEOPERATION[\"transformationName\",SOURCECRS[FOO],TARGETCRS[{dst}],{tail}"
+    ));
+    refused(&format!(
+        "COORDINATEOPERATION[\"transformationName\",SOURCECRS[{src}],{tail}"
+    ));
+    refused(&format!(
+        "COORDINATEOPERATION[\"transformationName\",SOURCECRS[{src}],TARGETCRS[FOO],{tail}"
+    ));
+    refused(&format!(
+        "COORDINATEOPERATION[\"transformationName\",SOURCECRS[{src}],TARGETCRS[{dst}]]"
+    ));
+    refused(&format!(
+        "COORDINATEOPERATION[\"transformationName\",SOURCECRS[{src}],TARGETCRS[{dst}],METHOD[],PARAMETERFILE[\"paramName\",\"foo.bin\"]]"
+    ));
+}
+
+#[test]
+fn wkt_parse_invalid_concatenatedoperation() {
+    refused("CONCATENATEDOPERATION[\"name\"]");
+
+    let src = wkt2_of(&proj_rs::Crs::Geographic(
+        proj_rs::GeographicCRS::epsg_4326(),
+    ));
+    let dst = wkt2_of(&proj_rs::Crs::Geographic(
+        proj_rs::GeographicCRS::epsg_4807(),
+    ));
+    let step = format!(
+        "COORDINATEOPERATION[\"transf_1\",SOURCECRS[{src}],TARGETCRS[{dst}],METHOD[\"operationMethodName\"],PARAMETERFILE[\"paramName\",\"foo.bin\"]]"
+    );
+    let tail = "ID[\"codeSpace\",\"code\"],REMARK[\"my remarks\"]]";
+    refused(&format!(
+        "CONCATENATEDOPERATION[\"name\",SOURCECRS[{src}],TARGETCRS[{dst}],STEP[{step}],{tail}"
+    ));
+    refused(&format!(
+        "CONCATENATEDOPERATION[\"name\",SOURCECRS[{src}],TARGETCRS[{dst}],STEP[],STEP[],{tail}"
+    ));
+    refused(&format!(
+        "CONCATENATEDOPERATION[\"name\",SOURCECRS[{src}],TARGETCRS[{dst}],STEP[SOURCECRS[{src}]],STEP[SOURCECRS[{src}]],{tail}"
+    ));
+}
+
+#[test]
+fn wkt_parse_invalid_boundcrs() {
+    let projcrs = proj_rs::ProjectedCRS::create(
+        "my PROJCRS",
+        proj_rs::GeodeticCRS::Geographic(
+            proj_rs::GeographicCRS::create(
+                "my GEOGCRS",
+                Some(proj_rs::GeodeticReferenceFrame::epsg_6326()),
+                None,
+                proj_rs::EllipsoidalCS::create_latitude_longitude(UnitOfMeasure::degree()),
+            )
+            .expect("geographic"),
+        ),
+        proj_rs::Conversion::create_utm_north(&proj_rs::OpProps::new(), 31).expect("utm"),
+        proj_rs::CartesianCS::create_easting_northing(UnitOfMeasure::metre()),
+    );
+    let proj = wkt2_of(&proj_rs::Crs::Projected(projcrs));
+    let geog = wkt2_of(&proj_rs::Crs::Geographic(
+        proj_rs::GeographicCRS::epsg_4326(),
+    ));
+    let transf = "ABRIDGEDTRANSFORMATION[\"foo\",METHOD[\"bar\"],PARAMETER[\"foo\",1.0]]]";
+    parse(&format!(
+        "BOUNDCRS[SOURCECRS[{proj}],\nTARGETCRS[{geog}],\n{transf}"
+    ));
+    refused(&format!("BOUNDCRS[TARGETCRS[{geog}],\n{transf}"));
+    refused(&format!(
+        "BOUNDCRS[SOURCECRS[foo], TARGETCRS[{geog}],\n{transf}"
+    ));
+    refused(&format!(
+        "BOUNDCRS[SOURCECRS[{proj}],TARGETCRS[\"foo\"],\n{transf}"
+    ));
+    refused(&format!("BOUNDCRS[SOURCECRS[{proj}],\nTARGETCRS[{geog}]]"));
+    refused(&format!(
+        "BOUNDCRS[SOURCECRS[{proj}],\nTARGETCRS[{geog}],ABRIDGEDTRANSFORMATION[\"foo\"],PARAMETER[\"foo\",1.0]]"
+    ));
+    refused(&format!(
+        "BOUNDCRS[SOURCECRS[{proj}],\nTARGETCRS[{geog}],ABRIDGEDTRANSFORMATION[\"foo\",METHOD[],PARAMETER[\"foo\",1.0]]]"
+    ));
+}
+
+#[test]
+fn wkt_parse_invalid_towgs84() {
+    refused(
+        "GEOGCS[\"WGS 84\",DATUM[\"WGS_1984\",SPHEROID[\"WGS 84\",6378137,298.257223563],TOWGS84[0]],PRIMEM[\"Greenwich\",0],UNIT[\"degree\",0.0174532925199433]]",
+    );
+    refused(
+        "GEOGCS[\"WGS 84\",DATUM[\"WGS_1984\",SPHEROID[\"WGS 84\",6378137,298.257223563],TOWGS84[0,0,0,0,0,0,\"foo\"]],PRIMEM[\"Greenwich\",0],UNIT[\"degree\",0.0174532925199433]]",
+    );
+}
+
+#[test]
+fn wkt_parse_invalid_local_cs() {
+    refused(
+        "LOCAL_CS[\"name\",LOCAL_DATUM[\"name\",1234],AXIS[\"Geodetic latitude\",NORTH],AXIS[\"Geodetic longitude\",EAST],AXIS[\"Ellipsoidal height\",UP]]",
+    );
+}
