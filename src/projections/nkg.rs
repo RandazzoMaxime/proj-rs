@@ -1009,6 +1009,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "needs the NKG grids from the CDN: run with PROJ_NETWORK=ON, where tests/gie/nkg.gie covers the same URNs"]
     fn gie_urns_build_when_the_grid_is_present() {
         let anchor =
             Operation::create("urn:ogc:def:coordinateOperation:NKG::ITRF2000_TO_NKG_ETRF00")

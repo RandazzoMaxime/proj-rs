@@ -87,7 +87,12 @@ pub(crate) fn search_paths() -> Vec<PathBuf> {
 
 pub(crate) fn cache_dir_if_enabled() -> Option<PathBuf> {
     let ctx = context();
-    if ctx.cache_enabled {
+    // The skip covers the default directory only. A directory set on the
+    // builder is read, as PROJ does for an explicit context.
+    let skip_default = ctx.cache_dir.is_none()
+        && nonempty_env("PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY")
+            .is_some_and(|value| truthy(&value));
+    if ctx.cache_enabled && !skip_default {
         Some(ctx.cache_directory())
     } else {
         None
