@@ -25,6 +25,8 @@ pub(crate) enum Kind {
     Projected,
     /// Geocentric X, Y, Z, metres.
     Geocentric,
+    /// Topocentric east, north, up, metres, about a geodetic or geocentric origin.
+    Topocentric,
 }
 
 /// One coordinate reference system the facade can build.
@@ -116,22 +118,37 @@ impl Crs {
     }
 
     /// Geodetic radians on this CRS's ellipsoid, height in `z`.
+    ///
+    /// `z` is the third public axis: height, geocentric Z, or topocentric Up.
     pub(crate) fn to_geodetic(
         &self,
         x: f64,
         y: f64,
+        z: f64,
     ) -> Result<Xyzt, crate::engine::TransformError> {
         match self.kind {
-            Kind::Geographic => Ok(Xyzt::xy(x.to_radians(), y.to_radians())),
-            Kind::Projected | Kind::Geocentric => self.op.inverse(Xyzt::xy(x, y)),
+            Kind::Geographic => Ok(Xyzt {
+                x: x.to_radians(),
+                y: y.to_radians(),
+                z,
+                t: 0.0,
+            }),
+            Kind::Projected | Kind::Geocentric | Kind::Topocentric => {
+                self.op.inverse(Xyzt { x, y, z, t: 0.0 })
+            }
         }
     }
 
     /// Public coordinates of this CRS from geodetic radians.
     pub(crate) fn geodetic_out(&self, coord: Xyzt) -> Result<Xyzt, crate::engine::TransformError> {
         match self.kind {
-            Kind::Geographic => Ok(Xyzt::xy(coord.x.to_degrees(), coord.y.to_degrees())),
-            Kind::Projected | Kind::Geocentric => self.op.forward(coord),
+            Kind::Geographic => Ok(Xyzt {
+                x: coord.x.to_degrees(),
+                y: coord.y.to_degrees(),
+                z: coord.z,
+                t: 0.0,
+            }),
+            Kind::Projected | Kind::Geocentric | Kind::Topocentric => self.op.forward(coord),
         }
     }
 }
@@ -177,6 +194,9 @@ fn from_proj(definition: &str) -> Result<Crs, ProjCreateError> {
             "a pipeline is not a CRS".to_owned(),
         ));
     }
+    if is_topocentric_crs(definition) {
+        return from_topocentric(definition);
+    }
     let op = Operation::create(definition).map_err(create_error)?;
     let kind = if definition.contains("proj=cart") || definition.contains("proj=geocent") {
         Kind::Geocentric
@@ -202,6 +222,52 @@ fn from_proj(definition: &str) -> Result<Crs, ProjCreateError> {
         rf: None,
         b: None,
     })
+}
+
+fn is_topocentric_crs(definition: &str) -> bool {
+    let tokens: Vec<&str> = definition
+        .split_whitespace()
+        .map(|token| token.trim_start_matches('+'))
+        .collect();
+    tokens.contains(&"proj=topocentric") && tokens.contains(&"type=crs")
+}
+
+/// A topocentric CRS is three-dimensional. Its operation runs the geocentric
+/// step first and the topocentric step second, so the forward direction goes
+/// from geodetic to east, north, up, as PROJ's `buildProjectedCRS` does with a
+/// geocentric base. The ellipsoid is set on the pipeline header, which every
+/// step inherits; the origin stays on the topocentric step alone.
+fn from_topocentric(definition: &str) -> Result<Crs, ProjCreateError> {
+    let (ellipsoid, origin): (Vec<&str>, Vec<&str>) = definition
+        .split_whitespace()
+        .filter(|token| {
+            let bare = token.trim_start_matches('+');
+            !bare.starts_with("proj=") && bare != "type=crs"
+        })
+        .partition(|token| is_ellipsoid_key(token.trim_start_matches('+')));
+    let pipeline = format!(
+        "+proj=pipeline {} +step +proj=cart +step +proj=topocentric {}",
+        ellipsoid.join(" "),
+        origin.join(" ")
+    );
+    let op = Operation::create(&pipeline).map_err(create_error)?;
+    Ok(Crs {
+        kind: Kind::Topocentric,
+        op,
+        datum_auth: String::new(),
+        datum_code: String::new(),
+        a: 0.0,
+        rf: None,
+        b: None,
+    })
+}
+
+fn is_ellipsoid_key(bare: &str) -> bool {
+    let key = bare.split('=').next().unwrap_or_default();
+    matches!(
+        key,
+        "ellps" | "datum" | "a" | "b" | "rf" | "f" | "es" | "e" | "R"
+    )
 }
 
 fn create_error(error: CreateError) -> ProjCreateError {
