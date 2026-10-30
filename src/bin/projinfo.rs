@@ -23,12 +23,12 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(Report::Usage(message)) => {
-            eprintln!("projinfo: {message}");
+            eprintln!("{message}");
             eprintln!("{}", usage());
             ExitCode::from(1)
         }
         Err(Report::Plain(message)) => {
-            eprintln!("projinfo: {message}");
+            eprintln!("{message}");
             ExitCode::from(1)
         }
     }
@@ -1115,19 +1115,19 @@ fn describe(options: &Options, text: &str) -> Result<String, String> {
     render(&object, &db, options)
 }
 
-/// The object `text` names. A `-k` kind other than CRS reads `auth:code` as
-/// a URN, or looks the text up by name.
+/// The object `text` names, as `buildObject` reads it. A `-k` kind reads
+/// `auth:code` as a URN; a name without `:` is looked up by name.
 fn build_object(
     db: &proj_rs::DatabaseContext,
     text: &str,
     kind: Option<ObjectKind>,
 ) -> Result<proj_rs::AuthorityObject, String> {
-    let tokens: Vec<&str> = text.split(':').collect();
     match kind {
         Some(ObjectKind::Operation) => Err(
             "-k operation is not supported yet: coordinate operations are not described".to_owned(),
         ),
         Some(kind @ (ObjectKind::Ellipsoid | ObjectKind::Datum | ObjectKind::Ensemble)) => {
+            let tokens: Vec<&str> = text.split(':').collect();
             if let [authority, code] = tokens.as_slice() {
                 let factory = proj_rs::AuthorityFactory::create(db, *authority);
                 let object = match kind {
@@ -1148,7 +1148,149 @@ fn build_object(
             }
             named_object(db, text, kind)
         }
-        _ => create_crs(db, text),
+        Some(ObjectKind::Crs) if !text.contains(':') && !looks_like_wkt(text) => {
+            named_object(db, text, ObjectKind::Crs)
+        }
+        Some(_) => create_crs(db, text),
+        None => create_default(db, text),
+    }
+}
+
+/// Text that can only be an object name: no WKT, PROJ string, JSON, or `AUTH:code`.
+fn name_like(text: &str) -> bool {
+    !text.contains([':', '[', '{', '=']) && !text.trim_start().starts_with('+')
+}
+
+/// Whether `text` opens with a WKT keyword and `[`.
+fn looks_like_wkt(text: &str) -> bool {
+    let Some((keyword, _)) = text.trim_start().split_once('[') else {
+        return false;
+    };
+    let keyword = keyword.trim_end();
+    !keyword.is_empty()
+        && keyword
+            .chars()
+            .all(|ch| ch.is_ascii_alphabetic() || ch == '_')
+}
+
+/// `createFromUserInput` with no `-k`: the text as WKT, PROJ, `AUTH:code`, or
+/// CRS name first. A name that matches none of those is searched over every
+/// object type PROJ tries.
+fn create_default(
+    db: &proj_rs::DatabaseContext,
+    text: &str,
+) -> Result<proj_rs::AuthorityObject, String> {
+    match proj_rs::create_from_user_input(text, db) {
+        Ok(crs) => Ok(proj_rs::AuthorityObject::Crs(crs)),
+        Err(_) if name_like(text) => search_default(db, text)
+            .map_err(|list| format!("input string: parsing of '{text}' failed: {list}"))?
+            .ok_or_else(|| {
+                format!(
+                    "input string: parsing of '{text}' failed: unrecognized format / unknown name"
+                )
+            }),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+/// The object types of `searchObject`'s second pass.
+const OTHER_NAME_TYPES: [proj_rs::ObjectType; 4] = [
+    proj_rs::ObjectType::Ellipsoid,
+    proj_rs::ObjectType::Datum,
+    proj_rs::ObjectType::DatumEnsemble,
+    proj_rs::ObjectType::CoordinateOperation,
+];
+
+/// The four passes of PROJ's name search: CRSs, then the other types, each
+/// exact, then both approximate. A text of four bytes or fewer gets only the
+/// exact passes, and an approximate match must have a name shorter than twice
+/// the text.
+fn search_default(
+    db: &proj_rs::DatabaseContext,
+    text: &str,
+) -> Result<Option<proj_rs::AuthorityObject>, String> {
+    let factory = proj_rs::AuthorityFactory::create(db, "");
+    let passes = if text.len() <= 4 { 2 } else { 4 };
+    for pass in 0..passes {
+        let approximate = pass >= 2;
+        let mode = if approximate {
+            proj_rs::NameMatch::Approximate
+        } else {
+            proj_rs::NameMatch::Exact
+        };
+        let (types, ties): (&[proj_rs::ObjectType], Ties) = if pass % 2 == 0 {
+            (&[proj_rs::ObjectType::Crs], Ties::Dimension)
+        } else {
+            (&OTHER_NAME_TYPES, Ties::Name)
+        };
+        let found = factory
+            .create_objects_from_name(text, types, mode, 10)
+            .map_err(|error| error.to_string())?;
+        if let Some(object) = settle(found, text, ties)? {
+            if !approximate || object.name().len() < 2 * text.len() {
+                return Ok(Some(object));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// How a name lookup breaks a tie between several matches.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Ties {
+    /// The match whose name is equivalent to the text.
+    Name,
+    /// For CRSs, the 2D geographic match, then the 3D one, before the name.
+    Dimension,
+}
+
+/// The match a lookup settles on: its only match, else the one `ties` picks.
+/// `None` when nothing matched. Several matches that `ties` cannot break are
+/// an error that lists their names.
+fn settle(
+    found: Vec<proj_rs::AuthorityObject>,
+    text: &str,
+    ties: Ties,
+) -> Result<Option<proj_rs::AuthorityObject>, String> {
+    if found.len() <= 1 {
+        return Ok(found.into_iter().next());
+    }
+    if ties == Ties::Dimension {
+        for dimension in [2, 3] {
+            if let Some(object) = found
+                .iter()
+                .find(|object| geographic_axes(object) == Some(dimension))
+            {
+                return Ok(Some(object.clone()));
+            }
+        }
+    }
+    if let Some(object) = found
+        .iter()
+        .find(|object| proj_rs::equivalent_name(object.name(), text))
+    {
+        return Ok(Some(object.clone()));
+    }
+    let mut message = String::from("several objects matching this name: ");
+    for (index, object) in found.iter().enumerate() {
+        if message.len() > 200 {
+            message.push_str(", ...");
+            break;
+        }
+        if index > 0 {
+            message.push_str(", ");
+        }
+        message.push_str(object.name());
+    }
+    Err(message)
+}
+
+fn geographic_axes(object: &proj_rs::AuthorityObject) -> Option<usize> {
+    match object {
+        proj_rs::AuthorityObject::Crs(proj_rs::Crs::Geographic(crs)) => {
+            Some(crs.coordinate_system().axes().len())
+        }
+        _ => None,
     }
 }
 
@@ -1161,14 +1303,15 @@ fn create_crs(
         .map_err(|error| error.to_string())
 }
 
-/// The ellipsoid, datum, or ensemble whose name is `text`: an exact name
-/// first, then a substring, as `buildObject` searches.
+/// The CRS, ellipsoid, datum, or ensemble whose name is `text`: an exact name
+/// first, then a substring, as `buildObject` searches with `-k`.
 fn named_object(
     db: &proj_rs::DatabaseContext,
     text: &str,
     kind: ObjectKind,
 ) -> Result<proj_rs::AuthorityObject, String> {
     let object_type = match kind {
+        ObjectKind::Crs => proj_rs::ObjectType::Crs,
         ObjectKind::Ellipsoid => proj_rs::ObjectType::Ellipsoid,
         ObjectKind::Datum => proj_rs::ObjectType::Datum,
         _ => proj_rs::ObjectType::DatumEnsemble,
@@ -1178,28 +1321,10 @@ fn named_object(
         let found = factory
             .create_objects_from_name(text, &[object_type], mode, 10)
             .map_err(|error| error.to_string())?;
-        if let [only] = found.as_slice() {
-            return Ok(only.clone());
-        }
-        if let Some(equivalent) = found
-            .iter()
-            .find(|object| proj_rs::equivalent_name(object.name(), text))
+        if let Some(object) =
+            settle(found, text, Ties::Name).map_err(|list| format!("input string: {list}"))?
         {
-            return Ok(equivalent.clone());
-        }
-        if found.len() > 1 {
-            let mut message = String::from("input string: several objects matching this name: ");
-            for (index, object) in found.iter().enumerate() {
-                if message.len() > 200 {
-                    message.push_str(", ...");
-                    break;
-                }
-                if index > 0 {
-                    message.push_str(", ");
-                }
-                message.push_str(object.name());
-            }
-            return Err(message);
+            return Ok(object);
         }
     }
     Err(format!("input string: {text}: no matching object"))
