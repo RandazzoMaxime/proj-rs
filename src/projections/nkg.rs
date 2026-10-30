@@ -8,7 +8,8 @@
 //! `data/sql/nkg.sql`.
 //!
 //! A PROJ-string step, including `+proj=deformation` and `+proj=xyzgridshift`,
-//! is built when its grid file is on disk. A missing grid is an error.
+//! is built when its grid file is on disk or fetchable with the network. A
+//! missing grid is `Unsupported("grid")`, never a coordinate.
 
 use crate::engine::{Coord, CreateError, Frame, IoKind, Operation, Params, Step, TransformError};
 use crate::helmert::{Helmert, HelmertConvention, HelmertParams};
@@ -639,12 +640,29 @@ fn read_other(connection: &Connection, auth: &str, code: &str) -> Result<Found, 
         });
     };
     if method_code.as_deref() == Some("PROJString") && method_auth.as_deref() == Some("PROJ") {
+        if !grids_available(&method_name) {
+            return Ok(Found::Grid);
+        }
         return Ok(Found::Ready(vec![Link::Proj(Sense::Forward, method_name)]));
     }
     if grid_name.is_some() || needs_grid(&method_name) {
         return Ok(Found::Grid);
     }
     Ok(Found::Unsupported("authority string"))
+}
+
+/// `false` when a required grid named by `+grids=`, `+xy_grids=`, or `+z_grids=`
+/// is neither on disk nor fetchable. Optional (`@`) grids never block.
+fn grids_available(definition: &str) -> bool {
+    definition
+        .split_whitespace()
+        .filter_map(|token| {
+            let (key, value) = token.trim_start_matches('+').split_once('=')?;
+            matches!(key, "grids" | "xy_grids" | "z_grids").then_some(value)
+        })
+        .flat_map(|value| value.split(','))
+        .filter(|name| !name.is_empty() && !name.starts_with('@'))
+        .all(crate::gridpath::available)
 }
 
 fn needs_grid(definition: &str) -> bool {
@@ -1009,17 +1027,28 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "needs the NKG grids from the CDN: run with PROJ_NETWORK=ON, where tests/gie/nkg.gie covers the same URNs"]
-    fn gie_urns_build_when_the_grid_is_present() {
-        let anchor =
-            Operation::create("urn:ogc:def:coordinateOperation:NKG::ITRF2000_TO_NKG_ETRF00")
-                .expect("anchor");
-        let got = anchor.forward(point()).expect("forward");
-        let limit = 1e-3;
-        assert!((got.x - 3_541_657.931_1).abs() < limit, "{}", got.x);
-        assert!((got.y - 948_983.798_0).abs() < limit, "{}", got.y);
-        assert!((got.z - 5_201_383.222_7).abs() < limit, "{}", got.z);
-        let codes = [
+    fn urns_without_a_grid_build_and_grid_urns_are_refused() {
+        let grid_free = [
+            "P1_2008_DK",
+            "P1_2008_EE",
+            "P1_2008_FI",
+            "P1_2008_LT",
+            "P1_2008_LV",
+            "P1_2008_NO",
+            "P1_2008_SE",
+            "PAR_2020_DK",
+            "PAR_2020_EE",
+            "PAR_2020_FI",
+            "PAR_2020_LT",
+            "PAR_2020_LV",
+            "PAR_2020_NO",
+            "PAR_2020_SE",
+        ];
+        for code in grid_free {
+            let urn = format!("urn:ogc:def:coordinateOperation:NKG::{code}");
+            Operation::create(&urn).unwrap_or_else(|error| panic!("{code}: {error}"));
+        }
+        let needs_grid = [
             "ITRF2000_TO_NKG_ETRF00",
             "ITRF2000_TO_DK",
             "ETRF00_TO_DK",
@@ -1047,10 +1076,10 @@ mod tests {
             "ETRF00_TO_SE",
             "ITRF2014_TO_SE",
         ];
-        assert_eq!(codes.len(), 26);
-        for code in codes {
+        for code in needs_grid {
             let urn = format!("urn:ogc:def:coordinateOperation:NKG::{code}");
-            Operation::create(&urn).unwrap_or_else(|error| panic!("{code}: {error}"));
+            let error = Operation::create(&urn).err();
+            assert_eq!(error, Some(CreateError::Unsupported("grid")), "{code}");
         }
     }
 

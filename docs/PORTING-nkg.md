@@ -37,16 +37,19 @@ gie points, inside the 0.1 mm and 1 mm tolerances.
   gie input is already ECEF metres. There is no `+proj=cart` wrapper.
   A Molodensky pivot, or a geographic-domain method, is an error rather than
   a Helmert that ignores the pivot.
-- `+proj=deformation`, `+proj=xyzgridshift`, `+proj=hgridshift`,
-  `+proj=vgridshift`, `+proj=gridshift`, `+proj=tinshift`, `+proj=horner`,
-  `+proj=defmodel`, and any `+grids=` / `+xy_grids=` / `+z_grids=` step reject
-  the whole URN. A PROJ string whose steps this crate already builds is
-  applied. A nested NKG URN inside that string is rejected, so the loader
-  cannot call itself.
+- A PROJ-string step that names a grid with `+grids=`, `+xy_grids=`, or
+  `+z_grids=` is built when every required grid (not `@`-optional) is on disk
+  or fetchable with the network (`gridpath::available`). Otherwise the whole
+  URN is `Unsupported("grid")`. The 19 `PROJString` rows of `nkg.sql` all name
+  a grid, so they follow this rule. A nested NKG URN inside that string is
+  rejected, so the loader cannot call itself.
 
 ## Verification
 
 Grid-free `NKG:P1_2008_DK` and the time-dependent step EPSG:7941 match
-`cct -d 9` to 1e-6 m, including `t = 2000` and a missing time. The 26 URNs in
-`tests/gie/nkg.gie` return `CreateError::Unsupported("grid")`. The gie runner
-skips that error, so the pass count does not move.
+`cct -d 9` to 1e-6 m, including `t = 2000` and a missing time.
+
+Offline (no `PROJ_NETWORK`, no grids on disk), the 26 chained URNs return
+`CreateError::Unsupported("grid")`, and the gie runner skips them. With
+`PROJ_NETWORK=ON` and the grids fetched, `tests/gie/nkg.gie` builds all 33
+cases and the network ratchet holds at 6,856.

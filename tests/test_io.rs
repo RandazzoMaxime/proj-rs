@@ -1737,3 +1737,123 @@ fn wkt_parse_wkt1_spherical_cross_track_height() {
         "+proj=sch +plat_0=1 +plon_0=2 +phdg_0=3 +h_0=4 +datum=WGS84 +units=m +no_defs +type=crs"
     );
 }
+
+fn geocentric_crs(object: &WktObject) -> &proj_rs::GeocentricCRS {
+    match object.geodetic_crs() {
+        Some(proj_rs::GeodeticCRS::Geocentric(crs)) => crs,
+        _ => panic!("expected a geocentric CRS"),
+    }
+}
+
+fn check_geocentric(crs: &proj_rs::GeocentricCRS) {
+    assert_eq!(crs.name(), "WGS 84 (geocentric)");
+    let axes = crs.coordinate_system().axes();
+    assert_eq!(axes.len(), 3);
+    let expected = [
+        ("Geocentric X", "X", "geocentricX"),
+        ("Geocentric Y", "Y", "geocentricY"),
+        ("Geocentric Z", "Z", "geocentricZ"),
+    ];
+    for (axis, (name, abbreviation, direction)) in axes.iter().zip(expected) {
+        assert_eq!(axis.name(), name);
+        assert_eq!(axis.abbreviation(), abbreviation);
+        assert_eq!(axis.direction(), direction);
+    }
+    let datum = crs.datum().expect("datum");
+    assert_eq!(datum.name(), "World Geodetic System 1984");
+    let ellipsoid = datum.ellipsoid();
+    assert_eq!(ellipsoid.semi_major_axis().value(), 6_378_137.0);
+    assert_eq!(ellipsoid.semi_major_axis().unit().name(), "metre");
+    assert_eq!(ellipsoid.inverse_flattening(), 298.257_223_563);
+    assert_eq!(ellipsoid.name(), "WGS 84");
+    assert_eq!(datum.prime_meridian().longitude().unit().name(), "degree");
+}
+
+#[test]
+fn wkt_parse_wkt2_geocentric() {
+    let object = parse(
+        "GEODCRS[\"WGS 84 (geocentric)\",\
+            DATUM[\"World Geodetic System 1984\",\
+                ELLIPSOID[\"WGS 84\",6378137,298.257223563,\
+                    LENGTHUNIT[\"metre\",1,ID[\"EPSG\",9001]],\
+                    ID[\"EPSG\",7030]],\
+                ID[\"EPSG\",6326]],\
+            PRIMEM[\"Greenwich\",0,\
+                ANGLEUNIT[\"degree\",0.0174532925199433,ID[\"EPSG\",9122]],\
+                ID[\"EPSG\",8901]],\
+            CS[Cartesian,3],\
+                AXIS[\"(X)\",GeocentricX,ORDER[1],LENGTHUNIT[\"metre\",1,ID[\"EPSG\",9001]]],\
+                AXIS[\"(Y)\",geocentricY,ORDER[2],LENGTHUNIT[\"metre\",1,ID[\"EPSG\",9001]]],\
+                AXIS[\"(Z)\",geocentricZ,ORDER[3],LENGTHUNIT[\"metre\",1,ID[\"EPSG\",9001]]],\
+            ID[\"EPSG\",4328]]",
+    );
+    check_geocentric(geocentric_crs(&object));
+}
+
+#[test]
+fn wkt_parse_wkt2_simplified_geocentric() {
+    let object = parse(
+        "GEODCRS[\"WGS 84 (geocentric)\",\
+            DATUM[\"World Geodetic System 1984\",\
+                ELLIPSOID[\"WGS 84\",6378137,298.257223563]],\
+            CS[Cartesian,3],\
+                AXIS[\"(X)\",geocentricX],\
+                AXIS[\"(Y)\",geocentricY],\
+                AXIS[\"(Z)\",geocentricZ],\
+                UNIT[\"metre\",1],\
+            ID[\"EPSG\",4328]]",
+    );
+    check_geocentric(geocentric_crs(&object));
+}
+
+#[test]
+fn wkt_parse_wkt1_geocentric() {
+    let object = parse(
+        "GEOCCS[\"WGS 84 (geocentric)\",\
+            DATUM[\"WGS_1984\",\
+                SPHEROID[\"WGS 84\",6378137,298.257223563,\
+                    AUTHORITY[\"EPSG\",\"7030\"]],\
+                AUTHORITY[\"EPSG\",\"6326\"]],\
+            PRIMEM[\"Greenwich\",0,\
+                AUTHORITY[\"EPSG\",\"8901\"]],\
+            UNIT[\"metre\",1,\
+                AUTHORITY[\"EPSG\",\"9001\"]],\
+            AXIS[\"Geocentric X\",OTHER],\
+            AXIS[\"Geocentric Y\",OTHER],\
+            AXIS[\"Geocentric Z\",NORTH],\
+            AUTHORITY[\"EPSG\",\"4328\"]]",
+    );
+    check_geocentric(geocentric_crs(&object));
+}
+
+#[test]
+fn wkt_parse_wkt1_geocentric_with_z_other() {
+    let object = parse(
+        "GEOCCS[\"WGS 84 (geocentric)\",\
+            DATUM[\"WGS_1984\",\
+                SPHEROID[\"WGS 84\",6378137,298.257223563,\
+                    AUTHORITY[\"EPSG\",\"7030\"]],\
+                AUTHORITY[\"EPSG\",\"6326\"]],\
+            PRIMEM[\"Greenwich\",0,\
+                AUTHORITY[\"EPSG\",\"8901\"]],\
+            UNIT[\"metre\",1,\
+                AUTHORITY[\"EPSG\",\"9001\"]],\
+            AXIS[\"Geocentric X\",OTHER],\
+            AXIS[\"Geocentric Y\",OTHER],\
+            AXIS[\"Geocentric Z\",OTHER],\
+            AUTHORITY[\"EPSG\",\"4328\"]]",
+    );
+    check_geocentric(geocentric_crs(&object));
+}
+
+#[test]
+fn wkt_parse_wkt1_geocentric_missing_unit_and_axis() {
+    let wkt = "GEOCCS[\"WGS 84\",DATUM[\"WGS_1984\",\
+        SPHEROID[\"WGS 84\",6378137,298.257223563]]]]";
+    refused(wkt);
+    let object = parse_loose(wkt);
+    let crs = geocentric_crs(&object);
+    let axes = crs.coordinate_system().axes();
+    assert_eq!(axes.len(), 3);
+    assert_eq!(axes[0].unit().name(), "metre");
+}
