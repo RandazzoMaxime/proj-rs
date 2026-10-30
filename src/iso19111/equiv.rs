@@ -528,6 +528,158 @@ fn folded_name(name: &str) -> String {
         .collect()
 }
 
+/// `Identifier::isEquivalentName(a, b)` with its default
+/// `biggerDifferencesAllowed`: on top of [`equivalent_name`], the words
+/// `zone` and `height` after a separator are ignored, `north` and `south`
+/// after a separator or a digit are shortened to their first letter, and
+/// `19dd` is read as `dd`. `EGM2008 height` is equivalent to `EGM2008`.
+pub fn equivalent_name_bigger_differences(left: &str, right: &str) -> bool {
+    let a: Vec<char> = left.chars().collect();
+    let b: Vec<char> = right.chars().collect();
+    let at = |text: &[char], idx: usize| text.get(idx).copied().unwrap_or('\0');
+    let (mut i, mut j) = (0usize, 0usize);
+    let (mut last_a, mut last_b) = ('\0', '\0');
+    while i < a.len() || j < b.len() {
+        let mut ca = lower_ascii(at(&a, i));
+        let mut cb = lower_ascii(at(&b, j));
+        if ca == ' ' && at(&a, i + 1) == '+' && at(&a, i + 2) == ' ' && at(&a, i + 3) != '\0' {
+            i += 3;
+            continue;
+        }
+        if cb == ' ' && at(&b, j + 1) == '+' && at(&b, j + 2) == ' ' && at(&b, j + 3) != '\0' {
+            j += 3;
+            continue;
+        }
+        if matches_at(&a, i, "_IntlFeet")
+            && at(&a, i + 9) == '\0'
+            && matches_at(&b, j, "_Feet")
+            && at(&b, j + 5) == '\0'
+        {
+            return true;
+        }
+        if matches_at(&a, i, "_Feet")
+            && at(&a, i + 5) == '\0'
+            && matches_at(&b, j, "_IntlFeet")
+            && at(&b, j + 9) == '\0'
+        {
+            return true;
+        }
+        if is_ignored_char(ca) {
+            i += 1;
+            continue;
+        }
+        if is_ignored_char(cb) {
+            j += 1;
+            continue;
+        }
+        if ca == '1'
+            && !last_a.is_ascii_digit()
+            && at(&a, i + 1) == '9'
+            && is_digit_at(&a, i + 2)
+            && is_digit_at(&a, i + 3)
+        {
+            i += 2;
+            last_a = '9';
+            continue;
+        }
+        if cb == '1'
+            && !last_b.is_ascii_digit()
+            && at(&b, j + 1) == '9'
+            && is_digit_at(&b, j + 2)
+            && is_digit_at(&b, j + 3)
+        {
+            j += 2;
+            last_b = '9';
+            continue;
+        }
+        let zone_a = skip_word(ca, &a, &mut i, "zone");
+        let zone_b = skip_word(cb, &b, &mut j, "zone");
+        if zone_a || zone_b {
+            continue;
+        }
+        let height_a = skip_word(ca, &a, &mut i, "height");
+        let height_b = skip_word(cb, &b, &mut j, "height");
+        if height_a || height_b {
+            continue;
+        }
+        if !shorten_word(ca, &a, &mut i, "north") {
+            shorten_word(ca, &a, &mut i, "south");
+        }
+        if !shorten_word(cb, &b, &mut j, "north") {
+            shorten_word(cb, &b, &mut j, "south");
+        }
+        if let Some(replacement) = accent_ascii(ca) {
+            ca = replacement;
+        }
+        if let Some(replacement) = accent_ascii(cb) {
+            cb = replacement;
+        }
+        if ca != cb {
+            return false;
+        }
+        last_a = ca;
+        last_b = cb;
+        if ca != '\0' {
+            i += 1;
+        }
+        if cb != '\0' {
+            j += 1;
+        }
+    }
+    true
+}
+
+fn lower_ascii(ch: char) -> char {
+    ch.to_ascii_lowercase()
+}
+
+fn is_ignored_char(ch: char) -> bool {
+    matches!(ch, ' ' | '_' | '-' | '/' | '(' | ')' | '.' | '&' | ',')
+}
+
+fn is_digit_at(text: &[char], idx: usize) -> bool {
+    text.get(idx).is_some_and(char::is_ascii_digit)
+}
+
+/// Case-insensitive match of `needle` at `idx`.
+fn matches_at(text: &[char], idx: usize, needle: &str) -> bool {
+    needle.chars().enumerate().all(|(offset, ch)| {
+        text.get(idx + offset)
+            .is_some_and(|c| lower_ascii(*c) == lower_ascii(ch))
+    })
+}
+
+/// `zone` or `height` after a separator: skip the word, returning true.
+fn skip_word(ch: char, text: &[char], idx: &mut usize, word: &str) -> bool {
+    let start = *idx;
+    if ch == word.chars().next().unwrap_or('\0')
+        && preceded_by(text, start, is_ignored_char)
+        && matches_at(text, start, word)
+    {
+        *idx += word.len();
+        return true;
+    }
+    false
+}
+
+fn preceded_by(text: &[char], idx: usize, test: fn(char) -> bool) -> bool {
+    idx > 0 && text.get(idx - 1).is_some_and(|ch| test(*ch))
+}
+
+/// `north` or `south` after a separator or a digit: keep the first letter only.
+fn shorten_word(ch: char, text: &[char], idx: &mut usize, word: &str) -> bool {
+    let start = *idx;
+    if ch == word.chars().next().unwrap_or('\0')
+        && (preceded_by(text, start, is_ignored_char)
+            || preceded_by(text, start, |c| c.is_ascii_digit()))
+        && matches_at(text, start, word)
+    {
+        *idx += word.len() - 1;
+        return true;
+    }
+    false
+}
+
 /// The ASCII letter that PROJ's `isEquivalentName` writes for an accented one.
 fn accent_ascii(ch: char) -> Option<char> {
     Some(match ch {
@@ -711,5 +863,31 @@ pub(crate) fn same_epoch(left: Option<f64>, right: Option<f64>) -> bool {
         (Some(left), Some(right)) => left == right,
         (None, None) => true,
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod bigger_differences_tests {
+    use super::equivalent_name_bigger_differences;
+
+    #[test]
+    fn height_and_zone_words_are_ignored() {
+        assert!(equivalent_name_bigger_differences(
+            "EGM2008 height",
+            "EGM2008"
+        ));
+        assert!(equivalent_name_bigger_differences(
+            "WGS 84 / UTM zone 31N",
+            "WGS 84 / UTM 31N"
+        ));
+    }
+
+    #[test]
+    fn other_words_still_differ() {
+        assert!(!equivalent_name_bigger_differences(
+            "WGS 84 + EGM2008 height",
+            "EGM2008"
+        ));
+        assert!(!equivalent_name_bigger_differences("EGM2008", "EGM2096"));
     }
 }

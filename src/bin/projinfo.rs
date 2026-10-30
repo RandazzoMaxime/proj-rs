@@ -1404,7 +1404,7 @@ fn settle(
     }
     if let Some(object) = found
         .iter()
-        .find(|object| proj_rs::equivalent_name(object.name(), text))
+        .find(|object| proj_rs::equivalent_name_bigger_differences(object.name(), text))
     {
         return Ok(Some(object.clone()));
     }
@@ -1478,7 +1478,7 @@ fn render(
     }
     for dialect in &options.dialects {
         let body = match dialect {
-            Dialect::Proj => match proj_text(object)? {
+            Dialect::Proj => match proj_text(object, db)? {
                 Some(body) => body,
                 None => continue,
             },
@@ -1550,9 +1550,13 @@ fn sql_text(
 }
 
 /// The PROJ string of `object`. A datum has none, so it prints no block.
-fn proj_text(object: &proj_rs::AuthorityObject) -> Result<Option<String>, String> {
+fn proj_text(
+    object: &proj_rs::AuthorityObject,
+    db: &proj_rs::DatabaseContext,
+) -> Result<Option<String>, String> {
     match object {
         proj_rs::AuthorityObject::Crs(crs) => crs
+            .create_bound_crs_to_wgs84_if_possible(db)
             .export_to_proj_string()
             .map(Some)
             .map_err(|error| error.to_string()),

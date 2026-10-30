@@ -266,6 +266,53 @@ impl DatabaseContext {
         rows.first().map(|row| row[0].text())
     }
 
+    /// `grid_alternatives.proj_grid_name` for an official grid name, when the database renames it for PROJ.
+    pub(crate) fn proj_grid_name(&self, original: &str) -> Result<Option<String>, FactoryError> {
+        let rows = self.query(
+            "SELECT proj_grid_name FROM grid_alternatives WHERE original_grid_name = ?",
+            &[original.to_owned()],
+        )?;
+        Ok(rows
+            .first()
+            .map(|row| row[0].text())
+            .filter(|name| !name.is_empty()))
+    }
+
+    /// `lookForGridInfo` with `considerKnownGridsAsAvailable`: a grid is known when
+    /// a grid package names it, when a download URL goes with an open licence, or
+    /// when the file is already on disk. `null` is always known.
+    pub(crate) fn grid_is_known(&self, name: &str) -> Result<bool, FactoryError> {
+        if name == "null" {
+            return Ok(true);
+        }
+        let local = crate::gridpath::resolve(name).is_some();
+        let rows = self.query(
+            "SELECT grid_packages.package_name, grid_alternatives.url, \
+             grid_packages.url, grid_alternatives.open_license, \
+             grid_packages.open_license \
+             FROM grid_alternatives \
+             LEFT JOIN grid_packages ON \
+             grid_alternatives.package_name = grid_packages.package_name \
+             WHERE proj_grid_name = ? OR old_proj_grid_name = ?",
+            &[name.to_owned(), name.to_owned()],
+        )?;
+        let Some(row) = rows.first() else {
+            return Ok(local);
+        };
+        let package = row[0].text();
+        let url = if row[1].empty() {
+            row[2].text()
+        } else {
+            row[1].text()
+        };
+        let open_license = if row[3].empty() {
+            row[4].text()
+        } else {
+            row[3].text()
+        } == "1";
+        Ok(!package.is_empty() || (!url.is_empty() && open_license) || local)
+    }
+
     /// `(auth_name, version)` for a code space such as `IAU_2015`.
     pub(crate) fn authority_and_version(&self, versioned: &str) -> Option<(String, String)> {
         let rows = self
