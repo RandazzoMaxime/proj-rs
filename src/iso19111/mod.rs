@@ -3,6 +3,7 @@
 //! The type names follow PROJ's C++ API (`GeographicCRS`, `AuthorityFactory`,
 //! `WktFormatter`). See `docs/CRS-API.md`.
 
+mod bound;
 mod buildop;
 mod equiv;
 mod factory;
@@ -18,7 +19,7 @@ mod wkt;
 mod wkt_import;
 
 pub use buildop::OpProps;
-pub use equiv::{equivalent_name, Equivalence};
+pub use equiv::{equivalent_name, equivalent_name_bigger_differences, Equivalence};
 pub use factory::{
     AlternativeGridNames, AuthorityFactory, AuthorityObject, CelestialBodyInfo,
     CoordinateOperationContext, CoordinateOperationFactory, CrsExtentUse, CrsInfo, DatabaseContext,

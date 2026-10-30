@@ -3,15 +3,27 @@
 //! Datum codes 6326, 6267, and 6269 become `+datum=`. Anything else is
 //! `+ellps` plus `+pm` when the prime meridian is not Greenwich.
 
+use super::bound::hub_is_wgs84;
 use super::model::{
-    Axis, CartesianCS, Conversion, Crs, Datum, DatumEnsemble, Ellipsoid, EllipsoidalCS,
-    FactoryError, GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified,
-    Identifier, ParameterValue, PrimeMeridian, ProjectedCRS, UnitKind, UnitOfMeasure,
+    Axis, BoundCRS, CartesianCS, Conversion, CoordinateOperation, Crs, Datum, DatumEnsemble,
+    Ellipsoid, EllipsoidalCS, FactoryError, GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame,
+    GeographicCRS, Identified, Identifier, ParameterValue, PrimeMeridian, ProjectedCRS, UnitKind,
+    UnitOfMeasure, VerticalCRS,
 };
 use super::parammap::{MethodMap, OTHER_METHODS, PROJECTION_METHODS};
 use super::pipeline::proj_number;
+use super::wkt::format_g;
 use crate::ellipsoid::PJ_ELLPS;
 use crate::projections::{angular_proj_unit, linear_proj_unit};
+
+/// What a bound CRS adds to the PROJ string of its base CRS.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct ProjExtras<'a> {
+    /// `+geoidgrids=`, written with `+geoid_crs=WGS84`, for a vertical base CRS.
+    geoid_grid: Option<&'a str>,
+    /// `+towgs84=`, for a horizontal base CRS bound to WGS 84.
+    towgs84: Option<[f64; 7]>,
+}
 
 impl Ellipsoid {
     /// `exportToPROJString` for an ellipsoid: `+ellps=` for a known name,
@@ -26,7 +38,7 @@ impl GeographicCRS {
     /// `exportToPROJString` for a geographic CRS.
     #[must_use]
     pub fn export_to_proj_string(&self) -> String {
-        geographic_proj(self)
+        geographic_proj(self, &ProjExtras::default())
     }
 }
 
@@ -37,9 +49,16 @@ impl GeodeticCRS {
     ///
     /// The CRS is spherical, or geocentric in a unit other than the metre.
     pub fn export_to_proj_string(&self) -> Result<String, FactoryError> {
+        self.export_with(&ProjExtras::default())
+    }
+
+    fn export_with(&self, extras: &ProjExtras<'_>) -> Result<String, FactoryError> {
         match self {
-            Self::Geographic(crs) => Ok(crs.export_to_proj_string()),
-            Self::Geocentric(crs) => crs.export_to_proj_string(),
+            Self::Geographic(crs) => Ok(geographic_proj(crs, extras)),
+            Self::Geocentric(crs) if extras.towgs84.is_none() => crs.export_to_proj_string(),
+            Self::Geocentric(_) => Err(FactoryError::Format(
+                "a bound geocentric CRS has no PROJ string in this build".to_owned(),
+            )),
             Self::Spherical(_) => Err(FactoryError::Format(
                 "a spherical CRS has no PROJ string in this build".to_owned(),
             )),
@@ -84,10 +103,16 @@ impl Crs {
     ///
     /// Any other kind, or a CRS whose parts cannot be written as PROJ text.
     pub fn export_to_proj_string(&self) -> Result<String, FactoryError> {
+        self.export_with(&ProjExtras::default())
+    }
+
+    fn export_with(&self, extras: &ProjExtras<'_>) -> Result<String, FactoryError> {
         match self {
-            Self::Geographic(crs) => Ok(crs.export_to_proj_string()),
-            Self::Geodetic(crs) => crs.export_to_proj_string(),
-            Self::Projected(crs) => crs.export_to_proj_string(),
+            Self::Geographic(crs) => Ok(geographic_proj(crs, extras)),
+            Self::Geodetic(crs) => crs.export_with(extras),
+            Self::Projected(crs) => crs.export_with(extras),
+            Self::Vertical(crs) => Ok(vertical_proj(crs, extras)),
+            Self::Bound(crs) => export_bound(crs),
             _ => Err(FactoryError::Format(
                 "this CRS kind has no PROJ string export".to_owned(),
             )),
@@ -146,9 +171,13 @@ impl ProjectedCRS {
     ///
     /// The deriving conversion cannot be written as a PROJ string.
     pub fn export_to_proj_string(&self) -> Result<String, FactoryError> {
+        self.export_with(&ProjExtras::default())
+    }
+
+    fn export_with(&self, extras: &ProjExtras<'_>) -> Result<String, FactoryError> {
         let mut text = self.deriving_conversion().export_to_proj_string()?;
         text.push(' ');
-        text.push_str(&crs_datum_clause(self.base_crs()));
+        text.push_str(&crs_datum_clause(self.base_crs(), extras.towgs84.as_ref()));
         if let Some(unit) = self.coordinate_system().axes().first().map(Axis::unit) {
             if let Some(clause) = linear_unit_clause(unit) {
                 text.push(' ');
@@ -341,8 +370,10 @@ fn axis_slot(direction: &str) -> Option<&'static str> {
     }
 }
 
-fn crs_datum_clause(crs: &GeodeticCRS) -> String {
-    if let GeodeticCRS::Geographic(geographic) = crs {
+/// `addDatumInfoToPROJString`: a datum token, unless `+towgs84` must be written,
+/// else the ellipsoid and prime meridian, then `+towgs84`.
+fn crs_datum_clause(crs: &GeodeticCRS, towgs84: Option<&[f64; 7]>) -> String {
+    if let (GeodeticCRS::Geographic(geographic), None) = (crs, towgs84) {
         if let Some(token) = datum_token(geographic) {
             return format!("+datum={token}");
         }
@@ -356,7 +387,15 @@ fn crs_datum_clause(crs: &GeodeticCRS) -> String {
             parts.push(clause);
         }
     }
+    if let Some(values) = towgs84 {
+        parts.push(towgs84_clause(values));
+    }
     parts.join(" ")
+}
+
+fn towgs84_clause(values: &[f64; 7]) -> String {
+    let numbers: Vec<String> = values.iter().map(|value| format_g(*value, 15)).collect();
+    format!("+towgs84={}", numbers.join(","))
 }
 
 fn linear_unit_clause(unit: &UnitOfMeasure) -> Option<String> {
@@ -399,9 +438,9 @@ impl GeocentricCRS {
     }
 }
 
-fn geographic_proj(crs: &GeographicCRS) -> String {
+fn geographic_proj(crs: &GeographicCRS, extras: &ProjExtras<'_>) -> String {
     let mut parts = vec!["+proj=longlat".to_owned()];
-    match datum_token(crs) {
+    match datum_token(crs).filter(|_| extras.towgs84.is_none()) {
         Some(token) => parts.push(format!("+datum={token}")),
         None => {
             if let Some(ellipsoid) = ellipsoid_of(crs) {
@@ -414,9 +453,57 @@ fn geographic_proj(crs: &GeographicCRS) -> String {
             }
         }
     }
+    if let Some(values) = extras.towgs84.as_ref() {
+        parts.push(towgs84_clause(values));
+    }
     parts.push("+no_defs".to_owned());
     parts.push("+type=crs".to_owned());
     parts.join(" ")
+}
+
+/// `VerticalCRS::_exportToPROJString`: the geoid grid of a bound CRS, then the
+/// vertical unit.
+fn vertical_proj(crs: &VerticalCRS, extras: &ProjExtras<'_>) -> String {
+    let mut parts = Vec::new();
+    if let Some(grid) = extras.geoid_grid {
+        parts.push(format!("+geoidgrids={grid}"));
+        parts.push("+geoid_crs=WGS84".to_owned());
+    }
+    let unit = crs.coordinate_system().axis().unit();
+    parts.push(match proj_unit_name(unit) {
+        Some(name) => format!("+vunits={name}"),
+        None => format!("+vto_meter={}", format_g(unit.conversion_to_si(), 15)),
+    });
+    parts.push("+no_defs".to_owned());
+    parts.push("+type=crs".to_owned());
+    parts.join(" ")
+}
+
+/// `BoundCRS::_exportToPROJString`: the base CRS, carrying the geoid grid of a
+/// vertical base bound to a WGS 84 hub, or else the `+towgs84` of a Helmert
+/// transformation to a WGS 84 hub.
+fn export_bound(bound: &BoundCRS) -> Result<String, FactoryError> {
+    let hub = bound.target_crs();
+    let transformation = match bound.transformation() {
+        CoordinateOperation::Transformation(transformation) => Some(transformation),
+        _ => None,
+    };
+    let geoid_grid = match (bound.source_crs(), transformation) {
+        (Crs::Vertical(_), Some(transformation)) if hub.name().eq_ignore_ascii_case("WGS 84") => {
+            transformation.height_to_geographic_3d_filename()
+        }
+        _ => None,
+    };
+    let towgs84 = match transformation {
+        Some(transformation) if geoid_grid.is_none() && hub_is_wgs84(hub) => {
+            transformation.towgs84_strict()?
+        }
+        _ => None,
+    };
+    bound.source_crs().export_with(&ProjExtras {
+        geoid_grid,
+        towgs84,
+    })
 }
 
 fn datum_token(crs: &GeographicCRS) -> Option<&'static str> {
