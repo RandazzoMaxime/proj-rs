@@ -15,11 +15,11 @@ mod wkt;
 mod wkt_import;
 
 pub use buildop::OpProps;
-pub use equiv::Equivalence;
+pub use equiv::{equivalent_name, Equivalence};
 pub use factory::{
     AlternativeGridNames, AuthorityFactory, AuthorityObject, CoordinateOperationContext,
     CoordinateOperationFactory, CrsInfo, DatabaseContext, DeprecatedCodes, IntermediateCrsUse,
-    ObjectType,
+    NameMatch, ObjectType,
 };
 pub use json::{create_from_user_input, epsg_identity};
 pub use model::{

@@ -9,6 +9,15 @@ use super::model::{
     ProjectedCRS, UnitKind, UnitOfMeasure,
 };
 
+impl Ellipsoid {
+    /// `exportToPROJString` for an ellipsoid: `+ellps=` for a known name,
+    /// otherwise `+a` with `+rf` or `+b`, or `+R` for a sphere.
+    #[must_use]
+    pub fn export_to_proj_string(&self) -> String {
+        ellipsoid_proj(self)
+    }
+}
+
 impl GeographicCRS {
     /// `exportToPROJString` for a geographic CRS.
     #[must_use]
@@ -503,7 +512,9 @@ fn ellipsoid_proj(ellipsoid: &Ellipsoid) -> String {
     if let Some(name) = well_known_ellps(metres, flattening, minor) {
         return format!("+ellps={name}");
     }
-    if let Some(inverse) = flattening {
+    if ellipsoid.is_sphere() {
+        format!("+R={metres}")
+    } else if let Some(inverse) = flattening {
         format!("+a={metres} +rf={inverse}")
     } else if let Some(minor) = minor {
         format!("+a={metres} +b={minor}")

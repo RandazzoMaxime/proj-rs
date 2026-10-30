@@ -1092,6 +1092,51 @@ impl GeodeticReferenceFrame {
     }
 }
 
+impl Datum {
+    /// Write this datum, of any kind, into `formatter` and return the WKT.
+    ///
+    /// # Errors
+    ///
+    /// The formatter cannot represent a value on the datum.
+    pub fn export_to_wkt(&self, formatter: &mut WktFormatter) -> Result<String, FactoryError> {
+        match self {
+            Self::Geodetic(datum) => datum.export_to_wkt(formatter),
+            Self::Vertical(datum) => {
+                export_vertical_datum(datum, formatter);
+                Ok(std::mem::take(&mut formatter.result))
+            }
+            Self::Engineering(datum) => {
+                export_engineering_datum(datum, formatter);
+                Ok(std::mem::take(&mut formatter.result))
+            }
+        }
+    }
+}
+
+impl DatumEnsemble {
+    /// Write this datum ensemble into `formatter` and return the WKT.
+    ///
+    /// # Errors
+    ///
+    /// The formatter cannot represent a value on the ensemble.
+    pub fn export_to_wkt(&self, formatter: &mut WktFormatter) -> Result<String, FactoryError> {
+        export_ensemble(self, formatter);
+        Ok(std::mem::take(&mut formatter.result))
+    }
+}
+
+impl Ellipsoid {
+    /// Write this ellipsoid into `formatter` and return the WKT.
+    ///
+    /// # Errors
+    ///
+    /// The formatter cannot represent a value on the ellipsoid.
+    pub fn export_to_wkt(&self, formatter: &mut WktFormatter) -> Result<String, FactoryError> {
+        export_ellipsoid(self, formatter);
+        Ok(std::mem::take(&mut formatter.result))
+    }
+}
+
 fn export_geodetic_datum(datum: &GeodeticReferenceFrame, formatter: &mut WktFormatter) {
     if formatter.wkt2 && formatter.keywords_2019 {
         if let Some(epoch) = datum.frame_epoch {
