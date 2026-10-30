@@ -11,6 +11,7 @@
 //! what `src/fwd.cpp` does for `PJ_IO_UNITS_CLASSIC`.
 
 use crate::angle::adjlon;
+use crate::ellipsoid::PJ_ELLPS;
 
 use crate::tmerc_approx::ApproxTmerc;
 use crate::{
@@ -704,55 +705,7 @@ fn expand_datum(params: &mut Params) -> Result<(), CreateError> {
 }
 
 fn named_ellipsoid(name: &str) -> Result<Ellipsoid, CreateError> {
-    const TABLE: &[(&str, f64, f64, bool)] = &[
-        ("MERIT", 6_378_137.0, 298.257, true),
-        ("SGS85", 6_378_136.0, 298.257, true),
-        ("GRS80", 6_378_137.0, 298.257_222_101, true),
-        ("IAU76", 6_378_140.0, 298.257, true),
-        ("airy", 6_377_563.396, 299.324_964_6, true),
-        ("APL4.9", 6_378_137.0, 298.25, true),
-        ("NWL9D", 6_378_145.0, 298.25, true),
-        ("mod_airy", 6_377_340.189, 6_356_034.446, false),
-        ("andrae", 6_377_104.43, 300.0, true),
-        ("danish", 6_377_019.256_3, 300.0, true),
-        ("aust_SA", 6_378_160.0, 298.25, true),
-        ("GRS67", 6_378_160.0, 298.247_167_427, true),
-        ("GSK2011", 6_378_136.5, 298.256_415_1, true),
-        ("bessel", 6_377_397.155, 299.152_812_8, true),
-        ("bess_nam", 6_377_483.865, 299.152_812_8, true),
-        ("clrk66", 6_378_206.4, 6_356_583.8, false),
-        ("clrk80", 6_378_249.145, 293.4663, true),
-        ("clrk80ign", 6_378_249.2, 293.466_021_293_626_9, true),
-        ("CPM", 6_375_738.7, 334.29, true),
-        ("delmbr", 6_376_428.0, 311.5, true),
-        ("engelis", 6_378_136.05, 298.2566, true),
-        ("evrst30", 6_377_276.345, 300.8017, true),
-        ("evrst48", 6_377_304.063, 300.8017, true),
-        ("evrst56", 6_377_301.243, 300.8017, true),
-        ("evrst69", 6_377_295.664, 300.8017, true),
-        ("evrstSS", 6_377_298.556, 300.8017, true),
-        ("fschr60", 6_378_166.0, 298.3, true),
-        ("fschr60m", 6_378_155.0, 298.3, true),
-        ("fschr68", 6_378_150.0, 298.3, true),
-        ("helmert", 6_378_200.0, 298.3, true),
-        ("hough", 6_378_270.0, 297.0, true),
-        ("intl", 6_378_388.0, 297.0, true),
-        ("krass", 6_378_245.0, 298.3, true),
-        ("kaula", 6_378_163.0, 298.24, true),
-        ("lerch", 6_378_139.0, 298.257, true),
-        ("mprts", 6_397_300.0, 191.0, true),
-        ("new_intl", 6_378_157.5, 6_356_772.2, false),
-        ("plessis", 6_376_523.0, 6_355_863.0, false),
-        ("PZ90", 6_378_136.0, 298.257_84, true),
-        ("SEasia", 6_378_155.0, 6_356_773.320_5, false),
-        ("walbeck", 6_376_896.0, 6_355_834.846_7, false),
-        ("WGS60", 6_378_165.0, 298.3, true),
-        ("WGS66", 6_378_145.0, 298.25, true),
-        ("WGS72", 6_378_135.0, 298.26, true),
-        ("WGS84", 6_378_137.0, 298.257_223_563, true),
-        ("sphere", 6_370_997.0, 6_370_997.0, false),
-    ];
-    let Some((_, first, second, rf)) = TABLE.iter().find(|(id, ..)| *id == name) else {
+    let Some((_, first, second, rf)) = PJ_ELLPS.iter().find(|(id, ..)| *id == name) else {
         return Err(CreateError::IllegalValue("ellps"));
     };
     let built = if *rf {

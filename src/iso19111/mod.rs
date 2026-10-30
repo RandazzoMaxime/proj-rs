@@ -11,7 +11,9 @@ mod insert;
 mod json;
 mod model;
 mod parammap;
+mod pipeline;
 mod projstring;
+mod transform_export;
 mod wkt;
 mod wkt_import;
 
@@ -33,6 +35,7 @@ pub use model::{
     Parameter, ParameterValue, PrimeMeridian, ProjectedCRS, SphericalCS, Transformation, UnitKind,
     UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame,
 };
+pub use pipeline::ProjLines;
 pub use projstring::create_crs_from_proj_string;
 pub use wkt::{
     EllipsoidalHeightPolicy, LinunitPolicy, OutputAxisRule, WktConvention, WktFormatter, WktLines,

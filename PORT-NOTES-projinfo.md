@@ -35,7 +35,7 @@ A deprecated object prints `Warning: object is deprecated` first.
 
 ## Covered by the yaml suite
 
-`tests/cli_yaml/test_projinfo.yaml`: 46 of 111 cases match
+`tests/cli_yaml/test_projinfo.yaml`: 47 of 111 cases match
 (`docs/UNPORTED-CLI.md` lists the other 65, with the reason for each).
 The list, kind, completion, database-structure, search-path and remote-data
 options are in `docs/PORTING-projinfo-lists.md`.
@@ -49,7 +49,7 @@ options are in `docs/PORTING-projinfo-lists.md`.
   output. The factory exists (`CoordinateOperationFactory::create_operations`);
   the formatting, the `--spatial-test`, `--area`, `--bbox`, and `--summary`
   options, and PROJ's ordering are not all matched yet.
-- **Operation names and `-k operation`**: needs transformation → PROJ string.
+- **Operation names and `-k operation`**: transformations and concatenated operations now have a PROJ string (`docs/PORTING-transformation-export.md`). `-k operation` is still not parsed, and the names are not searched.
 - **Implicit compounds** written with `+` (`EPSG:4326+3855`).
 - **`-o SQL`** and `--dump-db-structure <object>`: SQL export is not ported.
 - **WKT1 input** without a `PRIMEM` node (`GEOGCS should have a PRIMEM node`).

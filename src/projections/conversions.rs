@@ -79,6 +79,14 @@ pub(crate) fn linear_proj_unit(to_si: f64) -> Option<&'static str> {
     })
 }
 
+/// PROJ id of an angular unit whose factor matches `to_si`, the first hit in
+/// `pj_list_angular_units` order. An unknown factor has no id.
+pub(crate) fn angular_proj_unit(to_si: f64) -> Option<&'static str> {
+    named_units().iter().find_map(|unit| {
+        (!unit.linear && (unit.factor - to_si).abs() < 1e-10 * to_si.abs()).then_some(unit.id)
+    })
+}
+
 fn named_units() -> &'static [NamedUnit] {
     const UNITS: &[NamedUnit] = &[
         NamedUnit {

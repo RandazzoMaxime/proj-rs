@@ -1022,6 +1022,9 @@ fn candidates(options: &Options) -> Result<String, String> {
     let operations = proj_rs::CoordinateOperationFactory::create()
         .create_operations(&source, &target, &context)
         .map_err(|error| error.to_string())?;
+    if options.quiet && !operations.is_empty() {
+        return Ok(operation_bodies(&source, &operations[0], options));
+    }
     let mut out = format!("Candidate operations found: {}\n", operations.len());
     if !options.summary {
         out.push_str("-------------------------------------\n");
@@ -1035,23 +1038,60 @@ fn candidates(options: &Options) -> Result<String, String> {
         if options.summary {
             continue;
         }
-        if let Some(proj) = operation_proj(&source, operation) {
-            out.push_str("\nPROJ string:\n");
+        if options.dialects.contains(&Dialect::Proj) {
+            if let Some(proj) = operation_proj(&source, operation, proj_lines(options)) {
+                out.push_str("\nPROJ string:\n");
+                out.push_str(&proj);
+                out.push('\n');
+            }
+        }
+        if options.dialects.contains(&Dialect::Wkt2_2019) {
+            if let Ok(wkt) = operation_wkt(operation, wkt_lines(options)) {
+                out.push_str("\nWKT2:2019 string:\n");
+                out.push_str(&wkt);
+                out.push('\n');
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn proj_lines(options: &Options) -> proj_rs::ProjLines {
+    if options.single_line {
+        proj_rs::ProjLines::Single
+    } else {
+        proj_rs::ProjLines::Multi
+    }
+}
+
+fn wkt_lines(options: &Options) -> proj_rs::WktLines {
+    if options.single_line {
+        proj_rs::WktLines::Single
+    } else {
+        proj_rs::WktLines::Multi
+    }
+}
+
+/// The text `-q` prints for one object: its PROJ string, then its WKT2:2019, with no headers.
+fn operation_bodies(
+    source: &proj_rs::Crs,
+    operation: &proj_rs::CoordinateOperation,
+    options: &Options,
+) -> String {
+    let mut out = String::new();
+    if options.dialects.contains(&Dialect::Proj) {
+        if let Some(proj) = operation_proj(source, operation, proj_lines(options)) {
             out.push_str(&proj);
             out.push('\n');
         }
-        let lines = if options.single_line {
-            proj_rs::WktLines::Single
-        } else {
-            proj_rs::WktLines::Multi
-        };
-        if let Ok(wkt) = operation_wkt(operation, lines) {
-            out.push_str("\nWKT2:2019 string:\n");
+    }
+    if options.dialects.contains(&Dialect::Wkt2_2019) {
+        if let Ok(wkt) = operation_wkt(operation, wkt_lines(options)) {
             out.push_str(&wkt);
             out.push('\n');
         }
     }
-    Ok(out)
+    out
 }
 
 fn load_named(db: &proj_rs::DatabaseContext, text: &str) -> Result<proj_rs::Crs, String> {
@@ -1082,10 +1122,20 @@ fn operation_heading(operation: &proj_rs::CoordinateOperation) -> String {
 fn operation_proj(
     source: &proj_rs::Crs,
     operation: &proj_rs::CoordinateOperation,
+    lines: proj_rs::ProjLines,
 ) -> Option<String> {
-    let proj_rs::CoordinateOperation::Conversion(conversion) = operation else {
-        return None;
-    };
+    match operation {
+        proj_rs::CoordinateOperation::Conversion(conversion) => conversion_proj(source, conversion),
+        proj_rs::CoordinateOperation::Transformation(transformation) => {
+            transformation.export_to_proj_string(lines).ok()
+        }
+        proj_rs::CoordinateOperation::Concatenated(concatenated) => {
+            concatenated.export_to_proj_string(lines).ok()
+        }
+    }
+}
+
+fn conversion_proj(source: &proj_rs::Crs, conversion: &proj_rs::Conversion) -> Option<String> {
     let mut raw = conversion.export_to_proj_string().ok()?;
     if !raw.contains("+ellps=") && !raw.contains("+datum=") {
         raw.push_str(&ellps_suffix(source));
