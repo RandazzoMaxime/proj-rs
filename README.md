@@ -40,7 +40,7 @@ install.
 |---|:-:|---|
 | Projections and conversions | ✅ | **189 operations** build and run; `builtins.gie` passes **2,597 / 2,597** |
 | Pipelines, `cart`, Helmert, Molodensky, `unitconvert`, `affine`, `axisswap` | ✅ | `+proj=pipeline` with `+step` and `+inv`, exercised across PROJ's suite (`more_builtins`, `4D-API_cs2cs-style`, `axisswap`, `unitconvert`) |
-| Grid shifts, `tinshift`, deformation models | 🟡 | Pass against the grids vendored with the suite. PROJ-data grids are fetched on demand and are not stored in git |
+| Grid shifts, `tinshift`, deformation models | ✅ | All `gie` files green. The PROJ 9.9.0 test grids live in [`data/tests/`](data/tests). CDN grids are fetched with `PROJ_NETWORK=ON`, as in PROJ's own tests |
 | Embedded `proj.db` and EPSG resolution | ✅ | Built from the PROJ 9.9.0 SQL, opened in memory with `rusqlite` |
 | ISO 19111 model, WKT and PROJJSON | 🟡 | CRS model, authority factory, CRS identification against `proj.db`, WKT1 and WKT2 import and export, PROJJSON. See [`docs/CRS-API.md`](docs/CRS-API.md) |
 | georust `proj` facade | 🟡 | `Proj`, `ProjBuilder`, `Coord`, `Transform`, `Area`, errors and the `geo-types` feature exist. georust's own tests are not run against it yet |
@@ -58,19 +58,20 @@ them, untouched, with a Rust runner. A case it cannot build counts as
 **skipped**, never as passed. A case that builds but misses PROJ's tolerance
 is a **failure**, and tolerances are never loosened.
 
-> **6,693 of 6,856 cases pass on a fresh checkout (97.6%).**
-> Every one of the 163 others needs a PROJ-data grid that git does not store.
-> With those grids on disk the suite is **6,856 / 6,856**.
+> **6,856 of 6,856 cases pass (100%).**
+> 6,811 run offline, and all pass. The other 45 cases read grids from
+> `https://cdn.proj.org`, so they run with `PROJ_NETWORK=ON`. PROJ's
+> `test/CMakeLists.txt` splits its suite the same way.
 
 <details>
-<summary><b>26 files, 18 fully green</b>: per-file results on a fresh checkout</summary>
+<summary><b>26 files, all green</b>: per-file results with `PROJ_NETWORK=ON`</summary>
 
 <br>
 
 | File | Cases | Pass | Not yet | |
 |---|---:|---:|---:|:-:|
-| `4D-API_cs2cs-style.gie` | 78 | 68 | 10 | 🔒 |
-| `DHDN_ETRS89.gie` | 64 | 0 | 64 | 🔒 |
+| `4D-API_cs2cs-style.gie` | 78 | 78 | 0 | ✅ |
+| `DHDN_ETRS89.gie` | 64 | 64 | 0 | ✅ |
 | `GDA.gie` | 3 | 3 | 0 | ✅ |
 | `adams_hemi.gie` | 703 | 703 | 0 | ✅ |
 | `adams_ws1.gie` | 703 | 703 | 0 | ✅ |
@@ -78,26 +79,26 @@ is a **failure**, and tolerances are never loosened.
 | `axisswap.gie` | 27 | 27 | 0 | ✅ |
 | `builtins.gie` | 2,597 | 2,597 | 0 | ✅ |
 | `defmodel.gie` | 34 | 34 | 0 | ✅ |
-| `deformation.gie` | 43 | 9 | 34 | 🔒 |
+| `deformation.gie` | 43 | 43 | 0 | ✅ |
 | `ellipsoid.gie` | 37 | 37 | 0 | ✅ |
-| `epsg_grid.gie` | 7 | 0 | 7 | 🔒 |
+| `epsg_grid.gie` | 7 | 7 | 0 | ✅ |
 | `epsg_no_grid.gie` | 6 | 6 | 0 | ✅ |
-| `geotiff_grids.gie` | 51 | 49 | 2 | 🔒 |
+| `geotiff_grids.gie` | 51 | 51 | 0 | ✅ |
 | `gridshift.gie` | 59 | 59 | 0 | ✅ |
 | `guyou.gie` | 705 | 705 | 0 | ✅ |
 | `hourglass.gie` | 12 | 12 | 0 | ✅ |
 | `interrupted.gie` | 14 | 14 | 0 | ✅ |
-| `more_builtins.gie` | 183 | 174 | 9 | 🔒 |
-| `nkg.gie` | 33 | 0 | 33 | 🔒 |
+| `more_builtins.gie` | 183 | 183 | 0 | ✅ |
+| `nkg.gie` | 33 | 33 | 0 | ✅ |
 | `peirce_q.gie` | 592 | 592 | 0 | ✅ |
 | `spilhaus.gie` | 133 | 133 | 0 | ✅ |
 | `tinshift.gie` | 15 | 15 | 0 | ✅ |
 | `tinshift_gpkg.gie` | 14 | 14 | 0 | ✅ |
-| `tinshift_gpkg_network.gie` | 5 | 1 | 4 | 🔒 |
+| `tinshift_gpkg_network.gie` | 5 | 5 | 0 | ✅ |
 | `unitconvert.gie` | 16 | 16 | 0 | ✅ |
-| **Total** | **6,856** | **6,693** | **163** | |
+| **Total** | **6,856** | **6,856** | **0** | |
 
-✅ every case passes &nbsp;·&nbsp; 🔒 incomplete without PROJ-data grids
+✅ every case passes
 
 </details>
 
@@ -109,11 +110,12 @@ is a **failure**, and tolerances are never loosened.
 | `proj.db`, Adams, Guyou, Peirce, Spilhaus | 6,301 | 0 | 555 | `██████████████████░░` 91.9% |
 | Conversions, test grids, deformation models | 6,657 | 0 | 199 | `███████████████████░` 97.1% |
 | CDN grids present on disk | 6,678 | 0 | 178 | `███████████████████░` 97.4% |
-| External grids fetched, suite closed | 6,856 | 0 | 0 | `████████████████████` 100% |
+| PROJ 9.9.0 test data vendored, CTABLE2 sign, NKG, `epsg_grid`, network `tinshift` | 6,856 | 0 | 0 | `████████████████████` 100% |
 
-Each row is a green `cargo test --test gie_run` run by the maintainer.
-`tests/gie/passing.txt` holds the live count, and the test fails if the count
-moves without that file moving with it.
+Offline, the 45 CDN cases are not run, so the offline count is 6,811 / 6,811.
+The last row is the state of this checkout. `tests/gie/passing.txt` holds the
+live count for each mode, `offline` and `network`, and the test fails if the
+count moves without that file moving with it.
 
 ### Unit tests and CLI cases
 
@@ -151,8 +153,9 @@ WKT and the operation factory, which the `gie` suite barely touches.
 
 </details>
 
-These counts are as of 2026-10-28. The two ledgers are the live numbers, since
-unit tests are ported every day. The CLI counts come from the ledger committed
+The unit and CLI counts are as of 2026-10-28. The `gie` counts are as of
+2026-10-30. The two ledgers are the live numbers, since unit tests are ported
+every day. The CLI counts come from the ledger committed
 in the repository; a fresh Linux checkout without grids matches two fewer
 `cs2cs` cases.
 
@@ -234,15 +237,21 @@ As in PROJ, `EPSG:4326` on the command line reads latitude first. Use a
 
 The batch path (`forward_batch`) uses AVX2 on x86-64. On Linux glibc it calls
 libmvec. On Windows it uses the C runtime math library, one lane at a time.
-Other targets run the scalar loop. CI builds on Ubuntu 24.04 and Windows.
+Other targets run the scalar loop. CI builds on Ubuntu 24.04 and Windows, and checks
+against the PROJ 9.9.0 binaries from conda-forge.
 
 ### Grids
 
-PROJ-data grids are large and are not stored in git. They are looked up in
-`data/grids/` (git-ignored), then `tests/gie/tests/`, `data/tests/` and
-`tests/gie/`. Downloading is **off by default**. Set `PROJ_NETWORK=ON` to fetch
-a missing grid from `https://cdn.proj.org`, the way PROJ does. Without the grid
-the operation fails to build, with a clear error.
+Grids are not stored in git, with two exceptions. [`data/tests/`](data/tests)
+holds the test grids of PROJ 9.9.0 (`data/tests` in the PROJ source tree, which
+PROJ copies into its test directory), and that is all the offline suite needs.
+Other grids are looked up in `data/grids/` (git-ignored), then
+`tests/gie/tests/`, `data/tests/` and `tests/gie/`.
+
+Downloading is **off by default**. Set `PROJ_NETWORK=ON` to fetch a missing grid
+from `https://cdn.proj.org`, the way PROJ does. Fetched grids are cached in the
+temporary directory under `proj/`. Without the grid the operation fails to
+build, with a clear error.
 
 ## Performance
 
@@ -306,8 +315,10 @@ BENCH_MACHINE=my-box bench/record.sh
 cargo fmt --check
 cargo clippy --all-targets --all-features -- -D warnings
 
-# Per-file gie counts, the table above:
+# Per-file gie counts, the table above. Offline first, then with the network
+# files (PROJ's network-dependent tests use the same switch):
 cargo test --all-features --test gie_run -- --nocapture
+PROJ_NETWORK=ON cargo test --all-features --test gie_run -- --nocapture
 
 # Everything:
 cargo test --all-features
@@ -315,7 +326,8 @@ cargo test --all-features
 
 `tests/agree_cs2cs.rs` calls a PROJ `cs2cs` binary found on `PATH` as a
 differential check. It is a cross-check only: the numbers that decide a pass
-are the vendored PROJ 9.9.0 `.gie` expectations.
+are the vendored PROJ 9.9.0 `.gie` expectations. The check is skipped when no
+`cs2cs` is on `PATH`, unless `PROJ_CS2CS_REQUIRED=1` is set, as in CI.
 
 ## Project layout
 

@@ -16,15 +16,38 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
-      # Ubuntu 24.04 ships PROJ 9.4, the reference version of every port.
+      # The reference is PROJ 9.9.0 itself, the version every port is checked
+      # against. Ubuntu's apt ships 9.4, so the binaries come from conda-forge.
       - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y proj-bin
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: proj-ref
+          create-args: proj=9.9.0 --channel conda-forge
+          init-shell: bash
+      - if: runner.os == 'Linux'
+        shell: bash -el {0}
+        run: echo "$CONDA_PREFIX/bin" >> "$GITHUB_PATH"
       - if: runner.os == 'Windows'
         run: |
-          C:\Miniconda\condabin\conda.bat install -y -c conda-forge proj=9.4
+          C:\Miniconda\condabin\conda.bat install -y -c conda-forge proj=9.9.0
           echo "C:\Miniconda\Library\bin" >> $env:GITHUB_PATH
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --all-features -- -D warnings
+      # Offline, as PROJ's ctest runs its suites. The differential check
+      # against the reference cs2cs must run here, so a missing binary fails.
       - run: cargo test --all-features
+        env:
+          PROJ_CS2CS_REQUIRED: "1"
+      # PROJ runs the gie files that fetch grids only with PROJ_NETWORK=ON
+      # (test/CMakeLists.txt). The same files run here. Fetched grids are
+      # cached in the user writable directory, which the engine searches first.
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/proj
+          key: proj-grids-${{ runner.os }}-9.9.0-v1
+      - run: cargo test --all-features --test gie_run
+        env:
+          PROJ_NETWORK: ON
+          PROJ_USER_WRITABLE_DIRECTORY: ${{ runner.temp }}/proj
       # The bench is not timed in CI (shared runners are noisy), only built.
       - run: cargo build --release --bin proj-rs-bench

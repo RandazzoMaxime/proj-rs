@@ -45,12 +45,12 @@ grid download, and the `cct`, `cs2cs`, `proj` and `projinfo` binaries.
 
 | Order | Topic | Where it stands |
 |---|---|---|
-| 1 | **A fresh checkout that is green** | Tests that need a PROJ-data grid should skip with a message instead of failing, and CI should install PROJ 9.9 and provide the grids. Without grids the `gie` suite is 6,693 / 6,856 |
+| 1 | **A fresh checkout that is green** | Done for `gie`: 6,856 / 6,856 with `PROJ_NETWORK=ON`, 6,811 / 6,811 offline. CI checks against PROJ 9.9.0 from conda-forge. The unit and CLI suites are still open, see 2 and 3 |
 | 2 | **ISO 19111 and the PROJ unit tests** | 243 ported, **1,136** named `TEST()`s open (2026-10-28). Largest: `test_io` (419), `test_operationfactory` (274), `test_operation` (144), `test_crs` (120), `test_c_api` (109). List: [`docs/UNPORTED-UNIT.md`](docs/UNPORTED-UNIT.md) |
 | 3 | **CLI parity** | 155 of 276 PROJ CLI cases do not match yet: `projinfo` 96, `cs2cs` 57, `proj` 2. In `cs2cs` the biggest groups are CRS names that do not resolve and numeric differences; `+proj=sch` is not ported. List: [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md) |
 | 4 | **Portable batch path** | The AVX2 path covers x86-64 on Linux glibc (libmvec) and Windows (CRT). Other targets run the scalar loop |
 | 5 | **georust facade parity** | Run georust's own tests against the facade in CI, add the differential test, then finish the drop-in claim |
-| 6 | **Grid-dependent operations in CI** | Cache the PROJ-data grids so the 163 grid-dependent `gie` cases run on every pull request, and cover the network-backed `tinshift` cases |
+| 6 | **Grid cache in CI** | Done: the network step caches the CDN grids (about 81 MB, 10 files) in `actions/cache`. Re-run on a cache miss only |
 
 Anything under "What is left" is open to the community. Claim it in an issue
 before opening the PR, stay on PROJ 9.9 behavior, ship a `docs/PORTING-*.md`,
@@ -93,6 +93,9 @@ PROJ 9.9 describes its behavior in `test/gie/*.gie`: declarative files
 - `bench/record.sh` also writes the pass count to `bench/history.jsonl`, so
   speed and coverage are tracked together.
 - `builtins.gie` passes in full: 2,597 / 2,597.
+- **Two modes.** Offline, the 3 files that need the CDN are not run, as PROJ's
+  `ctest` does. With `PROJ_NETWORK=ON` all 26 files run. `passing.txt` holds
+  one count per mode.
 
 The PROJ C++ unit tests and CLI cases are tracked by name, in
 `docs/UNPORTED-UNIT.md` and `docs/UNPORTED-CLI.md`. A case leaves its ledger
