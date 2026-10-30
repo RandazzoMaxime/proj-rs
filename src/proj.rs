@@ -615,6 +615,20 @@ impl Proj {
         self.project(point, false)
     }
 
+    /// Convert a three-dimensional coordinate in the forward direction.
+    ///
+    /// `z` is the third axis: height for a geographic or projected CRS,
+    /// geocentric Z for a geocentric CRS, topocentric Up for a topocentric
+    /// CRS. Units match [`Self::convert`], metres for `z`.
+    ///
+    /// # Errors
+    ///
+    /// [`ProjError`] when the object is not a transform or the point has no image.
+    pub fn convert_xyz(&self, x: f64, y: f64, z: f64) -> Result<(f64, f64, f64), ProjError> {
+        let coord = self.map_xyz(x, y, z, Way::Forward, Report::Projection)?;
+        Ok((coord.x, coord.y, coord.z))
+    }
+
     /// Convert a slice in place, forward only.
     ///
     /// # Errors
@@ -797,6 +811,11 @@ impl Proj {
     }
 
     fn map_f64(&self, x: f64, y: f64, way: Way, report: Report) -> Result<(f64, f64), ProjError> {
+        let coord = self.map_xyz(x, y, 0.0, way, report)?;
+        Ok((coord.x, coord.y))
+    }
+
+    fn map_xyz(&self, x: f64, y: f64, z: f64, way: Way, report: Report) -> Result<Xyzt, ProjError> {
         let mapped = match &self.body {
             Body::Single(_) => {
                 return Err(match report {
@@ -809,7 +828,7 @@ impl Proj {
                 });
             }
             Body::Native(op) => {
-                let coord = Xyzt::xy(x, y);
+                let coord = Xyzt { x, y, z, t: 0.0 };
                 match way {
                     Way::Inverse => op.inverse(coord),
                     Way::Forward => op.forward(coord),
@@ -824,19 +843,16 @@ impl Proj {
                     Way::Inverse => (target, source, Way::Inverse),
                     Way::Forward => (source, target, Way::Forward),
                 };
-                source.to_geodetic(x, y).and_then(|coord| {
+                source.to_geodetic(x, y, z).and_then(|coord| {
                     apply_bridge(bridge.as_ref(), coord, bridge_way)
                         .and_then(|coord| target.geodetic_out(coord))
                 })
             }
         };
-        match mapped {
-            Ok(coord) => Ok((coord.x, coord.y)),
-            Err(error) => Err(match report {
-                Report::Projection => ProjError::Projection(error.to_string()),
-                Report::Conversion => ProjError::Conversion(error.to_string()),
-            }),
-        }
+        mapped.map_err(|error| match report {
+            Report::Projection => ProjError::Projection(error.to_string()),
+            Report::Conversion => ProjError::Conversion(error.to_string()),
+        })
     }
 }
 
@@ -1095,7 +1111,7 @@ fn from_create(error: CreateError) -> ProjCreateError {
 /// A sample point outside the domain still means the inverse exists.
 fn direction_exists(source: &Crs, target: &Crs, bridge: Option<&Operation>, way: Way) -> bool {
     !matches!(
-        source.to_geodetic(0.0, 0.0).and_then(|coord| {
+        source.to_geodetic(0.0, 0.0, 0.0).and_then(|coord| {
             apply_bridge(bridge, coord, way).and_then(|coord| target.geodetic_out(coord))
         }),
         Err(StepError::NoInverse)

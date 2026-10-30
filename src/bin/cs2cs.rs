@@ -279,7 +279,7 @@ enum Engine {
     Pair(Box<SidePair>),
     /// Two EPSG codes. The pipeline already speaks authority axis order and units.
     Pipe(CrsPipeline),
-    /// Names and mixed definitions. The facade is two-dimensional; height is copied.
+    /// Names and mixed definitions, through the CRS facade, which carries the third axis.
     Facade(Box<Proj>),
 }
 
@@ -299,7 +299,7 @@ impl Engine {
                 .forward(Xyzt { x, y, z, t: 0.0 })
                 .map(|coord| (coord.x, coord.y, coord.z))
                 .map_err(|_| ()),
-            Self::Facade(proj) => proj.convert((x, y)).map(|(x, y)| (x, y, z)).map_err(|_| ()),
+            Self::Facade(proj) => proj.convert_xyz(x, y, z).map_err(|_| ()),
         }
     }
 }

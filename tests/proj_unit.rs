@@ -902,3 +902,40 @@ fn sch_matches_cs2cs_and_round_trips() {
     near(back.z, input.z, 1e-6);
     assert!(Operation::create("+proj=sch +plat_0=30 +plon_0=45 +ellps=WGS84").is_err());
 }
+
+const TOPOCENTRIC: &str =
+    "+proj=topocentric +datum=WGS84 +X_0=-3982059.42 +Y_0=3331314.88 +Z_0=3692463.58 +no_defs +type=crs";
+
+#[test]
+fn topocentric_crs_to_geocentric_matches_cs2cs_in_3d() {
+    // cs2cs 9.9.0: `echo "0 0 0" | cs2cs $TOPOCENTRIC +to EPSG:4978 -d 3 -E`
+    // gives -3982059.420 3331314.880 3692463.580; `100 -50 20` gives
+    // -3982158.384 3331267.292 3692434.570.
+    let proj = Proj::new_known_crs(TOPOCENTRIC, "EPSG:4978", None).expect("topocentric to 4978");
+    let (x, y, z) = proj.convert_xyz(0.0, 0.0, 0.0).expect("origin");
+    near(x, -3_982_059.420, 1e-3);
+    near(y, 3_331_314.880, 1e-3);
+    near(z, 3_692_463.580, 1e-3);
+    let (x, y, z) = proj.convert_xyz(100.0, -50.0, 20.0).expect("offset");
+    near(x, -3_982_158.384, 1e-3);
+    near(y, 3_331_267.292, 1e-3);
+    near(z, 3_692_434.570, 1e-3);
+}
+
+#[test]
+fn geocentric_to_topocentric_round_trips_in_3d() {
+    // cs2cs 9.9.0: `echo "1000 2000 30" | cs2cs $TOPOCENTRIC +to EPSG:4978 -d 3 -E`
+    // gives -3981826.746 3329816.440 3694107.186.
+    let to_geocentric = Proj::new_known_crs(TOPOCENTRIC, "EPSG:4978", None).expect("forward");
+    let to_topocentric = Proj::new_known_crs("EPSG:4978", TOPOCENTRIC, None).expect("inverse");
+    let (x, y, z) = to_geocentric
+        .convert_xyz(1000.0, 2000.0, 30.0)
+        .expect("forward point");
+    near(x, -3_981_826.746, 1e-3);
+    near(y, 3_329_816.440, 1e-3);
+    near(z, 3_694_107.186, 1e-3);
+    let (e, n, u) = to_topocentric.convert_xyz(x, y, z).expect("back");
+    near(e, 1000.0, 1e-6);
+    near(n, 2000.0, 1e-6);
+    near(u, 30.0, 1e-6);
+}
