@@ -35,9 +35,12 @@ jobs:
       - run: cargo clippy --all-targets --all-features -- -D warnings
       # Offline, as PROJ's ctest runs its suites. The differential check
       # against the reference cs2cs must run here, so a missing binary fails.
+      # PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY is what PROJ's test setup sets:
+      # no grid left in a user cache can change an offline result.
       - run: cargo test --all-features
         env:
           PROJ_CS2CS_REQUIRED: "1"
+          PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY: YES
       # PROJ runs the gie files that fetch grids only with PROJ_NETWORK=ON
       # (test/CMakeLists.txt). The same files run here. Fetched grids are
       # cached in the user writable directory, which the engine searches first.
