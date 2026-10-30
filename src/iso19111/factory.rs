@@ -10,7 +10,7 @@ use rusqlite::{types::ValueRef, Connection};
 
 use super::equiv::equivalent_name;
 use super::model::{
-    ensemble_name_as_datum, Axis, CartesianCS, CompoundCRS, ConcatenatedOperation,
+    ensemble_name_as_datum, Axis, BoundingBox, CartesianCS, CompoundCRS, ConcatenatedOperation,
     ConcatenatedStep, Conversion, CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble,
     DerivedProjectedCRS, Ellipsoid, EllipsoidalCS, EngineeringCRS, EngineeringDatum, FactoryError,
     GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified, Identifier,
@@ -45,6 +45,30 @@ pub enum IntermediateCrsUse {
     Allow,
     /// Return only a direct operation or a deriving conversion.
     Never,
+}
+
+/// How an operation extent is compared with the area of interest.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SpatialCriterion {
+    /// The operation extent must contain the area. PROJ's default.
+    #[default]
+    StrictContainment,
+    /// The operation extent must intersect the area.
+    PartialIntersection,
+}
+
+/// Which CRS extents bound the candidate operations, as PROJ's `--crs-extent-use`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CrsExtentUse {
+    /// The CRS extents are not used.
+    Ignore,
+    /// The operation extent must contain both CRS extents.
+    Both,
+    /// The area of interest is the intersection of the two CRS extents.
+    Intersection,
+    /// The area of interest is the smaller of the two CRS extents. PROJ's default.
+    #[default]
+    Smallest,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2374,11 +2398,10 @@ impl AuthorityFactory {
         operations_between(
             &self.db,
             &self.authority,
-            &self.authority,
-            source_code,
-            &self.authority,
-            target_code,
-            AlternativeGridNames::Official,
+            (self.authority.as_str(), source_code),
+            (self.authority.as_str(), target_code),
+            (None, None),
+            RegistrySearch::Forward,
         )
     }
 
@@ -3519,6 +3542,7 @@ impl AuthorityFactory {
             target,
             interpolation,
             accuracy: accuracy_of(accuracy),
+            accuracy_text: accuracy_of(accuracy).and_then(|_| accuracy_text(accuracy)),
             version: optional_text(version),
             point_motion: motion == PointMotion::Yes,
             inverted: false,
@@ -3801,6 +3825,10 @@ pub struct CoordinateOperationContext {
     authority: String,
     intermediates: Vec<(String, String)>,
     allow_intermediate: bool,
+    area_of_interest: Option<ObjectDomain>,
+    spatial_criterion: SpatialCriterion,
+    crs_extent_use: CrsExtentUse,
+    desired_accuracy: f64,
 }
 
 impl CoordinateOperationContext {
@@ -3812,6 +3840,10 @@ impl CoordinateOperationContext {
             authority: authority.into(),
             intermediates: Vec::new(),
             allow_intermediate: true,
+            area_of_interest: None,
+            spatial_criterion: SpatialCriterion::default(),
+            crs_extent_use: CrsExtentUse::default(),
+            desired_accuracy: 0.0,
         }
     }
 
@@ -3824,6 +3856,30 @@ impl CoordinateOperationContext {
     /// When false, only a direct registered operation or a deriving conversion is returned.
     pub fn set_intermediate_crs_use(&mut self, policy: IntermediateCrsUse) -> &mut Self {
         self.allow_intermediate = policy == IntermediateCrsUse::Allow;
+        self
+    }
+
+    /// Area the operations must cover. `None` derives it from the CRS extents.
+    pub fn set_area_of_interest(&mut self, area: Option<ObjectDomain>) -> &mut Self {
+        self.area_of_interest = area;
+        self
+    }
+
+    /// How operation extents are compared with the area of interest.
+    pub fn set_spatial_criterion(&mut self, criterion: SpatialCriterion) -> &mut Self {
+        self.spatial_criterion = criterion;
+        self
+    }
+
+    /// Which CRS extents bound the operations.
+    pub fn set_crs_extent_use(&mut self, use_: CrsExtentUse) -> &mut Self {
+        self.crs_extent_use = use_;
+        self
+    }
+
+    /// Accuracy in metres an operation must meet. Zero keeps every operation.
+    pub fn set_desired_accuracy(&mut self, accuracy: f64) -> &mut Self {
+        self.desired_accuracy = accuracy;
         self
     }
 }
@@ -3881,46 +3937,61 @@ impl CoordinateOperationFactory {
                 ));
             }
         }
+        let (source_extent, target_extent) = match context.crs_extent_use {
+            CrsExtentUse::Ignore => (None, None),
+            _ => (crs_extent(source), crs_extent(target)),
+        };
+        let boxes = (
+            source_extent.as_ref().and_then(ObjectDomain::bounding_box),
+            target_extent.as_ref().and_then(ObjectDomain::bounding_box),
+        );
         let Some(source_id) = source
             .authority_code("EPSG")
             .or_else(|| source.identifiers().first())
         else {
-            return Ok(found);
+            return Ok(filter_and_sort(
+                found,
+                context,
+                source_extent.as_ref(),
+                target_extent.as_ref(),
+            ));
         };
         let Some(target_id) = target
             .authority_code("EPSG")
             .or_else(|| target.identifiers().first())
         else {
-            return Ok(found);
+            return Ok(filter_and_sort(
+                found,
+                context,
+                source_extent.as_ref(),
+                target_extent.as_ref(),
+            ));
         };
         found.extend(operations_between(
             &context.db,
             &context.authority,
-            source_id.code_space(),
-            source_id.code(),
-            target_id.code_space(),
-            target_id.code(),
-            AlternativeGridNames::Official,
+            (source_id.code_space(), source_id.code()),
+            (target_id.code_space(), target_id.code()),
+            boxes,
+            RegistrySearch::Both,
         )?);
         if context.allow_intermediate {
             for (pivot_auth, pivot_code) in &context.intermediates {
                 let first = operations_between(
                     &context.db,
                     &context.authority,
-                    source_id.code_space(),
-                    source_id.code(),
-                    pivot_auth,
-                    pivot_code,
-                    AlternativeGridNames::Official,
+                    (source_id.code_space(), source_id.code()),
+                    (pivot_auth, pivot_code),
+                    boxes,
+                    RegistrySearch::Both,
                 )?;
                 let second = operations_between(
                     &context.db,
                     &context.authority,
-                    pivot_auth,
-                    pivot_code,
-                    target_id.code_space(),
-                    target_id.code(),
-                    AlternativeGridNames::Official,
+                    (pivot_auth, pivot_code),
+                    (target_id.code_space(), target_id.code()),
+                    boxes,
+                    RegistrySearch::Both,
                 )?;
                 if let (Some(left), Some(right)) = (first.first(), second.first()) {
                     found.push(CoordinateOperation::Concatenated(ConcatenatedOperation {
@@ -3947,8 +4018,208 @@ impl CoordinateOperationFactory {
                 }
             }
         }
-        Ok(found)
+        Ok(filter_and_sort(
+            found,
+            context,
+            source_extent.as_ref(),
+            target_extent.as_ref(),
+        ))
     }
+}
+
+/// The extent of a CRS: its first usage, or for a compound CRS the intersection of its components.
+fn crs_extent(crs: &Crs) -> Option<ObjectDomain> {
+    if let Crs::Compound(compound) = crs {
+        let mut extent: Option<ObjectDomain> = None;
+        for component in compound.components() {
+            let Some(part) = crs_extent(component) else {
+                continue;
+            };
+            extent = Some(match extent {
+                None => part,
+                Some(sofar) => intersect_extents(sofar, part)?,
+            });
+        }
+        return extent;
+    }
+    crs.domains().first().cloned()
+}
+
+/// Extent of an operation: its first usage, or the intersection of its steps for a concatenated one.
+fn operation_extent(operation: &CoordinateOperation) -> Option<ObjectDomain> {
+    if matches!(operation, CoordinateOperation::Conversion(_)) {
+        return Some(world_extent());
+    }
+    if let Some(domain) = operation.domains().first() {
+        return Some(domain.clone());
+    }
+    let CoordinateOperation::Concatenated(concatenated) = operation else {
+        return None;
+    };
+    let mut extent: Option<ObjectDomain> = None;
+    for step in &concatenated.steps {
+        let Some(part) = operation_extent(&step.operation) else {
+            continue;
+        };
+        extent = Some(match extent {
+            None => part,
+            Some(sofar) => intersect_extents(sofar, part)?,
+        });
+    }
+    extent
+}
+
+/// Intersection of two extents' boxes, or `None` when they are disjoint. An extent without a box keeps the other.
+fn intersect_extents(sofar: ObjectDomain, part: ObjectDomain) -> Option<ObjectDomain> {
+    match (sofar.bounding_box(), part.bounding_box()) {
+        (Some(left), Some(right)) => {
+            Some(ObjectDomain::from_bounding_box(left.intersection(&right)?))
+        }
+        _ => Some(sofar),
+    }
+}
+
+fn world_extent() -> ObjectDomain {
+    ObjectDomain {
+        scope: None,
+        area: Some("World".to_owned()),
+        south: Some(-90.0),
+        west: Some(-180.0),
+        north: Some(90.0),
+        east: Some(180.0),
+    }
+}
+
+/// `Extent::contains` for two extents: an extent without a box contains anything.
+fn extent_contains(extent: &ObjectDomain, other: &ObjectDomain) -> bool {
+    match (extent.bounding_box(), other.bounding_box()) {
+        (Some(left), Some(right)) => left.contains(&right),
+        _ => true,
+    }
+}
+
+/// `Extent::intersects` for two extents: an extent without a box intersects anything.
+fn extent_intersects(extent: &ObjectDomain, other: &ObjectDomain) -> bool {
+    match (extent.bounding_box(), other.bounding_box()) {
+        (Some(left), Some(right)) => left.intersects(&right),
+        _ => true,
+    }
+}
+
+/// `getPseudoArea` of an extent: the integral of cos(latitude) over its box, in degrees squared.
+fn extent_pseudo_area(extent: &ObjectDomain) -> f64 {
+    extent.bounding_box().map_or(0.0, |bbox| bbox.pseudo_area())
+}
+
+/// `FilterResults` with `andSort`: keeps the operations that match the area of interest and accuracy.
+fn filter_and_sort(
+    operations: Vec<CoordinateOperation>,
+    context: &CoordinateOperationContext,
+    extent1: Option<&ObjectDomain>,
+    extent2: Option<&ObjectDomain>,
+) -> Vec<CoordinateOperation> {
+    let area = match (&context.area_of_interest, context.crs_extent_use) {
+        (Some(area), _) => Some(area.clone()),
+        (None, CrsExtentUse::Intersection) => match (extent1, extent2) {
+            (Some(left), Some(right)) => match (left.bounding_box(), right.bounding_box()) {
+                (Some(a), Some(b)) => a.intersection(&b).map(ObjectDomain::from_bounding_box),
+                _ => None,
+            },
+            _ => None,
+        },
+        (None, CrsExtentUse::Smallest) => match (extent1, extent2) {
+            (Some(left), Some(right)) => {
+                if extent_pseudo_area(left) < extent_pseudo_area(right) {
+                    Some(left.clone())
+                } else {
+                    Some(right.clone())
+                }
+            }
+            (Some(extent), None) | (None, Some(extent)) => Some(extent.clone()),
+            (None, None) => None,
+        },
+        _ => None,
+    };
+    let described = context.area_of_interest.as_ref().and_then(|area| {
+        let text = area.description()?;
+        operations
+            .iter()
+            .any(|operation| {
+                operation_extent(operation).is_some_and(|extent| extent.description() == Some(text))
+            })
+            .then_some(text)
+    });
+    let mut result = Vec::new();
+    let mut has_with_extent = false;
+    let mut has_without_extent = false;
+    for operation in &operations {
+        if !accuracy_allowed(operation, context.desired_accuracy) {
+            continue;
+        }
+        if let Some(area) = &area {
+            let Some(extent) = operation_extent(operation) else {
+                has_without_extent = true;
+                continue;
+            };
+            if let Some(expected) = described {
+                if extent.description() != Some(expected) {
+                    continue;
+                }
+            }
+            has_with_extent = true;
+            let contains = extent_contains(&extent, area);
+            match context.spatial_criterion {
+                SpatialCriterion::StrictContainment if !contains => continue,
+                SpatialCriterion::PartialIntersection if !extent_intersects(&extent, area) => {
+                    continue
+                }
+                _ => {}
+            }
+        } else if context.crs_extent_use == CrsExtentUse::Both {
+            let Some(extent) = operation_extent(operation) else {
+                has_without_extent = true;
+                continue;
+            };
+            has_with_extent = true;
+            let contains_source = extent1.is_none_or(|source| extent_contains(&extent, source));
+            let contains_target = extent2.is_none_or(|target| extent_contains(&extent, target));
+            match context.spatial_criterion {
+                SpatialCriterion::StrictContainment if !(contains_source && contains_target) => {
+                    continue
+                }
+                SpatialCriterion::PartialIntersection => {
+                    let meets_source =
+                        extent1.is_none_or(|source| extent_intersects(&extent, source));
+                    let meets_target =
+                        extent2.is_some_and(|target| extent_intersects(&extent, target));
+                    if !(meets_source && meets_target) {
+                        continue;
+                    }
+                }
+                _ => {}
+            }
+        }
+        result.push(operation.clone());
+    }
+    if result.is_empty() && (!has_with_extent || has_without_extent) {
+        return operations
+            .into_iter()
+            .filter(|operation| accuracy_allowed(operation, context.desired_accuracy))
+            .collect();
+    }
+    result
+}
+
+/// `getAccuracy` against `desired`: unknown accuracy is never allowed when a target is set.
+fn accuracy_allowed(operation: &CoordinateOperation, desired: f64) -> bool {
+    if desired == 0.0 {
+        return true;
+    }
+    let accuracy = match operation {
+        CoordinateOperation::Conversion(_) => 0.0,
+        _ => operation.accuracy().unwrap_or(-1.0),
+    };
+    (0.0..=desired).contains(&accuracy)
 }
 
 fn same_authority(source: &Crs, base: &GeodeticCRS) -> bool {
@@ -3962,47 +4233,84 @@ fn same_authority(source: &Crs, base: &GeodeticCRS) -> bool {
 }
 
 struct OperationRow {
-    source_auth: String,
-    source_code: String,
-    target_auth: String,
-    target_code: String,
+    source: (String, String),
     auth: String,
     code: String,
     table: String,
+    bbox: Option<BoundingBox>,
     area: f64,
     accuracy_missing: bool,
     accuracy: f64,
+    replacement: Option<(String, String)>,
+    replacement_is_unknown_grid: bool,
 }
 
+/// Which registered rows [`operations_between`] reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RegistrySearch {
+    /// Only `source` to `target`, every row kept. The public
+    /// `AuthorityFactory::create_from_coordinate_reference_system_codes`.
+    Forward,
+    /// Both directions, with inverses of the reverse rows, superseded rows
+    /// dropped, and rows restricted to the CRS extents when some intersect.
+    Both,
+}
+
+/// Registered operations between two CRS, as `createFromCoordinateReferenceSystemCodes`.
+///
+/// Rows are ordered by pseudo area then accuracy. `crs_boxes` are the bounding
+/// boxes of the source and target CRS extents.
 fn operations_between(
     db: &DatabaseContext,
-    authority_filter: &str,
-    source_auth: &str,
-    source_code: &str,
-    target_auth: &str,
-    target_code: &str,
-    grids: AlternativeGridNames,
+    authority: &str,
+    source: (&str, &str),
+    target: (&str, &str),
+    crs_boxes: (Option<BoundingBox>, Option<BoundingBox>),
+    search: RegistrySearch,
 ) -> Result<Vec<CoordinateOperation>, FactoryError> {
     let mut sql = "SELECT cov.source_crs_auth_name, cov.source_crs_code, \
          cov.target_crs_auth_name, cov.target_crs_code, cov.auth_name, cov.code, cov.table_name, \
-         extent.south_lat, extent.west_lon, extent.north_lat, extent.east_lon, cov.accuracy \
+         extent.south_lat, extent.west_lon, extent.north_lat, extent.east_lon, cov.accuracy, \
+         ss.replacement_auth_name, ss.replacement_code, \
+         (gt.auth_name IS NOT NULL) AS replacement_is_grid_transform, \
+         (ga.proj_grid_name IS NOT NULL) AS replacement_is_known_grid \
          FROM coordinate_operation_view cov \
          JOIN usage ON usage.object_table_name = cov.table_name \
          AND usage.object_auth_name = cov.auth_name AND usage.object_code = cov.code \
          JOIN extent ON extent.auth_name = usage.extent_auth_name AND extent.code = usage.extent_code \
-         WHERE cov.source_crs_auth_name = ? AND cov.source_crs_code = ? \
-         AND cov.target_crs_auth_name = ? AND cov.target_crs_code = ? \
-         AND cov.deprecated = 0"
+         LEFT JOIN supersession ss ON ss.superseded_table_name = cov.table_name \
+         AND ss.superseded_auth_name = cov.auth_name AND ss.superseded_code = cov.code \
+         AND ss.superseded_table_name = ss.replacement_table_name AND ss.same_source_target_crs = 1 \
+         LEFT JOIN grid_transformation gt ON gt.auth_name = ss.replacement_auth_name \
+         AND gt.code = ss.replacement_code \
+         LEFT JOIN grid_alternatives ga ON ga.original_grid_name = gt.grid_name \
+         WHERE "
         .to_owned();
+    let forward = "cov.source_crs_auth_name = ? AND cov.source_crs_code = ? \
+         AND cov.target_crs_auth_name = ? AND cov.target_crs_code = ?";
+    let reverse = "cov.source_crs_auth_name = ? AND cov.source_crs_code = ? \
+         AND cov.target_crs_auth_name = ? AND cov.target_crs_code = ?";
     let mut params = vec![
-        source_auth.to_owned(),
-        source_code.to_owned(),
-        target_auth.to_owned(),
-        target_code.to_owned(),
+        source.0.to_owned(),
+        source.1.to_owned(),
+        target.0.to_owned(),
+        target.1.to_owned(),
     ];
-    if !authority_filter.is_empty() {
+    if search == RegistrySearch::Both {
+        sql.push_str(&format!("(({forward}) OR ({reverse}))"));
+        params.extend([
+            target.0.to_owned(),
+            target.1.to_owned(),
+            source.0.to_owned(),
+            source.1.to_owned(),
+        ]);
+    } else {
+        sql.push_str(&format!("({forward})"));
+    }
+    sql.push_str(" AND cov.deprecated = 0");
+    if !authority.is_empty() {
         sql.push_str(" AND cov.auth_name = ?");
-        params.push(authority_filter.to_owned());
+        params.push(authority.to_owned());
     }
     let rows = db.query(&sql, &params)?;
     let mut parsed = Vec::new();
@@ -4014,17 +4322,18 @@ fn operations_between(
         } else {
             row[11].f64().unwrap_or(f64::MAX)
         };
+        let replacement = (!row[12].empty()).then(|| (row[12].text(), row[13].text()));
         parsed.push(OperationRow {
-            source_auth: row[0].text(),
-            source_code: row[1].text(),
-            target_auth: row[2].text(),
-            target_code: row[3].text(),
+            source: (row[0].text(), row[1].text()),
             auth: row[4].text(),
             code: row[5].text(),
             table: row[6].text(),
+            bbox: row_box(&row[7], &row[8], &row[9], &row[10]),
             area,
             accuracy_missing,
             accuracy,
+            replacement,
+            replacement_is_unknown_grid: row[14].text() == "1" && row[15].text() != "1",
         });
     }
     parsed.sort_by(|left, right| {
@@ -4039,9 +4348,31 @@ fn operations_between(
                     .unwrap_or(std::cmp::Ordering::Equal)
             })
     });
+    let listed: BTreeSet<(String, String)> = parsed
+        .iter()
+        .map(|row| (row.auth.clone(), row.code.clone()))
+        .collect();
+    let superseded = |row: &OperationRow| {
+        search == RegistrySearch::Both
+            && row
+                .replacement
+                .as_ref()
+                .is_some_and(|key| !row.replacement_is_unknown_grid && listed.contains(key))
+    };
+    let kept: Vec<&OperationRow> = parsed.iter().filter(|row| !superseded(row)).collect();
+    let intersects_crs = |bbox: &Option<BoundingBox>| {
+        [crs_boxes.0, crs_boxes.1]
+            .iter()
+            .flatten()
+            .all(|extent| bbox.as_ref().is_none_or(|bbox| bbox.intersects(extent)))
+    };
+    let intersecting = kept.iter().any(|row| intersects_crs(&row.bbox));
     let mut seen = BTreeSet::new();
     let mut operations = Vec::new();
-    for row in parsed {
+    for row in kept {
+        if intersecting && !intersects_crs(&row.bbox) {
+            continue;
+        }
         if !seen.insert((row.auth.clone(), row.code.clone())) {
             continue;
         }
@@ -4049,18 +4380,28 @@ fn operations_between(
         let operation = factory.create_coordinate_operation_typed(
             &row.code,
             ConcatenatedSteps::Allow,
-            grids,
+            AlternativeGridNames::Official,
             &row.table,
         )?;
-        let _ = (
-            &row.source_auth,
-            &row.source_code,
-            &row.target_auth,
-            &row.target_code,
-        );
-        operations.push(operation);
+        if row.source.0 == source.0 && row.source.1 == source.1 {
+            operations.push(operation);
+        } else if let CoordinateOperation::Transformation(transformation) = operation {
+            operations.push(CoordinateOperation::Transformation(
+                transformation.inverse(),
+            ));
+        }
     }
     Ok(operations)
+}
+
+/// Bounding box from the four extent columns, when all are present.
+fn row_box(south: &Cell, west: &Cell, north: &Cell, east: &Cell) -> Option<BoundingBox> {
+    Some(BoundingBox::new(
+        west.f64().ok()?,
+        south.f64().ok()?,
+        east.f64().ok()?,
+        north.f64().ok()?,
+    ))
 }
 
 fn pseudo_area(south: &Cell, west: &Cell, north: &Cell, east: &Cell) -> f64 {
@@ -4165,6 +4506,21 @@ fn accuracy_of(cell: &Cell) -> Option<f64> {
         None
     } else {
         Some(value)
+    }
+}
+
+/// The accuracy as SQLite writes it: a REAL `1.0` is the text `1.0`, not `1`.
+fn accuracy_text(cell: &Cell) -> Option<String> {
+    match cell {
+        Cell::Real(value) => {
+            let text = format!("{value}");
+            Some(if value.is_finite() && !text.contains('.') {
+                format!("{text}.0")
+            } else {
+                text
+            })
+        }
+        other => optional_text(&other.text()),
     }
 }
 
