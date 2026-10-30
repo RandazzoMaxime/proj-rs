@@ -17,6 +17,7 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader, Write};
 use std::process::ExitCode;
 
+use proj_rs::iso19111::{BestOperation, OnlyBest};
 use proj_rs::{Area, CrsPipeline, Operation, Proj, Xyzt};
 use rusqlite::Connection;
 
@@ -71,7 +72,7 @@ fn main() -> ExitCode {
             return exit_code(error.code);
         }
     };
-    let engine = match build_engine(&source, &target, area) {
+    let engine = match build_engine(&source, &target, area, opts.only_best) {
         Ok(engine) => engine,
         Err(error) => {
             report(
@@ -285,13 +286,15 @@ enum Engine {
     Pipe(CrsPipeline),
     /// Names and mixed definitions, through the CRS facade, which carries the third axis.
     Facade(Box<Proj>),
+    /// `--only-best` chose an operation whose grid is missing. Each point fails with PROJ's message.
+    Failing(String),
 }
 
 impl Engine {
     fn lat_first(&self) -> bool {
         match self {
             Self::Pipe(pipe) => pipe.lat_or_northing_first,
-            Self::Pair(_) | Self::Facade(_) => false,
+            Self::Pair(_) | Self::Facade(_) | Self::Failing(_) => false,
         }
     }
 
@@ -306,14 +309,23 @@ impl Engine {
                 .map(|coord| (coord.x, coord.y, coord.z))
                 .map_err(|_| ()),
             Self::Facade(proj) => proj.convert_xyz(x, y, z).map_err(|_| ()),
+            Self::Failing(message) => {
+                eprintln!("{message}");
+                Err(())
+            }
         }
     }
 }
 
-fn build_engine(source: &str, target: &str, area: Option<Area>) -> Result<Engine, String> {
+fn build_engine(
+    source: &str,
+    target: &str,
+    area: Option<Area>,
+    only_best: Option<bool>,
+) -> Result<Engine, String> {
     if area.is_none() && !projish(source) && !projish(target) {
-        if let Some(pipe) = select_pipeline(source, target) {
-            return Ok(Engine::Pipe(pipe));
+        if let Some(engine) = select_pipeline(source, target, only_best) {
+            return Ok(engine);
         }
     }
     let source = &canonical_side(source);
@@ -336,14 +348,25 @@ fn build_engine(source: &str, target: &str, area: Option<Area>) -> Result<Engine
 
 /// The operation PROJ's `proj_create_crs_to_crs` picks for the pair, or `None`
 /// when that selection fails and the caller keeps its previous path.
-fn select_pipeline(source: &str, target: &str) -> Option<CrsPipeline> {
-    let (definition, lat_or_northing_first) =
-        proj_rs::iso19111::best_pipeline(source, target).ok()?;
-    let operation = Operation::create(&definition).ok()?;
-    Some(CrsPipeline {
-        operation,
-        lat_or_northing_first,
-    })
+fn select_pipeline(source: &str, target: &str, only_best: Option<bool>) -> Option<Engine> {
+    let mode = if only_best == Some(true) {
+        OnlyBest::On
+    } else {
+        OnlyBest::Off
+    };
+    match proj_rs::iso19111::best_pipeline_with(source, target, mode).ok()? {
+        BestOperation::Pipeline {
+            definition,
+            lat_or_northing_first,
+        } => {
+            let operation = Operation::create(&definition).ok()?;
+            Some(Engine::Pipe(CrsPipeline {
+                operation,
+                lat_or_northing_first,
+            }))
+        }
+        BestOperation::MissingGrid { message } => Some(Engine::Failing(message)),
+    }
 }
 
 /// A name or compound that the library resolves to EPSG codes becomes that

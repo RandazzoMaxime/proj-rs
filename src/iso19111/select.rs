@@ -13,7 +13,7 @@
 //! one of those is either sorted differently or reported as an error, and the
 //! caller keeps its previous path.
 
-use super::factory::{crs_extent, operation_extent};
+use super::factory::{crs_extent, operation_extent, SpatialCriterion};
 use super::model::{BoundingBox, CoordinateOperation, Crs, ParameterValue};
 use super::{
     create_from_user_input, CoordinateOperationContext, CoordinateOperationFactory,
@@ -51,6 +51,34 @@ struct Characteristics {
     uses_etrs89_generic: bool,
 }
 
+/// `ONLY_BEST` of `proj_create_crs_to_crs`: whether the best operation may
+/// have grids that are not on disk. `cs2cs --only-best` sets it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OnlyBest {
+    /// The first operation whose grids are on disk.
+    Off,
+    /// The first operation, whether or not its grids are on disk.
+    On,
+}
+
+/// What `cs2cs` does with the best operation of a pair.
+#[derive(Debug, PartialEq, Eq)]
+pub enum BestOperation {
+    /// A PROJ pipeline, and whether its first output axis is latitude or northing.
+    Pipeline {
+        /// The pipeline text.
+        definition: String,
+        /// Whether the first output axis is latitude or northing.
+        lat_or_northing_first: bool,
+    },
+    /// `ONLY_BEST=YES` kept an operation whose grids are missing. PROJ fails each
+    /// transformation with this message, as `pj_warn_about_missing_grid`.
+    MissingGrid {
+        /// The failure text, one line.
+        message: String,
+    },
+}
+
 /// PROJ pipeline of the best operation from `source` to `target`, and whether
 /// its first output axis is latitude or northing.
 ///
@@ -62,10 +90,36 @@ struct Characteristics {
 /// A CRS cannot be read, no operation is registered, or the best operation
 /// cannot be written as a PROJ pipeline.
 pub fn best_pipeline(source: &str, target: &str) -> Result<(String, bool), FactoryError> {
+    match best_pipeline_with(source, target, OnlyBest::Off)? {
+        BestOperation::Pipeline {
+            definition,
+            lat_or_northing_first,
+        } => Ok((definition, lat_or_northing_first)),
+        BestOperation::MissingGrid { message } => Err(FactoryError::Format(message)),
+    }
+}
+
+/// The best operation from `source` to `target` as `cs2cs` takes it under
+/// `only_best`.
+///
+/// The order is `SortFunction`'s, grid availability included. Without
+/// `ONLY_BEST`, the first operation whose grids are on disk is used, as PROJ
+/// falls back to it after a failed grid. With `ONLY_BEST`, the first operation
+/// is used even when its grids are missing, and fails at each transformation.
+///
+/// # Errors
+///
+/// As [`best_pipeline`].
+pub fn best_pipeline_with(
+    source: &str,
+    target: &str,
+    only_best: OnlyBest,
+) -> Result<BestOperation, FactoryError> {
     let db = DatabaseContext::create()?;
     let source_crs = create_from_user_input(source, &db)?;
     let target_crs = create_from_user_input(target, &db)?;
-    let context = CoordinateOperationContext::create(&db, "");
+    let mut context = CoordinateOperationContext::create(&db, "");
+    context.set_spatial_criterion(SpatialCriterion::PartialIntersection);
     let operations = CoordinateOperationFactory::create().create_operations(
         &source_crs,
         &target_crs,
@@ -77,9 +131,13 @@ pub fn best_pipeline(source: &str, target: &str) -> Result<(String, bool), Facto
         ranked.push((operation, characteristics));
     }
     let ranked = sort(ranked);
-    let (best, characteristics) = ranked
-        .into_iter()
-        .next()
+    let chosen = match only_best {
+        OnlyBest::On => ranked.into_iter().next(),
+        OnlyBest::Off => ranked
+            .into_iter()
+            .find(|(_, characteristics)| characteristics.grids_available),
+    };
+    let (best, characteristics) = chosen
         .ok_or_else(|| FactoryError::Format(format!("no operation from {source} to {target}")))?;
     if !characteristics.exportable {
         return Err(FactoryError::Format(format!(
@@ -87,22 +145,42 @@ pub fn best_pipeline(source: &str, target: &str) -> Result<(String, bool), Facto
             characteristics.name
         )));
     }
-    let definition = export(&best, &source_crs, &target_crs)?;
-    Ok((definition, lat_or_northing_first(&target_crs)))
+    if !characteristics.grids_available {
+        let grids = proj_grids(&best, &db)?;
+        return Ok(BestOperation::MissingGrid {
+            message: missing_grid_message(&characteristics.name, &grids),
+        });
+    }
+    let definition = export(&best, &source_crs, &target_crs, &db)?;
+    Ok(BestOperation::Pipeline {
+        definition,
+        lat_or_northing_first: lat_or_northing_first(&target_crs),
+    })
+}
+
+/// `pj_warn_about_missing_grid`: the failure text for `name`, naming each grid
+/// that is not on disk.
+fn missing_grid_message(name: &str, grids: &[String]) -> String {
+    let mut message = format!("Attempt to use coordinate operation {name} failed.");
+    for grid in grids.iter().filter(|grid| !gridpath::available(grid)) {
+        message.push_str(&format!(
+            " Grid {grid} is not available. Consult https://proj.org/resource_files.html for guidance."
+        ));
+    }
+    message
 }
 
 fn export(
     operation: &CoordinateOperation,
     source: &Crs,
     target: &Crs,
+    db: &DatabaseContext,
 ) -> Result<String, FactoryError> {
     match operation {
-        CoordinateOperation::Transformation(transformation) => {
-            transformation.export_to_proj_string(ProjLines::Single)
-        }
-        CoordinateOperation::Concatenated(concatenated) => {
-            concatenated.export_to_proj_string(ProjLines::Single)
-        }
+        CoordinateOperation::Transformation(transformation) => transformation
+            .export_to_proj_string_with(ProjLines::Single, proj_grid_names(operation, db)?),
+        CoordinateOperation::Concatenated(concatenated) => concatenated
+            .export_to_proj_string_with(ProjLines::Single, proj_grid_names(operation, db)?),
         CoordinateOperation::Conversion(conversion) if conversion.inverted => {
             Err(FactoryError::Format(format!(
                 "inverse conversion {} has no PROJ string in this crate",
@@ -122,7 +200,7 @@ fn characteristics(
     target: &Crs,
 ) -> Characteristics {
     let name = operation.name().to_owned();
-    let (exportable, proj_step_count, xyz_gridshift) = match export(operation, source, target) {
+    let (exportable, proj_step_count, xyz_gridshift) = match export(operation, source, target, db) {
         Ok(text) => {
             let xyz = text.contains("+proj=xyzgridshift");
             let steps = if xyz { 0 } else { proj_steps(&text) };
@@ -131,7 +209,8 @@ fn characteristics(
         Err(_) => (false, 0, false),
     };
     let grids = grid_names(operation);
-    let grids_available = grids.iter().all(|grid| gridpath::available(grid));
+    let grids_available = proj_grids(operation, db)
+        .is_ok_and(|names| names.iter().all(|grid| gridpath::available(grid)));
     let grids_known = grids
         .iter()
         .all(|grid| db.grid_is_known(grid).unwrap_or(false));
@@ -192,6 +271,39 @@ fn pseudo_area_of(
         (None, Some(target)) => area_of(operation.intersection(&target)),
         (None, None) => operation.pseudo_area(),
     }
+}
+
+/// The grids of `operation` under the names PROJ reads them by, which is the
+/// name the database gives a renamed grid.
+fn proj_grids(
+    operation: &CoordinateOperation,
+    db: &DatabaseContext,
+) -> Result<Vec<String>, FactoryError> {
+    let renamed = proj_grid_names(operation, db)?;
+    Ok(grid_names(operation)
+        .into_iter()
+        .map(|grid| {
+            renamed
+                .iter()
+                .find(|(original, _)| *original == grid)
+                .map_or(grid, |(_, proj)| proj.clone())
+        })
+        .collect())
+}
+
+/// `(official name, PROJ name)` of the grids of `operation` that the database
+/// renames, as `substitutePROJAlternativeGridNames` writes them.
+fn proj_grid_names(
+    operation: &CoordinateOperation,
+    db: &DatabaseContext,
+) -> Result<Vec<(String, String)>, FactoryError> {
+    let mut renamed = Vec::new();
+    for grid in grid_names(operation) {
+        if let Some(proj) = db.proj_grid_name(&grid)? {
+            renamed.push((grid, proj));
+        }
+    }
+    Ok(renamed)
 }
 
 pub(crate) fn grid_names(operation: &CoordinateOperation) -> Vec<String> {
@@ -323,7 +435,7 @@ fn precedes(a: &Characteristics, b: &Characteristics) -> bool {
         return !a.has_grids;
     }
     if a.xyz_gridshift != b.xyz_gridshift {
-        return !a.xyz_gridshift;
+        return a.xyz_gridshift;
     }
     if a.etrs_pair && b.etrs_pair {
         if b.uses_etrs89_generic && !b.uses_etrf2000 && a.uses_etrf2000 && !a.uses_etrs89_generic {
