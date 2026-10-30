@@ -5,7 +5,7 @@
 //! `versioned_auth_name_mapping`.
 
 use super::equiv;
-use super::factory::{AuthorityFactory, DatabaseContext};
+use super::factory::{AuthorityFactory, AuthorityObject, DatabaseContext, NameMatch, ObjectType};
 use super::model::{
     Axis, CompoundCRS, Crs, DatumEnsemble, Ellipsoid, EllipsoidalCS, FactoryError, GeodeticCRS,
     GeodeticReferenceFrame, GeographicCRS, Identified, Identifier, Measure, PrimeMeridian,
@@ -450,13 +450,14 @@ fn epsg_code_of(crs: &Crs) -> Option<String> {
 }
 
 /// A CRS named `text`, or `A + B` for two named CRS, as PROJ's
-/// `createFromUserInput` does for names. An exact name first; several matches
-/// keep the 2D one, then the 3D one, and anything else is an error.
+/// `createFromUserInput` does for names. An exact name first, then an
+/// approximate one for a single name; several matches keep the 2D one, then
+/// the 3D one, and anything else is an error.
 fn crs_from_name(text: &str, db: &DatabaseContext) -> Result<Option<Crs>, FactoryError> {
     if let Some((left, right)) = text.split_once(" + ") {
         let (Some(first), Some(second)) = (
-            crs_named_one(left.trim(), db)?,
-            crs_named_one(right.trim(), db)?,
+            crs_named_one(left.trim(), db, NameMatch::Approximate)?,
+            crs_named_one(right.trim(), db, NameMatch::Approximate)?,
         ) else {
             return Ok(None);
         };
@@ -465,16 +466,42 @@ fn crs_from_name(text: &str, db: &DatabaseContext) -> Result<Option<Crs>, Factor
             vec![first, second],
         )?)));
     }
-    crs_named_one(text, db)
+    if let Some(crs) = crs_named_one(text, db, NameMatch::Exact)? {
+        return Ok(Some(crs));
+    }
+    // PROJ's `createFromUserInput` tries an approximate match only for a text
+    // longer than four bytes, and keeps it only when its name is shorter than
+    // twice the text, so `EGM2008` does not pick `EGM2008 height`.
+    if text.len() <= 4 {
+        return Ok(None);
+    }
+    Ok(crs_named_one(text, db, NameMatch::Approximate)?
+        .filter(|crs| crs.name().len() < 2 * text.len()))
 }
 
-fn crs_named_one(text: &str, db: &DatabaseContext) -> Result<Option<Crs>, FactoryError> {
+fn crs_named_one(
+    text: &str,
+    db: &DatabaseContext,
+    mode: NameMatch,
+) -> Result<Option<Crs>, FactoryError> {
     let codes = db.crs_codes_named(text)?;
     let mut found = Vec::new();
     for (authority, code) in &codes {
         found.push(
             AuthorityFactory::create(db, authority).create_coordinate_reference_system(code)?,
         );
+    }
+    if found.is_empty() && mode == NameMatch::Approximate {
+        for object in AuthorityFactory::create(db, "").create_objects_from_name(
+            text,
+            &[ObjectType::Crs],
+            NameMatch::Approximate,
+            10,
+        )? {
+            if let AuthorityObject::Crs(crs) = object {
+                found.push(crs);
+            }
+        }
     }
     match found.len() {
         0 => Ok(None),

@@ -347,7 +347,8 @@ fn select_pipeline(source: &str, target: &str) -> Option<CrsPipeline> {
 }
 
 /// A name or compound that the library resolves to EPSG codes becomes that
-/// code, so the EPSG pipeline builder can take it.
+/// code, so the EPSG pipeline builder can take it. A CRS with no EPSG identity,
+/// such as `IAU_2015:49935`, becomes its PROJ string.
 fn canonical_side(text: &str) -> String {
     if epsg_token(text) || projish(text) {
         return text.to_owned();
@@ -357,7 +358,10 @@ fn canonical_side(text: &str) -> String {
     };
     match proj_rs::epsg_identity(text, &db) {
         Ok(Some(identity)) => identity,
-        _ => text.to_owned(),
+        Ok(None) => proj_rs::iso19111::create_from_user_input(text, &db)
+            .and_then(|crs| crs.export_to_proj_string())
+            .unwrap_or_else(|_| text.to_owned()),
+        Err(_) => text.to_owned(),
     }
 }
 
