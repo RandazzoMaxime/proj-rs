@@ -2201,7 +2201,8 @@ impl AuthorityFactory {
             .one(
                 "SELECT name, ellipsoid_auth_name, ellipsoid_code, prime_meridian_auth_name, \
              prime_meridian_code, publication_date, frame_reference_epoch, ensemble_accuracy, \
-             anchor, anchor_epoch, deprecated FROM geodetic_datum WHERE auth_name = ? AND code = ?",
+             anchor, anchor_epoch, deprecated, CAST(ensemble_accuracy AS TEXT) FROM geodetic_datum \
+             WHERE auth_name = ? AND code = ?",
                 code,
             )
             .map_err(|_| FactoryError::missing("geodetic datum", &self.authority, code))?;
@@ -2222,6 +2223,7 @@ impl AuthorityFactory {
                 identified,
                 members,
                 accuracy: row[7].f64()?,
+                accuracy_text: Some(row[11].text()),
             }));
         }
         let ellipsoid = self
@@ -2262,7 +2264,7 @@ impl AuthorityFactory {
         let row = self
             .one(
                 "SELECT name, publication_date, frame_reference_epoch, ensemble_accuracy, \
-             anchor, anchor_epoch, deprecated FROM vertical_datum \
+             anchor, anchor_epoch, deprecated, CAST(ensemble_accuracy AS TEXT) FROM vertical_datum \
              WHERE auth_name = ? AND code = ?",
                 code,
             )
@@ -2277,6 +2279,7 @@ impl AuthorityFactory {
                 identified: self.properties(code, &row[0].text(), &row[6], "", "vertical_datum")?,
                 members,
                 accuracy: row[3].f64()?,
+                accuracy_text: Some(row[7].text()),
             }));
         }
         let mut identified =

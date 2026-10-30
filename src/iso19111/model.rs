@@ -924,6 +924,9 @@ pub struct DatumEnsemble {
     pub(crate) identified: Identified,
     pub(crate) members: Vec<Datum>,
     pub(crate) accuracy: f64,
+    /// The accuracy as the source wrote it: the proj.db text, or `None` for a
+    /// built object, which is written from the number.
+    pub(crate) accuracy_text: Option<String>,
 }
 
 impl DatumEnsemble {
@@ -955,6 +958,7 @@ impl DatumEnsemble {
             identified: Identified::named(name),
             members,
             accuracy,
+            accuracy_text: None,
         })
     }
 

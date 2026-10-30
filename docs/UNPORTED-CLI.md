@@ -64,13 +64,13 @@ A row remains when that case does not match the yaml.
 | `test_cs2cs_various.yaml#141` | cs2cs | exit 3 expected 0 Rel. 9.9.0, September 15th, 2026 <cs2cs>:  cannot initialize transformation cause: The underlying PROJ call failed: unknown CRS `GDA2020` prog | Test --t_epoch |
 | `test_cs2cs_various.yaml#142` | cs2cs | exit 3 expected 0 Rel. 9.9.0, September 15th, 2026 <cs2cs>:  cannot initialize transformation cause: The underlying PROJ call failed: `+proj=topocentric +datum= | - |
 | `test_cs2cs_various.yaml#143` | cs2cs | exit 3 expected 0 Rel. 9.9.0, September 15th, 2026 <cs2cs>:  cannot initialize transformation cause: The underlying PROJ call failed: unknown CRS `EPSG:4559+575 | Test cs2cs EPSG:5488 (RGAF09) to EPSG:4559+5757 (RRAF 1991 / UTM zone 20N + Guadeloupe 1988 height) |
-| `test_projinfo.yaml#6` | projinfo | exit 1 expected 0 projinfo: `+proj=merc +lat_ts=5 +datum=WGS84 +type=crs` is not an EPSG code this port can describe usage: projinfo [-o formats] [-q] [--versio | - |
-| `test_projinfo.yaml#7` | projinfo | exit 1 expected 0 projinfo: `+proj=merc +lat_ts=5 +datum=WGS84 +type=crs` is not an EPSG code this port can describe usage: projinfo [-o formats] [-q] [--versio | - |
+| `test_projinfo.yaml#6` | projinfo | exit 1 expected 0 projinfo: cannot write dialect SQL usage: projinfo [-o formats] [-q] [--version] EPSG:code -o: PROJ, WKT2:2019, PROJJSON, or default (PROJ and | - |
+| `test_projinfo.yaml#7` | projinfo | exit 1 expected 0 projinfo: cannot write dialect SQL usage: projinfo [-o formats] [-q] [--version] EPSG:code -o: PROJ, WKT2:2019, PROJJSON, or default (PROJ and | - |
 | `test_projinfo.yaml#10` | projinfo | stderr text mismatch expected: Too many parameters: EPSG:32631  got: projinfo: Too many parameters: EPSG:4327  | - |
-| `test_projinfo.yaml#11` | projinfo | exit 1 expected 0 projinfo: CRS not found (EPSG:NAD27)  | - |
-| `test_projinfo.yaml#12` | projinfo | exit 1 expected 0 projinfo: `NAD27` is not an EPSG code this port can describe usage: projinfo [-o formats] [-q] [--version] EPSG:code -o: PROJ, WKT2:2019, PROJ | - |
-| `test_projinfo.yaml#13` | projinfo | exit 1 expected 0 projinfo: CRS not found (EPSG:NAD27)  | - |
-| `test_projinfo.yaml#14` | projinfo | exit 1 expected 0 projinfo: CRS not found (EPSG:NAD27)  | - |
+| `test_projinfo.yaml#11` | projinfo | exit 1 expected 0 projinfo: missing [  | - |
+| `test_projinfo.yaml#12` | projinfo | exit 1 expected 0 projinfo: missing [  | - |
+| `test_projinfo.yaml#13` | projinfo | exit 1 expected 0 projinfo: missing [  | - |
+| `test_projinfo.yaml#14` | projinfo | exit 1 expected 0 projinfo: missing [  | - |
 | `test_projinfo.yaml#15` | projinfo | text mismatch expected: Candidate operations found: 1 Note: using '--spatial-test intersects' would bring more results (2) EPSG:1626, ED50 to ETRS89 (4), 1.0 m, | - |
 | `test_projinfo.yaml#16` | projinfo | text mismatch expected: Candidate operations found: 1 Note: using '--spatial-test intersects' would bring more results (9) unknown id, Inverse of UTM zone 31N + | - |
 | `test_projinfo.yaml#17` | projinfo | text mismatch expected: Candidate operations found: 1 EPSG:1626, ED50 to ETRS89 (4), 1.0 m, Denmark - onshore.  got: Candidate operations found: 14 EPSG:1588, E | - |
@@ -78,52 +78,52 @@ A row remains when that case does not match the yaml.
 | `test_projinfo.yaml#19` | projinfo | exit 0 expected 1  | several match |
 | `test_projinfo.yaml#20` | projinfo | exit 0 expected 1  | - |
 | `test_projinfo.yaml#21` | projinfo | exit 0 expected 1  | - |
-| `test_projinfo.yaml#22` | projinfo | exit 1 expected 0 projinfo: EPSG:26591 is projected (projected_crs); this port writes a geographic CRS only  | Testing deprecated CRS |
-| `test_projinfo.yaml#23` | projinfo | exit 1 expected 0 projinfo: `GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],UNIT["degree",0.0174532925199433]]` is not an EPSG code  | Testing non compliant WKT1 |
-| `test_projinfo.yaml#24` | projinfo | exit 1 expected 0 projinfo: EPSG:25832 is projected (projected_crs); this port writes a geographic CRS only  | Testing CRS with towgs84 |
+| `test_projinfo.yaml#22` | projinfo | text mismatch expected: Warning: object is deprecated Alternative non-deprecated CRS:   EPSG:3003  PROJ.4 string: +proj=tmerc +lat_0=0 +lon_0=9 +k=0.9996 +x_0=1 | Testing deprecated CRS |
+| `test_projinfo.yaml#23` | projinfo | exit 1 expected 0 projinfo: GEOGCS should have a PRIMEM node  | Testing non compliant WKT1 |
+| `test_projinfo.yaml#24` | projinfo | text mismatch expected: PROJ.4 string: +proj=utm +zone=32 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs +type=crs  got: PROJ.4 string: +proj=utm +zone=3 | Testing CRS with towgs84 |
 | `test_projinfo.yaml#25` | projinfo | text mismatch expected: Candidate operations found: 2 ------------------------------------- Operation No. 1:  INVERSE(DERIVED_FROM(PROJ)):EPSG_4977_TO_EPSG_5613 | Testing RH2000 height to ETRS89-SWE [SWEREF 99] |
 | `test_projinfo.yaml#26` | projinfo | text mismatch expected: Candidate operations found: 3 ------------------------------------- Operation No. 1:  unknown id, Inverse of NAD83(2011) to NAVD88 heigh | Testing NAD83(2011) + NAVD88 height -> NAD83(2011) |
 | `test_projinfo.yaml#27` | projinfo | text mismatch expected: Candidate operations found: 2 ------------------------------------- Operation No. 1:  INVERSE(DERIVED_FROM(EPSG)):10000, Inverse of ETRS | Testing NGF IGN69 height to RGF93 |
-| `test_projinfo.yaml#28` | projinfo | exit 1 expected 0 projinfo: EPSG:32631 is projected (projected_crs); this port writes a geographic CRS only  | - |
-| `test_projinfo.yaml#29` | projinfo | exit 1 expected 0 projinfo: CRS not found (EPSG:WGS 84)  | - |
-| `test_projinfo.yaml#30` | projinfo | exit 1 expected 0 projinfo: CRS not found (EPSG:WGS 84 + EGM96 height)  | - |
-| `test_projinfo.yaml#31` | projinfo | exit 1 expected 0 projinfo: CRS not found (EPSG:4326+3855)  | - |
-| `test_projinfo.yaml#32` | projinfo | exit 1 expected 0 projinfo: CRS not found (EPSG:4326+3855)  | - |
+| `test_projinfo.yaml#28` | projinfo | text mismatch expected: PROJ.4 string: +proj=utm +zone=31 +datum=WGS84 +units=m +no_defs +type=crs  WKT2:2019 string: PROJCRS["WGS 84 / UTM zone 31N",     BASEG | - |
+| `test_projinfo.yaml#29` | projinfo | exit 1 expected 0 projinfo: missing [  | - |
+| `test_projinfo.yaml#30` | projinfo | exit 1 expected 0 projinfo: missing [  | - |
+| `test_projinfo.yaml#31` | projinfo | text mismatch expected: Candidate operations found: 1 unknown id, Inverse of UTM zone 31N + Inverse of Null geographic offset from WGS 84 to WGS 84, 0 m, World. | - |
+| `test_projinfo.yaml#32` | projinfo | text mismatch expected: Candidate operations found: 3 unknown id, Inverse of UTM zone 31N + WGS 84 to EGM2008 height (1), 0.113 m, World. unknown id, Inverse of | - |
 | `test_projinfo.yaml#33` | projinfo | text mismatch expected: +proj=pipeline +step +proj=unitconvert +xy_in=deg +xy_out=rad +step +proj=stere +lat_0=90 +lon_0=0 +k=0.994 +x_0=2000000 +y_0=2000000 +e | Undocumented option: --normalize-axis-order |
 | `test_projinfo.yaml#34` | projinfo | text mismatch expected: Candidate operations found: 2 unknown id, Ballpark geocentric translation from ETRS89 to WGS 84, unknown accuracy, World, has ballpark t | WGS 84 to ETRS89 (2) uses a transformation method not supported by PROJ currently (time-specific Helmert), and thus must be sorted last |
-| `test_projinfo.yaml#35` | projinfo | exit 1 expected 0 projinfo: CRS not found (EPSG:+proj=longlat +datum=WGS84 +geoidgrids=@foo.gtx +type=crs)  | - |
-| `test_projinfo.yaml#36` | projinfo | exit 1 expected 0 projinfo: CRS not found (EPSG:AGD66)  | - |
-| `test_projinfo.yaml#37` | projinfo | exit 1 expected 0 projinfo: CRS not found (EPSG:ETRS89)  | - |
-| `test_projinfo.yaml#38` | projinfo | exit 1 expected 0 projinfo: CRS not found (EPSG:GDA94)  | - |
-| `test_projinfo.yaml#39` | projinfo | exit 1 expected 0 projinfo: CRS not found (EPSG:GDA2020)  | - |
+| `test_projinfo.yaml#35` | projinfo | exit 1 expected 0 projinfo: missing [  | - |
+| `test_projinfo.yaml#36` | projinfo | exit 1 expected 0 projinfo: missing [  | - |
+| `test_projinfo.yaml#37` | projinfo | exit 1 expected 0 projinfo: missing [  | - |
+| `test_projinfo.yaml#38` | projinfo | exit 1 expected 0 projinfo: missing [  | - |
+| `test_projinfo.yaml#39` | projinfo | exit 1 expected 0 projinfo: missing [  | - |
 | `test_projinfo.yaml#40` | projinfo | exit 1 expected 0 projinfo: unrecognized option -k usage: projinfo [-o formats] [-q] [--version] EPSG:code -o: PROJ, WKT2:2019, PROJJSON, or default (PROJ and W | - |
 | `test_projinfo.yaml#41` | projinfo | exit 1 expected 0 projinfo: unrecognized option -k usage: projinfo [-o formats] [-q] [--version] EPSG:code -o: PROJ, WKT2:2019, PROJJSON, or default (PROJ and W | - |
 | `test_projinfo.yaml#42` | projinfo | exit 1 expected 0 projinfo: unrecognized option -k usage: projinfo [-o formats] [-q] [--version] EPSG:code -o: PROJ, WKT2:2019, PROJJSON, or default (PROJ and W | - |
 | `test_projinfo.yaml#43` | projinfo | exit 1 expected 0 projinfo: unrecognized option -k usage: projinfo [-o formats] [-q] [--version] EPSG:code -o: PROJ, WKT2:2019, PROJJSON, or default (PROJ and W | - |
 | `test_projinfo.yaml#44` | projinfo | exit 1 expected 0 projinfo: unrecognized option -k usage: projinfo [-o formats] [-q] [--version] EPSG:code -o: PROJ, WKT2:2019, PROJJSON, or default (PROJ and W | - |
 | `test_projinfo.yaml#45` | projinfo | exit 1 expected 0 projinfo: unrecognized option -k usage: projinfo [-o formats] [-q] [--version] EPSG:code -o: PROJ, WKT2:2019, PROJJSON, or default (PROJ and W | - |
-| `test_projinfo.yaml#46` | projinfo | exit 1 expected 0 projinfo: `D_WGS_1984` is not an EPSG code this port can describe usage: projinfo [-o formats] [-q] [--version] EPSG:code -o: PROJ, WKT2:2019, | - |
+| `test_projinfo.yaml#46` | projinfo | exit 1 expected 0 projinfo: missing [  | - |
 | `test_projinfo.yaml#47` | projinfo | exit 1 expected 0 projinfo: unrecognized option -k usage: projinfo [-o formats] [-q] [--version] EPSG:code -o: PROJ, WKT2:2019, PROJJSON, or default (PROJ and W | - |
 | `test_projinfo.yaml#48` | projinfo | exit 1 expected 0 projinfo: missing EPSG code usage: projinfo [-o formats] [-q] [--version] EPSG:code -o: PROJ, WKT2:2019, PROJJSON, or default (PROJ and WKT2:2 | Hard to test content |
 | `test_projinfo.yaml#49` | projinfo | exit 1 expected 0 projinfo: missing EPSG code usage: projinfo [-o formats] [-q] [--version] EPSG:code -o: PROJ, WKT2:2019, PROJJSON, or default (PROJ and WKT2:2 | - |
 | `test_projinfo.yaml#50` | projinfo | exit 1 expected 0 projinfo: missing EPSG code usage: projinfo [-o formats] [-q] [--version] EPSG:code -o: PROJ, WKT2:2019, PROJJSON, or default (PROJ and WKT2:2 | Hard to test content |
 | `test_projinfo.yaml#51` | projinfo | text mismatch expected: Candidate operations found: 0  got: Candidate operations found: 0 -------------------------------------   | - |
-| `test_projinfo.yaml#52` | projinfo | exit 1 expected 0 projinfo: CRS not found (EPSG:NZGD2000)  | - |
-| `test_projinfo.yaml#53` | projinfo | exit 1 expected 0 projinfo: CRS not found (EPSG:NZGD2000)  | - |
-| `test_projinfo.yaml#54` | projinfo | exit 1 expected 0 projinfo: CRS not found (EPSG:NZGD2000)  | - |
-| `test_projinfo.yaml#55` | projinfo | exit 1 expected 0 projinfo: CRS not found (EPSG:NZGD2000)  | - |
-| `test_projinfo.yaml#56` | projinfo | exit 1 expected 0 projinfo: CRS not found (EPSG:NZGD2000)  | - |
-| `test_projinfo.yaml#57` | projinfo | exit 1 expected 0 projinfo: CRS not found (EPSG:NZGD2000)  | - |
-| `test_projinfo.yaml#58` | projinfo | exit 1 expected 0 projinfo: CRS not found (EPSG:KKJ / Finland Uniform Coordinate System)  | - |
-| `test_projinfo.yaml#59` | projinfo | exit 1 expected 0 projinfo: CRS not found (EPSG:KKJ)  | - |
-| `test_projinfo.yaml#60` | projinfo | exit 1 expected 0 projinfo: CRS not found (EPSG:KKJ + N43 height)  | - |
-| `test_projinfo.yaml#61` | projinfo | exit 1 expected 0 projinfo: CRS not found (EPSG:KKJ + N60 height)  | - |
-| `test_projinfo.yaml#62` | projinfo | exit 1 expected 0 projinfo: CRS not found (EPSG:KKJ + N43 height)  | - |
-| `test_projinfo.yaml#63` | projinfo | exit 1 expected 0 projinfo: CRS not found (EPSG:KKJ / Finland Uniform Coordinate System + N43 height)  | - |
-| `test_projinfo.yaml#64` | projinfo | exit 1 expected 0 projinfo: CRS not found (EPSG:ETRS89 / TM35FIN(E,N) + N2000 height)  | - |
+| `test_projinfo.yaml#52` | projinfo | exit 1 expected 0 projinfo: missing [  | - |
+| `test_projinfo.yaml#53` | projinfo | exit 1 expected 0 projinfo: missing [  | - |
+| `test_projinfo.yaml#54` | projinfo | exit 1 expected 0 projinfo: missing [  | - |
+| `test_projinfo.yaml#55` | projinfo | exit 1 expected 0 projinfo: missing [  | - |
+| `test_projinfo.yaml#56` | projinfo | exit 1 expected 0 projinfo: missing [  | - |
+| `test_projinfo.yaml#57` | projinfo | exit 1 expected 0 projinfo: missing [  | - |
+| `test_projinfo.yaml#58` | projinfo | exit 1 expected 0 projinfo: missing [  | - |
+| `test_projinfo.yaml#59` | projinfo | exit 1 expected 0 projinfo: missing [  | - |
+| `test_projinfo.yaml#60` | projinfo | exit 1 expected 0 projinfo: missing [  | - |
+| `test_projinfo.yaml#61` | projinfo | exit 1 expected 0 projinfo: missing [  | - |
+| `test_projinfo.yaml#62` | projinfo | exit 1 expected 0 projinfo: missing [  | - |
+| `test_projinfo.yaml#63` | projinfo | exit 1 expected 0 projinfo: missing [  | - |
+| `test_projinfo.yaml#64` | projinfo | exit 1 expected 0 projinfo: missing [  | - |
 | `test_projinfo.yaml#65` | projinfo | text mismatch expected: Candidate operations found: 2 EPSG:10894, ITRF2014 to ETRS89-DNK (1), 0.006 m, Denmark - onshore and offshore., time-dependent operation | Quick check of NKG transformations |
 | `test_projinfo.yaml#66` | projinfo | exit 1 expected 0 projinfo: missing EPSG code usage: projinfo [-o formats] [-q] [--version] EPSG:code -o: PROJ, WKT2:2019, PROJJSON, or default (PROJ and WKT2:2 | - |
-| `test_projinfo.yaml#67` | projinfo | exit 1 expected 0 projinfo: `HOBU:XXXX` is not an EPSG code this port can describe usage: projinfo [-o formats] [-q] [--version] EPSG:code -o: PROJ, WKT2:2019,  | - |
+| `test_projinfo.yaml#67` | projinfo | exit 1 expected 0 projinfo: CRS not found (HOBU:XXXX)  | - |
 | `test_projinfo.yaml#68` | projinfo | text mismatch expected: Candidate operations found: 2 unknown id, Inverse of UTM zone 30N + ED50 to ETRS89 (12) + UTM zone 30N, 0.2 m, Spain - mainland, Baleari | Checks that ED50 to ETRS89 (12) is in the output (superseded transformation, but replacements has unknown grid) |
 | `test_projinfo.yaml#72` | projinfo | text mismatch expected: EPSG:5782 "Alicante height" got: EPSG:10918 "COH88 2025 (NAVD88) height" EPSG:10919 "COH88 2025 (NAVD88) height (ftUS)" EPSG:5703 "NAVD8 | - |
 | `test_projinfo.yaml#73` | projinfo | text mismatch expected: EPSG:5782 "Alicante height" got: EPSG:10918 "COH88 2025 (NAVD88) height" EPSG:10919 "COH88 2025 (NAVD88) height (ftUS)" EPSG:5703 "NAVD8 | - |
@@ -134,14 +134,14 @@ A row remains when that case does not match the yaml.
 | `test_projinfo.yaml#80` | projinfo | text mismatch expected: EPSG:8449 "NAD83(FBN)" [deprecated]  got:  | - |
 | `test_projinfo.yaml#81` | projinfo | text mismatch expected: EPSG:6512 "NAD83(2011) / Missouri East" got: EPSG:2129 "NZGD2000 / Mount York 2000" EPSG:2260 "NAD83 / New York East (ftUS)" EPSG:2261 " | - |
 | `test_projinfo.yaml#82` | projinfo | text mismatch expected: EPSG:2154 "ETRS89-FRA [RGF93 v1] / Lambert-93" got: EPSG:2154 "ETRS89-FRA [RGF93 v1] / Lambert-93" EPSG:22211 "NAD83(CSRS)v2 / UTM zone  | Test case where --area has several matches |
-| `test_projinfo.yaml#83` | projinfo | exit 1 expected 0 projinfo: EPSG:9945 is projected (projected_crs); this port writes a geographic CRS only  | Test North-Macedonia CRS for which there are several MGI 1901 -> WGS 84 Helmert transformations but only one matches the extent of the CRS |
-| `test_projinfo.yaml#84` | projinfo | exit 1 expected 0 projinfo: CRS not found (EPSG:NAD83(CSRS)v7)  | - |
-| `test_projinfo.yaml#85` | projinfo | exit 1 expected 0 projinfo: CRS not found (EPSG:CGVD28 height)  | Test that "CGVD28 height" to "CGVD28(HTv2.0) height" is a no-op |
-| `test_projinfo.yaml#86` | projinfo | exit 1 expected 0 projinfo: CRS not found (EPSG:WGS 84 (G1150) + EGM2008 height)  | Test custom records for WGS 84 realizations to EGM2008 (https://github.com/OSGeo/PROJ/issues/4362) |
-| `test_projinfo.yaml#87` | projinfo | exit 1 expected 0 projinfo: CRS not found (EPSG:WGS 84 (G1150) + EGM2008 height)  | Test 'WGS 84 (Gxxx) + EGM2008 height' to 'WGS 84 (Gyyy) + EGM2008 height' |
-| `test_projinfo.yaml#88` | projinfo | exit 1 expected 0 projinfo: CRS not found (EPSG:ETRF2005)  | Test that ETRF2000 to ETRF2014 only goes through ITRF2000, ITRF2008 or ITRF2014, and not ITRF9x or ITRF>2020 |
-| `test_projinfo.yaml#89` | projinfo | exit 1 expected 0 projinfo: CRS not found (EPSG:ETRF2000-PL)  | Test that ETRF2000-PL to ETRF2014 is not negatively affected by https://github.com/OSGeo/PROJ/pull/4364 changes (the current actual result is not golden in any way, using ETRF2000 to ETRF2014 could probably make sense) |
-| `test_projinfo.yaml#90` | projinfo | exit 1 expected 0 projinfo: CRS not found (EPSG:WGS 84 (G1150))  | Test WGS 84 (G1150) to WGS 84 (G2296) |
+| `test_projinfo.yaml#83` | projinfo | text mismatch expected: +proj=tmerc +lat_0=0 +lon_0=21 +k=0.9999 +x_0=500000 +y_0=-4000000 +ellps=bessel +towgs84=521.748,229.489,590.921,4.029,4.488,-15.521,-9 | Test North-Macedonia CRS for which there are several MGI 1901 -> WGS 84 Helmert transformations but only one matches the extent of the CRS |
+| `test_projinfo.yaml#84` | projinfo | exit 1 expected 0 projinfo: unhandled keyword: NAD83  | - |
+| `test_projinfo.yaml#85` | projinfo | exit 1 expected 0 projinfo: missing [  | Test that "CGVD28 height" to "CGVD28(HTv2.0) height" is a no-op |
+| `test_projinfo.yaml#86` | projinfo | exit 1 expected 0 projinfo: missing [  | Test custom records for WGS 84 realizations to EGM2008 (https://github.com/OSGeo/PROJ/issues/4362) |
+| `test_projinfo.yaml#87` | projinfo | exit 1 expected 0 projinfo: missing [  | Test 'WGS 84 (Gxxx) + EGM2008 height' to 'WGS 84 (Gyyy) + EGM2008 height' |
+| `test_projinfo.yaml#88` | projinfo | exit 1 expected 0 projinfo: missing [  | Test that ETRF2000 to ETRF2014 only goes through ITRF2000, ITRF2008 or ITRF2014, and not ITRF9x or ITRF>2020 |
+| `test_projinfo.yaml#89` | projinfo | exit 1 expected 0 projinfo: missing [  | Test that ETRF2000-PL to ETRF2014 is not negatively affected by https://github.com/OSGeo/PROJ/pull/4364 changes (the current actual result is not golden in any way, using ETRF2000 to ETRF2014 could probably make sense) |
+| `test_projinfo.yaml#90` | projinfo | exit 1 expected 0 projinfo: missing [  | Test WGS 84 (G1150) to WGS 84 (G2296) |
 | `test_projinfo.yaml#91` | projinfo | text mismatch expected: -o -k --summary -q --area --bbox --spatial-test --crs-extent-use --grid-check --pivot-crs --show-superseded --hide-ballpark --accuracy - | - |
 | `test_projinfo.yaml#95` | projinfo | text mismatch expected: always if_no_direct_transformation never EPSG: ESRI: IAU_2015: IGNF: NKG: NRCAN: OGC: PROJ:  got:  always if_no_direct_transformation ne | - |
 | `test_projinfo.yaml#96` | projinfo | text mismatch expected: EPSG: ESRI: IAU_2015: IGNF: NKG: NRCAN: OGC: PROJ:  got:  EPSG: ESRI: IAU_2015: IGNF: NKG: NRCAN: OGC: PROJ:  | - |
@@ -153,12 +153,11 @@ A row remains when that case does not match the yaml.
 | `test_projinfo.yaml#102` | projinfo | text mismatch expected: Lambert-93 CC42 CC43 CC44 CC45 CC46 CC47 CC48 CC49 CC50 Lambert-93\ +\ NGF-IGN69\ height Lambert-93\ +\ NGF-IGN78\ height  got:  | - |
 | `test_projinfo.yaml#103` | projinfo | text mismatch expected: NGVD29\ height\ (ftUS) NAVD88\ depth\ (ftUS) NGVD29\ depth\ (ftUS) NAVD88\ height\ (ftUS) NGVD29\ height\ (m) MSL\ height\ (ftUS) MSL\ d | - |
 | `test_projinfo.yaml#104` | projinfo | text mismatch expected: EGM2008\ height MSL\ height MSL\ depth EGM96\ height EGM84\ height Instantaneous\ Water\ Level\ height Instantaneous\ Water\ Level\ dept | - |
-| `test_projinfo.yaml#105` | projinfo | exit 1 expected 0 projinfo: CRS not found (EPSG:Christmas Island Grid 1985)  | - |
-| `test_projinfo.yaml#106` | projinfo | exit 1 expected 0 projinfo: CRS not found (EPSG:Christmas Island Grid 1985)  | - |
-| `test_projinfo.yaml#107` | projinfo | exit 1 expected 0 projinfo: CRS not found (EPSG:NAD83(CSRS))  | Test bugfix of https://github.com/OSGeo/PROJ/issues/4464 (NAD83(CSRS) to NAD83(CSRS)v2 should not go through NAD83) |
+| `test_projinfo.yaml#105` | projinfo | exit 1 expected 0 projinfo: missing [  | - |
+| `test_projinfo.yaml#106` | projinfo | exit 1 expected 0 projinfo: missing [  | - |
+| `test_projinfo.yaml#107` | projinfo | exit 1 expected 0 projinfo: unhandled keyword: NAD83  | Test bugfix of https://github.com/OSGeo/PROJ/issues/4464 (NAD83(CSRS) to NAD83(CSRS)v2 should not go through NAD83) |
 | `test_projinfo.yaml#108` | projinfo | text mismatch expected: Candidate operations found: 1 unknown id, Inverse of Saba to WGS 84 (1) + Saba to Saba height (1) + Saba Transverse Mercator 2020, 1.2 m | Test that EPSG:4979 to EPSG:10645 does not include a non-sensical 'Inverse of Inverse of BES2020 Saba to Saba height (1) + Inverse of Saba to WGS 84 (1) + Saba Transverse Mercator 2020' |
-| `test_projinfo.yaml#109` | projinfo | exit 1 expected 0 projinfo: `EGM2008` is not an EPSG code this port can describe usage: projinfo [-o formats] [-q] [--version] EPSG:code -o: PROJ, WKT2:2019, PR | Test that 'projinfo EGM2008' by default resolves to the datum |
+| `test_projinfo.yaml#109` | projinfo | exit 1 expected 0 projinfo: missing [  | Test that 'projinfo EGM2008' by default resolves to the datum |
 | `test_projinfo.yaml#110` | projinfo | exit 1 expected 0 projinfo: unrecognized option -k usage: projinfo [-o formats] [-q] [--version] EPSG:code -o: PROJ, WKT2:2019, PROJJSON, or default (PROJ and W | Test that 'projinfo -k crs EGM2008' resolves to the CRS |
-| `test_projinfo.yaml#111` | projinfo | text mismatch expected: GEOGCRS["ETRS89-NLD [AGRS2010]",     DATUM["AGRS2010 (ETRF2000)",         ELLIPSOID["GRS 1980",6378137,298.257222101,             LENGTH | - |
 | `test_proj.yaml#3` | proj | exit 1 expected 0 proj: crs is not built  | Test projection factors on projected CRS with non-Greenwhich prime meridian |
 | `test_proj.yaml#4` | proj | text mismatch expected: 500000.00	0.00	<0.9996 0.9996 0.9992 0 0.9996 0.9996> got: 499999.41	-0.46	<0.9996 0.9996 0.9992 0 0.9996 0.9996>  | Test projection factors on compound CRS with a projected CRS |
