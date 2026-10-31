@@ -91,3 +91,169 @@ fn eiffel_matches_cs2cs() {
     assert!((xy.east - east).abs() < 1e-6, "{} vs {east}", xy.east);
     assert!((xy.north - north).abs() < 1e-6, "{} vs {north}", xy.north);
 }
+
+/// One named CRS pair, with points in the facade's order: longitude then latitude
+/// for a geographic CRS, easting then northing for a projected one.
+struct Pair {
+    from: &'static str,
+    to: &'static str,
+    points: &'static [(f64, f64)],
+    /// The facade is known to disagree with PROJ on this pair. The test then
+    /// expects the disagreement, so that fixing it forces the flag off.
+    known_gap: bool,
+}
+
+const PARIS: &[(f64, f64)] = &[
+    (2.2945, 48.8582),
+    (2.35, 48.85),
+    (-1.55, 47.2),
+    (5.37, 43.3),
+];
+
+const PAIRS: &[Pair] = &[
+    Pair {
+        from: "EPSG:4326",
+        to: "EPSG:2154",
+        points: PARIS,
+        known_gap: false,
+    },
+    Pair {
+        from: "EPSG:4326",
+        to: "EPSG:32631",
+        points: PARIS,
+        known_gap: false,
+    },
+    Pair {
+        from: "EPSG:4326",
+        to: "EPSG:3857",
+        points: PARIS,
+        known_gap: false,
+    },
+    Pair {
+        from: "EPSG:4326",
+        to: "EPSG:3035",
+        points: PARIS,
+        known_gap: false,
+    },
+    Pair {
+        from: "EPSG:4326",
+        to: "EPSG:3395",
+        points: PARIS,
+        known_gap: false,
+    },
+    Pair {
+        from: "EPSG:2154",
+        to: "EPSG:32631",
+        points: &[(652_000.0, 6_862_000.0), (700_000.0, 6_600_000.0)],
+        known_gap: false,
+    },
+    Pair {
+        from: "EPSG:4258",
+        to: "EPSG:25832",
+        points: &[(9.0, 48.0), (11.5, 53.5), (7.2, 50.1)],
+        known_gap: false,
+    },
+    Pair {
+        from: "EPSG:4326",
+        to: "EPSG:5070",
+        points: &[(-100.0, 40.0), (-84.4, 33.7), (-122.3, 47.6)],
+        known_gap: false,
+    },
+    // Same datum, only the linear unit changes: US survey foot to metre.
+    Pair {
+        from: "EPSG:2230",
+        to: "EPSG:26946",
+        points: &[
+            (4_760_096.421_921, 3_744_293.729_449),
+            (6_000_000.0, 2_000_000.0),
+        ],
+        known_gap: false,
+    },
+    Pair {
+        from: "EPSG:26946",
+        to: "EPSG:2230",
+        points: &[(1_450_880.29, 1_141_263.01)],
+        known_gap: false,
+    },
+    // The datum shift the facade picks is not the one PROJ picks (about 1 m).
+    Pair {
+        from: "EPSG:4326",
+        to: "EPSG:2230",
+        points: &[(-115.797_615, 37.264_797_8)],
+        known_gap: true,
+    },
+];
+
+/// Reference `cs2cs` output for one point, in the order the target CRS writes it.
+fn reference(program: &std::path::Path, pair: &Pair, point: (f64, f64)) -> (f64, f64) {
+    let geographic = matches!(pair.from, "EPSG:4326" | "EPSG:4258");
+    // Authority axis order: latitude first for these geographic CRS.
+    let (a, b) = if geographic {
+        (point.1, point.0)
+    } else {
+        point
+    };
+    let mut child = Command::new(program)
+        .args(["-d", "8", pair.from, pair.to])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("cs2cs is installed");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(format!("{a} {b}\n").as_bytes())
+        .expect("write");
+    let done = child.wait_with_output().expect("wait");
+    assert!(
+        done.status.success(),
+        "{} -> {}: {}",
+        pair.from,
+        pair.to,
+        String::from_utf8_lossy(&done.stderr)
+    );
+    let text = String::from_utf8(done.stdout).expect("utf8");
+    let mut numbers = text
+        .split_whitespace()
+        .map(|n| n.parse::<f64>().expect("number"));
+    let (first, second) = (numbers.next().expect("x"), numbers.next().expect("y"));
+    // These target CRS write northing first; the facade answers east, north.
+    if matches!(pair.to, "EPSG:3035") {
+        (second, first)
+    } else {
+        (first, second)
+    }
+}
+
+#[test]
+fn facade_matches_cs2cs_on_named_crs_pairs() {
+    let Some(program) = proj_cs2cs() else {
+        return;
+    };
+    for pair in PAIRS {
+        let proj = proj_rs::Proj::new_known_crs(pair.from, pair.to, None)
+            .unwrap_or_else(|error| panic!("{} -> {}: {error}", pair.from, pair.to));
+        for &point in pair.points {
+            let (east, north) = reference(&program, pair, point);
+            let ours = proj.convert(point).expect("convert");
+            let off = (ours.0 - east).abs().max((ours.1 - north).abs());
+            if pair.known_gap {
+                assert!(
+                    off > 0.01,
+                    "{} -> {} now agrees with PROJ (off {off}): clear known_gap",
+                    pair.from,
+                    pair.to
+                );
+            } else {
+                assert!(
+                    off < 1e-2,
+                    "{} -> {} at {point:?}: ours {ours:?}, PROJ ({east}, {north}), off {off}",
+                    pair.from,
+                    pair.to
+                );
+            }
+        }
+    }
+}
