@@ -4,7 +4,7 @@
 
 use proj_rs::{
     create_crs_from_proj_string, Crs, DatabaseContext, GeographicCRS, UnitOfMeasure, WktConvention,
-    WktDialect, WktFormatter, WktNode, WktObject, WktParser,
+    WktDialect, WktFormatter, WktLines, WktNode, WktObject, WktParser,
 };
 
 fn parse(wkt: &str) -> WktObject {
@@ -1856,4 +1856,252 @@ fn wkt_parse_wkt1_geocentric_missing_unit_and_axis() {
     let axes = crs.coordinate_system().axes();
     assert_eq!(axes.len(), 3);
     assert_eq!(axes[0].unit().name(), "metre");
+}
+
+// `PROJStringParser().createFromPROJString` on the `test_io.cpp` strings of
+// the `io.projparse_*` group, after the longlat ones: the WKT and PROJ string
+// they export.
+
+fn export_wkt2(crs: &Crs, lines: proj_rs::WktLines) -> String {
+    let mut formatter = WktFormatter::create(WktConvention::Wkt2_2015);
+    formatter.simul_cur_node_has_id();
+    formatter.set_lines(lines);
+    crs.export_to_wkt(&mut formatter).expect("WKT2")
+}
+
+fn export_wkt2_no_simul(crs: &Crs, lines: proj_rs::WktLines) -> String {
+    let mut formatter = WktFormatter::create(WktConvention::Wkt2_2015);
+    formatter.set_lines(lines);
+    crs.export_to_wkt(&mut formatter).expect("WKT2")
+}
+
+fn proj_string(crs: &Crs) -> String {
+    crs.export_to_proj_string().expect("PROJ string")
+}
+
+fn wkt1_lcc_single(definition: &str) -> String {
+    let crs = proj_crs(definition);
+    assert!(matches!(crs, Crs::Projected(_)), "{definition}");
+    export_wkt2_no_simul(&crs, proj_rs::WktLines::Single)
+}
+
+#[test]
+fn io_projparse_lcc_as_lcc1sp() {
+    let wkt = wkt1_lcc_single("+proj=lcc +lat_0=45 +lat_1=45 +type=crs");
+    assert!(wkt.contains("Lambert Conic Conformal (1SP)"), "{wkt}");
+}
+
+#[test]
+fn io_projparse_lcc_as_lcc1sp_variant_b() {
+    let wkt = wkt1_lcc_single("+proj=lcc +lat_0=45 +lat_1=46 +type=crs");
+    assert!(
+        wkt.contains("Lambert Conic Conformal (1SP variant B)"),
+        "{wkt}"
+    );
+}
+
+#[test]
+fn io_projparse_lcc_as_lcc2sp() {
+    let wkt = wkt1_lcc_single("+proj=lcc +lat_0=45 +lat_1=46 +lat_2=44 +type=crs");
+    assert!(wkt.contains("Lambert Conic Conformal (2SP)"), "{wkt}");
+}
+
+#[test]
+fn io_projparse_lcc_as_lcc2sp_michigan() {
+    let wkt = wkt1_lcc_single("+proj=lcc +lat_0=45 +lat_1=46 +lat_2=44 +k_0=1.02 +type=crs");
+    assert!(
+        wkt.contains("Lambert Conic Conformal (2SP Michigan)"),
+        "{wkt}"
+    );
+}
+
+/// `setMultiLine(false)` with `simulCurNodeHasId`, the WKT2 the C++ tests search.
+fn wkt2_single_simul(definition: &str) -> String {
+    export_wkt2(&proj_crs(definition), WktLines::Single)
+}
+
+#[test]
+fn io_projparse_cea_spherical() {
+    let input = "+proj=cea +lat_ts=0 +lon_0=0 +x_0=0 +y_0=0 +R=6371228 +units=m +no_defs +type=crs";
+    let crs = proj_crs(input);
+    assert!(matches!(crs, Crs::Projected(_)));
+    assert_eq!(proj_string(&crs), input);
+}
+
+#[test]
+fn io_projparse_cea_ellipsoidal() {
+    let wkt = wkt2_single_simul("+proj=cea +ellps=GRS80 +type=crs");
+    assert!(
+        wkt.contains("METHOD[\"Lambert Cylindrical Equal Area\",ID[\"EPSG\",9835]]"),
+        "{wkt}"
+    );
+}
+
+#[test]
+fn io_projparse_omerc_nouoff() {
+    let wkt = wkt2_single_simul("+proj=omerc +no_uoff +alpha=2 +gamma=3 +type=crs");
+    assert!(
+        wkt.contains("METHOD[\"Hotine Oblique Mercator (variant A)\",ID[\"EPSG\",9812]]"),
+        "{wkt}"
+    );
+    assert!(
+        wkt.contains("PARAMETER[\"Azimuth at projection centre\",2"),
+        "{wkt}"
+    );
+    assert!(
+        wkt.contains("PARAMETER[\"Angle from Rectified to Skew Grid\",3"),
+        "{wkt}"
+    );
+}
+
+#[test]
+fn io_projparse_omerc_tpno() {
+    let wkt = wkt2_single_simul("+proj=omerc +lat_1=1 +lat_2=2 +lon_1=3 +lon_2=4 +type=crs");
+    assert!(
+        wkt.contains("METHOD[\"Hotine Oblique Mercator Two Point Natural Origin\"]"),
+        "{wkt}"
+    );
+}
+
+#[test]
+fn io_projparse_omerc_variant_b() {
+    let wkt = wkt2_single_simul("+proj=omerc +alpha=2 +type=crs");
+    assert!(
+        wkt.contains("METHOD[\"Hotine Oblique Mercator (variant B)\",ID[\"EPSG\",9815]]"),
+        "{wkt}"
+    );
+    assert!(
+        wkt.contains("PARAMETER[\"Angle from Rectified to Skew Grid\",2"),
+        "{wkt}"
+    );
+}
+
+#[test]
+fn io_projparse_merc_variant_b() {
+    let wkt = wkt2_single_simul("+proj=merc +lat_ts=1 +type=crs");
+    assert!(
+        wkt.contains("METHOD[\"Mercator (variant B)\",ID[\"EPSG\",9805]]"),
+        "{wkt}"
+    );
+    assert!(
+        wkt.contains("PARAMETER[\"Latitude of 1st standard parallel\",1"),
+        "{wkt}"
+    );
+}
+
+#[test]
+fn io_projparse_tmerc() {
+    let crs = proj_crs("+proj=tmerc +x_0=1 +lat_0=1 +k_0=2 +type=crs");
+    assert!(matches!(crs, Crs::Projected(_)));
+    let wkt = export_wkt2(&crs, WktLines::Multi);
+    assert_eq!(
+        wkt,
+        lines(&[
+            "PROJCRS[\"unknown\",",
+            "    BASEGEODCRS[\"unknown\",",
+            "        DATUM[\"World Geodetic System 1984\",",
+            "            ELLIPSOID[\"WGS 84\",6378137,298.257223563,",
+            "                LENGTHUNIT[\"metre\",1]]],",
+            "        PRIMEM[\"Greenwich\",0,",
+            "            ANGLEUNIT[\"degree\",0.0174532925199433]]],",
+            "    CONVERSION[\"unknown\",",
+            "        METHOD[\"Transverse Mercator\",",
+            "            ID[\"EPSG\",9807]],",
+            "        PARAMETER[\"Latitude of natural origin\",1,",
+            "            ANGLEUNIT[\"degree\",0.0174532925199433],",
+            "            ID[\"EPSG\",8801]],",
+            "        PARAMETER[\"Longitude of natural origin\",0,",
+            "            ANGLEUNIT[\"degree\",0.0174532925199433],",
+            "            ID[\"EPSG\",8802]],",
+            "        PARAMETER[\"Scale factor at natural origin\",2,",
+            "            SCALEUNIT[\"unity\",1],",
+            "            ID[\"EPSG\",8805]],",
+            "        PARAMETER[\"False easting\",1,",
+            "            LENGTHUNIT[\"metre\",1],",
+            "            ID[\"EPSG\",8806]],",
+            "        PARAMETER[\"False northing\",0,",
+            "            LENGTHUNIT[\"metre\",1],",
+            "            ID[\"EPSG\",8807]]],",
+            "    CS[Cartesian,2],",
+            "        AXIS[\"(E)\",east,",
+            "            ORDER[1],",
+            "            LENGTHUNIT[\"metre\",1]],",
+            "        AXIS[\"(N)\",north,",
+            "            ORDER[2],",
+            "            LENGTHUNIT[\"metre\",1]]]",
+        ])
+    );
+}
+
+#[test]
+fn io_projparse_krovak() {
+    let wkt = wkt2_single_simul("+proj=krovak +type=crs");
+    assert!(
+        wkt.contains("METHOD[\"Krovak (North Orientated)\",ID[\"EPSG\",1041]]"),
+        "{wkt}"
+    );
+}
+
+#[test]
+fn io_projparse_krovak_axis_swu() {
+    let wkt = wkt2_single_simul("+proj=krovak +axis=swu +type=crs");
+    assert!(
+        wkt.contains("METHOD[\"Krovak\",ID[\"EPSG\",9819]]"),
+        "{wkt}"
+    );
+}
+
+#[test]
+fn io_projparse_krovak_modified() {
+    let wkt = wkt2_single_simul("+proj=mod_krovak +type=crs");
+    assert!(
+        wkt.contains("METHOD[\"Krovak Modified (North Orientated)\",ID[\"EPSG\",1043]]"),
+        "{wkt}"
+    );
+}
+
+#[test]
+fn io_projparse_krovak_modified_axis_swu() {
+    let wkt = wkt2_single_simul("+proj=mod_krovak +axis=swu +type=crs");
+    assert!(
+        wkt.contains("METHOD[\"Krovak Modified\",ID[\"EPSG\",1042]]"),
+        "{wkt}"
+    );
+}
+
+#[test]
+fn io_projparse_merc_stere_polar_variant_b() {
+    let wkt = wkt2_single_simul("+proj=stere +lat_0=90 +lat_ts=70 +type=crs");
+    assert!(
+        wkt.contains("METHOD[\"Polar Stereographic (variant B)\",ID[\"EPSG\",9829]]"),
+        "{wkt}"
+    );
+}
+
+#[test]
+fn io_projparse_merc_stere_polar_variant_a() {
+    let wkt = wkt2_single_simul("+proj=stere +lat_0=-90 +k=0.994 +type=crs");
+    assert!(
+        wkt.contains("METHOD[\"Polar Stereographic (variant A)\",ID[\"EPSG\",9810]]"),
+        "{wkt}"
+    );
+}
+
+#[test]
+fn io_projparse_merc_stere_polar_k_and_lat_ts() {
+    let crs = proj_crs("+proj=stere +lat_0=90 +lat_ts=90 +k=1 +type=crs");
+    let wkt = export_wkt2(&crs, WktLines::Single);
+    assert!(
+        wkt.contains("METHOD[\"Polar Stereographic (variant B)\",ID[\"EPSG\",9829]]"),
+        "{wkt}"
+    );
+    assert!(
+        wkt.contains("PARAMETER[\"Latitude of standard parallel\",90"),
+        "{wkt}"
+    );
+    assert_eq!(
+        proj_string(&crs),
+        "+proj=stere +lat_0=90 +lat_ts=90 +lon_0=0 +x_0=0 +y_0=0 +datum=WGS84 \
+         +units=m +no_defs +type=crs"
+    );
 }
