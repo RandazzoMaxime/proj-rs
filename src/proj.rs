@@ -610,7 +610,8 @@ impl Proj {
 
     /// Convert coordinates in the forward direction.
     ///
-    /// Units match [`Self::project`].
+    /// Units match [`Self::project`]. A failure is a [`ProjError::Conversion`],
+    /// as in georust `proj`.
     ///
     /// # Errors
     ///
@@ -620,7 +621,9 @@ impl Proj {
         C: Coord<F>,
         F: CoordinateType,
     {
-        self.project(point, false)
+        let (x, y) =
+            self.map_point(point.x(), point.y(), Direction::Forward, Report::Conversion)?;
+        Ok(C::from_xy(F::from_f64(x)?, F::from_f64(y)?))
     }
 
     /// Convert a three-dimensional coordinate in the forward direction.
@@ -633,7 +636,7 @@ impl Proj {
     ///
     /// [`ProjError`] when the object is not a transform or the point has no image.
     pub fn convert_xyz(&self, x: f64, y: f64, z: f64) -> Result<(f64, f64, f64), ProjError> {
-        let coord = self.map_xyz(x, y, z, Direction::Forward, Report::Projection)?;
+        let coord = self.map_xyz(x, y, z, Direction::Forward, Report::Conversion)?;
         Ok((coord.x, coord.y, coord.z))
     }
 
@@ -890,9 +893,16 @@ impl Proj {
                 })
             }
         };
-        mapped.map_err(|error| match report {
-            Report::Projection => ProjError::Projection(error.to_string()),
-            Report::Conversion => ProjError::Conversion(error.to_string()),
+        mapped.map_err(|error| {
+            // libproj words an invalid coordinate as `Invalid coordinate`.
+            let message = match error {
+                crate::engine::TransformError::InvalidCoord => "Invalid coordinate".to_owned(),
+                other => other.to_string(),
+            };
+            match report {
+                Report::Projection => ProjError::Projection(message),
+                Report::Conversion => ProjError::Conversion(message),
+            }
         })
     }
 }

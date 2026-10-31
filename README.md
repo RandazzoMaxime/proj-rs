@@ -43,8 +43,8 @@ install.
 | Grid shifts, `tinshift`, deformation models | ✅ | All `gie` files green. The PROJ 9.9.0 test grids live in [`data/tests/`](data/tests). CDN grids are fetched with `PROJ_NETWORK=ON`, as in PROJ's own tests |
 | Embedded `proj.db` and EPSG resolution | ✅ | Built from the PROJ 9.9.0 SQL, opened in memory with `rusqlite` |
 | ISO 19111 model, WKT and PROJJSON | 🟡 | CRS model, authority factory, CRS identification against `proj.db`, WKT1 and WKT2 import and export, PROJJSON. See [`docs/CRS-API.md`](docs/CRS-API.md) |
-| georust `proj` facade | 🟡 | `Proj`, `ProjBuilder`, `Coord`, `Transform`, `Area`, errors and the `geo-types` feature exist. georust's own tests are not run against it yet |
-| Command-line tools | 🟡 | `cct`, `cs2cs`, `proj`, `projinfo` over the library; <!--gen:cli_matched-->211<!--/gen--> of <!--gen:cli_total-->276<!--/gen--> PROJ CLI cases match |
+| georust `proj` facade | 🟡 | `Proj`, `ProjBuilder`, `Coord`, `Transform`, `Area`, errors and the `geo-types` feature exist. <!--gen:georust_pass-->16<!--/gen--> of <!--gen:georust_total-->25<!--/gen--> of georust `proj` 0.31's own unit tests pass against it ([`tests/georust_parity.rs`](tests/georust_parity.rs)); the rest are listed there as gaps |
+| Command-line tools | 🟡 | `cct`, `cs2cs`, `proj`, `projinfo` over the library; <!--gen:cli_matched-->213<!--/gen--> of <!--gen:cli_total-->276<!--/gen--> PROJ CLI cases match |
 | SIMD batch path | ✅ | AVX2 on x86-64. Other targets run the scalar loop |
 
 ✅ done and verified &nbsp;·&nbsp; 🟡 working, with known gaps listed below
@@ -127,9 +127,9 @@ The same goes for the CLI cases in [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md
 |---|---:|---:|:-:|
 | PROJ C++ unit tests | <!--gen:unit_ported-->391<!--/gen--> | <!--gen:unit_open-->961<!--/gen--> | <!--gen:unit_icon-->🔴<!--/gen--> |
 | `cct` CLI cases | <!--gen:cli_cct_ported-->18<!--/gen--> | <!--gen:cli_cct_open-->0<!--/gen--> | <!--gen:cli_cct_icon-->✅<!--/gen--> |
-| `cs2cs` CLI cases | <!--gen:cli_cs2cs_ported-->120<!--/gen--> | <!--gen:cli_cs2cs_open-->23<!--/gen--> | <!--gen:cli_cs2cs_icon-->🟡<!--/gen--> |
+| `cs2cs` CLI cases | <!--gen:cli_cs2cs_ported-->121<!--/gen--> | <!--gen:cli_cs2cs_open-->22<!--/gen--> | <!--gen:cli_cs2cs_icon-->🟡<!--/gen--> |
 | `proj` CLI cases | <!--gen:cli_proj_ported-->4<!--/gen--> | <!--gen:cli_proj_open-->0<!--/gen--> | <!--gen:cli_proj_icon-->✅<!--/gen--> |
-| `projinfo` CLI cases | <!--gen:cli_projinfo_ported-->69<!--/gen--> | <!--gen:cli_projinfo_open-->42<!--/gen--> | <!--gen:cli_projinfo_icon-->🟡<!--/gen--> |
+| `projinfo` CLI cases | <!--gen:cli_projinfo_ported-->70<!--/gen--> | <!--gen:cli_projinfo_open-->41<!--/gen--> | <!--gen:cli_projinfo_icon-->🟡<!--/gen--> |
 
 ✅ complete &nbsp;·&nbsp; 🟡 partial &nbsp;·&nbsp; 🔴 mostly open
 

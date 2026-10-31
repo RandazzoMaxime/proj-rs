@@ -408,7 +408,7 @@ fn load_projected(connection: &Connection, code: u32) -> Result<Loaded, rusqlite
         };
         return Ok(Loaded {
             kind: LoadedKind::Projected,
-            definition: text,
+            definition: with_linear_unit(connection, code, text)?,
             datum_auth: earth.datum_auth,
             datum_code: earth.datum_code,
             a: earth.a,
@@ -424,6 +424,7 @@ fn load_projected(connection: &Connection, code: u32) -> Result<Loaded, rusqlite
         .map_err(|_| unsupported(format!("EPSG:{code} base CRS `{base_code}` is not numeric")))?;
     let earth = earth_of(connection, u32_code(base)?)?;
     let definition = conversion_proj(connection, &conversion, &earth, code)?;
+    let definition = with_linear_unit(connection, code, definition)?;
     Ok(Loaded {
         kind: LoadedKind::Projected,
         definition,
@@ -433,6 +434,44 @@ fn load_projected(connection: &Connection, code: u32) -> Result<Loaded, rusqlite
         rf: earth.rf,
         b: earth.b,
     })
+}
+
+/// `definition` with the linear unit of the projected CRS's easting axis.
+///
+/// The conversion parameters are read in metres, so a CRS in feet (`EPSG:2230`)
+/// needs `+to_meter` in place of `+units=m`, or its coordinates would come out
+/// in metres. A definition that names another unit is left alone.
+fn with_linear_unit(
+    connection: &Connection,
+    code: u32,
+    definition: String,
+) -> Result<String, rusqlite::Error> {
+    let without_metres = definition.replace(" +units=m", "");
+    if without_metres.contains("units=") || without_metres.contains("to_meter=") {
+        return Ok(definition);
+    }
+    let factor: Option<f64> = connection
+        .query_row(
+            "SELECT u.conv_factor
+             FROM projected_crs p
+             JOIN axis a
+               ON a.coordinate_system_auth_name = p.coordinate_system_auth_name
+              AND a.coordinate_system_code = p.coordinate_system_code
+             JOIN unit_of_measure u
+               ON u.auth_name = a.uom_auth_name AND u.code = a.uom_code
+             WHERE p.auth_name = 'EPSG' AND p.code = ?1
+             ORDER BY a.coordinate_system_order LIMIT 1",
+            params![i64::from(code)],
+            |row| column_f64_opt(row, 0),
+        )
+        .optional()?
+        .flatten();
+    match factor {
+        Some(factor) if (factor - 1.0).abs() > f64::EPSILON => {
+            Ok(format!("{without_metres} +to_meter={}", format_f64(factor)))
+        }
+        _ => Ok(definition),
+    }
 }
 
 fn u32_code(code: i64) -> Result<u32, rusqlite::Error> {
