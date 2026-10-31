@@ -309,7 +309,7 @@ unsafe extern "C" {
 #[cfg(link_libproj)]
 fn libproj_ratios_linked(grids: &[ProjGrid<'_>]) -> Vec<(String, f64)> {
     use std::ffi::CString;
-    // SAFETY: OSGeo4W proj.dll creates one context. It is destroyed before return.
+    // SAFETY: libproj creates one context. It is destroyed before return.
     let ctx = unsafe { proj_context_create() };
     assert!(!ctx.is_null(), "proj_context_create");
     let mut ratios = Vec::new();

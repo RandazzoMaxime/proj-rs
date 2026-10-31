@@ -260,8 +260,13 @@ fixed grids. `bench/record.sh` appends one line per run to
 [`bench/history.jsonl`](bench/history.jsonl) with the commit and machine name,
 so each change can be measured against the last.
 
+To fill the `ratio` column, point the build at a libproj: set
+`PROJ_RS_LIBPROJ_DIR` to the directory that holds it, or activate a conda
+environment with `proj` installed (`CONDA_PREFIX`). Without one the bench still
+runs and leaves `ratio` empty.
+
 The two timing columns come from **different machines**: do not read them as a
-speedup. `ratio` is this port's time divided by OSGeo4W libproj on the same
+speedup. `ratio` is this port's time divided by libproj on the same
 grid, so below 1 means this port is faster. The 2026-10-28 column was recorded
 when the suite had 2,743 passing cases and has not been re-run since.
 
