@@ -53,6 +53,32 @@ fn geographic_3d_to_compound_is_the_inverse_of_the_vertical_branch() {
 }
 
 #[test]
+fn vertical_pair_of_different_datums_lists_the_ballpark_change_of_unit() {
+    let names: Vec<String> = candidates("EPSG:5773", "EPSG:5782")
+        .iter()
+        .map(|operation| operation.name().to_owned())
+        .collect();
+    assert_eq!(
+        names,
+        ["Transformation from EGM96 height to Alicante height (ballpark vertical transformation)"]
+    );
+}
+
+#[test]
+fn compound_pair_with_the_same_geographic_part_keeps_the_ballpark() {
+    // PROJ also lists a grid-based candidate first, which is not ported.
+    let names: Vec<String> = candidates("EPSG:4326+5773", "EPSG:4326+5782")
+        .iter()
+        .map(|operation| operation.name().to_owned())
+        .collect();
+    assert!(
+        names.iter().any(|name| name
+            == "Transformation from EGM96 height to Alicante height (ballpark vertical transformation)"),
+        "{names:?}"
+    );
+}
+
+#[test]
 fn compound_pair_builds_a_pipeline() {
     let (definition, _) = best_pipeline("EPSG:4326+3855", "EPSG:4979").expect("pipeline");
     assert!(definition.contains("+proj="), "{definition}");
