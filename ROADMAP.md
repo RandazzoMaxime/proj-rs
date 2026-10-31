@@ -43,14 +43,23 @@ grid download, and the `cct`, `cs2cs`, `proj` and `projinfo` binaries.
 
 ## What is left
 
+The order follows the goal: a project that uses georust `proj` switches with
+one line. What proves that comes first; matching PROJ's text output to the
+letter comes last.
+
 | Order | Topic | Where it stands |
 |---|---|---|
-| 1 | **A fresh checkout that is green** | Done for `gie`: 6,856 / 6,856 with `PROJ_NETWORK=ON`, 6,811 / 6,811 offline. CI checks against PROJ 9.9.0 from conda-forge. The unit and CLI suites are still open, see 2 and 3 |
-| 2 | **ISO 19111 and the PROJ unit tests** | 376 ported, **976** named `TEST()`s open (2026-10-30). Largest: `test_io` (365), `test_operationfactory` (265), `test_operation` (102), `test_crs` (94), `test_c_api` (92). List: [`docs/UNPORTED-UNIT.md`](docs/UNPORTED-UNIT.md) |
-| 3 | **CLI parity** | 156 of 276 PROJ CLI cases do not match yet: `projinfo` 95, `cs2cs` 59, `proj` 2. In `cs2cs` the biggest groups are CRS names that do not resolve and numeric differences; `+proj=sch` is not ported. List: [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md) |
-| 4 | **Portable batch path** | The AVX2 path covers x86-64 on Linux glibc (libmvec) and Windows (CRT). Other targets run the scalar loop |
-| 5 | **georust facade parity** | Run georust's own tests against the facade in CI, add the differential test, then finish the drop-in claim |
-| 6 | **Grid cache in CI** | Done: the network step caches the CDN grids (about 81 MB, 10 files) in `actions/cache`. Re-run on a cache miss only |
+| 1 | **A fresh checkout that is green** | Done for `gie`: 6,856 / 6,856 with `PROJ_NETWORK=ON`, 6,811 / 6,811 offline. CI checks against PROJ 9.9.0 from conda-forge |
+| 2 | **georust facade parity** | Run georust's own tests against the facade in CI, and compare proj-rs with the reference `cs2cs` on many points and many EPSG pairs (`tests/agree_cs2cs.rs`). This is what backs the drop-in claim |
+| 3 | **`cs2cs` real gaps** | Wrong or missing results, not wording: compound CRS names (`EPSG:3912+5779`), `--only-best` and missing grids, `--accuracy` and `--no-ballpark`, BETA2007, `ob_tran` with `o_proj=longlat`. <!--gen:cli_cs2cs_open-->23<!--/gen--> `cs2cs` cases open. List: [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md) |
+| 4 | **PROJ unit tests, by value** | <!--gen:unit_ported-->386<!--/gen--> ported, **<!--gen:unit_open-->966<!--/gen-->** named `TEST()`s open. Largest: <!--gen:unit_largest-->`test_io` (365), `test_operationfactory` (265), `test_operation` (102), `test_crs` (94), `test_c_api` (92)<!--/gen-->. Port first the tests that pin a result a user sees (WKT, PROJ string, chosen operation, identification), see [`docs/UNIT-TRIAGE.md`](docs/UNIT-TRIAGE.md). The tests that only check the shape of the C++ object model come last, and may stay unported when the Rust API differs on purpose. List: [`docs/UNPORTED-UNIT.md`](docs/UNPORTED-UNIT.md) |
+| 5 | **`projinfo` text parity** | <!--gen:cli_projinfo_open-->42<!--/gen--> `projinfo` cases open (and <!--gen:cli_proj_open-->0<!--/gen--> `proj`). Mostly the exact text of the candidate operation list. Lower value than 2 and 3: the numbers are right when the text differs |
+| 6 | **Portable batch path** | The AVX2 path covers x86-64 on Linux glibc (libmvec) and Windows (CRT). Other targets run the scalar loop |
+| 7 | **Grid cache in CI** | Done: the network step caches the CDN grids (about 81 MB, 10 files) in `actions/cache`. Re-run on a cache miss only |
+
+The numbers in this table are computed from the ledgers by
+`tests/docs_in_sync.rs`: `UPDATE_DOCS=1 cargo test --test docs_in_sync`
+refreshes them after a lot.
 
 Anything under "What is left" is open to the community. Claim it in an issue
 before opening the PR, stay on PROJ 9.9 behavior, ship a `docs/PORTING-*.md`,

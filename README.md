@@ -44,7 +44,7 @@ install.
 | Embedded `proj.db` and EPSG resolution | ✅ | Built from the PROJ 9.9.0 SQL, opened in memory with `rusqlite` |
 | ISO 19111 model, WKT and PROJJSON | 🟡 | CRS model, authority factory, CRS identification against `proj.db`, WKT1 and WKT2 import and export, PROJJSON. See [`docs/CRS-API.md`](docs/CRS-API.md) |
 | georust `proj` facade | 🟡 | `Proj`, `ProjBuilder`, `Coord`, `Transform`, `Area`, errors and the `geo-types` feature exist. georust's own tests are not run against it yet |
-| Command-line tools | 🟡 | `cct`, `cs2cs`, `proj`, `projinfo` over the library; 120 of 276 PROJ CLI cases match |
+| Command-line tools | 🟡 | `cct`, `cs2cs`, `proj`, `projinfo` over the library; <!--gen:cli_matched-->211<!--/gen--> of <!--gen:cli_total-->276<!--/gen--> PROJ CLI cases match |
 | SIMD batch path | ✅ | AVX2 on x86-64. Other targets run the scalar loop |
 
 ✅ done and verified &nbsp;·&nbsp; 🟡 working, with known gaps listed below
@@ -125,11 +125,11 @@ The same goes for the CLI cases in [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md
 
 | Suite | Ported and passing | Not yet | |
 |---|---:|---:|:-:|
-| PROJ C++ unit tests | 376 | 976 | 🟡 |
-| `cct` CLI cases | 18 | 0 | ✅ |
-| `cs2cs` CLI cases | 84 | 59 | 🟡 |
-| `proj` CLI cases | 2 | 2 | 🟡 |
-| `projinfo` CLI cases | 16 | 95 | 🔴 |
+| PROJ C++ unit tests | <!--gen:unit_ported-->386<!--/gen--> | <!--gen:unit_open-->966<!--/gen--> | <!--gen:unit_icon-->🔴<!--/gen--> |
+| `cct` CLI cases | <!--gen:cli_cct_ported-->18<!--/gen--> | <!--gen:cli_cct_open-->0<!--/gen--> | <!--gen:cli_cct_icon-->✅<!--/gen--> |
+| `cs2cs` CLI cases | <!--gen:cli_cs2cs_ported-->120<!--/gen--> | <!--gen:cli_cs2cs_open-->23<!--/gen--> | <!--gen:cli_cs2cs_icon-->🟡<!--/gen--> |
+| `proj` CLI cases | <!--gen:cli_proj_ported-->4<!--/gen--> | <!--gen:cli_proj_open-->0<!--/gen--> | <!--gen:cli_proj_icon-->✅<!--/gen--> |
+| `projinfo` CLI cases | <!--gen:cli_projinfo_ported-->69<!--/gen--> | <!--gen:cli_projinfo_open-->42<!--/gen--> | <!--gen:cli_projinfo_icon-->🟡<!--/gen--> |
 
 ✅ complete &nbsp;·&nbsp; 🟡 partial &nbsp;·&nbsp; 🔴 mostly open
 
@@ -140,12 +140,12 @@ The same goes for the CLI cases in [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md
 
 | PROJ file | Ported and passing | Not yet |
 |---|---:|---:|
-| `test_c_api.cpp` | 60 | 92 |
-| `test_crs.cpp` | 103 | 94 |
-| `test_factory.cpp` | 55 | 58 |
-| `test_io.cpp` | 89 | 365 |
-| `test_operation.cpp` | 60 | 102 |
-| `test_operationfactory.cpp` | 9 | 265 |
+| `test_c_api.cpp` | <!--gen:test_c_api_ported-->60<!--/gen--> | <!--gen:test_c_api_open-->92<!--/gen--> |
+| `test_crs.cpp` | <!--gen:test_crs_ported-->103<!--/gen--> | <!--gen:test_crs_open-->94<!--/gen--> |
+| `test_factory.cpp` | <!--gen:test_factory_ported-->65<!--/gen--> | <!--gen:test_factory_open-->48<!--/gen--> |
+| `test_io.cpp` | <!--gen:test_io_ported-->89<!--/gen--> | <!--gen:test_io_open-->365<!--/gen--> |
+| `test_operation.cpp` | <!--gen:test_operation_ported-->60<!--/gen--> | <!--gen:test_operation_open-->102<!--/gen--> |
+| `test_operationfactory.cpp` | <!--gen:test_operationfactory_ported-->9<!--/gen--> | <!--gen:test_operationfactory_open-->265<!--/gen--> |
 | Other unit files ([`tests/proj_unit.rs`](tests/proj_unit.rs)) | 33 | n/a |
 
 The unit tests are the biggest remaining piece: they cover the ISO 19111 model,
@@ -153,10 +153,10 @@ WKT and the operation factory, which the `gie` suite barely touches.
 
 </details>
 
-The unit and CLI counts are as of 2026-10-30. The `gie` counts are as of
-2026-10-30. The two ledgers are the live numbers, since unit tests are ported
-every day. The CLI counts come from the ledger committed
-in the repository; a fresh Linux checkout without grids matches two fewer
+The unit and CLI counts are computed from the two ledgers by
+`tests/docs_in_sync.rs`, which fails when this file drifts (`UPDATE_DOCS=1`
+rewrites it). The `gie` counts are as of 2026-10-30. The CLI counts come from
+the ledger committed in the repository; a fresh Linux checkout without grids matches two fewer
 `cs2cs` cases.
 
 ## Quick start
