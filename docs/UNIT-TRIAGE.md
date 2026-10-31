@@ -5,11 +5,11 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 735 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `core` | 717 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
 | `niche` | 150 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 76 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (735)
+## core (717)
 
 ### test_c_api.cpp (52)
 
@@ -141,7 +141,7 @@ The class comes from the test name alone, so check it when you port a test.
 - `factory.ogc_timecrs`
 - `factory.getPointMotionOperationsFor`
 
-### test_io.cpp (291)
+### test_io.cpp (273)
 
 - `wkt_parse.wkt1_esri_EPSG_4901_grad`
 - `wkt_parse.wkt1_esri_LINUNIT`
@@ -293,39 +293,21 @@ The class comes from the test name alone, so check it when you port a test.
 - `io.projparse_longlat_unitconvert_grad`
 - `io.projparse_longlat_unitconvert_rad`
 - `io.projparse_longlat_axisswap`
-- `io.projparse_tmerc`
 - `io.projparse_tmerc_south_oriented`
-- `io.projparse_lcc_as_lcc1sp`
-- `io.projparse_lcc_as_lcc1sp_variant_b`
-- `io.projparse_lcc_as_lcc2sp`
-- `io.projparse_lcc_as_lcc2sp_michigan`
 - `io.projparse_aeqd_guam`
-- `io.projparse_cea_spherical`
 - `io.projparse_cea_spherical_on_ellipsoid`
-- `io.projparse_cea_ellipsoidal`
 - `io.projparse_cea_ellipsoidal_with_k_0`
 - `io.projparse_merc_spherical_on_ellipsoid`
 - `io.projparse_geos_sweep_x`
 - `io.projparse_geos_sweep_y`
-- `io.projparse_omerc_nouoff`
-- `io.projparse_omerc_tpno`
-- `io.projparse_omerc_variant_b`
 - `io.projparse_somerc`
-- `io.projparse_krovak`
-- `io.projparse_krovak_axis_swu`
 - `io.projparse_krovak_czech`
-- `io.projparse_krovak_modified`
-- `io.projparse_krovak_modified_axis_swu`
 - `io.projparse_krovak_modified_czech`
 - `io.projparse_etmerc`
 - `io.projparse_tmerc_approx`
-- `io.projparse_merc_variant_B`
 - `io.projparse_merc_google_mercator`
 - `io.projparse_merc_google_mercator_non_metre_unit`
 - `io.projparse_merc_not_quite_google_mercator`
-- `io.projparse_merc_stere_polar_variant_B`
-- `io.projparse_merc_stere_polar_variant_A`
-- `io.projparse_merc_stere_polar_k_and_lat_ts`
 - `io.projparse_merc_stere_polar_k_and_lat_ts_incompatible`
 - `io.projparse_merc_stere`
 - `io.projparse_utm`

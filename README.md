@@ -125,7 +125,7 @@ The same goes for the CLI cases in [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md
 
 | Suite | Ported and passing | Not yet | |
 |---|---:|---:|:-:|
-| PROJ C++ unit tests | <!--gen:unit_ported-->391<!--/gen--> | <!--gen:unit_open-->961<!--/gen--> | <!--gen:unit_icon-->🔴<!--/gen--> |
+| PROJ C++ unit tests | <!--gen:unit_ported-->409<!--/gen--> | <!--gen:unit_open-->943<!--/gen--> | <!--gen:unit_icon-->🔴<!--/gen--> |
 | `cct` CLI cases | <!--gen:cli_cct_ported-->18<!--/gen--> | <!--gen:cli_cct_open-->0<!--/gen--> | <!--gen:cli_cct_icon-->✅<!--/gen--> |
 | `cs2cs` CLI cases | <!--gen:cli_cs2cs_ported-->121<!--/gen--> | <!--gen:cli_cs2cs_open-->22<!--/gen--> | <!--gen:cli_cs2cs_icon-->🟡<!--/gen--> |
 | `proj` CLI cases | <!--gen:cli_proj_ported-->4<!--/gen--> | <!--gen:cli_proj_open-->0<!--/gen--> | <!--gen:cli_proj_icon-->✅<!--/gen--> |
@@ -143,7 +143,7 @@ The same goes for the CLI cases in [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md
 | `test_c_api.cpp` | <!--gen:test_c_api_ported-->60<!--/gen--> | <!--gen:test_c_api_open-->92<!--/gen--> |
 | `test_crs.cpp` | <!--gen:test_crs_ported-->108<!--/gen--> | <!--gen:test_crs_open-->89<!--/gen--> |
 | `test_factory.cpp` | <!--gen:test_factory_ported-->65<!--/gen--> | <!--gen:test_factory_open-->48<!--/gen--> |
-| `test_io.cpp` | <!--gen:test_io_ported-->89<!--/gen--> | <!--gen:test_io_open-->365<!--/gen--> |
+| `test_io.cpp` | <!--gen:test_io_ported-->107<!--/gen--> | <!--gen:test_io_open-->347<!--/gen--> |
 | `test_operation.cpp` | <!--gen:test_operation_ported-->60<!--/gen--> | <!--gen:test_operation_open-->102<!--/gen--> |
 | `test_operationfactory.cpp` | <!--gen:test_operationfactory_ported-->9<!--/gen--> | <!--gen:test_operationfactory_open-->265<!--/gen--> |
 | Other unit files ([`tests/proj_unit.rs`](tests/proj_unit.rs)) | 33 | n/a |
