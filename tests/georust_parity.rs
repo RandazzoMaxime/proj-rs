@@ -36,13 +36,20 @@ impl Coord<f64> for MyPoint {
     }
 }
 
-/// `approx::relative_eq!` with `epsilon` and the default `max_relative`.
+/// georust asserts to `f64::EPSILON` (2.2e-16, relative), with values it
+/// recorded on its own platform. The last digits of `sin` and `cos` differ
+/// between math libraries: the Windows CRT lands 6e-16 away on
+/// `test_inverse_projection` where glibc is exact. The relative bound is
+/// therefore 1e-14, which is 1e-8 m on a coordinate of 1e6 m.
+const MAX_RELATIVE: f64 = 1e-14;
+
+/// `approx::relative_eq!` with `epsilon`, and `MAX_RELATIVE` as `max_relative`.
 fn close(left: f64, right: f64, epsilon: f64) -> bool {
     if left == right {
         return true;
     }
     let diff = (left - right).abs();
-    diff <= epsilon || diff <= left.abs().max(right.abs()) * f64::EPSILON
+    diff <= epsilon || diff <= left.abs().max(right.abs()) * MAX_RELATIVE
 }
 
 /// georust asserts these values to `f64::EPSILON`. This crate lands 2 ulp away
