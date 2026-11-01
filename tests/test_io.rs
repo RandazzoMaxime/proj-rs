@@ -2105,3 +2105,105 @@ fn io_projparse_merc_stere_polar_k_and_lat_ts() {
          +units=m +no_defs +type=crs"
     );
 }
+
+// Lot io-5: `io.projparse_*` PROJ strings whose projection was not imported,
+// or was imported under the wrong method name. PROJ 9.9.0 test/unit/test_io.cpp.
+
+fn wkt1_gdal(crs: &Crs) -> String {
+    let mut formatter = WktFormatter::create(WktConvention::Wkt1Gdal);
+    crs.export_to_wkt(&mut formatter).expect("WKT1")
+}
+
+#[test]
+fn io_projparse_geos_sweep_y() {
+    let wkt = wkt2_single_simul("+proj=geos +h=1 +type=crs");
+    assert!(wkt.contains("Geostationary Satellite (Sweep Y)"), "{wkt}");
+}
+
+#[test]
+fn io_projparse_geos_sweep_x() {
+    let wkt = wkt2_single_simul("+proj=geos +sweep=x +h=1 +type=crs");
+    assert!(wkt.contains("Geostationary Satellite (Sweep X)"), "{wkt}");
+}
+
+#[test]
+fn io_projparse_somerc() {
+    let crs = proj_crs("+proj=somerc +lat_0=1 +lon_0=2 +k_0=3 +x_0=4 +y_0=5 +type=crs");
+    let wkt = export_wkt2(&crs, WktLines::Single);
+    assert!(
+        wkt.contains("METHOD[\"Hotine Oblique Mercator (variant B)\",ID[\"EPSG\",9815]]"),
+        "{wkt}"
+    );
+    assert!(wkt.contains("\"Latitude of projection centre\",1"), "{wkt}");
+    assert!(
+        wkt.contains("\"Longitude of projection centre\",2"),
+        "{wkt}"
+    );
+    assert!(
+        wkt.contains("\"Scale factor at projection centre\",3"),
+        "{wkt}"
+    );
+    assert!(wkt.contains("\"Azimuth at projection centre\",90"), "{wkt}");
+    assert!(
+        wkt.contains("\"Angle from Rectified to Skew Grid\",90"),
+        "{wkt}"
+    );
+    assert!(wkt.contains("\"Easting at projection centre\",4"), "{wkt}");
+    assert!(wkt.contains("\"Northing at projection centre\",5"), "{wkt}");
+    let wkt1 = wkt1_gdal(&crs);
+    assert!(!wkt1.contains("EXTENSION"), "{wkt1}");
+}
+
+#[test]
+fn io_projparse_aeqd_guam() {
+    let wkt = wkt2_single_simul("+proj=aeqd +guam +type=crs");
+    assert!(wkt.contains("Guam Projection"), "{wkt}");
+}
+
+#[test]
+fn io_projparse_cea_spherical_on_ellipsoid() {
+    let input = "+proj=cea +R_A +lat_ts=0 +lon_0=0 +x_0=0 +y_0=0 \
+                 +ellps=WGS84 +units=m +no_defs +type=crs";
+    let crs = proj_crs(input);
+    let wkt = export_wkt2(&crs, WktLines::Single);
+    assert!(
+        wkt.contains("METHOD[\"Lambert Cylindrical Equal Area (Spherical)\",ID[\"EPSG\",9834]]"),
+        "{wkt}"
+    );
+    assert_eq!(proj_string(&crs), input);
+}
+
+#[test]
+fn io_projparse_cea_ellipsoidal_with_k_0() {
+    let wkt = wkt2_single_simul("+proj=cea +ellps=GRS80 +k_0=0.99 +type=crs");
+    assert!(
+        wkt.contains("PARAMETER[\"Latitude of 1st standard parallel\",8.1365"),
+        "{wkt}"
+    );
+}
+
+#[test]
+fn io_projparse_merc_stere_polar_k_and_lat_ts_incompatible() {
+    assert!(
+        create_crs_from_proj_string("+proj=stere +lat_0=90 +lat_ts=70 +k=0.994 +type=crs").is_err()
+    );
+}
+
+#[test]
+fn io_projparse_merc_stere() {
+    let wkt = wkt2_single_simul("+proj=stere +lat_0=30 +type=crs");
+    assert!(wkt.contains("METHOD[\"Stereographic\"]"), "{wkt}");
+}
+
+#[test]
+fn io_projparse_merc_spherical_on_ellipsoid() {
+    let input = "+proj=merc +R_C +lat_0=1 +lon_0=2 +x_0=3 +y_0=4 \
+                 +ellps=WGS84 +units=m +no_defs +type=crs";
+    let crs = proj_crs(input);
+    let wkt = export_wkt2(&crs, WktLines::Single);
+    assert!(
+        wkt.contains("METHOD[\"Mercator (Spherical)\",ID[\"EPSG\",1026]]"),
+        "{wkt}"
+    );
+    assert_eq!(proj_string(&crs), input);
+}

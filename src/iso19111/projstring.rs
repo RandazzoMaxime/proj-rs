@@ -1206,10 +1206,85 @@ fn param_token<'a>(tokens: &'a [(String, String)], key: &str) -> Option<&'a str>
         .map(|(_, value)| value.as_str())
 }
 
+/// Whether a method's `proj_aux` is in the PROJ string: a flag such as `+guam`
+/// or `+R_A`, or a `key=value` such as `+sweep=x` or `+axis=swu`.
+fn aux_selects(method: &MethodMap, tokens: &[(String, String)]) -> bool {
+    match method.proj_aux {
+        None => false,
+        Some(aux) => match aux.split_once('=') {
+            Some((key, value)) => param_token(tokens, key) == Some(value),
+            None => param_token(tokens, aux).is_some(),
+        },
+    }
+}
+
+/// The standard parallel `phi` with `cos(phi) / sqrt(1 - e^2 sin^2(phi)) = k0`,
+/// found by bisection on `[0, pi/2]`, where the scale falls as `phi` rises.
+fn standard_parallel_of_scale(k0: f64, ellipsoid: &Ellipsoid) -> f64 {
+    let inverse_flattening = ellipsoid.inverse_flattening();
+    let flattening = if inverse_flattening != 0.0 {
+        1.0 / inverse_flattening
+    } else {
+        0.0
+    };
+    let squared_e = flattening * (2.0 - flattening);
+    let (mut low, mut high) = (0.0_f64, std::f64::consts::FRAC_PI_2);
+    for _ in 0..100 {
+        let mid = 0.5 * (low + high);
+        let scale = mid.cos() / (1.0 - squared_e * mid.sin().powi(2)).sqrt();
+        if scale > k0 {
+            low = mid;
+        } else {
+            high = mid;
+        }
+    }
+    0.5 * (low + high)
+}
+
+/// The projection name and keys PROJ rewrites before it picks a method.
+/// `+proj=somerc` is Hotine oblique Mercator variant B with azimuth and
+/// rectified-grid angle 90, centred on `+lon_0`. On `+proj=cea` without `+lat_ts`, a `+k_0` is the
+/// scale factor of the standard parallel: `cos(lat_ts)` on a sphere
+/// (`+R_A`), else the ellipsoidal form of `standard_parallel_of_scale`.
+fn method_spelling(
+    proj: &str,
+    tokens: &[(String, String)],
+    ellipsoid: &Ellipsoid,
+) -> (String, Vec<(String, String)>) {
+    let mut tokens = tokens.to_vec();
+    let mut proj = proj.to_owned();
+    if proj == "somerc" {
+        proj = "omerc".to_owned();
+        let oblique = ["alpha", "gamma", "lonc"]
+            .iter()
+            .any(|key| param_token(&tokens, key).is_some());
+        if !oblique {
+            tokens.push(("alpha".to_owned(), "90".to_owned()));
+            tokens.push(("gamma".to_owned(), "90".to_owned()));
+            if let Some(lon_0) = param_token(&tokens, "lon_0").map(str::to_owned) {
+                tokens.push(("lonc".to_owned(), lon_0));
+            }
+        }
+    }
+    if proj == "cea" && param_token(&tokens, "lat_ts").is_none() {
+        let k0 = param_token(&tokens, "k").and_then(|text| text.parse::<f64>().ok());
+        if let Some(k0) = k0 {
+            let lat_ts = if param_token(&tokens, "R_A").is_some() {
+                k0.acos()
+            } else {
+                standard_parallel_of_scale(k0, ellipsoid)
+            };
+            tokens.retain(|(key, _)| !is_scale_key(key));
+            tokens.push(("lat_ts".to_owned(), lat_ts.to_degrees().to_string()));
+        }
+    }
+    (proj, tokens)
+}
+
 /// The EPSG method that `buildProjectedCRS` forces when the PROJ name alone
-/// does not decide it. `None` keeps the first method whose parameters cover
-/// every key. Pseudo-Mercator, the no-rotation and two-point variants of
-/// `omerc`, and non-polar `stere` are not decided here.
+/// does not decide it. `None` leaves the choice to `projected_from_proj_string`.
+/// Pseudo-Mercator and the no-rotation and two-point variants of `omerc` are
+/// not decided here.
 fn forced_method_code(proj: &str, tokens: &[(String, String)]) -> Option<i32> {
     let present = |key: &str| param_token(tokens, key).is_some();
     let number = |key: &str| param_token(tokens, key).and_then(|text| text.parse::<f64>().ok());
@@ -1287,10 +1362,34 @@ fn parameter_default(proj: &str, param: &ParamMap, tokens: &[(String, String)]) 
 /// `parameter_default`. The CRS is named by `+title=`, or `unknown`, on the
 /// `+datum`/`+ellps` geographic CRS, with easting and northing in metres.
 fn projected_from_proj_string(tokens: &[(String, String)]) -> Result<Crs, FactoryError> {
-    let proj = token(tokens, "proj");
     let units = token(tokens, "units");
     if !units.is_empty() && units != "m" {
         return Err(FactoryError::Invalid(format!("unsupported +units={units}")));
+    }
+    let krovak_default = matches!(token(tokens, "proj"), "krovak" | "mod_krovak")
+        && ["datum", "ellps", "a", "rf"]
+            .iter()
+            .all(|key| token(tokens, key).is_empty());
+    let datum = if krovak_default {
+        named_ellipsoid_datum("bessel", &None)?
+    } else {
+        datum_from_proj(tokens)?
+    };
+    let (proj, spelled) = method_spelling(token(tokens, "proj"), tokens, datum.ellipsoid());
+    let proj = proj.as_str();
+    let tokens = spelled.as_slice();
+    // PROJ refuses a polar `stere` that gives both `+lat_ts` and a scale other
+    // than 1: the two describe the same parameter.
+    let lat_0 = param_token(tokens, "lat_0").and_then(|text| text.parse::<f64>().ok());
+    let scale = param_token(tokens, "k").and_then(|text| text.parse::<f64>().ok());
+    if proj == "stere"
+        && lat_0.is_some_and(|lat| (lat.abs() - 90.0).abs() < 1e-10)
+        && param_token(tokens, "lat_ts").is_some()
+        && scale.is_some_and(|k| (k - 1.0).abs() > 1e-10)
+    {
+        return Err(FactoryError::Invalid(
+            "+lat_ts and +k are both given for a polar stereographic".to_owned(),
+        ));
     }
     let methods: Vec<&MethodMap> = PROJECTION_METHODS
         .iter()
@@ -1306,14 +1405,34 @@ fn projected_from_proj_string(tokens: &[(String, String)]) -> Result<Crs, Factor
                     .any(|param| param.proj_name.is_some_and(|name| same_param(key, name)))
         })
     };
-    let forced = forced_method_code(proj, tokens).and_then(|code| {
+    // A method named by its flag or `key=value` wins. Then the EPSG code the
+    // PROJ name forces. Then the non-polar `stere`, which has no EPSG code.
+    // Otherwise the first method without a flag whose parameters cover the keys.
+    let by_aux = methods
+        .iter()
+        .copied()
+        .find(|method| aux_selects(method, tokens));
+    let forced = by_aux
+        .or_else(|| {
+            forced_method_code(proj, tokens).and_then(|code| {
+                methods
+                    .iter()
+                    .copied()
+                    .find(|method| method.epsg_code == code)
+            })
+        })
+        .or_else(|| {
+            methods
+                .iter()
+                .copied()
+                .find(|method| proj == "stere" && method.wkt2_name == "Stereographic")
+        });
+    let Some(method) = forced.or_else(|| {
         methods
             .iter()
             .copied()
-            .find(|method| method.epsg_code == code)
-    });
-    let Some(method) = forced.or_else(|| methods.iter().copied().find(|method| covers(method)))
-    else {
+            .find(|method| method.proj_aux.is_none() && covers(method))
+    }) else {
         return Err(FactoryError::Invalid(format!(
             "unsupported +proj={proj} for a CRS"
         )));
@@ -1346,15 +1465,6 @@ fn projected_from_proj_string(tokens: &[(String, String)]) -> Result<Crs, Factor
         parameters,
     );
     conversion.identified = Identified::named("unknown");
-    let krovak_default = matches!(proj, "krovak" | "mod_krovak")
-        && ["datum", "ellps", "a", "rf"]
-            .iter()
-            .all(|key| token(tokens, key).is_empty());
-    let datum = if krovak_default {
-        named_ellipsoid_datum("bessel", &None)?
-    } else {
-        datum_from_proj(tokens)?
-    };
     let base = GeographicCRS {
         identified: Identified::named("unknown"),
         datum: Some(datum),
