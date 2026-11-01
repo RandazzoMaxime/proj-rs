@@ -417,12 +417,6 @@ and `PORT-NOTES-tests.md`.
 
 - `operation.transformation_to_wkt`
 - `operation.concatenated_operation`
-- `operation.transformation_createGeocentricTranslations`
-- `operation.transformation_createGeocentricTranslations_between_geocentricCRS`
-- `operation.transformation_createGeocentricTranslations_null`
-- `operation.transformation_createGeocentricTranslations_neg_zero`
-- `operation.transformation_createPositionVector`
-- `operation.transformation_createCoordinateFrameRotation`
 - `operation.transformation_createTimeDependentPositionVector`
 - `operation.transformation_createTimeDependentCoordinateFrameRotation`
 - `operation.transformation_successive_helmert_noop`

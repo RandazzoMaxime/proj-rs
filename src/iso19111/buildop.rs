@@ -12,6 +12,7 @@ use super::parammap::{self, MethodMap, ParamMap};
 use super::pipeline::proj_number;
 
 mod projections;
+mod transformations;
 
 /// Whether transverse Mercator export inserts `+approx`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -249,7 +250,12 @@ impl Transformation {
     #[must_use]
     pub fn inverse(&self) -> Self {
         let mut inverse = self.clone();
-        inverse.inverted = !self.inverted;
+        if self.has_translation_inverse() {
+            // PROJ writes the inverse of these methods with negated values, not `+inv`.
+            inverse.negate_values();
+        } else {
+            inverse.inverted = !self.inverted;
+        }
         std::mem::swap(&mut inverse.source, &mut inverse.target);
         for identifier in &mut inverse.identified.identifiers {
             identifier.code_space = inverse_code_space(&identifier.code_space);
@@ -333,7 +339,7 @@ impl Conversion {
     /// The inverse conversion, as `InverseConversion`: the same method and parameters, an
     /// `Inverse of` name, and `INVERSE(...)` identifiers.
     #[must_use]
-    pub(crate) fn inverse(&self) -> Self {
+    pub fn inverse(&self) -> Self {
         let mut inverse = self.clone();
         inverse.inverted = !self.inverted;
         for identifier in &mut inverse.identified.identifiers {

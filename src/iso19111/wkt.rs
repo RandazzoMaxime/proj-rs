@@ -1585,7 +1585,14 @@ fn export_conversion(
             node_from_ids(&conversion.identified.identifiers),
         );
         formatter.add_quoted(conversion.name());
-        export_method(&conversion.method, formatter)?;
+        let inverse_method;
+        let method = if conversion.inverted {
+            inverse_method = inverted_method(&conversion.method);
+            &inverse_method
+        } else {
+            &conversion.method
+        };
+        export_method(method, formatter)?;
         for parameter in &conversion.parameters {
             if omitted_zero_parameter(conversion, parameter) {
                 continue;
@@ -1804,6 +1811,17 @@ fn write_esri_value(
             formatter.add_number(angle);
         }
         _ => formatter.add_number(measure.si_value()),
+    }
+}
+
+/// The method of an inverted conversion, as PROJ `InverseConversion` writes it in
+/// WKT2: an `Inverse of` name and an `INVERSE(...)` code space.
+fn inverted_method(method: &OperationMethod) -> OperationMethod {
+    OperationMethod {
+        name: format!("Inverse of {}", method.name),
+        code_space: format!("INVERSE({})", method.code_space),
+        code: method.code.clone(),
+        parameters: method.parameters.clone(),
     }
 }
 
