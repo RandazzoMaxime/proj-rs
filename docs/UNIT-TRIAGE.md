@@ -5,11 +5,11 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 708 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `core` | 698 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
 | `niche` | 150 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 76 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (708)
+## core (698)
 
 ### test_c_api.cpp (52)
 
@@ -141,7 +141,7 @@ The class comes from the test name alone, so check it when you port a test.
 - `factory.ogc_timecrs`
 - `factory.getPointMotionOperationsFor`
 
-### test_io.cpp (264)
+### test_io.cpp (254)
 
 - `wkt_parse.wkt1_esri_EPSG_4901_grad`
 - `wkt_parse.wkt1_esri_LINUNIT`
@@ -276,16 +276,6 @@ The class comes from the test name alone, so check it when you port a test.
 - `io.projstringformatter_krovak_to_krovak_east_north`
 - `io.projstringformatter_krovak_east_north_to_krovak`
 - `io.projparse_longlat_complex`
-- `io.projparse_longlat_towgs84_3_terms`
-- `io.projparse_longlat_towgs84_7_terms`
-- `io.projparse_longlat_towgs84_7_terms_autocorrect`
-- `io.projparse_longlat_nadgrids`
-- `io.projparse_longlat_nadgrids_towgs84_ignored`
-- `io.projparse_longlat_geoidgrids`
-- `io.projparse_longlat_geoidgrids_vunits`
-- `io.projparse_longlat_vunits`
-- `io.projparse_vunits`
-- `io.projparse_vto_meter`
 - `io.projparse_longlat_axis_enu`
 - `io.projparse_longlat_axis_neu`
 - `io.projparse_longlat_axis_swu`
