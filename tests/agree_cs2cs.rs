@@ -244,12 +244,37 @@ fn run_cs2cs(
     }
 }
 
+/// Whether a result must match the reference, or is known not to.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Expect {
+    Agree,
+    KnownGap,
+}
+
+impl Pair {
+    fn facade_expect(&self) -> Expect {
+        if self.known_gap {
+            Expect::KnownGap
+        } else {
+            Expect::Agree
+        }
+    }
+
+    fn cli_expect(&self) -> Expect {
+        if self.cli_gap {
+            Expect::KnownGap
+        } else {
+            Expect::Agree
+        }
+    }
+}
+
 /// One line per way `got` disagrees with the reference, or none when it should agree.
 fn judge(
     what: &str,
     pair: &Pair,
     point: (f64, f64),
-    gap: bool,
+    expect: Expect,
     got: Result<(f64, f64), String>,
     want: (f64, f64),
 ) -> Option<String> {
@@ -257,14 +282,14 @@ fn judge(
     let off = got
         .as_ref()
         .map(|g| (g.0 - want.0).abs().max((g.1 - want.1).abs()));
-    match (off, gap) {
-        (Ok(off), false) if off < 1e-2 => None,
-        (Ok(off), false) => Some(format!("{label}: {got:?} vs PROJ {want:?}, off {off}")),
-        (Err(error), false) => Some(format!("{label}: failed ({error}), PROJ {want:?}")),
-        (Ok(off), true) if off < 1e-2 => {
+    match (off, expect) {
+        (Ok(off), Expect::Agree) if off < 1e-2 => None,
+        (Ok(off), Expect::Agree) => Some(format!("{label}: {got:?} vs PROJ {want:?}, off {off}")),
+        (Err(error), Expect::Agree) => Some(format!("{label}: failed ({error}), PROJ {want:?}")),
+        (Ok(off), Expect::KnownGap) if off < 1e-2 => {
             Some(format!("{label}: now agrees with PROJ, clear the gap flag"))
         }
-        (_, true) => None,
+        (_, Expect::KnownGap) => None,
     }
 }
 
@@ -287,9 +312,16 @@ fn named_crs_pairs_match_cs2cs() {
                 }
             };
             let facade = proj.convert(point).map_err(|error| error.to_string());
-            problems.extend(judge("facade", pair, point, pair.known_gap, facade, want));
+            problems.extend(judge(
+                "facade",
+                pair,
+                point,
+                pair.facade_expect(),
+                facade,
+                want,
+            ));
             let cli = run_cs2cs(ours, pair, point);
-            problems.extend(judge("cs2cs", pair, point, pair.cli_gap, cli, want));
+            problems.extend(judge("cs2cs", pair, point, pair.cli_expect(), cli, want));
         }
     }
     assert!(problems.is_empty(), "\n{}", problems.join("\n"));
