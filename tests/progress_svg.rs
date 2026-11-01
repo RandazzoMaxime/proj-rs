@@ -221,7 +221,10 @@ fn progress_chart_is_current() {
     if std::env::var_os("UPDATE_DOCS").is_some() {
         fs::write(&path, &expected).expect("write progress.svg");
     } else {
-        let current = fs::read_to_string(&path).unwrap_or_default();
+        // A Windows checkout may turn LF into CRLF: compare the text, not the bytes.
+        let current = fs::read_to_string(&path)
+            .unwrap_or_default()
+            .replace("\r\n", "\n");
         assert!(
             current == expected,
             "docs/progress.svg is out of date: run `UPDATE_DOCS=1 cargo test --test progress_svg`"
