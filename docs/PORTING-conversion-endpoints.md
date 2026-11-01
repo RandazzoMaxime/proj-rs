@@ -46,7 +46,7 @@ vers la source.
 | `src/iso19111/transform_export.rs` | `ConcatenatedOperation::export_steps` écrit une étape conversion au lieu de la refuser. |
 | `src/iso19111/select.rs` | `export` utilise la paire d'une conversion qui en porte une. `GridSteps` (voir plus bas). |
 | `src/iso19111/pipeline.rs` | `ingest_proj_string` et son analyseur ne sont plus réservés aux tests. |
-| `tests/iso_pipeline_oracle.rs` (nouveau) | Onze cas, un par point, `best_pipeline` puis `Operation::create` puis valeurs PROJ 9.9.0, tolérance 1e-3. |
+| `tests/iso_pipeline_oracle.rs` (nouveau) | Onze cas étape 1 (`best_pipeline` puis `Operation::create`), puis sept cas façade (`Proj::new_known_crs`, étape 3), valeurs PROJ 9.9.0, tolérance 1e-3. |
 
 Le cas `Conversion` sans paire garde son refus : `export_steps` rend la même erreur
 qu'avant, et `Conversion::export_to_proj_string` refuse toujours une conversion
@@ -173,10 +173,13 @@ ai pas régénérés : `UPDATE_DOCS=1 cargo test --test docs_in_sync` et
 
 | Commande | Code | Note |
 |---|---|---|
-| `cargo test --all-features --no-fail-fast` (référence, avant changement) | 0 | 781 passés, 12 ignorés |
-| `cargo fmt --check` (après changements) | 0 | |
-| `cargo clippy --all-targets --all-features -- -D warnings` | 0 | |
-| `cargo test --all-features --no-fail-fast` (final) | 101 | 789 passés, 2 échecs documentaires (ci-dessus), 13 ignorés |
-| `cargo test --all-features --test iso_pipeline_oracle` | 0 | 10 passés, 1 ignoré |
+| `cargo test --all-features --no-fail-fast` (référence, avant changement) | 0 | 781 passés, 0 échec, 12 ignorés |
+| `cargo test --all-features --test cli_yaml` (étape 1, après le correctif projinfo) | 0 | 1 passé ; réécrit `docs/UNPORTED-CLI.md` (ligne #100 retirée) |
+| `cargo test --all-features --test iso_pipeline_oracle` (fin) | 0 | 18 passés, 0 ignoré |
 | `cargo test --all-features --test derived_operation` | 0 | 4 passés, dont `inverse_conversion_has_no_forward_proj_string` |
-| `cargo test --all-features --test cli_yaml` | 0 | 1 passé ; réécrit `docs/UNPORTED-CLI.md` (ligne #100 retirée) |
+| `cargo test --all-features --test georust_parity` | 0 | 18 passés, 7 ignorés |
+| `UPDATE_DOCS=1 cargo test --all-features --test docs_in_sync --test progress_svg` | 0 | régénère README, ROADMAP, `docs/progress.svg` |
+| `cargo test --all-features --test docs_in_sync --test progress_svg` (sans `UPDATE_DOCS`) | 0 | |
+| `cargo fmt --check` | 0 | |
+| `cargo clippy --all-targets --all-features -- -D warnings` | 0 | |
+| `cargo test --all-features --no-fail-fast` (final) | 0 | 800 passés, 0 échec, 11 ignorés |
