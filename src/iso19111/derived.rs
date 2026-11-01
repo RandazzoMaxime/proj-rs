@@ -22,7 +22,7 @@ pub(super) fn derived_candidates(
     context: &CoordinateOperationContext,
 ) -> Result<Option<Vec<CoordinateOperation>>, FactoryError> {
     if let Some((conversion, base)) = derived_parts(source) {
-        return derived_to(factory, conversion, &base, target, context).map(Some);
+        return derived_to(factory, &conversion, &base, target, context).map(Some);
     }
     if derived_parts(target).is_none() {
         return Ok(None);
@@ -33,19 +33,22 @@ pub(super) fn derived_candidates(
     ))
 }
 
-/// The deriving conversion of a derived CRS, and its base CRS.
-fn derived_parts(crs: &Crs) -> Option<(&Conversion, Crs)> {
-    match crs {
-        Crs::Projected(projected) => Some((
+/// The deriving conversion of a derived CRS, with its CRS pair (base to derived, as the
+/// projection runs), and its base CRS.
+fn derived_parts(crs: &Crs) -> Option<(Conversion, Crs)> {
+    let (conversion, base) = match crs {
+        Crs::Projected(projected) => (
             projected.deriving_conversion(),
             Crs::Geodetic(projected.base_crs().clone()),
-        )),
-        Crs::DerivedProjected(derived) => Some((
+        ),
+        Crs::DerivedProjected(derived) => (
             derived.deriving_conversion(),
             Crs::Projected(derived.base_crs().clone()),
-        )),
-        _ => None,
-    }
+        ),
+        _ => return None,
+    };
+    let conversion = conversion.clone().with_endpoints(base.clone(), crs.clone());
+    Some((conversion, base))
 }
 
 /// `createOperationsDerivedTo`: the inverse of the deriving conversion, chained with each

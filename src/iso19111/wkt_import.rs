@@ -2166,6 +2166,8 @@ impl WktParser {
                 parameters: Vec::new(),
             },
             parameters,
+            source: None,
+            target: None,
             version: props.version,
             inverted: false,
         })
@@ -2335,6 +2337,8 @@ impl WktParser {
                 parameters: Vec::new(),
             },
             parameters,
+            source: None,
+            target: None,
             version: None,
             inverted: false,
         })

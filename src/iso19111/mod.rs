@@ -8,6 +8,7 @@ mod bound_export;
 mod bound_import;
 mod buildop;
 mod compound;
+mod conversion_export;
 mod convmethod;
 mod derived;
 mod equiv;

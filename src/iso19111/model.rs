@@ -1761,11 +1761,19 @@ impl Parameter {
 }
 
 /// Map projection or other conversion.
+///
+/// A conversion has no CRS of its own in the database. The operation factory sets
+/// the pair when it chains a projection with a transformation: a projection's
+/// source is its base geographic CRS and its target the projected CRS, and an
+/// inverse swaps them, as [`Transformation`] does. Without the pair a conversion
+/// has no PROJ string of its own.
 #[derive(Clone, Debug)]
 pub struct Conversion {
     pub(crate) identified: Identified,
     pub(crate) method: OperationMethod,
     pub(crate) parameters: Vec<Parameter>,
+    pub(crate) source: Option<Box<Crs>>,
+    pub(crate) target: Option<Box<Crs>>,
     pub(crate) version: Option<String>,
     pub(crate) inverted: bool,
 }
@@ -1775,6 +1783,18 @@ impl Conversion {
     #[must_use]
     pub fn name(&self) -> &str {
         &self.identified.name
+    }
+
+    /// Source CRS, when the factory set it.
+    #[must_use]
+    pub fn source_crs(&self) -> Option<&Crs> {
+        self.source.as_deref()
+    }
+
+    /// Target CRS, when the factory set it.
+    #[must_use]
+    pub fn target_crs(&self) -> Option<&Crs> {
+        self.target.as_deref()
     }
 
     /// Authority identifiers.

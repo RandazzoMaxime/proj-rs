@@ -127,7 +127,13 @@ pub fn best_pipeline_with(
     )?;
     let mut ranked = Vec::with_capacity(operations.len());
     for operation in operations {
-        let characteristics = characteristics(&operation, &db, &source_crs, &target_crs);
+        let characteristics = characteristics(
+            &operation,
+            &db,
+            &source_crs,
+            &target_crs,
+            GridSteps::Unwritten,
+        );
         ranked.push((operation, characteristics));
     }
     let ranked = sort(ranked);
@@ -181,6 +187,13 @@ fn export(
             .export_to_proj_string_with(ProjLines::Single, proj_grid_names(operation, db)?),
         CoordinateOperation::Concatenated(concatenated) => concatenated
             .export_to_proj_string_with(ProjLines::Single, proj_grid_names(operation, db)?),
+        // A conversion the factory chained carries its CRS pair, which is the operation's
+        // own; a bare one keeps the CRS the caller gave.
+        CoordinateOperation::Conversion(conversion)
+            if conversion.source_crs().is_some() && conversion.target_crs().is_some() =>
+        {
+            conversion.export_pipeline(ProjLines::Single)
+        }
         CoordinateOperation::Conversion(conversion) if conversion.inverted => {
             Err(FactoryError::Format(format!(
                 "inverse conversion {} has no PROJ string in this crate",
@@ -193,14 +206,34 @@ fn export(
     }
 }
 
+/// Whether a candidate's grid and deformation steps are written when its PROJ string is
+/// taken for ordering. PROJ's `isPROJExportable` writes them, so the candidate list of
+/// `createOperations` follows it. The `cs2cs` choice writes them only where it has
+/// always written them, so its pipeline is unchanged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GridSteps {
+    /// Grid and deformation steps are written, as `isPROJExportable` takes them.
+    Written,
+    /// Grid and deformation steps are not written: the `cs2cs` choice.
+    Unwritten,
+}
+
 fn characteristics(
     operation: &CoordinateOperation,
     db: &DatabaseContext,
     source: &Crs,
     target: &Crs,
+    grids: GridSteps,
 ) -> Characteristics {
     let name = operation.name().to_owned();
-    let (exportable, proj_step_count, xyz_gridshift) = match export(operation, source, target, db) {
+    let text = match (grids, operation) {
+        (
+            GridSteps::Written,
+            CoordinateOperation::Transformation(_) | CoordinateOperation::Concatenated(_),
+        ) => operation.export_to_proj_string_with_database(db, ProjLines::Single),
+        _ => export(operation, source, target, db),
+    };
+    let (exportable, proj_step_count, xyz_gridshift) = match text {
         Ok(text) => {
             let xyz = text.contains("+proj=xyzgridshift");
             let steps = if xyz { 0 } else { proj_steps(&text) };
@@ -517,7 +550,8 @@ pub(crate) fn sort_candidates(
     let ranked = operations
         .into_iter()
         .map(|operation| {
-            let characteristics = characteristics(&operation, db, source, target);
+            let characteristics =
+                characteristics(&operation, db, source, target, GridSteps::Written);
             (operation, characteristics)
         })
         .collect();

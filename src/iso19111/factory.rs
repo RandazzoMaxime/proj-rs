@@ -2288,6 +2288,8 @@ impl AuthorityFactory {
                 parameters: Vec::new(),
             },
             parameters,
+            source: None,
+            target: None,
             version: None,
             inverted: false,
         })
@@ -3528,6 +3530,8 @@ impl AuthorityFactory {
                 identified: transformation.identified,
                 method: transformation.method,
                 parameters: transformation.parameters,
+                source: None,
+                target: None,
                 version: transformation.version,
                 inverted: false,
             }));
@@ -4054,7 +4058,10 @@ impl CoordinateOperationFactory {
         if let Crs::Projected(projected) = target {
             if same_authority(source, projected.base_crs()) {
                 found.push(CoordinateOperation::Conversion(
-                    projected.deriving_conversion().clone(),
+                    projected.deriving_conversion().clone().with_endpoints(
+                        Crs::Geodetic(projected.base_crs().clone()),
+                        target.clone(),
+                    ),
                 ));
             }
         }
