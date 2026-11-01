@@ -2477,10 +2477,8 @@ impl WktParser {
             target,
             CoordinateOperation::Transformation(transformation),
         );
-        if let Ok(props) = self.build_properties(node) {
-            if !props.name.is_empty() {
-                bound.identified_mut().name = props.name;
-            }
+        // A BOUNDCRS has no name of its own: its first child is SOURCECRS, not a name.
+        if let Ok(props) = self.build_properties_without_name(node) {
             bound.identified_mut().identifiers = props.identifiers;
         }
         Ok(WktObject::Crs(Crs::Bound(bound)))

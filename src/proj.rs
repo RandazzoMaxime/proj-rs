@@ -13,6 +13,8 @@ use std::fmt;
 use std::path::Path;
 
 mod bounds;
+#[path = "proj_export.rs"]
+mod proj_export;
 
 use bounds::Dims;
 
@@ -309,12 +311,9 @@ pub struct ProjInfo {
     pub accuracy: f64,
 }
 
-/// Options for [`Proj::as_wkt`]. WKT export is not built.
+/// Options for [`Proj::as_wkt`]. An unset field keeps PROJ's default: multi-line output
+/// except for WKT1 Esri, four spaces of indentation, and strict WKT1.
 #[derive(Clone, Debug, Default)]
-#[expect(
-    dead_code,
-    reason = "fields match georust WktOptions; this port does not write WKT"
-)]
 pub struct WktOptions {
     multiline: Option<bool>,
     indentation_width: Option<usize>,
@@ -335,7 +334,7 @@ pub enum WktOutputAxis {
     No,
 }
 
-/// WKT dialect. Export of every dialect returns an error.
+/// WKT dialect for [`Proj::as_wkt`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[expect(
     non_camel_case_types,
@@ -817,37 +816,43 @@ impl Proj {
 
     /// PROJJSON stored for an EPSG code, or the PROJJSON text passed to [`Self::new`].
     ///
-    /// `multiline`, `indentation_width`, and `schema` are accepted and ignored:
-    /// the text is returned as stored. A CRS-to-CRS transform has none.
+    /// PROJJSON of the CRS this object was built from, written by the ISO 19111
+    /// exporter as `proj_as_projjson` does.
+    ///
+    /// `multiline` (multi-line by default), `indentation_width`, and `schema` (the
+    /// PROJJSON v0.7 schema by default) set the layout. A transform built from a pair
+    /// or a PROJ operation has no CRS to write: the export of that operation is not built.
     ///
     /// # Errors
     ///
-    /// [`ProjError::ExportToJson`] when this object was not loaded from a
-    /// PROJJSON string and `proj.db` has no PROJJSON column or value for it.
+    /// [`ProjError::ExportToJson`] when this object is not a CRS, or the CRS kind has no
+    /// PROJJSON export in this crate.
     pub fn to_projjson(
         &self,
-        _multiline: Option<bool>,
-        _indentation_width: Option<usize>,
-        _schema: Option<&str>,
+        multiline: Option<bool>,
+        indentation_width: Option<usize>,
+        schema: Option<&str>,
     ) -> Result<String, ProjError> {
-        crate::crs::stored_projjson(&self.definition).ok_or(ProjError::ExportToJson)
+        proj_export::to_projjson(self, multiline, indentation_width, schema)
     }
 
-    /// WKT stored for an EPSG code, or the WKT text passed to [`Self::new`].
+    /// WKT of the CRS this object was built from, in `version` (WKT2:2019 by default),
+    /// written by the ISO 19111 exporter as `proj_as_wkt` does.
     ///
-    /// `version` and `options` select a dialect this port does not write. When
-    /// a stored string exists it is returned unchanged.
+    /// `options` sets the layout, the axis rule, and the WKT1 strictness, as in
+    /// [`WktOptions`]. A transform built from a pair or a PROJ operation has no CRS to
+    /// write: the export of that operation is not built.
     ///
     /// # Errors
     ///
-    /// [`ProjError::ExportToWkt`] when this object was not loaded from WKT and
-    /// `proj.db` has no WKT column or value for it.
+    /// [`ProjError::ExportToWkt`] when this object is not a CRS, or the CRS cannot be
+    /// written in `version`.
     pub fn as_wkt(
         &self,
-        _version: Option<WktVersion>,
-        _options: Option<WktOptions>,
+        version: Option<WktVersion>,
+        options: Option<WktOptions>,
     ) -> Result<String, ProjError> {
-        crate::crs::stored_wkt(&self.definition).ok_or(ProjError::ExportToWkt)
+        proj_export::as_wkt(self, version, options)
     }
 
     fn has_inverse(&self) -> bool {

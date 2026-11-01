@@ -31,10 +31,6 @@ pub(crate) fn to_proj(text: &str) -> Result<String, String> {
     Err("not WKT or PROJJSON".to_owned())
 }
 
-pub(crate) fn is_wkt(text: &str) -> bool {
-    is_wkt_head(trim_bom(text))
-}
-
 fn trim_bom(text: &str) -> &str {
     text.trim().trim_start_matches('\u{feff}')
 }

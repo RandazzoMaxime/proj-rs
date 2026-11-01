@@ -1249,56 +1249,6 @@ pub(crate) fn epsg_pipeline(source: &str, target: &str) -> Result<(String, bool)
     with_db(|connection| pipeline_of(connection, source, target)).map_err(pipeline_error)
 }
 
-/// WKT or PROJJSON stored for an EPSG code, or the text the caller already passed.
-pub(crate) fn stored_wkt(definition: &str) -> Option<String> {
-    stored_markup(definition, Markup::Wkt)
-}
-
-pub(crate) fn stored_projjson(definition: &str) -> Option<String> {
-    stored_markup(definition, Markup::ProjJson)
-}
-
-fn stored_markup(definition: &str, markup: Markup) -> Option<String> {
-    let trimmed = definition.trim().trim_start_matches('\u{feff}');
-    if markup.matches_inline(trimmed) {
-        return Some(definition.to_owned());
-    }
-    let code = authority_code(trimmed)?;
-    with_db(|connection| read_stored(connection, code, markup))
-        .ok()
-        .flatten()
-}
-
-#[derive(Clone, Copy)]
-enum Markup {
-    Wkt,
-    ProjJson,
-}
-
-impl Markup {
-    fn matches_inline(self, text: &str) -> bool {
-        match self {
-            Self::ProjJson => text.starts_with('{'),
-            Self::Wkt => crate::crs_text::is_wkt(text),
-        }
-    }
-
-    fn matches_stored(self, text: &str) -> bool {
-        let trimmed = text.trim();
-        match self {
-            Self::ProjJson => trimmed.starts_with('{'),
-            Self::Wkt => crate::crs_text::is_wkt(trimmed),
-        }
-    }
-
-    fn columns(self) -> &'static [&'static str] {
-        match self {
-            Self::ProjJson => &["projjson", "proj_json", "json"],
-            Self::Wkt => &["wkt", "wkt2", "wkt1", "wkt_2"],
-        }
-    }
-}
-
 fn pipeline_error(error: DbFail) -> CreateError {
     let text = match error {
         DbFail::Open(message) => message,
@@ -2547,72 +2497,6 @@ fn accuracy_rows(
         });
     }
     Ok(blockers)
-}
-
-fn read_stored(
-    connection: &Connection,
-    code: u32,
-    markup: Markup,
-) -> Result<Option<String>, rusqlite::Error> {
-    for table in ["geodetic_crs", "projected_crs", "derived_projected_crs"] {
-        if let Some(text) = stored_in_table(connection, table, code, markup)? {
-            return Ok(Some(text));
-        }
-    }
-    Ok(None)
-}
-
-fn stored_in_table(
-    connection: &Connection,
-    table: &str,
-    code: u32,
-    markup: Markup,
-) -> Result<Option<String>, rusqlite::Error> {
-    let columns = column_names(connection, table)?;
-    let mut names: Vec<&str> = Vec::new();
-    for name in markup.columns() {
-        if columns.iter().any(|column| column == name) {
-            names.push(name);
-        }
-    }
-    if columns.iter().any(|column| column == "text_definition") {
-        names.push("text_definition");
-    }
-    for name in names {
-        if let Some(text) = column_cell(connection, table, name, code)? {
-            if markup.matches_stored(&text) {
-                return Ok(Some(text));
-            }
-        }
-    }
-    Ok(None)
-}
-
-fn column_names(connection: &Connection, table: &str) -> Result<Vec<String>, rusqlite::Error> {
-    if !safe_ident(table) {
-        return Err(unsupported("CRS axis order is not built".to_owned()));
-    }
-    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
-    let rows = statement.query_map([], |row| column_text(row, 1))?;
-    rows.collect()
-}
-
-fn column_cell(
-    connection: &Connection,
-    table: &str,
-    column: &str,
-    code: u32,
-) -> Result<Option<String>, rusqlite::Error> {
-    if !safe_ident(table) || !safe_ident(column) {
-        return Err(unsupported("CRS axis order is not built".to_owned()));
-    }
-    let sql = format!("SELECT {column} FROM {table} WHERE auth_name = 'EPSG' AND code = ?1");
-    connection
-        .query_row(&sql, params![i64::from(code)], |row| {
-            column_text_opt(row, 0)
-        })
-        .optional()
-        .map(Option::flatten)
 }
 
 fn safe_ident(name: &str) -> bool {

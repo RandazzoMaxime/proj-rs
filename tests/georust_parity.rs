@@ -298,7 +298,7 @@ fn test_area_of_use() {
 }
 
 #[test]
-#[ignore = "gap: PROJJSON export is not built in the facade"]
+#[ignore = "gap: PROJJSON of the operation behind a pair (a ConcatenatedOperation) is not built"]
 fn test_projjson() {
     let ft_to_m = Proj::new_known_crs("EPSG:2230", "EPSG:26946", None).unwrap();
     let _ = ft_to_m
@@ -312,7 +312,6 @@ fn test_projjson() {
 }
 
 #[test]
-#[ignore = "gap: WKT export is not built in the facade"]
 fn test_wkt() {
     let proj = Proj::new("EPSG:4326").unwrap();
     // georust passes `multiline: Some(false)`, a private field it reaches from
