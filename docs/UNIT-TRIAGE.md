@@ -5,11 +5,11 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 647 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `core` | 610 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
 | `niche` | 150 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 76 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (647)
+## core (610)
 
 ### test_c_api.cpp (52)
 
@@ -141,7 +141,7 @@ The class comes from the test name alone, so check it when you port a test.
 - `factory.ogc_timecrs`
 - `factory.getPointMotionOperationsFor`
 
-### test_io.cpp (203)
+### test_io.cpp (187)
 
 - `wkt_parse.wkt2_epsg_org_EPSG_4901_PRIMEM_weird_sexagesimal_DMS`
 - `wkt_parse.wkt1_geographic_old_datum_name_without_EPSG_code`
@@ -239,22 +239,6 @@ The class comes from the test name alone, so check it when you port a test.
 - `wkt_parse.wkt1_pseudo_wkt1_gdal_pseudo_wkt1_esri`
 - `wkt_parse.invalid_EngineeingCRS`
 - `wkt_parse.invalid_CoordinateMetadata`
-- `io.projstringformatter`
-- `io.projstringformatter_helmert_3_param_noop`
-- `io.projstringformatter_helmert_7_param_noop`
-- `io.projstringformatter_merge_consecutive_helmert_3_param`
-- `io.projstringformatter_merge_consecutive_helmert_3_param_noop`
-- `io.projstringformatter_merge_consecutive_helmert_7_param_noop`
-- `io.projstringformatter_merge_inverted_helmert_with_opposite_conventions`
-- `io.projstringformatter_cart_grs80_wgs84`
-- `io.projstringformatter_axisswap_unitconvert_axisswap`
-- `io.projstringformatter_axisswap_one_minus_two_inv`
-- `io.projstringformatter_axisswap_two_one_followed_two_minus_one`
-- `io.projstringformatter_axisswap_minus_two_one_followed_two_one`
-- `io.projstringformatter_axisswap_two_minus_one_followed_minus_two_one`
-- `io.projstringformatter_axisswap_two_minus_one_followed_one_minus_two`
-- `io.projstringformatter_unitconvert`
-- `io.projstringformatter_unmodified`
 - `io.projstringformatter_optim_hgridshift_vgridshift_hgridshift_inv`
 - `io.projstringformatter_optim_as_uc_vgridshift_uc_as_push_as_uc`
 - `io.projstringformatter_krovak_to_krovak_east_north`
@@ -347,7 +331,7 @@ The class comes from the test name alone, so check it when you port a test.
 - `wkt_parse.PointMotionOperation`
 - `json_import.PointMotionOperation`
 
-### test_operation.cpp (95)
+### test_operation.cpp (74)
 
 - `operation.transformation_to_wkt`
 - `operation.concatenated_operation`
@@ -405,31 +389,10 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.PROJ_based`
 - `operation.PROJ_based_empty`
 - `operation.PROJ_based_with_global_parameters`
-- `operation.mercator_variant_A_to_variant_B`
-- `operation.mercator_variant_A_to_variant_B_scale_1`
 - `operation.mercator_variant_A_to_variant_B_no_crs`
-- `operation.mercator_variant_A_to_variant_B_invalid_scale`
-- `operation.mercator_variant_A_to_variant_B_invalid_eccentricity`
-- `operation.mercator_variant_B_to_variant_A`
-- `operation.mercator_variant_B_to_variant_A_invalid_std1`
-- `operation.mercator_variant_B_to_variant_A_invalid_eccentricity`
-- `operation.lcc2sp_to_lcc1sp`
-- `operation.lcc2sp_to_lcc1sp_phi0_eq_phi1_eq_phi2`
-- `operation.lcc2sp_to_lcc1sp_phi0_diff_phi1_and_phi1_eq_phi2`
-- `operation.lcc1sp_to_lcc2sp_invalid_eccentricity`
-- `operation.lcc1sp_to_lcc2sp_invalid_scale`
-- `operation.lcc1sp_to_lcc2sp_invalid_lat0`
-- `operation.lcc1sp_to_lcc2sp_null_lat0`
-- `operation.lcc2sp_to_lcc1sp_invalid_lat0`
-- `operation.lcc2sp_to_lcc1sp_invalid_lat1`
-- `operation.lcc2sp_to_lcc1sp_invalid_lat2`
-- `operation.lcc2sp_to_lcc1sp_invalid_lat1_opposite_lat2`
-- `operation.lcc2sp_to_lcc1sp_invalid_lat1_and_lat2_close_to_zero`
-- `operation.lcc2sp_to_lcc1sp_invalid_eccentricity`
 - `operation.three_param_equivalent_to_seven_param`
 - `operation.position_vector_equivalent_coordinate_frame`
 - `operation.conversion_missing_parameter`
-- `operation.conversion_missing_parameter_scale`
 - `operation.hotine_oblique_mercator_variant_A_export_equivalent_modulo_360`
 - `operation.normalizeForVisualization`
 - `operation.export_of_Geographic3D_to_GravityRelatedHeight_gtx_unknown_grid`
