@@ -6,10 +6,14 @@
 //! `vgridshift`, and the `omit_fwd`/`omit_inv` flags it sets), the Krovak
 //! `axis=swu` merge, and the `set` epoch merge. Skipping one keeps the same
 //! transform with more steps, so the text differs from PROJ on those inputs.
+//! The PROJ string parser reads `init=` as a parameter and drops global parameters.
 //! Values are written without quoting, which is enough for the numbers and
 //! names an operation produces.
 
 use super::wkt::format_g;
+
+#[cfg(test)]
+mod tests;
 
 /// Line breaks in a PROJ string.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -101,6 +105,14 @@ impl PipelineFormatter {
         if let Some(step) = self.steps.last_mut() {
             step.inverted = true;
         }
+    }
+
+    /// PROJ `PROJStringFormatter::ingestPROJString`: appends the steps of a PROJ string.
+    ///
+    /// Only the tests read PROJ strings through the formatter, so this is test-only.
+    #[cfg(test)]
+    pub(crate) fn ingest_proj_string(&mut self, text: &str) {
+        self.steps.extend(parse_proj_string(text));
     }
 
     pub(crate) fn add_param(&mut self, key: &str, value: &str) {
@@ -309,6 +321,93 @@ fn normalize_inverse(step: &mut Step) {
         }
         "set" => step.inverted = false,
         _ => {}
+    }
+}
+
+/// PROJ `PROJStringSyntaxParser`, for a string with or without `+proj=pipeline`.
+///
+/// Tokens are split on whitespace with the leading `+` removed. Global parameters
+/// (before the first step) and `title=` are dropped. `init=` is read as a parameter, so
+/// it prints differently from PROJ.
+#[cfg(test)]
+fn parse_proj_string(text: &str) -> Vec<Step> {
+    let tokens: Vec<&str> = text
+        .split_whitespace()
+        .map(|token| token.strip_prefix('+').unwrap_or(token))
+        .collect();
+    let mut steps: Vec<Step> = Vec::new();
+    if tokens.contains(&"proj=pipeline") {
+        let mut in_pipeline = false;
+        let mut invert_all = false;
+        for word in tokens {
+            if word == "proj=pipeline" {
+                in_pipeline = true;
+            } else if word == "step" {
+                steps.push(new_step(""));
+            } else if word == "inv" {
+                match steps.last_mut() {
+                    Some(step) => step.inverted = true,
+                    None => invert_all = true,
+                }
+            } else if let Some(name) = word.strip_prefix("proj=").filter(|_| in_pipeline) {
+                match steps.last_mut() {
+                    Some(step) if step.name.is_empty() => step.name = name.to_owned(),
+                    _ => push_param(&mut steps, word),
+                }
+            } else {
+                push_param(&mut steps, word);
+            }
+        }
+        if invert_all && !steps.is_empty() {
+            for step in &mut steps {
+                step.inverted = !step.inverted;
+            }
+            steps.reverse();
+        }
+        return steps;
+    }
+    let has_proj = tokens.iter().any(|word| word.starts_with("proj="));
+    if has_proj {
+        steps.push(new_step(""));
+    }
+    for word in tokens {
+        if let Some(name) = word.strip_prefix("proj=") {
+            match steps.last_mut() {
+                Some(step) if step.name.is_empty() => step.name = name.to_owned(),
+                _ => push_param(&mut steps, word),
+            }
+        } else if word == "inv" {
+            if let Some(step) = steps.last_mut() {
+                step.inverted = true;
+            }
+        } else if word == "step" || word.starts_with("title=") {
+            continue;
+        } else {
+            push_param(&mut steps, word);
+        }
+    }
+    steps
+}
+
+#[cfg(test)]
+fn new_step(name: &str) -> Step {
+    Step {
+        name: name.to_owned(),
+        inverted: false,
+        params: Vec::new(),
+    }
+}
+
+/// Appends `token` (`key` or `key=value`) to the last step. A token before any step is
+/// a global parameter, which is dropped.
+#[cfg(test)]
+fn push_param(steps: &mut [Step], token: &str) {
+    let (key, value) = token.split_once('=').unwrap_or((token, ""));
+    if let Some(step) = steps.last_mut() {
+        step.params.push(Param {
+            key: key.to_owned(),
+            value: value.to_owned(),
+        });
     }
 }
 
