@@ -5,11 +5,11 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 681 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `core` | 663 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
 | `niche` | 150 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 76 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (681)
+## core (663)
 
 ### test_c_api.cpp (52)
 
@@ -141,7 +141,7 @@ The class comes from the test name alone, so check it when you port a test.
 - `factory.ogc_timecrs`
 - `factory.getPointMotionOperationsFor`
 
-### test_io.cpp (237)
+### test_io.cpp (219)
 
 - `wkt_parse.wkt1_esri_EPSG_4901_grad`
 - `wkt_parse.wkt1_esri_LINUNIT`
@@ -287,38 +287,20 @@ The class comes from the test name alone, so check it when you port a test.
 - `io.projparse_krovak_czech`
 - `io.projparse_krovak_modified_czech`
 - `io.projparse_tmerc_approx`
-- `io.projparse_merc_google_mercator`
-- `io.projparse_merc_google_mercator_non_metre_unit`
-- `io.projparse_merc_not_quite_google_mercator`
 - `io.projparse_laea_spherical`
 - `io.projparse_eqc_spherical`
-- `io.projparse_non_earth_ellipsoid`
 - `io.projparse_peirce_q_horizontal`
 - `io.projparse_axisswap_unitconvert_longlat_proj`
 - `io.projparse_axisswap_unitconvert_proj_axisswap`
 - `io.projparse_axisswap_unitconvert_proj_unitconvert`
 - `io.projparse_axisswap_unitconvert_proj_unitconvert_numeric_axisswap`
-- `io.projparse_projected_units`
-- `io.projparse_projected_to_meter_known`
-- `io.projparse_projected_to_meter_unknown`
-- `io.projparse_projected_vunits`
 - `io.projparse_projected_unknown`
-- `io.projparse_geocent`
-- `io.projparse_geocent_towgs84`
 - `io.projparse_cart_unit`
 - `io.projparse_cart_unit_numeric`
-- `io.projparse_longlat_wktext`
-- `io.projparse_geocent_wktext`
 - `io.projparse_geoc`
-- `io.projparse_projected_wktext`
 - `io.projparse_ob_tran_longlat`
 - `io.projparse_ob_tran_rhealpix`
-- `io.projparse_longlat_title`
-- `io.projparse_projected_title`
 - `io.projparse_init`
-- `io.projparse_errors`
-- `io.projparse_longlat_errors`
-- `io.projparse_projected_errors`
 - `io.createFromUserInput`
 - `io.createFromUserInput_ogc_crs_url`
 - `io.createFromUserInput_hack_EPSG_102100`

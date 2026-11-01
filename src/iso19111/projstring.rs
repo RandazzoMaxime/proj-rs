@@ -7,12 +7,14 @@ use super::bound_export::{export_bound, export_compound};
 use super::bound_import;
 use super::factory::DatabaseContext;
 use super::model::{
-    Axis, Conversion, Crs, Datum, DatumEnsemble, Ellipsoid, EllipsoidalCS, FactoryError,
-    GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified, Identifier,
-    Measure, ParameterValue, PrimeMeridian, ProjectedCRS, UnitKind, UnitOfMeasure, VerticalCRS,
+    Axis, CartesianCS, Conversion, Crs, Datum, DatumEnsemble, Ellipsoid, EllipsoidalCS,
+    FactoryError, GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified,
+    Identifier, Measure, ParameterValue, PrimeMeridian, ProjectedCRS, UnitKind, UnitOfMeasure,
+    VerticalCRS,
 };
 use super::parammap::{MethodMap, ParamMap, OTHER_METHODS, PROJECTION_METHODS};
 use super::pipeline::proj_number;
+use super::proj_crs;
 use super::projfam;
 use super::wkt::format_g;
 use super::wkt_import::{BODY_RELATIVE, EARTH_RADIUS};
@@ -165,10 +167,7 @@ impl GeodeticCRS {
     fn export_with(&self, extras: &ProjExtras<'_>) -> Result<String, FactoryError> {
         match self {
             Self::Geographic(crs) => Ok(geographic_proj(crs, extras)),
-            Self::Geocentric(crs) if extras.towgs84.is_none() => crs.export_to_proj_string(),
-            Self::Geocentric(_) => Err(FactoryError::Format(
-                "a bound geocentric CRS has no PROJ string in this build".to_owned(),
-            )),
+            Self::Geocentric(crs) => crs.export_with(extras),
             Self::Spherical(_) => Err(FactoryError::Format(
                 "a spherical CRS has no PROJ string in this build".to_owned(),
             )),
@@ -286,6 +285,9 @@ impl ProjectedCRS {
     }
 
     fn export_with(&self, extras: &ProjExtras<'_>) -> Result<String, FactoryError> {
+        if let Some(text) = self.pseudo_mercator_proj().filter(|_| !extras.has_shift()) {
+            return Ok(text);
+        }
         let mut text = self.deriving_conversion().export_to_proj_string()?;
         text.push(' ');
         text.push_str(&crs_datum_clause(self.base_crs(), extras));
@@ -297,6 +299,35 @@ impl ProjectedCRS {
         }
         text.push_str(" +no_defs +type=crs");
         Ok(text)
+    }
+
+    /// The pseudo-Mercator method (EPSG 1024) as PROJ writes it: `+proj=merc` on
+    /// a sphere of the base's semi-major axis, with `+lat_ts=0`, `+k=1` and
+    /// `+nadgrids=@null`, and no datum. `None` for any other method.
+    fn pseudo_mercator_proj(&self) -> Option<String> {
+        let conversion = self.deriving_conversion();
+        let method = conversion.method();
+        if method.code_space() != "EPSG" || method.code() != "1024" {
+            return None;
+        }
+        let radius = format_g(
+            self.base_crs().ellipsoid()?.semi_major_axis().si_value(),
+            15,
+        );
+        let mut text = format!(
+            "+proj=merc +a={radius} +b={radius} +lat_ts=0 +lon_0={} +x_0={} +y_0={} +k=1",
+            format_g(conversion.numeric_degrees(8802), 15),
+            format_g(conversion.numeric_si(8806), 15),
+            format_g(conversion.numeric_si(8807), 15),
+        );
+        if let Some(axis) = self.coordinate_system().axes().first() {
+            if let Some(clause) = linear_unit_clause(axis.unit()) {
+                text.push(' ');
+                text.push_str(&clause);
+            }
+        }
+        text.push_str(" +nadgrids=@null +no_defs +type=crs");
+        Some(text)
     }
 }
 
@@ -517,6 +548,38 @@ fn linear_unit_clause(unit: &UnitOfMeasure) -> Option<String> {
 }
 
 impl GeocentricCRS {
+    /// `+proj=geocent` for a geocentric CRS bound to WGS 84 (`+towgs84`). The
+    /// ellipsoid is written, not the datum name, as `BoundCRS` does.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::export_to_proj_string`].
+    fn export_with(&self, extras: &ProjExtras<'_>) -> Result<String, FactoryError> {
+        let Some(values) = extras.towgs84.as_ref() else {
+            return self.export_to_proj_string();
+        };
+        let unit = self
+            .coordinate_system
+            .axes()
+            .first()
+            .map(Axis::unit)
+            .ok_or_else(|| FactoryError::Format("a geocentric CRS has no axis".to_owned()))?;
+        if unit.name() != "metre" {
+            return Err(FactoryError::Format(
+                "geocentric CRS PROJ export requires a metre unit".to_owned(),
+            ));
+        }
+        let mut parts = vec!["+proj=geocent".to_owned()];
+        if let Some(datum) = self.datum() {
+            parts.push(ellipsoid_proj(datum.ellipsoid()));
+        }
+        parts.push(towgs84_clause(values));
+        parts.push("+units=m".to_owned());
+        parts.push("+no_defs".to_owned());
+        parts.push("+type=crs".to_owned());
+        Ok(parts.join(" "))
+    }
+
     /// `+proj=geocent` when the cartesian unit is the metre.
     ///
     /// # Errors
@@ -773,7 +836,7 @@ fn well_known_ellps_entry(
 
 /// `PROJStringParser::createFromPROJString` for a single `+proj=longlat` CRS.
 ///
-/// The CRS name is `unknown`. `+datum=WGS84`, `NAD83`, and `NAD27` use the
+/// The CRS is named by `+title=`, or `unknown`. `+datum=WGS84`, `NAD83`, and `NAD27` use the
 /// built-in frames. `+ellps=GRS80` or `WGS84` builds an `Unknown based on`
 /// datum. `+a` and `+rf` build an unnamed ellipsoid. The coordinate system is
 /// implicit, so identification accepts a latitude/longitude swap. The default
@@ -820,6 +883,8 @@ fn crs_from_proj_string(
     let proj = token(&tokens, "proj");
     let crs = if matches!(proj, "longlat" | "lonlat" | "latlong") {
         geographic_from_proj_string(&tokens)?
+    } else if proj == "geocent" {
+        proj_crs::geocentric_from_proj_string(&tokens)?
     } else {
         projected_from_proj_string(&tokens)?
     };
@@ -827,7 +892,7 @@ fn crs_from_proj_string(
 }
 
 fn geographic_from_proj_string(tokens: &[(String, String)]) -> Result<Crs, FactoryError> {
-    let datum = datum_from_proj(tokens)?;
+    let datum = proj_crs::titled_datum(datum_from_proj(tokens)?, tokens);
     let axis = token(tokens, "axis");
     let mut axes = if axis.is_empty() {
         vec![
@@ -847,7 +912,7 @@ fn geographic_from_proj_string(tokens: &[(String, String)]) -> Result<Crs, Facto
     };
     axes.extend(bound_import::ellipsoidal_height_axis(tokens)?);
     Ok(Crs::Geographic(GeographicCRS {
-        identified: Identified::named("unknown"),
+        identified: Identified::named(proj_crs::title_or_unknown(tokens)),
         datum: Some(datum),
         ensemble: None,
         coordinate_system: EllipsoidalCS {
@@ -881,7 +946,9 @@ pub(super) fn token<'a>(tokens: &'a [(String, String)], key: &str) -> &'a str {
 /// `PROJStringParser::Private::buildDatum`. `+R` takes precedence. Then
 /// `+datum=` or `+ellps=` gives a base datum, and `+a`, `+b`, `+rf`, `+f`, `+e`,
 /// and `+es` override its numbers. With no base, the datum is WGS 84.
-fn datum_from_proj(tokens: &[(String, String)]) -> Result<GeodeticReferenceFrame, FactoryError> {
+pub(super) fn datum_from_proj(
+    tokens: &[(String, String)],
+) -> Result<GeodeticReferenceFrame, FactoryError> {
     let meridian = prime_meridian_from_proj(tokens)?;
     let radius = token(tokens, "R");
     if !radius.is_empty() {
@@ -1215,11 +1282,30 @@ pub(super) fn geographic_axis(letter: char, unit: UnitOfMeasure) -> Result<Axis,
     }
 }
 
-/// Keys of a PROJ string that name the datum, the units, the title, or the
-/// output, not a parameter of a projection method.
+/// Keys of a PROJ string that name the datum, the units, the title, the grids,
+/// or the output, not a parameter of a projection method.
 const NON_METHOD_KEYS: &[&str] = &[
-    "proj", "datum", "ellps", "a", "b", "rf", "f", "R", "towgs84", "units", "no_defs", "type",
-    "axis", "title",
+    "proj",
+    "datum",
+    "ellps",
+    "a",
+    "b",
+    "rf",
+    "f",
+    "R",
+    "towgs84",
+    "units",
+    "no_defs",
+    "type",
+    "axis",
+    "title",
+    "to_meter",
+    "vunits",
+    "vto_meter",
+    "nadgrids",
+    "geoidgrids",
+    "geoid_crs",
+    "wktext",
 ];
 
 /// `+k` and `+k_0` name the same parameter.
@@ -1400,15 +1486,15 @@ fn parameter_default(proj: &str, param: &ParamMap, tokens: &[(String, String)]) 
 /// method is the one `forced_method_code` selects, else the first one whose
 /// PROJ parameters cover every key. Each parameter takes the key's value, or
 /// `parameter_default`. The CRS is named by `+title=`, or `unknown`, on the
-/// `+datum`/`+ellps` geographic CRS, with easting and northing in metres.
+/// `+datum`/`+ellps` geographic CRS. Easting and northing are in the linear unit
+/// of `+units` or `+to_meter` (`buildUnit`), and a linear parameter is stored in
+/// that unit. A `+vunits` adds the ellipsoidal height axis to both CRSs.
 pub(super) fn projected_from_proj_string(tokens: &[(String, String)]) -> Result<Crs, FactoryError> {
     if token(tokens, "proj") == "utm" {
         return projfam::utm_projected(tokens);
     }
-    let units = token(tokens, "units");
-    if !units.is_empty() && units != "m" {
-        return Err(FactoryError::Invalid(format!("unsupported +units={units}")));
-    }
+    let unit = bound_import::build_unit(tokens, "units", "to_meter")?;
+    let height = bound_import::ellipsoidal_height_axis(tokens)?;
     let krovak_default = matches!(token(tokens, "proj"), "krovak" | "mod_krovak")
         && ["datum", "ellps", "a", "rf"]
             .iter()
@@ -1418,6 +1504,8 @@ pub(super) fn projected_from_proj_string(tokens: &[(String, String)]) -> Result<
     } else {
         datum_from_proj(tokens)?
     };
+    let datum = proj_crs::grid_datum(datum, tokens);
+    let pseudo = proj_crs::pseudo_mercator(tokens);
     let (proj, spelled) = method_spelling(token(tokens, "proj"), tokens, datum.ellipsoid());
     let proj = proj.as_str();
     let tokens = spelled.as_slice();
@@ -1455,7 +1543,15 @@ pub(super) fn projected_from_proj_string(tokens: &[(String, String)]) -> Result<
         .iter()
         .copied()
         .find(|method| aux_selects(method, tokens));
-    let forced = by_aux
+    // The pseudo-Mercator method (1024) is not a `merc` method by PROJ name.
+    let pseudo_method = pseudo.and_then(|_| {
+        PROJECTION_METHODS
+            .iter()
+            .chain(OTHER_METHODS)
+            .find(|method| method.epsg_code == 1024)
+    });
+    let forced = pseudo_method
+        .or(by_aux)
         .or_else(|| {
             projfam::spherical_method_code(proj, datum.ellipsoid().inverse_flattening())
                 .or_else(|| forced_method_code(proj, tokens))
@@ -1482,6 +1578,13 @@ pub(super) fn projected_from_proj_string(tokens: &[(String, String)]) -> Result<
             "unsupported +proj={proj} for a CRS"
         )));
     };
+    // The web Mercator CRS keeps metre parameters whatever `+units` says.
+    let web = pseudo == Some(proj_crs::PseudoMercator::Web);
+    let parameter_unit = if web {
+        UnitOfMeasure::metre()
+    } else {
+        unit.clone()
+    };
     let mut parameters = Vec::new();
     for param in method.params {
         let key = param.proj_name.unwrap_or("");
@@ -1494,7 +1597,11 @@ pub(super) fn projected_from_proj_string(tokens: &[(String, String)]) -> Result<
         let value = match param.unit {
             UnitKind::Angular => ParameterValue::angle(value),
             UnitKind::Scale => ParameterValue::scale(value),
-            _ => ParameterValue::length(value),
+            // PROJ gives a linear value in metres, and stores it in the CRS unit.
+            _ => ParameterValue::Measure(Measure {
+                value: value / parameter_unit.conversion_to_si(),
+                unit: parameter_unit.clone(),
+            }),
         };
         parameters.push(Conversion::parameter(
             param.wkt2_name,
@@ -1519,17 +1626,43 @@ pub(super) fn projected_from_proj_string(tokens: &[(String, String)]) -> Result<
             axes: vec![
                 geographic_axis('e', UnitOfMeasure::degree())?,
                 geographic_axis('n', UnitOfMeasure::degree())?,
-            ],
+            ]
+            .into_iter()
+            .chain(height.clone())
+            .collect(),
         },
         implicit_cs: true,
     };
     let name = param_token(tokens, "title")
         .filter(|title| !title.is_empty())
         .unwrap_or("unknown");
+    let coordinate_system = match height {
+        None => projfam::projected_cs(proj, tokens, unit)?,
+        Some(height) => CartesianCS::create_allowing_mixed_units(vec![
+            Axis::new("Easting", "E", "east", unit.clone()),
+            Axis::new("Northing", "N", "north", unit),
+            height,
+        ])?,
+    };
+    if web {
+        // `createPseudoMercator`: the WGS 84 base, named with the `+units` suffix.
+        let units = token(tokens, "units");
+        let name = if units.is_empty() || units == "m" {
+            "WGS 84 / Pseudo-Mercator".to_owned()
+        } else {
+            format!("WGS 84 / Pseudo-Mercator (unit {units})")
+        };
+        return Ok(Crs::Projected(ProjectedCRS::create(
+            name,
+            GeodeticCRS::Geographic(GeographicCRS::epsg_4326()),
+            conversion,
+            coordinate_system,
+        )));
+    }
     Ok(Crs::Projected(ProjectedCRS::create(
         name,
         GeodeticCRS::Geographic(base),
         conversion,
-        projfam::projected_cs(proj, tokens, UnitOfMeasure::metre())?,
+        coordinate_system,
     )))
 }

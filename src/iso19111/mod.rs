@@ -18,6 +18,7 @@ mod json;
 mod model;
 mod parammap;
 mod pipeline;
+mod proj_crs;
 mod projfam;
 mod projstring;
 mod select;
