@@ -8,6 +8,7 @@ mod bound_export;
 mod bound_import;
 mod buildop;
 mod compound;
+mod convmethod;
 mod derived;
 mod equiv;
 mod esri_parammap;

@@ -11,6 +11,9 @@ use super::model::{
 use super::parammap::{self, MethodMap, ParamMap};
 use super::pipeline::proj_number;
 
+mod projections;
+mod transformations;
+
 /// Whether transverse Mercator export inserts `+approx`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TmercApprox {
@@ -247,7 +250,12 @@ impl Transformation {
     #[must_use]
     pub fn inverse(&self) -> Self {
         let mut inverse = self.clone();
-        inverse.inverted = !self.inverted;
+        if self.has_translation_inverse() {
+            // PROJ writes the inverse of these methods with negated values, not `+inv`.
+            inverse.negate_values();
+        } else {
+            inverse.inverted = !self.inverted;
+        }
         std::mem::swap(&mut inverse.source, &mut inverse.target);
         for identifier in &mut inverse.identified.identifiers {
             identifier.code_space = inverse_code_space(&identifier.code_space);
@@ -331,7 +339,7 @@ impl Conversion {
     /// The inverse conversion, as `InverseConversion`: the same method and parameters, an
     /// `Inverse of` name, and `INVERSE(...)` identifiers.
     #[must_use]
-    pub(crate) fn inverse(&self) -> Self {
+    pub fn inverse(&self) -> Self {
         let mut inverse = self.clone();
         inverse.inverted = !self.inverted;
         for identifier in &mut inverse.identified.identifiers {
@@ -451,7 +459,19 @@ fn measures_equivalent(left: &Measure, right: &Measure, criterion: Equivalence) 
     if left_si.is_infinite() && right_si.is_infinite() {
         return left_si.is_sign_positive() == right_si.is_sign_positive();
     }
-    (left_si - right_si).abs() <= 2e-10 * left_si.abs()
+    let difference = left_si - right_si;
+    if difference.abs() <= 2e-10 * left_si.abs() {
+        return true;
+    }
+    // Under `Equivalent`, an angle equals the same angle a whole turn away:
+    // `-3` and `357` degrees describe one Hotine azimuth (PROJ test
+    // `hotine_oblique_mercator_variant_A_export_equivalent_modulo_360`).
+    if left.unit().kind() == UnitKind::Angular {
+        let turns = (difference / std::f64::consts::TAU).round();
+        let residual = difference - turns * std::f64::consts::TAU;
+        return residual.abs() <= 2e-10 * left_si.abs().max(right_si.abs());
+    }
+    false
 }
 
 fn identified_names_match(left: &str, right: &str, criterion: Equivalence) -> bool {
@@ -832,7 +852,7 @@ impl super::model::Conversion {
         }
     }
 
-    fn measure_of_code(&self, code: i32) -> Option<&Measure> {
+    pub(crate) fn measure_of_code(&self, code: i32) -> Option<&Measure> {
         let by_code = self.parameters.iter().find_map(|parameter| {
             if parameter.code.parse::<i32>().ok() == Some(code) {
                 measure_ref(&parameter.value)
@@ -870,7 +890,7 @@ impl super::model::Conversion {
         })
     }
 
-    fn from_code(
+    pub(crate) fn from_code(
         props: &OpProps,
         code: i32,
         values: Vec<ParameterValue>,

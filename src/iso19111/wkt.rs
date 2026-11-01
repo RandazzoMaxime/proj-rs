@@ -1585,7 +1585,14 @@ fn export_conversion(
             node_from_ids(&conversion.identified.identifiers),
         );
         formatter.add_quoted(conversion.name());
-        export_method(&conversion.method, formatter)?;
+        let inverse_method;
+        let method = if conversion.inverted {
+            inverse_method = inverted_method(&conversion.method);
+            &inverse_method
+        } else {
+            &conversion.method
+        };
+        export_method(method, formatter)?;
         for parameter in &conversion.parameters {
             if omitted_zero_parameter(conversion, parameter) {
                 continue;
@@ -1715,6 +1722,22 @@ fn export_conversion_wkt1(
             add_parameter_value(parameter, formatter)?;
             formatter.end_node();
         }
+        // A WKT1 Hotine without a rectified grid angle gets the azimuth as its
+        // angle, as PROJ writes it for GDAL.
+        if !formatter.esri
+            && matches!(conversion.method.code.as_str(), "9812" | "9815")
+            && !conversion
+                .parameters
+                .iter()
+                .any(|parameter| parameter.code == "8814")
+        {
+            if let Some(azimuth) = conversion.parameters.iter().find(|p| p.code == "8813") {
+                formatter.start_node("PARAMETER", NodeId::Absent);
+                formatter.add_quoted("rectified_grid_angle");
+                add_parameter_value(azimuth, formatter)?;
+                formatter.end_node();
+            }
+        }
     }
     formatter.output_id.pop();
     formatter.output_unit.pop();
@@ -1788,6 +1811,17 @@ fn write_esri_value(
             formatter.add_number(angle);
         }
         _ => formatter.add_number(measure.si_value()),
+    }
+}
+
+/// The method of an inverted conversion, as PROJ `InverseConversion` writes it in
+/// WKT2: an `Inverse of` name and an `INVERSE(...)` code space.
+fn inverted_method(method: &OperationMethod) -> OperationMethod {
+    OperationMethod {
+        name: format!("Inverse of {}", method.name),
+        code_space: format!("INVERSE({})", method.code_space),
+        code: method.code.clone(),
+        parameters: method.parameters.clone(),
     }
 }
 

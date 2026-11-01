@@ -4,6 +4,7 @@
 //! tree into the ISO 19111 objects in [`super::model`], following
 //! `WKTParser::createFromWKT` in PROJ `src/iso19111/io.cpp`.
 
+use super::buildop::{OpProps, UtmHemisphere};
 use super::factory::{AuthorityFactory, DatabaseContext};
 use super::model::{
     Axis, BoundCRS, CartesianCS, CompoundCRS, ConcatenatedOperation, ConcatenatedStep, Conversion,
@@ -1543,9 +1544,10 @@ impl WktParser {
             crs.identified.identifiers.clear();
             return;
         }
-        // No axis and no unit of its own: PROJ keeps the authority coordinate
-        // system, so a degree axis carries `EPSG:9122`.
-        if !had_unit && !had_axis {
+        // No axis, and no unit of its own or the authority's unit: PROJ keeps the
+        // authority coordinate system, so a degree axis carries `EPSG:9122`, and
+        // a base CRS of a PROJCS is latitude first (`wkt1_projected`).
+        if !had_axis && (!had_unit || !units_differ) {
             crs.coordinate_system = db_crs.coordinate_system().clone();
         }
     }
@@ -2076,7 +2078,7 @@ impl WktParser {
         let conversion = if let Some(conversion) = node.child(&["CONVERSION"]) {
             self.build_conversion(conversion, linear, angular)?
         } else if let Some(projection) = node.child(&["PROJECTION"]) {
-            self.build_wkt1_projection(node, projection, linear, angular)?
+            wkt1_utm_named(self.build_wkt1_projection(node, projection, linear, angular)?)
         } else {
             return Err(invalid("missing CONVERSION"));
         };
@@ -2203,6 +2205,23 @@ impl WktParser {
                 }
             }
         }
+        // ESRI writes a south orientated transverse Mercator as a regular one
+        // with a scale factor of -1 (PROJ `io.cpp`, ESRI dialect).
+        if self.esri && ci_eq(&method_name, "Transverse_Mercator") {
+            let negative = parameters
+                .iter_mut()
+                .find(|parameter| ci_eq(parameter.name(), "scale_factor"))
+                .is_some_and(|parameter| match &mut parameter.value {
+                    ParameterValue::Measure(measure) if measure.value == -1.0 => {
+                        measure.value = 1.0;
+                        true
+                    }
+                    _ => false,
+                });
+            if negative {
+                method_name = "Transverse_Mercator_South_Orientated".to_owned();
+            }
+        }
         if ci_eq(&method_name, "Mercator_1SP") && !has_center_latitude(node) {
             let origin = parameters
                 .iter()
@@ -2227,15 +2246,60 @@ impl WktParser {
         }
         let (mapped_name, code) = if polar_variant_b {
             ("Polar Stereographic (variant B)", "9829")
+        } else if ci_eq(&method_name, "Krovak") && axes_are_east_north(node) {
+            ("Krovak (North Orientated)", "1041")
         } else {
             wkt1_method(&method_name)
         };
         if !code.is_empty() {
             method_name = mapped_name.to_owned();
         }
+        // The method's own WKT1 names come first, as in PROJ: Bonne's
+        // `standard_parallel_1` is EPSG 8801 there, not the generic 8823.
+        // A WKT1 method outside `wkt1_method` has no code yet, so its own WKT1
+        // name finds the map.
+        let method_params = code
+            .parse()
+            .ok()
+            .and_then(super::parammap::method_by_code)
+            .or_else(|| super::parammap::method_by_wkt1_name(&method_name))
+            .map(|method| method.params);
         for parameter in &mut parameters {
+            if code == "1041" && parameter.code.is_empty() {
+                // Krovak (North Orientated) has its own parameter set.
+                let krovak_north = if ci_eq(&parameter.name, "latitude_of_center") {
+                    Some(("Latitude of projection centre", "8811"))
+                } else if ci_eq(&parameter.name, "longitude_of_center") {
+                    Some(("Longitude of origin", "8833"))
+                } else if ci_eq(&parameter.name, "azimuth") {
+                    Some(("Co-latitude of cone axis", "1036"))
+                } else if ci_eq(&parameter.name, "pseudo_standard_parallel_1") {
+                    Some(("Latitude of pseudo standard parallel", "8818"))
+                } else if ci_eq(&parameter.name, "scale_factor") {
+                    Some(("Scale factor on pseudo standard parallel", "8819"))
+                } else {
+                    None
+                };
+                if let Some((name, code)) = krovak_north {
+                    parameter.name = name.to_owned();
+                    parameter.code_space = "EPSG".to_owned();
+                    parameter.code = code.to_owned();
+                    continue;
+                }
+            }
             if parameter.code.is_empty() {
-                if let Some((name, code, _)) = wkt1_parameter(&parameter.name) {
+                let own = method_params.and_then(|params| {
+                    params.iter().find(|param| {
+                        param
+                            .wkt1_name
+                            .is_some_and(|wkt1| ci_eq(wkt1, &parameter.name))
+                    })
+                });
+                if let Some(own) = own.filter(|param| param.epsg_code != 0) {
+                    parameter.name = own.wkt2_name.to_owned();
+                    parameter.code_space = "EPSG".to_owned();
+                    parameter.code = own.epsg_code.to_string();
+                } else if let Some((name, code, _)) = wkt1_parameter(&parameter.name) {
                     parameter.name = name.to_owned();
                     parameter.code_space = "EPSG".to_owned();
                     parameter.code = code.to_owned();
@@ -2986,6 +3050,31 @@ pub(crate) fn helmert_parameters(values: &[f64]) -> Vec<Parameter> {
         .collect()
 }
 
+/// Krovak with east then north axes is the North Orientated variant, EPSG:1041.
+fn axes_are_east_north(node: &WktNode) -> bool {
+    let axes = node.children_named("AXIS");
+    let direction = |index: usize| {
+        axes.get(index)
+            .and_then(|axis| axis.children.get(1))
+            .map(|token| token.value.as_str())
+    };
+    matches!(
+        (direction(0), direction(1)),
+        (Some(first), Some(second)) if ci_eq(first, "EAST") && ci_eq(second, "NORTH")
+    )
+}
+
+/// A WKT1 Transverse Mercator that is a UTM zone takes the UTM conversion and its
+/// name, without an authority code, as PROJ does on import.
+fn wkt1_utm_named(conversion: Conversion) -> Conversion {
+    let named = match conversion.utm_zone() {
+        Some((zone, UtmHemisphere::North)) => Conversion::create_utm_north(&OpProps::new(), zone),
+        Some((zone, UtmHemisphere::South)) => Conversion::create_utm_south(&OpProps::new(), zone),
+        None => return conversion,
+    };
+    named.unwrap_or(conversion)
+}
+
 fn wkt1_method(name: &str) -> (&'static str, &'static str) {
     if ci_eq(name, "Transverse_Mercator") {
         ("Transverse Mercator", "9807")
@@ -3005,7 +3094,9 @@ fn wkt1_method(name: &str) -> (&'static str, &'static str) {
         ("Polar Stereographic (variant A)", "9810")
     } else if ci_eq(name, "Oblique_Stereographic") {
         ("Oblique Stereographic", "9809")
-    } else if ci_eq(name, "Hotine_Oblique_Mercator_Azimuth_Natural_Origin") {
+    } else if ci_eq(name, "Hotine_Oblique_Mercator")
+        || ci_eq(name, "Hotine_Oblique_Mercator_Azimuth_Natural_Origin")
+    {
         ("Hotine Oblique Mercator (variant A)", "9812")
     } else if ci_eq(name, "Hotine_Oblique_Mercator_Azimuth_Center") {
         ("Hotine Oblique Mercator (variant B)", "9815")
