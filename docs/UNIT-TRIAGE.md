@@ -5,11 +5,11 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 610 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `core` | 585 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
 | `niche` | 150 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 76 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (610)
+## core (585)
 
 ### test_c_api.cpp (52)
 
@@ -331,16 +331,10 @@ The class comes from the test name alone, so check it when you port a test.
 - `wkt_parse.PointMotionOperation`
 - `json_import.PointMotionOperation`
 
-### test_operation.cpp (74)
+### test_operation.cpp (49)
 
 - `operation.transformation_to_wkt`
 - `operation.concatenated_operation`
-- `operation.transformation_createGeocentricTranslations`
-- `operation.transformation_createGeocentricTranslations_between_geocentricCRS`
-- `operation.transformation_createGeocentricTranslations_null`
-- `operation.transformation_createGeocentricTranslations_neg_zero`
-- `operation.transformation_createPositionVector`
-- `operation.transformation_createCoordinateFrameRotation`
 - `operation.transformation_createTimeDependentPositionVector`
 - `operation.transformation_createTimeDependentCoordinateFrameRotation`
 - `operation.transformation_successive_helmert_noop`
@@ -351,9 +345,6 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.transformation_inverse`
 - `operation.transformation_createTOWGS84`
 - `operation.createAxisOrderReversal`
-- `operation.tmerc_south_oriented_export`
-- `operation.tmerc_south_oriented_export_esri_102470`
-- `operation.bonne_export`
 - `operation.equidistant_cylindrical_lat_0`
 - `operation.geostationary_satellite_sweep_x_export`
 - `operation.webmerc_export`
@@ -363,26 +354,11 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.webmerc_import_from_WKT2_EPSG_3785_deprecated`
 - `operation.webmerc_import_from_broken_esri_WGS_84_Pseudo_Mercator`
 - `operation.mercator_spherical_import`
-- `operation.nzmg_export`
-- `operation.oblique_stereographic_export`
-- `operation.orthographic_export`
-- `operation.local_orthographic_export`
-- `operation.american_polyconic_export`
 - `operation.wkt1_import_polar_stereographic_variantA`
 - `operation.wkt1_import_polar_stereographic_variantB`
 - `operation.wkt1_import_polar_stereographic_ambiguous`
 - `operation.wkt1_import_equivalent_parameters`
-- `operation.robinson_export`
-- `operation.sinusoidal_export`
-- `operation.stereographic_export`
-- `operation.vandergrinten_export`
-- `operation.wagner_export`
-- `operation.wagnerIII_export`
-- `operation.qsc_export`
-- `operation.sch_export`
 - `operation.conversion_inverse`
-- `operation.eqearth_export`
-- `operation.vertical_perspective_export`
 - `operation.laborde_oblique_mercator`
 - `operation.adams_ws2_export`
 - `operation.hyperbolic_cassini_soldner`
@@ -393,7 +369,6 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.three_param_equivalent_to_seven_param`
 - `operation.position_vector_equivalent_coordinate_frame`
 - `operation.conversion_missing_parameter`
-- `operation.hotine_oblique_mercator_variant_A_export_equivalent_modulo_360`
 - `operation.normalizeForVisualization`
 - `operation.export_of_Geographic3D_to_GravityRelatedHeight_gtx_unknown_grid`
 - `operation.export_of_boundCRS_with_proj_string_method`
