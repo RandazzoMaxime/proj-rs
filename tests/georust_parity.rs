@@ -70,7 +70,6 @@ fn assert_eq_within(left: f64, right: f64, epsilon: f64) {
 }
 
 #[test]
-#[ignore = "gap: def() returns the text given, not libproj's normalized definition"]
 fn test_definition() {
     let wgs84 = "+proj=longlat +datum=WGS84 +no_defs";
     let proj = Proj::new(wgs84).unwrap();
@@ -100,7 +99,6 @@ fn test_create_crs_to_crs_from_pj() {
 }
 
 #[test]
-#[ignore = "gap: Debug output is not libproj's (id, description, definition, accuracy)"]
 fn test_debug() {
     let proj = Proj::new("+proj=longlat +datum=WGS84 +no_defs").unwrap();
     assert_eq!(
@@ -287,7 +285,6 @@ fn test_input_order() {
 }
 
 #[test]
-#[ignore = "gap: area_of_use has no area for EPSG:3035"]
 fn test_area_of_use() {
     let proj = Proj::new("EPSG:3035").unwrap();
     let (area, name) = proj.area_of_use().unwrap();

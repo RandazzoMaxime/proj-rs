@@ -379,7 +379,7 @@ enum Body {
 /// A coordinate transformation.
 ///
 /// Build one with [`Proj::new`], [`Proj::new_known_crs`], or [`ProjBuilder`].
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Proj {
     body: Body,
     definition: String,
@@ -547,19 +547,39 @@ impl Proj {
         }
     }
 
-    /// Area of use.
+    /// Area of use of a CRS, and its name, as `proj_get_area_of_use` reports them.
+    ///
+    /// The box is `None` when the CRS has no bounding box in `proj.db`. The
+    /// name is the description of its first usage.
     ///
     /// # Errors
     ///
-    /// [`ProjError::UnknownAreaOfUse`]. Extents in `proj.db` are not reported,
-    /// and this method does not invent one.
+    /// [`ProjError::UnknownAreaOfUse`] when this transform is not a CRS built from
+    /// `EPSG:`, WKT, or PROJJSON, or when the CRS cannot be read.
     pub fn area_of_use(&self) -> Result<(Option<Area>, Option<String>), ProjError> {
+        if matches!(self.body, Body::Single(_)) {
+            return crate::proj_info::crs_area_of_use(&self.definition);
+        }
         Err(ProjError::UnknownAreaOfUse)
     }
 
     /// Description of this transform.
+    ///
+    /// For a PROJ string, `id` is its `proj=` name, `description` is
+    /// `PROJ-based coordinate operation`, and `definition` is [`Self::def`].
     #[must_use]
     pub fn proj_info(&self) -> ProjInfo {
+        if matches!(self.body, Body::Native(_)) {
+            let definition = self.def().ok();
+            let id = definition.as_deref().and_then(crate::proj_info::proj_name);
+            return ProjInfo {
+                id,
+                description: Some(crate::proj_info::OPERATION_DESCRIPTION.to_owned()),
+                definition,
+                has_inverse: self.has_inverse(),
+                accuracy: -1.0,
+            };
+        }
         ProjInfo {
             id: None,
             description: Some(self.definition.clone()),
@@ -569,17 +589,26 @@ impl Proj {
         }
     }
 
-    /// PROJ string or CRS pair that built this object.
+    /// Definition of this object, as libproj reports it.
+    ///
+    /// For a PROJ string this is the CRS the string reads as, written back as
+    /// `proj=… key=value …` with the datum's ellipsoid and `towgs84=` or
+    /// `nadgrids=` appended. `+proj=longlat +datum=WGS84 +no_defs` gives
+    /// `proj=longlat datum=WGS84 no_defs ellps=WGS84 towgs84=0,0,0`.
     ///
     /// # Errors
     ///
-    /// [`ProjError::Definition`] when no definition was stored.
+    /// [`ProjError::Definition`] when no definition was stored, or when a PROJ
+    /// string cannot be read as a CRS (a pipeline, a grid step, `+init=`), or
+    /// names a datum PROJ does not know.
     pub fn def(&self) -> Result<String, ProjError> {
         if self.definition.is_empty() {
-            Err(ProjError::Definition)
-        } else {
-            Ok(self.definition.clone())
+            return Err(ProjError::Definition);
         }
+        if matches!(self.body, Body::Native(_)) {
+            return crate::proj_info::operation_definition(&self.definition);
+        }
+        Ok(self.definition.clone())
     }
 
     /// Version of the PROJ release this port follows.
