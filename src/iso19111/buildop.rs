@@ -832,7 +832,7 @@ impl super::model::Conversion {
         }
     }
 
-    fn measure_of_code(&self, code: i32) -> Option<&Measure> {
+    pub(crate) fn measure_of_code(&self, code: i32) -> Option<&Measure> {
         let by_code = self.parameters.iter().find_map(|parameter| {
             if parameter.code.parse::<i32>().ok() == Some(code) {
                 measure_ref(&parameter.value)
@@ -870,7 +870,7 @@ impl super::model::Conversion {
         })
     }
 
-    fn from_code(
+    pub(crate) fn from_code(
         props: &OpProps,
         code: i32,
         values: Vec<ParameterValue>,
