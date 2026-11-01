@@ -80,34 +80,24 @@ passe sans modification).
 | `EPSG:4326` vers `EPSG:2230` | 1 | égal : `6693625.672175 3497301.591803` (pieds US) |
 | `EPSG:4326` vers `EPSG:3035` | 1 | égal sur les valeurs principales du brief : est `3756581.008815`, nord `2890102.602314` |
 | `EPSG:2230` vers `EPSG:26946` | 1 | égal |
-| `EPSG:2154` vers `EPSG:32631` | 1 | **ouvert**, voir « Reste ouvert » |
+| `EPSG:2154` vers `EPSG:32631` | 2 | égal : `452013.62305875 5411682.07312335` au premier point, `500000.0 5149603.36165604` au second |
 
 Le pipeline existe pour les six paires : aucun cas `gap: no pipeline`.
 
-## Reste ouvert
+## Correction de l'oracle du brief
 
-**Conflit d'oracle sur `EPSG:2154` vers `EPSG:32631` (cas ignoré, à trancher par le mainteneur).**
-La valeur PROJ du brief, `452014.05470595 5411682.55322704`, est égale au chiffre près
-à la sortie de l'ancien constructeur de pipeline EPSG (`crs.rs`, `pipeline_of`) : le
-brief la donne comme sortie de PROJ, mais c'est notre valeur de l'ancien chemin.
-La chaîne que cette crate sélectionne (`EPSG:1671`, `ETRS89-FRA [RGF93 v1] to WGS 84 (1)`,
-tous paramètres nuls, donc une identité) donne `452013.6230587 5411682.0731233`.
-Trois éléments disent que cette valeur est celle de PROJ :
+Le brief donnait pour `EPSG:2154` vers `EPSG:32631` la valeur `452014.05470595
+5411682.55322704`. C'était la sortie de l'ancien constructeur de pipeline EPSG
+(`crs.rs`, `pipeline_of`), et non la valeur de PROJ : le brief lisait la première valeur
+de la ligne du journal CI (`Ok(got) vs PROJ (want)`), qui est notre cs2cs. La valeur
+PROJ est celle qui suit `vs PROJ`, à savoir `452013.62305875 5411682.07312335` pour
+`(652000, 6862000)` et `500000.0 5149603.36165604` pour `(700000, 6600000)`. C'est la
+chaîne identité `EPSG:1671` (paramètres nuls), que cette crate sélectionne. Le cas est
+réactivé avec ces valeurs.
 
-- le test CI `tests/agree_cs2cs.rs` attend que la façade (qui donne la même identité)
-  concorde avec `cs2cs` à 1e-2 près sur cette paire ;
-- les écarts « 0.47 à 0.51 m » du brief sont exactement les écarts entre l'ancien
-  chemin et l'identité, sur les trois paires 4326→2154, 2154→32631, 4326→3035 ;
-- la valeur principale du brief pour `EPSG:4326` vers `EPSG:2154` est l'identité.
-
-Le paquet PROJ 9.9.0 de conda-forge a été téléchargé dans le dossier de travail, mais son
-exécution a été refusée par l'outil dans cette session : la confirmation reste à faire.
-Le cas porte la valeur du brief, inchangée, avec `#[ignore]`.
-
-**La ligne « PROJ prints » de `EPSG:4326` vers `EPSG:3035` du brief** (`2890102.16524512
-3756580.53450501`) est la même sortie de l'ancien chemin. Elle diffère de 0.47 m de la
-valeur principale du brief, que le pipeline reproduit. La valeur principale est celle
-qui est testée.
+Même correction pour la ligne « PROJ prints » de `EPSG:4326` vers `EPSG:3035` du brief
+(`2890102.16524512 3756580.53450501`) : elle était l'ancienne sortie. La valeur PROJ est
+la principale, `E 3756581.00881472, N 2890102.6023135`, testée et atteinte.
 
 **Étapes 2 et 3 non commencées.** Elles dépendent de l'oracle complet (les drapeaux
 `cli_gap` et `known_gap` ne se mettent à faux que sur des paires vérifiées). La règle

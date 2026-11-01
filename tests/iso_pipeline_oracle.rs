@@ -135,19 +135,22 @@ fn wgs84_to_etrs89_laea_europe_northing_first() {
     );
 }
 
-// The brief's value is the output of the old EPSG pipeline builder (`crs.rs`), to every
-// printed digit. The chain this crate selects is an identity for RGF93 to WGS 84 (EPSG:1671,
-// all parameters zero) and gives 452013.6230587 / 5411682.0731233, the value the facade and
-// the CI agreement test `EPSG:2154` to `EPSG:32631` use. The maintainer must confirm PROJ's
-// number before this case is enabled.
-#[ignore = "gap: oracle conflict, the brief's PROJ value equals the old crs.rs pipeline output (see the sheet)"]
+// The chain is the identity for RGF93 to WGS 84 (EPSG:1671, all parameters zero), so PROJ's
+// value is the one the identity gives. The first value the brief gave for this pair was the
+// old pipeline output; the CI log has PROJ's value after `vs PROJ`, and it is used here.
 #[test]
 fn rgf93_lambert93_to_utm31n() {
     assert_matches_proj(
         "EPSG:2154",
         "EPSG:32631",
         (652_000.0, 6_862_000.0),
-        (452_014.054_705_95, 5_411_682.553_227_04),
+        (452_013.623_058_75, 5_411_682.073_123_35),
+    );
+    assert_matches_proj(
+        "EPSG:2154",
+        "EPSG:32631",
+        (700_000.0, 6_600_000.0),
+        (500_000.0, 5_149_603.361_656_04),
     );
 }
 
