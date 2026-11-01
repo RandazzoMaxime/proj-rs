@@ -1715,6 +1715,22 @@ fn export_conversion_wkt1(
             add_parameter_value(parameter, formatter)?;
             formatter.end_node();
         }
+        // A WKT1 Hotine without a rectified grid angle gets the azimuth as its
+        // angle, as PROJ writes it for GDAL.
+        if !formatter.esri
+            && matches!(conversion.method.code.as_str(), "9812" | "9815")
+            && !conversion
+                .parameters
+                .iter()
+                .any(|parameter| parameter.code == "8814")
+        {
+            if let Some(azimuth) = conversion.parameters.iter().find(|p| p.code == "8813") {
+                formatter.start_node("PARAMETER", NodeId::Absent);
+                formatter.add_quoted("rectified_grid_angle");
+                add_parameter_value(azimuth, formatter)?;
+                formatter.end_node();
+            }
+        }
     }
     formatter.output_id.pop();
     formatter.output_unit.pop();

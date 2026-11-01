@@ -151,36 +151,20 @@ and `PORT-NOTES-tests.md`.
 
 ## test_io.cpp
 
-- `wkt_parse.wkt1_esri_EPSG_4901_grad`
-- `wkt_parse.wkt1_esri_LINUNIT`
 - `wkt_parse.wkt2_epsg_org_EPSG_4901_PRIMEM_weird_sexagesimal_DMS`
-- `wkt_parse.wkt1_geographic_old_datum_name_from_EPSG_code`
 - `wkt_parse.wkt1_geographic_old_datum_name_without_EPSG_code`
-- `wkt_parse.wkt1_geographic_deprecated`
 - `wkt_parse.wkt1_geographic_with_PROJ4_extension`
 - `wkt_parse.wkt1_geographic_epsg_org_api_4326`
 - `wkt_parse.wkt1_geographic_epsg_org_api_4258`
 - `wkt_parse.wkt1_geocentric_with_PROJ4_extension`
-- `wkt_parse.wkt1_non_conformant_inf_inverse_flattening`
-- `wkt_parse.wkt1_esri_GCS_unknown_D_unknown`
-- `wkt_parse.wkt1_esri_GCS_unknown_D_Unknown_based_on_WGS_84_ellipsoid`
 - `wkt_parse.wkt2_simplified_EPSG_4326`
 - `wkt_parse.wkt2_EPSG_4979`
 - `wkt_parse.wkt2_spherical_planetocentric`
 - `wkt_parse.wkt2_geocentric_DEFININGTRANSFORMATION`
-- `wkt_parse.wkt1_projected`
-- `wkt_parse.wkt1_projected_no_axis`
-- `wkt_parse.wkt1_projected_wrong_axis_geogcs`
-- `wkt_parse.wkt1_projected_wrong_angular_unit`
 - `wkt_parse.wkt1_projected_with_PROJ4_extension`
-- `wkt_parse.wkt1_projected_missing_unit_and_axis`
 - `wkt_parse.wkt1_krovak_south_west`
-- `wkt_parse.wkt1_krovak_north_oriented`
 - `wkt_parse.wkt2_krovak_modified_south_west`
 - `wkt_parse.wkt2_krovak_modified_east_north`
-- `wkt_parse.wkt1_hotine_oblique_mercator_without_rectified_grid_angle`
-- `wkt_parse.wkt1_hotine_oblique_mercator_with_rectified_grid_angle`
-- `wkt_parse.wkt1_hotine_oblique_mercator_azimuth_center_with_rectified_grid_angle`
 - `proj_export.wkt2_hotine_oblique_mercator_without_rectified_grid_angle`
 - `wkt_parse.wkt2_projected`
 - `wkt_parse.wkt2_2019_projected_with_id_in_basegeodcrs`
