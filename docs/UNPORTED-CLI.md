@@ -10,7 +10,6 @@ A row remains when that case does not match the yaml.
 | `test_cs2cs_various.yaml#90` | cs2cs | expected -112.0000000	46.0000000 0.0000000 got 39.9148994	64.3941424 0.0000000 | Test inverse handling |
 | `test_cs2cs_various.yaml#97` | cs2cs | exit 0 expected 3  | Test effect of --accuracy |
 | `test_cs2cs_various.yaml#98` | cs2cs | exit 0 expected 3  | Test effect of --no-ballpark |
-| `test_cs2cs_various.yaml#100` | cs2cs | expected 49d59'59.36"N	179d59'52.133"W 0.000 got 49d59'57.924"N	179d59'52.076"W -6.772 | - |
 | `test_cs2cs_various.yaml#118` | cs2cs | no numbers expected *	* inf got 49dN	2dE 0.000 | Test cs2cs --only-best (grid missing) for EPSG:4326+3855 to EPSG:4979 |
 | `test_cs2cs_various.yaml#119` | cs2cs | no numbers expected *	* inf got 49dN	2dE 0.000 | Test cs2cs --only-best=yes (grid missing) for EPSG:4326+3855 to EPSG:4979 |
 | `test_cs2cs_various.yaml#120` | cs2cs | no numbers expected *	* inf got 49dN	2dE 0.000 | Test cs2cs (grid missing) with PROJ_ONLY_BEST_DEFAULT=YES for EPSG:4326+3855 to EPSG:4979 |
@@ -18,7 +17,7 @@ A row remains when that case does not match the yaml.
 | `test_cs2cs_various.yaml#122` | cs2cs | no numbers expected *	* inf got 40dN	100dW 0.000 | Test cs2cs --only-best (grid missing) |
 | `test_cs2cs_various.yaml#123` | cs2cs | exit 0 expected 3  | Test cs2cs --only-best --no-ballpark (grid missing) |
 | `test_cs2cs_various.yaml#124` | cs2cs | expected 1402288.54	5076296.64 0.00 got 1402285.98	5076292.42 0.00 | Test cs2cs (grid missing) with scenario of GH-3607 that we are using the 'NAD27 to WGS 84 (6)' DMA-ConusW transformation |
-| `test_cs2cs_various.yaml#125` | cs2cs | exit 3 expected 0 Rel. 9.9.0, September 15th, 2026 <cs2cs>:  cannot initialize transformation cause: The underlying PROJ call failed: EPSG datum 6269 to 6267 ne | Test cs2cs (grid missing) with scenario of GH-3613 that we are using a WGS 84 intermediate to do NAD27 to NAD83 |
+| `test_cs2cs_various.yaml#125` | cs2cs | expected 569720.46	4268813.88 0.00 got 569706.33	4268817.68 0.00 | Test cs2cs (grid missing) with scenario of GH-3613 that we are using a WGS 84 intermediate to do NAD27 to NAD83 |
 | `test_cs2cs_various.yaml#126` | cs2cs | stderr text mismatch expected: Attempt to use coordinate operation Inverse of WGS 84 to EGM96 height (1) + ETRS89-ESP [REGENTE] to Alicante height (1) using ETR | Test cs2cs (grid missing) with scenario of https://lists.osgeo.org/pipermail/proj/2023-April/011003.html |
 | `test_cs2cs_various.yaml#128` | cs2cs | exit 0 expected 3  | Test cs2cs (grid missing) --only-best with scenario of https://lists.osgeo.org/pipermail/proj/2023-April/011003.html |
 | `test_cs2cs_various.yaml#130` | cs2cs | expected 4003461.55	705832.08 4898267.79 got 3995986.86	4846735.07 1100568.03 | Test cs2cs geographic -> geocentric using BETA2007.gsb grid |

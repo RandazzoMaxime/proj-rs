@@ -161,8 +161,8 @@ impl ConcatenatedOperation {
     ///
     /// # Errors
     ///
-    /// A step has no PROJ string in this crate: a conversion step, or a
-    /// transformation method this crate does not write.
+    /// A step has no PROJ string in this crate: a conversion step without its CRS
+    /// pair, or a transformation method this crate does not write.
     pub fn export_to_proj_string(&self, lines: ProjLines) -> Result<String, FactoryError> {
         self.export_to_proj_string_with(lines, Vec::new())
     }
@@ -194,11 +194,8 @@ impl ConcatenatedOperation {
                 CoordinateOperation::Concatenated(concatenated) => {
                     concatenated.export_steps(formatter)?;
                 }
-                CoordinateOperation::Conversion(_) => {
-                    return Err(FactoryError::Format(
-                        "a conversion step of a concatenated operation has no PROJ string in this crate"
-                            .to_owned(),
-                    ));
+                CoordinateOperation::Conversion(conversion) => {
+                    conversion.export_steps(formatter)?;
                 }
             }
             if step.reverse {

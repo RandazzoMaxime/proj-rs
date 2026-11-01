@@ -2288,6 +2288,8 @@ impl AuthorityFactory {
                 parameters: Vec::new(),
             },
             parameters,
+            source: None,
+            target: None,
             version: None,
             inverted: false,
         })
@@ -3528,6 +3530,8 @@ impl AuthorityFactory {
                 identified: transformation.identified,
                 method: transformation.method,
                 parameters: transformation.parameters,
+                source: None,
+                target: None,
                 version: transformation.version,
                 inverted: false,
             }));
@@ -4053,8 +4057,13 @@ impl CoordinateOperationFactory {
         let mut direct_empty = true;
         if let Crs::Projected(projected) = target {
             if same_authority(source, projected.base_crs()) {
+                // The caller's own source, not the base: its axis order is the one the
+                // pipeline must read (a PROJ-string base may be longitude first).
                 found.push(CoordinateOperation::Conversion(
-                    projected.deriving_conversion().clone(),
+                    projected
+                        .deriving_conversion()
+                        .clone()
+                        .with_endpoints(source.clone(), target.clone()),
                 ));
             }
         }

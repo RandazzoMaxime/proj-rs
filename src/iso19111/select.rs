@@ -115,6 +115,38 @@ pub fn best_pipeline_with(
     target: &str,
     only_best: OnlyBest,
 ) -> Result<BestOperation, FactoryError> {
+    best_operation(source, target, only_best).map(|(best, _)| best)
+}
+
+/// The pipeline of the best operation from `source` to `target` under `OnlyBest::Off`, and
+/// whether its first output axis is latitude or northing, for the facade. An approximate
+/// operation (a ballpark transformation, a zero shift) is an error here: the facade never
+/// returns a result it cannot stand behind, and keeps its previous path instead.
+pub(crate) fn best_pipeline_exact(
+    source: &str,
+    target: &str,
+) -> Result<(String, bool), FactoryError> {
+    match best_operation(source, target, OnlyBest::Off)? {
+        (
+            BestOperation::Pipeline {
+                definition,
+                lat_or_northing_first,
+            },
+            false,
+        ) => Ok((definition, lat_or_northing_first)),
+        (BestOperation::Pipeline { .. }, true) => Err(FactoryError::Format(format!(
+            "best operation from {source} to {target} is approximate"
+        ))),
+        (BestOperation::MissingGrid { message }, _) => Err(FactoryError::Format(message)),
+    }
+}
+
+/// [`best_pipeline_with`], and whether the chosen operation is approximate.
+fn best_operation(
+    source: &str,
+    target: &str,
+    only_best: OnlyBest,
+) -> Result<(BestOperation, bool), FactoryError> {
     let db = DatabaseContext::create()?;
     let source_crs = create_from_user_input(source, &db)?;
     let target_crs = create_from_user_input(target, &db)?;
@@ -127,7 +159,13 @@ pub fn best_pipeline_with(
     )?;
     let mut ranked = Vec::with_capacity(operations.len());
     for operation in operations {
-        let characteristics = characteristics(&operation, &db, &source_crs, &target_crs);
+        let characteristics = characteristics(
+            &operation,
+            &db,
+            &source_crs,
+            &target_crs,
+            GridSteps::Unwritten,
+        );
         ranked.push((operation, characteristics));
     }
     let ranked = sort(ranked);
@@ -147,15 +185,21 @@ pub fn best_pipeline_with(
     }
     if !characteristics.grids_available {
         let grids = proj_grids(&best, &db)?;
-        return Ok(BestOperation::MissingGrid {
-            message: missing_grid_message(&characteristics.name, &grids),
-        });
+        return Ok((
+            BestOperation::MissingGrid {
+                message: missing_grid_message(&characteristics.name, &grids),
+            },
+            characteristics.approx,
+        ));
     }
     let definition = export(&best, &source_crs, &target_crs, &db)?;
-    Ok(BestOperation::Pipeline {
-        definition,
-        lat_or_northing_first: lat_or_northing_first(&target_crs),
-    })
+    Ok((
+        BestOperation::Pipeline {
+            definition,
+            lat_or_northing_first: lat_or_northing_first(&target_crs),
+        },
+        characteristics.approx,
+    ))
 }
 
 /// `pj_warn_about_missing_grid`: the failure text for `name`, naming each grid
@@ -181,6 +225,13 @@ fn export(
             .export_to_proj_string_with(ProjLines::Single, proj_grid_names(operation, db)?),
         CoordinateOperation::Concatenated(concatenated) => concatenated
             .export_to_proj_string_with(ProjLines::Single, proj_grid_names(operation, db)?),
+        // A conversion the factory chained carries its CRS pair, which is the operation's
+        // own; a bare one keeps the CRS the caller gave.
+        CoordinateOperation::Conversion(conversion)
+            if conversion.source_crs().is_some() && conversion.target_crs().is_some() =>
+        {
+            conversion.export_pipeline(ProjLines::Single)
+        }
         CoordinateOperation::Conversion(conversion) if conversion.inverted => {
             Err(FactoryError::Format(format!(
                 "inverse conversion {} has no PROJ string in this crate",
@@ -193,14 +244,34 @@ fn export(
     }
 }
 
+/// Whether a candidate's grid and deformation steps are written when its PROJ string is
+/// taken for ordering. PROJ's `isPROJExportable` writes them, so the candidate list of
+/// `createOperations` follows it. The `cs2cs` choice writes them only where it has
+/// always written them, so its pipeline is unchanged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GridSteps {
+    /// Grid and deformation steps are written, as `isPROJExportable` takes them.
+    Written,
+    /// Grid and deformation steps are not written: the `cs2cs` choice.
+    Unwritten,
+}
+
 fn characteristics(
     operation: &CoordinateOperation,
     db: &DatabaseContext,
     source: &Crs,
     target: &Crs,
+    grids: GridSteps,
 ) -> Characteristics {
     let name = operation.name().to_owned();
-    let (exportable, proj_step_count, xyz_gridshift) = match export(operation, source, target, db) {
+    let text = match (grids, operation) {
+        (
+            GridSteps::Written,
+            CoordinateOperation::Transformation(_) | CoordinateOperation::Concatenated(_),
+        ) => operation.export_to_proj_string_with_database(db, ProjLines::Single),
+        _ => export(operation, source, target, db),
+    };
+    let (exportable, proj_step_count, xyz_gridshift) = match text {
         Ok(text) => {
             let xyz = text.contains("+proj=xyzgridshift");
             let steps = if xyz { 0 } else { proj_steps(&text) };
@@ -379,7 +450,9 @@ fn etrs_pair(operation: &CoordinateOperation) -> bool {
     starts(source) && starts(target)
 }
 
-fn lat_or_northing_first(target: &Crs) -> bool {
+/// Whether the first axis of a geographic or projected CRS is latitude or northing, so
+/// the pipeline writes that axis first. `false` for any other kind.
+pub(crate) fn lat_or_northing_first(target: &Crs) -> bool {
     let axes = match target {
         Crs::Geographic(crs) => crs.coordinate_system().axes(),
         Crs::Projected(crs) => crs.coordinate_system().axes(),
@@ -517,7 +590,8 @@ pub(crate) fn sort_candidates(
     let ranked = operations
         .into_iter()
         .map(|operation| {
-            let characteristics = characteristics(&operation, db, source, target);
+            let characteristics =
+                characteristics(&operation, db, source, target, GridSteps::Written);
             (operation, characteristics)
         })
         .collect();

@@ -337,11 +337,13 @@ fn concatenated_inverse_name(name: &str) -> String {
 
 impl Conversion {
     /// The inverse conversion, as `InverseConversion`: the same method and parameters, an
-    /// `Inverse of` name, and `INVERSE(...)` identifiers.
+    /// `Inverse of` name, and `INVERSE(...)` identifiers. The CRS pair, when set, is swapped
+    /// with the direction, as [`Transformation::inverse`] swaps its own.
     #[must_use]
     pub fn inverse(&self) -> Self {
         let mut inverse = self.clone();
         inverse.inverted = !self.inverted;
+        std::mem::swap(&mut inverse.source, &mut inverse.target);
         for identifier in &mut inverse.identified.identifiers {
             identifier.code_space = inverse_code_space(&identifier.code_space);
         }
@@ -514,6 +516,14 @@ impl super::model::Conversion {
             && lcc2sp_parallels_swapped(self, other)
     }
 
+    /// This conversion with its CRS pair set: `source` to `target` in the forward direction.
+    #[must_use]
+    pub(crate) fn with_endpoints(mut self, source: Crs, target: Crs) -> Self {
+        self.source = Some(Box::new(source));
+        self.target = Some(Box::new(target));
+        self
+    }
+
     /// Build a conversion whose method name and code are supplied explicitly.
     ///
     /// This is the form `validateParameters` uses for a method that is not the
@@ -533,6 +543,8 @@ impl super::model::Conversion {
                 method_code.to_owned(),
             ),
             parameters,
+            source: None,
+            target: None,
             version: None,
             inverted: false,
         }
@@ -921,6 +933,8 @@ impl super::model::Conversion {
             identified: identified_from(props, mapped.wkt2_name),
             method,
             parameters,
+            source: None,
+            target: None,
             version: None,
             inverted: false,
         })

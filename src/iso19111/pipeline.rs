@@ -109,8 +109,7 @@ impl PipelineFormatter {
 
     /// PROJ `PROJStringFormatter::ingestPROJString`: appends the steps of a PROJ string.
     ///
-    /// Only the tests read PROJ strings through the formatter, so this is test-only.
-    #[cfg(test)]
+    /// A pipeline string, or one step string such as `+proj=axisswap +order=2,1`.
     pub(crate) fn ingest_proj_string(&mut self, text: &str) {
         self.steps.extend(parse_proj_string(text));
     }
@@ -329,7 +328,6 @@ fn normalize_inverse(step: &mut Step) {
 /// Tokens are split on whitespace with the leading `+` removed. Global parameters
 /// (before the first step) and `title=` are dropped. `init=` is read as a parameter, so
 /// it prints differently from PROJ.
-#[cfg(test)]
 fn parse_proj_string(text: &str) -> Vec<Step> {
     let tokens: Vec<&str> = text
         .split_whitespace()
@@ -389,7 +387,6 @@ fn parse_proj_string(text: &str) -> Vec<Step> {
     steps
 }
 
-#[cfg(test)]
 fn new_step(name: &str) -> Step {
     Step {
         name: name.to_owned(),
@@ -400,7 +397,6 @@ fn new_step(name: &str) -> Step {
 
 /// Appends `token` (`key` or `key=value`) to the last step. A token before any step is
 /// a global parameter, which is dropped.
-#[cfg(test)]
 fn push_param(steps: &mut [Step], token: &str) {
     let (key, value) = token.split_once('=').unwrap_or((token, ""));
     if let Some(step) = steps.last_mut() {

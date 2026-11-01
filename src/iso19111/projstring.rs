@@ -343,8 +343,20 @@ impl ProjectedCRS {
 ///
 /// `target` is neither of those CRS, or a step cannot be written.
 pub(crate) fn operation_proj_string(source: &Crs, target: &Crs) -> Result<String, FactoryError> {
+    Ok(pipeline(&projection_steps(source, target)?))
+}
+
+/// The steps of [`operation_proj_string`], one PROJ string each, in pipeline order.
+///
+/// `ConcatenatedOperation` writes a conversion step from these, between its own
+/// `startInversion` and `stopInversion` when the step is reversed.
+///
+/// # Errors
+///
+/// As [`operation_proj_string`].
+pub(crate) fn projection_steps(source: &Crs, target: &Crs) -> Result<Vec<String>, FactoryError> {
     if let Crs::Geodetic(GeodeticCRS::Geocentric(geocentric)) = target {
-        return geocentric_operation(source, geocentric);
+        return geocentric_steps(source, geocentric);
     }
     let Crs::Projected(projected) = target else {
         return Err(FactoryError::Format(
@@ -379,10 +391,33 @@ pub(crate) fn operation_proj_string(source: &Crs, target: &Crs) -> Result<String
         projection.push_str(&ellipsoid_proj(ellipsoid));
     }
     steps.push(projection);
+    if let Some(step) = projected_unit_step(projected) {
+        steps.push(step);
+    }
     if let Some(order) = projected_axis_order(projected) {
         steps.push(format!("+proj=axisswap +order={order}"));
     }
-    Ok(pipeline(&steps))
+    Ok(steps)
+}
+
+/// `addUnitConvertAndAxisSwap` for the unit: the metre that the projection writes becomes
+/// the linear unit of the projected CRS, such as the US survey foot. `None` for the metre.
+fn projected_unit_step(crs: &ProjectedCRS) -> Option<String> {
+    let unit = crs.coordinate_system().axes().first()?.unit();
+    if unit.kind() != UnitKind::Linear || (unit.conversion_to_si() - 1.0).abs() <= 1e-10 {
+        return None;
+    }
+    Some(format!(
+        "+proj=unitconvert +xy_in=m +xy_out={}",
+        linear_out_name(unit)
+    ))
+}
+
+/// The PROJ name of a linear unit, or its factor when PROJ has no name for it.
+fn linear_out_name(unit: &UnitOfMeasure) -> String {
+    linear_proj_unit(unit.conversion_to_si())
+        .map(str::to_owned)
+        .unwrap_or_else(|| super::wkt::format_g(unit.conversion_to_si(), 15))
 }
 
 /// The `unitconvert` step that turns the geographic axes into radians, or
@@ -397,7 +432,7 @@ fn angular_to_radians(geographic: &GeographicCRS) -> Option<&'static str> {
 
 /// Geographic source to a geocentric target: axis swap, degrees to radians,
 /// `+proj=cart`, then metres into the target linear unit.
-fn geocentric_operation(source: &Crs, target: &GeocentricCRS) -> Result<String, FactoryError> {
+fn geocentric_steps(source: &Crs, target: &GeocentricCRS) -> Result<Vec<String>, FactoryError> {
     let Some(geographic) = geographic_of(source) else {
         return Err(FactoryError::Format(
             "the source CRS is not geographic".to_owned(),
@@ -431,15 +466,13 @@ fn geocentric_operation(source: &Crs, target: &GeocentricCRS) -> Result<String, 
     steps.push(cart);
     if let Some(unit) = target.coordinate_system.axes().first().map(Axis::unit) {
         if unit.kind() == UnitKind::Linear && (unit.conversion_to_si() - 1.0).abs() > 1e-10 {
-            let out = crate::projections::linear_proj_unit(unit.conversion_to_si())
-                .map(str::to_owned)
-                .unwrap_or_else(|| super::wkt::format_g(unit.conversion_to_si(), 15));
+            let out = linear_out_name(unit);
             steps.push(format!(
                 "+proj=unitconvert +xy_in=m +z_in=m +xy_out={out} +z_out={out}"
             ));
         }
     }
-    Ok(pipeline(&steps))
+    Ok(steps)
 }
 
 fn pipeline(steps: &[String]) -> String {
