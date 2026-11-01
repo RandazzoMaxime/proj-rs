@@ -674,6 +674,30 @@ fn vendored_gie_ratchet() {
         total.passed, expected,
         "update the {mode} line of tests/gie/passing.txt to the live pass count"
     );
+    // `files.txt` holds `name cases passed` for every file, network ones included.
+    // The progress chart in the README is drawn from it.
+    let files =
+        fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/gie/files.txt"))
+            .expect("files.txt");
+    for (name, counts) in &per_file {
+        let line = files
+            .lines()
+            .find(|line| line.split_whitespace().next() == Some(name))
+            .unwrap_or_else(|| panic!("tests/gie/files.txt has no line for {name}"));
+        let numbers: Vec<u64> = line
+            .split_whitespace()
+            .skip(1)
+            .map(|n| n.parse().expect("number"))
+            .collect();
+        assert_eq!(
+            numbers,
+            [
+                counts.passed + counts.failed + counts.skipped,
+                counts.passed
+            ],
+            "update the {name} line of tests/gie/files.txt (name cases passed)"
+        );
+    }
     let builtins = per_file
         .iter()
         .find(|(name, _)| name == "builtins.gie")

@@ -6,22 +6,12 @@
 //! rewrites the files instead. `docs/UNIT-TRIAGE.md` is generated whole, by
 //! sorting the open unit tests by name into `core`, `niche` and `shape`.
 
+mod common;
+
+use common::{gie_files, read, CLI_TOTALS, UNIT_TOTALS};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
-
-/// `TEST()` names per PROJ 9.9.0 unit file, ported or not.
-const UNIT_TOTALS: [(&str, usize); 6] = [
-    ("test_c_api.cpp", 152),
-    ("test_crs.cpp", 197),
-    ("test_factory.cpp", 113),
-    ("test_io.cpp", 454),
-    ("test_operation.cpp", 162),
-    ("test_operationfactory.cpp", 274),
-];
-/// Cases per PROJ CLI, from the yaml files.
-const CLI_TOTALS: [(&str, usize); 4] =
-    [("cct", 18), ("cs2cs", 143), ("proj", 4), ("projinfo", 111)];
 
 /// Name fragments (lowercase) of tests that check the shape of PROJ's C++
 /// object model or its C ABI, not a result a user sees.
@@ -136,10 +126,6 @@ The class comes from the test name alone, so check it when you port a test.\n\n\
     out
 }
 
-fn read(name: &str) -> String {
-    fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(name)).expect(name)
-}
-
 fn icon(open: usize, total: usize) -> &'static str {
     if open == 0 {
         "✅"
@@ -151,6 +137,11 @@ fn icon(open: usize, total: usize) -> &'static str {
 }
 
 /// Every generated value, by name.
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_precision_loss,
+    reason = "a percentage of case counts far below 2^52"
+)]
 fn values() -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     let mut unit_open: BTreeMap<&str, usize> = BTreeMap::new();
@@ -212,6 +203,17 @@ fn values() -> BTreeMap<String, String> {
     out.insert(
         "georust_pass".into(),
         (georust_total - georust_gaps).to_string(),
+    );
+    let (gie_cases, gie_done) = gie_files()
+        .iter()
+        .fold((0, 0), |(cases, done), (_, c, d)| (cases + c, done + d));
+    let all_total = gie_cases + unit_total + cli_total;
+    let all_done = gie_done + (unit_total - open_total) + (cli_total - cli_open_total);
+    out.insert("all_total".into(), all_total.to_string());
+    out.insert("all_done".into(), all_done.to_string());
+    out.insert(
+        "all_percent".into(),
+        format!("{:.1}", 100.0 * all_done as f64 / all_total as f64),
     );
     out.insert("cli_total".into(), cli_total.to_string());
     out.insert(

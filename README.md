@@ -20,7 +20,8 @@ enums instead of error codes and `NaN` sentinels.
 
 It targets Rust projects that use the [`proj`](https://github.com/georust/proj)
 crate: same API, one line changed in `Cargo.toml`, no libproj to build or
-install.
+install. That claim is checked by georust's own unit tests and is **not complete
+yet**: see [Status at a glance](#status-at-a-glance).
 
 - **Checked against PROJ itself.** The numeric oracle is the PROJ 9.9.0
   `test/gie` suite, vendored unchanged under [`tests/gie/`](tests/gie). The
@@ -33,6 +34,53 @@ install.
 - **Strict by default.** Clippy runs with `-D warnings`, `unwrap()` is banned
   outside tests, every `unsafe` block needs a `// SAFETY:` comment, and a
   ratchet fails the test run if the PROJ pass count ever drops.
+
+## Progress
+
+<p align="center">
+  <img src="docs/progress.svg" alt="One square per PROJ test case: green when PROJ-RS passes it, grey when it is still open. Left: the gie suite. Right: the unit tests and CLI cases." width="100%">
+</p>
+
+Each square is **one test case of PROJ 9.9.0 itself**. Green: PROJ-RS passes it.
+Grey: still open. In all, <!--gen:all_percent-->88.1<!--/gen-->% of the cases pass
+(<!--gen:all_done-->7478<!--/gen--> of <!--gen:all_total-->8484<!--/gen-->). The left panel is the numeric suite (`gie`), complete. The right
+panel is what is left: PROJ's C++ unit tests, which cover the ISO 19111 model,
+WKT and the operation factory, and the command-line cases. The chart is drawn
+from the same ledgers as the tables below by `tests/progress_svg.rs`, so it
+cannot say more than the tests do.
+
+## How the port is done
+
+PROJ-RS is not checked against tests written for it. It is checked against
+PROJ's own, and a case counts only when it passes.
+
+1. **PROJ is the oracle.** The `gie` files are vendored unchanged and run by a
+   Rust runner. The C++ unit tests and the CLI cases are ported one `TEST()` at
+   a time, with PROJ's expected strings kept as written. A test is never edited
+   to fit the code: when the Rust output differs from PROJ, the test stays open
+   and its cause is written down.
+2. **What is open is listed by name.** [`docs/UNPORTED-UNIT.md`](docs/UNPORTED-UNIT.md)
+   and [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md) hold every open case. A name leaves
+   a ledger only when its case passes, and the counts in this README, in the
+   [roadmap](ROADMAP.md) and in the chart are computed from them. A test fails
+   when they drift.
+3. **A ratchet, so nothing slides back.** `tests/gie/passing.txt` and
+   `tests/gie/files.txt` hold the pass counts, and a CLI case that used to pass
+   fails the run if it stops. Tolerances are PROJ's own, never loosened.
+4. **One lot, one topic.** Each pull request ports one topic and comes with a
+   [`docs/PORTING-*.md`](docs) sheet: the function map, the deliberate
+   deviations, what stays open and why, the commands that were run.
+5. **Value first.** The open unit tests are sorted by name into `core` (a result
+   a user sees: WKT, PROJ string, chosen operation), `niche` (rare CRS kinds)
+   and `shape` (the C++ object model, which the Rust API does not mirror on
+   purpose). See [`docs/UNIT-TRIAGE.md`](docs/UNIT-TRIAGE.md).
+6. **Parity with the crate it replaces.** The unit tests of georust `proj` 0.31
+   run against the facade ([`tests/georust_parity.rs`](tests/georust_parity.rs)):
+   <!--gen:georust_pass-->16<!--/gen--> of <!--gen:georust_total-->25<!--/gen--> pass today. The others are marked
+   `#[ignore = "gap: ..."]` with their cause, so a gap is a finding on the page and not
+   a surprise later. CI also compares the facade with the reference `cs2cs` on named CRS pairs.
+7. **Fail closed.** An unknown `+proj`, an unsupported method or a missing grid
+   is an error when the operation is built, never a coordinate.
 
 ## Status at a glance
 
@@ -168,7 +216,9 @@ PROJ-RS is not on crates.io yet. Use it from git:
 proj-rs = { git = "https://github.com/RandazzoMaxime/proj-rs" }
 ```
 
-Already using the `proj` crate? Swap it without touching your Rust code:
+Already using the `proj` crate? Swap it without touching your Rust code. Check
+the [parity status](#how-the-port-is-done) first: a few results still differ
+from PROJ's, which the georust gaps list:
 
 ```toml
 proj = { package = "proj-rs", git = "https://github.com/RandazzoMaxime/proj-rs" }
@@ -327,6 +377,12 @@ PROJ_NETWORK=ON cargo test --all-features --test gie_run -- --nocapture
 
 # Everything:
 cargo test --all-features
+
+# After a lot, refresh the counts, the triage and the chart from the ledgers:
+UPDATE_DOCS=1 cargo test --test docs_in_sync --test progress_svg
+
+# The known gaps of the georust facade, each with its cause:
+cargo test --test georust_parity -- --ignored
 ```
 
 `tests/agree_cs2cs.rs` calls a PROJ `cs2cs` binary found on `PATH` as a
@@ -350,8 +406,9 @@ are the vendored PROJ 9.9.0 `.gie` expectations. The check is skipped when no
 
 ## Roadmap
 
-The remaining work is in [ROADMAP.md](ROADMAP.md): the unit-test port, the CLI
-gaps, a green fresh checkout, and a portable batch path.
+The remaining work is in [ROADMAP.md](ROADMAP.md), in the order of what a user of
+the `proj` crate needs: georust parity first, then the `cs2cs` gaps, the unit
+tests by value, the `projinfo` text, and a portable batch path.
 
 ## Contributing
 
