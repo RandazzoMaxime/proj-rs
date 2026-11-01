@@ -4,6 +4,8 @@
 //! `WktFormatter`). See `docs/CRS-API.md`.
 
 mod bound;
+mod bound_export;
+mod bound_import;
 mod buildop;
 mod compound;
 mod derived;
@@ -43,7 +45,7 @@ pub use model::{
     VerticalReferenceFrame,
 };
 pub use pipeline::ProjLines;
-pub use projstring::create_crs_from_proj_string;
+pub use projstring::{create_crs_from_proj_string, create_crs_from_proj_string_with_database};
 pub use select::{best_pipeline, best_pipeline_with, BestOperation, OnlyBest};
 pub use wkt::{
     EllipsoidalHeightPolicy, LinunitPolicy, OutputAxisRule, WktConvention, WktFormatter, WktLines,
