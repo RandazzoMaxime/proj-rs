@@ -119,7 +119,7 @@ const PAIRS: &[Pair] = &[
         to: "EPSG:2154",
         points: PARIS,
         known_gap: false,
-        cli_gap: true,
+        cli_gap: false,
     },
     Pair {
         from: "EPSG:4326",
@@ -140,7 +140,7 @@ const PAIRS: &[Pair] = &[
         to: "EPSG:3035",
         points: PARIS,
         known_gap: false,
-        cli_gap: true,
+        cli_gap: false,
     },
     Pair {
         from: "EPSG:4326",
@@ -154,7 +154,7 @@ const PAIRS: &[Pair] = &[
         to: "EPSG:32631",
         points: &[(652_000.0, 6_862_000.0), (700_000.0, 6_600_000.0)],
         known_gap: false,
-        cli_gap: true,
+        cli_gap: false,
     },
     Pair {
         from: "EPSG:4258",
@@ -168,7 +168,7 @@ const PAIRS: &[Pair] = &[
         to: "EPSG:5070",
         points: &[(-100.0, 40.0), (-84.4, 33.7), (-122.3, 47.6)],
         known_gap: true,
-        cli_gap: true,
+        cli_gap: false,
     },
     // Same datum, only the linear unit changes: US survey foot to metre.
     Pair {
@@ -194,7 +194,7 @@ const PAIRS: &[Pair] = &[
         to: "EPSG:2230",
         points: &[(-115.797_615, 37.264_797_8)],
         known_gap: true,
-        cli_gap: true,
+        cli_gap: false,
     },
 ];
 

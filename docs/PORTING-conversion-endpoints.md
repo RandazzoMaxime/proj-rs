@@ -71,6 +71,27 @@ passe sans modification).
   forme `ft`), comme `addUnitConvertAndAxisSwap`. Effet de bord voulu : `cs2cs
   EPSG:4326 EPSG:2230` donne maintenant les valeurs PROJ.
 
+## Étape 2 : `cs2cs`
+
+Aucun changement de code : `cs2cs` prend déjà le choix ISO (`select_pipeline`) en premier,
+et le pipeline qu'il obtient est désormais celui de PROJ pour les paires du brief. Vérifié
+avec le binaire de cette crate, entrée en ordre d'autorité (latitude d'abord pour
+`EPSG:4326`), sortie à 8 décimales, contre les valeurs PROJ :
+
+| Paire | Points | Résultat |
+|---|---|---|
+| `EPSG:4326` vers `EPSG:2154` | 4 | égal aux 4 points |
+| `EPSG:4326` vers `EPSG:5070` | 3 | égal aux 3 points, dont (-84.4, 33.7) : `1065090.92619740` (était 16524808) |
+| `EPSG:4326` vers `EPSG:2230` | 1 | égal |
+| `EPSG:4326` vers `EPSG:3035` | 1 sur 4 | égal au point d'Eiffel (`N 2890102.60231350`, `E 3756581.00881472`) |
+| `EPSG:2154` vers `EPSG:32631` | 2 | égal aux 2 points |
+
+`tests/agree_cs2cs.rs` : `cli_gap` passe à faux pour ces cinq paires. Le test juge
+chaque point : une paire marquée qui concorde sur un point échoue en CI (« now agrees
+with PROJ, clear the gap flag »). Pour `EPSG:4326` vers `EPSG:3035`, le point d'Eiffel
+concorde ; on ne peut pas garder le drapeau à vrai sans échouer. Les trois autres points
+de cette paire n'ont pas de valeur PROJ dans le brief : la CI les jugera.
+
 ## Résultats contre l'oracle (PROJ 9.9.0, tolérance 1e-3)
 
 | Cas | Points | Résultat |
