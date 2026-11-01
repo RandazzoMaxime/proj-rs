@@ -217,7 +217,7 @@ pub enum ProjCreateError {
     ArgumentNulError(NulError),
     /// The operation or CRS is unknown, or a parameter was rejected.
     ProjError(String),
-    /// Coordinate metadata objects are not built.
+    /// A coordinate metadata object needs a single CRS, not a transform.
     MetadataObjectCreation,
 }
 
@@ -387,6 +387,8 @@ pub struct Proj {
     /// `new_known_crs` owns an area slot. [`Proj::area_set_bbox`] records into it.
     known: bool,
     net: crate::network::GridContext,
+    /// The epoch of a coordinate metadata object, see [`crate::proj_meta`]. `None` otherwise.
+    pub(crate) epoch: Option<f64>,
 }
 
 impl Proj {
@@ -492,6 +494,11 @@ impl Proj {
                 "target is not a single CRS".to_owned(),
             ));
         };
+        // A coordinate metadata object moves its coordinate in time. The epoch is not
+        // applied here, so the transform is refused rather than built without it.
+        if let Some(error) = crate::proj_meta::time_dependent_refusal(self, target_crs) {
+            return Err(error);
+        }
         let bridge = source.datum_bridge(target)?;
         Ok(built(
             Body::Between {
@@ -504,21 +511,29 @@ impl Proj {
         ))
     }
 
-    /// Coordinate metadata objects are not built.
+    /// Build a coordinate metadata object: this CRS at `epoch`.
+    ///
+    /// The object keeps the CRS and the epoch. Passing it to
+    /// [`Self::create_crs_to_crs_from_pj`] is refused, because the epoch is not applied
+    /// to a transformation.
     ///
     /// # Errors
     ///
-    /// Always [`ProjCreateError::MetadataObjectCreation`].
-    pub fn coordinate_metadata_create(&self, _epoch: f64) -> Result<Self, ProjCreateError> {
-        Err(ProjCreateError::MetadataObjectCreation)
+    /// [`ProjCreateError::MetadataObjectCreation`] when `self` is a transform rather
+    /// than a single CRS.
+    pub fn coordinate_metadata_create(&self, epoch: f64) -> Result<Self, ProjCreateError> {
+        if !matches!(self.body, Body::Single(_)) {
+            return Err(ProjCreateError::MetadataObjectCreation);
+        }
+        Ok(crate::proj_meta::with_epoch(self, epoch))
     }
 
     /// Epoch of a coordinate metadata object.
     ///
-    /// This port does not build metadata objects, so the result is [`f64::NAN`].
+    /// An object without an epoch gives [`f64::NAN`].
     #[must_use]
     pub fn coordinate_metadata_get_epoch(&self) -> f64 {
-        f64::NAN
+        crate::proj_meta::epoch_of(self)
     }
 
     /// Record an area of use on a CRS-to-CRS transform.
@@ -891,7 +906,16 @@ impl Proj {
                     Direction::Forward => op.forward(coord),
                 }
             }
-            Body::Iso(pipeline) => pipeline.map(Xyzt { x, y, z, t: 0.0 }, way),
+            Body::Iso(pipeline) => {
+                if let Some(message) = pipeline.refusal(way) {
+                    let message = message.to_owned();
+                    return Err(match report {
+                        Report::Projection => ProjError::Projection(message),
+                        Report::Conversion => ProjError::Conversion(message),
+                    });
+                }
+                pipeline.map(Xyzt { x, y, z, t: 0.0 }, way)
+            }
             Body::Between {
                 source,
                 target,
@@ -1161,6 +1185,7 @@ fn built(body: Body, definition: String, area: Option<Area>) -> Proj {
         area,
         known,
         net: crate::network::context(),
+        epoch: None,
     }
 }
 

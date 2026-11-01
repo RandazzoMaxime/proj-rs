@@ -42,6 +42,7 @@ mod network;
 mod ported;
 mod proj;
 mod proj_iso;
+mod proj_meta;
 mod projdb;
 mod projections;
 mod projmath;

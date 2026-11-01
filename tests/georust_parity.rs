@@ -81,7 +81,6 @@ fn test_definition() {
 }
 
 #[test]
-#[ignore = "gap: coordinate metadata objects are not built"]
 fn test_metadata_creation() {
     let proj = Proj::new("EPSG:4326").unwrap();
     let np = proj.coordinate_metadata_create(2021.3).unwrap();
@@ -111,7 +110,6 @@ fn test_debug() {
 }
 
 #[test]
-#[ignore = "gap: new_known_crs does not read a compound name such as EPSG:4326+3855 (old CRS path)"]
 fn test_set_endpoint() {
     let mut tf = ProjBuilder::new();
     let ep = tf.get_url_endpoint().unwrap();

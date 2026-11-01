@@ -70,29 +70,74 @@ pub(crate) struct IsoPipeline {
     operation: Operation,
     source: Side,
     target: Side,
+    /// Why the forward direction is refused, when the pair cannot take a height.
+    refusal: Option<String>,
 }
 
 /// The ISO pipeline from `from` to `to`, or `None` when the selection fails.
+///
+/// A compound CRS (a horizontal part and a vertical one) is read by its horizontal part:
+/// the axis order and the units come from there. Its vertical part is in the pipeline.
 pub(crate) fn iso_pipeline(from: &str, to: &str) -> Option<IsoPipeline> {
     let (definition, _) = best_pipeline_exact(from, to).ok()?;
     let db = DatabaseContext::create().ok()?;
     let source = create_from_user_input(from, &db).ok()?;
     let target = create_from_user_input(to, &db).ok()?;
-    if !is_horizontal(&source) || !is_horizontal(&target) {
-        return None;
-    }
+    let source_horizontal = horizontal_part(&source).filter(|crs| is_horizontal(crs))?;
+    let target_horizontal = horizontal_part(&target).filter(|crs| is_horizontal(crs))?;
     let operation = Operation::create(&definition).ok()?;
     Some(IsoPipeline {
         operation,
-        source: Side::of(&source),
-        target: Side::of(&target),
+        source: Side::of(source_horizontal),
+        target: Side::of(target_horizontal),
+        refusal: refusal(&source, &target),
     })
+}
+
+/// The horizontal CRS of a pair side: the CRS itself, or the first component of a
+/// compound CRS of two components.
+fn horizontal_part(crs: &Crs) -> Option<&Crs> {
+    match crs {
+        Crs::Compound(compound) => match compound.components() {
+            [horizontal, _vertical] => Some(horizontal),
+            _ => None,
+        },
+        other => Some(other),
+    }
 }
 
 /// A geographic or projected CRS: the kinds whose two horizontal axes the facade
 /// boundary covers.
 fn is_horizontal(crs: &Crs) -> bool {
     is_geographic(crs) || matches!(crs, Crs::Projected(_))
+}
+
+/// Whether a CRS carries a height: a compound, or a geographic CRS of three axes.
+fn has_height(crs: &Crs) -> bool {
+    match crs {
+        Crs::Geographic(geographic) | Crs::Geodetic(GeodeticCRS::Geographic(geographic)) => {
+            geographic.coordinate_system().axes().len() > 2
+        }
+        Crs::Projected(_) => false,
+        _ => true,
+    }
+}
+
+/// The forward refusal of a pair. A two-dimensional source has no height to carry into a
+/// compound target, so the operation the selection writes for it is a null offset, and its
+/// result would be an ellipsoidal height of zero read as the target's vertical CRS. The
+/// facade refuses that conversion instead of writing the made-up height. The inverse, a
+/// compound source to a two-dimensional target, drops the height and is kept.
+fn refusal(source: &Crs, target: &Crs) -> Option<String> {
+    let compound_target = matches!(target, Crs::Compound(_));
+    if compound_target && !has_height(source) {
+        return Some(format!(
+            "{} has a vertical part that needs a height from {}, which has none: the conversion is not built",
+            target.name(),
+            source.name()
+        ));
+    }
+    None
 }
 
 fn is_geographic(crs: &Crs) -> bool {
@@ -128,6 +173,14 @@ impl IsoPipeline {
         match way {
             Direction::Forward => self.target.geographic,
             Direction::Inverse => self.source.geographic,
+        }
+    }
+
+    /// The message that fails a conversion in `way`, when the pair refuses it.
+    pub(crate) fn refusal(&self, way: Direction) -> Option<&str> {
+        match way {
+            Direction::Forward => self.refusal.as_deref(),
+            Direction::Inverse => None,
         }
     }
 
