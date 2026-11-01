@@ -179,7 +179,8 @@ impl fmt::Display for ProjError {
             }
             Self::ExportToJson => formatter
                 .write_str("The definition could not be represented in the requested JSON format"),
-            Self::ExportToWkt => formatter.write_str("WKT export is not built"),
+            Self::ExportToWkt => formatter
+                .write_str("The definition could not be represented in the requested WKT format"),
         }
     }
 }

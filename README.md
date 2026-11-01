@@ -76,7 +76,7 @@ PROJ's own, and a case counts only when it passes.
    purpose). See [`docs/UNIT-TRIAGE.md`](docs/UNIT-TRIAGE.md).
 6. **Parity with the crate it replaces.** The unit tests of georust `proj` 0.31
    run against the facade ([`tests/georust_parity.rs`](tests/georust_parity.rs)):
-   <!--gen:georust_pass-->23<!--/gen--> of <!--gen:georust_total-->25<!--/gen--> pass today. The others are marked
+   <!--gen:georust_pass-->24<!--/gen--> of <!--gen:georust_total-->25<!--/gen--> pass today. The others are marked
    `#[ignore = "gap: ..."]` with their cause, so a gap is a finding on the page and not
    a surprise later. CI also compares the facade with the reference `cs2cs` on named CRS pairs.
 7. **Fail closed.** An unknown `+proj`, an unsupported method or a missing grid
@@ -91,7 +91,7 @@ PROJ's own, and a case counts only when it passes.
 | Grid shifts, `tinshift`, deformation models | ✅ | All `gie` files green. The PROJ 9.9.0 test grids live in [`data/tests/`](data/tests). CDN grids are fetched with `PROJ_NETWORK=ON`, as in PROJ's own tests |
 | Embedded `proj.db` and EPSG resolution | ✅ | Built from the PROJ 9.9.0 SQL, opened in memory with `rusqlite` |
 | ISO 19111 model, WKT and PROJJSON | 🟡 | CRS model, authority factory, CRS identification against `proj.db`, WKT1 and WKT2 import and export, PROJJSON. See [`docs/CRS-API.md`](docs/CRS-API.md) |
-| georust `proj` facade | 🟡 | `Proj`, `ProjBuilder`, `Coord`, `Transform`, `Area`, errors and the `geo-types` feature exist. <!--gen:georust_pass-->23<!--/gen--> of <!--gen:georust_total-->25<!--/gen--> of georust `proj` 0.31's own unit tests pass against it ([`tests/georust_parity.rs`](tests/georust_parity.rs)); the rest are listed there as gaps |
+| georust `proj` facade | 🟡 | `Proj`, `ProjBuilder`, `Coord`, `Transform`, `Area`, errors and the `geo-types` feature exist. <!--gen:georust_pass-->24<!--/gen--> of <!--gen:georust_total-->25<!--/gen--> of georust `proj` 0.31's own unit tests pass against it ([`tests/georust_parity.rs`](tests/georust_parity.rs)); the rest are listed there as gaps |
 | Command-line tools | 🟡 | `cct`, `cs2cs`, `proj`, `projinfo` over the library; <!--gen:cli_matched-->214<!--/gen--> of <!--gen:cli_total-->276<!--/gen--> PROJ CLI cases match |
 | SIMD batch path | ✅ | AVX2 on x86-64. Other targets run the scalar loop |
 
