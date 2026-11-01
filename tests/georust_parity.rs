@@ -278,7 +278,6 @@ fn test_array_convert() {
 }
 
 #[test]
-#[ignore = "gap: new_known_crs picks another NAD83 to WGS 84 datum shift than PROJ: 3.5 ft (about 1.07 m) off"]
 fn test_input_order() {
     // Without normalisation this would fail: EPSG:4326 expects Lat, Lon input order.
     let to_feet = Proj::new_known_crs("EPSG:4326", "EPSG:2230", None).unwrap();

@@ -92,6 +92,44 @@ with PROJ, clear the gap flag »). Pour `EPSG:4326` vers `EPSG:3035`, le point d
 concorde ; on ne peut pas garder le drapeau à vrai sans échouer. Les trois autres points
 de cette paire n'ont pas de valeur PROJ dans le brief : la CI les jugera.
 
+## Étape 3 : façade `Proj::new_known_crs`
+
+`Proj::new_known_crs` (et `ProjBuilder::proj_known_crs`, qui l'appelle) prend le choix
+ISO quand il écrit un pipeline (`best_pipeline_exact`, dans `src/iso19111/select.rs`).
+Sinon il garde l'ancien chemin (`Crs::parse`, `datum_bridge`), qui refuse la paire.
+
+Le pipeline lit et écrit chaque CRS dans son ordre d'axes et ses unités. Le nouveau
+module `src/proj_iso.rs` met autour la frontière georust : longitude puis latitude pour un
+CRS géographique, est puis nord pour un CRS projeté, en unités du CRS. Il permute les deux
+premiers axes d'un côté quand ce CRS écrit la latitude ou le nord en premier. La permutation
+est sa propre inverse, donc le même code sert dans les deux sens.
+
+Décisions :
+
+- **Pas d'opération approchée.** Une ballpark (décalage nul) n'est pas renvoyée : la façade
+  garde son ancien chemin, qui refuse la paire. Exemple : `EPSG:4267` vers `EPSG:4269` sans
+  grille, où la sélection prend `Ballpark geographic offset from NAD27 to NAD83`. `cs2cs` garde
+  ce comportement PROJ ; la façade ne doit pas donner un nombre faux de plusieurs dizaines de
+  mètres. `tests/proj_facade.rs::database_crs_edges_and_grid_pairs` attend cette erreur.
+- **Aire.** `area` est stocké et ne choisit pas l'opération, comme avant : `best_pipeline`
+  n'a pas d'argument d'aire.
+- **Non modifié.** `create_crs_to_crs_from_pj` garde l'ancien chemin.
+- **Correction de l'étape 1.** La branche « même autorité » prenait la base de la projection
+  comme source de la conversion. Avec une cible à base PROJ (`+proj=laea`), cette base est en
+  longitude puis latitude, et l'axe n'était pas permuté : le résultat était faux. La
+  conversion prend maintenant la source de l'appelant, comme `cs2cs`.
+
+Vérifié :
+
+- `tests/iso_pipeline_oracle.rs`, cas `facade_*` : `EPSG:4326` vers `EPSG:5070` (3 points),
+  `EPSG:4326` vers `EPSG:2230`, `EPSG:4326` vers `EPSG:2154` et `EPSG:3035` (point d'Eiffel),
+  `EPSG:2154` vers `EPSG:32631`, à 1e-3.
+- `tests/georust_parity.rs` : 18 passés. `test_input_order` passe à l'égalité exacte et son
+  `#[ignore]` est retiré. Les sept autres cas ignorés gardent leur motif (métadonnées,
+  Debug, définition normalisée, WKT, PROJJSON, aire d'usage, compound).
+- `tests/agree_cs2cs.rs` : `known_gap` passe à faux pour `EPSG:4326` vers `EPSG:5070` et
+  `EPSG:4326` vers `EPSG:2230`, les deux valeurs étant vérifiées par la façade.
+
 ## Résultats contre l'oracle (PROJ 9.9.0, tolérance 1e-3)
 
 | Cas | Points | Résultat |
@@ -120,9 +158,8 @@ Même correction pour la ligne « PROJ prints » de `EPSG:4326` vers `EPSG:3035`
 (`2890102.16524512 3756580.53450501`) : elle était l'ancienne sortie. La valeur PROJ est
 la principale, `E 3756581.00881472, N 2890102.6023135`, testée et atteinte.
 
-**Étapes 2 et 3 non commencées.** Elles dépendent de l'oracle complet (les drapeaux
-`cli_gap` et `known_gap` ne se mettent à faux que sur des paires vérifiées). La règle
-d'arrêt du brief s'applique : étape 1 non vérifiée, arrêt.
+**Étapes 2 et 3 faites** (voir ci-dessus et ci-dessous). Aucun cas `gap` de la façade
+n'est levé sans vérification contre l'oracle.
 
 **Documents générés désalignés.** Le cas `test_cs2cs_various.yaml#100` passe désormais.
 `docs/UNPORTED-CLI.md` est réécrit (ligne retirée, ligne #125 modifiée : elle échoue

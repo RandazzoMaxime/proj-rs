@@ -4057,11 +4057,13 @@ impl CoordinateOperationFactory {
         let mut direct_empty = true;
         if let Crs::Projected(projected) = target {
             if same_authority(source, projected.base_crs()) {
+                // The caller's own source, not the base: its axis order is the one the
+                // pipeline must read (a PROJ-string base may be longitude first).
                 found.push(CoordinateOperation::Conversion(
-                    projected.deriving_conversion().clone().with_endpoints(
-                        Crs::Geodetic(projected.base_crs().clone()),
-                        target.clone(),
-                    ),
+                    projected
+                        .deriving_conversion()
+                        .clone()
+                        .with_endpoints(source.clone(), target.clone()),
                 ));
             }
         }

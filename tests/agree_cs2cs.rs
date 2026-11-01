@@ -167,7 +167,7 @@ const PAIRS: &[Pair] = &[
         from: "EPSG:4326",
         to: "EPSG:5070",
         points: &[(-100.0, 40.0), (-84.4, 33.7), (-122.3, 47.6)],
-        known_gap: true,
+        known_gap: false,
         cli_gap: false,
     },
     // Same datum, only the linear unit changes: US survey foot to metre.
@@ -193,7 +193,7 @@ const PAIRS: &[Pair] = &[
         from: "EPSG:4326",
         to: "EPSG:2230",
         points: &[(-115.797_615, 37.264_797_8)],
-        known_gap: true,
+        known_gap: false,
         cli_gap: false,
     },
 ];

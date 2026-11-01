@@ -154,6 +154,92 @@ fn rgf93_lambert93_to_utm31n() {
     );
 }
 
+/// The facade `Proj::new_known_crs` with the georust boundary: longitude then latitude for a
+/// geographic CRS, easting then northing for a projected one, in the CRS units.
+fn assert_facade_matches_proj(from: &str, to: &str, input: (f64, f64), expected: (f64, f64)) {
+    let proj = proj_rs::Proj::new_known_crs(from, to, None)
+        .unwrap_or_else(|error| panic!("{from} -> {to}: {error}"));
+    let (east, north, _) = proj
+        .convert_xyz(input.0, input.1, 0.0)
+        .unwrap_or_else(|error| panic!("{from} -> {to} at {input:?}: {error}"));
+    assert!(
+        (east - expected.0).abs() <= TOLERANCE && (north - expected.1).abs() <= TOLERANCE,
+        "{from} -> {to} at {input:?}: got ({east}, {north}), PROJ ({}, {})",
+        expected.0,
+        expected.1
+    );
+}
+
+#[test]
+fn facade_wgs84_to_conus_albers_atlanta() {
+    assert_facade_matches_proj(
+        "EPSG:4326",
+        "EPSG:5070",
+        (-84.4, 33.7),
+        (1_065_090.926_197_4, 1_246_540.246_130_59),
+    );
+}
+
+#[test]
+fn facade_wgs84_to_conus_albers_denver() {
+    assert_facade_matches_proj(
+        "EPSG:4326",
+        "EPSG:5070",
+        (-100.0, 40.0),
+        (-338_390.587_550_87, 1_894_100.140_042_56),
+    );
+}
+
+#[test]
+fn facade_wgs84_to_conus_albers_seattle() {
+    assert_facade_matches_proj(
+        "EPSG:4326",
+        "EPSG:5070",
+        (-122.3, 47.6),
+        (-1_965_840.775_865_01, 3_007_788.156_319_79),
+    );
+}
+
+#[test]
+fn facade_wgs84_to_nad83_california_zone6_us_feet() {
+    assert_facade_matches_proj(
+        "EPSG:4326",
+        "EPSG:2230",
+        (-115.797_615, 37.264_797_8),
+        (6_693_625.672_174_75, 3_497_301.591_802_72),
+    );
+}
+
+#[test]
+fn facade_wgs84_to_rgf93_lambert93_eiffel() {
+    assert_facade_matches_proj(
+        "EPSG:4326",
+        "EPSG:2154",
+        (2.2945, 48.8582),
+        (648_237.102_854_4, 6_862_249.443_404_44),
+    );
+}
+
+#[test]
+fn facade_wgs84_to_etrs89_laea_europe_eiffel() {
+    assert_facade_matches_proj(
+        "EPSG:4326",
+        "EPSG:3035",
+        (2.2945, 48.8582),
+        (3_756_581.008_814_72, 2_890_102.602_313_5),
+    );
+}
+
+#[test]
+fn facade_rgf93_lambert93_to_utm31n() {
+    assert_facade_matches_proj(
+        "EPSG:2154",
+        "EPSG:32631",
+        (652_000.0, 6_862_000.0),
+        (452_013.623_058_75, 5_411_682.073_123_35),
+    );
+}
+
 #[test]
 fn nad83_california_zone6_us_feet_to_utm46n() {
     assert_matches_proj(

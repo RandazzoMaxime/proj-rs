@@ -106,6 +106,10 @@ impl Proj {
                         .split_once(" -> ")
                         .is_some_and(|(from, to)| from.trim() == to.trim())
             }
+            Body::Iso(_) => self
+                .definition
+                .split_once(" -> ")
+                .is_some_and(|(from, to)| from.trim() == to.trim()),
             Body::Single(_) => false,
         }
     }
@@ -119,6 +123,7 @@ impl Proj {
                 Direction::Forward => target.is_geographic(),
                 Direction::Inverse => source.is_geographic(),
             },
+            Body::Iso(pipeline) => pipeline.degree_output(direction),
             Body::Single(_) => false,
         }
     }
@@ -129,7 +134,7 @@ impl Proj {
                 Direction::Forward => source.is_geocentric(),
                 Direction::Inverse => target.is_geocentric(),
             },
-            Body::Native(_) | Body::Single(_) => false,
+            Body::Native(_) | Body::Iso(_) | Body::Single(_) => false,
         }
     }
 
@@ -140,7 +145,7 @@ impl Proj {
     /// PROJ reads it when no target CRS is attached.
     fn axis_order(&self, direction: Direction) -> Result<Order, ProjError> {
         match &self.body {
-            Body::Between { .. } => Ok(Order::LonLat),
+            Body::Between { .. } | Body::Iso(_) => Ok(Order::LonLat),
             Body::Native(_) => {
                 let text = self
                     .definition

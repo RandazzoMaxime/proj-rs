@@ -51,6 +51,7 @@ pub use model::{
 pub use pipeline::ProjLines;
 pub use projstring::{create_crs_from_proj_string, create_crs_from_proj_string_with_database};
 pub use select::{best_pipeline, best_pipeline_with, BestOperation, OnlyBest};
+pub(crate) use select::{best_pipeline_exact, lat_or_northing_first};
 pub use wkt::{
     EllipsoidalHeightPolicy, LinunitPolicy, OutputAxisRule, WktConvention, WktFormatter, WktLines,
     WktStrictness,

@@ -19,6 +19,7 @@ use bounds::Dims;
 use crate::crs::Crs;
 use crate::engine::Operation;
 use crate::engine::TransformError as StepError;
+use crate::proj_iso::{iso_pipeline, IsoPipeline};
 use crate::{CreateError, Xyzt};
 
 /// Numeric type accepted by [`Coord`].
@@ -359,6 +360,9 @@ pub enum WktVersion {
 enum Body {
     /// [`Proj::new`] of a PROJ operation. Angular axes are radians.
     Native(Operation),
+    /// [`Proj::new_known_crs`] of a pair the ISO 19111 selection writes as a pipeline. The
+    /// facade boundary is applied around it, see [`crate::proj_iso`].
+    Iso(IsoPipeline),
     /// [`Proj::new_known_crs`]. Angular axes are degrees.
     ///
     /// `bridge` is a PROJ pipeline from source geodetic radians to target
@@ -420,8 +424,11 @@ impl Proj {
     /// geographic, projected, or geocentric CRS. Longitude, latitude order is
     /// degrees. Easting, northing and geocentric axes are metres.
     ///
-    /// `area` is stored and does not select a grid. A datum step is emitted as
-    /// a PROJ pipeline only when every step is an operation this crate builds.
+    /// The operation is the one `cs2cs` picks, from the ISO 19111 selection
+    /// ([`crate::iso19111::best_pipeline`]), when that selection writes a pipeline.
+    /// Otherwise the pair goes through the CRS path, which emits a datum step only
+    /// when every step is an operation this crate builds. `area` is stored and does
+    /// not select an operation or a grid.
     ///
     /// # Errors
     ///
@@ -434,6 +441,11 @@ impl Proj {
     ) -> Result<Self, ProjCreateError> {
         reject_nul(from)?;
         reject_nul(to)?;
+        // The ISO 19111 selection first, as `cs2cs` takes it. The previous CRS path
+        // below is the fallback for a pair the selection does not write.
+        if let Some(pipeline) = iso_pipeline(from, to) {
+            return Ok(built(Body::Iso(pipeline), format!("{from} -> {to}"), area));
+        }
         let source = Crs::parse(from)?;
         let target = Crs::parse(to)?;
         let bridge = source.datum_bridge(&target)?;
@@ -797,6 +809,7 @@ impl Proj {
     fn has_inverse(&self) -> bool {
         match &self.body {
             Body::Single(_) => false,
+            Body::Iso(pipeline) => pipeline.has_inverse(),
             Body::Native(op) => {
                 !matches!(op.inverse(Xyzt::xy(0.0, 0.0)), Err(StepError::NoInverse))
             }
@@ -878,6 +891,7 @@ impl Proj {
                     Direction::Forward => op.forward(coord),
                 }
             }
+            Body::Iso(pipeline) => pipeline.map(Xyzt { x, y, z, t: 0.0 }, way),
             Body::Between {
                 source,
                 target,
@@ -1140,7 +1154,7 @@ fn port_info(searchpath: &str) -> Info {
 }
 
 fn built(body: Body, definition: String, area: Option<Area>) -> Proj {
-    let known = matches!(body, Body::Between { .. });
+    let known = matches!(body, Body::Between { .. } | Body::Iso(_));
     Proj {
         body,
         definition,
