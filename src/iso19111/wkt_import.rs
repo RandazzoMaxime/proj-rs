@@ -2205,6 +2205,23 @@ impl WktParser {
                 }
             }
         }
+        // ESRI writes a south orientated transverse Mercator as a regular one
+        // with a scale factor of -1 (PROJ `io.cpp`, ESRI dialect).
+        if self.esri && ci_eq(&method_name, "Transverse_Mercator") {
+            let negative = parameters
+                .iter_mut()
+                .find(|parameter| ci_eq(parameter.name(), "scale_factor"))
+                .is_some_and(|parameter| match &mut parameter.value {
+                    ParameterValue::Measure(measure) if measure.value == -1.0 => {
+                        measure.value = 1.0;
+                        true
+                    }
+                    _ => false,
+                });
+            if negative {
+                method_name = "Transverse_Mercator_South_Orientated".to_owned();
+            }
+        }
         if ci_eq(&method_name, "Mercator_1SP") && !has_center_latitude(node) {
             let origin = parameters
                 .iter()
@@ -2237,6 +2254,16 @@ impl WktParser {
         if !code.is_empty() {
             method_name = mapped_name.to_owned();
         }
+        // The method's own WKT1 names come first, as in PROJ: Bonne's
+        // `standard_parallel_1` is EPSG 8801 there, not the generic 8823.
+        // A WKT1 method outside `wkt1_method` has no code yet, so its own WKT1
+        // name finds the map.
+        let method_params = code
+            .parse()
+            .ok()
+            .and_then(super::parammap::method_by_code)
+            .or_else(|| super::parammap::method_by_wkt1_name(&method_name))
+            .map(|method| method.params);
         for parameter in &mut parameters {
             if code == "1041" && parameter.code.is_empty() {
                 // Krovak (North Orientated) has its own parameter set.
@@ -2261,7 +2288,18 @@ impl WktParser {
                 }
             }
             if parameter.code.is_empty() {
-                if let Some((name, code, _)) = wkt1_parameter(&parameter.name) {
+                let own = method_params.and_then(|params| {
+                    params.iter().find(|param| {
+                        param
+                            .wkt1_name
+                            .is_some_and(|wkt1| ci_eq(wkt1, &parameter.name))
+                    })
+                });
+                if let Some(own) = own.filter(|param| param.epsg_code != 0) {
+                    parameter.name = own.wkt2_name.to_owned();
+                    parameter.code_space = "EPSG".to_owned();
+                    parameter.code = own.epsg_code.to_string();
+                } else if let Some((name, code, _)) = wkt1_parameter(&parameter.name) {
                     parameter.name = name.to_owned();
                     parameter.code_space = "EPSG".to_owned();
                     parameter.code = code.to_owned();

@@ -6750,6 +6750,19 @@ pub(crate) fn method_by_name(name: &str) -> Option<&'static MethodMap> {
         .find(|method| canonical_name(method.wkt2_name) == wanted)
 }
 
+/// First method whose WKT1 (GDAL) projection name matches `name`, ignoring case.
+#[must_use]
+pub(crate) fn method_by_wkt1_name(name: &str) -> Option<&'static MethodMap> {
+    PROJECTION_METHODS
+        .iter()
+        .chain(OTHER_METHODS)
+        .find(|method| {
+            method
+                .wkt1_name
+                .is_some_and(|wkt1| wkt1.eq_ignore_ascii_case(name))
+        })
+}
+
 fn canonical_name(name: &str) -> String {
     name.chars()
         .filter(|ch| !matches!(ch, ' ' | '_' | '-' | '/' | '{' | '}'))

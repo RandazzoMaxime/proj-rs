@@ -11,6 +11,8 @@ use super::model::{
 use super::parammap::{self, MethodMap, ParamMap};
 use super::pipeline::proj_number;
 
+mod projections;
+
 /// Whether transverse Mercator export inserts `+approx`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TmercApprox {
@@ -451,7 +453,19 @@ fn measures_equivalent(left: &Measure, right: &Measure, criterion: Equivalence) 
     if left_si.is_infinite() && right_si.is_infinite() {
         return left_si.is_sign_positive() == right_si.is_sign_positive();
     }
-    (left_si - right_si).abs() <= 2e-10 * left_si.abs()
+    let difference = left_si - right_si;
+    if difference.abs() <= 2e-10 * left_si.abs() {
+        return true;
+    }
+    // Under `Equivalent`, an angle equals the same angle a whole turn away:
+    // `-3` and `357` degrees describe one Hotine azimuth (PROJ test
+    // `hotine_oblique_mercator_variant_A_export_equivalent_modulo_360`).
+    if left.unit().kind() == UnitKind::Angular {
+        let turns = (difference / std::f64::consts::TAU).round();
+        let residual = difference - turns * std::f64::consts::TAU;
+        return residual.abs() <= 2e-10 * left_si.abs().max(right_si.abs());
+    }
+    false
 }
 
 fn identified_names_match(left: &str, right: &str, criterion: Equivalence) -> bool {
