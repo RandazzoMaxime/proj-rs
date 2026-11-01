@@ -1807,7 +1807,7 @@ fn export_method(
         wkt1_method_name(method)?
     };
     formatter.add_quoted(&name);
-    if formatter.output_id_now() && !method.code.is_empty() {
+    if formatter.output_id_now() && has_code(&method.code) {
         formatter.start_node("ID", NodeId::Absent);
         formatter.add_quoted(&method.code_space);
         if is_integer_code(&method.code) {
@@ -1819,6 +1819,12 @@ fn export_method(
     }
     formatter.end_node();
     Ok(())
+}
+
+/// A method or parameter code that PROJ would write as `ID`. The table's `0` means no EPSG
+/// code, and PROJ writes no `ID` for such an object.
+fn has_code(code: &str) -> bool {
+    !code.is_empty() && code != "0"
 }
 
 fn export_parameter(
@@ -1833,7 +1839,7 @@ fn export_parameter(
     formatter.start_node(keyword, node_from_text(&parameter.code));
     formatter.add_quoted(&parameter.name);
     add_parameter_value(parameter, formatter)?;
-    if formatter.output_id_now() && !parameter.code.is_empty() {
+    if formatter.output_id_now() && has_code(&parameter.code) {
         formatter.start_node("ID", NodeId::Absent);
         formatter.add_quoted(&parameter.code_space);
         if is_integer_code(&parameter.code) {
@@ -1880,6 +1886,11 @@ fn add_measure(measure: &Measure, formatter: &mut WktFormatter) -> Result<(), Fa
                     code: String::new(),
                 };
                 formatter.add_number(measure.convert_to(&seconds));
+            }
+            // `ParameterValue::_exportToWKT`: a scale in parts per million is
+            // written as the unity scale `1 + ppm * 1e-6`.
+            UnitKind::Scale if measure.unit.name == "parts per million" => {
+                formatter.add_number(1.0 + measure.value * 1e-6);
             }
             _ => formatter.add_number(measure.value),
         }

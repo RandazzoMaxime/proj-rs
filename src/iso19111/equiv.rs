@@ -250,12 +250,25 @@ impl ProjectedCRS {
     /// Strict projected equivalence.
     #[must_use]
     pub fn is_equivalent_to(&self, other: &Self) -> bool {
-        same_name(self.name(), other.name())
-            && geodetic_equivalent(self.base_crs(), other.base_crs(), Equivalence::Strict)
-            && conversion_equivalent(self.deriving_conversion(), other.deriving_conversion())
-            && cs_axes_match(
+        self.is_equivalent_to_with(other, Equivalence::Strict)
+    }
+
+    /// `isEquivalentTo` with `criterion`. The name, the conversion name, and the
+    /// axis names are compared for the strict criterion only. The base CRS and
+    /// the conversion method and parameters follow `criterion`.
+    #[must_use]
+    pub fn is_equivalent_to_with(&self, other: &Self, criterion: Equivalence) -> bool {
+        (criterion != Equivalence::Strict || same_name(self.name(), other.name()))
+            && geodetic_equivalent(self.base_crs(), other.base_crs(), criterion)
+            && conversion_equivalent_for(
+                self.deriving_conversion(),
+                other.deriving_conversion(),
+                criterion,
+            )
+            && cs_axes_match_for(
                 self.coordinate_system().axes(),
                 other.coordinate_system().axes(),
+                criterion,
             )
     }
 }
@@ -513,7 +526,17 @@ fn meridian_value(axis: &Axis) -> Option<f64> {
 }
 
 fn conversion_equivalent(left: &Conversion, right: &Conversion) -> bool {
-    same_name(left.name(), right.name())
+    conversion_equivalent_for(left, right, Equivalence::Strict)
+}
+
+/// A conversion with the same method and parameters. Its name must match only
+/// for the strict criterion.
+fn conversion_equivalent_for(
+    left: &Conversion,
+    right: &Conversion,
+    criterion: Equivalence,
+) -> bool {
+    (criterion != Equivalence::Strict || same_name(left.name(), right.name()))
         && left.method().code() == right.method().code()
         && left.parameters().len() == right.parameters().len()
         && left

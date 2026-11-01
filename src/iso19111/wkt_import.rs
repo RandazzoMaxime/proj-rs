@@ -2950,7 +2950,7 @@ fn parameter(name: &str, code: &str, value: f64, unit: &UnitOfMeasure) -> Parame
     }
 }
 
-fn helmert_parameters(values: &[f64]) -> Vec<Parameter> {
+pub(crate) fn helmert_parameters(values: &[f64]) -> Vec<Parameter> {
     let names = [
         ("X-axis translation", "8605", UnitKind::Linear),
         ("Y-axis translation", "8606", UnitKind::Linear),

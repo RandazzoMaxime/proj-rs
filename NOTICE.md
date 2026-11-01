@@ -26,3 +26,10 @@ calls. Copyright (c) Charles Karney, MIT/X11 license; see the header of
 [`src/geodesic/geodesic.c`](src/geodesic/geodesic.c) and
 <https://geographiclib.sourceforge.io/>. The inverse of the conformal latitude
 follows GeographicLib, as shipped in PROJ.
+
+## georust `proj` tests
+
+`tests/georust_parity.rs` runs the unit tests of the georust
+[`proj`](https://github.com/georust/proj) crate 0.31.0 (`src/proj.rs` and
+`src/geo_types.rs`) against this crate's facade. Inputs and expected values are
+georust's, copyright the GeoRust contributors, MIT OR Apache-2.0.

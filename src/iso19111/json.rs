@@ -11,7 +11,7 @@ use super::model::{
     GeodeticReferenceFrame, GeographicCRS, Identified, Identifier, Measure, PrimeMeridian,
     UnitOfMeasure,
 };
-use super::projstring::create_crs_from_proj_string;
+use super::projstring::create_crs_from_proj_string_with_database;
 use super::wkt_import::WktParser;
 use crate::crs_text::{self, Object, Value};
 
@@ -405,7 +405,7 @@ pub fn create_from_user_input(text: &str, db: &DatabaseContext) -> Result<Crs, F
     }
     let bare = text.strip_prefix('+').unwrap_or(text);
     if bare.starts_with("proj=") || text.contains(" +proj=") || text.contains(" proj=") {
-        return create_crs_from_proj_string(text);
+        return create_crs_from_proj_string_with_database(text, db);
     }
     if let Some(crs) = crs_from_authority_code(text, db)? {
         return Ok(crs);

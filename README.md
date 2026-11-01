@@ -20,7 +20,8 @@ enums instead of error codes and `NaN` sentinels.
 
 It targets Rust projects that use the [`proj`](https://github.com/georust/proj)
 crate: same API, one line changed in `Cargo.toml`, no libproj to build or
-install.
+install. That claim is checked by georust's own unit tests and is **not complete
+yet**: see [Status at a glance](#status-at-a-glance).
 
 - **Checked against PROJ itself.** The numeric oracle is the PROJ 9.9.0
   `test/gie` suite, vendored unchanged under [`tests/gie/`](tests/gie). The
@@ -34,6 +35,53 @@ install.
   outside tests, every `unsafe` block needs a `// SAFETY:` comment, and a
   ratchet fails the test run if the PROJ pass count ever drops.
 
+## Progress
+
+<p align="center">
+  <img src="docs/progress.svg" alt="One square per PROJ test case: green when PROJ-RS passes it, grey when it is still open. Left: the gie suite. Right: the unit tests and CLI cases." width="100%">
+</p>
+
+Each square is **one test case of PROJ 9.9.0 itself**. Green: PROJ-RS passes it.
+Grey: still open. In all, <!--gen:all_percent-->88.8<!--/gen-->% of the cases pass
+(<!--gen:all_done-->7532<!--/gen--> of <!--gen:all_total-->8484<!--/gen-->). The left panel is the numeric suite (`gie`), complete. The right
+panel is what is left: PROJ's C++ unit tests, which cover the ISO 19111 model,
+WKT and the operation factory, and the command-line cases. The chart is drawn
+from the same ledgers as the tables below by `tests/progress_svg.rs`, so it
+cannot say more than the tests do.
+
+## How the port is done
+
+PROJ-RS is not checked against tests written for it. It is checked against
+PROJ's own, and a case counts only when it passes.
+
+1. **PROJ is the oracle.** The `gie` files are vendored unchanged and run by a
+   Rust runner. The C++ unit tests and the CLI cases are ported one `TEST()` at
+   a time, with PROJ's expected strings kept as written. A test is never edited
+   to fit the code: when the Rust output differs from PROJ, the test stays open
+   and its cause is written down.
+2. **What is open is listed by name.** [`docs/UNPORTED-UNIT.md`](docs/UNPORTED-UNIT.md)
+   and [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md) hold every open case. A name leaves
+   a ledger only when its case passes, and the counts in this README, in the
+   [roadmap](ROADMAP.md) and in the chart are computed from them. A test fails
+   when they drift.
+3. **A ratchet, so nothing slides back.** `tests/gie/passing.txt` and
+   `tests/gie/files.txt` hold the pass counts, and a CLI case that used to pass
+   fails the run if it stops. Tolerances are PROJ's own, never loosened.
+4. **One lot, one topic.** Each pull request ports one topic and comes with a
+   [`docs/PORTING-*.md`](docs) sheet: the function map, the deliberate
+   deviations, what stays open and why, the commands that were run.
+5. **Value first.** The open unit tests are sorted by name into `core` (a result
+   a user sees: WKT, PROJ string, chosen operation), `niche` (rare CRS kinds)
+   and `shape` (the C++ object model, which the Rust API does not mirror on
+   purpose). See [`docs/UNIT-TRIAGE.md`](docs/UNIT-TRIAGE.md).
+6. **Parity with the crate it replaces.** The unit tests of georust `proj` 0.31
+   run against the facade ([`tests/georust_parity.rs`](tests/georust_parity.rs)):
+   <!--gen:georust_pass-->16<!--/gen--> of <!--gen:georust_total-->25<!--/gen--> pass today. The others are marked
+   `#[ignore = "gap: ..."]` with their cause, so a gap is a finding on the page and not
+   a surprise later. CI also compares the facade with the reference `cs2cs` on named CRS pairs.
+7. **Fail closed.** An unknown `+proj`, an unsupported method or a missing grid
+   is an error when the operation is built, never a coordinate.
+
 ## Status at a glance
 
 | Area | | What works today |
@@ -43,8 +91,8 @@ install.
 | Grid shifts, `tinshift`, deformation models | ✅ | All `gie` files green. The PROJ 9.9.0 test grids live in [`data/tests/`](data/tests). CDN grids are fetched with `PROJ_NETWORK=ON`, as in PROJ's own tests |
 | Embedded `proj.db` and EPSG resolution | ✅ | Built from the PROJ 9.9.0 SQL, opened in memory with `rusqlite` |
 | ISO 19111 model, WKT and PROJJSON | 🟡 | CRS model, authority factory, CRS identification against `proj.db`, WKT1 and WKT2 import and export, PROJJSON. See [`docs/CRS-API.md`](docs/CRS-API.md) |
-| georust `proj` facade | 🟡 | `Proj`, `ProjBuilder`, `Coord`, `Transform`, `Area`, errors and the `geo-types` feature exist. georust's own tests are not run against it yet |
-| Command-line tools | 🟡 | `cct`, `cs2cs`, `proj`, `projinfo` over the library; 120 of 276 PROJ CLI cases match |
+| georust `proj` facade | 🟡 | `Proj`, `ProjBuilder`, `Coord`, `Transform`, `Area`, errors and the `geo-types` feature exist. <!--gen:georust_pass-->16<!--/gen--> of <!--gen:georust_total-->25<!--/gen--> of georust `proj` 0.31's own unit tests pass against it ([`tests/georust_parity.rs`](tests/georust_parity.rs)); the rest are listed there as gaps |
+| Command-line tools | 🟡 | `cct`, `cs2cs`, `proj`, `projinfo` over the library; <!--gen:cli_matched-->213<!--/gen--> of <!--gen:cli_total-->276<!--/gen--> PROJ CLI cases match |
 | SIMD batch path | ✅ | AVX2 on x86-64. Other targets run the scalar loop |
 
 ✅ done and verified &nbsp;·&nbsp; 🟡 working, with known gaps listed below
@@ -125,11 +173,11 @@ The same goes for the CLI cases in [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md
 
 | Suite | Ported and passing | Not yet | |
 |---|---:|---:|:-:|
-| PROJ C++ unit tests | 376 | 976 | 🟡 |
-| `cct` CLI cases | 18 | 0 | ✅ |
-| `cs2cs` CLI cases | 84 | 59 | 🟡 |
-| `proj` CLI cases | 2 | 2 | 🟡 |
-| `projinfo` CLI cases | 16 | 95 | 🔴 |
+| PROJ C++ unit tests | <!--gen:unit_ported-->463<!--/gen--> | <!--gen:unit_open-->889<!--/gen--> | <!--gen:unit_icon-->🔴<!--/gen--> |
+| `cct` CLI cases | <!--gen:cli_cct_ported-->18<!--/gen--> | <!--gen:cli_cct_open-->0<!--/gen--> | <!--gen:cli_cct_icon-->✅<!--/gen--> |
+| `cs2cs` CLI cases | <!--gen:cli_cs2cs_ported-->121<!--/gen--> | <!--gen:cli_cs2cs_open-->22<!--/gen--> | <!--gen:cli_cs2cs_icon-->🟡<!--/gen--> |
+| `proj` CLI cases | <!--gen:cli_proj_ported-->4<!--/gen--> | <!--gen:cli_proj_open-->0<!--/gen--> | <!--gen:cli_proj_icon-->✅<!--/gen--> |
+| `projinfo` CLI cases | <!--gen:cli_projinfo_ported-->70<!--/gen--> | <!--gen:cli_projinfo_open-->41<!--/gen--> | <!--gen:cli_projinfo_icon-->🟡<!--/gen--> |
 
 ✅ complete &nbsp;·&nbsp; 🟡 partial &nbsp;·&nbsp; 🔴 mostly open
 
@@ -140,12 +188,12 @@ The same goes for the CLI cases in [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md
 
 | PROJ file | Ported and passing | Not yet |
 |---|---:|---:|
-| `test_c_api.cpp` | 60 | 92 |
-| `test_crs.cpp` | 103 | 94 |
-| `test_factory.cpp` | 55 | 58 |
-| `test_io.cpp` | 89 | 365 |
-| `test_operation.cpp` | 60 | 102 |
-| `test_operationfactory.cpp` | 9 | 265 |
+| `test_c_api.cpp` | <!--gen:test_c_api_ported-->60<!--/gen--> | <!--gen:test_c_api_open-->92<!--/gen--> |
+| `test_crs.cpp` | <!--gen:test_crs_ported-->108<!--/gen--> | <!--gen:test_crs_open-->89<!--/gen--> |
+| `test_factory.cpp` | <!--gen:test_factory_ported-->65<!--/gen--> | <!--gen:test_factory_open-->48<!--/gen--> |
+| `test_io.cpp` | <!--gen:test_io_ported-->161<!--/gen--> | <!--gen:test_io_open-->293<!--/gen--> |
+| `test_operation.cpp` | <!--gen:test_operation_ported-->60<!--/gen--> | <!--gen:test_operation_open-->102<!--/gen--> |
+| `test_operationfactory.cpp` | <!--gen:test_operationfactory_ported-->9<!--/gen--> | <!--gen:test_operationfactory_open-->265<!--/gen--> |
 | Other unit files ([`tests/proj_unit.rs`](tests/proj_unit.rs)) | 33 | n/a |
 
 The unit tests are the biggest remaining piece: they cover the ISO 19111 model,
@@ -153,10 +201,10 @@ WKT and the operation factory, which the `gie` suite barely touches.
 
 </details>
 
-The unit and CLI counts are as of 2026-10-30. The `gie` counts are as of
-2026-10-30. The two ledgers are the live numbers, since unit tests are ported
-every day. The CLI counts come from the ledger committed
-in the repository; a fresh Linux checkout without grids matches two fewer
+The unit and CLI counts are computed from the two ledgers by
+`tests/docs_in_sync.rs`, which fails when this file drifts (`UPDATE_DOCS=1`
+rewrites it). The `gie` counts are as of 2026-10-30. The CLI counts come from
+the ledger committed in the repository; a fresh Linux checkout without grids matches two fewer
 `cs2cs` cases.
 
 ## Quick start
@@ -168,7 +216,9 @@ PROJ-RS is not on crates.io yet. Use it from git:
 proj-rs = { git = "https://github.com/RandazzoMaxime/proj-rs" }
 ```
 
-Already using the `proj` crate? Swap it without touching your Rust code:
+Already using the `proj` crate? Swap it without touching your Rust code. Check
+the [parity status](#how-the-port-is-done) first: a few results still differ
+from PROJ's, which the georust gaps list:
 
 ```toml
 proj = { package = "proj-rs", git = "https://github.com/RandazzoMaxime/proj-rs" }
@@ -260,8 +310,13 @@ fixed grids. `bench/record.sh` appends one line per run to
 [`bench/history.jsonl`](bench/history.jsonl) with the commit and machine name,
 so each change can be measured against the last.
 
+To fill the `ratio` column, point the build at a libproj: set
+`PROJ_RS_LIBPROJ_DIR` to the directory that holds it, or activate a conda
+environment with `proj` installed (`CONDA_PREFIX`). Without one the bench still
+runs and leaves `ratio` empty.
+
 The two timing columns come from **different machines**: do not read them as a
-speedup. `ratio` is this port's time divided by OSGeo4W libproj on the same
+speedup. `ratio` is this port's time divided by libproj on the same
 grid, so below 1 means this port is faster. The 2026-10-28 column was recorded
 when the suite had 2,743 passing cases and has not been re-run since.
 
@@ -322,6 +377,12 @@ PROJ_NETWORK=ON cargo test --all-features --test gie_run -- --nocapture
 
 # Everything:
 cargo test --all-features
+
+# After a lot, refresh the counts, the triage and the chart from the ledgers:
+UPDATE_DOCS=1 cargo test --test docs_in_sync --test progress_svg
+
+# The known gaps of the georust facade, each with its cause:
+cargo test --test georust_parity -- --ignored
 ```
 
 `tests/agree_cs2cs.rs` calls a PROJ `cs2cs` binary found on `PATH` as a
@@ -345,8 +406,9 @@ are the vendored PROJ 9.9.0 `.gie` expectations. The check is skipped when no
 
 ## Roadmap
 
-The remaining work is in [ROADMAP.md](ROADMAP.md): the unit-test port, the CLI
-gaps, a green fresh checkout, and a portable batch path.
+The remaining work is in [ROADMAP.md](ROADMAP.md), in the order of what a user of
+the `proj` crate needs: georust parity first, then the `cs2cs` gaps, the unit
+tests by value, the `projinfo` text, and a portable batch path.
 
 ## Contributing
 

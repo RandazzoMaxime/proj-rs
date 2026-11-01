@@ -18,6 +18,16 @@ const GRAVITY_RELATED_HEIGHT_METHODS: [i32; 42] = [
     1126, 1127, 1128, 1135, 9661, 9662, 9663, 9664, 9665, 9635,
 ];
 
+/// `PROJ_WKT2_NAME_METHOD_HEIGHT_TO_GEOG3D`, the method of a vertical CRS bound
+/// to a geographic 3D CRS by `+geoidgrids`.
+pub(super) const HEIGHT_TO_GEOG3D_METHOD: &str = "GravityRelatedHeight to Geographic3D";
+
+const METHOD_NTV2: i32 = 9615;
+const METHOD_NADCON: i32 = 9613;
+const NTV2_FILE_PARAMETER: &str = "8656";
+const NADCON_LATITUDE_FILE_PARAMETER: &str = "8657";
+const NADCON_LONGITUDE_FILE_PARAMETER: &str = "8658";
+
 /// The EPSG code of the geoid correction file parameter.
 const GEOID_CORRECTION_FILENAME: i32 = 8666;
 const GEOID_CORRECTION_FILENAME_NAME: &str = "Geoid (height correction) model file";
@@ -168,10 +178,37 @@ impl Transformation {
     /// `getHeightToGeographic3DFilename`: the geoid grid of a height-to-geographic
     /// 3D transformation, when it names one.
     pub(crate) fn height_to_geographic_3d_filename(&self) -> Option<&str> {
-        if !is_gravity_related_height(self) {
+        let proj_method = self
+            .method()
+            .name()
+            .eq_ignore_ascii_case(HEIGHT_TO_GEOG3D_METHOD);
+        if !proj_method && !is_gravity_related_height(self) {
             return None;
         }
         geoid_file_parameter(self)
+    }
+
+    /// `getPROJ4NadgridsCompatibleFilename`: the grid of an NTv2 transformation,
+    /// or the latitude grid of a NADCON one that names both its grids.
+    pub(crate) fn nadgrids_filename(&self) -> Option<&str> {
+        let file = |code: &str| {
+            self.parameters()
+                .iter()
+                .find_map(|parameter| match parameter.value() {
+                    ParameterValue::Filename(name) if parameter.code() == code => {
+                        Some(name.as_str())
+                    }
+                    _ => None,
+                })
+        };
+        match epsg_method_code(self) {
+            METHOD_NTV2 => file(NTV2_FILE_PARAMETER),
+            METHOD_NADCON => {
+                file(NADCON_LONGITUDE_FILE_PARAMETER)?;
+                file(NADCON_LATITUDE_FILE_PARAMETER)
+            }
+            _ => None,
+        }
     }
 
     /// `substitutePROJAlternativeGridNames`: each grid file name is replaced by the
@@ -341,7 +378,7 @@ fn bind(source: &Crs, hub: Crs, transformation: Transformation) -> Crs {
 }
 
 /// `CRS::extractGeographicCRS` for the kinds this port binds.
-fn extract_geographic(crs: &Crs) -> Option<&GeographicCRS> {
+pub(super) fn extract_geographic(crs: &Crs) -> Option<&GeographicCRS> {
     match crs {
         Crs::Geographic(geographic) | Crs::Geodetic(GeodeticCRS::Geographic(geographic)) => {
             Some(geographic)

@@ -3,8 +3,9 @@
 //! Each function is one `TEST()` name. Values are the ones the C++ test asserts.
 
 use proj_rs::{
-    AuthorityFactory, AuthorityObject, CoordinateOperation, Crs, DatabaseContext, Equivalence,
-    FactoryError, GeographicCRS, NameMatch, NameSpelling, ObjectType, UnitKind,
+    AlternativeGridNames, AuthorityFactory, AuthorityObject, CoordinateOperation, Crs,
+    DatabaseContext, Equivalence, FactoryError, GeographicCRS, NameMatch, NameSpelling, ObjectType,
+    ProjLines, UnitKind,
 };
 
 fn epsg() -> AuthorityFactory {
@@ -1121,4 +1122,136 @@ fn factory_get_official_name_from_alias() {
         found.name,
         "System of the Unified Trigonometrical Cadastral Network (Ferro)"
     );
+}
+
+/// The operation for an EPSG code, with PROJ's default grid names.
+fn operation(code: &str) -> CoordinateOperation {
+    epsg()
+        .create_coordinate_operation(code, AlternativeGridNames::Official)
+        .expect(code)
+}
+
+/// `exportToPROJString` of an operation, on one line as PROJ's default formatter writes it.
+fn export_single(code: &str, grids: AlternativeGridNames) -> String {
+    let operation = epsg().create_coordinate_operation(code, grids).expect(code);
+    match operation {
+        CoordinateOperation::Transformation(transformation) => {
+            transformation.export_to_proj_string(ProjLines::Single)
+        }
+        CoordinateOperation::Concatenated(concatenated) => {
+            concatenated.export_to_proj_string(ProjLines::Single)
+        }
+        CoordinateOperation::Conversion(_) => panic!("EPSG:{code} is a conversion"),
+    }
+    .expect(code)
+}
+
+/// `isEquivalentTo` for the transformations and conversions a concatenated operation holds.
+fn is_equivalent(left: &CoordinateOperation, right: &CoordinateOperation) -> bool {
+    match (left, right) {
+        (CoordinateOperation::Transformation(a), CoordinateOperation::Transformation(b)) => {
+            a.is_equivalent_to(b)
+        }
+        (CoordinateOperation::Conversion(a), CoordinateOperation::Conversion(b)) => {
+            a.is_equivalent_to(b)
+        }
+        _ => false,
+    }
+}
+
+/// The steps of a concatenated operation, in order.
+fn steps(code: &str) -> Vec<CoordinateOperation> {
+    match operation(code) {
+        CoordinateOperation::Concatenated(concatenated) => concatenated
+            .steps()
+            .iter()
+            .map(|step| step.operation().clone())
+            .collect(),
+        other => panic!("EPSG:{code} is not concatenated: {}", other.name()),
+    }
+}
+
+#[test]
+fn factory_authority_factory_create_coordinate_operation_helmert_3() {
+    let missing = epsg()
+        .create_coordinate_operation("-1", AlternativeGridNames::Official)
+        .expect_err("missing");
+    assert!(is_missing(&missing), "{missing}");
+    assert_eq!(
+        export_single("1113", AlternativeGridNames::Official),
+        "+proj=pipeline +step +proj=axisswap +order=2,1 +step +proj=unitconvert +xy_in=deg +xy_out=rad +step +inv +proj=longlat +a=6378249.145 +rf=293.4663077 +step +proj=push +v_3 +step +proj=cart +a=6378249.145 +rf=293.4663077 +step +proj=helmert +x=-143 +y=-90 +z=-294 +step +inv +proj=cart +ellps=WGS84 +step +proj=pop +v_3 +step +proj=unitconvert +xy_in=rad +xy_out=deg +step +proj=axisswap +order=2,1"
+    );
+}
+
+#[test]
+fn factory_authority_factory_create_coordinate_operation_helmert_7_cf() {
+    assert_eq!(
+        export_single("7676", AlternativeGridNames::Official),
+        "+proj=pipeline +step +proj=axisswap +order=2,1 +step +proj=unitconvert +xy_in=deg +xy_out=rad +step +proj=push +v_3 +step +proj=cart +ellps=bessel +step +proj=helmert +x=577.88891 +y=165.22205 +z=391.18289 +rx=-4.9145 +ry=0.94729 +rz=13.05098 +s=7.78664 +convention=coordinate_frame +step +inv +proj=cart +ellps=WGS84 +step +proj=pop +v_3 +step +proj=unitconvert +xy_in=rad +xy_out=deg +step +proj=axisswap +order=2,1"
+    );
+}
+
+#[test]
+fn factory_authority_factory_create_coordinate_operation_helmert_7_pv() {
+    let text = export_single("1074", AlternativeGridNames::Official);
+    let expected = "+proj=helmert +x=-275.7224 +y=94.7824 +z=340.8944 +rx=-8.001 +ry=-4.42 +rz=-11.821 +s=1 +convention=position_vector";
+    assert!(text.contains(expected), "{text}");
+}
+
+#[test]
+fn factory_authority_factory_create_coordinate_operation_helmert_15_pv() {
+    assert_eq!(
+        export_single("8069", AlternativeGridNames::Official),
+        "+proj=helmert +x=-0.0254 +y=0.0005 +z=0.1548 +rx=-0.0001 +ry=0 +rz=-0.00026 +s=-0.01129 +dx=-0.0001 +dy=0.0005 +dz=0.0033 +drx=0 +dry=0 +drz=-2e-05 +ds=-0.00012 +t_epoch=2010 +convention=position_vector"
+    );
+}
+
+#[test]
+fn factory_authority_factory_create_coordinate_operation_helmert_15_pv_rounding_of_drz() {
+    assert_eq!(
+        export_single("7932", AlternativeGridNames::Official),
+        "+proj=helmert +x=0 +y=0 +z=0 +rx=0 +ry=0 +rz=0 +s=0 +dx=0 +dy=0 +dz=0 +drx=0.00011 +dry=0.00057 +drz=-0.00071 +ds=0 +t_epoch=1989 +convention=position_vector"
+    );
+}
+
+#[test]
+fn factory_authority_factory_affine_parametric_transform() {
+    assert_eq!(
+        export_single("10087", AlternativeGridNames::Official),
+        "+proj=affine +xoff=82357.457 +s11=0.304794369 +s12=1.5417425e-05 +yoff=28091.324 +s21=-1.5417425e-05 +s22=0.304794369"
+    );
+}
+
+#[test]
+fn factory_authority_factory_create_coordinate_operation_conversion() {
+    assert!(
+        matches!(operation("16031"), CoordinateOperation::Conversion(_)),
+        "EPSG:16031 is not a conversion"
+    );
+}
+
+#[test]
+fn factory_authority_factory_create_coordinate_operation_concatenated_operation() {
+    let steps = steps("3896");
+    assert_eq!(steps.len(), 2);
+    assert!(is_equivalent(&steps[0], &operation("3895")));
+    assert!(is_equivalent(&steps[1], &operation("1618")));
+}
+
+#[test]
+fn factory_authority_factory_create_coordinate_operation_concatenated_operation_three_steps() {
+    let steps = steps("8647");
+    assert_eq!(steps.len(), 3);
+    assert!(is_equivalent(&steps[0], &operation("1313")));
+    assert!(is_equivalent(&steps[1], &operation("1950")));
+    assert!(is_equivalent(&steps[2], &operation("1946")));
+}
+
+#[test]
+fn factory_authority_factory_create_coordinate_operation_concatenated_operation_step1_is_conversion(
+) {
+    let steps = steps("7973");
+    assert_eq!(steps.len(), 2);
+    assert!(is_equivalent(&steps[0], &operation("7813")));
+    assert!(is_equivalent(&steps[1], &operation("7969")));
 }

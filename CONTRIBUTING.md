@@ -48,6 +48,10 @@ Le port suit le skill
 6. Ajouter les cas du lot à `src/bin/bench.rs` et une ligne à
    `bench/history.jsonl` via `bench/record.sh`. Ne jamais renommer un cas
    existant : l'historique est indexé par nom.
+7. Si le lot retire des lignes de `docs/UNPORTED-UNIT.md` ou
+   `docs/UNPORTED-CLI.md`, lancer `UPDATE_DOCS=1 cargo test --test docs_in_sync`.
+   Les chiffres du `README.md` et du `ROADMAP.md` et le tri
+   `docs/UNIT-TRIAGE.md` en sont calculés, et le test échoue s'ils dérivent.
 
 Le modèle de pull request rappelle ces sections. Le remplir fait partie de
 la revue.
