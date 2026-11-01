@@ -198,7 +198,10 @@ fn values() -> BTreeMap<String, String> {
     let cli_open_total: usize = cli_open.values().sum();
     let georust = read("tests/georust_parity.rs");
     let georust_total = georust.matches("#[test]").count();
-    let georust_gaps = georust.matches("#[ignore = \"gap:").count();
+    let georust_gaps = georust
+        .lines()
+        .filter(|line| line.trim_start().starts_with("#[ignore = \"gap:"))
+        .count();
     out.insert("georust_total".into(), georust_total.to_string());
     out.insert(
         "georust_pass".into(),
