@@ -98,8 +98,9 @@ struct Pair {
     from: &'static str,
     to: &'static str,
     points: &'static [(f64, f64)],
-    /// The facade is known to disagree with PROJ on this pair. The test then
-    /// expects the disagreement, so that fixing it forces the flag off.
+    /// The facade is known to disagree with PROJ 9.9.0 on this pair (checked in
+    /// CI against the reference `cs2cs`). The test then expects the
+    /// disagreement, so that fixing it forces the flag off.
     known_gap: bool,
     /// Our `cs2cs` binary is known to disagree with the reference on this pair.
     cli_gap: bool,
@@ -118,7 +119,7 @@ const PAIRS: &[Pair] = &[
         to: "EPSG:2154",
         points: PARIS,
         known_gap: false,
-        cli_gap: false,
+        cli_gap: true,
     },
     Pair {
         from: "EPSG:4326",
@@ -139,7 +140,7 @@ const PAIRS: &[Pair] = &[
         to: "EPSG:3035",
         points: PARIS,
         known_gap: false,
-        cli_gap: false,
+        cli_gap: true,
     },
     Pair {
         from: "EPSG:4326",
@@ -153,7 +154,7 @@ const PAIRS: &[Pair] = &[
         to: "EPSG:32631",
         points: &[(652_000.0, 6_862_000.0), (700_000.0, 6_600_000.0)],
         known_gap: false,
-        cli_gap: false,
+        cli_gap: true,
     },
     Pair {
         from: "EPSG:4258",
@@ -166,8 +167,8 @@ const PAIRS: &[Pair] = &[
         from: "EPSG:4326",
         to: "EPSG:5070",
         points: &[(-100.0, 40.0), (-84.4, 33.7), (-122.3, 47.6)],
-        known_gap: false,
-        cli_gap: false,
+        known_gap: true,
+        cli_gap: true,
     },
     // Same datum, only the linear unit changes: US survey foot to metre.
     Pair {
@@ -193,7 +194,7 @@ const PAIRS: &[Pair] = &[
         to: "EPSG:2230",
         points: &[(-115.797_615, 37.264_797_8)],
         known_gap: true,
-        cli_gap: false,
+        cli_gap: true,
     },
 ];
 
