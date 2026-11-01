@@ -41,7 +41,9 @@ mod merc;
 mod network;
 mod ported;
 mod proj;
+mod proj_info;
 mod proj_iso;
+mod proj_meta;
 mod projdb;
 mod projections;
 mod projmath;
@@ -65,8 +67,9 @@ pub use transform::{Transform, TransformError};
 pub mod wkt {
     //! WKT export types from georust `proj` 0.31.
     //!
-    //! [`crate::Proj::as_wkt`] returns WKT stored for an EPSG code, or the WKT
-    //! text passed to [`crate::Proj::new`]. It does not invent a dialect.
+    //! [`crate::Proj::as_wkt`] writes the CRS of a [`crate::Proj`] with the ISO 19111
+    //! exporter, in the dialect asked for (WKT2:2019 by default). A transform between two
+    //! CRS is not written: its WKT export is not built, and the call returns an error.
 
     pub use crate::proj::{WktOptions, WktOutputAxis, WktVersion};
 }

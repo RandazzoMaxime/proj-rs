@@ -42,8 +42,8 @@ yet**: see [Status at a glance](#status-at-a-glance).
 </p>
 
 Each square is **one test case of PROJ 9.9.0 itself**. Green: PROJ-RS passes it.
-Grey: still open. In all, <!--gen:all_percent-->89.7<!--/gen-->% of the cases pass
-(<!--gen:all_done-->7611<!--/gen--> of <!--gen:all_total-->8484<!--/gen-->). The left panel is the numeric suite (`gie`), complete. The right
+Grey: still open. In all, <!--gen:all_percent-->89.9<!--/gen-->% of the cases pass
+(<!--gen:all_done-->7631<!--/gen--> of <!--gen:all_total-->8484<!--/gen-->). The left panel is the numeric suite (`gie`), complete. The right
 panel is what is left: PROJ's C++ unit tests, which cover the ISO 19111 model,
 WKT and the operation factory, and the command-line cases. The chart is drawn
 from the same ledgers as the tables below by `tests/progress_svg.rs`, so it
@@ -76,7 +76,7 @@ PROJ's own, and a case counts only when it passes.
    purpose). See [`docs/UNIT-TRIAGE.md`](docs/UNIT-TRIAGE.md).
 6. **Parity with the crate it replaces.** The unit tests of georust `proj` 0.31
    run against the facade ([`tests/georust_parity.rs`](tests/georust_parity.rs)):
-   <!--gen:georust_pass-->18<!--/gen--> of <!--gen:georust_total-->25<!--/gen--> pass today. The others are marked
+   <!--gen:georust_pass-->24<!--/gen--> of <!--gen:georust_total-->25<!--/gen--> pass today. The others are marked
    `#[ignore = "gap: ..."]` with their cause, so a gap is a finding on the page and not
    a surprise later. CI also compares the facade with the reference `cs2cs` on named CRS pairs.
 7. **Fail closed.** An unknown `+proj`, an unsupported method or a missing grid
@@ -91,7 +91,7 @@ PROJ's own, and a case counts only when it passes.
 | Grid shifts, `tinshift`, deformation models | ✅ | All `gie` files green. The PROJ 9.9.0 test grids live in [`data/tests/`](data/tests). CDN grids are fetched with `PROJ_NETWORK=ON`, as in PROJ's own tests |
 | Embedded `proj.db` and EPSG resolution | ✅ | Built from the PROJ 9.9.0 SQL, opened in memory with `rusqlite` |
 | ISO 19111 model, WKT and PROJJSON | 🟡 | CRS model, authority factory, CRS identification against `proj.db`, WKT1 and WKT2 import and export, PROJJSON. See [`docs/CRS-API.md`](docs/CRS-API.md) |
-| georust `proj` facade | 🟡 | `Proj`, `ProjBuilder`, `Coord`, `Transform`, `Area`, errors and the `geo-types` feature exist. <!--gen:georust_pass-->18<!--/gen--> of <!--gen:georust_total-->25<!--/gen--> of georust `proj` 0.31's own unit tests pass against it ([`tests/georust_parity.rs`](tests/georust_parity.rs)); the rest are listed there as gaps |
+| georust `proj` facade | 🟡 | `Proj`, `ProjBuilder`, `Coord`, `Transform`, `Area`, errors and the `geo-types` feature exist. <!--gen:georust_pass-->24<!--/gen--> of <!--gen:georust_total-->25<!--/gen--> of georust `proj` 0.31's own unit tests pass against it ([`tests/georust_parity.rs`](tests/georust_parity.rs)); the rest are listed there as gaps |
 | Command-line tools | 🟡 | `cct`, `cs2cs`, `proj`, `projinfo` over the library; <!--gen:cli_matched-->214<!--/gen--> of <!--gen:cli_total-->276<!--/gen--> PROJ CLI cases match |
 | SIMD batch path | ✅ | AVX2 on x86-64. Other targets run the scalar loop |
 
@@ -173,7 +173,7 @@ The same goes for the CLI cases in [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md
 
 | Suite | Ported and passing | Not yet | |
 |---|---:|---:|:-:|
-| PROJ C++ unit tests | <!--gen:unit_ported-->541<!--/gen--> | <!--gen:unit_open-->811<!--/gen--> | <!--gen:unit_icon-->🔴<!--/gen--> |
+| PROJ C++ unit tests | <!--gen:unit_ported-->561<!--/gen--> | <!--gen:unit_open-->791<!--/gen--> | <!--gen:unit_icon-->🔴<!--/gen--> |
 | `cct` CLI cases | <!--gen:cli_cct_ported-->18<!--/gen--> | <!--gen:cli_cct_open-->0<!--/gen--> | <!--gen:cli_cct_icon-->✅<!--/gen--> |
 | `cs2cs` CLI cases | <!--gen:cli_cs2cs_ported-->122<!--/gen--> | <!--gen:cli_cs2cs_open-->21<!--/gen--> | <!--gen:cli_cs2cs_icon-->🟡<!--/gen--> |
 | `proj` CLI cases | <!--gen:cli_proj_ported-->4<!--/gen--> | <!--gen:cli_proj_open-->0<!--/gen--> | <!--gen:cli_proj_icon-->✅<!--/gen--> |
@@ -191,7 +191,7 @@ The same goes for the CLI cases in [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md
 | `test_c_api.cpp` | <!--gen:test_c_api_ported-->60<!--/gen--> | <!--gen:test_c_api_open-->92<!--/gen--> |
 | `test_crs.cpp` | <!--gen:test_crs_ported-->108<!--/gen--> | <!--gen:test_crs_open-->89<!--/gen--> |
 | `test_factory.cpp` | <!--gen:test_factory_ported-->65<!--/gen--> | <!--gen:test_factory_open-->48<!--/gen--> |
-| `test_io.cpp` | <!--gen:test_io_ported-->193<!--/gen--> | <!--gen:test_io_open-->261<!--/gen--> |
+| `test_io.cpp` | <!--gen:test_io_ported-->213<!--/gen--> | <!--gen:test_io_open-->241<!--/gen--> |
 | `test_operation.cpp` | <!--gen:test_operation_ported-->106<!--/gen--> | <!--gen:test_operation_open-->56<!--/gen--> |
 | `test_operationfactory.cpp` | <!--gen:test_operationfactory_ported-->9<!--/gen--> | <!--gen:test_operationfactory_open-->265<!--/gen--> |
 | Other unit files ([`tests/proj_unit.rs`](tests/proj_unit.rs)) | 33 | n/a |

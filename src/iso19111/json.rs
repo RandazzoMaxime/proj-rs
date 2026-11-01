@@ -7,15 +7,71 @@
 use super::equiv;
 use super::factory::{AuthorityFactory, AuthorityObject, DatabaseContext, NameMatch, ObjectType};
 use super::model::{
-    Axis, CompoundCRS, Crs, DatumEnsemble, Ellipsoid, EllipsoidalCS, FactoryError, GeodeticCRS,
-    GeodeticReferenceFrame, GeographicCRS, Identified, Identifier, Measure, PrimeMeridian,
-    UnitOfMeasure,
+    Axis, BoundCRS, CompoundCRS, Conversion, CoordinateOperation, Crs, Datum, DatumEnsemble,
+    Ellipsoid, EllipsoidalCS, FactoryError, GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame,
+    GeographicCRS, GeoidModel, Identified, Identifier, Measure, ObjectDomain, OperationMethod,
+    Parameter, ParameterValue, PrimeMeridian, ProjectedCRS, Transformation, UnitKind,
+    UnitOfMeasure, VerticalCRS, VerticalReferenceFrame,
 };
 use super::projstring::create_crs_from_proj_string_with_database;
 use super::wkt_import::WktParser;
 use crate::crs_text::{self, Object, Value};
 
 const SCHEMA: &str = "https://proj.org/schemas/v0.7/projjson.schema.json";
+
+/// Line breaks in PROJJSON text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JsonLines {
+    /// One member per line, indented.
+    Multi,
+    /// A single line: no newline, no space after a colon.
+    Single,
+}
+
+/// Layout of PROJJSON text. The default is PROJ's: multi-line, two spaces per level, and
+/// the PROJJSON v0.7 `$schema`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JsonFormat {
+    lines: JsonLines,
+    indent_width: usize,
+    /// Value of the top-level `$schema` member. Empty writes no member.
+    schema: String,
+}
+
+impl Default for JsonFormat {
+    fn default() -> Self {
+        Self {
+            lines: JsonLines::Multi,
+            indent_width: 2,
+            schema: SCHEMA.to_owned(),
+        }
+    }
+}
+
+impl JsonFormat {
+    /// The default format with `lines` as its line breaks.
+    #[must_use]
+    pub fn with_lines(lines: JsonLines) -> Self {
+        Self {
+            lines,
+            ..Self::default()
+        }
+    }
+
+    /// Spaces per indentation level.
+    #[must_use]
+    pub fn with_indent_width(mut self, width: usize) -> Self {
+        self.indent_width = width;
+        self
+    }
+
+    /// Value of the top-level `$schema` member. An empty string writes none.
+    #[must_use]
+    pub fn with_schema(mut self, schema: &str) -> Self {
+        schema.clone_into(&mut self.schema);
+        self
+    }
+}
 
 struct Frame {
     has_child: bool,
@@ -25,14 +81,18 @@ struct Frame {
 struct Writer {
     out: String,
     indent: usize,
+    indent_width: usize,
+    pretty: bool,
     stack: Vec<Frame>,
 }
 
 impl Writer {
-    fn new() -> Self {
+    fn new(format: &JsonFormat) -> Self {
         Self {
             out: String::new(),
             indent: 0,
+            indent_width: format.indent_width,
+            pretty: format.lines == JsonLines::Multi,
             stack: Vec::new(),
         }
     }
@@ -70,7 +130,7 @@ impl Writer {
     fn key(&mut self, name: &str) {
         self.separator();
         self.string_raw(name);
-        self.out.push_str(": ");
+        self.out.push_str(if self.pretty { ": " } else { ":" });
         if let Some(frame) = self.stack.last_mut() {
             frame.expect_value = true;
         }
@@ -128,8 +188,12 @@ impl Writer {
     }
 
     fn newline(&mut self) {
+        if !self.pretty {
+            return;
+        }
         self.out.push('\n');
-        self.out.extend(std::iter::repeat_n(' ', self.indent * 2));
+        self.out
+            .extend(std::iter::repeat_n(' ', self.indent * self.indent_width));
     }
 
     fn string_raw(&mut self, text: &str) {
@@ -155,36 +219,179 @@ fn format_json_number(value: f64) -> String {
 }
 
 impl Crs {
-    /// PROJJSON for this CRS.
+    /// PROJJSON for this CRS, in PROJ's default layout.
     ///
     /// `proj.db` splits a versioned authority such as `IAU_2015` into
     /// `"authority": "IAU"` and `"version": 2015`.
     ///
     /// # Errors
     ///
-    /// The CRS kind has no PROJJSON export in this build.
+    /// The CRS kind, or a part of it, has no PROJJSON export in this build.
     pub fn export_to_json(&self, db: &DatabaseContext) -> Result<String, FactoryError> {
-        let mut writer = Writer::new();
+        self.export_to_json_with(db, &JsonFormat::default())
+    }
+
+    /// PROJJSON for this CRS in `format`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::export_to_json`].
+    pub fn export_to_json_with(
+        &self,
+        db: &DatabaseContext,
+        format: &JsonFormat,
+    ) -> Result<String, FactoryError> {
+        let mut writer = Writer::new(format);
         writer.start_object();
-        writer.key("$schema");
-        writer.string(SCHEMA);
-        match self {
-            Self::Geographic(crs) => write_geographic(&mut writer, crs, db)?,
-            Self::Geodetic(_)
-            | Self::Projected(_)
-            | Self::Vertical(_)
-            | Self::Compound(_)
-            | Self::Bound(_)
-            | Self::Engineering(_)
-            | Self::DerivedProjected(_) => {
-                return Err(FactoryError::Format(format!(
-                    "PROJJSON export is not built for {}",
-                    self.name()
-                )));
-            }
+        if !format.schema.is_empty() {
+            writer.key("$schema");
+            writer.string(&format.schema);
         }
+        write_crs(&mut writer, self, db, Place::top(crs_ident(self)))?;
         writer.end_object();
         Ok(writer.finish())
+    }
+}
+
+/// Whether an object has identifiers of its own.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Ident {
+    Has,
+    Lacks,
+}
+
+/// Whether a parent asks for its child's `id`, as PROJ's `setAllowIDInImmediateChild` does.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Allow {
+    Asked,
+    Plain,
+}
+
+/// Whether an object, or one of its ancestors, has an `id`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Chain {
+    Clear,
+    Has,
+}
+
+/// Where an object sits, as PROJ's `JSONFormatter` tracks it.
+///
+/// PROJ writes an object's `id` when it is the top object, or when no object above it has an
+/// `id` (`outputId`). A parent that asks for its child's `id` gets one anyway. The usage block
+/// (scope, area, extent) is written for the top object only.
+#[derive(Clone, Copy)]
+struct Place {
+    /// The top object of the export.
+    top: bool,
+    /// Whether this object writes its own `id`.
+    id_out: bool,
+    /// Whether this object or one of its ancestors has an `id`.
+    chain: Chain,
+}
+
+impl Place {
+    /// The top object, which always writes its `id`.
+    fn top(ident: Ident) -> Self {
+        Self {
+            top: true,
+            id_out: true,
+            chain: chain_of(Chain::Clear, ident),
+        }
+    }
+
+    /// An object with `ident`, inside a parent whose chain is `parent`.
+    fn inside(parent: Chain, ident: Ident, allow: Allow) -> Self {
+        Self {
+            top: false,
+            id_out: allow == Allow::Asked || parent == Chain::Clear,
+            chain: chain_of(parent, ident),
+        }
+    }
+}
+
+fn ident(identifiers: &[Identifier]) -> Ident {
+    if identifiers.is_empty() {
+        Ident::Lacks
+    } else {
+        Ident::Has
+    }
+}
+
+/// `Ident` of a parameter or a unit, from its code space.
+fn code_ident(code_space: &str) -> Ident {
+    if code_space.is_empty() {
+        Ident::Lacks
+    } else {
+        Ident::Has
+    }
+}
+
+fn chain_of(parent: Chain, ident: Ident) -> Chain {
+    if parent == Chain::Has || ident == Ident::Has {
+        Chain::Has
+    } else {
+        Chain::Clear
+    }
+}
+
+fn crs_ident(crs: &Crs) -> Ident {
+    match crs {
+        Crs::Geographic(crs) | Crs::Geodetic(GeodeticCRS::Geographic(crs)) => {
+            ident(crs.identifiers())
+        }
+        Crs::Geodetic(GeodeticCRS::Geocentric(crs)) => ident(crs.identifiers()),
+        Crs::Projected(crs) => ident(crs.identifiers()),
+        Crs::Vertical(crs) => ident(crs.identifiers()),
+        Crs::Compound(crs) => ident(crs.identifiers()),
+        Crs::Bound(crs) => ident(&crs.identified.identifiers),
+        _ => Ident::Lacks,
+    }
+}
+
+fn write_crs(
+    writer: &mut Writer,
+    crs: &Crs,
+    db: &DatabaseContext,
+    place: Place,
+) -> Result<(), FactoryError> {
+    match crs {
+        Crs::Geographic(crs) | Crs::Geodetic(GeodeticCRS::Geographic(crs)) => {
+            write_geographic(writer, crs, db, place)
+        }
+        Crs::Geodetic(GeodeticCRS::Geocentric(crs)) => write_geocentric(writer, crs, db, place),
+        Crs::Projected(crs) => write_projected(writer, crs, db, place),
+        Crs::Vertical(crs) => write_vertical(writer, crs, db, place),
+        Crs::Compound(crs) => write_compound(writer, crs, db, place),
+        Crs::Bound(crs) => write_bound(writer, crs, db, place),
+        other => Err(FactoryError::Format(format!(
+            "PROJJSON export is not built for {}",
+            other.name()
+        ))),
+    }
+}
+
+/// A CRS object inside the parent chain `parent`, with its own `type`. `allow` is `Allow::Asked`
+/// for a base CRS, whose `id` PROJ always writes.
+fn write_component(
+    writer: &mut Writer,
+    crs: &Crs,
+    db: &DatabaseContext,
+    parent: Chain,
+    allow: Allow,
+) -> Result<(), FactoryError> {
+    let place = Place::inside(parent, crs_ident(crs), allow);
+    writer.start_object();
+    write_crs(writer, crs, db, place)?;
+    writer.end_object();
+    Ok(())
+}
+
+fn write_name(writer: &mut Writer, name: &str) {
+    writer.key("name");
+    if name.is_empty() {
+        writer.string("unnamed");
+    } else {
+        writer.string(name);
     }
 }
 
@@ -192,30 +399,658 @@ fn write_geographic(
     writer: &mut Writer,
     crs: &GeographicCRS,
     db: &DatabaseContext,
+    place: Place,
 ) -> Result<(), FactoryError> {
     writer.key("type");
     writer.string("GeographicCRS");
-    writer.key("name");
-    writer.string(crs.name());
-    if let Some(datum) = crs.datum() {
-        writer.key("datum");
-        write_datum(writer, datum, db);
-    } else if let Some(ensemble) = crs.datum_ensemble() {
-        writer.key("datum_ensemble");
-        write_ensemble(writer, ensemble, db);
-    }
+    write_name(writer, crs.name());
+    write_datum_or_ensemble(writer, crs.datum(), crs.datum_ensemble(), db, place.chain)?;
     writer.key("coordinate_system");
-    write_ellipsoidal_cs(writer, crs.coordinate_system());
-    write_domain(writer, crs.domains());
-    write_id(writer, crs.identifiers(), db);
+    write_cs(
+        writer,
+        "ellipsoidal",
+        crs.coordinate_system().axes(),
+        place.chain,
+    )?;
+    write_usage(writer, crs.domains(), place);
+    write_id_if(writer, place, crs.identifiers(), db);
     Ok(())
 }
 
-/// The first usage, as PROJ writes it: scope, area, and bounding box.
-fn write_domain(writer: &mut Writer, domains: &[super::model::ObjectDomain]) {
-    let Some(domain) = domains.first() else {
-        return;
+fn write_geocentric(
+    writer: &mut Writer,
+    crs: &GeocentricCRS,
+    db: &DatabaseContext,
+    place: Place,
+) -> Result<(), FactoryError> {
+    writer.key("type");
+    writer.string("GeodeticCRS");
+    write_name(writer, crs.name());
+    write_datum_or_ensemble(writer, crs.datum(), crs.ensemble.as_ref(), db, place.chain)?;
+    writer.key("coordinate_system");
+    write_cs(
+        writer,
+        "Cartesian",
+        crs.coordinate_system().axes(),
+        place.chain,
+    )?;
+    write_usage(writer, crs.domains(), place);
+    write_id_if(writer, place, crs.identifiers(), db);
+    Ok(())
+}
+
+fn write_projected(
+    writer: &mut Writer,
+    crs: &ProjectedCRS,
+    db: &DatabaseContext,
+    place: Place,
+) -> Result<(), FactoryError> {
+    writer.key("type");
+    writer.string("ProjectedCRS");
+    write_name(writer, crs.name());
+    writer.key("base_crs");
+    writer.start_object();
+    // The base CRS always writes its `id`, as PROJ's `setAllowIDInImmediateChild` asks.
+    match crs.base_crs() {
+        GeodeticCRS::Geographic(base) => {
+            let base_place = Place::inside(place.chain, ident(base.identifiers()), Allow::Asked);
+            write_geographic(writer, base, db, base_place)?;
+        }
+        GeodeticCRS::Geocentric(base) => {
+            let base_place = Place::inside(place.chain, ident(base.identifiers()), Allow::Asked);
+            write_geocentric(writer, base, db, base_place)?;
+        }
+        GeodeticCRS::Spherical(_) => {
+            return Err(FactoryError::Format(
+                "PROJJSON export of a spherical base CRS is not built".to_owned(),
+            ));
+        }
+    }
+    writer.end_object();
+    writer.key("conversion");
+    let conversion = crs.deriving_conversion();
+    let conversion_place =
+        Place::inside(place.chain, ident(conversion.identifiers()), Allow::Plain);
+    write_conversion(writer, conversion, db, conversion_place)?;
+    writer.key("coordinate_system");
+    write_cs(
+        writer,
+        "Cartesian",
+        crs.coordinate_system().axes(),
+        place.chain,
+    )?;
+    write_usage(writer, crs.domains(), place);
+    write_id_if(writer, place, crs.identifiers(), db);
+    Ok(())
+}
+
+fn write_vertical(
+    writer: &mut Writer,
+    crs: &VerticalCRS,
+    db: &DatabaseContext,
+    place: Place,
+) -> Result<(), FactoryError> {
+    writer.key("type");
+    writer.string("VerticalCRS");
+    write_name(writer, crs.name());
+    if let Some(datum) = crs.datum() {
+        writer.key("datum");
+        let datum_place = Place::inside(place.chain, ident(datum.identifiers()), Allow::Plain);
+        write_vertical_datum(writer, datum, db, datum_place)?;
+    } else if let Some(ensemble) = crs.datum_ensemble() {
+        writer.key("datum_ensemble");
+        write_ensemble(writer, ensemble, db, place.chain)?;
+    }
+    writer.key("coordinate_system");
+    write_cs(
+        writer,
+        "vertical",
+        std::slice::from_ref(crs.coordinate_system().axis()),
+        place.chain,
+    )?;
+    write_geoid_models(writer, crs.geoid_models(), db);
+    write_usage(writer, crs.domains(), place);
+    write_id_if(writer, place, crs.identifiers(), db);
+    Ok(())
+}
+
+fn write_compound(
+    writer: &mut Writer,
+    crs: &CompoundCRS,
+    db: &DatabaseContext,
+    place: Place,
+) -> Result<(), FactoryError> {
+    writer.key("type");
+    writer.string("CompoundCRS");
+    write_name(writer, crs.name());
+    writer.key("components");
+    writer.start_array();
+    for component in crs.components() {
+        write_component(writer, component, db, place.chain, Allow::Plain)?;
+    }
+    writer.end_array();
+    write_usage(writer, crs.domains(), place);
+    write_id_if(writer, place, crs.identifiers(), db);
+    Ok(())
+}
+
+/// A bound CRS: its name when it differs from the source's, the source and target CRS, the
+/// transformation in its abridged form, and its usage and `id`.
+fn write_bound(
+    writer: &mut Writer,
+    crs: &BoundCRS,
+    db: &DatabaseContext,
+    place: Place,
+) -> Result<(), FactoryError> {
+    let source = crs.source_crs();
+    let CoordinateOperation::Transformation(transformation) = crs.transformation() else {
+        return Err(FactoryError::Format(
+            "PROJJSON export of a bound CRS with a conversion or a concatenated operation is not built"
+                .to_owned(),
+        ));
     };
+    writer.key("type");
+    writer.string("BoundCRS");
+    if !crs.name().is_empty() && crs.name() != source.name() {
+        writer.key("name");
+        writer.string(crs.name());
+    }
+    writer.key("source_crs");
+    write_component(writer, source, db, place.chain, Allow::Plain)?;
+    writer.key("target_crs");
+    write_component(writer, crs.target_crs(), db, place.chain, Allow::Plain)?;
+    writer.key("transformation");
+    let transformation_place = Place::inside(
+        place.chain,
+        ident(&transformation.identified.identifiers),
+        Allow::Plain,
+    );
+    let source_to_write = bound_source_to_write(crs, transformation);
+    write_abridged_transformation(
+        writer,
+        transformation,
+        db,
+        transformation_place,
+        source_to_write,
+    )?;
+    write_usage(writer, &crs.identified.domains, place);
+    write_id_if(writer, place, &crs.identified.identifiers, db);
+    Ok(())
+}
+
+/// The source CRS of a bound CRS's transformation, when it is written. PROJ writes it when that
+/// source is not equivalent to the bound CRS's source and, for a projected source, when the
+/// target is geographic and the projected CRS's base is not equivalent either. A transformation
+/// read from WKT has no source of its own: PROJ takes the bound CRS's source.
+fn bound_source_to_write<'a>(
+    crs: &'a BoundCRS,
+    transformation: &'a Transformation,
+) -> Option<&'a Crs> {
+    let source = crs.source_crs();
+    let operation_source = transformation.source_crs().unwrap_or(source);
+    if source.is_equivalent_to(operation_source) {
+        return None;
+    }
+    let write = match source {
+        Crs::Projected(projected) => {
+            let target_is_geographic = matches!(
+                crs.target_crs(),
+                Crs::Geographic(_) | Crs::Geodetic(GeodeticCRS::Geographic(_))
+            );
+            let base = Crs::Geodetic(projected.base_crs().clone());
+            target_is_geographic && !base.is_equivalent_to(operation_source)
+        }
+        _ => true,
+    };
+    write.then_some(operation_source)
+}
+
+/// The transformation of a bound CRS: name, the source CRS when it is to be written, method,
+/// parameter values, and `id`. PROJ writes it without `type`, and with no accuracy or usage.
+fn write_abridged_transformation(
+    writer: &mut Writer,
+    transformation: &Transformation,
+    db: &DatabaseContext,
+    place: Place,
+    source_to_write: Option<&Crs>,
+) -> Result<(), FactoryError> {
+    writer.start_object();
+    write_name(writer, &transformation.identified.name);
+    if let Some(source) = source_to_write {
+        writer.key("source_crs");
+        write_component(writer, source, db, place.chain, Allow::Asked)?;
+    }
+    writer.key("method");
+    write_method(writer, transformation.method());
+    writer.key("parameters");
+    writer.start_array();
+    for parameter in transformation.parameters() {
+        write_parameter(writer, parameter, place.chain);
+    }
+    writer.end_array();
+    write_id_if(writer, place, &transformation.identified.identifiers, db);
+    writer.end_object();
+    Ok(())
+}
+
+/// The `datum` or `datum_ensemble` of a geodetic CRS. The ensemble has no `type` in the CRS.
+fn write_datum_or_ensemble(
+    writer: &mut Writer,
+    datum: Option<&GeodeticReferenceFrame>,
+    ensemble: Option<&DatumEnsemble>,
+    db: &DatabaseContext,
+    parent: Chain,
+) -> Result<(), FactoryError> {
+    if let Some(datum) = datum {
+        writer.key("datum");
+        let datum_place = Place::inside(parent, ident(datum.identifiers()), Allow::Plain);
+        write_datum(writer, datum, db, datum_place)?;
+    } else if let Some(ensemble) = ensemble {
+        writer.key("datum_ensemble");
+        write_ensemble(writer, ensemble, db, parent)?;
+    }
+    Ok(())
+}
+
+fn write_datum(
+    writer: &mut Writer,
+    datum: &GeodeticReferenceFrame,
+    db: &DatabaseContext,
+    place: Place,
+) -> Result<(), FactoryError> {
+    writer.start_object();
+    let dynamic = datum.frame_reference_epoch().is_some();
+    writer.key("type");
+    writer.string(if dynamic {
+        "DynamicGeodeticReferenceFrame"
+    } else {
+        "GeodeticReferenceFrame"
+    });
+    write_name(writer, datum.name());
+    write_anchor(
+        writer,
+        datum.anchor(),
+        datum.anchor_epoch(),
+        datum.deformation_model(),
+    )?;
+    if let Some(epoch) = datum.frame_reference_epoch() {
+        writer.key("frame_reference_epoch");
+        writer.number(epoch);
+    }
+    writer.key("ellipsoid");
+    let ellipsoid = datum.ellipsoid();
+    let ellipsoid_place = Place::inside(place.chain, ident(ellipsoid.identifiers()), Allow::Plain);
+    write_ellipsoid(writer, ellipsoid, db, ellipsoid_place);
+    let meridian = datum.prime_meridian();
+    if meridian.name() != "Greenwich" {
+        writer.key("prime_meridian");
+        let meridian_place =
+            Place::inside(place.chain, ident(meridian.identifiers()), Allow::Plain);
+        write_meridian(writer, meridian, db, meridian_place);
+    }
+    write_id_if(writer, place, datum.identifiers(), db);
+    writer.end_object();
+    Ok(())
+}
+
+fn write_vertical_datum(
+    writer: &mut Writer,
+    datum: &VerticalReferenceFrame,
+    db: &DatabaseContext,
+    place: Place,
+) -> Result<(), FactoryError> {
+    writer.start_object();
+    let dynamic = datum.frame_reference_epoch().is_some();
+    writer.key("type");
+    writer.string(if dynamic {
+        "DynamicVerticalReferenceFrame"
+    } else {
+        "VerticalReferenceFrame"
+    });
+    write_name(writer, datum.name());
+    write_anchor(
+        writer,
+        datum.anchor(),
+        datum.anchor_epoch(),
+        datum.deformation_model(),
+    )?;
+    if let Some(epoch) = datum.frame_reference_epoch() {
+        writer.key("frame_reference_epoch");
+        writer.number(epoch);
+    }
+    write_id_if(writer, place, datum.identifiers(), db);
+    writer.end_object();
+    Ok(())
+}
+
+/// `anchor` as PROJ writes it. The anchor epoch and a deformation model are not written by this
+/// port, so a datum that has one is an error rather than a PROJJSON without them.
+fn write_anchor(
+    writer: &mut Writer,
+    anchor: Option<&str>,
+    anchor_epoch: Option<f64>,
+    deformation_model: Option<&str>,
+) -> Result<(), FactoryError> {
+    if anchor_epoch.is_some() {
+        return Err(FactoryError::Format(
+            "PROJJSON anchor_epoch is not written in this build".to_owned(),
+        ));
+    }
+    if deformation_model.is_some() {
+        return Err(FactoryError::Format(
+            "PROJJSON deformation_models is not written in this build".to_owned(),
+        ));
+    }
+    if let Some(anchor) = anchor {
+        writer.key("anchor");
+        writer.string(anchor);
+    }
+    Ok(())
+}
+
+/// A datum ensemble. PROJ writes its `id` whatever the parent. The ellipsoid of its first member
+/// follows the usual `id` rule, with the ensemble above it.
+fn write_ensemble(
+    writer: &mut Writer,
+    ensemble: &DatumEnsemble,
+    db: &DatabaseContext,
+    parent: Chain,
+) -> Result<(), FactoryError> {
+    let chain = chain_of(parent, ident(ensemble.identifiers()));
+    writer.start_object();
+    write_name(writer, ensemble.name());
+    writer.key("members");
+    writer.start_array();
+    for member in ensemble.members() {
+        writer.start_object();
+        let (name, identifiers) = match member {
+            Datum::Geodetic(frame) => (frame.name(), frame.identifiers()),
+            Datum::Vertical(frame) => (frame.name(), frame.identifiers()),
+            _ => {
+                return Err(FactoryError::Format(
+                    "PROJJSON export of this datum ensemble member is not built".to_owned(),
+                ));
+            }
+        };
+        write_name(writer, name);
+        write_id(writer, identifiers, db);
+        writer.end_object();
+    }
+    writer.end_array();
+    if let Some(Datum::Geodetic(first)) = ensemble.members().first() {
+        writer.key("ellipsoid");
+        let ellipsoid = first.ellipsoid();
+        let ellipsoid_place = Place::inside(chain, ident(ellipsoid.identifiers()), Allow::Plain);
+        write_ellipsoid(writer, ellipsoid, db, ellipsoid_place);
+    }
+    writer.key("accuracy");
+    // The accuracy is the text stored in proj.db, so a whole value reads "2.0".
+    match ensemble.accuracy_text.as_deref() {
+        Some(text) => writer.string(text),
+        None => writer.string(&super::wkt::format_g(ensemble.positional_accuracy(), 15)),
+    }
+    write_id(writer, ensemble.identifiers(), db);
+    writer.end_object();
+    Ok(())
+}
+
+/// `geoid_model`, or `geoid_models` for several. A model's `id` is always written.
+fn write_geoid_models(writer: &mut Writer, models: &[GeoidModel], db: &DatabaseContext) {
+    match models {
+        [] => {}
+        [model] => {
+            writer.key("geoid_model");
+            write_geoid_model(writer, model, db);
+        }
+        many => {
+            writer.key("geoid_models");
+            writer.start_array();
+            for model in many {
+                write_geoid_model(writer, model, db);
+            }
+            writer.end_array();
+        }
+    }
+}
+
+fn write_geoid_model(writer: &mut Writer, model: &GeoidModel, db: &DatabaseContext) {
+    writer.start_object();
+    writer.key("name");
+    writer.string(model.name());
+    write_id(writer, model.identifiers(), db);
+    writer.end_object();
+}
+
+/// An ellipsoid as PROJ writes it: `radius` for a sphere, else `semi_major_axis` and either the
+/// stored `inverse_flattening` or `semi_minor_axis`. An axis that is not in metres is an object
+/// with its `value` and `unit`.
+fn write_ellipsoid(writer: &mut Writer, ellipsoid: &Ellipsoid, db: &DatabaseContext, place: Place) {
+    writer.start_object();
+    write_name(writer, ellipsoid.name());
+    let sphere = ellipsoid.is_sphere();
+    let major_key = if sphere { "radius" } else { "semi_major_axis" };
+    write_length(writer, major_key, ellipsoid.semi_major_axis(), place);
+    if !sphere {
+        if let Some(inverse_flattening) = ellipsoid.declared_inverse_flattening() {
+            writer.key("inverse_flattening");
+            writer.number(inverse_flattening);
+        } else if let Some(minor) = ellipsoid.semi_minor_axis() {
+            write_length(writer, "semi_minor_axis", minor, place);
+        }
+    }
+    write_id_if(writer, place, ellipsoid.identifiers(), db);
+    writer.end_object();
+}
+
+/// A length under `key`: a bare number in metres, else `{value, unit}`.
+fn write_length(writer: &mut Writer, key: &str, length: &Measure, place: Place) {
+    writer.key(key);
+    let unit = length.unit();
+    if unit.name() == "metre" {
+        writer.number(length.value());
+    } else {
+        writer.start_object();
+        writer.key("value");
+        writer.number(length.value());
+        writer.key("unit");
+        let unit_place = Place::inside(place.chain, Ident::Lacks, Allow::Plain);
+        write_unit_object(writer, unit, unit_place);
+        writer.end_object();
+    }
+}
+
+fn write_meridian(
+    writer: &mut Writer,
+    meridian: &PrimeMeridian,
+    db: &DatabaseContext,
+    place: Place,
+) {
+    writer.start_object();
+    writer.key("name");
+    writer.string(meridian.name());
+    writer.key("longitude");
+    writer.number(meridian.longitude().convert_to(&UnitOfMeasure::degree()));
+    write_id_if(writer, place, meridian.identifiers(), db);
+    writer.end_object();
+}
+
+/// `coordinate_system`: its subtype and its axes. The coordinate system's own `id` is not
+/// written: none of the CRS built here has one in its CS.
+fn write_cs(
+    writer: &mut Writer,
+    subtype: &str,
+    axes: &[Axis],
+    parent: Chain,
+) -> Result<(), FactoryError> {
+    writer.start_object();
+    writer.key("subtype");
+    writer.string(subtype);
+    writer.key("axis");
+    writer.start_array();
+    for axis in axes {
+        if axis.meridian.is_some() {
+            return Err(FactoryError::Format(
+                "PROJJSON axis meridian is not written in this build".to_owned(),
+            ));
+        }
+        write_axis(writer, axis, parent);
+    }
+    writer.end_array();
+    writer.end_object();
+    Ok(())
+}
+
+fn write_axis(writer: &mut Writer, axis: &Axis, parent: Chain) {
+    writer.start_object();
+    writer.key("name");
+    writer.string(axis.name());
+    writer.key("abbreviation");
+    writer.string(axis.abbreviation());
+    writer.key("direction");
+    writer.string(axis.direction());
+    let unit = &axis.unit;
+    if matches!(unit.name(), "metre" | "degree") {
+        writer.key("unit");
+        writer.string(unit.name());
+    } else if unit.kind != UnitKind::None {
+        writer.key("unit");
+        let unit_place = Place::inside(parent, Ident::Lacks, Allow::Plain);
+        write_unit_object(writer, unit, unit_place);
+    }
+    if let Some(minimum) = axis.minimum {
+        writer.key("minimum_value");
+        writer.number(minimum);
+    }
+    if let Some(maximum) = axis.maximum {
+        writer.key("maximum_value");
+        writer.number(maximum);
+    }
+    if let (Some(_), Some(_), Some(range)) = (axis.minimum, axis.maximum, &axis.range_meaning) {
+        writer.key("range_meaning");
+        writer.string(range);
+    }
+    writer.end_object();
+}
+
+/// A unit that is not metre, degree or unity, as an object. Its `id` is written when `place`
+/// writes one.
+fn write_unit_object(writer: &mut Writer, unit: &UnitOfMeasure, place: Place) {
+    writer.start_object();
+    writer.key("type");
+    writer.string(match unit.kind {
+        UnitKind::Linear => "LinearUnit",
+        UnitKind::Angular => "AngularUnit",
+        UnitKind::Scale => "ScaleUnit",
+        UnitKind::Time => "TimeUnit",
+        UnitKind::None | UnitKind::Unknown => "Unit",
+    });
+    writer.key("name");
+    writer.string(unit.name());
+    writer.key("conversion_factor");
+    writer.number(unit.conversion_to_si());
+    if place.id_out && !unit.code_space.is_empty() && !unit.code.is_empty() {
+        write_id_code(writer, &unit.code_space, &unit.code);
+    }
+    writer.end_object();
+}
+
+/// A conversion inside a projected CRS: name, method, parameter values, and `id` by the usual
+/// rule. The conversion has no `type` there.
+fn write_conversion(
+    writer: &mut Writer,
+    conversion: &Conversion,
+    db: &DatabaseContext,
+    place: Place,
+) -> Result<(), FactoryError> {
+    writer.start_object();
+    write_name(writer, conversion.name());
+    writer.key("method");
+    write_method(writer, conversion.method());
+    let parameters = conversion.parameters();
+    if !parameters.is_empty() {
+        writer.key("parameters");
+        writer.start_array();
+        for parameter in parameters {
+            write_parameter(writer, parameter, place.chain);
+        }
+        writer.end_array();
+    }
+    write_id_if(writer, place, conversion.identifiers(), db);
+    writer.end_object();
+    Ok(())
+}
+
+/// An operation method: its name and `id`. The method's `id` is always written, PROJ's
+/// `setAllowIDInImmediateChild` comes before it.
+fn write_method(writer: &mut Writer, method: &OperationMethod) {
+    writer.start_object();
+    writer.key("name");
+    writer.string(method.name());
+    if !method.code_space().is_empty() && !method.code().is_empty() {
+        write_id_code(writer, method.code_space(), method.code());
+    }
+    writer.end_object();
+}
+
+/// One parameter value: name, then `value` and `unit`, then `id`. The `id` is always written. A
+/// string or boolean value is not written, as PROJ writes neither.
+fn write_parameter(writer: &mut Writer, parameter: &Parameter, parent: Chain) {
+    writer.start_object();
+    writer.key("name");
+    writer.string(parameter.name());
+    let has_id = code_ident(parameter.code_space());
+    match parameter.value() {
+        ParameterValue::Measure(measure) => {
+            writer.key("value");
+            writer.number(measure.value());
+            writer.key("unit");
+            let unit = measure.unit();
+            if matches!(unit.name(), "metre" | "degree" | "unity") {
+                writer.string(unit.name());
+            } else {
+                let unit_place = Place::inside(parent, has_id, Allow::Plain);
+                write_unit_object(writer, unit, unit_place);
+            }
+        }
+        ParameterValue::Filename(text) => {
+            writer.key("value");
+            writer.string(text);
+        }
+        ParameterValue::Integer(value) => {
+            writer.key("value");
+            writer.raw_token(&value.to_string());
+        }
+        ParameterValue::String(_) | ParameterValue::Boolean(_) => {}
+    }
+    if has_id == Ident::Has && !parameter.code().is_empty() {
+        write_id_code(writer, parameter.code_space(), parameter.code());
+    }
+    writer.end_object();
+}
+
+/// Usage of a top object: `scope`, `area` and `bbox` for one domain, or a `usages` array for
+/// several. Nothing is written below the top object.
+fn write_usage(writer: &mut Writer, domains: &[ObjectDomain], place: Place) {
+    if !place.top {
+        return;
+    }
+    match domains {
+        [] => {}
+        [domain] => write_domain_members(writer, domain),
+        many => {
+            writer.key("usages");
+            writer.start_array();
+            for domain in many {
+                writer.start_object();
+                write_domain_members(writer, domain);
+                writer.end_object();
+            }
+            writer.end_array();
+        }
+    }
+}
+
+fn write_domain_members(writer: &mut Writer, domain: &ObjectDomain) {
     if let Some(scope) = domain.scope() {
         writer.key("scope");
         writer.string(scope);
@@ -244,113 +1079,20 @@ fn write_domain(writer: &mut Writer, domains: &[super::model::ObjectDomain]) {
     }
 }
 
-fn write_datum(writer: &mut Writer, datum: &GeodeticReferenceFrame, db: &DatabaseContext) {
-    writer.start_object();
-    writer.key("type");
-    writer.string("GeodeticReferenceFrame");
-    writer.key("name");
-    writer.string(datum.name());
-    writer.key("ellipsoid");
-    write_ellipsoid(writer, datum.ellipsoid(), db);
-    writer.key("prime_meridian");
-    write_meridian(writer, datum.prime_meridian());
-    write_id(writer, datum.identifiers(), db);
-    writer.end_object();
-}
-
-fn write_ensemble(writer: &mut Writer, ensemble: &DatumEnsemble, db: &DatabaseContext) {
-    writer.start_object();
-    writer.key("name");
-    writer.string(ensemble.name());
-    writer.key("members");
-    writer.start_array();
-    for member in ensemble.members() {
-        if let super::model::Datum::Geodetic(frame) = member {
-            // PROJ writes an ensemble member as its name and id only.
-            writer.start_object();
-            writer.key("name");
-            writer.string(frame.name());
-            write_id(writer, frame.identifiers(), db);
-            writer.end_object();
-        }
+/// The `id` of an object that writes one, when `place` says so.
+fn write_id_if(
+    writer: &mut Writer,
+    place: Place,
+    identifiers: &[Identifier],
+    db: &DatabaseContext,
+) {
+    if place.id_out {
+        write_id(writer, identifiers, db);
     }
-    writer.end_array();
-    if let Some(super::model::Datum::Geodetic(frame)) = ensemble.members().first() {
-        // The ensemble's ellipsoid is written without an id.
-        let ellipsoid = frame.ellipsoid();
-        writer.key("ellipsoid");
-        writer.start_object();
-        writer.key("name");
-        writer.string(ellipsoid.name());
-        writer.key("semi_major_axis");
-        writer.number(ellipsoid.semi_major_axis().si_value());
-        writer.key("inverse_flattening");
-        writer.number(ellipsoid.inverse_flattening());
-        writer.end_object();
-    }
-    writer.key("accuracy");
-    // The accuracy is the text stored in proj.db, so a whole value reads "2.0".
-    match ensemble.accuracy_text.as_deref() {
-        Some(text) => writer.string(text),
-        None => writer.string(&super::wkt::format_g(ensemble.positional_accuracy(), 15)),
-    }
-    write_id(writer, ensemble.identifiers(), db);
-    writer.end_object();
 }
 
-fn write_ellipsoid(writer: &mut Writer, ellipsoid: &Ellipsoid, db: &DatabaseContext) {
-    writer.start_object();
-    writer.key("name");
-    writer.string(ellipsoid.name());
-    writer.key("semi_major_axis");
-    writer.number(ellipsoid.semi_major_axis().si_value());
-    writer.key("inverse_flattening");
-    writer.number(ellipsoid.inverse_flattening());
-    write_id(writer, ellipsoid.identifiers(), db);
-    writer.end_object();
-}
-
-fn write_meridian(writer: &mut Writer, meridian: &PrimeMeridian) {
-    writer.start_object();
-    writer.key("name");
-    writer.string(meridian.name());
-    writer.key("longitude");
-    writer.number(meridian.longitude().convert_to(&UnitOfMeasure::degree()));
-    writer.end_object();
-}
-
-fn write_ellipsoidal_cs(writer: &mut Writer, cs: &EllipsoidalCS) {
-    writer.start_object();
-    writer.key("subtype");
-    writer.string("ellipsoidal");
-    writer.key("axis");
-    writer.start_array();
-    for axis in cs.axes() {
-        writer.start_object();
-        writer.key("name");
-        writer.string(axis.name());
-        writer.key("abbreviation");
-        writer.string(axis.abbreviation());
-        writer.key("direction");
-        writer.string(axis.direction());
-        writer.key("unit");
-        // PROJ writes the two everyday units by name; any other unit as an object.
-        if matches!(axis.unit().name(), "degree" | "metre") {
-            writer.string(axis.unit().name());
-        } else {
-            writer.start_object();
-            writer.key("name");
-            writer.string(axis.unit().name());
-            writer.key("conversion_factor");
-            writer.number(axis.unit().conversion_to_si());
-            writer.end_object();
-        }
-        writer.end_object();
-    }
-    writer.end_array();
-    writer.end_object();
-}
-
+/// The `id` of an object: its first identifier, with the authority and, when `proj.db` has one,
+/// the version. Only the first identifier is written.
 fn write_id(writer: &mut Writer, identifiers: &[Identifier], db: &DatabaseContext) {
     let Some(identifier) = identifiers.first() else {
         return;
@@ -367,20 +1109,31 @@ fn write_id(writer: &mut Writer, identifiers: &[Identifier], db: &DatabaseContex
     writer.key("authority");
     writer.string(&authority);
     writer.key("code");
-    if is_integer_token(identifier.code()) {
-        writer.raw_token(identifier.code());
-    } else {
-        writer.string(identifier.code());
-    }
+    write_code(writer, identifier.code());
     if let Some(version) = version {
         writer.key("version");
-        if is_integer_token(&version) {
-            writer.raw_token(&version);
-        } else {
-            writer.string(&version);
-        }
+        write_code(writer, &version);
     }
     writer.end_object();
+}
+
+/// An `id` object with an `authority` and a `code`, for a parameter, method or unit.
+fn write_id_code(writer: &mut Writer, code_space: &str, code: &str) {
+    writer.key("id");
+    writer.start_object();
+    writer.key("authority");
+    writer.string(code_space);
+    writer.key("code");
+    write_code(writer, code);
+    writer.end_object();
+}
+
+fn write_code(writer: &mut Writer, code: &str) {
+    if is_integer_token(code) {
+        writer.raw_token(code);
+    } else {
+        writer.string(code);
+    }
 }
 
 fn is_integer_token(text: &str) -> bool {

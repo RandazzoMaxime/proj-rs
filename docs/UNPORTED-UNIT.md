@@ -151,25 +151,17 @@ and `PORT-NOTES-tests.md`.
 
 ## test_io.cpp
 
-- `wkt_parse.wkt2_epsg_org_EPSG_4901_PRIMEM_weird_sexagesimal_DMS`
 - `wkt_parse.wkt1_geographic_old_datum_name_without_EPSG_code`
 - `wkt_parse.wkt1_geographic_with_PROJ4_extension`
 - `wkt_parse.wkt1_geographic_epsg_org_api_4326`
 - `wkt_parse.wkt1_geographic_epsg_org_api_4258`
 - `wkt_parse.wkt1_geocentric_with_PROJ4_extension`
-- `wkt_parse.wkt2_simplified_EPSG_4326`
-- `wkt_parse.wkt2_EPSG_4979`
 - `wkt_parse.wkt2_spherical_planetocentric`
-- `wkt_parse.wkt2_geocentric_DEFININGTRANSFORMATION`
 - `wkt_parse.wkt1_projected_with_PROJ4_extension`
 - `wkt_parse.wkt1_krovak_south_west`
 - `wkt_parse.wkt2_krovak_modified_south_west`
 - `wkt_parse.wkt2_krovak_modified_east_north`
 - `proj_export.wkt2_hotine_oblique_mercator_without_rectified_grid_angle`
-- `wkt_parse.wkt2_projected`
-- `wkt_parse.wkt2_2019_projected_with_id_in_basegeodcrs`
-- `wkt_parse.wkt2_2019_projected_no_id_but_id_in_basegeodcrs`
-- `wkt_parse.wkt2_2019_simplified_projected`
 - `wkt_parse.wkt2_2019_projected_3D`
 - `wkt_parse.wkt2_2019_projected_utm_3D`
 - `wkt_parse.wkt2_2019_projected_with_base_geocentric`
@@ -184,23 +176,13 @@ and `PORT-NOTES-tests.md`.
 - `wkt_parse.cs_with_invalid_AXISMAXVAL_too_many_children`
 - `wkt_parse.cs_with_invalid_RANGEMEANING`
 - `wkt_parse.cs_with_invalid_RANGEMEANING_too_many_children`
-- `wkt_parse.vertcrs_VRF_WKT2`
-- `wkt_parse.vertcrs_with_GEOIDMODEL`
-- `wkt_parse.vertcrs_WKT1_GDAL`
-- `wkt_parse.vertcrs_WKT1_GDAL_minimum`
-- `wkt_parse.vertcrs_WKT1_GDAL_missing_unit_and_axis`
-- `wkt_parse.vertcrs_WKT1_GDAl_missing_unit_with_axis`
-- `wkt_parse.VERTCS_WKT1_ESRI`
 - `wkt_parse.VERTCS_WKT1_ESRI_context`
-- `wkt_parse.VERTCS_WKT1_ESRI_down`
 - `wkt_parse.vertcrs_WKT1_LAS_ftUS`
 - `wkt_parse.vertcrs_WKT1_LAS_metre`
 - `wkt_parse.compoundcrs_WKT1_LAS_only_geoid_name`
 - `wkt_parse.dynamic_vertical_reference_frame`
-- `wkt_parse.vertcrs_with_ensemble`
 - `wkt_parse.vdatum_with_ANCHOR`
 - `wkt_parse.vdatum_with_ANCHOREPOCH`
-- `wkt_parse.COMPOUNDCRS`
 - `wkt_parse.COMPOUNDCRS_spatio_parametric_2015`
 - `wkt_parse.COMPOUNDCRS_spatio_parametric_2019`
 - `wkt_parse.COMPOUNDCRS_spatio_temporal_2015`
@@ -211,7 +193,6 @@ and `PORT-NOTES-tests.md`.
 - `wkt_parse.COMPD_CS_horizontal_bound_geog_plus_vertical_ellipsoidal_height`
 - `wkt_parse.COMPD_CS_horizontal_projected_plus_vertical_ellipsoidal_height`
 - `wkt_parse.COMPD_CS_horizontal_geog_plus_vertical_ellipsoidal_height_non_metre`
-- `wkt_parse.implicit_compound_CRS_ESRI`
 - `wkt_parse.VERTCS_with_ellipsoidal_height_ESRI`
 - `wkt_parse.implicit_compound_CRS_geographic_with_ellipsoidal_height_ESRI`
 - `wkt_parse.implicit_compound_CRS_projected_with_ellipsoidal_height_ESRI`
@@ -228,7 +209,6 @@ and `PORT-NOTES-tests.md`.
 - `wkt_parse.BOUNDCRS_transformation_from_names`
 - `wkt_parse.BOUNDCRS_transformation_from_codes`
 - `wkt_parse.BOUNDCRS_with_interpolation_as_parameter`
-- `wkt_parse.boundcrs_of_verticalcrs_to_geog3Dcrs`
 - `wkt_parse.geogcs_TOWGS84_3terms`
 - `wkt_parse.projcs_TOWGS84_7terms`
 - `io.projcs_TOWGS84_7terms_autocorrect`

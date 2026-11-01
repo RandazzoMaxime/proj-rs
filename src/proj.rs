@@ -13,6 +13,8 @@ use std::fmt;
 use std::path::Path;
 
 mod bounds;
+#[path = "proj_export.rs"]
+mod proj_export;
 
 use bounds::Dims;
 
@@ -177,7 +179,8 @@ impl fmt::Display for ProjError {
             }
             Self::ExportToJson => formatter
                 .write_str("The definition could not be represented in the requested JSON format"),
-            Self::ExportToWkt => formatter.write_str("WKT export is not built"),
+            Self::ExportToWkt => formatter
+                .write_str("The definition could not be represented in the requested WKT format"),
         }
     }
 }
@@ -217,7 +220,7 @@ pub enum ProjCreateError {
     ArgumentNulError(NulError),
     /// The operation or CRS is unknown, or a parameter was rejected.
     ProjError(String),
-    /// Coordinate metadata objects are not built.
+    /// A coordinate metadata object needs a single CRS, not a transform.
     MetadataObjectCreation,
 }
 
@@ -309,12 +312,9 @@ pub struct ProjInfo {
     pub accuracy: f64,
 }
 
-/// Options for [`Proj::as_wkt`]. WKT export is not built.
+/// Options for [`Proj::as_wkt`]. An unset field keeps PROJ's default: multi-line output
+/// except for WKT1 Esri, four spaces of indentation, and strict WKT1.
 #[derive(Clone, Debug, Default)]
-#[expect(
-    dead_code,
-    reason = "fields match georust WktOptions; this port does not write WKT"
-)]
 pub struct WktOptions {
     multiline: Option<bool>,
     indentation_width: Option<usize>,
@@ -335,7 +335,7 @@ pub enum WktOutputAxis {
     No,
 }
 
-/// WKT dialect. Export of every dialect returns an error.
+/// WKT dialect for [`Proj::as_wkt`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[expect(
     non_camel_case_types,
@@ -379,7 +379,7 @@ enum Body {
 /// A coordinate transformation.
 ///
 /// Build one with [`Proj::new`], [`Proj::new_known_crs`], or [`ProjBuilder`].
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Proj {
     body: Body,
     definition: String,
@@ -387,6 +387,8 @@ pub struct Proj {
     /// `new_known_crs` owns an area slot. [`Proj::area_set_bbox`] records into it.
     known: bool,
     net: crate::network::GridContext,
+    /// The epoch of a coordinate metadata object, see [`crate::proj_meta`]. `None` otherwise.
+    pub(crate) epoch: Option<f64>,
 }
 
 impl Proj {
@@ -492,6 +494,11 @@ impl Proj {
                 "target is not a single CRS".to_owned(),
             ));
         };
+        // A coordinate metadata object moves its coordinate in time. The epoch is not
+        // applied here, so the transform is refused rather than built without it.
+        if let Some(error) = crate::proj_meta::time_dependent_refusal(self, target_crs) {
+            return Err(error);
+        }
         let bridge = source.datum_bridge(target)?;
         Ok(built(
             Body::Between {
@@ -504,21 +511,29 @@ impl Proj {
         ))
     }
 
-    /// Coordinate metadata objects are not built.
+    /// Build a coordinate metadata object: this CRS at `epoch`.
+    ///
+    /// The object keeps the CRS and the epoch. Passing it to
+    /// [`Self::create_crs_to_crs_from_pj`] is refused, because the epoch is not applied
+    /// to a transformation.
     ///
     /// # Errors
     ///
-    /// Always [`ProjCreateError::MetadataObjectCreation`].
-    pub fn coordinate_metadata_create(&self, _epoch: f64) -> Result<Self, ProjCreateError> {
-        Err(ProjCreateError::MetadataObjectCreation)
+    /// [`ProjCreateError::MetadataObjectCreation`] when `self` is a transform rather
+    /// than a single CRS.
+    pub fn coordinate_metadata_create(&self, epoch: f64) -> Result<Self, ProjCreateError> {
+        if !matches!(self.body, Body::Single(_)) {
+            return Err(ProjCreateError::MetadataObjectCreation);
+        }
+        Ok(crate::proj_meta::with_epoch(self, epoch))
     }
 
     /// Epoch of a coordinate metadata object.
     ///
-    /// This port does not build metadata objects, so the result is [`f64::NAN`].
+    /// An object without an epoch gives [`f64::NAN`].
     #[must_use]
     pub fn coordinate_metadata_get_epoch(&self) -> f64 {
-        f64::NAN
+        crate::proj_meta::epoch_of(self)
     }
 
     /// Record an area of use on a CRS-to-CRS transform.
@@ -532,19 +547,39 @@ impl Proj {
         }
     }
 
-    /// Area of use.
+    /// Area of use of a CRS, and its name, as `proj_get_area_of_use` reports them.
+    ///
+    /// The box is `None` when the CRS has no bounding box in `proj.db`. The
+    /// name is the description of its first usage.
     ///
     /// # Errors
     ///
-    /// [`ProjError::UnknownAreaOfUse`]. Extents in `proj.db` are not reported,
-    /// and this method does not invent one.
+    /// [`ProjError::UnknownAreaOfUse`] when this transform is not a CRS built from
+    /// `EPSG:`, WKT, or PROJJSON, or when the CRS cannot be read.
     pub fn area_of_use(&self) -> Result<(Option<Area>, Option<String>), ProjError> {
+        if matches!(self.body, Body::Single(_)) {
+            return crate::proj_info::crs_area_of_use(&self.definition);
+        }
         Err(ProjError::UnknownAreaOfUse)
     }
 
     /// Description of this transform.
+    ///
+    /// For a PROJ string, `id` is its `proj=` name, `description` is
+    /// `PROJ-based coordinate operation`, and `definition` is [`Self::def`].
     #[must_use]
     pub fn proj_info(&self) -> ProjInfo {
+        if matches!(self.body, Body::Native(_)) {
+            let definition = self.def().ok();
+            let id = definition.as_deref().and_then(crate::proj_info::proj_name);
+            return ProjInfo {
+                id,
+                description: Some(crate::proj_info::OPERATION_DESCRIPTION.to_owned()),
+                definition,
+                has_inverse: self.has_inverse(),
+                accuracy: -1.0,
+            };
+        }
         ProjInfo {
             id: None,
             description: Some(self.definition.clone()),
@@ -554,17 +589,26 @@ impl Proj {
         }
     }
 
-    /// PROJ string or CRS pair that built this object.
+    /// Definition of this object, as libproj reports it.
+    ///
+    /// For a PROJ string this is the CRS the string reads as, written back as
+    /// `proj=… key=value …` with the datum's ellipsoid and `towgs84=` or
+    /// `nadgrids=` appended. `+proj=longlat +datum=WGS84 +no_defs` gives
+    /// `proj=longlat datum=WGS84 no_defs ellps=WGS84 towgs84=0,0,0`.
     ///
     /// # Errors
     ///
-    /// [`ProjError::Definition`] when no definition was stored.
+    /// [`ProjError::Definition`] when no definition was stored, or when a PROJ
+    /// string cannot be read as a CRS (a pipeline, a grid step, `+init=`), or
+    /// names a datum PROJ does not know.
     pub fn def(&self) -> Result<String, ProjError> {
         if self.definition.is_empty() {
-            Err(ProjError::Definition)
-        } else {
-            Ok(self.definition.clone())
+            return Err(ProjError::Definition);
         }
+        if matches!(self.body, Body::Native(_)) {
+            return crate::proj_info::operation_definition(&self.definition);
+        }
+        Ok(self.definition.clone())
     }
 
     /// Version of the PROJ release this port follows.
@@ -773,37 +817,43 @@ impl Proj {
 
     /// PROJJSON stored for an EPSG code, or the PROJJSON text passed to [`Self::new`].
     ///
-    /// `multiline`, `indentation_width`, and `schema` are accepted and ignored:
-    /// the text is returned as stored. A CRS-to-CRS transform has none.
+    /// PROJJSON of the CRS this object was built from, written by the ISO 19111
+    /// exporter as `proj_as_projjson` does.
+    ///
+    /// `multiline` (multi-line by default), `indentation_width`, and `schema` (the
+    /// PROJJSON v0.7 schema by default) set the layout. A transform built from a pair
+    /// or a PROJ operation has no CRS to write: the export of that operation is not built.
     ///
     /// # Errors
     ///
-    /// [`ProjError::ExportToJson`] when this object was not loaded from a
-    /// PROJJSON string and `proj.db` has no PROJJSON column or value for it.
+    /// [`ProjError::ExportToJson`] when this object is not a CRS, or the CRS kind has no
+    /// PROJJSON export in this crate.
     pub fn to_projjson(
         &self,
-        _multiline: Option<bool>,
-        _indentation_width: Option<usize>,
-        _schema: Option<&str>,
+        multiline: Option<bool>,
+        indentation_width: Option<usize>,
+        schema: Option<&str>,
     ) -> Result<String, ProjError> {
-        crate::crs::stored_projjson(&self.definition).ok_or(ProjError::ExportToJson)
+        proj_export::to_projjson(self, multiline, indentation_width, schema)
     }
 
-    /// WKT stored for an EPSG code, or the WKT text passed to [`Self::new`].
+    /// WKT of the CRS this object was built from, in `version` (WKT2:2019 by default),
+    /// written by the ISO 19111 exporter as `proj_as_wkt` does.
     ///
-    /// `version` and `options` select a dialect this port does not write. When
-    /// a stored string exists it is returned unchanged.
+    /// `options` sets the layout, the axis rule, and the WKT1 strictness, as in
+    /// [`WktOptions`]. A transform built from a pair or a PROJ operation has no CRS to
+    /// write: the export of that operation is not built.
     ///
     /// # Errors
     ///
-    /// [`ProjError::ExportToWkt`] when this object was not loaded from WKT and
-    /// `proj.db` has no WKT column or value for it.
+    /// [`ProjError::ExportToWkt`] when this object is not a CRS, or the CRS cannot be
+    /// written in `version`.
     pub fn as_wkt(
         &self,
-        _version: Option<WktVersion>,
-        _options: Option<WktOptions>,
+        version: Option<WktVersion>,
+        options: Option<WktOptions>,
     ) -> Result<String, ProjError> {
-        crate::crs::stored_wkt(&self.definition).ok_or(ProjError::ExportToWkt)
+        proj_export::as_wkt(self, version, options)
     }
 
     fn has_inverse(&self) -> bool {
@@ -891,7 +941,16 @@ impl Proj {
                     Direction::Forward => op.forward(coord),
                 }
             }
-            Body::Iso(pipeline) => pipeline.map(Xyzt { x, y, z, t: 0.0 }, way),
+            Body::Iso(pipeline) => {
+                if let Some(message) = pipeline.refusal(way) {
+                    let message = message.to_owned();
+                    return Err(match report {
+                        Report::Projection => ProjError::Projection(message),
+                        Report::Conversion => ProjError::Conversion(message),
+                    });
+                }
+                pipeline.map(Xyzt { x, y, z, t: 0.0 }, way)
+            }
             Body::Between {
                 source,
                 target,
@@ -1161,6 +1220,7 @@ fn built(body: Body, definition: String, area: Option<Area>) -> Proj {
         area,
         known,
         net: crate::network::context(),
+        epoch: None,
     }
 }
 

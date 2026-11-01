@@ -70,7 +70,6 @@ fn assert_eq_within(left: f64, right: f64, epsilon: f64) {
 }
 
 #[test]
-#[ignore = "gap: def() returns the text given, not libproj's normalized definition"]
 fn test_definition() {
     let wgs84 = "+proj=longlat +datum=WGS84 +no_defs";
     let proj = Proj::new(wgs84).unwrap();
@@ -81,7 +80,6 @@ fn test_definition() {
 }
 
 #[test]
-#[ignore = "gap: coordinate metadata objects are not built"]
 fn test_metadata_creation() {
     let proj = Proj::new("EPSG:4326").unwrap();
     let np = proj.coordinate_metadata_create(2021.3).unwrap();
@@ -101,7 +99,6 @@ fn test_create_crs_to_crs_from_pj() {
 }
 
 #[test]
-#[ignore = "gap: Debug output is not libproj's (id, description, definition, accuracy)"]
 fn test_debug() {
     let proj = Proj::new("+proj=longlat +datum=WGS84 +no_defs").unwrap();
     assert_eq!(
@@ -111,7 +108,6 @@ fn test_debug() {
 }
 
 #[test]
-#[ignore = "gap: new_known_crs does not read a compound name such as EPSG:4326+3855 (old CRS path)"]
 fn test_set_endpoint() {
     let mut tf = ProjBuilder::new();
     let ep = tf.get_url_endpoint().unwrap();
@@ -289,7 +285,6 @@ fn test_input_order() {
 }
 
 #[test]
-#[ignore = "gap: area_of_use has no area for EPSG:3035"]
 fn test_area_of_use() {
     let proj = Proj::new("EPSG:3035").unwrap();
     let (area, name) = proj.area_of_use().unwrap();
@@ -303,7 +298,7 @@ fn test_area_of_use() {
 }
 
 #[test]
-#[ignore = "gap: PROJJSON export is not built in the facade"]
+#[ignore = "gap: PROJJSON of the operation behind a pair (a ConcatenatedOperation) is not built"]
 fn test_projjson() {
     let ft_to_m = Proj::new_known_crs("EPSG:2230", "EPSG:26946", None).unwrap();
     let _ = ft_to_m
@@ -317,7 +312,6 @@ fn test_projjson() {
 }
 
 #[test]
-#[ignore = "gap: WKT export is not built in the facade"]
 fn test_wkt() {
     let proj = Proj::new("EPSG:4326").unwrap();
     // georust passes `multiline: Some(false)`, a private field it reaches from

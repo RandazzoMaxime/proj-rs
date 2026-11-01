@@ -1890,11 +1890,15 @@ impl WktParser {
         if unit.is_none() {
             unit = unit_in;
         }
-        let Some(unit) = unit else {
-            if unit_kind != UnitKind::None && unit_kind != UnitKind::Time {
-                return Err(invalid("buildCS: missing UNIT"));
+        let unit = match unit {
+            Some(unit) => unit,
+            // An AXIS without UNIT is refused when strict, and read as metres
+            // with a warning otherwise, as PROJ does.
+            None if unit_kind == UnitKind::Linear => {
+                self.recover("buildCS: missing UNIT in AXIS node. Assuming metre")?;
+                UnitOfMeasure::metre()
             }
-            return Err(invalid("buildCS: missing UNIT"));
+            None => return Err(invalid("buildCS: missing UNIT")),
         };
         let meridian = if let Some(meridian) = node.child(&["MERIDIAN"]) {
             if meridian.children.is_empty() {
@@ -1988,7 +1992,13 @@ impl WktParser {
         if datum_node.is_none() && ensemble_node.is_none() && geodetic_in_vertcs.is_none() {
             return Err(invalid("Missing VDATUM or ENSEMBLE node"));
         }
-        let props = self.build_properties(node)?;
+        let mut props = self.build_properties(node)?;
+        // An ESRI vertical name is an alias of an EPSG name, as for projected CRSs.
+        if self.esri || self.maybe_esri {
+            if let Some((official, _, _)) = self.alias(&props.name, "vertical_crs") {
+                props.name = official;
+            }
+        }
         let dynamic = node.child(&["DYNAMIC"]);
         let cs_node = node.child(&["CS"]);
         let datum = if let Some(datum_node) = geodetic_in_vertcs {
@@ -2467,10 +2477,8 @@ impl WktParser {
             target,
             CoordinateOperation::Transformation(transformation),
         );
-        if let Ok(props) = self.build_properties(node) {
-            if !props.name.is_empty() {
-                bound.identified_mut().name = props.name;
-            }
+        // A BOUNDCRS has no name of its own: its first child is SOURCECRS, not a name.
+        if let Ok(props) = self.build_properties_without_name(node) {
             bound.identified_mut().identifiers = props.identifiers;
         }
         Ok(WktObject::Crs(Crs::Bound(bound)))

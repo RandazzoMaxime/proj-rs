@@ -155,8 +155,11 @@ fn wkt_and_projjson_build_a_geographic_or_projected_crs() {
         r#"PARAMETER["false_northing",0],UNIT["metre",1]]"#
     );
     let source = Proj::new(wkt).expect("wkt");
-    assert_eq!(source.as_wkt(None, None).expect("as_wkt"), wkt);
-    assert!(source.to_projjson(None, None, None).is_err());
+    // libproj writes the CRS again, in WKT2:2019 by default, and does not return the input.
+    let wkt2 = source.as_wkt(None, None).expect("as_wkt");
+    assert!(wkt2.starts_with(r#"GEOGCRS["WGS 84","#), "{wkt2}");
+    let json = source.to_projjson(None, None, None).expect("projjson");
+    assert!(json.contains(r#""type": "GeographicCRS""#), "{json}");
     let target = Proj::new(projected).expect("projcs");
     let pair = source
         .create_crs_to_crs_from_pj(&target, None, None)
@@ -176,7 +179,9 @@ fn wkt_and_projjson_build_a_geographic_or_projected_crs() {
         r#"{"name":"False northing","value":0}]}}"#
     );
     let from_json = Proj::new(json).expect("projjson");
-    assert_eq!(from_json.to_projjson(None, None, None).expect("json"), json);
+    // The ISO reader takes a geographic PROJJSON only: a projected one has no CRS to write
+    // here, and the facade says so instead of returning the input text.
+    assert!(from_json.to_projjson(None, None, None).is_err());
     assert!(from_json.as_wkt(None, None).is_err());
     let json_pair = source
         .create_crs_to_crs_from_pj(&from_json, None, None)
@@ -189,10 +194,11 @@ fn wkt_and_projjson_build_a_geographic_or_projected_crs() {
         r#"PROJCS["nope",GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]],PROJECTION["Not_A_Method"],UNIT["metre",1]]"#
     )
     .is_err());
-    assert!(Proj::new("EPSG:4326")
+    let wkt_4326 = Proj::new("EPSG:4326")
         .expect("4326")
         .as_wkt(None, None)
-        .is_err());
+        .expect("as_wkt");
+    assert!(wkt_4326.starts_with(r#"GEOGCRS["WGS 84","#), "{wkt_4326}");
 }
 
 #[test]
