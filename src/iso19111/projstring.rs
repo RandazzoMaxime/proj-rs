@@ -7,13 +7,13 @@ use super::bound_export::{export_bound, export_compound};
 use super::bound_import;
 use super::factory::DatabaseContext;
 use super::model::{
-    Axis, CartesianCS, Conversion, Crs, Datum, DatumEnsemble, Ellipsoid, EllipsoidalCS,
-    FactoryError, GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified,
-    Identifier, Measure, ParameterValue, PrimeMeridian, ProjectedCRS, UnitKind, UnitOfMeasure,
-    VerticalCRS,
+    Axis, Conversion, Crs, Datum, DatumEnsemble, Ellipsoid, EllipsoidalCS, FactoryError,
+    GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified, Identifier,
+    Measure, ParameterValue, PrimeMeridian, ProjectedCRS, UnitKind, UnitOfMeasure, VerticalCRS,
 };
 use super::parammap::{MethodMap, ParamMap, OTHER_METHODS, PROJECTION_METHODS};
 use super::pipeline::proj_number;
+use super::projfam;
 use super::wkt::format_g;
 use super::wkt_import::{BODY_RELATIVE, EARTH_RADIUS};
 use crate::ellipsoid::PJ_ELLPS;
@@ -1286,6 +1286,10 @@ fn method_spelling(
 ) -> (String, Vec<(String, String)>) {
     let mut tokens = tokens.to_vec();
     let mut proj = proj.to_owned();
+    if proj == "etmerc" {
+        // Exact transverse Mercator is the same EPSG method, written as `tmerc`.
+        proj = "tmerc".to_owned();
+    }
     if proj == "somerc" {
         proj = "omerc".to_owned();
         let oblique = ["alpha", "gamma", "lonc"]
@@ -1367,6 +1371,9 @@ fn forced_method_code(proj: &str, tokens: &[(String, String)]) -> Option<i32> {
 /// The value PROJ uses when a parameter is not given: 1 for a scale, 0 for an
 /// angle or length. `krovak` and `omerc` have their own defaults.
 fn parameter_default(proj: &str, param: &ParamMap, tokens: &[(String, String)]) -> f64 {
+    if let Some(value) = projfam::default_value(proj, param) {
+        return value;
+    }
     if proj == "omerc" && param.proj_name == Some("gamma") {
         return param_token(tokens, "alpha")
             .and_then(|text| text.parse().ok())
@@ -1394,7 +1401,10 @@ fn parameter_default(proj: &str, param: &ParamMap, tokens: &[(String, String)]) 
 /// PROJ parameters cover every key. Each parameter takes the key's value, or
 /// `parameter_default`. The CRS is named by `+title=`, or `unknown`, on the
 /// `+datum`/`+ellps` geographic CRS, with easting and northing in metres.
-fn projected_from_proj_string(tokens: &[(String, String)]) -> Result<Crs, FactoryError> {
+pub(super) fn projected_from_proj_string(tokens: &[(String, String)]) -> Result<Crs, FactoryError> {
+    if token(tokens, "proj") == "utm" {
+        return projfam::utm_projected(tokens);
+    }
     let units = token(tokens, "units");
     if !units.is_empty() && units != "m" {
         return Err(FactoryError::Invalid(format!("unsupported +units={units}")));
@@ -1447,12 +1457,14 @@ fn projected_from_proj_string(tokens: &[(String, String)]) -> Result<Crs, Factor
         .find(|method| aux_selects(method, tokens));
     let forced = by_aux
         .or_else(|| {
-            forced_method_code(proj, tokens).and_then(|code| {
-                methods
-                    .iter()
-                    .copied()
-                    .find(|method| method.epsg_code == code)
-            })
+            projfam::spherical_method_code(proj, datum.ellipsoid().inverse_flattening())
+                .or_else(|| forced_method_code(proj, tokens))
+                .and_then(|code| {
+                    methods
+                        .iter()
+                        .copied()
+                        .find(|method| method.epsg_code == code)
+                })
         })
         .or_else(|| {
             methods
@@ -1518,6 +1530,6 @@ fn projected_from_proj_string(tokens: &[(String, String)]) -> Result<Crs, Factor
         name,
         GeodeticCRS::Geographic(base),
         conversion,
-        CartesianCS::create_easting_northing(UnitOfMeasure::metre()),
+        projfam::projected_cs(proj, tokens, UnitOfMeasure::metre())?,
     )))
 }

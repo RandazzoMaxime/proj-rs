@@ -650,6 +650,9 @@ impl super::model::Conversion {
             ))
         })?;
         let code = mapped.epsg_code;
+        if mapped.wkt2_name.starts_with("Peirce Quincuncial") {
+            super::projfam::check_peirce_q_export(self.numeric_si(8801), self.numeric_si(8805))?;
+        }
         if code == 9808 {
             let easting = self.numeric_si(8806);
             let northing = self.numeric_si(8807);

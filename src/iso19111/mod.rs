@@ -18,6 +18,7 @@ mod json;
 mod model;
 mod parammap;
 mod pipeline;
+mod projfam;
 mod projstring;
 mod select;
 mod transform_export;

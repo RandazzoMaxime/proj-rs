@@ -5,11 +5,11 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 698 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `core` | 681 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
 | `niche` | 150 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 76 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (698)
+## core (681)
 
 ### test_c_api.cpp (52)
 
@@ -141,7 +141,7 @@ The class comes from the test name alone, so check it when you port a test.
 - `factory.ogc_timecrs`
 - `factory.getPointMotionOperationsFor`
 
-### test_io.cpp (254)
+### test_io.cpp (237)
 
 - `wkt_parse.wkt1_esri_EPSG_4901_grad`
 - `wkt_parse.wkt1_esri_LINUNIT`
@@ -286,31 +286,14 @@ The class comes from the test name alone, so check it when you port a test.
 - `io.projparse_tmerc_south_oriented`
 - `io.projparse_krovak_czech`
 - `io.projparse_krovak_modified_czech`
-- `io.projparse_etmerc`
 - `io.projparse_tmerc_approx`
 - `io.projparse_merc_google_mercator`
 - `io.projparse_merc_google_mercator_non_metre_unit`
 - `io.projparse_merc_not_quite_google_mercator`
-- `io.projparse_utm`
-- `io.projparse_utm_south`
-- `io.projparse_laea_north_pole`
-- `io.projparse_laea_south_pole`
 - `io.projparse_laea_spherical`
-- `io.projparse_laea_ellipsoidal`
-- `io.projparse_laea_spherical_on_ellipsoid`
 - `io.projparse_eqc_spherical`
-- `io.projparse_eqc_ellipsoidal`
 - `io.projparse_non_earth_ellipsoid`
-- `io.projparse_ortho_ellipsoidal`
-- `io.projparse_ortho_with_alpha`
-- `io.projparse_ortho_with_scale`
-- `io.projparse_ortho_spherical_on_ellipsoid`
-- `io.projparse_ortho_spherical_on_sphere`
-- `io.projparse_peirce_q_square`
-- `io.projparse_peirce_q_diamond`
 - `io.projparse_peirce_q_horizontal`
-- `io.projparse_peirce_q_invalid_lat_0`
-- `io.projparse_peirce_q_invalid_k_0`
 - `io.projparse_axisswap_unitconvert_longlat_proj`
 - `io.projparse_axisswap_unitconvert_proj_axisswap`
 - `io.projparse_axisswap_unitconvert_proj_unitconvert`
