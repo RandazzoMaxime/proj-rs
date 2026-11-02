@@ -83,6 +83,10 @@ impl FactoryError {
 pub struct Identifier {
     pub(crate) code_space: String,
     pub(crate) code: String,
+    /// Citation version, such as `2015` on `ID["IAU",19902,2015]`.
+    ///
+    /// Kept only when no database folded it into the code space (`IAU_2015`).
+    pub(crate) version: Option<String>,
 }
 
 impl Identifier {
@@ -102,7 +106,16 @@ impl Identifier {
         Self {
             code_space: code_space.into(),
             code: code.into(),
+            version: None,
         }
+    }
+
+    pub(crate) fn with_version(mut self, version: impl Into<String>) -> Self {
+        let version = version.into();
+        if !version.is_empty() {
+            self.version = Some(version);
+        }
+        self
     }
 }
 
@@ -324,6 +337,12 @@ pub(crate) struct Identified {
     pub(crate) anchor: Option<String>,
     pub(crate) anchor_epoch: Option<f64>,
     pub(crate) publication_date: Option<String>,
+    /// WKT1 `EXTENSION["PROJ4", ...]` text of a GEOGCS, GEOCCS or PROJCS.
+    pub(crate) extension_proj4: String,
+    /// `COMPD_CS` a promoted 3D CRS writes back as WKT1.
+    pub(crate) original_compound: Option<Box<CompoundCRS>>,
+    /// Horizontal-plus-horizontal `COMPD_CS` exported as two copies of the 2D CRS.
+    pub(crate) allow_non_conformant_wkt1: bool,
 }
 
 impl Identified {
@@ -337,6 +356,9 @@ impl Identified {
             anchor: None,
             anchor_epoch: None,
             publication_date: None,
+            extension_proj4: String::new(),
+            original_compound: None,
+            allow_non_conformant_wkt1: false,
         }
     }
 
@@ -1032,10 +1054,36 @@ impl EngineeringDatum {
         self.identified.publication_date.as_deref()
     }
 
+    /// Anchor definition.
+    #[must_use]
+    pub fn anchor(&self) -> Option<&str> {
+        self.identified.anchor.as_deref()
+    }
+
     /// Anchor epoch in years.
     #[must_use]
     pub fn anchor_epoch(&self) -> Option<f64> {
         self.identified.anchor_epoch
+    }
+}
+
+/// Parametric datum (`PDATUM`).
+#[derive(Clone, Debug)]
+pub struct ParametricDatum {
+    pub(crate) identified: Identified,
+}
+
+impl ParametricDatum {
+    /// Name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.identified.name
+    }
+
+    /// Anchor definition.
+    #[must_use]
+    pub fn anchor(&self) -> Option<&str> {
+        self.identified.anchor.as_deref()
     }
 }
 
@@ -1887,6 +1935,12 @@ impl Transformation {
     #[must_use]
     pub fn identifiers(&self) -> &[Identifier] {
         &self.identified.identifiers
+    }
+
+    /// Operation version, when the WKT or the database has one.
+    #[must_use]
+    pub fn version(&self) -> Option<&str> {
+        self.version.as_deref()
     }
 
     /// Method.

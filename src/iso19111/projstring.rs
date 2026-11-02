@@ -285,6 +285,9 @@ impl ProjectedCRS {
     }
 
     fn export_with(&self, extras: &ProjExtras<'_>) -> Result<String, FactoryError> {
+        if let Some(text) = extension_proj(&self.identified) {
+            return Ok(text);
+        }
         if let Some(text) = self.pseudo_mercator_proj().filter(|_| !extras.has_shift()) {
             return Ok(text);
         }
@@ -619,6 +622,9 @@ impl GeocentricCRS {
     ///
     /// The unit is not the metre. PROJ builds that case only as a pipeline step.
     pub fn export_to_proj_string(&self) -> Result<String, FactoryError> {
+        if let Some(text) = extension_proj(&self.identified) {
+            return Ok(text);
+        }
         let unit = self
             .coordinate_system
             .axes()
@@ -643,7 +649,16 @@ impl GeocentricCRS {
     }
 }
 
+/// The `EXTENSION["PROJ4", ...]` text of a WKT1 CRS, as the string PROJ writes for it.
+fn extension_proj(identified: &Identified) -> Option<String> {
+    let text = identified.extension_proj4.replace(" +type=crs", "");
+    (!text.is_empty()).then(|| format!("{text} +type=crs"))
+}
+
 fn geographic_proj(crs: &GeographicCRS, extras: &ProjExtras<'_>) -> String {
+    if let Some(text) = extension_proj(&crs.identified) {
+        return text;
+    }
     let mut parts = vec!["+proj=longlat".to_owned()];
     match datum_token(crs).filter(|_| !extras.has_shift()) {
         Some(token) => parts.push(format!("+datum={token}")),
@@ -905,6 +920,81 @@ pub fn create_crs_from_proj_string_with_database(
     crs_from_proj_string(definition, Some(db))
 }
 
+/// A `krovak` or `mod_krovak` pipeline whose only other steps are a degree-to-radian
+/// `unitconvert` and an optional `axisswap` of order `-2,-1`.
+///
+/// The axis swap is the south-west orientation (`+axis=swu`). Any other pipeline
+/// shape is left for the caller.
+fn krovak_from_pipeline(tokens: &[(String, String)]) -> Result<Option<Crs>, FactoryError> {
+    let mut steps: Vec<Vec<(String, String)>> = Vec::new();
+    let mut current: Option<Vec<(String, String)>> = None;
+    for (key, value) in tokens {
+        if key == "step" {
+            if let Some(step) = current.take() {
+                steps.push(step);
+            }
+            current = Some(Vec::new());
+            continue;
+        }
+        if let Some(step) = current.as_mut() {
+            step.push((key.clone(), value.clone()));
+        }
+    }
+    if let Some(step) = current {
+        steps.push(step);
+    }
+    if steps.is_empty() {
+        return Ok(None);
+    }
+    let mut projection: Option<Vec<(String, String)>> = None;
+    let mut swap_to_south_west = false;
+    for step in &steps {
+        let name = token(step, "proj");
+        if is_degree_radian_convert(step) {
+            continue;
+        }
+        if is_south_west_swap(step) {
+            if swap_to_south_west {
+                return Ok(None);
+            }
+            swap_to_south_west = true;
+            continue;
+        }
+        if matches!(name, "krovak" | "mod_krovak") {
+            if projection.is_some() {
+                return Ok(None);
+            }
+            projection = Some(step.clone());
+            continue;
+        }
+        return Ok(None);
+    }
+    let Some(mut projection) = projection else {
+        return Ok(None);
+    };
+    if swap_to_south_west && token(&projection, "axis").is_empty() {
+        projection.push(("axis".to_owned(), "swu".to_owned()));
+    }
+    Ok(Some(projected_from_proj_string(&projection)?))
+}
+
+fn is_degree_radian_convert(step: &[(String, String)]) -> bool {
+    token(step, "proj") == "unitconvert"
+        && token(step, "xy_in") == "deg"
+        && token(step, "xy_out") == "rad"
+        && step
+            .iter()
+            .all(|(key, _)| matches!(key.as_str(), "proj" | "xy_in" | "xy_out"))
+}
+
+fn is_south_west_swap(step: &[(String, String)]) -> bool {
+    token(step, "proj") == "axisswap"
+        && token(step, "order") == "-2,-1"
+        && step
+            .iter()
+            .all(|(key, _)| matches!(key.as_str(), "proj" | "order"))
+}
+
 fn crs_from_proj_string(
     definition: &str,
     db: Option<&DatabaseContext>,
@@ -918,6 +1008,11 @@ fn crs_from_proj_string(
         geographic_from_proj_string(&tokens)?
     } else if proj == "geocent" {
         proj_crs::geocentric_from_proj_string(&tokens)?
+    } else if proj == "pipeline" {
+        match krovak_from_pipeline(&tokens)? {
+            Some(crs) => crs,
+            None => projected_from_proj_string(&tokens)?,
+        }
     } else {
         projected_from_proj_string(&tokens)?
     };

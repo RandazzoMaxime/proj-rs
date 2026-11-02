@@ -489,6 +489,64 @@ pub(super) fn names_match(left: &str, right: &str) -> bool {
     canonical(left) == canonical(right)
 }
 
+/// Groups of parameter names that PROJ's `areEquivalentParameters` treats as one.
+const EQUIVALENT_PARAMETERS: &[&[&str]] = &[
+    &["latitude_of_point_1", "Latitude_Of_1st_Point"],
+    &["longitude_of_point_1", "Longitude_Of_1st_Point"],
+    &["latitude_of_point_2", "Latitude_Of_2nd_Point"],
+    &["longitude_of_point_2", "Longitude_Of_2nd_Point"],
+    &["satellite_height", "height"],
+    &[
+        "False easting",
+        "Easting at false origin",
+        "Easting at projection centre",
+    ],
+    &[
+        "False northing",
+        "Northing at false origin",
+        "Northing at projection centre",
+    ],
+    &[
+        "Scale factor at natural origin",
+        "scale_factor",
+        "Scale factor on initial line",
+        "Scale factor at projection centre",
+        "Scale factor on pseudo standard parallel",
+    ],
+    &[
+        "latitude_of_origin",
+        "latitude_of_center",
+        "Latitude of natural origin",
+        "Latitude of false origin",
+        "Latitude of projection centre",
+        "Central_Parallel",
+    ],
+    &[
+        "central_meridian",
+        "longitude_of_center",
+        "Longitude of natural origin",
+        "Longitude of false origin",
+        "Longitude of projection centre",
+        "Longitude of origin",
+    ],
+    &["Azimuth at projection centre", "Azimuth of initial line"],
+    &["pseudo_standard_parallel_1", "standard_parallel_1"],
+];
+
+/// `_isEquivalentTo(UnitOfMeasure::METRE, EQUIVALENT)`: a length unit of one metre, whatever its name.
+fn is_metre(unit: &super::model::UnitOfMeasure) -> bool {
+    unit.kind() == UnitKind::Linear && (unit.conversion_to_si() - 1.0).abs() < 1e-10
+}
+
+fn are_equivalent_parameters(left: &str, right: &str) -> bool {
+    let (left, right) = (canonical(left), canonical(right));
+    left != right
+        && EQUIVALENT_PARAMETERS.iter().any(|group| {
+            let has = |name: &str| group.iter().any(|entry| canonical(entry) == name);
+            has(&left) && has(&right)
+        })
+}
+
 fn canonical(name: &str) -> String {
     name.chars()
         .filter(|ch| !matches!(ch, ' ' | '_' | '-' | '/' | '{' | '}'))
@@ -675,6 +733,13 @@ impl super::model::Conversion {
                 self.name()
             )));
         }
+        if let Some(text) = self
+            .method
+            .name()
+            .strip_prefix("PROJ-based operation method: ")
+        {
+            return Ok(text.split_whitespace().collect::<Vec<_>>().join(" "));
+        }
         let mapped = lookup_method(&self.method).ok_or_else(|| {
             FactoryError::Format(format!(
                 "Unsupported conversion method: {}",
@@ -748,7 +813,7 @@ impl super::model::Conversion {
                 return Ok(parts.join(" "));
             }
         }
-        if code == 9807 {
+        if code == 9807 || (code == 1111 && self.method.code.is_empty()) {
             if let Some((zone, hemisphere)) = self.utm_zone() {
                 let mut parts = vec!["+proj=utm".to_owned()];
                 if approx_tmerc == TmercApprox::Yes {
@@ -801,15 +866,42 @@ impl super::model::Conversion {
         Ok(parts.join(" "))
     }
 
+    /// `isUTM`: the UTM zone number and hemisphere of a transverse Mercator conversion.
+    #[must_use]
+    pub fn is_utm(&self) -> Option<(i32, crate::Hemisphere)> {
+        self.utm_zone().map(|(zone, hemisphere)| {
+            let hemisphere = match hemisphere {
+                UtmHemisphere::North => crate::Hemisphere::North,
+                UtmHemisphere::South => crate::Hemisphere::South,
+            };
+            (zone, hemisphere)
+        })
+    }
+
     pub(crate) fn utm_zone(&self) -> Option<(i32, UtmHemisphere)> {
-        if self.method.code != "9807" {
+        // `OperationMethod::getEPSGCode`: a method without an ID is found by its name, less " (3D)".
+        let is_tmerc = self.method.code == "9807"
+            || (self.method.code.is_empty()
+                && names_match(
+                    self.method
+                        .name
+                        .strip_suffix(" (3D)")
+                        .unwrap_or(&self.method.name),
+                    "Transverse Mercator",
+                ));
+        if !is_tmerc {
             return None;
         }
         let latitude = self.numeric_degrees(8801);
         if (latitude - 0.0).abs() >= 1e-10 {
             return None;
         }
-        let longitude = self.numeric_degrees(8802);
+        let longitude = self
+            .measure_of_code(8802)
+            .or_else(|| self.measure_of_code(8833))
+            .map_or(0.0, |measure| {
+                measure.convert_to(&super::model::UnitOfMeasure::degree())
+            });
         let zone = (longitude + 183.0) / 6.0;
         if !(0.9..60.1).contains(&zone) || (zone - zone.round()).abs() >= 1e-10 {
             return None;
@@ -819,11 +911,11 @@ impl super::model::Conversion {
             return None;
         }
         let easting = self.measure_of_code(8806)?;
-        if easting.value() != 500_000.0 || easting.unit().name() != "metre" {
+        if easting.value() != 500_000.0 || !is_metre(easting.unit()) {
             return None;
         }
         let northing = self.measure_of_code(8807)?;
-        if northing.unit().name() != "metre" {
+        if !is_metre(northing.unit()) {
             return None;
         }
         let hemisphere = if (northing.value() - 0.0).abs() < 1e-10 {
@@ -890,7 +982,7 @@ impl super::model::Conversion {
                 return Some(measure);
             }
         }
-        self.parameters.iter().find_map(|parameter| {
+        let by_name = self.parameters.iter().find_map(|parameter| {
             if names_match(&parameter.name, param.wkt2_name) {
                 match &parameter.value {
                     ParameterValue::Measure(measure) => Some(measure),
@@ -899,6 +991,15 @@ impl super::model::Conversion {
             } else {
                 None
             }
+        });
+        by_name.or_else(|| {
+            self.parameters.iter().find_map(|parameter| {
+                if are_equivalent_parameters(param.wkt2_name, &parameter.name) {
+                    measure_ref(&parameter.value)
+                } else {
+                    None
+                }
+            })
         })
     }
 
@@ -2193,6 +2294,13 @@ fn measure_ref(value: &ParameterValue) -> Option<&Measure> {
 }
 
 fn epsg_code_of_parameter_name(name: &str) -> Option<i32> {
+    // `OperationParameter::getEPSGCode` falls back to these two WKT1-like names.
+    if names_match(name, "Latitude of origin") {
+        return Some(8801);
+    }
+    if names_match(name, "Scale factor") {
+        return Some(8805);
+    }
     parammap::PROJECTION_METHODS
         .iter()
         .chain(parammap::OTHER_METHODS)

@@ -4,16 +4,18 @@
 //! tree into the ISO 19111 objects in [`super::model`], following
 //! `WKTParser::createFromWKT` in PROJ `src/iso19111/io.cpp`.
 
+use super::bound::extract_geographic;
 use super::buildop::{OpProps, UtmHemisphere};
+use super::equiv::Equivalence;
 use super::factory::{AuthorityFactory, DatabaseContext};
 use super::model::{
     Axis, BoundCRS, CartesianCS, CompoundCRS, ConcatenatedOperation, ConcatenatedStep, Conversion,
     CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble, Ellipsoid, EllipsoidalCS,
     EngineeringCRS, EngineeringDatum, FactoryError, GeocentricCRS, GeodeticCRS,
     GeodeticReferenceFrame, GeographicCRS, GeoidModel, Identified, Identifier, Measure, Meridian,
-    ObjectDomain, OperationMethod, OrdinalCS, Parameter, ParameterValue, PrimeMeridian,
-    ProjectedCRS, SphericalCS, SphericalGeodeticCRS, Transformation, UnitKind, UnitOfMeasure,
-    VerticalCRS, VerticalCS, VerticalReferenceFrame,
+    ObjectDomain, OperationMethod, OrdinalCS, Parameter, ParameterValue, ParametricDatum,
+    PrimeMeridian, ProjectedCRS, SphericalCS, SphericalGeodeticCRS, Transformation, UnitKind,
+    UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame,
 };
 
 pub(crate) const EARTH_RADIUS: f64 = 6_375_000.0;
@@ -273,6 +275,7 @@ struct Props {
     deprecated: bool,
     domains: Vec<ObjectDomain>,
     version: Option<String>,
+    extension_proj4: String,
 }
 
 impl Props {
@@ -286,6 +289,9 @@ impl Props {
             anchor: None,
             anchor_epoch: None,
             publication_date: None,
+            extension_proj4: self.extension_proj4.clone(),
+            original_compound: None,
+            allow_non_conformant_wkt1: false,
         }
     }
 }
@@ -318,7 +324,7 @@ pub enum WktObject {
     /// `TDATUM` or `TIMEDATUM`.
     TemporalDatum,
     /// `PDATUM` or `PARAMETRICDATUM`.
-    ParametricDatum,
+    ParametricDatum(ParametricDatum),
     /// A node that parses but is not an ISO 19111 object, such as a bare `AUTHORITY`.
     Unknown,
 }
@@ -480,6 +486,12 @@ pub struct WktParser {
     grammar_errors: Vec<String>,
     towgs84: Vec<f64>,
     grids: String,
+    /// `PROJ4_GRIDS` of the vertical datum currently being built.
+    vertical_grids: String,
+    /// Name of the geographic CRS of the first component of the COMPD_CS being built.
+    compound_geographic_name: Option<String>,
+    /// That geographic CRS, so a vertical `PROJ4_GRIDS` binds to its 3D form.
+    compound_geographic: Option<GeographicCRS>,
 }
 
 impl Default for WktParser {
@@ -502,6 +514,9 @@ impl WktParser {
             grammar_errors: Vec::new(),
             towgs84: Vec::new(),
             grids: String::new(),
+            vertical_grids: String::new(),
+            compound_geographic_name: None,
+            compound_geographic: None,
         }
     }
 
@@ -559,6 +574,8 @@ impl WktParser {
         self.grammar_errors.clear();
         self.towgs84.clear();
         self.grids.clear();
+        self.vertical_grids.clear();
+        self.compound_geographic = None;
         self.esri = false;
         let dialect = guess_dialect(wkt);
         self.maybe_esri = dialect == WktDialect::Wkt1Esri;
@@ -606,11 +623,20 @@ impl WktParser {
                         ))));
                     }
                 }
+                if let Crs::Projected(projected) = &horizontal {
+                    if projected.coordinate_system.axes.len() == 2 {
+                        return Ok(WktObject::Crs(Crs::Projected(promote_projected_height(
+                            projected.clone(),
+                            &vertical,
+                        ))));
+                    }
+                }
             }
+            let vertical = self.finish_vertical(vertical);
             let name = format!("{} + {}", horizontal.name(), vertical.name());
             let compound = CompoundCRS {
                 identified: Identified::named(name),
-                components: vec![horizontal, Crs::Vertical(vertical)],
+                components: vec![horizontal, vertical],
             };
             return Ok(WktObject::Crs(Crs::Compound(compound)));
         }
@@ -673,7 +699,8 @@ impl WktParser {
             || ci_eq(name, "VERT_CS")
             || ci_eq(name, "VERTCS")
         {
-            return Ok(WktObject::Crs(Crs::Vertical(self.build_vertical(node)?)));
+            let vertical = self.build_vertical(node)?;
+            return Ok(WktObject::Crs(self.finish_vertical(vertical)));
         }
         if ci_eq(name, "COMPOUNDCRS") || ci_eq(name, "COMPD_CS") {
             return self.build_compound(node);
@@ -688,7 +715,10 @@ impl WktParser {
             return Ok(WktObject::TemporalDatum);
         }
         if ci_eq(name, "PDATUM") || ci_eq(name, "PARAMETRICDATUM") {
-            return Ok(WktObject::ParametricDatum);
+            let props = self.build_properties(node)?;
+            let mut identified = props.identified();
+            identified.anchor = self.anchor_of(node)?;
+            return Ok(WktObject::ParametricDatum(ParametricDatum { identified }));
         }
         if ci_eq(name, "AUTHORITY") || ci_eq(name, "ID") {
             return Ok(WktObject::Unknown);
@@ -713,9 +743,9 @@ impl WktParser {
         }
         if ci_eq(name, "EDATUM") || ci_eq(name, "ENGINEERINGDATUM") {
             let props = self.build_properties(node)?;
-            return Ok(WktObject::EngineeringDatum(EngineeringDatum {
-                identified: props.identified(),
-            }));
+            let mut identified = props.identified();
+            identified.anchor = self.anchor_of(node)?;
+            return Ok(WktObject::EngineeringDatum(EngineeringDatum { identified }));
         }
         if ci_eq(name, "ELLIPSOID") || ci_eq(name, "SPHEROID") {
             return Ok(WktObject::Ellipsoid(self.build_ellipsoid(node)?));
@@ -741,7 +771,7 @@ impl WktParser {
         Err(invalid(format!("unhandled keyword: {name}")))
     }
 
-    fn build_id(&mut self, node: &WktNode) -> Result<Identifier, FactoryError> {
+    fn build_id(&mut self, node: &WktNode, parent: &WktNode) -> Result<Identifier, FactoryError> {
         if node.children.len() < 2 {
             self.recover(format!("not enough children in {} node", node.value))?;
             return Err(invalid(format!(
@@ -750,14 +780,43 @@ impl WktParser {
             )));
         }
         let mut code_space = strip_quotes(&node.children[0]);
-        let code = strip_quotes(&node.children[1]);
-        if node.children.len() >= 3 && node.children[2].children.is_empty() {
-            let version = strip_quotes(&node.children[2]);
-            if code_space.eq_ignore_ascii_case("IAU") && version == "2015" {
-                code_space = "IAU_2015".to_owned();
+        let mut code = strip_quotes(&node.children[1]);
+        // Before PROJ 9.5 the synthesized ID of a UTM south CONVERSION was wrong.
+        if ci_eq(&parent.value, "CONVERSION") && ci_eq(&code_space, "EPSG") {
+            if let Some(name) = parent.children.first().map(strip_quotes) {
+                let prefix = "UTM zone ";
+                if name.len() > prefix.len()
+                    && name[..prefix.len()].eq_ignore_ascii_case(prefix)
+                    && name.contains('S')
+                {
+                    let digits: String = name[prefix.len()..]
+                        .chars()
+                        .take_while(char::is_ascii_digit)
+                        .collect();
+                    if let Ok(zone @ 1..=60) = digits.parse::<u32>() {
+                        code = (16100 + zone).to_string();
+                    }
+                }
             }
         }
-        Ok(Identifier::new(code_space, code))
+        let mut version_kept = None;
+        if node.children.len() >= 3 && node.children[2].children.is_empty() {
+            let version = strip_quotes(&node.children[2]);
+            let rewritten = self
+                .db
+                .as_ref()
+                .and_then(|db| db.versioned_authority(&code_space, &version));
+            if let Some(versioned) = rewritten {
+                code_space = versioned;
+            } else if !version.is_empty() {
+                version_kept = Some(version);
+            }
+        }
+        let mut identifier = Identifier::new(code_space, code);
+        if let Some(version) = version_kept {
+            identifier = identifier.with_version(version);
+        }
+        Ok(identifier)
     }
 
     fn build_properties(&mut self, node: &WktNode) -> Result<Props, FactoryError> {
@@ -777,7 +836,7 @@ impl WktParser {
         for child in &node.children {
             if ci_eq(&child.value, "ID") || ci_eq(&child.value, "AUTHORITY") {
                 if child.children.len() >= 2 {
-                    identifiers.push(self.build_id(child)?);
+                    identifiers.push(self.build_id(child, node)?);
                 } else {
                     self.recover(format!("not enough children in {} node", child.value))?;
                 }
@@ -858,6 +917,20 @@ impl WktParser {
         let version = node
             .child(&["VERSION"])
             .and_then(|version| version.children.first().map(strip_quotes));
+        let extension_proj4 = if ["GEOGCS", "GEOCCS", "PROJCS"]
+            .iter()
+            .any(|keyword| ci_eq(&node.value, keyword))
+        {
+            node.child(&["EXTENSION"])
+                .filter(|extension| {
+                    extension.children.len() == 2
+                        && ci_eq(&strip_quotes(&extension.children[0]), "PROJ4")
+                })
+                .map(|extension| strip_quotes(&extension.children[1]))
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
         Ok(Props {
             name,
             identifiers,
@@ -865,6 +938,7 @@ impl WktParser {
             deprecated,
             domains,
             version,
+            extension_proj4,
         })
     }
 
@@ -1181,6 +1255,8 @@ impl WktParser {
         let mut props = self.build_properties(node)?;
         let raw_name = strip_quotes(&node.children[0]);
         let mut name_set = false;
+        let mut name_has_meridian = false;
+        let esri_datum = raw_name.starts_with("D_") || self.esri;
         if raw_name == "WGS_1984" {
             props.name = "World Geodetic System 1984".to_owned();
             name_set = true;
@@ -1220,6 +1296,7 @@ impl WktParser {
                                 .is_some_and(|db| db.known_geodetic_datum_name(&with_pm))
                             {
                                 official = with_pm;
+                                name_has_meridian = true;
                             }
                         }
                         (official, auth, code)
@@ -1235,7 +1312,7 @@ impl WktParser {
                 props.identifiers.push(Identifier::new(auth, code));
             }
         }
-        if !name_set && raw_name.contains('_') {
+        if !name_set && !esri_datum && raw_name.contains('_') {
             if let Some(db) = self.db.clone() {
                 if let Some((official, auth, code)) = db.geodetic_datum_equivalent(&raw_name) {
                     props.name = official;
@@ -1245,7 +1322,7 @@ impl WktParser {
                 }
             }
         }
-        if let Some(db) = self.db.clone() {
+        if let Some(db) = self.db.clone().filter(|_| !name_has_meridian) {
             if let Some(id) = props
                 .identifiers
                 .iter()
@@ -1311,6 +1388,12 @@ impl WktParser {
         }
         while values.len() < 7 {
             values.push(0.0);
+        }
+        if let Some(db) = &self.db {
+            if let Ok(mut seven) = <[f64; 7]>::try_from(values.as_slice()) {
+                db.to_wgs84_autocorrect_wrong_values(&mut seven)?;
+                values = seven.to_vec();
+            }
         }
         self.towgs84 = values;
         Ok(())
@@ -1410,6 +1493,13 @@ impl WktParser {
         {
             return Err(invalid("missing CS"));
         }
+        // A base geodetic CRS with an authority id and no CS takes the database
+        // coordinate system. EPSG:4978 is geocentric, not geographic.
+        if cs_node.is_none() {
+            if let Some(geocentric) = self.geocentric_from_identifier(&props) {
+                return Ok(WktObject::Crs(Crs::Geodetic(geocentric)));
+            }
+        }
         if node.child(&["PRIMEM", "PRIMEMERIDIAN"]).is_none()
             && (ci_eq(keyword, "GEOGCS") || ci_eq(keyword, "GEOCCS"))
         {
@@ -1480,6 +1570,12 @@ impl WktParser {
                 self.reconcile_geographic_id(&mut crs, node);
                 let object = if !self.towgs84.is_empty() {
                     self.bind_towgs84(Crs::Geographic(crs))?
+                } else if !self.grids.is_empty() {
+                    let grids = std::mem::take(&mut self.grids);
+                    WktObject::Crs(super::bound_import::bind_nadgrids(
+                        Crs::Geographic(crs),
+                        &grids,
+                    ))
                 } else {
                     WktObject::Crs(Crs::Geographic(crs))
                 };
@@ -1554,7 +1650,12 @@ impl WktParser {
 
     fn bind_towgs84(&mut self, source: Crs) -> Result<WktObject, FactoryError> {
         let values = std::mem::take(&mut self.towgs84);
+        self.grids.clear();
         let target = Crs::Geographic(GeographicCRS::epsg_4326());
+        let transformation_source = extract_geographic(&source)
+            .cloned()
+            .map(Crs::Geographic)
+            .unwrap_or_else(|| source.clone());
         let parameters = helmert_parameters(&values);
         let transformation = Transformation {
             identified: Identified::named("Transformation to WGS84"),
@@ -1573,8 +1674,8 @@ impl WktParser {
                 parameters: Vec::new(),
             },
             parameters,
-            source: None,
-            target: None,
+            source: Some(Box::new(transformation_source)),
+            target: Some(Box::new(target.clone())),
             interpolation: None,
             accuracy: None,
             accuracy_text: None,
@@ -1982,6 +2083,7 @@ impl WktParser {
     }
 
     fn build_vertical(&mut self, node: &WktNode) -> Result<VerticalCRS, FactoryError> {
+        self.vertical_grids.clear();
         let datum_node = node.child(&["VDATUM", "VERT_DATUM", "VERTICALDATUM", "VRF"]);
         let ensemble_node = node.child(&["ENSEMBLE"]);
         let geodetic_in_vertcs = if ci_eq(&node.value, "VERTCS") {
@@ -1991,6 +2093,11 @@ impl WktParser {
         };
         if datum_node.is_none() && ensemble_node.is_none() && geodetic_in_vertcs.is_none() {
             return Err(invalid("Missing VDATUM or ENSEMBLE node"));
+        }
+        if node.children_named("PARAMETER").iter().any(|parameter| {
+            parameter.children.len() == 2 && parameter.children[0].value == "\"Vertical_Shift\""
+        }) {
+            self.esri = true;
         }
         let mut props = self.build_properties(node)?;
         // An ESRI vertical name is an alias of an EPSG name, as for projected CRSs.
@@ -2013,6 +2120,9 @@ impl WktParser {
                 deformation_model: None,
             })
         } else if let Some(datum_node) = datum_node {
+            if let Some(grids) = proj4_grids_of(datum_node) {
+                self.vertical_grids = grids;
+            }
             Some(self.build_vertical_datum(datum_node, dynamic)?)
         } else {
             None
@@ -2035,6 +2145,28 @@ impl WktParser {
             coordinate_system.axis = Axis::new("ellipsoidal height", "h", "up", unit);
         }
         let mut geoid_models = Vec::new();
+        let mut datum = datum;
+        if ci_eq(&node.value, "VERT_CS") || ci_eq(&node.value, "VERTCS") {
+            if let Some(geoid) =
+                las_geoid_name(&props.name, self.compound_geographic_name.as_deref())
+            {
+                self.apply_las_vertical(&mut props, &coordinate_system.axis);
+                datum = Some(VerticalReferenceFrame {
+                    identified: Identified::named("North American Vertical Datum 1988")
+                        .with_id("EPSG", "5103"),
+                    wkt1_type: "2005".to_owned(),
+                    frame_epoch: None,
+                    deformation_model: None,
+                });
+                geoid_models.push(GeoidModel {
+                    name: geoid.to_uppercase(),
+                    identifiers: Vec::new(),
+                });
+            }
+        }
+        if node.child(&["GEOIDMODEL"]).is_some() {
+            geoid_models.clear();
+        }
         for model in node.children_named("GEOIDMODEL") {
             if model.children.is_empty() {
                 return Err(invalid("not enough children in GEOIDMODEL node"));
@@ -2052,6 +2184,71 @@ impl WktParser {
             coordinate_system,
             geoid_models,
         })
+    }
+
+    /// A LAS vertical CRS named after a NAVD88 geoid model becomes `NAVD88 height`.
+    fn apply_las_vertical(&self, props: &mut Props, axis: &Axis) {
+        if axis.direction() != "up" {
+            return;
+        }
+        let (name, code) = match axis.unit().name() {
+            "metre" => ("NAVD88 height", "5703"),
+            "US survey foot" => ("NAVD88 height (ftUS)", "6360"),
+            _ => return,
+        };
+        name.clone_into(&mut props.name);
+        props.identifiers = vec![Identifier::new("EPSG", code)];
+    }
+
+    /// `VERT_DATUM` `EXTENSION["PROJ4_GRIDS"]` binds the vertical CRS to a
+    /// geographic 3D hub through a geoid-file transformation.
+    fn finish_vertical(&mut self, vertical: VerticalCRS) -> Crs {
+        let grids = std::mem::take(&mut self.vertical_grids);
+        if grids.is_empty() || gdal_hardcoded_geoid(&grids) {
+            return Crs::Vertical(vertical);
+        }
+        let hub = self.vertical_grid_hub();
+        let source = vertical_grid_source(&vertical);
+        let target = Crs::Geographic(hub);
+        let transformation = Transformation {
+            identified: Identified::named(format!(
+                "{} to {} ellipsoidal height",
+                source.name(),
+                target.name()
+            )),
+            method: OperationMethod::create("GravityRelatedHeight to Geographic3D", Vec::new()),
+            parameters: vec![Parameter {
+                name: "Geoid (height correction) model file".to_owned(),
+                code_space: "EPSG".to_owned(),
+                code: "8666".to_owned(),
+                value: ParameterValue::filename(grids),
+            }],
+            source: Some(Box::new(source)),
+            target: Some(Box::new(target.clone())),
+            interpolation: None,
+            accuracy: None,
+            accuracy_text: None,
+            version: None,
+            point_motion: false,
+            inverted: false,
+        };
+        Crs::Bound(BoundCRS::create(
+            Crs::Vertical(vertical),
+            target,
+            CoordinateOperation::Transformation(transformation),
+        ))
+    }
+
+    /// The compound's geographic CRS promoted to 3D, or EPSG:4979.
+    fn vertical_grid_hub(&self) -> GeographicCRS {
+        let Some(geographic) = &self.compound_geographic else {
+            return GeographicCRS::epsg_4979();
+        };
+        if greenwich_degree_geographic(geographic) {
+            geographic.promote_to_3d()
+        } else {
+            GeographicCRS::epsg_4979()
+        }
     }
 
     fn build_projected(&mut self, node: &WktNode) -> Result<WktObject, FactoryError> {
@@ -2442,6 +2639,50 @@ impl WktParser {
         Ok(parameters)
     }
 
+    /// Database geocentric CRS for an id on a CS-less base geodetic CRS.
+    fn geocentric_from_identifier(&self, props: &Props) -> Option<GeodeticCRS> {
+        let db = self.db.as_ref()?;
+        let id = props
+            .identifiers
+            .iter()
+            .find(|identifier| identifier.code_space().eq_ignore_ascii_case("EPSG"))?;
+        let crs = AuthorityFactory::create(db, id.code_space())
+            .create_geodetic_crs(id.code())
+            .ok()?;
+        matches!(crs, GeodeticCRS::Geocentric(_)).then_some(crs)
+    }
+
+    /// Drop `PARAMETER["EPSG code for Interpolation CRS", code]` and resolve it.
+    fn take_interpolation_crs(&self, parameters: &mut Vec<Parameter>) -> Option<Crs> {
+        let db = self.db.as_ref()?;
+        let index = parameters.iter().position(is_interpolation_parameter)?;
+        let value = match &parameters[index].value {
+            ParameterValue::Integer(value) => *value,
+            ParameterValue::Measure(measure) => {
+                let rounded = measure.value().round();
+                if (measure.value() - rounded).abs() > 1e-8 {
+                    return None;
+                }
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    clippy::as_conversions,
+                    reason = "EPSG code fits in i64"
+                )]
+                let code = rounded as i64;
+                code
+            }
+            _ => return None,
+        };
+        if value <= 0 {
+            return None;
+        }
+        let crs = AuthorityFactory::create(db, "EPSG")
+            .create_geographic_crs(&value.to_string())
+            .ok()?;
+        parameters.remove(index);
+        Some(Crs::Geographic(crs))
+    }
+
     fn build_compound(&mut self, node: &WktNode) -> Result<WktObject, FactoryError> {
         let props = self.build_properties(node)?;
         let mut components = Vec::new();
@@ -2451,11 +2692,24 @@ impl WktParser {
                 let Some(crs) = object.crs().cloned() else {
                     return Err(invalid("compound component is not a CRS"));
                 };
+                if components.is_empty() {
+                    if let Some(geographic) = extract_geographic(&crs) {
+                        self.compound_geographic_name = Some(geographic.name().to_owned());
+                        self.compound_geographic = Some(geographic.clone());
+                    }
+                }
                 components.push(crs);
             }
         }
+        self.compound_geographic_name = None;
+        self.compound_geographic = None;
         if components.len() < 2 {
             return Err(invalid("a compound CRS needs at least two components"));
+        }
+        if ci_eq(&node.value, "COMPD_CS") {
+            if let Some(promoted) = lax_compd_cs(props.name.clone(), components.clone())? {
+                return Ok(WktObject::Crs(promoted));
+            }
         }
         let horizontal = components.iter().filter(|crs| crs.is_horizontal()).count();
         let compound = if horizontal > 1 {
@@ -2549,7 +2803,7 @@ impl WktParser {
         } else {
             UnitOfMeasure::degree()
         };
-        let parameters = self.parameters_of(node, &UnitOfMeasure::metre(), &angular)?;
+        let mut parameters = self.parameters_of(node, &UnitOfMeasure::metre(), &angular)?;
         let source = if node.child(&["SOURCECRS"]).is_some() {
             Some(Box::new(self.wrapped_crs(node, "SOURCECRS")?))
         } else {
@@ -2560,11 +2814,16 @@ impl WktParser {
         } else {
             None
         };
-        let interpolation = if node.child(&["INTERPOLATIONCRS"]).is_some() {
+        let mut interpolation = if node.child(&["INTERPOLATIONCRS"]).is_some() {
             Some(Box::new(self.wrapped_crs(node, "INTERPOLATIONCRS")?))
         } else {
             None
         };
+        if interpolation.is_none() {
+            if let Some(crs) = self.take_interpolation_crs(&mut parameters) {
+                interpolation = Some(Box::new(crs));
+            }
+        }
         let accuracy = node
             .child(&["OPERATIONACCURACY"])
             .and_then(|accuracy| accuracy.children.first())
@@ -2664,6 +2923,172 @@ enum EnsembleBody {
 enum AxisFrame {
     Geocentric,
     Other,
+}
+
+fn is_interpolation_parameter(parameter: &Parameter) -> bool {
+    parameter.name() == "EPSG code for Interpolation CRS"
+        || parameter.code() == "1048"
+        || parameter.name() == "EPSG code for Horizontal CRS"
+        || parameter.code() == "1037"
+}
+
+/// `CompoundCRS::createLax` for a WKT1 `COMPD_CS`.
+///
+/// An equivalent second geographic CRS promotes the first CRS to 3D and marks it
+/// for a non-conformant WKT1 export. A vertical datum of type `2002` promotes
+/// with that axis and keeps the original compound for WKT1.
+fn lax_compd_cs(name: String, mut components: Vec<Crs>) -> Result<Option<Crs>, FactoryError> {
+    if components.len() != 2 {
+        return Ok(None);
+    }
+    let Some(second) = components.pop() else {
+        return Ok(None);
+    };
+    let Some(first) = components.pop() else {
+        return Ok(None);
+    };
+    if let Crs::Geographic(vertical_geog) = &second {
+        if let Some(horizontal) = horizontal_geographic(&first) {
+            let demoted = if vertical_geog.coordinate_system.axes.len() == 3 {
+                vertical_geog.demote_to_2d(None)
+            } else {
+                vertical_geog.clone()
+            };
+            if !horizontal.is_equivalent_to_with(&demoted, Equivalence::Equivalent) {
+                return Err(invalid(
+                    "The 'vertical' geographic CRS is not equivalent to the geographic CRS of the horizontal part",
+                ));
+            }
+            let mut promoted = first;
+            let axis = default_up_axis(&promoted);
+            add_height_axis(&mut promoted, axis, "");
+            set_nonconformant(&mut promoted);
+            return Ok(Some(promoted));
+        }
+    }
+    if let Crs::Vertical(vertical) = &second {
+        if vertical
+            .datum
+            .as_ref()
+            .is_some_and(|datum| datum.wkt1_type == "2002")
+        {
+            let axis = vertical.coordinate_system.axis();
+            let metre_up = axis.direction() == "up"
+                && axis.unit().kind() == UnitKind::Linear
+                && (axis.unit().conversion_to_si() - 1.0).abs() < 1e-12;
+            let mut new_name = first.name().to_owned();
+            if !metre_up {
+                new_name = format!("{new_name} ({})", vertical.name());
+            }
+            let height = Axis::new(
+                "Ellipsoidal height",
+                "h",
+                axis.direction(),
+                axis.unit().clone(),
+            );
+            let original_first = if let Crs::Bound(bound) = &first {
+                bound.source_crs().clone()
+            } else {
+                first.clone()
+            };
+            let compound = CompoundCRS {
+                identified: Identified::named(name),
+                components: vec![original_first, second],
+            };
+            let mut promoted = first;
+            add_height_axis(&mut promoted, height, &new_name);
+            attach_compound(&mut promoted, compound);
+            return Ok(Some(promoted));
+        }
+    }
+    Ok(None)
+}
+
+fn horizontal_geographic(crs: &Crs) -> Option<GeographicCRS> {
+    match crs {
+        Crs::Geographic(geographic) => Some(geographic.clone()),
+        Crs::Projected(projected) => match projected.base_crs() {
+            GeodeticCRS::Geographic(geographic) => Some(geographic.clone()),
+            _ => None,
+        },
+        Crs::Bound(bound) => horizontal_geographic(bound.source_crs()),
+        _ => None,
+    }
+}
+
+fn default_up_axis(crs: &Crs) -> Axis {
+    let unit = match crs {
+        Crs::Projected(projected) => projected
+            .coordinate_system()
+            .axes()
+            .first()
+            .map(|axis| axis.unit().clone())
+            .unwrap_or_else(UnitOfMeasure::metre),
+        Crs::Bound(bound) => return default_up_axis(bound.source_crs()),
+        _ => UnitOfMeasure::metre(),
+    };
+    Axis::new("Ellipsoidal height", "h", "up", unit)
+}
+
+fn add_height_axis(crs: &mut Crs, axis: Axis, new_name: &str) {
+    match crs {
+        Crs::Geographic(geographic) => {
+            if !new_name.is_empty() {
+                geographic.identified.name = new_name.to_owned();
+            }
+            if geographic.coordinate_system.axes.len() == 2 {
+                geographic.coordinate_system.axes.push(axis);
+            }
+        }
+        Crs::Projected(projected) => {
+            if !new_name.is_empty() {
+                projected.identified.name = new_name.to_owned();
+            }
+            if projected.coordinate_system.axes.len() == 2 {
+                projected.coordinate_system.axes.push(axis);
+            }
+        }
+        Crs::Bound(bound) => add_height_axis(&mut bound.source, axis, new_name),
+        _ => {}
+    }
+}
+
+fn set_nonconformant(crs: &mut Crs) {
+    match crs {
+        Crs::Geographic(geographic) => geographic.identified.allow_non_conformant_wkt1 = true,
+        Crs::Projected(projected) => projected.identified.allow_non_conformant_wkt1 = true,
+        Crs::Bound(bound) => set_nonconformant(&mut bound.source),
+        _ => {}
+    }
+}
+
+fn attach_compound(crs: &mut Crs, compound: CompoundCRS) {
+    match crs {
+        Crs::Geographic(geographic) => {
+            geographic.identified.original_compound = Some(Box::new(compound));
+        }
+        Crs::Projected(projected) => {
+            projected.identified.original_compound = Some(Box::new(compound));
+        }
+        Crs::Bound(bound) => attach_compound(&mut bound.source, compound),
+        _ => {}
+    }
+}
+
+fn promote_projected_height(mut projected: ProjectedCRS, vertical: &VerticalCRS) -> ProjectedCRS {
+    let down = vertical.coordinate_system.axis.direction() == "down";
+    let (name, abbreviation, direction) = if down {
+        ("Ellipsoidal depth", "d", "down")
+    } else {
+        ("Ellipsoidal height", "h", "up")
+    };
+    projected.coordinate_system.axes.push(Axis::new(
+        name,
+        abbreviation,
+        direction,
+        vertical.coordinate_system.axis.unit().clone(),
+    ));
+    projected
 }
 
 fn promote_ellipsoidal_height(
@@ -3077,6 +3502,65 @@ pub(crate) fn helmert_parameters(values: &[f64]) -> Vec<Parameter> {
         .collect()
 }
 
+/// `EXTENSION["PROJ4_GRIDS", filename]` on a datum node.
+fn proj4_grids_of(node: &WktNode) -> Option<String> {
+    let extension = node.child(&["EXTENSION"])?;
+    if extension.children.len() == 2 && ci_eq(&strip_quotes(&extension.children[0]), "PROJ4_GRIDS")
+    {
+        Some(strip_quotes(&extension.children[1]))
+    } else {
+        None
+    }
+}
+
+/// Old GDAL expansions of EPSG:5703 that PROJ does not turn into a bound CRS.
+fn gdal_hardcoded_geoid(name: &str) -> bool {
+    name == "g2003conus.gtx,g2003alaska.gtx,g2003h01.gtx,g2003p01.gtx"
+        || name == "g2012a_conus.gtx,g2012a_alaska.gtx,g2012a_guam.gtx,g2012a_hawaii.gtx,g2012a_puertorico.gtx,g2012a_samoa.gtx"
+}
+
+/// Source CRS of a height-to-geographic-3D transformation. A non-metre or
+/// non-up axis is rewritten as a metre-up gravity-related height.
+fn vertical_grid_source(crs: &VerticalCRS) -> Crs {
+    let axis = crs.coordinate_system().axis();
+    let metre_up = axis.direction() == "up"
+        && axis.unit().kind() == UnitKind::Linear
+        && (axis.unit().conversion_to_si() - 1.0).abs() < 1e-12;
+    if metre_up {
+        return Crs::Vertical(crs.clone());
+    }
+    let mut name = crs.name().to_owned();
+    if let Some(stripped) = name.strip_suffix(" (ftUS)") {
+        name = stripped.to_owned();
+    }
+    if let Some(stripped) = name.strip_suffix(" depth") {
+        name = stripped.to_owned();
+    }
+    if !name.ends_with(" height") {
+        name.push_str(" height");
+    }
+    let mut copy = crs.clone();
+    copy.identified.name = name;
+    copy.identified.identifiers.clear();
+    copy.coordinate_system.axis =
+        Axis::new("Gravity-related height", "H", "up", UnitOfMeasure::metre());
+    Crs::Vertical(copy)
+}
+
+/// Greenwich prime meridian and a degree axis, as `buildVerticalCRS` requires
+/// before it promotes the compound's geographic CRS.
+fn greenwich_degree_geographic(geographic: &GeographicCRS) -> bool {
+    let greenwich = geographic
+        .datum()
+        .is_some_and(|datum| datum.prime_meridian().longitude().si_value().abs() < 1e-12);
+    let degrees = geographic
+        .coordinate_system()
+        .axes()
+        .first()
+        .is_some_and(|axis| axis.unit().name() == "degree");
+    greenwich && degrees
+}
+
 /// Krovak with east then north axes is the North Orientated variant, EPSG:1041.
 fn axes_are_east_north(node: &WktNode) -> bool {
     let axes = node.children_named("AXIS");
@@ -3173,6 +3657,38 @@ fn wkt1_parameter(name: &str) -> Option<(&'static str, &'static str, UnitKind)> 
     } else {
         None
     }
+}
+
+/// The geoid model a LAS WKT1 vertical CRS name embeds, following the USGS LAS
+/// conventions: `NAVD88 - Geoid03 (Feet)` gives `Geoid03`.
+fn las_geoid_name(name: &str, compound_geographic: Option<&str>) -> Option<String> {
+    for prefix in [
+        "NAVD88 - ",
+        "NAVD88 via ",
+        "NAVD88 height - ",
+        "NAVD88 height (ftUS) - ",
+    ] {
+        if let Some(rest) = name.strip_prefix(prefix) {
+            let end = rest.find([' ', '(']).unwrap_or(rest.len());
+            return Some(rest[..end].to_owned());
+        }
+    }
+    if name.len() >= 5
+        && name[..5].eq_ignore_ascii_case("Geoid")
+        && compound_geographic.is_some_and(|geographic| geographic.starts_with("NAD83"))
+    {
+        let compact: String = name.chars().filter(|ch| *ch != ' ').collect();
+        let bytes = compact.as_bytes();
+        if compact.len() >= 9
+            && compact[..7].eq_ignore_ascii_case("Geoid20")
+            && bytes[7].is_ascii_digit()
+            && bytes[8].is_ascii_digit()
+        {
+            return Some(format!("Geoid{}", &compact[7..]));
+        }
+        return Some(compact);
+    }
+    None
 }
 
 fn guess_dialect(input: &str) -> WktDialect {

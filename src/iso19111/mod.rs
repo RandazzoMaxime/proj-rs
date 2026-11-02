@@ -46,7 +46,7 @@ pub use model::{
     EngineeringDatum, FactoryError, GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame,
     GeographicCRS, Identifier, Measure, Meridian, ObjectDomain, OperationMethod,
     OperationParameter, OperationParameterValue, OrdinalCS, Parameter, ParameterValue,
-    PrimeMeridian, ProjectedCRS, SphericalCS, Transformation, UnitKind, UnitOfMeasure, VerticalCRS,
+    ParametricDatum, PrimeMeridian, ProjectedCRS, SphericalCS, Transformation, UnitKind, UnitOfMeasure, VerticalCRS,
     VerticalCS, VerticalReferenceFrame,
 };
 pub(crate) use normalize::normalize_for_visualization;

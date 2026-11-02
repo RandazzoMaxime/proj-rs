@@ -103,8 +103,8 @@ pub use iso19111::{
     GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identifier,
     IntermediateCrsUse, LinunitPolicy, Measure, Meridian, NameMatch, NameSpelling, ObjectDomain,
     ObjectType, OfficialName, OpProps, OperationMethod, OperationParameter,
-    OperationParameterValue, OrdinalCS, OutputAxisRule, Parameter, ParameterValue, PrimeMeridian,
-    ProjLines, ProjectedCRS, SpatialCriterion, SphericalCS, Transformation, UnitInfo, UnitKind,
+    OperationParameterValue, OrdinalCS, OutputAxisRule, Parameter, ParameterValue, ParametricDatum,
+    PrimeMeridian, ProjLines, ProjectedCRS, SpatialCriterion, SphericalCS, Transformation, UnitInfo, UnitKind,
     UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame, WktConvention, WktDialect,
     WktFormatter, WktLines, WktNode, WktObject, WktParser, WktStrictness,
 };
