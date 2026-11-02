@@ -403,3 +403,74 @@ fn operation_proj_crs_3_d_to_geog_crs_3_d() {
          +step +proj=unitconvert +xy_in=m +z_in=m +xy_out=m +z_out=ft"
     );
 }
+
+#[test]
+fn operation_compound_crs_to_geog_crs_3_d() {
+    let db = database();
+    let compound = parse(
+        &db,
+        r#"COMPOUNDCRS["unknown",
+    PROJCRS["unknown",
+        BASEGEOGCRS["unknown",
+            DATUM["World Geodetic System 1984",
+                ELLIPSOID["WGS 84",6378137,298.257223563,
+                    LENGTHUNIT["metre",1]],
+                ID["EPSG",6326]],
+            PRIMEM["Greenwich",0,
+                ANGLEUNIT["degree",0.0174532925199433],
+                ID["EPSG",8901]]],
+        CONVERSION["unknown",
+            METHOD["Mercator (variant A)",
+                ID["EPSG",9804]],
+            PARAMETER["Latitude of natural origin",0,
+                ANGLEUNIT["degree",0.0174532925199433],
+                ID["EPSG",8801]],
+            PARAMETER["Longitude of natural origin",0,
+                ANGLEUNIT["degree",0.0174532925199433],
+                ID["EPSG",8802]],
+            PARAMETER["Scale factor at natural origin",1,
+                SCALEUNIT["unity",1],
+                ID["EPSG",8805]],
+            PARAMETER["False easting",0,
+                LENGTHUNIT["metre",1],
+                ID["EPSG",8806]],
+            PARAMETER["False northing",0,
+                LENGTHUNIT["metre",1],
+                ID["EPSG",8807]]],
+        CS[Cartesian,2],
+            AXIS["(E)",east,
+                ORDER[1],
+                LENGTHUNIT["metre",1,
+                    ID["EPSG",9001]]],
+            AXIS["(N)",north,
+                ORDER[2],
+                LENGTHUNIT["metre",1,
+                    ID["EPSG",9001]]]],
+    VERTCRS["unknown",
+        VDATUM["unknown"],
+        CS[vertical,1],
+            AXIS["gravity-related height (H)",up,
+                LENGTHUNIT["foot",0.3048,
+                    ID["EPSG",9002]]]]]"#,
+    );
+    let geographic =
+        create_crs_from_proj_string("+proj=longlat +vunits=m +type=crs").expect("longlat");
+
+    let forward = first(&db, &compound, &geographic);
+    assert!(forward.has_ballpark_transformation());
+    assert_eq!(
+        proj_string(&forward),
+        "+proj=pipeline +step +inv +proj=merc +lon_0=0 +k=1 +x_0=0 \
+         +y_0=0 +ellps=WGS84 +step +proj=unitconvert +xy_in=rad \
+         +z_in=ft +xy_out=deg +z_out=m"
+    );
+
+    let reverse = first(&db, &geographic, &compound);
+    assert!(reverse.has_ballpark_transformation());
+    assert_eq!(
+        proj_string(&reverse),
+        "+proj=pipeline +step +proj=unitconvert +xy_in=deg +z_in=m \
+         +xy_out=rad +z_out=ft +step +proj=merc +lon_0=0 +k=1 +x_0=0 \
+         +y_0=0 +ellps=WGS84"
+    );
+}

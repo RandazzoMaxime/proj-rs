@@ -4,7 +4,7 @@ PROJ 9.9.0 `test/unit/test_operationfactory.cpp`, the last 114 names of the `cor
 
 Rust tests are in `tests/unit_opfactory_core_b.rs`. Each function is `operation_` plus the C++ name in snake case. Expected PROJ strings are copied from the C++ `TEST()`.
 
-## Tests ported (10)
+## Tests ported (11)
 
 | C++ TEST | Rust test |
 |---|---|
@@ -18,6 +18,7 @@ Rust tests are in `tests/unit_opfactory_core_b.rs`. Each function is `operation_
 | `compoundCRS_with_boundVerticalCRS_from_grids_to_boundGeogCRS_with_ftus_ctxt` | `operation_compound_crs_with_bound_vertical_crs_from_grids_to_bound_geog_crs_with_ftus_ctxt` |
 | `vertCRS_to_vertCRS` | `operation_vert_crs_to_vert_crs` |
 | `projCRS_3D_to_geogCRS_3D` | `operation_proj_crs_3_d_to_geog_crs_3_d` |
+| `compoundCRS_to_geogCRS_3D` | `operation_compound_crs_to_geog_crs_3_d` |
 
 `vertCRS_to_vertCRS` builds `+vunits` CRS with `create_crs_from_proj_string`. `create_from_user_input` only treats a string as PROJ when it contains `proj=`.
 
@@ -32,6 +33,7 @@ Rust tests are in `tests/unit_opfactory_core_b.rs`. Each function is `operation_
 - A compound CRS to a bound CRS uses the base of the bound, then the inverse. PROJ's earlier bound-to-compound cases are not ported.
 - A bound CRS whose base datum already matches the geographic target uses that base. When that list is empty, the null geographic offset fills it.
 - A 3D projected CRS exports its height unit in the projection pipeline: the geographic step converts that height into metres, and the projected step converts metres into the projected height unit. `projCRS_3D_to_geogCRS_3D` is that inverse pipeline plus the same-datum geographic height change (method 1069). It is not a ballpark.
+- A compound of a projected CRS and a vertical CRS, on the same datum as a 3D geographic target and with no registered vertical operation, is the inverse projection plus the ballpark vertical change. The projection is exported from an east-north copy of its base, which is the pipeline left after PROJ cancels the north-east axis swap.
 
 ## Still open
 
@@ -44,13 +46,13 @@ These stay in `docs/UNPORTED-UNIT.md`.
 - **`compoundCRS_to_compoundCRS` and the later compound-to-compound names** (context, Helmert, geoid grids, two vertical transformations, issues 2232, 2720, 3152, 3191, 3328, 4550, GDA94/AHD, OSGB36, WGS 84/EGM96, WGS 84/EGM2008, extent none): `compound_to_compound` only keeps a vertical operation when the geographic parts are equivalent and the vertical names differ. Same vertical CRS, a geoid model, an interpolation CRS, and differing geographic parts are not built. `compoundCRS_to_compoundCRS` also needs the horizontal projected-to-projected operation retargeted onto the compounds.
 - **`vertCRS_to_vertCRS_context`, `_New_Zealand_context`**: EPSG vertical operations are looked up, and `setGridAvailabilityUse` does not exist, so the first candidate is not forced to the grid PROJ names.
 - **`vertCRS_to_vertCRS_pivot_context`**: no chain of a registered vertical transformation with a height-depth reversal.
-- **`compoundCRS_to_geogCRS_3D`**: a compound of a projected CRS and a vertical CRS is not split through the projected base. The expected operation is a ballpark: inverse Mercator, then one `unitconvert` of radians and feet into degrees and metres.
+- **`compoundCRS_to_geogCRS_3D_context` and the later compound-to-geographic-3D names**: the no-database ballpark above does not cover an EPSG compound, a 3D Helmert, or `KNOWN_AVAILABLE` grid ranking.
 - **EPSG compound/geographic 3D context, IGNF:LAMB1, NAD83 to EPSG:6414, canonical bound CRS, epochs, velocity grids, local orthographic EPSG:10622, ITRF/ETRS89, time-dependent Helmert, deformation model, ETRF2000/ETRS89 to Amersfoort**: not reached. Several need point-motion operations, a datum-pivot iteration, or `IGNORE_GRID_AVAILABILITY`, which the context does not have.
 - **`isPROJInstantiable`**: no method that checks a grid file on disk and rejects an empty method.
 
 ## Verification
 
-- `cargo test --test unit_opfactory_core_b`: 10 passed.
+- `cargo test --test unit_opfactory_core_b`: 11 passed.
 - `cargo clippy --all-targets --all-features -- -D warnings`: clean.
 - `cargo test --test docs_in_sync`: fails on the generated counts in `README.md` and `docs/UNIT-TRIAGE.md`. Those files are left for the orchestrator.
 - `cargo fmt` on the files this lot edited.

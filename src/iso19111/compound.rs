@@ -46,6 +46,22 @@ pub(super) fn compound_to_geog3d(
     if geog_dst.coordinate_system().axes().len() != 3 {
         return horizontal_only(factory, source, target, horizontal, context);
     }
+    if let Crs::Projected(projected) = horizontal {
+        if let Crs::Vertical(vertical_crs) = vertical {
+            if let Some(operation) = projected_compound_to_geog(
+                factory,
+                source,
+                target,
+                projected,
+                vertical,
+                vertical_crs,
+                geog_dst,
+                context,
+            )? {
+                return Ok(vec![operation]);
+            }
+        }
+    }
     let Some(geog_src) = extract_geographic(horizontal) else {
         return Ok(Vec::new());
     };
@@ -244,6 +260,95 @@ fn retarget(operation: &CoordinateOperation, source: &Crs, target: &Crs) -> Coor
         }
         CoordinateOperation::Conversion(_) => operation.clone(),
     }
+}
+
+/// A compound whose horizontal part is projected: the inverse of that projection,
+/// then the ballpark vertical change onto the 3D geographic target.
+///
+/// The conversion is exported from an east-north copy of the base. PROJ's
+/// north-east base emits an axis swap that the following geographic step
+/// cancels, and the pipeline optimizer deletes the pair.
+fn projected_compound_to_geog(
+    factory: &CoordinateOperationFactory,
+    source: &Crs,
+    target: &Crs,
+    projected: &super::model::ProjectedCRS,
+    vertical: &Crs,
+    vertical_crs: &VerticalCRS,
+    geog_dst: &GeographicCRS,
+    context: &CoordinateOperationContext,
+) -> Result<Option<CoordinateOperation>, FactoryError> {
+    let stored_base = Crs::Geodetic(projected.base_crs().clone());
+    // A different datum, or a registered vertical operation, keeps the general path.
+    if !same_geodetic_datum(&stored_base, target)
+        || !factory
+            .create_candidates(vertical, target, context)?
+            .is_empty()
+    {
+        return Ok(None);
+    }
+    let base = longitude_first(projected.base_crs());
+    let Some(base_geog) = geographic_of(&base) else {
+        return Ok(None);
+    };
+    let horizontal_datum = geographic_datum_name(base_geog);
+    let target_datum = geographic_datum_name(geog_dst);
+    let Some(vertical_op) = vertical_ballpark(
+        vertical,
+        vertical_crs,
+        horizontal_datum.as_deref(),
+        target_datum.as_deref(),
+        geog_dst,
+        target,
+    ) else {
+        return Ok(None);
+    };
+    let conversion = projected
+        .deriving_conversion()
+        .clone()
+        .with_endpoints(base, Crs::Projected(projected.clone()));
+    let horizontal_op = CoordinateOperation::Conversion(conversion.inverse());
+    Ok(Some(chain(source, target, horizontal_op, vertical_op)))
+}
+
+/// East-north form of a geographic base, so a projection export has no axis swap.
+fn longitude_first(base: &super::model::GeodeticCRS) -> Crs {
+    let super::model::GeodeticCRS::Geographic(geographic) = base else {
+        return Crs::Geodetic(base.clone());
+    };
+    let mut geographic = geographic.clone();
+    let axes = &mut geographic.coordinate_system.axes;
+    if axes.len() >= 2 && axes[0].direction() == "north" && axes[1].direction() == "east" {
+        axes.swap(0, 1);
+    }
+    Crs::Geographic(geographic)
+}
+
+fn chain(
+    source: &Crs,
+    target: &Crs,
+    first: CoordinateOperation,
+    second: CoordinateOperation,
+) -> CoordinateOperation {
+    CoordinateOperation::Concatenated(ConcatenatedOperation {
+        identified: Identified::named(format!("{} + {}", first.name(), second.name())),
+        steps: vec![
+            ConcatenatedStep {
+                operation: first,
+                reverse: false,
+            },
+            ConcatenatedStep {
+                operation: second,
+                reverse: false,
+            },
+        ],
+        source: Some(Box::new(source.clone())),
+        target: Some(Box::new(target.clone())),
+        accuracy: None,
+        version: None,
+        computed_name: true,
+        proj_based: None,
+    })
 }
 
 /// `createOperationsVertToGeogSynthetized`: the ballpark change of vertical unit

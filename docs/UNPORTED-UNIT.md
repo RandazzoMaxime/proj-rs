@@ -616,7 +616,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.vertCRS_to_vertCRS_context`
 - `operation.vertCRS_to_vertCRS_New_Zealand_context`
 - `operation.vertCRS_to_vertCRS_pivot_context`
-- `operation.compoundCRS_to_geogCRS_3D`
 - `operation.compoundCRS_to_geogCRS_3D_context`
 - `operation.compoundCRS_to_geogCRS_3D_with_3D_helmert_context`
 - `operation.compoundCRS_to_geogCRS_3D_with_3D_helmert_same_geog_src_target_context`
