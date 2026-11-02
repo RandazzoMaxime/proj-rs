@@ -375,6 +375,8 @@ pub enum UnitKind {
     Scale,
     /// Time. The SI unit is the second.
     Time,
+    /// A parametric quantity, such as a pressure.
+    Parametric,
     /// No conversion, used by an ordinal axis.
     None,
     /// A database type this crate does not classify.
@@ -452,6 +454,18 @@ impl UnitOfMeasure {
             code_space: String::new(),
             code: String::new(),
         }
+    }
+
+    /// Authority code written on this unit when the surrounding node has none.
+    #[must_use]
+    pub fn with_identifier(
+        mut self,
+        code_space: impl Into<String>,
+        code: impl Into<String>,
+    ) -> Self {
+        self.code_space = code_space.into();
+        self.code = code.into();
+        self
     }
 
     /// Unit name. PROJ compares units by this string.
@@ -982,6 +996,15 @@ impl VerticalReferenceFrame {
         &self.identified.identifiers
     }
 
+    /// Attach an authority identifier.
+    #[must_use]
+    pub fn with_identifier(mut self, code_space: &str, code: &str) -> Self {
+        self.identified
+            .identifiers
+            .push(Identifier::new(code_space, code));
+        self
+    }
+
     /// Frame reference epoch in years, when the vertical datum is dynamic.
     #[must_use]
     pub fn frame_reference_epoch(&self) -> Option<f64> {
@@ -1502,10 +1525,6 @@ impl OrdinalCS {
 
 /// Coordinate system, one of the kinds `proj.db` stores on a CRS.
 #[derive(Clone, Debug)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "a vertical system stores its axis inline; the others keep axes in a Vec"
-)]
 pub enum CoordinateSystem {
     /// Latitude and longitude, optionally with ellipsoidal height.
     Ellipsoidal(EllipsoidalCS),
@@ -1519,6 +1538,10 @@ pub enum CoordinateSystem {
     Ordinal(OrdinalCS),
     /// Affine axes. WKT writes `CS[affine,N]`.
     Affine(CartesianCS),
+    /// One time axis.
+    Temporal(super::derived_crs::TemporalCS),
+    /// One parametric axis.
+    Parametric(super::derived_crs::ParametricCS),
 }
 
 impl CoordinateSystem {
@@ -1532,6 +1555,8 @@ impl CoordinateSystem {
             Self::Spherical(cs) => cs.axes.iter().collect(),
             Self::Ordinal(cs) => cs.axes.iter().collect(),
             Self::Affine(cs) => cs.axes.iter().collect(),
+            Self::Temporal(cs) => vec![&cs.axis],
+            Self::Parametric(cs) => vec![&cs.axis],
         }
     }
 
@@ -1543,6 +1568,8 @@ impl CoordinateSystem {
             Self::Spherical(cs) => &cs.identified,
             Self::Ordinal(cs) => &cs.identified,
             Self::Affine(cs) => &cs.identified,
+            Self::Temporal(cs) => &cs.identified,
+            Self::Parametric(cs) => &cs.identified,
         }
     }
 
@@ -1560,6 +1587,8 @@ impl CoordinateSystem {
             Self::Spherical(_) => "spherical",
             Self::Ordinal(_) => "ordinal",
             Self::Affine(_) => "affine",
+            Self::Temporal(_) => "temporal",
+            Self::Parametric(_) => "parametric",
         }
     }
 }
@@ -1713,6 +1742,12 @@ impl ParameterValue {
     #[must_use]
     pub fn scale(value: f64) -> Self {
         Self::Measure(Measure::scale(value))
+    }
+
+    /// Numeric value in `unit`.
+    #[must_use]
+    pub fn measure(value: f64, unit: UnitOfMeasure) -> Self {
+        Self::Measure(Measure { value, unit })
     }
 }
 
@@ -2690,6 +2725,27 @@ impl GeoidModel {
 }
 
 impl VerticalCRS {
+    /// Vertical CRS named `name`, on `datum`.
+    #[must_use]
+    pub fn create(name: impl Into<String>, datum: VerticalReferenceFrame, cs: VerticalCS) -> Self {
+        Self {
+            identified: Identified::named(name),
+            datum: Some(datum),
+            ensemble: None,
+            coordinate_system: cs,
+            geoid_models: Vec::new(),
+        }
+    }
+
+    /// Attach an authority identifier.
+    #[must_use]
+    pub fn with_identifier(mut self, code_space: &str, code: &str) -> Self {
+        self.identified
+            .identifiers
+            .push(Identifier::new(code_space, code));
+        self
+    }
+
     /// Name.
     #[must_use]
     pub fn name(&self) -> &str {
@@ -3011,6 +3067,12 @@ pub enum Crs {
     Engineering(EngineeringCRS),
     /// Derived projected CRS.
     DerivedProjected(DerivedProjectedCRS),
+    /// Temporal CRS.
+    Temporal(super::derived_crs::TemporalCRS),
+    /// Parametric CRS.
+    Parametric(super::derived_crs::ParametricCRS),
+    /// Derived geographic, geodetic, vertical, engineering, parametric or temporal CRS.
+    Derived(super::derived_crs::DerivedCRS),
 }
 
 impl Crs {
@@ -3026,6 +3088,9 @@ impl Crs {
             Self::Bound(crs) => crs.name(),
             Self::Engineering(crs) => crs.name(),
             Self::DerivedProjected(crs) => crs.name(),
+            Self::Temporal(crs) => &crs.identified.name,
+            Self::Parametric(crs) => &crs.identified.name,
+            Self::Derived(crs) => crs.name(),
         }
     }
 
@@ -3041,6 +3106,9 @@ impl Crs {
             Self::Bound(crs) => &crs.identified.identifiers,
             Self::Engineering(crs) => &crs.identified.identifiers,
             Self::DerivedProjected(crs) => &crs.identified.identifiers,
+            Self::Temporal(crs) => &crs.identified.identifiers,
+            Self::Parametric(crs) => &crs.identified.identifiers,
+            Self::Derived(crs) => &crs.identified.identifiers,
         }
     }
 
@@ -3056,6 +3124,9 @@ impl Crs {
             Self::Bound(crs) => &crs.identified.domains,
             Self::Engineering(crs) => &crs.identified.domains,
             Self::DerivedProjected(crs) => &crs.identified.domains,
+            Self::Temporal(crs) => &crs.identified.domains,
+            Self::Parametric(crs) => &crs.identified.domains,
+            Self::Derived(crs) => &crs.identified.domains,
         }
     }
 
@@ -3083,6 +3154,88 @@ impl Crs {
             Self::Bound(crs) => crs.identified.deprecated,
             Self::Engineering(crs) => crs.identified.deprecated,
             Self::DerivedProjected(crs) => crs.identified.deprecated,
+            Self::Temporal(crs) => crs.identified.deprecated,
+            Self::Parametric(crs) => crs.identified.deprecated,
+            Self::Derived(crs) => crs.identified.deprecated,
+        }
+    }
+
+    /// A projected CRS or a derived CRS. This is `proj_crs_is_derived`.
+    #[must_use]
+    pub fn is_derived(&self) -> bool {
+        matches!(
+            self,
+            Self::Projected(_) | Self::DerivedProjected(_) | Self::Derived(_)
+        )
+    }
+
+    /// `proj_crs_add_horizontal_derived_conversion`.
+    ///
+    /// A projected CRS becomes a derived projected CRS. A compound or bound CRS
+    /// keeps its other parts and applies the same wrap to the projected one.
+    ///
+    /// # Errors
+    ///
+    /// `self` has no projected CRS to wrap.
+    pub fn add_horizontal_derived_conversion(
+        self,
+        name: impl Into<String>,
+        conversion: Conversion,
+        coordinate_system: CoordinateSystem,
+    ) -> Result<Self, FactoryError> {
+        let name = name.into();
+        match self {
+            Self::Projected(base) => Ok(Self::DerivedProjected(DerivedProjectedCRS::create(
+                name,
+                base,
+                conversion,
+                coordinate_system,
+            ))),
+            Self::Compound(compound) => {
+                let mut components = Vec::with_capacity(compound.components.len());
+                let mut replaced = false;
+                for component in compound.components {
+                    if !replaced && matches!(component, Self::Projected(_) | Self::Bound(_)) {
+                        components.push(component.add_horizontal_derived_conversion(
+                            name.clone(),
+                            conversion.clone(),
+                            coordinate_system.clone(),
+                        )?);
+                        replaced = true;
+                    } else {
+                        components.push(component);
+                    }
+                }
+                if !replaced {
+                    return Err(FactoryError::Invalid(
+                        "the compound CRS has no projected component".to_owned(),
+                    ));
+                }
+                Ok(Self::Compound(CompoundCRS::create(
+                    String::new(),
+                    components,
+                )?))
+            }
+            Self::Bound(bound) => {
+                let source = bound.source.add_horizontal_derived_conversion(
+                    name,
+                    conversion,
+                    coordinate_system,
+                )?;
+                let mut identified = Identified::named(source.name());
+                identified.identifiers = bound.identified.identifiers;
+                identified.domains = bound.identified.domains;
+                identified.remarks = bound.identified.remarks;
+                Ok(Self::Bound(BoundCRS {
+                    identified,
+                    source: Box::new(source),
+                    target: bound.target,
+                    transformation: bound.transformation,
+                }))
+            }
+            _ => Err(FactoryError::Invalid(
+                "a horizontal derived conversion applies to a projected CRS".to_owned(),
+            )),
         }
     }
 

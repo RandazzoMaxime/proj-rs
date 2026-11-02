@@ -5,9 +5,13 @@
 //! 9.9.0. The cases that stay open are listed in `docs/PORTING-niche-other.md`.
 
 use proj_rs::{
-    AlternativeGridNames, AuthorityFactory, Conversion, CoordinateOperation,
-    CoordinateOperationFactory, CoordinateSystem, Crs, DatabaseContext, GeodeticCRS, OpProps,
-    ProjLines, UnitOfMeasure, WktConvention, WktFormatter, WktObject, WktParser,
+    create_from_user_input, AlternativeGridNames, AuthorityFactory, Axis, CartesianCS, Conversion,
+    CoordinateOperation, CoordinateOperationFactory, CoordinateSystem, Crs, DatabaseContext,
+    DerivedCRS, DerivedProjectedCRS, EllipsoidalCS, EngineeringCRS, EngineeringDatum, Equivalence,
+    GeodeticCRS, GeographicCRS, OpProps, ParameterValue, ParametricCRS, ParametricCS, ProjLines,
+    ProjectedCRS, TemporalCRS, TemporalCS, TemporalDatum, TemporalKind, UnitKind, UnitOfMeasure,
+    VerticalCRS, VerticalCS, VerticalReferenceFrame, WktConvention, WktFormatter, WktObject,
+    WktParser, CALENDAR_PROLEPTIC_GREGORIAN,
 };
 
 fn database() -> DatabaseContext {
@@ -600,4 +604,1486 @@ fn factory_authority_factory_iau_2015() {
         assert_eq!(axes[1].direction(), "east");
         assert!(same_unit(axes[1].unit(), &degree));
     }
+}
+
+fn exported(crs: &Crs, convention: WktConvention) -> String {
+    crs.export_to_wkt(&mut WktFormatter::create(convention))
+        .expect("wkt")
+}
+
+fn refused(crs: &Crs, convention: WktConvention) -> String {
+    crs.export_to_wkt(&mut WktFormatter::create(convention))
+        .expect_err("refused")
+        .to_string()
+}
+
+fn pole_rotation() -> Conversion {
+    Conversion::create_with_method(
+        "Pole rotation",
+        "",
+        "",
+        vec![
+            Conversion::parameter(
+                "Latitude of rotated pole",
+                "",
+                "",
+                ParameterValue::angle(52.0),
+            ),
+            Conversion::parameter(
+                "Longitude of rotated pole",
+                "",
+                "",
+                ParameterValue::angle(-30.0),
+            ),
+            Conversion::parameter("Axis rotation", "", "", ParameterValue::angle(-25.0)),
+        ],
+    )
+    .with_name("Atlantic pole")
+}
+
+fn unimplemented_conversion(name: &str) -> Conversion {
+    Conversion::create_with_method("PROJ unimplemented", "", "", Vec::new()).with_name(name)
+}
+
+fn derived_geographic() -> DerivedCRS {
+    DerivedCRS::create(
+        "WMO Atlantic Pole",
+        Crs::Geographic(GeographicCRS::epsg_4326()),
+        pole_rotation(),
+        CoordinateSystem::Ellipsoidal(EllipsoidalCS::create_latitude_longitude(
+            UnitOfMeasure::degree(),
+        )),
+    )
+    .expect("derived geographic")
+}
+
+fn derived_geodetic() -> DerivedCRS {
+    DerivedCRS::create(
+        "Derived geodetic CRS",
+        Crs::Geographic(GeographicCRS::epsg_4326()),
+        Conversion::create_with_method("Some method", "", "", Vec::new())
+            .with_name("Some conversion"),
+        CoordinateSystem::Cartesian(CartesianCS::create_geocentric(UnitOfMeasure::metre())),
+    )
+    .expect("derived geodetic")
+}
+
+fn utm_31n() -> ProjectedCRS {
+    let conversion = Conversion::create_utm_north(&OpProps::new(), 31).expect("utm");
+    ProjectedCRS::create(
+        "WGS 84 / UTM zone 31N",
+        GeodeticCRS::Geographic(GeographicCRS::epsg_4326()),
+        conversion,
+        CartesianCS::create_easting_northing(UnitOfMeasure::metre()),
+    )
+    .with_identifier("EPSG", "32631")
+}
+
+fn derived_projected() -> DerivedProjectedCRS {
+    DerivedProjectedCRS::create(
+        "derived projectedCRS",
+        utm_31n(),
+        unimplemented_conversion("unnamed"),
+        CoordinateSystem::Cartesian(CartesianCS::create_easting_northing(UnitOfMeasure::metre())),
+    )
+}
+
+fn derived_projected_northing_easting() -> DerivedProjectedCRS {
+    DerivedProjectedCRS::create(
+        "derived projectedCRS",
+        utm_31n(),
+        unimplemented_conversion("unnamed"),
+        CoordinateSystem::Cartesian(CartesianCS::create_northing_easting(UnitOfMeasure::foot())),
+    )
+}
+
+fn none_unit() -> UnitOfMeasure {
+    UnitOfMeasure::new("", 0.0, UnitKind::None)
+}
+
+fn date_time_temporal() -> TemporalCRS {
+    TemporalCRS::create(
+        "Temporal CRS",
+        TemporalDatum::create(
+            "Gregorian calendar",
+            "0000-01-01",
+            CALENDAR_PROLEPTIC_GREGORIAN,
+        ),
+        TemporalCS::create(
+            TemporalKind::DateTime,
+            Axis::create("Time", "T", "future", none_unit()),
+        ),
+    )
+}
+
+fn vertical_odn() -> VerticalCRS {
+    VerticalCRS::create(
+        "ODN height",
+        VerticalReferenceFrame::named("Ordnance Datum Newlyn").with_identifier("EPSG", "5101"),
+        VerticalCS::create_gravity_related_height(UnitOfMeasure::metre()),
+    )
+    .with_identifier("EPSG", "5701")
+}
+
+fn derived_vertical() -> DerivedCRS {
+    DerivedCRS::create(
+        "Derived vertCRS",
+        Crs::Vertical(vertical_odn()),
+        unimplemented_conversion("unnamed"),
+        CoordinateSystem::Vertical(VerticalCS::create_gravity_related_height(
+            UnitOfMeasure::metre(),
+        )),
+    )
+    .expect("derived vertical")
+}
+
+fn engineering() -> EngineeringCRS {
+    EngineeringCRS::create(
+        "Engineering CRS",
+        EngineeringDatum::create("Engineering datum"),
+        CoordinateSystem::Cartesian(CartesianCS::create_easting_northing(UnitOfMeasure::metre())),
+    )
+}
+
+fn parametric() -> ParametricCRS {
+    ParametricCRS::create(
+        "Parametric CRS",
+        proj_rs::ParametricDatum::create("Parametric datum"),
+        ParametricCS::create(Axis::create(
+            "pressure",
+            "hPa",
+            "up",
+            proj_rs::parametric_unit("HectoPascal", 100.0),
+        )),
+    )
+}
+
+#[test]
+fn crs_derived_geographic_crs_basic() {
+    let derived = derived_geographic();
+    let crs = Crs::Derived(derived.clone());
+    let base = derived.base_crs().clone();
+    assert!(crs.is_equivalent_to(&crs));
+    assert!(!crs.is_equivalent_to_with(&base, Equivalence::Equivalent));
+    assert!(!base.is_equivalent_to_with(&crs, Equivalence::Equivalent));
+}
+
+#[test]
+fn crs_derived_geographic_crs_wkt2() {
+    let crs = Crs::Derived(derived_geographic());
+    assert_eq!(
+        exported(&crs, WktConvention::Wkt2_2015),
+        "\
+GEODCRS[\"WMO Atlantic Pole\",
+    BASEGEODCRS[\"WGS 84\",
+        DATUM[\"World Geodetic System 1984\",
+            ELLIPSOID[\"WGS 84\",6378137,298.257223563,
+                LENGTHUNIT[\"metre\",1]]],
+        PRIMEM[\"Greenwich\",0,
+            ANGLEUNIT[\"degree\",0.0174532925199433]]],
+    DERIVINGCONVERSION[\"Atlantic pole\",
+        METHOD[\"Pole rotation\"],
+        PARAMETER[\"Latitude of rotated pole\",52,
+            ANGLEUNIT[\"degree\",0.0174532925199433,
+                ID[\"EPSG\",9122]]],
+        PARAMETER[\"Longitude of rotated pole\",-30,
+            ANGLEUNIT[\"degree\",0.0174532925199433,
+                ID[\"EPSG\",9122]]],
+        PARAMETER[\"Axis rotation\",-25,
+            ANGLEUNIT[\"degree\",0.0174532925199433,
+                ID[\"EPSG\",9122]]]],
+    CS[ellipsoidal,2],
+        AXIS[\"latitude\",north,
+            ORDER[1],
+            ANGLEUNIT[\"degree\",0.0174532925199433,
+                ID[\"EPSG\",9122]]],
+        AXIS[\"longitude\",east,
+            ORDER[2],
+            ANGLEUNIT[\"degree\",0.0174532925199433,
+                ID[\"EPSG\",9122]]]]"
+    );
+    assert!(crs.is_equivalent_to(&crs.clone()));
+}
+
+#[test]
+fn crs_derived_geographic_crs_wkt2_2019() {
+    assert_eq!(
+        exported(
+            &Crs::Derived(derived_geographic()),
+            WktConvention::Wkt2_2019
+        ),
+        "\
+GEOGCRS[\"WMO Atlantic Pole\",
+    BASEGEOGCRS[\"WGS 84\",
+        DATUM[\"World Geodetic System 1984\",
+            ELLIPSOID[\"WGS 84\",6378137,298.257223563,
+                LENGTHUNIT[\"metre\",1]]],
+        PRIMEM[\"Greenwich\",0,
+            ANGLEUNIT[\"degree\",0.0174532925199433]],
+        ID[\"EPSG\",4326]],
+    DERIVINGCONVERSION[\"Atlantic pole\",
+        METHOD[\"Pole rotation\"],
+        PARAMETER[\"Latitude of rotated pole\",52,
+            ANGLEUNIT[\"degree\",0.0174532925199433,
+                ID[\"EPSG\",9122]]],
+        PARAMETER[\"Longitude of rotated pole\",-30,
+            ANGLEUNIT[\"degree\",0.0174532925199433,
+                ID[\"EPSG\",9122]]],
+        PARAMETER[\"Axis rotation\",-25,
+            ANGLEUNIT[\"degree\",0.0174532925199433,
+                ID[\"EPSG\",9122]]]],
+    CS[ellipsoidal,2],
+        AXIS[\"latitude\",north,
+            ORDER[1],
+            ANGLEUNIT[\"degree\",0.0174532925199433,
+                ID[\"EPSG\",9122]]],
+        AXIS[\"longitude\",east,
+            ORDER[2],
+            ANGLEUNIT[\"degree\",0.0174532925199433,
+                ID[\"EPSG\",9122]]]]"
+    );
+}
+
+#[test]
+fn crs_derived_geographic_crs_wkt1() {
+    assert_eq!(
+        refused(&Crs::Derived(derived_geographic()), WktConvention::Wkt1Gdal),
+        "DerivedGeographicCRS can only be exported to WKT2"
+    );
+}
+
+#[test]
+fn crs_derived_geodetic_crs_basic() {
+    let derived = derived_geodetic();
+    let crs = Crs::Derived(derived.clone());
+    let base = derived.base_crs().clone();
+    assert!(crs.is_equivalent_to(&crs));
+    assert!(!crs.is_equivalent_to_with(&base, Equivalence::Equivalent));
+    assert!(!base.is_equivalent_to_with(&crs, Equivalence::Equivalent));
+}
+
+#[test]
+fn crs_derived_geodetic_crs_wkt2() {
+    let crs = Crs::Derived(derived_geodetic());
+    assert_eq!(
+        exported(&crs, WktConvention::Wkt2_2015),
+        "\
+GEODCRS[\"Derived geodetic CRS\",
+    BASEGEODCRS[\"WGS 84\",
+        DATUM[\"World Geodetic System 1984\",
+            ELLIPSOID[\"WGS 84\",6378137,298.257223563,
+                LENGTHUNIT[\"metre\",1]]],
+        PRIMEM[\"Greenwich\",0,
+            ANGLEUNIT[\"degree\",0.0174532925199433]]],
+    DERIVINGCONVERSION[\"Some conversion\",
+        METHOD[\"Some method\"]],
+    CS[Cartesian,3],
+        AXIS[\"(X)\",geocentricX,
+            ORDER[1],
+            LENGTHUNIT[\"metre\",1,
+                ID[\"EPSG\",9001]]],
+        AXIS[\"(Y)\",geocentricY,
+            ORDER[2],
+            LENGTHUNIT[\"metre\",1,
+                ID[\"EPSG\",9001]]],
+        AXIS[\"(Z)\",geocentricZ,
+            ORDER[3],
+            LENGTHUNIT[\"metre\",1,
+                ID[\"EPSG\",9001]]]]"
+    );
+    assert!(crs.is_equivalent_to(&crs.clone()));
+}
+
+#[test]
+fn crs_derived_geodetic_crs_wkt2_2019() {
+    assert_eq!(
+        exported(&Crs::Derived(derived_geodetic()), WktConvention::Wkt2_2019),
+        "\
+GEODCRS[\"Derived geodetic CRS\",
+    BASEGEOGCRS[\"WGS 84\",
+        DATUM[\"World Geodetic System 1984\",
+            ELLIPSOID[\"WGS 84\",6378137,298.257223563,
+                LENGTHUNIT[\"metre\",1]]],
+        PRIMEM[\"Greenwich\",0,
+            ANGLEUNIT[\"degree\",0.0174532925199433]],
+        ID[\"EPSG\",4326]],
+    DERIVINGCONVERSION[\"Some conversion\",
+        METHOD[\"Some method\"]],
+    CS[Cartesian,3],
+        AXIS[\"(X)\",geocentricX,
+            ORDER[1],
+            LENGTHUNIT[\"metre\",1,
+                ID[\"EPSG\",9001]]],
+        AXIS[\"(Y)\",geocentricY,
+            ORDER[2],
+            LENGTHUNIT[\"metre\",1,
+                ID[\"EPSG\",9001]]],
+        AXIS[\"(Z)\",geocentricZ,
+            ORDER[3],
+            LENGTHUNIT[\"metre\",1,
+                ID[\"EPSG\",9001]]]]"
+    );
+}
+
+#[test]
+fn crs_derived_geodetic_crs_wkt1() {
+    assert_eq!(
+        refused(&Crs::Derived(derived_geodetic()), WktConvention::Wkt1Gdal),
+        "DerivedGeodeticCRS can only be exported to WKT2"
+    );
+}
+
+#[test]
+fn crs_derived_projected_crs_wkt2_2019() {
+    let crs = derived_projected();
+    assert_eq!(
+        exported(
+            &Crs::DerivedProjected(crs.clone()),
+            WktConvention::Wkt2_2019
+        ),
+        "\
+DERIVEDPROJCRS[\"derived projectedCRS\",
+    BASEPROJCRS[\"WGS 84 / UTM zone 31N\",
+        BASEGEOGCRS[\"WGS 84\",
+            DATUM[\"World Geodetic System 1984\",
+                ELLIPSOID[\"WGS 84\",6378137,298.257223563,
+                    LENGTHUNIT[\"metre\",1]]],
+            PRIMEM[\"Greenwich\",0,
+                ANGLEUNIT[\"degree\",0.0174532925199433]]],
+        CONVERSION[\"UTM zone 31N\",
+            METHOD[\"Transverse Mercator\",
+                ID[\"EPSG\",9807]],
+            PARAMETER[\"Latitude of natural origin\",0,
+                ANGLEUNIT[\"degree\",0.0174532925199433],
+                ID[\"EPSG\",8801]],
+            PARAMETER[\"Longitude of natural origin\",3,
+                ANGLEUNIT[\"degree\",0.0174532925199433],
+                ID[\"EPSG\",8802]],
+            PARAMETER[\"Scale factor at natural origin\",0.9996,
+                SCALEUNIT[\"unity\",1],
+                ID[\"EPSG\",8805]],
+            PARAMETER[\"False easting\",500000,
+                LENGTHUNIT[\"metre\",1],
+                ID[\"EPSG\",8806]],
+            PARAMETER[\"False northing\",0,
+                LENGTHUNIT[\"metre\",1],
+                ID[\"EPSG\",8807]]],
+        ID[\"EPSG\",32631]],
+    DERIVINGCONVERSION[\"unnamed\",
+        METHOD[\"PROJ unimplemented\"]],
+    CS[Cartesian,2],
+        AXIS[\"(E)\",east,
+            ORDER[1],
+            LENGTHUNIT[\"metre\",1,
+                ID[\"EPSG\",9001]]],
+        AXIS[\"(N)\",north,
+            ORDER[2],
+            LENGTHUNIT[\"metre\",1,
+                ID[\"EPSG\",9001]]]]"
+    );
+    let wrapped = Crs::DerivedProjected(crs);
+    assert!(wrapped.is_equivalent_to(&wrapped.clone()));
+    assert!(matches!(
+        wrapped,
+        Crs::DerivedProjected(ref derived) if matches!(derived.base_crs().base_crs(), GeodeticCRS::Geographic(_))
+    ));
+}
+
+#[test]
+fn crs_derived_projected_crs_wkt2_2015() {
+    assert_eq!(
+        refused(
+            &Crs::DerivedProjected(derived_projected()),
+            WktConvention::Wkt2_2015
+        ),
+        "DerivedProjectedCRS can only be exported to WKT2:2019"
+    );
+}
+
+#[test]
+fn crs_date_time_temporal_crs_wkt2() {
+    let crs = Crs::Temporal(date_time_temporal());
+    assert_eq!(
+        exported(&crs, WktConvention::Wkt2_2015),
+        "\
+TIMECRS[\"Temporal CRS\",
+    TDATUM[\"Gregorian calendar\",
+        TIMEORIGIN[0000-01-01]],
+    CS[temporal,1],
+        AXIS[\"time (T)\",future]]"
+    );
+    assert_eq!(
+        refused(&crs, WktConvention::Wkt1Gdal),
+        "TemporalCRS can only be exported to WKT2"
+    );
+    assert!(crs.is_equivalent_to(&crs.clone()));
+}
+
+#[test]
+fn crs_date_time_temporal_crs_wkt2_2019() {
+    assert_eq!(
+        exported(
+            &Crs::Temporal(date_time_temporal()),
+            WktConvention::Wkt2_2019
+        ),
+        "\
+TIMECRS[\"Temporal CRS\",
+    TDATUM[\"Gregorian calendar\",
+        CALENDAR[\"proleptic Gregorian\"],
+        TIMEORIGIN[0000-01-01]],
+    CS[TemporalDateTime,1],
+        AXIS[\"time (T)\",future]]"
+    );
+}
+
+#[test]
+fn crs_temporal_count_crs_with_conv_factor_wkt2_2019() {
+    let crs = TemporalCRS::create(
+        "GPS milliseconds",
+        TemporalDatum::create(
+            "GPS time origin",
+            "1980-01-01T00:00:00.0Z",
+            CALENDAR_PROLEPTIC_GREGORIAN,
+        ),
+        TemporalCS::create(
+            TemporalKind::Count,
+            Axis::create(
+                "",
+                "T",
+                "future",
+                UnitOfMeasure::new("milliseconds (ms)", 0.001, UnitKind::Time),
+            ),
+        ),
+    );
+    assert_eq!(
+        exported(&Crs::Temporal(crs), WktConvention::Wkt2_2019),
+        "\
+TIMECRS[\"GPS milliseconds\",
+    TDATUM[\"GPS time origin\",
+        CALENDAR[\"proleptic Gregorian\"],
+        TIMEORIGIN[1980-01-01T00:00:00.0Z]],
+    CS[TemporalCount,1],
+        AXIS[\"(T)\",future,
+            TIMEUNIT[\"milliseconds (ms)\",0.001]]]"
+    );
+}
+
+#[test]
+fn crs_temporal_count_crs_without_conv_factor_wkt2_2019() {
+    let crs = TemporalCRS::create(
+        "Calendar hours from 1979-12-29",
+        TemporalDatum::create(
+            "29 December 1979",
+            "1979-12-29T00",
+            CALENDAR_PROLEPTIC_GREGORIAN,
+        ),
+        TemporalCS::create(
+            TemporalKind::Count,
+            Axis::create(
+                "Time",
+                "",
+                "future",
+                UnitOfMeasure::new("hour", 0.0, UnitKind::Time),
+            ),
+        ),
+    );
+    assert_eq!(
+        exported(&Crs::Temporal(crs), WktConvention::Wkt2_2019),
+        "\
+TIMECRS[\"Calendar hours from 1979-12-29\",
+    TDATUM[\"29 December 1979\",
+        CALENDAR[\"proleptic Gregorian\"],
+        TIMEORIGIN[1979-12-29T00]],
+    CS[TemporalCount,1],
+        AXIS[\"time\",future,
+            TIMEUNIT[\"hour\"]]]"
+    );
+}
+
+#[test]
+fn crs_temporal_measure_crs_without_conv_factor_wkt2_2019() {
+    let crs = TemporalCRS::create(
+        "Decimal Years CE",
+        TemporalDatum::create("Common Era", "0000", CALENDAR_PROLEPTIC_GREGORIAN),
+        TemporalCS::create(
+            TemporalKind::Measure,
+            Axis::create(
+                "Decimal years",
+                "a",
+                "future",
+                UnitOfMeasure::new("year", 0.0, UnitKind::Time),
+            ),
+        ),
+    );
+    assert_eq!(
+        exported(&Crs::Temporal(crs), WktConvention::Wkt2_2019),
+        "\
+TIMECRS[\"Decimal Years CE\",
+    TDATUM[\"Common Era\",
+        CALENDAR[\"proleptic Gregorian\"],
+        TIMEORIGIN[0000]],
+    CS[TemporalMeasure,1],
+        AXIS[\"decimal years (a)\",future,
+            TIMEUNIT[\"year\"]]]"
+    );
+}
+
+#[test]
+fn crs_engineering_crs_unknown_equivalence() {
+    let wkt1 = "\
+ENGCRS[\"Undefined Cartesian SRS with unknown unit\",
+    EDATUM[\"\"],
+    CS[Cartesian,2],
+        AXIS[\"(E)\",east,
+            ORDER[1],
+            LENGTHUNIT[\"metre\",1,
+                ID[\"EPSG\",9001]]],
+        AXIS[\"(N)\",north,
+            ORDER[2],
+            LENGTHUNIT[\"metre\",1,
+                ID[\"EPSG\",9001]]]]";
+    let wkt2 = "\
+ENGCRS[\"Undefined Cartesian SRS with unknown unit\",
+    EDATUM[\"Unknown engineering datum\"],
+    CS[Cartesian,2],
+        AXIS[\"x\",unspecified,
+            ORDER[1],
+            LENGTHUNIT[\"metre\",1,
+                ID[\"EPSG\",9001]]],
+        AXIS[\"y\",unspecified,
+            ORDER[2],
+            LENGTHUNIT[\"metre\",1,
+                ID[\"EPSG\",9001]]]]";
+    let Crs::Engineering(_) = parse(wkt1).crs().expect("wkt1").clone() else {
+        panic!("wkt1 engineering");
+    };
+    let left = parse(wkt1).crs().expect("wkt1").clone();
+    let right = parse(wkt2).crs().expect("wkt2").clone();
+    assert!(left.is_equivalent_to_with(&right, Equivalence::Equivalent));
+    assert!(right.is_equivalent_to_with(&left, Equivalence::Equivalent));
+}
+
+#[test]
+fn crs_parametric_crs_wkt2() {
+    let crs = Crs::Parametric(parametric());
+    assert_eq!(
+        exported(&crs, WktConvention::Wkt2_2015),
+        "\
+PARAMETRICCRS[\"Parametric CRS\",
+    PDATUM[\"Parametric datum\"],
+    CS[parametric,1],
+        AXIS[\"pressure (hPa)\",up,
+            PARAMETRICUNIT[\"HectoPascal\",100]]]"
+    );
+    assert!(crs.is_equivalent_to(&crs.clone()));
+}
+
+#[test]
+fn crs_parametric_crs_wkt1() {
+    assert_eq!(
+        refused(&Crs::Parametric(parametric()), WktConvention::Wkt1Gdal),
+        "ParametricCRS can only be exported to WKT2"
+    );
+}
+
+#[test]
+fn crs_derived_vertical_crs_basic() {
+    let derived = derived_vertical();
+    let crs = Crs::Derived(derived.clone());
+    let base = derived.base_crs().clone();
+    assert!(crs.is_equivalent_to(&crs.clone()));
+    assert!(!crs.is_equivalent_to(&base));
+    assert!(!base.is_equivalent_to(&crs));
+}
+
+#[test]
+fn crs_derived_vertical_crs_wkt2() {
+    assert_eq!(
+        exported(&Crs::Derived(derived_vertical()), WktConvention::Wkt2_2015),
+        "\
+VERTCRS[\"Derived vertCRS\",
+    BASEVERTCRS[\"ODN height\",
+        VDATUM[\"Ordnance Datum Newlyn\",
+            ID[\"EPSG\",5101]]],
+    DERIVINGCONVERSION[\"unnamed\",
+        METHOD[\"PROJ unimplemented\"]],
+    CS[vertical,1],
+        AXIS[\"gravity-related height (H)\",up,
+            LENGTHUNIT[\"metre\",1,
+                ID[\"EPSG\",9001]]]]"
+    );
+}
+
+#[test]
+fn crs_derived_vertical_crs_wkt1() {
+    assert_eq!(
+        refused(&Crs::Derived(derived_vertical()), WktConvention::Wkt1Gdal),
+        "DerivedVerticalCRS can only be exported to WKT2"
+    );
+}
+
+#[test]
+fn crs_derived_vertical_crs_wkt1_when_simple_derivation() {
+    let conversion = Conversion::create_change_vertical_unit_no_conv_factor(
+        &OpProps::new().name("Vertical Axis Unit Conversion"),
+    )
+    .expect("1104");
+    let crs = DerivedCRS::create(
+        "Derived vertCRS",
+        Crs::Vertical(vertical_odn()),
+        conversion,
+        CoordinateSystem::Vertical(VerticalCS::create_gravity_related_height(
+            UnitOfMeasure::foot(),
+        )),
+    )
+    .expect("simple vertical");
+    assert_eq!(
+        exported(&Crs::Derived(crs), WktConvention::Wkt1Gdal),
+        "\
+VERT_CS[\"Derived vertCRS\",
+    VERT_DATUM[\"Ordnance Datum Newlyn\",2005,
+        AUTHORITY[\"EPSG\",\"5101\"]],
+    UNIT[\"foot\",0.3048,
+        AUTHORITY[\"EPSG\",\"9002\"]],
+    AXIS[\"Gravity-related height\",UP]]"
+    );
+}
+
+#[test]
+fn crs_derived_engineering_crs_wkt2() {
+    let derived = DerivedCRS::create(
+        "Derived EngineeringCRS",
+        Crs::Engineering(engineering()),
+        unimplemented_conversion("unnamed"),
+        CoordinateSystem::Cartesian(CartesianCS::create_easting_northing(UnitOfMeasure::metre())),
+    )
+    .expect("derived engineering");
+    let crs = Crs::Derived(derived);
+    assert!(crs.is_equivalent_to(&crs.clone()));
+    let Crs::Derived(derived) = &crs else {
+        unreachable!("derived");
+    };
+    assert!(derived
+        .coordinate_system()
+        .is_equivalent_to(&CoordinateSystem::Cartesian(
+            CartesianCS::create_easting_northing(UnitOfMeasure::metre())
+        )));
+    let Crs::Engineering(base) = derived.base_crs() else {
+        panic!("engineering base");
+    };
+    assert!(base.datum().is_equivalent_to(engineering().datum()));
+    assert_eq!(
+        exported(&crs, WktConvention::Wkt2_2019),
+        "\
+ENGCRS[\"Derived EngineeringCRS\",
+    BASEENGCRS[\"Engineering CRS\",
+        EDATUM[\"Engineering datum\"]],
+    DERIVINGCONVERSION[\"unnamed\",
+        METHOD[\"PROJ unimplemented\"]],
+    CS[Cartesian,2],
+        AXIS[\"(E)\",east,
+            ORDER[1],
+            LENGTHUNIT[\"metre\",1,
+                ID[\"EPSG\",9001]]],
+        AXIS[\"(N)\",north,
+            ORDER[2],
+            LENGTHUNIT[\"metre\",1,
+                ID[\"EPSG\",9001]]]]"
+    );
+    assert_eq!(
+        refused(&crs, WktConvention::Wkt2_2015),
+        "DerivedEngineeringCRS can only be exported to WKT2:2019"
+    );
+}
+
+#[test]
+fn crs_derived_engineering_crs_wkt1() {
+    let crs = DerivedCRS::create(
+        "Derived EngineeringCRS",
+        Crs::Engineering(engineering()),
+        unimplemented_conversion("unnamed"),
+        CoordinateSystem::Cartesian(CartesianCS::create_easting_northing(UnitOfMeasure::metre())),
+    )
+    .expect("derived engineering");
+    assert_eq!(
+        refused(&Crs::Derived(crs), WktConvention::Wkt1Gdal),
+        "DerivedEngineeringCRS can only be exported to WKT2:2019"
+    );
+}
+
+#[test]
+fn crs_derived_parametric_crs_wkt2() {
+    let cs = ParametricCS::create(Axis::create(
+        "pressure",
+        "hPa",
+        "up",
+        proj_rs::parametric_unit("HectoPascal", 100.0),
+    ));
+    let derived = DerivedCRS::create(
+        "Derived ParametricCRS",
+        Crs::Parametric(parametric()),
+        unimplemented_conversion("unnamed"),
+        CoordinateSystem::Parametric(cs.clone()),
+    )
+    .expect("derived parametric");
+    let crs = Crs::Derived(derived);
+    assert!(crs.is_equivalent_to(&crs.clone()));
+    let Crs::Derived(derived) = &crs else {
+        unreachable!("derived");
+    };
+    assert!(derived
+        .coordinate_system()
+        .is_equivalent_to(&CoordinateSystem::Parametric(cs)));
+    let Crs::Parametric(base) = derived.base_crs() else {
+        panic!("parametric base");
+    };
+    assert_eq!(base.datum().name(), parametric().datum().name());
+    assert_eq!(
+        exported(&crs, WktConvention::Wkt2_2019),
+        "\
+PARAMETRICCRS[\"Derived ParametricCRS\",
+    BASEPARAMCRS[\"Parametric CRS\",
+        PDATUM[\"Parametric datum\"]],
+    DERIVINGCONVERSION[\"unnamed\",
+        METHOD[\"PROJ unimplemented\"]],
+    CS[parametric,1],
+        AXIS[\"pressure (hPa)\",up,
+            PARAMETRICUNIT[\"HectoPascal\",100]]]"
+    );
+}
+
+#[test]
+fn crs_derived_parametric_crs_wkt1() {
+    let crs = DerivedCRS::create(
+        "Derived ParametricCRS",
+        Crs::Parametric(parametric()),
+        unimplemented_conversion("unnamed"),
+        CoordinateSystem::Parametric(parametric().coordinate_system().clone()),
+    )
+    .expect("derived parametric");
+    assert_eq!(
+        refused(&Crs::Derived(crs), WktConvention::Wkt1Gdal),
+        "DerivedParametricCRS can only be exported to WKT2"
+    );
+}
+
+#[test]
+fn crs_derive_temporal_crs_wkt2() {
+    let cs = date_time_temporal().coordinate_system().clone();
+    let derived = DerivedCRS::create(
+        "Derived TemporalCRS",
+        Crs::Temporal(date_time_temporal()),
+        unimplemented_conversion("unnamed"),
+        CoordinateSystem::Temporal(cs.clone()),
+    )
+    .expect("derived temporal");
+    let crs = Crs::Derived(derived);
+    assert!(crs.is_equivalent_to(&crs.clone()));
+    let Crs::Derived(derived) = &crs else {
+        unreachable!("derived");
+    };
+    assert!(derived
+        .coordinate_system()
+        .is_equivalent_to(&CoordinateSystem::Temporal(cs)));
+    let Crs::Temporal(base) = derived.base_crs() else {
+        panic!("temporal base");
+    };
+    let datum = date_time_temporal().datum().clone();
+    assert_eq!(base.datum().name(), datum.name());
+    assert_eq!(base.datum().temporal_origin(), datum.temporal_origin());
+    assert_eq!(base.datum().calendar(), datum.calendar());
+    assert_eq!(
+        exported(&crs, WktConvention::Wkt2_2019),
+        "\
+TIMECRS[\"Derived TemporalCRS\",
+    BASETIMECRS[\"Temporal CRS\",
+        TDATUM[\"Gregorian calendar\",
+            CALENDAR[\"proleptic Gregorian\"],
+            TIMEORIGIN[0000-01-01]]],
+    DERIVINGCONVERSION[\"unnamed\",
+        METHOD[\"PROJ unimplemented\"]],
+    CS[TemporalDateTime,1],
+        AXIS[\"time (T)\",future]]"
+    );
+}
+
+#[test]
+fn crs_derive_temporal_crs_wkt1() {
+    let crs = DerivedCRS::create(
+        "Derived TemporalCRS",
+        Crs::Temporal(date_time_temporal()),
+        unimplemented_conversion("unnamed"),
+        CoordinateSystem::Temporal(date_time_temporal().coordinate_system().clone()),
+    )
+    .expect("derived temporal");
+    assert_eq!(
+        refused(&Crs::Derived(crs), WktConvention::Wkt1Gdal),
+        "DerivedTemporalCRS can only be exported to WKT2"
+    );
+}
+
+#[test]
+fn crs_normalize_for_visualization_derivedprojected() {
+    let crs = derived_projected_northing_easting();
+    let axes = crs.coordinate_system().axes();
+    assert_eq!(axes.len(), 2);
+    assert_eq!(axes[0].direction(), "north");
+    assert_eq!(axes[1].direction(), "east");
+
+    let normalized = crs.normalize_for_visualization();
+    let axes = normalized.coordinate_system().axes();
+    assert_eq!(axes.len(), 2);
+    assert_eq!(axes[0].direction(), "east");
+    assert_eq!(axes[1].direction(), "north");
+
+    let normalized_3d = crs.promote_to_3d(None).normalize_for_visualization();
+    let axes = normalized_3d.coordinate_system().axes();
+    assert_eq!(axes.len(), 3);
+    assert_eq!(axes[0].direction(), "east");
+    assert_eq!(axes[1].direction(), "north");
+    assert_eq!(axes[2].direction(), "up");
+}
+
+#[test]
+fn c_api_proj_create_engineering_crs() {
+    let crs = EngineeringCRS::create(
+        "name",
+        EngineeringDatum::create(""),
+        CoordinateSystem::Cartesian(CartesianCS::create_easting_northing(UnitOfMeasure::metre())),
+    );
+    assert_eq!(
+        exported(&Crs::Engineering(crs), WktConvention::Wkt1Gdal),
+        "\
+LOCAL_CS[\"name\",
+    UNIT[\"metre\",1,
+        AUTHORITY[\"EPSG\",\"9001\"]],
+    AXIS[\"Easting\",EAST],
+    AXIS[\"Northing\",NORTH]]"
+    );
+}
+
+#[test]
+fn c_api_proj_crs_is_derived() {
+    let projected = Crs::Projected(utm_31n());
+    assert!(projected.is_derived());
+    let base = Crs::Geodetic(utm_31n().base_crs().clone());
+    assert!(!base.is_derived());
+}
+
+fn conversion_wkt(conversion: &Conversion) -> String {
+    conversion
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2019))
+        .expect("conversion wkt")
+}
+
+fn affine_2d(name: &str, units: [UnitOfMeasure; 6]) -> Conversion {
+    let values = [1.1, 2.1, 3.1, 4.1, 5.1, 6.1]
+        .into_iter()
+        .zip(units)
+        .map(|(value, unit)| ParameterValue::measure(value, unit))
+        .collect();
+    Conversion::create_by_name(
+        &OpProps::new().name(name),
+        "Affine parametric transformation",
+        values,
+    )
+    .expect("affine 2d")
+}
+
+fn default_affine_2d(name: &str) -> Conversion {
+    let metre = UnitOfMeasure::metre();
+    let unity = UnitOfMeasure::unity();
+    affine_2d(
+        name,
+        [
+            metre.clone(),
+            unity.clone(),
+            unity.clone(),
+            metre,
+            unity.clone(),
+            unity,
+        ],
+    )
+}
+
+fn unity_9201() -> UnitOfMeasure {
+    UnitOfMeasure::unity().with_identifier("EPSG", "9201")
+}
+
+fn affine_3d_default() -> Conversion {
+    let metre = UnitOfMeasure::metre();
+    let unity = unity_9201();
+    let units = [
+        metre.clone(),
+        unity.clone(),
+        unity.clone(),
+        unity.clone(),
+        metre.clone(),
+        unity.clone(),
+        unity.clone(),
+        unity.clone(),
+        metre,
+        unity.clone(),
+        unity.clone(),
+        unity,
+    ];
+    let values = [
+        1.1, 2.1, 3.1, 4.1, 5.1, 6.1, 7.1, 8.1, 9.1, 10.1, 11.1, 12.1,
+    ]
+    .into_iter()
+    .zip(units)
+    .map(|(value, unit)| ParameterValue::measure(value, unit))
+    .collect();
+    Conversion::create_by_name(
+        &OpProps::new().name("unnamed"),
+        "3D Affine parametric transformation",
+        values,
+    )
+    .expect("affine 3d")
+}
+
+fn easting_northing_metre() -> CoordinateSystem {
+    CoordinateSystem::Cartesian(CartesianCS::create_easting_northing(UnitOfMeasure::metre()))
+}
+
+fn database_crs(text: &str) -> Crs {
+    create_from_user_input(text, &database()).expect(text)
+}
+
+const DERIVED_PROJ_WKT: &str = "\
+DERIVEDPROJCRS[\"my derived crs\",
+    BASEPROJCRS[\"WGS 84 / UTM zone 31N\",
+        BASEGEOGCRS[\"WGS 84\",
+            ENSEMBLE[\"World Geodetic System 1984 ensemble\",
+                MEMBER[\"World Geodetic System 1984 (Transit)\"],
+                MEMBER[\"World Geodetic System 1984 (G730)\"],
+                MEMBER[\"World Geodetic System 1984 (G873)\"],
+                MEMBER[\"World Geodetic System 1984 (G1150)\"],
+                MEMBER[\"World Geodetic System 1984 (G1674)\"],
+                MEMBER[\"World Geodetic System 1984 (G1762)\"],
+                MEMBER[\"World Geodetic System 1984 (G2139)\"],
+                MEMBER[\"World Geodetic System 1984 (G2296)\"],
+                ELLIPSOID[\"WGS 84\",6378137,298.257223563,
+                    LENGTHUNIT[\"metre\",1]],
+                ENSEMBLEACCURACY[2.0]],
+            PRIMEM[\"Greenwich\",0,
+                ANGLEUNIT[\"degree\",0.0174532925199433]]],
+        CONVERSION[\"UTM zone 31N\",
+            METHOD[\"Transverse Mercator\",
+                ID[\"EPSG\",9807]],
+            PARAMETER[\"Latitude of natural origin\",0,
+                ANGLEUNIT[\"degree\",0.0174532925199433],
+                ID[\"EPSG\",8801]],
+            PARAMETER[\"Longitude of natural origin\",3,
+                ANGLEUNIT[\"degree\",0.0174532925199433],
+                ID[\"EPSG\",8802]],
+            PARAMETER[\"Scale factor at natural origin\",0.9996,
+                SCALEUNIT[\"unity\",1],
+                ID[\"EPSG\",8805]],
+            PARAMETER[\"False easting\",500000,
+                LENGTHUNIT[\"metre\",1],
+                ID[\"EPSG\",8806]],
+            PARAMETER[\"False northing\",0,
+                LENGTHUNIT[\"metre\",1],
+                ID[\"EPSG\",8807]]],
+        ID[\"EPSG\",32631]],
+    DERIVINGCONVERSION[\"unnamed\",
+        METHOD[\"Affine parametric transformation\",
+            ID[\"EPSG\",9624]],
+        PARAMETER[\"A0\",1.1,
+            LENGTHUNIT[\"metre\",1],
+            ID[\"EPSG\",8623]],
+        PARAMETER[\"A1\",2.1,
+            SCALEUNIT[\"unity\",1],
+            ID[\"EPSG\",8624]],
+        PARAMETER[\"A2\",3.1,
+            SCALEUNIT[\"unity\",1],
+            ID[\"EPSG\",8625]],
+        PARAMETER[\"B0\",4.1,
+            LENGTHUNIT[\"metre\",1],
+            ID[\"EPSG\",8639]],
+        PARAMETER[\"B1\",5.1,
+            SCALEUNIT[\"unity\",1],
+            ID[\"EPSG\",8640]],
+        PARAMETER[\"B2\",6.1,
+            SCALEUNIT[\"unity\",1],
+            ID[\"EPSG\",8641]]],
+    CS[Cartesian,2],
+        AXIS[\"(E)\",east,
+            ORDER[1],
+            LENGTHUNIT[\"metre\",1,
+                ID[\"EPSG\",9001]]],
+        AXIS[\"(N)\",north,
+            ORDER[2],
+            LENGTHUNIT[\"metre\",1,
+                ID[\"EPSG\",9001]]]]";
+
+#[test]
+fn c_api_proj_get_celestial_body_list_from_database() {
+    let all = AuthorityFactory::create(&database(), "")
+        .get_celestial_body_list()
+        .expect("bodies");
+    assert!(!all.is_empty());
+    assert!(!all[0].authority.is_empty());
+    assert!(!all[0].name.is_empty());
+    let esri = AuthorityFactory::create(&database(), "ESRI")
+        .get_celestial_body_list()
+        .expect("esri");
+    assert!(esri.len() > 1);
+    assert!(esri.iter().all(|body| body.authority == "ESRI"));
+    assert!(esri.iter().any(|body| body.name == "Ganymede"));
+}
+
+#[test]
+fn c_api_proj_create_linear_affine_parametric_conversion() {
+    assert_eq!(
+        conversion_wkt(&default_affine_2d("unnamed")),
+        "\
+CONVERSION[\"unnamed\",
+    METHOD[\"Affine parametric transformation\",
+        ID[\"EPSG\",9624]],
+    PARAMETER[\"A0\",1.1,
+        LENGTHUNIT[\"metre\",1],
+        ID[\"EPSG\",8623]],
+    PARAMETER[\"A1\",2.1,
+        SCALEUNIT[\"unity\",1],
+        ID[\"EPSG\",8624]],
+    PARAMETER[\"A2\",3.1,
+        SCALEUNIT[\"unity\",1],
+        ID[\"EPSG\",8625]],
+    PARAMETER[\"B0\",4.1,
+        LENGTHUNIT[\"metre\",1],
+        ID[\"EPSG\",8639]],
+    PARAMETER[\"B1\",5.1,
+        SCALEUNIT[\"unity\",1],
+        ID[\"EPSG\",8640]],
+    PARAMETER[\"B2\",6.1,
+        SCALEUNIT[\"unity\",1],
+        ID[\"EPSG\",8641]]]"
+    );
+    let custom = affine_2d(
+        "conversion name",
+        [
+            UnitOfMeasure::new("my unit1", 0.11, UnitKind::Linear),
+            UnitOfMeasure::new("my unit2", 0.12, UnitKind::Scale),
+            UnitOfMeasure::new("my unit3", 0.13, UnitKind::Scale),
+            UnitOfMeasure::new("my unit4", 0.14, UnitKind::Linear),
+            UnitOfMeasure::new("my unit5", 0.15, UnitKind::Scale),
+            UnitOfMeasure::new("my unit6", 0.16, UnitKind::Scale),
+        ],
+    );
+    assert_eq!(
+        conversion_wkt(&custom),
+        "\
+CONVERSION[\"conversion name\",
+    METHOD[\"Affine parametric transformation\",
+        ID[\"EPSG\",9624]],
+    PARAMETER[\"A0\",1.1,
+        LENGTHUNIT[\"my unit1\",0.11],
+        ID[\"EPSG\",8623]],
+    PARAMETER[\"A1\",2.1,
+        SCALEUNIT[\"my unit2\",0.12],
+        ID[\"EPSG\",8624]],
+    PARAMETER[\"A2\",3.1,
+        SCALEUNIT[\"my unit3\",0.13],
+        ID[\"EPSG\",8625]],
+    PARAMETER[\"B0\",4.1,
+        LENGTHUNIT[\"my unit4\",0.14],
+        ID[\"EPSG\",8639]],
+    PARAMETER[\"B1\",5.1,
+        SCALEUNIT[\"my unit5\",0.15],
+        ID[\"EPSG\",8640]],
+    PARAMETER[\"B2\",6.1,
+        SCALEUNIT[\"my unit6\",0.16],
+        ID[\"EPSG\",8641]]]"
+    );
+}
+
+#[test]
+fn c_api_proj_create_linear_3d_affine_parametric_conversion() {
+    let conversion = affine_3d_default();
+    assert_eq!(
+        conversion_wkt(&conversion),
+        "\
+CONVERSION[\"unnamed\",
+    METHOD[\"3D Affine parametric transformation\"],
+    PARAMETER[\"A0\",1.1,
+        LENGTHUNIT[\"metre\",1],
+        ID[\"EPSG\",8623]],
+    PARAMETER[\"A1\",2.1,
+        SCALEUNIT[\"unity\",1],
+        ID[\"EPSG\",8624]],
+    PARAMETER[\"A2\",3.1,
+        SCALEUNIT[\"unity\",1],
+        ID[\"EPSG\",8625]],
+    PARAMETER[\"A3\",4.1,
+        SCALEUNIT[\"unity\",1,
+            ID[\"EPSG\",9201]]],
+    PARAMETER[\"B0\",5.1,
+        LENGTHUNIT[\"metre\",1],
+        ID[\"EPSG\",8639]],
+    PARAMETER[\"B1\",6.1,
+        SCALEUNIT[\"unity\",1],
+        ID[\"EPSG\",8640]],
+    PARAMETER[\"B2\",7.1,
+        SCALEUNIT[\"unity\",1],
+        ID[\"EPSG\",8641]],
+    PARAMETER[\"B3\",8.1,
+        SCALEUNIT[\"unity\",1,
+            ID[\"EPSG\",9201]]],
+    PARAMETER[\"C0\",9.1,
+        LENGTHUNIT[\"metre\",1,
+            ID[\"EPSG\",9001]]],
+    PARAMETER[\"C1\",10.1,
+        SCALEUNIT[\"unity\",1,
+            ID[\"EPSG\",9201]]],
+    PARAMETER[\"C2\",11.1,
+        SCALEUNIT[\"unity\",1,
+            ID[\"EPSG\",9201]]],
+    PARAMETER[\"C3\",12.1,
+        SCALEUNIT[\"unity\",1,
+            ID[\"EPSG\",9201]]]]"
+    );
+    assert_eq!(
+        conversion.export_to_proj_string().expect("proj"),
+        "+proj=affine +xoff=1.1 +s11=2.1 +s12=3.1 +s13=4.1 +yoff=5.1 +s21=6.1 +s22=7.1 +s23=8.1 +zoff=9.1 +s31=10.1 +s32=11.1 +s33=12.1"
+    );
+}
+
+#[test]
+fn c_api_proj_create_derived_projected_crs() {
+    let Crs::Projected(base) = database_crs("EPSG:32631") else {
+        panic!("EPSG:32631 is projected");
+    };
+    let derived = DerivedProjectedCRS::create(
+        "my derived crs",
+        base,
+        default_affine_2d("unnamed"),
+        easting_northing_metre(),
+    );
+    assert_eq!(
+        exported(&Crs::DerivedProjected(derived), WktConvention::Wkt2_2019),
+        DERIVED_PROJ_WKT
+    );
+}
+
+#[test]
+fn c_api_proj_crs_add_horizontal_derived_conversion() {
+    let projected = database_crs("EPSG:32631")
+        .add_horizontal_derived_conversion(
+            "my derived crs",
+            default_affine_2d("unnamed"),
+            easting_northing_metre(),
+        )
+        .expect("projected");
+    assert_eq!(
+        exported(&projected, WktConvention::Wkt2_2019),
+        DERIVED_PROJ_WKT
+    );
+
+    let compound = database_crs("EPSG:32631+3855")
+        .add_horizontal_derived_conversion(
+            "my derived crs",
+            default_affine_2d("unnamed"),
+            easting_northing_metre(),
+        )
+        .expect("compound");
+    assert_eq!(
+        exported(&compound, WktConvention::Wkt2_2019),
+        "\
+COMPOUNDCRS[\"my derived crs + EGM2008 height\",
+    DERIVEDPROJCRS[\"my derived crs\",
+        BASEPROJCRS[\"WGS 84 / UTM zone 31N\",
+            BASEGEOGCRS[\"WGS 84\",
+                ENSEMBLE[\"World Geodetic System 1984 ensemble\",
+                    MEMBER[\"World Geodetic System 1984 (Transit)\"],
+                    MEMBER[\"World Geodetic System 1984 (G730)\"],
+                    MEMBER[\"World Geodetic System 1984 (G873)\"],
+                    MEMBER[\"World Geodetic System 1984 (G1150)\"],
+                    MEMBER[\"World Geodetic System 1984 (G1674)\"],
+                    MEMBER[\"World Geodetic System 1984 (G1762)\"],
+                    MEMBER[\"World Geodetic System 1984 (G2139)\"],
+                    MEMBER[\"World Geodetic System 1984 (G2296)\"],
+                    ELLIPSOID[\"WGS 84\",6378137,298.257223563,
+                        LENGTHUNIT[\"metre\",1]],
+                    ENSEMBLEACCURACY[2.0]],
+                PRIMEM[\"Greenwich\",0,
+                    ANGLEUNIT[\"degree\",0.0174532925199433]]],
+            CONVERSION[\"UTM zone 31N\",
+                METHOD[\"Transverse Mercator\",
+                    ID[\"EPSG\",9807]],
+                PARAMETER[\"Latitude of natural origin\",0,
+                    ANGLEUNIT[\"degree\",0.0174532925199433],
+                    ID[\"EPSG\",8801]],
+                PARAMETER[\"Longitude of natural origin\",3,
+                    ANGLEUNIT[\"degree\",0.0174532925199433],
+                    ID[\"EPSG\",8802]],
+                PARAMETER[\"Scale factor at natural origin\",0.9996,
+                    SCALEUNIT[\"unity\",1],
+                    ID[\"EPSG\",8805]],
+                PARAMETER[\"False easting\",500000,
+                    LENGTHUNIT[\"metre\",1],
+                    ID[\"EPSG\",8806]],
+                PARAMETER[\"False northing\",0,
+                    LENGTHUNIT[\"metre\",1],
+                    ID[\"EPSG\",8807]]],
+            ID[\"EPSG\",32631]],
+        DERIVINGCONVERSION[\"unnamed\",
+            METHOD[\"Affine parametric transformation\",
+                ID[\"EPSG\",9624]],
+            PARAMETER[\"A0\",1.1,
+                LENGTHUNIT[\"metre\",1],
+                ID[\"EPSG\",8623]],
+            PARAMETER[\"A1\",2.1,
+                SCALEUNIT[\"unity\",1],
+                ID[\"EPSG\",8624]],
+            PARAMETER[\"A2\",3.1,
+                SCALEUNIT[\"unity\",1],
+                ID[\"EPSG\",8625]],
+            PARAMETER[\"B0\",4.1,
+                LENGTHUNIT[\"metre\",1],
+                ID[\"EPSG\",8639]],
+            PARAMETER[\"B1\",5.1,
+                SCALEUNIT[\"unity\",1],
+                ID[\"EPSG\",8640]],
+            PARAMETER[\"B2\",6.1,
+                SCALEUNIT[\"unity\",1],
+                ID[\"EPSG\",8641]]],
+        CS[Cartesian,2],
+            AXIS[\"(E)\",east,
+                ORDER[1],
+                LENGTHUNIT[\"metre\",1,
+                    ID[\"EPSG\",9001]]],
+            AXIS[\"(N)\",north,
+                ORDER[2],
+                LENGTHUNIT[\"metre\",1,
+                    ID[\"EPSG\",9001]]]],
+    VERTCRS[\"EGM2008 height\",
+        VDATUM[\"EGM2008 geoid\"],
+        CS[vertical,1],
+            AXIS[\"gravity-related height (H)\",up,
+                LENGTHUNIT[\"metre\",1]],
+        USAGE[
+            SCOPE[\"Geodesy.\"],
+            AREA[\"World.\"],
+            BBOX[-90,-180,90,180]],
+        ID[\"EPSG\",3855]]]"
+    );
+
+    let bound = database_crs("+proj=utm +zone=31 +ellps=GRS80 +towgs84=0,0,0 +type=crs")
+        .add_horizontal_derived_conversion(
+            "my derived crs",
+            default_affine_2d("unnamed"),
+            easting_northing_metre(),
+        )
+        .expect("bound");
+    assert_eq!(
+        exported(&bound, WktConvention::Wkt2_2019),
+        "\
+BOUNDCRS[
+    SOURCECRS[
+        DERIVEDPROJCRS[\"my derived crs\",
+            BASEPROJCRS[\"unknown\",
+                BASEGEOGCRS[\"unknown\",
+                    DATUM[\"Unknown based on GRS 1980 ellipsoid using towgs84=0,0,0\",
+                        ELLIPSOID[\"GRS 1980\",6378137,298.257222101,
+                            LENGTHUNIT[\"metre\",1],
+                            ID[\"EPSG\",7019]]],
+                    PRIMEM[\"Greenwich\",0,
+                        ANGLEUNIT[\"degree\",0.0174532925199433],
+                        ID[\"EPSG\",8901]]],
+                CONVERSION[\"UTM zone 31N\",
+                    METHOD[\"Transverse Mercator\",
+                        ID[\"EPSG\",9807]],
+                    PARAMETER[\"Latitude of natural origin\",0,
+                        ANGLEUNIT[\"degree\",0.0174532925199433],
+                        ID[\"EPSG\",8801]],
+                    PARAMETER[\"Longitude of natural origin\",3,
+                        ANGLEUNIT[\"degree\",0.0174532925199433],
+                        ID[\"EPSG\",8802]],
+                    PARAMETER[\"Scale factor at natural origin\",0.9996,
+                        SCALEUNIT[\"unity\",1],
+                        ID[\"EPSG\",8805]],
+                    PARAMETER[\"False easting\",500000,
+                        LENGTHUNIT[\"metre\",1],
+                        ID[\"EPSG\",8806]],
+                    PARAMETER[\"False northing\",0,
+                        LENGTHUNIT[\"metre\",1],
+                        ID[\"EPSG\",8807]],
+                    ID[\"EPSG\",16031]]],
+            DERIVINGCONVERSION[\"unnamed\",
+                METHOD[\"Affine parametric transformation\",
+                    ID[\"EPSG\",9624]],
+                PARAMETER[\"A0\",1.1,
+                    LENGTHUNIT[\"metre\",1],
+                    ID[\"EPSG\",8623]],
+                PARAMETER[\"A1\",2.1,
+                    SCALEUNIT[\"unity\",1],
+                    ID[\"EPSG\",8624]],
+                PARAMETER[\"A2\",3.1,
+                    SCALEUNIT[\"unity\",1],
+                    ID[\"EPSG\",8625]],
+                PARAMETER[\"B0\",4.1,
+                    LENGTHUNIT[\"metre\",1],
+                    ID[\"EPSG\",8639]],
+                PARAMETER[\"B1\",5.1,
+                    SCALEUNIT[\"unity\",1],
+                    ID[\"EPSG\",8640]],
+                PARAMETER[\"B2\",6.1,
+                    SCALEUNIT[\"unity\",1],
+                    ID[\"EPSG\",8641]]],
+            CS[Cartesian,2],
+                AXIS[\"(E)\",east,
+                    ORDER[1],
+                    LENGTHUNIT[\"metre\",1,
+                        ID[\"EPSG\",9001]]],
+                AXIS[\"(N)\",north,
+                    ORDER[2],
+                    LENGTHUNIT[\"metre\",1,
+                        ID[\"EPSG\",9001]]]]],
+    TARGETCRS[
+        GEOGCRS[\"WGS 84\",
+            DATUM[\"World Geodetic System 1984\",
+                ELLIPSOID[\"WGS 84\",6378137,298.257223563,
+                    LENGTHUNIT[\"metre\",1]]],
+            PRIMEM[\"Greenwich\",0,
+                ANGLEUNIT[\"degree\",0.0174532925199433]],
+            CS[ellipsoidal,2],
+                AXIS[\"latitude\",north,
+                    ORDER[1],
+                    ANGLEUNIT[\"degree\",0.0174532925199433]],
+                AXIS[\"longitude\",east,
+                    ORDER[2],
+                    ANGLEUNIT[\"degree\",0.0174532925199433]],
+            ID[\"EPSG\",4326]]],
+    ABRIDGEDTRANSFORMATION[\"Transformation from unknown to WGS84\",
+        METHOD[\"Geocentric translations (geog2D domain)\",
+            ID[\"EPSG\",9603]],
+        PARAMETER[\"X-axis translation\",0,
+            ID[\"EPSG\",8605]],
+        PARAMETER[\"Y-axis translation\",0,
+            ID[\"EPSG\",8606]],
+        PARAMETER[\"Z-axis translation\",0,
+            ID[\"EPSG\",8607]]]]"
+    );
+
+    let refused = database_crs("EPSG:4326").add_horizontal_derived_conversion(
+        "my derived crs",
+        default_affine_2d("unnamed"),
+        easting_northing_metre(),
+    );
+    assert!(refused.is_err());
+}
+
+fn rotated_geographic(code: &str, method: &str) -> Crs {
+    let base = database_crs(code);
+    let Crs::Geographic(geographic) = &base else {
+        panic!("{code} is not geographic");
+    };
+    let cs = CoordinateSystem::Ellipsoidal(geographic.coordinate_system().clone());
+    let conversion = Conversion::create_by_name(
+        &OpProps::new(),
+        method,
+        vec![
+            ParameterValue::angle(2.0),
+            ParameterValue::angle(3.0),
+            ParameterValue::angle(4.0),
+        ],
+    )
+    .expect(method);
+    Crs::Derived(DerivedCRS::create("my rotated CRS", base, conversion, cs).expect("derived"))
+}
+
+#[test]
+fn c_api_proj_create_derived_geographic_crs() {
+    let base = database_crs("EPSG:4326");
+    assert!(!base.is_derived());
+    let crs = rotated_geographic("EPSG:4326", "Pole rotation (GRIB convention)");
+    assert!(crs.is_derived());
+    assert_eq!(
+        exported(&crs, WktConvention::Wkt2_2019),
+        "\
+GEOGCRS[\"my rotated CRS\",
+    BASEGEOGCRS[\"WGS 84\",
+        ENSEMBLE[\"World Geodetic System 1984 ensemble\",
+            MEMBER[\"World Geodetic System 1984 (Transit)\"],
+            MEMBER[\"World Geodetic System 1984 (G730)\"],
+            MEMBER[\"World Geodetic System 1984 (G873)\"],
+            MEMBER[\"World Geodetic System 1984 (G1150)\"],
+            MEMBER[\"World Geodetic System 1984 (G1674)\"],
+            MEMBER[\"World Geodetic System 1984 (G1762)\"],
+            MEMBER[\"World Geodetic System 1984 (G2139)\"],
+            MEMBER[\"World Geodetic System 1984 (G2296)\"],
+            ELLIPSOID[\"WGS 84\",6378137,298.257223563,
+                LENGTHUNIT[\"metre\",1]],
+            ENSEMBLEACCURACY[2.0]],
+        PRIMEM[\"Greenwich\",0,
+            ANGLEUNIT[\"degree\",0.0174532925199433]],
+        ID[\"EPSG\",4326]],
+    DERIVINGCONVERSION[\"Pole rotation (GRIB convention)\",
+        METHOD[\"Pole rotation (GRIB convention)\"],
+        PARAMETER[\"Latitude of the southern pole (GRIB convention)\",2,
+            ANGLEUNIT[\"degree\",0.0174532925199433,
+                ID[\"EPSG\",9122]]],
+        PARAMETER[\"Longitude of the southern pole (GRIB convention)\",3,
+            ANGLEUNIT[\"degree\",0.0174532925199433,
+                ID[\"EPSG\",9122]]],
+        PARAMETER[\"Axis rotation (GRIB convention)\",4,
+            ANGLEUNIT[\"degree\",0.0174532925199433,
+                ID[\"EPSG\",9122]]]],
+    CS[ellipsoidal,2],
+        AXIS[\"geodetic latitude (Lat)\",north,
+            ORDER[1],
+            ANGLEUNIT[\"degree\",0.0174532925199433,
+                ID[\"EPSG\",9122]]],
+        AXIS[\"geodetic longitude (Lon)\",east,
+            ORDER[2],
+            ANGLEUNIT[\"degree\",0.0174532925199433,
+                ID[\"EPSG\",9122]]]]"
+    );
+    assert_eq!(
+        crs.export_to_proj_string().expect("PROJ string"),
+        "+proj=ob_tran +o_proj=longlat +o_lon_p=-4 +o_lat_p=-2 +lon_0=3 +datum=WGS84 +no_defs +type=crs"
+    );
+}
+
+#[test]
+fn c_api_proj_create_derived_geographic_crs_netcdf_cf() {
+    let crs = rotated_geographic("EPSG:4019", "Pole rotation (netCDF CF convention)");
+    assert_eq!(
+        exported(&crs, WktConvention::Wkt2_2019),
+        "\
+GEOGCRS[\"my rotated CRS\",
+    BASEGEOGCRS[\"Unknown datum based upon the GRS 1980 ellipsoid\",
+        DATUM[\"Not specified (based on GRS 1980 ellipsoid)\",
+            ELLIPSOID[\"GRS 1980\",6378137,298.257222101,
+                LENGTHUNIT[\"metre\",1]]],
+        PRIMEM[\"Greenwich\",0,
+            ANGLEUNIT[\"degree\",0.0174532925199433]],
+        ID[\"EPSG\",4019]],
+    DERIVINGCONVERSION[\"Pole rotation (netCDF CF convention)\",
+        METHOD[\"Pole rotation (netCDF CF convention)\"],
+        PARAMETER[\"Grid north pole latitude (netCDF CF convention)\",2,
+            ANGLEUNIT[\"degree\",0.0174532925199433,
+                ID[\"EPSG\",9122]]],
+        PARAMETER[\"Grid north pole longitude (netCDF CF convention)\",3,
+            ANGLEUNIT[\"degree\",0.0174532925199433,
+                ID[\"EPSG\",9122]]],
+        PARAMETER[\"North pole grid longitude (netCDF CF convention)\",4,
+            ANGLEUNIT[\"degree\",0.0174532925199433,
+                ID[\"EPSG\",9122]]]],
+    CS[ellipsoidal,2],
+        AXIS[\"geodetic latitude (Lat)\",north,
+            ORDER[1],
+            ANGLEUNIT[\"degree\",0.0174532925199433,
+                ID[\"EPSG\",9122]]],
+        AXIS[\"geodetic longitude (Lon)\",east,
+            ORDER[2],
+            ANGLEUNIT[\"degree\",0.0174532925199433,
+                ID[\"EPSG\",9122]]]]"
+    );
+    assert_eq!(
+        crs.export_to_proj_string().expect("PROJ string"),
+        "+proj=ob_tran +o_proj=longlat +o_lon_p=4 +o_lat_p=2 +lon_0=183 +ellps=GRS80 +no_defs +type=crs"
+    );
 }

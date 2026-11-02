@@ -3,11 +3,14 @@
 //! Node order, identifier suppression, and the simplified omissions follow
 //! `WKTFormatter` in PROJ `src/iso19111/io.cpp`.
 
+use super::derived_crs::TemporalKind;
 use super::esri_parammap::{
     esri_method, find_parameter, mercator_variant_b, squared_eccentricity, EsriChoice, EsriParam,
 };
 use super::factory::{AuthorityFactory, DatabaseContext};
 use super::wkt_import::WktParser;
+
+mod derived;
 /// Whether the node being opened carries an authority identifier.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NodeId {
@@ -435,6 +438,7 @@ impl WktFormatter {
                 (true, UnitKind::Angular) => "ANGLEUNIT",
                 (true, UnitKind::Scale) => "SCALEUNIT",
                 (true, UnitKind::Time) => "TIMEUNIT",
+                (true, UnitKind::Parametric) => "PARAMETRICUNIT",
                 _ => "UNIT",
             }
         };
@@ -554,12 +558,10 @@ pub(crate) fn export_crs(crs: &Crs, formatter: &mut WktFormatter) -> Result<(), 
         Crs::Compound(crs) => export_compound(crs, formatter)?,
         Crs::Bound(crs) => export_bound(crs, formatter)?,
         Crs::Engineering(crs) => export_engineering(crs, formatter)?,
-        Crs::DerivedProjected(crs) => {
-            return Err(FactoryError::Format(format!(
-                "derived projected CRS {} has no WKT export in this build",
-                crs.name()
-            )));
-        }
+        Crs::DerivedProjected(crs) => derived::export_derived_projected(crs, formatter)?,
+        Crs::Temporal(crs) => derived::export_temporal(crs, formatter)?,
+        Crs::Parametric(crs) => derived::export_parametric(crs, formatter)?,
+        Crs::Derived(crs) => derived::export_derived(crs, formatter)?,
     }
     Ok(())
 }
@@ -1416,6 +1418,20 @@ fn export_prime_meridian(meridian: &PrimeMeridian, formatter: &mut WktFormatter)
     formatter.end_node();
 }
 
+/// WKT2:2019 names a temporal CS `TemporalDateTime`, `TemporalCount`, or `TemporalMeasure`.
+fn cs_wkt2_type(cs: &CoordinateSystem, formatter: &WktFormatter) -> &'static str {
+    if formatter.keywords_2019 {
+        if let CoordinateSystem::Temporal(cs) = cs {
+            return match cs.kind() {
+                TemporalKind::DateTime => "TemporalDateTime",
+                TemporalKind::Count => "TemporalCount",
+                TemporalKind::Measure => "TemporalMeasure",
+            };
+        }
+    }
+    cs.wkt2_type()
+}
+
 fn export_cs(cs: &CoordinateSystem, formatter: &mut WktFormatter) {
     if formatter.output_axis != OutputAxisRule::Yes {
         return;
@@ -1423,7 +1439,7 @@ fn export_cs(cs: &CoordinateSystem, formatter: &mut WktFormatter) {
     let axes = cs.axes();
     if formatter.wkt2 {
         formatter.start_node("CS", node_from_ids(&cs.identified().identifiers));
-        formatter.add_raw(cs.wkt2_type());
+        formatter.add_raw(cs_wkt2_type(cs, formatter));
         formatter.add_raw(&axes.len().to_string());
         formatter.end_node();
         formatter.start_node("", NodeId::Absent);
@@ -1492,8 +1508,10 @@ fn export_axis(axis: &Axis, order: usize, abbrev: AxisAbbrev, formatter: &mut Wk
         if !latitude {
             if geocentric || easting_northing {
                 designation = format!("({})", axis.abbreviation());
-            } else if !designation.is_empty() {
-                designation.push(' ');
+            } else {
+                if !designation.is_empty() {
+                    designation.push(' ');
+                }
                 designation.push('(');
                 designation.push_str(axis.abbreviation());
                 designation.push(')');
@@ -1580,30 +1598,36 @@ fn export_conversion(
         return Ok(());
     }
     if formatter.wkt2 {
-        formatter.start_node(
-            "CONVERSION",
-            node_from_ids(&conversion.identified.identifiers),
-        );
-        formatter.add_quoted(conversion.name());
-        let inverse_method;
-        let method = if conversion.inverted {
-            inverse_method = inverted_method(&conversion.method);
-            &inverse_method
-        } else {
-            &conversion.method
-        };
-        export_method(method, formatter)?;
-        for parameter in &conversion.parameters {
-            if omitted_zero_parameter(conversion, parameter) {
-                continue;
-            }
-            export_parameter(parameter, formatter)?;
-        }
-        formatter.format_ids(&conversion.identified.identifiers);
-        formatter.end_node();
-        return Ok(());
+        return export_wkt2_conversion(conversion, formatter, "CONVERSION");
     }
     export_conversion_wkt1(conversion, formatter, base_shape, owner)
+}
+
+/// The WKT2 node of a conversion: `CONVERSION`, or `DERIVINGCONVERSION` under a derived CRS.
+fn export_wkt2_conversion(
+    conversion: &Conversion,
+    formatter: &mut WktFormatter,
+    keyword: &str,
+) -> Result<(), FactoryError> {
+    formatter.start_node(keyword, node_from_ids(&conversion.identified.identifiers));
+    formatter.add_quoted(conversion.name());
+    let inverse_method;
+    let method = if conversion.inverted {
+        inverse_method = inverted_method(&conversion.method);
+        &inverse_method
+    } else {
+        &conversion.method
+    };
+    export_method(method, formatter)?;
+    for parameter in &conversion.parameters {
+        if omitted_zero_parameter(conversion, parameter) {
+            continue;
+        }
+        export_parameter(parameter, formatter)?;
+    }
+    formatter.format_ids(&conversion.identified.identifiers);
+    formatter.end_node();
+    Ok(())
 }
 
 /// PROJ leaves out a zero latitude of origin in Equidistant Cylindrical, and a

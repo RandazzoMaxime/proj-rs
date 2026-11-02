@@ -550,6 +550,13 @@ impl super::model::Conversion {
         }
     }
 
+    /// This conversion with `name` as its identified name.
+    #[must_use]
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.identified.name = name.into();
+        self
+    }
+
     /// Parameter value used by [`Self::create_with_method`].
     #[must_use]
     pub fn parameter(name: &str, code_space: &str, code: &str, value: ParameterValue) -> Parameter {
@@ -764,6 +771,12 @@ impl super::model::Conversion {
                 return Ok(parts.join(" "));
             }
         }
+        if let Some(text) = self.affine_parametric_proj_string() {
+            return Ok(text);
+        }
+        if let Some(text) = self.pole_rotation_proj_string() {
+            return Ok(text);
+        }
         let Some(proj_name) = mapped.proj_name else {
             return Err(FactoryError::Format(format!(
                 "Unsupported conversion method: {}",
@@ -802,6 +815,98 @@ impl super::model::Conversion {
             }
         }
         Ok(parts.join(" "))
+    }
+
+    /// `+proj=affine` for the 2D and 3D affine parametric methods. Values stay in the
+    /// unit stored on the parameter, as `PROJStringFormatter` writes them.
+    fn affine_parametric_proj_string(&self) -> Option<String> {
+        let three_d = self
+            .method
+            .name()
+            .eq_ignore_ascii_case("3D Affine parametric transformation");
+        let two_d = self.method.code == "9624"
+            || self
+                .method
+                .name()
+                .eq_ignore_ascii_case("Affine parametric transformation");
+        if !two_d && !three_d {
+            return None;
+        }
+        let raw = |code: i32| {
+            self.measure_of_code(code)
+                .map(Measure::value)
+                .unwrap_or(0.0)
+        };
+        let named = |name: &str| {
+            self.parameters
+                .iter()
+                .find(|parameter| parameter.name.eq_ignore_ascii_case(name))
+                .and_then(|parameter| measure_ref(&parameter.value))
+                .map(Measure::value)
+                .unwrap_or(0.0)
+        };
+        let mut parts = vec!["+proj=affine".to_owned()];
+        push_number(&mut parts, "xoff", raw(8623));
+        push_number(&mut parts, "s11", raw(8624));
+        push_number(&mut parts, "s12", raw(8625));
+        if three_d {
+            push_number(&mut parts, "s13", named("A3"));
+        }
+        push_number(&mut parts, "yoff", raw(8639));
+        push_number(&mut parts, "s21", raw(8640));
+        push_number(&mut parts, "s22", raw(8641));
+        if three_d {
+            push_number(&mut parts, "s23", named("B3"));
+            push_number(&mut parts, "zoff", named("C0"));
+            push_number(&mut parts, "s31", named("C1"));
+            push_number(&mut parts, "s32", named("C2"));
+            push_number(&mut parts, "s33", named("C3"));
+        }
+        Some(parts.join(" "))
+    }
+
+    /// `+proj=ob_tran` for the GRIB and netCDF CF pole-rotation methods. Angles are
+    /// degrees. GRIB negates the southern-pole latitude and the axis rotation.
+    /// netCDF CF writes `lon_0` as 180 plus the grid north-pole longitude.
+    pub(crate) fn pole_rotation_proj_string(&self) -> Option<String> {
+        let grib = self
+            .method
+            .name()
+            .eq_ignore_ascii_case("Pole rotation (GRIB convention)");
+        let netcdf = self
+            .method
+            .name()
+            .eq_ignore_ascii_case("Pole rotation (netCDF CF convention)");
+        if !grib && !netcdf {
+            return None;
+        }
+        let degrees = |name: &str| {
+            self.parameters
+                .iter()
+                .find(|parameter| parameter.name.eq_ignore_ascii_case(name))
+                .and_then(|parameter| measure_ref(&parameter.value))
+                .map(|measure| measure.convert_to(&super::model::UnitOfMeasure::degree()))
+                .unwrap_or(0.0)
+        };
+        let (lon_p, lat_p, lon_0) = if grib {
+            (
+                -degrees("Axis rotation (GRIB convention)"),
+                -degrees("Latitude of the southern pole (GRIB convention)"),
+                degrees("Longitude of the southern pole (GRIB convention)"),
+            )
+        } else {
+            let grid_longitude = degrees("Grid north pole longitude (netCDF CF convention)");
+            (
+                degrees("North pole grid longitude (netCDF CF convention)"),
+                degrees("Grid north pole latitude (netCDF CF convention)"),
+                180.0 + grid_longitude,
+            )
+        };
+        let mut parts = vec!["+proj=ob_tran".to_owned(), "+o_proj=longlat".to_owned()];
+        push_number(&mut parts, "o_lon_p", lon_p);
+        push_number(&mut parts, "o_lat_p", lat_p);
+        push_number(&mut parts, "lon_0", lon_0);
+        Some(parts.join(" "))
     }
 
     /// ESRI `Adams_Square_II` as `+proj=spilhaus`, from the ESRI parameter names, which have

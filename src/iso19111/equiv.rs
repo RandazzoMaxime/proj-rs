@@ -290,9 +290,27 @@ impl EngineeringCRS {
     /// Strict engineering-CRS equivalence.
     #[must_use]
     pub fn is_equivalent_to(&self, other: &Self) -> bool {
-        same_name(self.name(), other.name())
-            && self.datum().is_equivalent_to(other.datum())
-            && coordinate_system_equivalent(self.coordinate_system(), other.coordinate_system())
+        self.is_equivalent_to_with(other, Equivalence::Strict)
+    }
+
+    /// `isEquivalentTo` with `criterion`.
+    ///
+    /// `Equivalent` treats an empty datum name and `"Unknown engineering datum"` as the
+    /// same datum. A Cartesian pair whose directions are all `unspecified` and whose
+    /// names are `X`/`Y` matches easting/northing (`EngineeringCRS::_isEquivalentTo`).
+    #[must_use]
+    pub fn is_equivalent_to_with(&self, other: &Self, criterion: Equivalence) -> bool {
+        if criterion == Equivalence::Strict {
+            return same_name(self.name(), other.name())
+                && self.datum().is_equivalent_to(other.datum())
+                && coordinate_system_equivalent(
+                    self.coordinate_system(),
+                    other.coordinate_system(),
+                );
+        }
+        engineering_datum_equivalent(self.datum(), other.datum())
+            && (axes_direction_and_unit(self.coordinate_system(), other.coordinate_system())
+                || cartesian_xy_versus_en(self.coordinate_system(), other.coordinate_system()))
     }
 }
 
@@ -311,6 +329,20 @@ impl CompoundCRS {
 }
 
 impl Crs {
+    /// `isEquivalentTo` with `criterion`.
+    ///
+    /// Engineering CRS use the `Equivalent` datum and axis exceptions. Every other kind
+    /// uses the strict comparison.
+    #[must_use]
+    pub fn is_equivalent_to_with(&self, other: &Self, criterion: Equivalence) -> bool {
+        match (self, other) {
+            (Self::Engineering(left), Self::Engineering(right)) => {
+                left.is_equivalent_to_with(right, criterion)
+            }
+            _ => self.is_equivalent_to(other),
+        }
+    }
+
     /// Strict equivalence. A different CRS kind is not equivalent.
     #[must_use]
     pub fn is_equivalent_to(&self, other: &Self) -> bool {
@@ -325,6 +357,21 @@ impl Crs {
             (Self::Vertical(left), Self::Vertical(right)) => left.is_equivalent_to(right),
             (Self::Engineering(left), Self::Engineering(right)) => left.is_equivalent_to(right),
             (Self::Compound(left), Self::Compound(right)) => left.is_equivalent_to(right),
+            (Self::DerivedProjected(left), Self::DerivedProjected(right)) => {
+                same_name(left.name(), right.name())
+                    && left.base_crs().is_equivalent_to(right.base_crs())
+                    && conversion_equivalent(
+                        left.deriving_conversion(),
+                        right.deriving_conversion(),
+                    )
+                    && coordinate_system_equivalent(
+                        left.coordinate_system(),
+                        right.coordinate_system(),
+                    )
+            }
+            (Self::Temporal(left), Self::Temporal(right)) => left.is_equivalent_to(right),
+            (Self::Parametric(left), Self::Parametric(right)) => left.is_equivalent_to(right),
+            (Self::Derived(left), Self::Derived(right)) => left.is_equivalent_to(right),
             _ => false,
         }
     }
@@ -472,6 +519,56 @@ pub(crate) fn meridian_equivalent(left: &PrimeMeridian, right: &PrimeMeridian) -
             left.longitude().unit().name(),
             right.longitude().unit().name(),
         )
+}
+
+/// Empty and `"Unknown engineering datum"` match (`EngineeringDatum::_isEquivalentTo`).
+fn engineering_datum_equivalent(left: &EngineeringDatum, right: &EngineeringDatum) -> bool {
+    let unknown = |name: &str| name.is_empty() || name == "Unknown engineering datum";
+    if unknown(left.name()) && unknown(right.name()) {
+        return true;
+    }
+    same_name(left.name(), right.name())
+}
+
+/// Directions and conversion factors match. Axis names do not.
+fn axes_direction_and_unit(left: &CoordinateSystem, right: &CoordinateSystem) -> bool {
+    let left_axes = left.axes();
+    let right_axes = right.axes();
+    std::mem::discriminant(left) == std::mem::discriminant(right)
+        && left_axes.len() == right_axes.len()
+        && left_axes.iter().zip(right_axes).all(|(left, right)| {
+            let (left_si, right_si) = (
+                left.unit().conversion_to_si(),
+                right.unit().conversion_to_si(),
+            );
+            left.direction() == right.direction()
+                && (left_si - right_si).abs() <= 1e-10 * left_si.abs()
+        })
+}
+
+/// `X`/`Y` of unspecified direction against easting/northing, either way around.
+fn cartesian_xy_versus_en(left: &CoordinateSystem, right: &CoordinateSystem) -> bool {
+    let (CoordinateSystem::Cartesian(left), CoordinateSystem::Cartesian(right)) = (left, right)
+    else {
+        return false;
+    };
+    let left = left.axes();
+    let right = right.axes();
+    if left.len() != 2 || right.len() != 2 {
+        return false;
+    }
+    let unspecified = |axes: &[Axis]| axes.iter().all(|axis| axis.direction() == "unspecified");
+    if !unspecified(left) && !unspecified(right) {
+        return false;
+    }
+    (left[0].name() == "X"
+        && right[0].name() == "Easting"
+        && left[1].name() == "Y"
+        && right[1].name() == "Northing")
+        || (right[0].name() == "X"
+            && left[0].name() == "Easting"
+            && right[1].name() == "Y"
+            && left[1].name() == "Northing")
 }
 
 fn coordinate_system_equivalent(left: &CoordinateSystem, right: &CoordinateSystem) -> bool {

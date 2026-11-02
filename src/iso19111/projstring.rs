@@ -7,10 +7,10 @@ use super::bound_export::{export_bound, export_compound};
 use super::bound_import;
 use super::factory::DatabaseContext;
 use super::model::{
-    Axis, CartesianCS, Conversion, Crs, Datum, DatumEnsemble, Ellipsoid, EllipsoidalCS,
-    FactoryError, GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified,
-    Identifier, Measure, ParameterValue, PrimeMeridian, ProjectedCRS, UnitKind, UnitOfMeasure,
-    VerticalCRS,
+    Axis, CartesianCS, Conversion, CoordinateSystem, Crs, Datum, DatumEnsemble,
+    DerivedProjectedCRS, Ellipsoid, EllipsoidalCS, FactoryError, GeocentricCRS, GeodeticCRS,
+    GeodeticReferenceFrame, GeographicCRS, Identified, Identifier, Measure, ParameterValue,
+    PrimeMeridian, ProjectedCRS, UnitKind, UnitOfMeasure, VerticalCRS,
 };
 use super::parammap::{MethodMap, ParamMap, OTHER_METHODS, PROJECTION_METHODS};
 use super::pipeline::proj_number;
@@ -204,6 +204,23 @@ impl ProjectedCRS {
     }
 }
 
+impl DerivedProjectedCRS {
+    /// `normalizeForVisualization` when the first axes are north then east.
+    #[must_use]
+    pub fn normalize_for_visualization(&self) -> Self {
+        let axes = self.coordinate_system.axes();
+        if axes.len() < 2 || axes[0].direction() != "north" || axes[1].direction() != "east" {
+            return self.clone();
+        }
+        let mut crs = self.clone();
+        if let CoordinateSystem::Cartesian(cs) = &mut crs.coordinate_system {
+            cs.axes.swap(0, 1);
+        }
+        apply_axis_reversal(&mut crs.identified);
+        crs
+    }
+}
+
 impl Crs {
     /// `exportToPROJString` for the CRS kinds PROJ writes as one string: geographic,
     /// geocentric, and projected.
@@ -223,6 +240,7 @@ impl Crs {
             Self::Vertical(crs) => Ok(vertical_proj(crs, extras)),
             Self::Bound(crs) => export_bound(crs, None),
             Self::Compound(crs) => export_compound(crs),
+            Self::Derived(crs) => derived_geographic_proj(crs),
             _ => Err(FactoryError::Format(
                 "this CRS kind has no PROJ string export".to_owned(),
             )),
@@ -235,6 +253,9 @@ impl Crs {
         match self {
             Self::Geographic(crs) => Self::Geographic(crs.normalize_for_visualization()),
             Self::Projected(crs) => Self::Projected(crs.normalize_for_visualization()),
+            Self::DerivedProjected(crs) => {
+                Self::DerivedProjected(crs.normalize_for_visualization())
+            }
             other => other.clone(),
         }
     }
@@ -253,6 +274,9 @@ impl Crs {
             Self::Bound(crs) => &crs.identified.remarks,
             Self::Engineering(crs) => &crs.identified.remarks,
             Self::DerivedProjected(crs) => &crs.identified.remarks,
+            Self::Temporal(crs) => &crs.identified.remarks,
+            Self::Parametric(crs) => &crs.identified.remarks,
+            Self::Derived(crs) => &crs.identified.remarks,
         }
     }
 }
@@ -625,6 +649,32 @@ fn axis_slot(direction: &str) -> Option<&'static str> {
         "south" => Some("-2"),
         _ => None,
     }
+}
+
+/// `DerivedGeographicCRS::_exportToPROJString`: a pole-rotation conversion, then
+/// the base datum, `+no_defs` and `+type=crs`. Other derived kinds stay unexported.
+fn derived_geographic_proj(crs: &super::derived_crs::DerivedCRS) -> Result<String, FactoryError> {
+    if crs.kind() != super::derived_crs::DerivedKind::Geographic {
+        return Err(FactoryError::Format(
+            "this CRS kind has no PROJ string export".to_owned(),
+        ));
+    }
+    let Some(step) = crs.deriving_conversion().pole_rotation_proj_string() else {
+        return Err(FactoryError::Format(
+            "DerivedGeographicCRS cannot be exported to PROJ string".to_owned(),
+        ));
+    };
+    let base = crs.geodetic_base().ok_or_else(|| {
+        FactoryError::Format("DerivedGeographicCRS cannot be exported to PROJ string".to_owned())
+    })?;
+    let mut text = step;
+    let datum = crs_datum_clause(&base, &ProjExtras::default());
+    if !datum.is_empty() {
+        text.push(' ');
+        text.push_str(&datum);
+    }
+    text.push_str(" +no_defs +type=crs");
+    Ok(text)
 }
 
 /// `addDatumInfoToPROJString`: a datum token, unless `+towgs84` must be written,

@@ -103,6 +103,16 @@ fn crs_kind(crs: &Crs) -> &'static str {
         Crs::Compound(_) => "compound",
         Crs::Engineering(_) => "engineering",
         Crs::Bound(_) => "bound",
+        Crs::Temporal(_) => "temporal",
+        Crs::Parametric(_) => "parametric",
+        Crs::Derived(crs) => match crs.kind() {
+            proj_rs::DerivedKind::Geographic => "derived geographic",
+            proj_rs::DerivedKind::Geodetic => "derived geodetic",
+            proj_rs::DerivedKind::Vertical => "derived vertical",
+            proj_rs::DerivedKind::Engineering => "derived engineering",
+            proj_rs::DerivedKind::Parametric => "derived parametric",
+            proj_rs::DerivedKind::Temporal => "derived temporal",
+        },
     }
 }
 
@@ -1019,6 +1029,7 @@ fn crs_domains(crs: &Crs) -> &[ObjectDomain] {
         Crs::Compound(crs) => crs.domains(),
         Crs::Engineering(crs) => crs.domains(),
         Crs::DerivedProjected(_) | Crs::Bound(_) => &[],
+        Crs::Temporal(_) | Crs::Parametric(_) | Crs::Derived(_) => crs.domains(),
     }
 }
 
@@ -1039,6 +1050,8 @@ fn body_of_crs(crs: &Crs) -> Option<&'static str> {
             .map(|ellipsoid| body_static(ellipsoid.celestial_body())),
         Crs::Bound(crs) => body_of_crs(crs.source_crs()),
         Crs::DerivedProjected(crs) => body_of_crs(&Crs::Projected(crs.base_crs().clone())),
+        Crs::Temporal(_) | Crs::Parametric(_) => None,
+        Crs::Derived(crs) => body_of_crs(crs.base_crs()),
     }
 }
 

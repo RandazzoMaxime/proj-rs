@@ -11,6 +11,7 @@ mod compound;
 mod conversion_export;
 mod convmethod;
 mod derived;
+mod derived_crs;
 mod equiv;
 mod esri_parammap;
 mod factory;
@@ -29,6 +30,10 @@ mod wkt;
 mod wkt_import;
 
 pub use buildop::OpProps;
+pub use derived_crs::{
+    parametric_unit, DerivedCRS, DerivedKind, ParametricCRS, ParametricCS, ParametricDatum,
+    TemporalCRS, TemporalCS, TemporalDatum, TemporalKind, CALENDAR_PROLEPTIC_GREGORIAN,
+};
 pub use equiv::{equivalent_name, equivalent_name_bigger_differences, Equivalence};
 pub use factory::{
     AlternativeGridNames, AuthorityFactory, AuthorityObject, BallparkUse, CelestialBodyInfo,
