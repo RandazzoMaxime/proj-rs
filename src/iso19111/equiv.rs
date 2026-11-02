@@ -69,6 +69,11 @@ impl GeographicCRS {
 ///
 /// This is the base check of `createOperation` from a geographic CRS to a
 /// projected CRS of that datum. An ensemble is compared as `asDatum`.
+/// Projection pipelines print the conversion without requiring this match.
+#[expect(
+    dead_code,
+    reason = "kept for the geographic-base predicate; pipelines do not require it"
+)]
 pub(crate) fn same_geographic_base(left: &GeographicCRS, right: &GeographicCRS) -> bool {
     let (Some(left_frame), Some(right_frame)) = (datum_frame(left), datum_frame(right)) else {
         return false;

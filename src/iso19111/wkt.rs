@@ -900,9 +900,30 @@ fn export_projected(crs: &ProjectedCRS, formatter: &mut WktFormatter) -> Result<
         formatter,
     );
     formatter.output_axis = previous;
+    if !formatter.wkt2 && !formatter.esri {
+        if let Some(extension) = projected_proj4_extension(crs) {
+            formatter.start_node("EXTENSION", NodeId::Absent);
+            formatter.add_quoted("PROJ4");
+            formatter.add_quoted(&extension);
+            formatter.end_node();
+        }
+    }
     formatter.base_usage(&crs.identified);
     formatter.end_node();
     Ok(())
+}
+
+/// WKT1 `EXTENSION["PROJ4", ...]` for a PROJ string the conversion cannot carry.
+fn projected_proj4_extension(crs: &ProjectedCRS) -> Option<String> {
+    let approx = matches!(
+        crs.conversion.identified.proj_method_override.as_deref(),
+        Some("tmerc approx" | "utm approx")
+    );
+    if crs.identified.extension_proj4.is_none() && !approx {
+        return None;
+    }
+    let text = crs.export_to_proj_string().ok()?;
+    Some(text.replace(" +type=crs", ""))
 }
 
 /// WKT1 GDAL writes a projected 3D CRS as `COMPD_CS` plus `VERT_CS["Ellipsoid"]`.
@@ -1706,6 +1727,11 @@ fn export_conversion_wkt1(
         formatter.start_node("PROJECTION", NodeId::Absent);
         formatter.add_quoted(&wkt1_method_name(&conversion.method)?);
         formatter.end_node();
+        if conversion.method.name.starts_with("PROJ ") {
+            formatter.output_id.pop();
+            formatter.output_unit.pop();
+            return Ok(());
+        }
         let mapped = lookup_method(&conversion.method);
         for parameter in &conversion.parameters {
             if omitted_zero_parameter(conversion, parameter) {
@@ -2007,15 +2033,33 @@ fn export_transformation_crs(
     formatter: &mut WktFormatter,
 ) -> Result<(), FactoryError> {
     if let Some(source) = &transformation.source {
-        formatter.start_node("SOURCECRS", NodeId::Absent);
-        export_crs(source, formatter)?;
-        formatter.end_node();
+        export_bound_crs(formatter, "SOURCECRS", source)?;
     }
     if let Some(target) = &transformation.target {
-        formatter.start_node("TARGETCRS", NodeId::Absent);
-        export_crs(target, formatter)?;
-        formatter.end_node();
+        export_bound_crs(formatter, "TARGETCRS", target)?;
     }
+    Ok(())
+}
+
+/// `SOURCECRS` / `TARGETCRS`. PROJ clears the parent id so the CRS `ID` is written.
+fn export_bound_crs(
+    formatter: &mut WktFormatter,
+    keyword: &str,
+    crs: &Crs,
+) -> Result<(), FactoryError> {
+    formatter.start_node(keyword, NodeId::Absent);
+    let saved = formatter.stack_has_id.last().copied();
+    if !crs.identifiers().is_empty() {
+        if let Some(flag) = formatter.stack_has_id.last_mut() {
+            *flag = false;
+        }
+    }
+    let exported = export_crs(crs, formatter);
+    if let (Some(flag), Some(saved)) = (formatter.stack_has_id.last_mut(), saved) {
+        *flag = saved;
+    }
+    exported?;
+    formatter.end_node();
     Ok(())
 }
 
@@ -2283,6 +2327,9 @@ fn esri_wkt1_parameter_name(name: &str) -> String {
 }
 
 fn wkt1_method_name(method: &OperationMethod) -> Result<String, FactoryError> {
+    if method.name.starts_with("PROJ ") {
+        return Ok("custom_proj4".to_owned());
+    }
     if method.name == "Geostationary Satellite (Sweep X)" {
         return Ok("Geostationary_Satellite".to_owned());
     }

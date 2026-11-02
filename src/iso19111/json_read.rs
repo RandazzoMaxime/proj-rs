@@ -6,18 +6,30 @@
 
 use super::factory::{AuthorityFactory, DatabaseContext};
 use super::model::{
-    Axis, BoundCRS, CompoundCRS, Conversion, CoordinateOperation, CoordinateSystem, Crs, Datum,
-    DatumEnsemble, Ellipsoid, EllipsoidalCS, FactoryError, GeodeticCRS, GeodeticReferenceFrame,
-    GeographicCRS, GeoidModel, Identified, Identifier, Measure, Meridian, ObjectDomain, Parameter,
-    ParameterValue, PrimeMeridian, ProjectedCRS, SphericalCS, UnitKind, UnitOfMeasure, VerticalCRS,
-    VerticalCS, VerticalExtent, VerticalReferenceFrame,
+    Axis, BoundCRS, CompoundCRS, ConcatenatedOperation, ConcatenatedStep, Conversion,
+    CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble, Ellipsoid, EllipsoidalCS,
+    FactoryError, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, GeoidModel, Identified,
+    Identifier, Measure, Meridian, ObjectDomain, Parameter, ParameterValue, PrimeMeridian,
+    ProjectedCRS, SphericalCS, Transformation, UnitKind, UnitOfMeasure, VerticalCRS, VerticalCS,
+    VerticalExtent, VerticalReferenceFrame,
 };
 use crate::crs_text::{self, Object, Value};
 
 type Read<T> = Result<T, FactoryError>;
 
+/// `Transformation` has a target CRS. `PointMotionOperation` does not.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Motion {
+    Stationary,
+    Point,
+}
+
 /// An object that PROJJSON import produces.
 #[derive(Clone, Debug)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a CRS is stored inline; the other objects are smaller PROJJSON nodes"
+)]
 pub enum JsonObject {
     /// `Ellipsoid`.
     Ellipsoid(Ellipsoid),
@@ -31,6 +43,12 @@ pub enum JsonObject {
     VerticalReferenceFrame(VerticalReferenceFrame),
     /// `DatumEnsemble`.
     DatumEnsemble(DatumEnsemble),
+    /// A map projection or other conversion, including a repaired UTM id.
+    Conversion(Conversion),
+    /// A transformation, or a point-motion operation (`point_motion`).
+    Transformation(Transformation),
+    /// A concatenated operation.
+    Concatenated(ConcatenatedOperation),
     /// Any CRS.
     Crs(Crs),
 }
@@ -107,7 +125,11 @@ fn is_integral(number: f64) -> bool {
 
 fn get_integer(object: &Object, key: &str) -> Read<i64> {
     match get_value(object, key)? {
-        Value::Number(number) if is_integral(*number) => Ok(*number as i64),
+        Value::Number(number) if is_integral(*number) => {
+            format!("{number:.0}").parse().map_err(|_| {
+                FactoryError::Invalid(format!("The value of \"{key}\" should be an integer"))
+            })
+        }
         _ => invalid(format!("The value of \"{key}\" should be an integer")),
     }
 }
@@ -172,6 +194,16 @@ fn get_length(object: &Object, key: &str) -> Read<Measure> {
     }
 }
 
+/// `accuracy` is a JSON string. The number is kept when the text parses.
+fn accuracy_of(object: &Object) -> Read<(Option<f64>, Option<String>)> {
+    if !contains(object, "accuracy") {
+        return Ok((None, None));
+    }
+    let text = get_string(object, "accuracy")?.to_owned();
+    let parsed = text.parse::<f64>().ok();
+    Ok((parsed, Some(text)))
+}
+
 fn get_optional_number(object: &Object, key: &str) -> Read<Option<f64>> {
     if contains(object, key) {
         get_number(object, key).map(Some)
@@ -209,6 +241,14 @@ impl Reader<'_> {
             "Ellipsoid" => JsonObject::Ellipsoid(self.build_ellipsoid(object)?),
             "PrimeMeridian" => JsonObject::PrimeMeridian(self.build_prime_meridian(object)?),
             "Axis" => JsonObject::Axis(self.build_axis(object)?),
+            "Conversion" => JsonObject::Conversion(self.build_conversion(object)?),
+            "Transformation" => {
+                JsonObject::Transformation(self.build_transformation(object, Motion::Stationary)?)
+            }
+            "PointMotionOperation" => {
+                JsonObject::Transformation(self.build_transformation(object, Motion::Point)?)
+            }
+            "ConcatenatedOperation" => JsonObject::Concatenated(self.build_concatenated(object)?),
             _ => return invalid("Unsupported value of \"type\""),
         })
     }
@@ -335,6 +375,10 @@ impl Reader<'_> {
     }
 
     /// `buildProperties`: name, ids, remarks and usages.
+    #[expect(
+        clippy::fn_params_excessive_bools,
+        reason = "name_required is PROJ's buildProperties flag for a node that must be named"
+    )]
     fn properties(&self, object: &Object, name_required: bool) -> Read<Identified> {
         let mut identified = Identified::named(String::new());
         if contains(object, "name") || name_required {
@@ -712,6 +756,100 @@ impl Reader<'_> {
         Ok(conversion)
     }
 
+    /// `buildTransformation` and `buildPointMotionOperation`. Accuracy stays the JSON string.
+    fn build_transformation(&mut self, object: &Object, motion: Motion) -> Read<Transformation> {
+        let point_motion = motion == Motion::Point;
+        let source =
+            Box::new(self.build_crs(&Value::Object(get_object(object, "source_crs")?.clone()))?);
+        let target = if point_motion {
+            None
+        } else {
+            Some(Box::new(self.build_crs(&Value::Object(
+                get_object(object, "target_crs")?.clone(),
+            ))?))
+        };
+        let interpolation = if !point_motion && contains(object, "interpolation_crs") {
+            Some(Box::new(self.build_crs(&Value::Object(
+                get_object(object, "interpolation_crs")?.clone(),
+            ))?))
+        } else {
+            None
+        };
+        let method = get_object(object, "method")?;
+        let mut parameters = Vec::new();
+        for parameter in get_array(object, "parameters")? {
+            let Value::Object(parameter) = parameter else {
+                return invalid("Unexpected type for a \"parameters\" child");
+            };
+            parameters.push(self.build_parameter(parameter)?);
+        }
+        let identified = self.properties(object, false)?;
+        let method_properties = self.properties(method, false)?;
+        let (code_space, code) = method_properties
+            .identifiers
+            .first()
+            .map(|id| (id.code_space().to_owned(), id.code().to_owned()))
+            .unwrap_or_default();
+        let mut conversion =
+            Conversion::create_with_method(&method_properties.name, &code_space, &code, parameters);
+        conversion.identified = identified;
+        let (accuracy, accuracy_text) = accuracy_of(object)?;
+        Ok(Transformation {
+            identified: conversion.identified,
+            method: conversion.method,
+            parameters: conversion.parameters,
+            source: Some(source),
+            target,
+            interpolation,
+            accuracy,
+            accuracy_text,
+            version: None,
+            point_motion,
+            inverted: false,
+        })
+    }
+
+    /// `buildConcatenatedOperation`. Steps are stored as written; PROJ's `fixSteps` is a no-op
+    /// on the JSON this importer is asked to round-trip.
+    fn build_concatenated(&mut self, object: &Object) -> Read<ConcatenatedOperation> {
+        let source =
+            Box::new(self.build_crs(&Value::Object(get_object(object, "source_crs")?.clone()))?);
+        let target =
+            Box::new(self.build_crs(&Value::Object(get_object(object, "target_crs")?.clone()))?);
+        let mut steps = Vec::new();
+        for step in get_array(object, "steps")? {
+            let Value::Object(step) = step else {
+                return invalid("Unexpected type for a \"steps\" child");
+            };
+            let operation = match self.create(&Value::Object(step.clone()))? {
+                JsonObject::Conversion(conversion) => CoordinateOperation::Conversion(conversion),
+                JsonObject::Transformation(transformation) => {
+                    CoordinateOperation::Transformation(transformation)
+                }
+                JsonObject::Concatenated(operation) => CoordinateOperation::Concatenated(operation),
+                _ => return invalid("Invalid content in a \"steps\" child"),
+            };
+            steps.push(ConcatenatedStep {
+                operation,
+                reverse: false,
+            });
+        }
+        if steps.len() < 2 {
+            return invalid("a concatenated operation needs at least two steps");
+        }
+        let identified = self.properties(object, false)?;
+        let (accuracy, _) = accuracy_of(object)?;
+        Ok(ConcatenatedOperation {
+            identified,
+            steps,
+            source: Some(source),
+            target: Some(target),
+            accuracy,
+            version: None,
+            computed_name: false,
+        })
+    }
+
     fn build_parameter(&self, object: &Object) -> Read<Parameter> {
         let identified = self.properties(object, true)?;
         let (code_space, code) = identified
@@ -757,7 +895,20 @@ impl Reader<'_> {
         let mut conversion =
             Conversion::create_with_method(&method_properties.name, &code_space, &code, parameters);
         conversion.identified = identified;
-        let operation = CoordinateOperation::Conversion(conversion);
+        // A bound CRS binds with a transformation. PROJJSON writes it abridged, with no `type`.
+        let operation = CoordinateOperation::Transformation(Transformation {
+            identified: conversion.identified,
+            method: conversion.method,
+            parameters: conversion.parameters,
+            source: None,
+            target: None,
+            interpolation: None,
+            accuracy: None,
+            accuracy_text: None,
+            version: None,
+            point_motion: false,
+            inverted: false,
+        });
         let mut bound = BoundCRS::create(source, target, operation);
         bound.identified = self.properties(object, false)?;
         Ok(bound)
@@ -797,9 +948,14 @@ impl Reader<'_> {
         let identified = self.properties(object, false)?;
         let mut ensemble = DatumEnsemble::create(identified.name.clone(), members, accuracy)?;
         ensemble.identified = identified;
+        ensemble.accuracy_text = Some(accuracy_text.to_owned());
         Ok(ensemble)
     }
 
+    #[expect(
+        clippy::fn_params_excessive_bools,
+        reason = "has_ellipsoid selects a geodetic member against a vertical one"
+    )]
     fn build_ensemble_member(
         &self,
         parent: &Object,
@@ -843,6 +999,10 @@ impl Reader<'_> {
         }
     }
 
+    #[expect(
+        clippy::fn_params_excessive_bools,
+        reason = "dynamic selects DynamicGeodeticReferenceFrame against GeodeticReferenceFrame"
+    )]
     fn build_geodetic_frame(&self, object: &Object, dynamic: bool) -> Read<GeodeticReferenceFrame> {
         let ellipsoid = self.build_ellipsoid(get_object(object, "ellipsoid")?)?;
         let prime_meridian = if contains(object, "prime_meridian") {
@@ -870,6 +1030,10 @@ impl Reader<'_> {
         })
     }
 
+    #[expect(
+        clippy::fn_params_excessive_bools,
+        reason = "dynamic selects DynamicVerticalReferenceFrame against VerticalReferenceFrame"
+    )]
     fn build_vertical_frame(&self, object: &Object, dynamic: bool) -> Read<VerticalReferenceFrame> {
         let mut identified = self.properties(object, false)?;
         identified.anchor = Self::anchor(object)?;

@@ -8,11 +8,12 @@ use super::equiv;
 use super::factory::{AuthorityFactory, AuthorityObject, DatabaseContext, NameMatch, ObjectType};
 use super::json_read::{create_object_from_json, JsonObject};
 use super::model::{
-    Axis, BoundCRS, CompoundCRS, Conversion, CoordinateOperation, Crs, Datum, DatumEnsemble,
-    Ellipsoid, FactoryError, GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS,
-    GeoidModel, Identified, Identifier, Measure, ObjectDomain, OperationMethod, Parameter,
-    ParameterValue, PrimeMeridian, ProjectedCRS, SphericalGeodeticCRS, Transformation, UnitKind,
-    UnitOfMeasure, VerticalCRS, VerticalExtent, VerticalReferenceFrame,
+    Axis, BoundCRS, CompoundCRS, ConcatenatedOperation, Conversion, CoordinateOperation, Crs,
+    Datum, DatumEnsemble, Ellipsoid, FactoryError, GeocentricCRS, GeodeticCRS,
+    GeodeticReferenceFrame, GeographicCRS, GeoidModel, Identified, Identifier, Measure,
+    ObjectDomain, OperationMethod, Parameter, ParameterValue, PrimeMeridian, ProjectedCRS,
+    SphericalGeodeticCRS, Transformation, UnitKind, UnitOfMeasure, VerticalCRS, VerticalExtent,
+    VerticalReferenceFrame,
 };
 use super::projstring::create_crs_from_proj_string_with_database;
 use super::wkt_import::WktParser;
@@ -289,7 +290,28 @@ impl JsonObject {
                     Place::top(ident(datum.identifiers())),
                 )?;
             }
-            Self::DatumEnsemble(_) | Self::Crs(_) => {
+            Self::DatumEnsemble(ensemble) => {
+                writer.key("type");
+                writer.string("DatumEnsemble");
+                write_ensemble_members(&mut writer, ensemble, db, Chain::Clear)?;
+            }
+            Self::Transformation(transformation) => {
+                write_transformation(
+                    &mut writer,
+                    transformation,
+                    db,
+                    Place::top(ident(transformation.identifiers())),
+                )?;
+            }
+            Self::Concatenated(operation) => {
+                write_concatenated(
+                    &mut writer,
+                    operation,
+                    db,
+                    Place::top(ident(&operation.identified.identifiers)),
+                )?;
+            }
+            Self::Conversion(_) | Self::Crs(_) => {
                 return Err(FactoryError::Format(
                     "PROJJSON export of this object is not built".to_owned(),
                 ));
@@ -582,7 +604,13 @@ fn write_projected(
     let conversion = crs.deriving_conversion();
     let conversion_place =
         Place::inside(place.chain, ident(conversion.identifiers()), Allow::Plain);
-    write_conversion(writer, conversion, db, conversion_place)?;
+    write_conversion(
+        writer,
+        conversion,
+        db,
+        conversion_place,
+        ConversionForm::Embedded,
+    )?;
     writer.key("coordinate_system");
     write_cs(
         writer,
@@ -891,8 +919,19 @@ fn write_ensemble(
     db: &DatabaseContext,
     parent: Chain,
 ) -> Result<(), FactoryError> {
-    let chain = chain_of(parent, ident(ensemble.identifiers()));
     writer.start_object();
+    write_ensemble_members(writer, ensemble, db, parent)?;
+    writer.end_object();
+    Ok(())
+}
+
+fn write_ensemble_members(
+    writer: &mut Writer,
+    ensemble: &DatumEnsemble,
+    db: &DatabaseContext,
+    parent: Chain,
+) -> Result<(), FactoryError> {
+    let chain = chain_of(parent, ident(ensemble.identifiers()));
     write_name(writer, ensemble.name());
     writer.key("members");
     writer.start_array();
@@ -925,7 +964,6 @@ fn write_ensemble(
         None => writer.string(&super::wkt::format_g(ensemble.positional_accuracy(), 15)),
     }
     write_id(writer, ensemble.identifiers(), db);
-    writer.end_object();
     Ok(())
 }
 
@@ -1156,15 +1194,25 @@ fn write_unit_object(writer: &mut Writer, unit: &UnitOfMeasure, place: Place) {
     writer.end_object();
 }
 
-/// A conversion inside a projected CRS: name, method, parameter values, and `id` by the usual
-/// rule. The conversion has no `type` there.
+/// A conversion inside a projected CRS has no `type`. A concatenated step writes one.
+enum ConversionForm {
+    Embedded,
+    Object,
+}
+
+/// A conversion: optional `type`, name, method, parameter values, and `id`.
 fn write_conversion(
     writer: &mut Writer,
     conversion: &Conversion,
     db: &DatabaseContext,
     place: Place,
+    form: ConversionForm,
 ) -> Result<(), FactoryError> {
     writer.start_object();
+    if matches!(form, ConversionForm::Object) {
+        writer.key("type");
+        writer.string("Conversion");
+    }
     write_name(writer, conversion.name());
     writer.key("method");
     write_method(writer, conversion.method());
@@ -1179,6 +1227,110 @@ fn write_conversion(
     }
     write_id_if(writer, place, conversion.identifiers(), db);
     writer.end_object();
+    Ok(())
+}
+
+/// A transformation, or a point-motion operation when `point_motion` is set.
+///
+/// The source and target CRS write their `id`. A point-motion operation has no target.
+/// `accuracy` is the text PROJ stored, written as a JSON string.
+fn write_transformation(
+    writer: &mut Writer,
+    transformation: &Transformation,
+    db: &DatabaseContext,
+    place: Place,
+) -> Result<(), FactoryError> {
+    writer.key("type");
+    writer.string(if transformation.point_motion {
+        "PointMotionOperation"
+    } else {
+        "Transformation"
+    });
+    write_name(writer, transformation.name());
+    let source = transformation
+        .source_crs()
+        .ok_or_else(|| FactoryError::Format("transformation has no source CRS".to_owned()))?;
+    writer.key("source_crs");
+    write_component(writer, source, db, place.chain, Allow::Asked)?;
+    if !transformation.point_motion {
+        let target = transformation
+            .target_crs()
+            .ok_or_else(|| FactoryError::Format("transformation has no target CRS".to_owned()))?;
+        writer.key("target_crs");
+        write_component(writer, target, db, place.chain, Allow::Asked)?;
+        if let Some(interpolation) = transformation.interpolation_crs() {
+            writer.key("interpolation_crs");
+            write_component(writer, interpolation, db, place.chain, Allow::Asked)?;
+        }
+    }
+    writer.key("method");
+    write_method(writer, transformation.method());
+    writer.key("parameters");
+    writer.start_array();
+    for parameter in transformation.parameters() {
+        write_parameter(writer, parameter, place.chain);
+    }
+    writer.end_array();
+    if let Some(text) = &transformation.accuracy_text {
+        writer.key("accuracy");
+        writer.string(text);
+    }
+    write_base(writer, &transformation.identified, place, db);
+    Ok(())
+}
+
+/// A concatenated operation: source and target CRS, steps, accuracy, then usage and `id`.
+fn write_concatenated(
+    writer: &mut Writer,
+    operation: &ConcatenatedOperation,
+    db: &DatabaseContext,
+    place: Place,
+) -> Result<(), FactoryError> {
+    writer.key("type");
+    writer.string("ConcatenatedOperation");
+    write_name(writer, operation.name());
+    let source = operation.source_crs().ok_or_else(|| {
+        FactoryError::Format("concatenated operation has no source CRS".to_owned())
+    })?;
+    writer.key("source_crs");
+    write_component(writer, source, db, place.chain, Allow::Asked)?;
+    let target = operation.target_crs().ok_or_else(|| {
+        FactoryError::Format("concatenated operation has no target CRS".to_owned())
+    })?;
+    writer.key("target_crs");
+    write_component(writer, target, db, place.chain, Allow::Asked)?;
+    writer.key("steps");
+    writer.start_array();
+    for step in operation.steps() {
+        match step.operation() {
+            CoordinateOperation::Conversion(conversion) => {
+                let step_place =
+                    Place::inside(place.chain, ident(conversion.identifiers()), Allow::Asked);
+                write_conversion(writer, conversion, db, step_place, ConversionForm::Object)?;
+            }
+            CoordinateOperation::Transformation(transformation) => {
+                let step_place = Place::inside(
+                    place.chain,
+                    ident(transformation.identifiers()),
+                    Allow::Asked,
+                );
+                writer.start_object();
+                write_transformation(writer, transformation, db, step_place)?;
+                writer.end_object();
+            }
+            CoordinateOperation::Concatenated(_) => {
+                return Err(FactoryError::Format(
+                    "PROJJSON export of a nested concatenated operation is not built".to_owned(),
+                ));
+            }
+        }
+    }
+    writer.end_array();
+    if let Some(accuracy) = operation.accuracy() {
+        writer.key("accuracy");
+        writer.string(&super::wkt::format_g(accuracy, 15));
+    }
+    write_base(writer, &operation.identified, place, db);
     Ok(())
 }
 
@@ -1426,6 +1578,10 @@ pub fn create_from_user_input(text: &str, db: &DatabaseContext) -> Result<Crs, F
     if bare.starts_with("proj=") || text.contains(" +proj=") || text.contains(" proj=") {
         return create_crs_from_proj_string_with_database(text, db);
     }
+    // An OGC CRS URL contains colons, so it must be tried before `AUTH:CODE`.
+    if is_ogc_crs_url(text) {
+        return import_ogc_crs_url(text, db);
+    }
     if let Some(crs) = crs_from_authority_code(text, db)? {
         return Ok(crs);
     }
@@ -1581,6 +1737,14 @@ fn crs_from_authority_code(text: &str, db: &DatabaseContext) -> Result<Option<Cr
         if let Ok(crs) = factory.create_coordinate_reference_system(tokens[1]) {
             return Ok(Some(crs));
         }
+        // PROJ retries EPSG:102100 as ESRI:102100. The identifiers stay ESRI.
+        if tokens[0].eq_ignore_ascii_case("EPSG") && tokens[1] == "102100" {
+            if let Ok(crs) =
+                AuthorityFactory::create(db, "ESRI").create_coordinate_reference_system("102100")
+            {
+                return Ok(Some(crs));
+            }
+        }
         let parts: Vec<&str> = tokens[1].split('+').collect();
         if parts.len() == 2 {
             return Ok(Some(implicit_compound(
@@ -1612,6 +1776,94 @@ fn implicit_compound(
     let vertical = second_factory.create_coordinate_reference_system(second_code)?;
     let name = format!("{} + {}", horizontal.name(), vertical.name());
     CompoundCRS::create_lax(name, vec![horizontal, vertical])
+}
+
+const OGC_CRS_URL_PREFIXES: &[&str] = &[
+    "https://www.opengis.net/def/crs",
+    "http://www.opengis.net/def/crs",
+    "https://opengis.net/def/crs",
+    "http://opengis.net/def/crs",
+    "www.opengis.net/def/crs",
+];
+
+fn is_ogc_crs_url(text: &str) -> bool {
+    OGC_CRS_URL_PREFIXES
+        .iter()
+        .any(|prefix| text.starts_with(prefix))
+}
+
+/// OGC Best Practice 11-135: `http://www.opengis.net/def/crs/AUTH/version/code`
+/// and a `crs-compound` query of those URLs.
+fn import_ogc_crs_url(text: &str, db: &DatabaseContext) -> Result<Crs, FactoryError> {
+    let Some(prefix) = OGC_CRS_URL_PREFIXES
+        .iter()
+        .find(|prefix| text.starts_with(*prefix))
+    else {
+        return Err(FactoryError::Invalid("invalid OGC CRS URL".to_owned()));
+    };
+    let rest = &text[prefix.len()..];
+    let parts: Vec<&str> = rest.split('/').collect();
+    if parts
+        .first()
+        .is_some_and(|part| part.starts_with("-compound?"))
+    {
+        let query = text.split_once('?').map(|(_, query)| query).unwrap_or("");
+        let mut keyed = std::collections::BTreeMap::new();
+        for part in query.split('&') {
+            let Some((index, url)) = part.split_once('=') else {
+                return Err(FactoryError::Invalid("invalid OGC CRS URL".to_owned()));
+            };
+            let index = index
+                .parse::<usize>()
+                .map_err(|_| FactoryError::Invalid("invalid OGC CRS URL".to_owned()))?;
+            keyed.insert(index, url);
+        }
+        let mut components = Vec::new();
+        let mut name = String::new();
+        for index in 1..=keyed.len() {
+            let Some(url) = keyed.get(&index) else {
+                return Err(FactoryError::Invalid("invalid OGC CRS URL".to_owned()));
+            };
+            let component = import_ogc_crs_url(url, db)?;
+            if !name.is_empty() {
+                name.push_str(" + ");
+            }
+            name.push_str(component.name());
+            components.push(component);
+        }
+        return Ok(Crs::Compound(CompoundCRS::create(name, components)?));
+    }
+    if parts.len() < 4 {
+        return Err(FactoryError::Invalid("invalid OGC CRS URL".to_owned()));
+    }
+    authority_crs(db, parts[1], parts[2], parts[3])
+}
+
+fn authority_crs(
+    db: &DatabaseContext,
+    authority: &str,
+    version: &str,
+    code: &str,
+) -> Result<Crs, FactoryError> {
+    match AuthorityFactory::create(db, authority).create_coordinate_reference_system(code) {
+        Ok(crs) => Ok(crs),
+        Err(error) => {
+            if version.is_empty() || version == "0" {
+                for versioned in db.versioned_authorities_from_name(authority) {
+                    if let Ok(crs) = AuthorityFactory::create(db, &versioned)
+                        .create_coordinate_reference_system(code)
+                    {
+                        return Ok(crs);
+                    }
+                }
+                return Err(error);
+            }
+            let Some(versioned) = db.versioned_authority(authority, version) else {
+                return Err(error);
+            };
+            AuthorityFactory::create(db, &versioned).create_coordinate_reference_system(code)
+        }
+    }
 }
 
 fn import_json(text: &str, db: &DatabaseContext) -> Result<Crs, FactoryError> {

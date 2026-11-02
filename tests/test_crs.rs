@@ -755,7 +755,7 @@ fn crs_geocentric_crs_non_meter_unit_as_proj_string() {
         .expect("operation");
     assert_eq!(
         operation,
-        "+proj=pipeline +step +proj=axisswap +order=2,1 +step +proj=unitconvert +xy_in=deg +xy_out=rad +step +proj=cart +ellps=WGS84 +step +proj=unitconvert +xy_in=m +z_in=m +xy_out=km +z_out=km"
+        "+proj=pipeline +step +proj=axisswap +order=2,1 +step +proj=unitconvert +xy_in=deg +z_in=m +xy_out=rad +z_out=m +step +proj=cart +ellps=WGS84 +step +proj=unitconvert +xy_in=m +z_in=m +xy_out=km +z_out=km"
     );
     assert!(crs.export_to_proj_string().is_err());
 }
@@ -1205,7 +1205,7 @@ fn crs_geocentric_crs_unsupported_unit_as_proj_string() {
         .expect("operation");
     assert_eq!(
         operation,
-        "+proj=pipeline +step +proj=axisswap +order=2,1 +step +proj=unitconvert +xy_in=deg +xy_out=rad +step +proj=cart +ellps=WGS84 +step +proj=unitconvert +xy_in=m +z_in=m +xy_out=500 +z_out=500"
+        "+proj=pipeline +step +proj=axisswap +order=2,1 +step +proj=unitconvert +xy_in=deg +z_in=m +xy_out=rad +z_out=m +step +proj=cart +ellps=WGS84 +step +proj=unitconvert +xy_in=m +z_in=m +xy_out=500 +z_out=500"
     );
 }
 

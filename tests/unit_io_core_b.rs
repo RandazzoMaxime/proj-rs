@@ -5,8 +5,8 @@
 use proj_rs::iso19111::{create_object_from_json, Equivalence, JsonFormat, JsonObject};
 use proj_rs::{
     create_crs_from_proj_string, create_from_user_input, Conversion, CoordinateOperationFactory,
-    Crs, DatabaseContext, GeographicCRS, OpProps, ProjectedCRS, WktConvention, WktFormatter,
-    WktLines, WktObject, WktParser,
+    Crs, DatabaseContext, GeodeticCRS, GeographicCRS, OpProps, ProjectedCRS, WktConvention,
+    WktFormatter, WktLines, WktObject, WktParser,
 };
 
 fn proj_crs(definition: &str) -> Crs {
@@ -1381,4 +1381,1801 @@ fn json_import_geographic_crs_errors() {
   }
 }"#,
     );
+}
+
+#[test]
+fn json_import_dynamic_geodetic_reference_frame_with_implicit_prime_meridian() {
+    let json = r#"{
+  "$schema": "foo",
+  "type": "DynamicGeodeticReferenceFrame",
+  "name": "World Geodetic System 1984",
+  "frame_reference_epoch": 1,
+  "ellipsoid": {
+    "name": "WGS 84",
+    "semi_major_axis": 6378137,
+    "inverse_flattening": 298.257223563
+  }
+}"#;
+    let object = round_trip(json);
+    assert!(matches!(object, JsonObject::GeodeticReferenceFrame(_)));
+}
+
+#[test]
+fn json_import_invalid_bbox() {
+    assert!(create_object_from_json(
+        r#"{
+  "$schema": "foo",
+  "type": "GeodeticReferenceFrame",
+  "name": "World Geodetic System 1984",
+  "ellipsoid": {
+    "name": "WGS 84",
+    "semi_major_axis": 6378137,
+    "inverse_flattening": 298.257223563
+  },
+  "bbox": {
+    "south_latitude": -90,
+    "west_longitude": -180,
+    "north_latitude": 90,
+    "east_longitude": 180
+  }
+}"#,
+        None
+    )
+    .is_ok());
+    refused(
+        r#"{
+  "$schema": "foo",
+  "type": "GeodeticReferenceFrame",
+  "name": "World Geodetic System 1984",
+  "ellipsoid": {
+    "name": "WGS 84",
+    "semi_major_axis": 6378137,
+    "inverse_flattening": 298.257223563
+  },
+  "bbox": {
+    "south_latitude": 90,
+    "west_longitude": -180,
+    "north_latitude": -90,
+    "east_longitude": 180
+  }
+}"#,
+    );
+}
+
+#[test]
+fn json_import_spherical_planetocentric() {
+    let json = r#"{
+  "$schema": "foo",
+  "type": "GeodeticCRS",
+  "name": "Mercury (2015) / Ocentric",
+  "datum": {
+    "type": "GeodeticReferenceFrame",
+    "name": "Mercury (2015)",
+    "anchor": "Hun Kal: 20.0",
+    "ellipsoid": {
+      "name": "Mercury (2015)",
+      "semi_major_axis": 2440530,
+      "inverse_flattening": 1075.12334801762
+    },
+    "prime_meridian": {
+      "name": "Reference Meridian",
+      "longitude": 0
+    }
+  },
+  "coordinate_system": {
+    "subtype": "spherical",
+    "axis": [
+      {
+        "name": "Planetocentric latitude",
+        "abbreviation": "U",
+        "direction": "north",
+        "unit": "degree"
+      },
+      {
+        "name": "Planetocentric longitude",
+        "abbreviation": "V",
+        "direction": "east",
+        "unit": "degree"
+      }
+    ]
+  },
+  "id": {
+    "authority": "IAU",
+    "code": 19902
+  },
+  "remarks": "Source of IAU Coordinate systems: doi://10.1007/s10569-017-9805-5"
+}"#;
+    let object = round_trip(json);
+    let JsonObject::Crs(Crs::Geodetic(crs @ GeodeticCRS::Spherical(_))) = &object else {
+        panic!("spherical geodetic CRS");
+    };
+    let coordinate_system = crs.coordinate_system();
+    let names: Vec<&str> = coordinate_system
+        .axes()
+        .iter()
+        .map(|axis| axis.name())
+        .collect();
+    assert_eq!(
+        names,
+        ["Planetocentric latitude", "Planetocentric longitude"]
+    );
+}
+
+#[test]
+fn json_import_geographic_crs_with_datum_ensemble() {
+    let json = r#"{
+  "$schema": "foo",
+  "type": "GeographicCRS",
+  "name": "WGS 84",
+  "datum_ensemble": {
+    "name": "WGS 84 ensemble",
+    "members": [
+      {
+        "name": "World Geodetic System 1984 (Transit)"
+      },
+      {
+        "name": "World Geodetic System 1984 (G730)"
+      },
+      {
+        "name": "Some unknown ensemble with unknown id",
+        "id": {
+          "authority": "UNKNOWN",
+          "code": 1234
+        }
+      }
+    ],
+    "ellipsoid": {
+      "name": "WGS 84",
+      "semi_major_axis": 6378137,
+      "inverse_flattening": 298.257223563
+    },
+    "accuracy": "2"
+  },
+  "coordinate_system": {
+    "subtype": "ellipsoidal",
+    "axis": [
+      {
+        "name": "Latitude",
+        "abbreviation": "lat",
+        "direction": "north",
+        "unit": "degree"
+      },
+      {
+        "name": "Longitude",
+        "abbreviation": "lon",
+        "direction": "east",
+        "unit": "degree"
+      }
+    ]
+  }
+}"#;
+    let expected_json = r#"{
+  "$schema": "foo",
+  "type": "GeographicCRS",
+  "name": "WGS 84",
+  "datum_ensemble": {
+    "name": "WGS 84 ensemble",
+    "members": [
+      {
+        "name": "World Geodetic System 1984 (Transit)",
+        "id": {
+          "authority": "EPSG",
+          "code": 1166
+        }
+      },
+      {
+        "name": "World Geodetic System 1984 (G730)",
+        "id": {
+          "authority": "EPSG",
+          "code": 1152
+        }
+      },
+      {
+        "name": "Some unknown ensemble with unknown id",
+        "id": {
+          "authority": "UNKNOWN",
+          "code": 1234
+        }
+      }
+    ],
+    "ellipsoid": {
+      "name": "WGS 84",
+      "semi_major_axis": 6378137,
+      "inverse_flattening": 298.257223563,
+      "id": {
+        "authority": "EPSG",
+        "code": 7030
+      }
+    },
+    "accuracy": "2"
+  },
+  "coordinate_system": {
+    "subtype": "ellipsoidal",
+    "axis": [
+      {
+        "name": "Latitude",
+        "abbreviation": "lat",
+        "direction": "north",
+        "unit": "degree"
+      },
+      {
+        "name": "Longitude",
+        "abbreviation": "lon",
+        "direction": "east",
+        "unit": "degree"
+      }
+    ]
+  }
+}"#;
+    // No database
+    let object = round_trip(json);
+    assert!(matches!(object, JsonObject::Crs(Crs::Geographic(_))));
+    let db = DatabaseContext::create().expect("proj.db");
+    let object = create_object_from_json(json, Some(&db)).expect("PROJJSON");
+    assert!(matches!(object, JsonObject::Crs(Crs::Geographic(_))));
+    assert_eq!(export_foo(&object), expected_json);
+    let object = create_object_from_json(expected_json, Some(&db)).expect("PROJJSON");
+    assert!(matches!(object, JsonObject::Crs(Crs::Geographic(_))));
+    assert_eq!(export_foo(&object), expected_json);
+}
+
+#[test]
+fn json_import_datum_ensemble_without_ellipsoid() {
+    let json = r#"{
+  "$schema": "foo",
+  "type": "DatumEnsemble",
+  "name": "ensemble",
+  "members": [
+    {
+      "name": "member1"
+    },
+    {
+      "name": "member2"
+    }
+  ],
+  "accuracy": "2"
+}"#;
+    let object = round_trip(json);
+    assert!(matches!(object, JsonObject::DatumEnsemble(_)));
+}
+
+#[test]
+fn json_import_ensemble_without_members() {
+    let json = r#"{
+  "type": "GeographicCRS",
+  "name": "WGS 84",
+  "datum_ensemble": {
+    "name": "World Geodetic System 1984 ensemble",
+    "ellipsoid": {
+      "name": "WGS 84",
+      "semi_major_axis": 6378137,
+      "inverse_flattening": 298.257223563
+    },
+    "accuracy": "2.0",
+    "id": {
+      "authority": "EPSG",
+      "code": 6326
+    }
+  },
+  "coordinate_system": {
+    "subtype": "ellipsoidal",
+    "axis": [
+      {
+        "name": "Geodetic latitude",
+        "abbreviation": "Lat",
+        "direction": "north",
+        "unit": "degree"
+      },
+      {
+        "name": "Geodetic longitude",
+        "abbreviation": "Lon",
+        "direction": "east",
+        "unit": "degree"
+      }
+    ]
+  }
+}"#;
+    let db = DatabaseContext::create().expect("proj.db");
+    let object = create_object_from_json(json, Some(&db)).expect("PROJJSON");
+    let JsonObject::Crs(Crs::Geographic(crs)) = &object else {
+        panic!("geographic CRS");
+    };
+    let ensemble = crs.datum_ensemble().expect("ensemble");
+    assert!(ensemble.members().len() >= 2);
+}
+
+#[test]
+fn json_import_ensemble_without_members_no_db() {
+    refused(
+        r#"{
+  "type": "GeographicCRS",
+  "name": "WGS 84",
+  "datum_ensemble": {
+    "name": "World Geodetic System 1984 ensemble",
+    "ellipsoid": {
+      "name": "WGS 84",
+      "semi_major_axis": 6378137,
+      "inverse_flattening": 298.257223563
+    },
+    "accuracy": "2.0",
+    "id": {
+      "authority": "EPSG",
+      "code": 6326
+    }
+  },
+  "coordinate_system": {
+    "subtype": "ellipsoidal",
+    "axis": [
+      {
+        "name": "Geodetic latitude",
+        "abbreviation": "Lat",
+        "direction": "north",
+        "unit": "degree"
+      },
+      {
+        "name": "Geodetic longitude",
+        "abbreviation": "Lon",
+        "direction": "east",
+        "unit": "degree"
+      }
+    ]
+  }
+}"#,
+    );
+}
+
+#[test]
+fn json_import_ensemble_without_members_unknown_name() {
+    let db = DatabaseContext::create().expect("proj.db");
+    assert!(create_object_from_json(
+        r#"{
+  "type": "GeographicCRS",
+  "name": "WGS 84",
+  "datum_ensemble": {
+    "name": "i do not exist",
+    "ellipsoid": {
+      "name": "WGS 84",
+      "semi_major_axis": 6378137,
+      "inverse_flattening": 298.257223563
+    },
+    "accuracy": "2.0",
+    "id": {
+      "authority": "EPSG",
+      "code": 6326
+    }
+  },
+  "coordinate_system": {
+    "subtype": "ellipsoidal",
+    "axis": [
+      {
+        "name": "Geodetic latitude",
+        "abbreviation": "Lat",
+        "direction": "north",
+        "unit": "degree"
+      },
+      {
+        "name": "Geodetic longitude",
+        "abbreviation": "Lon",
+        "direction": "east",
+        "unit": "degree"
+      }
+    ]
+  }
+}"#,
+        Some(&db)
+    )
+    .is_err());
+}
+#[test]
+fn json_import_projected_crs() {
+    let json = r#"{
+  "$schema": "foo",
+  "type": "ProjectedCRS",
+  "name": "WGS 84 / UTM zone 31N",
+  "base_crs": {
+    "name": "WGS 84",
+    "datum": {
+      "type": "GeodeticReferenceFrame",
+      "name": "World Geodetic System 1984",
+      "ellipsoid": {
+        "name": "WGS 84",
+        "semi_major_axis": 6378137,
+        "inverse_flattening": 298.257223563
+      }
+    },
+    "coordinate_system": {
+      "subtype": "ellipsoidal",
+      "axis": [
+        {
+          "name": "Geodetic latitude",
+          "abbreviation": "Lat",
+          "direction": "north",
+          "unit": "degree"
+        },
+        {
+          "name": "Geodetic longitude",
+          "abbreviation": "Lon",
+          "direction": "east",
+          "unit": "degree"
+        }
+      ]
+    },
+    "id": {
+      "authority": "EPSG",
+      "code": 4326
+    }
+  },
+  "conversion": {
+    "name": "UTM zone 31N",
+    "method": {
+      "name": "Transverse Mercator",
+      "id": {
+        "authority": "EPSG",
+        "code": 9807
+      }
+    },
+    "parameters": [
+      {
+        "name": "Latitude of natural origin",
+        "value": 0,
+        "unit": "degree",
+        "id": {
+          "authority": "EPSG",
+          "code": 8801
+        }
+      },
+      {
+        "name": "Longitude of natural origin",
+        "value": 3,
+        "unit": "degree",
+        "id": {
+          "authority": "EPSG",
+          "code": 8802
+        }
+      },
+      {
+        "name": "Scale factor at natural origin",
+        "value": 0.9996,
+        "unit": "unity",
+        "id": {
+          "authority": "EPSG",
+          "code": 8805
+        }
+      },
+      {
+        "name": "False easting",
+        "value": 500000,
+        "unit": "metre",
+        "id": {
+          "authority": "EPSG",
+          "code": 8806
+        }
+      },
+      {
+        "name": "False northing",
+        "value": 0,
+        "unit": "metre",
+        "id": {
+          "authority": "EPSG",
+          "code": 8807
+        }
+      }
+    ]
+  },
+  "coordinate_system": {
+    "subtype": "Cartesian",
+    "axis": [
+      {
+        "name": "Easting",
+        "abbreviation": "E",
+        "direction": "east",
+        "unit": "metre"
+      },
+      {
+        "name": "Northing",
+        "abbreviation": "N",
+        "direction": "north",
+        "unit": "metre"
+      }
+    ]
+  }
+}"#;
+    let object = import_json(json);
+    assert!(matches!(object, JsonObject::Crs(Crs::Projected(_))));
+    let got = export_foo(&object);
+    // The base CRS has no `type` member in the C++ output; the test removes it.
+    let marker = "    \"type\": \"GeographicCRS\",\n";
+    let position = got.find(marker).expect("base CRS type");
+    let got = format!("{}{}", &got[..position], &got[position + marker.len()..]);
+    assert_eq!(got, json);
+}
+
+#[test]
+fn json_import_projected_crs_with_geocentric_base() {
+    let json = r#"{
+  "$schema": "foo",
+  "type": "ProjectedCRS",
+  "name": "EPSG topocentric example B",
+  "base_crs": {
+    "name": "WGS 84",
+    "datum_ensemble": {
+      "name": "World Geodetic System 1984 ensemble",
+      "members": [
+        {
+          "name": "World Geodetic System 1984 (Transit)"
+        },
+        {
+          "name": "World Geodetic System 1984 (G730)"
+        },
+        {
+          "name": "World Geodetic System 1984 (G873)"
+        },
+        {
+          "name": "World Geodetic System 1984 (G1150)"
+        },
+        {
+          "name": "World Geodetic System 1984 (G1674)"
+        },
+        {
+          "name": "World Geodetic System 1984 (G1762)"
+        }
+      ],
+      "ellipsoid": {
+        "name": "WGS 84",
+        "semi_major_axis": 6378137,
+        "inverse_flattening": 298.257223563
+      },
+      "accuracy": "2.0"
+    },
+    "coordinate_system": {
+      "subtype": "Cartesian",
+      "axis": [
+        {
+          "name": "Geocentric X",
+          "abbreviation": "X",
+          "direction": "geocentricX",
+          "unit": "metre"
+        },
+        {
+          "name": "Geocentric Y",
+          "abbreviation": "Y",
+          "direction": "geocentricY",
+          "unit": "metre"
+        },
+        {
+          "name": "Geocentric Z",
+          "abbreviation": "Z",
+          "direction": "geocentricZ",
+          "unit": "metre"
+        }
+      ]
+    },
+    "id": {
+      "authority": "EPSG",
+      "code": 4978
+    }
+  },
+  "conversion": {
+    "name": "EPSG topocentric example B",
+    "method": {
+      "name": "Geocentric/topocentric conversions",
+      "id": {
+        "authority": "EPSG",
+        "code": 9836
+      }
+    },
+    "parameters": [
+      {
+        "name": "Geocentric X of topocentric origin",
+        "value": 3771793.97,
+        "unit": "metre",
+        "id": {
+          "authority": "EPSG",
+          "code": 8837
+        }
+      },
+      {
+        "name": "Geocentric Y of topocentric origin",
+        "value": 140253.34,
+        "unit": "metre",
+        "id": {
+          "authority": "EPSG",
+          "code": 8838
+        }
+      },
+      {
+        "name": "Geocentric Z of topocentric origin",
+        "value": 5124304.35,
+        "unit": "metre",
+        "id": {
+          "authority": "EPSG",
+          "code": 8839
+        }
+      }
+    ]
+  },
+  "coordinate_system": {
+    "subtype": "Cartesian",
+    "axis": [
+      {
+        "name": "Topocentric East",
+        "abbreviation": "U",
+        "direction": "east",
+        "unit": "metre"
+      },
+      {
+        "name": "Topocentric North",
+        "abbreviation": "V",
+        "direction": "north",
+        "unit": "metre"
+      },
+      {
+        "name": "Topocentric height",
+        "abbreviation": "W",
+        "direction": "up",
+        "unit": "metre"
+      }
+    ]
+  },
+  "scope": "Example only (fictitious).",
+  "area": "Description of the extent of the CRS.",
+  "bbox": {
+    "south_latitude": -90,
+    "west_longitude": -180,
+    "north_latitude": 90,
+    "east_longitude": 180
+  },
+  "id": {
+    "authority": "EPSG",
+    "code": 5820
+  }
+}"#;
+    let object = import_json(json);
+    let JsonObject::Crs(Crs::Projected(crs)) = &object else {
+        panic!("projected CRS");
+    };
+    assert!(matches!(crs.base_crs(), GeodeticCRS::Geocentric(_)));
+    let got = export_foo(&object);
+    let marker = "    \"type\": \"GeodeticCRS\",\n";
+    let position = got.find(marker).expect("base CRS type");
+    let got = format!("{}{}", &got[..position], &got[position + marker.len()..]);
+    assert_eq!(got, json);
+}
+
+#[test]
+fn json_import_vertical_crs() {
+    let json = r#"{
+  "$schema": "foo",
+  "type": "VerticalCRS",
+  "name": "EGM2008 height",
+  "datum": {
+    "type": "VerticalReferenceFrame",
+    "name": "EGM2008 geoid"
+  },
+  "coordinate_system": {
+    "subtype": "vertical",
+    "axis": [
+      {
+        "name": "Gravity-related height",
+        "abbreviation": "H",
+        "direction": "up",
+        "unit": "metre"
+      }
+    ]
+  }
+}"#;
+    let object = round_trip(json);
+    let JsonObject::Crs(Crs::Vertical(crs)) = &object else {
+        panic!("vertical CRS");
+    };
+    let datum = crs.datum().expect("datum").clone();
+    let datum_json = export_foo(&JsonObject::VerticalReferenceFrame(datum));
+    assert!(matches!(
+        import_json(&datum_json),
+        JsonObject::VerticalReferenceFrame(_)
+    ));
+}
+
+#[test]
+fn io_projparse_projected_unknown() {
+    let crs = proj_crs(
+        "+proj=mbt_s +unused_flag +lat_0=45 +lon_0=0 +k=1 +x_0=10 +y_0=0 \
+         +datum=WGS84 +type=crs",
+    );
+    let Crs::Projected(_) = &crs else {
+        panic!("projected");
+    };
+    let wkt2 = wkt2_single(&crs);
+    assert!(
+        wkt2.contains(
+            "CONVERSION[\"unknown\",METHOD[\"PROJ mbt_s\"],\
+             PARAMETER[\"lat_0\",45,ANGLEUNIT[\"degree\",0.0174532925199433]],\
+             PARAMETER[\"lon_0\",0,ANGLEUNIT[\"degree\",0.0174532925199433]],\
+             PARAMETER[\"k\",1,SCALEUNIT[\"unity\",1]],\
+             PARAMETER[\"x_0\",10,LENGTHUNIT[\"metre\",1]],\
+             PARAMETER[\"y_0\",0,LENGTHUNIT[\"metre\",1]]]"
+        ),
+        "{wkt2}"
+    );
+    let expected_wkt1 = "PROJCS[\"unknown\",GEOGCS[\"unknown\",DATUM[\"WGS_1984\",SPHEROID[\"WGS \
+         84\",6378137,298.257223563,AUTHORITY[\"EPSG\",\"7030\"]],AUTHORITY[\"EPSG\",\"6326\"]],\
+         PRIMEM[\"Greenwich\",0,AUTHORITY[\"EPSG\",\"8901\"]],UNIT[\"degree\",0.0174532925199433,\
+         AUTHORITY[\"EPSG\",\"9122\"]]],PROJECTION[\"custom_proj4\"],UNIT[\"metre\",1,\
+         AUTHORITY[\"EPSG\",\"9001\"]],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH],\
+         EXTENSION[\"PROJ4\",\"+proj=mbt_s +lat_0=45 +lon_0=0 +k=1 +x_0=10 +y_0=0 +datum=WGS84\"]]";
+    let mut wkt1 = WktFormatter::create(WktConvention::Wkt1Gdal);
+    wkt1.simul_cur_node_has_id();
+    wkt1.set_lines(WktLines::Single);
+    let exported = crs.export_to_wkt(&mut wkt1).expect("WKT1");
+    assert_eq!(exported, expected_wkt1);
+    assert_eq!(
+        crs.export_to_proj_string().expect("PROJ string"),
+        "+proj=mbt_s +lat_0=45 +lon_0=0 +k=1 +x_0=10 +y_0=0 +datum=WGS84 +type=crs"
+    );
+    let again = parse_crs(&exported);
+    let again_wkt2 = wkt2_single(&again);
+    assert!(
+        again_wkt2.contains("METHOD[\"PROJ mbt_s\"]"),
+        "{again_wkt2}"
+    );
+}
+
+#[test]
+fn io_projparse_geoc() {
+    let crs = proj_crs("+proj=longlat +geoc +datum=WGS84 +no_defs +type=crs");
+    assert!(matches!(crs, Crs::Geodetic(GeodeticCRS::Spherical(_))));
+    assert!(crs.export_to_proj_string().is_err());
+}
+
+#[test]
+fn io_extension_proj4() {
+    let crs = proj_crs("+proj=utm +datum=NAD27 +zone=11 +over +type=crs");
+    let Crs::Projected(_) = &crs else {
+        panic!("projected");
+    };
+    assert_eq!(
+        crs.remarks(),
+        "PROJ CRS string: +proj=utm +datum=NAD27 +zone=11 +over"
+    );
+    let mut wkt2 = WktFormatter::create(WktConvention::Wkt2_2015);
+    let exported = crs.export_to_wkt(&mut wkt2).expect("WKT2");
+    let again = parse_crs(&exported);
+    assert_eq!(
+        again.export_to_proj_string().expect("PROJ string"),
+        "+proj=utm +datum=NAD27 +zone=11 +over +type=crs"
+    );
+    let wkt3 = "PROJCRS[\"unknown\",\n\
+        \x20   BASEGEOGCRS[\"unknown\",\n\
+        \x20       DATUM[\"North American Datum 1927\",\n\
+        \x20           ELLIPSOID[\"Clarke 1866\",6378206.4,294.978698213898,\n\
+        \x20               LENGTHUNIT[\"metre\",1]],\n\
+        \x20           ID[\"EPSG\",6267]],\n\
+        \x20       PRIMEM[\"Greenwich\",0,\n\
+        \x20           ANGLEUNIT[\"degree\",0.0174532925199433],\n\
+        \x20           ID[\"EPSG\",8901]]],\n\
+        \x20   CONVERSION[\"UTM zone 11N\",\n\
+        \x20       METHOD[\"Transverse Mercator\",\n\
+        \x20           ID[\"EPSG\",9807]],\n\
+        \x20       PARAMETER[\"Latitude of natural origin\",0,\n\
+        \x20           ANGLEUNIT[\"degree\",0.0174532925199433],\n\
+        \x20           ID[\"EPSG\",8801]],\n\
+        \x20       PARAMETER[\"Longitude of natural origin\",-117,\n\
+        \x20           ANGLEUNIT[\"degree\",0.0174532925199433],\n\
+        \x20           ID[\"EPSG\",8802]],\n\
+        \x20       PARAMETER[\"Scale factor at natural origin\",0.9996,\n\
+        \x20           SCALEUNIT[\"unity\",1],\n\
+        \x20           ID[\"EPSG\",8805]],\n\
+        \x20       PARAMETER[\"False easting\",500000,\n\
+        \x20           LENGTHUNIT[\"metre\",1],\n\
+        \x20           ID[\"EPSG\",8806]],\n\
+        \x20       PARAMETER[\"False northing\",0,\n\
+        \x20           LENGTHUNIT[\"metre\",1],\n\
+        \x20           ID[\"EPSG\",8807]],\n\
+        \x20       ID[\"EPSG\",16011]],\n\
+        \x20   CS[Cartesian,2],\n\
+        \x20       AXIS[\"(E)\",east,\n\
+        \x20           ORDER[1],\n\
+        \x20           LENGTHUNIT[\"metre\",1,\n\
+        \x20               ID[\"EPSG\",9001]]],\n\
+        \x20       AXIS[\"(N)\",north,\n\
+        \x20           ORDER[2],\n\
+        \x20           LENGTHUNIT[\"metre\",1,\n\
+        \x20               ID[\"EPSG\",9001]]],\n\
+        \x20   REMARK[\"Prefix. PROJ CRS string: +proj=utm +datum=NAD27 +zone=11 \
+         +over. Suffix\"]]";
+    let crs3 = parse_crs(wkt3);
+    assert_eq!(
+        crs3.remarks(),
+        "Prefix. PROJ CRS string: +proj=utm +datum=NAD27 +zone=11 +over. Suffix"
+    );
+    assert_eq!(
+        crs3.export_to_proj_string().expect("PROJ string"),
+        "+proj=utm +datum=NAD27 +zone=11 +over +type=crs"
+    );
+}
+
+#[test]
+fn json_import_conversion_utm_zone_south_wrong_id() {
+    let json = r#"{
+  "type": "Conversion",
+  "name": "UTM zone 55S",
+  "method": {
+    "name": "Transverse Mercator",
+    "id": {
+      "authority": "EPSG",
+      "code": 9807
+    }
+  },
+  "parameters": [
+    {
+      "name": "Latitude of natural origin",
+      "value": 0,
+      "unit": {
+        "type": "AngularUnit",
+        "name": "Degree",
+        "conversion_factor": 0.0174532925199433
+      },
+      "id": {
+        "authority": "EPSG",
+        "code": 8801
+      }
+    },
+    {
+      "name": "Longitude of natural origin",
+      "value": 147,
+      "unit": {
+        "type": "AngularUnit",
+        "name": "Degree",
+        "conversion_factor": 0.0174532925199433
+      },
+      "id": {
+        "authority": "EPSG",
+        "code": 8802
+      }
+    },
+    {
+      "name": "Scale factor at natural origin",
+      "value": 0.9996,
+      "unit": "unity",
+      "id": {
+        "authority": "EPSG",
+        "code": 8805
+      }
+    },
+    {
+      "name": "False easting",
+      "value": 500000,
+      "unit": "metre",
+      "id": {
+        "authority": "EPSG",
+        "code": 8806
+      }
+    },
+    {
+      "name": "False northing",
+      "value": 10000000,
+      "unit": "metre",
+      "id": {
+        "authority": "EPSG",
+        "code": 8807
+      }
+    }
+  ],
+  "id": {
+    "authority": "EPSG",
+    "code": 17055
+  }
+}"#;
+    let JsonObject::Conversion(conversion) = import_json(json) else {
+        panic!("conversion");
+    };
+    assert_eq!(conversion.identifiers()[0].code(), "16155");
+}
+
+#[test]
+fn json_import_invalid_coordinatemetadata() {
+    for json in [
+        "{\n  \"$schema\": \"foo\",\n  \"type\": \"CoordinateMetadata\"\n}",
+        "{\n  \"$schema\": \"foo\",\n  \"type\": \"CoordinateMetadata\",\n  \"crs\": \"not quite a CRS...\"\n}",
+        "{\n  \"type\": \"CoordinateMetadata\",\n  \"coordinateEpoch\": \"this should be a number\"\n}",
+    ] {
+        refused(json);
+    }
+}
+
+#[test]
+fn io_createfromuserinput_ogc_crs_url() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let crs =
+        create_from_user_input("http://www.opengis.net/def/crs/EPSG/0/4326", &db).expect("4326");
+    assert!(matches!(
+        crs,
+        Crs::Geographic(_) | Crs::Geodetic(GeodeticCRS::Geographic(_))
+    ));
+    let iau = create_from_user_input("http://www.opengis.net/def/crs/IAU/2015/49900", &db)
+        .expect("IAU 2015");
+    assert!(matches!(
+        iau,
+        Crs::Geographic(_) | Crs::Geodetic(GeodeticCRS::Geographic(_))
+    ));
+    let latest = create_from_user_input("http://www.opengis.net/def/crs/IAU/0/49900", &db)
+        .expect("IAU latest");
+    assert!(matches!(
+        latest,
+        Crs::Geographic(_) | Crs::Geodetic(GeodeticCRS::Geographic(_))
+    ));
+    assert!(create_from_user_input("http://www.opengis.net/def/crs", &db).is_err());
+    assert!(create_from_user_input("http://www.opengis.net/def/crs/EPSG/0", &db).is_err());
+    assert!(create_from_user_input("http://www.opengis.net/def/crs/EPSG/0/XXXX", &db).is_err());
+    assert!(
+        create_from_user_input("http://www.opengis.net/def/crs/IAU/2015/invalid", &db).is_err()
+    );
+    let compound = create_from_user_input(
+        "http://www.opengis.net/def/crs-compound?1=http://www.opengis.net/def/crs/EPSG/0/4326&2=http://www.opengis.net/def/crs/EPSG/0/3855",
+        &db,
+    )
+    .expect("compound");
+    let Crs::Compound(compound) = compound else {
+        panic!("compound");
+    };
+    assert_eq!(compound.name(), "WGS 84 + EGM2008 height");
+    assert!(create_from_user_input("http://www.opengis.net/def/crs-compound?", &db).is_err());
+    assert!(create_from_user_input(
+        "http://www.opengis.net/def/crs-compound?1=http://www.opengis.net/def/crs/EPSG/0/4326",
+        &db
+    )
+    .is_err());
+    assert!(create_from_user_input(
+        "http://www.opengis.net/def/crs-compound?1=http://www.opengis.net/def/crs/EPSG/0/4326&2=http://www.opengis.net/def/crs/EPSG/0/4326",
+        &db
+    )
+    .is_err());
+    assert!(create_from_user_input(
+        "http://www.opengis.net/def/crs-compound?1=http://www.opengis.net/def/crs/EPSG/0/4326&3=http://www.opengis.net/def/crs/EPSG/0/3855",
+        &db
+    )
+    .is_err());
+    assert!(create_from_user_input(
+        "http://www.opengis.net/def/crs-compound?1=http://www.opengis.net/def/crs/EPSG/0/4326&bla",
+        &db
+    )
+    .is_err());
+    assert!(create_from_user_input(
+        "http://www.opengis.net/def/crs-compound?1=http://www.opengis.net/def/crs/EPSG/0/4326&two=http://www.opengis.net/def/crs/EPSG/0/3855",
+        &db
+    )
+    .is_err());
+}
+
+#[test]
+fn json_import_bound_crs() {
+    let json = r#"{
+  "$schema": "foo",
+  "type": "BoundCRS",
+  "source_crs": {
+    "type": "GeographicCRS",
+    "name": "unknown",
+    "datum": {
+      "type": "GeodeticReferenceFrame",
+      "name": "Unknown based on GRS80 ellipsoid",
+      "ellipsoid": {
+        "name": "GRS 1980",
+        "semi_major_axis": 6378137,
+        "inverse_flattening": 298.257222101,
+        "id": {
+          "authority": "EPSG",
+          "code": 7019
+        }
+      }
+    },
+    "coordinate_system": {
+      "subtype": "ellipsoidal",
+      "axis": [
+        {
+          "name": "Longitude",
+          "abbreviation": "lon",
+          "direction": "east",
+          "unit": "degree"
+        },
+        {
+          "name": "Latitude",
+          "abbreviation": "lat",
+          "direction": "north",
+          "unit": "degree"
+        }
+      ]
+    }
+  },
+  "target_crs": {
+    "type": "GeographicCRS",
+    "name": "WGS 84",
+    "datum": {
+      "type": "GeodeticReferenceFrame",
+      "name": "World Geodetic System 1984",
+      "ellipsoid": {
+        "name": "WGS 84",
+        "semi_major_axis": 6378137,
+        "inverse_flattening": 298.257223563
+      }
+    },
+    "coordinate_system": {
+      "subtype": "ellipsoidal",
+      "axis": [
+        {
+          "name": "Latitude",
+          "abbreviation": "lat",
+          "direction": "north",
+          "unit": "degree"
+        },
+        {
+          "name": "Longitude",
+          "abbreviation": "lon",
+          "direction": "east",
+          "unit": "degree"
+        }
+      ]
+    },
+    "id": {
+      "authority": "EPSG",
+      "code": 4326
+    }
+  },
+  "transformation": {
+    "name": "unknown to WGS84",
+    "method": {
+      "name": "NTv2",
+      "id": {
+        "authority": "EPSG",
+        "code": 9615
+      }
+    },
+    "parameters": [
+      {
+        "name": "Latitude and longitude difference file",
+        "value": "@foo",
+        "id": {
+          "authority": "EPSG",
+          "code": 8656
+        }
+      }
+    ]
+  }
+}"#;
+    let obj = round_trip(json);
+    assert!(matches!(obj, JsonObject::Crs(Crs::Bound(_))));
+}
+
+#[test]
+fn json_import_transformation() {
+    let json = r#"{
+  "$schema": "foo",
+  "type": "Transformation",
+  "name": "GDA94 to GDA2020 (1)",
+  "source_crs": {
+    "type": "GeographicCRS",
+    "name": "GDA94",
+    "datum": {
+      "type": "GeodeticReferenceFrame",
+      "name": "Geocentric Datum of Australia 1994",
+      "ellipsoid": {
+        "name": "GRS 1980",
+        "semi_major_axis": 6378137,
+        "inverse_flattening": 298.257222101
+      }
+    },
+    "coordinate_system": {
+      "subtype": "ellipsoidal",
+      "axis": [
+        {
+          "name": "Geodetic latitude",
+          "abbreviation": "Lat",
+          "direction": "north",
+          "unit": "degree"
+        },
+        {
+          "name": "Geodetic longitude",
+          "abbreviation": "Lon",
+          "direction": "east",
+          "unit": "degree"
+        }
+      ]
+    }
+  },
+  "target_crs": {
+    "type": "GeographicCRS",
+    "name": "GDA2020",
+    "datum": {
+      "type": "GeodeticReferenceFrame",
+      "name": "Geocentric Datum of Australia 2020",
+      "ellipsoid": {
+        "name": "GRS 1980",
+        "semi_major_axis": 6378137,
+        "inverse_flattening": 298.257222101
+      }
+    },
+    "coordinate_system": {
+      "subtype": "ellipsoidal",
+      "axis": [
+        {
+          "name": "Geodetic latitude",
+          "abbreviation": "Lat",
+          "direction": "north",
+          "unit": "degree"
+        },
+        {
+          "name": "Geodetic longitude",
+          "abbreviation": "Lon",
+          "direction": "east",
+          "unit": "degree"
+        }
+      ]
+    }
+  },
+  "method": {
+    "name": "Coordinate Frame rotation (geog2D domain)",
+    "id": {
+      "authority": "EPSG",
+      "code": 9607
+    }
+  },
+  "parameters": [
+    {
+      "name": "X-axis translation",
+      "value": 61.55,
+      "unit": {
+        "type": "LinearUnit",
+        "name": "millimetre",
+        "conversion_factor": 0.001
+      },
+      "id": {
+        "authority": "EPSG",
+        "code": 8605
+      }
+    },
+    {
+      "name": "Y-axis translation",
+      "value": -10.87,
+      "unit": {
+        "type": "LinearUnit",
+        "name": "millimetre",
+        "conversion_factor": 0.001
+      },
+      "id": {
+        "authority": "EPSG",
+        "code": 8606
+      }
+    },
+    {
+      "name": "Z-axis translation",
+      "value": -40.19,
+      "unit": {
+        "type": "LinearUnit",
+        "name": "millimetre",
+        "conversion_factor": 0.001
+      },
+      "id": {
+        "authority": "EPSG",
+        "code": 8607
+      }
+    },
+    {
+      "name": "X-axis rotation",
+      "value": -39.4924,
+      "unit": {
+        "type": "AngularUnit",
+        "name": "milliarc-second",
+        "conversion_factor": 4.84813681109536e-09
+      },
+      "id": {
+        "authority": "EPSG",
+        "code": 8608
+      }
+    },
+    {
+      "name": "Y-axis rotation",
+      "value": -32.7221,
+      "unit": {
+        "type": "AngularUnit",
+        "name": "milliarc-second",
+        "conversion_factor": 4.84813681109536e-09
+      },
+      "id": {
+        "authority": "EPSG",
+        "code": 8609
+      }
+    },
+    {
+      "name": "Z-axis rotation",
+      "value": -32.8979,
+      "unit": {
+        "type": "AngularUnit",
+        "name": "milliarc-second",
+        "conversion_factor": 4.84813681109536e-09
+      },
+      "id": {
+        "authority": "EPSG",
+        "code": 8610
+      }
+    },
+    {
+      "name": "Scale difference",
+      "value": -9.994,
+      "unit": {
+        "type": "ScaleUnit",
+        "name": "parts per billion",
+        "conversion_factor": 1e-09
+      },
+      "id": {
+        "authority": "EPSG",
+        "code": 8611
+      }
+    }
+  ],
+  "accuracy": "0.01",
+  "scope": "scope",
+  "area": "Australia - GDA",
+  "bbox": {
+    "south_latitude": -60.56,
+    "west_longitude": 93.41,
+    "north_latitude": -8.47,
+    "east_longitude": 173.35
+  },
+  "id": {
+    "authority": "EPSG",
+    "code": 8048
+  },
+  "remarks": "foo"
+}"#;
+    let object = round_trip(json);
+    assert!(matches!(object, JsonObject::Transformation(_)));
+}
+
+#[test]
+fn json_import_concatenated_operation() {
+    let json = r#"{
+  "$schema": "foo",
+  "type": "ConcatenatedOperation",
+  "name": "Inverse of Vicgrid + GDA94 to GDA2020 (1)",
+  "source_crs": {
+    "type": "ProjectedCRS",
+    "name": "GDA94 / Vicgrid",
+    "base_crs": {
+      "type": "GeographicCRS",
+      "name": "GDA94",
+      "datum": {
+        "type": "GeodeticReferenceFrame",
+        "name": "Geocentric Datum of Australia 1994",
+        "ellipsoid": {
+          "name": "GRS 1980",
+          "semi_major_axis": 6378137,
+          "inverse_flattening": 298.257222101
+        }
+      },
+      "coordinate_system": {
+        "subtype": "ellipsoidal",
+        "axis": [
+          {
+            "name": "Geodetic latitude",
+            "abbreviation": "Lat",
+            "direction": "north",
+            "unit": "degree"
+          },
+          {
+            "name": "Geodetic longitude",
+            "abbreviation": "Lon",
+            "direction": "east",
+            "unit": "degree"
+          }
+        ]
+      },
+      "id": {
+        "authority": "EPSG",
+        "code": 4283
+      }
+    },
+    "conversion": {
+      "name": "Vicgrid",
+      "method": {
+        "name": "Lambert Conic Conformal (2SP)",
+        "id": {
+          "authority": "EPSG",
+          "code": 9802
+        }
+      },
+      "parameters": [
+        {
+          "name": "Latitude of false origin",
+          "value": -37,
+          "unit": "degree",
+          "id": {
+            "authority": "EPSG",
+            "code": 8821
+          }
+        },
+        {
+          "name": "Longitude of false origin",
+          "value": 145,
+          "unit": "degree",
+          "id": {
+            "authority": "EPSG",
+            "code": 8822
+          }
+        },
+        {
+          "name": "Latitude of 1st standard parallel",
+          "value": -36,
+          "unit": "degree",
+          "id": {
+            "authority": "EPSG",
+            "code": 8823
+          }
+        },
+        {
+          "name": "Latitude of 2nd standard parallel",
+          "value": -38,
+          "unit": "degree",
+          "id": {
+            "authority": "EPSG",
+            "code": 8824
+          }
+        },
+        {
+          "name": "Easting at false origin",
+          "value": 2500000,
+          "unit": "metre",
+          "id": {
+            "authority": "EPSG",
+            "code": 8826
+          }
+        },
+        {
+          "name": "Northing at false origin",
+          "value": 2500000,
+          "unit": "metre",
+          "id": {
+            "authority": "EPSG",
+            "code": 8827
+          }
+        }
+      ]
+    },
+    "coordinate_system": {
+      "subtype": "Cartesian",
+      "axis": [
+        {
+          "name": "Easting",
+          "abbreviation": "E",
+          "direction": "east",
+          "unit": "metre"
+        },
+        {
+          "name": "Northing",
+          "abbreviation": "N",
+          "direction": "north",
+          "unit": "metre"
+        }
+      ]
+    },
+    "id": {
+      "authority": "EPSG",
+      "code": 3111
+    }
+  },
+  "target_crs": {
+    "type": "GeographicCRS",
+    "name": "GDA2020",
+    "datum": {
+      "type": "GeodeticReferenceFrame",
+      "name": "Geocentric Datum of Australia 2020",
+      "ellipsoid": {
+        "name": "GRS 1980",
+        "semi_major_axis": 6378137,
+        "inverse_flattening": 298.257222101
+      }
+    },
+    "coordinate_system": {
+      "subtype": "ellipsoidal",
+      "axis": [
+        {
+          "name": "Geodetic latitude",
+          "abbreviation": "Lat",
+          "direction": "north",
+          "unit": "degree"
+        },
+        {
+          "name": "Geodetic longitude",
+          "abbreviation": "Lon",
+          "direction": "east",
+          "unit": "degree"
+        }
+      ]
+    },
+    "id": {
+      "authority": "EPSG",
+      "code": 7844
+    }
+  },
+  "steps": [
+    {
+      "type": "Conversion",
+      "name": "Inverse of Vicgrid",
+      "method": {
+        "name": "Inverse of Lambert Conic Conformal (2SP)",
+        "id": {
+          "authority": "INVERSE(EPSG)",
+          "code": 9802
+        }
+      },
+      "parameters": [
+        {
+          "name": "Latitude of false origin",
+          "value": -37,
+          "unit": "degree",
+          "id": {
+            "authority": "EPSG",
+            "code": 8821
+          }
+        },
+        {
+          "name": "Longitude of false origin",
+          "value": 145,
+          "unit": "degree",
+          "id": {
+            "authority": "EPSG",
+            "code": 8822
+          }
+        },
+        {
+          "name": "Latitude of 1st standard parallel",
+          "value": -36,
+          "unit": "degree",
+          "id": {
+            "authority": "EPSG",
+            "code": 8823
+          }
+        },
+        {
+          "name": "Latitude of 2nd standard parallel",
+          "value": -38,
+          "unit": "degree",
+          "id": {
+            "authority": "EPSG",
+            "code": 8824
+          }
+        },
+        {
+          "name": "Easting at false origin",
+          "value": 2500000,
+          "unit": "metre",
+          "id": {
+            "authority": "EPSG",
+            "code": 8826
+          }
+        },
+        {
+          "name": "Northing at false origin",
+          "value": 2500000,
+          "unit": "metre",
+          "id": {
+            "authority": "EPSG",
+            "code": 8827
+          }
+        }
+      ],
+      "id": {
+        "authority": "INVERSE(EPSG)",
+        "code": 17361
+      }
+    },
+    {
+      "type": "Transformation",
+      "name": "GDA94 to GDA2020 (1)",
+      "source_crs": {
+        "type": "GeographicCRS",
+        "name": "GDA94",
+        "datum": {
+          "type": "GeodeticReferenceFrame",
+          "name": "Geocentric Datum of Australia 1994",
+          "ellipsoid": {
+            "name": "GRS 1980",
+            "semi_major_axis": 6378137,
+            "inverse_flattening": 298.257222101
+          }
+        },
+        "coordinate_system": {
+          "subtype": "ellipsoidal",
+          "axis": [
+            {
+              "name": "Geodetic latitude",
+              "abbreviation": "Lat",
+              "direction": "north",
+              "unit": "degree"
+            },
+            {
+              "name": "Geodetic longitude",
+              "abbreviation": "Lon",
+              "direction": "east",
+              "unit": "degree"
+            }
+          ]
+        },
+        "id": {
+          "authority": "EPSG",
+          "code": 4283
+        }
+      },
+      "target_crs": {
+        "type": "GeographicCRS",
+        "name": "GDA2020",
+        "datum": {
+          "type": "GeodeticReferenceFrame",
+          "name": "Geocentric Datum of Australia 2020",
+          "ellipsoid": {
+            "name": "GRS 1980",
+            "semi_major_axis": 6378137,
+            "inverse_flattening": 298.257222101
+          }
+        },
+        "coordinate_system": {
+          "subtype": "ellipsoidal",
+          "axis": [
+            {
+              "name": "Geodetic latitude",
+              "abbreviation": "Lat",
+              "direction": "north",
+              "unit": "degree"
+            },
+            {
+              "name": "Geodetic longitude",
+              "abbreviation": "Lon",
+              "direction": "east",
+              "unit": "degree"
+            }
+          ]
+        },
+        "id": {
+          "authority": "EPSG",
+          "code": 7844
+        }
+      },
+      "method": {
+        "name": "Coordinate Frame rotation (geog2D domain)",
+        "id": {
+          "authority": "EPSG",
+          "code": 9607
+        }
+      },
+      "parameters": [
+        {
+          "name": "X-axis translation",
+          "value": 61.55,
+          "unit": {
+            "type": "LinearUnit",
+            "name": "millimetre",
+            "conversion_factor": 0.001
+          },
+          "id": {
+            "authority": "EPSG",
+            "code": 8605
+          }
+        },
+        {
+          "name": "Y-axis translation",
+          "value": -10.87,
+          "unit": {
+            "type": "LinearUnit",
+            "name": "millimetre",
+            "conversion_factor": 0.001
+          },
+          "id": {
+            "authority": "EPSG",
+            "code": 8606
+          }
+        },
+        {
+          "name": "Z-axis translation",
+          "value": -40.19,
+          "unit": {
+            "type": "LinearUnit",
+            "name": "millimetre",
+            "conversion_factor": 0.001
+          },
+          "id": {
+            "authority": "EPSG",
+            "code": 8607
+          }
+        },
+        {
+          "name": "X-axis rotation",
+          "value": -39.4924,
+          "unit": {
+            "type": "AngularUnit",
+            "name": "milliarc-second",
+            "conversion_factor": 4.84813681109536e-09
+          },
+          "id": {
+            "authority": "EPSG",
+            "code": 8608
+          }
+        },
+        {
+          "name": "Y-axis rotation",
+          "value": -32.7221,
+          "unit": {
+            "type": "AngularUnit",
+            "name": "milliarc-second",
+            "conversion_factor": 4.84813681109536e-09
+          },
+          "id": {
+            "authority": "EPSG",
+            "code": 8609
+          }
+        },
+        {
+          "name": "Z-axis rotation",
+          "value": -32.8979,
+          "unit": {
+            "type": "AngularUnit",
+            "name": "milliarc-second",
+            "conversion_factor": 4.84813681109536e-09
+          },
+          "id": {
+            "authority": "EPSG",
+            "code": 8610
+          }
+        },
+        {
+          "name": "Scale difference",
+          "value": -9.994,
+          "unit": {
+            "type": "ScaleUnit",
+            "name": "parts per billion",
+            "conversion_factor": 1e-09
+          },
+          "id": {
+            "authority": "EPSG",
+            "code": 8611
+          }
+        }
+      ],
+      "accuracy": "0.01",
+      "id": {
+        "authority": "EPSG",
+        "code": 8048
+      },
+      "remarks": "remarks"
+    }
+  ],
+  "accuracy": "0.02",
+  "area": "Australia - GDA",
+  "bbox": {
+    "south_latitude": -60.56,
+    "west_longitude": 93.41,
+    "north_latitude": -8.47,
+    "east_longitude": 173.35
+  }
+}"#;
+    let object = round_trip(json);
+    assert!(matches!(object, JsonObject::Concatenated(_)));
+}
+
+#[test]
+fn json_import_pointmotionoperation() {
+    let json = r#"{
+  "$schema": "foo",
+  "type": "PointMotionOperation",
+  "name": "Canada velocity grid v7",
+  "source_crs": {
+    "type": "GeographicCRS",
+    "name": "NAD83(CSRS)v7",
+    "datum": {
+      "type": "GeodeticReferenceFrame",
+      "name": "North American Datum of 1983 (CSRS) version 7",
+      "ellipsoid": {
+        "name": "GRS 1980",
+        "semi_major_axis": 6378137,
+        "inverse_flattening": 298.257222101
+      }
+    },
+    "coordinate_system": {
+      "subtype": "ellipsoidal",
+      "axis": [
+        {
+          "name": "Geodetic latitude",
+          "abbreviation": "Lat",
+          "direction": "north",
+          "unit": "degree"
+        },
+        {
+          "name": "Geodetic longitude",
+          "abbreviation": "Lon",
+          "direction": "east",
+          "unit": "degree"
+        },
+        {
+          "name": "Ellipsoidal height",
+          "abbreviation": "h",
+          "direction": "up",
+          "unit": "metre"
+        }
+      ]
+    },
+    "id": {
+      "authority": "EPSG",
+      "code": 8254
+    }
+  },
+  "method": {
+    "name": "Point motion by grid (Canada NTv2_Vel)",
+    "id": {
+      "authority": "EPSG",
+      "code": 1070
+    }
+  },
+  "parameters": [
+    {
+      "name": "Point motion velocity grid file",
+      "value": "foo.tif"
+    }
+  ],
+  "accuracy": "0.01",
+  "scope": "scope",
+  "area": "area",
+  "bbox": {
+    "south_latitude": 38.21,
+    "west_longitude": -141.01,
+    "north_latitude": 86.46,
+    "east_longitude": -40.73
+  },
+  "id": {
+    "authority": "DERIVED_FROM(EPSG)",
+    "code": 9483
+  },
+  "remarks": "remark."
+}"#;
+    let object = round_trip(json);
+    assert!(matches!(object, JsonObject::Transformation(_)));
+}
+
+#[test]
+fn wkt_parse_pointmotionoperation() {
+    let wkt = r#"POINTMOTIONOPERATION["Canada velocity grid v7",
+    SOURCECRS[
+        GEOGCRS["NAD83(CSRS)v7",
+            DATUM["North American Datum of 1983 (CSRS) version 7",
+                ELLIPSOID["GRS 1980",6378137,298.257222101,
+                    LENGTHUNIT["metre",1]]],
+            PRIMEM["Greenwich",0,
+                ANGLEUNIT["degree",0.0174532925199433]],
+            CS[ellipsoidal,3],
+                AXIS["geodetic latitude (Lat)",north,
+                    ORDER[1],
+                    ANGLEUNIT["degree",0.0174532925199433]],
+                AXIS["geodetic longitude (Lon)",east,
+                    ORDER[2],
+                    ANGLEUNIT["degree",0.0174532925199433]],
+                AXIS["ellipsoidal height (h)",up,
+                    ORDER[3],
+                    LENGTHUNIT["metre",1]],
+            ID["EPSG",8254]]],
+    METHOD["Point motion by grid (Canada NTv2_Vel)",
+        ID["EPSG",1070]],
+    PARAMETERFILE["Point motion velocity grid file","foo.tif"],
+    OPERATIONACCURACY[0.01],
+    USAGE[
+        SCOPE["scope"],
+        AREA["area"],
+        BBOX[38.21,-141.01,86.46,-40.73]],
+    ID["DERIVED_FROM(EPSG)",9483],
+    REMARK["remark."]]"#;
+    let WktObject::Transformation(transformation) =
+        WktParser::new().create_from_wkt(wkt).expect("wkt")
+    else {
+        panic!("point motion");
+    };
+    let mut formatter = WktFormatter::create(WktConvention::Wkt2_2019);
+    let got = proj_rs::CoordinateOperation::Transformation(transformation)
+        .export_to_wkt(&mut formatter)
+        .expect("export");
+    assert_eq!(got, wkt);
 }
