@@ -105,7 +105,14 @@ fn crs_kind(crs: &Crs) -> &'static str {
         Crs::Bound(_) => "bound",
         Crs::Temporal(_) => "temporal",
         Crs::Parametric(_) => "parametric",
-        Crs::Derived(_) => "derived",
+        Crs::Derived(crs) => match crs.kind() {
+            proj_rs::DerivedKind::Geographic => "derived geographic",
+            proj_rs::DerivedKind::Geodetic => "derived geodetic",
+            proj_rs::DerivedKind::Vertical => "derived vertical",
+            proj_rs::DerivedKind::Engineering => "derived engineering",
+            proj_rs::DerivedKind::Parametric => "derived parametric",
+            proj_rs::DerivedKind::Temporal => "derived temporal",
+        },
     }
 }
 
@@ -1023,7 +1030,8 @@ fn crs_domains(crs: &Crs) -> &[ObjectDomain] {
         Crs::Engineering(crs) => crs.domains(),
         Crs::Temporal(crs) => crs.domains(),
         Crs::Parametric(crs) => crs.domains(),
-        Crs::DerivedProjected(_) | Crs::Bound(_) | Crs::Derived(_) => &[],
+        Crs::Derived(crs) => crs.domains(),
+        Crs::DerivedProjected(_) | Crs::Bound(_) => &[],
     }
 }
 

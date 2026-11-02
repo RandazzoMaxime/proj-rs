@@ -56,8 +56,9 @@ pub use model::{
     VerticalCS, VerticalReferenceFrame,
 };
 pub use niche::{
-    DerivedCRS, ParametricCRS, ParametricCS, ParametricDatum, TemporalCRS, TemporalCS,
-    TemporalCsKind, TemporalDatum,
+    parametric_unit, DerivedCRS, DerivedKind, ParametricCRS, ParametricCS, ParametricDatum,
+    TemporalCRS, TemporalCS, TemporalCsKind, TemporalDatum, TemporalKind,
+    CALENDAR_PROLEPTIC_GREGORIAN,
 };
 pub(crate) use normalize::normalize_for_visualization;
 pub use pipeline::ProjLines;

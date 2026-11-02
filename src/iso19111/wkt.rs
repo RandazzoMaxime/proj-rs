@@ -1811,6 +1811,21 @@ fn export_prime_meridian(meridian: &PrimeMeridian, formatter: &mut WktFormatter)
     formatter.end_node();
 }
 
+/// WKT2:2019 names a temporal CS `TemporalDateTime`, `TemporalCount`, or `TemporalMeasure`.
+fn cs_wkt2_type(cs: &CoordinateSystem, formatter: &WktFormatter) -> &'static str {
+    if let CoordinateSystem::Temporal(cs) = cs {
+        if !formatter.keywords_2019 {
+            return "temporal";
+        }
+        return match cs.kind() {
+            super::niche::TemporalCsKind::DateTime => "TemporalDateTime",
+            super::niche::TemporalCsKind::Count => "TemporalCount",
+            super::niche::TemporalCsKind::Measure => "TemporalMeasure",
+        };
+    }
+    cs.wkt2_type()
+}
+
 fn export_cs(cs: &CoordinateSystem, formatter: &mut WktFormatter) {
     if formatter.output_axis != OutputAxisRule::Yes {
         return;
@@ -1818,7 +1833,7 @@ fn export_cs(cs: &CoordinateSystem, formatter: &mut WktFormatter) {
     let axes = cs.axes();
     if formatter.wkt2 {
         formatter.start_node("CS", node_from_ids(&cs.identified().identifiers));
-        formatter.add_raw(cs.wkt2_type());
+        formatter.add_raw(cs_wkt2_type(cs, formatter));
         formatter.add_raw(&axes.len().to_string());
         formatter.end_node();
         formatter.start_node("", NodeId::Absent);
@@ -1887,8 +1902,10 @@ fn export_axis(axis: &Axis, order: usize, abbrev: AxisAbbrev, formatter: &mut Wk
         if !latitude {
             if geocentric || easting_northing {
                 designation = format!("({})", axis.abbreviation());
-            } else if !designation.is_empty() {
-                designation.push(' ');
+            } else {
+                if !designation.is_empty() {
+                    designation.push(' ');
+                }
                 designation.push('(');
                 designation.push_str(axis.abbreviation());
                 designation.push(')');
@@ -2584,9 +2601,15 @@ fn export_transformation(
         }
     }
     if !formatter.abridged {
+        // A point motion operation stays in one CRS, so WKT writes the source only.
+        let target = if transformation.point_motion {
+            None
+        } else {
+            transformation.target.as_deref()
+        };
         export_source_and_target(
             transformation.source.as_deref(),
-            transformation.target.as_deref(),
+            target,
             !transformation.identified.domains.is_empty(),
             formatter,
         )?;
@@ -2602,9 +2625,11 @@ fn export_transformation(
     if formatter.abridged {
         export_interpolation_parameter(transformation, formatter)?;
     } else if let Some(interpolation) = &transformation.interpolation {
-        formatter.start_node("INTERPOLATIONCRS", NodeId::Absent);
-        export_crs(interpolation, formatter)?;
-        formatter.end_node();
+        if !transformation.point_motion {
+            formatter.start_node("INTERPOLATIONCRS", NodeId::Absent);
+            export_crs(interpolation, formatter)?;
+            formatter.end_node();
+        }
     }
     if !formatter.abridged {
         if let Some(accuracy) = transformation.accuracy {

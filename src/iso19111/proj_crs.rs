@@ -31,8 +31,8 @@ pub(super) fn titled_datum(
     named_datum(frame, tokens, title(tokens))
 }
 
-/// The datum of a projected CRS. Its base geographic step has no title, so only
-/// `+nadgrids` changes the name.
+/// The datum of a projected CRS. Its base geographic step has no title, so
+/// `+nadgrids` or `+towgs84` changes the name.
 pub(super) fn grid_datum(
     frame: GeodeticReferenceFrame,
     tokens: Tokens<'_>,
@@ -41,9 +41,9 @@ pub(super) fn grid_datum(
 }
 
 /// `buildDatum` and `createGRF`: a datum built from an ellipsoid (`+R`,
-/// `+ellps`, `+a` with a shape) takes the title when there is one. Otherwise,
-/// with `+nadgrids`, its name gets ` using nadgrids=<file>`. A named `+datum=`
-/// keeps its own name.
+/// `+ellps`, `+a` with a shape) takes the title when there is one. Otherwise
+/// `+nadgrids` appends ` using nadgrids=<file>`, else `+towgs84` appends
+/// ` using towgs84=<values>`. A named `+datum=` keeps its own name.
 fn named_datum(
     frame: GeodeticReferenceFrame,
     tokens: Tokens<'_>,
@@ -56,9 +56,11 @@ fn named_datum(
         return frame;
     }
     let grids = token(tokens, "nadgrids");
+    let towgs84 = token(tokens, "towgs84");
     let name = match title {
         Some(title) => title.to_owned(),
         None if !grids.is_empty() => format!("{} using nadgrids={grids}", frame.name()),
+        None if !towgs84.is_empty() => format!("{} using towgs84={towgs84}", frame.name()),
         None => return frame,
     };
     let mut frame = frame;

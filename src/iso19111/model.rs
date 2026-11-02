@@ -510,6 +510,18 @@ impl UnitOfMeasure {
         }
     }
 
+    /// Authority code written on this unit when the surrounding node has none.
+    #[must_use]
+    pub fn with_identifier(
+        mut self,
+        code_space: impl Into<String>,
+        code: impl Into<String>,
+    ) -> Self {
+        self.code_space = code_space.into();
+        self.code = code.into();
+        self
+    }
+
     /// Unit name. PROJ compares units by this string.
     #[must_use]
     pub fn name(&self) -> &str {
@@ -652,6 +664,24 @@ impl Ellipsoid {
             return major / (major - minor);
         }
         0.0
+    }
+
+    /// `computeSemiMinorAxis`: the stored `b`, or `a (1 - 1/rf)` from the inverse flattening.
+    #[must_use]
+    pub fn computed_semi_minor_axis(&self) -> Measure {
+        if let Some(minor) = &self.semi_minor {
+            return minor.clone();
+        }
+        let inverse = self.inverse_flattening();
+        let factor = if inverse == 0.0 {
+            1.0
+        } else {
+            1.0 - 1.0 / inverse
+        };
+        Measure {
+            value: self.semi_major.value * factor,
+            unit: self.semi_major.unit.clone(),
+        }
     }
 
     /// Celestial body name from the database.
@@ -1020,6 +1050,15 @@ impl VerticalReferenceFrame {
         &self.identified.identifiers
     }
 
+    /// Attach an authority identifier.
+    #[must_use]
+    pub fn with_identifier(mut self, code_space: &str, code: &str) -> Self {
+        self.identified
+            .identifiers
+            .push(Identifier::new(code_space, code));
+        self
+    }
+
     /// Frame reference epoch in years, when the vertical datum is dynamic.
     #[must_use]
     pub fn frame_reference_epoch(&self) -> Option<f64> {
@@ -1098,6 +1137,14 @@ impl EngineeringDatum {
     #[must_use]
     pub fn anchor_epoch(&self) -> Option<f64> {
         self.identified.anchor_epoch
+    }
+
+    /// Engineering datum named `name`.
+    #[must_use]
+    pub fn create(name: impl Into<String>) -> Self {
+        Self {
+            identified: Identified::named(name),
+        }
     }
 }
 
@@ -1477,6 +1524,18 @@ impl CartesianCS {
         }
     }
 
+    /// Northing then easting, in `unit`.
+    #[must_use]
+    pub fn create_northing_easting(unit: UnitOfMeasure) -> Self {
+        Self {
+            identified: Identified::default(),
+            axes: vec![
+                Axis::new("Northing", "N", "north", unit.clone()),
+                Axis::new("Easting", "E", "east", unit),
+            ],
+        }
+    }
+
     /// Easting then northing, in `unit`.
     #[must_use]
     pub fn create_easting_northing(unit: UnitOfMeasure) -> Self {
@@ -1824,6 +1883,12 @@ impl ParameterValue {
     pub fn scale(value: f64) -> Self {
         Self::Measure(Measure::scale(value))
     }
+
+    /// Numeric value in `unit`.
+    #[must_use]
+    pub fn measure(value: f64, unit: UnitOfMeasure) -> Self {
+        Self::Measure(Measure { value, unit })
+    }
 }
 
 /// A parameter definition paired with a value.
@@ -2018,6 +2083,12 @@ impl Transformation {
         self.target.as_deref()
     }
 
+    /// Whether this is a `PointMotionOperation`.
+    #[must_use]
+    pub fn is_point_motion(&self) -> bool {
+        self.point_motion
+    }
+
     /// Stated accuracy in metres, when it is not the EPSG unknown value `999`.
     #[must_use]
     pub fn accuracy(&self) -> Option<f64> {
@@ -2028,12 +2099,6 @@ impl Transformation {
     #[must_use]
     pub fn interpolation_crs(&self) -> Option<&Crs> {
         self.interpolation.as_deref()
-    }
-
-    /// True for a point motion operation, which moves coordinates in time within one CRS.
-    #[must_use]
-    pub fn is_point_motion(&self) -> bool {
-        self.point_motion
     }
 }
 
@@ -2907,6 +2972,15 @@ impl VerticalCRS {
         }
     }
 
+    /// Attach an authority identifier.
+    #[must_use]
+    pub fn with_identifier(mut self, code_space: &str, code: &str) -> Self {
+        self.identified
+            .identifiers
+            .push(Identifier::new(code_space, code));
+        self
+    }
+
     /// Name.
     #[must_use]
     pub fn name(&self) -> &str {
@@ -2987,6 +3061,20 @@ impl EngineeringCRS {
     #[must_use]
     pub fn domains(&self) -> &[ObjectDomain] {
         &self.identified.domains
+    }
+
+    /// Engineering CRS named `name`.
+    #[must_use]
+    pub fn create(
+        name: impl Into<String>,
+        datum: EngineeringDatum,
+        coordinate_system: CoordinateSystem,
+    ) -> Self {
+        Self {
+            identified: Identified::named(name),
+            datum,
+            coordinate_system,
+        }
     }
 }
 
@@ -3355,6 +3443,85 @@ impl Crs {
             Self::Temporal(crs) => crs.identified.deprecated,
             Self::Parametric(crs) => crs.identified.deprecated,
             Self::Derived(crs) => crs.identified.deprecated,
+        }
+    }
+
+    /// A projected CRS or a derived CRS. This is `proj_crs_is_derived`.
+    #[must_use]
+    pub fn is_derived(&self) -> bool {
+        matches!(
+            self,
+            Self::Projected(_) | Self::DerivedProjected(_) | Self::Derived(_)
+        )
+    }
+
+    /// `proj_crs_add_horizontal_derived_conversion`.
+    ///
+    /// A projected CRS becomes a derived projected CRS. A compound or bound CRS
+    /// keeps its other parts and applies the same wrap to the projected one.
+    ///
+    /// # Errors
+    ///
+    /// `self` has no projected CRS to wrap.
+    pub fn add_horizontal_derived_conversion(
+        self,
+        name: impl Into<String>,
+        conversion: Conversion,
+        coordinate_system: CoordinateSystem,
+    ) -> Result<Self, FactoryError> {
+        let name = name.into();
+        match self {
+            Self::Projected(base) => Ok(Self::DerivedProjected(DerivedProjectedCRS::create(
+                name,
+                base,
+                conversion,
+                coordinate_system,
+            ))),
+            Self::Compound(compound) => {
+                let mut components = Vec::with_capacity(compound.components.len());
+                let mut replaced = false;
+                for component in compound.components {
+                    if !replaced && matches!(component, Self::Projected(_) | Self::Bound(_)) {
+                        components.push(component.add_horizontal_derived_conversion(
+                            name.clone(),
+                            conversion.clone(),
+                            coordinate_system.clone(),
+                        )?);
+                        replaced = true;
+                    } else {
+                        components.push(component);
+                    }
+                }
+                if !replaced {
+                    return Err(FactoryError::Invalid(
+                        "the compound CRS has no projected component".to_owned(),
+                    ));
+                }
+                Ok(Self::Compound(CompoundCRS::create(
+                    String::new(),
+                    components,
+                )?))
+            }
+            Self::Bound(bound) => {
+                let source = bound.source.add_horizontal_derived_conversion(
+                    name,
+                    conversion,
+                    coordinate_system,
+                )?;
+                let mut identified = Identified::named(source.name());
+                identified.identifiers = bound.identified.identifiers;
+                identified.domains = bound.identified.domains;
+                identified.remarks = bound.identified.remarks;
+                Ok(Self::Bound(BoundCRS {
+                    identified,
+                    source: Box::new(source),
+                    target: bound.target,
+                    transformation: bound.transformation,
+                }))
+            }
+            _ => Err(FactoryError::Invalid(
+                "a horizontal derived conversion applies to a projected CRS".to_owned(),
+            )),
         }
     }
 

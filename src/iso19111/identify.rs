@@ -11,8 +11,9 @@ use super::equiv::{
 };
 use super::factory::{AuthorityFactory, DatabaseContext, NameMatch};
 use super::model::{
-    Axis, CartesianCS, Conversion, Crs, Datum, DatumEnsemble, GeodeticCRS, GeodeticReferenceFrame,
-    GeographicCRS, Identified, Identifier, ProjectedCRS, UnitOfMeasure,
+    Axis, CartesianCS, Conversion, CoordinateSystem, Crs, Datum, DatumEnsemble,
+    DerivedProjectedCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified,
+    Identifier, ProjectedCRS, UnitOfMeasure,
 };
 
 const UNKNOWN_BASED_ON: &str = "Unknown based on ";
@@ -580,6 +581,33 @@ impl GeographicCRS {
         crs.coordinate_system.axes.truncate(2);
         crs.identified.identifiers.clear();
         crs
+    }
+}
+
+impl DerivedProjectedCRS {
+    /// `DerivedProjectedCRS::promoteTo3D`.
+    ///
+    /// Adds an ellipsoidal-height axis in the unit of the first axis and promotes the
+    /// projected base. A CRS that is not a 2D Cartesian system is returned unchanged.
+    #[must_use]
+    pub fn promote_to_3d(&self, db: Option<&DatabaseContext>) -> Self {
+        let CoordinateSystem::Cartesian(cs) = &self.coordinate_system else {
+            return self.clone();
+        };
+        if cs.axes.len() != 2 {
+            return self.clone();
+        }
+        let unit = cs.axes[0].unit().clone();
+        let mut coordinate_system = cs.clone();
+        coordinate_system
+            .axes
+            .push(Axis::new("Ellipsoidal height", "h", "up", unit));
+        Self {
+            identified: Identified::named(self.name()),
+            base: self.base.promote_to_3d(db),
+            conversion: self.conversion.clone(),
+            coordinate_system: CoordinateSystem::Cartesian(coordinate_system),
+        }
     }
 }
 

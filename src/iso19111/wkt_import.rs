@@ -1594,6 +1594,11 @@ impl WktParser {
             None
         };
         let cs = self.build_cs(cs_node, node, angular)?;
+        // A BASEGEODCRS without CS is geocentric when its authority code says so.
+        let cs = self
+            .geocentric_cs_of_base_id(node)
+            .filter(|_| cs_node.is_none() && ci_eq(keyword, "BASEGEODCRS"))
+            .unwrap_or(cs);
         let identified = props.identified();
         match cs {
             CoordinateSystem::Ellipsoidal(coordinate_system) => {
@@ -1652,6 +1657,25 @@ impl WktParser {
             ))),
             other => Err(invalid(format!("unhandled CS type: {}", other.wkt2_type()))),
         }
+    }
+
+    /// The Cartesian CS of the geocentric CRS that an `ID` of `node` names in the database.
+    fn geocentric_cs_of_base_id(&mut self, node: &WktNode) -> Option<CoordinateSystem> {
+        let db = self.db.clone()?;
+        for child in &node.children {
+            if !(ci_eq(&child.value, "ID") || ci_eq(&child.value, "AUTHORITY")) {
+                continue;
+            }
+            let Ok(id) = self.build_id(child, node) else {
+                continue;
+            };
+            if let Ok(GeodeticCRS::Geocentric(found)) =
+                AuthorityFactory::create(&db, id.code_space()).create_geodetic_crs(id.code())
+            {
+                return Some(CoordinateSystem::Cartesian(found.coordinate_system));
+            }
+        }
+        None
     }
 
     fn reconcile_geographic_id(&mut self, crs: &mut GeographicCRS, node: &WktNode) {
@@ -2105,9 +2129,9 @@ impl WktParser {
                 self.recover("buildCS: missing UNIT in AXIS node. Assuming metre")?;
                 UnitOfMeasure::metre()
             }
-            None if matches!(unit_kind, UnitKind::None | UnitKind::Time) => {
-                UnitOfMeasure::new("", 1.0, UnitKind::None)
-            }
+            None if unit_kind == UnitKind::Time => UnitOfMeasure::new("", 1.0, UnitKind::None),
+            // An ordinal axis has no unit (`UnitOfMeasure::NONE`).
+            None if unit_kind == UnitKind::None => UnitOfMeasure::new("", 0.0, UnitKind::None),
             None => return Err(invalid("buildCS: missing UNIT")),
         };
         let meridian = if let Some(meridian) = node.child(&["MERIDIAN"]) {
@@ -2704,7 +2728,10 @@ impl WktParser {
                         parameter.code_space = "EPSG".to_owned();
                         parameter.code = own.epsg_code.to_string();
                     }
-                } else if let Some((name, code, _)) = wkt1_parameter(&parameter.name) {
+                } else if let Some((name, code, _)) =
+                    wkt1_parameter(&parameter.name).filter(|_| !(self.esri && code.is_empty()))
+                {
+                    // An ESRI method with no OGC mapping keeps its own parameter names.
                     parameter.name = name.to_owned();
                     parameter.code_space = "EPSG".to_owned();
                     parameter.code = code.to_owned();

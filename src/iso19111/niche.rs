@@ -2,11 +2,24 @@
 //! `DerivedGeographicCRS`, `DerivedVerticalCRS` and the other derived kinds).
 
 use super::model::{
-    Axis, Conversion, CoordinateSystem, Crs, EngineeringDatum, Identified, Identifier, ObjectDomain,
+    Axis, Conversion, CoordinateSystem, Crs, EngineeringDatum, FactoryError, GeodeticCRS,
+    Identified, Identifier, ObjectDomain, UnitKind, UnitOfMeasure,
 };
 
 /// Calendar of a [`TemporalDatum`] when WKT names none.
 pub(crate) const PROLEPTIC_GREGORIAN: &str = "proleptic Gregorian";
+
+/// `TemporalDatum::CALENDAR_PROLEPTIC_GREGORIAN`.
+pub const CALENDAR_PROLEPTIC_GREGORIAN: &str = PROLEPTIC_GREGORIAN;
+
+/// Kind of a temporal coordinate system. Same variants as [`TemporalCsKind`].
+pub type TemporalKind = TemporalCsKind;
+
+/// The unit of a parametric axis, such as a hectopascal.
+#[must_use]
+pub fn parametric_unit(name: &str, factor: f64) -> UnitOfMeasure {
+    UnitOfMeasure::new(name, factor, UnitKind::Parametric)
+}
 
 /// Datum of a temporal CRS: a calendar and an origin.
 #[derive(Clone, Debug)]
@@ -40,6 +53,26 @@ impl TemporalDatum {
     pub fn identifiers(&self) -> &[Identifier] {
         &self.identified.identifiers
     }
+
+    /// Datum named `name`. `origin` is the text of the `DateTime`, which may be empty.
+    #[must_use]
+    pub fn create(
+        name: impl Into<String>,
+        origin: impl Into<String>,
+        calendar: impl Into<String>,
+    ) -> Self {
+        Self {
+            identified: Identified::named(name),
+            origin: origin.into(),
+            calendar: calendar.into(),
+        }
+    }
+
+    pub(crate) fn is_equivalent_to(&self, other: &Self) -> bool {
+        self.name() == other.name()
+            && self.origin == other.origin
+            && self.calendar == other.calendar
+    }
 }
 
 /// Datum of a parametric CRS.
@@ -71,6 +104,14 @@ impl ParametricDatum {
     #[must_use]
     pub fn identifiers(&self) -> &[Identifier] {
         &self.identified.identifiers
+    }
+
+    /// Datum named `name`.
+    #[must_use]
+    pub fn create(name: impl Into<String>) -> Self {
+        Self {
+            identified: Identified::named(name),
+        }
     }
 }
 
@@ -105,6 +146,16 @@ impl TemporalCS {
     pub fn kind(&self) -> TemporalCsKind {
         self.kind
     }
+
+    /// Temporal coordinate system of `kind` with the single `axis`.
+    #[must_use]
+    pub fn create(kind: TemporalCsKind, axis: Axis) -> Self {
+        Self {
+            identified: Identified::default(),
+            axis,
+            kind,
+        }
+    }
 }
 
 /// Parametric coordinate system: one axis.
@@ -119,6 +170,15 @@ impl ParametricCS {
     #[must_use]
     pub fn axis(&self) -> &Axis {
         &self.axis
+    }
+
+    /// Parametric coordinate system with the single `axis`.
+    #[must_use]
+    pub fn create(axis: Axis) -> Self {
+        Self {
+            identified: Identified::default(),
+            axis,
+        }
     }
 }
 
@@ -160,6 +220,27 @@ impl TemporalCRS {
     pub fn domains(&self) -> &[ObjectDomain] {
         &self.identified.domains
     }
+
+    /// Temporal CRS named `name`.
+    #[must_use]
+    pub fn create(
+        name: impl Into<String>,
+        datum: TemporalDatum,
+        coordinate_system: TemporalCS,
+    ) -> Self {
+        Self {
+            identified: Identified::named(name),
+            datum,
+            coordinate_system,
+        }
+    }
+
+    pub(crate) fn is_equivalent_to(&self, other: &Self) -> bool {
+        self.name() == other.name()
+            && self.datum.is_equivalent_to(&other.datum)
+            && CoordinateSystem::Temporal(self.coordinate_system.clone())
+                .is_equivalent_to(&CoordinateSystem::Temporal(other.coordinate_system.clone()))
+    }
 }
 
 /// Parametric CRS.
@@ -200,6 +281,45 @@ impl ParametricCRS {
     pub fn domains(&self) -> &[ObjectDomain] {
         &self.identified.domains
     }
+
+    /// Parametric CRS named `name`.
+    #[must_use]
+    pub fn create(
+        name: impl Into<String>,
+        datum: ParametricDatum,
+        coordinate_system: ParametricCS,
+    ) -> Self {
+        Self {
+            identified: Identified::named(name),
+            datum,
+            coordinate_system,
+        }
+    }
+
+    pub(crate) fn is_equivalent_to(&self, other: &Self) -> bool {
+        self.name() == other.name()
+            && self.datum.name() == other.datum.name()
+            && CoordinateSystem::Parametric(self.coordinate_system.clone()).is_equivalent_to(
+                &CoordinateSystem::Parametric(other.coordinate_system.clone()),
+            )
+    }
+}
+
+/// What a [`DerivedCRS`] is derived into.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DerivedKind {
+    /// `DerivedGeographicCRS`: ellipsoidal coordinate system on a geodetic base.
+    Geographic,
+    /// `DerivedGeodeticCRS`: Cartesian or spherical coordinate system on a geodetic base.
+    Geodetic,
+    /// `DerivedVerticalCRS`.
+    Vertical,
+    /// `DerivedEngineeringCRS`.
+    Engineering,
+    /// `DerivedParametricCRS`.
+    Parametric,
+    /// `DerivedTemporalCRS`.
+    Temporal,
 }
 
 /// A CRS derived from a base CRS of any kind but projected (see `DerivedProjectedCRS`):
@@ -242,6 +362,92 @@ impl DerivedCRS {
     #[must_use]
     pub fn identifiers(&self) -> &[Identifier] {
         &self.identified.identifiers
+    }
+
+    /// Usages recorded for this CRS.
+    #[must_use]
+    pub fn domains(&self) -> &[ObjectDomain] {
+        &self.identified.domains
+    }
+
+    /// `DerivedGeographicCRS::create`, `DerivedGeodeticCRS::create`, `DerivedVerticalCRS::create`,
+    /// `DerivedEngineeringCRS::create`, `DerivedParametricCRS::create` or
+    /// `DerivedTemporalCRS::create`, chosen from `base` and `coordinate_system`.
+    ///
+    /// # Errors
+    ///
+    /// `base` is not a geodetic, vertical, engineering, parametric or temporal CRS, or the
+    /// coordinate system does not suit it.
+    pub fn create(
+        name: impl Into<String>,
+        base: Crs,
+        conversion: Conversion,
+        coordinate_system: CoordinateSystem,
+    ) -> Result<Self, FactoryError> {
+        let crs = Self {
+            identified: Identified::named(name),
+            base: Box::new(base),
+            conversion,
+            coordinate_system,
+        };
+        if crs.derived_kind().is_none() {
+            return Err(FactoryError::Invalid(
+                "the base CRS and the coordinate system do not make a derived CRS".to_owned(),
+            ));
+        }
+        Ok(crs)
+    }
+
+    fn derived_kind(&self) -> Option<DerivedKind> {
+        let cs = &self.coordinate_system;
+        match (&*self.base, cs) {
+            (Crs::Geographic(_) | Crs::Geodetic(_), CoordinateSystem::Ellipsoidal(_)) => {
+                Some(DerivedKind::Geographic)
+            }
+            (
+                Crs::Geographic(_) | Crs::Geodetic(_),
+                CoordinateSystem::Cartesian(_) | CoordinateSystem::Spherical(_),
+            ) => Some(DerivedKind::Geodetic),
+            (Crs::Vertical(_), CoordinateSystem::Vertical(_)) => Some(DerivedKind::Vertical),
+            (
+                Crs::Engineering(_),
+                CoordinateSystem::Cartesian(_)
+                | CoordinateSystem::Affine(_)
+                | CoordinateSystem::Ordinal(_)
+                | CoordinateSystem::Spherical(_)
+                | CoordinateSystem::Vertical(_)
+                | CoordinateSystem::Ellipsoidal(_),
+            ) => Some(DerivedKind::Engineering),
+            (Crs::Parametric(_), CoordinateSystem::Parametric(_)) => Some(DerivedKind::Parametric),
+            (Crs::Temporal(_), CoordinateSystem::Temporal(_)) => Some(DerivedKind::Temporal),
+            _ => None,
+        }
+    }
+
+    /// What this CRS is derived into.
+    #[must_use]
+    pub fn kind(&self) -> DerivedKind {
+        self.derived_kind().unwrap_or(DerivedKind::Engineering)
+    }
+
+    /// The geodetic base CRS, when this CRS is derived from one.
+    #[must_use]
+    pub fn geodetic_base(&self) -> Option<GeodeticCRS> {
+        match &*self.base {
+            Crs::Geographic(crs) => Some(GeodeticCRS::Geographic(crs.clone())),
+            Crs::Geodetic(crs) => Some(crs.clone()),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn is_equivalent_to(&self, other: &Self) -> bool {
+        self.kind() == other.kind()
+            && self.name() == other.name()
+            && self.base.is_equivalent_to(&other.base)
+            && self.conversion.is_equivalent_to(&other.conversion)
+            && self
+                .coordinate_system
+                .is_equivalent_to(&other.coordinate_system)
     }
 }
 

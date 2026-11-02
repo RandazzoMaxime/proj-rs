@@ -8,11 +8,11 @@ use super::{
 };
 use crate::iso19111::factory::{AuthorityFactory, NameMatch, ObjectType};
 use crate::iso19111::model::{
-    CoordinateSystem, Crs, DatumEnsemble, DerivedProjectedCRS, FactoryError, GeodeticCRS,
-    GeodeticReferenceFrame, Identified, ProjectedCRS, UnitOfMeasure,
+    Axis, CoordinateSystem, Crs, DatumEnsemble, DerivedProjectedCRS, FactoryError, GeodeticCRS,
+    GeodeticReferenceFrame, Identified, ProjectedCRS, UnitOfMeasure, VerticalCRS, VerticalCS,
 };
 use crate::iso19111::niche::{
-    DerivedCRS, ParametricCRS, ParametricDatum, TemporalCRS, TemporalDatum,
+    DerivedCRS, DerivedKind, ParametricCRS, ParametricDatum, TemporalCRS, TemporalDatum,
 };
 
 fn require_wkt2(formatter: &WktFormatter, what: &str) -> Result<(), FactoryError> {
@@ -130,7 +130,9 @@ fn export_base_node(
     keyword: &str,
     formatter: &mut WktFormatter,
 ) -> Result<(), FactoryError> {
-    let base_has_id = formatter.keywords_2019 && !base.identifiers().is_empty();
+    let geodetic_base = matches!(base, Crs::Geographic(_) | Crs::Geodetic(_));
+    let base_has_id = !base.identifiers().is_empty()
+        && (geodetic_base || formatter.keywords_2019);
     formatter.start_node(
         keyword,
         if base_has_id {
@@ -186,10 +188,77 @@ fn export_deriving_conversion(
     result
 }
 
+fn derived_wkt_refusal(kind: DerivedKind) -> &'static str {
+    match kind {
+        DerivedKind::Geographic => "DerivedGeographicCRS can only be exported to WKT2",
+        DerivedKind::Geodetic => "DerivedGeodeticCRS can only be exported to WKT2",
+        DerivedKind::Vertical => "DerivedVerticalCRS can only be exported to WKT2",
+        DerivedKind::Engineering => "DerivedEngineeringCRS can only be exported to WKT2:2019",
+        DerivedKind::Parametric => "DerivedParametricCRS can only be exported to WKT2",
+        DerivedKind::Temporal => "DerivedTemporalCRS can only be exported to WKT2",
+    }
+}
+
+/// A unit change or a height/depth reversal only: WKT1 writes the derived vertical CRS
+/// as a plain vertical CRS.
+fn simple_vertical_derivation(crs: &DerivedCRS) -> bool {
+    let mut current = crs;
+    loop {
+        let code = current.conversion.method.code.as_str();
+        if !matches!(code, "1069" | "1104" | "1068") {
+            return false;
+        }
+        match current.base_crs() {
+            Crs::Derived(next) if next.kind() == DerivedKind::Vertical => current = next,
+            _ => return true,
+        }
+    }
+}
+
+fn vertical_view(crs: &DerivedCRS) -> VerticalCRS {
+    let mut innermost = crs.base_crs();
+    while let Crs::Derived(next) = innermost {
+        innermost = next.base_crs();
+    }
+    let (datum, ensemble) = match innermost {
+        Crs::Vertical(base) => (base.datum.clone(), base.ensemble.clone()),
+        _ => (None, None),
+    };
+    let axis = match &crs.coordinate_system {
+        CoordinateSystem::Vertical(cs) => cs.axis.clone(),
+        other => other.axes().into_iter().next().map_or_else(
+            || Axis::create("Gravity-related height", "H", "up", UnitOfMeasure::metre()),
+            Clone::clone,
+        ),
+    };
+    VerticalCRS {
+        identified: crs.identified.clone(),
+        datum,
+        ensemble,
+        coordinate_system: VerticalCS {
+            identified: Identified::default(),
+            axis,
+        },
+        geoid_models: Vec::new(),
+    }
+}
+
 pub(super) fn export_derived(
     crs: &DerivedCRS,
     formatter: &mut WktFormatter,
 ) -> Result<(), FactoryError> {
+    let kind = crs.kind();
+    if !formatter.wkt2 {
+        if kind == DerivedKind::Vertical && simple_vertical_derivation(crs) {
+            return super::export_vertical(&vertical_view(crs), formatter);
+        }
+        return Err(FactoryError::Format(derived_wkt_refusal(kind).to_owned()));
+    }
+    if kind == DerivedKind::Engineering && !formatter.keywords_2019 {
+        return Err(FactoryError::Format(
+            "DerivedEngineeringCRS can only be exported to WKT2:2019".to_owned(),
+        ));
+    }
     let (keyword, base_keyword) = match (&*crs.base, &crs.coordinate_system) {
         (Crs::Geographic(_) | Crs::Geodetic(_), cs) => {
             let geographic_base = geodetic_parts(&crs.base).is_some_and(|parts| parts.2);
@@ -204,7 +273,6 @@ pub(super) fn export_derived(
                 } else {
                     "GEODCRS"
                 };
-            require_wkt2(formatter, "DerivedGeodeticCRS")?;
             (keyword, base_keyword)
         }
         (Crs::Vertical(_), _) => ("VERTCRS", "BASEVERTCRS"),
@@ -217,7 +285,6 @@ pub(super) fn export_derived(
             ))
         }
     };
-    require_wkt2(formatter, "DerivedCRS")?;
     formatter.start_node(keyword, node_from_ids(&crs.identified.identifiers));
     formatter.add_quoted(&crs.identified.name);
     export_base_node(&crs.base, base_keyword, formatter)?;
