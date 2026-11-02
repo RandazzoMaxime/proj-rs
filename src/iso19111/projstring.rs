@@ -382,8 +382,8 @@ pub(crate) fn projection_steps(source: &Crs, target: &Crs) -> Result<Vec<String>
     if let Some(order) = geographic_axis_order(geographic) {
         steps.push(format!("+proj=axisswap +order={order}"));
     }
-    if let Some(step) = angular_to_radians(geographic) {
-        steps.push(step.to_owned());
+    if let Some(step) = angular_unit_step(geographic) {
+        steps.push(step);
     }
     let mut projection = projected.deriving_conversion().export_to_proj_string()?;
     if let Some(ellipsoid) = base.ellipsoid() {
@@ -401,16 +401,27 @@ pub(crate) fn projection_steps(source: &Crs, target: &Crs) -> Result<Vec<String>
 }
 
 /// `addUnitConvertAndAxisSwap` for the unit: the metre that the projection writes becomes
-/// the linear unit of the projected CRS, such as the US survey foot. `None` for the metre.
+/// the linear unit of the projected CRS, such as the US survey foot. A third axis is
+/// included when it is not the metre, even if easting and northing already are.
+/// `None` when every axis is the metre.
 fn projected_unit_step(crs: &ProjectedCRS) -> Option<String> {
-    let unit = crs.coordinate_system().axes().first()?.unit();
-    if unit.kind() != UnitKind::Linear || (unit.conversion_to_si() - 1.0).abs() <= 1e-10 {
+    let axes = crs.coordinate_system().axes();
+    let unit = axes.first()?.unit();
+    let height = axes.get(2).map(Axis::unit);
+    let metric = |unit: &UnitOfMeasure| {
+        unit.kind() == UnitKind::Linear && (unit.conversion_to_si() - 1.0).abs() <= 1e-10
+    };
+    if metric(unit) && height.is_none_or(metric) {
         return None;
     }
-    Some(format!(
-        "+proj=unitconvert +xy_in=m +xy_out={}",
-        linear_out_name(unit)
-    ))
+    let xy_out = linear_out_name(unit);
+    match height {
+        Some(height) => Some(format!(
+            "+proj=unitconvert +xy_in=m +z_in=m +xy_out={xy_out} +z_out={}",
+            linear_out_name(height)
+        )),
+        None => Some(format!("+proj=unitconvert +xy_in=m +xy_out={xy_out}")),
+    }
 }
 
 /// The PROJ name of a linear unit, or its factor when PROJ has no name for it.
@@ -421,7 +432,27 @@ fn linear_out_name(unit: &UnitOfMeasure) -> String {
 }
 
 /// The `unitconvert` step that turns the geographic axes into radians, or
-/// `None` when they already are.
+/// `None` when they already are. A third axis is converted from its unit into
+/// metres, which is the height the projection consumes.
+fn angular_unit_step(geographic: &GeographicCRS) -> Option<String> {
+    let axes = geographic.coordinate_system().axes();
+    let xy_in = match axes.first()?.unit().name() {
+        "degree" => "deg",
+        "grad" => "grad",
+        _ => return None,
+    };
+    match axes.get(2) {
+        Some(height) => Some(format!(
+            "+proj=unitconvert +xy_in={xy_in} +z_in={} +xy_out=rad +z_out=m",
+            linear_out_name(height.unit())
+        )),
+        None => Some(format!("+proj=unitconvert +xy_in={xy_in} +xy_out=rad")),
+    }
+}
+
+/// The `unitconvert` step that turns the geographic axes into radians, or
+/// `None` when they already are. The geocentric path leaves a height axis to
+/// the `cart` step.
 fn angular_to_radians(geographic: &GeographicCRS) -> Option<&'static str> {
     match geographic.coordinate_system().axes().first()?.unit().name() {
         "degree" => Some("+proj=unitconvert +xy_in=deg +xy_out=rad"),

@@ -577,9 +577,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.transformation_vertical_offset_to_PROJ_string`
 - `operation.compoundCRS_with_boundProjCRS_and_boundVerticalCRS_to_geogCRS`
 - `operation.compoundCRS_with_boundProjCRS_with_ftus_and_boundVerticalCRS_to_geogCRS`
-- `operation.compoundCRS_with_boundVerticalCRS_from_grids_to_geogCRS_with_ftus_ctxt`
-- `operation.compoundCRS_with_boundGeogCRS_boundVerticalCRS_from_grids_to_boundGeogCRS_with_ftus_ctxt`
-- `operation.compoundCRS_with_boundVerticalCRS_from_grids_to_boundGeogCRS_with_ftus_ctxt`
 - `operation.compoundCRS_with_bound_of_projected_and_bound_of_vertical_to_geog3D`
 - `operation.compoundCRS_with_boundGeogCRS_and_geoid_to_geodCRS_NAD2011_ctxt`
 - `operation.compoundCRS_with_vert_bound_to_bound_geog3D`
@@ -619,7 +616,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.vertCRS_to_vertCRS_context`
 - `operation.vertCRS_to_vertCRS_New_Zealand_context`
 - `operation.vertCRS_to_vertCRS_pivot_context`
-- `operation.projCRS_3D_to_geogCRS_3D`
 - `operation.compoundCRS_to_geogCRS_3D`
 - `operation.compoundCRS_to_geogCRS_3D_context`
 - `operation.compoundCRS_to_geogCRS_3D_with_3D_helmert_context`

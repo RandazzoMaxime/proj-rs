@@ -358,7 +358,7 @@ fn ballpark_scale(src: &Axis, dst: Option<&Axis>) -> Option<f64> {
 /// meridian and vertical unit: a null geographic offset, which is `None` for any
 /// other pair. Its name follows `buildOpName`, so two CRS of the same name get a
 /// `(geog2D)` or `(geog3D)` qualifier.
-fn null_offset(source: &Crs, target: &Crs) -> Option<CoordinateOperation> {
+pub(super) fn null_offset(source: &Crs, target: &Crs) -> Option<CoordinateOperation> {
     let (src, dst) = (geographic_of(source)?, geographic_of(target)?);
     if !same_geodetic_datum(source, target) {
         return None;
@@ -609,7 +609,64 @@ fn interpolation_geographic(operation: &CoordinateOperation) -> Option<Geographi
 }
 
 fn is_same_datum_unit_change(transformation: &Transformation) -> bool {
-    transformation.method().code() == "1069" && transformation.name().starts_with("Conversion from")
+    transformation.method().code() == "1069"
+        && !transformation
+            .name()
+            .to_ascii_lowercase()
+            .contains("ballpark")
+}
+
+/// `createOperationsGeogToGeog` when two geographic CRS of the same datum differ only by
+/// their height unit: a change of vertical unit (method 1069). A 2D CRS counts as metres.
+/// A prime-meridian shift or a lat/lon reversal takes PROJ's proj-based path, which is not
+/// ported, and gives nothing here. A different datum is the ballpark path.
+pub(super) fn geographic_height_change(source: &Crs, target: &Crs) -> Option<CoordinateOperation> {
+    let (src, dst) = (geographic_of(source)?, geographic_of(target)?);
+    if !same_geodetic_datum(source, target) || horizontal_axes_reversed(src, dst) {
+        return None;
+    }
+    let src_factor = vertical_si(src);
+    let dst_factor = vertical_si(dst);
+    if src_factor == dst_factor || dst_factor == 0.0 {
+        return None;
+    }
+    let name = format!("Transformation from {} to {}", source.name(), target.name());
+    Transformation::create_from_code(
+        &OpProps::new().name(name),
+        source.clone(),
+        target.clone(),
+        1069,
+        vec![ParameterValue::scale(src_factor / dst_factor)],
+        world_extent(),
+    )
+    .ok()
+    .map(CoordinateOperation::Transformation)
+}
+
+/// Height unit factor, metres for a 2D geographic CRS.
+fn vertical_si(geographic: &GeographicCRS) -> f64 {
+    geographic
+        .coordinate_system()
+        .axes()
+        .get(2)
+        .map_or(1.0, |axis| axis.unit().conversion_to_si())
+}
+
+/// Lat/lon against lon/lat. Height-axis direction is not an axis reversal.
+fn horizontal_axes_reversed(src: &GeographicCRS, dst: &GeographicCRS) -> bool {
+    let first = |geographic: &GeographicCRS| {
+        geographic
+            .coordinate_system()
+            .axes()
+            .first()
+            .map(|axis| axis.direction().to_ascii_lowercase())
+    };
+    let (Some(src), Some(dst)) = (first(src), first(dst)) else {
+        return false;
+    };
+    let latitude = |direction: &str| direction == "north" || direction == "south";
+    let longitude = |direction: &str| direction == "east" || direction == "west";
+    (latitude(&src) && longitude(&dst)) || (longitude(&src) && latitude(&dst))
 }
 
 /// `demoteTo2D` then `promoteTo3D` with the given height axis, metres when there is none.

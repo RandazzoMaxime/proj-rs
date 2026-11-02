@@ -2498,10 +2498,10 @@ impl WktParser {
         }
         self.compound_geographic = saved_geographic;
         if ci_eq(&node.value, "COMPD_CS") {
-            if let Ok(Crs::Geographic(geographic)) =
+            if let Ok(crs @ (Crs::Geographic(_) | Crs::Bound(_))) =
                 CompoundCRS::create_lax(props.name.clone(), components.clone())
             {
-                return Ok(WktObject::Crs(Crs::Geographic(geographic)));
+                return Ok(WktObject::Crs(crs));
             }
         }
         if components.len() < 2 {

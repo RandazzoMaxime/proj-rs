@@ -54,7 +54,11 @@ fn bound_to_geog(
 
     if let Some(base_geog) = &base_geog {
         if same_geodetic_datum(base_geog, target) {
-            return factory.create_candidates(base, target, context);
+            let mut found = factory.create_candidates(base, target, context)?;
+            if found.is_empty() {
+                found.extend(super::compound::null_offset(base, target));
+            }
+            return Ok(found);
         }
     }
 
