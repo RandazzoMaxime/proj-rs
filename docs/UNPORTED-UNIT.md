@@ -114,9 +114,7 @@ and `PORT-NOTES-tests.md`.
 - `factory.AuthorityFactory_createCoordinateOperation_concatenated_operation_step_2_and_3_are_conversion`
 - `factory.AuthorityFactory_createCoordinateOperation_concatenated_operation_epsg_9103`
 - `factory.AuthorityFactory_build_all_concatenated`
-- `factory.AuthorityFactory_createCoordinateOperation_point_motion_operation`
 - `factory.AuthorityFactory_getAuthorityCodes`
-- `factory.AuthorityFactory_IAU_2015`
 - `FactoryWithTmpDatabase.AuthorityFactory_test_with_fake_EPSG_database`
 - `factory.AuthorityFactory_createFromCoordinateReferenceSystemCodes`
 - `factory.AuthorityFactory_createFromCoordinateReferenceSystemCodes_anonymous_authority`

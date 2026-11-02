@@ -2002,18 +2002,40 @@ fn export_operation(
     }
 }
 
+/// `exportSourceCRSAndTargetCRSToWKT`: a CRS identifier is written even under an operation that
+/// has one, as the top node is faked to have none while the CRS is written. A point motion
+/// operation has a source only.
 fn export_transformation_crs(
     transformation: &Transformation,
     formatter: &mut WktFormatter,
 ) -> Result<(), FactoryError> {
-    if let Some(source) = &transformation.source {
-        formatter.start_node("SOURCECRS", NodeId::Absent);
-        export_crs(source, formatter)?;
-        formatter.end_node();
-    }
-    if let Some(target) = &transformation.target {
-        formatter.start_node("TARGETCRS", NodeId::Absent);
-        export_crs(target, formatter)?;
+    let can_export_crs_id = formatter.wkt2
+        && formatter.keywords_2019
+        && !(formatter.id_on_top_only && top_has_id(formatter));
+    let ends = [
+        ("SOURCECRS", transformation.source.as_deref()),
+        (
+            "TARGETCRS",
+            transformation
+                .target
+                .as_deref()
+                .filter(|_| !transformation.point_motion),
+        ),
+    ];
+    for (keyword, crs) in ends {
+        let Some(crs) = crs else {
+            continue;
+        };
+        formatter.start_node(keyword, NodeId::Absent);
+        let fake = can_export_crs_id && !crs.identifiers().is_empty();
+        if fake {
+            formatter.stack_has_id.push(false);
+        }
+        let exported = export_crs(crs, formatter);
+        if fake {
+            formatter.stack_has_id.pop();
+        }
+        exported?;
         formatter.end_node();
     }
     Ok(())

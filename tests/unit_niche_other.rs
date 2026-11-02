@@ -5,12 +5,20 @@
 //! 9.9.0. The cases that stay open are listed in `docs/PORTING-niche-other.md`.
 
 use proj_rs::{
-    AuthorityFactory, Conversion, CoordinateOperationFactory, Crs, DatabaseContext, OpProps,
-    ProjLines, WktObject, WktParser,
+    AlternativeGridNames, AuthorityFactory, Conversion, CoordinateOperation,
+    CoordinateOperationFactory, CoordinateSystem, Crs, DatabaseContext, GeodeticCRS, OpProps,
+    ProjLines, UnitOfMeasure, WktConvention, WktFormatter, WktObject, WktParser,
 };
 
 fn database() -> DatabaseContext {
     DatabaseContext::create().expect("proj.db")
+}
+
+/// `UnitOfMeasure::operator==`: name, kind and factor.
+fn same_unit(left: &UnitOfMeasure, right: &UnitOfMeasure) -> bool {
+    left.name() == right.name()
+        && left.kind() == right.kind()
+        && left.conversion_to_si() == right.conversion_to_si()
 }
 
 fn parse(wkt: &str) -> WktObject {
@@ -470,4 +478,126 @@ fn operation_export_of_seismic_bin_grid_i_eq_j_minus_90() {
          +yoff=-226962.970754743 +s21=-0.0272026930156193 \
          +s22=0.0747387848087701"
     );
+}
+
+#[test]
+fn factory_authority_factory_create_coordinate_operation_point_motion_operation() {
+    let db = database();
+    let factory = AuthorityFactory::create(&db, "EPSG");
+    let op = factory
+        .create_coordinate_operation("9483", AlternativeGridNames::Official)
+        .expect("EPSG:9483");
+    let CoordinateOperation::Transformation(pmo) = &op else {
+        panic!("not a transformation");
+    };
+    assert!(pmo.is_point_motion());
+    let expected = r#"POINTMOTIONOPERATION["Canada velocity grid v7",
+    VERSION["NRC-Can cvg7.0"],
+    SOURCECRS[
+        GEOGCRS["NAD83(CSRS)v7",
+            DATUM["North American Datum of 1983 (CSRS) version 7",
+                ELLIPSOID["GRS 1980",6378137,298.257222101,
+                    LENGTHUNIT["metre",1]],
+                ANCHOREPOCH[2010]],
+            PRIMEM["Greenwich",0,
+                ANGLEUNIT["degree",0.0174532925199433]],
+            CS[ellipsoidal,3],
+                AXIS["geodetic latitude (Lat)",north,
+                    ORDER[1],
+                    ANGLEUNIT["degree",0.0174532925199433]],
+                AXIS["geodetic longitude (Lon)",east,
+                    ORDER[2],
+                    ANGLEUNIT["degree",0.0174532925199433]],
+                AXIS["ellipsoidal height (h)",up,
+                    ORDER[3],
+                    LENGTHUNIT["metre",1]],
+            ID["EPSG",8254]]],
+    METHOD["Point motion (geog3D domain) using NEU velocity grid (NTv2_Vel)",
+        ID["EPSG",1141]],
+    PARAMETERFILE["Point motion velocity grid file","NAD83v70VG.gvb"],
+    OPERATIONACCURACY[0.01],
+    USAGE[
+        SCOPE["Change of coordinate epoch for points referenced to NAD83(CSRS)v7."],
+        AREA["Canada - onshore - Alberta; British Columbia (BC); Manitoba; New Brunswick (NB); Newfoundland and Labrador; Northwest Territories (NWT); Nova Scotia (NS); Nunavut; Ontario; Prince Edward Island (PEI); Quebec; Saskatchewan; Yukon."],
+        BBOX[41.67,-141.01,83.17,-52.54]],
+    ID["EPSG",9483],
+    REMARK["File initially published with name cvg70.cvb, later renamed to NAD83v70VG.gvb with no change of content. Replaces Canada velocity grid v6 (code 8676). Replaced by Canada velocity grid v8 (code 10707). Although the interpolation CRS is given as NAD83(CSRS)v7 (also known as NAD83(CSRS) 2010), any version of NAD83(CSRS) may be used for grid interpolation without significant error."]]"#;
+    assert_eq!(
+        op.export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2019))
+            .expect("wkt"),
+        expected
+    );
+}
+
+#[test]
+fn factory_authority_factory_iau_2015() {
+    let db = database();
+    let factory = AuthorityFactory::create(&db, "IAU_2015");
+    let degree = UnitOfMeasure::degree();
+    let close = |left: f64, right: f64| (left - right).abs() < 1e-6;
+
+    {
+        let crs = factory.create_geographic_crs("19900").expect("19900");
+        assert_eq!(crs.name(), "Mercury (2015) - Sphere / Ocentric");
+        let ellipsoid = crs.ellipsoid().expect("ellipsoid");
+        assert!(ellipsoid.is_sphere());
+        assert!(close(ellipsoid.semi_major_axis().value(), 2_440_530.0));
+        let axes = crs.coordinate_system().axes();
+        assert_eq!(axes.len(), 2);
+        assert_eq!(axes[0].name(), "Geodetic latitude");
+        assert_eq!(axes[0].abbreviation(), "Lat");
+        assert_eq!(axes[0].direction(), "north");
+        assert!(same_unit(axes[0].unit(), &degree));
+        assert_eq!(axes[1].name(), "Geodetic longitude");
+        assert_eq!(axes[1].abbreviation(), "Lon");
+        assert_eq!(axes[1].direction(), "east");
+        assert!(same_unit(axes[1].unit(), &degree));
+    }
+
+    {
+        let crs = factory.create_geographic_crs("19901").expect("19901");
+        assert_eq!(crs.name(), "Mercury (2015) / Ographic");
+        let ellipsoid = crs.ellipsoid().expect("ellipsoid");
+        assert!(!ellipsoid.is_sphere());
+        assert!(close(ellipsoid.semi_major_axis().value(), 2_440_530.0));
+        assert!(close(
+            ellipsoid.computed_semi_minor_axis().value(),
+            2_438_260.0
+        ));
+        let axes = crs.coordinate_system().axes();
+        assert_eq!(axes.len(), 2);
+        assert_eq!(axes[0].name(), "Geodetic latitude");
+        assert_eq!(axes[0].abbreviation(), "Lat");
+        assert_eq!(axes[0].direction(), "north");
+        assert!(same_unit(axes[0].unit(), &degree));
+        assert_eq!(axes[1].name(), "Geodetic longitude");
+        assert_eq!(axes[1].abbreviation(), "Lon");
+        assert_eq!(axes[1].direction(), "west"); // WEST !
+        assert!(same_unit(axes[1].unit(), &degree));
+    }
+
+    {
+        let crs = factory.create_geodetic_crs("19902").expect("19902");
+        assert_eq!(crs.name(), "Mercury (2015) / Ocentric");
+        assert!(!matches!(crs, GeodeticCRS::Geographic(_)));
+        let ellipsoid = crs.ellipsoid().expect("ellipsoid");
+        assert!(!ellipsoid.is_sphere());
+        assert!(close(ellipsoid.semi_major_axis().value(), 2_440_530.0));
+        assert!(close(
+            ellipsoid.computed_semi_minor_axis().value(),
+            2_438_260.0
+        ));
+        let cs = crs.coordinate_system();
+        assert!(matches!(cs, CoordinateSystem::Spherical(_)));
+        let axes = cs.axes();
+        assert_eq!(axes.len(), 2);
+        assert_eq!(axes[0].name(), "Planetocentric latitude");
+        assert_eq!(axes[0].abbreviation(), "U");
+        assert_eq!(axes[0].direction(), "north");
+        assert!(same_unit(axes[0].unit(), &degree));
+        assert_eq!(axes[1].name(), "Planetocentric longitude");
+        assert_eq!(axes[1].abbreviation(), "V");
+        assert_eq!(axes[1].direction(), "east");
+        assert!(same_unit(axes[1].unit(), &degree));
+    }
 }

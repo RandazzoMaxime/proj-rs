@@ -598,6 +598,24 @@ impl Ellipsoid {
         0.0
     }
 
+    /// `computeSemiMinorAxis`: the stored `b`, or `a (1 - 1/rf)` from the inverse flattening.
+    #[must_use]
+    pub fn computed_semi_minor_axis(&self) -> Measure {
+        if let Some(minor) = &self.semi_minor {
+            return minor.clone();
+        }
+        let inverse = self.inverse_flattening();
+        let factor = if inverse == 0.0 {
+            1.0
+        } else {
+            1.0 - 1.0 / inverse
+        };
+        Measure {
+            value: self.semi_major.value * factor,
+            unit: self.semi_major.unit.clone(),
+        }
+    }
+
     /// Celestial body name from the database.
     #[must_use]
     pub fn celestial_body(&self) -> &str {
@@ -1874,6 +1892,12 @@ impl Transformation {
     #[must_use]
     pub fn target_crs(&self) -> Option<&Crs> {
         self.target.as_deref()
+    }
+
+    /// Whether this is a `PointMotionOperation`.
+    #[must_use]
+    pub fn is_point_motion(&self) -> bool {
+        self.point_motion
     }
 
     /// Stated accuracy in metres, when it is not the EPSG unknown value `999`.
