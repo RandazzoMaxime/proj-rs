@@ -2288,10 +2288,22 @@ impl WktParser {
                 parameter("Latitude of natural origin", "8801", 0.0, &angular),
             );
         }
+        // A polar stereographic whose origin is not a pole and whose scale is
+        // not 1 stays the WKT1 method name. Variant A and variant B share that
+        // name, so a lookup would pick variant A.
+        let polar_variant_a = ci_eq(&method_name, "Polar_Stereographic")
+            && !polar_variant_b
+            && latitude_near_pole(&parameters);
+        let polar_ambiguous =
+            ci_eq(&method_name, "Polar_Stereographic") && !polar_variant_b && !polar_variant_a;
         let (mapped_name, code) = if polar_variant_b {
             ("Polar Stereographic (variant B)", "9829")
+        } else if polar_variant_a {
+            ("Polar Stereographic (variant A)", "9810")
         } else if ci_eq(&method_name, "Krovak") && axes_are_east_north(node) {
             ("Krovak (North Orientated)", "1041")
+        } else if polar_ambiguous {
+            ("", "")
         } else {
             wkt1_method(&method_name)
         };
@@ -2302,13 +2314,17 @@ impl WktParser {
         // `standard_parallel_1` is EPSG 8801 there, not the generic 8823.
         // A WKT1 method outside `wkt1_method` has no code yet, so its own WKT1
         // name finds the map.
-        let method_params = code
-            .parse()
-            .ok()
-            .and_then(super::parammap::method_by_code)
-            .or_else(|| super::parammap::method_by_wkt1_name(&method_name))
-            .map(|method| method.params);
-        for parameter in &mut parameters {
+        let method_params = if polar_ambiguous {
+            None
+        } else {
+            code.parse()
+                .ok()
+                .and_then(super::parammap::method_by_code)
+                .or_else(|| super::parammap::method_by_wkt1_name(&method_name))
+                .map(|method| method.params)
+        };
+        let bound = bind_wkt1_parameters(method_params, &parameters);
+        for (parameter, own) in parameters.iter_mut().zip(bound) {
             if code == "1041" && parameter.code.is_empty() {
                 // Krovak (North Orientated) has its own parameter set.
                 let krovak_north = if ci_eq(&parameter.name, "latitude_of_center") {
@@ -2332,17 +2348,12 @@ impl WktParser {
                 }
             }
             if parameter.code.is_empty() {
-                let own = method_params.and_then(|params| {
-                    params.iter().find(|param| {
-                        param
-                            .wkt1_name
-                            .is_some_and(|wkt1| ci_eq(wkt1, &parameter.name))
-                    })
-                });
-                if let Some(own) = own.filter(|param| param.epsg_code != 0) {
+                if let Some(own) = own {
                     parameter.name = own.wkt2_name.to_owned();
-                    parameter.code_space = "EPSG".to_owned();
-                    parameter.code = own.epsg_code.to_string();
+                    if own.epsg_code != 0 {
+                        parameter.code_space = "EPSG".to_owned();
+                        parameter.code = own.epsg_code.to_string();
+                    }
                 } else if let Some((name, code, _)) = wkt1_parameter(&parameter.name) {
                     parameter.name = name.to_owned();
                     parameter.code_space = "EPSG".to_owned();
@@ -3096,6 +3107,70 @@ fn is_one_measure(parameter: &Parameter) -> bool {
     matches!(&parameter.value, ParameterValue::Measure(measure) if measure.value == 1.0)
 }
 
+/// `| |latitude_of_origin| - 90° | < 1e-10`, the polar stereographic variant A test.
+fn latitude_near_pole(parameters: &[Parameter]) -> bool {
+    let Some(parameter) = parameters
+        .iter()
+        .find(|parameter| ci_eq(parameter.name(), "latitude_of_origin"))
+    else {
+        return false;
+    };
+    let ParameterValue::Measure(measure) = &parameter.value else {
+        return false;
+    };
+    let degrees = measure.convert_to(&UnitOfMeasure::degree());
+    (degrees.abs() - 90.0).abs() < 1e-10
+}
+
+/// WKT1 parameter of `method_params` for each imported parameter.
+///
+/// An exact WKT1 name wins over an alias, so `latitude_of_center` is not taken
+/// by an earlier `latitude_of_origin` parameter. A code of 0 still takes the
+/// WKT2 name (`getMappingFromWKT1`).
+fn bind_wkt1_parameters<'a>(
+    method_params: Option<&'a [super::parammap::ParamMap]>,
+    parameters: &[Parameter],
+) -> Vec<Option<&'a super::parammap::ParamMap>> {
+    let Some(params) = method_params else {
+        return vec![None; parameters.len()];
+    };
+    let mut chosen = vec![None; parameters.len()];
+    let mut used = vec![false; params.len()];
+    for (index, parameter) in parameters.iter().enumerate() {
+        if !parameter.code.is_empty() {
+            continue;
+        }
+        let Some(hit) = params.iter().position(|param| {
+            param
+                .wkt1_name
+                .is_some_and(|wkt1| super::equiv::equivalent_name(wkt1, &parameter.name))
+        }) else {
+            continue;
+        };
+        if used[hit] {
+            continue;
+        }
+        used[hit] = true;
+        chosen[index] = Some(&params[hit]);
+    }
+    for (index, parameter) in parameters.iter().enumerate() {
+        if chosen[index].is_some() || !parameter.code.is_empty() {
+            continue;
+        }
+        let Some(hit) = params.iter().enumerate().position(|(slot, param)| {
+            !used[slot]
+                && param.wkt1_name.is_some_and(|wkt1| {
+                    super::equiv::are_equivalent_parameters(wkt1, &parameter.name)
+                })
+        }) else {
+            continue;
+        };
+        used[hit] = true;
+        chosen[index] = Some(&params[hit]);
+    }
+    chosen
+}
+
 fn parameter(name: &str, code: &str, value: f64, unit: &UnitOfMeasure) -> Parameter {
     Parameter {
         name: name.to_owned(),
@@ -3161,12 +3236,39 @@ fn axes_are_east_north(node: &WktNode) -> bool {
 /// A WKT1 Transverse Mercator that is a UTM zone takes the UTM conversion and its
 /// name, without an authority code, as PROJ does on import.
 fn wkt1_utm_named(conversion: Conversion) -> Conversion {
+    // An extra parameter, such as `UNKNOWN` = 13, is part of the conversion.
+    // Replacing it with the stock UTM operation would drop that parameter.
+    if conversion_has_foreign_parameter(&conversion) {
+        return conversion;
+    }
     let named = match conversion.utm_zone() {
         Some((zone, UtmHemisphere::North)) => Conversion::create_utm_north(&OpProps::new(), zone),
         Some((zone, UtmHemisphere::South)) => Conversion::create_utm_south(&OpProps::new(), zone),
         None => return conversion,
     };
     named.unwrap_or(conversion)
+}
+
+fn conversion_has_foreign_parameter(conversion: &Conversion) -> bool {
+    let Some(method) = conversion
+        .method()
+        .code()
+        .parse()
+        .ok()
+        .and_then(super::parammap::method_by_code)
+    else {
+        return false;
+    };
+    conversion.parameters().iter().any(|parameter| {
+        let code = parameter.code().parse::<i32>().unwrap_or(0);
+        !method.params.iter().any(|param| {
+            (param.epsg_code != 0 && code == param.epsg_code)
+                || super::equiv::equivalent_name(param.wkt2_name, parameter.name())
+                || param
+                    .wkt1_name
+                    .is_some_and(|wkt1| super::equiv::equivalent_name(wkt1, parameter.name()))
+        })
+    })
 }
 
 fn wkt1_method(name: &str) -> (&'static str, &'static str) {

@@ -5,10 +5,10 @@
 //! PROJ 9.9.0 unchanged. Multi-line WKT is built with `concat!` and `\n`.
 
 use proj_rs::{
-    create_crs_from_proj_string, CartesianCS, ConcatenatedOperation, Conversion,
-    CoordinateOperation, CoordinateOperationFactory, Crs, DatabaseContext, GeodeticCRS,
-    GeographicCRS, OpProps, OperationMethod, OperationParameter, ParameterValue, ProjLines,
-    ProjectedCRS, Transformation, UnitOfMeasure, WktConvention, WktFormatter, WktParser,
+    create_crs_from_proj_string, AuthorityFactory, CartesianCS, ConcatenatedOperation, Conversion,
+    CoordinateOperation, CoordinateOperationFactory, Crs, DatabaseContext, Equivalence,
+    GeodeticCRS, GeographicCRS, OpProps, OperationMethod, OperationParameter, ParameterValue,
+    ProjLines, ProjectedCRS, Transformation, UnitOfMeasure, WktConvention, WktFormatter, WktParser,
     WktStrictness,
 };
 
@@ -884,4 +884,426 @@ fn operation_mercator_spherical_import() {
         "+proj=merc +R_C +lat_0=0 +lon_0=0 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs +type=crs"
     );
     assert_eq!(projected_wkt(&crs, WktConvention::Wkt2_2019), wkt2);
+}
+
+#[test]
+fn operation_wkt1_import_polar_stereographic_variant_a() {
+    let crs = parse_projected(concat!(
+        "PROJCS[\"test\",\n",
+        "    GEOGCS[\"WGS 84\",\n",
+        "        DATUM[\"WGS 1984\",\n",
+        "            SPHEROID[\"WGS 84\",6378137,298.257223563]],\n",
+        "        PRIMEM[\"Greenwich\",0],\n",
+        "        UNIT[\"degree\",0.0174532925199433]],\n",
+        "    PROJECTION[\"Polar_Stereographic\"],\n",
+        "    PARAMETER[\"latitude_of_origin\",-90],\n",
+        "    PARAMETER[\"central_meridian\",2],\n",
+        "    PARAMETER[\"scale_factor\",3],\n",
+        "    PARAMETER[\"false_easting\",4],\n",
+        "    PARAMETER[\"false_northing\",5],\n",
+        "    UNIT[\"metre\",1]]",
+    ));
+    let reference = Conversion::create_polar_stereographic_variant_a(
+        &OpProps::new().name("unknown"),
+        -90.0,
+        2.0,
+        3.0,
+        4.0,
+        5.0,
+    )
+    .expect("variant A");
+    assert_eq!(conv_wkt2(crs.deriving_conversion()), conv_wkt2(&reference));
+}
+
+#[test]
+fn operation_wkt1_import_polar_stereographic_variant_b() {
+    let crs = parse_projected(concat!(
+        "PROJCS[\"test\",\n",
+        "    GEOGCS[\"WGS 84\",\n",
+        "        DATUM[\"WGS 1984\",\n",
+        "            SPHEROID[\"WGS 84\",6378137,298.257223563]],\n",
+        "        PRIMEM[\"Greenwich\",0],\n",
+        "        UNIT[\"degree\",0.0174532925199433]],\n",
+        "    PROJECTION[\"Polar_Stereographic\"],\n",
+        "    PARAMETER[\"latitude_of_origin\",-70],\n",
+        "    PARAMETER[\"central_meridian\",2],\n",
+        "    PARAMETER[\"scale_factor\",1],\n",
+        "    PARAMETER[\"false_easting\",4],\n",
+        "    PARAMETER[\"false_northing\",5],\n",
+        "    UNIT[\"metre\",1]]",
+    ));
+    let reference = Conversion::create_polar_stereographic_variant_b(
+        &OpProps::new().name("unknown"),
+        -70.0,
+        2.0,
+        4.0,
+        5.0,
+    )
+    .expect("variant B");
+    assert_eq!(conv_wkt2(crs.deriving_conversion()), conv_wkt2(&reference));
+}
+
+#[test]
+fn operation_wkt1_import_polar_stereographic_ambiguous() {
+    let crs = parse_projected(concat!(
+        "PROJCS[\"test\",\n",
+        "    GEOGCS[\"WGS 84\",\n",
+        "        DATUM[\"WGS 1984\",\n",
+        "            SPHEROID[\"WGS 84\",6378137,298.257223563]],\n",
+        "        PRIMEM[\"Greenwich\",0],\n",
+        "        UNIT[\"degree\",0.0174532925199433]],\n",
+        "    PROJECTION[\"Polar_Stereographic\"],\n",
+        "    PARAMETER[\"latitude_of_origin\",-70],\n",
+        "    PARAMETER[\"central_meridian\",2],\n",
+        "    PARAMETER[\"scale_factor\",3],\n",
+        "    PARAMETER[\"false_easting\",4],\n",
+        "    PARAMETER[\"false_northing\",5],\n",
+        "    UNIT[\"metre\",1]]",
+    ));
+    assert_eq!(
+        crs.deriving_conversion().method().name(),
+        "Polar_Stereographic"
+    );
+}
+
+#[test]
+fn operation_wkt1_import_equivalent_parameters() {
+    let crs = parse_projected(concat!(
+        "PROJCS[\"test\",\n",
+        "    GEOGCS[\"WGS 84\",\n",
+        "        DATUM[\"WGS 1984\",\n",
+        "            SPHEROID[\"WGS 84\",6378137,298.257223563]],\n",
+        "        PRIMEM[\"Greenwich\",0],\n",
+        "        UNIT[\"degree\",0.0174532925199433]],\n",
+        "    PROJECTION[\"Hotine Oblique Mercator Two Point Natural ",
+        "Origin\"],\n",
+        "    PARAMETER[\"latitude_of_origin\",1],\n",
+        "    PARAMETER[\"Latitude_Of_1st_Point\",2],\n",
+        "    PARAMETER[\"Longitude_Of_1st_Point\",3],\n",
+        "    PARAMETER[\"Latitude_Of_2nd_Point\",4],\n",
+        "    PARAMETER[\"Longitude_Of 2nd_Point\",5],\n",
+        "    PARAMETER[\"scale_factor\",6],\n",
+        "    PARAMETER[\"false_easting\",7],\n",
+        "    PARAMETER[\"false_northing\",8],\n",
+        "    UNIT[\"metre\",1]]",
+    ));
+    let reference = Conversion::create_hotine_oblique_mercator_two_point_natural_origin(
+        &props(),
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+        5.0,
+        6.0,
+        7.0,
+        8.0,
+    )
+    .expect("hotine");
+    let wkt1 = |conv: &Conversion| {
+        conv.export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt1Gdal))
+            .expect("wkt1")
+    };
+    assert_eq!(wkt1(crs.deriving_conversion()), wkt1(&reference));
+}
+
+#[test]
+fn operation_conversion_inverse() {
+    let conv =
+        Conversion::create_transverse_mercator(&props(), 1.0, 2.0, 3.0, 4.0, 5.0).expect("tmerc");
+    let inv = conv.inverse();
+    assert_eq!(inv.inverse().name(), conv.name());
+    assert!(inv.inverse().is_equivalent_to(&conv));
+    assert_eq!(
+        conv_wkt2(&inv),
+        concat!(
+            "CONVERSION[\"Inverse of Transverse Mercator\",\n",
+            "    METHOD[\"Inverse of Transverse Mercator\",\n",
+            "        ID[\"INVERSE(EPSG)\",9807]],\n",
+            "    PARAMETER[\"Latitude of natural origin\",1,\n",
+            "        ANGLEUNIT[\"degree\",0.0174532925199433],\n",
+            "        ID[\"EPSG\",8801]],\n",
+            "    PARAMETER[\"Longitude of natural origin\",2,\n",
+            "        ANGLEUNIT[\"degree\",0.0174532925199433],\n",
+            "        ID[\"EPSG\",8802]],\n",
+            "    PARAMETER[\"Scale factor at natural origin\",3,\n",
+            "        SCALEUNIT[\"unity\",1],\n",
+            "        ID[\"EPSG\",8805]],\n",
+            "    PARAMETER[\"False easting\",4,\n",
+            "        LENGTHUNIT[\"metre\",1],\n",
+            "        ID[\"EPSG\",8806]],\n",
+            "    PARAMETER[\"False northing\",5,\n",
+            "        LENGTHUNIT[\"metre\",1],\n",
+            "        ID[\"EPSG\",8807]]]"
+        )
+    );
+    assert_eq!(
+        inv.export_to_proj_string().expect("proj"),
+        "+proj=pipeline +step +inv +proj=tmerc +lat_0=1 +lon_0=2 +k=3 +x_0=4 +y_0=5"
+    );
+    assert!(inv.is_equivalent_to(&inv));
+    assert!(conv.is_equivalent_to(&conv.clone()));
+    assert!(inv.is_equivalent_to(&inv.clone()));
+}
+
+#[test]
+fn operation_laborde_oblique_mercator() {
+    // Content of EPSG:29701 "Tananarive (Paris) / Laborde Grid"
+    let proj_string = "+proj=labrd +lat_0=-18.9 +lon_0=44.1 +azi=18.9 +k=0.9995 +x_0=400000 \
+                       +y_0=800000 +ellps=intl +pm=paris +units=m +no_defs +type=crs";
+    let Crs::Projected(crs) = create_crs_from_proj_string(proj_string).expect("crs") else {
+        panic!("not a projected CRS");
+    };
+    assert_eq!(crs.export_to_proj_string().expect("proj"), proj_string);
+}
+
+fn esri_projected(code: &str) -> ProjectedCRS {
+    let db = DatabaseContext::create().expect("db");
+    AuthorityFactory::create(&db, "ESRI")
+        .create_projected_crs(code)
+        .expect(code)
+}
+
+#[test]
+fn operation_adams_ws2_export() {
+    // ESRI:54098 WGS_1984_Adams_Square_II
+    let crs = esri_projected("54098");
+    assert_eq!(
+        crs.export_to_proj_string().expect("proj"),
+        "+proj=spilhaus +lat_0=0 +lon_0=0 +azi=0 +k_0=1.4142135623731 +rot=0 +x_0=0 +y_0=0 \
+         +datum=WGS84 +units=m +no_defs +type=crs"
+    );
+}
+
+#[test]
+fn operation_hyperbolic_cassini_soldner() {
+    let db = DatabaseContext::create().expect("db");
+    let crs = AuthorityFactory::create(&db, "EPSG")
+        .create_projected_crs("3139")
+        .expect("EPSG:3139");
+    assert_eq!(
+        crs.export_to_proj_string().expect("proj"),
+        "+proj=cass +hyperbolic +lat_0=-16.25 +lon_0=179.333333333333 +x_0=251727.9155424 \
+         +y_0=334519.953768 +a=6378306.3696 +b=6356571.996 +units=link +no_defs +type=crs"
+    );
+}
+
+#[test]
+fn operation_mercator_variant_a_to_variant_b_no_crs() {
+    let conv = Conversion::create_mercator_variant_a(&props(), 0.0, 1.0, 1.0, 3.0, 4.0)
+        .expect("variant A");
+    assert!(conv.convert_to_other_method(9805).is_none());
+}
+
+fn equivalent_transformation(left: &Transformation, right: &Transformation) -> bool {
+    left.is_equivalent_to_with(right, Equivalence::Equivalent)
+}
+
+#[test]
+fn operation_three_param_equivalent_to_seven_param() {
+    let three = Transformation::create_geocentric_translations(
+        &props(),
+        g4269(),
+        g4326(),
+        1.0,
+        2.0,
+        3.0,
+        None,
+    )
+    .expect("three");
+    let pv = |rx: f64| {
+        Transformation::create_position_vector(
+            &props(),
+            g4269(),
+            g4326(),
+            [1.0, 2.0, 3.0, rx, 0.0, 0.0, 0.0],
+            None,
+        )
+        .expect("pv")
+    };
+    let seven_pv = pv(0.0);
+    let seven_cf = Transformation::create_coordinate_frame_rotation(
+        &props(),
+        g4269(),
+        g4326(),
+        [1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 0.0],
+        None,
+    )
+    .expect("cf");
+    let non_equivalent = pv(1.0);
+
+    assert!(equivalent_transformation(&three, &seven_pv));
+    assert!(equivalent_transformation(&three, &seven_cf));
+    assert!(equivalent_transformation(&seven_cf, &three));
+    assert!(equivalent_transformation(&seven_pv, &three));
+    assert!(!equivalent_transformation(&three, &non_equivalent));
+}
+
+#[test]
+fn operation_position_vector_equivalent_coordinate_frame() {
+    let pv = Transformation::create_position_vector(
+        &props(),
+        g4269(),
+        g4326(),
+        [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0],
+        None,
+    )
+    .expect("pv");
+    let cf = Transformation::create_coordinate_frame_rotation(
+        &props(),
+        g4269(),
+        g4326(),
+        [1.0, 2.0, 3.0, -4.0 + 1e-11, -5.0, -6.0, 7.0],
+        None,
+    )
+    .expect("cf");
+    let cf_non_equivalent = Transformation::create_coordinate_frame_rotation(
+        &props(),
+        g4269(),
+        g4326(),
+        [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0],
+        None,
+    )
+    .expect("cf non-equivalent");
+    assert!(equivalent_transformation(&pv, &cf));
+    assert!(equivalent_transformation(&cf, &pv));
+    assert!(!equivalent_transformation(&pv, &cf_non_equivalent));
+}
+
+#[test]
+fn operation_conversion_missing_parameter() {
+    let crs1 = parse_projected(concat!(
+        "PROJCS[\"NAD83(CSRS98) / UTM zone 20N (deprecated)\",",
+        "    GEOGCS[\"NAD83(CSRS98)\",",
+        "        DATUM[\"NAD83_Canadian_Spatial_Reference_System\",",
+        "            SPHEROID[\"GRS 1980\",6378137,298.257222101,",
+        "                AUTHORITY[\"EPSG\",\"7019\"]],",
+        "            AUTHORITY[\"EPSG\",\"6140\"]],",
+        "        PRIMEM[\"Greenwich\",0,",
+        "            AUTHORITY[\"EPSG\",\"8901\"]],",
+        "        UNIT[\"degree\",0.0174532925199433,",
+        "            AUTHORITY[\"EPSG\",\"9108\"]],",
+        "        AUTHORITY[\"EPSG\",\"4140\"]],",
+        "    PROJECTION[\"Transverse_Mercator\"],",
+        "    PARAMETER[\"latitude_of_origin\",0],",
+        "    PARAMETER[\"central_meridian\",-63],",
+        "    PARAMETER[\"scale_factor\",0.9996],",
+        "    PARAMETER[\"false_easting\",500000],",
+        "    UNIT[\"metre\",1,",
+        "        AUTHORITY[\"EPSG\",\"9001\"]],",
+        "    AXIS[\"Easting\",EAST],",
+        "    AXIS[\"Northing\",NORTH],",
+        "    AUTHORITY[\"EPSG\",\"2038\"]]",
+    ));
+    let crs2 = parse_projected(concat!(
+        "PROJCS[\"NAD83(CSRS98) / UTM zone 20N (deprecated)\",",
+        "    GEOGCS[\"NAD83(CSRS98)\",",
+        "        DATUM[\"NAD83_Canadian_Spatial_Reference_System\",",
+        "            SPHEROID[\"GRS 1980\",6378137,298.257222101,",
+        "                AUTHORITY[\"EPSG\",\"7019\"]],",
+        "            AUTHORITY[\"EPSG\",\"6140\"]],",
+        "        PRIMEM[\"Greenwich\",0,",
+        "            AUTHORITY[\"EPSG\",\"8901\"]],",
+        "        UNIT[\"degree\",0.0174532925199433,",
+        "            AUTHORITY[\"EPSG\",\"9108\"]],",
+        "        AUTHORITY[\"EPSG\",\"4140\"]],",
+        "    PROJECTION[\"Transverse_Mercator\"],",
+        "    PARAMETER[\"central_meridian\",-63],",
+        "    PARAMETER[\"scale_factor\",0.9996],",
+        "    PARAMETER[\"false_easting\",500000],",
+        "    PARAMETER[\"false_northing\",0],",
+        "    UNIT[\"metre\",1,",
+        "        AUTHORITY[\"EPSG\",\"9001\"]],",
+        "    AXIS[\"Easting\",EAST],",
+        "    AXIS[\"Northing\",NORTH],",
+        "    AUTHORITY[\"EPSG\",\"2038\"]]",
+    ));
+    let crs3 = parse_projected(concat!(
+        "PROJCS[\"NAD83(CSRS98) / UTM zone 20N (deprecated)\",",
+        "    GEOGCS[\"NAD83(CSRS98)\",",
+        "        DATUM[\"NAD83_Canadian_Spatial_Reference_System\",",
+        "            SPHEROID[\"GRS 1980\",6378137,298.257222101,",
+        "                AUTHORITY[\"EPSG\",\"7019\"]],",
+        "            AUTHORITY[\"EPSG\",\"6140\"]],",
+        "        PRIMEM[\"Greenwich\",0,",
+        "            AUTHORITY[\"EPSG\",\"8901\"]],",
+        "        UNIT[\"degree\",0.0174532925199433,",
+        "            AUTHORITY[\"EPSG\",\"9108\"]],",
+        "        AUTHORITY[\"EPSG\",\"4140\"]],",
+        "    PROJECTION[\"Transverse_Mercator\"],",
+        "    PARAMETER[\"latitude_of_origin\",0],",
+        "    PARAMETER[\"central_meridian\",-63],",
+        "    PARAMETER[\"scale_factor\",0.9996],",
+        "    PARAMETER[\"false_easting\",500000],",
+        "    PARAMETER[\"false_northing\",0],",
+        "    UNIT[\"metre\",1,",
+        "        AUTHORITY[\"EPSG\",\"9001\"]],",
+        "    AXIS[\"Easting\",EAST],",
+        "    AXIS[\"Northing\",NORTH],",
+        "    AUTHORITY[\"EPSG\",\"2038\"]]",
+    ));
+    let crs4 = parse_projected(concat!(
+        "PROJCS[\"NAD83(CSRS98) / UTM zone 20N (deprecated)\",",
+        "    GEOGCS[\"NAD83(CSRS98)\",",
+        "        DATUM[\"NAD83_Canadian_Spatial_Reference_System\",",
+        "            SPHEROID[\"GRS 1980\",6378137,298.257222101,",
+        "                AUTHORITY[\"EPSG\",\"7019\"]],",
+        "            AUTHORITY[\"EPSG\",\"6140\"]],",
+        "        PRIMEM[\"Greenwich\",0,",
+        "            AUTHORITY[\"EPSG\",\"8901\"]],",
+        "        UNIT[\"degree\",0.0174532925199433,",
+        "            AUTHORITY[\"EPSG\",\"9108\"]],",
+        "        AUTHORITY[\"EPSG\",\"4140\"]],",
+        "    PROJECTION[\"Transverse_Mercator\"],",
+        "    PARAMETER[\"latitude_of_origin\",0],",
+        "    PARAMETER[\"central_meridian\",-63],",
+        "    PARAMETER[\"scale_factor\",0.9996],",
+        "    PARAMETER[\"false_easting\",500000],",
+        "    PARAMETER[\"false_northing\",0],",
+        "    PARAMETER[\"UNKNOWN\",13],",
+        "    UNIT[\"metre\",1,",
+        "        AUTHORITY[\"EPSG\",\"9001\"]],",
+        "    AXIS[\"Easting\",EAST],",
+        "    AXIS[\"Northing\",NORTH],",
+        "    AUTHORITY[\"EPSG\",\"2038\"]]",
+    ));
+    let crs5 = parse_projected(concat!(
+        "PROJCS[\"NAD83(CSRS98) / UTM zone 20N (deprecated)\",",
+        "    GEOGCS[\"NAD83(CSRS98)\",",
+        "        DATUM[\"NAD83_Canadian_Spatial_Reference_System\",",
+        "            SPHEROID[\"GRS 1980\",6378137,298.257222101,",
+        "                AUTHORITY[\"EPSG\",\"7019\"]],",
+        "            AUTHORITY[\"EPSG\",\"6140\"]],",
+        "        PRIMEM[\"Greenwich\",0,",
+        "            AUTHORITY[\"EPSG\",\"8901\"]],",
+        "        UNIT[\"degree\",0.0174532925199433,",
+        "            AUTHORITY[\"EPSG\",\"9108\"]],",
+        "        AUTHORITY[\"EPSG\",\"4140\"]],",
+        "    PROJECTION[\"Transverse_Mercator\"],",
+        "    PARAMETER[\"central_meridian\",-63],",
+        "    PARAMETER[\"scale_factor\",0.9996],",
+        "    PARAMETER[\"false_easting\",500000],",
+        "    PARAMETER[\"false_northing\",-99999],",
+        "    UNIT[\"metre\",1,",
+        "        AUTHORITY[\"EPSG\",\"9001\"]],",
+        "    AXIS[\"Easting\",EAST],",
+        "    AXIS[\"Northing\",NORTH],",
+        "    AUTHORITY[\"EPSG\",\"2038\"]]",
+    ));
+
+    assert!(equivalent(&crs1, &crs2));
+    assert!(equivalent(&crs2, &crs1));
+    assert!(equivalent(&crs1, &crs3));
+    assert!(equivalent(&crs3, &crs1));
+    assert!(equivalent(&crs2, &crs3));
+    assert!(equivalent(&crs3, &crs2));
+
+    assert!(!equivalent(&crs1, &crs4));
+    assert!(!equivalent(&crs4, &crs1));
+
+    assert!(!equivalent(&crs1, &crs5));
+    assert!(!equivalent(&crs5, &crs1));
+}
+
+fn equivalent(left: &ProjectedCRS, right: &ProjectedCRS) -> bool {
+    left.is_equivalent_to_with(right, Equivalence::Equivalent)
 }

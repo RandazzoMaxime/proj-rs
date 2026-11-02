@@ -355,6 +355,15 @@ impl Transformation {
             return false;
         }
         if !self.method.is_equivalent_to_with(&other.method, criterion) {
+            // A geocentric translation, position vector and coordinate frame rotation
+            // are the same operation when their `+towgs84` values agree.
+            if criterion == Equivalence::Equivalent && helmert_parameters_match(self, other) {
+                return crs_option(self.source_crs(), other.source_crs())
+                    && crs_option(self.target_crs(), other.target_crs())
+                    && crs_option(self.interpolation_crs(), other.interpolation_crs())
+                    && self.accuracy == other.accuracy
+                    && self.inverted == other.inverted;
+            }
             return false;
         }
         values_equivalent(&self.parameters, &other.parameters, criterion)
@@ -364,6 +373,17 @@ impl Transformation {
             && self.accuracy == other.accuracy
             && self.inverted == other.inverted
     }
+}
+
+/// `getTOWGS84Parameters` values within `1e-10` relative tolerance.
+fn helmert_parameters_match(left: &Transformation, right: &Transformation) -> bool {
+    let (Ok(Some(left)), Ok(Some(right))) = (left.towgs84_strict(), right.towgs84_strict()) else {
+        return false;
+    };
+    left.iter().zip(right).all(|(left, right)| {
+        let difference = (left - right).abs();
+        difference <= 1e-10 * left.abs()
+    })
 }
 
 /// The code space of an inverse operation's identifier: `EPSG` becomes `INVERSE(EPSG)`,
@@ -583,6 +603,20 @@ fn crs_option(left: Option<&Crs>, right: Option<&Crs>) -> bool {
 }
 
 fn values_equivalent(left: &[Parameter], right: &[Parameter], criterion: Equivalence) -> bool {
+    values_equivalent_from(left, right, criterion, false)
+}
+
+/// `SingleOperation::_isEquivalentTo` for parameter lists.
+///
+/// Under `Equivalent`, a parameter missing on the other side is accepted when it
+/// is the neutral value (1 for a scale, 0 otherwise). The check runs both ways
+/// unless `from_other` is set, which is the reverse pass.
+fn values_equivalent_from(
+    left: &[Parameter],
+    right: &[Parameter],
+    criterion: Equivalence,
+    from_other: bool,
+) -> bool {
     if criterion == Equivalence::Strict {
         return left.len() == right.len()
             && left
@@ -590,37 +624,67 @@ fn values_equivalent(left: &[Parameter], right: &[Parameter], criterion: Equival
                 .zip(right)
                 .all(|(left, right)| parameter_equivalent(left, right, criterion));
     }
-    if left.len() != right.len() {
-        return false;
-    }
     let mut used = vec![false; right.len()];
+    let mut found_missing = left.len() != right.len();
     for parameter in left {
-        let mut same_name = false;
-        let mut found = false;
+        let mut equivalent = false;
+        let mut same_name_different_value = false;
         for (index, other) in right.iter().enumerate() {
             if used[index] {
                 continue;
             }
             if parameter_equivalent(parameter, other, criterion) {
                 used[index] = true;
-                found = true;
+                equivalent = true;
                 break;
-            } else if identified_names_match(&parameter.name, &other.name, criterion) {
-                same_name = true;
+            } else if parameter_names_match(parameter, other, criterion) {
+                same_name_different_value = true;
                 used[index] = true;
                 break;
             }
         }
-        if !found || same_name {
+        if equivalent {
+            continue;
+        }
+        if same_name_different_value || !neutral_parameter(parameter) {
             return false;
         }
+        found_missing = true;
+    }
+    if found_missing && !from_other {
+        return values_equivalent_from(right, left, criterion, true);
     }
     true
 }
 
 fn parameter_equivalent(left: &Parameter, right: &Parameter, criterion: Equivalence) -> bool {
-    identified_names_match(&left.name, &right.name, criterion)
+    parameter_names_match(left, right, criterion)
         && left.value.is_equivalent_to_with(&right.value, criterion)
+}
+
+/// Same parameter: the name, or, under `Equivalent`, the same non-zero EPSG code.
+fn parameter_names_match(left: &Parameter, right: &Parameter, criterion: Equivalence) -> bool {
+    if identified_names_match(&left.name, &right.name, criterion) {
+        return true;
+    }
+    if criterion != Equivalence::Equivalent {
+        return false;
+    }
+    let left_code = left.code.parse::<i32>().unwrap_or(0);
+    let right_code = right.code.parse::<i32>().unwrap_or(0);
+    left_code != 0 && left_code == right_code
+}
+
+/// A missing parameter is neutral when a scale is 1 and every other measure is 0.
+fn neutral_parameter(parameter: &Parameter) -> bool {
+    let ParameterValue::Measure(measure) = &parameter.value else {
+        return false;
+    };
+    if measure.unit().kind() == UnitKind::Scale {
+        measure.si_value() == 1.0
+    } else {
+        measure.si_value() == 0.0
+    }
 }
 
 fn measures_equivalent(left: &Measure, right: &Measure, criterion: Equivalence) -> bool {
@@ -830,9 +894,8 @@ impl super::model::Conversion {
     ///
     /// # Errors
     ///
-    /// The method cannot be written as a PROJ string, a parameter value is outside the
-    /// range PROJ accepts, or the conversion is an inverse, whose `+inv` form (with its
-    /// axis steps for the target CRS) is not written yet.
+    /// The method cannot be written as a PROJ string, or a parameter value is outside
+    /// the range PROJ accepts. An inverse is the forward string inside `+inv`.
     pub fn export_to_proj_string(&self) -> Result<String, FactoryError> {
         self.export_to_proj_inner(TmercApprox::No)
     }
@@ -848,10 +911,17 @@ impl super::model::Conversion {
 
     fn export_to_proj_inner(&self, approx_tmerc: TmercApprox) -> Result<String, FactoryError> {
         if self.inverted {
-            return Err(FactoryError::Format(format!(
-                "inverse conversion {} has no PROJ string in this crate",
-                self.name()
-            )));
+            let mut forward = self.clone();
+            forward.inverted = false;
+            let forward_string = forward.export_to_proj_inner(approx_tmerc)?;
+            let mut formatter = super::pipeline::PipelineFormatter::with_grid_names(Vec::new());
+            formatter.start_inversion();
+            formatter.ingest_proj_string(&forward_string);
+            formatter.stop_inversion();
+            return Ok(formatter.finish(super::pipeline::ProjLines::Single));
+        }
+        if self.method.name.eq_ignore_ascii_case("Adams_Square_II") {
+            return Ok(adams_square_ii_proj(self));
         }
         let mapped = lookup_method(&self.method).ok_or_else(|| {
             FactoryError::Format(format!(
@@ -2392,4 +2462,64 @@ fn push_aux(parts: &mut Vec<String>, aux: &str) {
 
 fn push_number(parts: &mut Vec<String>, name: &str, value: f64) {
     parts.push(format!("+{name}={}", proj_number(value)));
+}
+
+/// `+proj=spilhaus` for ESRI `Adams_Square_II`. The scale is `sqrt(2)` times
+/// `Scale_Factor`, which defaults to 1 when the parameter is absent.
+fn adams_square_ii_proj(conversion: &Conversion) -> String {
+    let mut parts = vec!["+proj=spilhaus".to_owned()];
+    push_number(
+        &mut parts,
+        "lat_0",
+        adams_degrees(conversion, "Latitude_Of_Center"),
+    );
+    push_number(
+        &mut parts,
+        "lon_0",
+        adams_degrees(conversion, "Longitude_Of_Center"),
+    );
+    push_number(&mut parts, "azi", adams_degrees(conversion, "Azimuth"));
+    let scale = adams_measure(conversion, "Scale_Factor")
+        .map(Measure::si_value)
+        .unwrap_or(1.0);
+    push_number(&mut parts, "k_0", std::f64::consts::SQRT_2 * scale);
+    push_number(
+        &mut parts,
+        "rot",
+        adams_degrees(conversion, "XY_Plane_Rotation"),
+    );
+    push_number(&mut parts, "x_0", adams_metres(conversion, "False_Easting"));
+    push_number(
+        &mut parts,
+        "y_0",
+        adams_metres(conversion, "False_Northing"),
+    );
+    parts.join(" ")
+}
+
+fn adams_degrees(conversion: &Conversion, name: &str) -> f64 {
+    adams_measure(conversion, name)
+        .map(|measure| measure.convert_to(&super::model::UnitOfMeasure::degree()))
+        .unwrap_or(0.0)
+}
+
+fn adams_metres(conversion: &Conversion, name: &str) -> f64 {
+    adams_measure(conversion, name)
+        .map(Measure::si_value)
+        .unwrap_or(0.0)
+}
+
+/// ESRI Adams names, or the EPSG names WKT1 import substitutes for them.
+fn adams_measure<'a>(conversion: &'a Conversion, name: &str) -> Option<&'a Measure> {
+    conversion.parameters.iter().find_map(|parameter| {
+        let same = super::equiv::equivalent_name(&parameter.name, name)
+            || super::equiv::are_equivalent_parameters(&parameter.name, name);
+        if !same {
+            return None;
+        }
+        match &parameter.value {
+            ParameterValue::Measure(measure) => Some(measure),
+            _ => None,
+        }
+    })
 }

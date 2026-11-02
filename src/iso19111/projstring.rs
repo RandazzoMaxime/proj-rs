@@ -1358,6 +1358,7 @@ const NON_METHOD_KEYS: &[&str] = &[
     "geoidgrids",
     "geoid_crs",
     "wktext",
+    "pm",
 ];
 
 /// `+k` and `+k_0` name the same parameter.

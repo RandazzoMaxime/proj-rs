@@ -536,7 +536,10 @@ fn conversion_equivalent_for(
     right: &Conversion,
     criterion: Equivalence,
 ) -> bool {
-    (criterion != Equivalence::Strict || same_name(left.name(), right.name()))
+    if criterion != Equivalence::Strict {
+        return left.is_equivalent_to_with(right, criterion);
+    }
+    same_name(left.name(), right.name())
         && left.method().code() == right.method().code()
         && left.parameters().len() == right.parameters().len()
         && left
@@ -569,6 +572,62 @@ fn same_name(left: &str, right: &str) -> bool {
 /// `/`, parentheses, `.`, `&`, and `,`, and writing accented letters as ASCII.
 pub fn equivalent_name(left: &str, right: &str) -> bool {
     folded_name(left) == folded_name(right)
+}
+
+/// `areEquivalentParameters`: names PROJ treats as one parameter, such as
+/// `latitude_of_origin` and `latitude_of_center`.
+pub(crate) fn are_equivalent_parameters(left: &str, right: &str) -> bool {
+    let left = folded_name(left);
+    let right = folded_name(right);
+    if left == right {
+        return false;
+    }
+    const GROUPS: &[&[&str]] = &[
+        &["latitude_of_point_1", "Latitude_Of_1st_Point"],
+        &["longitude_of_point_1", "Longitude_Of_1st_Point"],
+        &["latitude_of_point_2", "Latitude_Of_2nd_Point"],
+        &["longitude_of_point_2", "Longitude_Of_2nd_Point"],
+        &["satellite_height", "height"],
+        &[
+            "False easting",
+            "Easting at false origin",
+            "Easting at projection centre",
+        ],
+        &[
+            "False northing",
+            "Northing at false origin",
+            "Northing at projection centre",
+        ],
+        &[
+            "Scale factor at natural origin",
+            "scale_factor",
+            "Scale factor on initial line",
+            "Scale factor at projection centre",
+            "Scale factor on pseudo standard parallel",
+        ],
+        &[
+            "latitude_of_origin",
+            "latitude_of_center",
+            "Latitude of natural origin",
+            "Latitude of false origin",
+            "Latitude of projection centre",
+            "Central_Parallel",
+        ],
+        &[
+            "central_meridian",
+            "longitude_of_center",
+            "Longitude of natural origin",
+            "Longitude of false origin",
+            "Longitude of projection centre",
+            "Longitude of origin",
+        ],
+        &["Azimuth of initial line", "Azimuth at projection centre"],
+        &["pseudo_standard_parallel_1", "standard_parallel_1"],
+    ];
+    GROUPS.iter().any(|group| {
+        let in_group = |name: &str| group.iter().any(|entry| folded_name(entry) == name);
+        in_group(&left) && in_group(&right)
+    })
 }
 
 fn folded_name(name: &str) -> String {
