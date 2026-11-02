@@ -2066,6 +2066,9 @@ impl WktParser {
             WktObject::Crs(Crs::Geographic(crs)) => GeodeticCRS::Geographic(crs),
             WktObject::Crs(Crs::Geodetic(crs)) => crs,
             WktObject::Crs(Crs::Bound(bound)) => {
+                if is_web_mercator_node(node, &props) {
+                    return self.pseudo_mercator_projected(node, props);
+                }
                 return self.projected_bound(node, props, bound);
             }
             _ => return Err(invalid("base CRS is not geodetic")),
@@ -2085,6 +2088,9 @@ impl WktParser {
             .first()
             .map(|axis| axis.unit.clone())
             .unwrap_or_else(UnitOfMeasure::metre);
+        if is_web_mercator_node(node, &props) {
+            return self.pseudo_mercator_projected(node, props);
+        }
         let conversion = if let Some(conversion) = node.child(&["CONVERSION"]) {
             self.build_conversion(conversion, linear, angular)?
         } else if let Some(projection) = node.child(&["PROJECTION"]) {
@@ -2107,6 +2113,32 @@ impl WktParser {
             return self.bind_towgs84(Crs::Projected(crs));
         }
         Ok(WktObject::Crs(Crs::Projected(crs)))
+    }
+
+    /// `createPseudoMercator`: web Mercator on WGS 84 with the axes of `node`.
+    fn pseudo_mercator_projected(
+        &mut self,
+        node: &WktNode,
+        props: Props,
+    ) -> Result<WktObject, FactoryError> {
+        self.towgs84.clear();
+        let cs = self.build_cs(node.child(&["CS"]), node, UnitOfMeasure::degree())?;
+        let CoordinateSystem::Cartesian(coordinate_system) = cs else {
+            return Err(invalid("projected CRS requires a Cartesian CS"));
+        };
+        let conversion = Conversion::create_popular_visualisation_pseudo_mercator(
+            &super::buildop::OpProps::new().name("unknown"),
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+        )?;
+        Ok(WktObject::Crs(Crs::Projected(ProjectedCRS {
+            identified: props.identified(),
+            base: GeodeticCRS::Geographic(GeographicCRS::epsg_4326()),
+            conversion,
+            coordinate_system,
+        })))
     }
 
     fn projected_bound(
@@ -2996,6 +3028,56 @@ fn guess_parameter_unit(
 
 /// GDAL WKT1 Mercator_1SP with a non-zero `latitude_of_origin` is Mercator
 /// variant B (https://trac.osgeo.org/gdal/ticket/3026), as in PROJ `io.cpp`.
+/// A WKT1 projected CRS that PROJ reads as web Mercator: no `CONVERSION`, and either the GDAL
+/// `EXTENSION` spelling or the name GDAL's older ESRI writer produced.
+fn is_web_mercator_node(node: &WktNode, props: &Props) -> bool {
+    node.child(&["CONVERSION"]).is_none()
+        && (node
+            .child(&["PROJECTION"])
+            .is_some_and(|projection| has_web_merc_proj4(node, projection))
+            || ci_eq(&props.name, "WGS_84_Pseudo_Mercator")
+            || ci_eq(&props.name, "WGS_1984_Web_Mercator"))
+}
+
+/// `hasWebMercPROJ4String`: the GDAL WKT1 spelling of web Mercator, a `Mercator_1SP` with an
+/// `EXTENSION["PROJ4", ...]` node of a spherical, null-grid `+proj=merc`.
+fn has_web_merc_proj4(node: &WktNode, projection: &WktNode) -> bool {
+    let Some(name) = projection.children.first() else {
+        return false;
+    };
+    if !ci_eq(
+        &strip_quotes(name).replace(['_', ' ', '-'], ""),
+        "Mercator1SP",
+    ) {
+        return false;
+    }
+    let Some(extension) = node.child(&["EXTENSION"]) else {
+        return false;
+    };
+    let [key, value] = extension.children.as_slice() else {
+        return false;
+    };
+    if !ci_eq(&strip_quotes(key), "PROJ4") {
+        return false;
+    }
+    let text = strip_quotes(value);
+    let absent_or = |key: &str, expected: &str| !text.contains(key) || text.contains(expected);
+    [
+        "+proj=merc",
+        "+a=6378137",
+        "+b=6378137",
+        "+lon_0=0",
+        "+x_0=0",
+        "+y_0=0",
+        "+nadgrids=@null",
+    ]
+    .iter()
+    .all(|needle| text.contains(needle))
+        && absent_or("+lat_ts=", "+lat_ts=0")
+        && absent_or("+k=", "+k=1")
+        && absent_or("+units=", "+units=m")
+}
+
 fn has_center_latitude(node: &WktNode) -> bool {
     node.children.iter().any(|child| {
         ci_eq(&child.value, "PARAMETER")

@@ -307,7 +307,12 @@ impl ProjectedCRS {
     fn pseudo_mercator_proj(&self) -> Option<String> {
         let conversion = self.deriving_conversion();
         let method = conversion.method();
-        if method.code_space() != "EPSG" || method.code() != "1024" {
+        let pseudo = method.code_space() == "EPSG" && method.code() == "1024";
+        if !pseudo
+            && !conversion
+                .name()
+                .eq_ignore_ascii_case("Popular Visualisation Mercator")
+        {
             return None;
         }
         let radius = format_g(
@@ -326,8 +331,22 @@ impl ProjectedCRS {
                 text.push_str(&clause);
             }
         }
-        text.push_str(" +nadgrids=@null +no_defs +type=crs");
+        text.push_str(" +nadgrids=@null +wktext +no_defs +type=crs");
         Some(text)
+    }
+
+    /// `Conversion::addWKTExtensionNode`: the PROJ.4 string that a WKT1 `EXTENSION` node
+    /// carries for a method WKT1 cannot spell, or `None`.
+    pub(super) fn wkt1_extension_proj4(&self) -> Option<String> {
+        let suffix = " +type=crs";
+        if let Some(text) = self.pseudo_mercator_proj() {
+            return text.strip_suffix(suffix).map(str::to_owned);
+        }
+        if self.deriving_conversion().method().name() == "Geostationary Satellite (Sweep X)" {
+            let text = self.export_with(&ProjExtras::default()).ok()?;
+            return text.strip_suffix(suffix).map(str::to_owned);
+        }
+        None
     }
 }
 

@@ -14,6 +14,9 @@ use crate::iso19111::model::{
     UnitOfMeasure,
 };
 
+/// Seconds in a year, the factor of the `year` unit.
+const YEAR: f64 = 31_556_925.445;
+
 /// Seven Helmert values in EPSG order: three translations (metres), three
 /// rotations (arc-seconds), and the scale difference (parts per million).
 fn helmert_values(translation: [f64; 3], rotation: [f64; 3], scale: f64) -> Vec<ParameterValue> {
@@ -47,15 +50,23 @@ fn rate_values(rates: [f64; 7]) -> Vec<ParameterValue> {
         values.push(match index {
             0..=2 => ParameterValue::Measure(Measure {
                 value,
-                unit: UnitOfMeasure::new("metre per year", 1.0, UnitKind::Linear),
+                unit: UnitOfMeasure::new("metre per year", 1.0 / YEAR, UnitKind::Linear),
             }),
             3..=5 => ParameterValue::Measure(Measure {
                 value,
-                unit: UnitOfMeasure::new("arc-second per year", PI / 648_000.0, UnitKind::Angular),
+                unit: UnitOfMeasure::new(
+                    "arc-second per year",
+                    PI / 648_000.0 / YEAR,
+                    UnitKind::Angular,
+                ),
             }),
             _ => ParameterValue::Measure(Measure {
                 value,
-                unit: UnitOfMeasure::new("parts per million per year", 1e-6, UnitKind::Scale),
+                unit: UnitOfMeasure::new(
+                    "parts per million per year",
+                    1e-6 / YEAR,
+                    UnitKind::Scale,
+                ),
             }),
         });
     }
@@ -92,10 +103,37 @@ fn build(
         Transformation::create_from_code(props, source, target, code, values, empty_domain())?;
     transformation.identified.domains.clear();
     transformation.accuracy = accuracy;
+    if props.name.is_none() {
+        transformation.identified.name = transformation_name(
+            transformation
+                .source_crs()
+                .map(Crs::name)
+                .unwrap_or_default(),
+            transformation
+                .target_crs()
+                .map(Crs::name)
+                .unwrap_or_default(),
+        );
+    }
     Ok(transformation)
 }
 
+/// `buildTransfName`.
+fn transformation_name(source: &str, target: &str) -> String {
+    format!("Transformation from {source} to {target}")
+}
+
 impl Transformation {
+    /// `requiresPerCoordinateInputTime`: the method is a time-dependent Helmert one.
+    #[must_use]
+    pub fn requires_per_coordinate_input_time(&self) -> bool {
+        let code = self.method.code.parse::<i32>().unwrap_or(0);
+        let name = self.method.name.to_ascii_lowercase();
+        name.contains("time dependent")
+            || name.contains("time-dependent")
+            || (self.method.code_space == "EPSG" && (1053..=1058).contains(&code))
+    }
+
     /// Geocentric translations and Molodensky: PROJ's inverse negates the values.
     pub(super) fn has_translation_inverse(&self) -> bool {
         matches!(
@@ -269,7 +307,7 @@ fn time_dependent_values(helmert: [f64; 7], rates: [f64; 7], epoch: f64) -> Vec<
     values.extend(rate_values(rates));
     values.push(ParameterValue::Measure(Measure {
         value: epoch,
-        unit: UnitOfMeasure::new("year", 1.0, UnitKind::Time),
+        unit: UnitOfMeasure::new("year", YEAR, UnitKind::Time),
     }));
     values
 }
