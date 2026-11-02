@@ -25,7 +25,8 @@ use super::factory::DatabaseContext;
 use super::model::{
     Axis, ConcatenatedOperation, CoordinateOperation, CoordinateSystem, Crs, Ellipsoid,
     FactoryError, GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Measure,
-    ParameterValue, ProjectedCRS, Transformation, UnitKind, UnitOfMeasure, VerticalCRS,
+    ParameterValue, ProjBased, ProjBasedKind, ProjectedCRS, Transformation, UnitKind,
+    UnitOfMeasure, VerticalCRS,
 };
 use super::pipeline::{proj_number, PipelineFormatter, ProjLines};
 use super::projstring::{
@@ -183,6 +184,16 @@ impl ConcatenatedOperation {
         &self,
         formatter: &mut PipelineFormatter,
     ) -> Result<(), FactoryError> {
+        if let Some(proj_based) = &self.proj_based {
+            if proj_based.inverted {
+                formatter.start_inversion();
+            }
+            export_proj_based(proj_based, formatter)?;
+            if proj_based.inverted {
+                formatter.stop_inversion();
+            }
+            return Ok(());
+        }
         for step in &self.steps {
             if step.reverse {
                 formatter.start_inversion();
@@ -240,7 +251,7 @@ fn export_forward(
         return longitude_rotation(operation, source, target, formatter);
     }
     if code == METHOD_GEOGRAPHIC2D_OFFSETS || code == METHOD_GEOGRAPHIC3D_OFFSETS {
-        return null_geographic_offset(operation, formatter);
+        return null_geographic_offset(operation, source, target, formatter);
     }
     if code == METHOD_HEIGHT_DEPTH_REVERSAL {
         formatter.add_step("axisswap");
@@ -249,6 +260,9 @@ fn export_forward(
     }
     if code == METHOD_GEOCENTRIC_GRID_IGN {
         return geocentric_grid(operation, source, target, formatter);
+    }
+    if height_to_geog3d_grid_shift(operation, target, formatter)? {
+        return Ok(());
     }
     if grid_shift(operation, source, target, formatter)? {
         return Ok(());
@@ -435,9 +449,12 @@ fn geoid_grid_shift(
     })?;
     let grid = formatter.grid_name(&file);
     let axes = source.coordinate_system().axes();
-    formatter.start_inversion();
-    horizontal_unit_and_axis_swap(axes, formatter)?;
-    formatter.stop_inversion();
+    let with_horizontal = !formatter.omits_horizontal_in_vertical();
+    if with_horizontal {
+        formatter.start_inversion();
+        horizontal_unit_and_axis_swap(axes, formatter)?;
+        formatter.stop_inversion();
+    }
     formatter.start_inversion();
     if vertical
         .coordinate_system()
@@ -452,7 +469,62 @@ fn geoid_grid_shift(
     formatter.add_param("grids", &grid);
     formatter.add_number("multiplier", 1.0);
     formatter.stop_inversion();
-    horizontal_unit_and_axis_swap(axes, formatter)?;
+    if with_horizontal {
+        horizontal_unit_and_axis_swap(axes, formatter)?;
+    }
+    Ok(true)
+}
+
+/// `vgridshift` for `GravityRelatedHeight to Geographic3D`, the method of a vertical CRS bound
+/// to a 3D geographic CRS (`_getHeightToGeographic3DFilename`).
+fn height_to_geog3d_grid_shift(
+    operation: &Transformation,
+    target: Option<&Crs>,
+    formatter: &mut PipelineFormatter,
+) -> Result<bool, FactoryError> {
+    const METHOD: &str = "GravityRelatedHeight to Geographic3D";
+    let name = operation.method().name();
+    let inverse_of = name
+        .to_ascii_lowercase()
+        .strip_prefix("inverse of ")
+        .is_some_and(|rest| rest.eq_ignore_ascii_case(METHOD));
+    if !name.eq_ignore_ascii_case(METHOD) && !inverse_of {
+        return Ok(false);
+    }
+    let file = operation.parameters().iter().find_map(|parameter| {
+        let is_file = parameter.code() == PARAMETER_GEOID_CORRECTION_FILENAME.to_string()
+            || parameter.name() == "Geoid (height correction) model file";
+        match parameter.value() {
+            ParameterValue::Filename(name) if is_file => Some(name.clone()),
+            _ => None,
+        }
+    });
+    let Some(file) = file else {
+        return Ok(false);
+    };
+    let target = target
+        .and_then(extract_geographic)
+        .ok_or_else(|| geographic_required(name))?;
+    let grid = formatter.grid_name(&file);
+    let axes = target.coordinate_system().axes();
+    let with_horizontal = !formatter.omits_horizontal_in_vertical();
+    if with_horizontal {
+        formatter.start_inversion();
+        horizontal_unit_and_axis_swap(axes, formatter)?;
+        formatter.stop_inversion();
+    }
+    if inverse_of {
+        formatter.start_inversion();
+    }
+    formatter.add_step("vgridshift");
+    formatter.add_param("grids", &grid);
+    formatter.add_number("multiplier", 1.0);
+    if inverse_of {
+        formatter.stop_inversion();
+    }
+    if with_horizontal {
+        horizontal_unit_and_axis_swap(axes, formatter)?;
+    }
     Ok(true)
 }
 
@@ -792,6 +864,8 @@ fn invalid_geographic_geocentric() -> FactoryError {
 /// PROJ writes as `noop`. Non-zero offsets are not ported.
 fn null_geographic_offset(
     operation: &Transformation,
+    source: Option<&Crs>,
+    target: Option<&Crs>,
     formatter: &mut PipelineFormatter,
 ) -> Result<(), FactoryError> {
     if [8601, 8602, 8603]
@@ -799,6 +873,16 @@ fn null_geographic_offset(
         .any(|&code| si_value(operation, code) != 0.0)
     {
         return Err(unimplemented(operation));
+    }
+    let two_d_offset = epsg_method_code(operation) == METHOD_GEOGRAPHIC2D_OFFSETS;
+    let source = source.and_then(extract_geographic);
+    let target = target.and_then(extract_geographic);
+    if let (true, Some(source), Some(target)) = (two_d_offset, source, target) {
+        formatter.start_inversion();
+        angular_unit_and_axis_swap(source.coordinate_system().axes(), formatter)?;
+        formatter.stop_inversion();
+        angular_unit_and_axis_swap(target.coordinate_system().axes(), formatter)?;
+        return Ok(());
     }
     formatter.add_step("noop");
     Ok(())
@@ -1208,11 +1292,12 @@ fn angular_unit_and_axis_swap(
     };
     formatter.add_step("unitconvert");
     formatter.add_param("xy_in", "rad");
-    if axes.len() == 3 {
+    let with_z = axes.len() == 3 && !formatter.omits_z_unit_conversion();
+    if with_z {
         formatter.add_param("z_in", "m");
     }
     formatter.add_param("xy_out", &unit_text(first.unit()));
-    if let (3, Some(height)) = (axes.len(), axes.get(2)) {
+    if let (true, Some(height)) = (with_z, axes.get(2)) {
         formatter.add_param("z_out", &unit_text(height.unit()));
     }
     axis_swap(axes, formatter);
@@ -1372,4 +1457,144 @@ fn geocentric_unit_steps(
 fn geocentric_frame(crs: &GeocentricCRS) -> Option<&GeodeticReferenceFrame> {
     crs.datum()
         .or_else(|| crs.ensemble.as_ref().and_then(geodetic_member))
+}
+
+fn export_operation_steps(
+    operation: &CoordinateOperation,
+    formatter: &mut PipelineFormatter,
+) -> Result<(), FactoryError> {
+    match operation {
+        CoordinateOperation::Transformation(transformation) => {
+            transformation.export_steps(formatter)
+        }
+        CoordinateOperation::Concatenated(concatenated) => concatenated.export_steps(formatter),
+        CoordinateOperation::Conversion(conversion) => conversion.export_steps(formatter),
+    }
+}
+
+/// The geographic CRS that the interpolation step runs on, as `addAngularUnitConvertAndAxisSwap`.
+fn interpolation_axes(
+    interpolation: &Crs,
+    formatter: &mut PipelineFormatter,
+) -> Result<(), FactoryError> {
+    match extract_geographic(interpolation) {
+        Some(geographic) => {
+            angular_unit_and_axis_swap(geographic.coordinate_system().axes(), formatter)
+        }
+        None => Ok(()),
+    }
+}
+
+/// `MyPROJStringExportableHorizVertical` and `MyPROJStringExportableHorizVerticalHorizPROJBased`.
+fn export_proj_based(
+    proj_based: &ProjBased,
+    formatter: &mut PipelineFormatter,
+) -> Result<(), FactoryError> {
+    match proj_based.kind {
+        ProjBasedKind::HorizVertical => {
+            export_operation_steps(&proj_based.horizontal, formatter)?;
+            formatter.start_inversion();
+            interpolation_axes(&proj_based.interpolation, formatter)?;
+            formatter.stop_inversion();
+            formatter.push_omit_horizontal_in_vertical();
+            export_operation_steps(&proj_based.vertical, formatter)?;
+            formatter.pop_omit_horizontal_in_vertical();
+            formatter.push_omit_z_unit_conversion();
+            interpolation_axes(&proj_based.interpolation, formatter)?;
+            formatter.pop_omit_z_unit_conversion();
+            Ok(())
+        }
+        ProjBasedKind::HorizVerticalHoriz => {
+            let save_horizontal = saves_horizontal_coordinates(proj_based);
+            if save_horizontal {
+                formatter.add_step("push");
+                formatter.add_flag("v_1");
+                formatter.add_flag("v_2");
+            }
+            formatter.push_omit_z_unit_conversion();
+            export_operation_steps(&proj_based.horizontal, formatter)?;
+            formatter.start_inversion();
+            interpolation_axes(&proj_based.interpolation, formatter)?;
+            formatter.stop_inversion();
+            formatter.pop_omit_z_unit_conversion();
+            formatter.push_omit_horizontal_in_vertical();
+            export_operation_steps(&proj_based.vertical, formatter)?;
+            formatter.pop_omit_horizontal_in_vertical();
+            formatter.push_omit_z_unit_conversion();
+            interpolation_axes(&proj_based.interpolation, formatter)?;
+            if let Some(last) = &proj_based.last {
+                export_operation_steps(last, formatter)?;
+            }
+            formatter.pop_omit_z_unit_conversion();
+            if save_horizontal {
+                formatter.add_step("pop");
+                formatter.add_flag("v_1");
+                formatter.add_flag("v_2");
+            }
+            Ok(())
+        }
+    }
+}
+
+/// The horizontal operation is a Helmert-type transformation that returns to the source datum:
+/// the horizontal coordinates are saved around the vertical step.
+fn saves_horizontal_coordinates(proj_based: &ProjBased) -> bool {
+    let CoordinateOperation::Transformation(transformation) = &proj_based.horizontal else {
+        return false;
+    };
+    let Some(last) = &proj_based.last else {
+        return false;
+    };
+    let (Some(source), Some(target)) = (
+        transformation.source_crs(),
+        super::bound_ops::operation_target(last),
+    ) else {
+        return false;
+    };
+    let (Some(source), Some(target)) = (extract_geographic(source), extract_geographic(target))
+    else {
+        return false;
+    };
+    if !source.is_equivalent_to_with(&target.demote_to_2d(None), Equivalence::Equivalent) {
+        return false;
+    }
+    let code = {
+        let method = transformation.method();
+        let code = if method.code_space() == "EPSG" {
+            method.code().parse().unwrap_or(0)
+        } else {
+            0
+        };
+        if code == 0 {
+            epsg_method_code(&transformation.inverse())
+        } else {
+            code
+        }
+    };
+    let translation_is_null = [8605, 8606, 8607]
+        .iter()
+        .all(|id| si_value(transformation, *id) == 0.0);
+    let geocentric_translation = matches!(code, 1031 | 9603 | 1035);
+    (geocentric_translation && !translation_is_null)
+        || matches!(
+            code,
+            1032 | 1132
+                | 9607
+                | 1133
+                | 1140
+                | 1038
+                | 1149
+                | 1033
+                | 9606
+                | 1037
+                | 1034
+                | 1056
+                | 1057
+                | 1053
+                | 1054
+                | 1055
+                | 1065
+                | 1066
+                | 1067
+        )
 }

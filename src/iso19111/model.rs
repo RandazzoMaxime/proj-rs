@@ -1921,6 +1921,34 @@ pub struct ConcatenatedOperation {
     pub(crate) version: Option<String>,
     /// The name is the steps' names joined by ` + `, as `createComputeMetadata` sets it.
     pub(crate) computed_name: bool,
+    /// The horizontal and vertical operations written as one PROJ pipeline, with the
+    /// horizontal conversion of the vertical step left out.
+    pub(crate) proj_based: Option<Box<ProjBased>>,
+}
+
+/// Which `MyPROJStringExportableHorizVertical*` of `coordinateoperationfactory.cpp` writes a
+/// concatenated operation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ProjBasedKind {
+    /// A horizontal operation, then the vertical one, on the target geographic CRS.
+    HorizVertical,
+    /// The source to an interpolation CRS, the vertical operation, then the interpolation
+    /// CRS to the target.
+    HorizVerticalHoriz,
+}
+
+/// The parts of a [`ProjBasedKind`] pipeline.
+#[derive(Clone, Debug)]
+pub(crate) struct ProjBased {
+    pub(crate) kind: ProjBasedKind,
+    pub(crate) horizontal: CoordinateOperation,
+    pub(crate) vertical: CoordinateOperation,
+    /// The interpolation CRS to the target. Unused by [`ProjBasedKind::HorizVertical`].
+    pub(crate) last: Option<CoordinateOperation>,
+    /// The interpolation CRS, or the target geographic CRS for `HorizVertical`.
+    pub(crate) interpolation: Crs,
+    /// The pipeline is written between `startInversion` and `stopInversion`.
+    pub(crate) inverted: bool,
 }
 
 impl ConcatenatedOperation {

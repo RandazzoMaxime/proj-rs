@@ -480,6 +480,9 @@ pub struct WktParser {
     grammar_errors: Vec<String>,
     towgs84: Vec<f64>,
     grids: String,
+    /// Geographic CRS of the horizontal part of the compound being built.
+    /// A `VERT_DATUM` `PROJ4_GRIDS` extension binds to its 3D promotion.
+    compound_geographic: Option<GeographicCRS>,
 }
 
 impl Default for WktParser {
@@ -502,6 +505,7 @@ impl WktParser {
             grammar_errors: Vec::new(),
             towgs84: Vec::new(),
             grids: String::new(),
+            compound_geographic: None,
         }
     }
 
@@ -559,6 +563,7 @@ impl WktParser {
         self.grammar_errors.clear();
         self.towgs84.clear();
         self.grids.clear();
+        self.compound_geographic = None;
         self.esri = false;
         let dialect = guess_dialect(wkt);
         self.maybe_esri = dialect == WktDialect::Wkt1Esri;
@@ -592,25 +597,28 @@ impl WktParser {
             index = skip_space(wkt, index);
             index = skip_space(wkt, index + 1);
             let (vertical_node, _) = parse_node(wkt, index, 0)?;
-            let vertical = self.build_vertical(&vertical_node)?;
-            if vertical
-                .datum
-                .as_ref()
-                .is_some_and(|datum| datum.wkt1_type == "2002")
-            {
-                if let Crs::Geographic(geographic) = &horizontal {
-                    if geographic.coordinate_system.axes.len() == 2 {
-                        return Ok(WktObject::Crs(Crs::Geographic(promote_ellipsoidal_height(
-                            geographic.clone(),
-                            &vertical,
-                        ))));
+            self.compound_geographic = geographic_component(&horizontal);
+            let vertical = self.vertical_crs(&vertical_node)?;
+            self.compound_geographic = None;
+            if let Crs::Vertical(vertical_crs) = &vertical {
+                if vertical_crs
+                    .datum
+                    .as_ref()
+                    .is_some_and(|datum| datum.wkt1_type == "2002")
+                {
+                    if let Crs::Geographic(geographic) = &horizontal {
+                        if geographic.coordinate_system.axes.len() == 2 {
+                            return Ok(WktObject::Crs(Crs::Geographic(
+                                promote_ellipsoidal_height(geographic.clone(), vertical_crs),
+                            )));
+                        }
                     }
                 }
             }
             let name = format!("{} + {}", horizontal.name(), vertical.name());
             let compound = CompoundCRS {
                 identified: Identified::named(name),
-                components: vec![horizontal, Crs::Vertical(vertical)],
+                components: vec![horizontal, vertical],
             };
             return Ok(WktObject::Crs(Crs::Compound(compound)));
         }
@@ -673,7 +681,7 @@ impl WktParser {
             || ci_eq(name, "VERT_CS")
             || ci_eq(name, "VERTCS")
         {
-            return Ok(WktObject::Crs(Crs::Vertical(self.build_vertical(node)?)));
+            return Ok(WktObject::Crs(self.vertical_crs(node)?));
         }
         if ci_eq(name, "COMPOUNDCRS") || ci_eq(name, "COMPD_CS") {
             return self.build_compound(node);
@@ -2046,6 +2054,43 @@ impl WktParser {
         })
     }
 
+    /// A vertical CRS, or a bound CRS when its datum carries `PROJ4_GRIDS`.
+    fn vertical_crs(&mut self, node: &WktNode) -> Result<Crs, FactoryError> {
+        let vertical = self.build_vertical(node)?;
+        let Some(grids) = proj4_grids_of(node) else {
+            return Ok(Crs::Vertical(vertical));
+        };
+        if legacy_navd88_grids(&grids) {
+            return Ok(Crs::Vertical(vertical));
+        }
+        Ok(Crs::Bound(bind_vertical_grids(
+            vertical,
+            &grids,
+            self.grids_hub(),
+        )))
+    }
+
+    /// Hub of a `PROJ4_GRIDS` vertical datum: the compound's geographic CRS in
+    /// 3D when it is Greenwich and in degrees, otherwise WGS 84 3D.
+    fn grids_hub(&self) -> GeographicCRS {
+        let Some(geographic) = &self.compound_geographic else {
+            return GeographicCRS::epsg_4979();
+        };
+        let greenwich = geographic
+            .datum()
+            .is_some_and(|datum| datum.prime_meridian().longitude().si_value() == 0.0);
+        let degrees = geographic
+            .coordinate_system()
+            .axes()
+            .first()
+            .is_some_and(|axis| (axis.unit().conversion_to_si() - DEGREE_SI).abs() <= 1e-12);
+        if greenwich && degrees {
+            geographic.promote_to_3d_with_db(self.db.as_ref())
+        } else {
+            GeographicCRS::epsg_4979()
+        }
+    }
+
     fn build_projected(&mut self, node: &WktNode) -> Result<WktObject, FactoryError> {
         let base_node = node
             .child(&["BASEGEOGCRS", "BASEGEODCRS", "GEOGCS"])
@@ -2436,14 +2481,27 @@ impl WktParser {
 
     fn build_compound(&mut self, node: &WktNode) -> Result<WktObject, FactoryError> {
         let props = self.build_properties(node)?;
+        let saved_geographic = self.compound_geographic.take();
         let mut components = Vec::new();
         for child in &node.children {
             if is_crs_keyword(&child.value) {
                 let object = self.build_object(child)?;
                 let Some(crs) = object.crs().cloned() else {
+                    self.compound_geographic = saved_geographic;
                     return Err(invalid("compound component is not a CRS"));
                 };
+                if components.is_empty() {
+                    self.compound_geographic = geographic_component(&crs);
+                }
                 components.push(crs);
+            }
+        }
+        self.compound_geographic = saved_geographic;
+        if ci_eq(&node.value, "COMPD_CS") {
+            if let Ok(Crs::Geographic(geographic)) =
+                CompoundCRS::create_lax(props.name.clone(), components.clone())
+            {
+                return Ok(WktObject::Crs(Crs::Geographic(geographic)));
             }
         }
         if components.len() < 2 {
@@ -2629,6 +2687,7 @@ impl WktParser {
             accuracy: None,
             version: props.version,
             computed_name: false,
+            proj_based: None,
         })
     }
 }
@@ -2649,6 +2708,99 @@ enum EnsembleBody {
 enum AxisFrame {
     Geocentric,
     Other,
+}
+
+/// `EXTENSION["PROJ4_GRIDS", ...]` on a vertical datum.
+fn proj4_grids_of(node: &WktNode) -> Option<String> {
+    let datum = node.child(&["VDATUM", "VERT_DATUM", "VERTICALDATUM", "VRF"])?;
+    let extension = datum.child(&["EXTENSION"])?;
+    if extension.children.len() != 2 || !ci_eq(&strip_quotes(&extension.children[0]), "PROJ4_GRIDS")
+    {
+        return None;
+    }
+    Some(strip_quotes(&extension.children[1]))
+}
+
+/// Old GDAL expansions of EPSG:5703. PROJ keeps those as a plain vertical CRS.
+fn legacy_navd88_grids(grids: &str) -> bool {
+    grids == "g2003conus.gtx,g2003alaska.gtx,g2003h01.gtx,g2003p01.gtx"
+        || grids
+            == "g2012a_conus.gtx,g2012a_alaska.gtx,g2012a_guam.gtx,g2012a_hawaii.gtx,\
+g2012a_puertorico.gtx,g2012a_samoa.gtx"
+}
+
+/// `BoundCRS` of a vertical CRS through `GravityRelatedHeight to Geographic3D`.
+fn bind_vertical_grids(vertical: VerticalCRS, grids: &str, hub: GeographicCRS) -> BoundCRS {
+    let source = vertical_transformation_source(&vertical);
+    let hub_crs = Crs::Geographic(hub);
+    let name = format!("{} to {} ellipsoidal height", source.name(), hub_crs.name());
+    let transformation = Transformation {
+        identified: Identified::named(name),
+        method: OperationMethod::create("GravityRelatedHeight to Geographic3D", Vec::new()),
+        parameters: vec![Parameter {
+            name: "Geoid (height correction) model file".to_owned(),
+            code_space: "EPSG".to_owned(),
+            code: "8666".to_owned(),
+            value: ParameterValue::filename(grids),
+        }],
+        source: Some(Box::new(source)),
+        target: Some(Box::new(hub_crs.clone())),
+        interpolation: None,
+        accuracy: None,
+        accuracy_text: None,
+        version: None,
+        point_motion: false,
+        inverted: false,
+    };
+    BoundCRS::create(
+        Crs::Vertical(vertical),
+        hub_crs,
+        CoordinateOperation::Transformation(transformation),
+    )
+}
+
+/// Source CRS of the binding transformation. A metre-up axis is used as it is.
+/// Any other axis is rewritten to a metre-up height, with `(ftUS)` and `depth` stripped.
+fn vertical_transformation_source(vertical: &VerticalCRS) -> Crs {
+    let axis = vertical.coordinate_system().axis();
+    let metre_up = axis.direction() == "up" && (axis.unit().conversion_to_si() - 1.0).abs() < 1e-12;
+    if metre_up {
+        return Crs::Vertical(vertical.clone());
+    }
+    let mut name = vertical.name().to_owned();
+    if let Some(stripped) = name.strip_suffix(" (ftUS)") {
+        name = stripped.to_owned();
+    }
+    if let Some(stripped) = name.strip_suffix(" depth") {
+        name = stripped.to_owned();
+    }
+    if !name.ends_with(" height") {
+        name.push_str(" height");
+    }
+    Crs::Vertical(VerticalCRS {
+        identified: Identified::named(name),
+        datum: vertical.datum().cloned(),
+        ensemble: vertical.datum_ensemble().cloned(),
+        coordinate_system: VerticalCS {
+            identified: Identified::default(),
+            axis: Axis::new("Gravity-related height", "H", "up", UnitOfMeasure::metre()),
+        },
+        geoid_models: Vec::new(),
+    })
+}
+
+/// Geographic CRS of a compound's horizontal component, including a bound or projected one.
+fn geographic_component(crs: &Crs) -> Option<GeographicCRS> {
+    match crs {
+        Crs::Geographic(geographic) => Some(geographic.clone()),
+        Crs::Geodetic(GeodeticCRS::Geographic(geographic)) => Some(geographic.clone()),
+        Crs::Projected(projected) => match projected.base_crs() {
+            GeodeticCRS::Geographic(geographic) => Some(geographic.clone()),
+            _ => None,
+        },
+        Crs::Bound(bound) => geographic_component(bound.source_crs()),
+        _ => None,
+    }
 }
 
 fn promote_ellipsoidal_height(

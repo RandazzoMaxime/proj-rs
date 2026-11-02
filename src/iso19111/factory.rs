@@ -3586,6 +3586,7 @@ impl AuthorityFactory {
             accuracy,
             version: optional_text(&row[7].text()),
             computed_name: false,
+            proj_based: None,
         })
     }
 
@@ -4053,6 +4054,9 @@ impl CoordinateOperationFactory {
         target: &Crs,
         context: &CoordinateOperationContext,
     ) -> Result<Vec<CoordinateOperation>, FactoryError> {
+        if let Some(bound) = super::bound_ops::bound_candidates(self, source, target, context)? {
+            return Ok(bound);
+        }
         let mut found = Vec::new();
         let mut direct_empty = true;
         if let Crs::Projected(projected) = target {
@@ -4130,6 +4134,7 @@ impl CoordinateOperationFactory {
                             accuracy: None,
                             version: None,
                             computed_name: true,
+                            proj_based: None,
                         }));
                     }
                 }
@@ -4694,6 +4699,7 @@ pub(super) fn pivot_concatenation(steps: Vec<CoordinateOperation>) -> Concatenat
         accuracy,
         version: None,
         computed_name: true,
+        proj_based: None,
     }
 }
 

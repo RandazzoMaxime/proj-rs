@@ -11,6 +11,7 @@
 //! the same, the extent check of a concatenated candidate, and the geoid
 //! trigger and three-pass selection of `createOperationsCompoundToCompound`.
 
+use super::bound::extract_geographic;
 use super::buildop::OpProps;
 use super::equiv::{geodetic_frame, same_geodetic_datum, Equivalence};
 use super::factory::{
@@ -18,7 +19,7 @@ use super::factory::{
 };
 use super::model::{
     Axis, ConcatenatedOperation, ConcatenatedStep, CoordinateOperation, Crs, GeographicCRS,
-    Identified, ParameterValue, Transformation, VerticalCRS,
+    Identified, ParameterValue, ProjBased, ProjBasedKind, Transformation, VerticalCRS,
 };
 use super::FactoryError;
 
@@ -45,10 +46,18 @@ pub(super) fn compound_to_geog3d(
     if geog_dst.coordinate_system().axes().len() != 3 {
         return horizontal_only(factory, source, target, horizontal, context);
     }
-    let (Some(geog_src), Crs::Vertical(vertical_crs)) = (geographic_of(horizontal), vertical)
-    else {
+    let Some(geog_src) = extract_geographic(horizontal) else {
         return Ok(Vec::new());
     };
+    let vertical_crs = match vertical {
+        Crs::Vertical(vertical_crs) => Some(vertical_crs),
+        Crs::Bound(bound) if matches!(bound.source_crs(), Crs::Vertical(_)) => None,
+        _ => return Ok(Vec::new()),
+    };
+
+    if matches!(horizontal, Crs::Bound(_)) || matches!(vertical, Crs::Bound(_)) {
+        return bound_compound_to_geog3d(factory, source, target, context);
+    }
 
     let mut horizontal_ops = factory.create_operations(horizontal, target, context)?;
     if horizontal_ops.is_empty() {
@@ -61,14 +70,16 @@ pub(super) fn compound_to_geog3d(
     let mut vertical_ops = factory.create_operations(vertical, target, context)?;
     let horizontal_datum = geographic_datum_name(geog_src);
     let target_datum = geographic_datum_name(geog_dst);
-    vertical_ops.extend(vertical_ballpark(
-        vertical,
-        vertical_crs,
-        horizontal_datum.as_deref(),
-        target_datum.as_deref(),
-        geog_dst,
-        target,
-    ));
+    if let Some(vertical_crs) = vertical_crs {
+        vertical_ops.extend(vertical_ballpark(
+            vertical,
+            vertical_crs,
+            horizontal_datum.as_deref(),
+            target_datum.as_deref(),
+            geog_dst,
+            target,
+        ));
+    }
     if vertical_ops.is_empty() {
         return Ok(horizontal_ops);
     }
@@ -207,6 +218,7 @@ fn combine(
         accuracy: None,
         version: None,
         computed_name: true,
+        proj_based: None,
     })
 }
 
@@ -281,35 +293,44 @@ fn vertical_ballpark(
     .map(CoordinateOperation::Transformation)
 }
 
-/// `createOperationsVertToVert`: the ballpark change of vertical unit between two vertical
-/// CRS of different datums. Two CRS of the same datum, where PROJ builds a conversion, are
-/// not ported.
+/// `createOperationsVertToVert`: a ballpark change of vertical unit between two vertical CRS
+/// of different datums (method 1069, scale negated on a height/depth reversal), the same
+/// change between two of the same datum, or a height/depth reversal (method 1068) when the
+/// datum is the same and the unit is unchanged.
 pub(super) fn vertical_to_vertical(source: &Crs, target: &Crs) -> Option<CoordinateOperation> {
     let (Crs::Vertical(src), Crs::Vertical(dst)) = (source, target) else {
         return None;
     };
-    if vertical_datum_name(src) == vertical_datum_name(dst) {
-        return None;
-    }
     let scale = ballpark_scale(
         src.coordinate_system().axis(),
         Some(dst.coordinate_system().axis()),
     )?;
-    let name = format!(
-        "Transformation from {} to {} (ballpark vertical transformation)",
-        source.name(),
-        target.name()
-    );
+    let same_datum = vertical_datum_name(src) == vertical_datum_name(dst);
+    let reversal = same_datum && scale == -1.0;
+    let name = if same_datum {
+        format!("Conversion from {} to {}", source.name(), target.name())
+    } else {
+        format!(
+            "Transformation from {} to {} (ballpark vertical transformation)",
+            source.name(),
+            target.name()
+        )
+    };
     let domain = match (crs_extent(source), crs_extent(target)) {
         (Some(left), Some(right)) if left == right => left,
         _ => world_extent(),
+    };
+    let (code, values) = if reversal {
+        (1068, Vec::new())
+    } else {
+        (1069, vec![ParameterValue::scale(scale)])
     };
     Transformation::create_from_code(
         &OpProps::new().name(name),
         source.clone(),
         target.clone(),
-        1069,
-        vec![ParameterValue::scale(scale)],
+        code,
+        values,
         domain,
     )
     .ok()
@@ -439,4 +460,289 @@ fn vertical_datum_name(vertical: &VerticalCRS) -> Option<String> {
                 .datum_ensemble()
                 .map(|ensemble| ensemble.name().to_owned())
         })
+}
+
+/// `createOperationsCompoundToGeog` for a compound CRS with a bound component: the horizontal
+/// and vertical operations are written as one pipeline, `createHorizVerticalHorizPROJBased` when
+/// the vertical operation has an interpolation CRS and `createHorizVerticalPROJBased` when it has
+/// none. Only the single source-to-interpolation and interpolation-to-target pair is considered;
+/// PROJ's consistency filter between several pairs is not ported.
+fn bound_compound_to_geog3d(
+    factory: &CoordinateOperationFactory,
+    source: &Crs,
+    target: &Crs,
+    context: &CoordinateOperationContext,
+) -> Result<Vec<CoordinateOperation>, FactoryError> {
+    let Crs::Compound(compound) = source else {
+        return Ok(Vec::new());
+    };
+    let [horizontal, vertical] = compound.components() else {
+        return Ok(Vec::new());
+    };
+    let Some(geog_dst) = geographic_of(target) else {
+        return Ok(Vec::new());
+    };
+    let mut horizontal_ops = factory.create_candidates(horizontal, target, context)?;
+    if horizontal_ops.is_empty() {
+        horizontal_ops.extend(null_offset(horizontal, target));
+    }
+    let vertical_ops = factory.create_candidates(vertical, target, context)?;
+    if horizontal_ops.is_empty() || vertical_ops.is_empty() {
+        return Ok(horizontal_ops);
+    }
+
+    let mut found = Vec::new();
+    let mut has_interpolated = false;
+    for vertical_op in &vertical_ops {
+        let Some(interpolation) = interpolation_geographic(vertical_op) else {
+            continue;
+        };
+        let interpolation_crs = Crs::Geographic(interpolation.clone());
+        let mut to_interpolation =
+            factory.create_candidates(horizontal, &interpolation_crs, context)?;
+        if to_interpolation.is_empty() {
+            to_interpolation.extend(null_offset(horizontal, &interpolation_crs));
+        }
+        let height_axis = geog_dst.coordinate_system().axes().get(2).cloned();
+        let interpolation_3d = Crs::Geographic(promote_with_axis(&interpolation, height_axis));
+        let from_interpolation = if bound_cancels(horizontal, target, &interpolation) {
+            to_interpolation
+                .iter()
+                .map(CoordinateOperation::inverse)
+                .collect()
+        } else {
+            let mut candidates = factory.create_candidates(&interpolation_3d, target, context)?;
+            if candidates.is_empty() {
+                candidates.extend(null_offset(&interpolation_3d, target));
+            }
+            candidates
+        };
+        for first in &to_interpolation {
+            for last in &from_interpolation {
+                found.push(proj_based_horiz_vertical_horiz(
+                    source,
+                    target,
+                    first,
+                    vertical_op,
+                    last,
+                    &interpolation,
+                ));
+                has_interpolated = true;
+            }
+        }
+    }
+    for vertical_op in &vertical_ops {
+        if interpolation_geographic(vertical_op).is_none()
+            && (!has_interpolated || vertical_op.has_ballpark_transformation())
+        {
+            for horizontal_op in &horizontal_ops {
+                found.push(proj_based_horiz_vertical(
+                    source,
+                    target,
+                    horizontal_op,
+                    vertical_op,
+                    geog_dst,
+                ));
+            }
+        }
+    }
+    Ok(found)
+}
+
+/// The base of a bound horizontal CRS is the target and its hub the interpolation CRS: the
+/// horizontal operation to the interpolation CRS is then reused, inverted, after the vertical step.
+fn bound_cancels(horizontal: &Crs, target: &Crs, interpolation: &GeographicCRS) -> bool {
+    let Crs::Bound(bound) = horizontal else {
+        return false;
+    };
+    let (Some(base), Some(target)) = (geographic_of(bound.source_crs()), geographic_of(target))
+    else {
+        return false;
+    };
+    let Some(hub) = geographic_of(bound.target_crs()) else {
+        return false;
+    };
+    base.is_equivalent_to_with(&target.demote_to_2d(None), Equivalence::Equivalent)
+        && hub
+            .demote_to_2d(None)
+            .is_equivalent_to_with(&interpolation.demote_to_2d(None), Equivalence::Equivalent)
+}
+
+/// `getInterpolationGeogCRS`: the 2D geographic CRS a vertical operation interpolates in.
+fn interpolation_geographic(operation: &CoordinateOperation) -> Option<GeographicCRS> {
+    let transformation = match operation {
+        CoordinateOperation::Transformation(transformation) => Some(transformation),
+        CoordinateOperation::Concatenated(concatenated) => {
+            let mut transformations = concatenated.steps().iter().filter_map(|step| {
+                match step.operation() {
+                    // A same-datum change of unit is a conversion in PROJ.
+                    CoordinateOperation::Transformation(transformation)
+                        if !is_same_datum_unit_change(transformation) =>
+                    {
+                        Some(transformation)
+                    }
+                    _ => None,
+                }
+            });
+            let first = transformations.next();
+            if transformations.next().is_some() {
+                None
+            } else {
+                first
+            }
+        }
+        CoordinateOperation::Conversion(_) => None,
+    }?;
+    if operation.has_ballpark_transformation()
+        || transformation
+            .name()
+            .to_ascii_lowercase()
+            .contains("ballpark")
+    {
+        return None;
+    }
+    let interpolation = match transformation.interpolation_crs() {
+        Some(crs) => geographic_of(crs)?.clone(),
+        None => geographic_of(transformation.target_crs()?)?.clone(),
+    };
+    Some(interpolation.demote_to_2d(None))
+}
+
+fn is_same_datum_unit_change(transformation: &Transformation) -> bool {
+    transformation.method().code() == "1069" && transformation.name().starts_with("Conversion from")
+}
+
+/// `demoteTo2D` then `promoteTo3D` with the given height axis, metres when there is none.
+fn promote_with_axis(geographic: &GeographicCRS, height: Option<Axis>) -> GeographicCRS {
+    let mut promoted = geographic.demote_to_2d(None).promote_to_3d();
+    if let Some(height) = height {
+        if let Some(axis) = promoted.coordinate_system.axes.get_mut(2) {
+            *axis = height;
+        }
+    }
+    promoted
+}
+
+fn is_null_offset(operation: &CoordinateOperation) -> bool {
+    operation.name().starts_with(NULL_GEOGRAPHIC_OFFSET) && !operation.name().contains(" + ")
+}
+
+fn accuracy_sum(operations: &[&CoordinateOperation]) -> Option<f64> {
+    operations
+        .iter()
+        .map(|operation| match operation {
+            CoordinateOperation::Conversion(_) => Some(0.0),
+            other => other.accuracy(),
+        })
+        .sum::<Option<f64>>()
+}
+
+fn proj_based_operation(
+    name: String,
+    source: &Crs,
+    target: &Crs,
+    steps: Vec<CoordinateOperation>,
+    accuracy: Option<f64>,
+    proj_based: ProjBased,
+) -> CoordinateOperation {
+    CoordinateOperation::Concatenated(ConcatenatedOperation {
+        identified: Identified::named(name),
+        steps: steps
+            .into_iter()
+            .map(|operation| ConcatenatedStep {
+                operation,
+                reverse: false,
+            })
+            .collect(),
+        source: Some(Box::new(source.clone())),
+        target: Some(Box::new(target.clone())),
+        accuracy,
+        version: None,
+        computed_name: false,
+        proj_based: Some(Box::new(proj_based)),
+    })
+}
+
+/// `createHorizVerticalHorizPROJBased`.
+fn proj_based_horiz_vertical_horiz(
+    source: &Crs,
+    target: &Crs,
+    first: &CoordinateOperation,
+    vertical: &CoordinateOperation,
+    last: &CoordinateOperation,
+    interpolation: &GeographicCRS,
+) -> CoordinateOperation {
+    let mut steps = Vec::new();
+    if !is_null_offset(first) {
+        steps.push(first.clone());
+    }
+    steps.push(vertical.clone());
+    if !is_null_offset(last) {
+        steps.push(last.clone());
+    }
+    let cancels = steps.len() == 3 && last.inverse().name() == first.name();
+    let name = if cancels {
+        let helper = if first.name().starts_with("Inverse of") {
+            last.name()
+        } else {
+            first.name()
+        };
+        format!("{} using {helper}", vertical.name())
+    } else {
+        steps
+            .iter()
+            .map(CoordinateOperation::name)
+            .collect::<Vec<_>>()
+            .join(" + ")
+    };
+    let accuracy = accuracy_sum(&steps.iter().collect::<Vec<_>>());
+    proj_based_operation(
+        name,
+        source,
+        target,
+        steps,
+        accuracy,
+        ProjBased {
+            kind: ProjBasedKind::HorizVerticalHoriz,
+            horizontal: first.clone(),
+            vertical: vertical.clone(),
+            last: Some(last.clone()),
+            interpolation: Crs::Geographic(interpolation.clone()),
+            inverted: false,
+        },
+    )
+}
+
+/// `createHorizVerticalPROJBased`.
+fn proj_based_horiz_vertical(
+    source: &Crs,
+    target: &Crs,
+    horizontal: &CoordinateOperation,
+    vertical: &CoordinateOperation,
+    geog_dst: &GeographicCRS,
+) -> CoordinateOperation {
+    let (name, steps) = if is_null_offset(horizontal) {
+        (vertical.name().to_owned(), vec![vertical.clone()])
+    } else {
+        (
+            format!("{} + {}", horizontal.name(), vertical.name()),
+            vec![horizontal.clone(), vertical.clone()],
+        )
+    };
+    let accuracy = accuracy_sum(&steps.iter().collect::<Vec<_>>());
+    proj_based_operation(
+        name,
+        source,
+        target,
+        steps,
+        accuracy,
+        ProjBased {
+            kind: ProjBasedKind::HorizVertical,
+            horizontal: horizontal.clone(),
+            vertical: vertical.clone(),
+            last: None,
+            interpolation: Crs::Geographic(geog_dst.clone()),
+            inverted: false,
+        },
+    )
 }

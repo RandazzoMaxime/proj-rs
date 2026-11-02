@@ -6,6 +6,7 @@
 mod bound;
 mod bound_export;
 mod bound_import;
+mod bound_ops;
 mod buildop;
 mod compound;
 mod conversion_export;
