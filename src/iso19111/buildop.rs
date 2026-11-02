@@ -246,7 +246,8 @@ impl Transformation {
         })
     }
 
-    /// Inverse transformation: swapped CRS and an `Inverse of` name.
+    /// Inverse transformation: swapped CRS, negated translations for the methods
+    /// PROJ inverts that way, and the name from `createPropertiesForInverse`.
     #[must_use]
     pub fn inverse(&self) -> Self {
         let mut inverse = self.clone();
@@ -256,16 +257,31 @@ impl Transformation {
         } else {
             inverse.inverted = !self.inverted;
         }
+        inverse.identified.name = super::geodetic_ops::inverse_operation_name(
+            self.name(),
+            self.source_crs(),
+            self.target_crs(),
+            super::geodetic_ops::NamedOperationKind::Transformation,
+        );
         std::mem::swap(&mut inverse.source, &mut inverse.target);
         for identifier in &mut inverse.identified.identifiers {
             identifier.code_space = inverse_code_space(&identifier.code_space);
         }
-        inverse.identified.name = if self.inverted {
-            uninverse_name(self.name())
-        } else {
-            inverse_name(self.name())
-        };
         inverse
+    }
+
+    /// Parameters that are missing or not part of the method.
+    ///
+    /// The messages are the ones PROJ `SingleOperation::validateParameters` emits.
+    #[must_use]
+    pub fn validate_parameters(&self) -> Vec<String> {
+        Conversion::create_with_method(
+            self.method.name(),
+            self.method.code_space(),
+            self.method.code(),
+            self.parameters.clone(),
+        )
+        .validate_parameters()
     }
 
     /// `isEquivalentTo` with the strict criterion.
@@ -308,16 +324,6 @@ fn inverse_code_space(code_space: &str) -> String {
     }
 }
 
-/// The name of the inverse of an operation that is not inverted yet.
-fn inverse_name(name: &str) -> String {
-    format!("Inverse of {name}")
-}
-
-/// The name of the inverse of an inverted operation: the `Inverse of ` prefix is removed.
-fn uninverse_name(name: &str) -> String {
-    name.strip_prefix("Inverse of ").unwrap_or(name).to_owned()
-}
-
 /// `createPropertiesForInverse` for a stored concatenated operation: the `Inverse of`
 /// prefix is removed, or added with the name quoted when it joins steps with ` + `.
 fn concatenated_inverse_name(name: &str) -> String {
@@ -343,15 +349,16 @@ impl Conversion {
     pub fn inverse(&self) -> Self {
         let mut inverse = self.clone();
         inverse.inverted = !self.inverted;
+        inverse.identified.name = super::geodetic_ops::inverse_operation_name(
+            self.name(),
+            self.source_crs(),
+            self.target_crs(),
+            super::geodetic_ops::NamedOperationKind::Conversion,
+        );
         std::mem::swap(&mut inverse.source, &mut inverse.target);
         for identifier in &mut inverse.identified.identifiers {
             identifier.code_space = inverse_code_space(&identifier.code_space);
         }
-        inverse.identified.name = if self.inverted {
-            uninverse_name(self.name())
-        } else {
-            inverse_name(self.name())
-        };
         inverse
     }
 }
@@ -392,7 +399,7 @@ impl ConcatenatedOperation {
 impl CoordinateOperation {
     /// The operation from the target to the source.
     #[must_use]
-    pub(crate) fn inverse(&self) -> Self {
+    pub fn inverse(&self) -> Self {
         match self {
             Self::Conversion(operation) => Self::Conversion(operation.inverse()),
             Self::Transformation(operation) => Self::Transformation(operation.inverse()),

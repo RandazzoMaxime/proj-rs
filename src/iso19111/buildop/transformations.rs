@@ -1,10 +1,11 @@
 //! Transformation constructors of PROJ `Transformation::create*`: the Helmert
 //! family (geocentric translations, position vector, coordinate frame rotation,
-//! and their time-dependent forms) and the Molodensky pair.
+//! and their time-dependent forms), the Molodensky pair, longitude rotation,
+//! the geographic and vertical offsets, NTv2, and VERTCON.
 //!
 //! The method, parameter order and EPSG codes come from [`super::super::parammap`].
 //! Values are in the units of the EPSG parameters, as PROJ takes them: metres,
-//! arc-seconds, and parts per million for the scale difference.
+//! degrees for the offset angles, arc-seconds and parts per million for Helmert.
 
 use std::f64::consts::PI;
 
@@ -96,11 +97,13 @@ fn build(
 }
 
 impl Transformation {
-    /// Geocentric translations and Molodensky: PROJ's inverse negates the values.
+    /// Methods whose inverse is the same method with every value negated:
+    /// geocentric translations, Molodensky, longitude rotation, the geographic
+    /// offsets, the vertical offset, and Cartesian grid offsets.
     pub(super) fn has_translation_inverse(&self) -> bool {
         matches!(
             self.method.code.parse::<i32>(),
-            Ok(1031 | 9603 | 9604 | 9605)
+            Ok(1031 | 9603 | 9604 | 9605 | 9601 | 9619 | 9660 | 9618 | 9616 | 9656)
         )
     }
 
@@ -255,6 +258,175 @@ impl Transformation {
         accuracy: Option<f64>,
     ) -> Result<Self, FactoryError> {
         molodensky(props, source, target, 9605, shifts, accuracy)
+    }
+
+    /// Longitude rotation (EPSG:9601). `offset` is the longitude offset in degrees.
+    ///
+    /// # Errors
+    ///
+    /// The method map is missing.
+    pub fn create_longitude_rotation(
+        props: &OpProps,
+        source: Crs,
+        target: Crs,
+        offset: f64,
+    ) -> Result<Self, FactoryError> {
+        build(
+            props,
+            source,
+            target,
+            9601,
+            vec![ParameterValue::angle(offset)],
+            None,
+        )
+    }
+
+    /// Geographic 2D offsets (EPSG:9619). Offsets are angles in degrees.
+    ///
+    /// # Errors
+    ///
+    /// The method map is missing.
+    pub fn create_geographic_2d_offsets(
+        props: &OpProps,
+        source: Crs,
+        target: Crs,
+        latitude: f64,
+        longitude: f64,
+        accuracy: Option<f64>,
+    ) -> Result<Self, FactoryError> {
+        build(
+            props,
+            source,
+            target,
+            9619,
+            vec![
+                ParameterValue::angle(latitude),
+                ParameterValue::angle(longitude),
+            ],
+            accuracy,
+        )
+    }
+
+    /// Geographic 3D offsets (EPSG:9660). Angles are degrees, `height` is metres.
+    ///
+    /// # Errors
+    ///
+    /// The method map is missing.
+    pub fn create_geographic_3d_offsets(
+        props: &OpProps,
+        source: Crs,
+        target: Crs,
+        latitude: f64,
+        longitude: f64,
+        height: f64,
+        accuracy: Option<f64>,
+    ) -> Result<Self, FactoryError> {
+        build(
+            props,
+            source,
+            target,
+            9660,
+            vec![
+                ParameterValue::angle(latitude),
+                ParameterValue::angle(longitude),
+                ParameterValue::length(height),
+            ],
+            accuracy,
+        )
+    }
+
+    /// Geographic 2D with height offsets (EPSG:9618). Angles are degrees, `height` is metres.
+    ///
+    /// # Errors
+    ///
+    /// The method map is missing.
+    pub fn create_geographic_2d_with_height_offsets(
+        props: &OpProps,
+        source: Crs,
+        target: Crs,
+        latitude: f64,
+        longitude: f64,
+        height: f64,
+        accuracy: Option<f64>,
+    ) -> Result<Self, FactoryError> {
+        build(
+            props,
+            source,
+            target,
+            9618,
+            vec![
+                ParameterValue::angle(latitude),
+                ParameterValue::angle(longitude),
+                ParameterValue::length(height),
+            ],
+            accuracy,
+        )
+    }
+
+    /// Vertical offset (EPSG:9616). `offset` is metres.
+    ///
+    /// # Errors
+    ///
+    /// The method map is missing.
+    pub fn create_vertical_offset(
+        props: &OpProps,
+        source: Crs,
+        target: Crs,
+        offset: f64,
+        accuracy: Option<f64>,
+    ) -> Result<Self, FactoryError> {
+        build(
+            props,
+            source,
+            target,
+            9616,
+            vec![ParameterValue::length(offset)],
+            accuracy,
+        )
+    }
+
+    /// NTv2 (EPSG:9615).
+    ///
+    /// # Errors
+    ///
+    /// The method map is missing.
+    pub fn create_ntv2(
+        props: &OpProps,
+        source: Crs,
+        target: Crs,
+        filename: &str,
+        accuracy: Option<f64>,
+    ) -> Result<Self, FactoryError> {
+        build(
+            props,
+            source,
+            target,
+            9615,
+            vec![ParameterValue::filename(filename)],
+            accuracy,
+        )
+    }
+
+    /// VERTCON (EPSG:9658).
+    ///
+    /// # Errors
+    ///
+    /// The method map is missing.
+    pub fn create_vertcon(
+        props: &OpProps,
+        source: Crs,
+        target: Crs,
+        filename: &str,
+        accuracy: Option<f64>,
+    ) -> Result<Self, FactoryError> {
+        build(
+            props,
+            source,
+            target,
+            9658,
+            vec![ParameterValue::filename(filename)],
+            accuracy,
+        )
     }
 }
 

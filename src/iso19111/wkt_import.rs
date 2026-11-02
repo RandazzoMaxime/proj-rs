@@ -22,6 +22,43 @@ const DEGREE_SI: f64 = std::f64::consts::PI / 180.0;
 const US_FOOT: f64 = 12.0 / 39.37;
 const REL_UNIT: f64 = 1e-10;
 
+/// A WKT parameter with no identifier takes the EPSG code of the method's
+/// parameter of the same name, as PROJ resolves it when the method is known.
+fn assign_parameter_codes(method_code: &str, parameters: &mut [Parameter]) {
+    let Ok(code) = method_code.parse::<i32>() else {
+        return;
+    };
+    let Some(method) = super::parammap::method_by_code(code) else {
+        return;
+    };
+    for parameter in parameters {
+        if !parameter.code.is_empty() {
+            continue;
+        }
+        let Some(known) = method
+            .params
+            .iter()
+            .find(|known| same_parameter_name(known.wkt2_name, &parameter.name))
+        else {
+            continue;
+        };
+        parameter.code = known.epsg_code.to_string();
+        if parameter.code_space.is_empty() {
+            parameter.code_space = "EPSG".to_owned();
+        }
+    }
+}
+
+fn same_parameter_name(left: &str, right: &str) -> bool {
+    let fold = |name: &str| {
+        name.chars()
+            .filter(|ch| ch.is_ascii_alphanumeric())
+            .flat_map(|ch| ch.to_lowercase())
+            .collect::<String>()
+    };
+    fold(left) == fold(right)
+}
+
 fn invalid(message: impl Into<String>) -> FactoryError {
     FactoryError::Invalid(message.into())
 }
@@ -2533,8 +2570,14 @@ impl WktParser {
             return Err(invalid("missing METHOD"));
         };
         let method_props = self.build_properties(method)?;
-        let parameters =
+        let mut parameters =
             self.parameters_of(node, &UnitOfMeasure::metre(), &UnitOfMeasure::degree())?;
+        let method_code = method_props
+            .identifiers
+            .first()
+            .map(|id| id.code.clone())
+            .unwrap_or_default();
+        assign_parameter_codes(&method_code, &mut parameters);
         let source = if node.child(&["SOURCECRS"]).is_some() {
             Some(Box::new(self.wrapped_crs(node, "SOURCECRS")?))
         } else {

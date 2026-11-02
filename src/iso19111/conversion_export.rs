@@ -12,9 +12,14 @@
 //! conversions read from the database (and the inverse of a bare one) keep their
 //! refusal.
 
-use super::model::{Conversion, Crs, FactoryError};
+use super::model::{Conversion, Crs, FactoryError, ParameterValue};
 use super::pipeline::{PipelineFormatter, ProjLines};
 use super::projstring::projection_steps;
+use super::transform_export::{axis_order_reversal, change_vertical_unit_by_factor};
+
+const AXIS_ORDER_REVERSAL_2D: i32 = 9843;
+const AXIS_ORDER_REVERSAL_3D: i32 = 9844;
+const CHANGE_VERTICAL_UNIT: i32 = 1069;
 
 impl Conversion {
     /// `_exportToPROJString` of a conversion with its CRS pair, as the steps of a
@@ -36,11 +41,46 @@ impl Conversion {
         };
         if self.inverted {
             formatter.start_inversion();
-            export_projection(target, source, formatter)?;
+            self.export_forward(target, source, formatter)?;
             formatter.stop_inversion();
             Ok(())
         } else {
-            export_projection(source, target, formatter)
+            self.export_forward(source, target, formatter)
+        }
+    }
+
+    /// The conversion from `source` to `target`: an axis order change or a change of vertical
+    /// unit between two geographic CRS, or else a projection.
+    fn export_forward(
+        &self,
+        source: &Crs,
+        target: &Crs,
+        formatter: &mut PipelineFormatter,
+    ) -> Result<(), FactoryError> {
+        let method = self.method();
+        let code = if method.code_space() == "EPSG" {
+            method.code().parse().unwrap_or(0)
+        } else {
+            0
+        };
+        match code {
+            AXIS_ORDER_REVERSAL_2D | AXIS_ORDER_REVERSAL_3D => {
+                axis_order_reversal(Some(source), Some(target), formatter)
+            }
+            CHANGE_VERTICAL_UNIT => {
+                let factor = self
+                    .parameters()
+                    .iter()
+                    .find(|parameter| parameter.code() == "1051")
+                    .and_then(|parameter| match parameter.value() {
+                        ParameterValue::Measure(measure) => Some(measure.si_value()),
+                        _ => None,
+                    })
+                    .unwrap_or(0.0);
+                change_vertical_unit_by_factor(factor, formatter);
+                Ok(())
+            }
+            _ => export_projection(source, target, formatter),
         }
     }
 

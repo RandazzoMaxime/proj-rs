@@ -13,7 +13,7 @@
 //! one of those is either sorted differently or reported as an error, and the
 //! caller keeps its previous path.
 
-use super::factory::{crs_extent, operation_extent, SpatialCriterion};
+use super::factory::{crs_extent, operation_extent, GridAvailabilityUse, SpatialCriterion};
 use super::model::{BoundingBox, CoordinateOperation, Crs, ParameterValue};
 use super::{
     create_from_user_input, CoordinateOperationContext, CoordinateOperationFactory,
@@ -21,6 +21,7 @@ use super::{
 };
 use crate::gridpath;
 
+const NADCON_LONGITUDE_FILE_PARAMETER: &str = "8658";
 const BALLPARK_GEOGRAPHIC_OFFSET: &str = "Ballpark geographic offset";
 const BALLPARK_VERTICAL_TRANSFORMATION: &str = "Ballpark vertical transformation";
 const NULL_GEOGRAPHIC_OFFSET: &str = "Null geographic offset";
@@ -165,6 +166,7 @@ fn best_operation(
             &source_crs,
             &target_crs,
             GridSteps::Unwritten,
+            GridAvailabilityUse::UseForSorting,
         );
         ranked.push((operation, characteristics));
     }
@@ -262,6 +264,7 @@ fn characteristics(
     source: &Crs,
     target: &Crs,
     grids: GridSteps,
+    availability: GridAvailabilityUse,
 ) -> Characteristics {
     let name = operation.name().to_owned();
     let text = match (grids, operation) {
@@ -280,9 +283,11 @@ fn characteristics(
         Err(_) => (false, 0, false),
     };
     let grids = grid_names(operation);
-    let grids_available = proj_grids(operation, db)
-        .is_ok_and(|names| names.iter().all(|grid| gridpath::available(grid)));
-    let grids_known = grids
+    let grids_available = availability == GridAvailabilityUse::IgnoreGridAvailability
+        || proj_grids(operation, db)
+            .is_ok_and(|names| names.iter().all(|grid| gridpath::available(grid)));
+    let known_names = proj_grids(operation, db).unwrap_or_else(|_| grids.clone());
+    let grids_known = known_names
         .iter()
         .all(|grid| db.grid_is_known(grid).unwrap_or(false));
     let (area_source, area_target) = (crs_extent(source), crs_extent(target));
@@ -387,6 +392,11 @@ fn collect_grids(operation: &CoordinateOperation, names: &mut Vec<String>) {
     match operation {
         CoordinateOperation::Transformation(transformation) => {
             for parameter in transformation.parameters() {
+                // A NADCON pair is one GTiff once its alternative is substituted: only the
+                // latitude file counts.
+                if parameter.code() == NADCON_LONGITUDE_FILE_PARAMETER {
+                    continue;
+                }
                 if let ParameterValue::Filename(text) = parameter.value() {
                     names.extend(
                         text.split(',')
@@ -586,12 +596,19 @@ pub(crate) fn sort_candidates(
     db: &DatabaseContext,
     source: &Crs,
     target: &Crs,
+    availability: GridAvailabilityUse,
 ) -> Vec<CoordinateOperation> {
     let ranked = operations
         .into_iter()
         .map(|operation| {
-            let characteristics =
-                characteristics(&operation, db, source, target, GridSteps::Written);
+            let characteristics = characteristics(
+                &operation,
+                db,
+                source,
+                target,
+                GridSteps::Written,
+                availability,
+            );
             (operation, characteristics)
         })
         .collect();
