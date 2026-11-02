@@ -2293,6 +2293,7 @@ impl AuthorityFactory {
             target: None,
             version: None,
             inverted: false,
+            interpolation: None,
         })
     }
 
@@ -3535,6 +3536,7 @@ impl AuthorityFactory {
                 target: None,
                 version: transformation.version,
                 inverted: false,
+                interpolation: None,
             }));
         }
         Ok(CoordinateOperation::Transformation(transformation))

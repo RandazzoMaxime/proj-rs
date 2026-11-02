@@ -1615,11 +1615,49 @@ fn export_conversion(
             }
             export_parameter(parameter, formatter)?;
         }
+        export_interpolation_code(conversion, formatter)?;
         formatter.format_ids(&conversion.identified.identifiers);
         formatter.end_node();
         return Ok(());
     }
     export_conversion_wkt1(conversion, formatter, base_shape, owner)
+}
+
+/// An interpolation CRS with an EPSG code is written as the `EPSG code for ... CRS` parameter,
+/// unless the conversion already has that parameter.
+fn export_interpolation_code(
+    conversion: &Conversion,
+    formatter: &mut WktFormatter,
+) -> Result<(), FactoryError> {
+    let Some(crs) = conversion.interpolation_crs() else {
+        return Ok(());
+    };
+    let is_code_parameter = |parameter: &Parameter| {
+        parameter.code_space == "EPSG" && matches!(parameter.code.as_str(), "1048" | "1037")
+    };
+    if conversion.parameters.iter().any(is_code_parameter) {
+        return Ok(());
+    }
+    let Some(code) = crs
+        .authority_code("EPSG")
+        .and_then(|identifier| identifier.code().parse::<i64>().ok())
+    else {
+        return Ok(());
+    };
+    let (name, parameter_code) = if conversion.method.code == "1046" {
+        ("EPSG code for Horizontal CRS", "1037")
+    } else {
+        ("EPSG code for Interpolation CRS", "1048")
+    };
+    export_parameter(
+        &Parameter {
+            name: name.to_owned(),
+            code_space: "EPSG".to_owned(),
+            code: parameter_code.to_owned(),
+            value: ParameterValue::Integer(code),
+        },
+        formatter,
+    )
 }
 
 /// PROJ leaves out a zero latitude of origin in Equidistant Cylindrical, and a

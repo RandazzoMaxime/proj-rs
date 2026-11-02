@@ -8,7 +8,7 @@ use super::{
 use crate::iso19111::factory::{AuthorityFactory, AuthorityObject, NameMatch, ObjectType};
 use crate::iso19111::model::{
     Conversion, CoordinateSystem, Crs, DerivedProjectedCRS, FactoryError, GeocentricCRS,
-    GeodeticCRS, ParameterValue, UnitKind, UnitOfMeasure,
+    GeodeticCRS, Parameter, ParameterValue, UnitKind, UnitOfMeasure,
 };
 use crate::iso19111::niche::{
     DerivedCRS, ParametricCRS, ParametricCS, ParametricDatum, TemporalCRS, TemporalCS,
@@ -360,6 +360,35 @@ impl WktParser {
             }
         }
         Ok(linear.map(|unit| CoordinateSystem::Cartesian(easting_northing(unit))))
+    }
+
+    /// `dealWithEPSGCodeForInterpolationCRSParameter`: the `EPSG code for ... CRS` parameter
+    /// becomes the interpolation CRS when the database knows that geographic CRS.
+    pub(super) fn take_interpolation_crs(
+        &mut self,
+        parameters: &mut Vec<Parameter>,
+    ) -> Option<Box<Crs>> {
+        let db = self.db.clone()?;
+        for index in 0..parameters.len() {
+            let parameter = &parameters[index];
+            let is_code = parameter.name == "EPSG code for Interpolation CRS"
+                || parameter.name == "EPSG code for Horizontal CRS"
+                || (parameter.code_space == "EPSG"
+                    && matches!(parameter.code.as_str(), "1048" | "1037"));
+            let ParameterValue::Integer(code) = &parameter.value else {
+                continue;
+            };
+            if !is_code {
+                continue;
+            }
+            if let Ok(crs) =
+                AuthorityFactory::create(&db, "EPSG").create_geographic_crs(&code.to_string())
+            {
+                parameters.remove(index);
+                return Some(Box::new(Crs::Geographic(crs)));
+            }
+        }
+        None
     }
 
     fn deriving_conversion(&mut self, node: &WktNode) -> Result<Conversion, FactoryError> {

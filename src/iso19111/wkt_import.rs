@@ -2244,7 +2244,8 @@ impl WktParser {
         }
         let props = self.build_properties(node)?;
         let method_props = self.build_properties(method_node)?;
-        let parameters = self.parameters_of(node, &linear, &angular)?;
+        let mut parameters = self.parameters_of(node, &linear, &angular)?;
+        let interpolation = self.take_interpolation_crs(&mut parameters);
         Ok(Conversion {
             identified: props.identified(),
             method: OperationMethod {
@@ -2266,6 +2267,7 @@ impl WktParser {
             target: None,
             version: props.version,
             inverted: false,
+            interpolation,
         })
     }
 
@@ -2437,6 +2439,7 @@ impl WktParser {
             target: None,
             version: None,
             inverted: false,
+            interpolation: None,
         })
     }
 
@@ -2467,7 +2470,11 @@ impl WktParser {
                     if unit.is_none() {
                         unit = guess_parameter_unit(&props.name, linear, angular);
                     }
-                    if let Some(unit) = unit {
+                    if is_interpolation_code_parameter(&props) {
+                        #[expect(clippy::cast_possible_truncation, reason = "an EPSG code")]
+                        let code = number as i64;
+                        ParameterValue::Integer(code)
+                    } else if let Some(unit) = unit {
                         ParameterValue::Measure(Measure {
                             value: number,
                             unit,
@@ -2797,6 +2804,15 @@ fn dms_prime_meridian(name: &str) -> Option<(i32, f64, f64)> {
         .iter()
         .find(|(entry, _, _, _)| *entry == name)
         .map(|(_, degrees, minutes, seconds)| (*degrees, *minutes, *seconds))
+}
+
+/// `isEPSGCodeForInterpolationParameter`.
+fn is_interpolation_code_parameter(props: &Props) -> bool {
+    props.name == "EPSG code for Interpolation CRS"
+        || props.name == "EPSG code for Horizontal CRS"
+        || props.identifiers.first().is_some_and(|id| {
+            id.code_space == "EPSG" && matches!(id.code.as_str(), "1048" | "1037")
+        })
 }
 
 fn is_temporal_cs_type(cs_type: &str) -> bool {

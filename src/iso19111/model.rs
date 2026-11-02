@@ -1792,9 +1792,17 @@ pub struct Conversion {
     pub(crate) target: Option<Box<Crs>>,
     pub(crate) version: Option<String>,
     pub(crate) inverted: bool,
+    /// Interpolation CRS, from the EPSG `EPSG code for Interpolation CRS` parameter.
+    pub(crate) interpolation: Option<Box<Crs>>,
 }
 
 impl Conversion {
+    /// Interpolation CRS, when the conversion names one.
+    #[must_use]
+    pub fn interpolation_crs(&self) -> Option<&Crs> {
+        self.interpolation.as_deref()
+    }
+
     /// Name.
     #[must_use]
     pub fn name(&self) -> &str {

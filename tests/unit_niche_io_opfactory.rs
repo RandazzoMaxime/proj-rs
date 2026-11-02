@@ -1018,3 +1018,455 @@ fn wkt_parse_derivedprojectedcrs_base_crs_cs_non_metre_from_conversion_context_f
         .expect("export");
     assert_eq!(exported, wkt);
 }
+
+#[test]
+fn wkt_parse_invalid_derivedgeographiccrs() {
+    accepted(
+        r#"GEODCRS["WMO Atlantic Pole",
+    BASEGEODCRS["WGS 84",
+        DATUM["World Geodetic System 1984",
+            ELLIPSOID["WGS 84",6378137,298.257223563]]],
+    DERIVINGCONVERSION["foo",
+        METHOD["bar"],
+        PARAMETER["foo",1.0,UNIT["metre",1]]],
+    CS[ellipsoidal,2],
+        AXIS["latitude",north],
+        AXIS["longitude",east],
+        UNIT["degree",0.0174532925199433]]"#,
+    );
+    // Missing DERIVINGCONVERSION
+    refused(
+        r#"GEODCRS["WMO Atlantic Pole",
+    BASEGEODCRS["WGS 84",
+        DATUM["World Geodetic System 1984",
+            ELLIPSOID["WGS 84",6378137,298.257223563]]],
+    CS[ellipsoidal,2],
+        AXIS["latitude",north],
+        AXIS["longitude",east],
+        UNIT["degree",0.0174532925199433]]"#,
+    );
+    // Missing CS
+    refused(
+        r#"GEODCRS["WMO Atlantic Pole",
+    BASEGEODCRS["WGS 84",
+        DATUM["World Geodetic System 1984",
+            ELLIPSOID["WGS 84",6378137,298.257223563]]],
+    DERIVINGCONVERSION["foo",
+        METHOD["bar"],
+        PARAMETER["foo",1.0,UNIT["metre",1]]]]"#,
+    );
+    // CS should be ellipsoidal given root node is GEOGCRS
+    refused(
+        r#"GEOGCRS["WMO Atlantic Pole",
+    BASEGEOGCRS["WGS 84",
+        DATUM["World Geodetic System 1984",
+            ELLIPSOID["WGS 84",6378137,298.257223563]]],
+    DERIVINGCONVERSION["foo",
+        METHOD["bar"],
+        PARAMETER["foo",1.0,UNIT["metre",1]]],
+    CS[Cartesian,3],
+        AXIS["(X)",geocentricX],
+        AXIS["(Y)",geocentricY],
+        AXIS["(Z)",geocentricZ],
+        UNIT["metre",1]]"#,
+    );
+    // CS should have 3 axis
+    refused(
+        r#"GEODCRS["WMO Atlantic Pole",
+    BASEGEODCRS["WGS 84",
+        DATUM["World Geodetic System 1984",
+            ELLIPSOID["WGS 84",6378137,298.257223563]]],
+    DERIVINGCONVERSION["foo",
+        METHOD["bar"],
+        PARAMETER["foo",1.0,UNIT["metre",1]]],
+    CS[Cartesian,2],
+        AXIS["(X)",geocentricX],
+        AXIS["(Y)",geocentricY],
+        UNIT["metre",1]]"#,
+    );
+    // Invalid CS type
+    refused(
+        r#"GEODCRS["WMO Atlantic Pole",
+    BASEGEODCRS["WGS 84",
+        DATUM["World Geodetic System 1984",
+            ELLIPSOID["WGS 84",6378137,298.257223563]]],
+    DERIVINGCONVERSION["foo",
+        METHOD["bar"],
+        PARAMETER["foo",1.0,UNIT["metre",1]]],
+    CS[vertical,1],
+        AXIS["gravity-related height (H)",up],
+        UNIT["metre",1]]"#,
+    );
+}
+
+#[test]
+fn wkt_parse_invalid_temporalcrs() {
+    accepted(
+        r#"TIMECRS["Temporal CRS",
+    TDATUM["Gregorian calendar",
+        TIMEORIGIN[0000-01-01]],
+    CS[temporal,1],
+        AXIS["time (T)",future]]"#,
+    );
+    // Missing TDATUM
+    refused(
+        r#"TIMECRS["Temporal CRS",
+    CS[temporal,1],
+        AXIS["time (T)",future]]"#,
+    );
+    // Missing CS
+    refused(
+        r#"TIMECRS["Temporal CRS",
+    TDATUM["Gregorian calendar",
+        TIMEORIGIN[0000-01-01]]]"#,
+    );
+    // CS should be temporal
+    refused(
+        r#"TIMECRS["Temporal CRS",
+    TDATUM["Gregorian calendar",
+        TIMEORIGIN[0000-01-01]],
+    CS[Cartesian,2],
+        AXIS["(X)",geocentricX],
+        AXIS["(Y)",geocentricY],
+        UNIT["metre",1]]"#,
+    );
+    // CS should have 1 axis
+    refused(
+        r#"TIMECRS["Temporal CRS",
+    TDATUM["Gregorian calendar",
+        TIMEORIGIN[0000-01-01]],
+    CS[temporal,2],
+        AXIS["time (T)",future],
+        AXIS["time2 (T)",future]]"#,
+    );
+    // CS should have 1 axis
+    refused(
+        r#"TIMECRS["Temporal CRS",
+    TDATUM["Gregorian calendar",
+        TIMEORIGIN[0000-01-01]],
+    CS[TemporalDateTime,2],
+        AXIS["time (T)",future],
+        AXIS["time2 (T)",future]]"#,
+    );
+    // CS should have 1 axis
+    refused(
+        r#"TIMECRS["Temporal CRS",
+    TDATUM["Gregorian calendar",
+        TIMEORIGIN[0000-01-01]],
+    CS[TemporalCount,2],
+        AXIS["time (T)",future],
+        AXIS["time2 (T)",future]]"#,
+    );
+    // CS should have 1 axis
+    refused(
+        r#"TIMECRS["Temporal CRS",
+    TDATUM["Gregorian calendar",
+        TIMEORIGIN[0000-01-01]],
+    CS[TemporalMeasure,2],
+        AXIS["time (T)",future],
+        AXIS["time2 (T)",future]]"#,
+    );
+}
+
+#[test]
+fn wkt_parse_invalid_parametriccrs() {
+    accepted(
+        r#"PARAMETRICCRS["name",
+    PDATUM["name"],
+    CS[parametric,1],
+        AXIS["pressure (hPa)",up,
+            PARAMETRICUNIT["HectoPascal",100]]]"#,
+    );
+    // Missing PDATUM
+    refused(
+        r#"PARAMETRICCRS["name",
+    CS[parametric,1],
+        AXIS["pressure (hPa)",up,
+            PARAMETRICUNIT["HectoPascal",100]]]"#,
+    );
+    // Missing CS
+    refused(
+        r#"PARAMETRICCRS["name",
+    PDATUM["name"]]"#,
+    );
+    // Invalid number of axis for CS
+    refused(
+        r#"PARAMETRICCRS["name",
+    PDATUM["name"],
+    CS[parametric,2],
+        AXIS["pressure (hPa)",up,
+            PARAMETRICUNIT["HectoPascal",100]]        AXIS["pressure (hPa)",up,
+            PARAMETRICUNIT["HectoPascal",100]]]"#,
+    );
+    // Invalid CS type
+    refused(
+        r#"PARAMETRICCRS["name",
+    PDATUM["name"],
+    CS[temporal,1],
+        AXIS["time (T)",future]]"#,
+    );
+}
+
+#[test]
+fn wkt_parse_invalid_derivedprojcrs() {
+    accepted(
+        r#"DERIVEDPROJCRS["derived projectedCRS",
+    BASEPROJCRS["BASEPROJCRS",
+        BASEGEOGCRS["WGS 84",
+            DATUM["World Geodetic System 1984",
+                ELLIPSOID["WGS 84",6378137,298.257223563,
+                    LENGTHUNIT["metre",1]]]],
+        CONVERSION["unknown",
+            METHOD["PROJ unimplemented"],
+            PARAMETER["foo",1.0,UNIT["metre",1]]]],
+    DERIVINGCONVERSION["unknown",
+        METHOD["PROJ unimplemented"],
+        PARAMETER["foo",1.0,UNIT["metre",1]]],
+    CS[Cartesian,2],
+        AXIS["(E)",east],
+        AXIS["(N)",north],
+        UNIT["metre",1]]"#,
+    );
+    refused(
+        r#"DERIVEDPROJCRS["derived projectedCRS",
+    DERIVINGCONVERSION["unknown",
+        METHOD["PROJ unimplemented"],
+        PARAMETER["foo",1.0,UNIT["metre",1]]],
+    CS[Cartesian,2],
+        AXIS["(E)",east],
+        AXIS["(N)",north],
+        UNIT["metre",1]]"#,
+    );
+    // Missing DERIVINGCONVERSION
+    refused(
+        r#"DERIVEDPROJCRS["derived projectedCRS",
+    BASEPROJCRS["BASEPROJCRS",
+        BASEGEOGCRS["WGS 84",
+            DATUM["World Geodetic System 1984",
+                ELLIPSOID["WGS 84",6378137,298.257223563,
+                    LENGTHUNIT["metre",1]]]],
+        CONVERSION["unknown",
+            METHOD["PROJ unimplemented"],
+            PARAMETER["foo",1.0,UNIT["metre",1]]]],
+    CS[Cartesian,2],
+        AXIS["(E)",east],
+        AXIS["(N)",north],
+        UNIT["metre",1]]"#,
+    );
+    // Missing CS
+    refused(
+        r#"DERIVEDPROJCRS["derived projectedCRS",
+    BASEPROJCRS["BASEPROJCRS",
+        BASEGEOGCRS["WGS 84",
+            DATUM["World Geodetic System 1984",
+                ELLIPSOID["WGS 84",6378137,298.257223563,
+                    LENGTHUNIT["metre",1]]]],
+        CONVERSION["unknown",
+            METHOD["PROJ unimplemented"],
+            PARAMETER["foo",1.0,UNIT["metre",1]]]],
+    DERIVINGCONVERSION["unknown",
+        METHOD["PROJ unimplemented"],
+        PARAMETER["foo",1.0,UNIT["metre",1]]]]"#,
+    );
+}
+
+#[test]
+fn wkt_parse_invalid_derivedverticalcrs() {
+    accepted(
+        r#"VERTCRS["Derived vertCRS",
+    BASEVERTCRS["ODN height",
+        VDATUM["Ordnance Datum Newlyn"]],
+    DERIVINGCONVERSION["unknown",
+        METHOD["PROJ unimplemented"],
+        PARAMETER["foo",1.0,UNIT["metre",1]]],
+    CS[vertical,1],
+        AXIS["gravity-related height (H)",up],
+        UNIT["metre",1]]"#,
+    );
+    // Missing DERIVINGCONVERSION
+    refused(
+        r#"VERTCRS["Derived vertCRS",
+    BASEVERTCRS["ODN height",
+        VDATUM["Ordnance Datum Newlyn"]],
+    CS[vertical,1],
+        AXIS["gravity-related height (H)",up],
+        UNIT["metre",1]]"#,
+    );
+    // Missing CS
+    refused(
+        r#"VERTCRS["Derived vertCRS",
+    BASEVERTCRS["ODN height",
+        VDATUM["Ordnance Datum Newlyn"]],
+    DERIVINGCONVERSION["unknown",
+        METHOD["PROJ unimplemented"],
+        PARAMETER["foo",1.0,UNIT["metre",1]]]]"#,
+    );
+    // Wrong CS type
+    refused(
+        r#"VERTCRS["Derived vertCRS",
+    BASEVERTCRS["ODN height",
+        VDATUM["Ordnance Datum Newlyn"]],
+    DERIVINGCONVERSION["unknown",
+        METHOD["PROJ unimplemented"],
+        PARAMETER["foo",1.0,UNIT["metre",1]]],
+    CS[parametric,1],
+        AXIS["gravity-related height (H)",up],
+        UNIT["metre",1]]"#,
+    );
+}
+
+#[test]
+fn wkt_parse_invalid_derivedengineeringcrs() {
+    accepted(
+        r#"ENGCRS["Derived EngineeringCRS",
+    BASEENGCRS["Engineering CRS",
+        EDATUM["Engineering datum"]],
+    DERIVINGCONVERSION["unknown",
+        METHOD["PROJ unimplemented"],
+        PARAMETER["foo",1.0,UNIT["metre",1]]],
+    CS[Cartesian,2],
+        AXIS["(E)",east],
+        AXIS["(N)",north],
+        LENGTHUNIT["metre",1]]"#,
+    );
+    // Missing DERIVINGCONVERSION
+    refused(
+        r#"ENGCRS["Derived EngineeringCRS",
+    BASEENGCRS["Engineering CRS",
+        EDATUM["Engineering datum"]],
+    CS[Cartesian,2],
+        AXIS["(E)",east],
+        AXIS["(N)",north],
+        LENGTHUNIT["metre",1]]"#,
+    );
+    // Missing CS
+    refused(
+        r#"ENGCRS["Derived EngineeringCRS",
+    BASEENGCRS["Engineering CRS",
+        EDATUM["Engineering datum"]],
+    DERIVINGCONVERSION["unknown",
+        METHOD["PROJ unimplemented"],
+        PARAMETER["foo",1.0,UNIT["metre",1]]]]"#,
+    );
+}
+
+#[test]
+fn wkt_parse_invalid_derivedparametriccrs() {
+    accepted(
+        r#"PARAMETRICCRS["Derived ParametricCRS",
+    BASEPARAMCRS["Parametric CRS",
+        PDATUM["Parametric datum"]],
+    DERIVINGCONVERSION["unknown",
+        METHOD["PROJ unimplemented"],
+        PARAMETER["foo",1.0,UNIT["metre",1]]],
+    CS[parametric,1],
+        AXIS["pressure (hPa)",up,
+            PARAMETRICUNIT["HectoPascal",100]]]"#,
+    );
+    // Missing DERIVINGCONVERSION
+    refused(
+        r#"PARAMETRICCRS["Derived ParametricCRS",
+    BASEPARAMCRS["Parametric CRS",
+        PDATUM["Parametric datum"]],
+    CS[parametric,1],
+        AXIS["pressure (hPa)",up,
+            PARAMETRICUNIT["HectoPascal",100]]]"#,
+    );
+    // Missing CS
+    refused(
+        r#"PARAMETRICCRS["Derived ParametricCRS",
+    BASEPARAMCRS["Parametric CRS",
+        PDATUM["Parametric datum"]],
+    DERIVINGCONVERSION["unknown",
+        METHOD["PROJ unimplemented"],
+        PARAMETER["foo",1.0,UNIT["metre",1]]]]"#,
+    );
+    // Wrong CS type
+    refused(
+        r#"PARAMETRICCRS["Derived ParametricCRS",
+    BASEPARAMCRS["Parametric CRS",
+        PDATUM["Parametric datum"]],
+    DERIVINGCONVERSION["unknown",
+        METHOD["PROJ unimplemented"],
+        PARAMETER["foo",1.0,UNIT["metre",1]]],
+    CS[TemporalDateTime,1],
+        AXIS["time (T)",future]]"#,
+    );
+}
+
+#[test]
+fn wkt_parse_invalid_derivedtemporalcrs() {
+    accepted(
+        r#"TIMECRS["Derived TemporalCRS",
+    BASETIMECRS["Temporal CRS",
+        TDATUM["Gregorian calendar",
+            CALENDAR["proleptic Gregorian"],
+            TIMEORIGIN[0000-01-01]]],
+    DERIVINGCONVERSION["unknown",
+        METHOD["PROJ unimplemented"],
+        PARAMETER["foo",1.0,UNIT["metre",1]]],
+    CS[TemporalDateTime,1],
+        AXIS["time (T)",future]]"#,
+    );
+    // Missing DERIVINGCONVERSION
+    refused(
+        r#"TIMECRS["Derived TemporalCRS",
+    BASETIMECRS["Temporal CRS",
+        TDATUM["Gregorian calendar",
+            CALENDAR["proleptic Gregorian"],
+            TIMEORIGIN[0000-01-01]]],
+    CS[TemporalDateTime,1],
+        AXIS["time (T)",future]]"#,
+    );
+    // Missing CS
+    refused(
+        r#"TIMECRS["Derived TemporalCRS",
+    BASETIMECRS["Temporal CRS",
+        TDATUM["Gregorian calendar",
+            CALENDAR["proleptic Gregorian"],
+            TIMEORIGIN[0000-01-01]]],
+    DERIVINGCONVERSION["unknown",
+        METHOD["PROJ unimplemented"],
+        PARAMETER["foo",1.0,UNIT["metre",1]]]]"#,
+    );
+    // Wrong CS type
+    refused(
+        r#"TIMECRS["Derived TemporalCRS",
+    BASETIMECRS["Temporal CRS",
+        TDATUM["Gregorian calendar",
+            CALENDAR["proleptic Gregorian"],
+            TIMEORIGIN[0000-01-01]]],
+    DERIVINGCONVERSION["unknown",
+        METHOD["PROJ unimplemented"],
+        PARAMETER["foo",1.0,UNIT["metre",1]]],
+    CS[parametric,1],
+        AXIS["pressure (hPa)",up,
+            PARAMETRICUNIT["HectoPascal",100]]]"#,
+    );
+}
+
+#[test]
+fn wkt_parse_derivedverticalcrs_epsg_code_for_horizontal_crs() {
+    let wkt = r#"VERTCRS["Derived vertCRS",
+    BASEVERTCRS["ODN height",
+        VDATUM["Ordnance Datum Newlyn",
+            ID["EPSG",5101]]],
+    DERIVINGCONVERSION["Conv Vertical Offset and Slope",
+        METHOD["Vertical Offset and Slope",
+            ID["EPSG",1046]],
+        PARAMETER["Ordinate 1 of evaluation point",40.5,
+            ANGLEUNIT["degree",0.0174532925199433],
+            ID["EPSG",8617]],
+        PARAMETER["EPSG code for Horizontal CRS",4277,
+            ID["EPSG",1037]]],
+    CS[vertical,1],
+        AXIS["gravity-related height (H)",up,
+            LENGTHUNIT["metre",1,
+                ID["EPSG",9001]]]]"#;
+    let object = parse_db(wkt);
+    let crs = derived(&object);
+    // "EPSG code for Horizontal CRS" is removed and set as interpolation CRS
+    assert_eq!(crs.deriving_conversion().parameters().len(), 1);
+    assert!(crs.deriving_conversion().interpolation_crs().is_some());
+    assert_eq!(export(crs_of(&object), WktConvention::Wkt2_2019), wkt);
+}
