@@ -35,6 +35,43 @@ impl GeographicCRS {
         geographic_equivalent(self, other, criterion)
     }
 
+    /// `isEquivalentTo` with a database context, as `proj_is_equivalent_to_with_ctx`.
+    ///
+    /// Beyond the structural check, a datum name that is an alias of the other datum's
+    /// official name in `proj.db` counts as the same name (`GDA2020` and
+    /// `Geocentric Datum of Australia 2020`). The strict criterion keeps names exact.
+    #[must_use]
+    pub fn is_equivalent_to_with_database(
+        &self,
+        other: &Self,
+        criterion: Equivalence,
+        db: &super::factory::DatabaseContext,
+    ) -> bool {
+        if self.is_equivalent_to_with(other, criterion) {
+            return true;
+        }
+        if criterion == Equivalence::Strict {
+            return false;
+        }
+        let (Some(left), Some(right)) = (self.datum(), other.datum()) else {
+            return false;
+        };
+        let official = |name: &str| db.geodetic_datum_equivalent(name).map(|found| found.0);
+        let (Some(left_official), Some(right_official)) =
+            (official(left.name()), official(right.name()))
+        else {
+            return false;
+        };
+        if left_official != right_official {
+            return false;
+        }
+        let mut renamed = other.clone();
+        if let Some(datum) = renamed.datum.as_mut() {
+            datum.identified.name = left.name().to_owned();
+        }
+        self.is_equivalent_to_with(&renamed, criterion)
+    }
+
     /// `other` is `None` when the value is not a geographic CRS.
     #[must_use]
     pub fn is_equivalent_to_geographic(
@@ -365,7 +402,7 @@ fn geographic_equivalent(
 fn geographic_anchor(left: &GeographicCRS, right: &GeographicCRS, criterion: Equivalence) -> bool {
     if criterion != Equivalence::Strict {
         return match (datum_frame(left), datum_frame(right)) {
-            (Some(left), Some(right)) => frame_equivalent(&left, &right),
+            (Some(left), Some(right)) => frame_equivalent_by(&left, &right, equivalent_name),
             _ => false,
         };
     }
@@ -421,9 +458,19 @@ fn vertical_anchor(left: &VerticalCRS, right: &VerticalCRS) -> bool {
 }
 
 fn frame_equivalent(left: &GeodeticReferenceFrame, right: &GeodeticReferenceFrame) -> bool {
-    same_name(left.name(), right.name())
+    frame_equivalent_by(left, right, same_name)
+}
+
+/// Datum comparison with a name rule: strict names are equal ignoring case, the
+/// `EQUIVALENT` criterion uses `Identifier::isEquivalentName`.
+fn frame_equivalent_by(
+    left: &GeodeticReferenceFrame,
+    right: &GeodeticReferenceFrame,
+    names: fn(&str, &str) -> bool,
+) -> bool {
+    names(left.name(), right.name())
         && same_epoch(left.frame_reference_epoch(), right.frame_reference_epoch())
-        && ellipsoid_equivalent(left.ellipsoid(), right.ellipsoid())
+        && ellipsoid_equivalent_by(left.ellipsoid(), right.ellipsoid(), names)
         && meridian_equivalent(left.prime_meridian(), right.prime_meridian())
 }
 
@@ -455,7 +502,20 @@ fn datum_equivalent(left: &Datum, right: &Datum) -> bool {
 }
 
 fn ellipsoid_equivalent(left: &Ellipsoid, right: &Ellipsoid) -> bool {
-    same_name(left.name(), right.name())
+    ellipsoid_equivalent_by(left, right, same_name)
+}
+
+/// Ellipsoid comparison with the `EQUIVALENT` name rule.
+pub(crate) fn ellipsoid_equivalent_loose(left: &Ellipsoid, right: &Ellipsoid) -> bool {
+    ellipsoid_equivalent_by(left, right, equivalent_name)
+}
+
+fn ellipsoid_equivalent_by(
+    left: &Ellipsoid,
+    right: &Ellipsoid,
+    names: fn(&str, &str) -> bool,
+) -> bool {
+    names(left.name(), right.name())
         && left.semi_major_axis().si_value() == right.semi_major_axis().si_value()
         && left.inverse_flattening() == right.inverse_flattening()
         && match (left.semi_minor_axis(), right.semi_minor_axis()) {

@@ -968,7 +968,24 @@ fn export_vertical(crs: &VerticalCRS, formatter: &mut WktFormatter) -> Result<()
     formatter.start_node(keyword, node_from_ids(&crs.identified.identifiers));
     formatter.add_quoted(&name);
     if let Some(datum) = &crs.datum {
-        export_vertical_datum(datum, formatter);
+        // `VerticalCRS::_exportToWKT`: an ESRI ellipsoidal-height datum (WKT1 type 2002)
+        // is written as the geodetic datum of the same name.
+        let geodetic = if formatter.esri && datum.wkt1_type == "2002" {
+            formatter.db.as_ref().and_then(|db| {
+                AuthorityFactory::create(db, "")
+                    .create_geodetic_datums_by_name(&datum.identified.name)
+                    .ok()?
+                    .into_iter()
+                    .next()
+            })
+        } else {
+            None
+        };
+        if let Some(geodetic) = geodetic {
+            export_geodetic_datum(&geodetic, formatter);
+        } else {
+            export_vertical_datum(datum, formatter);
+        }
     } else if let Some(ensemble) = &crs.ensemble {
         export_vertical_ensemble(ensemble, formatter);
     }
@@ -1103,6 +1120,19 @@ pub(crate) fn export_datum_standalone(
         export_prime_meridian(&datum.prime_meridian, formatter);
     }
     Ok(std::mem::take(&mut formatter.result))
+}
+
+impl super::model::CartesianCS {
+    /// Write this coordinate system into `formatter` and return the WKT. WKT1 has no
+    /// standalone coordinate system node, so the result is empty there.
+    #[must_use]
+    pub fn export_to_wkt(&self, formatter: &mut WktFormatter) -> String {
+        let previous = formatter.output_axis;
+        formatter.output_axis = OutputAxisRule::Yes;
+        export_cs(&CoordinateSystem::Cartesian(self.clone()), formatter);
+        formatter.output_axis = previous;
+        std::mem::take(&mut formatter.result)
+    }
 }
 
 impl GeodeticReferenceFrame {
@@ -1932,7 +1962,10 @@ fn add_measure(measure: &Measure, formatter: &mut WktFormatter) -> Result<(), Fa
     }
     if formatter.wkt2 {
         formatter.add_number(measure.value);
-        if measure.unit.kind != UnitKind::None {
+        // A WKT `PARAMETER` read without a unit carries an unnamed unit: no `UNIT` on output.
+        let unitless = measure.unit.kind == UnitKind::None
+            || (measure.unit.kind == UnitKind::Unknown && measure.unit.name.is_empty());
+        if !unitless {
             let linear = formatter
                 .axis_linear
                 .last()

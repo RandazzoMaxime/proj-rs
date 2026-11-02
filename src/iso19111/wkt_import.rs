@@ -2023,9 +2023,17 @@ impl WktParser {
             None
         };
         let cs = self.build_cs(cs_node, node, UnitOfMeasure::degree())?;
-        let CoordinateSystem::Vertical(coordinate_system) = cs else {
+        let CoordinateSystem::Vertical(mut coordinate_system) = cs else {
             return Err(invalid("vertical CS expected"));
         };
+        // `buildVerticalCRS`: an ellipsoidal-height datum (WKT1 type 2002) with an upward
+        // axis gets the `ellipsoidal height` axis.
+        if datum.as_ref().is_some_and(|d| d.wkt1_type == "2002")
+            && coordinate_system.axis.direction() == "up"
+        {
+            let unit = coordinate_system.axis.unit().clone();
+            coordinate_system.axis = Axis::new("ellipsoidal height", "h", "up", unit);
+        }
         let mut geoid_models = Vec::new();
         for model in node.children_named("GEOIDMODEL") {
             if model.children.is_empty() {
@@ -2464,8 +2472,6 @@ impl WktParser {
     }
 
     fn build_bound(&mut self, node: &WktNode) -> Result<WktObject, FactoryError> {
-        let props = self.build_properties_without_name(node);
-        let _ = props;
         let source = self.wrapped_crs(node, "SOURCECRS")?;
         let target = self.wrapped_crs(node, "TARGETCRS")?;
         let operation = node
@@ -2479,7 +2485,11 @@ impl WktParser {
         );
         // A BOUNDCRS has no name of its own: its first child is SOURCECRS, not a name.
         if let Ok(props) = self.build_properties_without_name(node) {
-            bound.identified_mut().identifiers = props.identifiers;
+            let identified = props.identified();
+            let target = bound.identified_mut();
+            target.identifiers = identified.identifiers;
+            target.domains = identified.domains;
+            target.remarks = identified.remarks;
         }
         Ok(WktObject::Crs(Crs::Bound(bound)))
     }
@@ -2533,8 +2543,13 @@ impl WktParser {
             return Err(invalid("missing METHOD"));
         };
         let method_props = self.build_properties(method)?;
-        let parameters =
-            self.parameters_of(node, &UnitOfMeasure::metre(), &UnitOfMeasure::degree())?;
+        // An abridged transformation states rotations in arc-seconds, as the EPSG methods do.
+        let angular = if ci_eq(&node.value, "ABRIDGEDTRANSFORMATION") {
+            UnitOfMeasure::new("arc-second", DEGREE_SI / 3600.0, UnitKind::Angular)
+        } else {
+            UnitOfMeasure::degree()
+        };
+        let parameters = self.parameters_of(node, &UnitOfMeasure::metre(), &angular)?;
         let source = if node.child(&["SOURCECRS"]).is_some() {
             Some(Box::new(self.wrapped_crs(node, "SOURCECRS")?))
         } else {

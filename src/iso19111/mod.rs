@@ -43,10 +43,10 @@ pub use model::{
     Conversion, CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble,
     DerivedConversion, DerivedProjectedCRS, Ellipsoid, EllipsoidalCS, EngineeringCRS,
     EngineeringDatum, FactoryError, GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame,
-    GeographicCRS, Identifier, Meridian, ObjectDomain, OperationMethod, OperationParameter,
-    OperationParameterValue, OrdinalCS, Parameter, ParameterValue, PrimeMeridian, ProjectedCRS,
-    SphericalCS, Transformation, UnitKind, UnitOfMeasure, VerticalCRS, VerticalCS,
-    VerticalReferenceFrame,
+    GeographicCRS, Identifier, Measure, Meridian, ObjectDomain, OperationMethod,
+    OperationParameter, OperationParameterValue, OrdinalCS, Parameter, ParameterValue,
+    PrimeMeridian, ProjectedCRS, SphericalCS, Transformation, UnitKind, UnitOfMeasure, VerticalCRS,
+    VerticalCS, VerticalReferenceFrame,
 };
 pub use pipeline::ProjLines;
 pub use projstring::{create_crs_from_proj_string, create_crs_from_proj_string_with_database};
