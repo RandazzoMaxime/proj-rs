@@ -637,6 +637,7 @@ impl WktParser {
         self.towgs84.clear();
         self.grids.clear();
         self.vertical_grids.clear();
+        self.compound_geographic_name = None;
         self.compound_geographic = None;
         self.esri = false;
         let dialect = guess_dialect(wkt);
@@ -671,12 +672,18 @@ impl WktParser {
             index = skip_space(wkt, index);
             index = skip_space(wkt, index + 1);
             let (vertical_node, _) = parse_node(wkt, index, 0)?;
+            if let Some(geographic) = horizontal_geographic(&horizontal) {
+                self.compound_geographic_name = Some(geographic.name().to_owned());
+                self.compound_geographic = Some(geographic);
+            }
             let vertical = self.build_vertical(&vertical_node)?;
             if vertical
                 .datum
                 .as_ref()
                 .is_some_and(|datum| datum.wkt1_type == "2002")
             {
+                self.compound_geographic_name = None;
+                self.compound_geographic = None;
                 if let Crs::Geographic(geographic) = &horizontal {
                     if geographic.coordinate_system.axes.len() == 2 {
                         return Ok(WktObject::Crs(Crs::Geographic(promote_ellipsoidal_height(
@@ -695,6 +702,8 @@ impl WktParser {
                 }
             }
             let vertical = self.finish_vertical(vertical);
+            self.compound_geographic_name = None;
+            self.compound_geographic = None;
             let name = format!("{} + {}", horizontal.name(), vertical.name());
             let compound = CompoundCRS {
                 identified: Identified::named(name),
@@ -2417,7 +2426,7 @@ impl WktParser {
             return GeographicCRS::epsg_4979();
         };
         if greenwich_degree_geographic(geographic) {
-            geographic.promote_to_3d()
+            geographic.promote_to_3d_with_db(self.db.as_ref())
         } else {
             GeographicCRS::epsg_4979()
         }
@@ -2945,24 +2954,28 @@ impl WktParser {
 
     fn build_compound(&mut self, node: &WktNode) -> Result<WktObject, FactoryError> {
         let props = self.build_properties(node)?;
+        let saved_name = self.compound_geographic_name.take();
+        let saved_geographic = self.compound_geographic.take();
         let mut components = Vec::new();
         for child in &node.children {
             if is_crs_keyword(&child.value) {
                 let object = self.build_object(child)?;
                 let Some(crs) = object.crs().cloned() else {
+                    self.compound_geographic_name = saved_name;
+                    self.compound_geographic = saved_geographic;
                     return Err(invalid("compound component is not a CRS"));
                 };
                 if components.is_empty() {
-                    if let Some(geographic) = extract_geographic(&crs) {
+                    if let Some(geographic) = horizontal_geographic(&crs) {
                         self.compound_geographic_name = Some(geographic.name().to_owned());
-                        self.compound_geographic = Some(geographic.clone());
+                        self.compound_geographic = Some(geographic);
                     }
                 }
                 components.push(crs);
             }
         }
-        self.compound_geographic_name = None;
-        self.compound_geographic = None;
+        self.compound_geographic_name = saved_name;
+        self.compound_geographic = saved_geographic;
         if components.len() < 2 {
             return Err(invalid("a compound CRS needs at least two components"));
         }
@@ -3170,6 +3183,7 @@ impl WktParser {
             accuracy: None,
             version: props.version,
             computed_name: false,
+            proj_based: None,
         })
     }
 }
@@ -3273,7 +3287,9 @@ fn lax_compd_cs(name: String, mut components: Vec<Crs>) -> Result<Option<Crs>, F
 
 fn horizontal_geographic(crs: &Crs) -> Option<GeographicCRS> {
     match crs {
-        Crs::Geographic(geographic) => Some(geographic.clone()),
+        Crs::Geographic(geographic) | Crs::Geodetic(GeodeticCRS::Geographic(geographic)) => {
+            Some(geographic.clone())
+        }
         Crs::Projected(projected) => match projected.base_crs() {
             GeodeticCRS::Geographic(geographic) => Some(geographic.clone()),
             _ => None,

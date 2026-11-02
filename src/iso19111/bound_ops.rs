@@ -1,0 +1,260 @@
+//! `createOperationsBoundToGeog` of PROJ's `coordinateoperationfactory.cpp`: a bound CRS to a
+//! geographic CRS, chaining the base CRS, the binding transformation, and the hub to the target.
+//! A geographic source and a bound target is its inverse (`applyInverse`).
+//!
+//! Not ported: the Clarke 1866 to NAD83 special case, and the vertical unit change that
+//! `skipHorizontalTransformation` adds.
+
+use super::bound::extract_geographic;
+use super::equiv::{same_geodetic_datum, Equivalence};
+use super::factory::{geographic_of, CoordinateOperationContext, CoordinateOperationFactory};
+use super::model::{
+    BoundCRS, ConcatenatedOperation, ConcatenatedStep, CoordinateOperation, Crs, Identified,
+};
+use super::FactoryError;
+
+/// Candidates for a pair where one side is a bound CRS and the other a geographic CRS.
+/// `None` for any other pair.
+pub(super) fn bound_candidates(
+    factory: &CoordinateOperationFactory,
+    source: &Crs,
+    target: &Crs,
+    context: &CoordinateOperationContext,
+) -> Result<Option<Vec<CoordinateOperation>>, FactoryError> {
+    match (source, target) {
+        (Crs::Bound(bound), _) if geographic_of(target).is_some() => {
+            bound_to_geog(factory, source, bound, target, context).map(Some)
+        }
+        (_, Crs::Bound(_)) if geographic_of(source).is_some() => {
+            let forward = factory.create_candidates(target, source, context)?;
+            Ok(Some(
+                forward.iter().map(CoordinateOperation::inverse).collect(),
+            ))
+        }
+        _ => Ok(None),
+    }
+}
+
+fn bound_to_geog(
+    factory: &CoordinateOperationFactory,
+    source: &Crs,
+    bound: &BoundCRS,
+    target: &Crs,
+    context: &CoordinateOperationContext,
+) -> Result<Vec<CoordinateOperation>, FactoryError> {
+    let Some(geog_dst) = geographic_of(target) else {
+        return Ok(Vec::new());
+    };
+    let base = bound.source_crs();
+    let hub = bound.target_crs();
+    let hub_geog = geographic_of(hub);
+    let base_geog = extract_geographic(base).map(|geog| Crs::Geographic(geog.clone()));
+    let bound_transformation = with_endpoints(bound);
+    let transformation = &bound_transformation;
+
+    if let Some(base_geog) = &base_geog {
+        if same_geodetic_datum(base_geog, target) {
+            let mut found = factory.create_candidates(base, target, context)?;
+            if found.is_empty() {
+                found.extend(super::compound::null_offset(base, target));
+            }
+            return Ok(found);
+        }
+    }
+
+    let mut tried_hub_is_target = false;
+    if let (Some(hub_geog), Some(base_geog)) = (hub_geog, &base_geog) {
+        let intermediate = intermediate_operation(factory, base_geog, transformation, context)?;
+        if hub_geog.is_equivalent_to_with(geog_dst, Equivalence::Equivalent)
+            || hub_geog.is_2d_part_of_3d(geog_dst)
+        {
+            tried_hub_is_target = true;
+            if matches!(base, Crs::Geographic(_) | Crs::Geodetic(_)) {
+                return Ok(vec![match intermediate {
+                    Some(first) => concatenate(vec![first, transformation.clone()]),
+                    None => transformation.clone(),
+                }]);
+            }
+            let mut found = Vec::new();
+            for first in factory.create_candidates(base, base_geog, context)? {
+                let mut steps = vec![first];
+                steps.extend(intermediate.clone());
+                steps.push(transformation.clone());
+                found.push(concatenate(steps));
+            }
+            if !found.is_empty() {
+                return Ok(found);
+            }
+        } else if same_geodetic_datum(hub, target) {
+            let firsts = factory.create_candidates(base, base_geog, context)?;
+            let lasts = factory.create_candidates(hub, target, context)?;
+            let mut found = Vec::new();
+            if !firsts.is_empty() && !lasts.is_empty() {
+                for first in &firsts {
+                    for last in &lasts {
+                        let mut steps = vec![first.clone()];
+                        steps.extend(intermediate.clone());
+                        steps.push(transformation.clone());
+                        steps.push(last.clone());
+                        found.push(concatenate(steps));
+                    }
+                }
+            }
+            if !found.is_empty() {
+                return Ok(found);
+            }
+        }
+    }
+
+    if let (Some(hub_geog), Crs::Vertical(_)) = (hub_geog, base) {
+        if hub_geog.is_equivalent_to_with(geog_dst, Equivalence::Equivalent) {
+            let Some(vertical_source) = operation_source(transformation) else {
+                return Ok(vec![transformation.clone()]);
+            };
+            if matches!(vertical_source, Crs::Vertical(_))
+                && !base.is_equivalent_to(vertical_source)
+            {
+                return Ok(factory
+                    .create_candidates(base, vertical_source, context)?
+                    .into_iter()
+                    .map(|first| concatenate(vec![first, transformation.clone()]))
+                    .collect());
+            }
+            return Ok(vec![transformation.clone()]);
+        }
+    }
+
+    if let (false, Some(_), Some(_)) = (tried_hub_is_target, hub_geog, &base_geog) {
+        let firsts = factory.create_candidates(source, hub, context)?;
+        let lasts = factory.create_candidates(hub, target, context)?;
+        let mut found = Vec::new();
+        for first in &firsts {
+            for last in &lasts {
+                if lasts.len() > 1 || !last.has_ballpark_transformation() {
+                    found.push(concatenate(vec![first.clone(), last.clone()]));
+                }
+            }
+        }
+        if !found.is_empty() {
+            return Ok(found);
+        }
+    }
+
+    if let (Crs::Vertical(_), Some(_)) = (base, hub_geog) {
+        let firsts = factory.create_candidates(source, hub, context)?;
+        let lasts = factory.create_candidates(hub, target, context)?;
+        let mut found = Vec::new();
+        for first in &firsts {
+            for last in &lasts {
+                if !last.has_ballpark_transformation() {
+                    found.push(concatenate(vec![first.clone(), last.clone()]));
+                }
+            }
+        }
+        if !found.is_empty() {
+            return Ok(found);
+        }
+    }
+
+    factory.create_candidates(base, target, context)
+}
+
+/// The operation from the geographic CRS of the base to the source of the binding
+/// transformation, when they are not equivalent.
+fn intermediate_operation(
+    factory: &CoordinateOperationFactory,
+    base_geog: &Crs,
+    transformation: &CoordinateOperation,
+    context: &CoordinateOperationContext,
+) -> Result<Option<CoordinateOperation>, FactoryError> {
+    let Some(transformation_source) = operation_source(transformation) else {
+        return Ok(None);
+    };
+    if crs_equivalent(base_geog, transformation_source) {
+        return Ok(None);
+    }
+    Ok(factory
+        .create_candidates(base_geog, transformation_source, context)?
+        .into_iter()
+        .next())
+}
+
+pub(super) fn operation_source(operation: &CoordinateOperation) -> Option<&Crs> {
+    match operation {
+        CoordinateOperation::Conversion(conversion) => conversion.source_crs(),
+        CoordinateOperation::Transformation(transformation) => transformation.source_crs(),
+        CoordinateOperation::Concatenated(concatenated) => concatenated.source_crs(),
+    }
+}
+
+pub(super) fn operation_target(operation: &CoordinateOperation) -> Option<&Crs> {
+    match operation {
+        CoordinateOperation::Conversion(conversion) => conversion.target_crs(),
+        CoordinateOperation::Transformation(transformation) => transformation.target_crs(),
+        CoordinateOperation::Concatenated(concatenated) => concatenated.target_crs(),
+    }
+}
+
+fn crs_equivalent(left: &Crs, right: &Crs) -> bool {
+    match (geographic_of(left), geographic_of(right)) {
+        (Some(left), Some(right)) => left.is_equivalent_to_with(right, Equivalence::Equivalent),
+        _ => left.is_equivalent_to(right),
+    }
+}
+
+/// `ConcatenatedOperation::createComputeMetadata`: the steps, named by joining theirs.
+fn concatenate(operations: Vec<CoordinateOperation>) -> CoordinateOperation {
+    let name = operations
+        .iter()
+        .map(CoordinateOperation::name)
+        .collect::<Vec<_>>()
+        .join(" + ");
+    let source = operations
+        .first()
+        .and_then(operation_source)
+        .cloned()
+        .map(Box::new);
+    let target = operations
+        .last()
+        .and_then(operation_target)
+        .cloned()
+        .map(Box::new);
+    CoordinateOperation::Concatenated(ConcatenatedOperation {
+        identified: Identified::named(name),
+        steps: operations
+            .into_iter()
+            .map(|operation| ConcatenatedStep {
+                operation,
+                reverse: false,
+            })
+            .collect(),
+        source,
+        target,
+        accuracy: None,
+        version: None,
+        computed_name: true,
+        proj_based: None,
+    })
+}
+
+/// The binding transformation, with the bound CRS endpoints when it carries none. A bound
+/// projected CRS binds the geographic CRS of its base, as `createFromTOWGS84` does.
+fn with_endpoints(bound: &BoundCRS) -> CoordinateOperation {
+    let mut operation = bound.transformation().clone();
+    if let CoordinateOperation::Transformation(transformation) = &mut operation {
+        let base = bound.source_crs();
+        let source = match (base, extract_geographic(base)) {
+            (Crs::Projected(_), Some(geographic)) => Crs::Geographic(geographic.clone()),
+            _ => base.clone(),
+        };
+        if transformation.source.is_none()
+            || matches!(transformation.source.as_deref(), Some(Crs::Projected(_)))
+        {
+            transformation.source = Some(Box::new(source));
+        }
+        if transformation.target.is_none() {
+            transformation.target = Some(Box::new(bound.target_crs().clone()));
+        }
+    }
+    operation
+}

@@ -91,6 +91,7 @@ fn concatenated_of(
         version: None,
         // Only selects how the accuracy text is spelled, see `accuracy_text`.
         computed_name,
+        proj_based: None,
     }
 }
 

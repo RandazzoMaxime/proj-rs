@@ -25,7 +25,7 @@ A row remains when that case does not match the yaml.
 | `test_cs2cs_various.yaml#134` | cs2cs | expected 4189881.02	146313.87 4790558.75 got 4182107.12	4810218.62 221502.98 | Test cs2cs geographic -> geocentric outside BETA2007.gsb grid |
 | `test_cs2cs_various.yaml#135` | cs2cs | expected 49dN	2dE 0.002 got 2d0'0.12"E	49d0'3.647"N -50.127 | Test cs2cs geocentric -> geographic outside BETA2007.gsb grid |
 | `test_cs2cs_various.yaml#139` | cs2cs | exit 3 expected 0 Rel. 9.9.0, September 15th, 2026 <cs2cs>:  cannot initialize transformation cause: The underlying PROJ call failed: unknown CRS `EPSG:3912+577 | - |
-| `test_cs2cs_various.yaml#143` | cs2cs | exit 3 expected 0 Rel. 9.9.0, September 15th, 2026 <cs2cs>:  cannot initialize transformation cause: The underlying PROJ call failed: unknown CRS `EPSG:4559+575 | Test cs2cs EPSG:5488 (RGAF09) to EPSG:4559+5757 (RRAF 1991 / UTM zone 20N + Guadeloupe 1988 height) |
+| `test_cs2cs_various.yaml#143` | cs2cs | expected 661991.318	1796999.201 93.846 got 661990.711	1796999.279 53.073 | Test cs2cs EPSG:5488 (RGAF09) to EPSG:4559+5757 (RRAF 1991 / UTM zone 20N + Guadeloupe 1988 height) |
 | `test_projinfo.yaml#10` | projinfo | stderr text mismatch expected: Too many parameters: EPSG:32631  got: Too many parameters: EPSG:4327  | - |
 | `test_projinfo.yaml#13` | projinfo | text mismatch expected: Candidate operations found: 9 DERIVED_FROM(EPSG):1313, NAD27 to NAD83 (4), 1.5 m, Canada - onshore - Alberta; British Columbia; Manitoba | - |
 | `test_projinfo.yaml#14` | projinfo | text mismatch expected: Candidate operations found: 10 ------------------------------------- Operation No. 1:  DERIVED_FROM(EPSG):1313, NAD27 to NAD83 (4), 1.5  | - |
@@ -37,7 +37,6 @@ A row remains when that case does not match the yaml.
 | `test_projinfo.yaml#28` | projinfo | text mismatch expected: PROJ.4 string: +proj=utm +zone=31 +datum=WGS84 +units=m +no_defs +type=crs  WKT2:2019 string: PROJCRS["WGS 84 / UTM zone 31N",     BASEG | - |
 | `test_projinfo.yaml#32` | projinfo | text mismatch expected: Candidate operations found: 3 unknown id, Inverse of UTM zone 31N + WGS 84 to EGM2008 height (1), 0.113 m, World. unknown id, Inverse of | - |
 | `test_projinfo.yaml#33` | projinfo | text mismatch expected: +proj=pipeline +step +proj=unitconvert +xy_in=deg +xy_out=rad +step +proj=stere +lat_0=90 +lon_0=0 +k=0.994 +x_0=2000000 +y_0=2000000 +e | Undocumented option: --normalize-axis-order |
-| `test_projinfo.yaml#35` | projinfo | text mismatch expected: +proj=pipeline   +step +proj=unitconvert +xy_in=deg +xy_out=rad   +step +proj=vgridshift +grids=@foo.gtx +multiplier=1   +step +proj=uni | - |
 | `test_projinfo.yaml#36` | projinfo | text mismatch expected: Candidate operations found: 19 unknown id, AGD66 to WGS 84 (18) + WGS 84 to WGS 84 (G1762), 5 m, Australia - offshore including EEZ. unk | - |
 | `test_projinfo.yaml#37` | projinfo | text mismatch expected: Candidate operations found: 4 unknown id, Inverse of 3-degree Gauss-Kruger zone 3 + DHDN to ETRS89 (9), 0.1 m, Germany - Baden-Wurttembe | - |
 | `test_projinfo.yaml#38` | projinfo | text mismatch expected: Candidate operations found: 1 ------------------------------------- Operation No. 1:  DERIVED_FROM(EPSG):5656, GDA94 to AHD height (49), | - |

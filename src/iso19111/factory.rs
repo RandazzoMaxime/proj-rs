@@ -4343,6 +4343,7 @@ impl AuthorityFactory {
             accuracy,
             version: optional_text(&row[7].text()),
             computed_name: false,
+            proj_based: None,
         })
     }
 
@@ -4841,6 +4842,9 @@ impl CoordinateOperationFactory {
         target: &Crs,
         context: &CoordinateOperationContext,
     ) -> Result<Vec<CoordinateOperation>, FactoryError> {
+        if let Some(bound) = super::bound_ops::bound_candidates(self, source, target, context)? {
+            return Ok(bound);
+        }
         let mut found = Vec::new();
         let mut direct_empty = true;
         if let Crs::Projected(projected) = target {
@@ -4920,6 +4924,7 @@ impl CoordinateOperationFactory {
                             accuracy: None,
                             version: None,
                             computed_name: true,
+                            proj_based: None,
                         }));
                     }
                 }
@@ -4938,6 +4943,9 @@ impl CoordinateOperationFactory {
         if found.is_empty() {
             found.extend(super::compound::vertical_to_vertical(source, target));
         }
+        if found.is_empty() {
+            found.extend(super::compound::geographic_height_change(source, target));
+        }
         found.extend(super::compound::compound_to_geog3d(
             self, source, target, context,
         )?);
@@ -4947,6 +4955,15 @@ impl CoordinateOperationFactory {
         found.extend(super::compound::compound_to_compound(
             self, source, target, context,
         )?);
+        // A compound to a bound CRS is the inverse of the bound CRS's base to that compound.
+        // PROJ's bound-to-compound special cases are not ported; this is its last fallback.
+        if let (Crs::Compound(_), Crs::Bound(bound)) = (source, target) {
+            found.extend(
+                self.create_candidates(bound.source_crs(), source, context)?
+                    .into_iter()
+                    .map(|operation| operation.inverse()),
+            );
+        }
         if is_geodetic(source)
             && is_geodetic(target)
             && !has_perfect_accuracy_result(
@@ -5266,8 +5283,9 @@ pub(super) fn geographic_of(crs: &Crs) -> Option<&GeographicCRS> {
 
 /// The ballpark operation of `createOperationsGeodToGeod` between two CRS of different
 /// datums: a geographic offset between geographic CRS, or a geocentric translation between
-/// geocentric CRS. A null offset (same datum), a prime meridian shift, a geographic to
-/// geocentric pair, and a vertical unit change are not ported, and give nothing here.
+/// geocentric CRS. A null offset (same datum), a prime meridian shift, and a geographic to
+/// geocentric pair are not ported, and give nothing here. A same-datum height-unit change
+/// is [`super::compound::geographic_height_change`].
 fn ballpark_operations(source: &Crs, target: &Crs) -> Vec<CoordinateOperation> {
     if same_geodetic_datum(source, target) {
         return Vec::new();
@@ -5609,6 +5627,7 @@ pub(super) fn pivot_concatenation(steps: Vec<CoordinateOperation>) -> Concatenat
         accuracy,
         version: None,
         computed_name: true,
+        proj_based: None,
     }
 }
 

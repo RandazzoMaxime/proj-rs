@@ -516,6 +516,7 @@ impl ConcatenatedOperation {
             accuracy,
             version: None,
             computed_name,
+            proj_based: None,
         })
     }
 
@@ -552,6 +553,9 @@ impl ConcatenatedOperation {
             concatenated_inverse_name(self.name())
         };
         inverse.steps = steps;
+        if let Some(proj_based) = inverse.proj_based.as_mut() {
+            proj_based.inverted = !proj_based.inverted;
+        }
         std::mem::swap(&mut inverse.source, &mut inverse.target);
         for identifier in &mut inverse.identified.identifiers {
             identifier.code_space = inverse_code_space(&identifier.code_space);

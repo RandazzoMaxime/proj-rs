@@ -2134,6 +2134,34 @@ pub struct ConcatenatedOperation {
     pub(crate) version: Option<String>,
     /// The name is the steps' names joined by ` + `, as `createComputeMetadata` sets it.
     pub(crate) computed_name: bool,
+    /// The horizontal and vertical operations written as one PROJ pipeline, with the
+    /// horizontal conversion of the vertical step left out.
+    pub(crate) proj_based: Option<Box<ProjBased>>,
+}
+
+/// Which `MyPROJStringExportableHorizVertical*` of `coordinateoperationfactory.cpp` writes a
+/// concatenated operation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ProjBasedKind {
+    /// A horizontal operation, then the vertical one, on the target geographic CRS.
+    HorizVertical,
+    /// The source to an interpolation CRS, the vertical operation, then the interpolation
+    /// CRS to the target.
+    HorizVerticalHoriz,
+}
+
+/// The parts of a [`ProjBasedKind`] pipeline.
+#[derive(Clone, Debug)]
+pub(crate) struct ProjBased {
+    pub(crate) kind: ProjBasedKind,
+    pub(crate) horizontal: CoordinateOperation,
+    pub(crate) vertical: CoordinateOperation,
+    /// The interpolation CRS to the target. Unused by [`ProjBasedKind::HorizVertical`].
+    pub(crate) last: Option<CoordinateOperation>,
+    /// The interpolation CRS, or the target geographic CRS for `HorizVertical`.
+    pub(crate) interpolation: Crs,
+    /// The pipeline is written between `startInversion` and `stopInversion`.
+    pub(crate) inverted: bool,
 }
 
 /// Which CRS of a step `crs_pair` reads when the operation stores none.
@@ -3210,30 +3238,30 @@ impl CompoundCRS {
     ///
     /// The components are not a valid compound CRS.
     pub fn create_lax(name: impl Into<String>, components: Vec<Crs>) -> Result<Crs, FactoryError> {
-        if let [Crs::Geographic(horizontal), Crs::Vertical(vertical)] = components.as_slice() {
-            if horizontal.coordinate_system.axes.len() == 2
-                && vertical
-                    .datum
-                    .as_ref()
-                    .is_some_and(|datum| datum.wkt1_type == "2002")
+        if let [horizontal, Crs::Vertical(vertical)] = components.as_slice() {
+            if vertical
+                .datum
+                .as_ref()
+                .is_some_and(|datum| datum.wkt1_type == "2002")
             {
-                let axis = vertical.coordinate_system.axis();
-                let mut promoted = horizontal.clone();
-                promoted.identified.identifiers.clear();
-                let metre_up = axis.direction() == "up"
-                    && axis.unit().kind() == UnitKind::Linear
-                    && (axis.unit().conversion_to_si() - 1.0).abs() < 1e-12;
-                if !metre_up {
-                    promoted.identified.name =
-                        format!("{} ({})", horizontal.name(), vertical.name());
+                if let Crs::Geographic(geographic) = horizontal {
+                    if geographic.coordinate_system.axes.len() == 2 {
+                        return Ok(Crs::Geographic(ellipsoidal_height_geographic(
+                            geographic, vertical,
+                        )));
+                    }
                 }
-                promoted.coordinate_system.axes.push(Axis::new(
-                    "Ellipsoidal height",
-                    "h",
-                    axis.direction(),
-                    axis.unit().clone(),
-                ));
-                return Ok(Crs::Geographic(promoted));
+                if let Crs::Bound(bound) = horizontal {
+                    if let Crs::Geographic(geographic) = bound.source_crs() {
+                        if geographic.coordinate_system.axes.len() == 2 {
+                            let mut promoted = bound.clone();
+                            promoted.source = Box::new(Crs::Geographic(
+                                ellipsoidal_height_geographic(geographic, vertical),
+                            ));
+                            return Ok(Crs::Bound(promoted));
+                        }
+                    }
+                }
             }
         }
         Ok(Crs::Compound(Self::create(name, components)?))
@@ -3244,6 +3272,30 @@ impl CompoundCRS {
     pub fn domains(&self) -> &[ObjectDomain] {
         &self.identified.domains
     }
+}
+
+/// Geographic CRS plus an ellipsoidal-height vertical CRS (`VERT_DATUM` type `2002`).
+/// A metre-up height keeps the horizontal name. Any other axis appends the vertical name.
+fn ellipsoidal_height_geographic(
+    horizontal: &GeographicCRS,
+    vertical: &VerticalCRS,
+) -> GeographicCRS {
+    let axis = vertical.coordinate_system.axis();
+    let mut promoted = horizontal.clone();
+    promoted.identified.identifiers.clear();
+    let metre_up = axis.direction() == "up"
+        && axis.unit().kind() == UnitKind::Linear
+        && (axis.unit().conversion_to_si() - 1.0).abs() < 1e-12;
+    if !metre_up {
+        promoted.identified.name = format!("{} ({})", horizontal.name(), vertical.name());
+    }
+    promoted.coordinate_system.axes.push(Axis::new(
+        "Ellipsoidal height",
+        "h",
+        axis.direction(),
+        axis.unit().clone(),
+    ));
+    promoted
 }
 
 /// Bound CRS: a source CRS, a hub, and the transformation that binds them.
