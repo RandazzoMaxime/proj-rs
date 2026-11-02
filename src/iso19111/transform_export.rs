@@ -52,6 +52,8 @@ const METHOD_CHANGE_VERTICAL_UNIT: i32 = 1069;
 const METHOD_HEIGHT_DEPTH_REVERSAL: i32 = 1068;
 const METHOD_CARTESIAN_GRID_OFFSETS: i32 = 9656;
 const METHOD_LONGITUDE_ROTATION: i32 = 9601;
+const METHOD_MOLODENSKY: i32 = 9604;
+const METHOD_ABRIDGED_MOLODENSKY: i32 = 9605;
 const METHOD_GEOGRAPHIC2D_OFFSETS: i32 = 9619;
 const METHOD_GEOGRAPHIC3D_OFFSETS: i32 = 9660;
 const METHOD_GEOCENTRIC_GRID_IGN: i32 = 1087;
@@ -239,6 +241,9 @@ fn export_forward(
     if code == METHOD_LONGITUDE_ROTATION {
         return longitude_rotation(operation, source, target, formatter);
     }
+    if code == METHOD_MOLODENSKY || code == METHOD_ABRIDGED_MOLODENSKY {
+        return molodensky(operation, source, target, formatter);
+    }
     if code == METHOD_GEOGRAPHIC2D_OFFSETS || code == METHOD_GEOGRAPHIC3D_OFFSETS {
         return null_geographic_offset(operation, formatter);
     }
@@ -258,6 +263,40 @@ fn export_forward(
         return helmert(operation, kind, source, target, formatter);
     }
     Err(unimplemented(operation))
+}
+
+/// Molodensky and abridged Molodensky: the source geographic CRS reversed, the `molodensky`
+/// step on the source ellipsoid, then the target geographic CRS.
+fn molodensky(
+    operation: &Transformation,
+    source: Option<&Crs>,
+    target: Option<&Crs>,
+    formatter: &mut PipelineFormatter,
+) -> Result<(), FactoryError> {
+    let not_geographic =
+        || FactoryError::Format("Can apply Molodensky only to GeographicCRS".to_owned());
+    let source = source.and_then(geographic_of).ok_or_else(not_geographic)?;
+    let target = target.and_then(geographic_of).ok_or_else(not_geographic)?;
+    formatter.start_inversion();
+    geographic_export(source, formatter)?;
+    formatter.stop_inversion();
+    formatter.add_step("molodensky");
+    ellipsoid_steps(ellipsoid_of(source), formatter);
+    formatter.add_number("dx", si_value(operation, 8605));
+    formatter.add_number("dy", si_value(operation, 8606));
+    formatter.add_number("dz", si_value(operation, 8607));
+    formatter.add_number("da", si_value(operation, 8654));
+    formatter.add_number("df", si_value(operation, 8655));
+    if epsg_method_code(operation) == METHOD_ABRIDGED_MOLODENSKY
+        || operation
+            .method()
+            .name()
+            .to_ascii_lowercase()
+            .contains("abridged")
+    {
+        formatter.add_flag("abridged");
+    }
+    geographic_export(target, formatter)
 }
 
 /// The first grid file of a grid method: the file PROJ looks up.
@@ -953,6 +992,38 @@ struct HelmertKind {
     position_vector: bool,
     params: HelmertParams,
     full_matrix: bool,
+}
+
+impl Transformation {
+    /// `createApproximateInverseIfPossible`: an inverted seven or fifteen parameter Helmert
+    /// transformation written as the forward method with every value but the reference epoch
+    /// negated. The name says `approx. inversion` unless every rotation, scale and rate is zero.
+    pub(super) fn approximate_inverse(&self) -> Option<Self> {
+        if !self.inverted {
+            return None;
+        }
+        let kind = helmert_kind(self)?;
+        if kind.full_matrix || kind.params == HelmertParams::Three {
+            return None;
+        }
+        let mut approximate = self.clone();
+        approximate.inverted = false;
+        let mut exact = true;
+        for parameter in &mut approximate.parameters {
+            if parameter.name == "Parameter reference epoch" {
+                continue;
+            }
+            if let ParameterValue::Measure(measure) = &mut parameter.value {
+                let is_translation = measure.unit.kind == UnitKind::Linear;
+                measure.value = 0.0 - measure.value;
+                exact &= is_translation || measure.value == 0.0;
+            }
+        }
+        if !exact {
+            approximate.identified.name.push_str(" (approx. inversion)");
+        }
+        Some(approximate)
+    }
 }
 
 /// The Helmert form of a method, or `None` when the method is not a Helmert

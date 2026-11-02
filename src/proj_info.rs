@@ -273,7 +273,7 @@ fn init_definition(exported: &str) -> Result<String, ProjError> {
     let mut items: Vec<String> = exported
         .split_whitespace()
         .map(|token| token.strip_prefix('+').unwrap_or(token).to_owned())
-        .filter(|item| item != "type=crs")
+        .filter(|item| item != "type=crs" && item != "wktext")
         .collect();
     let datum = items
         .iter()

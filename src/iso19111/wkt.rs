@@ -547,6 +547,30 @@ impl super::model::CoordinateOperation {
     }
 }
 
+impl Transformation {
+    /// Write this transformation into `formatter` and return the WKT.
+    ///
+    /// # Errors
+    ///
+    /// The formatter is not a WKT2 one, or a parameter cannot be written.
+    pub fn export_to_wkt(&self, formatter: &mut WktFormatter) -> Result<String, FactoryError> {
+        export_transformation(self, formatter)?;
+        Ok(std::mem::take(&mut formatter.result))
+    }
+}
+
+impl super::model::ConcatenatedOperation {
+    /// Write this concatenated operation into `formatter` and return the WKT.
+    ///
+    /// # Errors
+    ///
+    /// The formatter is not WKT2:2019, or a step cannot be written.
+    pub fn export_to_wkt(&self, formatter: &mut WktFormatter) -> Result<String, FactoryError> {
+        export_concatenated(self, formatter)?;
+        Ok(std::mem::take(&mut formatter.result))
+    }
+}
+
 impl Crs {
     /// Write this CRS into `formatter` and return the WKT.
     ///
@@ -867,6 +891,15 @@ fn export_projected(crs: &ProjectedCRS, formatter: &mut WktFormatter) -> Result<
             "a projected 3D CRS can only be exported as WKT2:2019".to_owned(),
         ));
     }
+    if !formatter.wkt2
+        && !formatter.esri
+        && crs
+            .identified
+            .name
+            .starts_with("Popular Visualisation CRS / Mercator")
+    {
+        return export_popular_visualisation_projected(crs, formatter);
+    }
     let keyword = if formatter.wkt2 { "PROJCRS" } else { "PROJCS" };
     let mut name = crs.identified.name.clone();
     if formatter.esri {
@@ -960,12 +993,81 @@ fn export_projected(crs: &ProjectedCRS, formatter: &mut WktFormatter) -> Result<
     );
     formatter.output_axis = previous;
     if !formatter.wkt2 && !formatter.esri {
-        if let Some(extension) = projected_proj4_extension(crs) {
+        if let Some(extension) =
+            projected_proj4_extension(crs).or_else(|| crs.wkt1_extension_proj4())
+        {
             formatter.start_node("EXTENSION", NodeId::Absent);
             formatter.add_quoted("PROJ4");
             formatter.add_quoted(&extension);
             formatter.end_node();
         }
+    }
+    formatter.base_usage(&crs.identified);
+    formatter.end_node();
+    Ok(())
+}
+
+/// The deprecated EPSG:3785 in WKT1 GDAL: the sphere datum with a zero `TOWGS84`, and
+/// `Mercator_1SP` with no latitude of origin.
+fn export_popular_visualisation_projected(
+    crs: &ProjectedCRS,
+    formatter: &mut WktFormatter,
+) -> Result<(), FactoryError> {
+    formatter.start_node("PROJCS", node_from_ids(&crs.identified.identifiers));
+    formatter.add_quoted(&crs.identified.name);
+    formatter.towgs84 = Some([0.0; 7]);
+    let previous = formatter.output_axis;
+    formatter.output_axis = OutputAxisRule::No;
+    let base = match &crs.base {
+        GeodeticCRS::Geographic(base) => export_geographic(base, formatter),
+        GeodeticCRS::Geocentric(base) => export_geocentric(base, formatter),
+        GeodeticCRS::Spherical(base) => export_spherical(
+            &base.identified,
+            base.datum.as_ref(),
+            base.ensemble.as_ref(),
+            &base.coordinate_system,
+            formatter,
+        ),
+    };
+    formatter.output_axis = previous;
+    formatter.towgs84 = None;
+    base?;
+    formatter.start_node("PROJECTION", NodeId::Absent);
+    formatter.add_quoted("Mercator_1SP");
+    formatter.end_node();
+    for (name, value) in [
+        ("central_meridian", 0.0),
+        ("scale_factor", 1.0),
+        ("false_easting", 0.0),
+        ("false_northing", 0.0),
+    ] {
+        formatter.start_node("PARAMETER", NodeId::Absent);
+        formatter.add_quoted(name);
+        formatter.add_number(value);
+        formatter.end_node();
+    }
+    let axes = &crs.coordinate_system.axes;
+    if let Some(unit) = axes.first().map(Axis::unit) {
+        formatter.export_unit(unit, None);
+    }
+    let previous = formatter.output_axis;
+    if previous == OutputAxisRule::Wkt1GdalEpsgStyle {
+        let east_north =
+            axes.len() >= 2 && axes[0].direction() == "east" && axes[1].direction() == "north";
+        if east_north {
+            formatter.output_axis = OutputAxisRule::Yes;
+        }
+    }
+    export_cs(
+        &CoordinateSystem::Cartesian(crs.coordinate_system.clone()),
+        formatter,
+    );
+    formatter.output_axis = previous;
+    if let Some(text) = projected_proj4_extension(crs).or_else(|| crs.wkt1_extension_proj4()) {
+        formatter.start_node("EXTENSION", NodeId::Absent);
+        formatter.add_quoted("PROJ4");
+        formatter.add_quoted(&text);
+        formatter.end_node();
     }
     formatter.base_usage(&crs.identified);
     formatter.end_node();
@@ -2360,39 +2462,40 @@ fn export_concatenated_body(
     Ok(())
 }
 
-fn export_transformation_crs(
-    transformation: &Transformation,
+/// `exportSourceCRSAndTargetCRSToWKT`: the CRS keep their identifier in WKT2:2019 unless
+/// identifiers are written on the top level only.
+fn export_source_and_target(
+    source: Option<&Crs>,
+    target: Option<&Crs>,
+    has_domains: bool,
     formatter: &mut WktFormatter,
 ) -> Result<(), FactoryError> {
-    if let Some(source) = &transformation.source {
-        export_bound_crs(formatter, "SOURCECRS", source)?;
-    }
-    if let Some(target) = &transformation.target {
-        export_bound_crs(formatter, "TARGETCRS", target)?;
-    }
-    Ok(())
-}
-
-/// `SOURCECRS` / `TARGETCRS`. PROJ clears the parent id so the CRS `ID` is written.
-fn export_bound_crs(
-    formatter: &mut WktFormatter,
-    keyword: &str,
-    crs: &Crs,
-) -> Result<(), FactoryError> {
-    formatter.start_node(keyword, NodeId::Absent);
-    let saved = formatter.stack_has_id.last().copied();
-    if !crs.identifiers().is_empty() {
-        if let Some(flag) = formatter.stack_has_id.last_mut() {
-            *flag = false;
+    let can_export_id = formatter.wkt2
+        && formatter.keywords_2019
+        && !(formatter.id_on_top_only && top_has_id(formatter));
+    let disabled = usize::from(has_domains);
+    formatter.usage_disabled += disabled;
+    let mut result = Ok(());
+    for (keyword, crs) in [("SOURCECRS", source), ("TARGETCRS", target)] {
+        let Some(crs) = crs else {
+            continue;
+        };
+        formatter.start_node(keyword, NodeId::Absent);
+        let fake_no_id = can_export_id && !crs.identifiers().is_empty();
+        if fake_no_id {
+            formatter.stack_has_id.push(false);
+        }
+        result = export_crs(crs, formatter);
+        if fake_no_id {
+            formatter.stack_has_id.pop();
+        }
+        formatter.end_node();
+        if result.is_err() {
+            break;
         }
     }
-    let exported = export_crs(crs, formatter);
-    if let (Some(flag), Some(saved)) = (formatter.stack_has_id.last_mut(), saved) {
-        *flag = saved;
-    }
-    exported?;
-    formatter.end_node();
-    Ok(())
+    formatter.usage_disabled -= disabled;
+    result
 }
 
 fn export_transformation(
@@ -2403,6 +2506,9 @@ fn export_transformation(
         return Err(FactoryError::Format(
             "a transformation can only be exported to WKT2".to_owned(),
         ));
+    }
+    if let Some(approximate) = transformation.approximate_inverse() {
+        return export_transformation(&approximate, formatter);
     }
     let keyword = if formatter.abridged {
         "ABRIDGEDTRANSFORMATION"
@@ -2424,13 +2530,18 @@ fn export_transformation(
         }
     }
     if !formatter.abridged {
-        let disabled = usize::from(!transformation.identified.domains.is_empty());
-        formatter.usage_disabled += disabled;
-        let exported = export_transformation_crs(transformation, formatter);
-        formatter.usage_disabled -= disabled;
-        exported?;
+        export_source_and_target(
+            transformation.source.as_deref(),
+            transformation.target.as_deref(),
+            !transformation.identified.domains.is_empty(),
+            formatter,
+        )?;
     }
-    export_method(&transformation.method, formatter)?;
+    if transformation.inverted {
+        export_method(&transformation.method.inverse(), formatter)?;
+    } else {
+        export_method(&transformation.method, formatter)?;
+    }
     for parameter in &transformation.parameters {
         export_parameter(parameter, formatter)?;
     }

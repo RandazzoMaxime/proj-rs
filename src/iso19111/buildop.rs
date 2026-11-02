@@ -82,6 +82,21 @@ impl OperationParameter {
 }
 
 impl OperationMethod {
+    /// `createPropertiesForInverse(method)`: the `Inverse of ` prefix added or removed, and the
+    /// identifier moved to the `INVERSE(...)` code space or back.
+    #[must_use]
+    pub(crate) fn inverse(&self) -> Self {
+        let mut inverse = self.clone();
+        inverse.name = match self.name.strip_prefix("Inverse of ") {
+            Some(rest) => rest.to_owned(),
+            None => format!("Inverse of {}", self.name),
+        };
+        if !inverse.code_space.is_empty() {
+            inverse.code_space = inverse_code_space(&self.code_space);
+        }
+        inverse
+    }
+
     /// `isEquivalentTo` with the strict criterion.
     #[must_use]
     pub fn is_equivalent_to(&self, other: &Self) -> bool {
@@ -211,6 +226,41 @@ impl Transformation {
         })
     }
 
+    /// Parameters that are missing or not part of the method, as
+    /// `SingleOperation::validateParameters` reports them.
+    #[must_use]
+    pub fn validate_parameters(&self) -> Vec<String> {
+        validate_method_parameters(&self.method, &self.parameters)
+    }
+
+    /// As [`Self::create`], with a method that carries an identifier.
+    ///
+    /// # Errors
+    ///
+    /// The method's parameter list and the value list have different lengths.
+    pub fn create_with_operation_method(
+        props: &OpProps,
+        source: Crs,
+        target: Crs,
+        interpolation: Option<Crs>,
+        method: OperationMethod,
+        values: Vec<ParameterValue>,
+        accuracy: Option<f64>,
+    ) -> Result<Self, FactoryError> {
+        let mut transformation = Self::create(
+            props,
+            source,
+            target,
+            interpolation,
+            &method.name,
+            method.parameters.clone(),
+            values,
+            accuracy,
+        )?;
+        transformation.method = method;
+        Ok(transformation)
+    }
+
     /// Transformation with the method of EPSG `code`, `values` in its parameter
     /// order, and `domain` as its usage. Used for the ballpark operations.
     ///
@@ -260,11 +310,31 @@ impl Transformation {
         for identifier in &mut inverse.identified.identifiers {
             identifier.code_space = inverse_code_space(&identifier.code_space);
         }
-        inverse.identified.name = if self.inverted {
-            uninverse_name(self.name())
-        } else {
-            inverse_name(self.name())
+        let swapped_name = match (self.source_crs(), self.target_crs()) {
+            (Some(source), Some(target))
+                if source.name() != target.name()
+                    && self.name()
+                        == format!(
+                            "Transformation from {} to {}",
+                            source.name(),
+                            target.name()
+                        ) =>
+            {
+                Some(format!(
+                    "Transformation from {} to {}",
+                    target.name(),
+                    source.name()
+                ))
+            }
+            _ => None,
         };
+        inverse.identified.name = swapped_name.unwrap_or_else(|| {
+            if self.inverted {
+                uninverse_name(self.name())
+            } else {
+                inverse_name(self.name())
+            }
+        });
         inverse
     }
 
@@ -285,6 +355,15 @@ impl Transformation {
             return false;
         }
         if !self.method.is_equivalent_to_with(&other.method, criterion) {
+            // A geocentric translation, position vector and coordinate frame rotation
+            // are the same operation when their `+towgs84` values agree.
+            if criterion == Equivalence::Equivalent && helmert_parameters_match(self, other) {
+                return crs_option(self.source_crs(), other.source_crs())
+                    && crs_option(self.target_crs(), other.target_crs())
+                    && crs_option(self.interpolation_crs(), other.interpolation_crs())
+                    && self.accuracy == other.accuracy
+                    && self.inverted == other.inverted;
+            }
             return false;
         }
         values_equivalent(&self.parameters, &other.parameters, criterion)
@@ -294,6 +373,17 @@ impl Transformation {
             && self.accuracy == other.accuracy
             && self.inverted == other.inverted
     }
+}
+
+/// `getTOWGS84Parameters` values within `1e-10` relative tolerance.
+fn helmert_parameters_match(left: &Transformation, right: &Transformation) -> bool {
+    let (Ok(Some(left)), Ok(Some(right))) = (left.towgs84_strict(), right.towgs84_strict()) else {
+        return false;
+    };
+    left.iter().zip(right).all(|(left, right)| {
+        let difference = (left - right).abs();
+        difference <= 1e-10 * left.abs()
+    })
 }
 
 /// The code space of an inverse operation's identifier: `EPSG` becomes `INVERSE(EPSG)`,
@@ -357,10 +447,80 @@ impl Conversion {
 }
 
 impl ConcatenatedOperation {
+    /// `ConcatenatedOperation::create`: the source is the first step's source and the target
+    /// the last step's target. An empty name becomes the step names joined by ` + `.
+    ///
+    /// # Errors
+    ///
+    /// Fewer than two steps, a step without CRS, or a step whose source is not the
+    /// previous step's target.
+    pub fn create(
+        props: &OpProps,
+        steps: Vec<CoordinateOperation>,
+        accuracy: Option<f64>,
+    ) -> Result<Self, FactoryError> {
+        if steps.len() < 2 {
+            return Err(FactoryError::Invalid(
+                "ConcatenatedOperation must have at least 2 operations".to_owned(),
+            ));
+        }
+        for pair in steps.windows(2) {
+            let (Some(previous), Some(next)) = (pair[0].target_crs(), pair[1].source_crs()) else {
+                return Err(FactoryError::Invalid(
+                    "Operations are missing their source or target CRS".to_owned(),
+                ));
+            };
+            if !previous.is_equivalent_to(next) {
+                return Err(FactoryError::Invalid(format!(
+                    "Inconsistent chaining of CRS in operations: {} != {}",
+                    previous.name(),
+                    next.name()
+                )));
+            }
+        }
+        let source = steps.first().and_then(CoordinateOperation::source_crs);
+        let target = steps.last().and_then(CoordinateOperation::target_crs);
+        let (source, target) = (source.cloned().map(Box::new), target.cloned().map(Box::new));
+        let computed_name = props.name.as_deref().map_or(true, str::is_empty);
+        let joined = steps
+            .iter()
+            .map(CoordinateOperation::name)
+            .collect::<Vec<_>>()
+            .join(" + ");
+        let mut identified = identified_from(props, &joined);
+        if computed_name {
+            identified.name = joined;
+        }
+        Ok(Self {
+            identified,
+            steps: steps
+                .into_iter()
+                .map(|operation| ConcatenatedStep {
+                    operation,
+                    reverse: false,
+                })
+                .collect(),
+            source,
+            target,
+            accuracy,
+            version: None,
+            computed_name,
+        })
+    }
+
+    /// `isEquivalentTo` with the strict criterion: the same steps, in order.
+    #[must_use]
+    pub fn is_equivalent_to(&self, other: &Self) -> bool {
+        self.steps.len() == other.steps.len()
+            && self.steps.iter().zip(&other.steps).all(|(left, right)| {
+                left.reverse == right.reverse && left.operation.is_equivalent_to(&right.operation)
+            })
+    }
+
     /// The inverse concatenated operation: the steps in reverse order, each inverted, and
     /// the source and target swapped. A computed name is rebuilt from the inverted steps.
     #[must_use]
-    pub(crate) fn inverse(&self) -> Self {
+    pub fn inverse(&self) -> Self {
         let steps: Vec<ConcatenatedStep> = self
             .steps
             .iter()
@@ -390,9 +550,42 @@ impl ConcatenatedOperation {
 }
 
 impl CoordinateOperation {
+    /// Source CRS, when the operation has one.
+    #[must_use]
+    pub fn source_crs(&self) -> Option<&Crs> {
+        match self {
+            Self::Conversion(operation) => operation.source_crs(),
+            Self::Transformation(operation) => operation.source_crs(),
+            Self::Concatenated(operation) => operation.source_crs(),
+        }
+    }
+
+    /// Target CRS, when the operation has one.
+    #[must_use]
+    pub fn target_crs(&self) -> Option<&Crs> {
+        match self {
+            Self::Conversion(operation) => operation.target_crs(),
+            Self::Transformation(operation) => operation.target_crs(),
+            Self::Concatenated(operation) => operation.target_crs(),
+        }
+    }
+
+    /// `isEquivalentTo` with the strict criterion. Two operations of different kinds differ.
+    #[must_use]
+    pub fn is_equivalent_to(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Conversion(left), Self::Conversion(right)) => left.is_equivalent_to(right),
+            (Self::Transformation(left), Self::Transformation(right)) => {
+                left.is_equivalent_to(right)
+            }
+            (Self::Concatenated(left), Self::Concatenated(right)) => left.is_equivalent_to(right),
+            _ => false,
+        }
+    }
+
     /// The operation from the target to the source.
     #[must_use]
-    pub(crate) fn inverse(&self) -> Self {
+    pub fn inverse(&self) -> Self {
         match self {
             Self::Conversion(operation) => Self::Conversion(operation.inverse()),
             Self::Transformation(operation) => Self::Transformation(operation.inverse()),
@@ -410,6 +603,20 @@ fn crs_option(left: Option<&Crs>, right: Option<&Crs>) -> bool {
 }
 
 fn values_equivalent(left: &[Parameter], right: &[Parameter], criterion: Equivalence) -> bool {
+    values_equivalent_from(left, right, criterion, false)
+}
+
+/// `SingleOperation::_isEquivalentTo` for parameter lists.
+///
+/// Under `Equivalent`, a parameter missing on the other side is accepted when it
+/// is the neutral value (1 for a scale, 0 otherwise). The check runs both ways
+/// unless `from_other` is set, which is the reverse pass.
+fn values_equivalent_from(
+    left: &[Parameter],
+    right: &[Parameter],
+    criterion: Equivalence,
+    from_other: bool,
+) -> bool {
     if criterion == Equivalence::Strict {
         return left.len() == right.len()
             && left
@@ -417,37 +624,67 @@ fn values_equivalent(left: &[Parameter], right: &[Parameter], criterion: Equival
                 .zip(right)
                 .all(|(left, right)| parameter_equivalent(left, right, criterion));
     }
-    if left.len() != right.len() {
-        return false;
-    }
     let mut used = vec![false; right.len()];
+    let mut found_missing = left.len() != right.len();
     for parameter in left {
-        let mut same_name = false;
-        let mut found = false;
+        let mut equivalent = false;
+        let mut same_name_different_value = false;
         for (index, other) in right.iter().enumerate() {
             if used[index] {
                 continue;
             }
             if parameter_equivalent(parameter, other, criterion) {
                 used[index] = true;
-                found = true;
+                equivalent = true;
                 break;
-            } else if identified_names_match(&parameter.name, &other.name, criterion) {
-                same_name = true;
+            } else if parameter_names_match(parameter, other, criterion) {
+                same_name_different_value = true;
                 used[index] = true;
                 break;
             }
         }
-        if !found || same_name {
+        if equivalent {
+            continue;
+        }
+        if same_name_different_value || !neutral_parameter(parameter) {
             return false;
         }
+        found_missing = true;
+    }
+    if found_missing && !from_other {
+        return values_equivalent_from(right, left, criterion, true);
     }
     true
 }
 
 fn parameter_equivalent(left: &Parameter, right: &Parameter, criterion: Equivalence) -> bool {
-    identified_names_match(&left.name, &right.name, criterion)
+    parameter_names_match(left, right, criterion)
         && left.value.is_equivalent_to_with(&right.value, criterion)
+}
+
+/// Same parameter: the name, or, under `Equivalent`, the same non-zero EPSG code.
+fn parameter_names_match(left: &Parameter, right: &Parameter, criterion: Equivalence) -> bool {
+    if identified_names_match(&left.name, &right.name, criterion) {
+        return true;
+    }
+    if criterion != Equivalence::Equivalent {
+        return false;
+    }
+    let left_code = left.code.parse::<i32>().unwrap_or(0);
+    let right_code = right.code.parse::<i32>().unwrap_or(0);
+    left_code != 0 && left_code == right_code
+}
+
+/// A missing parameter is neutral when a scale is 1 and every other measure is 0.
+fn neutral_parameter(parameter: &Parameter) -> bool {
+    let ParameterValue::Measure(measure) = &parameter.value else {
+        return false;
+    };
+    if measure.unit().kind() == UnitKind::Scale {
+        measure.si_value() == 1.0
+    } else {
+        measure.si_value() == 0.0
+    }
 }
 
 fn measures_equivalent(left: &Measure, right: &Measure, criterion: Equivalence) -> bool {
@@ -554,6 +791,90 @@ fn canonical(name: &str) -> String {
         .collect()
 }
 
+/// `SingleOperation::validateParameters`.
+fn validate_method_parameters(method: &OperationMethod, parameters: &[Parameter]) -> Vec<String> {
+    let Some(mapped) = find_for_validate(method) else {
+        return vec![format!("Unknown method {}", method.name())];
+    };
+    let mut messages = Vec::new();
+    if mapped.wkt2_name != method.name() {
+        if names_match(mapped.wkt2_name, method.name()) {
+            messages.push(format!(
+                "Method name {} is equivalent to official {} but not strictly equal",
+                method.name(),
+                mapped.wkt2_name
+            ));
+        } else {
+            messages.push(format!(
+                "Method name {}, matched to {}, through its EPSG code has not an equivalent name",
+                method.name(),
+                mapped.wkt2_name
+            ));
+        }
+    }
+    let method_code = method.code.parse::<i32>().unwrap_or(0);
+    if method_code != 0 && method_code != mapped.epsg_code {
+        messages.push(format!(
+            "Method of EPSG code {method_code} does not match official code ({})",
+            mapped.epsg_code
+        ));
+    }
+    let mut matched = vec![false; parameters.len()];
+    for param in mapped.params {
+        let found = parameters.iter().position(|have| {
+            let have_code = have.code.parse::<i32>().unwrap_or(0);
+            (param.epsg_code != 0 && have_code == param.epsg_code)
+                || have.name.eq_ignore_ascii_case(param.wkt2_name)
+        });
+        let Some(index) = found else {
+            messages.push(format!(
+                "Cannot find expected parameter {}",
+                param.wkt2_name
+            ));
+            continue;
+        };
+        matched[index] = true;
+        let have = &parameters[index];
+        if param.wkt2_name != have.name {
+            if have.name.eq_ignore_ascii_case(param.wkt2_name) {
+                messages.push(format!(
+                    "Parameter name {} is equivalent to official {} but not strictly equal",
+                    have.name, param.wkt2_name
+                ));
+            } else {
+                messages.push(format!(
+                    "Parameter name {}, matched to {}, through its EPSG code has not an equivalent name",
+                    have.name, param.wkt2_name
+                ));
+            }
+        }
+        let have_code = have.code.parse::<i32>().unwrap_or(0);
+        if have_code != 0 && have_code != param.epsg_code {
+            messages.push(format!(
+                "Parameter of EPSG code {have_code} does not match official code ({})",
+                param.epsg_code
+            ));
+        }
+    }
+    for (index, have) in parameters.iter().enumerate() {
+        if matched[index] {
+            continue;
+        }
+        let have_code = have.code.parse::<i32>().unwrap_or(0);
+        let known = mapped.params.iter().any(|param| {
+            (param.epsg_code != 0 && have_code == param.epsg_code)
+                || have.name.eq_ignore_ascii_case(param.wkt2_name)
+        });
+        if !known {
+            messages.push(format!(
+                "Parameter {} found but not expected for this method",
+                have.name
+            ));
+        }
+    }
+    messages
+}
+
 impl super::model::Conversion {
     /// `isEquivalentTo` with `criterion`.
     ///
@@ -624,95 +945,15 @@ impl super::model::Conversion {
     /// The messages are the ones PROJ `SingleOperation::validateParameters` emits.
     #[must_use]
     pub fn validate_parameters(&self) -> Vec<String> {
-        let Some(mapped) = find_for_validate(&self.method) else {
-            return vec![format!("Unknown method {}", self.method.name())];
-        };
-        let mut messages = Vec::new();
-        if mapped.wkt2_name != self.method.name() {
-            if names_match(mapped.wkt2_name, self.method.name()) {
-                messages.push(format!(
-                    "Method name {} is equivalent to official {} but not strictly equal",
-                    self.method.name(),
-                    mapped.wkt2_name
-                ));
-            } else {
-                messages.push(format!(
-                    "Method name {}, matched to {}, through its EPSG code has not an equivalent name",
-                    self.method.name(),
-                    mapped.wkt2_name
-                ));
-            }
-        }
-        let method_code = self.method.code.parse::<i32>().unwrap_or(0);
-        if method_code != 0 && method_code != mapped.epsg_code {
-            messages.push(format!(
-                "Method of EPSG code {method_code} does not match official code ({})",
-                mapped.epsg_code
-            ));
-        }
-        let mut matched = vec![false; self.parameters.len()];
-        for param in mapped.params {
-            let found = self.parameters.iter().position(|have| {
-                let have_code = have.code.parse::<i32>().unwrap_or(0);
-                (param.epsg_code != 0 && have_code == param.epsg_code)
-                    || have.name.eq_ignore_ascii_case(param.wkt2_name)
-            });
-            let Some(index) = found else {
-                messages.push(format!(
-                    "Cannot find expected parameter {}",
-                    param.wkt2_name
-                ));
-                continue;
-            };
-            matched[index] = true;
-            let have = &self.parameters[index];
-            if param.wkt2_name != have.name {
-                if have.name.eq_ignore_ascii_case(param.wkt2_name) {
-                    messages.push(format!(
-                        "Parameter name {} is equivalent to official {} but not strictly equal",
-                        have.name, param.wkt2_name
-                    ));
-                } else {
-                    messages.push(format!(
-                        "Parameter name {}, matched to {}, through its EPSG code has not an equivalent name",
-                        have.name, param.wkt2_name
-                    ));
-                }
-            }
-            let have_code = have.code.parse::<i32>().unwrap_or(0);
-            if have_code != 0 && have_code != param.epsg_code {
-                messages.push(format!(
-                    "Parameter of EPSG code {have_code} does not match official code ({})",
-                    param.epsg_code
-                ));
-            }
-        }
-        for (index, have) in self.parameters.iter().enumerate() {
-            if matched[index] {
-                continue;
-            }
-            let have_code = have.code.parse::<i32>().unwrap_or(0);
-            let known = mapped.params.iter().any(|param| {
-                (param.epsg_code != 0 && have_code == param.epsg_code)
-                    || have.name.eq_ignore_ascii_case(param.wkt2_name)
-            });
-            if !known {
-                messages.push(format!(
-                    "Parameter {} found but not expected for this method",
-                    have.name
-                ));
-            }
-        }
-        messages
+        validate_method_parameters(&self.method, &self.parameters)
     }
 
     /// `exportToPROJString` for a conversion that has no source or target CRS.
     ///
     /// # Errors
     ///
-    /// The method cannot be written as a PROJ string, a parameter value is outside the
-    /// range PROJ accepts, or the conversion is an inverse, whose `+inv` form (with its
-    /// axis steps for the target CRS) is not written yet.
+    /// The method cannot be written as a PROJ string, or a parameter value is outside
+    /// the range PROJ accepts. An inverse is the forward string inside `+inv`.
     pub fn export_to_proj_string(&self) -> Result<String, FactoryError> {
         self.export_to_proj_inner(TmercApprox::No)
     }
@@ -728,10 +969,25 @@ impl super::model::Conversion {
 
     fn export_to_proj_inner(&self, approx_tmerc: TmercApprox) -> Result<String, FactoryError> {
         if self.inverted {
-            return Err(FactoryError::Format(format!(
-                "inverse conversion {} has no PROJ string in this crate",
-                self.name()
-            )));
+            // A factory inverse still carries its CRS pair. That string is the
+            // projection pipeline, not this bare `+inv` form.
+            if self.source_crs().is_some() || self.target_crs().is_some() {
+                return Err(FactoryError::Format(format!(
+                    "inverse conversion {} has no PROJ string in this crate",
+                    self.name()
+                )));
+            }
+            let mut forward = self.clone();
+            forward.inverted = false;
+            let forward_string = forward.export_to_proj_inner(approx_tmerc)?;
+            let mut formatter = super::pipeline::PipelineFormatter::with_grid_names(Vec::new());
+            formatter.start_inversion();
+            formatter.ingest_proj_string(&forward_string);
+            formatter.stop_inversion();
+            return Ok(formatter.finish(super::pipeline::ProjLines::Single));
+        }
+        if self.method.name.eq_ignore_ascii_case("Adams_Square_II") {
+            return Ok(adams_square_ii_proj(self));
         }
         if let Some(text) = self
             .method
@@ -2322,4 +2578,64 @@ fn push_aux(parts: &mut Vec<String>, aux: &str) {
 
 fn push_number(parts: &mut Vec<String>, name: &str, value: f64) {
     parts.push(format!("+{name}={}", proj_number(value)));
+}
+
+/// `+proj=spilhaus` for ESRI `Adams_Square_II`. The scale is `sqrt(2)` times
+/// `Scale_Factor`, which defaults to 1 when the parameter is absent.
+fn adams_square_ii_proj(conversion: &Conversion) -> String {
+    let mut parts = vec!["+proj=spilhaus".to_owned()];
+    push_number(
+        &mut parts,
+        "lat_0",
+        adams_degrees(conversion, "Latitude_Of_Center"),
+    );
+    push_number(
+        &mut parts,
+        "lon_0",
+        adams_degrees(conversion, "Longitude_Of_Center"),
+    );
+    push_number(&mut parts, "azi", adams_degrees(conversion, "Azimuth"));
+    let scale = adams_measure(conversion, "Scale_Factor")
+        .map(Measure::si_value)
+        .unwrap_or(1.0);
+    push_number(&mut parts, "k_0", std::f64::consts::SQRT_2 * scale);
+    push_number(
+        &mut parts,
+        "rot",
+        adams_degrees(conversion, "XY_Plane_Rotation"),
+    );
+    push_number(&mut parts, "x_0", adams_metres(conversion, "False_Easting"));
+    push_number(
+        &mut parts,
+        "y_0",
+        adams_metres(conversion, "False_Northing"),
+    );
+    parts.join(" ")
+}
+
+fn adams_degrees(conversion: &Conversion, name: &str) -> f64 {
+    adams_measure(conversion, name)
+        .map(|measure| measure.convert_to(&super::model::UnitOfMeasure::degree()))
+        .unwrap_or(0.0)
+}
+
+fn adams_metres(conversion: &Conversion, name: &str) -> f64 {
+    adams_measure(conversion, name)
+        .map(Measure::si_value)
+        .unwrap_or(0.0)
+}
+
+/// ESRI Adams names, or the EPSG names WKT1 import substitutes for them.
+fn adams_measure<'a>(conversion: &'a Conversion, name: &str) -> Option<&'a Measure> {
+    conversion.parameters.iter().find_map(|parameter| {
+        let same = super::equiv::equivalent_name(&parameter.name, name)
+            || super::equiv::are_equivalent_parameters(&parameter.name, name);
+        if !same {
+            return None;
+        }
+        match &parameter.value {
+            ParameterValue::Measure(measure) => Some(measure),
+            _ => None,
+        }
+    })
 }

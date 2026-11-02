@@ -2301,6 +2301,9 @@ impl WktParser {
             WktObject::Crs(Crs::Geographic(crs)) => GeodeticCRS::Geographic(crs),
             WktObject::Crs(Crs::Geodetic(crs)) => crs,
             WktObject::Crs(Crs::Bound(bound)) => {
+                if is_web_mercator_node(node, &props) {
+                    return self.pseudo_mercator_projected(node, props);
+                }
                 return self.projected_bound(node, props, bound);
             }
             _ => return Err(invalid("base CRS is not geodetic")),
@@ -2320,6 +2323,9 @@ impl WktParser {
             .first()
             .map(|axis| axis.unit.clone())
             .unwrap_or_else(UnitOfMeasure::metre);
+        if is_web_mercator_node(node, &props) {
+            return self.pseudo_mercator_projected(node, props);
+        }
         let conversion = if let Some(conversion) = node.child(&["CONVERSION"]) {
             self.build_conversion(conversion, linear, angular)?
         } else if let Some(projection) = node.child(&["PROJECTION"]) {
@@ -2342,6 +2348,32 @@ impl WktParser {
             return self.bind_towgs84(Crs::Projected(crs));
         }
         Ok(WktObject::Crs(Crs::Projected(crs)))
+    }
+
+    /// `createPseudoMercator`: web Mercator on WGS 84 with the axes of `node`.
+    fn pseudo_mercator_projected(
+        &mut self,
+        node: &WktNode,
+        props: Props,
+    ) -> Result<WktObject, FactoryError> {
+        self.towgs84.clear();
+        let cs = self.build_cs(node.child(&["CS"]), node, UnitOfMeasure::degree())?;
+        let CoordinateSystem::Cartesian(coordinate_system) = cs else {
+            return Err(invalid("projected CRS requires a Cartesian CS"));
+        };
+        let conversion = Conversion::create_popular_visualisation_pseudo_mercator(
+            &super::buildop::OpProps::new().name("unknown"),
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+        )?;
+        Ok(WktObject::Crs(Crs::Projected(ProjectedCRS {
+            identified: props.identified(),
+            base: GeodeticCRS::Geographic(GeographicCRS::epsg_4326()),
+            conversion,
+            coordinate_system,
+        })))
     }
 
     fn projected_bound(
@@ -2519,10 +2551,22 @@ impl WktParser {
                 parameter("Latitude of natural origin", "8801", 0.0, &angular),
             );
         }
+        // A polar stereographic whose origin is not a pole and whose scale is
+        // not 1 stays the WKT1 method name. Variant A and variant B share that
+        // name, so a lookup would pick variant A.
+        let polar_variant_a = ci_eq(&method_name, "Polar_Stereographic")
+            && !polar_variant_b
+            && latitude_near_pole(&parameters);
+        let polar_ambiguous =
+            ci_eq(&method_name, "Polar_Stereographic") && !polar_variant_b && !polar_variant_a;
         let (mapped_name, code) = if polar_variant_b {
             ("Polar Stereographic (variant B)", "9829")
+        } else if polar_variant_a {
+            ("Polar Stereographic (variant A)", "9810")
         } else if ci_eq(&method_name, "Krovak") && axes_are_east_north(node) {
             ("Krovak (North Orientated)", "1041")
+        } else if polar_ambiguous {
+            ("", "")
         } else {
             wkt1_method(&method_name)
         };
@@ -2533,13 +2577,17 @@ impl WktParser {
         // `standard_parallel_1` is EPSG 8801 there, not the generic 8823.
         // A WKT1 method outside `wkt1_method` has no code yet, so its own WKT1
         // name finds the map.
-        let method_params = code
-            .parse()
-            .ok()
-            .and_then(super::parammap::method_by_code)
-            .or_else(|| super::parammap::method_by_wkt1_name(&method_name))
-            .map(|method| method.params);
-        for parameter in &mut parameters {
+        let method_params = if polar_ambiguous {
+            None
+        } else {
+            code.parse()
+                .ok()
+                .and_then(super::parammap::method_by_code)
+                .or_else(|| super::parammap::method_by_wkt1_name(&method_name))
+                .map(|method| method.params)
+        };
+        let bound = bind_wkt1_parameters(method_params, &parameters);
+        for (parameter, own) in parameters.iter_mut().zip(bound) {
             if code == "1041" && parameter.code.is_empty() {
                 // Krovak (North Orientated) has its own parameter set.
                 let krovak_north = if ci_eq(&parameter.name, "latitude_of_center") {
@@ -2563,17 +2611,12 @@ impl WktParser {
                 }
             }
             if parameter.code.is_empty() {
-                let own = method_params.and_then(|params| {
-                    params.iter().find(|param| {
-                        param
-                            .wkt1_name
-                            .is_some_and(|wkt1| ci_eq(wkt1, &parameter.name))
-                    })
-                });
-                if let Some(own) = own.filter(|param| param.epsg_code != 0) {
+                if let Some(own) = own {
                     parameter.name = own.wkt2_name.to_owned();
-                    parameter.code_space = "EPSG".to_owned();
-                    parameter.code = own.epsg_code.to_string();
+                    if own.epsg_code != 0 {
+                        parameter.code_space = "EPSG".to_owned();
+                        parameter.code = own.epsg_code.to_string();
+                    }
                 } else if let Some((name, code, _)) = wkt1_parameter(&parameter.name) {
                     parameter.name = name.to_owned();
                     parameter.code_space = "EPSG".to_owned();
@@ -3494,6 +3537,56 @@ fn guess_parameter_unit(
 
 /// GDAL WKT1 Mercator_1SP with a non-zero `latitude_of_origin` is Mercator
 /// variant B (https://trac.osgeo.org/gdal/ticket/3026), as in PROJ `io.cpp`.
+/// A WKT1 projected CRS that PROJ reads as web Mercator: no `CONVERSION`, and either the GDAL
+/// `EXTENSION` spelling or the name GDAL's older ESRI writer produced.
+fn is_web_mercator_node(node: &WktNode, props: &Props) -> bool {
+    node.child(&["CONVERSION"]).is_none()
+        && (node
+            .child(&["PROJECTION"])
+            .is_some_and(|projection| has_web_merc_proj4(node, projection))
+            || ci_eq(&props.name, "WGS_84_Pseudo_Mercator")
+            || ci_eq(&props.name, "WGS_1984_Web_Mercator"))
+}
+
+/// `hasWebMercPROJ4String`: the GDAL WKT1 spelling of web Mercator, a `Mercator_1SP` with an
+/// `EXTENSION["PROJ4", ...]` node of a spherical, null-grid `+proj=merc`.
+fn has_web_merc_proj4(node: &WktNode, projection: &WktNode) -> bool {
+    let Some(name) = projection.children.first() else {
+        return false;
+    };
+    if !ci_eq(
+        &strip_quotes(name).replace(['_', ' ', '-'], ""),
+        "Mercator1SP",
+    ) {
+        return false;
+    }
+    let Some(extension) = node.child(&["EXTENSION"]) else {
+        return false;
+    };
+    let [key, value] = extension.children.as_slice() else {
+        return false;
+    };
+    if !ci_eq(&strip_quotes(key), "PROJ4") {
+        return false;
+    }
+    let text = strip_quotes(value);
+    let absent_or = |key: &str, expected: &str| !text.contains(key) || text.contains(expected);
+    [
+        "+proj=merc",
+        "+a=6378137",
+        "+b=6378137",
+        "+lon_0=0",
+        "+x_0=0",
+        "+y_0=0",
+        "+nadgrids=@null",
+    ]
+    .iter()
+    .all(|needle| text.contains(needle))
+        && absent_or("+lat_ts=", "+lat_ts=0")
+        && absent_or("+k=", "+k=1")
+        && absent_or("+units=", "+units=m")
+}
+
 fn has_center_latitude(node: &WktNode) -> bool {
     node.children.iter().any(|child| {
         ci_eq(&child.value, "PARAMETER")
@@ -3510,6 +3603,70 @@ fn non_zero_measure(parameter: &Parameter) -> bool {
 
 fn is_one_measure(parameter: &Parameter) -> bool {
     matches!(&parameter.value, ParameterValue::Measure(measure) if measure.value == 1.0)
+}
+
+/// `| |latitude_of_origin| - 90° | < 1e-10`, the polar stereographic variant A test.
+fn latitude_near_pole(parameters: &[Parameter]) -> bool {
+    let Some(parameter) = parameters
+        .iter()
+        .find(|parameter| ci_eq(parameter.name(), "latitude_of_origin"))
+    else {
+        return false;
+    };
+    let ParameterValue::Measure(measure) = &parameter.value else {
+        return false;
+    };
+    let degrees = measure.convert_to(&UnitOfMeasure::degree());
+    (degrees.abs() - 90.0).abs() < 1e-10
+}
+
+/// WKT1 parameter of `method_params` for each imported parameter.
+///
+/// An exact WKT1 name wins over an alias, so `latitude_of_center` is not taken
+/// by an earlier `latitude_of_origin` parameter. A code of 0 still takes the
+/// WKT2 name (`getMappingFromWKT1`).
+fn bind_wkt1_parameters<'a>(
+    method_params: Option<&'a [super::parammap::ParamMap]>,
+    parameters: &[Parameter],
+) -> Vec<Option<&'a super::parammap::ParamMap>> {
+    let Some(params) = method_params else {
+        return vec![None; parameters.len()];
+    };
+    let mut chosen = vec![None; parameters.len()];
+    let mut used = vec![false; params.len()];
+    for (index, parameter) in parameters.iter().enumerate() {
+        if !parameter.code.is_empty() {
+            continue;
+        }
+        let Some(hit) = params.iter().position(|param| {
+            param
+                .wkt1_name
+                .is_some_and(|wkt1| super::equiv::equivalent_name(wkt1, &parameter.name))
+        }) else {
+            continue;
+        };
+        if used[hit] {
+            continue;
+        }
+        used[hit] = true;
+        chosen[index] = Some(&params[hit]);
+    }
+    for (index, parameter) in parameters.iter().enumerate() {
+        if chosen[index].is_some() || !parameter.code.is_empty() {
+            continue;
+        }
+        let Some(hit) = params.iter().enumerate().position(|(slot, param)| {
+            !used[slot]
+                && param.wkt1_name.is_some_and(|wkt1| {
+                    super::equiv::are_equivalent_parameters(wkt1, &parameter.name)
+                })
+        }) else {
+            continue;
+        };
+        used[hit] = true;
+        chosen[index] = Some(&params[hit]);
+    }
+    chosen
 }
 
 fn parameter(name: &str, code: &str, value: f64, unit: &UnitOfMeasure) -> Parameter {
@@ -3636,12 +3793,39 @@ fn axes_are_east_north(node: &WktNode) -> bool {
 /// A WKT1 Transverse Mercator that is a UTM zone takes the UTM conversion and its
 /// name, without an authority code, as PROJ does on import.
 fn wkt1_utm_named(conversion: Conversion) -> Conversion {
+    // An extra parameter, such as `UNKNOWN` = 13, is part of the conversion.
+    // Replacing it with the stock UTM operation would drop that parameter.
+    if conversion_has_foreign_parameter(&conversion) {
+        return conversion;
+    }
     let named = match conversion.utm_zone() {
         Some((zone, UtmHemisphere::North)) => Conversion::create_utm_north(&OpProps::new(), zone),
         Some((zone, UtmHemisphere::South)) => Conversion::create_utm_south(&OpProps::new(), zone),
         None => return conversion,
     };
     named.unwrap_or(conversion)
+}
+
+fn conversion_has_foreign_parameter(conversion: &Conversion) -> bool {
+    let Some(method) = conversion
+        .method()
+        .code()
+        .parse()
+        .ok()
+        .and_then(super::parammap::method_by_code)
+    else {
+        return false;
+    };
+    conversion.parameters().iter().any(|parameter| {
+        let code = parameter.code().parse::<i32>().unwrap_or(0);
+        !method.params.iter().any(|param| {
+            (param.epsg_code != 0 && code == param.epsg_code)
+                || super::equiv::equivalent_name(param.wkt2_name, parameter.name())
+                || param
+                    .wkt1_name
+                    .is_some_and(|wkt1| super::equiv::equivalent_name(wkt1, parameter.name()))
+        })
+    })
 }
 
 fn wkt1_method(name: &str) -> (&'static str, &'static str) {

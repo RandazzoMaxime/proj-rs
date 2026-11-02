@@ -1729,6 +1729,14 @@ impl OperationMethod {
         &self.parameters
     }
 
+    /// This method with the identifier `code_space:code`.
+    #[must_use]
+    pub fn with_identifier(mut self, code_space: &str, code: &str) -> Self {
+        code_space.clone_into(&mut self.code_space);
+        code.clone_into(&mut self.code);
+        self
+    }
+
     pub(crate) fn named_code(name: String, code_space: String, code: String) -> Self {
         Self {
             name,
