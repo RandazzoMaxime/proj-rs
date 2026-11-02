@@ -2006,15 +2006,19 @@ fn export_transformation_crs(
     transformation: &Transformation,
     formatter: &mut WktFormatter,
 ) -> Result<(), FactoryError> {
-    if let Some(source) = &transformation.source {
-        formatter.start_node("SOURCECRS", NodeId::Absent);
-        export_crs(source, formatter)?;
-        formatter.end_node();
-    }
-    if let Some(target) = &transformation.target {
-        formatter.start_node("TARGETCRS", NodeId::Absent);
-        export_crs(target, formatter)?;
-        formatter.end_node();
+    for (keyword, crs) in [
+        ("SOURCECRS", &transformation.source),
+        ("TARGETCRS", &transformation.target),
+    ] {
+        if let Some(crs) = crs {
+            formatter.start_node(keyword, NodeId::Absent);
+            // The endpoint CRS keeps its own ID even when the operation has one.
+            if let Some(has_id) = formatter.stack_has_id.last_mut() {
+                *has_id = false;
+            }
+            export_crs(crs, formatter)?;
+            formatter.end_node();
+        }
     }
     Ok(())
 }
@@ -2061,7 +2065,10 @@ fn export_transformation(
     if !formatter.abridged {
         if let Some(accuracy) = transformation.accuracy {
             formatter.start_node("OPERATIONACCURACY", NodeId::Absent);
-            formatter.add_number(accuracy);
+            match &transformation.accuracy_text {
+                Some(text) => formatter.add_raw(text),
+                None => formatter.add_number(accuracy),
+            }
             formatter.end_node();
         }
     }

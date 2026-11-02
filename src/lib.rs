@@ -104,9 +104,9 @@ pub use iso19111::{
     IntermediateCrsUse, LinunitPolicy, Meridian, NameMatch, NameSpelling, ObjectDomain, ObjectType,
     OfficialName, OpProps, OperationMethod, OperationParameter, OperationParameterValue, OrdinalCS,
     OutputAxisRule, Parameter, ParameterValue, PrimeMeridian, ProjLines, ProjectedCRS,
-    SpatialCriterion, SphericalCS, Transformation, UnitInfo, UnitKind, UnitOfMeasure, VerticalCRS,
-    VerticalCS, VerticalReferenceFrame, WktConvention, WktDialect, WktFormatter, WktLines, WktNode,
-    WktObject, WktParser, WktStrictness,
+    SpatialCriterion, SphericalCS, SupersededOperations, Transformation, UnitInfo, UnitKind,
+    UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame, WktConvention, WktDialect,
+    WktFormatter, WktLines, WktNode, WktObject, WktParser, WktStrictness,
 };
 pub use lcc::{Cone, Lcc};
 pub use merc::Mercator;

@@ -1887,6 +1887,12 @@ impl Transformation {
     pub fn interpolation_crs(&self) -> Option<&Crs> {
         self.interpolation.as_deref()
     }
+
+    /// True for a point motion operation, which moves coordinates in time within one CRS.
+    #[must_use]
+    pub fn is_point_motion(&self) -> bool {
+        self.point_motion
+    }
 }
 
 /// One step of a concatenated operation.

@@ -34,7 +34,7 @@ pub use factory::{
     AlternativeGridNames, AuthorityFactory, AuthorityObject, BallparkUse, CelestialBodyInfo,
     CoordinateOperationContext, CoordinateOperationFactory, CrsExtentUse, CrsInfo, DatabaseContext,
     DeprecatedCodes, IntermediateCrsUse, NameMatch, NameSpelling, ObjectType, OfficialName,
-    SpatialCriterion, UnitInfo,
+    SpatialCriterion, SupersededOperations, UnitInfo,
 };
 pub use insert::insert_statements;
 pub use json::{create_from_user_input, epsg_identity, JsonFormat, JsonLines};

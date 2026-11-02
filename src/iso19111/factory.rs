@@ -39,6 +39,16 @@ pub enum AlternativeGridNames {
     Proj,
 }
 
+/// Whether [`AuthorityFactory::create_from_coordinate_reference_system_codes_in`] keeps an
+/// operation that a listed operation supersedes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SupersededOperations {
+    /// Keep every operation.
+    Keep,
+    /// Drop an operation whose replacement is listed.
+    Discard,
+}
+
 /// Whether a coordinate-operation search may chain through a named pivot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IntermediateCrsUse {
@@ -832,9 +842,18 @@ struct BuiltObject<T> {
     object: T,
 }
 
+/// Whether a name search keeps only deprecated rows, as a ` (deprecated)` suffix asks.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DeprecatedFilter {
+    Any,
+    Only,
+}
+
 trait NamedAuthorityObject: Sized {
     fn name(&self) -> &str;
     fn identifiers(&self) -> &[Identifier];
+    /// The concrete PROJ class of the object, as `typeid` tells it apart.
+    fn class(&self) -> u16;
 }
 
 impl NamedAuthorityObject for GeodeticCRS {
@@ -845,6 +864,19 @@ impl NamedAuthorityObject for GeodeticCRS {
     fn identifiers(&self) -> &[Identifier] {
         GeodeticCRS::identifiers(self)
     }
+
+    fn class(&self) -> u16 {
+        geodetic_class(self)
+    }
+}
+
+/// The class of a geodetic CRS: a geographic CRS and a geocentric one differ.
+fn geodetic_class(crs: &GeodeticCRS) -> u16 {
+    match crs {
+        GeodeticCRS::Geographic(_) => 10,
+        GeodeticCRS::Geocentric(_) => 11,
+        GeodeticCRS::Spherical(_) => 12,
+    }
 }
 
 impl NamedAuthorityObject for GeodeticReferenceFrame {
@@ -854,6 +886,10 @@ impl NamedAuthorityObject for GeodeticReferenceFrame {
 
     fn identifiers(&self) -> &[Identifier] {
         GeodeticReferenceFrame::identifiers(self)
+    }
+
+    fn class(&self) -> u16 {
+        2
     }
 }
 
@@ -888,7 +924,9 @@ impl NamedAuthorityObject for AuthorityObject {
             Self::Datum(Datum::Engineering(object)) => object.name(),
             Self::DatumEnsemble(object) => object.name(),
             Self::Crs(object) => object.name(),
-            Self::Extent(_) | Self::Unit(_) | Self::PrimeMeridian(_) | Self::Operation(_) => "",
+            Self::PrimeMeridian(object) => object.name(),
+            Self::Operation(object) => object.name(),
+            Self::Extent(_) | Self::Unit(_) => "",
         }
     }
 
@@ -900,7 +938,33 @@ impl NamedAuthorityObject for AuthorityObject {
             Self::Datum(Datum::Engineering(object)) => object.identifiers(),
             Self::DatumEnsemble(object) => object.identifiers(),
             Self::Crs(object) => object.identifiers(),
-            Self::Extent(_) | Self::Unit(_) | Self::PrimeMeridian(_) | Self::Operation(_) => &[],
+            Self::PrimeMeridian(object) => object.identifiers(),
+            Self::Operation(object) => object.identifiers(),
+            Self::Extent(_) | Self::Unit(_) => &[],
+        }
+    }
+
+    fn class(&self) -> u16 {
+        match self {
+            Self::Ellipsoid(_) => 1,
+            Self::Datum(Datum::Geodetic(_)) => 2,
+            Self::Datum(Datum::Vertical(_)) => 3,
+            Self::Datum(Datum::Engineering(_)) => 4,
+            Self::DatumEnsemble(_) => 5,
+            Self::PrimeMeridian(_) => 6,
+            Self::Crs(Crs::Geographic(_)) => 10,
+            Self::Crs(Crs::Geodetic(crs)) => geodetic_class(crs),
+            Self::Crs(Crs::Projected(_)) => 13,
+            Self::Crs(Crs::Vertical(_)) => 14,
+            Self::Crs(Crs::Compound(_)) => 15,
+            Self::Crs(Crs::Bound(_)) => 16,
+            Self::Crs(Crs::Engineering(_)) => 17,
+            Self::Crs(Crs::DerivedProjected(_)) => 18,
+            Self::Operation(CoordinateOperation::Conversion(_)) => 20,
+            Self::Operation(CoordinateOperation::Transformation(_)) => 21,
+            Self::Operation(CoordinateOperation::Concatenated(_)) => 22,
+            Self::Extent(_) => 30,
+            Self::Unit(_) => 31,
         }
     }
 }
@@ -911,6 +975,7 @@ fn name_keys(types: &[ObjectType], name: &str) -> Vec<&'static str> {
     let hide_vertical = name.starts_with("D_");
     if types.is_empty() {
         let mut keys = vec![
+            "prime_meridian",
             "ellipsoid",
             "geodetic_datum",
             "engineering_datum",
@@ -920,6 +985,11 @@ fn name_keys(types: &[ObjectType], name: &str) -> Vec<&'static str> {
             "vertical_crs",
             "compound_crs",
             "engineering_crs",
+            "conversion",
+            "helmert_transformation",
+            "grid_transformation",
+            "other_transformation",
+            "concatenated_operation",
         ];
         if !hide_vertical {
             keys.push("vertical_datum");
@@ -936,6 +1006,7 @@ fn name_keys(types: &[ObjectType], name: &str) -> Vec<&'static str> {
             }
         }
     };
+    want(ObjectType::PrimeMeridian, &["prime_meridian"]);
     want(ObjectType::Ellipsoid, &["ellipsoid"]);
     want(
         ObjectType::Datum,
@@ -984,6 +1055,29 @@ fn name_keys(types: &[ObjectType], name: &str) -> Vec<&'static str> {
     want(ObjectType::VerticalCrs, &["vertical_crs"]);
     want(ObjectType::CompoundCrs, &["compound_crs"]);
     want(ObjectType::EngineeringCrs, &["engineering_crs"]);
+    want(
+        ObjectType::CoordinateOperation,
+        &[
+            "conversion",
+            "helmert_transformation",
+            "grid_transformation",
+            "other_transformation",
+            "concatenated_operation",
+        ],
+    );
+    want(ObjectType::Conversion, &["conversion"]);
+    want(
+        ObjectType::Transformation,
+        &[
+            "helmert_transformation",
+            "grid_transformation",
+            "other_transformation",
+        ],
+    );
+    want(
+        ObjectType::ConcatenatedOperation,
+        &["concatenated_operation"],
+    );
     keys
 }
 
@@ -1008,6 +1102,21 @@ fn load_named(
     let code = row.code.as_str();
     let ensemble_allowed = types.is_empty() || types.contains(&ObjectType::DatumEnsemble);
     Ok(match (table, filter) {
+        ("prime_meridian", _) => {
+            AuthorityObject::PrimeMeridian(factory.create_prime_meridian(code)?)
+        }
+        ("conversion", _) => AuthorityObject::Operation(CoordinateOperation::Conversion(
+            factory.create_conversion(code)?,
+        )),
+        (
+            "helmert_transformation"
+            | "grid_transformation"
+            | "other_transformation"
+            | "concatenated_operation",
+            _,
+        ) => AuthorityObject::Operation(
+            factory.create_coordinate_operation(code, AlternativeGridNames::Proj)?,
+        ),
         ("ellipsoid", _) => AuthorityObject::Ellipsoid(factory.create_ellipsoid(code)?),
         ("geodetic_datum", "ensemble") | ("vertical_datum", "ensemble") => {
             AuthorityObject::DatumEnsemble(factory.create_datum_ensemble(code)?)
@@ -2008,17 +2117,23 @@ impl AuthorityFactory {
     where
         T: NamedAuthorityObject,
     {
+        let (name, deprecated) = match name.strip_suffix(" (deprecated)") {
+            Some(stripped) => (stripped, DeprecatedFilter::Only),
+            None => (name, DeprecatedFilter::Any),
+        };
         let canonical = canonical_search_name(name);
         if canonical.chars().count() <= 1 {
             return Ok(Vec::new());
         }
-        let rows = self.name_rows(tables, name, mode, limit)?;
+        let rows = self.name_rows(tables, name, mode, limit, deprecated)?;
         let mut seen = BTreeSet::new();
         let mut built: Vec<BuiltObject<T>> = Vec::new();
         let mut first = true;
         let mut first_deprecated = false;
         let mut exact_official = 0usize;
         let mut exact_alias = 0usize;
+        let mut first_class: Option<u16> = None;
+        let mut one_class = true;
         for row in rows {
             if mode == NameMatch::Approximate
                 && !approximate_name(&row.matched_name, name, &canonical)
@@ -2044,12 +2159,19 @@ impl AuthorityFactory {
             } else if equivalent_object_name(&row.matched_name, name) {
                 exact_alias += 1;
             }
+            let class = object.class();
+            if *first_class.get_or_insert(class) != class {
+                one_class = false;
+            }
             built.push(BuiltObject {
                 matched_name: row.matched_name,
                 object,
             });
+            if limit > 0 && built.len() == limit {
+                break;
+            }
         }
-        if mode == NameMatch::Exact && exact_official + exact_alias >= 1 {
+        if mode == NameMatch::Exact && exact_official + exact_alias >= 1 && one_class {
             let alias_only = exact_official == 0;
             built.retain(|item| {
                 equivalent_object_name(item.object.name(), name)
@@ -2095,6 +2217,7 @@ impl AuthorityFactory {
         name: &str,
         mode: NameMatch,
         limit: usize,
+        deprecated: DeprecatedFilter,
     ) -> Result<Vec<NameRow>, FactoryError> {
         let mut sql =
             String::from("SELECT table_name, auth_name, code, name, deprecated, is_alias FROM (");
@@ -2109,6 +2232,9 @@ impl AuthorityFactory {
                  FROM \"{table}\" WHERE 1 = 1 {}",
                 name_filter_sql("", filter)
             ));
+            if deprecated == DeprecatedFilter::Only {
+                sql.push_str("AND deprecated = 1 ");
+            }
             if mode == NameMatch::Exact {
                 sql.push_str("AND name = ? COLLATE NOCASE ");
                 params.push(name.to_owned());
@@ -2124,6 +2250,9 @@ impl AuthorityFactory {
                  WHERE a.source != 'EPSG_OLD' AND a.table_name = '{table}' {}",
                 name_filter_sql("ov.", filter)
             ));
+            if deprecated == DeprecatedFilter::Only {
+                sql.push_str("AND ov.deprecated = 1 ");
+            }
             if mode == NameMatch::Exact {
                 sql.push_str("AND a.alt_name = ? COLLATE NOCASE ");
                 params.push(name.to_owned());
@@ -2488,14 +2617,140 @@ impl AuthorityFactory {
         source_code: &str,
         target_code: &str,
     ) -> Result<Vec<CoordinateOperation>, FactoryError> {
+        self.create_from_coordinate_reference_system_codes_in(
+            (self.authority.as_str(), source_code),
+            (self.authority.as_str(), target_code),
+            SupersededOperations::Keep,
+        )
+    }
+
+    /// Operations registered from the CRS `source` to the CRS `target`, each given as an
+    /// authority name and a code. The factory authority, when it is not empty, restricts the
+    /// operations. `superseded` chooses whether an operation replaced by a listed one is kept.
+    ///
+    /// # Errors
+    ///
+    /// A selected operation cannot be instantiated.
+    pub fn create_from_coordinate_reference_system_codes_in(
+        &self,
+        source: (&str, &str),
+        target: (&str, &str),
+        superseded: SupersededOperations,
+    ) -> Result<Vec<CoordinateOperation>, FactoryError> {
+        if let Some(conversion) = self.projected_deriving_conversion(source, target) {
+            return Ok(vec![CoordinateOperation::Conversion(conversion)]);
+        }
         operations_between(
             &self.db,
             &self.authority,
-            (self.authority.as_str(), source_code),
-            (self.authority.as_str(), target_code),
+            source,
+            target,
             (None, None),
-            RegistrySearch::Forward,
+            match superseded {
+                SupersededOperations::Keep => RegistrySearch::Forward,
+                SupersededOperations::Discard => RegistrySearch::ForwardWithoutSuperseded,
+            },
         )
+    }
+
+    /// The point motion operations registered for the datum of `crs`, in database order.
+    ///
+    /// A point motion operation has the same CRS as source and target.
+    ///
+    /// # Errors
+    ///
+    /// The database rejects a statement or an operation cannot be instantiated.
+    pub fn get_point_motion_operations_for(
+        &self,
+        crs: &GeodeticCRS,
+        grids: AlternativeGridNames,
+    ) -> Result<Vec<Transformation>, FactoryError> {
+        let datum_id = crs
+            .datum()
+            .and_then(|datum| datum.identifiers().first())
+            .or_else(|| {
+                crs.datum_ensemble()
+                    .and_then(|ensemble| ensemble.identifiers().first())
+            });
+        let Some(datum_id) = datum_id else {
+            return Ok(Vec::new());
+        };
+        let candidates = AuthorityFactory::create(&self.db, "").create_geodetic_crs_from_datum(
+            datum_id.code_space(),
+            datum_id.code(),
+            "",
+        )?;
+        let mut clauses = Vec::new();
+        let mut params = Vec::new();
+        for candidate in &candidates {
+            let Some(id) = candidate.identifiers().first() else {
+                continue;
+            };
+            clauses.push("(source_crs_auth_name = ? AND source_crs_code = ?)");
+            params.push(id.code_space().to_owned());
+            params.push(id.code().to_owned());
+        }
+        if clauses.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut sql = format!(
+            "SELECT auth_name, code FROM coordinate_operation_view \
+             WHERE source_crs_auth_name = target_crs_auth_name AND \
+             source_crs_code = target_crs_code AND deprecated = 0 AND ({})",
+            clauses.join(" OR ")
+        );
+        if !self.authority.is_empty() {
+            sql.push_str(" AND auth_name = ?");
+            params.push(self.authority.clone());
+        }
+        let mut operations = Vec::new();
+        for row in self.db.query(&sql, &params)? {
+            let factory = AuthorityFactory::create(&self.db, row[0].text());
+            if let CoordinateOperation::Transformation(transformation) =
+                factory.create_coordinate_operation(&row[1].text(), grids)?
+            {
+                if transformation.is_point_motion() {
+                    operations.push(transformation);
+                }
+            }
+        }
+        Ok(operations)
+    }
+
+    /// The conversion of the projected CRS `target` when `source` is its base CRS, with the
+    /// CRS pair set: `createFromCoordinateReferenceSystemCodes` answers with it before any search.
+    fn projected_deriving_conversion(
+        &self,
+        source: (&str, &str),
+        target: (&str, &str),
+    ) -> Option<Conversion> {
+        if target.0.is_empty() {
+            return None;
+        }
+        let projected = AuthorityFactory::create(&self.db, target.0)
+            .create_projected_crs(target.1)
+            .ok()?;
+        let base = projected.base_crs();
+        let is_source = source.0.is_empty()
+            || base
+                .identifiers()
+                .first()
+                .is_some_and(|id| id.code_space() == source.0 && id.code() == source.1);
+        if !is_source {
+            return None;
+        }
+        let mut conversion = projected.deriving_conversion().clone();
+        if !self.authority.is_empty()
+            && conversion
+                .identifiers()
+                .first()
+                .is_some_and(|id| id.code_space() != self.authority)
+        {
+            return None;
+        }
+        conversion.source = Some(Box::new(Crs::Geodetic(base.clone())));
+        conversion.target = Some(Box::new(Crs::Projected(projected)));
+        Some(conversion)
     }
 
     /// Authority codes of `kind`.
@@ -4738,6 +4993,8 @@ enum RegistrySearch {
     /// Only `source` to `target`, every row kept. The public
     /// `AuthorityFactory::create_from_coordinate_reference_system_codes`.
     Forward,
+    /// As [`Self::Forward`], with the superseded rows dropped.
+    ForwardWithoutSuperseded,
     /// Both directions, with inverses of the reverse rows, superseded rows
     /// dropped, and rows restricted to the CRS extents when some intersect.
     Both,
@@ -4916,7 +5173,7 @@ fn operations_between(
         .map(|row| (row.auth.clone(), row.code.clone()))
         .collect();
     let superseded = |row: &OperationRow| {
-        search == RegistrySearch::Both
+        search != RegistrySearch::Forward
             && row
                 .replacement
                 .as_ref()

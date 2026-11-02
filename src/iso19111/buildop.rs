@@ -166,6 +166,13 @@ impl OperationParameterValue {
 }
 
 impl Transformation {
+    /// Parameters that are missing or not part of the method, as
+    /// `SingleOperation::validateParameters` reports them.
+    #[must_use]
+    pub fn validate_parameters(&self) -> Vec<String> {
+        validate_method_parameters(&self.method, &self.parameters)
+    }
+
     /// Build a transformation from explicit parameters.
     ///
     /// # Errors
@@ -566,86 +573,7 @@ impl super::model::Conversion {
     /// The messages are the ones PROJ `SingleOperation::validateParameters` emits.
     #[must_use]
     pub fn validate_parameters(&self) -> Vec<String> {
-        let Some(mapped) = find_for_validate(&self.method) else {
-            return vec![format!("Unknown method {}", self.method.name())];
-        };
-        let mut messages = Vec::new();
-        if mapped.wkt2_name != self.method.name() {
-            if names_match(mapped.wkt2_name, self.method.name()) {
-                messages.push(format!(
-                    "Method name {} is equivalent to official {} but not strictly equal",
-                    self.method.name(),
-                    mapped.wkt2_name
-                ));
-            } else {
-                messages.push(format!(
-                    "Method name {}, matched to {}, through its EPSG code has not an equivalent name",
-                    self.method.name(),
-                    mapped.wkt2_name
-                ));
-            }
-        }
-        let method_code = self.method.code.parse::<i32>().unwrap_or(0);
-        if method_code != 0 && method_code != mapped.epsg_code {
-            messages.push(format!(
-                "Method of EPSG code {method_code} does not match official code ({})",
-                mapped.epsg_code
-            ));
-        }
-        let mut matched = vec![false; self.parameters.len()];
-        for param in mapped.params {
-            let found = self.parameters.iter().position(|have| {
-                let have_code = have.code.parse::<i32>().unwrap_or(0);
-                (param.epsg_code != 0 && have_code == param.epsg_code)
-                    || have.name.eq_ignore_ascii_case(param.wkt2_name)
-            });
-            let Some(index) = found else {
-                messages.push(format!(
-                    "Cannot find expected parameter {}",
-                    param.wkt2_name
-                ));
-                continue;
-            };
-            matched[index] = true;
-            let have = &self.parameters[index];
-            if param.wkt2_name != have.name {
-                if have.name.eq_ignore_ascii_case(param.wkt2_name) {
-                    messages.push(format!(
-                        "Parameter name {} is equivalent to official {} but not strictly equal",
-                        have.name, param.wkt2_name
-                    ));
-                } else {
-                    messages.push(format!(
-                        "Parameter name {}, matched to {}, through its EPSG code has not an equivalent name",
-                        have.name, param.wkt2_name
-                    ));
-                }
-            }
-            let have_code = have.code.parse::<i32>().unwrap_or(0);
-            if have_code != 0 && have_code != param.epsg_code {
-                messages.push(format!(
-                    "Parameter of EPSG code {have_code} does not match official code ({})",
-                    param.epsg_code
-                ));
-            }
-        }
-        for (index, have) in self.parameters.iter().enumerate() {
-            if matched[index] {
-                continue;
-            }
-            let have_code = have.code.parse::<i32>().unwrap_or(0);
-            let known = mapped.params.iter().any(|param| {
-                (param.epsg_code != 0 && have_code == param.epsg_code)
-                    || have.name.eq_ignore_ascii_case(param.wkt2_name)
-            });
-            if !known {
-                messages.push(format!(
-                    "Parameter {} found but not expected for this method",
-                    have.name
-                ));
-            }
-        }
-        messages
+        validate_method_parameters(&self.method, &self.parameters)
     }
 
     /// `exportToPROJString` for a conversion that has no source or target CRS.
@@ -2152,6 +2080,90 @@ fn lcc2sp_parallels_swapped(
         && [8821, 8822, 8826, 8827]
             .into_iter()
             .all(|code| near(left.numeric_si(code), right.numeric_si(code)))
+}
+
+/// `SingleOperation::validateParameters` for a method and its parameter values.
+fn validate_method_parameters(method: &OperationMethod, parameters: &[Parameter]) -> Vec<String> {
+    let Some(mapped) = find_for_validate(&method) else {
+        return vec![format!("Unknown method {}", method.name())];
+    };
+    let mut messages = Vec::new();
+    if mapped.wkt2_name != method.name() {
+        if names_match(mapped.wkt2_name, method.name()) {
+            messages.push(format!(
+                "Method name {} is equivalent to official {} but not strictly equal",
+                method.name(),
+                mapped.wkt2_name
+            ));
+        } else {
+            messages.push(format!(
+                "Method name {}, matched to {}, through its EPSG code has not an equivalent name",
+                method.name(),
+                mapped.wkt2_name
+            ));
+        }
+    }
+    let method_code = method.code.parse::<i32>().unwrap_or(0);
+    if method_code != 0 && method_code != mapped.epsg_code {
+        messages.push(format!(
+            "Method of EPSG code {method_code} does not match official code ({})",
+            mapped.epsg_code
+        ));
+    }
+    let mut matched = vec![false; parameters.len()];
+    for param in mapped.params {
+        let found = parameters.iter().position(|have| {
+            let have_code = have.code.parse::<i32>().unwrap_or(0);
+            (param.epsg_code != 0 && have_code == param.epsg_code)
+                || have.name.eq_ignore_ascii_case(param.wkt2_name)
+        });
+        let Some(index) = found else {
+            messages.push(format!(
+                "Cannot find expected parameter {}",
+                param.wkt2_name
+            ));
+            continue;
+        };
+        matched[index] = true;
+        let have = &parameters[index];
+        if param.wkt2_name != have.name {
+            if have.name.eq_ignore_ascii_case(param.wkt2_name) {
+                messages.push(format!(
+                    "Parameter name {} is equivalent to official {} but not strictly equal",
+                    have.name, param.wkt2_name
+                ));
+            } else {
+                messages.push(format!(
+                    "Parameter name {}, matched to {}, through its EPSG code has not an equivalent name",
+                    have.name, param.wkt2_name
+                ));
+            }
+        }
+        let have_code = have.code.parse::<i32>().unwrap_or(0);
+        if have_code != 0 && have_code != param.epsg_code {
+            messages.push(format!(
+                "Parameter of EPSG code {have_code} does not match official code ({})",
+                param.epsg_code
+            ));
+        }
+    }
+    for (index, have) in parameters.iter().enumerate() {
+        if matched[index] {
+            continue;
+        }
+        let have_code = have.code.parse::<i32>().unwrap_or(0);
+        let known = mapped.params.iter().any(|param| {
+            (param.epsg_code != 0 && have_code == param.epsg_code)
+                || have.name.eq_ignore_ascii_case(param.wkt2_name)
+        });
+        if !known {
+            messages.push(format!(
+                "Parameter {} found but not expected for this method",
+                have.name
+            ));
+        }
+    }
+    messages
 }
 
 fn find_for_validate(method: &OperationMethod) -> Option<&'static MethodMap> {
