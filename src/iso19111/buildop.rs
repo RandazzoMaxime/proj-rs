@@ -181,6 +181,13 @@ impl OperationParameterValue {
 }
 
 impl Transformation {
+    /// Parameters that are missing or not part of the method, as
+    /// `SingleOperation::validateParameters` reports them.
+    #[must_use]
+    pub fn validate_parameters(&self) -> Vec<String> {
+        validate_method_parameters(&self.method, &self.parameters)
+    }
+
     /// Build a transformation from explicit parameters.
     ///
     /// # Errors
@@ -224,13 +231,6 @@ impl Transformation {
             point_motion: false,
             inverted: false,
         })
-    }
-
-    /// Parameters that are missing or not part of the method, as
-    /// `SingleOperation::validateParameters` reports them.
-    #[must_use]
-    pub fn validate_parameters(&self) -> Vec<String> {
-        validate_method_parameters(&self.method, &self.parameters)
     }
 
     /// As [`Self::create`], with a method that carries an identifier.
@@ -426,6 +426,43 @@ fn concatenated_inverse_name(name: &str) -> String {
 }
 
 impl Conversion {
+    /// Build a conversion from explicit parameters, as `proj_create_conversion`.
+    ///
+    /// # Errors
+    ///
+    /// The parameter list and the value list have different lengths.
+    pub fn create(
+        props: &OpProps,
+        method_name: &str,
+        parameters: Vec<OperationParameter>,
+        values: Vec<ParameterValue>,
+    ) -> Result<Self, FactoryError> {
+        if parameters.len() != values.len() {
+            return Err(FactoryError::Invalid(
+                "Inconsistent number of parameters and parameter values".to_owned(),
+            ));
+        }
+        let stored = parameters
+            .iter()
+            .zip(&values)
+            .map(|(parameter, value)| Parameter {
+                name: parameter.name().to_owned(),
+                code_space: String::new(),
+                code: String::new(),
+                value: value.clone(),
+            })
+            .collect();
+        Ok(Self {
+            identified: identified_from(props, ""),
+            method: OperationMethod::create(method_name, parameters),
+            parameters: stored,
+            source: None,
+            target: None,
+            version: None,
+            inverted: false,
+        })
+    }
+
     /// The inverse conversion, as `InverseConversion`: the same method and parameters, an
     /// `Inverse of` name, and `INVERSE(...)` identifiers. The CRS pair, when set, is swapped
     /// with the direction, as [`Transformation::inverse`] swaps its own.
@@ -2510,6 +2547,7 @@ fn lcc2sp_parallels_swapped(
             .into_iter()
             .all(|code| near(left.numeric_si(code), right.numeric_si(code)))
 }
+
 
 fn find_for_validate(method: &OperationMethod) -> Option<&'static MethodMap> {
     let code = method.code.parse::<i32>().unwrap_or(0);

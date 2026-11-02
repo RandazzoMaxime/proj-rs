@@ -7,7 +7,7 @@
 use super::buildop::{OpProps, UtmHemisphere};
 use super::equiv::{
     directions_and_units, ellipsoid_parameters_match, equivalent_name, identify_axes_match,
-    meridian_equivalent, same_epoch, IdentifyAxisOrder,
+    meridian_equivalent, same_epoch, Equivalence, IdentifyAxisOrder,
 };
 use super::factory::{AuthorityFactory, DatabaseContext, NameMatch};
 use super::model::{
@@ -117,6 +117,7 @@ impl Crs {
         match self {
             Self::Geographic(crs) => crs.identify_with(factory),
             Self::Geodetic(crs) => crs.identify_with(factory),
+            Self::Projected(crs) => crs.identify_with(factory),
             _ => Vec::new(),
         }
     }
@@ -589,13 +590,23 @@ impl ProjectedCRS {
     /// The base geographic CRS is promoted with `db`. Identifiers are not kept.
     #[must_use]
     pub fn promote_to_3d(&self, db: Option<&DatabaseContext>) -> Self {
-        if self.coordinate_system.axes.len() != 2 {
-            return self.clone();
-        }
         let base = match &self.base {
             GeodeticCRS::Geographic(crs) => GeodeticCRS::Geographic(crs.promote_to_3d_with_db(db)),
             other => other.clone(),
         };
+        self.promote_with_base(base)
+    }
+
+    /// `ProjectedCRS::promoteTo3D` with an explicit geographic 3D base CRS.
+    #[must_use]
+    pub fn promote_to_3d_on(&self, base: &GeographicCRS) -> Self {
+        self.promote_with_base(GeodeticCRS::Geographic(base.clone()))
+    }
+
+    fn promote_with_base(&self, base: GeodeticCRS) -> Self {
+        if self.coordinate_system.axes.len() != 2 {
+            return self.clone();
+        }
         let unit = self.coordinate_system.axes[0].unit().clone();
         let mut coordinate_system = self.coordinate_system.clone();
         coordinate_system
@@ -661,7 +672,9 @@ impl ProjectedCRS {
         if !easting_northing_metre(&self.coordinate_system) {
             return Vec::new();
         }
-        let base = self.base.identify_with(Some(factory));
+        // A longitude/latitude base is identified as latitude/longitude, as
+        // `ProjectedCRS::identify` does before the database search.
+        let base = latitude_longitude_base(&self.base).identify_with(Some(factory));
         if base.len() != 1 || base[0].1 < 70 {
             return Vec::new();
         }
@@ -691,7 +704,7 @@ impl ProjectedCRS {
             };
             (format!("NAD83 / UTM zone {zone}N"), code)
         } else {
-            return Vec::new();
+            return utm_from_database(self, factory, &base, zone);
         };
         let conversion = match hemisphere {
             UtmHemisphere::North => Conversion::create_utm_north(&OpProps::new(), zone),
@@ -719,6 +732,95 @@ impl ProjectedCRS {
             70
         };
         vec![(Crs::Projected(crs), confidence)]
+    }
+}
+
+/// Longitude/latitude geographic base, rewritten as latitude/longitude.
+fn latitude_longitude_base(base: &GeodeticCRS) -> GeodeticCRS {
+    let GeodeticCRS::Geographic(crs) = base else {
+        return base.clone();
+    };
+    let axes = crs.coordinate_system().axes();
+    if axes.len() >= 2 && axes[0].direction() == "east" && axes[1].direction() == "north" {
+        let mut swapped = crs.clone();
+        swapped.coordinate_system.axes.swap(0, 1);
+        return GeodeticCRS::Geographic(swapped);
+    }
+    base.clone()
+}
+
+/// UTM zone on a base that is not WGS 84, NAD27, or NAD83: the EPSG projected
+/// CRS with the same central meridian, kept at the highest confidence.
+fn utm_from_database(
+    source: &ProjectedCRS,
+    factory: &AuthorityFactory,
+    bases: &[(Crs, i32)],
+    zone: i32,
+) -> Vec<(Crs, i32)> {
+    let codes: Vec<(String, String)> = bases
+        .iter()
+        .filter(|(_, confidence)| *confidence >= 70)
+        .filter_map(|(crs, _)| {
+            crs.identifiers().first().map(|identifier| {
+                (
+                    identifier.code_space().to_owned(),
+                    identifier.code().to_owned(),
+                )
+            })
+        })
+        .collect();
+    let pairs: Vec<(&str, &str)> = codes
+        .iter()
+        .map(|(authority, code)| (authority.as_str(), code.as_str()))
+        .collect();
+    let Ok(found) = factory.utm_projected_codes(&pairs, f64::from(zone) * 6.0 - 183.0) else {
+        return Vec::new();
+    };
+    let mut hits = Vec::new();
+    for (authority, code) in found {
+        let Ok(Crs::Projected(candidate)) =
+            AuthorityFactory::create(factory.database_context(), &authority)
+                .create_coordinate_reference_system(&code)
+        else {
+            continue;
+        };
+        let confidence = utm_match_confidence(source, &candidate);
+        if confidence > 0 {
+            hits.push((Crs::Projected(candidate), confidence));
+        }
+    }
+    let Some(best) = hits.iter().map(|(_, confidence)| *confidence).max() else {
+        return Vec::new();
+    };
+    hits.retain(|(_, confidence)| *confidence == best);
+    hits
+}
+
+fn utm_match_confidence(source: &ProjectedCRS, candidate: &ProjectedCRS) -> i32 {
+    if !source
+        .deriving_conversion()
+        .is_equivalent_to_with(candidate.deriving_conversion(), Equivalence::Equivalent)
+    {
+        return 0;
+    }
+    let left = source.coordinate_system().axes();
+    let right = candidate.coordinate_system().axes();
+    let axes_match = left.len() == right.len()
+        && left.iter().zip(right).all(|(left, right)| {
+            let left_si = left.unit().conversion_to_si();
+            let right_si = right.unit().conversion_to_si();
+            left.direction() == right.direction()
+                && (left_si - right_si).abs() <= 1e-10 * left_si.abs().max(1.0)
+        });
+    if !axes_match {
+        return 50;
+    }
+    if source.name() == candidate.name() {
+        100
+    } else if equivalent_name(source.name(), candidate.name()) {
+        90
+    } else {
+        70
     }
 }
 

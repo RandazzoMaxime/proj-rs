@@ -2555,7 +2555,10 @@ fn export_transformation(
     if !formatter.abridged {
         if let Some(accuracy) = transformation.accuracy {
             formatter.start_node("OPERATIONACCURACY", NodeId::Absent);
-            formatter.add_number(accuracy);
+            match &transformation.accuracy_text {
+                Some(text) => formatter.add_raw(text),
+                None => formatter.add_number(accuracy),
+            }
             formatter.end_node();
         }
     }

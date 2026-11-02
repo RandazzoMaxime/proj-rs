@@ -1534,6 +1534,17 @@ pub struct VerticalCS {
 }
 
 impl VerticalCS {
+    /// Gravity-related height, up, abbreviated `H`.
+    ///
+    /// This is `VerticalCS::createGravityRelatedHeight`.
+    #[must_use]
+    pub fn create_gravity_related_height(unit: UnitOfMeasure) -> Self {
+        Self {
+            identified: Identified::default(),
+            axis: Axis::new("Gravity-related height", "H", "up", unit),
+        }
+    }
+
     /// The single axis.
     #[must_use]
     pub fn axis(&self) -> &Axis {
@@ -2006,6 +2017,12 @@ impl Transformation {
     #[must_use]
     pub fn interpolation_crs(&self) -> Option<&Crs> {
         self.interpolation.as_deref()
+    }
+
+    /// True for a point motion operation, which moves coordinates in time within one CRS.
+    #[must_use]
+    pub fn is_point_motion(&self) -> bool {
+        self.point_motion
     }
 }
 
@@ -2861,6 +2878,24 @@ impl GeoidModel {
 }
 
 impl VerticalCRS {
+    /// Vertical CRS with one datum and a vertical coordinate system.
+    ///
+    /// This is `VerticalCRS::create` when no geoid model is set.
+    #[must_use]
+    pub fn create(
+        name: impl Into<String>,
+        datum: VerticalReferenceFrame,
+        coordinate_system: VerticalCS,
+    ) -> Self {
+        Self {
+            identified: Identified::named(name),
+            datum: Some(datum),
+            ensemble: None,
+            coordinate_system,
+            geoid_models: Vec::new(),
+        }
+    }
+
     /// Name.
     #[must_use]
     pub fn name(&self) -> &str {
@@ -3236,6 +3271,39 @@ impl Crs {
         self.identifiers()
             .iter()
             .find(|identifier| identifier.code_space.eq_ignore_ascii_case(authority))
+    }
+
+    /// `proj_crs_is_dynamic`: a geodetic or vertical datum with a frame
+    /// reference epoch. A compound CRS is dynamic when one component is.
+    /// WGS 84 is not treated as dynamic.
+    #[must_use]
+    pub fn is_dynamic(&self) -> bool {
+        self.geodetic_frame()
+            .is_some_and(|datum| datum.frame_reference_epoch().is_some())
+            || self
+                .vertical_frame()
+                .is_some_and(|datum| datum.frame_reference_epoch().is_some())
+    }
+
+    fn geodetic_frame(&self) -> Option<&GeodeticReferenceFrame> {
+        match self {
+            Self::Geographic(crs) => crs.datum(),
+            Self::Geodetic(crs) => crs.datum(),
+            Self::Projected(crs) => crs.base_crs().datum(),
+            Self::DerivedProjected(crs) => crs.base_crs().base_crs().datum(),
+            Self::Compound(crs) => crs.components().iter().find_map(Self::geodetic_frame),
+            Self::Bound(crs) => crs.source_crs().geodetic_frame(),
+            Self::Vertical(_) | Self::Engineering(_) => None,
+        }
+    }
+
+    fn vertical_frame(&self) -> Option<&VerticalReferenceFrame> {
+        match self {
+            Self::Vertical(crs) => crs.datum(),
+            Self::Compound(crs) => crs.components().iter().find_map(Self::vertical_frame),
+            Self::Bound(crs) => crs.source_crs().vertical_frame(),
+            _ => None,
+        }
     }
 
     /// Deprecated flag stored for this CRS.

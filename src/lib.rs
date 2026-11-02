@@ -100,13 +100,14 @@ pub use iso19111::{
     CoordinateOperationFactory, CoordinateSystem, Crs, CrsExtentUse, CrsInfo, DatabaseContext,
     Datum, DatumEnsemble, DeprecatedCodes, DerivedConversion, DerivedProjectedCRS, EllipsoidalCS,
     EllipsoidalHeightPolicy, EngineeringCRS, EngineeringDatum, Equivalence, FactoryError,
-    GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identifier,
-    IntermediateCrsUse, LinunitPolicy, Measure, Meridian, NameMatch, NameSpelling, ObjectDomain,
-    ObjectType, OfficialName, OpProps, OperationMethod, OperationParameter,
-    OperationParameterValue, OrdinalCS, OutputAxisRule, Parameter, ParameterValue, ParametricDatum,
-    PrimeMeridian, ProjLines, ProjectedCRS, SpatialCriterion, SphericalCS, Transformation, UnitInfo, UnitKind,
-    UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame, WktConvention, WktDialect,
-    WktFormatter, WktLines, WktNode, WktObject, WktParser, WktStrictness,
+    GeocentricCRS, GeodeticComponents, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS,
+    GridInfo, Identifier, IntermediateCrsUse, LinunitPolicy, Measure, Meridian, NameMatch,
+    NameSpelling, ObjectDomain, ObjectType, OfficialName, OpProps, OperationMethod,
+    OperationParameter, OperationParameterValue, OrdinalCS, OutputAxisRule, Parameter,
+    ParameterValue, ParametricDatum, PrimeMeridian, ProjLines, ProjectedCRS, SpatialCriterion,
+    SphericalCS, SupersededOperations, Transformation, UnitInfo, UnitKind, UnitOfMeasure,
+    VerticalCRS, VerticalCS, VerticalReferenceFrame, WktConvention, WktDialect, WktFormatter,
+    WktLines, WktNode, WktObject, WktParser, WktStrictness,
 };
 pub use lcc::{Cone, Lcc};
 pub use merc::Mercator;

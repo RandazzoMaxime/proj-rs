@@ -1060,6 +1060,29 @@ fn write_ellipsoid(writer: &mut Writer, ellipsoid: &Ellipsoid, db: &DatabaseCont
     writer.end_object();
 }
 
+impl Ellipsoid {
+    /// PROJJSON for this ellipsoid, including `"type": "Ellipsoid"`.
+    #[must_use]
+    pub fn export_to_json(&self, db: &DatabaseContext, format: &JsonFormat) -> String {
+        let mut writer = Writer::new(format);
+        writer.start_object();
+        if !format.schema.is_empty() {
+            writer.key("$schema");
+            writer.string(&format.schema);
+        }
+        writer.key("type");
+        writer.string("Ellipsoid");
+        write_ellipsoid_members(
+            &mut writer,
+            self,
+            db,
+            Place::top(ident(self.identifiers())),
+        );
+        writer.end_object();
+        writer.finish()
+    }
+}
+
 fn write_ellipsoid_members(
     writer: &mut Writer,
     ellipsoid: &Ellipsoid,

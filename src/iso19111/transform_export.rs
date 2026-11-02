@@ -50,6 +50,8 @@ const METHOD_AXIS_ORDER_REVERSAL_3D: i32 = 9844;
 const METHOD_GEOGRAPHIC_GEOCENTRIC: i32 = 9602;
 const METHOD_CHANGE_VERTICAL_UNIT: i32 = 1069;
 const METHOD_HEIGHT_DEPTH_REVERSAL: i32 = 1068;
+const METHOD_VERTICAL_OFFSET: i32 = 9616;
+const PARAMETER_VERTICAL_OFFSET: i32 = 8603;
 const METHOD_CARTESIAN_GRID_OFFSETS: i32 = 9656;
 const METHOD_LONGITUDE_ROTATION: i32 = 9601;
 const METHOD_MOLODENSKY: i32 = 9604;
@@ -57,6 +59,9 @@ const METHOD_ABRIDGED_MOLODENSKY: i32 = 9605;
 const METHOD_GEOGRAPHIC2D_OFFSETS: i32 = 9619;
 const METHOD_GEOGRAPHIC3D_OFFSETS: i32 = 9660;
 const METHOD_GEOCENTRIC_GRID_IGN: i32 = 1087;
+const METHOD_GEOGRAPHIC3D_TO_GRAVITY_HEIGHT: i32 = 1136;
+const METHOD_GEOGRAPHIC3D_TO_GEOG2D_GRAVITY_HEIGHT: i32 = 1131;
+const PARAMETER_GEOID_HEIGHT: i32 = 8604;
 const METHOD_NTV1: i32 = 9614;
 const METHOD_NTV2: i32 = 9615;
 const METHOD_VERTCON: i32 = 9658;
@@ -252,11 +257,22 @@ fn export_forward(
         formatter.add_param("order", "1,2,-3");
         return Ok(());
     }
+    if code == METHOD_VERTICAL_OFFSET {
+        return vertical_offset(operation, source, target, formatter);
+    }
     if code == METHOD_GEOCENTRIC_GRID_IGN {
         return geocentric_grid(operation, source, target, formatter);
     }
+    if code == METHOD_GEOGRAPHIC3D_TO_GRAVITY_HEIGHT
+        || code == METHOD_GEOGRAPHIC3D_TO_GEOG2D_GRAVITY_HEIGHT
+    {
+        return constant_geoid_height(operation, target, formatter);
+    }
     if grid_shift(operation, source, target, formatter)? {
         return Ok(());
+    }
+    if let Some(kind) = molodensky_badekas_kind(code) {
+        return molodensky_badekas(operation, kind, source, target, formatter);
     }
     formatter.set_optimize_units();
     if let Some(kind) = helmert_kind(operation) {
@@ -843,17 +859,56 @@ fn null_geographic_offset(
     Ok(())
 }
 
+/// `Geographic3D to GravityRelatedHeight` with a constant geoid height: an
+/// `affine` height shift, then the linear unit of the target vertical CRS.
+fn constant_geoid_height(
+    operation: &Transformation,
+    target: Option<&Crs>,
+    formatter: &mut PipelineFormatter,
+) -> Result<(), FactoryError> {
+    let vertical = match target {
+        Some(Crs::Compound(compound)) => compound.components().get(1),
+        other => other,
+    };
+    let Some(Crs::Vertical(vertical)) = vertical else {
+        return Err(FactoryError::Format(
+            "Can apply Geographic3D to GravityRelatedHeight only to VerticalCRS".to_owned(),
+        ));
+    };
+    let geoid_height = si_value(operation, PARAMETER_GEOID_HEIGHT);
+    if geoid_height != 0.0 {
+        formatter.add_step("affine");
+        formatter.add_number("zoff", -geoid_height);
+    }
+    let unit = vertical.coordinate_system().axis().unit();
+    if unit.conversion_to_si() != 1.0 {
+        formatter.add_step("unitconvert");
+        formatter.add_param("z_in", "m");
+        match proj_unit_name(unit) {
+            Some(name) => formatter.add_param("z_out", name),
+            None => formatter.add_number("z_out", unit.conversion_to_si()),
+        }
+    }
+    Ok(())
+}
+
 fn change_vertical_unit(
     operation: &Transformation,
     formatter: &mut PipelineFormatter,
 ) -> Result<(), FactoryError> {
-    let factor = si_value(operation, 1051);
+    export_vertical_unit_factor(si_value(operation, 1051), formatter);
+    Ok(())
+}
+
+/// `exportToPROJStringChangeVerticalUnit`: `z_in`/`z_out` from the SI factor of the
+/// source unit over the target unit.
+pub(crate) fn export_vertical_unit_factor(factor: f64, formatter: &mut PipelineFormatter) {
     let forward = proj_linear_name(factor);
     let reverse = (factor != 0.0)
         .then(|| proj_linear_name(1.0 / factor))
         .flatten();
     if forward == Some("m") {
-        return Ok(());
+        return;
     }
     if let Some(from) = forward {
         formatter.add_step("unitconvert");
@@ -875,7 +930,76 @@ fn change_vertical_unit(
         formatter.add_step("affine");
         formatter.add_number("s33", factor);
     }
+}
+
+/// Vertical offset, EPSG:9616: `geogoffset` with `dh` in metres, between the
+/// linear units of the vertical CRS (or the vertical part of two compounds
+/// that share a horizontal CRS).
+fn vertical_offset(
+    operation: &Transformation,
+    source: Option<&Crs>,
+    target: Option<&Crs>,
+    formatter: &mut PipelineFormatter,
+) -> Result<(), FactoryError> {
+    let (source, target) = vertical_pair(source, target)?;
+    formatter.start_inversion();
+    linear_unit_convert(source, formatter);
+    formatter.stop_inversion();
+    let offset = si_value(operation, PARAMETER_VERTICAL_OFFSET);
+    if offset != 0.0 {
+        formatter.add_step("geogoffset");
+        formatter.add_number("dh", offset);
+    }
+    linear_unit_convert(target, formatter);
     Ok(())
+}
+
+fn vertical_pair<'a>(
+    source: Option<&'a Crs>,
+    target: Option<&'a Crs>,
+) -> Result<(&'a VerticalCRS, &'a VerticalCRS), FactoryError> {
+    let (source, target) = match (source, target) {
+        (Some(Crs::Compound(source_crs)), Some(Crs::Compound(target_crs)))
+            if source_crs.components().first().is_some_and(|left| {
+                target_crs
+                    .components()
+                    .first()
+                    .is_some_and(|right| left.is_equivalent_to(right))
+            }) =>
+        {
+            (
+                source_crs.components().get(1),
+                target_crs.components().get(1),
+            )
+        }
+        other => other,
+    };
+    match (vertical_crs(source), vertical_crs(target)) {
+        (Some(source), Some(target)) => Ok((source, target)),
+        _ => Err(FactoryError::Format(
+            "Can apply Vertical offset only to VerticalCRS".to_owned(),
+        )),
+    }
+}
+
+fn vertical_crs(crs: Option<&Crs>) -> Option<&VerticalCRS> {
+    match crs {
+        Some(Crs::Vertical(vertical)) => Some(vertical),
+        _ => None,
+    }
+}
+
+fn linear_unit_convert(vertical: &VerticalCRS, formatter: &mut PipelineFormatter) {
+    let unit = vertical.coordinate_system().axis().unit();
+    if unit.conversion_to_si() == 1.0 {
+        return;
+    }
+    formatter.add_step("unitconvert");
+    formatter.add_param("z_in", "m");
+    match proj_unit_name(unit) {
+        Some(name) => formatter.add_param("z_out", name),
+        None => formatter.add_number("z_out", unit.conversion_to_si()),
+    }
 }
 
 /// `Cartesian grid offsets`: a shift of the projected or engineering CRS
@@ -1024,6 +1148,68 @@ impl Transformation {
         }
         Some(approximate)
     }
+}
+
+/// The convention and domain of a Molodensky-Badekas method.
+#[derive(Clone, Copy)]
+struct MolodenskyBadekasKind {
+    position_vector: bool,
+    push_pop_v3: PushV3,
+}
+
+/// The Molodensky-Badekas variants: coordinate frame 1034, 9636, 1039 and
+/// position vector 1061, 1063, 1062, for the geocentric, geographic 2D and geographic 3D domains.
+fn molodensky_badekas_kind(code: i32) -> Option<MolodenskyBadekasKind> {
+    let (position_vector, geographic_2d) = match code {
+        1034 | 1039 => (false, false),
+        9636 => (false, true),
+        1061 | 1062 => (true, false),
+        1063 => (true, true),
+        _ => return None,
+    };
+    Some(MolodenskyBadekasKind {
+        position_vector,
+        push_pop_v3: if geographic_2d {
+            PushV3::Yes
+        } else {
+            PushV3::No
+        },
+    })
+}
+
+fn molodensky_badekas(
+    operation: &Transformation,
+    kind: MolodenskyBadekasKind,
+    source: Option<&Crs>,
+    target: Option<&Crs>,
+    formatter: &mut PipelineFormatter,
+) -> Result<(), FactoryError> {
+    if let Some(source) = source {
+        setup_source(source, kind.push_pop_v3, formatter)?;
+    }
+    formatter.add_step("molobadekas");
+    formatter.add_number("x", si_value(operation, 8605));
+    formatter.add_number("y", si_value(operation, 8606));
+    formatter.add_number("z", si_value(operation, 8607));
+    formatter.add_number("rx", numeric(operation, 8608, ARC_SECOND));
+    formatter.add_number("ry", numeric(operation, 8609, ARC_SECOND));
+    formatter.add_number("rz", numeric(operation, 8610, ARC_SECOND));
+    formatter.add_number("s", numeric(operation, 8611, PARTS_PER_MILLION));
+    formatter.add_number("px", si_value(operation, 8617));
+    formatter.add_number("py", si_value(operation, 8618));
+    formatter.add_number("pz", si_value(operation, 8667));
+    formatter.add_param(
+        "convention",
+        if kind.position_vector {
+            "position_vector"
+        } else {
+            "coordinate_frame"
+        },
+    );
+    if let Some(target) = target {
+        setup_target(target, kind.push_pop_v3, formatter)?;
+    }
+    Ok(())
 }
 
 /// The Helmert form of a method, or `None` when the method is not a Helmert
