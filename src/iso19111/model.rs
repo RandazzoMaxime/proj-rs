@@ -83,6 +83,12 @@ impl FactoryError {
 pub struct Identifier {
     pub(crate) code_space: String,
     pub(crate) code: String,
+    /// PROJJSON `version` of an `id`, when `proj.db` does not fold it into the code space.
+    pub(crate) version: Option<String>,
+    /// PROJJSON `authority_citation`.
+    pub(crate) authority_citation: Option<String>,
+    /// PROJJSON `uri`.
+    pub(crate) uri: Option<String>,
 }
 
 impl Identifier {
@@ -102,6 +108,9 @@ impl Identifier {
         Self {
             code_space: code_space.into(),
             code: code.into(),
+            version: None,
+            authority_citation: None,
+            uri: None,
         }
     }
 }
@@ -324,6 +333,20 @@ pub(crate) struct Identified {
     pub(crate) anchor: Option<String>,
     pub(crate) anchor_epoch: Option<f64>,
     pub(crate) publication_date: Option<String>,
+    /// PROJJSON `vertical_extent` of the usage.
+    pub(crate) vertical_extent: Option<VerticalExtent>,
+    /// The PROJ string that `+type=crs` import could not carry (`EXTENSION_PROJ4`).
+    pub(crate) extension_proj4: Option<String>,
+    /// `tmerc approx` or `utm approx`: the PROJ method name override of a conversion.
+    pub(crate) proj_method_override: Option<String>,
+}
+
+/// Vertical extent of an object usage, as PROJJSON writes it.
+#[derive(Clone, Debug)]
+pub(crate) struct VerticalExtent {
+    pub(crate) minimum: f64,
+    pub(crate) maximum: f64,
+    pub(crate) unit: UnitOfMeasure,
 }
 
 impl Identified {
@@ -337,6 +360,9 @@ impl Identified {
             anchor: None,
             anchor_epoch: None,
             publication_date: None,
+            vertical_extent: None,
+            extension_proj4: None,
+            proj_method_override: None,
         }
     }
 
@@ -2649,6 +2675,8 @@ pub struct VerticalCRS {
 pub struct GeoidModel {
     pub(crate) name: String,
     pub(crate) identifiers: Vec<Identifier>,
+    /// PROJJSON `interpolation_crs`: the CRS the model interpolates in.
+    pub(crate) interpolation_crs: Option<Box<Crs>>,
 }
 
 impl GeoidModel {

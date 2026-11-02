@@ -76,6 +76,9 @@ pub(super) fn projected_cs(
     tokens: &[(String, String)],
     unit: UnitOfMeasure,
 ) -> Result<CartesianCS, FactoryError> {
+    if let Some(cs) = axis_cartesian_cs(proj, tokens, &unit)? {
+        return Ok(cs);
+    }
     let lat_0 = token(tokens, "lat_0").parse::<f64>().ok();
     let direction = match (proj, lat_0) {
         ("laea", Some(lat)) if (lat - 90.0).abs() < 1e-10 => "south",
@@ -116,4 +119,37 @@ pub(super) fn check_peirce_q_export(latitude: f64, scale: f64) -> Result<(), Fac
         ));
     }
     Ok(())
+}
+
+/// The cartesian axes `+axis=` names, or the west-south axes of `+czech` on a
+/// Krovak projection. `None` when neither is present or `+axis` is `enu`.
+fn axis_cartesian_cs(
+    proj: &str,
+    tokens: &[(String, String)],
+    unit: &UnitOfMeasure,
+) -> Result<Option<CartesianCS>, FactoryError> {
+    let axis = token(tokens, "axis");
+    let czech =
+        matches!(proj, "krovak" | "mod_krovak") && tokens.iter().any(|(key, _)| key == "czech");
+    let letters: Vec<char> = if czech && axis.is_empty() {
+        vec!['w', 's']
+    } else if axis.len() == 3 && axis != "enu" {
+        axis.chars().take(2).collect()
+    } else {
+        return Ok(None);
+    };
+    let named = |letter: char| match letter {
+        'e' => Ok(Axis::new("Easting", "E", "east", unit.clone())),
+        'n' => Ok(Axis::new("Northing", "N", "north", unit.clone())),
+        'w' => Ok(Axis::new("Westing", "", "west", unit.clone())),
+        's' => Ok(Axis::new("Southing", "", "south", unit.clone())),
+        other => Err(FactoryError::Invalid(format!(
+            "Unhandled axis letter {other}"
+        ))),
+    };
+    let axes = letters
+        .into_iter()
+        .map(named)
+        .collect::<Result<Vec<_>, _>>()?;
+    CartesianCS::create(axes).map(Some)
 }

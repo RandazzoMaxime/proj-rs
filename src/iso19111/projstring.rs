@@ -289,6 +289,9 @@ impl ProjectedCRS {
             return Ok(text);
         }
         let mut text = self.deriving_conversion().export_to_proj_string()?;
+        if self.has_west_south_axes() {
+            text = text.replacen("+axis=swu", "+czech", 1);
+        }
         text.push(' ');
         text.push_str(&crs_datum_clause(self.base_crs(), extras));
         if let Some(unit) = self.coordinate_system().axes().first().map(Axis::unit) {
@@ -299,6 +302,15 @@ impl ProjectedCRS {
         }
         text.push_str(" +no_defs +type=crs");
         Ok(text)
+    }
+
+    /// Westing then southing axes, which `+czech` names on a Krovak method.
+    fn has_west_south_axes(&self) -> bool {
+        matches!(self.deriving_conversion().method().code(), "9819" | "1042")
+            && matches!(
+                self.coordinate_system().axes(),
+                [first, second] if first.direction() == "west" && second.direction() == "south"
+            )
     }
 
     /// The pseudo-Mercator method (EPSG 1024) as PROJ writes it: `+proj=merc` on
@@ -1190,7 +1202,7 @@ fn frame_from_ellipsoid(
 
 /// `Ellipsoid::guessBodyName` without a database: Earth when `a` is close to
 /// the mean Earth radius, otherwise a non-Earth body.
-fn guess_body(semi_major: f64) -> String {
+pub(super) fn guess_body(semi_major: f64) -> String {
     if (semi_major - EARTH_RADIUS).abs() < BODY_RELATIVE * EARTH_RADIUS {
         "Earth".to_owned()
     } else {

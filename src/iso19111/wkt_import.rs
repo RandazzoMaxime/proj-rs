@@ -286,6 +286,7 @@ impl Props {
             anchor: None,
             anchor_epoch: None,
             publication_date: None,
+            ..Identified::default()
         }
     }
 }
@@ -2035,6 +2036,7 @@ impl WktParser {
             geoid_models.push(GeoidModel {
                 name: props.name,
                 identifiers: props.identifiers,
+                interpolation_crs: None,
             });
         }
         Ok(VerticalCRS {

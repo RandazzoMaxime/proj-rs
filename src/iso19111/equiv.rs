@@ -536,6 +536,12 @@ fn conversion_equivalent_for(
     right: &Conversion,
     criterion: Equivalence,
 ) -> bool {
+    if criterion != Equivalence::Strict
+        && left.method().code() != right.method().code()
+        && spherical_method_pair(left.method().code(), right.method().code())
+    {
+        return spherical_pair_parameters_match(left, right);
+    }
     (criterion != Equivalence::Strict || same_name(left.name(), right.name()))
         && left.method().code() == right.method().code()
         && left.parameters().len() == right.parameters().len()
@@ -544,6 +550,45 @@ fn conversion_equivalent_for(
             .iter()
             .zip(right.parameters())
             .all(|(left, right)| parameter_equivalent(left, right))
+}
+
+/// The EPSG methods PROJ treats as the same projection on a sphere: Lambert
+/// azimuthal equal area (1027, 9820) and equidistant cylindrical (1029, 1028).
+fn spherical_method_pair(left: &str, right: &str) -> bool {
+    matches!(
+        (left, right),
+        ("1027", "9820") | ("9820", "1027") | ("1029", "1028") | ("1028", "1029")
+    )
+}
+
+/// Parameters of a spherical/ellipsoidal method pair, matched by code. A
+/// parameter the other method lacks must be zero.
+fn spherical_pair_parameters_match(left: &Conversion, right: &Conversion) -> bool {
+    let covered = |from: &Conversion, other: &Conversion| {
+        from.parameters().iter().all(|parameter| {
+            match other
+                .parameters()
+                .iter()
+                .find(|candidate| candidate.code() == parameter.code())
+            {
+                Some(found) => parameter_value_equivalent(parameter, found),
+                None => matches!(
+                    parameter.value(),
+                    ParameterValue::Measure(measure) if measure.value() == 0.0
+                ),
+            }
+        })
+    };
+    covered(left, right) && covered(right, left)
+}
+
+fn parameter_value_equivalent(left: &Parameter, right: &Parameter) -> bool {
+    match (left.value(), right.value()) {
+        (ParameterValue::Measure(left), ParameterValue::Measure(right)) => {
+            left.value() == right.value() && left.unit().name() == right.unit().name()
+        }
+        _ => false,
+    }
 }
 
 fn parameter_equivalent(left: &Parameter, right: &Parameter) -> bool {
