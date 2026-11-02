@@ -6,8 +6,9 @@
 //! text and numbers are copied from PROJ 9.9.0 `test/unit`.
 
 use proj_rs::iso19111::{
-    create_from_user_input, AuthorityFactory, CoordinateOperation, CoordinateOperationContext,
-    CoordinateOperationFactory, FactoryError, ProjLines,
+    create_crs_from_proj_string, create_from_user_input, create_object_from_user_input,
+    AuthorityFactory, CoordinateOperation, CoordinateOperationContext, CoordinateOperationFactory,
+    FactoryError, JsonFormat, ProjLines, SpatialCriterion, UserObject,
 };
 use proj_rs::{
     CoordinateSystem, Crs, DatabaseContext, TemporalCsKind, UnitKind, WktConvention, WktFormatter,
@@ -1566,4 +1567,1013 @@ fn operation_geogcrs_to_geogcrs_compatible_celestial_body_through_semi_major_axi
     let list = operations_between(&source, &target, &db).expect("operations");
     assert_eq!(list.len(), 1);
     assert_eq!(proj_string_of(&list[0]), "+proj=noop");
+}
+
+#[test]
+fn operation_geogcrs_to_derived_geogcrs_3d() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let source = authority_crs(&db, "EPSG", "4979");
+    let wkt = r#"GEOGCRS["CH1903+ with 10m offset on ellipsoidal height",
+    BASEGEOGCRS["CH1903+",
+        DATUM["CH1903+",
+            ELLIPSOID["Bessel 1841",6377397.155,299.1528128,
+                LENGTHUNIT["metre",1]],
+            ID["EPSG",6150]],
+        PRIMEM["Greenwich",0,
+            ANGLEUNIT["degree",0.0174532925199433],
+            ID["EPSG",8901]]],
+    DERIVINGCONVERSION["Offset on ellipsoidal height",
+        METHOD["Geographic3D offsets",
+            ID["EPSG",9660]],
+        PARAMETER["Latitude offset",0,
+            ANGLEUNIT["degree",0.0174532925199433],
+            ID["EPSG",8601]],
+        PARAMETER["Longitude offset",0,
+            ANGLEUNIT["degree",0.0174532925199433],
+            ID["EPSG",8602]],
+        PARAMETER["Vertical Offset",10,
+            LENGTHUNIT["metre",1],
+            ID["EPSG",8603]]],
+    CS[ellipsoidal,3],
+        AXIS["geodetic latitude (Lat)",north,
+            ORDER[1],
+            ANGLEUNIT["degree",0.0174532925199433,
+                ID["EPSG",9122]]],
+        AXIS["geodetic longitude (Lon)",east,
+            ORDER[2],
+            ANGLEUNIT["degree",0.0174532925199433,
+                ID["EPSG",9122]]],
+        AXIS["ellipsoidal height (h)",up,
+            ORDER[3],
+            LENGTHUNIT["metre",1,
+                ID["EPSG",9001]]]]"#;
+    let target = crs_of(&parse(wkt)).clone();
+    let mut context = CoordinateOperationContext::create(&db, "EPSG");
+    context.set_spatial_criterion(SpatialCriterion::PartialIntersection);
+    let list = CoordinateOperationFactory::create()
+        .create_operations(&source, &target, &context)
+        .expect("operations");
+    assert!(!list.is_empty());
+    assert_eq!(
+        list[0].name(),
+        "Inverse of CH1903+ to WGS 84 (1) + Offset on ellipsoidal height"
+    );
+    assert_eq!(
+        proj_string_of(&list[0]),
+        "+proj=pipeline \
+         +step +proj=axisswap +order=2,1 \
+         +step +proj=unitconvert +xy_in=deg +z_in=m +xy_out=rad +z_out=m \
+         +step +proj=cart +ellps=WGS84 \
+         +step +proj=helmert +x=-674.374 +y=-15.056 +z=-405.346 \
+         +step +inv +proj=cart +ellps=bessel \
+         +step +proj=geogoffset +dlat=0 +dlon=0 +dh=10 \
+         +step +proj=unitconvert +xy_in=rad +z_in=m +xy_out=deg +z_out=m \
+         +step +proj=axisswap +order=2,1"
+    );
+}
+
+#[test]
+fn io_projparse_topocentric() {
+    let crs = create_crs_from_proj_string(
+        "+proj=topocentric +datum=WGS84 +X_0=-3982059.42 +Y_0=3331314.88 \
+         +Z_0=3692463.58 +no_defs +type=crs",
+    )
+    .expect("topocentric");
+    assert!(matches!(crs, Crs::Projected(_)));
+    assert_eq!(
+        export(&crs, WktConvention::Wkt2_2019),
+        r#"PROJCRS["unknown",
+    BASEGEODCRS["unknown",
+        DATUM["World Geodetic System 1984",
+            ELLIPSOID["WGS 84",6378137,298.257223563,
+                LENGTHUNIT["metre",1]],
+            ID["EPSG",6326]],
+        PRIMEM["Greenwich",0,
+            ANGLEUNIT["degree",0.0174532925199433],
+            ID["EPSG",8901]]],
+    CONVERSION["unknown",
+        METHOD["Geocentric/topocentric conversions",
+            ID["EPSG",9836]],
+        PARAMETER["Geocentric X of topocentric origin",-3982059.42,
+            LENGTHUNIT["metre",1],
+            ID["EPSG",8837]],
+        PARAMETER["Geocentric Y of topocentric origin",3331314.88,
+            LENGTHUNIT["metre",1],
+            ID["EPSG",8838]],
+        PARAMETER["Geocentric Z of topocentric origin",3692463.58,
+            LENGTHUNIT["metre",1],
+            ID["EPSG",8839]]],
+    CS[Cartesian,3],
+        AXIS["topocentric East (U)",east,
+            ORDER[1],
+            LENGTHUNIT["metre",1,
+                ID["EPSG",9001]]],
+        AXIS["topocentric North (V)",north,
+            ORDER[2],
+            LENGTHUNIT["metre",1,
+                ID["EPSG",9001]]],
+        AXIS["topocentric Up (W)",up,
+            ORDER[3],
+            LENGTHUNIT["metre",1,
+                ID["EPSG",9001]]]]"#
+    );
+}
+
+const TEMPORAL_EXTENT_JSON: &str = r#"{
+  "$schema": "foo",
+  "type": "GeodeticReferenceFrame",
+  "name": "World Geodetic System 1984",
+  "ellipsoid": {
+    "name": "WGS 84",
+    "semi_major_axis": 6378137,
+    "inverse_flattening": 298.257223563
+  },
+  "temporal_extent": {
+    "start": "my start",
+    "end": "my end"
+  }
+}"#;
+
+const PARAMETRIC_CRS_JSON: &str = r#"{
+  "$schema": "foo",
+  "type": "ParametricCRS",
+  "name": "WMO standard atmosphere layer 0",
+  "datum": {
+    "name": "Mean Sea Level",
+    "anchor": "1013.25 hPa at 15°C"
+  },
+  "coordinate_system": {
+    "subtype": "parametric",
+    "axis": [
+      {
+        "name": "Pressure",
+        "abbreviation": "hPa",
+        "direction": "up",
+        "unit": {
+          "type": "ParametricUnit",
+          "name": "HectoPascal",
+          "conversion_factor": 100
+        }
+      }
+    ]
+  }
+}"#;
+
+const ENGINEERING_CRS_JSON: &str = r#"{
+  "$schema": "foo",
+  "type": "EngineeringCRS",
+  "name": "Engineering CRS",
+  "datum": {
+    "name": "Engineering datum"
+  },
+  "coordinate_system": {
+    "subtype": "Cartesian",
+    "axis": [
+      {
+        "name": "Easting",
+        "abbreviation": "E",
+        "direction": "east",
+        "unit": "metre"
+      },
+      {
+        "name": "Northing",
+        "abbreviation": "N",
+        "direction": "north",
+        "unit": "metre"
+      }
+    ]
+  }
+}"#;
+
+const TEMPORAL_CRS_JSON: &str = r#"{
+  "$schema": "foo",
+  "type": "TemporalCRS",
+  "name": "Temporal CRS",
+  "datum": {
+    "name": "Gregorian calendar",
+    "calendar": "proleptic Gregorian",
+    "time_origin": "0000-01-01"
+  },
+  "coordinate_system": {
+    "subtype": "TemporalDateTime",
+    "axis": [
+      {
+        "name": "Time",
+        "abbreviation": "T",
+        "direction": "future"
+      }
+    ]
+  }
+}"#;
+
+const DERIVED_GEODETIC_CRS_JSON: &str = r#"{
+  "$schema": "foo",
+  "type": "DerivedGeodeticCRS",
+  "name": "Derived geodetic CRS",
+  "base_crs": {
+    "type": "GeographicCRS",
+    "name": "WGS 84",
+    "datum": {
+      "type": "GeodeticReferenceFrame",
+      "name": "World Geodetic System 1984",
+      "ellipsoid": {
+        "name": "WGS 84",
+        "semi_major_axis": 6378137,
+        "inverse_flattening": 298.257223563
+      }
+    },
+    "coordinate_system": {
+      "subtype": "ellipsoidal",
+      "axis": [
+        {
+          "name": "Latitude",
+          "abbreviation": "lat",
+          "direction": "north",
+          "unit": "degree"
+        },
+        {
+          "name": "Longitude",
+          "abbreviation": "lon",
+          "direction": "east",
+          "unit": "degree"
+        }
+      ]
+    }
+  },
+  "conversion": {
+    "name": "Some conversion",
+    "method": {
+      "name": "Some method"
+    },
+    "parameters": [
+      {
+        "name": "foo",
+        "value": 1,
+        "unit": "metre"
+      }
+    ]
+  },
+  "coordinate_system": {
+    "subtype": "Cartesian",
+    "axis": [
+      {
+        "name": "Geocentric X",
+        "abbreviation": "X",
+        "direction": "geocentricX",
+        "unit": "metre"
+      },
+      {
+        "name": "Geocentric Y",
+        "abbreviation": "Y",
+        "direction": "geocentricY",
+        "unit": "metre"
+      },
+      {
+        "name": "Geocentric Z",
+        "abbreviation": "Z",
+        "direction": "geocentricZ",
+        "unit": "metre"
+      }
+    ]
+  }
+}"#;
+
+const DERIVED_GEOGRAPHIC_CRS_JSON: &str = r#"{
+  "$schema": "foo",
+  "type": "DerivedGeographicCRS",
+  "name": "WMO Atlantic Pole",
+  "base_crs": {
+    "type": "GeographicCRS",
+    "name": "WGS 84",
+    "datum": {
+      "type": "GeodeticReferenceFrame",
+      "name": "World Geodetic System 1984",
+      "ellipsoid": {
+        "name": "WGS 84",
+        "semi_major_axis": 6378137,
+        "inverse_flattening": 298.257223563
+      }
+    },
+    "coordinate_system": {
+      "subtype": "ellipsoidal",
+      "axis": [
+        {
+          "name": "Latitude",
+          "abbreviation": "lat",
+          "direction": "north",
+          "unit": "degree"
+        },
+        {
+          "name": "Longitude",
+          "abbreviation": "lon",
+          "direction": "east",
+          "unit": "degree"
+        }
+      ]
+    }
+  },
+  "conversion": {
+    "name": "Atlantic pole",
+    "method": {
+      "name": "Pole rotation"
+    },
+    "parameters": [
+      {
+        "name": "Latitude of rotated pole",
+        "value": 52,
+        "unit": "degree"
+      },
+      {
+        "name": "Longitude of rotated pole",
+        "value": -30,
+        "unit": "degree"
+      },
+      {
+        "name": "Axis rotation",
+        "value": -25,
+        "unit": "degree"
+      }
+    ]
+  },
+  "coordinate_system": {
+    "subtype": "ellipsoidal",
+    "axis": [
+      {
+        "name": "Latitude",
+        "abbreviation": "lat",
+        "direction": "north",
+        "unit": "degree"
+      },
+      {
+        "name": "Longitude",
+        "abbreviation": "lon",
+        "direction": "east",
+        "unit": "degree"
+      }
+    ]
+  }
+}"#;
+
+const DERIVED_PROJECTED_CRS_JSON: &str = r#"{
+  "$schema": "foo",
+  "type": "DerivedProjectedCRS",
+  "name": "derived projectedCRS",
+  "base_crs": {
+    "type": "ProjectedCRS",
+    "name": "WGS 84 / UTM zone 31N",
+    "base_crs": {
+      "type": "GeographicCRS",
+      "name": "WGS 84",
+      "datum": {
+        "type": "GeodeticReferenceFrame",
+        "name": "World Geodetic System 1984",
+        "ellipsoid": {
+          "name": "WGS 84",
+          "semi_major_axis": 6378137,
+          "inverse_flattening": 298.257223563
+        }
+      },
+      "coordinate_system": {
+        "subtype": "ellipsoidal",
+        "axis": [
+          {
+            "name": "Latitude",
+            "abbreviation": "lat",
+            "direction": "north",
+            "unit": "degree"
+          },
+          {
+            "name": "Longitude",
+            "abbreviation": "lon",
+            "direction": "east",
+            "unit": "degree"
+          }
+        ]
+      }
+    },
+    "conversion": {
+      "name": "UTM zone 31N",
+      "method": {
+        "name": "Transverse Mercator",
+        "id": {
+          "authority": "EPSG",
+          "code": 9807
+        }
+      },
+      "parameters": [
+        {
+          "name": "Latitude of natural origin",
+          "value": 0,
+          "unit": "degree",
+          "id": {
+            "authority": "EPSG",
+            "code": 8801
+          }
+        },
+        {
+          "name": "Longitude of natural origin",
+          "value": 3,
+          "unit": "degree",
+          "id": {
+            "authority": "EPSG",
+            "code": 8802
+          }
+        },
+        {
+          "name": "Scale factor at natural origin",
+          "value": 0.9996,
+          "unit": "unity",
+          "id": {
+            "authority": "EPSG",
+            "code": 8805
+          }
+        },
+        {
+          "name": "False easting",
+          "value": 500000,
+          "unit": "metre",
+          "id": {
+            "authority": "EPSG",
+            "code": 8806
+          }
+        },
+        {
+          "name": "False northing",
+          "value": 0,
+          "unit": "metre",
+          "id": {
+            "authority": "EPSG",
+            "code": 8807
+          }
+        }
+      ]
+    },
+    "coordinate_system": {
+      "subtype": "Cartesian",
+      "axis": [
+        {
+          "name": "Easting",
+          "abbreviation": "E",
+          "direction": "east",
+          "unit": "metre"
+        },
+        {
+          "name": "Northing",
+          "abbreviation": "N",
+          "direction": "north",
+          "unit": "metre"
+        }
+      ]
+    }
+  },
+  "conversion": {
+    "name": "unnamed",
+    "method": {
+      "name": "PROJ unimplemented"
+    },
+    "parameters": [
+      {
+        "name": "foo",
+        "value": 1,
+        "unit": "metre"
+      }
+    ]
+  },
+  "coordinate_system": {
+    "subtype": "Cartesian",
+    "axis": [
+      {
+        "name": "Easting",
+        "abbreviation": "E",
+        "direction": "east",
+        "unit": "metre"
+      },
+      {
+        "name": "Northing",
+        "abbreviation": "N",
+        "direction": "north",
+        "unit": "metre"
+      }
+    ]
+  }
+}"#;
+
+const DERIVED_VERTICAL_CRS_JSON: &str = r#"{
+  "$schema": "foo",
+  "type": "DerivedVerticalCRS",
+  "name": "Derived vertCRS",
+  "base_crs": {
+    "type": "VerticalCRS",
+    "name": "ODN height",
+    "datum": {
+      "type": "VerticalReferenceFrame",
+      "name": "Ordnance Datum Newlyn"
+    },
+    "coordinate_system": {
+      "subtype": "vertical",
+      "axis": [
+        {
+          "name": "Gravity-related height",
+          "abbreviation": "H",
+          "direction": "up",
+          "unit": "metre"
+        }
+      ]
+    }
+  },
+  "conversion": {
+    "name": "unnamed",
+    "method": {
+      "name": "PROJ unimplemented"
+    },
+    "parameters": [
+      {
+        "name": "foo",
+        "value": 1,
+        "unit": "metre"
+      }
+    ]
+  },
+  "coordinate_system": {
+    "subtype": "vertical",
+    "axis": [
+      {
+        "name": "Gravity-related height",
+        "abbreviation": "H",
+        "direction": "up",
+        "unit": "metre"
+      }
+    ]
+  }
+}"#;
+
+const DERIVED_VERTICAL_EPSG_JSON: &str = r#"{
+  "$schema": "foo",
+  "type": "DerivedVerticalCRS",
+  "name": "Derived vertCRS",
+  "base_crs": {
+    "type": "VerticalCRS",
+    "name": "ODN height",
+    "datum": {
+      "type": "VerticalReferenceFrame",
+      "name": "Ordnance Datum Newlyn",
+      "id": {
+        "authority": "EPSG",
+        "code": 5101
+      }
+    },
+    "coordinate_system": {
+      "subtype": "vertical",
+      "axis": [
+        {
+          "name": "Gravity-related height",
+          "abbreviation": "H",
+          "direction": "up",
+          "unit": "metre"
+        }
+      ]
+    }
+  },
+  "conversion": {
+    "name": "Conv Vertical Offset and Slope",
+    "method": {
+      "name": "Vertical Offset and Slope",
+      "id": {
+        "authority": "EPSG",
+        "code": 1046
+      }
+    },
+    "parameters": [
+      {
+        "name": "Ordinate 1 of evaluation point",
+        "value": 40.5,
+        "unit": "degree",
+        "id": {
+          "authority": "EPSG",
+          "code": 8617
+        }
+      },
+      {
+        "name": "EPSG code for Horizontal CRS",
+        "value": 4277,
+        "id": {
+          "authority": "EPSG",
+          "code": 1037
+        }
+      }
+    ]
+  },
+  "coordinate_system": {
+    "subtype": "vertical",
+    "axis": [
+      {
+        "name": "Gravity-related height",
+        "abbreviation": "H",
+        "direction": "up",
+        "unit": "metre"
+      }
+    ]
+  }
+}"#;
+
+const DERIVED_ENGINEERING_CRS_JSON: &str = r#"{
+  "$schema": "foo",
+  "type": "DerivedEngineeringCRS",
+  "name": "Derived EngineeringCRS",
+  "base_crs": {
+    "type": "EngineeringCRS",
+    "name": "Engineering CRS",
+    "datum": {
+      "name": "Engineering datum"
+    },
+    "coordinate_system": {
+      "subtype": "Cartesian",
+      "axis": [
+        {
+          "name": "Easting",
+          "abbreviation": "E",
+          "direction": "east",
+          "unit": "metre"
+        },
+        {
+          "name": "Northing",
+          "abbreviation": "N",
+          "direction": "north",
+          "unit": "metre"
+        }
+      ]
+    }
+  },
+  "conversion": {
+    "name": "unnamed",
+    "method": {
+      "name": "PROJ unimplemented"
+    },
+    "parameters": [
+      {
+        "name": "foo",
+        "value": 1,
+        "unit": "metre"
+      }
+    ]
+  },
+  "coordinate_system": {
+    "subtype": "Cartesian",
+    "axis": [
+      {
+        "name": "Easting",
+        "abbreviation": "E",
+        "direction": "east",
+        "unit": "metre"
+      },
+      {
+        "name": "Northing",
+        "abbreviation": "N",
+        "direction": "north",
+        "unit": "metre"
+      }
+    ]
+  }
+}"#;
+
+const DERIVED_PARAMETRIC_CRS_JSON: &str = r#"{
+  "$schema": "foo",
+  "type": "DerivedParametricCRS",
+  "name": "Derived ParametricCRS",
+  "base_crs": {
+    "type": "ParametricCRS",
+    "name": "Parametric CRS",
+    "datum": {
+      "name": "Parametric datum"
+    },
+    "coordinate_system": {
+      "subtype": "parametric",
+      "axis": [
+        {
+          "name": "unknown parametric",
+          "abbreviation": "",
+          "direction": "unspecified",
+          "unit": {
+            "type": "ParametricUnit",
+            "name": "unknown",
+            "conversion_factor": 1
+          }
+        }
+      ]
+    }
+  },
+  "conversion": {
+    "name": "unnamed",
+    "method": {
+      "name": "PROJ unimplemented"
+    },
+    "parameters": [
+      {
+        "name": "foo",
+        "value": 1,
+        "unit": "metre"
+      }
+    ]
+  },
+  "coordinate_system": {
+    "subtype": "parametric",
+    "axis": [
+      {
+        "name": "Pressure",
+        "abbreviation": "hPa",
+        "direction": "up",
+        "unit": {
+          "type": "ParametricUnit",
+          "name": "HectoPascal",
+          "conversion_factor": 100
+        }
+      }
+    ]
+  }
+}"#;
+
+const DERIVED_TEMPORAL_CRS_JSON: &str = r#"{
+  "$schema": "foo",
+  "type": "DerivedTemporalCRS",
+  "name": "Derived TemporalCRS",
+  "base_crs": {
+    "type": "TemporalCRS",
+    "name": "Temporal CRS",
+    "datum": {
+      "name": "Gregorian calendar",
+      "calendar": "proleptic Gregorian",
+      "time_origin": "0000-01-01"
+    },
+    "coordinate_system": {
+      "subtype": "TemporalDateTime",
+      "axis": [
+        {
+          "name": "unknown temporal",
+          "abbreviation": "",
+          "direction": "future",
+          "unit": {
+            "type": "TimeUnit",
+            "name": "unknown",
+            "conversion_factor": 1
+          }
+        }
+      ]
+    }
+  },
+  "conversion": {
+    "name": "unnamed",
+    "method": {
+      "name": "PROJ unimplemented"
+    },
+    "parameters": [
+      {
+        "name": "foo",
+        "value": 1,
+        "unit": "metre"
+      }
+    ]
+  },
+  "coordinate_system": {
+    "subtype": "TemporalDateTime",
+    "axis": [
+      {
+        "name": "Time",
+        "abbreviation": "T",
+        "direction": "future"
+      }
+    ]
+  }
+}"#;
+
+fn db() -> DatabaseContext {
+    DatabaseContext::create().expect("proj.db")
+}
+
+fn schema_foo() -> JsonFormat {
+    JsonFormat::default().with_schema("foo")
+}
+
+fn round_trip_crs(json: &str) -> Crs {
+    let database = db();
+    let crs = create_from_user_input(json, &database).expect("import");
+    let exported = crs
+        .export_to_json_with(&database, &schema_foo())
+        .expect("export");
+    assert_eq!(exported, json);
+    crs
+}
+
+fn reimport_datum(json: &str, matches_datum: impl FnOnce(&UserObject) -> bool) {
+    let database = db();
+    let object = create_object_from_user_input(json, &database).expect("datum");
+    assert!(matches_datum(&object), "{json}");
+}
+
+#[test]
+fn json_import_temporal_extent() {
+    let database = db();
+    let object = create_object_from_user_input(TEMPORAL_EXTENT_JSON, &database).expect("datum");
+    assert!(matches!(object, UserObject::GeodeticDatum(_)));
+    let exported = object
+        .export_to_json(&database, &schema_foo())
+        .expect("export");
+    assert_eq!(exported, TEMPORAL_EXTENT_JSON);
+}
+
+#[test]
+fn json_import_parametric_crs() {
+    let crs = round_trip_crs(PARAMETRIC_CRS_JSON);
+    let Crs::Parametric(crs) = crs else {
+        panic!("parametric");
+    };
+    let json = UserObject::ParametricDatum(crs.datum().clone())
+        .export_to_json(&db(), &schema_foo())
+        .expect("datum");
+    reimport_datum(&json, |object| {
+        matches!(object, UserObject::ParametricDatum(_))
+    });
+}
+
+#[test]
+fn json_import_engineering_crs() {
+    let crs = round_trip_crs(ENGINEERING_CRS_JSON);
+    let Crs::Engineering(crs) = crs else {
+        panic!("engineering");
+    };
+    let json = UserObject::EngineeringDatum(crs.datum().clone())
+        .export_to_json(&db(), &schema_foo())
+        .expect("datum");
+    reimport_datum(&json, |object| {
+        matches!(object, UserObject::EngineeringDatum(_))
+    });
+}
+
+#[test]
+fn json_import_temporal_crs() {
+    let crs = round_trip_crs(TEMPORAL_CRS_JSON);
+    let Crs::Temporal(crs) = crs else {
+        panic!("temporal");
+    };
+    let json = UserObject::TemporalDatum(crs.datum().clone())
+        .export_to_json(&db(), &schema_foo())
+        .expect("datum");
+    reimport_datum(&json, |object| {
+        matches!(object, UserObject::TemporalDatum(_))
+    });
+}
+
+#[test]
+fn json_import_derived_geodetic_crs() {
+    let crs = round_trip_crs(DERIVED_GEODETIC_CRS_JSON);
+    assert!(matches!(crs, Crs::Derived(_)));
+}
+
+#[test]
+fn json_import_derived_geographic_crs() {
+    let crs = round_trip_crs(DERIVED_GEOGRAPHIC_CRS_JSON);
+    assert!(matches!(crs, Crs::Derived(_)));
+}
+
+#[test]
+fn json_import_derived_projected_crs() {
+    let crs = round_trip_crs(DERIVED_PROJECTED_CRS_JSON);
+    assert!(matches!(crs, Crs::DerivedProjected(_)));
+}
+
+#[test]
+fn json_import_derived_vertical_crs() {
+    let crs = round_trip_crs(DERIVED_VERTICAL_CRS_JSON);
+    assert!(matches!(crs, Crs::Derived(_)));
+}
+
+#[test]
+fn json_import_derived_vertical_crs_epsg_code_for_horizontal_crs() {
+    let database = db();
+    let crs = create_from_user_input(DERIVED_VERTICAL_EPSG_JSON, &database).expect("import");
+    let Crs::Derived(derived) = &crs else {
+        panic!("derived vertical");
+    };
+    assert_eq!(derived.deriving_conversion().parameters().len(), 1);
+    assert!(derived.deriving_conversion().interpolation_crs().is_some());
+    let exported = crs
+        .export_to_json_with(&database, &schema_foo())
+        .expect("export");
+    assert_eq!(exported, DERIVED_VERTICAL_EPSG_JSON);
+}
+
+#[test]
+fn json_import_derived_engineering_crs() {
+    let crs = round_trip_crs(DERIVED_ENGINEERING_CRS_JSON);
+    assert!(matches!(crs, Crs::Derived(_)));
+}
+
+#[test]
+fn json_import_derived_parametric_crs() {
+    let crs = round_trip_crs(DERIVED_PARAMETRIC_CRS_JSON);
+    assert!(matches!(crs, Crs::Derived(_)));
+}
+
+#[test]
+fn json_import_derived_temporal_crs() {
+    let crs = round_trip_crs(DERIVED_TEMPORAL_CRS_JSON);
+    assert!(matches!(crs, Crs::Derived(_)));
+}
+
+#[test]
+fn io_createfromuserinput_ogc_auto() {
+    let projected = |text: &str| {
+        let crs = create_from_user_input(text, &db()).expect(text);
+        let Crs::Projected(crs) = crs else {
+            panic!("{text} is not projected");
+        };
+        crs
+    };
+    let utm_north = projected("AUTO:42001,-117,33");
+    assert_eq!(utm_north.deriving_conversion().name(), "UTM zone 11N");
+    assert_eq!(
+        utm_north.export_to_proj_string().expect("proj"),
+        "+proj=utm +zone=11 +datum=WGS84 +units=m +no_defs +type=crs"
+    );
+    let utm_south = projected("AUTO:42001,-117,-33");
+    assert_eq!(utm_south.deriving_conversion().name(), "UTM zone 11S");
+    assert_eq!(
+        utm_south.export_to_proj_string().expect("proj"),
+        "+proj=utm +zone=11 +south +datum=WGS84 +units=m +no_defs +type=crs"
+    );
+    let metre = projected("AUTO:42001,9001,-117,33");
+    assert_eq!(metre.deriving_conversion().name(), "UTM zone 11N");
+    assert_eq!(
+        metre.export_to_proj_string().expect("proj"),
+        "+proj=utm +zone=11 +datum=WGS84 +units=m +no_defs +type=crs"
+    );
+    let foot = projected("AUTO:42001,9002,-117,33");
+    assert_eq!(foot.deriving_conversion().name(), "UTM zone 11N");
+    assert_eq!(
+        foot.export_to_proj_string().expect("proj"),
+        "+proj=utm +zone=11 +datum=WGS84 +units=ft +no_defs +type=crs"
+    );
+    let us_foot = projected("AUTO:42001,9003,-117,33");
+    assert_eq!(us_foot.deriving_conversion().name(), "UTM zone 11N");
+    assert_eq!(
+        us_foot.export_to_proj_string().expect("proj"),
+        "+proj=utm +zone=11 +datum=WGS84 +units=us-ft +no_defs +type=crs"
+    );
+    let database = db();
+    for text in [
+        "AUTO:42001,0,-117,33",
+        "AUTO:42001,-180.01,33",
+        "AUTO:42001,180,33",
+        "AUTO:42001",
+        "AUTO:42999,1,0",
+    ] {
+        assert!(
+            create_from_user_input(text, &database).is_err(),
+            "{text} should be refused"
+        );
+    }
+    assert!(create_from_user_input("AUTO:42001,-180,33", &database).is_ok());
+    assert!(create_from_user_input("AUTO:42001,179.999,33", &database).is_ok());
+    let tmerc = projected("AUTO:42002,1,2");
+    assert_eq!(tmerc.deriving_conversion().name(), "Transverse Mercator");
+    assert_eq!(
+        tmerc.export_to_proj_string().expect("proj"),
+        "+proj=tmerc +lat_0=0 +lon_0=1 +k=0.9996 +x_0=500000 +y_0=0 +datum=WGS84 +units=m +no_defs +type=crs"
+    );
+    let tmerc_south = projected("AUTO:42002,1,-2");
+    assert_eq!(
+        tmerc_south.deriving_conversion().name(),
+        "Transverse Mercator"
+    );
+    assert_eq!(
+        tmerc_south.export_to_proj_string().expect("proj"),
+        "+proj=tmerc +lat_0=0 +lon_0=1 +k=0.9996 +x_0=500000 +y_0=10000000 +datum=WGS84 +units=m +no_defs +type=crs"
+    );
+    assert_eq!(
+        projected("AUTO:42003,1,2")
+            .export_to_proj_string()
+            .expect("proj"),
+        "+proj=ortho +lat_0=2 +lon_0=1 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs +type=crs"
+    );
+    assert_eq!(
+        projected("AUTO:42004,1,0").export_to_proj_string().expect("proj"),
+        "+proj=eqc +lat_ts=0 +lat_0=0 +lon_0=1 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs +type=crs"
+    );
+    assert_eq!(
+        projected("AUTO:42005,1")
+            .export_to_proj_string()
+            .expect("proj"),
+        "+proj=moll +lon_0=1 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs +type=crs"
+    );
+    assert_eq!(
+        projected("AUTO:42005,9001,1")
+            .export_to_proj_string()
+            .expect("proj"),
+        "+proj=moll +lon_0=1 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs +type=crs"
+    );
+    assert_eq!(
+        projected("urn:ogc:def:crs:OGC::AUTO42001:-117:33")
+            .export_to_proj_string()
+            .expect("proj"),
+        "+proj=utm +zone=11 +datum=WGS84 +units=m +no_defs +type=crs"
+    );
 }

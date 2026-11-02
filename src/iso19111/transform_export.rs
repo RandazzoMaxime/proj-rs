@@ -788,6 +788,104 @@ fn invalid_geographic_geocentric() -> FactoryError {
     )
 }
 
+/// EPSG method code of a conversion, or 0 when the method has no EPSG identifier.
+pub(super) fn conversion_method_code(conversion: &super::model::Conversion) -> i32 {
+    let method = conversion.method();
+    if method.code_space() == "EPSG" {
+        method.code().parse().unwrap_or(0)
+    } else {
+        0
+    }
+}
+
+/// `Geographic2D offsets` (9619) or `Geographic3D offsets` (9660).
+pub(super) fn is_geographic_offset(conversion: &super::model::Conversion) -> bool {
+    let code = conversion_method_code(conversion);
+    code == METHOD_GEOGRAPHIC2D_OFFSETS || code == METHOD_GEOGRAPHIC3D_OFFSETS
+}
+
+/// `Geographic2D offsets` and `Geographic3D offsets` (`exportToPROJStringGeneric`).
+///
+/// Angular offsets are arc-seconds. A zero offset writes no `geogoffset` step.
+/// The source and target are geographic CRS, a derived CRS with an ellipsoidal
+/// system, or a bound CRS of one of those.
+///
+/// # Errors
+///
+/// A CRS is not geographic.
+pub(super) fn geographic_offsets(
+    conversion: &super::model::Conversion,
+    source: &Crs,
+    target: &Crs,
+    formatter: &mut PipelineFormatter,
+) -> Result<(), FactoryError> {
+    let three_d = conversion_method_code(conversion) == METHOD_GEOGRAPHIC3D_OFFSETS;
+    let refused = if three_d {
+        "Can apply Geographic 3D offsets only to GeographicCRS"
+    } else {
+        "Can apply Geographic 2D offsets only to GeographicCRS"
+    };
+    let source_axes = offset_axes(source, refused)?;
+    let target_axes = offset_axes(target, refused)?;
+    let latitude = parameter_numeric(conversion, 8601, ARC_SECOND);
+    let longitude = parameter_numeric(conversion, 8602, ARC_SECOND);
+    let height = if three_d {
+        parameter_si(conversion, 8603)
+    } else {
+        0.0
+    };
+    formatter.start_inversion();
+    angular_unit_and_axis_swap(&source_axes, formatter)?;
+    formatter.stop_inversion();
+    if latitude != 0.0 || longitude != 0.0 || height != 0.0 {
+        formatter.add_step("geogoffset");
+        formatter.add_number("dlat", latitude);
+        formatter.add_number("dlon", longitude);
+        if three_d {
+            formatter.add_number("dh", height);
+        }
+    }
+    angular_unit_and_axis_swap(&target_axes, formatter)
+}
+
+/// Axes of the geographic CRS a geographic-offset step accepts.
+fn offset_axes(crs: &Crs, message: &'static str) -> Result<Vec<Axis>, FactoryError> {
+    let refused = || FactoryError::Format(message.to_owned());
+    match crs {
+        Crs::Geographic(geographic) | Crs::Geodetic(GeodeticCRS::Geographic(geographic)) => {
+            Ok(geographic.coordinate_system().axes().to_vec())
+        }
+        Crs::Derived(derived) => match derived.coordinate_system() {
+            CoordinateSystem::Ellipsoidal(system) => Ok(system.axes().to_vec()),
+            _ => Err(refused()),
+        },
+        Crs::Bound(bound) => offset_axes(bound.source_crs(), message),
+        _ => Err(refused()),
+    }
+}
+
+/// Parameter value in the unit whose SI factor is `to_si`, zero when absent.
+fn parameter_numeric(conversion: &super::model::Conversion, code: i32, to_si: f64) -> f64 {
+    parameter_si(conversion, code) / to_si
+}
+
+/// SI value of the parameter with EPSG code `code`, zero when absent.
+fn parameter_si(conversion: &super::model::Conversion, code: i32) -> f64 {
+    conversion
+        .parameters()
+        .iter()
+        .find_map(|parameter| {
+            if parameter.code() != code.to_string() {
+                return None;
+            }
+            match parameter.value() {
+                ParameterValue::Measure(measure) => Some(measure.si_value()),
+                _ => None,
+            }
+        })
+        .unwrap_or(0.0)
+}
+
 /// `Geographic2D offsets` and `Geographic3D offsets` with zero offsets, the null offset
 /// PROJ writes as `noop`. Non-zero offsets are not ported.
 fn null_geographic_offset(

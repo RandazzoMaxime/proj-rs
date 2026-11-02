@@ -329,6 +329,10 @@ pub(crate) struct Identified {
     pub(crate) anchor: Option<String>,
     pub(crate) anchor_epoch: Option<f64>,
     pub(crate) publication_date: Option<String>,
+    /// PROJJSON `temporal_extent.start`, when the object has one.
+    pub(crate) temporal_start: Option<String>,
+    /// PROJJSON `temporal_extent.end`, when the object has one.
+    pub(crate) temporal_end: Option<String>,
 }
 
 impl Identified {
@@ -342,6 +346,8 @@ impl Identified {
             anchor: None,
             anchor_epoch: None,
             publication_date: None,
+            temporal_start: None,
+            temporal_end: None,
         }
     }
 
@@ -1491,10 +1497,6 @@ impl OrdinalCS {
 
 /// Coordinate system, one of the kinds `proj.db` stores on a CRS.
 #[derive(Clone, Debug)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "a vertical system stores its axis inline; the others keep axes in a Vec"
-)]
 pub enum CoordinateSystem {
     /// Latitude and longitude, optionally with ellipsoidal height.
     Ellipsoidal(EllipsoidalCS),

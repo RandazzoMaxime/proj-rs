@@ -19,6 +19,21 @@ fn missing(keyword: &str) -> FactoryError {
     invalid(format!("missing {keyword} node"))
 }
 
+/// `GeodeticCRS::promoteTo3D` for a base that has no CS of its own.
+fn promote_base_to_3d(base: Crs) -> Crs {
+    match base {
+        Crs::Geographic(geographic) if geographic.coordinate_system().axes().len() == 2 => {
+            Crs::Geographic(geographic.promote_to_3d())
+        }
+        Crs::Geodetic(GeodeticCRS::Geographic(geographic))
+            if geographic.coordinate_system().axes().len() == 2 =>
+        {
+            Crs::Geodetic(GeodeticCRS::Geographic(geographic.promote_to_3d()))
+        }
+        other => other,
+    }
+}
+
 impl WktParser {
     pub(super) fn build_temporal_datum(
         &mut self,
@@ -258,6 +273,13 @@ impl WktParser {
             CoordinateSystem::Spherical(_) => {}
             other => {
                 return Err(invalid(format!("unhandled CS type: {}", other.wkt2_type())));
+            }
+        }
+        // PROJ promotes a 2D base when the derived ellipsoidal CS is 3D
+        // (`buildDerivedGeodeticCRS`).
+        if let CoordinateSystem::Ellipsoidal(system) = &cs {
+            if system.axes().len() == 3 {
+                base = promote_base_to_3d(base);
             }
         }
         self.derived(node, base, conversion, cs)

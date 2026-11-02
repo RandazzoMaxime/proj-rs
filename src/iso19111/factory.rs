@@ -4560,6 +4560,8 @@ fn datum_pivot_operations(
         return Vec::new();
     }
     let authority = AuthorityFactory::create(&context.db, context.authority.clone());
+    let both_3d =
+        geographic_axis_count(source) == Some(3) && geographic_axis_count(target) == Some(3);
     let candidates_source = candidate_geodetic_crs(&authority, &source_datum);
     let candidates_target = candidate_geodetic_crs(&authority, &target_datum);
     let mut pairs: Vec<(&Crs, &Crs)> = candidates_source
@@ -4592,7 +4594,12 @@ fn datum_pivot_operations(
                     CoordinateOperation::Transformation(_) | CoordinateOperation::Concatenated(_)
                 )
             })
-            .map(|operation| {
+            .map(|mut operation| {
+                // PROJ forces a Helmert found for the 2D domain onto 3D CRS
+                // when both requested CRS are 3D, so the pipeline has no `push v_3`.
+                if both_3d {
+                    promote_operation_domain(&mut operation);
+                }
                 let steps = [first.clone(), Some(operation), third.clone()]
                     .into_iter()
                     .flatten()
@@ -4607,10 +4614,60 @@ fn datum_pivot_operations(
     Vec::new()
 }
 
+/// Axis count of a geographic CRS.
+fn geographic_axis_count(crs: &Crs) -> Option<usize> {
+    geographic_of(crs).map(|geographic| geographic.coordinate_system().axes().len())
+}
+
+/// `promoteTo3D` on every geographic endpoint of a datum-pivot operation.
+fn promote_operation_domain(operation: &mut CoordinateOperation) {
+    match operation {
+        CoordinateOperation::Transformation(transformation) => {
+            if let Some(source) = transformation.source.as_deref() {
+                transformation.source = Some(Box::new(promote_crs_to_3d(source)));
+            }
+            if let Some(target) = transformation.target.as_deref() {
+                transformation.target = Some(Box::new(promote_crs_to_3d(target)));
+            }
+        }
+        CoordinateOperation::Concatenated(concatenated) => {
+            for step in &mut concatenated.steps {
+                promote_operation_domain(&mut step.operation);
+            }
+        }
+        CoordinateOperation::Conversion(_) => {}
+    }
+}
+
+/// A 2D geographic CRS with an ellipsoidal-height axis added. Other CRS are cloned.
+fn promote_crs_to_3d(crs: &Crs) -> Crs {
+    match crs {
+        Crs::Geographic(geographic) => Crs::Geographic(geographic.promote_to_3d()),
+        Crs::Geodetic(GeodeticCRS::Geographic(geographic)) => {
+            Crs::Geodetic(GeodeticCRS::Geographic(geographic.promote_to_3d()))
+        }
+        other => other.clone(),
+    }
+}
+
 /// Authority code of the datum of a geodetic CRS, the key its candidates are read with.
+///
+/// An ensemble CRS has no datum code of its own. The ensemble code is the datum code
+/// `geodetic_crs.datum_code` stores, such as EPSG:6326 for WGS 84.
 fn datum_identity(crs: &Crs) -> Option<(String, String)> {
     let frame = geodetic_frame(crs)?;
-    let identifier = frame.identifiers().first()?;
+    if let Some(identifier) = frame.identifiers().first() {
+        return Some((
+            identifier.code_space().to_owned(),
+            identifier.code().to_owned(),
+        ));
+    }
+    let ensemble = match crs {
+        Crs::Geographic(geographic) => geographic.datum_ensemble(),
+        Crs::Geodetic(geodetic) => geodetic.datum_ensemble(),
+        _ => None,
+    }?;
+    let identifier = ensemble.identifiers().first()?;
     Some((
         identifier.code_space().to_owned(),
         identifier.code().to_owned(),

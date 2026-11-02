@@ -38,7 +38,10 @@ pub use factory::{
     SpatialCriterion, UnitInfo,
 };
 pub use insert::insert_statements;
-pub use json::{create_from_user_input, epsg_identity, JsonFormat, JsonLines};
+pub use json::{
+    create_from_user_input, create_object_from_user_input, epsg_identity, JsonFormat, JsonLines,
+    UserObject,
+};
 pub use model::{
     Axis, BoundCRS, BoundingBox, CartesianCS, CompoundCRS, ConcatenatedOperation, ConcatenatedStep,
     Conversion, CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble,

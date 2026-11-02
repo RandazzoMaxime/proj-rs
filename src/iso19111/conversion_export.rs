@@ -34,6 +34,16 @@ impl Conversion {
                     .to_owned(),
             ));
         };
+        if super::transform_export::is_geographic_offset(self) {
+            if self.inverted {
+                formatter.start_inversion();
+                super::transform_export::geographic_offsets(self, target, source, formatter)?;
+                formatter.stop_inversion();
+            } else {
+                super::transform_export::geographic_offsets(self, source, target, formatter)?;
+            }
+            return Ok(());
+        }
         if self.inverted {
             formatter.start_inversion();
             export_projection(target, source, formatter)?;

@@ -289,6 +289,8 @@ impl Props {
             anchor: None,
             anchor_epoch: None,
             publication_date: None,
+            temporal_start: None,
+            temporal_end: None,
         }
     }
 }
@@ -2471,8 +2473,11 @@ impl WktParser {
                         unit = guess_parameter_unit(&props.name, linear, angular);
                     }
                     if is_interpolation_code_parameter(&props) {
-                        #[expect(clippy::cast_possible_truncation, reason = "an EPSG code")]
-                        let code = number as i64;
+                        let code = interpolation_code(number).ok_or_else(|| {
+                            invalid(
+                                "EPSG code for a horizontal or interpolation CRS is not an integer",
+                            )
+                        })?;
                         ParameterValue::Integer(code)
                     } else if let Some(unit) = unit {
                         ParameterValue::Measure(Measure {
@@ -2813,6 +2818,14 @@ fn is_interpolation_code_parameter(props: &Props) -> bool {
         || props.identifiers.first().is_some_and(|id| {
             id.code_space == "EPSG" && matches!(id.code.as_str(), "1048" | "1037")
         })
+}
+
+/// An integer-valued finite parameter, parsed from its shortest decimal form.
+fn interpolation_code(number: f64) -> Option<i64> {
+    if !number.is_finite() || number.fract() != 0.0 {
+        return None;
+    }
+    format!("{number:.0}").parse().ok()
 }
 
 fn is_temporal_cs_type(cs_type: &str) -> bool {
