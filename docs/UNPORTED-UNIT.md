@@ -101,25 +101,11 @@ and `PORT-NOTES-tests.md`.
 ## test_factory.cpp
 
 - `factory.AuthorityFactory_createDynamicVerticalDatum`
-- `factory.AuthorityFactory_createCoordinateOperation_helmert_8_CF`
-- `factory.AuthorityFactory_createCoordinateOperation_helmert_15_CF`
-- `factory.AuthorityFactory_createCoordinateOperation_CF_full_matrix_geog3D`
-- `factory.AuthorityFactory_createCoordinateOperation_molodensky_badekas_PV`
-- `factory.AuthorityFactory_createCoordinateOperation_grid_transformation_one_parameter`
-- `factory.AuthorityFactory_createCoordinateOperation_grid_transformation_two_parameter`
-- `factory.AuthorityFactory_createCoordinateOperation_other_transformation`
-- `factory.AuthorityFactory_10566_issue_4212`
-- `factory.AuthorityFactory_createCoordinateOperation_concatenated_operation_inverse_step1`
-- `factory.AuthorityFactory_createCoordinateOperation_concatenated_operation_inverse_step2`
-- `factory.AuthorityFactory_createCoordinateOperation_concatenated_operation_step_2_and_3_are_conversion`
-- `factory.AuthorityFactory_createCoordinateOperation_concatenated_operation_epsg_9103`
 - `factory.AuthorityFactory_build_all_concatenated`
 - `factory.AuthorityFactory_createCoordinateOperation_point_motion_operation`
 - `factory.AuthorityFactory_getAuthorityCodes`
 - `factory.AuthorityFactory_IAU_2015`
 - `FactoryWithTmpDatabase.AuthorityFactory_test_with_fake_EPSG_database`
-- `factory.AuthorityFactory_createFromCoordinateReferenceSystemCodes`
-- `factory.AuthorityFactory_createFromCoordinateReferenceSystemCodes_anonymous_authority`
 - `FactoryWithTmpDatabase.AuthorityFactory_test_inversion_first_and_last_steps_of_concat_op`
 - `FactoryWithTmpDatabase.AuthorityFactory_test_with_fake_EPSG_and_OTHER_database`
 - `FactoryWithTmpDatabase.AuthorityFactory_test_sorting_of_coordinate_operations`
@@ -144,10 +130,8 @@ and `PORT-NOTES-tests.md`.
 - `factory.attachExtraDatabases_auxiliary_error`
 - `FactoryWithTmpDatabase.createOperations_exact_transform_not_whole_area`
 - `FactoryWithTmpDatabase.check_fixup_direction_concatenated_inverse_map_projection`
-- `factory.createObjectsFromName`
 - `factory.objectInsertion`
 - `factory.ogc_timecrs`
-- `factory.getPointMotionOperationsFor`
 
 ## test_io.cpp
 
@@ -722,7 +706,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_c_api.cpp
 
-- `CApi.proj_crs_create_bound_crs_to_WGS84`
 - `CApi.proj_crs_create_bound_crs_to_WGS84_on_invalid_type`
 - `CApi.proj_create_from_database_grid_alternative_null_old_proj_grid_name`
 - `CApi.proj_coordoperation_get_grid_used`
@@ -740,10 +723,6 @@ and `PORT-NOTES-tests.md`.
 - `CApi.proj_context_set_database_path_aux`
 - `CApi.proj_context_set_database_path_error_1`
 - `CApi.proj_context_set_database_path_error_2`
-- `CApi.proj_create_from_name`
-- `CApi.proj_identify`
-- `CApi.proj_create_geographic_crs`
-- `CApi.proj_create_geocentric_crs`
 - `CApi.proj_clone_of_obj_with_alternative_operations`
 - `CApi.proj_crs_alter_geodetic_crs`
 - `CApi.proj_crs_alter_cs_angular_unit`
@@ -752,26 +731,14 @@ and `PORT-NOTES-tests.md`.
 - `CApi.proj_create_engineering_crs`
 - `CApi.proj_alter_name`
 - `CApi.proj_alter_id`
-- `CApi.proj_create_projected_crs`
-- `CApi.proj_create_transformation`
-- `CApi.proj_create_compound_crs`
-- `CApi.proj_convert_conversion_to_other_method`
-- `CApi.proj_get_non_deprecated`
-- `CApi.proj_query_geodetic_crs_from_datum`
-- `CApi.proj_uom_get_info_from_database`
-- `CApi.proj_grid_get_info_from_database`
 - `CApi.proj_create_cartesian_2D_cs`
-- `CApi.proj_get_crs_info_list_from_database`
-- `CApi.proj_get_units_from_database`
 - `CApi.proj_get_celestial_body_list_from_database`
 - `CApi.proj_normalize_for_visualization_with_alternatives`
 - `CApi.proj_normalize_for_visualization_with_alternatives_reverse`
-- `CApi.proj_normalize_for_visualization_on_crs`
 - `CApi.proj_coordoperation_create_inverse`
 - `CApi.proj_get_remarks`
 - `CApi.proj_get_scope`
 - `CApi.proj_concatoperation_get_step`
-- `CApi.proj_as_projjson`
 - `CApi.proj_context_copy_from_default`
 - `CApi.proj_context_clone`
 - `CApi.proj_create_crs_to_crs_from_pj_accuracy_filter`
@@ -779,11 +746,7 @@ and `PORT-NOTES-tests.md`.
 - `CApi.proj_create_crs_to_crs_coordinate_metadata_in_src`
 - `CApi.proj_create_crs_to_crs_coordinate_metadata_in_target`
 - `CApi.proj_create_ellipsoidal_3D_cs`
-- `CApi.proj_crs_promote_to_3D`
 - `CApi.proj_crs_promote_to_3D_on_coordinate_metadata`
-- `CApi.proj_crs_demote_to_2D`
-- `CApi.proj_crs_create_projected_3D_crs_from_2D`
-- `CApi.proj_crs_create_bound_vertical_crs`
 - `CApi.proj_create_crs_to_crs_with_only_ballpark_transformations`
 - `CApi.proj_create_crs_to_crs_from_custom_compound_crs_with_NAD83_2011_and_geoidgrid_ref_against_WGS84_to_WGS84_G1762`
 - `CApi.proj_create_crs_to_crs_from_custom_compound_crs_with_NAD83_2011_and_geoidgrid_ref_against_NAD83_2011_to_WGS84_G1762`
@@ -797,10 +760,8 @@ and `PORT-NOTES-tests.md`.
 - `CApi.use_proj4_init_rules`
 - `CApi.use_proj4_init_rules_from_global_context`
 - `CApi.proj_is_equivalent_to_with_ctx`
-- `CApi.datum_ensemble`
 - `CApi.proj_crs_is_derived`
 - `CApi.proj_get_insert_statements`
-- `CApi.proj_get_geoid_models_from_database`
 - `CApi.proj_trans_bounds_ignore_inf`
 - `CApi.proj_trans_bounds_ignore_inf_geographic`
 - `CApi.proj_trans_bounds_to_compound_crs`
@@ -813,5 +774,4 @@ and `PORT-NOTES-tests.md`.
 - `CApi.proj_create_linear_3D_affine_parametric_conversion`
 - `CApi.proj_create_derived_projected_crs`
 - `CApi.proj_crs_add_horizontal_derived_conversion`
-- `CApi.proj_crs_is_dynamic`
 

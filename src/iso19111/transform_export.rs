@@ -50,6 +50,8 @@ const METHOD_AXIS_ORDER_REVERSAL_3D: i32 = 9844;
 const METHOD_GEOGRAPHIC_GEOCENTRIC: i32 = 9602;
 const METHOD_CHANGE_VERTICAL_UNIT: i32 = 1069;
 const METHOD_HEIGHT_DEPTH_REVERSAL: i32 = 1068;
+const METHOD_VERTICAL_OFFSET: i32 = 9616;
+const PARAMETER_VERTICAL_OFFSET: i32 = 8603;
 const METHOD_CARTESIAN_GRID_OFFSETS: i32 = 9656;
 const METHOD_LONGITUDE_ROTATION: i32 = 9601;
 const METHOD_GEOGRAPHIC2D_OFFSETS: i32 = 9619;
@@ -249,6 +251,9 @@ fn export_forward(
         formatter.add_step("axisswap");
         formatter.add_param("order", "1,2,-3");
         return Ok(());
+    }
+    if code == METHOD_VERTICAL_OFFSET {
+        return vertical_offset(operation, source, target, formatter);
     }
     if code == METHOD_GEOCENTRIC_GRID_IGN {
         return geocentric_grid(operation, source, target, formatter);
@@ -852,13 +857,19 @@ fn change_vertical_unit(
     operation: &Transformation,
     formatter: &mut PipelineFormatter,
 ) -> Result<(), FactoryError> {
-    let factor = si_value(operation, 1051);
+    export_vertical_unit_factor(si_value(operation, 1051), formatter);
+    Ok(())
+}
+
+/// `exportToPROJStringChangeVerticalUnit`: `z_in`/`z_out` from the SI factor of the
+/// source unit over the target unit.
+pub(crate) fn export_vertical_unit_factor(factor: f64, formatter: &mut PipelineFormatter) {
     let forward = proj_linear_name(factor);
     let reverse = (factor != 0.0)
         .then(|| proj_linear_name(1.0 / factor))
         .flatten();
     if forward == Some("m") {
-        return Ok(());
+        return;
     }
     if let Some(from) = forward {
         formatter.add_step("unitconvert");
@@ -880,7 +891,76 @@ fn change_vertical_unit(
         formatter.add_step("affine");
         formatter.add_number("s33", factor);
     }
+}
+
+/// Vertical offset, EPSG:9616: `geogoffset` with `dh` in metres, between the
+/// linear units of the vertical CRS (or the vertical part of two compounds
+/// that share a horizontal CRS).
+fn vertical_offset(
+    operation: &Transformation,
+    source: Option<&Crs>,
+    target: Option<&Crs>,
+    formatter: &mut PipelineFormatter,
+) -> Result<(), FactoryError> {
+    let (source, target) = vertical_pair(source, target)?;
+    formatter.start_inversion();
+    linear_unit_convert(source, formatter);
+    formatter.stop_inversion();
+    let offset = si_value(operation, PARAMETER_VERTICAL_OFFSET);
+    if offset != 0.0 {
+        formatter.add_step("geogoffset");
+        formatter.add_number("dh", offset);
+    }
+    linear_unit_convert(target, formatter);
     Ok(())
+}
+
+fn vertical_pair<'a>(
+    source: Option<&'a Crs>,
+    target: Option<&'a Crs>,
+) -> Result<(&'a VerticalCRS, &'a VerticalCRS), FactoryError> {
+    let (source, target) = match (source, target) {
+        (Some(Crs::Compound(source_crs)), Some(Crs::Compound(target_crs)))
+            if source_crs.components().first().is_some_and(|left| {
+                target_crs
+                    .components()
+                    .first()
+                    .is_some_and(|right| left.is_equivalent_to(right))
+            }) =>
+        {
+            (
+                source_crs.components().get(1),
+                target_crs.components().get(1),
+            )
+        }
+        other => other,
+    };
+    match (vertical_crs(source), vertical_crs(target)) {
+        (Some(source), Some(target)) => Ok((source, target)),
+        _ => Err(FactoryError::Format(
+            "Can apply Vertical offset only to VerticalCRS".to_owned(),
+        )),
+    }
+}
+
+fn vertical_crs(crs: Option<&Crs>) -> Option<&VerticalCRS> {
+    match crs {
+        Some(Crs::Vertical(vertical)) => Some(vertical),
+        _ => None,
+    }
+}
+
+fn linear_unit_convert(vertical: &VerticalCRS, formatter: &mut PipelineFormatter) {
+    let unit = vertical.coordinate_system().axis().unit();
+    if unit.conversion_to_si() == 1.0 {
+        return;
+    }
+    formatter.add_step("unitconvert");
+    formatter.add_param("z_in", "m");
+    match proj_unit_name(unit) {
+        Some(name) => formatter.add_param("z_out", name),
+        None => formatter.add_number("z_out", unit.conversion_to_si()),
+    }
 }
 
 /// `Cartesian grid offsets`: a shift of the projected or engineering CRS

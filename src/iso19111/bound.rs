@@ -338,7 +338,7 @@ fn horizontal_bound(
     let mut count = 0_usize;
     let mut candidate = None;
     for operation in operations {
-        let CoordinateOperation::Transformation(transformation) = operation else {
+        let Some(transformation) = helmert_for_towgs84(operation) else {
             continue;
         };
         if transformation.name().starts_with("Ballpark geo") {
@@ -357,6 +357,37 @@ fn horizontal_bound(
         Some(transformation) if count == 1 => Some(bind(crs, hub, transformation)),
         _ => None,
     })
+}
+
+/// A Helmert transformation, or the Helmert that follows a longitude rotation.
+///
+/// EPSG:4807 is that concatenation: the prime-meridian shift is written on the
+/// geographic CRS, and `+towgs84` comes from the second step.
+fn helmert_for_towgs84(operation: CoordinateOperation) -> Option<Transformation> {
+    match operation {
+        CoordinateOperation::Transformation(transformation) => Some(transformation),
+        CoordinateOperation::Concatenated(concatenated) => {
+            let steps = concatenated.steps();
+            if steps.len() != 2 {
+                return None;
+            }
+            let longitude_rotation = match steps[0].operation() {
+                CoordinateOperation::Transformation(transformation) => {
+                    transformation.method().code() == "9601"
+                }
+                CoordinateOperation::Conversion(conversion) => conversion.method().code() == "9601",
+                CoordinateOperation::Concatenated(_) => false,
+            };
+            if !longitude_rotation {
+                return None;
+            }
+            match steps[1].operation() {
+                CoordinateOperation::Transformation(transformation) => Some(transformation.clone()),
+                _ => None,
+            }
+        }
+        CoordinateOperation::Conversion(_) => None,
+    }
 }
 
 fn candidate_operations(

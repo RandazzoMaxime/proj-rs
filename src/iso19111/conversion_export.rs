@@ -15,6 +15,7 @@
 use super::model::{Conversion, Crs, FactoryError};
 use super::pipeline::{PipelineFormatter, ProjLines};
 use super::projstring::projection_steps;
+use super::transform_export::export_vertical_unit_factor;
 
 impl Conversion {
     /// `_exportToPROJString` of a conversion with its CRS pair, as the steps of a
@@ -28,20 +29,30 @@ impl Conversion {
         &self,
         formatter: &mut PipelineFormatter,
     ) -> Result<(), FactoryError> {
-        let (Some(source), Some(target)) = (self.source_crs(), self.target_crs()) else {
-            return Err(FactoryError::Format(
-                "a conversion step of a concatenated operation has no PROJ string in this crate"
-                    .to_owned(),
-            ));
+        let (source, target) = if self.inverted {
+            (self.target_crs(), self.source_crs())
+        } else {
+            (self.source_crs(), self.target_crs())
         };
         if self.inverted {
             formatter.start_inversion();
-            export_projection(target, source, formatter)?;
-            formatter.stop_inversion();
-            Ok(())
-        } else {
-            export_projection(source, target, formatter)
         }
+        if !export_body(self, source, target, formatter)? {
+            let (Some(source), Some(target)) = (source, target) else {
+                if self.inverted {
+                    formatter.stop_inversion();
+                }
+                return Err(FactoryError::Format(
+                    "a conversion step of a concatenated operation has no PROJ string in this crate"
+                        .to_owned(),
+                ));
+            };
+            export_projection(source, target, formatter)?;
+        }
+        if self.inverted {
+            formatter.stop_inversion();
+        }
+        Ok(())
     }
 
     /// `exportToPROJString` of a conversion with its CRS pair, as one pipeline.
@@ -54,6 +65,40 @@ impl Conversion {
         self.export_steps(&mut formatter)?;
         Ok(formatter.finish(lines))
     }
+}
+
+/// Height-depth reversal and a unit change with no stored factor. Other methods
+/// are projections and return `false`.
+fn export_body(
+    conversion: &Conversion,
+    source: Option<&Crs>,
+    target: Option<&Crs>,
+    formatter: &mut PipelineFormatter,
+) -> Result<bool, FactoryError> {
+    match conversion.method().code() {
+        "1068" => {
+            formatter.add_step("axisswap");
+            formatter.add_param("order", "1,2,-3");
+            Ok(true)
+        }
+        "1104" => {
+            export_vertical_unit_factor(vertical_unit_factor(source, target)?, formatter);
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
+/// Source-unit SI factor over the target-unit SI factor, for EPSG:1104.
+fn vertical_unit_factor(source: Option<&Crs>, target: Option<&Crs>) -> Result<f64, FactoryError> {
+    let (Some(Crs::Vertical(source)), Some(Crs::Vertical(target))) = (source, target) else {
+        return Err(FactoryError::Format(
+            "Export of EPSG_CODE_METHOD_CHANGE_VERTICAL_UNIT_NO_CONV_FACTOR conversion to a PROJ string requires an input and output vertical CRS"
+                .to_owned(),
+        ));
+    };
+    Ok(source.coordinate_system().axis().unit().conversion_to_si()
+        / target.coordinate_system().axis().unit().conversion_to_si())
 }
 
 /// The forward direction from `source` to `target`. A projected `source` is the

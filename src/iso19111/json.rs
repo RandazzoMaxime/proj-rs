@@ -826,6 +826,34 @@ fn write_geoid_model(writer: &mut Writer, model: &GeoidModel, db: &DatabaseConte
 /// with its `value` and `unit`.
 fn write_ellipsoid(writer: &mut Writer, ellipsoid: &Ellipsoid, db: &DatabaseContext, place: Place) {
     writer.start_object();
+    write_ellipsoid_body(writer, ellipsoid, db, place);
+    writer.end_object();
+}
+
+impl Ellipsoid {
+    /// PROJJSON for this ellipsoid, including `"type": "Ellipsoid"`.
+    #[must_use]
+    pub fn export_to_json(&self, db: &DatabaseContext, format: &JsonFormat) -> String {
+        let mut writer = Writer::new(format);
+        writer.start_object();
+        if !format.schema.is_empty() {
+            writer.key("$schema");
+            writer.string(&format.schema);
+        }
+        writer.key("type");
+        writer.string("Ellipsoid");
+        write_ellipsoid_body(&mut writer, self, db, Place::top(ident(self.identifiers())));
+        writer.end_object();
+        writer.finish()
+    }
+}
+
+fn write_ellipsoid_body(
+    writer: &mut Writer,
+    ellipsoid: &Ellipsoid,
+    db: &DatabaseContext,
+    place: Place,
+) {
     write_name(writer, ellipsoid.name());
     let sphere = ellipsoid.is_sphere();
     let major_key = if sphere { "radius" } else { "semi_major_axis" };
@@ -839,7 +867,6 @@ fn write_ellipsoid(writer: &mut Writer, ellipsoid: &Ellipsoid, db: &DatabaseCont
         }
     }
     write_id_if(writer, place, ellipsoid.identifiers(), db);
-    writer.end_object();
 }
 
 /// A length under `key`: a bare number in metres, else `{value, unit}`.

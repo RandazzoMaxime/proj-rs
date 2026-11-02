@@ -343,6 +343,43 @@ fn concatenated_inverse_name(name: &str) -> String {
 }
 
 impl Conversion {
+    /// Build a conversion from explicit parameters, as `proj_create_conversion`.
+    ///
+    /// # Errors
+    ///
+    /// The parameter list and the value list have different lengths.
+    pub fn create(
+        props: &OpProps,
+        method_name: &str,
+        parameters: Vec<OperationParameter>,
+        values: Vec<ParameterValue>,
+    ) -> Result<Self, FactoryError> {
+        if parameters.len() != values.len() {
+            return Err(FactoryError::Invalid(
+                "Inconsistent number of parameters and parameter values".to_owned(),
+            ));
+        }
+        let stored = parameters
+            .iter()
+            .zip(&values)
+            .map(|(parameter, value)| Parameter {
+                name: parameter.name().to_owned(),
+                code_space: String::new(),
+                code: String::new(),
+                value: value.clone(),
+            })
+            .collect();
+        Ok(Self {
+            identified: identified_from(props, ""),
+            method: OperationMethod::create(method_name, parameters),
+            parameters: stored,
+            source: None,
+            target: None,
+            version: None,
+            inverted: false,
+        })
+    }
+
     /// The inverse conversion, as `InverseConversion`: the same method and parameters, an
     /// `Inverse of` name, and `INVERSE(...)` identifiers. The CRS pair, when set, is swapped
     /// with the direction, as [`Transformation::inverse`] swaps its own.
@@ -367,7 +404,7 @@ impl ConcatenatedOperation {
     /// The inverse concatenated operation: the steps in reverse order, each inverted, and
     /// the source and target swapped. A computed name is rebuilt from the inverted steps.
     #[must_use]
-    pub(crate) fn inverse(&self) -> Self {
+    pub fn inverse(&self) -> Self {
         let steps: Vec<ConcatenatedStep> = self
             .steps
             .iter()
@@ -399,7 +436,7 @@ impl ConcatenatedOperation {
 impl CoordinateOperation {
     /// The operation from the target to the source.
     #[must_use]
-    pub(crate) fn inverse(&self) -> Self {
+    pub fn inverse(&self) -> Self {
         match self {
             Self::Conversion(operation) => Self::Conversion(operation.inverse()),
             Self::Transformation(operation) => Self::Transformation(operation.inverse()),
@@ -2084,7 +2121,7 @@ fn lcc2sp_parallels_swapped(
 
 /// `SingleOperation::validateParameters` for a method and its parameter values.
 fn validate_method_parameters(method: &OperationMethod, parameters: &[Parameter]) -> Vec<String> {
-    let Some(mapped) = find_for_validate(&method) else {
+    let Some(mapped) = find_for_validate(method) else {
         return vec![format!("Unknown method {}", method.name())];
     };
     let mut messages = Vec::new();

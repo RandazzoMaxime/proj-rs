@@ -272,6 +272,7 @@ fn apply_axis_reversal(identified: &mut Identified) {
         }
         identified.remarks = remarks;
     }
+    identified.identifiers.clear();
 }
 
 impl ProjectedCRS {

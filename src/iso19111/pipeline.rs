@@ -318,6 +318,16 @@ fn normalize_inverse(step: &mut Step) {
             step.params[3].value = values[1].clone();
             step.inverted = false;
         }
+        "geogoffset" => {
+            for param in &mut step.params {
+                if matches!(param.key.as_str(), "dlat" | "dlon" | "dh") {
+                    if let Ok(value) = param.value.parse::<f64>() {
+                        param.value = proj_number(0.0 - value);
+                    }
+                }
+            }
+            step.inverted = false;
+        }
         "set" => step.inverted = false,
         _ => {}
     }
