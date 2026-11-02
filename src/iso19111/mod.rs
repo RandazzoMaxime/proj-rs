@@ -17,6 +17,7 @@ mod factory;
 mod identify;
 mod insert;
 mod json;
+mod json_read;
 mod model;
 mod normalize;
 mod parammap;
@@ -39,6 +40,7 @@ pub use factory::{
 };
 pub use insert::insert_statements;
 pub use json::{create_from_user_input, epsg_identity, JsonFormat, JsonLines};
+pub use json_read::{create_object_from_json, JsonObject};
 pub use model::{
     Axis, BoundCRS, BoundingBox, CartesianCS, CompoundCRS, ConcatenatedOperation, ConcatenatedStep,
     Conversion, CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble,

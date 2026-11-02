@@ -264,6 +264,16 @@ impl DatabaseContext {
         Ok(out)
     }
 
+    /// Versioned code spaces of `authority`, such as `IAU_2015` for `IAU`.
+    pub(crate) fn versioned_authorities_from_name(&self, authority: &str) -> Vec<String> {
+        self.query(
+            "SELECT versioned_auth_name FROM versioned_auth_name_mapping WHERE auth_name = ?",
+            &[authority.to_owned()],
+        )
+        .map(|rows| rows.into_iter().map(|row| row[0].text()).collect())
+        .unwrap_or_default()
+    }
+
     /// `IAU_2015` for authority `IAU` and version `2015`.
     pub(crate) fn versioned_authority(&self, authority: &str, version: &str) -> Option<String> {
         let rows = self
@@ -535,7 +545,7 @@ impl DatabaseContext {
         let table = match table {
             "geographic_2D_crs" | "geographic_3D_crs" | "geodetic_crs" => "geodetic_crs",
             "geodetic_datum" | "ellipsoid" | "prime_meridian" | "projected_crs"
-            | "vertical_datum" => table,
+            | "vertical_datum" | "vertical_crs" => table,
             _ => return false,
         };
         let sql = format!("SELECT COUNT(*) FROM \"{table}\" WHERE name = ? AND auth_name = 'ESRI'");

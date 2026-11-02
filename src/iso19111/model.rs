@@ -86,7 +86,12 @@ pub struct Identifier {
     /// Citation version, such as `2015` on `ID["IAU",19902,2015]`.
     ///
     /// Kept only when no database folded it into the code space (`IAU_2015`).
+    /// PROJJSON writes the same field as `version`.
     pub(crate) version: Option<String>,
+    /// PROJJSON `authority_citation`.
+    pub(crate) authority_citation: Option<String>,
+    /// PROJJSON `uri`.
+    pub(crate) uri: Option<String>,
 }
 
 impl Identifier {
@@ -107,6 +112,8 @@ impl Identifier {
             code_space: code_space.into(),
             code: code.into(),
             version: None,
+            authority_citation: None,
+            uri: None,
         }
     }
 
@@ -337,12 +344,24 @@ pub(crate) struct Identified {
     pub(crate) anchor: Option<String>,
     pub(crate) anchor_epoch: Option<f64>,
     pub(crate) publication_date: Option<String>,
-    /// WKT1 `EXTENSION["PROJ4", ...]` text of a GEOGCS, GEOCCS or PROJCS.
-    pub(crate) extension_proj4: String,
+    /// PROJJSON `vertical_extent` of the usage.
+    pub(crate) vertical_extent: Option<VerticalExtent>,
+    /// WKT1 `EXTENSION["PROJ4", ...]` text, or a `+type=crs` string the conversion cannot carry.
+    pub(crate) extension_proj4: Option<String>,
+    /// `tmerc approx` or `utm approx`: the PROJ method name override of a conversion.
+    pub(crate) proj_method_override: Option<String>,
     /// `COMPD_CS` a promoted 3D CRS writes back as WKT1.
     pub(crate) original_compound: Option<Box<CompoundCRS>>,
     /// Horizontal-plus-horizontal `COMPD_CS` exported as two copies of the 2D CRS.
     pub(crate) allow_non_conformant_wkt1: bool,
+}
+
+/// Vertical extent of an object usage, as PROJJSON writes it.
+#[derive(Clone, Debug)]
+pub(crate) struct VerticalExtent {
+    pub(crate) minimum: f64,
+    pub(crate) maximum: f64,
+    pub(crate) unit: UnitOfMeasure,
 }
 
 impl Identified {
@@ -356,7 +375,9 @@ impl Identified {
             anchor: None,
             anchor_epoch: None,
             publication_date: None,
-            extension_proj4: String::new(),
+            vertical_extent: None,
+            extension_proj4: None,
+            proj_method_override: None,
             original_compound: None,
             allow_non_conformant_wkt1: false,
         }
@@ -2813,6 +2834,8 @@ pub struct VerticalCRS {
 pub struct GeoidModel {
     pub(crate) name: String,
     pub(crate) identifiers: Vec<Identifier>,
+    /// PROJJSON `interpolation_crs`: the CRS the model interpolates in.
+    pub(crate) interpolation_crs: Option<Box<Crs>>,
 }
 
 impl GeoidModel {

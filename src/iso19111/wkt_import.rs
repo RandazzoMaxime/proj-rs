@@ -280,7 +280,7 @@ struct Props {
 
 impl Props {
     fn identified(&self) -> Identified {
-        Identified {
+        let mut identified = Identified {
             name: self.name.clone(),
             identifiers: self.identifiers.clone(),
             remarks: self.remarks.clone(),
@@ -289,10 +289,30 @@ impl Props {
             anchor: None,
             anchor_epoch: None,
             publication_date: None,
-            extension_proj4: self.extension_proj4.clone(),
+            vertical_extent: None,
+            extension_proj4: if self.extension_proj4.is_empty() {
+                None
+            } else {
+                Some(self.extension_proj4.clone())
+            },
+            proj_method_override: None,
             original_compound: None,
             allow_non_conformant_wkt1: false,
+        };
+        // `CRS::setProperties` copies `PROJ CRS string: ...` into EXTENSION_PROJ4
+        // when the WKT node itself has no `EXTENSION["PROJ4"]`.
+        const PREFIX: &str = "PROJ CRS string: ";
+        if identified.extension_proj4.is_none() {
+            if let Some(start) = identified.remarks.find(PREFIX) {
+                let rest = &identified.remarks[start + PREFIX.len()..];
+                let end = rest.find(". ").unwrap_or(rest.len());
+                let extension = rest[..end].to_owned();
+                if !extension.is_empty() {
+                    identified.extension_proj4 = Some(extension);
+                }
+            }
         }
+        identified
     }
 }
 
@@ -764,6 +784,14 @@ impl WktParser {
                 }
             }
             return Ok(WktObject::Transformation(self.build_transformation(node)?));
+        }
+        if ci_eq(name, "POINTMOTIONOPERATION") {
+            if node.child(&["SOURCECRS"]).is_none() {
+                return Err(invalid("missing SOURCECRS"));
+            }
+            let mut transformation = self.build_transformation(node)?;
+            transformation.point_motion = true;
+            return Ok(WktObject::Transformation(transformation));
         }
         if ci_eq(name, "CONCATENATEDOPERATION") {
             return Ok(WktObject::Concatenated(self.build_concatenated(node)?));
@@ -2161,6 +2189,7 @@ impl WktParser {
                 geoid_models.push(GeoidModel {
                     name: geoid.to_uppercase(),
                     identifiers: Vec::new(),
+                    interpolation_crs: None,
                 });
             }
         }
@@ -2175,6 +2204,7 @@ impl WktParser {
             geoid_models.push(GeoidModel {
                 name: props.name,
                 identifiers: props.identifiers,
+                interpolation_crs: None,
             });
         }
         Ok(VerticalCRS {
@@ -2388,6 +2418,27 @@ impl WktParser {
         })
     }
 
+    /// `buildProjectionStandard`: an `EXTENSION["PROJ4","+proj=..."]` is the conversion.
+    fn conversion_from_proj4_extension(node: &WktNode) -> Result<Option<Conversion>, FactoryError> {
+        let Some(extension) = node.child(&["EXTENSION"]) else {
+            return Ok(None);
+        };
+        if extension.children.len() != 2 || !ci_eq(&strip_quotes(&extension.children[0]), "PROJ4") {
+            return Ok(None);
+        }
+        let mut proj = strip_quotes(&extension.children[1]);
+        if !proj.starts_with("+proj=") && !proj.starts_with("proj=") {
+            return Ok(None);
+        }
+        if !proj.contains("type=crs") {
+            proj.push_str(" +type=crs");
+        }
+        match super::projstring::create_crs_from_proj_string(&proj) {
+            Ok(Crs::Projected(projected)) => Ok(Some(projected.deriving_conversion().clone())),
+            _ => Ok(None),
+        }
+    }
+
     fn build_wkt1_projection(
         &mut self,
         node: &WktNode,
@@ -2399,6 +2450,13 @@ impl WktParser {
             return Err(invalid("not enough children in PROJECTION node"));
         }
         let mut method_name = strip_quotes(&projection.children[0]);
+        // GDAL stores an unmapped `+proj=` in `EXTENSION["PROJ4", ...]`.
+        // Mercator_1SP and Polar_Stereographic keep their own WKT1 reading.
+        if !ci_eq(&method_name, "Mercator_1SP") && !ci_eq(&method_name, "Polar_Stereographic") {
+            if let Some(conversion) = Self::conversion_from_proj4_extension(node)? {
+                return Ok(conversion);
+            }
+        }
         let mut parameters = self.parameters_of(node, &linear, &angular)?;
         let polar_variant_b = ci_eq(&method_name, "Polar_Stereographic")
             && parameters
