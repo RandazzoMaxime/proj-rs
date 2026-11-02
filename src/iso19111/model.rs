@@ -31,6 +31,8 @@ pub enum FactoryError {
     Format(String),
     /// A constructor rejected its arguments.
     Invalid(String),
+    /// No operation exists between these CRS: PROJ's `UnsupportedOperationException`.
+    Unsupported(String),
 }
 
 impl fmt::Display for FactoryError {
@@ -47,7 +49,10 @@ impl fmt::Display for FactoryError {
                 code,
                 detail,
             } => write!(f, "{object} {authority}:{code}: {detail}"),
-            Self::Sql(detail) | Self::Format(detail) | Self::Invalid(detail) => f.write_str(detail),
+            Self::Sql(detail)
+            | Self::Format(detail)
+            | Self::Invalid(detail)
+            | Self::Unsupported(detail) => f.write_str(detail),
         }
     }
 }

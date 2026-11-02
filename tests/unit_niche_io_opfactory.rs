@@ -5,6 +5,10 @@
 //! Each function is one `TEST()`; the name is the C++ suite and test name in snake case. Expected
 //! text and numbers are copied from PROJ 9.9.0 `test/unit`.
 
+use proj_rs::iso19111::{
+    create_from_user_input, AuthorityFactory, CoordinateOperation, CoordinateOperationContext,
+    CoordinateOperationFactory, FactoryError, ProjLines,
+};
 use proj_rs::{
     CoordinateSystem, Crs, DatabaseContext, TemporalCsKind, UnitKind, WktConvention, WktFormatter,
     WktObject, WktParser,
@@ -1469,4 +1473,97 @@ fn wkt_parse_derivedverticalcrs_epsg_code_for_horizontal_crs() {
     assert_eq!(crs.deriving_conversion().parameters().len(), 1);
     assert!(crs.deriving_conversion().interpolation_crs().is_some());
     assert_eq!(export(crs_of(&object), WktConvention::Wkt2_2019), wkt);
+}
+
+// ---------------------------------------------------------------------------
+// test_operationfactory.cpp
+
+fn authority_crs(db: &DatabaseContext, authority: &str, code: &str) -> Crs {
+    AuthorityFactory::create(db, authority)
+        .create_coordinate_reference_system(code)
+        .expect(code)
+}
+
+fn operations_between(
+    source: &Crs,
+    target: &Crs,
+    db: &DatabaseContext,
+) -> Result<Vec<CoordinateOperation>, FactoryError> {
+    let context = CoordinateOperationContext::create(db, "");
+    CoordinateOperationFactory::create().create_operations(source, target, &context)
+}
+
+fn proj_string_of(operation: &CoordinateOperation) -> String {
+    match operation {
+        CoordinateOperation::Conversion(conversion) => conversion.export_to_proj_string(),
+        CoordinateOperation::Transformation(transformation) => {
+            transformation.export_to_proj_string(ProjLines::Single)
+        }
+        CoordinateOperation::Concatenated(concatenated) => {
+            concatenated.export_to_proj_string(ProjLines::Single)
+        }
+    }
+    .expect("PROJ string")
+}
+
+fn is_unsupported(result: Result<Vec<CoordinateOperation>, FactoryError>) -> bool {
+    matches!(result, Err(FactoryError::Unsupported(_)))
+}
+
+#[test]
+fn operation_geogcrs_to_geogcrs_context_incompatible_celestial_body() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let source = authority_crs(&db, "EPSG", "4326");
+    let target = authority_crs(&db, "IAU_2015", "51200");
+    assert!(is_unsupported(operations_between(&source, &target, &db)));
+}
+
+#[test]
+fn operation_geogcrs_to_geogcrs_context_incompatible_celestial_body_but_same_radius() {
+    let db = DatabaseContext::create().expect("proj.db");
+    // GCS_Pan_2000 and Ananke
+    let source = authority_crs(&db, "ESRI", "104936");
+    let target = authority_crs(&db, "IAU_2015", "51200");
+    assert!(is_unsupported(operations_between(&source, &target, &db)));
+}
+
+#[test]
+fn operation_geogcrs_to_geogcrs_compatible_unknown_celestial_body() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let source = create_from_user_input("+proj=longlat +R=10000 +type=crs", &db).expect("source");
+    let target = create_from_user_input("+proj=longlat +R=10001 +type=crs", &db).expect("target");
+    let list = operations_between(&source, &target, &db).expect("operations");
+    assert_eq!(list.len(), 1);
+    assert_eq!(proj_string_of(&list[0]), "+proj=noop");
+}
+
+#[test]
+fn operation_geogcrs_to_geogcrs_incompatible_unknown_celestial_body() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let source = create_from_user_input("+proj=longlat +R=10000 +type=crs", &db).expect("source");
+    let target = create_from_user_input("+proj=longlat +R=99999 +type=crs", &db).expect("target");
+    assert!(is_unsupported(operations_between(&source, &target, &db)));
+}
+
+#[test]
+fn operation_geogcrs_to_geogcrs_compatible_celestial_body_through_semi_major_axis() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let source = authority_crs(&db, "IAU_2015", "51200"); // Ananke
+    let wkt = r#"GEOGCRS["unknown",
+    DATUM["unknown",
+        ELLIPSOID["unknown",9999,0,
+            LENGTHUNIT["metre",1]]],
+    PRIMEM["Reference_Meridian",0,
+        ANGLEUNIT["degree",0.0174532925199433]],
+    CS[ellipsoidal,2],
+        AXIS["geodetic latitude (Lat)",north,
+            ORDER[1],
+            ANGLEUNIT["degree",0.0174532925199433]],
+        AXIS["geodetic longitude (Lon)",east,
+            ORDER[2],
+            ANGLEUNIT["degree",0.0174532925199433]]]"#;
+    let target = crs_of(&parse(wkt)).clone();
+    let list = operations_between(&source, &target, &db).expect("operations");
+    assert_eq!(list.len(), 1);
+    assert_eq!(proj_string_of(&list[0]), "+proj=noop");
 }

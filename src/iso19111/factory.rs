@@ -4043,6 +4043,7 @@ impl CoordinateOperationFactory {
         target: &Crs,
         context: &CoordinateOperationContext,
     ) -> Result<Vec<CoordinateOperation>, FactoryError> {
+        check_same_celestial_body(source, target)?;
         let found = self.create_candidates(source, target, context)?;
         Ok(select_candidates(found, source, target, context))
     }
@@ -5180,4 +5181,56 @@ impl From<GeodeticCRS> for Crs {
             other => Self::Geodetic(other),
         }
     }
+}
+
+/// The ellipsoid of the geodetic CRS a CRS is based on.
+fn base_ellipsoid(crs: &Crs) -> Option<&Ellipsoid> {
+    match crs {
+        Crs::Geographic(crs) => crs.ellipsoid(),
+        Crs::Geodetic(crs) => crs.ellipsoid(),
+        Crs::Projected(crs) => crs.base_crs().ellipsoid(),
+        Crs::DerivedProjected(crs) => crs.base_crs().base_crs().ellipsoid(),
+        Crs::Bound(crs) => base_ellipsoid(crs.source_crs()),
+        _ => None,
+    }
+}
+
+/// `createOperationsGeodToGeod`: the two ellipsoids must be on the same celestial body, or
+/// both on an unnamed body with close semi-major axes. `PROJ_IGNORE_CELESTIAL_BODY` set to a
+/// value other than `NO`, `FALSE` or `OFF` skips the check.
+fn check_same_celestial_body(source: &Crs, target: &Crs) -> Result<(), FactoryError> {
+    const NON_EARTH_BODY: &str = "Non-Earth body";
+    let (Some(from), Some(to)) = (base_ellipsoid(source), base_ellipsoid(target)) else {
+        return Ok(());
+    };
+    let (from_body, to_body) = (from.celestial_body(), to.celestial_body());
+    if from_body == to_body && from_body != NON_EARTH_BODY {
+        return Ok(());
+    }
+    let named_apart =
+        from_body != to_body && from_body != NON_EARTH_BODY && to_body != NON_EARTH_BODY;
+    let to_axis = to.semi_major_axis().si_value();
+    let far_apart = (from.semi_major_axis().si_value() - to_axis).abs()
+        > super::wkt_import::BODY_RELATIVE * to_axis;
+    if !named_apart && !far_apart {
+        return Ok(());
+    }
+    let ignore = std::env::var("PROJ_IGNORE_CELESTIAL_BODY");
+    if let Ok(value) = &ignore {
+        if !["NO", "FALSE", "OFF"]
+            .iter()
+            .any(|off| value.eq_ignore_ascii_case(off))
+        {
+            return Ok(());
+        }
+    }
+    let mut message = format!(
+        "Source and target ellipsoid do not belong to the same celestial body ({from_body} vs {to_body})."
+    );
+    if ignore.is_err() {
+        message.push_str(
+            " You may override this check by setting the PROJ_IGNORE_CELESTIAL_BODY environment variable to YES.",
+        );
+    }
+    Err(FactoryError::Unsupported(message))
 }
