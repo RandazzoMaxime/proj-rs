@@ -285,6 +285,9 @@ impl ProjectedCRS {
     }
 
     fn export_with(&self, extras: &ProjExtras<'_>) -> Result<String, FactoryError> {
+        if let Some(text) = extension_proj(&self.identified) {
+            return Ok(text);
+        }
         if let Some(text) = self.pseudo_mercator_proj().filter(|_| !extras.has_shift()) {
             return Ok(text);
         }
@@ -619,6 +622,9 @@ impl GeocentricCRS {
     ///
     /// The unit is not the metre. PROJ builds that case only as a pipeline step.
     pub fn export_to_proj_string(&self) -> Result<String, FactoryError> {
+        if let Some(text) = extension_proj(&self.identified) {
+            return Ok(text);
+        }
         let unit = self
             .coordinate_system
             .axes()
@@ -643,7 +649,16 @@ impl GeocentricCRS {
     }
 }
 
+/// The `EXTENSION["PROJ4", ...]` text of a WKT1 CRS, as the string PROJ writes for it.
+fn extension_proj(identified: &Identified) -> Option<String> {
+    let text = identified.extension_proj4.replace(" +type=crs", "");
+    (!text.is_empty()).then(|| format!("{text} +type=crs"))
+}
+
 fn geographic_proj(crs: &GeographicCRS, extras: &ProjExtras<'_>) -> String {
+    if let Some(text) = extension_proj(&crs.identified) {
+        return text;
+    }
     let mut parts = vec!["+proj=longlat".to_owned()];
     match datum_token(crs).filter(|_| !extras.has_shift()) {
         Some(token) => parts.push(format!("+datum={token}")),

@@ -11,9 +11,9 @@ use super::model::{
     CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble, Ellipsoid, EllipsoidalCS,
     EngineeringCRS, EngineeringDatum, FactoryError, GeocentricCRS, GeodeticCRS,
     GeodeticReferenceFrame, GeographicCRS, GeoidModel, Identified, Identifier, Measure, Meridian,
-    ObjectDomain, OperationMethod, OrdinalCS, Parameter, ParameterValue, PrimeMeridian,
-    ProjectedCRS, SphericalCS, SphericalGeodeticCRS, Transformation, UnitKind, UnitOfMeasure,
-    VerticalCRS, VerticalCS, VerticalReferenceFrame,
+    ObjectDomain, OperationMethod, OrdinalCS, Parameter, ParameterValue, ParametricDatum,
+    PrimeMeridian, ProjectedCRS, SphericalCS, SphericalGeodeticCRS, Transformation, UnitKind,
+    UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame,
 };
 
 pub(crate) const EARTH_RADIUS: f64 = 6_375_000.0;
@@ -273,6 +273,7 @@ struct Props {
     deprecated: bool,
     domains: Vec<ObjectDomain>,
     version: Option<String>,
+    extension_proj4: String,
 }
 
 impl Props {
@@ -286,6 +287,7 @@ impl Props {
             anchor: None,
             anchor_epoch: None,
             publication_date: None,
+            extension_proj4: self.extension_proj4.clone(),
         }
     }
 }
@@ -318,7 +320,7 @@ pub enum WktObject {
     /// `TDATUM` or `TIMEDATUM`.
     TemporalDatum,
     /// `PDATUM` or `PARAMETRICDATUM`.
-    ParametricDatum,
+    ParametricDatum(ParametricDatum),
     /// A node that parses but is not an ISO 19111 object, such as a bare `AUTHORITY`.
     Unknown,
 }
@@ -688,7 +690,10 @@ impl WktParser {
             return Ok(WktObject::TemporalDatum);
         }
         if ci_eq(name, "PDATUM") || ci_eq(name, "PARAMETRICDATUM") {
-            return Ok(WktObject::ParametricDatum);
+            let props = self.build_properties(node)?;
+            let mut identified = props.identified();
+            identified.anchor = self.anchor_of(node)?;
+            return Ok(WktObject::ParametricDatum(ParametricDatum { identified }));
         }
         if ci_eq(name, "AUTHORITY") || ci_eq(name, "ID") {
             return Ok(WktObject::Unknown);
@@ -713,9 +718,9 @@ impl WktParser {
         }
         if ci_eq(name, "EDATUM") || ci_eq(name, "ENGINEERINGDATUM") {
             let props = self.build_properties(node)?;
-            return Ok(WktObject::EngineeringDatum(EngineeringDatum {
-                identified: props.identified(),
-            }));
+            let mut identified = props.identified();
+            identified.anchor = self.anchor_of(node)?;
+            return Ok(WktObject::EngineeringDatum(EngineeringDatum { identified }));
         }
         if ci_eq(name, "ELLIPSOID") || ci_eq(name, "SPHEROID") {
             return Ok(WktObject::Ellipsoid(self.build_ellipsoid(node)?));
@@ -741,7 +746,7 @@ impl WktParser {
         Err(invalid(format!("unhandled keyword: {name}")))
     }
 
-    fn build_id(&mut self, node: &WktNode) -> Result<Identifier, FactoryError> {
+    fn build_id(&mut self, node: &WktNode, parent: &WktNode) -> Result<Identifier, FactoryError> {
         if node.children.len() < 2 {
             self.recover(format!("not enough children in {} node", node.value))?;
             return Err(invalid(format!(
@@ -750,7 +755,25 @@ impl WktParser {
             )));
         }
         let mut code_space = strip_quotes(&node.children[0]);
-        let code = strip_quotes(&node.children[1]);
+        let mut code = strip_quotes(&node.children[1]);
+        // Before PROJ 9.5 the synthesized ID of a UTM south CONVERSION was wrong.
+        if ci_eq(&parent.value, "CONVERSION") && ci_eq(&code_space, "EPSG") {
+            if let Some(name) = parent.children.first().map(strip_quotes) {
+                let prefix = "UTM zone ";
+                if name.len() > prefix.len()
+                    && name[..prefix.len()].eq_ignore_ascii_case(prefix)
+                    && name.contains('S')
+                {
+                    let digits: String = name[prefix.len()..]
+                        .chars()
+                        .take_while(char::is_ascii_digit)
+                        .collect();
+                    if let Ok(zone @ 1..=60) = digits.parse::<u32>() {
+                        code = (16100 + zone).to_string();
+                    }
+                }
+            }
+        }
         if node.children.len() >= 3 && node.children[2].children.is_empty() {
             let version = strip_quotes(&node.children[2]);
             if code_space.eq_ignore_ascii_case("IAU") && version == "2015" {
@@ -777,7 +800,7 @@ impl WktParser {
         for child in &node.children {
             if ci_eq(&child.value, "ID") || ci_eq(&child.value, "AUTHORITY") {
                 if child.children.len() >= 2 {
-                    identifiers.push(self.build_id(child)?);
+                    identifiers.push(self.build_id(child, node)?);
                 } else {
                     self.recover(format!("not enough children in {} node", child.value))?;
                 }
@@ -858,6 +881,20 @@ impl WktParser {
         let version = node
             .child(&["VERSION"])
             .and_then(|version| version.children.first().map(strip_quotes));
+        let extension_proj4 = if ["GEOGCS", "GEOCCS", "PROJCS"]
+            .iter()
+            .any(|keyword| ci_eq(&node.value, keyword))
+        {
+            node.child(&["EXTENSION"])
+                .filter(|extension| {
+                    extension.children.len() == 2
+                        && ci_eq(&strip_quotes(&extension.children[0]), "PROJ4")
+                })
+                .map(|extension| strip_quotes(&extension.children[1]))
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
         Ok(Props {
             name,
             identifiers,
@@ -865,6 +902,7 @@ impl WktParser {
             deprecated,
             domains,
             version,
+            extension_proj4,
         })
     }
 
@@ -1181,6 +1219,8 @@ impl WktParser {
         let mut props = self.build_properties(node)?;
         let raw_name = strip_quotes(&node.children[0]);
         let mut name_set = false;
+        let mut name_has_meridian = false;
+        let esri_datum = raw_name.starts_with("D_") || self.esri;
         if raw_name == "WGS_1984" {
             props.name = "World Geodetic System 1984".to_owned();
             name_set = true;
@@ -1220,6 +1260,7 @@ impl WktParser {
                                 .is_some_and(|db| db.known_geodetic_datum_name(&with_pm))
                             {
                                 official = with_pm;
+                                name_has_meridian = true;
                             }
                         }
                         (official, auth, code)
@@ -1235,7 +1276,7 @@ impl WktParser {
                 props.identifiers.push(Identifier::new(auth, code));
             }
         }
-        if !name_set && raw_name.contains('_') {
+        if !name_set && !esri_datum && raw_name.contains('_') {
             if let Some(db) = self.db.clone() {
                 if let Some((official, auth, code)) = db.geodetic_datum_equivalent(&raw_name) {
                     props.name = official;
@@ -1245,7 +1286,7 @@ impl WktParser {
                 }
             }
         }
-        if let Some(db) = self.db.clone() {
+        if let Some(db) = self.db.clone().filter(|_| !name_has_meridian) {
             if let Some(id) = props
                 .identifiers
                 .iter()
@@ -2023,9 +2064,17 @@ impl WktParser {
             None
         };
         let cs = self.build_cs(cs_node, node, UnitOfMeasure::degree())?;
-        let CoordinateSystem::Vertical(coordinate_system) = cs else {
+        let CoordinateSystem::Vertical(mut coordinate_system) = cs else {
             return Err(invalid("vertical CS expected"));
         };
+        // `buildVerticalCRS`: an ellipsoidal-height datum (WKT1 type 2002) with an upward
+        // axis gets the `ellipsoidal height` axis.
+        if datum.as_ref().is_some_and(|d| d.wkt1_type == "2002")
+            && coordinate_system.axis.direction() == "up"
+        {
+            let unit = coordinate_system.axis.unit().clone();
+            coordinate_system.axis = Axis::new("ellipsoidal height", "h", "up", unit);
+        }
         let mut geoid_models = Vec::new();
         for model in node.children_named("GEOIDMODEL") {
             if model.children.is_empty() {

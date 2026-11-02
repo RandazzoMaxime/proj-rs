@@ -617,6 +617,17 @@ fn horizontal_for_compound(crs: &GeographicCRS, formatter: &WktFormatter) -> Geo
     flat
 }
 
+/// WKT1 GDAL `EXTENSION["PROJ4", ...]` of a GEOGCS, GEOCCS or PROJCS.
+fn export_extension_proj4(identified: &Identified, formatter: &mut WktFormatter) {
+    if identified.extension_proj4.is_empty() || formatter.wkt2 || formatter.esri {
+        return;
+    }
+    formatter.start_node("EXTENSION", NodeId::Absent);
+    formatter.add_quoted("PROJ4");
+    formatter.add_quoted(&identified.extension_proj4);
+    formatter.end_node();
+}
+
 fn export_geographic(
     crs: &GeographicCRS,
     formatter: &mut WktFormatter,
@@ -678,6 +689,7 @@ fn export_geographic(
         &CoordinateSystem::Ellipsoidal(crs.coordinate_system.clone()),
         formatter,
     );
+    export_extension_proj4(&crs.identified, formatter);
     formatter.base_usage(&crs.identified);
     formatter.end_node();
     Ok(())
@@ -769,6 +781,7 @@ fn export_geocentric(
         formatter,
     );
     formatter.output_axis = previous;
+    export_extension_proj4(&crs.identified, formatter);
     formatter.base_usage(&crs.identified);
     formatter.end_node();
     Ok(())
@@ -900,6 +913,7 @@ fn export_projected(crs: &ProjectedCRS, formatter: &mut WktFormatter) -> Result<
         formatter,
     );
     formatter.output_axis = previous;
+    export_extension_proj4(&crs.identified, formatter);
     formatter.base_usage(&crs.identified);
     formatter.end_node();
     Ok(())
