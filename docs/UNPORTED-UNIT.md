@@ -16,7 +16,6 @@ and `PORT-NOTES-tests.md`.
 - `crs.projectedCRS_identify_no_db`
 - `crs.projectedCRS_identify_db`
 - `crs.projectedCRS_identify_wrong_auth_name_case`
-- `datum.cs_with_MERIDIAN`
 - `crs.scope_area_bbox_remark`
 - `crs.multiple_ID`
 - `crs.verticalCRS_ESRI_115834_as_WKT1_ESRI_with_database`
@@ -29,7 +28,6 @@ and `PORT-NOTES-tests.md`.
 - `crs.compoundCRS_as_PROJ_string`
 - `crs.compoundCRS_identify_db`
 - `crs.boundCRS_to_WKT2`
-- `crs.boundCRS_with_usage`
 - `crs.boundCRS_crs_link`
 - `crs.boundCRS_to_WKT1`
 - `crs.boundCRS_geographicCRS_to_PROJ_string`
@@ -115,7 +113,6 @@ and `PORT-NOTES-tests.md`.
 - `factory.AuthorityFactory_createCoordinateOperation_concatenated_operation_epsg_9103`
 - `factory.AuthorityFactory_build_all_concatenated`
 - `factory.AuthorityFactory_createCoordinateOperation_point_motion_operation`
-- `factory.AuthorityFactory_getAuthorityCodes`
 - `factory.AuthorityFactory_IAU_2015`
 - `FactoryWithTmpDatabase.AuthorityFactory_test_with_fake_EPSG_database`
 - `factory.AuthorityFactory_createFromCoordinateReferenceSystemCodes`
@@ -139,7 +136,6 @@ and `PORT-NOTES-tests.md`.
 - `FactoryWithTmpDatabase.custom_projected_crs`
 - `FactoryWithTmpDatabase.custom_derived_projected_crs`
 - `FactoryWithTmpDatabase.CoordinateMetadata`
-- `factory.attachExtraDatabases_none`
 - `factory.attachExtraDatabases_auxiliary`
 - `factory.attachExtraDatabases_auxiliary_error`
 - `FactoryWithTmpDatabase.createOperations_exact_transform_not_whole_area`
@@ -167,15 +163,6 @@ and `PORT-NOTES-tests.md`.
 - `wkt_parse.wkt2_2019_projected_with_base_geocentric`
 - `wkt_parse.wkt2_2019_eqdc_non_epsg`
 - `crs.projected_angular_unit_from_primem`
-- `wkt_parse.cs_with_MERIDIAN`
-- `wkt_parse.cs_with_multiple_ID`
-- `wkt_parse.cs_with_AXISMINVAL_AXISMAXVAL_RANGEMEANING`
-- `wkt_parse.cs_with_invalid_AXISMINVAL_string`
-- `wkt_parse.cs_with_invalid_AXISMINVAL_too_many_children`
-- `wkt_parse.cs_with_invalid_AXISMAXVAL_string`
-- `wkt_parse.cs_with_invalid_AXISMAXVAL_too_many_children`
-- `wkt_parse.cs_with_invalid_RANGEMEANING`
-- `wkt_parse.cs_with_invalid_RANGEMEANING_too_many_children`
 - `wkt_parse.VERTCS_WKT1_ESRI_context`
 - `wkt_parse.vertcrs_WKT1_LAS_ftUS`
 - `wkt_parse.vertcrs_WKT1_LAS_metre`
@@ -187,13 +174,11 @@ and `PORT-NOTES-tests.md`.
 - `wkt_parse.COMPOUNDCRS_spatio_parametric_2019`
 - `wkt_parse.COMPOUNDCRS_spatio_temporal_2015`
 - `wkt_parse.COMPOUNDCRS_spatio_temporal_2019`
-- `wkt_parse.COMPD_CS`
 - `wkt_parse.COMPD_CS_non_conformant_horizontal_plus_horizontal_as_in_LAS`
 - `wkt_parse.COMPD_CS_non_conformant_horizontal_TOWGS84_plus_horizontal_as_in_LAS`
 - `wkt_parse.COMPD_CS_horizontal_bound_geog_plus_vertical_ellipsoidal_height`
 - `wkt_parse.COMPD_CS_horizontal_projected_plus_vertical_ellipsoidal_height`
 - `wkt_parse.COMPD_CS_horizontal_geog_plus_vertical_ellipsoidal_height_non_metre`
-- `wkt_parse.VERTCS_with_ellipsoidal_height_ESRI`
 - `wkt_parse.implicit_compound_CRS_geographic_with_ellipsoidal_height_ESRI`
 - `wkt_parse.implicit_compound_CRS_projected_with_ellipsoidal_height_ESRI`
 - `wkt_parse.COORDINATEOPERATION`
@@ -768,9 +753,6 @@ and `PORT-NOTES-tests.md`.
 - `CApi.proj_normalize_for_visualization_with_alternatives_reverse`
 - `CApi.proj_normalize_for_visualization_on_crs`
 - `CApi.proj_coordoperation_create_inverse`
-- `CApi.proj_get_remarks`
-- `CApi.proj_get_scope`
-- `CApi.proj_concatoperation_get_step`
 - `CApi.proj_as_projjson`
 - `CApi.proj_context_copy_from_default`
 - `CApi.proj_context_clone`
@@ -778,7 +760,6 @@ and `PORT-NOTES-tests.md`.
 - `CApi.proj_create_crs_to_crs_from_pj_ballpark_filter`
 - `CApi.proj_create_crs_to_crs_coordinate_metadata_in_src`
 - `CApi.proj_create_crs_to_crs_coordinate_metadata_in_target`
-- `CApi.proj_create_ellipsoidal_3D_cs`
 - `CApi.proj_crs_promote_to_3D`
 - `CApi.proj_crs_promote_to_3D_on_coordinate_metadata`
 - `CApi.proj_crs_demote_to_2D`
@@ -796,7 +777,6 @@ and `PORT-NOTES-tests.md`.
 - `CApi.proj_context_set_sqlite3_vfs_name__from_global_context`
 - `CApi.use_proj4_init_rules`
 - `CApi.use_proj4_init_rules_from_global_context`
-- `CApi.proj_is_equivalent_to_with_ctx`
 - `CApi.datum_ensemble`
 - `CApi.proj_crs_is_derived`
 - `CApi.proj_get_insert_statements`

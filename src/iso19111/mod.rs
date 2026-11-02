@@ -44,10 +44,10 @@ pub use model::{
     Conversion, CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble,
     DerivedConversion, DerivedProjectedCRS, Ellipsoid, EllipsoidalCS, EngineeringCRS,
     EngineeringDatum, FactoryError, GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame,
-    GeographicCRS, Identifier, Meridian, ObjectDomain, OperationMethod, OperationParameter,
-    OperationParameterValue, OrdinalCS, Parameter, ParameterValue, PrimeMeridian, ProjectedCRS,
-    SphericalCS, Transformation, UnitKind, UnitOfMeasure, VerticalCRS, VerticalCS,
-    VerticalReferenceFrame,
+    GeographicCRS, Identifier, Measure, Meridian, ObjectDomain, OperationMethod,
+    OperationParameter, OperationParameterValue, OrdinalCS, Parameter, ParameterValue,
+    PrimeMeridian, ProjectedCRS, SphericalCS, Transformation, UnitKind, UnitOfMeasure, VerticalCRS,
+    VerticalCS, VerticalReferenceFrame,
 };
 pub(crate) use normalize::normalize_for_visualization;
 pub use pipeline::ProjLines;

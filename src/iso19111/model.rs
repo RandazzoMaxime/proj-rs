@@ -1206,6 +1206,12 @@ pub struct Meridian {
 }
 
 impl Meridian {
+    /// Meridian at `longitude`.
+    #[must_use]
+    pub fn create(longitude: Measure) -> Self {
+        Self { longitude }
+    }
+
     /// Longitude of the meridian.
     #[must_use]
     pub fn longitude(&self) -> &Measure {
@@ -1273,6 +1279,13 @@ impl Axis {
         Self::new(name, abbreviation, direction, unit)
     }
 
+    /// This axis with `meridian`.
+    #[must_use]
+    pub fn with_meridian(mut self, meridian: Meridian) -> Self {
+        self.meridian = Some(meridian);
+        self
+    }
+
     pub(crate) fn new(
         name: impl Into<String>,
         abbreviation: impl Into<String>,
@@ -1332,6 +1345,19 @@ impl EllipsoidalCS {
             axes: vec![
                 Axis::new("Longitude", "Lon", "east", unit.clone()),
                 Axis::new("Latitude", "Lat", "north", unit),
+            ],
+        }
+    }
+
+    /// Longitude, latitude, and ellipsoidal height.
+    #[must_use]
+    pub fn create_longitude_latitude_height(angular: UnitOfMeasure, linear: UnitOfMeasure) -> Self {
+        Self {
+            identified: Identified::default(),
+            axes: vec![
+                Axis::new("Longitude", "Lon", "east", angular.clone()),
+                Axis::new("Latitude", "Lat", "north", angular),
+                Axis::new("Ellipsoidal height", "h", "up", linear),
             ],
         }
     }
@@ -2064,6 +2090,16 @@ impl CoordinateOperation {
             Self::Conversion(operation) => operation.identifiers(),
             Self::Transformation(operation) => operation.identifiers(),
             Self::Concatenated(operation) => &operation.identified.identifiers,
+        }
+    }
+
+    /// Remarks, empty when there are none.
+    #[must_use]
+    pub fn remarks(&self) -> &str {
+        match self {
+            Self::Conversion(operation) => &operation.identified.remarks,
+            Self::Transformation(operation) => &operation.identified.remarks,
+            Self::Concatenated(operation) => &operation.identified.remarks,
         }
     }
 
