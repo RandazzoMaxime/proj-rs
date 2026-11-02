@@ -336,6 +336,29 @@ impl DatabaseContext {
         Some((row[0].text(), row[1].text()))
     }
 
+    /// ESRI vertical CRS whose datum is `from_geogdatum_{code_space}_{code}`.
+    ///
+    /// `exportAsESRIWktCompoundCRSWithEllipsoidalHeight` uses that one CRS as the `VERTCS`.
+    pub(crate) fn esri_vertical_code_for_geodetic(
+        &self,
+        code_space: &str,
+        code: &str,
+    ) -> Option<String> {
+        let datum_code = format!("from_geogdatum_{code_space}_{code}");
+        let rows = self
+            .query(
+                "SELECT code FROM vertical_crs \
+                 WHERE auth_name = 'ESRI' AND datum_auth_name = 'ESRI' AND datum_code = ?",
+                &[datum_code],
+            )
+            .ok()?;
+        if rows.len() == 1 {
+            Some(rows[0][0].text())
+        } else {
+            None
+        }
+    }
+
     pub(crate) fn aliases(
         &self,
         authority: &str,
@@ -756,11 +779,52 @@ impl DatabaseContext {
              ORDER BY g.deprecated LIMIT 1",
             std::slice::from_ref(&key),
         );
-        let Ok(rows) = by_alias else {
-            return None;
-        };
-        rows.first()
-            .map(|row| (row[0].text(), row[1].text(), row[2].text()))
+        if let Ok(rows) = by_alias {
+            if let Some(row) = rows.first() {
+                return Some((row[0].text(), row[1].text(), row[2].text()));
+            }
+        }
+        self.geodetic_datum_by_folded_name(name)
+    }
+
+    /// Alias match that also folds accents, skipping `EPSG_OLD` spellings.
+    ///
+    /// The SQL above only drops spaces and underscores, so
+    /// `System_Jednotne_Trigonometricke_Site_Katastralni_Ferro` misses the
+    /// accented EPSG alias of datum 6818.
+    fn geodetic_datum_by_folded_name(&self, name: &str) -> Option<(String, String, String)> {
+        let rows = self
+            .query(
+                "SELECT g.name, g.auth_name, g.code, a.alt_name, IFNULL(a.source, ''), \
+                 g.deprecated \
+                 FROM alias_name a \
+                 JOIN geodetic_datum g ON g.auth_name = a.auth_name AND g.code = a.code \
+                 WHERE a.table_name = 'geodetic_datum'",
+                &[],
+            )
+            .ok()?;
+        let mut matches: Vec<(bool, bool, String, String, String)> = rows
+            .into_iter()
+            .filter(|row| {
+                let source = row[4].text();
+                let official = equivalent_name(&row[0].text(), name);
+                let alias = source != "EPSG_OLD" && equivalent_name(&row[3].text(), name);
+                official || alias
+            })
+            .map(|row| {
+                (
+                    row[5].text() != "0",
+                    row[1].text() != "EPSG",
+                    row[0].text(),
+                    row[1].text(),
+                    row[2].text(),
+                )
+            })
+            .collect();
+        matches.sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));
+        matches
+            .first()
+            .map(|(_, _, official, auth, code)| (official.clone(), auth.clone(), code.clone()))
     }
 
     /// Celestial bodies of ellipsoids whose name is `name` or starts with `name`.

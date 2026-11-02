@@ -21,6 +21,10 @@ fn parse_db(wkt: &str) -> proj_rs::WktObject {
     parser.create_from_wkt(wkt).expect("wkt")
 }
 
+#[expect(
+    dead_code,
+    reason = "ESRI PROJCS cases in this lot still parse through the lenient parser"
+)]
 fn parse_loose(wkt: &str) -> proj_rs::WktObject {
     let mut parser = WktParser::new();
     parser.set_strictness(WktStrictness::Lenient);
@@ -59,6 +63,10 @@ fn bound_base_geographic(crs: &proj_rs::BoundCRS) -> &GeographicCRS {
     base
 }
 
+#[expect(
+    dead_code,
+    reason = "parameter checks for the remaining ESRI projection table"
+)]
 fn check_parameter(parameter: &Parameter, name: &str, unit: &UnitOfMeasure, value: f64) {
     assert_eq!(parameter.name(), name);
     let ParameterValue::Measure(measure) = parameter.value() else {
@@ -69,6 +77,10 @@ fn check_parameter(parameter: &Parameter, name: &str, unit: &UnitOfMeasure, valu
 }
 
 /// `checkEPSG_4326(crs, true, false)` of test_io.cpp, latitude first: no EPSG codes.
+#[expect(
+    dead_code,
+    reason = "EPSG:4326 check used by the remaining ESRI and axis cases"
+)]
 fn check_epsg_4326(crs: &GeographicCRS) {
     assert_eq!(crs.name(), "WGS 84");
     let axes = crs.coordinate_system().axes();
@@ -89,6 +101,10 @@ fn check_epsg_4326(crs: &GeographicCRS) {
 }
 
 /// `checkEPSG_4979` of test_io.cpp.
+#[expect(
+    dead_code,
+    reason = "EPSG:4979 check used by the remaining compound cases"
+)]
 fn check_epsg_4979(crs: &GeographicCRS) {
     assert_eq!(crs.identifiers().len(), 1);
     assert_eq!(crs.identifiers()[0].code(), "4979");
@@ -115,6 +131,10 @@ fn check_epsg_4979(crs: &GeographicCRS) {
 }
 
 /// `checkProjected(crs, false)` of test_io.cpp: the UTM zone 31N with EPSG:32631.
+#[expect(
+    dead_code,
+    reason = "UTM zone 31N check used by the remaining projected cases"
+)]
 fn check_projected(crs: &ProjectedCRS) {
     assert_eq!(crs.name(), "WGS 84 / UTM zone 31N");
     assert_eq!(crs.identifiers().len(), 1);
@@ -875,8 +895,8 @@ fn wkt_parse_boundcrs_with_interpolation_as_parameter() {
     ABRIDGEDTRANSFORMATION["unknown to WGS84 ellipsoidal height",
         METHOD["GravityRelatedHeight to Geographic3D"],
         PARAMETERFILE["Geoid (height correction) model file","@foo.gtx",
-            ID["EPSG",8666]]],
-        PARAMETER["EPSG code for Interpolation CRS",7886]]"#;
+            ID["EPSG",8666]],
+        PARAMETER["EPSG code for Interpolation CRS",7886]]]"#;
     {
         let bound = parse(wkt).bound().expect("crs").clone();
         let transformation = transformation_of(&bound);
@@ -1307,7 +1327,10 @@ fn wkt_parse_esri_datum_name_with_prime_meridian() {
         crs.datum().expect("datum").name(),
         "Nouvelle Triangulation Francaise (Paris)"
     );
-    assert_eq!(crs.ellipsoid().expect("ellipsoid").name(), "Clarke 1880 (IGN)");
+    assert_eq!(
+        crs.ellipsoid().expect("ellipsoid").name(),
+        "Clarke 1880 (IGN)"
+    );
 }
 
 const ESRI_UTM_31N: &str = r#"PROJCS["WGS_1984_UTM_Zone_31N",GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137.0,298.257223563]],PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]],PROJECTION["transverse_mercator"],PARAMETER["false_easting",500000.0],PARAMETER["false_northing",0.0],PARAMETER["central_meridian",3.0],PARAMETER["scale_factor",0.9996],PARAMETER["latitude_of_origin",0.0],UNIT["Meter",1.0]]"#;
@@ -1343,4 +1366,578 @@ fn wkt_parse_wkt1_esri_normalize_unit() {
         crs.coordinate_system().axes()[0].unit().name(),
         "Gold Coast foot"
     );
+}
+
+fn assert_towgs84(transformation: &proj_rs::Transformation, expected: [f64; 7]) {
+    let params = transformation
+        .towgs84_parameters()
+        .expect("helmert")
+        .expect("seven terms");
+    for (got, want) in params.iter().zip(expected) {
+        assert!((got - want).abs() < 1e-10, "{got} != {want}");
+    }
+}
+
+#[test]
+fn wkt_parse_wkt1_krovak_south_west() {
+    let wkt = r#"PROJCS["S-JTSK / Krovak",GEOGCS["S-JTSK",DATUM["System_Jednotne_Trigonometricke_Site_Katastralni",SPHEROID["Bessel 1841",6377397.155,299.1528128,AUTHORITY["EPSG","7004"]],AUTHORITY["EPSG","6156"]],PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]],AUTHORITY["EPSG","4156"]],PROJECTION["Krovak"],PARAMETER["latitude_of_center",49.5],PARAMETER["longitude_of_center",24.83333333333333],PARAMETER["azimuth",30.2881397527778],PARAMETER["pseudo_standard_parallel_1",78.5],PARAMETER["scale_factor",0.9999],PARAMETER["false_easting",0],PARAMETER["false_northing",0],UNIT["metre",1,AUTHORITY["EPSG","9001"]],AXIS["X",SOUTH],AXIS["Y",WEST],AUTHORITY["EPSG","5513"]]"#;
+    let crs = parse(wkt).projected().expect("crs").clone();
+    assert_eq!(crs.deriving_conversion().method().name(), "Krovak");
+    let expected_wkt2 = r#"PROJCRS["S-JTSK / Krovak",
+    BASEGEODCRS["S-JTSK",
+        DATUM["System_Jednotne_Trigonometricke_Site_Katastralni",
+            ELLIPSOID["Bessel 1841",6377397.155,299.1528128,
+                LENGTHUNIT["metre",1]]],
+        PRIMEM["Greenwich",0,
+            ANGLEUNIT["degree",0.0174532925199433]]],
+    CONVERSION["unknown",
+        METHOD["Krovak",
+            ID["EPSG",9819]],
+        PARAMETER["Latitude of projection centre",49.5,
+            ANGLEUNIT["degree",0.0174532925199433],
+            ID["EPSG",8811]],
+        PARAMETER["Longitude of origin",24.8333333333333,
+            ANGLEUNIT["degree",0.0174532925199433],
+            ID["EPSG",8833]],
+        PARAMETER["Co-latitude of cone axis",30.2881397527778,
+            ANGLEUNIT["degree",0.0174532925199433],
+            ID["EPSG",1036]],
+        PARAMETER["Latitude of pseudo standard parallel",78.5,
+            ANGLEUNIT["degree",0.0174532925199433],
+            ID["EPSG",8818]],
+        PARAMETER["Scale factor on pseudo standard parallel",0.9999,
+            SCALEUNIT["unity",1],
+            ID["EPSG",8819]],
+        PARAMETER["False easting",0,
+            LENGTHUNIT["metre",1],
+            ID["EPSG",8806]],
+        PARAMETER["False northing",0,
+            LENGTHUNIT["metre",1],
+            ID["EPSG",8807]]],
+    CS[Cartesian,2],
+        AXIS["x",south,
+            ORDER[1],
+            LENGTHUNIT["metre",1]],
+        AXIS["y",west,
+            ORDER[2],
+            LENGTHUNIT["metre",1]],
+    ID["EPSG",5513]]"#;
+    assert_eq!(
+        export(&Crs::Projected(crs.clone()), WktConvention::Wkt2_2015).expect("WKT2"),
+        expected_wkt2
+    );
+    let expected_proj = "+proj=krovak +axis=swu +lat_0=49.5 +lon_0=24.8333333333333 \
+        +alpha=30.2881397527778 +k=0.9999 +x_0=0 +y_0=0 +ellps=bessel +units=m \
+        +no_defs +type=crs";
+    let proj = Crs::Projected(crs).export_to_proj_string().expect("PROJ");
+    assert_eq!(proj, expected_proj);
+
+    let Crs::Projected(crs2) = create_crs_from_proj_string(&proj).expect("import") else {
+        panic!("not projected");
+    };
+    let wkt2 = export(&Crs::Projected(crs2.clone()), WktConvention::Wkt2_2015).expect("WKT2");
+    assert!(wkt2.contains("METHOD[\"Krovak\""), "{wkt2}");
+    assert!(
+        wkt2.contains("PARAMETER[\"Latitude of pseudo standard parallel\",78.5,"),
+        "{wkt2}"
+    );
+    assert!(
+        wkt2.contains("PARAMETER[\"Co-latitude of cone axis\",30.2881397527778,"),
+        "{wkt2}"
+    );
+    assert_eq!(
+        Crs::Projected(crs2).export_to_proj_string().expect("PROJ"),
+        expected_proj
+    );
+
+    let Crs::Projected(crs3) = create_crs_from_proj_string(
+        "+type=crs +proj=pipeline +step +proj=unitconvert +xy_in=deg +xy_out=rad \
+         +step +proj=krovak +lat_0=49.5 +lon_0=24.8333333333333 +alpha=30.2881397527778 \
+         +k=0.9999 +x_0=0 +y_0=0 +ellps=bessel +step +proj=axisswap +order=-2,-1",
+    )
+    .expect("import") else {
+        panic!("not projected");
+    };
+    let wkt3 = export(&Crs::Projected(crs3), WktConvention::Wkt2_2015).expect("WKT2");
+    assert!(wkt3.contains("METHOD[\"Krovak\""), "{wkt3}");
+}
+
+#[test]
+fn proj_export_wkt2_hotine_oblique_mercator_without_rectified_grid_angle() {
+    let wkt = "PROJCRS[\"NAD_1983_Michigan_GeoRef_Meters\",\n\
+        BASEGEOGCRS[\"NAD83(1986)\",\n\
+            DATUM[\"North American Datum 1983\",\n\
+                ELLIPSOID[\"GRS_1980\",6378137,298.257222101,\n\
+                    LENGTHUNIT[\"metre\",1]],\n\
+                ID[\"EPSG\",6269]],\n\
+            PRIMEM[\"Greenwich\",0,\n\
+                ANGLEUNIT[\"Degree\",0.0174532925199433]]],\n\
+        CONVERSION[\"unknown\",\n\
+            METHOD[\"Hotine Oblique Mercator (variant A)\",\n\
+                ID[\"EPSG\",9812]],\n\
+            PARAMETER[\"False easting\",2546731.496,\n\
+                LENGTHUNIT[\"Meter\",1],\n\
+                ID[\"EPSG\",8806]],\n\
+            PARAMETER[\"False northing\",-4354009.816,\n\
+                LENGTHUNIT[\"Meter\",1],\n\
+                ID[\"EPSG\",8807]],\n\
+            PARAMETER[\"Latitude of projection centre\",45.3091666666667,\n\
+                ANGLEUNIT[\"Degree\",0.0174532925199433],\n\
+                ID[\"EPSG\",8811]],\n\
+            PARAMETER[\"Longitude of projection centre\",-86,\n\
+                ANGLEUNIT[\"Degree\",0.0174532925199433],\n\
+                ID[\"EPSG\",8812]],\n\
+            PARAMETER[\"Azimuth of initial line\",-22.74444,\n\
+                ANGLEUNIT[\"Degree\",0.0174532925199433],\n\
+                ID[\"EPSG\",8813]],\n\
+            PARAMETER[\"Scale factor on initial line\",0.9996,\n\
+                SCALEUNIT[\"unity\",1],\n\
+                ID[\"EPSG\",8815]]],\n\
+        CS[Cartesian,2],\n\
+            AXIS[\"(E)\",east,\n\
+                ORDER[1],\n\
+                LENGTHUNIT[\"Meter\",1]],\n\
+            AXIS[\"(N)\",north,\n\
+                ORDER[2],\n\
+                LENGTHUNIT[\"Meter\",1]]]";
+    let crs = parse(wkt).projected().expect("crs").clone();
+    let expected = "+proj=omerc +no_uoff +lat_0=45.3091666666667 +lonc=-86 +alpha=-22.74444 \
+        +k=0.9996 +x_0=2546731.496 +y_0=-4354009.816 +datum=NAD83 +units=m +no_defs +type=crs";
+    let proj = Crs::Projected(crs).export_to_proj_string().expect("PROJ");
+    assert_eq!(proj, expected);
+    assert!(!proj.contains("gamma"));
+}
+
+#[test]
+fn wkt_parse_geogcs_towgs84_3terms() {
+    let wkt = "GEOGCS[\"my GEOGCRS\",\n\
+        DATUM[\"WGS_1984\",\n\
+            SPHEROID[\"WGS 84\",6378137,298.257223563],\n\
+            TOWGS84[1,2,3]],\n\
+        PRIMEM[\"Greenwich\",0],\n\
+        UNIT[\"degree\",0.0174532925199433]]";
+    let object = parse(wkt);
+    let crs = object.bound().expect("bound");
+    assert_eq!(crs.source_crs().name(), "my GEOGCRS");
+    assert_eq!(crs.target_crs().name(), GeographicCRS::epsg_4326().name());
+    let transformation = transformation_of(crs);
+    let source = transformation.source_crs().expect("source");
+    assert_eq!(source.name(), "my GEOGCRS");
+    assert_towgs84(transformation, [1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 0.0]);
+}
+
+#[test]
+fn wkt_parse_projcs_towgs84_7terms() {
+    let wkt = "PROJCS[\"my PROJCRS\",\n\
+        GEOGCS[\"my GEOGCRS\",\n\
+            DATUM[\"WGS_1984\",\n\
+                SPHEROID[\"WGS 84\",6378137,298.257223563,\n\
+                    AUTHORITY[\"EPSG\",\"7030\"]],\n\
+                TOWGS84[1,2,3,4,5,6,7],\n\
+                AUTHORITY[\"EPSG\",\"6326\"]],\n\
+            PRIMEM[\"Greenwich\",0,\n\
+                AUTHORITY[\"EPSG\",\"8901\"]],\n\
+            UNIT[\"degree\",0.0174532925199433,\n\
+                AUTHORITY[\"EPSG\",\"9122\"]],\n\
+            AXIS[\"Latitude\",NORTH],\n\
+            AXIS[\"Longitude\",EAST]],\n\
+        PROJECTION[\"Transverse_Mercator\"],\n\
+        PARAMETER[\"latitude_of_origin\",0],\n\
+        PARAMETER[\"central_meridian\",3],\n\
+        PARAMETER[\"scale_factor\",0.9996],\n\
+        PARAMETER[\"false_easting\",500000],\n\
+        PARAMETER[\"false_northing\",0],\n\
+        UNIT[\"metre\",1,\n\
+            AUTHORITY[\"EPSG\",\"9001\"]],\n\
+        AXIS[\"Easting\",EAST],\n\
+        AXIS[\"Northing\",NORTH]]";
+    let object = parse(wkt);
+    let crs = object.bound().expect("bound");
+    assert_eq!(crs.source_crs().name(), "my PROJCRS");
+    assert_eq!(crs.target_crs().name(), GeographicCRS::epsg_4326().name());
+    let transformation = transformation_of(crs);
+    assert_eq!(
+        transformation.source_crs().expect("source").name(),
+        "my GEOGCRS"
+    );
+    assert_towgs84(transformation, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]);
+}
+
+#[test]
+fn io_projcs_towgs84_7terms_autocorrect() {
+    let wkt = "PROJCS[\"BD72 / Belgian Lambert 72\",\n\
+        GEOGCS[\"BD72\",\n\
+            DATUM[\"Reseau_National_Belge_1972\",\n\
+                SPHEROID[\"International 1924\",6378388,297],\n\
+                TOWGS84[-106.8686,52.2978,-103.7239,-0.3366,0.457,-1.8422,-1.2747]],\n\
+            PRIMEM[\"Greenwich\",0,\n\
+                AUTHORITY[\"EPSG\",\"8901\"]],\n\
+            UNIT[\"degree\",0.0174532925199433,\n\
+                AUTHORITY[\"EPSG\",\"9122\"]],\n\
+            AUTHORITY[\"EPSG\",\"4313\"]],\n\
+        PROJECTION[\"Lambert_Conformal_Conic_2SP\"],\n\
+        PARAMETER[\"latitude_of_origin\",90],\n\
+        PARAMETER[\"central_meridian\",4.36748666666667],\n\
+        PARAMETER[\"standard_parallel_1\",51.1666672333333],\n\
+        PARAMETER[\"standard_parallel_2\",49.8333339],\n\
+        PARAMETER[\"false_easting\",150000.013],\n\
+        PARAMETER[\"false_northing\",5400088.438],\n\
+        UNIT[\"metre\",1,\n\
+            AUTHORITY[\"EPSG\",\"9001\"]],\n\
+        AXIS[\"Easting\",EAST],\n\
+        AXIS[\"Northing\",NORTH],\n\
+        AUTHORITY[\"EPSG\",\"31370\"]]";
+    let object = parse_db(wkt);
+    let crs = object.bound().expect("bound");
+    assert_towgs84(
+        transformation_of(crs),
+        [
+            -106.8686, 52.2978, -103.7239, 0.3366, -0.457, 1.8422, -1.2747,
+        ],
+    );
+}
+
+#[test]
+fn wkt_parse_wkt1_vert_datum_extension() {
+    let wkt = "VERT_CS[\"EGM2008 geoid height\",\n\
+        VERT_DATUM[\"EGM2008 geoid\",2005,\n\
+            EXTENSION[\"PROJ4_GRIDS\",\"egm08_25.gtx\"],\n\
+            AUTHORITY[\"EPSG\",\"1027\"]],\n\
+        UNIT[\"metre\",1,\n\
+            AUTHORITY[\"EPSG\",\"9001\"]],\n\
+        AXIS[\"Up\",UP],\n\
+        AUTHORITY[\"EPSG\",\"3855\"]]";
+    let object = parse(wkt);
+    let crs = object.bound().expect("bound");
+    assert_eq!(crs.source_crs().name(), "EGM2008 geoid height");
+    assert_eq!(crs.target_crs().name(), GeographicCRS::epsg_4979().name());
+    let transformation = transformation_of(crs);
+    assert_eq!(
+        transformation.source_crs().expect("source").name(),
+        crs.source_crs().name()
+    );
+    assert_eq!(
+        transformation.target_crs().expect("target").name(),
+        crs.target_crs().name()
+    );
+    assert_eq!(
+        transformation.name(),
+        "EGM2008 geoid height to WGS 84 ellipsoidal height"
+    );
+    assert_eq!(
+        transformation.method().name(),
+        "GravityRelatedHeight to Geographic3D"
+    );
+    let parameters = transformation.parameters();
+    assert_eq!(parameters.len(), 1);
+    assert_eq!(parameters[0].code(), "8666");
+    assert_eq!(parameters[0].name(), "Geoid (height correction) model file");
+    let ParameterValue::Filename(file) = parameters[0].value() else {
+        panic!("not a filename");
+    };
+    assert_eq!(file, "egm08_25.gtx");
+}
+
+#[test]
+fn wkt_parse_wkt1_vert_datum_extension_units_ftus() {
+    let wkt = "VERT_CS[\"NAVD88 height (ftUS)\",\
+         VERT_DATUM[\"North American Vertical Datum 1988\",2005,\
+             EXTENSION[\"PROJ4_GRIDS\",\"foo.gtx\"],\
+             AUTHORITY[\"EPSG\",\"5103\"]],\
+         UNIT[\"US survey foot\",0.304800609601219,\
+             AUTHORITY[\"EPSG\",\"9003\"]],\
+         AXIS[\"Gravity-related height\",UP],\
+         AUTHORITY[\"EPSG\",\"6360\"]]";
+    let object = parse(wkt);
+    let crs = object.bound().expect("bound");
+    let transformation = transformation_of(crs);
+    assert_eq!(
+        transformation.name(),
+        "NAVD88 height to WGS 84 ellipsoidal height"
+    );
+    let Crs::Vertical(source) = transformation.source_crs().expect("source") else {
+        panic!("source is not vertical");
+    };
+    assert_eq!(source.coordinate_system().axis().unit().name(), "metre");
+}
+
+#[test]
+fn wkt_parse_wkt1_compd_cs_vert_datum_extension() {
+    let wkt = r#"COMPD_CS["NAD83 + NAVD88 height",
+    GEOGCS["NAD83",
+        DATUM["North_American_Datum_1983",
+            SPHEROID["GRS 1980",6378137,298.257222101,
+                AUTHORITY["EPSG","7019"]],
+            AUTHORITY["EPSG","6269"]],
+        PRIMEM["Greenwich",0,
+            AUTHORITY["EPSG","8901"]],
+        UNIT["degree",0.0174532925199433,
+            AUTHORITY["EPSG","9122"]],
+        AUTHORITY["EPSG","4269"]],
+    VERT_CS["NAVD88 height",
+        VERT_DATUM["North American Vertical Datum 1988",2005,
+            EXTENSION["PROJ4_GRIDS","@foo.gtx"],
+            AUTHORITY["EPSG","5103"]],
+        UNIT["metre",1,
+            AUTHORITY["EPSG","9001"]],
+        AXIS["Gravity-related height",UP],
+        AUTHORITY["EPSG","5703"]]]"#;
+    let object = parse(wkt);
+    let crs = object.compound().expect("compound");
+    let Crs::Bound(vertical) = &crs.components()[1] else {
+        panic!("vertical component is not bound");
+    };
+    assert_eq!(
+        transformation_of(vertical).name(),
+        "NAVD88 height to NAD83 ellipsoidal height"
+    );
+    assert_eq!(
+        export(&Crs::Compound(crs.clone()), WktConvention::Wkt1Gdal).expect("WKT1"),
+        wkt
+    );
+}
+
+#[test]
+fn wkt_parse_wkt1_datum_extension() {
+    let wkt = "PROJCS[\"unnamed\",\n\
+    GEOGCS[\"International 1909 (Hayford)\",\n\
+        DATUM[\"unknown\",\n\
+            SPHEROID[\"intl\",6378388,297],\n\
+            EXTENSION[\"PROJ4_GRIDS\",\"nzgd2kgrid0005.gsb\"]],\n\
+        PRIMEM[\"Greenwich\",0],\n\
+        UNIT[\"degree\",0.0174532925199433]],\n\
+    PROJECTION[\"New_Zealand_Map_Grid\"],\n\
+    PARAMETER[\"latitude_of_origin\",-41],\n\
+    PARAMETER[\"central_meridian\",173],\n\
+    PARAMETER[\"false_easting\",2510000],\n\
+    PARAMETER[\"false_northing\",6023150],\n\
+    UNIT[\"Meter\",1]]";
+    let object = parse(wkt);
+    let crs = object.bound().expect("bound");
+    assert_eq!(crs.source_crs().name(), "unnamed");
+    assert_eq!(crs.target_crs().name(), GeographicCRS::epsg_4326().name());
+    let transformation = transformation_of(crs);
+    assert_eq!(
+        transformation.source_crs().expect("source").name(),
+        "International 1909 (Hayford)"
+    );
+    assert_eq!(
+        transformation.target_crs().expect("target").name(),
+        crs.target_crs().name()
+    );
+    assert_eq!(
+        transformation.name(),
+        "International 1909 (Hayford) to WGS84"
+    );
+    assert_eq!(transformation.method().name(), "NTv2");
+    let parameters = transformation.parameters();
+    assert_eq!(parameters.len(), 1);
+    assert_eq!(parameters[0].code(), "8656");
+    assert_eq!(
+        parameters[0].name(),
+        "Latitude and longitude difference file"
+    );
+    let ParameterValue::Filename(file) = parameters[0].value() else {
+        panic!("not a filename");
+    };
+    assert_eq!(file, "nzgd2kgrid0005.gsb");
+}
+
+fn hidden_wkt(crs: &Crs, convention: WktConvention) -> String {
+    let mut formatter = WktFormatter::create(convention);
+    formatter.hide_identifiers().expect("setOutputId");
+    crs.export_to_wkt(&mut formatter).expect("wkt")
+}
+
+fn compact(text: &str) -> String {
+    text.chars().filter(|ch| !ch.is_whitespace()).collect()
+}
+
+fn coordinate_operation_wkt(convention: WktConvention, version: Option<&str>) -> String {
+    let src = hidden_wkt(&Crs::Geographic(GeographicCRS::epsg_4326()), convention);
+    let dst = hidden_wkt(&Crs::Geographic(GeographicCRS::epsg_4807()), convention);
+    let interpolation = hidden_wkt(&Crs::Geographic(GeographicCRS::epsg_4979()), convention);
+    let version = version
+        .map(|version| format!("    VERSION[\"{version}\"],\n"))
+        .unwrap_or_default();
+    format!(
+        "COORDINATEOPERATION[\"transformationName\",\n\
+         {version}\
+         \x20   SOURCECRS[{src}],\n\
+         \x20   TARGETCRS[{dst}],\n\
+         \x20   METHOD[\"operationMethodName\",\n\
+         \x20       ID[\"codeSpaceOperationMethod\",\"codeOperationMethod\"]],\n\
+         \x20   PARAMETERFILE[\"paramName\",\"foo.bin\"],\n\
+         \x20   INTERPOLATIONCRS[{interpolation}],\n\
+         \x20   OPERATIONACCURACY[0.1],\n\
+         \x20   ID[\"codeSpaceTransformation\",\"codeTransformation\"],\n\
+         \x20   REMARK[\"my remarks\"]]"
+    )
+}
+
+#[test]
+fn wkt_parse_coordinateoperation() {
+    let wkt = coordinate_operation_wkt(WktConvention::Wkt2_2015, None);
+    let transformation = parse(&wkt)
+        .transformation()
+        .expect("transformation")
+        .clone();
+    assert_eq!(transformation.name(), "transformationName");
+    assert_eq!(transformation.identifiers().len(), 1);
+    assert_eq!(transformation.identifiers()[0].code(), "codeTransformation");
+    assert_eq!(
+        transformation.identifiers()[0].code_space(),
+        "codeSpaceTransformation"
+    );
+    let accuracy = transformation.accuracy().expect("accuracy");
+    assert!((accuracy - 0.1).abs() < 1e-12);
+    assert_eq!(
+        transformation.source_crs().expect("source").name(),
+        GeographicCRS::epsg_4326().name()
+    );
+    assert_eq!(
+        transformation.target_crs().expect("target").name(),
+        GeographicCRS::epsg_4807().name()
+    );
+    assert_eq!(
+        transformation
+            .interpolation_crs()
+            .expect("interpolation")
+            .name(),
+        GeographicCRS::epsg_4979().name()
+    );
+    assert_eq!(transformation.method().name(), "operationMethodName");
+    assert_eq!(transformation.parameters().len(), 1);
+    let out = proj_rs::CoordinateOperation::Transformation(transformation)
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2015))
+        .expect("WKT");
+    assert_eq!(compact(&out), compact(&wkt));
+}
+
+#[test]
+fn wkt_parse_coordinateoperation_with_interpolation_as_parameter() {
+    let wkt = r#"COORDINATEOPERATION["SHGD2015 to SHGD2015 + SHVD2015 height (1)",
+    VERSION["ENRD-Shn Hel"],
+    SOURCECRS[
+        GEOGCRS["SHGD2015",
+            DATUM["St. Helena Geodetic Datum 2015",
+                ELLIPSOID["GRS 1980",6378137,298.257222101,
+                    LENGTHUNIT["metre",1]]],
+            PRIMEM["Greenwich",0,
+                ANGLEUNIT["degree",0.0174532925199433]],
+            CS[ellipsoidal,3],
+                AXIS["latitude",north,
+                    ORDER[1],
+                    ANGLEUNIT["degree",0.0174532925199433]],
+                AXIS["longitude",east,
+                    ORDER[2],
+                    ANGLEUNIT["degree",0.0174532925199433]],
+                AXIS["ellipsoidal height",up,
+                    ORDER[3],
+                    LENGTHUNIT["metre",1]],
+            ID["EPSG",7885]]],
+    TARGETCRS[
+        COMPOUNDCRS["SHMG2015 + SHVD2015 height",
+            PROJCRS["SHMG2015",
+                BASEGEOGCRS["SHGD2015",
+                    DATUM["St. Helena Geodetic Datum 2015",
+                        ELLIPSOID["GRS 1980",6378137,298.257222101,
+                            LENGTHUNIT["metre",1]]],
+                    PRIMEM["Greenwich",0,
+                        ANGLEUNIT["degree",0.0174532925199433]],
+                    ID["EPSG",7886]],
+                CONVERSION["UTM zone 30S",
+                    METHOD["Transverse Mercator",
+                        ID["EPSG",9807]],
+                    PARAMETER["Latitude of natural origin",0,
+                        ANGLEUNIT["degree",0.0174532925199433],
+                        ID["EPSG",8801]],
+                    PARAMETER["Longitude of natural origin",-3,
+                        ANGLEUNIT["degree",0.0174532925199433],
+                        ID["EPSG",8802]],
+                    PARAMETER["Scale factor at natural origin",0.9996,
+                        SCALEUNIT["unity",1],
+                        ID["EPSG",8805]],
+                    PARAMETER["False easting",500000,
+                        LENGTHUNIT["metre",1],
+                        ID["EPSG",8806]],
+                    PARAMETER["False northing",10000000,
+                        LENGTHUNIT["metre",1],
+                        ID["EPSG",8807]]],
+                CS[Cartesian,2],
+                    AXIS["(E)",east,
+                        ORDER[1],
+                        LENGTHUNIT["metre",1]],
+                    AXIS["(N)",north,
+                        ORDER[2],
+                        LENGTHUNIT["metre",1]]],
+            VERTCRS["SHVD2015 height",
+                VDATUM["St. Helena Vertical Datum 2015"],
+                CS[vertical,1],
+                    AXIS["gravity-related height (H)",up,
+                        LENGTHUNIT["metre",1]]],
+            ID["EPSG",7956]]],
+    METHOD["Geog3D to Geog2D+GravityRelatedHeight (EGM2008)",
+        ID["EPSG",1092]],
+    PARAMETERFILE["Geoid (height correction) model file","Und_min2.5x2.5_egm2008_isw=82_WGS84_TideFree.gz"],
+    PARAMETER["EPSG code for Interpolation CRS",7886,
+        ID["EPSG",1048]],
+    OPERATIONACCURACY[0],
+    ID["EPSG",9617]]"#;
+    {
+        let object = parse(wkt);
+        let transformation = object.transformation().expect("transformation");
+        assert!(transformation.interpolation_crs().is_none());
+        assert_eq!(transformation.parameters().len(), 2);
+    }
+    {
+        let object = parse_db(wkt);
+        let transformation = object.transformation().expect("transformation");
+        assert!(transformation.interpolation_crs().is_some());
+        assert_eq!(transformation.parameters().len(), 1);
+    }
+}
+
+#[test]
+fn wkt_parse_coordinateoperation_wkt2_2019() {
+    let wkt = coordinate_operation_wkt(WktConvention::Wkt2_2019, Some("my version"));
+    let transformation = parse(&wkt)
+        .transformation()
+        .expect("transformation")
+        .clone();
+    assert_eq!(transformation.name(), "transformationName");
+    assert_eq!(transformation.version(), Some("my version"));
+    assert_eq!(transformation.identifiers().len(), 1);
+    assert_eq!(transformation.identifiers()[0].code(), "codeTransformation");
+    assert_eq!(
+        transformation.identifiers()[0].code_space(),
+        "codeSpaceTransformation"
+    );
+    let accuracy = transformation.accuracy().expect("accuracy");
+    assert!((accuracy - 0.1).abs() < 1e-12);
+    assert_eq!(
+        transformation.source_crs().expect("source").name(),
+        GeographicCRS::epsg_4326().name()
+    );
+    assert_eq!(
+        transformation.target_crs().expect("target").name(),
+        GeographicCRS::epsg_4807().name()
+    );
+    assert_eq!(
+        transformation
+            .interpolation_crs()
+            .expect("interpolation")
+            .name(),
+        GeographicCRS::epsg_4979().name()
+    );
+    assert_eq!(transformation.method().name(), "operationMethodName");
+    assert_eq!(transformation.parameters().len(), 1);
+    let out = proj_rs::CoordinateOperation::Transformation(transformation.clone())
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2019))
+        .expect("WKT");
+    assert_eq!(compact(&out), compact(&wkt));
+    let wkt2015 = proj_rs::CoordinateOperation::Transformation(transformation)
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2015))
+        .expect("WKT");
+    assert!(!wkt2015.contains("VERSION[\"my version\"],"));
 }

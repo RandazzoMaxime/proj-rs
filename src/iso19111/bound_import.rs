@@ -275,7 +275,7 @@ fn bind_towgs84(crs: Crs, values: &[f64]) -> Result<Crs, FactoryError> {
 
 /// `BoundCRS::createFromNadgrids`: an NTv2 transformation from the geographic
 /// CRS of `crs` (on a Greenwich meridian) to WGS 84.
-fn bind_nadgrids(crs: Crs, filename: &str) -> Crs {
+pub(super) fn bind_nadgrids(crs: Crs, filename: &str) -> Crs {
     let source = match geographic_of(&crs) {
         Some(geographic) => Crs::Geographic(greenwich_based(&geographic)),
         None => crs.clone(),
