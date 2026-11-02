@@ -100,7 +100,7 @@ pub use iso19111::{
     CoordinateOperationFactory, CoordinateSystem, Crs, CrsExtentUse, CrsInfo, DatabaseContext,
     Datum, DatumEnsemble, DeprecatedCodes, DerivedConversion, DerivedKind, DerivedProjectedCRS,
     EllipsoidalCS, EllipsoidalHeightPolicy, EngineeringCRS, EngineeringDatum, Equivalence,
-    FactoryError, GeocentricCRS, GeodeticComponents, GeodeticCRS, GeodeticReferenceFrame,
+    FactoryError, GeocentricCRS, GeodeticCRS, GeodeticComponents, GeodeticReferenceFrame,
     GeographicCRS, GridAvailabilityUse, GridInfo, Identifier, IntermediateCrsUse, LinunitPolicy,
     Measure, Meridian, NameMatch, NameSpelling, ObjectDomain, ObjectType, OfficialName, OpProps,
     OperationMethod, OperationParameter, OperationParameterValue, OrdinalCS, OutputAxisRule,

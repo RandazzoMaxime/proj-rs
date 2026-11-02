@@ -1249,7 +1249,8 @@ fn export_esri_type_2002_datum(
     let Some(db) = formatter.db.as_ref() else {
         return false;
     };
-    if let Ok(geodetic) = AuthorityFactory::create(db, authority).create_geodetic_datum(geodetic_code)
+    if let Ok(geodetic) =
+        AuthorityFactory::create(db, authority).create_geodetic_datum(geodetic_code)
     {
         export_geodetic_datum(&geodetic, formatter);
         return true;
@@ -1265,7 +1266,8 @@ fn export_esri_type_2002_by_name(
     let Some(db) = formatter.db.as_ref() else {
         return false;
     };
-    let Ok(found) = AuthorityFactory::create(db, "EPSG").create_geodetic_datums_by_name(datum.name())
+    let Ok(found) =
+        AuthorityFactory::create(db, "EPSG").create_geodetic_datums_by_name(datum.name())
     else {
         return false;
     };
@@ -2538,14 +2540,13 @@ fn export_concatenated_body(
 fn export_source_and_target(
     source: Option<&Crs>,
     target: Option<&Crs>,
-    has_domains: bool,
+    usage_disabled: usize,
     formatter: &mut WktFormatter,
 ) -> Result<(), FactoryError> {
     let can_export_id = formatter.wkt2
         && formatter.keywords_2019
         && !(formatter.id_on_top_only && top_has_id(formatter));
-    let disabled = usize::from(has_domains);
-    formatter.usage_disabled += disabled;
+    formatter.usage_disabled += usage_disabled;
     let mut result = Ok(());
     for (keyword, crs) in [("SOURCECRS", source), ("TARGETCRS", target)] {
         let Some(crs) = crs else {
@@ -2565,7 +2566,7 @@ fn export_source_and_target(
             break;
         }
     }
-    formatter.usage_disabled -= disabled;
+    formatter.usage_disabled -= usage_disabled;
     result
 }
 
@@ -2610,7 +2611,7 @@ fn export_transformation(
         export_source_and_target(
             transformation.source.as_deref(),
             target,
-            !transformation.identified.domains.is_empty(),
+            usize::from(!transformation.identified.domains.is_empty()),
             formatter,
         )?;
     }

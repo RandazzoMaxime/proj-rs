@@ -13,9 +13,9 @@ use super::model::{
     CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble, DerivedProjectedCRS,
     Ellipsoid, EllipsoidalCS, EngineeringCRS, EngineeringDatum, FactoryError, GeocentricCRS,
     GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, GeoidModel, Identified, Identifier,
-    Measure, ObjectDomain, OperationMethod, Parameter, ParameterValue, PrimeMeridian,
-    ProjectedCRS, SphericalGeodeticCRS, Transformation, UnitKind, UnitOfMeasure, VerticalCRS,
-    VerticalCS, VerticalExtent, VerticalReferenceFrame,
+    Measure, ObjectDomain, OperationMethod, Parameter, ParameterValue, PrimeMeridian, ProjectedCRS,
+    SphericalGeodeticCRS, Transformation, UnitKind, UnitOfMeasure, VerticalCRS, VerticalCS,
+    VerticalExtent, VerticalReferenceFrame,
 };
 use super::niche::{
     DerivedCRS, ParametricCRS, ParametricCS, ParametricDatum, TemporalCRS, TemporalCS,
@@ -387,12 +387,7 @@ impl CoordinateOperation {
             writer.key("$schema");
             writer.string(&format.schema);
         }
-        write_operation(
-            &mut writer,
-            self,
-            db,
-            Place::top(operation_ident(self)),
-        )?;
+        write_operation(&mut writer, self, db, Place::top(operation_ident(self)))?;
         writer.end_object();
         Ok(writer.finish())
     }
@@ -1106,12 +1101,7 @@ impl Ellipsoid {
         }
         writer.key("type");
         writer.string("Ellipsoid");
-        write_ellipsoid_members(
-            &mut writer,
-            self,
-            db,
-            Place::top(ident(self.identifiers())),
-        );
+        write_ellipsoid_members(&mut writer, self, db, Place::top(ident(self.identifiers())));
         writer.end_object();
         writer.finish()
     }
@@ -1448,9 +1438,9 @@ fn write_concatenated(
     writer.key("type");
     writer.string("ConcatenatedOperation");
     write_name(writer, operation.name());
-    let (source, target) = operation.crs_pair().ok_or_else(|| {
-        FactoryError::Format("concatenated operation has no CRS pair".to_owned())
-    })?;
+    let (source, target) = operation
+        .crs_pair()
+        .ok_or_else(|| FactoryError::Format("concatenated operation has no CRS pair".to_owned()))?;
     writer.key("source_crs");
     write_component(writer, source, db, place.chain, Allow::Asked)?;
     writer.key("target_crs");
@@ -2209,7 +2199,8 @@ fn parameter_unit(
 ) -> Result<UnitOfMeasure, FactoryError> {
     let code = identifier.and_then(|identifier| identifier.code().parse::<i32>().ok());
     let found = method.params.iter().find(|param| {
-        code.is_some_and(|code| code != 0 && param.epsg_code == code) || same_token(param.wkt2_name, name)
+        code.is_some_and(|code| code != 0 && param.epsg_code == code)
+            || same_token(param.wkt2_name, name)
     });
     let Some(param) = found else {
         return Err(FactoryError::Invalid(format!(
@@ -2345,7 +2336,10 @@ fn read_geographic(object: &Object, db: &DatabaseContext) -> Result<GeographicCR
     })
 }
 
-fn read_datum(object: &Object, db: &DatabaseContext) -> Result<GeodeticReferenceFrame, FactoryError> {
+fn read_datum(
+    object: &Object,
+    db: &DatabaseContext,
+) -> Result<GeodeticReferenceFrame, FactoryError> {
     let name = optional_name(object);
     let ellipsoid = object
         .get("ellipsoid")
@@ -3435,8 +3429,6 @@ fn read_json_axis(object: &Object) -> Result<Axis, FactoryError> {
     };
     Ok(Axis::new(name, abbreviation, direction, unit))
 }
-
-
 
 /// `AUTO:` and `urn:ogc:def:crs:OGC::AUTO...`. `Ok(None)` when `text` is neither.
 fn crs_from_ogc_auto(text: &str) -> Result<Option<Crs>, FactoryError> {

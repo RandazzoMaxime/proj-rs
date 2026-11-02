@@ -492,7 +492,7 @@ impl ConcatenatedOperation {
         let source = steps.first().and_then(CoordinateOperation::source_crs);
         let target = steps.last().and_then(CoordinateOperation::target_crs);
         let (source, target) = (source.cloned().map(Box::new), target.cloned().map(Box::new));
-        let computed_name = props.name.as_deref().map_or(true, str::is_empty);
+        let computed_name = props.name.as_deref().is_none_or(str::is_empty);
         let joined = steps
             .iter()
             .map(CoordinateOperation::name)
@@ -618,20 +618,6 @@ fn crs_option(left: Option<&Crs>, right: Option<&Crs>) -> bool {
 }
 
 fn values_equivalent(left: &[Parameter], right: &[Parameter], criterion: Equivalence) -> bool {
-    values_equivalent_from(left, right, criterion, false)
-}
-
-/// `SingleOperation::_isEquivalentTo` for parameter lists.
-///
-/// Under `Equivalent`, a parameter missing on the other side is accepted when it
-/// is the neutral value (1 for a scale, 0 otherwise). The check runs both ways
-/// unless `from_other` is set, which is the reverse pass.
-fn values_equivalent_from(
-    left: &[Parameter],
-    right: &[Parameter],
-    criterion: Equivalence,
-    from_other: bool,
-) -> bool {
     if criterion == Equivalence::Strict {
         return left.len() == right.len()
             && left
@@ -639,6 +625,24 @@ fn values_equivalent_from(
                 .zip(right)
                 .all(|(left, right)| parameter_equivalent(left, right, criterion));
     }
+    match one_way_parameters(left, right, criterion) {
+        None => false,
+        Some(false) => true,
+        Some(true) => one_way_parameters(right, left, criterion).is_some(),
+    }
+}
+
+/// `SingleOperation::_isEquivalentTo` for parameter lists, one direction.
+///
+/// Returns `None` on a mismatch, and `Some(found_missing)` otherwise. Under
+/// `Equivalent`, a parameter missing on the other side is accepted when it is the
+/// neutral value (1 for a scale, 0 otherwise). A missing parameter makes the caller
+/// run the reverse pass.
+fn one_way_parameters(
+    left: &[Parameter],
+    right: &[Parameter],
+    criterion: Equivalence,
+) -> Option<bool> {
     let mut used = vec![false; right.len()];
     let mut found_missing = left.len() != right.len();
     for parameter in left {
@@ -662,14 +666,11 @@ fn values_equivalent_from(
             continue;
         }
         if same_name_different_value || !neutral_parameter(parameter) {
-            return false;
+            return None;
         }
         found_missing = true;
     }
-    if found_missing && !from_other {
-        return values_equivalent_from(right, left, criterion, true);
-    }
-    true
+    Some(found_missing)
 }
 
 fn parameter_equivalent(left: &Parameter, right: &Parameter, criterion: Equivalence) -> bool {
@@ -2675,7 +2676,6 @@ fn lcc2sp_parallels_swapped(
             .into_iter()
             .all(|code| near(left.numeric_si(code), right.numeric_si(code)))
 }
-
 
 fn find_for_validate(method: &OperationMethod) -> Option<&'static MethodMap> {
     let code = method.code.parse::<i32>().unwrap_or(0);

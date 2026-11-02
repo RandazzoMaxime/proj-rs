@@ -131,8 +131,7 @@ fn export_base_node(
     formatter: &mut WktFormatter,
 ) -> Result<(), FactoryError> {
     let geodetic_base = matches!(base, Crs::Geographic(_) | Crs::Geodetic(_));
-    let base_has_id = !base.identifiers().is_empty()
-        && (geodetic_base || formatter.keywords_2019);
+    let base_has_id = !base.identifiers().is_empty() && (geodetic_base || formatter.keywords_2019);
     formatter.start_node(
         keyword,
         if base_has_id {

@@ -5,15 +5,14 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 565 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
-| `niche` | 150 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
-| `shape` | 76 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
+| `core` | 346 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `niche` | 40 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
+| `shape` | 56 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (565)
+## core (346)
 
-### test_c_api.cpp (52)
+### test_c_api.cpp (28)
 
-- `CApi.proj_crs_create_bound_crs_to_WGS84`
 - `CApi.proj_crs_create_bound_crs_to_WGS84_on_invalid_type`
 - `CApi.proj_create_from_database_grid_alternative_null_old_proj_grid_name`
 - `CApi.proj_coordoperation_get_grid_used`
@@ -27,44 +26,21 @@ The class comes from the test name alone, so check it when you port a test.
 - `CApi.proj_create_operations_dont_discard_superseded`
 - `CApi.proj_create_operations_with_pivot`
 - `CApi.proj_create_operations_allow_ballpark_transformations`
-- `CApi.proj_create_from_name`
-- `CApi.proj_identify`
-- `CApi.proj_create_geographic_crs`
-- `CApi.proj_create_geocentric_crs`
-- `CApi.proj_create_projected_crs`
-- `CApi.proj_create_transformation`
-- `CApi.proj_create_compound_crs`
-- `CApi.proj_convert_conversion_to_other_method`
-- `CApi.proj_get_non_deprecated`
-- `CApi.proj_query_geodetic_crs_from_datum`
-- `CApi.proj_uom_get_info_from_database`
-- `CApi.proj_grid_get_info_from_database`
-- `CApi.proj_get_crs_info_list_from_database`
-- `CApi.proj_get_units_from_database`
 - `CApi.proj_normalize_for_visualization_with_alternatives`
 - `CApi.proj_normalize_for_visualization_with_alternatives_reverse`
-- `CApi.proj_normalize_for_visualization_on_crs`
 - `CApi.proj_coordoperation_create_inverse`
-- `CApi.proj_as_projjson`
 - `CApi.proj_create_crs_to_crs_from_pj_accuracy_filter`
 - `CApi.proj_create_crs_to_crs_from_pj_ballpark_filter`
-- `CApi.proj_crs_promote_to_3D`
-- `CApi.proj_crs_demote_to_2D`
-- `CApi.proj_crs_create_projected_3D_crs_from_2D`
-- `CApi.proj_crs_create_bound_vertical_crs`
 - `CApi.proj_create_crs_to_crs_with_only_ballpark_transformations`
 - `CApi.proj_create_crs_to_crs_from_custom_compound_crs_with_NAD83_2011_and_geoidgrid_ref_against_WGS84_to_WGS84_G1762`
 - `CApi.proj_create_crs_to_crs_from_custom_compound_crs_with_NAD83_2011_and_geoidgrid_ref_against_NAD83_2011_to_WGS84_G1762`
 - `CApi.proj_create_vertical_crs_ex`
 - `CApi.proj_create_vertical_crs_ex_with_geog_crs`
 - `CApi.proj_create_vertical_crs_ex_implied_accuracy`
-- `CApi.datum_ensemble`
-- `CApi.proj_get_geoid_models_from_database`
 - `CApi.proj_trans_bounds_ignore_inf`
 - `CApi.proj_trans_bounds_ignore_inf_geographic`
 - `CApi.proj_trans_bounds_to_compound_crs`
 - `CApi.proj_trans_bounds_3D_ignore_inf`
-- `CApi.proj_crs_is_dynamic`
 
 ### test_crs.cpp (50)
 
@@ -119,94 +95,22 @@ The class comes from the test name alone, so check it when you port a test.
 - `crs.ETRF2000_PL_CS92`
 - `crs.identical_after_import_from_proj4_and_wkt1_export`
 
-### test_factory.cpp (19)
+### test_factory.cpp (3)
 
 - `factory.AuthorityFactory_createDynamicVerticalDatum`
-- `factory.AuthorityFactory_createCoordinateOperation_helmert_8_CF`
-- `factory.AuthorityFactory_createCoordinateOperation_helmert_15_CF`
-- `factory.AuthorityFactory_createCoordinateOperation_CF_full_matrix_geog3D`
-- `factory.AuthorityFactory_createCoordinateOperation_molodensky_badekas_PV`
-- `factory.AuthorityFactory_createCoordinateOperation_grid_transformation_one_parameter`
-- `factory.AuthorityFactory_createCoordinateOperation_grid_transformation_two_parameter`
-- `factory.AuthorityFactory_createCoordinateOperation_other_transformation`
-- `factory.AuthorityFactory_10566_issue_4212`
-- `factory.AuthorityFactory_createCoordinateOperation_concatenated_operation_inverse_step1`
-- `factory.AuthorityFactory_createCoordinateOperation_concatenated_operation_inverse_step2`
-- `factory.AuthorityFactory_createCoordinateOperation_concatenated_operation_step_2_and_3_are_conversion`
-- `factory.AuthorityFactory_createCoordinateOperation_concatenated_operation_epsg_9103`
 - `factory.AuthorityFactory_build_all_concatenated`
-- `factory.AuthorityFactory_createFromCoordinateReferenceSystemCodes`
-- `factory.AuthorityFactory_createFromCoordinateReferenceSystemCodes_anonymous_authority`
-- `factory.createObjectsFromName`
 - `factory.ogc_timecrs`
-- `factory.getPointMotionOperationsFor`
 
-### test_io.cpp (167)
+### test_io.cpp (30)
 
-- `wkt_parse.wkt1_geographic_old_datum_name_without_EPSG_code`
-- `wkt_parse.wkt1_geographic_with_PROJ4_extension`
-- `wkt_parse.wkt1_geographic_epsg_org_api_4326`
-- `wkt_parse.wkt1_geographic_epsg_org_api_4258`
-- `wkt_parse.wkt1_geocentric_with_PROJ4_extension`
-- `wkt_parse.wkt2_spherical_planetocentric`
-- `wkt_parse.wkt1_projected_with_PROJ4_extension`
-- `wkt_parse.wkt1_krovak_south_west`
-- `wkt_parse.wkt2_krovak_modified_south_west`
-- `wkt_parse.wkt2_krovak_modified_east_north`
-- `proj_export.wkt2_hotine_oblique_mercator_without_rectified_grid_angle`
-- `wkt_parse.wkt2_2019_projected_3D`
-- `wkt_parse.wkt2_2019_projected_utm_3D`
-- `wkt_parse.wkt2_2019_projected_with_base_geocentric`
-- `wkt_parse.wkt2_2019_eqdc_non_epsg`
-- `crs.projected_angular_unit_from_primem`
-- `wkt_parse.VERTCS_WKT1_ESRI_context`
-- `wkt_parse.vertcrs_WKT1_LAS_ftUS`
-- `wkt_parse.vertcrs_WKT1_LAS_metre`
-- `wkt_parse.compoundcrs_WKT1_LAS_only_geoid_name`
-- `wkt_parse.dynamic_vertical_reference_frame`
-- `wkt_parse.vdatum_with_ANCHOR`
-- `wkt_parse.vdatum_with_ANCHOREPOCH`
-- `wkt_parse.COMPD_CS_non_conformant_horizontal_plus_horizontal_as_in_LAS`
-- `wkt_parse.COMPD_CS_non_conformant_horizontal_TOWGS84_plus_horizontal_as_in_LAS`
-- `wkt_parse.COMPD_CS_horizontal_bound_geog_plus_vertical_ellipsoidal_height`
-- `wkt_parse.COMPD_CS_horizontal_projected_plus_vertical_ellipsoidal_height`
-- `wkt_parse.COMPD_CS_horizontal_geog_plus_vertical_ellipsoidal_height_non_metre`
-- `wkt_parse.implicit_compound_CRS_geographic_with_ellipsoidal_height_ESRI`
-- `wkt_parse.implicit_compound_CRS_projected_with_ellipsoidal_height_ESRI`
-- `wkt_parse.COORDINATEOPERATION`
-- `wkt_parse.COORDINATEOPERATION_with_interpolation_as_parameter`
-- `wkt_parse.COORDINATEOPERATION_wkt2_2019`
-- `wkt_parse.conversion_proj_based`
-- `wkt_parse.conversion_utm_zone_south_wrong_id`
 - `wkt_parse.CONCATENATEDOPERATION`
 - `wkt_parse.CONCATENATEDOPERATION_with_conversion_and_conversion`
 - `wkt_parse.CONCATENATEDOPERATION_with_conversion_coordinateoperation_conversion`
 - `wkt_parse.CONCATENATEDOPERATION_with_conversion_coordinateoperation_to_inverse_conversion`
 - `wkt_parse.CONCATENATEDOPERATION_with_inverse_conversion_of_compound`
-- `wkt_parse.BOUNDCRS_transformation_from_names`
-- `wkt_parse.BOUNDCRS_transformation_from_codes`
-- `wkt_parse.BOUNDCRS_with_interpolation_as_parameter`
-- `wkt_parse.geogcs_TOWGS84_3terms`
-- `wkt_parse.projcs_TOWGS84_7terms`
-- `io.projcs_TOWGS84_7terms_autocorrect`
-- `wkt_parse.WKT1_VERT_DATUM_EXTENSION`
-- `wkt_parse.WKT1_VERT_DATUM_EXTENSION_units_ftUS`
-- `wkt_parse.WKT1_COMPD_CS_VERT_DATUM_EXTENSION`
-- `wkt_parse.WKT1_DATUM_EXTENSION`
-- `wkt_parse.EDATUM`
-- `wkt_parse.ENGCRS`
-- `wkt_parse.ENGCRS_unknown_unit`
-- `wkt_parse.PDATUM`
-- `wkt_parse.ensemble`
-- `wkt_parse.ensemble_vdatum`
-- `wkt_parse.esri_geogcs_datum_spheroid_name_from_db_substitution`
-- `wkt_parse.esri_datum_name_with_prime_meridian`
 - `wkt_parse.esri_projcs`
-- `wkt_parse.wkt1_esri_case_insensitive_names`
-- `wkt_parse.wkt1_esri_non_expected_param_name`
 - `wkt_parse.wkt1_esri_krovak_south_west`
 - `wkt_parse.wkt1_esri_krovak_east_north_non_standard_likely_from_GDAL_wkt1`
-- `wkt_parse.wkt1_esri_normalize_unit`
 - `wkt_parse.wkt1_esri_ups_north`
 - `wkt_parse.wkt1_esri_ups_south`
 - `wkt_parse.wkt1_esri_wgs_1984_ups_north_E_N`
@@ -218,7 +122,6 @@ The class comes from the test name alone, so check it when you port a test.
 - `wkt_parse.wkt1_lcc_1sp_without_1sp_suffix`
 - `wkt_parse.wkt1_pseudo_wkt1_gdal_pseudo_wkt1_esri`
 - `wkt_parse.invalid_EngineeingCRS`
-- `wkt_parse.invalid_CoordinateMetadata`
 - `io.projstringformatter_optim_hgridshift_vgridshift_hgridshift_inv`
 - `io.projstringformatter_optim_as_uc_vgridshift_uc_as_push_as_uc`
 - `io.projstringformatter_krovak_to_krovak_east_north`
@@ -227,128 +130,17 @@ The class comes from the test name alone, so check it when you port a test.
 - `io.projparse_longlat_axis_enu`
 - `io.projparse_longlat_axis_neu`
 - `io.projparse_longlat_axis_swu`
-- `io.projparse_longlat_unitconvert_deg`
-- `io.projparse_longlat_unitconvert_grad`
-- `io.projparse_longlat_unitconvert_rad`
-- `io.projparse_longlat_axisswap`
-- `io.projparse_tmerc_south_oriented`
-- `io.projparse_krovak_czech`
-- `io.projparse_krovak_modified_czech`
-- `io.projparse_tmerc_approx`
-- `io.projparse_laea_spherical`
-- `io.projparse_eqc_spherical`
-- `io.projparse_peirce_q_horizontal`
-- `io.projparse_axisswap_unitconvert_longlat_proj`
-- `io.projparse_axisswap_unitconvert_proj_axisswap`
-- `io.projparse_axisswap_unitconvert_proj_unitconvert`
-- `io.projparse_axisswap_unitconvert_proj_unitconvert_numeric_axisswap`
-- `io.projparse_projected_unknown`
-- `io.projparse_cart_unit`
-- `io.projparse_cart_unit_numeric`
-- `io.projparse_geoc`
-- `io.projparse_ob_tran_longlat`
-- `io.projparse_ob_tran_rhealpix`
 - `io.projparse_init`
 - `io.createFromUserInput`
-- `io.createFromUserInput_ogc_crs_url`
-- `io.createFromUserInput_hack_EPSG_102100`
-- `wkt_export.precision`
-- `wkt_export.invalid_linear_unit`
-- `wkt_export.invalid_angular_unit`
-- `json_import.ellipsoid_flattened_sphere`
-- `json_import.ellipsoid_major_minor_custom_unit`
-- `json_import.ellipsoid_sphere`
-- `json_import.ellipsoid_errors`
-- `json_import.axis_with_meridian`
-- `json_import.axis_with_meridian_with_unit`
-- `json_import.axis_with_minimum_value_maximum_value_range_meaning`
-- `json_import.axis_with_invalid_minimum_value`
-- `json_import.axis_with_invalid_maximum_value`
-- `json_import.axis_with_invalid_range_meaning_str`
-- `json_import.axis_with_invalid_range_meaning_number`
-- `json_import.prime_meridian`
-- `json_import.prime_meridian_errors`
-- `json_import.geodetic_reference_frame_with_implicit_prime_meridian`
-- `json_import.invalid_bbox`
-- `json_import.geodetic_reference_frame_with_explicit_prime_meridian`
-- `json_import.geodetic_reference_frame_with_anchor_epoch`
-- `json_import.geodetic_reference_frame_with_invalid_anchor_epoch`
-- `json_import.dynamic_geodetic_reference_frame_with_implicit_prime_meridian`
-- `json_import.vertical_extent`
-- `json_import.vertical_extent_with_unit`
-- `json_import.geodetic_reference_frame_errors`
-- `json_import.dynamic_vertical_reference_frame`
-- `json_import.geographic_crs`
-- `json_import.geographic_crs_with_deformation_models`
-- `json_import.spherical_planetocentric`
-- `json_import.geographic_crs_errors`
-- `json_import.geocentric_crs`
-- `json_import.projected_crs`
-- `json_import.conversion_utm_zone_south_wrong_id`
-- `json_import.projected_crs_with_geocentric_base`
-- `json_import.compound_crs`
-- `json_import.bound_crs`
 - `json_import.bound_crs_with_source_crs_in_transformation`
-- `json_import.transformation`
-- `json_import.concatenated_operation`
-- `json_import.geographic_crs_with_datum_ensemble`
-- `json_import.datum_ensemble_without_ellipsoid`
-- `json_import.ensemble_without_members`
-- `json_import.ensemble_without_members_no_db`
-- `json_import.ensemble_without_members_unknown_name`
-- `json_import.vertical_crs`
-- `json_import.vertical_crs_with_datum_ensemble`
-- `json_import.vertical_crs_with_geoid_model`
-- `json_import.vertical_crs_with_geoid_models`
-- `json_import.vertical_crs_with_deformation_models`
-- `json_import.vertical_crs_with_geoid_model_and_interpolation_crs`
-- `json_import.vertical_reference_frame_with_anchor_epoch`
-- `json_import.id`
-- `json_import.id_code_string_version_string`
-- `json_import.id_code_string_version_double`
-- `json_import.invalid_CoordinateMetadata`
-- `io.EXTENSION_PROJ4`
-- `wkt_parse.PointMotionOperation`
-- `json_import.PointMotionOperation`
 
-### test_operation.cpp (49)
+### test_operation.cpp (18)
 
-- `operation.transformation_to_wkt`
-- `operation.concatenated_operation`
-- `operation.transformation_createTimeDependentPositionVector`
-- `operation.transformation_createTimeDependentCoordinateFrameRotation`
-- `operation.transformation_successive_helmert_noop`
-- `operation.transformation_successive_helmert_non_trivial_1`
-- `operation.transformation_successive_helmert_non_trivial_2`
-- `operation.transformation_createMolodensky`
-- `operation.transformation_createAbridgedMolodensky`
-- `operation.transformation_inverse`
 - `operation.transformation_createTOWGS84`
 - `operation.createAxisOrderReversal`
-- `operation.equidistant_cylindrical_lat_0`
-- `operation.geostationary_satellite_sweep_x_export`
-- `operation.webmerc_export`
-- `operation.webmerc_import_from_GDAL_wkt1`
-- `operation.webmerc_import_from_GDAL_wkt1_with_EPSG_code`
-- `operation.webmerc_import_from_GDAL_wkt1_EPSG_3785_deprecated`
-- `operation.webmerc_import_from_WKT2_EPSG_3785_deprecated`
-- `operation.webmerc_import_from_broken_esri_WGS_84_Pseudo_Mercator`
-- `operation.mercator_spherical_import`
-- `operation.wkt1_import_polar_stereographic_variantA`
-- `operation.wkt1_import_polar_stereographic_variantB`
-- `operation.wkt1_import_polar_stereographic_ambiguous`
-- `operation.wkt1_import_equivalent_parameters`
-- `operation.conversion_inverse`
-- `operation.laborde_oblique_mercator`
-- `operation.adams_ws2_export`
-- `operation.hyperbolic_cassini_soldner`
 - `operation.PROJ_based`
 - `operation.PROJ_based_empty`
 - `operation.PROJ_based_with_global_parameters`
-- `operation.mercator_variant_A_to_variant_B_no_crs`
-- `operation.three_param_equivalent_to_seven_param`
-- `operation.position_vector_equivalent_coordinate_frame`
-- `operation.conversion_missing_parameter`
 - `operation.normalizeForVisualization`
 - `operation.export_of_Geographic3D_to_GravityRelatedHeight_gtx_unknown_grid`
 - `operation.export_of_boundCRS_with_proj_string_method`
@@ -363,7 +155,7 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.operation_geocen_translations_by_grid_and_geocen_translations_NEU_velocities_gtg`
 - `operation.operation_geocen_translations_NEU_velocities_gtg`
 
-### test_operationfactory.cpp (228)
+### test_operationfactory.cpp (217)
 
 - `operation.geogCRS_to_geogCRS`
 - `operation.geogCRS_to_geogCRS_context_match_by_name`
@@ -479,16 +271,8 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.transformation_Geographic3D_offsets_to_PROJ_string`
 - `operation.transformation_Geographic2D_with_height_offsets_to_PROJ_string`
 - `operation.transformation_vertical_offset_to_PROJ_string`
-- `operation.compoundCRS_with_boundVerticalCRS_to_geogCRS`
-- `operation.compoundCRS_with_boundGeogCRS_to_geogCRS`
-- `operation.compoundCRS_with_boundGeogCRS_and_boundVerticalCRS_to_geogCRS`
 - `operation.compoundCRS_with_boundProjCRS_and_boundVerticalCRS_to_geogCRS`
-- `operation.compoundCRS_with_boundVerticalCRS_from_geoidgrids_with_m_to_geogCRS`
-- `operation.compoundCRS_with_boundVerticalCRS_from_geoidgrids_with_ftus_to_geogCRS`
 - `operation.compoundCRS_with_boundProjCRS_with_ftus_and_boundVerticalCRS_to_geogCRS`
-- `operation.compoundCRS_with_boundVerticalCRS_from_grids_to_geogCRS_with_ftus_ctxt`
-- `operation.compoundCRS_with_boundGeogCRS_boundVerticalCRS_from_grids_to_boundGeogCRS_with_ftus_ctxt`
-- `operation.compoundCRS_with_boundVerticalCRS_from_grids_to_boundGeogCRS_with_ftus_ctxt`
 - `operation.compoundCRS_with_bound_of_projected_and_bound_of_vertical_to_geog3D`
 - `operation.compoundCRS_with_boundGeogCRS_and_geoid_to_geodCRS_NAD2011_ctxt`
 - `operation.compoundCRS_with_vert_bound_to_bound_geog3D`
@@ -522,12 +306,9 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.compoundCRS_to_compoundCRS_issue_3191_BD72_Ostend_height_to_WGS84_EGM96`
 - `operation.compoundCRS_to_compoundCRS_issue_4550`
 - `operation.compoundCRS_to_compoundCRS_using_intermediate_of_horizontal_transform`
-- `operation.vertCRS_to_vertCRS`
 - `operation.vertCRS_to_vertCRS_context`
 - `operation.vertCRS_to_vertCRS_New_Zealand_context`
 - `operation.vertCRS_to_vertCRS_pivot_context`
-- `operation.projCRS_3D_to_geogCRS_3D`
-- `operation.compoundCRS_to_geogCRS_3D`
 - `operation.compoundCRS_to_geogCRS_3D_context`
 - `operation.compoundCRS_to_geogCRS_3D_with_3D_helmert_context`
 - `operation.compoundCRS_to_geogCRS_3D_with_3D_helmert_same_geog_src_target_context`
@@ -594,144 +375,28 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.createOperation_ETRF2000_to_Amersfoort`
 - `operation.createOperation_ETRS89_to_Amersfoort`
 
-## niche (150)
+## niche (40)
 
-### test_c_api.cpp (14)
+### test_c_api.cpp (5)
 
-- `CApi.proj_create_engineering_crs`
-- `CApi.proj_get_celestial_body_list_from_database`
 - `CApi.proj_create_crs_to_crs_coordinate_metadata_in_src`
 - `CApi.proj_create_crs_to_crs_coordinate_metadata_in_target`
 - `CApi.proj_crs_promote_to_3D_on_coordinate_metadata`
-- `CApi.proj_create_derived_geographic_crs`
-- `CApi.proj_create_derived_geographic_crs_netcdf_cf`
-- `CApi.proj_crs_is_derived`
 - `CApi.proj_trans_bounds_world_geodetic_to_spilhaus`
 - `CApi.proj_crs_has_point_motion_operation`
-- `CApi.proj_create_linear_affine_parametric_conversion`
-- `CApi.proj_create_linear_3D_affine_parametric_conversion`
-- `CApi.proj_create_derived_projected_crs`
-- `CApi.proj_crs_add_horizontal_derived_conversion`
 
-### test_crs.cpp (32)
+### test_crs.cpp (3)
 
-- `crs.derivedGeographicCRS_basic`
-- `crs.derivedGeographicCRS_WKT2`
-- `crs.derivedGeographicCRS_WKT2_2019`
-- `crs.derivedGeographicCRS_WKT1`
 - `crs.derivedGeographicCRS_to_PROJ`
 - `crs.derivedGeographicCRS_with_affine_transform_to_PROJ`
-- `crs.derivedGeodeticCRS_basic`
-- `crs.derivedGeodeticCRS_WKT2`
-- `crs.derivedGeodeticCRS_WKT2_2019`
-- `crs.derivedGeodeticCRS_WKT1`
-- `crs.derivedProjectedCRS_WKT2_2019`
-- `crs.derivedProjectedCRS_WKT2_2015`
-- `crs.dateTimeTemporalCRS_WKT2`
-- `crs.dateTimeTemporalCRS_WKT2_2019`
-- `crs.temporalCountCRSWithConvFactor_WKT2_2019`
-- `crs.temporalCountCRSWithoutConvFactor_WKT2_2019`
-- `crs.temporalMeasureCRSWithoutConvFactor_WKT2_2019`
-- `crs.engineeringCRS_unknown_equivalence`
-- `crs.parametricCRS_WKT2`
-- `crs.parametricCRS_WKT1`
-- `crs.derivedVerticalCRS_basic`
-- `crs.DerivedVerticalCRS_WKT2`
-- `crs.DerivedVerticalCRS_WKT1`
-- `crs.DerivedVerticalCRS_WKT1_when_simple_derivation`
-- `crs.DerivedEngineeringCRS_WKT2`
-- `crs.DerivedEngineeringCRS_WKT1`
-- `crs.DerivedParametricCRS_WKT2`
-- `crs.DerivedParametricCRS_WKT1`
-- `crs.DeriveTemporalCRS_WKT2`
-- `crs.DeriveTemporalCRS_WKT1`
 - `crs.normalizeForVisualization_derivedprojected_operation`
-- `crs.normalizeForVisualization_derivedprojected`
 
-### test_factory.cpp (2)
+### test_io.cpp (1)
 
-- `factory.AuthorityFactory_createCoordinateOperation_point_motion_operation`
-- `factory.AuthorityFactory_IAU_2015`
-
-### test_io.cpp (58)
-
-- `wkt_parse.COMPOUNDCRS_spatio_parametric_2015`
-- `wkt_parse.COMPOUNDCRS_spatio_parametric_2019`
-- `wkt_parse.COMPOUNDCRS_spatio_temporal_2015`
-- `wkt_parse.COMPOUNDCRS_spatio_temporal_2019`
-- `wkt_parse.DerivedGeographicCRS_WKT2`
-- `wkt_parse.DerivedGeographicCRS_WKT2_2019`
-- `wkt_parse.DerivedGeodeticCRS`
-- `wkt_parse.DerivedGeodeticCRS_where_base_is_geocentric`
 - `wkt_parse.DerivedGeographicCRS_GDAL_PROJ4_EXSTENSION_hack`
-- `wkt_parse.DerivedProjectedCRS`
-- `wkt_parse.DerivedProjectedCRS_base_crs_cs_non_metre_from_conversion`
-- `wkt_parse.DerivedProjectedCRS_base_crs_cs_non_metre_from_conversion_context_from_baseprojcrs_name`
-- `wkt_parse.DerivedProjectedCRS_base_crs_cs_non_metre_from_conversion_context_from_baseprojcrs_id`
-- `wkt_parse.DerivedProjectedCRS_ordinal`
-- `wkt_parse.TemporalDatum`
-- `wkt_parse.TemporalDatum_no_calendar`
-- `wkt_parse.dateTimeTemporalCRS_WKT2_2015`
-- `wkt_parse.dateTimeTemporalCRS_WKT2_2019`
-- `wkt_parse.temporalCountCRSWithConvFactor_WKT2_2019`
-- `wkt_parse.temporalCountCRSWithoutConvFactor_WKT2_2019`
-- `wkt_parse.temporalMeasureCRS_WKT2_2015`
-- `wkt_parse.temporalMeasureCRSWithoutConvFactor_WKT2_2019`
-- `wkt_parse.ENGINEERINGDATUM`
-- `wkt_parse.ENGINEERINGCRS`
-- `wkt_parse.LOCAL_CS_short`
-- `wkt_parse.LOCAL_CS_long_one_axis`
-- `wkt_parse.LOCAL_CS_long_two_axis`
-- `wkt_parse.LOCAL_CS_long_three_axis`
-- `wkt_parse.PARAMETRICDATUM`
-- `wkt_parse.PARAMETRICCRS`
-- `wkt_parse.PARAMETRICCRS_PARAMETRICDATUM`
-- `wkt_parse.DerivedVerticalCRS`
-- `wkt_parse.DerivedVerticalCRS_EPSG_code_for_horizontal_CRS`
-- `wkt_parse.DerivedEngineeringCRS`
-- `wkt_parse.DerivedParametricCRS`
-- `wkt_parse.DerivedTemporalCRS`
-- `wkt_parse.invalid_DerivedGeographicCRS`
-- `wkt_parse.invalid_TemporalCRS`
-- `wkt_parse.invalid_ParametricCRS`
-- `wkt_parse.invalid_DERIVEDPROJCRS`
-- `wkt_parse.invalid_DerivedVerticalCRS`
-- `wkt_parse.invalid_DerivedEngineeringCRS`
-- `wkt_parse.invalid_DerivedParametricCRS`
-- `wkt_parse.invalid_DerivedTemporalCRS`
-- `io.projparse_topocentric`
-- `io.createFromUserInput_OGC_AUTO`
-- `json_import.temporal_extent`
-- `json_import.parametric_crs`
-- `json_import.engineering_crs`
-- `json_import.temporal_crs`
-- `json_import.derived_geodetic_crs`
-- `json_import.derived_geographic_crs`
-- `json_import.derived_projected_crs`
-- `json_import.derived_vertical_crs`
-- `json_import.derived_vertical_crs_EPSG_code_for_horizontal_CRS`
-- `json_import.derived_engineering_crs`
-- `json_import.derived_parametric_crs`
-- `json_import.derived_temporal_crs`
 
-### test_operation.cpp (7)
+### test_operationfactory.cpp (31)
 
-- `operation.vertical_perspective_export_no_topocentric_height_and_false_easting_northing`
-- `operation.spilhaus_esri_export`
-- `operation.geographic_topocentric`
-- `operation.geocentric_topocentric`
-- `operation.export_of_Cartesian_Grid_Offsets_with_EngineeringCRS`
-- `operation.export_of_seismic_bin_grid_I_eq_J_plus_90`
-- `operation.export_of_seismic_bin_grid_I_eq_J_minus_90`
-
-### test_operationfactory.cpp (37)
-
-- `operation.geogCRS_to_geogCRS_context_incompatible_celestial_body`
-- `operation.geogCRS_to_geogCRS_context_incompatible_celestial_body_but_same_radius`
-- `operation.geogCRS_to_geogCRS_compatible_unknown_celestial_body`
-- `operation.geogCRS_to_geogCRS_incompatible_unknown_celestial_body`
-- `operation.geogCRS_to_geogCRS_compatible_celestial_body_through_semi_major_axis`
-- `operation.geogCRS_to_derived_geogCRS_3D`
 - `operation.boundCRS_to_derived_geog_with_transformation_with_source_crs_being_base_crs_of_source_crs`
 - `operation.compoundCRS_with_derivedVerticalCRS_ellipsoidal_height_to_geog`
 - `operation.compoundCRS_with_horizontal_boundCRS_to_compoundCRS_with_derived_vertical`
@@ -764,9 +429,9 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.createOperation_compound_to_compound_with_point_motion_operation`
 - `operation.createOperation_compound_to_compound_with_point_motion_operation_special_case_CGVD2013a`
 
-## shape (76)
+## shape (56)
 
-### test_c_api.cpp (26)
+### test_c_api.cpp (21)
 
 - `CApi.proj_context_set_database_path_null`
 - `CApi.proj_context_set_database_path_aux`
@@ -780,34 +445,26 @@ The class comes from the test name alone, so check it when you port a test.
 - `CApi.proj_alter_name`
 - `CApi.proj_alter_id`
 - `CApi.proj_create_cartesian_2D_cs`
-- `CApi.proj_get_remarks`
-- `CApi.proj_get_scope`
-- `CApi.proj_concatoperation_get_step`
 - `CApi.proj_context_copy_from_default`
 - `CApi.proj_context_clone`
-- `CApi.proj_create_ellipsoidal_3D_cs`
 - `CApi.proj_context_set_sqlite3_vfs_name`
 - `CApi.proj_context_set_sqlite3_vfs_name__from_global_context`
 - `CApi.use_proj4_init_rules`
 - `CApi.use_proj4_init_rules_from_global_context`
-- `CApi.proj_is_equivalent_to_with_ctx`
 - `CApi.proj_get_insert_statements`
 - `CApi.open_plenty_of_contexts`
 - `CApi.concurrent_context`
 
-### test_crs.cpp (7)
+### test_crs.cpp (5)
 
-- `datum.cs_with_MERIDIAN`
 - `crs.scope_area_bbox_remark`
 - `crs.multiple_ID`
 - `crs.VerticalCRS_ensemble_exception_in_create`
 - `datum.vdatum_with_anchor`
-- `crs.boundCRS_with_usage`
 - `crs.projected_is_equivalent_to_with_proj4_extension`
 
-### test_factory.cpp (27)
+### test_factory.cpp (25)
 
-- `factory.AuthorityFactory_getAuthorityCodes`
 - `FactoryWithTmpDatabase.AuthorityFactory_test_with_fake_EPSG_database`
 - `FactoryWithTmpDatabase.AuthorityFactory_test_inversion_first_and_last_steps_of_concat_op`
 - `FactoryWithTmpDatabase.AuthorityFactory_test_with_fake_EPSG_and_OTHER_database`
@@ -828,26 +485,14 @@ The class comes from the test name alone, so check it when you port a test.
 - `FactoryWithTmpDatabase.custom_projected_crs`
 - `FactoryWithTmpDatabase.custom_derived_projected_crs`
 - `FactoryWithTmpDatabase.CoordinateMetadata`
-- `factory.attachExtraDatabases_none`
 - `factory.attachExtraDatabases_auxiliary`
 - `factory.attachExtraDatabases_auxiliary_error`
 - `FactoryWithTmpDatabase.createOperations_exact_transform_not_whole_area`
 - `FactoryWithTmpDatabase.check_fixup_direction_concatenated_inverse_map_projection`
 - `factory.objectInsertion`
 
-### test_io.cpp (16)
+### test_io.cpp (5)
 
-- `wkt_parse.cs_with_MERIDIAN`
-- `wkt_parse.cs_with_multiple_ID`
-- `wkt_parse.cs_with_AXISMINVAL_AXISMAXVAL_RANGEMEANING`
-- `wkt_parse.cs_with_invalid_AXISMINVAL_string`
-- `wkt_parse.cs_with_invalid_AXISMINVAL_too_many_children`
-- `wkt_parse.cs_with_invalid_AXISMAXVAL_string`
-- `wkt_parse.cs_with_invalid_AXISMAXVAL_too_many_children`
-- `wkt_parse.cs_with_invalid_RANGEMEANING`
-- `wkt_parse.cs_with_invalid_RANGEMEANING_too_many_children`
-- `wkt_parse.COMPD_CS`
-- `wkt_parse.VERTCS_with_ellipsoidal_height_ESRI`
 - `json_import.several_usages`
 - `json_import.bound_crs_with_name_and_usage`
 - `json_import.engineering_crs_affine_CS`
