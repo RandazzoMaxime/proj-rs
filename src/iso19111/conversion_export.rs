@@ -12,10 +12,12 @@
 //! conversions read from the database (and the inverse of a bare one) keep their
 //! refusal.
 
-use super::model::{Conversion, Crs, FactoryError};
+use super::model::{Conversion, Crs, FactoryError, ParameterValue};
 use super::pipeline::{PipelineFormatter, ProjLines};
 use super::projstring::projection_steps;
-use super::transform_export::export_vertical_unit_factor;
+use super::transform_export::{
+    axis_order_reversal, change_vertical_unit_by_factor, export_vertical_unit_factor,
+};
 
 impl Conversion {
     /// `_exportToPROJString` of a conversion with its CRS pair, as the steps of a
@@ -83,8 +85,8 @@ impl Conversion {
     }
 }
 
-/// Height-depth reversal and a unit change with no stored factor. Other methods
-/// are projections and return `false`.
+/// Axis-order reversal, a vertical unit change, and height-depth reversal.
+/// Other methods are projections and return `false`.
 fn export_body(
     conversion: &Conversion,
     source: Option<&Crs>,
@@ -99,6 +101,23 @@ fn export_body(
         }
         "1104" => {
             export_vertical_unit_factor(vertical_unit_factor(source, target)?, formatter);
+            Ok(true)
+        }
+        "9843" | "9844" => {
+            axis_order_reversal(source, target, formatter)?;
+            Ok(true)
+        }
+        "1069" => {
+            let factor = conversion
+                .parameters()
+                .iter()
+                .find(|parameter| parameter.code() == "1051")
+                .and_then(|parameter| match parameter.value() {
+                    ParameterValue::Measure(measure) => Some(measure.si_value()),
+                    _ => None,
+                })
+                .unwrap_or(0.0);
+            change_vertical_unit_by_factor(factor, formatter);
             Ok(true)
         }
         _ => Ok(false),

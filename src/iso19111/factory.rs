@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use rusqlite::{types::ValueRef, Connection};
 
 use super::buildop::OpProps;
-use super::equiv::{equivalent_name, geodetic_frame, same_geodetic_datum};
+use super::equiv::{equivalent_name, geodetic_frame, same_geodetic_datum, same_geographic_base};
 use super::model::{
     ensemble_name_as_datum, Axis, BoundingBox, CartesianCS, CompoundCRS, ConcatenatedOperation,
     ConcatenatedStep, Conversion, CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble,
@@ -65,6 +65,26 @@ pub enum BallparkUse {
     Allow,
     /// Ballpark operations are dropped (`--hide-ballpark`).
     Forbid,
+}
+
+/// How the availability of an operation's grids enters the ordering.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GridAvailabilityUse {
+    /// An operation whose grids are not on disk sorts after one whose grids are.
+    #[default]
+    UseForSorting,
+    /// Grids are taken as available, as `IGNORE_GRID_AVAILABILITY`.
+    IgnoreGridAvailability,
+}
+
+/// Whether the registered operations of the database are searched.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum RegistryUse {
+    /// Registered operations, pivots and datum-based chains are candidates.
+    #[default]
+    Database,
+    /// Only the operations that need no database: `createOperation(source, target)`.
+    None,
 }
 
 /// How an operation extent is compared with the area of interest.
@@ -4664,6 +4684,8 @@ pub struct CoordinateOperationContext {
     crs_extent_use: CrsExtentUse,
     desired_accuracy: f64,
     ballpark: BallparkUse,
+    grid_availability: GridAvailabilityUse,
+    registry: RegistryUse,
 }
 
 impl CoordinateOperationContext {
@@ -4680,6 +4702,8 @@ impl CoordinateOperationContext {
             crs_extent_use: CrsExtentUse::default(),
             desired_accuracy: 0.0,
             ballpark: BallparkUse::Allow,
+            grid_availability: GridAvailabilityUse::default(),
+            registry: RegistryUse::default(),
         }
     }
 
@@ -4725,6 +4749,12 @@ impl CoordinateOperationContext {
         self
     }
 
+    /// Whether the availability of grids on disk orders the operations.
+    pub fn set_grid_availability_use(&mut self, policy: GridAvailabilityUse) -> &mut Self {
+        self.grid_availability = policy;
+        self
+    }
+
     /// Whether operations with a ballpark transformation are candidates.
     pub fn set_ballpark_use(&mut self, policy: BallparkUse) -> &mut Self {
         self.ballpark = policy;
@@ -4765,6 +4795,26 @@ impl CoordinateOperationFactory {
         super::projstring::operation_proj_string(source, target)
     }
 
+    /// `createOperation(source, target)`: the first operation between the two CRS when no
+    /// authority database is consulted, or `None` when there is none.
+    ///
+    /// # Errors
+    ///
+    /// An operation cannot be built from the CRS.
+    pub fn create_operation(
+        &self,
+        source: &Crs,
+        target: &Crs,
+    ) -> Result<Option<CoordinateOperation>, FactoryError> {
+        let db = DatabaseContext::create()?;
+        let mut context = CoordinateOperationContext::create(&db, "");
+        context.registry = RegistryUse::None;
+        Ok(self
+            .create_operations(source, target, &context)?
+            .into_iter()
+            .next())
+    }
+
     /// Operations from `source` to `target`.
     ///
     /// # Errors
@@ -4794,7 +4844,7 @@ impl CoordinateOperationFactory {
         let mut found = Vec::new();
         let mut direct_empty = true;
         if let Crs::Projected(projected) = target {
-            if same_authority(source, projected.base_crs()) {
+            if projection_uses_source(source, projected, context.registry) {
                 // The caller's own source, not the base: its axis order is the one the
                 // pipeline must read (a PROJ-string base may be longitude first).
                 found.push(CoordinateOperation::Conversion(
@@ -4813,7 +4863,9 @@ impl CoordinateOperationFactory {
             source_extent.as_ref().and_then(ObjectDomain::bounding_box),
             target_extent.as_ref().and_then(ObjectDomain::bounding_box),
         );
-        if let (Some(source_id), Some(target_id)) = (
+        let registry = context.registry == RegistryUse::Database;
+        if let (true, Some(source_id), Some(target_id)) = (
+            registry,
             source
                 .authority_code("EPSG")
                 .or_else(|| source.identifiers().first()),
@@ -4880,7 +4932,7 @@ impl CoordinateOperationFactory {
                 return Ok(derived);
             }
         }
-        if direct_empty && is_geodetic(source) && is_geodetic(target) {
+        if registry && direct_empty && is_geodetic(source) && is_geodetic(target) {
             found.extend(datum_pivot_operations(source, target, context));
         }
         if found.is_empty() {
@@ -4904,7 +4956,17 @@ impl CoordinateOperationFactory {
                 target_extent.as_ref(),
             )
         {
-            found.extend(ballpark_operations(source, target));
+            if registry && !found.is_empty() {
+                found.extend(ballpark_operations(source, target));
+            } else {
+                // No registered operation: the same geodetic conversions as
+                // `createOperation`, including a same-datum geographic/geocentric pair.
+                found.extend(super::geodetic_ops::geodetic_operations(
+                    source,
+                    target,
+                    super::geodetic_ops::BallparkRule::ByDatum,
+                )?);
+            }
         }
         Ok(found)
     }
@@ -4928,8 +4990,13 @@ fn select_candidates(
         source_extent.as_ref(),
         target_extent.as_ref(),
     );
-    let mut sorted =
-        super::select::sort_candidates(filtered.operations, &context.db, source, target);
+    let mut sorted = super::select::sort_candidates(
+        filtered.operations,
+        &context.db,
+        source,
+        target,
+        context.grid_availability,
+    );
     let synthetic_last = sorted.last().is_some_and(|operation| {
         operation.has_ballpark_transformation()
             || super::select::is_null_transformation(operation.name())
@@ -5294,8 +5361,7 @@ fn datum_pivot_operations(
         return Vec::new();
     }
     let authority = AuthorityFactory::create(&context.db, context.authority.clone());
-    let both_3d =
-        geographic_axis_count(source) == Some(3) && geographic_axis_count(target) == Some(3);
+    let both_3d = axis_count(source) == 3 && axis_count(target) == 3;
     let candidates_source = candidate_geodetic_crs(&authority, &source_datum);
     let candidates_target = candidate_geodetic_crs(&authority, &target_datum);
     let mut pairs: Vec<(&Crs, &Crs)> = candidates_source
@@ -5306,7 +5372,17 @@ fn datum_pivot_operations(
         u8::from(!(left.name() == source.name() && right.name() == target.name()))
     });
     for (left, right) in pairs {
-        let (Some(first), Some(third)) = (pivot_leg(source, left), pivot_leg(right, target)) else {
+        let (left_leg, right_leg) = if both_3d {
+            (
+                promote_crs_to_3d(left, &context.db),
+                promote_crs_to_3d(right, &context.db),
+            )
+        } else {
+            (left.clone(), right.clone())
+        };
+        let (Some(first), Some(third)) =
+            (pivot_leg(source, &left_leg), pivot_leg(&right_leg, target))
+        else {
             continue;
         };
         let boxes = (
@@ -5328,12 +5404,12 @@ fn datum_pivot_operations(
                     CoordinateOperation::Transformation(_) | CoordinateOperation::Concatenated(_)
                 )
             })
-            .map(|mut operation| {
-                // PROJ forces a Helmert found for the 2D domain onto 3D CRS
-                // when both requested CRS are 3D, so the pipeline has no `push v_3`.
-                if both_3d {
-                    promote_operation_domain(&mut operation);
-                }
+            .map(|operation| {
+                let operation = if both_3d {
+                    promote_operation_to_3d(operation, &context.db)
+                } else {
+                    operation
+                };
                 let steps = [first.clone(), Some(operation), third.clone()]
                     .into_iter()
                     .flatten()
@@ -5348,39 +5424,54 @@ fn datum_pivot_operations(
     Vec::new()
 }
 
-/// Axis count of a geographic CRS.
-fn geographic_axis_count(crs: &Crs) -> Option<usize> {
-    geographic_of(crs).map(|geographic| geographic.coordinate_system().axes().len())
-}
-
-/// `promoteTo3D` on every geographic endpoint of a datum-pivot operation.
-fn promote_operation_domain(operation: &mut CoordinateOperation) {
-    match operation {
-        CoordinateOperation::Transformation(transformation) => {
-            if let Some(source) = transformation.source.as_deref() {
-                transformation.source = Some(Box::new(promote_crs_to_3d(source)));
-            }
-            if let Some(target) = transformation.target.as_deref() {
-                transformation.target = Some(Box::new(promote_crs_to_3d(target)));
-            }
+/// Axis count of a geographic or geocentric CRS, zero for any other.
+fn axis_count(crs: &Crs) -> usize {
+    match crs {
+        Crs::Geodetic(GeodeticCRS::Geocentric(_)) => 3,
+        other => {
+            geographic_of(other).map_or(0, |geographic| geographic.coordinate_system().axes().len())
         }
-        CoordinateOperation::Concatenated(concatenated) => {
-            for step in &mut concatenated.steps {
-                promote_operation_domain(&mut step.operation);
-            }
-        }
-        CoordinateOperation::Conversion(_) => {}
     }
 }
 
-/// A 2D geographic CRS with an ellipsoidal-height axis added. Other CRS are cloned.
-fn promote_crs_to_3d(crs: &Crs) -> Crs {
+fn promote_crs_to_3d(crs: &Crs, db: &DatabaseContext) -> Crs {
     match crs {
-        Crs::Geographic(geographic) => Crs::Geographic(geographic.promote_to_3d()),
-        Crs::Geodetic(GeodeticCRS::Geographic(geographic)) => {
-            Crs::Geodetic(GeodeticCRS::Geographic(geographic.promote_to_3d()))
-        }
+        Crs::Geographic(geographic) => Crs::Geographic(geographic.promote_to_3d_with_db(Some(db))),
+        Crs::Geodetic(GeodeticCRS::Geographic(geographic)) => Crs::Geodetic(
+            GeodeticCRS::Geographic(geographic.promote_to_3d_with_db(Some(db))),
+        ),
         other => other.clone(),
+    }
+}
+
+/// `promoteTo3D` on the endpoints of a registered operation, so that a Helmert advertised
+/// for the 2D domain is written without the `push` / `pop` of the vertical coordinate.
+fn promote_operation_to_3d(
+    operation: CoordinateOperation,
+    db: &DatabaseContext,
+) -> CoordinateOperation {
+    let promote = |crs: &Option<Box<Crs>>| -> Option<Box<Crs>> {
+        crs.as_deref()
+            .map(|crs| Box::new(promote_crs_to_3d(crs, db)))
+    };
+    match operation {
+        CoordinateOperation::Transformation(mut transformation) => {
+            transformation.source = promote(&transformation.source);
+            transformation.target = promote(&transformation.target);
+            CoordinateOperation::Transformation(transformation)
+        }
+        CoordinateOperation::Concatenated(mut concatenated) => {
+            concatenated.steps = concatenated
+                .steps
+                .into_iter()
+                .map(|step| ConcatenatedStep {
+                    operation: promote_operation_to_3d(step.operation, db),
+                    reverse: step.reverse,
+                })
+                .collect();
+            CoordinateOperation::Concatenated(concatenated)
+        }
+        other @ CoordinateOperation::Conversion(_) => other,
     }
 }
 
@@ -5531,6 +5622,27 @@ fn accuracy_allowed(operation: &CoordinateOperation, desired: f64) -> bool {
         _ => operation.accuracy().unwrap_or(-1.0),
     };
     (0.0..=desired).contains(&accuracy)
+}
+
+/// The deriving conversion of `projected` is the operation from `source`.
+///
+/// An authority match is the database path. Without a registry, the same datum and
+/// angular unit are enough, and only when the dimension matches, so a 3D geographic
+/// source still goes through the derived-CRS chain.
+fn projection_uses_source(source: &Crs, projected: &ProjectedCRS, registry: RegistryUse) -> bool {
+    if same_authority(source, projected.base_crs()) {
+        return true;
+    }
+    if registry != RegistryUse::None {
+        return false;
+    }
+    let (Some(geographic), GeodeticCRS::Geographic(base)) =
+        (geographic_of(source), projected.base_crs())
+    else {
+        return false;
+    };
+    geographic.coordinate_system().axes().len() == base.coordinate_system().axes().len()
+        && same_geographic_base(geographic, base)
 }
 
 fn same_authority(source: &Crs, base: &GeodeticCRS) -> bool {

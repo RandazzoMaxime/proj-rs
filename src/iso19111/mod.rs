@@ -14,6 +14,7 @@ mod derived;
 mod equiv;
 mod esri_parammap;
 mod factory;
+mod geodetic_ops;
 mod identify;
 mod insert;
 mod json;
@@ -36,8 +37,9 @@ pub use equiv::{equivalent_name, equivalent_name_bigger_differences, Equivalence
 pub use factory::{
     AlternativeGridNames, AuthorityFactory, AuthorityObject, BallparkUse, CelestialBodyInfo,
     CoordinateOperationContext, CoordinateOperationFactory, CrsExtentUse, CrsInfo, DatabaseContext,
-    DeprecatedCodes, GeodeticComponents, GridInfo, IntermediateCrsUse, NameMatch, NameSpelling,
-    ObjectType, OfficialName, SpatialCriterion, SupersededOperations, UnitInfo,
+    DeprecatedCodes, GeodeticComponents, GridAvailabilityUse, GridInfo, IntermediateCrsUse,
+    NameMatch, NameSpelling, ObjectType, OfficialName, SpatialCriterion, SupersededOperations,
+    UnitInfo,
 };
 pub use insert::insert_statements;
 pub use json::{

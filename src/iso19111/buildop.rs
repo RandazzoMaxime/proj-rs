@@ -296,7 +296,8 @@ impl Transformation {
         })
     }
 
-    /// Inverse transformation: swapped CRS and an `Inverse of` name.
+    /// Inverse transformation: swapped CRS, negated translations for the methods
+    /// PROJ inverts that way, and the name from `createPropertiesForInverse`.
     #[must_use]
     pub fn inverse(&self) -> Self {
         let mut inverse = self.clone();
@@ -306,35 +307,16 @@ impl Transformation {
         } else {
             inverse.inverted = !self.inverted;
         }
+        inverse.identified.name = super::geodetic_ops::inverse_operation_name(
+            self.name(),
+            self.source_crs(),
+            self.target_crs(),
+            super::geodetic_ops::NamedOperationKind::Transformation,
+        );
         std::mem::swap(&mut inverse.source, &mut inverse.target);
         for identifier in &mut inverse.identified.identifiers {
             identifier.code_space = inverse_code_space(&identifier.code_space);
         }
-        let swapped_name = match (self.source_crs(), self.target_crs()) {
-            (Some(source), Some(target))
-                if source.name() != target.name()
-                    && self.name()
-                        == format!(
-                            "Transformation from {} to {}",
-                            source.name(),
-                            target.name()
-                        ) =>
-            {
-                Some(format!(
-                    "Transformation from {} to {}",
-                    target.name(),
-                    source.name()
-                ))
-            }
-            _ => None,
-        };
-        inverse.identified.name = swapped_name.unwrap_or_else(|| {
-            if self.inverted {
-                uninverse_name(self.name())
-            } else {
-                inverse_name(self.name())
-            }
-        });
         inverse
     }
 
@@ -396,16 +378,6 @@ fn inverse_code_space(code_space: &str) -> String {
         Some(authority) => authority.to_owned(),
         None => format!("INVERSE({code_space})"),
     }
-}
-
-/// The name of the inverse of an operation that is not inverted yet.
-fn inverse_name(name: &str) -> String {
-    format!("Inverse of {name}")
-}
-
-/// The name of the inverse of an inverted operation: the `Inverse of ` prefix is removed.
-fn uninverse_name(name: &str) -> String {
-    name.strip_prefix("Inverse of ").unwrap_or(name).to_owned()
 }
 
 /// `createPropertiesForInverse` for a stored concatenated operation: the `Inverse of`
@@ -471,15 +443,16 @@ impl Conversion {
     pub fn inverse(&self) -> Self {
         let mut inverse = self.clone();
         inverse.inverted = !self.inverted;
+        inverse.identified.name = super::geodetic_ops::inverse_operation_name(
+            self.name(),
+            self.source_crs(),
+            self.target_crs(),
+            super::geodetic_ops::NamedOperationKind::Conversion,
+        );
         std::mem::swap(&mut inverse.source, &mut inverse.target);
         for identifier in &mut inverse.identified.identifiers {
             identifier.code_space = inverse_code_space(&identifier.code_space);
         }
-        inverse.identified.name = if self.inverted {
-            uninverse_name(self.name())
-        } else {
-            inverse_name(self.name())
-        };
         inverse
     }
 }
@@ -1052,6 +1025,11 @@ impl super::model::Conversion {
             ))
         })?;
         let code = mapped.epsg_code;
+        // A registered axis-order reversal has no CRS pair. The swap of the two
+        // horizontal axes is still `+proj=axisswap +order=2,1`.
+        if code == 9843 || code == 9844 {
+            return Ok("+proj=axisswap +order=2,1".to_owned());
+        }
         if mapped.wkt2_name.starts_with("Peirce Quincuncial") {
             super::projfam::check_peirce_q_export(self.numeric_si(8801), self.numeric_si(8805))?;
         }

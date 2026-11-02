@@ -6726,6 +6726,20 @@ pub(crate) static OTHER_METHODS: &[MethodMap] = &[
             proj_name: None,
         }],
     },
+    MethodMap {
+        wkt2_name: "Geographic3D to GravityRelatedHeight (US .gtx)",
+        epsg_code: 9665,
+        wkt1_name: None,
+        proj_name: None,
+        proj_aux: None,
+        params: &[ParamMap {
+            wkt2_name: "Geoid (height correction) model file",
+            epsg_code: 8666,
+            wkt1_name: None,
+            unit: UnitKind::None,
+            proj_name: None,
+        }],
+    },
 ];
 
 /// First method whose EPSG code is `code`.
