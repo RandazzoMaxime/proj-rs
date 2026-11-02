@@ -675,6 +675,9 @@ impl super::model::Conversion {
                 self.name()
             )));
         }
+        if self.method.name().eq_ignore_ascii_case("Adams_Square_II") {
+            return Ok(self.adams_square_ii_proj_string());
+        }
         let mapped = lookup_method(&self.method).ok_or_else(|| {
             FactoryError::Format(format!(
                 "Unsupported conversion method: {}",
@@ -799,6 +802,41 @@ impl super::model::Conversion {
             }
         }
         Ok(parts.join(" "))
+    }
+
+    /// ESRI `Adams_Square_II` as `+proj=spilhaus`, from the ESRI parameter names, which have
+    /// no OGC mapping. PROJ's `spilhaus` matches it up to a `sqrt(2)` factor on the scale.
+    fn adams_square_ii_proj_string(&self) -> String {
+        let value = |name: &str, unit: &super::model::UnitOfMeasure| {
+            self.parameters
+                .iter()
+                .find(|parameter| parameter.name.eq_ignore_ascii_case(name))
+                .and_then(|parameter| measure_ref(&parameter.value))
+                .map_or(0.0, |measure| measure.convert_to(unit))
+        };
+        let metre = super::model::UnitOfMeasure::metre();
+        let degree = super::model::UnitOfMeasure::degree();
+        let has_scale = self
+            .parameters
+            .iter()
+            .any(|parameter| parameter.name.eq_ignore_ascii_case("Scale_Factor"));
+        let scale = if has_scale {
+            value(
+                "Scale_Factor",
+                &super::model::UnitOfMeasure::new("unity", 1.0, UnitKind::Scale),
+            )
+        } else {
+            1.0
+        };
+        let mut parts = vec!["+proj=spilhaus".to_owned()];
+        push_number(&mut parts, "lat_0", value("Latitude_Of_Center", &degree));
+        push_number(&mut parts, "lon_0", value("Longitude_Of_Center", &degree));
+        push_number(&mut parts, "azi", value("Azimuth", &degree));
+        push_number(&mut parts, "k_0", std::f64::consts::SQRT_2 * scale);
+        push_number(&mut parts, "rot", value("XY_Plane_Rotation", &degree));
+        push_number(&mut parts, "x_0", value("False_Easting", &metre));
+        push_number(&mut parts, "y_0", value("False_Northing", &metre));
+        parts.join(" ")
     }
 
     pub(crate) fn utm_zone(&self) -> Option<(i32, UtmHemisphere)> {

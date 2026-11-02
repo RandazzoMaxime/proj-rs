@@ -51,6 +51,8 @@ const METHOD_GEOGRAPHIC_GEOCENTRIC: i32 = 9602;
 const METHOD_CHANGE_VERTICAL_UNIT: i32 = 1069;
 const METHOD_HEIGHT_DEPTH_REVERSAL: i32 = 1068;
 const METHOD_CARTESIAN_GRID_OFFSETS: i32 = 9656;
+const METHOD_SEISMIC_BIN_GRID_I_EQ_J_PLUS_90: i32 = 9666;
+const METHOD_SEISMIC_BIN_GRID_I_EQ_J_MINUS_90: i32 = 1049;
 const METHOD_LONGITUDE_ROTATION: i32 = 9601;
 const METHOD_GEOGRAPHIC2D_OFFSETS: i32 = 9619;
 const METHOD_GEOGRAPHIC3D_OFFSETS: i32 = 9660;
@@ -223,6 +225,11 @@ fn export_forward(
     }
     if code == METHOD_SIMILARITY {
         return similarity(operation, formatter);
+    }
+    if code == METHOD_SEISMIC_BIN_GRID_I_EQ_J_PLUS_90
+        || code == METHOD_SEISMIC_BIN_GRID_I_EQ_J_MINUS_90
+    {
+        return seismic_bin_grid(operation, code, source, formatter);
     }
     if code == METHOD_AXIS_ORDER_REVERSAL_2D || code == METHOD_AXIS_ORDER_REVERSAL_3D {
         return axis_order_reversal(source, target, formatter);
@@ -721,6 +728,60 @@ fn similarity(
     formatter.add_number("yoff", yt0);
     formatter.add_number("s21", -scale * angle.sin());
     formatter.add_number("s22", scale * angle.cos());
+    Ok(())
+}
+
+/// EPSG guidance note 7-2, section 2.4.3.3. EPSG orders these operations from the map grid
+/// to the bin grid, so the coefficients are the reverse of the guidance note's formulas.
+fn seismic_bin_grid(
+    operation: &Transformation,
+    code: i32,
+    source: Option<&Crs>,
+    formatter: &mut PipelineFormatter,
+) -> Result<(), FactoryError> {
+    let origin_i = si_value(operation, 8733);
+    let origin_j = si_value(operation, 8734);
+    let origin_easting = numeric(operation, 8735, 1.0);
+    let origin_northing = numeric(operation, 8736, 1.0);
+    let scale_factor = si_value(operation, 8737);
+    let width_i = numeric(operation, 8738, 1.0);
+    let width_j = numeric(operation, 8739, 1.0);
+    let theta = numeric(operation, 8740, 1.0);
+    let increment_i = si_value(operation, 8741);
+    let increment_j = si_value(operation, 8742);
+    if scale_factor == 0.0 || width_i == 0.0 || width_j == 0.0 {
+        return Err(FactoryError::Format(
+            "Invalid seismic bin grid operation: the scale factor of the bin grid and the bin \
+             widths must be non-zero"
+                .to_owned(),
+        ));
+    }
+    let scale_i = increment_i / (scale_factor * width_i);
+    let scale_j = increment_j / (scale_factor * width_j);
+    // I=J-90 (left-handed) differs from I=J+90 only by the sign of the I axis.
+    let sign_i = if code == METHOD_SEISMIC_BIN_GRID_I_EQ_J_PLUS_90 {
+        1.0
+    } else {
+        -1.0
+    };
+    let s11 = sign_i * scale_i * theta.cos();
+    let s12 = -sign_i * scale_i * theta.sin();
+    let s21 = scale_j * theta.sin();
+    let s22 = scale_j * theta.cos();
+    let xoff = origin_i - (s11 * origin_easting + s12 * origin_northing);
+    let yoff = origin_j - (s21 * origin_easting + s22 * origin_northing);
+    if let Some(Crs::Projected(projected)) = source {
+        formatter.start_inversion();
+        projected_unit_and_axis_swap(projected, formatter);
+        formatter.stop_inversion();
+    }
+    formatter.add_step("affine");
+    formatter.add_number("xoff", xoff);
+    formatter.add_number("s11", s11);
+    formatter.add_number("s12", s12);
+    formatter.add_number("yoff", yoff);
+    formatter.add_number("s21", s21);
+    formatter.add_number("s22", s22);
     Ok(())
 }
 

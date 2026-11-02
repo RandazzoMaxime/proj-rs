@@ -421,16 +421,12 @@ and `PORT-NOTES-tests.md`.
 - `operation.wkt1_import_polar_stereographic_ambiguous`
 - `operation.wkt1_import_equivalent_parameters`
 - `operation.conversion_inverse`
-- `operation.vertical_perspective_export_no_topocentric_height_and_false_easting_northing`
 - `operation.laborde_oblique_mercator`
 - `operation.adams_ws2_export`
-- `operation.spilhaus_esri_export`
 - `operation.hyperbolic_cassini_soldner`
 - `operation.PROJ_based`
 - `operation.PROJ_based_empty`
 - `operation.PROJ_based_with_global_parameters`
-- `operation.geographic_topocentric`
-- `operation.geocentric_topocentric`
 - `operation.mercator_variant_A_to_variant_B_no_crs`
 - `operation.three_param_equivalent_to_seven_param`
 - `operation.position_vector_equivalent_coordinate_frame`
@@ -439,7 +435,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.export_of_Geographic3D_to_GravityRelatedHeight_gtx_unknown_grid`
 - `operation.export_of_boundCRS_with_proj_string_method`
 - `operation.PointMotionOperation_with_epochs`
-- `operation.export_of_Cartesian_Grid_Offsets_with_EngineeringCRS`
 - `operation.Geographic3DToGravityRelatedHeight`
 - `operation.inverse_of_Geographic3DToGravityRelatedHeight`
 - `operation.CoordinateFrameRotationFullMatrixGeog2D`
@@ -449,8 +444,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.operation_Position_Vector_geocen_and_geocen_translations_NEU_velocities_gtg_with_source_epoch`
 - `operation.operation_geocen_translations_by_grid_and_geocen_translations_NEU_velocities_gtg`
 - `operation.operation_geocen_translations_NEU_velocities_gtg`
-- `operation.export_of_seismic_bin_grid_I_eq_J_plus_90`
-- `operation.export_of_seismic_bin_grid_I_eq_J_minus_90`
 
 ## test_operationfactory.cpp
 

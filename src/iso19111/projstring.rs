@@ -363,6 +363,9 @@ pub(crate) fn projection_steps(source: &Crs, target: &Crs) -> Result<Vec<String>
             "this operation is not a projection of the source CRS".to_owned(),
         ));
     };
+    if let Some(steps) = topocentric_steps(source, projected)? {
+        return Ok(steps);
+    }
     let Some(geographic) = geographic_of(source) else {
         return Err(FactoryError::Format(
             "the source CRS is not geographic".to_owned(),
@@ -398,6 +401,82 @@ pub(crate) fn projection_steps(source: &Crs, target: &Crs) -> Result<Vec<String>
         steps.push(format!("+proj=axisswap +order={order}"));
     }
     Ok(steps)
+}
+
+/// The geocentric/topocentric (EPSG:9836) and geographic/topocentric (EPSG:9837)
+/// conversions of a projected CRS, as `Conversion::_exportToPROJString` writes them:
+/// `+proj=topocentric` with the base ellipsoid, after `+proj=cart` for a geographic source.
+/// `None` for any other method.
+fn topocentric_steps(
+    source: &Crs,
+    projected: &ProjectedCRS,
+) -> Result<Option<Vec<String>>, FactoryError> {
+    let conversion = projected.deriving_conversion();
+    let method = conversion.method();
+    let code = if method.code_space() == "EPSG" {
+        method.code()
+    } else {
+        ""
+    };
+    let ellipsoid = projected.base_crs().ellipsoid().map(ellipsoid_proj);
+    let mut topocentric = String::from("+proj=topocentric");
+    let mut steps = Vec::new();
+    match code {
+        "9836" => {
+            topocentric = conversion.export_to_proj_string()?;
+        }
+        "9837" => {
+            let Some(geographic) = geographic_of(source) else {
+                return Err(FactoryError::Format(
+                    "Export of Geographic/Topocentric conversion to a PROJ string requires an \
+                     input geographic CRS"
+                        .to_owned(),
+                ));
+            };
+            if let Some(order) = geographic_axis_order(geographic) {
+                steps.push(format!("+proj=axisswap +order={order}"));
+            }
+            let degrees = geographic
+                .coordinate_system()
+                .axes()
+                .first()
+                .is_some_and(|axis| axis.unit().name() == "degree");
+            if degrees {
+                let height = if geographic.coordinate_system().axes().len() == 3 {
+                    " +z_in=m"
+                } else {
+                    ""
+                };
+                let height_out = if height.is_empty() { "" } else { " +z_out=m" };
+                steps.push(format!(
+                    "+proj=unitconvert +xy_in=deg{height} +xy_out=rad{height_out}"
+                ));
+            }
+            let mut cart = String::from("+proj=cart");
+            if let Some(ellipsoid) = &ellipsoid {
+                cart.push(' ');
+                cart.push_str(ellipsoid);
+            }
+            steps.push(cart);
+            for (key, parameter, unit) in [
+                ("lat_0", 8834, UnitOfMeasure::degree()),
+                ("lon_0", 8835, UnitOfMeasure::degree()),
+                ("h_0", 8836, UnitOfMeasure::metre()),
+            ] {
+                let value = conversion
+                    .measure_of_code(parameter)
+                    .map_or(0.0, |measure| measure.convert_to(&unit));
+                topocentric.push_str(&format!(" +{key}={}", proj_number(value)));
+            }
+        }
+        _ => return Ok(None),
+    }
+    if let Some(ellipsoid) = ellipsoid {
+        topocentric.push(' ');
+        topocentric.push_str(&ellipsoid);
+    }
+    steps.push(topocentric);
+    Ok(Some(steps))
 }
 
 /// `addUnitConvertAndAxisSwap` for the unit: the metre that the projection writes becomes
@@ -476,6 +555,9 @@ fn geocentric_steps(source: &Crs, target: &GeocentricCRS) -> Result<Vec<String>,
 }
 
 fn pipeline(steps: &[String]) -> String {
+    if let [single] = steps {
+        return single.clone();
+    }
     let body = steps
         .iter()
         .map(|step| format!("+step {step}"))

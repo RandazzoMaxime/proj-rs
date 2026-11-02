@@ -96,11 +96,12 @@ fn build(
 }
 
 impl Transformation {
-    /// Geocentric translations and Molodensky: PROJ's inverse negates the values.
+    /// Geocentric translations, Molodensky and Cartesian Grid Offsets: PROJ's inverse
+    /// negates the values.
     pub(super) fn has_translation_inverse(&self) -> bool {
         matches!(
             self.method.code.parse::<i32>(),
-            Ok(1031 | 9603 | 9604 | 9605)
+            Ok(1031 | 9603 | 9604 | 9605 | 9656)
         )
     }
 
