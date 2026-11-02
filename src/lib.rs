@@ -108,6 +108,10 @@ pub use iso19111::{
     VerticalCS, VerticalReferenceFrame, WktConvention, WktDialect, WktFormatter, WktLines, WktNode,
     WktObject, WktParser, WktStrictness,
 };
+pub use iso19111::{
+    DerivedCRS, ParametricCRS, ParametricCS, ParametricDatum, TemporalCRS, TemporalCS,
+    TemporalCsKind, TemporalDatum,
+};
 pub use lcc::{Cone, Lcc};
 pub use merc::Mercator;
 pub use tmerc::{Hemisphere, Tmerc, UtmZone};

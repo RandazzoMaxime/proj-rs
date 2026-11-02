@@ -18,6 +18,7 @@ mod identify;
 mod insert;
 mod json;
 mod model;
+mod niche;
 mod parammap;
 mod pipeline;
 mod proj_crs;
@@ -47,6 +48,10 @@ pub use model::{
     OperationParameterValue, OrdinalCS, Parameter, ParameterValue, PrimeMeridian, ProjectedCRS,
     SphericalCS, Transformation, UnitKind, UnitOfMeasure, VerticalCRS, VerticalCS,
     VerticalReferenceFrame,
+};
+pub use niche::{
+    DerivedCRS, ParametricCRS, ParametricCS, ParametricDatum, TemporalCRS, TemporalCS,
+    TemporalCsKind, TemporalDatum,
 };
 pub use pipeline::ProjLines;
 pub use projstring::{create_crs_from_proj_string, create_crs_from_proj_string_with_database};

@@ -942,6 +942,7 @@ fn write_unit_object(writer: &mut Writer, unit: &UnitOfMeasure, place: Place) {
         UnitKind::Angular => "AngularUnit",
         UnitKind::Scale => "ScaleUnit",
         UnitKind::Time => "TimeUnit",
+        UnitKind::Parametric => "ParametricUnit",
         UnitKind::None | UnitKind::Unknown => "Unit",
     });
     writer.key("name");

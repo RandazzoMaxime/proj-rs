@@ -375,6 +375,8 @@ pub enum UnitKind {
     Scale,
     /// Time. The SI unit is the second.
     Time,
+    /// A parametric quantity, such as a pressure.
+    Parametric,
     /// No conversion, used by an ordinal axis.
     None,
     /// A database type this crate does not classify.
@@ -1501,6 +1503,10 @@ pub enum CoordinateSystem {
     Ordinal(OrdinalCS),
     /// Affine axes. WKT writes `CS[affine,N]`.
     Affine(CartesianCS),
+    /// One time axis.
+    Temporal(super::niche::TemporalCS),
+    /// One parametric axis.
+    Parametric(super::niche::ParametricCS),
 }
 
 impl CoordinateSystem {
@@ -1514,6 +1520,8 @@ impl CoordinateSystem {
             Self::Spherical(cs) => cs.axes.iter().collect(),
             Self::Ordinal(cs) => cs.axes.iter().collect(),
             Self::Affine(cs) => cs.axes.iter().collect(),
+            Self::Temporal(cs) => vec![&cs.axis],
+            Self::Parametric(cs) => vec![&cs.axis],
         }
     }
 
@@ -1525,6 +1533,8 @@ impl CoordinateSystem {
             Self::Spherical(cs) => &cs.identified,
             Self::Ordinal(cs) => &cs.identified,
             Self::Affine(cs) => &cs.identified,
+            Self::Temporal(cs) => &cs.identified,
+            Self::Parametric(cs) => &cs.identified,
         }
     }
 
@@ -1542,6 +1552,12 @@ impl CoordinateSystem {
             Self::Spherical(_) => "spherical",
             Self::Ordinal(_) => "ordinal",
             Self::Affine(_) => "affine",
+            Self::Temporal(cs) => match cs.kind {
+                super::niche::TemporalCsKind::DateTime => "TemporalDateTime",
+                super::niche::TemporalCsKind::Count => "TemporalCount",
+                super::niche::TemporalCsKind::Measure => "TemporalMeasure",
+            },
+            Self::Parametric(_) => "parametric",
         }
     }
 }
@@ -2987,6 +3003,13 @@ pub enum Crs {
     Engineering(EngineeringCRS),
     /// Derived projected CRS.
     DerivedProjected(DerivedProjectedCRS),
+    /// Temporal CRS.
+    Temporal(super::niche::TemporalCRS),
+    /// Parametric CRS.
+    Parametric(super::niche::ParametricCRS),
+    /// Derived CRS of a geographic, geodetic, vertical, engineering, parametric or
+    /// temporal base.
+    Derived(super::niche::DerivedCRS),
 }
 
 impl Crs {
@@ -3002,6 +3025,9 @@ impl Crs {
             Self::Bound(crs) => crs.name(),
             Self::Engineering(crs) => crs.name(),
             Self::DerivedProjected(crs) => crs.name(),
+            Self::Temporal(crs) => crs.name(),
+            Self::Parametric(crs) => crs.name(),
+            Self::Derived(crs) => crs.name(),
         }
     }
 
@@ -3017,6 +3043,9 @@ impl Crs {
             Self::Bound(crs) => &crs.identified.identifiers,
             Self::Engineering(crs) => &crs.identified.identifiers,
             Self::DerivedProjected(crs) => &crs.identified.identifiers,
+            Self::Temporal(crs) => &crs.identified.identifiers,
+            Self::Parametric(crs) => &crs.identified.identifiers,
+            Self::Derived(crs) => &crs.identified.identifiers,
         }
     }
 
@@ -3032,6 +3061,9 @@ impl Crs {
             Self::Bound(crs) => &crs.identified.domains,
             Self::Engineering(crs) => &crs.identified.domains,
             Self::DerivedProjected(crs) => &crs.identified.domains,
+            Self::Temporal(crs) => &crs.identified.domains,
+            Self::Parametric(crs) => &crs.identified.domains,
+            Self::Derived(crs) => &crs.identified.domains,
         }
     }
 
@@ -3059,12 +3091,15 @@ impl Crs {
             Self::Bound(crs) => crs.identified.deprecated,
             Self::Engineering(crs) => crs.identified.deprecated,
             Self::DerivedProjected(crs) => crs.identified.deprecated,
+            Self::Temporal(crs) => crs.identified.deprecated,
+            Self::Parametric(crs) => crs.identified.deprecated,
+            Self::Derived(crs) => crs.identified.deprecated,
         }
     }
 
     pub(crate) fn is_horizontal(&self) -> bool {
         match self {
-            Self::Vertical(_) => false,
+            Self::Vertical(_) | Self::Temporal(_) | Self::Parametric(_) => false,
             Self::Compound(crs) => crs.components.iter().any(Self::is_horizontal),
             Self::Bound(crs) => crs.source.is_horizontal(),
             _ => true,

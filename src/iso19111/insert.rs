@@ -858,6 +858,7 @@ fn unit_database_type(kind: UnitKind) -> Option<&'static str> {
         UnitKind::Angular => Some("angle"),
         UnitKind::Scale => Some("scale"),
         UnitKind::Time => Some("time"),
+        UnitKind::Parametric => Some("parametric"),
         UnitKind::None | UnitKind::Unknown => None,
     }
 }

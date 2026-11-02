@@ -73,8 +73,8 @@ fn object_kind(object: &WktObject) -> &'static str {
         WktObject::Conversion(_) => "conversion",
         WktObject::Transformation(_) => "transformation",
         WktObject::Concatenated(_) => "concatenated operation",
-        WktObject::TemporalDatum => "temporal datum",
-        WktObject::ParametricDatum => "parametric datum",
+        WktObject::TemporalDatum(_) => "temporal datum",
+        WktObject::ParametricDatum(_) => "parametric datum",
         WktObject::Unknown => "unknown",
     }
 }

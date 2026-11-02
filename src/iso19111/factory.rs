@@ -1313,6 +1313,7 @@ impl AuthorityFactory {
             "angle" => UnitKind::Angular,
             "scale" => UnitKind::Scale,
             "time" => UnitKind::Time,
+            "parametric" => UnitKind::Parametric,
             _ => UnitKind::Unknown,
         };
         Ok(UnitOfMeasure {

@@ -253,6 +253,9 @@ impl Crs {
             Self::Bound(crs) => &crs.identified.remarks,
             Self::Engineering(crs) => &crs.identified.remarks,
             Self::DerivedProjected(crs) => &crs.identified.remarks,
+            Self::Temporal(crs) => &crs.identified.remarks,
+            Self::Parametric(crs) => &crs.identified.remarks,
+            Self::Derived(crs) => &crs.identified.remarks,
         }
     }
 }

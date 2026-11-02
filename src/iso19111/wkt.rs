@@ -8,6 +8,8 @@ use super::esri_parammap::{
 };
 use super::factory::{AuthorityFactory, DatabaseContext};
 use super::wkt_import::WktParser;
+
+mod niche;
 /// Whether the node being opened carries an authority identifier.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NodeId {
@@ -148,6 +150,8 @@ pub struct WktFormatter {
     axis_linear: Vec<UnitOfMeasure>,
     axis_angular: Vec<UnitOfMeasure>,
     abridged: bool,
+    /// `setUseDerivingConversion`: the next conversion is a `DERIVINGCONVERSION`.
+    use_deriving_conversion: bool,
     /// Nesting of `pushDisableUsage`: while positive, no `USAGE` or `REMARK` is written.
     usage_disabled: usize,
     db: Option<DatabaseContext>,
@@ -198,6 +202,7 @@ impl WktFormatter {
             axis_linear: vec![UnitOfMeasure::metre()],
             axis_angular: vec![UnitOfMeasure::degree()],
             abridged: false,
+            use_deriving_conversion: false,
             usage_disabled: 0,
             db: None,
         }
@@ -435,6 +440,7 @@ impl WktFormatter {
                 (true, UnitKind::Angular) => "ANGLEUNIT",
                 (true, UnitKind::Scale) => "SCALEUNIT",
                 (true, UnitKind::Time) => "TIMEUNIT",
+                (true, UnitKind::Parametric) => "PARAMETRICUNIT",
                 _ => "UNIT",
             }
         };
@@ -554,12 +560,10 @@ pub(crate) fn export_crs(crs: &Crs, formatter: &mut WktFormatter) -> Result<(), 
         Crs::Compound(crs) => export_compound(crs, formatter)?,
         Crs::Bound(crs) => export_bound(crs, formatter)?,
         Crs::Engineering(crs) => export_engineering(crs, formatter)?,
-        Crs::DerivedProjected(crs) => {
-            return Err(FactoryError::Format(format!(
-                "derived projected CRS {} has no WKT export in this build",
-                crs.name()
-            )));
-        }
+        Crs::DerivedProjected(crs) => niche::export_derived_projected(crs, formatter)?,
+        Crs::Temporal(crs) => niche::export_temporal(crs, formatter)?,
+        Crs::Parametric(crs) => niche::export_parametric(crs, formatter)?,
+        Crs::Derived(crs) => niche::export_derived(crs, formatter)?,
     }
     Ok(())
 }
@@ -1057,7 +1061,9 @@ fn export_engineering(
     let keyword = if formatter.wkt2 { "ENGCRS" } else { "LOCAL_CS" };
     formatter.start_node(keyword, node_from_ids(&crs.identified.identifiers));
     formatter.add_quoted(crs.name());
-    if formatter.wkt2 || !crs.datum.name().is_empty() {
+    if formatter.wkt2
+        || (!crs.datum.name().is_empty() && crs.datum.name() != "Unknown engineering datum")
+    {
         export_engineering_datum(&crs.datum, formatter);
     }
     if !formatter.wkt2 {
@@ -1333,7 +1339,13 @@ fn export_engineering_datum(datum: &EngineeringDatum, formatter: &mut WktFormatt
     } else {
         datum.name()
     });
-    if !formatter.wkt2 {
+    if formatter.wkt2 {
+        if let Some(anchor) = datum.anchor_definition() {
+            formatter.start_node("ANCHOR", NodeId::Absent);
+            formatter.add_quoted(anchor);
+            formatter.end_node();
+        }
+    } else {
         formatter.add_raw("32767");
     }
     formatter.format_ids(&datum.identified.identifiers);
@@ -1581,7 +1593,11 @@ fn export_conversion(
     }
     if formatter.wkt2 {
         formatter.start_node(
-            "CONVERSION",
+            if formatter.use_deriving_conversion {
+                "DERIVINGCONVERSION"
+            } else {
+                "CONVERSION"
+            },
             node_from_ids(&conversion.identified.identifiers),
         );
         formatter.add_quoted(conversion.name());
