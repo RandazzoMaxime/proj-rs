@@ -521,6 +521,17 @@ fn projjson_of_4326_is_proj_text() {
 }
 
 #[test]
+fn projjson_of_a_projected_crs_roundtrips_through_the_facade() {
+    // PROJ's projected-CRS unit text, imported by `Proj::new` and written back.
+    // The comparison drops the base CRS `"type": "GeographicCRS"` line, which
+    // that unit test also drops.
+    let proj = Proj::new(PROJJSON_PROJECTED_TEST).expect("projected json");
+    let json = proj.to_projjson(None, None, Some("foo")).expect("export");
+    let json = json.replacen("    \"type\": \"GeographicCRS\",\n", "", 1);
+    assert_eq!(json, PROJJSON_PROJECTED_TEST);
+}
+
+#[test]
 fn projjson_of_projected_crs_is_proj_unit_test_text() {
     // The base CRS of PROJ's test carries `"type": "GeographicCRS"`, which the test's own
     // comparison removes. The CRS is written here from WKT with the same identifiers.
@@ -560,12 +571,33 @@ fn projjson_indentation_width_and_schema_are_honoured() {
 }
 
 #[test]
-fn transform_between_two_crs_has_no_wkt_or_projjson() {
-    // libproj writes the coordinate operation here. That export is not built, so both calls
-    // return an error rather than a text that is not PROJ's.
+fn transform_between_two_crs_exports_the_operation() {
+    // PROJ 9.8.1 `proj_create_crs_to_crs` + `proj_as_projjson` / `proj_as_wkt`
+    // (WKT2:2019) / `proj_pj_info`, pyproj 3.8.0's libproj. The bytes of the
+    // JSON and the WKT are those exports (10 958 and 6 238 bytes).
     let proj = Proj::new_known_crs("EPSG:2230", "EPSG:26946", None).expect("pair");
-    assert!(proj.as_wkt(None, None).is_err());
-    assert!(proj.to_projjson(None, None, None).is_err());
+    let definition = proj.def().expect("definition");
+    assert_eq!(
+        definition,
+        "proj=pipeline step proj=unitconvert xy_in=us-ft xy_out=m step inv proj=lcc lat_0=32.1666666666667 lon_0=-116.25 lat_1=33.8833333333333 lat_2=32.7833333333333 x_0=2000000.0001016 y_0=500000.0001016 ellps=GRS80 step proj=lcc lat_0=32.1666666666667 lon_0=-116.25 lat_1=33.8833333333333 lat_2=32.7833333333333 x_0=2000000 y_0=500000 ellps=GRS80"
+    );
+    let info = proj.proj_info();
+    assert_eq!(info.id.as_deref(), Some("pipeline"));
+    assert_eq!(
+        info.description.as_deref(),
+        Some("Inverse of SPCS83 California zone 6 (US survey foot) + SPCS83 California zone 6 (meter)")
+    );
+    let json = proj.to_projjson(None, None, None).expect("projjson");
+    let wkt = proj.as_wkt(None, None).expect("wkt");
+    assert_eq!(json.len(), 10958, "{json}");
+    assert_eq!(wkt.len(), 6238, "{wkt}");
+    assert!(
+        json.contains("\"type\": \"ConcatenatedOperation\""),
+        "{json}"
+    );
+    assert!(wkt.starts_with(
+        "CONCATENATEDOPERATION[\"Inverse of SPCS83 California zone 6 (US survey foot) + SPCS83 California zone 6 (meter)\""
+    ));
 }
 
 const GEOCENTRIC_WKT: &str = r#"GEODCRS["WGS 84",

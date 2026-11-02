@@ -18,6 +18,7 @@ mod identify;
 mod insert;
 mod json;
 mod model;
+mod normalize;
 mod parammap;
 mod pipeline;
 mod proj_crs;
@@ -48,10 +49,11 @@ pub use model::{
     SphericalCS, Transformation, UnitKind, UnitOfMeasure, VerticalCRS, VerticalCS,
     VerticalReferenceFrame,
 };
+pub(crate) use normalize::normalize_for_visualization;
 pub use pipeline::ProjLines;
 pub use projstring::{create_crs_from_proj_string, create_crs_from_proj_string_with_database};
+pub(crate) use select::{best_operation_exact, lat_or_northing_first, same_datum_noop};
 pub use select::{best_pipeline, best_pipeline_with, BestOperation, OnlyBest};
-pub(crate) use select::{best_pipeline_exact, lat_or_northing_first};
 pub use wkt::{
     EllipsoidalHeightPolicy, LinunitPolicy, OutputAxisRule, WktConvention, WktFormatter, WktLines,
     WktStrictness,

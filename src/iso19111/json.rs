@@ -7,12 +7,13 @@
 use super::equiv;
 use super::factory::{AuthorityFactory, AuthorityObject, DatabaseContext, NameMatch, ObjectType};
 use super::model::{
-    Axis, BoundCRS, CompoundCRS, Conversion, CoordinateOperation, Crs, Datum, DatumEnsemble,
-    Ellipsoid, EllipsoidalCS, FactoryError, GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame,
-    GeographicCRS, GeoidModel, Identified, Identifier, Measure, ObjectDomain, OperationMethod,
-    Parameter, ParameterValue, PrimeMeridian, ProjectedCRS, Transformation, UnitKind,
-    UnitOfMeasure, VerticalCRS, VerticalReferenceFrame,
+    Axis, BoundCRS, CartesianCS, CompoundCRS, ConcatenatedOperation, Conversion,
+    CoordinateOperation, Crs, Datum, DatumEnsemble, Ellipsoid, EllipsoidalCS, FactoryError,
+    GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, GeoidModel, Identified,
+    Identifier, Measure, ObjectDomain, OperationMethod, Parameter, ParameterValue, PrimeMeridian,
+    ProjectedCRS, Transformation, UnitKind, UnitOfMeasure, VerticalCRS, VerticalReferenceFrame,
 };
+use super::parammap::{method_by_code, method_by_name};
 use super::projstring::create_crs_from_proj_string_with_database;
 use super::wkt_import::WktParser;
 use crate::crs_text::{self, Object, Value};
@@ -253,6 +254,34 @@ impl Crs {
     }
 }
 
+impl CoordinateOperation {
+    /// PROJJSON for this operation in `format`: a `Conversion`, a `Transformation`, or a
+    /// `ConcatenatedOperation`, as `proj_as_projjson` writes it.
+    ///
+    /// A concatenated operation or a transformation names its CRS pair. A conversion does not,
+    /// as PROJ writes none. A concatenated operation that stores no pair takes the source of
+    /// its first step and the target of its last.
+    ///
+    /// # Errors
+    ///
+    /// A CRS or a step has no PROJJSON export here, or a concatenated operation has no CRS pair.
+    pub fn export_to_json_with(
+        &self,
+        db: &DatabaseContext,
+        format: &JsonFormat,
+    ) -> Result<String, FactoryError> {
+        let mut writer = Writer::new(format);
+        writer.start_object();
+        if !format.schema.is_empty() {
+            writer.key("$schema");
+            writer.string(&format.schema);
+        }
+        write_operation(&mut writer, self, db, Place::top(operation_ident(self)))?;
+        writer.end_object();
+        Ok(writer.finish())
+    }
+}
+
 /// Whether an object has identifiers of its own.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Ident {
@@ -414,6 +443,7 @@ fn write_geographic(
     )?;
     write_usage(writer, crs.domains(), place);
     write_id_if(writer, place, crs.identifiers(), db);
+    write_remarks(writer, &crs.identified.remarks);
     Ok(())
 }
 
@@ -436,6 +466,7 @@ fn write_geocentric(
     )?;
     write_usage(writer, crs.domains(), place);
     write_id_if(writer, place, crs.identifiers(), db);
+    write_remarks(writer, &crs.identified.remarks);
     Ok(())
 }
 
@@ -481,6 +512,7 @@ fn write_projected(
     )?;
     write_usage(writer, crs.domains(), place);
     write_id_if(writer, place, crs.identifiers(), db);
+    write_remarks(writer, &crs.identified.remarks);
     Ok(())
 }
 
@@ -511,6 +543,7 @@ fn write_vertical(
     write_geoid_models(writer, crs.geoid_models(), db);
     write_usage(writer, crs.domains(), place);
     write_id_if(writer, place, crs.identifiers(), db);
+    write_remarks(writer, &crs.identified.remarks);
     Ok(())
 }
 
@@ -531,6 +564,7 @@ fn write_compound(
     writer.end_array();
     write_usage(writer, crs.domains(), place);
     write_id_if(writer, place, crs.identifiers(), db);
+    write_remarks(writer, &crs.identified.remarks);
     Ok(())
 }
 
@@ -575,6 +609,7 @@ fn write_bound(
     )?;
     write_usage(writer, &crs.identified.domains, place);
     write_id_if(writer, place, &crs.identified.identifiers, db);
+    write_remarks(writer, &crs.identified.remarks);
     Ok(())
 }
 
@@ -723,29 +758,37 @@ fn write_vertical_datum(
     Ok(())
 }
 
-/// `anchor` as PROJ writes it. The anchor epoch and a deformation model are not written by this
-/// port, so a datum that has one is an error rather than a PROJJSON without them.
+/// `anchor` then `anchor_epoch`, as `GeodeticReferenceFrame::_exportToJSON` writes them.
+///
+/// A deformation model is WKT `MODEL[]` only. The PROJJSON writer does not emit it, so it is
+/// omitted here as well. The epoch is rounded the way `getRoundedEpochInDecimalYear` does: when
+/// the year is within 1e-3 of a milliyear, it is that milliyear.
 fn write_anchor(
     writer: &mut Writer,
     anchor: Option<&str>,
     anchor_epoch: Option<f64>,
-    deformation_model: Option<&str>,
+    _deformation_model: Option<&str>,
 ) -> Result<(), FactoryError> {
-    if anchor_epoch.is_some() {
-        return Err(FactoryError::Format(
-            "PROJJSON anchor_epoch is not written in this build".to_owned(),
-        ));
-    }
-    if deformation_model.is_some() {
-        return Err(FactoryError::Format(
-            "PROJJSON deformation_models is not written in this build".to_owned(),
-        ));
-    }
     if let Some(anchor) = anchor {
         writer.key("anchor");
         writer.string(anchor);
     }
+    if let Some(epoch) = anchor_epoch {
+        writer.key("anchor_epoch");
+        writer.number(rounded_anchor_epoch(epoch));
+    }
     Ok(())
+}
+
+/// `getRoundedEpochInDecimalYear`: snap to 0.001 year when the residual is at most 1e-3.
+fn rounded_anchor_epoch(year: f64) -> f64 {
+    let scaled = year * 1000.0;
+    let nearest = scaled.round();
+    if (scaled - nearest).abs() <= 1e-3 {
+        nearest / 1000.0
+    } else {
+        year
+    }
 }
 
 /// A datum ensemble. PROJ writes its `id` whatever the parent. The ellipsoid of its first member
@@ -963,9 +1006,27 @@ fn write_conversion(
     place: Place,
 ) -> Result<(), FactoryError> {
     writer.start_object();
+    write_conversion_members(writer, conversion, db, place);
+    writer.end_object();
+    Ok(())
+}
+
+/// The members of a conversion: name, method, parameter values, `id`. An inverse conversion
+/// writes the inverse method, as `InverseConversion` builds it.
+fn write_conversion_members(
+    writer: &mut Writer,
+    conversion: &Conversion,
+    db: &DatabaseContext,
+    place: Place,
+) {
     write_name(writer, conversion.name());
     writer.key("method");
-    write_method(writer, conversion.method());
+    let way = if conversion.inverted {
+        MethodWay::Inverse
+    } else {
+        MethodWay::Forward
+    };
+    write_method(writer, &method_for_direction(&conversion.method, way));
     let parameters = conversion.parameters();
     if !parameters.is_empty() {
         writer.key("parameters");
@@ -976,7 +1037,153 @@ fn write_conversion(
         writer.end_array();
     }
     write_id_if(writer, place, conversion.identifiers(), db);
+}
+
+/// Forward or inverse method, as written in PROJJSON.
+enum MethodWay {
+    Forward,
+    Inverse,
+}
+
+/// The method of an operation. An inverse is `Inverse of ...` under the `INVERSE(...)`
+/// code space, as `createPropertiesForInverse` names it.
+fn method_for_direction(method: &OperationMethod, way: MethodWay) -> OperationMethod {
+    match way {
+        MethodWay::Forward => method.clone(),
+        MethodWay::Inverse => method.inverse_of(),
+    }
+}
+
+fn operation_ident(operation: &CoordinateOperation) -> Ident {
+    ident(operation.identifiers())
+}
+
+/// An operation object: its `type`, then the members of its kind.
+fn write_operation(
+    writer: &mut Writer,
+    operation: &CoordinateOperation,
+    db: &DatabaseContext,
+    place: Place,
+) -> Result<(), FactoryError> {
+    match operation {
+        CoordinateOperation::Conversion(conversion) => {
+            writer.key("type");
+            writer.string("Conversion");
+            write_conversion_members(writer, conversion, db, place);
+            Ok(())
+        }
+        CoordinateOperation::Transformation(transformation) => {
+            write_transformation(writer, transformation, db, place)
+        }
+        CoordinateOperation::Concatenated(concatenated) => {
+            write_concatenated(writer, concatenated, db, place)
+        }
+    }
+}
+
+/// A step or another operation inside a parent chain, which asks for its `id`.
+fn write_operation_component(
+    writer: &mut Writer,
+    operation: &CoordinateOperation,
+    db: &DatabaseContext,
+    parent: Chain,
+) -> Result<(), FactoryError> {
+    let place = Place::inside(parent, operation_ident(operation), Allow::Asked);
+    writer.start_object();
+    write_operation(writer, operation, db, place)?;
     writer.end_object();
+    Ok(())
+}
+
+fn write_transformation(
+    writer: &mut Writer,
+    transformation: &Transformation,
+    db: &DatabaseContext,
+    place: Place,
+) -> Result<(), FactoryError> {
+    let (Some(source), Some(target)) = (transformation.source_crs(), transformation.target_crs())
+    else {
+        return Err(FactoryError::Format(format!(
+            "transformation {} has no CRS pair",
+            transformation.name()
+        )));
+    };
+    writer.key("type");
+    writer.string("Transformation");
+    write_name(writer, transformation.name());
+    writer.key("source_crs");
+    write_component(writer, source, db, place.chain, Allow::Asked)?;
+    writer.key("target_crs");
+    write_component(writer, target, db, place.chain, Allow::Asked)?;
+    if let Some(interpolation) = transformation.interpolation_crs() {
+        writer.key("interpolation_crs");
+        write_component(writer, interpolation, db, place.chain, Allow::Asked)?;
+    }
+    writer.key("method");
+    let way = if transformation.inverted {
+        MethodWay::Inverse
+    } else {
+        MethodWay::Forward
+    };
+    write_method(writer, &method_for_direction(transformation.method(), way));
+    writer.key("parameters");
+    writer.start_array();
+    for parameter in transformation.parameters() {
+        write_parameter(writer, parameter, place.chain);
+    }
+    writer.end_array();
+    if let Some(text) = transformation_accuracy_text(transformation) {
+        writer.key("accuracy");
+        writer.string(&text);
+    }
+    write_usage(writer, &transformation.identified.domains, place);
+    write_id_if(writer, place, &transformation.identified.identifiers, db);
+    write_remarks(writer, &transformation.identified.remarks);
+    Ok(())
+}
+
+/// The accuracy of a transformation as PROJ's `PositionalAccuracy::value()` holds it: the text
+/// the database gave, or the number written with `%.15g`.
+fn transformation_accuracy_text(transformation: &Transformation) -> Option<String> {
+    transformation.accuracy_text.clone().or_else(|| {
+        transformation
+            .accuracy()
+            .map(|value| super::wkt::format_g(value, 15))
+    })
+}
+
+fn write_concatenated(
+    writer: &mut Writer,
+    concatenated: &ConcatenatedOperation,
+    db: &DatabaseContext,
+    place: Place,
+) -> Result<(), FactoryError> {
+    let (source, target) = concatenated.crs_pair().ok_or_else(|| {
+        FactoryError::Format(format!(
+            "concatenated operation {} has no CRS pair",
+            concatenated.name()
+        ))
+    })?;
+    writer.key("type");
+    writer.string("ConcatenatedOperation");
+    write_name(writer, concatenated.name());
+    writer.key("source_crs");
+    write_component(writer, source, db, place.chain, Allow::Asked)?;
+    writer.key("target_crs");
+    write_component(writer, target, db, place.chain, Allow::Asked)?;
+    writer.key("steps");
+    writer.start_array();
+    for step in concatenated.steps() {
+        write_operation_component(writer, step.operation(), db, place.chain)?;
+    }
+    writer.end_array();
+    if let Some(text) = concatenated.accuracy_text() {
+        writer.key("accuracy");
+        writer.string(&text);
+    }
+    write_usage(writer, &concatenated.identified.domains, place);
+    write_id_if(writer, place, &concatenated.identified.identifiers, db);
+    write_remarks(writer, &concatenated.identified.remarks);
     Ok(())
 }
 
@@ -1076,6 +1283,14 @@ fn write_domain_members(writer: &mut Writer, domain: &ObjectDomain) {
         writer.key("east_longitude");
         writer.number(east);
         writer.end_object();
+    }
+}
+
+/// The `remarks` of an object, `formatRemarks`: nothing when there are none.
+fn write_remarks(writer: &mut Writer, remarks: &str) {
+    if !remarks.is_empty() {
+        writer.key("remarks");
+        writer.string(remarks);
     }
 }
 
@@ -1357,14 +1572,284 @@ fn import_json(text: &str, db: &DatabaseContext) -> Result<Crs, FactoryError> {
     let kind = required_str(object, "type")?;
     match kind {
         "GeographicCRS" => Ok(Crs::Geographic(read_geographic(object, db)?)),
+        "ProjectedCRS" => read_projected(object, db),
         other => Err(FactoryError::Invalid(format!(
             "PROJJSON type {other} is not imported in this build"
         ))),
     }
 }
 
+/// A projected CRS. The base is geographic. A missing `type` on the base is still geographic:
+/// PROJ's own projected-CRS unit test compares a document that omits it. Names may be absent;
+/// they are stored as `unnamed`, which is what the writer emits for an empty name.
+fn read_projected(object: &Object, db: &DatabaseContext) -> Result<Crs, FactoryError> {
+    let name = optional_name(object);
+    let base = object
+        .get("base_crs")
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            FactoryError::Invalid("PROJJSON projected CRS has no base_crs".to_owned())
+        })?;
+    let base_kind = base
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("GeographicCRS");
+    if base_kind != "GeographicCRS" {
+        return Err(FactoryError::Invalid(format!(
+            "PROJJSON projected base CRS type {base_kind} is not imported"
+        )));
+    }
+    let geographic = read_geographic(base, db)?;
+    let conversion_object = object
+        .get("conversion")
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            FactoryError::Invalid("PROJJSON projected CRS has no conversion".to_owned())
+        })?;
+    let conversion = read_conversion(conversion_object, db)?;
+    let coordinate_system = object
+        .get("coordinate_system")
+        .and_then(Value::as_object)
+        .map(read_cartesian_cs)
+        .transpose()?
+        .unwrap_or_else(|| CartesianCS::create_easting_northing(UnitOfMeasure::metre()));
+    let mut crs = ProjectedCRS::create(
+        name,
+        GeodeticCRS::Geographic(geographic),
+        conversion,
+        coordinate_system,
+    );
+    if let Some(identifier) = object
+        .get("id")
+        .and_then(Value::as_object)
+        .map(|id| read_id(id, db))
+        .transpose()?
+        .flatten()
+    {
+        crs = crs.with_identifier(identifier.code_space(), identifier.code());
+    }
+    Ok(Crs::Projected(crs))
+}
+
+fn read_conversion(object: &Object, db: &DatabaseContext) -> Result<Conversion, FactoryError> {
+    let name = optional_name(object);
+    let method_object = object
+        .get("method")
+        .and_then(Value::as_object)
+        .ok_or_else(|| FactoryError::Invalid("PROJJSON conversion has no method".to_owned()))?;
+    let (method, mapped) = read_method(method_object, db)?;
+    let parameters = object
+        .get("parameters")
+        .and_then(Value::as_array)
+        .map(|items| read_parameters(items, mapped, db))
+        .transpose()?
+        .unwrap_or_default();
+    let mut identified = Identified::named(name);
+    if let Some(identifier) = object
+        .get("id")
+        .and_then(Value::as_object)
+        .map(|id| read_id(id, db))
+        .transpose()?
+        .flatten()
+    {
+        identified = identified.with_id(identifier.code_space(), identifier.code());
+    }
+    Ok(Conversion {
+        identified,
+        method,
+        parameters,
+        source: None,
+        target: None,
+        version: None,
+        inverted: false,
+    })
+}
+
+fn read_method(
+    object: &Object,
+    db: &DatabaseContext,
+) -> Result<(OperationMethod, &'static super::parammap::MethodMap), FactoryError> {
+    let name = object.get("name").and_then(Value::as_str);
+    let identifier = object
+        .get("id")
+        .and_then(Value::as_object)
+        .map(|id| read_id(id, db))
+        .transpose()?
+        .flatten();
+    let code_number = identifier
+        .as_ref()
+        .and_then(|identifier| identifier.code().parse::<i32>().ok());
+    let mapped = code_number
+        .and_then(method_by_code)
+        .or_else(|| name.and_then(method_by_name))
+        .ok_or_else(|| {
+            FactoryError::Invalid(format!(
+                "PROJJSON conversion method {} is not imported",
+                name.unwrap_or("without a name")
+            ))
+        })?;
+    let (code_space, code) = match &identifier {
+        Some(identifier) => (
+            identifier.code_space().to_owned(),
+            identifier.code().to_owned(),
+        ),
+        None => (String::new(), String::new()),
+    };
+    let method_name = name.unwrap_or(mapped.wkt2_name).to_owned();
+    Ok((
+        OperationMethod::named_code(method_name, code_space, code),
+        mapped,
+    ))
+}
+
+fn read_parameters(
+    items: &[Value],
+    method: &super::parammap::MethodMap,
+    db: &DatabaseContext,
+) -> Result<Vec<Parameter>, FactoryError> {
+    let mut parameters = Vec::with_capacity(items.len());
+    for item in items {
+        let object = item.as_object().ok_or_else(|| {
+            FactoryError::Invalid("PROJJSON parameter is not an object".to_owned())
+        })?;
+        let name = optional_name(object);
+        let identifier = object
+            .get("id")
+            .and_then(Value::as_object)
+            .map(|id| read_id(id, db))
+            .transpose()?
+            .flatten();
+        let value = object.get("value").and_then(Value::as_f64).ok_or_else(|| {
+            FactoryError::Invalid(format!("PROJJSON parameter {name} has no value"))
+        })?;
+        let unit = match object.get("unit") {
+            Some(unit) => read_unit_value(unit)?,
+            None => parameter_unit(method, name, identifier.as_ref())?,
+        };
+        let (code_space, code) = match &identifier {
+            Some(identifier) => (
+                identifier.code_space().to_owned(),
+                identifier.code().to_owned(),
+            ),
+            None => (String::new(), String::new()),
+        };
+        parameters.push(Parameter {
+            name: name.to_owned(),
+            code_space,
+            code,
+            value: ParameterValue::Measure(Measure { value, unit }),
+        });
+    }
+    Ok(parameters)
+}
+
+/// Unit of a parameter that names none, from the method's parameter map.
+fn parameter_unit(
+    method: &super::parammap::MethodMap,
+    name: &str,
+    identifier: Option<&Identifier>,
+) -> Result<UnitOfMeasure, FactoryError> {
+    let code = identifier.and_then(|identifier| identifier.code().parse::<i32>().ok());
+    let found = method.params.iter().find(|param| {
+        code.is_some_and(|code| code != 0 && param.epsg_code == code)
+            || same_token(param.wkt2_name, name)
+    });
+    let Some(param) = found else {
+        return Err(FactoryError::Invalid(format!(
+            "PROJJSON parameter {name} has no unit"
+        )));
+    };
+    Ok(match param.unit {
+        UnitKind::Linear => UnitOfMeasure::metre(),
+        UnitKind::Angular => UnitOfMeasure::degree(),
+        UnitKind::Scale => UnitOfMeasure::unity(),
+        UnitKind::Time | UnitKind::None | UnitKind::Unknown => {
+            return Err(FactoryError::Invalid(format!(
+                "PROJJSON parameter {name} has no unit"
+            )));
+        }
+    })
+}
+
+fn same_token(left: &str, right: &str) -> bool {
+    let fold = |text: &str| {
+        text.chars()
+            .filter(|ch| !matches!(ch, ' ' | '_' | '-' | '/'))
+            .flat_map(|ch| ch.to_lowercase())
+            .collect::<String>()
+    };
+    fold(left) == fold(right)
+}
+
+fn read_cartesian_cs(object: &Object) -> Result<CartesianCS, FactoryError> {
+    let Some(axes) = object.get("axis").and_then(Value::as_array) else {
+        return Ok(CartesianCS::create_easting_northing(UnitOfMeasure::metre()));
+    };
+    let mut built = Vec::new();
+    for axis in axes {
+        let Some(axis) = axis.as_object() else {
+            continue;
+        };
+        built.push(read_axis(axis, UnitOfMeasure::metre())?);
+    }
+    CartesianCS::create(built)
+}
+
+fn read_axis(axis: &Object, default_unit: UnitOfMeasure) -> Result<Axis, FactoryError> {
+    let name = axis.get("name").and_then(Value::as_str).unwrap_or("axis");
+    let abbreviation = axis
+        .get("abbreviation")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let direction = axis
+        .get("direction")
+        .and_then(Value::as_str)
+        .unwrap_or("north");
+    let unit = match axis.get("unit") {
+        Some(unit) => read_unit_value(unit)?,
+        None => default_unit,
+    };
+    Ok(Axis::new(name, abbreviation, direction, unit))
+}
+
+fn read_unit_value(value: &Value) -> Result<UnitOfMeasure, FactoryError> {
+    match value {
+        Value::String(name) => named_unit(name, None),
+        Value::Object(object) => read_unit(object),
+        _ => Err(FactoryError::Invalid(
+            "PROJJSON unit is not a string or an object".to_owned(),
+        )),
+    }
+}
+
+fn named_unit(name: &str, factor: Option<f64>) -> Result<UnitOfMeasure, FactoryError> {
+    if name.eq_ignore_ascii_case("degree") {
+        return Ok(UnitOfMeasure::degree());
+    }
+    if name.eq_ignore_ascii_case("metre") || name.eq_ignore_ascii_case("meter") {
+        return Ok(UnitOfMeasure::metre());
+    }
+    if name.eq_ignore_ascii_case("unity") {
+        return Ok(UnitOfMeasure::unity());
+    }
+    Ok(UnitOfMeasure {
+        name: name.to_owned(),
+        factor: factor.unwrap_or(1.0),
+        kind: UnitKind::Unknown,
+        code_space: String::new(),
+        code: String::new(),
+    })
+}
+
+fn optional_name(object: &Object) -> &str {
+    object
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("unnamed")
+}
+
 fn read_geographic(object: &Object, db: &DatabaseContext) -> Result<GeographicCRS, FactoryError> {
-    let name = required_str(object, "name")?;
+    let name = optional_name(object);
     let datum = object
         .get("datum")
         .and_then(Value::as_object)
@@ -1409,7 +1894,7 @@ fn read_datum(
     object: &Object,
     db: &DatabaseContext,
 ) -> Result<GeodeticReferenceFrame, FactoryError> {
-    let name = required_str(object, "name")?;
+    let name = optional_name(object);
     let ellipsoid = object
         .get("ellipsoid")
         .and_then(Value::as_object)
@@ -1472,7 +1957,7 @@ fn read_ensemble(object: &Object, db: &DatabaseContext) -> Result<DatumEnsemble,
 }
 
 fn read_ellipsoid(object: &Object, db: &DatabaseContext) -> Result<Ellipsoid, FactoryError> {
-    let name = required_str(object, "name")?;
+    let name = optional_name(object);
     let semi_major = object
         .get("semi_major_axis")
         .and_then(Value::as_f64)
@@ -1523,22 +2008,7 @@ fn read_ellipsoidal_cs(object: &Object) -> Result<EllipsoidalCS, FactoryError> {
         let Some(axis) = axis.as_object() else {
             continue;
         };
-        let name = axis.get("name").and_then(Value::as_str).unwrap_or("axis");
-        let abbreviation = axis
-            .get("abbreviation")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        let direction = axis
-            .get("direction")
-            .and_then(Value::as_str)
-            .unwrap_or("north");
-        let unit = axis
-            .get("unit")
-            .and_then(Value::as_object)
-            .map(read_unit)
-            .transpose()?
-            .unwrap_or_else(UnitOfMeasure::degree);
-        built.push(Axis::new(name, abbreviation, direction, unit));
+        built.push(read_axis(axis, UnitOfMeasure::degree())?);
     }
     if built.len() == 2 || built.len() == 3 {
         Ok(EllipsoidalCS {
@@ -1557,23 +2027,8 @@ fn read_unit(object: &Object) -> Result<UnitOfMeasure, FactoryError> {
         .get("name")
         .and_then(Value::as_str)
         .unwrap_or("degree");
-    if name.eq_ignore_ascii_case("degree") {
-        return Ok(UnitOfMeasure::degree());
-    }
-    if name.eq_ignore_ascii_case("metre") || name.eq_ignore_ascii_case("meter") {
-        return Ok(UnitOfMeasure::metre());
-    }
-    let factor = object
-        .get("conversion_factor")
-        .and_then(Value::as_f64)
-        .unwrap_or(1.0);
-    Ok(UnitOfMeasure {
-        name: name.to_owned(),
-        factor,
-        kind: super::model::UnitKind::Unknown,
-        code_space: String::new(),
-        code: String::new(),
-    })
+    let factor = object.get("conversion_factor").and_then(Value::as_f64);
+    named_unit(name, factor)
 }
 
 fn read_id(object: &Object, db: &DatabaseContext) -> Result<Option<Identifier>, FactoryError> {

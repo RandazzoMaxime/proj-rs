@@ -337,7 +337,7 @@ fn ballpark_scale(src: &Axis, dst: Option<&Axis>) -> Option<f64> {
 /// meridian and vertical unit: a null geographic offset, which is `None` for any
 /// other pair. Its name follows `buildOpName`, so two CRS of the same name get a
 /// `(geog2D)` or `(geog3D)` qualifier.
-fn null_offset(source: &Crs, target: &Crs) -> Option<CoordinateOperation> {
+pub(crate) fn null_offset(source: &Crs, target: &Crs) -> Option<CoordinateOperation> {
     let (src, dst) = (geographic_of(source)?, geographic_of(target)?);
     if !same_geodetic_datum(source, target) {
         return None;

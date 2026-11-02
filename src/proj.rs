@@ -21,7 +21,7 @@ use bounds::Dims;
 use crate::crs::Crs;
 use crate::engine::Operation;
 use crate::engine::TransformError as StepError;
-use crate::proj_iso::{iso_pipeline, IsoPipeline};
+use crate::proj_iso::{iso_pipeline, iso_pipeline_at, IsoPipeline};
 use crate::{CreateError, Xyzt};
 
 /// Numeric type accepted by [`Coord`].
@@ -362,7 +362,7 @@ enum Body {
     Native(Operation),
     /// [`Proj::new_known_crs`] of a pair the ISO 19111 selection writes as a pipeline. The
     /// facade boundary is applied around it, see [`crate::proj_iso`].
-    Iso(IsoPipeline),
+    Iso(Box<IsoPipeline>),
     /// [`Proj::new_known_crs`]. Angular axes are degrees.
     ///
     /// `bridge` is a PROJ pipeline from source geodetic radians to target
@@ -446,7 +446,11 @@ impl Proj {
         // The ISO 19111 selection first, as `cs2cs` takes it. The previous CRS path
         // below is the fallback for a pair the selection does not write.
         if let Some(pipeline) = iso_pipeline(from, to) {
-            return Ok(built(Body::Iso(pipeline), format!("{from} -> {to}"), area));
+            return Ok(built(
+                Body::Iso(Box::new(pipeline)),
+                format!("{from} -> {to}"),
+                area,
+            ));
         }
         let source = Crs::parse(from)?;
         let target = Crs::parse(to)?;
@@ -494,10 +498,25 @@ impl Proj {
                 "target is not a single CRS".to_owned(),
             ));
         };
-        // A coordinate metadata object moves its coordinate in time. The epoch is not
-        // applied here, so the transform is refused rather than built without it.
+        // Two epochs are not a single `coordinateEpoch`. One epoch is applied on the
+        // ISO pipeline. If that pipeline cannot be built, the transform is refused:
+        // the datum-bridge fallback drops the time and would return an undated point.
         if let Some(error) = crate::proj_meta::time_dependent_refusal(self, target_crs) {
             return Err(error);
+        }
+        let epoch = crate::proj_meta::epoch_to_apply(self, target_crs);
+        if let Some(pipeline) = iso_pipeline_at(&self.definition, &target_crs.definition, epoch) {
+            return Ok(built(
+                Body::Iso(Box::new(pipeline)),
+                format!("{} -> {}", self.definition, target_crs.definition),
+                area,
+            ));
+        }
+        if epoch.is_some() {
+            return Err(ProjCreateError::ProjError(
+                "coordinate epoch is not applied: the operation has no pipeline this build can time"
+                    .to_owned(),
+            ));
         }
         let bridge = source.datum_bridge(target)?;
         Ok(built(
@@ -513,9 +532,10 @@ impl Proj {
 
     /// Build a coordinate metadata object: this CRS at `epoch`.
     ///
-    /// The object keeps the CRS and the epoch. Passing it to
-    /// [`Self::create_crs_to_crs_from_pj`] is refused, because the epoch is not applied
-    /// to a transformation.
+    /// The object keeps the CRS and the epoch. [`Self::create_crs_to_crs_from_pj`]
+    /// applies that epoch when exactly one side carries one. A static CRS such as
+    /// `EPSG:4326` still accepts an epoch here, as `proj_coordinate_metadata_create`
+    /// does in the georust test, even though PROJ 9 rejects an epoch on a static datum.
     ///
     /// # Errors
     ///
@@ -580,10 +600,22 @@ impl Proj {
                 accuracy: -1.0,
             };
         }
+        let definition = self.def().ok();
+        let deferred = definition.as_deref() == Some("unavailable until proj_trans is called");
+        let id = if deferred {
+            Some("unknown".to_owned())
+        } else {
+            definition.as_deref().and_then(crate::proj_info::proj_name)
+        };
+        let description = match &self.body {
+            Body::Iso(_) if deferred => Some("unavailable until proj_trans is called".to_owned()),
+            Body::Iso(pipeline) => Some(pipeline.chosen().name().to_owned()),
+            _ => Some(self.definition.clone()),
+        };
         ProjInfo {
-            id: None,
-            description: Some(self.definition.clone()),
-            definition: Some(self.definition.clone()),
+            id,
+            description,
+            definition,
             has_inverse: self.has_inverse(),
             accuracy: -1.0,
         }
@@ -595,20 +627,26 @@ impl Proj {
     /// `proj=… key=value …` with the datum's ellipsoid and `towgs84=` or
     /// `nadgrids=` appended. `+proj=longlat +datum=WGS84 +no_defs` gives
     /// `proj=longlat datum=WGS84 no_defs ellps=WGS84 towgs84=0,0,0`.
+    /// A one-step pipeline is that step. `+proj=cart` stays `cart`. `+init=` is
+    /// the expanded operation. A single CRS has no operation definition: PROJ's
+    /// `proj_pj_info` leaves it null. A pair is the normalized pipeline when one
+    /// operation can be built, and `unavailable until proj_trans is called` when
+    /// several can.
     ///
     /// # Errors
     ///
-    /// [`ProjError::Definition`] when no definition was stored, or when a PROJ
-    /// string cannot be read as a CRS (a pipeline, a grid step, `+init=`), or
-    /// names a datum PROJ does not know.
+    /// [`ProjError::Definition`] when no definition was stored, when a PROJ
+    /// string names a datum PROJ does not know, or when a single CRS is asked
+    /// for an operation definition.
     pub fn def(&self) -> Result<String, ProjError> {
         if self.definition.is_empty() {
             return Err(ProjError::Definition);
         }
-        if matches!(self.body, Body::Native(_)) {
-            return crate::proj_info::operation_definition(&self.definition);
+        match &self.body {
+            Body::Native(_) => crate::proj_info::operation_definition(&self.definition),
+            Body::Single(_) | Body::Between { .. } => Err(ProjError::Definition),
+            Body::Iso(pipeline) => pipeline.reported_definition(),
         }
-        Ok(self.definition.clone())
     }
 
     /// Version of the PROJ release this port follows.

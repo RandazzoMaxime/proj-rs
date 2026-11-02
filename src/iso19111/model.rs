@@ -1606,6 +1606,17 @@ impl OperationMethod {
         }
     }
 
+    /// The method of an inverse operation: `Inverse of` the name, under the `INVERSE(...)`
+    /// code space, as `createPropertiesForInverse` writes it.
+    pub(crate) fn inverse_of(&self) -> Self {
+        Self {
+            name: format!("Inverse of {}", self.name),
+            code_space: format!("INVERSE({})", self.code_space),
+            code: self.code.clone(),
+            parameters: self.parameters.clone(),
+        }
+    }
+
     /// Method with `name` and parameter definitions. The name may be empty.
     #[must_use]
     pub fn create(name: impl Into<String>, parameters: Vec<OperationParameter>) -> Self {
@@ -1923,6 +1934,31 @@ pub struct ConcatenatedOperation {
     pub(crate) computed_name: bool,
 }
 
+/// Which CRS of a step `crs_pair` reads when the operation stores none.
+enum StepSide {
+    Source,
+    Target,
+}
+
+/// One end of a concatenated step.
+fn step_end(step: Option<&ConcatenatedStep>, side: StepSide) -> Option<&Crs> {
+    let (source, target) = match &step?.operation {
+        CoordinateOperation::Conversion(operation) => {
+            (operation.source_crs(), operation.target_crs())
+        }
+        CoordinateOperation::Transformation(operation) => {
+            (operation.source_crs(), operation.target_crs())
+        }
+        CoordinateOperation::Concatenated(operation) => {
+            (operation.source_crs(), operation.target_crs())
+        }
+    };
+    match side {
+        StepSide::Source => source,
+        StepSide::Target => target,
+    }
+}
+
 impl ConcatenatedOperation {
     /// Name.
     #[must_use]
@@ -1958,6 +1994,44 @@ impl ConcatenatedOperation {
     #[must_use]
     pub fn version(&self) -> Option<&str> {
         self.version.as_deref()
+    }
+
+    /// The source and target CRS: the stored pair, or the source of the first step and the
+    /// target of the last when none is stored. `None` when a step has no CRS.
+    #[must_use]
+    pub(crate) fn crs_pair(&self) -> Option<(&Crs, &Crs)> {
+        let source = self.source_crs().or_else(|| {
+            let step = self.steps.first()?;
+            let side = if step.reverse {
+                StepSide::Target
+            } else {
+                StepSide::Source
+            };
+            step_end(Some(step), side)
+        })?;
+        let target = self.target_crs().or_else(|| {
+            let step = self.steps.last()?;
+            let side = if step.reverse {
+                StepSide::Source
+            } else {
+                StepSide::Target
+            };
+            step_end(Some(step), side)
+        })?;
+        Some((source, target))
+    }
+
+    /// The accuracy as PROJ's `PositionalAccuracy::value()` holds it. A name computed from the
+    /// steps has an accuracy written with `%.15g`. One read from the database is the number as
+    /// SQLite prints a real.
+    #[must_use]
+    pub(crate) fn accuracy_text(&self) -> Option<String> {
+        let value = self.accuracy?;
+        Some(if self.computed_name {
+            super::wkt::format_g(value, 15)
+        } else {
+            format!("{value:?}")
+        })
     }
 }
 

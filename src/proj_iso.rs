@@ -14,10 +14,10 @@
 
 use crate::engine::{Coord, Operation, TransformError};
 use crate::iso19111::{
-    best_pipeline_exact, create_from_user_input, lat_or_northing_first, Crs, DatabaseContext,
-    GeodeticCRS,
+    best_operation_exact, lat_or_northing_first, same_datum_noop, CoordinateOperation, Crs,
+    FactoryError, GeodeticCRS,
 };
-use crate::proj::Direction;
+use crate::proj::{Direction, ProjError};
 
 /// Which axis a CRS writes first in the pipeline.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -72,6 +72,14 @@ pub(crate) struct IsoPipeline {
     target: Side,
     /// Why the forward direction is refused, when the pair cannot take a height.
     refusal: Option<String>,
+    /// The ISO operation the pipeline was written from.
+    chosen: CoordinateOperation,
+    /// How many candidate operations libproj could build for the pair.
+    instantiable: usize,
+    /// The operation's PROJ string before an epoch is inserted, as `export` wrote it.
+    base_definition: String,
+    /// Coordinate epoch inserted as `proj=set` steps, when one side of the pair carries one.
+    epoch: Option<f64>,
 }
 
 /// The ISO pipeline from `from` to `to`, or `None` when the selection fails.
@@ -79,10 +87,33 @@ pub(crate) struct IsoPipeline {
 /// A compound CRS (a horizontal part and a vertical one) is read by its horizontal part:
 /// the axis order and the units come from there. Its vertical part is in the pipeline.
 pub(crate) fn iso_pipeline(from: &str, to: &str) -> Option<IsoPipeline> {
-    let (definition, _) = best_pipeline_exact(from, to).ok()?;
-    let db = DatabaseContext::create().ok()?;
-    let source = create_from_user_input(from, &db).ok()?;
-    let target = create_from_user_input(to, &db).ok()?;
+    iso_pipeline_at(from, to, None)
+}
+
+/// [`iso_pipeline`] with a coordinate epoch.
+///
+/// PROJ inserts `+proj=set +v_4=<epoch>` at both ends of the pipeline
+/// (`proj_coordoperation_create_proj_crs_to_crs` when `coordinateEpoch` is set).
+/// The helmert then reads that time. No epoch leaves the coordinate time at 0,
+/// which is what an undated `proj_trans` passes.
+pub(crate) fn iso_pipeline_at(from: &str, to: &str, epoch: Option<f64>) -> Option<IsoPipeline> {
+    // A same-datum pair has no registered operation. PROJ still builds the null
+    // geographic offset, and that is the pipeline `def()` reports.
+    let choice = match best_operation_exact(from, to) {
+        Ok(choice) => choice,
+        // Only an empty candidate list. An approximate or grid-less choice stays
+        // on the caller's previous path instead of becoming a null offset.
+        Err(FactoryError::Format(message)) if message.starts_with("no operation from ") => {
+            same_datum_noop(from, to).ok()?
+        }
+        Err(_) => return None,
+    };
+    let base_definition = choice.definition.clone();
+    let definition = match epoch {
+        Some(year) => with_epoch_steps(&choice.definition, year),
+        None => choice.definition,
+    };
+    let (source, target) = (choice.source, choice.target);
     let source_horizontal = horizontal_part(&source).filter(|crs| is_horizontal(crs))?;
     let target_horizontal = horizontal_part(&target).filter(|crs| is_horizontal(crs))?;
     let operation = Operation::create(&definition).ok()?;
@@ -91,7 +122,66 @@ pub(crate) fn iso_pipeline(from: &str, to: &str) -> Option<IsoPipeline> {
         source: Side::of(source_horizontal),
         target: Side::of(target_horizontal),
         refusal: refusal(&source, &target),
+        chosen: choice.operation,
+        instantiable: choice.instantiable,
+        base_definition,
+        epoch,
     })
+}
+
+/// `proj=set v_4=<year>` as the first and last step. A bare operation is wrapped in a pipeline.
+fn with_epoch_steps(definition: &str, year: f64) -> String {
+    let year = format_year(year);
+    let plus = definition
+        .split_whitespace()
+        .any(|token| token.starts_with('+'));
+    let mark = |token: &str| {
+        if plus {
+            format!("+{token}")
+        } else {
+            token.to_owned()
+        }
+    };
+    let tokens: Vec<String> = definition
+        .split_whitespace()
+        .map(|token| token.strip_prefix('+').unwrap_or(token).to_owned())
+        .collect();
+    let set = [
+        "step".to_owned(),
+        "proj=set".to_owned(),
+        format!("v_4={year}"),
+    ];
+    let mut out = Vec::new();
+    if tokens.first().map(String::as_str) == Some("proj=pipeline") {
+        out.push(mark("proj=pipeline"));
+        for token in &set {
+            out.push(mark(token));
+        }
+        for token in tokens.iter().skip(1) {
+            out.push(mark(token));
+        }
+    } else {
+        out.push(mark("proj=pipeline"));
+        for token in &set {
+            out.push(mark(token));
+        }
+        out.push(mark("step"));
+        for token in &tokens {
+            out.push(mark(token));
+        }
+    }
+    for token in &set {
+        out.push(mark(token));
+    }
+    out.join(" ")
+}
+
+fn format_year(year: f64) -> String {
+    if year.is_finite() && year.fract() == 0.0 {
+        format!("{year:.0}")
+    } else {
+        format!("{year}")
+    }
 }
 
 /// The horizontal CRS of a pair side: the CRS itself, or the first component of a
@@ -109,7 +199,11 @@ fn horizontal_part(crs: &Crs) -> Option<&Crs> {
 /// A geographic or projected CRS: the kinds whose two horizontal axes the facade
 /// boundary covers.
 fn is_horizontal(crs: &Crs) -> bool {
-    is_geographic(crs) || matches!(crs, Crs::Projected(_))
+    is_geographic(crs)
+        || matches!(
+            crs,
+            Crs::Projected(_) | Crs::Geodetic(GeodeticCRS::Geocentric(_))
+        )
 }
 
 /// Whether a CRS carries a height: a compound, or a geographic CRS of three axes.
@@ -148,6 +242,37 @@ fn is_geographic(crs: &Crs) -> bool {
 }
 
 impl IsoPipeline {
+    /// The ISO operation this pipeline was written from.
+    pub(crate) fn chosen(&self) -> &CoordinateOperation {
+        &self.chosen
+    }
+
+    /// How many candidate operations libproj could build for the pair.
+    pub(crate) fn instantiable(&self) -> usize {
+        self.instantiable
+    }
+
+    /// `proj_pj_info().definition` of this pair, after `proj_normalize_for_visualization`.
+    ///
+    /// One instantiable operation is that pipeline. The axis swap a lat-first or
+    /// northing-first side contributes is not in the string: normalization folds
+    /// it into the CRS, which is what georust stores (`new_known_crs` normalizes).
+    /// Several instantiable operations are the text PROJ stores until `proj_trans`
+    /// picks one: `unavailable until proj_trans is called`. An epoch adds
+    /// `proj=set v_4=<year>` at both ends.
+    pub(crate) fn reported_definition(&self) -> Result<String, ProjError> {
+        if self.instantiable() != 1 {
+            return Ok("unavailable until proj_trans is called".to_owned());
+        }
+        let visualized = visualization_definition(&self.base_definition, self.source, self.target);
+        let finished = crate::proj_info::parameters_of_operation(&visualized)
+            .map_err(|_| ProjError::Definition)?;
+        Ok(match self.epoch {
+            Some(year) => with_epoch_steps(&finished, year),
+            None => finished,
+        })
+    }
+
     /// One point in `way` direction, facade order on both sides. The third axis passes
     /// through the pipeline, as `z` does in its geocentric steps.
     pub(crate) fn map(&self, coord: Coord, way: Direction) -> Result<Coord, TransformError> {
@@ -191,4 +316,58 @@ impl IsoPipeline {
             Err(TransformError::NoInverse)
         )
     }
+}
+
+/// The PROJ string `proj_normalize_for_visualization` leaves in `proj_pj_info`.
+///
+/// A side whose first axis is latitude or northing contributes
+/// `step proj=axisswap order=2,1` at that end of the authority pipeline. The
+/// normalized object drops those steps. Measured on PROJ 9.8.1: `EPSG:4326` to
+/// `EPSG:3857` loses the leading swap and keeps the unit conversion and `webmerc`.
+fn visualization_definition(definition: &str, source: Side, target: Side) -> String {
+    let mut tokens = bare_tokens(definition);
+    if source.lead == Lead::LatOrNorthing {
+        tokens = drop_leading_swap(tokens);
+    }
+    if target.lead == Lead::LatOrNorthing {
+        tokens = drop_trailing_swap(tokens);
+    }
+    tokens.join(" ")
+}
+
+fn bare_tokens(definition: &str) -> Vec<String> {
+    definition
+        .split_whitespace()
+        .map(|token| token.strip_prefix('+').unwrap_or(token).to_owned())
+        .collect()
+}
+
+fn drop_leading_swap(mut tokens: Vec<String>) -> Vec<String> {
+    if tokens.len() >= 4
+        && tokens[0] == "proj=pipeline"
+        && tokens[1] == "step"
+        && tokens[2] == "proj=axisswap"
+        && tokens[3] == "order=2,1"
+    {
+        let rest = tokens.split_off(4);
+        if rest.first().map(String::as_str) == Some("step") {
+            let mut out = vec!["proj=pipeline".to_owned()];
+            out.extend(rest);
+            return out;
+        }
+        return rest;
+    }
+    tokens
+}
+
+fn drop_trailing_swap(mut tokens: Vec<String>) -> Vec<String> {
+    let len = tokens.len();
+    if len >= 3
+        && tokens[len - 3] == "step"
+        && tokens[len - 2] == "proj=axisswap"
+        && tokens[len - 1] == "order=2,1"
+    {
+        tokens.truncate(len - 3);
+    }
+    tokens
 }

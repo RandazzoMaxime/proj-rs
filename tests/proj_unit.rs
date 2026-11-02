@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use proj_rs::{CreateError, Operation, Proj, ProjBuilder, UtmZone, Xyzt};
+use proj_rs::{CreateError, Operation, Proj, ProjBuilder, ProjError, UtmZone, Xyzt};
 
 fn near(got: f64, expect: f64, tol: f64) {
     assert!((got - expect).abs() <= tol, "{got} vs {expect} (tol {tol})");
@@ -716,8 +716,9 @@ fn util_name_factory_is_not_a_projection() {
     assert!(Proj::new("foo").is_err());
     assert!(Proj::new("bar/foo").is_err());
     let crs = Proj::new("EPSG:4326").expect("epsg");
-    let definition = crs.def().expect("definition");
-    assert!(definition.contains("4326"), "{definition}");
+    // `proj_pj_info` of a CRS object has a null definition. The code is not
+    // handed back as if it were an operation.
+    assert!(matches!(crs.def(), Err(ProjError::Definition)));
 }
 
 #[test]

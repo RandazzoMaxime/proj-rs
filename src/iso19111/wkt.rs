@@ -260,6 +260,14 @@ impl WktFormatter {
         self
     }
 
+    /// `pushHasId(false)` on the current node: identifiers below it are written even when an
+    /// ancestor has one.
+    fn simul_cur_node_has_id_cleared(&mut self) {
+        if let Some(flag) = self.stack_has_id.last_mut() {
+            *flag = false;
+        }
+    }
+
     /// Hide authority nodes. Only valid before the first node.
     ///
     /// # Errors
@@ -1996,10 +2004,79 @@ fn export_operation(
         super::model::CoordinateOperation::Transformation(transformation) => {
             export_transformation(transformation, formatter)
         }
-        super::model::CoordinateOperation::Concatenated(_) => Err(FactoryError::Format(
-            "a concatenated operation is not exported as a single WKT node here".to_owned(),
-        )),
+        super::model::CoordinateOperation::Concatenated(concatenated) => {
+            export_concatenated(concatenated, formatter)
+        }
     }
+}
+
+/// `ConcatenatedOperation::_exportToWKT`: WKT2:2019 only. The CRS pair and each step are
+/// written as they are on their own, identifiers included, as PROJ's `pushHasId(false)` makes
+/// them.
+fn export_concatenated(
+    concatenated: &super::model::ConcatenatedOperation,
+    formatter: &mut WktFormatter,
+) -> Result<(), FactoryError> {
+    if !formatter.wkt2 || !formatter.keywords_2019 {
+        return Err(FactoryError::Format(
+            "Transformation can only be exported to WKT2:2019".to_owned(),
+        ));
+    }
+    let (source, target) = concatenated.crs_pair().ok_or_else(|| {
+        FactoryError::Format(format!(
+            "concatenated operation {} has no CRS pair",
+            concatenated.name()
+        ))
+    })?;
+    formatter.start_node(
+        "CONCATENATEDOPERATION",
+        node_from_ids(&concatenated.identified.identifiers),
+    );
+    formatter.add_quoted(concatenated.name());
+    if let Some(version) = &concatenated.version {
+        formatter.start_node("VERSION", NodeId::Absent);
+        formatter.add_quoted(version);
+        formatter.end_node();
+    }
+    let disabled = usize::from(!concatenated.identified.domains.is_empty());
+    formatter.usage_disabled += disabled;
+    let exported = export_concatenated_body(concatenated, source, target, formatter);
+    formatter.usage_disabled -= disabled;
+    exported?;
+    if let Some(text) = concatenated.accuracy_text() {
+        formatter.start_node("OPERATIONACCURACY", NodeId::Absent);
+        formatter.add_raw(&text);
+        formatter.end_node();
+    }
+    formatter.base_usage(&concatenated.identified);
+    formatter.end_node();
+    Ok(())
+}
+
+fn export_concatenated_body(
+    concatenated: &super::model::ConcatenatedOperation,
+    source: &Crs,
+    target: &Crs,
+    formatter: &mut WktFormatter,
+) -> Result<(), FactoryError> {
+    let can_export_id = !(formatter.id_on_top_only && top_has_id(formatter));
+    for (keyword, crs) in [("SOURCECRS", source), ("TARGETCRS", target)] {
+        formatter.start_node(keyword, NodeId::Absent);
+        if can_export_id && !crs.identifiers().is_empty() {
+            formatter.simul_cur_node_has_id_cleared();
+        }
+        export_crs(crs, formatter)?;
+        formatter.end_node();
+    }
+    for step in concatenated.steps() {
+        formatter.start_node("STEP", NodeId::Absent);
+        if can_export_id && !step.operation().identifiers().is_empty() {
+            formatter.simul_cur_node_has_id_cleared();
+        }
+        export_operation(step.operation(), formatter)?;
+        formatter.end_node();
+    }
+    Ok(())
 }
 
 fn export_transformation_crs(

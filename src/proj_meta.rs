@@ -1,11 +1,10 @@
 //! Coordinate metadata objects: a CRS and an epoch, as libproj's
 //! `proj_coordinate_metadata_create` builds them.
 //!
-//! The object is the CRS [`crate::Proj`] itself, with the epoch stored beside it. An
-//! epoch matters only to a transformation that moves a coordinate in time. This port
-//! does not apply the epoch, so a CRS-to-CRS transform that takes such an object as its
-//! source or its target is refused when it is created, rather than built with the epoch
-//! ignored.
+//! The object is the CRS [`crate::Proj`] itself, with the epoch stored beside it.
+//! [`crate::Proj::create_crs_to_crs_from_pj`] applies one epoch by inserting
+//! `proj=set` steps, the way PROJ does. Two epochs are refused: PROJ's C API does
+//! not set `coordinateEpoch` when both sides carry one.
 
 use crate::proj::{Proj, ProjCreateError};
 
@@ -21,12 +20,19 @@ pub(crate) fn epoch_of(object: &Proj) -> f64 {
     object.epoch.unwrap_or(f64::NAN)
 }
 
-/// The refusal of a CRS-to-CRS transform whose source or target carries an epoch.
+/// The refusal of a CRS-to-CRS transform whose source and target both carry an epoch.
 pub(crate) fn time_dependent_refusal(source: &Proj, target: &Proj) -> Option<ProjCreateError> {
-    (source.epoch.is_some() || target.epoch.is_some()).then(|| {
+    (source.epoch.is_some() && target.epoch.is_some()).then(|| {
         ProjCreateError::ProjError(
-            "coordinate metadata epoch is not applied: a time-dependent transformation is not built"
-                .to_owned(),
+            "both CRS carry a coordinate epoch: a two-epoch transformation is not built".to_owned(),
         )
     })
+}
+
+/// The epoch to apply, when exactly one side carries one.
+pub(crate) fn epoch_to_apply(source: &Proj, target: &Proj) -> Option<f64> {
+    match (source.epoch, target.epoch) {
+        (Some(year), None) | (None, Some(year)) => Some(year),
+        _ => None,
+    }
 }
