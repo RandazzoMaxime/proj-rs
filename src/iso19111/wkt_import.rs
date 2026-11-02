@@ -7,13 +7,16 @@
 use super::bound::extract_geographic;
 use super::buildop::{OpProps, UtmHemisphere};
 use super::equiv::Equivalence;
+use super::niche::{ParametricCS, ParametricDatum, TemporalCS, TemporalCsKind, TemporalDatum};
+
+mod niche;
 use super::factory::{AuthorityFactory, DatabaseContext};
 use super::model::{
     Axis, BoundCRS, CartesianCS, CompoundCRS, ConcatenatedOperation, ConcatenatedStep, Conversion,
     CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble, Ellipsoid, EllipsoidalCS,
     EngineeringCRS, EngineeringDatum, FactoryError, GeocentricCRS, GeodeticCRS,
     GeodeticReferenceFrame, GeographicCRS, GeoidModel, Identified, Identifier, Measure, Meridian,
-    ObjectDomain, OperationMethod, OrdinalCS, Parameter, ParameterValue, ParametricDatum,
+    ObjectDomain, OperationMethod, OrdinalCS, Parameter, ParameterValue,
     PrimeMeridian, ProjectedCRS, SphericalCS, SphericalGeodeticCRS, Transformation, UnitKind,
     UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame,
 };
@@ -298,6 +301,8 @@ impl Props {
             proj_method_override: None,
             original_compound: None,
             allow_non_conformant_wkt1: false,
+            temporal_start: None,
+            temporal_end: None,
         };
         // `CRS::setProperties` copies `PROJ CRS string: ...` into EXTENSION_PROJ4
         // when the WKT node itself has no `EXTENSION["PROJ4"]`.
@@ -342,7 +347,7 @@ pub enum WktObject {
     /// `CONCATENATEDOPERATION`.
     Concatenated(ConcatenatedOperation),
     /// `TDATUM` or `TIMEDATUM`.
-    TemporalDatum,
+    TemporalDatum(TemporalDatum),
     /// `PDATUM` or `PARAMETRICDATUM`.
     ParametricDatum(ParametricDatum),
     /// A node that parses but is not an ISO 19111 object, such as a bare `AUTHORITY`.
@@ -707,7 +712,7 @@ impl WktParser {
         let name = node.value.as_str();
         if is_geodetic_keyword(name) {
             if node.child(&["BASEGEOGCRS", "BASEGEODCRS"]).is_some() {
-                return Err(invalid("derived geodetic CRS is not parsed in this build"));
+                return self.build_derived_geodetic(node);
             }
             return self.build_geodetic_crs(node);
         }
@@ -719,6 +724,9 @@ impl WktParser {
             || ci_eq(name, "VERT_CS")
             || ci_eq(name, "VERTCS")
         {
+            if node.child(&["BASEVERTCRS"]).is_some() {
+                return self.build_derived_vertical(node);
+            }
             let vertical = self.build_vertical(node)?;
             return Ok(WktObject::Crs(self.finish_vertical(vertical)));
         }
@@ -728,17 +736,28 @@ impl WktParser {
         if ci_eq(name, "BOUNDCRS") {
             return self.build_bound(node);
         }
-        if ci_eq(name, "ENGCRS") || ci_eq(name, "ENGINEERINGCRS") || ci_eq(name, "LOCAL_CS") {
+        if ci_eq(name, "ENGCRS") || ci_eq(name, "ENGINEERINGCRS") {
+            return self.build_engineering_object(node);
+        }
+        if ci_eq(name, "LOCAL_CS") {
             return self.build_engineering(node);
         }
+        if ci_eq(name, "TIMECRS") {
+            return self.build_temporal_object(node);
+        }
+        if ci_eq(name, "PARAMETRICCRS") {
+            return self.build_parametric_object(node);
+        }
+        if ci_eq(name, "DERIVEDPROJCRS") {
+            return self.build_derived_projected(node);
+        }
         if ci_eq(name, "TDATUM") || ci_eq(name, "TIMEDATUM") {
-            return Ok(WktObject::TemporalDatum);
+            return Ok(WktObject::TemporalDatum(self.build_temporal_datum(node)?));
         }
         if ci_eq(name, "PDATUM") || ci_eq(name, "PARAMETRICDATUM") {
-            let props = self.build_properties(node)?;
-            let mut identified = props.identified();
-            identified.anchor = self.anchor_of(node)?;
-            return Ok(WktObject::ParametricDatum(ParametricDatum { identified }));
+            return Ok(WktObject::ParametricDatum(
+                self.build_parametric_datum(node)?,
+            ));
         }
         if ci_eq(name, "AUTHORITY") || ci_eq(name, "ID") {
             return Ok(WktObject::Unknown);
@@ -1093,7 +1112,7 @@ impl WktParser {
             ("ANGLEUNIT", UnitKind::Angular),
             ("SCALEUNIT", UnitKind::Scale),
             ("TIMEUNIT", UnitKind::Time),
-            ("PARAMETRICUNIT", UnitKind::Unknown),
+            ("PARAMETRICUNIT", UnitKind::Parametric),
             ("UNIT", kind),
             ("LINUNIT", UnitKind::Linear),
         ] {
@@ -1500,6 +1519,7 @@ impl WktParser {
         let mut ensemble = DatumEnsemble::create(props.name, members, accuracy)?;
         ensemble.identified.identifiers = props.identifiers;
         ensemble.identified.remarks = props.remarks;
+        ensemble.accuracy_text = Some(accuracy_node.children[0].value.clone());
         Ok(ensemble)
     }
 
@@ -1749,8 +1769,7 @@ impl WktParser {
                     .unwrap_or(default_angular);
                 return Ok(CoordinateSystem::Ellipsoidal(latitude_longitude(unit)));
             }
-            if (ci_eq(parent_name, "PROJCS") || ci_eq(parent_name, "BASEPROJCRS"))
-                && axis_count == 0
+            if matches_any(parent_name, &["PROJCS", "BASEPROJCRS", "BASEENGCRS"]) && axis_count == 0
             {
                 let unit = if ci_eq(parent_name, "PROJCS") {
                     self.linear_or_warn(parent, UnitOfMeasure::metre())?
@@ -1790,6 +1809,25 @@ impl WktParser {
                     axis,
                 }));
             }
+            if ci_eq(parent_name, "BASEPARAMCRS") && axis_count == 0 {
+                let unit = self
+                    .unit_in(parent, UnitKind::Linear)?
+                    .unwrap_or_else(|| UnitOfMeasure::new("unknown", 1.0, UnitKind::Parametric));
+                return Ok(CoordinateSystem::Parametric(ParametricCS {
+                    identified: Identified::default(),
+                    axis: Axis::new("unknown parametric", "", "unspecified", unit),
+                }));
+            }
+            if ci_eq(parent_name, "BASETIMECRS") && axis_count == 0 {
+                let unit = self
+                    .unit_in(parent, UnitKind::Time)?
+                    .unwrap_or_else(|| UnitOfMeasure::new("unknown", 1.0, UnitKind::Time));
+                return Ok(CoordinateSystem::Temporal(TemporalCS {
+                    identified: Identified::default(),
+                    axis: Axis::new("unknown temporal", "", "future", unit),
+                    kind: TemporalCsKind::DateTime,
+                }));
+            }
             if ci_eq(parent_name, "LOCAL_CS") && axis_count == 0 {
                 let unit = self
                     .unit_in(parent, UnitKind::Linear)?
@@ -1814,9 +1852,14 @@ impl WktParser {
             } else if ci_eq(parent_name, "GEOCCS")
                 || ci_eq(parent_name, "PROJCS")
                 || ci_eq(parent_name, "BASEPROJCRS")
+                || ci_eq(parent_name, "BASEENGCRS")
                 || (ci_eq(parent_name, "LOCAL_CS") && axis_count != 1)
             {
                 "Cartesian"
+            } else if ci_eq(parent_name, "BASEPARAMCRS") {
+                "parametric"
+            } else if ci_eq(parent_name, "BASETIMECRS") {
+                "temporal"
             } else if matches_any(parent_name, &["VERT_CS", "VERTCS", "BASEVERTCRS"])
                 || (ci_eq(parent_name, "LOCAL_CS") && axis_count == 1)
             {
@@ -1847,6 +1890,10 @@ impl WktParser {
             UnitKind::Angular
         } else if ci_eq(cs_type, "ordinal") {
             UnitKind::None
+        } else if ci_eq(cs_type, "parametric") {
+            UnitKind::Parametric
+        } else if is_temporal_cs_type(cs_type) {
+            UnitKind::Time
         } else if ci_eq(cs_type, "Cartesian")
             || ci_eq(cs_type, "vertical")
             || ci_eq(cs_type, "affine")
@@ -1910,6 +1957,37 @@ impl WktParser {
                 identified: Identified::default(),
                 axes,
             }));
+        }
+        if ci_eq(cs_type, "parametric") && axes.len() == 1 {
+            return Ok(CoordinateSystem::Parametric(ParametricCS {
+                identified: Identified::default(),
+                axis: axes.remove(0),
+            }));
+        }
+        if is_temporal_cs_type(cs_type) && axes.len() == 1 {
+            let kind = if ci_eq(cs_type, "temporal") {
+                if parent.child(&["TIMEUNIT"]).is_none() && parent.child(&["UNIT"]).is_none() {
+                    TemporalCsKind::DateTime
+                } else {
+                    TemporalCsKind::Measure
+                }
+            } else if ci_eq(cs_type, "TemporalCount") {
+                TemporalCsKind::Count
+            } else if ci_eq(cs_type, "TemporalMeasure") {
+                TemporalCsKind::Measure
+            } else {
+                TemporalCsKind::DateTime
+            };
+            return Ok(CoordinateSystem::Temporal(TemporalCS {
+                identified: Identified::default(),
+                axis: axes.remove(0),
+                kind,
+            }));
+        }
+        if ci_eq(cs_type, "parametric") || is_temporal_cs_type(cs_type) {
+            return Err(invalid(format!(
+                "buildCS: invalid CS axis count for {cs_type}"
+            )));
         }
         Err(invalid(format!("unhandled CS type: {cs_type}")))
     }
@@ -2026,6 +2104,9 @@ impl WktParser {
             None if unit_kind == UnitKind::Linear => {
                 self.recover("buildCS: missing UNIT in AXIS node. Assuming metre")?;
                 UnitOfMeasure::metre()
+            }
+            None if matches!(unit_kind, UnitKind::None | UnitKind::Time) => {
+                UnitOfMeasure::new("", 1.0, UnitKind::None)
             }
             None => return Err(invalid("buildCS: missing UNIT")),
         };
@@ -2314,7 +2395,11 @@ impl WktParser {
             .first()
             .map(|axis| axis.unit().clone())
             .unwrap_or_else(UnitOfMeasure::degree);
-        let cs = self.build_cs(node.child(&["CS"]), node, angular.clone())?;
+        let inferred = self.base_projected_cs(node)?;
+        let cs = match inferred {
+            Some(cs) => cs,
+            None => self.build_cs(node.child(&["CS"]), node, angular.clone())?,
+        };
         let CoordinateSystem::Cartesian(mut coordinate_system) = cs else {
             return Err(invalid("projected CRS requires a Cartesian CS"));
         };
@@ -2425,7 +2510,8 @@ impl WktParser {
         }
         let props = self.build_properties(node)?;
         let method_props = self.build_properties(method_node)?;
-        let parameters = self.parameters_of(node, &linear, &angular)?;
+        let mut parameters = self.parameters_of(node, &linear, &angular)?;
+        let interpolation = self.take_interpolation_crs(&mut parameters);
         Ok(Conversion {
             identified: props.identified(),
             method: OperationMethod {
@@ -2447,6 +2533,7 @@ impl WktParser {
             target: None,
             version: props.version,
             inverted: false,
+            interpolation: interpolation.map(Box::new),
         })
     }
 
@@ -2657,6 +2744,7 @@ impl WktParser {
             target: None,
             version: None,
             inverted: false,
+            interpolation: None,
         })
     }
 
@@ -2687,7 +2775,14 @@ impl WktParser {
                     if unit.is_none() {
                         unit = guess_parameter_unit(&props.name, linear, angular);
                     }
-                    if let Some(unit) = unit {
+                    if is_interpolation_code_parameter(&props) {
+                        let code = interpolation_code(number).ok_or_else(|| {
+                            invalid(
+                                "EPSG code for a horizontal or interpolation CRS is not an integer",
+                            )
+                        })?;
+                        ParameterValue::Integer(code)
+                    } else if let Some(unit) = unit {
                         ParameterValue::Measure(Measure {
                             value: number,
                             unit,
@@ -2869,21 +2964,22 @@ impl WktParser {
         let props = self.build_properties(node)?;
         let datum = if let Some(datum) = node.child(&["EDATUM", "ENGINEERINGDATUM", "LOCAL_DATUM"])
         {
-            let datum_props = self.build_properties(datum)?;
-            EngineeringDatum {
-                identified: datum_props.identified(),
-            }
+            self.build_engineering_datum(datum)?
         } else if ci_eq(&node.value, "LOCAL_CS") {
             EngineeringDatum {
-                identified: Identified::named(props.name.clone()),
+                identified: Identified::named("Unknown engineering datum"),
             }
         } else {
-            return Err(invalid("missing EDATUM"));
+            return Err(invalid("Missing EDATUM / ENGINEERINGDATUM node"));
         };
         let cs = if ci_eq(&node.value, "LOCAL_CS") {
             self.build_cs(None, node, UnitOfMeasure::degree())?
         } else {
-            self.build_cs(node.child(&["CS"]), node, UnitOfMeasure::degree())?
+            let cs_node = node.child(&["CS"]);
+            if cs_node.is_none() && !ci_eq(&node.value, "BASEENGCRS") {
+                return Err(invalid("missing CS"));
+            }
+            self.build_cs(cs_node, node, UnitOfMeasure::degree())?
         };
         Ok(WktObject::Crs(Crs::Engineering(EngineeringCRS {
             identified: props.identified(),
@@ -3253,6 +3349,35 @@ fn dms_prime_meridian(name: &str) -> Option<(i32, f64, f64)> {
         .map(|(_, degrees, minutes, seconds)| (*degrees, *minutes, *seconds))
 }
 
+/// `isEPSGCodeForInterpolationParameter`.
+fn is_interpolation_code_parameter(props: &Props) -> bool {
+    props.name == "EPSG code for Interpolation CRS"
+        || props.name == "EPSG code for Horizontal CRS"
+        || props.identifiers.first().is_some_and(|id| {
+            id.code_space == "EPSG" && matches!(id.code.as_str(), "1048" | "1037")
+        })
+}
+
+/// An integer-valued finite parameter, parsed from its shortest decimal form.
+fn interpolation_code(number: f64) -> Option<i64> {
+    if !number.is_finite() || number.fract() != 0.0 {
+        return None;
+    }
+    format!("{number:.0}").parse().ok()
+}
+
+fn is_temporal_cs_type(cs_type: &str) -> bool {
+    matches_any(
+        cs_type,
+        &[
+            "temporal",
+            "TemporalDateTime",
+            "TemporalCount",
+            "TemporalMeasure",
+        ],
+    )
+}
+
 fn is_geodetic_keyword(name: &str) -> bool {
     matches_any(
         name,
@@ -3287,6 +3412,9 @@ fn is_crs_keyword(name: &str) -> bool {
                 "ENGCRS",
                 "ENGINEERINGCRS",
                 "LOCAL_CS",
+                "TIMECRS",
+                "PARAMETRICCRS",
+                "DERIVEDPROJCRS",
             ],
         )
 }

@@ -73,7 +73,7 @@ fn object_kind(object: &WktObject) -> &'static str {
         WktObject::Conversion(_) => "conversion",
         WktObject::Transformation(_) => "transformation",
         WktObject::Concatenated(_) => "concatenated operation",
-        WktObject::TemporalDatum => "temporal datum",
+        WktObject::TemporalDatum(_) => "temporal datum",
         WktObject::ParametricDatum(_) => "parametric datum",
         WktObject::Unknown => "unknown",
     }
@@ -103,6 +103,9 @@ fn crs_kind(crs: &Crs) -> &'static str {
         Crs::Compound(_) => "compound",
         Crs::Engineering(_) => "engineering",
         Crs::Bound(_) => "bound",
+        Crs::Temporal(_) => "temporal",
+        Crs::Parametric(_) => "parametric",
+        Crs::Derived(_) => "derived",
     }
 }
 
@@ -1018,7 +1021,9 @@ fn crs_domains(crs: &Crs) -> &[ObjectDomain] {
         Crs::Vertical(crs) => crs.domains(),
         Crs::Compound(crs) => crs.domains(),
         Crs::Engineering(crs) => crs.domains(),
-        Crs::DerivedProjected(_) | Crs::Bound(_) => &[],
+        Crs::Temporal(crs) => crs.domains(),
+        Crs::Parametric(crs) => crs.domains(),
+        Crs::DerivedProjected(_) | Crs::Bound(_) | Crs::Derived(_) => &[],
     }
 }
 
@@ -1039,6 +1044,8 @@ fn body_of_crs(crs: &Crs) -> Option<&'static str> {
             .map(|ellipsoid| body_static(ellipsoid.celestial_body())),
         Crs::Bound(crs) => body_of_crs(crs.source_crs()),
         Crs::DerivedProjected(crs) => body_of_crs(&Crs::Projected(crs.base_crs().clone())),
+        Crs::Derived(crs) => body_of_crs(crs.base_crs()),
+        Crs::Temporal(_) | Crs::Parametric(_) => Some("Earth"),
     }
 }
 

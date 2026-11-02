@@ -34,6 +34,22 @@ impl Conversion {
         } else {
             (self.source_crs(), self.target_crs())
         };
+        if super::transform_export::is_geographic_offset(self) {
+            let (Some(source), Some(target)) = (source, target) else {
+                return Err(FactoryError::Format(
+                    "a conversion step of a concatenated operation has no PROJ string in this crate"
+                        .to_owned(),
+                ));
+            };
+            if self.inverted {
+                formatter.start_inversion();
+            }
+            super::transform_export::geographic_offsets(self, source, target, formatter)?;
+            if self.inverted {
+                formatter.stop_inversion();
+            }
+            return Ok(());
+        }
         if self.inverted {
             formatter.start_inversion();
         }

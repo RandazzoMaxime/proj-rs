@@ -9,6 +9,8 @@ use super::esri_parammap::{
 };
 use super::factory::{AuthorityFactory, DatabaseContext};
 use super::wkt_import::WktParser;
+
+mod niche;
 /// Whether the node being opened carries an authority identifier.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NodeId {
@@ -156,6 +158,8 @@ pub struct WktFormatter {
     axis_linear: Vec<UnitOfMeasure>,
     axis_angular: Vec<UnitOfMeasure>,
     abridged: bool,
+    /// `setUseDerivingConversion`: the next conversion is a `DERIVINGCONVERSION`.
+    use_deriving_conversion: bool,
     /// Nesting of `pushDisableUsage`: while positive, no `USAGE` or `REMARK` is written.
     usage_disabled: usize,
     db: Option<DatabaseContext>,
@@ -209,6 +213,7 @@ impl WktFormatter {
             axis_linear: vec![UnitOfMeasure::metre()],
             axis_angular: vec![UnitOfMeasure::degree()],
             abridged: false,
+            use_deriving_conversion: false,
             usage_disabled: 0,
             db: None,
         }
@@ -458,6 +463,7 @@ impl WktFormatter {
                 (true, UnitKind::Angular) => "ANGLEUNIT",
                 (true, UnitKind::Scale) => "SCALEUNIT",
                 (true, UnitKind::Time) => "TIMEUNIT",
+                (true, UnitKind::Parametric) => "PARAMETRICUNIT",
                 _ => "UNIT",
             }
         };
@@ -601,12 +607,10 @@ pub(crate) fn export_crs(crs: &Crs, formatter: &mut WktFormatter) -> Result<(), 
         Crs::Compound(crs) => export_compound(crs, formatter)?,
         Crs::Bound(crs) => export_bound(crs, formatter)?,
         Crs::Engineering(crs) => export_engineering(crs, formatter)?,
-        Crs::DerivedProjected(crs) => {
-            return Err(FactoryError::Format(format!(
-                "derived projected CRS {} has no WKT export in this build",
-                crs.name()
-            )));
-        }
+        Crs::DerivedProjected(crs) => niche::export_derived_projected(crs, formatter)?,
+        Crs::Temporal(crs) => niche::export_temporal(crs, formatter)?,
+        Crs::Parametric(crs) => niche::export_parametric(crs, formatter)?,
+        Crs::Derived(crs) => niche::export_derived(crs, formatter)?,
     }
     Ok(())
 }
@@ -1412,7 +1416,9 @@ fn export_engineering(
     let keyword = if formatter.wkt2 { "ENGCRS" } else { "LOCAL_CS" };
     formatter.start_node(keyword, node_from_ids(&crs.identified.identifiers));
     formatter.add_quoted(crs.name());
-    if formatter.wkt2 || !crs.datum.name().is_empty() {
+    if formatter.wkt2
+        || (!crs.datum.name().is_empty() && crs.datum.name() != "Unknown engineering datum")
+    {
         export_engineering_datum(&crs.datum, formatter);
     }
     if !formatter.wkt2 {
@@ -1716,7 +1722,13 @@ fn export_engineering_datum(datum: &EngineeringDatum, formatter: &mut WktFormatt
     } else {
         datum.name()
     });
-    if !formatter.wkt2 {
+    if formatter.wkt2 {
+        if let Some(anchor) = datum.anchor_definition() {
+            formatter.start_node("ANCHOR", NodeId::Absent);
+            formatter.add_quoted(anchor);
+            formatter.end_node();
+        }
+    } else {
         formatter.add_raw("32767");
     }
     formatter.format_ids(&datum.identified.identifiers);
@@ -1964,7 +1976,11 @@ fn export_conversion(
     }
     if formatter.wkt2 {
         formatter.start_node(
-            "CONVERSION",
+            if formatter.use_deriving_conversion {
+                "DERIVINGCONVERSION"
+            } else {
+                "CONVERSION"
+            },
             node_from_ids(&conversion.identified.identifiers),
         );
         formatter.add_quoted(conversion.name());
@@ -1982,11 +1998,49 @@ fn export_conversion(
             }
             export_parameter(parameter, formatter)?;
         }
+        export_interpolation_code(conversion, formatter)?;
         formatter.format_ids(&conversion.identified.identifiers);
         formatter.end_node();
         return Ok(());
     }
     export_conversion_wkt1(conversion, formatter, base_shape, owner)
+}
+
+/// An interpolation CRS with an EPSG code is written as the `EPSG code for ... CRS` parameter,
+/// unless the conversion already has that parameter.
+fn export_interpolation_code(
+    conversion: &Conversion,
+    formatter: &mut WktFormatter,
+) -> Result<(), FactoryError> {
+    let Some(crs) = conversion.interpolation_crs() else {
+        return Ok(());
+    };
+    let is_code_parameter = |parameter: &Parameter| {
+        parameter.code_space == "EPSG" && matches!(parameter.code.as_str(), "1048" | "1037")
+    };
+    if conversion.parameters.iter().any(is_code_parameter) {
+        return Ok(());
+    }
+    let Some(code) = crs
+        .authority_code("EPSG")
+        .and_then(|identifier| identifier.code().parse::<i64>().ok())
+    else {
+        return Ok(());
+    };
+    let (name, parameter_code) = if conversion.method.code == "1046" {
+        ("EPSG code for Horizontal CRS", "1037")
+    } else {
+        ("EPSG code for Interpolation CRS", "1048")
+    };
+    export_parameter(
+        &Parameter {
+            name: name.to_owned(),
+            code_space: "EPSG".to_owned(),
+            code: parameter_code.to_owned(),
+            value: ParameterValue::Integer(code),
+        },
+        formatter,
+    )
 }
 
 /// PROJ leaves out a zero latitude of origin in Equidistant Cylindrical, and a

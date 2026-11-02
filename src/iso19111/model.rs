@@ -31,6 +31,8 @@ pub enum FactoryError {
     Format(String),
     /// A constructor rejected its arguments.
     Invalid(String),
+    /// No operation exists between these CRS: PROJ's `UnsupportedOperationException`.
+    Unsupported(String),
 }
 
 impl fmt::Display for FactoryError {
@@ -47,7 +49,10 @@ impl fmt::Display for FactoryError {
                 code,
                 detail,
             } => write!(f, "{object} {authority}:{code}: {detail}"),
-            Self::Sql(detail) | Self::Format(detail) | Self::Invalid(detail) => f.write_str(detail),
+            Self::Sql(detail)
+            | Self::Format(detail)
+            | Self::Invalid(detail)
+            | Self::Unsupported(detail) => f.write_str(detail),
         }
     }
 }
@@ -354,6 +359,10 @@ pub(crate) struct Identified {
     pub(crate) original_compound: Option<Box<CompoundCRS>>,
     /// Horizontal-plus-horizontal `COMPD_CS` exported as two copies of the 2D CRS.
     pub(crate) allow_non_conformant_wkt1: bool,
+    /// PROJJSON `temporal_extent.start`, when the object has one.
+    pub(crate) temporal_start: Option<String>,
+    /// PROJJSON `temporal_extent.end`, when the object has one.
+    pub(crate) temporal_end: Option<String>,
 }
 
 /// Vertical extent of an object usage, as PROJJSON writes it.
@@ -380,6 +389,8 @@ impl Identified {
             proj_method_override: None,
             original_compound: None,
             allow_non_conformant_wkt1: false,
+            temporal_start: None,
+            temporal_end: None,
         }
     }
 
@@ -418,6 +429,8 @@ pub enum UnitKind {
     Scale,
     /// Time. The SI unit is the second.
     Time,
+    /// A parametric quantity, such as a pressure.
+    Parametric,
     /// No conversion, used by an ordinal axis.
     None,
     /// A database type this crate does not classify.
@@ -1088,26 +1101,6 @@ impl EngineeringDatum {
     }
 }
 
-/// Parametric datum (`PDATUM`).
-#[derive(Clone, Debug)]
-pub struct ParametricDatum {
-    pub(crate) identified: Identified,
-}
-
-impl ParametricDatum {
-    /// Name.
-    #[must_use]
-    pub fn name(&self) -> &str {
-        &self.identified.name
-    }
-
-    /// Anchor definition.
-    #[must_use]
-    pub fn anchor(&self) -> Option<&str> {
-        self.identified.anchor.as_deref()
-    }
-}
-
 /// One datum, whichever kind the database row describes.
 #[derive(Clone, Debug)]
 #[expect(
@@ -1590,10 +1583,6 @@ impl OrdinalCS {
 
 /// Coordinate system, one of the kinds `proj.db` stores on a CRS.
 #[derive(Clone, Debug)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "a vertical system stores its axis inline; the others keep axes in a Vec"
-)]
 pub enum CoordinateSystem {
     /// Latitude and longitude, optionally with ellipsoidal height.
     Ellipsoidal(EllipsoidalCS),
@@ -1607,6 +1596,10 @@ pub enum CoordinateSystem {
     Ordinal(OrdinalCS),
     /// Affine axes. WKT writes `CS[affine,N]`.
     Affine(CartesianCS),
+    /// One time axis.
+    Temporal(super::niche::TemporalCS),
+    /// One parametric axis.
+    Parametric(super::niche::ParametricCS),
 }
 
 impl CoordinateSystem {
@@ -1620,6 +1613,8 @@ impl CoordinateSystem {
             Self::Spherical(cs) => cs.axes.iter().collect(),
             Self::Ordinal(cs) => cs.axes.iter().collect(),
             Self::Affine(cs) => cs.axes.iter().collect(),
+            Self::Temporal(cs) => vec![&cs.axis],
+            Self::Parametric(cs) => vec![&cs.axis],
         }
     }
 
@@ -1631,6 +1626,8 @@ impl CoordinateSystem {
             Self::Spherical(cs) => &cs.identified,
             Self::Ordinal(cs) => &cs.identified,
             Self::Affine(cs) => &cs.identified,
+            Self::Temporal(cs) => &cs.identified,
+            Self::Parametric(cs) => &cs.identified,
         }
     }
 
@@ -1648,6 +1645,12 @@ impl CoordinateSystem {
             Self::Spherical(_) => "spherical",
             Self::Ordinal(_) => "ordinal",
             Self::Affine(_) => "affine",
+            Self::Temporal(cs) => match cs.kind {
+                super::niche::TemporalCsKind::DateTime => "TemporalDateTime",
+                super::niche::TemporalCsKind::Count => "TemporalCount",
+                super::niche::TemporalCsKind::Measure => "TemporalMeasure",
+            },
+            Self::Parametric(_) => "parametric",
         }
     }
 }
@@ -1901,9 +1904,17 @@ pub struct Conversion {
     pub(crate) target: Option<Box<Crs>>,
     pub(crate) version: Option<String>,
     pub(crate) inverted: bool,
+    /// Interpolation CRS, from the EPSG `EPSG code for Interpolation CRS` parameter.
+    pub(crate) interpolation: Option<Box<Crs>>,
 }
 
 impl Conversion {
+    /// Interpolation CRS, when the conversion names one.
+    #[must_use]
+    pub fn interpolation_crs(&self) -> Option<&Crs> {
+        self.interpolation.as_deref()
+    }
+
     /// Name.
     #[must_use]
     pub fn name(&self) -> &str {
@@ -3217,6 +3228,13 @@ pub enum Crs {
     Engineering(EngineeringCRS),
     /// Derived projected CRS.
     DerivedProjected(DerivedProjectedCRS),
+    /// Temporal CRS.
+    Temporal(super::niche::TemporalCRS),
+    /// Parametric CRS.
+    Parametric(super::niche::ParametricCRS),
+    /// Derived CRS of a geographic, geodetic, vertical, engineering, parametric or
+    /// temporal base.
+    Derived(super::niche::DerivedCRS),
 }
 
 impl Crs {
@@ -3232,6 +3250,9 @@ impl Crs {
             Self::Bound(crs) => crs.name(),
             Self::Engineering(crs) => crs.name(),
             Self::DerivedProjected(crs) => crs.name(),
+            Self::Temporal(crs) => crs.name(),
+            Self::Parametric(crs) => crs.name(),
+            Self::Derived(crs) => crs.name(),
         }
     }
 
@@ -3247,6 +3268,9 @@ impl Crs {
             Self::Bound(crs) => &crs.identified.identifiers,
             Self::Engineering(crs) => &crs.identified.identifiers,
             Self::DerivedProjected(crs) => &crs.identified.identifiers,
+            Self::Temporal(crs) => &crs.identified.identifiers,
+            Self::Parametric(crs) => &crs.identified.identifiers,
+            Self::Derived(crs) => &crs.identified.identifiers,
         }
     }
 
@@ -3262,6 +3286,9 @@ impl Crs {
             Self::Bound(crs) => &crs.identified.domains,
             Self::Engineering(crs) => &crs.identified.domains,
             Self::DerivedProjected(crs) => &crs.identified.domains,
+            Self::Temporal(crs) => &crs.identified.domains,
+            Self::Parametric(crs) => &crs.identified.domains,
+            Self::Derived(crs) => &crs.identified.domains,
         }
     }
 
@@ -3291,9 +3318,12 @@ impl Crs {
             Self::Geodetic(crs) => crs.datum(),
             Self::Projected(crs) => crs.base_crs().datum(),
             Self::DerivedProjected(crs) => crs.base_crs().base_crs().datum(),
+            Self::Derived(crs) => crs.base_crs().geodetic_frame(),
             Self::Compound(crs) => crs.components().iter().find_map(Self::geodetic_frame),
             Self::Bound(crs) => crs.source_crs().geodetic_frame(),
-            Self::Vertical(_) | Self::Engineering(_) => None,
+            Self::Vertical(_) | Self::Engineering(_) | Self::Temporal(_) | Self::Parametric(_) => {
+                None
+            }
         }
     }
 
@@ -3322,12 +3352,15 @@ impl Crs {
             Self::Bound(crs) => crs.identified.deprecated,
             Self::Engineering(crs) => crs.identified.deprecated,
             Self::DerivedProjected(crs) => crs.identified.deprecated,
+            Self::Temporal(crs) => crs.identified.deprecated,
+            Self::Parametric(crs) => crs.identified.deprecated,
+            Self::Derived(crs) => crs.identified.deprecated,
         }
     }
 
     pub(crate) fn is_horizontal(&self) -> bool {
         match self {
-            Self::Vertical(_) => false,
+            Self::Vertical(_) | Self::Temporal(_) | Self::Parametric(_) => false,
             Self::Compound(crs) => crs.components.iter().any(Self::is_horizontal),
             Self::Bound(crs) => crs.source.is_horizontal(),
             _ => true,

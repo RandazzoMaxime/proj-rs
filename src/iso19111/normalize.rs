@@ -131,6 +131,7 @@ fn reversal_step(source: Crs, target: Crs) -> Option<ConcatenatedStep> {
         target: Some(Box::new(target)),
         version: None,
         inverted: false,
+        interpolation: None,
     };
     Some(ConcatenatedStep {
         operation: CoordinateOperation::Conversion(conversion),

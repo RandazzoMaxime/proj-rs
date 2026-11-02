@@ -104,10 +104,14 @@ pub use iso19111::{
     GridInfo, Identifier, IntermediateCrsUse, LinunitPolicy, Measure, Meridian, NameMatch,
     NameSpelling, ObjectDomain, ObjectType, OfficialName, OpProps, OperationMethod,
     OperationParameter, OperationParameterValue, OrdinalCS, OutputAxisRule, Parameter,
-    ParameterValue, ParametricDatum, PrimeMeridian, ProjLines, ProjectedCRS, SpatialCriterion,
+    ParameterValue, PrimeMeridian, ProjLines, ProjectedCRS, SpatialCriterion,
     SphericalCS, SupersededOperations, Transformation, UnitInfo, UnitKind, UnitOfMeasure,
     VerticalCRS, VerticalCS, VerticalReferenceFrame, WktConvention, WktDialect, WktFormatter,
     WktLines, WktNode, WktObject, WktParser, WktStrictness,
+};
+pub use iso19111::{
+    DerivedCRS, ParametricCRS, ParametricCS, ParametricDatum, TemporalCRS, TemporalCS,
+    TemporalCsKind, TemporalDatum,
 };
 pub use lcc::{Cone, Lcc};
 pub use merc::Mercator;

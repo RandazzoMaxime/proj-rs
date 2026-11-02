@@ -460,6 +460,7 @@ impl Conversion {
             target: None,
             version: None,
             inverted: false,
+            interpolation: None,
         })
     }
 
@@ -963,6 +964,7 @@ impl super::model::Conversion {
             target: None,
             version: None,
             inverted: false,
+            interpolation: None,
         }
     }
 
@@ -1331,6 +1333,7 @@ impl super::model::Conversion {
             target: None,
             version: None,
             inverted: false,
+            interpolation: None,
         })
     }
 

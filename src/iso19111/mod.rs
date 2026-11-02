@@ -19,6 +19,7 @@ mod insert;
 mod json;
 mod json_read;
 mod model;
+mod niche;
 mod normalize;
 mod parammap;
 mod pipeline;
@@ -39,7 +40,10 @@ pub use factory::{
     ObjectType, OfficialName, SpatialCriterion, SupersededOperations, UnitInfo,
 };
 pub use insert::insert_statements;
-pub use json::{create_from_user_input, epsg_identity, JsonFormat, JsonLines};
+pub use json::{
+    create_from_user_input, create_object_from_user_input, epsg_identity, JsonFormat, JsonLines,
+    UserObject,
+};
 pub use json_read::{create_object_from_json, JsonObject};
 pub use model::{
     Axis, BoundCRS, BoundingBox, CartesianCS, CompoundCRS, ConcatenatedOperation, ConcatenatedStep,
@@ -48,8 +52,12 @@ pub use model::{
     EngineeringDatum, FactoryError, GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame,
     GeographicCRS, Identifier, Measure, Meridian, ObjectDomain, OperationMethod,
     OperationParameter, OperationParameterValue, OrdinalCS, Parameter, ParameterValue,
-    ParametricDatum, PrimeMeridian, ProjectedCRS, SphericalCS, Transformation, UnitKind, UnitOfMeasure, VerticalCRS,
+    PrimeMeridian, ProjectedCRS, SphericalCS, Transformation, UnitKind, UnitOfMeasure, VerticalCRS,
     VerticalCS, VerticalReferenceFrame,
+};
+pub use niche::{
+    DerivedCRS, ParametricCRS, ParametricCS, ParametricDatum, TemporalCRS, TemporalCS,
+    TemporalCsKind, TemporalDatum,
 };
 pub(crate) use normalize::normalize_for_visualization;
 pub use pipeline::ProjLines;

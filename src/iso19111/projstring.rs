@@ -253,6 +253,9 @@ impl Crs {
             Self::Bound(crs) => &crs.identified.remarks,
             Self::Engineering(crs) => &crs.identified.remarks,
             Self::DerivedProjected(crs) => &crs.identified.remarks,
+            Self::Temporal(crs) => &crs.identified.remarks,
+            Self::Parametric(crs) => &crs.identified.remarks,
+            Self::Derived(crs) => &crs.identified.remarks,
         }
     }
 }
@@ -1814,6 +1817,33 @@ fn parameter_default(proj: &str, param: &ParamMap, tokens: &[(String, String)]) 
 /// `+datum`/`+ellps` geographic CRS. Easting and northing are in the linear unit
 /// of `+units` or `+to_meter` (`buildUnit`), and a linear parameter is stored in
 /// that unit. A `+vunits` adds the ellipsoidal height axis to both CRSs.
+/// `+proj=topocentric +type=crs`: a projected CRS over a geocentric base, with the
+/// topocentric East, North and Up axes.
+fn topocentric_crs(
+    name: &str,
+    base: GeographicCRS,
+    conversion: Conversion,
+    unit: UnitOfMeasure,
+) -> Result<ProjectedCRS, FactoryError> {
+    let geocentric = GeodeticCRS::Geocentric(GeocentricCRS {
+        identified: base.identified.clone(),
+        datum: base.datum,
+        ensemble: None,
+        coordinate_system: CartesianCS::create_geocentric(unit.clone()),
+    });
+    let coordinate_system = CartesianCS::create_allowing_mixed_units(vec![
+        Axis::new("topocentric East", "U", "east", unit.clone()),
+        Axis::new("topocentric North", "V", "north", unit.clone()),
+        Axis::new("topocentric Up", "W", "up", unit),
+    ])?;
+    Ok(ProjectedCRS::create(
+        name,
+        geocentric,
+        conversion,
+        coordinate_system,
+    ))
+}
+
 pub(super) fn projected_from_proj_string(tokens: &[(String, String)]) -> Result<Crs, FactoryError> {
     if token(tokens, "proj") == "utm" {
         return projfam::utm_projected(tokens);
@@ -1970,6 +2000,11 @@ pub(super) fn projected_from_proj_string(tokens: &[(String, String)]) -> Result<
     let name = param_token(tokens, "title")
         .filter(|title| !title.is_empty())
         .unwrap_or("unknown");
+    if proj == "topocentric" {
+        return Ok(Crs::Projected(topocentric_crs(
+            name, base, conversion, unit,
+        )?));
+    }
     let coordinate_system = match height {
         None => projfam::projected_cs(proj, tokens, unit)?,
         Some(height) => CartesianCS::create_allowing_mixed_units(vec![
