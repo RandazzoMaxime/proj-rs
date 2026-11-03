@@ -5,11 +5,11 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 346 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `core` | 217 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
 | `niche` | 40 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 56 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (346)
+## core (217)
 
 ### test_c_api.cpp (28)
 
@@ -42,58 +42,22 @@ The class comes from the test name alone, so check it when you port a test.
 - `CApi.proj_trans_bounds_to_compound_crs`
 - `CApi.proj_trans_bounds_3D_ignore_inf`
 
-### test_crs.cpp (50)
+### test_crs.cpp (14)
 
 - `crs.projectedCRS_from_WKT1_ESRI_as_WKT1_ESRI_s_jtsk03_krovak_east_north`
-- `crs.projectedCRS_from_WKT1_ESRI_ETRS89_with_db`
-- `crs.projectedCRS_3D_is_WKT1_equivalent_to_WKT2`
 - `crs.projectedCRS_Krovak_EPSG_5221_as_PROJ_string`
 - `crs.projectedCRS_Krovak_with_approximate_alpha_as_PROJ_string`
-- `crs.projectedCRS_identify_no_db`
 - `crs.projectedCRS_identify_db`
 - `crs.projectedCRS_identify_wrong_auth_name_case`
-- `crs.verticalCRS_ESRI_115834_as_WKT1_ESRI_with_database`
 - `crs.verticalCRS_identify_db`
-- `crs.verticalCRS_datum_ensemble`
-- `crs.compoundCRS_valid`
-- `crs.compoundCRS_as_WKT1_GDAL`
-- `crs.compoundCRS_as_PROJ_string`
 - `crs.compoundCRS_identify_db`
-- `crs.boundCRS_to_WKT2`
 - `crs.boundCRS_crs_link`
-- `crs.boundCRS_to_WKT1`
-- `crs.boundCRS_geographicCRS_to_PROJ_string`
-- `crs.boundCRS_projectedCRS_to_PROJ_string`
 - `crs.boundCRS_nadcon_to_PROJ_string_usePROJAlternativeGridNames_false`
-- `crs.boundCRS_nadcon_to_PROJ_string_usePROJAlternativeGridNames_true`
 - `crs.boundCRS_identify_db`
-- `crs.incompatible_boundCRS_hubCRS_to_WKT1`
-- `crs.incompatible_boundCRS_transformation_to_WKT1`
-- `crs.WKT1_DATUM_EXTENSION_to_WKT1_and_PROJ_string`
-- `crs.WKT1_VERT_DATUM_EXTENSION_to_WKT1`
-- `crs.WKT1_VERT_DATUM_EXTENSION_to_WKT2`
-- `crs.WKT1_VERT_DATUM_EXTENSION_to_PROJ_string`
-- `crs.extractGeographicCRS`
-- `crs.extractVerticalCRS`
-- `crs.default_identify_method`
 - `crs.crs_createBoundCRSToWGS84IfPossible`
-- `crs.crs_stripVerticalComponent`
-- `crs.crs_alterGeodeticCRS`
-- `crs.crs_alterCSLinearUnit`
-- `crs.alterParametersLinearUnit`
-- `crs.getNonDeprecated`
-- `crs.promoteTo3D_and_demoteTo2D`
 - `crs.normalizeForVisualization_bound`
-- `crs.projected_normalizeForVisualization_do_not_mess_deriving_conversion`
-- `crs.projected_promoteTo3D_do_not_mess_deriving_conversion`
-- `crs.projected_demoteTo2D_do_not_mess_deriving_conversion`
-- `crs.projected_alterGeodeticCRS_do_not_mess_deriving_conversion`
-- `crs.projected_alterCSLinearUnit_do_not_mess_deriving_conversion`
-- `crs.projected_alterParametersLinearUnit_do_not_mess_deriving_conversion`
-- `crs.is_dynamic`
 - `crs.norway_ntm`
 - `crs.ETRF2000_PL_CS92`
-- `crs.identical_after_import_from_proj4_and_wkt1_export`
 
 ### test_factory.cpp (3)
 
@@ -101,149 +65,68 @@ The class comes from the test name alone, so check it when you port a test.
 - `factory.AuthorityFactory_build_all_concatenated`
 - `factory.ogc_timecrs`
 
-### test_io.cpp (30)
+### test_io.cpp (13)
 
-- `wkt_parse.CONCATENATEDOPERATION`
 - `wkt_parse.CONCATENATEDOPERATION_with_conversion_and_conversion`
 - `wkt_parse.CONCATENATEDOPERATION_with_conversion_coordinateoperation_conversion`
 - `wkt_parse.CONCATENATEDOPERATION_with_conversion_coordinateoperation_to_inverse_conversion`
 - `wkt_parse.CONCATENATEDOPERATION_with_inverse_conversion_of_compound`
-- `wkt_parse.esri_projcs`
-- `wkt_parse.wkt1_esri_krovak_south_west`
-- `wkt_parse.wkt1_esri_krovak_east_north_non_standard_likely_from_GDAL_wkt1`
-- `wkt_parse.wkt1_esri_ups_north`
-- `wkt_parse.wkt1_esri_ups_south`
-- `wkt_parse.wkt1_esri_wgs_1984_ups_north_E_N`
-- `wkt_parse.wkt1_esri_wgs_1984_ups_south_E_N`
-- `wkt_parse.wkt1_esri_gauss_kruger`
-- `wkt_parse.wkt1_esri_goode_homolosine_without_option_0`
 - `wkt_parse.wkt1_oracle`
 - `wkt_parse.wkt1_oracle_albers_conical_equal_area`
-- `wkt_parse.wkt1_lcc_1sp_without_1sp_suffix`
-- `wkt_parse.wkt1_pseudo_wkt1_gdal_pseudo_wkt1_esri`
-- `wkt_parse.invalid_EngineeingCRS`
 - `io.projstringformatter_optim_hgridshift_vgridshift_hgridshift_inv`
 - `io.projstringformatter_optim_as_uc_vgridshift_uc_as_push_as_uc`
 - `io.projstringformatter_krovak_to_krovak_east_north`
 - `io.projstringformatter_krovak_east_north_to_krovak`
-- `io.projparse_longlat_complex`
-- `io.projparse_longlat_axis_enu`
-- `io.projparse_longlat_axis_neu`
-- `io.projparse_longlat_axis_swu`
 - `io.projparse_init`
 - `io.createFromUserInput`
 - `json_import.bound_crs_with_source_crs_in_transformation`
 
-### test_operation.cpp (18)
+### test_operation.cpp (5)
 
-- `operation.transformation_createTOWGS84`
-- `operation.createAxisOrderReversal`
-- `operation.PROJ_based`
-- `operation.PROJ_based_empty`
-- `operation.PROJ_based_with_global_parameters`
 - `operation.normalizeForVisualization`
-- `operation.export_of_Geographic3D_to_GravityRelatedHeight_gtx_unknown_grid`
-- `operation.export_of_boundCRS_with_proj_string_method`
 - `operation.PointMotionOperation_with_epochs`
-- `operation.Geographic3DToGravityRelatedHeight`
-- `operation.inverse_of_Geographic3DToGravityRelatedHeight`
-- `operation.CoordinateFrameRotationFullMatrixGeog2D`
-- `operation.operation_Geog3D_to_Geog2D_GravityRelatedHeight_with_compoundCRS`
-- `operation.helmert_between_geog3D_and_compound`
-- `operation.operation_Geographic2D_Offsets_by_TIN_Interpolation_JSON`
 - `operation.operation_Position_Vector_geocen_and_geocen_translations_NEU_velocities_gtg_with_source_epoch`
 - `operation.operation_geocen_translations_by_grid_and_geocen_translations_NEU_velocities_gtg`
 - `operation.operation_geocen_translations_NEU_velocities_gtg`
 
-### test_operationfactory.cpp (217)
+### test_operationfactory.cpp (154)
 
-- `operation.geogCRS_to_geogCRS`
 - `operation.geogCRS_to_geogCRS_context_match_by_name`
 - `operation.geogCRS_to_geogCRS_context_inverse_needed`
-- `operation.geogCRS_to_geogCRS_context_ntv1_ntv2_ctable2`
-- `operation.geogCRS_to_geogCRS_context_NAD27_to_WGS84`
 - `operation.geogCRS_to_geogCRS_context_NAD27_to_WGS84_G1762`
-- `operation.geogCRS_to_geogCRS_context_helmert_geog3D_crs`
-- `operation.geogCRS_to_geogCRS_context_helmert_geocentric_3D`
-- `operation.geogCRS_to_geogCRS_context_helmert_geog3D_to_geocentirc`
 - `operation.geogCRS_to_geogCRS_context_datum_ensemble`
 - `operation.vertCRS_to_geogCRS_context`
 - `operation.geog3DCRS_to_geog2DCRS_plus_vertCRS_context`
 - `operation.geog3DCRS_to_vertCRS_depth_context`
 - `operation.geog3DCRS_to_geog2DCRS_plus_vertCRS_depth_context`
-- `operation.geogCRS_to_geogCRS_noop`
-- `operation.geogCRS_to_geogCRS_longitude_rotation`
 - `operation.geogCRS_to_geogCRS_context_lonlat_vs_latlon_crs`
 - `operation.geogCRS_to_geogCRS_context_concatenated_operation`
-- `operation.geogCRS_to_geogCRS_context_concatenated_operation_Egypt1907_to_WGS84`
 - `operation.geogCRS_to_geogCRS_context_ED50_to_WGS72_no_NTF_intermediate`
-- `operation.geogCRS_to_geogCRS_context_same_grid_name`
-- `operation.geogCRS_to_geogCRS_geographic_offset_context`
 - `operation.geogCRS_to_geogCRS_CH1903_to_CH1903plus_context`
 - `operation.geogCRS_to_geogCRS_init_IGNF_to_init_IGNF_context`
-- `operation.geogCRS_to_geogCRS_3D`
-- `operation.geogCRS_3D_lat_long_non_metre_to_geogCRS_longlat`
 - `operation.geogCRS_without_id_to_geogCRS_3D_context`
 - `operation.geogCRS_promoted_to_3D_to_geogCRS_3D_context`
-- `operation.geocentricCRS_to_geogCRS_same_datum`
-- `operation.geocentricCRS_to_geogCRS_different_datum`
-- `operation.geogCRS_to_geocentricCRS_different_datum`
-- `operation.geocentricCRS_to_geocentricCRS_same_noop`
-- `operation.geocentricCRS_to_geocentricCRS_different_ballpark`
-- `operation.geocentricCRS_to_geogCRS_same_datum_context`
-- `operation.geocentricCRS_to_geogCRS_same_datum_context_all_auth`
-- `operation.geocentricCRS_to_geocentricCRS_different_datum_context`
-- `operation.geogCRS_geocentricCRS_same_datum_to_context`
-- `operation.geog2D_to_geog3D_same_datum_but_with_potential_other_pivot_context`
-- `operation.geogCRS_to_geogCRS_different_datum_though_geocentric_transform_context`
-- `operation.geogCRS_to_geocentricCRS_different_datum_context`
-- `operation.geocentricCRS_to_geogCRS_different_datum_context`
 - `operation.geogCRS_3D_to_geogCRS_3D_different_datum_context`
 - `operation.geocentric_to_geogCRS_3D_different_datum_context`
 - `operation.createBetweenGeodeticCRSWithDatumBasedIntermediates`
 - `operation.esri_projectedCRS_to_geogCRS_with_ITRF_intermediate_context`
-- `operation.geogCRS_to_geogCRS_WGS84_to_GDA2020`
 - `operation.geogCRS_to_geogCRS_with_intermediate_no_ids`
 - `operation.geogCRS_3D_source_datum_name_is_alias_to_geogCRS`
-- `operation.geogCRS_to_projCRS`
-- `operation.geogCRS_longlat_to_geogCS_latlong`
-- `operation.geogCRS_longlat_to_geogCS_latlong_database`
-- `operation.geogCRS_longlat_to_projCRS`
-- `operation.geogCRS_different_from_baseCRS_to_projCRS`
 - `operation.geogCRS_with_towgs84_to_geocentric`
 - `operation.geogCRS_different_from_baseCRS_to_projCRS_context_compatible_area`
-- `operation.geocentricCRS_to_projCRS`
-- `operation.projCRS_to_geogCRS`
 - `operation.projCRS_no_id_to_geogCRS_context`
 - `operation.projCRS_3D_to_geogCRS_3D_context`
-- `operation.projCRS_3D_to_projCRS_2D_context`
 - `operation.geogCRS_3D_to_projCRS_with_2D_geocentric_translation`
-- `operation.projCRS_to_projCRS`
 - `operation.projCRS_to_projCRS_different_baseCRS`
-- `operation.projCRS_to_projCRS_context_compatible_area`
-- `operation.projCRS_to_projCRS_context_compatible_area_bis`
-- `operation.projCRS_to_projCRS_context_one_incompatible_area`
-- `operation.projCRS_to_projCRS_context_incompatible_areas`
-- `operation.projCRS_to_projCRS_context_incompatible_areas_ballpark`
 - `operation.projCRS_to_projCRS_context_grid_offsets`
 - `operation.projCRS_to_projCRS_context_grid_offsets_non_metre_unit_noop`
-- `operation.projCRS_to_projCRS_context_incompatible_areas_crs_extent_use_intersection`
-- `operation.projCRS_to_geogCRS_crs_extent_use_none`
 - `operation.projCRS_to_geogCRS_concatenated_operation_extent_none`
-- `operation.projCRS_to_projCRS_north_pole_inverted_axis`
-- `operation.projCRS_to_projCRS_south_pole_inverted_axis`
-- `operation.projCRS_to_projCRS_through_geog3D`
-- `operation.transform_from_amersfoort_rd_new_to_epsg_4326`
-- `operation.boundCRS_of_geogCRS_to_geogCRS`
 - `operation.boundCRS_of_geogCRS_to_geodCRS`
 - `operation.boundCRS_of_geogCRS_to_geodCRS_not_related_to_hub`
-- `operation.boundCRS_of_geogCRS_to_geogCRS_with_area`
-- `operation.boundCRS_of_geogCRS_to_unrelated_geogCRS`
 - `operation.createOperation_boundCRS_identified_by_datum`
 - `operation.boundCRS_of_clrk_66_geogCRS_to_nad83_geogCRS`
 - `operation.boundCRS_of_clrk_66_projCRS_to_nad83_geogCRS`
 - `operation.boundCRS_of_projCRS_to_geogCRS`
-- `operation.boundCRS_of_geogCRS_to_projCRS`
 - `operation.boundCRS_of_geogCRS_to_unrelated_geogCRS_context`
 - `operation.geogCRS_to_boundCRS_of_geogCRS`
 - `operation.boundCRS_to_geogCRS_same_datum_context`
@@ -259,18 +142,7 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.nadgrids_with_pm`
 - `operation.towgs84_pm_3d`
 - `operation.WGS84_G1762_to_compoundCRS_with_bound_vertCRS`
-- `operation.compoundCRS_to_geogCRS`
 - `operation.transformation_height_to_PROJ_string`
-- `operation.transformation_Geographic3D_to_GravityRelatedHeight_gtx`
-- `operation.transformation_ntv2_to_PROJ_string`
-- `operation.transformation_VERTCON_to_PROJ_string`
-- `operation.transformation_NZLVD_to_PROJ_string`
-- `operation.transformation_BEV_AT_to_PROJ_string`
-- `operation.transformation_longitude_rotation_to_PROJ_string`
-- `operation.transformation_Geographic2D_offsets_to_PROJ_string`
-- `operation.transformation_Geographic3D_offsets_to_PROJ_string`
-- `operation.transformation_Geographic2D_with_height_offsets_to_PROJ_string`
-- `operation.transformation_vertical_offset_to_PROJ_string`
 - `operation.compoundCRS_with_boundProjCRS_and_boundVerticalCRS_to_geogCRS`
 - `operation.compoundCRS_with_boundProjCRS_with_ftus_and_boundVerticalCRS_to_geogCRS`
 - `operation.compoundCRS_with_bound_of_projected_and_bound_of_vertical_to_geog3D`
@@ -365,7 +237,6 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.createOperation_Geographic3D_Offset_by_velocity_grid`
 - `operation.createOperation_test_createOperationsWithDatumPivot_iter_1`
 - `operation.createOperation_Vrtical_Offset_by_velocity_grid`
-- `operation.createOperation_epsg_10622_local_orthographic`
 - `operation.createOperation_ITRF2000_to_ETRS89`
 - `operation.createOperation_ITRF2014_to_ETRS89_DNK`
 - `operation.createOperation_ETRS89_XXX_to_ETRS89_YYY_using_ETRF2000`
