@@ -4876,6 +4876,10 @@ impl CoordinateOperationFactory {
         target: &Crs,
         context: &CoordinateOperationContext,
     ) -> Result<Vec<CoordinateOperation>, FactoryError> {
+        if let Some(operation) = super::projstring::operation_from_proj_extensions(source, target)?
+        {
+            return Ok(vec![operation]);
+        }
         if let Some(bound) = super::bound_ops::bound_candidates(self, source, target, context)? {
             return Ok(bound);
         }
