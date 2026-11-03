@@ -4851,6 +4851,22 @@ impl CoordinateOperationFactory {
         Ok(select_candidates(found, source, target, context))
     }
 
+    /// `proj_get_suggested_operation` (forward) on `operations`, the list from `source`
+    /// to a target: the index of the operation whose area of use holds `coord`, in the
+    /// axis order of `source`. An operation with no area of use covers the world.
+    ///
+    /// # Errors
+    ///
+    /// `source` is not a geographic CRS, or its axis order is not latitude or longitude.
+    pub fn suggested_operation(
+        &self,
+        operations: &[CoordinateOperation],
+        source: &Crs,
+        coord: (f64, f64),
+    ) -> Result<Option<usize>, FactoryError> {
+        super::suggest::suggested_forward(operations, source, coord)
+    }
+
     /// PROJ's private `createOperations`: the candidates before the area, spatial, and
     /// accuracy filters. Only [`Self::create_operations`] applies them, once, so that the
     /// operations a derived CRS chains are not filtered twice.

@@ -30,6 +30,7 @@ mod proj_crs;
 mod projfam;
 mod projstring;
 mod select;
+mod suggest;
 mod transform_export;
 mod wkt;
 mod wkt_import;
