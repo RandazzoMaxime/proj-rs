@@ -139,21 +139,8 @@ and `PORT-NOTES-tests.md`.
 
 ## test_operation.cpp
 
-- `operation.transformation_createTOWGS84`
-- `operation.createAxisOrderReversal`
-- `operation.PROJ_based`
-- `operation.PROJ_based_empty`
-- `operation.PROJ_based_with_global_parameters`
 - `operation.normalizeForVisualization`
-- `operation.export_of_Geographic3D_to_GravityRelatedHeight_gtx_unknown_grid`
-- `operation.export_of_boundCRS_with_proj_string_method`
 - `operation.PointMotionOperation_with_epochs`
-- `operation.Geographic3DToGravityRelatedHeight`
-- `operation.inverse_of_Geographic3DToGravityRelatedHeight`
-- `operation.CoordinateFrameRotationFullMatrixGeog2D`
-- `operation.operation_Geog3D_to_Geog2D_GravityRelatedHeight_with_compoundCRS`
-- `operation.helmert_between_geog3D_and_compound`
-- `operation.operation_Geographic2D_Offsets_by_TIN_Interpolation_JSON`
 - `operation.operation_Position_Vector_geocen_and_geocen_translations_NEU_velocities_gtg_with_source_epoch`
 - `operation.operation_geocen_translations_by_grid_and_geocen_translations_NEU_velocities_gtg`
 - `operation.operation_geocen_translations_NEU_velocities_gtg`

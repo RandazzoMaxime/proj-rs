@@ -33,7 +33,7 @@ mod transform_export;
 mod wkt;
 mod wkt_import;
 
-pub use buildop::OpProps;
+pub use buildop::{AxisOrderReversal, OpProps};
 pub use equiv::{equivalent_name, equivalent_name_bigger_differences, Equivalence};
 pub use factory::{
     AlternativeGridNames, AuthorityFactory, AuthorityObject, BallparkUse, CelestialBodyInfo,

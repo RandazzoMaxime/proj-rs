@@ -11,8 +11,8 @@ use std::f64::consts::PI;
 
 use super::OpProps;
 use crate::iso19111::model::{
-    Crs, FactoryError, Measure, ObjectDomain, ParameterValue, Transformation, UnitKind,
-    UnitOfMeasure,
+    Crs, FactoryError, GeodeticCRS, GeographicCRS, Measure, ObjectDomain, ParameterValue,
+    Transformation, UnitKind, UnitOfMeasure,
 };
 
 /// Seconds in a year, the factor of the `year` unit.
@@ -77,6 +77,22 @@ fn rate_values(rates: [f64; 7]) -> Vec<ParameterValue> {
 /// Geocentric CRS get the geocentric method, geographic CRS the 2D one.
 fn is_geocentric(crs: &Crs) -> bool {
     matches!(crs, Crs::Geodetic(_))
+}
+
+/// The geodetic CRS `createTOWGS84` transforms, walking projected, bound,
+/// compound, and derived CRS the way PROJ `extractGeodeticCRS` does.
+fn towgs84_geodetic(crs: &Crs) -> Option<Crs> {
+    match crs {
+        Crs::Geographic(_) | Crs::Geodetic(_) => Some(crs.clone()),
+        Crs::Projected(projected) => Some(Crs::Geodetic(projected.base_crs().clone())),
+        Crs::DerivedProjected(derived) => {
+            Some(Crs::Geodetic(derived.base_crs().base_crs().clone()))
+        }
+        Crs::Bound(bound) => towgs84_geodetic(bound.source_crs()),
+        Crs::Compound(compound) => compound.components().iter().find_map(towgs84_geodetic),
+        Crs::Derived(derived) => towgs84_geodetic(derived.base_crs()),
+        Crs::Vertical(_) | Crs::Engineering(_) | Crs::Temporal(_) | Crs::Parametric(_) => None,
+    }
 }
 
 fn empty_domain() -> ObjectDomain {
@@ -207,6 +223,40 @@ impl Transformation {
             helmert[6],
         );
         build(props, source, target, code, values, accuracy)
+    }
+
+    /// `Transformation::createTOWGS84`: three geocentric translations or a
+    /// seven-parameter position vector, from the geodetic CRS inside `source`
+    /// to WGS 84.
+    ///
+    /// # Errors
+    ///
+    /// `values` has a length other than 3 or 7, or `source` has no geodetic CRS.
+    pub fn create_towgs84(source: Crs, values: &[f64]) -> Result<Self, FactoryError> {
+        if values.len() != 3 && values.len() != 7 {
+            return Err(FactoryError::Invalid(
+                "Invalid number of elements in TOWGS84Parameters".to_owned(),
+            ));
+        }
+        let Some(geodetic) = towgs84_geodetic(&source) else {
+            return Err(FactoryError::Invalid(
+                "Cannot find GeodeticCRS in sourceCRS of TOWGS84 transformation".to_owned(),
+            ));
+        };
+        let target = match &geodetic {
+            Crs::Geodetic(GeodeticCRS::Geocentric(_)) => Crs::Geodetic(GeodeticCRS::epsg_4978()),
+            _ => Crs::Geographic(GeographicCRS::epsg_4326()),
+        };
+        let props = OpProps::new().name(format!("Transformation from {} to WGS84", source.name()));
+        if values.len() == 3 {
+            Self::create_geocentric_translations(
+                &props, geodetic, target, values[0], values[1], values[2], None,
+            )
+        } else {
+            let mut helmert = [0.0; 7];
+            helmert.copy_from_slice(values);
+            Self::create_position_vector(&props, geodetic, target, helmert, None)
+        }
     }
 
     /// Coordinate frame rotation (EPSG:9607, or 1034 for geocentric CRS).
