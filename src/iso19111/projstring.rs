@@ -7,7 +7,7 @@ use super::bound_export::{export_bound, export_compound};
 use super::bound_import;
 use super::factory::DatabaseContext;
 use super::model::{
-    Axis, CartesianCS, Conversion, CoordinateSystem, Crs, Datum, DatumEnsemble,
+    Axis, BoundCRS, CartesianCS, Conversion, CoordinateSystem, Crs, Datum, DatumEnsemble,
     DerivedProjectedCRS, Ellipsoid, EllipsoidalCS, FactoryError, GeocentricCRS, GeodeticCRS,
     GeodeticReferenceFrame, GeographicCRS, Identified, Identifier, Measure, ParameterValue,
     PrimeMeridian, ProjectedCRS, SphericalCS, SphericalGeodeticCRS, UnitKind, UnitOfMeasure,
@@ -233,14 +233,32 @@ impl Crs {
         self.export_with(&ProjExtras::default())
     }
 
+    /// `exportToPROJString` with a database: a `+nadgrids` name that the database renames
+    /// (`grid_alternatives`) is written under its PROJ name. Other kinds are as
+    /// [`Self::export_to_proj_string`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::export_to_proj_string`], or the database cannot be read.
+    pub fn export_to_proj_string_with_database(
+        &self,
+        db: &DatabaseContext,
+    ) -> Result<String, FactoryError> {
+        match self {
+            Self::Bound(crs) => export_bound(crs, None, Some(db)),
+            Self::Compound(crs) => export_compound(crs, Some(db)),
+            other => other.export_to_proj_string(),
+        }
+    }
+
     pub(super) fn export_with(&self, extras: &ProjExtras<'_>) -> Result<String, FactoryError> {
         match self {
             Self::Geographic(crs) => Ok(geographic_proj(crs, extras)),
             Self::Geodetic(crs) => crs.export_with(extras),
             Self::Projected(crs) => crs.export_with(extras),
             Self::Vertical(crs) => Ok(vertical_proj(crs, extras)),
-            Self::Bound(crs) => export_bound(crs, None),
-            Self::Compound(crs) => export_compound(crs),
+            Self::Bound(crs) => export_bound(crs, None, None),
+            Self::Compound(crs) => export_compound(crs, None),
             Self::Derived(crs) => derived_geographic_proj(crs),
             _ => Err(FactoryError::Format(
                 "this CRS kind has no PROJ string export".to_owned(),
@@ -248,7 +266,8 @@ impl Crs {
         }
     }
 
-    /// `normalizeForVisualization` for a geographic or projected CRS.
+    /// `normalizeForVisualization` for a geographic, projected, or bound CRS. A bound CRS
+    /// normalizes its base and keeps its hub and transformation.
     #[must_use]
     pub fn normalize_for_visualization(&self) -> Self {
         match self {
@@ -257,6 +276,11 @@ impl Crs {
             Self::DerivedProjected(crs) => {
                 Self::DerivedProjected(crs.normalize_for_visualization())
             }
+            Self::Bound(crs) => Self::Bound(BoundCRS::create(
+                crs.source_crs().normalize_for_visualization(),
+                crs.target_crs().clone(),
+                crs.transformation().clone(),
+            )),
             other => other.clone(),
         }
     }
