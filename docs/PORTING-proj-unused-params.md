@@ -92,9 +92,10 @@ présents dans le dépôt).
   "units", "")`). La crate lit aussi `to_meter` pour l'unité. Le nouveau critère
   rend `to_meter` non lu, donc l'extension est gardée, mais l'unité n'est pas
   changée. Non corrigé ici (hors périmètre).
-- **Remarque `PROJ CRS string: ...`** : cette remarque n'apparaît pas dans
-  `io.cpp` 9.9.0. C'est un comportement existant du port pour `+over`, qui
-  s'étend maintenant à toutes les extensions. Non vérifié contre la source PROJ.
+- **Remarque `PROJ CRS string: ...`** : elle est dans `crs.cpp` 9.9.0
+  (`CRS::setProperties`, préfixe `PROJ CRS string: `, suffixe `. `). Le port
+  l'écrit comme PROJ pour toutes les extensions, et non plus seulement pour
+  `+over`.
 - **Casse** : PROJ compare les clés avec `ci_equal`. Ici la comparaison est
   sensible à la casse.
 - **`k` / `k_0`** : `getParamValueK` ne marque que la première des deux. La
