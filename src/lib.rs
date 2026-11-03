@@ -104,11 +104,11 @@ pub use iso19111::{
     GeographicCRS, GridAvailabilityUse, GridInfo, Identifier, IntermediateCrsUse, LinunitPolicy,
     Measure, Meridian, NameMatch, NameSpelling, ObjectDomain, ObjectType, OfficialName, OpProps,
     OperationMethod, OperationParameter, OperationParameterValue, OrdinalCS, OutputAxisRule,
-    Parameter, ParameterValue, PrimeMeridian, ProjLines, ProjectedCRS, SpatialCriterion,
-    SphericalCS, SupersededOperations, TemporalKind, Transformation, UnitInfo, UnitKind,
-    UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame, WktConvention, WktDialect,
-    WktFormatter, WktLines, WktNode, WktObject, WktParser, WktStrictness,
-    CALENDAR_PROLEPTIC_GREGORIAN,
+    Parameter, ParameterLinearUnit, ParameterValue, PrimeMeridian, ProjLines, ProjectedCRS,
+    SpatialCriterion, SphericalCS, SupersededOperations, TemporalKind, Transformation, UnitInfo,
+    UnitKind, UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame, Wgs84Dynamic,
+    WktConvention, WktDialect, WktFormatter, WktLines, WktNode, WktObject, WktParser,
+    WktStrictness, CALENDAR_PROLEPTIC_GREGORIAN,
 };
 pub use iso19111::{
     DerivedCRS, ParametricCRS, ParametricCS, ParametricDatum, TemporalCRS, TemporalCS,

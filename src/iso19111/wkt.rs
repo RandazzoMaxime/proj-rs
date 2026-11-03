@@ -145,6 +145,8 @@ pub struct WktFormatter {
     towgs84: Option<[f64; 7]>,
     /// `PROJ4_GRIDS` written into the next WKT1 vertical datum.
     vdatum_grid: Option<String>,
+    /// `PROJ4_GRIDS` written into the next WKT1 geodetic datum.
+    hdatum_grid: Option<String>,
     /// Geographic CRS name of a compound being exported, so a vertical bound
     /// whose hub is that CRS is written back as `EXTENSION["PROJ4_GRIDS"]`.
     compound_geog_name: Option<String>,
@@ -202,6 +204,7 @@ impl WktFormatter {
             allow_linunit: esri,
             towgs84: None,
             vdatum_grid: None,
+            hdatum_grid: None,
             compound_geog_name: None,
             result: String::new(),
             indent_level: 0,
@@ -945,6 +948,11 @@ fn export_projected(crs: &ProjectedCRS, formatter: &mut WktFormatter) -> Result<
             formatter.format_ids(crs.base.identifiers());
             formatter.output_id.pop();
         }
+        // A 2D base omits its CS. A 3D base must write it or a round trip
+        // rebuilds a latitude/longitude CRS (PROJ issue 2122).
+        if crs.base.coordinate_system().axes().len() > 2 {
+            export_cs(&crs.base.coordinate_system(), formatter);
+        }
         formatter.end_node();
     } else {
         let previous = formatter.output_axis;
@@ -1397,6 +1405,14 @@ fn export_bound(crs: &BoundCRS, formatter: &mut WktFormatter) -> Result<(), Fact
                 return exported;
             }
         }
+        if hub_is_wgs84(crs.target_crs()) && transformation.method().code() == "9615" {
+            if let Some(grid) = transformation.nadgrids_filename() {
+                formatter.hdatum_grid = Some(grid.to_owned());
+                let exported = export_crs(&crs.source, formatter);
+                formatter.hdatum_grid = None;
+                return exported;
+            }
+        }
         if hub_is_wgs84(crs.target_crs()) {
             if let Ok(Some(params)) = transformation.towgs84_strict() {
                 formatter.towgs84 = Some(params);
@@ -1571,6 +1587,12 @@ fn export_geodetic_datum(datum: &GeodeticReferenceFrame, formatter: &mut WktForm
             for value in params {
                 formatter.add_number(value);
             }
+            formatter.end_node();
+        }
+        if let Some(grid) = formatter.hdatum_grid.clone() {
+            formatter.start_node("EXTENSION", NodeId::Absent);
+            formatter.add_quoted("PROJ4_GRIDS");
+            formatter.add_quoted(&grid);
             formatter.end_node();
         }
     }

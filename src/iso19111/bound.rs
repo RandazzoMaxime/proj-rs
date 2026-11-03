@@ -7,8 +7,8 @@ use std::f64::consts::PI;
 use super::equiv::Equivalence;
 use super::factory::{CoordinateOperationContext, CoordinateOperationFactory, DatabaseContext};
 use super::model::{
-    BoundCRS, CoordinateOperation, Crs, FactoryError, GeodeticCRS, GeographicCRS, Parameter,
-    ParameterValue, Transformation,
+    BoundCRS, CompoundCRS, CoordinateOperation, Crs, FactoryError, GeodeticCRS, GeographicCRS,
+    Parameter, ParameterValue, Transformation,
 };
 
 /// EPSG method codes that `Transformation::isGeographic3DToGravityRelatedHeight` accepts.
@@ -268,7 +268,8 @@ impl Crs {
     /// A vertical CRS is bound to EPSG:4979 through a transformation whose grids are
     /// known. A geographic or projected CRS is bound to EPSG:4326 through a Helmert
     /// transformation, when exactly one of them has `+towgs84` parameters. A bound
-    /// CRS and a compound CRS are returned as they are.
+    /// CRS is returned as it is. A compound of two CRS is rebuilt when either
+    /// component can be bound.
     #[must_use]
     pub fn create_bound_crs_to_wgs84_if_possible(&self, db: &DatabaseContext) -> Crs {
         self.bound_to_wgs84(db)
@@ -278,7 +279,15 @@ impl Crs {
     }
 
     fn bound_to_wgs84(&self, db: &DatabaseContext) -> Result<Option<Crs>, FactoryError> {
-        if matches!(self, Self::Bound(_) | Self::Compound(_)) {
+        if let Self::Compound(compound) = self {
+            return compound_bound(compound, db);
+        }
+        if matches!(self, Self::Bound(_)) {
+            return Ok(None);
+        }
+        // Several areas of validity, and neither contains the other: no single
+        // transformation covers every domain (`createBoundCRSToWGS84IfPossible`).
+        if several_unrelated_domains(self) {
             return Ok(None);
         }
         let authority = self
@@ -290,6 +299,26 @@ impl Crs {
         }
         horizontal_bound(self, db, &authority)
     }
+}
+
+/// A compound of two CRS is bound when either component can be bound.
+fn compound_bound(
+    compound: &CompoundCRS,
+    db: &DatabaseContext,
+) -> Result<Option<Crs>, FactoryError> {
+    let components = compound.components();
+    if components.len() != 2 {
+        return Ok(None);
+    }
+    let horizontal = components[0].create_bound_crs_to_wgs84_if_possible(db);
+    let vertical = components[1].create_bound_crs_to_wgs84_if_possible(db);
+    if horizontal.is_equivalent_to(&components[0]) && vertical.is_equivalent_to(&components[1]) {
+        return Ok(None);
+    }
+    let mut created = CompoundCRS::create(compound.name(), vec![horizontal, vertical])?;
+    created.identified.identifiers = compound.identified.identifiers.clone();
+    created.identified.deprecated = compound.identified.deprecated;
+    Ok(Some(Crs::Compound(created)))
 }
 
 fn vertical_bound(
@@ -398,6 +427,20 @@ fn candidate_operations(
 ) -> Result<Vec<CoordinateOperation>, FactoryError> {
     let context = CoordinateOperationContext::create(db, authority);
     CoordinateOperationFactory::create().create_operations(source, target, &context)
+}
+
+/// Two usages whose boxes do not nest. One domain, or a pair where one box
+/// contains the other (ETRS89 UTM since EPSG v11), still binds.
+fn several_unrelated_domains(crs: &Crs) -> bool {
+    let domains = crs.domains();
+    if domains.len() == 2 {
+        if let (Some(outer), Some(inner)) = (domains[0].bounding_box(), domains[1].bounding_box()) {
+            if outer.contains(&inner) || inner.contains(&outer) {
+                return false;
+            }
+        }
+    }
+    domains.len() > 1
 }
 
 fn bind(source: &Crs, hub: Crs, transformation: Transformation) -> Crs {

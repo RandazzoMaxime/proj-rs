@@ -20,6 +20,16 @@ const AXIS_ORDER_REVERSAL_2D: i32 = 9843;
 const AXIS_ORDER_CHANGE_2D: &str = "15498";
 const AXIS_ORDER_CHANGE_2D_NAME: &str = "axis order change (2D)";
 
+impl CoordinateOperation {
+    /// `normalizeForVisualization`: north/east axes become east/north.
+    ///
+    /// `None` when a side that needs the reversal cannot be reversed.
+    #[must_use]
+    pub fn normalize_for_visualization(&self) -> Option<Self> {
+        normalize_for_visualization(self)
+    }
+}
+
 /// The operation `normalizeForVisualization` returns, or `None` when it cannot be built: a
 /// side that needs the reversal is a kind this crate cannot reverse (a compound CRS), or the
 /// operation has no CRS pair.

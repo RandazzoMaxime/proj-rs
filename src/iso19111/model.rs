@@ -909,6 +909,20 @@ impl GeodeticReferenceFrame {
         self.frame_epoch
     }
 
+    /// This frame with a reference epoch, in decimal years.
+    #[must_use]
+    pub fn with_frame_epoch(mut self, epoch: f64) -> Self {
+        self.frame_epoch = Some(epoch);
+        self
+    }
+
+    /// This frame with an anchor definition.
+    #[must_use]
+    pub fn with_anchor(mut self, anchor: impl Into<String>) -> Self {
+        self.identified.anchor = Some(anchor.into());
+        self
+    }
+
     /// Anchor definition.
     #[must_use]
     pub fn anchor(&self) -> Option<&str> {
@@ -1063,6 +1077,13 @@ impl VerticalReferenceFrame {
     #[must_use]
     pub fn frame_reference_epoch(&self) -> Option<f64> {
         self.frame_epoch
+    }
+
+    /// This datum with a reference epoch, in decimal years.
+    #[must_use]
+    pub fn with_frame_epoch(mut self, epoch: f64) -> Self {
+        self.frame_epoch = Some(epoch);
+        self
     }
 
     /// Usages recorded for this datum.
@@ -3000,6 +3021,34 @@ impl VerticalCRS {
         }
     }
 
+    /// Vertical CRS defined by a datum ensemble.
+    ///
+    /// # Errors
+    ///
+    /// A member is not a vertical datum.
+    pub fn create_ensemble(
+        name: impl Into<String>,
+        ensemble: DatumEnsemble,
+        coordinate_system: VerticalCS,
+    ) -> Result<Self, FactoryError> {
+        if ensemble
+            .members()
+            .iter()
+            .any(|member| !matches!(member, Datum::Vertical(_)))
+        {
+            return Err(FactoryError::Invalid(
+                "a vertical CRS ensemble must contain vertical datums".to_owned(),
+            ));
+        }
+        Ok(Self {
+            identified: Identified::named(name),
+            datum: None,
+            ensemble: Some(ensemble),
+            coordinate_system,
+            geoid_models: Vec::new(),
+        })
+    }
+
     /// Attach an authority identifier.
     #[must_use]
     pub fn with_identifier(mut self, code_space: &str, code: &str) -> Self {
@@ -3225,6 +3274,15 @@ impl CompoundCRS {
     #[must_use]
     pub fn components(&self) -> &[Crs] {
         &self.components
+    }
+
+    /// Attach an authority identifier.
+    #[must_use]
+    pub fn with_identifier(mut self, code_space: &str, code: &str) -> Self {
+        self.identified
+            .identifiers
+            .push(Identifier::new(code_space, code));
+        self
     }
 
     /// `CompoundCRS::createLax`: a geographic CRS plus an ellipsoidal-height
@@ -3580,6 +3638,12 @@ impl Crs {
     pub(crate) fn is_horizontal(&self) -> bool {
         match self {
             Self::Vertical(_) | Self::Temporal(_) | Self::Parametric(_) => false,
+            Self::Derived(crs) => !matches!(
+                crs.kind(),
+                super::niche::DerivedKind::Vertical
+                    | super::niche::DerivedKind::Temporal
+                    | super::niche::DerivedKind::Parametric
+            ),
             Self::Compound(crs) => crs.components.iter().any(Self::is_horizontal),
             Self::Bound(crs) => crs.source.is_horizontal(),
             _ => true,

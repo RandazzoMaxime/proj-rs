@@ -5,10 +5,10 @@
 //! geographic latitude/longitude swap.
 
 use super::model::{
-    ensemble_name_as_datum, Axis, CompoundCRS, Conversion, CoordinateSystem, Crs, Datum,
-    DatumEnsemble, Ellipsoid, EngineeringCRS, EngineeringDatum, GeodeticCRS,
+    ensemble_name_as_datum, Axis, CompoundCRS, Conversion, CoordinateOperation, CoordinateSystem,
+    Crs, Datum, DatumEnsemble, Ellipsoid, EngineeringCRS, EngineeringDatum, GeodeticCRS,
     GeodeticReferenceFrame, GeographicCRS, Identified, Parameter, ParameterValue, PrimeMeridian,
-    ProjectedCRS, VerticalCRS, VerticalReferenceFrame,
+    ProjectedCRS, Transformation, VerticalCRS, VerticalReferenceFrame,
 };
 
 /// How much two ISO 19111 objects may differ and still compare equal.
@@ -410,8 +410,56 @@ impl Crs {
             (Self::Temporal(left), Self::Temporal(right)) => left.is_equivalent_to(right),
             (Self::Parametric(left), Self::Parametric(right)) => left.is_equivalent_to(right),
             (Self::Derived(left), Self::Derived(right)) => left.is_equivalent_to(right),
+            (Self::Bound(left), Self::Bound(right)) => {
+                same_name(left.name(), right.name())
+                    && left.source_crs().is_equivalent_to(right.source_crs())
+                    && left.target_crs().is_equivalent_to(right.target_crs())
+                    && operations_equivalent(left.transformation(), right.transformation())
+            }
             _ => false,
         }
+    }
+}
+
+fn operations_equivalent(left: &CoordinateOperation, right: &CoordinateOperation) -> bool {
+    match (left, right) {
+        (CoordinateOperation::Transformation(left), CoordinateOperation::Transformation(right)) => {
+            transformation_equivalent(left, right)
+        }
+        (CoordinateOperation::Conversion(left), CoordinateOperation::Conversion(right)) => {
+            left.is_equivalent_to(right)
+        }
+        (CoordinateOperation::Concatenated(left), CoordinateOperation::Concatenated(right)) => {
+            same_name(left.name(), right.name())
+                && left.steps().len() == right.steps().len()
+                && left
+                    .steps()
+                    .iter()
+                    .zip(right.steps())
+                    .all(|(left, right)| operations_equivalent(left.operation(), right.operation()))
+        }
+        _ => false,
+    }
+}
+
+fn transformation_equivalent(left: &Transformation, right: &Transformation) -> bool {
+    same_name(left.name(), right.name())
+        && left.method().code() == right.method().code()
+        && endpoint_equivalent(left.source_crs(), right.source_crs())
+        && endpoint_equivalent(left.target_crs(), right.target_crs())
+        && left.parameters().len() == right.parameters().len()
+        && left
+            .parameters()
+            .iter()
+            .zip(right.parameters())
+            .all(|(left, right)| parameter_equivalent(left, right))
+}
+
+fn endpoint_equivalent(left: Option<&Crs>, right: Option<&Crs>) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => left.is_equivalent_to(right),
+        (None, None) => true,
+        _ => false,
     }
 }
 
@@ -1049,8 +1097,8 @@ impl GeodeticCRS {
 impl Crs {
     /// `CRS::identify` with no authority factory.
     ///
-    /// Geographic and geodetic CRS use [`GeodeticCRS::identify`]. Other kinds
-    /// have no hardcoded candidate.
+    /// Geographic and geodetic CRS use [`GeodeticCRS::identify`]. A projected
+    /// CRS uses the hardcoded UTM zones. Other kinds have no candidate.
     #[must_use]
     pub fn identify(&self) -> Vec<(Crs, i32)> {
         match self {
@@ -1058,6 +1106,7 @@ impl Crs {
                 Self::Geodetic(GeodeticCRS::Geographic(crs.clone())).identify()
             }
             Self::Geodetic(crs) => crs.identify(),
+            Self::Projected(crs) => crs.identify_with(None),
             _ => Vec::new(),
         }
     }

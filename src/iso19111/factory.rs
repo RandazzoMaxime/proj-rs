@@ -811,6 +811,24 @@ impl DatabaseContext {
                 return Some((row[0].text(), row[1].text(), row[2].text()));
             }
         }
+        // Realizations share the ensemble name as an alias. Prefer the ensemble
+        // (`European Terrestrial Reference System 1989 ensemble`) and return the
+        // name `datum()` synthesizes, not an arbitrary member such as EPSG:1132.
+        let ensemble_key = format!("{key}ensemble");
+        let ensemble = self.query(
+            "SELECT name FROM geodetic_datum \
+             WHERE REPLACE(REPLACE(LOWER(name), '_', ''), ' ', '') = ? \
+             ORDER BY deprecated LIMIT 1",
+            std::slice::from_ref(&ensemble_key),
+        );
+        if let Ok(rows) = ensemble {
+            if let Some(row) = rows.first() {
+                let name = row[0].text();
+                if let Some(stripped) = name.strip_suffix(" ensemble") {
+                    return Some((stripped.to_owned(), String::new(), String::new()));
+                }
+            }
+        }
         let by_alias = self.query(
             "SELECT g.name, g.auth_name, g.code FROM alias_name a \
              JOIN geodetic_datum g ON g.auth_name = a.auth_name AND g.code = a.code \
