@@ -5,27 +5,23 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 217 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `core` | 200 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
 | `niche` | 40 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 56 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (217)
+## core (200)
 
-### test_c_api.cpp (28)
+### test_c_api.cpp (23)
 
-- `CApi.proj_crs_create_bound_crs_to_WGS84_on_invalid_type`
-- `CApi.proj_create_from_database_grid_alternative_null_old_proj_grid_name`
 - `CApi.proj_coordoperation_get_grid_used`
 - `CApi.proj_coordoperation_get_grid_used_fullname_caching`
 - `CApi.proj_coordoperation_is_instantiable`
-- `CApi.proj_create_operations`
 - `CApi.proj_get_suggested_operation_for_NAD83_to_NAD83_HARN`
 - `CApi.proj_create_operations_prime_meridian_non_greenwich`
 - `CApi.proj_get_suggested_operation_with_operations_without_area_of_use`
 - `CApi.proj_create_operations_discard_superseded`
 - `CApi.proj_create_operations_dont_discard_superseded`
 - `CApi.proj_create_operations_with_pivot`
-- `CApi.proj_create_operations_allow_ballpark_transformations`
 - `CApi.proj_normalize_for_visualization_with_alternatives`
 - `CApi.proj_normalize_for_visualization_with_alternatives_reverse`
 - `CApi.proj_coordoperation_create_inverse`
@@ -39,10 +35,9 @@ The class comes from the test name alone, so check it when you port a test.
 - `CApi.proj_create_vertical_crs_ex_implied_accuracy`
 - `CApi.proj_trans_bounds_ignore_inf`
 - `CApi.proj_trans_bounds_ignore_inf_geographic`
-- `CApi.proj_trans_bounds_to_compound_crs`
 - `CApi.proj_trans_bounds_3D_ignore_inf`
 
-### test_crs.cpp (14)
+### test_crs.cpp (12)
 
 - `crs.projectedCRS_from_WKT1_ESRI_as_WKT1_ESRI_s_jtsk03_krovak_east_north`
 - `crs.projectedCRS_Krovak_EPSG_5221_as_PROJ_string`
@@ -52,10 +47,8 @@ The class comes from the test name alone, so check it when you port a test.
 - `crs.verticalCRS_identify_db`
 - `crs.compoundCRS_identify_db`
 - `crs.boundCRS_crs_link`
-- `crs.boundCRS_nadcon_to_PROJ_string_usePROJAlternativeGridNames_false`
 - `crs.boundCRS_identify_db`
 - `crs.crs_createBoundCRSToWGS84IfPossible`
-- `crs.normalizeForVisualization_bound`
 - `crs.norway_ntm`
 - `crs.ETRF2000_PL_CS92`
 
@@ -65,7 +58,7 @@ The class comes from the test name alone, so check it when you port a test.
 - `factory.AuthorityFactory_build_all_concatenated`
 - `factory.ogc_timecrs`
 
-### test_io.cpp (13)
+### test_io.cpp (12)
 
 - `wkt_parse.CONCATENATEDOPERATION_with_conversion_and_conversion`
 - `wkt_parse.CONCATENATEDOPERATION_with_conversion_coordinateoperation_conversion`
@@ -79,7 +72,6 @@ The class comes from the test name alone, so check it when you port a test.
 - `io.projstringformatter_krovak_east_north_to_krovak`
 - `io.projparse_init`
 - `io.createFromUserInput`
-- `json_import.bound_crs_with_source_crs_in_transformation`
 
 ### test_operation.cpp (5)
 
@@ -89,7 +81,7 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.operation_geocen_translations_by_grid_and_geocen_translations_NEU_velocities_gtg`
 - `operation.operation_geocen_translations_NEU_velocities_gtg`
 
-### test_operationfactory.cpp (154)
+### test_operationfactory.cpp (145)
 
 - `operation.geogCRS_to_geogCRS_context_match_by_name`
 - `operation.geogCRS_to_geogCRS_context_inverse_needed`
@@ -115,7 +107,6 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.geogCRS_with_towgs84_to_geocentric`
 - `operation.geogCRS_different_from_baseCRS_to_projCRS_context_compatible_area`
 - `operation.projCRS_no_id_to_geogCRS_context`
-- `operation.projCRS_3D_to_geogCRS_3D_context`
 - `operation.geogCRS_3D_to_projCRS_with_2D_geocentric_translation`
 - `operation.projCRS_to_projCRS_different_baseCRS`
 - `operation.projCRS_to_projCRS_context_grid_offsets`
@@ -127,9 +118,6 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.boundCRS_of_clrk_66_geogCRS_to_nad83_geogCRS`
 - `operation.boundCRS_of_clrk_66_projCRS_to_nad83_geogCRS`
 - `operation.boundCRS_of_projCRS_to_geogCRS`
-- `operation.boundCRS_of_geogCRS_to_unrelated_geogCRS_context`
-- `operation.geogCRS_to_boundCRS_of_geogCRS`
-- `operation.boundCRS_to_geogCRS_same_datum_context`
 - `operation.boundCRS_to_geogCRS_hubCRS_and_targetCRS_same_but_baseCRS_not`
 - `operation.boundCRS_to_boundCRS`
 - `operation.boundCRS_to_boundCRS_noop_for_TOWGS84`
@@ -145,7 +133,6 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.transformation_height_to_PROJ_string`
 - `operation.compoundCRS_with_boundProjCRS_and_boundVerticalCRS_to_geogCRS`
 - `operation.compoundCRS_with_boundProjCRS_with_ftus_and_boundVerticalCRS_to_geogCRS`
-- `operation.compoundCRS_with_bound_of_projected_and_bound_of_vertical_to_geog3D`
 - `operation.compoundCRS_with_boundGeogCRS_and_geoid_to_geodCRS_NAD2011_ctxt`
 - `operation.compoundCRS_with_vert_bound_to_bound_geog3D`
 - `operation.geocent_to_compoundCRS`
@@ -185,7 +172,6 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.compoundCRS_to_geogCRS_3D_with_3D_helmert_context`
 - `operation.compoundCRS_to_geogCRS_3D_with_3D_helmert_same_geog_src_target_context`
 - `operation.compoundCRS_to_geogCRS_3D_with_null_helmert_same_geog_src_target_context`
-- `operation.compoundCRS_to_geogCRS_3D_with_same_geog_src_target_interp_context`
 - `operation.compoundCRS_to_geogCRS_3D_WGS84_to_GDA2020_AHD_Height`
 - `operation.compoundCRS_to_geogCRS_2D_promote_to_3D_context`
 - `operation.compoundCRS_of_projCRS_to_geogCRS_3D_context`
@@ -200,7 +186,6 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.compoundCRS_to_geogCRS_with_height_depth_reversal`
 - `operation.compoundCRS_to_geogCRS_with_vertical_unit_change_and_height_depth_reversal`
 - `operation.compoundCRS_of_vertCRS_with_geoid_model_to_geogCRS`
-- `operation.compoundCRS_of_horizCRS_with_TOWGS84_vertCRS_with_geoid_model_to_geogCRS`
 - `operation.compoundCRS_of_vertCRS_with_geoid_model_by_id_to_geogCRS`
 - `operation.compoundCRS_of_vertCRS_with_geoid_model_by_name_and_several_records_to_geogCRS`
 - `operation.compoundCRS_of_vertCRS_with_geoid_model_by_name_and_datum_ensemble`
@@ -208,7 +193,6 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.compoundCRS_from_WKT2_to_geogCRS_3D_context`
 - `operation.compoundCRS_from_WKT2_no_id_to_geogCRS_3D_context`
 - `operation.compoundCRS_to_geogCRS_3D_Amersfoort_NAP_height_to_Amersfoort`
-- `operation.proj3DCRS_with_non_meter_horiz_and_vertical_to_geog`
 - `operation.compoundCRS_with_non_meter_horiz_and_vertical_to_geog`
 - `operation.compoundCRS_to_geogCRS_3D_using_intermediate_of_horizontal_transform`
 - `operation.boundCRS_to_compoundCRS`
@@ -244,7 +228,6 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.createOperation_defmodel_from_database`
 - `operation.compoundCRS_to_compoundCRS_context_extent_use_none`
 - `operation.createOperation_ETRF2000_to_Amersfoort`
-- `operation.createOperation_ETRS89_to_Amersfoort`
 
 ## niche (40)
 
