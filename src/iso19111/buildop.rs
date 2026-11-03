@@ -28,6 +28,17 @@ pub(crate) enum UtmHemisphere {
     South,
 }
 
+/// Horizontal axis order of [`Conversion::create_axis_order_reversal`].
+///
+/// PROJ takes a `bool`. The two EPSG conversions are distinct objects.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AxisOrderReversal {
+    /// EPSG:15498, method 9843, two horizontal axes.
+    TwoD,
+    /// EPSG:15499, method 9844, the horizontal axes of a geographic 3D CRS.
+    Geographic3d,
+}
+
 /// Name, authority code, and remarks passed to an operation constructor.
 #[derive(Clone, Debug, Default)]
 pub struct OpProps {
@@ -434,6 +445,46 @@ impl Conversion {
             inverted: false,
             interpolation: None,
         })
+    }
+
+    /// `PROJBasedOperation::create`: the PROJ string is the method name after
+    /// `PROJ-based operation method: `.
+    ///
+    /// # Errors
+    ///
+    /// `proj_string` is a pipeline that contains another pipeline.
+    pub fn create_proj_based(props: &OpProps, proj_string: &str) -> Result<Self, FactoryError> {
+        reject_nested_pipeline(proj_string)?;
+        let method_name = format!("PROJ-based operation method: {proj_string}");
+        Ok(Self {
+            identified: identified_from(props, "PROJ-based coordinate operation"),
+            method: OperationMethod::create(method_name, Vec::new()),
+            parameters: Vec::new(),
+            source: None,
+            target: None,
+            version: None,
+            inverted: false,
+            interpolation: None,
+        })
+    }
+
+    /// `Conversion::createAxisOrderReversal`: EPSG:15498 or EPSG:15499.
+    ///
+    /// # Errors
+    ///
+    /// The method map has no entry for the axis-order method.
+    pub fn create_axis_order_reversal(kind: AxisOrderReversal) -> Result<Self, FactoryError> {
+        let (code, name, id) = match kind {
+            AxisOrderReversal::TwoD => (9843, "axis order change (2D)", "15498"),
+            AxisOrderReversal::Geographic3d => {
+                (9844, "axis order change (geographic3D horizontal)", "15499")
+            }
+        };
+        Self::from_code(
+            &OpProps::new().name(name).identifier("EPSG", id),
+            code,
+            Vec::new(),
+        )
     }
 
     /// The inverse conversion, as `InverseConversion`: the same method and parameters, an
@@ -992,6 +1043,18 @@ impl super::model::Conversion {
     }
 
     fn export_to_proj_inner(&self, approx_tmerc: TmercApprox) -> Result<String, FactoryError> {
+        if let Some(text) = self
+            .method
+            .name()
+            .strip_prefix("PROJ-based operation method: ")
+        {
+            let direction = if self.inverted {
+                ProjBasedDirection::Inverse
+            } else {
+                ProjBasedDirection::Forward
+            };
+            return export_proj_based_definition(text, direction);
+        }
         if self.inverted {
             // A factory inverse still carries its CRS pair. That string is the
             // projection pipeline, not this bare `+inv` form.
@@ -1012,13 +1075,6 @@ impl super::model::Conversion {
         }
         if self.method.name.eq_ignore_ascii_case("Adams_Square_II") {
             return Ok(adams_square_ii_proj(self));
-        }
-        if let Some(text) = self
-            .method
-            .name()
-            .strip_prefix("PROJ-based operation method: ")
-        {
-            return Ok(text.split_whitespace().collect::<Vec<_>>().join(" "));
         }
         if self.method.name().eq_ignore_ascii_case("Adams_Square_II") {
             return Ok(self.adams_square_ii_proj_string());
@@ -2649,6 +2705,54 @@ fn long_lengths(longitude: f64, false_easting: f64, false_northing: f64) -> Vec<
         ParameterValue::length(false_easting),
         ParameterValue::length(false_northing),
     ]
+}
+
+/// A pipeline step whose `+proj` is itself `pipeline` is rejected by PROJ.
+fn reject_nested_pipeline(text: &str) -> Result<(), FactoryError> {
+    let mut pipelines = 0;
+    let mut saw_step = false;
+    for token in text.split_whitespace() {
+        let token = token.trim_start_matches('+');
+        if token == "step" {
+            saw_step = true;
+        }
+        if token == "proj=pipeline" {
+            pipelines += 1;
+            if pipelines > 1 && saw_step {
+                return Err(FactoryError::Unsupported(
+                    "PROJBasedOperation::create() failed: nested pipeline".to_owned(),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Direction of a PROJ-based conversion's stored string.
+enum ProjBasedDirection {
+    Forward,
+    Inverse,
+}
+
+/// Forward text is the stored PROJ string. An empty definition is `+proj=noop`
+/// in both directions. An inverse re-ingests the text, as PROJ does, so a
+/// global parameter before the first step is kept on the forward string.
+fn export_proj_based_definition(
+    text: &str,
+    direction: ProjBasedDirection,
+) -> Result<String, FactoryError> {
+    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() || normalized == "+proj=noop" {
+        return Ok("+proj=noop".to_owned());
+    }
+    if let ProjBasedDirection::Forward = direction {
+        return Ok(normalized);
+    }
+    let mut formatter = super::pipeline::PipelineFormatter::with_grid_names(Vec::new());
+    formatter.start_inversion();
+    formatter.ingest_proj_string(&normalized);
+    formatter.stop_inversion();
+    Ok(formatter.finish(super::pipeline::ProjLines::Single))
 }
 
 fn identified_from(props: &OpProps, default_name: &str) -> Identified {

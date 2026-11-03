@@ -8,10 +8,13 @@
 //! translations, position vector, coordinate frame, and their time-dependent
 //! forms), and the grid methods: `hgridshift` (NTv1, NTv2), `vgridshift` (geoid
 //! and vertical grids), `defmodel` (New Zealand), and the `tinshift` JSON methods
-//! on projected CRS (1138) and geographic 2D (1145). The grid methods are written
-//! only by [`CoordinateOperation::export_to_proj_string_with_database`], the export
-//! `projinfo` uses; the `cs2cs` selection still sees them as unimplemented. Any
-//! other method is `Unimplemented`, the error PROJ raises for a method its
+//! on projected CRS (1138) and geographic 2D (1145). Grid steps are written by
+//! [`Transformation::export_to_proj_string`] and
+//! [`ConcatenatedOperation::export_to_proj_string`], matching PROJ
+//! `exportToPROJString`, and by
+//! [`CoordinateOperation::export_to_proj_string_with_database`]. The `cs2cs`
+//! path uses `export_to_proj_string_with` without grid steps.
+//! Any other method is `Unimplemented`, the error PROJ raises for a method its
 //! exporter lacks.
 //!
 //! Coordinate epochs are not stored by this crate, so PROJ's `set` steps for a
@@ -103,11 +106,13 @@ impl Transformation {
     /// The method is not one this crate writes, the operation is a point motion,
     /// or an endpoint is not a geodetic CRS the method needs.
     pub fn export_to_proj_string(&self, lines: ProjLines) -> Result<String, FactoryError> {
-        self.export_to_proj_string_with(lines, Vec::new())
+        let mut formatter = PipelineFormatter::with_grid_names(Vec::new()).with_grid_steps();
+        self.export_steps(&mut formatter)?;
+        Ok(formatter.finish(lines))
     }
 
     /// As [`Self::export_to_proj_string`], each grid written under the PROJ name
-    /// `grid_names` gives it.
+    /// `grid_names` gives it. Grid steps stay off: this is the `cs2cs` path.
     pub(crate) fn export_to_proj_string_with(
         &self,
         lines: ProjLines,
@@ -175,11 +180,13 @@ impl ConcatenatedOperation {
     /// A step has no PROJ string in this crate: a conversion step without its CRS
     /// pair, or a transformation method this crate does not write.
     pub fn export_to_proj_string(&self, lines: ProjLines) -> Result<String, FactoryError> {
-        self.export_to_proj_string_with(lines, Vec::new())
+        let mut formatter = PipelineFormatter::with_grid_names(Vec::new()).with_grid_steps();
+        self.export_steps(&mut formatter)?;
+        Ok(formatter.finish(lines))
     }
 
     /// As [`Self::export_to_proj_string`], each grid written under the PROJ name
-    /// `grid_names` gives it.
+    /// `grid_names` gives it. Grid steps stay off: this is the `cs2cs` path.
     pub(crate) fn export_to_proj_string_with(
         &self,
         lines: ProjLines,
@@ -236,7 +243,17 @@ fn export_forward(
     formatter: &mut PipelineFormatter,
 ) -> Result<(), FactoryError> {
     let code = epsg_method_code(operation);
-    if operation.method().name() == PROJ_BASED_METHOD {
+    let method_name = operation.method().name();
+    if let Some(text) = method_name.strip_prefix("PROJ-based operation method: ") {
+        formatter.ingest_proj_string(text);
+        return Ok(());
+    }
+    if method_name.eq_ignore_ascii_case("Inverse of Geographic3D to GravityRelatedHeight")
+        || method_name.eq_ignore_ascii_case("Inverse of Geog3D to Geog2D+GravityRelatedHeight")
+    {
+        return inverse_constant_geoid_height(operation, source, formatter);
+    }
+    if method_name == PROJ_BASED_METHOD {
         return geodetic_proj_based(source, target, formatter);
     }
     if code == METHOD_AFFINE {
@@ -1167,6 +1184,14 @@ fn vertical_offset(
     Ok(())
 }
 
+/// Which vertical CRS carries the constant geoid shift, and the sign of `zoff`.
+enum GeoidShift {
+    /// Method 1136: subtract the geoid height from the target vertical CRS.
+    Forward,
+    /// An inverse method name: add the geoid height on the source vertical CRS.
+    InverseMethod,
+}
+
 /// `Geographic3D to GravityRelatedHeight` with a constant geoid height: an
 /// `affine` height shift, then the linear unit of the target vertical CRS.
 fn constant_geoid_height(
@@ -1174,19 +1199,48 @@ fn constant_geoid_height(
     target: Option<&Crs>,
     formatter: &mut PipelineFormatter,
 ) -> Result<(), FactoryError> {
-    let vertical = match target {
+    write_geoid_shift(operation, target, GeoidShift::Forward, formatter)
+}
+
+/// Inverse method names of 1136 and 1131. `INVERSE(EPSG)` is not an EPSG code,
+/// so the forward branch never sees them. The height is read from the source.
+fn inverse_constant_geoid_height(
+    operation: &Transformation,
+    source: Option<&Crs>,
+    formatter: &mut PipelineFormatter,
+) -> Result<(), FactoryError> {
+    write_geoid_shift(operation, source, GeoidShift::InverseMethod, formatter)
+}
+
+fn write_geoid_shift(
+    operation: &Transformation,
+    crs: Option<&Crs>,
+    shift: GeoidShift,
+    formatter: &mut PipelineFormatter,
+) -> Result<(), FactoryError> {
+    let vertical = match crs {
         Some(Crs::Compound(compound)) => compound.components().get(1),
         other => other,
     };
     let Some(Crs::Vertical(vertical)) = vertical else {
-        return Err(FactoryError::Format(
-            "Can apply Geographic3D to GravityRelatedHeight only to VerticalCRS".to_owned(),
-        ));
+        let message = match shift {
+            GeoidShift::Forward => {
+                "Can apply Geographic3D to GravityRelatedHeight only to VerticalCRS"
+            }
+            GeoidShift::InverseMethod => {
+                "Inverse of Geographic3D to GravityRelatedHeight only to VerticalCRS"
+            }
+        };
+        return Err(FactoryError::Format(message.to_owned()));
     };
     let geoid_height = si_value(operation, PARAMETER_GEOID_HEIGHT);
-    if geoid_height != 0.0 {
+    let zoff = match shift {
+        GeoidShift::Forward => -geoid_height,
+        GeoidShift::InverseMethod => geoid_height,
+    };
+    if zoff != 0.0 {
         formatter.add_step("affine");
-        formatter.add_number("zoff", -geoid_height);
+        formatter.add_number("zoff", zoff);
     }
     let unit = vertical.coordinate_system().axis().unit();
     if unit.conversion_to_si() != 1.0 {

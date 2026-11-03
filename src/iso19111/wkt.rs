@@ -2011,6 +2011,16 @@ fn export_conversion(
     base_shape: BaseShape,
     owner: Option<OwnerCrs<'_>>,
 ) -> Result<(), FactoryError> {
+    if !formatter.wkt2
+        && conversion
+            .method()
+            .name()
+            .starts_with("PROJ-based operation method")
+    {
+        return Err(FactoryError::Format(
+            "PROJBasedOperation can only be exported to WKT2".to_owned(),
+        ));
+    }
     if !formatter.wkt2 && formatter.esri {
         export_conversion_wkt1(conversion, formatter, base_shape, owner)?;
         return Ok(());
