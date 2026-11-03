@@ -948,9 +948,12 @@ fn export_projected(crs: &ProjectedCRS, formatter: &mut WktFormatter) -> Result<
             formatter.format_ids(crs.base.identifiers());
             formatter.output_id.pop();
         }
-        // A 2D base omits its CS. A 3D base must write it or a round trip
-        // rebuilds a latitude/longitude CRS (PROJ issue 2122).
-        if crs.base.coordinate_system().axes().len() > 2 {
+        // A 2D base omits its CS. A 3D geographic base writes it or a round trip
+        // rebuilds a latitude/longitude CRS (PROJ issue 2122). A geocentric base
+        // omits it, as PROJ 9.9.0 does for `+proj=topocentric`.
+        if matches!(crs.base, GeodeticCRS::Geographic(_))
+            && crs.base.coordinate_system().axes().len() > 2
+        {
             export_cs(&crs.base.coordinate_system(), formatter);
         }
         formatter.end_node();
