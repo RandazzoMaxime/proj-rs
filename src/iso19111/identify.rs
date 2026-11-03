@@ -685,13 +685,13 @@ impl ProjectedCRS {
     ///
     /// One base match at confidence 70 or more, an easting/northing metre
     /// system, and a transverse Mercator with UTM parameters returns that zone.
-    /// An exact CRS name is confidence 100.
+    /// An exact CRS name is confidence 100. `None` still returns the hardcoded
+    /// WGS 84, NAD27, and NAD83 zones.
     #[must_use]
     pub fn identify_with(&self, factory: Option<&AuthorityFactory>) -> Vec<(Crs, i32)> {
-        let Some(factory) = factory else {
-            return Vec::new();
-        };
-        if !(factory.authority().is_empty() || factory.authority() == "EPSG") {
+        if factory.is_some_and(|factory| {
+            !(factory.authority().is_empty() || factory.authority() == "EPSG")
+        }) {
             return Vec::new();
         }
         let Some((zone, hemisphere)) = self.conversion.utm_zone() else {
@@ -702,7 +702,7 @@ impl ProjectedCRS {
         }
         // A longitude/latitude base is identified as latitude/longitude, as
         // `ProjectedCRS::identify` does before the database search.
-        let base = latitude_longitude_base(&self.base).identify_with(Some(factory));
+        let base = latitude_longitude_base(&self.base).identify_with(factory);
         if base.len() != 1 || base[0].1 < 70 {
             return Vec::new();
         }
@@ -732,6 +732,9 @@ impl ProjectedCRS {
             };
             (format!("NAD83 / UTM zone {zone}N"), code)
         } else {
+            let Some(factory) = factory else {
+                return Vec::new();
+            };
             return utm_from_database(self, factory, &base, zone);
         };
         let conversion = match hemisphere {

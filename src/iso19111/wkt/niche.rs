@@ -326,6 +326,9 @@ pub(super) fn export_derived_projected(
     if let Some(meridian) = geodetic_meridian(geodetic.datum(), geodetic.datum_ensemble()) {
         export_prime_meridian(meridian, formatter);
     }
+    if geodetic.coordinate_system().axes().len() > 2 {
+        export_cs(&geodetic.coordinate_system(), formatter);
+    }
     formatter.end_node();
     export_projected_conversion(base, formatter)?;
     // WKT2 has no BASEPROJCRS.CS, but the CS is written when the reader could not infer it.
@@ -334,7 +337,11 @@ pub(super) fn export_derived_projected(
         .axes
         .first()
         .is_some_and(|axis| !axis.unit().same_name(&UnitOfMeasure::metre()));
-    if non_metre && base.identifiers().is_empty() && !known_projected_name(base, formatter) {
+    let three_d = base.coordinate_system.axes.len() == 3;
+    if (non_metre || three_d)
+        && base.identifiers().is_empty()
+        && !known_projected_name(base, formatter)
+    {
         export_axes(
             &CoordinateSystem::Cartesian(base.coordinate_system.clone()),
             formatter,
