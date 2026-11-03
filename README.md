@@ -310,30 +310,32 @@ fixed grids. `bench/record.sh` appends one line per run to
 [`bench/history.jsonl`](bench/history.jsonl) with the commit and machine name,
 so each change can be measured against the last.
 
-To fill the `ratio` column, point the build at a libproj: set
+To fill the `speedup` column, point the build at a libproj: set
 `PROJ_RS_LIBPROJ_DIR` to the directory that holds it, or activate a conda
 environment with `proj` installed (`CONDA_PREFIX`). Without one the bench still
-runs and leaves `ratio` empty.
+runs and leaves `speedup` empty.
 
-The two timing columns come from **different machines**: do not read them as a
-speedup. `ratio` is this port's time divided by libproj on the same
-grid, so below 1 means this port is faster. The 2026-10-28 column was recorded
-when the suite had 2,743 passing cases and has not been re-run since.
+The two timing columns come from **different machines**, so compare them only
+with a column from the same machine. `speedup` is libproj's time divided by
+this port's time on the same run, so `1.5×` means this port is 1.5 times
+faster than libproj. The 2026-10-28 column was recorded when the suite had
+2,743 passing cases and has not been re-run since.
 
-| Case | 2026-10-27 scalar | 2026-10-28 AVX2 | libproj | ratio |
+| Case | 2026-10-27 scalar (ns) | 2026-10-28 AVX2 (ns) | libproj (ns) | speedup |
 |---|---:|---:|---:|---:|
-| UTM 31 forward | 81.5 | 82.2 | 113.4 | 0.72 |
+| UTM 31 forward | 81.5 | 82.2 | 113.4 | 1.4× |
 | UTM 31 inverse | 79.0 | 90.1 | | |
-| Lambert-93 forward | 50.3 | 54.7 | 91.3 | 0.60 |
+| Lambert-93 forward | 50.3 | 54.7 | 91.3 | 1.7× |
 | Lambert-93 inverse | 138.5 | 163.3 | | |
-| Web Mercator forward | 19.3 | 41.5 | 67.7 | 0.61 |
+| Web Mercator forward | 19.3 | 41.5 | 67.7 | 1.6× |
 | Web Mercator inverse | 25.0 | 35.6 | | |
 | UTM batch, zone center | 80.0 | 50.2 | | |
 | UTM batch, zone edge | 75.0 | 44.3 | | |
 | Lambert-93 batch | 47.5 | 34.2 | | |
 | Helmert 7-parameter | 7.3 | 7.1 | | |
 
-Nanoseconds per point, one million points. The first column is
+Timings are nanoseconds (ns) per point, over one million points. `speedup` is
+libproj's ns divided by the AVX2 ns of the same run. The first column is
 `maxime-win11-nosimd` at `b405008`. The second is `RANDAZZOPROD`,
 `batch_path=avx2`, at dirty `16408a8`.
 
