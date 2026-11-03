@@ -212,9 +212,7 @@ and `PORT-NOTES-tests.md`.
 - `operation.NAD83_to_projected_CRS_based_on_NAD83_2011`
 - `operation.isPROJInstantiable`
 - `operation.createOperation_on_crs_with_canonical_bound_crs`
-- `operation.createOperation_fallback_to_proj4_strings_proj_NAD83_to_projliteral`
 - `operation.createOperation_on_crs_with_bound_crs_and_wktext`
-- `operation.createOperation_fallback_to_proj4_strings_with_axis_inverted_projCRS`
 - `operation.compoundCRS_to_proj_string_with_non_metre_height`
 - `operation.compoundCRS_with_derived_vertical_CRS`
 - `operation.compoundCRS_to_PROJJSON_with_non_metre_height`

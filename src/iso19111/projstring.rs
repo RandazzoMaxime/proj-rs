@@ -129,12 +129,20 @@ pub(crate) struct ProjExtras<'a> {
     pub(super) towgs84: Option<[f64; 7]>,
     /// `+nadgrids=`, for a horizontal base CRS bound to WGS 84 by a grid.
     pub(super) nadgrids: Option<&'a str>,
+    /// The CRS-to-CRS legacy export: NAD83 is written as its ellipsoid, not as `+datum=NAD83`.
+    pub(super) legacy_crs_to_crs: bool,
 }
 
 impl ProjExtras<'_> {
     /// A datum shift is written, so the datum token gives way to the ellipsoid.
     fn has_shift(&self) -> bool {
         self.towgs84.is_some() || self.nadgrids.is_some()
+    }
+
+    /// The datum token of `datum`, unless the legacy export writes NAD83 as its ellipsoid:
+    /// `datum=NAD83` would add a useless `towgs84=0,0,0`.
+    fn datum_token_of(&self, token: Option<&'static str>) -> Option<&'static str> {
+        token.filter(|token| !(self.legacy_crs_to_crs && *token == "NAD83"))
     }
 }
 
@@ -497,13 +505,22 @@ fn write_proj_extension_end(
         Crs::Geographic(_) | Crs::Geodetic(GeodeticCRS::Geographic(_))
     ) {
         // The CRS-level tokens belong to the top-level export, not to a step.
-        let text = crs.export_to_proj_string()?;
+        let text = crs.export_with(&ProjExtras {
+            legacy_crs_to_crs: true,
+            ..ProjExtras::default()
+        })?;
         let body = text
             .split_whitespace()
             .filter(|token| !matches!(*token, "+type=crs" | "+units=m" | "+no_defs"))
             .collect::<Vec<_>>()
             .join(" ");
         formatter.ingest_proj_string(&body);
+        if let Crs::Projected(projected) = crs {
+            if has_north_east_axes(projected) {
+                formatter.add_step("axisswap");
+                formatter.add_param("order", "2,1");
+            }
+        }
     }
     if let Some(geographic) = geographic_of(base_of(crs)) {
         let mut angular = super::pipeline::PipelineFormatter::default();
@@ -514,6 +531,14 @@ fn write_proj_extension_end(
         formatter.ingest_proj_string(&angular.finish(super::pipeline::ProjLines::Single));
     }
     Ok(())
+}
+
+/// A projected CRS whose axes are north then east, such as EPSG:2193.
+fn has_north_east_axes(projected: &ProjectedCRS) -> bool {
+    matches!(
+        projected.coordinate_system().axes(),
+        [first, second] if first.direction() == "north" && second.direction() == "east"
+    )
 }
 
 /// The CRS a bound CRS is bound to, or the CRS itself.
@@ -977,7 +1002,7 @@ fn derived_geographic_proj(crs: &super::niche::DerivedCRS) -> Result<String, Fac
 /// else the ellipsoid and prime meridian, then `+towgs84`.
 fn crs_datum_clause(crs: &GeodeticCRS, extras: &ProjExtras<'_>) -> String {
     if let (GeodeticCRS::Geographic(geographic), false) = (crs, extras.has_shift()) {
-        if let Some(token) = datum_token(geographic) {
+        if let Some(token) = extras.datum_token_of(datum_token(geographic)) {
             return format!("+datum={token}");
         }
     }
@@ -1088,7 +1113,10 @@ fn geographic_proj(crs: &GeographicCRS, extras: &ProjExtras<'_>) -> String {
         return text;
     }
     let mut parts = vec!["+proj=longlat".to_owned()];
-    match datum_token(crs).filter(|_| !extras.has_shift()) {
+    match extras
+        .datum_token_of(datum_token(crs))
+        .filter(|_| !extras.has_shift())
+    {
         Some(token) => parts.push(format!("+datum={token}")),
         None => {
             if let Some(ellipsoid) = ellipsoid_of(crs) {
@@ -1456,7 +1484,10 @@ fn crs_from_proj_string(
     };
     // `+over` is recognized by PROJ and unused by the CRS builder, so the
     // original string is kept and repeated in the remarks.
-    if tokens.iter().any(|(key, _)| key == "over") {
+    if tokens
+        .iter()
+        .any(|(key, _)| key == "over" || OPERATION_ONLY_PARAMS.contains(&key.as_str()))
+    {
         attach_over_extension(&mut crs, &tokens);
     }
     bound_import::bind_if_needed(&tokens, crs, db)
@@ -2423,6 +2454,10 @@ const PROJ_BASED_SKIP: &[&str] = &[
     "vto_meter",
     "type",
 ];
+
+/// Parameters that PROJ reads only when it runs an operation. The CRS builder never reads them,
+/// so a CRS string that has one keeps its whole text as the extension, as `+over` does.
+const OPERATION_ONLY_PARAMS: &[&str] = &["lon_wrap"];
 
 /// Empty-value tokens a PROJ method may actually read. Any other flag is the
 /// `unused_flag` case: `pj` never marks it used, so the CRS string drops it.
