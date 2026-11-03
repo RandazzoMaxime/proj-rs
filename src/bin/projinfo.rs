@@ -186,6 +186,7 @@ struct Options {
     accuracy: Option<f64>,
     hide_ballpark: bool,
     promote_3d: bool,
+    normalize_axis_order: bool,
     output_id: Option<(String, String)>,
     all: bool,
 }
@@ -238,10 +239,11 @@ impl Options {
         let mut accuracy = None;
         let mut hide_ballpark = false;
         let mut promote_3d = false;
+        let mut normalize_axis_order = false;
         let mut output_id = None;
         let mut all = false;
         let mut sql = false;
-        let mut positional = 0;
+        let mut positionals: Vec<String> = Vec::new();
         let mut index = 0;
         while index < args.len() {
             let arg = args[index].as_str();
@@ -269,10 +271,11 @@ impl Options {
                     | "--t_epoch"
             ) {
                 index += 1;
+            } else if arg == "--normalize-axis-order" {
+                normalize_axis_order = true;
             } else if matches!(
                 arg,
                 "--show-superseded"
-                    | "--normalize-axis-order"
                     | "--boundcrs-to-wgs84"
                     | "--allow-ellipsoidal-height-as-vertical-crs"
                     | "--identify"
@@ -417,13 +420,13 @@ impl Options {
             } else if arg.starts_with('-') {
                 return Err(format!("unrecognized option {arg}"));
             } else {
-                positional += 1;
+                positionals.push(arg.to_owned());
                 if source.is_none() {
                     source = Some(arg.to_owned());
                 } else if target.is_none() {
                     target = Some(arg.to_owned());
                 } else {
-                    return Err(format!("Too many parameters: {arg}"));
+                    return Err(format!("Too many parameters: {}", positionals[1]));
                 }
                 if code.is_none() {
                     code = Some(arg.to_owned());
@@ -460,6 +463,7 @@ impl Options {
         if saw_format && dialects.is_empty() && !help && !version {
             return Err("no output format remains enabled".to_owned());
         }
+        let positional = positionals.len();
         Ok(Self {
             help,
             version,
@@ -485,6 +489,7 @@ impl Options {
             accuracy,
             hide_ballpark,
             promote_3d,
+            normalize_axis_order,
             output_id,
             all,
         })
@@ -970,10 +975,10 @@ fn candidates(options: &Options) -> Result<String, String> {
     let db = proj_rs::DatabaseContext::create().map_err(|error| error.to_string())?;
     let source_text = options.source.as_deref().unwrap_or("");
     let target_text = options.target.as_deref().unwrap_or("");
-    let source = load_named(&db, source_text)?;
-    let target = load_named(&db, target_text)?;
+    let source = build_crs(&db, load_named(&db, source_text)?, options);
+    let target = build_crs(&db, load_named(&db, target_text)?, options);
     let (source, target) = if options.promote_3d {
-        (promote(&db, &source), promote(&db, &target))
+        (source, target)
     } else {
         promote_by_name(&db, source_text, target_text, source, target)
     };
@@ -1167,6 +1172,21 @@ fn load_named(db: &proj_rs::DatabaseContext, text: &str) -> Result<proj_rs::Crs,
     proj_rs::create_from_user_input(text, db).map_err(|error| error.to_string())
 }
 
+/// The CRS as `buildObject` leaves it: promoted to 3D by `--3d`, then given
+/// the visualization axis order by `--normalize-axis-order`.
+fn build_crs(db: &proj_rs::DatabaseContext, crs: proj_rs::Crs, options: &Options) -> proj_rs::Crs {
+    let crs = if options.promote_3d {
+        promote(db, &crs)
+    } else {
+        crs
+    };
+    if options.normalize_axis_order {
+        crs.normalize_for_visualization()
+    } else {
+        crs
+    }
+}
+
 /// `outputOperations` in `projinfo_lib.cpp`: a CRS given by its name is promoted
 /// to the 3D CRS of the same name when the other CRS is 3D, as in
 /// `projinfo -s "WGS 84" -t "WGS 84 + EGM96 height"`. The promoted CRS is kept
@@ -1330,7 +1350,12 @@ fn operation_wkt(
 
 fn describe(options: &Options, text: &str) -> Result<String, String> {
     let db = database()?;
-    let object = build_object(&db, text, options.kind)?;
+    let object = match build_object(&db, text, options.kind)? {
+        proj_rs::AuthorityObject::Crs(crs) => {
+            proj_rs::AuthorityObject::Crs(build_crs(&db, crs, options))
+        }
+        other => other,
+    };
     render(&object, &db, options)
 }
 
@@ -1342,9 +1367,7 @@ fn build_object(
     kind: Option<ObjectKind>,
 ) -> Result<proj_rs::AuthorityObject, String> {
     match kind {
-        Some(ObjectKind::Operation) => Err(
-            "-k operation is not supported yet: coordinate operations are not described".to_owned(),
-        ),
+        Some(ObjectKind::Operation) => operation_object(db, text),
         Some(kind @ (ObjectKind::Ellipsoid | ObjectKind::Datum | ObjectKind::Ensemble)) => {
             let tokens: Vec<&str> = text.split(':').collect();
             if let [authority, code] = tokens.as_slice() {
@@ -1373,6 +1396,27 @@ fn build_object(
         Some(_) => create_crs(db, text),
         None => create_default(db, text),
     }
+}
+
+/// The coordinate operation `text` names, with `-k operation`: `AUTH:code` is
+/// read as a URN, and a name is searched.
+fn operation_object(
+    db: &proj_rs::DatabaseContext,
+    text: &str,
+) -> Result<proj_rs::AuthorityObject, String> {
+    let tokens: Vec<&str> = text.split(':').collect();
+    if let [authority, code] = tokens.as_slice() {
+        return proj_rs::AuthorityFactory::create(db, *authority)
+            .create_coordinate_operation(code, proj_rs::AlternativeGridNames::Proj)
+            .map(proj_rs::AuthorityObject::Operation)
+            .map_err(|error| error.to_string());
+    }
+    if text.contains(':') {
+        return Err(
+            "-k operation is not supported yet: coordinate operations are not described".to_owned(),
+        );
+    }
+    named_object(db, text, ObjectKind::Operation)
 }
 
 /// Text that can only be an object name: no WKT, PROJ string, JSON, or `AUTH:code`.
@@ -1531,9 +1575,10 @@ fn named_object(
 ) -> Result<proj_rs::AuthorityObject, String> {
     let object_type = match kind {
         ObjectKind::Crs => proj_rs::ObjectType::Crs,
+        ObjectKind::Operation => proj_rs::ObjectType::CoordinateOperation,
         ObjectKind::Ellipsoid => proj_rs::ObjectType::Ellipsoid,
         ObjectKind::Datum => proj_rs::ObjectType::Datum,
-        _ => proj_rs::ObjectType::DatumEnsemble,
+        ObjectKind::Ensemble => proj_rs::ObjectType::DatumEnsemble,
     };
     let factory = proj_rs::AuthorityFactory::create(db, "");
     for mode in [proj_rs::NameMatch::Exact, proj_rs::NameMatch::Approximate] {
@@ -1555,12 +1600,12 @@ fn render(
     options: &Options,
 ) -> Result<String, String> {
     let mut blocks = Vec::new();
-    if object.is_deprecated() {
-        blocks.push("Warning: object is deprecated".to_owned());
+    if !options.quiet && object.is_deprecated() {
+        blocks.push(deprecation_notice(object, db));
     }
     for dialect in &options.dialects {
         let body = match dialect {
-            Dialect::Proj => match proj_text(object, db)? {
+            Dialect::Proj => match proj_text(object, db, proj_lines(options))? {
                 Some(body) => body,
                 None => continue,
             },
@@ -1631,10 +1676,36 @@ fn sql_text(
     Ok(statements.join("\n"))
 }
 
+/// The warning `outputObject` prints for a deprecated object. A CRS adds its
+/// non-deprecated replacements.
+fn deprecation_notice(object: &proj_rs::AuthorityObject, db: &proj_rs::DatabaseContext) -> String {
+    let mut text = "Warning: object is deprecated".to_owned();
+    let proj_rs::AuthorityObject::Crs(crs) = object else {
+        return text;
+    };
+    let Ok(replacements) = crs.non_deprecated(db) else {
+        return text;
+    };
+    if !replacements.is_empty() {
+        text.push_str("\nAlternative non-deprecated CRS:");
+    }
+    for replacement in &replacements {
+        if let Some(identifier) = replacement.identifiers().first() {
+            text.push_str(&format!(
+                "\n  {}:{}",
+                identifier.code_space(),
+                identifier.code()
+            ));
+        }
+    }
+    text
+}
+
 /// The PROJ string of `object`. A datum has none, so it prints no block.
 fn proj_text(
     object: &proj_rs::AuthorityObject,
     db: &proj_rs::DatabaseContext,
+    lines: proj_rs::ProjLines,
 ) -> Result<Option<String>, String> {
     match object {
         proj_rs::AuthorityObject::Crs(crs) => crs
@@ -1645,6 +1716,10 @@ fn proj_text(
         proj_rs::AuthorityObject::Ellipsoid(ellipsoid) => {
             Ok(Some(ellipsoid.export_to_proj_string()))
         }
+        proj_rs::AuthorityObject::Operation(operation) => operation
+            .export_to_proj_string_with_database(db, lines)
+            .map(Some)
+            .map_err(|error| error.to_string()),
         _ => Ok(None),
     }
 }
@@ -1660,6 +1735,7 @@ fn wkt(
         proj_rs::AuthorityObject::Ellipsoid(ellipsoid) => ellipsoid.export_to_wkt(&mut formatter),
         proj_rs::AuthorityObject::Datum(datum) => datum.export_to_wkt(&mut formatter),
         proj_rs::AuthorityObject::DatumEnsemble(ensemble) => ensemble.export_to_wkt(&mut formatter),
+        proj_rs::AuthorityObject::Operation(operation) => operation.export_to_wkt(&mut formatter),
         _ => return Err("cannot write WKT for this object".to_owned()),
     };
     text.map_err(|error| error.to_string())
