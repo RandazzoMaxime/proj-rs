@@ -262,12 +262,11 @@ fn retarget(operation: &CoordinateOperation, source: &Crs, target: &Crs) -> Coor
     }
 }
 
-/// A compound whose horizontal part is projected: the inverse of that projection,
-/// then the ballpark vertical change onto the 3D geographic target.
-///
-/// The conversion is exported from an east-north copy of the base. PROJ's
-/// north-east base emits an axis swap that the following geographic step
-/// cancels, and the pipeline optimizer deletes the pair.
+/// A compound whose horizontal part is projected, to a 3D geographic target. This is the
+/// derived branch of PROJ's `createOperationsCompoundToGeog`: the first operation of the
+/// projected CRS to its base, then the ballpark vertical change as `createHorizVerticalPROJBased`
+/// with a null horizontal part. The target's axis steps wrap the vertical step, so the
+/// pipeline optimizer cancels them against the horizontal tail and keeps the final swap.
 fn projected_compound_to_geog(
     factory: &CoordinateOperationFactory,
     source: &Crs,
@@ -278,16 +277,15 @@ fn projected_compound_to_geog(
     geog_dst: &GeographicCRS,
     context: &CoordinateOperationContext,
 ) -> Result<Option<CoordinateOperation>, FactoryError> {
-    let stored_base = Crs::Geodetic(projected.base_crs().clone());
+    let base = Crs::Geodetic(projected.base_crs().clone());
     // A different datum, or a registered vertical operation, keeps the general path.
-    if !same_geodetic_datum(&stored_base, target)
+    if !same_geodetic_datum(&base, target)
         || !factory
             .create_candidates(vertical, target, context)?
             .is_empty()
     {
         return Ok(None);
     }
-    let base = longitude_first(projected.base_crs());
     let Some(base_geog) = geographic_of(&base) else {
         return Ok(None);
     };
@@ -303,25 +301,18 @@ fn projected_compound_to_geog(
     ) else {
         return Ok(None);
     };
-    let conversion = projected
-        .deriving_conversion()
-        .clone()
-        .with_endpoints(base, Crs::Projected(projected.clone()));
-    let horizontal_op = CoordinateOperation::Conversion(conversion.inverse());
-    Ok(Some(chain(source, target, horizontal_op, vertical_op)))
-}
-
-/// East-north form of a geographic base, so a projection export has no axis swap.
-fn longitude_first(base: &super::model::GeodeticCRS) -> Crs {
-    let super::model::GeodeticCRS::Geographic(geographic) = base else {
-        return Crs::Geodetic(base.clone());
+    let Some(horizontal_op) = factory
+        .create_candidates(&Crs::Projected(projected.clone()), &base, context)?
+        .into_iter()
+        .next()
+    else {
+        return Ok(None);
     };
-    let mut geographic = geographic.clone();
-    let axes = &mut geographic.coordinate_system.axes;
-    if axes.len() >= 2 && axes[0].direction() == "north" && axes[1].direction() == "east" {
-        axes.swap(0, 1);
-    }
-    Crs::Geographic(geographic)
+    let Some(null) = null_offset(&base, target) else {
+        return Ok(None);
+    };
+    let last = proj_based_horiz_vertical(source, target, &null, &vertical_op, geog_dst);
+    Ok(Some(chain(source, target, horizontal_op, last)))
 }
 
 fn chain(
