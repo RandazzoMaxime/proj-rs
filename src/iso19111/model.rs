@@ -357,6 +357,9 @@ pub(crate) struct Identified {
     pub(crate) proj_method_override: Option<String>,
     /// `COMPD_CS` a promoted 3D CRS writes back as WKT1.
     pub(crate) original_compound: Option<Box<CompoundCRS>>,
+    /// The bound CRS a base CRS was taken from (`CRS::canonicalBoundCRS`), set by
+    /// [`BoundCRS::base_crs_with_canonical_bound_crs`].
+    pub(crate) canonical_bound: Option<Box<BoundCRS>>,
     /// Horizontal-plus-horizontal `COMPD_CS` exported as two copies of the 2D CRS.
     pub(crate) allow_non_conformant_wkt1: bool,
     /// PROJJSON `temporal_extent.start`, when the object has one.
@@ -388,6 +391,7 @@ impl Identified {
             extension_proj4: None,
             proj_method_override: None,
             original_compound: None,
+            canonical_bound: None,
             allow_non_conformant_wkt1: false,
             temporal_start: None,
             temporal_end: None,
@@ -1747,6 +1751,14 @@ impl OperationParameter {
     pub fn create(name: impl Into<String>) -> Self {
         Self {
             identified: Identified::named(name),
+        }
+    }
+
+    /// This parameter with the identifier `code_space:code`, such as `EPSG:8656`.
+    #[must_use]
+    pub fn with_identifier(self, code_space: &str, code: &str) -> Self {
+        Self {
+            identified: self.identified.with_id(code_space, code),
         }
     }
 
@@ -3406,6 +3418,57 @@ impl BoundCRS {
     #[must_use]
     pub fn transformation(&self) -> &CoordinateOperation {
         &self.transformation
+    }
+}
+
+impl Crs {
+    /// `CRS::canonicalBoundCRS`: the bound CRS this CRS was taken from by
+    /// [`BoundCRS::base_crs_with_canonical_bound_crs`], or `None`.
+    #[must_use]
+    pub fn canonical_bound_crs(&self) -> Option<&BoundCRS> {
+        self.identified().canonical_bound.as_deref()
+    }
+
+    /// This CRS with `bound` as its canonical bound CRS.
+    pub(crate) fn with_canonical_bound(mut self, bound: BoundCRS) -> Self {
+        self.identified_mut().canonical_bound = Some(Box::new(bound));
+        self
+    }
+
+    fn identified(&self) -> &Identified {
+        match self {
+            Self::Geographic(crs) => &crs.identified,
+            Self::Geodetic(GeodeticCRS::Geographic(crs)) => &crs.identified,
+            Self::Geodetic(GeodeticCRS::Geocentric(crs)) => &crs.identified,
+            Self::Geodetic(GeodeticCRS::Spherical(crs)) => &crs.identified,
+            Self::Projected(crs) => &crs.identified,
+            Self::Vertical(crs) => &crs.identified,
+            Self::Compound(crs) => &crs.identified,
+            Self::Bound(crs) => &crs.identified,
+            Self::Engineering(crs) => &crs.identified,
+            Self::DerivedProjected(crs) => &crs.identified,
+            Self::Temporal(crs) => &crs.identified,
+            Self::Parametric(crs) => &crs.identified,
+            Self::Derived(crs) => &crs.identified,
+        }
+    }
+
+    fn identified_mut(&mut self) -> &mut Identified {
+        match self {
+            Self::Geographic(crs) => &mut crs.identified,
+            Self::Geodetic(GeodeticCRS::Geographic(crs)) => &mut crs.identified,
+            Self::Geodetic(GeodeticCRS::Geocentric(crs)) => &mut crs.identified,
+            Self::Geodetic(GeodeticCRS::Spherical(crs)) => &mut crs.identified,
+            Self::Projected(crs) => &mut crs.identified,
+            Self::Vertical(crs) => &mut crs.identified,
+            Self::Compound(crs) => &mut crs.identified,
+            Self::Bound(crs) => &mut crs.identified,
+            Self::Engineering(crs) => &mut crs.identified,
+            Self::DerivedProjected(crs) => &mut crs.identified,
+            Self::Temporal(crs) => &mut crs.identified,
+            Self::Parametric(crs) => &mut crs.identified,
+            Self::Derived(crs) => &mut crs.identified,
+        }
     }
 }
 

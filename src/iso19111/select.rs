@@ -13,8 +13,10 @@
 //! one of those is either sorted differently or reported as an error, and the
 //! caller keeps its previous path.
 
-use super::factory::{crs_extent, operation_extent, GridAvailabilityUse, SpatialCriterion};
-use super::model::{BoundingBox, CoordinateOperation, Crs, ParameterValue};
+use super::factory::{
+    crs_extent, operation_extent, GridAvailabilityUse, GridDescription, GridInfo, SpatialCriterion,
+};
+use super::model::{BoundingBox, CoordinateOperation, Crs, Parameter, ParameterValue};
 use super::{
     create_from_user_input, CoordinateOperationContext, CoordinateOperationFactory,
     DatabaseContext, FactoryError, ProjLines,
@@ -378,7 +380,8 @@ fn characteristics(
         Err(_) => (false, 0, false),
     };
     let grids = grid_names(operation);
-    let grids_available = availability == GridAvailabilityUse::IgnoreGridAvailability
+    // Only `UseForSorting` looks at the disk: PROJ clears `gridsAvailable` under that policy alone.
+    let grids_available = availability != GridAvailabilityUse::UseForSorting
         || proj_grids(operation, db)
             .is_ok_and(|names| names.iter().all(|grid| gridpath::available(grid)));
     let known_names = proj_grids(operation, db).unwrap_or_else(|_| grids.clone());
@@ -507,6 +510,107 @@ fn collect_grids(operation: &CoordinateOperation, names: &mut Vec<String>) {
             }
         }
         CoordinateOperation::Conversion(_) => {}
+    }
+}
+
+impl CoordinateOperation {
+    /// `gridsNeeded`: each grid named by a file parameter of the operation or of its steps,
+    /// sorted by name, without repeats (PROJ keeps them in a set of the names).
+    ///
+    /// `known` is [`GridAvailabilityUse::KnownAvailable`] for `considerKnownGridsAsAvailable`.
+    /// The other policies look for the files only.
+    ///
+    /// # Errors
+    ///
+    /// The database rejects a grid lookup.
+    pub fn grids_needed(
+        &self,
+        db: &DatabaseContext,
+        known: GridAvailabilityUse,
+    ) -> Result<Vec<GridDescription>, FactoryError> {
+        let mut names = Vec::new();
+        collect_file_parameters(self, &mut names);
+        names.sort();
+        names.dedup();
+        names
+            .into_iter()
+            .map(|short_name| {
+                let info = match db.look_for_grid_info(&short_name, known)? {
+                    Some(info) => info,
+                    None => unrecorded_grid(&short_name),
+                };
+                Ok(GridDescription { short_name, info })
+            })
+            .collect()
+    }
+
+    /// `isPROJInstantiable`: the operation writes a PROJ string, and each grid it needs is
+    /// available. A grid whose name starts with `@` is optional. `known` is as in
+    /// [`Self::grids_needed`].
+    #[must_use]
+    pub fn is_proj_instantiable(&self, db: &DatabaseContext, known: GridAvailabilityUse) -> bool {
+        if self
+            .export_to_proj_string_with_database(db, ProjLines::Single)
+            .is_err()
+        {
+            return false;
+        }
+        self.grids_needed(db, known).is_ok_and(|grids| {
+            grids
+                .iter()
+                .all(|grid| grid.info.available || grid.short_name.starts_with('@'))
+        })
+    }
+}
+
+/// The file names of the file parameters of `operation`, then of its steps, in order.
+fn collect_file_parameters(operation: &CoordinateOperation, names: &mut Vec<String>) {
+    let values: Vec<&ParameterValue> = match operation {
+        CoordinateOperation::Transformation(transformation) => transformation
+            .parameters()
+            .iter()
+            .map(Parameter::value)
+            .collect(),
+        CoordinateOperation::Conversion(conversion) => {
+            conversion.parameters.iter().map(Parameter::value).collect()
+        }
+        CoordinateOperation::Concatenated(concatenated) => {
+            for step in concatenated.steps() {
+                collect_file_parameters(&step.operation, names);
+            }
+            return;
+        }
+    };
+    for value in values {
+        if let ParameterValue::Filename(text) = value {
+            names.extend(
+                text.split(',')
+                    .filter(|name| !name.is_empty())
+                    .map(str::to_owned),
+            );
+        }
+    }
+}
+
+/// `lookForGridInfo` for a grid the database has no row for: available when its file is on
+/// the search path, and a URL when the name is one.
+fn unrecorded_grid(name: &str) -> GridInfo {
+    let url = if name.starts_with("http://") || name.starts_with("https://") {
+        name.to_owned()
+    } else {
+        String::new()
+    };
+    let (full_name, available) = match gridpath::resolve(name) {
+        Some(path) if url.is_empty() => (path.to_string_lossy().into_owned(), true),
+        _ => (String::new(), false),
+    };
+    GridInfo {
+        full_name,
+        package_name: String::new(),
+        url,
+        direct_download: false,
+        open_license: false,
+        available,
     }
 }
 

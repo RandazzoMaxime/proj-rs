@@ -219,14 +219,24 @@ impl Transformation {
                 "Inconsistent number of parameters and parameter values".to_owned(),
             ));
         }
+        // The parameter's identifier is its EPSG code, which the export reads (`getEPSGCode`).
         let stored = parameters
             .iter()
             .zip(&values)
-            .map(|(parameter, value)| Parameter {
-                name: parameter.name().to_owned(),
-                code_space: String::new(),
-                code: String::new(),
-                value: value.clone(),
+            .map(|(parameter, value)| {
+                let (code_space, code) = parameter
+                    .identified
+                    .identifiers
+                    .first()
+                    .map_or((String::new(), String::new()), |identifier| {
+                        (identifier.code_space.clone(), identifier.code.clone())
+                    });
+                Parameter {
+                    name: parameter.name().to_owned(),
+                    code_space,
+                    code,
+                    value: value.clone(),
+                }
             })
             .collect();
         Ok(Self {

@@ -337,6 +337,7 @@ impl Props {
             },
             proj_method_override: None,
             original_compound: None,
+            canonical_bound: None,
             allow_non_conformant_wkt1: false,
             temporal_start: None,
             temporal_end: None,
