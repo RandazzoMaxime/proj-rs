@@ -1122,7 +1122,7 @@ fn check_keys(name: &str, params: &Params) -> Result<(), CreateError> {
     Ok(())
 }
 
-const GLOBAL_KEYS: &[&str] = &[
+pub(crate) const GLOBAL_KEYS: &[&str] = &[
     "proj",
     "ellps",
     "datum",
