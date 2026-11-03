@@ -63,34 +63,17 @@ and `PORT-NOTES-tests.md`.
 
 ## test_io.cpp
 
-- `wkt_parse.CONCATENATEDOPERATION`
 - `wkt_parse.CONCATENATEDOPERATION_with_conversion_and_conversion`
 - `wkt_parse.CONCATENATEDOPERATION_with_conversion_coordinateoperation_conversion`
 - `wkt_parse.CONCATENATEDOPERATION_with_conversion_coordinateoperation_to_inverse_conversion`
 - `wkt_parse.CONCATENATEDOPERATION_with_inverse_conversion_of_compound`
 - `wkt_parse.DerivedGeographicCRS_GDAL_PROJ4_EXSTENSION_hack`
-- `wkt_parse.esri_projcs`
-- `wkt_parse.wkt1_esri_krovak_south_west`
-- `wkt_parse.wkt1_esri_krovak_east_north_non_standard_likely_from_GDAL_wkt1`
-- `wkt_parse.wkt1_esri_ups_north`
-- `wkt_parse.wkt1_esri_ups_south`
-- `wkt_parse.wkt1_esri_wgs_1984_ups_north_E_N`
-- `wkt_parse.wkt1_esri_wgs_1984_ups_south_E_N`
-- `wkt_parse.wkt1_esri_gauss_kruger`
-- `wkt_parse.wkt1_esri_goode_homolosine_without_option_0`
 - `wkt_parse.wkt1_oracle`
 - `wkt_parse.wkt1_oracle_albers_conical_equal_area`
-- `wkt_parse.wkt1_lcc_1sp_without_1sp_suffix`
-- `wkt_parse.wkt1_pseudo_wkt1_gdal_pseudo_wkt1_esri`
-- `wkt_parse.invalid_EngineeingCRS`
 - `io.projstringformatter_optim_hgridshift_vgridshift_hgridshift_inv`
 - `io.projstringformatter_optim_as_uc_vgridshift_uc_as_push_as_uc`
 - `io.projstringformatter_krovak_to_krovak_east_north`
 - `io.projstringformatter_krovak_east_north_to_krovak`
-- `io.projparse_longlat_complex`
-- `io.projparse_longlat_axis_enu`
-- `io.projparse_longlat_axis_neu`
-- `io.projparse_longlat_axis_swu`
 - `io.projparse_init`
 - `io.createFromUserInput`
 - `json_import.several_usages`

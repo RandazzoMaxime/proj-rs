@@ -2239,6 +2239,12 @@ fn export_esri_method(conversion: &Conversion, choice: &EsriChoice, formatter: &
                 esri_name,
                 wkt2_name,
                 epsg_code,
+            }
+            | EsriParam::Defaulted {
+                esri_name,
+                wkt2_name,
+                epsg_code,
+                ..
             } => {
                 formatter.add_quoted(esri_name);
                 write_esri_value(conversion, esri_name, wkt2_name, epsg_code, formatter);
