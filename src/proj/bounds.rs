@@ -107,9 +107,11 @@ impl Proj {
                         .is_some_and(|(from, to)| from.trim() == to.trim())
             }
             Body::Iso(_) => self
-                .definition
-                .split_once(" -> ")
-                .is_some_and(|(from, to)| from.trim() == to.trim()),
+                .def()
+                .ok()
+                .as_deref()
+                .and_then(crate::proj_info::proj_name)
+                .is_some_and(|name| name == "noop"),
             Body::Single(_) => false,
         }
     }
