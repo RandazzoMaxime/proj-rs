@@ -1799,7 +1799,7 @@ fn geographic_export(
 
 /// `GeodeticCRS::addAngularUnitConvertAndAxisSwap`: radians to the CRS angular
 /// unit, the height unit when there is one, then the axis order.
-fn angular_unit_and_axis_swap(
+pub(super) fn angular_unit_and_axis_swap(
     axes: &[Axis],
     formatter: &mut PipelineFormatter,
 ) -> Result<(), FactoryError> {

@@ -7,11 +7,11 @@ use super::bound_export::{export_bound, export_compound};
 use super::bound_import;
 use super::factory::DatabaseContext;
 use super::model::{
-    Axis, BoundCRS, CartesianCS, Conversion, CoordinateSystem, Crs, Datum, DatumEnsemble,
-    DerivedProjectedCRS, Ellipsoid, EllipsoidalCS, FactoryError, GeocentricCRS, GeodeticCRS,
-    GeodeticReferenceFrame, GeographicCRS, Identified, Identifier, Measure, ParameterValue,
-    PrimeMeridian, ProjectedCRS, SphericalCS, SphericalGeodeticCRS, UnitKind, UnitOfMeasure,
-    VerticalCRS,
+    Axis, BoundCRS, CartesianCS, Conversion, CoordinateOperation, CoordinateSystem, Crs, Datum,
+    DatumEnsemble, DerivedProjectedCRS, Ellipsoid, EllipsoidalCS, FactoryError, GeocentricCRS,
+    GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified, Identifier, Measure,
+    ParameterValue, PrimeMeridian, ProjectedCRS, SphericalCS, SphericalGeodeticCRS, UnitKind,
+    UnitOfMeasure, VerticalCRS,
 };
 use super::parammap::{MethodMap, ParamMap, OTHER_METHODS, PROJECTION_METHODS};
 use super::pipeline::proj_number;
@@ -452,6 +452,88 @@ pub(crate) fn operation_proj_string(source: &Crs, target: &Crs) -> Result<String
         return Ok(formatter.finish(super::pipeline::ProjLines::Single));
     }
     Ok(pipeline(&steps))
+}
+
+/// `createOperationsFromProj4Ext`: when a CRS, or the base of a bound CRS, carries a PROJ
+/// string extension (`+over`, `+nadgrids`, ...), no registered operation is looked for. The
+/// operation is one PROJ-based step: the source written inverted, then the target.
+///
+/// # Errors
+///
+/// An end cannot be written as a PROJ string.
+pub(crate) fn operation_from_proj_extensions(
+    source: &Crs,
+    target: &Crs,
+) -> Result<Option<CoordinateOperation>, FactoryError> {
+    if proj_extension(source).is_none() && proj_extension(target).is_none() {
+        return Ok(None);
+    }
+    let mut formatter = super::pipeline::PipelineFormatter::default();
+    formatter.start_inversion();
+    write_proj_extension_end(source, &mut formatter)?;
+    formatter.stop_inversion();
+    write_proj_extension_end(target, &mut formatter)?;
+    let text = formatter.finish(super::pipeline::ProjLines::Single);
+    let props = super::buildop::OpProps::new().name(format!(
+        "Transformation from {} to {}",
+        source.name(),
+        target.name()
+    ));
+    let operation = Conversion::create_proj_based(&props, &text)?
+        .with_endpoints(source.clone(), target.clone());
+    Ok(Some(CoordinateOperation::Conversion(operation)))
+}
+
+/// One end of [`operation_from_proj_extensions`]. A plain geographic CRS writes no step of
+/// its own: only its angular unit conversion and axis order, as PROJ does.
+fn write_proj_extension_end(
+    crs: &Crs,
+    formatter: &mut super::pipeline::PipelineFormatter,
+) -> Result<(), FactoryError> {
+    if let Some(text) = proj_extension(crs) {
+        formatter.ingest_proj_string(text);
+    } else if !matches!(
+        crs,
+        Crs::Geographic(_) | Crs::Geodetic(GeodeticCRS::Geographic(_))
+    ) {
+        // The CRS-level tokens belong to the top-level export, not to a step.
+        let text = crs.export_to_proj_string()?;
+        let body = text
+            .split_whitespace()
+            .filter(|token| !matches!(*token, "+type=crs" | "+units=m" | "+no_defs"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        formatter.ingest_proj_string(&body);
+    }
+    if let Some(geographic) = geographic_of(base_of(crs)) {
+        let mut angular = super::pipeline::PipelineFormatter::default();
+        super::transform_export::angular_unit_and_axis_swap(
+            geographic.coordinate_system().axes(),
+            &mut angular,
+        )?;
+        formatter.ingest_proj_string(&angular.finish(super::pipeline::ProjLines::Single));
+    }
+    Ok(())
+}
+
+/// The CRS a bound CRS is bound to, or the CRS itself.
+fn base_of(crs: &Crs) -> &Crs {
+    match crs {
+        Crs::Bound(bound) => &bound.source,
+        other => other,
+    }
+}
+
+/// The PROJ string extension of the CRS, or of the base of a bound CRS.
+fn proj_extension(crs: &Crs) -> Option<&str> {
+    let identified = match base_of(crs) {
+        Crs::Geographic(crs) => &crs.identified,
+        Crs::Geodetic(GeodeticCRS::Geographic(crs)) => &crs.identified,
+        Crs::Geodetic(GeodeticCRS::Geocentric(crs)) => &crs.identified,
+        Crs::Projected(crs) => &crs.identified,
+        _ => return None,
+    };
+    identified.extension_proj4.as_deref()
 }
 
 /// The steps of [`operation_proj_string`], one PROJ string each, in pipeline order.
@@ -1382,19 +1464,21 @@ fn crs_from_proj_string(
 
 /// `CRS::setProperties` for a single-step string that still has `+over`.
 fn attach_over_extension(crs: &mut Crs, tokens: &[(String, String)]) {
-    let Crs::Projected(projected) = crs else {
-        return;
+    let identified = match crs {
+        Crs::Projected(projected) => &mut projected.identified,
+        Crs::Geographic(geographic) => &mut geographic.identified,
+        _ => return,
     };
     let bare = cleaned_proj_string(tokens).replace(" +type=crs", "");
     const PREFIX: &str = "PROJ CRS string: ";
-    if !projected.identified.remarks.contains(PREFIX) {
-        projected.identified.remarks = if projected.identified.remarks.is_empty() {
+    if !identified.remarks.contains(PREFIX) {
+        identified.remarks = if identified.remarks.is_empty() {
             format!("{PREFIX}{bare}")
         } else {
-            format!("{PREFIX}{bare}. {}", projected.identified.remarks)
+            format!("{PREFIX}{bare}. {}", identified.remarks)
         };
     }
-    projected.identified.extension_proj4 = Some(bare);
+    identified.extension_proj4 = Some(bare);
 }
 
 fn geographic_from_proj_string(tokens: &[(String, String)]) -> Result<Crs, FactoryError> {

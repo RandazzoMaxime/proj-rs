@@ -125,3 +125,124 @@ fn operation_proj3_d_crs_with_non_meter_horiz_and_vertical_to_geog() {
          +step +proj=axisswap +order=2,1"
     );
 }
+
+/// Operation from `source` to `target` with the default context, the first one.
+fn first_operation(db: &DatabaseContext, source: &Crs, target: &Crs) -> CoordinateOperation {
+    let ctx = CoordinateOperationContext::create(db, "");
+    operations(source, target, &ctx)
+        .into_iter()
+        .next()
+        .expect("operation")
+}
+
+/// TEST(operation, createOperation_fallback_to_proj4_strings)
+#[test]
+fn operation_create_operation_fallback_to_proj4_strings() {
+    let db = database();
+    let dest = proj_crs("+proj=longlat +over +datum=WGS84 +type=crs");
+    let op = first_operation(&db, &epsg(&db, "4326"), &dest);
+    assert_eq!(
+        plain(&op),
+        "+proj=pipeline \
+         +step +proj=axisswap +order=2,1 \
+         +step +proj=unitconvert +xy_in=deg +xy_out=rad \
+         +step +proj=longlat +over +datum=WGS84 \
+         +step +proj=unitconvert +xy_in=rad +xy_out=deg"
+    );
+}
+
+/// TEST(operation, createOperation_fallback_to_proj4_strings_bound_of_geog)
+#[test]
+fn operation_create_operation_fallback_to_proj4_strings_bound_of_geog() {
+    let db = database();
+    let src = proj_crs("+proj=longlat +over +ellps=GRS80 +towgs84=0,0,0 +type=crs");
+    let dest = proj_crs("+proj=longlat +over +ellps=clrk66 +towgs84=0,0,0 +type=crs");
+    let op = first_operation(&db, &src, &dest);
+    assert_eq!(
+        plain(&op),
+        "+proj=pipeline \
+         +step +proj=unitconvert +xy_in=deg +xy_out=rad \
+         +step +inv +proj=longlat +over +ellps=GRS80 +towgs84=0,0,0 \
+         +step +proj=longlat +over +ellps=clrk66 +towgs84=0,0,0 \
+         +step +proj=unitconvert +xy_in=rad +xy_out=deg"
+    );
+}
+
+/// TEST(operation, createOperation_fallback_to_proj4_strings_regular_with_datum_to_projliteral)
+#[test]
+fn operation_create_operation_fallback_to_proj4_strings_regular_with_datum_to_projliteral() {
+    let db = database();
+    let src = proj_crs("+proj=utm +zone=11 +datum=NAD27 +type=crs");
+    let dst = proj_crs("+proj=longlat +datum=WGS84 +over +type=crs");
+    let op = first_operation(&db, &src, &dst);
+    assert_eq!(
+        plain(&op),
+        "+proj=pipeline \
+         +step +inv +proj=utm +zone=11 +datum=NAD27 \
+         +step +proj=longlat +datum=WGS84 +over \
+         +step +proj=unitconvert +xy_in=rad +xy_out=deg"
+    );
+}
+
+/// TEST(operation, createOperation_fallback_to_proj4_strings_geog_NAD83_to_projliteral)
+#[test]
+fn operation_create_operation_fallback_to_proj4_strings_geog_nad83_to_projliteral() {
+    let db = database();
+    let src = proj_crs("+proj=longlat +datum=NAD83 +type=crs");
+    let dst = proj_crs("+proj=longlat +datum=WGS84 +over +type=crs");
+    let op = first_operation(&db, &src, &dst);
+    assert_eq!(
+        plain(&op),
+        "+proj=pipeline \
+         +step +proj=unitconvert +xy_in=deg +xy_out=rad \
+         +step +proj=longlat +datum=WGS84 +over \
+         +step +proj=unitconvert +xy_in=rad +xy_out=deg"
+    );
+}
+
+/// TEST(operation, createOperation_fallback_to_proj4_strings_regular_with_nadgrids_to_projliteral)
+#[test]
+fn operation_create_operation_fallback_to_proj4_strings_regular_with_nadgrids_to_projliteral() {
+    let db = database();
+    let src = proj_crs("+proj=utm +zone=11 +ellps=clrk66 +nadgrids=@conus +type=crs");
+    let dst = proj_crs("+proj=longlat +datum=WGS84 +over +type=crs");
+    let op = first_operation(&db, &src, &dst);
+    assert_eq!(
+        plain(&op),
+        "+proj=pipeline \
+         +step +inv +proj=utm +zone=11 +ellps=clrk66 +nadgrids=@conus \
+         +step +proj=longlat +datum=WGS84 +over \
+         +step +proj=unitconvert +xy_in=rad +xy_out=deg"
+    );
+}
+
+/// TEST(operation, createOperation_fallback_to_proj4_strings_projliteral_to_projliteral)
+#[test]
+fn operation_create_operation_fallback_to_proj4_strings_projliteral_to_projliteral() {
+    let db = database();
+    let src = proj_crs("+proj=utm +zone=11 +datum=NAD27 +over +type=crs");
+    let dst = proj_crs("+proj=longlat +datum=WGS84 +over +type=crs");
+    let op = first_operation(&db, &src, &dst);
+    assert_eq!(
+        plain(&op),
+        "+proj=pipeline \
+         +step +inv +proj=utm +zone=11 +datum=NAD27 +over \
+         +step +proj=longlat +datum=WGS84 +over \
+         +step +proj=unitconvert +xy_in=rad +xy_out=deg"
+    );
+}
+
+/// TEST(operation, createOperation_fallback_to_proj4_strings_regular_to_projliteral_with_towgs84)
+#[test]
+fn operation_create_operation_fallback_to_proj4_strings_regular_to_projliteral_with_towgs84() {
+    let db = database();
+    let src = epsg(&db, "4326");
+    let dst = proj_crs("+proj=utm +zone=31 +ellps=GRS80 +towgs84=1,2,3 +over +type=crs");
+    let op = first_operation(&db, &src, &dst);
+    assert_eq!(
+        plain(&op),
+        "+proj=pipeline +step +proj=axisswap +order=2,1 \
+         +step +proj=unitconvert +xy_in=deg +xy_out=rad \
+         +step +proj=utm +zone=31 +ellps=GRS80 +towgs84=1,2,3 +over"
+    );
+}
