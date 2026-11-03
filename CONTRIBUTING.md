@@ -13,13 +13,12 @@ automatique.
 Personne ne pousse directement sur `main`. Même un correctif d'une ligne
 passe par une branche et une pull request.
 
-À activer dans les réglages du dépôt GitHub, une fois le dépôt publié :
+Deux rulesets GitHub, `protect-main` et `protect-dev`, appliquent ces règles :
 
-- bloquer les pushes directs sur `main` ;
-- exiger une pull request avant fusion ;
-- ne pas exiger une revue tierce qui empêcherait le mainteneur de fusionner
-  seul ;
-- interdire le force-push sur `main`.
+- pas de push direct : toute modification passe par une pull request ;
+- pas de force-push ni de suppression de la branche ;
+- historique linéaire, fusion par squash ou par rebase ;
+- aucune approbation tierce exigée, le mainteneur fusionne seul.
 
 `CODEOWNERS` désigne `@RandazzoMaxime` sur tout le dépôt. GitHub s'en sert
 pour la revue ; ça ne donne à personne d'autre le droit de fusionner.
@@ -72,5 +71,5 @@ dans `Cargo.toml`).
 ## Revue
 
 Le mainteneur regarde, dans l'ordre : le comportement face à PROJ, les écarts
-annoncés dans `PORTING.md`, l'API, puis le style. Une PR qui mélange deux
+annoncés dans la fiche `docs/PORTING-<module>.md`, l'API, puis le style. Une PR qui mélange deux
 lots ou qui élargit le périmètre sans le dire retourne à l'auteur.
