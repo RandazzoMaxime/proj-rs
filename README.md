@@ -42,8 +42,8 @@ yet**: see [Status at a glance](#status-at-a-glance).
 </p>
 
 Each square is **one test case of PROJ 9.9.0 itself**. Green: PROJ-RS passes it.
-Grey: still open. In all, <!--gen:all_percent-->95.6<!--/gen-->% of the cases pass
-(<!--gen:all_done-->8111<!--/gen--> of <!--gen:all_total-->8484<!--/gen-->). The left panel is the numeric suite (`gie`), complete. The right
+Grey: still open. In all, <!--gen:all_percent-->95.8<!--/gen-->% of the cases pass
+(<!--gen:all_done-->8128<!--/gen--> of <!--gen:all_total-->8484<!--/gen-->). The left panel is the numeric suite (`gie`), complete. The right
 panel is what is left: PROJ's C++ unit tests, which cover the ISO 19111 model,
 WKT and the operation factory, and the command-line cases. The chart is drawn
 from the same ledgers as the tables below by `tests/progress_svg.rs`, so it
@@ -173,7 +173,7 @@ The same goes for the CLI cases in [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md
 
 | Suite | Ported and passing | Not yet | |
 |---|---:|---:|:-:|
-| PROJ C++ unit tests | <!--gen:unit_ported-->1039<!--/gen--> | <!--gen:unit_open-->313<!--/gen--> | <!--gen:unit_icon-->🟡<!--/gen--> |
+| PROJ C++ unit tests | <!--gen:unit_ported-->1056<!--/gen--> | <!--gen:unit_open-->296<!--/gen--> | <!--gen:unit_icon-->🟡<!--/gen--> |
 | `cct` CLI cases | <!--gen:cli_cct_ported-->18<!--/gen--> | <!--gen:cli_cct_open-->0<!--/gen--> | <!--gen:cli_cct_icon-->✅<!--/gen--> |
 | `cs2cs` CLI cases | <!--gen:cli_cs2cs_ported-->122<!--/gen--> | <!--gen:cli_cs2cs_open-->21<!--/gen--> | <!--gen:cli_cs2cs_icon-->🟡<!--/gen--> |
 | `proj` CLI cases | <!--gen:cli_proj_ported-->4<!--/gen--> | <!--gen:cli_proj_open-->0<!--/gen--> | <!--gen:cli_proj_icon-->✅<!--/gen--> |
@@ -188,12 +188,12 @@ The same goes for the CLI cases in [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md
 
 | PROJ file | Ported and passing | Not yet |
 |---|---:|---:|
-| `test_c_api.cpp` | <!--gen:test_c_api_ported-->98<!--/gen--> | <!--gen:test_c_api_open-->54<!--/gen--> |
-| `test_crs.cpp` | <!--gen:test_crs_ported-->175<!--/gen--> | <!--gen:test_crs_open-->22<!--/gen--> |
+| `test_c_api.cpp` | <!--gen:test_c_api_ported-->103<!--/gen--> | <!--gen:test_c_api_open-->49<!--/gen--> |
+| `test_crs.cpp` | <!--gen:test_crs_ported-->177<!--/gen--> | <!--gen:test_crs_open-->20<!--/gen--> |
 | `test_factory.cpp` | <!--gen:test_factory_ported-->85<!--/gen--> | <!--gen:test_factory_open-->28<!--/gen--> |
-| `test_io.cpp` | <!--gen:test_io_ported-->435<!--/gen--> | <!--gen:test_io_open-->19<!--/gen--> |
+| `test_io.cpp` | <!--gen:test_io_ported-->436<!--/gen--> | <!--gen:test_io_open-->18<!--/gen--> |
 | `test_operation.cpp` | <!--gen:test_operation_ported-->157<!--/gen--> | <!--gen:test_operation_open-->5<!--/gen--> |
-| `test_operationfactory.cpp` | <!--gen:test_operationfactory_ported-->89<!--/gen--> | <!--gen:test_operationfactory_open-->185<!--/gen--> |
+| `test_operationfactory.cpp` | <!--gen:test_operationfactory_ported-->98<!--/gen--> | <!--gen:test_operationfactory_open-->176<!--/gen--> |
 | Other unit files ([`tests/proj_unit.rs`](tests/proj_unit.rs)) | 33 | n/a |
 
 The unit tests are the biggest remaining piece: they cover the ISO 19111 model,

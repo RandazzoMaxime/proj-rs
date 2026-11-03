@@ -19,13 +19,11 @@ and `PORT-NOTES-tests.md`.
 - `datum.vdatum_with_anchor`
 - `crs.compoundCRS_identify_db`
 - `crs.boundCRS_crs_link`
-- `crs.boundCRS_nadcon_to_PROJ_string_usePROJAlternativeGridNames_false`
 - `crs.boundCRS_identify_db`
 - `crs.derivedGeographicCRS_to_PROJ`
 - `crs.derivedGeographicCRS_with_affine_transform_to_PROJ`
 - `crs.crs_createBoundCRSToWGS84IfPossible`
 - `crs.normalizeForVisualization_derivedprojected_operation`
-- `crs.normalizeForVisualization_bound`
 - `crs.projected_is_equivalent_to_with_proj4_extension`
 - `crs.norway_ntm`
 - `crs.ETRF2000_PL_CS92`
@@ -78,7 +76,6 @@ and `PORT-NOTES-tests.md`.
 - `io.createFromUserInput`
 - `json_import.several_usages`
 - `json_import.bound_crs_with_name_and_usage`
-- `json_import.bound_crs_with_source_crs_in_transformation`
 - `json_import.engineering_crs_affine_CS`
 - `json_import.multiple_ids`
 - `json_export.coordinate_system_id`
@@ -117,7 +114,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.geogCRS_with_towgs84_to_geocentric`
 - `operation.geogCRS_different_from_baseCRS_to_projCRS_context_compatible_area`
 - `operation.projCRS_no_id_to_geogCRS_context`
-- `operation.projCRS_3D_to_geogCRS_3D_context`
 - `operation.geogCRS_3D_to_projCRS_with_2D_geocentric_translation`
 - `operation.projCRS_to_projCRS_different_baseCRS`
 - `operation.projCRS_to_projCRS_context_grid_offsets`
@@ -129,9 +125,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.boundCRS_of_clrk_66_geogCRS_to_nad83_geogCRS`
 - `operation.boundCRS_of_clrk_66_projCRS_to_nad83_geogCRS`
 - `operation.boundCRS_of_projCRS_to_geogCRS`
-- `operation.boundCRS_of_geogCRS_to_unrelated_geogCRS_context`
-- `operation.geogCRS_to_boundCRS_of_geogCRS`
-- `operation.boundCRS_to_geogCRS_same_datum_context`
 - `operation.boundCRS_to_geogCRS_hubCRS_and_targetCRS_same_but_baseCRS_not`
 - `operation.boundCRS_to_derived_geog_with_transformation_with_source_crs_being_base_crs_of_source_crs`
 - `operation.boundCRS_to_boundCRS`
@@ -148,7 +141,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.transformation_height_to_PROJ_string`
 - `operation.compoundCRS_with_boundProjCRS_and_boundVerticalCRS_to_geogCRS`
 - `operation.compoundCRS_with_boundProjCRS_with_ftus_and_boundVerticalCRS_to_geogCRS`
-- `operation.compoundCRS_with_bound_of_projected_and_bound_of_vertical_to_geog3D`
 - `operation.compoundCRS_with_boundGeogCRS_and_geoid_to_geodCRS_NAD2011_ctxt`
 - `operation.compoundCRS_with_vert_bound_to_bound_geog3D`
 - `operation.compoundCRS_with_derivedVerticalCRS_ellipsoidal_height_to_geog`
@@ -191,7 +183,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.compoundCRS_to_geogCRS_3D_with_3D_helmert_context`
 - `operation.compoundCRS_to_geogCRS_3D_with_3D_helmert_same_geog_src_target_context`
 - `operation.compoundCRS_to_geogCRS_3D_with_null_helmert_same_geog_src_target_context`
-- `operation.compoundCRS_to_geogCRS_3D_with_same_geog_src_target_interp_context`
 - `operation.compoundCRS_to_geogCRS_3D_WGS84_to_GDA2020_AHD_Height`
 - `operation.compoundCRS_to_geogCRS_2D_promote_to_3D_context`
 - `operation.compoundCRS_of_projCRS_to_geogCRS_3D_context`
@@ -206,7 +197,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.compoundCRS_to_geogCRS_with_height_depth_reversal`
 - `operation.compoundCRS_to_geogCRS_with_vertical_unit_change_and_height_depth_reversal`
 - `operation.compoundCRS_of_vertCRS_with_geoid_model_to_geogCRS`
-- `operation.compoundCRS_of_horizCRS_with_TOWGS84_vertCRS_with_geoid_model_to_geogCRS`
 - `operation.compoundCRS_of_vertCRS_with_geoid_model_by_id_to_geogCRS`
 - `operation.compoundCRS_of_vertCRS_with_geoid_model_by_name_and_several_records_to_geogCRS`
 - `operation.compoundCRS_of_vertCRS_with_geoid_model_by_name_and_datum_ensemble`
@@ -214,7 +204,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.compoundCRS_from_WKT2_to_geogCRS_3D_context`
 - `operation.compoundCRS_from_WKT2_no_id_to_geogCRS_3D_context`
 - `operation.compoundCRS_to_geogCRS_3D_Amersfoort_NAP_height_to_Amersfoort`
-- `operation.proj3DCRS_with_non_meter_horiz_and_vertical_to_geog`
 - `operation.compoundCRS_with_non_meter_horiz_and_vertical_to_geog`
 - `operation.compoundCRS_to_geogCRS_3D_using_intermediate_of_horizontal_transform`
 - `operation.boundCRS_to_compoundCRS`
@@ -277,23 +266,18 @@ and `PORT-NOTES-tests.md`.
 - `operation.createOperation_defmodel_from_database`
 - `operation.compoundCRS_to_compoundCRS_context_extent_use_none`
 - `operation.createOperation_ETRF2000_to_Amersfoort`
-- `operation.createOperation_ETRS89_to_Amersfoort`
 
 ## test_c_api.cpp
 
-- `CApi.proj_crs_create_bound_crs_to_WGS84_on_invalid_type`
-- `CApi.proj_create_from_database_grid_alternative_null_old_proj_grid_name`
 - `CApi.proj_coordoperation_get_grid_used`
 - `CApi.proj_coordoperation_get_grid_used_fullname_caching`
 - `CApi.proj_coordoperation_is_instantiable`
-- `CApi.proj_create_operations`
 - `CApi.proj_get_suggested_operation_for_NAD83_to_NAD83_HARN`
 - `CApi.proj_create_operations_prime_meridian_non_greenwich`
 - `CApi.proj_get_suggested_operation_with_operations_without_area_of_use`
 - `CApi.proj_create_operations_discard_superseded`
 - `CApi.proj_create_operations_dont_discard_superseded`
 - `CApi.proj_create_operations_with_pivot`
-- `CApi.proj_create_operations_allow_ballpark_transformations`
 - `CApi.proj_context_set_database_path_null`
 - `CApi.proj_context_set_database_path_aux`
 - `CApi.proj_context_set_database_path_error_1`
@@ -329,7 +313,6 @@ and `PORT-NOTES-tests.md`.
 - `CApi.proj_get_insert_statements`
 - `CApi.proj_trans_bounds_ignore_inf`
 - `CApi.proj_trans_bounds_ignore_inf_geographic`
-- `CApi.proj_trans_bounds_to_compound_crs`
 - `CApi.proj_trans_bounds_world_geodetic_to_spilhaus`
 - `CApi.proj_trans_bounds_3D_ignore_inf`
 - `CApi.proj_crs_has_point_motion_operation`
