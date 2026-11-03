@@ -1,13 +1,15 @@
 //! ESRI method and parameter names for WKT1 ESRI, from PROJ `esriparammappings.cpp`.
 //!
 //! The table is generated from the PROJ 9.9.0 sources and keeps their order: the
-//! first row that matches a method wins. `ESRIParamMapping::is_fixed_value` is not
-//! kept, because only the WKT1 ESRI import reads it, and that import is not ported.
+//! first row that matches a method wins. `ESRIParamMapping::is_fixed_value` is
+//! [`EsriParam::Defaulted`] (Behrmann). [`import_esri_projection`] is PROJ
+//! `getESRIMapping` plus `buildProjectionFromESRI`.
 
 use super::buildop::{names_match, OpProps};
 use super::model::{
     Conversion, Ellipsoid, FactoryError, Measure, Parameter, ParameterValue, UnitOfMeasure,
 };
+use super::parammap::{method_by_code, method_by_name, MethodMap};
 
 /// One `PARAMETER` of an ESRI method.
 #[derive(Clone, Copy, Debug)]
@@ -23,6 +25,14 @@ pub(crate) enum EsriParam {
         esri_name: &'static str,
         text: &'static str,
     },
+    /// Present: a normal match. Absent: inject `text` and do not count a miss.
+    /// PROJ `is_fixed_value` with a WKT2 name. Behrmann is the only row.
+    Defaulted {
+        esri_name: &'static str,
+        wkt2_name: &'static str,
+        epsg_code: i32,
+        text: &'static str,
+    },
 }
 
 impl EsriParam {
@@ -36,6 +46,20 @@ impl EsriParam {
 
     const fn fixed(esri_name: &'static str, text: &'static str) -> Self {
         Self::Fixed { esri_name, text }
+    }
+
+    const fn defaulted(
+        esri_name: &'static str,
+        wkt2_name: &'static str,
+        epsg_code: i32,
+        text: &'static str,
+    ) -> Self {
+        Self::Defaulted {
+            esri_name,
+            wkt2_name,
+            epsg_code,
+            text,
+        }
     }
 }
 
@@ -395,11 +419,17 @@ static PARAMS_CYLINDRICAL_EQUAL_AREA: &[EsriParam] = &[
 static PARAMS_BEHRMANN: &[EsriParam] = &[
     EsriParam::value("False_Easting", "False easting", 8806),
     EsriParam::value("False_Northing", "False northing", 8807),
-    EsriParam::value("Central_Meridian", "Longitude of natural origin", 8802),
-    EsriParam::value(
+    EsriParam::defaulted(
+        "Central_Meridian",
+        "Longitude of natural origin",
+        8802,
+        "0.0",
+    ),
+    EsriParam::defaulted(
         "Standard_Parallel_1",
         "Latitude of 1st standard parallel",
         8823,
+        "30.0",
     ),
 ];
 
@@ -1494,4 +1524,300 @@ pub(crate) fn mercator_variant_b(
         si_value(conversion, 8807),
     )
     .map(Some)
+}
+
+/// Whether a row whose misses are at least its hits is kept.
+///
+/// Guessed ESRI WKT drops that row (`maybeEsriStyle_`). A declared ESRI string,
+/// and a GDAL string that fell through to this table, keep the best score.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum EsriRowChoice {
+    /// `maybeEsriStyle_`.
+    Guessed,
+    /// `esriStyle_` or the standard-path fallback.
+    AnyScore,
+}
+
+/// Ellipsoid or sphere, for the three methods that have both forms.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReferenceSurface {
+    /// `selectSphericalOrEllipsoidal` with a sphere.
+    Sphere,
+    /// `selectSphericalOrEllipsoidal` with an ellipsoid.
+    Ellipsoid,
+}
+
+/// One WKT2 parameter produced from an ESRI `PROJECTION`.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct EsriImportedParam {
+    /// WKT2 parameter name.
+    pub(crate) name: &'static str,
+    /// EPSG parameter code, or 0.
+    pub(crate) epsg_code: i32,
+    /// Value in the unit of the WKT1 parameter.
+    pub(crate) value: f64,
+}
+
+/// A conversion described by an ESRI method row.
+#[derive(Clone, Debug)]
+pub(crate) struct EsriImported {
+    /// WKT2 method name.
+    pub(crate) method_name: &'static str,
+    /// EPSG method code, or 0.
+    pub(crate) epsg_code: i32,
+    /// `unknown`, or `unknown (Gauss Kruger)`.
+    pub(crate) conversion_name: &'static str,
+    /// Parameters in WKT2 method order. A WKT2 parameter with no ESRI name is absent.
+    pub(crate) parameters: Vec<EsriImportedParam>,
+}
+
+/// PROJ `getESRIMapping` and `buildProjectionFromESRI`.
+///
+/// `Ok(None)` when `esri_name` is not an ESRI projection name, or every row is
+/// rejected. A parameter value that is not a number is an error, as PROJ's
+/// `asDouble` throws once a row has been chosen.
+///
+/// # Errors
+///
+/// A chosen parameter's text is not a floating-point number.
+pub(crate) fn import_esri_projection(
+    esri_name: &str,
+    crs_name: &str,
+    parameters: &[(&str, &str)],
+    surface: ReferenceSurface,
+    choice: EsriRowChoice,
+) -> Result<Option<EsriImported>, FactoryError> {
+    let candidates: Vec<&EsriMethod> = ESRI_METHODS
+        .iter()
+        .filter(|method| method.esri_name.eq_ignore_ascii_case(esri_name))
+        .collect();
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+    let mut present: Vec<(String, String)> = parameters
+        .iter()
+        .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+        .collect();
+    let mut best_index: Option<usize> = None;
+    let mut best_hits = -1_i32;
+    for (index, mapping) in candidates.iter().enumerate() {
+        let Some(score) = score_esri_row(mapping, &mut present) else {
+            continue;
+        };
+        let dominated = choice == EsriRowChoice::Guessed && score.misses >= score.hits;
+        if score.hits > best_hits && !dominated {
+            best_hits = score.hits;
+            best_index = Some(index);
+        }
+    }
+    let Some(mapping) = best_index.map(|index| candidates[index]) else {
+        return Ok(None);
+    };
+
+    let mut alias: Vec<(&str, &str)> = Vec::new();
+    for param in mapping.params {
+        if let Some((esri, wkt2)) = wkt2_link(param) {
+            set_alias(&mut alias, wkt2, esri);
+        }
+    }
+
+    let mut method_name = mapping.wkt2_name;
+    if esri_name.eq_ignore_ascii_case("Krovak") && crs_name.contains("_East_North") {
+        method_name = "Krovak (North Orientated)";
+    }
+    let Some(mut method) = method_by_name(method_name) else {
+        return Ok(None);
+    };
+    if esri_name.eq_ignore_ascii_case("Stereographic") {
+        // A non-numeric origin is ignored here; emitting the parameter still errors.
+        let at_pole = param_text(&present, "Latitude_Of_Origin")
+            .and_then(|latitude| latitude.trim().parse::<f64>().ok())
+            .is_some_and(|latitude| latitude.abs() == 90.0);
+        if at_pole {
+            if let Some(polar) = method_by_code(9810) {
+                method = polar;
+            }
+        }
+    }
+    method = spherical_or_ellipsoidal(method, surface);
+
+    if method.epsg_code == 1028 && esri_name.eq_ignore_ascii_case("Plate_Carree") {
+        set_alias(
+            &mut alias,
+            "Latitude of 1st standard parallel",
+            "Standard_Parallel_1",
+        );
+        set_param(&mut present, "Standard_Parallel_1", "0");
+    } else if matches!(method.epsg_code, 9812 | 9815)
+        && !esri_name.eq_ignore_ascii_case("Rectified_Skew_Orthomorphic_Natural_Origin")
+        && !esri_name.eq_ignore_ascii_case("Rectified_Skew_Orthomorphic_Center")
+    {
+        set_alias(&mut alias, "Angle from Rectified to Skew Grid", "Azimuth");
+    }
+
+    let mut imported = Vec::new();
+    for param in method.params {
+        let Some(esri) = alias
+            .iter()
+            .rev()
+            .find(|(wkt2, _)| *wkt2 == param.wkt2_name)
+            .map(|(_, esri)| *esri)
+        else {
+            continue;
+        };
+        let Some(text) = param_text(&present, esri).or_else(|| equivalent_text(&present, esri))
+        else {
+            continue;
+        };
+        imported.push(EsriImportedParam {
+            name: param.wkt2_name,
+            epsg_code: param.epsg_code,
+            value: parse_esri_number(text)?,
+        });
+    }
+    let conversion_name = if esri_name.eq_ignore_ascii_case("Gauss_Kruger") {
+        "unknown (Gauss Kruger)"
+    } else {
+        "unknown"
+    };
+    Ok(Some(EsriImported {
+        method_name: method.wkt2_name,
+        epsg_code: method.epsg_code,
+        conversion_name,
+        parameters: imported,
+    }))
+}
+
+/// PROJ `selectSphericalOrEllipsoidal` for the three methods that have both forms.
+pub(crate) fn spherical_or_ellipsoidal(
+    method: &'static MethodMap,
+    surface: ReferenceSurface,
+) -> &'static MethodMap {
+    let sphere = matches!(surface, ReferenceSurface::Sphere);
+    let code = match method.epsg_code {
+        9834 | 9835 => {
+            if sphere {
+                9834
+            } else {
+                9835
+            }
+        }
+        1027 | 9820 => {
+            if sphere {
+                1027
+            } else {
+                9820
+            }
+        }
+        1028 | 1029 => {
+            if sphere {
+                1029
+            } else {
+                1028
+            }
+        }
+        _ => return method,
+    };
+    method_by_code(code).unwrap_or(method)
+}
+
+struct RowScore {
+    hits: i32,
+    misses: i32,
+}
+
+/// Score one ESRI row. `None` when a fixed parameter is present with another value.
+/// Injected defaults stay in `present` for later rows, as the C++ map does.
+fn score_esri_row(mapping: &EsriMethod, present: &mut Vec<(String, String)>) -> Option<RowScore> {
+    let mut hits = 0_i32;
+    let mut misses = 0_i32;
+    for param in mapping.params {
+        let name = esri_param_name(param);
+        if let Some(index) = position_ci(present, name) {
+            if let EsriParam::Fixed { text, .. } = param {
+                if !numbers_equal(&present[index].1, text) {
+                    return None;
+                }
+            }
+            hits += 1;
+        } else if let EsriParam::Defaulted {
+            esri_name, text, ..
+        } = param
+        {
+            present.push(((*esri_name).to_owned(), (*text).to_owned()));
+        } else {
+            misses += 1;
+        }
+    }
+    Some(RowScore { hits, misses })
+}
+
+fn esri_param_name(param: &EsriParam) -> &str {
+    match param {
+        EsriParam::Value { esri_name, .. }
+        | EsriParam::Fixed { esri_name, .. }
+        | EsriParam::Defaulted { esri_name, .. } => esri_name,
+    }
+}
+
+fn wkt2_link(param: &EsriParam) -> Option<(&str, &str)> {
+    match param {
+        EsriParam::Value {
+            esri_name,
+            wkt2_name,
+            ..
+        }
+        | EsriParam::Defaulted {
+            esri_name,
+            wkt2_name,
+            ..
+        } => Some((*esri_name, *wkt2_name)),
+        EsriParam::Fixed { .. } => None,
+    }
+}
+
+fn set_alias(alias: &mut Vec<(&str, &str)>, wkt2: &'static str, esri: &'static str) {
+    if let Some(slot) = alias.iter_mut().find(|(name, _)| *name == wkt2) {
+        slot.1 = esri;
+    } else {
+        alias.push((wkt2, esri));
+    }
+}
+
+fn set_param(present: &mut Vec<(String, String)>, name: &str, value: &str) {
+    if let Some(index) = position_ci(present, name) {
+        present[index].1 = value.to_owned();
+    } else {
+        present.push((name.to_owned(), value.to_owned()));
+    }
+}
+
+fn position_ci(present: &[(String, String)], name: &str) -> Option<usize> {
+    present
+        .iter()
+        .position(|(got, _)| got.eq_ignore_ascii_case(name))
+}
+
+fn param_text<'a>(present: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    position_ci(present, name).map(|index| present[index].1.as_str())
+}
+
+fn equivalent_text<'a>(present: &'a [(String, String)], esri_name: &str) -> Option<&'a str> {
+    present
+        .iter()
+        .find(|(name, _)| super::equiv::are_equivalent_parameters(name, esri_name))
+        .map(|(_, value)| value.as_str())
+}
+
+fn numbers_equal(left: &str, right: &str) -> bool {
+    matches!(
+        (left.trim().parse::<f64>(), right.trim().parse::<f64>()),
+        (Ok(left), Ok(right)) if left == right
+    )
+}
+
+fn parse_esri_number(text: &str) -> Result<f64, FactoryError> {
+    text.trim()
+        .parse::<f64>()
+        .map_err(|_| FactoryError::Invalid(format!("unhandled parameter value type : {text}")))
 }

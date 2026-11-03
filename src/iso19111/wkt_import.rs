@@ -2484,12 +2484,39 @@ impl WktParser {
         let conversion = if let Some(conversion) = node.child(&["CONVERSION"]) {
             self.build_conversion(conversion, linear, angular)?
         } else if let Some(projection) = node.child(&["PROJECTION"]) {
-            wkt1_utm_named(self.build_wkt1_projection(node, projection, linear, angular)?)
+            wkt1_utm_named(self.build_wkt1_projection(
+                node,
+                projection,
+                linear,
+                angular,
+                reference_surface(base.ellipsoid()),
+            )?)
         } else {
             return Err(invalid("missing CONVERSION"));
         };
         if node.child(&["CS"]).is_none() && node.children_named("AXIS").is_empty() {
-            if let Some(pole) = polar_pole_cs(&conversion, &coordinate_system) {
+            let unit = coordinate_system
+                .axes
+                .first()
+                .map(|axis| axis.unit.clone())
+                .unwrap_or_else(UnitOfMeasure::metre);
+            if conversion.method.code == "9819" {
+                coordinate_system = CartesianCS {
+                    identified: Identified::default(),
+                    axes: vec![
+                        Axis::new("Southing", "", "south", unit.clone()),
+                        Axis::new("Westing", "", "west", unit),
+                    ],
+                };
+            } else if conversion.method.code == "9808" {
+                coordinate_system = CartesianCS {
+                    identified: Identified::default(),
+                    axes: vec![
+                        Axis::new("Westing", "", "west", unit.clone()),
+                        Axis::new("Southing", "", "south", unit),
+                    ],
+                };
+            } else if let Some(pole) = polar_pole_cs(&conversion, &coordinate_system) {
                 coordinate_system = pole;
             }
         }
@@ -2551,7 +2578,13 @@ impl WktParser {
             .map(|axis| axis.unit.clone())
             .unwrap_or_else(UnitOfMeasure::metre);
         let conversion = if let Some(projection) = node.child(&["PROJECTION"]) {
-            self.build_wkt1_projection(node, projection, linear, angular)?
+            self.build_wkt1_projection(
+                node,
+                projection,
+                linear,
+                angular,
+                reference_surface(base_geo.ellipsoid()),
+            )?
         } else {
             return Err(invalid("missing PROJECTION"));
         };
@@ -2628,12 +2661,100 @@ impl WktParser {
         }
     }
 
+    /// PROJ `buildProjectionFromESRI` when the projection name is in the ESRI table.
+    fn conversion_from_esri(
+        &mut self,
+        node: &WktNode,
+        esri_name: &str,
+        crs_name: &str,
+        units: (&UnitOfMeasure, &UnitOfMeasure),
+        surface: super::esri_parammap::ReferenceSurface,
+        choice: super::esri_parammap::EsriRowChoice,
+    ) -> Result<Option<Conversion>, FactoryError> {
+        let mut texts = Vec::new();
+        for child in &node.children {
+            if !ci_eq(&child.value, "PARAMETER") {
+                continue;
+            }
+            if child.children.len() < 2 {
+                return Err(invalid("not enough children in PARAMETER node"));
+            }
+            texts.push((
+                strip_quotes(&child.children[0]),
+                child.children[1].value.clone(),
+            ));
+        }
+        let pairs: Vec<(&str, &str)> = texts
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.as_str()))
+            .collect();
+        let Some(imported) = super::esri_parammap::import_esri_projection(
+            esri_name, crs_name, &pairs, surface, choice,
+        )?
+        else {
+            return Ok(None);
+        };
+        let (linear, angular) = units;
+        let parameters = imported
+            .parameters
+            .iter()
+            .map(|param| {
+                let unit =
+                    guess_parameter_unit(param.name, linear, angular).unwrap_or(UnitOfMeasure {
+                        name: String::new(),
+                        factor: 1.0,
+                        kind: UnitKind::Unknown,
+                        code_space: String::new(),
+                        code: String::new(),
+                    });
+                let (code_space, code) = if param.epsg_code == 0 {
+                    (String::new(), String::new())
+                } else {
+                    ("EPSG".to_owned(), param.epsg_code.to_string())
+                };
+                Parameter {
+                    name: param.name.to_owned(),
+                    code_space,
+                    code,
+                    value: ParameterValue::Measure(Measure {
+                        value: param.value,
+                        unit,
+                    }),
+                }
+            })
+            .collect();
+        Ok(Some(Conversion {
+            identified: Identified::named(imported.conversion_name),
+            method: OperationMethod {
+                name: imported.method_name.to_owned(),
+                code_space: if imported.epsg_code == 0 {
+                    String::new()
+                } else {
+                    "EPSG".to_owned()
+                },
+                code: if imported.epsg_code == 0 {
+                    String::new()
+                } else {
+                    imported.epsg_code.to_string()
+                },
+                parameters: Vec::new(),
+            },
+            parameters,
+            source: None,
+            target: None,
+            version: None,
+            inverted: false,
+            interpolation: None,
+        }))
+    }
+
     fn build_wkt1_projection(
         &mut self,
         node: &WktNode,
         projection: &WktNode,
         linear: UnitOfMeasure,
         angular: UnitOfMeasure,
+        surface: super::esri_parammap::ReferenceSurface,
     ) -> Result<Conversion, FactoryError> {
         if projection.children.is_empty() {
             return Err(invalid("not enough children in PROJECTION node"));
@@ -2686,6 +2807,24 @@ impl WktParser {
                 method_name = "Transverse_Mercator_South_Orientated".to_owned();
             }
         }
+        let crs_name = node.children.first().map(strip_quotes).unwrap_or_default();
+        let south_orientated = ci_eq(&method_name, "Transverse_Mercator_South_Orientated");
+        if !south_orientated && (self.esri || self.maybe_esri) {
+            if let Some(conversion) = self.conversion_from_esri(
+                node,
+                &method_name,
+                &crs_name,
+                (&linear, &angular),
+                surface,
+                if self.maybe_esri {
+                    super::esri_parammap::EsriRowChoice::Guessed
+                } else {
+                    super::esri_parammap::EsriRowChoice::AnyScore
+                },
+            )? {
+                return Ok(conversion);
+            }
+        }
         if ci_eq(&method_name, "Mercator_1SP") && !has_center_latitude(node) {
             let origin = parameters
                 .iter()
@@ -2716,19 +2855,66 @@ impl WktParser {
             && latitude_near_pole(&parameters);
         let polar_ambiguous =
             ci_eq(&method_name, "Polar_Stereographic") && !polar_variant_b && !polar_variant_a;
-        let (mapped_name, code) = if polar_variant_b {
-            ("Polar Stereographic (variant B)", "9829")
+        let (mut mapped_name, mut code) = if polar_variant_b {
+            (
+                "Polar Stereographic (variant B)".to_owned(),
+                "9829".to_owned(),
+            )
         } else if polar_variant_a {
-            ("Polar Stereographic (variant A)", "9810")
+            (
+                "Polar Stereographic (variant A)".to_owned(),
+                "9810".to_owned(),
+            )
         } else if ci_eq(&method_name, "Krovak") && axes_are_east_north(node) {
-            ("Krovak (North Orientated)", "1041")
+            ("Krovak (North Orientated)".to_owned(), "1041".to_owned())
         } else if polar_ambiguous {
-            ("", "")
+            (String::new(), String::new())
         } else {
-            wkt1_method(&method_name)
+            let (name, epsg) = wkt1_method(&method_name);
+            (name.to_owned(), epsg.to_owned())
         };
+        if code.is_empty() && !polar_ambiguous {
+            if let Some(found) = super::parammap::method_by_wkt1_name(&method_name) {
+                let adjusted = super::esri_parammap::spherical_or_ellipsoidal(found, surface);
+                if adjusted.epsg_code != 0 {
+                    mapped_name = adjusted.wkt2_name.to_owned();
+                    code = adjusted.epsg_code.to_string();
+                }
+            } else if !(self.esri || self.maybe_esri) {
+                if let Some(conversion) = self.conversion_from_esri(
+                    node,
+                    &method_name,
+                    &crs_name,
+                    (&linear, &angular),
+                    surface,
+                    super::esri_parammap::EsriRowChoice::AnyScore,
+                )? {
+                    return Ok(conversion);
+                }
+            } else if super::equiv::equivalent_name(&method_name, "Lambert Conformal Conic") {
+                let parallel = parameters.iter().any(|parameter| {
+                    super::equiv::equivalent_name(parameter.name(), "standard_parallel_2")
+                });
+                let scale = parameters.iter().any(|parameter| {
+                    super::equiv::equivalent_name(parameter.name(), "scale_factor")
+                });
+                let lambert = if parallel && !scale {
+                    Some(("Lambert Conic Conformal (2SP)", "9802"))
+                } else if !parallel && scale {
+                    Some(("Lambert Conic Conformal (1SP)", "9801"))
+                } else if parallel && scale {
+                    Some(("Lambert Conic Conformal (2SP Michigan)", "1051"))
+                } else {
+                    None
+                };
+                if let Some((name, epsg)) = lambert {
+                    mapped_name = name.to_owned();
+                    code = epsg.to_owned();
+                }
+            }
+        }
         if !code.is_empty() {
-            method_name = mapped_name.to_owned();
+            method_name = mapped_name;
         }
         // The method's own WKT1 names come first, as in PROJ: Bonne's
         // `standard_parallel_1` is EPSG 8801 there, not the generic 8823.
@@ -2774,13 +2960,14 @@ impl WktParser {
                         parameter.code_space = "EPSG".to_owned();
                         parameter.code = own.epsg_code.to_string();
                     }
-                } else if let Some((name, code, _)) =
-                    wkt1_parameter(&parameter.name).filter(|_| !(self.esri && code.is_empty()))
-                {
-                    // An ESRI method with no OGC mapping keeps its own parameter names.
-                    parameter.name = name.to_owned();
-                    parameter.code_space = "EPSG".to_owned();
-                    parameter.code = code.to_owned();
+                } else if !code.is_empty() {
+                    // A mapped method still renames a parameter the method table
+                    // did not claim. An unmapped method keeps the WKT1 name.
+                    if let Some((name, param_code, _)) = wkt1_parameter(&parameter.name) {
+                        parameter.name = name.to_owned();
+                        parameter.code_space = "EPSG".to_owned();
+                        parameter.code = param_code.to_owned();
+                    }
                 }
             }
         }
@@ -2809,7 +2996,7 @@ impl WktParser {
                 } else {
                     "EPSG".to_owned()
                 },
-                code: code.to_owned(),
+                code,
                 parameters: Vec::new(),
             },
             parameters,
@@ -3175,16 +3362,34 @@ impl WktParser {
         if steps.len() < 2 {
             return Err(invalid("a concatenated operation needs at least two steps"));
         }
+        let source = if node.child(&["SOURCECRS"]).is_some() {
+            Some(Box::new(self.wrapped_crs(node, "SOURCECRS")?))
+        } else {
+            None
+        };
+        let target = if node.child(&["TARGETCRS"]).is_some() {
+            Some(Box::new(self.wrapped_crs(node, "TARGETCRS")?))
+        } else {
+            None
+        };
         Ok(ConcatenatedOperation {
             identified: props.identified(),
             steps,
-            source: None,
-            target: None,
+            source,
+            target,
             accuracy: None,
             version: props.version,
             computed_name: false,
             proj_based: None,
         })
+    }
+}
+
+fn reference_surface(ellipsoid: Option<&Ellipsoid>) -> super::esri_parammap::ReferenceSurface {
+    if ellipsoid.is_some_and(Ellipsoid::is_sphere) {
+        super::esri_parammap::ReferenceSurface::Sphere
+    } else {
+        super::esri_parammap::ReferenceSurface::Ellipsoid
     }
 }
 
@@ -3685,7 +3890,8 @@ fn easting_northing(unit: UnitOfMeasure) -> CartesianCS {
 /// parallel.
 fn polar_pole_cs(conversion: &Conversion, cs: &CartesianCS) -> Option<CartesianCS> {
     let (lat_code, pole_only) = match conversion.method.code.as_str() {
-        "9810" => ("8801", true),
+        // 9810 polar stereographic and 9820 Lambert azimuthal equal area.
+        "9810" | "9820" => ("8801", true),
         "9829" => ("8832", false),
         _ => return None,
     };

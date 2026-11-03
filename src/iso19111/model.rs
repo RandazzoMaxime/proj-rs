@@ -2196,6 +2196,12 @@ impl ConcatenatedOperation {
         &self.identified.name
     }
 
+    /// Authority identifiers.
+    #[must_use]
+    pub fn identifiers(&self) -> &[Identifier] {
+        &self.identified.identifiers
+    }
+
     /// Steps, in `step_number` order. The NKG chains start at 2; that number is kept.
     #[must_use]
     pub fn steps(&self) -> &[ConcatenatedStep] {
