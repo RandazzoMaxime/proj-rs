@@ -658,6 +658,19 @@ impl CoordinateOperation {
             Self::Concatenated(operation) => Self::Concatenated(operation.inverse()),
         }
     }
+
+    /// `requiresPerCoordinateInputTime`: a time-dependent Helmert, or a step that has one.
+    #[must_use]
+    pub fn requires_per_coordinate_input_time(&self) -> bool {
+        match self {
+            Self::Conversion(_) => false,
+            Self::Transformation(operation) => operation.requires_per_coordinate_input_time(),
+            Self::Concatenated(operation) => operation
+                .steps
+                .iter()
+                .any(|step| step.operation.requires_per_coordinate_input_time()),
+        }
+    }
 }
 
 fn crs_option(left: Option<&Crs>, right: Option<&Crs>) -> bool {
