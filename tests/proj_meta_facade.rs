@@ -62,16 +62,83 @@ fn metadata_object_needs_a_single_crs() {
 }
 
 #[test]
-fn metadata_object_as_source_or_target_is_refused() {
-    let plain = Proj::new("EPSG:4326").expect("CRS");
-    let dated = plain.coordinate_metadata_create(2021.3).expect("object");
-    let target = Proj::new("EPSG:3857").expect("CRS");
-    assert!(dated
+fn an_epoch_moves_itrf2014_to_itrf2008() {
+    // PROJ 9.8.1 `proj_trans` of EPSG:7789 to EPSG:5332 (pyproj 3.8.0's libproj).
+    // The input is geocentric metres. No epoch passes time 0. An epoch inserts
+    // `proj=set v_4=<year>` and the helmert rates move the point.
+    let source = Proj::new("EPSG:7789").expect("ITRF2014");
+    let target = Proj::new("EPSG:5332").expect("ITRF2008");
+    let plain = source
+        .create_crs_to_crs_from_pj(&target, None, None)
+        .expect("undated");
+    let (x, y, z) = plain
+        .convert_xyz(4_027_893.0, 307_045.0, 4_919_474.0)
+        .expect("time 0");
+    near(x, 4_027_892.758_637_508_4);
+    near(y, 307_044.983_379_046_55);
+    near(z, 4_919_473.906_657_333_5);
+
+    let at_2010 = source
+        .coordinate_metadata_create(2010.0)
+        .expect("epoch")
+        .create_crs_to_crs_from_pj(&target, None, None)
+        .expect("2010");
+    let (x, y, z) = at_2010
+        .convert_xyz(4_027_893.0, 307_045.0, 4_919_474.0)
+        .expect("2010");
+    near(x, 4_027_893.001_519_442);
+    near(y, 307_045.001_893_859_07);
+    near(z, 4_919_474.002_301_61);
+    let definition = at_2010.def().expect("definition");
+    assert!(definition.contains("proj=set v_4=2010"), "{definition}");
+
+    let at_2020 = source
+        .coordinate_metadata_create(2020.0)
+        .expect("epoch")
+        .create_crs_to_crs_from_pj(&target, None, None)
+        .expect("2020");
+    let (x, y, z) = at_2020
+        .convert_xyz(4_027_893.0, 307_045.0, 4_919_474.0)
+        .expect("2020");
+    near(x, 4_027_893.002_727_810_3);
+    near(y, 307_045.001_985_972_6);
+    near(z, 4_919_474.002_777_453_5);
+}
+
+#[test]
+fn two_epochs_are_refused() {
+    let source = Proj::new("EPSG:7789")
+        .expect("source")
+        .coordinate_metadata_create(2010.0)
+        .expect("source epoch");
+    let target = Proj::new("EPSG:5332")
+        .expect("target")
+        .coordinate_metadata_create(2020.0)
+        .expect("target epoch");
+    assert!(source
         .create_crs_to_crs_from_pj(&target, None, None)
         .is_err());
-    assert!(plain.create_crs_to_crs_from_pj(&dated, None, None).is_err());
-    let builder = ProjBuilder::new().proj_create_crs_to_crs_from_pj(&dated, &target, None, None);
+    let builder = ProjBuilder::new().proj_create_crs_to_crs_from_pj(&source, &target, None, None);
     assert!(builder.is_err());
+}
+
+#[test]
+fn an_epoch_on_a_static_projected_pair_keeps_the_undated_point() {
+    // Web Mercator ignores time. PROJ 9.8.1 `Transformer.from_crs(4326, 3857)`
+    // of (2°, 49°) is these metres. An epoch must not move them.
+    let dated = Proj::new("EPSG:4326")
+        .expect("source")
+        .coordinate_metadata_create(2021.3)
+        .expect("epoch")
+        .create_crs_to_crs_from_pj(&Proj::new("EPSG:3857").expect("target"), None, None)
+        .expect("dated");
+    let (x, y) = dated.convert((2.0_f64, 49.0_f64)).expect("convert");
+    near(x, 222_638.981_586_547_13);
+    near(y, 6_274_861.394_006_575);
+}
+
+fn near(got: f64, expect: f64) {
+    assert!((got - expect).abs() <= 1e-6, "{got} vs {expect}");
 }
 
 #[test]

@@ -137,7 +137,11 @@ fn network_and_grid_methods_follow_the_builder() {
         "https://example.invalid"
     );
     assert!(proj.area_of_use().is_err());
-    assert!(proj.to_projjson(None, None, None).is_err());
+    let json = proj.to_projjson(None, None, None).expect("operation json");
+    assert!(
+        json.contains("\"type\": \"ConcatenatedOperation\""),
+        "{json}"
+    );
 }
 
 #[test]
@@ -179,10 +183,15 @@ fn wkt_and_projjson_build_a_geographic_or_projected_crs() {
         r#"{"name":"False northing","value":0}]}}"#
     );
     let from_json = Proj::new(json).expect("projjson");
-    // The ISO reader takes a geographic PROJJSON only: a projected one has no CRS to write
-    // here, and the facade says so instead of returning the input text.
-    assert!(from_json.to_projjson(None, None, None).is_err());
-    assert!(from_json.as_wkt(None, None).is_err());
+    let exported = from_json
+        .to_projjson(None, None, None)
+        .expect("projected json");
+    assert!(
+        exported.contains("\"type\": \"ProjectedCRS\""),
+        "{exported}"
+    );
+    let wkt = from_json.as_wkt(None, None).expect("projected wkt");
+    assert!(wkt.contains("PROJCRS["), "{wkt}");
     let json_pair = source
         .create_crs_to_crs_from_pj(&from_json, None, None)
         .expect("json pair");

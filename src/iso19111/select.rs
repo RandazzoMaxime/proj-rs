@@ -13,7 +13,7 @@
 //! one of those is either sorted differently or reported as an error, and the
 //! caller keeps its previous path.
 
-use super::factory::{crs_extent, operation_extent, SpatialCriterion};
+use super::factory::{crs_extent, operation_extent, GridAvailabilityUse, SpatialCriterion};
 use super::model::{BoundingBox, CoordinateOperation, Crs, ParameterValue};
 use super::{
     create_from_user_input, CoordinateOperationContext, CoordinateOperationFactory,
@@ -21,6 +21,7 @@ use super::{
 };
 use crate::gridpath;
 
+const NADCON_LONGITUDE_FILE_PARAMETER: &str = "8658";
 const BALLPARK_GEOGRAPHIC_OFFSET: &str = "Ballpark geographic offset";
 const BALLPARK_VERTICAL_TRANSFORMATION: &str = "Ballpark vertical transformation";
 const NULL_GEOGRAPHIC_OFFSET: &str = "Null geographic offset";
@@ -118,27 +119,78 @@ pub fn best_pipeline_with(
     best_operation(source, target, only_best).map(|(best, _)| best)
 }
 
-/// The pipeline of the best operation from `source` to `target` under `OnlyBest::Off`, and
-/// whether its first output axis is latitude or northing, for the facade. An approximate
-/// operation (a ballpark transformation, a zero shift) is an error here: the facade never
-/// returns a result it cannot stand behind, and keeps its previous path instead.
-pub(crate) fn best_pipeline_exact(
+/// The best operation of a pair under `OnlyBest::Off`, as the facade needs it: the pipeline,
+/// the operation object it was written from, and the two CRS. An approximate operation (a
+/// ballpark transformation, a zero shift) is an error here: the facade never returns a result
+/// it cannot stand behind, and keeps its previous path instead.
+#[derive(Debug, Clone)]
+pub(crate) struct ExactChoice {
+    pub(crate) definition: String,
+    pub(crate) operation: CoordinateOperation,
+    pub(crate) source: Crs,
+    pub(crate) target: Crs,
+    /// How many candidate operations libproj could build: PROJ lists them all, and reports no
+    /// single definition for the pair when more than one is instantiable.
+    pub(crate) instantiable: usize,
+}
+
+/// The operation `cs2cs` takes for a pair, with what the facade needs of the selection.
+struct Chosen {
+    best: BestOperation,
+    approx: bool,
+    operation: CoordinateOperation,
+    source: Crs,
+    target: Crs,
+    instantiable: usize,
+}
+
+pub(crate) fn best_operation_exact(
     source: &str,
     target: &str,
-) -> Result<(String, bool), FactoryError> {
-    match best_operation(source, target, OnlyBest::Off)? {
-        (
-            BestOperation::Pipeline {
-                definition,
-                lat_or_northing_first,
-            },
-            false,
-        ) => Ok((definition, lat_or_northing_first)),
+) -> Result<ExactChoice, FactoryError> {
+    let Chosen {
+        best,
+        approx,
+        operation,
+        source: source_crs,
+        target: target_crs,
+        instantiable,
+    } = best_operation_full(source, target, OnlyBest::Off)?;
+    match (best, approx) {
+        (BestOperation::Pipeline { definition, .. }, false) => Ok(ExactChoice {
+            definition,
+            operation,
+            source: source_crs,
+            target: target_crs,
+            instantiable,
+        }),
         (BestOperation::Pipeline { .. }, true) => Err(FactoryError::Format(format!(
             "best operation from {source} to {target} is approximate"
         ))),
         (BestOperation::MissingGrid { message }, _) => Err(FactoryError::Format(message)),
     }
+}
+
+/// A same-datum geographic pair, which the factory does not synthesize.
+///
+/// PROJ's `createOperationsGeogToGeog` builds a null geographic offset for it
+/// (`+proj=noop`). The factory leaves that out, so the facade asks for it only
+/// when no registered operation exists. `instantiable` is 1: that offset is the
+/// only operation.
+pub(crate) fn same_datum_noop(source: &str, target: &str) -> Result<ExactChoice, FactoryError> {
+    let db = DatabaseContext::create()?;
+    let source_crs = create_from_user_input(source, &db)?;
+    let target_crs = create_from_user_input(target, &db)?;
+    let operation = super::compound::null_offset(&source_crs, &target_crs)
+        .ok_or_else(|| FactoryError::Format(format!("no null offset from {source} to {target}")))?;
+    let definition = export_operation(&operation, &db)?;
+    Ok(ExactChoice {
+        definition,
+        operation,
+        source: source_crs,
+        target: target_crs,
+        instantiable: 1,
+    })
 }
 
 /// [`best_pipeline_with`], and whether the chosen operation is approximate.
@@ -147,6 +199,15 @@ fn best_operation(
     target: &str,
     only_best: OnlyBest,
 ) -> Result<(BestOperation, bool), FactoryError> {
+    best_operation_full(source, target, only_best).map(|chosen| (chosen.best, chosen.approx))
+}
+
+/// [`best_operation`], with the chosen operation and the two CRS.
+fn best_operation_full(
+    source: &str,
+    target: &str,
+    only_best: OnlyBest,
+) -> Result<Chosen, FactoryError> {
     let db = DatabaseContext::create()?;
     let source_crs = create_from_user_input(source, &db)?;
     let target_crs = create_from_user_input(target, &db)?;
@@ -165,10 +226,17 @@ fn best_operation(
             &source_crs,
             &target_crs,
             GridSteps::Unwritten,
+            GridAvailabilityUse::UseForSorting,
         );
         ranked.push((operation, characteristics));
     }
     let ranked = sort(ranked);
+    let instantiable = ranked
+        .iter()
+        .filter(|(_, characteristics)| {
+            characteristics.exportable && characteristics.grids_available
+        })
+        .count();
     let chosen = match only_best {
         OnlyBest::On => ranked.into_iter().next(),
         OnlyBest::Off => ranked
@@ -185,21 +253,30 @@ fn best_operation(
     }
     if !characteristics.grids_available {
         let grids = proj_grids(&best, &db)?;
-        return Ok((
-            BestOperation::MissingGrid {
+        return Ok(Chosen {
+            best: BestOperation::MissingGrid {
                 message: missing_grid_message(&characteristics.name, &grids),
             },
-            characteristics.approx,
-        ));
+            approx: characteristics.approx,
+            operation: best,
+            source: source_crs,
+            target: target_crs,
+            instantiable,
+        });
     }
     let definition = export(&best, &source_crs, &target_crs, &db)?;
-    Ok((
-        BestOperation::Pipeline {
+    let lat_first = lat_or_northing_first(&target_crs);
+    Ok(Chosen {
+        best: BestOperation::Pipeline {
             definition,
-            lat_or_northing_first: lat_or_northing_first(&target_crs),
+            lat_or_northing_first: lat_first,
         },
-        characteristics.approx,
-    ))
+        approx: characteristics.approx,
+        operation: best,
+        source: source_crs,
+        target: target_crs,
+        instantiable,
+    })
 }
 
 /// `pj_warn_about_missing_grid`: the failure text for `name`, naming each grid
@@ -212,6 +289,26 @@ fn missing_grid_message(name: &str, grids: &[String]) -> String {
         ));
     }
     message
+}
+
+/// The PROJ string of an operation that carries its own CRS pair, in one line, with its
+/// grid and deformation steps written as `exportToPROJString` writes them.
+pub(crate) fn export_operation(
+    operation: &CoordinateOperation,
+    db: &DatabaseContext,
+) -> Result<String, FactoryError> {
+    match operation {
+        CoordinateOperation::Conversion(conversion)
+            if conversion.source_crs().is_some() && conversion.target_crs().is_some() =>
+        {
+            conversion.export_pipeline(ProjLines::Single)
+        }
+        CoordinateOperation::Conversion(conversion) => Err(FactoryError::Format(format!(
+            "conversion {} has no CRS pair",
+            conversion.name()
+        ))),
+        _ => operation.export_to_proj_string_with_database(db, ProjLines::Single),
+    }
 }
 
 fn export(
@@ -262,6 +359,7 @@ fn characteristics(
     source: &Crs,
     target: &Crs,
     grids: GridSteps,
+    availability: GridAvailabilityUse,
 ) -> Characteristics {
     let name = operation.name().to_owned();
     let text = match (grids, operation) {
@@ -280,9 +378,11 @@ fn characteristics(
         Err(_) => (false, 0, false),
     };
     let grids = grid_names(operation);
-    let grids_available = proj_grids(operation, db)
-        .is_ok_and(|names| names.iter().all(|grid| gridpath::available(grid)));
-    let grids_known = grids
+    let grids_available = availability == GridAvailabilityUse::IgnoreGridAvailability
+        || proj_grids(operation, db)
+            .is_ok_and(|names| names.iter().all(|grid| gridpath::available(grid)));
+    let known_names = proj_grids(operation, db).unwrap_or_else(|_| grids.clone());
+    let grids_known = known_names
         .iter()
         .all(|grid| db.grid_is_known(grid).unwrap_or(false));
     let (area_source, area_target) = (crs_extent(source), crs_extent(target));
@@ -387,6 +487,11 @@ fn collect_grids(operation: &CoordinateOperation, names: &mut Vec<String>) {
     match operation {
         CoordinateOperation::Transformation(transformation) => {
             for parameter in transformation.parameters() {
+                // A NADCON pair is one GTiff once its alternative is substituted: only the
+                // latitude file counts.
+                if parameter.code() == NADCON_LONGITUDE_FILE_PARAMETER {
+                    continue;
+                }
                 if let ParameterValue::Filename(text) = parameter.value() {
                     names.extend(
                         text.split(',')
@@ -586,12 +691,19 @@ pub(crate) fn sort_candidates(
     db: &DatabaseContext,
     source: &Crs,
     target: &Crs,
+    availability: GridAvailabilityUse,
 ) -> Vec<CoordinateOperation> {
     let ranked = operations
         .into_iter()
         .map(|operation| {
-            let characteristics =
-                characteristics(&operation, db, source, target, GridSteps::Written);
+            let characteristics = characteristics(
+                &operation,
+                db,
+                source,
+                target,
+                GridSteps::Written,
+                availability,
+            );
             (operation, characteristics)
         })
         .collect();

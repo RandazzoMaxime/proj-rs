@@ -6726,6 +6726,20 @@ pub(crate) static OTHER_METHODS: &[MethodMap] = &[
             proj_name: None,
         }],
     },
+    MethodMap {
+        wkt2_name: "Geographic3D to GravityRelatedHeight (US .gtx)",
+        epsg_code: 9665,
+        wkt1_name: None,
+        proj_name: None,
+        proj_aux: None,
+        params: &[ParamMap {
+            wkt2_name: "Geoid (height correction) model file",
+            epsg_code: 8666,
+            wkt1_name: None,
+            unit: UnitKind::None,
+            proj_name: None,
+        }],
+    },
 ];
 
 /// First method whose EPSG code is `code`.
@@ -6750,16 +6764,19 @@ pub(crate) fn method_by_name(name: &str) -> Option<&'static MethodMap> {
         .find(|method| canonical_name(method.wkt2_name) == wanted)
 }
 
-/// First method whose WKT1 (GDAL) projection name matches `name`, ignoring case.
+/// First method whose WKT1 (GDAL) projection name matches `name`.
+///
+/// Spaces and underscores are ignored, as `getMappingFromWKT1` does.
 #[must_use]
 pub(crate) fn method_by_wkt1_name(name: &str) -> Option<&'static MethodMap> {
+    let wanted = canonical_name(name);
     PROJECTION_METHODS
         .iter()
         .chain(OTHER_METHODS)
         .find(|method| {
             method
                 .wkt1_name
-                .is_some_and(|wkt1| wkt1.eq_ignore_ascii_case(name))
+                .is_some_and(|wkt1| canonical_name(wkt1) == wanted)
         })
 }
 

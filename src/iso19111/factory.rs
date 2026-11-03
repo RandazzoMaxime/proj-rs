@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use rusqlite::{types::ValueRef, Connection};
 
 use super::buildop::OpProps;
-use super::equiv::{equivalent_name, geodetic_frame, same_geodetic_datum};
+use super::equiv::{equivalent_name, geodetic_frame, same_geodetic_datum, same_geographic_base};
 use super::model::{
     ensemble_name_as_datum, Axis, BoundingBox, CartesianCS, CompoundCRS, ConcatenatedOperation,
     ConcatenatedStep, Conversion, CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble,
@@ -39,6 +39,16 @@ pub enum AlternativeGridNames {
     Proj,
 }
 
+/// Whether [`AuthorityFactory::create_from_coordinate_reference_system_codes_in`] keeps an
+/// operation that a listed operation supersedes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SupersededOperations {
+    /// Keep every operation.
+    Keep,
+    /// Drop an operation whose replacement is listed.
+    Discard,
+}
+
 /// Whether a coordinate-operation search may chain through a named pivot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IntermediateCrsUse {
@@ -55,6 +65,26 @@ pub enum BallparkUse {
     Allow,
     /// Ballpark operations are dropped (`--hide-ballpark`).
     Forbid,
+}
+
+/// How the availability of an operation's grids enters the ordering.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GridAvailabilityUse {
+    /// An operation whose grids are not on disk sorts after one whose grids are.
+    #[default]
+    UseForSorting,
+    /// Grids are taken as available, as `IGNORE_GRID_AVAILABILITY`.
+    IgnoreGridAvailability,
+}
+
+/// Whether the registered operations of the database are searched.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum RegistryUse {
+    /// Registered operations, pivots and datum-based chains are candidates.
+    #[default]
+    Database,
+    /// Only the operations that need no database: `createOperation(source, target)`.
+    None,
 }
 
 /// How an operation extent is compared with the area of interest.
@@ -264,6 +294,16 @@ impl DatabaseContext {
         Ok(out)
     }
 
+    /// Versioned code spaces of `authority`, such as `IAU_2015` for `IAU`.
+    pub(crate) fn versioned_authorities_from_name(&self, authority: &str) -> Vec<String> {
+        self.query(
+            "SELECT versioned_auth_name FROM versioned_auth_name_mapping WHERE auth_name = ?",
+            &[authority.to_owned()],
+        )
+        .map(|rows| rows.into_iter().map(|row| row[0].text()).collect())
+        .unwrap_or_default()
+    }
+
     /// `IAU_2015` for authority `IAU` and version `2015`.
     pub(crate) fn versioned_authority(&self, authority: &str, version: &str) -> Option<String> {
         let rows = self
@@ -334,6 +374,29 @@ impl DatabaseContext {
             .ok()?;
         let row = rows.first()?;
         Some((row[0].text(), row[1].text()))
+    }
+
+    /// ESRI vertical CRS whose datum is `from_geogdatum_{code_space}_{code}`.
+    ///
+    /// `exportAsESRIWktCompoundCRSWithEllipsoidalHeight` uses that one CRS as the `VERTCS`.
+    pub(crate) fn esri_vertical_code_for_geodetic(
+        &self,
+        code_space: &str,
+        code: &str,
+    ) -> Option<String> {
+        let datum_code = format!("from_geogdatum_{code_space}_{code}");
+        let rows = self
+            .query(
+                "SELECT code FROM vertical_crs \
+                 WHERE auth_name = 'ESRI' AND datum_auth_name = 'ESRI' AND datum_code = ?",
+                &[datum_code],
+            )
+            .ok()?;
+        if rows.len() == 1 {
+            Some(rows[0][0].text())
+        } else {
+            None
+        }
     }
 
     pub(crate) fn aliases(
@@ -512,7 +575,7 @@ impl DatabaseContext {
         let table = match table {
             "geographic_2D_crs" | "geographic_3D_crs" | "geodetic_crs" => "geodetic_crs",
             "geodetic_datum" | "ellipsoid" | "prime_meridian" | "projected_crs"
-            | "vertical_datum" => table,
+            | "vertical_datum" | "vertical_crs" => table,
             _ => return false,
         };
         let sql = format!("SELECT COUNT(*) FROM \"{table}\" WHERE name = ? AND auth_name = 'ESRI'");
@@ -748,6 +811,24 @@ impl DatabaseContext {
                 return Some((row[0].text(), row[1].text(), row[2].text()));
             }
         }
+        // Realizations share the ensemble name as an alias. Prefer the ensemble
+        // (`European Terrestrial Reference System 1989 ensemble`) and return the
+        // name `datum()` synthesizes, not an arbitrary member such as EPSG:1132.
+        let ensemble_key = format!("{key}ensemble");
+        let ensemble = self.query(
+            "SELECT name FROM geodetic_datum \
+             WHERE REPLACE(REPLACE(LOWER(name), '_', ''), ' ', '') = ? \
+             ORDER BY deprecated LIMIT 1",
+            std::slice::from_ref(&ensemble_key),
+        );
+        if let Ok(rows) = ensemble {
+            if let Some(row) = rows.first() {
+                let name = row[0].text();
+                if let Some(stripped) = name.strip_suffix(" ensemble") {
+                    return Some((stripped.to_owned(), String::new(), String::new()));
+                }
+            }
+        }
         let by_alias = self.query(
             "SELECT g.name, g.auth_name, g.code FROM alias_name a \
              JOIN geodetic_datum g ON g.auth_name = a.auth_name AND g.code = a.code \
@@ -756,11 +837,52 @@ impl DatabaseContext {
              ORDER BY g.deprecated LIMIT 1",
             std::slice::from_ref(&key),
         );
-        let Ok(rows) = by_alias else {
-            return None;
-        };
-        rows.first()
-            .map(|row| (row[0].text(), row[1].text(), row[2].text()))
+        if let Ok(rows) = by_alias {
+            if let Some(row) = rows.first() {
+                return Some((row[0].text(), row[1].text(), row[2].text()));
+            }
+        }
+        self.geodetic_datum_by_folded_name(name)
+    }
+
+    /// Alias match that also folds accents, skipping `EPSG_OLD` spellings.
+    ///
+    /// The SQL above only drops spaces and underscores, so
+    /// `System_Jednotne_Trigonometricke_Site_Katastralni_Ferro` misses the
+    /// accented EPSG alias of datum 6818.
+    fn geodetic_datum_by_folded_name(&self, name: &str) -> Option<(String, String, String)> {
+        let rows = self
+            .query(
+                "SELECT g.name, g.auth_name, g.code, a.alt_name, IFNULL(a.source, ''), \
+                 g.deprecated \
+                 FROM alias_name a \
+                 JOIN geodetic_datum g ON g.auth_name = a.auth_name AND g.code = a.code \
+                 WHERE a.table_name = 'geodetic_datum'",
+                &[],
+            )
+            .ok()?;
+        let mut matches: Vec<(bool, bool, String, String, String)> = rows
+            .into_iter()
+            .filter(|row| {
+                let source = row[4].text();
+                let official = equivalent_name(&row[0].text(), name);
+                let alias = source != "EPSG_OLD" && equivalent_name(&row[3].text(), name);
+                official || alias
+            })
+            .map(|row| {
+                (
+                    row[5].text() != "0",
+                    row[1].text() != "EPSG",
+                    row[0].text(),
+                    row[1].text(),
+                    row[2].text(),
+                )
+            })
+            .collect();
+        matches.sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));
+        matches
+            .first()
+            .map(|(_, _, official, auth, code)| (official.clone(), auth.clone(), code.clone()))
     }
 
     /// Celestial bodies of ellipsoids whose name is `name` or starts with `name`.
@@ -783,6 +905,346 @@ impl DatabaseContext {
         rows.into_iter()
             .filter_map(|row| row[1].f64().ok().map(|axis| (row[0].text(), axis)))
             .collect()
+    }
+
+    /// `getNonDeprecated`: replacement authority and code. A `PROJ` source
+    /// wins; otherwise every row is returned.
+    ///
+    /// # Errors
+    ///
+    /// The database rejects the statement.
+    pub fn non_deprecated_codes(
+        &self,
+        table: &str,
+        authority: &str,
+        code: &str,
+    ) -> Result<Vec<(String, String)>, FactoryError> {
+        let rows = self.query(
+            "SELECT replacement_auth_name, replacement_code, source FROM deprecation \
+             WHERE table_name = ? AND deprecated_auth_name = ? AND deprecated_code = ?",
+            &[table.to_owned(), authority.to_owned(), code.to_owned()],
+        )?;
+        let from_proj: Vec<_> = rows
+            .iter()
+            .filter(|row| row[2].text() == "PROJ")
+            .map(|row| (row[0].text(), row[1].text()))
+            .collect();
+        if !from_proj.is_empty() {
+            return Ok(from_proj);
+        }
+        Ok(rows
+            .iter()
+            .map(|row| (row[0].text(), row[1].text()))
+            .collect())
+    }
+
+    /// `lookForGridInfo` with known grids not treated as available.
+    /// `null` is the implicit grid: no file, an open licence, and available.
+    ///
+    /// # Errors
+    ///
+    /// The database rejects the statement.
+    pub fn grid_info(&self, name: &str) -> Result<Option<GridInfo>, FactoryError> {
+        if name == "null" {
+            return Ok(Some(GridInfo {
+                full_name: String::new(),
+                package_name: String::new(),
+                url: String::new(),
+                direct_download: false,
+                open_license: true,
+                available: true,
+            }));
+        }
+        let rows = self.query(
+            "SELECT grid_packages.package_name, grid_alternatives.url, \
+             grid_packages.url, grid_alternatives.open_license, \
+             grid_packages.open_license, grid_alternatives.direct_download, \
+             grid_packages.direct_download, grid_alternatives.proj_grid_name, \
+             grid_alternatives.old_proj_grid_name \
+             FROM grid_alternatives \
+             LEFT JOIN grid_packages ON \
+             grid_alternatives.package_name = grid_packages.package_name \
+             WHERE proj_grid_name = ? OR old_proj_grid_name = ?",
+            &[name.to_owned(), name.to_owned()],
+        )?;
+        let Some(row) = rows.first() else {
+            return Ok(None);
+        };
+        let package_name = row[0].text();
+        let url = if row[1].empty() {
+            row[2].text()
+        } else {
+            row[1].text()
+        };
+        let open_license = license_flag(&row[3], &row[4]);
+        let direct_download = license_flag(&row[5], &row[6]);
+        let proj_grid_name = row[7].text();
+        let old_name = row[8].text();
+        let mut full_name = String::new();
+        let mut available = false;
+        if proj_grid_name != old_name && old_name == name {
+            if let Some(path) = crate::gridpath::resolve(&proj_grid_name) {
+                available = true;
+                full_name = path.to_string_lossy().into_owned();
+            }
+        }
+        if !available {
+            if let Some(path) = crate::gridpath::resolve(name) {
+                available = true;
+                full_name = path.to_string_lossy().into_owned();
+            }
+        }
+        Ok(Some(GridInfo {
+            full_name,
+            package_name,
+            url,
+            direct_download,
+            open_license,
+            available,
+        }))
+    }
+
+    /// Geographic CRS built the way `proj_create_geographic_crs` builds one.
+    ///
+    /// A name ending in ` (deprecated)` is stored without that suffix and
+    /// marked deprecated. A datum name `WGS_1984`, or a name containing `_`,
+    /// is replaced by the official geodetic-datum name when the database has
+    /// an equivalent spelling or alias.
+    #[must_use]
+    pub fn create_geographic_crs(
+        &self,
+        parts: &GeodeticComponents<'_>,
+        coordinate_system: EllipsoidalCS,
+    ) -> GeographicCRS {
+        let (name, deprecated) = object_name(parts.crs_name);
+        let mut identified = Identified::named(name);
+        identified.deprecated = deprecated;
+        GeographicCRS {
+            identified,
+            datum: Some(self.geodetic_reference_frame(parts)),
+            ensemble: None,
+            coordinate_system,
+            implicit_cs: false,
+        }
+    }
+
+    /// Geocentric CRS built the way `proj_create_geocentric_crs` builds one.
+    #[must_use]
+    pub fn create_geocentric_crs(
+        &self,
+        parts: &GeodeticComponents<'_>,
+        linear_unit_name: Option<&str>,
+        linear_unit_to_metre: f64,
+    ) -> GeodeticCRS {
+        let (name, deprecated) = object_name(parts.crs_name);
+        let mut identified = Identified::named(name);
+        identified.deprecated = deprecated;
+        GeodeticCRS::Geocentric(GeocentricCRS {
+            identified,
+            datum: Some(self.geodetic_reference_frame(parts)),
+            ensemble: None,
+            coordinate_system: CartesianCS::create_geocentric(linear_unit(
+                linear_unit_name,
+                linear_unit_to_metre,
+            )),
+        })
+    }
+
+    fn geodetic_reference_frame(&self, parts: &GeodeticComponents<'_>) -> GeodeticReferenceFrame {
+        let angular = angular_unit(parts.angular_unit_name, parts.angular_unit_to_radian);
+        let ellipsoid_name = parts.ellipsoid_name.unwrap_or("unnamed");
+        let ellipsoid = if parts.inverse_flattening == 0.0 {
+            Ellipsoid::create_two_axis(
+                ellipsoid_name,
+                parts.semi_major_metre,
+                parts.semi_major_metre,
+            )
+        } else {
+            Ellipsoid::create_flattened_sphere(
+                ellipsoid_name,
+                parts.semi_major_metre,
+                parts.inverse_flattening,
+            )
+        };
+        let meridian_name = match parts.prime_meridian_name {
+            Some(name) => name.to_owned(),
+            None if parts.prime_meridian_offset == 0.0 => "Greenwich".to_owned(),
+            None => "unnamed".to_owned(),
+        };
+        GeodeticReferenceFrame::create(
+            self.wkt1_datum_name(parts.datum_name),
+            ellipsoid,
+            PrimeMeridian {
+                identified: Identified::named(meridian_name),
+                longitude: Measure {
+                    value: parts.prime_meridian_offset,
+                    unit: angular,
+                },
+            },
+        )
+    }
+
+    /// `createGeodeticReferenceFrame`: `WGS_1984` is EPSG:6326, and a WKT1
+    /// datum name with `_` is the official name when an equivalent datum or
+    /// alias exists.
+    fn wkt1_datum_name(&self, datum_name: Option<&str>) -> String {
+        let datum_name = datum_name.unwrap_or("unnamed");
+        if datum_name == "WGS_1984" {
+            return "World Geodetic System 1984".to_owned();
+        }
+        if !datum_name.contains('_') {
+            return datum_name.to_owned();
+        }
+        let factory = AuthorityFactory::create(self, "");
+        if let Ok(found) = factory.create_objects_from_name(
+            datum_name,
+            &[ObjectType::GeodeticReferenceFrame],
+            NameMatch::Approximate,
+            1,
+        ) {
+            if let Some(AuthorityObject::Datum(Datum::Geodetic(frame))) = found.first() {
+                if equivalent_name(datum_name, frame.name()) {
+                    return frame.name().to_owned();
+                }
+                if let Some(identifier) = frame.identifiers().first() {
+                    let aliases = self.get_aliases(
+                        identifier.code_space(),
+                        identifier.code(),
+                        frame.name(),
+                        "geodetic_datum",
+                        "",
+                    );
+                    if aliases
+                        .iter()
+                        .any(|alias| equivalent_name(datum_name, alias))
+                    {
+                        return frame.name().to_owned();
+                    }
+                }
+            }
+        }
+        // Approximate search does not fold accents. `getOfficialNameFromAlias`
+        // does, which is how the Ferro WKT1 spelling is found.
+        if let Ok(Some(official)) = factory.official_name_from_alias(
+            datum_name,
+            Some("geodetic_datum"),
+            None,
+            NameSpelling::Equivalent,
+        ) {
+            return official.name;
+        }
+        datum_name.to_owned()
+    }
+}
+
+/// Ellipsoid, datum, and prime meridian of `proj_create_geographic_crs`.
+///
+/// A missing name is the C API's `NULL`.
+#[derive(Clone, Copy, Debug)]
+pub struct GeodeticComponents<'a> {
+    /// CRS name.
+    pub crs_name: Option<&'a str>,
+    /// Geodetic datum name.
+    pub datum_name: Option<&'a str>,
+    /// Ellipsoid name.
+    pub ellipsoid_name: Option<&'a str>,
+    /// Semi-major axis, metres.
+    pub semi_major_metre: f64,
+    /// Inverse flattening. `0` is a sphere.
+    pub inverse_flattening: f64,
+    /// Prime meridian name.
+    pub prime_meridian_name: Option<&'a str>,
+    /// Prime meridian longitude, in `angular_unit_name`.
+    pub prime_meridian_offset: f64,
+    /// Angular unit of the prime meridian. Missing means degree.
+    pub angular_unit_name: Option<&'a str>,
+    /// Factor from that angular unit to radians. Ignored for degree and grad.
+    pub angular_unit_to_radian: f64,
+}
+
+fn object_name(name: Option<&str>) -> (String, bool) {
+    let name = name.unwrap_or("unnamed");
+    match name.strip_suffix(" (deprecated)") {
+        Some(stripped) => (stripped.to_owned(), true),
+        None => (name.to_owned(), false),
+    }
+}
+
+fn angular_unit(name: Option<&str>, factor: f64) -> UnitOfMeasure {
+    match name {
+        None => UnitOfMeasure::degree(),
+        Some(name) if name.eq_ignore_ascii_case("degree") => UnitOfMeasure::degree(),
+        Some(name) if name.eq_ignore_ascii_case("grad") => UnitOfMeasure::grad(),
+        Some(name) => UnitOfMeasure::new(name, factor, UnitKind::Angular),
+    }
+}
+
+fn linear_unit(name: Option<&str>, factor: f64) -> UnitOfMeasure {
+    match name {
+        None => UnitOfMeasure::metre(),
+        Some(name) if name.eq_ignore_ascii_case("metre") || name.eq_ignore_ascii_case("meter") => {
+            UnitOfMeasure::metre()
+        }
+        Some(name) => UnitOfMeasure::new(name, factor, UnitKind::Linear),
+    }
+}
+
+fn license_flag(primary: &Cell, fallback: &Cell) -> bool {
+    if primary.empty() {
+        fallback.text() == "1"
+    } else {
+        primary.text() == "1"
+    }
+}
+
+/// File, package, and download record of one grid in `proj.db`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GridInfo {
+    /// Path of the file on the search path. Empty when the file is absent.
+    pub full_name: String,
+    /// Package that ships the file. Empty when `grid_packages` has no row.
+    pub package_name: String,
+    /// Download URL. Empty when the database has none.
+    pub url: String,
+    /// The file can be downloaded directly.
+    pub direct_download: bool,
+    /// The file is under an open licence.
+    pub open_license: bool,
+    /// The file is on the local search path.
+    pub available: bool,
+}
+
+impl Crs {
+    /// CRS objects that replace this deprecated CRS, as `CRS::getNonDeprecated`.
+    ///
+    /// # Errors
+    ///
+    /// The database rejects the lookup, or a replacement code cannot be built.
+    pub fn non_deprecated(&self, db: &DatabaseContext) -> Result<Vec<Self>, FactoryError> {
+        let table = match self {
+            Self::Geographic(_) | Self::Geodetic(_) => "geodetic_crs",
+            Self::Projected(_) => "projected_crs",
+            Self::Vertical(_) => "vertical_crs",
+            Self::Compound(_) => "compound_crs",
+            Self::Bound(_)
+            | Self::Engineering(_)
+            | Self::DerivedProjected(_)
+            | Self::Temporal(_)
+            | Self::Parametric(_)
+            | Self::Derived(_) => {
+                return Ok(Vec::new());
+            }
+        };
+        let Some(identifier) = self.identifiers().first() else {
+            return Ok(Vec::new());
+        };
+        let pairs = db.non_deprecated_codes(table, identifier.code_space(), identifier.code())?;
+        let mut replacements = Vec::with_capacity(pairs.len());
+        for (authority, code) in pairs {
+            let factory = AuthorityFactory::create(db, authority);
+            replacements.push(factory.create_coordinate_reference_system(&code)?);
+        }
+        Ok(replacements)
     }
 }
 
@@ -832,9 +1294,18 @@ struct BuiltObject<T> {
     object: T,
 }
 
+/// Whether a name search keeps only deprecated rows, as a ` (deprecated)` suffix asks.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DeprecatedFilter {
+    Any,
+    Only,
+}
+
 trait NamedAuthorityObject: Sized {
     fn name(&self) -> &str;
     fn identifiers(&self) -> &[Identifier];
+    /// The concrete PROJ class of the object, as `typeid` tells it apart.
+    fn class(&self) -> u16;
 }
 
 impl NamedAuthorityObject for GeodeticCRS {
@@ -845,6 +1316,19 @@ impl NamedAuthorityObject for GeodeticCRS {
     fn identifiers(&self) -> &[Identifier] {
         GeodeticCRS::identifiers(self)
     }
+
+    fn class(&self) -> u16 {
+        geodetic_class(self)
+    }
+}
+
+/// The class of a geodetic CRS: a geographic CRS and a geocentric one differ.
+fn geodetic_class(crs: &GeodeticCRS) -> u16 {
+    match crs {
+        GeodeticCRS::Geographic(_) => 10,
+        GeodeticCRS::Geocentric(_) => 11,
+        GeodeticCRS::Spherical(_) => 12,
+    }
 }
 
 impl NamedAuthorityObject for GeodeticReferenceFrame {
@@ -854,6 +1338,10 @@ impl NamedAuthorityObject for GeodeticReferenceFrame {
 
     fn identifiers(&self) -> &[Identifier] {
         GeodeticReferenceFrame::identifiers(self)
+    }
+
+    fn class(&self) -> u16 {
+        2
     }
 }
 
@@ -888,7 +1376,9 @@ impl NamedAuthorityObject for AuthorityObject {
             Self::Datum(Datum::Engineering(object)) => object.name(),
             Self::DatumEnsemble(object) => object.name(),
             Self::Crs(object) => object.name(),
-            Self::Extent(_) | Self::Unit(_) | Self::PrimeMeridian(_) | Self::Operation(_) => "",
+            Self::PrimeMeridian(object) => object.name(),
+            Self::Operation(object) => object.name(),
+            Self::Extent(_) | Self::Unit(_) => "",
         }
     }
 
@@ -900,7 +1390,36 @@ impl NamedAuthorityObject for AuthorityObject {
             Self::Datum(Datum::Engineering(object)) => object.identifiers(),
             Self::DatumEnsemble(object) => object.identifiers(),
             Self::Crs(object) => object.identifiers(),
-            Self::Extent(_) | Self::Unit(_) | Self::PrimeMeridian(_) | Self::Operation(_) => &[],
+            Self::PrimeMeridian(object) => object.identifiers(),
+            Self::Operation(object) => object.identifiers(),
+            Self::Extent(_) | Self::Unit(_) => &[],
+        }
+    }
+
+    fn class(&self) -> u16 {
+        match self {
+            Self::Ellipsoid(_) => 1,
+            Self::Datum(Datum::Geodetic(_)) => 2,
+            Self::Datum(Datum::Vertical(_)) => 3,
+            Self::Datum(Datum::Engineering(_)) => 4,
+            Self::DatumEnsemble(_) => 5,
+            Self::PrimeMeridian(_) => 6,
+            Self::Crs(Crs::Geographic(_)) => 10,
+            Self::Crs(Crs::Geodetic(crs)) => geodetic_class(crs),
+            Self::Crs(Crs::Projected(_)) => 13,
+            Self::Crs(Crs::Vertical(_)) => 14,
+            Self::Crs(Crs::Compound(_)) => 15,
+            Self::Crs(Crs::Bound(_)) => 16,
+            Self::Crs(Crs::Engineering(_)) => 17,
+            Self::Crs(Crs::DerivedProjected(_)) => 18,
+            Self::Crs(Crs::Temporal(_)) => 19,
+            Self::Crs(Crs::Parametric(_)) => 23,
+            Self::Crs(Crs::Derived(_)) => 24,
+            Self::Operation(CoordinateOperation::Conversion(_)) => 20,
+            Self::Operation(CoordinateOperation::Transformation(_)) => 21,
+            Self::Operation(CoordinateOperation::Concatenated(_)) => 22,
+            Self::Extent(_) => 30,
+            Self::Unit(_) => 31,
         }
     }
 }
@@ -911,6 +1430,7 @@ fn name_keys(types: &[ObjectType], name: &str) -> Vec<&'static str> {
     let hide_vertical = name.starts_with("D_");
     if types.is_empty() {
         let mut keys = vec![
+            "prime_meridian",
             "ellipsoid",
             "geodetic_datum",
             "engineering_datum",
@@ -920,6 +1440,11 @@ fn name_keys(types: &[ObjectType], name: &str) -> Vec<&'static str> {
             "vertical_crs",
             "compound_crs",
             "engineering_crs",
+            "conversion",
+            "helmert_transformation",
+            "grid_transformation",
+            "other_transformation",
+            "concatenated_operation",
         ];
         if !hide_vertical {
             keys.push("vertical_datum");
@@ -936,6 +1461,7 @@ fn name_keys(types: &[ObjectType], name: &str) -> Vec<&'static str> {
             }
         }
     };
+    want(ObjectType::PrimeMeridian, &["prime_meridian"]);
     want(ObjectType::Ellipsoid, &["ellipsoid"]);
     want(
         ObjectType::Datum,
@@ -984,6 +1510,29 @@ fn name_keys(types: &[ObjectType], name: &str) -> Vec<&'static str> {
     want(ObjectType::VerticalCrs, &["vertical_crs"]);
     want(ObjectType::CompoundCrs, &["compound_crs"]);
     want(ObjectType::EngineeringCrs, &["engineering_crs"]);
+    want(
+        ObjectType::CoordinateOperation,
+        &[
+            "conversion",
+            "helmert_transformation",
+            "grid_transformation",
+            "other_transformation",
+            "concatenated_operation",
+        ],
+    );
+    want(ObjectType::Conversion, &["conversion"]);
+    want(
+        ObjectType::Transformation,
+        &[
+            "helmert_transformation",
+            "grid_transformation",
+            "other_transformation",
+        ],
+    );
+    want(
+        ObjectType::ConcatenatedOperation,
+        &["concatenated_operation"],
+    );
     keys
 }
 
@@ -1008,6 +1557,21 @@ fn load_named(
     let code = row.code.as_str();
     let ensemble_allowed = types.is_empty() || types.contains(&ObjectType::DatumEnsemble);
     Ok(match (table, filter) {
+        ("prime_meridian", _) => {
+            AuthorityObject::PrimeMeridian(factory.create_prime_meridian(code)?)
+        }
+        ("conversion", _) => AuthorityObject::Operation(CoordinateOperation::Conversion(
+            factory.create_conversion(code)?,
+        )),
+        (
+            "helmert_transformation"
+            | "grid_transformation"
+            | "other_transformation"
+            | "concatenated_operation",
+            _,
+        ) => AuthorityObject::Operation(
+            factory.create_coordinate_operation(code, AlternativeGridNames::Proj)?,
+        ),
         ("ellipsoid", _) => AuthorityObject::Ellipsoid(factory.create_ellipsoid(code)?),
         ("geodetic_datum", "ensemble") | ("vertical_datum", "ensemble") => {
             AuthorityObject::DatumEnsemble(factory.create_datum_ensemble(code)?)
@@ -1313,6 +1877,7 @@ impl AuthorityFactory {
             "angle" => UnitKind::Angular,
             "scale" => UnitKind::Scale,
             "time" => UnitKind::Time,
+            "parametric" => UnitKind::Parametric,
             _ => UnitKind::Unknown,
         };
         Ok(UnitOfMeasure {
@@ -1811,6 +2376,55 @@ impl AuthorityFactory {
         Ok(None)
     }
 
+    /// Non-deprecated projected CRS whose Transverse Mercator conversion (EPSG:9807)
+    /// uses central meridian `central_meridian` degrees and whose base is one of `bases`.
+    ///
+    /// This is the UTM slice of `createProjectedCRSFromExisting`.
+    ///
+    /// # Errors
+    ///
+    /// The database rejects the statement.
+    pub(crate) fn utm_projected_codes(
+        &self,
+        bases: &[(&str, &str)],
+        central_meridian: f64,
+    ) -> Result<Vec<(String, String)>, FactoryError> {
+        if bases.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut sql = String::from(
+            "SELECT projected_crs.auth_name, projected_crs.code FROM projected_crs \
+             JOIN conversion_table conv ON \
+             projected_crs.conversion_auth_name = conv.auth_name AND \
+             projected_crs.conversion_code = conv.code \
+             WHERE projected_crs.deprecated = 0 \
+             AND conv.method_auth_name = 'EPSG' AND conv.method_code = '9807' \
+             AND conv.param2_code = '8802' AND abs(conv.param2_value - ?) < 1e-8 AND (",
+        );
+        let mut params = vec![central_meridian.to_string()];
+        for (index, (authority, code)) in bases.iter().enumerate() {
+            if index > 0 {
+                sql.push_str(" OR ");
+            }
+            sql.push_str(
+                "(projected_crs.geodetic_crs_auth_name = ? AND projected_crs.geodetic_crs_code = ?)",
+            );
+            params.push((*authority).to_owned());
+            params.push((*code).to_owned());
+        }
+        sql.push(')');
+        if !self.authority.is_empty() {
+            sql.push_str(" AND projected_crs.auth_name = ?");
+            params.push(self.authority.clone());
+        }
+        Ok(self
+            .db
+            .text_rows(&sql, &params)?
+            .into_iter()
+            .map(|row| (row[0].clone(), row[1].clone()))
+            .collect())
+    }
+
     /// Non-deprecated geodetic CRS that use this datum.
     ///
     /// `crs_type` is `geographic 2D`, `geographic 3D`, or `geocentric`. An empty
@@ -2008,17 +2622,23 @@ impl AuthorityFactory {
     where
         T: NamedAuthorityObject,
     {
+        let (name, deprecated) = match name.strip_suffix(" (deprecated)") {
+            Some(stripped) => (stripped, DeprecatedFilter::Only),
+            None => (name, DeprecatedFilter::Any),
+        };
         let canonical = canonical_search_name(name);
         if canonical.chars().count() <= 1 {
             return Ok(Vec::new());
         }
-        let rows = self.name_rows(tables, name, mode, limit)?;
+        let rows = self.name_rows(tables, name, mode, limit, deprecated)?;
         let mut seen = BTreeSet::new();
         let mut built: Vec<BuiltObject<T>> = Vec::new();
         let mut first = true;
         let mut first_deprecated = false;
         let mut exact_official = 0usize;
         let mut exact_alias = 0usize;
+        let mut first_class: Option<u16> = None;
+        let mut one_class = true;
         for row in rows {
             if mode == NameMatch::Approximate
                 && !approximate_name(&row.matched_name, name, &canonical)
@@ -2044,12 +2664,19 @@ impl AuthorityFactory {
             } else if equivalent_object_name(&row.matched_name, name) {
                 exact_alias += 1;
             }
+            let class = object.class();
+            if *first_class.get_or_insert(class) != class {
+                one_class = false;
+            }
             built.push(BuiltObject {
                 matched_name: row.matched_name,
                 object,
             });
+            if limit > 0 && built.len() == limit {
+                break;
+            }
         }
-        if mode == NameMatch::Exact && exact_official + exact_alias >= 1 {
+        if mode == NameMatch::Exact && exact_official + exact_alias >= 1 && one_class {
             let alias_only = exact_official == 0;
             built.retain(|item| {
                 equivalent_object_name(item.object.name(), name)
@@ -2095,6 +2722,7 @@ impl AuthorityFactory {
         name: &str,
         mode: NameMatch,
         limit: usize,
+        deprecated: DeprecatedFilter,
     ) -> Result<Vec<NameRow>, FactoryError> {
         let mut sql =
             String::from("SELECT table_name, auth_name, code, name, deprecated, is_alias FROM (");
@@ -2109,6 +2737,9 @@ impl AuthorityFactory {
                  FROM \"{table}\" WHERE 1 = 1 {}",
                 name_filter_sql("", filter)
             ));
+            if deprecated == DeprecatedFilter::Only {
+                sql.push_str("AND deprecated = 1 ");
+            }
             if mode == NameMatch::Exact {
                 sql.push_str("AND name = ? COLLATE NOCASE ");
                 params.push(name.to_owned());
@@ -2124,6 +2755,9 @@ impl AuthorityFactory {
                  WHERE a.source != 'EPSG_OLD' AND a.table_name = '{table}' {}",
                 name_filter_sql("ov.", filter)
             ));
+            if deprecated == DeprecatedFilter::Only {
+                sql.push_str("AND ov.deprecated = 1 ");
+            }
             if mode == NameMatch::Exact {
                 sql.push_str("AND a.alt_name = ? COLLATE NOCASE ");
                 params.push(name.to_owned());
@@ -2292,6 +2926,7 @@ impl AuthorityFactory {
             target: None,
             version: None,
             inverted: false,
+            interpolation: None,
         })
     }
 
@@ -2488,14 +3123,140 @@ impl AuthorityFactory {
         source_code: &str,
         target_code: &str,
     ) -> Result<Vec<CoordinateOperation>, FactoryError> {
+        self.create_from_coordinate_reference_system_codes_in(
+            (self.authority.as_str(), source_code),
+            (self.authority.as_str(), target_code),
+            SupersededOperations::Keep,
+        )
+    }
+
+    /// Operations registered from the CRS `source` to the CRS `target`, each given as an
+    /// authority name and a code. The factory authority, when it is not empty, restricts the
+    /// operations. `superseded` chooses whether an operation replaced by a listed one is kept.
+    ///
+    /// # Errors
+    ///
+    /// A selected operation cannot be instantiated.
+    pub fn create_from_coordinate_reference_system_codes_in(
+        &self,
+        source: (&str, &str),
+        target: (&str, &str),
+        superseded: SupersededOperations,
+    ) -> Result<Vec<CoordinateOperation>, FactoryError> {
+        if let Some(conversion) = self.projected_deriving_conversion(source, target) {
+            return Ok(vec![CoordinateOperation::Conversion(conversion)]);
+        }
         operations_between(
             &self.db,
             &self.authority,
-            (self.authority.as_str(), source_code),
-            (self.authority.as_str(), target_code),
+            source,
+            target,
             (None, None),
-            RegistrySearch::Forward,
+            match superseded {
+                SupersededOperations::Keep => RegistrySearch::Forward,
+                SupersededOperations::Discard => RegistrySearch::ForwardWithoutSuperseded,
+            },
         )
+    }
+
+    /// The point motion operations registered for the datum of `crs`, in database order.
+    ///
+    /// A point motion operation has the same CRS as source and target.
+    ///
+    /// # Errors
+    ///
+    /// The database rejects a statement or an operation cannot be instantiated.
+    pub fn get_point_motion_operations_for(
+        &self,
+        crs: &GeodeticCRS,
+        grids: AlternativeGridNames,
+    ) -> Result<Vec<Transformation>, FactoryError> {
+        let datum_id = crs
+            .datum()
+            .and_then(|datum| datum.identifiers().first())
+            .or_else(|| {
+                crs.datum_ensemble()
+                    .and_then(|ensemble| ensemble.identifiers().first())
+            });
+        let Some(datum_id) = datum_id else {
+            return Ok(Vec::new());
+        };
+        let candidates = AuthorityFactory::create(&self.db, "").create_geodetic_crs_from_datum(
+            datum_id.code_space(),
+            datum_id.code(),
+            "",
+        )?;
+        let mut clauses = Vec::new();
+        let mut params = Vec::new();
+        for candidate in &candidates {
+            let Some(id) = candidate.identifiers().first() else {
+                continue;
+            };
+            clauses.push("(source_crs_auth_name = ? AND source_crs_code = ?)");
+            params.push(id.code_space().to_owned());
+            params.push(id.code().to_owned());
+        }
+        if clauses.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut sql = format!(
+            "SELECT auth_name, code FROM coordinate_operation_view \
+             WHERE source_crs_auth_name = target_crs_auth_name AND \
+             source_crs_code = target_crs_code AND deprecated = 0 AND ({})",
+            clauses.join(" OR ")
+        );
+        if !self.authority.is_empty() {
+            sql.push_str(" AND auth_name = ?");
+            params.push(self.authority.clone());
+        }
+        let mut operations = Vec::new();
+        for row in self.db.query(&sql, &params)? {
+            let factory = AuthorityFactory::create(&self.db, row[0].text());
+            if let CoordinateOperation::Transformation(transformation) =
+                factory.create_coordinate_operation(&row[1].text(), grids)?
+            {
+                if transformation.is_point_motion() {
+                    operations.push(transformation);
+                }
+            }
+        }
+        Ok(operations)
+    }
+
+    /// The conversion of the projected CRS `target` when `source` is its base CRS, with the
+    /// CRS pair set: `createFromCoordinateReferenceSystemCodes` answers with it before any search.
+    fn projected_deriving_conversion(
+        &self,
+        source: (&str, &str),
+        target: (&str, &str),
+    ) -> Option<Conversion> {
+        if target.0.is_empty() {
+            return None;
+        }
+        let projected = AuthorityFactory::create(&self.db, target.0)
+            .create_projected_crs(target.1)
+            .ok()?;
+        let base = projected.base_crs();
+        let is_source = source.0.is_empty()
+            || base
+                .identifiers()
+                .first()
+                .is_some_and(|id| id.code_space() == source.0 && id.code() == source.1);
+        if !is_source {
+            return None;
+        }
+        let mut conversion = projected.deriving_conversion().clone();
+        if !self.authority.is_empty()
+            && conversion
+                .identifiers()
+                .first()
+                .is_some_and(|id| id.code_space() != self.authority)
+        {
+            return None;
+        }
+        conversion.source = Some(Box::new(Crs::Geodetic(base.clone())));
+        conversion.target = Some(Box::new(Crs::Projected(projected)));
+        Some(conversion)
     }
 
     /// Authority codes of `kind`.
@@ -3534,6 +4295,7 @@ impl AuthorityFactory {
                 target: None,
                 version: transformation.version,
                 inverted: false,
+                interpolation: None,
             }));
         }
         Ok(CoordinateOperation::Transformation(transformation))
@@ -3556,14 +4318,24 @@ impl AuthorityFactory {
             &[self.authority.clone(), code.to_owned()],
         )?;
         let mut steps = Vec::new();
+        let mut explicit_direction = 0_usize;
         for step in steps_rows {
+            let direction = step[2].text();
+            if direction == "forward" || direction == "reverse" {
+                explicit_direction += 1;
+            }
             let operation = self
                 .child(&step[0].text())
                 .create_coordinate_operation(&step[1].text(), grids)?;
             steps.push(ConcatenatedStep {
                 operation,
-                reverse: step[2].text() == "reverse",
+                reverse: direction == "reverse",
             });
+        }
+        if explicit_direction > 0 && explicit_direction != steps.len() {
+            return Err(FactoryError::Invalid(format!(
+                "not all steps have a defined direction for concatenated operation {code}"
+            )));
         }
         let source = self
             .child(&row[2].text())
@@ -3572,6 +4344,9 @@ impl AuthorityFactory {
             .child(&row[4].text())
             .create_coordinate_reference_system(&row[5].text())?;
         let accuracy = accuracy_of(&row[6]);
+        if explicit_direction == 0 {
+            fix_unspecified_step_directions(&mut steps, &source, &target);
+        }
         Ok(ConcatenatedOperation {
             identified: self.properties(
                 code,
@@ -3586,6 +4361,7 @@ impl AuthorityFactory {
             accuracy,
             version: optional_text(&row[7].text()),
             computed_name: false,
+            proj_based: None,
         })
     }
 
@@ -3927,6 +4703,8 @@ pub struct CoordinateOperationContext {
     crs_extent_use: CrsExtentUse,
     desired_accuracy: f64,
     ballpark: BallparkUse,
+    grid_availability: GridAvailabilityUse,
+    registry: RegistryUse,
 }
 
 impl CoordinateOperationContext {
@@ -3943,6 +4721,8 @@ impl CoordinateOperationContext {
             crs_extent_use: CrsExtentUse::default(),
             desired_accuracy: 0.0,
             ballpark: BallparkUse::Allow,
+            grid_availability: GridAvailabilityUse::default(),
+            registry: RegistryUse::default(),
         }
     }
 
@@ -3988,6 +4768,12 @@ impl CoordinateOperationContext {
         self
     }
 
+    /// Whether the availability of grids on disk orders the operations.
+    pub fn set_grid_availability_use(&mut self, policy: GridAvailabilityUse) -> &mut Self {
+        self.grid_availability = policy;
+        self
+    }
+
     /// Whether operations with a ballpark transformation are candidates.
     pub fn set_ballpark_use(&mut self, policy: BallparkUse) -> &mut Self {
         self.ballpark = policy;
@@ -4028,6 +4814,26 @@ impl CoordinateOperationFactory {
         super::projstring::operation_proj_string(source, target)
     }
 
+    /// `createOperation(source, target)`: the first operation between the two CRS when no
+    /// authority database is consulted, or `None` when there is none.
+    ///
+    /// # Errors
+    ///
+    /// An operation cannot be built from the CRS.
+    pub fn create_operation(
+        &self,
+        source: &Crs,
+        target: &Crs,
+    ) -> Result<Option<CoordinateOperation>, FactoryError> {
+        let db = DatabaseContext::create()?;
+        let mut context = CoordinateOperationContext::create(&db, "");
+        context.registry = RegistryUse::None;
+        Ok(self
+            .create_operations(source, target, &context)?
+            .into_iter()
+            .next())
+    }
+
     /// Operations from `source` to `target`.
     ///
     /// # Errors
@@ -4040,6 +4846,7 @@ impl CoordinateOperationFactory {
         target: &Crs,
         context: &CoordinateOperationContext,
     ) -> Result<Vec<CoordinateOperation>, FactoryError> {
+        check_same_celestial_body(source, target)?;
         let found = self.create_candidates(source, target, context)?;
         Ok(select_candidates(found, source, target, context))
     }
@@ -4053,10 +4860,13 @@ impl CoordinateOperationFactory {
         target: &Crs,
         context: &CoordinateOperationContext,
     ) -> Result<Vec<CoordinateOperation>, FactoryError> {
+        if let Some(bound) = super::bound_ops::bound_candidates(self, source, target, context)? {
+            return Ok(bound);
+        }
         let mut found = Vec::new();
         let mut direct_empty = true;
         if let Crs::Projected(projected) = target {
-            if same_authority(source, projected.base_crs()) {
+            if projection_uses_source(source, projected, context.registry) {
                 // The caller's own source, not the base: its axis order is the one the
                 // pipeline must read (a PROJ-string base may be longitude first).
                 found.push(CoordinateOperation::Conversion(
@@ -4075,7 +4885,9 @@ impl CoordinateOperationFactory {
             source_extent.as_ref().and_then(ObjectDomain::bounding_box),
             target_extent.as_ref().and_then(ObjectDomain::bounding_box),
         );
-        if let (Some(source_id), Some(target_id)) = (
+        let registry = context.registry == RegistryUse::Database;
+        if let (true, Some(source_id), Some(target_id)) = (
+            registry,
             source
                 .authority_code("EPSG")
                 .or_else(|| source.identifiers().first()),
@@ -4130,6 +4942,7 @@ impl CoordinateOperationFactory {
                             accuracy: None,
                             version: None,
                             computed_name: true,
+                            proj_based: None,
                         }));
                     }
                 }
@@ -4142,11 +4955,14 @@ impl CoordinateOperationFactory {
                 return Ok(derived);
             }
         }
-        if direct_empty && is_geodetic(source) && is_geodetic(target) {
+        if registry && direct_empty && is_geodetic(source) && is_geodetic(target) {
             found.extend(datum_pivot_operations(source, target, context));
         }
         if found.is_empty() {
             found.extend(super::compound::vertical_to_vertical(source, target));
+        }
+        if found.is_empty() {
+            found.extend(super::compound::geographic_height_change(source, target));
         }
         found.extend(super::compound::compound_to_geog3d(
             self, source, target, context,
@@ -4157,6 +4973,15 @@ impl CoordinateOperationFactory {
         found.extend(super::compound::compound_to_compound(
             self, source, target, context,
         )?);
+        // A compound to a bound CRS is the inverse of the bound CRS's base to that compound.
+        // PROJ's bound-to-compound special cases are not ported; this is its last fallback.
+        if let (Crs::Compound(_), Crs::Bound(bound)) = (source, target) {
+            found.extend(
+                self.create_candidates(bound.source_crs(), source, context)?
+                    .into_iter()
+                    .map(|operation| operation.inverse()),
+            );
+        }
         if is_geodetic(source)
             && is_geodetic(target)
             && !has_perfect_accuracy_result(
@@ -4166,7 +4991,17 @@ impl CoordinateOperationFactory {
                 target_extent.as_ref(),
             )
         {
-            found.extend(ballpark_operations(source, target));
+            if registry && !found.is_empty() {
+                found.extend(ballpark_operations(source, target));
+            } else {
+                // No registered operation: the same geodetic conversions as
+                // `createOperation`, including a same-datum geographic/geocentric pair.
+                found.extend(super::geodetic_ops::geodetic_operations(
+                    source,
+                    target,
+                    super::geodetic_ops::BallparkRule::ByDatum,
+                )?);
+            }
         }
         Ok(found)
     }
@@ -4190,8 +5025,13 @@ fn select_candidates(
         source_extent.as_ref(),
         target_extent.as_ref(),
     );
-    let mut sorted =
-        super::select::sort_candidates(filtered.operations, &context.db, source, target);
+    let mut sorted = super::select::sort_candidates(
+        filtered.operations,
+        &context.db,
+        source,
+        target,
+        context.grid_availability,
+    );
     let synthetic_last = sorted.last().is_some_and(|operation| {
         operation.has_ballpark_transformation()
             || super::select::is_null_transformation(operation.name())
@@ -4461,8 +5301,9 @@ pub(super) fn geographic_of(crs: &Crs) -> Option<&GeographicCRS> {
 
 /// The ballpark operation of `createOperationsGeodToGeod` between two CRS of different
 /// datums: a geographic offset between geographic CRS, or a geocentric translation between
-/// geocentric CRS. A null offset (same datum), a prime meridian shift, a geographic to
-/// geocentric pair, and a vertical unit change are not ported, and give nothing here.
+/// geocentric CRS. A null offset (same datum), a prime meridian shift, and a geographic to
+/// geocentric pair are not ported, and give nothing here. A same-datum height-unit change
+/// is [`super::compound::geographic_height_change`].
 fn ballpark_operations(source: &Crs, target: &Crs) -> Vec<CoordinateOperation> {
     if same_geodetic_datum(source, target) {
         return Vec::new();
@@ -4556,6 +5397,7 @@ fn datum_pivot_operations(
         return Vec::new();
     }
     let authority = AuthorityFactory::create(&context.db, context.authority.clone());
+    let both_3d = axis_count(source) == 3 && axis_count(target) == 3;
     let candidates_source = candidate_geodetic_crs(&authority, &source_datum);
     let candidates_target = candidate_geodetic_crs(&authority, &target_datum);
     let mut pairs: Vec<(&Crs, &Crs)> = candidates_source
@@ -4566,7 +5408,17 @@ fn datum_pivot_operations(
         u8::from(!(left.name() == source.name() && right.name() == target.name()))
     });
     for (left, right) in pairs {
-        let (Some(first), Some(third)) = (pivot_leg(source, left), pivot_leg(right, target)) else {
+        let (left_leg, right_leg) = if both_3d {
+            (
+                promote_crs_to_3d(left, &context.db),
+                promote_crs_to_3d(right, &context.db),
+            )
+        } else {
+            (left.clone(), right.clone())
+        };
+        let (Some(first), Some(third)) =
+            (pivot_leg(source, &left_leg), pivot_leg(&right_leg, target))
+        else {
             continue;
         };
         let boxes = (
@@ -4589,6 +5441,11 @@ fn datum_pivot_operations(
                 )
             })
             .map(|operation| {
+                let operation = if both_3d {
+                    promote_operation_to_3d(operation, &context.db)
+                } else {
+                    operation
+                };
                 let steps = [first.clone(), Some(operation), third.clone()]
                     .into_iter()
                     .flatten()
@@ -4603,10 +5460,75 @@ fn datum_pivot_operations(
     Vec::new()
 }
 
+/// Axis count of a geographic or geocentric CRS, zero for any other.
+fn axis_count(crs: &Crs) -> usize {
+    match crs {
+        Crs::Geodetic(GeodeticCRS::Geocentric(_)) => 3,
+        other => {
+            geographic_of(other).map_or(0, |geographic| geographic.coordinate_system().axes().len())
+        }
+    }
+}
+
+fn promote_crs_to_3d(crs: &Crs, db: &DatabaseContext) -> Crs {
+    match crs {
+        Crs::Geographic(geographic) => Crs::Geographic(geographic.promote_to_3d_with_db(Some(db))),
+        Crs::Geodetic(GeodeticCRS::Geographic(geographic)) => Crs::Geodetic(
+            GeodeticCRS::Geographic(geographic.promote_to_3d_with_db(Some(db))),
+        ),
+        other => other.clone(),
+    }
+}
+
+/// `promoteTo3D` on the endpoints of a registered operation, so that a Helmert advertised
+/// for the 2D domain is written without the `push` / `pop` of the vertical coordinate.
+fn promote_operation_to_3d(
+    operation: CoordinateOperation,
+    db: &DatabaseContext,
+) -> CoordinateOperation {
+    let promote = |crs: &Option<Box<Crs>>| -> Option<Box<Crs>> {
+        crs.as_deref()
+            .map(|crs| Box::new(promote_crs_to_3d(crs, db)))
+    };
+    match operation {
+        CoordinateOperation::Transformation(mut transformation) => {
+            transformation.source = promote(&transformation.source);
+            transformation.target = promote(&transformation.target);
+            CoordinateOperation::Transformation(transformation)
+        }
+        CoordinateOperation::Concatenated(mut concatenated) => {
+            concatenated.steps = concatenated
+                .steps
+                .into_iter()
+                .map(|step| ConcatenatedStep {
+                    operation: promote_operation_to_3d(step.operation, db),
+                    reverse: step.reverse,
+                })
+                .collect();
+            CoordinateOperation::Concatenated(concatenated)
+        }
+        other @ CoordinateOperation::Conversion(_) => other,
+    }
+}
+
 /// Authority code of the datum of a geodetic CRS, the key its candidates are read with.
+///
+/// An ensemble CRS has no datum code of its own. The ensemble code is the datum code
+/// `geodetic_crs.datum_code` stores, such as EPSG:6326 for WGS 84.
 fn datum_identity(crs: &Crs) -> Option<(String, String)> {
     let frame = geodetic_frame(crs)?;
-    let identifier = frame.identifiers().first()?;
+    if let Some(identifier) = frame.identifiers().first() {
+        return Some((
+            identifier.code_space().to_owned(),
+            identifier.code().to_owned(),
+        ));
+    }
+    let ensemble = match crs {
+        Crs::Geographic(geographic) => geographic.datum_ensemble(),
+        Crs::Geodetic(geodetic) => geodetic.datum_ensemble(),
+        _ => None,
+    }?;
+    let identifier = ensemble.identifiers().first()?;
     Some((
         identifier.code_space().to_owned(),
         identifier.code().to_owned(),
@@ -4643,14 +5565,43 @@ fn pivot_leg(from: &Crs, to: &Crs) -> Option<Option<CoordinateOperation>> {
     }
 }
 
+/// `buildOpName`: equal CRS names gain `(geog2D)`, `(geog3D)`, or `(geocentric)`.
+fn operation_crs_name(kind: &str, source: &Crs, target: &Crs) -> String {
+    let mut source_qualifier = "";
+    let mut target_qualifier = "";
+    if source.name() == target.name() {
+        source_qualifier = crs_qualifier(source);
+        target_qualifier = crs_qualifier(target);
+        if source_qualifier == target_qualifier {
+            source_qualifier = "";
+            target_qualifier = "";
+        }
+    }
+    format!(
+        "{kind} from {}{source_qualifier} to {}{target_qualifier}",
+        source.name(),
+        target.name()
+    )
+}
+
+fn crs_qualifier(crs: &Crs) -> &'static str {
+    if is_geocentric_crs(crs) {
+        " (geocentric)"
+    } else if let Some(geographic) = geographic_of(crs) {
+        if geographic.coordinate_system().axes().len() == 2 {
+            " (geog2D)"
+        } else {
+            " (geog3D)"
+        }
+    } else {
+        ""
+    }
+}
+
 /// The geographic/geocentric conversion, EPSG:9602, as a transformation that keeps both CRS,
 /// so the PROJ string export can read the ellipsoid of each side.
 fn geographic_geocentric(geographic: &Crs, geocentric: &Crs) -> Option<Transformation> {
-    let name = format!(
-        "Conversion from {} to {}",
-        geographic.name(),
-        geocentric.name()
-    );
+    let name = operation_crs_name("Conversion", geographic, geocentric);
     let mut conversion = Transformation::create_from_code(
         &OpProps::new().name(name),
         geographic.clone(),
@@ -4694,6 +5645,7 @@ pub(super) fn pivot_concatenation(steps: Vec<CoordinateOperation>) -> Concatenat
         accuracy,
         version: None,
         computed_name: true,
+        proj_based: None,
     }
 }
 
@@ -4707,6 +5659,27 @@ fn accuracy_allowed(operation: &CoordinateOperation, desired: f64) -> bool {
         _ => operation.accuracy().unwrap_or(-1.0),
     };
     (0.0..=desired).contains(&accuracy)
+}
+
+/// The deriving conversion of `projected` is the operation from `source`.
+///
+/// An authority match is the database path. Without a registry, the same datum and
+/// angular unit are enough, and only when the dimension matches, so a 3D geographic
+/// source still goes through the derived-CRS chain.
+fn projection_uses_source(source: &Crs, projected: &ProjectedCRS, registry: RegistryUse) -> bool {
+    if same_authority(source, projected.base_crs()) {
+        return true;
+    }
+    if registry != RegistryUse::None {
+        return false;
+    }
+    let (Some(geographic), GeodeticCRS::Geographic(base)) =
+        (geographic_of(source), projected.base_crs())
+    else {
+        return false;
+    };
+    geographic.coordinate_system().axes().len() == base.coordinate_system().axes().len()
+        && same_geographic_base(geographic, base)
 }
 
 fn same_authority(source: &Crs, base: &GeodeticCRS) -> bool {
@@ -4738,6 +5711,8 @@ enum RegistrySearch {
     /// Only `source` to `target`, every row kept. The public
     /// `AuthorityFactory::create_from_coordinate_reference_system_codes`.
     Forward,
+    /// As [`Self::Forward`], with the superseded rows dropped.
+    ForwardWithoutSuperseded,
     /// Both directions, with inverses of the reverse rows, superseded rows
     /// dropped, and rows restricted to the CRS extents when some intersect.
     Both,
@@ -4916,7 +5891,7 @@ fn operations_between(
         .map(|row| (row.auth.clone(), row.code.clone()))
         .collect();
     let superseded = |row: &OperationRow| {
-        search == RegistrySearch::Both
+        search != RegistrySearch::Forward
             && row
                 .replacement
                 .as_ref()
@@ -5060,6 +6035,204 @@ fn helmert_parameter(
     })
 }
 
+/// `ConcatenatedOperation::fixSteps` when no step stores `forward` or `reverse`:
+/// a step that arrives at the concatenated source, or leaves from the concatenated
+/// target, runs backwards.
+fn fix_unspecified_step_directions(steps: &mut Vec<ConcatenatedStep>, source: &Crs, target: &Crs) {
+    if steps.len() < 2 {
+        return;
+    }
+    let reverse_first = matches!(
+        step_endpoints(&steps[0]),
+        (Some(step_source), Some(step_target))
+            if !same_registered_crs(step_source, source) && same_registered_crs(step_target, source)
+    );
+    if reverse_first {
+        steps[0].operation = steps[0].operation.inverse();
+    }
+    let last = steps.len() - 1;
+    let reverse_last = matches!(
+        step_endpoints(&steps[last]),
+        (Some(step_source), Some(step_target))
+            if !same_registered_crs(step_target, target) && same_registered_crs(step_source, target)
+    );
+    if reverse_last {
+        steps[last].operation = steps[last].operation.inverse();
+    }
+    link_geographic_geocentric(steps, source);
+    assign_missing_conversion_crs(steps, target);
+}
+
+/// Intermediate transformations whose CRS name matches the previous target, but
+/// one side is geographic and the other geocentric, gain an explicit
+/// geographic/geocentric conversion (`EPSG:9103`). A transformation that
+/// arrives from the previous target runs backwards.
+fn link_geographic_geocentric(steps: &mut Vec<ConcatenatedStep>, source: &Crs) {
+    let mut index = 0;
+    while index < steps.len() {
+        if matches!(steps[index].operation(), CoordinateOperation::Conversion(_)) {
+            index += 1;
+            continue;
+        }
+        let Some((step_source, step_target)) = owned_endpoints(&steps[index]) else {
+            index += 1;
+            continue;
+        };
+        let Some(previous) = (if index == 0 {
+            Some(source.clone())
+        } else {
+            step_endpoints(&steps[index - 1]).1.cloned()
+        }) else {
+            index += 1;
+            continue;
+        };
+        if same_registered_crs(&step_source, &previous) {
+            index += 1;
+            continue;
+        }
+        if same_registered_crs(&step_target, &previous) {
+            steps[index].operation = steps[index].operation.inverse();
+            index += 1;
+            continue;
+        }
+        let bridge = geographic_geocentric_link(&previous, &step_source)
+            .or_else(|| geographic_geocentric_link(&previous, &step_target));
+        if let Some(bridge) = bridge {
+            steps.insert(
+                index,
+                ConcatenatedStep {
+                    operation: CoordinateOperation::Transformation(bridge),
+                    reverse: false,
+                },
+            );
+            index += 1;
+            continue;
+        }
+        index += 1;
+    }
+}
+
+fn owned_endpoints(step: &ConcatenatedStep) -> Option<(Crs, Crs)> {
+    let (source, target) = step_endpoints(step);
+    Some((source?.clone(), target?.clone()))
+}
+
+/// `createGeographicGeocentric` when the two CRS share a name and differ only
+/// by geographic versus geocentric. The conversion runs from `from` to `to`.
+fn geographic_geocentric_link(from: &Crs, to: &Crs) -> Option<Transformation> {
+    if from.name() != to.name() {
+        return None;
+    }
+    let from_geographic = geographic_of(from).is_some();
+    let to_geographic = geographic_of(to).is_some();
+    if from_geographic && is_geocentric_crs(to) {
+        geographic_geocentric(from, to)
+    } else if is_geocentric_crs(from) && to_geographic {
+        geographic_geocentric(to, from).map(|operation| operation.inverse())
+    } else {
+        None
+    }
+}
+
+fn is_geocentric_crs(crs: &Crs) -> bool {
+    matches!(crs, Crs::Geodetic(GeodeticCRS::Geocentric(_)))
+}
+
+/// Intermediate and final conversions in a concatenated operation have no CRS
+/// in `proj.db`. PROJ fills them from the neighbouring steps. A height-to-depth
+/// reversal whose next step has no source gets a depth CRS derived from the
+/// previous height (`EPSG:7987`).
+fn assign_missing_conversion_crs(steps: &mut [ConcatenatedStep], concatenated_target: &Crs) {
+    let len = steps.len();
+    for index in 1..len {
+        let method = match steps[index].operation() {
+            CoordinateOperation::Conversion(conversion)
+                if conversion.source_crs().is_none() && conversion.target_crs().is_none() =>
+            {
+                conversion.method().code().to_owned()
+            }
+            _ => continue,
+        };
+        let previous = step_endpoints(&steps[index - 1]).1.cloned();
+        let next = (index + 1 < len)
+            .then(|| step_endpoints(&steps[index + 1]).0.cloned())
+            .flatten();
+        if index + 1 < len {
+            if let (Some(source), Some(target)) = (previous.clone(), next) {
+                set_conversion_endpoints(&mut steps[index], source, target);
+                continue;
+            }
+            if method == "1068" {
+                if let Some(Crs::Vertical(vertical)) = previous.as_ref() {
+                    if vertical.name().ends_with(" height")
+                        && vertical.coordinate_system().axis().direction() == "up"
+                    {
+                        let depth = depth_crs_from_height(vertical);
+                        if let Some(source) = previous {
+                            set_conversion_endpoints(&mut steps[index], source, depth);
+                        }
+                    }
+                }
+            }
+        } else if let Some(source) = previous {
+            set_conversion_endpoints(&mut steps[index], source, concatenated_target.clone());
+        }
+    }
+}
+
+fn set_conversion_endpoints(step: &mut ConcatenatedStep, source: Crs, target: Crs) {
+    if let CoordinateOperation::Conversion(conversion) = &mut step.operation {
+        conversion.source = Some(Box::new(source));
+        conversion.target = Some(Box::new(target));
+    }
+}
+
+fn depth_crs_from_height(vertical: &VerticalCRS) -> Crs {
+    let stem = vertical
+        .name()
+        .strip_suffix(" height")
+        .unwrap_or(vertical.name());
+    let unit = vertical.coordinate_system().axis().unit().clone();
+    Crs::Vertical(VerticalCRS {
+        identified: Identified::named(format!("{stem} depth")),
+        datum: vertical.datum().cloned(),
+        ensemble: vertical.datum_ensemble().cloned(),
+        coordinate_system: VerticalCS {
+            identified: Identified::named(""),
+            axis: Axis::new("Gravity-related depth", "D", "down", unit),
+        },
+        geoid_models: Vec::new(),
+    })
+}
+
+fn step_endpoints(step: &ConcatenatedStep) -> (Option<&Crs>, Option<&Crs>) {
+    match step.operation() {
+        CoordinateOperation::Transformation(operation) => {
+            (operation.source_crs(), operation.target_crs())
+        }
+        CoordinateOperation::Conversion(operation) => {
+            (operation.source_crs(), operation.target_crs())
+        }
+        CoordinateOperation::Concatenated(operation) => {
+            (operation.source_crs(), operation.target_crs())
+        }
+    }
+}
+
+fn same_registered_crs(left: &Crs, right: &Crs) -> bool {
+    match (left.identifiers().first(), right.identifiers().first()) {
+        (Some(left_id), Some(right_id))
+            if left_id
+                .code_space()
+                .eq_ignore_ascii_case(right_id.code_space())
+                && left_id.code() == right_id.code() =>
+        {
+            true
+        }
+        _ => left.is_equivalent_to(right),
+    }
+}
+
 fn accuracy_of(cell: &Cell) -> Option<f64> {
     if cell.empty() {
         return None;
@@ -5177,4 +6350,56 @@ impl From<GeodeticCRS> for Crs {
             other => Self::Geodetic(other),
         }
     }
+}
+
+/// The ellipsoid of the geodetic CRS a CRS is based on.
+fn base_ellipsoid(crs: &Crs) -> Option<&Ellipsoid> {
+    match crs {
+        Crs::Geographic(crs) => crs.ellipsoid(),
+        Crs::Geodetic(crs) => crs.ellipsoid(),
+        Crs::Projected(crs) => crs.base_crs().ellipsoid(),
+        Crs::DerivedProjected(crs) => crs.base_crs().base_crs().ellipsoid(),
+        Crs::Bound(crs) => base_ellipsoid(crs.source_crs()),
+        _ => None,
+    }
+}
+
+/// `createOperationsGeodToGeod`: the two ellipsoids must be on the same celestial body, or
+/// both on an unnamed body with close semi-major axes. `PROJ_IGNORE_CELESTIAL_BODY` set to a
+/// value other than `NO`, `FALSE` or `OFF` skips the check.
+fn check_same_celestial_body(source: &Crs, target: &Crs) -> Result<(), FactoryError> {
+    const NON_EARTH_BODY: &str = "Non-Earth body";
+    let (Some(from), Some(to)) = (base_ellipsoid(source), base_ellipsoid(target)) else {
+        return Ok(());
+    };
+    let (from_body, to_body) = (from.celestial_body(), to.celestial_body());
+    if from_body == to_body && from_body != NON_EARTH_BODY {
+        return Ok(());
+    }
+    let named_apart =
+        from_body != to_body && from_body != NON_EARTH_BODY && to_body != NON_EARTH_BODY;
+    let to_axis = to.semi_major_axis().si_value();
+    let far_apart = (from.semi_major_axis().si_value() - to_axis).abs()
+        > super::wkt_import::BODY_RELATIVE * to_axis;
+    if !named_apart && !far_apart {
+        return Ok(());
+    }
+    let ignore = std::env::var("PROJ_IGNORE_CELESTIAL_BODY");
+    if let Ok(value) = &ignore {
+        if !["NO", "FALSE", "OFF"]
+            .iter()
+            .any(|off| value.eq_ignore_ascii_case(off))
+        {
+            return Ok(());
+        }
+    }
+    let mut message = format!(
+        "Source and target ellipsoid do not belong to the same celestial body ({from_body} vs {to_body})."
+    );
+    if ignore.is_err() {
+        message.push_str(
+            " You may override this check by setting the PROJ_IGNORE_CELESTIAL_BODY environment variable to YES.",
+        );
+    }
+    Err(FactoryError::Unsupported(message))
 }

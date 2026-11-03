@@ -3,11 +3,14 @@
 //! Node order, identifier suppression, and the simplified omissions follow
 //! `WKTFormatter` in PROJ `src/iso19111/io.cpp`.
 
+use super::bound::hub_is_wgs84;
 use super::esri_parammap::{
     esri_method, find_parameter, mercator_variant_b, squared_eccentricity, EsriChoice, EsriParam,
 };
 use super::factory::{AuthorityFactory, DatabaseContext};
 use super::wkt_import::WktParser;
+
+mod niche;
 /// Whether the node being opened carries an authority identifier.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NodeId {
@@ -38,11 +41,11 @@ fn node_from_text(text: &str) -> NodeId {
 }
 
 use super::model::{
-    ensemble_name_as_datum, Axis, BoundCRS, CompoundCRS, Conversion, CoordinateSystem, Crs, Datum,
-    DatumEnsemble, Ellipsoid, EngineeringCRS, EngineeringDatum, FactoryError, GeocentricCRS,
-    GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified, Identifier, Measure,
-    OperationMethod, Parameter, ParameterValue, PrimeMeridian, ProjectedCRS, Transformation,
-    UnitKind, UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame,
+    ensemble_name_as_datum, Axis, BoundCRS, CompoundCRS, Conversion, CoordinateOperation,
+    CoordinateSystem, Crs, Datum, DatumEnsemble, Ellipsoid, EngineeringCRS, EngineeringDatum,
+    FactoryError, GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified,
+    Identifier, Measure, OperationMethod, Parameter, ParameterValue, PrimeMeridian, ProjectedCRS,
+    Transformation, UnitKind, UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame,
 };
 
 /// WKT dialect.
@@ -138,6 +141,15 @@ pub struct WktFormatter {
     output_axis: OutputAxisRule,
     allow_ellipsoidal_height: bool,
     allow_linunit: bool,
+    /// Seven TOWGS84 values written into the next WKT1 datum.
+    towgs84: Option<[f64; 7]>,
+    /// `PROJ4_GRIDS` written into the next WKT1 vertical datum.
+    vdatum_grid: Option<String>,
+    /// `PROJ4_GRIDS` written into the next WKT1 geodetic datum.
+    hdatum_grid: Option<String>,
+    /// Geographic CRS name of a compound being exported, so a vertical bound
+    /// whose hub is that CRS is written back as `EXTENSION["PROJ4_GRIDS"]`.
+    compound_geog_name: Option<String>,
     result: String,
     indent_level: i32,
     stack_has_child: Vec<bool>,
@@ -148,6 +160,8 @@ pub struct WktFormatter {
     axis_linear: Vec<UnitOfMeasure>,
     axis_angular: Vec<UnitOfMeasure>,
     abridged: bool,
+    /// `setUseDerivingConversion`: the next conversion is a `DERIVINGCONVERSION`.
+    use_deriving_conversion: bool,
     /// Nesting of `pushDisableUsage`: while positive, no `USAGE` or `REMARK` is written.
     usage_disabled: usize,
     db: Option<DatabaseContext>,
@@ -188,6 +202,10 @@ impl WktFormatter {
             },
             allow_ellipsoidal_height: false,
             allow_linunit: esri,
+            towgs84: None,
+            vdatum_grid: None,
+            hdatum_grid: None,
+            compound_geog_name: None,
             result: String::new(),
             indent_level: 0,
             stack_has_child: Vec::new(),
@@ -198,6 +216,7 @@ impl WktFormatter {
             axis_linear: vec![UnitOfMeasure::metre()],
             axis_angular: vec![UnitOfMeasure::degree()],
             abridged: false,
+            use_deriving_conversion: false,
             usage_disabled: 0,
             db: None,
         }
@@ -258,6 +277,14 @@ impl WktFormatter {
             *flag = true;
         }
         self
+    }
+
+    /// `pushHasId(false)` on the current node: identifiers below it are written even when an
+    /// ancestor has one.
+    fn simul_cur_node_has_id_cleared(&mut self) {
+        if let Some(flag) = self.stack_has_id.last_mut() {
+            *flag = false;
+        }
     }
 
     /// Hide authority nodes. Only valid before the first node.
@@ -391,7 +418,11 @@ impl WktFormatter {
             return;
         }
         for identifier in identifiers {
-            let (code_space, version) = self.split_authority(&identifier.code_space);
+            let (code_space, version) = if let Some(version) = &identifier.version {
+                (identifier.code_space.clone(), Some(version.clone()))
+            } else {
+                self.split_authority(&identifier.code_space)
+            };
             self.start_node(if self.wkt2 { "ID" } else { "AUTHORITY" }, NodeId::Absent);
             self.add_quoted(&code_space);
             if self.wkt2 && is_integer_code(&identifier.code) {
@@ -435,6 +466,7 @@ impl WktFormatter {
                 (true, UnitKind::Angular) => "ANGLEUNIT",
                 (true, UnitKind::Scale) => "SCALEUNIT",
                 (true, UnitKind::Time) => "TIMEUNIT",
+                (true, UnitKind::Parametric) => "PARAMETRICUNIT",
                 _ => "UNIT",
             }
         };
@@ -524,6 +556,30 @@ impl super::model::CoordinateOperation {
     }
 }
 
+impl Transformation {
+    /// Write this transformation into `formatter` and return the WKT.
+    ///
+    /// # Errors
+    ///
+    /// The formatter is not a WKT2 one, or a parameter cannot be written.
+    pub fn export_to_wkt(&self, formatter: &mut WktFormatter) -> Result<String, FactoryError> {
+        export_transformation(self, formatter)?;
+        Ok(std::mem::take(&mut formatter.result))
+    }
+}
+
+impl super::model::ConcatenatedOperation {
+    /// Write this concatenated operation into `formatter` and return the WKT.
+    ///
+    /// # Errors
+    ///
+    /// The formatter is not WKT2:2019, or a step cannot be written.
+    pub fn export_to_wkt(&self, formatter: &mut WktFormatter) -> Result<String, FactoryError> {
+        export_concatenated(self, formatter)?;
+        Ok(std::mem::take(&mut formatter.result))
+    }
+}
+
 impl Crs {
     /// Write this CRS into `formatter` and return the WKT.
     ///
@@ -554,12 +610,10 @@ pub(crate) fn export_crs(crs: &Crs, formatter: &mut WktFormatter) -> Result<(), 
         Crs::Compound(crs) => export_compound(crs, formatter)?,
         Crs::Bound(crs) => export_bound(crs, formatter)?,
         Crs::Engineering(crs) => export_engineering(crs, formatter)?,
-        Crs::DerivedProjected(crs) => {
-            return Err(FactoryError::Format(format!(
-                "derived projected CRS {} has no WKT export in this build",
-                crs.name()
-            )));
-        }
+        Crs::DerivedProjected(crs) => niche::export_derived_projected(crs, formatter)?,
+        Crs::Temporal(crs) => niche::export_temporal(crs, formatter)?,
+        Crs::Parametric(crs) => niche::export_parametric(crs, formatter)?,
+        Crs::Derived(crs) => niche::export_derived(crs, formatter)?,
     }
     Ok(())
 }
@@ -617,6 +671,20 @@ fn horizontal_for_compound(crs: &GeographicCRS, formatter: &WktFormatter) -> Geo
     flat
 }
 
+/// WKT1 GDAL `EXTENSION["PROJ4", ...]` of a GEOGCS, GEOCCS or PROJCS.
+fn export_extension_proj4(identified: &Identified, formatter: &mut WktFormatter) {
+    let Some(extension) = identified.extension_proj4.as_deref() else {
+        return;
+    };
+    if extension.is_empty() || formatter.wkt2 || formatter.esri {
+        return;
+    }
+    formatter.start_node("EXTENSION", NodeId::Absent);
+    formatter.add_quoted("PROJ4");
+    formatter.add_quoted(extension);
+    formatter.end_node();
+}
+
 fn export_geographic(
     crs: &GeographicCRS,
     formatter: &mut WktFormatter,
@@ -629,6 +697,12 @@ fn export_geographic(
         && three_d
         && formatter.output_axis != OutputAxisRule::No
     {
+        if crs.identified.allow_non_conformant_wkt1 {
+            return export_nonconformant_geographic(crs, formatter);
+        }
+        if let Some(compound) = &crs.identified.original_compound {
+            return export_compound(compound, formatter);
+        }
         if formatter.allow_ellipsoidal_height {
             return export_ellipsoidal_height_compound(crs, formatter);
         }
@@ -678,6 +752,7 @@ fn export_geographic(
         &CoordinateSystem::Ellipsoidal(crs.coordinate_system.clone()),
         formatter,
     );
+    export_extension_proj4(&crs.identified, formatter);
     formatter.base_usage(&crs.identified);
     formatter.end_node();
     Ok(())
@@ -691,6 +766,9 @@ fn export_esri_geographic_3d_as_vertcs(
     let mut flat = crs.clone();
     flat.coordinate_system.axes.truncate(2);
     export_geographic(&flat, formatter)?;
+    if let Some(vertical) = esri_ellipsoidal_vertical(crs.datum.as_ref(), formatter) {
+        return export_vertical(&vertical, formatter);
+    }
     let Some(height) = crs.coordinate_system.axes.get(2) else {
         return Err(FactoryError::Format(
             "a geographic 3D CRS has no ellipsoidal height axis".to_owned(),
@@ -769,6 +847,7 @@ fn export_geocentric(
         formatter,
     );
     formatter.output_axis = previous;
+    export_extension_proj4(&crs.identified, formatter);
     formatter.base_usage(&crs.identified);
     formatter.end_node();
     Ok(())
@@ -801,12 +880,32 @@ fn export_projected(crs: &ProjectedCRS, formatter: &mut WktFormatter) -> Result<
     }
     let axes = &crs.coordinate_system.axes;
     if axes.len() == 3 && !(formatter.wkt2 && formatter.keywords_2019) {
-        if !formatter.wkt2 && !formatter.esri && formatter.allow_ellipsoidal_height {
-            return export_projected_ellipsoidal_height(crs, formatter);
+        if !formatter.wkt2 && !formatter.esri {
+            if crs.identified.allow_non_conformant_wkt1 {
+                return export_nonconformant_projected(crs, formatter);
+            }
+            if let Some(compound) = &crs.identified.original_compound {
+                return export_compound(compound, formatter);
+            }
+            if formatter.allow_ellipsoidal_height {
+                return export_projected_ellipsoidal_height(crs, formatter);
+            }
+        }
+        if formatter.esri && export_esri_projected_3d(crs, formatter)? {
+            return Ok(());
         }
         return Err(FactoryError::Format(
             "a projected 3D CRS can only be exported as WKT2:2019".to_owned(),
         ));
+    }
+    if !formatter.wkt2
+        && !formatter.esri
+        && crs
+            .identified
+            .name
+            .starts_with("Popular Visualisation CRS / Mercator")
+    {
+        return export_popular_visualisation_projected(crs, formatter);
     }
     let keyword = if formatter.wkt2 { "PROJCRS" } else { "PROJCS" };
     let mut name = crs.identified.name.clone();
@@ -848,6 +947,14 @@ fn export_projected(crs: &ProjectedCRS, formatter: &mut WktFormatter) -> Result<
             formatter.output_id.push(true);
             formatter.format_ids(crs.base.identifiers());
             formatter.output_id.pop();
+        }
+        // A 2D base omits its CS. A 3D geographic base writes it or a round trip
+        // rebuilds a latitude/longitude CRS (PROJ issue 2122). A geocentric base
+        // omits it, as PROJ 9.9.0 does for `+proj=topocentric`.
+        if matches!(crs.base, GeodeticCRS::Geographic(_))
+            && crs.base.coordinate_system().axes().len() > 2
+        {
+            export_cs(&crs.base.coordinate_system(), formatter);
         }
         formatter.end_node();
     } else {
@@ -900,9 +1007,99 @@ fn export_projected(crs: &ProjectedCRS, formatter: &mut WktFormatter) -> Result<
         formatter,
     );
     formatter.output_axis = previous;
+    if !formatter.wkt2 && !formatter.esri {
+        if let Some(extension) =
+            projected_proj4_extension(crs).or_else(|| crs.wkt1_extension_proj4())
+        {
+            formatter.start_node("EXTENSION", NodeId::Absent);
+            formatter.add_quoted("PROJ4");
+            formatter.add_quoted(&extension);
+            formatter.end_node();
+        }
+    }
     formatter.base_usage(&crs.identified);
     formatter.end_node();
     Ok(())
+}
+
+/// The deprecated EPSG:3785 in WKT1 GDAL: the sphere datum with a zero `TOWGS84`, and
+/// `Mercator_1SP` with no latitude of origin.
+fn export_popular_visualisation_projected(
+    crs: &ProjectedCRS,
+    formatter: &mut WktFormatter,
+) -> Result<(), FactoryError> {
+    formatter.start_node("PROJCS", node_from_ids(&crs.identified.identifiers));
+    formatter.add_quoted(&crs.identified.name);
+    formatter.towgs84 = Some([0.0; 7]);
+    let previous = formatter.output_axis;
+    formatter.output_axis = OutputAxisRule::No;
+    let base = match &crs.base {
+        GeodeticCRS::Geographic(base) => export_geographic(base, formatter),
+        GeodeticCRS::Geocentric(base) => export_geocentric(base, formatter),
+        GeodeticCRS::Spherical(base) => export_spherical(
+            &base.identified,
+            base.datum.as_ref(),
+            base.ensemble.as_ref(),
+            &base.coordinate_system,
+            formatter,
+        ),
+    };
+    formatter.output_axis = previous;
+    formatter.towgs84 = None;
+    base?;
+    formatter.start_node("PROJECTION", NodeId::Absent);
+    formatter.add_quoted("Mercator_1SP");
+    formatter.end_node();
+    for (name, value) in [
+        ("central_meridian", 0.0),
+        ("scale_factor", 1.0),
+        ("false_easting", 0.0),
+        ("false_northing", 0.0),
+    ] {
+        formatter.start_node("PARAMETER", NodeId::Absent);
+        formatter.add_quoted(name);
+        formatter.add_number(value);
+        formatter.end_node();
+    }
+    let axes = &crs.coordinate_system.axes;
+    if let Some(unit) = axes.first().map(Axis::unit) {
+        formatter.export_unit(unit, None);
+    }
+    let previous = formatter.output_axis;
+    if previous == OutputAxisRule::Wkt1GdalEpsgStyle {
+        let east_north =
+            axes.len() >= 2 && axes[0].direction() == "east" && axes[1].direction() == "north";
+        if east_north {
+            formatter.output_axis = OutputAxisRule::Yes;
+        }
+    }
+    export_cs(
+        &CoordinateSystem::Cartesian(crs.coordinate_system.clone()),
+        formatter,
+    );
+    formatter.output_axis = previous;
+    if let Some(text) = projected_proj4_extension(crs).or_else(|| crs.wkt1_extension_proj4()) {
+        formatter.start_node("EXTENSION", NodeId::Absent);
+        formatter.add_quoted("PROJ4");
+        formatter.add_quoted(&text);
+        formatter.end_node();
+    }
+    formatter.base_usage(&crs.identified);
+    formatter.end_node();
+    Ok(())
+}
+
+/// WKT1 `EXTENSION["PROJ4", ...]` for a PROJ string the conversion cannot carry.
+fn projected_proj4_extension(crs: &ProjectedCRS) -> Option<String> {
+    let approx = matches!(
+        crs.conversion.identified.proj_method_override.as_deref(),
+        Some("tmerc approx" | "utm approx")
+    );
+    if crs.identified.extension_proj4.is_none() && !approx {
+        return None;
+    }
+    let text = crs.export_to_proj_string().ok()?;
+    Some(text.replace(" +type=crs", ""))
 }
 
 /// WKT1 GDAL writes a projected 3D CRS as `COMPD_CS` plus `VERT_CS["Ellipsoid"]`.
@@ -949,6 +1146,149 @@ fn export_projected_ellipsoidal_height(
     Ok(())
 }
 
+/// WKT1 of two equivalent geographic CRS: `COMPD_CS[name + name, GEOGCS, GEOGCS]`.
+///
+/// The second copy omits `TOWGS84`. The formatter's parameters are restored afterwards.
+fn export_nonconformant_geographic(
+    crs: &GeographicCRS,
+    formatter: &mut WktFormatter,
+) -> Result<(), FactoryError> {
+    let flat = geographic_without_height(crs);
+    let compound_name = format!("{} + {}", crs.name(), crs.name());
+    formatter.start_node("COMPD_CS", NodeId::Absent);
+    formatter.add_quoted(&compound_name);
+    export_geographic(&flat, formatter)?;
+    let saved = formatter.towgs84.take();
+    export_geographic(&flat, formatter)?;
+    formatter.towgs84 = saved;
+    formatter.end_node();
+    Ok(())
+}
+
+/// WKT1 of a projected CRS stacked on an equivalent geographic CRS.
+fn export_nonconformant_projected(
+    crs: &ProjectedCRS,
+    formatter: &mut WktFormatter,
+) -> Result<(), FactoryError> {
+    let mut flat = crs.clone();
+    flat.coordinate_system.axes.truncate(2);
+    flat.identified.allow_non_conformant_wkt1 = false;
+    if let GeodeticCRS::Geographic(base) = &mut flat.base {
+        *base = geographic_without_height(base);
+    }
+    let compound_name = format!("{} + {}", crs.name(), crs.base.name());
+    formatter.start_node("COMPD_CS", NodeId::Absent);
+    formatter.add_quoted(&compound_name);
+    export_projected(&flat, formatter)?;
+    match &flat.base {
+        GeodeticCRS::Geographic(base) => export_geographic(base, formatter)?,
+        GeodeticCRS::Geocentric(base) => export_geocentric(base, formatter)?,
+        GeodeticCRS::Spherical(base) => export_spherical(
+            &base.identified,
+            base.datum.as_ref(),
+            base.ensemble.as_ref(),
+            &base.coordinate_system,
+            formatter,
+        )?,
+    }
+    formatter.end_node();
+    Ok(())
+}
+
+fn geographic_without_height(crs: &GeographicCRS) -> GeographicCRS {
+    let mut flat = crs.clone();
+    flat.coordinate_system.axes.truncate(2);
+    flat.identified.allow_non_conformant_wkt1 = false;
+    flat.identified.original_compound = None;
+    flat
+}
+
+/// `PROJCS,VERTCS` for an ESRI projected 3D CRS whose datum has one ellipsoidal-height CRS.
+fn export_esri_projected_3d(
+    crs: &ProjectedCRS,
+    formatter: &mut WktFormatter,
+) -> Result<bool, FactoryError> {
+    let Some(vertical) = esri_ellipsoidal_vertical(crs.base.datum(), formatter) else {
+        return Ok(false);
+    };
+    let mut flat = crs.clone();
+    flat.coordinate_system.axes.truncate(2);
+    if let GeodeticCRS::Geographic(base) = &mut flat.base {
+        *base = geographic_without_height(base);
+    }
+    export_projected(&flat, formatter)?;
+    export_vertical(&vertical, formatter)?;
+    Ok(true)
+}
+
+/// ESRI vertical CRS `from_geogdatum_{authority}_{code}` for this geodetic datum.
+fn esri_ellipsoidal_vertical(
+    datum: Option<&GeodeticReferenceFrame>,
+    formatter: &WktFormatter,
+) -> Option<VerticalCRS> {
+    let db = formatter.db.as_ref()?;
+    let datum = datum?;
+    let identifier = datum
+        .identifiers()
+        .iter()
+        .find(|identifier| identifier.code_space.eq_ignore_ascii_case("EPSG"))
+        .or_else(|| datum.identifiers().first())?;
+    let code = db.esri_vertical_code_for_geodetic(identifier.code_space(), identifier.code())?;
+    AuthorityFactory::create(db, "ESRI")
+        .create_vertical_crs(&code)
+        .ok()
+}
+
+/// ESRI type `2002` is a geodetic datum (`DATUM`/`SPHEROID`), not a `VDATUM`.
+///
+/// The vertical datum code is `from_geogdatum_{authority}_{code}`. A code that
+/// does not parse, or a datum the database does not have, leaves the caller to
+/// write the vertical datum instead.
+fn export_esri_type_2002_datum(
+    datum: &VerticalReferenceFrame,
+    formatter: &mut WktFormatter,
+) -> bool {
+    let Some(code) = datum.identifiers().first().map(Identifier::code) else {
+        return false;
+    };
+    let Some(rest) = code.strip_prefix("from_geogdatum_") else {
+        return false;
+    };
+    let Some((authority, geodetic_code)) = rest.rsplit_once('_') else {
+        return false;
+    };
+    let Some(db) = formatter.db.as_ref() else {
+        return false;
+    };
+    if let Ok(geodetic) =
+        AuthorityFactory::create(db, authority).create_geodetic_datum(geodetic_code)
+    {
+        export_geodetic_datum(&geodetic, formatter);
+        return true;
+    }
+    false
+}
+
+/// Type `2002` whose WKT named the geodetic datum but carried no `from_geogdatum_` code.
+fn export_esri_type_2002_by_name(
+    datum: &VerticalReferenceFrame,
+    formatter: &mut WktFormatter,
+) -> bool {
+    let Some(db) = formatter.db.as_ref() else {
+        return false;
+    };
+    let Ok(found) =
+        AuthorityFactory::create(db, "EPSG").create_geodetic_datums_by_name(datum.name())
+    else {
+        return false;
+    };
+    let Some(geodetic) = found.into_iter().next() else {
+        return false;
+    };
+    export_geodetic_datum(&geodetic, formatter);
+    true
+}
+
 fn export_vertical(crs: &VerticalCRS, formatter: &mut WktFormatter) -> Result<(), FactoryError> {
     let keyword = if formatter.wkt2 {
         "VERTCRS"
@@ -961,14 +1301,20 @@ fn export_vertical(crs: &VerticalCRS, formatter: &mut WktFormatter) -> Result<()
     if formatter.esri {
         if let Some(alias) = esri_alias(&crs.identified, "vertical_crs", formatter) {
             name = alias;
-        } else {
+        } else if !esri_official_name(&name, "vertical_crs", formatter) {
             name = morph_name_to_esri(&name);
         }
     }
     formatter.start_node(keyword, node_from_ids(&crs.identified.identifiers));
     formatter.add_quoted(&name);
     if let Some(datum) = &crs.datum {
-        export_vertical_datum(datum, formatter);
+        if !(formatter.esri
+            && datum.wkt1_type == "2002"
+            && (export_esri_type_2002_datum(datum, formatter)
+                || export_esri_type_2002_by_name(datum, formatter)))
+        {
+            export_vertical_datum(datum, formatter);
+        }
     } else if let Some(ensemble) = &crs.ensemble {
         export_vertical_ensemble(ensemble, formatter);
     }
@@ -1021,9 +1367,15 @@ fn export_compound(crs: &CompoundCRS, formatter: &mut WktFormatter) -> Result<()
     };
     formatter.start_node(keyword, node_from_ids(&crs.identified.identifiers));
     formatter.add_quoted(crs.name());
+    let previous_geog = formatter.compound_geog_name.clone();
+    if let Some(first) = crs.components.first() {
+        formatter.compound_geog_name =
+            super::bound::extract_geographic(first).map(|geographic| geographic.name().to_owned());
+    }
     for component in &crs.components {
         export_crs(component, formatter)?;
     }
+    formatter.compound_geog_name = previous_geog;
     formatter.base_usage(&crs.identified);
     formatter.end_node();
     Ok(())
@@ -1045,6 +1397,34 @@ fn export_bound(crs: &BoundCRS, formatter: &mut WktFormatter) -> Result<(), Fact
         formatter.end_node();
         return Ok(());
     }
+    if let CoordinateOperation::Transformation(transformation) = &crs.transformation {
+        if let Some(grid) = transformation.height_to_geographic_3d_filename() {
+            let hub_name = crs.target_crs().name();
+            let for_compound = formatter.compound_geog_name.as_deref() == Some(hub_name);
+            if hub_is_wgs84(crs.target_crs()) || for_compound {
+                formatter.vdatum_grid = Some(grid.to_owned());
+                let exported = export_crs(crs.source_crs(), formatter);
+                formatter.vdatum_grid = None;
+                return exported;
+            }
+        }
+        if hub_is_wgs84(crs.target_crs()) && transformation.method().code() == "9615" {
+            if let Some(grid) = transformation.nadgrids_filename() {
+                formatter.hdatum_grid = Some(grid.to_owned());
+                let exported = export_crs(&crs.source, formatter);
+                formatter.hdatum_grid = None;
+                return exported;
+            }
+        }
+        if hub_is_wgs84(crs.target_crs()) {
+            if let Ok(Some(params)) = transformation.towgs84_strict() {
+                formatter.towgs84 = Some(params);
+                let exported = export_crs(&crs.source, formatter);
+                formatter.towgs84 = None;
+                return exported;
+            }
+        }
+    }
     Err(FactoryError::Format(
         "WKT1 bound CRS export requires a WGS 84 hub and TOWGS84 parameters".to_owned(),
     ))
@@ -1057,7 +1437,9 @@ fn export_engineering(
     let keyword = if formatter.wkt2 { "ENGCRS" } else { "LOCAL_CS" };
     formatter.start_node(keyword, node_from_ids(&crs.identified.identifiers));
     formatter.add_quoted(crs.name());
-    if formatter.wkt2 || !crs.datum.name().is_empty() {
+    if formatter.wkt2
+        || (!crs.datum.name().is_empty() && crs.datum.name() != "Unknown engineering datum")
+    {
         export_engineering_datum(&crs.datum, formatter);
     }
     if !formatter.wkt2 {
@@ -1103,6 +1485,19 @@ pub(crate) fn export_datum_standalone(
         export_prime_meridian(&datum.prime_meridian, formatter);
     }
     Ok(std::mem::take(&mut formatter.result))
+}
+
+impl super::model::CartesianCS {
+    /// Write this coordinate system into `formatter` and return the WKT. WKT1 has no
+    /// standalone coordinate system node, so the result is empty there.
+    #[must_use]
+    pub fn export_to_wkt(&self, formatter: &mut WktFormatter) -> String {
+        let previous = formatter.output_axis;
+        formatter.output_axis = OutputAxisRule::Yes;
+        export_cs(&CoordinateSystem::Cartesian(self.clone()), formatter);
+        formatter.output_axis = previous;
+        std::mem::take(&mut formatter.result)
+    }
 }
 
 impl GeodeticReferenceFrame {
@@ -1189,6 +1584,21 @@ fn export_geodetic_datum(datum: &GeodeticReferenceFrame, formatter: &mut WktForm
     formatter.start_node("DATUM", node_from_ids(&datum.identified.identifiers));
     formatter.add_quoted(&name);
     export_ellipsoid(&datum.ellipsoid, formatter);
+    if !formatter.wkt2 {
+        if let Some(params) = formatter.towgs84 {
+            formatter.start_node("TOWGS84", NodeId::Absent);
+            for value in params {
+                formatter.add_number(value);
+            }
+            formatter.end_node();
+        }
+        if let Some(grid) = formatter.hdatum_grid.clone() {
+            formatter.start_node("EXTENSION", NodeId::Absent);
+            formatter.add_quoted("PROJ4_GRIDS");
+            formatter.add_quoted(&grid);
+            formatter.end_node();
+        }
+    }
     if formatter.wkt2 {
         if let Some(anchor) = &datum.identified.anchor {
             formatter.start_node("ANCHOR", NodeId::Absent);
@@ -1299,6 +1709,12 @@ fn export_vertical_datum(datum: &VerticalReferenceFrame, formatter: &mut WktForm
         }
     } else if !formatter.esri {
         formatter.add_raw(&datum.wkt1_type);
+        if let Some(grid) = formatter.vdatum_grid.clone() {
+            formatter.start_node("EXTENSION", NodeId::Absent);
+            formatter.add_quoted("PROJ4_GRIDS");
+            formatter.add_quoted(&grid);
+            formatter.end_node();
+        }
     }
     formatter.format_ids(&datum.identified.identifiers);
     formatter.end_node();
@@ -1333,7 +1749,13 @@ fn export_engineering_datum(datum: &EngineeringDatum, formatter: &mut WktFormatt
     } else {
         datum.name()
     });
-    if !formatter.wkt2 {
+    if formatter.wkt2 {
+        if let Some(anchor) = datum.anchor_definition() {
+            formatter.start_node("ANCHOR", NodeId::Absent);
+            formatter.add_quoted(anchor);
+            formatter.end_node();
+        }
+    } else {
         formatter.add_raw("32767");
     }
     formatter.format_ids(&datum.identified.identifiers);
@@ -1416,6 +1838,21 @@ fn export_prime_meridian(meridian: &PrimeMeridian, formatter: &mut WktFormatter)
     formatter.end_node();
 }
 
+/// WKT2:2019 names a temporal CS `TemporalDateTime`, `TemporalCount`, or `TemporalMeasure`.
+fn cs_wkt2_type(cs: &CoordinateSystem, formatter: &WktFormatter) -> &'static str {
+    if let CoordinateSystem::Temporal(cs) = cs {
+        if !formatter.keywords_2019 {
+            return "temporal";
+        }
+        return match cs.kind() {
+            super::niche::TemporalCsKind::DateTime => "TemporalDateTime",
+            super::niche::TemporalCsKind::Count => "TemporalCount",
+            super::niche::TemporalCsKind::Measure => "TemporalMeasure",
+        };
+    }
+    cs.wkt2_type()
+}
+
 fn export_cs(cs: &CoordinateSystem, formatter: &mut WktFormatter) {
     if formatter.output_axis != OutputAxisRule::Yes {
         return;
@@ -1423,7 +1860,7 @@ fn export_cs(cs: &CoordinateSystem, formatter: &mut WktFormatter) {
     let axes = cs.axes();
     if formatter.wkt2 {
         formatter.start_node("CS", node_from_ids(&cs.identified().identifiers));
-        formatter.add_raw(cs.wkt2_type());
+        formatter.add_raw(cs_wkt2_type(cs, formatter));
         formatter.add_raw(&axes.len().to_string());
         formatter.end_node();
         formatter.start_node("", NodeId::Absent);
@@ -1492,8 +1929,10 @@ fn export_axis(axis: &Axis, order: usize, abbrev: AxisAbbrev, formatter: &mut Wk
         if !latitude {
             if geocentric || easting_northing {
                 designation = format!("({})", axis.abbreviation());
-            } else if !designation.is_empty() {
-                designation.push(' ');
+            } else {
+                if !designation.is_empty() {
+                    designation.push(' ');
+                }
                 designation.push('(');
                 designation.push_str(axis.abbreviation());
                 designation.push(')');
@@ -1575,13 +2014,27 @@ fn export_conversion(
     base_shape: BaseShape,
     owner: Option<OwnerCrs<'_>>,
 ) -> Result<(), FactoryError> {
+    if !formatter.wkt2
+        && conversion
+            .method()
+            .name()
+            .starts_with("PROJ-based operation method")
+    {
+        return Err(FactoryError::Format(
+            "PROJBasedOperation can only be exported to WKT2".to_owned(),
+        ));
+    }
     if !formatter.wkt2 && formatter.esri {
         export_conversion_wkt1(conversion, formatter, base_shape, owner)?;
         return Ok(());
     }
     if formatter.wkt2 {
         formatter.start_node(
-            "CONVERSION",
+            if formatter.use_deriving_conversion {
+                "DERIVINGCONVERSION"
+            } else {
+                "CONVERSION"
+            },
             node_from_ids(&conversion.identified.identifiers),
         );
         formatter.add_quoted(conversion.name());
@@ -1599,11 +2052,49 @@ fn export_conversion(
             }
             export_parameter(parameter, formatter)?;
         }
+        export_interpolation_code(conversion, formatter)?;
         formatter.format_ids(&conversion.identified.identifiers);
         formatter.end_node();
         return Ok(());
     }
     export_conversion_wkt1(conversion, formatter, base_shape, owner)
+}
+
+/// An interpolation CRS with an EPSG code is written as the `EPSG code for ... CRS` parameter,
+/// unless the conversion already has that parameter.
+fn export_interpolation_code(
+    conversion: &Conversion,
+    formatter: &mut WktFormatter,
+) -> Result<(), FactoryError> {
+    let Some(crs) = conversion.interpolation_crs() else {
+        return Ok(());
+    };
+    let is_code_parameter = |parameter: &Parameter| {
+        parameter.code_space == "EPSG" && matches!(parameter.code.as_str(), "1048" | "1037")
+    };
+    if conversion.parameters.iter().any(is_code_parameter) {
+        return Ok(());
+    }
+    let Some(code) = crs
+        .authority_code("EPSG")
+        .and_then(|identifier| identifier.code().parse::<i64>().ok())
+    else {
+        return Ok(());
+    };
+    let (name, parameter_code) = if conversion.method.code == "1046" {
+        ("EPSG code for Horizontal CRS", "1037")
+    } else {
+        ("EPSG code for Interpolation CRS", "1048")
+    };
+    export_parameter(
+        &Parameter {
+            name: name.to_owned(),
+            code_space: "EPSG".to_owned(),
+            code: parameter_code.to_owned(),
+            value: ParameterValue::Integer(code),
+        },
+        formatter,
+    )
 }
 
 /// PROJ leaves out a zero latitude of origin in Equidistant Cylindrical, and a
@@ -1706,6 +2197,11 @@ fn export_conversion_wkt1(
         formatter.start_node("PROJECTION", NodeId::Absent);
         formatter.add_quoted(&wkt1_method_name(&conversion.method)?);
         formatter.end_node();
+        if conversion.method.name.starts_with("PROJ ") {
+            formatter.output_id.pop();
+            formatter.output_unit.pop();
+            return Ok(());
+        }
         let mapped = lookup_method(&conversion.method);
         for parameter in &conversion.parameters {
             if omitted_zero_parameter(conversion, parameter) {
@@ -1756,6 +2252,12 @@ fn export_esri_method(conversion: &Conversion, choice: &EsriChoice, formatter: &
                 esri_name,
                 wkt2_name,
                 epsg_code,
+            }
+            | EsriParam::Defaulted {
+                esri_name,
+                wkt2_name,
+                epsg_code,
+                ..
             } => {
                 formatter.add_quoted(esri_name);
                 write_esri_value(conversion, esri_name, wkt2_name, epsg_code, formatter);
@@ -1932,7 +2434,10 @@ fn add_measure(measure: &Measure, formatter: &mut WktFormatter) -> Result<(), Fa
     }
     if formatter.wkt2 {
         formatter.add_number(measure.value);
-        if measure.unit.kind != UnitKind::None {
+        // A WKT `PARAMETER` read without a unit carries an unnamed unit: no `UNIT` on output.
+        let unitless = measure.unit.kind == UnitKind::None
+            || (measure.unit.kind == UnitKind::Unknown && measure.unit.name.is_empty());
+        if !unitless {
             let linear = formatter
                 .axis_linear
                 .last()
@@ -1996,27 +2501,114 @@ fn export_operation(
         super::model::CoordinateOperation::Transformation(transformation) => {
             export_transformation(transformation, formatter)
         }
-        super::model::CoordinateOperation::Concatenated(_) => Err(FactoryError::Format(
-            "a concatenated operation is not exported as a single WKT node here".to_owned(),
-        )),
+        super::model::CoordinateOperation::Concatenated(concatenated) => {
+            export_concatenated(concatenated, formatter)
+        }
     }
 }
 
-fn export_transformation_crs(
-    transformation: &Transformation,
+/// `ConcatenatedOperation::_exportToWKT`: WKT2:2019 only. The CRS pair and each step are
+/// written as they are on their own, identifiers included, as PROJ's `pushHasId(false)` makes
+/// them.
+fn export_concatenated(
+    concatenated: &super::model::ConcatenatedOperation,
     formatter: &mut WktFormatter,
 ) -> Result<(), FactoryError> {
-    if let Some(source) = &transformation.source {
-        formatter.start_node("SOURCECRS", NodeId::Absent);
-        export_crs(source, formatter)?;
+    if !formatter.wkt2 || !formatter.keywords_2019 {
+        return Err(FactoryError::Format(
+            "Transformation can only be exported to WKT2:2019".to_owned(),
+        ));
+    }
+    let (source, target) = concatenated.crs_pair().ok_or_else(|| {
+        FactoryError::Format(format!(
+            "concatenated operation {} has no CRS pair",
+            concatenated.name()
+        ))
+    })?;
+    formatter.start_node(
+        "CONCATENATEDOPERATION",
+        node_from_ids(&concatenated.identified.identifiers),
+    );
+    formatter.add_quoted(concatenated.name());
+    if let Some(version) = &concatenated.version {
+        formatter.start_node("VERSION", NodeId::Absent);
+        formatter.add_quoted(version);
         formatter.end_node();
     }
-    if let Some(target) = &transformation.target {
-        formatter.start_node("TARGETCRS", NodeId::Absent);
-        export_crs(target, formatter)?;
+    let disabled = usize::from(!concatenated.identified.domains.is_empty());
+    formatter.usage_disabled += disabled;
+    let exported = export_concatenated_body(concatenated, source, target, formatter);
+    formatter.usage_disabled -= disabled;
+    exported?;
+    if let Some(text) = concatenated.accuracy_text() {
+        formatter.start_node("OPERATIONACCURACY", NodeId::Absent);
+        formatter.add_raw(&text);
+        formatter.end_node();
+    }
+    formatter.base_usage(&concatenated.identified);
+    formatter.end_node();
+    Ok(())
+}
+
+fn export_concatenated_body(
+    concatenated: &super::model::ConcatenatedOperation,
+    source: &Crs,
+    target: &Crs,
+    formatter: &mut WktFormatter,
+) -> Result<(), FactoryError> {
+    let can_export_id = !(formatter.id_on_top_only && top_has_id(formatter));
+    for (keyword, crs) in [("SOURCECRS", source), ("TARGETCRS", target)] {
+        formatter.start_node(keyword, NodeId::Absent);
+        if can_export_id && !crs.identifiers().is_empty() {
+            formatter.simul_cur_node_has_id_cleared();
+        }
+        export_crs(crs, formatter)?;
+        formatter.end_node();
+    }
+    for step in concatenated.steps() {
+        formatter.start_node("STEP", NodeId::Absent);
+        if can_export_id && !step.operation().identifiers().is_empty() {
+            formatter.simul_cur_node_has_id_cleared();
+        }
+        export_operation(step.operation(), formatter)?;
         formatter.end_node();
     }
     Ok(())
+}
+
+/// `exportSourceCRSAndTargetCRSToWKT`: the CRS keep their identifier in WKT2:2019 unless
+/// identifiers are written on the top level only.
+fn export_source_and_target(
+    source: Option<&Crs>,
+    target: Option<&Crs>,
+    usage_disabled: usize,
+    formatter: &mut WktFormatter,
+) -> Result<(), FactoryError> {
+    let can_export_id = formatter.wkt2
+        && formatter.keywords_2019
+        && !(formatter.id_on_top_only && top_has_id(formatter));
+    formatter.usage_disabled += usage_disabled;
+    let mut result = Ok(());
+    for (keyword, crs) in [("SOURCECRS", source), ("TARGETCRS", target)] {
+        let Some(crs) = crs else {
+            continue;
+        };
+        formatter.start_node(keyword, NodeId::Absent);
+        let fake_no_id = can_export_id && !crs.identifiers().is_empty();
+        if fake_no_id {
+            formatter.stack_has_id.push(false);
+        }
+        result = export_crs(crs, formatter);
+        if fake_no_id {
+            formatter.stack_has_id.pop();
+        }
+        formatter.end_node();
+        if result.is_err() {
+            break;
+        }
+    }
+    formatter.usage_disabled -= usage_disabled;
+    result
 }
 
 fn export_transformation(
@@ -2027,6 +2619,9 @@ fn export_transformation(
         return Err(FactoryError::Format(
             "a transformation can only be exported to WKT2".to_owned(),
         ));
+    }
+    if let Some(approximate) = transformation.approximate_inverse() {
+        return export_transformation(&approximate, formatter);
     }
     let keyword = if formatter.abridged {
         "ABRIDGEDTRANSFORMATION"
@@ -2048,26 +2643,92 @@ fn export_transformation(
         }
     }
     if !formatter.abridged {
-        let disabled = usize::from(!transformation.identified.domains.is_empty());
-        formatter.usage_disabled += disabled;
-        let exported = export_transformation_crs(transformation, formatter);
-        formatter.usage_disabled -= disabled;
-        exported?;
+        // A point motion operation stays in one CRS, so WKT writes the source only.
+        let target = if transformation.point_motion {
+            None
+        } else {
+            transformation.target.as_deref()
+        };
+        export_source_and_target(
+            transformation.source.as_deref(),
+            target,
+            usize::from(!transformation.identified.domains.is_empty()),
+            formatter,
+        )?;
     }
-    export_method(&transformation.method, formatter)?;
+    if transformation.inverted {
+        export_method(&transformation.method.inverse(), formatter)?;
+    } else {
+        export_method(&transformation.method, formatter)?;
+    }
     for parameter in &transformation.parameters {
         export_parameter(parameter, formatter)?;
+    }
+    if formatter.abridged {
+        export_interpolation_parameter(transformation, formatter)?;
+    } else if let Some(interpolation) = &transformation.interpolation {
+        if !transformation.point_motion {
+            formatter.start_node("INTERPOLATIONCRS", NodeId::Absent);
+            export_crs(interpolation, formatter)?;
+            formatter.end_node();
+        }
     }
     if !formatter.abridged {
         if let Some(accuracy) = transformation.accuracy {
             formatter.start_node("OPERATIONACCURACY", NodeId::Absent);
-            formatter.add_number(accuracy);
+            match &transformation.accuracy_text {
+                Some(text) => formatter.add_raw(text),
+                None => formatter.add_number(accuracy),
+            }
             formatter.end_node();
         }
     }
     formatter.base_usage(&transformation.identified);
     formatter.end_node();
     Ok(())
+}
+
+/// An abridged transformation re-emits its interpolation CRS as parameter 1048
+/// (or 1037 for method 1046) when that parameter is not already present.
+fn export_interpolation_parameter(
+    transformation: &Transformation,
+    formatter: &mut WktFormatter,
+) -> Result<(), FactoryError> {
+    let present = transformation.parameters.iter().any(|parameter| {
+        matches!(parameter.code(), "1048" | "1037")
+            || parameter.name() == "EPSG code for Interpolation CRS"
+            || parameter.name() == "EPSG code for Horizontal CRS"
+    });
+    if present {
+        return Ok(());
+    }
+    let Some(crs) = transformation.interpolation_crs() else {
+        return Ok(());
+    };
+    let Some(identifier) = crs.authority_code("EPSG") else {
+        return Ok(());
+    };
+    let Ok(code) = identifier.code().parse::<i64>() else {
+        return Ok(());
+    };
+    if code == 0 {
+        return Ok(());
+    }
+    let horizontal = transformation.method.code() == "1046";
+    let (name, param_code) = if horizontal {
+        ("EPSG code for Horizontal CRS", "1037")
+    } else {
+        ("EPSG code for Interpolation CRS", "1048")
+    };
+    export_parameter(
+        &Parameter {
+            name: name.to_owned(),
+            code_space: "EPSG".to_owned(),
+            code: param_code.to_owned(),
+            value: ParameterValue::integer(code),
+        },
+        formatter,
+    )
 }
 
 fn geodetic_meridian<'a>(
@@ -2283,6 +2944,9 @@ fn esri_wkt1_parameter_name(name: &str) -> String {
 }
 
 fn wkt1_method_name(method: &OperationMethod) -> Result<String, FactoryError> {
+    if method.name.starts_with("PROJ ") {
+        return Ok("custom_proj4".to_owned());
+    }
     if method.name == "Geostationary Satellite (Sweep X)" {
         return Ok("Geostationary_Satellite".to_owned());
     }

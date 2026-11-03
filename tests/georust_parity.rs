@@ -298,7 +298,6 @@ fn test_area_of_use() {
 }
 
 #[test]
-#[ignore = "gap: PROJJSON of the operation behind a pair (a ConcatenatedOperation) is not built"]
 fn test_projjson() {
     let ft_to_m = Proj::new_known_crs("EPSG:2230", "EPSG:26946", None).unwrap();
     let _ = ft_to_m

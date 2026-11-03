@@ -45,6 +45,7 @@ fn derived_parts(crs: &Crs) -> Option<(Conversion, Crs)> {
             derived.deriving_conversion(),
             Crs::Projected(derived.base_crs().clone()),
         ),
+        Crs::Derived(derived) => (derived.deriving_conversion(), derived.base_crs().clone()),
         _ => return None,
     };
     let conversion = conversion.clone().with_endpoints(base.clone(), crs.clone());

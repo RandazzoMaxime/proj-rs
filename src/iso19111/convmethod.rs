@@ -14,7 +14,7 @@ use super::buildop::OpProps;
 use super::equiv::Equivalence;
 use super::esri_parammap::squared_eccentricity;
 use super::model::{
-    Conversion, DerivedConversion, GeodeticCRS, Measure, ParameterValue, UnitOfMeasure,
+    Conversion, Crs, DerivedConversion, GeodeticCRS, Measure, ParameterValue, UnitOfMeasure,
 };
 use crate::projmath::{msfn, tsfn};
 
@@ -48,6 +48,20 @@ impl DerivedConversion<'_> {
 }
 
 impl Conversion {
+    /// PROJ `Conversion::convertToOtherMethod` on the source CRS this conversion carries.
+    ///
+    /// `None` when the conversion has no geodetic source CRS, and in the cases of
+    /// [`DerivedConversion::convert_to_other_method`].
+    #[must_use]
+    pub fn convert_to_other_method(&self, method_code: i32) -> Option<Self> {
+        let base = match self.source_crs()? {
+            Crs::Geographic(crs) => GeodeticCRS::Geographic(crs.clone()),
+            Crs::Geodetic(crs) => crs.clone(),
+            _ => return None,
+        };
+        convert_to_other_method(&base, self, method_code)
+    }
+
     /// PROJ `SingleOperation::_isEquivalentTo` for two conversions that share `source` as
     /// base CRS, with `criterion`.
     ///

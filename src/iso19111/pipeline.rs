@@ -62,6 +62,10 @@ pub(crate) struct PipelineFormatter {
     /// Whether the grid and deformation methods write their steps. Off, they are
     /// unimplemented, so the candidate selection of `cs2cs` is unchanged.
     grid_steps: bool,
+    /// Open `pushOmitZUnitConversion` scopes.
+    omit_z_unit_depth: usize,
+    /// Open `pushOmitHorizontalConversionInVertTransformation` scopes.
+    omit_horizontal_depth: usize,
 }
 
 impl PipelineFormatter {
@@ -82,6 +86,30 @@ impl PipelineFormatter {
 
     pub(crate) fn grid_steps(&self) -> bool {
         self.grid_steps
+    }
+
+    pub(crate) fn push_omit_z_unit_conversion(&mut self) {
+        self.omit_z_unit_depth += 1;
+    }
+
+    pub(crate) fn pop_omit_z_unit_conversion(&mut self) {
+        self.omit_z_unit_depth = self.omit_z_unit_depth.saturating_sub(1);
+    }
+
+    pub(crate) fn omits_z_unit_conversion(&self) -> bool {
+        self.omit_z_unit_depth > 0
+    }
+
+    pub(crate) fn push_omit_horizontal_in_vertical(&mut self) {
+        self.omit_horizontal_depth += 1;
+    }
+
+    pub(crate) fn pop_omit_horizontal_in_vertical(&mut self) {
+        self.omit_horizontal_depth = self.omit_horizontal_depth.saturating_sub(1);
+    }
+
+    pub(crate) fn omits_horizontal_in_vertical(&self) -> bool {
+        self.omit_horizontal_depth > 0
     }
 
     /// The name a grid is written under.
@@ -316,6 +344,16 @@ fn normalize_inverse(step: &mut Step) {
             step.params[2].value = values[0].clone();
             step.params[1].value = values[3].clone();
             step.params[3].value = values[1].clone();
+            step.inverted = false;
+        }
+        "geogoffset" => {
+            for param in &mut step.params {
+                if matches!(param.key.as_str(), "dlat" | "dlon" | "dh") {
+                    if let Ok(value) = param.value.parse::<f64>() {
+                        param.value = proj_number(0.0 - value);
+                    }
+                }
+            }
             step.inverted = false;
         }
         "set" => step.inverted = false,

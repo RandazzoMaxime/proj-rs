@@ -10,8 +10,9 @@
 
 use super::{Body, Proj, ProjError, WktOptions, WktOutputAxis, WktVersion};
 use crate::iso19111::{
-    create_from_user_input, Crs, DatabaseContext, EllipsoidalHeightPolicy, JsonFormat, JsonLines,
-    LinunitPolicy, OutputAxisRule, WktConvention, WktFormatter, WktLines, WktStrictness,
+    create_from_user_input, normalize_for_visualization, CoordinateOperation, Crs, DatabaseContext,
+    EllipsoidalHeightPolicy, JsonFormat, JsonLines, LinunitPolicy, OutputAxisRule, WktConvention,
+    WktFormatter, WktLines, WktStrictness,
 };
 
 /// Indentation of WKT output, PROJ's default.
@@ -28,7 +29,7 @@ pub(super) fn as_wkt(
     version: Option<WktVersion>,
     options: Option<WktOptions>,
 ) -> Result<String, ProjError> {
-    let (crs, db) = crs_of(proj).ok_or(ProjError::ExportToWkt)?;
+    let (object, db) = exportable_of(proj).ok_or(ProjError::ExportToWkt)?;
     let version = version.unwrap_or(WktVersion::Wkt2_2019);
     let options = options.unwrap_or_default();
     let mut formatter = WktFormatter::create(convention(version)).with_database(db);
@@ -70,8 +71,11 @@ pub(super) fn as_wkt(
             LinunitPolicy::Reject
         });
     }
-    crs.export_to_wkt(&mut formatter)
-        .map_err(|_| ProjError::ExportToWkt)
+    match object {
+        Exportable::Crs(crs) => crs.export_to_wkt(&mut formatter),
+        Exportable::Operation(operation) => operation.export_to_wkt(&mut formatter),
+    }
+    .map_err(|_| ProjError::ExportToWkt)
 }
 
 /// The dialect of a georust [`WktVersion`].
@@ -86,22 +90,32 @@ fn convention(version: WktVersion) -> WktConvention {
     }
 }
 
-/// The ISO CRS behind `proj`, and the database it was read from.
+/// What a [`Proj`] exports as: the CRS it was built from, or the ISO operation behind a pair.
+enum Exportable {
+    Crs(Box<Crs>),
+    Operation(Box<CoordinateOperation>),
+}
+
+/// The object `proj_as_wkt` and `proj_as_projjson` write for `proj`.
 ///
-/// `None` for an operation: a pair from [`Proj::new_known_crs`], a `create_crs_to_crs_from_pj`
-/// result, or a PROJ string that is not `+type=crs`. Their export is not built.
-fn crs_of(proj: &Proj) -> Option<(Crs, DatabaseContext)> {
-    let is_crs = match &proj.body {
-        Body::Single(_) => true,
-        Body::Native(_) => has_crs_token(&proj.definition),
-        Body::Iso(_) | Body::Between { .. } => false,
-    };
-    if !is_crs {
-        return None;
-    }
+/// A CRS is read again from its definition. A pair from [`Proj::new_known_crs`] exports the
+/// ISO 19111 operation its pipeline was written from, with the axis order of the CRS as the
+/// database gives it. libproj normalises that operation for visualization, so it is the normalised one. A side
+/// that cannot be reversed (a compound CRS with a latitude-first horizontal part) is not
+/// exported.
+fn exportable_of(proj: &Proj) -> Option<(Exportable, DatabaseContext)> {
     let db = DatabaseContext::create().ok()?;
+    match &proj.body {
+        Body::Single(_) => {}
+        Body::Native(_) if has_crs_token(&proj.definition) => {}
+        Body::Iso(pipeline) => {
+            let normalized = normalize_for_visualization(pipeline.chosen())?;
+            return Some((Exportable::Operation(Box::new(normalized)), db));
+        }
+        Body::Native(_) | Body::Between { .. } => return None,
+    }
     let crs = create_from_user_input(&proj.definition, &db).ok()?;
-    Some((crs, db))
+    Some((Exportable::Crs(Box::new(crs)), db))
 }
 
 /// Whether a PROJ string carries the `+type=crs` token.
@@ -124,7 +138,7 @@ pub(super) fn to_projjson(
     indentation_width: Option<usize>,
     schema: Option<&str>,
 ) -> Result<String, ProjError> {
-    let (crs, db) = crs_of(proj).ok_or(ProjError::ExportToJson)?;
+    let (object, db) = exportable_of(proj).ok_or(ProjError::ExportToJson)?;
     let mut format = JsonFormat::with_lines(match multiline {
         Some(false) => JsonLines::Single,
         None | Some(true) => JsonLines::Multi,
@@ -135,8 +149,11 @@ pub(super) fn to_projjson(
     if let Some(schema) = schema {
         format = format.with_schema(schema);
     }
-    crs.export_to_json_with(&db, &format)
-        .map_err(|_| ProjError::ExportToJson)
+    match object {
+        Exportable::Crs(crs) => crs.export_to_json_with(&db, &format),
+        Exportable::Operation(operation) => operation.export_to_json_with(&db, &format),
+    }
+    .map_err(|_| ProjError::ExportToJson)
 }
 
 #[cfg(test)]
@@ -183,12 +200,15 @@ mod tests {
     }
 
     #[test]
-    fn a_pair_and_a_proj_operation_are_not_crs() {
-        let pair = Proj::new_known_crs("EPSG:4326", "EPSG:2154", None).expect("pair");
-        assert!(crs_of(&pair).is_none());
+    fn a_pair_exports_its_operation_and_a_proj_operation_exports_nothing() {
+        let pair = Proj::new_known_crs("EPSG:2230", "EPSG:26946", None).expect("pair");
+        assert!(matches!(
+            exportable_of(&pair),
+            Some((Exportable::Operation(_), _))
+        ));
         let operation = Proj::new("+proj=utm +zone=32 +ellps=WGS84").expect("utm");
-        assert!(crs_of(&operation).is_none());
+        assert!(exportable_of(&operation).is_none());
         let crs = Proj::new("+proj=longlat +datum=WGS84 +no_defs +type=crs").expect("crs");
-        assert!(crs_of(&crs).is_some());
+        assert!(matches!(exportable_of(&crs), Some((Exportable::Crs(_), _))));
     }
 }

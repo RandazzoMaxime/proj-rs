@@ -5,10 +5,10 @@
 //! geographic latitude/longitude swap.
 
 use super::model::{
-    ensemble_name_as_datum, Axis, CompoundCRS, Conversion, CoordinateSystem, Crs, Datum,
-    DatumEnsemble, Ellipsoid, EngineeringCRS, EngineeringDatum, GeodeticCRS,
+    ensemble_name_as_datum, Axis, CompoundCRS, Conversion, CoordinateOperation, CoordinateSystem,
+    Crs, Datum, DatumEnsemble, Ellipsoid, EngineeringCRS, EngineeringDatum, GeodeticCRS,
     GeodeticReferenceFrame, GeographicCRS, Identified, Parameter, ParameterValue, PrimeMeridian,
-    ProjectedCRS, VerticalCRS, VerticalReferenceFrame,
+    ProjectedCRS, Transformation, VerticalCRS, VerticalReferenceFrame,
 };
 
 /// How much two ISO 19111 objects may differ and still compare equal.
@@ -33,6 +33,43 @@ impl GeographicCRS {
     #[must_use]
     pub fn is_equivalent_to_with(&self, other: &Self, criterion: Equivalence) -> bool {
         geographic_equivalent(self, other, criterion)
+    }
+
+    /// `isEquivalentTo` with a database context, as `proj_is_equivalent_to_with_ctx`.
+    ///
+    /// Beyond the structural check, a datum name that is an alias of the other datum's
+    /// official name in `proj.db` counts as the same name (`GDA2020` and
+    /// `Geocentric Datum of Australia 2020`). The strict criterion keeps names exact.
+    #[must_use]
+    pub fn is_equivalent_to_with_database(
+        &self,
+        other: &Self,
+        criterion: Equivalence,
+        db: &super::factory::DatabaseContext,
+    ) -> bool {
+        if self.is_equivalent_to_with(other, criterion) {
+            return true;
+        }
+        if criterion == Equivalence::Strict {
+            return false;
+        }
+        let (Some(left), Some(right)) = (self.datum(), other.datum()) else {
+            return false;
+        };
+        let official = |name: &str| db.geodetic_datum_equivalent(name).map(|found| found.0);
+        let (Some(left_official), Some(right_official)) =
+            (official(left.name()), official(right.name()))
+        else {
+            return false;
+        };
+        if left_official != right_official {
+            return false;
+        }
+        let mut renamed = other.clone();
+        if let Some(datum) = renamed.datum.as_mut() {
+            datum.identified.name = left.name().to_owned();
+        }
+        self.is_equivalent_to_with(&renamed, criterion)
     }
 
     /// `other` is `None` when the value is not a geographic CRS.
@@ -69,6 +106,7 @@ impl GeographicCRS {
 ///
 /// This is the base check of `createOperation` from a geographic CRS to a
 /// projected CRS of that datum. An ensemble is compared as `asDatum`.
+/// Projection pipelines print the conversion without requiring this match.
 pub(crate) fn same_geographic_base(left: &GeographicCRS, right: &GeographicCRS) -> bool {
     let (Some(left_frame), Some(right_frame)) = (datum_frame(left), datum_frame(right)) else {
         return false;
@@ -290,9 +328,27 @@ impl EngineeringCRS {
     /// Strict engineering-CRS equivalence.
     #[must_use]
     pub fn is_equivalent_to(&self, other: &Self) -> bool {
-        same_name(self.name(), other.name())
-            && self.datum().is_equivalent_to(other.datum())
-            && coordinate_system_equivalent(self.coordinate_system(), other.coordinate_system())
+        self.is_equivalent_to_with(other, Equivalence::Strict)
+    }
+
+    /// `isEquivalentTo` with `criterion`.
+    ///
+    /// `Equivalent` treats an empty datum name and `"Unknown engineering datum"` as the
+    /// same datum. A Cartesian pair whose directions are all `unspecified` and whose
+    /// names are `X`/`Y` matches easting/northing (`EngineeringCRS::_isEquivalentTo`).
+    #[must_use]
+    pub fn is_equivalent_to_with(&self, other: &Self, criterion: Equivalence) -> bool {
+        if criterion == Equivalence::Strict {
+            return same_name(self.name(), other.name())
+                && self.datum().is_equivalent_to(other.datum())
+                && coordinate_system_equivalent(
+                    self.coordinate_system(),
+                    other.coordinate_system(),
+                );
+        }
+        engineering_datum_equivalent(self.datum(), other.datum())
+            && (axes_direction_and_unit(self.coordinate_system(), other.coordinate_system())
+                || cartesian_xy_versus_en(self.coordinate_system(), other.coordinate_system()))
     }
 }
 
@@ -311,6 +367,20 @@ impl CompoundCRS {
 }
 
 impl Crs {
+    /// `isEquivalentTo` with `criterion`.
+    ///
+    /// Engineering CRS use the `Equivalent` datum and axis exceptions. Every other kind
+    /// uses the strict comparison.
+    #[must_use]
+    pub fn is_equivalent_to_with(&self, other: &Self, criterion: Equivalence) -> bool {
+        match (self, other) {
+            (Self::Engineering(left), Self::Engineering(right)) => {
+                left.is_equivalent_to_with(right, criterion)
+            }
+            _ => self.is_equivalent_to(other),
+        }
+    }
+
     /// Strict equivalence. A different CRS kind is not equivalent.
     #[must_use]
     pub fn is_equivalent_to(&self, other: &Self) -> bool {
@@ -325,8 +395,71 @@ impl Crs {
             (Self::Vertical(left), Self::Vertical(right)) => left.is_equivalent_to(right),
             (Self::Engineering(left), Self::Engineering(right)) => left.is_equivalent_to(right),
             (Self::Compound(left), Self::Compound(right)) => left.is_equivalent_to(right),
+            (Self::DerivedProjected(left), Self::DerivedProjected(right)) => {
+                same_name(left.name(), right.name())
+                    && left.base_crs().is_equivalent_to(right.base_crs())
+                    && conversion_equivalent(
+                        left.deriving_conversion(),
+                        right.deriving_conversion(),
+                    )
+                    && coordinate_system_equivalent(
+                        left.coordinate_system(),
+                        right.coordinate_system(),
+                    )
+            }
+            (Self::Temporal(left), Self::Temporal(right)) => left.is_equivalent_to(right),
+            (Self::Parametric(left), Self::Parametric(right)) => left.is_equivalent_to(right),
+            (Self::Derived(left), Self::Derived(right)) => left.is_equivalent_to(right),
+            (Self::Bound(left), Self::Bound(right)) => {
+                same_name(left.name(), right.name())
+                    && left.source_crs().is_equivalent_to(right.source_crs())
+                    && left.target_crs().is_equivalent_to(right.target_crs())
+                    && operations_equivalent(left.transformation(), right.transformation())
+            }
             _ => false,
         }
+    }
+}
+
+fn operations_equivalent(left: &CoordinateOperation, right: &CoordinateOperation) -> bool {
+    match (left, right) {
+        (CoordinateOperation::Transformation(left), CoordinateOperation::Transformation(right)) => {
+            transformation_equivalent(left, right)
+        }
+        (CoordinateOperation::Conversion(left), CoordinateOperation::Conversion(right)) => {
+            left.is_equivalent_to(right)
+        }
+        (CoordinateOperation::Concatenated(left), CoordinateOperation::Concatenated(right)) => {
+            same_name(left.name(), right.name())
+                && left.steps().len() == right.steps().len()
+                && left
+                    .steps()
+                    .iter()
+                    .zip(right.steps())
+                    .all(|(left, right)| operations_equivalent(left.operation(), right.operation()))
+        }
+        _ => false,
+    }
+}
+
+fn transformation_equivalent(left: &Transformation, right: &Transformation) -> bool {
+    same_name(left.name(), right.name())
+        && left.method().code() == right.method().code()
+        && endpoint_equivalent(left.source_crs(), right.source_crs())
+        && endpoint_equivalent(left.target_crs(), right.target_crs())
+        && left.parameters().len() == right.parameters().len()
+        && left
+            .parameters()
+            .iter()
+            .zip(right.parameters())
+            .all(|(left, right)| parameter_equivalent(left, right))
+}
+
+fn endpoint_equivalent(left: Option<&Crs>, right: Option<&Crs>) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => left.is_equivalent_to(right),
+        (None, None) => true,
+        _ => false,
     }
 }
 
@@ -365,7 +498,7 @@ fn geographic_equivalent(
 fn geographic_anchor(left: &GeographicCRS, right: &GeographicCRS, criterion: Equivalence) -> bool {
     if criterion != Equivalence::Strict {
         return match (datum_frame(left), datum_frame(right)) {
-            (Some(left), Some(right)) => frame_equivalent(&left, &right),
+            (Some(left), Some(right)) => frame_equivalent_by(&left, &right, equivalent_name),
             _ => false,
         };
     }
@@ -421,9 +554,19 @@ fn vertical_anchor(left: &VerticalCRS, right: &VerticalCRS) -> bool {
 }
 
 fn frame_equivalent(left: &GeodeticReferenceFrame, right: &GeodeticReferenceFrame) -> bool {
-    same_name(left.name(), right.name())
+    frame_equivalent_by(left, right, same_name)
+}
+
+/// Datum comparison with a name rule: strict names are equal ignoring case, the
+/// `EQUIVALENT` criterion uses `Identifier::isEquivalentName`.
+fn frame_equivalent_by(
+    left: &GeodeticReferenceFrame,
+    right: &GeodeticReferenceFrame,
+    names: fn(&str, &str) -> bool,
+) -> bool {
+    names(left.name(), right.name())
         && same_epoch(left.frame_reference_epoch(), right.frame_reference_epoch())
-        && ellipsoid_equivalent(left.ellipsoid(), right.ellipsoid())
+        && ellipsoid_equivalent_by(left.ellipsoid(), right.ellipsoid(), names)
         && meridian_equivalent(left.prime_meridian(), right.prime_meridian())
 }
 
@@ -455,7 +598,20 @@ fn datum_equivalent(left: &Datum, right: &Datum) -> bool {
 }
 
 fn ellipsoid_equivalent(left: &Ellipsoid, right: &Ellipsoid) -> bool {
-    same_name(left.name(), right.name())
+    ellipsoid_equivalent_by(left, right, same_name)
+}
+
+/// Ellipsoid comparison with the `EQUIVALENT` name rule.
+pub(crate) fn ellipsoid_equivalent_loose(left: &Ellipsoid, right: &Ellipsoid) -> bool {
+    ellipsoid_equivalent_by(left, right, equivalent_name)
+}
+
+fn ellipsoid_equivalent_by(
+    left: &Ellipsoid,
+    right: &Ellipsoid,
+    names: fn(&str, &str) -> bool,
+) -> bool {
+    names(left.name(), right.name())
         && left.semi_major_axis().si_value() == right.semi_major_axis().si_value()
         && left.inverse_flattening() == right.inverse_flattening()
         && match (left.semi_minor_axis(), right.semi_minor_axis()) {
@@ -472,6 +628,56 @@ pub(crate) fn meridian_equivalent(left: &PrimeMeridian, right: &PrimeMeridian) -
             left.longitude().unit().name(),
             right.longitude().unit().name(),
         )
+}
+
+/// Empty and `"Unknown engineering datum"` match (`EngineeringDatum::_isEquivalentTo`).
+fn engineering_datum_equivalent(left: &EngineeringDatum, right: &EngineeringDatum) -> bool {
+    let unknown = |name: &str| name.is_empty() || name == "Unknown engineering datum";
+    if unknown(left.name()) && unknown(right.name()) {
+        return true;
+    }
+    same_name(left.name(), right.name())
+}
+
+/// Directions and conversion factors match. Axis names do not.
+fn axes_direction_and_unit(left: &CoordinateSystem, right: &CoordinateSystem) -> bool {
+    let left_axes = left.axes();
+    let right_axes = right.axes();
+    std::mem::discriminant(left) == std::mem::discriminant(right)
+        && left_axes.len() == right_axes.len()
+        && left_axes.iter().zip(right_axes).all(|(left, right)| {
+            let (left_si, right_si) = (
+                left.unit().conversion_to_si(),
+                right.unit().conversion_to_si(),
+            );
+            left.direction() == right.direction()
+                && (left_si - right_si).abs() <= 1e-10 * left_si.abs()
+        })
+}
+
+/// `X`/`Y` of unspecified direction against easting/northing, either way around.
+fn cartesian_xy_versus_en(left: &CoordinateSystem, right: &CoordinateSystem) -> bool {
+    let (CoordinateSystem::Cartesian(left), CoordinateSystem::Cartesian(right)) = (left, right)
+    else {
+        return false;
+    };
+    let left = left.axes();
+    let right = right.axes();
+    if left.len() != 2 || right.len() != 2 {
+        return false;
+    }
+    let unspecified = |axes: &[Axis]| axes.iter().all(|axis| axis.direction() == "unspecified");
+    if !unspecified(left) && !unspecified(right) {
+        return false;
+    }
+    (left[0].name() == "X"
+        && right[0].name() == "Easting"
+        && left[1].name() == "Y"
+        && right[1].name() == "Northing")
+        || (right[0].name() == "X"
+            && left[0].name() == "Easting"
+            && right[1].name() == "Y"
+            && left[1].name() == "Northing")
 }
 
 fn coordinate_system_equivalent(left: &CoordinateSystem, right: &CoordinateSystem) -> bool {
@@ -536,7 +742,16 @@ fn conversion_equivalent_for(
     right: &Conversion,
     criterion: Equivalence,
 ) -> bool {
-    (criterion != Equivalence::Strict || same_name(left.name(), right.name()))
+    if criterion != Equivalence::Strict
+        && left.method().code() != right.method().code()
+        && spherical_method_pair(left.method().code(), right.method().code())
+    {
+        return spherical_pair_parameters_match(left, right);
+    }
+    if criterion != Equivalence::Strict {
+        return left.is_equivalent_to_with(right, criterion);
+    }
+    same_name(left.name(), right.name())
         && left.method().code() == right.method().code()
         && left.parameters().len() == right.parameters().len()
         && left
@@ -544,6 +759,45 @@ fn conversion_equivalent_for(
             .iter()
             .zip(right.parameters())
             .all(|(left, right)| parameter_equivalent(left, right))
+}
+
+/// The EPSG methods PROJ treats as the same projection on a sphere: Lambert
+/// azimuthal equal area (1027, 9820) and equidistant cylindrical (1029, 1028).
+fn spherical_method_pair(left: &str, right: &str) -> bool {
+    matches!(
+        (left, right),
+        ("1027", "9820") | ("9820", "1027") | ("1029", "1028") | ("1028", "1029")
+    )
+}
+
+/// Parameters of a spherical/ellipsoidal method pair, matched by code. A
+/// parameter the other method lacks must be zero.
+fn spherical_pair_parameters_match(left: &Conversion, right: &Conversion) -> bool {
+    let covered = |from: &Conversion, other: &Conversion| {
+        from.parameters().iter().all(|parameter| {
+            match other
+                .parameters()
+                .iter()
+                .find(|candidate| candidate.code() == parameter.code())
+            {
+                Some(found) => parameter_value_equivalent(parameter, found),
+                None => matches!(
+                    parameter.value(),
+                    ParameterValue::Measure(measure) if measure.value() == 0.0
+                ),
+            }
+        })
+    };
+    covered(left, right) && covered(right, left)
+}
+
+fn parameter_value_equivalent(left: &Parameter, right: &Parameter) -> bool {
+    match (left.value(), right.value()) {
+        (ParameterValue::Measure(left), ParameterValue::Measure(right)) => {
+            left.value() == right.value() && left.unit().name() == right.unit().name()
+        }
+        _ => false,
+    }
 }
 
 fn parameter_equivalent(left: &Parameter, right: &Parameter) -> bool {
@@ -569,6 +823,62 @@ fn same_name(left: &str, right: &str) -> bool {
 /// `/`, parentheses, `.`, `&`, and `,`, and writing accented letters as ASCII.
 pub fn equivalent_name(left: &str, right: &str) -> bool {
     folded_name(left) == folded_name(right)
+}
+
+/// `areEquivalentParameters`: names PROJ treats as one parameter, such as
+/// `latitude_of_origin` and `latitude_of_center`.
+pub(crate) fn are_equivalent_parameters(left: &str, right: &str) -> bool {
+    let left = folded_name(left);
+    let right = folded_name(right);
+    if left == right {
+        return false;
+    }
+    const GROUPS: &[&[&str]] = &[
+        &["latitude_of_point_1", "Latitude_Of_1st_Point"],
+        &["longitude_of_point_1", "Longitude_Of_1st_Point"],
+        &["latitude_of_point_2", "Latitude_Of_2nd_Point"],
+        &["longitude_of_point_2", "Longitude_Of_2nd_Point"],
+        &["satellite_height", "height"],
+        &[
+            "False easting",
+            "Easting at false origin",
+            "Easting at projection centre",
+        ],
+        &[
+            "False northing",
+            "Northing at false origin",
+            "Northing at projection centre",
+        ],
+        &[
+            "Scale factor at natural origin",
+            "scale_factor",
+            "Scale factor on initial line",
+            "Scale factor at projection centre",
+            "Scale factor on pseudo standard parallel",
+        ],
+        &[
+            "latitude_of_origin",
+            "latitude_of_center",
+            "Latitude of natural origin",
+            "Latitude of false origin",
+            "Latitude of projection centre",
+            "Central_Parallel",
+        ],
+        &[
+            "central_meridian",
+            "longitude_of_center",
+            "Longitude of natural origin",
+            "Longitude of false origin",
+            "Longitude of projection centre",
+            "Longitude of origin",
+        ],
+        &["Azimuth of initial line", "Azimuth at projection centre"],
+        &["pseudo_standard_parallel_1", "standard_parallel_1"],
+    ];
+    GROUPS.iter().any(|group| {
+        let in_group = |name: &str| group.iter().any(|entry| folded_name(entry) == name);
+        in_group(&left) && in_group(&right)
+    })
 }
 
 fn folded_name(name: &str) -> String {
@@ -787,8 +1097,8 @@ impl GeodeticCRS {
 impl Crs {
     /// `CRS::identify` with no authority factory.
     ///
-    /// Geographic and geodetic CRS use [`GeodeticCRS::identify`]. Other kinds
-    /// have no hardcoded candidate.
+    /// Geographic and geodetic CRS use [`GeodeticCRS::identify`]. A projected
+    /// CRS uses the hardcoded UTM zones. Other kinds have no candidate.
     #[must_use]
     pub fn identify(&self) -> Vec<(Crs, i32)> {
         match self {
@@ -796,6 +1106,7 @@ impl Crs {
                 Self::Geodetic(GeodeticCRS::Geographic(crs.clone())).identify()
             }
             Self::Geodetic(crs) => crs.identify(),
+            Self::Projected(crs) => crs.identify_with(None),
             _ => Vec::new(),
         }
     }

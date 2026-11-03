@@ -4,15 +4,24 @@
 //! version on the way out, and joined again on the way in, using
 //! `versioned_auth_name_mapping`.
 
+use super::buildop::OpProps;
 use super::equiv;
 use super::factory::{AuthorityFactory, AuthorityObject, DatabaseContext, NameMatch, ObjectType};
+use super::json_read::{create_object_from_json, JsonObject};
 use super::model::{
-    Axis, BoundCRS, CompoundCRS, Conversion, CoordinateOperation, Crs, Datum, DatumEnsemble,
-    Ellipsoid, EllipsoidalCS, FactoryError, GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame,
-    GeographicCRS, GeoidModel, Identified, Identifier, Measure, ObjectDomain, OperationMethod,
-    Parameter, ParameterValue, PrimeMeridian, ProjectedCRS, Transformation, UnitKind,
-    UnitOfMeasure, VerticalCRS, VerticalReferenceFrame,
+    Axis, BoundCRS, CartesianCS, CompoundCRS, ConcatenatedOperation, Conversion,
+    CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble, DerivedProjectedCRS,
+    Ellipsoid, EllipsoidalCS, EngineeringCRS, EngineeringDatum, FactoryError, GeocentricCRS,
+    GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, GeoidModel, Identified, Identifier,
+    Measure, ObjectDomain, OperationMethod, Parameter, ParameterValue, PrimeMeridian, ProjectedCRS,
+    SphericalGeodeticCRS, Transformation, UnitKind, UnitOfMeasure, VerticalCRS, VerticalCS,
+    VerticalExtent, VerticalReferenceFrame,
 };
+use super::niche::{
+    DerivedCRS, ParametricCRS, ParametricCS, ParametricDatum, TemporalCRS, TemporalCS,
+    TemporalCsKind, TemporalDatum, PROLEPTIC_GREGORIAN,
+};
+use super::parammap::{method_by_code, method_by_name};
 use super::projstring::create_crs_from_proj_string_with_database;
 use super::wkt_import::WktParser;
 use crate::crs_text::{self, Object, Value};
@@ -218,6 +227,109 @@ fn format_json_number(value: f64) -> String {
     }
 }
 
+impl JsonObject {
+    /// PROJJSON for this object, in PROJ's default layout.
+    ///
+    /// # Errors
+    ///
+    /// The object, or a part of it, has no PROJJSON export in this build.
+    pub fn export_to_json(&self, db: &DatabaseContext) -> Result<String, FactoryError> {
+        self.export_to_json_with(db, &JsonFormat::default())
+    }
+
+    /// PROJJSON for this object in `format`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::export_to_json`].
+    pub fn export_to_json_with(
+        &self,
+        db: &DatabaseContext,
+        format: &JsonFormat,
+    ) -> Result<String, FactoryError> {
+        if let Self::Crs(crs) = self {
+            return crs.export_to_json_with(db, format);
+        }
+        let mut writer = Writer::new(format);
+        writer.start_object();
+        if !format.schema.is_empty() {
+            writer.key("$schema");
+            writer.string(&format.schema);
+        }
+        match self {
+            Self::Ellipsoid(ellipsoid) => {
+                writer.key("type");
+                writer.string("Ellipsoid");
+                write_ellipsoid_members(
+                    &mut writer,
+                    ellipsoid,
+                    db,
+                    Place::top(ident(ellipsoid.identifiers())),
+                );
+            }
+            Self::PrimeMeridian(meridian) => {
+                writer.key("type");
+                writer.string("PrimeMeridian");
+                write_meridian_members(
+                    &mut writer,
+                    meridian,
+                    db,
+                    Place::top(ident(meridian.identifiers())),
+                );
+            }
+            Self::Axis(axis) => {
+                writer.key("type");
+                writer.string("Axis");
+                write_axis_members(&mut writer, axis, Chain::Clear);
+            }
+            Self::GeodeticReferenceFrame(datum) => {
+                write_datum_fields(
+                    &mut writer,
+                    datum,
+                    db,
+                    Place::top(ident(datum.identifiers())),
+                )?;
+            }
+            Self::VerticalReferenceFrame(datum) => {
+                write_vertical_datum_members(
+                    &mut writer,
+                    datum,
+                    db,
+                    Place::top(ident(datum.identifiers())),
+                )?;
+            }
+            Self::DatumEnsemble(ensemble) => {
+                writer.key("type");
+                writer.string("DatumEnsemble");
+                write_ensemble_members(&mut writer, ensemble, db, Chain::Clear)?;
+            }
+            Self::Transformation(transformation) => {
+                write_transformation(
+                    &mut writer,
+                    transformation,
+                    db,
+                    Place::top(ident(transformation.identifiers())),
+                )?;
+            }
+            Self::Concatenated(operation) => {
+                write_concatenated(
+                    &mut writer,
+                    operation,
+                    db,
+                    Place::top(ident(&operation.identified.identifiers)),
+                )?;
+            }
+            Self::Conversion(_) | Self::Crs(_) => {
+                return Err(FactoryError::Format(
+                    "PROJJSON export of this object is not built".to_owned(),
+                ));
+            }
+        }
+        writer.end_object();
+        Ok(writer.finish())
+    }
+}
+
 impl Crs {
     /// PROJJSON for this CRS, in PROJ's default layout.
     ///
@@ -248,6 +360,34 @@ impl Crs {
             writer.string(&format.schema);
         }
         write_crs(&mut writer, self, db, Place::top(crs_ident(self)))?;
+        writer.end_object();
+        Ok(writer.finish())
+    }
+}
+
+impl CoordinateOperation {
+    /// PROJJSON for this operation in `format`: a `Conversion`, a `Transformation`, or a
+    /// `ConcatenatedOperation`, as `proj_as_projjson` writes it.
+    ///
+    /// A concatenated operation or a transformation names its CRS pair. A conversion does not,
+    /// as PROJ writes none. A concatenated operation that stores no pair takes the source of
+    /// its first step and the target of its last.
+    ///
+    /// # Errors
+    ///
+    /// A CRS or a step has no PROJJSON export here, or a concatenated operation has no CRS pair.
+    pub fn export_to_json_with(
+        &self,
+        db: &DatabaseContext,
+        format: &JsonFormat,
+    ) -> Result<String, FactoryError> {
+        let mut writer = Writer::new(format);
+        writer.start_object();
+        if !format.schema.is_empty() {
+            writer.key("$schema");
+            writer.string(&format.schema);
+        }
+        write_operation(&mut writer, self, db, Place::top(operation_ident(self)))?;
         writer.end_object();
         Ok(writer.finish())
     }
@@ -340,11 +480,16 @@ fn crs_ident(crs: &Crs) -> Ident {
             ident(crs.identifiers())
         }
         Crs::Geodetic(GeodeticCRS::Geocentric(crs)) => ident(crs.identifiers()),
+        Crs::Geodetic(GeodeticCRS::Spherical(crs)) => ident(&crs.identified.identifiers),
         Crs::Projected(crs) => ident(crs.identifiers()),
         Crs::Vertical(crs) => ident(crs.identifiers()),
         Crs::Compound(crs) => ident(crs.identifiers()),
         Crs::Bound(crs) => ident(&crs.identified.identifiers),
-        _ => Ident::Lacks,
+        Crs::Engineering(crs) => ident(&crs.identified.identifiers),
+        Crs::DerivedProjected(crs) => ident(&crs.identified.identifiers),
+        Crs::Temporal(crs) => ident(crs.identifiers()),
+        Crs::Parametric(crs) => ident(crs.identifiers()),
+        Crs::Derived(crs) => ident(crs.identifiers()),
     }
 }
 
@@ -359,14 +504,16 @@ fn write_crs(
             write_geographic(writer, crs, db, place)
         }
         Crs::Geodetic(GeodeticCRS::Geocentric(crs)) => write_geocentric(writer, crs, db, place),
+        Crs::Geodetic(GeodeticCRS::Spherical(crs)) => write_spherical(writer, crs, db, place),
         Crs::Projected(crs) => write_projected(writer, crs, db, place),
         Crs::Vertical(crs) => write_vertical(writer, crs, db, place),
         Crs::Compound(crs) => write_compound(writer, crs, db, place),
         Crs::Bound(crs) => write_bound(writer, crs, db, place),
-        other => Err(FactoryError::Format(format!(
-            "PROJJSON export is not built for {}",
-            other.name()
-        ))),
+        Crs::Engineering(crs) => write_engineering(writer, crs, db, place),
+        Crs::Temporal(crs) => write_temporal(writer, crs, db, place),
+        Crs::Parametric(crs) => write_parametric(writer, crs, db, place),
+        Crs::Derived(crs) => write_derived(writer, crs, db, place),
+        Crs::DerivedProjected(crs) => write_derived_projected(writer, crs, db, place),
     }
 }
 
@@ -412,8 +559,8 @@ fn write_geographic(
         crs.coordinate_system().axes(),
         place.chain,
     )?;
-    write_usage(writer, crs.domains(), place);
-    write_id_if(writer, place, crs.identifiers(), db);
+    write_deformation_models(writer, dynamic_model(crs.datum()));
+    write_base(writer, &crs.identified, place, db);
     Ok(())
 }
 
@@ -434,8 +581,36 @@ fn write_geocentric(
         crs.coordinate_system().axes(),
         place.chain,
     )?;
-    write_usage(writer, crs.domains(), place);
-    write_id_if(writer, place, crs.identifiers(), db);
+    write_deformation_models(writer, dynamic_model(crs.datum()));
+    write_base(writer, &crs.identified, place, db);
+    Ok(())
+}
+
+fn write_spherical(
+    writer: &mut Writer,
+    crs: &SphericalGeodeticCRS,
+    db: &DatabaseContext,
+    place: Place,
+) -> Result<(), FactoryError> {
+    writer.key("type");
+    writer.string("GeodeticCRS");
+    write_name(writer, &crs.identified.name);
+    write_datum_or_ensemble(
+        writer,
+        crs.datum.as_ref(),
+        crs.ensemble.as_ref(),
+        db,
+        place.chain,
+    )?;
+    writer.key("coordinate_system");
+    write_cs(
+        writer,
+        "spherical",
+        &crs.coordinate_system.axes,
+        place.chain,
+    )?;
+    write_deformation_models(writer, dynamic_model(crs.datum.as_ref()));
+    write_base(writer, &crs.identified, place, db);
     Ok(())
 }
 
@@ -479,8 +654,7 @@ fn write_projected(
         crs.coordinate_system().axes(),
         place.chain,
     )?;
-    write_usage(writer, crs.domains(), place);
-    write_id_if(writer, place, crs.identifiers(), db);
+    write_base(writer, &crs.identified, place, db);
     Ok(())
 }
 
@@ -508,9 +682,14 @@ fn write_vertical(
         std::slice::from_ref(crs.coordinate_system().axis()),
         place.chain,
     )?;
-    write_geoid_models(writer, crs.geoid_models(), db);
-    write_usage(writer, crs.domains(), place);
-    write_id_if(writer, place, crs.identifiers(), db);
+    write_deformation_models(
+        writer,
+        crs.datum()
+            .filter(|datum| datum.frame_reference_epoch().is_some())
+            .and_then(VerticalReferenceFrame::deformation_model),
+    );
+    write_geoid_models(writer, crs.geoid_models(), db, place.chain)?;
+    write_base(writer, &crs.identified, place, db);
     Ok(())
 }
 
@@ -529,8 +708,7 @@ fn write_compound(
         write_component(writer, component, db, place.chain, Allow::Plain)?;
     }
     writer.end_array();
-    write_usage(writer, crs.domains(), place);
-    write_id_if(writer, place, crs.identifiers(), db);
+    write_base(writer, &crs.identified, place, db);
     Ok(())
 }
 
@@ -573,8 +751,7 @@ fn write_bound(
         transformation_place,
         source_to_write,
     )?;
-    write_usage(writer, &crs.identified.domains, place);
-    write_id_if(writer, place, &crs.identified.identifiers, db);
+    write_base(writer, &crs.identified, place, db);
     Ok(())
 }
 
@@ -634,6 +811,12 @@ fn write_abridged_transformation(
 }
 
 /// The `datum` or `datum_ensemble` of a geodetic CRS. The ensemble has no `type` in the CRS.
+fn dynamic_model(datum: Option<&GeodeticReferenceFrame>) -> Option<&str> {
+    datum
+        .filter(|datum| datum.frame_reference_epoch().is_some())
+        .and_then(GeodeticReferenceFrame::deformation_model)
+}
+
 fn write_datum_or_ensemble(
     writer: &mut Writer,
     datum: Option<&GeodeticReferenceFrame>,
@@ -659,6 +842,17 @@ fn write_datum(
     place: Place,
 ) -> Result<(), FactoryError> {
     writer.start_object();
+    write_datum_fields(writer, datum, db, place)?;
+    writer.end_object();
+    Ok(())
+}
+
+fn write_datum_fields(
+    writer: &mut Writer,
+    datum: &GeodeticReferenceFrame,
+    db: &DatabaseContext,
+    place: Place,
+) -> Result<(), FactoryError> {
     let dynamic = datum.frame_reference_epoch().is_some();
     writer.key("type");
     writer.string(if dynamic {
@@ -667,12 +861,7 @@ fn write_datum(
         "GeodeticReferenceFrame"
     });
     write_name(writer, datum.name());
-    write_anchor(
-        writer,
-        datum.anchor(),
-        datum.anchor_epoch(),
-        datum.deformation_model(),
-    )?;
+    write_anchor(writer, datum.anchor(), datum.anchor_epoch())?;
     if let Some(epoch) = datum.frame_reference_epoch() {
         writer.key("frame_reference_epoch");
         writer.number(epoch);
@@ -688,9 +877,30 @@ fn write_datum(
             Place::inside(place.chain, ident(meridian.identifiers()), Allow::Plain);
         write_meridian(writer, meridian, db, meridian_place);
     }
-    write_id_if(writer, place, datum.identifiers(), db);
-    writer.end_object();
+    write_temporal_extent(
+        writer,
+        datum.identified.temporal_start.as_deref(),
+        datum.identified.temporal_end.as_deref(),
+    );
+    write_base(writer, &datum.identified, place, db);
     Ok(())
+}
+
+fn write_temporal_extent(writer: &mut Writer, start: Option<&str>, end: Option<&str>) {
+    if start.is_none() && end.is_none() {
+        return;
+    }
+    writer.key("temporal_extent");
+    writer.start_object();
+    if let Some(start) = start {
+        writer.key("start");
+        writer.string(start);
+    }
+    if let Some(end) = end {
+        writer.key("end");
+        writer.string(end);
+    }
+    writer.end_object();
 }
 
 fn write_vertical_datum(
@@ -700,6 +910,17 @@ fn write_vertical_datum(
     place: Place,
 ) -> Result<(), FactoryError> {
     writer.start_object();
+    write_vertical_datum_members(writer, datum, db, place)?;
+    writer.end_object();
+    Ok(())
+}
+
+fn write_vertical_datum_members(
+    writer: &mut Writer,
+    datum: &VerticalReferenceFrame,
+    db: &DatabaseContext,
+    place: Place,
+) -> Result<(), FactoryError> {
     let dynamic = datum.frame_reference_epoch().is_some();
     writer.key("type");
     writer.string(if dynamic {
@@ -708,44 +929,55 @@ fn write_vertical_datum(
         "VerticalReferenceFrame"
     });
     write_name(writer, datum.name());
-    write_anchor(
-        writer,
-        datum.anchor(),
-        datum.anchor_epoch(),
-        datum.deformation_model(),
-    )?;
+    write_anchor(writer, datum.anchor(), datum.anchor_epoch())?;
     if let Some(epoch) = datum.frame_reference_epoch() {
         writer.key("frame_reference_epoch");
         writer.number(epoch);
     }
-    write_id_if(writer, place, datum.identifiers(), db);
-    writer.end_object();
+    write_base(writer, &datum.identified, place, db);
     Ok(())
 }
 
-/// `anchor` as PROJ writes it. The anchor epoch and a deformation model are not written by this
-/// port, so a datum that has one is an error rather than a PROJJSON without them.
+/// `anchor` and `anchor_epoch` as PROJ writes them. The deformation model of a dynamic datum is
+/// written by the CRS, as `deformation_models`.
 fn write_anchor(
     writer: &mut Writer,
     anchor: Option<&str>,
     anchor_epoch: Option<f64>,
-    deformation_model: Option<&str>,
 ) -> Result<(), FactoryError> {
-    if anchor_epoch.is_some() {
-        return Err(FactoryError::Format(
-            "PROJJSON anchor_epoch is not written in this build".to_owned(),
-        ));
-    }
-    if deformation_model.is_some() {
-        return Err(FactoryError::Format(
-            "PROJJSON deformation_models is not written in this build".to_owned(),
-        ));
-    }
     if let Some(anchor) = anchor {
         writer.key("anchor");
         writer.string(anchor);
     }
+    if let Some(epoch) = anchor_epoch {
+        writer.key("anchor_epoch");
+        writer.number(rounded_anchor_epoch(epoch));
+    }
     Ok(())
+}
+
+/// `getRoundedEpochInDecimalYear`: snap to 0.001 year when the residual is at most 1e-3.
+fn rounded_anchor_epoch(year: f64) -> f64 {
+    let scaled = year * 1000.0;
+    let nearest = scaled.round();
+    if (scaled - nearest).abs() <= 1e-3 {
+        nearest / 1000.0
+    } else {
+        year
+    }
+}
+
+/// `deformation_models` of a CRS whose datum is dynamic and names a model.
+fn write_deformation_models(writer: &mut Writer, model: Option<&str>) {
+    if let Some(model) = model {
+        writer.key("deformation_models");
+        writer.start_array();
+        writer.start_object();
+        writer.key("name");
+        writer.string(model);
+        writer.end_object();
+        writer.end_array();
+    }
 }
 
 /// A datum ensemble. PROJ writes its `id` whatever the parent. The ellipsoid of its first member
@@ -756,8 +988,19 @@ fn write_ensemble(
     db: &DatabaseContext,
     parent: Chain,
 ) -> Result<(), FactoryError> {
-    let chain = chain_of(parent, ident(ensemble.identifiers()));
     writer.start_object();
+    write_ensemble_members(writer, ensemble, db, parent)?;
+    writer.end_object();
+    Ok(())
+}
+
+fn write_ensemble_members(
+    writer: &mut Writer,
+    ensemble: &DatumEnsemble,
+    db: &DatabaseContext,
+    parent: Chain,
+) -> Result<(), FactoryError> {
+    let chain = chain_of(parent, ident(ensemble.identifiers()));
     write_name(writer, ensemble.name());
     writer.key("members");
     writer.start_array();
@@ -790,35 +1033,51 @@ fn write_ensemble(
         None => writer.string(&super::wkt::format_g(ensemble.positional_accuracy(), 15)),
     }
     write_id(writer, ensemble.identifiers(), db);
-    writer.end_object();
     Ok(())
 }
 
-/// `geoid_model`, or `geoid_models` for several. A model's `id` is always written.
-fn write_geoid_models(writer: &mut Writer, models: &[GeoidModel], db: &DatabaseContext) {
+/// `geoid_model`, or `geoid_models` for several. A model's `id` is always written. The
+/// interpolation CRS is written only for a model with no `id`.
+fn write_geoid_models(
+    writer: &mut Writer,
+    models: &[GeoidModel],
+    db: &DatabaseContext,
+    parent: Chain,
+) -> Result<(), FactoryError> {
     match models {
         [] => {}
         [model] => {
             writer.key("geoid_model");
-            write_geoid_model(writer, model, db);
+            write_geoid_model(writer, model, db, parent)?;
         }
         many => {
             writer.key("geoid_models");
             writer.start_array();
             for model in many {
-                write_geoid_model(writer, model, db);
+                write_geoid_model(writer, model, db, parent)?;
             }
             writer.end_array();
         }
     }
+    Ok(())
 }
 
-fn write_geoid_model(writer: &mut Writer, model: &GeoidModel, db: &DatabaseContext) {
+fn write_geoid_model(
+    writer: &mut Writer,
+    model: &GeoidModel,
+    db: &DatabaseContext,
+    parent: Chain,
+) -> Result<(), FactoryError> {
     writer.start_object();
     writer.key("name");
     writer.string(model.name());
+    if let (true, Some(crs)) = (model.identifiers().is_empty(), &model.interpolation_crs) {
+        writer.key("interpolation_crs");
+        write_component(writer, crs, db, parent, Allow::Plain)?;
+    }
     write_id(writer, model.identifiers(), db);
     writer.end_object();
+    Ok(())
 }
 
 /// An ellipsoid as PROJ writes it: `radius` for a sphere, else `semi_major_axis` and either the
@@ -826,6 +1085,34 @@ fn write_geoid_model(writer: &mut Writer, model: &GeoidModel, db: &DatabaseConte
 /// with its `value` and `unit`.
 fn write_ellipsoid(writer: &mut Writer, ellipsoid: &Ellipsoid, db: &DatabaseContext, place: Place) {
     writer.start_object();
+    write_ellipsoid_members(writer, ellipsoid, db, place);
+    writer.end_object();
+}
+
+impl Ellipsoid {
+    /// PROJJSON for this ellipsoid, including `"type": "Ellipsoid"`.
+    #[must_use]
+    pub fn export_to_json(&self, db: &DatabaseContext, format: &JsonFormat) -> String {
+        let mut writer = Writer::new(format);
+        writer.start_object();
+        if !format.schema.is_empty() {
+            writer.key("$schema");
+            writer.string(&format.schema);
+        }
+        writer.key("type");
+        writer.string("Ellipsoid");
+        write_ellipsoid_members(&mut writer, self, db, Place::top(ident(self.identifiers())));
+        writer.end_object();
+        writer.finish()
+    }
+}
+
+fn write_ellipsoid_members(
+    writer: &mut Writer,
+    ellipsoid: &Ellipsoid,
+    db: &DatabaseContext,
+    place: Place,
+) {
     write_name(writer, ellipsoid.name());
     let sphere = ellipsoid.is_sphere();
     let major_key = if sphere { "radius" } else { "semi_major_axis" };
@@ -839,7 +1126,6 @@ fn write_ellipsoid(writer: &mut Writer, ellipsoid: &Ellipsoid, db: &DatabaseCont
         }
     }
     write_id_if(writer, place, ellipsoid.identifiers(), db);
-    writer.end_object();
 }
 
 /// A length under `key`: a bare number in metres, else `{value, unit}`.
@@ -866,12 +1152,43 @@ fn write_meridian(
     place: Place,
 ) {
     writer.start_object();
-    writer.key("name");
-    writer.string(meridian.name());
-    writer.key("longitude");
-    writer.number(meridian.longitude().convert_to(&UnitOfMeasure::degree()));
-    write_id_if(writer, place, meridian.identifiers(), db);
+    write_meridian_members(writer, meridian, db, place);
     writer.end_object();
+}
+
+fn write_meridian_members(
+    writer: &mut Writer,
+    meridian: &PrimeMeridian,
+    db: &DatabaseContext,
+    place: Place,
+) {
+    writer.key("name");
+    if meridian.identified.name.is_empty() {
+        writer.string("Greenwich");
+    } else {
+        writer.string(meridian.name());
+    }
+    writer.key("longitude");
+    write_angle(writer, meridian.longitude(), place);
+    write_id_if(writer, place, meridian.identifiers(), db);
+}
+
+/// A longitude: a bare number in degrees, else `{value, unit}`.
+fn write_angle(writer: &mut Writer, angle: &Measure, place: Place) {
+    if angle.unit().name() == "degree" {
+        writer.number(angle.value());
+    } else {
+        writer.start_object();
+        writer.key("value");
+        writer.number(angle.value());
+        writer.key("unit");
+        write_unit_object(
+            writer,
+            angle.unit(),
+            Place::inside(place.chain, Ident::Lacks, Allow::Plain),
+        );
+        writer.end_object();
+    }
 }
 
 /// `coordinate_system`: its subtype and its axes. The coordinate system's own `id` is not
@@ -888,11 +1205,6 @@ fn write_cs(
     writer.key("axis");
     writer.start_array();
     for axis in axes {
-        if axis.meridian.is_some() {
-            return Err(FactoryError::Format(
-                "PROJJSON axis meridian is not written in this build".to_owned(),
-            ));
-        }
         write_axis(writer, axis, parent);
     }
     writer.end_array();
@@ -902,12 +1214,28 @@ fn write_cs(
 
 fn write_axis(writer: &mut Writer, axis: &Axis, parent: Chain) {
     writer.start_object();
+    write_axis_members(writer, axis, parent);
+    writer.end_object();
+}
+
+fn write_axis_members(writer: &mut Writer, axis: &Axis, parent: Chain) {
     writer.key("name");
     writer.string(axis.name());
     writer.key("abbreviation");
     writer.string(axis.abbreviation());
     writer.key("direction");
     writer.string(axis.direction());
+    if let Some(meridian) = &axis.meridian {
+        writer.key("meridian");
+        writer.start_object();
+        writer.key("longitude");
+        write_angle(
+            writer,
+            meridian.longitude(),
+            Place::inside(parent, Ident::Lacks, Allow::Plain),
+        );
+        writer.end_object();
+    }
     let unit = &axis.unit;
     if matches!(unit.name(), "metre" | "degree") {
         writer.key("unit");
@@ -929,7 +1257,6 @@ fn write_axis(writer: &mut Writer, axis: &Axis, parent: Chain) {
         writer.key("range_meaning");
         writer.string(range);
     }
-    writer.end_object();
 }
 
 /// A unit that is not metre, degree or unity, as an object. Its `id` is written when `place`
@@ -942,6 +1269,7 @@ fn write_unit_object(writer: &mut Writer, unit: &UnitOfMeasure, place: Place) {
         UnitKind::Angular => "AngularUnit",
         UnitKind::Scale => "ScaleUnit",
         UnitKind::Time => "TimeUnit",
+        UnitKind::Parametric => "ParametricUnit",
         UnitKind::None | UnitKind::Unknown => "Unit",
     });
     writer.key("name");
@@ -954,8 +1282,8 @@ fn write_unit_object(writer: &mut Writer, unit: &UnitOfMeasure, place: Place) {
     writer.end_object();
 }
 
-/// A conversion inside a projected CRS: name, method, parameter values, and `id` by the usual
-/// rule. The conversion has no `type` there.
+/// A conversion inside a projected CRS: no `type`. A step or a top-level conversion writes
+/// `type` through [`write_operation`].
 fn write_conversion(
     writer: &mut Writer,
     conversion: &Conversion,
@@ -963,20 +1291,171 @@ fn write_conversion(
     place: Place,
 ) -> Result<(), FactoryError> {
     writer.start_object();
+    write_conversion_members(writer, conversion, db, place);
+    writer.end_object();
+    Ok(())
+}
+
+/// Name, method, parameters, and `id` of a conversion. An inverse conversion writes the inverse
+/// method, as `InverseConversion` builds it. The caller writes `type` when the conversion is an
+/// object of its own.
+fn write_conversion_members(
+    writer: &mut Writer,
+    conversion: &Conversion,
+    db: &DatabaseContext,
+    place: Place,
+) {
     write_name(writer, conversion.name());
     writer.key("method");
-    write_method(writer, conversion.method());
+    let method = if conversion.inverted {
+        conversion.method().inverse_of()
+    } else {
+        conversion.method().clone()
+    };
+    write_method(writer, &method);
     let parameters = conversion.parameters();
-    if !parameters.is_empty() {
+    let interpolation = interpolation_parameter(conversion);
+    if !parameters.is_empty() || interpolation.is_some() {
         writer.key("parameters");
         writer.start_array();
         for parameter in parameters {
             write_parameter(writer, parameter, place.chain);
         }
+        if let Some(parameter) = &interpolation {
+            write_parameter(writer, parameter, place.chain);
+        }
         writer.end_array();
     }
     write_id_if(writer, place, conversion.identifiers(), db);
+}
+
+fn operation_ident(operation: &CoordinateOperation) -> Ident {
+    ident(operation.identifiers())
+}
+
+/// An operation object: its `type`, then the members of its kind.
+fn write_operation(
+    writer: &mut Writer,
+    operation: &CoordinateOperation,
+    db: &DatabaseContext,
+    place: Place,
+) -> Result<(), FactoryError> {
+    match operation {
+        CoordinateOperation::Conversion(conversion) => {
+            writer.key("type");
+            writer.string("Conversion");
+            write_conversion_members(writer, conversion, db, place);
+            Ok(())
+        }
+        CoordinateOperation::Transformation(transformation) => {
+            write_transformation(writer, transformation, db, place)
+        }
+        CoordinateOperation::Concatenated(concatenated) => {
+            write_concatenated(writer, concatenated, db, place)
+        }
+    }
+}
+
+/// A step or another operation inside a parent chain, which asks for its `id`.
+fn write_operation_component(
+    writer: &mut Writer,
+    operation: &CoordinateOperation,
+    db: &DatabaseContext,
+    parent: Chain,
+) -> Result<(), FactoryError> {
+    let place = Place::inside(parent, operation_ident(operation), Allow::Asked);
+    writer.start_object();
+    write_operation(writer, operation, db, place)?;
     writer.end_object();
+    Ok(())
+}
+
+/// A transformation, or a point-motion operation when `point_motion` is set.
+///
+/// The source and target CRS write their `id`. A point-motion operation has no target.
+/// `accuracy` is the text PROJ stored, written as a JSON string.
+fn write_transformation(
+    writer: &mut Writer,
+    transformation: &Transformation,
+    db: &DatabaseContext,
+    place: Place,
+) -> Result<(), FactoryError> {
+    writer.key("type");
+    writer.string(if transformation.point_motion {
+        "PointMotionOperation"
+    } else {
+        "Transformation"
+    });
+    write_name(writer, transformation.name());
+    let source = transformation
+        .source_crs()
+        .ok_or_else(|| FactoryError::Format("transformation has no source CRS".to_owned()))?;
+    writer.key("source_crs");
+    write_component(writer, source, db, place.chain, Allow::Asked)?;
+    if !transformation.point_motion {
+        let target = transformation
+            .target_crs()
+            .ok_or_else(|| FactoryError::Format("transformation has no target CRS".to_owned()))?;
+        writer.key("target_crs");
+        write_component(writer, target, db, place.chain, Allow::Asked)?;
+        if let Some(interpolation) = transformation.interpolation_crs() {
+            writer.key("interpolation_crs");
+            write_component(writer, interpolation, db, place.chain, Allow::Asked)?;
+        }
+    }
+    writer.key("method");
+    let method = if transformation.inverted {
+        transformation.method().inverse_of()
+    } else {
+        transformation.method().clone()
+    };
+    write_method(writer, &method);
+    writer.key("parameters");
+    writer.start_array();
+    for parameter in transformation.parameters() {
+        write_parameter(writer, parameter, place.chain);
+    }
+    writer.end_array();
+    if let Some(text) = transformation.accuracy_text.clone().or_else(|| {
+        transformation
+            .accuracy()
+            .map(|value| super::wkt::format_g(value, 15))
+    }) {
+        writer.key("accuracy");
+        writer.string(&text);
+    }
+    write_base(writer, &transformation.identified, place, db);
+    Ok(())
+}
+
+/// A concatenated operation: source and target CRS, steps, accuracy, then usage and `id`.
+fn write_concatenated(
+    writer: &mut Writer,
+    operation: &ConcatenatedOperation,
+    db: &DatabaseContext,
+    place: Place,
+) -> Result<(), FactoryError> {
+    writer.key("type");
+    writer.string("ConcatenatedOperation");
+    write_name(writer, operation.name());
+    let (source, target) = operation
+        .crs_pair()
+        .ok_or_else(|| FactoryError::Format("concatenated operation has no CRS pair".to_owned()))?;
+    writer.key("source_crs");
+    write_component(writer, source, db, place.chain, Allow::Asked)?;
+    writer.key("target_crs");
+    write_component(writer, target, db, place.chain, Allow::Asked)?;
+    writer.key("steps");
+    writer.start_array();
+    for step in operation.steps() {
+        write_operation_component(writer, step.operation(), db, place.chain)?;
+    }
+    writer.end_array();
+    if let Some(text) = operation.accuracy_text() {
+        writer.key("accuracy");
+        writer.string(&text);
+    }
+    write_base(writer, &operation.identified, place, db);
     Ok(())
 }
 
@@ -1030,13 +1509,42 @@ fn write_parameter(writer: &mut Writer, parameter: &Parameter, parent: Chain) {
 
 /// Usage of a top object: `scope`, `area` and `bbox` for one domain, or a `usages` array for
 /// several. Nothing is written below the top object.
-fn write_usage(writer: &mut Writer, domains: &[ObjectDomain], place: Place) {
+/// Usage of a top object, then its `id` and `remarks`: PROJ's `ObjectUsage::baseExportToJSON`.
+fn write_base(writer: &mut Writer, identified: &Identified, place: Place, db: &DatabaseContext) {
+    write_usage(
+        writer,
+        &identified.domains,
+        identified.vertical_extent.as_ref(),
+        place,
+    );
+    write_id_if(writer, place, &identified.identifiers, db);
+    if !identified.remarks.is_empty() {
+        writer.key("remarks");
+        writer.string(&identified.remarks);
+    }
+}
+
+fn write_usage(
+    writer: &mut Writer,
+    domains: &[ObjectDomain],
+    vertical: Option<&VerticalExtent>,
+    place: Place,
+) {
     if !place.top {
         return;
     }
     match domains {
-        [] => {}
-        [domain] => write_domain_members(writer, domain),
+        [] => {
+            if let Some(vertical) = vertical {
+                write_vertical_extent(writer, vertical);
+            }
+        }
+        [domain] => {
+            write_domain_members(writer, domain);
+            if let Some(vertical) = vertical {
+                write_vertical_extent(writer, vertical);
+            }
+        }
         many => {
             writer.key("usages");
             writer.start_array();
@@ -1048,6 +1556,24 @@ fn write_usage(writer: &mut Writer, domains: &[ObjectDomain], place: Place) {
             writer.end_array();
         }
     }
+}
+
+fn write_vertical_extent(writer: &mut Writer, vertical: &VerticalExtent) {
+    writer.key("vertical_extent");
+    writer.start_object();
+    writer.key("minimum");
+    writer.number(vertical.minimum);
+    writer.key("maximum");
+    writer.number(vertical.maximum);
+    if vertical.unit.name() != "metre" {
+        writer.key("unit");
+        write_unit_object(
+            writer,
+            &vertical.unit,
+            Place::inside(Chain::Clear, Ident::Lacks, Allow::Plain),
+        );
+    }
+    writer.end_object();
 }
 
 fn write_domain_members(writer: &mut Writer, domain: &ObjectDomain) {
@@ -1103,7 +1629,12 @@ fn write_id(writer: &mut Writer, identifiers: &[Identifier], db: &DatabaseContex
     let (authority, version) = db
         .authority_and_version(identifier.code_space())
         .map(|(authority, version)| (authority, Some(version)))
-        .unwrap_or_else(|| (identifier.code_space().to_owned(), None));
+        .unwrap_or_else(|| {
+            (
+                identifier.code_space().to_owned(),
+                identifier.version.clone(),
+            )
+        });
     writer.key("id");
     writer.start_object();
     writer.key("authority");
@@ -1112,7 +1643,19 @@ fn write_id(writer: &mut Writer, identifiers: &[Identifier], db: &DatabaseContex
     write_code(writer, identifier.code());
     if let Some(version) = version {
         writer.key("version");
-        write_code(writer, &version);
+        if version.parse::<f64>().is_ok() {
+            writer.raw_token(&version);
+        } else {
+            writer.string(&version);
+        }
+    }
+    if let Some(citation) = &identifier.authority_citation {
+        writer.key("authority_citation");
+        writer.string(citation);
+    }
+    if let Some(uri) = &identifier.uri {
+        writer.key("uri");
+        writer.string(uri);
     }
     writer.end_object();
 }
@@ -1156,9 +1699,16 @@ pub fn create_from_user_input(text: &str, db: &DatabaseContext) -> Result<Crs, F
     if text.starts_with('{') {
         return import_json(text, db);
     }
+    if let Some(crs) = crs_from_ogc_auto(text)? {
+        return Ok(crs);
+    }
     let bare = text.strip_prefix('+').unwrap_or(text);
     if bare.starts_with("proj=") || text.contains(" +proj=") || text.contains(" proj=") {
         return create_crs_from_proj_string_with_database(text, db);
+    }
+    // An OGC CRS URL contains colons, so it must be tried before `AUTH:CODE`.
+    if is_ogc_crs_url(text) {
+        return import_ogc_crs_url(text, db);
     }
     if let Some(crs) = crs_from_authority_code(text, db)? {
         return Ok(crs);
@@ -1315,6 +1865,14 @@ fn crs_from_authority_code(text: &str, db: &DatabaseContext) -> Result<Option<Cr
         if let Ok(crs) = factory.create_coordinate_reference_system(tokens[1]) {
             return Ok(Some(crs));
         }
+        // PROJ retries EPSG:102100 as ESRI:102100. The identifiers stay ESRI.
+        if tokens[0].eq_ignore_ascii_case("EPSG") && tokens[1] == "102100" {
+            if let Ok(crs) =
+                AuthorityFactory::create(db, "ESRI").create_coordinate_reference_system("102100")
+            {
+                return Ok(Some(crs));
+            }
+        }
         let parts: Vec<&str> = tokens[1].split('+').collect();
         if parts.len() == 2 {
             return Ok(Some(implicit_compound(
@@ -1348,23 +1906,396 @@ fn implicit_compound(
     CompoundCRS::create_lax(name, vec![horizontal, vertical])
 }
 
+const OGC_CRS_URL_PREFIXES: &[&str] = &[
+    "https://www.opengis.net/def/crs",
+    "http://www.opengis.net/def/crs",
+    "https://opengis.net/def/crs",
+    "http://opengis.net/def/crs",
+    "www.opengis.net/def/crs",
+];
+
+fn is_ogc_crs_url(text: &str) -> bool {
+    OGC_CRS_URL_PREFIXES
+        .iter()
+        .any(|prefix| text.starts_with(prefix))
+}
+
+/// OGC Best Practice 11-135: `http://www.opengis.net/def/crs/AUTH/version/code`
+/// and a `crs-compound` query of those URLs.
+fn import_ogc_crs_url(text: &str, db: &DatabaseContext) -> Result<Crs, FactoryError> {
+    let Some(prefix) = OGC_CRS_URL_PREFIXES
+        .iter()
+        .find(|prefix| text.starts_with(*prefix))
+    else {
+        return Err(FactoryError::Invalid("invalid OGC CRS URL".to_owned()));
+    };
+    let rest = &text[prefix.len()..];
+    let parts: Vec<&str> = rest.split('/').collect();
+    if parts
+        .first()
+        .is_some_and(|part| part.starts_with("-compound?"))
+    {
+        let query = text.split_once('?').map(|(_, query)| query).unwrap_or("");
+        let mut keyed = std::collections::BTreeMap::new();
+        for part in query.split('&') {
+            let Some((index, url)) = part.split_once('=') else {
+                return Err(FactoryError::Invalid("invalid OGC CRS URL".to_owned()));
+            };
+            let index = index
+                .parse::<usize>()
+                .map_err(|_| FactoryError::Invalid("invalid OGC CRS URL".to_owned()))?;
+            keyed.insert(index, url);
+        }
+        let mut components = Vec::new();
+        let mut name = String::new();
+        for index in 1..=keyed.len() {
+            let Some(url) = keyed.get(&index) else {
+                return Err(FactoryError::Invalid("invalid OGC CRS URL".to_owned()));
+            };
+            let component = import_ogc_crs_url(url, db)?;
+            if !name.is_empty() {
+                name.push_str(" + ");
+            }
+            name.push_str(component.name());
+            components.push(component);
+        }
+        return Ok(Crs::Compound(CompoundCRS::create(name, components)?));
+    }
+    if parts.len() < 4 {
+        return Err(FactoryError::Invalid("invalid OGC CRS URL".to_owned()));
+    }
+    authority_crs(db, parts[1], parts[2], parts[3])
+}
+
+fn authority_crs(
+    db: &DatabaseContext,
+    authority: &str,
+    version: &str,
+    code: &str,
+) -> Result<Crs, FactoryError> {
+    match AuthorityFactory::create(db, authority).create_coordinate_reference_system(code) {
+        Ok(crs) => Ok(crs),
+        Err(error) => {
+            if version.is_empty() || version == "0" {
+                for versioned in db.versioned_authorities_from_name(authority) {
+                    if let Ok(crs) = AuthorityFactory::create(db, &versioned)
+                        .create_coordinate_reference_system(code)
+                    {
+                        return Ok(crs);
+                    }
+                }
+                return Err(error);
+            }
+            let Some(versioned) = db.versioned_authority(authority, version) else {
+                return Err(error);
+            };
+            AuthorityFactory::create(db, &versioned).create_coordinate_reference_system(code)
+        }
+    }
+}
+
 fn import_json(text: &str, db: &DatabaseContext) -> Result<Crs, FactoryError> {
+    // Strict PROJJSON first. A datum at the root is not a CRS. A projected CRS that
+    // omits `type` on its datum and `coordinate_system` fails both importers and is
+    // still a CRS through the lenient reader.
+    if let Ok(JsonObject::Crs(crs)) = create_object_from_json(text, Some(db)) {
+        return Ok(crs);
+    }
+    match import_user_object(text, db) {
+        Ok(UserObject::Crs(crs)) => Ok(crs),
+        Ok(_) => Err(FactoryError::Invalid(
+            "PROJJSON object is not a CRS".to_owned(),
+        )),
+        Err(error) => lenient_projected_json(text, db).map_err(|_| error),
+    }
+}
+
+/// Projected PROJJSON with omitted names, units, and coordinate systems.
+///
+/// `create_object_from_json` stays strict. This runs only after that import fails.
+fn lenient_projected_json(text: &str, db: &DatabaseContext) -> Result<Crs, FactoryError> {
     let value = crs_text::parse_json(text)
         .map_err(|error| FactoryError::Invalid(format!("PROJJSON: {error}")))?;
     let object = value
         .as_object()
         .ok_or_else(|| FactoryError::Invalid("PROJJSON root is not an object".to_owned()))?;
-    let kind = required_str(object, "type")?;
-    match kind {
-        "GeographicCRS" => Ok(Crs::Geographic(read_geographic(object, db)?)),
-        other => Err(FactoryError::Invalid(format!(
-            "PROJJSON type {other} is not imported in this build"
-        ))),
+    if required_str(object, "type")? != "ProjectedCRS" {
+        return Err(FactoryError::Invalid(
+            "PROJJSON type is not a projected CRS".to_owned(),
+        ));
+    }
+    read_projected(object, db)
+}
+
+/// A projected CRS. The base is geographic. A missing `type` on the base is still geographic.
+/// Names may be absent; they are stored as `unnamed`.
+fn read_projected(object: &Object, db: &DatabaseContext) -> Result<Crs, FactoryError> {
+    let name = optional_name(object);
+    let base = object
+        .get("base_crs")
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            FactoryError::Invalid("PROJJSON projected CRS has no base_crs".to_owned())
+        })?;
+    let base_kind = base
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("GeographicCRS");
+    if base_kind != "GeographicCRS" {
+        return Err(FactoryError::Invalid(format!(
+            "PROJJSON projected base CRS type {base_kind} is not imported"
+        )));
+    }
+    let geographic = read_geographic(base, db)?;
+    let conversion_object = object
+        .get("conversion")
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            FactoryError::Invalid("PROJJSON projected CRS has no conversion".to_owned())
+        })?;
+    let conversion = read_conversion(conversion_object, db)?;
+    let coordinate_system = object
+        .get("coordinate_system")
+        .and_then(Value::as_object)
+        .map(read_cartesian_cs)
+        .transpose()?
+        .unwrap_or_else(|| CartesianCS::create_easting_northing(UnitOfMeasure::metre()));
+    let mut crs = ProjectedCRS::create(
+        name,
+        GeodeticCRS::Geographic(geographic),
+        conversion,
+        coordinate_system,
+    );
+    if let Some(identifier) = object
+        .get("id")
+        .and_then(Value::as_object)
+        .map(|id| read_id(id, db))
+        .transpose()?
+        .flatten()
+    {
+        crs = crs.with_identifier(identifier.code_space(), identifier.code());
+    }
+    Ok(Crs::Projected(crs))
+}
+
+fn read_conversion(object: &Object, db: &DatabaseContext) -> Result<Conversion, FactoryError> {
+    let name = optional_name(object);
+    let method_object = object
+        .get("method")
+        .and_then(Value::as_object)
+        .ok_or_else(|| FactoryError::Invalid("PROJJSON conversion has no method".to_owned()))?;
+    let (method, mapped) = read_method(method_object, db)?;
+    let parameters = object
+        .get("parameters")
+        .and_then(Value::as_array)
+        .map(|items| read_parameters(items, mapped, db))
+        .transpose()?
+        .unwrap_or_default();
+    let mut identified = Identified::named(name);
+    if let Some(identifier) = object
+        .get("id")
+        .and_then(Value::as_object)
+        .map(|id| read_id(id, db))
+        .transpose()?
+        .flatten()
+    {
+        identified = identified.with_id(identifier.code_space(), identifier.code());
+    }
+    Ok(Conversion {
+        identified,
+        method,
+        parameters,
+        source: None,
+        target: None,
+        version: None,
+        inverted: false,
+        interpolation: None,
+    })
+}
+
+fn read_method(
+    object: &Object,
+    db: &DatabaseContext,
+) -> Result<(OperationMethod, &'static super::parammap::MethodMap), FactoryError> {
+    let name = object.get("name").and_then(Value::as_str);
+    let identifier = object
+        .get("id")
+        .and_then(Value::as_object)
+        .map(|id| read_id(id, db))
+        .transpose()?
+        .flatten();
+    let code_number = identifier
+        .as_ref()
+        .and_then(|identifier| identifier.code().parse::<i32>().ok());
+    let mapped = code_number
+        .and_then(method_by_code)
+        .or_else(|| name.and_then(method_by_name))
+        .ok_or_else(|| {
+            FactoryError::Invalid(format!(
+                "PROJJSON conversion method {} is not imported",
+                name.unwrap_or("without a name")
+            ))
+        })?;
+    let (code_space, code) = match &identifier {
+        Some(identifier) => (
+            identifier.code_space().to_owned(),
+            identifier.code().to_owned(),
+        ),
+        None => (String::new(), String::new()),
+    };
+    let method_name = name.unwrap_or(mapped.wkt2_name).to_owned();
+    Ok((
+        OperationMethod::named_code(method_name, code_space, code),
+        mapped,
+    ))
+}
+
+fn read_parameters(
+    items: &[Value],
+    method: &super::parammap::MethodMap,
+    db: &DatabaseContext,
+) -> Result<Vec<Parameter>, FactoryError> {
+    let mut parameters = Vec::with_capacity(items.len());
+    for item in items {
+        let object = item.as_object().ok_or_else(|| {
+            FactoryError::Invalid("PROJJSON parameter is not an object".to_owned())
+        })?;
+        let name = optional_name(object);
+        let identifier = object
+            .get("id")
+            .and_then(Value::as_object)
+            .map(|id| read_id(id, db))
+            .transpose()?
+            .flatten();
+        let value = object.get("value").and_then(Value::as_f64).ok_or_else(|| {
+            FactoryError::Invalid(format!("PROJJSON parameter {name} has no value"))
+        })?;
+        let unit = match object.get("unit") {
+            Some(unit) => read_unit_value(unit)?,
+            None => parameter_unit(method, name, identifier.as_ref())?,
+        };
+        let (code_space, code) = match &identifier {
+            Some(identifier) => (
+                identifier.code_space().to_owned(),
+                identifier.code().to_owned(),
+            ),
+            None => (String::new(), String::new()),
+        };
+        parameters.push(Parameter {
+            name: name.to_owned(),
+            code_space,
+            code,
+            value: ParameterValue::Measure(Measure { value, unit }),
+        });
+    }
+    Ok(parameters)
+}
+
+/// Unit of a parameter that names none, from the method's parameter map.
+fn parameter_unit(
+    method: &super::parammap::MethodMap,
+    name: &str,
+    identifier: Option<&Identifier>,
+) -> Result<UnitOfMeasure, FactoryError> {
+    let code = identifier.and_then(|identifier| identifier.code().parse::<i32>().ok());
+    let found = method.params.iter().find(|param| {
+        code.is_some_and(|code| code != 0 && param.epsg_code == code)
+            || same_token(param.wkt2_name, name)
+    });
+    let Some(param) = found else {
+        return Err(FactoryError::Invalid(format!(
+            "PROJJSON parameter {name} has no unit"
+        )));
+    };
+    Ok(match param.unit {
+        UnitKind::Linear => UnitOfMeasure::metre(),
+        UnitKind::Angular => UnitOfMeasure::degree(),
+        UnitKind::Scale => UnitOfMeasure::unity(),
+        UnitKind::Time | UnitKind::None | UnitKind::Unknown | UnitKind::Parametric => {
+            return Err(FactoryError::Invalid(format!(
+                "PROJJSON parameter {name} has no unit"
+            )));
+        }
+    })
+}
+
+fn same_token(left: &str, right: &str) -> bool {
+    let fold = |text: &str| {
+        text.chars()
+            .filter(|ch| !matches!(ch, ' ' | '_' | '-' | '/'))
+            .flat_map(|ch| ch.to_lowercase())
+            .collect::<String>()
+    };
+    fold(left) == fold(right)
+}
+
+fn read_cartesian_cs(object: &Object) -> Result<CartesianCS, FactoryError> {
+    let Some(axes) = object.get("axis").and_then(Value::as_array) else {
+        return Ok(CartesianCS::create_easting_northing(UnitOfMeasure::metre()));
+    };
+    let mut built = Vec::new();
+    for axis in axes {
+        let Some(axis) = axis.as_object() else {
+            continue;
+        };
+        built.push(read_axis(axis, UnitOfMeasure::metre())?);
+    }
+    CartesianCS::create(built)
+}
+
+fn read_axis(axis: &Object, default_unit: UnitOfMeasure) -> Result<Axis, FactoryError> {
+    let name = axis.get("name").and_then(Value::as_str).unwrap_or("axis");
+    let abbreviation = axis
+        .get("abbreviation")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let direction = axis
+        .get("direction")
+        .and_then(Value::as_str)
+        .unwrap_or("north");
+    let unit = match axis.get("unit") {
+        Some(unit) => read_unit_value(unit)?,
+        None => default_unit,
+    };
+    Ok(Axis::new(name, abbreviation, direction, unit))
+}
+
+fn read_unit_value(value: &Value) -> Result<UnitOfMeasure, FactoryError> {
+    match value {
+        Value::String(name) => named_unit(name, None),
+        Value::Object(object) => read_unit(object),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) => Err(
+            FactoryError::Invalid("PROJJSON unit is not a string or an object".to_owned()),
+        ),
     }
 }
 
+fn named_unit(name: &str, factor: Option<f64>) -> Result<UnitOfMeasure, FactoryError> {
+    if name.eq_ignore_ascii_case("degree") {
+        return Ok(UnitOfMeasure::degree());
+    }
+    if name.eq_ignore_ascii_case("metre") || name.eq_ignore_ascii_case("meter") {
+        return Ok(UnitOfMeasure::metre());
+    }
+    if name.eq_ignore_ascii_case("unity") {
+        return Ok(UnitOfMeasure::unity());
+    }
+    Ok(UnitOfMeasure::new(
+        name,
+        factor.unwrap_or(1.0),
+        UnitKind::Unknown,
+    ))
+}
+
+fn optional_name(object: &Object) -> &str {
+    object
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("unnamed")
+}
+
 fn read_geographic(object: &Object, db: &DatabaseContext) -> Result<GeographicCRS, FactoryError> {
-    let name = required_str(object, "name")?;
+    let name = optional_name(object);
     let datum = object
         .get("datum")
         .and_then(Value::as_object)
@@ -1409,7 +2340,7 @@ fn read_datum(
     object: &Object,
     db: &DatabaseContext,
 ) -> Result<GeodeticReferenceFrame, FactoryError> {
-    let name = required_str(object, "name")?;
+    let name = optional_name(object);
     let ellipsoid = object
         .get("ellipsoid")
         .and_then(Value::as_object)
@@ -1432,6 +2363,13 @@ fn read_datum(
     {
         identified.identifiers.push(identifier);
     }
+    if let Some(extent) = object.get("temporal_extent").and_then(Value::as_object) {
+        identified.temporal_start = extent
+            .get("start")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        identified.temporal_end = extent.get("end").and_then(Value::as_str).map(str::to_owned);
+    }
     Ok(GeodeticReferenceFrame {
         identified,
         ellipsoid,
@@ -1452,7 +2390,7 @@ fn read_ensemble(object: &Object, db: &DatabaseContext) -> Result<DatumEnsemble,
         let Some(member) = member.as_object() else {
             continue;
         };
-        frames.push(super::model::Datum::Geodetic(read_datum(member, db)?));
+        frames.push(Datum::Geodetic(read_datum(member, db)?));
     }
     let accuracy = object
         .get("accuracy")
@@ -1472,7 +2410,7 @@ fn read_ensemble(object: &Object, db: &DatabaseContext) -> Result<DatumEnsemble,
 }
 
 fn read_ellipsoid(object: &Object, db: &DatabaseContext) -> Result<Ellipsoid, FactoryError> {
-    let name = required_str(object, "name")?;
+    let name = optional_name(object);
     let semi_major = object
         .get("semi_major_axis")
         .and_then(Value::as_f64)
@@ -1523,22 +2461,7 @@ fn read_ellipsoidal_cs(object: &Object) -> Result<EllipsoidalCS, FactoryError> {
         let Some(axis) = axis.as_object() else {
             continue;
         };
-        let name = axis.get("name").and_then(Value::as_str).unwrap_or("axis");
-        let abbreviation = axis
-            .get("abbreviation")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        let direction = axis
-            .get("direction")
-            .and_then(Value::as_str)
-            .unwrap_or("north");
-        let unit = axis
-            .get("unit")
-            .and_then(Value::as_object)
-            .map(read_unit)
-            .transpose()?
-            .unwrap_or_else(UnitOfMeasure::degree);
-        built.push(Axis::new(name, abbreviation, direction, unit));
+        built.push(read_axis(axis, UnitOfMeasure::degree())?);
     }
     if built.len() == 2 || built.len() == 3 {
         Ok(EllipsoidalCS {
@@ -1563,14 +2486,22 @@ fn read_unit(object: &Object) -> Result<UnitOfMeasure, FactoryError> {
     if name.eq_ignore_ascii_case("metre") || name.eq_ignore_ascii_case("meter") {
         return Ok(UnitOfMeasure::metre());
     }
+    if name.eq_ignore_ascii_case("unity") {
+        return Ok(UnitOfMeasure::unity());
+    }
     let factor = object
         .get("conversion_factor")
         .and_then(Value::as_f64)
         .unwrap_or(1.0);
+    let kind = object
+        .get("type")
+        .and_then(Value::as_str)
+        .map(unit_kind_name)
+        .unwrap_or(UnitKind::Unknown);
     Ok(UnitOfMeasure {
         name: name.to_owned(),
         factor,
-        kind: super::model::UnitKind::Unknown,
+        kind,
         code_space: String::new(),
         code: String::new(),
     })
@@ -1625,4 +2556,1007 @@ fn required_str<'a>(object: &'a Object, key: &str) -> Result<&'a str, FactoryErr
         .get(key)
         .and_then(Value::as_str)
         .ok_or_else(|| FactoryError::Invalid(format!("PROJJSON object is missing {key}")))
+}
+
+/// The members of the datum ensemble that `name` approximately matches in `proj.db`.
+pub(super) fn ensemble_members_by_name(
+    db: &DatabaseContext,
+    name: &str,
+) -> Result<Vec<Datum>, FactoryError> {
+    let found = AuthorityFactory::create(db, "").create_objects_from_name(
+        name,
+        &[ObjectType::DatumEnsemble],
+        NameMatch::Approximate,
+        1,
+    )?;
+    Ok(match found.into_iter().next() {
+        Some(AuthorityObject::DatumEnsemble(ensemble)) => ensemble.members().to_vec(),
+        _ => Vec::new(),
+    })
+}
+
+/// The datum named exactly `name` in `proj.db`, when there is one.
+pub(super) fn datum_by_name(
+    db: &DatabaseContext,
+    name: &str,
+) -> Result<Option<Datum>, FactoryError> {
+    let found = AuthorityFactory::create(db, "").create_objects_from_name(
+        name,
+        &[ObjectType::Datum],
+        NameMatch::Exact,
+        1,
+    )?;
+    Ok(found.into_iter().find_map(|object| match object {
+        AuthorityObject::Datum(datum) => Some(datum),
+        _ => None,
+    }))
+}
+
+fn invalid(text: impl Into<String>) -> FactoryError {
+    FactoryError::Invalid(text.into())
+}
+
+fn unit_kind_name(type_name: &str) -> UnitKind {
+    match type_name {
+        "LinearUnit" => UnitKind::Linear,
+        "AngularUnit" => UnitKind::Angular,
+        "ScaleUnit" => UnitKind::Scale,
+        "TimeUnit" => UnitKind::Time,
+        "ParametricUnit" => UnitKind::Parametric,
+        _ => UnitKind::Unknown,
+    }
+}
+
+/// A CRS, or a datum PROJJSON can name at the root. `createFromUserInput` in PROJ returns either.
+#[derive(Clone, Debug)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a geodetic datum carries an ellipsoid; the other objects do not"
+)]
+pub enum UserObject {
+    /// A coordinate reference system.
+    Crs(Crs),
+    /// A geodetic reference frame, including a dynamic one.
+    GeodeticDatum(GeodeticReferenceFrame),
+    /// A parametric datum.
+    ParametricDatum(ParametricDatum),
+    /// An engineering datum.
+    EngineeringDatum(EngineeringDatum),
+    /// A temporal datum.
+    TemporalDatum(TemporalDatum),
+}
+
+impl UserObject {
+    /// PROJJSON for this object in `format`.
+    ///
+    /// # Errors
+    ///
+    /// A part of the object has no PROJJSON export in this build.
+    pub fn export_to_json(
+        &self,
+        db: &DatabaseContext,
+        format: &JsonFormat,
+    ) -> Result<String, FactoryError> {
+        match self {
+            Self::Crs(crs) => crs.export_to_json_with(db, format),
+            Self::GeodeticDatum(datum) => export_wrapped(format, |writer| {
+                write_datum_fields(writer, datum, db, Place::top(ident(datum.identifiers())))
+            }),
+            Self::ParametricDatum(datum) => export_plain(
+                format,
+                &PlainDatum {
+                    type_name: Some("ParametricDatum"),
+                    name: datum.name(),
+                    calendar: None,
+                    origin: None,
+                    anchor: datum.anchor_definition(),
+                    identifiers: datum.identifiers(),
+                },
+                db,
+            ),
+            Self::EngineeringDatum(datum) => export_plain(
+                format,
+                &PlainDatum {
+                    type_name: Some("EngineeringDatum"),
+                    name: datum.name(),
+                    calendar: None,
+                    origin: None,
+                    anchor: datum.anchor_definition(),
+                    identifiers: datum.identifiers(),
+                },
+                db,
+            ),
+            Self::TemporalDatum(datum) => export_plain(
+                format,
+                &PlainDatum {
+                    type_name: Some("TemporalDatum"),
+                    name: datum.name(),
+                    calendar: Some(datum.calendar()),
+                    origin: Some(datum.temporal_origin()),
+                    anchor: None,
+                    identifiers: datum.identifiers(),
+                },
+                db,
+            ),
+        }
+    }
+}
+
+/// `createFromUserInput` for a CRS or a root datum.
+///
+/// JSON whose `type` is a datum returns that datum. Every other accepted text is a CRS, the same
+/// objects [`create_from_user_input`] builds.
+///
+/// # Errors
+///
+/// The text is not a CRS or a datum this importer accepts.
+pub fn create_object_from_user_input(
+    text: &str,
+    db: &DatabaseContext,
+) -> Result<UserObject, FactoryError> {
+    let text = text.trim();
+    if text.starts_with('{') {
+        return import_user_object(text, db);
+    }
+    Ok(UserObject::Crs(create_from_user_input(text, db)?))
+}
+
+fn export_wrapped(
+    format: &JsonFormat,
+    write: impl FnOnce(&mut Writer) -> Result<(), FactoryError>,
+) -> Result<String, FactoryError> {
+    let mut writer = Writer::new(format);
+    writer.start_object();
+    if !format.schema.is_empty() {
+        writer.key("$schema");
+        writer.string(&format.schema);
+    }
+    write(&mut writer)?;
+    writer.end_object();
+    Ok(writer.finish())
+}
+
+/// Fields of a parametric, engineering, or temporal datum. Nested datums omit `type`.
+struct PlainDatum<'a> {
+    type_name: Option<&'a str>,
+    name: &'a str,
+    calendar: Option<&'a str>,
+    origin: Option<&'a str>,
+    anchor: Option<&'a str>,
+    identifiers: &'a [Identifier],
+}
+
+fn export_plain(
+    format: &JsonFormat,
+    datum: &PlainDatum<'_>,
+    db: &DatabaseContext,
+) -> Result<String, FactoryError> {
+    export_wrapped(format, |writer| {
+        write_plain_datum_fields(writer, datum, db, Place::top(ident(datum.identifiers)))
+    })
+}
+
+fn write_plain_datum_fields(
+    writer: &mut Writer,
+    datum: &PlainDatum<'_>,
+    db: &DatabaseContext,
+    place: Place,
+) -> Result<(), FactoryError> {
+    if let Some(type_name) = datum.type_name {
+        writer.key("type");
+        writer.string(type_name);
+    }
+    write_name(writer, datum.name);
+    if let Some(calendar) = datum.calendar.filter(|text| !text.is_empty()) {
+        writer.key("calendar");
+        writer.string(calendar);
+    }
+    if let Some(origin) = datum.origin.filter(|text| !text.is_empty()) {
+        writer.key("time_origin");
+        writer.string(origin);
+    }
+    write_anchor(writer, datum.anchor, None)?;
+    write_id_if(writer, place, datum.identifiers, db);
+    Ok(())
+}
+
+fn write_plain_datum_object(
+    writer: &mut Writer,
+    datum: &PlainDatum<'_>,
+    db: &DatabaseContext,
+    place: Place,
+) -> Result<(), FactoryError> {
+    writer.start_object();
+    write_plain_datum_fields(writer, datum, db, place)?;
+    writer.end_object();
+    Ok(())
+}
+
+fn write_engineering(
+    writer: &mut Writer,
+    crs: &EngineeringCRS,
+    db: &DatabaseContext,
+    place: Place,
+) -> Result<(), FactoryError> {
+    writer.key("type");
+    writer.string("EngineeringCRS");
+    write_name(writer, crs.name());
+    writer.key("datum");
+    let datum = crs.datum();
+    write_plain_datum_object(
+        writer,
+        &PlainDatum {
+            type_name: None,
+            name: datum.name(),
+            calendar: None,
+            origin: None,
+            anchor: datum.anchor_definition(),
+            identifiers: datum.identifiers(),
+        },
+        db,
+        Place::inside(place.chain, ident(datum.identifiers()), Allow::Plain),
+    )?;
+    writer.key("coordinate_system");
+    write_system(writer, crs.coordinate_system(), place.chain)?;
+    write_usage(writer, crs.domains(), None, place);
+    write_id_if(writer, place, crs.identifiers(), db);
+    Ok(())
+}
+
+fn write_temporal(
+    writer: &mut Writer,
+    crs: &TemporalCRS,
+    db: &DatabaseContext,
+    place: Place,
+) -> Result<(), FactoryError> {
+    writer.key("type");
+    writer.string("TemporalCRS");
+    write_name(writer, crs.name());
+    writer.key("datum");
+    let datum = crs.datum();
+    write_plain_datum_object(
+        writer,
+        &PlainDatum {
+            type_name: None,
+            name: datum.name(),
+            calendar: Some(datum.calendar()),
+            origin: Some(datum.temporal_origin()),
+            anchor: None,
+            identifiers: datum.identifiers(),
+        },
+        db,
+        Place::inside(place.chain, ident(datum.identifiers()), Allow::Plain),
+    )?;
+    writer.key("coordinate_system");
+    let subtype = match crs.coordinate_system().kind() {
+        TemporalCsKind::DateTime => "TemporalDateTime",
+        TemporalCsKind::Count => "TemporalCount",
+        TemporalCsKind::Measure => "TemporalMeasure",
+    };
+    write_cs(
+        writer,
+        subtype,
+        std::slice::from_ref(crs.coordinate_system().axis()),
+        place.chain,
+    )?;
+    write_usage(writer, crs.domains(), None, place);
+    write_id_if(writer, place, crs.identifiers(), db);
+    Ok(())
+}
+
+fn write_parametric(
+    writer: &mut Writer,
+    crs: &ParametricCRS,
+    db: &DatabaseContext,
+    place: Place,
+) -> Result<(), FactoryError> {
+    writer.key("type");
+    writer.string("ParametricCRS");
+    write_name(writer, crs.name());
+    writer.key("datum");
+    let datum = crs.datum();
+    write_plain_datum_object(
+        writer,
+        &PlainDatum {
+            type_name: None,
+            name: datum.name(),
+            calendar: None,
+            origin: None,
+            anchor: datum.anchor_definition(),
+            identifiers: datum.identifiers(),
+        },
+        db,
+        Place::inside(place.chain, ident(datum.identifiers()), Allow::Plain),
+    )?;
+    writer.key("coordinate_system");
+    write_cs(
+        writer,
+        "parametric",
+        std::slice::from_ref(crs.coordinate_system().axis()),
+        place.chain,
+    )?;
+    write_usage(writer, crs.domains(), None, place);
+    write_id_if(writer, place, crs.identifiers(), db);
+    Ok(())
+}
+
+fn write_derived(
+    writer: &mut Writer,
+    crs: &DerivedCRS,
+    db: &DatabaseContext,
+    place: Place,
+) -> Result<(), FactoryError> {
+    writer.key("type");
+    writer.string(derived_json_type(crs));
+    write_name(writer, crs.name());
+    writer.key("base_crs");
+    write_component(writer, crs.base_crs(), db, place.chain, Allow::Asked)?;
+    write_deriving_conversion(writer, crs.deriving_conversion(), db, place)?;
+    writer.key("coordinate_system");
+    write_system(writer, crs.coordinate_system(), place.chain)?;
+    write_usage(writer, &crs.identified.domains, None, place);
+    write_id_if(writer, place, crs.identifiers(), db);
+    Ok(())
+}
+
+fn write_derived_projected(
+    writer: &mut Writer,
+    crs: &DerivedProjectedCRS,
+    db: &DatabaseContext,
+    place: Place,
+) -> Result<(), FactoryError> {
+    writer.key("type");
+    writer.string("DerivedProjectedCRS");
+    write_name(writer, crs.name());
+    writer.key("base_crs");
+    writer.start_object();
+    let base = crs.base_crs();
+    let base_place = Place::inside(place.chain, ident(base.identifiers()), Allow::Asked);
+    write_projected(writer, base, db, base_place)?;
+    writer.end_object();
+    write_deriving_conversion(writer, crs.deriving_conversion(), db, place)?;
+    writer.key("coordinate_system");
+    write_system(writer, crs.coordinate_system(), place.chain)?;
+    write_usage(writer, &crs.identified.domains, None, place);
+    write_id_if(writer, place, &crs.identified.identifiers, db);
+    Ok(())
+}
+
+fn write_deriving_conversion(
+    writer: &mut Writer,
+    conversion: &Conversion,
+    db: &DatabaseContext,
+    place: Place,
+) -> Result<(), FactoryError> {
+    writer.key("conversion");
+    let conversion_place =
+        Place::inside(place.chain, ident(conversion.identifiers()), Allow::Plain);
+    write_conversion(writer, conversion, db, conversion_place)
+}
+
+fn write_system(
+    writer: &mut Writer,
+    system: &CoordinateSystem,
+    parent: Chain,
+) -> Result<(), FactoryError> {
+    let owned: Vec<Axis> = system.axes().into_iter().cloned().collect();
+    write_cs(writer, system.wkt2_type(), &owned, parent)
+}
+
+fn derived_json_type(crs: &DerivedCRS) -> &'static str {
+    match crs.base_crs() {
+        Crs::Vertical(_) => "DerivedVerticalCRS",
+        Crs::Engineering(_) => "DerivedEngineeringCRS",
+        Crs::Parametric(_) => "DerivedParametricCRS",
+        Crs::Temporal(_) => "DerivedTemporalCRS",
+        Crs::Geographic(_) | Crs::Geodetic(_)
+            if matches!(crs.coordinate_system(), CoordinateSystem::Ellipsoidal(_)) =>
+        {
+            "DerivedGeographicCRS"
+        }
+        _ => "DerivedGeodeticCRS",
+    }
+}
+
+/// The EPSG interpolation-code parameter PROJ re-emits from [`Conversion::interpolation_crs`].
+fn interpolation_parameter(conversion: &Conversion) -> Option<Parameter> {
+    let crs = conversion.interpolation_crs()?;
+    let already = conversion.parameters().iter().any(|parameter| {
+        parameter.code_space() == "EPSG" && matches!(parameter.code(), "1048" | "1037")
+    });
+    if already {
+        return None;
+    }
+    let code = crs
+        .authority_code("EPSG")
+        .and_then(|identifier| identifier.code().parse::<i64>().ok())?;
+    let (name, parameter_code) = if conversion.method().code() == "1046" {
+        ("EPSG code for Horizontal CRS", "1037")
+    } else {
+        ("EPSG code for Interpolation CRS", "1048")
+    };
+    Some(Parameter {
+        name: name.to_owned(),
+        code_space: "EPSG".to_owned(),
+        code: parameter_code.to_owned(),
+        value: ParameterValue::Integer(code),
+    })
+}
+
+fn import_user_object(text: &str, db: &DatabaseContext) -> Result<UserObject, FactoryError> {
+    let value = crs_text::parse_json(text).map_err(FactoryError::Invalid)?;
+    let Some(object) = value.as_object() else {
+        return Err(invalid("PROJJSON value is not an object"));
+    };
+    let type_name = required_str(object, "type")?;
+    if let Some(crs) = read_crs_of_type(type_name, object, db)? {
+        return Ok(UserObject::Crs(crs));
+    }
+    match type_name {
+        "GeodeticReferenceFrame" | "DynamicGeodeticReferenceFrame" => {
+            Ok(UserObject::GeodeticDatum(read_datum(object, db)?))
+        }
+        "ParametricDatum" => Ok(UserObject::ParametricDatum(read_parametric_datum(
+            object, db,
+        )?)),
+        "EngineeringDatum" => Ok(UserObject::EngineeringDatum(read_engineering_datum(
+            object, db,
+        )?)),
+        "TemporalDatum" => Ok(UserObject::TemporalDatum(read_temporal_datum(object, db)?)),
+        other => Err(invalid(format!("PROJJSON type {other} is not imported"))),
+    }
+}
+
+fn read_crs_object(object: &Object, db: &DatabaseContext) -> Result<Crs, FactoryError> {
+    let type_name = required_str(object, "type")?;
+    read_crs_of_type(type_name, object, db)?
+        .ok_or_else(|| invalid(format!("PROJJSON type {type_name} is not a CRS")))
+}
+
+fn read_crs_of_type(
+    type_name: &str,
+    object: &Object,
+    db: &DatabaseContext,
+) -> Result<Option<Crs>, FactoryError> {
+    let crs = match type_name {
+        "GeographicCRS" => Crs::Geographic(read_geographic(object, db)?),
+        "ProjectedCRS" => Crs::Projected(read_projected_crs(object, db)?),
+        "VerticalCRS" => Crs::Vertical(read_vertical_crs(object, db)?),
+        "EngineeringCRS" => Crs::Engineering(read_engineering_crs(object, db)?),
+        "ParametricCRS" => Crs::Parametric(read_parametric_crs(object, db)?),
+        "TemporalCRS" => Crs::Temporal(read_temporal_crs(object, db)?),
+        "DerivedProjectedCRS" => Crs::DerivedProjected(read_derived_projected(object, db)?),
+        "DerivedGeodeticCRS"
+        | "DerivedGeographicCRS"
+        | "DerivedVerticalCRS"
+        | "DerivedEngineeringCRS"
+        | "DerivedParametricCRS"
+        | "DerivedTemporalCRS" => Crs::Derived(read_derived(object, db)?),
+        _ => return Ok(None),
+    };
+    Ok(Some(crs))
+}
+
+fn read_name_id(object: &Object, db: &DatabaseContext) -> Result<Identified, FactoryError> {
+    let mut identified = Identified::named(required_str(object, "name")?);
+    if let Some(identifier) = object
+        .get("id")
+        .and_then(Value::as_object)
+        .map(|id| read_id(id, db))
+        .transpose()?
+        .flatten()
+    {
+        identified.identifiers.push(identifier);
+    }
+    Ok(identified)
+}
+
+fn read_datum_identified(
+    object: &Object,
+    db: &DatabaseContext,
+) -> Result<Identified, FactoryError> {
+    let mut identified = read_name_id(object, db)?;
+    if let Some(anchor) = object.get("anchor").and_then(Value::as_str) {
+        identified.anchor = Some(anchor.to_owned());
+    }
+    Ok(identified)
+}
+
+fn read_engineering_datum(
+    object: &Object,
+    db: &DatabaseContext,
+) -> Result<EngineeringDatum, FactoryError> {
+    Ok(EngineeringDatum {
+        identified: read_datum_identified(object, db)?,
+    })
+}
+
+fn read_parametric_datum(
+    object: &Object,
+    db: &DatabaseContext,
+) -> Result<ParametricDatum, FactoryError> {
+    Ok(ParametricDatum {
+        identified: read_datum_identified(object, db)?,
+    })
+}
+
+fn read_temporal_datum(
+    object: &Object,
+    db: &DatabaseContext,
+) -> Result<TemporalDatum, FactoryError> {
+    Ok(TemporalDatum {
+        identified: read_datum_identified(object, db)?,
+        calendar: object
+            .get("calendar")
+            .and_then(Value::as_str)
+            .unwrap_or(PROLEPTIC_GREGORIAN)
+            .to_owned(),
+        origin: object
+            .get("time_origin")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned(),
+    })
+}
+
+fn child_object<'a>(object: &'a Object, key: &str) -> Result<&'a Object, FactoryError> {
+    object
+        .get(key)
+        .and_then(Value::as_object)
+        .ok_or_else(|| invalid(format!("PROJJSON object is missing {key}")))
+}
+
+fn read_engineering_crs(
+    object: &Object,
+    db: &DatabaseContext,
+) -> Result<EngineeringCRS, FactoryError> {
+    Ok(EngineeringCRS {
+        identified: read_name_id(object, db)?,
+        datum: read_engineering_datum(child_object(object, "datum")?, db)?,
+        coordinate_system: read_cs_object(object)?,
+    })
+}
+
+fn read_parametric_crs(
+    object: &Object,
+    db: &DatabaseContext,
+) -> Result<ParametricCRS, FactoryError> {
+    let system = match read_cs_object(object)? {
+        CoordinateSystem::Parametric(system) => system,
+        _ => return Err(invalid("PROJJSON parametric CRS axis is not parametric")),
+    };
+    Ok(ParametricCRS {
+        identified: read_name_id(object, db)?,
+        datum: read_parametric_datum(child_object(object, "datum")?, db)?,
+        coordinate_system: system,
+    })
+}
+
+fn read_temporal_crs(object: &Object, db: &DatabaseContext) -> Result<TemporalCRS, FactoryError> {
+    let system = match read_cs_object(object)? {
+        CoordinateSystem::Temporal(system) => system,
+        _ => return Err(invalid("PROJJSON temporal CRS axis is not temporal")),
+    };
+    Ok(TemporalCRS {
+        identified: read_name_id(object, db)?,
+        datum: read_temporal_datum(child_object(object, "datum")?, db)?,
+        coordinate_system: system,
+    })
+}
+
+fn read_vertical_crs(object: &Object, db: &DatabaseContext) -> Result<VerticalCRS, FactoryError> {
+    let system = match read_cs_object(object)? {
+        CoordinateSystem::Vertical(system) => system,
+        _ => return Err(invalid("PROJJSON vertical CRS axis is not vertical")),
+    };
+    let datum = object
+        .get("datum")
+        .and_then(Value::as_object)
+        .map(|datum| read_vertical_frame(datum, db))
+        .transpose()?;
+    Ok(VerticalCRS {
+        identified: read_name_id(object, db)?,
+        datum,
+        ensemble: None,
+        coordinate_system: system,
+        geoid_models: Vec::new(),
+    })
+}
+
+fn read_vertical_frame(
+    object: &Object,
+    db: &DatabaseContext,
+) -> Result<VerticalReferenceFrame, FactoryError> {
+    Ok(VerticalReferenceFrame {
+        identified: read_datum_identified(object, db)?,
+        wkt1_type: "2005".to_owned(),
+        frame_epoch: None,
+        deformation_model: None,
+    })
+}
+
+fn read_projected_crs(object: &Object, db: &DatabaseContext) -> Result<ProjectedCRS, FactoryError> {
+    let base = match read_crs_object(child_object(object, "base_crs")?, db)? {
+        Crs::Geographic(crs) => GeodeticCRS::Geographic(crs),
+        Crs::Geodetic(crs) => crs,
+        _ => return Err(invalid("PROJJSON projected CRS base is not geodetic")),
+    };
+    let coordinate_system = match read_cs_object(object)? {
+        CoordinateSystem::Cartesian(system) => system,
+        _ => {
+            return Err(invalid(
+                "PROJJSON projected CRS coordinate system is not cartesian",
+            ))
+        }
+    };
+    Ok(ProjectedCRS {
+        identified: read_name_id(object, db)?,
+        base,
+        conversion: read_user_conversion(child_object(object, "conversion")?, db)?,
+        coordinate_system,
+    })
+}
+
+fn read_derived(object: &Object, db: &DatabaseContext) -> Result<DerivedCRS, FactoryError> {
+    Ok(DerivedCRS {
+        identified: read_name_id(object, db)?,
+        base: Box::new(read_crs_object(child_object(object, "base_crs")?, db)?),
+        conversion: read_user_conversion(child_object(object, "conversion")?, db)?,
+        coordinate_system: read_cs_object(object)?,
+    })
+}
+
+fn read_derived_projected(
+    object: &Object,
+    db: &DatabaseContext,
+) -> Result<DerivedProjectedCRS, FactoryError> {
+    let base = match read_crs_object(child_object(object, "base_crs")?, db)? {
+        Crs::Projected(crs) => crs,
+        _ => {
+            return Err(invalid(
+                "PROJJSON derived projected CRS base is not projected",
+            ))
+        }
+    };
+    Ok(DerivedProjectedCRS {
+        identified: read_name_id(object, db)?,
+        base,
+        conversion: read_user_conversion(child_object(object, "conversion")?, db)?,
+        coordinate_system: read_cs_object(object)?,
+    })
+}
+
+fn read_user_conversion(object: &Object, db: &DatabaseContext) -> Result<Conversion, FactoryError> {
+    let method = child_object(object, "method")?;
+    let (code_space, code) = id_parts(method, db)?;
+    let mut parameters = Vec::new();
+    if let Some(items) = object.get("parameters").and_then(Value::as_array) {
+        for item in items {
+            let Some(item) = item.as_object() else {
+                return Err(invalid("PROJJSON parameter is not an object"));
+            };
+            parameters.push(read_parameter(item, db)?);
+        }
+    }
+    let interpolation = take_json_interpolation(&mut parameters, db);
+    Ok(Conversion {
+        identified: read_name_id(object, db)?,
+        method: OperationMethod::named_code(
+            required_str(method, "name")?.to_owned(),
+            code_space,
+            code,
+        ),
+        parameters,
+        source: None,
+        target: None,
+        version: None,
+        inverted: false,
+        interpolation,
+    })
+}
+
+fn read_parameter(object: &Object, db: &DatabaseContext) -> Result<Parameter, FactoryError> {
+    let value = object.get("value").and_then(Value::as_f64).ok_or_else(|| {
+        invalid(format!(
+            "PROJJSON parameter {} has no numeric value",
+            object
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+        ))
+    })?;
+    let (code_space, code) = id_parts(object, db)?;
+    let stored = if let Some(unit) = object.get("unit") {
+        ParameterValue::Measure(Measure {
+            value,
+            unit: read_unit_value(unit)?,
+        })
+    } else if let Some(integer) = finite_integer(value) {
+        ParameterValue::Integer(integer)
+    } else {
+        ParameterValue::Measure(Measure {
+            value,
+            unit: UnitOfMeasure::unity(),
+        })
+    };
+    Ok(Parameter {
+        name: required_str(object, "name")?.to_owned(),
+        code_space,
+        code,
+        value: stored,
+    })
+}
+
+/// An integer-valued finite float, parsed from its shortest decimal form so the conversion is checked.
+fn finite_integer<T: std::str::FromStr>(value: f64) -> Option<T> {
+    if !value.is_finite() || value.fract() != 0.0 {
+        return None;
+    }
+    format!("{value:.0}").parse().ok()
+}
+
+fn id_parts(object: &Object, db: &DatabaseContext) -> Result<(String, String), FactoryError> {
+    let Some(id) = object.get("id").and_then(Value::as_object) else {
+        return Ok((String::new(), String::new()));
+    };
+    match read_id(id, db)? {
+        Some(identifier) => Ok((
+            identifier.code_space().to_owned(),
+            identifier.code().to_owned(),
+        )),
+        None => Ok((String::new(), String::new())),
+    }
+}
+
+/// Drop an EPSG interpolation-code parameter and keep the geographic CRS it names.
+fn take_json_interpolation(
+    parameters: &mut Vec<Parameter>,
+    db: &DatabaseContext,
+) -> Option<Box<Crs>> {
+    let index = parameters.iter().position(|parameter| {
+        let named = matches!(
+            parameter.name(),
+            "EPSG code for Interpolation CRS" | "EPSG code for Horizontal CRS"
+        );
+        let coded = parameter.code_space() == "EPSG" && matches!(parameter.code(), "1048" | "1037");
+        named || coded
+    })?;
+    let ParameterValue::Integer(code) = parameters[index].value() else {
+        return None;
+    };
+    let crs = AuthorityFactory::create(db, "EPSG")
+        .create_geographic_crs(&code.to_string())
+        .ok()?;
+    parameters.remove(index);
+    Some(Box::new(Crs::Geographic(crs)))
+}
+
+fn read_cs_object(object: &Object) -> Result<CoordinateSystem, FactoryError> {
+    read_coordinate_system(child_object(object, "coordinate_system")?)
+}
+
+fn read_coordinate_system(object: &Object) -> Result<CoordinateSystem, FactoryError> {
+    let subtype = required_str(object, "subtype")?;
+    let axes = read_axes(object)?;
+    match subtype.to_ascii_lowercase().as_str() {
+        "ellipsoidal" => {
+            if axes.len() != 2 && axes.len() != 3 {
+                return Err(invalid("an ellipsoidal coordinate system has 2 or 3 axes"));
+            }
+            Ok(CoordinateSystem::Ellipsoidal(EllipsoidalCS {
+                identified: Identified::default(),
+                axes,
+            }))
+        }
+        "cartesian" => Ok(CoordinateSystem::Cartesian(CartesianCS::create(axes)?)),
+        "affine" => Ok(CoordinateSystem::Affine(
+            CartesianCS::create_allowing_mixed_units(axes)?,
+        )),
+        "vertical" => Ok(CoordinateSystem::Vertical(VerticalCS {
+            identified: Identified::default(),
+            axis: one_axis(axes)?,
+        })),
+        "parametric" => Ok(CoordinateSystem::Parametric(ParametricCS {
+            identified: Identified::default(),
+            axis: one_axis(axes)?,
+        })),
+        "temporaldatetime" => Ok(CoordinateSystem::Temporal(temporal_cs(
+            axes,
+            TemporalCsKind::DateTime,
+        )?)),
+        "temporalcount" => Ok(CoordinateSystem::Temporal(temporal_cs(
+            axes,
+            TemporalCsKind::Count,
+        )?)),
+        "temporalmeasure" => Ok(CoordinateSystem::Temporal(temporal_cs(
+            axes,
+            TemporalCsKind::Measure,
+        )?)),
+        _ => Err(invalid(format!(
+            "PROJJSON coordinate system subtype {subtype} is not imported"
+        ))),
+    }
+}
+
+fn temporal_cs(axes: Vec<Axis>, kind: TemporalCsKind) -> Result<TemporalCS, FactoryError> {
+    Ok(TemporalCS {
+        identified: Identified::default(),
+        axis: one_axis(axes)?,
+        kind,
+    })
+}
+
+fn one_axis(mut axes: Vec<Axis>) -> Result<Axis, FactoryError> {
+    if axes.len() == 1 {
+        return Ok(axes.remove(0));
+    }
+    Err(invalid("this coordinate system has one axis"))
+}
+
+fn read_axes(object: &Object) -> Result<Vec<Axis>, FactoryError> {
+    let Some(items) = object.get("axis").and_then(Value::as_array) else {
+        return Err(invalid("PROJJSON coordinate system has no axis"));
+    };
+    let mut axes = Vec::new();
+    for item in items {
+        let Some(axis) = item.as_object() else {
+            return Err(invalid("PROJJSON axis is not an object"));
+        };
+        axes.push(read_json_axis(axis)?);
+    }
+    Ok(axes)
+}
+
+fn read_json_axis(object: &Object) -> Result<Axis, FactoryError> {
+    let name = object.get("name").and_then(Value::as_str).unwrap_or("axis");
+    let abbreviation = object
+        .get("abbreviation")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let direction = object
+        .get("direction")
+        .and_then(Value::as_str)
+        .unwrap_or("unspecified");
+    let unit = match object.get("unit") {
+        Some(value) => read_unit_value(value)?,
+        None => UnitOfMeasure {
+            name: String::new(),
+            factor: 1.0,
+            kind: UnitKind::None,
+            code_space: String::new(),
+            code: String::new(),
+        },
+    };
+    Ok(Axis::new(name, abbreviation, direction, unit))
+}
+
+/// `AUTO:` and `urn:ogc:def:crs:OGC::AUTO...`. `Ok(None)` when `text` is neither.
+fn crs_from_ogc_auto(text: &str) -> Result<Option<Crs>, FactoryError> {
+    if text
+        .get(..5)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("AUTO:"))
+    {
+        return import_wms_auto(text).map(Some);
+    }
+    let Some(normalized) = auto_from_urn(text) else {
+        return Ok(None);
+    };
+    import_wms_auto(&normalized).map(Some)
+}
+
+/// `urn:ogc:def:crs:OGC::AUTO42001:-117:33` becomes `AUTO:42001,-117,33`.
+fn auto_from_urn(text: &str) -> Option<String> {
+    let tokens: Vec<&str> = text.split(':').collect();
+    let code = tokens.get(6)?;
+    if tokens.len() <= 7
+        || !tokens
+            .first()
+            .is_some_and(|token| token.eq_ignore_ascii_case("urn"))
+        || tokens.get(4).is_none_or(|token| *token != "OGC")
+        || !code
+            .get(..4)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("AUTO"))
+    {
+        return None;
+    }
+    let marker = text.find(":AUTO")?;
+    let body = text[marker + 5..].replace(':', ",");
+    Some(format!("AUTO:{body}"))
+}
+
+fn import_wms_auto(text: &str) -> Result<Crs, FactoryError> {
+    let body = text.get(5..).ok_or_else(wms_invalid)?;
+    let parts: Vec<&str> = body.split(',').collect();
+    let method = parts
+        .first()
+        .copied()
+        .ok_or_else(wms_invalid)?
+        .parse::<i32>()
+        .map_err(|_| wms_invalid())?;
+    let (unit_code, longitude, latitude) = auto_arguments(method, &parts)?;
+    let conversion = auto_conversion(method, longitude, latitude)?;
+    let crs = ProjectedCRS::create(
+        "unknown",
+        GeodeticCRS::Geographic(GeographicCRS::epsg_4326()),
+        conversion,
+        CartesianCS::create_easting_northing(auto_unit(unit_code)?),
+    );
+    Ok(Crs::Projected(crs))
+}
+
+fn wms_invalid() -> FactoryError {
+    invalid("invalid WMS AUTO CRS definition")
+}
+
+fn auto_arguments(method: i32, parts: &[&str]) -> Result<(i32, f64, f64), FactoryError> {
+    let number = |index: usize| -> Result<f64, FactoryError> {
+        parts
+            .get(index)
+            .ok_or_else(wms_invalid)?
+            .parse()
+            .map_err(|_| wms_invalid())
+    };
+    let integer = |index: usize| -> Result<i32, FactoryError> {
+        parts
+            .get(index)
+            .ok_or_else(wms_invalid)?
+            .parse()
+            .map_err(|_| wms_invalid())
+    };
+    if parts.len() == 4 {
+        Ok((integer(1)?, number(2)?, number(3)?))
+    } else if parts.len() == 3 && method == 42005 {
+        Ok((integer(1)?, number(2)?, 0.0))
+    } else if parts.len() == 3 {
+        Ok((9001, number(1)?, number(2)?))
+    } else if parts.len() == 2 && method == 42005 {
+        Ok((9001, number(1)?, 0.0))
+    } else {
+        Err(wms_invalid())
+    }
+}
+
+fn auto_conversion(method: i32, longitude: f64, latitude: f64) -> Result<Conversion, FactoryError> {
+    let props = OpProps::new();
+    match method {
+        42001 => {
+            if !(longitude >= -180.0 && longitude < 180.0) {
+                return Err(wms_invalid());
+            }
+            let zone_index = finite_integer::<i32>(((longitude + 180.0) / 6.0).floor())
+                .ok_or_else(wms_invalid)?;
+            let zone = zone_index + 1;
+            if latitude >= 0.0 {
+                Conversion::create_utm_north(&props, zone)
+            } else {
+                Conversion::create_utm_south(&props, zone)
+            }
+        }
+        42002 => {
+            let northing = if latitude >= 0.0 { 0.0 } else { 10_000_000.0 };
+            Conversion::create_transverse_mercator(
+                &props, 0.0, longitude, 0.9996, 500_000.0, northing,
+            )
+        }
+        42003 => Conversion::create_orthographic(&props, latitude, longitude, 0.0, 0.0),
+        42004 => Conversion::create_equidistant_cylindrical(&props, latitude, longitude, 0.0, 0.0),
+        42005 => Conversion::create_mollweide(&props, longitude, 0.0, 0.0),
+        _ => return Err(wms_invalid()),
+    }
+    .map_err(|_| wms_invalid())
+}
+
+fn auto_unit(code: i32) -> Result<UnitOfMeasure, FactoryError> {
+    match code {
+        9001 => Ok(UnitOfMeasure::metre()),
+        9002 => Ok(UnitOfMeasure::foot()),
+        9003 => Ok(UnitOfMeasure {
+            name: "US survey foot".to_owned(),
+            factor: 1200.0 / 3937.0,
+            kind: UnitKind::Linear,
+            code_space: "EPSG".to_owned(),
+            code: "9003".to_owned(),
+        }),
+        _ => Err(wms_invalid()),
+    }
 }

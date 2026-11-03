@@ -31,6 +31,8 @@ pub enum FactoryError {
     Format(String),
     /// A constructor rejected its arguments.
     Invalid(String),
+    /// No operation exists between these CRS: PROJ's `UnsupportedOperationException`.
+    Unsupported(String),
 }
 
 impl fmt::Display for FactoryError {
@@ -47,7 +49,10 @@ impl fmt::Display for FactoryError {
                 code,
                 detail,
             } => write!(f, "{object} {authority}:{code}: {detail}"),
-            Self::Sql(detail) | Self::Format(detail) | Self::Invalid(detail) => f.write_str(detail),
+            Self::Sql(detail)
+            | Self::Format(detail)
+            | Self::Invalid(detail)
+            | Self::Unsupported(detail) => f.write_str(detail),
         }
     }
 }
@@ -83,6 +88,15 @@ impl FactoryError {
 pub struct Identifier {
     pub(crate) code_space: String,
     pub(crate) code: String,
+    /// Citation version, such as `2015` on `ID["IAU",19902,2015]`.
+    ///
+    /// Kept only when no database folded it into the code space (`IAU_2015`).
+    /// PROJJSON writes the same field as `version`.
+    pub(crate) version: Option<String>,
+    /// PROJJSON `authority_citation`.
+    pub(crate) authority_citation: Option<String>,
+    /// PROJJSON `uri`.
+    pub(crate) uri: Option<String>,
 }
 
 impl Identifier {
@@ -102,7 +116,18 @@ impl Identifier {
         Self {
             code_space: code_space.into(),
             code: code.into(),
+            version: None,
+            authority_citation: None,
+            uri: None,
         }
+    }
+
+    pub(crate) fn with_version(mut self, version: impl Into<String>) -> Self {
+        let version = version.into();
+        if !version.is_empty() {
+            self.version = Some(version);
+        }
+        self
     }
 }
 
@@ -324,6 +349,28 @@ pub(crate) struct Identified {
     pub(crate) anchor: Option<String>,
     pub(crate) anchor_epoch: Option<f64>,
     pub(crate) publication_date: Option<String>,
+    /// PROJJSON `vertical_extent` of the usage.
+    pub(crate) vertical_extent: Option<VerticalExtent>,
+    /// WKT1 `EXTENSION["PROJ4", ...]` text, or a `+type=crs` string the conversion cannot carry.
+    pub(crate) extension_proj4: Option<String>,
+    /// `tmerc approx` or `utm approx`: the PROJ method name override of a conversion.
+    pub(crate) proj_method_override: Option<String>,
+    /// `COMPD_CS` a promoted 3D CRS writes back as WKT1.
+    pub(crate) original_compound: Option<Box<CompoundCRS>>,
+    /// Horizontal-plus-horizontal `COMPD_CS` exported as two copies of the 2D CRS.
+    pub(crate) allow_non_conformant_wkt1: bool,
+    /// PROJJSON `temporal_extent.start`, when the object has one.
+    pub(crate) temporal_start: Option<String>,
+    /// PROJJSON `temporal_extent.end`, when the object has one.
+    pub(crate) temporal_end: Option<String>,
+}
+
+/// Vertical extent of an object usage, as PROJJSON writes it.
+#[derive(Clone, Debug)]
+pub(crate) struct VerticalExtent {
+    pub(crate) minimum: f64,
+    pub(crate) maximum: f64,
+    pub(crate) unit: UnitOfMeasure,
 }
 
 impl Identified {
@@ -337,6 +384,13 @@ impl Identified {
             anchor: None,
             anchor_epoch: None,
             publication_date: None,
+            vertical_extent: None,
+            extension_proj4: None,
+            proj_method_override: None,
+            original_compound: None,
+            allow_non_conformant_wkt1: false,
+            temporal_start: None,
+            temporal_end: None,
         }
     }
 
@@ -375,6 +429,8 @@ pub enum UnitKind {
     Scale,
     /// Time. The SI unit is the second.
     Time,
+    /// A parametric quantity, such as a pressure.
+    Parametric,
     /// No conversion, used by an ordinal axis.
     None,
     /// A database type this crate does not classify.
@@ -452,6 +508,18 @@ impl UnitOfMeasure {
             code_space: String::new(),
             code: String::new(),
         }
+    }
+
+    /// Authority code written on this unit when the surrounding node has none.
+    #[must_use]
+    pub fn with_identifier(
+        mut self,
+        code_space: impl Into<String>,
+        code: impl Into<String>,
+    ) -> Self {
+        self.code_space = code_space.into();
+        self.code = code.into();
+        self
     }
 
     /// Unit name. PROJ compares units by this string.
@@ -596,6 +664,24 @@ impl Ellipsoid {
             return major / (major - minor);
         }
         0.0
+    }
+
+    /// `computeSemiMinorAxis`: the stored `b`, or `a (1 - 1/rf)` from the inverse flattening.
+    #[must_use]
+    pub fn computed_semi_minor_axis(&self) -> Measure {
+        if let Some(minor) = &self.semi_minor {
+            return minor.clone();
+        }
+        let inverse = self.inverse_flattening();
+        let factor = if inverse == 0.0 {
+            1.0
+        } else {
+            1.0 - 1.0 / inverse
+        };
+        Measure {
+            value: self.semi_major.value * factor,
+            unit: self.semi_major.unit.clone(),
+        }
     }
 
     /// Celestial body name from the database.
@@ -823,6 +909,20 @@ impl GeodeticReferenceFrame {
         self.frame_epoch
     }
 
+    /// This frame with a reference epoch, in decimal years.
+    #[must_use]
+    pub fn with_frame_epoch(mut self, epoch: f64) -> Self {
+        self.frame_epoch = Some(epoch);
+        self
+    }
+
+    /// This frame with an anchor definition.
+    #[must_use]
+    pub fn with_anchor(mut self, anchor: impl Into<String>) -> Self {
+        self.identified.anchor = Some(anchor.into());
+        self
+    }
+
     /// Anchor definition.
     #[must_use]
     pub fn anchor(&self) -> Option<&str> {
@@ -964,10 +1064,26 @@ impl VerticalReferenceFrame {
         &self.identified.identifiers
     }
 
+    /// Attach an authority identifier.
+    #[must_use]
+    pub fn with_identifier(mut self, code_space: &str, code: &str) -> Self {
+        self.identified
+            .identifiers
+            .push(Identifier::new(code_space, code));
+        self
+    }
+
     /// Frame reference epoch in years, when the vertical datum is dynamic.
     #[must_use]
     pub fn frame_reference_epoch(&self) -> Option<f64> {
         self.frame_epoch
+    }
+
+    /// This datum with a reference epoch, in decimal years.
+    #[must_use]
+    pub fn with_frame_epoch(mut self, epoch: f64) -> Self {
+        self.frame_epoch = Some(epoch);
+        self
     }
 
     /// Usages recorded for this datum.
@@ -1032,10 +1148,24 @@ impl EngineeringDatum {
         self.identified.publication_date.as_deref()
     }
 
+    /// Anchor definition.
+    #[must_use]
+    pub fn anchor(&self) -> Option<&str> {
+        self.identified.anchor.as_deref()
+    }
+
     /// Anchor epoch in years.
     #[must_use]
     pub fn anchor_epoch(&self) -> Option<f64> {
         self.identified.anchor_epoch
+    }
+
+    /// Engineering datum named `name`.
+    #[must_use]
+    pub fn create(name: impl Into<String>) -> Self {
+        Self {
+            identified: Identified::named(name),
+        }
     }
 }
 
@@ -1206,6 +1336,12 @@ pub struct Meridian {
 }
 
 impl Meridian {
+    /// Meridian at `longitude`.
+    #[must_use]
+    pub fn create(longitude: Measure) -> Self {
+        Self { longitude }
+    }
+
     /// Longitude of the meridian.
     #[must_use]
     pub fn longitude(&self) -> &Measure {
@@ -1273,6 +1409,13 @@ impl Axis {
         Self::new(name, abbreviation, direction, unit)
     }
 
+    /// This axis with `meridian`.
+    #[must_use]
+    pub fn with_meridian(mut self, meridian: Meridian) -> Self {
+        self.meridian = Some(meridian);
+        self
+    }
+
     pub(crate) fn new(
         name: impl Into<String>,
         abbreviation: impl Into<String>,
@@ -1336,6 +1479,19 @@ impl EllipsoidalCS {
         }
     }
 
+    /// Longitude, latitude, and ellipsoidal height.
+    #[must_use]
+    pub fn create_longitude_latitude_height(angular: UnitOfMeasure, linear: UnitOfMeasure) -> Self {
+        Self {
+            identified: Identified::default(),
+            axes: vec![
+                Axis::new("Longitude", "Lon", "east", angular.clone()),
+                Axis::new("Latitude", "Lat", "north", angular),
+                Axis::new("Ellipsoidal height", "h", "up", linear),
+            ],
+        }
+    }
+
     /// Latitude, longitude, and ellipsoidal height.
     #[must_use]
     pub fn create_latitude_longitude_height(angular: UnitOfMeasure, linear: UnitOfMeasure) -> Self {
@@ -1385,6 +1541,18 @@ impl CartesianCS {
                 Axis::new("Geocentric X", "X", "geocentricX", unit.clone()),
                 Axis::new("Geocentric Y", "Y", "geocentricY", unit.clone()),
                 Axis::new("Geocentric Z", "Z", "geocentricZ", unit),
+            ],
+        }
+    }
+
+    /// Northing then easting, in `unit`.
+    #[must_use]
+    pub fn create_northing_easting(unit: UnitOfMeasure) -> Self {
+        Self {
+            identified: Identified::default(),
+            axes: vec![
+                Axis::new("Northing", "N", "north", unit.clone()),
+                Axis::new("Easting", "E", "east", unit),
             ],
         }
     }
@@ -1439,6 +1607,17 @@ pub struct VerticalCS {
 }
 
 impl VerticalCS {
+    /// Gravity-related height, up, abbreviated `H`.
+    ///
+    /// This is `VerticalCS::createGravityRelatedHeight`.
+    #[must_use]
+    pub fn create_gravity_related_height(unit: UnitOfMeasure) -> Self {
+        Self {
+            identified: Identified::default(),
+            axis: Axis::new("Gravity-related height", "H", "up", unit),
+        }
+    }
+
     /// The single axis.
     #[must_use]
     pub fn axis(&self) -> &Axis {
@@ -1484,10 +1663,6 @@ impl OrdinalCS {
 
 /// Coordinate system, one of the kinds `proj.db` stores on a CRS.
 #[derive(Clone, Debug)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "a vertical system stores its axis inline; the others keep axes in a Vec"
-)]
 pub enum CoordinateSystem {
     /// Latitude and longitude, optionally with ellipsoidal height.
     Ellipsoidal(EllipsoidalCS),
@@ -1501,6 +1676,10 @@ pub enum CoordinateSystem {
     Ordinal(OrdinalCS),
     /// Affine axes. WKT writes `CS[affine,N]`.
     Affine(CartesianCS),
+    /// One time axis.
+    Temporal(super::niche::TemporalCS),
+    /// One parametric axis.
+    Parametric(super::niche::ParametricCS),
 }
 
 impl CoordinateSystem {
@@ -1514,6 +1693,8 @@ impl CoordinateSystem {
             Self::Spherical(cs) => cs.axes.iter().collect(),
             Self::Ordinal(cs) => cs.axes.iter().collect(),
             Self::Affine(cs) => cs.axes.iter().collect(),
+            Self::Temporal(cs) => vec![&cs.axis],
+            Self::Parametric(cs) => vec![&cs.axis],
         }
     }
 
@@ -1525,6 +1706,8 @@ impl CoordinateSystem {
             Self::Spherical(cs) => &cs.identified,
             Self::Ordinal(cs) => &cs.identified,
             Self::Affine(cs) => &cs.identified,
+            Self::Temporal(cs) => &cs.identified,
+            Self::Parametric(cs) => &cs.identified,
         }
     }
 
@@ -1542,6 +1725,12 @@ impl CoordinateSystem {
             Self::Spherical(_) => "spherical",
             Self::Ordinal(_) => "ordinal",
             Self::Affine(_) => "affine",
+            Self::Temporal(cs) => match cs.kind {
+                super::niche::TemporalCsKind::DateTime => "TemporalDateTime",
+                super::niche::TemporalCsKind::Count => "TemporalCount",
+                super::niche::TemporalCsKind::Measure => "TemporalMeasure",
+            },
+            Self::Parametric(_) => "parametric",
         }
     }
 }
@@ -1606,6 +1795,17 @@ impl OperationMethod {
         }
     }
 
+    /// The method of an inverse operation: `Inverse of` the name, under the `INVERSE(...)`
+    /// code space, as `createPropertiesForInverse` writes it.
+    pub(crate) fn inverse_of(&self) -> Self {
+        Self {
+            name: format!("Inverse of {}", self.name),
+            code_space: format!("INVERSE({})", self.code_space),
+            code: self.code.clone(),
+            parameters: self.parameters.clone(),
+        }
+    }
+
     /// Method with `name` and parameter definitions. The name may be empty.
     #[must_use]
     pub fn create(name: impl Into<String>, parameters: Vec<OperationParameter>) -> Self {
@@ -1621,6 +1821,14 @@ impl OperationMethod {
     #[must_use]
     pub fn parameters(&self) -> &[OperationParameter] {
         &self.parameters
+    }
+
+    /// This method with the identifier `code_space:code`.
+    #[must_use]
+    pub fn with_identifier(mut self, code_space: &str, code: &str) -> Self {
+        code_space.clone_into(&mut self.code_space);
+        code.clone_into(&mut self.code);
+        self
     }
 
     pub(crate) fn named_code(name: String, code_space: String, code: String) -> Self {
@@ -1695,6 +1903,12 @@ impl ParameterValue {
     #[must_use]
     pub fn scale(value: f64) -> Self {
         Self::Measure(Measure::scale(value))
+    }
+
+    /// Numeric value in `unit`.
+    #[must_use]
+    pub fn measure(value: f64, unit: UnitOfMeasure) -> Self {
+        Self::Measure(Measure { value, unit })
     }
 }
 
@@ -1776,9 +1990,17 @@ pub struct Conversion {
     pub(crate) target: Option<Box<Crs>>,
     pub(crate) version: Option<String>,
     pub(crate) inverted: bool,
+    /// Interpolation CRS, from the EPSG `EPSG code for Interpolation CRS` parameter.
+    pub(crate) interpolation: Option<Box<Crs>>,
 }
 
 impl Conversion {
+    /// Interpolation CRS, when the conversion names one.
+    #[must_use]
+    pub fn interpolation_crs(&self) -> Option<&Crs> {
+        self.interpolation.as_deref()
+    }
+
     /// Name.
     #[must_use]
     pub fn name(&self) -> &str {
@@ -1852,6 +2074,12 @@ impl Transformation {
         &self.identified.identifiers
     }
 
+    /// Operation version, when the WKT or the database has one.
+    #[must_use]
+    pub fn version(&self) -> Option<&str> {
+        self.version.as_deref()
+    }
+
     /// Method.
     #[must_use]
     pub fn method(&self) -> &OperationMethod {
@@ -1874,6 +2102,12 @@ impl Transformation {
     #[must_use]
     pub fn target_crs(&self) -> Option<&Crs> {
         self.target.as_deref()
+    }
+
+    /// Whether this is a `PointMotionOperation`.
+    #[must_use]
+    pub fn is_point_motion(&self) -> bool {
+        self.point_motion
     }
 
     /// Stated accuracy in metres, when it is not the EPSG unknown value `999`.
@@ -1921,6 +2155,59 @@ pub struct ConcatenatedOperation {
     pub(crate) version: Option<String>,
     /// The name is the steps' names joined by ` + `, as `createComputeMetadata` sets it.
     pub(crate) computed_name: bool,
+    /// The horizontal and vertical operations written as one PROJ pipeline, with the
+    /// horizontal conversion of the vertical step left out.
+    pub(crate) proj_based: Option<Box<ProjBased>>,
+}
+
+/// Which `MyPROJStringExportableHorizVertical*` of `coordinateoperationfactory.cpp` writes a
+/// concatenated operation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ProjBasedKind {
+    /// A horizontal operation, then the vertical one, on the target geographic CRS.
+    HorizVertical,
+    /// The source to an interpolation CRS, the vertical operation, then the interpolation
+    /// CRS to the target.
+    HorizVerticalHoriz,
+}
+
+/// The parts of a [`ProjBasedKind`] pipeline.
+#[derive(Clone, Debug)]
+pub(crate) struct ProjBased {
+    pub(crate) kind: ProjBasedKind,
+    pub(crate) horizontal: CoordinateOperation,
+    pub(crate) vertical: CoordinateOperation,
+    /// The interpolation CRS to the target. Unused by [`ProjBasedKind::HorizVertical`].
+    pub(crate) last: Option<CoordinateOperation>,
+    /// The interpolation CRS, or the target geographic CRS for `HorizVertical`.
+    pub(crate) interpolation: Crs,
+    /// The pipeline is written between `startInversion` and `stopInversion`.
+    pub(crate) inverted: bool,
+}
+
+/// Which CRS of a step `crs_pair` reads when the operation stores none.
+enum StepSide {
+    Source,
+    Target,
+}
+
+/// One end of a concatenated step.
+fn step_end(step: Option<&ConcatenatedStep>, side: StepSide) -> Option<&Crs> {
+    let (source, target) = match &step?.operation {
+        CoordinateOperation::Conversion(operation) => {
+            (operation.source_crs(), operation.target_crs())
+        }
+        CoordinateOperation::Transformation(operation) => {
+            (operation.source_crs(), operation.target_crs())
+        }
+        CoordinateOperation::Concatenated(operation) => {
+            (operation.source_crs(), operation.target_crs())
+        }
+    };
+    match side {
+        StepSide::Source => source,
+        StepSide::Target => target,
+    }
 }
 
 impl ConcatenatedOperation {
@@ -1928,6 +2215,12 @@ impl ConcatenatedOperation {
     #[must_use]
     pub fn name(&self) -> &str {
         &self.identified.name
+    }
+
+    /// Authority identifiers.
+    #[must_use]
+    pub fn identifiers(&self) -> &[Identifier] {
+        &self.identified.identifiers
     }
 
     /// Steps, in `step_number` order. The NKG chains start at 2; that number is kept.
@@ -1958,6 +2251,44 @@ impl ConcatenatedOperation {
     #[must_use]
     pub fn version(&self) -> Option<&str> {
         self.version.as_deref()
+    }
+
+    /// The source and target CRS: the stored pair, or the source of the first step and the
+    /// target of the last when none is stored. `None` when a step has no CRS.
+    #[must_use]
+    pub(crate) fn crs_pair(&self) -> Option<(&Crs, &Crs)> {
+        let source = self.source_crs().or_else(|| {
+            let step = self.steps.first()?;
+            let side = if step.reverse {
+                StepSide::Target
+            } else {
+                StepSide::Source
+            };
+            step_end(Some(step), side)
+        })?;
+        let target = self.target_crs().or_else(|| {
+            let step = self.steps.last()?;
+            let side = if step.reverse {
+                StepSide::Source
+            } else {
+                StepSide::Target
+            };
+            step_end(Some(step), side)
+        })?;
+        Some((source, target))
+    }
+
+    /// The accuracy as PROJ's `PositionalAccuracy::value()` holds it. A name computed from the
+    /// steps has an accuracy written with `%.15g`. One read from the database is the number as
+    /// SQLite prints a real.
+    #[must_use]
+    pub(crate) fn accuracy_text(&self) -> Option<String> {
+        let value = self.accuracy?;
+        Some(if self.computed_name {
+            super::wkt::format_g(value, 15)
+        } else {
+            format!("{value:?}")
+        })
     }
 }
 
@@ -1990,6 +2321,16 @@ impl CoordinateOperation {
             Self::Conversion(operation) => operation.identifiers(),
             Self::Transformation(operation) => operation.identifiers(),
             Self::Concatenated(operation) => &operation.identified.identifiers,
+        }
+    }
+
+    /// Remarks, empty when there are none.
+    #[must_use]
+    pub fn remarks(&self) -> &str {
+        match self {
+            Self::Conversion(operation) => &operation.identified.remarks,
+            Self::Transformation(operation) => &operation.identified.remarks,
+            Self::Concatenated(operation) => &operation.identified.remarks,
         }
     }
 
@@ -2649,6 +2990,8 @@ pub struct VerticalCRS {
 pub struct GeoidModel {
     pub(crate) name: String,
     pub(crate) identifiers: Vec<Identifier>,
+    /// PROJJSON `interpolation_crs`: the CRS the model interpolates in.
+    pub(crate) interpolation_crs: Option<Box<Crs>>,
 }
 
 impl GeoidModel {
@@ -2666,6 +3009,61 @@ impl GeoidModel {
 }
 
 impl VerticalCRS {
+    /// Vertical CRS with one datum and a vertical coordinate system.
+    ///
+    /// This is `VerticalCRS::create` when no geoid model is set.
+    #[must_use]
+    pub fn create(
+        name: impl Into<String>,
+        datum: VerticalReferenceFrame,
+        coordinate_system: VerticalCS,
+    ) -> Self {
+        Self {
+            identified: Identified::named(name),
+            datum: Some(datum),
+            ensemble: None,
+            coordinate_system,
+            geoid_models: Vec::new(),
+        }
+    }
+
+    /// Vertical CRS defined by a datum ensemble.
+    ///
+    /// # Errors
+    ///
+    /// A member is not a vertical datum.
+    pub fn create_ensemble(
+        name: impl Into<String>,
+        ensemble: DatumEnsemble,
+        coordinate_system: VerticalCS,
+    ) -> Result<Self, FactoryError> {
+        if ensemble
+            .members()
+            .iter()
+            .any(|member| !matches!(member, Datum::Vertical(_)))
+        {
+            return Err(FactoryError::Invalid(
+                "a vertical CRS ensemble must contain vertical datums".to_owned(),
+            ));
+        }
+        Ok(Self {
+            identified: Identified::named(name),
+            datum: None,
+            ensemble: Some(ensemble),
+            coordinate_system,
+            geoid_models: Vec::new(),
+        })
+    }
+
+    /// Attach an authority identifier.
+    #[must_use]
+    pub fn with_identifier(mut self, code_space: &str, code: &str) -> Self {
+        self.identified
+            .identifiers
+            .push(Identifier::new(code_space, code));
+        self
+    }
+
     /// Name.
     #[must_use]
     pub fn name(&self) -> &str {
@@ -2746,6 +3144,20 @@ impl EngineeringCRS {
     #[must_use]
     pub fn domains(&self) -> &[ObjectDomain] {
         &self.identified.domains
+    }
+
+    /// Engineering CRS named `name`.
+    #[must_use]
+    pub fn create(
+        name: impl Into<String>,
+        datum: EngineeringDatum,
+        coordinate_system: CoordinateSystem,
+    ) -> Self {
+        Self {
+            identified: Identified::named(name),
+            datum,
+            coordinate_system,
+        }
     }
 }
 
@@ -2870,6 +3282,15 @@ impl CompoundCRS {
         &self.components
     }
 
+    /// Attach an authority identifier.
+    #[must_use]
+    pub fn with_identifier(mut self, code_space: &str, code: &str) -> Self {
+        self.identified
+            .identifiers
+            .push(Identifier::new(code_space, code));
+        self
+    }
+
     /// `CompoundCRS::createLax`: a geographic CRS plus an ellipsoidal-height
     /// vertical CRS (`VERT_DATUM` type `2002`) becomes one geographic 3D CRS.
     ///
@@ -2881,30 +3302,30 @@ impl CompoundCRS {
     ///
     /// The components are not a valid compound CRS.
     pub fn create_lax(name: impl Into<String>, components: Vec<Crs>) -> Result<Crs, FactoryError> {
-        if let [Crs::Geographic(horizontal), Crs::Vertical(vertical)] = components.as_slice() {
-            if horizontal.coordinate_system.axes.len() == 2
-                && vertical
-                    .datum
-                    .as_ref()
-                    .is_some_and(|datum| datum.wkt1_type == "2002")
+        if let [horizontal, Crs::Vertical(vertical)] = components.as_slice() {
+            if vertical
+                .datum
+                .as_ref()
+                .is_some_and(|datum| datum.wkt1_type == "2002")
             {
-                let axis = vertical.coordinate_system.axis();
-                let mut promoted = horizontal.clone();
-                promoted.identified.identifiers.clear();
-                let metre_up = axis.direction() == "up"
-                    && axis.unit().kind() == UnitKind::Linear
-                    && (axis.unit().conversion_to_si() - 1.0).abs() < 1e-12;
-                if !metre_up {
-                    promoted.identified.name =
-                        format!("{} ({})", horizontal.name(), vertical.name());
+                if let Crs::Geographic(geographic) = horizontal {
+                    if geographic.coordinate_system.axes.len() == 2 {
+                        return Ok(Crs::Geographic(ellipsoidal_height_geographic(
+                            geographic, vertical,
+                        )));
+                    }
                 }
-                promoted.coordinate_system.axes.push(Axis::new(
-                    "Ellipsoidal height",
-                    "h",
-                    axis.direction(),
-                    axis.unit().clone(),
-                ));
-                return Ok(Crs::Geographic(promoted));
+                if let Crs::Bound(bound) = horizontal {
+                    if let Crs::Geographic(geographic) = bound.source_crs() {
+                        if geographic.coordinate_system.axes.len() == 2 {
+                            let mut promoted = bound.clone();
+                            promoted.source = Box::new(Crs::Geographic(
+                                ellipsoidal_height_geographic(geographic, vertical),
+                            ));
+                            return Ok(Crs::Bound(promoted));
+                        }
+                    }
+                }
             }
         }
         Ok(Crs::Compound(Self::create(name, components)?))
@@ -2915,6 +3336,30 @@ impl CompoundCRS {
     pub fn domains(&self) -> &[ObjectDomain] {
         &self.identified.domains
     }
+}
+
+/// Geographic CRS plus an ellipsoidal-height vertical CRS (`VERT_DATUM` type `2002`).
+/// A metre-up height keeps the horizontal name. Any other axis appends the vertical name.
+fn ellipsoidal_height_geographic(
+    horizontal: &GeographicCRS,
+    vertical: &VerticalCRS,
+) -> GeographicCRS {
+    let axis = vertical.coordinate_system.axis();
+    let mut promoted = horizontal.clone();
+    promoted.identified.identifiers.clear();
+    let metre_up = axis.direction() == "up"
+        && axis.unit().kind() == UnitKind::Linear
+        && (axis.unit().conversion_to_si() - 1.0).abs() < 1e-12;
+    if !metre_up {
+        promoted.identified.name = format!("{} ({})", horizontal.name(), vertical.name());
+    }
+    promoted.coordinate_system.axes.push(Axis::new(
+        "Ellipsoidal height",
+        "h",
+        axis.direction(),
+        axis.unit().clone(),
+    ));
+    promoted
 }
 
 /// Bound CRS: a source CRS, a hub, and the transformation that binds them.
@@ -2987,6 +3432,13 @@ pub enum Crs {
     Engineering(EngineeringCRS),
     /// Derived projected CRS.
     DerivedProjected(DerivedProjectedCRS),
+    /// Temporal CRS.
+    Temporal(super::niche::TemporalCRS),
+    /// Parametric CRS.
+    Parametric(super::niche::ParametricCRS),
+    /// Derived CRS of a geographic, geodetic, vertical, engineering, parametric or
+    /// temporal base.
+    Derived(super::niche::DerivedCRS),
 }
 
 impl Crs {
@@ -3002,6 +3454,9 @@ impl Crs {
             Self::Bound(crs) => crs.name(),
             Self::Engineering(crs) => crs.name(),
             Self::DerivedProjected(crs) => crs.name(),
+            Self::Temporal(crs) => crs.name(),
+            Self::Parametric(crs) => crs.name(),
+            Self::Derived(crs) => crs.name(),
         }
     }
 
@@ -3017,6 +3472,9 @@ impl Crs {
             Self::Bound(crs) => &crs.identified.identifiers,
             Self::Engineering(crs) => &crs.identified.identifiers,
             Self::DerivedProjected(crs) => &crs.identified.identifiers,
+            Self::Temporal(crs) => &crs.identified.identifiers,
+            Self::Parametric(crs) => &crs.identified.identifiers,
+            Self::Derived(crs) => &crs.identified.identifiers,
         }
     }
 
@@ -3032,6 +3490,9 @@ impl Crs {
             Self::Bound(crs) => &crs.identified.domains,
             Self::Engineering(crs) => &crs.identified.domains,
             Self::DerivedProjected(crs) => &crs.identified.domains,
+            Self::Temporal(crs) => &crs.identified.domains,
+            Self::Parametric(crs) => &crs.identified.domains,
+            Self::Derived(crs) => &crs.identified.domains,
         }
     }
 
@@ -3041,6 +3502,42 @@ impl Crs {
         self.identifiers()
             .iter()
             .find(|identifier| identifier.code_space.eq_ignore_ascii_case(authority))
+    }
+
+    /// `proj_crs_is_dynamic`: a geodetic or vertical datum with a frame
+    /// reference epoch. A compound CRS is dynamic when one component is.
+    /// WGS 84 is not treated as dynamic.
+    #[must_use]
+    pub fn is_dynamic(&self) -> bool {
+        self.geodetic_frame()
+            .is_some_and(|datum| datum.frame_reference_epoch().is_some())
+            || self
+                .vertical_frame()
+                .is_some_and(|datum| datum.frame_reference_epoch().is_some())
+    }
+
+    fn geodetic_frame(&self) -> Option<&GeodeticReferenceFrame> {
+        match self {
+            Self::Geographic(crs) => crs.datum(),
+            Self::Geodetic(crs) => crs.datum(),
+            Self::Projected(crs) => crs.base_crs().datum(),
+            Self::DerivedProjected(crs) => crs.base_crs().base_crs().datum(),
+            Self::Derived(crs) => crs.base_crs().geodetic_frame(),
+            Self::Compound(crs) => crs.components().iter().find_map(Self::geodetic_frame),
+            Self::Bound(crs) => crs.source_crs().geodetic_frame(),
+            Self::Vertical(_) | Self::Engineering(_) | Self::Temporal(_) | Self::Parametric(_) => {
+                None
+            }
+        }
+    }
+
+    fn vertical_frame(&self) -> Option<&VerticalReferenceFrame> {
+        match self {
+            Self::Vertical(crs) => crs.datum(),
+            Self::Compound(crs) => crs.components().iter().find_map(Self::vertical_frame),
+            Self::Bound(crs) => crs.source_crs().vertical_frame(),
+            _ => None,
+        }
     }
 
     /// Deprecated flag stored for this CRS.
@@ -3059,12 +3556,100 @@ impl Crs {
             Self::Bound(crs) => crs.identified.deprecated,
             Self::Engineering(crs) => crs.identified.deprecated,
             Self::DerivedProjected(crs) => crs.identified.deprecated,
+            Self::Temporal(crs) => crs.identified.deprecated,
+            Self::Parametric(crs) => crs.identified.deprecated,
+            Self::Derived(crs) => crs.identified.deprecated,
+        }
+    }
+
+    /// A projected CRS or a derived CRS. This is `proj_crs_is_derived`.
+    #[must_use]
+    pub fn is_derived(&self) -> bool {
+        matches!(
+            self,
+            Self::Projected(_) | Self::DerivedProjected(_) | Self::Derived(_)
+        )
+    }
+
+    /// `proj_crs_add_horizontal_derived_conversion`.
+    ///
+    /// A projected CRS becomes a derived projected CRS. A compound or bound CRS
+    /// keeps its other parts and applies the same wrap to the projected one.
+    ///
+    /// # Errors
+    ///
+    /// `self` has no projected CRS to wrap.
+    pub fn add_horizontal_derived_conversion(
+        self,
+        name: impl Into<String>,
+        conversion: Conversion,
+        coordinate_system: CoordinateSystem,
+    ) -> Result<Self, FactoryError> {
+        let name = name.into();
+        match self {
+            Self::Projected(base) => Ok(Self::DerivedProjected(DerivedProjectedCRS::create(
+                name,
+                base,
+                conversion,
+                coordinate_system,
+            ))),
+            Self::Compound(compound) => {
+                let mut components = Vec::with_capacity(compound.components.len());
+                let mut replaced = false;
+                for component in compound.components {
+                    if !replaced && matches!(component, Self::Projected(_) | Self::Bound(_)) {
+                        components.push(component.add_horizontal_derived_conversion(
+                            name.clone(),
+                            conversion.clone(),
+                            coordinate_system.clone(),
+                        )?);
+                        replaced = true;
+                    } else {
+                        components.push(component);
+                    }
+                }
+                if !replaced {
+                    return Err(FactoryError::Invalid(
+                        "the compound CRS has no projected component".to_owned(),
+                    ));
+                }
+                Ok(Self::Compound(CompoundCRS::create(
+                    String::new(),
+                    components,
+                )?))
+            }
+            Self::Bound(bound) => {
+                let source = bound.source.add_horizontal_derived_conversion(
+                    name,
+                    conversion,
+                    coordinate_system,
+                )?;
+                let mut identified = Identified::named(source.name());
+                identified.identifiers = bound.identified.identifiers;
+                identified.domains = bound.identified.domains;
+                identified.remarks = bound.identified.remarks;
+                Ok(Self::Bound(BoundCRS {
+                    identified,
+                    source: Box::new(source),
+                    target: bound.target,
+                    transformation: bound.transformation,
+                }))
+            }
+            _ => Err(FactoryError::Invalid(
+                "a horizontal derived conversion applies to a projected CRS".to_owned(),
+            )),
         }
     }
 
     pub(crate) fn is_horizontal(&self) -> bool {
         match self {
-            Self::Vertical(_) => false,
+            Self::Vertical(_) | Self::Temporal(_) | Self::Parametric(_) => false,
+            Self::Derived(crs) => !matches!(
+                crs.kind(),
+                super::niche::DerivedKind::Vertical
+                    | super::niche::DerivedKind::Temporal
+                    | super::niche::DerivedKind::Parametric
+            ),
             Self::Compound(crs) => crs.components.iter().any(Self::is_horizontal),
             Self::Bound(crs) => crs.source.is_horizontal(),
             _ => true,

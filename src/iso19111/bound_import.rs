@@ -231,7 +231,7 @@ fn geodetic_as_crs(geodetic: GeodeticCRS) -> Crs {
 /// `Transformation::createTOWGS84` and `BoundCRS::createFromTOWGS84`: a
 /// geocentric translations transformation for three terms, a position vector
 /// one for seven, from the geodetic CRS of `crs` to WGS 84.
-fn bind_towgs84(crs: Crs, values: &[f64]) -> Result<Crs, FactoryError> {
+pub(crate) fn bind_towgs84(crs: Crs, values: &[f64]) -> Result<Crs, FactoryError> {
     if values.len() != 3 && values.len() != 7 {
         return Err(FactoryError::Invalid(
             "Invalid number of elements in TOWGS84Parameters".to_owned(),
@@ -275,7 +275,7 @@ fn bind_towgs84(crs: Crs, values: &[f64]) -> Result<Crs, FactoryError> {
 
 /// `BoundCRS::createFromNadgrids`: an NTv2 transformation from the geographic
 /// CRS of `crs` (on a Greenwich meridian) to WGS 84.
-fn bind_nadgrids(crs: Crs, filename: &str) -> Crs {
+pub(super) fn bind_nadgrids(crs: Crs, filename: &str) -> Crs {
     let source = match geographic_of(&crs) {
         Some(geographic) => Crs::Geographic(greenwich_based(&geographic)),
         None => crs.clone(),

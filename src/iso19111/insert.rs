@@ -9,7 +9,7 @@
 //! errors. Each call starts from the database as it is; objects inserted by an
 //! earlier call are not seen.
 
-use super::equiv::directions_and_units;
+use super::equiv::{directions_and_units, ellipsoid_equivalent_loose};
 use super::factory::{AuthorityFactory, AuthorityObject, DatabaseContext, NameMatch, ObjectType};
 use super::model::{
     Axis, CoordinateSystem, Crs, Datum, Ellipsoid, FactoryError, GeodeticCRS,
@@ -515,6 +515,28 @@ impl Writer<'_> {
                 }
             }
         }
+        if let AuthorityObject::PrimeMeridian(meridian) = object {
+            // `create_objects_from_name` does not load prime meridians: search the table.
+            for authority in &authorities {
+                let rows = self.db.text_rows(
+                    "SELECT code FROM prime_meridian WHERE auth_name = ? AND name = ?",
+                    &[authority.clone(), meridian.name().to_owned()],
+                )?;
+                let factory = AuthorityFactory::create(self.db, authority.as_str());
+                for row in rows {
+                    let Some(code) = row.first() else {
+                        continue;
+                    };
+                    if factory
+                        .create_prime_meridian(code)
+                        .is_ok_and(|known| known.is_equivalent_to(meridian))
+                    {
+                        return Ok(Some((authority.clone(), code.clone())));
+                    }
+                }
+            }
+            return Ok(None);
+        }
         for authority in &authorities {
             let factory = AuthorityFactory::create(self.db, authority.as_str());
             let candidates = factory.create_objects_from_name(
@@ -858,6 +880,7 @@ fn unit_database_type(kind: UnitKind) -> Option<&'static str> {
         UnitKind::Angular => Some("angle"),
         UnitKind::Scale => Some("scale"),
         UnitKind::Time => Some("time"),
+        UnitKind::Parametric => Some("parametric"),
         UnitKind::None | UnitKind::Unknown => None,
     }
 }
@@ -908,7 +931,7 @@ fn same_kind(
 fn equivalent(candidate: &AuthorityObject, object: &AuthorityObject) -> bool {
     match (candidate, object) {
         (AuthorityObject::Ellipsoid(known), AuthorityObject::Ellipsoid(other)) => {
-            known.is_equivalent_to(other)
+            ellipsoid_equivalent_loose(known, other)
         }
         (AuthorityObject::PrimeMeridian(known), AuthorityObject::PrimeMeridian(other)) => {
             known.is_equivalent_to(other)

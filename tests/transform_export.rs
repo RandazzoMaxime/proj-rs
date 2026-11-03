@@ -257,10 +257,14 @@ fn concatenated_helmert_with_pm() {
     );
 }
 
+// The step is a Molodensky-Badekas method, written as `molobadekas` since the
+// transformation exporter handles that family. The values are not pinned here: see
+// `AuthorityFactory_createCoordinateOperation_molodensky_badekas_PV` for EPSG:1066.
 #[test]
-fn molodensky_badekas_step_is_unimplemented() {
-    let error = export("5192").expect_err("a Molodensky-Badekas step is not written");
-    assert!(error.contains("Unimplemented"), "{error}");
+fn molodensky_badekas_step_is_written() {
+    let text = export("5192").expect("export");
+    assert!(text.contains("+proj=molobadekas"), "{text}");
+    assert!(text.contains("+convention=coordinate_frame"), "{text}");
 }
 
 // Grid and deformation methods: `projinfo -k operation EPSG:<code> -o PROJ -q` from PROJ 9.9.0.

@@ -74,22 +74,81 @@ fn definitions_follow_libproj() {
 }
 
 #[test]
-fn a_definition_the_crate_cannot_read_is_an_error_not_text() {
-    // libproj reads these; this crate does not yet (single-step pipeline, `cart`,
-    // `+init=`). The facade must refuse them, not hand back the input.
-    for input in [
-        "+proj=longlat +datum=GRS80",
-        "+proj=pipeline +step +proj=longlat +datum=NAD27",
-        "+proj=cart +ellps=WGS84",
-        "+init=epsg:4326",
-    ] {
+fn a_definition_proj_does_not_name_is_an_error() {
+    // PROJ 9.8.1 `proj_create` of this datum is error 1027. The facade refuses
+    // it instead of returning the input.
+    let proj = Proj::new("+proj=longlat +datum=GRS80").expect("created");
+    assert!(matches!(proj.def(), Err(ProjError::Definition)));
+}
+
+#[test]
+fn pipeline_cart_and_init_definitions_follow_proj_pj_info() {
+    // `proj_pj_info().definition` from PROJ 9.8.1 (pyproj 3.8.0's libproj),
+    // `proj_create` not the CRS (`+type=crs`) reading. A one-step pipeline is
+    // the step, with `pj_datum_set` and the default ellipsoid. `cart` stays
+    // `cart`. `+init=` is rejected by that `proj_create`. The string below is
+    // `proj_pj_info` of the expansion, whose inverse flattening is the database
+    // value printed at 15 digits.
+    let cases = [
+        (
+            "+proj=pipeline +step +proj=longlat +datum=NAD27",
+            "proj=longlat datum=NAD27 ellps=clrk66 nadgrids=@conus,@alaska,@ntv2_0.gsb,@ntv1_can.dat",
+        ),
+        (
+            "+proj=pipeline +step +proj=unitconvert +xy_in=deg +xy_out=rad",
+            "proj=unitconvert xy_in=deg xy_out=rad ellps=GRS80",
+        ),
+        (
+            "+proj=pipeline +step +proj=longlat +ellps=GRS80 +step +proj=utm +zone=31",
+            "proj=pipeline step proj=longlat ellps=GRS80 step proj=utm zone=31",
+        ),
+        (
+            "+proj=pipeline +step +proj=cart +ellps=WGS84",
+            "proj=cart ellps=WGS84",
+        ),
+        ("+proj=cart +ellps=WGS84", "proj=cart ellps=WGS84"),
+        (
+            "+init=epsg:4326",
+            // `format_f64` prints the database `inv_flattening` at 15 digits.
+            // PROJ 9.8.1 `proj_pj_info` of that expansion keeps the digits.
+            "proj=longlat a=6378137.0 rf=298.257223563000025 no_defs",
+        ),
+    ];
+    for (input, expected) in cases {
         let proj = Proj::new(input).expect(input);
-        assert!(
-            matches!(proj.def(), Err(ProjError::Definition)),
-            "{input} gave {:?}",
-            proj.def()
-        );
+        assert_eq!(proj.def().expect(input), expected, "{input}");
+        let info = proj.proj_info();
+        assert_eq!(info.definition.as_deref(), Some(expected), "{input}");
     }
+}
+
+#[test]
+fn a_single_crs_has_no_operation_definition() {
+    // PROJ 9.8.1 `proj_pj_info` of `proj_create("EPSG:4326")` has a null definition.
+    let crs = Proj::new("EPSG:4326").expect("crs");
+    assert!(matches!(crs.def(), Err(ProjError::Definition)));
+    assert!(crs.proj_info().definition.is_none());
+}
+
+#[test]
+fn pair_definitions_follow_proj_pj_info() {
+    // PROJ 9.8.1 `proj_create_crs_to_crs` + `proj_pj_info`.
+    let one = Proj::new_known_crs("EPSG:4326", "EPSG:4326", None).expect("noop");
+    assert_eq!(one.def().expect("noop"), "proj=noop ellps=GRS80");
+    assert_eq!(one.proj_info().id.as_deref(), Some("noop"));
+    // georust `new_known_crs` calls `proj_normalize_for_visualization`. PROJ 9.8.1
+    // then drops the authority `axisswap` and keeps this pipeline.
+    let web = Proj::new_known_crs("EPSG:4326", "EPSG:3857", None).expect("webmerc");
+    assert_eq!(
+        web.def().expect("webmerc"),
+        "proj=pipeline step proj=unitconvert xy_in=deg xy_out=rad step proj=webmerc lat_0=0 lon_0=0 x_0=0 y_0=0 ellps=WGS84"
+    );
+    let many = Proj::new_known_crs("EPSG:4269", "EPSG:4326", None).expect("nad83");
+    assert_eq!(
+        many.def().expect("several operations"),
+        "unavailable until proj_trans is called"
+    );
+    assert_eq!(many.proj_info().id.as_deref(), Some("unknown"));
 }
 
 #[test]
