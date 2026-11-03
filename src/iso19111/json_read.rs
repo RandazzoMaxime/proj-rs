@@ -13,6 +13,7 @@ use super::model::{
     ProjectedCRS, SphericalCS, Transformation, UnitKind, UnitOfMeasure, VerticalCRS, VerticalCS,
     VerticalExtent, VerticalReferenceFrame,
 };
+use super::niche::DerivedCRS;
 use crate::crs_text::{self, Object, Value};
 
 type Read<T> = Result<T, FactoryError>;
@@ -222,6 +223,9 @@ impl Reader<'_> {
             "GeographicCRS" => JsonObject::Crs(Crs::Geographic(self.build_geographic_crs(object)?)),
             "GeodeticCRS" => JsonObject::Crs(Crs::Geodetic(self.build_geodetic_crs(object)?)),
             "ProjectedCRS" => JsonObject::Crs(Crs::Projected(self.build_projected_crs(object)?)),
+            "DerivedGeographicCRS" => {
+                JsonObject::Crs(Crs::Derived(self.build_derived_crs(object)?))
+            }
             "VerticalCRS" => JsonObject::Crs(Crs::Vertical(self.build_vertical_crs(object)?)),
             "CompoundCRS" => JsonObject::Crs(Crs::Compound(self.build_compound_crs(object)?)),
             "BoundCRS" => JsonObject::Crs(Crs::Bound(self.build_bound_crs(object)?)),
@@ -636,6 +640,17 @@ impl Reader<'_> {
         Ok(crs)
     }
 
+    fn build_derived_crs(&mut self, object: &Object) -> Read<DerivedCRS> {
+        let base = self.build_crs(&Value::Object(get_object(object, "base_crs")?.clone()))?;
+        let coordinate_system = self.build_cs(get_object(object, "coordinate_system")?)?;
+        let conversion = self.build_conversion(get_object(object, "conversion")?)?;
+        let identified = self.properties(object, false)?;
+        let mut crs =
+            DerivedCRS::create(identified.name.clone(), base, conversion, coordinate_system)?;
+        crs.identified = identified;
+        Ok(crs)
+    }
+
     fn build_projected_crs(&mut self, object: &Object) -> Read<ProjectedCRS> {
         let base = get_object(object, "base_crs")?;
         let base_cs = self.build_cs(get_object(base, "coordinate_system")?)?;
@@ -886,6 +901,12 @@ impl Reader<'_> {
             };
             parameters.push(self.build_parameter(parameter)?);
         }
+        let operation_source = if contains(transformation, "source_crs") {
+            let object = get_object(transformation, "source_crs")?;
+            Some(Box::new(self.build_crs(&Value::Object(object.clone()))?))
+        } else {
+            None
+        };
         let identified = self.properties(transformation, false)?;
         let method_properties = self.properties(method, false)?;
         let (code_space, code) = method_properties
@@ -901,7 +922,7 @@ impl Reader<'_> {
             identified: conversion.identified,
             method: conversion.method,
             parameters: conversion.parameters,
-            source: None,
+            source: operation_source,
             target: None,
             interpolation: None,
             accuracy: None,
