@@ -103,11 +103,12 @@ Before this change the same pairs went through the EPSG pipeline builder, which 
 - The context search returns official grid names. C++ `CoordinateOperationContext` defaults `usePROJNames_` to `true` (`src/iso19111/operation/coordinateoperationfactory.cpp`, 9.9.0), so the PROJ name is written: `nl_nsgi_rdtrans2018.tif` where the crate writes `rdtrans2018.gsb`. Switching `operations_between` to the PROJ names was tried. The full suite stayed green (1344 passed), and the one case it touches, `compoundCRS_from_WKT2_no_id_to_geogCRS_3D_context`, still fails on its operation count. The change was reverted because no ported test needs it. It belongs to a lot that also adds `setUsePROJAlternativeGridNames`.
 - PROJ's `PROJStringParser` makes a CRS keep its extension whenever one of its parameters is not used by the parser (`hasUnusedParameters` in `io.cpp`, 9.9.0). That rule needs the set of parameters each projection reads. It is not ported. The crate only applies it to `OPERATION_ONLY_PARAMS` (`lon_wrap`, read by PROJ only when it runs an operation), so other unused parameters, such as `+x_0` on a method that does not use it, do not yet make an extension. A broader port would change the export of many CRS strings and needs its own lot.
 
-## Bound CRS with a projected base (open, found while trying `createOperation_on_crs_with_bound_crs_and_wktext`)
+## Bound CRS with a projected base (checked against PROJ 9.9.0, no defect)
 
-- A bound CRS whose base is a projected CRS and whose binding is a `+nadgrids` grid gives, to a geographic CRS, `Inverse of UTM zone 55S + Ballpark geographic offset from unknown to unknown`. The grid is missing and the result is a ballpark. Checked on `main` before any change of this lot: the geographic path in `bound_ops.rs` (`bound_to_geog`) is the cause. PROJ keeps the `hgridshift` of the binding.
-- A bound CRS to a projected CRS gives no operation at all (`0 ops`). PROJ treats the projected target as a derived CRS: the bound goes to the geographic base of the projection, then the deriving conversion follows. Adding that branch alone produced the ballpark above for a plain UTM target, which is a wrong result, so it was not kept.
-- The `wktext` case therefore needs both: the grid kept in `bound_to_geog`, then the projected target. It stays open.
+The first reading of `createOperation_on_crs_with_bound_crs_and_wktext` suggested that a bound CRS with a projected base and a `+nadgrids` binding loses its grid to a geographic CRS. PROJ 9.9.0 gives the same ballpark (`projinfo -s ... -t "+proj=longlat +ellps=GRS80 +type=crs"`: `Inverse of UTM zone 55S + Ballpark geographic offset from unknown to unknown`). The grid is not used there because the base datum carries `using nadgrids=...` and no longer matches the target datum. The Rust output is the PROJ output. Four expectations from `projinfo` are in `tests/unit_bound_projected_base.rs`, see `docs/PORTING-bound-projected-base.md`.
+
+- A bound CRS to a projected CRS gives no operation (`0 ops`) in the Rust. PROJ treats a projected target as a derived CRS. This is still open.
+- The `wktext` case is not a bound-CRS case: its `+ignored1 +ignored2 +wktext` parameters make the CRS an extension (`createOperationsFromProj4Ext`). It stays open, and depends on the rule for unused parameters.
 
 ## Ledger and bench
 
