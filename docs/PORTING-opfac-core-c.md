@@ -4,14 +4,15 @@ PROJ 9.9.0 `test/unit/test_operationfactory.cpp`, the 52 `operation` names of lo
 
 Rust tests are in `tests/unit_opfac_core_c.rs`. Each function is `operation_` plus the C++ name in snake case, and its doc comment carries the exact `TEST(operation, ...)` name.
 
-**Result: 12 of 52 cases are ported. 40 stay open, each with a reason below.**
+**Result: 13 of 52 cases are ported. 39 stay open, each with a reason below.**
 
-## Ported (12)
+## Ported (13)
 
 | C++ TEST | Rust test |
 |---|---|
 | `compoundCRS_of_horizCRS_with_TOWGS84_vertCRS_with_geoid_model_to_geogCRS` | `operation_compound_crs_of_horiz_crs_with_towgs84_vert_crs_with_geoid_model_to_geog_crs` |
 | `createOperation_ETRS89_to_Amersfoort` | `operation_create_operation_etrs89_to_amersfoort` |
+| `compoundCRS_with_non_meter_horiz_and_vertical_to_geog` | `operation_compound_crs_with_non_meter_horiz_and_vertical_to_geog` (in `tests/unit_compound_axis_swap.rs`). The final axis swap of the derived branch, see `docs/PORTING-compound-axis-swap.md`. |
 | `proj3DCRS_with_non_meter_horiz_and_vertical_to_geog` | `operation_proj3_d_crs_with_non_meter_horiz_and_vertical_to_geog` |
 | `createOperation_fallback_to_proj4_strings` | `operation_create_operation_fallback_to_proj4_strings` |
 | `createOperation_fallback_to_proj4_strings_bound_of_geog` | `operation_create_operation_fallback_to_proj4_strings_bound_of_geog` |
@@ -27,9 +28,9 @@ Rust tests are in `tests/unit_opfac_core_c.rs`. Each function is `operation_` pl
 
 The nine `createOperation_fallback_to_proj4_strings*` cases are the PROJ-string extension path, see [Source change](#source-change) below.
 
-## Not ported (40)
+## Not ported (39)
 
-Written and failing against this crate (29): the test was written, run, and removed from the file because it did not pass. A failing test is not kept in the tree.
+Written and failing against this crate (28): the test was written, run, and removed from the file because it did not pass. A failing test is not kept in the tree.
 
 | C++ TEST | Reason |
 |---|---|
@@ -46,7 +47,6 @@ Written and failing against this crate (29): the test was written, run, and remo
 | `compoundCRS_to_geogCRS_with_vertical_unit_change_and_height_depth_reversal` | One operation where PROJ gives three; same missing height-depth reversal of a compound. |
 | `compoundCRS_to_proj_string_with_non_metre_height` | One operation where PROJ gives more: the vgridshift path into a `+vunits=us-ft` PROJ CRS is not built. |
 | `compoundCRS_to_PROJJSON_with_non_metre_height` | Same as the PROJ-string case, from a PROJJSON compound. |
-| `compoundCRS_with_non_meter_horiz_and_vertical_to_geog` | The final lat/lon axis swap is lost in `projected_compound_to_geog`, which cancels an east-north swap the target still needs. |
 | `compoundCRS_of_bound_horizCRS_and_bound_vertCRS_to_geogCRS` | The `Geographic3D to GravityRelatedHeight (EGM)` method (9661) with a `PARAMETERFILE` does not export (`Unimplemented`). |
 | `createOperation_ellipsoidal_ocentric_to_projected_of_ellipsoidal_ocentric` | The IAU_2015 ellipsoidal CRS is written as `+proj=eqc` alone; the `+proj=geoc` steps are missing. |
 | `compoundCRS_of_vertCRS_with_geoid_model_to_geogCRS` | NAVD88 to NAD83 uses a ballpark vertical change, not the `us_noaa_g2012bu0.tif` GEOIDMODEL grid. |

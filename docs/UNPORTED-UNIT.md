@@ -204,7 +204,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.compoundCRS_from_WKT2_to_geogCRS_3D_context`
 - `operation.compoundCRS_from_WKT2_no_id_to_geogCRS_3D_context`
 - `operation.compoundCRS_to_geogCRS_3D_Amersfoort_NAP_height_to_Amersfoort`
-- `operation.compoundCRS_with_non_meter_horiz_and_vertical_to_geog`
 - `operation.compoundCRS_to_geogCRS_3D_using_intermediate_of_horizontal_transform`
 - `operation.boundCRS_to_compoundCRS`
 - `operation.boundCRS_to_compoundCRS_with_hubCRS_same_as_compound_geographicCRS`
