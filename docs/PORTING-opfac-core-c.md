@@ -4,9 +4,9 @@ PROJ 9.9.0 `test/unit/test_operationfactory.cpp`, the 52 `operation` names of lo
 
 Rust tests are in `tests/unit_opfac_core_c.rs`. Each function is `operation_` plus the C++ name in snake case, and its doc comment carries the exact `TEST(operation, ...)` name.
 
-**Result: 13 of 52 cases are ported. 39 stay open, each with a reason below.**
+**Result: 22 of 52 cases are ported. 30 stay open, each with a reason below.** Counts assume PR #71 to #74 are merged. The vertical cases of the vertical agent are not counted yet.
 
-## Ported (13)
+## Ported (22)
 
 | C++ TEST | Rust test |
 |---|---|
@@ -23,14 +23,23 @@ Rust tests are in `tests/unit_opfac_core_c.rs`. Each function is `operation_` pl
 | `createOperation_fallback_to_proj4_strings_regular_to_projliteral_with_towgs84` | `operation_create_operation_fallback_to_proj4_strings_regular_to_projliteral_with_towgs84` |
 | `createOperation_fallback_to_proj4_strings_proj_NAD83_to_projliteral` | `operation_create_operation_fallback_to_proj4_strings_proj_nad83_to_projliteral` |
 | `createOperation_fallback_to_proj4_strings_with_axis_inverted_projCRS` | `operation_create_operation_fallback_to_proj4_strings_with_axis_inverted_proj_crs` |
+| `createOperation_on_crs_with_bound_crs_and_wktext` | `operation_create_operation_on_crs_with_bound_crs_and_wktext` (`tests/unit_opfac_core_c_bound.rs`, PR #74). |
+| `isPROJInstantiable` | `operation_is_proj_instantiable` (`tests/unit_opfac_core_c_api.rs`, PR #71). |
+| `createOperation_on_crs_with_canonical_bound_crs` | `operation_create_operation_on_crs_with_canonical_bound_crs` (PR #71). |
+| `createOperation_time_dependent_helmert_directly_from_database` | `operation_time_dependent_helmert_directly_from_database` (`tests/unit_opfac_core_c_metadata.rs`, PR #72). |
+| `createOperation_defmodel_from_database` | `operation_defmodel_from_database` (PR #72). |
+| `createOperation_Geographic3D_Offset_by_velocity_grid` | `operation_create_operation_geographic3d_offset_by_velocity_grid` (`tests/unit_opfac_core_c_deformation.rs`, PR #73). |
+| `createOperation_ITRF2014_to_ETRS89_DNK` | `operation_create_operation_itrf2014_to_etrs89_dnk` (PR #73). |
+| `createOperation_test_createOperationsWithDatumPivot_iter_1` | `operation_create_operation_test_create_operations_with_datum_pivot_iter_1` (PR #73). |
+| `createOperation_Vrtical_Offset_by_velocity_grid` | `operation_create_operation_vrtical_offset_by_velocity_grid` (PR #73). |
 
 `createOperation_ETRS89_to_Amersfoort` was listed as open in `PORTING-opfac-core-2.md`; the existing registry search already returns the expected operations, so it is ported here without a source change.
 
 The nine `createOperation_fallback_to_proj4_strings*` cases are the PROJ-string extension path, see [Source change](#source-change) below.
 
-## Not ported (39)
+## Not ported (30)
 
-Written and failing against this crate (28): the test was written, run, and removed from the file because it did not pass. A failing test is not kept in the tree.
+Written and failing against this crate (24): the test was written, run, and removed from the file because it did not pass. A failing test is not kept in the tree.
 
 | C++ TEST | Reason |
 |---|---|
@@ -55,29 +64,20 @@ Written and failing against this crate (28): the test was written, run, and remo
 | `compoundCRS_of_vertCRS_with_geoid_model_by_name_and_datum_ensemble` | No operation from OSGB36 + ODN to ETRS89 geocentric: the OSTN15 and OSGM15 chain is not built. |
 | `createOperation_ETRS89_XXX_to_ETRS89_YYY_using_ETRF2000` | Fewer than two operations; PROJ gives the ETRF2000 chain and the `+proj=noop` inverse. |
 | `createOperation_ETRF2000_to_Amersfoort` | The result is a ballpark, not the ETRS89-NLD [AGRS2010] chain through `Amersfoort to ETRS89-NLD [AGRS2010] (9)`. |
-| `createOperation_Geographic3D_Offset_by_velocity_grid` | The first operation is a ballpark: `ca_nrc_NAD83v70VG.tif` deformation is not used. |
-| `createOperation_ITRF2014_to_ETRS89_DNK` | The first operation is a ballpark: the `eur_nkg_nkgrf17vel.tif` deformation step is not built. |
-| `createOperation_test_createOperationsWithDatumPivot_iter_1` | The first operation is a ballpark; PROJ gives `+proj=noop` through the `NAD83(CSRS)v2 to NAD83(CSRS)v3 (3)` pivot. |
 | `createOperation_compound_to_compound_with_Geographic3D_Offset_by_velocity_grid` | No operation for the NAD83(CSRS)v3 MTM 7 + HT2_1997 to UTM 19 + CGVD2013a(2010) compound: velocity and vertical grid chain not built. |
 | `NAD83_to_projected_CRS_based_on_NAD83_2011` | One operation where PROJ gives two: the ballpark `NAD83 to NAD83(2011) + California Albers` is missing. |
-| `createOperation_Vrtical_Offset_by_velocity_grid` | `Inverse of CGVD2013a(2010) height to CGVD2013a(2002) height (1)` is `Unimplemented` (vertical velocity grid, `deformation +dt=-8`). |
 | `compoundCRS_from_WKT2_to_geogCRS_3D_context` | An operation of the WKT2 round trip of `EPSG:7415` is not `is_equivalent_to` the one from the EPSG CRS. |
 
-Not written (11). The reason is an API that this crate does not expose, or a cause already documented in an earlier lot:
+Not written (6). The reason is an API that this crate does not expose, or a cause already documented in an earlier lot:
 
 | C++ TEST | Reason |
 |---|---|
 | `IGNF_LAMB1_TO_EPSG_4326` | `IntermediateCRSUse::ALWAYS` is absent; the enum has `Allow` and `Never` only. |
-| `isPROJInstantiable` | No `isPROJInstantiable` method and no grid-file check on `Transformation`. |
-| `createOperation_on_crs_with_canonical_bound_crs` | No `baseCRSWithCanonicalBoundCRS` accessor. |
 | `createOperation_compound_to_compound_with_epoch_HT2_1997_CGG2013a` | Needs `CoordinateMetadata` (an epoch attached to a CRS); no such type. |
 | `createOperation_compound_to_compound_with_epoch_HT2_2002_CGG2013a` | Same as above. |
 | `createOperation_compound_to_compound_with_epoch_HT2_2010_CGG2013a` | Same as above. |
-| `createOperation_time_dependent_helmert_directly_from_database` | Needs `CoordinateMetadata`; no such type. |
-| `createOperation_defmodel_from_database` | Needs `CoordinateMetadata`; no such type. |
 | `createOperation_ITRF2000_to_ETRS89` | `gridsNeeded` is not exposed, so the grid-based and grid-less split cannot be checked. |
 | `compoundCRS_to_geogCRS_3D_using_intermediate_of_horizontal_transform` | `GridAvailabilityUse::KNOWN_AVAILABLE` is absent (`UseForSorting` and `IgnoreGridAvailability` only). |
-| `createOperation_on_crs_with_bound_crs_and_wktext` | `+ignored1`, `+ignored2` and `+wktext` do not parse as a projected CRS; the bound pipeline needs bound-to-bound, as in `PORTING-opfactory-core-b.md`. |
 
 ## Source change
 
