@@ -5,13 +5,13 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 150 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
-| `niche` | 32 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
+| `core` | 147 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `niche` | 27 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 42 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (150)
+## core (147)
 
-### test_c_api.cpp (23)
+### test_c_api.cpp (20)
 
 - `CApi.proj_coordoperation_get_grid_used`
 - `CApi.proj_coordoperation_get_grid_used_fullname_caching`
@@ -33,9 +33,6 @@ The class comes from the test name alone, so check it when you port a test.
 - `CApi.proj_create_vertical_crs_ex`
 - `CApi.proj_create_vertical_crs_ex_with_geog_crs`
 - `CApi.proj_create_vertical_crs_ex_implied_accuracy`
-- `CApi.proj_trans_bounds_ignore_inf`
-- `CApi.proj_trans_bounds_ignore_inf_geographic`
-- `CApi.proj_trans_bounds_3D_ignore_inf`
 
 ### test_crs.cpp (8)
 
@@ -179,15 +176,7 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.createOperation_compound_to_compound_with_Geographic3D_Offset_by_velocity_grid`
 - `operation.compoundCRS_to_compoundCRS_context_extent_use_none`
 
-## niche (32)
-
-### test_c_api.cpp (5)
-
-- `CApi.proj_create_crs_to_crs_coordinate_metadata_in_src`
-- `CApi.proj_create_crs_to_crs_coordinate_metadata_in_target`
-- `CApi.proj_crs_promote_to_3D_on_coordinate_metadata`
-- `CApi.proj_trans_bounds_world_geodetic_to_spilhaus`
-- `CApi.proj_crs_has_point_motion_operation`
+## niche (27)
 
 ### test_crs.cpp (3)
 
