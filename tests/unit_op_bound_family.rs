@@ -4,7 +4,7 @@
 use proj_rs::iso19111::{
     create_crs_from_proj_string, BoundCRS, CartesianCS, Conversion, CoordinateOperationContext,
     CoordinateOperationFactory, Crs, DatabaseContext, GeodeticCRS, GeographicCRS, OpProps,
-    ProjLines, ProjectedCRS, UnitOfMeasure, WktObject, WktParser,
+    ProjLines, ProjectedCRS, UnitOfMeasure, WktConvention, WktFormatter, WktObject, WktParser,
 };
 
 fn utm31_bound() -> BoundCRS {
@@ -241,5 +241,39 @@ fn operation_bound_crs_with_base_crs_with_extent_to_geog_crs() {
     assert_eq!(
         operation.name(),
         "Inverse of SPCS83 California zone 3 (US Survey feet) + NAD83 to WGS 84 (1)"
+    );
+}
+
+/// `buildCRSFromProjStrThroughWKT`: the PROJ string as a CRS, read back from its WKT2.
+fn crs_through_wkt(text: &str) -> Crs {
+    let crs = create_crs_from_proj_string(text).expect(text);
+    let wkt = crs
+        .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2019))
+        .expect("WKT2");
+    let WktObject::Crs(read) = WktParser::new().create_from_wkt(&wkt).expect("WKT2 read") else {
+        panic!("expected a CRS");
+    };
+    read
+}
+
+/// `TEST(operation, boundCRS_to_boundCRS_with_base_geog_crs_different_from_source_of_transf)`
+#[test]
+fn operation_bound_crs_to_bound_crs_with_base_geog_crs_different_from_source_of_transf() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let src = crs_through_wkt(
+        "+proj=lcc +lat_1=49 +lat_0=49 +lon_0=0 +k_0=0.999877499 +x_0=600000 +y_0=200000 +ellps=clrk80ign +pm=paris +towgs84=-168,-60,320,0,0,0,0 +units=m +no_defs +type=crs",
+    );
+    let dst = crs_through_wkt(
+        "+proj=longlat +ellps=clrk80ign +pm=paris +towgs84=-168,-60,320,0,0,0,0 +no_defs +type=crs",
+    );
+    let operation = CoordinateOperationFactory::create()
+        .create_operation(&src, &dst)
+        .expect("operations")
+        .expect("operation");
+    assert_eq!(
+        operation
+            .export_to_proj_string_with_database(&db, ProjLines::Single)
+            .expect("PROJ string"),
+        "+proj=pipeline +step +inv +proj=lcc +lat_1=49 +lat_0=49 +lon_0=0 +k_0=0.999877499 +x_0=600000 +y_0=200000 +ellps=clrk80ign +pm=paris +step +proj=longlat +ellps=clrk80ign +pm=paris +step +proj=unitconvert +xy_in=rad +xy_out=deg"
     );
 }
