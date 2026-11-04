@@ -27,6 +27,14 @@ CRS and the source is its base, the deriving conversion is returned first.
 Pivots are used only for pairs passed to
 `CoordinateOperationContext::set_intermediate_crs`.
 
+`CoordinateMetadata` is a CRS with the decimal year of its coordinates
+(`CoordinateMetadata::create`, `AuthorityFactory::create_coordinate_metadata`).
+`CoordinateOperationFactory::create_operations_from_metadata`,
+`create_operations_to_metadata` and `create_operations_between_metadata` take it
+for the source, the target, or both. Each returned transformation carries the
+epochs, and its helmert and `defmodel` exports write the `set v_4` steps.
+See `docs/PORTING-lotc-metadata.md`.
+
 ## WKT
 
 `WktConvention` is `Wkt2_2015`, `Wkt2_2015Simplified`, `Wkt2_2019`,

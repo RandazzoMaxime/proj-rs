@@ -11,6 +11,7 @@ mod buildop;
 mod compound;
 mod conversion_export;
 mod convmethod;
+mod coordinate_metadata;
 mod crs_ops;
 mod derived;
 mod equiv;
@@ -36,6 +37,7 @@ mod wkt;
 mod wkt_import;
 
 pub use buildop::{AxisOrderReversal, OpProps};
+pub use coordinate_metadata::CoordinateMetadata;
 pub use crs_ops::{ParameterLinearUnit, Wgs84Dynamic};
 pub use equiv::{equivalent_name, equivalent_name_bigger_differences, Equivalence};
 pub use factory::{

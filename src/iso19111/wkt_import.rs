@@ -1800,6 +1800,8 @@ impl WktParser {
             accuracy_text: None,
             version: None,
             point_motion: false,
+            source_epoch: None,
+            target_epoch: None,
             inverted: false,
         };
         Ok(WktObject::Crs(Crs::Bound(BoundCRS::create(
@@ -2412,6 +2414,8 @@ impl WktParser {
             accuracy_text: None,
             version: None,
             point_motion: false,
+            source_epoch: None,
+            target_epoch: None,
             inverted: false,
         };
         Crs::Bound(BoundCRS::create(
@@ -3321,6 +3325,8 @@ impl WktParser {
             accuracy_text: None,
             version: props.version,
             point_motion: false,
+            source_epoch: None,
+            target_epoch: None,
             inverted: false,
         })
     }

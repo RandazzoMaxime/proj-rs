@@ -821,6 +821,8 @@ impl Reader<'_> {
             version: None,
             point_motion,
             inverted: false,
+            source_epoch: None,
+            target_epoch: None,
         })
     }
 
@@ -929,6 +931,8 @@ impl Reader<'_> {
             accuracy_text: None,
             version: None,
             point_motion: false,
+            source_epoch: None,
+            target_epoch: None,
             inverted: false,
         });
         let mut bound = BoundCRS::create(source, target, operation);

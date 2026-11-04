@@ -980,13 +980,13 @@ fn write_anchor(
     }
     if let Some(epoch) = anchor_epoch {
         writer.key("anchor_epoch");
-        writer.number(rounded_anchor_epoch(epoch));
+        writer.number(rounded_epoch_in_decimal_year(epoch));
     }
     Ok(())
 }
 
 /// `getRoundedEpochInDecimalYear`: snap to 0.001 year when the residual is at most 1e-3.
-fn rounded_anchor_epoch(year: f64) -> f64 {
+pub(super) fn rounded_epoch_in_decimal_year(year: f64) -> f64 {
     let scaled = year * 1000.0;
     let nearest = scaled.round();
     if (scaled - nearest).abs() <= 1e-3 {
