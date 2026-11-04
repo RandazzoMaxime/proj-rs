@@ -3426,13 +3426,27 @@ fn remove_inverse_of(props: &mut Props) {
 /// `ConcatenatedOperation::fixSteps`, for a CONVERSION step without CRSs at either end.
 /// A projected CRS stands for its base geodetic CRS on the step's side, and the step is
 /// inverted when it runs from the projected CRS. Axis-order steps, the intermediate
-/// steps, and the derived-CRS branches of the other side are not ported yet.
+/// conversions, and the derived-CRS branches of the other side are not ported yet.
 fn fix_steps(source: &Crs, target: &Crs, steps: &mut [ConcatenatedStep]) {
     let last = steps.len() - 1;
-    for index in [0, last] {
+    for index in 0..steps.len() {
+        if matches!(
+            steps[index].operation,
+            CoordinateOperation::Transformation(_)
+        ) {
+            fix_transformation_direction(source, steps, index);
+            continue;
+        }
+        if index != 0 && index != last {
+            continue;
+        }
         let next_source = steps
             .get(index + 1)
             .and_then(|step| step.operation.source_crs())
+            .cloned();
+        let next_target = steps
+            .get(index + 1)
+            .and_then(|step| step.operation.target_crs())
             .cloned();
         let previous_target = index
             .checked_sub(1)
@@ -3447,7 +3461,20 @@ fn fix_steps(source: &Crs, target: &Crs, steps: &mut [ConcatenatedStep]) {
         if index == 0 {
             match derived_base(source) {
                 Some(base) => {
-                    let other = next_source.unwrap_or(base);
+                    let other = match next_source {
+                        Some(next) if !are_more_or_less_equivalent(&next, &base) => {
+                            match next_target {
+                                Some(next_target)
+                                    if are_more_or_less_equivalent(&next_target, &base) =>
+                                {
+                                    next_target
+                                }
+                                _ => next,
+                            }
+                        }
+                        Some(next) => next,
+                        None => base,
+                    };
                     if conversion.inverted {
                         set_step_crss(conversion, source.clone(), other);
                     } else {
@@ -3477,10 +3504,52 @@ fn fix_steps(source: &Crs, target: &Crs, steps: &mut [ConcatenatedStep]) {
     }
 }
 
+/// `ConcatenatedOperation::fixSteps`, for a transformation step: it is reversed when its
+/// target matches the CRS the previous step ends on, and its source does not.
+fn fix_transformation_direction(source: &Crs, steps: &mut [ConcatenatedStep], index: usize) {
+    let (Some(step_source), Some(step_target)) = (
+        steps[index].operation.source_crs().cloned(),
+        steps[index].operation.target_crs().cloned(),
+    ) else {
+        return;
+    };
+    let previous = if index == 0 {
+        Some(source.clone())
+    } else {
+        steps[index - 1].operation.target_crs().cloned()
+    };
+    let Some(previous) = previous else {
+        return;
+    };
+    if are_more_or_less_equivalent(&step_source, &previous) {
+        return;
+    }
+    if are_more_or_less_equivalent(&step_target, &previous) {
+        steps[index].operation = steps[index].operation.inverse();
+    }
+}
+
+/// `areCRSMoreOrLessEquivalent`: the same single identifier, or an equivalent CRS.
+fn are_more_or_less_equivalent(left: &Crs, right: &Crs) -> bool {
+    let (left_ids, right_ids) = (left.identifiers(), right.identifiers());
+    if let ([l], [r]) = (left_ids, right_ids) {
+        if l.code() == r.code() && l.code_space() == r.code_space() {
+            return true;
+        }
+    }
+    // `Crs::is_equivalent_to_with` compares geographic CRS strictly, axis names included.
+    match (left, right) {
+        (Crs::Geographic(left), Crs::Geographic(right)) => {
+            left.is_equivalent_to_with(right, Equivalence::Equivalent)
+        }
+        _ => left.is_equivalent_to_with(right, Equivalence::Equivalent),
+    }
+}
+
 /// `extractDerivedCRS`, for a projected CRS: its base geodetic CRS.
 fn derived_base(crs: &Crs) -> Option<Crs> {
     match crs {
-        Crs::Projected(projected) => Some(Crs::Geodetic(projected.base_crs().clone())),
+        Crs::Projected(projected) => Some(Crs::from(projected.base_crs().clone())),
         _ => None,
     }
 }
