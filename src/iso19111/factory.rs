@@ -5095,22 +5095,15 @@ fn select_candidates(
     target: &Crs,
     context: &CoordinateOperationContext,
 ) -> Vec<CoordinateOperation> {
-    let (source_extent, target_extent) = match context.crs_extent_use {
-        CrsExtentUse::Ignore => (None, None),
-        _ => (crs_extent(source), crs_extent(target)),
-    };
-    let filtered = filter_and_sort(
-        found,
-        context,
-        source_extent.as_ref(),
-        target_extent.as_ref(),
-    );
+    let extents = sort_extents(context, source, target);
+    let filtered = filter_and_sort(found, context, &extents);
     let mut sorted = super::select::sort_candidates(
         filtered.operations,
         &context.db,
         source,
         target,
         context.grid_availability,
+        &extents,
     );
     let synthetic_last = sorted.last().is_some_and(|operation| {
         operation.has_ballpark_transformation()
@@ -5215,6 +5208,65 @@ fn extent_pseudo_area(extent: &ObjectDomain) -> f64 {
 }
 
 /// `FilterResults` with `andSort`: keeps the operations that match the area of interest and accuracy.
+/// The extents `FilterResults` measures against: the area of interest (the given one, or
+/// the one `computeAreaOfInterest` derives from the CRS extents), and the two CRS extents.
+pub(crate) struct SortExtents {
+    pub(crate) area: Option<ObjectDomain>,
+    pub(crate) source: Option<ObjectDomain>,
+    pub(crate) target: Option<ObjectDomain>,
+}
+
+impl SortExtents {
+    /// `computeAreaOfInterest`: a given area stands; otherwise the area is the intersection
+    /// or the smaller of the two CRS extents, as the CRS extent use says.
+    pub(crate) fn new(
+        context: &CoordinateOperationContext,
+        source: Option<ObjectDomain>,
+        target: Option<ObjectDomain>,
+    ) -> Self {
+        let area = match (&context.area_of_interest, context.crs_extent_use) {
+            (Some(area), _) => Some(area.clone()),
+            (None, CrsExtentUse::Intersection) => match (&source, &target) {
+                (Some(left), Some(right)) => match (left.bounding_box(), right.bounding_box()) {
+                    (Some(a), Some(b)) => a.intersection(&b).map(ObjectDomain::from_bounding_box),
+                    _ => None,
+                },
+                _ => None,
+            },
+            (None, CrsExtentUse::Smallest) => match (&source, &target) {
+                (Some(left), Some(right)) => {
+                    if extent_pseudo_area(left) < extent_pseudo_area(right) {
+                        Some(left.clone())
+                    } else {
+                        Some(right.clone())
+                    }
+                }
+                (Some(extent), None) | (None, Some(extent)) => Some(extent.clone()),
+                (None, None) => None,
+            },
+            _ => None,
+        };
+        Self {
+            area,
+            source,
+            target,
+        }
+    }
+}
+
+/// [`SortExtents`] of a pair: the CRS extents, unless the context ignores them.
+pub(crate) fn sort_extents(
+    context: &CoordinateOperationContext,
+    source: &Crs,
+    target: &Crs,
+) -> SortExtents {
+    let (source_extent, target_extent) = match context.crs_extent_use {
+        CrsExtentUse::Ignore => (None, None),
+        _ => (crs_extent(source), crs_extent(target)),
+    };
+    SortExtents::new(context, source_extent, target_extent)
+}
+
 /// Operations kept by [`filter_and_sort`], and whether a kept-or-not operation with no
 /// grid and no ballpark contains the area: PROJ's `hasOpThatContainsAreaOfInterestAndNoGrid`.
 struct Filtered {
@@ -5225,31 +5277,10 @@ struct Filtered {
 fn filter_and_sort(
     operations: Vec<CoordinateOperation>,
     context: &CoordinateOperationContext,
-    extent1: Option<&ObjectDomain>,
-    extent2: Option<&ObjectDomain>,
+    extents: &SortExtents,
 ) -> Filtered {
-    let area = match (&context.area_of_interest, context.crs_extent_use) {
-        (Some(area), _) => Some(area.clone()),
-        (None, CrsExtentUse::Intersection) => match (extent1, extent2) {
-            (Some(left), Some(right)) => match (left.bounding_box(), right.bounding_box()) {
-                (Some(a), Some(b)) => a.intersection(&b).map(ObjectDomain::from_bounding_box),
-                _ => None,
-            },
-            _ => None,
-        },
-        (None, CrsExtentUse::Smallest) => match (extent1, extent2) {
-            (Some(left), Some(right)) => {
-                if extent_pseudo_area(left) < extent_pseudo_area(right) {
-                    Some(left.clone())
-                } else {
-                    Some(right.clone())
-                }
-            }
-            (Some(extent), None) | (None, Some(extent)) => Some(extent.clone()),
-            (None, None) => None,
-        },
-        _ => None,
-    };
+    let area = extents.area.as_ref();
+    let (extent1, extent2) = (extents.source.as_ref(), extents.target.as_ref());
     let described = context.area_of_interest.as_ref().and_then(|area| {
         let text = area.description()?;
         operations
@@ -5275,7 +5306,7 @@ fn filter_and_sort(
             continue;
         }
         let ballpark = operation.has_ballpark_transformation();
-        if let Some(area) = &area {
+        if let Some(area) = area {
             let Some(extent) = operation_extent(operation) else {
                 non_ballpark_without_extent |= !ballpark;
                 continue;
@@ -5357,7 +5388,8 @@ fn has_perfect_accuracy_result(
 ) -> bool {
     let mut strict = context.clone();
     strict.spatial_criterion = SpatialCriterion::StrictContainment;
-    filter_and_sort(operations.to_vec(), &strict, extent1, extent2)
+    let extents = SortExtents::new(&strict, extent1.cloned(), extent2.cloned());
+    filter_and_sort(operations.to_vec(), &strict, &extents)
         .operations
         .iter()
         .any(|operation| {
