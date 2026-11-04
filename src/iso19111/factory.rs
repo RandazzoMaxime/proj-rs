@@ -4880,6 +4880,13 @@ impl CoordinateOperationFactory {
         let source = canonical_or_self(source);
         let target = canonical_or_self(target);
         check_same_celestial_body(&source, &target)?;
+        if context.crs_extent_use == CrsExtentUse::Intersection {
+            if let (Some(left), Some(right)) = (crs_extent(&source), crs_extent(&target)) {
+                if !extent_intersects(&left, &right) {
+                    return Ok(Vec::new());
+                }
+            }
+        }
         let found = self.create_candidates(&source, &target, context)?;
         Ok(select_candidates(found, &source, &target, context))
     }
