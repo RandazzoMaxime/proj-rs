@@ -19,6 +19,7 @@ use super::model::{
     PrimeMeridian, ProjectedCRS, SphericalCS, Transformation, UnitKind, UnitOfMeasure, VerticalCRS,
     VerticalCS, VerticalReferenceFrame,
 };
+use super::pipeline::ProjLines;
 use crate::projdb;
 
 /// Whether [`AuthorityFactory::get_authority_codes`] returns deprecated rows.
@@ -5107,6 +5108,7 @@ fn select_candidates(
     );
     let sorted = remove_synthetic_null_transforms(sorted, &filtered);
     let sorted = remove_uninteresting_ops(sorted);
+    let sorted = remove_duplicate_ops(sorted, &context.db);
     remove_synthetic_null_transforms(sorted, &filtered)
 }
 
@@ -5161,6 +5163,32 @@ fn remove_uninteresting_ops(operations: Vec<CoordinateOperation>) -> Vec<Coordin
         }
         kept.push(operation.clone());
         last = Some((operation, extent, accuracy, steps));
+    }
+    kept
+}
+
+/// `removeDuplicateOps`: an operation whose PROJ string and extent equal those of an earlier one
+/// adds nothing. An operation whose PROJ string cannot be written is kept.
+fn remove_duplicate_ops(
+    operations: Vec<CoordinateOperation>,
+    db: &DatabaseContext,
+) -> Vec<CoordinateOperation> {
+    if operations.len() <= 1 {
+        return operations;
+    }
+    let mut seen: Vec<(String, Option<BoundingBox>)> = Vec::new();
+    let mut kept = Vec::with_capacity(operations.len());
+    for operation in operations {
+        let Ok(text) = operation.export_to_proj_string_with_database(db, ProjLines::Single) else {
+            kept.push(operation);
+            continue;
+        };
+        let bbox = operation_extent(&operation).and_then(|extent| extent.bounding_box());
+        let key = (text, bbox);
+        if !seen.contains(&key) {
+            seen.push(key);
+            kept.push(operation);
+        }
     }
     kept
 }
