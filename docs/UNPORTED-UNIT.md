@@ -237,8 +237,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.createOperation_Vrtical_Offset_by_velocity_grid`
 - `operation.createOperation_ITRF2000_to_ETRS89`
 - `operation.createOperation_ITRF2014_to_ETRS89_DNK`
-- `operation.createOperation_time_dependent_helmert_directly_from_database`
-- `operation.createOperation_defmodel_from_database`
 - `operation.compoundCRS_to_compoundCRS_context_extent_use_none`
 
 ## test_c_api.cpp

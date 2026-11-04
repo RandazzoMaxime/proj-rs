@@ -5,11 +5,11 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 179 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `core` | 177 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
 | `niche` | 40 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 51 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (179)
+## core (177)
 
 ### test_c_api.cpp (23)
 
@@ -77,7 +77,7 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.operation_geocen_translations_by_grid_and_geocen_translations_NEU_velocities_gtg`
 - `operation.operation_geocen_translations_NEU_velocities_gtg`
 
-### test_operationfactory.cpp (128)
+### test_operationfactory.cpp (126)
 
 - `operation.geogCRS_to_geogCRS_context_match_by_name`
 - `operation.geogCRS_to_geogCRS_context_inverse_needed`
@@ -204,8 +204,6 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.createOperation_Vrtical_Offset_by_velocity_grid`
 - `operation.createOperation_ITRF2000_to_ETRS89`
 - `operation.createOperation_ITRF2014_to_ETRS89_DNK`
-- `operation.createOperation_time_dependent_helmert_directly_from_database`
-- `operation.createOperation_defmodel_from_database`
 - `operation.compoundCRS_to_compoundCRS_context_extent_use_none`
 
 ## niche (40)
