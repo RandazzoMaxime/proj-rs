@@ -2154,6 +2154,21 @@ fn setup_source(
         ellipsoid_steps(ellipsoid_of(geographic), formatter);
         return Ok(());
     }
+    if let Some((derived, base)) = derived_geographic(crs) {
+        if let Some(pole) = super::projstring::derived_pole_step(derived) {
+            formatter.start_inversion();
+            formatter.ingest_proj_string(&pole);
+            angular_unit_and_axis_swap(&derived_axes(derived), formatter)?;
+            formatter.stop_inversion();
+            if push_v3 == PushV3::Yes {
+                formatter.add_step("push");
+                formatter.add_flag("v_3");
+            }
+            formatter.add_step("cart");
+            ellipsoid_steps(ellipsoid_of(base), formatter);
+            return Ok(());
+        }
+    }
     let Some(geodetic) = geodetic_direct(crs) else {
         return Err(not_geodetic_or_geographic("Helmert"));
     };
@@ -2180,10 +2195,41 @@ fn setup_target(
         }
         return geographic_export(geographic, formatter);
     }
+    if let Some((derived, base)) = derived_geographic(crs) {
+        if let Some(pole) = super::projstring::derived_pole_step(derived) {
+            formatter.add_step("cart");
+            formatter.invert_last_step();
+            ellipsoid_steps(ellipsoid_of(base), formatter);
+            if push_v3 == PushV3::Yes {
+                formatter.add_step("pop");
+                formatter.add_flag("v_3");
+            }
+            formatter.ingest_proj_string(&pole);
+            return angular_unit_and_axis_swap(&derived_axes(derived), formatter);
+        }
+    }
     let Some(geodetic) = geodetic_direct(crs) else {
         return Err(not_geodetic_or_geographic("Helmert"));
     };
     geocentric_unit(geodetic, formatter)
+}
+
+/// A derived geographic CRS and its geographic base.
+fn derived_geographic(crs: &Crs) -> Option<(&super::niche::DerivedCRS, &GeographicCRS)> {
+    let Crs::Derived(derived) = crs else {
+        return None;
+    };
+    if derived.kind() != super::niche::DerivedKind::Geographic {
+        return None;
+    }
+    geographic_of(derived.base_crs()).map(|base| (derived, base))
+}
+
+fn derived_axes(derived: &super::niche::DerivedCRS) -> Vec<Axis> {
+    match derived.coordinate_system() {
+        CoordinateSystem::Ellipsoidal(system) => system.axes().to_vec(),
+        _ => Vec::new(),
+    }
 }
 
 fn not_geodetic_or_geographic(method: &str) -> FactoryError {

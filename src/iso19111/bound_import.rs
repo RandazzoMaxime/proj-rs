@@ -10,6 +10,7 @@ use super::model::{
     PrimeMeridian, Transformation, UnitKind, UnitOfMeasure, VerticalCRS, VerticalCS,
     VerticalReferenceFrame,
 };
+use super::niche::DerivedKind;
 use super::projstring::{geographic_axis, meridian_of, token};
 use super::wkt_import::helmert_parameters;
 
@@ -228,6 +229,36 @@ fn geodetic_as_crs(geodetic: GeodeticCRS) -> Crs {
     }
 }
 
+/// `createFromTOWGS84` for a `DerivedGeographicCRS`, which is itself a geodetic CRS: the
+/// transformation starts from the derived CRS.
+fn bind_towgs84_derived_geographic(
+    crs: &Crs,
+    axes: usize,
+    values: &[f64],
+) -> Result<Crs, FactoryError> {
+    let target = Crs::Geographic(GeographicCRS::epsg_4326());
+    let three_d = axes != 2;
+    let (name, code) = match (values.len() == 3, three_d) {
+        (true, false) => ("Geocentric translations (geog2D domain)", "9603"),
+        (true, true) => ("Geocentric translations (geog3D domain)", "1035"),
+        (false, false) => ("Position Vector transformation (geog2D domain)", "9606"),
+        (false, true) => ("Position Vector transformation (geog3D domain)", "1037"),
+    };
+    let transformation = Transformation {
+        identified: Identified::named(format!("Transformation from {} to WGS84", crs.name())),
+        method: epsg_method(name, code),
+        parameters: helmert_parameters(values),
+        source: Some(Box::new(crs.clone())),
+        target: Some(Box::new(target.clone())),
+        ..plain_transformation()
+    };
+    Ok(Crs::Bound(BoundCRS::create(
+        crs.clone(),
+        target,
+        CoordinateOperation::Transformation(transformation),
+    )))
+}
+
 /// `Transformation::createTOWGS84` and `BoundCRS::createFromTOWGS84`: a
 /// geocentric translations transformation for three terms, a position vector
 /// one for seven, from the geodetic CRS of `crs` to WGS 84.
@@ -236,6 +267,15 @@ pub(crate) fn bind_towgs84(crs: Crs, values: &[f64]) -> Result<Crs, FactoryError
         return Err(FactoryError::Invalid(
             "Invalid number of elements in TOWGS84Parameters".to_owned(),
         ));
+    }
+    if let Crs::Derived(derived) = &crs {
+        if derived.kind() == DerivedKind::Geographic {
+            return bind_towgs84_derived_geographic(
+                &crs,
+                derived.coordinate_system().axes().len(),
+                values,
+            );
+        }
     }
     let geodetic = extract_geodetic(&crs).ok_or_else(|| {
         FactoryError::Invalid(

@@ -22,6 +22,7 @@ use super::model::{
     BoundCRS, ConcatenatedOperation, ConcatenatedStep, CoordinateOperation, Crs, Ellipsoid,
     EllipsoidalCS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified, UnitOfMeasure,
 };
+use super::niche::DerivedKind;
 use super::FactoryError;
 
 /// Candidates for a pair where one side is a bound CRS. `None` for any other pair.
@@ -141,7 +142,13 @@ fn bound_to_geog(
     let base = bound.source_crs();
     let hub = bound.target_crs();
     let hub_geog = geographic_of(hub);
-    let base_geog = extract_geographic(base).map(|geog| Crs::Geographic(geog.clone()));
+    let base_geog = match base {
+        // A derived geographic CRS is replaced by its base, as `createOperationsBoundToGeog` does.
+        Crs::Derived(derived) if derived.kind() == DerivedKind::Geographic => {
+            Some(derived.base_crs().clone()).filter(|crs| geographic_of(crs).is_some())
+        }
+        _ => extract_geographic(base).map(|geog| Crs::Geographic(geog.clone())),
+    };
     let bound_transformation = with_endpoints(bound);
     let transformation = &bound_transformation;
 
