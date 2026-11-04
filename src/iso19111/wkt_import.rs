@@ -2616,11 +2616,17 @@ impl WktParser {
         if method_node.children.is_empty() {
             return Err(invalid("not enough children in METHOD node"));
         }
-        let props = self.build_properties(node)?;
-        let method_props = self.build_properties(method_node)?;
+        let mut props = self.build_properties(node)?;
+        let mut method_props = self.build_properties(method_node)?;
+        let inverse =
+            props.name.starts_with("Inverse of ") && method_props.name.starts_with("Inverse of ");
+        if inverse {
+            remove_inverse_of(&mut props);
+            remove_inverse_of(&mut method_props);
+        }
         let mut parameters = self.parameters_of(node, &linear, &angular)?;
         let interpolation = self.take_interpolation_crs(&mut parameters);
-        Ok(Conversion {
+        let conversion = Conversion {
             identified: props.identified(),
             method: OperationMethod {
                 name: method_props.name,
@@ -2642,6 +2648,11 @@ impl WktParser {
             version: props.version,
             inverted: false,
             interpolation: interpolation.map(Box::new),
+        };
+        Ok(if inverse {
+            conversion.inverse()
+        } else {
+            conversion
         })
     }
 
@@ -3379,6 +3390,9 @@ impl WktParser {
         } else {
             None
         };
+        if let (Some(source), Some(target)) = (&source, &target) {
+            fix_steps(source, target, &mut steps);
+        }
         Ok(ConcatenatedOperation {
             identified: props.identified(),
             steps,
@@ -3390,6 +3404,92 @@ impl WktParser {
             proj_based: None,
         })
     }
+}
+
+/// `buildProperties(node, true)`: the `Inverse of ` name prefix and the `INVERSE(...)` code
+/// spaces are removed, before the inverse of the built object is taken.
+fn remove_inverse_of(props: &mut Props) {
+    if let Some(name) = props.name.strip_prefix("Inverse of ") {
+        props.name = name.to_owned();
+    }
+    for identifier in &mut props.identifiers {
+        if let Some(code_space) = identifier
+            .code_space
+            .strip_prefix("INVERSE(")
+            .and_then(|code_space| code_space.strip_suffix(')'))
+        {
+            identifier.code_space = code_space.to_owned();
+        }
+    }
+}
+
+/// `ConcatenatedOperation::fixSteps`, for a CONVERSION step without CRSs at either end.
+/// A projected CRS stands for its base geodetic CRS on the step's side, and the step is
+/// inverted when it runs from the projected CRS. Axis-order steps, the intermediate
+/// steps, and the derived-CRS branches of the other side are not ported yet.
+fn fix_steps(source: &Crs, target: &Crs, steps: &mut [ConcatenatedStep]) {
+    let last = steps.len() - 1;
+    for index in [0, last] {
+        let next_source = steps
+            .get(index + 1)
+            .and_then(|step| step.operation.source_crs())
+            .cloned();
+        let previous_target = index
+            .checked_sub(1)
+            .and_then(|previous| steps[previous].operation.target_crs())
+            .cloned();
+        let CoordinateOperation::Conversion(conversion) = &mut steps[index].operation else {
+            continue;
+        };
+        if conversion.source.is_some() || conversion.target.is_some() {
+            continue;
+        }
+        if index == 0 {
+            match derived_base(source) {
+                Some(base) => {
+                    let other = next_source.unwrap_or(base);
+                    if conversion.inverted {
+                        set_step_crss(conversion, source.clone(), other);
+                    } else {
+                        set_step_crss(conversion, other, source.clone());
+                        *conversion = conversion.inverse();
+                    }
+                }
+                None => {
+                    if let Some(other) = next_source {
+                        set_step_crss(conversion, source.clone(), other);
+                    }
+                }
+            }
+        } else if index == last {
+            match derived_base(target) {
+                Some(base) => {
+                    let other = previous_target.unwrap_or(base);
+                    set_step_crss(conversion, other, target.clone());
+                }
+                None => {
+                    if let Some(other) = previous_target {
+                        set_step_crss(conversion, other, target.clone());
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// `extractDerivedCRS`, for a projected CRS: its base geodetic CRS.
+fn derived_base(crs: &Crs) -> Option<Crs> {
+    match crs {
+        Crs::Projected(projected) => Some(Crs::Geodetic(projected.base_crs().clone())),
+        _ => None,
+    }
+}
+
+/// `setCRSsUpdateInverse`: the CRS pair is the one the operation exposes, whatever its
+/// direction.
+fn set_step_crss(conversion: &mut Conversion, source: Crs, target: Crs) {
+    conversion.source = Some(Box::new(source));
+    conversion.target = Some(Box::new(target));
 }
 
 fn reference_surface(ellipsoid: Option<&Ellipsoid>) -> super::esri_parammap::ReferenceSurface {

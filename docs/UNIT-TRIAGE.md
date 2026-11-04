@@ -5,11 +5,11 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 173 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `core` | 172 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
 | `niche` | 40 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 51 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (173)
+## core (172)
 
 ### test_c_api.cpp (23)
 
@@ -58,9 +58,8 @@ The class comes from the test name alone, so check it when you port a test.
 - `factory.AuthorityFactory_build_all_concatenated`
 - `factory.ogc_timecrs`
 
-### test_io.cpp (8)
+### test_io.cpp (7)
 
-- `wkt_parse.CONCATENATEDOPERATION_with_conversion_and_conversion`
 - `wkt_parse.CONCATENATEDOPERATION_with_conversion_coordinateoperation_conversion`
 - `wkt_parse.CONCATENATEDOPERATION_with_conversion_coordinateoperation_to_inverse_conversion`
 - `wkt_parse.CONCATENATEDOPERATION_with_inverse_conversion_of_compound`
