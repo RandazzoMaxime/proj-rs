@@ -3611,6 +3611,30 @@ impl Crs {
         }
     }
 
+    /// `proj_alter_name`: this CRS with `name`. A name ending in " (deprecated)" is stored
+    /// without that suffix, and the CRS is flagged deprecated.
+    #[must_use]
+    pub fn alter_name(&self, name: &str) -> Self {
+        let mut altered = self.clone();
+        let identified = altered.identified_mut();
+        match name.strip_suffix(" (deprecated)") {
+            Some(stripped) => {
+                identified.name = stripped.to_owned();
+                identified.deprecated = true;
+            }
+            None => identified.name = name.to_owned(),
+        }
+        altered
+    }
+
+    /// `proj_alter_id`: this CRS with the single identifier `code_space:code`.
+    #[must_use]
+    pub fn alter_id(&self, code_space: &str, code: &str) -> Self {
+        let mut altered = self.clone();
+        altered.identified_mut().identifiers = vec![Identifier::new(code_space, code)];
+        altered
+    }
+
     /// Deprecated flag stored for this CRS.
     #[must_use]
     pub fn is_deprecated(&self) -> bool {

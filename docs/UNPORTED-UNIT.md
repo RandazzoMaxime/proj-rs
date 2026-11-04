@@ -222,8 +222,6 @@ and `PORT-NOTES-tests.md`.
 - `CApi.proj_crs_alter_cs_angular_unit`
 - `CApi.proj_crs_alter_cs_linear_unit`
 - `CApi.proj_crs_alter_parameters_linear_unit`
-- `CApi.proj_alter_name`
-- `CApi.proj_alter_id`
 - `CApi.proj_create_cartesian_2D_cs`
 - `CApi.proj_normalize_for_visualization_with_alternatives`
 - `CApi.proj_normalize_for_visualization_with_alternatives_reverse`
