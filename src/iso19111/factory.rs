@@ -5249,7 +5249,17 @@ impl CoordinateOperationFactory {
         if registry && found.is_empty() {
             found.extend(super::compound::geoid_vertical(source, target, context)?);
         }
-        if found.is_empty() {
+        // `createOperationsVertToVert` also runs when the registry gave no perfect operation.
+        let vertical_pair = matches!((source, target), (Crs::Vertical(_), Crs::Vertical(_)));
+        if found.is_empty()
+            || (vertical_pair
+                && !has_perfect_accuracy_result(
+                    &found,
+                    context,
+                    source_extent.as_ref(),
+                    target_extent.as_ref(),
+                ))
+        {
             found.extend(super::compound::vertical_to_vertical(source, target));
         }
         if found.is_empty() {
