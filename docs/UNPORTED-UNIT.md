@@ -68,10 +68,6 @@ and `PORT-NOTES-tests.md`.
 - `wkt_parse.DerivedGeographicCRS_GDAL_PROJ4_EXSTENSION_hack`
 - `wkt_parse.wkt1_oracle`
 - `wkt_parse.wkt1_oracle_albers_conical_equal_area`
-- `io.projstringformatter_optim_hgridshift_vgridshift_hgridshift_inv`
-- `io.projstringformatter_optim_as_uc_vgridshift_uc_as_push_as_uc`
-- `io.projstringformatter_krovak_to_krovak_east_north`
-- `io.projstringformatter_krovak_east_north_to_krovak`
 - `io.projparse_init`
 - `io.createFromUserInput`
 
