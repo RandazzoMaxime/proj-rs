@@ -54,7 +54,6 @@ and `PORT-NOTES-tests.md`.
 - `FactoryWithTmpDatabase.createOperations_exact_transform_not_whole_area`
 - `FactoryWithTmpDatabase.check_fixup_direction_concatenated_inverse_map_projection`
 - `factory.objectInsertion`
-- `factory.ogc_timecrs`
 
 ## test_io.cpp
 
