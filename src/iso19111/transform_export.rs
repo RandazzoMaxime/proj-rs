@@ -504,6 +504,19 @@ fn file_by_code(operation: &Transformation, code: i32) -> Option<String> {
     })
 }
 
+/// The filename of the parameter named `name`, for a parameter without an EPSG code.
+fn file_by_name(operation: &Transformation, name: &str) -> Option<String> {
+    operation.parameters().iter().find_map(|parameter| {
+        if parameter.name() != name {
+            return None;
+        }
+        match parameter.value() {
+            ParameterValue::Filename(file) => Some(file.clone()),
+            _ => None,
+        }
+    })
+}
+
 /// The vertical CRS of a target: itself, or the vertical component of a compound CRS.
 fn vertical_of(crs: &Crs) -> Option<&VerticalCRS> {
     match crs {
@@ -526,9 +539,13 @@ fn horizontal_grid_shift(
     target: Option<&Crs>,
     formatter: &mut PipelineFormatter,
 ) -> Result<bool, FactoryError> {
-    let code = epsg_method_code(operation);
+    let code = match epsg_method_code(operation) {
+        0 if operation.method().name().eq_ignore_ascii_case("CTABLE2") => METHOD_NTV2,
+        code => code,
+    };
     let file = match code {
-        METHOD_NTV1 | METHOD_NTV2 => file_by_code(operation, PARAMETER_LAT_LON_DIFFERENCE_FILE),
+        METHOD_NTV1 | METHOD_NTV2 => file_by_code(operation, PARAMETER_LAT_LON_DIFFERENCE_FILE)
+            .or_else(|| file_by_name(operation, "Latitude and longitude difference file")),
         // The latitude file names the pair: `lookForGridAlternative` replaces it by one GTiff.
         METHOD_NADCON => file_by_code(operation, PARAMETER_LONGITUDE_DIFFERENCE_FILE)
             .and_then(|_| file_by_code(operation, PARAMETER_LATITUDE_DIFFERENCE_FILE)),
