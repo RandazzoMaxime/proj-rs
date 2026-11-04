@@ -99,8 +99,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.boundCRS_to_geogCRS_hubCRS_and_targetCRS_same_but_baseCRS_not`
 - `operation.boundCRS_to_derived_geog_with_transformation_with_source_crs_being_base_crs_of_source_crs`
 - `operation.boundCRS_to_boundCRS`
-- `operation.boundCRS_to_boundCRS_noop_for_TOWGS84`
-- `operation.boundCRS_to_boundCRS_unralated_hub`
 - `operation.boundCRS_of_projCRS_towgs84_to_boundCRS_of_projCRS_nadgrids`
 - `operation.boundCRS_of_projCRS_towgs84_non_metre_unit_to_geocentric`
 - `operation.boundCRS_to_boundCRS_with_base_geog_crs_different_from_source_of_transf`
