@@ -63,7 +63,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_operationfactory.cpp
 
-- `operation.geogCRS_to_geogCRS_context_match_by_name`
 - `operation.geogCRS_to_geogCRS_context_inverse_needed`
 - `operation.geogCRS_to_geogCRS_context_NAD27_to_WGS84_G1762`
 - `operation.geogCRS_to_geogCRS_context_datum_ensemble`
@@ -72,7 +71,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.geog3DCRS_to_vertCRS_depth_context`
 - `operation.geog3DCRS_to_geog2DCRS_plus_vertCRS_depth_context`
 - `operation.geogCRS_to_geogCRS_context_lonlat_vs_latlon_crs`
-- `operation.geogCRS_to_geogCRS_context_concatenated_operation`
 - `operation.geogCRS_to_geogCRS_CH1903_to_CH1903plus_context`
 - `operation.geogCRS_to_geogCRS_init_IGNF_to_init_IGNF_context`
 - `operation.geogCRS_without_id_to_geogCRS_3D_context`
@@ -164,7 +162,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.boundCRS_to_compoundCRS`
 - `operation.boundCRS_to_compoundCRS_with_hubCRS_same_as_compound_geographicCRS`
 - `operation.IGNF_LAMB1_TO_EPSG_4326`
-- `operation.NAD83_to_projected_CRS_based_on_NAD83_2011`
 - `operation.compoundCRS_to_proj_string_with_non_metre_height`
 - `operation.compoundCRS_with_derived_vertical_CRS`
 - `operation.compoundCRS_to_PROJJSON_with_non_metre_height`
@@ -176,7 +173,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.createOperation_ellipsoidal_ographic_west_to_projected_of_ellipsoidal_ographic_west`
 - `operation.createOperation_ellipsoidal_ographic_west_to_projected_of_ellipsoidal_ocentric`
 - `operation.createOperation_ellipsoidal_ocentric_to_projected_of_ellipsoidal_ographic_west`
-- `operation.createOperation_ossfuzz_47873`
 - `operation.createOperation_derived_projected_crs`
 - `operation.geogCRS_to_compoundCRS_with_boundVerticalCRS_and_derivedProjected`
 - `operation.createOperation_point_motion_operation_geocentric`
