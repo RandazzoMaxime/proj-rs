@@ -21,7 +21,6 @@ and `PORT-NOTES-tests.md`.
 - `crs.derivedGeographicCRS_with_affine_transform_to_PROJ`
 - `crs.crs_createBoundCRSToWGS84IfPossible`
 - `crs.normalizeForVisualization_derivedprojected_operation`
-- `crs.projected_is_equivalent_to_with_proj4_extension`
 - `crs.norway_ntm`
 - `crs.ETRF2000_PL_CS92`
 
