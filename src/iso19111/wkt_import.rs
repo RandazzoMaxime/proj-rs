@@ -2471,6 +2471,17 @@ impl WktParser {
             }
             _ => return Err(invalid("base CRS is not geodetic")),
         };
+        let mut base = base;
+        if !self.esri && props.name == "ETRF2000-PL / CS92" && base.name() == "ETRF2000-PL" {
+            if let Some(db) = self.db.clone() {
+                if let Ok(current) =
+                    AuthorityFactory::create(&db, "EPSG").create_projected_crs("2180")
+                {
+                    props.name = current.name().to_owned();
+                    base = current.base_crs().clone();
+                }
+            }
+        }
         let angular = base
             .coordinate_system()
             .axes()
