@@ -14,6 +14,11 @@ use proj_rs::iso19111::{
 fn context(db: &DatabaseContext) -> CoordinateOperationContext {
     let mut ctxt = CoordinateOperationContext::create(db, "EPSG");
     ctxt.set_grid_availability_use(GridAvailabilityUse::IgnoreGridAvailability);
+    ctxt
+}
+
+fn partial_context(db: &DatabaseContext) -> CoordinateOperationContext {
+    let mut ctxt = context(db);
     ctxt.set_spatial_criterion(SpatialCriterion::PartialIntersection);
     ctxt
 }
@@ -52,7 +57,7 @@ fn operation_compound_to_compound_context_helmert_noop() {
     let db = DatabaseContext::create().expect("proj.db");
     let src = parse(&db, "EPSG:4326+5773");
     let dst = parse(&db, "EPSG:4258+5773");
-    let list = operations(&src, &dst, &context(&db));
+    let list = operations(&src, &dst, &partial_context(&db));
     assert!(!list.is_empty());
     assert_eq!(proj(&db, &list[0]), "+proj=noop");
 }
@@ -64,7 +69,7 @@ fn operation_compound_to_compound_context_helmert() {
     let db = DatabaseContext::create().expect("proj.db");
     let src = parse(&db, "EPSG:9464");
     let dst = parse(&db, "EPSG:9463");
-    let list = operations(&src, &dst, &context(&db));
+    let list = operations(&src, &dst, &partial_context(&db));
     assert!(!list.is_empty());
     assert_eq!(
         proj(&db, &list[0]),
@@ -90,7 +95,7 @@ fn operation_compound_to_compound_gda94_ahd_to_gda2020_avws() {
     let db = DatabaseContext::create().expect("proj.db");
     let src = epsg(&db, "9464");
     let dst = epsg(&db, "9462");
-    let list = operations(&src, &dst, &context(&db));
+    let list = operations(&src, &dst, &partial_context(&db));
     assert!(!list.is_empty());
     assert_eq!(
         list[0].name(),
@@ -122,7 +127,7 @@ fn operation_compound_to_compound_wgs84_egm96_to_etrs89_belfast() {
     let db = DatabaseContext::create().expect("proj.db");
     let src = parse(&db, "EPSG:4326+5773");
     let dst = parse(&db, "EPSG:4173+5732");
-    let list = operations(&src, &dst, &context(&db));
+    let list = operations(&src, &dst, &partial_context(&db));
     assert!(!list.is_empty());
     assert_eq!(
         list[0].name(),
@@ -136,6 +141,30 @@ fn operation_compound_to_compound_wgs84_egm96_to_etrs89_belfast() {
          +step +proj=unitconvert +xy_in=deg +xy_out=rad \
          +step +proj=vgridshift +grids=us_nga_egm96_15.tif +multiplier=1 \
          +step +inv +proj=vgridshift +grids=uk_os_OSGM15_Belfast.tif +multiplier=1 \
+         +step +proj=unitconvert +xy_in=rad +xy_out=deg \
+         +step +proj=axisswap +order=2,1"
+    );
+}
+
+/// TEST(operation, compoundCRS_to_compoundCRS_issue_2720): an orthographic projected CRS with
+/// the EGM96 geoid height, to WGS 84 with the same height. The vertical part is a null change.
+#[test]
+fn operation_compound_to_compound_issue_2720() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let src = parse(
+        &db,
+        r#"COMPD_CS["Orthographic + EGM96 geoid height",PROJCS["Orthographic",GEOGCS["GCS_WGS_1984",DATUM["D_unknown",SPHEROID["WGS84",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["Degree",0.017453292519943295]],PROJECTION["Orthographic"],PARAMETER["Latitude_Of_Center",36.1754430555555000],PARAMETER["Longitude_Of_Center",-86.7740944444444000],PARAMETER["false_easting",0],PARAMETER["false_northing",0],UNIT["Meter",1]],VERT_CS["EGM96 geoid height",VERT_DATUM["EGM96 geoid",2005,EXTENSION["PROJ4_GRIDS","egm96_15.gtx"],AUTHORITY["EPSG","5171"]],UNIT["metre",1,AUTHORITY["EPSG","9001"]],AXIS["Up",UP],AUTHORITY["EPSG","5773"]]]"#,
+    );
+    let dst = parse(
+        &db,
+        r#"COMPD_CS["WGS84 Coordinate System + EGM96 geoid height",GEOGCS["WGS84 Coordinate System",DATUM["WGS 1984",SPHEROID["WGS 1984",6378137,298.257223563],TOWGS84[0,0,0,0,0,0,0],AUTHORITY["EPSG","6326"]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433],AUTHORITY["EPSG","4326"]],VERT_CS["EGM96 geoid height",VERT_DATUM["EGM96 geoid",2005,EXTENSION["PROJ4_GRIDS","egm96_15.gtx"],AUTHORITY["EPSG","5171"]],UNIT["metre",1,AUTHORITY["EPSG","9001"]],AXIS["Up",UP],AUTHORITY["EPSG","5773"]]]"#,
+    );
+    let list = operations(&src, &dst, &context(&db));
+    assert_eq!(list.len(), 1);
+    assert_eq!(
+        proj(&db, &list[0]),
+        "+proj=pipeline +step +inv +proj=ortho +f=0 +lat_0=36.1754430555555 \
+         +lon_0=-86.7740944444444 +x_0=0 +y_0=0 +ellps=WGS84 \
          +step +proj=unitconvert +xy_in=rad +xy_out=deg \
          +step +proj=axisswap +order=2,1"
     );
