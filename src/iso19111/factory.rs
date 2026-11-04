@@ -5096,23 +5096,94 @@ fn select_candidates(
     context: &CoordinateOperationContext,
 ) -> Vec<CoordinateOperation> {
     let extents = sort_extents(context, source, target);
-    let filtered = filter_and_sort(found, context, &extents);
-    let mut sorted = super::select::sort_candidates(
-        filtered.operations,
+    let mut filtered = filter_and_sort(found, context, &extents);
+    let sorted = super::select::sort_candidates(
+        std::mem::take(&mut filtered.operations),
         &context.db,
         source,
         target,
         context.grid_availability,
         &extents,
     );
-    let synthetic_last = sorted.last().is_some_and(|operation| {
+    let sorted = remove_synthetic_null_transforms(sorted, &filtered);
+    let sorted = remove_uninteresting_ops(sorted);
+    remove_synthetic_null_transforms(sorted, &filtered)
+}
+
+/// `removeSyntheticNullTransforms`: with an operation that contains the area and needs no grid,
+/// a last result that is a ballpark or null transformation is dropped, as the sorted list
+/// starts with better ones.
+fn remove_synthetic_null_transforms(
+    mut operations: Vec<CoordinateOperation>,
+    filtered: &Filtered,
+) -> Vec<CoordinateOperation> {
+    let synthetic_last = operations.last().is_some_and(|operation| {
         operation.has_ballpark_transformation()
             || super::select::is_null_transformation(operation.name())
     });
-    if filtered.contains_area_without_grid && sorted.len() > 1 && synthetic_last {
-        sorted.pop();
+    if filtered.contains_area_without_grid && operations.len() > 1 && synthetic_last {
+        operations.pop();
     }
-    sorted
+    operations
+}
+
+/// `removeUninterestingOps`: for a given area, an operation with similar or worse accuracy and
+/// more transformation steps than the one kept before it adds nothing.
+fn remove_uninteresting_ops(operations: Vec<CoordinateOperation>) -> Vec<CoordinateOperation> {
+    let mut kept = Vec::with_capacity(operations.len());
+    let mut last: Option<(&CoordinateOperation, Option<ObjectDomain>, f64, usize)> = None;
+    for operation in &operations {
+        let accuracy = operation_accuracy(operation);
+        let extent = operation_extent(operation);
+        let steps = if operation.identifiers().is_empty() {
+            transformation_step_count(operation)
+        } else {
+            1
+        };
+        if let Some((last_operation, last_extent, last_accuracy, last_steps)) = &last {
+            if last_operation.is_equivalent_to(operation) {
+                continue;
+            }
+            let same_extent = match (&extent, last_extent) {
+                (None, None) => true,
+                (Some(current), Some(previous)) => {
+                    extent_contains(current, previous) && extent_contains(previous, current)
+                }
+                _ => false,
+            };
+            if ((accuracy >= *last_accuracy && *last_accuracy >= 0.0)
+                || (accuracy < 0.0 && *last_accuracy >= 0.0))
+                && same_extent
+                && steps > *last_steps
+            {
+                continue;
+            }
+        }
+        kept.push(operation.clone());
+        last = Some((operation, extent, accuracy, steps));
+    }
+    kept
+}
+
+/// `getAccuracy`: a conversion is exact, an unknown accuracy is -1.
+fn operation_accuracy(operation: &CoordinateOperation) -> f64 {
+    match operation {
+        CoordinateOperation::Conversion(_) => 0.0,
+        _ => operation.accuracy().unwrap_or(-1.0),
+    }
+}
+
+/// `getTransformationStepCount`: the steps of a concatenated operation that are not
+/// conversions, and 1 for any other operation.
+fn transformation_step_count(operation: &CoordinateOperation) -> usize {
+    match operation {
+        CoordinateOperation::Concatenated(concatenated) => concatenated
+            .steps()
+            .iter()
+            .filter(|step| !matches!(step.operation, CoordinateOperation::Conversion(_)))
+            .count(),
+        _ => 1,
+    }
 }
 
 /// The extent of a CRS: its first usage, or for a compound CRS the intersection of its components.
