@@ -5,11 +5,11 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 106 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `core` | 99 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
 | `niche` | 21 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 41 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (106)
+## core (99)
 
 ### test_c_api.cpp (15)
 
@@ -53,7 +53,7 @@ The class comes from the test name alone, so check it when you port a test.
 
 - `operation.normalizeForVisualization`
 
-### test_operationfactory.cpp (79)
+### test_operationfactory.cpp (72)
 
 - `operation.geogCRS_to_geogCRS_context_inverse_needed`
 - `operation.vertCRS_to_geogCRS_context`
@@ -84,12 +84,6 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.geocent_to_compoundCRS_context`
 - `operation.compoundCRS_to_compoundCRS`
 - `operation.compoundCRS_to_compoundCRS_with_vertical_transform`
-- `operation.compoundCRS_to_compoundCRS_with_bound_crs_in_horiz_and_vert`
-- `operation.compoundCRS_to_compoundCRS_with_bound_crs_in_horiz_and_vert_same_geoidgrids`
-- `operation.compoundCRS_to_compoundCRS_with_bound_crs_in_horiz_and_vert_same_geoidgrids_different_vunits`
-- `operation.compoundCRS_to_compoundCRS_with_bound_crs_in_horiz_and_vert_same_nadgrids_same_geoidgrids`
-- `operation.compoundCRS_to_compoundCRS_with_bound_crs_in_horiz_and_vert_same_towgs84_same_geoidgrids`
-- `operation.compoundCRS_to_compoundCRS_with_bound_crs_in_horiz_and_vert_same_ellsp_but_different_towgs84_different_geoidgrids`
 - `operation.compoundCRS_to_compoundCRS_with_bound_crs_in_horiz_and_vert_WKT1_same_geoidgrids_context`
 - `operation.compoundCRS_to_compoundCRS_issue_2232`
 - `operation.compoundCRS_to_compoundCRS_context`
@@ -107,7 +101,6 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.compoundCRS_to_compoundCRS_using_intermediate_of_horizontal_transform`
 - `operation.vertCRS_to_vertCRS_pivot_context`
 - `operation.compoundCRS_to_geogCRS_3D_context`
-- `operation.compoundCRS_to_geogCRS_3D_with_3D_helmert_context`
 - `operation.compoundCRS_to_geogCRS_3D_with_3D_helmert_same_geog_src_target_context`
 - `operation.compoundCRS_to_geogCRS_3D_with_null_helmert_same_geog_src_target_context`
 - `operation.compoundCRS_to_geogCRS_2D_promote_to_3D_context`

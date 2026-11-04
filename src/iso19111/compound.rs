@@ -23,9 +23,9 @@ use super::factory::{
     GUARD_VERTICAL_INTERMEDIATE,
 };
 use super::model::{
-    Axis, ConcatenatedOperation, ConcatenatedStep, CoordinateOperation, Crs, GeographicCRS,
-    GeoidModel, Identified, OperationMethod, Parameter, ParameterValue, ProjBased, ProjBasedKind,
-    Transformation, VerticalCRS,
+    Axis, BoundCRS, CompoundCRS, ConcatenatedOperation, ConcatenatedStep, CoordinateOperation, Crs,
+    GeographicCRS, GeoidModel, Identified, OperationMethod, Parameter, ParameterValue, ProjBased,
+    ProjBasedKind, Transformation, VerticalCRS,
 };
 use super::FactoryError;
 
@@ -218,8 +218,16 @@ fn compound_vertical_pass(
         };
         let src_to_interp = factory.create_candidates(horizontal, interpolation, &inherited)?;
         let interp_to_target = factory.create_candidates(&interpolation_3d, target, &inherited)?;
+        let same_geog = horizontal.is_equivalent_to_with(&target_2d, Equivalence::Equivalent);
+        let only_one = src_to_interp.len() == 1 && interp_to_target.len() == 1;
         for first in &src_to_interp {
             for last in &interp_to_target {
+                if !only_one
+                    && ((same_geog && datum_names_used(first) != datum_names_used(last))
+                        || !compatible_transformations(first, last))
+                {
+                    continue;
+                }
                 if let Some(operation) = horiz_vertical_horiz_checked(
                     source,
                     target,
@@ -1175,6 +1183,93 @@ pub(super) fn vertical_geog_fallback(
     Ok(res)
 }
 
+/// `normalize2D3DInName`.
+fn normalize_2d_3d_in_name(name: &str) -> String {
+    [
+        " (2D)",
+        " (geographic3D horizontal)",
+        " (geog2D)",
+        " (geog3D)",
+    ]
+    .iter()
+    .fold(name.to_owned(), |out, pattern| out.replace(pattern, ""))
+}
+
+/// `getOps`: the steps of a concatenated operation, nested ones included, or the operation.
+fn flat_operations(operation: &CoordinateOperation) -> Vec<&CoordinateOperation> {
+    match operation {
+        CoordinateOperation::Concatenated(concatenated) => concatenated
+            .steps()
+            .iter()
+            .flat_map(|step| flat_operations(step.operation()))
+            .collect(),
+        other => vec![other],
+    }
+}
+
+/// `useCompatibleTransformationsForSameSourceTarget`: two operations that go through the same
+/// pair of CRS use the same transformation, in the same or the inverse direction.
+fn compatible_transformations(first: &CoordinateOperation, second: &CoordinateOperation) -> bool {
+    for step_a in flat_operations(first) {
+        let CoordinateOperation::Transformation(_) = step_a else {
+            continue;
+        };
+        let name_a = normalize_2d_3d_in_name(step_a.name());
+        let (Some(source_a), Some(target_a)) = (step_a.source_crs(), step_a.target_crs()) else {
+            continue;
+        };
+        if source_a.name() == "unknown" || target_a.name() == "unknown" {
+            continue;
+        }
+        for step_b in flat_operations(second) {
+            let CoordinateOperation::Transformation(_) = step_b else {
+                continue;
+            };
+            let (Some(source_b), Some(target_b)) = (step_b.source_crs(), step_b.target_crs())
+            else {
+                continue;
+            };
+            if source_b.name() == "unknown" || target_b.name() == "unknown" {
+                continue;
+            }
+            let both_null = name_a.starts_with(NULL_GEOGRAPHIC_OFFSET)
+                && step_b.name().starts_with(NULL_GEOGRAPHIC_OFFSET);
+            if source_a.name() == source_b.name() && target_a.name() == target_b.name() {
+                if both_null {
+                    continue;
+                }
+                if name_a != normalize_2d_3d_in_name(step_b.name()) {
+                    return false;
+                }
+            } else if source_a.name() == target_b.name() && target_a.name() == source_b.name() {
+                if both_null {
+                    continue;
+                }
+                if name_a != normalize_2d_3d_in_name(step_b.inverse().name()) {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
+/// The names of the geodetic datums of the transformations of an operation.
+fn datum_names_used(operation: &CoordinateOperation) -> std::collections::BTreeSet<String> {
+    let mut names = std::collections::BTreeSet::new();
+    for step in flat_operations(operation) {
+        if !matches!(step, CoordinateOperation::Transformation(_)) {
+            continue;
+        }
+        for crs in [step.source_crs(), step.target_crs()].into_iter().flatten() {
+            if let Some(frame) = geodetic_frame(crs) {
+                names.insert(frame.name().to_owned());
+            }
+        }
+    }
+    names
+}
+
 /// `hasIdentifiers`: the operation or one of its steps has an identifier.
 fn has_identifiers(operation: &CoordinateOperation) -> bool {
     if !operation.identifiers().is_empty() {
@@ -1562,6 +1657,11 @@ fn bound_compound_to_geog3d(
     let Some(geog_dst) = geographic_of(target) else {
         return Ok(Vec::new());
     };
+    if let Some(found) =
+        bound_horizontal_and_vertical_to_other_datum(factory, source, target, context)?
+    {
+        return Ok(found);
+    }
     let mut horizontal_ops = factory.create_candidates(horizontal, target, context)?;
     if horizontal_ops.is_empty() {
         horizontal_ops.extend(null_offset(horizontal, target));
@@ -1627,6 +1727,72 @@ fn bound_compound_to_geog3d(
         }
     }
     Ok(found)
+}
+
+/// `createOperationsCompoundToGeog` for `+proj=something +geoidgrids +nadgrids/+towgs84`: a
+/// bound horizontal CRS and a bound vertical CRS whose hub is the horizontal base, to a CRS of
+/// another datum. The vertical part goes to the hub of the vertical CRS, the horizontal bound
+/// CRS, in 3D, to its own hub, and that hub to the target.
+fn bound_horizontal_and_vertical_to_other_datum(
+    factory: &CoordinateOperationFactory,
+    source: &Crs,
+    target: &Crs,
+    context: &CoordinateOperationContext,
+) -> Result<Option<Vec<CoordinateOperation>>, FactoryError> {
+    let Crs::Compound(compound) = source else {
+        return Ok(None);
+    };
+    let [Crs::Bound(horizontal), Crs::Bound(vertical)] = compound.components() else {
+        return Ok(None);
+    };
+    let Some(horizontal_geog) = horizontal.source_crs().extract_geographic_crs() else {
+        return Ok(None);
+    };
+    let Some(target_geog) = target.extract_geographic_crs() else {
+        return Ok(None);
+    };
+    let db = context.database();
+    let horizontal_geog_crs = Crs::Geographic(horizontal_geog);
+    if !vertical
+        .target_crs()
+        .demote_to_2d(Some(db))
+        .is_equivalent_to_with(&horizontal_geog_crs, Equivalence::Equivalent)
+        || same_geodetic_datum(&horizontal_geog_crs, &Crs::Geographic(target_geog))
+    {
+        return Ok(None);
+    }
+    let vertical_dest = vertical.target_crs().clone();
+    let first_source = CompoundCRS::create(
+        "",
+        vec![
+            horizontal.source_crs().clone(),
+            Crs::Bound(vertical.clone()),
+        ],
+    )?;
+    let first = factory.create_candidates(&Crs::Compound(first_source), &vertical_dest, context)?;
+    let horizontal_dest = horizontal.target_crs().promote_to_3d(Some(db));
+    let bound_geog = Crs::Bound(BoundCRS::create(
+        horizontal_geog_crs,
+        horizontal.target_crs().clone(),
+        horizontal.transformation().clone(),
+    ))
+    .promote_to_3d(Some(db));
+    let second = factory.create_candidates(&bound_geog, &horizontal_dest, context)?;
+    let third = factory.create_candidates(&horizontal_dest, target, context)?;
+    let mut res = Vec::new();
+    for op1 in &first {
+        let op1 = with_endpoints(op1.clone(), source, &vertical_dest);
+        for op2 in &second {
+            let op2 = with_endpoints(op2.clone(), &vertical_dest, &horizontal_dest);
+            for op3 in &third {
+                res.extend(compute_metadata(
+                    vec![op1.clone(), op2.clone(), op3.clone()],
+                    context,
+                ));
+            }
+        }
+    }
+    Ok(if res.is_empty() { None } else { Some(res) })
 }
 
 /// The base of a bound horizontal CRS is the target and its hub the interpolation CRS: the
