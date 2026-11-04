@@ -5,11 +5,11 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 154 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `core` | 153 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
 | `niche` | 32 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 49 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (154)
+## core (153)
 
 ### test_c_api.cpp (23)
 
@@ -61,7 +61,7 @@ The class comes from the test name alone, so check it when you port a test.
 
 - `operation.normalizeForVisualization`
 
-### test_operationfactory.cpp (119)
+### test_operationfactory.cpp (118)
 
 - `operation.geogCRS_to_geogCRS_context_match_by_name`
 - `operation.geogCRS_to_geogCRS_context_inverse_needed`
@@ -73,7 +73,6 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.geog3DCRS_to_geog2DCRS_plus_vertCRS_depth_context`
 - `operation.geogCRS_to_geogCRS_context_lonlat_vs_latlon_crs`
 - `operation.geogCRS_to_geogCRS_context_concatenated_operation`
-- `operation.geogCRS_to_geogCRS_context_ED50_to_WGS72_no_NTF_intermediate`
 - `operation.geogCRS_to_geogCRS_CH1903_to_CH1903plus_context`
 - `operation.geogCRS_to_geogCRS_init_IGNF_to_init_IGNF_context`
 - `operation.geogCRS_without_id_to_geogCRS_3D_context`

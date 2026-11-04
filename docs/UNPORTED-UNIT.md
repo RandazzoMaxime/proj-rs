@@ -73,7 +73,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.geog3DCRS_to_geog2DCRS_plus_vertCRS_depth_context`
 - `operation.geogCRS_to_geogCRS_context_lonlat_vs_latlon_crs`
 - `operation.geogCRS_to_geogCRS_context_concatenated_operation`
-- `operation.geogCRS_to_geogCRS_context_ED50_to_WGS72_no_NTF_intermediate`
 - `operation.geogCRS_to_geogCRS_CH1903_to_CH1903plus_context`
 - `operation.geogCRS_to_geogCRS_init_IGNF_to_init_IGNF_context`
 - `operation.geogCRS_without_id_to_geogCRS_3D_context`

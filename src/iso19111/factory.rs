@@ -6177,6 +6177,26 @@ fn datum_based_intermediate_operations(
         pair_operations.push((op1, op2));
     }
 
+    // `createBetweenGeodeticCRSWithDatumBasedIntermediates`: a pivot that goes through a datum
+    // published before the 1900 cut-off is skipped when the source or target datum is more
+    // recent (ED50 to WGS 84 must not go through NTF).
+    let publication_of = |crs: &Crs| {
+        geodetic_frame(crs).and_then(|frame| frame.publication_date().map(str::to_owned))
+    };
+    let source_pub = publication_of(source);
+    let target_pub = publication_of(target);
+    let most_ancient = match (&target_pub, &source_pub) {
+        (Some(target_date), Some(source_date)) if target_date < source_date => target_pub.clone(),
+        (Some(_), None) => target_pub.clone(),
+        _ => source_pub.clone(),
+    }
+    .unwrap_or_default();
+    const CUT_OFF_DATE: &str = "1900-01-01";
+    let is_older = |crs: &Crs| {
+        most_ancient.as_str() > CUT_OFF_DATE
+            && publication_of(crs).is_some_and(|date| date.as_str() < CUT_OFF_DATE)
+    };
+
     let mut result = Vec::new();
     for (op1, op2) in pair_operations {
         let (Some(op1_source), Some(op1_target), Some(op2_source), Some(op2_target)) = (
@@ -6187,6 +6207,12 @@ fn datum_based_intermediate_operations(
         ) else {
             continue;
         };
+        if [op1_source, op1_target, op2_source, op2_target]
+            .into_iter()
+            .any(is_older)
+        {
+            continue;
+        }
         let factory = CoordinateOperationFactory::create();
         let mut steps = Vec::new();
         if !source.is_equivalent_to(op1_source) {
