@@ -1,21 +1,25 @@
 //! The vertical branch of PROJ's `createOperationsCompoundToGeog`
 //! (`coordinateoperationfactory.cpp`): a compound CRS of a geographic CRS and a
 //! vertical CRS, to a 3D geographic CRS. Also `createOperationsCompoundToCompound`
-//! for two compound CRS with the same geographic part, and the ballpark of
-//! `createOperationsVertToVert`.
+//! for two compound CRS, and the ballpark of `createOperationsVertToVert`.
 //!
 //! Not ported: the interpolation CRS of a vertical operation
 //! (`createHorizVerticalHorizPROJBased`, which the vertical operation then
 //! skips), the geographic CRS of a horizontal operation that differs from the
 //! target (`geogCRSTmp`), the change of vertical unit when the two datums are
-//! the same, the extent check of a concatenated candidate, and the geoid
-//! trigger and three-pass selection of `createOperationsCompoundToCompound`.
+//! the same, the extent check of a concatenated candidate, the point motion
+//! branch and the NAD83(CSRS)v7 hack of `createOperationsCompoundToCompound`
+//! (both need epochs), and the removal of consecutive inverse steps in
+//! `createComputeMetadata`.
 
 use super::bound::extract_geographic;
+use super::bound_ops::{operation_source, operation_target};
 use super::buildop::OpProps;
+use super::derived::joint_extent;
 use super::equiv::{geodetic_frame, same_geodetic_datum, Equivalence};
 use super::factory::{
-    crs_extent, geographic_of, world_extent, CoordinateOperationContext, CoordinateOperationFactory,
+    crs_extent, geographic_of, world_extent, CoordinateOperationContext,
+    CoordinateOperationFactory, DatabaseContext, GridAvailabilityUse,
 };
 use super::model::{
     Axis, ConcatenatedOperation, ConcatenatedStep, CoordinateOperation, Crs, GeographicCRS,
@@ -25,6 +29,7 @@ use super::model::{
 use super::FactoryError;
 
 const NULL_GEOGRAPHIC_OFFSET: &str = "Null geographic offset";
+const BALLPARK_VERTICAL_TRANSFORMATION: &str = "ballpark vertical transformation";
 
 /// Candidates of the vertical branch for `source` to `target`. Empty for any
 /// pair that is not a two-component compound of a geographic and a vertical
@@ -131,10 +136,12 @@ pub(super) fn geog_to_compound(
         .collect())
 }
 
-/// `createOperationsCompoundToCompound`, for two compound CRS whose geographic parts are
-/// equivalent: each vertical operation, with its horizontal part null. Only a vertical
-/// operation with no interpolation CRS, or one whose interpolation CRS is that geographic
-/// CRS, is kept. The others need `createHorizVerticalHorizPROJBased`, not ported.
+/// `createOperationsCompoundToCompound` for two compound CRS of the same number of components.
+/// The horizontal parts go through the geographic CRS of each, promoted to 3D: the registry
+/// operations between them, the vertical operations between the vertical parts, and the
+/// intermediate geographic CRS when the vertical operation is ballpark or a geoid trigger
+/// applies. Only the first of PROJ's branches that gives a result is kept. Epochs are not
+/// carried, so the point motion branch does not run.
 pub(super) fn compound_to_compound(
     factory: &CoordinateOperationFactory,
     source: &Crs,
@@ -144,57 +151,554 @@ pub(super) fn compound_to_compound(
     let (Crs::Compound(src), Crs::Compound(dst)) = (source, target) else {
         return Ok(Vec::new());
     };
-    let ([src_horizontal, src_vertical], [dst_horizontal, dst_vertical]) =
-        (src.components(), dst.components())
-    else {
-        return Ok(Vec::new());
-    };
-    let (Some(geog_src), Some(geog_dst)) =
-        (geographic_of(src_horizontal), geographic_of(dst_horizontal))
-    else {
-        return Ok(Vec::new());
-    };
-    if !geog_src.is_equivalent_to_with(geog_dst, Equivalence::Equivalent)
-        || src_vertical.name() == dst_vertical.name()
-    {
+    let (src_components, dst_components) = (src.components(), dst.components());
+    if src_components.is_empty() || src_components.len() != dst_components.len() {
         return Ok(Vec::new());
     }
-
-    let vertical_ops = factory.create_candidates(src_vertical, dst_vertical, context)?;
-    let Some(null) = null_offset(src_horizontal, dst_horizontal) else {
+    let (Some(src_geog), Some(dst_geog)) = (
+        src_components[0].extract_geographic_crs(),
+        dst_components[0].extract_geographic_crs(),
+    ) else {
         return Ok(Vec::new());
     };
-    Ok(vertical_ops
-        .iter()
-        .filter(|operation| horizontal_is_null(operation, geog_src))
-        .map(|operation| {
-            proj_based_horiz_vertical(
-                source,
-                target,
-                &null,
-                &retarget(operation, source, target),
-                geog_dst,
-            )
-        })
-        .collect())
-}
+    let db = context.database();
+    let same_geog = src_geog.is_equivalent_to_with(&dst_geog, Equivalence::Equivalent);
+    let inter_src = Crs::Geographic(src_geog.clone()).promote_to_3d(Some(db));
+    let inter_dst = if same_geog {
+        inter_src.clone()
+    } else {
+        Crs::Geographic(dst_geog.clone()).promote_to_3d(Some(db))
+    };
+    let geog_ops = factory.create_candidates(&inter_src, &inter_dst, context)?;
+    let mut res = Vec::new();
 
-/// Whether a vertical operation leaves the horizontal part null: no interpolation CRS, or
-/// the geographic CRS of the horizontal part. A conversion never has one.
-fn horizontal_is_null(operation: &CoordinateOperation, geog: &GeographicCRS) -> bool {
-    match operation {
-        CoordinateOperation::Transformation(transformation) => {
-            match transformation.interpolation_crs() {
-                None => true,
-                Some(Crs::Geographic(interpolation)) => {
-                    interpolation.is_equivalent_to_with(geog, Equivalence::Equivalent)
+    if let (
+        [Crs::Bound(src_horizontal), Crs::Bound(src_vertical)],
+        [Crs::Bound(dst_horizontal), Crs::Bound(dst_vertical)],
+    ) = (src_components, dst_components)
+    {
+        if src_horizontal
+            .target_crs()
+            .is_equivalent_to_with(dst_horizontal.target_crs(), Equivalence::Equivalent)
+            && !Crs::Bound(src_vertical.clone())
+                .is_equivalent_to_with(&Crs::Bound(dst_vertical.clone()), Equivalence::Equivalent)
+        {
+            let hub = src_horizontal.target_crs().promote_to_3d(Some(db));
+            let ops1 = factory.create_candidates(source, &hub, context)?;
+            let ops2 = factory.create_candidates(&hub, target, context)?;
+            for op1 in &ops1 {
+                for op2 in &ops2 {
+                    res.extend(compute_metadata(vec![op1.clone(), op2.clone()], context));
                 }
-                Some(_) => false,
+            }
+            return Ok(res);
+        }
+    }
+
+    let mut vertical_transforms = Vec::new();
+    let mut tried_vertical = false;
+    let mut through_intermediate = false;
+    if src_components.len() >= 2 {
+        if let (Some(vert_src), Some(vert_dst)) = (
+            src_components[1].extract_vertical_crs(),
+            dst_components[1].extract_vertical_crs(),
+        ) {
+            if !src_components[1].is_equivalent_to_with(&dst_components[1], Equivalence::Equivalent)
+            {
+                let has_geoid =
+                    !vert_src.geoid_models().is_empty() || !vert_dst.geoid_models().is_empty();
+                if has_geoid
+                    && !cgvd_transition(&vert_src, &vert_dst)
+                    && !cgvd_transition(&vert_dst, &vert_src)
+                {
+                    through_intermediate = true;
+                } else {
+                    tried_vertical = true;
+                    vertical_transforms = factory.create_candidates(
+                        &src_components[1],
+                        &dst_components[1],
+                        context,
+                    )?;
+                    through_intermediate = (vertical_transforms.len() == 1
+                        && vertical_transforms[0].has_ballpark_transformation())
+                        || (!same_geog
+                            && !inter_src.identifiers().is_empty()
+                            && !inter_dst.identifiers().is_empty()
+                            && !geog_ops.is_empty()
+                            && !geog_ops[0].has_ballpark_transformation());
+                }
             }
         }
-        CoordinateOperation::Conversion(_) => true,
-        CoordinateOperation::Concatenated(_) => false,
     }
+
+    if through_intermediate {
+        if let Crs::Bound(bound) = &src_components[0] {
+            if !matches!(dst_components[0], Crs::Bound(_))
+                && bound
+                    .target_crs()
+                    .is_equivalent_to_with(&dst_components[0], Equivalence::Equivalent)
+            {
+                let interm = dst_components[0].promote_to_3d(Some(db));
+                through_crs(factory, source, target, &interm, context, &mut res)?;
+                if !res.is_empty() {
+                    return Ok(res);
+                }
+            }
+        } else if let Crs::Bound(bound) = &dst_components[0] {
+            if bound
+                .target_crs()
+                .is_equivalent_to_with(&src_components[0], Equivalence::Equivalent)
+            {
+                let interm = src_components[0].promote_to_3d(Some(db));
+                through_crs(factory, source, target, &interm, context, &mut res)?;
+                if !res.is_empty() {
+                    return Ok(res);
+                }
+            }
+        }
+
+        let ops_src_to_geog = factory.create_candidates(source, &inter_src, context)?;
+        let ops_geog_to_target = factory.create_candidates(&inter_dst, target, context)?;
+        let has_nontrivial_src = has_nontrivial_transformation(db, &ops_src_to_geog);
+        let has_nontrivial_target = has_nontrivial_transformation(db, &ops_geog_to_target);
+        let mut best = (-1.0_f64, 0_usize);
+        if has_nontrivial_src && has_nontrivial_target {
+            for pass in 0..=1 {
+                if !res.is_empty() {
+                    break;
+                }
+                for op1 in &ops_src_to_geog {
+                    if (pass == 0 && op1.has_ballpark_transformation()) || is_ballpark_vertical(op1)
+                    {
+                        continue;
+                    }
+                    for op2 in &geog_ops {
+                        for op3 in &ops_geog_to_target {
+                            if (pass == 0 && op3.has_ballpark_transformation())
+                                || is_ballpark_vertical(op3)
+                            {
+                                continue;
+                            }
+                            let steps = if same_geog {
+                                vec![op1.clone(), op3.clone()]
+                            } else {
+                                vec![op1.clone(), op2.clone(), op3.clone()]
+                            };
+                            if let Some(operation) = compute_metadata(steps, context) {
+                                let accuracy = get_accuracy(&operation);
+                                if improves(accuracy, get_step_count(&operation), best) {
+                                    best = (accuracy, get_step_count(&operation));
+                                }
+                                res.push(operation);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if res.is_empty()
+            || inter_src.identifiers().is_empty()
+            || inter_dst.identifiers().is_empty()
+        {
+            if !src_geog.identifiers().is_empty()
+                && !inter_dst.identifiers().is_empty()
+                && has_nontrivial_target
+            {
+                let ops_src_to_inter_dst =
+                    factory.create_candidates(source, &inter_dst, context)?;
+                if has_nontrivial_transformation(db, &ops_src_to_inter_dst) {
+                    two_steps(
+                        &ops_src_to_inter_dst,
+                        &ops_geog_to_target,
+                        context,
+                        &mut res,
+                        &mut best,
+                    );
+                }
+            }
+            if !dst_geog.identifiers().is_empty()
+                && !inter_src.identifiers().is_empty()
+                && has_nontrivial_src
+            {
+                let ops_inter_src_to_target =
+                    factory.create_candidates(&inter_src, target, context)?;
+                if has_nontrivial_transformation(db, &ops_inter_src_to_target) {
+                    two_steps(
+                        &ops_src_to_geog,
+                        &ops_inter_src_to_target,
+                        context,
+                        &mut res,
+                        &mut best,
+                    );
+                }
+            }
+        }
+        if !res.is_empty() {
+            return Ok(res);
+        }
+
+        if !tried_vertical {
+            vertical_transforms =
+                factory.create_candidates(&src_components[1], &dst_components[1], context)?;
+        }
+    }
+
+    let mut interpolation_names: Vec<String> = Vec::new();
+    let mut vector_interpolation: Vec<Crs> = Vec::new();
+    for vertical_transform in &vertical_transforms {
+        let mut interpolation = Crs::Geographic(src_geog.clone());
+        if let Some(interpolation_crs) = interpolation_of(vertical_transform) {
+            if !interpolation_names
+                .iter()
+                .any(|name| name == interpolation_crs.name())
+            {
+                interpolation_names.push(interpolation_crs.name().to_owned());
+                let interpolation_3d = interpolation_crs.promote_to_3d(Some(db));
+                if !interpolation_3d.identifiers().is_empty() {
+                    vector_interpolation.push(interpolation_3d);
+                }
+            }
+            interpolation = interpolation_crs.clone();
+        } else if let (Crs::Bound(src0), Crs::Bound(dst0)) =
+            (&src_components[0], &dst_components[0])
+        {
+            if let Crs::Geographic(hub) = src0.target_crs() {
+                if src0
+                    .target_crs()
+                    .is_equivalent_to_with(dst0.target_crs(), Equivalence::Equivalent)
+                {
+                    interpolation = Crs::Geographic(hub.clone());
+                }
+            }
+        } else if let Crs::Bound(src0) = &src_components[0] {
+            if src0
+                .target_crs()
+                .is_equivalent_to_with(&Crs::Geographic(dst_geog.clone()), Equivalence::Equivalent)
+            {
+                interpolation = Crs::Geographic(dst_geog.clone());
+            }
+        }
+
+        let ops_src = factory.create_candidates(&src_components[0], &interpolation, context)?;
+        let ops_dst = factory.create_candidates(&interpolation, &dst_components[0], context)?;
+        for op_src in &ops_src {
+            for op_dst in &ops_dst {
+                if let Some(operation) = horiz_vertical_horiz_checked(
+                    source,
+                    target,
+                    op_src,
+                    vertical_transform,
+                    op_dst,
+                    &interpolation,
+                    context,
+                ) {
+                    res.push(operation);
+                }
+            }
+        }
+    }
+
+    for interpolation in &vector_interpolation {
+        let ops_src: Vec<CoordinateOperation> = factory
+            .create_candidates(source, interpolation, context)?
+            .into_iter()
+            .filter(|operation| !operation.has_ballpark_transformation())
+            .collect();
+        if ops_src.is_empty() {
+            continue;
+        }
+        let ops_dst: Vec<CoordinateOperation> = factory
+            .create_candidates(interpolation, target, context)?
+            .into_iter()
+            .filter(|operation| !operation.has_ballpark_transformation())
+            .collect();
+        for op1 in &ops_src {
+            for op2 in &ops_dst {
+                res.extend(compute_metadata(vec![op1.clone(), op2.clone()], context));
+            }
+        }
+    }
+
+    if vertical_transforms.is_empty() {
+        for operation in
+            factory.create_candidates(&src_components[0], &dst_components[0], context)?
+        {
+            res.push(with_endpoints(operation, source, target));
+        }
+    }
+    Ok(res)
+}
+
+/// `createOperationsCompoundToCompound`'s intermediate CRS step: the operations from the source
+/// to `interm` and from `interm` to the target, each pair chained.
+fn through_crs(
+    factory: &CoordinateOperationFactory,
+    source: &Crs,
+    target: &Crs,
+    interm: &Crs,
+    context: &CoordinateOperationContext,
+    res: &mut Vec<CoordinateOperation>,
+) -> Result<(), FactoryError> {
+    let ops1 = factory.create_candidates(source, interm, context)?;
+    let ops2 = factory.create_candidates(interm, target, context)?;
+    for op1 in &ops1 {
+        for op2 in &ops2 {
+            res.extend(compute_metadata(vec![op1.clone(), op2.clone()], context));
+        }
+    }
+    Ok(())
+}
+
+/// `createOperationsCompoundToCompound`'s two-step helper: each pair of `ops1` and `ops2`
+/// chained. The first pass leaves out the ballpark operations, the second takes them.
+fn two_steps(
+    ops1: &[CoordinateOperation],
+    ops2: &[CoordinateOperation],
+    context: &CoordinateOperationContext,
+    res: &mut Vec<CoordinateOperation>,
+    best: &mut (f64, usize),
+) {
+    let mut res2 = Vec::new();
+    let mut best2 = (-1.0_f64, 0_usize);
+    for pass in 0..=1 {
+        if !res2.is_empty() {
+            break;
+        }
+        for op1 in ops1 {
+            if (pass == 0 && op1.has_ballpark_transformation()) || is_ballpark_vertical(op1) {
+                continue;
+            }
+            for op2 in ops2 {
+                if (pass == 0 && op2.has_ballpark_transformation()) || is_ballpark_vertical(op2) {
+                    continue;
+                }
+                if let Some(operation) = compute_metadata(vec![op1.clone(), op2.clone()], context) {
+                    let accuracy = get_accuracy(&operation);
+                    let steps = get_step_count(&operation);
+                    if improves(accuracy, steps, best2) {
+                        best2 = (accuracy, steps);
+                    }
+                    res2.push(operation);
+                }
+            }
+        }
+    }
+    if improves(best2.0, best2.1, *best) {
+        *best = best2;
+        *res = res2;
+    }
+}
+
+/// `CoordinateOperation::interpolationCRS`: set on a single operation only.
+fn interpolation_of(operation: &CoordinateOperation) -> Option<&Crs> {
+    match operation {
+        CoordinateOperation::Conversion(conversion) => conversion.interpolation_crs(),
+        CoordinateOperation::Transformation(transformation) => transformation.interpolation_crs(),
+        CoordinateOperation::Concatenated(_) => None,
+    }
+}
+
+fn is_ballpark_vertical(operation: &CoordinateOperation) -> bool {
+    operation.name().contains(BALLPARK_VERTICAL_TRANSFORMATION)
+}
+
+/// The best-candidate rule of PROJ's compound-to-compound selection: a non-negative accuracy
+/// that is lower than the best so far, or equal with fewer steps.
+fn improves(accuracy: f64, steps: usize, best: (f64, usize)) -> bool {
+    accuracy >= 0.0 && (best.0 < 0.0 || accuracy < best.0 || (accuracy == best.0 && steps < best.1))
+}
+
+/// Whether an operation has a grid it needs available, as `gridsNeeded` with the known grids
+/// taken as available.
+fn has_known_grid(db: &DatabaseContext, operation: &CoordinateOperation) -> bool {
+    operation
+        .grids_needed(db, GridAvailabilityUse::KnownAvailable)
+        .is_ok_and(|grids| grids.iter().any(|grid| grid.info.available))
+}
+
+/// `hasNonTrivialTransf`: the first operation is not ballpark, or it has a known grid.
+fn has_nontrivial_transformation(db: &DatabaseContext, operations: &[CoordinateOperation]) -> bool {
+    operations
+        .first()
+        .is_some_and(|first| !first.has_ballpark_transformation() || has_known_grid(db, first))
+}
+
+/// The CGVD28 to CGVD2013a height change that one HT2 grid covers, from `vertical` to `other`.
+fn cgvd_transition(vertical: &VerticalCRS, other: &VerticalCRS) -> bool {
+    let grid = vertical.geoid_models().first().map(GeoidModel::name);
+    let to_2013a = |year: &str| {
+        other.name() == format!("CGVD2013a({year}) height") && other.geoid_models().is_empty()
+    };
+    vertical.name() == "CGVD28 height"
+        && match grid {
+            Some("HT2_1997") => to_2013a("1997"),
+            Some("HT2_2002") => to_2013a("2002"),
+            Some("HT2_2010") => to_2013a("2010"),
+            _ => false,
+        }
+}
+
+/// `ConcatenatedOperation::createComputeMetadata`: the steps, flattened, named by joining theirs,
+/// with the intersection of their extents and the sum of their accuracies. `None` when the
+/// extents do not meet and the context disallows that, which PROJ skips silently.
+fn compute_metadata(
+    operations: Vec<CoordinateOperation>,
+    context: &CoordinateOperationContext,
+) -> Option<CoordinateOperation> {
+    if operations.len() == 1 {
+        return operations.into_iter().next();
+    }
+    let mut steps = Vec::new();
+    for operation in operations {
+        match operation {
+            CoordinateOperation::Concatenated(concatenated) => {
+                steps.extend(concatenated.steps.into_iter().map(|step| step.operation));
+            }
+            other => steps.push(other),
+        }
+    }
+    if steps.len() == 1 {
+        return steps.into_iter().next();
+    }
+    let extent = match joint_extent(&steps) {
+        Some(extent) => extent,
+        None if context.disallows_empty_intersection() => return None,
+        None => None,
+    };
+    let accuracy = accuracy_of_steps(&steps);
+    let name = steps
+        .iter()
+        .map(CoordinateOperation::name)
+        .collect::<Vec<_>>()
+        .join(" + ");
+    let source = steps
+        .first()
+        .and_then(operation_source)
+        .cloned()
+        .map(Box::new);
+    let target = steps
+        .last()
+        .and_then(operation_target)
+        .cloned()
+        .map(Box::new);
+    let mut identified = Identified::named(name);
+    identified.domains = extent.into_iter().collect();
+    Some(CoordinateOperation::Concatenated(ConcatenatedOperation {
+        identified,
+        steps: steps
+            .into_iter()
+            .map(|operation| ConcatenatedStep {
+                operation,
+                reverse: false,
+            })
+            .collect(),
+        source,
+        target,
+        accuracy: (accuracy >= 0.0).then_some(accuracy),
+        version: None,
+        computed_name: true,
+        source_epoch: None,
+        target_epoch: None,
+        proj_based: None,
+    }))
+}
+
+/// `getAccuracy` of a list of operations: the sum of their accuracies, or -1 when one is unknown.
+fn accuracy_of_steps(operations: &[CoordinateOperation]) -> f64 {
+    let mut total = 0.0;
+    for operation in operations {
+        let accuracy = get_accuracy(operation);
+        if accuracy < 0.0 {
+            return -1.0;
+        }
+        total += accuracy;
+    }
+    total
+}
+
+/// `getAccuracy` of one operation: 0 for a conversion, the stated accuracy, or else the sum
+/// over the steps of a concatenated operation. -1 when unknown.
+fn get_accuracy(operation: &CoordinateOperation) -> f64 {
+    match operation {
+        CoordinateOperation::Conversion(_) => 0.0,
+        _ => match operation.accuracy() {
+            Some(accuracy) => accuracy,
+            None => match operation {
+                CoordinateOperation::Concatenated(concatenated) => {
+                    let steps: Vec<CoordinateOperation> = concatenated
+                        .steps
+                        .iter()
+                        .map(|step| step.operation.clone())
+                        .collect();
+                    accuracy_of_steps(&steps)
+                }
+                _ => -1.0,
+            },
+        },
+    }
+}
+
+fn get_step_count(operation: &CoordinateOperation) -> usize {
+    match operation {
+        CoordinateOperation::Concatenated(concatenated) => concatenated.steps.len(),
+        _ => 1,
+    }
+}
+
+/// `createHorizVerticalHorizPROJBased`, which is skipped when the extents of its parts do not
+/// meet and the context disallows that.
+fn horiz_vertical_horiz_checked(
+    source: &Crs,
+    target: &Crs,
+    first: &CoordinateOperation,
+    vertical: &CoordinateOperation,
+    last: &CoordinateOperation,
+    interpolation: &Crs,
+    context: &CoordinateOperationContext,
+) -> Option<CoordinateOperation> {
+    let mut steps = Vec::new();
+    if !is_null_offset(first) {
+        steps.push(first.clone());
+    }
+    steps.push(vertical.clone());
+    if !is_null_offset(last) {
+        steps.push(last.clone());
+    }
+    if context.disallows_empty_intersection() && joint_extent(&steps).is_none() {
+        return None;
+    }
+    Some(proj_based_horiz_vertical_horiz(
+        source,
+        target,
+        first,
+        vertical,
+        last,
+        interpolation,
+    ))
+}
+
+/// `setCRSs` on a copy: the source and target of the operation, with its identifiers kept.
+fn with_endpoints(
+    mut operation: CoordinateOperation,
+    source: &Crs,
+    target: &Crs,
+) -> CoordinateOperation {
+    match &mut operation {
+        CoordinateOperation::Conversion(conversion) => {
+            conversion.source = Some(Box::new(source.clone()));
+            conversion.target = Some(Box::new(target.clone()));
+        }
+        CoordinateOperation::Transformation(transformation) => {
+            transformation.source = Some(Box::new(source.clone()));
+            transformation.target = Some(Box::new(target.clone()));
+        }
+        CoordinateOperation::Concatenated(concatenated) => {
+            concatenated.source = Some(Box::new(source.clone()));
+            concatenated.target = Some(Box::new(target.clone()));
+        }
+    }
+    operation
 }
 
 /// `createOperationsCompoundToGeog` for a 2D geographic target: the operations of the
@@ -808,7 +1312,7 @@ fn bound_compound_to_geog3d(
                     first,
                     vertical_op,
                     last,
-                    &interpolation,
+                    &Crs::Geographic(interpolation.clone()),
                 ));
                 has_interpolated = true;
             }
@@ -1012,7 +1516,7 @@ fn proj_based_horiz_vertical_horiz(
     first: &CoordinateOperation,
     vertical: &CoordinateOperation,
     last: &CoordinateOperation,
-    interpolation: &GeographicCRS,
+    interpolation: &Crs,
 ) -> CoordinateOperation {
     let mut steps = Vec::new();
     if !is_null_offset(first) {
@@ -1049,7 +1553,7 @@ fn proj_based_horiz_vertical_horiz(
             horizontal: first.clone(),
             vertical: vertical.clone(),
             last: Some(last.clone()),
-            interpolation: Crs::Geographic(interpolation.clone()),
+            interpolation: interpolation.clone(),
             inverted: false,
         },
     )
