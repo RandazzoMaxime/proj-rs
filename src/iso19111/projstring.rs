@@ -594,10 +594,16 @@ pub(crate) fn projection_steps(source: &Crs, target: &Crs) -> Result<Vec<String>
             "the source CRS is not geographic".to_owned(),
         ));
     };
-    let GeodeticCRS::Geographic(base) = projected.base_crs() else {
-        return Err(FactoryError::Format(
-            "the projected CRS base is not geographic".to_owned(),
-        ));
+    let base = match projected.base_crs() {
+        GeodeticCRS::Geographic(base) => base,
+        // A spherical planetocentric base takes the geographic CRS of the source, the one
+        // `createOperationsFromSphericalPlanetocentric` puts between the two.
+        GeodeticCRS::Spherical(_) => geographic,
+        GeodeticCRS::Geocentric(_) => {
+            return Err(FactoryError::Format(
+                "the projected CRS base is not geographic".to_owned(),
+            ));
+        }
     };
     let mut steps = Vec::new();
     if let Some(order) = geographic_axis_order(geographic) {
