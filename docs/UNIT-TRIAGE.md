@@ -5,11 +5,11 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 168 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `core` | 166 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
 | `niche` | 40 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 51 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (168)
+## core (166)
 
 ### test_c_api.cpp (23)
 
@@ -37,11 +37,9 @@ The class comes from the test name alone, so check it when you port a test.
 - `CApi.proj_trans_bounds_ignore_inf_geographic`
 - `CApi.proj_trans_bounds_3D_ignore_inf`
 
-### test_crs.cpp (12)
+### test_crs.cpp (10)
 
 - `crs.projectedCRS_from_WKT1_ESRI_as_WKT1_ESRI_s_jtsk03_krovak_east_north`
-- `crs.projectedCRS_Krovak_EPSG_5221_as_PROJ_string`
-- `crs.projectedCRS_Krovak_with_approximate_alpha_as_PROJ_string`
 - `crs.projectedCRS_identify_db`
 - `crs.projectedCRS_identify_wrong_auth_name_case`
 - `crs.verticalCRS_identify_db`
