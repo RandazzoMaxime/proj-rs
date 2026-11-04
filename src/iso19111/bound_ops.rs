@@ -99,7 +99,7 @@ fn bound_to_bound(
 /// The C++ intermediate also has the WORLD domain of validity. It is not set here: with it,
 /// the datum pivot of this port drops the Helmert to ETRS89 (an area of Europe), and the
 /// chain changes.
-fn bound_to_geod(
+pub(super) fn bound_to_geod(
     factory: &CoordinateOperationFactory,
     source: &Crs,
     geodetic: &GeodeticCRS,

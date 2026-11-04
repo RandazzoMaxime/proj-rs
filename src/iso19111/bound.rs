@@ -86,7 +86,7 @@ fn epsg_method_code(transformation: &Transformation) -> i32 {
 }
 
 /// `Transformation::isGeographic3DToGravityRelatedHeight` with `allowInverse` false.
-fn is_gravity_related_height(transformation: &Transformation) -> bool {
+pub(super) fn is_gravity_related_height(transformation: &Transformation) -> bool {
     let method = transformation.method();
     if starts_with_ci(method.name(), "Geographic3D to GravityRelatedHeight") {
         return true;
@@ -98,7 +98,7 @@ fn is_gravity_related_height(transformation: &Transformation) -> bool {
             .is_ok_and(|code| GRAVITY_RELATED_HEIGHT_METHODS.contains(&code))
 }
 
-fn geoid_file_parameter(transformation: &Transformation) -> Option<&str> {
+pub(super) fn geoid_file_parameter(transformation: &Transformation) -> Option<&str> {
     transformation.parameters().iter().find_map(|parameter| {
         let is_file = parameter.code() == GEOID_CORRECTION_FILENAME.to_string()
             || parameter.name() == GEOID_CORRECTION_FILENAME_NAME;

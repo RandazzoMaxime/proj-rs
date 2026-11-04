@@ -1785,7 +1785,10 @@ impl WktParser {
             .unwrap_or_else(|| source.clone());
         let parameters = helmert_parameters(&values);
         let transformation = Transformation {
-            identified: Identified::named("Transformation to WGS84"),
+            identified: Identified::named(format!(
+                "Transformation from {} to WGS84",
+                transformation_source.name()
+            )),
             method: OperationMethod {
                 name: if values.iter().skip(3).any(|value| *value != 0.0) {
                     "Position Vector transformation (geog2D domain)".to_owned()
@@ -3232,7 +3235,25 @@ impl WktParser {
         let operation = node
             .child(&["ABRIDGEDTRANSFORMATION", "COORDINATEOPERATION"])
             .ok_or_else(|| invalid("missing ABRIDGEDTRANSFORMATION"))?;
-        let transformation = self.build_transformation(operation)?;
+        let mut transformation = self.build_transformation(operation)?;
+        // A `Geographic3D to GravityRelatedHeight` transformation of a vertical CRS bound to a
+        // geographic CRS goes the other way round: the method becomes
+        // `GravityRelatedHeight to Geographic3D` on the same file (`buildTransformationForBoundCRS`).
+        if matches!(source, Crs::Vertical(_))
+            && crate::iso19111::factory::geographic_of(&target).is_some()
+            && super::bound::is_gravity_related_height(&transformation)
+        {
+            if let Some(file) = super::bound::geoid_file_parameter(&transformation) {
+                let name = transformation.name().to_owned();
+                transformation = Transformation::create_gravity_related_height_to_geographic_3d(
+                    &super::buildop::OpProps::new().name(name),
+                    source.clone(),
+                    target.clone(),
+                    file,
+                    None,
+                );
+            }
+        }
         let mut bound = BoundCRS::create(
             source,
             target,

@@ -5371,6 +5371,14 @@ impl CoordinateOperationFactory {
         found.extend(super::compound::compound_to_geog3d(
             self, source, target, context,
         )?);
+        // `createOperationsToGeod` for a compound CRS to a geocentric CRS.
+        if let (Crs::Compound(_), Crs::Geodetic(geodetic)) = (source, target) {
+            if geographic_of(target).is_none() {
+                found.extend(super::bound_ops::bound_to_geod(
+                    self, source, geodetic, target, context,
+                )?);
+            }
+        }
         found.extend(super::compound::geog_to_compound(
             self, source, target, context,
         )?);
