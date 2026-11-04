@@ -1108,6 +1108,9 @@ impl super::model::Conversion {
             formatter.stop_inversion();
             return Ok(formatter.finish(super::pipeline::ProjLines::Single));
         }
+        if let Some(text) = self.proj_ob_tran_string() {
+            return Ok(text);
+        }
         if self.method.name.eq_ignore_ascii_case("Adams_Square_II") {
             return Ok(adams_square_ii_proj(self));
         }
@@ -1307,6 +1310,19 @@ impl super::model::Conversion {
             push_number(&mut parts, "s31", named("C1"));
             push_number(&mut parts, "s32", named("C2"));
             push_number(&mut parts, "s33", named("C3"));
+        }
+        Some(parts.join(" "))
+    }
+
+    /// `Conversion::_exportToPROJString` of a `PROJ ob_tran o_proj=...` method: the method
+    /// name is the PROJ operation, and each parameter is `+name=value` in degrees.
+    fn proj_ob_tran_string(&self) -> Option<String> {
+        let rest = self.method.name().strip_prefix("PROJ ob_tran o_proj=")?;
+        let mut parts = vec![format!("+proj=ob_tran +o_proj={rest}")];
+        for parameter in &self.parameters {
+            let measure = measure_ref(&parameter.value)?;
+            let degrees = measure.convert_to(&super::model::UnitOfMeasure::degree());
+            push_number(&mut parts, &parameter.name, degrees);
         }
         Some(parts.join(" "))
     }
