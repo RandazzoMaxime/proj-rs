@@ -3103,6 +3103,11 @@ impl AuthorityFactory {
         if self.authority == "OGC" && code == "84" {
             return self.create_coordinate_reference_system("CRS84");
         }
+        if self.authority == "OGC" {
+            if let Some(temporal) = ogc_temporal_crs(code) {
+                return Ok(Crs::Temporal(temporal));
+            }
+        }
         let row = self
             .one(
                 "SELECT type FROM crs_view WHERE auth_name = ? AND code = ?",
@@ -7171,4 +7176,38 @@ fn check_same_celestial_body(source: &Crs, target: &Crs) -> Result<(), FactoryEr
         );
     }
     Err(FactoryError::Unsupported(message))
+}
+
+/// The OGC temporal CRS `AnsiDate`, `JulianDate` or `UnixTime`, which the factory builds
+/// without a database row, as `AuthorityFactory::createCoordinateReferenceSystem` does.
+fn ogc_temporal_crs(code: &str) -> Option<super::niche::TemporalCRS> {
+    use super::niche::{TemporalCRS, TemporalCS, TemporalCsKind, TemporalDatum};
+    let day = || UnitOfMeasure::new("day", 86_400.0, UnitKind::Time);
+    let (name, datum_name, origin, unit) = match code {
+        "AnsiDate" => (
+            "Ansi Date",
+            "Epoch time for the ANSI date (1-Jan-1601, 00h00 UTC) as day 1.",
+            "1600-12-31T00:00:00Z",
+            day(),
+        ),
+        "JulianDate" => (
+            "Julian Date",
+            "The beginning of the Julian period.",
+            "-4714-11-24T12:00:00Z",
+            day(),
+        ),
+        "UnixTime" => (
+            "Unix Time",
+            "Unix epoch",
+            "1970-01-01T00:00:00Z",
+            UnitOfMeasure::new("second", 1.0, UnitKind::Time),
+        ),
+        _ => return None,
+    };
+    let datum = TemporalDatum::create(datum_name, origin, super::niche::PROLEPTIC_GREGORIAN);
+    let axis = Axis::new("Time", "T", "future", unit);
+    let coordinate_system = TemporalCS::create(TemporalCsKind::Count, axis);
+    let mut crs = TemporalCRS::create(name, datum, coordinate_system);
+    crs.identified = Identified::named(name).with_id("OGC", code);
+    Some(crs)
 }
