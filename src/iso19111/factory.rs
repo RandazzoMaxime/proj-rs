@@ -19,6 +19,7 @@ use super::model::{
     PrimeMeridian, ProjectedCRS, SphericalCS, Transformation, UnitKind, UnitOfMeasure, VerticalCRS,
     VerticalCS, VerticalReferenceFrame,
 };
+use super::pipeline::ProjLines;
 use crate::projdb;
 
 /// Whether [`AuthorityFactory::get_authority_codes`] returns deprecated rows.
@@ -4880,6 +4881,13 @@ impl CoordinateOperationFactory {
         let source = canonical_or_self(source);
         let target = canonical_or_self(target);
         check_same_celestial_body(&source, &target)?;
+        if context.crs_extent_use == CrsExtentUse::Intersection {
+            if let (Some(left), Some(right)) = (crs_extent(&source), crs_extent(&target)) {
+                if !extent_intersects(&left, &right) {
+                    return Ok(Vec::new());
+                }
+            }
+        }
         let found = self.create_candidates(&source, &target, context)?;
         Ok(select_candidates(found, &source, &target, context))
     }
@@ -5088,31 +5096,122 @@ fn select_candidates(
     target: &Crs,
     context: &CoordinateOperationContext,
 ) -> Vec<CoordinateOperation> {
-    let (source_extent, target_extent) = match context.crs_extent_use {
-        CrsExtentUse::Ignore => (None, None),
-        _ => (crs_extent(source), crs_extent(target)),
-    };
-    let filtered = filter_and_sort(
-        found,
-        context,
-        source_extent.as_ref(),
-        target_extent.as_ref(),
-    );
-    let mut sorted = super::select::sort_candidates(
-        filtered.operations,
+    let extents = sort_extents(context, source, target);
+    let mut filtered = filter_and_sort(found, context, &extents);
+    let sorted = super::select::sort_candidates(
+        std::mem::take(&mut filtered.operations),
         &context.db,
         source,
         target,
         context.grid_availability,
+        &extents,
     );
-    let synthetic_last = sorted.last().is_some_and(|operation| {
+    let sorted = remove_synthetic_null_transforms(sorted, &filtered);
+    let sorted = remove_uninteresting_ops(sorted);
+    let sorted = remove_duplicate_ops(sorted, &context.db);
+    remove_synthetic_null_transforms(sorted, &filtered)
+}
+
+/// `removeSyntheticNullTransforms`: with an operation that contains the area and needs no grid,
+/// a last result that is a ballpark or null transformation is dropped, as the sorted list
+/// starts with better ones.
+fn remove_synthetic_null_transforms(
+    mut operations: Vec<CoordinateOperation>,
+    filtered: &Filtered,
+) -> Vec<CoordinateOperation> {
+    let synthetic_last = operations.last().is_some_and(|operation| {
         operation.has_ballpark_transformation()
             || super::select::is_null_transformation(operation.name())
     });
-    if filtered.contains_area_without_grid && sorted.len() > 1 && synthetic_last {
-        sorted.pop();
+    if filtered.contains_area_without_grid && operations.len() > 1 && synthetic_last {
+        operations.pop();
     }
-    sorted
+    operations
+}
+
+/// `removeUninterestingOps`: for a given area, an operation with similar or worse accuracy and
+/// more transformation steps than the one kept before it adds nothing.
+fn remove_uninteresting_ops(operations: Vec<CoordinateOperation>) -> Vec<CoordinateOperation> {
+    let mut kept = Vec::with_capacity(operations.len());
+    let mut last: Option<(&CoordinateOperation, Option<ObjectDomain>, f64, usize)> = None;
+    for operation in &operations {
+        let accuracy = operation_accuracy(operation);
+        let extent = operation_extent(operation);
+        let steps = if operation.identifiers().is_empty() {
+            transformation_step_count(operation)
+        } else {
+            1
+        };
+        if let Some((last_operation, last_extent, last_accuracy, last_steps)) = &last {
+            if last_operation.is_equivalent_to(operation) {
+                continue;
+            }
+            let same_extent = match (&extent, last_extent) {
+                (None, None) => true,
+                (Some(current), Some(previous)) => {
+                    extent_contains(current, previous) && extent_contains(previous, current)
+                }
+                _ => false,
+            };
+            if ((accuracy >= *last_accuracy && *last_accuracy >= 0.0)
+                || (accuracy < 0.0 && *last_accuracy >= 0.0))
+                && same_extent
+                && steps > *last_steps
+            {
+                continue;
+            }
+        }
+        kept.push(operation.clone());
+        last = Some((operation, extent, accuracy, steps));
+    }
+    kept
+}
+
+/// `removeDuplicateOps`: an operation whose PROJ string and extent equal those of an earlier one
+/// adds nothing. An operation whose PROJ string cannot be written is kept.
+fn remove_duplicate_ops(
+    operations: Vec<CoordinateOperation>,
+    db: &DatabaseContext,
+) -> Vec<CoordinateOperation> {
+    if operations.len() <= 1 {
+        return operations;
+    }
+    let mut seen: Vec<(String, Option<BoundingBox>)> = Vec::new();
+    let mut kept = Vec::with_capacity(operations.len());
+    for operation in operations {
+        let Ok(text) = operation.export_to_proj_string_with_database(db, ProjLines::Single) else {
+            kept.push(operation);
+            continue;
+        };
+        let bbox = operation_extent(&operation).and_then(|extent| extent.bounding_box());
+        let key = (text, bbox);
+        if !seen.contains(&key) {
+            seen.push(key);
+            kept.push(operation);
+        }
+    }
+    kept
+}
+
+/// `getAccuracy`: a conversion is exact, an unknown accuracy is -1.
+fn operation_accuracy(operation: &CoordinateOperation) -> f64 {
+    match operation {
+        CoordinateOperation::Conversion(_) => 0.0,
+        _ => operation.accuracy().unwrap_or(-1.0),
+    }
+}
+
+/// `getTransformationStepCount`: the steps of a concatenated operation that are not
+/// conversions, and 1 for any other operation.
+fn transformation_step_count(operation: &CoordinateOperation) -> usize {
+    match operation {
+        CoordinateOperation::Concatenated(concatenated) => concatenated
+            .steps()
+            .iter()
+            .filter(|step| !matches!(step.operation, CoordinateOperation::Conversion(_)))
+            .count(),
+        _ => 1,
+    }
 }
 
 /// The extent of a CRS: its first usage, or for a compound CRS the intersection of its components.
@@ -5208,6 +5307,65 @@ fn extent_pseudo_area(extent: &ObjectDomain) -> f64 {
 }
 
 /// `FilterResults` with `andSort`: keeps the operations that match the area of interest and accuracy.
+/// The extents `FilterResults` measures against: the area of interest (the given one, or
+/// the one `computeAreaOfInterest` derives from the CRS extents), and the two CRS extents.
+pub(crate) struct SortExtents {
+    pub(crate) area: Option<ObjectDomain>,
+    pub(crate) source: Option<ObjectDomain>,
+    pub(crate) target: Option<ObjectDomain>,
+}
+
+impl SortExtents {
+    /// `computeAreaOfInterest`: a given area stands; otherwise the area is the intersection
+    /// or the smaller of the two CRS extents, as the CRS extent use says.
+    pub(crate) fn new(
+        context: &CoordinateOperationContext,
+        source: Option<ObjectDomain>,
+        target: Option<ObjectDomain>,
+    ) -> Self {
+        let area = match (&context.area_of_interest, context.crs_extent_use) {
+            (Some(area), _) => Some(area.clone()),
+            (None, CrsExtentUse::Intersection) => match (&source, &target) {
+                (Some(left), Some(right)) => match (left.bounding_box(), right.bounding_box()) {
+                    (Some(a), Some(b)) => a.intersection(&b).map(ObjectDomain::from_bounding_box),
+                    _ => None,
+                },
+                _ => None,
+            },
+            (None, CrsExtentUse::Smallest) => match (&source, &target) {
+                (Some(left), Some(right)) => {
+                    if extent_pseudo_area(left) < extent_pseudo_area(right) {
+                        Some(left.clone())
+                    } else {
+                        Some(right.clone())
+                    }
+                }
+                (Some(extent), None) | (None, Some(extent)) => Some(extent.clone()),
+                (None, None) => None,
+            },
+            _ => None,
+        };
+        Self {
+            area,
+            source,
+            target,
+        }
+    }
+}
+
+/// [`SortExtents`] of a pair: the CRS extents, unless the context ignores them.
+pub(crate) fn sort_extents(
+    context: &CoordinateOperationContext,
+    source: &Crs,
+    target: &Crs,
+) -> SortExtents {
+    let (source_extent, target_extent) = match context.crs_extent_use {
+        CrsExtentUse::Ignore => (None, None),
+        _ => (crs_extent(source), crs_extent(target)),
+    };
+    SortExtents::new(context, source_extent, target_extent)
+}
+
 /// Operations kept by [`filter_and_sort`], and whether a kept-or-not operation with no
 /// grid and no ballpark contains the area: PROJ's `hasOpThatContainsAreaOfInterestAndNoGrid`.
 struct Filtered {
@@ -5218,31 +5376,10 @@ struct Filtered {
 fn filter_and_sort(
     operations: Vec<CoordinateOperation>,
     context: &CoordinateOperationContext,
-    extent1: Option<&ObjectDomain>,
-    extent2: Option<&ObjectDomain>,
+    extents: &SortExtents,
 ) -> Filtered {
-    let area = match (&context.area_of_interest, context.crs_extent_use) {
-        (Some(area), _) => Some(area.clone()),
-        (None, CrsExtentUse::Intersection) => match (extent1, extent2) {
-            (Some(left), Some(right)) => match (left.bounding_box(), right.bounding_box()) {
-                (Some(a), Some(b)) => a.intersection(&b).map(ObjectDomain::from_bounding_box),
-                _ => None,
-            },
-            _ => None,
-        },
-        (None, CrsExtentUse::Smallest) => match (extent1, extent2) {
-            (Some(left), Some(right)) => {
-                if extent_pseudo_area(left) < extent_pseudo_area(right) {
-                    Some(left.clone())
-                } else {
-                    Some(right.clone())
-                }
-            }
-            (Some(extent), None) | (None, Some(extent)) => Some(extent.clone()),
-            (None, None) => None,
-        },
-        _ => None,
-    };
+    let area = extents.area.as_ref();
+    let (extent1, extent2) = (extents.source.as_ref(), extents.target.as_ref());
     let described = context.area_of_interest.as_ref().and_then(|area| {
         let text = area.description()?;
         operations
@@ -5253,8 +5390,9 @@ fn filter_and_sort(
             .then_some(text)
     });
     let mut result = Vec::new();
-    let mut has_with_extent = false;
-    let mut has_without_extent = false;
+    let mut only_ballpark = true;
+    let mut non_ballpark_with_extent = false;
+    let mut non_ballpark_without_extent = false;
     let mut contains_area_without_grid = false;
     let no_grid = |operation: &CoordinateOperation| {
         !operation.has_ballpark_transformation() && super::select::grid_names(operation).is_empty()
@@ -5266,9 +5404,10 @@ fn filter_and_sort(
         if context.ballpark == BallparkUse::Forbid && operation.has_ballpark_transformation() {
             continue;
         }
-        if let Some(area) = &area {
+        let ballpark = operation.has_ballpark_transformation();
+        if let Some(area) = area {
             let Some(extent) = operation_extent(operation) else {
-                has_without_extent = true;
+                non_ballpark_without_extent |= !ballpark;
                 continue;
             };
             if let Some(expected) = described {
@@ -5276,7 +5415,7 @@ fn filter_and_sort(
                     continue;
                 }
             }
-            has_with_extent = true;
+            non_ballpark_with_extent |= !ballpark;
             let contains = extent_contains(&extent, area);
             if contains && no_grid(operation) {
                 contains_area_without_grid = true;
@@ -5290,10 +5429,10 @@ fn filter_and_sort(
             }
         } else if context.crs_extent_use == CrsExtentUse::Both {
             let Some(extent) = operation_extent(operation) else {
-                has_without_extent = true;
+                non_ballpark_without_extent |= !ballpark;
                 continue;
             };
-            has_with_extent = true;
+            non_ballpark_with_extent |= !ballpark;
             let contains_source = extent1.is_none_or(|source| extent_contains(&extent, source));
             let contains_target = extent2.is_none_or(|target| extent_contains(&extent, target));
             if contains_source && contains_target && no_grid(operation) {
@@ -5315,21 +5454,25 @@ fn filter_and_sort(
                 _ => {}
             }
         }
+        only_ballpark &= ballpark;
         result.push(operation.clone());
     }
-    let operations = if result.is_empty() && (!has_with_extent || has_without_extent) {
-        operations
-            .into_iter()
-            .filter(|operation| accuracy_allowed(operation, context.desired_accuracy))
-            .filter(|operation| {
-                context.ballpark == BallparkUse::Allow || !operation.has_ballpark_transformation()
-            })
-            .collect()
-    } else {
-        result
-    };
+    if (result.is_empty() && !non_ballpark_with_extent)
+        || (only_ballpark && non_ballpark_without_extent)
+    {
+        result.extend(
+            operations
+                .iter()
+                .filter(|operation| accuracy_allowed(operation, context.desired_accuracy))
+                .filter(|operation| {
+                    context.ballpark == BallparkUse::Allow
+                        || !operation.has_ballpark_transformation()
+                })
+                .cloned(),
+        );
+    }
     Filtered {
-        operations,
+        operations: result,
         contains_area_without_grid,
     }
 }
@@ -5344,7 +5487,8 @@ fn has_perfect_accuracy_result(
 ) -> bool {
     let mut strict = context.clone();
     strict.spatial_criterion = SpatialCriterion::StrictContainment;
-    filter_and_sort(operations.to_vec(), &strict, extent1, extent2)
+    let extents = SortExtents::new(&strict, extent1.cloned(), extent2.cloned());
+    filter_and_sort(operations.to_vec(), &strict, &extents)
         .operations
         .iter()
         .any(|operation| {

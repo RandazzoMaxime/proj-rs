@@ -32,7 +32,6 @@ A row remains when that case does not match the yaml.
 | `test_projinfo.yaml#22` | projinfo | text mismatch expected: Warning: object is deprecated Alternative non-deprecated CRS:   EPSG:3003  PROJ.4 string: +proj=tmerc +lat_0=0 +lon_0=9 +k=0.9996 +x_0=1 | Testing deprecated CRS |
 | `test_projinfo.yaml#23` | projinfo | exit 1 expected 0 GEOGCS should have a PRIMEM node  | Testing non compliant WKT1 |
 | `test_projinfo.yaml#25` | projinfo | text mismatch expected: Candidate operations found: 2 ------------------------------------- Operation No. 1:  INVERSE(DERIVED_FROM(PROJ)):EPSG_4977_TO_EPSG_5613 | Testing RH2000 height to ETRS89-SWE [SWEREF 99] |
-| `test_projinfo.yaml#26` | projinfo | text mismatch expected: Candidate operations found: 3 ------------------------------------- Operation No. 1:  unknown id, Inverse of NAD83(2011) to NAVD88 heigh | Testing NAD83(2011) + NAVD88 height -> NAD83(2011) |
 | `test_projinfo.yaml#27` | projinfo | text mismatch expected: Candidate operations found: 2 ------------------------------------- Operation No. 1:  INVERSE(DERIVED_FROM(EPSG)):10000, Inverse of ETRS | Testing NGF IGN69 height to RGF93 |
 | `test_projinfo.yaml#28` | projinfo | text mismatch expected: PROJ.4 string: +proj=utm +zone=31 +datum=WGS84 +units=m +no_defs +type=crs  WKT2:2019 string: PROJCRS["WGS 84 / UTM zone 31N",     BASEG | - |
 | `test_projinfo.yaml#32` | projinfo | text mismatch expected: Candidate operations found: 3 unknown id, Inverse of UTM zone 31N + WGS 84 to EGM2008 height (1), 0.113 m, World. unknown id, Inverse of | - |

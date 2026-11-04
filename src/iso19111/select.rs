@@ -14,9 +14,12 @@
 //! caller keeps its previous path.
 
 use super::factory::{
-    crs_extent, operation_extent, GridAvailabilityUse, GridDescription, GridInfo, SpatialCriterion,
+    operation_extent, sort_extents, GridAvailabilityUse, GridDescription, GridInfo, SortExtents,
+    SpatialCriterion,
 };
-use super::model::{BoundingBox, CoordinateOperation, Crs, Parameter, ParameterValue};
+use super::model::{
+    BoundingBox, CoordinateOperation, Crs, ObjectDomain, Parameter, ParameterValue,
+};
 use super::{
     create_from_user_input, CoordinateOperationContext, CoordinateOperationFactory,
     DatabaseContext, FactoryError, ProjLines,
@@ -220,6 +223,7 @@ fn best_operation_full(
         &target_crs,
         &context,
     )?;
+    let extents = sort_extents(&context, &source_crs, &target_crs);
     let mut ranked = Vec::with_capacity(operations.len());
     for operation in operations {
         let characteristics = characteristics(
@@ -229,6 +233,7 @@ fn best_operation_full(
             &target_crs,
             GridSteps::Unwritten,
             GridAvailabilityUse::UseForSorting,
+            &extents,
         );
         ranked.push((operation, characteristics));
     }
@@ -362,6 +367,7 @@ fn characteristics(
     target: &Crs,
     grids: GridSteps,
     availability: GridAvailabilityUse,
+    extents: &SortExtents,
 ) -> Characteristics {
     let name = operation.name().to_owned();
     let text = match (grids, operation) {
@@ -388,13 +394,8 @@ fn characteristics(
     let grids_known = known_names
         .iter()
         .all(|grid| db.grid_is_known(grid).unwrap_or(false));
-    let (area_source, area_target) = (crs_extent(source), crs_extent(target));
     let op_box = operation_extent(operation).and_then(|extent| extent.bounding_box());
-    let area = pseudo_area_of(
-        op_box,
-        area_source.and_then(|extent| extent.bounding_box()),
-        area_target.and_then(|extent| extent.bounding_box()),
-    );
+    let area = pseudo_area_of(op_box, extents);
     let accuracy = match operation {
         CoordinateOperation::Conversion(_) => 0.0,
         _ => operation.accuracy().unwrap_or(-1.0),
@@ -420,17 +421,19 @@ fn characteristics(
     }
 }
 
-/// `getPseudoArea` of the operation extent, intersected with the CRS extents
-/// as PROJ does when no area of interest is given.
-fn pseudo_area_of(
-    operation: Option<BoundingBox>,
-    source: Option<BoundingBox>,
-    target: Option<BoundingBox>,
-) -> f64 {
+/// `SortFunction`'s area: `getPseudoArea` of the operation extent, intersected with the area of
+/// interest when there is one, else with the CRS extents as PROJ does.
+fn pseudo_area_of(operation: Option<BoundingBox>, extents: &SortExtents) -> f64 {
     let Some(operation) = operation else {
         return 0.0;
     };
+    let bbox_of = |domain: Option<&ObjectDomain>| domain.and_then(ObjectDomain::bounding_box);
     let area_of = |bbox: Option<BoundingBox>| bbox.map_or(0.0, |bbox| bbox.pseudo_area());
+    if let Some(area) = bbox_of(extents.area.as_ref()) {
+        return area_of(operation.intersection(&area));
+    }
+    let source = bbox_of(extents.source.as_ref());
+    let target = bbox_of(extents.target.as_ref());
     match (source, target) {
         (Some(source), Some(target)) => {
             let x = operation.intersection(&source);
@@ -796,6 +799,7 @@ pub(crate) fn sort_candidates(
     source: &Crs,
     target: &Crs,
     availability: GridAvailabilityUse,
+    extents: &SortExtents,
 ) -> Vec<CoordinateOperation> {
     let ranked = operations
         .into_iter()
@@ -807,6 +811,7 @@ pub(crate) fn sort_candidates(
                 target,
                 GridSteps::Written,
                 availability,
+                extents,
             );
             (operation, characteristics)
         })
