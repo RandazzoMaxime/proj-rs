@@ -19,7 +19,8 @@ use super::derived::joint_extent;
 use super::equiv::{geodetic_frame, same_geodetic_datum, Equivalence};
 use super::factory::{
     crs_extent, geographic_of, world_extent, CoordinateOperationContext,
-    CoordinateOperationFactory, DatabaseContext, GridAvailabilityUse,
+    CoordinateOperationFactory, DatabaseContext, GridAvailabilityUse, GUARD_ALTERNATIVE_GEOG,
+    GUARD_VERTICAL_INTERMEDIATE,
 };
 use super::model::{
     Axis, ConcatenatedOperation, ConcatenatedStep, CoordinateOperation, Crs, GeographicCRS,
@@ -1162,10 +1163,10 @@ pub(super) fn vertical_geog_fallback(
         return Ok(Vec::new());
     }
     let mut res = Vec::new();
-    if !context.in_vertical_intermediate {
+    if !context.has_guard(GUARD_VERTICAL_INTERMEDIATE) {
         res = geog_to_vertical_intermediate(factory, geog, vertical, context)?;
     }
-    if res.is_empty() && !context.in_alternative_geog {
+    if res.is_empty() && !context.has_guard(GUARD_ALTERNATIVE_GEOG) {
         res = geog_to_vertical_alternative(factory, geog, vertical, context)?;
     }
     if from_vertical {
@@ -1204,7 +1205,7 @@ fn geog_to_vertical_intermediate(
         return Ok(Vec::new());
     };
     let mut inner = context.clone();
-    inner.in_vertical_intermediate = true;
+    inner.guards |= GUARD_VERTICAL_INTERMEDIATE;
     let candidates = context.database().query(
         "SELECT auth_name, code FROM vertical_crs WHERE datum_auth_name = ? \
          AND datum_code = ? AND deprecated = 0",
@@ -1258,7 +1259,7 @@ fn geog_to_vertical_alternative(
         return Ok(Vec::new());
     };
     let mut inner = context.clone();
-    inner.in_alternative_geog = true;
+    inner.guards |= GUARD_ALTERNATIVE_GEOG;
     let rows = context.database().query(
         "SELECT auth_name, code FROM coordinate_operation_view WHERE target_crs_auth_name = ? \
          AND target_crs_code = ? AND deprecated = 0",

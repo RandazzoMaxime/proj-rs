@@ -60,8 +60,6 @@ and `PORT-NOTES-tests.md`.
 ## test_operationfactory.cpp
 
 - `operation.geogCRS_to_geogCRS_context_inverse_needed`
-- `operation.geogCRS_to_geogCRS_context_NAD27_to_WGS84_G1762`
-- `operation.geogCRS_to_geogCRS_context_datum_ensemble`
 - `operation.vertCRS_to_geogCRS_context`
 - `operation.geog3DCRS_to_geog2DCRS_plus_vertCRS_context`
 - `operation.geog3DCRS_to_vertCRS_depth_context`
@@ -70,8 +68,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.geogCRS_to_geogCRS_CH1903_to_CH1903plus_context`
 - `operation.geogCRS_to_geogCRS_init_IGNF_to_init_IGNF_context`
 - `operation.geogCRS_promoted_to_3D_to_geogCRS_3D_context`
-- `operation.geogCRS_3D_to_geogCRS_3D_different_datum_context`
-- `operation.geocentric_to_geogCRS_3D_different_datum_context`
 - `operation.esri_projectedCRS_to_geogCRS_with_ITRF_intermediate_context`
 - `operation.geogCRS_to_geogCRS_with_intermediate_no_ids`
 - `operation.geogCRS_3D_source_datum_name_is_alias_to_geogCRS`

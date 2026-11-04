@@ -75,6 +75,15 @@ pub enum BallparkUse {
     Forbid,
 }
 
+/// `inCreateOperationsGeogToVertWithIntermediateVert`.
+pub(super) const GUARD_VERTICAL_INTERMEDIATE: u8 = 1;
+/// `inCreateOperationsGeogToVertWithAlternativeGeog`.
+pub(super) const GUARD_ALTERNATIVE_GEOG: u8 = 2;
+/// `inCreateOperationsWithIntermediate`.
+pub(super) const GUARD_DATUM_INTERMEDIATE: u8 = 4;
+/// `inCreateOperationsWithDatumPivotAntiRecursion`.
+pub(super) const GUARD_DATUM_PIVOT: u8 = 8;
+
 /// How the availability of an operation's grids enters the ordering.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum GridAvailabilityUse {
@@ -4871,10 +4880,8 @@ pub struct CoordinateOperationContext {
     /// The CRS extents of the outermost call, which a sub-call of a compound CRS reuses
     /// instead of its own components' extents (PROJ's `Private::Context` extents).
     inherited_extents: Option<(Option<ObjectDomain>, Option<ObjectDomain>)>,
-    /// `inCreateOperationsGeogToVertWithIntermediateVert`.
-    pub(super) in_vertical_intermediate: bool,
-    /// `inCreateOperationsGeogToVertWithAlternativeGeog`.
-    pub(super) in_alternative_geog: bool,
+    /// The anti-recursion guards of PROJ's `Private::Context`, as `GUARD_*` bits.
+    pub(super) guards: u8,
 }
 
 impl CoordinateOperationContext {
@@ -4895,8 +4902,7 @@ impl CoordinateOperationContext {
             superseded: SupersededOperations::Discard,
             registry: RegistryUse::default(),
             inherited_extents: None,
-            in_vertical_intermediate: false,
-            in_alternative_geog: false,
+            guards: 0,
         }
     }
 
@@ -4908,6 +4914,11 @@ impl CoordinateOperationContext {
             context.inherited_extents = Some((crs_extent(source), crs_extent(target)));
         }
         context
+    }
+
+    /// Whether the guard `guard` (`GUARD_*`) is set.
+    pub(super) fn has_guard(&self, guard: u8) -> bool {
+        self.guards & guard != 0
     }
 
     /// `disallowEmptyIntersection`: an operation whose extents do not meet is not built,
@@ -5319,7 +5330,11 @@ impl CoordinateOperationFactory {
             && is_geodetic(source)
             && is_geodetic(target)
         {
-            let pivot = datum_pivot_operations(source, target, context);
+            let pivot = if context.has_guard(GUARD_DATUM_PIVOT) {
+                Vec::new()
+            } else {
+                datum_pivot_operations(source, target, context)
+            };
             let intermediate_needed = direct_unfiltered_empty
                 && (pivot.is_empty() || only_ensemble_null_operations(&pivot));
             found.extend(pivot);
@@ -6084,7 +6099,140 @@ fn datum_pivot_operations(
             return linked;
         }
     }
+    // `createTransformations` without `useOnlyDirectRegistryOp` (iterations 1 and 2): the full
+    // search between the candidates, first between two of the same kind, then of another.
+    // Kept to a CRS the registry does not know (a 3D promotion, a CRS read from WKT): with
+    // identifiers on both sides the registry chains of `createBetween...` come first.
+    if context.has_guard(GUARD_DATUM_PIVOT)
+        || (registry_identity(source, context).is_some()
+            && registry_identity(target, context).is_some())
+    {
+        return Vec::new();
+    }
+    let kind = |crs: &Crs| match geographic_of(crs) {
+        Some(geographic) if geographic.coordinate_system().axes().len() == 3 => 1,
+        Some(_) => 0,
+        None => 2,
+    };
+    let mut inner = context.clone();
+    inner.guards |= GUARD_DATUM_PIVOT;
+    let factory = CoordinateOperationFactory::create();
+    for iteration in 1..=2 {
+        for left in &candidates_source {
+            if left.name() != source.name() {
+                continue;
+            }
+            for right in &candidates_target {
+                if right.name() != target.name() {
+                    continue;
+                }
+                if (iteration == 1) != (kind(left) == kind(right)) {
+                    continue;
+                }
+                let (left_leg, right_leg) = if both_3d {
+                    (
+                        promote_crs_to_3d(left, &context.db),
+                        promote_crs_to_3d(right, &context.db),
+                    )
+                } else {
+                    (left.clone(), right.clone())
+                };
+                let (Some(first), Some(third)) =
+                    (pivot_leg(source, &left_leg), pivot_leg(&right_leg, target))
+                else {
+                    continue;
+                };
+                let Ok(second) = factory.create_candidates(left, right, &inner) else {
+                    continue;
+                };
+                let linked: Vec<CoordinateOperation> = second
+                    .into_iter()
+                    .filter(|operation| !operation.has_ballpark_transformation())
+                    .map(|operation| {
+                        let operation = if both_3d {
+                            promote_operation_to_3d(operation, &context.db)
+                        } else {
+                            operation
+                        };
+                        let steps = [first.clone(), Some(operation), third.clone()]
+                            .into_iter()
+                            .flatten()
+                            .collect();
+                        CoordinateOperation::Concatenated(pivot_concatenation(steps))
+                    })
+                    .collect();
+                if !linked.is_empty() {
+                    return linked;
+                }
+            }
+        }
+    }
     Vec::new()
+}
+
+/// `findsOpsInRegistryWithIntermediate` for a source CRS the registry does not know: each
+/// registered CRS of its datum, of the same kind and axis count (and of the authority a 3D
+/// promotion comes from), stands for it, and the operations from it to the target are
+/// preceded by the operations from the source to it.
+fn intermediate_through_candidates(
+    source: &Crs,
+    target: &Crs,
+    context: &CoordinateOperationContext,
+) -> Result<Vec<CoordinateOperation>, FactoryError> {
+    let Some(frame) = geodetic_frame(source) else {
+        return Ok(Vec::new());
+    };
+    if frame.identifiers().is_empty()
+        && (frame.name().eq_ignore_ascii_case("unknown")
+            || frame.name().starts_with("Unknown based on "))
+    {
+        return Ok(Vec::new());
+    }
+    let Some(datum) = datum_identity(source, &context.db) else {
+        return Ok(Vec::new());
+    };
+    let originating = source
+        .remarks()
+        .strip_prefix("Promoted to 3D from ")
+        .and_then(|rest| rest.split(':').next())
+        .unwrap_or("");
+    let authority = AuthorityFactory::create(&context.db, context.authority.clone());
+    let source_axes = axis_count(source);
+    let mut inner = context.clone();
+    inner.guards |= GUARD_DATUM_INTERMEDIATE;
+    for candidate in candidate_geodetic_crs(&authority, &datum) {
+        let ids = candidate.identifiers();
+        let same_authority = originating.is_empty()
+            || (ids.len() == 1 && ids[0].code_space() == originating)
+            || ids.len() > 1;
+        if !same_authority
+            || axis_count(&candidate) != source_axes
+            || geographic_of(source).is_some() != geographic_of(&candidate).is_some()
+        {
+            continue;
+        }
+        if same_geodetic_datum(&candidate, target) {
+            continue;
+        }
+        let with_intermediate = datum_based_intermediate_operations(&candidate, target, &inner)?;
+        if with_intermediate.is_empty() {
+            continue;
+        }
+        let mut res = Vec::new();
+        for first in
+            CoordinateOperationFactory::create().create_candidates(source, &candidate, &inner)?
+        {
+            for second in &with_intermediate {
+                res.push(CoordinateOperation::Concatenated(pivot_concatenation(
+                    vec![first.clone(), second.clone()],
+                )));
+            }
+        }
+        if !res.is_empty() {
+            return Ok(res);
+        }
+    }
+    Ok(Vec::new())
 }
 
 /// `createBetweenGeodeticCRSWithDatumBasedIntermediates`: two geodetic CRS of different
@@ -6099,6 +6247,19 @@ fn datum_based_intermediate_operations(
     target: &Crs,
     context: &CoordinateOperationContext,
 ) -> Result<Vec<CoordinateOperation>, FactoryError> {
+    if !context.has_guard(GUARD_DATUM_INTERMEDIATE) {
+        if registry_identity(source, context).is_none() {
+            return intermediate_through_candidates(source, target, context);
+        }
+        if registry_identity(target, context).is_none() {
+            return Ok(
+                datum_based_intermediate_operations(target, source, context)?
+                    .iter()
+                    .map(CoordinateOperation::inverse)
+                    .collect(),
+            );
+        }
+    }
     let source_id = identity_of(source);
     let target_id = identity_of(target);
     if source_id.0.is_empty() || target_id.0.is_empty() || source_id == target_id {
