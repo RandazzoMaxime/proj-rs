@@ -675,6 +675,75 @@ impl DerivedProjectedCRS {
     }
 }
 
+/// The database search of `ProjectedCRS::identify` for a CRS that is not a UTM zone: the
+/// object named by its own identifier when the authority matches, else the projected CRS of
+/// the same name. An equivalent object (EQUIVALENT criterion) gives 100 for the same name and
+/// 90 for another one; a different one gives 25.
+fn identify_projected_in_database(
+    crs: &ProjectedCRS,
+    factory: Option<&AuthorityFactory>,
+) -> Vec<(Crs, i32)> {
+    let Some(factory) = factory else {
+        return Vec::new();
+    };
+    let db = factory.database_context();
+    // An implicit axis order (WKT1 without AXIS) is compared without the axis order, as
+    // `ProjectedCRS::identify` does with EQUIVALENT_EXCEPT_AXIS_ORDER_GEOGCRS.
+    let criterion = match crs.base_crs() {
+        GeodeticCRS::Geographic(base) if base.implicit_cs => Equivalence::ExceptAxisOrder,
+        _ => Equivalence::Equivalent,
+    };
+    if compatible_authority(crs.identifiers(), factory) {
+        for identifier in crs.identifiers() {
+            if !(factory.authority().is_empty() || identifier.code_space() == factory.authority()) {
+                continue;
+            }
+            if let Ok(found) = AuthorityFactory::create(db, identifier.code_space())
+                .create_projected_crs(identifier.code())
+            {
+                let confidence = if crs.is_equivalent_to_with(&found, criterion) {
+                    100
+                } else {
+                    25
+                };
+                return vec![(Crs::Projected(found), confidence)];
+            }
+        }
+        return Vec::new();
+    }
+    let name = crs.name();
+    if name.is_empty()
+        || name.eq_ignore_ascii_case("unknown")
+        || name.eq_ignore_ascii_case("unnamed")
+    {
+        return Vec::new();
+    }
+    for mode in [NameMatch::Exact, NameMatch::Approximate] {
+        let Ok(objects) = factory.create_projected_crs_by_name(name, mode) else {
+            return Vec::new();
+        };
+        let mut hits: Vec<(ProjectedCRS, i32)> = Vec::new();
+        for found in objects {
+            if crs.is_equivalent_to_with(&found, criterion) {
+                if found.name() == name {
+                    return vec![(Crs::Projected(found), 100)];
+                }
+                hits.push((found, 90));
+            } else {
+                hits.push((found, 25));
+            }
+        }
+        if !hits.is_empty() {
+            hits.sort_by_key(|hit| std::cmp::Reverse(hit.1));
+            return hits
+                .into_iter()
+                .map(|(crs, c)| (Crs::Projected(crs), c))
+                .collect();
+        }
+    }
+    Vec::new()
+}
+
 impl ProjectedCRS {
     /// `ProjectedCRS::promoteTo3D`.
     ///
@@ -759,7 +828,7 @@ impl ProjectedCRS {
             return Vec::new();
         }
         let Some((zone, hemisphere)) = self.conversion.utm_zone() else {
-            return Vec::new();
+            return identify_projected_in_database(self, factory);
         };
         if !easting_northing_metre(&self.coordinate_system) {
             return Vec::new();

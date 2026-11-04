@@ -659,11 +659,7 @@ fn ellipsoid_equivalent_by(
 
 pub(crate) fn meridian_equivalent(left: &PrimeMeridian, right: &PrimeMeridian) -> bool {
     same_name(left.name(), right.name())
-        && left.longitude().value() == right.longitude().value()
-        && same_name(
-            left.longitude().unit().name(),
-            right.longitude().unit().name(),
-        )
+        && (left.longitude().si_value() - right.longitude().si_value()).abs() <= 1e-12
 }
 
 /// Empty and `"Unknown engineering datum"` match (`EngineeringDatum::_isEquivalentTo`).
