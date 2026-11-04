@@ -996,6 +996,12 @@ impl DatabaseContext {
             &[name.to_owned(), name.to_owned()],
         )?;
         let Some(row) = rows.first() else {
+            // An official grid name is looked up under the PROJ name that replaces it.
+            if let Some((alternative, _)) = self.proj_grid_alternative(name)? {
+                if alternative != name {
+                    return self.look_for_grid_info(&alternative, known);
+                }
+            }
             return Ok(None);
         };
         let package_name = row[0].text();
@@ -4852,7 +4858,7 @@ pub struct CoordinateOperationContext {
     crs_extent_use: CrsExtentUse,
     desired_accuracy: f64,
     ballpark: BallparkUse,
-    grid_availability: GridAvailabilityUse,
+    pub(super) grid_availability: GridAvailabilityUse,
     superseded: SupersededOperations,
     registry: RegistryUse,
     /// The CRS extents of the outermost call, which a sub-call of a compound CRS reuses
