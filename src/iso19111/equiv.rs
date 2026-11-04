@@ -600,10 +600,21 @@ fn frame_equivalent_by(
     right: &GeodeticReferenceFrame,
     names: fn(&str, &str) -> bool,
 ) -> bool {
-    names(left.name(), right.name())
+    (names(left.name(), right.name()) || shares_epsg_code(left, right))
         && same_epoch(left.frame_reference_epoch(), right.frame_reference_epoch())
         && ellipsoid_equivalent_by(left.ellipsoid(), right.ellipsoid(), names)
         && meridian_equivalent(left.prime_meridian(), right.prime_meridian())
+}
+
+/// Two datums with the same EPSG code are the same datum, whatever their names.
+fn shares_epsg_code(left: &GeodeticReferenceFrame, right: &GeodeticReferenceFrame) -> bool {
+    left.identifiers().iter().any(|a| {
+        a.code_space() == "EPSG"
+            && right
+                .identifiers()
+                .iter()
+                .any(|b| b.code_space() == "EPSG" && b.code() == a.code())
+    })
 }
 
 fn vertical_equivalent(left: &VerticalReferenceFrame, right: &VerticalReferenceFrame) -> bool {

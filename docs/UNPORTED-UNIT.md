@@ -55,7 +55,6 @@ and `PORT-NOTES-tests.md`.
 ## test_io.cpp
 
 - `wkt_parse.DerivedGeographicCRS_GDAL_PROJ4_EXSTENSION_hack`
-- `wkt_parse.wkt1_oracle`
 - `io.projparse_init`
 - `io.createFromUserInput`
 
