@@ -74,11 +74,6 @@ and `PORT-NOTES-tests.md`.
 - `io.projstringformatter_krovak_east_north_to_krovak`
 - `io.projparse_init`
 - `io.createFromUserInput`
-- `json_import.several_usages`
-- `json_import.bound_crs_with_name_and_usage`
-- `json_import.engineering_crs_affine_CS`
-- `json_import.multiple_ids`
-- `json_export.coordinate_system_id`
 
 ## test_operation.cpp
 

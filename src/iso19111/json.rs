@@ -301,7 +301,7 @@ impl JsonObject {
             Self::DatumEnsemble(ensemble) => {
                 writer.key("type");
                 writer.string("DatumEnsemble");
-                write_ensemble_members(&mut writer, ensemble, db, Chain::Clear)?;
+                write_ensemble_members(&mut writer, ensemble, db)?;
             }
             Self::Transformation(transformation) => {
                 write_transformation(
@@ -365,6 +365,35 @@ impl Crs {
     }
 }
 
+impl CoordinateSystem {
+    /// PROJJSON for this coordinate system in `format`, as `CoordinateSystem::exportToJSON`
+    /// writes it: its subtype, its axes, and its `id` when it has one.
+    ///
+    /// # Errors
+    ///
+    /// The export fails when a part of the system has no PROJJSON export in this build.
+    pub fn export_to_json_with(
+        &self,
+        db: &DatabaseContext,
+        format: &JsonFormat,
+    ) -> Result<String, FactoryError> {
+        export_wrapped(format, |writer| {
+            writer.key("type");
+            writer.string("CoordinateSystem");
+            writer.key("subtype");
+            writer.string(self.wkt2_type());
+            writer.key("axis");
+            writer.start_array();
+            for axis in self.axes() {
+                write_axis(writer, axis, Chain::Clear);
+            }
+            writer.end_array();
+            write_id(writer, self.identifiers(), db);
+            Ok(())
+        })
+    }
+}
+
 impl CoordinateOperation {
     /// PROJJSON for this operation in `format`: a `Conversion`, a `Transformation`, or a
     /// `ConcatenatedOperation`, as `proj_as_projjson` writes it.
@@ -407,7 +436,7 @@ enum Allow {
     Plain,
 }
 
-/// Whether an object, or one of its ancestors, has an `id`.
+/// Whether the object that carries this value has an `id`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Chain {
     Clear,
@@ -416,16 +445,16 @@ enum Chain {
 
 /// Where an object sits, as PROJ's `JSONFormatter` tracks it.
 ///
-/// PROJ writes an object's `id` when it is the top object, or when no object above it has an
-/// `id` (`outputId`). A parent that asks for its child's `id` gets one anyway. The usage block
-/// (scope, area, extent) is written for the top object only.
+/// PROJ writes an object's `id` when it is the top object, when its parent asks for it, or when
+/// its parent has no `id`. The usage block (scope, area, extent) is written for the top object
+/// only.
 #[derive(Clone, Copy)]
 struct Place {
     /// The top object of the export.
     top: bool,
     /// Whether this object writes its own `id`.
     id_out: bool,
-    /// Whether this object or one of its ancestors has an `id`.
+    /// Whether this object has an `id`. Its children read it as their parent state.
     chain: Chain,
 }
 
@@ -435,16 +464,16 @@ impl Place {
         Self {
             top: true,
             id_out: true,
-            chain: chain_of(Chain::Clear, ident),
+            chain: chain_of(ident),
         }
     }
 
-    /// An object with `ident`, inside a parent whose chain is `parent`.
+    /// An object with `ident`, inside a parent whose `id` state is `parent`.
     fn inside(parent: Chain, ident: Ident, allow: Allow) -> Self {
         Self {
             top: false,
             id_out: allow == Allow::Asked || parent == Chain::Clear,
-            chain: chain_of(parent, ident),
+            chain: chain_of(ident),
         }
     }
 }
@@ -466,8 +495,8 @@ fn code_ident(code_space: &str) -> Ident {
     }
 }
 
-fn chain_of(parent: Chain, ident: Ident) -> Chain {
-    if parent == Chain::Has || ident == Ident::Has {
+fn chain_of(ident: Ident) -> Chain {
+    if ident == Ident::Has {
         Chain::Has
     } else {
         Chain::Clear
@@ -673,7 +702,7 @@ fn write_vertical(
         write_vertical_datum(writer, datum, db, datum_place)?;
     } else if let Some(ensemble) = crs.datum_ensemble() {
         writer.key("datum_ensemble");
-        write_ensemble(writer, ensemble, db, place.chain)?;
+        write_ensemble(writer, ensemble, db)?;
     }
     writer.key("coordinate_system");
     write_cs(
@@ -734,9 +763,9 @@ fn write_bound(
         writer.string(crs.name());
     }
     writer.key("source_crs");
-    write_component(writer, source, db, place.chain, Allow::Plain)?;
+    write_component(writer, source, db, place.chain, Allow::Asked)?;
     writer.key("target_crs");
-    write_component(writer, crs.target_crs(), db, place.chain, Allow::Plain)?;
+    write_component(writer, crs.target_crs(), db, place.chain, Allow::Asked)?;
     writer.key("transformation");
     let transformation_place = Place::inside(
         place.chain,
@@ -830,7 +859,7 @@ fn write_datum_or_ensemble(
         write_datum(writer, datum, db, datum_place)?;
     } else if let Some(ensemble) = ensemble {
         writer.key("datum_ensemble");
-        write_ensemble(writer, ensemble, db, parent)?;
+        write_ensemble(writer, ensemble, db)?;
     }
     Ok(())
 }
@@ -986,10 +1015,9 @@ fn write_ensemble(
     writer: &mut Writer,
     ensemble: &DatumEnsemble,
     db: &DatabaseContext,
-    parent: Chain,
 ) -> Result<(), FactoryError> {
     writer.start_object();
-    write_ensemble_members(writer, ensemble, db, parent)?;
+    write_ensemble_members(writer, ensemble, db)?;
     writer.end_object();
     Ok(())
 }
@@ -998,9 +1026,8 @@ fn write_ensemble_members(
     writer: &mut Writer,
     ensemble: &DatumEnsemble,
     db: &DatabaseContext,
-    parent: Chain,
 ) -> Result<(), FactoryError> {
-    let chain = chain_of(parent, ident(ensemble.identifiers()));
+    let chain = chain_of(ident(ensemble.identifiers()));
     write_name(writer, ensemble.name());
     writer.key("members");
     writer.start_array();
@@ -1617,15 +1644,31 @@ fn write_id_if(
     }
 }
 
-/// The `id` of an object: its first identifier, with the authority and, when `proj.db` has one,
-/// the version. Only the first identifier is written.
+/// The `id` of an object, or its `ids` when it has several identifiers. Each identifier is written
+/// with its authority and, when `proj.db` has one, its version.
 fn write_id(writer: &mut Writer, identifiers: &[Identifier], db: &DatabaseContext) {
-    let Some(identifier) = identifiers.first() else {
-        return;
-    };
-    if identifier.code_space().is_empty() || identifier.code().is_empty() {
-        return;
+    let written: Vec<&Identifier> = identifiers
+        .iter()
+        .filter(|identifier| !identifier.code_space().is_empty() && !identifier.code().is_empty())
+        .collect();
+    match written.as_slice() {
+        [] => {}
+        [identifier] => {
+            writer.key("id");
+            write_identifier(writer, identifier, db);
+        }
+        several => {
+            writer.key("ids");
+            writer.start_array();
+            for identifier in several {
+                write_identifier(writer, identifier, db);
+            }
+            writer.end_array();
+        }
     }
+}
+
+fn write_identifier(writer: &mut Writer, identifier: &Identifier, db: &DatabaseContext) {
     let (authority, version) = db
         .authority_and_version(identifier.code_space())
         .map(|(authority, version)| (authority, Some(version)))
@@ -1635,7 +1678,6 @@ fn write_id(writer: &mut Writer, identifiers: &[Identifier], db: &DatabaseContex
                 identifier.version.clone(),
             )
         });
-    writer.key("id");
     writer.start_object();
     writer.key("authority");
     writer.string(&authority);

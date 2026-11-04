@@ -7,7 +7,7 @@ The class comes from the test name alone, so check it when you port a test.
 |---|---:|---|---|
 | `core` | 187 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
 | `niche` | 40 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
-| `shape` | 56 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
+| `shape` | 51 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
 ## core (187)
 
@@ -270,7 +270,7 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.createOperation_compound_to_compound_with_point_motion_operation`
 - `operation.createOperation_compound_to_compound_with_point_motion_operation_special_case_CGVD2013a`
 
-## shape (56)
+## shape (51)
 
 ### test_c_api.cpp (21)
 
@@ -331,11 +331,3 @@ The class comes from the test name alone, so check it when you port a test.
 - `FactoryWithTmpDatabase.createOperations_exact_transform_not_whole_area`
 - `FactoryWithTmpDatabase.check_fixup_direction_concatenated_inverse_map_projection`
 - `factory.objectInsertion`
-
-### test_io.cpp (5)
-
-- `json_import.several_usages`
-- `json_import.bound_crs_with_name_and_usage`
-- `json_import.engineering_crs_affine_CS`
-- `json_import.multiple_ids`
-- `json_export.coordinate_system_id`
