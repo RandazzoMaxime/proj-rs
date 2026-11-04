@@ -67,9 +67,6 @@ and `PORT-NOTES-tests.md`.
 ## test_operation.cpp
 
 - `operation.normalizeForVisualization`
-- `operation.operation_Position_Vector_geocen_and_geocen_translations_NEU_velocities_gtg_with_source_epoch`
-- `operation.operation_geocen_translations_by_grid_and_geocen_translations_NEU_velocities_gtg`
-- `operation.operation_geocen_translations_NEU_velocities_gtg`
 
 ## test_operationfactory.cpp
 

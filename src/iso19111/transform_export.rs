@@ -97,6 +97,7 @@ const METHOD_GEOGRAPHIC3D_OFFSET_BY_VELOCITY_GRID: i32 = 1114;
 const METHOD_VERTICAL_OFFSET_NEU_VELOCITY_GRID: i32 = 1113;
 const METHOD_POSITION_VECTOR_NEU_VELOCITIES_GTG: i32 = 1143;
 const METHOD_GEOCENTRIC_TRANSLATIONS_NEU_VELOCITY_GRID_GTG: i32 = 1144;
+const METHOD_GEOCENTRIC_TRANSLATIONS_BY_GRID_AND_NEU_VELOCITIES_GTG: i32 = 1142;
 
 /// `Geographic3D to GravityRelatedHeight` methods, the codes `isGeographic3DToGravityRelatedHeight` lists.
 const GEOG3D_TO_HEIGHT_METHODS: [i32; 42] = [
@@ -330,6 +331,9 @@ fn export_forward(
     }
     if code == METHOD_GEOCENTRIC_TRANSLATIONS_NEU_VELOCITY_GRID_GTG {
         return geocentric_velocity_grid(operation, source, target, formatter);
+    }
+    if code == METHOD_GEOCENTRIC_TRANSLATIONS_BY_GRID_AND_NEU_VELOCITIES_GTG {
+        return geocentric_translation_grid_and_velocity(operation, source, target, formatter);
     }
     if code == METHOD_POSITION_VECTOR_NEU_VELOCITIES_GTG {
         return position_vector_velocity_grid(operation, source, target, formatter);
@@ -942,6 +946,38 @@ fn point_motion_velocity_grid(
     angular_unit_and_axis_swap(axes, formatter)
 }
 
+/// `Geocen translations by grid (gtg) & Geocen translations NEU velocities (gtg)` (1142): the
+/// geocentric source, a `xyzgridshift` on the translation grid, a `deformation` over the time
+/// between the two epochs on the velocity grid, then the geocentric target.
+fn geocentric_translation_grid_and_velocity(
+    operation: &Transformation,
+    source: Option<&Crs>,
+    target: Option<&Crs>,
+    formatter: &mut PipelineFormatter,
+) -> Result<(), FactoryError> {
+    let method = operation.method().name();
+    let (source, target) = geocentric_endpoints(source, target, method)?;
+    let translation = file_by_name(operation, "Geocentric translation file").ok_or_else(|| {
+        FactoryError::Format("Missing parameter Geocentric translation file".to_owned())
+    })?;
+    let translation = formatter.grid_name(&translation);
+    let velocity = formatter.grid_name(&velocity_grid_file(operation)?);
+    let source_year = epoch_years(operation, PARAMETER_SOURCE_EPOCH)
+        .ok_or_else(|| FactoryError::Format("Missing parameter source epoch".to_owned()))?;
+    let target_year = target_epoch_years(operation)?;
+    setup_source(source, PushV3::No, formatter)?;
+    formatter.add_step("xyzgridshift");
+    formatter.add_param("grids", &translation);
+    formatter.add_step("deformation");
+    formatter.add_number(
+        "dt",
+        rounded_epoch_in_decimal_year(target_year - source_year),
+    );
+    formatter.add_param("grids", &velocity);
+    geocentric_ellipsoid_steps(source, formatter);
+    setup_target(target, PushV3::No, formatter)
+}
+
 /// `Vertical offset using NEU velocity grid (NTv2_Vel)` (1113): the horizontal position is
 /// pushed aside, a `deformation` step on the velocity grid moves the height over the time from
 /// the source to the target vertical datum epoch, then the position is popped back.
@@ -1045,7 +1081,10 @@ fn position_vector_velocity_grid(
     let target_year = target_epoch_years(operation)?;
     formatter.add_step("deformation");
     match epoch_years(operation, PARAMETER_SOURCE_EPOCH) {
-        Some(source_year) => formatter.add_number("dt", target_year - source_year),
+        Some(source_year) => formatter.add_number(
+            "dt",
+            rounded_epoch_in_decimal_year(target_year - source_year),
+        ),
         None => formatter.add_number("t_epoch", target_year),
     }
     formatter.add_param("grids", &grid);
