@@ -4426,7 +4426,12 @@ impl AuthorityFactory {
         let accuracy = accuracy_of(&row[6]);
         if explicit_direction == 0 {
             fix_unspecified_step_directions(&mut steps, &source, &target);
+            for index in 0..steps.len() {
+                super::wkt_import::fix_transformation_direction(&source, &mut steps, index);
+            }
         }
+        append_geographic_geocentric_tail(&mut steps, &target);
+        super::wkt_import::check_steps_chaining(&steps, &source, &target)?;
         Ok(ConcatenatedOperation {
             identified: self.properties(
                 code,
@@ -7210,4 +7215,26 @@ fn ogc_temporal_crs(code: &str) -> Option<super::niche::TemporalCRS> {
     let mut crs = TemporalCRS::create(name, datum, coordinate_system);
     crs.identified = Identified::named(name).with_id("OGC", code);
     Some(crs)
+}
+
+/// The end of `fixSteps`: a last step that ends on the geocentric or geographic twin of the
+/// target CRS gets the `createGeographicGeocentric` conversion to the target.
+fn append_geographic_geocentric_tail(steps: &mut Vec<ConcatenatedStep>, target: &Crs) {
+    let Some(last) = steps.last() else {
+        return;
+    };
+    let end = if last.reverse {
+        last.operation.source_crs()
+    } else {
+        last.operation.target_crs()
+    };
+    let Some(end) = end.cloned() else {
+        return;
+    };
+    if let Some(bridge) = geographic_geocentric_link(&end, target) {
+        steps.push(ConcatenatedStep {
+            operation: CoordinateOperation::Transformation(bridge),
+            reverse: false,
+        });
+    }
 }

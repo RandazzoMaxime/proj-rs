@@ -3521,7 +3521,11 @@ fn fix_steps(source: &Crs, target: &Crs, steps: &mut [ConcatenatedStep]) {
 
 /// `ConcatenatedOperation::fixSteps`, for a transformation step: it is reversed when its
 /// target matches the CRS the previous step ends on, and its source does not.
-fn fix_transformation_direction(source: &Crs, steps: &mut [ConcatenatedStep], index: usize) {
+pub(crate) fn fix_transformation_direction(
+    source: &Crs,
+    steps: &mut [ConcatenatedStep],
+    index: usize,
+) {
     let (Some(step_source), Some(step_target)) = (
         steps[index].operation.source_crs().cloned(),
         steps[index].operation.target_crs().cloned(),
@@ -3553,12 +3557,67 @@ fn are_more_or_less_equivalent(left: &Crs, right: &Crs) -> bool {
         }
     }
     // `Crs::is_equivalent_to_with` compares geographic CRS strictly, axis names included.
-    match (left, right) {
+    let equivalent = match (left, right) {
         (Crs::Geographic(left), Crs::Geographic(right)) => {
             left.is_equivalent_to_with(right, Equivalence::Equivalent)
         }
         _ => left.is_equivalent_to_with(right, Equivalence::Equivalent),
+    };
+    if equivalent {
+        return true;
     }
+    // A compound CRS stands for its vertical component, as in PROJ, for the EPSG:10146 case.
+    match (left, right) {
+        (Crs::Compound(compound), other) if !matches!(other, Crs::Compound(_)) => compound
+            .components()
+            .get(1)
+            .is_some_and(|vertical| are_more_or_less_equivalent(vertical, other)),
+        (other, Crs::Compound(compound)) if !matches!(other, Crs::Compound(_)) => compound
+            .components()
+            .get(1)
+            .is_some_and(|vertical| are_more_or_less_equivalent(other, vertical)),
+        _ => false,
+    }
+}
+
+/// The chaining checks of `ConcatenatedOperation::create` and the end of `fixSteps`: each step
+/// starts where the previous one ends, the first starts at the source and the last ends at the
+/// target. A step with its reverse flag set runs from its target to its source.
+pub(crate) fn check_steps_chaining(
+    steps: &[ConcatenatedStep],
+    source: &Crs,
+    target: &Crs,
+) -> Result<(), FactoryError> {
+    fn effective(step: &ConcatenatedStep) -> (Option<&Crs>, Option<&Crs>) {
+        let (from, to) = (step.operation.source_crs(), step.operation.target_crs());
+        if step.reverse {
+            (to, from)
+        } else {
+            (from, to)
+        }
+    }
+    let inconsistent =
+        || FactoryError::Invalid("Inconsistent chaining of CRS in operations".to_owned());
+    for index in 1..steps.len() {
+        if let (Some(current), Some(previous)) =
+            (effective(&steps[index]).0, effective(&steps[index - 1]).1)
+        {
+            if !are_more_or_less_equivalent(current, previous) {
+                return Err(inconsistent());
+            }
+        }
+    }
+    if let Some(first) = steps.first().and_then(|step| effective(step).0) {
+        if !are_more_or_less_equivalent(first, source) {
+            return Err(inconsistent());
+        }
+    }
+    if let Some(last) = steps.last().and_then(|step| effective(step).1) {
+        if !are_more_or_less_equivalent(last, target) {
+            return Err(inconsistent());
+        }
+    }
+    Ok(())
 }
 
 /// `PointMotionOperation::create`: the source and target epochs, in years, that the name gives
