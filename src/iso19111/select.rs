@@ -462,22 +462,22 @@ fn proj_grids(
         .map(|grid| {
             renamed
                 .iter()
-                .find(|(original, _)| *original == grid)
-                .map_or(grid, |(_, proj)| proj.clone())
+                .find(|(original, _, _)| *original == grid)
+                .map_or(grid, |(_, proj, _)| proj.clone())
         })
         .collect())
 }
 
-/// `(official name, PROJ name)` of the grids of `operation` that the database
-/// renames, as `substitutePROJAlternativeGridNames` writes them.
+/// `(official name, PROJ name, inverse direction)` of the grids of `operation` that the
+/// database renames, as `substitutePROJAlternativeGridNames` writes them.
 pub(crate) fn proj_grid_names(
     operation: &CoordinateOperation,
     db: &DatabaseContext,
-) -> Result<Vec<(String, String)>, FactoryError> {
+) -> Result<Vec<(String, String, bool)>, FactoryError> {
     let mut renamed = Vec::new();
     for grid in grid_names(operation) {
-        if let Some(proj) = db.proj_grid_name(&grid)? {
-            renamed.push((grid, proj));
+        if let Some((proj, inverse)) = db.proj_grid_alternative(&grid)? {
+            renamed.push((grid, proj, inverse));
         }
     }
     Ok(renamed)

@@ -327,14 +327,23 @@ impl DatabaseContext {
 
     /// `grid_alternatives.proj_grid_name` for an official grid name, when the database renames it for PROJ.
     pub(crate) fn proj_grid_name(&self, original: &str) -> Result<Option<String>, FactoryError> {
+        Ok(self.proj_grid_alternative(original)?.map(|(name, _)| name))
+    }
+
+    /// `lookForGridAlternative`: the PROJ grid name of an official grid name, and whether
+    /// PROJ reads that grid in the inverse direction (`inverse_direction`).
+    pub(crate) fn proj_grid_alternative(
+        &self,
+        original: &str,
+    ) -> Result<Option<(String, bool)>, FactoryError> {
         let rows = self.query(
-            "SELECT proj_grid_name FROM grid_alternatives WHERE original_grid_name = ?",
+            "SELECT proj_grid_name, inverse_direction FROM grid_alternatives \
+             WHERE original_grid_name = ? AND proj_grid_name <> ''",
             &[original.to_owned()],
         )?;
         Ok(rows
             .first()
-            .map(|row| row[0].text())
-            .filter(|name| !name.is_empty()))
+            .map(|row| (row[0].text(), row[1].text() == "1")))
     }
 
     /// `lookForGridInfo` with `considerKnownGridsAsAvailable`: a grid is known when
@@ -6833,10 +6842,8 @@ fn operations_between(
         )?;
         if row.source.0 == source.0 && row.source.1 == source.1 {
             operations.push(operation);
-        } else if let CoordinateOperation::Transformation(transformation) = operation {
-            operations.push(CoordinateOperation::Transformation(
-                transformation.inverse(),
-            ));
+        } else {
+            operations.push(operation.inverse());
         }
     }
     Ok(operations)

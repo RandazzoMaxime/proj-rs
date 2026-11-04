@@ -73,6 +73,8 @@ const METHOD_GEOGRAPHIC3D_TO_GEOG2D_GRAVITY_HEIGHT: i32 = 1131;
 const PARAMETER_GEOID_HEIGHT: i32 = 8604;
 const METHOD_NTV1: i32 = 9614;
 const METHOD_NTV2: i32 = 9615;
+const METHOD_NADCON5_2D: i32 = 1074;
+const METHOD_NADCON5_3D: i32 = 1075;
 const METHOD_POINT_MOTION_CANADA_NTV2_VEL: i32 = 1070;
 const METHOD_POINT_MOTION_GEOG3D_NEU_NTV2_VEL: i32 = 1141;
 const METHOD_VERTCON: i32 = 9658;
@@ -128,7 +130,7 @@ impl Transformation {
     pub(crate) fn export_to_proj_string_with(
         &self,
         lines: ProjLines,
-        grid_names: Vec<(String, String)>,
+        grid_names: Vec<(String, String, bool)>,
     ) -> Result<String, FactoryError> {
         let mut formatter = PipelineFormatter::with_grid_names(grid_names);
         self.export_steps(&mut formatter)?;
@@ -204,7 +206,7 @@ impl ConcatenatedOperation {
     pub(crate) fn export_to_proj_string_with(
         &self,
         lines: ProjLines,
-        grid_names: Vec<(String, String)>,
+        grid_names: Vec<(String, String, bool)>,
     ) -> Result<String, FactoryError> {
         let mut formatter = PipelineFormatter::with_grid_names(grid_names);
         self.export_steps(&mut formatter)?;
@@ -556,7 +558,8 @@ fn vertical_of(crs: &Crs) -> Option<&VerticalCRS> {
     }
 }
 
-/// `hgridshift` for NTv1 and NTv2, between the angular unit and axis steps of each geographic CRS.
+/// `hgridshift` for NTv1, NTv2, and NADCON, and `gridshift` for NADCON5 once its grid is the
+/// GTiff the database names for PROJ. Between the angular unit and axis steps of each geographic CRS.
 fn horizontal_grid_shift(
     operation: &Transformation,
     source: Option<&Crs>,
@@ -571,8 +574,10 @@ fn horizontal_grid_shift(
         METHOD_NTV1 | METHOD_NTV2 => file_by_code(operation, PARAMETER_LAT_LON_DIFFERENCE_FILE)
             .or_else(|| file_by_name(operation, "Latitude and longitude difference file")),
         // The latitude file names the pair: `lookForGridAlternative` replaces it by one GTiff.
-        METHOD_NADCON => file_by_code(operation, PARAMETER_LONGITUDE_DIFFERENCE_FILE)
-            .and_then(|_| file_by_code(operation, PARAMETER_LATITUDE_DIFFERENCE_FILE)),
+        METHOD_NADCON | METHOD_NADCON5_2D | METHOD_NADCON5_3D => {
+            file_by_code(operation, PARAMETER_LONGITUDE_DIFFERENCE_FILE)
+                .and_then(|_| file_by_code(operation, PARAMETER_LATITUDE_DIFFERENCE_FILE))
+        }
         _ => return Ok(false),
     };
     let Some(file) = file else {
@@ -586,11 +591,29 @@ fn horizontal_grid_shift(
         .and_then(extract_geographic)
         .ok_or_else(|| geographic_required(method))?;
     let grid = formatter.grid_name(&file);
+    let nadcon5 = matches!(code, METHOD_NADCON5_2D | METHOD_NADCON5_3D);
+    if nadcon5 && grid == file {
+        return Ok(false);
+    }
+    let inverse = formatter.grid_is_inverse(&file);
     formatter.start_inversion();
     angular_unit_and_axis_swap(source.coordinate_system().axes(), formatter)?;
     formatter.stop_inversion();
-    formatter.add_step("hgridshift");
+    if inverse {
+        formatter.start_inversion();
+    }
+    if nadcon5 {
+        formatter.add_step("gridshift");
+        if code == METHOD_NADCON5_3D && source.coordinate_system().axes().len() == 2 {
+            formatter.add_flag("no_z_transform");
+        }
+    } else {
+        formatter.add_step("hgridshift");
+    }
     formatter.add_param("grids", &grid);
+    if inverse {
+        formatter.stop_inversion();
+    }
     angular_unit_and_axis_swap(target.coordinate_system().axes(), formatter)?;
     Ok(true)
 }
