@@ -5176,6 +5176,9 @@ impl CoordinateOperationFactory {
                 )?);
             }
         }
+        if registry && found.is_empty() {
+            found.extend(super::compound::geoid_vertical(source, target, context)?);
+        }
         if found.is_empty() {
             found.extend(super::compound::vertical_to_vertical(source, target));
         }
@@ -5231,6 +5234,55 @@ fn canonical_or_self(crs: &Crs) -> std::borrow::Cow<'_, Crs> {
         Some(bound) => std::borrow::Cow::Owned(Crs::Bound(bound.clone())),
         None => std::borrow::Cow::Borrowed(crs),
     }
+}
+
+/// The registered operation `code` of `authority`, with the PROJ grid names.
+pub(super) fn registered_operation(
+    context: &CoordinateOperationContext,
+    authority: &str,
+    code: &str,
+) -> Result<CoordinateOperation, FactoryError> {
+    AuthorityFactory::create(&context.db, authority)
+        .create_coordinate_operation(code, AlternativeGridNames::Proj)
+}
+
+/// `AuthorityFactory::getTransformationsForGeoid`: the operations registered for the geoid
+/// model `name` (`geoid_model.name`), in the authority of `context`.
+pub(super) fn geoid_model_operations(
+    context: &CoordinateOperationContext,
+    name: &str,
+) -> Result<Vec<CoordinateOperation>, FactoryError> {
+    let rows = context.db.query(
+        "SELECT operation_auth_name, operation_code FROM geoid_model WHERE name = ?",
+        &[name.to_owned()],
+    )?;
+    rows.iter()
+        .map(|row| {
+            AuthorityFactory::create(&context.db, row[0].text())
+                .create_coordinate_operation(&row[1].text(), AlternativeGridNames::Proj)
+        })
+        .collect()
+}
+
+/// `DatabaseContext::getTransformationsForGridName`: the operations registered on the grid
+/// `grid`, or on the official name of a grid that PROJ names `grid`.
+pub(super) fn grid_name_operations(
+    context: &CoordinateOperationContext,
+    grid: &str,
+) -> Result<Vec<CoordinateOperation>, FactoryError> {
+    let rows = context.db.query(
+        "SELECT auth_name, code FROM grid_transformation \
+         WHERE grid_name = ? OR grid_name IN \
+         (SELECT original_grid_name FROM grid_alternatives WHERE proj_grid_name = ?) \
+         ORDER BY auth_name, code",
+        &[grid.to_owned(), grid.to_owned()],
+    )?;
+    rows.iter()
+        .map(|row| {
+            AuthorityFactory::create(&context.db, row[0].text())
+                .create_coordinate_operation(&row[1].text(), AlternativeGridNames::Proj)
+        })
+        .collect()
 }
 
 /// The public call's filters and order: area, spatial test, accuracy, ballpark use, then

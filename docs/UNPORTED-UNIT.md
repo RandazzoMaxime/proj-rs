@@ -189,7 +189,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.compoundCRS_to_geogCRS_with_vertical_unit_change_and_height_depth_reversal`
 - `operation.compoundCRS_of_vertCRS_with_geoid_model_to_geogCRS`
 - `operation.compoundCRS_of_vertCRS_with_geoid_model_by_id_to_geogCRS`
-- `operation.compoundCRS_of_vertCRS_with_geoid_model_by_name_and_several_records_to_geogCRS`
 - `operation.compoundCRS_of_vertCRS_with_geoid_model_by_name_and_datum_ensemble`
 - `operation.compoundCRS_of_bound_horizCRS_and_bound_vertCRS_to_geogCRS`
 - `operation.compoundCRS_from_WKT2_to_geogCRS_3D_context`
