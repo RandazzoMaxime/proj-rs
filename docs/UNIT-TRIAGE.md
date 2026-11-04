@@ -5,22 +5,19 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 131 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
-| `niche` | 26 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
-| `shape` | 42 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
+| `core` | 122 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `niche` | 25 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
+| `shape` | 41 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (131)
+## core (122)
 
-### test_c_api.cpp (20)
+### test_c_api.cpp (17)
 
 - `CApi.proj_coordoperation_get_grid_used`
 - `CApi.proj_coordoperation_get_grid_used_fullname_caching`
-- `CApi.proj_coordoperation_is_instantiable`
 - `CApi.proj_get_suggested_operation_for_NAD83_to_NAD83_HARN`
 - `CApi.proj_create_operations_prime_meridian_non_greenwich`
 - `CApi.proj_get_suggested_operation_with_operations_without_area_of_use`
-- `CApi.proj_create_operations_discard_superseded`
-- `CApi.proj_create_operations_dont_discard_superseded`
 - `CApi.proj_create_operations_with_pivot`
 - `CApi.proj_normalize_for_visualization_with_alternatives`
 - `CApi.proj_normalize_for_visualization_with_alternatives_reverse`
@@ -58,7 +55,7 @@ The class comes from the test name alone, so check it when you port a test.
 
 - `operation.normalizeForVisualization`
 
-### test_operationfactory.cpp (99)
+### test_operationfactory.cpp (93)
 
 - `operation.geogCRS_to_geogCRS_context_inverse_needed`
 - `operation.geogCRS_to_geogCRS_context_NAD27_to_WGS84_G1762`
@@ -82,7 +79,6 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.geogCRS_3D_to_projCRS_with_2D_geocentric_translation`
 - `operation.projCRS_to_projCRS_context_grid_offsets`
 - `operation.projCRS_to_projCRS_context_grid_offsets_non_metre_unit_noop`
-- `operation.projCRS_to_geogCRS_concatenated_operation_extent_none`
 - `operation.boundCRS_to_geogCRS_hubCRS_and_targetCRS_same_but_baseCRS_not`
 - `operation.ETRS89_3D_to_proj_string_with_geoidgrids_nadgrids`
 - `operation.nadgrids_with_pm`
@@ -106,16 +102,11 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.compoundCRS_to_compoundCRS_with_bound_crs_in_horiz_and_vert_WKT1_same_geoidgrids_context`
 - `operation.compoundCRS_to_compoundCRS_issue_2232`
 - `operation.compoundCRS_to_compoundCRS_context`
-- `operation.compoundCRS_to_compoundCRS_context_helmert_noop`
-- `operation.compoundCRS_to_compoundCRS_WGS84_EGM96_to_ETRS89_Belfast`
 - `operation.compoundCRS_to_compoundCRS_WGS84_EGM96_to_WGS84_Belfast`
 - `operation.compoundCRS_to_compoundCRS_OSGB36_BNG_ODN_height_to_WGS84_EGM96`
-- `operation.compoundCRS_to_compoundCRS_context_helmert`
-- `operation.compoundCRS_to_compoundCRS_GDA94_AHD_to_GDA2020_AVWS`
 - `operation.compoundCRS_with_horizontal_boundCRS_to_compoundCRS_and_same_vertical`
 - `operation.compoundCRS_to_compoundCRS_concatenated_operation_with_two_vert_transformation`
 - `operation.compoundCRS_to_compoundCRS_concatenated_operation_with_two_vert_transformation_and_different_source_dest_interp`
-- `operation.compoundCRS_to_compoundCRS_issue_2720`
 - `operation.compoundCRS_to_compoundCRS_issue_3328`
 - `operation.compoundCRS_to_compoundCRS_WGS84_EGM2008_to_RD_new_NAP_height`
 - `operation.compoundCRS_to_compoundCRS_concatenated_operation_with_two_vert_transformation_and_ballpark_geog`
@@ -160,17 +151,13 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.createOperation_compound_to_compound_with_Geographic3D_Offset_by_velocity_grid`
 - `operation.compoundCRS_to_compoundCRS_context_extent_use_none`
 
-## niche (26)
+## niche (25)
 
 ### test_crs.cpp (3)
 
 - `crs.derivedGeographicCRS_to_PROJ`
 - `crs.derivedGeographicCRS_with_affine_transform_to_PROJ`
 - `crs.normalizeForVisualization_derivedprojected_operation`
-
-### test_io.cpp (1)
-
-- `wkt_parse.DerivedGeographicCRS_GDAL_PROJ4_EXSTENSION_hack`
 
 ### test_operationfactory.cpp (22)
 
@@ -197,7 +184,7 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.createOperation_compound_to_compound_with_point_motion_operation`
 - `operation.createOperation_compound_to_compound_with_point_motion_operation_special_case_CGVD2013a`
 
-## shape (42)
+## shape (41)
 
 ### test_c_api.cpp (14)
 
@@ -216,11 +203,10 @@ The class comes from the test name alone, so check it when you port a test.
 - `CApi.open_plenty_of_contexts`
 - `CApi.concurrent_context`
 
-### test_crs.cpp (3)
+### test_crs.cpp (2)
 
 - `crs.scope_area_bbox_remark`
 - `crs.VerticalCRS_ensemble_exception_in_create`
-- `datum.vdatum_with_anchor`
 
 ### test_factory.cpp (25)
 

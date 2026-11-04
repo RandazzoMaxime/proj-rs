@@ -3952,6 +3952,7 @@ impl AuthorityFactory {
             "2005"
         };
         Ok(VerticalOrEnsemble::Datum(VerticalReferenceFrame {
+            realization_method: None,
             identified,
             wkt1_type: wkt1_type.to_owned(),
             frame_epoch: if row[2].empty() {
@@ -4852,6 +4853,7 @@ pub struct CoordinateOperationContext {
     desired_accuracy: f64,
     ballpark: BallparkUse,
     grid_availability: GridAvailabilityUse,
+    superseded: SupersededOperations,
     registry: RegistryUse,
     /// The CRS extents of the outermost call, which a sub-call of a compound CRS reuses
     /// instead of its own components' extents (PROJ's `Private::Context` extents).
@@ -4873,6 +4875,7 @@ impl CoordinateOperationContext {
             desired_accuracy: 0.0,
             ballpark: BallparkUse::Allow,
             grid_availability: GridAvailabilityUse::default(),
+            superseded: SupersededOperations::Discard,
             registry: RegistryUse::default(),
             inherited_extents: None,
         }
@@ -4892,6 +4895,11 @@ impl CoordinateOperationContext {
     /// unless the CRS extents are not used at all.
     pub(super) fn disallows_empty_intersection(&self) -> bool {
         !matches!(self.crs_extent_use, CrsExtentUse::Ignore)
+    }
+
+    /// The database the operations are read from.
+    pub(super) fn database(&self) -> &DatabaseContext {
+        &self.db
     }
 
     /// Pivot CRS codes, as `(authority, code)` pairs.
@@ -4933,6 +4941,13 @@ impl CoordinateOperationContext {
     /// Whether the availability of grids on disk orders the operations.
     pub fn set_grid_availability_use(&mut self, policy: GridAvailabilityUse) -> &mut Self {
         self.grid_availability = policy;
+        self
+    }
+
+    /// Whether an operation that a registered operation supersedes is dropped. PROJ's
+    /// `setDiscardSuperseded`; the default is [`SupersededOperations::Discard`].
+    pub fn set_superseded_operations(&mut self, policy: SupersededOperations) -> &mut Self {
+        self.superseded = policy;
         self
     }
 
@@ -6621,6 +6636,8 @@ enum RegistrySearch {
     /// Both directions, with inverses of the reverse rows, superseded rows
     /// dropped, and rows restricted to the CRS extents when some intersect.
     Both,
+    /// As [`Self::Both`], with the superseded rows kept (`setDiscardSuperseded(false)`).
+    BothKeepingSuperseded,
 }
 
 /// Registered operations between two CRS read in the authorities of `findOpsInRegistryDirect`.
@@ -6634,14 +6651,12 @@ fn direct_registry_operations(
 ) -> Result<Vec<CoordinateOperation>, FactoryError> {
     let mut found = Vec::new();
     for authority in candidate_authorities(&context.db, &context.authority, source.0, target.0)? {
-        let mut operations = operations_between(
-            &context.db,
-            &authority,
-            source,
-            target,
-            crs_boxes,
-            RegistrySearch::Both,
-        )?;
+        let search = match context.superseded {
+            SupersededOperations::Discard => RegistrySearch::Both,
+            SupersededOperations::Keep => RegistrySearch::BothKeepingSuperseded,
+        };
+        let mut operations =
+            operations_between(&context.db, &authority, source, target, crs_boxes, search)?;
         if context.grid_availability == GridAvailabilityUse::KnownAvailable {
             // `rejectOpDueToMissingGrid`: an operation with a grid that is neither on disk
             // nor known to the database is not returned.
@@ -6753,7 +6768,10 @@ fn operations_between(
         target.0.to_owned(),
         target.1.to_owned(),
     ];
-    if search == RegistrySearch::Both {
+    if matches!(
+        search,
+        RegistrySearch::Both | RegistrySearch::BothKeepingSuperseded
+    ) {
         sql.push_str(&format!("(({forward}) OR ({reverse}))"));
         params.extend([
             target.0.to_owned(),
@@ -6810,11 +6828,13 @@ fn operations_between(
         .map(|row| (row.auth.clone(), row.code.clone()))
         .collect();
     let superseded = |row: &OperationRow| {
-        search != RegistrySearch::Forward
-            && row
-                .replacement
-                .as_ref()
-                .is_some_and(|key| !row.replacement_is_unknown_grid && listed.contains(key))
+        !matches!(
+            search,
+            RegistrySearch::Forward | RegistrySearch::BothKeepingSuperseded
+        ) && row
+            .replacement
+            .as_ref()
+            .is_some_and(|key| !row.replacement_is_unknown_grid && listed.contains(key))
     };
     let kept: Vec<&OperationRow> = parsed.iter().filter(|row| !superseded(row)).collect();
     let intersects_crs = |bbox: &Option<BoundingBox>| {

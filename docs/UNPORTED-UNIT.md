@@ -12,7 +12,6 @@ and `PORT-NOTES-tests.md`.
 - `crs.projectedCRS_identify_wrong_auth_name_case`
 - `crs.scope_area_bbox_remark`
 - `crs.VerticalCRS_ensemble_exception_in_create`
-- `datum.vdatum_with_anchor`
 - `crs.compoundCRS_identify_db`
 - `crs.boundCRS_crs_link`
 - `crs.boundCRS_identify_db`
@@ -53,7 +52,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_io.cpp
 
-- `wkt_parse.DerivedGeographicCRS_GDAL_PROJ4_EXSTENSION_hack`
 - `io.projparse_init`
 - `io.createFromUserInput`
 
@@ -85,7 +83,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.geogCRS_3D_to_projCRS_with_2D_geocentric_translation`
 - `operation.projCRS_to_projCRS_context_grid_offsets`
 - `operation.projCRS_to_projCRS_context_grid_offsets_non_metre_unit_noop`
-- `operation.projCRS_to_geogCRS_concatenated_operation_extent_none`
 - `operation.boundCRS_to_geogCRS_hubCRS_and_targetCRS_same_but_baseCRS_not`
 - `operation.boundCRS_to_derived_geog_with_transformation_with_source_crs_being_base_crs_of_source_crs`
 - `operation.ETRS89_3D_to_proj_string_with_geoidgrids_nadgrids`
@@ -111,17 +108,12 @@ and `PORT-NOTES-tests.md`.
 - `operation.compoundCRS_to_compoundCRS_with_bound_crs_in_horiz_and_vert_WKT1_same_geoidgrids_context`
 - `operation.compoundCRS_to_compoundCRS_issue_2232`
 - `operation.compoundCRS_to_compoundCRS_context`
-- `operation.compoundCRS_to_compoundCRS_context_helmert_noop`
-- `operation.compoundCRS_to_compoundCRS_WGS84_EGM96_to_ETRS89_Belfast`
 - `operation.compoundCRS_to_compoundCRS_WGS84_EGM96_to_WGS84_Belfast`
 - `operation.compoundCRS_to_compoundCRS_OSGB36_BNG_ODN_height_to_WGS84_EGM96`
-- `operation.compoundCRS_to_compoundCRS_context_helmert`
-- `operation.compoundCRS_to_compoundCRS_GDA94_AHD_to_GDA2020_AVWS`
 - `operation.compoundCRS_with_horizontal_boundCRS_to_compoundCRS_and_same_vertical`
 - `operation.compoundCRS_with_horizontal_boundCRS_to_compoundCRS_with_derived_vertical`
 - `operation.compoundCRS_to_compoundCRS_concatenated_operation_with_two_vert_transformation`
 - `operation.compoundCRS_to_compoundCRS_concatenated_operation_with_two_vert_transformation_and_different_source_dest_interp`
-- `operation.compoundCRS_to_compoundCRS_issue_2720`
 - `operation.compoundCRS_to_compoundCRS_issue_3328`
 - `operation.compoundCRS_to_compoundCRS_WGS84_EGM2008_to_RD_new_NAP_height`
 - `operation.compoundCRS_to_compoundCRS_concatenated_operation_with_two_vert_transformation_and_ballpark_geog`
@@ -189,12 +181,9 @@ and `PORT-NOTES-tests.md`.
 
 - `CApi.proj_coordoperation_get_grid_used`
 - `CApi.proj_coordoperation_get_grid_used_fullname_caching`
-- `CApi.proj_coordoperation_is_instantiable`
 - `CApi.proj_get_suggested_operation_for_NAD83_to_NAD83_HARN`
 - `CApi.proj_create_operations_prime_meridian_non_greenwich`
 - `CApi.proj_get_suggested_operation_with_operations_without_area_of_use`
-- `CApi.proj_create_operations_discard_superseded`
-- `CApi.proj_create_operations_dont_discard_superseded`
 - `CApi.proj_create_operations_with_pivot`
 - `CApi.proj_context_set_database_path_null`
 - `CApi.proj_context_set_database_path_aux`

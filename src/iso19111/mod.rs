@@ -60,8 +60,8 @@ pub use model::{
     EngineeringDatum, FactoryError, GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame,
     GeographicCRS, Identifier, Measure, Meridian, ObjectDomain, OperationMethod,
     OperationParameter, OperationParameterValue, OrdinalCS, Parameter, ParameterValue,
-    PrimeMeridian, ProjectedCRS, SphericalCS, Transformation, UnitKind, UnitOfMeasure, VerticalCRS,
-    VerticalCS, VerticalReferenceFrame,
+    PrimeMeridian, ProjectedCRS, RealizationMethod, SphericalCS, Transformation, UnitKind,
+    UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame,
 };
 pub use niche::{
     parametric_unit, DerivedCRS, DerivedKind, ParametricCRS, ParametricCS, ParametricDatum,

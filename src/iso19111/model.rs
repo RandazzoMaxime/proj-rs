@@ -1042,6 +1042,18 @@ pub struct VerticalReferenceFrame {
     pub(crate) wkt1_type: String,
     pub(crate) frame_epoch: Option<f64>,
     pub(crate) deformation_model: Option<String>,
+    pub(crate) realization_method: Option<RealizationMethod>,
+}
+
+/// `RealizationMethod`: how a vertical datum is realized.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RealizationMethod {
+    /// `LEVELLING`.
+    Levelling,
+    /// `GEOID`.
+    Geoid,
+    /// `TIDAL`.
+    Tidal,
 }
 
 impl VerticalReferenceFrame {
@@ -1053,6 +1065,7 @@ impl VerticalReferenceFrame {
             wkt1_type: "2005".to_owned(),
             frame_epoch: None,
             deformation_model: None,
+            realization_method: None,
         }
     }
 
@@ -1088,6 +1101,26 @@ impl VerticalReferenceFrame {
     pub fn with_frame_epoch(mut self, epoch: f64) -> Self {
         self.frame_epoch = Some(epoch);
         self
+    }
+
+    /// This datum with an anchor definition.
+    #[must_use]
+    pub fn with_anchor(mut self, anchor: impl Into<String>) -> Self {
+        self.identified.anchor = Some(anchor.into());
+        self
+    }
+
+    /// This datum with a realization method.
+    #[must_use]
+    pub fn with_realization_method(mut self, method: RealizationMethod) -> Self {
+        self.realization_method = Some(method);
+        self
+    }
+
+    /// Realization method, when the datum records one.
+    #[must_use]
+    pub fn realization_method(&self) -> Option<RealizationMethod> {
+        self.realization_method
     }
 
     /// Usages recorded for this datum.
@@ -1309,6 +1342,7 @@ impl DatumEnsemble {
                 }))
             }
             Datum::Vertical(_) => Some(Datum::Vertical(VerticalReferenceFrame {
+                realization_method: None,
                 identified,
                 wkt1_type: "2005".to_owned(),
                 frame_epoch: None,
