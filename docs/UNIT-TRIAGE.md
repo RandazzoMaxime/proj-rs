@@ -5,11 +5,11 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 184 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `core` | 180 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
 | `niche` | 40 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 51 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (184)
+## core (180)
 
 ### test_c_api.cpp (23)
 
@@ -58,7 +58,7 @@ The class comes from the test name alone, so check it when you port a test.
 - `factory.AuthorityFactory_build_all_concatenated`
 - `factory.ogc_timecrs`
 
-### test_io.cpp (12)
+### test_io.cpp (8)
 
 - `wkt_parse.CONCATENATEDOPERATION_with_conversion_and_conversion`
 - `wkt_parse.CONCATENATEDOPERATION_with_conversion_coordinateoperation_conversion`
@@ -66,10 +66,6 @@ The class comes from the test name alone, so check it when you port a test.
 - `wkt_parse.CONCATENATEDOPERATION_with_inverse_conversion_of_compound`
 - `wkt_parse.wkt1_oracle`
 - `wkt_parse.wkt1_oracle_albers_conical_equal_area`
-- `io.projstringformatter_optim_hgridshift_vgridshift_hgridshift_inv`
-- `io.projstringformatter_optim_as_uc_vgridshift_uc_as_push_as_uc`
-- `io.projstringformatter_krovak_to_krovak_east_north`
-- `io.projstringformatter_krovak_east_north_to_krovak`
 - `io.projparse_init`
 - `io.createFromUserInput`
 
