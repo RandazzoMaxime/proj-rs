@@ -6833,10 +6833,8 @@ fn operations_between(
         )?;
         if row.source.0 == source.0 && row.source.1 == source.1 {
             operations.push(operation);
-        } else if let CoordinateOperation::Transformation(transformation) = operation {
-            operations.push(CoordinateOperation::Transformation(
-                transformation.inverse(),
-            ));
+        } else {
+            operations.push(operation.inverse());
         }
     }
     Ok(operations)
