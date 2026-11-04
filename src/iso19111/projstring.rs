@@ -581,6 +581,11 @@ pub(crate) fn projection_steps(source: &Crs, target: &Crs) -> Result<Vec<String>
         };
         return Ok(geographic_steps(source_geographic, target_geographic));
     }
+    if let Crs::Derived(derived) = target {
+        if let Some(steps) = derived_geographic_steps(source, derived)? {
+            return Ok(steps);
+        }
+    }
     let Crs::Projected(projected) = target else {
         return Err(FactoryError::Format(
             "this operation is not a projection of the source CRS".to_owned(),
@@ -701,6 +706,44 @@ fn same_meridian_angle(left: &GeographicCRS, right: &GeographicCRS) -> bool {
         .map(|meridian| meridian.longitude().si_value())
         .unwrap_or(0.0);
     (left - right).abs() <= 1e-9
+}
+
+/// A derived geographic CRS as the target of a geographic source: the source in radians,
+/// the pole rotation with the base ellipsoid and meridian, then back to degrees.
+/// `None` for a derived CRS that is not geographic.
+fn derived_geographic_steps(
+    source: &Crs,
+    derived: &super::niche::DerivedCRS,
+) -> Result<Option<Vec<String>>, FactoryError> {
+    if derived.kind() != super::niche::DerivedKind::Geographic {
+        return Ok(None);
+    }
+    let Some(geographic) = geographic_of(source) else {
+        return Err(FactoryError::Format(
+            "the source CRS is not geographic".to_owned(),
+        ));
+    };
+    let Some(GeodeticCRS::Geographic(base)) = derived.geodetic_base() else {
+        return Ok(None);
+    };
+    let conversion = derived.deriving_conversion();
+    let Some(pole_rotation) = conversion
+        .identified
+        .extension_proj4
+        .clone()
+        .or_else(|| conversion.pole_rotation_proj_string())
+    else {
+        return Ok(None);
+    };
+    let mut steps = Vec::new();
+    if let Some(step) = angular_unit_step(geographic) {
+        steps.push(step);
+    }
+    let mut pole = pole_rotation;
+    append_ellipsoid_and_meridian(&mut pole, geographic, &base);
+    steps.push(pole);
+    steps.push("+proj=unitconvert +xy_in=rad +xy_out=deg".to_owned());
+    Ok(Some(steps))
 }
 
 /// A geographic `ob_tran` step: the stored definition, then the base ellipsoid.
@@ -2538,6 +2581,9 @@ pub(super) fn projected_from_proj_string(tokens: &[(String, String)]) -> Result<
         // Other unmapped names (`mbt_s`, `peirce_q`, `ob_tran`) stay PROJ-based
         // CRSs when `+type=crs` is set.
         if token(tokens, "type") == "crs" && proj_identifier(proj) {
+            if let Some(derived) = derived_geographic_ob_tran(tokens)? {
+                return Ok(derived);
+            }
             return proj_based_projected(tokens);
         }
         return Err(FactoryError::Invalid(format!(
@@ -2697,6 +2743,27 @@ fn proj_identifier(proj: &str) -> bool {
         && proj
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+}
+
+/// `PROJStringParser` on `+proj=ob_tran +o_proj=longlat` (or lonlat, latlong, latlon): a
+/// derived geographic CRS named `unknown`, over the geographic base the string describes.
+fn derived_geographic_ob_tran(tokens: &[(String, String)]) -> Result<Option<Crs>, FactoryError> {
+    let mut shell = proj_based_shell(tokens)?;
+    if !geographic_ob_tran(&shell.conversion.method.name) {
+        return Ok(None);
+    }
+    let GeodeticCRS::Geographic(base) = shell.base else {
+        return Ok(None);
+    };
+    shell.conversion.identified.extension_proj4 = Some(operation_body(tokens));
+    let coordinate_system = CoordinateSystem::Ellipsoidal(base.coordinate_system.clone());
+    super::niche::DerivedCRS::create(
+        "unknown",
+        Crs::Geographic(base),
+        shell.conversion,
+        coordinate_system,
+    )
+    .map(|derived| Some(Crs::Derived(derived)))
 }
 
 fn proj_based_projected(tokens: &[(String, String)]) -> Result<Crs, FactoryError> {

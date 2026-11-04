@@ -3210,6 +3210,7 @@ fn read_vertical_frame(
     db: &DatabaseContext,
 ) -> Result<VerticalReferenceFrame, FactoryError> {
     Ok(VerticalReferenceFrame {
+        realization_method: None,
         identified: read_datum_identified(object, db)?,
         wkt1_type: "2005".to_owned(),
         frame_epoch: None,

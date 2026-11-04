@@ -3952,6 +3952,7 @@ impl AuthorityFactory {
             "2005"
         };
         Ok(VerticalOrEnsemble::Datum(VerticalReferenceFrame {
+            realization_method: None,
             identified,
             wkt1_type: wkt1_type.to_owned(),
             frame_epoch: if row[2].empty() {

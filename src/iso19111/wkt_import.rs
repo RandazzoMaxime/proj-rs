@@ -1535,6 +1535,7 @@ impl WktParser {
                 }));
             } else {
                 members.push(Datum::Vertical(VerticalReferenceFrame {
+                    realization_method: None,
                     identified: member_props.identified(),
                     wkt1_type: "2005".to_owned(),
                     frame_epoch: None,
@@ -2264,6 +2265,7 @@ impl WktParser {
             (None, None)
         };
         Ok(VerticalReferenceFrame {
+            realization_method: None,
             identified,
             wkt1_type,
             frame_epoch,
@@ -2303,6 +2305,7 @@ impl WktParser {
                 return Err(invalid("VERTCS DATUM is not a geodetic datum"));
             };
             Some(VerticalReferenceFrame {
+                realization_method: None,
                 identified: Identified::named(frame.name()),
                 wkt1_type: "2002".to_owned(),
                 frame_epoch: None,
@@ -2341,6 +2344,7 @@ impl WktParser {
             {
                 self.apply_las_vertical(&mut props, &coordinate_system.axis);
                 datum = Some(VerticalReferenceFrame {
+                    realization_method: None,
                     identified: Identified::named("North American Vertical Datum 1988")
                         .with_id("EPSG", "5103"),
                     wkt1_type: "2005".to_owned(),
@@ -2449,6 +2453,9 @@ impl WktParser {
             .child(&["BASEGEOGCRS", "BASEGEODCRS", "GEOGCS"])
             .ok_or_else(|| invalid("missing base geodetic CRS"))?;
         let mut props = self.build_properties(node)?;
+        if let Some(crs) = derived_geographic_from_extension(&props.extension_proj4) {
+            return Ok(WktObject::Crs(crs));
+        }
         // A guessed ESRI dialect is known before the datum node sets `esri`.
         if self.esri || self.maybe_esri {
             if let Some((official, _, _)) = self.alias(&props.name, "projected_crs") {
@@ -4241,6 +4248,26 @@ fn guess_parameter_unit(
         return Some(linear.clone());
     }
     None
+}
+
+/// `buildProjectedCRS` in `io.cpp`: a `PROJCS` whose `EXTENSION["PROJ4"]` is an `ob_tran`
+/// on a longitude/latitude `o_proj` is a derived geographic CRS, built from that PROJ string.
+fn derived_geographic_from_extension(proj4: &str) -> Option<Crs> {
+    const PREFIXES: [&str; 4] = [
+        "+proj=ob_tran +o_proj=longlat",
+        "+proj=ob_tran +o_proj=lonlat",
+        "+proj=ob_tran +o_proj=latlong",
+        "+proj=ob_tran +o_proj=latlon",
+    ];
+    if !PREFIXES.iter().any(|prefix| proj4.starts_with(prefix)) {
+        return None;
+    }
+    let definition = if proj4.contains(" +type=crs") {
+        proj4.to_owned()
+    } else {
+        format!("{proj4} +type=crs")
+    };
+    super::projstring::create_crs_from_proj_string(&definition).ok()
 }
 
 /// GDAL WKT1 Mercator_1SP with a non-zero `latitude_of_origin` is Mercator
