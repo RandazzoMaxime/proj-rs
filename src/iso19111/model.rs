@@ -2174,6 +2174,10 @@ pub struct ConcatenatedOperation {
     /// The horizontal and vertical operations written as one PROJ pipeline, with the
     /// horizontal conversion of the vertical step left out.
     pub(crate) proj_based: Option<Box<ProjBased>>,
+    /// The source and target coordinate epochs, in decimal years, which the export writes as
+    /// `set` steps around the steps (`ConcatenatedOperation::_exportToPROJString`).
+    pub(crate) source_epoch: Option<f64>,
+    pub(crate) target_epoch: Option<f64>,
 }
 
 /// Which `MyPROJStringExportableHorizVertical*` of `coordinateoperationfactory.cpp` writes a

@@ -246,6 +246,8 @@ fn combine(
         accuracy: None,
         version: None,
         computed_name: true,
+        source_epoch: None,
+        target_epoch: None,
         proj_based: None,
     })
 }
@@ -370,6 +372,8 @@ fn chain(
         accuracy: None,
         version: None,
         computed_name: true,
+        source_epoch: None,
+        target_epoch: None,
         proj_based: None,
     })
 }
@@ -991,6 +995,8 @@ fn proj_based_operation(
         accuracy,
         version: None,
         computed_name: false,
+        source_epoch: None,
+        target_epoch: None,
         proj_based: Some(Box::new(proj_based)),
     })
 }

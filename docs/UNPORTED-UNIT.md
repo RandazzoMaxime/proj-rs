@@ -200,7 +200,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.createOperation_ossfuzz_47873`
 - `operation.createOperation_derived_projected_crs`
 - `operation.geogCRS_to_compoundCRS_with_boundVerticalCRS_and_derivedProjected`
-- `operation.createOperation_point_motion_operation_geog2D`
 - `operation.createOperation_point_motion_operation_geocentric`
 - `operation.createOperation_point_motion_operation_geocentric_to_geog3D`
 - `operation.createOperation_point_motion_operation_NAD83_CSRS_v7_TO_ITRF2014`

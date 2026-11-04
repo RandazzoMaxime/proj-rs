@@ -276,6 +276,8 @@ fn concatenate(operations: Vec<CoordinateOperation>) -> CoordinateOperation {
         accuracy: None,
         version: None,
         computed_name: true,
+        source_epoch: None,
+        target_epoch: None,
         proj_based: None,
     })
 }

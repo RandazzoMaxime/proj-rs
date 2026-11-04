@@ -6,7 +6,7 @@ The class comes from the test name alone, so check it when you port a test.
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
 | `core` | 160 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
-| `niche` | 33 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
+| `niche` | 32 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 50 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
 ## core (160)
@@ -189,7 +189,7 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.createOperation_compound_to_compound_with_Geographic3D_Offset_by_velocity_grid`
 - `operation.compoundCRS_to_compoundCRS_context_extent_use_none`
 
-## niche (33)
+## niche (32)
 
 ### test_c_api.cpp (5)
 
@@ -209,7 +209,7 @@ The class comes from the test name alone, so check it when you port a test.
 
 - `wkt_parse.DerivedGeographicCRS_GDAL_PROJ4_EXSTENSION_hack`
 
-### test_operationfactory.cpp (24)
+### test_operationfactory.cpp (23)
 
 - `operation.boundCRS_to_derived_geog_with_transformation_with_source_crs_being_base_crs_of_source_crs`
 - `operation.compoundCRS_with_derivedVerticalCRS_ellipsoidal_height_to_geog`
@@ -227,7 +227,6 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.createOperation_ossfuzz_47873`
 - `operation.createOperation_derived_projected_crs`
 - `operation.geogCRS_to_compoundCRS_with_boundVerticalCRS_and_derivedProjected`
-- `operation.createOperation_point_motion_operation_geog2D`
 - `operation.createOperation_point_motion_operation_geocentric`
 - `operation.createOperation_point_motion_operation_geocentric_to_geog3D`
 - `operation.createOperation_point_motion_operation_NAD83_CSRS_v7_TO_ITRF2014`
