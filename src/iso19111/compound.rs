@@ -156,10 +156,21 @@ pub(super) fn compound_to_compound(
     }
 
     let vertical_ops = factory.create_candidates(src_vertical, dst_vertical, context)?;
+    let Some(null) = null_offset(src_horizontal, dst_horizontal) else {
+        return Ok(Vec::new());
+    };
     Ok(vertical_ops
         .iter()
         .filter(|operation| horizontal_is_null(operation, geog_src))
-        .map(|operation| retarget(operation, source, target))
+        .map(|operation| {
+            proj_based_horiz_vertical(
+                source,
+                target,
+                &null,
+                &retarget(operation, source, target),
+                geog_dst,
+            )
+        })
         .collect())
 }
 
