@@ -79,7 +79,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.geogCRS_promoted_to_3D_to_geogCRS_3D_context`
 - `operation.geogCRS_3D_to_geogCRS_3D_different_datum_context`
 - `operation.geocentric_to_geogCRS_3D_different_datum_context`
-- `operation.createBetweenGeodeticCRSWithDatumBasedIntermediates`
 - `operation.esri_projectedCRS_to_geogCRS_with_ITRF_intermediate_context`
 - `operation.geogCRS_to_geogCRS_with_intermediate_no_ids`
 - `operation.geogCRS_3D_source_datum_name_is_alias_to_geogCRS`
