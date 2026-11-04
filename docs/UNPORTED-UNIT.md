@@ -61,7 +61,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_io.cpp
 
-- `wkt_parse.CONCATENATEDOPERATION_with_inverse_conversion_of_compound`
 - `wkt_parse.DerivedGeographicCRS_GDAL_PROJ4_EXSTENSION_hack`
 - `wkt_parse.wkt1_oracle`
 - `wkt_parse.wkt1_oracle_albers_conical_equal_area`
