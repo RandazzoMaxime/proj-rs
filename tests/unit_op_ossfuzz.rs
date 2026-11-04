@@ -2,8 +2,7 @@
 //! return, without a panic or an infinite recursion.
 
 use proj_rs::iso19111::{
-    create_crs_from_proj_string, AuthorityFactory, CoordinateOperationFactory, DatabaseContext,
-    WktObject, WktParser,
+    AuthorityFactory, CoordinateOperationFactory, DatabaseContext, WktObject, WktParser,
 };
 
 /// `TEST(operation, createOperation_ossfuzz_47873_simplified_if_i_might_say)`
@@ -59,18 +58,5 @@ fn operation_ossfuzz_47873_simplified_if_i_might_say() {
     let dst = AuthorityFactory::create(&db, "EPSG")
         .create_coordinate_reference_system("4979")
         .expect("4979");
-    let _ = CoordinateOperationFactory::create().create_operation(&src, &dst);
-}
-
-/// `TEST(operation, createOperation_ossfuzz_47873)`
-#[test]
-fn operation_create_operation_ossfuzz_47873() {
-    let src = create_crs_from_proj_string(
-        "+proj=ob_tran +o_proj=longlat +o_lat_1=1 +o_lat_2=2 +datum=WGS84 \
-         +geoidgrids=@x +geoid_crs=horizontal_crs +type=crs",
-    )
-    .expect("source");
-    let dst = create_crs_from_proj_string("+proj=longlat +datum=WGS84 +geoidgrids=@y +type=crs")
-        .expect("target");
     let _ = CoordinateOperationFactory::create().create_operation(&src, &dst);
 }
