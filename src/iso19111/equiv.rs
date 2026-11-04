@@ -296,6 +296,14 @@ impl ProjectedCRS {
     /// the conversion method and parameters follow `criterion`.
     #[must_use]
     pub fn is_equivalent_to_with(&self, other: &Self, criterion: Equivalence) -> bool {
+        if criterion != Equivalence::Strict {
+            if let (Some(left), Some(right)) = (
+                self.identified.extension_proj4.as_deref(),
+                other.identified.extension_proj4.as_deref(),
+            ) {
+                return proj_extensions_equivalent(left, right);
+            }
+        }
         (criterion != Equivalence::Strict || same_name(self.name(), other.name()))
             && geodetic_equivalent(self.base_crs(), other.base_crs(), criterion)
             && conversion_equivalent_for(
@@ -375,6 +383,9 @@ impl Crs {
     pub fn is_equivalent_to_with(&self, other: &Self, criterion: Equivalence) -> bool {
         match (self, other) {
             (Self::Engineering(left), Self::Engineering(right)) => {
+                left.is_equivalent_to_with(right, criterion)
+            }
+            (Self::Projected(left), Self::Projected(right)) => {
                 left.is_equivalent_to_with(right, criterion)
             }
             _ => self.is_equivalent_to(other),
@@ -1241,6 +1252,20 @@ pub(crate) fn same_epoch(left: Option<f64>, right: Option<f64>) -> bool {
         (None, None) => true,
         _ => false,
     }
+}
+
+/// Two PROJ strings of projected CRS are equivalent when they hold the same options, in any
+/// order: the PROJ extension decides, as `ProjectedCRS::_isEquivalentTo` does for EQUIVALENT.
+fn proj_extensions_equivalent(left: &str, right: &str) -> bool {
+    let options = |text: &str| {
+        let mut options: Vec<String> = text
+            .split_whitespace()
+            .map(|token| token.trim_start_matches('+').to_owned())
+            .collect();
+        options.sort();
+        options
+    };
+    options(left) == options(right)
 }
 
 #[cfg(test)]
