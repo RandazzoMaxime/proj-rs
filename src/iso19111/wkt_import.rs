@@ -3459,9 +3459,13 @@ fn fix_steps(source: &Crs, target: &Crs, steps: &mut [ConcatenatedStep]) {
             continue;
         }
         if index == 0 {
+            let step_source = derived_projected(source).map_or_else(
+                || source.clone(),
+                |projected| Crs::Projected(projected.clone()),
+            );
             match derived_base(source) {
                 Some(base) => {
-                    let other = match next_source {
+                    let other = leading_crs(match next_source {
                         Some(next) if !are_more_or_less_equivalent(&next, &base) => {
                             match next_target {
                                 Some(next_target)
@@ -3474,11 +3478,11 @@ fn fix_steps(source: &Crs, target: &Crs, steps: &mut [ConcatenatedStep]) {
                         }
                         Some(next) => next,
                         None => base,
-                    };
+                    });
                     if conversion.inverted {
-                        set_step_crss(conversion, source.clone(), other);
+                        set_step_crss(conversion, step_source, other);
                     } else {
-                        set_step_crss(conversion, other, source.clone());
+                        set_step_crss(conversion, other, step_source);
                         *conversion = conversion.inverse();
                     }
                 }
@@ -3489,14 +3493,18 @@ fn fix_steps(source: &Crs, target: &Crs, steps: &mut [ConcatenatedStep]) {
                 }
             }
         } else if index == last {
+            let step_target = derived_projected(target).map_or_else(
+                || target.clone(),
+                |projected| Crs::Projected(projected.clone()),
+            );
             match derived_base(target) {
                 Some(base) => {
-                    let other = previous_target.unwrap_or(base);
-                    set_step_crss(conversion, other, target.clone());
+                    let other = leading_crs(previous_target.unwrap_or(base));
+                    set_step_crss(conversion, other, step_target);
                 }
                 None => {
                     if let Some(other) = previous_target {
-                        set_step_crss(conversion, other, target.clone());
+                        set_step_crss(conversion, other, step_target);
                     }
                 }
             }
@@ -3546,12 +3554,29 @@ fn are_more_or_less_equivalent(left: &Crs, right: &Crs) -> bool {
     }
 }
 
-/// `extractDerivedCRS`, for a projected CRS: its base geodetic CRS.
-fn derived_base(crs: &Crs) -> Option<Crs> {
+/// `extractDerivedCRS`: the projected CRS itself, or the one a compound CRS starts with.
+fn derived_projected(crs: &Crs) -> Option<&ProjectedCRS> {
     match crs {
-        Crs::Projected(projected) => Some(Crs::from(projected.base_crs().clone())),
+        Crs::Projected(projected) => Some(projected),
+        Crs::Compound(compound) => match compound.components().first() {
+            Some(Crs::Projected(projected)) => Some(projected),
+            _ => None,
+        },
         _ => None,
     }
+}
+
+/// The first component of a compound CRS, which is the CRS a projection is exported from.
+fn leading_crs(crs: Crs) -> Crs {
+    match &crs {
+        Crs::Compound(compound) => compound.components().first().cloned().unwrap_or(crs),
+        _ => crs,
+    }
+}
+
+/// The base geodetic CRS of [`derived_projected`].
+fn derived_base(crs: &Crs) -> Option<Crs> {
+    derived_projected(crs).map(|projected| Crs::from(projected.base_crs().clone()))
 }
 
 /// `setCRSsUpdateInverse`: the CRS pair is the one the operation exposes, whatever its
