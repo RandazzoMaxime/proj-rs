@@ -5253,8 +5253,9 @@ fn filter_and_sort(
             .then_some(text)
     });
     let mut result = Vec::new();
-    let mut has_with_extent = false;
-    let mut has_without_extent = false;
+    let mut only_ballpark = true;
+    let mut non_ballpark_with_extent = false;
+    let mut non_ballpark_without_extent = false;
     let mut contains_area_without_grid = false;
     let no_grid = |operation: &CoordinateOperation| {
         !operation.has_ballpark_transformation() && super::select::grid_names(operation).is_empty()
@@ -5266,9 +5267,10 @@ fn filter_and_sort(
         if context.ballpark == BallparkUse::Forbid && operation.has_ballpark_transformation() {
             continue;
         }
+        let ballpark = operation.has_ballpark_transformation();
         if let Some(area) = &area {
             let Some(extent) = operation_extent(operation) else {
-                has_without_extent = true;
+                non_ballpark_without_extent |= !ballpark;
                 continue;
             };
             if let Some(expected) = described {
@@ -5276,7 +5278,7 @@ fn filter_and_sort(
                     continue;
                 }
             }
-            has_with_extent = true;
+            non_ballpark_with_extent |= !ballpark;
             let contains = extent_contains(&extent, area);
             if contains && no_grid(operation) {
                 contains_area_without_grid = true;
@@ -5290,10 +5292,10 @@ fn filter_and_sort(
             }
         } else if context.crs_extent_use == CrsExtentUse::Both {
             let Some(extent) = operation_extent(operation) else {
-                has_without_extent = true;
+                non_ballpark_without_extent |= !ballpark;
                 continue;
             };
-            has_with_extent = true;
+            non_ballpark_with_extent |= !ballpark;
             let contains_source = extent1.is_none_or(|source| extent_contains(&extent, source));
             let contains_target = extent2.is_none_or(|target| extent_contains(&extent, target));
             if contains_source && contains_target && no_grid(operation) {
@@ -5315,21 +5317,25 @@ fn filter_and_sort(
                 _ => {}
             }
         }
+        only_ballpark &= ballpark;
         result.push(operation.clone());
     }
-    let operations = if result.is_empty() && (!has_with_extent || has_without_extent) {
-        operations
-            .into_iter()
-            .filter(|operation| accuracy_allowed(operation, context.desired_accuracy))
-            .filter(|operation| {
-                context.ballpark == BallparkUse::Allow || !operation.has_ballpark_transformation()
-            })
-            .collect()
-    } else {
-        result
-    };
+    if (result.is_empty() && !non_ballpark_with_extent)
+        || (only_ballpark && non_ballpark_without_extent)
+    {
+        result.extend(
+            operations
+                .iter()
+                .filter(|operation| accuracy_allowed(operation, context.desired_accuracy))
+                .filter(|operation| {
+                    context.ballpark == BallparkUse::Allow
+                        || !operation.has_ballpark_transformation()
+                })
+                .cloned(),
+        );
+    }
     Filtered {
-        operations,
+        operations: result,
         contains_area_without_grid,
     }
 }
