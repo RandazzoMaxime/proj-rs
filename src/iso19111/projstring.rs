@@ -761,7 +761,9 @@ fn topocentric_steps(
                 .coordinate_system()
                 .axes()
                 .first()
-                .is_some_and(|axis| axis.unit().name() == "degree");
+                .is_some_and(|axis| {
+                    angular_proj_unit(axis.unit().conversion_to_si()) == Some("deg")
+                });
             if degrees {
                 let height = if geographic.coordinate_system().axes().len() == 3 {
                     " +z_in=m"
@@ -836,8 +838,8 @@ fn linear_out_name(unit: &UnitOfMeasure) -> String {
 /// metres, which is the height the projection consumes.
 fn angular_unit_step(geographic: &GeographicCRS) -> Option<String> {
     let axes = geographic.coordinate_system().axes();
-    let xy_in = match axes.first()?.unit().name() {
-        "degree" => "deg",
+    let xy_in = match angular_proj_unit(axes.first()?.unit().conversion_to_si())? {
+        "deg" => "deg",
         "grad" => "grad",
         _ => return None,
     };
@@ -854,8 +856,15 @@ fn angular_unit_step(geographic: &GeographicCRS) -> Option<String> {
 /// `None` when they already are. The geocentric path leaves a height axis to
 /// the `cart` step.
 fn angular_to_radians(geographic: &GeographicCRS) -> Option<&'static str> {
-    match geographic.coordinate_system().axes().first()?.unit().name() {
-        "degree" => Some("+proj=unitconvert +xy_in=deg +xy_out=rad"),
+    match angular_proj_unit(
+        geographic
+            .coordinate_system()
+            .axes()
+            .first()?
+            .unit()
+            .conversion_to_si(),
+    )? {
+        "deg" => Some("+proj=unitconvert +xy_in=deg +xy_out=rad"),
         "grad" => Some("+proj=unitconvert +xy_in=grad +xy_out=rad"),
         _ => None,
     }
@@ -863,8 +872,15 @@ fn angular_to_radians(geographic: &GeographicCRS) -> Option<&'static str> {
 
 /// Degrees or grads into radians, with the metre height PROJ's cart step expects.
 fn angular_z_to_radians(geographic: &GeographicCRS) -> Option<&'static str> {
-    match geographic.coordinate_system().axes().first()?.unit().name() {
-        "degree" => Some("+proj=unitconvert +xy_in=deg +z_in=m +xy_out=rad +z_out=m"),
+    match angular_proj_unit(
+        geographic
+            .coordinate_system()
+            .axes()
+            .first()?
+            .unit()
+            .conversion_to_si(),
+    )? {
+        "deg" => Some("+proj=unitconvert +xy_in=deg +z_in=m +xy_out=rad +z_out=m"),
         "grad" => Some("+proj=unitconvert +xy_in=grad +z_in=m +xy_out=rad +z_out=m"),
         _ => None,
     }
@@ -872,8 +888,15 @@ fn angular_z_to_radians(geographic: &GeographicCRS) -> Option<&'static str> {
 
 /// Radians into the angular unit of `geographic`. A radian axis needs no step.
 fn radians_to_angular(geographic: &GeographicCRS) -> Option<&'static str> {
-    match geographic.coordinate_system().axes().first()?.unit().name() {
-        "degree" => Some("+proj=unitconvert +xy_in=rad +xy_out=deg"),
+    match angular_proj_unit(
+        geographic
+            .coordinate_system()
+            .axes()
+            .first()?
+            .unit()
+            .conversion_to_si(),
+    )? {
+        "deg" => Some("+proj=unitconvert +xy_in=rad +xy_out=deg"),
         "grad" => Some("+proj=unitconvert +xy_in=rad +xy_out=grad"),
         _ => None,
     }
