@@ -42,8 +42,8 @@ yet**: see [Status at a glance](#status-at-a-glance).
 </p>
 
 Each square is **one test case of PROJ 9.9.0 itself**. Green: PROJ-RS passes it.
-Grey: still open. In all, <!--gen:all_percent-->96.2<!--/gen-->% of the cases pass
-(<!--gen:all_done-->8165<!--/gen--> of <!--gen:all_total-->8484<!--/gen-->). The left panel is the numeric suite (`gie`), complete. The right
+Grey: still open. In all, <!--gen:all_percent-->96.3<!--/gen-->% of the cases pass
+(<!--gen:all_done-->8166<!--/gen--> of <!--gen:all_total-->8484<!--/gen-->). The left panel is the numeric suite (`gie`), complete. The right
 panel is what is left: PROJ's C++ unit tests, which cover the ISO 19111 model,
 WKT and the operation factory, and the command-line cases. The chart is drawn
 from the same ledgers as the tables below by `tests/progress_svg.rs`, so it
@@ -173,7 +173,7 @@ The same goes for the CLI cases in [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md
 
 | Suite | Ported and passing | Not yet | |
 |---|---:|---:|:-:|
-| PROJ C++ unit tests | <!--gen:unit_ported-->1088<!--/gen--> | <!--gen:unit_open-->264<!--/gen--> | <!--gen:unit_icon-->🟡<!--/gen--> |
+| PROJ C++ unit tests | <!--gen:unit_ported-->1089<!--/gen--> | <!--gen:unit_open-->263<!--/gen--> | <!--gen:unit_icon-->🟡<!--/gen--> |
 | `cct` CLI cases | <!--gen:cli_cct_ported-->18<!--/gen--> | <!--gen:cli_cct_open-->0<!--/gen--> | <!--gen:cli_cct_icon-->✅<!--/gen--> |
 | `cs2cs` CLI cases | <!--gen:cli_cs2cs_ported-->122<!--/gen--> | <!--gen:cli_cs2cs_open-->21<!--/gen--> | <!--gen:cli_cs2cs_icon-->🟡<!--/gen--> |
 | `proj` CLI cases | <!--gen:cli_proj_ported-->4<!--/gen--> | <!--gen:cli_proj_open-->0<!--/gen--> | <!--gen:cli_proj_icon-->✅<!--/gen--> |
@@ -191,7 +191,7 @@ The same goes for the CLI cases in [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md
 | `test_c_api.cpp` | <!--gen:test_c_api_ported-->103<!--/gen--> | <!--gen:test_c_api_open-->49<!--/gen--> |
 | `test_crs.cpp` | <!--gen:test_crs_ported-->177<!--/gen--> | <!--gen:test_crs_open-->20<!--/gen--> |
 | `test_factory.cpp` | <!--gen:test_factory_ported-->85<!--/gen--> | <!--gen:test_factory_open-->28<!--/gen--> |
-| `test_io.cpp` | <!--gen:test_io_ported-->445<!--/gen--> | <!--gen:test_io_open-->9<!--/gen--> |
+| `test_io.cpp` | <!--gen:test_io_ported-->446<!--/gen--> | <!--gen:test_io_open-->8<!--/gen--> |
 | `test_operation.cpp` | <!--gen:test_operation_ported-->157<!--/gen--> | <!--gen:test_operation_open-->5<!--/gen--> |
 | `test_operationfactory.cpp` | <!--gen:test_operationfactory_ported-->121<!--/gen--> | <!--gen:test_operationfactory_open-->153<!--/gen--> |
 | Other unit files ([`tests/proj_unit.rs`](tests/proj_unit.rs)) | 33 | n/a |
