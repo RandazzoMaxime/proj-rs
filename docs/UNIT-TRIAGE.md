@@ -7,7 +7,7 @@ The class comes from the test name alone, so check it when you port a test.
 |---|---:|---|---|
 | `core` | 150 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
 | `niche` | 32 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
-| `shape` | 47 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
+| `shape` | 42 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
 ## core (150)
 
@@ -225,20 +225,15 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.createOperation_compound_to_compound_with_point_motion_operation`
 - `operation.createOperation_compound_to_compound_with_point_motion_operation_special_case_CGVD2013a`
 
-## shape (47)
+## shape (42)
 
-### test_c_api.cpp (19)
+### test_c_api.cpp (14)
 
 - `CApi.proj_context_set_database_path_null`
 - `CApi.proj_context_set_database_path_aux`
 - `CApi.proj_context_set_database_path_error_1`
 - `CApi.proj_context_set_database_path_error_2`
 - `CApi.proj_clone_of_obj_with_alternative_operations`
-- `CApi.proj_crs_alter_geodetic_crs`
-- `CApi.proj_crs_alter_cs_angular_unit`
-- `CApi.proj_crs_alter_cs_linear_unit`
-- `CApi.proj_crs_alter_parameters_linear_unit`
-- `CApi.proj_create_cartesian_2D_cs`
 - `CApi.proj_context_copy_from_default`
 - `CApi.proj_context_clone`
 - `CApi.proj_context_set_sqlite3_vfs_name`
