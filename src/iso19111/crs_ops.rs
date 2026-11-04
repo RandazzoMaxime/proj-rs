@@ -218,6 +218,21 @@ impl Crs {
         }
     }
 
+    /// `CRS::alterCSAngularUnit`.
+    ///
+    /// Angular axes of a geographic CRS take `unit`, and its identifiers are cleared. Other
+    /// kinds are returned unchanged.
+    #[must_use]
+    pub fn alter_cs_angular_unit(&self, unit: &UnitOfMeasure) -> Self {
+        match self {
+            Self::Geographic(crs) => Self::Geographic(geographic_angular_unit(crs, unit)),
+            Self::Geodetic(GeodeticCRS::Geographic(crs)) => {
+                Self::Geographic(geographic_angular_unit(crs, unit))
+            }
+            _ => self.clone(),
+        }
+    }
+
     /// `CRS::alterCSLinearUnit`.
     ///
     /// Cartesian axes, a geographic height axis, and a vertical axis take `unit`
@@ -365,6 +380,17 @@ fn geographic_linear_unit(crs: &GeographicCRS, unit: &UnitOfMeasure) -> Geograph
     let mut crs = crs.clone();
     for axis in &mut crs.coordinate_system.axes {
         replace_linear_axis(axis, unit);
+    }
+    crs.identified.identifiers.clear();
+    crs
+}
+
+fn geographic_angular_unit(crs: &GeographicCRS, unit: &UnitOfMeasure) -> GeographicCRS {
+    let mut crs = crs.clone();
+    for axis in &mut crs.coordinate_system.axes {
+        if axis.unit.kind == UnitKind::Angular {
+            axis.unit = unit.clone();
+        }
     }
     crs.identified.identifiers.clear();
     crs

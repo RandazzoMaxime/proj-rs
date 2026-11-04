@@ -1573,6 +1573,48 @@ impl CartesianCS {
         }
     }
 
+    /// Westing then southing, in `unit`.
+    #[must_use]
+    pub fn create_westing_southing(unit: UnitOfMeasure) -> Self {
+        Self {
+            identified: Identified::default(),
+            axes: vec![
+                Axis::new("Easting", "Y", "west", unit.clone()),
+                Axis::new("Northing", "X", "south", unit),
+            ],
+        }
+    }
+
+    /// Easting and northing at the north pole, both pointing south, in `unit`. The
+    /// meridians are 90 and 180 degrees.
+    #[must_use]
+    pub fn create_north_pole_easting_south_northing_south(unit: UnitOfMeasure) -> Self {
+        Self {
+            identified: Identified::default(),
+            axes: vec![
+                Axis::new("Easting", "E", "south", unit.clone())
+                    .with_meridian(Meridian::create(Measure::angle(90.0))),
+                Axis::new("Northing", "N", "south", unit)
+                    .with_meridian(Meridian::create(Measure::angle(180.0))),
+            ],
+        }
+    }
+
+    /// Easting and northing at the south pole, both pointing north, in `unit`. The
+    /// meridians are 90 and 0 degrees.
+    #[must_use]
+    pub fn create_south_pole_easting_north_northing_north(unit: UnitOfMeasure) -> Self {
+        Self {
+            identified: Identified::default(),
+            axes: vec![
+                Axis::new("Easting", "E", "north", unit.clone())
+                    .with_meridian(Meridian::create(Measure::angle(90.0))),
+                Axis::new("Northing", "N", "north", unit)
+                    .with_meridian(Meridian::create(Measure::angle(0.0))),
+            ],
+        }
+    }
+
     /// Cartesian system whose axes may use different units.
     ///
     /// # Errors
