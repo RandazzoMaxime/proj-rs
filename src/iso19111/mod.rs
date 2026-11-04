@@ -41,9 +41,9 @@ pub use equiv::{equivalent_name, equivalent_name_bigger_differences, Equivalence
 pub use factory::{
     AlternativeGridNames, AuthorityFactory, AuthorityObject, BallparkUse, CelestialBodyInfo,
     CoordinateOperationContext, CoordinateOperationFactory, CrsExtentUse, CrsInfo, DatabaseContext,
-    DeprecatedCodes, GeodeticComponents, GridAvailabilityUse, GridInfo, IntermediateCrsUse,
-    NameMatch, NameSpelling, ObjectType, OfficialName, SpatialCriterion, SupersededOperations,
-    UnitInfo,
+    DeprecatedCodes, GeodeticComponents, GridAvailabilityUse, GridDescription, GridInfo,
+    IntermediateCrsUse, NameMatch, NameSpelling, ObjectType, OfficialName, SpatialCriterion,
+    SupersededOperations, UnitInfo,
 };
 pub use insert::insert_statements;
 pub use json::{

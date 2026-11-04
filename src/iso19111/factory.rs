@@ -75,6 +75,10 @@ pub enum GridAvailabilityUse {
     UseForSorting,
     /// Grids are taken as available, as `IGNORE_GRID_AVAILABILITY`.
     IgnoreGridAvailability,
+    /// A grid the database knows counts as available, as `KNOWN_AVAILABLE`
+    /// (`considerKnownGridsAsAvailable`). A registry operation with a grid that is neither on
+    /// disk nor known is discarded.
+    KnownAvailable,
 }
 
 /// Whether the registered operations of the database are searched.
@@ -945,6 +949,16 @@ impl DatabaseContext {
     ///
     /// The database rejects the statement.
     pub fn grid_info(&self, name: &str) -> Result<Option<GridInfo>, FactoryError> {
+        self.look_for_grid_info(name, GridAvailabilityUse::UseForSorting)
+    }
+
+    /// `lookForGridInfo`: the record of `name`, or `None` when the database has no row for it.
+    /// A grid the database knows is available under [`GridAvailabilityUse::KnownAvailable`].
+    pub(crate) fn look_for_grid_info(
+        &self,
+        name: &str,
+        known: GridAvailabilityUse,
+    ) -> Result<Option<GridInfo>, FactoryError> {
         if name == "null" {
             return Ok(Some(GridInfo {
                 full_name: String::new(),
@@ -985,6 +999,13 @@ impl DatabaseContext {
         if proj_grid_name != old_name && old_name == name {
             if let Some(path) = crate::gridpath::resolve(&proj_grid_name) {
                 available = true;
+                full_name = path.to_string_lossy().into_owned();
+            }
+        }
+        let known_grid = !package_name.is_empty() || (!url.is_empty() && open_license);
+        if !available && known == GridAvailabilityUse::KnownAvailable && known_grid {
+            available = true;
+            if let Some(path) = crate::gridpath::resolve(name) {
                 full_name = path.to_string_lossy().into_owned();
             }
         }
@@ -1212,6 +1233,15 @@ pub struct GridInfo {
     pub open_license: bool,
     /// The file is on the local search path.
     pub available: bool,
+}
+
+/// One grid an operation needs, as PROJ's `GridDescription` from `gridsNeeded`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GridDescription {
+    /// The grid name the operation gives, as written in its file parameter.
+    pub short_name: String,
+    /// The file, package, and download record of the grid.
+    pub info: GridInfo,
 }
 
 impl Crs {
@@ -4846,9 +4876,12 @@ impl CoordinateOperationFactory {
         target: &Crs,
         context: &CoordinateOperationContext,
     ) -> Result<Vec<CoordinateOperation>, FactoryError> {
-        check_same_celestial_body(source, target)?;
-        let found = self.create_candidates(source, target, context)?;
-        Ok(select_candidates(found, source, target, context))
+        // `createOperations` starts from the canonical bound CRS of an input that has one.
+        let source = canonical_or_self(source);
+        let target = canonical_or_self(target);
+        check_same_celestial_body(&source, &target)?;
+        let found = self.create_candidates(&source, &target, context)?;
+        Ok(select_candidates(found, &source, &target, context))
     }
 
     /// `proj_get_suggested_operation` (forward) on `operations`, the list from `source`
@@ -5024,6 +5057,14 @@ impl CoordinateOperationFactory {
             }
         }
         Ok(found)
+    }
+}
+
+/// The canonical bound CRS of `crs` when it has one, otherwise `crs` itself.
+fn canonical_or_self(crs: &Crs) -> std::borrow::Cow<'_, Crs> {
+    match crs.canonical_bound_crs() {
+        Some(bound) => std::borrow::Cow::Owned(Crs::Bound(bound.clone())),
+        None => std::borrow::Cow::Borrowed(crs),
     }
 }
 
@@ -5749,14 +5790,28 @@ fn direct_registry_operations(
 ) -> Result<Vec<CoordinateOperation>, FactoryError> {
     let mut found = Vec::new();
     for authority in candidate_authorities(&context.db, &context.authority, source.0, target.0)? {
-        found.extend(operations_between(
+        let mut operations = operations_between(
             &context.db,
             &authority,
             source,
             target,
             crs_boxes,
             RegistrySearch::Both,
-        )?);
+        )?;
+        if context.grid_availability == GridAvailabilityUse::KnownAvailable {
+            // `rejectOpDueToMissingGrid`: an operation with a grid that is neither on disk
+            // nor known to the database is not returned.
+            let mut kept = Vec::with_capacity(operations.len());
+            for operation in operations {
+                let grids =
+                    operation.grids_needed(&context.db, GridAvailabilityUse::KnownAvailable)?;
+                if grids.iter().all(|grid| grid.info.available) {
+                    kept.push(operation);
+                }
+            }
+            operations = kept;
+        }
+        found.extend(operations);
         if authority != "PROJ" && !found.is_empty() {
             break;
         }

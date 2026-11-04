@@ -110,6 +110,16 @@ impl BoundCRS {
             )),
         }
     }
+
+    /// `BoundCRS::baseCRSWithCanonicalBoundCRS`: a copy of the base CRS that remembers this
+    /// bound CRS, so that `create_operations` starts from it.
+    #[must_use]
+    pub fn base_crs_with_canonical_bound_crs(&self) -> Crs {
+        self.source
+            .as_ref()
+            .clone()
+            .with_canonical_bound(self.clone())
+    }
 }
 
 impl Crs {
