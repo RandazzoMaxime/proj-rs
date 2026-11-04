@@ -28,8 +28,8 @@ use super::factory::DatabaseContext;
 use super::model::{
     Axis, ConcatenatedOperation, CoordinateOperation, CoordinateSystem, Crs, Ellipsoid,
     FactoryError, GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Measure,
-    ParameterValue, ProjBased, ProjBasedKind, ProjectedCRS, Transformation, UnitKind,
-    UnitOfMeasure, VerticalCRS,
+    ParameterValue, ProjBased, ProjBasedKind, ProjectedCRS, SphericalGeodeticCRS, Transformation,
+    UnitKind, UnitOfMeasure, VerticalCRS,
 };
 use super::pipeline::{proj_number, PipelineFormatter, ProjLines};
 use super::projstring::{
@@ -1003,17 +1003,37 @@ fn geographic_geocentric(
     ) else {
         return Err(invalid_geographic_geocentric());
     };
-    let source_geocentric = matches!(source, Geodetic::Geocentric(_));
+    let source_geocentric = matches!(source, Geodetic::Geocentric(_) | Geodetic::Spherical(_));
     let source_geographic = matches!(source, Geodetic::Geographic(_));
-    let target_geocentric = matches!(target, Geodetic::Geocentric(_));
+    let target_geocentric = matches!(target, Geodetic::Geocentric(_) | Geodetic::Spherical(_));
     let target_geographic = matches!(target, Geodetic::Geographic(_));
     if !((source_geocentric && target_geographic) || (source_geographic && target_geocentric)) {
         return Err(invalid_geographic_geocentric());
     }
     formatter.start_inversion();
-    geodetic_export(source, formatter)?;
+    geographic_geocentric_end(source, formatter)?;
     formatter.stop_inversion();
-    geodetic_export(target, formatter)
+    geographic_geocentric_end(target, formatter)
+}
+
+/// One end of a geographic/geocentric conversion. A geographic end with a zero prime
+/// meridian writes only its angular unit and axis order, not `longlat`.
+fn geographic_geocentric_end(
+    geodetic: Geodetic<'_>,
+    formatter: &mut PipelineFormatter,
+) -> Result<(), FactoryError> {
+    match geodetic {
+        Geodetic::Geographic(geographic) => {
+            let zero_meridian = meridian_of(geographic)
+                .is_none_or(|meridian| prime_meridian_params(meridian).is_none());
+            if zero_meridian {
+                angular_unit_and_axis_swap(geographic.coordinate_system().axes(), formatter)
+            } else {
+                geodetic_export(geodetic, formatter)
+            }
+        }
+        other => geodetic_export(other, formatter),
+    }
 }
 
 fn invalid_geographic_geocentric() -> FactoryError {
@@ -1733,7 +1753,7 @@ fn not_geodetic_or_geographic(method: &str) -> FactoryError {
 enum Geodetic<'a> {
     Geographic(&'a GeographicCRS),
     Geocentric(&'a GeocentricCRS),
-    Spherical,
+    Spherical(&'a SphericalGeodeticCRS),
 }
 
 /// The geodetic CRS of `crs`, or of its first component when `crs` is compound.
@@ -1752,7 +1772,7 @@ fn geodetic_direct(crs: &Crs) -> Option<Geodetic<'_>> {
         Crs::Geodetic(GeodeticCRS::Geocentric(geocentric)) => {
             Some(Geodetic::Geocentric(geocentric))
         }
-        Crs::Geodetic(GeodeticCRS::Spherical(_)) => Some(Geodetic::Spherical),
+        Crs::Geodetic(GeodeticCRS::Spherical(spherical)) => Some(Geodetic::Spherical(spherical)),
         _ => None,
     }
 }
@@ -1931,9 +1951,16 @@ fn geodetic_export(
             }
             geocentric_unit_steps(geocentric.coordinate_system().axes(), formatter)
         }
-        Geodetic::Spherical => Err(FactoryError::Format(
-            "a spherical CRS has no PROJ string in this crate".to_owned(),
-        )),
+        Geodetic::Spherical(spherical) => {
+            formatter.add_step("geoc");
+            if let Some(frame) = spherical_frame(spherical) {
+                ellipsoid_steps(Some(frame.ellipsoid()), formatter);
+                if let Some((key, value)) = prime_meridian_params(frame.prime_meridian()) {
+                    formatter.add_param(key, &value);
+                }
+            }
+            angular_unit_and_axis_swap(spherical.coordinate_system.axes(), formatter)
+        }
     }
 }
 
@@ -1946,7 +1973,9 @@ fn geocentric_unit(
         Geodetic::Geocentric(geocentric) => {
             geocentric_unit_steps(geocentric.coordinate_system().axes(), formatter)
         }
-        Geodetic::Geographic(_) | Geodetic::Spherical => Err(not_geodetic_or_geographic("Helmert")),
+        Geodetic::Geographic(_) | Geodetic::Spherical(_) => {
+            Err(not_geodetic_or_geographic("Helmert"))
+        }
     }
 }
 
@@ -1970,6 +1999,12 @@ fn geocentric_unit_steps(
     formatter.add_param("xy_out", &text);
     formatter.add_param("z_out", &text);
     Ok(())
+}
+
+fn spherical_frame(crs: &SphericalGeodeticCRS) -> Option<&GeodeticReferenceFrame> {
+    crs.datum
+        .as_ref()
+        .or_else(|| crs.ensemble.as_ref().and_then(geodetic_member))
 }
 
 fn geocentric_frame(crs: &GeocentricCRS) -> Option<&GeodeticReferenceFrame> {

@@ -7,7 +7,10 @@
 //! nor geocentric.
 
 use super::equiv::{geodetic_frame, same_geodetic_datum};
-use super::factory::{crs_extent, pivot_concatenation, world_extent};
+use super::factory::{
+    crs_extent, pivot_concatenation, world_extent, CoordinateOperationContext,
+    CoordinateOperationFactory,
+};
 use super::model::{
     Axis, Conversion, CoordinateOperation, Crs, EllipsoidalCS, GeodeticCRS, GeodeticReferenceFrame,
     GeographicCRS, Measure, ObjectDomain, ParameterValue, Transformation, UnitOfMeasure,
@@ -255,6 +258,77 @@ pub(super) fn geographic_geocentric_conversion(
     operation.identified.domains.clear();
     operation.accuracy = Some(0.0);
     Ok(operation)
+}
+
+/// `isSphericalPlanetocentric`: a spherical CRS whose two axes are the planetocentric latitude
+/// and longitude, in either order.
+pub(super) fn is_spherical_planetocentric(crs: &Crs) -> bool {
+    let Crs::Geodetic(GeodeticCRS::Spherical(spherical)) = crs else {
+        return false;
+    };
+    matches!(
+        spherical.coordinate_system.axes(),
+        [first, second]
+            if (first.name().eq_ignore_ascii_case("planetocentric latitude")
+                && second.name().eq_ignore_ascii_case("planetocentric longitude"))
+                || (first.name().eq_ignore_ascii_case("planetocentric longitude")
+                    && second.name().eq_ignore_ascii_case("planetocentric latitude"))
+    )
+}
+
+/// `createOperationsFromSphericalPlanetocentric`: from a spherical planetocentric source, the
+/// geographic/geocentric latitude conversion to a geographic CRS of the same datum, then the
+/// operations from that geographic CRS to the target. A geographic target of the same datum
+/// takes the conversion alone.
+///
+/// Not ported: the domain of the intermediate CRS is not copied from the source.
+///
+/// # Errors
+///
+/// An operation cannot be built from the CRS.
+pub(super) fn spherical_planetocentric_operations(
+    factory: &CoordinateOperationFactory,
+    source: &Crs,
+    target: &Crs,
+    context: &CoordinateOperationContext,
+) -> Result<Vec<CoordinateOperation>, FactoryError> {
+    let Crs::Geodetic(GeodeticCRS::Spherical(spherical)) = source else {
+        return Ok(Vec::new());
+    };
+    if super::factory::geographic_of(target).is_some() && same_geodetic_datum(source, target) {
+        return Ok(vec![CoordinateOperation::Transformation(
+            geographic_geocentric_conversion(source, target)?,
+        )]);
+    }
+    let intermediate = Crs::Geographic(GeographicCRS::create(
+        format!("{} (geographic)", spherical.identified.name),
+        spherical.datum.clone(),
+        spherical.ensemble.clone(),
+        EllipsoidalCS::create_latitude_longitude(UnitOfMeasure::degree()),
+    )?);
+    let first = CoordinateOperation::Transformation(geographic_geocentric_conversion(
+        source,
+        &intermediate,
+    )?);
+    let seconds = match target {
+        Crs::Projected(projected)
+            if source.is_equivalent_to(&Crs::Geodetic(projected.base_crs().clone())) =>
+        {
+            vec![CoordinateOperation::Conversion(
+                projected
+                    .deriving_conversion()
+                    .clone()
+                    .with_endpoints(intermediate, target.clone()),
+            )]
+        }
+        _ => factory.create_candidates(&intermediate, target, context)?,
+    };
+    Ok(seconds
+        .into_iter()
+        .map(|second| {
+            CoordinateOperation::Concatenated(pivot_concatenation(vec![first.clone(), second]))
+        })
+        .collect())
 }
 
 /// A geocentric source and a geographic target, or the reverse, on different datums: the

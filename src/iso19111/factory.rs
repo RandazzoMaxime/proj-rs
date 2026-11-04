@@ -4913,6 +4913,18 @@ impl CoordinateOperationFactory {
         {
             return Ok(vec![operation]);
         }
+        if super::geodetic_ops::is_spherical_planetocentric(source) {
+            return super::geodetic_ops::spherical_planetocentric_operations(
+                self, source, target, context,
+            );
+        }
+        if super::geodetic_ops::is_spherical_planetocentric(target) {
+            return Ok(self
+                .create_candidates(target, source, context)?
+                .iter()
+                .map(CoordinateOperation::inverse)
+                .collect());
+        }
         if let Some(bound) = super::bound_ops::bound_candidates(self, source, target, context)? {
             return Ok(bound);
         }

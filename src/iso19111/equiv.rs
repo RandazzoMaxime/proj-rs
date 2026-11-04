@@ -536,6 +536,21 @@ fn geodetic_equivalent(left: &GeodeticCRS, right: &GeodeticCRS, criterion: Equiv
                     right.coordinate_system().axes(),
                 )
         }
+        (GeodeticCRS::Spherical(left), GeodeticCRS::Spherical(right)) => {
+            (criterion != Equivalence::Strict
+                || same_name(&left.identified.name, &right.identified.name))
+                && match (
+                    left.datum.as_ref(),
+                    right.datum.as_ref(),
+                    left.ensemble.as_ref(),
+                    right.ensemble.as_ref(),
+                ) {
+                    (Some(left), Some(right), _, _) => frame_equivalent(left, right),
+                    (None, None, Some(left), Some(right)) => ensemble_equivalent(left, right),
+                    _ => false,
+                }
+                && cs_axes_match(&left.coordinate_system.axes, &right.coordinate_system.axes)
+        }
         _ => false,
     }
 }
