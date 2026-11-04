@@ -7,13 +7,13 @@
 use super::buildop::{OpProps, UtmHemisphere};
 use super::equiv::{
     directions_and_units, ellipsoid_parameters_match, equivalent_name, identify_axes_match,
-    meridian_equivalent, same_epoch, Equivalence, IdentifyAxisOrder,
+    meridian_equivalent, same_epoch, vertical_crs_equivalent, Equivalence, IdentifyAxisOrder,
 };
 use super::factory::{AuthorityFactory, DatabaseContext, NameMatch};
 use super::model::{
     Axis, CartesianCS, Conversion, CoordinateSystem, Crs, Datum, DatumEnsemble,
     DerivedProjectedCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified,
-    Identifier, ProjectedCRS, UnitOfMeasure,
+    Identifier, ProjectedCRS, UnitOfMeasure, VerticalCRS,
 };
 
 const UNKNOWN_BASED_ON: &str = "Unknown based on ";
@@ -119,6 +119,7 @@ impl Crs {
             Self::Geographic(crs) => crs.identify_with(factory),
             Self::Geodetic(crs) => crs.identify_with(factory),
             Self::Projected(crs) => crs.identify_with(factory),
+            Self::Vertical(crs) => crs.identify_with(factory),
             _ => Vec::new(),
         }
     }
@@ -172,6 +173,69 @@ fn geodetic_type(crs: &GeodeticCRS) -> &'static str {
 
 fn insignificant(name: &str) -> bool {
     name.is_empty() || name.eq_ignore_ascii_case("unknown") || name.eq_ignore_ascii_case("unnamed")
+}
+
+impl VerticalCRS {
+    /// `VerticalCRS::identify`: the CRS of the factory's authority named by one of its
+    /// identifiers, else the vertical CRS of the same name, with the confidence of PROJ.
+    #[must_use]
+    pub fn identify_with(&self, factory: Option<&AuthorityFactory>) -> Vec<(Crs, i32)> {
+        let Some(factory) = factory else {
+            return Vec::new();
+        };
+        let db = factory.database_context();
+        if compatible_authority(self.identifiers(), factory) {
+            for identifier in self.identifiers() {
+                if !(factory.authority().is_empty()
+                    || identifier.code_space() == factory.authority())
+                {
+                    continue;
+                }
+                let looked = AuthorityFactory::create(db, identifier.code_space())
+                    .create_vertical_crs(identifier.code());
+                if let Ok(found) = looked {
+                    let confidence = if vertical_crs_equivalent(self, &found) {
+                        100
+                    } else {
+                        25
+                    };
+                    return vec![(Crs::Vertical(found), confidence)];
+                }
+            }
+            return Vec::new();
+        }
+        let name = self.name();
+        if name.is_empty()
+            || name.eq_ignore_ascii_case("unknown")
+            || name.eq_ignore_ascii_case("unnamed")
+        {
+            return Vec::new();
+        }
+        for mode in [NameMatch::Exact, NameMatch::Approximate] {
+            let Ok(objects) = factory.create_vertical_crs_by_name(name, mode) else {
+                return Vec::new();
+            };
+            let mut hits: Vec<(VerticalCRS, i32)> = Vec::new();
+            for found in objects {
+                if vertical_crs_equivalent(self, &found) {
+                    if found.name() == name {
+                        return vec![(Crs::Vertical(found), 100)];
+                    }
+                    hits.push((found, 90));
+                } else {
+                    hits.push((found, 25));
+                }
+            }
+            if !hits.is_empty() {
+                hits.sort_by_key(|hit| std::cmp::Reverse(hit.1));
+                return hits
+                    .into_iter()
+                    .map(|(crs, c)| (Crs::Vertical(crs), c))
+                    .collect();
+            }
+        }
+        Vec::new()
+    }
 }
 
 fn compatible_authority(identifiers: &[Identifier], factory: &AuthorityFactory) -> bool {
