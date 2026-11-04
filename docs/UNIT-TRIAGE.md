@@ -5,11 +5,11 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 147 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `core` | 137 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
 | `niche` | 27 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 42 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (147)
+## core (137)
 
 ### test_c_api.cpp (20)
 
@@ -58,7 +58,7 @@ The class comes from the test name alone, so check it when you port a test.
 
 - `operation.normalizeForVisualization`
 
-### test_operationfactory.cpp (115)
+### test_operationfactory.cpp (105)
 
 - `operation.geogCRS_to_geogCRS_context_match_by_name`
 - `operation.geogCRS_to_geogCRS_context_inverse_needed`
@@ -83,22 +83,12 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.geogCRS_different_from_baseCRS_to_projCRS_context_compatible_area`
 - `operation.projCRS_no_id_to_geogCRS_context`
 - `operation.geogCRS_3D_to_projCRS_with_2D_geocentric_translation`
-- `operation.projCRS_to_projCRS_different_baseCRS`
 - `operation.projCRS_to_projCRS_context_grid_offsets`
 - `operation.projCRS_to_projCRS_context_grid_offsets_non_metre_unit_noop`
 - `operation.projCRS_to_geogCRS_concatenated_operation_extent_none`
-- `operation.boundCRS_of_geogCRS_to_geodCRS`
-- `operation.boundCRS_of_geogCRS_to_geodCRS_not_related_to_hub`
-- `operation.createOperation_boundCRS_identified_by_datum`
 - `operation.boundCRS_of_clrk_66_geogCRS_to_nad83_geogCRS`
 - `operation.boundCRS_of_clrk_66_projCRS_to_nad83_geogCRS`
-- `operation.boundCRS_of_projCRS_to_geogCRS`
 - `operation.boundCRS_to_geogCRS_hubCRS_and_targetCRS_same_but_baseCRS_not`
-- `operation.boundCRS_to_boundCRS`
-- `operation.boundCRS_of_projCRS_towgs84_to_boundCRS_of_projCRS_nadgrids`
-- `operation.boundCRS_of_projCRS_towgs84_non_metre_unit_to_geocentric`
-- `operation.boundCRS_to_boundCRS_with_base_geog_crs_different_from_source_of_transf`
-- `operation.boundCRS_with_basecrs_with_extent_to_geogCRS`
 - `operation.ETRS89_3D_to_proj_string_with_geoidgrids_nadgrids`
 - `operation.nadgrids_with_pm`
 - `operation.towgs84_pm_3d`
