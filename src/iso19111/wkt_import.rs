@@ -857,6 +857,13 @@ impl WktParser {
             }
             let mut transformation = self.build_transformation(node)?;
             transformation.point_motion = true;
+            if transformation.target.is_none() {
+                transformation.target = transformation.source.clone();
+            }
+            if let Some((source, target)) = point_motion_epochs(transformation.name()) {
+                transformation.source_epoch = Some(source);
+                transformation.target_epoch = Some(target);
+            }
             return Ok(WktObject::Transformation(transformation));
         }
         if ci_eq(name, "CONCATENATEDOPERATION") {
@@ -3552,6 +3559,14 @@ fn are_more_or_less_equivalent(left: &Crs, right: &Crs) -> bool {
         }
         _ => left.is_equivalent_to_with(right, Equivalence::Equivalent),
     }
+}
+
+/// `PointMotionOperation::create`: the source and target epochs, in years, that the name gives
+/// after ` from epoch `.
+fn point_motion_epochs(name: &str) -> Option<(f64, f64)> {
+    let (_, rest) = name.split_once(" from epoch ")?;
+    let (source, target) = rest.split_once(" to epoch ")?;
+    Some((source.trim().parse().ok()?, target.trim().parse().ok()?))
 }
 
 /// `extractDerivedCRS`: the projected CRS itself, or the one a compound CRS starts with.

@@ -329,17 +329,21 @@ impl Transformation {
         if self.has_translation_inverse() {
             // PROJ writes the inverse of these methods with negated values, not `+inv`.
             inverse.negate_values();
-        } else {
+        } else if !self.point_motion {
             inverse.inverted = !self.inverted;
         }
-        inverse.identified.name = super::geodetic_ops::inverse_operation_name(
-            self.name(),
-            self.source_crs(),
-            self.target_crs(),
-            super::geodetic_ops::NamedOperationKind::Transformation,
-        );
         std::mem::swap(&mut inverse.source, &mut inverse.target);
         std::mem::swap(&mut inverse.source_epoch, &mut inverse.target_epoch);
+        inverse.identified.name = if self.point_motion {
+            point_motion_name(self.name(), inverse.source_epoch, inverse.target_epoch)
+        } else {
+            super::geodetic_ops::inverse_operation_name(
+                self.name(),
+                self.source_crs(),
+                self.target_crs(),
+                super::geodetic_ops::NamedOperationKind::Transformation,
+            )
+        };
         for identifier in &mut inverse.identified.identifiers {
             identifier.code_space = inverse_code_space(&identifier.code_space);
         }
@@ -2936,4 +2940,19 @@ fn adams_measure<'a>(conversion: &'a Conversion, name: &str) -> Option<&'a Measu
             _ => None,
         }
     })
+}
+
+/// `PointMotionOperation::inverse`: the name with the epochs of the inverse, in years.
+fn point_motion_name(name: &str, source: Option<f64>, target: Option<f64>) -> String {
+    let (Some(source), Some(target)) = (source, target) else {
+        return name.to_owned();
+    };
+    let base = name
+        .split_once(" from epoch ")
+        .map_or(name, |(base, _)| base);
+    format!(
+        "{base} from epoch {} to epoch {}",
+        super::json::rounded_epoch_in_decimal_year(source),
+        super::json::rounded_epoch_in_decimal_year(target)
+    )
 }

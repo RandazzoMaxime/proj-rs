@@ -73,6 +73,7 @@ const METHOD_GEOGRAPHIC3D_TO_GEOG2D_GRAVITY_HEIGHT: i32 = 1131;
 const PARAMETER_GEOID_HEIGHT: i32 = 8604;
 const METHOD_NTV1: i32 = 9614;
 const METHOD_NTV2: i32 = 9615;
+const METHOD_POINT_MOTION_CANADA_NTV2_VEL: i32 = 1070;
 const METHOD_VERTCON: i32 = 9658;
 const METHOD_NRCAN_BYN: i32 = 1112;
 const METHOD_NRCAN_GEOID_DIFFERENCE: i32 = 1126;
@@ -140,10 +141,7 @@ impl Transformation {
         formatter: &mut PipelineFormatter,
     ) -> Result<(), FactoryError> {
         if self.point_motion {
-            return Err(FactoryError::Format(format!(
-                "Unimplemented {}",
-                self.name()
-            )));
+            return point_motion_velocity_grid(self, formatter);
         }
         if self.inverted {
             formatter.start_inversion();
@@ -886,6 +884,62 @@ fn geographic3d_velocity_grid(
         formatter.add_flag("v_3");
     }
     angular_unit_and_axis_swap(target_axes, formatter)
+}
+
+/// `PointMotionOperation::_exportToPROJString` for `Point motion by grid (Canada NTv2_Vel)`
+/// (1070), a geographic source: the source CRS in radians, a `set` to the source epoch that
+/// omits the forward direction, a `deformation` step over the time between the two epochs, a
+/// `set` to the target epoch that omits the inverse direction, then the source CRS back.
+fn point_motion_velocity_grid(
+    operation: &Transformation,
+    formatter: &mut PipelineFormatter,
+) -> Result<(), FactoryError> {
+    if epsg_method_code(operation) != METHOD_POINT_MOTION_CANADA_NTV2_VEL {
+        return Err(FactoryError::Format(format!(
+            "Unimplemented {}",
+            operation.name()
+        )));
+    }
+    let (Some(source_epoch), Some(target_epoch)) = (
+        operation.source_epoch.map(rounded_epoch_in_decimal_year),
+        operation.target_epoch.map(rounded_epoch_in_decimal_year),
+    ) else {
+        return Err(FactoryError::Format(
+            "CoordinateOperationNNPtr::_exportToPROJString() unimplemented when source coordinate epoch is missing"
+                .to_owned(),
+        ));
+    };
+    let source = operation
+        .source_crs()
+        .and_then(geographic_of)
+        .ok_or_else(|| {
+            FactoryError::Format(
+                "Can apply PointMotionOperation VelocityGrid only to GeodeticCRS".to_owned(),
+            )
+        })?;
+    let grid = formatter.grid_name(&velocity_grid_file(operation)?);
+    let axes = source.coordinate_system().axes();
+
+    formatter.start_inversion();
+    angular_unit_and_axis_swap(axes, formatter)?;
+    formatter.stop_inversion();
+    formatter.add_step("cart");
+    ellipsoid_steps(ellipsoid_of(source), formatter);
+    formatter.add_step("set");
+    formatter.add_number("v_4", source_epoch);
+    formatter.add_flag("omit_fwd");
+    formatter.add_step("deformation");
+    formatter.add_number("dt", target_epoch - source_epoch);
+    formatter.add_param("grids", &grid);
+    ellipsoid_steps(ellipsoid_of(source), formatter);
+    formatter.add_step("set");
+    formatter.add_number("v_4", target_epoch);
+    formatter.add_flag("omit_inv");
+    formatter.start_inversion();
+    formatter.add_step("cart");
+    ellipsoid_steps(ellipsoid_of(source), formatter);
+    formatter.stop_inversion();
+    angular_unit_and_axis_swap(axes, formatter)
 }
 
 /// `Vertical offset using NEU velocity grid (NTv2_Vel)` (1113): the horizontal position is
