@@ -1366,6 +1366,20 @@ fn geodetic_class(crs: &GeodeticCRS) -> u16 {
     }
 }
 
+impl NamedAuthorityObject for ProjectedCRS {
+    fn name(&self) -> &str {
+        ProjectedCRS::name(self)
+    }
+
+    fn identifiers(&self) -> &[Identifier] {
+        ProjectedCRS::identifiers(self)
+    }
+
+    fn class(&self) -> u16 {
+        13
+    }
+}
+
 impl NamedAuthorityObject for VerticalCRS {
     fn name(&self) -> &str {
         VerticalCRS::name(self)
@@ -2577,6 +2591,16 @@ impl AuthorityFactory {
     /// # Errors
     ///
     /// The database rejects the statement.
+    pub(crate) fn create_projected_crs_by_name(
+        &self,
+        name: &str,
+        mode: NameMatch,
+    ) -> Result<Vec<ProjectedCRS>, FactoryError> {
+        self.objects_from_name(name, &["projected_crs"], mode, 0, |factory, row| {
+            factory.create_projected_crs(&row.code)
+        })
+    }
+
     pub(crate) fn create_vertical_crs_by_name(
         &self,
         name: &str,

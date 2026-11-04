@@ -56,7 +56,6 @@ and `PORT-NOTES-tests.md`.
 
 - `wkt_parse.DerivedGeographicCRS_GDAL_PROJ4_EXSTENSION_hack`
 - `wkt_parse.wkt1_oracle`
-- `wkt_parse.wkt1_oracle_albers_conical_equal_area`
 - `io.projparse_init`
 - `io.createFromUserInput`
 

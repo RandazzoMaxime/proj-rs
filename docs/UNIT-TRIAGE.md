@@ -5,11 +5,11 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 159 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `core` | 158 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
 | `niche` | 32 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 49 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (159)
+## core (158)
 
 ### test_c_api.cpp (23)
 
@@ -53,10 +53,9 @@ The class comes from the test name alone, so check it when you port a test.
 
 - `factory.AuthorityFactory_createDynamicVerticalDatum`
 
-### test_io.cpp (4)
+### test_io.cpp (3)
 
 - `wkt_parse.wkt1_oracle`
-- `wkt_parse.wkt1_oracle_albers_conical_equal_area`
 - `io.projparse_init`
 - `io.createFromUserInput`
 
