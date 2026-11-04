@@ -57,10 +57,13 @@ pub enum SupersededOperations {
 /// Whether a coordinate-operation search may chain through a named pivot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IntermediateCrsUse {
-    /// Use pivots from [`CoordinateOperationContext::set_intermediate_crs`].
+    /// Use pivots from [`CoordinateOperationContext::set_intermediate_crs`] when no
+    /// registered operation is found directly (`IF_NO_DIRECT_TRANSFORMATION`).
     Allow,
     /// Return only a direct operation or a deriving conversion.
     Never,
+    /// Use the pivots even when a registered operation is found directly (`ALWAYS`).
+    Always,
 }
 
 /// Whether operations with a ballpark transformation are candidates.
@@ -4846,7 +4849,7 @@ pub struct CoordinateOperationContext {
     db: DatabaseContext,
     authority: String,
     intermediates: Vec<(String, String)>,
-    allow_intermediate: bool,
+    intermediate_use: IntermediateCrsUse,
     area_of_interest: Option<ObjectDomain>,
     spatial_criterion: SpatialCriterion,
     crs_extent_use: CrsExtentUse,
@@ -4868,7 +4871,7 @@ impl CoordinateOperationContext {
             db: db.clone(),
             authority: authority.into(),
             intermediates: Vec::new(),
-            allow_intermediate: true,
+            intermediate_use: IntermediateCrsUse::Allow,
             area_of_interest: None,
             spatial_criterion: SpatialCriterion::default(),
             crs_extent_use: CrsExtentUse::default(),
@@ -4908,9 +4911,10 @@ impl CoordinateOperationContext {
         self
     }
 
-    /// When false, only a direct registered operation or a deriving conversion is returned.
+    /// Whether pivots are used: [`IntermediateCrsUse::Never`] returns only a direct registered
+    /// operation or a deriving conversion.
     pub fn set_intermediate_crs_use(&mut self, policy: IntermediateCrsUse) -> &mut Self {
-        self.allow_intermediate = policy == IntermediateCrsUse::Allow;
+        self.intermediate_use = policy;
         self
     }
 
@@ -5215,7 +5219,12 @@ impl CoordinateOperationFactory {
             )
             .operations
             .is_empty();
-            if context.allow_intermediate {
+            let pivots_used = match context.intermediate_use {
+                IntermediateCrsUse::Never => false,
+                IntermediateCrsUse::Allow => direct_empty,
+                IntermediateCrsUse::Always => true,
+            };
+            if pivots_used {
                 for (pivot_auth, pivot_code) in &context.intermediates {
                     let first = operations_between(
                         &context.db,
@@ -5270,7 +5279,19 @@ impl CoordinateOperationFactory {
                 return Ok(derived);
             }
         }
-        if registry && direct_empty && is_geodetic(source) && is_geodetic(target) {
+        // `NEVER` bars the datum pivot between identified CRS. A CRS without identifier
+        // keeps it: PROJ finds its operations through the candidates of its datum, which
+        // this port reads here (not ported: that candidate search).
+        let pivot_barred = context.intermediate_use == IntermediateCrsUse::Never
+            && !source.identifiers().is_empty()
+            && !target.identifiers().is_empty();
+        if registry
+            && direct_empty
+            && !pivot_barred
+            && context.intermediates.is_empty()
+            && is_geodetic(source)
+            && is_geodetic(target)
+        {
             let pivot = datum_pivot_operations(source, target, context);
             let intermediate_needed = direct_unfiltered_empty
                 && (pivot.is_empty() || only_ensemble_null_operations(&pivot));
