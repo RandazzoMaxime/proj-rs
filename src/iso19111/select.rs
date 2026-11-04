@@ -14,10 +14,12 @@
 //! caller keeps its previous path.
 
 use super::factory::{
-    crs_extent, operation_extent, sort_extents, GridAvailabilityUse, GridDescription, GridInfo,
-    SortExtents, SpatialCriterion,
+    operation_extent, sort_extents, GridAvailabilityUse, GridDescription, GridInfo, SortExtents,
+    SpatialCriterion,
 };
-use super::model::{BoundingBox, CoordinateOperation, Crs, ObjectDomain, Parameter, ParameterValue};
+use super::model::{
+    BoundingBox, CoordinateOperation, Crs, ObjectDomain, Parameter, ParameterValue,
+};
 use super::{
     create_from_user_input, CoordinateOperationContext, CoordinateOperationFactory,
     DatabaseContext, FactoryError, ProjLines,
