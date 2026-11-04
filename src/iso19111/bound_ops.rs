@@ -5,6 +5,9 @@
 //! `createOperationsBoundToBound` of the same file: two bound CRS with the same geographic hub
 //! chain the source to its hub and the hub to the target.
 //!
+//! `createOperationsToGeod`: a bound CRS to a geodetic CRS that is not geographic, through a
+//! geographic 3D CRS on the target's datum.
+//!
 //! Not ported: the Clarke 1866 to NAD83 special case, the vertical unit change that
 //! `skipHorizontalTransformation` adds, and the vertical blocks of `createOperationsBoundToBound`
 //! (same vertical datum, same hub for vertical bases).
@@ -13,7 +16,8 @@ use super::bound::extract_geographic;
 use super::equiv::{same_geodetic_datum, Equivalence};
 use super::factory::{geographic_of, CoordinateOperationContext, CoordinateOperationFactory};
 use super::model::{
-    BoundCRS, ConcatenatedOperation, ConcatenatedStep, CoordinateOperation, Crs, Identified,
+    BoundCRS, ConcatenatedOperation, ConcatenatedStep, CoordinateOperation, Crs, EllipsoidalCS,
+    GeodeticCRS, GeographicCRS, Identified, UnitOfMeasure,
 };
 use super::FactoryError;
 
@@ -30,6 +34,9 @@ pub(super) fn bound_candidates(
         }
         (Crs::Bound(bound), _) if geographic_of(target).is_some() => {
             bound_to_geog(factory, source, bound, target, context).map(Some)
+        }
+        (Crs::Bound(_), Crs::Geodetic(geodetic)) => {
+            bound_to_geod(factory, source, geodetic, target, context).map(Some)
         }
         (_, Crs::Bound(_)) if geographic_of(source).is_some() => {
             let forward = factory.create_candidates(target, source, context)?;
@@ -76,6 +83,43 @@ fn bound_to_bound(
         target_bound.source_crs(),
         context,
     )
+}
+
+/// `createOperationsToGeod`: the source to a geographic 3D CRS named and datum-ed as the
+/// target, then that CRS to the target. The first step takes that pair (`setCRSs`), so a
+/// Helmert step whose target is 3D writes no `push v_3`/`pop v_3`.
+///
+/// The C++ intermediate also has the WORLD domain of validity. It is not set here: with it,
+/// the datum pivot of this port drops the Helmert to ETRS89 (an area of Europe), and the
+/// chain changes.
+fn bound_to_geod(
+    factory: &CoordinateOperationFactory,
+    source: &Crs,
+    geodetic: &GeodeticCRS,
+    target: &Crs,
+    context: &CoordinateOperationContext,
+) -> Result<Vec<CoordinateOperation>, FactoryError> {
+    let intermediate = Crs::Geographic(GeographicCRS::create(
+        geodetic.name(),
+        geodetic.datum().cloned(),
+        geodetic.datum_ensemble().cloned(),
+        EllipsoidalCS::create_latitude_longitude_height(
+            UnitOfMeasure::degree(),
+            UnitOfMeasure::metre(),
+        ),
+    )?);
+    let firsts = factory.create_candidates(source, &intermediate, context)?;
+    let lasts = factory.create_candidates(&intermediate, target, context)?;
+    let Some(last) = lasts.first() else {
+        return Ok(Vec::new());
+    };
+    Ok(firsts
+        .into_iter()
+        .map(|mut first| {
+            set_endpoints(&mut first, source, &intermediate);
+            concatenate(vec![first, last.clone()])
+        })
+        .collect())
 }
 
 fn bound_to_geog(
@@ -243,6 +287,23 @@ fn crs_equivalent(left: &Crs, right: &Crs) -> bool {
         (Some(left), Some(right)) => left.is_equivalent_to_with(right, Equivalence::Equivalent),
         _ => left.is_equivalent_to(right),
     }
+}
+
+/// `CoordinateOperation::setCRSs`: the source and target the operation stores.
+fn set_endpoints(operation: &mut CoordinateOperation, source: &Crs, target: &Crs) {
+    let (stored_source, stored_target) = match operation {
+        CoordinateOperation::Conversion(conversion) => {
+            (&mut conversion.source, &mut conversion.target)
+        }
+        CoordinateOperation::Transformation(transformation) => {
+            (&mut transformation.source, &mut transformation.target)
+        }
+        CoordinateOperation::Concatenated(concatenated) => {
+            (&mut concatenated.source, &mut concatenated.target)
+        }
+    };
+    *stored_source = Some(Box::new(source.clone()));
+    *stored_target = Some(Box::new(target.clone()));
 }
 
 /// `ConcatenatedOperation::createComputeMetadata`: the steps, named by joining theirs.
