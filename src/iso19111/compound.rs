@@ -207,7 +207,14 @@ fn compound_vertical_pass(
             continue;
         };
         let interpolation = &Crs::Geographic(interpolation_geog);
-        let interpolation_3d = interpolation.promote_to_3d(Some(db));
+        // The height axis of the 3D interpolation CRS is the one of the target, so that the
+        // vertical operation alone converts the vertical unit.
+        let interpolation_3d = match (&interpolation, geog_dst.coordinate_system().axes().get(2)) {
+            (Crs::Geographic(geographic), Some(axis)) => {
+                Crs::Geographic(promote_with_axis(geographic, Some(axis.clone())))
+            }
+            _ => interpolation.promote_to_3d(Some(db)),
+        };
         let src_to_interp = factory.create_candidates(horizontal, interpolation, &inherited)?;
         let interp_to_target = factory.create_candidates(&interpolation_3d, target, &inherited)?;
         for first in &src_to_interp {
@@ -1129,6 +1136,166 @@ pub(super) fn geoid_vertical(
         .collect())
 }
 
+/// `createOperationsFromDatabaseWithVertCRS` for a geographic CRS and a vertical CRS that no
+/// registered operation links directly: through a vertical CRS of the same datum
+/// (`createOperationsGeogToVertWithIntermediateVert`), then through the registered operations to
+/// the vertical CRS from any geographic CRS (`createOperationsGeogToVertWithAlternativeGeog`).
+pub(super) fn vertical_geog_fallback(
+    factory: &CoordinateOperationFactory,
+    source: &Crs,
+    target: &Crs,
+    context: &CoordinateOperationContext,
+) -> Result<Vec<CoordinateOperation>, FactoryError> {
+    let (geog, vertical, from_vertical) = match (source, target) {
+        (Crs::Vertical(_), other) if geographic_of(other).is_some() => (other, source, true),
+        (other, Crs::Vertical(_)) if geographic_of(other).is_some() => (other, target, false),
+        _ => return Ok(Vec::new()),
+    };
+    // Only for a geographic CRS the registry does not know by identifier, or a vertical CRS in
+    // another unit than the metre: an identified pair keeps the registered operations the caller
+    // reads.
+    let non_metre_vertical = matches!(
+        vertical,
+        Crs::Vertical(vertical_crs) if vertical_crs.coordinate_system().axis().unit().conversion_to_si() != 1.0
+    );
+    if !geog.identifiers().is_empty() && !non_metre_vertical {
+        return Ok(Vec::new());
+    }
+    let mut res = Vec::new();
+    if !context.in_vertical_intermediate {
+        res = geog_to_vertical_intermediate(factory, geog, vertical, context)?;
+    }
+    if res.is_empty() && !context.in_alternative_geog {
+        res = geog_to_vertical_alternative(factory, geog, vertical, context)?;
+    }
+    if from_vertical {
+        res = res.iter().map(CoordinateOperation::inverse).collect();
+    }
+    Ok(res)
+}
+
+/// `hasIdentifiers`: the operation or one of its steps has an identifier.
+fn has_identifiers(operation: &CoordinateOperation) -> bool {
+    if !operation.identifiers().is_empty() {
+        return true;
+    }
+    match operation {
+        CoordinateOperation::Concatenated(concatenated) => concatenated
+            .steps()
+            .iter()
+            .any(|step| has_identifiers(step.operation())),
+        _ => false,
+    }
+}
+
+fn geog_to_vertical_intermediate(
+    factory: &CoordinateOperationFactory,
+    geog: &Crs,
+    vertical: &Crs,
+    context: &CoordinateOperationContext,
+) -> Result<Vec<CoordinateOperation>, FactoryError> {
+    let Crs::Vertical(vertical_crs) = vertical else {
+        return Ok(Vec::new());
+    };
+    let Some(datum) = vertical_crs
+        .datum()
+        .and_then(|datum| datum.identifiers().first())
+    else {
+        return Ok(Vec::new());
+    };
+    let mut inner = context.clone();
+    inner.in_vertical_intermediate = true;
+    let candidates = context.database().query(
+        "SELECT auth_name, code FROM vertical_crs WHERE datum_auth_name = ? \
+         AND datum_code = ? AND deprecated = 0",
+        &[datum.code_space().to_owned(), datum.code().to_owned()],
+    )?;
+    let mut res = Vec::new();
+    for row in &candidates {
+        let Ok(candidate) =
+            super::factory::AuthorityFactory::create(context.database(), row[0].text())
+                .create_coordinate_reference_system(&row[1].text())
+        else {
+            continue;
+        };
+        let first = factory.create_candidates(geog, &candidate, &inner)?;
+        if first.is_empty() {
+            continue;
+        }
+        let second = factory.create_candidates(&candidate, vertical, &inner)?;
+        let Some(second) = second.first() else {
+            continue;
+        };
+        for op_first in &first {
+            if !has_identifiers(op_first) {
+                continue;
+            }
+            if candidate.is_equivalent_to_with(vertical, Equivalence::Equivalent) {
+                res.push(op_first.clone());
+            } else if let Some(operation) =
+                compute_metadata(vec![op_first.clone(), second.clone()], context)
+            {
+                res.push(operation);
+            }
+        }
+        if !res.is_empty() {
+            break;
+        }
+    }
+    Ok(res)
+}
+
+fn geog_to_vertical_alternative(
+    factory: &CoordinateOperationFactory,
+    geog: &Crs,
+    vertical: &Crs,
+    context: &CoordinateOperationContext,
+) -> Result<Vec<CoordinateOperation>, FactoryError> {
+    let Some(id) = vertical.identifiers().first() else {
+        return Ok(Vec::new());
+    };
+    let Some(geographic) = geographic_of(geog) else {
+        return Ok(Vec::new());
+    };
+    let mut inner = context.clone();
+    inner.in_alternative_geog = true;
+    let rows = context.database().query(
+        "SELECT auth_name, code FROM coordinate_operation_view WHERE target_crs_auth_name = ? \
+         AND target_crs_code = ? AND deprecated = 0",
+        &[id.code_space().to_owned(), id.code().to_owned()],
+    )?;
+    let axes = geographic.coordinate_system().axes();
+    let mut res = Vec::new();
+    for row in &rows {
+        let operation =
+            super::factory::registered_operation(context, &row[0].text(), &row[1].text())?;
+        let Some(op_source) = operation.source_crs() else {
+            continue;
+        };
+        if geographic_of(op_source).is_none() {
+            continue;
+        }
+        if axes.len() == 3 && axes[2].unit().conversion_to_si() != 1.0 {
+            let with_z = Crs::Geographic(promote_with_axis(
+                &geographic_of(op_source)
+                    .cloned()
+                    .unwrap_or_else(|| geographic.clone()),
+                Some(axes[2].clone()),
+            ));
+            let unit_change = factory.create_candidates(&with_z, op_source, &inner)?;
+            let Some(unit_change) = unit_change.into_iter().next() else {
+                continue;
+            };
+            if let Some(operation) = compute_metadata(vec![unit_change, operation], context) {
+                res.push(operation);
+            }
+        } else {
+            res.push(operation);
+        }
+    }
+    Ok(res)
+}
+
 /// `getProjGeoidTransformation` for a model named `PROJ <grid>`: the gravity-related height
 /// transformation from the vertical CRS to the geographic CRS on that grid. Among the
 /// operations on the grid, those whose target has the datum of the vertical CRS are kept
@@ -1667,7 +1834,7 @@ fn proj_based_horiz_vertical_horiz(
             .join(" + ")
     };
     let accuracy = accuracy_sum(&steps.iter().collect::<Vec<_>>());
-    proj_based_operation(
+    let mut operation = proj_based_operation(
         name,
         source,
         target,
@@ -1681,7 +1848,12 @@ fn proj_based_horiz_vertical_horiz(
             interpolation: interpolation.clone(),
             inverted: false,
         },
-    )
+    );
+    // A name joined from the steps is rebuilt from the inverted steps by the inverse.
+    if let CoordinateOperation::Concatenated(concatenated) = &mut operation {
+        concatenated.computed_name = !cancels;
+    }
+    operation
 }
 
 /// `createHorizVerticalPROJBased`.
