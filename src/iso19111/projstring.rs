@@ -727,14 +727,21 @@ fn derived_geographic_steps(
         return Ok(None);
     };
     let conversion = derived.deriving_conversion();
-    let Some(pole_rotation) = conversion
+    let pole_rotation = conversion
         .identified
         .extension_proj4
         .clone()
         .or_else(|| conversion.pole_rotation_proj_string())
-        .or_else(|| conversion.export_to_proj_string().ok())
-    else {
-        return Ok(None);
+        .or_else(|| {
+            conversion
+                .method()
+                .name()
+                .starts_with("PROJ ob_tran")
+                .then(|| conversion.export_to_proj_string().ok())
+                .flatten()
+        });
+    let Some(pole_rotation) = pole_rotation else {
+        return Ok(Some(vec![conversion.export_to_proj_string()?]));
     };
     let mut steps = Vec::new();
     if let Some(order) = geographic_axis_order(geographic) {

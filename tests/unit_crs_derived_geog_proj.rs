@@ -71,3 +71,60 @@ fn crs_derived_geographic_crs_to_proj() {
          +proj=axisswap +order=2,1"
     );
 }
+
+/// `TEST(crs, derivedGeographicCRS_with_affine_transform_to_PROJ)`
+#[test]
+fn crs_derived_geographic_crs_with_affine_transform_to_proj() {
+    let wkt = "GEODCRS[\"WGS 84 Translated\",\n\
+        BASEGEODCRS[\"WGS 84\",\n\
+            DATUM[\"World Geodetic System 1984\",\n\
+                ELLIPSOID[\"WGS 84\",6378137,298.257223563,\n\
+                    LENGTHUNIT[\"metre\",1]]],\n\
+            PRIMEM[\"Greenwich\",0]],\n\
+        DERIVINGCONVERSION[\"Translation\",\n\
+            METHOD[\"Affine parametric transformation\",\n\
+                ID[\"EPSG\",9624]],\n\
+            PARAMETER[\"A0\",0.5,\n\
+                ANGLEUNIT[\"degree\",0.0174532925199433],\n\
+                ID[\"EPSG\",8623]],\n\
+            PARAMETER[\"A1\",1,\n\
+                SCALEUNIT[\"coefficient\",1],\n\
+                ID[\"EPSG\",8624]],\n\
+            PARAMETER[\"A2\",0,\n\
+                SCALEUNIT[\"coefficient\",1],\n\
+                ID[\"EPSG\",8625]],\n\
+            PARAMETER[\"B0\",2.5,\n\
+                ANGLEUNIT[\"degree\",0.0174532925199433],\n\
+                ID[\"EPSG\",8639]],\n\
+            PARAMETER[\"B1\",0,\n\
+                SCALEUNIT[\"coefficient\",1],\n\
+                ID[\"EPSG\",8640]],\n\
+            PARAMETER[\"B2\",1,\n\
+                SCALEUNIT[\"coefficient\",1],\n\
+                ID[\"EPSG\",8641]]],\n\
+        CS[ellipsoidal,2],\n\
+            AXIS[\"latitude\",north],\n\
+            AXIS[\"longitude\",east],\n\
+            ANGLEUNIT[\"degree\",0.0174532925199433]]";
+
+    let crs = parse_derived(wkt);
+    let Crs::Derived(derived) = &crs else {
+        panic!("not a derived CRS");
+    };
+    assert!(derived
+        .deriving_conversion()
+        .validate_parameters()
+        .is_empty());
+
+    let db = DatabaseContext::create().expect("proj.db");
+    let base = derived.base_crs().clone();
+    let op = CoordinateOperationFactory::create()
+        .create_operation(&base, &crs)
+        .expect("operation")
+        .expect("some operation");
+    assert_eq!(
+        op.export_to_proj_string_with_database(&db, ProjLines::Single)
+            .expect("proj string"),
+        "+proj=affine +xoff=0.5 +s11=1 +s12=0 +yoff=2.5 +s21=0 +s22=1"
+    );
+}
