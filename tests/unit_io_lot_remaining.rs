@@ -5,8 +5,8 @@
 //! PROJ's, byte for byte, and each test compares the export with the input.
 
 use proj_rs::iso19111::{
-    create_object_from_json, create_object_from_user_input, Crs, DatabaseContext, JsonFormat,
-    JsonObject, UserObject,
+    create_from_user_input, create_object_from_json, create_object_from_user_input,
+    CoordinateSystem, Crs, DatabaseContext, JsonFormat, JsonObject, UserObject,
 };
 
 fn export_foo(object: &JsonObject) -> String {
@@ -220,4 +220,42 @@ fn json_import_multiple_ids() {
     let object = create_object_from_json(json, None).expect("PROJJSON");
     assert!(matches!(object, JsonObject::Ellipsoid(_)));
     assert_eq!(export_foo(&object), json);
+}
+
+/// `TEST(json_export, coordinate_system_id)`
+#[test]
+fn json_export_coordinate_system_id() {
+    let json = r#"{
+  "$schema": "foo",
+  "type": "CoordinateSystem",
+  "subtype": "ellipsoidal",
+  "axis": [
+    {
+      "name": "Geodetic latitude",
+      "abbreviation": "Lat",
+      "direction": "north",
+      "unit": "degree"
+    },
+    {
+      "name": "Geodetic longitude",
+      "abbreviation": "Lon",
+      "direction": "east",
+      "unit": "degree"
+    }
+  ],
+  "id": {
+    "authority": "EPSG",
+    "code": 6422
+  }
+}"#;
+    let db = DatabaseContext::create().expect("proj.db");
+    let Crs::Geographic(crs) = create_from_user_input("EPSG:4326", &db).expect("EPSG:4326") else {
+        panic!("EPSG:4326 is a geographic CRS");
+    };
+    let system = CoordinateSystem::Ellipsoidal(crs.coordinate_system().clone());
+    let format = JsonFormat::default().with_schema("foo");
+    assert_eq!(
+        system.export_to_json_with(&db, &format).expect("export"),
+        json
+    );
 }

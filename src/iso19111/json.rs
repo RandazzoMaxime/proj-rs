@@ -365,6 +365,35 @@ impl Crs {
     }
 }
 
+impl CoordinateSystem {
+    /// PROJJSON for this coordinate system in `format`, as `CoordinateSystem::exportToJSON`
+    /// writes it: its subtype, its axes, and its `id` when it has one.
+    ///
+    /// # Errors
+    ///
+    /// The export fails when a part of the system has no PROJJSON export in this build.
+    pub fn export_to_json_with(
+        &self,
+        db: &DatabaseContext,
+        format: &JsonFormat,
+    ) -> Result<String, FactoryError> {
+        export_wrapped(format, |writer| {
+            writer.key("type");
+            writer.string("CoordinateSystem");
+            writer.key("subtype");
+            writer.string(self.wkt2_type());
+            writer.key("axis");
+            writer.start_array();
+            for axis in self.axes() {
+                write_axis(writer, axis, Chain::Clear);
+            }
+            writer.end_array();
+            write_id(writer, self.identifiers(), db);
+            Ok(())
+        })
+    }
+}
+
 impl CoordinateOperation {
     /// PROJJSON for this operation in `format`: a `Conversion`, a `Transformation`, or a
     /// `ConcatenatedOperation`, as `proj_as_projjson` writes it.
