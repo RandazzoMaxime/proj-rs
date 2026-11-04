@@ -11,7 +11,6 @@ and `PORT-NOTES-tests.md`.
 - `crs.projectedCRS_identify_db`
 - `crs.projectedCRS_identify_wrong_auth_name_case`
 - `crs.scope_area_bbox_remark`
-- `crs.verticalCRS_identify_db`
 - `crs.VerticalCRS_ensemble_exception_in_create`
 - `datum.vdatum_with_anchor`
 - `crs.compoundCRS_identify_db`
