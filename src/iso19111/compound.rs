@@ -81,6 +81,23 @@ pub(super) fn compound_to_geog3d(
         return bound_compound_to_geog3d(factory, source, target, context);
     }
 
+    if let Some(vertical_crs) = vertical_crs {
+        let found = compound_vertical_pass(
+            factory,
+            source,
+            target,
+            horizontal,
+            vertical,
+            vertical_crs,
+            geog_src,
+            geog_dst,
+            context,
+        )?;
+        if !found.is_empty() {
+            return Ok(found);
+        }
+    }
+
     // The horizontal part is searched against the 2D target, as PROJ's geographic-to-geographic
     // search does for a 3D target: the 2D registry operation is then promoted.
     let target_2d = target.demote_to_2d(None);
@@ -117,6 +134,114 @@ pub(super) fn compound_to_geog3d(
         }
     }
     Ok(found)
+}
+
+/// `createOperationsCompoundToGeog`, vertical part: the vertical operations to the target, and
+/// when the geographic CRS of the source is another one, to its own 3D form. Each vertical
+/// operation that names an interpolation CRS is chained with the horizontal operations to and
+/// from that CRS (`createHorizVerticalHorizPROJBased`); the others take the horizontal
+/// operations to the target (`createHorizVerticalPROJBased`) when no operation of the first
+/// kind exists or the vertical one is ballpark.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the parts of one compound search, as PROJ passes them"
+)]
+fn compound_vertical_pass(
+    factory: &CoordinateOperationFactory,
+    source: &Crs,
+    target: &Crs,
+    horizontal: &Crs,
+    vertical: &Crs,
+    vertical_crs: &VerticalCRS,
+    geog_src: &GeographicCRS,
+    geog_dst: &GeographicCRS,
+    context: &CoordinateOperationContext,
+) -> Result<Vec<CoordinateOperation>, FactoryError> {
+    let db = context.database();
+    let ignore_grids = context.grid_availability == GridAvailabilityUse::IgnoreGridAvailability;
+    let target_2d = target.demote_to_2d(None);
+    let inherited = context.with_inherited_extents(source, target);
+    let horizontal_ops = factory.create_operations(horizontal, &target_2d, &inherited)?;
+    let mut vertical_ops = factory.create_candidates(vertical, target, &inherited)?;
+    let has_all_grids = |operations: &[CoordinateOperation]| {
+        operations.iter().any(|operation| {
+            !operation.identifiers().is_empty()
+                && (ignore_grids
+                    || operation
+                        .grids_needed(db, GridAvailabilityUse::KnownAvailable)
+                        .is_ok_and(|grids| grids.iter().all(|grid| grid.info.available)))
+        })
+    };
+    vertical_ops.extend(vertical_ballpark(
+        vertical,
+        vertical_crs,
+        geographic_datum_name(geog_src).as_deref(),
+        geographic_datum_name(geog_dst).as_deref(),
+        geog_dst,
+        target,
+    ));
+    let first_has_grids = has_all_grids(&vertical_ops);
+    let src_geographic = Crs::Geographic(geog_src.clone());
+    if !src_geographic.is_equivalent_to_with(target, Equivalence::Equivalent)
+        && !geog_src.is_2d_part_of_3d(geog_dst)
+    {
+        let interp = src_geographic.promote_to_3d(Some(db));
+        let tmp = factory.create_candidates(vertical, &interp, &inherited)?;
+        let tmp_has_grids = has_all_grids(&tmp);
+        let registered = tmp
+            .iter()
+            .any(|operation| !operation.identifiers().is_empty());
+        if tmp_has_grids && !first_has_grids {
+            vertical_ops = tmp;
+        } else if registered {
+            vertical_ops.extend(tmp);
+        }
+    }
+    if horizontal_ops.is_empty() || vertical_ops.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut res = Vec::new();
+    let mut with_interpolation = false;
+    for vertical_op in &vertical_ops {
+        let Some(interpolation_geog) = interpolation_geographic(vertical_op) else {
+            continue;
+        };
+        let interpolation = &Crs::Geographic(interpolation_geog);
+        let interpolation_3d = interpolation.promote_to_3d(Some(db));
+        let src_to_interp = factory.create_candidates(horizontal, interpolation, &inherited)?;
+        let interp_to_target = factory.create_candidates(&interpolation_3d, target, &inherited)?;
+        for first in &src_to_interp {
+            for last in &interp_to_target {
+                if let Some(operation) = horiz_vertical_horiz_checked(
+                    source,
+                    target,
+                    first,
+                    vertical_op,
+                    last,
+                    interpolation,
+                    context,
+                ) {
+                    res.push(operation);
+                    with_interpolation = true;
+                }
+            }
+        }
+    }
+    if !with_interpolation {
+        // Without a vertical operation through an interpolation CRS, the ballpark and geoid
+        // candidates of the caller are kept.
+        return Ok(Vec::new());
+    }
+    for vertical_op in &vertical_ops {
+        let has_interpolation = interpolation_geographic(vertical_op).is_some();
+        if !has_interpolation && (!with_interpolation || vertical_op.has_ballpark_transformation())
+        {
+            for horizontal_op in &horizontal_ops {
+                res.push(combine(source, target, horizontal_op, vertical_op));
+            }
+        }
+    }
+    Ok(res)
 }
 
 /// The reverse of [`compound_to_geog3d`], for a geographic source and a compound

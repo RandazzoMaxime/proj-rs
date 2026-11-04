@@ -89,7 +89,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.nadgrids_with_pm`
 - `operation.towgs84_pm_3d`
 - `operation.WGS84_G1762_to_compoundCRS_with_bound_vertCRS`
-- `operation.transformation_height_to_PROJ_string`
 - `operation.compoundCRS_with_boundProjCRS_and_boundVerticalCRS_to_geogCRS`
 - `operation.compoundCRS_with_boundProjCRS_with_ftus_and_boundVerticalCRS_to_geogCRS`
 - `operation.compoundCRS_with_boundGeogCRS_and_geoid_to_geodCRS_NAD2011_ctxt`
@@ -130,7 +129,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.compoundCRS_to_geogCRS_3D_WGS84_to_GDA2020_AHD_Height`
 - `operation.compoundCRS_to_geogCRS_2D_promote_to_3D_context`
 - `operation.compoundCRS_of_projCRS_to_geogCRS_3D_context`
-- `operation.compoundCRS_to_geogCRS_3D_KNOWN_AVAILABLE_context`
 - `operation.compoundCRS_from_wkt_without_id_to_geogCRS`
 - `operation.compoundCRS_of_projCRS_from_wkt_without_id_or_extent_to_geogCRS`
 - `operation.compoundCRS_to_geogCRS_with_vertical_unit_change`
@@ -155,8 +153,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.compoundCRS_with_derived_vertical_CRS`
 - `operation.compoundCRS_to_PROJJSON_with_non_metre_height`
 - `operation.createOperation_ossfuzz_18587`
-- `derivedGeographicCRS_with_to_wgs84_to_geographicCRS.src_from_proj`
-- `derivedGeographicCRS_with_to_wgs84_to_geographicCRS.src_from_wkt2`
 - `operation.createOperation_bound_of_spherical_ocentric_to_same_type`
 - `operation.createOperation_spherical_ocentric_spherical_to_ellipsoidal_north_west`
 - `operation.createOperation_ellipsoidal_ographic_west_to_projected_of_ellipsoidal_ographic_west`

@@ -43,7 +43,7 @@ yet**: see [Status at a glance](#status-at-a-glance).
 
 Each square is **one test case of PROJ 9.9.0 itself**. Green: PROJ-RS passes it.
 Grey: still open. In all, <!--gen:all_percent-->97.2<!--/gen-->% of the cases pass
-(<!--gen:all_done-->8243<!--/gen--> of <!--gen:all_total-->8484<!--/gen-->). The left panel is the numeric suite (`gie`), complete. The right
+(<!--gen:all_done-->8244<!--/gen--> of <!--gen:all_total-->8484<!--/gen-->). The left panel is the numeric suite (`gie`), complete. The right
 panel is what is left: PROJ's C++ unit tests, which cover the ISO 19111 model,
 WKT and the operation factory, and the command-line cases. The chart is drawn
 from the same ledgers as the tables below by `tests/progress_svg.rs`, so it
@@ -92,7 +92,7 @@ PROJ's own, and a case counts only when it passes.
 | Embedded `proj.db` and EPSG resolution | ✅ | Built from the PROJ 9.9.0 SQL, opened in memory with `rusqlite` |
 | ISO 19111 model, WKT and PROJJSON | 🟡 | CRS model, authority factory, CRS identification against `proj.db`, WKT1 and WKT2 import and export, PROJJSON. See [`docs/CRS-API.md`](docs/CRS-API.md) |
 | georust `proj` facade | 🟡 | `Proj`, `ProjBuilder`, `Coord`, `Transform`, `Area`, errors and the `geo-types` feature exist. <!--gen:georust_pass-->25<!--/gen--> of <!--gen:georust_total-->25<!--/gen--> of georust `proj` 0.31's own unit tests pass against it ([`tests/georust_parity.rs`](tests/georust_parity.rs)); the rest are listed there as gaps |
-| Command-line tools | 🟡 | `cct`, `cs2cs`, `proj`, `projinfo` over the library; <!--gen:cli_matched-->223<!--/gen--> of <!--gen:cli_total-->276<!--/gen--> PROJ CLI cases match |
+| Command-line tools | 🟡 | `cct`, `cs2cs`, `proj`, `projinfo` over the library; <!--gen:cli_matched-->220<!--/gen--> of <!--gen:cli_total-->276<!--/gen--> PROJ CLI cases match |
 | SIMD batch path | ✅ | AVX2 on x86-64. Other targets run the scalar loop |
 
 ✅ done and verified &nbsp;·&nbsp; 🟡 working, with known gaps listed below
@@ -173,11 +173,11 @@ The same goes for the CLI cases in [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md
 
 | Suite | Ported and passing | Not yet | |
 |---|---:|---:|:-:|
-| PROJ C++ unit tests | <!--gen:unit_ported-->1164<!--/gen--> | <!--gen:unit_open-->188<!--/gen--> | <!--gen:unit_icon-->🟡<!--/gen--> |
+| PROJ C++ unit tests | <!--gen:unit_ported-->1168<!--/gen--> | <!--gen:unit_open-->184<!--/gen--> | <!--gen:unit_icon-->🟡<!--/gen--> |
 | `cct` CLI cases | <!--gen:cli_cct_ported-->18<!--/gen--> | <!--gen:cli_cct_open-->0<!--/gen--> | <!--gen:cli_cct_icon-->✅<!--/gen--> |
 | `cs2cs` CLI cases | <!--gen:cli_cs2cs_ported-->123<!--/gen--> | <!--gen:cli_cs2cs_open-->20<!--/gen--> | <!--gen:cli_cs2cs_icon-->🟡<!--/gen--> |
 | `proj` CLI cases | <!--gen:cli_proj_ported-->4<!--/gen--> | <!--gen:cli_proj_open-->0<!--/gen--> | <!--gen:cli_proj_icon-->✅<!--/gen--> |
-| `projinfo` CLI cases | <!--gen:cli_projinfo_ported-->78<!--/gen--> | <!--gen:cli_projinfo_open-->33<!--/gen--> | <!--gen:cli_projinfo_icon-->🟡<!--/gen--> |
+| `projinfo` CLI cases | <!--gen:cli_projinfo_ported-->75<!--/gen--> | <!--gen:cli_projinfo_open-->36<!--/gen--> | <!--gen:cli_projinfo_icon-->🟡<!--/gen--> |
 
 ✅ complete &nbsp;·&nbsp; 🟡 partial &nbsp;·&nbsp; 🔴 mostly open
 
@@ -193,7 +193,7 @@ The same goes for the CLI cases in [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md
 | `test_factory.cpp` | <!--gen:test_factory_ported-->87<!--/gen--> | <!--gen:test_factory_open-->26<!--/gen--> |
 | `test_io.cpp` | <!--gen:test_io_ported-->452<!--/gen--> | <!--gen:test_io_open-->2<!--/gen--> |
 | `test_operation.cpp` | <!--gen:test_operation_ported-->161<!--/gen--> | <!--gen:test_operation_open-->1<!--/gen--> |
-| `test_operationfactory.cpp` | <!--gen:test_operationfactory_ported-->159<!--/gen--> | <!--gen:test_operationfactory_open-->115<!--/gen--> |
+| `test_operationfactory.cpp` | <!--gen:test_operationfactory_ported-->163<!--/gen--> | <!--gen:test_operationfactory_open-->111<!--/gen--> |
 | Other unit files ([`tests/proj_unit.rs`](tests/proj_unit.rs)) | 33 | n/a |
 
 The unit tests are the biggest remaining piece: they cover the ISO 19111 model,

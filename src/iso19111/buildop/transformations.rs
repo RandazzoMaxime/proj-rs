@@ -11,8 +11,8 @@ use std::f64::consts::PI;
 
 use super::OpProps;
 use crate::iso19111::model::{
-    Crs, FactoryError, GeodeticCRS, GeographicCRS, Measure, ObjectDomain, ParameterValue,
-    Transformation, UnitKind, UnitOfMeasure,
+    Crs, FactoryError, GeodeticCRS, GeographicCRS, Identified, Measure, ObjectDomain,
+    OperationMethod, Parameter, ParameterValue, Transformation, UnitKind, UnitOfMeasure,
 };
 
 /// Seconds in a year, the factor of the `year` unit.
@@ -493,6 +493,42 @@ impl Transformation {
             vec![ParameterValue::filename(filename)],
             accuracy,
         )
+    }
+
+    /// `GravityRelatedHeight to Geographic3D`: a vertical CRS to a geographic 3D CRS through
+    /// a geoid model file. The name is the one of PROJ when `props` has none.
+    #[must_use]
+    pub fn create_gravity_related_height_to_geographic_3d(
+        props: &OpProps,
+        source: Crs,
+        target: Crs,
+        filename: &str,
+        accuracy: Option<f64>,
+    ) -> Self {
+        let name = props
+            .name
+            .clone()
+            .unwrap_or_else(|| transformation_name(source.name(), target.name()));
+        Self {
+            identified: Identified::named(name),
+            method: OperationMethod::create("GravityRelatedHeight to Geographic3D", Vec::new()),
+            parameters: vec![Parameter {
+                name: "Geoid (height correction) model file".to_owned(),
+                code_space: "EPSG".to_owned(),
+                code: "8666".to_owned(),
+                value: ParameterValue::filename(filename),
+            }],
+            source: Some(Box::new(source)),
+            target: Some(Box::new(target)),
+            interpolation: None,
+            accuracy,
+            accuracy_text: None,
+            version: None,
+            point_motion: false,
+            source_epoch: None,
+            target_epoch: None,
+            inverted: false,
+        }
     }
 
     /// VERTCON (EPSG:9658).

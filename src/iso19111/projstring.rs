@@ -727,23 +727,90 @@ fn derived_geographic_steps(
         return Ok(None);
     };
     let conversion = derived.deriving_conversion();
-    let Some(pole_rotation) = conversion
-        .identified
-        .extension_proj4
-        .clone()
-        .or_else(|| conversion.pole_rotation_proj_string())
-    else {
+    let Some(pole_rotation) = pole_text(conversion) else {
         return Ok(None);
     };
     let mut steps = Vec::new();
     if let Some(step) = angular_unit_step(geographic) {
         steps.push(step);
     }
-    let mut pole = pole_rotation;
+    let mut pole = normalize_ob_tran(&pole_rotation);
     append_ellipsoid_and_meridian(&mut pole, geographic, &base);
     steps.push(pole);
     steps.push("+proj=unitconvert +xy_in=rad +xy_out=deg".to_owned());
     Ok(Some(steps))
+}
+
+/// The `ob_tran` step of a derived geographic CRS as `Conversion::_exportToPROJString` writes
+/// it: numbers in their shortest form, `+over` right after `+o_proj`, then the base ellipsoid.
+pub(super) fn derived_pole_step(derived: &super::niche::DerivedCRS) -> Option<String> {
+    let Some(GeodeticCRS::Geographic(base)) = derived.geodetic_base() else {
+        return None;
+    };
+    let conversion = derived.deriving_conversion();
+    let pole = pole_text(conversion)?;
+    let mut pole = normalize_ob_tran(&pole);
+    append_ellipsoid_and_meridian(&mut pole, &base, &base);
+    Some(pole)
+}
+
+/// The `ob_tran` text of a derived geographic conversion: the stored PROJ definition, the
+/// pole-rotation methods, or a `PROJ ob_tran o_proj=...` method with its parameters (what a
+/// WKT2 round trip leaves).
+fn pole_text(conversion: &Conversion) -> Option<String> {
+    if let Some(text) = conversion
+        .identified
+        .extension_proj4
+        .clone()
+        .or_else(|| conversion.pole_rotation_proj_string())
+    {
+        return Some(text);
+    }
+    let name = conversion.method().name();
+    let rest = name.strip_prefix("PROJ ob_tran ")?;
+    if !geographic_ob_tran(name) {
+        return None;
+    }
+    let mut text = String::from("+proj=ob_tran");
+    for word in rest.split_whitespace() {
+        text.push_str(&format!(" +{word}"));
+    }
+    for parameter in conversion.parameters() {
+        if let ParameterValue::Measure(measure) = parameter.value() {
+            text.push_str(&format!(" +{}={}", parameter.name(), measure.value()));
+        }
+    }
+    Some(text)
+}
+
+fn normalize_ob_tran(text: &str) -> String {
+    let mut head = Vec::new();
+    let mut over = false;
+    let mut rest = Vec::new();
+    for token in text.split_whitespace() {
+        match token {
+            "+over" => over = true,
+            "+proj=ob_tran" => head.push(token.to_owned()),
+            _ if token.starts_with("+o_proj=") => head.push(token.to_owned()),
+            _ => {
+                let normalized = token
+                    .split_once('=')
+                    .and_then(|(key, value)| {
+                        value
+                            .parse::<f64>()
+                            .ok()
+                            .map(|number| format!("{key}={}", super::pipeline::proj_number(number)))
+                    })
+                    .unwrap_or_else(|| token.to_owned());
+                rest.push(normalized);
+            }
+        }
+    }
+    if over {
+        head.push("+over".to_owned());
+    }
+    head.extend(rest);
+    head.join(" ")
 }
 
 /// A geographic `ob_tran` step: the stored definition, then the base ellipsoid.
