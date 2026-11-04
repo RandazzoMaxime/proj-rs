@@ -14,7 +14,7 @@ fn crs_projected_crs_krovak_epsg_5221_as_proj_string() {
         .expect("5221");
     let base = Crs::Geodetic(projected.base_crs().clone());
     let op = CoordinateOperationFactory::create()
-        .create_operation(&base, &Crs::Projected(projected.clone()))
+        .create_operation(&base, &Crs::Projected(projected))
         .expect("operation")
         .expect("some operation");
     assert_eq!(
@@ -37,7 +37,7 @@ fn crs_projected_crs_krovak_with_approximate_alpha_as_proj_string() {
     };
     let base = Crs::Geodetic(projected.base_crs().clone());
     let op = CoordinateOperationFactory::create()
-        .create_operation(&base, &Crs::Projected(projected.clone()))
+        .create_operation(&base, &Crs::Projected(projected))
         .expect("operation")
         .expect("some operation");
     assert_eq!(

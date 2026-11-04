@@ -630,7 +630,8 @@ pub(crate) fn projection_steps(source: &Crs, target: &Crs) -> Result<Vec<String>
         }
     }
     let mut projection = projected.deriving_conversion().export_to_proj_string()?;
-    append_ellipsoid_and_meridian(&mut projection, geographic, base, true);
+    append_ellipsoid(&mut projection, base);
+    append_meridian(&mut projection, base);
     steps.push(projection);
     if let Some(step) = projected_unit_step(projected) {
         steps.push(step);
@@ -671,15 +672,21 @@ fn append_ellipsoid_and_meridian(
     projection: &mut String,
     source: &GeographicCRS,
     base: &GeographicCRS,
-    keep_same_meridian: bool,
 ) {
+    append_ellipsoid(projection, base);
+    if !same_meridian_angle(source, base) {
+        append_meridian(projection, base);
+    }
+}
+
+fn append_ellipsoid(projection: &mut String, base: &GeographicCRS) {
     if let Some(ellipsoid) = base.ellipsoid() {
         projection.push(' ');
         projection.push_str(&ellipsoid_proj(ellipsoid));
     }
-    if !keep_same_meridian && same_meridian_angle(source, base) {
-        return;
-    }
+}
+
+fn append_meridian(projection: &mut String, base: &GeographicCRS) {
     if let Some(clause) = meridian_of(base).and_then(prime_meridian_proj) {
         projection.push(' ');
         projection.push_str(&clause);
@@ -713,7 +720,7 @@ fn ob_tran_geographic_step(
         return None;
     }
     let mut text = projected.conversion.identified.extension_proj4.clone()?;
-    append_ellipsoid_and_meridian(&mut text, source, base, false);
+    append_ellipsoid_and_meridian(&mut text, source, base);
     Some(text)
 }
 
