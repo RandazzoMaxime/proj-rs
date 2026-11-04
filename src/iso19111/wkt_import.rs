@@ -3408,6 +3408,8 @@ impl WktParser {
             accuracy: None,
             version: props.version,
             computed_name: false,
+            source_epoch: None,
+            target_epoch: None,
             proj_based: None,
         })
     }

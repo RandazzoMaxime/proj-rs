@@ -102,6 +102,8 @@ fn concatenated_of(
         // Only selects how the accuracy text is spelled, see `accuracy_text`.
         computed_name,
         proj_based: None,
+        source_epoch: None,
+        target_epoch: None,
     }
 }
 

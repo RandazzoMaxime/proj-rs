@@ -587,6 +587,8 @@ impl ConcatenatedOperation {
             version: None,
             computed_name,
             proj_based: None,
+            source_epoch: None,
+            target_epoch: None,
         })
     }
 
@@ -627,6 +629,7 @@ impl ConcatenatedOperation {
             proj_based.inverted = !proj_based.inverted;
         }
         std::mem::swap(&mut inverse.source, &mut inverse.target);
+        std::mem::swap(&mut inverse.source_epoch, &mut inverse.target_epoch);
         for identifier in &mut inverse.identified.identifiers {
             identifier.code_space = inverse_code_space(&identifier.code_space);
         }

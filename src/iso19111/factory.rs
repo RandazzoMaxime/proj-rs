@@ -4448,6 +4448,8 @@ impl AuthorityFactory {
             accuracy,
             version: optional_text(&row[7].text()),
             computed_name: false,
+            source_epoch: None,
+            target_epoch: None,
             proj_based: None,
         })
     }
@@ -5170,6 +5172,8 @@ impl CoordinateOperationFactory {
                             accuracy: None,
                             version: None,
                             computed_name: true,
+                            source_epoch: None,
+                            target_epoch: None,
                             proj_based: None,
                         }));
                     }
@@ -5317,6 +5321,11 @@ fn with_epochs(
             transformation.source_epoch = source_epoch;
             transformation.target_epoch = target_epoch;
             CoordinateOperation::Transformation(transformation)
+        }
+        CoordinateOperation::Concatenated(mut concatenated) => {
+            concatenated.source_epoch = source_epoch;
+            concatenated.target_epoch = target_epoch;
+            CoordinateOperation::Concatenated(concatenated)
         }
         other => other,
     }
@@ -6424,6 +6433,8 @@ pub(super) fn pivot_concatenation(steps: Vec<CoordinateOperation>) -> Concatenat
         accuracy,
         version: None,
         computed_name: true,
+        source_epoch: None,
+        target_epoch: None,
         proj_based: None,
     }
 }
@@ -7284,15 +7295,41 @@ fn point_motion_between_epochs(
         let same_crs = transformation
             .source_crs()
             .is_some_and(|crs| crs.is_equivalent_to_with(source, Equivalence::Equivalent));
+        transformation.point_motion = true;
+        transformation.source_epoch = Some(source_epoch);
+        transformation.target_epoch = Some(target_epoch);
+        let operation = CoordinateOperation::Transformation(transformation);
         if same_crs {
-            transformation.point_motion = true;
-            transformation.source_epoch = Some(source_epoch);
-            transformation.target_epoch = Some(target_epoch);
-            operations.push(CoordinateOperation::Transformation(transformation));
+            operations.push(operation);
+        } else {
+            operations.push(CoordinateOperation::Concatenated(
+                point_motion_concatenation(operation, source),
+            ));
         }
     }
     if !operations.is_empty() {
         operations.extend(forced_ballpark_operations(source, target));
     }
     Ok(operations)
+}
+
+/// A concatenated operation with one step, between the CRS of the source; the operation of a
+/// point motion whose CRS is the 3D form of the source, PROJ's `createComputeMetadata` with the
+/// conversions between the two forms left out.
+fn point_motion_concatenation(step: CoordinateOperation, source: &Crs) -> ConcatenatedOperation {
+    ConcatenatedOperation {
+        identified: Identified::named(step.name()),
+        steps: vec![ConcatenatedStep {
+            operation: step,
+            reverse: false,
+        }],
+        source: Some(Box::new(source.clone())),
+        target: Some(Box::new(source.clone())),
+        accuracy: None,
+        version: None,
+        computed_name: true,
+        proj_based: None,
+        source_epoch: None,
+        target_epoch: None,
+    }
 }

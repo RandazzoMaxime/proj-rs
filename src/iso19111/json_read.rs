@@ -864,6 +864,8 @@ impl Reader<'_> {
             accuracy,
             version: None,
             computed_name: false,
+            source_epoch: None,
+            target_epoch: None,
             proj_based: None,
         })
     }

@@ -225,6 +225,10 @@ impl ConcatenatedOperation {
             }
             return Ok(());
         }
+        let (source_year, target_year) = concatenated_epoch_years(self);
+        if let Some(year) = source_year {
+            add_epoch_step(year, formatter);
+        }
         for step in &self.steps {
             if step.reverse {
                 formatter.start_inversion();
@@ -244,7 +248,24 @@ impl ConcatenatedOperation {
                 formatter.stop_inversion();
             }
         }
+        if let Some(year) = target_year {
+            add_epoch_step(year, formatter);
+        }
         Ok(())
+    }
+}
+
+/// `ConcatenatedOperation::_exportToPROJString`: the source and target years of the epochs,
+/// rounded, a missing side taking the other one. A year of zero or less writes no step.
+fn concatenated_epoch_years(operation: &ConcatenatedOperation) -> (Option<f64>, Option<f64>) {
+    let round = |epoch: Option<f64>| {
+        epoch
+            .map(rounded_epoch_in_decimal_year)
+            .filter(|year| *year > 0.0)
+    };
+    match (round(operation.source_epoch), round(operation.target_epoch)) {
+        (Some(year), None) | (None, Some(year)) => (Some(year), Some(year)),
+        other => other,
     }
 }
 
