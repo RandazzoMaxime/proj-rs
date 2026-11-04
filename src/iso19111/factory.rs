@@ -4974,7 +4974,13 @@ impl CoordinateOperationFactory {
                 (target_id.code_space(), target_id.code()),
                 boxes,
             )?);
-            direct_empty = found.is_empty();
+            direct_empty = filter_and_sort(
+                found.clone(),
+                context,
+                &sort_extents(context, source, target),
+            )
+            .operations
+            .is_empty();
             if context.allow_intermediate {
                 for (pivot_auth, pivot_code) in &context.intermediates {
                     let first = operations_between(
@@ -5648,6 +5654,10 @@ fn datum_pivot_operations(
         );
         let second =
             direct_registry_operations(context, identity_of(left), identity_of(right), boxes)
+                .map(|operations| {
+                    filter_and_sort(operations, context, &sort_extents(context, source, target))
+                        .operations
+                })
                 .unwrap_or_default();
         let linked: Vec<CoordinateOperation> = second
             .into_iter()
