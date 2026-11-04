@@ -2,8 +2,12 @@
 //! geographic CRS, chaining the base CRS, the binding transformation, and the hub to the target.
 //! A geographic source and a bound target is its inverse (`applyInverse`).
 //!
-//! Not ported: the Clarke 1866 to NAD83 special case, and the vertical unit change that
-//! `skipHorizontalTransformation` adds.
+//! `createOperationsBoundToBound` of the same file: two bound CRS with the same geographic hub
+//! chain the source to its hub and the hub to the target.
+//!
+//! Not ported: the Clarke 1866 to NAD83 special case, the vertical unit change that
+//! `skipHorizontalTransformation` adds, and the vertical blocks of `createOperationsBoundToBound`
+//! (same vertical datum, same hub for vertical bases).
 
 use super::bound::extract_geographic;
 use super::equiv::{same_geodetic_datum, Equivalence};
@@ -13,8 +17,7 @@ use super::model::{
 };
 use super::FactoryError;
 
-/// Candidates for a pair where one side is a bound CRS and the other a geographic CRS.
-/// `None` for any other pair.
+/// Candidates for a pair where one side is a bound CRS. `None` for any other pair.
 pub(super) fn bound_candidates(
     factory: &CoordinateOperationFactory,
     source: &Crs,
@@ -22,6 +25,9 @@ pub(super) fn bound_candidates(
     context: &CoordinateOperationContext,
 ) -> Result<Option<Vec<CoordinateOperation>>, FactoryError> {
     match (source, target) {
+        (Crs::Bound(bound), Crs::Bound(target_bound)) => {
+            bound_to_bound(factory, source, bound, target, target_bound, context).map(Some)
+        }
         (Crs::Bound(bound), _) if geographic_of(target).is_some() => {
             bound_to_geog(factory, source, bound, target, context).map(Some)
         }
@@ -33,6 +39,43 @@ pub(super) fn bound_candidates(
         }
         _ => Ok(None),
     }
+}
+
+/// `createOperationsBoundToBound`, without its vertical blocks: when both hubs are the same
+/// geographic CRS, the source to its hub, then the hub to the target. Otherwise the base
+/// CRS of the source to the base CRS of the target.
+fn bound_to_bound(
+    factory: &CoordinateOperationFactory,
+    source: &Crs,
+    source_bound: &BoundCRS,
+    target: &Crs,
+    target_bound: &BoundCRS,
+    context: &CoordinateOperationContext,
+) -> Result<Vec<CoordinateOperation>, FactoryError> {
+    let hub_src = source_bound.target_crs();
+    let hub_dst = target_bound.target_crs();
+    if let (Some(hub_src_geog), Some(hub_dst_geog)) =
+        (geographic_of(hub_src), geographic_of(hub_dst))
+    {
+        if hub_src_geog.is_equivalent_to_with(hub_dst_geog, Equivalence::Equivalent) {
+            let firsts = factory.create_candidates(source, hub_src, context)?;
+            let lasts = factory.create_candidates(hub_src, target, context)?;
+            let mut found = Vec::new();
+            for first in &firsts {
+                for last in &lasts {
+                    found.push(concatenate(vec![first.clone(), last.clone()]));
+                }
+            }
+            if !found.is_empty() {
+                return Ok(found);
+            }
+        }
+    }
+    factory.create_candidates(
+        source_bound.source_crs(),
+        target_bound.source_crs(),
+        context,
+    )
 }
 
 fn bound_to_geog(
