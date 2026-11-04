@@ -76,7 +76,11 @@ pub(super) fn compound_to_geog3d(
         return bound_compound_to_geog3d(factory, source, target, context);
     }
 
-    let mut horizontal_ops = factory.create_operations(horizontal, target, context)?;
+    // The horizontal part is searched against the 2D target, as PROJ's geographic-to-geographic
+    // search does for a 3D target: the 2D registry operation is then promoted.
+    let target_2d = target.demote_to_2d(None);
+    let inherited = context.with_inherited_extents(source, target);
+    let mut horizontal_ops = factory.create_operations(horizontal, &target_2d, &inherited)?;
     if horizontal_ops.is_empty() {
         horizontal_ops.extend(null_offset(horizontal, target));
     }

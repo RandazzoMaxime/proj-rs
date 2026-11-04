@@ -4844,6 +4844,9 @@ pub struct CoordinateOperationContext {
     ballpark: BallparkUse,
     grid_availability: GridAvailabilityUse,
     registry: RegistryUse,
+    /// The CRS extents of the outermost call, which a sub-call of a compound CRS reuses
+    /// instead of its own components' extents (PROJ's `Private::Context` extents).
+    inherited_extents: Option<(Option<ObjectDomain>, Option<ObjectDomain>)>,
 }
 
 impl CoordinateOperationContext {
@@ -4862,7 +4865,18 @@ impl CoordinateOperationContext {
             ballpark: BallparkUse::Allow,
             grid_availability: GridAvailabilityUse::default(),
             registry: RegistryUse::default(),
+            inherited_extents: None,
         }
+    }
+
+    /// This context, with the CRS extents of `source` and `target` for every sub-call, unless
+    /// the outermost call already set them.
+    pub(crate) fn with_inherited_extents(&self, source: &Crs, target: &Crs) -> Self {
+        let mut context = self.clone();
+        if context.inherited_extents.is_none() {
+            context.inherited_extents = Some((crs_extent(source), crs_extent(target)));
+        }
+        context
     }
 
     /// `disallowEmptyIntersection`: an operation whose extents do not meet is not built,
@@ -5148,10 +5162,7 @@ impl CoordinateOperationFactory {
                 ));
             }
         }
-        let (source_extent, target_extent) = match context.crs_extent_use {
-            CrsExtentUse::Ignore => (None, None),
-            _ => (crs_extent(source), crs_extent(target)),
-        };
+        let (source_extent, target_extent) = crs_extents_of(context, source, target);
         let boxes = (
             source_extent.as_ref().and_then(ObjectDomain::bounding_box),
             target_extent.as_ref().and_then(ObjectDomain::bounding_box),
@@ -5658,11 +5669,22 @@ pub(crate) fn sort_extents(
     source: &Crs,
     target: &Crs,
 ) -> SortExtents {
-    let (source_extent, target_extent) = match context.crs_extent_use {
-        CrsExtentUse::Ignore => (None, None),
-        _ => (crs_extent(source), crs_extent(target)),
-    };
+    let (source_extent, target_extent) = crs_extents_of(context, source, target);
     SortExtents::new(context, source_extent, target_extent)
+}
+
+/// The CRS extents of a pair: the inherited ones of a sub-call, else those of the CRS, and none
+/// when the context ignores them.
+fn crs_extents_of(
+    context: &CoordinateOperationContext,
+    source: &Crs,
+    target: &Crs,
+) -> (Option<ObjectDomain>, Option<ObjectDomain>) {
+    match (&context.inherited_extents, context.crs_extent_use) {
+        (_, CrsExtentUse::Ignore) => (None, None),
+        (Some((source_extent, target_extent)), _) => (source_extent.clone(), target_extent.clone()),
+        _ => (crs_extent(source), crs_extent(target)),
+    }
 }
 
 /// Operations kept by [`filter_and_sort`], and whether a kept-or-not operation with no
