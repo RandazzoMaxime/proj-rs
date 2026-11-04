@@ -5,20 +5,18 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 120 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
-| `niche` | 23 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
+| `core` | 118 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `niche` | 21 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 41 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (120)
+## core (118)
 
-### test_c_api.cpp (17)
+### test_c_api.cpp (15)
 
 - `CApi.proj_coordoperation_get_grid_used`
 - `CApi.proj_coordoperation_get_grid_used_fullname_caching`
-- `CApi.proj_get_suggested_operation_for_NAD83_to_NAD83_HARN`
 - `CApi.proj_create_operations_prime_meridian_non_greenwich`
 - `CApi.proj_get_suggested_operation_with_operations_without_area_of_use`
-- `CApi.proj_create_operations_with_pivot`
 - `CApi.proj_normalize_for_visualization_with_alternatives`
 - `CApi.proj_normalize_for_visualization_with_alternatives_reverse`
 - `CApi.proj_coordoperation_create_inverse`
@@ -149,12 +147,10 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.createOperation_compound_to_compound_with_Geographic3D_Offset_by_velocity_grid`
 - `operation.compoundCRS_to_compoundCRS_context_extent_use_none`
 
-## niche (23)
+## niche (21)
 
-### test_crs.cpp (3)
+### test_crs.cpp (1)
 
-- `crs.derivedGeographicCRS_to_PROJ`
-- `crs.derivedGeographicCRS_with_affine_transform_to_PROJ`
 - `crs.normalizeForVisualization_derivedprojected_operation`
 
 ### test_operationfactory.cpp (20)

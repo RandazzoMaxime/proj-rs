@@ -727,10 +727,21 @@ fn derived_geographic_steps(
         return Ok(None);
     };
     let conversion = derived.deriving_conversion();
-    let Some(pole_rotation) = pole_text(conversion) else {
-        return Ok(None);
+    let pole_rotation = pole_text(conversion).or_else(|| {
+        conversion
+            .method()
+            .name()
+            .starts_with("PROJ ob_tran")
+            .then(|| conversion.export_to_proj_string().ok())
+            .flatten()
+    });
+    let Some(pole_rotation) = pole_rotation else {
+        return Ok(Some(vec![conversion.export_to_proj_string()?]));
     };
     let mut steps = Vec::new();
+    if let Some(order) = geographic_axis_order(geographic) {
+        steps.push(format!("+proj=axisswap +order={order}"));
+    }
     if let Some(step) = angular_unit_step(geographic) {
         steps.push(step);
     }
@@ -738,6 +749,11 @@ fn derived_geographic_steps(
     append_ellipsoid_and_meridian(&mut pole, geographic, &base);
     steps.push(pole);
     steps.push("+proj=unitconvert +xy_in=rad +xy_out=deg".to_owned());
+    if let CoordinateSystem::Ellipsoidal(cs) = derived.coordinate_system() {
+        if let Some(order) = axis_order_text(cs.axes()) {
+            steps.push(format!("+proj=axisswap +order={order}"));
+        }
+    }
     Ok(Some(steps))
 }
 
@@ -1079,7 +1095,11 @@ pub(crate) fn geographic_of(crs: &Crs) -> Option<&GeographicCRS> {
 
 /// `2,1` when the first axis is north and the second is east. East-then-north needs no swap.
 fn geographic_axis_order(crs: &GeographicCRS) -> Option<String> {
-    let axes = crs.coordinate_system().axes();
+    axis_order_text(crs.coordinate_system().axes())
+}
+
+/// The `+proj=axisswap` order of two horizontal axes, `None` when east then north.
+fn axis_order_text(axes: &[Axis]) -> Option<String> {
     if axes.len() < 2 {
         return None;
     }
@@ -1138,7 +1158,11 @@ fn derived_geographic_proj(crs: &super::niche::DerivedCRS) -> Result<String, Fac
             "this CRS kind has no PROJ string export".to_owned(),
         ));
     }
-    let Some(step) = crs.deriving_conversion().pole_rotation_proj_string() else {
+    let Some(step) = crs
+        .deriving_conversion()
+        .pole_rotation_proj_string()
+        .or_else(|| crs.deriving_conversion().export_to_proj_string().ok())
+    else {
         return Err(FactoryError::Format(
             "DerivedGeographicCRS cannot be exported to PROJ string".to_owned(),
         ));

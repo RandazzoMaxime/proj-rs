@@ -15,8 +15,6 @@ and `PORT-NOTES-tests.md`.
 - `crs.compoundCRS_identify_db`
 - `crs.boundCRS_crs_link`
 - `crs.boundCRS_identify_db`
-- `crs.derivedGeographicCRS_to_PROJ`
-- `crs.derivedGeographicCRS_with_affine_transform_to_PROJ`
 - `crs.crs_createBoundCRSToWGS84IfPossible`
 - `crs.normalizeForVisualization_derivedprojected_operation`
 - `crs.norway_ntm`
@@ -177,10 +175,8 @@ and `PORT-NOTES-tests.md`.
 
 - `CApi.proj_coordoperation_get_grid_used`
 - `CApi.proj_coordoperation_get_grid_used_fullname_caching`
-- `CApi.proj_get_suggested_operation_for_NAD83_to_NAD83_HARN`
 - `CApi.proj_create_operations_prime_meridian_non_greenwich`
 - `CApi.proj_get_suggested_operation_with_operations_without_area_of_use`
-- `CApi.proj_create_operations_with_pivot`
 - `CApi.proj_context_set_database_path_null`
 - `CApi.proj_context_set_database_path_aux`
 - `CApi.proj_context_set_database_path_error_1`
