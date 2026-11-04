@@ -233,10 +233,7 @@ and `PORT-NOTES-tests.md`.
 - `operation.createOperation_compound_to_compound_with_epoch_HT2_2010_CGG2013a`
 - `operation.createOperation_compound_to_compound_with_Geographic3D_Offset_by_velocity_grid`
 - `operation.createOperation_compound_to_compound_with_point_motion_operation_special_case_CGVD2013a`
-- `operation.createOperation_Geographic3D_Offset_by_velocity_grid`
-- `operation.createOperation_Vrtical_Offset_by_velocity_grid`
 - `operation.createOperation_ITRF2000_to_ETRS89`
-- `operation.createOperation_ITRF2014_to_ETRS89_DNK`
 - `operation.compoundCRS_to_compoundCRS_context_extent_use_none`
 
 ## test_c_api.cpp

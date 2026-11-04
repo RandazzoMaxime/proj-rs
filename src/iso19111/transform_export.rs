@@ -719,7 +719,7 @@ fn deformation_grid_shift(
     formatter.start_inversion();
     angular_unit_and_axis_swap(source.coordinate_system().axes(), formatter)?;
     formatter.stop_inversion();
-    let (source_year, target_year) = epoch_years(operation);
+    let (source_year, target_year) = operation_epoch_years(operation);
     if let Some(year) = source_year {
         add_epoch_step(year, formatter);
     }
@@ -1915,7 +1915,7 @@ fn helmert(
     if let Some(source) = source {
         setup_source(source, push_v3, formatter)?;
     }
-    let (source_year, target_year) = epoch_years(operation);
+    let (source_year, target_year) = operation_epoch_years(operation);
     if let Some(year) = source_year {
         add_epoch_step(year, formatter);
     }
@@ -1959,7 +1959,7 @@ fn helmert(
 
 /// `sourceYear` and `targetYear` of PROJ's helmert and defmodel exports: the rounded epoch of
 /// each side, a year of zero or less counting as none. A side without an epoch takes the other's.
-fn epoch_years(operation: &Transformation) -> (Option<f64>, Option<f64>) {
+fn operation_epoch_years(operation: &Transformation) -> (Option<f64>, Option<f64>) {
     let round = |epoch: Option<f64>| {
         epoch
             .map(rounded_epoch_in_decimal_year)
