@@ -36,7 +36,10 @@ pub(super) fn export_bound(
         _ => None,
     };
     let renames = match db {
-        Some(db) => proj_grid_names(bound.transformation(), db)?,
+        Some(db) => proj_grid_names(bound.transformation(), db)?
+            .into_iter()
+            .map(|(official, proj, _)| (official, proj))
+            .collect(),
         None => Vec::new(),
     };
     let mut extras = ProjExtras::default();

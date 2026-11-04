@@ -57,8 +57,8 @@ pub(crate) struct PipelineFormatter {
     /// Drops `unitconvert` steps that change nothing, as PROJ does once a
     /// Helmert step is written.
     optimize_units: bool,
-    /// `(official name, PROJ name)` of each grid the database renames.
-    grid_names: Vec<(String, String)>,
+    /// `(official name, PROJ name, inverse direction)` of each grid the database renames.
+    grid_names: Vec<(String, String, bool)>,
     /// Whether the grid and deformation methods write their steps. Off, they are
     /// unimplemented, so the candidate selection of `cs2cs` is unchanged.
     grid_steps: bool,
@@ -71,7 +71,7 @@ pub(crate) struct PipelineFormatter {
 impl PipelineFormatter {
     /// A formatter that writes each grid under its PROJ name, as
     /// `substitutePROJAlternativeGridNames` does with a database context.
-    pub(crate) fn with_grid_names(grid_names: Vec<(String, String)>) -> Self {
+    pub(crate) fn with_grid_names(grid_names: Vec<(String, String, bool)>) -> Self {
         Self {
             grid_names,
             ..Self::default()
@@ -116,8 +116,16 @@ impl PipelineFormatter {
     pub(crate) fn grid_name(&self, name: &str) -> String {
         self.grid_names
             .iter()
-            .find(|(original, _)| original == name)
-            .map_or_else(|| name.to_owned(), |(_, proj)| proj.clone())
+            .find(|(original, _, _)| original == name)
+            .map_or_else(|| name.to_owned(), |(_, proj, _)| proj.clone())
+    }
+
+    /// Whether the grid is written as the inverse of its PROJ grid, `inverse_direction` in
+    /// `grid_alternatives`.
+    pub(crate) fn grid_is_inverse(&self, name: &str) -> bool {
+        self.grid_names
+            .iter()
+            .any(|(original, _, inverse)| original == name && *inverse)
     }
 
     pub(crate) fn add_step(&mut self, name: &str) {

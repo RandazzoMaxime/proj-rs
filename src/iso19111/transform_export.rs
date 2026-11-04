@@ -128,7 +128,7 @@ impl Transformation {
     pub(crate) fn export_to_proj_string_with(
         &self,
         lines: ProjLines,
-        grid_names: Vec<(String, String)>,
+        grid_names: Vec<(String, String, bool)>,
     ) -> Result<String, FactoryError> {
         let mut formatter = PipelineFormatter::with_grid_names(grid_names);
         self.export_steps(&mut formatter)?;
@@ -204,7 +204,7 @@ impl ConcatenatedOperation {
     pub(crate) fn export_to_proj_string_with(
         &self,
         lines: ProjLines,
-        grid_names: Vec<(String, String)>,
+        grid_names: Vec<(String, String, bool)>,
     ) -> Result<String, FactoryError> {
         let mut formatter = PipelineFormatter::with_grid_names(grid_names);
         self.export_steps(&mut formatter)?;
@@ -586,11 +586,18 @@ fn horizontal_grid_shift(
         .and_then(extract_geographic)
         .ok_or_else(|| geographic_required(method))?;
     let grid = formatter.grid_name(&file);
+    let inverse = formatter.grid_is_inverse(&file);
     formatter.start_inversion();
     angular_unit_and_axis_swap(source.coordinate_system().axes(), formatter)?;
     formatter.stop_inversion();
+    if inverse {
+        formatter.start_inversion();
+    }
     formatter.add_step("hgridshift");
     formatter.add_param("grids", &grid);
+    if inverse {
+        formatter.stop_inversion();
+    }
     angular_unit_and_axis_swap(target.coordinate_system().axes(), formatter)?;
     Ok(true)
 }
