@@ -21,7 +21,6 @@ and `PORT-NOTES-tests.md`.
 - `crs.crs_createBoundCRSToWGS84IfPossible`
 - `crs.normalizeForVisualization_derivedprojected_operation`
 - `crs.norway_ntm`
-- `crs.ETRF2000_PL_CS92`
 
 ## test_factory.cpp
 
