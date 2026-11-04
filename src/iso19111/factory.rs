@@ -5038,12 +5038,13 @@ impl CoordinateOperationFactory {
         }
         if registry && direct_empty && is_geodetic(source) && is_geodetic(target) {
             let pivot = datum_pivot_operations(source, target, context);
-            if pivot.is_empty() && direct_unfiltered_empty {
+            let intermediate_needed = direct_unfiltered_empty
+                && (pivot.is_empty() || only_ensemble_null_operations(&pivot));
+            found.extend(pivot);
+            if intermediate_needed {
                 found.extend(datum_based_intermediate_operations(
                     source, target, context,
                 )?);
-            } else {
-                found.extend(pivot);
             }
         }
         if found.is_empty() {
@@ -5904,6 +5905,58 @@ fn datum_based_intermediate_operations(
     Ok(result)
 }
 
+/// `useOnlyIntermediateCRSThroughDatumEnsembleNullOp`: every operation has a PROJ step that
+/// is a null transformation between a datum ensemble and one of its members. Such a pivot
+/// does not connect the two datums, so the intermediate datums are searched too.
+fn only_ensemble_null_operations(operations: &[CoordinateOperation]) -> bool {
+    !operations.is_empty()
+        && operations.iter().all(|operation| {
+            let CoordinateOperation::Concatenated(concatenated) = operation else {
+                return false;
+            };
+            concatenated.steps.iter().any(|step| {
+                let operation = &step.operation;
+                let is_proj = match operation {
+                    CoordinateOperation::Conversion(conversion) => conversion.identifiers(),
+                    CoordinateOperation::Transformation(transformation) => {
+                        transformation.identifiers()
+                    }
+                    CoordinateOperation::Concatenated(_) => &[],
+                }
+                .iter()
+                .any(|id| id.code_space().contains("PROJ"));
+                if !is_proj {
+                    return false;
+                }
+                let (Some(source), Some(target)) = (operation.source_crs(), operation.target_crs())
+                else {
+                    return false;
+                };
+                member_of_ensemble(source, target) || member_of_ensemble(target, source)
+            })
+        })
+}
+
+/// `isDatumInEnsemble`: the datum of `member` is a member of the ensemble of `ensemble`.
+fn member_of_ensemble(member: &Crs, ensemble: &Crs) -> bool {
+    let (Some(datum), Some(ensemble)) = (geodetic_frame(member), ensemble_of(ensemble)) else {
+        return false;
+    };
+    ensemble
+        .members()
+        .iter()
+        .any(|candidate| datum.is_equivalent_to_datum(candidate))
+}
+
+/// The datum ensemble of a geodetic CRS, when it has one.
+fn ensemble_of(crs: &Crs) -> Option<&DatumEnsemble> {
+    match crs {
+        Crs::Geographic(geographic) => geographic.datum_ensemble(),
+        Crs::Geodetic(geodetic) => geodetic.datum_ensemble(),
+        _ => None,
+    }
+}
+
 /// A registered operation, by its `(table, auth, code)` row, read for a datum-based pivot.
 struct DatumTrfm {
     situation: String,
@@ -6117,9 +6170,9 @@ fn geographic_geocentric(geographic: &Crs, geocentric: &Crs) -> Option<Transform
     Some(conversion)
 }
 
-/// A concatenated operation of the pivot legs, with the sum of the step accuracies as
-/// `ConcatenatedOperation::createComputeMetadata` does. A step with no accuracy leaves it
-/// unknown.
+/// A concatenated operation of the pivot legs, with the largest step accuracy as the oracle
+/// gives it: two 0.1 m legs make 0.1 m (EPSG:11108 to EPSG:11128 through ETRF2000). A step with
+/// no accuracy leaves it unknown.
 pub(super) fn pivot_concatenation(steps: Vec<CoordinateOperation>) -> ConcatenatedOperation {
     let name = steps
         .iter()
@@ -6132,7 +6185,9 @@ pub(super) fn pivot_concatenation(steps: Vec<CoordinateOperation>) -> Concatenat
             CoordinateOperation::Conversion(_) => Some(0.0),
             other => other.accuracy(),
         })
-        .sum::<Option<f64>>();
+        .try_fold(0.0_f64, |worst, accuracy| {
+            accuracy.map(|value| worst.max(value))
+        });
     ConcatenatedOperation {
         identified: Identified::named(name),
         steps: steps

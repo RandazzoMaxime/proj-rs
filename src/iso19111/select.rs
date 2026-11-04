@@ -653,9 +653,14 @@ fn etrs_pair(operation: &CoordinateOperation) -> bool {
         CoordinateOperation::Transformation(transformation) => {
             (transformation.source_crs(), transformation.target_crs())
         }
-        CoordinateOperation::Concatenated(concatenated) => {
-            (concatenated.source_crs(), concatenated.target_crs())
-        }
+        CoordinateOperation::Concatenated(concatenated) => (
+            concatenated
+                .source_crs()
+                .or_else(|| concatenated.steps.first()?.operation.source_crs()),
+            concatenated
+                .target_crs()
+                .or_else(|| concatenated.steps.last()?.operation.target_crs()),
+        ),
         CoordinateOperation::Conversion(_) => return false,
     };
     let starts = |crs: Option<&Crs>| crs.is_some_and(|crs| crs.name().starts_with("ETRS89-"));

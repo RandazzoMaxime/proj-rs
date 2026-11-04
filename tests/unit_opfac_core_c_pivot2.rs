@@ -94,3 +94,59 @@ fn operation_create_operation_etrf2000_to_amersfoort() {
          Conversion from ETRF2000 (geocentric) to ETRF2000 (geog2D)"
     );
 }
+
+/// TEST(operation, createOperation_ETRS89_XXX_to_ETRS89_YYY_using_ETRF2000)
+#[test]
+fn operation_create_operation_etrs89_xxx_to_etrs89_yyy_using_etrf2000() {
+    let db = database();
+    let epsg = AuthorityFactory::create(&db, "EPSG");
+    let mut context = CoordinateOperationContext::create(&db, "");
+    context.set_spatial_criterion(SpatialCriterion::PartialIntersection);
+    context.set_grid_availability_use(GridAvailabilityUse::IgnoreGridAvailability);
+    // ETRS89-PRT [1995] to ETRS89-ESP [ERGNSS]
+    let source = epsg
+        .create_coordinate_reference_system("11108")
+        .expect("11108");
+    let target = epsg
+        .create_coordinate_reference_system("11128")
+        .expect("11128");
+    let list = CoordinateOperationFactory::create()
+        .create_operations(&source, &target, &context)
+        .expect("operations");
+    assert!(list.len() >= 2);
+
+    assert_eq!(
+        list[0].name(),
+        "Conversion from ETRS89-PRT [1995] (geog2D) to \
+         ETRS89-PRT [1995] (geocentric) + \
+         ETRS89-PRT [1995] to ETRF2000 (2) + \
+         Inverse of ETRS89-ESP [ERGNSS] to ETRF2000 (1) + \
+         Conversion from ETRS89-ESP [ERGNSS] (geocentric) to \
+         ETRS89-ESP [ERGNSS] (geog2D)"
+    );
+    assert!(!list[0].has_ballpark_transformation());
+    assert_eq!(
+        plain(&list[0]),
+        "+proj=pipeline \
+         +step +proj=axisswap +order=2,1 \
+         +step +proj=unitconvert +xy_in=deg +xy_out=rad \
+         +step +proj=cart +ellps=GRS80 \
+         +step +proj=helmert +x=0.0063 +y=0.00294 +z=0.01726 \
+         +rx=-0.0007616 +ry=-6.4e-05 +rz=-0.0008768 +s=-0.001534 \
+         +dx=0 +dy=0.0006 +dz=0.0014 +drx=-0.000119 +dry=-1e-05 \
+         +drz=-0.000162 +ds=-1e-05 +t_epoch=1995.4 \
+         +convention=position_vector \
+         +step +inv +proj=cart +ellps=GRS80 \
+         +step +proj=unitconvert +xy_in=rad +xy_out=deg \
+         +step +proj=axisswap +order=2,1"
+    );
+    assert_eq!(list[0].accuracy(), Some(0.1));
+
+    assert_eq!(
+        list[1].name(),
+        "Inverse of ETRS89 to ETRS89-PRT [1995] + ETRS89 to ETRS89-ESP [ERGNSS]"
+    );
+    assert!(!list[1].has_ballpark_transformation());
+    assert_eq!(plain(&list[1]), "+proj=noop");
+    assert_eq!(list[1].accuracy(), Some(0.1));
+}
