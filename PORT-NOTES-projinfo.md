@@ -57,4 +57,5 @@ options are in `docs/PORTING-projinfo-lists.md`.
 ## Preserved quirks
 
 - `projinfo` writes exit 1 with the usage text on an unknown option, as PROJ does.
-- `Too many parameters: <arg>` names the third positional argument.
+- `Too many parameters: <arg>` names the second positional argument, as
+  `positional_args[1]` in `projinfo_lib.cpp`.
