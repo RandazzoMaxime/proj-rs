@@ -17,14 +17,17 @@
 //! Any other method is `Unimplemented`, the error PROJ raises for a method its
 //! exporter lacks.
 //!
-//! Coordinate epochs are not stored by this crate, so PROJ's `set` steps for a
-//! source or target epoch are never written.
+//! A transformation keeps the source and target coordinate epochs it was given
+//! (`CoordinateOperationFactory::create_operations_from_metadata` and its siblings).
+//! The helmert and `defmodel` exports write PROJ's `set` steps for them. The other
+//! methods write none, as PROJ does not for them either.
 
 use std::f64::consts::PI;
 
 use super::buildop::names_match;
 use super::equiv::Equivalence;
 use super::factory::DatabaseContext;
+use super::json::rounded_epoch_in_decimal_year;
 use super::model::{
     Axis, ConcatenatedOperation, CoordinateOperation, CoordinateSystem, Crs, Ellipsoid,
     FactoryError, GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Measure,
@@ -138,7 +141,12 @@ impl Transformation {
         }
         if self.inverted {
             formatter.start_inversion();
-            export_forward(self, self.target_crs(), self.source_crs(), formatter)?;
+            let forward = Transformation {
+                source_epoch: self.target_epoch,
+                target_epoch: self.source_epoch,
+                ..self.clone()
+            };
+            export_forward(&forward, self.target_crs(), self.source_crs(), formatter)?;
             formatter.stop_inversion();
             Ok(())
         } else {
@@ -693,11 +701,18 @@ fn deformation_grid_shift(
     formatter.start_inversion();
     angular_unit_and_axis_swap(source.coordinate_system().axes(), formatter)?;
     formatter.stop_inversion();
+    let (source_year, target_year) = epoch_years(operation);
+    if let Some(year) = source_year {
+        add_epoch_step(year, formatter);
+    }
     let model = formatter.grid_name(&file);
     formatter.start_inversion();
     formatter.add_step("defmodel");
     formatter.add_param("model", &model);
     formatter.stop_inversion();
+    if let Some(year) = target_year {
+        add_epoch_step(year, formatter);
+    }
     angular_unit_and_axis_swap(target.coordinate_system().axes(), formatter)?;
     Ok(true)
 }
@@ -1656,6 +1671,10 @@ fn helmert(
     if let Some(source) = source {
         setup_source(source, push_v3, formatter)?;
     }
+    let (source_year, target_year) = epoch_years(operation);
+    if let Some(year) = source_year {
+        add_epoch_step(year, formatter);
+    }
     formatter.add_step("helmert");
     if kind.full_matrix {
         formatter.add_flag("exact");
@@ -1685,10 +1704,33 @@ fn helmert(
         };
         formatter.add_param("convention", convention);
     }
+    if let Some(year) = target_year {
+        add_epoch_step(year, formatter);
+    }
     if let Some(target) = target {
         setup_target(target, push_v3, formatter)?;
     }
     Ok(())
+}
+
+/// `sourceYear` and `targetYear` of PROJ's helmert and defmodel exports: the rounded epoch of
+/// each side, a year of zero or less counting as none. A side without an epoch takes the other's.
+fn epoch_years(operation: &Transformation) -> (Option<f64>, Option<f64>) {
+    let round = |epoch: Option<f64>| {
+        epoch
+            .map(rounded_epoch_in_decimal_year)
+            .filter(|year| *year > 0.0)
+    };
+    match (round(operation.source_epoch), round(operation.target_epoch)) {
+        (Some(year), None) | (None, Some(year)) => (Some(year), Some(year)),
+        other => other,
+    }
+}
+
+/// `set` with `v_4`, the coordinate time the following step reads.
+fn add_epoch_step(year: f64, formatter: &mut PipelineFormatter) {
+    formatter.add_step("set");
+    formatter.add_number("v_4", year);
 }
 
 /// `setupPROJGeodeticSourceCRS`: the source CRS as the pipeline reaches it

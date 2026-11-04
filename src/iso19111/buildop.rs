@@ -250,6 +250,8 @@ impl Transformation {
             accuracy_text: None,
             version: None,
             point_motion: false,
+            source_epoch: None,
+            target_epoch: None,
             inverted: false,
         })
     }
@@ -313,6 +315,8 @@ impl Transformation {
             accuracy_text: None,
             version: None,
             point_motion: false,
+            source_epoch: None,
+            target_epoch: None,
             inverted: false,
         })
     }
@@ -335,6 +339,7 @@ impl Transformation {
             super::geodetic_ops::NamedOperationKind::Transformation,
         );
         std::mem::swap(&mut inverse.source, &mut inverse.target);
+        std::mem::swap(&mut inverse.source_epoch, &mut inverse.target_epoch);
         for identifier in &mut inverse.identified.identifiers {
             identifier.code_space = inverse_code_space(&identifier.code_space);
         }

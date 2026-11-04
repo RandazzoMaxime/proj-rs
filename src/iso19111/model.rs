@@ -2071,6 +2071,10 @@ pub struct Transformation {
     pub(crate) version: Option<String>,
     pub(crate) point_motion: bool,
     pub(crate) inverted: bool,
+    /// Decimal year of the source coordinate epoch, as `setSourceCoordinateEpoch` sets it.
+    pub(crate) source_epoch: Option<f64>,
+    /// Decimal year of the target coordinate epoch.
+    pub(crate) target_epoch: Option<f64>,
 }
 
 impl Transformation {

@@ -9,7 +9,9 @@ use std::sync::{Arc, Mutex};
 use rusqlite::{types::ValueRef, Connection};
 
 use super::buildop::OpProps;
+use super::coordinate_metadata::CoordinateMetadata;
 use super::equiv::{equivalent_name, geodetic_frame, same_geodetic_datum, same_geographic_base};
+use super::json::create_from_user_input;
 use super::model::{
     ensemble_name_as_datum, Axis, BoundingBox, CartesianCS, CompoundCRS, ConcatenatedOperation,
     ConcatenatedStep, Conversion, CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble,
@@ -3127,6 +3129,45 @@ impl AuthorityFactory {
         }
     }
 
+    /// `createCoordinateMetadata(code)`: the CRS of the `coordinate_metadata` row, with its epoch.
+    ///
+    /// # Errors
+    ///
+    /// The code is missing, or its CRS or epoch cannot be built.
+    pub fn create_coordinate_metadata(
+        &self,
+        code: &str,
+    ) -> Result<CoordinateMetadata, FactoryError> {
+        let row = self
+            .one(
+                "SELECT crs_auth_name, crs_code, crs_text_definition, coordinate_epoch \
+                 FROM coordinate_metadata WHERE auth_name = ? AND code = ?",
+                code,
+            )
+            .map_err(|_| FactoryError::missing("CoordinateMetadata", &self.authority, code))?;
+        let build = || -> Result<CoordinateMetadata, FactoryError> {
+            let crs = if row[0].empty() {
+                create_from_user_input(&row[2].text(), &self.db)?
+            } else {
+                AuthorityFactory::create(&self.db, row[0].text())
+                    .create_coordinate_reference_system(&row[1].text())?
+            };
+            if row[3].empty() {
+                CoordinateMetadata::create_without_epoch(&crs)
+            } else {
+                CoordinateMetadata::create(&crs, row[3].f64()?, &self.db)
+            }
+        };
+        build().map_err(|error| {
+            FactoryError::wrap(
+                "CoordinateMetadata",
+                &self.authority,
+                code,
+                error.to_string(),
+            )
+        })
+    }
+
     /// Coordinate operation, using PROJ alternative grid names when `grids` is set.
     ///
     /// # Errors
@@ -4449,6 +4490,8 @@ impl AuthorityFactory {
             accuracy_text: accuracy_of(accuracy).and_then(|_| accuracy_text(accuracy)),
             version: optional_text(version),
             point_motion: motion == PointMotion::Yes,
+            source_epoch: None,
+            target_epoch: None,
             inverted: false,
         })
     }
@@ -4892,6 +4935,89 @@ impl CoordinateOperationFactory {
         Ok(select_candidates(found, &source, &target, context))
     }
 
+    /// `createOperations(sourceCoordinateMetadata, targetCRS, context)`: as
+    /// [`Self::create_operations`], each operation carrying the epoch of `source`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::create_operations`].
+    pub fn create_operations_from_metadata(
+        &self,
+        source: &CoordinateMetadata,
+        target: &Crs,
+        context: &CoordinateOperationContext,
+    ) -> Result<Vec<CoordinateOperation>, FactoryError> {
+        self.create_operations_at_epochs(
+            source.crs(),
+            source.coordinate_epoch(),
+            target,
+            None,
+            context,
+        )
+    }
+
+    /// `createOperations(sourceCRS, targetCoordinateMetadata, context)`: as
+    /// [`Self::create_operations`], each operation carrying the epoch of `target`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::create_operations`].
+    pub fn create_operations_to_metadata(
+        &self,
+        source: &Crs,
+        target: &CoordinateMetadata,
+        context: &CoordinateOperationContext,
+    ) -> Result<Vec<CoordinateOperation>, FactoryError> {
+        self.create_operations_at_epochs(
+            source,
+            None,
+            target.crs(),
+            target.coordinate_epoch(),
+            context,
+        )
+    }
+
+    /// `createOperations(sourceCoordinateMetadata, targetCoordinateMetadata, context)`: as
+    /// [`Self::create_operations`], each operation carrying both epochs.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::create_operations`].
+    pub fn create_operations_between_metadata(
+        &self,
+        source: &CoordinateMetadata,
+        target: &CoordinateMetadata,
+        context: &CoordinateOperationContext,
+    ) -> Result<Vec<CoordinateOperation>, FactoryError> {
+        self.create_operations_at_epochs(
+            source.crs(),
+            source.coordinate_epoch(),
+            target.crs(),
+            target.coordinate_epoch(),
+            context,
+        )
+    }
+
+    /// The operations of [`Self::create_operations`] with the epochs set on each of them.
+    ///
+    /// PROJ also searches with the epochs (point motion and epoch change operations). This
+    /// crate searches without them and only attaches the epochs, which are exported for the
+    /// helmert and `defmodel` methods.
+    fn create_operations_at_epochs(
+        &self,
+        source: &Crs,
+        source_epoch: Option<f64>,
+        target: &Crs,
+        target_epoch: Option<f64>,
+        context: &CoordinateOperationContext,
+    ) -> Result<Vec<CoordinateOperation>, FactoryError> {
+        Ok(self
+            .create_operations(source, target, context)?
+            .into_iter()
+            .map(|operation| with_epochs(operation, source_epoch, target_epoch))
+            .collect())
+    }
+
     /// `proj_get_suggested_operation` (forward) on `operations`, the list from `source`
     /// to a target: the index of the operation whose area of use holds `coord`, in the
     /// axis order of `source`. An operation with no area of use covers the world.
@@ -5106,6 +5232,23 @@ fn canonical_or_self(crs: &Crs) -> std::borrow::Cow<'_, Crs> {
 
 /// The public call's filters and order: area, spatial test, accuracy, ballpark use, then
 /// the sort, and the last synthetic operation dropped when a sorted list has a better one.
+/// `opClone->setSourceCoordinateEpoch` and `setTargetCoordinateEpoch`. Only a transformation
+/// keeps epochs: PROJ writes none for the other kinds.
+fn with_epochs(
+    operation: CoordinateOperation,
+    source_epoch: Option<f64>,
+    target_epoch: Option<f64>,
+) -> CoordinateOperation {
+    match operation {
+        CoordinateOperation::Transformation(mut transformation) => {
+            transformation.source_epoch = source_epoch;
+            transformation.target_epoch = target_epoch;
+            CoordinateOperation::Transformation(transformation)
+        }
+        other => other,
+    }
+}
+
 fn select_candidates(
     found: Vec<CoordinateOperation>,
     source: &Crs,

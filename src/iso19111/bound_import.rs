@@ -459,6 +459,8 @@ fn plain_transformation() -> Transformation {
         accuracy_text: None,
         version: None,
         point_motion: false,
+        source_epoch: None,
+        target_epoch: None,
         inverted: false,
     }
 }
