@@ -403,6 +403,15 @@ impl Crs {
             (Self::Projected(left), Self::Projected(right)) => {
                 left.is_equivalent_to_with(right, criterion)
             }
+            // Under a criterion other than `Strict`, the name of a compound CRS is not compared.
+            (Self::Compound(left), Self::Compound(right)) if criterion != Equivalence::Strict => {
+                left.components().len() == right.components().len()
+                    && left
+                        .components()
+                        .iter()
+                        .zip(right.components())
+                        .all(|(left, right)| left.is_equivalent_to_with(right, criterion))
+            }
             _ => self.is_equivalent_to(other),
         }
     }

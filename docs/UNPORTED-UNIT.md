@@ -69,7 +69,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.geogCRS_to_geogCRS_context_lonlat_vs_latlon_crs`
 - `operation.geogCRS_to_geogCRS_CH1903_to_CH1903plus_context`
 - `operation.geogCRS_to_geogCRS_init_IGNF_to_init_IGNF_context`
-- `operation.geogCRS_without_id_to_geogCRS_3D_context`
 - `operation.geogCRS_promoted_to_3D_to_geogCRS_3D_context`
 - `operation.geogCRS_3D_to_geogCRS_3D_different_datum_context`
 - `operation.geocentric_to_geogCRS_3D_different_datum_context`
@@ -77,7 +76,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.geogCRS_to_geogCRS_with_intermediate_no_ids`
 - `operation.geogCRS_3D_source_datum_name_is_alias_to_geogCRS`
 - `operation.geogCRS_different_from_baseCRS_to_projCRS_context_compatible_area`
-- `operation.projCRS_no_id_to_geogCRS_context`
 - `operation.geogCRS_3D_to_projCRS_with_2D_geocentric_translation`
 - `operation.projCRS_to_projCRS_context_grid_offsets`
 - `operation.projCRS_to_projCRS_context_grid_offsets_non_metre_unit_noop`
@@ -124,15 +122,10 @@ and `PORT-NOTES-tests.md`.
 - `operation.compoundCRS_to_geogCRS_3D_with_3D_helmert_context`
 - `operation.compoundCRS_to_geogCRS_3D_with_3D_helmert_same_geog_src_target_context`
 - `operation.compoundCRS_to_geogCRS_3D_with_null_helmert_same_geog_src_target_context`
-- `operation.compoundCRS_to_geogCRS_3D_WGS84_to_GDA2020_AHD_Height`
 - `operation.compoundCRS_to_geogCRS_2D_promote_to_3D_context`
 - `operation.compoundCRS_of_projCRS_to_geogCRS_3D_context`
-- `operation.compoundCRS_from_wkt_without_id_to_geogCRS`
 - `operation.compoundCRS_of_projCRS_from_wkt_without_id_or_extent_to_geogCRS`
-- `operation.compoundCRS_to_geogCRS_with_vertical_unit_change`
 - `operation.compoundCRS_ftUS_to_geogCRS_ft`
-- `operation.compoundCRS_ft_to_geogCRS_ft`
-- `operation.compoundCRS_m_to_geogCRS_ft`
 - `operation.compoundCRS_to_geogCRS_with_vertical_unit_change_and_complex_horizontal_change`
 - `operation.compoundCRS_to_geogCRS_with_height_depth_reversal`
 - `operation.compoundCRS_to_geogCRS_with_vertical_unit_change_and_height_depth_reversal`
@@ -140,7 +133,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.compoundCRS_of_vertCRS_with_geoid_model_by_id_to_geogCRS`
 - `operation.compoundCRS_of_vertCRS_with_geoid_model_by_name_and_datum_ensemble`
 - `operation.compoundCRS_of_bound_horizCRS_and_bound_vertCRS_to_geogCRS`
-- `operation.compoundCRS_from_WKT2_to_geogCRS_3D_context`
 - `operation.compoundCRS_from_WKT2_no_id_to_geogCRS_3D_context`
 - `operation.compoundCRS_to_geogCRS_3D_Amersfoort_NAP_height_to_Amersfoort`
 - `operation.compoundCRS_to_geogCRS_3D_using_intermediate_of_horizontal_transform`

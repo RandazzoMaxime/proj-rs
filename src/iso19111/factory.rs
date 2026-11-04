@@ -283,7 +283,11 @@ impl DatabaseContext {
             .collect())
     }
 
-    fn query(&self, sql: &str, params: &[String]) -> Result<Vec<Vec<Cell>>, FactoryError> {
+    pub(super) fn query(
+        &self,
+        sql: &str,
+        params: &[String],
+    ) -> Result<Vec<Vec<Cell>>, FactoryError> {
         let guard = self.lock();
         let mut statement = guard
             .prepare(sql)
@@ -1748,7 +1752,7 @@ fn semi_minor_si(ellipsoid: &Ellipsoid) -> f64 {
 }
 
 #[derive(Clone, Debug)]
-enum Cell {
+pub(super) enum Cell {
     Empty,
     Text(String),
     Real(f64),
@@ -1768,7 +1772,7 @@ impl Cell {
         })
     }
 
-    fn text(&self) -> String {
+    pub(super) fn text(&self) -> String {
         match self {
             Self::Empty => String::new(),
             Self::Text(value) => value.clone(),
@@ -4867,6 +4871,10 @@ pub struct CoordinateOperationContext {
     /// The CRS extents of the outermost call, which a sub-call of a compound CRS reuses
     /// instead of its own components' extents (PROJ's `Private::Context` extents).
     inherited_extents: Option<(Option<ObjectDomain>, Option<ObjectDomain>)>,
+    /// `inCreateOperationsGeogToVertWithIntermediateVert`.
+    pub(super) in_vertical_intermediate: bool,
+    /// `inCreateOperationsGeogToVertWithAlternativeGeog`.
+    pub(super) in_alternative_geog: bool,
 }
 
 impl CoordinateOperationContext {
@@ -4887,6 +4895,8 @@ impl CoordinateOperationContext {
             superseded: SupersededOperations::Discard,
             registry: RegistryUse::default(),
             inherited_extents: None,
+            in_vertical_intermediate: false,
+            in_alternative_geog: false,
         }
     }
 
@@ -5037,6 +5047,13 @@ impl CoordinateOperationFactory {
         let source = canonical_or_self(source);
         let target = canonical_or_self(target);
         check_same_celestial_body(&source, &target)?;
+        let (source, source_extent, source_changed) = resolve_crs(&source, context);
+        let (target, target_extent, target_changed) = resolve_crs(&target, context);
+        let mut resolved_context = context.clone();
+        if resolved_context.inherited_extents.is_none() && (source_changed || target_changed) {
+            resolved_context.inherited_extents = Some((source_extent, target_extent));
+        }
+        let context = &resolved_context;
         if context.crs_extent_use == CrsExtentUse::Intersection {
             if let (Some(left), Some(right)) = (crs_extent(&source), crs_extent(&target)) {
                 if !extent_intersects(&left, &right) {
@@ -5202,19 +5219,23 @@ impl CoordinateOperationFactory {
             target_extent.as_ref().and_then(ObjectDomain::bounding_box),
         );
         let registry = context.registry == RegistryUse::Database;
-        if let (true, Some(source_id), Some(target_id)) = (
-            registry,
-            source
-                .authority_code("EPSG")
-                .or_else(|| source.identifiers().first()),
-            target
-                .authority_code("EPSG")
-                .or_else(|| target.identifiers().first()),
-        ) {
+        let source_identity = if registry {
+            registry_identity(source, context)
+        } else {
+            None
+        };
+        let target_identity = if registry {
+            registry_identity(target, context)
+        } else {
+            None
+        };
+        if let (true, Some(source_id), Some(target_id)) =
+            (registry, source_identity, target_identity)
+        {
             found.extend(direct_registry_operations(
                 context,
-                (source_id.code_space(), source_id.code()),
-                (target_id.code_space(), target_id.code()),
+                (source_id.0.as_str(), source_id.1.as_str()),
+                (target_id.0.as_str(), target_id.1.as_str()),
                 boxes,
             )?);
             direct_unfiltered_empty = found.is_empty();
@@ -5235,7 +5256,7 @@ impl CoordinateOperationFactory {
                     let first = operations_between(
                         &context.db,
                         &context.authority,
-                        (source_id.code_space(), source_id.code()),
+                        (source_id.0.as_str(), source_id.1.as_str()),
                         (pivot_auth, pivot_code),
                         boxes,
                         RegistrySearch::Both,
@@ -5244,7 +5265,7 @@ impl CoordinateOperationFactory {
                         &context.db,
                         &context.authority,
                         (pivot_auth, pivot_code),
-                        (target_id.code_space(), target_id.code()),
+                        (target_id.0.as_str(), target_id.1.as_str()),
                         boxes,
                         RegistrySearch::Both,
                     )?;
@@ -5310,6 +5331,11 @@ impl CoordinateOperationFactory {
         }
         if registry && found.is_empty() {
             found.extend(super::compound::geoid_vertical(source, target, context)?);
+        }
+        if registry && found.is_empty() {
+            found.extend(super::compound::vertical_geog_fallback(
+                self, source, target, context,
+            )?);
         }
         // `createOperationsVertToVert` also runs when the registry gave no perfect operation.
         let vertical_pair = matches!((source, target), (Crs::Vertical(_), Crs::Vertical(_)));
@@ -5984,8 +6010,10 @@ fn datum_pivot_operations(
     target: &Crs,
     context: &CoordinateOperationContext,
 ) -> Vec<CoordinateOperation> {
-    let (Some(source_datum), Some(target_datum)) = (datum_identity(source), datum_identity(target))
-    else {
+    let (Some(source_datum), Some(target_datum)) = (
+        datum_identity(source, &context.db),
+        datum_identity(target, &context.db),
+    ) else {
         return Vec::new();
     };
     if same_geodetic_datum(source, target) {
@@ -6384,7 +6412,7 @@ fn crs_with_same_datum(
     db: &DatabaseContext,
     crs: &Crs,
 ) -> Result<Vec<(String, String)>, FactoryError> {
-    let Some((datum_auth, datum_code)) = datum_identity(crs) else {
+    let Some((datum_auth, datum_code)) = datum_identity(crs, db) else {
         return Ok(Vec::new());
     };
     let mut list: Vec<(String, String)> = db
@@ -6458,13 +6486,35 @@ fn promote_operation_to_3d(
 ///
 /// An ensemble CRS has no datum code of its own. The ensemble code is the datum code
 /// `geodetic_crs.datum_code` stores, such as EPSG:6326 for WGS 84.
-fn datum_identity(crs: &Crs) -> Option<(String, String)> {
+fn datum_identity(crs: &Crs, db: &DatabaseContext) -> Option<(String, String)> {
     let frame = geodetic_frame(crs)?;
     if let Some(identifier) = frame.identifiers().first() {
         return Some((
             identifier.code_space().to_owned(),
             identifier.code().to_owned(),
         ));
+    }
+    // `findCandidateGeodCRSForDatum`: a datum without identifier takes the one of the single
+    // registered datum of that name it is equivalent to.
+    let name = frame.name();
+    if name != "unknown" && name != "unnamed" && !name.is_empty() {
+        if let Ok(matches) = AuthorityFactory::create(db, "").create_objects_from_name(
+            name,
+            &[ObjectType::GeodeticReferenceFrame],
+            NameMatch::Exact,
+            2,
+        ) {
+            if let [AuthorityObject::Datum(Datum::Geodetic(found))] = matches.as_slice() {
+                if frame.is_equivalent_to(found) {
+                    if let Some(identifier) = found.identifiers().first() {
+                        return Some((
+                            identifier.code_space().to_owned(),
+                            identifier.code().to_owned(),
+                        ));
+                    }
+                }
+            }
+        }
     }
     let ensemble = match crs {
         Crs::Geographic(geographic) => geographic.datum_ensemble(),
@@ -6476,6 +6526,150 @@ fn datum_identity(crs: &Crs) -> Option<(String, String)> {
         identifier.code_space().to_owned(),
         identifier.code().to_owned(),
     ))
+}
+
+/// `CRS::getResolvedCRS`: a geographic, projected, or compound CRS read from the database by its
+/// identifier, or by its name when it has none, when that object is equivalent to it. The extent
+/// is the one of the CRS, or the registered one when the CRS has none (or only a synthesized one).
+fn resolve_crs(
+    crs: &Crs,
+    context: &CoordinateOperationContext,
+) -> (Crs, Option<ObjectDomain>, bool) {
+    let mut extent = crs_extent(crs);
+    if context.registry != RegistryUse::Database {
+        return (crs.clone(), extent, false);
+    }
+    let original_has_extent = extent.is_some();
+    let approximate = extent.is_none() || matches!(crs, Crs::Compound(_));
+    let object_type = match crs {
+        Crs::Geographic(geographic) | Crs::Geodetic(GeodeticCRS::Geographic(geographic)) => {
+            if geographic.coordinate_system().axes().len() == 2 {
+                ObjectType::Geographic2dCrs
+            } else {
+                ObjectType::Geographic3dCrs
+            }
+        }
+        Crs::Projected(_) => ObjectType::ProjectedCrs,
+        Crs::Compound(_) => ObjectType::CompoundCrs,
+        _ => return (crs.clone(), extent, false),
+    };
+    let axis_directions = |crs: &Crs| -> Vec<String> {
+        geographic_of(crs)
+            .map(|geographic| {
+                geographic
+                    .coordinate_system()
+                    .axes()
+                    .iter()
+                    .map(|axis| axis.direction().to_owned())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let equivalent = |left: &Crs, right: &Crs| {
+        left.is_equivalent_to_with(right, Equivalence::Equivalent)
+            || (left.is_equivalent_to_db(right, &context.db)
+                && axis_directions(left) == axis_directions(right))
+    };
+    let has_geoid = matches!(
+        crs,
+        Crs::Compound(compound) if matches!(
+            compound.components(),
+            [_, Crs::Vertical(vertical)] if !vertical.geoid_models().is_empty()
+        )
+    );
+    if let Some(id) = crs.identifiers().first() {
+        let factory = AuthorityFactory::create(&context.db, id.code_space());
+        if let Ok(resolved) = factory.create_coordinate_reference_system(id.code()) {
+            let mut changed = false;
+            if approximate {
+                if let Some(registered) = crs_extent(&resolved) {
+                    extent = Some(registered);
+                    changed = !original_has_extent;
+                }
+            }
+            if equivalent(&resolved, crs) && !has_geoid {
+                return (resolved, extent, true);
+            }
+            return (crs.clone(), extent, changed);
+        }
+        return (crs.clone(), extent, false);
+    }
+    let name = crs.name();
+    if name != "unknown" && name != "unnamed" {
+        let authority = if context.authority == "any" {
+            ""
+        } else {
+            context.authority.as_str()
+        };
+        if let Ok(matches) = AuthorityFactory::create(&context.db, authority)
+            .create_objects_from_name(name, &[object_type], NameMatch::Exact, 2)
+        {
+            if let [AuthorityObject::Crs(found)] = matches.as_slice() {
+                let mut changed = false;
+                if approximate {
+                    if let Some(registered) = crs_extent(found) {
+                        extent = Some(registered);
+                        changed = !original_has_extent;
+                    }
+                }
+                if equivalent(found, crs) && !has_geoid {
+                    return (found.clone(), extent, true);
+                }
+                return (crs.clone(), extent, changed);
+            }
+        }
+    }
+    (crs.clone(), extent, false)
+}
+
+/// `buildCRSIds`: the identifier of the CRS, or when it has none the identifier of the one
+/// registered object of that type and name that is equivalent to it.
+fn registry_identity(crs: &Crs, context: &CoordinateOperationContext) -> Option<(String, String)> {
+    if let Some(id) = crs
+        .authority_code("EPSG")
+        .or_else(|| crs.identifiers().first())
+    {
+        return Some((id.code_space().to_owned(), id.code().to_owned()));
+    }
+    let name = crs.name();
+    if name.eq_ignore_ascii_case("unknown") {
+        return None;
+    }
+    let object_type = match crs {
+        Crs::Geographic(geographic) | Crs::Geodetic(GeodeticCRS::Geographic(geographic)) => {
+            if geodetic_frame(crs).is_some_and(|frame| frame.name() == "unknown") {
+                return None;
+            }
+            if geographic.coordinate_system().axes().len() == 2 {
+                ObjectType::Geographic2dCrs
+            } else {
+                ObjectType::Geographic3dCrs
+            }
+        }
+        Crs::Projected(_) => ObjectType::ProjectedCrs,
+        Crs::Vertical(_) => ObjectType::VerticalCrs,
+        _ => return None,
+    };
+    let authority = if context.authority == "any" {
+        ""
+    } else {
+        context.authority.as_str()
+    };
+    let matches = AuthorityFactory::create(&context.db, authority)
+        .create_objects_from_name(name, &[object_type], NameMatch::Exact, 2)
+        .ok()?;
+    let [AuthorityObject::Crs(found)] = matches.as_slice() else {
+        return None;
+    };
+    if !crs.is_equivalent_to_with(found, Equivalence::Equivalent)
+        && !crs.is_equivalent_to_db(found, &context.db)
+    {
+        return None;
+    }
+    found
+        .identifiers()
+        .first()
+        .map(|id| (id.code_space().to_owned(), id.code().to_owned()))
 }
 
 /// Authority code of a CRS, as `(codeSpace, code)`.
