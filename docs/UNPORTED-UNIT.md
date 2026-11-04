@@ -28,7 +28,6 @@ and `PORT-NOTES-tests.md`.
 ## test_factory.cpp
 
 - `factory.AuthorityFactory_createDynamicVerticalDatum`
-- `factory.AuthorityFactory_build_all_concatenated`
 - `FactoryWithTmpDatabase.AuthorityFactory_test_with_fake_EPSG_database`
 - `FactoryWithTmpDatabase.AuthorityFactory_test_inversion_first_and_last_steps_of_concat_op`
 - `FactoryWithTmpDatabase.AuthorityFactory_test_with_fake_EPSG_and_OTHER_database`
