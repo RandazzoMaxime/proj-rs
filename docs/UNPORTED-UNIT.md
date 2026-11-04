@@ -209,8 +209,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.boundCRS_to_compoundCRS_with_hubCRS_same_as_compound_geographicCRS`
 - `operation.IGNF_LAMB1_TO_EPSG_4326`
 - `operation.NAD83_to_projected_CRS_based_on_NAD83_2011`
-- `operation.isPROJInstantiable`
-- `operation.createOperation_on_crs_with_canonical_bound_crs`
 - `operation.createOperation_on_crs_with_bound_crs_and_wktext`
 - `operation.compoundCRS_to_proj_string_with_non_metre_height`
 - `operation.compoundCRS_with_derived_vertical_CRS`
@@ -227,7 +225,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.createOperation_spherical_ocentric_spherical_to_ellipsoidal_north_west`
 - `operation.createOperation_ellipsoidal_ographic_west_to_projected_of_ellipsoidal_ographic_west`
 - `operation.createOperation_ellipsoidal_ographic_west_to_projected_of_ellipsoidal_ocentric`
-- `operation.createOperation_ellipsoidal_ocentric_to_projected_of_ellipsoidal_ocentric`
 - `operation.createOperation_ellipsoidal_ocentric_to_projected_of_ellipsoidal_ographic_west`
 - `operation.createOperation_ossfuzz_47873`
 - `operation.createOperation_ossfuzz_47873_simplified_if_i_might_say`
