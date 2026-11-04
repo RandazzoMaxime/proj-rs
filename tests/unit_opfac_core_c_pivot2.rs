@@ -5,7 +5,7 @@
 
 use proj_rs::iso19111::{
     AuthorityFactory, CoordinateOperation, CoordinateOperationContext, CoordinateOperationFactory,
-    DatabaseContext, GridAvailabilityUse, ProjLines,
+    DatabaseContext, GridAvailabilityUse, ProjLines, SpatialCriterion,
 };
 
 fn database() -> DatabaseContext {
@@ -52,4 +52,45 @@ fn operation_create_operation_test_create_operations_with_datum_pivot_iter_1() {
          NAD83(CSRS)v3 (geog2D)"
     );
     assert_eq!(plain(&list[0]), "+proj=noop");
+}
+
+/// TEST(operation, createOperation_ETRF2000_to_Amersfoort)
+#[test]
+fn operation_create_operation_etrf2000_to_amersfoort() {
+    let db = database();
+    let epsg = AuthorityFactory::create(&db, "EPSG");
+    let mut context = CoordinateOperationContext::create(&db, "");
+    context.set_spatial_criterion(SpatialCriterion::PartialIntersection);
+    context.set_grid_availability_use(GridAvailabilityUse::IgnoreGridAvailability);
+    let factory = CoordinateOperationFactory::create();
+    let source = epsg
+        .create_coordinate_reference_system("9067")
+        .expect("9067");
+    let target = epsg
+        .create_coordinate_reference_system("4289")
+        .expect("4289");
+    let list = factory
+        .create_operations(&source, &target, &context)
+        .expect("operations");
+    assert!(!list.is_empty());
+    assert_eq!(
+        list[0].name(),
+        "Conversion from ETRF2000 (geog2D) to ETRF2000 (geocentric) + \
+         Inverse of ETRS89-NLD [AGRS2010] to ETRF2000 (1) + \
+         Conversion from ETRS89-NLD [AGRS2010] (geocentric) to \
+         ETRS89-NLD [AGRS2010] (geog2D) + \
+         Inverse of Amersfoort to ETRS89-NLD [AGRS2010] (9)"
+    );
+    let list = factory
+        .create_operations(&target, &source, &context)
+        .expect("operations");
+    assert!(!list.is_empty());
+    assert_eq!(
+        list[0].name(),
+        "Amersfoort to ETRS89-NLD [AGRS2010] (9) + \
+         Conversion from ETRS89-NLD [AGRS2010] (geog2D) to \
+         ETRS89-NLD [AGRS2010] (geocentric) + \
+         ETRS89-NLD [AGRS2010] to ETRF2000 (1) + \
+         Conversion from ETRF2000 (geocentric) to ETRF2000 (geog2D)"
+    );
 }
