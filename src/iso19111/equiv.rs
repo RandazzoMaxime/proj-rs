@@ -146,6 +146,11 @@ pub(crate) fn geodetic_frame(crs: &Crs) -> Option<GeodeticReferenceFrame> {
     }
 }
 
+/// `isEquivalentTo` of the datum of `crs` with `frame`, under the `EQUIVALENT` name rule.
+pub(crate) fn datum_equivalent_to_frame(crs: &Crs, frame: &GeodeticReferenceFrame) -> bool {
+    geodetic_frame(crs).is_some_and(|left| frame_equivalent_by(&left, frame, equivalent_name))
+}
+
 /// `isSameGeodeticDatum`: the datums of two geodetic CRS, or their ensembles as datums, are
 /// equivalent. An `unknown` datum matches only another `unknown` datum.
 pub(crate) fn same_geodetic_datum(left: &Crs, right: &Crs) -> bool {

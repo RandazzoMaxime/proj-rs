@@ -1,6 +1,6 @@
 //! `createOperationsBoundToGeog` of PROJ's `coordinateoperationfactory.cpp`: a bound CRS to a
 //! geographic CRS, chaining the base CRS, the binding transformation, and the hub to the target.
-//! A geographic source and a bound target is its inverse (`applyInverse`).
+//! A geodetic source and a bound target is its inverse (`applyInverse`).
 //!
 //! `createOperationsBoundToBound` of the same file: two bound CRS with the same geographic hub
 //! chain the source to its hub and the hub to the target.
@@ -13,11 +13,14 @@
 //! (same vertical datum, same hub for vertical bases).
 
 use super::bound::extract_geographic;
-use super::equiv::{same_geodetic_datum, Equivalence};
+use super::equiv::{
+    datum_equivalent_to_frame, ellipsoid_equivalent_loose, geodetic_frame, same_geodetic_datum,
+    Equivalence,
+};
 use super::factory::{geographic_of, CoordinateOperationContext, CoordinateOperationFactory};
 use super::model::{
-    BoundCRS, ConcatenatedOperation, ConcatenatedStep, CoordinateOperation, Crs, EllipsoidalCS,
-    GeodeticCRS, GeographicCRS, Identified, UnitOfMeasure,
+    BoundCRS, ConcatenatedOperation, ConcatenatedStep, CoordinateOperation, Crs, Ellipsoid,
+    EllipsoidalCS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified, UnitOfMeasure,
 };
 use super::FactoryError;
 
@@ -38,7 +41,10 @@ pub(super) fn bound_candidates(
         (Crs::Bound(_), Crs::Geodetic(geodetic)) => {
             bound_to_geod(factory, source, geodetic, target, context).map(Some)
         }
-        (_, Crs::Bound(_)) if geographic_of(source).is_some() => {
+        (_, Crs::Bound(_))
+            if geographic_of(source).is_some()
+                || matches!(source, Crs::Geodetic(GeodeticCRS::Geocentric(_))) =>
+        {
             let forward = factory.create_candidates(target, source, context)?;
             Ok(Some(
                 forward.iter().map(CoordinateOperation::inverse).collect(),
@@ -190,6 +196,21 @@ fn bound_to_geog(
             if !found.is_empty() {
                 return Ok(found);
             }
+        } else if is_clarke_66_nad27_to_nad83(base_geog, hub, target) {
+            if base.is_equivalent_to(base_geog) {
+                return Ok(vec![clarke_66_transformation(transformation, base, target)]);
+            }
+            let found: Vec<CoordinateOperation> = factory
+                .create_candidates(base, base_geog, context)?
+                .into_iter()
+                .map(|first| {
+                    let transf = clarke_66_transformation(transformation, base_geog, target);
+                    concatenate(vec![first, transf])
+                })
+                .collect();
+            if !found.is_empty() {
+                return Ok(found);
+            }
         }
     }
 
@@ -244,6 +265,36 @@ fn bound_to_geog(
     }
 
     factory.create_candidates(base, target, context)
+}
+
+/// `createOperationsBoundToGeog`, the Clarke 1866 case: a base on the Clarke 1866 ellipsoid
+/// bound to WGS 84 (`+nadgrids=ntv1_can.dat,conus`), and a NAD83 target. NAD27 and NAD83 are
+/// taken as the same datum for that binding.
+fn is_clarke_66_nad27_to_nad83(base_geog: &Crs, hub: &Crs, target: &Crs) -> bool {
+    geodetic_frame(base_geog).is_some_and(|frame| {
+        ellipsoid_equivalent_loose(frame.ellipsoid(), &Ellipsoid::clarke_1866())
+    }) && datum_equivalent_to_frame(hub, &GeodeticReferenceFrame::epsg_6326())
+        && datum_equivalent_to_frame(target, &GeodeticReferenceFrame::epsg_6269())
+}
+
+/// The binding transformation of the Clarke 1866 case, named and set from `source` to
+/// `target` (`setCRSs`).
+fn clarke_66_transformation(
+    transformation: &CoordinateOperation,
+    source: &Crs,
+    target: &Crs,
+) -> CoordinateOperation {
+    let mut transf = transformation.clone();
+    set_endpoints(&mut transf, source, target);
+    let name = format!("Transformation from {} to {}", source.name(), target.name());
+    match &mut transf {
+        CoordinateOperation::Conversion(conversion) => conversion.identified.name = name,
+        CoordinateOperation::Transformation(transformation) => {
+            transformation.identified.name = name
+        }
+        CoordinateOperation::Concatenated(concatenated) => concatenated.identified.name = name,
+    }
+    transf
 }
 
 /// The operation from the geographic CRS of the base to the source of the binding
