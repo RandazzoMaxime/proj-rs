@@ -105,7 +105,7 @@ fn concatenate(
 
 /// The intersection of the steps' extents, as `getExtent` takes it. The outer `None` is an
 /// empty intersection. A step without an extent is skipped.
-fn joint_extent(steps: &[CoordinateOperation]) -> Option<Option<ObjectDomain>> {
+pub(super) fn joint_extent(steps: &[CoordinateOperation]) -> Option<Option<ObjectDomain>> {
     let mut extent: Option<ObjectDomain> = None;
     for part in steps.iter().filter_map(operation_extent) {
         extent = match extent {

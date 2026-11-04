@@ -4894,6 +4894,11 @@ impl CoordinateOperationContext {
         !matches!(self.crs_extent_use, CrsExtentUse::Ignore)
     }
 
+    /// The database the operations are read from.
+    pub(super) fn database(&self) -> &DatabaseContext {
+        &self.db
+    }
+
     /// Pivot CRS codes, as `(authority, code)` pairs.
     pub fn set_intermediate_crs(&mut self, intermediates: Vec<(String, String)>) -> &mut Self {
         self.intermediates = intermediates;
