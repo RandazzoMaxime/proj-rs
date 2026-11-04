@@ -4242,7 +4242,9 @@ impl AuthorityFactory {
              source_crs_auth_name, source_crs_code, target_crs_auth_name, target_crs_code, \
              accuracy, grid_param_auth_name, grid_param_code, grid_param_name, grid_name, \
              grid2_param_auth_name, grid2_param_code, grid2_param_name, grid2_name, \
-             interpolation_crs_auth_name, interpolation_crs_code, operation_version, deprecated \
+             interpolation_crs_auth_name, interpolation_crs_code, operation_version, deprecated, \
+             param1_auth_name, param1_code, param1_name, param1_value, param1_uom_auth_name, param1_uom_code, \
+             param2_auth_name, param2_code, param2_name, param2_value, param2_uom_auth_name, param2_uom_code \
              FROM grid_transformation WHERE auth_name = ? AND code = ?",
             code,
         )?;
@@ -4262,6 +4264,7 @@ impl AuthorityFactory {
                 grids,
             )?);
         }
+        parameters.extend(self.parameter_block(&row, 22, 2)?);
         let interpolation = if row[18].empty() {
             None
         } else {

@@ -25,7 +25,7 @@
 use std::f64::consts::PI;
 
 use super::buildop::names_match;
-use super::equiv::Equivalence;
+use super::equiv::{geodetic_frame, Equivalence};
 use super::factory::DatabaseContext;
 use super::json::rounded_epoch_in_decimal_year;
 use super::model::{
@@ -90,6 +90,12 @@ const PARAMETER_VERTICAL_OFFSET_FILE: i32 = 8732;
 const PARAMETER_GEOID_MODEL_DIFFERENCE_FILE: i32 = 1063;
 const PARAMETER_POINT_MOTION_VELOCITY_GRID_FILE: i32 = 1050;
 const PARAMETER_TIN_OFFSET_FILE: i32 = 1064;
+const PARAMETER_SOURCE_EPOCH: i32 = 1068;
+const PARAMETER_TARGET_EPOCH: i32 = 1069;
+const METHOD_GEOGRAPHIC3D_OFFSET_BY_VELOCITY_GRID: i32 = 1114;
+const METHOD_VERTICAL_OFFSET_NEU_VELOCITY_GRID: i32 = 1113;
+const METHOD_POSITION_VECTOR_NEU_VELOCITIES_GTG: i32 = 1143;
+const METHOD_GEOCENTRIC_TRANSLATIONS_NEU_VELOCITY_GRID_GTG: i32 = 1144;
 
 /// `Geographic3D to GravityRelatedHeight` methods, the codes `isGeographic3DToGravityRelatedHeight` lists.
 const GEOG3D_TO_HEIGHT_METHODS: [i32; 42] = [
@@ -317,6 +323,18 @@ fn export_forward(
         || code == METHOD_GEOGRAPHIC3D_TO_GEOG2D_GRAVITY_HEIGHT
     {
         return constant_geoid_height(operation, target, formatter);
+    }
+    if code == METHOD_GEOGRAPHIC3D_OFFSET_BY_VELOCITY_GRID {
+        return geographic3d_velocity_grid(operation, source, target, formatter);
+    }
+    if code == METHOD_VERTICAL_OFFSET_NEU_VELOCITY_GRID {
+        return vertical_velocity_grid(operation, source, target, formatter);
+    }
+    if code == METHOD_GEOCENTRIC_TRANSLATIONS_NEU_VELOCITY_GRID_GTG {
+        return geocentric_velocity_grid(operation, source, target, formatter);
+    }
+    if code == METHOD_POSITION_VECTOR_NEU_VELOCITIES_GTG {
+        return position_vector_velocity_grid(operation, source, target, formatter);
     }
     if height_to_geog3d_grid_shift(operation, target, formatter)? {
         return Ok(());
@@ -790,6 +808,232 @@ fn tin_shift(
         return Ok(true);
     }
     Ok(false)
+}
+
+/// `Geographic3D offset using NEU velocity grid (NTv2_Vel)` (1114): the source CRS in radians,
+/// a `deformation` step on the velocity grid over the time from the source datum epoch to the
+/// target datum epoch, then the target CRS. The interpolation CRS, the source or the target,
+/// gives the ellipsoid of the deformation.
+fn geographic3d_velocity_grid(
+    operation: &Transformation,
+    source: Option<&Crs>,
+    target: Option<&Crs>,
+    formatter: &mut PipelineFormatter,
+) -> Result<(), FactoryError> {
+    let method = operation.method().name();
+    let not_geographic =
+        || FactoryError::Format(format!("Can apply {method} only to GeographicCRS"));
+    let source_year = anchor_years(source, method, "source")?;
+    let target_year = anchor_years(target, method, "target")?;
+    let source = source.and_then(geographic_of).ok_or_else(not_geographic)?;
+    let target = target.and_then(geographic_of).ok_or_else(not_geographic)?;
+    let interpolation = operation.interpolation_crs().and_then(geographic_of);
+    let on_target = interpolation.is_some_and(|crs| {
+        crs.is_equivalent_to_with(&target.demote_to_2d(None), Equivalence::Equivalent)
+    });
+    let on_source = interpolation.is_some_and(|crs| {
+        crs.is_equivalent_to_with(&source.demote_to_2d(None), Equivalence::Equivalent)
+    });
+    if !on_source && !on_target {
+        return Err(FactoryError::Format(format!(
+            "For {method}, interpolation CRS should be the source or target CRS"
+        )));
+    }
+    let grid = formatter.grid_name(&velocity_grid_file(operation)?);
+    let source_axes = source.coordinate_system().axes();
+    let target_axes = target.coordinate_system().axes();
+    let push_pop = source_axes.len() == 2 || target_axes.len() == 2;
+
+    formatter.start_inversion();
+    angular_unit_and_axis_swap(source_axes, formatter)?;
+    formatter.stop_inversion();
+    if push_pop {
+        formatter.add_step("push");
+        formatter.add_flag("v_3");
+    }
+    formatter.add_step("cart");
+    ellipsoid_steps(ellipsoid_of(source), formatter);
+    formatter.add_step("deformation");
+    formatter.add_number("dt", target_year - source_year);
+    formatter.add_param("grids", &grid);
+    ellipsoid_steps(
+        ellipsoid_of(if on_target { target } else { source }),
+        formatter,
+    );
+    formatter.start_inversion();
+    formatter.add_step("cart");
+    ellipsoid_steps(ellipsoid_of(target), formatter);
+    formatter.stop_inversion();
+    if push_pop {
+        formatter.add_step("pop");
+        formatter.add_flag("v_3");
+    }
+    angular_unit_and_axis_swap(target_axes, formatter)
+}
+
+/// `Vertical offset using NEU velocity grid (NTv2_Vel)` (1113): the horizontal position is
+/// pushed aside, a `deformation` step on the velocity grid moves the height over the time from
+/// the source to the target vertical datum epoch, then the position is popped back.
+fn vertical_velocity_grid(
+    operation: &Transformation,
+    source: Option<&Crs>,
+    target: Option<&Crs>,
+    formatter: &mut PipelineFormatter,
+) -> Result<(), FactoryError> {
+    let method = operation.method().name();
+    let interpolation = operation
+        .interpolation_crs()
+        .and_then(geographic_of)
+        .ok_or_else(|| {
+            FactoryError::Format(format!(
+                "Can apply {method} only to a GeographicCRS interpolation CRS"
+            ))
+        })?;
+    let vertical_epoch = |crs: Option<&Crs>, role: &str| {
+        let vertical = crs.and_then(vertical_of).ok_or_else(|| {
+            FactoryError::Format(format!("Can apply {method} only to a {role} VerticalCRS"))
+        })?;
+        vertical
+            .datum()
+            .and_then(|datum| datum.anchor_epoch())
+            .ok_or_else(|| {
+                FactoryError::Format(format!("For {method}, missing epoch for {role} CRS"))
+            })
+    };
+    let source_year = vertical_epoch(source, "source")?;
+    let target_year = vertical_epoch(target, "target")?;
+    let grid = formatter.grid_name(&velocity_grid_file(operation)?);
+    formatter.add_step("push");
+    formatter.add_flag("v_1");
+    formatter.add_flag("v_2");
+    formatter.add_step("cart");
+    ellipsoid_steps(ellipsoid_of(interpolation), formatter);
+    formatter.add_step("deformation");
+    formatter.add_number("dt", target_year - source_year);
+    formatter.add_param("grids", &grid);
+    ellipsoid_steps(ellipsoid_of(interpolation), formatter);
+    formatter.start_inversion();
+    formatter.add_step("cart");
+    ellipsoid_steps(ellipsoid_of(interpolation), formatter);
+    formatter.stop_inversion();
+    formatter.add_step("pop");
+    formatter.add_flag("v_1");
+    formatter.add_flag("v_2");
+    Ok(())
+}
+
+/// `Geocentric translations using NEU velocity grid (gtg)` (1144): the source CRS, a
+/// `deformation` step run backwards to the target epoch, then the target CRS.
+fn geocentric_velocity_grid(
+    operation: &Transformation,
+    source: Option<&Crs>,
+    target: Option<&Crs>,
+    formatter: &mut PipelineFormatter,
+) -> Result<(), FactoryError> {
+    let method = operation.method().name();
+    let (source, target) = geocentric_endpoints(source, target, method)?;
+    let grid = formatter.grid_name(&velocity_grid_file(operation)?);
+    if measure_by_code(operation, PARAMETER_SOURCE_EPOCH).is_some() {
+        return Err(FactoryError::Format(
+            "Unsupported parameter source epoch".to_owned(),
+        ));
+    }
+    let target_year = target_epoch_years(operation)?;
+    setup_source(source, PushV3::No, formatter)?;
+    formatter.start_inversion();
+    formatter.add_step("deformation");
+    formatter.add_number("t_epoch", target_year);
+    formatter.add_param("grids", &grid);
+    geocentric_ellipsoid_steps(source, formatter);
+    formatter.stop_inversion();
+    setup_target(target, PushV3::No, formatter)
+}
+
+/// `Position Vector (geocen) & Geocen translations NEU velocities (gtg)` (1143): a Helmert
+/// step between geocentric CRS, then a `deformation` step on the velocity grid over the time
+/// from the source to the target epoch, or to the target epoch alone.
+fn position_vector_velocity_grid(
+    operation: &Transformation,
+    source: Option<&Crs>,
+    target: Option<&Crs>,
+    formatter: &mut PipelineFormatter,
+) -> Result<(), FactoryError> {
+    let method = operation.method().name();
+    let (source, target) = geocentric_endpoints(source, target, method)?;
+    let grid = formatter.grid_name(&velocity_grid_file(operation)?);
+    setup_source(source, PushV3::No, formatter)?;
+    formatter.add_step("helmert");
+    formatter.add_number("x", si_value(operation, 8605));
+    formatter.add_number("y", si_value(operation, 8606));
+    formatter.add_number("z", si_value(operation, 8607));
+    formatter.add_number("rx", numeric(operation, 8608, ARC_SECOND));
+    formatter.add_number("ry", numeric(operation, 8609, ARC_SECOND));
+    formatter.add_number("rz", numeric(operation, 8610, ARC_SECOND));
+    formatter.add_number("s", numeric(operation, 8611, PARTS_PER_MILLION));
+    formatter.add_param("convention", "position_vector");
+    let target_year = target_epoch_years(operation)?;
+    formatter.add_step("deformation");
+    match epoch_years(operation, PARAMETER_SOURCE_EPOCH) {
+        Some(source_year) => formatter.add_number("dt", target_year - source_year),
+        None => formatter.add_number("t_epoch", target_year),
+    }
+    formatter.add_param("grids", &grid);
+    geocentric_ellipsoid_steps(source, formatter);
+    setup_target(target, PushV3::No, formatter)
+}
+
+/// The two CRS of a velocity grid method on geocentric CRS.
+fn geocentric_endpoints<'a>(
+    source: Option<&'a Crs>,
+    target: Option<&'a Crs>,
+    method: &str,
+) -> Result<(&'a Crs, &'a Crs), FactoryError> {
+    let refused = || FactoryError::Format(format!("Can apply {method} only to a geocentric CRS"));
+    let geocentric = |crs: &Crs| matches!(geodetic_direct(crs), Some(Geodetic::Geocentric(_)));
+    match (source, target) {
+        (Some(source), Some(target)) if geocentric(source) && geocentric(target) => {
+            Ok((source, target))
+        }
+        _ => Err(refused()),
+    }
+}
+
+fn geocentric_ellipsoid_steps(crs: &Crs, formatter: &mut PipelineFormatter) {
+    if let Some(Geodetic::Geocentric(geocentric)) = geodetic_direct(crs) {
+        ellipsoid_steps(
+            geocentric_frame(geocentric).map(GeodeticReferenceFrame::ellipsoid),
+            formatter,
+        );
+    }
+}
+
+fn velocity_grid_file(operation: &Transformation) -> Result<String, FactoryError> {
+    file_by_code(operation, PARAMETER_POINT_MOTION_VELOCITY_GRID_FILE).ok_or_else(|| {
+        FactoryError::Format("Missing parameter Point motion velocity grid file".to_owned())
+    })
+}
+
+fn target_epoch_years(operation: &Transformation) -> Result<f64, FactoryError> {
+    epoch_years(operation, PARAMETER_TARGET_EPOCH)
+        .ok_or_else(|| FactoryError::Format("Missing parameter target epoch".to_owned()))
+}
+
+/// An epoch parameter in years, as `parameterValueNumeric(code, YEAR)`.
+fn epoch_years(operation: &Transformation, code: i32) -> Option<f64> {
+    measure_by_code(operation, code).map(|measure| {
+        if measure.unit().conversion_to_si() == YEAR {
+            measure.value()
+        } else {
+            measure.si_value() / YEAR
+        }
+    })
+}
+
+/// The anchor epoch in years of the datum of `crs`, which a velocity grid method needs.
+fn anchor_years(crs: Option<&Crs>, method: &str, role: &str) -> Result<f64, FactoryError> {
+    crs.and_then(geodetic_frame)
+        .and_then(|frame| frame.anchor_epoch())
+        .ok_or_else(|| FactoryError::Format(format!("For {method}, missing epoch for {role} CRS")))
 }
 
 /// `addAngularUnitConvertAndAxisSwap` with the height unit left out: the `pushOmitZUnitConversion` form.
