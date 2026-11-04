@@ -10,7 +10,9 @@ use rusqlite::{types::ValueRef, Connection};
 
 use super::buildop::OpProps;
 use super::coordinate_metadata::CoordinateMetadata;
-use super::equiv::{equivalent_name, geodetic_frame, same_geodetic_datum, same_geographic_base};
+use super::equiv::{
+    equivalent_name, geodetic_frame, same_geodetic_datum, same_geographic_base, Equivalence,
+};
 use super::json::create_from_user_input;
 use super::model::{
     ensemble_name_as_datum, Axis, BoundingBox, CartesianCS, CompoundCRS, ConcatenatedOperation,
@@ -5024,8 +5026,14 @@ impl CoordinateOperationFactory {
         target_epoch: Option<f64>,
         context: &CoordinateOperationContext,
     ) -> Result<Vec<CoordinateOperation>, FactoryError> {
-        Ok(self
-            .create_operations(source, target, context)?
+        let point_motion =
+            point_motion_between_epochs(source, source_epoch, target, target_epoch, context)?;
+        let operations = if point_motion.is_empty() {
+            self.create_operations(source, target, context)?
+        } else {
+            point_motion
+        };
+        Ok(operations
             .into_iter()
             .map(|operation| with_epochs(operation, source_epoch, target_epoch))
             .collect())
@@ -5749,6 +5757,12 @@ fn ballpark_operations(source: &Crs, target: &Crs) -> Vec<CoordinateOperation> {
     if same_geodetic_datum(source, target) {
         return Vec::new();
     }
+    forced_ballpark_operations(source, target)
+}
+
+/// [`ballpark_operations`] without the same-datum exception: `createOperationsGeodToGeod` with
+/// `forceBallpark`.
+fn forced_ballpark_operations(source: &Crs, target: &Crs) -> Vec<CoordinateOperation> {
     let (name, code, values, domain) = match (geographic_of(source), geographic_of(target)) {
         (Some(left), Some(right)) => {
             let meridian = |crs: &Crs| {
@@ -7237,4 +7251,48 @@ fn append_geographic_geocentric_tail(steps: &mut Vec<ConcatenatedStep>, target: 
             reverse: false,
         });
     }
+}
+
+/// `createOperationsGeodToGeod` with two epochs: for one geodetic CRS at two different epochs,
+/// the point motion operations of the database that run from that CRS to itself, each with the
+/// two epochs.
+fn point_motion_between_epochs(
+    source: &Crs,
+    source_epoch: Option<f64>,
+    target: &Crs,
+    target_epoch: Option<f64>,
+    context: &CoordinateOperationContext,
+) -> Result<Vec<CoordinateOperation>, FactoryError> {
+    let (Some(source_epoch), Some(target_epoch)) = (source_epoch, target_epoch) else {
+        return Ok(Vec::new());
+    };
+    if source_epoch == target_epoch
+        || !source.is_equivalent_to_with(target, Equivalence::Equivalent)
+    {
+        return Ok(Vec::new());
+    }
+    let geodetic = match source {
+        Crs::Geographic(geographic) => GeodeticCRS::Geographic(geographic.clone()),
+        Crs::Geodetic(geodetic) => geodetic.clone(),
+        _ => return Ok(Vec::new()),
+    };
+    let factory = AuthorityFactory::create(&context.db, "");
+    let mut operations = Vec::new();
+    for mut transformation in
+        factory.get_point_motion_operations_for(&geodetic, AlternativeGridNames::Official)?
+    {
+        let same_crs = transformation
+            .source_crs()
+            .is_some_and(|crs| crs.is_equivalent_to_with(source, Equivalence::Equivalent));
+        if same_crs {
+            transformation.point_motion = true;
+            transformation.source_epoch = Some(source_epoch);
+            transformation.target_epoch = Some(target_epoch);
+            operations.push(CoordinateOperation::Transformation(transformation));
+        }
+    }
+    if !operations.is_empty() {
+        operations.extend(forced_ballpark_operations(source, target));
+    }
+    Ok(operations)
 }

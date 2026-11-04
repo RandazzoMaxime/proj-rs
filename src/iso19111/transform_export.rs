@@ -74,6 +74,7 @@ const PARAMETER_GEOID_HEIGHT: i32 = 8604;
 const METHOD_NTV1: i32 = 9614;
 const METHOD_NTV2: i32 = 9615;
 const METHOD_POINT_MOTION_CANADA_NTV2_VEL: i32 = 1070;
+const METHOD_POINT_MOTION_GEOG3D_NEU_NTV2_VEL: i32 = 1141;
 const METHOD_VERTCON: i32 = 9658;
 const METHOD_NRCAN_BYN: i32 = 1112;
 const METHOD_NRCAN_GEOID_DIFFERENCE: i32 = 1126;
@@ -898,7 +899,10 @@ fn point_motion_velocity_grid(
     operation: &Transformation,
     formatter: &mut PipelineFormatter,
 ) -> Result<(), FactoryError> {
-    if epsg_method_code(operation) != METHOD_POINT_MOTION_CANADA_NTV2_VEL {
+    if !matches!(
+        epsg_method_code(operation),
+        METHOD_POINT_MOTION_CANADA_NTV2_VEL | METHOD_POINT_MOTION_GEOG3D_NEU_NTV2_VEL
+    ) {
         return Err(FactoryError::Format(format!(
             "Unimplemented {}",
             operation.name()
