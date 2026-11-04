@@ -5,11 +5,11 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 162 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `core` | 161 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
 | `niche` | 34 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 50 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (162)
+## core (161)
 
 ### test_c_api.cpp (23)
 
@@ -50,10 +50,9 @@ The class comes from the test name alone, so check it when you port a test.
 - `crs.norway_ntm`
 - `crs.ETRF2000_PL_CS92`
 
-### test_factory.cpp (2)
+### test_factory.cpp (1)
 
 - `factory.AuthorityFactory_createDynamicVerticalDatum`
-- `factory.AuthorityFactory_build_all_concatenated`
 
 ### test_io.cpp (4)
 
