@@ -5,11 +5,11 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 156 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `core` | 155 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
 | `niche` | 32 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 49 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (156)
+## core (155)
 
 ### test_c_api.cpp (23)
 
@@ -61,7 +61,7 @@ The class comes from the test name alone, so check it when you port a test.
 
 - `operation.normalizeForVisualization`
 
-### test_operationfactory.cpp (121)
+### test_operationfactory.cpp (120)
 
 - `operation.geogCRS_to_geogCRS_context_match_by_name`
 - `operation.geogCRS_to_geogCRS_context_inverse_needed`
@@ -145,7 +145,6 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.compoundCRS_to_compoundCRS_issue_3191_BD72_Ostend_height_to_WGS84_EGM96`
 - `operation.compoundCRS_to_compoundCRS_issue_4550`
 - `operation.compoundCRS_to_compoundCRS_using_intermediate_of_horizontal_transform`
-- `operation.vertCRS_to_vertCRS_context`
 - `operation.vertCRS_to_vertCRS_New_Zealand_context`
 - `operation.vertCRS_to_vertCRS_pivot_context`
 - `operation.compoundCRS_to_geogCRS_3D_context`
