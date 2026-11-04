@@ -200,7 +200,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.createOperation_ellipsoidal_ographic_west_to_projected_of_ellipsoidal_ocentric`
 - `operation.createOperation_ellipsoidal_ocentric_to_projected_of_ellipsoidal_ographic_west`
 - `operation.createOperation_ossfuzz_47873`
-- `operation.createOperation_ossfuzz_47873_simplified_if_i_might_say`
 - `operation.createOperation_derived_projected_crs`
 - `operation.geogCRS_to_compoundCRS_with_boundVerticalCRS_and_derivedProjected`
 - `operation.createOperation_point_motion_operation_geog2D`
