@@ -524,3 +524,205 @@ fn io_projstringformatter_unmodified() {
         assert_eq!(print(fmt), text);
     }
 }
+
+/// TEST(io, projstringformatter_optim_hgridshift_vgridshift_hgridshift_inv)
+#[test]
+fn io_projstringformatter_optim_hgridshift_vgridshift_hgridshift_inv() {
+    {
+        let mut fmt = PipelineFormatter::default();
+        fmt.add_step("hgridshift");
+        fmt.add_param("grids", "foo");
+        fmt.add_step("vgridshift");
+        fmt.add_param("grids", "bar");
+        fmt.start_inversion();
+        fmt.add_step("hgridshift");
+        fmt.add_param("grids", "foo");
+        fmt.stop_inversion();
+        assert_eq!(
+            print(fmt),
+            "+proj=pipeline \
+             +step +proj=push +v_1 +v_2 \
+             +step +proj=hgridshift +grids=foo +omit_inv \
+             +step +proj=vgridshift +grids=bar \
+             +step +inv +proj=hgridshift +grids=foo +omit_fwd \
+             +step +proj=pop +v_1 +v_2"
+        );
+    }
+    {
+        let mut fmt = PipelineFormatter::default();
+        fmt.start_inversion();
+        fmt.ingest_proj_string("+proj=hgridshift +grids=foo +omit_fwd");
+        fmt.stop_inversion();
+        assert_eq!(
+            print(fmt),
+            "+proj=pipeline +step +inv +proj=hgridshift +grids=foo +omit_inv"
+        );
+    }
+    {
+        let mut fmt = PipelineFormatter::default();
+        fmt.start_inversion();
+        fmt.ingest_proj_string("+proj=hgridshift +grids=foo +omit_inv");
+        fmt.stop_inversion();
+        assert_eq!(
+            print(fmt),
+            "+proj=pipeline +step +inv +proj=hgridshift +grids=foo +omit_fwd"
+        );
+    }
+    {
+        let mut fmt = PipelineFormatter::default();
+        fmt.start_inversion();
+        fmt.add_step("hgridshift");
+        fmt.add_param("grids", "foo");
+        fmt.stop_inversion();
+        fmt.add_step("vgridshift");
+        fmt.add_param("grids", "bar");
+        fmt.add_step("hgridshift");
+        fmt.add_param("grids", "foo");
+        assert_eq!(
+            print(fmt),
+            "+proj=pipeline \
+             +step +proj=push +v_1 +v_2 \
+             +step +inv +proj=hgridshift +grids=foo +omit_inv \
+             +step +proj=vgridshift +grids=bar \
+             +step +proj=hgridshift +grids=foo +omit_fwd \
+             +step +proj=pop +v_1 +v_2"
+        );
+    }
+    {
+        let mut fmt = PipelineFormatter::default();
+        fmt.add_step("hgridshift");
+        fmt.add_param("grids", "foo");
+        fmt.add_step("vgridshift");
+        fmt.add_param("grids", "bar");
+        fmt.start_inversion();
+        fmt.add_step("hgridshift");
+        fmt.add_param("grids", "foo2");
+        fmt.stop_inversion();
+        assert_eq!(
+            print(fmt),
+            "+proj=pipeline +step +proj=hgridshift +grids=foo \
+             +step +proj=vgridshift +grids=bar \
+             +step +inv +proj=hgridshift +grids=foo2"
+        );
+    }
+    {
+        let mut fmt = PipelineFormatter::default();
+        fmt.add_step("hgridshift");
+        fmt.add_param("grids", "foo");
+        fmt.add_step("vgridshift");
+        fmt.add_param("grids", "bar");
+        fmt.add_step("hgridshift");
+        fmt.add_param("grids", "foo");
+        assert_eq!(
+            print(fmt),
+            "+proj=pipeline +step +proj=hgridshift +grids=foo \
+             +step +proj=vgridshift +grids=bar \
+             +step +proj=hgridshift +grids=foo"
+        );
+    }
+}
+
+/// TEST(io, projstringformatter_optim_as_uc_vgridshift_uc_as_push_as_uc)
+#[test]
+fn io_projstringformatter_optim_as_uc_vgridshift_uc_as_push_as_uc() {
+    let mut fmt = PipelineFormatter::default();
+    fmt.add_step("axisswap");
+    fmt.add_param("order", "2,1");
+    fmt.add_step("unitconvert");
+    fmt.add_param("xy_in", "deg");
+    fmt.add_param("xy_out", "rad");
+    fmt.add_step("vgridshift");
+    fmt.add_param("grids", "foo");
+    fmt.add_step("unitconvert");
+    fmt.add_param("xy_in", "rad");
+    fmt.add_param("xy_out", "deg");
+    fmt.add_step("axisswap");
+    fmt.add_param("order", "2,1");
+    fmt.add_step("push");
+    fmt.add_flag("v_1");
+    fmt.add_flag("v_2");
+    fmt.add_step("axisswap");
+    fmt.add_param("order", "2,1");
+    fmt.add_step("unitconvert");
+    fmt.add_param("xy_in", "deg");
+    fmt.add_param("xy_out", "rad");
+    assert_eq!(
+        print(fmt),
+        "+proj=pipeline \
+         +step +proj=push +v_1 +v_2 \
+         +step +proj=axisswap +order=2,1 \
+         +step +proj=unitconvert +xy_in=deg +xy_out=rad \
+         +step +proj=vgridshift +grids=foo"
+    );
+}
+
+/// TEST(io, projstringformatter_krovak_to_krovak_east_north)
+#[test]
+fn io_projstringformatter_krovak_to_krovak_east_north() {
+    let mut fmt = PipelineFormatter::default();
+    fmt.ingest_proj_string(
+        "+proj=pipeline \
+         +step +inv +proj=krovak +axis=swu +lat_0=49.5 \
+         +lon_0=24.8333333333333 \
+         +alpha=30.2881397527778 +k=0.9999 +x_0=0 +y_0=0 +ellps=bessel \
+         +step +proj=krovak +lat_0=49.5 +lon_0=24.8333333333333 \
+         +alpha=30.2881397527778 +k=0.9999 +x_0=0 +y_0=0 +ellps=bessel",
+    );
+    assert_eq!(print(fmt), "+proj=axisswap +order=-2,-1");
+
+    let mut fmt = PipelineFormatter::default();
+    fmt.ingest_proj_string(
+        "+proj=pipeline \
+         +step +inv +proj=krovak +axis=swu +lat_0=49.5 \
+         +lon_0=24.8333333333333 \
+         +alpha=30.2881397527778 +k=0.9999 +x_0=0 +y_0=0 +ellps=bessel \
+         +step +proj=krovak +lat_0=49.5 +lon_0=24.8333333333333 \
+         +alpha=30.2881397527778 +k=0.9999 +x_0=0 +y_0=0",
+    );
+    assert_ne!(print(fmt), "+proj=axisswap +order=-2,-1");
+
+    let mut fmt = PipelineFormatter::default();
+    fmt.ingest_proj_string(
+        "+proj=pipeline \
+         +step +inv +proj=krovak +axis=swu +lat_0=49.5 \
+         +lon_0=24.8333333333333 \
+         +alpha=30.2881397527778 +k=0.9999 +x_0=0 +y_0=0 +ellps=bessel \
+         +step +proj=krovak +lat_0=FOO +lon_0=24.8333333333333 \
+         +alpha=30.2881397527778 +k=0.9999 +x_0=0 +y_0=0 +ellps=bessel",
+    );
+    assert_ne!(print(fmt), "+proj=axisswap +order=-2,-1");
+}
+
+/// TEST(io, projstringformatter_krovak_east_north_to_krovak)
+#[test]
+fn io_projstringformatter_krovak_east_north_to_krovak() {
+    let mut fmt = PipelineFormatter::default();
+    fmt.ingest_proj_string(
+        "+proj=pipeline \
+         +step +inv +proj=krovak +lat_0=49.5 +lon_0=24.8333333333333 \
+         +alpha=30.2881397527778 +k=0.9999 +x_0=0 +y_0=0 +ellps=bessel \
+         +step +proj=krovak +axis=swu +lat_0=49.5 +lon_0=24.8333333333333 \
+         +alpha=30.2881397527778 +k=0.9999 +x_0=0 +y_0=0 +ellps=bessel",
+    );
+    assert_eq!(print(fmt), "+proj=axisswap +order=-2,-1");
+
+    let mut fmt = PipelineFormatter::default();
+    fmt.ingest_proj_string(
+        "+proj=pipeline \
+         +step +inv +proj=krovak +lat_0=49.5 +lon_0=24.8333333333333 \
+         +alpha=30.2881397527778 +k=0.9999 +x_0=0 +y_0=0 +ellps=bessel \
+         +step +proj=krovak +axis=swu +lat_0=FOO +lon_0=24.8333333333333 \
+         +alpha=30.2881397527778 +k=0.9999 +x_0=0 +y_0=0",
+    );
+    assert_ne!(print(fmt), "+proj=axisswap +order=-2,-1");
+
+    let mut fmt = PipelineFormatter::default();
+    fmt.ingest_proj_string(
+        "+proj=pipeline \
+         +step +inv +proj=krovak +lat_0=49.5 +lon_0=24.8333333333333 \
+         +alpha=30.2881397527778 +k=0.9999 +x_0=0 +y_0=0 +ellps=bessel \
+         +step +proj=krovak +axis=swu +lat_0=FOO +lon_0=24.8333333333333 \
+         +alpha=30.2881397527778 +k=0.9999 +x_0=0 +y_0=0 +ellps=bessel",
+    );
+    assert_ne!(print(fmt), "+proj=axisswap +order=-2,-1");
+}

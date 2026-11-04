@@ -177,6 +177,13 @@ impl PipelineFormatter {
         };
         for step in &mut self.steps[start..] {
             step.inverted = !step.inverted;
+            for param in &mut step.params {
+                if param.is("omit_fwd", "") {
+                    "omit_inv".clone_into(&mut param.key);
+                } else if param.is("omit_inv", "") {
+                    "omit_fwd".clone_into(&mut param.key);
+                }
+            }
         }
         self.steps[start..].reverse();
     }
@@ -190,7 +197,14 @@ impl PipelineFormatter {
         self.drop_noops();
         self.normalize_inverses();
         self.merge_adjacent();
+        self.rewrite_patterns();
         self.render(lines)
+    }
+
+    /// The pattern rewrites of PROJ's `PROJStringFormatter`, run until none applies: grid
+    /// push/pop, the axis and unit moves around `push`, and the Krovak `axis=swu` merge.
+    fn rewrite_patterns(&mut self) {
+        while rewrite_once(&mut self.steps) {}
     }
 
     fn drop_noops(&mut self) {
@@ -455,6 +469,161 @@ fn unitconvert_xyz_keys(params: &[Param]) -> bool {
 /// Applies the first rule that matches the pair `(cur - 1, cur)`.
 ///
 /// Returns the index to resume at, or `None` when no rule applies.
+/// One rewrite of the PROJ formatter's pattern passes, applied at the first position that
+/// matches. `true` when the steps changed.
+fn rewrite_once(steps: &mut Vec<Step>) -> bool {
+    (1..steps.len()).any(|cur| {
+        rewrite_krovak_swu(steps, cur)
+            || rewrite_grid_push_pop(steps, cur)
+            || rewrite_push_axes_units(steps, cur)
+    })
+}
+
+fn rewrite_krovak_swu(steps: &mut Vec<Step>, cur: usize) -> bool {
+    let prev = cur - 1;
+    let (p, c) = (&steps[prev], &steps[cur]);
+    if p.inverted == c.inverted || p.name != c.name {
+        return false;
+    }
+    let (sw, en) = if p.params.len() == c.params.len() + 1 {
+        (p, c)
+    } else if c.params.len() == p.params.len() + 1 {
+        (c, p)
+    } else {
+        return false;
+    };
+    let leading_swu = sw
+        .params
+        .first()
+        .is_some_and(|param| param.is("axis", "swu"));
+    if !leading_swu || en.params.iter().zip(&sw.params[1..]).any(|(a, b)| a != b) {
+        return false;
+    }
+    steps[cur] = Step {
+        name: "axisswap".to_owned(),
+        inverted: false,
+        params: vec![Param {
+            key: "order".to_owned(),
+            value: "-2,-1".to_owned(),
+        }],
+    };
+    steps.remove(prev);
+    true
+}
+
+fn rewrite_grid_push_pop(steps: &mut Vec<Step>, cur: usize) -> bool {
+    let (Some(prev), Some(next)) = (cur.checked_sub(1), steps.get(cur + 1)) else {
+        return false;
+    };
+    let p = &steps[prev];
+    if p.name != "hgridshift"
+        || p.params.len() != 1
+        || steps[cur].name != "vgridshift"
+        || next.name != "hgridshift"
+        || next.inverted == p.inverted
+        || next.params.len() != 1
+        || next.params[0] != p.params[0]
+    {
+        return false;
+    }
+    let next = cur + 1;
+    steps[prev].params.push(flag("omit_inv"));
+    steps[next].params.push(flag("omit_fwd"));
+    steps.insert(next + 1, pattern_step("pop", &["v_1", "v_2"]));
+    steps.insert(prev, pattern_step("push", &["v_1", "v_2"]));
+    true
+}
+
+/// `axisswap` / `unitconvert` / `push` moves: a `push` is pulled in front of the axis and
+/// unit steps that surround a `vgridshift`, and the repeated steps are dropped.
+fn rewrite_push_axes_units(steps: &mut Vec<Step>, cur: usize) -> bool {
+    let Some(prev) = cur.checked_sub(1) else {
+        return false;
+    };
+    let at = |index: usize, name: &str| steps.get(index).is_some_and(|s| s.name == name);
+    let swap21 = |index: usize| {
+        steps.get(index).is_some_and(|s| {
+            s.name == "axisswap" && s.params.len() == 1 && s.params[0].is("order", "2,1")
+        })
+    };
+    let unit = |index: usize, from: &str, to: &str| {
+        steps.get(index).is_some_and(|s| {
+            s.name == "unitconvert"
+                && !s.inverted
+                && s.params.len() == 2
+                && s.params[0].is("xy_in", from)
+                && s.params[1].is("xy_out", to)
+        })
+    };
+    let pop_at = |index: usize| {
+        steps.get(index).is_some_and(|s| {
+            s.name == "pop"
+                && s.params.len() == 2
+                && s.params[0].keyed("v_1")
+                && s.params[1].keyed("v_2")
+        })
+    };
+    let push_at = |index: usize| {
+        steps.get(index).is_some_and(|s| {
+            s.name == "push"
+                && s.params.len() == 2
+                && s.params[0].keyed("v_1")
+                && s.params[1].keyed("v_2")
+        })
+    };
+    // unitconvert rad->deg, axisswap, push, axisswap, unitconvert deg->rad, vgridshift,
+    // unitconvert rad->deg, axisswap, pop: the whole wrapper goes, the vgridshift stays.
+    if steps[prev].name == "unitconvert"
+        && steps[prev].params.len() == 2
+        && steps[prev].params[0].is("xy_in", "rad")
+        && steps[prev].params[1].is("xy_out", "deg")
+        && swap21(cur)
+        && push_at(cur + 1)
+        && swap21(cur + 2)
+        && unit(cur + 3, "deg", "rad")
+        && at(cur + 4, "vgridshift")
+        && unit(cur + 5, "rad", "deg")
+        && swap21(cur + 6)
+        && pop_at(cur + 7)
+    {
+        steps.remove(cur + 7);
+        steps.drain(prev..cur + 4);
+        return true;
+    }
+    // axisswap, unitconvert deg->rad, vgridshift, unitconvert rad->deg, axisswap, push,
+    // axisswap, unitconvert deg->rad: the push moves in front, the vgridshift follows.
+    if swap21(prev)
+        && unit(cur, "deg", "rad")
+        && at(cur + 1, "vgridshift")
+        && unit(cur + 2, "rad", "deg")
+        && swap21(cur + 3)
+        && push_at(cur + 4)
+        && swap21(cur + 5)
+        && unit(cur + 6, "deg", "rad")
+    {
+        let vgridshift = steps[cur + 1].clone();
+        steps.drain(prev..cur + 4);
+        steps.insert(prev + 3, vgridshift);
+        return true;
+    }
+    false
+}
+
+fn flag(key: &str) -> Param {
+    Param {
+        key: key.to_owned(),
+        value: String::new(),
+    }
+}
+
+fn pattern_step(name: &str, flags: &[&str]) -> Step {
+    Step {
+        name: name.to_owned(),
+        inverted: false,
+        params: flags.iter().map(|key| flag(key)).collect(),
+    }
+}
+
 fn adjacent_rule(steps: &mut Vec<Step>, cur: usize) -> Option<usize> {
     let prev = cur - 1;
     let len = steps.len();
