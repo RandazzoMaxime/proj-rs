@@ -3,7 +3,7 @@
 //! The statements are the ones in PROJ `src/iso19111/factory.cpp`. A missing
 //! code is an error. A `text_definition` is not turned into a coordinate.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use rusqlite::{types::ValueRef, Connection};
@@ -4938,6 +4938,7 @@ impl CoordinateOperationFactory {
         }
         let mut found = Vec::new();
         let mut direct_empty = true;
+        let mut direct_unfiltered_empty = true;
         if let Crs::Projected(projected) = target {
             if projection_uses_source(source, projected, context.registry) {
                 // The caller's own source, not the base: its axis order is the one the
@@ -4974,7 +4975,14 @@ impl CoordinateOperationFactory {
                 (target_id.code_space(), target_id.code()),
                 boxes,
             )?);
-            direct_empty = found.is_empty();
+            direct_unfiltered_empty = found.is_empty();
+            direct_empty = filter_and_sort(
+                found.clone(),
+                context,
+                &sort_extents(context, source, target),
+            )
+            .operations
+            .is_empty();
             if context.allow_intermediate {
                 for (pivot_auth, pivot_code) in &context.intermediates {
                     let first = operations_between(
@@ -5029,7 +5037,15 @@ impl CoordinateOperationFactory {
             }
         }
         if registry && direct_empty && is_geodetic(source) && is_geodetic(target) {
-            found.extend(datum_pivot_operations(source, target, context));
+            let pivot = datum_pivot_operations(source, target, context);
+            let intermediate_needed = direct_unfiltered_empty
+                && (pivot.is_empty() || only_ensemble_null_operations(&pivot));
+            found.extend(pivot);
+            if intermediate_needed {
+                found.extend(datum_based_intermediate_operations(
+                    source, target, context,
+                )?);
+            }
         }
         if found.is_empty() {
             found.extend(super::compound::vertical_to_vertical(source, target));
@@ -5648,6 +5664,10 @@ fn datum_pivot_operations(
         );
         let second =
             direct_registry_operations(context, identity_of(left), identity_of(right), boxes)
+                .map(|operations| {
+                    filter_and_sort(operations, context, &sort_extents(context, source, target))
+                        .operations
+                })
                 .unwrap_or_default();
         let linked: Vec<CoordinateOperation> = second
             .into_iter()
@@ -5675,6 +5695,324 @@ fn datum_pivot_operations(
         }
     }
     Vec::new()
+}
+
+/// `createBetweenGeodeticCRSWithDatumBasedIntermediates`: two geodetic CRS of different
+/// datums with no registered operation between them are linked through an intermediate
+/// datum. The operations read are those between a CRS of the source datum and a CRS of
+/// the intermediate datum, and the same for the target datum, in the order PROJ gives.
+///
+/// Not ported: `discardSuperseded` (off by default), `usePROJAlternativeGridNames`, and the
+/// grid discard of `KNOWN_AVAILABLE`.
+fn datum_based_intermediate_operations(
+    source: &Crs,
+    target: &Crs,
+    context: &CoordinateOperationContext,
+) -> Result<Vec<CoordinateOperation>, FactoryError> {
+    let source_id = identity_of(source);
+    let target_id = identity_of(target);
+    if source_id.0.is_empty() || target_id.0.is_empty() || source_id == target_id {
+        return Ok(Vec::new());
+    }
+    if same_geodetic_datum(source, target) {
+        return Ok(Vec::new());
+    }
+    let db = &context.db;
+    let source_list = crs_with_same_datum(db, source)?;
+    let target_list = crs_with_same_datum(db, target)?;
+    if source_list.is_empty() || target_list.is_empty() {
+        return Ok(Vec::new());
+    }
+    let nad83_csrs =
+        source.name().starts_with("NAD83(CSRS)") && target.name().starts_with("NAD83(CSRS)");
+
+    let mut sql = String::new();
+    let mut params: Vec<String> = Vec::new();
+    for (is_source, select_on_target) in
+        [(true, true), (false, true), (true, false), (false, false)]
+    {
+        if !sql.is_empty() {
+            sql.push_str("UNION ALL ");
+        }
+        let situation = format!(
+            "{}_is_{}",
+            if is_source { "src" } else { "tgt" },
+            if select_on_target { "tgt" } else { "src" }
+        );
+        let (prefix1, prefix2) = if select_on_target {
+            ("source", "target")
+        } else {
+            ("target", "source")
+        };
+        let list = if is_source {
+            &source_list
+        } else {
+            &target_list
+        };
+        sql.push_str(&format!(
+            "SELECT '{situation}' as situation, v.table_name, v.auth_name, v.code, v.name, \
+             gcrs.datum_auth_name, gcrs.datum_code, a.west_lon, a.south_lat, a.east_lon, a.north_lat \
+             FROM coordinate_operation_view v \
+             JOIN geodetic_crs gcrs ON gcrs.auth_name = {prefix1}_crs_auth_name \
+             AND gcrs.code = {prefix1}_crs_code \
+             LEFT JOIN usage u ON u.object_table_name = v.table_name \
+             AND u.object_auth_name = v.auth_name AND u.object_code = v.code \
+             LEFT JOIN extent a ON a.auth_name = u.extent_auth_name AND a.code = u.extent_code \
+             WHERE v.deprecated = 0 AND ("
+        ));
+        let condition = list
+            .iter()
+            .map(|_| format!("({prefix2}_crs_auth_name = ? AND {prefix2}_crs_code = ?)"))
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        for (auth, code) in list {
+            params.push(auth.clone());
+            params.push(code.clone());
+        }
+        sql.push_str(&condition);
+        sql.push_str(") ");
+        if !context.authority.is_empty() && context.authority != "any" {
+            sql.push_str("AND v.auth_name = ? ");
+            params.push(context.authority.clone());
+        }
+        if nad83_csrs {
+            sql.push_str("AND gcrs.name NOT IN ('NAD83', 'WGS 84') ");
+        }
+    }
+
+    let mut from_source: BTreeMap<String, Vec<DatumTrfm>> = BTreeMap::new();
+    let mut from_target: BTreeMap<String, Vec<DatumTrfm>> = BTreeMap::new();
+    for row in db.query(&sql, &params)? {
+        let Some(bbox) = row_box(&row[8], &row[7], &row[10], &row[9]) else {
+            continue;
+        };
+        let situation = row[0].text();
+        let trfm = DatumTrfm {
+            situation: situation.clone(),
+            table: row[1].text(),
+            auth: row[2].text(),
+            code: row[3].text(),
+            bbox,
+        };
+        let key = format!("{}:{}", row[5].text(), row[6].text());
+        if situation == "src_is_tgt" || situation == "src_is_src" {
+            from_source.entry(key).or_default().push(trfm);
+        } else {
+            from_target.entry(key).or_default().push(trfm);
+        }
+    }
+
+    let extra: Vec<BoundingBox> = match context.crs_extent_use {
+        CrsExtentUse::Ignore => Vec::new(),
+        _ => [source, target]
+            .into_iter()
+            .filter_map(|crs| crs_extent(crs).and_then(|extent| extent.bounding_box()))
+            .collect(),
+    };
+    let skip_intermediate_intersection = context.crs_extent_use == CrsExtentUse::Ignore;
+
+    let mut candidates = Vec::new();
+    for (key, sources) in &from_source {
+        let Some(targets) = from_target.get(key) else {
+            continue;
+        };
+        for first in sources {
+            if !extra.iter().all(|area| area.intersects(&first.bbox)) {
+                continue;
+            }
+            for second in targets {
+                if !extra.iter().all(|area| area.intersects(&second.bbox)) {
+                    continue;
+                }
+                if !skip_intermediate_intersection && !first.bbox.intersects(&second.bbox) {
+                    continue;
+                }
+                candidates.push((first, second));
+            }
+        }
+    }
+
+    let mut operations: BTreeMap<String, Option<CoordinateOperation>> = BTreeMap::new();
+    let mut operation_of = |trfm: &DatumTrfm| -> Option<CoordinateOperation> {
+        let key = format!("{}_{}_{}", trfm.table, trfm.auth, trfm.code);
+        operations
+            .entry(key)
+            .or_insert_with(|| {
+                let operation = AuthorityFactory::create(db, trfm.auth.clone())
+                    .create_coordinate_operation_typed(
+                        &trfm.code,
+                        ConcatenatedSteps::Allow,
+                        AlternativeGridNames::Official,
+                        &trfm.table,
+                    )
+                    .ok()?;
+                let irrelevant = useless_pivot(&operation, source_id, target_id);
+                (!irrelevant).then_some(operation)
+            })
+            .clone()
+    };
+
+    let mut pair_operations = Vec::new();
+    for (first, second) in candidates {
+        let (Some(mut op1), Some(mut op2)) = (operation_of(first), operation_of(second)) else {
+            continue;
+        };
+        if first.situation == "src_is_tgt" {
+            op1 = op1.inverse();
+        }
+        if second.situation == "tgt_is_src" {
+            op2 = op2.inverse();
+        }
+        pair_operations.push((op1, op2));
+    }
+
+    let mut result = Vec::new();
+    for (op1, op2) in pair_operations {
+        let (Some(op1_source), Some(op1_target), Some(op2_source), Some(op2_target)) = (
+            op1.source_crs(),
+            op1.target_crs(),
+            op2.source_crs(),
+            op2.target_crs(),
+        ) else {
+            continue;
+        };
+        let factory = CoordinateOperationFactory::create();
+        let mut steps = Vec::new();
+        if !source.is_equivalent_to(op1_source) {
+            let Some(step) = factory.create_operation(source, op1_source)? else {
+                continue;
+            };
+            steps.push(step);
+        }
+        steps.push(op1.clone());
+        if !op1_target.is_equivalent_to(op2_source) {
+            let Some(step) = factory.create_operation(op1_target, op2_source)? else {
+                continue;
+            };
+            steps.push(step);
+        }
+        steps.push(op2.clone());
+        if !op2_target.is_equivalent_to(target) {
+            let Some(step) = factory.create_operation(op2_target, target)? else {
+                continue;
+            };
+            steps.push(step);
+        }
+        result.push(CoordinateOperation::Concatenated(pivot_concatenation(
+            steps,
+        )));
+    }
+    Ok(result)
+}
+
+/// `useOnlyIntermediateCRSThroughDatumEnsembleNullOp`: every operation has a PROJ step that
+/// is a null transformation between a datum ensemble and one of its members. Such a pivot
+/// does not connect the two datums, so the intermediate datums are searched too.
+fn only_ensemble_null_operations(operations: &[CoordinateOperation]) -> bool {
+    !operations.is_empty()
+        && operations.iter().all(|operation| {
+            let CoordinateOperation::Concatenated(concatenated) = operation else {
+                return false;
+            };
+            concatenated.steps.iter().any(|step| {
+                let operation = &step.operation;
+                let is_proj = match operation {
+                    CoordinateOperation::Conversion(conversion) => conversion.identifiers(),
+                    CoordinateOperation::Transformation(transformation) => {
+                        transformation.identifiers()
+                    }
+                    CoordinateOperation::Concatenated(_) => &[],
+                }
+                .iter()
+                .any(|id| id.code_space().contains("PROJ"));
+                if !is_proj {
+                    return false;
+                }
+                let (Some(source), Some(target)) = (operation.source_crs(), operation.target_crs())
+                else {
+                    return false;
+                };
+                member_of_ensemble(source, target) || member_of_ensemble(target, source)
+            })
+        })
+}
+
+/// `isDatumInEnsemble`: the datum of `member` is a member of the ensemble of `ensemble`.
+fn member_of_ensemble(member: &Crs, ensemble: &Crs) -> bool {
+    let (Some(datum), Some(ensemble)) = (geodetic_frame(member), ensemble_of(ensemble)) else {
+        return false;
+    };
+    ensemble
+        .members()
+        .iter()
+        .any(|candidate| datum.is_equivalent_to_datum(candidate))
+}
+
+/// The datum ensemble of a geodetic CRS, when it has one.
+fn ensemble_of(crs: &Crs) -> Option<&DatumEnsemble> {
+    match crs {
+        Crs::Geographic(geographic) => geographic.datum_ensemble(),
+        Crs::Geodetic(geodetic) => geodetic.datum_ensemble(),
+        _ => None,
+    }
+}
+
+/// A registered operation, by its `(table, auth, code)` row, read for a datum-based pivot.
+struct DatumTrfm {
+    situation: String,
+    table: String,
+    auth: String,
+    code: String,
+    bbox: BoundingBox,
+}
+
+/// `useIrrelevantPivot`: a concatenated operation whose inner pivot is one of the two CRS
+/// being converted is not a pivot of the pair.
+fn useless_pivot(
+    operation: &CoordinateOperation,
+    source: (&str, &str),
+    target: (&str, &str),
+) -> bool {
+    let CoordinateOperation::Concatenated(concatenated) = operation else {
+        return false;
+    };
+    let steps = &concatenated.steps;
+    steps
+        .iter()
+        .take(steps.len().saturating_sub(1))
+        .any(|step| {
+            step.operation.target_crs().is_some_and(|crs| {
+                let ids = crs.identifiers();
+                ids.len() == 1
+                    && ((ids[0].code_space() == source.0 && ids[0].code() == source.1)
+                        || (ids[0].code_space() == target.0 && ids[0].code() == target.1))
+            })
+        })
+}
+
+/// `GetListCRSWithSameDatum`: the geodetic CRS of the datum of `crs`, or `crs` itself when
+/// the database has none for that datum.
+fn crs_with_same_datum(
+    db: &DatabaseContext,
+    crs: &Crs,
+) -> Result<Vec<(String, String)>, FactoryError> {
+    let Some((datum_auth, datum_code)) = datum_identity(crs) else {
+        return Ok(Vec::new());
+    };
+    let mut list: Vec<(String, String)> = db
+        .query(
+            "SELECT auth_name, code FROM geodetic_crs WHERE \
+             datum_auth_name = ? AND datum_code = ? AND deprecated = 0",
+            &[datum_auth, datum_code],
+        )?
+        .iter()
+        .map(|row| (row[0].text(), row[1].text()))
+        .collect();
+    if list.is_empty() {
+        let (auth, code) = identity_of(crs);
+        list.push((auth.to_owned(), code.to_owned()));
+    }
+    Ok(list)
 }
 
 /// Axis count of a geographic or geocentric CRS, zero for any other.
@@ -5832,9 +6170,9 @@ fn geographic_geocentric(geographic: &Crs, geocentric: &Crs) -> Option<Transform
     Some(conversion)
 }
 
-/// A concatenated operation of the pivot legs, with the sum of the step accuracies as
-/// `ConcatenatedOperation::createComputeMetadata` does. A step with no accuracy leaves it
-/// unknown.
+/// A concatenated operation of the pivot legs, with the largest step accuracy as the oracle
+/// gives it: two 0.1 m legs make 0.1 m (EPSG:11108 to EPSG:11128 through ETRF2000). A step with
+/// no accuracy leaves it unknown.
 pub(super) fn pivot_concatenation(steps: Vec<CoordinateOperation>) -> ConcatenatedOperation {
     let name = steps
         .iter()
@@ -5847,7 +6185,9 @@ pub(super) fn pivot_concatenation(steps: Vec<CoordinateOperation>) -> Concatenat
             CoordinateOperation::Conversion(_) => Some(0.0),
             other => other.accuracy(),
         })
-        .sum::<Option<f64>>();
+        .try_fold(0.0_f64, |worst, accuracy| {
+            accuracy.map(|value| worst.max(value))
+        });
     ConcatenatedOperation {
         identified: Identified::named(name),
         steps: steps

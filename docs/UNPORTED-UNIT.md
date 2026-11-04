@@ -239,15 +239,12 @@ and `PORT-NOTES-tests.md`.
 - `operation.createOperation_compound_to_compound_with_Geographic3D_Offset_by_velocity_grid`
 - `operation.createOperation_compound_to_compound_with_point_motion_operation_special_case_CGVD2013a`
 - `operation.createOperation_Geographic3D_Offset_by_velocity_grid`
-- `operation.createOperation_test_createOperationsWithDatumPivot_iter_1`
 - `operation.createOperation_Vrtical_Offset_by_velocity_grid`
 - `operation.createOperation_ITRF2000_to_ETRS89`
 - `operation.createOperation_ITRF2014_to_ETRS89_DNK`
-- `operation.createOperation_ETRS89_XXX_to_ETRS89_YYY_using_ETRF2000`
 - `operation.createOperation_time_dependent_helmert_directly_from_database`
 - `operation.createOperation_defmodel_from_database`
 - `operation.compoundCRS_to_compoundCRS_context_extent_use_none`
-- `operation.createOperation_ETRF2000_to_Amersfoort`
 
 ## test_c_api.cpp
 
