@@ -8,8 +8,6 @@ and `PORT-NOTES-tests.md`.
 ## test_crs.cpp
 
 - `crs.projectedCRS_from_WKT1_ESRI_as_WKT1_ESRI_s_jtsk03_krovak_east_north`
-- `crs.projectedCRS_Krovak_EPSG_5221_as_PROJ_string`
-- `crs.projectedCRS_Krovak_with_approximate_alpha_as_PROJ_string`
 - `crs.projectedCRS_identify_db`
 - `crs.projectedCRS_identify_wrong_auth_name_case`
 - `crs.scope_area_bbox_remark`

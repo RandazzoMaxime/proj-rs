@@ -618,8 +618,20 @@ pub(crate) fn projection_steps(source: &Crs, target: &Crs) -> Result<Vec<String>
         steps.push("+proj=axisswap +order=2,1".to_owned());
         return Ok(steps);
     }
+    if same_meridian_angle(geographic, base) {
+        if let (Some(ellipsoid), Some(clause)) = (
+            base.ellipsoid(),
+            meridian_of(base).and_then(prime_meridian_proj),
+        ) {
+            steps.push(format!(
+                "+inv +proj=longlat {} {clause}",
+                ellipsoid_proj(ellipsoid)
+            ));
+        }
+    }
     let mut projection = projected.deriving_conversion().export_to_proj_string()?;
-    append_ellipsoid_and_meridian(&mut projection, geographic, base);
+    append_ellipsoid(&mut projection, base);
+    append_meridian(&mut projection, base);
     steps.push(projection);
     if let Some(step) = projected_unit_step(projected) {
         steps.push(step);
@@ -661,13 +673,20 @@ fn append_ellipsoid_and_meridian(
     source: &GeographicCRS,
     base: &GeographicCRS,
 ) {
+    append_ellipsoid(projection, base);
+    if !same_meridian_angle(source, base) {
+        append_meridian(projection, base);
+    }
+}
+
+fn append_ellipsoid(projection: &mut String, base: &GeographicCRS) {
     if let Some(ellipsoid) = base.ellipsoid() {
         projection.push(' ');
         projection.push_str(&ellipsoid_proj(ellipsoid));
     }
-    if same_meridian_angle(source, base) {
-        return;
-    }
+}
+
+fn append_meridian(projection: &mut String, base: &GeographicCRS) {
     if let Some(clause) = meridian_of(base).and_then(prime_meridian_proj) {
         projection.push(' ');
         projection.push_str(&clause);
