@@ -1488,25 +1488,282 @@ fn crs_from_proj_string(
     } else {
         projected_from_proj_string(&tokens)?
     };
-    // `+over` is recognized by PROJ and unused by the CRS builder, so the
-    // original string is kept and repeated in the remarks.
-    if tokens
-        .iter()
-        .any(|(key, _)| key == "over" || OPERATION_ONLY_PARAMS.contains(&key.as_str()))
-    {
-        attach_over_extension(&mut crs, &tokens);
+    if keeps_proj_string(&crs, proj, &tokens) {
+        attach_proj_extension(&mut crs, proj, &tokens);
     }
     bound_import::bind_if_needed(&tokens, crs, db)
 }
 
-/// `CRS::setProperties` for a single-step string that still has `+over`.
-fn attach_over_extension(crs: &mut Crs, tokens: &[(String, String)]) {
+/// The `EXTENSION_PROJ4` rule of `buildGeodeticCRS`, `buildGeocentricCRS`, and
+/// `buildProjectedCRS`: a single-step string keeps its text when `hasUnusedParameters`
+/// holds. A geographic CRS also keeps it when `+lon_0` is not zero.
+fn keeps_proj_string(crs: &Crs, proj: &str, tokens: &[(String, String)]) -> bool {
+    let Some(kind) = ProjKind::of(crs, proj) else {
+        return false;
+    };
+    if kind == ProjKind::Geographic && number_token(tokens, "lon_0").is_some_and(|v| v != 0.0) {
+        return true;
+    }
+    let read = kind.read_keys(proj, tokens);
+    has_unused_parameters(proj, kind, tokens, &read)
+}
+
+/// The kind of CRS a single-step string builds, and for a projected CRS whether
+/// it has a PROJ method (`proj_based` is the PROJ-based operation case).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ProjKind {
+    Geographic,
+    Geocentric,
+    Projected { proj_based: bool },
+}
+
+impl ProjKind {
+    fn of(crs: &Crs, proj: &str) -> Option<Self> {
+        match crs {
+            Crs::Geographic(_) | Crs::Geodetic(GeodeticCRS::Spherical(_)) => Some(Self::Geographic),
+            Crs::Geodetic(GeodeticCRS::Geocentric(_)) => Some(Self::Geocentric),
+            Crs::Projected(_) => Some(Self::Projected {
+                proj_based: named_methods(proj).is_empty(),
+            }),
+            _ => None,
+        }
+    }
+
+    /// The keys the CRS builder reads from the string.
+    fn read_keys(self, proj: &str, tokens: &[(String, String)]) -> Vec<&'static str> {
+        match self {
+            Self::Geographic => geographic_keys(tokens),
+            Self::Geocentric => common_keys(tokens),
+            Self::Projected { .. } => projected_keys(proj, tokens),
+        }
+    }
+}
+
+/// `hasUnusedParameters` over the keys PROJ keeps. `getParamValue` marks only
+/// the first of a key, so PROJ drops a repeat before the check. A key PROJ does
+/// not recognize is also dropped, and it does not count. `no_defs` never counts.
+fn has_unused_parameters(
+    proj: &str,
+    kind: ProjKind,
+    tokens: &[(String, String)],
+    read: &[&str],
+) -> bool {
+    let mut keys_seen: Vec<&str> = Vec::new();
+    let mut read_seen: Vec<&str> = Vec::new();
+    for (key, _) in tokens {
+        let key = key.as_str();
+        if matches!(key, "proj" | "title" | "inv") || keys_seen.contains(&key) {
+            continue;
+        }
+        keys_seen.push(key);
+        if key == "no_defs" || !recognized(proj, kind, key, tokens) {
+            continue;
+        }
+        let Some(&name) = read.iter().find(|name| same_param(key, name)) else {
+            return true;
+        };
+        if read_seen.contains(&name) {
+            return true;
+        }
+        read_seen.push(name);
+    }
+    false
+}
+
+/// Whether PROJ's `pj` sets `used` for `key` in the string. `wktext` is not a
+/// PROJ parameter. A PROJ-based CRS has no method table, so every key is kept.
+fn recognized(proj: &str, kind: ProjKind, key: &str, tokens: &[(String, String)]) -> bool {
+    match key {
+        "wktext" => return false,
+        "geoid_crs" => return param_token(tokens, "geoidgrids").is_some(),
+        _ => {}
+    }
+    if crate::engine::GLOBAL_KEYS.contains(&key) {
+        return true;
+    }
+    match kind {
+        ProjKind::Projected { proj_based: true } => true,
+        ProjKind::Projected { proj_based: false } => {
+            method_keys(proj, tokens).contains(&key)
+                || selector_keys(proj, tokens).contains(&key)
+                || named_methods(proj)
+                    .iter()
+                    .filter_map(|method| method.proj_aux)
+                    .any(|aux| aux.split_once('=').map_or(aux, |(name, _)| name) == key)
+        }
+        ProjKind::Geographic | ProjKind::Geocentric => false,
+    }
+}
+
+fn number_token(tokens: &[(String, String)], key: &str) -> Option<f64> {
+    param_token(tokens, key).and_then(|text| text.parse::<f64>().ok())
+}
+
+/// The keys `buildDatum` reads for every CRS kind, `buildUnit`'s `+units`, the
+/// `+type` of the dispatch, and the `+geoidgrids` that `buildBoundOrCompound` reads.
+/// `+geoid_crs` is read only with `+geoidgrids`.
+fn common_keys(tokens: &[(String, String)]) -> Vec<&'static str> {
+    let mut keys = vec![
+        "ellps",
+        "datum",
+        "R",
+        "a",
+        "b",
+        "rf",
+        "f",
+        "es",
+        "e",
+        "pm",
+        "nadgrids",
+        "towgs84",
+        "units",
+        "type",
+        "geoidgrids",
+    ];
+    if param_token(tokens, "geoidgrids").is_some() {
+        keys.push("geoid_crs");
+    }
+    keys
+}
+
+/// The ellipsoidal height keys `buildEllipsoidalCS` reads. A `+geoc` CRS is
+/// spherical and does not read them.
+fn height_keys(tokens: &[(String, String)]) -> Vec<&'static str> {
+    if param_token(tokens, "geoc").is_some() {
+        Vec::new()
+    } else {
+        vec!["vunits", "vto_meter"]
+    }
+}
+
+fn geographic_keys(tokens: &[(String, String)]) -> Vec<&'static str> {
+    let mut keys = common_keys(tokens);
+    keys.extend(["axis", "geoc", "lon_0"]);
+    keys.extend(height_keys(tokens));
+    keys
+}
+
+/// The methods a PROJ name is listed under. `etmerc` and `utm` use the
+/// `tmerc` methods, and `somerc` uses the `omerc` ones.
+fn named_methods(proj: &str) -> Vec<&'static MethodMap> {
+    let name = match proj {
+        "etmerc" | "utm" => "tmerc",
+        "somerc" => "omerc",
+        other => other,
+    };
+    PROJECTION_METHODS
+        .iter()
+        .chain(OTHER_METHODS)
+        .filter(|method| method.proj_name == Some(name))
+        .collect()
+}
+
+/// The parameters of every method of the PROJ name. The method PROJ chooses is
+/// one of them. A `proj_aux` flag or `key=value` counts when the string has it,
+/// so `+shape=horizontal` does not select the square or diamond method.
+fn method_keys(proj: &str, tokens: &[(String, String)]) -> Vec<&'static str> {
+    let methods = named_methods(proj);
+    let mut keys: Vec<&'static str> = methods
+        .iter()
+        .flat_map(|method| method.params.iter().filter_map(|param| param.proj_name))
+        .collect();
+    for aux in methods.iter().filter_map(|method| method.proj_aux) {
+        match aux.split_once('=') {
+            Some((key, value)) if param_token(tokens, key) == Some(value) => keys.push(key),
+            Some(_) => {}
+            None if param_token(tokens, aux).is_some() => keys.push(aux),
+            None => {}
+        }
+    }
+    keys
+}
+
+/// The keys `buildProjectedCRS` reads for `proj`. `utm` builds its conversion
+/// from `+zone` and `+south` and the `tmerc` selector, so the method parameters
+/// are recognized but not read.
+fn projected_keys(proj: &str, tokens: &[(String, String)]) -> Vec<&'static str> {
+    let mut keys = common_keys(tokens);
+    keys.extend(["to_meter", "axis", "geoc"]);
+    keys.extend(height_keys(tokens));
+    keys.extend(selector_keys(proj, tokens));
+    if proj == "utm" {
+        keys.extend(["zone", "south"]);
+    } else {
+        keys.extend(method_keys(proj, tokens));
+    }
+    keys
+}
+
+/// Keys a projection name reads in `buildProjectedCRS` before or beside its
+/// method choice: `+approx` for `tmerc`, the `+lat_ts` of a polar `stere`, and so
+/// on. These are read whatever method is chosen.
+fn selector_keys(proj: &str, tokens: &[(String, String)]) -> Vec<&'static str> {
+    match proj {
+        "tmerc" => vec!["approx"],
+        "lcc" => vec!["lat_0", "lat_1", "lat_2", "k"],
+        "aeqd" => vec!["guam"],
+        "geos" => vec!["sweep"],
+        "omerc" => vec![
+            "no_rot", "no_uoff", "no_off", "lat_1", "lon_1", "lat_2", "lon_2", "alpha", "gamma",
+        ],
+        "somerc" => vec!["alpha", "gamma", "lonc", "lon_0", "k"],
+        "krovak" | "mod_krovak" => vec!["axis", "czech"],
+        "merc" => vec!["a", "b", "lat_ts", "k", "R_C"],
+        "stere" => {
+            let polar =
+                number_token(tokens, "lat_0").is_some_and(|lat| (lat.abs() - 90.0).abs() < 1e-10);
+            if polar {
+                vec!["lat_0", "lat_ts", "k"]
+            } else {
+                vec!["lat_0", "k"]
+            }
+        }
+        "utm" => vec!["approx", "zone", "south"],
+        "ortho" => vec!["k", "alpha"],
+        "cea" => vec!["k", "lat_ts"],
+        _ => Vec::new(),
+    }
+}
+
+/// The keys `pj` keeps, in order: the first of each key that it recognizes.
+/// `proj_string` in PROJ is rebuilt from these, and `title` is not a parameter.
+fn extension_tokens(
+    kind: Option<ProjKind>,
+    proj: &str,
+    tokens: &[(String, String)],
+) -> Vec<(String, String)> {
+    let Some(kind) = kind else {
+        return tokens.to_vec();
+    };
+    let mut keys_seen: Vec<&str> = Vec::new();
+    tokens
+        .iter()
+        .filter(|(key, _)| {
+            let key = key.as_str();
+            if key == "proj" {
+                return true;
+            }
+            if matches!(key, "title" | "inv") || keys_seen.contains(&key) {
+                return false;
+            }
+            keys_seen.push(key);
+            recognized(proj, kind, key, tokens)
+        })
+        .cloned()
+        .collect()
+}
+
+/// `CRS::setProperties` for a single-step string whose CRS does not read every key.
+fn attach_proj_extension(crs: &mut Crs, proj: &str, tokens: &[(String, String)]) {
+    let kept = extension_tokens(ProjKind::of(crs, proj), proj, tokens);
     let identified = match crs {
         Crs::Projected(projected) => &mut projected.identified,
         Crs::Geographic(geographic) => &mut geographic.identified,
+        Crs::Geodetic(GeodeticCRS::Geocentric(geocentric)) => &mut geocentric.identified,
+        Crs::Geodetic(GeodeticCRS::Spherical(spherical)) => &mut spherical.identified,
         _ => return,
     };
-    let bare = cleaned_proj_string(tokens).replace(" +type=crs", "");
+    let bare = cleaned_proj_string(&kept).replace(" +type=crs", "");
     const PREFIX: &str = "PROJ CRS string: ";
     if !identified.remarks.contains(PREFIX) {
         identified.remarks = if identified.remarks.is_empty() {
@@ -2388,9 +2645,9 @@ fn spherical_from_proj_string(tokens: &[(String, String)]) -> Result<Crs, Factor
 
 /// A `+proj=` with no EPSG method (`peirce_q` horizontal, `ob_tran`, `mbt_s`).
 ///
-/// The conversion is `PROJ {name}` plus the numeric parameters. Flags PROJ
-/// itself does not use are dropped, and the cleaned string is stored so export
-/// matches `exportToPROJString` instead of expanding defaults.
+/// The conversion is `PROJ {name}` plus the numeric parameters. The string is
+/// kept as the extension only when `keeps_proj_string` holds, and its keys are
+/// the ones `pj` recognizes.
 /// A PROJ method name: letters, digits, and underscores, and not `unknown`.
 fn proj_identifier(proj: &str) -> bool {
     !proj.is_empty()
@@ -2402,7 +2659,6 @@ fn proj_identifier(proj: &str) -> bool {
 
 fn proj_based_projected(tokens: &[(String, String)]) -> Result<Crs, FactoryError> {
     let mut crs = proj_based_shell(tokens)?;
-    crs.identified.extension_proj4 = Some(cleaned_proj_string(tokens));
     if geographic_ob_tran(&crs.conversion.method.name) {
         crs.conversion.identified.extension_proj4 = Some(operation_body(tokens));
     }
@@ -2460,10 +2716,6 @@ const PROJ_BASED_SKIP: &[&str] = &[
     "vto_meter",
     "type",
 ];
-
-/// Parameters that PROJ reads only when it runs an operation. The CRS builder never reads them,
-/// so a CRS string that has one keeps its whole text as the extension, as `+over` does.
-const OPERATION_ONLY_PARAMS: &[&str] = &["lon_wrap"];
 
 /// Empty-value tokens a PROJ method may actually read. Any other flag is the
 /// `unused_flag` case: `pj` never marks it used, so the CRS string drops it.
