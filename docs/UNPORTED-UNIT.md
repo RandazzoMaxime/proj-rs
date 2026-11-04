@@ -225,9 +225,6 @@ and `PORT-NOTES-tests.md`.
 - `CApi.proj_context_clone`
 - `CApi.proj_create_crs_to_crs_from_pj_accuracy_filter`
 - `CApi.proj_create_crs_to_crs_from_pj_ballpark_filter`
-- `CApi.proj_create_crs_to_crs_coordinate_metadata_in_src`
-- `CApi.proj_create_crs_to_crs_coordinate_metadata_in_target`
-- `CApi.proj_crs_promote_to_3D_on_coordinate_metadata`
 - `CApi.proj_create_crs_to_crs_with_only_ballpark_transformations`
 - `CApi.proj_create_crs_to_crs_from_custom_compound_crs_with_NAD83_2011_and_geoidgrid_ref_against_WGS84_to_WGS84_G1762`
 - `CApi.proj_create_crs_to_crs_from_custom_compound_crs_with_NAD83_2011_and_geoidgrid_ref_against_NAD83_2011_to_WGS84_G1762`
@@ -239,11 +236,6 @@ and `PORT-NOTES-tests.md`.
 - `CApi.use_proj4_init_rules`
 - `CApi.use_proj4_init_rules_from_global_context`
 - `CApi.proj_get_insert_statements`
-- `CApi.proj_trans_bounds_ignore_inf`
-- `CApi.proj_trans_bounds_ignore_inf_geographic`
-- `CApi.proj_trans_bounds_world_geodetic_to_spilhaus`
-- `CApi.proj_trans_bounds_3D_ignore_inf`
-- `CApi.proj_crs_has_point_motion_operation`
 - `CApi.open_plenty_of_contexts`
 - `CApi.concurrent_context`
 
