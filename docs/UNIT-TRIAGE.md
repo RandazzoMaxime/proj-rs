@@ -5,11 +5,11 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 152 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `core` | 150 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
 | `niche` | 32 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 49 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (152)
+## core (150)
 
 ### test_c_api.cpp (23)
 
@@ -61,7 +61,7 @@ The class comes from the test name alone, so check it when you port a test.
 
 - `operation.normalizeForVisualization`
 
-### test_operationfactory.cpp (117)
+### test_operationfactory.cpp (115)
 
 - `operation.geogCRS_to_geogCRS_context_match_by_name`
 - `operation.geogCRS_to_geogCRS_context_inverse_needed`
@@ -98,8 +98,6 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.boundCRS_of_projCRS_to_geogCRS`
 - `operation.boundCRS_to_geogCRS_hubCRS_and_targetCRS_same_but_baseCRS_not`
 - `operation.boundCRS_to_boundCRS`
-- `operation.boundCRS_to_boundCRS_noop_for_TOWGS84`
-- `operation.boundCRS_to_boundCRS_unralated_hub`
 - `operation.boundCRS_of_projCRS_towgs84_to_boundCRS_of_projCRS_nadgrids`
 - `operation.boundCRS_of_projCRS_towgs84_non_metre_unit_to_geocentric`
 - `operation.boundCRS_to_boundCRS_with_base_geog_crs_different_from_source_of_transf`
