@@ -7,7 +7,7 @@ The class comes from the test name alone, so check it when you port a test.
 |---|---:|---|---|
 | `core` | 166 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
 | `niche` | 40 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
-| `shape` | 51 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
+| `shape` | 50 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
 ## core (166)
 
@@ -249,7 +249,7 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.createOperation_compound_to_compound_with_point_motion_operation`
 - `operation.createOperation_compound_to_compound_with_point_motion_operation_special_case_CGVD2013a`
 
-## shape (51)
+## shape (50)
 
 ### test_c_api.cpp (21)
 
@@ -275,10 +275,9 @@ The class comes from the test name alone, so check it when you port a test.
 - `CApi.open_plenty_of_contexts`
 - `CApi.concurrent_context`
 
-### test_crs.cpp (5)
+### test_crs.cpp (4)
 
 - `crs.scope_area_bbox_remark`
-- `crs.multiple_ID`
 - `crs.VerticalCRS_ensemble_exception_in_create`
 - `datum.vdatum_with_anchor`
 - `crs.projected_is_equivalent_to_with_proj4_extension`
