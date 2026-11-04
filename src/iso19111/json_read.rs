@@ -1019,6 +1019,7 @@ impl Reader<'_> {
             }))
         } else {
             Ok(Datum::Vertical(VerticalReferenceFrame {
+                realization_method: None,
                 identified,
                 wkt1_type: "2005".to_owned(),
                 frame_epoch: None,
@@ -1075,6 +1076,7 @@ impl Reader<'_> {
             (None, None)
         };
         Ok(VerticalReferenceFrame {
+            realization_method: None,
             identified,
             wkt1_type: "2005".to_owned(),
             frame_epoch,

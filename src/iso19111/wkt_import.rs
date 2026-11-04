@@ -1535,6 +1535,7 @@ impl WktParser {
                 }));
             } else {
                 members.push(Datum::Vertical(VerticalReferenceFrame {
+                    realization_method: None,
                     identified: member_props.identified(),
                     wkt1_type: "2005".to_owned(),
                     frame_epoch: None,
@@ -2264,6 +2265,7 @@ impl WktParser {
             (None, None)
         };
         Ok(VerticalReferenceFrame {
+            realization_method: None,
             identified,
             wkt1_type,
             frame_epoch,
@@ -2303,6 +2305,7 @@ impl WktParser {
                 return Err(invalid("VERTCS DATUM is not a geodetic datum"));
             };
             Some(VerticalReferenceFrame {
+                realization_method: None,
                 identified: Identified::named(frame.name()),
                 wkt1_type: "2002".to_owned(),
                 frame_epoch: None,
@@ -2341,6 +2344,7 @@ impl WktParser {
             {
                 self.apply_las_vertical(&mut props, &coordinate_system.axis);
                 datum = Some(VerticalReferenceFrame {
+                    realization_method: None,
                     identified: Identified::named("North American Vertical Datum 1988")
                         .with_id("EPSG", "5103"),
                     wkt1_type: "2005".to_owned(),

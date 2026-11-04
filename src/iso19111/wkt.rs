@@ -633,6 +633,7 @@ fn export_ellipsoidal_height_compound(
     let vertical = VerticalCRS {
         identified: Identified::named(vertical_name),
         datum: Some(VerticalReferenceFrame {
+            realization_method: None,
             identified: Identified::named("Ellipsoid"),
             wkt1_type: "2002".to_owned(),
             frame_epoch: None,
@@ -1126,6 +1127,7 @@ fn export_projected_ellipsoidal_height(
     let vertical = VerticalCRS {
         identified: Identified::named(vertical_name),
         datum: Some(VerticalReferenceFrame {
+            realization_method: None,
             identified: Identified::named("Ellipsoid"),
             wkt1_type: "2002".to_owned(),
             frame_epoch: None,
@@ -1726,6 +1728,7 @@ fn export_vertical_ensemble(ensemble: &DatumEnsemble, formatter: &mut WktFormatt
         let mut identified = ensemble.identified.clone();
         identified.name = name.to_owned();
         let datum = VerticalReferenceFrame {
+            realization_method: None,
             identified,
             wkt1_type: "2005".to_owned(),
             frame_epoch: None,
