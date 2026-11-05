@@ -77,6 +77,7 @@ const METHOD_NADCON5_2D: i32 = 1074;
 const METHOD_NADCON5_3D: i32 = 1075;
 const METHOD_POINT_MOTION_CANADA_NTV2_VEL: i32 = 1070;
 const METHOD_POINT_MOTION_GEOG3D_NEU_NTV2_VEL: i32 = 1141;
+const METHOD_POINT_MOTION_GEOCEN_NEU_GRAVSOFT: i32 = 1139;
 const METHOD_VERTCON: i32 = 9658;
 const METHOD_NRCAN_BYN: i32 = 1112;
 const METHOD_NRCAN_GEOID_DIFFERENCE: i32 = 1126;
@@ -93,6 +94,7 @@ const PARAMETER_GEOID_CORRECTION_FILENAME: i32 = 8666;
 const PARAMETER_VERTICAL_OFFSET_FILE: i32 = 8732;
 const PARAMETER_GEOID_MODEL_DIFFERENCE_FILE: i32 = 1063;
 const PARAMETER_POINT_MOTION_VELOCITY_GRID_FILE: i32 = 1050;
+const PARAMETER_POINT_MOTION_VELOCITY_NORTH_GRID_FILE: i32 = 1072;
 const PARAMETER_TIN_OFFSET_FILE: i32 = 1064;
 const PARAMETER_SOURCE_EPOCH: i32 = 1068;
 const PARAMETER_TARGET_EPOCH: i32 = 1069;
@@ -945,7 +947,9 @@ fn point_motion_velocity_grid(
 ) -> Result<(), FactoryError> {
     if !matches!(
         epsg_method_code(operation),
-        METHOD_POINT_MOTION_CANADA_NTV2_VEL | METHOD_POINT_MOTION_GEOG3D_NEU_NTV2_VEL
+        METHOD_POINT_MOTION_CANADA_NTV2_VEL
+            | METHOD_POINT_MOTION_GEOG3D_NEU_NTV2_VEL
+            | METHOD_POINT_MOTION_GEOCEN_NEU_GRAVSOFT
     ) {
         return Err(FactoryError::Format(format!(
             "Unimplemented {}",
@@ -961,6 +965,21 @@ fn point_motion_velocity_grid(
                 .to_owned(),
         ));
     };
+    let grid = formatter.grid_name(&velocity_grid_file(operation)?);
+    if let Some(Crs::Geodetic(GeodeticCRS::Geocentric(geocentric))) = operation.source_crs() {
+        formatter.add_step("set");
+        formatter.add_number("v_4", source_epoch);
+        formatter.add_step("deformation");
+        formatter.add_number("dt", target_epoch - source_epoch);
+        formatter.add_param("grids", &grid);
+        ellipsoid_steps(
+            geocentric.datum().map(GeodeticReferenceFrame::ellipsoid),
+            formatter,
+        );
+        formatter.add_step("set");
+        formatter.add_number("v_4", target_epoch);
+        return Ok(());
+    }
     let source = operation
         .source_crs()
         .and_then(geographic_of)
@@ -969,7 +988,6 @@ fn point_motion_velocity_grid(
                 "Can apply PointMotionOperation VelocityGrid only to GeodeticCRS".to_owned(),
             )
         })?;
-    let grid = formatter.grid_name(&velocity_grid_file(operation)?);
     let axes = source.coordinate_system().axes();
 
     formatter.start_inversion();
@@ -1166,9 +1184,11 @@ fn geocentric_ellipsoid_steps(crs: &Crs, formatter: &mut PipelineFormatter) {
 }
 
 fn velocity_grid_file(operation: &Transformation) -> Result<String, FactoryError> {
-    file_by_code(operation, PARAMETER_POINT_MOTION_VELOCITY_GRID_FILE).ok_or_else(|| {
-        FactoryError::Format("Missing parameter Point motion velocity grid file".to_owned())
-    })
+    file_by_code(operation, PARAMETER_POINT_MOTION_VELOCITY_GRID_FILE)
+        .or_else(|| file_by_code(operation, PARAMETER_POINT_MOTION_VELOCITY_NORTH_GRID_FILE))
+        .ok_or_else(|| {
+            FactoryError::Format("Missing parameter Point motion velocity grid file".to_owned())
+        })
 }
 
 fn target_epoch_years(operation: &Transformation) -> Result<f64, FactoryError> {
