@@ -59,9 +59,14 @@ pub(crate) fn build(
     }
     let (lamp, pole) = pole(params)?;
     let transverse = pole.abs() <= TOL;
-    let identity = matches!(target, "latlon" | "latlong" | "longlat" | "lonlat");
+    let identity = matches!(target, "latlon" | "latlong");
     let (child, has_inverse) = if identity {
         (None, true)
+    } else if matches!(target, "longlat" | "lonlat") {
+        // ponytail: only `longlat` is pinned by PROJ 9.9.0 (test_cs2cs_various #1525).
+        // Its output is degrees, so the rotated radians go through unitconvert.
+        let child = Operation::create("proj=unitconvert xy_in=rad xy_out=deg")?;
+        (Some(child), true)
     } else {
         let child = Operation::create(&child_definition(target, params))?;
         let cartesian = child_is_cartesian(target);
