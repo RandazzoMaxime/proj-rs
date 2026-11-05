@@ -7840,6 +7840,12 @@ fn point_motion_between_epochs(
         transformation.point_motion = true;
         transformation.source_epoch = Some(source_epoch);
         transformation.target_epoch = Some(target_epoch);
+        if matches!(source, Crs::Geodetic(GeodeticCRS::Geocentric(_))) {
+            transformation.source = Some(Box::new(source.clone()));
+            transformation.target = Some(Box::new(source.clone()));
+            operations.push(CoordinateOperation::Transformation(transformation));
+            continue;
+        }
         let operation = CoordinateOperation::Transformation(transformation);
         if same_crs {
             operations.push(operation);
