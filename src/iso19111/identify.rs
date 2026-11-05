@@ -698,15 +698,22 @@ fn identify_projected_in_database(
             if !(factory.authority().is_empty() || identifier.code_space() == factory.authority()) {
                 continue;
             }
-            if let Ok(found) = AuthorityFactory::create(db, identifier.code_space())
-                .create_projected_crs(identifier.code())
-            {
-                let confidence = if crs.is_equivalent_to_with(&found, criterion) {
-                    100
-                } else {
-                    25
-                };
-                return vec![(Crs::Projected(found), confidence)];
+            // An authority name in another case (`Esri`) is looked up in upper case.
+            let spellings = [
+                identifier.code_space().to_owned(),
+                identifier.code_space().to_ascii_uppercase(),
+            ];
+            for space in spellings {
+                if let Ok(found) =
+                    AuthorityFactory::create(db, &space).create_projected_crs(identifier.code())
+                {
+                    let confidence = if crs.is_equivalent_to_with(&found, criterion) {
+                        100
+                    } else {
+                        25
+                    };
+                    return vec![(Crs::Projected(found), confidence)];
+                }
             }
         }
         return Vec::new();
