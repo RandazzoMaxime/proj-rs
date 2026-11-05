@@ -84,8 +84,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.compoundCRS_with_boundGeogCRS_and_geoid_to_geodCRS_NAD2011_ctxt`
 - `operation.compoundCRS_with_vert_bound_to_bound_geog3D`
 - `operation.compoundCRS_with_derivedVerticalCRS_ellipsoidal_height_to_geog`
-- `operation.geocent_to_compoundCRS`
-- `operation.geocent_to_compoundCRS_context`
 - `operation.compoundCRS_to_compoundCRS`
 - `operation.compoundCRS_to_compoundCRS_with_vertical_transform`
 - `operation.compoundCRS_to_compoundCRS_issue_2232`
@@ -150,7 +148,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_c_api.cpp
 
-- `CApi.proj_coordoperation_get_grid_used`
 - `CApi.proj_coordoperation_get_grid_used_fullname_caching`
 - `CApi.proj_create_operations_prime_meridian_non_greenwich`
 - `CApi.proj_get_suggested_operation_with_operations_without_area_of_use`
