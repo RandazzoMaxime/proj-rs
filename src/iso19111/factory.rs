@@ -5379,6 +5379,18 @@ impl CoordinateOperationFactory {
                 )?);
             }
         }
+        // A geocentric CRS to a compound CRS is the inverse of the compound CRS to it.
+        if let (Crs::Geodetic(_), Crs::Compound(_)) = (source, target) {
+            if geographic_of(source).is_none() && !context.has_guard(GUARD_DATUM_INTERMEDIATE) {
+                let mut inner = context.clone();
+                inner.guards |= GUARD_DATUM_INTERMEDIATE;
+                found.extend(
+                    self.create_candidates(target, source, &inner)?
+                        .iter()
+                        .map(CoordinateOperation::inverse),
+                );
+            }
+        }
         found.extend(super::compound::geog_to_compound(
             self, source, target, context,
         )?);
