@@ -10,7 +10,7 @@ fn crs_projected_crs_identify_wrong_auth_name_case() {
     let anonymous = AuthorityFactory::create(&db, "");
     let mut parser = WktParser::new();
     parser.set_strictness(WktStrictness::Lenient);
-    parser.attach_database(db.clone());
+    parser.attach_database(db);
     let wkt = "PROJCS[\"World_Cylindrical_Equal_Area\",\
         GEOGCS[\"GCS_WGS_1984\",\
         DATUM[\"D_WGS_1984\",SPHEROID[\"WGS_1984\",6378137.0,298.257223563]],\
