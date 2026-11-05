@@ -6,8 +6,6 @@ A row remains when that case does not match the yaml.
 | id | app | reason | comment |
 |---|---|---|---|
 | `test_cs2cs_various.yaml#59` | cs2cs | expected 595710.3731286	5357598.4645652 0.0000000 got 595625.7338097	5357535.8096752 0.0000000 | Test MGI datum gives expected results (#207) |
-| `test_cs2cs_various.yaml#89` | cs2cs | expected -132.0000000	46.0000000 0.0000000 got -2.3038346	0.8028515 0.0000000 | Check ob_tran with o_proj=longlat (#1525) |
-| `test_cs2cs_various.yaml#90` | cs2cs | expected -112.0000000	46.0000000 0.0000000 got 39.9148994	64.3941424 0.0000000 | Test inverse handling |
 | `test_cs2cs_various.yaml#97` | cs2cs | exit 0 expected 3  | Test effect of --accuracy |
 | `test_cs2cs_various.yaml#98` | cs2cs | exit 0 expected 3  | Test effect of --no-ballpark |
 | `test_cs2cs_various.yaml#118` | cs2cs | no numbers expected *	* inf got 49dN	2dE 0.000 | Test cs2cs --only-best (grid missing) for EPSG:4326+3855 to EPSG:4979 |
