@@ -83,6 +83,8 @@ pub(super) const GUARD_ALTERNATIVE_GEOG: u8 = 2;
 pub(super) const GUARD_DATUM_INTERMEDIATE: u8 = 4;
 /// `inCreateOperationsWithDatumPivotAntiRecursion`.
 pub(super) const GUARD_DATUM_PIVOT: u8 = 8;
+/// `inCreateOperationsVertToVertWithIntermediateVert`.
+pub(super) const GUARD_VERTICAL_PIVOT: u8 = 16;
 
 /// How the availability of an operation's grids enters the ordering.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -5349,6 +5351,11 @@ impl CoordinateOperationFactory {
         }
         if registry && found.is_empty() {
             found.extend(super::compound::vertical_geog_fallback(
+                self, source, target, context,
+            )?);
+        }
+        if registry && found.is_empty() {
+            found.extend(super::compound::vertical_pivot(
                 self, source, target, context,
             )?);
         }

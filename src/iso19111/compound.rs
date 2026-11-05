@@ -20,7 +20,7 @@ use super::equiv::{geodetic_frame, same_geodetic_datum, Equivalence};
 use super::factory::{
     crs_extent, geographic_of, world_extent, CoordinateOperationContext,
     CoordinateOperationFactory, DatabaseContext, GridAvailabilityUse, GUARD_ALTERNATIVE_GEOG,
-    GUARD_VERTICAL_INTERMEDIATE,
+    GUARD_VERTICAL_INTERMEDIATE, GUARD_VERTICAL_PIVOT,
 };
 use super::model::{
     Axis, BoundCRS, CompoundCRS, ConcatenatedOperation, ConcatenatedStep, CoordinateOperation, Crs,
@@ -1268,6 +1268,78 @@ fn datum_names_used(operation: &CoordinateOperation) -> std::collections::BTreeS
         }
     }
     names
+}
+
+/// `createOperationsVertToVertWithIntermediateVert`: two pivot strategies through the vertical
+/// CRS of the target's datum, then of the source's datum.
+pub(super) fn vertical_pivot(
+    factory: &CoordinateOperationFactory,
+    source: &Crs,
+    target: &Crs,
+    context: &CoordinateOperationContext,
+) -> Result<Vec<CoordinateOperation>, FactoryError> {
+    let (Crs::Vertical(vsrc), Crs::Vertical(vdst)) = (source, target) else {
+        return Ok(Vec::new());
+    };
+    if context.has_guard(GUARD_VERTICAL_PIVOT) {
+        return Ok(Vec::new());
+    }
+    let mut inner = context.clone();
+    inner.guards |= GUARD_VERTICAL_PIVOT;
+    let candidates = |vertical: &VerticalCRS| -> Result<Vec<Crs>, FactoryError> {
+        let Some(datum) = vertical.datum().and_then(|d| d.identifiers().first()) else {
+            return Ok(Vec::new());
+        };
+        let rows = context.database().query(
+            "SELECT auth_name, code FROM vertical_crs WHERE datum_auth_name = ? \
+             AND datum_code = ? AND deprecated = 0",
+            &[datum.code_space().to_owned(), datum.code().to_owned()],
+        )?;
+        Ok(rows
+            .iter()
+            .filter_map(|row| {
+                super::factory::AuthorityFactory::create(context.database(), row[0].text())
+                    .create_coordinate_reference_system(&row[1].text())
+                    .ok()
+            })
+            .collect())
+    };
+    let mut res = Vec::new();
+    for candidate in candidates(vdst)? {
+        if candidate.is_equivalent_to_with(target, Equivalence::Equivalent) {
+            continue;
+        }
+        let first = factory.create_operations(source, &candidate, &inner)?;
+        if first.is_empty() {
+            continue;
+        }
+        let second = factory.create_operations(&candidate, target, &inner)?;
+        let Some(second) = second.first() else {
+            continue;
+        };
+        for op in first.iter().filter(|op| has_identifiers(op)) {
+            res.extend(compute_metadata(vec![op.clone(), second.clone()], context));
+        }
+    }
+    if res.is_empty() {
+        for candidate in candidates(vsrc)? {
+            if candidate.is_equivalent_to_with(source, Equivalence::Equivalent) {
+                continue;
+            }
+            let second = factory.create_operations(&candidate, target, &inner)?;
+            if second.is_empty() {
+                continue;
+            }
+            let first = factory.create_operations(source, &candidate, &inner)?;
+            let Some(first) = first.first() else {
+                continue;
+            };
+            for op in second.iter().filter(|op| has_identifiers(op)) {
+                res.extend(compute_metadata(vec![first.clone(), op.clone()], context));
+            }
+        }
+    }
+    Ok(res)
 }
 
 /// `hasIdentifiers`: the operation or one of its steps has an identifier.
