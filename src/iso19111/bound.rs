@@ -350,6 +350,31 @@ fn horizontal_bound(
     db: &DatabaseContext,
     authority: &str,
 ) -> Result<Option<Crs>, FactoryError> {
+    if let Crs::Geodetic(GeodeticCRS::Geocentric(_)) = crs {
+        let hub = Crs::Geodetic(GeodeticCRS::epsg_4978());
+        let operations = candidate_operations(db, crs, &hub, authority)?;
+        let mut count = 0_usize;
+        let mut candidate = None;
+        for operation in operations {
+            let Some(transformation) = helmert_for_towgs84(operation) else {
+                continue;
+            };
+            if transformation.name().starts_with("Ballpark geo")
+                || transformation.towgs84_lenient().is_none()
+            {
+                continue;
+            }
+            if candidate.is_none() {
+                count = 0;
+                candidate = Some(transformation);
+            }
+            count += 1;
+        }
+        return Ok(match candidate {
+            Some(transformation) if count == 1 => Some(bind(crs, hub, transformation)),
+            _ => None,
+        });
+    }
     let Some(geographic) = extract_geographic(crs) else {
         return Ok(None);
     };
@@ -425,7 +450,8 @@ fn candidate_operations(
     target: &Crs,
     authority: &str,
 ) -> Result<Vec<CoordinateOperation>, FactoryError> {
-    let context = CoordinateOperationContext::create(db, authority);
+    let mut context = CoordinateOperationContext::create(db, authority);
+    context.set_spatial_criterion(super::factory::SpatialCriterion::PartialIntersection);
     CoordinateOperationFactory::create().create_operations(source, target, &context)
 }
 
