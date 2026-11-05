@@ -5,11 +5,11 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 91 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `core` | 90 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
 | `niche` | 21 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 41 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (91)
+## core (90)
 
 ### test_c_api.cpp (14)
 
@@ -52,7 +52,7 @@ The class comes from the test name alone, so check it when you port a test.
 
 - `operation.normalizeForVisualization`
 
-### test_operationfactory.cpp (65)
+### test_operationfactory.cpp (64)
 
 - `operation.geogCRS_to_geogCRS_context_inverse_needed`
 - `operation.vertCRS_to_geogCRS_context`
@@ -118,7 +118,6 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.createOperation_compound_to_compound_with_epoch_HT2_2002_CGG2013a`
 - `operation.createOperation_compound_to_compound_with_epoch_HT2_2010_CGG2013a`
 - `operation.createOperation_compound_to_compound_with_Geographic3D_Offset_by_velocity_grid`
-- `operation.compoundCRS_to_compoundCRS_context_extent_use_none`
 
 ## niche (21)
 
