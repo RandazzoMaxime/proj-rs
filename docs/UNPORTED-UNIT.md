@@ -102,7 +102,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.compoundCRS_to_compoundCRS_issue_4550`
 - `operation.compoundCRS_to_compoundCRS_with_derivedVerticalCRS_ellipsoidal_height`
 - `operation.compoundCRS_to_compoundCRS_using_intermediate_of_horizontal_transform`
-- `operation.vertCRS_to_vertCRS_pivot_context`
 - `operation.compoundCRS_to_geogCRS_3D_context`
 - `operation.compoundCRS_to_geogCRS_3D_with_3D_helmert_same_geog_src_target_context`
 - `operation.compoundCRS_to_geogCRS_3D_with_null_helmert_same_geog_src_target_context`
