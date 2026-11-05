@@ -3076,8 +3076,25 @@ impl WktParser {
                         ))
                     })?;
                     let mut unit = self.unit_in(child, UnitKind::Unknown)?;
+                    let mut number = number;
                     if unit.is_none() {
                         unit = guess_parameter_unit(&props.name, linear, angular);
+                        // An abridged `Scale difference` without UNIT is the unity scale
+                        // `1 + ppm * 1e-6` (`ParameterValue::_exportToWKT`): read it in ppm.
+                        if props.name == "Scale difference"
+                            && unit.as_ref().is_some_and(|unit| {
+                                unit.kind == UnitKind::Scale && unit.factor == 1.0
+                            })
+                        {
+                            number = (number - 1.0) * 1e6;
+                            unit = Some(UnitOfMeasure {
+                                name: "parts per million".to_owned(),
+                                factor: 1e-6,
+                                kind: UnitKind::Scale,
+                                code_space: "EPSG".to_owned(),
+                                code: "9202".to_owned(),
+                            });
+                        }
                     }
                     if is_interpolation_code_parameter(&props) {
                         let code = interpolation_code(number).ok_or_else(|| {

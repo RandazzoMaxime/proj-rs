@@ -77,7 +77,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.boundCRS_to_derived_geog_with_transformation_with_source_crs_being_base_crs_of_source_crs`
 - `operation.ETRS89_3D_to_proj_string_with_geoidgrids_nadgrids`
 - `operation.nadgrids_with_pm`
-- `operation.towgs84_pm_3d`
 - `operation.WGS84_G1762_to_compoundCRS_with_bound_vertCRS`
 - `operation.compoundCRS_with_boundGeogCRS_and_geoid_to_geodCRS_NAD2011_ctxt`
 - `operation.compoundCRS_with_vert_bound_to_bound_geog3D`
