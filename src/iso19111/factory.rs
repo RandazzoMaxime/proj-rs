@@ -3338,12 +3338,18 @@ impl AuthorityFactory {
                 crs.datum_ensemble()
                     .and_then(|ensemble| ensemble.identifiers().first())
             });
-        let Some(datum_id) = datum_id else {
-            return Ok(Vec::new());
+        let by_name = match (datum_id, crs.datum()) {
+            (None, Some(frame)) => Self::datum_by_name(&self.db, frame.name()),
+            _ => None,
+        };
+        let datum_id = match (datum_id, &by_name) {
+            (Some(id), _) => (id.code_space().to_owned(), id.code().to_owned()),
+            (None, Some(found)) => found.clone(),
+            (None, None) => return Ok(Vec::new()),
         };
         let candidates = AuthorityFactory::create(&self.db, "").create_geodetic_crs_from_datum(
-            datum_id.code_space(),
-            datum_id.code(),
+            &datum_id.0,
+            &datum_id.1,
             "",
         )?;
         let mut clauses = Vec::new();
@@ -3381,6 +3387,29 @@ impl AuthorityFactory {
             }
         }
         Ok(operations)
+    }
+
+    /// The identifier of the one registered geodetic datum named `name`, for a datum that has no
+    /// identifier of its own (`createGeodeticCRSFromDatum` searches by name).
+    fn datum_by_name(db: &DatabaseContext, name: &str) -> Option<(String, String)> {
+        if name == "unknown" || name == "unnamed" || name.is_empty() {
+            return None;
+        }
+        let matches = AuthorityFactory::create(db, "")
+            .create_objects_from_name(
+                name,
+                &[ObjectType::GeodeticReferenceFrame],
+                NameMatch::Exact,
+                2,
+            )
+            .ok()?;
+        let [AuthorityObject::Datum(Datum::Geodetic(found))] = matches.as_slice() else {
+            return None;
+        };
+        found
+            .identifiers()
+            .first()
+            .map(|id| (id.code_space().to_owned(), id.code().to_owned()))
     }
 
     /// The conversion of the projected CRS `target` when `source` is its base CRS, with the
