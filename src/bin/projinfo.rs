@@ -1113,7 +1113,7 @@ fn candidate_operations(
         SpatialTest::Contains => proj_rs::SpatialCriterion::StrictContainment,
         SpatialTest::Intersects => proj_rs::SpatialCriterion::PartialIntersection,
     };
-    let mut context = proj_rs::CoordinateOperationContext::create(db, "EPSG");
+    let mut context = proj_rs::CoordinateOperationContext::create(db, "");
     context
         .set_area_of_interest(area.cloned())
         .set_spatial_criterion(criterion)

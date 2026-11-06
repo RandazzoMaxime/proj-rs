@@ -82,6 +82,26 @@ fn utm15n_pair_without_grids_pivots_through_wgs84() {
     );
 }
 
+/// `projinfo -s EPSG:11108 -t EPSG:11128 --summary --spatial-test intersects` (PROJ 9.9.0): three
+/// candidates, the ETRS89 pair at 0.1 m among them. The port's `projinfo` used the `EPSG` context
+/// and listed two of them.
+#[test]
+fn etrs89_ensemble_pair_has_the_three_candidates_of_projinfo() {
+    let operations = candidates(
+        "EPSG:11108",
+        "EPSG:11128",
+        GridAvailabilityUse::UseForSorting,
+    );
+    assert_eq!(
+        names(&operations),
+        [
+            "Conversion from ETRS89-PRT [1995] (geog2D) to ETRS89-PRT [1995] (geocentric) + ETRS89-PRT [1995] to ETRF2000 (2) + Inverse of ETRS89-ESP [ERGNSS] to ETRF2000 (1) + Conversion from ETRS89-ESP [ERGNSS] (geocentric) to ETRS89-ESP [ERGNSS] (geog2D)",
+            "Inverse of ETRS89 to ETRS89-PRT [1995] + ETRS89 to ETRS89-ESP [ERGNSS]",
+            "Ballpark geographic offset from ETRS89-PRT [1995] to ETRS89-ESP [ERGNSS]",
+        ]
+    );
+}
+
 /// `projinfo -s EPSG:4746 -t EPSG:4978 --summary --spatial-test intersects --grid-check
 /// discard_missing` (PROJ 9.9.0, no grid file): the one candidate is the pivot through ETRS89, whose
 /// legs need no grid. The pivot through WGS 84 with a grid leg is discarded, as the registry
