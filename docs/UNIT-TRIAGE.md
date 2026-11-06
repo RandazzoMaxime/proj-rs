@@ -5,11 +5,11 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 84 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `core` | 79 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
 | `niche` | 19 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 41 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (84)
+## core (79)
 
 ### test_c_api.cpp (14)
 
@@ -50,7 +50,7 @@ The class comes from the test name alone, so check it when you port a test.
 
 - `operation.normalizeForVisualization`
 
-### test_operationfactory.cpp (60)
+### test_operationfactory.cpp (55)
 
 - `operation.geogCRS_to_geogCRS_context_inverse_needed`
 - `operation.vertCRS_to_geogCRS_context`
@@ -74,9 +74,7 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.WGS84_G1762_to_compoundCRS_with_bound_vertCRS`
 - `operation.compoundCRS_with_boundGeogCRS_and_geoid_to_geodCRS_NAD2011_ctxt`
 - `operation.compoundCRS_with_vert_bound_to_bound_geog3D`
-- `operation.compoundCRS_to_compoundCRS`
 - `operation.compoundCRS_to_compoundCRS_with_vertical_transform`
-- `operation.compoundCRS_to_compoundCRS_issue_2232`
 - `operation.compoundCRS_to_compoundCRS_context`
 - `operation.compoundCRS_to_compoundCRS_WGS84_EGM96_to_WGS84_Belfast`
 - `operation.compoundCRS_to_compoundCRS_OSGB36_BNG_ODN_height_to_WGS84_EGM96`
@@ -84,11 +82,8 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.compoundCRS_to_compoundCRS_concatenated_operation_with_two_vert_transformation`
 - `operation.compoundCRS_to_compoundCRS_concatenated_operation_with_two_vert_transformation_and_different_source_dest_interp`
 - `operation.compoundCRS_to_compoundCRS_issue_3328`
-- `operation.compoundCRS_to_compoundCRS_WGS84_EGM2008_to_RD_new_NAP_height`
 - `operation.compoundCRS_to_compoundCRS_concatenated_operation_with_two_vert_transformation_and_ballpark_geog`
 - `operation.compoundCRS_to_compoundCRS_issue_3152_ch1903lv03_ln02_bound`
-- `operation.compoundCRS_to_compoundCRS_issue_3191_BD72_Ostend_height_to_WGS84_EGM96`
-- `operation.compoundCRS_to_compoundCRS_issue_4550`
 - `operation.compoundCRS_to_compoundCRS_using_intermediate_of_horizontal_transform`
 - `operation.compoundCRS_to_geogCRS_3D_context`
 - `operation.compoundCRS_to_geogCRS_3D_with_3D_helmert_same_geog_src_target_context`
