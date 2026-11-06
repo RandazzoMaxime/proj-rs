@@ -320,12 +320,8 @@ fn best_operation_filtered(
     };
     let (best, characteristics) = chosen
         .ok_or_else(|| FactoryError::Format(format!("no operation from {source} to {target}")))?;
-    if !characteristics.exportable {
-        return Err(FactoryError::Format(format!(
-            "best operation {} has no PROJ pipeline",
-            characteristics.name
-        )));
-    }
+    // A missing grid is a result of its own, checked before the export: PROJ builds the
+    // pipeline naming the grid and fails on the grid, so the export is not what decides.
     if !characteristics.grids_available {
         let grids = proj_grids(&best, &db)?;
         return Ok(Chosen {
@@ -338,6 +334,12 @@ fn best_operation_filtered(
             target: target_crs,
             instantiable,
         });
+    }
+    if !characteristics.exportable {
+        return Err(FactoryError::Format(format!(
+            "best operation {} has no PROJ pipeline",
+            characteristics.name
+        )));
     }
     let definition = export(&best, &source_crs, &target_crs, &db)?;
     let lat_first = lat_or_northing_first(&target_crs);
