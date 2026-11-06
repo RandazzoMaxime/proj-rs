@@ -179,3 +179,24 @@ bash scratchpad/concat-accuracy/run_pairs.sh <out>   # the 32-pair table
 cargo test --test cli_yaml
 cargo test --test concat_accuracy
 ```
+
+## Interaction found when combining with the grid rerun (base-next-4)
+
+With the grid rerun of `lot-too-small-areas` alone, `test_cs2cs_various.yaml#125`
+(EPSG:26915 to EPSG:26715, no grid) passes; combined with this lot it stays open
+(569719.87 4268814.65 instead of 569720.46 4268813.88). It was open on 338cc24, so
+nothing reopens. The cause is the candidate set, not the sum:
+
+- PROJ 9.9.0 `projinfo --grid-check discard_missing` lists 11 candidates for the
+  pair; the port's DISCARD search lists about 100.
+- The port keeps ESRI steps (`Inverse of WGS_1984_(ITRF00)_To_NAD_1983`) for a pair
+  of EPSG CRS, many `NAD83 to WGS 84 (n)` steps PROJ does not list, and pivot legs
+  whose grid is missing (`NAD27 to WGS 84 (33)`, `(79)`): DISCARD is not applied to
+  the legs of a pivot.
+- `pj_get_suggested_operation` (trans.cpp 47-) picks, among the candidates whose
+  area holds the point, the best accuracy. With the maximum, `NAD83 to WGS 84 (1) +
+  Inverse of NAD27 to WGS 84 (6)` won a tie at 7 m; with PROJ's sum, the ESRI route
+  at 7.1 m wins over it at 11 m.
+
+Next lot: the pivot candidate set (authorities of the pivot legs, DISCARD on the
+legs, PROJ's filtering of the registry intermediates), measured on this pair.
