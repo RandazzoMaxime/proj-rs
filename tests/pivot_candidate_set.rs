@@ -81,3 +81,20 @@ fn utm15n_pair_without_grids_pivots_through_wgs84() {
         ]
     );
 }
+
+/// `projinfo -s EPSG:4746 -t EPSG:4978 --summary --spatial-test intersects --grid-check
+/// discard_missing` (PROJ 9.9.0, no grid file): the one candidate is the pivot through ETRS89, whose
+/// legs need no grid. The pivot through WGS 84 with a grid leg is discarded, as the registry
+/// operations with a missing grid are.
+#[test]
+fn pivot_leg_with_a_missing_grid_is_discarded() {
+    let operations = candidates(
+        "EPSG:4746",
+        "EPSG:4978",
+        GridAvailabilityUse::DiscardIfMissing,
+    );
+    assert_eq!(
+        names(&operations),
+        ["PD/83 to ETRS89 (1) + ETRS89 to WGS 84 (1) + Conversion from WGS 84 (geog2D) to WGS 84 (geocentric)"]
+    );
+}

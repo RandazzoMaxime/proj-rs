@@ -6563,7 +6563,29 @@ fn datum_based_intermediate_operations(
             steps,
         )));
     }
-    Ok(result)
+    // The grid rejection that ends `createBetweenGeodeticCRSWithDatumBasedIntermediates`
+    // (factory.cpp:8774-8780): a pivot whose grid is not available is dropped.
+    without_missing_grids(result, context)
+}
+
+/// `discardIfMissingGrid` (`rejectOpDueToMissingGrid`, factory.cpp:8232-8238 and 8774-8780): with
+/// the grid policy that discards an operation whose grid is not available, the operations whose
+/// grids are all available are kept.
+fn without_missing_grids(
+    operations: Vec<CoordinateOperation>,
+    context: &CoordinateOperationContext,
+) -> Result<Vec<CoordinateOperation>, FactoryError> {
+    if !context.discards_missing_grids() {
+        return Ok(operations);
+    }
+    let mut kept = Vec::with_capacity(operations.len());
+    for operation in operations {
+        let grids = operation.grids_needed(&context.db, context.grid_availability)?;
+        if grids.iter().all(|grid| grid.info.available) {
+            kept.push(operation);
+        }
+    }
+    Ok(kept)
 }
 
 /// The authorities an intermediate leg of a pair may use (`allowedAuthorities`,
@@ -6872,17 +6894,7 @@ fn crs_codes_intermediate_operations(
             )));
         }
     }
-    if context.discards_missing_grids() {
-        let mut kept = Vec::with_capacity(operations.len());
-        for operation in operations {
-            let grids = operation.grids_needed(db, context.grid_availability)?;
-            if grids.iter().all(|grid| grid.info.available) {
-                kept.push(operation);
-            }
-        }
-        operations = kept;
-    }
-    Ok(operations)
+    without_missing_grids(operations, context)
 }
 
 /// `useOnlyIntermediateCRSThroughDatumEnsembleNullOp`: every operation has a PROJ step that
