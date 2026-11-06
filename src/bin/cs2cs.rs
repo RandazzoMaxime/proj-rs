@@ -17,7 +17,10 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader, Write};
 use std::process::ExitCode;
 
-use proj_rs::iso19111::{Ballpark, BestOperation, CandidateFilter, OnlyBest};
+use proj_rs::iso19111::{
+    AlternativeError, Alternatives, Ballpark, BestOperation, BestPolicy, CandidateFilter, OnlyBest,
+    Selection,
+};
 use proj_rs::{Area, CrsPipeline, Operation, Proj, Xyzt};
 use rusqlite::Connection;
 
@@ -305,13 +308,18 @@ enum Engine {
     Facade(Box<Proj>),
     /// `--only-best` chose an operation whose grid is missing. Each point fails with PROJ's message.
     Failing(String),
+    /// Several candidates: each point takes the one `proj_trans` picks for it.
+    Alternatives(Box<Alternatives>),
+    /// The default policy chose an operation whose grid is missing: each point fails silently.
+    Unavailable,
 }
 
 impl Engine {
     fn lat_first(&self) -> bool {
         match self {
             Self::Pipe(pipe) => pipe.lat_or_northing_first,
-            Self::Pair(_) | Self::Facade(_) | Self::Failing(_) => false,
+            Self::Alternatives(alternatives) => alternatives.lat_or_northing_first(),
+            Self::Pair(_) | Self::Facade(_) | Self::Failing(_) | Self::Unavailable => false,
         }
     }
 
@@ -330,6 +338,16 @@ impl Engine {
                 eprintln!("{message}");
                 Err(())
             }
+            Self::Alternatives(alternatives) => alternatives
+                .forward(Xyzt { x, y, z, t })
+                .map(|coord| (coord.x, coord.y, coord.z))
+                .map_err(|error| {
+                    // `ONLY_BEST=YES` prints the missing grid of each point it cannot serve.
+                    if let AlternativeError::MissingGrid(message) = &error {
+                        eprintln!("{message}");
+                    }
+                }),
+            Self::Unavailable => Err(()),
         }
     }
 }
@@ -413,6 +431,23 @@ fn build_engine(
 ) -> Result<BuiltEngine, InitError> {
     let mut iso = IsoStatus::NotTried;
     if area.is_none() && !projish(source) && !projish(target) {
+        match proj_rs::iso19111::select_alternatives(source, target, policy_of(only_best), filter) {
+            Ok(Selection::Several(alternatives)) => {
+                return Ok(BuiltEngine {
+                    engine: Engine::Alternatives(Box::new(alternatives)),
+                    path: BuildPath::Iso,
+                    iso,
+                });
+            }
+            Ok(Selection::Single(best)) => {
+                return single_engine(best, only_best, filter).map(|engine| BuiltEngine {
+                    engine,
+                    path: BuildPath::Iso,
+                    iso,
+                });
+            }
+            Err(error) => iso = IsoStatus::Failed(error.to_string()),
+        }
         if filter != CandidateFilter::NONE {
             return select_pipeline_filtered(source, target, only_best, filter).map(|engine| {
                 BuiltEngine {
@@ -460,6 +495,50 @@ fn build_engine(
             iso,
         })
         .map_err(|error| InitError::Cause(error.to_string()))
+}
+
+/// The `ONLY_BEST` state of `proj_create_crs_to_crs` for `--only-best`, `--only-best=no`, or no
+/// option (`crs_to_crs.cpp:521-531`, and the `PROJ_ONLY_BEST_DEFAULT` default that warns).
+fn policy_of(only_best: Option<bool>) -> BestPolicy {
+    match only_best {
+        None => BestPolicy::Warn,
+        Some(true) => BestPolicy::Error,
+        Some(false) => BestPolicy::Discard,
+    }
+}
+
+/// The engine of a pair with one operation, as `proj_create_crs_to_crs` returns it. A missing
+/// grid fails the creation under `ALLOW_BALLPARK=NO --only-best`, fails each point under
+/// `--only-best`, and fails each point silently under the default policy.
+fn single_engine(
+    best: BestOperation,
+    only_best: Option<bool>,
+    filter: CandidateFilter,
+) -> Result<Engine, InitError> {
+    match best {
+        BestOperation::Pipeline {
+            definition,
+            lat_or_northing_first,
+        } => {
+            let operation = Operation::create(&definition)
+                .map_err(|error| InitError::Cause(error.to_string()))?;
+            Ok(Engine::Pipe(CrsPipeline {
+                operation,
+                lat_or_northing_first,
+            }))
+        }
+        BestOperation::MissingGrid { message } => {
+            if filter.ballpark == Ballpark::Forbidden && only_best == Some(true) {
+                return Err(InitError::Grid(format!(
+                    "{message}\n\ncannot initialize transformation\ncause: File not found or invalid"
+                )));
+            }
+            Ok(match only_best {
+                None => Engine::Unavailable,
+                Some(_) => Engine::Failing(message),
+            })
+        }
+    }
 }
 
 /// The operation PROJ's `proj_create_crs_to_crs` picks for the pair. An error is

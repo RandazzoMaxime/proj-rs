@@ -102,12 +102,7 @@ fn prepare(operations: &[CoordinateOperation]) -> Vec<Prepared> {
         let (west, south, east, north) = bounds;
         let accuracy = operation.accuracy().unwrap_or(-1.0);
         let name = operation.name();
-        let priority = name.contains("NAD83 to NAD83(HARN) (47)")
-            || name.contains("NAD83 to NAD83(HARN) (48)")
-            || name.contains("NAD83 to NAD83(HARN) (49)")
-            || name.contains("NAD83 to NAD83(HARN) (50)")
-            || name.contains("GDA94 to WGS 84 (1)")
-            || name.contains("GDA2020 to WGS 84 (2)");
+        let priority = priority_operation(name);
         let offshore = area.contains("- offshore");
         let unknown_area = area.is_empty() || area == "unknown";
         let west_rad = west.to_radians();
@@ -140,9 +135,19 @@ fn prepare(operations: &[CoordinateOperation]) -> Vec<Prepared> {
     candidates
 }
 
+/// `isPriorityOp` of `PJCoordOperation`: the operations PROJ prefers at equal accuracy.
+pub(super) fn priority_operation(name: &str) -> bool {
+    name.contains("NAD83 to NAD83(HARN) (47)")
+        || name.contains("NAD83 to NAD83(HARN) (48)")
+        || name.contains("NAD83 to NAD83(HARN) (49)")
+        || name.contains("NAD83 to NAD83(HARN) (50)")
+        || name.contains("GDA94 to WGS 84 (1)")
+        || name.contains("GDA2020 to WGS 84 (2)")
+}
+
 /// Area of use of the first usage that has a bounding box, with its name. The world
 /// when none does, and an empty name.
-fn area_of_use(operation: &CoordinateOperation) -> (String, (f64, f64, f64, f64)) {
+pub(super) fn area_of_use(operation: &CoordinateOperation) -> (String, (f64, f64, f64, f64)) {
     for domain in operation.domains() {
         let (Some(west), Some(south), Some(east), Some(north)) = (
             domain.west_bound_longitude(),

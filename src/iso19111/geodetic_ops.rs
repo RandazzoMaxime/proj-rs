@@ -241,6 +241,74 @@ pub(super) fn geodetic_operations(
     }
 }
 
+/// The ballpark candidates between a geographic and a geocentric CRS on different datums, that
+/// `createOperationsGeodToGeod` builds through the geographic CRS `I` of the geocentric one (PROJ
+/// 9.9, `coordinateoperationfactory.cpp:5366-5387`): from geographic `G` to geocentric `X`,
+/// `G -> I` ballpark then `I -> X` conversion. The reverse order from `X`. The registry candidates
+/// of the pair are not built here: the caller has them already. Empty for a same-datum pair, or
+/// when the two CRS are not of that kind.
+pub(super) fn geographic_geocentric_ballpark(
+    source: &Crs,
+    target: &Crs,
+) -> Vec<CoordinateOperation> {
+    let (geographic, geocentric, geographic_first) = match (source, target) {
+        (_, Crs::Geodetic(GeodeticCRS::Geocentric(_)))
+            if super::factory::geographic_of(source).is_some() =>
+        {
+            (source, target, true)
+        }
+        (Crs::Geodetic(GeodeticCRS::Geocentric(_)), _)
+            if super::factory::geographic_of(target).is_some() =>
+        {
+            (target, source, false)
+        }
+        _ => return Vec::new(),
+    };
+    if same_geodetic_datum(source, target) {
+        return Vec::new();
+    }
+    let Crs::Geodetic(geodetic) = geocentric else {
+        return Vec::new();
+    };
+    let mut coordinate_system = EllipsoidalCS::create_longitude_latitude(UnitOfMeasure::degree());
+    coordinate_system.axes.push(Axis::new(
+        "Ellipsoidal height",
+        "h",
+        "up",
+        UnitOfMeasure::metre(),
+    ));
+    let Ok(mut intermediate) = GeographicCRS::create(
+        format!("{} (geographic)", geocentric.name()),
+        geodetic.datum().cloned(),
+        geodetic.datum_ensemble().cloned(),
+        coordinate_system,
+    ) else {
+        return Vec::new();
+    };
+    intermediate.identified.domains = geocentric.domains().to_vec();
+    let intermediate = Crs::Geographic(intermediate);
+    let Ok(conversion) = geographic_geocentric_conversion(geocentric, &intermediate) else {
+        return Vec::new();
+    };
+    let conversion = CoordinateOperation::Transformation(conversion);
+    let ballparks = if geographic_first {
+        super::factory::forced_ballpark_operations(geographic, &intermediate)
+    } else {
+        super::factory::forced_ballpark_operations(&intermediate, geographic)
+    };
+    ballparks
+        .into_iter()
+        .map(|ballpark| {
+            let steps = if geographic_first {
+                vec![ballpark, conversion.clone().inverse()]
+            } else {
+                vec![conversion.clone(), ballpark]
+            };
+            CoordinateOperation::Concatenated(pivot_concatenation(steps))
+        })
+        .collect()
+}
+
 /// `Conversion::createGeographicGeocentric(source, target)`, as a transformation that keeps both
 /// CRS so that the PROJ string reads the ellipsoid of the geographic side.
 pub(super) fn geographic_geocentric_conversion(

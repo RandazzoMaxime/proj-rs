@@ -13,17 +13,21 @@
 //! one of those is either sorted differently or reported as an error, and the
 //! caller keeps its previous path.
 
+use super::alternatives::{Alternatives, BestPolicy, Bounds, FirstAxis, Item, SourceAxes};
 use super::factory::{
     operation_extent, sort_extents, GridAvailabilityUse, GridDescription, GridInfo, SortExtents,
     SpatialCriterion,
 };
 use super::model::{
-    BoundingBox, CoordinateOperation, Crs, ObjectDomain, Parameter, ParameterValue,
+    Axis, BoundingBox, CoordinateOperation, Crs, EllipsoidalCS, GeodeticCRS, GeographicCRS,
+    ObjectDomain, Parameter, ParameterValue, UnitOfMeasure,
 };
+use super::suggest::{area_of_use, priority_operation};
 use super::{
     create_from_user_input, CoordinateOperationContext, CoordinateOperationFactory,
     DatabaseContext, FactoryError, ProjLines,
 };
+use crate::engine::{Coord, Operation};
 use crate::gridpath;
 
 const NADCON_LONGITUDE_FILE_PARAMETER: &str = "8658";
@@ -896,4 +900,446 @@ fn sort(
         sorted.insert(at, candidate);
     }
     sorted
+}
+
+/// What `proj_create_crs_to_crs` makes of a pair under a [`BestPolicy`].
+#[derive(Debug)]
+pub enum Selection {
+    /// One operation: PROJ returns it without alternatives.
+    Single(BestOperation),
+    /// Two or more candidates, chosen per point by `proj_trans`.
+    Several(Alternatives),
+}
+
+/// `proj_create_crs_to_crs` for `source` to `target` under `policy`: the candidates PROJ keeps
+/// (`createOperations`, the grid rerun of `crs_to_crs.cpp:612-773`, and
+/// `pj_create_prepared_operations`, `crs_to_crs.cpp:362-466`), or [`Selection::Single`] when
+/// there is only one. A CRS that is neither geodetic nor projected is an error: the caller keeps
+/// its previous path.
+///
+/// # Errors
+///
+/// A CRS cannot be read, or no candidate can be prepared.
+pub fn select_alternatives(
+    source: &str,
+    target: &str,
+    policy: BestPolicy,
+    filter: CandidateFilter,
+) -> Result<Selection, FactoryError> {
+    let db = DatabaseContext::create()?;
+    let source_crs = create_from_user_input(source, &db)?;
+    let target_crs = create_from_user_input(target, &db)?;
+    let (Some(source_base), Some(target_base)) =
+        (reference_base(&source_crs), reference_base(&target_crs))
+    else {
+        return Err(FactoryError::Format(format!(
+            "{source} or {target} has no geodetic base to prepare its candidates"
+        )));
+    };
+    let mut context = CoordinateOperationContext::create(&db, "");
+    context.set_spatial_criterion(SpatialCriterion::PartialIntersection);
+    let operations = CoordinateOperationFactory::create()
+        .create_operations(&source_crs, &target_crs, &context)?
+        .into_iter()
+        .filter(|operation| filter.keeps(operation))
+        .collect::<Vec<_>>();
+    let extents = sort_extents(&context, &source_crs, &target_crs);
+    // `proj_create_crs_to_crs` asks KNOWN_AVAILABLE unless ONLY_BEST=NO (DISCARD), and the sort
+    // then does not look at the disk.
+    let availability = match policy {
+        BestPolicy::Discard => GridAvailabilityUse::UseForSorting,
+        BestPolicy::Warn | BestPolicy::Error => GridAvailabilityUse::KnownAvailable,
+    };
+    let ranked = rank(
+        operations.clone(),
+        &db,
+        &source_crs,
+        &target_crs,
+        availability,
+        &extents,
+    );
+    let ranked = match policy {
+        BestPolicy::Discard => discard_missing(ranked),
+        BestPolicy::Warn | BestPolicy::Error => ranked,
+    };
+    // `op_count == 1` returns the operation before any preparation (`crs_to_crs.cpp:617-647`).
+    if let [(operation, characteristics)] = ranked.as_slice() {
+        let best = single_operation(operation, characteristics, &db, &source_crs, &target_crs)?;
+        return Ok(Selection::Single(best));
+    }
+    if ranked.is_empty() {
+        return Err(FactoryError::Format(format!(
+            "no operation from {source} to {target}"
+        )));
+    }
+    let source_to_crs = geodetic_to_crs(&source_base, &source_crs, &db)?;
+    let target_to_crs = geodetic_to_crs(&target_base, &target_crs, &db)?;
+    let geocentric = matches!(source_crs, Crs::Geodetic(GeodeticCRS::Geocentric(_)));
+    let to_lon_lat = if geocentric {
+        Some(geocentric_to_lon_lat(&source_crs, &db)?)
+    } else {
+        None
+    };
+    let (source_lon_lat, source_lat_lon) = degree_order(&source_crs);
+    let preparer = Preparer {
+        db: &db,
+        source: &source_crs,
+        target: &target_crs,
+        source_to_crs: source_to_crs.as_ref(),
+        target_to_crs: target_to_crs.as_ref(),
+        geocentric,
+        source_lon_lat,
+        source_lat_lon,
+    };
+    let mut prepared = preparer.prepare(&ranked);
+    if policy != BestPolicy::Discard
+        && !prepared
+            .iter()
+            .any(|item| !item.approximate && item.instantiable)
+    {
+        // `crs_to_crs.cpp:685-773`: no instantiable candidate that is not a ballpark. The
+        // candidates whose grids are on disk follow the others that are not a ballpark.
+        let discarded = discard_missing(rank(
+            operations,
+            &db,
+            &source_crs,
+            &target_crs,
+            GridAvailabilityUse::UseForSorting,
+            &extents,
+        ));
+        let mut kept: Vec<Item> = prepared
+            .into_iter()
+            .filter(|item| !item.approximate)
+            .collect();
+        kept.extend(preparer.prepare(&discarded));
+        prepared = kept;
+    }
+    match prepared.len() {
+        0 => Err(FactoryError::Format(format!(
+            "no operation from {source} to {target}"
+        ))),
+        1 => {
+            let item = &prepared[0];
+            let best = match &item.definition {
+                _ if !item.instantiable => BestOperation::MissingGrid {
+                    message: item.grid_message.clone(),
+                },
+                Some(definition) => BestOperation::Pipeline {
+                    definition: definition.clone(),
+                    lat_or_northing_first: lat_or_northing_first(&target_crs),
+                },
+                None => {
+                    return Err(FactoryError::Format(
+                        "best operation has no PROJ pipeline".to_owned(),
+                    ))
+                }
+            };
+            Ok(Selection::Single(best))
+        }
+        _ => {
+            let source_axes = match to_lon_lat {
+                Some(operation) => SourceAxes::Geocentric(operation),
+                None => SourceAxes::Plain,
+            };
+            let first_axis = if lat_or_northing_first(&target_crs) {
+                FirstAxis::LatitudeOrNorthing
+            } else {
+                FirstAxis::Other
+            };
+            Ok(Selection::Several(Alternatives::new(
+                prepared,
+                policy,
+                source_axes,
+                first_axis,
+            )))
+        }
+    }
+}
+
+/// `rank` of the candidates: each one with its characteristics, in `SortFunction` order.
+fn rank(
+    operations: Vec<CoordinateOperation>,
+    db: &DatabaseContext,
+    source: &Crs,
+    target: &Crs,
+    availability: GridAvailabilityUse,
+    extents: &SortExtents,
+) -> Vec<(CoordinateOperation, Characteristics)> {
+    let ranked = operations
+        .into_iter()
+        .map(|operation| {
+            let characteristics =
+                characteristics(&operation, db, source, target, availability, extents);
+            (operation, characteristics)
+        })
+        .collect();
+    sort(ranked)
+}
+
+/// The single operation of a pair, as the single-pipeline path reads it: its grids checked first,
+/// then its PROJ string.
+fn single_operation(
+    operation: &CoordinateOperation,
+    characteristics: &Characteristics,
+    db: &DatabaseContext,
+    source: &Crs,
+    target: &Crs,
+) -> Result<BestOperation, FactoryError> {
+    let grids = proj_grids(operation, db)?;
+    if !grids.iter().all(|grid| gridpath::available(grid)) {
+        return Ok(BestOperation::MissingGrid {
+            message: missing_grid_message(&characteristics.name, &grids),
+        });
+    }
+    if !characteristics.exportable {
+        return Err(FactoryError::Format(format!(
+            "best operation {} has no PROJ pipeline",
+            characteristics.name
+        )));
+    }
+    Ok(BestOperation::Pipeline {
+        definition: export(operation, source, target, db)?,
+        lat_or_northing_first: lat_or_northing_first(target),
+    })
+}
+
+/// `createOperations` with DISCARD: the candidates whose grids are on disk, in the same order.
+fn discard_missing(
+    ranked: Vec<(CoordinateOperation, Characteristics)>,
+) -> Vec<(CoordinateOperation, Characteristics)> {
+    ranked
+        .into_iter()
+        .filter(|(_, characteristics)| characteristics.grids_available)
+        .collect()
+}
+
+/// The CRS an operation to the CRS is taken from: its longitude and latitude CRS, or the CRS itself
+/// when it is geocentric (not reprojected, see [`geodetic_to_crs`]).
+fn reference_base(crs: &Crs) -> Option<Crs> {
+    match crs {
+        Crs::Geodetic(GeodeticCRS::Geocentric(_)) => Some(crs.clone()),
+        _ => lon_lat_base(crs),
+    }
+}
+
+/// The longitude and latitude CRS on the datum of a CRS, as `create_operation_to_geog_crs` makes
+/// it (`crs_to_crs.cpp:174-224`). Its axis order is the one an operation from it to the CRS must
+/// bridge, so a latitude-first source gets its axis change here. The prime meridian is the CRS's
+/// own, not zero as PROJ makes it (not ported). `None` for a CRS with no geodetic datum.
+fn lon_lat_base(crs: &Crs) -> Option<Crs> {
+    let geographic = match crs {
+        Crs::Geographic(geographic) | Crs::Geodetic(GeodeticCRS::Geographic(geographic)) => {
+            geographic
+        }
+        Crs::Projected(projected) => match projected.base_crs() {
+            GeodeticCRS::Geographic(geographic) => geographic,
+            _ => return None,
+        },
+        Crs::Geodetic(_) => return None,
+        _ => return None,
+    };
+    GeographicCRS::create(
+        "unnamed crs",
+        geographic.datum().cloned(),
+        geographic.datum_ensemble().cloned(),
+        EllipsoidalCS::create_longitude_latitude(UnitOfMeasure::degree()),
+    )
+    .ok()
+    .map(Crs::Geographic)
+}
+
+/// The operation from the geodetic base of `crs` to `crs`, used to box the area of use of a
+/// candidate in the coordinates of `crs` (`create_operation_to_geog_crs`, reversed). A grid-free
+/// operation is preferred. `None` when `crs` is geocentric (not reprojected) or is its own base.
+fn geodetic_to_crs(
+    base: &Crs,
+    crs: &Crs,
+    db: &DatabaseContext,
+) -> Result<Option<Operation>, FactoryError> {
+    if matches!(crs, Crs::Geodetic(GeodeticCRS::Geocentric(_))) {
+        return Ok(None);
+    }
+    let context = CoordinateOperationContext::create(db, "");
+    let operations = CoordinateOperationFactory::create().create_operations(base, crs, &context)?;
+    let chosen = operations
+        .iter()
+        .find(|operation| grid_names(operation).is_empty())
+        .or_else(|| operations.first())
+        .ok_or_else(|| {
+            FactoryError::Format(format!("no operation from the base of {}", crs.name()))
+        })?;
+    let text = export_operation(chosen, db)?;
+    Operation::create(&text)
+        .map(Some)
+        .map_err(|error| FactoryError::Format(error.to_string()))
+}
+
+/// `create_operation_geocentric_crs_to_geog_crs`: the one operation from a geocentric CRS to
+/// longitude and latitude on its own datum.
+fn geocentric_to_lon_lat(crs: &Crs, db: &DatabaseContext) -> Result<Operation, FactoryError> {
+    let Crs::Geodetic(geocentric) = crs else {
+        return Err(FactoryError::Format("not a geocentric CRS".to_owned()));
+    };
+    let lon_lat = Crs::Geographic(GeographicCRS::create(
+        "unnamed crs",
+        geocentric.datum().cloned(),
+        geocentric.datum_ensemble().cloned(),
+        EllipsoidalCS::create_longitude_latitude(UnitOfMeasure::degree()),
+    )?);
+    let context = CoordinateOperationContext::create(db, "");
+    let operations =
+        CoordinateOperationFactory::create().create_operations(crs, &lon_lat, &context)?;
+    let [operation] = operations.as_slice() else {
+        return Err(FactoryError::Format(
+            "no single operation from a geocentric CRS to geographic".to_owned(),
+        ));
+    };
+    let text = export_operation(operation, db)?;
+    Operation::create(&text).map_err(|error| FactoryError::Format(error.to_string()))
+}
+
+/// `IsLonLatOrLatLon` of `PJCoordOperation`: whether the first, and whether the second, axis of
+/// a geographic CRS is an east axis in degrees.
+fn degree_order(crs: &Crs) -> (bool, bool) {
+    let Some(geographic) = super::factory::geographic_of(crs) else {
+        return (false, false);
+    };
+    let axes = geographic.coordinate_system().axes();
+    let is_degree_east = |axis: Option<&Axis>| {
+        axis.is_some_and(|axis| {
+            axis.direction() == "east"
+                && (axis.unit().conversion_to_si() - std::f64::consts::PI / 180.0).abs() < 1e-14
+        })
+    };
+    (is_degree_east(axes.first()), is_degree_east(axes.get(1)))
+}
+
+/// The per-candidate part of `pj_create_prepared_operations`, with the CRS of the pair.
+struct Preparer<'a> {
+    db: &'a DatabaseContext,
+    source: &'a Crs,
+    target: &'a Crs,
+    source_to_crs: Option<&'a Operation>,
+    target_to_crs: Option<&'a Operation>,
+    geocentric: bool,
+    source_lon_lat: bool,
+    source_lat_lon: bool,
+}
+
+impl Preparer<'_> {
+    /// One [`Item`] per candidate, two when its box crosses the antimeridian. A piece whose box
+    /// cannot be reprojected into the source or the target is dropped (`add_coord_op_to_list`,
+    /// `minxSrc <= maxxSrc && minxDst <= maxxDst`).
+    fn prepare(&self, ranked: &[(CoordinateOperation, Characteristics)]) -> Vec<Item> {
+        let mut items = Vec::new();
+        for (operation, characteristics) in ranked {
+            let (area, (west, south, east, north)) = area_of_use(operation);
+            let pieces = if west <= east {
+                vec![(west, east)]
+            } else {
+                vec![(west, 180.0), (-180.0, east)]
+            };
+            let grids = proj_grids(operation, self.db).unwrap_or_else(|_| grid_names(operation));
+            let instantiable =
+                characteristics.exportable && grids.iter().all(|grid| gridpath::available(grid));
+            let definition = export(operation, self.source, self.target, self.db).ok();
+            for (piece_west, piece_east) in pieces {
+                let source_box = if self.geocentric {
+                    Some(Bounds {
+                        min_x: piece_west,
+                        min_y: south,
+                        max_x: piece_east,
+                        max_y: north,
+                    })
+                } else {
+                    reproject_box(self.source_to_crs, piece_west, south, piece_east, north)
+                };
+                let target_valid = self.target_to_crs.is_none()
+                    || reproject_box(self.target_to_crs, piece_west, south, piece_east, north)
+                        .is_some();
+                let Some(bounds) = source_box.filter(|_| target_valid) else {
+                    continue;
+                };
+                let w = piece_west.to_radians();
+                let e = piece_east.to_radians();
+                items.push(Item {
+                    operation: definition
+                        .as_deref()
+                        .and_then(|text| Operation::create(text).ok()),
+                    definition: definition.clone(),
+                    instantiable,
+                    grid_free: grid_names(operation).is_empty(),
+                    grid_message: missing_grid_message(&characteristics.name, &grids),
+                    bounds,
+                    pseudo_area: (e - w) * (north.to_radians().sin() - south.to_radians().sin()),
+                    accuracy: characteristics.accuracy,
+                    offshore: area.contains("- offshore"),
+                    unknown_area: area.is_empty() || area == "unknown",
+                    priority: priority_operation(&characteristics.name),
+                    lon_lat_degree: self.source_lon_lat,
+                    lat_lon_degree: self.source_lat_lon,
+                    approximate: characteristics.approx,
+                });
+            }
+        }
+        items
+    }
+}
+
+/// `reproject_bbox` of `crs_to_crs.cpp:54-100`: the box of a longitude and latitude box in the
+/// coordinates of the operation's target, from 20 samples per side of its boundary. The world
+/// is not reprojected. `None` when no sample gives a result. With no operation (a geographic
+/// CRS in its own axis order) the box is the longitude and latitude one.
+fn reproject_box(
+    operation: Option<&Operation>,
+    west: f64,
+    south: f64,
+    east: f64,
+    north: f64,
+) -> Option<Bounds> {
+    if west == -180.0 && east == 180.0 && south == -90.0 && north == 90.0 {
+        return Some(Bounds {
+            min_x: -f64::MAX,
+            min_y: -f64::MAX,
+            max_x: f64::MAX,
+            max_y: f64::MAX,
+        });
+    }
+    let Some(operation) = operation else {
+        return Some(Bounds {
+            min_x: west,
+            min_y: south,
+            max_x: east,
+            max_y: north,
+        });
+    };
+    const STEPS: u32 = 20;
+    let step_lon = (east - west) / f64::from(STEPS);
+    let step_lat = (north - south) / f64::from(STEPS);
+    let mut samples = Vec::with_capacity(4 * (usize::try_from(STEPS).unwrap_or(0) + 1));
+    for j in 0..=STEPS {
+        let lon = west + f64::from(j) * step_lon;
+        let lat = south + f64::from(j) * step_lat;
+        samples.push((lon, south));
+        samples.push((lon, north));
+        samples.push((west, lat));
+        samples.push((east, lat));
+    }
+    let mut bounds: Option<Bounds> = None;
+    for (lon, lat) in samples {
+        let Ok(point) = operation.forward(Coord::xy(lon, lat)) else {
+            continue;
+        };
+        let current = bounds.get_or_insert(Bounds {
+            min_x: point.x,
+            min_y: point.y,
+            max_x: point.x,
+            max_y: point.y,
+        });
+        current.min_x = current.min_x.min(point.x);
+        current.min_y = current.min_y.min(point.y);
+        current.max_x = current.max_x.max(point.x);
+        current.max_y = current.max_y.max(point.y);
+    }
+    bounds
 }
