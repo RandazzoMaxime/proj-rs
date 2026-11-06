@@ -14,6 +14,10 @@ use proj_rs::iso19111::{
 /// The candidates of `projinfo -s source -t target --summary --spatial-test intersects`, with
 /// the grid policy given (`DiscardIfMissing` is `--grid-check discard_missing`).
 fn candidates(source: &str, target: &str, grids: GridAvailabilityUse) -> Vec<CoordinateOperation> {
+    // The database only: the oracle runs on a copy with no grid file, and `data/tests` holds the
+    // NADCON grid (`conus`) that would make the NAD27 legs available.
+    std::env::set_var("PROJ_DATA", concat!(env!("CARGO_MANIFEST_DIR"), "/data"));
+    std::env::set_var("PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY", "YES");
     let db = DatabaseContext::create().expect("database");
     let source = create_from_user_input(source, &db).expect("source");
     let target = create_from_user_input(target, &db).expect("target");
@@ -45,6 +49,35 @@ fn ed50_pivot_reads_only_the_authorities_of_the_pair() {
             "PD/83 to ETRS89 (2) + Inverse of ED50 to ETRS89 (10)",
             "PD/83 to WGS 84 (1) + Inverse of ED50 to WGS 84 (17)",
             "Ballpark geographic offset from PD/83 to ED50",
+        ]
+    );
+}
+
+/// `projinfo -s EPSG:26915 -t EPSG:26715 --summary --spatial-test intersects --grid-check
+/// discard_missing` (PROJ 9.9.0, no grid file): 11 candidates, all through `NAD83 to WGS 84 (1)`.
+/// The NAD27 legs that need a grid are discarded, and the pivot is searched through the CRS of
+/// the registry (`createFromCRSCodesWithIntermediates`), not through every datum-based leg.
+#[test]
+fn utm15n_pair_without_grids_pivots_through_wgs84() {
+    let operations = candidates(
+        "EPSG:26915",
+        "EPSG:26715",
+        GridAvailabilityUse::DiscardIfMissing,
+    );
+    assert_eq!(
+        names(&operations),
+        [
+            "Inverse of UTM zone 15N + NAD83 to WGS 84 (1) + Inverse of NAD27 to WGS 84 (3) + UTM zone 15N",
+            "Inverse of UTM zone 15N + NAD83 to WGS 84 (1) + Inverse of NAD27 to WGS 84 (4) + UTM zone 15N",
+            "Inverse of UTM zone 15N + NAD83 to WGS 84 (1) + Inverse of NAD27 to WGS 84 (5) + UTM zone 15N",
+            "Inverse of UTM zone 15N + NAD83 to WGS 84 (1) + Inverse of NAD27 to WGS 84 (6) + UTM zone 15N",
+            "Inverse of UTM zone 15N + NAD83 to WGS 84 (1) + Inverse of NAD27 to WGS 84 (13) + UTM zone 15N",
+            "Inverse of UTM zone 15N + NAD83 to WGS 84 (1) + Inverse of NAD27 to WGS 84 (11) + UTM zone 15N",
+            "Inverse of UTM zone 15N + NAD83 to WGS 84 (1) + Inverse of NAD27 to WGS 84 (18) + UTM zone 15N",
+            "Inverse of UTM zone 15N + NAD83 to WGS 84 (1) + Inverse of NAD27 to WGS 84 (84) + UTM zone 15N",
+            "Inverse of UTM zone 15N + NAD83 to WGS 84 (1) + Inverse of NAD27 to WGS 84 (81) + UTM zone 15N",
+            "Inverse of UTM zone 15N + NAD83 to WGS 84 (1) + Inverse of NAD27 to WGS 84 (82) + UTM zone 15N",
+            "Inverse of UTM zone 15N + Ballpark geographic offset from NAD83 to NAD27 + UTM zone 15N",
         ]
     );
 }
