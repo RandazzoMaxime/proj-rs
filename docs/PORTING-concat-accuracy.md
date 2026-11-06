@@ -37,7 +37,25 @@ here and 7 m in PROJ.
 | `concatenatedoperation.cpp:754-758` the accuracy: `getAccuracy(flattenOps)`, stored as `toString(accuracy)` when it is not -1 | `compound.rs` `compute_metadata`, `factory.rs` `pivot_concatenation`, `stored_accuracy` |
 | `src/iso19111/internal.cpp:343-357` `toString(double, 15)`: `%.15g`, 14 digits when the text holds `9999999999` | `compound.rs` `stored_accuracy` |
 | `src/iso19111/operation/c_api.cpp:8754-8778` `proj_coordoperation_get_accuracy`: stored accuracy only, -1 when absent, used by `crs_to_crs.cpp:153` | `suggest.rs` `prepare` (stored, unchanged) |
-| `src/iso19111/operation/coordinateoperationfactory.cpp:891` the sort key `accuracy_(getAccuracy(op))` | not changed in this commit (see the criterion B note) |
+| `src/iso19111/operation/coordinateoperationfactory.cpp:891` the sort key `accuracy_(getAccuracy(op))` | `select.rs` `Characteristics` accuracy (criterion B) |
+| `coordinateoperationfactory.cpp:1608-1655` `removeUninterestingOps` (`getAccuracy(op)` at 1621) | `factory.rs` `remove_uninteresting_ops` (criterion B) |
+| `coordinateoperationfactory.cpp:3562-3574` `hasPerfectAccuracyResult` (`getAccuracy(op)` at 3568) | `factory.rs` `has_perfect_accuracy_result` (criterion B) |
+| `coordinateoperationfactory.cpp:1325-1330` the desired-accuracy filter: `getAccuracy(op)`, dropped when below 0 or above `desiredAccuracy` | `factory.rs` `accuracy_allowed` (criterion B) |
+
+## Criterion B
+
+`getAccuracy(op)` (`compound.rs` `get_accuracy`) replaces the stored-only reads at the sort key
+(`select.rs`), `remove_uninteresting_ops`, `has_perfect_accuracy_result` and `accuracy_allowed`
+(`factory.rs`). The stored-only `operation_accuracy` is removed. Behaviour differs only for a
+concatenated operation with no stored accuracy, which now sums its steps.
+
+Oracle: the 32-pair table is byte-identical to criterion A (19 SAME, 13 DIFF). The CLI ratchet reopens
+no case. Full suite: 1567 passed, 0 failed.
+
+Left as stored-only on purpose: `suggest.rs` `prepare` (PROJ `proj_coordoperation_get_accuracy`,
+`c_api.cpp:8754`, stored only, used by `crs_to_crs.cpp:153`) and `compound.rs` `proj_geoid_operation`
+(its best-of-grid loop reads transformations, which are never concatenations; PROJ uses
+`getAccuracy(transf)` at `coordinateoperationfactory.cpp:4790`, so the two are equal there).
 
 ## Deviations from PROJ
 
@@ -117,6 +135,9 @@ the axis-order variant of PROJ.
     Passes on both: it guards the ETRS89 case, which the sum would break (0.2 m).
 - The three tests take the expected values from `projinfo -s ... --summary` of PROJ 9.9.0, not
   from this port.
+- Full suite with the oracle `cs2cs` on `PATH` (`agree_cs2cs` runs against it): criterion A 1567
+  passed, 0 failed; with criterion B also 1567 passed, 0 failed. The base commit had 1564 passed;
+  the three new tests make 1567.
 
 ## CLI ratchet (`tests/cli_yaml`)
 
@@ -142,10 +163,10 @@ None found in this lot.
 - `test_cs2cs_various.yaml#139` (`EPSG:3912+EPSG:5779 -> EPSG:3794+EPSG:8690`) is not examined in this
   lot; it stays open.
 - The consecutive-inverse removal of `createComputeMetadata` (deviation 2) is not ported.
-- The sort key (`select.rs`) and the helpers `factory.rs` `remove_uninteresting_ops`,
-  `has_perfect_accuracy_result`, `accuracy_allowed` still read the stored accuracy. PROJ reads
-  `getAccuracy(op)` at `coordinateoperationfactory.cpp:891`, `1621`, `3568`. See the criterion B
-  section of the report.
+- Criterion B (second commit, see "Criterion B" below): the sort key and the three factory helpers
+  read `getAccuracy(op)` as PROJ does. It changes no row of the oracle table, so it is kept on the
+  faithful-port argument only; its effect on a DB concatenation with no stored accuracy is not
+  measured.
 
 ## Commands
 

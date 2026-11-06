@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use rusqlite::{types::ValueRef, Connection};
 
 use super::buildop::OpProps;
-use super::compound::{flatten_steps, get_accuracy_of_steps, stored_accuracy};
+use super::compound::{flatten_steps, get_accuracy, get_accuracy_of_steps, stored_accuracy};
 use super::coordinate_metadata::CoordinateMetadata;
 use super::equiv::{
     equivalent_name, geodetic_frame, same_geodetic_datum, same_geographic_base, Equivalence,
@@ -5610,7 +5610,7 @@ fn remove_uninteresting_ops(operations: Vec<CoordinateOperation>) -> Vec<Coordin
     let mut kept = Vec::with_capacity(operations.len());
     let mut last: Option<(&CoordinateOperation, Option<ObjectDomain>, f64, usize)> = None;
     for operation in &operations {
-        let accuracy = operation_accuracy(operation);
+        let accuracy = get_accuracy(operation);
         let extent = operation_extent(operation);
         let steps = if operation.identifiers().is_empty() {
             transformation_step_count(operation)
@@ -5666,14 +5666,6 @@ fn remove_duplicate_ops(
         }
     }
     kept
-}
-
-/// `getAccuracy`: a conversion is exact, an unknown accuracy is -1.
-fn operation_accuracy(operation: &CoordinateOperation) -> f64 {
-    match operation {
-        CoordinateOperation::Conversion(_) => 0.0,
-        _ => operation.accuracy().unwrap_or(-1.0),
-    }
 }
 
 /// `getTransformationStepCount`: the steps of a concatenated operation that are not
@@ -5977,13 +5969,7 @@ fn has_perfect_accuracy_result(
     filter_and_sort(operations.to_vec(), &strict, &extents)
         .operations
         .iter()
-        .any(|operation| {
-            let accuracy = match operation {
-                CoordinateOperation::Conversion(_) => 0.0,
-                _ => operation.accuracy().unwrap_or(-1.0),
-            };
-            accuracy == 0.0
-        })
+        .any(|operation| get_accuracy(operation) == 0.0)
 }
 
 /// Geographic or geocentric CRS, not spherical: the ones `createOperationsGeodToGeod` handles.
@@ -7066,11 +7052,7 @@ fn accuracy_allowed(operation: &CoordinateOperation, desired: f64) -> bool {
     if desired == 0.0 {
         return true;
     }
-    let accuracy = match operation {
-        CoordinateOperation::Conversion(_) => 0.0,
-        _ => operation.accuracy().unwrap_or(-1.0),
-    };
-    (0.0..=desired).contains(&accuracy)
+    (0.0..=desired).contains(&get_accuracy(operation))
 }
 
 /// The deriving conversion of `projected` is the operation from `source`.
