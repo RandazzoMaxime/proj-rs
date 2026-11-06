@@ -436,11 +436,17 @@ fn run_in(case: &Case, bin: &str, scratch: &Path) -> Result<(), String> {
         command.env(key, subst_env(value, &tmp_text, &pwd));
     }
     let mut child = command.spawn().map_err(|error| error.to_string())?;
-    if let Some(stdin) = child.stdin.as_mut() {
+    if let Some(mut stdin) = child.stdin.take() {
         use std::io::Write;
-        stdin
-            .write_all(case.input.as_bytes())
-            .map_err(|error| error.to_string())?;
+        // A program that exits before reading all of its input (an argument error, `-l`)
+        // closes the pipe: the write then fails with `BrokenPipe`, which is the program's
+        // behaviour and not a harness failure. Its exit code and output are still compared.
+        match stdin.write_all(case.input.as_bytes()) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {}
+            Err(error) => return Err(error.to_string()),
+        }
+        // Dropping `stdin` closes the pipe, so a program that reads to the end terminates.
     }
     let output = child
         .wait_with_output()
