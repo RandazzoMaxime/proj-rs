@@ -138,4 +138,9 @@ impl Step for Sch {
     fn distance_ellipsoid(&self) -> (f64, f64) {
         (self.frame.earth.a(), self.frame.earth.es())
     }
+
+    /// PROJ sets `P->fwd3d` and `P->inv3d` (`sch.cpp`), so the height is the sch height.
+    fn computes_height(&self) -> bool {
+        true
+    }
 }

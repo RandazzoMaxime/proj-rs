@@ -267,6 +267,11 @@ impl Step for Legacy {
         (self.a, self.es)
     }
 
+    /// A geoid grid sets the height. A datum shift on its own is 2D and does not.
+    fn computes_height(&self) -> bool {
+        self.inner.computes_height() || self.vertical.is_some()
+    }
+
     fn needs_pipeline_stack(&self) -> bool {
         self.inner.needs_pipeline_stack()
     }

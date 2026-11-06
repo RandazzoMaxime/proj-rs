@@ -893,6 +893,12 @@ pub(crate) trait Step: Send + Sync {
     /// Semi-major axis and `e²` used when an angular error is turned into metres.
     fn distance_ellipsoid(&self) -> (f64, f64);
 
+    /// `true` when this step computes the third axis from its input, as PROJ's `fwd3d`
+    /// and `inv3d` do (`sch`, `cart`). A 2D step passes the height through.
+    fn computes_height(&self) -> bool {
+        false
+    }
+
     /// `true` when this step reads the pipeline coordinate stack.
     fn needs_pipeline_stack(&self) -> bool {
         false
@@ -1033,6 +1039,13 @@ impl Operation {
     #[must_use]
     pub fn distance_ellipsoid(&self) -> (f64, f64) {
         self.step.distance_ellipsoid()
+    }
+
+    /// Whether the operation computes the third axis from its input, as PROJ's
+    /// `fwd3d` does. `+proj=sch` and `+proj=cart` do; a 2D projection passes the height on.
+    #[must_use]
+    pub fn computes_height(&self) -> bool {
+        self.step.computes_height()
     }
 }
 
@@ -1897,6 +1910,11 @@ impl Step for CartStep {
 
     fn distance_ellipsoid(&self) -> (f64, f64) {
         (self.frame.earth.a(), self.frame.earth.es())
+    }
+
+    /// Geocentric X, Y, Z is three-dimensional: its inverse returns the geodetic height.
+    fn computes_height(&self) -> bool {
+        true
     }
 }
 

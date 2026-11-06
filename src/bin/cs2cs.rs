@@ -707,8 +707,10 @@ struct SidePair {
     dst_scale: Option<f64>,
     src_geoc: Option<Operation>,
     dst_geoc: Option<Operation>,
-    /// Whether the target has a height. A 2D target keeps the input height, as PROJ does
-    /// with a `+towgs84` shift: the shift moves the horizontal position only.
+    /// Whether each side sets the height: a vertical key (a geoid grid), or an operation that
+    /// computes the third axis (`+proj=sch`, `+proj=cart`). A side that does not keeps the
+    /// height it was given, as PROJ does: its datum shift moves the horizontal position only.
+    src_has_height: bool,
     dst_has_height: bool,
 }
 
@@ -739,16 +741,20 @@ impl SidePair {
         let (source_op, src_scale, src_geoc) = open_side(&source_def)?;
         let (target_op, dst_scale, dst_geoc) = open_side(&target_def)?;
         Ok(Self {
+            src_has_height: has_height(&source_def) || source_op.computes_height(),
+            dst_has_height: has_height(&target_def) || target_op.computes_height(),
             source: source_op,
             target: target_op,
             src_scale,
             dst_scale,
             src_geoc,
             dst_geoc,
-            dst_has_height: has_height(&target_def),
         })
     }
 
+    /// Forward through the source inverse and the target forward, as `cs2cs` does with
+    /// `proj_trans` on the pair. The height follows the coordinate: a side that sets it
+    /// (`sch`, `cart`) writes it, and any other side passes the height it was given.
     fn apply(&self, x: f64, y: f64, z: f64, t: f64) -> Result<Xyzt, ()> {
         let input_height = z;
         let mut coord = Xyzt { x, y, z, t };
@@ -760,6 +766,10 @@ impl SidePair {
             coord = geoc.inverse(coord).map_err(|_| ())?;
         }
         coord = self.source.inverse(coord).map_err(|_| ())?;
+        if !self.src_has_height {
+            coord.z = input_height;
+        }
+        let height = coord.z;
         coord = self.target.forward(coord).map_err(|_| ())?;
         if let Some(geoc) = &self.dst_geoc {
             coord = geoc.forward(coord).map_err(|_| ())?;
@@ -770,7 +780,7 @@ impl SidePair {
             coord.y *= out;
         }
         if !self.dst_has_height {
-            coord.z = input_height;
+            coord.z = height;
         }
         Ok(coord)
     }
