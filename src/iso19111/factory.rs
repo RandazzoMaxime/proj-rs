@@ -5453,6 +5453,9 @@ impl CoordinateOperationFactory {
         {
             if registry && !found.is_empty() {
                 found.extend(ballpark_operations(source, target));
+                found.extend(super::geodetic_ops::geographic_geocentric_ballpark(
+                    source, target,
+                ));
             } else {
                 // No registered operation: the same geodetic conversions as
                 // `createOperation`, including a same-datum geographic/geocentric pair.
@@ -5999,7 +6002,7 @@ fn ballpark_operations(source: &Crs, target: &Crs) -> Vec<CoordinateOperation> {
 
 /// [`ballpark_operations`] without the same-datum exception: `createOperationsGeodToGeod` with
 /// `forceBallpark`.
-fn forced_ballpark_operations(source: &Crs, target: &Crs) -> Vec<CoordinateOperation> {
+pub(super) fn forced_ballpark_operations(source: &Crs, target: &Crs) -> Vec<CoordinateOperation> {
     let (name, code, values, domain) = match (geographic_of(source), geographic_of(target)) {
         (Some(left), Some(right)) => {
             let meridian = |crs: &Crs| {

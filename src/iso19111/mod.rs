@@ -3,6 +3,7 @@
 //! The type names follow PROJ's C++ API (`GeographicCRS`, `AuthorityFactory`,
 //! `WktFormatter`). See `docs/CRS-API.md`.
 
+mod alternatives;
 mod bound;
 mod bound_export;
 mod bound_import;
@@ -36,6 +37,7 @@ mod transform_export;
 mod wkt;
 mod wkt_import;
 
+pub use alternatives::{AlternativeError, Alternatives, BestPolicy};
 pub use buildop::{AxisOrderReversal, OpProps};
 pub use coordinate_metadata::CoordinateMetadata;
 pub use crs_ops::{ParameterLinearUnit, Wgs84Dynamic};
@@ -76,6 +78,7 @@ pub use select::{
     best_pipeline, best_pipeline_filtered, best_pipeline_with, Ballpark, BestOperation,
     CandidateFilter, OnlyBest,
 };
+pub use select::{select_alternatives, Selection};
 pub use wkt::{
     EllipsoidalHeightPolicy, LinunitPolicy, OutputAxisRule, WktConvention, WktFormatter, WktLines,
     WktStrictness,
