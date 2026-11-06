@@ -5375,11 +5375,24 @@ impl CoordinateOperationFactory {
             && is_geodetic(source)
             && is_geodetic(target)
         {
-            let pivot = if context.has_guard(GUARD_DATUM_PIVOT) {
+            let mut pivot = if context.has_guard(GUARD_DATUM_PIVOT) {
                 Vec::new()
             } else {
                 datum_pivot_operations(source, target, context)
             };
+            // `findsOpsInRegistryWithIntermediate(..., false)` (coordinateoperationfactory.cpp:
+            // 4436-4450): with no direct operation and no datum pivot, the registered CRS between
+            // the two are read first, and the result is filtered as the direct one is.
+            let crs_codes_needed = context.intermediate_use != IntermediateCrsUse::Never
+                && direct_unfiltered_empty
+                && pivot.is_empty()
+                && context.intermediates.is_empty()
+                && !context.has_guard(GUARD_DATUM_INTERMEDIATE)
+                && !same_geodetic_datum(source, target);
+            if crs_codes_needed {
+                let codes = crs_codes_intermediate_operations(source, target, context)?;
+                pivot.extend(select_candidates(codes, source, target, context));
+            }
             let intermediate_needed = direct_unfiltered_empty
                 && (pivot.is_empty() || only_ensemble_null_operations(&pivot));
             found.extend(pivot);
@@ -6342,16 +6355,7 @@ fn datum_based_intermediate_operations(
     // authority named by the context, the authorities of the pair restrict the intermediate
     // operations when there are several (`getCandidateAuthorities`, factory.cpp:7819-7839 and
     // 8397-8408). EPSG to EPSG reads PROJ, EPSG and NKG, not ESRI.
-    let allowed_authorities = if context.authority.is_empty() {
-        let list = candidate_authorities(db, "", source_id.0, target_id.0)?;
-        if list.len() > 1 {
-            list
-        } else {
-            Vec::new()
-        }
-    } else {
-        Vec::new()
-    };
+    let allowed_authorities = pivot_authorities(context, source_id.0, target_id.0)?;
 
     let mut sql = String::new();
     let mut params: Vec<String> = Vec::new();
@@ -6560,6 +6564,325 @@ fn datum_based_intermediate_operations(
         )));
     }
     Ok(result)
+}
+
+/// The authorities an intermediate leg of a pair may use (`allowedAuthorities`,
+/// `findsOpsInRegistryWithIntermediate`, coordinateoperationfactory.cpp:2073-2298): with no
+/// authority named by the context, the authorities of the pair restrict the legs when there are
+/// several (`getCandidateAuthorities`). Otherwise the named authority is the only restriction,
+/// which the caller applies (`hasAuthorityRestriction`, factory.cpp:8409).
+fn pivot_authorities(
+    context: &CoordinateOperationContext,
+    source_authority: &str,
+    target_authority: &str,
+) -> Result<Vec<String>, FactoryError> {
+    if !context.authority.is_empty() {
+        return Ok(Vec::new());
+    }
+    let list = candidate_authorities(&context.db, "", source_authority, target_authority)?;
+    Ok(if list.len() > 1 { list } else { Vec::new() })
+}
+
+/// `checkPivot` (factory.cpp:7955-7987): an ETRF to ETRF pivot does not go through an ITRF
+/// outside the two dates, and a NAD83(CSRS) to NAD83(CSRS) pivot is neither NAD83 nor WGS 84.
+fn pivot_allowed(source: &Crs, target: &Crs, pivot: &Crs) -> bool {
+    let (source, target, pivot) = (source.name(), target.name(), pivot.name());
+    if source.starts_with("ETRF") && target.starts_with("ETRF") && pivot.starts_with("ITRF") {
+        let year = |text: &str| {
+            let value: i64 = text
+                .chars()
+                .take_while(char::is_ascii_digit)
+                .collect::<String>()
+                .parse()
+                .unwrap_or(0);
+            if (80..=99).contains(&value) {
+                value + 1900
+            } else {
+                value
+            }
+        };
+        let (source_year, target_year, pivot_year) =
+            (year(&source[4..]), year(&target[4..]), year(&pivot[4..]));
+        if source_year > 0
+            && target_year > 0
+            && pivot_year > 0
+            && (pivot_year < source_year.min(target_year)
+                || pivot_year > source_year.max(target_year))
+        {
+            return false;
+        }
+    }
+    if source.starts_with("NAD83(CSRS)")
+        && target.starts_with("NAD83(CSRS)")
+        && (pivot == "NAD83" || pivot == "WGS 84")
+    {
+        return false;
+    }
+    true
+}
+
+/// `createFromCRSCodesWithIntermediates` (factory.cpp:7630-8241): the operations from `source` to
+/// `target` through a registered CRS X, read by the four joins PROJ runs in turn. X is the target
+/// of the first leg and the source of the second (`source -> X -> target`), or the same in
+/// another orientation (`source -> X <- target`, `X -> source -> ...`). Each row of a join is one
+/// candidate, in the order of its `ORDER BY` (accuracy sum, nulls last). A row is kept when both
+/// legs intersect each other and the extents of the CRS, when its authorities are the allowed
+/// ones, and when its pivot is not an irrelevant one. The grid rejection of PROJ applies to the
+/// concatenation.
+///
+/// Not ported: the explicit intermediate CRS list (`getIntermediateCRS`), the `EXPLAIN`-free
+/// `intersects_bbox` (the extents are compared in Rust, with `BoundingBox::intersects`), and the
+/// error of an invalid row, which is skipped as the datum-based search does.
+fn crs_codes_intermediate_operations(
+    source: &Crs,
+    target: &Crs,
+    context: &CoordinateOperationContext,
+) -> Result<Vec<CoordinateOperation>, FactoryError> {
+    let (Some(source_id), Some(target_id)) = (
+        registry_identity(source, context),
+        registry_identity(target, context),
+    ) else {
+        return Ok(Vec::new());
+    };
+    if source_id == target_id {
+        return Ok(Vec::new());
+    }
+    let db = &context.db;
+    let source_key = (source_id.0.as_str(), source_id.1.as_str());
+    let target_key = (target_id.0.as_str(), target_id.1.as_str());
+    let allowed = pivot_authorities(context, &source_id.0, &target_id.0)?;
+    let both_geographic = geographic_of(source).is_some() && geographic_of(target).is_some();
+    // `allowedIntermediateObjectType == GEOGRAPHIC_CRS`: a geographic pair with no intermediate
+    // CRS given takes geographic intermediates only (factory.cpp is called at 4436 with that type).
+    let geographic_intermediates = both_geographic && context.intermediates.is_empty();
+    let skip_intersection = context.crs_extent_use == CrsExtentUse::Ignore;
+    let extra: Vec<BoundingBox> = match context.crs_extent_use {
+        CrsExtentUse::Ignore => Vec::new(),
+        _ => [source, target]
+            .into_iter()
+            .filter_map(|crs| crs_extent(crs).and_then(|extent| extent.bounding_box()))
+            .collect(),
+    };
+    let date_of = |crs: &Crs| {
+        geodetic_frame(crs).and_then(|frame| frame.publication_date().map(str::to_owned))
+    };
+    let min_date = match (date_of(source), date_of(target)) {
+        (Some(source_date), Some(target_date)) => Some(source_date.min(target_date)),
+        _ => None,
+    };
+    // `criterionOnIntermediateCRS`: the intermediate CRS is geographic, and its datum is not older
+    // than the pair's. `role` is the column of `v1` that holds the intermediate CRS.
+    let criterion = |role: &str| -> String {
+        if !geographic_intermediates {
+            return String::new();
+        }
+        match &min_date {
+            Some(date) => format!(
+                "AND EXISTS(SELECT 1 FROM geodetic_crs x JOIN geodetic_datum y \
+                 ON y.auth_name = x.datum_auth_name AND y.code = x.datum_code \
+                 WHERE x.auth_name = v1.{role}_crs_auth_name AND x.code = v1.{role}_crs_code \
+                 AND x.type IN ('geographic 2D', 'geographic 3D') AND \
+                 (y.publication_date IS NULL OR y.publication_date >= '{date}')) "
+            ),
+            None => format!(
+                "AND EXISTS(SELECT 1 FROM geodetic_crs x WHERE \
+                 x.auth_name = v1.{role}_crs_auth_name AND x.code = v1.{role}_crs_code \
+                 AND x.type IN ('geographic 2D', 'geographic 3D')) "
+            ),
+        }
+    };
+    let discard_superseded = context.superseded == SupersededOperations::Discard;
+    // The four joins of `createFromCRSCodesWithIntermediates`: the join condition, the role of X
+    // in the criterion, the operation of each leg (`inverse` or not), and the leg order.
+    let joins = [
+        (
+            "v1.target_crs_auth_name = v2.source_crs_auth_name AND v1.target_crs_code = v2.source_crs_code",
+            "v1.source_crs_auth_name = ? AND v1.source_crs_code = ? AND v2.target_crs_auth_name = ? AND v2.target_crs_code = ?",
+            "target",
+            (false, false),
+        ),
+        (
+            "v1.target_crs_auth_name = v2.target_crs_auth_name AND v1.target_crs_code = v2.target_crs_code",
+            "v1.source_crs_auth_name = ? AND v1.source_crs_code = ? AND v2.source_crs_auth_name = ? AND v2.source_crs_code = ?",
+            "target",
+            (false, true),
+        ),
+        (
+            "v1.source_crs_auth_name = v2.source_crs_auth_name AND v1.source_crs_code = v2.source_crs_code",
+            "v1.target_crs_auth_name = ? AND v1.target_crs_code = ? AND v2.target_crs_auth_name = ? AND v2.target_crs_code = ?",
+            "source",
+            (true, false),
+        ),
+        (
+            "v1.source_crs_auth_name = v2.target_crs_auth_name AND v1.source_crs_code = v2.target_crs_code",
+            "v1.target_crs_auth_name = ? AND v1.target_crs_code = ? AND v2.source_crs_auth_name = ? AND v2.source_crs_code = ?",
+            "source",
+            (true, true),
+        ),
+    ];
+    let mut operations = Vec::new();
+    for (on, wher, role, (invert_first, invert_second)) in joins {
+        let mut sql = String::from(
+            "SELECT v1.table_name, v1.auth_name, v1.code, v1.accuracy, \
+             v2.table_name, v2.auth_name, v2.code, v2.accuracy, \
+             a1.south_lat, a1.west_lon, a1.north_lat, a1.east_lon, \
+             a2.south_lat, a2.west_lon, a2.north_lat, a2.east_lon, ",
+        );
+        if discard_superseded {
+            sql.push_str(
+                "ss1.replacement_auth_name, ss1.replacement_code, \
+                 ss2.replacement_auth_name, ss2.replacement_code \
+                 FROM coordinate_operation_view v1 JOIN coordinate_operation_view v2 ",
+            );
+        } else {
+            sql.push_str(
+                "NULL, NULL, NULL, NULL FROM coordinate_operation_view v1 \
+                 JOIN coordinate_operation_view v2 ",
+            );
+        }
+        sql.push_str(&format!("ON {on} "));
+        if discard_superseded {
+            for (alias, view) in [("ss1", "v1"), ("ss2", "v2")] {
+                sql.push_str(&format!(
+                    "LEFT JOIN supersession {alias} ON {alias}.superseded_table_name = {view}.table_name \
+                     AND {alias}.superseded_auth_name = {view}.auth_name \
+                     AND {alias}.superseded_code = {view}.code \
+                     AND {alias}.superseded_table_name = {alias}.replacement_table_name \
+                     AND {alias}.same_source_target_crs = 1 "
+                ));
+            }
+        }
+        sql.push_str(
+            "JOIN usage u1 ON u1.object_table_name = v1.table_name \
+             AND u1.object_auth_name = v1.auth_name AND u1.object_code = v1.code \
+             JOIN extent a1 ON a1.auth_name = u1.extent_auth_name AND a1.code = u1.extent_code \
+             JOIN usage u2 ON u2.object_table_name = v2.table_name \
+             AND u2.object_auth_name = v2.auth_name AND u2.object_code = v2.code \
+             JOIN extent a2 ON a2.auth_name = u2.extent_auth_name AND a2.code = u2.extent_code \
+             WHERE ",
+        );
+        sql.push_str(wher);
+        sql.push(' ');
+        let mut params = vec![
+            source_id.0.clone(),
+            source_id.1.clone(),
+            target_id.0.clone(),
+            target_id.1.clone(),
+        ];
+        sql.push_str("AND v1.deprecated = 0 AND v2.deprecated = 0 ");
+        sql.push_str(&criterion(role));
+        if !allowed.is_empty() {
+            let marks = vec!["?"; allowed.len()].join(",");
+            sql.push_str(&format!(
+                "AND v1.auth_name IN ({marks}) AND v2.auth_name IN ({marks}) "
+            ));
+            params.extend(allowed.iter().cloned());
+            params.extend(allowed.iter().cloned());
+        }
+        if !context.authority.is_empty() && context.authority != "any" {
+            sql.push_str("AND v1.auth_name = ? AND v2.auth_name = ? ");
+            params.extend([context.authority.clone(), context.authority.clone()]);
+        }
+        sql.push_str(
+            "ORDER BY (CASE WHEN v1.accuracy IS NULL THEN 1 ELSE 0 END) + \
+             (CASE WHEN v2.accuracy IS NULL THEN 1 ELSE 0 END), v1.accuracy + v2.accuracy",
+        );
+        let rows = db.query(&sql, &params)?;
+        // The extents of the legs: each leg meets the extents of the CRS, and the two legs meet.
+        let mut kept = Vec::new();
+        for row in rows {
+            let (Some(first_box), Some(second_box)) = (
+                row_box(&row[8], &row[9], &row[10], &row[11]),
+                row_box(&row[12], &row[13], &row[14], &row[15]),
+            ) else {
+                continue;
+            };
+            if !extra
+                .iter()
+                .all(|area| area.intersects(&first_box) && area.intersects(&second_box))
+            {
+                continue;
+            }
+            if !skip_intersection && !first_box.intersects(&second_box) {
+                continue;
+            }
+            kept.push(row);
+        }
+        // `filterOutSuperseded`: a leg whose replacement is another row of the same result set is
+        // dropped.
+        if discard_superseded {
+            let first_set: BTreeSet<(String, String)> = kept
+                .iter()
+                .map(|row| (row[1].text(), row[2].text()))
+                .collect();
+            let second_set: BTreeSet<(String, String)> = kept
+                .iter()
+                .map(|row| (row[5].text(), row[6].text()))
+                .collect();
+            kept.retain(|row| {
+                let replaced_first =
+                    !row[16].empty() && first_set.contains(&(row[16].text(), row[17].text()));
+                let replaced_second =
+                    !row[18].empty() && second_set.contains(&(row[18].text(), row[19].text()));
+                !replaced_first && !replaced_second
+            });
+        }
+        for row in kept {
+            let (Some(first), Some(second)) = (
+                AuthorityFactory::create(db, row[1].text())
+                    .create_coordinate_operation_typed(
+                        &row[2].text(),
+                        ConcatenatedSteps::Allow,
+                        AlternativeGridNames::Official,
+                        &row[0].text(),
+                    )
+                    .ok(),
+                AuthorityFactory::create(db, row[5].text())
+                    .create_coordinate_operation_typed(
+                        &row[6].text(),
+                        ConcatenatedSteps::Allow,
+                        AlternativeGridNames::Official,
+                        &row[4].text(),
+                    )
+                    .ok(),
+            ) else {
+                continue;
+            };
+            if useless_pivot(&first, source_key, target_key)
+                || useless_pivot(&second, source_key, target_key)
+            {
+                continue;
+            }
+            let pivot_crs = if role == "target" {
+                first.target_crs()
+            } else {
+                first.source_crs()
+            };
+            if pivot_crs.is_some_and(|pivot| !pivot_allowed(source, target, pivot)) {
+                continue;
+            }
+            let first = if invert_first { first.inverse() } else { first };
+            let second = if invert_second {
+                second.inverse()
+            } else {
+                second
+            };
+            operations.push(CoordinateOperation::Concatenated(pivot_concatenation(
+                vec![first, second],
+            )));
+        }
+    }
+    if context.discards_missing_grids() {
+        let mut kept = Vec::with_capacity(operations.len());
+        for operation in operations {
+            let grids = operation.grids_needed(db, context.grid_availability)?;
+            if grids.iter().all(|grid| grid.info.available) {
+                kept.push(operation);
+            }
+        }
+        operations = kept;
+    }
+    Ok(operations)
 }
 
 /// `useOnlyIntermediateCRSThroughDatumEnsembleNullOp`: every operation has a PROJ step that
