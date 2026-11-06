@@ -80,8 +80,8 @@ fn main() -> ExitCode {
             Ballpark::Forbidden
         },
     };
-    let engine = match build_engine(&source, &target, area, opts.only_best, filter) {
-        Ok(engine) => engine,
+    let built = match build_engine(&source, &target, area, opts.only_best, filter) {
+        Ok(built) => built,
         Err(InitError::Cause(error)) => {
             report(
                 &prog,
@@ -102,6 +102,8 @@ fn main() -> ExitCode {
             return ExitCode::from(3);
         }
     };
+    trace_path(&built);
+    let engine = built.engine;
     let lat_first = engine.lat_first() && dst_side.layout == Layout::DegreeLongLat;
     let _selection = (
         opts.authority.as_deref(),
@@ -340,60 +342,148 @@ enum InitError {
     Grid(String),
 }
 
+/// The path `build_engine` took to create the transformation, one per numbered path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BuildPath {
+    /// (1) The ISO 19111 selection, `best_pipeline_with` or `best_pipeline_filtered`.
+    Iso,
+    /// (2) Two PROJ strings, `SidePair::open`.
+    SidePair,
+    /// (3) The legacy EPSG pipeline builder, `CrsPipeline::create`.
+    LegacyEpsg,
+    /// (4) The facade, `Proj::new_known_crs`.
+    Facade,
+}
+
+impl BuildPath {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Iso => "iso",
+            Self::SidePair => "side-pair",
+            Self::LegacyEpsg => "legacy-epsg",
+            Self::Facade => "facade",
+        }
+    }
+}
+
+/// What path (1) did before a later path built the engine.
+enum IsoStatus {
+    /// Path (1) was not tried: an area is set, or a side is a PROJ string.
+    NotTried,
+    /// Path (1) was tried and failed, with its error on one line.
+    Failed(String),
+}
+
+/// The engine, and the path that built it.
+struct BuiltEngine {
+    engine: Engine,
+    path: BuildPath,
+    iso: IsoStatus,
+}
+
+/// Writes the path line to stderr when `PROJ_RS_TRACE_PATH` is set. Off by default.
+fn trace_path(built: &BuiltEngine) {
+    if std::env::var_os("PROJ_RS_TRACE_PATH").is_none() {
+        return;
+    }
+    if built.path == BuildPath::Iso {
+        eprintln!("cs2cs: path={}", built.path.name());
+        return;
+    }
+    match &built.iso {
+        IsoStatus::NotTried => {
+            eprintln!("cs2cs: path={} iso=not-tried", built.path.name());
+        }
+        IsoStatus::Failed(error) => {
+            eprintln!(
+                "cs2cs: path={} iso=failed: {}",
+                built.path.name(),
+                error.replace('\n', " ")
+            );
+        }
+    }
+}
+
 fn build_engine(
     source: &str,
     target: &str,
     area: Option<Area>,
     only_best: Option<bool>,
     filter: CandidateFilter,
-) -> Result<Engine, InitError> {
+) -> Result<BuiltEngine, InitError> {
+    let mut iso = IsoStatus::NotTried;
     if area.is_none() && !projish(source) && !projish(target) {
         if filter != CandidateFilter::NONE {
-            return select_pipeline_filtered(source, target, only_best, filter);
+            return select_pipeline_filtered(source, target, only_best, filter).map(|engine| {
+                BuiltEngine {
+                    engine,
+                    path: BuildPath::Iso,
+                    iso,
+                }
+            });
         }
-        if let Some(engine) = select_pipeline(source, target, only_best) {
-            return Ok(engine);
+        match select_pipeline(source, target, only_best) {
+            Ok(engine) => {
+                return Ok(BuiltEngine {
+                    engine,
+                    path: BuildPath::Iso,
+                    iso,
+                });
+            }
+            Err(error) => iso = IsoStatus::Failed(error),
         }
     }
     let source = &canonical_side(source);
     let target = &canonical_side(target);
     if projish(source) && projish(target) {
         return SidePair::open(source, target)
-            .map(Box::new)
-            .map(Engine::Pair)
+            .map(|pair| BuiltEngine {
+                engine: Engine::Pair(Box::new(pair)),
+                path: BuildPath::SidePair,
+                iso,
+            })
             .map_err(InitError::Cause);
     }
     if epsg_token(source) && epsg_token(target) {
         if let Ok(pipe) = CrsPipeline::create(source, target) {
-            return Ok(Engine::Pipe(pipe));
+            return Ok(BuiltEngine {
+                engine: Engine::Pipe(pipe),
+                path: BuildPath::LegacyEpsg,
+                iso,
+            });
         }
     }
     Proj::new_known_crs(source, target, area)
-        .map(Box::new)
-        .map(Engine::Facade)
+        .map(|proj| BuiltEngine {
+            engine: Engine::Facade(Box::new(proj)),
+            path: BuildPath::Facade,
+            iso,
+        })
         .map_err(|error| InitError::Cause(error.to_string()))
 }
 
-/// The operation PROJ's `proj_create_crs_to_crs` picks for the pair, or `None`
-/// when that selection fails and the caller keeps its previous path.
-fn select_pipeline(source: &str, target: &str, only_best: Option<bool>) -> Option<Engine> {
+/// The operation PROJ's `proj_create_crs_to_crs` picks for the pair. An error is
+/// the reason path (1) failed, and the caller keeps its previous path.
+fn select_pipeline(source: &str, target: &str, only_best: Option<bool>) -> Result<Engine, String> {
     let mode = if only_best == Some(true) {
         OnlyBest::On
     } else {
         OnlyBest::Off
     };
-    match proj_rs::iso19111::best_pipeline_with(source, target, mode).ok()? {
+    let best = proj_rs::iso19111::best_pipeline_with(source, target, mode)
+        .map_err(|error| error.to_string())?;
+    match best {
         BestOperation::Pipeline {
             definition,
             lat_or_northing_first,
         } => {
-            let operation = Operation::create(&definition).ok()?;
-            Some(Engine::Pipe(CrsPipeline {
+            let operation = Operation::create(&definition).map_err(|error| error.to_string())?;
+            Ok(Engine::Pipe(CrsPipeline {
                 operation,
                 lat_or_northing_first,
             }))
         }
-        BestOperation::MissingGrid { message } => Some(Engine::Failing(message)),
+        BestOperation::MissingGrid { message } => Ok(Engine::Failing(message)),
     }
 }
 
