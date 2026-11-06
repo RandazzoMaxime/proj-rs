@@ -79,6 +79,20 @@ pub enum OnlyBest {
     Discard,
 }
 
+/// The `ONLY_BEST` state when no option is given: `PROJ_ONLY_BEST_DEFAULT`, else the
+/// `only_best_default` key of `proj.ini`. A non-empty `PROJ_ONLY_BEST_DEFAULT` set to YES, ON or
+/// TRUE is [`OnlyBest::On`], and any other non-empty value is [`OnlyBest::Discard`]. An empty
+/// one is no setting and hides `proj.ini`. With no setting the state is [`OnlyBest::Unset`],
+/// PROJ's warning default (`filemanager.cpp:2023-2031`, `2101-2107`, `crs_to_crs.cpp:494-504`).
+#[must_use]
+pub fn only_best_default() -> OnlyBest {
+    match crate::network::GridContext::load().only_best_default {
+        Some(true) => OnlyBest::On,
+        Some(false) => OnlyBest::Discard,
+        None => OnlyBest::Unset,
+    }
+}
+
 /// What `cs2cs` does with the best operation of a pair.
 #[derive(Debug, PartialEq, Eq)]
 pub enum BestOperation {
