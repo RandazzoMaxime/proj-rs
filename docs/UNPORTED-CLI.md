@@ -6,14 +6,12 @@ A row remains when that case does not match the yaml.
 | id | app | reason | comment |
 |---|---|---|---|
 | `test_cs2cs_various.yaml#59` | cs2cs | expected 595710.3731286	5357598.4645652 0.0000000 got 595625.7338097	5357535.8096752 0.0000000 | Test MGI datum gives expected results (#207) |
-| `test_cs2cs_various.yaml#97` | cs2cs | exit 0 expected 3  | Test effect of --accuracy |
-| `test_cs2cs_various.yaml#98` | cs2cs | exit 0 expected 3  | Test effect of --no-ballpark |
 | `test_cs2cs_various.yaml#118` | cs2cs | no numbers expected *	* inf got 49dN	2dE 0.000 | Test cs2cs --only-best (grid missing) for EPSG:4326+3855 to EPSG:4979 |
 | `test_cs2cs_various.yaml#119` | cs2cs | no numbers expected *	* inf got 49dN	2dE 0.000 | Test cs2cs --only-best=yes (grid missing) for EPSG:4326+3855 to EPSG:4979 |
 | `test_cs2cs_various.yaml#120` | cs2cs | no numbers expected *	* inf got 49dN	2dE 0.000 | Test cs2cs (grid missing) with PROJ_ONLY_BEST_DEFAULT=YES for EPSG:4326+3855 to EPSG:4979 |
 | `test_cs2cs_various.yaml#121` | cs2cs | no numbers expected *	* inf got 49dN	2dE 0.000 | Test cs2cs (grid missing) with only_best_default=on in proj.ini |
 | `test_cs2cs_various.yaml#122` | cs2cs | no numbers expected *	* inf got 40dN	100dW 0.000 | Test cs2cs --only-best (grid missing) |
-| `test_cs2cs_various.yaml#123` | cs2cs | exit 0 expected 3  | Test cs2cs --only-best --no-ballpark (grid missing) |
+| `test_cs2cs_various.yaml#123` | cs2cs | stderr text mismatch expected: Attempt to use coordinate operation Inverse of WGS 84 to EGM2008 height (1) failed. Grid us_nga_egm08_25.tif is not available. Co | Test cs2cs --only-best --no-ballpark (grid missing) |
 | `test_cs2cs_various.yaml#124` | cs2cs | expected 1402288.54	5076296.64 0.00 got 1402285.98	5076292.42 0.00 | Test cs2cs (grid missing) with scenario of GH-3607 that we are using the 'NAD27 to WGS 84 (6)' DMA-ConusW transformation |
 | `test_cs2cs_various.yaml#125` | cs2cs | expected 569720.46	4268813.88 0.00 got 569706.33	4268817.68 0.00 | Test cs2cs (grid missing) with scenario of GH-3613 that we are using a WGS 84 intermediate to do NAD27 to NAD83 |
 | `test_cs2cs_various.yaml#126` | cs2cs | stderr text mismatch expected: Attempt to use coordinate operation Inverse of WGS 84 to EGM96 height (1) + ETRS89-ESP [REGENTE] to Alicante height (1) using ETR | Test cs2cs (grid missing) with scenario of https://lists.osgeo.org/pipermail/proj/2023-April/011003.html |

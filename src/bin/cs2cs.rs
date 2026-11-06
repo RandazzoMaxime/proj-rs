@@ -17,7 +17,7 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader, Write};
 use std::process::ExitCode;
 
-use proj_rs::iso19111::{BestOperation, OnlyBest};
+use proj_rs::iso19111::{Ballpark, BestOperation, CandidateFilter, OnlyBest};
 use proj_rs::{Area, CrsPipeline, Operation, Proj, Xyzt};
 use rusqlite::Connection;
 
@@ -72,7 +72,15 @@ fn main() -> ExitCode {
             return exit_code(error.code);
         }
     };
-    let engine = match build_engine(&source, &target, area, opts.only_best) {
+    let filter = CandidateFilter {
+        accuracy: opts.accuracy,
+        ballpark: if opts.allow_ballpark {
+            Ballpark::Allowed
+        } else {
+            Ballpark::Forbidden
+        },
+    };
+    let engine = match build_engine(&source, &target, area, opts.only_best, filter) {
         Ok(engine) => engine,
         Err(error) => {
             report(
@@ -87,9 +95,6 @@ fn main() -> ExitCode {
     let lat_first = engine.lat_first() && dst_side.layout == Layout::DegreeLongLat;
     let _selection = (
         opts.authority.as_deref(),
-        opts.accuracy,
-        opts.only_best,
-        opts.allow_ballpark,
         opts.promote_3d,
         opts.source_epoch,
         opts.target_epoch,
@@ -322,8 +327,12 @@ fn build_engine(
     target: &str,
     area: Option<Area>,
     only_best: Option<bool>,
+    filter: CandidateFilter,
 ) -> Result<Engine, String> {
     if area.is_none() && !projish(source) && !projish(target) {
+        if filter != CandidateFilter::NONE {
+            return select_pipeline_filtered(source, target, only_best, filter);
+        }
         if let Some(engine) = select_pipeline(source, target, only_best) {
             return Ok(engine);
         }
@@ -366,6 +375,39 @@ fn select_pipeline(source: &str, target: &str, only_best: Option<bool>) -> Optio
             }))
         }
         BestOperation::MissingGrid { message } => Some(Engine::Failing(message)),
+    }
+}
+
+/// [`select_pipeline`] over the candidates `filter` keeps. A filter that keeps nothing
+/// is an error: PROJ's `proj_create_crs_to_crs` returns no transformation for it, and
+/// `cs2cs` does not fall back to another path.
+fn select_pipeline_filtered(
+    source: &str,
+    target: &str,
+    only_best: Option<bool>,
+    filter: CandidateFilter,
+) -> Result<Engine, String> {
+    let mode = if only_best == Some(true) {
+        OnlyBest::On
+    } else {
+        OnlyBest::Off
+    };
+    // PROJ's `proj_create_crs_to_crs` returns NULL with no error text when a filter removes
+    // every candidate, and `cs2cs` prints the empty text as `(null)`. Matched on purpose.
+    match proj_rs::iso19111::best_pipeline_filtered(source, target, mode, filter)
+        .map_err(|_| "(null)".to_owned())?
+    {
+        BestOperation::Pipeline {
+            definition,
+            lat_or_northing_first,
+        } => {
+            let operation = Operation::create(&definition).map_err(|error| error.to_string())?;
+            Ok(Engine::Pipe(CrsPipeline {
+                operation,
+                lat_or_northing_first,
+            }))
+        }
+        BestOperation::MissingGrid { message } => Ok(Engine::Failing(message)),
     }
 }
 

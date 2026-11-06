@@ -760,7 +760,7 @@ fn accuracy_of_steps(operations: &[CoordinateOperation]) -> f64 {
 
 /// `getAccuracy` of one operation: 0 for a conversion, the stated accuracy, or else the sum
 /// over the steps of a concatenated operation. -1 when unknown.
-fn get_accuracy(operation: &CoordinateOperation) -> f64 {
+pub(crate) fn get_accuracy(operation: &CoordinateOperation) -> f64 {
     match operation {
         CoordinateOperation::Conversion(_) => 0.0,
         _ => match operation.accuracy() {

@@ -85,6 +85,62 @@ pub enum BestOperation {
     },
 }
 
+/// Whether `ALLOW_BALLPARK` of `proj_create_crs_to_crs` admits ballpark transformations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ballpark {
+    /// Ballpark transformations are candidates, as by default.
+    Allowed,
+    /// `ALLOW_BALLPARK=NO`: an operation with a ballpark step is not a candidate.
+    Forbidden,
+}
+
+/// The candidate filters of `proj_create_crs_to_crs`: `ACCURACY` and `ALLOW_BALLPARK`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CandidateFilter {
+    /// `ACCURACY` in metres: keep an operation whose accuracy is known and at most this.
+    pub accuracy: Option<f64>,
+    /// Whether ballpark transformations are candidates.
+    pub ballpark: Ballpark,
+}
+
+impl CandidateFilter {
+    /// No filter: every candidate PROJ lists is kept.
+    pub const NONE: Self = Self {
+        accuracy: None,
+        ballpark: Ballpark::Allowed,
+    };
+
+    /// Whether a candidate passes the filter. PROJ drops an operation of unknown accuracy
+    /// when an accuracy is requested.
+    fn keeps(&self, operation: &CoordinateOperation) -> bool {
+        if let Some(limit) = self.accuracy {
+            let accuracy = super::compound::get_accuracy(operation);
+            if accuracy < 0.0 || accuracy > limit {
+                return false;
+            }
+        }
+        match self.ballpark {
+            Ballpark::Allowed => true,
+            Ballpark::Forbidden => !operation.has_ballpark_transformation(),
+        }
+    }
+}
+
+/// [`best_pipeline_with`], over the candidates `filter` keeps. An empty set is an error,
+/// never a fallback: a filtered pair fails closed.
+///
+/// # Errors
+///
+/// As [`best_pipeline`], and when `filter` keeps no candidate.
+pub fn best_pipeline_filtered(
+    source: &str,
+    target: &str,
+    only_best: OnlyBest,
+    filter: CandidateFilter,
+) -> Result<BestOperation, FactoryError> {
+    best_operation_filtered(source, target, only_best, filter).map(|chosen| chosen.best)
+}
+
 /// PROJ pipeline of the best operation from `source` to `target`, and whether
 /// its first output axis is latitude or northing.
 ///
@@ -213,16 +269,26 @@ fn best_operation_full(
     target: &str,
     only_best: OnlyBest,
 ) -> Result<Chosen, FactoryError> {
+    best_operation_filtered(source, target, only_best, CandidateFilter::NONE)
+}
+
+/// [`best_operation_full`], keeping only the candidates `filter` accepts.
+fn best_operation_filtered(
+    source: &str,
+    target: &str,
+    only_best: OnlyBest,
+    filter: CandidateFilter,
+) -> Result<Chosen, FactoryError> {
     let db = DatabaseContext::create()?;
     let source_crs = create_from_user_input(source, &db)?;
     let target_crs = create_from_user_input(target, &db)?;
     let mut context = CoordinateOperationContext::create(&db, "");
     context.set_spatial_criterion(SpatialCriterion::PartialIntersection);
-    let operations = CoordinateOperationFactory::create().create_operations(
-        &source_crs,
-        &target_crs,
-        &context,
-    )?;
+    let operations = CoordinateOperationFactory::create()
+        .create_operations(&source_crs, &target_crs, &context)?
+        .into_iter()
+        .filter(|operation| filter.keeps(operation))
+        .collect::<Vec<_>>();
     let extents = sort_extents(&context, &source_crs, &target_crs);
     let mut ranked = Vec::with_capacity(operations.len());
     for operation in operations {
