@@ -75,6 +75,11 @@ fn main() -> ExitCode {
             return exit_code(error.code);
         }
     };
+    let (build_source, build_target) = if opts.promote_3d {
+        (source.clone(), target.clone())
+    } else {
+        promoted_by_name(&source, &target)
+    };
     let filter = CandidateFilter {
         accuracy: opts.accuracy,
         ballpark: if opts.allow_ballpark {
@@ -83,7 +88,7 @@ fn main() -> ExitCode {
             Ballpark::Forbidden
         },
     };
-    let built = match build_engine(&source, &target, area, opts.only_best, filter) {
+    let built = match build_engine(&build_source, &build_target, area, opts.only_best, filter) {
         Ok(built) => built,
         Err(InitError::Cause(error)) => {
             report(
@@ -1331,6 +1336,62 @@ fn resolve_pair(
     let src_side = catalog.layout(&source);
     let dst_side = catalog.layout(&target);
     Ok((source, target, src_side, dst_side))
+}
+
+/// The texts the engine is built from. PROJ's `cs2cs` promotes a CRS given by its name to the
+/// 3D CRS of the same name when the other CRS is 3D (`src/apps/cs2cs.cpp`, the `else` of
+/// `promoteTo3D`): `cs2cs "WGS 84" "WGS 84 + EGM96 height"` is built from EPSG:4979. The
+/// promoted CRS is kept only when the database gives it an identifier, and the identifier
+/// stands for it in the text. The same test is in `projinfo.rs` (`promote_by_name`).
+fn promoted_by_name(source: &str, target: &str) -> (String, String) {
+    let unchanged = (source.to_owned(), target.to_owned());
+    let Ok(db) = proj_rs::DatabaseContext::create() else {
+        return unchanged;
+    };
+    let (Ok(src), Ok(dst)) = (
+        proj_rs::create_from_user_input(source, &db),
+        proj_rs::create_from_user_input(target, &db),
+    ) else {
+        return unchanged;
+    };
+    if is_3d_crs(&dst)
+        && !is_3d_crs(&src)
+        && !src.identifiers().is_empty()
+        && proj_rs::equivalent_name(source, src.name())
+    {
+        if let Some(text) = promoted_text(&src, &db) {
+            return (text, target.to_owned());
+        }
+    } else if is_3d_crs(&src)
+        && !is_3d_crs(&dst)
+        && !dst.identifiers().is_empty()
+        && proj_rs::equivalent_name(target, dst.name())
+    {
+        if let Some(text) = promoted_text(&dst, &db) {
+            return (source.to_owned(), text);
+        }
+    }
+    unchanged
+}
+
+/// `promoteTo3D` of `crs`, as `authority:code` when the promoted CRS has an identifier.
+fn promoted_text(crs: &proj_rs::Crs, db: &proj_rs::DatabaseContext) -> Option<String> {
+    let promoted = crs.promote_to_3d(Some(db));
+    let identifier = promoted.identifiers().first()?;
+    Some(format!("{}:{}", identifier.code_space(), identifier.code()))
+}
+
+/// `is3DCRS` in `src/apps/cs2cs.cpp`.
+fn is_3d_crs(crs: &proj_rs::Crs) -> bool {
+    match crs {
+        proj_rs::Crs::Compound(_) => true,
+        proj_rs::Crs::Geographic(geographic)
+        | proj_rs::Crs::Geodetic(proj_rs::GeodeticCRS::Geographic(geographic)) => {
+            geographic.coordinate_system().axes().len() == 3
+        }
+        proj_rs::Crs::Projected(projected) => projected.coordinate_system().axes().len() == 3,
+        _ => false,
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
