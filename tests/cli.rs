@@ -314,3 +314,35 @@ fn cct_yaml_decimals_height_time_pipeline_and_output_file() {
     );
     std::fs::remove_file(&path).expect("remove output file");
 }
+
+/// Runs `cs2cs EPSG:4326 EPSG:2154` on one point, with `trace` as `PROJ_RS_TRACE_PATH`
+/// when it is set. Returns stderr.
+fn cs2cs_stderr(trace: Option<&str>) -> String {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_cs2cs"));
+    command
+        .args(["EPSG:4326", "EPSG:2154"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    match trace {
+        Some(value) => command.env("PROJ_RS_TRACE_PATH", value),
+        None => command.env_remove("PROJ_RS_TRACE_PATH"),
+    };
+    let mut child = command.spawn().expect("spawn");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(b"46.5 3\n")
+        .expect("write");
+    let output = child.wait_with_output().expect("wait");
+    assert!(output.status.success());
+    String::from_utf8(output.stderr).expect("utf-8")
+}
+
+/// `PROJ_RS_TRACE_PATH` names the path that built the engine on stderr. Unset, stderr is empty.
+#[test]
+fn cs2cs_trace_path_names_the_builder_only_when_set() {
+    assert_eq!(cs2cs_stderr(Some("1")), "cs2cs: path=iso\n");
+    assert_eq!(cs2cs_stderr(None), "");
+}
