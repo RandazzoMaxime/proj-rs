@@ -25,12 +25,12 @@ A row remains when that case does not match the yaml.
 | `test_cs2cs_various.yaml#126` | cs2cs | stderr text mismatch expected: Attempt to use coordinate operation Inverse of WGS 84 to EGM96 height (1) + ETRS89-ESP [REGENTE] to Alicante height (1) using ETR | Test cs2cs (grid missing) with scenario of https://lists.osgeo.org/pipermail/proj/2023-April/011003.html |
 | `test_cs2cs_various.yaml#128` | cs2cs | exit 0 expected 3  | Test cs2cs (grid missing) --only-best with scenario of https://lists.osgeo.org/pipermail/proj/2023-April/011003.html |
 | `test_cs2cs_various.yaml#129` | cs2cs | expected 49dN	2dE 0.000 got 2dE	49dN 0.000 | Test cs2cs grid missing with @gridname |
-| `test_cs2cs_various.yaml#130` | cs2cs | expected 4003461.55	705832.08 4898267.79 got 3995986.86	4846735.07 1100568.03 | Test cs2cs geographic -> geocentric using BETA2007.gsb grid |
-| `test_cs2cs_various.yaml#131` | cs2cs | expected 50d30'N	10dE -0.001 got 10dE	50d29'59.992"N -47.747 | Test cs2cs geocentric -> geographic using BETA2007.gsb grid |
+| `test_cs2cs_various.yaml#130` | cs2cs | expected 4003461.55	705832.08 4898267.79 got 4002857.22	705811.73 4897853.73 | Test cs2cs geographic -> geocentric using BETA2007.gsb grid |
+| `test_cs2cs_various.yaml#131` | cs2cs | expected 50d30'N	10dE -0.001 got 50d29'53.573"N	9d59'55.692"E 700.308 | Test cs2cs geocentric -> geographic using BETA2007.gsb grid |
 | `test_cs2cs_various.yaml#132` | cs2cs | expected 4003461.37	705832.04 4898267.94 got 3995986.86	4846735.07 1100568.03 | Test cs2cs geographic -> geocentric, normally using BETA2007.gsb grid but missing |
 | `test_cs2cs_various.yaml#133` | cs2cs | expected 50d30'N	10dE -0.002 got 10dE	50d30'N -47.748 | Test cs2cs geocentric -> geographic, normally using BETA2007.gsb grid but missing |
-| `test_cs2cs_various.yaml#134` | cs2cs | expected 4189881.02	146313.87 4790558.75 got 4182107.12	4810218.62 221502.98 | Test cs2cs geographic -> geocentric outside BETA2007.gsb grid |
-| `test_cs2cs_various.yaml#135` | cs2cs | expected 49dN	2dE 0.002 got 2d0'0.12"E	49d0'3.647"N -50.127 | Test cs2cs geocentric -> geographic outside BETA2007.gsb grid |
+| `test_cs2cs_various.yaml#134` | cs2cs | expected 4189881.02	146313.87 4790558.75 got 4189371.04	146296.06 4790072.14 | Test cs2cs geographic -> geocentric outside BETA2007.gsb grid |
+| `test_cs2cs_various.yaml#135` | cs2cs | expected 49dN	2dE 0.002 got 48d59'57.868"N	2dE 702.027 | Test cs2cs geocentric -> geographic outside BETA2007.gsb grid |
 | `test_cs2cs_various.yaml#139` | cs2cs | expected 476763.303	95620.222 5.000 got 477131.509	95651.636 5.000 | - |
 | `test_cs2cs_various.yaml#143` | cs2cs | expected 661991.318	1796999.201 93.846 got 661991.318	1796999.201 53.073 | Test cs2cs EPSG:5488 (RGAF09) to EPSG:4559+5757 (RRAF 1991 / UTM zone 20N + Guadeloupe 1988 height) |
 | `test_projinfo.yaml#13` | projinfo | text mismatch expected: Candidate operations found: 9 DERIVED_FROM(EPSG):1313, NAD27 to NAD83 (4), 1.5 m, Canada - onshore - Alberta; British Columbia; Manitoba | - |

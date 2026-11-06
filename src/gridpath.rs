@@ -42,9 +42,18 @@ fn search_directories() -> Vec<PathBuf> {
 }
 
 /// First existing file for `name`, including a `grid_alternatives` rename.
+///
+/// As PROJ 9.9.0 `FileManager::open_resource_file` (`src/filemanager.cpp`,
+/// 1786-1857): a name without `.tif` falls back to its PROJ name
+/// (`getProjGridName`), a name with `.tif` to its old name
+/// (`getOldProjGridName`). Paths and URLs have no fallback.
 pub(crate) fn resolve(name: &str) -> Option<PathBuf> {
     locate(name).or_else(|| {
-        let alternate = crate::network::proj_grid_filename(name)?;
+        let alternate = if name.contains(".tif") {
+            crate::network::old_grid_filename(name)?
+        } else {
+            crate::network::proj_grid_filename(name)?
+        };
         if alternate == name {
             None
         } else {
@@ -98,5 +107,50 @@ fn strip_cdn(name: &str) -> Option<&str> {
         None
     } else {
         Some(rest)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{resolve, use_fixture_search_path};
+
+    /// The file name `name` resolves to on the fixture path, if any.
+    fn file_name_of(name: &str) -> Option<String> {
+        use_fixture_search_path();
+        let path = resolve(name)?;
+        path.file_name()
+            .map(|file| file.to_string_lossy().into_owned())
+    }
+
+    /// `de_adv_BETA2007.tif` is missing. Its `old_proj_grid_name`, `BETA2007.gsb`,
+    /// is on the fixture path (`filemanager.cpp:1833-1857`, `factory.cpp:3575`).
+    #[test]
+    fn tif_name_falls_back_to_its_old_name() {
+        assert_eq!(
+            file_name_of("de_adv_BETA2007.tif").as_deref(),
+            Some("BETA2007.gsb")
+        );
+    }
+
+    /// `RAGTBT2016.gtx` is missing. Its PROJ name, `fr_ign_RAGTBT2016.tif`, is on
+    /// the fixture path (`filemanager.cpp:1802-1831`, `factory.cpp:3563`).
+    #[test]
+    fn name_without_tif_falls_back_to_its_proj_name() {
+        assert_eq!(
+            file_name_of("RAGTBT2016.gtx").as_deref(),
+            Some("fr_ign_RAGTBT2016.tif")
+        );
+    }
+
+    /// A path is not renamed: the fallback is for bare names only.
+    #[test]
+    fn path_with_tif_is_not_renamed() {
+        assert_eq!(file_name_of("sub/de_adv_BETA2007.tif"), None);
+    }
+
+    /// A name with no file and no `grid_alternatives` row stays missing.
+    #[test]
+    fn unknown_tif_name_stays_missing() {
+        assert_eq!(file_name_of("no_such_grid.tif"), None);
     }
 }
