@@ -530,10 +530,7 @@ fn characteristics(
         .all(|grid| db.grid_is_known(grid).unwrap_or(false));
     let op_box = operation_extent(operation).and_then(|extent| extent.bounding_box());
     let area = pseudo_area_of(op_box, extents);
-    let accuracy = match operation {
-        CoordinateOperation::Conversion(_) => 0.0,
-        _ => operation.accuracy().unwrap_or(-1.0),
-    };
+    let accuracy = super::compound::get_accuracy(operation);
     let etrs_pair = etrs_pair(operation);
     Characteristics {
         area,
