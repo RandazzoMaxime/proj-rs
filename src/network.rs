@@ -20,12 +20,18 @@ thread_local! {
     static ACTIVE: RefCell<Option<GridContext>> = const { RefCell::new(None) };
 }
 
-/// Network and cache settings for one builder, or the process default.
+/// Network, cache and `ONLY_BEST` default settings for one builder, or the process default.
+///
+/// The `ONLY_BEST` default is a `pj_load_ini` setting in PROJ, which keeps it on the context
+/// (`ctx->errorIfBestTransformationNotAvailableDefault`) beside the network settings.
 #[derive(Clone, Debug)]
 pub(crate) struct GridContext {
     pub(crate) enabled: bool,
     pub(crate) endpoint: String,
     pub(crate) cache_enabled: bool,
+    /// `Some(true)` is `ONLY_BEST=YES`, `Some(false)` is `ONLY_BEST=NO`, and `None` is no
+    /// setting: `crs_to_crs` then keeps PROJ's warning default.
+    pub(crate) only_best_default: Option<bool>,
     cache_dir: Option<PathBuf>,
     search_paths: Vec<PathBuf>,
 }
@@ -197,11 +203,14 @@ impl GridContext {
             enabled: false,
             endpoint: String::new(),
             cache_enabled: true,
+            only_best_default: None,
             cache_dir: None,
             search_paths: Vec::new(),
         };
         let env_network = nonempty_env("PROJ_NETWORK");
         let env_endpoint = nonempty_env("PROJ_NETWORK_ENDPOINT");
+        let env_only_best = std::env::var_os("PROJ_ONLY_BEST_DEFAULT");
+        ctx.only_best_default = only_best_from_env(env_only_best.as_deref());
         if let Some(text) = read_proj_ini() {
             apply_ini(
                 &text,
@@ -209,6 +218,7 @@ impl GridContext {
                 &IniSkip {
                     network: env_network.is_some(),
                     endpoint: env_endpoint.is_some(),
+                    only_best: env_only_best.is_some(),
                 },
             );
         }
@@ -596,6 +606,8 @@ fn read_proj_ini() -> Option<String> {
 struct IniSkip {
     network: bool,
     endpoint: bool,
+    /// `PROJ_ONLY_BEST_DEFAULT` is set, even empty, so `proj.ini` does not override it.
+    only_best: bool,
 }
 
 fn apply_ini(text: &str, ctx: &mut GridContext, skip: &IniSkip) {
@@ -613,9 +625,19 @@ fn apply_ini(text: &str, ctx: &mut GridContext, skip: &IniSkip) {
             "cdn_endpoint" if !skip.endpoint => ctx.endpoint = value.to_owned(),
             "network" if !skip.network => ctx.enabled = truthy(value),
             "cache_enabled" => ctx.cache_enabled = truthy(value),
+            "only_best_default" if !skip.only_best => ctx.only_best_default = Some(truthy(value)),
             _ => {}
         }
     }
+}
+
+/// `PROJ_ONLY_BEST_DEFAULT` as `pj_load_ini` reads it (`filemanager.cpp:2025-2031`). An empty
+/// value is no setting. Any other value is `ONLY_BEST=YES` when it is YES, ON or TRUE, and
+/// `ONLY_BEST=NO` otherwise.
+fn only_best_from_env(value: Option<&OsStr>) -> Option<bool> {
+    value
+        .filter(|value| !value.is_empty())
+        .map(|value| truthy(&value.to_string_lossy()))
 }
 
 fn truthy(value: &str) -> bool {
@@ -631,11 +653,75 @@ fn nonempty_env(key: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        data_path_value, decide_download, remote_url_in, split_directories, with_context,
-        GridContext,
+        apply_ini, data_path_value, decide_download, only_best_from_env, remote_url_in,
+        split_directories, with_context, GridContext, IniSkip,
     };
-    use std::ffi::OsString;
+    use std::ffi::{OsStr, OsString};
     use std::path::PathBuf;
+
+    #[test]
+    fn only_best_env_follows_pj_load_ini() {
+        // filemanager.cpp:2025-2031. Empty is no setting. YES, ON or TRUE (any case) is
+        // ONLY_BEST=YES, and every other value is ONLY_BEST=NO. Oracle: scenarios s02-s09.
+        let env = |value: &str| only_best_from_env(Some(OsStr::new(value)));
+        assert_eq!(only_best_from_env(None), None);
+        assert_eq!(env(""), None);
+        assert_eq!(env("YES"), Some(true));
+        assert_eq!(env("on"), Some(true));
+        assert_eq!(env("TRUE"), Some(true));
+        assert_eq!(env("NO"), Some(false));
+        assert_eq!(env("maybe"), Some(false));
+        assert_eq!(env(" yes"), Some(false));
+        assert_eq!(env("0"), Some(false));
+    }
+
+    #[test]
+    fn only_best_ini_key_follows_pj_load_ini() {
+        // filemanager.cpp:2101-2107. The key is exact after trimming, and any value other than
+        // ON, YES or TRUE is ONLY_BEST=NO. Oracle: scenarios s10-s15, s23-s26, s29-s31.
+        let ini = |text: &str| {
+            let mut ctx = GridContext::load();
+            ctx.only_best_default = None;
+            let skip = IniSkip {
+                network: false,
+                endpoint: false,
+                only_best: false,
+            };
+            apply_ini(text, &mut ctx, &skip);
+            ctx.only_best_default
+        };
+        assert_eq!(ini("only_best_default=on\n"), Some(true));
+        assert_eq!(ini("only_best_default=YES\n"), Some(true));
+        assert_eq!(ini("only_best_default = true \n"), Some(true));
+        assert_eq!(ini("foo=1\r\nonly_best_default=on\r\n"), Some(true));
+        assert_eq!(ini("only_best_default=off\n"), Some(false));
+        assert_eq!(ini("only_best_default=\n"), Some(false));
+        assert_eq!(ini("only_best_default=bogus\n"), Some(false));
+        assert_eq!(ini("only_best_default=\"on\"\n"), Some(false));
+        assert_eq!(
+            ini("only_best_default=on\nonly_best_default=off\n"),
+            Some(false)
+        );
+        assert_eq!(ini("ONLY_BEST_DEFAULT=on\n"), None);
+        assert_eq!(ini("=on\n"), None);
+        assert_eq!(ini("#only_best_default=on\n"), None);
+        assert_eq!(ini("only_best=on\n"), None);
+    }
+
+    #[test]
+    fn only_best_env_hides_the_ini_key_even_when_empty() {
+        // filemanager.cpp:2101 tests `getenv(...) == nullptr`, so an empty variable hides the key
+        // as well. Oracle: scenarios s17 and s28.
+        let mut ctx = GridContext::load();
+        ctx.only_best_default = only_best_from_env(Some(OsStr::new("")));
+        let skip = IniSkip {
+            network: false,
+            endpoint: false,
+            only_best: true,
+        };
+        apply_ini("only_best_default=on\n", &mut ctx, &skip);
+        assert_eq!(ctx.only_best_default, None);
+    }
 
     #[test]
     fn proj_data_replaces_proj_lib_and_empty_hides_it() {

@@ -8,8 +8,6 @@ A row remains when that case does not match the yaml.
 | `test_cs2cs_various.yaml#71` | cs2cs | expected -1977112.0305592	5551475.1418378 6595.7256583 got -1977112.0305592	5551475.1418378 0.0000000 | Test SCH forward projection |
 | `test_cs2cs_various.yaml#72` | cs2cs | expected 44.989863	29.998124 -0.000362 got 44.989863	29.998124 0.000000 | Test SCH inverse projection |
 | `test_cs2cs_various.yaml#96` | cs2cs | expected 49dN	2dE 0.000 got 49d0'0.002"N	2dE 0.018 | Test effect of --authority (GH-2442) - a no-op |
-| `test_cs2cs_various.yaml#120` | cs2cs | no numbers expected *	* inf got 49dN	2dE 0.000 | Test cs2cs (grid missing) with PROJ_ONLY_BEST_DEFAULT=YES for EPSG:4326+3855 to EPSG:4979 |
-| `test_cs2cs_various.yaml#121` | cs2cs | no numbers expected *	* inf got 49dN	2dE 0.000 | Test cs2cs (grid missing) with only_best_default=on in proj.ini |
 | `test_cs2cs_various.yaml#125` | cs2cs | expected 569720.46	4268813.88 0.00 got 569706.33	4268817.68 0.00 | Test cs2cs (grid missing) with scenario of GH-3613 that we are using a WGS 84 intermediate to do NAD27 to NAD83 |
 | `test_cs2cs_various.yaml#126` | cs2cs | stderr text mismatch expected: Attempt to use coordinate operation Inverse of WGS 84 to EGM96 height (1) + ETRS89-ESP [REGENTE] to Alicante height (1) using ETR | Test cs2cs (grid missing) with scenario of https://lists.osgeo.org/pipermail/proj/2023-April/011003.html |
 | `test_cs2cs_various.yaml#129` | cs2cs | expected 49dN	2dE 0.000 got 2dE	49dN 0.000 | Test cs2cs grid missing with @gridname |
