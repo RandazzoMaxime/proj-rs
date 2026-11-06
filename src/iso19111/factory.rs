@@ -6147,11 +6147,14 @@ fn datum_pivot_operations(
                 } else {
                     operation
                 };
-                let steps = [first.clone(), Some(operation), third.clone()]
-                    .into_iter()
-                    .flatten()
-                    .collect();
-                CoordinateOperation::Concatenated(pivot_concatenation(steps))
+                let steps: Vec<CoordinateOperation> =
+                    [first.clone(), Some(operation), third.clone()]
+                        .into_iter()
+                        .flatten()
+                        .collect();
+                let mut concatenated = pivot_concatenation(steps.clone());
+                concatenated.identified.domains = pivot_domain(&steps).into_iter().collect();
+                CoordinateOperation::Concatenated(concatenated)
             })
             .collect();
         if !linked.is_empty() {
@@ -6913,11 +6916,24 @@ fn candidate_geodetic_crs(authority: &AuthorityFactory, datum: &(String, String)
 /// CRS are both geographic or both geocentric, so the leg is the identity. `None`: the pair
 /// cannot be linked, and the candidate pair is skipped.
 fn pivot_leg(from: &Crs, to: &Crs) -> Option<Option<CoordinateOperation>> {
-    match (geographic_of(from).is_some(), geographic_of(to).is_some()) {
-        (true, true) | (false, false) => Some(None),
-        (true, false) => geographic_geocentric(from, to)
+    match (geographic_of(from), geographic_of(to)) {
+        // Two geographic CRS of one datum differ at most by their axis order. PROJ takes the
+        // first operation of `createOperations(source, candidate)` as this leg, and keeps it
+        // (`coordinateoperationfactory.cpp:3480-3486`, 3351-3352). For such a pair that
+        // operation is the axis order change of `createOperationsGeogToGeog` (2967-2993, 3019-3020).
+        (Some(left), Some(right)) => {
+            if super::geodetic_ops::axis_reversal_between(left, right) {
+                super::geodetic_ops::axis_order_change(from, to, left, right)
+                    .ok()
+                    .map(Some)
+            } else {
+                Some(None)
+            }
+        }
+        (None, None) => Some(None),
+        (Some(_), None) => geographic_geocentric(from, to)
             .map(|operation| Some(CoordinateOperation::Transformation(operation))),
-        (false, true) => geographic_geocentric(to, from)
+        (None, Some(_)) => geographic_geocentric(to, from)
             .map(|operation| Some(CoordinateOperation::Transformation(operation.inverse()))),
     }
 }
@@ -6970,6 +6986,24 @@ fn geographic_geocentric(geographic: &Crs, geocentric: &Crs) -> Option<Transform
     .ok()?;
     conversion.accuracy = Some(0.0);
     Some(conversion)
+}
+
+/// The area of use of a concatenated operation of pivot legs: the intersection of the areas of
+/// its steps, a step with none being skipped (`getExtent` of `oputils.cpp:529`, called by
+/// `ConcatenatedOperation::createComputeMetadata`). `None` when no step has an area, or when the
+/// areas do not meet.
+fn pivot_domain(steps: &[CoordinateOperation]) -> Option<ObjectDomain> {
+    let mut extent: Option<ObjectDomain> = None;
+    for step in steps {
+        let Some(part) = operation_extent(step) else {
+            continue;
+        };
+        extent = Some(match extent {
+            None => part,
+            Some(sofar) => intersect_extents(sofar, part)?,
+        });
+    }
+    extent
 }
 
 /// A concatenated operation of the pivot legs, with the largest step accuracy as the oracle

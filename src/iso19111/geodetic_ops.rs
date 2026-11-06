@@ -536,6 +536,38 @@ fn coordinate_systems_equivalent(left: &GeographicCRS, right: &GeographicCRS) ->
         })
 }
 
+/// Whether two geographic CRS differ by their latitude and longitude order: `axisReversal2D` or
+/// `axisReversal3D` of `createOperationsGeogToGeog` (`coordinateoperationfactory.cpp:2967-2993`).
+pub(super) fn axis_reversal_between(left: &GeographicCRS, right: &GeographicCRS) -> bool {
+    !coordinate_systems_equivalent(left, right)
+        && matches!(
+            (latitude_first(left), latitude_first(right)),
+            (Some(true), Some(false)) | (Some(false), Some(true))
+        )
+}
+
+/// The axis order change between two geographic CRS, `Conversion::createAxisOrderReversal` with
+/// the CRS pair set (`coordinateoperationfactory.cpp:3019-3023`): EPSG:15498 for two axes,
+/// EPSG:15499 for three. The caller checks [`axis_reversal_between`] first.
+pub(super) fn axis_order_change(
+    source: &Crs,
+    target: &Crs,
+    left: &GeographicCRS,
+    right: &GeographicCRS,
+) -> Result<CoordinateOperation, FactoryError> {
+    let three_d =
+        left.coordinate_system().axes().len() == 3 || right.coordinate_system().axes().len() == 3;
+    let (code, name) = if three_d {
+        (9844, "axis order change (geographic3D horizontal)")
+    } else {
+        (9843, "axis order change (2D)")
+    };
+    Ok(CoordinateOperation::Conversion(
+        Conversion::from_code(&OpProps::new().name(name), code, Vec::new())?
+            .with_endpoints(source.clone(), target.clone()),
+    ))
+}
+
 /// `createOperationsGeogToGeog`.
 fn geographic_to_geographic(
     source: &Crs,
@@ -551,15 +583,7 @@ fn geographic_to_geographic(
     let same_datum = rule == BallparkRule::ByDatum && same_geodetic_datum(source, target);
     let (source_height, target_height) = (vertical_unit(left), vertical_unit(right));
 
-    let mut axis_reversal = false;
-    if !coordinate_systems_equivalent(left, right) {
-        axis_reversal = matches!(
-            (latitude_first(left), latitude_first(right)),
-            (Some(true), Some(false)) | (Some(false), Some(true))
-        );
-    }
-    let three_d =
-        left.coordinate_system().axes().len() == 3 || right.coordinate_system().axes().len() == 3;
+    let axis_reversal = axis_reversal_between(left, right);
 
     if (source_height - target_height).abs() > f64::EPSILON && same_ellipsoid(source, target) {
         if offset.value() == 0.0 && !axis_reversal {
@@ -581,14 +605,7 @@ fn geographic_to_geographic(
     }
 
     if same_datum && axis_reversal {
-        let (code, name) = if three_d {
-            (9844, "axis order change (geographic3D horizontal)")
-        } else {
-            (9843, "axis order change (2D)")
-        };
-        let conversion = Conversion::from_code(&OpProps::new().name(name), code, Vec::new())?
-            .with_endpoints(source.clone(), target.clone());
-        return Ok(vec![CoordinateOperation::Conversion(conversion)]);
+        return Ok(vec![axis_order_change(source, target, left, right)?]);
     }
 
     let (source_pm, target_pm) = (prime_meridian_si(source), prime_meridian_si(target));

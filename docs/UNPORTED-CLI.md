@@ -5,16 +5,11 @@ A row remains when that case does not match the yaml.
 
 | id | app | reason | comment |
 |---|---|---|---|
-| `test_cs2cs_various.yaml#9` | cs2cs | expected 6378137.00	-0.03 0.03 got 6378137.00	-0.03 0.00 | Test geocentric x/y/z generation |
-| `test_cs2cs_various.yaml#10` | cs2cs | expected 0dE	0dN 10.000 got 0dE	0dN 0.000 | Test geocentric x/y/z consumption |
 | `test_cs2cs_various.yaml#71` | cs2cs | expected -1977112.0305592	5551475.1418378 6595.7256583 got -1977112.0305592	5551475.1418378 0.0000000 | Test SCH forward projection |
 | `test_cs2cs_various.yaml#72` | cs2cs | expected 44.989863	29.998124 -0.000362 got 44.989863	29.998124 0.000000 | Test SCH inverse projection |
-| `test_cs2cs_various.yaml#80` | cs2cs | expected 0.000	0.000 1000.000 got 0.000	0.000 1.000 | Test vto_meter |
-| `test_cs2cs_various.yaml#81` | cs2cs | expected 0.000	0.000 1000.000 got 0.000	0.000 1.000 | - |
 | `test_cs2cs_various.yaml#96` | cs2cs | expected 49dN	2dE 0.000 got 49d0'0.002"N	2dE 0.018 | Test effect of --authority (GH-2442) - a no-op |
 | `test_cs2cs_various.yaml#120` | cs2cs | no numbers expected *	* inf got 49dN	2dE 0.000 | Test cs2cs (grid missing) with PROJ_ONLY_BEST_DEFAULT=YES for EPSG:4326+3855 to EPSG:4979 |
 | `test_cs2cs_various.yaml#121` | cs2cs | no numbers expected *	* inf got 49dN	2dE 0.000 | Test cs2cs (grid missing) with only_best_default=on in proj.ini |
-| `test_cs2cs_various.yaml#124` | cs2cs | expected 1402288.54	5076296.64 0.00 got 1402224.57	5076275.42 0.00 | Test cs2cs (grid missing) with scenario of GH-3607 that we are using the 'NAD27 to WGS 84 (6)' DMA-ConusW transformation |
 | `test_cs2cs_various.yaml#125` | cs2cs | expected 569720.46	4268813.88 0.00 got 569706.33	4268817.68 0.00 | Test cs2cs (grid missing) with scenario of GH-3613 that we are using a WGS 84 intermediate to do NAD27 to NAD83 |
 | `test_cs2cs_various.yaml#126` | cs2cs | stderr text mismatch expected: Attempt to use coordinate operation Inverse of WGS 84 to EGM96 height (1) + ETRS89-ESP [REGENTE] to Alicante height (1) using ETR | Test cs2cs (grid missing) with scenario of https://lists.osgeo.org/pipermail/proj/2023-April/011003.html |
 | `test_cs2cs_various.yaml#128` | cs2cs | exit 0 expected 3  | Test cs2cs (grid missing) --only-best with scenario of https://lists.osgeo.org/pipermail/proj/2023-April/011003.html |

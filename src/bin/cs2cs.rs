@@ -435,7 +435,7 @@ fn build_engine(
     filter: CandidateFilter,
 ) -> Result<BuiltEngine, InitError> {
     let mut iso = IsoStatus::NotTried;
-    if area.is_none() && !projish(source) && !projish(target) {
+    if area.is_none() && iso_serves_pair(source, target) {
         match proj_rs::iso19111::select_alternatives(source, target, policy_of(only_best), filter) {
             Ok(Selection::Several(alternatives)) => {
                 return Ok(BuiltEngine {
@@ -631,6 +631,23 @@ fn canonical_side(text: &str) -> String {
             .unwrap_or_else(|_| text.to_owned()),
         Err(_) => text.to_owned(),
     }
+}
+
+/// Whether path (1) serves the pair. An EPSG token, a name or a CRS with an EPSG identity always
+/// goes there. A PROJ string goes there too unless it carries a flag the ISO import does not
+/// represent (`+approx`, `+over`, `+lon_wrap`): PROJ creates those CRS with the flag, and the
+/// ISO candidates would drop it.
+fn iso_serves_pair(source: &str, target: &str) -> bool {
+    const FLAGS: [&str; 3] = ["approx", "over", "lon_wrap"];
+    [source, target].iter().all(|side| {
+        !projish(side)
+            || !FLAGS.iter().any(|flag| {
+                side.split_whitespace().any(|token| {
+                    let bare = token.trim_start_matches('+');
+                    bare == *flag || bare.starts_with(&format!("{flag}="))
+                })
+            })
+    })
 }
 
 fn projish(definition: &str) -> bool {
@@ -2399,6 +2416,32 @@ fn parse_inf_nan(text: &str) -> Option<(f64, usize)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `test_cs2cs_various.yaml#124` takes the ISO selection; `+approx`, `+over` and `+lon_wrap`
+    /// keep their PROJ strings on the side-pair path (`#6`, `#20`, `#21`, `#92`).
+    #[test]
+    fn iso_selection_takes_plain_proj_strings_but_not_flagged_ones() {
+        assert!(iso_serves_pair(
+            "+proj=latlong +datum=WGS84",
+            "+proj=utm +zone=10 +datum=NAD27"
+        ));
+        assert!(iso_serves_pair(
+            "EPSG:4326",
+            "+proj=utm +zone=10 +datum=NAD27"
+        ));
+        assert!(!iso_serves_pair(
+            "+proj=latlong +datum=WGS84",
+            "+proj=latlong +datum=WGS84 +lon_wrap=180"
+        ));
+        assert!(!iso_serves_pair(
+            "+proj=tmerc +approx +k=0.998 +lon_0=-20 +datum=WGS84",
+            "+proj=latlong +datum=WGS84"
+        ));
+        assert!(!iso_serves_pair(
+            "+proj=longlat +over +datum=WGS84",
+            "+proj=merc +a=6378137"
+        ));
+    }
 
     #[test]
     fn dms_west_and_plain_degrees() {
