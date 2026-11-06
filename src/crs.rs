@@ -1234,6 +1234,20 @@ pub(crate) fn init_definition(spec: &str) -> Result<String, CreateError> {
     let code: u32 = code
         .parse()
         .map_err(|_| CreateError::IllegalValue("init"))?;
+    // PROJ expands `+init=epsg:` from the CRS export, which carries the `+towgs84` of its
+    // datum (a BoundCRS). The raw table definition does not, so it is only the fallback.
+    if let Ok(db) = crate::DatabaseContext::create() {
+        if let Ok(crs @ crate::iso19111::Crs::Projected(_)) =
+            crate::iso19111::create_from_user_input(&format!("EPSG:{code}"), &db)
+        {
+            // Only a projected CRS needs its datum shift: a geographic CRS keeps the
+            // ellipsoid definition that `pj_info` gives (see `facade_info`).
+            let bound = crs.create_bound_crs_to_wgs84_if_possible(&db);
+            if let Ok(definition) = bound.export_to_proj_string() {
+                return Ok(definition);
+            }
+        }
+    }
     match with_db(|connection| load_crs(connection, code)) {
         Ok(loaded) => Ok(loaded.definition),
         Err(DbFail::Open(_)) => Err(CreateError::Unsupported("proj.db")),

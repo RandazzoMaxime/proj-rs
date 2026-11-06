@@ -484,6 +484,19 @@ struct SidePair {
     dst_scale: Option<f64>,
     src_geoc: Option<Operation>,
     dst_geoc: Option<Operation>,
+    /// Whether the target has a height. A 2D target keeps the input height, as PROJ does
+    /// with a `+towgs84` shift: the shift moves the horizontal position only.
+    dst_has_height: bool,
+}
+
+/// Whether a PROJ-string side names a vertical component.
+fn has_height(definition: &str) -> bool {
+    definition.split_whitespace().any(|token| {
+        let bare = token.trim_start_matches('+');
+        ["geoidgrids", "geoid", "vunits", "vto_meter", "vgridshift"]
+            .iter()
+            .any(|key| bare == *key || bare.starts_with(&format!("{key}=")))
+    })
 }
 
 impl SidePair {
@@ -509,10 +522,12 @@ impl SidePair {
             dst_scale,
             src_geoc,
             dst_geoc,
+            dst_has_height: has_height(&target_def),
         })
     }
 
     fn apply(&self, x: f64, y: f64, z: f64, t: f64) -> Result<Xyzt, ()> {
+        let input_height = z;
         let mut coord = Xyzt { x, y, z, t };
         if let Some(scale) = self.src_scale {
             coord.x *= scale;
@@ -530,6 +545,9 @@ impl SidePair {
             let out = 1.0 / scale;
             coord.x *= out;
             coord.y *= out;
+        }
+        if !self.dst_has_height {
+            coord.z = input_height;
         }
         Ok(coord)
     }
