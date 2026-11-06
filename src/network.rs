@@ -742,6 +742,16 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn search_path_keeps_drive_letters_on_windows() {
+        // `:` is part of a drive letter on Windows: only `;` and `|` split.
+        assert_eq!(
+            split_directories(&OsString::from(r"C:\a;D:\b|;")),
+            [r"C:\a", r"D:\b"].map(PathBuf::from).to_vec()
+        );
+    }
+
     #[test]
     fn decide_download_requires_the_network() {
         let mut ctx = GridContext::load();
