@@ -8,7 +8,7 @@
 mod common;
 
 use proj_rs::iso19111::{
-    select_alternatives, BestOperation, BestPolicy, CandidateFilter, Selection,
+    best_pipeline, select_alternatives, BestOperation, BestPolicy, CandidateFilter, Selection,
 };
 use proj_rs::{Operation, Xyzt};
 
@@ -159,4 +159,23 @@ fn latitude_first_source_to_crs84_is_the_axis_swap() {
     let coord = forward("EPSG:4326", "OGC:CRS84", 10.0, 45.0);
     assert_near(coord.x, 45.0, 1e-6, "longitude");
     assert_near(coord.y, 10.0, 1e-6, "latitude");
+}
+
+/// `cs2cs OGC:CRS84 EPSG:4326+5782`, `2 45 0`: `45.000000 2.000000 0.000000`. The target is a
+/// compound CRS, and the bare axis-order change of `proj.db` is still exported as the swap alone,
+/// the swap not depending on the other CRS of the pair (singleoperation.cpp:3479-3500). The
+/// selection `cs2cs` takes after its `select_alternatives` refusal is `best_pipeline`.
+#[test]
+fn crs84_to_compound_is_the_axis_swap() {
+    common::use_fixture_search_path();
+    let (definition, _) =
+        best_pipeline("OGC:CRS84", "EPSG:4326+5782").expect("OGC:CRS84 to EPSG:4326+5782");
+    assert_eq!(definition, "+proj=axisswap +order=2,1");
+    let coord = Operation::create(&definition)
+        .expect("pipeline")
+        .forward(point(2.0, 45.0))
+        .expect("forward");
+    assert_near(coord.x, 45.0, 1e-6, "latitude");
+    assert_near(coord.y, 2.0, 1e-6, "longitude");
+    assert_near(coord.z, 0.0, 1e-6, "height");
 }
