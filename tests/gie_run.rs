@@ -13,6 +13,8 @@
 //! coordinate misses the file's tolerance is a failure. `tests/gie/passing.txt`
 //! is the ratchet: the live pass count must equal that file.
 
+mod common;
+
 use proj_rs::{
     lpz_dist, parse_gie_coord, xyz_dist, CreateError, CrsPipeline, Operation,
     StepError as TransformError, Xyzt,
@@ -582,8 +584,8 @@ fn decorative(line: &str) -> bool {
     line.chars().take(5).filter(|ch| *ch == first).count() >= 5
 }
 
-/// Same directories as `gridpath::directories`. A require_grid name may be a
-/// bare filename.
+/// The directories `common::fixture_search_path` puts on `PROJ_DATA`. A
+/// require_grid name may be a bare filename.
 fn grid_present(name: &str) -> bool {
     let name = name.trim();
     if name.is_empty() {
@@ -593,12 +595,7 @@ fn grid_present(name: &str) -> bool {
         return true;
     }
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let directories = [
-        root.join("data").join("grids"),
-        root.join("tests").join("gie").join("tests"),
-        root.join("data").join("tests"),
-        root.join("tests").join("gie"),
-    ];
+    let directories = [root.join("data"), root.join("data").join("tests")];
     let file_name = std::path::Path::new(name);
     for directory in &directories {
         if directory.join(name).is_file() {
@@ -644,6 +641,7 @@ fn split_tag(line: &str) -> (String, String) {
 
 #[test]
 fn vendored_gie_ratchet() {
+    common::use_fixture_search_path();
     let (total, per_file, failures) = main_counts();
     for (name, counts) in &per_file {
         println!(
