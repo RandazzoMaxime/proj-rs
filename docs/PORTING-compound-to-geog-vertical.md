@@ -149,3 +149,46 @@ cargo test --test cli_yaml            # the ledger; git checkout docs/UNPORTED-C
 cargo test --test compound_operation
 cargo test --test unit_opfactory_core_b operation_compound_crs_with_bound_geog_crs_to_geog_crs
 ```
+
+## Landed (second pass)
+
+The reverted attempt above is applied, with three changes, and lands:
+
+| PROJ 9.9.0 | Rust |
+|---|---|
+| `createOperationsFromDatabaseWithVertCRS` guards (coordinateoperationfactory.cpp 5152–5230): no test on the identifier of the geographic CRS | `compound::vertical_geog_fallback`: the identifier test is gone |
+| `createPROJBased` returns a single operation (2633), so `computeMetadata` does not flatten it | `compound::compute_metadata` keeps a `proj_based` concatenation as one step |
+| `DISCARD_OPERATION_IF_MISSING_GRID` for `ONLY_BEST=NO` (crs_to_crs.cpp 570–576) | `GridAvailabilityUse::DiscardIfMissing`, `OnlyBest::Discard` (`--only-best=no`) |
+| `ONLY_BEST=YES` with one candidate whose grid is missing returns no transformation (617–641) | `BestOperation::Refused`: `cs2cs --only-best` exits 3 with PROJ's text |
+| No ONLY_BEST option: when no candidate is instantiable and free of a ballpark step, run again with `DISCARD_OPERATION_IF_MISSING_GRID` and append (668–735) | `OnlyBest::Unset`, `cs2cs` without `--only-best` |
+| `gridsNeeded` is a `std::set` | `proj_grids` sorts and dedups the grid names |
+
+Closed: `test_cs2cs_various.yaml#128`. Reopened: none. `#126` keeps its previous
+state: stdout is right, the stderr lines of `PROJ_DEBUG=2` ("Attempt to use ...",
+"Using coordinate operation ...") are not written by the port.
+
+Two existing tests asserted what PROJ does not do, and now follow PROJ:
+
+- `tests/compound_operation.rs`: `EPSG:4326+5773` to `EPSG:4326+5782` expected a
+  ballpark candidate. PROJ 9.9.0 `projinfo --summary --authority EPSG` lists one
+  candidate, the geoid operation; the test now asserts that list.
+- `tests/unit_opfactory_core_b.rs`, `operation_compound_crs_with_bound_geog_crs_to_geog_crs`:
+  PROJ's `TEST()` calls `createOperation` with no database context; the port called
+  `create_operations` with the database, so registry operations came first once the
+  guard was lifted. It now calls `create_operation`, as PROJ does. The PROJ string is
+  unchanged.
+
+Deliberate deviation, pending a decision: the georust facade (`best_operation_exact`)
+stays on `OnlyBest::Off`, without the rerun. With the rerun, `Proj::new_known_crs("EPSG:4267",
+"EPSG:4269")` with no grid succeeds through a WGS 84 Helmert pivot, as libproj does
+(crs_to_crs.cpp 688–690 names this case), while `tests/proj_facade.rs` asserts an error.
+
+Seen, not fixed: for a compound target, `cs2cs` prints `39dE 3dS 0.000` where PROJ
+prints `39.00 -3.00 0.00` (`#126`, `#127`). The numbers agree, so the CLI harness,
+which compares numbers, accepts it. Same before this lot.
+
+Commands: `cargo test --test cli_yaml`; `UPDATE_DOCS=1 cargo test --test docs_in_sync
+--test progress_svg`; `cargo fmt --check`; `cargo clippy --all-targets --all-features --
+-D warnings`; `PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY=YES cargo test --all-features
+--no-fail-fast`: 1549 passed, 0 failed, 34 ignored. Oracle: `tools/build-reference.sh`
+(PROJ 9.9.0), `projinfo` and `cs2cs` on the pair, default, `--only-best`, `--only-best=no`.

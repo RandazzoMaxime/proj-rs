@@ -65,16 +65,19 @@ fn vertical_pair_of_different_datums_lists_the_ballpark_change_of_unit() {
 }
 
 #[test]
-fn compound_pair_with_the_same_geographic_part_keeps_the_ballpark() {
-    // PROJ also lists a grid-based candidate first, which is not ported.
+fn compound_pair_with_the_same_geographic_part_goes_through_the_geoid() {
+    // PROJ 9.9.0 `projinfo -s EPSG:4326+5773 -t EPSG:4326+5782 --summary --authority EPSG`
+    // lists this one candidate, and no ballpark.
     let names: Vec<String> = candidates("EPSG:4326+5773", "EPSG:4326+5782")
         .iter()
         .map(|operation| operation.name().to_owned())
         .collect();
-    assert!(
-        names.iter().any(|name| name
-            == "Transformation from EGM96 height to Alicante height (ballpark vertical transformation)"),
-        "{names:?}"
+    assert_eq!(
+        names,
+        [
+            "Inverse of WGS 84 to EGM96 height (1) + ETRS89-ESP [REGENTE] to Alicante height (1) \
+             using ETRS89-ESP [REGENTE] to WGS 84 (1)"
+        ]
     );
 }
 

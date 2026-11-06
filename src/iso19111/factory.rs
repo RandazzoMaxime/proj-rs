@@ -98,6 +98,10 @@ pub enum GridAvailabilityUse {
     /// (`considerKnownGridsAsAvailable`). A registry operation with a grid that is neither on
     /// disk nor known is discarded.
     KnownAvailable,
+    /// `DISCARD_OPERATION_IF_MISSING_GRID`: a registry operation with a grid that is not on disk
+    /// is discarded, and a grid the database knows is not counted as available. The search then
+    /// falls through to the operations that need no such grid.
+    DiscardIfMissing,
 }
 
 /// Whether the registered operations of the database are searched.
@@ -5006,6 +5010,15 @@ impl CoordinateOperationContext {
         self
     }
 
+    /// Whether a registry operation with a grid that is not available is discarded, under
+    /// `KNOWN_AVAILABLE` or `DISCARD_OPERATION_IF_MISSING_GRID`.
+    pub(super) fn discards_missing_grids(&self) -> bool {
+        matches!(
+            self.grid_availability,
+            GridAvailabilityUse::KnownAvailable | GridAvailabilityUse::DiscardIfMissing
+        )
+    }
+
     /// Whether an operation that a registered operation supersedes is dropped. PROJ's
     /// `setDiscardSuperseded`; the default is [`SupersededOperations::Discard`].
     pub fn set_superseded_operations(&mut self, policy: SupersededOperations) -> &mut Self {
@@ -7098,13 +7111,13 @@ fn direct_registry_operations(
         };
         let mut operations =
             operations_between(&context.db, &authority, source, target, crs_boxes, search)?;
-        if context.grid_availability == GridAvailabilityUse::KnownAvailable {
-            // `rejectOpDueToMissingGrid`: an operation with a grid that is neither on disk
-            // nor known to the database is not returned.
+        if context.discards_missing_grids() {
+            // `rejectOpDueToMissingGrid`: an operation with a grid that is not returned when the
+            // grid is neither on disk nor known to the database (`KNOWN_AVAILABLE`), or not on
+            // disk (`DISCARD_OPERATION_IF_MISSING_GRID`).
             let mut kept = Vec::with_capacity(operations.len());
             for operation in operations {
-                let grids =
-                    operation.grids_needed(&context.db, GridAvailabilityUse::KnownAvailable)?;
+                let grids = operation.grids_needed(&context.db, context.grid_availability)?;
                 if grids.iter().all(|grid| grid.info.available) {
                     kept.push(operation);
                 }

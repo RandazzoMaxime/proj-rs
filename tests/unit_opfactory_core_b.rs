@@ -98,7 +98,11 @@ fn operation_compound_crs_with_bound_geog_crs_to_geog_crs() {
     let db = database();
     let vertical = parse(&db, ODN_HEIGHT);
     let source = compound("", vec![parse(&db, GEOG_UNKNOWN_TOWGS84), vertical]);
-    let op = first(&db, &source, &epsg_crs(&db, "4979"));
+    // `createOperation`, with no database context: no registered operation.
+    let op = CoordinateOperationFactory::create()
+        .create_operation(&source, &epsg_crs(&db, "4979"))
+        .expect("operation")
+        .expect("an operation");
     assert_eq!(
         proj_string(&op),
         "+proj=pipeline \

@@ -65,10 +65,18 @@ struct Characteristics {
 /// have grids that are not on disk. `cs2cs --only-best` sets it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OnlyBest {
-    /// The first operation whose grids are on disk.
+    /// The first operation whose grids are on disk. The georust facade uses it.
     Off,
+    /// No `ONLY_BEST` option, `cs2cs` without `--only-best`: [`OnlyBest::Off`], and when no
+    /// candidate is both instantiable and free of a ballpark step, the search runs again with
+    /// `DISCARD_OPERATION_IF_MISSING_GRID` (`crs_to_crs.cpp:668-735`).
+    Unset,
     /// The first operation, whether or not its grids are on disk.
     On,
+    /// `ONLY_BEST=NO` (`--only-best=no`): the registry drops an operation whose grid is not on
+    /// disk (`DISCARD_OPERATION_IF_MISSING_GRID`), and the search falls through to the operations
+    /// that need none, as PROJ's fallbacks do. The first operation whose grids are on disk.
+    Discard,
 }
 
 /// What `cs2cs` does with the best operation of a pair.
@@ -85,6 +93,12 @@ pub enum BestOperation {
     /// transformation with this message, as `pj_warn_about_missing_grid`.
     MissingGrid {
         /// The failure text, one line.
+        message: String,
+    },
+    /// `ONLY_BEST=YES`, a single candidate whose grids are missing: PROJ's
+    /// `proj_create_crs_to_crs` returns no transformation (`crs_to_crs.cpp:622-641`).
+    Refused {
+        /// The `pj_warn_about_missing_grid` text, one line.
         message: String,
     },
 }
@@ -163,7 +177,9 @@ pub fn best_pipeline(source: &str, target: &str) -> Result<(String, bool), Facto
             definition,
             lat_or_northing_first,
         } => Ok((definition, lat_or_northing_first)),
-        BestOperation::MissingGrid { message } => Err(FactoryError::Format(message)),
+        BestOperation::MissingGrid { message } | BestOperation::Refused { message } => {
+            Err(FactoryError::Format(message))
+        }
     }
 }
 
@@ -235,7 +251,9 @@ pub(crate) fn best_operation_exact(
         (BestOperation::Pipeline { .. }, true) => Err(FactoryError::Format(format!(
             "best operation from {source} to {target} is approximate"
         ))),
-        (BestOperation::MissingGrid { message }, _) => Err(FactoryError::Format(message)),
+        (BestOperation::MissingGrid { message } | BestOperation::Refused { message }, _) => {
+            Err(FactoryError::Format(message))
+        }
     }
 }
 
@@ -291,41 +309,75 @@ fn best_operation_filtered(
     let target_crs = create_from_user_input(target, &db)?;
     let mut context = CoordinateOperationContext::create(&db, "");
     context.set_spatial_criterion(SpatialCriterion::PartialIntersection);
-    let operations = CoordinateOperationFactory::create()
-        .create_operations(&source_crs, &target_crs, &context)?
-        .into_iter()
-        .filter(|operation| filter.keeps(operation))
-        .collect::<Vec<_>>();
+    // `proj_create_crs_to_crs` asks KNOWN_AVAILABLE with ONLY_BEST=YES and
+    // DISCARD_OPERATION_IF_MISSING_GRID with ONLY_BEST=NO (`crs_to_crs.cpp:570-576`). The
+    // registry then drops an operation whose grid is missing, and the search falls through to
+    // the operations that need none.
+    match only_best {
+        OnlyBest::On => {
+            context.set_grid_availability_use(GridAvailabilityUse::KnownAvailable);
+        }
+        OnlyBest::Discard => {
+            context.set_grid_availability_use(GridAvailabilityUse::DiscardIfMissing);
+        }
+        OnlyBest::Off | OnlyBest::Unset => {}
+    }
     let extents = sort_extents(&context, &source_crs, &target_crs);
     // `proj_create_crs_to_crs` with ONLY_BEST asks for KNOWN_AVAILABLE, which does not
     // clear `gridsAvailable` in the sort (`createOperations`, 1477-1491); the chosen
     // operation's grids are checked afterwards. Otherwise the sort follows availability.
     let availability = match only_best {
         OnlyBest::On => GridAvailabilityUse::KnownAvailable,
-        OnlyBest::Off => GridAvailabilityUse::UseForSorting,
+        OnlyBest::Off | OnlyBest::Unset | OnlyBest::Discard => GridAvailabilityUse::UseForSorting,
     };
-    let mut ranked = Vec::with_capacity(operations.len());
-    for operation in operations {
-        let characteristics = characteristics(
-            &operation,
-            &db,
-            &source_crs,
-            &target_crs,
-            availability,
-            &extents,
-        );
-        ranked.push((operation, characteristics));
+    let ranked_with = |context: &CoordinateOperationContext| -> Result<Vec<_>, FactoryError> {
+        let operations = CoordinateOperationFactory::create()
+            .create_operations(&source_crs, &target_crs, context)?
+            .into_iter()
+            .filter(|operation| filter.keeps(operation));
+        let mut ranked = Vec::new();
+        for operation in operations {
+            let characteristics = characteristics(
+                &operation,
+                &db,
+                &source_crs,
+                &target_crs,
+                availability,
+                &extents,
+            );
+            ranked.push((operation, characteristics));
+        }
+        Ok(sort(ranked))
+    };
+    let mut ranked = ranked_with(&context)?;
+    // With no ONLY_BEST option, when no candidate is both instantiable and free of a ballpark
+    // step, PROJ runs the search again with DISCARD_OPERATION_IF_MISSING_GRID and appends its
+    // operations to the non-ballpark ones of the first list (`crs_to_crs.cpp:668-735`).
+    if only_best == OnlyBest::Unset
+        && !ranked.iter().any(|(operation, characteristics)| {
+            characteristics.grids_available && !operation.has_ballpark_transformation()
+        })
+    {
+        let mut discard = context.clone();
+        discard.set_grid_availability_use(GridAvailabilityUse::DiscardIfMissing);
+        let rerun = ranked_with(&discard)?;
+        if !rerun.is_empty() {
+            ranked.retain(|(operation, _)| !operation.has_ballpark_transformation());
+            ranked.extend(rerun);
+        }
     }
-    let ranked = sort(ranked);
     let instantiable = ranked
         .iter()
         .filter(|(_, characteristics)| {
             characteristics.exportable && characteristics.grids_available
         })
         .count();
+    // `op_count == 1` under ONLY_BEST=YES (`crs_to_crs.cpp:617-641`): the only candidate is kept
+    // whatever its grids, and a missing grid refuses the creation.
+    let single_candidate = ranked.len() == 1;
     let chosen = match only_best {
         OnlyBest::On => ranked.into_iter().next(),
-        OnlyBest::Off => ranked
+        OnlyBest::Off | OnlyBest::Unset | OnlyBest::Discard => ranked
             .into_iter()
             .find(|(_, characteristics)| characteristics.grids_available),
     };
@@ -337,9 +389,12 @@ fn best_operation_filtered(
     // PROJ name, must open.
     let grids = proj_grids(&best, &db)?;
     if !grids.iter().all(|grid| gridpath::available(grid)) {
+        let message = missing_grid_message(&characteristics.name, &grids);
         return Ok(Chosen {
-            best: BestOperation::MissingGrid {
-                message: missing_grid_message(&characteristics.name, &grids),
+            best: if only_best == OnlyBest::On && single_candidate {
+                BestOperation::Refused { message }
+            } else {
+                BestOperation::MissingGrid { message }
             },
             approx: characteristics.approx,
             operation: best,
@@ -516,13 +571,15 @@ fn pseudo_area_of(operation: Option<BoundingBox>, extents: &SortExtents) -> f64 
 }
 
 /// The grids of `operation` under the names PROJ reads them by, which is the
-/// name the database gives a renamed grid.
+/// name the database gives a renamed grid. PROJ's `gridsNeeded` is a `std::set`
+/// ordered by the grid's name as the pipeline carries it, so each grid is listed
+/// once, in that order.
 fn proj_grids(
     operation: &CoordinateOperation,
     db: &DatabaseContext,
 ) -> Result<Vec<String>, FactoryError> {
     let renamed = proj_grid_names(operation, db)?;
-    Ok(grid_names(operation)
+    let mut names: Vec<String> = grid_names(operation)
         .into_iter()
         .map(|grid| {
             renamed
@@ -530,7 +587,10 @@ fn proj_grids(
                 .find(|(original, _, _)| *original == grid)
                 .map_or(grid, |(_, proj, _)| proj.clone())
         })
-        .collect())
+        .collect();
+    names.sort();
+    names.dedup();
+    Ok(names)
 }
 
 /// `(official name, PROJ name, inverse direction)` of the grids of `operation` that the
