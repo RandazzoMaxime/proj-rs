@@ -150,3 +150,13 @@ fn latitude_first_source_to_utm10n_is_unchanged() {
     assert_near(coord.x, 578_911.275_196, 1e-5, "easting");
     assert_near(coord.y, 4_983_237.990_370, 1e-5, "northing");
 }
+
+/// `cs2cs EPSG:4326 OGC:CRS84`, `10 45` (latitude, longitude): `45.000000 10.000000`, longitude
+/// first. The chosen operation is the inverse of the bare EPSG:9843 that `proj.db` holds, which
+/// PROJ exports as `+proj=axisswap +order=2,1`.
+#[test]
+fn latitude_first_source_to_crs84_is_the_axis_swap() {
+    let coord = forward("EPSG:4326", "OGC:CRS84", 10.0, 45.0);
+    assert_near(coord.x, 45.0, 1e-6, "longitude");
+    assert_near(coord.y, 10.0, 1e-6, "latitude");
+}

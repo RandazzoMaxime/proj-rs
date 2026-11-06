@@ -143,6 +143,26 @@ fn cs2cs_dms_roundtrip_and_constant_width() {
     assert_eq!(text, "1.00000000\t2.00000000 3.00000000\n");
 }
 
+/// `EPSG:4326` to `OGC:CRS84` is the inverse of the axis-order change `proj.db` holds as a bare
+/// EPSG:9843 conversion, written `+proj=axisswap +order=2,1`. CRS84 writes longitude first, so the
+/// point is printed longitude first, in DMS by default and in decimals with `-f`. Oracle: PROJ 9.9.0
+/// `cs2cs`, `PROJ_DEBUG=3` shows only `axisswap`.
+#[test]
+fn cs2cs_epsg_4326_to_crs84_is_longitude_first() {
+    let text = run(
+        env!("CARGO_BIN_EXE_cs2cs"),
+        &["EPSG:4326", "OGC:CRS84"],
+        "10 45 0\n",
+    );
+    assert_eq!(text, "45dE\t10dN 0.000\n");
+    let text = run(
+        env!("CARGO_BIN_EXE_cs2cs"),
+        &["-f", "%.6f", "EPSG:4326", "OGC:CRS84"],
+        "10 45 0\n",
+    );
+    assert_eq!(text, "45.000000\t10.000000 0.000000\n");
+}
+
 #[test]
 fn cs2cs_bad_w_exits_with_proj_message() {
     let output = Command::new(env!("CARGO_BIN_EXE_cs2cs"))

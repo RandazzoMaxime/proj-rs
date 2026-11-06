@@ -487,6 +487,23 @@ fn export(
         {
             conversion.export_pipeline(ProjLines::Single)
         }
+        // The inverse of a bare axis-order change (EPSG:9843 or 9844, read from `proj.db`
+        // without its CRS pair) is the same swap: `axisswap order=2,1` is its own inverse, and
+        // the pipeline cleanup drops the `+inv` (io.cpp:8938). The pair is the caller's, read in
+        // the direction of the operation, as `InverseConversion` exports its conversion.
+        CoordinateOperation::Conversion(conversion)
+            if conversion.inverted && matches!(conversion.method().code(), "9843" | "9844") =>
+        {
+            let mut formatter = super::pipeline::PipelineFormatter::default();
+            formatter.start_inversion();
+            super::transform_export::axis_order_reversal(
+                Some(source),
+                Some(target),
+                &mut formatter,
+            )?;
+            formatter.stop_inversion();
+            Ok(formatter.finish(ProjLines::Single))
+        }
         CoordinateOperation::Conversion(conversion) if conversion.inverted => {
             Err(FactoryError::Format(format!(
                 "inverse conversion {} has no PROJ string in this crate",

@@ -1512,15 +1512,17 @@ impl Catalog {
             return layout_from_proj(&name, def);
         }
         if let Some(code) = init_epsg(def) {
-            return self.authority("EPSG", code);
+            return self.authority("EPSG", &code.to_string());
         }
         if let Some((auth, code)) = first_auth(def) {
-            return self.authority(&auth, code);
+            return self.authority(&auth, &code);
         }
         self.by_name(def.trim())
     }
 
-    fn authority(&self, auth: &str, code: i64) -> Side {
+    /// The layout of `auth:code`. A code is text: `proj.db` stores `OGC:CRS84` next to
+    /// `EPSG:4326`, so the lookup compares the code as the database does.
+    fn authority(&self, auth: &str, code: &str) -> Side {
         let Some(db) = &self.db else {
             return Side::other();
         };
@@ -1534,7 +1536,7 @@ impl Catalog {
         &self,
         db: &Connection,
         auth: &str,
-        code: i64,
+        code: &str,
         kind: &str,
         depth: u8,
     ) -> Side {
@@ -1565,11 +1567,11 @@ impl Catalog {
         }
         if kind == "compound" {
             if let Some((horiz_auth, horiz_code)) = compound_horizontal(db, auth, code) {
-                if let Ok(horiz_kind) = query_type(db, &horiz_auth, horiz_code) {
+                if let Ok(horiz_kind) = query_type(db, &horiz_auth, &horiz_code) {
                     return self.layout_of_type(
                         db,
                         &horiz_auth,
-                        horiz_code,
+                        &horiz_code,
                         &horiz_kind,
                         depth + 1,
                     );
@@ -1595,10 +1597,10 @@ impl Catalog {
             "SELECT code, type FROM crs_view WHERE auth_name = 'EPSG' AND name = ?1 AND deprecated = 0 ORDER BY code",
             name,
         ) {
-            return self.layout_of_type(db, "EPSG", code, &kind, 0);
+            return self.layout_of_type(db, "EPSG", &code.to_string(), &kind, 0);
         }
         if let Some((auth, code, kind)) = named_any(db, name) {
-            return self.layout_of_type(db, &auth, code, &kind, 0);
+            return self.layout_of_type(db, &auth, &code.to_string(), &kind, 0);
         }
         Side::other()
     }
@@ -1607,9 +1609,9 @@ impl Catalog {
         if explicit_proj(def).is_some() {
             return Some(synthesize_longlat(def));
         }
-        let (auth, code) =
-            first_auth(def).or_else(|| init_epsg(def).map(|code| ("EPSG".to_owned(), code)))?;
-        let (base_auth, base_code) = projected_base(self.db.as_ref()?, &auth, code)?;
+        let (auth, code) = first_auth(def)
+            .or_else(|| init_epsg(def).map(|code| ("EPSG".to_owned(), code.to_string())))?;
+        let (base_auth, base_code) = projected_base(self.db.as_ref()?, &auth, &code)?;
         Some(format!("{base_auth}:{base_code}"))
     }
 
@@ -1700,7 +1702,8 @@ fn init_epsg(def: &str) -> Option<i64> {
     None
 }
 
-fn first_auth(text: &str) -> Option<(String, i64)> {
+/// `AUTH:CODE` of one CRS. The code is text, as `proj.db` stores it (`OGC:CRS84`, `EPSG:4326`).
+fn first_auth(text: &str) -> Option<(String, String)> {
     let text = text.trim();
     if text.is_empty() || text.contains("proj=") || text.split_whitespace().count() != 1 {
         return None;
@@ -1711,10 +1714,14 @@ fn first_auth(text: &str) -> Option<(String, i64)> {
         || !auth
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        || code.is_empty()
+        || !code
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
     {
         return None;
     }
-    Some((auth.to_owned(), code.parse().ok()?))
+    Some((auth.to_owned(), code.to_owned()))
 }
 
 fn synthesize_longlat(def: &str) -> String {
@@ -1753,7 +1760,7 @@ fn keep_geographic_key(key: &str) -> bool {
     ) || key.starts_with("R_")
 }
 
-fn query_type(db: &Connection, auth: &str, code: i64) -> Result<String, rusqlite::Error> {
+fn query_type(db: &Connection, auth: &str, code: &str) -> Result<String, rusqlite::Error> {
     db.query_row(
         "SELECT type FROM crs_view WHERE auth_name = ?1 AND code = ?2",
         (auth, code),
@@ -1761,7 +1768,7 @@ fn query_type(db: &Connection, auth: &str, code: i64) -> Result<String, rusqlite
     )
 }
 
-fn axis_is_degrees(db: &Connection, auth: &str, code: i64) -> Option<bool> {
+fn axis_is_degrees(db: &Connection, auth: &str, code: &str) -> Option<bool> {
     let factor: f64 = db
         .query_row(
             "SELECT u.conv_factor
@@ -1784,7 +1791,7 @@ fn axis_is_degrees(db: &Connection, auth: &str, code: i64) -> Option<bool> {
 /// Whether axis 1 of the coordinate system of the CRS `auth:code` runs north or south, so the CRS
 /// writes latitude or northing first. This is `lat_or_northing_first` of the library, read from
 /// the `axis` table. `false` when the CRS is not a geodetic or projected one.
-fn first_axis_north_or_south(db: &Connection, auth: &str, code: i64) -> bool {
+fn first_axis_north_or_south(db: &Connection, auth: &str, code: &str) -> bool {
     db.query_row(
         "SELECT a.orientation
          FROM axis a
@@ -1805,7 +1812,7 @@ fn first_axis_north_or_south(db: &Connection, auth: &str, code: i64) -> bool {
     })
 }
 
-fn datum_is_dynamic(db: &Connection, auth: &str, code: i64) -> bool {
+fn datum_is_dynamic(db: &Connection, auth: &str, code: &str) -> bool {
     db.query_row(
         "SELECT d.frame_reference_epoch
          FROM geodetic_crs g
@@ -1820,36 +1827,51 @@ fn datum_is_dynamic(db: &Connection, auth: &str, code: i64) -> bool {
     .is_some()
 }
 
-fn projected_datum_dynamic(db: &Connection, auth: &str, code: i64) -> bool {
+fn projected_datum_dynamic(db: &Connection, auth: &str, code: &str) -> bool {
     let Ok((base_auth, base_code)) = db.query_row(
         "SELECT geodetic_crs_auth_name, geodetic_crs_code
          FROM projected_crs WHERE auth_name = ?1 AND code = ?2",
         (auth, code),
-        |row| Ok((row.get::<_, String>(0)?, cell_i64(row, 1)?)),
+        |row| Ok((row.get::<_, String>(0)?, cell_code(row, 1)?)),
     ) else {
         return false;
     };
-    datum_is_dynamic(db, &base_auth, base_code)
+    datum_is_dynamic(db, &base_auth, &base_code)
 }
 
-fn projected_base(db: &Connection, auth: &str, code: i64) -> Option<(String, i64)> {
+fn projected_base(db: &Connection, auth: &str, code: &str) -> Option<(String, String)> {
     db.query_row(
         "SELECT geodetic_crs_auth_name, geodetic_crs_code
          FROM projected_crs WHERE auth_name = ?1 AND code = ?2",
         (auth, code),
-        |row| Ok((row.get::<_, String>(0)?, cell_i64(row, 1)?)),
+        |row| Ok((row.get::<_, String>(0)?, cell_code(row, 1)?)),
     )
     .ok()
 }
 
-fn compound_horizontal(db: &Connection, auth: &str, code: i64) -> Option<(String, i64)> {
+fn compound_horizontal(db: &Connection, auth: &str, code: &str) -> Option<(String, String)> {
     db.query_row(
         "SELECT horiz_crs_auth_name, horiz_crs_code
          FROM compound_crs WHERE auth_name = ?1 AND code = ?2",
         (auth, code),
-        |row| Ok((row.get::<_, String>(0)?, cell_i64(row, 1)?)),
+        |row| Ok((row.get::<_, String>(0)?, cell_code(row, 1)?)),
     )
     .ok()
+}
+
+/// A code column. `proj.db` stores a code as an integer or as text (`INTEGER_OR_TEXT`), so
+/// both come back as the text the lookups compare.
+fn cell_code(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<String> {
+    match row.get_ref(index)? {
+        rusqlite::types::ValueRef::Integer(value) => Ok(value.to_string()),
+        rusqlite::types::ValueRef::Real(value) => Ok(float_to_i64(value)?.to_string()),
+        rusqlite::types::ValueRef::Text(bytes) => Ok(String::from_utf8_lossy(bytes).into_owned()),
+        _ => Err(rusqlite::Error::InvalidColumnType(
+            index,
+            String::new(),
+            rusqlite::types::Type::Text,
+        )),
+    }
 }
 
 fn cell_i64(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<i64> {
@@ -2658,5 +2680,16 @@ mod tests {
         assert!(catalog.layout("EPSG:32661").lat_first);
         assert!(!catalog.layout("EPSG:32631").lat_first);
         assert!(!catalog.layout("+proj=longlat +datum=WGS84").lat_first);
+    }
+
+    /// `OGC:CRS84` has a text code in `proj.db`: it is longitude first, in degrees, as PROJ's
+    /// `instantiate_crs` reads it (`cs2cs.cpp:274-313`), so its output is printed as DMS.
+    #[test]
+    fn text_code_crs_is_read_by_its_axis_order() {
+        let catalog = Catalog::open();
+        let crs84 = catalog.layout("OGC:CRS84");
+        assert_eq!(crs84.layout, Layout::DegreeLongLat);
+        assert!(!crs84.lat_first);
+        assert_eq!(catalog.layout("OGC:CRS83").layout, Layout::DegreeLongLat);
     }
 }
