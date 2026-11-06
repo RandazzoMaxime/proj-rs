@@ -204,4 +204,40 @@ The agree test also calls `Proj::new_known_crs` (path (4) as the facade) on each
 
 ## Note on the EPSG:4746 to EPSG:4978 cases
 
-The lead's brief says this pair falls to the legacy EPSG builder and swaps lat/lon. The trace shows it falls to the facade (path 4), after path (1) fails with `no operation from EPSG:4746 to EPSG:4978`. The `iso=failed` error text is the cause to look at. Grid name resolution and the ranking in `src/iso19111/select.rs` belong to another lot and are not changed here.
+The brief for this lot said this pair falls to the legacy EPSG builder and swaps lat/lon. The trace shows it falls to the facade (path 4), after path (1) fails with `no operation from EPSG:4746 to EPSG:4978`. The legacy builder (3) was tried, since both sides are EPSG tokens, and returned an error that is not logged. Grid name resolution and the ranking in `src/iso19111/select.rs` belong to another lot and are not changed here.
+
+## Targets 124, 125, 139: why they stay open
+
+Commit `efa913c` changed no pair's path, so the three targets keep their numbers. The findings below come from the trace, from `projinfo -o PROJ` candidate lists, and from `cct` runs of each candidate pipeline. PROJ source: `src/iso19111/operation/coordinateoperationfactory.cpp` at tag 9.9.0, read through a text extraction. `src/4D_api.cpp` was not read, because the raw URL returned 404 at that path on tag 9.9.0, so the per-point retry of PROJ is not checked here.
+
+### 124: PROJ-string pair, path (2)
+
+- Path (2) serves it because both sides are PROJ strings: the gate in `build_engine` skips path (1).
+- Attempt 1 (done, reverted): removing the gate sends this pair to the ISO path. `projinfo` then lists 79 candidates, including `Inverse of NAD27 to WGS 84 (6)`, a Helmert with `+x=8 +y=-159 +z=-175` and no grid. The first candidate whose grids are found is then used, and it fails at the point, with no alternative to try. The gate removal also reopened yaml cases #6, #20, #21, #69, #79 and #92 (lon_wrap, `+approx` tmerc, `+datum=carthage`, a bare Web Mercator and `+over`), so it is reverted and the ledger is restored.
+- Blockers, not fixed here:
+  1. The grid search (`src/gridpath.rs`) also searches the vendored fixtures, so a grid PROJ does not have counts as available. That belongs to the other lot.
+  2. Engine::Pipe has no list of alternatives, so a point that fails on the first operation is not retried on the next one, as the expected output requires.
+  3. ISO import of PROJ strings with non-ISO parameters (`+approx`, `lon_wrap`, `+over`, `+datum=carthage`) would change six passing cases.
+- A numeric check of the exported ISO pipelines for this pair failed for every candidate, so it does not identify which candidate PROJ picked. The cause is not diagnosed.
+
+### 125: EPSG:26915 to EPSG:26715, path (1)
+
+- Path (1) already serves it. `projinfo` lists 5 intersecting candidates: 4 grid-based `Inverse of NAD27 to NAD83 (k)` operations, and `Inverse of UTM zone 15N + Ballpark geographic offset from NAD83 to NAD27 + UTM zone 15N`. With the grid files absent, the grid candidates produce no output, and the ballpark candidate gives `569706.33 4268817.68`, which is what we print.
+- No candidate reproduces the expected `569720.46 4268813.88`. The ballpark candidate is zero-offset in PROJ too (`createBallparkGeographicOffset`, `coordinateoperationfactory.cpp:2298-2345`), so the difference is not the ballpark itself. PROJ must select or build an operation absent from this list. The datum pivot exists in PROJ only as the fallback when no direct operation is found (`coordinateoperationfactory.cpp:4410-4418`, `createOperationsWithDatumPivot` at line 3167), and this pair has direct candidates, so the pivot may not be the explanation either. Not resolved here.
+- The brief named the ours-side candidate as `Inverse of Ballpark geographic offset from NAD27 to NAD83`. The trace and `projinfo` show it is `Inverse of UTM zone 15N + Ballpark geographic offset from NAD83 to NAD27 + UTM zone 15N`, in the same direction as PROJ's name.
+
+### 139: compound CRS, path (1)
+
+- Path (1) serves it. `projinfo` lists 26 candidates. Candidates 1 to 12 are grid-based `MGI 1901 to ETRS89-SVN [D96] (k)` and produce no output with the grids absent. Candidate 13 is `Inverse of Slovene National Grid + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation) + Ballpark geographic offset from MGI 1901 to ETRS89-SVN [D96] + Slovene National Grid`, zero offset, and it is the first that works. It gives `477131.509 95651.636 5.000`, which is what we print.
+- Candidates 14 to 25 (`... + MGI 1901 to ETRS89-SVN [D96] (k) + ...`) are within 0.1 m of the expected `476763.303 95620.222` (candidate 19: `476763.396 95620.218`), but none is exact.
+- The cause is the choice of candidate 13 over the 14 to 25 group. That choice comes from the ranking in `src/iso19111/select.rs`, which this lot does not change. Not fixed.
+
+### Attempt log
+
+| Target | Attempt | Result | Reverted |
+|---|---|---|---|
+| 124 | Remove the `projish` gate in `build_engine` so the ISO path serves PROJ-string pairs | #124 still open (now `*`), #6, #20, #21, #69, #79, #92 reopened | yes |
+| 125 | none: path (1) already serves it, and no candidate reproduces the expected value | open | - |
+| 139 | none: the cause is the ranking in `src/iso19111/select.rs`, out of scope | open | - |
+
+The ledger `docs/UNPORTED-CLI.md` is unchanged from `efa913c`, and the three targets stay open.
