@@ -1514,6 +1514,14 @@ impl Catalog {
         if let Some(code) = init_epsg(def) {
             return self.authority("EPSG", &code.to_string());
         }
+        if let Some(horizontal) = compound_notation(def) {
+            // `instantiate_crs` reads the compound CRS as neither geographic nor projected, so its
+            // side is plain numbers. Its horizontal part decides the axis order.
+            return Side {
+                layout: Layout::Other,
+                ..self.layout(horizontal)
+            };
+        }
         if let Some((auth, code)) = first_auth(def) {
             return self.authority(&auth, &code);
         }
@@ -1566,15 +1574,18 @@ impl Catalog {
             };
         }
         if kind == "compound" {
+            // `instantiate_crs` reads a compound CRS as neither geographic nor projected
+            // (`cs2cs.cpp:274-313`): its input and output are the plain numbers of `%.2f`, not DMS.
+            // Its horizontal part still decides which axis comes first, for the facade boundary.
             if let Some((horiz_auth, horiz_code)) = compound_horizontal(db, auth, code) {
                 if let Ok(horiz_kind) = query_type(db, &horiz_auth, &horiz_code) {
-                    return self.layout_of_type(
-                        db,
-                        &horiz_auth,
-                        &horiz_code,
-                        &horiz_kind,
-                        depth + 1,
-                    );
+                    let horizontal =
+                        self.layout_of_type(db, &horiz_auth, &horiz_code, &horiz_kind, depth + 1);
+                    return Side {
+                        layout: Layout::Other,
+                        dynamic: horizontal.dynamic,
+                        lat_first: horizontal.lat_first,
+                    };
                 }
             }
         }
@@ -1700,6 +1711,21 @@ fn init_epsg(def: &str) -> Option<i64> {
         return rest.split(['+', ':']).next()?.parse().ok();
     }
     None
+}
+
+/// The horizontal part of the compound notation `AUTH:CODE+VERTICAL` (`EPSG:4326+5782`). `None`
+/// for a PROJ string, a single CRS, or a text that does not start with `AUTH:CODE`.
+fn compound_notation(def: &str) -> Option<&str> {
+    let text = def.trim();
+    if text.contains("proj=") || text.split_whitespace().count() != 1 {
+        return None;
+    }
+    let (horizontal, vertical) = text.split_once('+')?;
+    if vertical.is_empty() || vertical.contains('+') {
+        return None;
+    }
+    first_auth(horizontal)?;
+    Some(horizontal)
 }
 
 /// `AUTH:CODE` of one CRS. The code is text, as `proj.db` stores it (`OGC:CRS84`, `EPSG:4326`).
@@ -2680,6 +2706,17 @@ mod tests {
         assert!(catalog.layout("EPSG:32661").lat_first);
         assert!(!catalog.layout("EPSG:32631").lat_first);
         assert!(!catalog.layout("+proj=longlat +datum=WGS84").lat_first);
+    }
+
+    /// A compound CRS is neither geographic nor projected for `instantiate_crs` (`cs2cs.cpp:274-313`),
+    /// so it is printed as plain numbers. Its horizontal part is latitude first, which is kept.
+    #[test]
+    fn compound_crs_is_plain_numbers_with_its_horizontal_order() {
+        let catalog = Catalog::open();
+        let compound = catalog.layout("EPSG:4326+5782");
+        assert_eq!(compound.layout, Layout::Other);
+        assert!(compound.lat_first);
+        assert_eq!(catalog.layout("EPSG:4326+5773").layout, Layout::Other);
     }
 
     /// `OGC:CRS84` has a text code in `proj.db`: it is longitude first, in degrees, as PROJ's
