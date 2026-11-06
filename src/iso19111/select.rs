@@ -462,6 +462,15 @@ pub(crate) fn export_operation(
         {
             conversion.export_pipeline(ProjLines::Single)
         }
+        // A bare axis-order change has no CRS to read units from, so PROJ writes the swap alone
+        // (singleoperation.cpp:3479-3500 with null CRS). Its inverse is the same swap.
+        CoordinateOperation::Conversion(conversion)
+            if matches!(conversion.method().code(), "9843" | "9844") =>
+        {
+            let mut formatter = super::pipeline::PipelineFormatter::default();
+            super::transform_export::axis_order_reversal(None, None, &mut formatter)?;
+            Ok(formatter.finish(ProjLines::Single))
+        }
         CoordinateOperation::Conversion(conversion) => Err(FactoryError::Format(format!(
             "conversion {} has no CRS pair",
             conversion.name()
@@ -487,21 +496,27 @@ fn export(
         {
             conversion.export_pipeline(ProjLines::Single)
         }
-        // The inverse of a bare axis-order change (EPSG:9843 or 9844, read from `proj.db`
-        // without its CRS pair) is the same swap: `axisswap order=2,1` is its own inverse, and
-        // the pipeline cleanup drops the `+inv` (io.cpp:8938). The pair is the caller's, read in
-        // the direction of the operation, as `InverseConversion` exports its conversion.
+        // A bare axis-order change (EPSG:9843 or 9844, read from `proj.db` without its CRS pair)
+        // is the swap of its two horizontal axes, whatever the other CRS of the pair is: PROJ's
+        // `_exportToPROJString` writes `axisswap order=2,1` and no projection
+        // (singleoperation.cpp:3479-3500). Its inverse is the same swap, since `axisswap
+        // order=2,1` is its own inverse and the pipeline cleanup drops the `+inv` (io.cpp:8938).
+        // The pair is the caller's, read in the direction of the operation.
         CoordinateOperation::Conversion(conversion)
-            if conversion.inverted && matches!(conversion.method().code(), "9843" | "9844") =>
+            if matches!(conversion.method().code(), "9843" | "9844") =>
         {
             let mut formatter = super::pipeline::PipelineFormatter::default();
-            formatter.start_inversion();
+            if conversion.inverted {
+                formatter.start_inversion();
+            }
             super::transform_export::axis_order_reversal(
                 Some(source),
                 Some(target),
                 &mut formatter,
             )?;
-            formatter.stop_inversion();
+            if conversion.inverted {
+                formatter.stop_inversion();
+            }
             Ok(formatter.finish(ProjLines::Single))
         }
         CoordinateOperation::Conversion(conversion) if conversion.inverted => {
