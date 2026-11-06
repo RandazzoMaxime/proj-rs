@@ -1148,8 +1148,9 @@ impl ProjBuilder {
 
     /// Add a grid search path, keeping paths already added.
     ///
-    /// Built-in data directories stay in front. The added path is searched
-    /// after them, then the download cache.
+    /// The user-writable directory is searched first, then the data
+    /// directories (`PROJ_DATA`, or the default `data/grids`). The added path
+    /// is searched after them.
     ///
     /// # Errors
     ///

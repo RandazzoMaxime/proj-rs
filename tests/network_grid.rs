@@ -12,8 +12,11 @@ use std::time::Duration;
 
 use proj_rs::ProjBuilder;
 
+mod common;
+
 #[test]
 fn missing_grid_is_fetched_only_when_the_network_is_on() {
+    common::use_fixture_search_path();
     let fixture = std::fs::read(vendored_hgrid()).expect("fixture");
     let server = Server::spawn(fixture.clone());
     assert!(!server.url.contains("cdn.proj.org"), "{}", server.url);

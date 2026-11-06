@@ -18,7 +18,7 @@ mod inflate;
 mod json;
 mod tinshift;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::engine::{CreateError, Frame, Params, Step};
 
@@ -103,15 +103,7 @@ fn resolve(name: &str) -> Result<PathBuf, CreateError> {
     if name.starts_with("http://") || name.starts_with("https://") {
         return Err(CreateError::IllegalValue("file"));
     }
-    if let Some(path) = crate::gridpath::resolve(name) {
-        return Ok(path);
-    }
-    for candidate in candidates(name) {
-        if candidate.is_file() {
-            return Ok(candidate);
-        }
-    }
-    Err(CreateError::IllegalValue("file"))
+    crate::gridpath::resolve(name).ok_or(CreateError::IllegalValue("file"))
 }
 
 /// `https://cdn.proj.org/<file>` is the file of that name under the grid search path.
@@ -135,38 +127,6 @@ fn read_resource(name: &str) -> Result<Vec<u8>, CreateError> {
     Ok(bytes)
 }
 
-fn candidates(name: &str) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    let given = Path::new(name);
-    if given.is_absolute() {
-        out.push(given.to_path_buf());
-    } else {
-        out.push(PathBuf::from(name));
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        out.push(root.join("data").join(name));
-        out.push(root.join(name));
-        for directory in crate::gridpath::directories() {
-            out.push(directory.join(name));
-            if let Some(file_name) = given.file_name() {
-                if file_name != given.as_os_str() {
-                    out.push(directory.join(file_name));
-                }
-            }
-        }
-    }
-    for variable in ["PROJ_DATA", "PROJ_LIB"] {
-        if let Some(value) = std::env::var_os(variable) {
-            let text = value.to_string_lossy();
-            for directory in text.split([';', '|']) {
-                if !directory.is_empty() {
-                    out.push(Path::new(directory).join(name));
-                }
-            }
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use crate::engine::{Coord, Operation};
@@ -180,6 +140,7 @@ mod tests {
 
     #[test]
     fn tinshift_json_matches_the_gie_points() {
+        crate::gridpath::use_fixture_search_path();
         let implicit = Operation::create("+proj=tinshift +file=tests/tinshift_crs_implicit.json")
             .expect("implicit");
         let got = implicit.forward(Coord::xy(2.0, 49.0)).expect("inside");
@@ -225,6 +186,7 @@ mod tests {
 
     #[test]
     fn tinshift_gpkg_matches_the_json_cases() {
+        crate::gridpath::use_fixture_search_path();
         let implicit = Operation::create("+proj=tinshift +file=tests/tinshift_crs_implicit.gpkg")
             .expect("gpkg");
         let got = implicit.forward(Coord::xy(2.0, 49.0)).expect("inside");
@@ -235,6 +197,7 @@ mod tests {
 
     #[test]
     fn defmodel_degree_and_vertical_match_the_gie_points() {
+        crate::gridpath::use_fixture_search_path();
         let horizontal =
             Operation::create("+proj=defmodel +model=tests/simple_model_degree_horizontal.json")
                 .expect("horizontal");
@@ -277,6 +240,7 @@ mod tests {
 
     #[test]
     fn deformation_extract_matches_the_gie_pipeline() {
+        crate::gridpath::use_fixture_search_path();
         let pipeline = Operation::create(
             "+proj=pipeline +step +proj=cart +ellps=GRS80 +step +proj=deformation +grids=tests/nkgrf03vel_realigned_extract.tif +ellps=GRS80 +dt=1 +step +inv +proj=cart +ellps=GRS80",
         )
@@ -327,6 +291,7 @@ mod tests {
 
     #[test]
     fn defmodel_remaining_gie_points() {
+        crate::gridpath::use_fixture_search_path();
         let three = Operation::create("+proj=defmodel +model=tests/simple_model_degree_3d.json")
             .expect("3d");
         angular_close(
@@ -494,6 +459,7 @@ mod tests {
 
     #[test]
     fn tinshift_gpkg_remaining_and_missing_files() {
+        crate::gridpath::use_fixture_search_path();
         let kkj = Operation::create("+proj=tinshift +file=tests/tinshift_simplified_kkj_etrs.gpkg")
             .expect("kkj gpkg");
         let got = kkj

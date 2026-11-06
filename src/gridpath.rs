@@ -1,20 +1,44 @@
 //! Directories a grid or model file name is resolved against.
 //!
-//! `data/grids` holds CDN grids and is not part of the source tree.
-//! `tests/gie/tests` and `data/tests` hold the vendored fixtures. A name may
-//! be a path or a bare filename. A missing file is not a coordinate. When the
-//! network is on, [`read`] fetches a missing bare name into the cache first.
+//! After a file that exists relative to the working directory, the directories
+//! are searched in PROJ's order (`pj_open_lib_internal`, `src/filemanager.cpp`):
+//! the user-writable directory first, unless `PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY`
+//! is set, then the data directories of [`crate::network::data_directories`]
+//! (`PROJ_DATA`, or the default `data/grids`), then the paths added with
+//! `set_search_paths`. Test fixtures are not searched unless a test puts them
+//! on `PROJ_DATA`. A name may be a path or a bare filename. A missing file is
+//! not a coordinate. When the network is on, [`read`] fetches a missing bare
+//! name into the cache first.
 
 use std::path::{Path, PathBuf};
 
-pub(crate) fn directories() -> [PathBuf; 4] {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    [
-        root.join("data").join("grids"),
-        root.join("tests").join("gie").join("tests"),
-        root.join("data").join("tests"),
-        root.join("tests").join("gie"),
-    ]
+/// Put the vendored fixtures on `PROJ_DATA` for this process, as PROJ's test
+/// runs do (`proj_test_set_properties`, `cmake/ProjTest.cmake`). The vendored
+/// `data` directory comes first, then its `tests` fixtures. Lookups read the
+/// variable on each call, so the call may come after another test resolved a
+/// grid. `tests/common` does the same for the integration tests.
+#[cfg(test)]
+pub(crate) fn use_fixture_search_path() {
+    let data = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("data");
+    let separator = if cfg!(windows) { ";" } else { ":" };
+    let path = format!(
+        "{}{separator}{}",
+        data.display(),
+        data.join("tests").display()
+    );
+    std::env::set_var("PROJ_DATA", path);
+    std::env::set_var("PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY", "YES");
+}
+
+/// The directories a name is looked up in, in order.
+fn search_directories() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some(cache) = crate::network::cache_dir_if_enabled() {
+        dirs.push(cache);
+    }
+    dirs.extend(crate::network::data_directories());
+    dirs.extend(crate::network::search_paths());
+    dirs
 }
 
 /// First existing file for `name`, including a `grid_alternatives` rename.
@@ -65,15 +89,6 @@ fn locate(name: &str) -> Option<PathBuf> {
         }
     }
     None
-}
-
-fn search_directories() -> Vec<PathBuf> {
-    let mut dirs = Vec::from(directories());
-    dirs.extend(crate::network::search_paths());
-    if let Some(cache) = crate::network::cache_dir_if_enabled() {
-        dirs.push(cache);
-    }
-    dirs
 }
 
 /// `https://cdn.proj.org/<file>` is the file of that name on the search path.

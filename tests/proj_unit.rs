@@ -10,6 +10,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use proj_rs::{CreateError, Operation, Proj, ProjBuilder, ProjError, UtmZone, Xyzt};
 
+mod common;
+
 fn near(got: f64, expect: f64, tol: f64) {
     assert!((got - expect).abs() <= tol, "{got} vs {expect} (tol {tol})");
 }
@@ -238,6 +240,7 @@ fn grids_null_shift_is_identity() {
 
 #[test]
 fn grids_gtiff_subgrid_matches_gie_samples() {
+    common::use_fixture_search_path();
     let grid = Operation::create("+proj=gridshift +grids=tests/test_hgrid_with_subgrid.tif")
         .expect("subgrid");
     let cases = [
@@ -821,6 +824,7 @@ fn c_api_geocentric_bounds_corners() {
 
 #[test]
 fn c_api_time_dependent_operations() {
+    common::use_fixture_search_path();
     let rates = Operation::create("+proj=helmert +dx=1 +t_epoch=2010").expect("rates");
     let at = rates
         .forward(Xyzt {
