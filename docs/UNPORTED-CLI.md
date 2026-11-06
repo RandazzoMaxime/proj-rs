@@ -5,7 +5,6 @@ A row remains when that case does not match the yaml.
 
 | id | app | reason | comment |
 |---|---|---|---|
-| `test_cs2cs_various.yaml#59` | cs2cs | expected 595710.3731286	5357598.4645652 0.0000000 got 595625.7338097	5357535.8096752 0.0000000 | Test MGI datum gives expected results (#207) |
 | `test_cs2cs_various.yaml#118` | cs2cs | no numbers expected *	* inf got 49dN	2dE 0.000 | Test cs2cs --only-best (grid missing) for EPSG:4326+3855 to EPSG:4979 |
 | `test_cs2cs_various.yaml#119` | cs2cs | no numbers expected *	* inf got 49dN	2dE 0.000 | Test cs2cs --only-best=yes (grid missing) for EPSG:4326+3855 to EPSG:4979 |
 | `test_cs2cs_various.yaml#120` | cs2cs | no numbers expected *	* inf got 49dN	2dE 0.000 | Test cs2cs (grid missing) with PROJ_ONLY_BEST_DEFAULT=YES for EPSG:4326+3855 to EPSG:4979 |
