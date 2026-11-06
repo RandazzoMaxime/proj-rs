@@ -1,61 +1,95 @@
-# Contribuer à PROJ-RS
+# Contributing to PROJ-RS
 
-PROJ-RS est ouvert : les issues et les pull requests sont les bienvenues.
-La fusion dans la branche principale reste entre les mains du mainteneur.
+PROJ-RS is open: issues and pull requests are welcome. Merging into the main
+branch stays with the maintainer.
 
-## Qui fusionne
+## Who merges
 
-**Maxime Randazzo ([@RandazzoMaxime](https://github.com/RandazzoMaxime)) est le
-seul à fusionner.** Une revue approuvée, une CI verte ou un accord dans
-l'issue ne fusionnent pas la PR toutes seules. Il n'y a pas de merge
-automatique.
+**Maxime Randazzo ([@RandazzoMaxime](https://github.com/RandazzoMaxime)) is the
+only one who merges.** An approved review, a green CI or an agreement in the
+issue does not merge a PR on its own. There is no automatic merge.
 
-Personne ne pousse directement sur `main`. Même un correctif d'une ligne
-passe par une branche et une pull request.
+Nobody pushes directly to `main`. Even a one-line fix goes through a branch and
+a pull request.
 
-Deux rulesets GitHub, `protect-main` et `protect-dev`, appliquent ces règles :
+Two GitHub rulesets, `protect-main` and `protect-dev`, enforce these rules:
 
-- pas de push direct : toute modification passe par une pull request ;
-- pas de force-push ni de suppression de la branche ;
-- historique linéaire, fusion par squash ou par rebase ;
-- aucune approbation tierce exigée, le mainteneur fusionne seul.
+- no direct push: every change goes through a pull request;
+- no force-push and no deletion of the branch;
+- linear history, squash or rebase merge;
+- no third-party approval required, the maintainer merges alone.
 
-`CODEOWNERS` désigne `@RandazzoMaxime` sur tout le dépôt. GitHub s'en sert
-pour la revue ; ça ne donne à personne d'autre le droit de fusionner.
+`CODEOWNERS` names `@RandazzoMaxime` on the whole repository. GitHub uses it
+for review; it gives nobody else the right to merge.
 
-## Proposer un lot
+## Proposing a lot
 
-Un lot est une pull request qui porte un seul sujet. Les sujets ouverts sont
-dans [ROADMAP.md](ROADMAP.md). Ouvrir une issue « Je prends le lot N » avant
-de coder évite deux ports du même module.
+A lot is a pull request that carries one topic. The open topics are in
+[ROADMAP.md](ROADMAP.md). Opening an issue "I take lot N" before coding avoids
+two ports of the same module.
 
-La branche part de `main`. Le nom indique le lot : `lot-8-cart`.
+The branch starts from `main`. Its name says the lot: `lot-8-cart`.
 
-## Ce qu'une PR de port doit contenir
+## What a port PR contains
 
-Le port suit le skill
-[rust-port](https://github.com/morganlinton/BeautifulRust/tree/main/skills/rust-port) :
+The port follows the
+[rust-port](https://github.com/morganlinton/BeautifulRust/tree/main/skills/rust-port)
+skill:
 
-1. Lire le source PROJ et lister le comportement observable, y compris les
-   échecs et les cas limites.
-2. Écrire d'abord les tests qui caractérisent ce comportement.
-3. Dessiner l'API Rust (`Result`, `Option`, enums). Ne pas translittérer les
-   codes d'erreur, les `NULL` ni les paramètres booléens.
-4. Garder l'algorithme. Un changement d'algorithme se justifie dans la PR.
-5. Joindre un `docs/PORTING-<module>.md` : correspondance des fonctions, des
-   tests, écarts volontaires, quirks conservés, commandes lancées.
-6. Ajouter les cas du lot à `src/bin/bench.rs` et une ligne à
-   `bench/history.jsonl` via `bench/record.sh`. Ne jamais renommer un cas
-   existant : l'historique est indexé par nom.
-7. Si le lot retire des lignes de `docs/UNPORTED-UNIT.md` ou
-   `docs/UNPORTED-CLI.md`, lancer `UPDATE_DOCS=1 cargo test --test docs_in_sync`.
-   Les chiffres du `README.md` et du `ROADMAP.md` et le tri
-   `docs/UNIT-TRIAGE.md` en sont calculés, et le test échoue s'ils dérivent.
+1. Read the PROJ source and list the observable behavior, failures and edge
+   cases included.
+2. Write the tests that characterize that behavior first. Expected values come
+   from PROJ 9.9.0 (its sources, its tests, its CLI yaml files), never from the
+   code under test.
+3. Design the Rust API (`Result`, `Option`, enums). Do not transliterate error
+   codes, `NULL`s or boolean parameters.
+4. Keep the algorithm. A change of algorithm is justified in the PR.
+5. Attach a `docs/PORTING-<module>.md`: map of functions and tests, deliberate
+   deviations, quirks kept, commands run.
+6. Add the lot's cases to `src/bin/bench.rs` and a line to
+   `bench/history.jsonl` with `bench/record.sh`. Never rename an existing case:
+   the history is indexed by name.
+7. If the lot removes lines from `docs/UNPORTED-UNIT.md` or
+   `docs/UNPORTED-CLI.md`, run `UPDATE_DOCS=1 cargo test --test docs_in_sync`.
+   The counts in `README.md` and `ROADMAP.md` and the `docs/UNIT-TRIAGE.md`
+   triage are computed from them, and the test fails if they drift.
 
-Le modèle de pull request rappelle ces sections. Le remplir fait partie de
-la revue.
+There is no pull request template: the PR description covers the sections
+above (behavior against PROJ, cases closed and reopened, deviations, commands
+run).
 
-## Barre technique
+## Working a lot without regressions
+
+Several attempts failed for the same reasons. These rules come from them.
+
+- **Measure before and after.** Run `cargo test --test cli_yaml` before any
+  change. It runs our binaries against the outputs PROJ 9.9.0 wrote in
+  `tests/cli_yaml/*.yaml`, offline, with no PROJ install. It rewrites
+  `docs/UNPORTED-CLI.md` and fails when a case that used to pass breaks. It
+  compares with the ledger file on disk, so restore it (`git checkout
+  docs/UNPORTED-CLI.md`) before measuring after an experiment.
+- **Compare with the real PROJ.** `tools/build-reference.sh` builds `cs2cs` and
+  `projinfo` 9.9.0 from the tagged sources in about two minutes. Check the
+  pair you change and a few neighbours against it, not only the yaml cases;
+  when an existing test disagrees with it, say so in the PR instead of
+  changing the test silently.
+- **Zero reopened case.** A lot may close cases; it never reopens one, not even
+  for a larger gain elsewhere.
+- **One criterion at a time.** Change one thing (a ranking criterion, a lookup,
+  a branch of the factory), then measure. Changing several at once hides which
+  one broke what.
+- **Port the C++ function whole.** Keep PROJ's branches, order and recursion.
+  A simplified "one-level" version of a recursive function has regressed other
+  cases each time it was tried. If a needed piece is missing, stop at a clean
+  boundary and say so.
+- **Two attempts, then a status sheet.** After two attempts that still regress,
+  revert the code and commit only `docs/PORTING-<lot>.md` as a status sheet:
+  what PROJ does, what the port does, the cause, the next step. That sheet is
+  useful work: the next attempt starts from it.
+- **Count failures exactly.** Read the totals of `cargo test --all-features`
+  (passed, failed, ignored); do not trust a truncated or filtered output.
+
+## Technical bar
 
 ```bash
 cargo fmt --check
@@ -63,13 +97,13 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-features
 ```
 
-Pas de `unsafe` sans commentaire `// SAFETY:` et sans besoin mesuré ou FFI.
-Pas de paramètre `bool` dans une signature publique. Pas de `unwrap()` hors
-des tests. Les lints sont ceux de BeautifulRust (`clippy.toml` et `[lints]`
-dans `Cargo.toml`).
+No `unsafe` without a `// SAFETY:` comment and without a measured need or FFI.
+No boolean parameter in a public signature. No `unwrap()` outside tests. The
+lints are BeautifulRust's (`clippy.toml` and `[lints]` in `Cargo.toml`).
 
-## Revue
+## Review
 
-Le mainteneur regarde, dans l'ordre : le comportement face à PROJ, les écarts
-annoncés dans la fiche `docs/PORTING-<module>.md`, l'API, puis le style. Une PR qui mélange deux
-lots ou qui élargit le périmètre sans le dire retourne à l'auteur.
+The maintainer looks, in this order, at: the behavior against PROJ, the
+deviations stated in the `docs/PORTING-<module>.md` sheet, the API, then the
+style. A PR that mixes two lots or widens its scope without saying so goes
+back to its author.
