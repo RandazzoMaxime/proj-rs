@@ -1381,15 +1381,15 @@ fn promoted_text(crs: &proj_rs::Crs, db: &proj_rs::DatabaseContext) -> Option<St
     Some(format!("{}:{}", identifier.code_space(), identifier.code()))
 }
 
-/// `is3DCRS` in `src/apps/cs2cs.cpp`.
+/// `is3DCRS` in `src/apps/cs2cs.cpp` (lines 361-376): a compound CRS, or a geographic,
+/// geodetic (geocentric included), projected or derived projected CRS with three axes.
 fn is_3d_crs(crs: &proj_rs::Crs) -> bool {
     match crs {
         proj_rs::Crs::Compound(_) => true,
-        proj_rs::Crs::Geographic(geographic)
-        | proj_rs::Crs::Geodetic(proj_rs::GeodeticCRS::Geographic(geographic)) => {
-            geographic.coordinate_system().axes().len() == 3
-        }
+        proj_rs::Crs::Geographic(geographic) => geographic.coordinate_system().axes().len() == 3,
+        proj_rs::Crs::Geodetic(geodetic) => geodetic.coordinate_system().axes().len() == 3,
         proj_rs::Crs::Projected(projected) => projected.coordinate_system().axes().len() == 3,
+        proj_rs::Crs::DerivedProjected(derived) => derived.coordinate_system().axes().len() == 3,
         _ => false,
     }
 }
