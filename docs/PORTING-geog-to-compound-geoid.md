@@ -47,7 +47,7 @@ parsed and ignored, see `_selection`).
 |---|---|---|
 | `cs2cs.cpp:893-916` (name promotion) | `src/bin/cs2cs.rs` `promoted_by_name`, called from `main` before `build_engine` | Builds from the promoted text. Printed names and layouts still come from the typed text. |
 | `cs2cs.cpp` `promoteTo3D` result, `proj_get_id_code` check | `promoted_text` | The identifier is written as `AUTH:CODE` (here `EPSG:4979`), and the engine parses it back. |
-| `cs2cs.cpp` `is3DCRS` | `is_3d_crs` | Same variants as `projinfo.rs` `is_3d`. |
+| `cs2cs.cpp:361-376` `is3DCRS` | `is_3d_crs` | Compound, or geographic, geodetic (geocentric included), projected or derived projected with 3 axes, as PROJ. `projinfo.rs` `is_3d` still omits the geocentric and derived projected cases: a separate lot. |
 | `projinfo_lib.cpp:1048` | `src/bin/projinfo.rs` `promote_by_name`, `is_3d` | Unchanged. |
 | `createOperations` `geodSrc && compoundDst` (3782) | `factory.rs` `create_candidates` (`geog_to_compound` in `compound.rs`) | Unchanged. The 2D source keeps no geoid candidate, as PROJ. |
 
