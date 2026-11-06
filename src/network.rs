@@ -82,6 +82,28 @@ pub(crate) fn proj_grid_filename(name: &str) -> Option<String> {
     .ok()
 }
 
+/// `old_proj_grid_name` for a PROJ grid name such as `de_adv_BETA2007.tif`.
+///
+/// As PROJ 9.9.0 `DatabaseContext::getOldProjGridName` (`factory.cpp:3575`):
+/// the first row for `proj_grid_name`, and nothing when that row has no old
+/// name. Only a name containing `.tif` is looked up, as
+/// `FileManager::open_resource_file` does (`filemanager.cpp:1833-1857`).
+pub(crate) fn old_grid_filename(name: &str) -> Option<String> {
+    if !plain_name(name) || !name.contains(".tif") {
+        return None;
+    }
+    let old = crate::projdb::with_db(|connection| {
+        connection.query_row(
+            "SELECT old_proj_grid_name FROM grid_alternatives WHERE proj_grid_name = ?1",
+            [name],
+            |row| row.get::<_, Option<String>>(0),
+        )
+    })
+    .ok()
+    .flatten();
+    old.filter(|old| !old.is_empty())
+}
+
 pub(crate) fn search_paths() -> Vec<PathBuf> {
     context().search_paths
 }
@@ -281,10 +303,15 @@ fn join_endpoint(endpoint: &str, file: &str) -> Option<String> {
 }
 
 fn bare_short_name(name: &str) -> bool {
+    plain_name(name) && !name.contains(".tif")
+}
+
+/// A name that is neither a path nor a URL, as PROJ's
+/// `is_rel_or_absolute_filename` and `starts_with(name, "http")` tests.
+fn plain_name(name: &str) -> bool {
     !name.is_empty()
         && !name.contains('/')
         && !name.contains('\\')
-        && !name.contains(".tif")
         && !is_http(name)
         && !is_explicit_path(name)
 }
