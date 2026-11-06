@@ -163,6 +163,19 @@ fn cs2cs_epsg_4326_to_crs84_is_longitude_first() {
     assert_eq!(text, "45.000000\t10.000000 0.000000\n");
 }
 
+/// A compound target is neither geographic nor projected for `cs2cs` (`cs2cs.cpp:274-313`): its
+/// numbers are printed as `%.2f`, latitude first as the horizontal part of EPSG:4326+5782 writes
+/// it, not as DMS. Oracle: PROJ 9.9.0 `cs2cs EPSG:4326+5773 EPSG:4326+5782`, `39 -3 0`.
+#[test]
+fn cs2cs_compound_target_prints_plain_numbers() {
+    let text = run(
+        env!("CARGO_BIN_EXE_cs2cs"),
+        &["EPSG:4326+5773", "EPSG:4326+5782"],
+        "39 -3 0\n",
+    );
+    assert_eq!(text, "39.00\t-3.00 0.00\n");
+}
+
 #[test]
 fn cs2cs_bad_w_exits_with_proj_message() {
     let output = Command::new(env!("CARGO_BIN_EXE_cs2cs"))
