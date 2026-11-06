@@ -1022,7 +1022,7 @@ pub fn select_alternatives(
         BestPolicy::Warn | BestPolicy::Error => GridAvailabilityUse::KnownAvailable,
     };
     let ranked = rank(
-        operations.clone(),
+        operations,
         &db,
         &source_crs,
         &target_crs,
@@ -1068,10 +1068,19 @@ pub fn select_alternatives(
             .iter()
             .any(|item| !item.approximate && item.instantiable)
     {
-        // `crs_to_crs.cpp:685-773`: no instantiable candidate that is not a ballpark. The
-        // candidates whose grids are on disk follow the others that are not a ballpark.
+        // `crs_to_crs.cpp:685-750`: no instantiable candidate that is not a ballpark. PROJ runs
+        // `proj_create_operations` again with DISCARD_OPERATION_IF_MISSING_GRID, not a filter of
+        // the first list: the registry then drops the operations whose grids are missing, and
+        // the intermediate CRS behind them is searched (PD/83 to WGS 84 through ETRS89 for
+        // EPSG:4746 to EPSG:4978 with BETA2007 missing). A search that fails leaves the first
+        // list, as PROJ's `if (op_list)`.
+        let mut discard_context = context.clone();
+        discard_context.set_grid_availability_use(GridAvailabilityUse::DiscardIfMissing);
+        let discard_ops = CoordinateOperationFactory::create()
+            .create_operations(&source_crs, &target_crs, &discard_context)
+            .unwrap_or_default();
         let discarded = discard_missing(rank(
-            operations,
+            discard_ops,
             &db,
             &source_crs,
             &target_crs,
