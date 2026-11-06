@@ -27,6 +27,7 @@ use super::model::{
     GeographicCRS, GeoidModel, Identified, OperationMethod, Parameter, ParameterValue, ProjBased,
     ProjBasedKind, Transformation, VerticalCRS,
 };
+use super::pipeline::ProjLines;
 use super::FactoryError;
 
 const NULL_GEOGRAPHIC_OFFSET: &str = "Null geographic offset";
@@ -690,20 +691,7 @@ fn compute_metadata(
     if operations.len() == 1 {
         return operations.into_iter().next();
     }
-    let mut steps = Vec::new();
-    for operation in operations {
-        match operation {
-            // PROJ flattens a `ConcatenatedOperation` (`concatenatedoperation.cpp` 686–697), but
-            // `createPROJBased` returns a single operation (`coordinateoperationfactory.cpp`
-            // 2633): a PROJ-based operation keeps its name and is one step.
-            CoordinateOperation::Concatenated(concatenated)
-                if concatenated.proj_based.is_none() =>
-            {
-                steps.extend(concatenated.steps.into_iter().map(|step| step.operation));
-            }
-            other => steps.push(other),
-        }
-    }
+    let steps = flatten_steps(operations);
     if steps.len() == 1 {
         return steps.into_iter().next();
     }
@@ -712,7 +700,7 @@ fn compute_metadata(
         None if context.disallows_empty_intersection() => return None,
         None => None,
     };
-    let accuracy = accuracy_of_steps(&steps);
+    let accuracy = get_accuracy_of_steps(&steps);
     let name = steps
         .iter()
         .map(CoordinateOperation::name)
@@ -741,7 +729,7 @@ fn compute_metadata(
             .collect(),
         source,
         target,
-        accuracy: (accuracy >= 0.0).then_some(accuracy),
+        accuracy: (accuracy >= 0.0).then(|| stored_accuracy(accuracy)),
         version: None,
         computed_name: true,
         source_epoch: None,
@@ -750,21 +738,115 @@ fn compute_metadata(
     }))
 }
 
-/// `getAccuracy` of a list of operations: the sum of their accuracies, or -1 when one is unknown.
-fn accuracy_of_steps(operations: &[CoordinateOperation]) -> f64 {
-    let mut total = 0.0;
+/// The steps `ConcatenatedOperation::createComputeMetadata` keeps, flattened: a concatenated
+/// operation contributes its own steps (`concatenatedoperation.cpp:686-697`). A PROJ-based
+/// operation is a single operation, not flattened (`createPROJBased` returns one operation,
+/// `coordinateoperationfactory.cpp:2633`), so it keeps its name and is one step.
+pub(crate) fn flatten_steps(operations: Vec<CoordinateOperation>) -> Vec<CoordinateOperation> {
+    let mut steps = Vec::new();
     for operation in operations {
-        let accuracy = get_accuracy(operation);
-        if accuracy < 0.0 {
-            return -1.0;
+        match operation {
+            CoordinateOperation::Concatenated(concatenated)
+                if concatenated.proj_based.is_none() =>
+            {
+                steps.extend(concatenated.steps.into_iter().map(|step| step.operation));
+            }
+            other => steps.push(other),
         }
-        total += accuracy;
     }
-    total
+    steps
 }
 
-/// `getAccuracy` of one operation: 0 for a conversion, the stated accuracy, or else the sum
-/// over the steps of a concatenated operation. -1 when unknown.
+/// `getAccuracy(const std::vector<CoordinateOperationNNPtr> &)` (`oputils.cpp:587-612`): the sum
+/// of the accuracies of the steps, or -1 when one of them is unknown. Two neighbouring steps that
+/// both have an accuracy, and that the ETRS89 ensemble case covers, count as their larger
+/// accuracy, once (`oputils.cpp:600-636`, see [`is_etrs89_ensemble_pair`]).
+pub(crate) fn get_accuracy_of_steps(operations: &[CoordinateOperation]) -> f64 {
+    let mut accuracy = -1.0_f64;
+    let mut index = 0;
+    while index < operations.len() {
+        let subops_accuracy = get_accuracy(&operations[index]);
+        if subops_accuracy < 0.0 {
+            return -1.0;
+        }
+        if accuracy < 0.0 {
+            accuracy = 0.0;
+        }
+        if subops_accuracy > 0.0 && index + 1 < operations.len() {
+            let first = &operations[index];
+            let second = &operations[index + 1];
+            let next_accuracy = get_accuracy(second);
+            let largest = subops_accuracy.max(next_accuracy);
+            if next_accuracy > 0.0
+                && is_etrs89_ensemble_pair(first, second, largest)
+                && (is_noop(first) || is_noop(second))
+            {
+                accuracy += largest;
+                index += 2;
+                continue;
+            }
+        }
+        accuracy += subops_accuracy;
+        index += 1;
+    }
+    accuracy
+}
+
+/// The ETRS89 case of `getAccuracy` (`oputils.cpp:600-636`): `first` goes from an `ETRS89-XXX`
+/// CRS to the ETRS89 or ETRF CRS that `second` goes on from, and `second` ends on an `ETRS89-YYY`
+/// CRS. The larger accuracy of the two, `largest`, must be at most 0.1 m.
+fn is_etrs89_ensemble_pair(
+    first: &CoordinateOperation,
+    second: &CoordinateOperation,
+    largest: f64,
+) -> bool {
+    const ACCURACY_ENSEMBLE_ETRS89: f64 = 0.1;
+    let (Some(crs1), Some(middle), Some(crs2)) = (
+        operation_source(first),
+        operation_target(first),
+        operation_target(second),
+    ) else {
+        return false;
+    };
+    largest <= ACCURACY_ENSEMBLE_ETRS89
+        && (middle.name() == "ETRS89" || middle.name().starts_with("ETRF"))
+        && crs1.name().starts_with("ETRS89-")
+        && crs2.name().starts_with("ETRS89-")
+}
+
+/// `IsNoOp` of `oputils.cpp`: the operation exports as `+proj=noop`. An operation whose PROJ string
+/// cannot be written is not a no-op, as PROJ catches the exception and answers false.
+fn is_noop(operation: &CoordinateOperation) -> bool {
+    let exported = match operation {
+        // A conversion has accuracy 0, so the ETRS89 case never asks for it.
+        CoordinateOperation::Conversion(_) => return false,
+        CoordinateOperation::Transformation(transformation) => {
+            transformation.export_to_proj_string(ProjLines::Single)
+        }
+        CoordinateOperation::Concatenated(concatenated) => {
+            concatenated.export_to_proj_string(ProjLines::Single)
+        }
+    };
+    exported.is_ok_and(|text| text == "+proj=noop")
+}
+
+/// The accuracy a concatenated operation stores: PROJ writes `toString(accuracy)` as its accuracy
+/// string (`concatenatedoperation.cpp:754-758`), `%.15g` (`internal.cpp:343-357`, 14 digits when
+/// the 15 read `9999999999`), and `getAccuracy` reads that string back. A sum of 0.1 and 0.11 is
+/// therefore stored as 0.21, not as 0.21000000000000002.
+pub(crate) fn stored_accuracy(accuracy: f64) -> f64 {
+    let fifteen = format!("{accuracy:.14e}");
+    let text = if fifteen.contains("9999999999") {
+        format!("{accuracy:.13e}")
+    } else {
+        fifteen
+    };
+    text.parse().unwrap_or(accuracy)
+}
+
+/// `getAccuracy(const CoordinateOperationNNPtr &)` (`oputils.cpp:560-585`): 0 for a conversion,
+/// else the stated accuracy, or else the sum over the steps of a concatenated operation. -1 when
+/// unknown.
 pub(crate) fn get_accuracy(operation: &CoordinateOperation) -> f64 {
     match operation {
         CoordinateOperation::Conversion(_) => 0.0,
@@ -777,7 +859,7 @@ pub(crate) fn get_accuracy(operation: &CoordinateOperation) -> f64 {
                         .iter()
                         .map(|step| step.operation.clone())
                         .collect();
-                    accuracy_of_steps(&steps)
+                    get_accuracy_of_steps(&steps)
                 }
                 _ => -1.0,
             },

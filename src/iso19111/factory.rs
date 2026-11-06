@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use rusqlite::{types::ValueRef, Connection};
 
 use super::buildop::OpProps;
+use super::compound::{flatten_steps, get_accuracy_of_steps, stored_accuracy};
 use super::coordinate_metadata::CoordinateMetadata;
 use super::equiv::{
     equivalent_name, geodetic_frame, same_geodetic_datum, same_geographic_base, Equivalence,
@@ -7021,9 +7022,11 @@ fn pivot_domain(steps: &[CoordinateOperation]) -> Option<ObjectDomain> {
     extent
 }
 
-/// A concatenated operation of the pivot legs, with the largest step accuracy as the oracle
-/// gives it: two 0.1 m legs make 0.1 m (EPSG:11108 to EPSG:11128 through ETRF2000). A step with
-/// no accuracy leaves it unknown. Its domain is the intersection of the steps' extents, as
+/// A concatenated operation of the pivot legs. Its accuracy is `getAccuracy` of the flattened
+/// steps, as `ConcatenatedOperation::createComputeMetadata` takes it (`concatenatedoperation.cpp:
+/// 754-756`): the sum of the steps, except that two 0.1 m legs through ETRF2000 between two
+/// `ETRS89-XXX` CRS, one of them a no-op, make 0.1 m (EPSG:11108 to EPSG:11128). A step with no
+/// accuracy leaves it unknown. Its domain is the intersection of the steps' extents, as
 /// `ConcatenatedOperation::createComputeMetadata` gives it (`joint_extent`).
 pub(super) fn pivot_concatenation(steps: Vec<CoordinateOperation>) -> ConcatenatedOperation {
     let name = steps
@@ -7031,15 +7034,8 @@ pub(super) fn pivot_concatenation(steps: Vec<CoordinateOperation>) -> Concatenat
         .map(CoordinateOperation::name)
         .collect::<Vec<_>>()
         .join(" + ");
-    let accuracy = steps
-        .iter()
-        .map(|step| match step {
-            CoordinateOperation::Conversion(_) => Some(0.0),
-            other => other.accuracy(),
-        })
-        .try_fold(0.0_f64, |worst, accuracy| {
-            accuracy.map(|value| worst.max(value))
-        });
+    let accuracy = get_accuracy_of_steps(&flatten_steps(steps.clone()));
+    let accuracy = (accuracy >= 0.0).then(|| stored_accuracy(accuracy));
     let mut identified = Identified::named(name);
     identified.domains = super::derived::joint_extent(&steps)
         .flatten()
