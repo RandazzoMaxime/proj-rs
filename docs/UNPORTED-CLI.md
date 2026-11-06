@@ -12,8 +12,6 @@ A row remains when that case does not match the yaml.
 | `test_cs2cs_various.yaml#80` | cs2cs | expected 0.000	0.000 1000.000 got 0.000	0.000 1.000 | Test vto_meter |
 | `test_cs2cs_various.yaml#81` | cs2cs | expected 0.000	0.000 1000.000 got 0.000	0.000 1.000 | - |
 | `test_cs2cs_various.yaml#96` | cs2cs | expected 49dN	2dE 0.000 got 49d0'0.002"N	2dE 0.018 | Test effect of --authority (GH-2442) - a no-op |
-| `test_cs2cs_various.yaml#102` | cs2cs | expected 49.000	2.000 4.936 got 49.000	2.000 50.000 | Check that we promote CRS specified by name to 3D when the other one is 3D |
-| `test_cs2cs_various.yaml#103` | cs2cs | expected 49.000	2.000 45.064 got 49.000	2.000 0.000 | - |
 | `test_cs2cs_various.yaml#120` | cs2cs | no numbers expected *	* inf got 49dN	2dE 0.000 | Test cs2cs (grid missing) with PROJ_ONLY_BEST_DEFAULT=YES for EPSG:4326+3855 to EPSG:4979 |
 | `test_cs2cs_various.yaml#121` | cs2cs | no numbers expected *	* inf got 49dN	2dE 0.000 | Test cs2cs (grid missing) with only_best_default=on in proj.ini |
 | `test_cs2cs_various.yaml#124` | cs2cs | expected 1402288.54	5076296.64 0.00 got 1402224.57	5076275.42 0.00 | Test cs2cs (grid missing) with scenario of GH-3607 that we are using the 'NAD27 to WGS 84 (6)' DMA-ConusW transformation |
