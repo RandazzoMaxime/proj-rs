@@ -66,10 +66,12 @@ Code:
    candidates have too small areas (`hasTooSmallAreas`, `coordinateoperationfactory.cpp:3897-3960`,
    called at 4474). Not ported: the pivot candidates (for example `PD/83 to ETRS89 (1) + ETRS89 to WGS
    84 (1)`) are missing. See `test_cs2cs_various.yaml#132` and `#133` below.
-5. Domain of a concatenated operation. The port gives `PD/83 to WGS 84 (1) + Conversion ...` an
-   unknown domain, where PROJ gives `Germany - Thuringen`. Its box is then the world, so the grid
-   candidate is always the first suggestion for its pair. The result is the same for the cases
-   checked (the grid fails outside its extent, and the ballpark is used), but not in general.
+5. Domain of a concatenated operation. The datum-pivot candidates now take the intersection of the
+   areas of their legs (`pivot_domain`, `getExtent` of PROJ, `oputils.cpp:529`), as of lot
+   `lonlat-source-axis` (see `docs/PORTING-lonlat-source-axis.md`). Other concatenated operations
+   keep an unknown domain: `PD/83 to WGS 84 (1) + Conversion ...` still gets no area where PROJ gives
+   `Germany - Thuringen`, so its box is the world. The result is the same for the cases checked,
+   but not in general.
 6. Destination box. PROJ uses the destination box only to drop a candidate whose box cannot be
    reprojected, and for the inverse direction. This port does the same gating for a projected target
    and does not box the destination (cs2cs is forward only).
@@ -95,17 +97,13 @@ Changed, still open (the got values move towards PROJ's, but the candidate list 
 - `#133` (reverse, grid missing): the same candidate, reversed. The port gives
   `50d29'55.695"N 9d59'55.692"E -0.002`.
 
-Still open, cause not in this lot:
+Closed by lot `lonlat-source-axis` (`docs/PORTING-lonlat-source-axis.md`):
 
 - `#124` (`+proj=latlong +datum=WGS84 +to +proj=utm +zone=10 +datum=NAD27`, grid of the first
-  candidate missing). A pair of PROJ strings goes through the side-pair path, which has no alternatives
-  (`docs/PORTING-cs2cs-paths.md`). The alternatives code picks the right candidate (`Inverse of NAD27
-  to WGS 84 (6)`, the second one) when the pair is served by it, as a trace shows. The exported
-  pipeline of a candidate for a longitude-first source, however, starts with an axis change that is
-  not right for that source: the Helmert step then receives latitude first, and the point fails. The
-  same pipeline failure exists on the base commit for `OGC:CRS84 EPSG:4269` (`111d30'S
-  45d15'33.1"E`), so it predates this lot. Serving PROJ-string pairs from the ISO path would need that
-  export fixed first; the attempt to do it in this lot was reverted.
+  candidate missing): a PROJ-string pair now goes through the ISO selection, and its candidates have
+  alternatives. The axis change of a longitude-first source was missing from the datum-pivot
+  candidates, which is what the previous text called the export fault. Pairs with `+approx`, `+over`
+  or `+lon_wrap` keep the side-pair path, as their flag is not in the ISO candidates.
 
 ## Ratchet and checks
 
