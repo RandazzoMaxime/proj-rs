@@ -37,7 +37,9 @@ fn forward(source: &str, target: &str, x: f64, y: f64) -> Xyzt {
                 .forward(point(x, y))
                 .unwrap_or_else(|error| panic!("{source} to {target} at {x} {y}: {error:?}"))
         }
-        Selection::Single(BestOperation::MissingGrid { message }) => {
+        Selection::Single(
+            BestOperation::MissingGrid { message } | BestOperation::Refused { message },
+        ) => {
             panic!("{source} to {target}: {message}")
         }
     }
