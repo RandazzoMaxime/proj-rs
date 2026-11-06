@@ -10,11 +10,8 @@ A row remains when that case does not match the yaml.
 | `test_cs2cs_various.yaml#96` | cs2cs | expected 49dN	2dE 0.000 got 49d0'0.002"N	2dE 0.018 | Test effect of --authority (GH-2442) - a no-op |
 | `test_cs2cs_various.yaml#120` | cs2cs | no numbers expected *	* inf got 49dN	2dE 0.000 | Test cs2cs (grid missing) with PROJ_ONLY_BEST_DEFAULT=YES for EPSG:4326+3855 to EPSG:4979 |
 | `test_cs2cs_various.yaml#121` | cs2cs | no numbers expected *	* inf got 49dN	2dE 0.000 | Test cs2cs (grid missing) with only_best_default=on in proj.ini |
-| `test_cs2cs_various.yaml#125` | cs2cs | expected 569720.46	4268813.88 0.00 got 569706.33	4268817.68 0.00 | Test cs2cs (grid missing) with scenario of GH-3613 that we are using a WGS 84 intermediate to do NAD27 to NAD83 |
 | `test_cs2cs_various.yaml#126` | cs2cs | stderr text mismatch expected: Attempt to use coordinate operation Inverse of WGS 84 to EGM96 height (1) + ETRS89-ESP [REGENTE] to Alicante height (1) using ETR | Test cs2cs (grid missing) with scenario of https://lists.osgeo.org/pipermail/proj/2023-April/011003.html |
 | `test_cs2cs_various.yaml#129` | cs2cs | expected 49dN	2dE 0.000 got 2dE	49dN 0.000 | Test cs2cs grid missing with @gridname |
-| `test_cs2cs_various.yaml#132` | cs2cs | expected 4003461.37	705832.04 4898267.94 got 4003345.54	705897.83 4898352.56 | Test cs2cs geographic -> geocentric, normally using BETA2007.gsb grid but missing |
-| `test_cs2cs_various.yaml#133` | cs2cs | expected 50d30'N	10dE -0.002 got 50d29'55.695"N	9d59'55.692"E -0.002 | Test cs2cs geocentric -> geographic, normally using BETA2007.gsb grid but missing |
 | `test_cs2cs_various.yaml#139` | cs2cs | expected 476763.303	95620.222 5.000 got 477131.509	95651.636 5.000 | - |
 | `test_projinfo.yaml#13` | projinfo | text mismatch expected: Candidate operations found: 9 DERIVED_FROM(EPSG):1313, NAD27 to NAD83 (4), 1.5 m, Canada - onshore - Alberta; British Columbia; Manitoba | - |
 | `test_projinfo.yaml#14` | projinfo | text mismatch expected: Candidate operations found: 10 ------------------------------------- Operation No. 1:  DERIVED_FROM(EPSG):1313, NAD27 to NAD83 (4), 1.5  | - |
