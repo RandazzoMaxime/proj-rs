@@ -4,7 +4,7 @@ PROJ 9.9.0 sources: `test/unit` and `test/cli`. The Rust tests call `Operation` 
 
 ## CLI
 
-`tests/cli_yaml.rs` reads the vendored copies of `test_cct.yaml`, `test_cs2cs_various.yaml`, `test_projinfo.yaml`, and `test_proj.yaml` and runs `cct` and `cs2cs`. Comparison is numeric, line by line. A geographic line that PROJ prints as latitude then longitude is accepted when this `cs2cs` printed longitude then latitude, which is the order `Proj::new_known_crs` uses.
+`tests/cli_yaml.rs` reads the vendored copies of `test_cct.yaml`, `test_cs2cs_various.yaml`, `test_projinfo.yaml`, and `test_proj.yaml` and runs `cct` and `cs2cs`. Comparison is numeric, line by line: every number of the line, in PROJ's order, with the same count. The third number (a height or a Z) counts like the first two, and a line whose two axes are swapped is a mismatch. PROJ's own runner compares the text, so a looser check let wrong heights and swapped axes pass; the 14 cases it hid are back in `docs/UNPORTED-CLI.md`. The georust axis order of `Proj::new_known_crs` is checked by the facade tests, not here.
 
 A case is not executed, and is listed in `docs/UNPORTED-CLI.md`, when:
 

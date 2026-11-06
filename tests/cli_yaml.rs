@@ -627,26 +627,22 @@ fn compare_numbers(expected: &str, got: &str) -> Result<(), String> {
                 "no numbers\nexpected {expect_line}\ngot {got_line}"
             ));
         }
-        if !axes_match(&expect_numbers, &got_numbers) {
+        if !numbers_match(&expect_numbers, &got_numbers) {
             return Err(format!("expected {expect_line}\ngot {got_line}"));
         }
     }
     Ok(())
 }
 
-fn axes_match(expect: &[f64], got: &[f64]) -> bool {
-    if expect.is_empty() || got.is_empty() {
-        return false;
-    }
-    let direct =
-        close(got[0], expect[0]) && (got.len() < 2 || expect.len() < 2 || close(got[1], expect[1]));
-    if direct {
-        return true;
-    }
-    if expect.len() >= 2 && got.len() >= 2 && expect[0].abs() <= 180.0 && expect[1].abs() <= 180.0 {
-        return close(got[0], expect[1]) && close(got[1], expect[0]);
-    }
-    false
+/// Every number of the line, in PROJ's order: the third one (a height or a Z)
+/// counts as much as the first two, and a swapped pair of axes is a mismatch,
+/// as it is for PROJ's own CLI tests, which compare the text.
+fn numbers_match(expect: &[f64], got: &[f64]) -> bool {
+    expect.len() == got.len()
+        && expect
+            .iter()
+            .zip(got)
+            .all(|(&expect, &value)| close(value, expect))
 }
 
 fn close(value: f64, expect: f64) -> bool {
