@@ -313,7 +313,7 @@ enum Engine {
     /// Two EPSG codes. The pipeline already speaks authority axis order and units.
     Pipe(CrsPipeline),
     /// Names and mixed definitions, through the CRS facade, which carries the third axis.
-    Facade(Box<Proj>),
+    Facade(Box<FacadeAxes>),
     /// `--only-best` chose an operation whose grid is missing. Each point fails with PROJ's message.
     Failing(String),
     /// Several candidates: each point takes the one `proj_trans` picks for it.
@@ -322,12 +322,24 @@ enum Engine {
     Unavailable,
 }
 
+/// The CRS facade with the axis order of each side. The facade reads and writes longitude or
+/// easting first, whatever the CRS writes. `cs2cs` reads and writes the CRS's own order, so a
+/// side that writes latitude or northing first is swapped on the facade boundary.
+struct FacadeAxes {
+    proj: Proj,
+    /// The source writes latitude or northing first: the input pair is swapped.
+    swap_in: bool,
+    /// The target writes latitude or northing first: the output pair is swapped.
+    swap_out: bool,
+}
+
 impl Engine {
     fn lat_first(&self) -> bool {
         match self {
             Self::Pipe(pipe) => pipe.lat_or_northing_first,
             Self::Alternatives(alternatives) => alternatives.lat_or_northing_first(),
-            Self::Pair(_) | Self::Facade(_) | Self::Failing(_) | Self::Unavailable => false,
+            Self::Facade(facade) => facade.swap_out,
+            Self::Pair(_) | Self::Failing(_) | Self::Unavailable => false,
         }
     }
 
@@ -341,7 +353,15 @@ impl Engine {
                 .forward(Xyzt { x, y, z, t })
                 .map(|coord| (coord.x, coord.y, coord.z))
                 .map_err(|_| ()),
-            Self::Facade(proj) => proj.convert_xyz(x, y, z).map_err(|_| ()),
+            Self::Facade(facade) => {
+                let (x, y) = if facade.swap_in { (y, x) } else { (x, y) };
+                let (x, y, z) = facade.proj.convert_xyz(x, y, z).map_err(|_| ())?;
+                Ok(if facade.swap_out {
+                    (y, x, z)
+                } else {
+                    (x, y, z)
+                })
+            }
             Self::Failing(message) => {
                 eprintln!("{message}");
                 Err(())
@@ -498,9 +518,16 @@ fn build_engine(
             });
         }
     }
+    let catalog = Catalog::open();
+    let swap_in = catalog.layout(source).lat_first;
+    let swap_out = catalog.layout(target).lat_first;
     Proj::new_known_crs(source, target, area)
         .map(|proj| BuiltEngine {
-            engine: Engine::Facade(Box::new(proj)),
+            engine: Engine::Facade(Box::new(FacadeAxes {
+                proj,
+                swap_in,
+                swap_out,
+            })),
             path: BuildPath::Facade,
             iso,
         })
@@ -1464,6 +1491,8 @@ enum Layout {
 struct Side {
     layout: Layout,
     dynamic: bool,
+    /// The CRS writes latitude or northing first: its first axis is north or south.
+    lat_first: bool,
 }
 
 impl Side {
@@ -1471,6 +1500,7 @@ impl Side {
         Self {
             layout: Layout::Other,
             dynamic: false,
+            lat_first: false,
         }
     }
 }
@@ -1522,19 +1552,25 @@ impl Catalog {
             return Side::other();
         }
         let dynamic = datum_is_dynamic(db, auth, code);
+        let lat_first = first_axis_north_or_south(db, auth, code);
         if kind.starts_with("geographic") {
             let layout = if axis_is_degrees(db, auth, code).unwrap_or(true) {
                 Layout::DegreeLongLat
             } else {
                 Layout::Other
             };
-            return Side { layout, dynamic };
+            return Side {
+                layout,
+                dynamic,
+                lat_first,
+            };
         }
         if kind == "projected" {
             let dynamic = dynamic || projected_datum_dynamic(db, auth, code);
             return Side {
                 layout: Layout::Projected,
                 dynamic,
+                lat_first,
             };
         }
         if kind == "compound" {
@@ -1553,6 +1589,7 @@ impl Catalog {
         Side {
             layout: Layout::Other,
             dynamic,
+            lat_first,
         }
     }
 
@@ -1628,6 +1665,8 @@ fn layout_from_proj(name: &str, def: &str) -> Side {
     Side {
         layout,
         dynamic: false,
+        // A PROJ string writes longitude or easting first; `+axis` is not read here.
+        lat_first: false,
     }
 }
 
@@ -1750,6 +1789,30 @@ fn axis_is_degrees(db: &Connection, auth: &str, code: i64) -> Option<bool> {
         )
         .ok()?;
     Some((factor - std::f64::consts::PI / 180.0).abs() < 1e-10)
+}
+
+/// Whether axis 1 of the coordinate system of the CRS `auth:code` runs north or south, so the CRS
+/// writes latitude or northing first. This is `lat_or_northing_first` of the library, read from
+/// the `axis` table. `false` when the CRS is not a geodetic or projected one.
+fn first_axis_north_or_south(db: &Connection, auth: &str, code: i64) -> bool {
+    db.query_row(
+        "SELECT a.orientation
+         FROM axis a
+         JOIN (SELECT coordinate_system_auth_name AS auth, coordinate_system_code AS code
+                 FROM geodetic_crs WHERE auth_name = ?1 AND code = ?2
+               UNION ALL
+               SELECT coordinate_system_auth_name, coordinate_system_code
+                 FROM projected_crs WHERE auth_name = ?1 AND code = ?2) cs
+           ON a.coordinate_system_auth_name = cs.auth
+          AND a.coordinate_system_code = cs.code
+         WHERE a.coordinate_system_order = 1",
+        (auth, code),
+        |row| row.get::<_, String>(0),
+    )
+    .is_ok_and(|orientation| {
+        let orientation = orientation.to_ascii_lowercase();
+        orientation.starts_with("north") || orientation.starts_with("south")
+    })
 }
 
 fn datum_is_dynamic(db: &Connection, auth: &str, code: i64) -> bool {
@@ -2590,5 +2653,20 @@ mod tests {
             catalog.layout("+proj=utm +zone=31 +ellps=WGS84").layout,
             Layout::Projected
         );
+    }
+
+    /// The axis order a side writes, as `instantiate_crs` reads it (`cs2cs.cpp:274-313`). EPSG:4326
+    /// and EPSG:4979 write latitude first, EPSG:7034 (`RGSPM06 (lon-lat)`) writes longitude first,
+    /// EPSG:32661 writes northing first (`South along 180°E`), and a PROJ string writes longitude or
+    /// easting first.
+    #[test]
+    fn lat_first_follows_the_crs_axis_order() {
+        let catalog = Catalog::open();
+        assert!(catalog.layout("EPSG:4326").lat_first);
+        assert!(catalog.layout("EPSG:4979").lat_first);
+        assert!(!catalog.layout("EPSG:7034").lat_first);
+        assert!(catalog.layout("EPSG:32661").lat_first);
+        assert!(!catalog.layout("EPSG:32631").lat_first);
+        assert!(!catalog.layout("+proj=longlat +datum=WGS84").lat_first);
     }
 }
