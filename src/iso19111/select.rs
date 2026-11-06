@@ -166,10 +166,11 @@ pub fn best_pipeline(source: &str, target: &str) -> Result<(String, bool), Facto
 /// The best operation from `source` to `target` as `cs2cs` takes it under
 /// `only_best`.
 ///
-/// The order is `SortFunction`'s, grid availability included. Without
-/// `ONLY_BEST`, the first operation whose grids are on disk is used, as PROJ
-/// falls back to it after a failed grid. With `ONLY_BEST`, the first operation
-/// is used even when its grids are missing, and fails at each transformation.
+/// The order is `SortFunction`'s. Without `ONLY_BEST`, grid availability is part of
+/// it, and the first operation whose grids are on disk is used, as PROJ falls back
+/// to it after a failed grid. With `ONLY_BEST` (`KNOWN_AVAILABLE`), availability does
+/// not order the candidates: the first one is used, and it fails with PROJ's message
+/// when its grids are missing.
 ///
 /// # Errors
 ///
@@ -292,6 +293,13 @@ fn best_operation_filtered(
         .filter(|operation| filter.keeps(operation))
         .collect::<Vec<_>>();
     let extents = sort_extents(&context, &source_crs, &target_crs);
+    // `proj_create_crs_to_crs` with ONLY_BEST asks for KNOWN_AVAILABLE, which does not
+    // clear `gridsAvailable` in the sort (`createOperations`, 1477-1491); the chosen
+    // operation's grids are checked afterwards. Otherwise the sort follows availability.
+    let availability = match only_best {
+        OnlyBest::On => GridAvailabilityUse::KnownAvailable,
+        OnlyBest::Off => GridAvailabilityUse::UseForSorting,
+    };
     let mut ranked = Vec::with_capacity(operations.len());
     for operation in operations {
         let characteristics = characteristics(
@@ -299,8 +307,7 @@ fn best_operation_filtered(
             &db,
             &source_crs,
             &target_crs,
-            GridSteps::Unwritten,
-            GridAvailabilityUse::UseForSorting,
+            availability,
             &extents,
         );
         ranked.push((operation, characteristics));
@@ -322,8 +329,10 @@ fn best_operation_filtered(
         .ok_or_else(|| FactoryError::Format(format!("no operation from {source} to {target}")))?;
     // A missing grid is a result of its own, checked before the export: PROJ builds the
     // pipeline naming the grid and fails on the grid, so the export is not what decides.
-    if !characteristics.grids_available {
-        let grids = proj_grids(&best, &db)?;
+    // `proj_coordoperation_is_instantiable` is the check: each grid of the pipeline, by its
+    // PROJ name, must open.
+    let grids = proj_grids(&best, &db)?;
+    if !grids.iter().all(|grid| gridpath::available(grid)) {
         return Ok(Chosen {
             best: BestOperation::MissingGrid {
                 message: missing_grid_message(&characteristics.name, &grids),
@@ -341,7 +350,7 @@ fn best_operation_filtered(
             characteristics.name
         )));
     }
-    let definition = export(&best, &source_crs, &target_crs, &db)?;
+    let definition = export_operation(&best, &db)?;
     let lat_first = lat_or_northing_first(&target_crs);
     Ok(Chosen {
         best: BestOperation::Pipeline {
@@ -395,10 +404,9 @@ fn export(
     db: &DatabaseContext,
 ) -> Result<String, FactoryError> {
     match operation {
-        CoordinateOperation::Transformation(transformation) => transformation
-            .export_to_proj_string_with(ProjLines::Single, proj_grid_names(operation, db)?),
-        CoordinateOperation::Concatenated(concatenated) => concatenated
-            .export_to_proj_string_with(ProjLines::Single, proj_grid_names(operation, db)?),
+        CoordinateOperation::Transformation(_) | CoordinateOperation::Concatenated(_) => {
+            operation.export_to_proj_string_with_database(db, ProjLines::Single)
+        }
         // A conversion the factory chained carries its CRS pair, which is the operation's
         // own; a bare one keeps the CRS the caller gave.
         CoordinateOperation::Conversion(conversion)
@@ -418,35 +426,18 @@ fn export(
     }
 }
 
-/// Whether a candidate's grid and deformation steps are written when its PROJ string is
-/// taken for ordering. PROJ's `isPROJExportable` writes them, so the candidate list of
-/// `createOperations` follows it. The `cs2cs` choice writes them only where it has
-/// always written them, so its pipeline is unchanged.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum GridSteps {
-    /// Grid and deformation steps are written, as `isPROJExportable` takes them.
-    Written,
-    /// Grid and deformation steps are not written: the `cs2cs` choice.
-    Unwritten,
-}
-
+/// `isPROJExportable` of a candidate: its PROJ string, with the grid and deformation steps
+/// written, as `exportToPROJString` writes them.
 fn characteristics(
     operation: &CoordinateOperation,
     db: &DatabaseContext,
     source: &Crs,
     target: &Crs,
-    grids: GridSteps,
     availability: GridAvailabilityUse,
     extents: &SortExtents,
 ) -> Characteristics {
     let name = operation.name().to_owned();
-    let text = match (grids, operation) {
-        (
-            GridSteps::Written,
-            CoordinateOperation::Transformation(_) | CoordinateOperation::Concatenated(_),
-        ) => operation.export_to_proj_string_with_database(db, ProjLines::Single),
-        _ => export(operation, source, target, db),
-    };
+    let text = export(operation, source, target, db);
     let (exportable, proj_step_count, xyz_gridshift) = match text {
         Ok(text) => {
             let xyz = text.contains("+proj=xyzgridshift");
@@ -879,15 +870,8 @@ pub(crate) fn sort_candidates(
     let ranked = operations
         .into_iter()
         .map(|operation| {
-            let characteristics = characteristics(
-                &operation,
-                db,
-                source,
-                target,
-                GridSteps::Written,
-                availability,
-                extents,
-            );
+            let characteristics =
+                characteristics(&operation, db, source, target, availability, extents);
             (operation, characteristics)
         })
         .collect();
