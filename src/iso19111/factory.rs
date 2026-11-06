@@ -6338,6 +6338,20 @@ fn datum_based_intermediate_operations(
     }
     let nad83_csrs =
         source.name().starts_with("NAD83(CSRS)") && target.name().starts_with("NAD83(CSRS)");
+    // `findsOpsInRegistryWithIntermediate` (coordinateoperationfactory.cpp:2073-2298): with no
+    // authority named by the context, the authorities of the pair restrict the intermediate
+    // operations when there are several (`getCandidateAuthorities`, factory.cpp:7819-7839 and
+    // 8397-8408). EPSG to EPSG reads PROJ, EPSG and NKG, not ESRI.
+    let allowed_authorities = if context.authority.is_empty() {
+        let list = candidate_authorities(db, "", source_id.0, target_id.0)?;
+        if list.len() > 1 {
+            list
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
 
     let mut sql = String::new();
     let mut params: Vec<String> = Vec::new();
@@ -6384,7 +6398,11 @@ fn datum_based_intermediate_operations(
         }
         sql.push_str(&condition);
         sql.push_str(") ");
-        if !context.authority.is_empty() && context.authority != "any" {
+        if !allowed_authorities.is_empty() {
+            let marks = vec!["?"; allowed_authorities.len()].join(",");
+            sql.push_str(&format!("AND v.auth_name IN ({marks}) "));
+            params.extend(allowed_authorities.iter().cloned());
+        } else if !context.authority.is_empty() && context.authority != "any" {
             sql.push_str("AND v.auth_name = ? ");
             params.push(context.authority.clone());
         }
