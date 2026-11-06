@@ -470,7 +470,9 @@ fn build_engine(
                     iso,
                 });
             }
-            Err(error) => iso = IsoStatus::Failed(error),
+            // A refusal ends the creation; any other failure keeps the previous path.
+            Err(refusal @ InitError::Grid(_)) => return Err(refusal),
+            Err(InitError::Cause(error)) => iso = IsoStatus::Failed(error),
         }
     }
     let source = &canonical_side(source);
@@ -534,40 +536,60 @@ fn single_engine(
         }
         BestOperation::MissingGrid { message } => {
             if filter.ballpark == Ballpark::Forbidden && only_best == Some(true) {
-                return Err(InitError::Grid(format!(
-                    "{message}\n\ncannot initialize transformation\ncause: File not found or invalid"
-                )));
+                return Err(refused(message));
             }
             Ok(match only_best {
                 None => Engine::Unavailable,
                 Some(_) => Engine::Failing(message),
             })
         }
+        BestOperation::Refused { message } => Err(refused(message)),
     }
 }
 
+/// The `ONLY_BEST` state of the legacy pipeline path for `--only-best`, `--only-best=no`, or
+/// no option (`cs2cs.cpp:981-987`): no option keeps the first operation whose grids are on disk.
+fn only_best_mode(only_best: Option<bool>) -> OnlyBest {
+    match only_best {
+        None => OnlyBest::Unset,
+        Some(true) => OnlyBest::On,
+        Some(false) => OnlyBest::Discard,
+    }
+}
+
+/// The creation failure of a pair PROJ refuses: the `pj_warn_about_missing_grid` text, then the
+/// `cannot initialize transformation` block (`cs2cs.cpp:996-999`).
+fn refused(message: String) -> InitError {
+    InitError::Grid(format!(
+        "{message}\n\ncannot initialize transformation\ncause: File not found or invalid"
+    ))
+}
+
 /// The operation PROJ's `proj_create_crs_to_crs` picks for the pair. An error is
-/// the reason path (1) failed, and the caller keeps its previous path.
-fn select_pipeline(source: &str, target: &str, only_best: Option<bool>) -> Result<Engine, String> {
-    let mode = if only_best == Some(true) {
-        OnlyBest::On
-    } else {
-        OnlyBest::Off
-    };
+/// the reason path (1) failed, and the caller keeps its previous path, unless it is a
+/// refusal (`InitError::Grid`), which ends the creation.
+fn select_pipeline(
+    source: &str,
+    target: &str,
+    only_best: Option<bool>,
+) -> Result<Engine, InitError> {
+    let mode = only_best_mode(only_best);
     let best = proj_rs::iso19111::best_pipeline_with(source, target, mode)
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| InitError::Cause(error.to_string()))?;
     match best {
         BestOperation::Pipeline {
             definition,
             lat_or_northing_first,
         } => {
-            let operation = Operation::create(&definition).map_err(|error| error.to_string())?;
+            let operation = Operation::create(&definition)
+                .map_err(|error| InitError::Cause(error.to_string()))?;
             Ok(Engine::Pipe(CrsPipeline {
                 operation,
                 lat_or_northing_first,
             }))
         }
         BestOperation::MissingGrid { message } => Ok(Engine::Failing(message)),
+        BestOperation::Refused { message } => Err(refused(message)),
     }
 }
 
@@ -580,11 +602,7 @@ fn select_pipeline_filtered(
     only_best: Option<bool>,
     filter: CandidateFilter,
 ) -> Result<Engine, InitError> {
-    let mode = if only_best == Some(true) {
-        OnlyBest::On
-    } else {
-        OnlyBest::Off
-    };
+    let mode = only_best_mode(only_best);
     // PROJ's `proj_create_crs_to_crs` returns NULL with no error text when a filter removes
     // every candidate, and `cs2cs` prints the empty text as `(null)`. Matched on purpose.
     match proj_rs::iso19111::best_pipeline_filtered(source, target, mode, filter)
@@ -611,6 +629,7 @@ fn select_pipeline_filtered(
             )))
         }
         BestOperation::MissingGrid { message } => Ok(Engine::Failing(message)),
+        BestOperation::Refused { message } => Err(refused(message)),
     }
 }
 

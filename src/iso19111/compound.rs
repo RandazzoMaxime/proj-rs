@@ -693,7 +693,12 @@ fn compute_metadata(
     let mut steps = Vec::new();
     for operation in operations {
         match operation {
-            CoordinateOperation::Concatenated(concatenated) => {
+            // PROJ flattens a `ConcatenatedOperation` (`concatenatedoperation.cpp` 686–697), but
+            // `createPROJBased` returns a single operation (`coordinateoperationfactory.cpp`
+            // 2633): a PROJ-based operation keeps its name and is one step.
+            CoordinateOperation::Concatenated(concatenated)
+                if concatenated.proj_based.is_none() =>
+            {
                 steps.extend(concatenated.steps.into_iter().map(|step| step.operation));
             }
             other => steps.push(other),
@@ -1160,16 +1165,10 @@ pub(super) fn vertical_geog_fallback(
         (other, Crs::Vertical(_)) if geographic_of(other).is_some() => (other, target, false),
         _ => return Ok(Vec::new()),
     };
-    // Only for a geographic CRS the registry does not know by identifier, or a vertical CRS in
-    // another unit than the metre: an identified pair keeps the registered operations the caller
-    // reads.
-    let non_metre_vertical = matches!(
-        vertical,
-        Crs::Vertical(vertical_crs) if vertical_crs.coordinate_system().axis().unit().conversion_to_si() != 1.0
-    );
-    if !geog.identifiers().is_empty() && !non_metre_vertical {
-        return Ok(Vec::new());
-    }
+    // PROJ's guards (`createOperationsFromDatabaseWithVertCRS`, coordinateoperationfactory.cpp
+    // 5152–5230) are: the registry gave nothing (the caller checks it), and the anti-recursion flag
+    // of each step is not set. PROJ tests no identifier of the geographic CRS, so an identified one
+    // reaches the same steps.
     let mut res = Vec::new();
     if !context.has_guard(GUARD_VERTICAL_INTERMEDIATE) {
         res = geog_to_vertical_intermediate(factory, geog, vertical, context)?;
@@ -1437,6 +1436,16 @@ fn geog_to_vertical_alternative(
     for row in &rows {
         let operation =
             super::factory::registered_operation(context, &row[0].text(), &row[1].text())?;
+        // The registry search of PROJ (`findOpsInRegistryDirectTo`) drops, under the grid
+        // availability of the context, an operation whose grid is missing.
+        if context.discards_missing_grids()
+            && !operation
+                .grids_needed(context.database(), context.grid_availability)?
+                .iter()
+                .all(|grid| grid.info.available)
+        {
+            continue;
+        }
         let Some(op_source) = operation.source_crs() else {
             continue;
         };

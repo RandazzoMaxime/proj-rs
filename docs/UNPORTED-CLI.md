@@ -17,7 +17,6 @@ A row remains when that case does not match the yaml.
 | `test_cs2cs_various.yaml#124` | cs2cs | expected 1402288.54	5076296.64 0.00 got 1402224.57	5076275.42 0.00 | Test cs2cs (grid missing) with scenario of GH-3607 that we are using the 'NAD27 to WGS 84 (6)' DMA-ConusW transformation |
 | `test_cs2cs_various.yaml#125` | cs2cs | expected 569720.46	4268813.88 0.00 got 569706.33	4268817.68 0.00 | Test cs2cs (grid missing) with scenario of GH-3613 that we are using a WGS 84 intermediate to do NAD27 to NAD83 |
 | `test_cs2cs_various.yaml#126` | cs2cs | stderr text mismatch expected: Attempt to use coordinate operation Inverse of WGS 84 to EGM96 height (1) + ETRS89-ESP [REGENTE] to Alicante height (1) using ETR | Test cs2cs (grid missing) with scenario of https://lists.osgeo.org/pipermail/proj/2023-April/011003.html |
-| `test_cs2cs_various.yaml#128` | cs2cs | exit 0 expected 3  | Test cs2cs (grid missing) --only-best with scenario of https://lists.osgeo.org/pipermail/proj/2023-April/011003.html |
 | `test_cs2cs_various.yaml#129` | cs2cs | expected 49dN	2dE 0.000 got 2dE	49dN 0.000 | Test cs2cs grid missing with @gridname |
 | `test_cs2cs_various.yaml#132` | cs2cs | expected 4003461.37	705832.04 4898267.94 got 4003345.54	705897.83 4898352.56 | Test cs2cs geographic -> geocentric, normally using BETA2007.gsb grid but missing |
 | `test_cs2cs_various.yaml#133` | cs2cs | expected 50d30'N	10dE -0.002 got 50d29'55.695"N	9d59'55.692"E -0.002 | Test cs2cs geocentric -> geographic, normally using BETA2007.gsb grid but missing |
