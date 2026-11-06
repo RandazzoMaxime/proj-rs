@@ -163,6 +163,25 @@ fn cs2cs_epsg_4326_to_crs84_is_longitude_first() {
     assert_eq!(text, "45.000000\t10.000000 0.000000\n");
 }
 
+/// `-s` reverses the output. For the latitude-first EPSG:4979, the second axis (longitude) is
+/// printed first with E/W, then latitude with N/S, as PROJ's `reverseout` branch does
+/// (`cs2cs.cpp:211-237`). Oracle: PROJ 9.9.0 `cs2cs -s EPSG:4326 EPSG:4979`, `45 2 0`.
+#[test]
+fn cs2cs_reversed_output_keeps_the_letters_of_each_axis() {
+    let text = run(
+        env!("CARGO_BIN_EXE_cs2cs"),
+        &["-s", "EPSG:4326", "EPSG:4979"],
+        "45 2 0\n",
+    );
+    assert_eq!(text, "2dE\t45dN 0.000\n");
+    let text = run(
+        env!("CARGO_BIN_EXE_cs2cs"),
+        &["-s", "OGC:CRS84", "EPSG:4326"],
+        "45 2 0\n",
+    );
+    assert_eq!(text, "45dE\t2dN 0.000\n");
+}
+
 /// A compound target is neither geographic nor projected for `cs2cs` (`cs2cs.cpp:274-313`): its
 /// numbers are printed as `%.2f`, latitude first as the horizontal part of EPSG:4326+5782 writes
 /// it, not as DMS. Oracle: PROJ 9.9.0 `cs2cs EPSG:4326+5773 EPSG:4326+5782`, `39 -3 0`.
