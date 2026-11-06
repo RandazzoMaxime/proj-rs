@@ -113,7 +113,9 @@ impl CandidateFilter {
     /// Whether a candidate passes the filter. PROJ drops an operation of unknown accuracy
     /// when an accuracy is requested.
     fn keeps(&self, operation: &CoordinateOperation) -> bool {
-        if let Some(limit) = self.accuracy {
+        // PROJ applies the accuracy test only when the requested value is not 0
+        // (`coordinateoperationfactory.cpp`, `desiredAccuracy != 0`).
+        if let Some(limit) = self.accuracy.filter(|limit| *limit != 0.0) {
             let accuracy = super::compound::get_accuracy(operation);
             if accuracy < 0.0 || accuracy > limit {
                 return false;
