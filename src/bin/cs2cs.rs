@@ -82,13 +82,23 @@ fn main() -> ExitCode {
     };
     let engine = match build_engine(&source, &target, area, opts.only_best, filter) {
         Ok(engine) => engine,
-        Err(error) => {
+        Err(InitError::Cause(error)) => {
             report(
                 &prog,
                 3,
                 &format!("cannot initialize transformation\ncause: {error}"),
                 None,
             );
+            return ExitCode::from(3);
+        }
+        Err(InitError::Grid(text)) => {
+            if std::env::var("PROJ_DISPLAY_PROGRAM_NAME").ok().as_deref() == Some("NO") {
+                // PROJ writes this block with no blank line before it, unlike `report`.
+                eprintln!("{text}");
+                eprintln!("program abnormally terminated");
+            } else {
+                report(&prog, 3, &text, None);
+            }
             return ExitCode::from(3);
         }
     };
@@ -322,13 +332,21 @@ impl Engine {
     }
 }
 
+/// Why the transformation could not be created.
+enum InitError {
+    /// PROJ's `proj_errno` text, printed after `cannot initialize transformation`.
+    Cause(String),
+    /// The whole stderr block of a missing grid that fails the creation.
+    Grid(String),
+}
+
 fn build_engine(
     source: &str,
     target: &str,
     area: Option<Area>,
     only_best: Option<bool>,
     filter: CandidateFilter,
-) -> Result<Engine, String> {
+) -> Result<Engine, InitError> {
     if area.is_none() && !projish(source) && !projish(target) {
         if filter != CandidateFilter::NONE {
             return select_pipeline_filtered(source, target, only_best, filter);
@@ -342,7 +360,8 @@ fn build_engine(
     if projish(source) && projish(target) {
         return SidePair::open(source, target)
             .map(Box::new)
-            .map(Engine::Pair);
+            .map(Engine::Pair)
+            .map_err(InitError::Cause);
     }
     if epsg_token(source) && epsg_token(target) {
         if let Ok(pipe) = CrsPipeline::create(source, target) {
@@ -352,7 +371,7 @@ fn build_engine(
     Proj::new_known_crs(source, target, area)
         .map(Box::new)
         .map(Engine::Facade)
-        .map_err(|error| error.to_string())
+        .map_err(|error| InitError::Cause(error.to_string()))
 }
 
 /// The operation PROJ's `proj_create_crs_to_crs` picks for the pair, or `None`
@@ -386,7 +405,7 @@ fn select_pipeline_filtered(
     target: &str,
     only_best: Option<bool>,
     filter: CandidateFilter,
-) -> Result<Engine, String> {
+) -> Result<Engine, InitError> {
     let mode = if only_best == Some(true) {
         OnlyBest::On
     } else {
@@ -395,17 +414,27 @@ fn select_pipeline_filtered(
     // PROJ's `proj_create_crs_to_crs` returns NULL with no error text when a filter removes
     // every candidate, and `cs2cs` prints the empty text as `(null)`. Matched on purpose.
     match proj_rs::iso19111::best_pipeline_filtered(source, target, mode, filter)
-        .map_err(|_| "(null)".to_owned())?
+        .map_err(|_| InitError::Cause("(null)".to_owned()))?
     {
         BestOperation::Pipeline {
             definition,
             lat_or_northing_first,
         } => {
-            let operation = Operation::create(&definition).map_err(|error| error.to_string())?;
+            let operation = Operation::create(&definition)
+                .map_err(|error| InitError::Cause(error.to_string()))?;
             Ok(Engine::Pipe(CrsPipeline {
                 operation,
                 lat_or_northing_first,
             }))
+        }
+        // ONLY_BEST=YES with ALLOW_BALLPARK=NO leaves no ballpark fallback: PROJ fails the
+        // creation on the missing grid, where ballpark allowed fails each point.
+        BestOperation::MissingGrid { message }
+            if filter.ballpark == Ballpark::Forbidden && only_best == Some(true) =>
+        {
+            Err(InitError::Grid(format!(
+                "{message}\n\ncannot initialize transformation\ncause: File not found or invalid"
+            )))
         }
         BestOperation::MissingGrid { message } => Ok(Engine::Failing(message)),
     }
