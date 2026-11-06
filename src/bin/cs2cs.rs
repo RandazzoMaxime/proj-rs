@@ -278,13 +278,15 @@ fn render_point(job: &Job<'_>, drawn: Drawn, echo_prefix: &str, tail: &str) -> S
         Drawn::Value(x, y, z) => {
             match job.style.xy {
                 XyStyle::Dms { fract, form } => {
+                    // cs2cs.cpp:211-237. Each value keeps the letters of its own axis, wherever it
+                    // is printed. With `-s` the second axis comes first, so a latitude-first CRS
+                    // prints longitude (E/W) first and latitude (N/S) second.
                     let (left, right, left_pos, left_neg, right_pos, right_neg) =
-                        if job.lat_first && !job.reverse_out {
-                            (x, y, 'N', 'S', 'E', 'W')
-                        } else if job.reverse_out {
-                            (y, x, 'N', 'S', 'E', 'W')
-                        } else {
-                            (x, y, 'E', 'W', 'N', 'S')
+                        match (job.lat_first, job.reverse_out) {
+                            (true, false) => (x, y, 'N', 'S', 'E', 'W'),
+                            (true, true) => (y, x, 'E', 'W', 'N', 'S'),
+                            (false, true) => (y, x, 'N', 'S', 'E', 'W'),
+                            (false, false) => (x, y, 'E', 'W', 'N', 'S'),
                         };
                     out.push_str(&rtodms(left, left_pos, left_neg, fract, form));
                     out.push('\t');
