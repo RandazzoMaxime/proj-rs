@@ -17,6 +17,10 @@ local, pointer `PROJ_RS_LIBPROJ_DIR` vers la lib de PROJ 9.9.0 (`build.rs`).
 La CI définit aussi `PROJ_CS2CS_REQUIRED=1` et
 `PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY=YES`.
 
+Sans PROJ installé (session cloud), `tools/build-reference.sh` compile
+`cs2cs` et `projinfo` 9.9.0 depuis les sources du tag (2 min environ) pour
+comparer n'importe quelle paire au vrai PROJ, pas seulement les cas des yaml.
+
 ## Règles de travail
 
 - Personne ne pousse sur `main`. Chaque changement passe par une branche et une PR.
