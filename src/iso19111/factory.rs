@@ -6956,7 +6956,9 @@ fn crs_qualifier(crs: &Crs) -> &'static str {
 }
 
 /// The geographic/geocentric conversion, EPSG:9602, as a transformation that keeps both CRS,
-/// so the PROJ string export can read the ellipsoid of each side.
+/// so the PROJ string export can read the ellipsoid of each side. Its domain is the world, as
+/// `getExtent` gives any `Conversion` (`oputils.cpp`), not the extent of the geographic CRS: a
+/// concatenated operation through it takes the area of its other steps.
 fn geographic_geocentric(geographic: &Crs, geocentric: &Crs) -> Option<Transformation> {
     let name = operation_crs_name("Conversion", geographic, geocentric);
     let mut conversion = Transformation::create_from_code(
@@ -6965,7 +6967,7 @@ fn geographic_geocentric(geographic: &Crs, geocentric: &Crs) -> Option<Transform
         geocentric.clone(),
         9602,
         Vec::new(),
-        crs_extent(geographic).unwrap_or_else(world_extent),
+        world_extent(),
     )
     .ok()?;
     conversion.accuracy = Some(0.0);
@@ -6974,7 +6976,8 @@ fn geographic_geocentric(geographic: &Crs, geocentric: &Crs) -> Option<Transform
 
 /// A concatenated operation of the pivot legs, with the largest step accuracy as the oracle
 /// gives it: two 0.1 m legs make 0.1 m (EPSG:11108 to EPSG:11128 through ETRF2000). A step with
-/// no accuracy leaves it unknown.
+/// no accuracy leaves it unknown. Its domain is the intersection of the steps' extents, as
+/// `ConcatenatedOperation::createComputeMetadata` gives it (`joint_extent`).
 pub(super) fn pivot_concatenation(steps: Vec<CoordinateOperation>) -> ConcatenatedOperation {
     let name = steps
         .iter()
@@ -6990,8 +6993,13 @@ pub(super) fn pivot_concatenation(steps: Vec<CoordinateOperation>) -> Concatenat
         .try_fold(0.0_f64, |worst, accuracy| {
             accuracy.map(|value| worst.max(value))
         });
+    let mut identified = Identified::named(name);
+    identified.domains = super::derived::joint_extent(&steps)
+        .flatten()
+        .into_iter()
+        .collect();
     ConcatenatedOperation {
-        identified: Identified::named(name),
+        identified,
         steps: steps
             .into_iter()
             .map(|operation| ConcatenatedStep {
