@@ -425,10 +425,20 @@ fn open_vertical(name: &str) -> Result<GridSet, Fail> {
     if geotiff::is_tiff(&bytes) {
         return GridSet::from_tiff_vertical(&bytes);
     }
-    if gtx_name(name) {
+    // `VerticalShiftGridSet::open` (`grids.cpp`, 1631) tests the file it opened, so a
+    // `grid_alternatives` fallback such as `us_nga_egm96_15.tif` -> `egm96_15.gtx` is GTX.
+    if gtx_name(&opened_name(name)) {
         return GridSet::from_gtx(&bytes);
     }
     Err(Fail::Invalid)
+}
+
+/// The file `name` resolves to, or `name` itself when none is found.
+fn opened_name(name: &str) -> String {
+    crate::gridpath::resolve(name).map_or_else(
+        || name.to_owned(),
+        |path| path.to_string_lossy().into_owned(),
+    )
 }
 
 fn gtx_name(name: &str) -> bool {
@@ -2096,5 +2106,31 @@ impl Step for XyzShift {
 
     fn distance_ellipsoid(&self) -> (f64, f64) {
         (self.a, self.es)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::engine::{Coord, Operation};
+
+    /// `us_nga_egm96_15.tif` is not on disk, so it opens `egm96_15.gtx` (`grid_alternatives`),
+    /// a GTX file. The GTX reader is chosen from the opened file name (`grids.cpp:1631`).
+    /// At 49N 2E the EGM96 undulation is 45.064 m, the value of cs2cs case
+    /// `test_cs2cs_various.yaml#111`.
+    #[test]
+    fn vertical_grid_by_proj_name_is_read_from_its_gtx_fallback() {
+        crate::gridpath::use_fixture_search_path();
+        let operation =
+            Operation::create("+proj=vgridshift +grids=us_nga_egm96_15.tif +multiplier=1")
+                .expect("the GTX fallback opens");
+        let geoid = operation
+            .forward(Coord {
+                x: 2.0_f64.to_radians(),
+                y: 49.0_f64.to_radians(),
+                z: 0.0,
+                t: 0.0,
+            })
+            .expect("inside the grid");
+        assert!((geoid.z - 45.064).abs() < 1e-3, "{}", geoid.z);
     }
 }

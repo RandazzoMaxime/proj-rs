@@ -12,8 +12,8 @@
 //! [`Transformation::export_to_proj_string`] and
 //! [`ConcatenatedOperation::export_to_proj_string`], matching PROJ
 //! `exportToPROJString`, and by
-//! [`CoordinateOperation::export_to_proj_string_with_database`]. The `cs2cs`
-//! path uses `export_to_proj_string_with` without grid steps.
+//! [`CoordinateOperation::export_to_proj_string_with_database`], which the `cs2cs`
+//! choice uses too, as PROJ's `isPROJExportable` and `proj_create_crs_to_crs` do.
 //! Any other method is `Unimplemented`, the error PROJ raises for a method its
 //! exporter lacks.
 //!
@@ -127,18 +127,6 @@ impl Transformation {
         Ok(formatter.finish(lines))
     }
 
-    /// As [`Self::export_to_proj_string`], each grid written under the PROJ name
-    /// `grid_names` gives it. Grid steps stay off: this is the `cs2cs` path.
-    pub(crate) fn export_to_proj_string_with(
-        &self,
-        lines: ProjLines,
-        grid_names: Vec<(String, String, bool)>,
-    ) -> Result<String, FactoryError> {
-        let mut formatter = PipelineFormatter::with_grid_names(grid_names);
-        self.export_steps(&mut formatter)?;
-        Ok(formatter.finish(lines))
-    }
-
     /// `_exportToPROJString`: an inverted operation is its forward operation
     /// written between `startInversion` and `stopInversion`, with the CRS the
     /// forward operation runs from and to.
@@ -199,18 +187,6 @@ impl ConcatenatedOperation {
     /// pair, or a transformation method this crate does not write.
     pub fn export_to_proj_string(&self, lines: ProjLines) -> Result<String, FactoryError> {
         let mut formatter = PipelineFormatter::with_grid_names(Vec::new()).with_grid_steps();
-        self.export_steps(&mut formatter)?;
-        Ok(formatter.finish(lines))
-    }
-
-    /// As [`Self::export_to_proj_string`], each grid written under the PROJ name
-    /// `grid_names` gives it. Grid steps stay off: this is the `cs2cs` path.
-    pub(crate) fn export_to_proj_string_with(
-        &self,
-        lines: ProjLines,
-        grid_names: Vec<(String, String, bool)>,
-    ) -> Result<String, FactoryError> {
-        let mut formatter = PipelineFormatter::with_grid_names(grid_names);
         self.export_steps(&mut formatter)?;
         Ok(formatter.finish(lines))
     }
