@@ -295,8 +295,10 @@ against the PROJ 9.9.0 binaries from conda-forge.
 Grids are not stored in git, with two exceptions. [`data/tests/`](data/tests)
 holds the test grids of PROJ 9.9.0 (`data/tests` in the PROJ source tree, which
 PROJ copies into its test directory), and that is all the offline suite needs.
-Other grids are looked up in `data/grids/` (git-ignored), then
-`tests/gie/tests/`, `data/tests/` and `tests/gie/`.
+Grids are looked up the way PROJ looks them up: the user-writable directory,
+then `PROJ_DATA` (or `PROJ_LIB`), which replaces the default `data/grids/`
+(git-ignored). The test suites set `PROJ_DATA` to `data/` and `data/tests/`
+themselves, so a grid is not found by accident.
 
 Downloading is **off by default**. Set `PROJ_NETWORK=ON` to fetch a missing grid
 from `https://cdn.proj.org`, the way PROJ does. Fetched grids are cached in the

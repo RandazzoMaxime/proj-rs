@@ -6,6 +6,7 @@
 //! file is fetched only when [`decide_download`] says so.
 
 use std::cell::RefCell;
+use std::ffi::{OsStr, OsString};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
@@ -83,6 +84,51 @@ pub(crate) fn proj_grid_filename(name: &str) -> Option<String> {
 
 pub(crate) fn search_paths() -> Vec<PathBuf> {
     context().search_paths
+}
+
+/// The data directories, read from the environment on each lookup as PROJ does.
+///
+/// `PROJ_DATA`, else the legacy `PROJ_LIB`, replaces the default data
+/// directory, which is PROJ's compile-time share directory
+/// (`pj_get_default_searchpaths`). An empty value counts as unset.
+pub(crate) fn data_directories() -> Vec<PathBuf> {
+    match proj_data_env() {
+        Some(value) => split_directories(&value),
+        None => vec![default_data_directory()],
+    }
+}
+
+fn proj_data_env() -> Option<OsString> {
+    data_path_value(std::env::var_os("PROJ_DATA"), std::env::var_os("PROJ_LIB"))
+}
+
+/// `PROJ_DATA` if it is set, else `PROJ_LIB`, when the value is not empty.
+/// An empty `PROJ_DATA` hides `PROJ_LIB`, as in `getProjDataEnvVar`.
+fn data_path_value(proj_data: Option<OsString>, proj_lib: Option<OsString>) -> Option<OsString> {
+    proj_data.or(proj_lib).filter(|value| !value.is_empty())
+}
+
+/// The default data directory: `data/grids`, which holds the grids a user
+/// places in the tree (git-ignored).
+fn default_data_directory() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("data")
+        .join("grids")
+}
+
+/// Split a search path the way PROJ does: `:` on Unix, `;` on Windows. `;` and
+/// `|` are accepted everywhere. Empty entries are dropped.
+fn split_directories(value: &OsStr) -> Vec<PathBuf> {
+    let text = value.to_string_lossy();
+    let separators: &[char] = if cfg!(windows) {
+        &[';', '|']
+    } else {
+        &[':', ';', '|']
+    };
+    text.split(separators)
+        .filter(|directory| !directory.is_empty())
+        .map(PathBuf::from)
+        .collect()
 }
 
 pub(crate) fn cache_dir_if_enabled() -> Option<PathBuf> {
@@ -505,12 +551,9 @@ fn default_user_dir() -> PathBuf {
 }
 
 fn read_proj_ini() -> Option<String> {
-    let mut dirs = Vec::new();
-    for key in ["PROJ_DATA", "PROJ_LIB"] {
-        if let Some(value) = std::env::var_os(key) {
-            push_split(&mut dirs, &value);
-        }
-    }
+    let mut dirs = proj_data_env()
+        .map(|value| split_directories(&value))
+        .unwrap_or_default();
     dirs.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("data"));
     for dir in dirs {
         let path = dir.join("proj.ini");
@@ -521,15 +564,6 @@ fn read_proj_ini() -> Option<String> {
         }
     }
     None
-}
-
-fn push_split(dirs: &mut Vec<PathBuf>, value: &std::ffi::OsStr) {
-    let text = value.to_string_lossy();
-    for directory in text.split([';', '|']) {
-        if !directory.is_empty() {
-            dirs.push(PathBuf::from(directory));
-        }
-    }
 }
 
 struct IniSkip {
@@ -569,7 +603,31 @@ fn nonempty_env(key: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{decide_download, remote_url_in, with_context, GridContext};
+    use super::{
+        data_path_value, decide_download, remote_url_in, split_directories, with_context,
+        GridContext,
+    };
+    use std::ffi::OsString;
+    use std::path::PathBuf;
+
+    #[test]
+    fn proj_data_replaces_proj_lib_and_empty_hides_it() {
+        let data = || Some(OsString::from("/data"));
+        let lib = || Some(OsString::from("/lib"));
+        assert_eq!(data_path_value(data(), lib()), data());
+        assert_eq!(data_path_value(None, lib()), lib());
+        assert_eq!(data_path_value(Some(OsString::new()), lib()), None);
+        assert_eq!(data_path_value(None, None), None);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn search_path_is_split_on_colon_and_drops_empty_entries() {
+        assert_eq!(
+            split_directories(&OsString::from("a:b;c|::d:")),
+            ["a", "b", "c", "d"].map(PathBuf::from).to_vec()
+        );
+    }
 
     #[test]
     fn decide_download_requires_the_network() {
@@ -587,6 +645,7 @@ mod tests {
 
     #[test]
     fn alaska_short_name_is_resolved_before_the_cdn() {
+        crate::gridpath::use_fixture_search_path();
         let mut ctx = GridContext::load();
         ctx.enabled = true;
         ctx.endpoint = "http://127.0.0.1:9".to_owned();

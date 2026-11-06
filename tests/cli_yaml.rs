@@ -8,6 +8,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+mod common;
+
 use serde_yaml::Value;
 
 const FILES: &[&str] = &[
@@ -425,6 +427,8 @@ fn run_in(case: &Case, bin: &str, scratch: &Path) -> Result<(), String> {
         .args(&args)
         .current_dir(scratch)
         .env("PROJ_NETWORK", "OFF")
+        .env("PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY", "YES")
+        .env("PROJ_DATA", common::fixture_search_path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

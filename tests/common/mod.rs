@@ -73,3 +73,24 @@ pub(crate) fn gie_files() -> Vec<(String, usize, usize)> {
         })
         .collect()
 }
+
+/// The data search path of PROJ's test runs (`proj_test_set_properties` in
+/// `cmake/ProjTest.cmake`): the vendored data directory, then its `tests`
+/// fixtures. `PROJ_DATA` takes this value, as it does in PROJ's ctest runs.
+pub(crate) fn fixture_search_path() -> String {
+    let data = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("data");
+    let separator = if cfg!(windows) { ";" } else { ":" };
+    format!(
+        "{}{separator}{}",
+        data.display(),
+        data.join("tests").display()
+    )
+}
+
+/// Put the fixtures on `PROJ_DATA` for this process, with no user-writable
+/// directory. The library reads `PROJ_DATA` on each lookup, so the call may
+/// come after another test has already resolved a grid.
+pub(crate) fn use_fixture_search_path() {
+    std::env::set_var("PROJ_DATA", fixture_search_path());
+    std::env::set_var("PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY", "YES");
+}
