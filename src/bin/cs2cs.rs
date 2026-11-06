@@ -18,8 +18,8 @@ use std::io::{self, BufRead, BufReader, Write};
 use std::process::ExitCode;
 
 use proj_rs::iso19111::{
-    AlternativeError, Alternatives, Ballpark, BestOperation, BestPolicy, CandidateFilter, OnlyBest,
-    Selection,
+    only_best_default, AlternativeError, Alternatives, Ballpark, BestOperation, BestPolicy,
+    CandidateFilter, OnlyBest, Selection,
 };
 use proj_rs::{Area, CrsPipeline, Operation, Proj, Xyzt};
 use rusqlite::Connection;
@@ -37,7 +37,7 @@ fn main() -> ExitCode {
         eprintln!("{}", usage(&prog));
         return ExitCode::SUCCESS;
     }
-    let opts = match parse(&args) {
+    let mut opts = match parse(&args) {
         Ok(opts) => opts,
         Err(error) => {
             if error.plain {
@@ -48,6 +48,9 @@ fn main() -> ExitCode {
             return exit_code(error.code);
         }
     };
+    // The command line wins over the environment and `proj.ini`, as `ONLY_BEST` wins over
+    // `ctx->errorIfBestTransformationNotAvailableDefault` in `proj_create_crs_to_crs`.
+    opts.only_best = opts.only_best.or_else(default_only_best);
     if opts.list {
         eprintln!("cs2cs: listing is not built in proj-rs");
         return ExitCode::SUCCESS;
@@ -544,6 +547,16 @@ fn single_engine(
             })
         }
         BestOperation::Refused { message } => Err(refused(message)),
+    }
+}
+
+/// The `--only-best` value that `PROJ_ONLY_BEST_DEFAULT` or `proj.ini` gives when the command
+/// line has none: YES is `Some(true)`, NO is `Some(false)`, and no setting is `None`.
+fn default_only_best() -> Option<bool> {
+    match only_best_default() {
+        OnlyBest::On => Some(true),
+        OnlyBest::Discard => Some(false),
+        OnlyBest::Off | OnlyBest::Unset => None,
     }
 }
 
