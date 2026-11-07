@@ -5,11 +5,11 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 37 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `core` | 28 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
 | `niche` | 14 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 41 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (37)
+## core (28)
 
 ### test_c_api.cpp (8)
 
@@ -39,7 +39,7 @@ The class comes from the test name alone, so check it when you port a test.
 
 - `operation.normalizeForVisualization`
 
-### test_operationfactory.cpp (24)
+### test_operationfactory.cpp (15)
 
 - `operation.geog3DCRS_to_geog2DCRS_plus_vertCRS_context`
 - `operation.geogCRS_to_geogCRS_init_IGNF_to_init_IGNF_context`
@@ -50,19 +50,10 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.compoundCRS_with_boundGeogCRS_and_geoid_to_geodCRS_NAD2011_ctxt`
 - `operation.compoundCRS_to_compoundCRS_with_vertical_transform`
 - `operation.compoundCRS_to_compoundCRS_context`
-- `operation.compoundCRS_to_compoundCRS_OSGB36_BNG_ODN_height_to_WGS84_EGM96`
 - `operation.compoundCRS_to_compoundCRS_concatenated_operation_with_two_vert_transformation`
-- `operation.compoundCRS_to_compoundCRS_concatenated_operation_with_two_vert_transformation_and_different_source_dest_interp`
 - `operation.compoundCRS_to_compoundCRS_issue_3152_ch1903lv03_ln02_bound`
-- `operation.compoundCRS_to_compoundCRS_using_intermediate_of_horizontal_transform`
 - `operation.compoundCRS_to_geogCRS_3D_context`
-- `operation.compoundCRS_to_geogCRS_2D_promote_to_3D_context`
 - `operation.compoundCRS_of_projCRS_to_geogCRS_3D_context`
-- `operation.compoundCRS_ftUS_to_geogCRS_ft`
-- `operation.compoundCRS_to_geogCRS_with_vertical_unit_change_and_complex_horizontal_change`
-- `operation.compoundCRS_of_vertCRS_with_geoid_model_to_geogCRS`
-- `operation.compoundCRS_to_geogCRS_3D_Amersfoort_NAP_height_to_Amersfoort`
-- `operation.compoundCRS_to_geogCRS_3D_using_intermediate_of_horizontal_transform`
 - `operation.compoundCRS_to_proj_string_with_non_metre_height`
 - `operation.compoundCRS_to_PROJJSON_with_non_metre_height`
 
