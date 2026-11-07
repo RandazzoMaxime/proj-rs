@@ -163,6 +163,29 @@ pub(crate) fn same_geodetic_datum(left: &Crs, right: &Crs) -> bool {
     frame_equivalent(&left, &right)
 }
 
+/// `isSameGeodeticDatum` with the database (coordinateoperationfactory.cpp:2056-2066): the
+/// datums of two geodetic CRS are equivalent under the `EQUIVALENT` criterion, where a datum
+/// name may be an alias of the official name of the datum identifier, or of the other datum's.
+/// The names are compared as `IdentifiedObject::_isEquivalentTo` does, then the prime meridian and
+/// the ellipsoid (`GeodeticReferenceFrame::isEquivalentToNoExactTypeCheck`, datum.cpp:1572).
+pub(crate) fn same_geodetic_datum_with_database(
+    left: &Crs,
+    right: &Crs,
+    db: &super::factory::DatabaseContext,
+) -> bool {
+    let (Some(left), Some(right)) = (geodetic_frame(left), geodetic_frame(right)) else {
+        return false;
+    };
+    if (left.identified.name == "unknown") != (right.identified.name == "unknown") {
+        return false;
+    }
+    let names = equivalent_name(left.name(), right.name())
+        || frame_names_equivalent_by_db(&left, &right, db);
+    names
+        && ellipsoid_equivalent_tolerant(left.ellipsoid(), right.ellipsoid())
+        && meridian_equivalent(left.prime_meridian(), right.prime_meridian())
+}
+
 fn frame_of(
     datum: Option<&GeodeticReferenceFrame>,
     ensemble: Option<&DatumEnsemble>,

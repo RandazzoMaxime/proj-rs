@@ -58,7 +58,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.vertCRS_to_geogCRS_context`
 - `operation.geog3DCRS_to_geog2DCRS_plus_vertCRS_context`
 - `operation.geogCRS_to_geogCRS_init_IGNF_to_init_IGNF_context`
-- `operation.geogCRS_3D_source_datum_name_is_alias_to_geogCRS`
 - `operation.boundCRS_to_geogCRS_hubCRS_and_targetCRS_same_but_baseCRS_not`
 - `operation.boundCRS_to_derived_geog_with_transformation_with_source_crs_being_base_crs_of_source_crs`
 - `operation.ETRS89_3D_to_proj_string_with_geoidgrids_nadgrids`
