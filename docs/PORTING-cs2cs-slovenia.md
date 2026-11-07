@@ -1,14 +1,16 @@
 # Port — `test_cs2cs_various.yaml#139` (EPSG:3912+EPSG:5779 to EPSG:3794+EPSG:8690, `-d 3`)
 
-Status: **#139 stays open.** This lot lands two rules and closes two CLI rows:
+Status: **#139 is closed** (its yaml point gives `476763.303 95620.222 5.000`). The lot lands five rules,
+one commit each, and closes `test_cs2cs_various.yaml#139` and `test_projinfo.yaml#37`, `#68`.
 
 1. `projinfo --grid-check` sets the grid policy (`test_projinfo.yaml#37`, `#68` close).
-2. A derived source keeps its registry candidates and appends the chained ones (`EPSG:3912 ->
-   EPSG:3794` and `EPSG:23031 -> EPSG:25831` now list PROJ's candidates by name and order).
+2. A derived source keeps its registry candidates and appends the chained ones.
+3. Compound to compound: the horizontal registry operations with a ballpark vertical change.
+4. The ballpark vertical sort key uses PROJ's lower-case text.
+5. `cs2cs` selection for a compound pair: the lon-lat base and the 2D demotion of a compound CRS, the
+   rerun of a single non-instantiable candidate under the default policy, and the ONLY_BEST refusal.
 
-The yaml point still gives `477131.509 95651.636` (PROJ `476763.303 95620.222`). The cause is in
-the selection of `cs2cs`, and the horizontal candidates that PROJ builds for the compound pair are not
-ported yet (see "Compound pair").
+Open cs2cs rows after the lot: `#96` (`--authority`, a no-op) and `#126` (the PROJ_DEBUG message text).
 
 ## Rule 1: `projinfo --grid-check`
 
@@ -71,9 +73,9 @@ A pair is SAME when the list of names, in order, is identical.
 | Label | Build | Identical to PROJ (of 44) |
 |---|---|---|
 | `origin/main` (`d8dbb42`) | before the lot | 32 |
-| this lot (rules 1 and 2) | | 35 |
+| this lot (all rules) | | 36 |
 
-Pairs changed by rule 2 (all three now SAME):
+Pairs changed by rule 2 (all three now SAME), and the compound pair by rules 3 and 4 (SAME, 26 names by default):
 
 | Pair | before (PROJ) | after (PROJ) |
 |---|---|---|
@@ -98,7 +100,6 @@ Still different from PROJ (default list; counts PROJ / port):
 
 | Pair | PROJ | port | Cause |
 |---|---|---|---|
-| `EPSG:3912+EPSG:5779 -> EPSG:3794+EPSG:8690` | 26 | 26 | the horizontal legs (compound, below); names and order differ |
 | `EPSG:2393 -> EPSG:4258`, `EPSG:4258 -> EPSG:2393` | 3 | 3 | names differ; the same family as #58 (`removeUninterestingOps`, extents), not traced further |
 | `EPSG:3416 -> EPSG:4258` | 2 | 1 | not traced |
 | `EPSG:4284 -> EPSG:4258` | 9 | 6 | see `PORTING-pivot-candidate-set.md` |
@@ -115,48 +116,62 @@ compound pair (the extent of a concatenation is the intersection of the steps' e
 
 ## Compound pair `#139`
 
-Oracle, PROJ 9.9.0, `EPSG:3912+EPSG:5779 -> EPSG:3794+EPSG:8690`:
+Oracle, PROJ 9.9.0, `EPSG:3912+EPSG:5779 -> EPSG:3794+EPSG:8690`: 26 candidates by default and 37 under
+DISCARD (`--grid-check discard_missing`). The port now lists the same names in the same order in both
+modes (`tests/slovenia_candidates.rs`, the 37 names of DISCARD).
 
-| Mode | Count | Content |
-|---|---|---|
-| default | 26 | 12 grid-missing `Inverse of Slovene National Grid + MGI 1901 to ETRS89-SVN [D96] (n) + SVS2000 height to SVS2010 height (1) + Slovene National Grid`, one `Ballpark geographic offset` leg with the same vertical, and 13 ballpark-vertical legs |
-| DISCARD (`--grid-check discard_missing`) | 37 | the 13 ballpark-vertical legs above, and 24 `D48/GK to D96/TM (n) + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation)` |
+Rule 3 (`createHorizNullVerticalPROJBased`, `coordinateoperationfactory.cpp:2884-2914`, called from
+7769-7799): the 24 registry operations of `EPSG:3912 -> EPSG:3794` (`createOperationsFromDatabase`,
+direct only, `7790-7794`) each chained with the ballpark vertical change. `ProjBasedKind::HorizNullVertical`
+exports the horizontal operation alone.
 
-The port gives 26 by default and 13 under DISCARD (the lot's measurement with the library). The
-missing 24 are the horizontal registry legs combined with the ballpark vertical. In PROJ that is
-`createOperationsCompoundToCompound` (`coordinateoperationfactory.cpp:7214-7847`) with different
-horizontal parts. `compound.rs` does not port it (its doc: "Geographic parts that differ ... are not
-ported. The result is empty"). This is the candidate rule that remains for `#139`.
+Rule 4: `BALLPARK_VERTICAL_TRANSFORMATION` is `"ballpark vertical transformation"` (`oputils.cpp:65-66`).
+The port's constant had capitals, so the `SortFunction` key `hasBallparkVertical_` (948-955) was never set.
 
-## The yaml point
+## The yaml point, and rule 5
 
-`cs2cs -d 3 EPSG:3912+EPSG:5779 EPSG:3794+EPSG:8690` at `477134.28 95134.21 5`:
-PROJ `476763.303 95620.222 5.000`. `EPSG:3912 -> EPSG:3794` in 2D gives the same
-`476763.303 95620.222` (`tests/cli_yaml/test_cs2cs_various.yaml`, the case just before). The port
-`477131.509 95651.636`, the zero-offset `Ballpark geographic offset from MGI 1901 to ETRS89-SVN [D96]` leg.
+`cs2cs -d 3 EPSG:3912+EPSG:5779 EPSG:3794+EPSG:8690` at `477134.28 95134.21 5`: PROJ and the port give
+`476763.303 95620.222 5.000`.
 
-The choice is made by `cs2cs` at run time, not by `projinfo`:
-- `src/crs_to_crs.cpp:668-790`: the first list is kept only when no instantiable non-ballpark
-  candidate exists; the rerun with `DISCARD_OPERATION_IF_MISSING_GRID` keeps the first list's
-  non-ballpark legs and appends the rerun list (the port: `select_alternatives`, rerun branch).
-- `src/trans.cpp:47-176` `pj_get_suggested_operation`, `233-346` `proj_trans` retries (the port:
-  `Alternatives::suggest`, `Alternatives::forward`).
+Why the port's `cs2cs` used to differ. For a compound CRS, `select_alternatives` returned an error
+(`reference_base` has no lon-lat base for a compound), so `cs2cs` fell back to the previous path, which
+took the zero-offset `Ballpark geographic offset from MGI 1901 to ETRS89-SVN [D96]` leg. Rule 5 ports
+the three PROJ steps that were missing (`crs_to_crs.cpp`):
 
-Not yet done: attributing the expected value to one leg. The pipelines written by hand (the zero-offset
-leg and the MGI helmert leg) failed in `cct` ("Point outside of projection domain"), so the leg is not
-identified.
+- `proj_crs_get_geodetic_crs` of a compound: the geodetic CRS of its first component that has one
+  (`crs_to_crs.cpp:189`, `select.rs` `lon_lat_base`).
+- `proj_crs_demote_to_2D` of a compound: its horizontal part (`crs_to_crs.cpp:243`, `geodetic_to_crs`).
+- A single candidate is returned before preparation only when it is instantiable, or when the policy is
+  not the default one (`crs_to_crs.cpp:617-647`, `mayNeedToReRunWithDiscardMissing`). Otherwise the
+  alternatives are prepared, and the DISCARD rerun gives the ballpark leg (`test_cs2cs_various.yaml#126`).
+- With ONLY_BEST=YES a single candidate whose grids are missing ends the creation, whatever the ballpark
+  option (`crs_to_crs.cpp:644-647`; `src/bin/cs2cs.rs` `single_engine`). `test_cs2cs_various.yaml#128` keeps passing.
+
+The PROJ debug log of the oracle (`PROJ_DEBUG=3`) gives
+`Using coordinate operation D48/GK to D96/TM (10) + Transformation from SVS2000 height to SVS2010 height
+(ballpark vertical transformation)`: the candidate chosen is a horizontal registry leg (rule 3), not the
+zero-offset leg. The port now chooses the same one.
+
+Deviation (rule 5): the compound lon-lat base is used for compound to compound pairs only. A compound on
+one side alone (`EPSG:4326+3855 -> EPSG:4979`, `test_cs2cs_various.yaml#118-121`) keeps the previous path:
+with the base, PROJ's candidate order gives `Inverse of WGS 84 to EGM2008 height (1)` first, the port's
+`--only-best` choice is `(2)` (accuracy 0.11 against 0.113), and PROJ's choice is not reproduced by
+the accuracy order. Not traced; the cases stay as they were.
 
 ## Tests
 
-`tests/slovenia_candidates.rs` (3 tests, names from `projinfo` 9.9.0, not from this port):
+`tests/slovenia_candidates.rs` (4 tests, names from `projinfo` 9.9.0, not from this port):
 - `d48_gk_to_slovene_grid_has_the_thirty_six_candidates_of_projinfo` (`EPSG:3912 -> EPSG:3794`, 36 names).
 - `slovene_grid_to_d48_gk_has_the_thirty_six_candidates_of_projinfo` (`EPSG:3794 -> EPSG:3912`, 36).
 - `ed50_utm31_to_etrs89_utm31_has_the_eleven_candidates_of_projinfo` (`EPSG:23031 -> EPSG:25831`, 11 names).
+- `compound_pair_with_a_ballpark_vertical_has_the_thirty_seven_candidates_of_projinfo` (`EPSG:3912+EPSG:5779 ->
+  EPSG:3794+EPSG:8690`, DISCARD, 37 names).
 
 ## Ratchet
 
-`cargo test --test cli_yaml`: passes. Rows closed by this lot: `test_projinfo.yaml#37`, `#68`. No row
-reopened. The cs2cs open rows stay `#96`, `#126`, `#139`.
+`cargo test --test cli_yaml`: passes. Rows closed by this lot: `test_projinfo.yaml#37`, `#68`,
+`test_cs2cs_various.yaml#139`. No row reopened. The cs2cs open rows: `#96`, `#126`. Each rule was measured
+with the ratchet against the committed ledger (the ledger is restored before each run).
 
 ## Commands
 

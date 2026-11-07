@@ -581,7 +581,7 @@ fn build_engine(
                 });
             }
             Ok(Selection::Single(best)) => {
-                return single_engine(best, only_best, filter).map(|engine| BuiltEngine {
+                return single_engine(best, only_best).map(|engine| BuiltEngine {
                     engine,
                     path: BuildPath::Iso,
                     iso,
@@ -660,11 +660,7 @@ fn policy_of(only_best: Option<bool>) -> BestPolicy {
 /// The engine of a pair with one operation, as `proj_create_crs_to_crs` returns it. A missing
 /// grid fails the creation under `ALLOW_BALLPARK=NO --only-best`, fails each point under
 /// `--only-best`, and fails each point silently under the default policy.
-fn single_engine(
-    best: BestOperation,
-    only_best: Option<bool>,
-    filter: CandidateFilter,
-) -> Result<Engine, InitError> {
+fn single_engine(best: BestOperation, only_best: Option<bool>) -> Result<Engine, InitError> {
     match best {
         BestOperation::Pipeline {
             definition,
@@ -678,7 +674,9 @@ fn single_engine(
             }))
         }
         BestOperation::MissingGrid { message } => {
-            if filter.ballpark == Ballpark::Forbidden && only_best == Some(true) {
+            // `crs_to_crs.cpp:644-647`: with ONLY_BEST=YES a single operation whose grids are
+            // missing ends the creation, whatever the ballpark option.
+            if only_best == Some(true) {
                 return Err(refused(message));
             }
             Ok(match only_best {

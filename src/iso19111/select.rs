@@ -1175,6 +1175,14 @@ pub fn select_alternatives_with_authority(
     let db = DatabaseContext::create()?;
     let source_crs = create_from_user_input(source, &db)?;
     let target_crs = create_from_user_input(target, &db)?;
+    // Compound to compound only. A compound on one side alone (`EPSG:4326+3855 -> EPSG:4979`)
+    // keeps the previous path: its candidates are the same, but the first one tried differs
+    // from PROJ's (`test_cs2cs_various.yaml#118-121`, see docs/PORTING-cs2cs-slovenia.md).
+    if matches!(source_crs, Crs::Compound(_)) != matches!(target_crs, Crs::Compound(_)) {
+        return Err(FactoryError::Format(format!(
+            "{source} to {target}: a compound CRS on one side only is not prepared here"
+        )));
+    }
     let (Some(source_base), Some(target_base)) =
         (reference_base(&source_crs), reference_base(&target_crs))
     else {
@@ -1209,9 +1217,16 @@ pub fn select_alternatives_with_authority(
         BestPolicy::Warn | BestPolicy::Error => ranked,
     };
     // `op_count == 1` returns the operation before any preparation (`crs_to_crs.cpp:617-647`).
+    // `crs_to_crs.cpp:617-647`: a single operation is returned unless the default policy may
+    // rerun the search with DISCARD (`mayNeedToReRunWithDiscardMissing`) and its grids are missing.
     if let [(operation, characteristics)] = ranked.as_slice() {
-        let best = single_operation(operation, characteristics, &db, &source_crs, &target_crs)?;
-        return Ok(Selection::Single(best));
+        let grids = proj_grids(operation, &db).unwrap_or_else(|_| grid_names(operation));
+        let instantiable =
+            characteristics.exportable && grids.iter().all(|grid| gridpath::available(grid));
+        if policy != BestPolicy::Warn || instantiable {
+            let best = single_operation(operation, characteristics, &db, &source_crs, &target_crs)?;
+            return Ok(Selection::Single(best));
+        }
     }
     if ranked.is_empty() {
         return Err(FactoryError::Format(format!(
@@ -1384,12 +1399,18 @@ fn reference_base(crs: &Crs) -> Option<Crs> {
 fn lon_lat_base(crs: &Crs) -> Option<Crs> {
     let geographic = match crs {
         Crs::Geographic(geographic) | Crs::Geodetic(GeodeticCRS::Geographic(geographic)) => {
-            geographic
+            geographic.clone()
         }
         Crs::Projected(projected) => match projected.base_crs() {
-            GeodeticCRS::Geographic(geographic) => geographic,
+            GeodeticCRS::Geographic(geographic) => geographic.clone(),
             _ => return None,
         },
+        // `proj_crs_get_geodetic_crs` of a compound CRS: the geodetic CRS of its first component
+        // that has one, the horizontal part (`crs_to_crs.cpp:189`).
+        Crs::Compound(compound) => compound
+            .components()
+            .iter()
+            .find_map(|component| component.extract_geographic_crs())?,
         Crs::Geodetic(_) => return None,
         _ => return None,
     };
@@ -1414,6 +1435,12 @@ fn geodetic_to_crs(
     if matches!(crs, Crs::Geodetic(GeodeticCRS::Geocentric(_))) {
         return Ok(None);
     }
+    // `proj_crs_demote_to_2D` of a compound CRS: its horizontal part (`crs_to_crs.cpp:243`).
+    let horizontal = match crs {
+        Crs::Compound(compound) => compound.components().first().cloned(),
+        _ => None,
+    };
+    let crs = horizontal.as_ref().unwrap_or(crs);
     let context = CoordinateOperationContext::create(db, "");
     let operations = CoordinateOperationFactory::create().create_operations(base, crs, &context)?;
     let chosen = operations
