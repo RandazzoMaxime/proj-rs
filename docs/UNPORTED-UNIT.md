@@ -45,7 +45,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_io.cpp
 
-- `io.projparse_init`
 - `io.createFromUserInput`
 
 ## test_operation.cpp

@@ -375,6 +375,9 @@ impl ProjectedCRS {
                 text.push_str(&clause);
             }
         }
+        if self.identified.over {
+            text.push_str(" +over");
+        }
         text.push_str(" +no_defs +type=crs");
         Ok(text)
     }
@@ -1316,6 +1319,11 @@ fn geographic_proj(crs: &GeographicCRS, extras: &ProjExtras<'_>) -> String {
     }
     if let Some(grids) = extras.nadgrids {
         parts.push(format!("+nadgrids={grids}"));
+    }
+    // `CRS::_exportToPROJString` writes `+over` after the datum, before the CRS formatter's
+    // `+no_defs +type=crs`.
+    if crs.identified.over {
+        parts.push("+over".to_owned());
     }
     parts.push("+no_defs".to_owned());
     parts.push("+type=crs".to_owned());

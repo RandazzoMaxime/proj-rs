@@ -342,6 +342,7 @@ impl Props {
             allow_non_conformant_wkt1: false,
             temporal_start: None,
             temporal_end: None,
+            over: false,
         };
         // `CRS::setProperties` copies `PROJ CRS string: ...` into EXTENSION_PROJ4
         // when the WKT node itself has no `EXTENSION["PROJ4"]`.

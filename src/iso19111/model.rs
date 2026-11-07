@@ -366,6 +366,8 @@ pub(crate) struct Identified {
     pub(crate) temporal_start: Option<String>,
     /// PROJJSON `temporal_extent.end`, when the object has one.
     pub(crate) temporal_end: Option<String>,
+    /// PROJ's `OVER` property of a CRS: its PROJ string carries `+over` (`CRS::hasOver`).
+    pub(crate) over: bool,
 }
 
 /// Vertical extent of an object usage, as PROJJSON writes it.
@@ -393,6 +395,7 @@ impl Identified {
             original_compound: None,
             canonical_bound: None,
             allow_non_conformant_wkt1: false,
+            over: false,
             temporal_start: None,
             temporal_end: None,
         }

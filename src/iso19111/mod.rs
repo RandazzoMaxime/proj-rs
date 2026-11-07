@@ -56,8 +56,8 @@ pub use factory::{
 };
 pub use insert::insert_statements;
 pub use json::{
-    create_from_user_input, create_object_from_user_input, epsg_identity, JsonFormat, JsonLines,
-    UserObject,
+    create_from_user_input, create_from_user_input_with_init_rules, create_object_from_user_input,
+    epsg_identity, InitRules, JsonFormat, JsonLines, UserObject,
 };
 pub use json_read::{create_object_from_json, JsonObject};
 pub use model::{
