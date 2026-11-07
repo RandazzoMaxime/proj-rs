@@ -52,7 +52,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_operationfactory.cpp
 
-- `operation.vertCRS_to_geogCRS_context`
 - `operation.geog3DCRS_to_geog2DCRS_plus_vertCRS_context`
 - `operation.geogCRS_to_geogCRS_init_IGNF_to_init_IGNF_context`
 - `operation.boundCRS_to_geogCRS_hubCRS_and_targetCRS_same_but_baseCRS_not`

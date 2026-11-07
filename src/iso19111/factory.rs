@@ -5268,11 +5268,10 @@ pub struct CoordinateOperationContext {
     inherited_extents: Option<(Option<ObjectDomain>, Option<ObjectDomain>)>,
     /// The anti-recursion guards of PROJ's `Private::Context`, as `GUARD_*` bits.
     pub(super) guards: u8,
-    /// `usePROJAlternativeGridNames`, when the caller set it: the grid names of the registered
-    /// operations, as the database has them (`Official`) or as PROJ reads them (`Proj`). Unset,
-    /// the registered operations keep the database names, and the candidates are sorted on the
-    /// PROJ names (see [`Self::sort_grid_names`]).
-    grid_names: Option<AlternativeGridNames>,
+    /// `usePROJAlternativeGridNames` (`usePROJNames_`, true by default): the grid names of the
+    /// registered operations, as the database has them (`Official`) or as PROJ reads them
+    /// (`Proj`). The candidates are sorted on the same names (`gridsNeeded`, `SortFunction`).
+    grid_names: AlternativeGridNames,
 }
 
 impl CoordinateOperationContext {
@@ -5298,23 +5297,14 @@ impl CoordinateOperationContext {
             registry: RegistryUse::default(),
             inherited_extents: None,
             guards: 0,
-            grid_names: None,
+            grid_names: AlternativeGridNames::Proj,
         }
     }
 
-    /// The grid names the registered operations are read with: the ones set, else the database
-    /// names.
-    fn registry_grid_names(&self) -> AlternativeGridNames {
-        self.grid_names.unwrap_or(AlternativeGridNames::Official)
-    }
-
-    /// The grid names the candidates are sorted on, as `gridsNeeded` reads them. Set to
-    /// `Official`, the operations keep the database names; otherwise the PROJ names are read.
-    fn sort_grid_names(&self) -> AlternativeGridNames {
-        match self.grid_names {
-            Some(AlternativeGridNames::Official) => AlternativeGridNames::Official,
-            Some(AlternativeGridNames::Proj) | None => AlternativeGridNames::Proj,
-        }
+    /// The grid names the registered operations are read with, and the candidates are sorted on
+    /// (`usePROJAlternativeGridNames`, see [`Self::set_alternative_grid_names`]).
+    fn alternative_grid_names(&self) -> AlternativeGridNames {
+        self.grid_names
     }
 
     /// This context, with the CRS extents of `source` and `target` for every sub-call, unless
@@ -5392,7 +5382,7 @@ impl CoordinateOperationContext {
     /// `Proj`, as PROJ's `usePROJNames_` is true, and `Official` keeps the names the database
     /// stores.
     pub fn set_alternative_grid_names(&mut self, names: AlternativeGridNames) -> &mut Self {
-        self.grid_names = Some(names);
+        self.grid_names = names;
         self
     }
 
@@ -5943,7 +5933,7 @@ impl CoordinateOperationFactory {
                         (pivot_auth, pivot_code),
                         boxes,
                         RegistrySearch::Both,
-                        context.registry_grid_names(),
+                        context.alternative_grid_names(),
                     )?;
                     let second = operations_between(
                         &context.db,
@@ -5952,7 +5942,7 @@ impl CoordinateOperationFactory {
                         (target_id.0.as_str(), target_id.1.as_str()),
                         boxes,
                         RegistrySearch::Both,
-                        context.registry_grid_names(),
+                        context.alternative_grid_names(),
                     )?;
                     if let (Some(left), Some(right)) = (first.first(), second.first()) {
                         let interpolation =
@@ -6348,7 +6338,7 @@ fn select_candidates(
         source,
         target,
         context.grid_availability,
-        context.sort_grid_names(),
+        context.alternative_grid_names(),
         &extents,
     );
     let sorted = remove_synthetic_null_transforms(sorted, &filtered);
@@ -8887,7 +8877,7 @@ fn direct_registry_operations(
             target,
             crs_boxes,
             search,
-            context.registry_grid_names(),
+            context.alternative_grid_names(),
         )?;
         if context.discards_missing_grids() {
             // `rejectOpDueToMissingGrid`: an operation with a grid that is not returned when the
