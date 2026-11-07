@@ -561,8 +561,8 @@ fn horizontal_grid_shift(
     formatter: &mut PipelineFormatter,
 ) -> Result<bool, FactoryError> {
     let method_name = operation.method().name();
-    // `_getHorizontalShiftGTIFFFilename`: a GTiff method is named, without an EPSG code, once
-    // `substitutePROJAlternativeGridNames` wrote it (`singleoperation.cpp:2020`).
+    // `_getHorizontalShiftGTIFFFilename` (`singleoperation.cpp:2061`): a GTiff method is named,
+    // without an EPSG code, once `substitutePROJAlternativeGridNames` wrote it.
     let gtiff = is_gtiff_method(method_name);
     let code = match epsg_method_code(operation) {
         0 if operation.method().name().eq_ignore_ascii_case("CTABLE2") => METHOD_NTV2,
