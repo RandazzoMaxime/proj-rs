@@ -5618,16 +5618,44 @@ impl CoordinateOperationFactory {
             // `!inCreateOperationsWithDatumPivotAntiRecursion && !inCreateOperationsWithIntermediate`
             // (coordinateoperationfactory.cpp:4467-4468): the intermediate search is off inside a
             // pivot or inside another intermediate search, such as the ensemble step's members.
-            let intermediate_needed = direct_unfiltered_empty
-                && !context.has_guard(GUARD_DATUM_PIVOT)
+            // The block after the datum pivot (coordinateoperationfactory.cpp:4467-4515): `res` is
+            // the registry result, the datum pivot and the CRS codes; the intermediate search runs
+            // when `res` is empty, or when its operations are replaced, too small for the area of
+            // interest, all time-dependent between static CRS, or ensemble null operations.
+            let res: Vec<CoordinateOperation> = found.iter().chain(pivot.iter()).cloned().collect();
+            let intermediate_tried = !context.has_guard(GUARD_DATUM_PIVOT)
                 && !context.has_guard(GUARD_DATUM_INTERMEDIATE)
-                && (pivot.is_empty() || only_ensemble_null_operations(&pivot));
-            found.extend(pivot);
-            if intermediate_needed {
-                found.extend(datum_based_intermediate_operations(
-                    source, target, context,
-                )?);
+                && context.intermediate_use != IntermediateCrsUse::Never
+                && !same_geodetic_datum(source, target);
+            let replaced = !direct_unfiltered_empty && use_only_replaced_operations(&res);
+            if intermediate_tried && (direct_unfiltered_empty || replaced) {
+                let too_small = has_too_small_areas(&res, source, target, context);
+                let all_time_dependent = res
+                    .iter()
+                    .all(CoordinateOperation::requires_per_coordinate_input_time);
+                if res.is_empty()
+                    || replaced
+                    || too_small
+                    || (all_time_dependent && !source.is_dynamic() && !target.is_dynamic())
+                    || only_ensemble_null_operations(&res)
+                {
+                    let with_intermediate =
+                        datum_based_intermediate_operations(source, target, context)?;
+                    if too_small && !res.is_empty() {
+                        // Only the operations whose names are not already there.
+                        let names: BTreeSet<&str> =
+                            res.iter().map(CoordinateOperation::name).collect();
+                        let new_ones: Vec<CoordinateOperation> = with_intermediate
+                            .into_iter()
+                            .filter(|operation| !names.contains(operation.name()))
+                            .collect();
+                        pivot.extend(new_ones);
+                    } else {
+                        pivot.extend(with_intermediate);
+                    }
+                }
             }
+            found.extend(pivot);
         }
         // `createOperations`, the ensemble step (coordinateoperationfactory.cpp:4524-4572): one CRS
         // defined by a datum ensemble and the other by a single datum. The operations go through
@@ -7216,6 +7244,71 @@ fn crs_codes_intermediate_operations(
         }
     }
     without_missing_grids(operations, context)
+}
+
+/// `useOnlyReplacedOperations` (coordinateoperationfactory.cpp:4031-4040): every operation is
+/// replaced by another one.
+fn use_only_replaced_operations(operations: &[CoordinateOperation]) -> bool {
+    operations
+        .iter()
+        .all(|operation| operation.remarks().contains("Replaced by"))
+}
+
+/// `hasTooSmallAreas` (coordinateoperationfactory.cpp:3897-3959): fewer than ten operations, and
+/// each one covers at most half the area of interest, the CRS extents or their intersection.
+fn has_too_small_areas(
+    operations: &[CoordinateOperation],
+    source: &Crs,
+    target: &Crs,
+    context: &CoordinateOperationContext,
+) -> bool {
+    if operations.is_empty() || operations.len() >= 10 {
+        return false;
+    }
+    let pseudo_area = |extent: Option<ObjectDomain>| extent.map_or(0.0, |e| extent_pseudo_area(&e));
+    let intersection =
+        |left: &ObjectDomain, right: &ObjectDomain| intersect_extents(left.clone(), right.clone());
+    let area_of_interest = context.area_of_interest.clone();
+    let (extent1, extent2) = crs_extents_of(context, source, target);
+    let target_area = if let Some(area) = &area_of_interest {
+        extent_pseudo_area(area)
+    } else if let Some(first) = &extent1 {
+        match &extent2 {
+            Some(second) => pseudo_area(intersection(first, second)),
+            None => extent_pseudo_area(first),
+        }
+    } else {
+        extent2.as_ref().map_or(0.0, extent_pseudo_area)
+    };
+    if target_area <= 0.0 {
+        return false;
+    }
+    for operation in operations {
+        let Some(extent_op) = operation_extent(operation) else {
+            continue;
+        };
+        let area = if let Some(area) = &area_of_interest {
+            pseudo_area(intersection(&extent_op, area))
+        } else if let (Some(first), Some(second)) = (&extent1, &extent2) {
+            let x = intersection(&extent_op, first);
+            let y = intersection(&extent_op, second);
+            let both = match (&x, &y) {
+                (Some(x), Some(y)) => pseudo_area(intersection(x, y)),
+                _ => 0.0,
+            };
+            pseudo_area(x.clone()) + pseudo_area(y.clone()) - both
+        } else if let Some(first) = &extent1 {
+            pseudo_area(intersection(&extent_op, first))
+        } else if let Some(second) = &extent2 {
+            pseudo_area(intersection(&extent_op, second))
+        } else {
+            extent_pseudo_area(&extent_op)
+        };
+        if area > 0.5 * target_area {
+            return false;
+        }
+    }
+    true
 }
 
 /// `useOnlyIntermediateCRSThroughDatumEnsembleNullOp`: every operation has a PROJ step that
