@@ -93,8 +93,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.compoundCRS_of_vertCRS_with_geoid_model_to_geogCRS`
 - `operation.compoundCRS_to_geogCRS_3D_Amersfoort_NAP_height_to_Amersfoort`
 - `operation.compoundCRS_to_geogCRS_3D_using_intermediate_of_horizontal_transform`
-- `operation.boundCRS_to_compoundCRS`
-- `operation.boundCRS_to_compoundCRS_with_hubCRS_same_as_compound_geographicCRS`
 - `operation.IGNF_LAMB1_TO_EPSG_4326`
 - `operation.compoundCRS_to_proj_string_with_non_metre_height`
 - `operation.compoundCRS_with_derived_vertical_CRS`

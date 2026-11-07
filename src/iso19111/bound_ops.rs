@@ -8,11 +8,15 @@
 //! `createOperationsToGeod`: a bound CRS to a geodetic CRS that is not geographic, through a
 //! geographic 3D CRS on the target's datum.
 //!
+//! `createOperationsBoundToCompound`: a bound CRS to a compound CRS, in its three cases, then the
+//! base CRS of the source to the compound CRS.
+//!
 //! Not ported: the Clarke 1866 to NAD83 special case and the vertical blocks of
 //! `createOperationsBoundToBound` (same vertical datum, same hub for vertical bases).
 
 use super::bound::extract_geographic;
 use super::buildop::OpProps;
+use super::compound::compute_metadata;
 use super::equiv::{
     datum_equivalent_to_frame, ellipsoid_equivalent_loose, geodetic_frame, same_geodetic_datum,
     Equivalence,
@@ -21,9 +25,9 @@ use super::factory::{
     geographic_of, CoordinateOperationContext, CoordinateOperationFactory, GUARD_SKIP_HORIZONTAL,
 };
 use super::model::{
-    Axis, BoundCRS, ConcatenatedOperation, ConcatenatedStep, Conversion, CoordinateOperation, Crs,
-    Ellipsoid, EllipsoidalCS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified,
-    UnitOfMeasure,
+    Axis, BoundCRS, CompoundCRS, ConcatenatedOperation, ConcatenatedStep, Conversion,
+    CoordinateOperation, Crs, Ellipsoid, EllipsoidalCS, GeodeticCRS, GeodeticReferenceFrame,
+    GeographicCRS, Identified, UnitOfMeasure,
 };
 use super::niche::DerivedKind;
 use super::FactoryError;
@@ -38,6 +42,9 @@ pub(super) fn bound_candidates(
     match (source, target) {
         (Crs::Bound(bound), Crs::Bound(target_bound)) => {
             bound_to_bound(factory, source, bound, target, target_bound, context).map(Some)
+        }
+        (Crs::Bound(bound), Crs::Compound(compound)) => {
+            bound_to_compound(factory, source, bound, target, compound, context).map(Some)
         }
         (Crs::Bound(bound), _) if geographic_of(target).is_some() => {
             bound_to_geog(factory, source, bound, target, context).map(Some)
@@ -130,6 +137,168 @@ pub(super) fn bound_to_geod(
             concatenate(vec![first, last.clone()])
         })
         .collect())
+}
+
+/// `createOperationsBoundToCompound`: a bound CRS to a compound CRS. Three cases, in PROJ's
+/// order, then the base CRS of the source to the compound CRS.
+///
+/// - Two bound components, the first with a geographic hub and the second a vertical base with
+///   a geographic hub, and the source base and the first component on the datum of that hub:
+///   the source to the compound of the first component and the second, with its endpoints set
+///   to the source and the target.
+/// - A bound first component whose hub is on the datum of the source's hub: the source to a
+///   geographic 3D CRS on that datum, then that CRS to the target. Where the two steps do not
+///   meet, an adapter between them is used when one exists.
+/// - The source base is 3D, its hub is 3D, and the first component is on another datum: the
+///   source to its hub, then the hub to the target.
+///
+/// The PROJ example of the first case is `BOUND[NAD83_3D,TOWGS84]` to
+/// `COMPOUND[BOUND[NAD83_2D,TOWGS84],BOUND[VERT[NAVD88],HUB=NAD83_3D,GRID]]`.
+fn bound_to_compound(
+    factory: &CoordinateOperationFactory,
+    source: &Crs,
+    bound_src: &BoundCRS,
+    target: &Crs,
+    compound_dst: &CompoundCRS,
+    context: &CoordinateOperationContext,
+) -> Result<Vec<CoordinateOperation>, FactoryError> {
+    let components = compound_dst.components();
+    let mut res = Vec::new();
+
+    // The TOWGS84 bound of the source is ignored: the source goes to the compound directly.
+    if let [Crs::Bound(comp0), Crs::Bound(comp1), ..] = components {
+        let hub1 = comp1.target_crs();
+        if let (Some(src_geodetic), Some(comp0_geog), true, true) = (
+            extract_geodetic(bound_src.source_crs()),
+            extract_geographic(&components[0]),
+            matches!(comp1.source_crs(), Crs::Vertical(_)),
+            geographic_of(hub1).is_some(),
+        ) {
+            let comp0_geog = Crs::Geographic(comp0_geog.clone());
+            if datums_equivalent(&src_geodetic, hub1) && datums_equivalent(&comp0_geog, hub1) {
+                let src_new = bound_src.source_crs().clone();
+                let name = format!("{} + {}", comp0.name(), components[1].name());
+                let dst_new = Crs::Compound(CompoundCRS::create(
+                    name,
+                    vec![components[0].clone(), components[1].clone()],
+                )?);
+                for mut operation in factory.create_candidates(&src_new, &dst_new, context)? {
+                    set_endpoints(&mut operation, source, target);
+                    res.push(operation);
+                }
+                return Ok(res);
+            }
+        }
+    }
+
+    if let Some(first) = components.first() {
+        // A bound first component whose hub is on the datum of the source's hub.
+        if let Crs::Bound(comp0) = first {
+            if let (Some(src_hub), Some(_)) = (
+                geographic_of(bound_src.target_crs()),
+                geographic_of(comp0.target_crs()),
+            ) {
+                if datums_equivalent(bound_src.target_crs(), comp0.target_crs()) {
+                    let interm = Crs::Geographic(GeographicCRS::create(
+                        src_hub.name(),
+                        src_hub.datum().cloned(),
+                        src_hub.datum_ensemble().cloned(),
+                        EllipsoidalCS::create_latitude_longitude_height(
+                            UnitOfMeasure::degree(),
+                            UnitOfMeasure::metre(),
+                        ),
+                    )?);
+                    let source_to_interm = factory.create_candidates(source, &interm, context)?;
+                    let interm_to_target = factory.create_candidates(&interm, target, context)?;
+                    for op_src in &source_to_interm {
+                        for op_dst in &interm_to_target {
+                            // The two steps do not meet when one is 2D and the other 3D: an
+                            // adapter operation between them, when one exists.
+                            let steps = match (op_src.target_crs(), op_dst.source_crs()) {
+                                (Some(mid), Some(next)) if !crs_equivalent(mid, next) => factory
+                                    .create_candidates(mid, next, context)?
+                                    .first()
+                                    .map(|adapter| {
+                                        vec![op_src.clone(), adapter.clone(), op_dst.clone()]
+                                    }),
+                                _ => Some(vec![op_src.clone(), op_dst.clone()]),
+                            };
+                            if let Some(operation) =
+                                steps.and_then(|steps| compute_metadata(steps, context))
+                            {
+                                res.push(operation);
+                            }
+                        }
+                    }
+                    return Ok(res);
+                }
+            }
+        }
+
+        // e.g transforming from a Bound[something_not_WGS84_but_with_TOWGS84] to a
+        // CompoundCRS[WGS84, ...]
+        let src_geog = extract_geographic(bound_src.source_crs());
+        let hub_geog = geographic_of(bound_src.target_crs());
+        let comp0_geog = extract_geographic(first);
+        if let (Some(src_geog), Some(hub_geog), Some(comp0_geog)) = (src_geog, hub_geog, comp0_geog)
+        {
+            let src_geog = Crs::Geographic(src_geog.clone());
+            let comp0_geog = Crs::Geographic(comp0_geog.clone());
+            if single_axis_count(bound_src.source_crs()) == Some(3)
+                && hub_geog.coordinate_system().axes().len() == 3
+                && !datums_equivalent(&src_geog, &comp0_geog)
+                && datums_equivalent(&Crs::Geographic(hub_geog.clone()), &comp0_geog)
+            {
+                let ops1 = factory.create_candidates(source, bound_src.target_crs(), context)?;
+                let ops2 = factory.create_candidates(bound_src.target_crs(), target, context)?;
+                for op1 in &ops1 {
+                    for op2 in &ops2 {
+                        if let Some(operation) =
+                            compute_metadata(vec![op1.clone(), op2.clone()], context)
+                        {
+                            res.push(operation);
+                        }
+                    }
+                }
+                if !res.is_empty() {
+                    return Ok(res);
+                }
+            }
+        }
+    }
+
+    // There might be better things to do, but for now just ignore the transformation of the
+    // bound CRS.
+    factory.create_candidates(bound_src.source_crs(), target, context)
+}
+
+/// `CRS::extractGeodeticCRS` for the kinds this port binds: a geodetic CRS, or the base of a
+/// projected CRS.
+fn extract_geodetic(crs: &Crs) -> Option<Crs> {
+    match crs {
+        Crs::Geographic(_) | Crs::Geodetic(_) => Some(crs.clone()),
+        Crs::Projected(projected) => Some(Crs::Geodetic(projected.base_crs().clone())),
+        _ => None,
+    }
+}
+
+/// `isEquivalentTo(EQUIVALENT)` of the datum of `left` with the datum of `right`.
+fn datums_equivalent(left: &Crs, right: &Crs) -> bool {
+    geodetic_frame(left).is_some_and(|frame| datum_equivalent_to_frame(right, &frame))
+}
+
+/// `coordinateSystem()->axisList().size()` of a single CRS of the kinds this port binds, and
+/// `None` for the other kinds.
+fn single_axis_count(crs: &Crs) -> Option<usize> {
+    match crs {
+        Crs::Geographic(geographic) | Crs::Geodetic(GeodeticCRS::Geographic(geographic)) => {
+            Some(geographic.coordinate_system().axes().len())
+        }
+        Crs::Geodetic(GeodeticCRS::Geocentric(_)) => Some(3),
+        Crs::Projected(projected) => Some(projected.coordinate_system().axes().len()),
+        Crs::Vertical(_) => Some(1),
+        _ => None,
+    }
 }
 
 fn bound_to_geog(
