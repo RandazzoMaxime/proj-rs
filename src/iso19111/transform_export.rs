@@ -2537,17 +2537,21 @@ fn export_operation_steps(
     }
 }
 
-/// The geographic CRS that the interpolation step runs on, as `addAngularUnitConvertAndAxisSwap`.
+/// The interpolation CRS of a proj-based operation, as PROJ's
+/// `MyPROJStringExportableHorizVertical(HorizVerticalHoriz)PROJBased` writes it: a geographic
+/// one with `addAngularUnitConvertAndAxisSwap`, else a projected one with
+/// `addUnitConvertAndAxisSwap` (coordinateoperationfactory.cpp:2533-2536, 2547-2550).
 fn interpolation_axes(
     interpolation: &Crs,
     formatter: &mut PipelineFormatter,
 ) -> Result<(), FactoryError> {
-    match extract_geographic(interpolation) {
-        Some(geographic) => {
-            angular_unit_and_axis_swap(geographic.coordinate_system().axes(), formatter)
-        }
-        None => Ok(()),
+    if let Some(geographic) = extract_geographic(interpolation) {
+        return angular_unit_and_axis_swap(geographic.coordinate_system().axes(), formatter);
     }
+    if let Crs::Projected(projected) = interpolation {
+        projected_unit_and_axis_swap(projected, formatter);
+    }
+    Ok(())
 }
 
 /// `MyPROJStringExportableHorizVertical` and `MyPROJStringExportableHorizVerticalHorizPROJBased`.
