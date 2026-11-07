@@ -6,6 +6,7 @@
 //!
 //! Not ported: the recursion limit of `createOperations`, and the epochs.
 
+use super::equiv::Equivalence;
 use super::factory::{
     intersect_extents, operation_extent, pivot_concatenation, CoordinateOperationContext,
     CoordinateOperationFactory,
@@ -102,6 +103,7 @@ fn concatenate(
             other => steps.push(other.clone()),
         }
     }
+    let steps = remove_consecutive_inverse(steps);
     let extent = match joint_extent(&steps) {
         Some(extent) => extent,
         None if context.disallows_empty_intersection() => return None,
@@ -112,6 +114,46 @@ fn concatenate(
         concatenated.identified.domains = vec![domain];
     }
     Some(CoordinateOperation::Concatenated(concatenated))
+}
+
+/// `ConcatenatedOperation::createComputeMetadata`, "Remove consecutive inverse operations"
+/// (`src/iso19111/operation/concatenatedoperation.cpp:700-732`): a step followed by the
+/// inverse of itself, the two CRS meeting, cancels. Repeated until nothing cancels, and the
+/// last two steps are never cancelled, as PROJ bails out at two.
+pub(super) fn remove_consecutive_inverse(
+    steps: Vec<CoordinateOperation>,
+) -> Vec<CoordinateOperation> {
+    if steps.len() <= 2 {
+        return steps;
+    }
+    let mut indices: Vec<usize> = (0..steps.len()).collect();
+    loop {
+        let mut changed = false;
+        for position in 0..indices.len().saturating_sub(1) {
+            let (left, right) = (&steps[indices[position]], &steps[indices[position + 1]]);
+            let cancels = left.is_equivalent_to(&right.inverse())
+                && matches!(
+                    (left.source_crs(), right.target_crs()),
+                    (Some(source), Some(target))
+                        if source.is_equivalent_to_with(target, Equivalence::Equivalent)
+                );
+            if cancels {
+                indices.drain(position..position + 2);
+                changed = true;
+                break;
+            }
+        }
+        if !changed || indices.len() <= 2 {
+            break;
+        }
+    }
+    if indices.len() == steps.len() {
+        return steps;
+    }
+    indices
+        .into_iter()
+        .map(|index| steps[index].clone())
+        .collect()
 }
 
 /// The intersection of the steps' extents, as `getExtent` takes it. The outer `None` is an
