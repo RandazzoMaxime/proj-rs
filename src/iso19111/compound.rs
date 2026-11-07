@@ -691,7 +691,7 @@ fn cgvd_transition(vertical: &VerticalCRS, other: &VerticalCRS) -> bool {
 /// `ConcatenatedOperation::createComputeMetadata`: the steps, flattened, named by joining theirs,
 /// with the intersection of their extents and the sum of their accuracies. `None` when the
 /// extents do not meet and the context disallows that, which PROJ skips silently.
-fn compute_metadata(
+pub(super) fn compute_metadata(
     operations: Vec<CoordinateOperation>,
     context: &CoordinateOperationContext,
 ) -> Option<CoordinateOperation> {
