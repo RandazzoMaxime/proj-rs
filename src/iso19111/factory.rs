@@ -5308,6 +5308,12 @@ impl CoordinateOperationContext {
         self.grid_names.unwrap_or(AlternativeGridNames::Official)
     }
 
+    /// `getUsePROJAlternativeGridNames`: whether the operations are read with the PROJ grid
+    /// names, the default unless the database names are set.
+    pub(super) fn uses_proj_grid_names(&self) -> bool {
+        self.grid_names != Some(AlternativeGridNames::Official)
+    }
+
     /// The grid names the candidates are sorted on, as `gridsNeeded` reads them. Set to
     /// `Official`, the operations keep the database names; otherwise the PROJ names are read.
     fn sort_grid_names(&self) -> AlternativeGridNames {
@@ -6172,7 +6178,7 @@ impl CoordinateOperationFactory {
             found.extend(super::compound::geographic_height_change(source, target));
         }
         found.extend(super::compound::compound_to_geog3d(
-            self, source, target, context,
+            self, source, target, epochs, context,
         )?);
         // `createOperationsToGeod` for a compound CRS to a geocentric CRS.
         if let (Crs::Compound(_), Crs::Geodetic(geodetic)) = (source, target) {
@@ -6195,7 +6201,7 @@ impl CoordinateOperationFactory {
             }
         }
         found.extend(super::compound::geog_to_compound(
-            self, source, target, context,
+            self, source, target, epochs, context,
         )?);
         found.extend(super::compound::compound_to_compound(
             self, source, target, epochs, context,

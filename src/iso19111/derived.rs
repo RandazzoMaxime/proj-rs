@@ -40,6 +40,11 @@ pub(super) fn is_derived(crs: &Crs) -> bool {
     derived_parts(crs).is_some()
 }
 
+/// The base CRS of a derived CRS (`DerivedCRS::baseCRS`), `None` for a CRS that is not derived.
+pub(super) fn derived_base(crs: &Crs) -> Option<Crs> {
+    derived_parts(crs).map(|(_, base)| base)
+}
+
 /// The deriving conversion of a derived CRS, with its CRS pair (base to derived, as the
 /// projection runs), and its base CRS.
 fn derived_parts(crs: &Crs) -> Option<(Conversion, Crs)> {
