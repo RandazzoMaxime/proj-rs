@@ -91,7 +91,14 @@ fn main() -> ExitCode {
             Ballpark::Forbidden
         },
     };
-    let built = match build_engine(&build_source, &build_target, area, opts.only_best, filter) {
+    let built = match build_engine(
+        &build_source,
+        &build_target,
+        area,
+        opts.only_best,
+        filter,
+        opts.authority.as_deref(),
+    ) {
         Ok(built) => built,
         Err(InitError::Cause(error)) => {
             report(
@@ -117,7 +124,6 @@ fn main() -> ExitCode {
     let engine = built.engine;
     let lat_first = engine.lat_first() && dst_side.layout == Layout::DegreeLongLat;
     let _selection = (
-        opts.authority.as_deref(),
         opts.promote_3d,
         opts.source_epoch,
         opts.target_epoch,
@@ -458,10 +464,19 @@ fn build_engine(
     area: Option<Area>,
     only_best: Option<bool>,
     filter: CandidateFilter,
+    authority: Option<&str>,
 ) -> Result<BuiltEngine, InitError> {
+    // `--authority` is `AUTHORITY=` of `proj_create_crs_to_crs`: no option is every authority.
+    let authority = authority.unwrap_or("");
     let mut iso = IsoStatus::NotTried;
     if area.is_none() && iso_serves_pair(source, target) {
-        match proj_rs::iso19111::select_alternatives(source, target, policy_of(only_best), filter) {
+        match proj_rs::iso19111::select_alternatives_with_authority(
+            source,
+            target,
+            policy_of(only_best),
+            filter,
+            authority,
+        ) {
             Ok(Selection::Several(alternatives)) => {
                 return Ok(BuiltEngine {
                     engine: Engine::Alternatives(Box::new(alternatives)),
@@ -479,15 +494,15 @@ fn build_engine(
             Err(error) => iso = IsoStatus::Failed(error.to_string()),
         }
         if filter != CandidateFilter::NONE {
-            return select_pipeline_filtered(source, target, only_best, filter).map(|engine| {
-                BuiltEngine {
+            return select_pipeline_filtered(source, target, only_best, filter, authority).map(
+                |engine| BuiltEngine {
                     engine,
                     path: BuildPath::Iso,
                     iso,
-                }
-            });
+                },
+            );
         }
-        match select_pipeline(source, target, only_best) {
+        match select_pipeline(source, target, only_best, authority) {
             Ok(engine) => {
                 return Ok(BuiltEngine {
                     engine,
@@ -614,9 +629,10 @@ fn select_pipeline(
     source: &str,
     target: &str,
     only_best: Option<bool>,
+    authority: &str,
 ) -> Result<Engine, InitError> {
     let mode = only_best_mode(only_best);
-    let best = proj_rs::iso19111::best_pipeline_with(source, target, mode)
+    let best = proj_rs::iso19111::best_pipeline_with_authority(source, target, mode, authority)
         .map_err(|error| InitError::Cause(error.to_string()))?;
     match best {
         BestOperation::Pipeline {
@@ -643,12 +659,15 @@ fn select_pipeline_filtered(
     target: &str,
     only_best: Option<bool>,
     filter: CandidateFilter,
+    authority: &str,
 ) -> Result<Engine, InitError> {
     let mode = only_best_mode(only_best);
     // PROJ's `proj_create_crs_to_crs` returns NULL with no error text when a filter removes
     // every candidate, and `cs2cs` prints the empty text as `(null)`. Matched on purpose.
-    match proj_rs::iso19111::best_pipeline_filtered(source, target, mode, filter)
-        .map_err(|_| InitError::Cause("(null)".to_owned()))?
+    match proj_rs::iso19111::best_pipeline_filtered_with_authority(
+        source, target, mode, filter, authority,
+    )
+    .map_err(|_| InitError::Cause("(null)".to_owned()))?
     {
         BestOperation::Pipeline {
             definition,

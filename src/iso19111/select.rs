@@ -172,7 +172,24 @@ pub fn best_pipeline_filtered(
     only_best: OnlyBest,
     filter: CandidateFilter,
 ) -> Result<BestOperation, FactoryError> {
-    best_operation_filtered(source, target, only_best, filter).map(|chosen| chosen.best)
+    best_pipeline_filtered_with_authority(source, target, only_best, filter, "")
+}
+
+/// [`best_pipeline_filtered`], over the candidates of `authority` only: the `AUTHORITY=` option
+/// of `proj_create_crs_to_crs` (`crs_to_crs.cpp:507-508`), which `cs2cs --authority` sets. `""`
+/// is every authority, `"any"` too.
+///
+/// # Errors
+///
+/// As [`best_pipeline_filtered`].
+pub fn best_pipeline_filtered_with_authority(
+    source: &str,
+    target: &str,
+    only_best: OnlyBest,
+    filter: CandidateFilter,
+    authority: &str,
+) -> Result<BestOperation, FactoryError> {
+    best_operation_filtered(source, target, only_best, filter, authority).map(|chosen| chosen.best)
 }
 
 /// PROJ pipeline of the best operation from `source` to `target`, and whether
@@ -214,7 +231,23 @@ pub fn best_pipeline_with(
     target: &str,
     only_best: OnlyBest,
 ) -> Result<BestOperation, FactoryError> {
-    best_operation(source, target, only_best).map(|(best, _)| best)
+    best_pipeline_with_authority(source, target, only_best, "")
+}
+
+/// [`best_pipeline_with`], over the candidates of `authority` only (see
+/// [`best_pipeline_filtered_with_authority`]).
+///
+/// # Errors
+///
+/// As [`best_pipeline`].
+pub fn best_pipeline_with_authority(
+    source: &str,
+    target: &str,
+    only_best: OnlyBest,
+    authority: &str,
+) -> Result<BestOperation, FactoryError> {
+    best_operation_filtered(source, target, only_best, CandidateFilter::NONE, authority)
+        .map(|chosen| chosen.best)
 }
 
 /// The best operation of a pair under `OnlyBest::Off`, as the facade needs it: the pipeline,
@@ -293,35 +326,28 @@ pub(crate) fn same_datum_noop(source: &str, target: &str) -> Result<ExactChoice,
     })
 }
 
-/// [`best_pipeline_with`], and whether the chosen operation is approximate.
-fn best_operation(
-    source: &str,
-    target: &str,
-    only_best: OnlyBest,
-) -> Result<(BestOperation, bool), FactoryError> {
-    best_operation_full(source, target, only_best).map(|chosen| (chosen.best, chosen.approx))
-}
-
-/// [`best_operation`], with the chosen operation and the two CRS.
+/// The best operation of a pair over every authority, with the chosen operation and the two CRS.
 fn best_operation_full(
     source: &str,
     target: &str,
     only_best: OnlyBest,
 ) -> Result<Chosen, FactoryError> {
-    best_operation_filtered(source, target, only_best, CandidateFilter::NONE)
+    best_operation_filtered(source, target, only_best, CandidateFilter::NONE, "")
 }
 
-/// [`best_operation_full`], keeping only the candidates `filter` accepts.
+/// [`best_operation_full`], keeping only the candidates `filter` accepts, and only those of
+/// `authority` (`""` for every authority), as `proj_create_operation_factory_context` does.
 fn best_operation_filtered(
     source: &str,
     target: &str,
     only_best: OnlyBest,
     filter: CandidateFilter,
+    authority: &str,
 ) -> Result<Chosen, FactoryError> {
     let db = DatabaseContext::create()?;
     let source_crs = create_from_user_input(source, &db)?;
     let target_crs = create_from_user_input(target, &db)?;
-    let mut context = CoordinateOperationContext::create(&db, "");
+    let mut context = CoordinateOperationContext::create(&db, authority);
     context.set_spatial_criterion(SpatialCriterion::PartialIntersection);
     // `proj_create_crs_to_crs` asks KNOWN_AVAILABLE with ONLY_BEST=YES and
     // DISCARD_OPERATION_IF_MISSING_GRID with ONLY_BEST=NO (`crs_to_crs.cpp:570-576`). The
@@ -1029,6 +1055,22 @@ pub fn select_alternatives(
     policy: BestPolicy,
     filter: CandidateFilter,
 ) -> Result<Selection, FactoryError> {
+    select_alternatives_with_authority(source, target, policy, filter, "")
+}
+
+/// [`select_alternatives`], over the candidates of `authority` only: the `AUTHORITY=` option of
+/// `proj_create_crs_to_crs`, which `cs2cs --authority` sets (`""` is every authority).
+///
+/// # Errors
+///
+/// As [`select_alternatives`].
+pub fn select_alternatives_with_authority(
+    source: &str,
+    target: &str,
+    policy: BestPolicy,
+    filter: CandidateFilter,
+    authority: &str,
+) -> Result<Selection, FactoryError> {
     let db = DatabaseContext::create()?;
     let source_crs = create_from_user_input(source, &db)?;
     let target_crs = create_from_user_input(target, &db)?;
@@ -1039,7 +1081,7 @@ pub fn select_alternatives(
             "{source} or {target} has no geodetic base to prepare its candidates"
         )));
     };
-    let mut context = CoordinateOperationContext::create(&db, "");
+    let mut context = CoordinateOperationContext::create(&db, authority);
     context.set_spatial_criterion(SpatialCriterion::PartialIntersection);
     let operations = CoordinateOperationFactory::create()
         .create_operations(&source_crs, &target_crs, &context)?

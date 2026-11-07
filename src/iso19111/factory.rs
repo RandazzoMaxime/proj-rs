@@ -2514,7 +2514,7 @@ impl AuthorityFactory {
             params.push((*code).to_owned());
         }
         sql.push(')');
-        if !self.authority.is_empty() {
+        if authority_restricts(&self.authority) {
             sql.push_str(" AND projected_crs.auth_name = ?");
             params.push(self.authority.clone());
         }
@@ -2545,7 +2545,7 @@ impl AuthorityFactory {
              datum_auth_name = ? AND datum_code = ? AND deprecated = 0"
             .to_owned();
         let mut params = vec![datum_auth.to_owned(), datum_code.to_owned()];
-        if !self.authority.is_empty() {
+        if authority_restricts(&self.authority) {
             sql.push_str(" AND auth_name = ?");
             params.push(self.authority.clone());
         }
@@ -2576,7 +2576,7 @@ impl AuthorityFactory {
              AND geodetic_datum.deprecated = 0 AND geodetic_crs.deprecated = 0"
             .to_owned();
         let mut params = vec![ellipsoid_auth.to_owned(), ellipsoid_code.to_owned()];
-        if !self.authority.is_empty() {
+        if authority_restricts(&self.authority) {
             sql.push_str(" AND geodetic_crs.auth_name = ?");
             params.push(self.authority.clone());
         }
@@ -2716,7 +2716,7 @@ impl AuthorityFactory {
     ) -> Result<Vec<(String, String)>, FactoryError> {
         let mut sql = String::from("SELECT auth_name, code FROM extent WHERE deprecated = 0 AND ");
         let mut params = Vec::new();
-        if !self.authority.is_empty() {
+        if authority_restricts(&self.authority) {
             sql.push_str("auth_name = ? AND ");
             params.push(self.authority.clone());
         }
@@ -2865,7 +2865,7 @@ impl AuthorityFactory {
                 sql.push_str("AND name = ? COLLATE NOCASE ");
                 params.push(name.to_owned());
             }
-            if !self.authority.is_empty() {
+            if authority_restricts(&self.authority) {
                 sql.push_str("AND auth_name = ? ");
                 params.push(self.authority.clone());
             }
@@ -2883,7 +2883,7 @@ impl AuthorityFactory {
                 sql.push_str("AND a.alt_name = ? COLLATE NOCASE ");
                 params.push(name.to_owned());
             }
-            if !self.authority.is_empty() {
+            if authority_restricts(&self.authority) {
                 sql.push_str("AND ov.auth_name = ? ");
                 params.push(self.authority.clone());
             }
@@ -3376,7 +3376,7 @@ impl AuthorityFactory {
              source_crs_code = target_crs_code AND deprecated = 0 AND ({})",
             clauses.join(" OR ")
         );
-        if !self.authority.is_empty() {
+        if authority_restricts(&self.authority) {
             sql.push_str(" AND auth_name = ?");
             params.push(self.authority.clone());
         }
@@ -3440,7 +3440,7 @@ impl AuthorityFactory {
             return None;
         }
         let mut conversion = projected.deriving_conversion().clone();
-        if !self.authority.is_empty()
+        if authority_restricts(&self.authority)
             && conversion
                 .identifiers()
                 .first()
@@ -3617,7 +3617,7 @@ impl AuthorityFactory {
              AND VC1.code = ?"
             .to_owned();
         let mut params = vec![code.to_owned()];
-        if !self.authority.is_empty() {
+        if authority_restricts(&self.authority) {
             sql.push_str(" AND GT0.target_crs_auth_name = ?");
             params.push(self.authority.clone());
         }
@@ -3640,7 +3640,7 @@ impl AuthorityFactory {
              FROM unit_of_measure",
         );
         let mut params = Vec::new();
-        if !self.authority.is_empty() {
+        if authority_restricts(&self.authority) {
             sql.push_str(" WHERE auth_name = ?");
             params.push(self.authority.clone());
         }
@@ -3682,7 +3682,7 @@ impl AuthorityFactory {
     pub fn get_celestial_body_list(&self) -> Result<Vec<CelestialBodyInfo>, FactoryError> {
         let mut sql = String::from("SELECT auth_name, name FROM celestial_body");
         let mut params = Vec::new();
-        if !self.authority.is_empty() {
+        if authority_restricts(&self.authority) {
             sql.push_str(" WHERE auth_name = ?");
             params.push(self.authority.clone());
         }
@@ -4922,11 +4922,15 @@ pub struct CoordinateOperationContext {
 
 impl CoordinateOperationContext {
     /// Context that reads `db`. An empty authority considers every authority.
+    ///
+    /// The name is the one `proj_create_operation_factory_context` gives its
+    /// `AuthorityFactory`: `EPSG`, `ESRI` and `PROJ` in any case are spelled as PROJ spells them
+    /// (`factory.cpp:4400-4417`), and the context keeps the spelling.
     #[must_use]
     pub fn create(db: &DatabaseContext, authority: impl Into<String>) -> Self {
         Self {
             db: db.clone(),
-            authority: authority.into(),
+            authority: canonical_authority(authority.into()),
             intermediates: Vec::new(),
             intermediate_use: IntermediateCrsUse::Allow,
             area_of_interest: None,
@@ -6406,7 +6410,7 @@ fn datum_based_intermediate_operations(
             let marks = vec!["?"; allowed_authorities.len()].join(",");
             sql.push_str(&format!("AND v.auth_name IN ({marks}) "));
             params.extend(allowed_authorities.iter().cloned());
-        } else if !context.authority.is_empty() && context.authority != "any" {
+        } else if authority_restricts(&context.authority) {
             sql.push_str("AND v.auth_name = ? ");
             params.push(context.authority.clone());
         }
@@ -6591,8 +6595,8 @@ fn without_missing_grids(
 /// The authorities an intermediate leg of a pair may use (`allowedAuthorities`,
 /// `findsOpsInRegistryWithIntermediate`, coordinateoperationfactory.cpp:2073-2298): with no
 /// authority named by the context, the authorities of the pair restrict the legs when there are
-/// several (`getCandidateAuthorities`). Otherwise the named authority is the only restriction,
-/// which the caller applies (`hasAuthorityRestriction`, factory.cpp:8409).
+/// several (`getCandidateAuthorities`). A named authority, `any` included, gives no list: PROJ
+/// then reads the legs with `""` (coordinateoperationfactory.cpp:2209-2213).
 fn pivot_authorities(
     context: &CoordinateOperationContext,
     source_authority: &str,
@@ -6801,7 +6805,7 @@ fn crs_codes_intermediate_operations(
             params.extend(allowed.iter().cloned());
             params.extend(allowed.iter().cloned());
         }
-        if !context.authority.is_empty() && context.authority != "any" {
+        if authority_restricts(&context.authority) {
             sql.push_str("AND v1.auth_name = ? AND v2.auth_name = ? ");
             params.extend([context.authority.clone(), context.authority.clone()]);
         }
@@ -7505,6 +7509,23 @@ fn direct_registry_operations(
     Ok(found)
 }
 
+/// `hasAuthorityRestriction` (`factory.cpp:4138-4140`): the SQL of a lookup is restricted to one
+/// authority. An empty name and `any` do not restrict it.
+fn authority_restricts(name: &str) -> bool {
+    !name.is_empty() && name != "any"
+}
+
+/// The spelling of an authority name that `AuthorityFactory::create` (`factory.cpp:4400-4417`)
+/// gives the known ones: `EPSG`, `ESRI` and `PROJ`, compared without case. Any other name is kept.
+fn canonical_authority(name: String) -> String {
+    for known in ["EPSG", "ESRI", "PROJ"] {
+        if name.eq_ignore_ascii_case(known) {
+            return known.to_owned();
+        }
+    }
+    name
+}
+
 /// `getCandidateAuthorities`: the authorities a direct search reads, in order. An authority
 /// the context names is the only one. Otherwise the table `authority_to_authority_preference`
 /// gives the list for the pair of CRS authorities, so that `ESRI` operations are not read for
@@ -7610,7 +7631,7 @@ fn operations_between(
         sql.push_str(&format!("({forward})"));
     }
     sql.push_str(" AND cov.deprecated = 0");
-    if !authority.is_empty() {
+    if authority_restricts(authority) {
         sql.push_str(" AND cov.auth_name = ?");
         params.push(authority.to_owned());
     }
