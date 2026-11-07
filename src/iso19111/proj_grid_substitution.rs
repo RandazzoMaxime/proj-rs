@@ -375,6 +375,7 @@ fn similar_operation(
         accuracy_text: transformation.accuracy_text.clone(),
         version: None,
         point_motion: false,
+        ballpark: false,
         inverted: false,
         source_epoch: None,
         target_epoch: None,

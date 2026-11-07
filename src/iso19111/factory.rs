@@ -4661,6 +4661,7 @@ impl AuthorityFactory {
             accuracy_text: accuracy_of(accuracy).and_then(|_| accuracy_text(accuracy)),
             version: optional_text(version),
             point_motion: motion == PointMotion::Yes,
+            ballpark: false,
             source_epoch: None,
             target_epoch: None,
             inverted: false,
@@ -5364,8 +5365,59 @@ impl CoordinateOperationFactory {
                 res.push(operation);
             }
         }
-        res.extend(forced_ballpark_operations(source, target));
+        res.extend(self.forced_geodetic_operations(source, target, context)?);
         Ok(Some(res))
+    }
+
+    /// `createOperationsGeodToGeod` with `forceBallpark` (coordinateoperationfactory.cpp:
+    /// 5236-5523), for two geodetic CRS. Two geographic CRS: [`forced_ballpark_operations`]. A
+    /// geographic and a geocentric CRS of the same datum: the flagged PROJ-based conversion. On
+    /// different datums, the geographic intermediate of the geocentric CRS, then the operations
+    /// of the full `createOperations` from it to the other CRS, each chained (5314-5331); the
+    /// reverse pair is the inverse. Two geocentric CRS: the ballpark translation.
+    fn forced_geodetic_operations(
+        &self,
+        source: &Crs,
+        target: &Crs,
+        context: &CoordinateOperationContext,
+    ) -> Result<Vec<CoordinateOperation>, FactoryError> {
+        let source_geocentric = matches!(source, Crs::Geodetic(GeodeticCRS::Geocentric(_)));
+        let target_geocentric = matches!(target, Crs::Geodetic(GeodeticCRS::Geocentric(_)));
+        let (source_geographic, target_geographic) = (
+            geographic_of(source).is_some(),
+            geographic_of(target).is_some(),
+        );
+        if source_geographic && target_geographic {
+            return Ok(forced_ballpark_operations(source, target));
+        }
+        if !((source_geocentric && target_geographic) || (source_geographic && target_geocentric)) {
+            return Ok(forced_ballpark_operations(source, target));
+        }
+        if same_geodetic_datum(source, target) {
+            return Ok(vec![super::geodetic_ops::forced_geographic_geocentric(
+                source, target,
+            )?]);
+        }
+        if !source_geocentric {
+            return Ok(self
+                .forced_geodetic_operations(target, source, context)?
+                .iter()
+                .map(CoordinateOperation::inverse)
+                .collect());
+        }
+        let intermediate = super::geodetic_ops::geocentric_intermediate(source)?;
+        let first = CoordinateOperation::Transformation(
+            super::geodetic_ops::geographic_geocentric_conversion(source, &intermediate)?,
+        );
+        let mut found = Vec::new();
+        for second in self.create_candidates(&intermediate, target, context)? {
+            if let Some(operation) =
+                super::compound::compute_metadata(vec![first.clone(), second], context)
+            {
+                found.push(operation);
+            }
+        }
+        Ok(found)
     }
 
     /// `proj_get_suggested_operation` (forward) on `operations`, the list from `source`
