@@ -5639,6 +5639,26 @@ impl CoordinateOperationFactory {
                 )?);
             }
         }
+        // `createOperations` (coordinateoperationfactory.cpp:3809-3833): an engineering CRS to an
+        // equivalent one is the identity, a Cartesian grid offset of zero over the world.
+        if let Crs::Engineering(_) = source {
+            if source.is_equivalent_to(target) {
+                let mut operation = Transformation::create_from_code(
+                    &OpProps::new().name(format!(
+                        "Identity transformation from {} to {}",
+                        source.name(),
+                        target.name()
+                    )),
+                    source.clone(),
+                    target.clone(),
+                    9656,
+                    vec![ParameterValue::length(0.0); 2],
+                    world_extent(),
+                )?;
+                operation.accuracy = Some(0.0);
+                found.push(CoordinateOperation::Transformation(operation));
+            }
+        }
         Ok(found)
     }
 }
