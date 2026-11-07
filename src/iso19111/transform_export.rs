@@ -84,6 +84,7 @@ const METHOD_NRCAN_GEOID_DIFFERENCE: i32 = 1126;
 const METHOD_NEW_ZEALAND_DEFORMATION_MODEL: i32 = 1079;
 const METHOD_TIN_CARTESIAN: i32 = 1138;
 const METHOD_TIN_GEOGRAPHIC2D: i32 = 1145;
+const METHOD_TIN_VERTICAL: i32 = 1137;
 const PARAMETER_LAT_LON_DIFFERENCE_FILE: i32 = 8656;
 /// Name of the method of an operation PROJ builds from the two CRS exports (`PROJBasedOperation`).
 pub(super) const PROJ_BASED_METHOD: &str = "PROJ-based operation method";
@@ -777,7 +778,8 @@ fn deformation_grid_shift(
     Ok(true)
 }
 
-/// `tinshift` on projected CRS (method 1138), or on geographic 2D CRS in degrees (method 1145).
+/// `tinshift` on projected CRS (method 1138), on geographic 2D CRS in degrees (method 1145),
+/// or on vertical CRS (method 1137).
 fn tin_shift(
     operation: &Transformation,
     source: Option<&Crs>,
@@ -785,6 +787,30 @@ fn tin_shift(
     formatter: &mut PipelineFormatter,
 ) -> Result<bool, FactoryError> {
     let code = epsg_method_code(operation);
+    if code == METHOD_TIN_VERTICAL {
+        // `EPSG_CODE_METHOD_VERTICAL_OFFSET_BY_TIN_INTERPOLATION_JSON` (singleoperation.cpp:5057):
+        // both CRS must be vertical, checked before the file; no unit conversion is written.
+        let method = operation.method().name();
+        if !matches!(source, Some(Crs::Vertical(_))) || !matches!(target, Some(Crs::Vertical(_))) {
+            return Err(FactoryError::Format(format!(
+                "Can apply {method} only to VerticalCRS"
+            )));
+        }
+        let Some(file) = file_by_code(operation, PARAMETER_TIN_OFFSET_FILE) else {
+            return Ok(false);
+        };
+        // `isMethodInverseOf`: a method named `Inverse of ...` writes the step inverted.
+        let inverse_method = method.starts_with("Inverse of ");
+        if inverse_method {
+            formatter.start_inversion();
+        }
+        formatter.add_step("tinshift");
+        formatter.add_param("file", &formatter.grid_name(&file));
+        if inverse_method {
+            formatter.stop_inversion();
+        }
+        return Ok(true);
+    }
     if code == METHOD_TIN_CARTESIAN {
         let Some(file) = file_by_code(operation, PARAMETER_TIN_OFFSET_FILE) else {
             return Ok(false);
