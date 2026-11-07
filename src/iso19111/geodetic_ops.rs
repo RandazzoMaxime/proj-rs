@@ -401,17 +401,14 @@ pub(super) fn spherical_planetocentric_operations(
 
 /// A geocentric source and a geographic target, or the reverse, on different datums: the
 /// conversion to the geographic CRS of the geocentric one, then the geographic operation.
-fn geographic_geocentric_different_datum(
-    source: &Crs,
-    target: &Crs,
-    rule: BallparkRule,
-) -> Result<Vec<CoordinateOperation>, FactoryError> {
-    if !is_geocentric(source) {
-        let reverse = geographic_geocentric_different_datum(target, source, rule)?;
-        return Ok(reverse.iter().map(CoordinateOperation::inverse).collect());
-    }
-    let Crs::Geodetic(geodetic) = source else {
-        return Ok(Vec::new());
+/// The geographic CRS `<geocentric> (geographic)` of the geocentric CRS, on its datum, with
+/// latitude and longitude axes and an ellipsoidal height, as `createOperationsGeodToGeod` builds
+/// it for two datums (coordinateoperationfactory.cpp:5314-5331).
+pub(super) fn geocentric_intermediate(geocentric: &Crs) -> Result<Crs, FactoryError> {
+    let Crs::Geodetic(geodetic) = geocentric else {
+        return Err(FactoryError::Format(
+            "geocentric CRS expected for its geographic intermediate".to_owned(),
+        ));
     };
     let mut coordinate_system = EllipsoidalCS::create_longitude_latitude(UnitOfMeasure::degree());
     coordinate_system.axes.push(Axis::new(
@@ -421,13 +418,39 @@ fn geographic_geocentric_different_datum(
         UnitOfMeasure::metre(),
     ));
     let mut intermediate = GeographicCRS::create(
-        format!("{} (geographic)", source.name()),
+        format!("{} (geographic)", geocentric.name()),
         geodetic.datum().cloned(),
         geodetic.datum_ensemble().cloned(),
         coordinate_system,
     )?;
-    intermediate.identified.domains = source.domains().to_vec();
-    let intermediate = Crs::Geographic(intermediate);
+    intermediate.identified.domains = geocentric.domains().to_vec();
+    Ok(Crs::Geographic(intermediate))
+}
+
+/// `createOperationsGeodToGeod` with `forceBallpark`, for a geographic CRS and a geocentric CRS of
+/// the same datum: `createGeodToGeodPROJBased`, flagged as a ballpark (coordinateoperationfactory.
+/// cpp:5282-5289). The PROJ string is the geographic/geocentric conversion.
+pub(super) fn forced_geographic_geocentric(
+    source: &Crs,
+    target: &Crs,
+) -> Result<CoordinateOperation, FactoryError> {
+    let mut operation = geographic_geocentric_conversion(source, target)?;
+    operation.identified.name = transformation_name(source.name(), target.name());
+    operation.identified.domains = vec![world_extent()];
+    operation.ballpark = true;
+    Ok(CoordinateOperation::Transformation(operation))
+}
+
+fn geographic_geocentric_different_datum(
+    source: &Crs,
+    target: &Crs,
+    rule: BallparkRule,
+) -> Result<Vec<CoordinateOperation>, FactoryError> {
+    if !is_geocentric(source) {
+        let reverse = geographic_geocentric_different_datum(target, source, rule)?;
+        return Ok(reverse.iter().map(CoordinateOperation::inverse).collect());
+    }
+    let intermediate = geocentric_intermediate(source)?;
     let first = CoordinateOperation::Transformation(geographic_geocentric_conversion(
         source,
         &intermediate,
