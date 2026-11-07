@@ -1729,10 +1729,14 @@ impl WktParser {
             let Ok(id) = self.build_id(child, node) else {
                 continue;
             };
-            if let Ok(GeodeticCRS::Geocentric(found)) =
-                AuthorityFactory::create(&db, id.code_space()).create_geodetic_crs(id.code())
-            {
-                return Some(CoordinateSystem::Cartesian(found.coordinate_system));
+            match AuthorityFactory::create(&db, id.code_space()).create_geodetic_crs(id.code()) {
+                Ok(GeodeticCRS::Geocentric(found)) => {
+                    return Some(CoordinateSystem::Cartesian(found.coordinate_system));
+                }
+                Ok(GeodeticCRS::Spherical(found)) => {
+                    return Some(CoordinateSystem::Spherical(found.coordinate_system));
+                }
+                _ => {}
             }
         }
         None
@@ -2484,6 +2488,7 @@ impl WktParser {
         if let Some(crs) = derived_geographic_from_extension(&props.extension_proj4) {
             return Ok(WktObject::Crs(crs));
         }
+        let original_name = props.name.clone();
         // A guessed ESRI dialect is known before the datum node sets `esri`.
         if self.esri || self.maybe_esri {
             if let Some((official, _, _)) = self.alias(&props.name, "projected_crs") {
@@ -2585,11 +2590,31 @@ impl WktParser {
                 base = GeodeticCRS::Geographic(geographic.promote_to_3d_with_db(self.db.as_ref()));
             }
         }
+        // io.cpp:4736-4757: an ESRI `_FIPS_` name in US feet, with no `_Feet`, is the name of the
+        // `_Feet` alias of its official CRS, when the name itself is an alias.
+        if self.esri && self.alias(&original_name, "projected_crs").is_some() {
+            const US_FOOT_CONV_FACTOR: f64 = 12.0 / 39.37;
+            let factor = coordinate_system
+                .axes()
+                .first()
+                .map_or(0.0, |axis| axis.unit().conversion_to_si());
+            if original_name.contains("_FIPS_")
+                && !original_name.contains("_Feet")
+                && (factor - US_FOOT_CONV_FACTOR).abs() < 1e-10 * US_FOOT_CONV_FACTOR
+            {
+                if let Some((official_from_feet, _, _)) =
+                    self.alias(&format!("{original_name}_Feet"), "projected_crs")
+                {
+                    props.name = official_from_feet;
+                }
+            }
+        }
         let crs = ProjectedCRS {
             identified: props.identified(),
             base,
             conversion,
             coordinate_system,
+            implicit_cs: ci_eq(node.value(), "PROJCS") && node.count_named("AXIS") == 0,
         };
         if !self.towgs84.is_empty() {
             return self.bind_towgs84(Crs::Projected(crs));
@@ -2620,6 +2645,7 @@ impl WktParser {
             base: GeodeticCRS::Geographic(GeographicCRS::epsg_4326()),
             conversion,
             coordinate_system,
+            implicit_cs: false,
         })))
     }
 
@@ -2632,7 +2658,12 @@ impl WktParser {
         let Crs::Geographic(base_geo) = bound.source_crs().clone() else {
             return Err(invalid("bound base is not geographic"));
         };
-        let angular = UnitOfMeasure::degree();
+        let angular = base_geo
+            .coordinate_system()
+            .axes()
+            .first()
+            .map(|axis| axis.unit().clone())
+            .unwrap_or_else(UnitOfMeasure::degree);
         let cs = self.build_cs(node.child(&["CS"]), node, angular.clone())?;
         let CoordinateSystem::Cartesian(coordinate_system) = cs else {
             return Err(invalid("projected CRS requires a Cartesian CS"));
@@ -2658,6 +2689,7 @@ impl WktParser {
             base: GeodeticCRS::Geographic(base_geo),
             conversion,
             coordinate_system,
+            implicit_cs: ci_eq(node.value(), "PROJCS") && node.count_named("AXIS") == 0,
         };
         let mut bound = bound;
         *bound.source_crs_mut() = Crs::Projected(projected);

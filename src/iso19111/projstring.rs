@@ -1497,6 +1497,17 @@ fn well_known_ellps(major: f64, inverse: Option<f64>, minor: Option<f64>) -> Opt
     well_known_ellps_entry(major, inverse, minor).map(|(id, ..)| *id)
 }
 
+/// `Ellipsoid::lookForProjWellKnownEllps`: the PROJ name of the well-known ellipsoid with the
+/// semi-major axis, and the inverse flattening or the minor axis, of `ellipsoid`.
+pub(crate) fn look_for_proj_well_known_ellps(ellipsoid: &Ellipsoid) -> Option<&'static str> {
+    let inverse = ellipsoid.inverse_flattening();
+    let flattening = (inverse != 0.0).then_some(inverse);
+    let minor = ellipsoid
+        .semi_minor_axis()
+        .map(super::model::Measure::si_value);
+    well_known_ellps(ellipsoid.semi_major_axis().si_value(), flattening, minor)
+}
+
 /// [`well_known_ellps`] with the whole `proj_ellps` row, so the name is available.
 fn well_known_ellps_entry(
     major: f64,
@@ -2763,19 +2774,25 @@ pub(super) fn projected_from_proj_string(tokens: &[(String, String)]) -> Result<
         } else {
             format!("WGS 84 / Pseudo-Mercator (unit {units})")
         };
-        return Ok(Crs::Projected(ProjectedCRS::create(
+        let mut crs = ProjectedCRS::create(
             name,
             GeodeticCRS::Geographic(GeographicCRS::epsg_4326()),
             conversion,
             coordinate_system,
-        )));
+        );
+        // io.cpp:11684-12411: the properties of a CRS built from a PROJ string carry
+        // IMPLICIT_CS, so its axis order is not compared when identified.
+        crs.implicit_cs = true;
+        return Ok(Crs::Projected(crs));
     }
-    Ok(Crs::Projected(ProjectedCRS::create(
+    let mut crs = ProjectedCRS::create(
         name,
         GeodeticCRS::Geographic(base),
         conversion,
         coordinate_system,
-    )))
+    );
+    crs.implicit_cs = true;
+    Ok(Crs::Projected(crs))
 }
 
 /// Ellipsoid numbers and prime-meridian longitude, ignoring the datum name.

@@ -12,7 +12,8 @@ use super::buildop::{concatenation_interpolation, concatenation_interpolation_of
 use super::compound::{flatten_steps, get_accuracy, get_accuracy_of_steps, stored_accuracy};
 use super::coordinate_metadata::CoordinateMetadata;
 use super::equiv::{
-    equivalent_name, geodetic_frame, same_geodetic_datum, same_geographic_base, Equivalence,
+    equivalent_name, equivalent_name_bigger_differences, geodetic_frame, same_geodetic_datum,
+    same_geographic_base, Equivalence,
 };
 use super::json::create_from_user_input;
 use super::model::{
@@ -24,7 +25,10 @@ use super::model::{
     PrimeMeridian, ProjectedCRS, SphericalCS, Transformation, UnitKind, UnitOfMeasure, VerticalCRS,
     VerticalCS, VerticalReferenceFrame,
 };
+use super::parammap::{MethodMap, OTHER_METHODS, PROJECTION_METHODS};
 use super::pipeline::ProjLines;
+use super::projstring::look_for_proj_well_known_ellps;
+use super::wkt::format_g;
 use crate::projdb;
 
 /// Whether [`AuthorityFactory::get_authority_codes`] returns deprecated rows.
@@ -1738,32 +1742,62 @@ fn equivalent_object_name(left: &str, right: &str) -> bool {
 /// `ITRF1993` matches `ITRF93`.
 fn canonical_search_name(name: &str) -> String {
     let chars: Vec<char> = name.chars().collect();
+    let at = |index: usize| chars.get(index).copied().unwrap_or('\0');
+    let word_at = |index: usize, word: &str| {
+        word.chars()
+            .enumerate()
+            .all(|(offset, expected)| at(index + offset).to_ascii_lowercase() == expected)
+    };
     let mut out = String::new();
     let mut i = 0;
     while i < chars.len() {
         let ch = chars[i].to_ascii_lowercase();
-        if ch == ' ' && chars.get(i + 1) == Some(&'+') && chars.get(i + 2) == Some(&' ') {
+        if ch == ' ' && at(i + 1) == '+' && at(i + 2) == ' ' {
             i += 3;
             continue;
         }
+        // "19dd" is canonicalized as "dd".
         if ch == '1'
             && out
                 .chars()
                 .last()
                 .is_some_and(|last| !last.is_ascii_digit())
-            && chars.get(i + 1) == Some(&'9')
-            && chars.get(i + 2).is_some_and(char::is_ascii_digit)
-            && chars.get(i + 3).is_some_and(char::is_ascii_digit)
+            && at(i + 1) == '9'
+            && at(i + 2).is_ascii_digit()
+            && at(i + 3).is_ascii_digit()
         {
             i += 2;
             continue;
         }
-        if !matches!(ch, ' ' | '_' | '-' | '/' | '(' | ')' | '.' | '&' | ',') {
+        // The bigger differences of `Identifier::canonicalizeName`: "zone" and "height" after a
+        // separator are dropped; "north" and "south" after a separator or a digit are shortened
+        // to their first letter.
+        let after_separator = i > 0 && is_ignored_search_char(chars[i - 1]);
+        if after_separator && (word_at(i, "zone") || word_at(i, "height")) {
+            i += if word_at(i, "zone") { 4 } else { 6 };
+            continue;
+        }
+        let after_separator_or_digit = after_separator || (i > 0 && chars[i - 1].is_ascii_digit());
+        if after_separator_or_digit && (word_at(i, "north") || word_at(i, "south")) {
+            out.push(ch);
+            i += 5;
+            continue;
+        }
+        if word_at(i, "_intlfeet") && at(i + 9) == '\0' {
+            out.push_str("feet");
+            break;
+        }
+        if !is_ignored_search_char(ch) {
             out.push(ch);
         }
         i += 1;
     }
     out
+}
+
+/// `isIgnoredChar` of `Identifier::canonicalizeName`.
+fn is_ignored_search_char(ch: char) -> bool {
+    matches!(ch, ' ' | '_' | '-' | '/' | '(' | ')' | '.' | '&' | ',')
 }
 
 fn approximate_name(candidate: &str, searched: &str, canonical_searched: &str) -> bool {
@@ -2496,55 +2530,6 @@ impl AuthorityFactory {
         Ok(None)
     }
 
-    /// Non-deprecated projected CRS whose Transverse Mercator conversion (EPSG:9807)
-    /// uses central meridian `central_meridian` degrees and whose base is one of `bases`.
-    ///
-    /// This is the UTM slice of `createProjectedCRSFromExisting`.
-    ///
-    /// # Errors
-    ///
-    /// The database rejects the statement.
-    pub(crate) fn utm_projected_codes(
-        &self,
-        bases: &[(&str, &str)],
-        central_meridian: f64,
-    ) -> Result<Vec<(String, String)>, FactoryError> {
-        if bases.is_empty() {
-            return Ok(Vec::new());
-        }
-        let mut sql = String::from(
-            "SELECT projected_crs.auth_name, projected_crs.code FROM projected_crs \
-             JOIN conversion_table conv ON \
-             projected_crs.conversion_auth_name = conv.auth_name AND \
-             projected_crs.conversion_code = conv.code \
-             WHERE projected_crs.deprecated = 0 \
-             AND conv.method_auth_name = 'EPSG' AND conv.method_code = '9807' \
-             AND conv.param2_code = '8802' AND abs(conv.param2_value - ?) < 1e-8 AND (",
-        );
-        let mut params = vec![central_meridian.to_string()];
-        for (index, (authority, code)) in bases.iter().enumerate() {
-            if index > 0 {
-                sql.push_str(" OR ");
-            }
-            sql.push_str(
-                "(projected_crs.geodetic_crs_auth_name = ? AND projected_crs.geodetic_crs_code = ?)",
-            );
-            params.push((*authority).to_owned());
-            params.push((*code).to_owned());
-        }
-        sql.push(')');
-        if authority_restricts(&self.authority) {
-            sql.push_str(" AND projected_crs.auth_name = ?");
-            params.push(self.authority.clone());
-        }
-        Ok(self
-            .db
-            .text_rows(&sql, &params)?
-            .into_iter()
-            .map(|row| (row[0].clone(), row[1].clone()))
-            .collect())
-    }
-
     /// Non-deprecated geodetic CRS that use this datum.
     ///
     /// `crs_type` is `geographic 2D`, `geographic 3D`, or `geocentric`. An empty
@@ -2637,23 +2622,14 @@ impl AuthorityFactory {
         Ok(found)
     }
 
-    /// Geodetic CRS whose official name or alias matches `name`.
-    ///
-    /// Exact mode is `name = ? COLLATE NOCASE` on the official name and on
-    /// aliases other than `EPSG_OLD`. Approximate mode keeps a name when the
-    /// searched text, or its canonical form, is a substring. Deprecated rows are
-    /// dropped once a non-deprecated row has been seen. When an exact official
-    /// name matched, only those official-name matches are returned.
-    ///
-    /// # Errors
-    ///
-    /// The database rejects the statement.
-    pub(crate) fn create_projected_crs_by_name(
+    /// Projected CRS whose official name or alias matches `name`, each with the matched name
+    /// (`createObjectsFromNameEx` for `PROJECTED_CRS`).
+    pub(crate) fn create_projected_crs_by_name_matched(
         &self,
         name: &str,
         mode: NameMatch,
-    ) -> Result<Vec<ProjectedCRS>, FactoryError> {
-        self.objects_from_name(name, &["projected_crs"], mode, 0, |factory, row| {
+    ) -> Result<Vec<(ProjectedCRS, String)>, FactoryError> {
+        self.objects_from_name_matched(name, &["projected_crs"], mode, 0, |factory, row| {
             factory.create_projected_crs(&row.code)
         })
     }
@@ -2678,6 +2654,248 @@ impl AuthorityFactory {
         self.objects_from_name(name, &["compound_crs"], mode, 0, |factory, row| {
             factory.create_compound_crs(&row.code)
         })
+    }
+
+    /// `createProjectedCRSFromExisting` (factory.cpp:10149): the projected CRS of this
+    /// factory that `crs` describes.
+    ///
+    /// The candidates have the same base CRS (identified by this factory, with the other axis
+    /// order too for a geographic base), the EPSG method of `crs`, and parameter values within
+    /// one unit of those of `crs`. Among them, the ones whose name is equivalent to the name of
+    /// `crs` are returned. Without one, the projected CRS without a conversion whose WKT text
+    /// names the method, the semi-major axis, and the parameters of `crs` are returned, each
+    /// set of rows only when it holds 200 rows at most.
+    pub(crate) fn create_projected_crs_from_existing(
+        &self,
+        crs: &ProjectedCRS,
+    ) -> Vec<ProjectedCRS> {
+        let conversion = crs.deriving_conversion();
+        let method = conversion.method();
+        let method_code = epsg_code_of_identifiers(method.identifiers());
+        if method_code == 0 {
+            return Vec::new();
+        }
+        let base = crs.base_crs();
+        let mut candidates = Crs::Geodetic(base.clone()).identify_with(Some(self));
+        if let GeodeticCRS::Geographic(geographic) = base {
+            if let Some(other) = geographic_with_other_axis_order(geographic) {
+                candidates.extend(Crs::Geographic(other).identify_with(Some(self)));
+            }
+        }
+        let base_axis_unit = base.coordinate_system().axes()[0].unit().clone();
+        let Some(base_ellipsoid) = base.ellipsoid() else {
+            return Vec::new();
+        };
+        let semi_major = base_ellipsoid.semi_major_axis().value();
+
+        let mut sql = "SELECT projected_crs.auth_name, projected_crs.code, \
+             projected_crs.name FROM projected_crs \
+             JOIN conversion_table conv ON \
+             projected_crs.conversion_auth_name = conv.auth_name AND \
+             projected_crs.conversion_code = conv.code \
+             JOIN geodetic_crs gcrs ON \
+             gcrs.auth_name = projected_crs.geodetic_crs_auth_name AND \
+             gcrs.code = projected_crs.geodetic_crs_code \
+             JOIN geodetic_datum datum ON \
+             datum.auth_name = gcrs.datum_auth_name AND \
+             datum.code = gcrs.datum_code \
+             JOIN ellipsoid ellps ON \
+             ellps.auth_name = datum.ellipsoid_auth_name AND \
+             ellps.code = datum.ellipsoid_code \
+             WHERE \
+             abs(ellps.semi_major_axis - ?) <= 1e-4 * ellps.semi_major_axis AND \
+             projected_crs.deprecated = 0 AND "
+            .to_owned();
+        let mut params = vec![format_g(semi_major, 15)];
+        if !candidates.is_empty() {
+            sql.push_str(&auth_name_code_in(
+                &candidates,
+                &mut params,
+                "projected_crs.geodetic_crs_",
+            ));
+            sql.push_str(" AND ");
+        }
+        sql.push_str("conv.method_auth_name = 'EPSG' AND conv.method_code = ?");
+        params.push(method_code.to_string());
+        if authority_restricts(&self.authority) {
+            sql.push_str(" AND projected_crs.auth_name = ?");
+            params.push(self.authority.clone());
+        }
+
+        // The parameter values, read in order. The loop stops at the first value that is not
+        // an EPSG-coded measure, as PROJ does.
+        let mut has_lat_1st = false;
+        let mut lat_1st = 0.0;
+        let mut param_lat_1st = 0;
+        let mut has_lat_2nd = false;
+        let mut lat_2nd = 0.0;
+        let mut param_lat_2nd = 0;
+        for (index, parameter) in conversion.parameters().iter().enumerate() {
+            let i_param = index + 1;
+            let param_code = epsg_code_of_parameter(parameter);
+            let ParameterValue::Measure(measure) = parameter.value() else {
+                break;
+            };
+            if param_code <= 0 {
+                break;
+            }
+            if same_unit(measure.unit(), &UnitOfMeasure::degree())
+                && same_unit(measure.unit(), &base_axis_unit)
+            {
+                if method_code == EPSG_METHOD_LCC_2SP {
+                    if param_code == EPSG_PARAMETER_LAT_1ST_STD_PARALLEL {
+                        has_lat_1st = true;
+                        lat_1st = measure.value();
+                        param_lat_1st = i_param;
+                        continue;
+                    } else if param_code == EPSG_PARAMETER_LAT_2ND_STD_PARALLEL {
+                        has_lat_2nd = true;
+                        lat_2nd = measure.value();
+                        param_lat_2nd = i_param;
+                        continue;
+                    }
+                }
+                sql.push_str(&format!(
+                    " AND conv.param{i_param}_code = ? AND conv.param{i_param}_auth_name = 'EPSG' \
+                     AND conv.param{i_param}_value BETWEEN ? AND ?"
+                ));
+                // As angles might be expressed with the odd unit EPSG:9110 "sexagesimal DMS",
+                // the range is broad.
+                params.push(param_code.to_string());
+                params.push((measure.value() - 1.0).to_string());
+                params.push((measure.value() + 1.0).to_string());
+            }
+        }
+        // The two standard parallels of LCC 2SP may be switched.
+        if method_code == EPSG_METHOD_LCC_2SP && has_lat_1st && has_lat_2nd {
+            sql.push_str(&format!(
+                " AND conv.param{param_lat_1st}_code = ? AND conv.param{param_lat_1st}_auth_name = 'EPSG' \
+                 AND conv.param{param_lat_2nd}_code = ? AND conv.param{param_lat_2nd}_auth_name = 'EPSG' AND (("
+            ));
+            params.push(EPSG_PARAMETER_LAT_1ST_STD_PARALLEL.to_string());
+            params.push(EPSG_PARAMETER_LAT_2ND_STD_PARALLEL.to_string());
+            let (mut value_1, mut value_2) = (lat_1st, lat_2nd);
+            for alternative in 0..2 {
+                if alternative == 1 {
+                    sql.push_str(") OR (");
+                    std::mem::swap(&mut value_1, &mut value_2);
+                }
+                sql.push_str(&format!(
+                    "conv.param{param_lat_1st}_value BETWEEN ? AND ? AND \
+                     conv.param{param_lat_2nd}_value BETWEEN ? AND ?"
+                ));
+                params.push((value_1 - 1.0).to_string());
+                params.push((value_1 + 1.0).to_string());
+                params.push((value_2 - 1.0).to_string());
+                params.push((value_2 + 1.0).to_string());
+            }
+            sql.push_str("))");
+        }
+        let mut res = Vec::new();
+        let Ok(rows) = self.db.text_rows(&sql, &params) else {
+            return res;
+        };
+        for row in &rows {
+            if equivalent_name_bigger_differences(crs.name(), &row[2]) {
+                if let Ok(found) = self.child(&row[0]).create_projected_crs(&row[1]) {
+                    res.push(found);
+                }
+            }
+        }
+        if !res.is_empty() {
+            return res;
+        }
+
+        // No candidate has the name: the projected CRS without a conversion row whose WKT
+        // text names the method, the semi-major axis, and the parameters.
+        let mut params = Vec::new();
+        let mut sql = "SELECT auth_name, code FROM projected_crs WHERE \
+             deprecated = 0 AND conversion_auth_name IS NULL AND "
+            .to_owned();
+        if !candidates.is_empty() {
+            sql.push_str(&auth_name_code_in(
+                &candidates,
+                &mut params,
+                "geodetic_crs_",
+            ));
+            sql.push_str(" AND ");
+        }
+        let semi_major_text = format_g(base_ellipsoid.semi_major_axis().si_value(), 10);
+        sql.push_str("(text_definition LIKE ? ESCAPE '\\'");
+        // WKT2 definition.
+        params.push(format!(
+            "%,{semi_major_text}%{}%",
+            escape_like(method.name())
+        ));
+        let mapping = projection_mapping(method_code, method.name());
+        if let Some(proj_name) = mapping.and_then(|mapping| mapping.proj_name) {
+            sql.push_str(" OR (text_definition LIKE ? AND (text_definition LIKE ?");
+            params.push(format!("%proj={proj_name}%"));
+            params.push(format!("%={semi_major_text}%"));
+            if let Some(proj_ellps) = look_for_proj_well_known_ellps(base_ellipsoid) {
+                sql.push_str(" OR text_definition LIKE ?");
+                params.push(format!("%={proj_ellps}%"));
+            }
+            sql.push_str("))");
+        }
+        // WKT1 GDAL definition.
+        if let Some(gdal_name) = wkt1_gdal_method_name(method_code, method.name()) {
+            sql.push_str(" OR text_definition LIKE ? ESCAPE '\\'");
+            params.push(format!("%,{semi_major_text}%{}%", escape_like(gdal_name)));
+        }
+        // WKT1 ESRI definition.
+        if let Some(esri) = esri_method(conversion, method.name(), method_code) {
+            sql.push_str(" OR text_definition LIKE ? ESCAPE '\\'");
+            let mut pattern = format!("%,{semi_major_text}%{}%", escape_like(esri.name));
+            let false_easting = conversion
+                .measure_of_code(EPSG_PARAMETER_FALSE_EASTING)
+                .or_else(|| conversion.measure_of_code(EPSG_PARAMETER_EASTING_FALSE_ORIGIN));
+            if let Some(false_easting) = false_easting {
+                pattern.push_str(&format!(
+                    "PARAMETER[\"False\\_Easting\",{}%",
+                    format_g(
+                        false_easting.convert_to(crs.coordinate_system().axes()[0].unit()),
+                        10
+                    )
+                ));
+            }
+            let latitude = conversion_measure_by_name(conversion, "Latitude of natural origin")
+                .or_else(|| conversion_measure_by_name(conversion, "Latitude of false origin"));
+            if let Some(latitude) = latitude {
+                let angular = if matches!(base, GeodeticCRS::Geographic(_)) {
+                    base_axis_unit
+                } else {
+                    UnitOfMeasure::degree()
+                };
+                pattern.push_str(&format!(
+                    "PARAMETER[\"Latitude\\_Of\\_Origin\",{}%",
+                    format_g(latitude.convert_to(&angular), 10)
+                ));
+            }
+            params.push(pattern);
+        }
+        sql.push(')');
+        if authority_restricts(&self.authority) {
+            sql.push_str(" AND auth_name = ?");
+            params.push(self.authority.clone());
+        }
+        let rows_without_conversion = self.db.text_rows(&sql, &params).unwrap_or_default();
+
+        if rows.len() <= 200 {
+            for row in &rows {
+                if let Ok(found) = self.child(&row[0]).create_projected_crs(&row[1]) {
+                    res.push(found);
+                }
+            }
+        }
+        if rows_without_conversion.len() <= 200 {
+            for row in &rows_without_conversion {
+                if let Ok(found) = self.child(&row[0]).create_projected_crs(&row[1]) {
+                    res.push(found);
+                }
+            }
+        }
+        res
     }
 
     /// `createCompoundCRSFromExisting`: the compound CRS of this factory whose horizontal
@@ -2817,6 +3035,26 @@ impl AuthorityFactory {
     where
         T: NamedAuthorityObject,
     {
+        Ok(self
+            .objects_from_name_matched(name, tables, mode, limit, load)?
+            .into_iter()
+            .map(|(object, _)| object)
+            .collect())
+    }
+
+    /// [`Self::objects_from_name`] with the name each object matched, as the second element of
+    /// PROJ's `createObjectsFromNameEx` pair: its official name, or the alias that matched.
+    fn objects_from_name_matched<T>(
+        &self,
+        name: &str,
+        tables: &[&str],
+        mode: NameMatch,
+        limit: usize,
+        load: impl Fn(&Self, &NameRow) -> Result<T, FactoryError>,
+    ) -> Result<Vec<(T, String)>, FactoryError>
+    where
+        T: NamedAuthorityObject,
+    {
         let (name, deprecated) = match name.strip_suffix(" (deprecated)") {
             Some(stripped) => (stripped, DeprecatedFilter::Only),
             None => (name, DeprecatedFilter::Any),
@@ -2908,7 +3146,10 @@ impl AuthorityFactory {
                         .unwrap_or(std::cmp::Ordering::Equal)
                 })
         });
-        Ok(built.into_iter().map(|item| item.object).collect())
+        Ok(built
+            .into_iter()
+            .map(|item| (item.object, item.matched_name))
+            .collect())
     }
 
     fn name_rows(
@@ -3179,6 +3420,7 @@ impl AuthorityFactory {
             base,
             conversion,
             coordinate_system,
+            implicit_cs: false,
         })
     }
 
@@ -9437,3 +9679,107 @@ fn point_motion_with_epochs(
     );
     transformation
 }
+
+/// The same unit: the same kind and the same size in SI.
+pub(crate) fn same_unit(left: &UnitOfMeasure, right: &UnitOfMeasure) -> bool {
+    left.kind() == right.kind()
+        && (left.conversion_to_si() - right.conversion_to_si()).abs()
+            <= 1e-15 * right.conversion_to_si().abs()
+}
+
+/// EPSG code of the identifier of `identifiers` in the EPSG code space, `0` when none.
+fn epsg_code_of_identifiers(identifiers: Vec<Identifier>) -> i32 {
+    identifiers
+        .iter()
+        .find(|identifier| identifier.code_space() == "EPSG")
+        .and_then(|identifier| identifier.code().parse().ok())
+        .unwrap_or(0)
+}
+
+/// `getEPSGCode()` of a conversion parameter, `0` when it has none.
+fn epsg_code_of_parameter(parameter: &Parameter) -> i32 {
+    if parameter.code_space() == "EPSG" {
+        parameter.code().parse().unwrap_or(0)
+    } else {
+        0
+    }
+}
+
+/// `Conversion::getESRIMethodName` with the parameter list of the ESRI mapping. The CRS target
+/// of the conversion is not set on a projected CRS's deriving conversion, so the target-name
+/// choices are not taken.
+fn esri_method(
+    conversion: &Conversion,
+    name: &str,
+    method_code: i32,
+) -> Option<super::esri_parammap::EsriChoice> {
+    super::esri_parammap::esri_method(conversion, name, method_code, None)
+}
+
+/// `Conversion::getWKT1GDALMethodName`: `Mercator_1SP` for the pseudo Mercator method, else the
+/// GDAL name of the mapping of the method.
+fn wkt1_gdal_method_name(method_code: i32, name: &str) -> Option<&'static str> {
+    if method_code == EPSG_METHOD_POPULAR_VISUALISATION_PSEUDO_MERCATOR {
+        return Some("Mercator_1SP");
+    }
+    projection_mapping(method_code, name).and_then(|mapping| mapping.wkt1_name)
+}
+
+/// `getMapping(const OperationMethod *)` (parammappings.cpp:1882): the first mapping whose EPSG
+/// code is the method code, or whose WKT2 name is equivalent to the method name.
+fn projection_mapping(method_code: i32, name: &str) -> Option<&'static MethodMap> {
+    PROJECTION_METHODS
+        .iter()
+        .chain(OTHER_METHODS)
+        .find(|mapping| {
+            (method_code != 0 && mapping.epsg_code == method_code)
+                || equivalent_name_bigger_differences(mapping.wkt2_name, name)
+        })
+}
+
+/// `parameterValueMeasure(name)` of a conversion: the measure of the first parameter whose name
+/// is equivalent to `name`, when that value is a measure.
+fn conversion_measure_by_name(conversion: &Conversion, name: &str) -> Option<Measure> {
+    let parameter = conversion
+        .parameters()
+        .iter()
+        .find(|parameter| equivalent_name_bigger_differences(name, parameter.name()))?;
+    match parameter.value() {
+        ParameterValue::Measure(measure) => Some(measure.clone()),
+        _ => None,
+    }
+}
+
+/// The LIKE pattern text of `text`, with `\`, `_` and `%` escaped (`escapeLikeStr`).
+fn escape_like(text: &str) -> String {
+    text.replace('\\', "\\\\")
+        .replace('_', "\\_")
+        .replace('%', "\\%")
+}
+
+/// The geographic CRS with the other order of its two first axes, in two dimensions:
+/// `LONG_EAST_LAT_NORTH` becomes `LAT_NORTH_LONG_EAST` and the reverse, as
+/// `createProjectedCRSFromExisting` builds it.
+fn geographic_with_other_axis_order(crs: &GeographicCRS) -> Option<GeographicCRS> {
+    let axes = crs.coordinate_system().axes();
+    if axes.len() < 2 {
+        return None;
+    }
+    if !matches!(
+        (axes[0].direction(), axes[1].direction()),
+        ("east", "north") | ("north", "east")
+    ) {
+        return None;
+    }
+    let mut swapped = crs.clone();
+    swapped.coordinate_system.axes.swap(0, 1);
+    swapped.coordinate_system.axes.truncate(2);
+    Some(swapped)
+}
+
+const EPSG_METHOD_LCC_2SP: i32 = 9802;
+const EPSG_METHOD_POPULAR_VISUALISATION_PSEUDO_MERCATOR: i32 = 1024;
+const EPSG_PARAMETER_LAT_1ST_STD_PARALLEL: i32 = 8823;
+const EPSG_PARAMETER_LAT_2ND_STD_PARALLEL: i32 = 8824;
+const EPSG_PARAMETER_FALSE_EASTING: i32 = 8806;
+const EPSG_PARAMETER_EASTING_FALSE_ORIGIN: i32 = 8826;

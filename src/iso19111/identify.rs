@@ -6,17 +6,17 @@
 
 use std::collections::BTreeSet;
 
-use super::buildop::{OpProps, UtmHemisphere};
+use super::buildop::UtmHemisphere;
 use super::equiv::{
-    directions_and_units, ellipsoid_parameters_match, equivalent_name,
-    equivalent_name_bigger_differences, identify_axes_match, meridian_equivalent, same_epoch,
-    vertical_crs_equivalent, Equivalence, IdentifyAxisOrder,
+    directions_and_units, ellipsoid_parameters_match, equivalent_name_bigger_differences,
+    identify_axes_match, meridian_equivalent, same_epoch, vertical_crs_equivalent, Equivalence,
+    IdentifyAxisOrder,
 };
-use super::factory::{AuthorityFactory, DatabaseContext, NameMatch};
+use super::factory::{same_unit, AuthorityFactory, DatabaseContext, NameMatch};
 use super::model::{
-    Axis, CartesianCS, CompoundCRS, Conversion, CoordinateSystem, Crs, Datum, DatumEnsemble,
+    Axis, CartesianCS, CompoundCRS, CoordinateSystem, Crs, Datum, DatumEnsemble,
     DerivedProjectedCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified,
-    Identifier, ObjectDomain, ProjectedCRS, UnitOfMeasure, VerticalCRS,
+    Identifier, ObjectDomain, ProjectedCRS, VerticalCRS,
 };
 
 const UNKNOWN_BASED_ON: &str = "Unknown based on ";
@@ -63,7 +63,7 @@ impl GeodeticCRS {
                         if crs.name() == name {
                             return vec![(to_crs(crs), 100)];
                         }
-                        let confidence = if equivalent_name(name, crs.name()) {
+                        let confidence = if equivalent_name_bigger_differences(name, crs.name()) {
                             90
                         } else {
                             70
@@ -439,7 +439,10 @@ fn hardcoded_match(
     for candidate in candidates {
         let name_equal = crs.name() == candidate.name();
         let equivalent = db_equivalent(crs, &candidate, order, db);
-        if equivalent_name(crs.name(), candidate.name()) && equivalent && name_equal {
+        if equivalent_name_bigger_differences(crs.name(), candidate.name())
+            && equivalent
+            && name_equal
+        {
             return Some((to_crs(candidate), 100));
         }
     }
@@ -637,7 +640,9 @@ fn frame_matches(
 }
 
 fn ellipsoid_name_is_crs_name(crs: &GeodeticCRS) -> bool {
-    owning_frame(crs).is_some_and(|frame| equivalent_name(frame.ellipsoid().name(), crs.name()))
+    owning_frame(crs).is_some_and(|frame| {
+        equivalent_name_bigger_differences(frame.ellipsoid().name(), crs.name())
+    })
 }
 
 fn db_equivalent(
@@ -674,12 +679,12 @@ fn datum_names_match(
     let right_prefixed = has_d_prefix(right.name());
     if left_prefixed && !right_prefixed {
         let stripped = &left.name()[2..];
-        return equivalent_name(stripped, right.name())
+        return equivalent_name_bigger_differences(stripped, right.name())
             || names_alias(left, stripped, right, right.name(), db);
     }
     if right_prefixed && !left_prefixed {
         let stripped = &right.name()[2..];
-        return equivalent_name(left.name(), stripped)
+        return equivalent_name_bigger_differences(left.name(), stripped)
             || names_alias(left, left.name(), right, stripped, db);
     }
     names_alias(left, left.name(), right, right.name(), db)
@@ -725,8 +730,10 @@ fn alias_from_identifier(
         "",
     );
     let matches = |name: &str| {
-        (!official.is_empty() && equivalent_name(name, &official))
-            || aliases.iter().any(|alias| equivalent_name(name, alias))
+        (!official.is_empty() && equivalent_name_bigger_differences(name, &official))
+            || aliases
+                .iter()
+                .any(|alias| equivalent_name_bigger_differences(name, alias))
     };
     matches(this_name) && matches(other_name)
 }
@@ -734,7 +741,7 @@ fn alias_from_identifier(
 fn alias_from_name(this_name: &str, other_name: &str, db: &DatabaseContext) -> bool {
     db.get_aliases("", "", this_name, "geodetic_datum", "")
         .iter()
-        .any(|alias| equivalent_name(other_name, alias))
+        .any(|alias| equivalent_name_bigger_differences(other_name, alias))
 }
 
 fn has_d_prefix(name: &str) -> bool {
@@ -853,82 +860,6 @@ impl DerivedProjectedCRS {
     }
 }
 
-/// The database search of `ProjectedCRS::identify` for a CRS that is not a UTM zone: the
-/// object named by its own identifier when the authority matches, else the projected CRS of
-/// the same name. An equivalent object (EQUIVALENT criterion) gives 100 for the same name and
-/// 90 for another one; a different one gives 25.
-fn identify_projected_in_database(
-    crs: &ProjectedCRS,
-    factory: Option<&AuthorityFactory>,
-) -> Vec<(Crs, i32)> {
-    let Some(factory) = factory else {
-        return Vec::new();
-    };
-    let db = factory.database_context();
-    // An implicit axis order (WKT1 without AXIS) is compared without the axis order, as
-    // `ProjectedCRS::identify` does with EQUIVALENT_EXCEPT_AXIS_ORDER_GEOGCRS.
-    let criterion = match crs.base_crs() {
-        GeodeticCRS::Geographic(base) if base.implicit_cs => Equivalence::ExceptAxisOrder,
-        _ => Equivalence::Equivalent,
-    };
-    if compatible_authority(crs.identifiers(), factory) {
-        for identifier in crs.identifiers() {
-            if !(factory.authority().is_empty() || identifier.code_space() == factory.authority()) {
-                continue;
-            }
-            // An authority name in another case (`Esri`) is looked up in upper case.
-            let spellings = [
-                identifier.code_space().to_owned(),
-                identifier.code_space().to_ascii_uppercase(),
-            ];
-            for space in spellings {
-                if let Ok(found) =
-                    AuthorityFactory::create(db, &space).create_projected_crs(identifier.code())
-                {
-                    let confidence = if crs.is_equivalent_to_with(&found, criterion) {
-                        100
-                    } else {
-                        25
-                    };
-                    return vec![(Crs::Projected(found), confidence)];
-                }
-            }
-        }
-        return Vec::new();
-    }
-    let name = crs.name();
-    if name.is_empty()
-        || name.eq_ignore_ascii_case("unknown")
-        || name.eq_ignore_ascii_case("unnamed")
-    {
-        return Vec::new();
-    }
-    for mode in [NameMatch::Exact, NameMatch::Approximate] {
-        let Ok(objects) = factory.create_projected_crs_by_name(name, mode) else {
-            return Vec::new();
-        };
-        let mut hits: Vec<(ProjectedCRS, i32)> = Vec::new();
-        for found in objects {
-            if crs.is_equivalent_to_with(&found, criterion) {
-                if found.name() == name {
-                    return vec![(Crs::Projected(found), 100)];
-                }
-                hits.push((found, 90));
-            } else {
-                hits.push((found, 25));
-            }
-        }
-        if !hits.is_empty() {
-            hits.sort_by_key(|hit| std::cmp::Reverse(hit.1));
-            return hits
-                .into_iter()
-                .map(|(crs, c)| (Crs::Projected(crs), c))
-                .collect();
-        }
-    }
-    Vec::new()
-}
-
 impl ProjectedCRS {
     /// `ProjectedCRS::promoteTo3D`.
     ///
@@ -963,6 +894,7 @@ impl ProjectedCRS {
             base,
             conversion: self.conversion.clone(),
             coordinate_system,
+            implicit_cs: self.implicit_cs,
         }
     }
 
@@ -986,194 +918,392 @@ impl ProjectedCRS {
             base,
             conversion: self.conversion.clone(),
             coordinate_system,
+            implicit_cs: self.implicit_cs,
         }
     }
+}
 
-    /// `ProjectedCRS::identify` for a UTM zone on WGS 84, NAD27, or NAD83.
+impl ProjectedCRS {
+    /// `ProjectedCRS::identify` (crs.cpp:4858).
     ///
-    /// One base match at confidence 70 or more, an easting/northing metre
-    /// system, and a transverse Mercator with UTM parameters returns that zone.
-    /// An exact CRS name is confidence 100. `None` still returns the hardcoded
-    /// WGS 84, NAD27, and NAD83 zones.
+    /// A UTM zone on WGS 84, NAD27, or NAD83 is named by its hardcoded zone CRS. Otherwise,
+    /// with a factory, the CRS of the factory's authority named by one of its identifiers is
+    /// taken when equivalent; without one, the projected CRS of the same name, then the
+    /// projected CRS that the base CRS, the conversion, and the axes describe
+    /// (`createProjectedCRSFromExisting`). The results of the highest confidence are kept.
     #[must_use]
     pub fn identify_with(&self, factory: Option<&AuthorityFactory>) -> Vec<(Crs, i32)> {
-        if factory.is_some_and(|factory| {
-            !(factory.authority().is_empty() || factory.authority() == "EPSG")
-        }) {
-            return Vec::new();
+        let base = identify_base(self.base_crs(), factory);
+        if let Some(found) = identify_utm_zone(self, &base, factory) {
+            return found;
         }
-        let Some((zone, hemisphere)) = self.conversion.utm_zone() else {
-            return identify_projected_in_database(self, factory);
-        };
-        if !easting_northing_metre(&self.coordinate_system) {
-            return Vec::new();
-        }
-        // A longitude/latitude base is identified as latitude/longitude, as
-        // `ProjectedCRS::identify` does before the database search.
-        let base = latitude_longitude_base(&self.base).identify_with(factory);
-        if base.len() != 1 || base[0].1 < 70 {
-            return Vec::new();
-        }
-        let Crs::Geographic(base_crs) = &base[0].0 else {
-            return Vec::new();
-        };
-        let (name, code) = if base_crs.is_equivalent_to(&GeographicCRS::epsg_4326()) {
-            utm_name_code("WGS 84 / UTM zone ", zone, hemisphere, 32_600, 32_700)
-        } else if hemisphere == UtmHemisphere::North
-            && ((1..=22).contains(&zone) || zone == 59 || zone == 60)
-            && base_crs.is_equivalent_to(&GeographicCRS::epsg_4267())
-        {
-            let code = if zone >= 59 {
-                3370 + zone - 59
-            } else {
-                26_700 + zone
-            };
-            (format!("NAD27 / UTM zone {zone}N"), code)
-        } else if hemisphere == UtmHemisphere::North
-            && ((1..=23).contains(&zone) || zone == 59 || zone == 60)
-            && base_crs.is_equivalent_to(&GeographicCRS::epsg_4269())
-        {
-            let code = if zone >= 59 {
-                3372 + zone - 59
-            } else {
-                26_900 + zone
-            };
-            (format!("NAD83 / UTM zone {zone}N"), code)
+        identify_projected_general(self, factory)
+            .into_iter()
+            .map(|(crs, confidence)| (Crs::Projected(crs), confidence))
+            .collect()
+    }
+}
+
+/// The base CRS of `ProjectedCRS::identify` identified (crs.cpp:4858-4871). A geographic base
+/// in longitude/latitude order is identified in latitude/longitude order.
+fn identify_base(base: &GeodeticCRS, factory: Option<&AuthorityFactory>) -> Vec<(Crs, i32)> {
+    let swapped = match base {
+        GeodeticCRS::Geographic(crs) => latitude_longitude_base(crs),
+        _ => None,
+    };
+    match swapped {
+        Some(crs) => Crs::Geographic(crs).identify_with(factory),
+        None => Crs::Geodetic(base.clone()).identify_with(factory),
+    }
+}
+
+/// The UTM branch of `ProjectedCRS::identify` (crs.cpp:4882-4935): a zone on WGS 84, NAD27, or
+/// NAD83 is the hardcoded CRS of that zone, with the conversion and axes of `source`. `None`
+/// when the branch does not apply, and the general search runs.
+fn identify_utm_zone(
+    source: &ProjectedCRS,
+    base: &[(Crs, i32)],
+    factory: Option<&AuthorityFactory>,
+) -> Option<Vec<(Crs, i32)>> {
+    if !factory
+        .is_none_or(|factory| factory.authority().is_empty() || factory.authority() == "EPSG")
+    {
+        return None;
+    }
+    let (zone, hemisphere) = source.conversion.utm_zone()?;
+    let [(Crs::Geographic(base_crs), confidence)] = base else {
+        return None;
+    };
+    if *confidence < 70 || !easting_northing_metre(&source.coordinate_system) {
+        return None;
+    }
+    let base_crs = GeodeticCRS::Geographic(base_crs.clone());
+    let north = hemisphere == UtmHemisphere::North;
+    let equivalent = |other: GeographicCRS| {
+        base_crs.is_equivalent_to_with(&GeodeticCRS::Geographic(other), Equivalence::Equivalent)
+    };
+    let (prefix, base_epsg, code) = if equivalent(GeographicCRS::epsg_4326()) {
+        let base_code = if north { 32_600 } else { 32_700 };
+        let code = base_code + zone;
+        ("WGS 84 / UTM zone ", GeographicCRS::epsg_4326(), code)
+    } else if ((1..=22).contains(&zone) || zone == 59 || zone == 60)
+        && north
+        && equivalent(GeographicCRS::epsg_4267())
+    {
+        let code = if zone >= 59 {
+            3370 + zone - 59
         } else {
-            let Some(factory) = factory else {
-                return Vec::new();
+            26_700 + zone
+        };
+        ("NAD27 / UTM zone ", GeographicCRS::epsg_4267(), code)
+    } else if ((1..=23).contains(&zone) || zone == 59 || zone == 60)
+        && north
+        && equivalent(GeographicCRS::epsg_4269())
+    {
+        let code = if zone >= 59 {
+            3372 + zone - 59
+        } else {
+            26_900 + zone
+        };
+        ("NAD83 / UTM zone ", GeographicCRS::epsg_4269(), code)
+    } else {
+        return None;
+    };
+    let name = format!("{prefix}{zone}{}", if north { "N" } else { "S" });
+    let crs = ProjectedCRS::create(
+        name.clone(),
+        GeodeticCRS::Geographic(base_epsg),
+        source.conversion.clone(),
+        source.coordinate_system.clone(),
+    )
+    .with_identifier("EPSG", &code.to_string());
+    let confidence = if name == source.name() {
+        100
+    } else if equivalent_name_bigger_differences(&name, source.name()) {
+        90
+    } else {
+        70
+    };
+    Some(vec![(Crs::Projected(crs), confidence)])
+}
+
+/// The general search of `ProjectedCRS::identify` (crs.cpp:4937-5180). Without a factory there
+/// is no candidate.
+fn identify_projected_general(
+    source: &ProjectedCRS,
+    factory: Option<&AuthorityFactory>,
+) -> Vec<(ProjectedCRS, i32)> {
+    let Some(factory) = factory else {
+        return Vec::new();
+    };
+    let db = factory.database_context();
+    let this_name = source.name();
+    let insignificant_name = insignificant(this_name);
+    let Some(base_ellipsoid) = source.base_crs().ellipsoid() else {
+        return Vec::new();
+    };
+    let semi_major = base_ellipsoid.semi_major_axis().si_value();
+    let mut found_equivalent_name = false;
+    let mut has_non_matching_id = false;
+    let mut res: Vec<(ProjectedCRS, i32)> = Vec::new();
+    if compatible_authority(source.identifiers(), factory) {
+        // The CRS already has an identifier: the official object of that identifier, if the
+        // database has it, and whether it is equivalent.
+        for identifier in source.identifiers() {
+            if !(factory.authority().is_empty() || identifier.code_space() == factory.authority()) {
+                continue;
+            }
+            let looked = AuthorityFactory::create(db, identifier.code_space())
+                .create_projected_crs(identifier.code());
+            if let Ok(found) = looked {
+                let matched =
+                    source.is_equivalent_to_with_database(&found, Equivalence::ExceptAxisOrder, db);
+                res.push((found, if matched { 100 } else { 25 }));
+                if matched {
+                    return res;
+                }
+            }
+        }
+        has_non_matching_id = true;
+    } else if !insignificant_name {
+        for approximate in [false, true] {
+            let mode = if approximate {
+                NameMatch::Approximate
+            } else {
+                NameMatch::Exact
             };
-            return utm_from_database(self, factory, &base, zone);
-        };
-        let conversion = match hemisphere {
-            UtmHemisphere::North => Conversion::create_utm_north(&OpProps::new(), zone),
-            UtmHemisphere::South => Conversion::create_utm_south(&OpProps::new(), zone),
-        };
-        let Ok(conversion) = conversion else {
-            return Vec::new();
-        };
-        let crs = ProjectedCRS::create(
-            name.clone(),
-            GeodeticCRS::Geographic(match code {
-                26_700..=26_722 | 3_370 | 3_371 => GeographicCRS::epsg_4267(),
-                26_900..=26_923 | 3_372 | 3_373 => GeographicCRS::epsg_4269(),
-                _ => GeographicCRS::epsg_4326(),
-            }),
-            conversion,
-            CartesianCS::create_easting_northing(UnitOfMeasure::metre()),
-        )
-        .with_identifier("EPSG", &code.to_string());
-        let confidence = if name == self.name() {
-            100
-        } else if equivalent_name(&name, self.name()) {
+            let Ok(objects) = factory.create_projected_crs_by_name_matched(this_name, mode) else {
+                break;
+            };
+            for (found, matched_name) in objects {
+                let eq_name = equivalent_name_bigger_differences(this_name, &matched_name);
+                found_equivalent_name |= eq_name;
+                let found_semi_major = found
+                    .base_crs()
+                    .ellipsoid()
+                    .map(|ellipsoid| ellipsoid.semi_major_axis().si_value());
+                if found_semi_major
+                    .is_some_and(|value| (semi_major - value).abs() <= 1e-4 * semi_major)
+                    && add_projected_candidate(
+                        source,
+                        db,
+                        &mut res,
+                        &found,
+                        CandidateFlags {
+                            name_equivalent: eq_name,
+                            non_matching_id: false,
+                        },
+                    ) == 100
+                {
+                    return res;
+                }
+            }
+            if !res.is_empty() {
+                break;
+            }
+        }
+    }
+    sort_projected_hits(this_name, &mut res);
+    if !found_equivalent_name && res.first().is_none_or(|(_, confidence)| *confidence < 50) {
+        let mut already_known: BTreeSet<(String, String)> = BTreeSet::new();
+        for (found, _) in &res {
+            if let Some(identifier) = found.identifiers().first() {
+                already_known.insert((
+                    identifier.code_space().to_owned(),
+                    identifier.code().to_owned(),
+                ));
+            }
+        }
+        for candidate in factory.create_projected_crs_from_existing(source) {
+            if let Some(identifier) = candidate.identifiers().first() {
+                let key = (
+                    identifier.code_space().to_owned(),
+                    identifier.code().to_owned(),
+                );
+                if already_known.contains(&key) {
+                    continue;
+                }
+            }
+            add_projected_candidate(
+                source,
+                db,
+                &mut res,
+                &candidate,
+                CandidateFlags {
+                    name_equivalent: insignificant_name,
+                    non_matching_id: has_non_matching_id,
+                },
+            );
+        }
+        sort_projected_hits(this_name, &mut res);
+    }
+    // Only the results of the highest confidence are kept.
+    if res.len() >= 2 {
+        let highest = res[0].1;
+        res.retain(|(_, confidence)| *confidence == highest);
+    }
+    res
+}
+
+/// What `addCRS` of `ProjectedCRS::identify` knows of a candidate: whether its name is
+/// equivalent to the name of the CRS (`eqName`), and whether the CRS has an identifier that the
+/// database does not match (`hasNonMatchingId`).
+#[derive(Clone, Copy)]
+struct CandidateFlags {
+    name_equivalent: bool,
+    non_matching_id: bool,
+}
+
+/// `addCRS` of `ProjectedCRS::identify` (crs.cpp:4960-5012): adds `candidate` to `res` with
+/// its confidence, and returns that confidence. A candidate with the name of the CRS replaces
+/// the results before it.
+fn add_projected_candidate(
+    source: &ProjectedCRS,
+    db: &DatabaseContext,
+    res: &mut Vec<(ProjectedCRS, i32)>,
+    candidate: &ProjectedCRS,
+    flags: CandidateFlags,
+) -> i32 {
+    let CandidateFlags {
+        name_equivalent: eq_name,
+        non_matching_id: has_non_matching_id,
+    } = flags;
+    let this_name = source.name();
+    let source_unit = source.coordinate_system.axes()[0].unit();
+    let candidate_unit = candidate.coordinate_system.axes()[0].unit();
+    let implicit = source.implicit_cs;
+    let unit_match = implicit && same_unit(source_unit, candidate_unit);
+    let source_datum = frame_name(source.base_crs());
+    let candidate_datum = frame_name(candidate.base_crs());
+    let mixed_unknown = (source_datum == "unknown") != (candidate_datum == "unknown");
+    let equivalent_except_axis_order =
+        source.is_equivalent_to_with_database(candidate, Equivalence::ExceptAxisOrder, db)
+            || (unit_match
+                && geodetic_equivalent_with_database(
+                    source.base_crs(),
+                    candidate.base_crs(),
+                    Equivalence::ExceptAxisOrder,
+                    db,
+                )
+                && source.deriving_conversion().is_equivalent_to_with(
+                    candidate.deriving_conversion(),
+                    Equivalence::Equivalent,
+                ));
+    if equivalent_except_axis_order && !mixed_unknown {
+        let confidence = if candidate.name() == this_name {
+            res.clear();
+            if has_non_matching_id {
+                70
+            } else {
+                100
+            }
+        } else if eq_name {
             90
         } else {
             70
         };
-        vec![(Crs::Projected(crs), confidence)]
+        res.push((candidate.clone(), confidence));
+        return confidence;
+    }
+    let confidence = match (
+        source.base_crs().ellipsoid(),
+        candidate.base_crs().ellipsoid(),
+    ) {
+        (Some(left), Some(right))
+            if ellipsoid_parameters_match(left, right)
+                && source.deriving_conversion().is_equivalent_to_with(
+                    candidate.deriving_conversion(),
+                    Equivalence::Equivalent,
+                ) =>
+        {
+            let axes_match = unit_match
+                || directions_and_units(
+                    source.coordinate_system.axes(),
+                    candidate.coordinate_system.axes(),
+                );
+            if axes_match {
+                let significant_datum = !source_datum.to_ascii_lowercase().starts_with("unknown")
+                    && source_datum != "unnamed";
+                if !significant_datum || datum_equivalent_loose(source, candidate) {
+                    70
+                } else {
+                    60
+                }
+            } else {
+                50
+            }
+        }
+        _ => 25,
+    };
+    res.push((candidate.clone(), confidence));
+    confidence
+}
+
+/// `isEquivalentTo` of two geodetic CRS with a database: two geographic CRS may have their
+/// datum names aliased in the database.
+fn geodetic_equivalent_with_database(
+    left: &GeodeticCRS,
+    right: &GeodeticCRS,
+    criterion: Equivalence,
+    db: &DatabaseContext,
+) -> bool {
+    match (left, right) {
+        (GeodeticCRS::Geographic(left), GeodeticCRS::Geographic(right)) => {
+            left.is_equivalent_to_with_database(right, criterion, db)
+        }
+        _ => left.is_equivalent_to_with(right, criterion),
     }
 }
 
-/// Longitude/latitude geographic base, rewritten as latitude/longitude.
-fn latitude_longitude_base(base: &GeodeticCRS) -> GeodeticCRS {
-    let GeodeticCRS::Geographic(crs) = base else {
-        return base.clone();
+/// The datum of a CRS as `datumNonNull` names it (an ensemble is its own datum), `""` when it
+/// has none.
+fn frame_name(crs: &GeodeticCRS) -> String {
+    owning_frame(crs)
+        .map(|frame| frame.name().to_owned())
+        .unwrap_or_default()
+}
+
+/// `IComparable` of the datums of the base CRS of `source` and `candidate` with the
+/// `EQUIVALENT` criterion and no database: the names by `isEquivalentName`, the ellipsoid, the
+/// epoch, and the prime meridian.
+fn datum_equivalent_loose(source: &ProjectedCRS, candidate: &ProjectedCRS) -> bool {
+    let (Some(left), Some(right)) = (
+        owning_frame(source.base_crs()),
+        owning_frame(candidate.base_crs()),
+    ) else {
+        return false;
     };
+    let names_match = equivalent_name_bigger_differences(left.name(), right.name())
+        || (left.name() == "unknown" && right.name() == "unnamed")
+        || (left.name() == "unnamed" && right.name() == "unknown");
+    names_match
+        && ellipsoid_parameters_match(left.ellipsoid(), right.ellipsoid())
+        && meridian_equivalent(left.prime_meridian(), right.prime_meridian())
+        && same_epoch(left.frame_reference_epoch(), right.frame_reference_epoch())
+}
+
+/// The sort of `ProjectedCRS::identify` (crs.cpp:5043-5062): confidence first, then the exact
+/// name of the CRS, then the name in byte order.
+fn sort_projected_hits(this_name: &str, hits: &mut [(ProjectedCRS, i32)]) {
+    hits.sort_by(|(left, left_confidence), (right, right_confidence)| {
+        right_confidence
+            .cmp(left_confidence)
+            .then_with(|| prefer(left.name() == this_name, right.name() == this_name))
+            .then_with(|| left.name().cmp(right.name()))
+    });
+}
+
+/// `ProjectedCRS::identify` needs the base CRS with latitude first, as PROJ identifies a
+/// longitude/latitude base in latitude/longitude order (crs.cpp:4866). Two dimensions only.
+fn latitude_longitude_base(crs: &GeographicCRS) -> Option<GeographicCRS> {
     let axes = crs.coordinate_system().axes();
     if axes.len() >= 2 && axes[0].direction() == "east" && axes[1].direction() == "north" {
         let mut swapped = crs.clone();
         swapped.coordinate_system.axes.swap(0, 1);
-        return GeodeticCRS::Geographic(swapped);
+        swapped.coordinate_system.axes.truncate(2);
+        return Some(swapped);
     }
-    base.clone()
-}
-
-/// UTM zone on a base that is not WGS 84, NAD27, or NAD83: the EPSG projected
-/// CRS with the same central meridian, kept at the highest confidence.
-fn utm_from_database(
-    source: &ProjectedCRS,
-    factory: &AuthorityFactory,
-    bases: &[(Crs, i32)],
-    zone: i32,
-) -> Vec<(Crs, i32)> {
-    let codes: Vec<(String, String)> = bases
-        .iter()
-        .filter(|(_, confidence)| *confidence >= 70)
-        .filter_map(|(crs, _)| {
-            crs.identifiers().first().map(|identifier| {
-                (
-                    identifier.code_space().to_owned(),
-                    identifier.code().to_owned(),
-                )
-            })
-        })
-        .collect();
-    let pairs: Vec<(&str, &str)> = codes
-        .iter()
-        .map(|(authority, code)| (authority.as_str(), code.as_str()))
-        .collect();
-    let Ok(found) = factory.utm_projected_codes(&pairs, f64::from(zone) * 6.0 - 183.0) else {
-        return Vec::new();
-    };
-    let mut hits = Vec::new();
-    for (authority, code) in found {
-        let Ok(Crs::Projected(candidate)) =
-            AuthorityFactory::create(factory.database_context(), &authority)
-                .create_coordinate_reference_system(&code)
-        else {
-            continue;
-        };
-        let confidence = utm_match_confidence(source, &candidate);
-        if confidence > 0 {
-            hits.push((Crs::Projected(candidate), confidence));
-        }
-    }
-    let Some(best) = hits.iter().map(|(_, confidence)| *confidence).max() else {
-        return Vec::new();
-    };
-    hits.retain(|(_, confidence)| *confidence == best);
-    hits
-}
-
-fn utm_match_confidence(source: &ProjectedCRS, candidate: &ProjectedCRS) -> i32 {
-    if !source
-        .deriving_conversion()
-        .is_equivalent_to_with(candidate.deriving_conversion(), Equivalence::Equivalent)
-    {
-        return 0;
-    }
-    let left = source.coordinate_system().axes();
-    let right = candidate.coordinate_system().axes();
-    let axes_match = left.len() == right.len()
-        && left.iter().zip(right).all(|(left, right)| {
-            let left_si = left.unit().conversion_to_si();
-            let right_si = right.unit().conversion_to_si();
-            left.direction() == right.direction()
-                && (left_si - right_si).abs() <= 1e-10 * left_si.abs().max(1.0)
-        });
-    if !axes_match {
-        return 50;
-    }
-    if source.name() == candidate.name() {
-        100
-    } else if equivalent_name(source.name(), candidate.name()) {
-        90
-    } else {
-        70
-    }
-}
-
-fn utm_name_code(
-    prefix: &str,
-    zone: i32,
-    hemisphere: UtmHemisphere,
-    north_base: i32,
-    south_base: i32,
-) -> (String, i32) {
-    match hemisphere {
-        UtmHemisphere::North => (format!("{prefix}{zone}N"), north_base + zone),
-        UtmHemisphere::South => (format!("{prefix}{zone}S"), south_base + zone),
-    }
+    None
 }
 
 fn easting_northing_metre(cs: &CartesianCS) -> bool {
