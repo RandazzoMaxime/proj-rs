@@ -91,7 +91,7 @@ fn operation_compound_to_compound_wgs84_egm96_to_wgs84_belfast() {
 /// TEST(operation, compoundCRS_to_compoundCRS_OSGB36_BNG_ODN_height_to_WGS84_EGM96): the
 /// British National Grid with the ODN height, to WGS 84 with the EGM96 height, both ways.
 #[test]
-#[ignore = "open: the first candidate is OSGB36 to WGS 84 (9) with the ODN height inverse, where PROJ chains OSGB36 to ETRS89-GBR (2) then ETRS89-GBR to WGS 84 (1); the candidate choice is not traced"]
+#[ignore = "open: the projected horizontal part takes projected_compound_to_geog (compound.rs), not the derived branch of createOperationsCompoundToGeog (C++ 6473-6502); the faithful branch regresses issue_4550 and the RD New NAP test (docs/PORTING-unit-compound-to-compound.md)"]
 fn operation_compound_to_compound_osgb36_bng_odn_height_to_wgs84_egm96() {
     let db = DatabaseContext::create().expect("proj.db");
     let ctxt = ignore_grids(&db, "");
@@ -155,7 +155,7 @@ fn operation_compound_to_compound_osgb36_bng_odn_height_to_wgs84_egm96() {
 /// BD72 + Ostend height to Amersfoort + NAP height. The two vertical transformations have
 /// different interpolation CRS, and the result goes through ETRS89 on each side.
 #[test]
-#[ignore = "open: the first candidate has an extra 'Inverse of BD72 to ETRS89-BEL (3) + BD72 to ETRS89 (3)' pair that PROJ does not give; the chain is not traced (compound.rs compound_to_compound)"]
+#[ignore = "open: the first candidate has an extra 'Inverse of BD72 to ETRS89-BEL (3) + BD72 to ETRS89 (3)' pivot leg; ETRS89-BEL [BEREF2011] to ETRS89 is 'Null geographic offset' in PROJ and 'Inverse of ETRS89 to ETRS89-BEL' here (geodetic candidate set)"]
 fn operation_compound_to_compound_concatenated_two_vert_transformation_different_source_dest_interp(
 ) {
     let db = DatabaseContext::create().expect("proj.db");
@@ -689,7 +689,7 @@ fn operation_compound_to_compound_utm31_to_utm32_with_odn_height() {
 /// vertical grid, the NAD27 grid and the NAD83(NSRS2007) inverse. The ballpark candidate,
 /// with the same horizontal chain, is among them.
 #[test]
-#[ignore = "open: the NGVD29 to NAVD88 (3) registry candidate with the VERTCON grid is not built, only the ballpark vertical candidates are (compound_vertical_pass, horiz_vertical_horiz_checked)"]
+#[ignore = "open: 137 candidates, PROJ 158; the 21 missing ones are NAD27 to WGS 84 (N) + Inverse of NAD83(NSRS2007) pivots, because createOperations(NAD27, NAD83(NSRS2007)) gives 67 here and 76 in PROJ (datum pivot set, not the vertical part)"]
 fn operation_compound_to_compound_context() {
     let db = DatabaseContext::create().expect("proj.db");
     let ctxt = partial_ignore_grids(&db, "EPSG");
@@ -776,7 +776,7 @@ fn operation_compound_to_compound_context() {
 /// PNGMG94 zone 54 + Kumul 34 height to WGS 84 (G2139) + EGM2008 height. The horizontal part
 /// goes through WGS 84 and WGS 84 (G2139) with a geographic offset, with grids known as available.
 #[test]
-#[ignore = "open: PROJ's only-vertical-ballpark branch (createOperationsCompoundToGeog, intermediate geographic CRS of the horizontal transforms, C++ 6860-6905) is not ported; the ballpark Kumul 34 to EGM2008 candidate comes first"]
+#[ignore = "open: PROJ's only-vertical-ballpark branch (createOperationsCompoundToGeog, C++ 6843-6905) needs the geogCRSOfVertCRSStack context, which this port does not have; the two ballpark Kumul 34 to EGM2008 candidates are kept instead"]
 fn operation_compound_to_compound_using_intermediate_of_horizontal_transform() {
     let db = DatabaseContext::create().expect("proj.db");
     let mut ctxt = CoordinateOperationContext::create(&db, "");
@@ -807,5 +807,48 @@ fn operation_compound_to_compound_using_intermediate_of_horizontal_transform() {
          +multiplier=1 \
          +step +proj=unitconvert +xy_in=rad +xy_out=deg \
          +step +proj=axisswap +order=2,1"
+    );
+}
+
+/// `GEOGSRC_BOUNDGEOG`: NAD83 / California zone 5 (ftUS) + NAVD88 height (Geoid12B), as in
+/// `test/unit/test_operationfactory.cpp:5037-5070`.
+const NAD2011_SRC_WKT: &str = r#"COMPD_CS["NAD83 / California zone 5 (ftUS) + NAVD88 height - Geoid12B (ftUS)",   PROJCS["NAD83 / California zone 5 (ftUS)",       GEOGCS["NAD83",           DATUM["North_American_Datum_1983",               SPHEROID["GRS 1980",6378137,298.257222101,                   AUTHORITY["EPSG","7019"]],               TOWGS84[0,0,0,0,0,0,0],               AUTHORITY["EPSG","6269"]],           PRIMEM["Greenwich",0,               AUTHORITY["EPSG","8901"]],           UNIT["degree",0.0174532925199433,               AUTHORITY["EPSG","9122"]],           AUTHORITY["EPSG","4269"]],       PROJECTION["Lambert_Conformal_Conic_2SP"],       PARAMETER["standard_parallel_1",35.46666666666667],       PARAMETER["standard_parallel_2",34.03333333333333],       PARAMETER["latitude_of_origin",33.5],       PARAMETER["central_meridian",-118],       PARAMETER["false_easting",6561666.667],       PARAMETER["false_northing",1640416.667],       UNIT["US survey foot",0.3048006096012192,           AUTHORITY["EPSG","9003"]],       AXIS["X",EAST],       AXIS["Y",NORTH],       AUTHORITY["EPSG","2229"]],VERT_CS["NAVD88 height - Geoid12B (ftUS)",   VERT_DATUM["North American Vertical Datum 1988",2005,       AUTHORITY["EPSG","5103"]],   UNIT["US survey foot",0.3048006096012192,       AUTHORITY["EPSG","9003"]],   AXIS["Gravity-related height",UP],   AUTHORITY["EPSG","6360"]]]"#;
+
+/// TEST(operation, compoundCRS_with_boundGeogCRS_and_geoid_to_geodCRS_NAD2011_ctxt): the
+/// California zone 5 (ftUS) compound with the Geoid12B height, to NAD83(2011) geocentric.
+/// The authority is "" (all of them), and the grid availability is ignored, as in the C++ test.
+#[test]
+#[ignore = "open: the projected horizontal part gives 0 candidates to NAD83(2011) geog3D where PROJ gives 2 (projected_compound_to_geog, not the derived branch of createOperationsCompoundToGeog); the geocentric target goes through createOperationsToGeod"]
+fn operation_compound_with_bound_geog_and_geoid_to_geod_nad2011_ctxt() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let src = parse(&db, NAD2011_SRC_WKT);
+    // "NAD83(2011) geocentric"
+    let dst = epsg(&db, "6317");
+    let ctxt = partial_ignore_grids(&db, "");
+    let list = operations(&src, &dst, &ctxt);
+    let op = list
+        .iter()
+        .find(|op| {
+            op.name()
+                == "Inverse of unknown + \
+                 Transformation from NAD83 to WGS84 + \
+                 Inverse of NAD83(2011) to WGS 84 (1) + \
+                 Conversion from NAVD88 height (ftUS) to NAVD88 height + \
+                 Inverse of NAD83(2011) to NAVD88 height (1) + \
+                 Conversion from NAD83(2011) (geog3D) to NAD83(2011) \
+                 (geocentric)"
+        })
+        .expect("the named pipeline");
+    assert_eq!(
+        proj(&db, op),
+        "+proj=pipeline \
+         +step +proj=unitconvert +xy_in=us-ft +xy_out=m \
+         +step +inv +proj=lcc +lat_0=33.5 +lon_0=-118 \
+         +lat_1=35.4666666666667 +lat_2=34.0333333333333 \
+         +x_0=2000000.0001016 +y_0=500000.0001016 +ellps=GRS80 \
+         +step +proj=unitconvert +z_in=us-ft +z_out=m \
+         +step +proj=vgridshift +grids=us_noaa_g2012bu0.tif \
+         +multiplier=1 \
+         +step +proj=cart +ellps=GRS80"
     );
 }
