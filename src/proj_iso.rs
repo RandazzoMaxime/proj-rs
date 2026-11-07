@@ -11,8 +11,6 @@
 //! A pair that the selection cannot write (no operation, a missing grid, a CRS that
 //! is neither geographic nor projected) returns `None`, and the creation fails.
 
-use std::sync::Arc;
-
 use crate::engine::{Coord, Operation, TransformError};
 use crate::iso19111::{
     facade_candidates, same_datum_noop, AlternativeError, Alternatives, Axis, BestPolicy,
@@ -71,8 +69,8 @@ impl Side {
 enum Route {
     /// `proj_create_crs_to_crs` returns one operation.
     Single(Operation),
-    /// Several candidates. `Arc` keeps the pipeline `Clone`, as its `Body` is.
-    Alternatives(Arc<Alternatives>),
+    /// Several candidates, cloned with the pipeline as its `Body` is.
+    Alternatives(Box<Alternatives>),
 }
 
 /// The ISO pipeline of one pair, with the axis order of each side.
@@ -147,7 +145,7 @@ pub(crate) fn iso_pipeline_at(from: &str, to: &str, epoch: Option<f64>) -> Optio
             }
             Route::Single(item.operation?)
         }
-        _ => Route::Alternatives(Arc::new(Alternatives::new(
+        _ => Route::Alternatives(Box::new(Alternatives::new(
             items,
             BestPolicy::Warn,
             source_axes,
