@@ -477,25 +477,17 @@ fn operations_equivalent(left: &CoordinateOperation, right: &CoordinateOperation
     }
 }
 
+/// `SingleOperation::_isEquivalentTo` (singleoperation.cpp:1483-1750): the name, the method and
+/// the parameter values are compared, the source and target CRS are not.
 fn transformation_equivalent(left: &Transformation, right: &Transformation) -> bool {
     same_name(left.name(), right.name())
         && left.method().code() == right.method().code()
-        && endpoint_equivalent(left.source_crs(), right.source_crs())
-        && endpoint_equivalent(left.target_crs(), right.target_crs())
         && left.parameters().len() == right.parameters().len()
         && left
             .parameters()
             .iter()
             .zip(right.parameters())
             .all(|(left, right)| parameter_equivalent(left, right))
-}
-
-fn endpoint_equivalent(left: Option<&Crs>, right: Option<&Crs>) -> bool {
-    match (left, right) {
-        (Some(left), Some(right)) => left.is_equivalent_to(right),
-        (None, None) => true,
-        _ => false,
-    }
 }
 
 fn geographic_equivalent(
