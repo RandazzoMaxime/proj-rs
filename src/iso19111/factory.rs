@@ -6461,18 +6461,35 @@ fn datum_pivot_operations(
                 )
             })
             .map(|operation| {
+                // `createTransformations` (coordinateoperationfactory.cpp:3278-3330): a null
+                // first or third leg is dropped, and the registry operation it leaves is marked
+                // `DERIVED_FROM`, as `addModifiedIdentifier` does.
+                let is_null_leg = first.is_none() || third.is_none();
                 let operation = if both_3d {
                     promote_operation_to_3d(operation, &context.db)
                 } else {
                     operation
                 };
-                let steps: Vec<CoordinateOperation> =
+                let operation = if is_null_leg {
+                    derived_from_identifier(operation)
+                } else {
+                    operation
+                };
+                let mut steps: Vec<CoordinateOperation> =
                     [first.clone(), Some(operation), third.clone()]
                         .into_iter()
                         .flatten()
                         .collect();
-                let mut concatenated = pivot_concatenation(steps.clone());
-                concatenated.identified.domains = pivot_domain(&steps).into_iter().collect();
+                // `setCRSs` of the first and of the last step (coordinateoperationfactory.cpp:
+                // 3392-3399): the pair of the request, not the one of the candidates.
+                pivot_endpoints(&mut steps, source, target);
+                let domains = pivot_domain(&steps);
+                // `createComputeMetadata` of one operation is that operation (3399-3405).
+                if let [only] = steps.as_slice() {
+                    return only.clone();
+                }
+                let mut concatenated = pivot_concatenation(steps);
+                concatenated.identified.domains = domains.into_iter().collect();
                 CoordinateOperation::Concatenated(concatenated)
             })
             .collect();
@@ -6523,10 +6540,15 @@ fn datum_pivot_operations(
                 } else {
                     operation
                 };
-                let steps = [first.clone(), Some(operation), third.clone()]
-                    .into_iter()
-                    .flatten()
-                    .collect();
+                let mut steps: Vec<CoordinateOperation> =
+                    [first.clone(), Some(operation), third.clone()]
+                        .into_iter()
+                        .flatten()
+                        .collect();
+                pivot_endpoints(&mut steps, source, target);
+                if let [only] = steps.as_slice() {
+                    return only.clone();
+                }
                 CoordinateOperation::Concatenated(pivot_concatenation(steps))
             })
             .collect()
@@ -8085,6 +8107,59 @@ fn pivot_domain(steps: &[CoordinateOperation]) -> Option<ObjectDomain> {
         });
     }
     extent
+}
+
+/// `setCRSs` on the first step (its source becomes `source`) and on the last one (its target
+/// becomes `target`), as `createTransformations` does on its subOps (coordinateoperationfactory
+/// .cpp:3392-3399). A step keeps the other end it stores.
+fn pivot_endpoints(steps: &mut [CoordinateOperation], source: &Crs, target: &Crs) {
+    let count = steps.len();
+    for (index, step) in steps.iter_mut().enumerate() {
+        let new_source = if index == 0 {
+            source.clone()
+        } else {
+            match super::bound_ops::operation_source(step) {
+                Some(crs) => crs.clone(),
+                None => continue,
+            }
+        };
+        let new_target = if index + 1 == count {
+            target.clone()
+        } else {
+            match super::bound_ops::operation_target(step) {
+                Some(crs) => crs.clone(),
+                None => continue,
+            }
+        };
+        super::bound_ops::set_endpoints(step, &new_source, &new_target);
+    }
+}
+
+/// `addModifiedIdentifier` with `derivedFrom` (coordinateoperationfactory.cpp:3297-3305): an
+/// operation with one identifier, not already `DERIVED_FROM`, gets `DERIVED_FROM(<authority>)`,
+/// inside `INVERSE(...)` when the identifier is an inverse one (`INVERSE(EPSG)`, 9090).
+fn derived_from_identifier(mut operation: CoordinateOperation) -> CoordinateOperation {
+    let identifiers = match &mut operation {
+        CoordinateOperation::Conversion(conversion) => &mut conversion.identified.identifiers,
+        CoordinateOperation::Transformation(transformation) => {
+            &mut transformation.identified.identifiers
+        }
+        CoordinateOperation::Concatenated(concatenated) => &mut concatenated.identified.identifiers,
+    };
+    if let [identifier] = identifiers.as_mut_slice() {
+        if !identifier.code_space().contains("DERIVED_FROM") {
+            let code_space = identifier.code_space().to_owned();
+            let derived = match code_space
+                .strip_prefix("INVERSE(")
+                .and_then(|rest| rest.strip_suffix(')'))
+            {
+                Some(authority) => format!("INVERSE(DERIVED_FROM({authority}))"),
+                None => format!("DERIVED_FROM({code_space})"),
+            };
+            *identifier = Identifier::new(derived, identifier.code());
+        }
+    }
+    operation
 }
 
 /// A concatenated operation of the pivot legs. Its accuracy is `getAccuracy` of the flattened
