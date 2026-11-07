@@ -68,6 +68,10 @@ pub(super) enum NamedOperationKind {
     Conversion,
     /// A concatenated operation. Its computed name is rebuilt by the caller.
     Concatenated,
+    /// A PROJ-based operation (`PROJBasedOperation`, neither a transformation nor a concatenated
+    /// operation in PROJ): a name that joins steps with ` + `, or that starts with `Inverse of`,
+    /// is split and each part inverted in reverse order.
+    ProjBased,
 }
 
 /// `createPropertiesForInverse`: the inverse name, swapping the CRS of a
