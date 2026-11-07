@@ -5,11 +5,11 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 79 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `core` | 71 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
 | `niche` | 19 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 41 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (79)
+## core (71)
 
 ### test_c_api.cpp (14)
 
@@ -50,24 +50,16 @@ The class comes from the test name alone, so check it when you port a test.
 
 - `operation.normalizeForVisualization`
 
-### test_operationfactory.cpp (55)
+### test_operationfactory.cpp (47)
 
 - `operation.geogCRS_to_geogCRS_context_inverse_needed`
 - `operation.vertCRS_to_geogCRS_context`
 - `operation.geog3DCRS_to_geog2DCRS_plus_vertCRS_context`
-- `operation.geog3DCRS_to_vertCRS_depth_context`
-- `operation.geog3DCRS_to_geog2DCRS_plus_vertCRS_depth_context`
-- `operation.geogCRS_to_geogCRS_context_lonlat_vs_latlon_crs`
 - `operation.geogCRS_to_geogCRS_CH1903_to_CH1903plus_context`
 - `operation.geogCRS_to_geogCRS_init_IGNF_to_init_IGNF_context`
-- `operation.geogCRS_promoted_to_3D_to_geogCRS_3D_context`
-- `operation.esri_projectedCRS_to_geogCRS_with_ITRF_intermediate_context`
-- `operation.geogCRS_to_geogCRS_with_intermediate_no_ids`
 - `operation.geogCRS_3D_source_datum_name_is_alias_to_geogCRS`
 - `operation.geogCRS_different_from_baseCRS_to_projCRS_context_compatible_area`
 - `operation.geogCRS_3D_to_projCRS_with_2D_geocentric_translation`
-- `operation.projCRS_to_projCRS_context_grid_offsets`
-- `operation.projCRS_to_projCRS_context_grid_offsets_non_metre_unit_noop`
 - `operation.boundCRS_to_geogCRS_hubCRS_and_targetCRS_same_but_baseCRS_not`
 - `operation.ETRS89_3D_to_proj_string_with_geoidgrids_nadgrids`
 - `operation.nadgrids_with_pm`
