@@ -27,6 +27,8 @@ ones of `tests/unit_op_compound_vertical_units.rs`.
 | `Transformation::_getHorizontalShiftGTIFFFilename` (singleoperation.cpp:2061-2090) | `transform_export.rs`, `horizontal_grid_shift`, the GTiff `file` lookup |
 | `Transformation::_exportToPROJString`, grid branch (singleoperation.cpp:4315-4389) | `transform_export.rs`, `grid_shift`, `horizontal_grid_shift` |
 | `SingleOperation::parameterValue(name, code)` (singleoperation.cpp:1329-1353) | `model.rs` / `transform_export.rs`, `file_by_code`, `file_by_name` |
+| `CoordinateOperationContext::usePROJNames_`, default true (coordinateoperationfactory.cpp:175, 333-346) | `factory.rs`, `CoordinateOperationContext::grid_names`, `alternative_grid_names`, `set_alternative_grid_names` |
+| `findOpsInRegistryDirect`, `usePROJAlternativeGridNames` (1927-1931), `SortFunction` / `gridsNeeded` (1480-1498) | `factory.rs` (`operations_between` callers), `select.rs`, `sort_candidates` |
 
 ## Commit 1 — the GTiff grid of a NADCON5 (3D) method is read from its ellipsoidal height file
 
@@ -74,9 +76,62 @@ The operation is built with `AlternativeGridNames::Proj`, so its grid is the sub
 The two compound tests of `tests/unit_op_compound_vertical_units.rs` pass on the base with the
 official default. They are the guard of step 2.
 
-## Commands run (step 1)
+## Commit 2 — the default context reads the registered operations with the PROJ names
+
+### What was wrong
+
+PROJ's `CoordinateOperationContext` starts with `usePROJNames_ = true` (coordinateoperationfactory.cpp:175).
+The registered operations are then read with `usePROJAlternativeGridNames` set, in
+`findOpsInRegistryDirect` (1930) and the other registry readers (2000, 2222, 2256, 4853), and
+`gridsNeeded` in `SortFunction` reads the names those operations carry (1480). The port defaulted to
+the database names (`Official`) and sorted on the PROJ names, so a default context and a context set
+to `Proj` disagreed, and neither was PROJ's.
+
+### What is now ported
+
+- `CoordinateOperationContext` keeps one setting, `grid_names`, which starts at `Proj`. The registry
+  readers (the intermediate searches, the registry search of `create_operations`) and the sort of the
+  candidates read the same setting. `Official` (`set_alternative_grid_names(Official)`) gives the
+  database names to both, as `setUsePROJAlternativeGridNames(false)` does.
+- The two accessors `registry_grid_names` and `sort_grid_names` of the previous lots are merged into
+  `alternative_grid_names`. Their results were the same except for the default, which was the cause.
+
+The NADCON5 (3D) export that failed under `Proj` is commit 1 (`transform_export.rs`,
+`horizontal_grid_shift`). With it, the candidates of the NSRS2007 pairs export, and the sort puts the
+ballpark last, as PROJ does.
+
+### Deviation closed
+
+The previous lots kept `Official` as the default, because `Proj` made
+`operation_compound_ft_to_geog_ft` and `operation_compound_m_to_geog_ft` fail. That deviation is closed
+by commit 1 and by this commit: the default is PROJ's.
+
+### Tests
+
+| Rust test | PROJ `TEST()` | Status |
+|---|---|---|
+| `operation_vert_crs_to_geog_crs_context` (file `tests/unit_op_vert_crs_context.rs`) | `operation.vertCRS_to_geogCRS_context` | closed, commit 2 (block 1 `Official`, block 2 the default, blocks 3 to 5 the reverse, NGVD29 and NZVD2016, and the Baltic 1957 block with every authority) |
+
+The compound and geographic tests that the earlier lots left open for the default pass under it:
+`operation_compound_ft_to_geog_ft`, `operation_compound_m_to_geog_ft` (`tests/unit_op_compound_vertical_units.rs`),
+and the five `tests/unit_op_geog_candidates.rs` tests, whose "default" block is now PROJ's.
+
+### Full suite
+
+`cargo test --all-features --no-fail-fast` with the reference PROJ 9.9.0 on `PATH`: 1680 passed,
+0 failed, 31 ignored (179 `test result:` lines). `cli_yaml` passes under `ulimit -s 1024`. `cargo fmt
+--check` and clippy with `-D warnings`: clean. `UPDATE_DOCS=1 cargo test --test docs_in_sync --test
+progress_svg` regenerated the counts (`README.md`, `ROADMAP.md`, `docs/UNIT-TRIAGE.md`,
+`docs/progress.svg`), and both pass without the update.
+
+## Commands run
 
 - `cargo test --test unit_op_compound_vertical_units` with the default switched to `Proj` (a local
   experiment, reverted): the two NADCON5 tests fail as described above.
+- `projinfo -s EPSG:6318 -t EPSG:4759 -o PROJ --grid-check none --crs-extent-use none`, and
+  `projinfo -s EPSG:4759 -t EPSG:6318 ...` (reference and port), to compare the PROJ strings.
+- Step 2: `cargo test --test unit_op_vert_crs_context`, with the Baltic 1957 block of
+  `test_operationfactory.cpp:1023-1049` added to the draft, which the draft did not have. Then the full
+  bar listed above.
 - After the fix: `unit_op_*`, `unit_capi_*`, `unit_crs_*` (86 `test result:` lines, all passing) and
   `cli_yaml` under `ulimit -s 1024` (1 passed). `cargo fmt --check` and clippy with `-D warnings`: clean.
