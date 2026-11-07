@@ -45,7 +45,8 @@ Code:
 - Default (no `--only-best`): PROJ's default is the warn policy. The candidates are sorted with
   `KNOWN_AVAILABLE`, so a missing grid does not move a candidate down. A point is served by the first
   candidate whose area covers it. When that candidate fails, it is excluded and the next one is tried,
-  with the instantiable ones only from then on. No message is printed (PROJ logs it at debug level).
+  with the instantiable ones only from then on. The warning and the retry lines are logged at debug
+  level, as data for the binary (`Alternatives::forward_logged`, see `PORTING-cs2cs-proj-debug.md`).
 - `--only-best` (`Error`): the candidate PROJ would choose for the point is used, or the point fails
   with PROJ's missing-grid message (printed on stderr, one line per point). No retry.
 - `--only-best=no` (`Discard`): candidates whose grids are missing are not kept.
