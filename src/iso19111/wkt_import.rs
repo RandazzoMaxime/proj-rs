@@ -11,7 +11,7 @@ use super::niche::{ParametricCS, ParametricDatum, TemporalCS, TemporalCsKind, Te
 use super::wkt1_syntax::wkt1_syntax_error;
 
 mod niche;
-use super::factory::{AuthorityFactory, DatabaseContext};
+use super::factory::{AuthorityFactory, DatabaseContext, NameMatch};
 use super::model::{
     Axis, BoundCRS, CartesianCS, CompoundCRS, ConcatenatedOperation, ConcatenatedStep, Conversion,
     CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble, Ellipsoid, EllipsoidalCS,
@@ -2512,6 +2512,45 @@ impl WktParser {
                 {
                     props.name = current.name().to_owned();
                     base = current.base_crs().clone();
+                }
+            }
+        } else if let Some(db) = self.db.clone() {
+            // `buildProjectedCRS` (io.cpp:4690-4716): EPSG v12.025 moved the ETRS89 systems of
+            // Norway from ETRS89 (EPSG:4258) to ETRS89-NOR [EUREF89]. A projected CRS named
+            // `ETRS89 / ...`, or `ETRS_1989_...` in ESRI style, on a 2D ETRS89 geographic base
+            // takes the EPSG CRS of that name whose base is equivalent but for the axis order.
+            let etrs_name = original_name.starts_with("ETRS89 / ")
+                || (self.esri && original_name.starts_with("ETRS_1989_"));
+            let geographic_2d = matches!(
+                &base,
+                GeodeticCRS::Geographic(geographic)
+                    if geographic.coordinate_system.axes().len() == 2
+            );
+            if ((etrs_name && base.name() == "ETRS89")
+                || original_name.starts_with("ETRF2000-PL /"))
+                && geographic_2d
+            {
+                let candidates = AuthorityFactory::create(&db, "EPSG")
+                    .create_projected_crs_by_name_matched(&original_name, NameMatch::Exact)
+                    .unwrap_or_default();
+                for (candidate, matched) in candidates {
+                    if matched != original_name || candidate.base_crs().name() == base.name() {
+                        continue;
+                    }
+                    let equivalent = match (candidate.base_crs(), &base) {
+                        (GeodeticCRS::Geographic(left), GeodeticCRS::Geographic(right)) => left
+                            .is_equivalent_to_with_database(
+                                right,
+                                Equivalence::ExceptAxisOrder,
+                                &db,
+                            ),
+                        _ => false,
+                    };
+                    if equivalent {
+                        props.name = candidate.name().to_owned();
+                        base = candidate.base_crs().clone();
+                        break;
+                    }
                 }
             }
         }

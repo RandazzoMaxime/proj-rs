@@ -7,7 +7,7 @@ use super::bound::hub_is_wgs84;
 use super::esri_parammap::{
     esri_method, find_parameter, mercator_variant_b, squared_eccentricity, EsriChoice, EsriParam,
 };
-use super::factory::{AuthorityFactory, DatabaseContext};
+use super::factory::{AuthorityFactory, AuthorityObject, DatabaseContext, NameMatch, ObjectType};
 use super::wkt_import::WktParser;
 
 mod niche;
@@ -2781,11 +2781,127 @@ fn esri_geographic_name(
     if esri_official_name(&identified.name, table, formatter) {
         return identified.name.clone();
     }
+    let nature = if axis_count == 3 {
+        "geographic_3D"
+    } else {
+        "geographic_2D"
+    };
+    if let Some(name) = formatter
+        .db
+        .as_ref()
+        .and_then(|db| esri_crs_epsg_old_name(identified, table, nature, db))
+    {
+        return name;
+    }
     let mut name = morph_name_to_esri(&identified.name);
     if !name.starts_with("GCS_") {
         name.insert_str(0, "GCS_");
     }
     name
+}
+
+/// The `EPSG_OLD` fallback of a geodetic CRS's ESRI name (`GeodeticCRS::_exportToWKT`,
+/// crs.cpp:2269-2300), for a CRS with no ESRI alias of its own. The single old EPSG name of the
+/// CRS is looked up among the EPSG geodetic CRSs, and the first one of the same nature that has
+/// a single ESRI alias gives the name. ETRS89-NOR [EUREF89] (EPSG:10873) has the old name
+/// `ETRS89`, which is EPSG:4258, whose ESRI alias is `GCS_ETRS_1989`.
+fn esri_crs_epsg_old_name(
+    identified: &Identified,
+    table: &str,
+    nature: &str,
+    db: &DatabaseContext,
+) -> Option<String> {
+    let identifier = identified.identifiers.first()?;
+    let old_names = db
+        .aliases(&identifier.code_space, &identifier.code, table, "EPSG_OLD")
+        .ok()?;
+    let [old_name] = old_names.as_slice() else {
+        return None;
+    };
+    let candidates = AuthorityFactory::create(db, "EPSG")
+        .create_objects_from_name(old_name, &[ObjectType::GeodeticCrs], NameMatch::Exact, 0)
+        .ok()?;
+    candidates.iter().find_map(|object| {
+        let AuthorityObject::Crs(crs) = object else {
+            return None;
+        };
+        let (candidate_nature, identifiers) = match crs {
+            Crs::Geographic(geographic) => {
+                let axes = geographic.coordinate_system.axes().len();
+                let candidate_nature = if axes == 3 {
+                    "geographic_3D"
+                } else {
+                    "geographic_2D"
+                };
+                (candidate_nature, geographic.identifiers())
+            }
+            Crs::Geodetic(geodetic) => {
+                let candidate_nature = if matches!(geodetic, GeodeticCRS::Geocentric(_)) {
+                    "geocentric"
+                } else {
+                    "geographic_2D"
+                };
+                (candidate_nature, geodetic.identifiers())
+            }
+            _ => return None,
+        };
+        if candidate_nature != nature {
+            return None;
+        }
+        let first = identifiers.first()?;
+        let aliases = db
+            .aliases(&first.code_space, &first.code, table, "ESRI")
+            .ok()?;
+        let [alias] = aliases.as_slice() else {
+            return None;
+        };
+        Some(alias.clone())
+    })
+}
+
+/// The `EPSG_OLD` fallback of a geodetic datum's ESRI name (`GeodeticReferenceFrame::_exportToWKT`,
+/// datum.cpp:1392-1433). ETRS89-NOR [EUREF89] has the old name `European Terrestrial Reference
+/// System 1989`, which names the ensemble EPSG:6258 with the ESRI alias `D_ETRS_1989`.
+fn esri_datum_epsg_old_name(identified: &Identified, db: &DatabaseContext) -> Option<String> {
+    let identifier = identified.identifiers.first()?;
+    let old_names = db
+        .aliases(
+            &identifier.code_space,
+            &identifier.code,
+            "geodetic_datum",
+            "EPSG_OLD",
+        )
+        .ok()?;
+    let [old_name] = old_names.as_slice() else {
+        return None;
+    };
+    let mut name = old_name.clone();
+    if name == "European Terrestrial Reference System 1989" {
+        name.push_str(" ensemble");
+    }
+    let candidates = AuthorityFactory::create(db, "EPSG")
+        .create_objects_from_name(
+            &name,
+            &[ObjectType::GeodeticReferenceFrame],
+            NameMatch::Exact,
+            0,
+        )
+        .ok()?;
+    candidates.iter().find_map(|object| {
+        let identifiers = match object {
+            AuthorityObject::Datum(Datum::Geodetic(frame)) => frame.identifiers(),
+            AuthorityObject::DatumEnsemble(ensemble) => ensemble.identifiers(),
+            _ => return None,
+        };
+        let first = identifiers.first()?;
+        let aliases = db
+            .aliases(&first.code_space, &first.code, "geodetic_datum", "ESRI")
+            .ok()?;
+        let [alias] = aliases.as_slice() else {
+            return None;
+        };
+        Some(alias.clone())
+    })
 }
 
 /// ESRI WKT1 of an object whose database row is a `PROJCS` `text_definition`.
@@ -2855,6 +2971,13 @@ fn wkt1_datum_name(identified: &Identified, formatter: &WktFormatter) -> String 
         }
         if esri_official_name(&identified.name, "geodetic_datum", formatter) {
             return identified.name.clone();
+        }
+        if let Some(name) = formatter
+            .db
+            .as_ref()
+            .and_then(|db| esri_datum_epsg_old_name(identified, db))
+        {
+            return name;
         }
         let mut name = morph_name_to_esri(&identified.name);
         if !name.starts_with("D_") {
