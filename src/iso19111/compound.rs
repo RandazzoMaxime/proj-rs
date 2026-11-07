@@ -65,6 +65,26 @@ pub(super) fn compound_to_geog3d(
     )? {
         return Ok(found);
     }
+    // A bound CRS of a derived CRS (coordinateoperationfactory.cpp:6539-6568): the same, through
+    // the compound of the bound CRS of its base, with the same hub and transformation.
+    if let Crs::Bound(bound) = horizontal {
+        if let Some(base) = super::derived::derived_base(bound.source_crs()) {
+            let bound_base = Crs::Bound(BoundCRS::create(
+                base,
+                bound.target_crs().clone(),
+                bound.transformation().clone(),
+            ));
+            return derived_horizontal_to_geog(
+                factory,
+                source,
+                target,
+                &bound_base,
+                vertical,
+                epochs,
+                &inherited,
+            );
+        }
+    }
     if geog_dst.coordinate_system().axes().len() != 3 {
         return horizontal_only(factory, source, target, horizontal, context);
     }
