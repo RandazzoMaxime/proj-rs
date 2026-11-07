@@ -432,6 +432,15 @@ fn run_in(case: &Case, bin: &str, scratch: &Path) -> Result<(), String> {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    // A combined `out:` is the `2>&1` of PROJ's runner (`stderr=subprocess.STDOUT` in
+    // run_cli_test.py): both streams are one open file, so their writes keep the order in
+    // which the program made them. It is not stdout followed by stderr.
+    let merged = scratch.join(".combined-stdout-stderr");
+    if case.combined {
+        let file = fs::File::create(&merged).map_err(|error| error.to_string())?;
+        let copy = file.try_clone().map_err(|error| error.to_string())?;
+        command.stdout(Stdio::from(file)).stderr(Stdio::from(copy));
+    }
     for (key, value) in case.global_env.iter().chain(case.env.iter()) {
         command.env(key, subst_env(value, &tmp_text, &pwd));
     }
@@ -448,23 +457,30 @@ fn run_in(case: &Case, bin: &str, scratch: &Path) -> Result<(), String> {
         }
         // Dropping `stdin` closes the pipe, so a program that reads to the end terminates.
     }
-    let output = child
-        .wait_with_output()
-        .map_err(|error| error.to_string())?;
-    let code = output.status.code().unwrap_or(1);
+    let (status, stdout_bytes, stderr_bytes) = if case.combined {
+        let status = child.wait().map_err(|error| error.to_string())?;
+        let bytes = fs::read(&merged).map_err(|error| error.to_string())?;
+        (status, bytes, Vec::new())
+    } else {
+        let output = child
+            .wait_with_output()
+            .map_err(|error| error.to_string())?;
+        (output.status, output.stdout, output.stderr)
+    };
+    let code = status.code().unwrap_or(1);
     if code != case.exitcode {
         return Err(format!(
             "exit {code} expected {}\n{}",
             case.exitcode,
-            String::from_utf8_lossy(&output.stderr)
+            String::from_utf8_lossy(if case.combined {
+                &stdout_bytes
+            } else {
+                &stderr_bytes
+            })
         ));
     }
-    let mut stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
-    let mut stderr = String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n");
-    if case.combined {
-        stdout.push_str(&stderr);
-        stderr.clear();
-    }
+    let mut stdout = String::from_utf8_lossy(&stdout_bytes).replace("\r\n", "\n");
+    let mut stderr = String::from_utf8_lossy(&stderr_bytes).replace("\r\n", "\n");
     for step in &case.steps {
         apply_step(step, &mut stdout);
         apply_step(step, &mut stderr);
