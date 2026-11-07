@@ -763,6 +763,15 @@ impl ConcatenatedOperation {
                 .map(|step| step.operation.name())
                 .collect::<Vec<_>>()
                 .join(" + ")
+        } else if self.proj_based.is_some() {
+            // `PROJBasedOperation::inverse` names the inverse with `createPropertiesForInverse`
+            // (oputils.cpp:231-316), for an operation that is not a `ConcatenatedOperation`.
+            super::geodetic_ops::inverse_operation_name(
+                self.name(),
+                self.source_crs(),
+                self.target_crs(),
+                super::geodetic_ops::NamedOperationKind::ProjBased,
+            )
         } else {
             concatenated_inverse_name(self.name())
         };
