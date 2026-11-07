@@ -66,6 +66,21 @@ fn nad27_to_wgs84_inverse_without_grid_chooses_per_point() {
     }
 }
 
+/// A pair whose only candidate is a ballpark offset is still a transformation: libproj returns
+/// that operation at once, and `EPSG:4326` to `EPSG:4610` (Xian 1980) is the zero offset.
+#[test]
+fn a_ballpark_only_pair_is_a_transformation() {
+    let xian = Proj::new_known_crs("EPSG:4326", "EPSG:4610", None).expect("ballpark only");
+    let (lon, lat) = xian.convert((116.4_f64, 39.9_f64)).expect("forward");
+    assert!((lon - 116.4).abs() < 1e-9, "{lon}");
+    assert!((lat - 39.9).abs() < 1e-9, "{lat}");
+    // EPSG:2393 (KKJ / Finland): the ballpark is a geocentric translation and a Transverse Mercator.
+    let kkj = Proj::new_known_crs("EPSG:4326", "EPSG:2393", None).expect("ballpark only");
+    let (east, north) = kkj.convert((24.0_f64, 65.0_f64)).expect("forward");
+    assert!((east - 3_358_686.366_799_974_8).abs() < 1e-6, "{east}");
+    assert!((north - 7_214_830.355_803_429_1).abs() < 1e-6, "{north}");
+}
+
 #[test]
 fn ups_north_32661_is_switched_for_visualization() {
     // EPSG:32661 writes north first along the 180 and 90 meridians, so it is switched.

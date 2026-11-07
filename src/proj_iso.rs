@@ -141,10 +141,11 @@ pub(crate) fn iso_pipeline_at(from: &str, to: &str, epoch: Option<f64>) -> Optio
     let route = match items.len() {
         0 => return None,
         1 => {
-            // A candidate whose grids are missing, or an approximate one, stays on the caller's
-            // previous path for now.
+            // One instantiable candidate is PROJ's single operation, approximate or not: the
+            // default warning policy returns it at once (crs_to_crs.cpp:617-647). A candidate whose
+            // grids are missing stays on the caller's previous path.
             let item = items.pop()?;
-            if !item.instantiable || item.approximate {
+            if !item.instantiable {
                 return None;
             }
             Route::Single(item.operation?)
