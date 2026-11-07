@@ -63,7 +63,6 @@ fn proj(db: &DatabaseContext, operation: &CoordinateOperation) -> String {
 /// WGS 84 + Belfast height. The EGM96 geoid is referenced to WGS 84, so the candidate goes
 /// through the vertical grids only.
 #[test]
-#[ignore = "open: the geog 3D to 4326+5732 candidates hold only the ballpark Belfast height change, not the ETRS89-IRE interpolation chain. Cause in the compound-to-geographic path (compound.rs compound_to_geog3d) not traced"]
 fn operation_compound_to_compound_wgs84_egm96_to_wgs84_belfast() {
     let db = DatabaseContext::create().expect("proj.db");
     let ctxt = partial_ignore_grids(&db, "EPSG");
@@ -641,7 +640,6 @@ fn operation_compound_to_compound_wgs84_egm2008_to_rd_new_nap_height() {
 /// is a ballpark offset from NAD83(CSRS) to NAD83(CSRS)v6. The second half of the PROJ test is
 /// inside `#if 0` and is not run.
 #[test]
-#[ignore = "open: the first candidate is the ballpark CGVD28 to CGVD2013(CGG2013) change; PROJ's chains NAD83(CSRS)v6 vertical operations with the ballpark geographic offset. Same compound-to-geographic path as issue_3328, not traced"]
 fn operation_compound_to_compound_concatenated_two_vert_transformation_and_ballpark_geog() {
     let db = DatabaseContext::create().expect("proj.db");
     // "NAD83(CSRS) + CGVD28 height"
