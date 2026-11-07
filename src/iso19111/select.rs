@@ -263,50 +263,12 @@ pub(crate) struct ExactChoice {
     pub(crate) operation: CoordinateOperation,
     pub(crate) source: Crs,
     pub(crate) target: Crs,
-    /// How many candidate operations libproj could build: PROJ lists them all, and reports no
-    /// single definition for the pair when more than one is instantiable.
-    pub(crate) instantiable: usize,
 }
 
 /// The operation `cs2cs` takes for a pair, with what the facade needs of the selection.
 struct Chosen {
     best: BestOperation,
-    approx: bool,
-    operation: CoordinateOperation,
-    source: Crs,
-    target: Crs,
-    instantiable: usize,
     log: PipelineLog,
-}
-
-pub(crate) fn best_operation_exact(
-    source: &str,
-    target: &str,
-) -> Result<ExactChoice, FactoryError> {
-    let Chosen {
-        best,
-        approx,
-        operation,
-        source: source_crs,
-        target: target_crs,
-        instantiable,
-        log: _,
-    } = best_operation_full(source, target, OnlyBest::Off)?;
-    match (best, approx) {
-        (BestOperation::Pipeline { definition, .. }, false) => Ok(ExactChoice {
-            definition,
-            operation,
-            source: source_crs,
-            target: target_crs,
-            instantiable,
-        }),
-        (BestOperation::Pipeline { .. }, true) => Err(FactoryError::Format(format!(
-            "best operation from {source} to {target} is approximate"
-        ))),
-        (BestOperation::MissingGrid { message } | BestOperation::Refused { message }, _) => {
-            Err(FactoryError::Format(message))
-        }
-    }
 }
 
 /// A same-datum geographic pair, which the factory does not synthesize.
@@ -327,20 +289,10 @@ pub(crate) fn same_datum_noop(source: &str, target: &str) -> Result<ExactChoice,
         operation,
         source: source_crs,
         target: target_crs,
-        instantiable: 1,
     })
 }
 
-/// The best operation of a pair over every authority, with the chosen operation and the two CRS.
-fn best_operation_full(
-    source: &str,
-    target: &str,
-    only_best: OnlyBest,
-) -> Result<Chosen, FactoryError> {
-    best_operation_filtered(source, target, only_best, CandidateFilter::NONE, "")
-}
-
-/// [`best_operation_full`], keeping only the candidates `filter` accepts, and only those of
+/// The best operation of a pair, keeping only the candidates `filter` accepts, and only those of
 /// `authority` (`""` for every authority), as `proj_create_operation_factory_context` does.
 fn best_operation_filtered(
     source: &str,
@@ -411,12 +363,6 @@ fn best_operation_filtered(
             ranked.extend(rerun);
         }
     }
-    let instantiable = ranked
-        .iter()
-        .filter(|(_, characteristics)| {
-            characteristics.exportable && characteristics.grids_available
-        })
-        .count();
     // `op_count == 1` under ONLY_BEST=YES (`crs_to_crs.cpp:617-641`): the only candidate is kept
     // whatever its grids, and a missing grid refuses the creation.
     let single_candidate = ranked.len() == 1;
@@ -455,11 +401,6 @@ fn best_operation_filtered(
             } else {
                 BestOperation::MissingGrid { message }
             },
-            approx: characteristics.approx,
-            operation: best,
-            source: source_crs,
-            target: target_crs,
-            instantiable,
             log,
         });
     }
@@ -476,11 +417,6 @@ fn best_operation_filtered(
             definition,
             lat_or_northing_first: lat_first,
         },
-        approx: characteristics.approx,
-        operation: best,
-        source: source_crs,
-        target: target_crs,
-        instantiable,
         log,
     })
 }
@@ -1329,6 +1265,191 @@ pub fn select_alternatives_with_authority(
                 None => alternatives,
             }))
         }
+    }
+}
+
+/// The candidates of a pair for the georust facade, as `proj_create_crs_to_crs` returns them with
+/// no options: `ONLY_BEST` warns, so the candidates are sorted without looking at the disk, and the
+/// rerun of `crs_to_crs.cpp:668-735` runs when no candidate is both instantiable and free of a
+/// ballpark step. [`select_alternatives`] serves cs2cs; it is not this list. Two of its choices
+/// differ from PROJ and are not made here: a single candidate whose grids are missing is not
+/// returned at once (`crs_to_crs.cpp:617-651` runs the rerun for it), and a rerun that finds
+/// nothing keeps the first list, ballpark steps included (`crs_to_crs.cpp:733-751`).
+pub(crate) struct FacadeCandidates {
+    /// The prepared candidates in PROJ's order (`pj_create_prepared_operations`). One item is a
+    /// single operation, several are chosen per point by `proj_trans`.
+    pub(crate) items: Vec<Item>,
+    /// The ISO operation of the first candidate, `P` of `proj_create_crs_to_crs`: the name and the
+    /// object `proj_pj_info` and `proj_as_projjson` report for the pair.
+    pub(crate) first: CoordinateOperation,
+    /// How the box test reads a point of the source (see [`SourceAxes`]).
+    pub(crate) source_axes: SourceAxes,
+    /// Whether the target writes latitude or northing first.
+    pub(crate) first_axis: FirstAxis,
+    /// The source and the target CRS, as read from their names.
+    pub(crate) source: Crs,
+    pub(crate) target: Crs,
+}
+
+/// [`FacadeCandidates`] of `source` to `target`.
+///
+/// # Errors
+///
+/// A CRS cannot be read, no candidate is registered (the message starts with `no operation
+/// from`), or no candidate can be prepared.
+pub(crate) fn facade_candidates(
+    source: &str,
+    target: &str,
+) -> Result<FacadeCandidates, FactoryError> {
+    let db = DatabaseContext::create()?;
+    let source_crs = create_from_user_input(source, &db)?;
+    let target_crs = create_from_user_input(target, &db)?;
+    let mut context = CoordinateOperationContext::create(&db, "");
+    context.set_spatial_criterion(SpatialCriterion::PartialIntersection);
+    let operations = CoordinateOperationFactory::create().create_operations(
+        &source_crs,
+        &target_crs,
+        &context,
+    )?;
+    let extents = sort_extents(&context, &source_crs, &target_crs);
+    // The warning policy asks KNOWN_AVAILABLE: the sort does not look at the disk.
+    let ranked = rank(
+        operations,
+        &db,
+        &source_crs,
+        &target_crs,
+        GridAvailabilityUse::KnownAvailable,
+        &extents,
+    );
+    if ranked.is_empty() {
+        return Err(FactoryError::Format(format!(
+            "no operation from {source} to {target}"
+        )));
+    }
+    let geocentric = matches!(source_crs, Crs::Geodetic(GeodeticCRS::Geocentric(_)));
+    let source_part = horizontal_crs(&source_crs);
+    let target_part = horizontal_crs(&target_crs);
+    // `op_count == 1` with an instantiable operation returns it at once, rerun or not
+    // (`crs_to_crs.cpp:617-647`). Its boxes are not read: a single candidate is never boxed.
+    if let [(operation, characteristics)] = ranked.as_slice() {
+        if characteristics.exportable && characteristics.grids_available {
+            let preparer = Preparer {
+                db: &db,
+                source: &source_crs,
+                target: &target_crs,
+                source_to_crs: None,
+                target_to_crs: None,
+                geocentric,
+                source_lon_lat: false,
+                source_lat_lon: false,
+            };
+            let items = preparer.prepare(&ranked);
+            return Ok(FacadeCandidates {
+                items,
+                first: operation.clone(),
+                source_axes: SourceAxes::Plain,
+                first_axis: FirstAxis::Other,
+                source: source_crs,
+                target: target_crs,
+            });
+        }
+    }
+    let (Some(source_base), Some(target_base)) =
+        (reference_base(&source_part), reference_base(&target_part))
+    else {
+        return Err(FactoryError::Format(format!(
+            "{source} or {target} has no geodetic base to prepare its candidates"
+        )));
+    };
+    let source_to_crs = geodetic_to_crs(&source_base, &source_part, &db)?;
+    let target_to_crs = geodetic_to_crs(&target_base, &target_part, &db)?;
+    let (source_lon_lat, source_lat_lon) = degree_order(&source_part);
+    let preparer = Preparer {
+        db: &db,
+        source: &source_crs,
+        target: &target_crs,
+        source_to_crs: source_to_crs.as_ref(),
+        target_to_crs: target_to_crs.as_ref(),
+        geocentric,
+        source_lon_lat,
+        source_lat_lon,
+    };
+    // Each candidate with the operation its pieces were prepared from, in PROJ's order.
+    let prepare_each = |candidates: &[(CoordinateOperation, Characteristics)]| {
+        let mut out: Vec<(CoordinateOperation, Item)> = Vec::new();
+        for candidate in candidates {
+            for item in preparer.prepare(std::slice::from_ref(candidate)) {
+                out.push((candidate.0.clone(), item));
+            }
+        }
+        out
+    };
+    let mut prepared = prepare_each(&ranked);
+    // `crs_to_crs.cpp:668-735`: no candidate both instantiable and free of a ballpark step. The
+    // search runs again with DISCARD_OPERATION_IF_MISSING_GRID, and the candidates of the first
+    // list that are not ballpark steps come first, then the rerun's. A rerun that finds nothing
+    // leaves the first list as it is.
+    if !prepared
+        .iter()
+        .any(|(_, item)| !item.approximate && item.instantiable)
+    {
+        let mut discard_context = context.clone();
+        discard_context.set_grid_availability_use(GridAvailabilityUse::DiscardIfMissing);
+        let discard_ops = CoordinateOperationFactory::create()
+            .create_operations(&source_crs, &target_crs, &discard_context)
+            .unwrap_or_default();
+        let discarded = rank(
+            discard_ops,
+            &db,
+            &source_crs,
+            &target_crs,
+            GridAvailabilityUse::UseForSorting,
+            &extents,
+        );
+        let rerun = prepare_each(&discarded);
+        if !rerun.is_empty() {
+            let mut merged: Vec<(CoordinateOperation, Item)> = prepared
+                .into_iter()
+                .filter(|(_, item)| !item.approximate)
+                .collect();
+            merged.extend(rerun);
+            prepared = merged;
+        }
+    }
+    let Some(first) = prepared.first().map(|(operation, _)| operation.clone()) else {
+        return Err(FactoryError::Format(format!(
+            "no operation from {source} to {target}"
+        )));
+    };
+    let items = prepared.into_iter().map(|(_, item)| item).collect();
+    let source_axes = if geocentric {
+        SourceAxes::Geocentric(geocentric_to_lon_lat(&source_crs, &db)?)
+    } else {
+        SourceAxes::Plain
+    };
+    Ok(FacadeCandidates {
+        items,
+        first,
+        source_axes,
+        first_axis: if lat_or_northing_first(&target_crs) {
+            FirstAxis::LatitudeOrNorthing
+        } else {
+            FirstAxis::Other
+        },
+        source: source_crs,
+        target: target_crs,
+    })
+}
+
+/// The horizontal part of a CRS: the CRS itself, or the first component of a compound CRS of two
+/// components (as `horizontal_part` of the facade reads it).
+fn horizontal_crs(crs: &Crs) -> Crs {
+    match crs {
+        Crs::Compound(compound) => match compound.components() {
+            [horizontal, _vertical] => horizontal.clone(),
+            _ => crs.clone(),
+        },
+        other => other.clone(),
     }
 }
 

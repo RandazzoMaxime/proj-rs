@@ -92,12 +92,14 @@ fn database_crs_edges_and_grid_pairs() {
         (moved.0 - 3.0).abs() > 1e-6 || (moved.1 - 46.0).abs() > 1e-6,
         "{moved:?}"
     );
-    let grid = Proj::new_known_crs("EPSG:4267", "EPSG:4269", None).expect_err("nad");
-    let text = grid.to_string();
-    assert!(
-        text.contains("grid") || text.contains("not build"),
-        "{text}"
-    );
+    // NAD27 to NAD83 with no grid. Its only candidates in the first list are the NADCON grids and
+    // a ballpark offset, and libproj's warning policy then reruns the search without the grid
+    // operations (crs_to_crs.cpp:668-735): the WGS 84 pivot is the pair's operation. PROJ 9.9.0,
+    // georust path, no grid: (-74, 40) gives (-73.999573598275, 40.000008481659).
+    let nad = Proj::new_known_crs("EPSG:4267", "EPSG:4269", None).expect("pivot, no grid");
+    let (east, north) = nad.convert((-74.0_f64, 40.0_f64)).expect("forward");
+    assert!((east - -73.999_573_598_275).abs() < 1e-9, "{east}");
+    assert!((north - 40.000_008_481_659).abs() < 1e-9, "{north}");
     assert!(Proj::new("EPSG:5773").is_err());
 }
 
