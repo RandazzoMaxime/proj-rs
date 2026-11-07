@@ -1305,21 +1305,10 @@ fn is_3d(crs: &proj_rs::Crs) -> bool {
     }
 }
 
+/// `CRS::promoteTo3D` with the database (projinfo_lib.cpp:543-550): every kind of CRS,
+/// a bound CRS included, promotes through the library.
 fn promote(db: &proj_rs::DatabaseContext, crs: &proj_rs::Crs) -> proj_rs::Crs {
-    match crs {
-        proj_rs::Crs::Geographic(geographic) => {
-            proj_rs::Crs::Geographic(geographic.promote_to_3d_with_db(Some(db)))
-        }
-        proj_rs::Crs::Geodetic(proj_rs::GeodeticCRS::Geographic(geographic)) => {
-            proj_rs::Crs::Geodetic(proj_rs::GeodeticCRS::Geographic(
-                geographic.promote_to_3d_with_db(Some(db)),
-            ))
-        }
-        proj_rs::Crs::Projected(projected) => {
-            proj_rs::Crs::Projected(projected.promote_to_3d(Some(db)))
-        }
-        other => other.clone(),
-    }
+    crs.promote_to_3d(Some(db))
 }
 
 /// The grid check of `outputOperationSummary` (projinfo_lib.cpp:945): off when the
@@ -1716,31 +1705,35 @@ fn render(
         blocks.push(deprecation_notice(object, db));
     }
     for dialect in &options.dialects {
-        let body = match dialect {
-            Dialect::Proj => match proj_text(object, db, proj_lines(options))? {
-                Some(body) => body,
-                None => continue,
-            },
+        let exported = match dialect {
+            Dialect::Proj => proj_text(object, db, proj_lines(options)),
             Dialect::ProjJson => match object {
-                proj_rs::AuthorityObject::Crs(crs) => {
-                    crs.export_to_json(db).map_err(|error| error.to_string())?
-                }
-                _ => return Err("cannot write PROJJSON for this object".to_owned()),
+                proj_rs::AuthorityObject::Crs(crs) => crs
+                    .export_to_json(db)
+                    .map(Some)
+                    .map_err(|error| error.to_string()),
+                _ => Err("cannot write PROJJSON for this object".to_owned()),
             },
-            Dialect::Sql => match sql_text(object, db, options) {
-                Ok(body) => body,
-                Err(error) => {
-                    eprintln!("Error when exporting to SQL: {error}");
-                    continue;
-                }
-            },
-            Dialect::Wkt2_2015 => wkt(object, db, proj_rs::WktConvention::Wkt2_2015)?,
-            Dialect::Wkt2_2019 => wkt(object, db, proj_rs::WktConvention::Wkt2_2019)?,
-            Dialect::Wkt1Gdal => {
-                format!("{}\n", wkt(object, db, proj_rs::WktConvention::Wkt1Gdal)?)
+            Dialect::Sql => sql_text(object, db, options).map(Some),
+            Dialect::Wkt2_2015 => wkt(object, db, proj_rs::WktConvention::Wkt2_2015).map(Some),
+            Dialect::Wkt2_2019 => wkt(object, db, proj_rs::WktConvention::Wkt2_2019).map(Some),
+            Dialect::Wkt1Gdal => wkt(object, db, proj_rs::WktConvention::Wkt1Gdal)
+                .map(|text| Some(format!("{text}\n"))),
+            Dialect::Wkt1Esri => wkt(object, db, proj_rs::WktConvention::Wkt1Esri)
+                .map(|text| Some(format!("{text}\n"))),
+        };
+        let body = match exported {
+            Ok(Some(body)) => body,
+            Ok(None) => continue,
+            Err(error) if matches!(dialect, Dialect::Sql) => {
+                eprintln!("Error when exporting to SQL: {error}");
+                continue;
             }
-            Dialect::Wkt1Esri => {
-                format!("{}\n", wkt(object, db, proj_rs::WktConvention::Wkt1Esri)?)
+            // outputObject writes the header, reports the failure on stderr, and goes on with
+            // the next dialect (projinfo_lib.cpp:640-828), so the block is its header alone.
+            Err(error) => {
+                eprintln!("Error when exporting to {}: {error}", export_label(dialect));
+                String::new()
             }
         };
         if options.quiet {
@@ -1766,6 +1759,19 @@ fn render(
         }
     }
     Ok(blocks.join("\n\n"))
+}
+
+/// The name `outputObject` gives a dialect in its export error (projinfo_lib.cpp:641-828).
+fn export_label(dialect: &Dialect) -> &'static str {
+    match dialect {
+        Dialect::Proj => "PROJ string",
+        Dialect::ProjJson => "PROJJSON",
+        Dialect::Sql => "SQL",
+        Dialect::Wkt2_2015 => "WKT2:2015",
+        Dialect::Wkt2_2019 => "WKT2:2019",
+        Dialect::Wkt1Gdal => "WKT1:GDAL",
+        Dialect::Wkt1Esri => "WKT1:ESRI",
+    }
 }
 
 /// The insert statements for `object` under `--output-id`, one per line. An
