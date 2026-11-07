@@ -348,7 +348,7 @@ fn crs_equivalent(left: &Crs, right: &Crs) -> bool {
 }
 
 /// `CoordinateOperation::setCRSs`: the source and target the operation stores.
-fn set_endpoints(operation: &mut CoordinateOperation, source: &Crs, target: &Crs) {
+pub(super) fn set_endpoints(operation: &mut CoordinateOperation, source: &Crs, target: &Crs) {
     let (stored_source, stored_target) = match operation {
         CoordinateOperation::Conversion(conversion) => {
             (&mut conversion.source, &mut conversion.target)
