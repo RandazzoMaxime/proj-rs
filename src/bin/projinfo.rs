@@ -989,8 +989,8 @@ fn candidates(options: &Options) -> Result<String, String> {
     let db = proj_rs::DatabaseContext::create().map_err(|error| error.to_string())?;
     let source_text = options.source.as_deref().unwrap_or("");
     let target_text = options.target.as_deref().unwrap_or("");
-    let source = build_crs(&db, load_named(&db, source_text)?, options);
-    let target = build_crs(&db, load_named(&db, target_text)?, options);
+    let source = build_crs(&db, load_named(&db, source_text, options.quiet)?, options);
+    let target = build_crs(&db, load_named(&db, target_text, options.quiet)?, options);
     let (source, target) = if options.promote_3d {
         (source, target)
     } else {
@@ -1183,8 +1183,50 @@ fn operation_bodies(
     out
 }
 
-fn load_named(db: &proj_rs::DatabaseContext, text: &str) -> Result<proj_rs::Crs, String> {
+fn load_named(
+    db: &proj_rs::DatabaseContext,
+    text: &str,
+    quiet: bool,
+) -> Result<proj_rs::Crs, String> {
+    if let Some(crs) = read_wkt(db, text, quiet) {
+        return crs;
+    }
     proj_rs::create_from_user_input(text, db).map_err(|error| error.to_string())
+}
+
+/// The WKT branch of `buildObject` (projinfo_lib.cpp:389-406). WKT user input is parsed
+/// in non-strict mode, and the parse's warnings and grammar errors are written to
+/// stderr, as `Warning: ` and `Grammar error: ` lines, unless `-q`. `None` when the text
+/// is not WKT, so the other readings apply.
+fn read_wkt(
+    db: &proj_rs::DatabaseContext,
+    text: &str,
+    quiet: bool,
+) -> Option<Result<proj_rs::Crs, String>> {
+    if proj_rs::WktParser::guess_dialect(text) == proj_rs::WktDialect::NotWkt {
+        return None;
+    }
+    let mut parser = proj_rs::WktParser::new();
+    parser.set_strictness(proj_rs::WktStrictness::Lenient);
+    parser.attach_database(db.clone());
+    let object = match parser.create_from_wkt(text) {
+        Ok(object) => object,
+        Err(error) => return Some(Err(error.to_string())),
+    };
+    if !quiet {
+        for warning in parser.warnings() {
+            eprintln!("Warning: {warning}");
+        }
+        for error in parser.grammar_errors() {
+            eprintln!("Grammar error: {error}");
+        }
+    }
+    Some(
+        object
+            .crs()
+            .cloned()
+            .ok_or_else(|| "WKT is not a CRS".to_owned()),
+    )
 }
 
 /// The CRS as `buildObject` leaves it: promoted to 3D by `--3d`, then given
@@ -1365,7 +1407,7 @@ fn operation_wkt(
 
 fn describe(options: &Options, text: &str) -> Result<String, String> {
     let db = database()?;
-    let object = match build_object(&db, text, options.kind)? {
+    let object = match build_object(&db, text, options.kind, options.quiet)? {
         proj_rs::AuthorityObject::Crs(crs) => {
             proj_rs::AuthorityObject::Crs(build_crs(&db, crs, options))
         }
@@ -1380,7 +1422,13 @@ fn build_object(
     db: &proj_rs::DatabaseContext,
     text: &str,
     kind: Option<ObjectKind>,
+    quiet: bool,
 ) -> Result<proj_rs::AuthorityObject, String> {
+    if matches!(kind, None | Some(ObjectKind::Crs)) {
+        if let Some(crs) = read_wkt(db, text, quiet) {
+            return crs.map(proj_rs::AuthorityObject::Crs);
+        }
+    }
     match kind {
         Some(ObjectKind::Operation) => operation_object(db, text),
         Some(kind @ (ObjectKind::Ellipsoid | ObjectKind::Datum | ObjectKind::Ensemble)) => {
