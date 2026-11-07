@@ -85,9 +85,43 @@ array is zero (`trans.cpp`, "a null pointer ... treated as a fully populated arr
 The C API and the facade use zero. The `cs2cs` CLI uses `HUGE_VAL` for a missing time, a
 separate existing difference. The change was reverted.
 
-## Open: `io.projparse_init`
+## Commit 3: `io.projparse_init` (closed)
 
-Status: not started in the code yet.
+Cause: `create_from_user_input` sent `init=` texts to the authority-code lookup, which returned
+`NotFound { authority: "init=epsg" }`. PROJ routes them to the PROJ string parser, and reads
+`init=epsg:` and `init=IGNF:` only under the PROJ 4 rules.
+
+Changes:
+
+- `json.rs`: `create_from_user_input` is `create_from_user_input_with_init_rules(text, db,
+  InitRules::Iso19111)`. A text with `init=` and no `proj=` step goes to `crs_from_init_text`.
+  Under `InitRules::Iso19111` it is refused with PROJ's message (`io.cpp` 12548-12558). Under
+  `InitRules::Proj4` the CRS of `EPSG:` (or `IGNF:`) is rebuilt as in `io.cpp` 12571-12619:
+  longitude and latitude in degrees (with the height axis when there are three), or easting and
+  northing for a projected CRS (not for Transverse Mercator South Orientated). The `title=` name
+  and the `over` flag are applied to the geographic and projected results only.
+- `model.rs` `Identified.over`: PROJ's `OVER` property of a CRS (`crs.cpp` 128-135).
+  `projstring.rs` writes `+over` after the datum, before `+no_defs +type=crs` (`crs.cpp` 3469).
+- `mod.rs`: the public names `InitRules` (an enum, since PROJ's `usePROJ4InitRules` is a bool
+  and no bool may be in a public signature) and `create_from_user_input_with_init_rules`.
+
+Tests (`tests/unit_io_projparse_init.rs`): `io.projparse_init` closed. The draft called the
+two-argument form for the four compatibility blocks; the test now calls the rules form with
+`InitRules::Proj4`, and adds PROJ's default-mode refusal. Expected values are unchanged. The
+WKT of the test uses `WktConvention::Wkt2_2015`, the default of PROJ's `WKTFormatter::create()`
+(`Convention::WKT2`); the draft's 2019 form writes `GEOGCRS` for the ensemble datum of
+EPSG:4326.
+
+Deviations and not ported:
+
+- A `init=` with parameters beside `over`, `no_defs`, `wktext` and `type=crs` is an error
+  (`Unsupported`), not PROJ's expansion through `exportToPROJString` (`io.cpp` 12581-12600).
+- `init=` names that are not EPSG or IGNF codes (PROJ's init files, for example `nad27:`) are an
+  error: the init file expansion is not ported.
+- The domains are copied; PROJ sets the domain of validity from `getExtent(crs)`, which is the
+  first domain.
+
+The original requirement, kept for reference:
 
 The test needs, in compatibility mode (PROJ `usePROJ4InitRules = true`):
 
@@ -100,11 +134,6 @@ The test needs, in compatibility mode (PROJ `usePROJ4InitRules = true`):
 - the error `init=epsg:/init=IGNF: syntax not supported in non-PROJ4 emulation mode` in default
   mode (`io.cpp` 12548-12558), which is what `create_from_user_input(text, db)` must keep giving.
 
-Public API this needs (not added yet): an enum for the init rules, since PROJ's
-`usePROJ4InitRules` is a bool and the brief forbids a bool in a public signature, and a
-function taking it, for example `create_from_user_input_with_init_rules(text, db,
-ProjInitRules::Proj4)`. The draft test calls the two-argument form, which in PROJ gives the
-error; the test must call the compatibility form for the four positive blocks.
 
 ## APIs needed by the tests not in this lot
 

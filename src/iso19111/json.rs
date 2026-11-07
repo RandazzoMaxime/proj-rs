@@ -1737,12 +1737,56 @@ fn is_integer_token(text: &str) -> bool {
 /// The text is not an authority code, PROJJSON this importer accepts, a PROJ
 /// string this importer accepts, or WKT for a CRS.
 pub fn create_from_user_input(text: &str, db: &DatabaseContext) -> Result<Crs, FactoryError> {
+    create_from_user_input_with_init_rules(text, db, InitRules::Iso19111)
+}
+
+/// Whether PROJ's `createFromUserInput` sends `text` to the PROJ string parser
+/// (`io.cpp`, the `proj=`, `init=`, `title=` tests).
+fn is_proj_string_text(text: &str) -> bool {
+    let bare = text.strip_prefix('+').unwrap_or(text);
+    bare.starts_with("proj=")
+        || bare.starts_with("init=")
+        || bare.starts_with("title=")
+        || text.contains(" +proj=")
+        || text.contains(" proj=")
+        || text.contains(" +init=")
+        || text.contains(" init=")
+}
+
+/// The `usePROJ4InitRules` of PROJ's `createFromUserInput` (`io.cpp`): whether the `init=` of a
+/// PROJ string is read as an EPSG or IGNF code in the PROJ 4 way, with longitude and latitude in
+/// degrees, and easting and northing for a projected CRS.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum InitRules {
+    /// The ISO 19111 rules: `init=epsg:` and `init=IGNF:` are refused.
+    #[default]
+    Iso19111,
+    /// The PROJ 4 rules: `init=epsg:` and `init=IGNF:` build the CRS of the code.
+    Proj4,
+}
+
+/// [`create_from_user_input`] with the `init=` rules of `rules`, as PROJ's
+/// `createFromUserInput(text, dbContext, usePROJ4InitRules)` (`io.cpp`).
+///
+/// # Errors
+///
+/// As [`create_from_user_input`]. An `init=` that is not an EPSG or IGNF code, or that has
+/// parameters beside the flags PROJ accepts (`over`, `no_defs`, `wktext`, `type=crs`), is not
+/// read: it is an error, not a silent drop.
+pub fn create_from_user_input_with_init_rules(
+    text: &str,
+    db: &DatabaseContext,
+    rules: InitRules,
+) -> Result<Crs, FactoryError> {
     let text = text.trim();
     if text.starts_with('{') {
         return import_json(text, db);
     }
     if let Some(crs) = crs_from_ogc_auto(text)? {
         return Ok(crs);
+    }
+    if is_proj_string_text(text) && text.contains("init=") && !has_proj_step(text) {
+        return crs_from_init_text(text, db, rules);
     }
     let bare = text.strip_prefix('+').unwrap_or(text);
     if bare.starts_with("proj=") || text.contains(" +proj=") || text.contains(" proj=") {
@@ -1767,6 +1811,104 @@ pub fn create_from_user_input(text: &str, db: &DatabaseContext) -> Result<Crs, F
         .crs()
         .cloned()
         .ok_or_else(|| FactoryError::Invalid("WKT is not a CRS".to_owned()))
+}
+
+/// Whether a PROJ string has a `proj=` step, not only `init=` and flags.
+fn has_proj_step(text: &str) -> bool {
+    text.split_whitespace()
+        .any(|word| word.strip_prefix('+').unwrap_or(word).starts_with("proj="))
+}
+
+/// A PROJ string whose only step is `init=AUTH:CODE`, read as PROJ's `createFromPROJString` does
+/// for the `+init=xxxx:yyyy` case (`io.cpp`, lines 12514-12640). Under the PROJ 4 rules the CRS of
+/// the code is rebuilt with longitude and latitude in degrees (easting and northing for a
+/// projected CRS), named by `title=` and given the `over` flag. Under the ISO 19111 rules the
+/// `epsg:` and `IGNF:` forms are refused, as PROJ does.
+fn crs_from_init_text(
+    text: &str,
+    db: &DatabaseContext,
+    rules: InitRules,
+) -> Result<Crs, FactoryError> {
+    let mut title: Option<String> = None;
+    let mut init: Option<&str> = None;
+    let mut over = false;
+    let mut significant = false;
+    for word in text.split_whitespace() {
+        let word = word.strip_prefix('+').unwrap_or(word);
+        if let Some(value) = word.strip_prefix("title=") {
+            title = Some(value.trim_matches('"').to_owned());
+        } else if let Some(name) = word.strip_prefix("init=") {
+            init = Some(name);
+        } else if word == "over" {
+            over = true;
+        } else if !matches!(word, "no_defs" | "wktext" | "type=crs") {
+            significant = true;
+        }
+    }
+    let name = init.ok_or_else(|| FactoryError::Format(format!("{text}: no init= step")))?;
+    let (authority, code) = name
+        .split_once(':')
+        .ok_or_else(|| FactoryError::Format(format!("init={name}: no authority")))?;
+    let authority = authority.to_ascii_uppercase();
+    if !matches!(authority.as_str(), "EPSG" | "IGNF") {
+        return Err(FactoryError::Unsupported(format!(
+            "init={name}: only the EPSG and IGNF codes are read (no init file)"
+        )));
+    }
+    if rules == InitRules::Iso19111 {
+        return Err(FactoryError::Format(
+            "init=epsg:/init=IGNF: syntax not supported in non-PROJ4 emulation mode".to_owned(),
+        ));
+    }
+    if significant {
+        return Err(FactoryError::Unsupported(format!(
+            "init={name} with parameters beside over, no_defs, wktext and type=crs is not expanded"
+        )));
+    }
+    let crs = create_from_user_input(&format!("{authority}:{code}"), db)?;
+    match crs {
+        Crs::Geographic(geographic) => {
+            let cs = match geographic.coordinate_system().axes() {
+                [_, _, height] => EllipsoidalCS::create_longitude_latitude_height(
+                    UnitOfMeasure::degree(),
+                    height.unit().clone(),
+                ),
+                _ => EllipsoidalCS::create_longitude_latitude(UnitOfMeasure::degree()),
+            };
+            let name = title.unwrap_or_else(|| geographic.identified.name.clone());
+            let mut rebuilt = GeographicCRS::create(
+                name,
+                geographic.datum().cloned(),
+                geographic.datum_ensemble().cloned(),
+                cs,
+            )?;
+            rebuilt.identified.domains = geographic.identified.domains;
+            rebuilt.identified.over = over;
+            Ok(Crs::Geographic(rebuilt))
+        }
+        Crs::Projected(projected) => {
+            // PROJ keeps the CRS of a Transverse Mercator South Orientated projection as it is.
+            let south_oriented = projected.deriving_conversion().method().name()
+                == "Transverse Mercator (South Orientated)";
+            let Some(first) = projected.coordinate_system().axes().first() else {
+                return Ok(Crs::Projected(projected));
+            };
+            if south_oriented {
+                return Ok(Crs::Projected(projected));
+            }
+            let name = title.unwrap_or_else(|| projected.identified.name.clone());
+            let mut rebuilt = ProjectedCRS::create(
+                name,
+                projected.base_crs().clone(),
+                projected.deriving_conversion().clone(),
+                CartesianCS::create_easting_northing(first.unit().clone()),
+            );
+            rebuilt.identified.domains = projected.identified.domains;
+            rebuilt.identified.over = over;
+            Ok(Crs::Projected(rebuilt))
+        }
+        other => Ok(other),
+    }
 }
 
 /// The `EPSG:CODE` text of a CRS that `text` names, or `EPSG:A+B` for a
