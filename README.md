@@ -217,8 +217,8 @@ proj-rs = { git = "https://github.com/RandazzoMaxime/proj-rs" }
 ```
 
 Already using the `proj` crate? Swap it without touching your Rust code. Check
-the [parity status](#how-the-port-is-done) first: a few results still differ
-from PROJ's, which the georust gaps list:
+the [parity status](#how-the-port-is-done) first: one pair still fails to create where
+PROJ creates it (`EPSG:4326+5773` to `EPSG:4326+5782`), see the georust gaps list:
 
 ```toml
 proj = { package = "proj-rs", git = "https://github.com/RandazzoMaxime/proj-rs" }
@@ -244,7 +244,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (east, north) = to_utm.project(radians, false)?;
     println!("UTM 31N (PROJ string):  {east:.3} E  {north:.3} N");
 
-    // Anything this crate cannot do is an error at creation, never a wrong number.
+    // Anything this crate does not build is an error at creation.
     let refused = Proj::new("+proj=not_a_real_projection");
     println!("Unknown projection:     {}", refused.is_err());
 
