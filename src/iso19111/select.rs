@@ -1345,7 +1345,10 @@ pub(crate) fn facade_candidates(
     // `op_count == 1` with an instantiable operation returns it at once, rerun or not
     // (`crs_to_crs.cpp:617-647`). Its boxes are not read: a single candidate is never boxed.
     if let [(operation, characteristics)] = ranked.as_slice() {
-        if characteristics.exportable && characteristics.grids_available {
+        // Instantiable means the grids are on disk, as `proj_coordoperation_is_instantiable`
+        // reads them. The KNOWN_AVAILABLE sort does not look, so `grids_available` is no test here.
+        let grids = proj_grids(operation, &db).unwrap_or_else(|_| grid_names(operation));
+        if characteristics.exportable && grids.iter().all(|grid| gridpath::available(grid)) {
             let preparer = Preparer {
                 db: &db,
                 source: &source_crs,
