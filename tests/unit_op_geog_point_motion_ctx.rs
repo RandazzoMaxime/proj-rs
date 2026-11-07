@@ -100,3 +100,82 @@ fn operation_point_motion_operation_geocentric_to_geog3d() {
         ),
     );
 }
+
+/// `TEST(operation, createOperation_point_motion_operation_NAD83_CSRS_v7_TO_ITRF2014)`
+#[test]
+fn operation_point_motion_operation_nad83_csrs_v7_to_itrf2014() {
+    let db = database();
+    // "NAD83(CSRS)v7"
+    let crs_2002 = CoordinateMetadata::create(&epsg_crs(&db, "8254"), 2002.0, &db).expect("2002");
+    // ITRF2014
+    let crs_2005 = CoordinateMetadata::create(&epsg_crs(&db, "7912"), 2005.0, &db).expect("2005");
+    let ctx = point_motion_context(&db);
+    let list = CoordinateOperationFactory::create()
+        .create_operations_between_metadata(&crs_2002, &crs_2005, &ctx)
+        .expect("operations");
+    assert!(list.len() >= 2);
+    assert!(!list[0].has_ballpark_transformation());
+    assert_proj_eq(
+        &proj(&db, &list[0]),
+        concat!(
+            "+proj=pipeline ",
+            "+step +proj=set +v_4=2002 ",
+            "+step +proj=axisswap +order=2,1 ",
+            "+step +proj=unitconvert +xy_in=deg +z_in=m +xy_out=rad +z_out=m ",
+            "+step +proj=cart +ellps=GRS80 ",
+            "+step +proj=set +v_4=2002 +omit_fwd ",
+            "+step +proj=deformation +dt=3 +grids=ca_nrc_NAD83v70VG.tif ",
+            "+ellps=GRS80 ",
+            "+step +proj=set +v_4=2005 +omit_inv ",
+            "+step +inv +proj=helmert ",
+            "+x=1.0053 +y=-1.90921 +z=-0.54157 +rx=-0.02678138 ",
+            "+ry=0.00042027 +rz=-0.01093206 +s=0.00036891 +dx=0.00079 +dy=-0.0006 ",
+            "+dz=-0.00144 +drx=-6.667e-05 +dry=0.00075744 +drz=5.133e-05 ",
+            "+ds=-7.201e-05 +t_epoch=2010 +convention=position_vector ",
+            "+step +inv +proj=cart +ellps=GRS80 ",
+            "+step +proj=unitconvert +xy_in=rad +z_in=m +xy_out=deg +z_out=m ",
+            "+step +proj=axisswap +order=2,1 ",
+            "+step +proj=set +v_4=2005"
+        ),
+    );
+    assert!(list[1].has_ballpark_transformation());
+}
+
+/// `TEST(operation, createOperation_point_motion_operation_ITRF2014_to_NAD83_CSRS_v7)`
+#[test]
+fn operation_point_motion_operation_itrf2014_to_nad83_csrs_v7() {
+    let db = database();
+    // ITRF2014
+    let crs_2005 = CoordinateMetadata::create(&epsg_crs(&db, "7912"), 2005.0, &db).expect("2005");
+    // "NAD83(CSRS)v7"
+    let crs_2002 = CoordinateMetadata::create(&epsg_crs(&db, "8254"), 2002.0, &db).expect("2002");
+    let ctx = point_motion_context(&db);
+    let list = CoordinateOperationFactory::create()
+        .create_operations_between_metadata(&crs_2005, &crs_2002, &ctx)
+        .expect("operations");
+    assert!(list.len() >= 2);
+    assert!(!list[0].has_ballpark_transformation());
+    assert_proj_eq(
+        &proj(&db, &list[0]),
+        concat!(
+            "+proj=pipeline ",
+            "+step +proj=set +v_4=2005 ",
+            "+step +proj=axisswap +order=2,1 ",
+            "+step +proj=unitconvert +xy_in=deg +z_in=m +xy_out=rad +z_out=m ",
+            "+step +proj=cart +ellps=GRS80 ",
+            "+step +proj=helmert +x=1.0053 +y=-1.90921 +z=-0.54157 +rx=-0.02678138 ",
+            "+ry=0.00042027 +rz=-0.01093206 +s=0.00036891 +dx=0.00079 +dy=-0.0006 ",
+            "+dz=-0.00144 +drx=-6.667e-05 +dry=0.00075744 +drz=5.133e-05 ",
+            "+ds=-7.201e-05 +t_epoch=2010 +convention=position_vector ",
+            "+step +proj=set +v_4=2005 +omit_fwd ",
+            "+step +proj=deformation +dt=-3 +grids=ca_nrc_NAD83v70VG.tif ",
+            "+ellps=GRS80 ",
+            "+step +proj=set +v_4=2002 +omit_inv ",
+            "+step +inv +proj=cart +ellps=GRS80 ",
+            "+step +proj=unitconvert +xy_in=rad +z_in=m +xy_out=deg +z_out=m ",
+            "+step +proj=axisswap +order=2,1 ",
+            "+step +proj=set +v_4=2002"
+        ),
+    );
+    assert!(list[1].has_ballpark_transformation());
+}
