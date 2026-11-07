@@ -5,11 +5,11 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 50 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `core` | 47 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
 | `niche` | 14 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 41 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (50)
+## core (47)
 
 ### test_c_api.cpp (10)
 
@@ -24,12 +24,9 @@ The class comes from the test name alone, so check it when you port a test.
 - `CApi.proj_create_vertical_crs_ex_with_geog_crs`
 - `CApi.proj_create_vertical_crs_ex_implied_accuracy`
 
-### test_crs.cpp (6)
+### test_crs.cpp (3)
 
-- `crs.projectedCRS_identify_db`
-- `crs.compoundCRS_identify_db`
 - `crs.boundCRS_crs_link`
-- `crs.boundCRS_identify_db`
 - `crs.crs_createBoundCRSToWGS84IfPossible`
 - `crs.norway_ntm`
 
