@@ -719,7 +719,7 @@ fn compute_metadata(
     if operations.len() == 1 {
         return operations.into_iter().next();
     }
-    let steps = flatten_steps(operations);
+    let steps = super::derived::remove_consecutive_inverse(flatten_steps(operations));
     if steps.len() == 1 {
         return steps.into_iter().next();
     }
