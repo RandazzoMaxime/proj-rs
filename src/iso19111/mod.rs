@@ -37,7 +37,9 @@ mod transform_export;
 mod wkt;
 mod wkt_import;
 
-pub use alternatives::{AlternativeError, Alternatives, BestPolicy};
+pub use alternatives::{
+    AlternativeError, Alternatives, BestPolicy, LogLevel, LogLine, WARN_SUFFIX,
+};
 pub use buildop::{AxisOrderReversal, OpProps};
 pub use coordinate_metadata::CoordinateMetadata;
 pub use crs_ops::{ParameterLinearUnit, Wgs84Dynamic};
@@ -79,7 +81,10 @@ pub use select::{
     best_pipeline_with, best_pipeline_with_authority, only_best_default, Ballpark, BestOperation,
     CandidateFilter, OnlyBest,
 };
-pub use select::{select_alternatives, select_alternatives_with_authority, Selection};
+pub use select::{
+    best_pipeline_logged, best_pipeline_logged_with_authority, select_alternatives,
+    select_alternatives_with_authority, PipelineLog, Selection,
+};
 pub use wkt::{
     EllipsoidalHeightPolicy, LinunitPolicy, OutputAxisRule, WktConvention, WktFormatter, WktLines,
     WktStrictness,

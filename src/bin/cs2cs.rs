@@ -13,13 +13,16 @@
     reason = "cs2cs writes coordinates to stdout and usage to stderr"
 )]
 
+use std::cell::Cell;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Write};
 use std::process::ExitCode;
+use std::sync::OnceLock;
 
 use proj_rs::iso19111::{
-    only_best_default, AlternativeError, Alternatives, Ballpark, BestOperation, BestPolicy,
-    CandidateFilter, OnlyBest, Selection,
+    best_pipeline_logged_with_authority, only_best_default, AlternativeError, Alternatives,
+    Ballpark, BestOperation, BestPolicy, CandidateFilter, LogLevel, LogLine, OnlyBest, PipelineLog,
+    Selection,
 };
 use proj_rs::{Area, CrsPipeline, Operation, Proj, Xyzt};
 use rusqlite::Connection;
@@ -27,6 +30,8 @@ use rusqlite::Connection;
 const RELEASE: &str = "Rel. 9.9.0, September 15th, 2026";
 
 fn main() -> ExitCode {
+    // Reads `PROJ_DEBUG` first, as PROJ's context does: an invalid value is reported before anything.
+    proj_debug_level();
     let prog = program_name();
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.is_empty() {
@@ -320,10 +325,14 @@ enum Engine {
     Pair(Box<SidePair>),
     /// Two EPSG codes. The pipeline already speaks authority axis order and units.
     Pipe(CrsPipeline),
+    /// [`Engine::Pipe`] of a pair whose first use PROJ logs (`PROJ_DEBUG`).
+    Logged(Box<LoggedPipe>),
     /// Names and mixed definitions, through the CRS facade, which carries the third axis.
     Facade(Box<FacadeAxes>),
     /// `--only-best` chose an operation whose grid is missing. Each point fails with PROJ's message.
     Failing(String),
+    /// [`Engine::Failing`] of a pair with several candidates: PROJ logs the first use once.
+    LoggedFailing(Box<LoggedFailing>),
     /// Several candidates: each point takes the one `proj_trans` picks for it.
     Alternatives(Box<Alternatives>),
     /// The default policy chose an operation whose grid is missing: each point fails silently.
@@ -341,13 +350,71 @@ struct FacadeAxes {
     swap_out: bool,
 }
 
+/// A pipeline, with the log lines PROJ writes for its pair. `used` is PROJ's `iCurCoordOp`
+/// state: the first use is logged once.
+struct LoggedPipe {
+    pipe: CrsPipeline,
+    log: PipelineLog,
+    used: Cell<bool>,
+}
+
+/// A failing operation of a pair with several candidates, with the first-use line of its pair.
+struct LoggedFailing {
+    message: String,
+    log: PipelineLog,
+    used: Cell<bool>,
+}
+
+/// `PROJ_DEBUG` as `pj_ctx::createDefault` reads it (`ctx.cpp:90-111`): `ON` is level 2, `OFF`
+/// is 1, a number is its level, and a level below -3 is the trace level 3. Unset, the level is
+/// `PJ_LOG_ERROR`. Any other value is reported on stderr and ignored, as PROJ does at the
+/// creation of its context.
+fn proj_debug_level() -> i32 {
+    static LEVEL: OnceLock<i32> = OnceLock::new();
+    *LEVEL.get_or_init(|| match std::env::var("PROJ_DEBUG") {
+        Err(_) => 1,
+        Ok(value) => debug_level_of(&value).unwrap_or_else(|| {
+            eprintln!("Invalid value for PROJ_DEBUG: {value}");
+            1
+        }),
+    })
+}
+
+/// The debug level of a `PROJ_DEBUG` value (`ctx.cpp:90-111`), or `None` for a value PROJ
+/// refuses.
+fn debug_level_of(value: &str) -> Option<i32> {
+    if value.eq_ignore_ascii_case("ON") {
+        Some(2)
+    } else if value.eq_ignore_ascii_case("OFF") {
+        Some(1)
+    } else if value.starts_with('-') || value.starts_with(|c: char| c.is_ascii_digit()) {
+        let level = atoi(value);
+        Some(if level >= -3 { level } else { 3 })
+    } else {
+        None
+    }
+}
+
+/// Writes a PROJ log line when the debug level allows it: a line is written when its level is at
+/// most the level of the context (`log.cpp:104-115`).
+fn print_line(line: &LogLine) {
+    let needed = match line.level {
+        LogLevel::Error => 1,
+        LogLevel::Debug => 2,
+    };
+    if proj_debug_level() >= needed {
+        eprintln!("{}", line.text);
+    }
+}
+
 impl Engine {
     fn lat_first(&self) -> bool {
         match self {
             Self::Pipe(pipe) => pipe.lat_or_northing_first,
+            Self::Logged(logged) => logged.pipe.lat_or_northing_first,
             Self::Alternatives(alternatives) => alternatives.lat_or_northing_first(),
             Self::Facade(facade) => facade.swap_out,
-            Self::Pair(_) | Self::Failing(_) | Self::Unavailable => false,
+            Self::Pair(_) | Self::Failing(_) | Self::LoggedFailing(_) | Self::Unavailable => false,
         }
     }
 
@@ -371,18 +438,47 @@ impl Engine {
                 })
             }
             Self::Failing(message) => {
-                eprintln!("{message}");
+                print_line(&LogLine::error(message.as_str()));
                 Err(())
             }
-            Self::Alternatives(alternatives) => alternatives
-                .forward(Xyzt { x, y, z, t })
-                .map(|coord| (coord.x, coord.y, coord.z))
-                .map_err(|error| {
-                    // `ONLY_BEST=YES` prints the missing grid of each point it cannot serve.
-                    if let AlternativeError::MissingGrid(message) = &error {
-                        eprintln!("{message}");
+            Self::LoggedFailing(failing) => {
+                if !failing.used.replace(true) {
+                    if let Some(line) = &failing.log.first_use {
+                        print_line(line);
                     }
-                }),
+                }
+                print_line(&LogLine::error(failing.message.as_str()));
+                Err(())
+            }
+            Self::Logged(logged) => {
+                // PROJ logs the first use of a pair with several candidates before the first point.
+                if !logged.used.replace(true) {
+                    if let Some(line) = &logged.log.first_use {
+                        print_line(line);
+                    }
+                }
+                logged
+                    .pipe
+                    .operation
+                    .forward(Xyzt { x, y, z, t })
+                    .map(|coord| (coord.x, coord.y, coord.z))
+                    .map_err(|_| ())
+            }
+            Self::Alternatives(alternatives) => {
+                let mut lines = Vec::new();
+                let result = alternatives.forward_logged(Xyzt { x, y, z, t }, &mut lines);
+                for line in &lines {
+                    print_line(line);
+                }
+                result
+                    .map(|coord| (coord.x, coord.y, coord.z))
+                    .map_err(|error| {
+                        // `ONLY_BEST=YES` prints the missing grid of each point it cannot serve.
+                        if let AlternativeError::MissingGrid(message) = &error {
+                            print_line(&LogLine::error(message.as_str()));
+                        }
+                    })
+            }
             Self::Unavailable => Err(()),
         }
     }
@@ -632,8 +728,9 @@ fn select_pipeline(
     authority: &str,
 ) -> Result<Engine, InitError> {
     let mode = only_best_mode(only_best);
-    let best = proj_rs::iso19111::best_pipeline_with_authority(source, target, mode, authority)
-        .map_err(|error| InitError::Cause(error.to_string()))?;
+    let (best, log) =
+        best_pipeline_logged_with_authority(source, target, mode, CandidateFilter::NONE, authority)
+            .map_err(|error| InitError::Cause(error.to_string()))?;
     match best {
         BestOperation::Pipeline {
             definition,
@@ -641,13 +738,50 @@ fn select_pipeline(
         } => {
             let operation = Operation::create(&definition)
                 .map_err(|error| InitError::Cause(error.to_string()))?;
-            Ok(Engine::Pipe(CrsPipeline {
-                operation,
-                lat_or_northing_first,
-            }))
+            Ok(logged_pipe(
+                CrsPipeline {
+                    operation,
+                    lat_or_northing_first,
+                },
+                log,
+            ))
         }
-        BestOperation::MissingGrid { message } => Ok(Engine::Failing(message)),
+        BestOperation::MissingGrid { message } => Ok(logged_failing(message, log)),
         BestOperation::Refused { message } => Err(refused(message)),
+    }
+}
+
+/// The engine of a failing operation and the log lines of its pair: the creation lines are written
+/// here, the first-use line before the first point.
+fn logged_failing(message: String, log: PipelineLog) -> Engine {
+    for line in &log.creation {
+        print_line(line);
+    }
+    if log.first_use.is_none() {
+        Engine::Failing(message)
+    } else {
+        Engine::LoggedFailing(Box::new(LoggedFailing {
+            message,
+            log,
+            used: Cell::new(false),
+        }))
+    }
+}
+
+/// The engine of a pipeline and the log lines of its pair. PROJ writes the creation lines when
+/// the pair is created, here, and the first-use line before the first point.
+fn logged_pipe(pipe: CrsPipeline, log: PipelineLog) -> Engine {
+    for line in &log.creation {
+        print_line(line);
+    }
+    if log.first_use.is_none() {
+        Engine::Pipe(pipe)
+    } else {
+        Engine::Logged(Box::new(LoggedPipe {
+            pipe,
+            log,
+            used: Cell::new(false),
+        }))
     }
 }
 
@@ -664,21 +798,22 @@ fn select_pipeline_filtered(
     let mode = only_best_mode(only_best);
     // PROJ's `proj_create_crs_to_crs` returns NULL with no error text when a filter removes
     // every candidate, and `cs2cs` prints the empty text as `(null)`. Matched on purpose.
-    match proj_rs::iso19111::best_pipeline_filtered_with_authority(
-        source, target, mode, filter, authority,
-    )
-    .map_err(|_| InitError::Cause("(null)".to_owned()))?
-    {
+    let (best, log) = best_pipeline_logged_with_authority(source, target, mode, filter, authority)
+        .map_err(|_| InitError::Cause("(null)".to_owned()))?;
+    match best {
         BestOperation::Pipeline {
             definition,
             lat_or_northing_first,
         } => {
             let operation = Operation::create(&definition)
                 .map_err(|error| InitError::Cause(error.to_string()))?;
-            Ok(Engine::Pipe(CrsPipeline {
-                operation,
-                lat_or_northing_first,
-            }))
+            Ok(logged_pipe(
+                CrsPipeline {
+                    operation,
+                    lat_or_northing_first,
+                },
+                log,
+            ))
         }
         // ONLY_BEST=YES with ALLOW_BALLPARK=NO leaves no ballpark fallback: PROJ fails the
         // creation on the missing grid, where ballpark allowed fails each point.
@@ -689,7 +824,7 @@ fn select_pipeline_filtered(
                 "{message}\n\ncannot initialize transformation\ncause: File not found or invalid"
             )))
         }
-        BestOperation::MissingGrid { message } => Ok(Engine::Failing(message)),
+        BestOperation::MissingGrid { message } => Ok(logged_failing(message, log)),
         BestOperation::Refused { message } => Err(refused(message)),
     }
 }
@@ -2590,6 +2725,21 @@ fn parse_inf_nan(text: &str) -> Option<(f64, usize)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `PROJ_DEBUG` values as `ctx.cpp:90-111` reads them: `ON` and `OFF` by name, a number as
+    /// its level, a level below -3 as the trace level, and anything else refused.
+    #[test]
+    fn proj_debug_values_follow_the_context_reader() {
+        assert_eq!(debug_level_of("ON"), Some(2));
+        assert_eq!(debug_level_of("on"), Some(2));
+        assert_eq!(debug_level_of("OFF"), Some(1));
+        assert_eq!(debug_level_of("0"), Some(0));
+        assert_eq!(debug_level_of("2"), Some(2));
+        assert_eq!(debug_level_of("3"), Some(3));
+        assert_eq!(debug_level_of("-5"), Some(3));
+        assert_eq!(debug_level_of(""), None);
+        assert_eq!(debug_level_of("verbose"), None);
+    }
 
     /// `test_cs2cs_various.yaml#124` takes the ISO selection; `+approx`, `+over` and `+lon_wrap`
     /// keep their PROJ strings on the side-pair path (`#6`, `#20`, `#21`, `#92`).

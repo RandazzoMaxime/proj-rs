@@ -13,7 +13,9 @@
 //! one of those is either sorted differently or reported as an error, and the
 //! caller keeps its previous path.
 
-use super::alternatives::{Alternatives, BestPolicy, Bounds, FirstAxis, Item, SourceAxes};
+use super::alternatives::{
+    Alternatives, BestPolicy, Bounds, FirstAxis, Item, LogLine, SourceAxes, WARN_SUFFIX,
+};
 use super::factory::{
     operation_extent, sort_extents, GridAvailabilityUse, GridDescription, GridInfo, SortExtents,
     SpatialCriterion,
@@ -273,6 +275,7 @@ struct Chosen {
     source: Crs,
     target: Crs,
     instantiable: usize,
+    log: PipelineLog,
 }
 
 pub(crate) fn best_operation_exact(
@@ -286,6 +289,7 @@ pub(crate) fn best_operation_exact(
         source: source_crs,
         target: target_crs,
         instantiable,
+        log: _,
     } = best_operation_full(source, target, OnlyBest::Off)?;
     match (best, approx) {
         (BestOperation::Pipeline { definition, .. }, false) => Ok(ExactChoice {
@@ -415,6 +419,10 @@ fn best_operation_filtered(
     // `op_count == 1` under ONLY_BEST=YES (`crs_to_crs.cpp:617-641`): the only candidate is kept
     // whatever its grids, and a missing grid refuses the creation.
     let single_candidate = ranked.len() == 1;
+    let mut log = PipelineLog::default();
+    let warned_at_creation = only_best == OnlyBest::Unset
+        && creation_warning(&context, &source_crs, &target_crs, filter, &db, &mut log)?;
+    let ranked_len = ranked.len();
     let chosen = match only_best {
         OnlyBest::On => ranked.into_iter().next(),
         OnlyBest::Off | OnlyBest::Unset | OnlyBest::Discard => ranked
@@ -423,6 +431,16 @@ fn best_operation_filtered(
     };
     let (best, characteristics) = chosen
         .ok_or_else(|| FactoryError::Format(format!("no operation from {source} to {target}")))?;
+    // A list of several candidates is an alternatives list: `proj_trans` logs the candidate it
+    // uses at the first point, since no candidate was used before (`trans.cpp:269-276`). Under the
+    // warn policy the first use is the first instantiable candidate (the warning cleared
+    // `skipNonInstantiable`, `crs_to_crs.cpp:650`). Under `ONLY_BEST=YES` it is the first one.
+    if ranked_len > 1 && (warned_at_creation || only_best == OnlyBest::On) {
+        log.first_use = Some(LogLine::debug(format!(
+            "Using coordinate operation {}",
+            characteristics.name
+        )));
+    }
     // A missing grid is a result of its own, checked before the export: PROJ builds the
     // pipeline naming the grid and fails on the grid, so the export is not what decides.
     // `proj_coordoperation_is_instantiable` is the check: each grid of the pipeline, by its
@@ -441,6 +459,7 @@ fn best_operation_filtered(
             source: source_crs,
             target: target_crs,
             instantiable,
+            log,
         });
     }
     if !characteristics.exportable {
@@ -461,7 +480,88 @@ fn best_operation_filtered(
         source: source_crs,
         target: target_crs,
         instantiable,
+        log,
     })
+}
+
+/// The creation warning of the warn policy, `crs_to_crs.cpp:617-651`. The first list is read with
+/// `KNOWN_AVAILABLE`, as PROJ reads it under the warn policy (`crs_to_crs.cpp:570-576`). When it
+/// has one candidate and that candidate's grids are not on disk, PROJ logs
+/// `pj_warn_about_missing_grid` and clears the warning flag of the instance. Returns whether the
+/// warning was logged. The search then goes on with the rerun, as in [`best_operation_filtered`].
+fn creation_warning(
+    context: &CoordinateOperationContext,
+    source: &Crs,
+    target: &Crs,
+    filter: CandidateFilter,
+    db: &DatabaseContext,
+    log: &mut PipelineLog,
+) -> Result<bool, FactoryError> {
+    let mut known = context.clone();
+    known.set_grid_availability_use(GridAvailabilityUse::KnownAvailable);
+    let known_ops = CoordinateOperationFactory::create()
+        .create_operations(source, target, &known)?
+        .into_iter()
+        .filter(|operation| filter.keeps(operation))
+        .collect::<Vec<_>>();
+    let [operation] = known_ops.as_slice() else {
+        return Ok(false);
+    };
+    let grids = proj_grids(operation, db).unwrap_or_else(|_| grid_names(operation));
+    let on_disk = grids.iter().all(|grid| gridpath::available(grid));
+    let instantiable = on_disk && export(operation, source, target, db).is_ok();
+    if instantiable {
+        return Ok(false);
+    }
+    log.creation.push(LogLine::debug(format!(
+        "{}{WARN_SUFFIX}",
+        missing_grid_message(operation.name(), &grids)
+    )));
+    Ok(true)
+}
+
+/// The PROJ log lines of a pair under the warn policy (no `ONLY_BEST` option), for the binary to
+/// write. PROJ writes the creation lines when `proj_create_crs_to_crs` returns and the first use
+/// when the first `proj_trans` runs.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PipelineLog {
+    /// Written by the creation of the pair (`crs_to_crs.cpp:650`).
+    pub creation: Vec<LogLine>,
+    /// Written by the first transformation, when the pair keeps several candidates
+    /// (`trans.cpp:269-276`).
+    pub first_use: Option<LogLine>,
+}
+
+/// [`best_pipeline_with`] and [`best_pipeline_filtered`] with the log lines PROJ writes for the
+/// pair, under the warn policy (`OnlyBest::Unset`). Under the other states the log is empty.
+///
+/// # Errors
+///
+/// As [`best_pipeline`].
+pub fn best_pipeline_logged(
+    source: &str,
+    target: &str,
+    only_best: OnlyBest,
+    filter: CandidateFilter,
+) -> Result<(BestOperation, PipelineLog), FactoryError> {
+    best_pipeline_logged_with_authority(source, target, only_best, filter, "")
+}
+
+/// [`best_pipeline_logged`], over the candidates of `authority` only (see
+/// [`best_pipeline_filtered_with_authority`]).
+///
+/// # Errors
+///
+/// As [`best_pipeline`].
+pub fn best_pipeline_logged_with_authority(
+    source: &str,
+    target: &str,
+    only_best: OnlyBest,
+    filter: CandidateFilter,
+    authority: &str,
+) -> Result<(BestOperation, PipelineLog), FactoryError> {
+    best_operation_filtered(source, target, only_best, filter, authority)
+        .map(|chosen| (chosen.best, chosen.log))
 }
 
 /// `pj_warn_about_missing_grid`: the failure text for `name`, naming each grid
@@ -1417,6 +1517,7 @@ impl Preparer<'_> {
                 let w = piece_west.to_radians();
                 let e = piece_east.to_radians();
                 items.push(Item {
+                    name: characteristics.name.clone(),
                     operation: definition
                         .as_deref()
                         .and_then(|text| Operation::create(text).ok()),
