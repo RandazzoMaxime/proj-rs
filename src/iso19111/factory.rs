@@ -4547,6 +4547,8 @@ impl AuthorityFactory {
             for index in 0..steps.len() {
                 super::wkt_import::fix_transformation_direction(&source, &mut steps, index);
             }
+        } else {
+            assign_missing_conversion_crs(&mut steps, &source, &target);
         }
         append_geographic_geocentric_tail(&mut steps, &target);
         super::wkt_import::check_steps_chaining(&steps, &source, &target)?;
@@ -7895,7 +7897,7 @@ fn fix_unspecified_step_directions(steps: &mut Vec<ConcatenatedStep>, source: &C
         steps[last].operation = steps[last].operation.inverse();
     }
     link_geographic_geocentric(steps, source);
-    assign_missing_conversion_crs(steps, target);
+    assign_missing_conversion_crs(steps, source, target);
 }
 
 /// Intermediate transformations whose CRS name matches the previous target, but
@@ -7973,12 +7975,32 @@ fn is_geocentric_crs(crs: &Crs) -> bool {
     matches!(crs, Crs::Geodetic(GeodeticCRS::Geocentric(_)))
 }
 
-/// Intermediate and final conversions in a concatenated operation have no CRS
-/// in `proj.db`. PROJ fills them from the neighbouring steps. A height-to-depth
-/// reversal whose next step has no source gets a depth CRS derived from the
-/// previous height (`EPSG:7987`).
-fn assign_missing_conversion_crs(steps: &mut [ConcatenatedStep], concatenated_target: &Crs) {
+/// Conversions in a concatenated operation have no CRS in `proj.db`. PROJ fills
+/// them from the neighbouring steps, as `ConcatenatedOperation::fixSteps` does
+/// (`src/iso19111/operation/concatenatedoperation.cpp`, the `i == 0` branch at
+/// 382-419 and the intermediate and last branches at 420-460 and 461-544). This
+/// runs whether or not the steps store their directions: PROJ gates only the
+/// direction fixes on `fixDirectionAllowed`, not the CRS assignment. A
+/// height-to-depth reversal whose next step has no source gets a depth CRS
+/// derived from the previous height (`EPSG:7987`).
+fn assign_missing_conversion_crs(
+    steps: &mut [ConcatenatedStep],
+    concatenated_source: &Crs,
+    concatenated_target: &Crs,
+) {
     let len = steps.len();
+    if len >= 2 {
+        let first_is_bare_conversion = matches!(
+            steps[0].operation(),
+            CoordinateOperation::Conversion(conversion)
+                if conversion.source_crs().is_none() && conversion.target_crs().is_none()
+        );
+        if first_is_bare_conversion {
+            if let Some(next) = effective_endpoints(&steps[1]).0.cloned() {
+                set_effective_endpoints(&mut steps[0], concatenated_source.clone(), next);
+            }
+        }
+    }
     for index in 1..len {
         let method = match steps[index].operation() {
             CoordinateOperation::Conversion(conversion)
@@ -7988,13 +8010,13 @@ fn assign_missing_conversion_crs(steps: &mut [ConcatenatedStep], concatenated_ta
             }
             _ => continue,
         };
-        let previous = step_endpoints(&steps[index - 1]).1.cloned();
+        let previous = effective_endpoints(&steps[index - 1]).1.cloned();
         let next = (index + 1 < len)
-            .then(|| step_endpoints(&steps[index + 1]).0.cloned())
+            .then(|| effective_endpoints(&steps[index + 1]).0.cloned())
             .flatten();
         if index + 1 < len {
             if let (Some(source), Some(target)) = (previous.clone(), next) {
-                set_conversion_endpoints(&mut steps[index], source, target);
+                set_effective_endpoints(&mut steps[index], source, target);
                 continue;
             }
             if method == "1068" {
@@ -8004,14 +8026,35 @@ fn assign_missing_conversion_crs(steps: &mut [ConcatenatedStep], concatenated_ta
                     {
                         let depth = depth_crs_from_height(vertical);
                         if let Some(source) = previous {
-                            set_conversion_endpoints(&mut steps[index], source, depth);
+                            set_effective_endpoints(&mut steps[index], source, depth);
                         }
                     }
                 }
             }
         } else if let Some(source) = previous {
-            set_conversion_endpoints(&mut steps[index], source, concatenated_target.clone());
+            set_effective_endpoints(&mut steps[index], source, concatenated_target.clone());
         }
+    }
+}
+
+/// The source and target of a step in the direction the concatenated operation runs:
+/// a reversed step (`ConcatenatedStep::reverse`) swaps the operation's own pair.
+fn effective_endpoints(step: &ConcatenatedStep) -> (Option<&Crs>, Option<&Crs>) {
+    let (source, target) = step_endpoints(step);
+    if step.reverse {
+        (target, source)
+    } else {
+        (source, target)
+    }
+}
+
+/// Sets the pair of a bare conversion step in the direction the concatenated operation
+/// runs. A reversed step stores the pair the other way round.
+fn set_effective_endpoints(step: &mut ConcatenatedStep, source: Crs, target: Crs) {
+    if step.reverse {
+        set_conversion_endpoints(step, target, source);
+    } else {
+        set_conversion_endpoints(step, source, target);
     }
 }
 
