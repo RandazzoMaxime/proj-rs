@@ -14,8 +14,8 @@
 
 use crate::engine::{Coord, Operation, TransformError};
 use crate::iso19111::{
-    best_operation_exact, lat_or_northing_first, same_datum_noop, CoordinateOperation, Crs,
-    FactoryError, GeodeticCRS,
+    best_operation_exact, same_datum_noop, Axis, CoordinateOperation, Crs, FactoryError,
+    GeodeticCRS, UnitOfMeasure,
 };
 use crate::proj::{Direction, ProjError};
 
@@ -37,7 +37,7 @@ struct Side {
 
 impl Side {
     fn of(crs: &Crs) -> Self {
-        let lead = if lat_or_northing_first(crs) {
+        let lead = if must_switch_for_visualization(crs) {
             Lead::LatOrNorthing
         } else {
             Lead::LonOrEasting
@@ -232,6 +232,44 @@ fn refusal(source: &Crs, target: &Crs) -> Option<String> {
         ));
     }
     None
+}
+
+/// Whether `proj_normalize_for_visualization` reverses the two horizontal axes of a CRS, so that
+/// the facade's order (longitude or easting first) differs from the CRS's own.
+///
+/// This is `CRS::mustAxisOrderBeSwitchedForVisualization` (`crs.cpp:869-947`): a latitude or
+/// northing first CRS is switched, and so is a polar CRS whose axes point north or south along
+/// the meridians PROJ names. A polar CRS with the same directions along other meridians is not:
+/// `EPSG:3413` writes easting first, and `cs2cs`, which reads the CRS's own order, keeps it.
+fn must_switch_for_visualization(crs: &Crs) -> bool {
+    let axes = match crs {
+        Crs::Geographic(geographic) | Crs::Geodetic(GeodeticCRS::Geographic(geographic)) => {
+            geographic.coordinate_system().axes()
+        }
+        Crs::Projected(projected) => projected.coordinate_system().axes(),
+        _ => return false,
+    };
+    let [first, second, ..] = axes else {
+        return false;
+    };
+    let meridian = |axis: &Axis| {
+        axis.meridian()
+            .map(|meridian| meridian.longitude().convert_to(&UnitOfMeasure::degree()))
+    };
+    let along = |axis: &Axis, degrees: f64| {
+        meridian(axis).is_some_and(|value| (value - degrees).abs() < 1e-10)
+    };
+    match (first.direction(), second.direction()) {
+        ("north", "east") => true,
+        // EPSG:32661 "WGS 84 / UPS North (N,E)".
+        ("south", "south") => along(first, 180.0) && along(second, 90.0),
+        // EPSG:32761 "WGS 84 / UPS South (N,E)", and EPSG:5482 "RSRGD2000 / RSPS2000".
+        ("north", "north") => {
+            (along(first, 0.0) && along(second, 90.0))
+                || (along(first, 180.0) && along(second, -90.0))
+        }
+        _ => false,
+    }
 }
 
 fn is_geographic(crs: &Crs) -> bool {
