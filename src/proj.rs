@@ -980,13 +980,6 @@ impl Proj {
                 }
             }
             Body::Iso(pipeline) => {
-                if let Some(message) = pipeline.refusal(way) {
-                    let message = message.to_owned();
-                    return Err(match report {
-                        Report::Projection => ProjError::Projection(message),
-                        Report::Conversion => ProjError::Conversion(message),
-                    });
-                }
                 pipeline.map(Xyzt { x, y, z, t: 0.0 }, way)
             }
             Body::Between {

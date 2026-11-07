@@ -1,19 +1,23 @@
 //! Compound CRS names in the facade, and coordinate metadata objects (`src/proj_meta.rs`).
 //!
 //! The EGM2008 geoid grid is not on disk in this suite, so a conversion that needs it must
-//! fail. A two-dimensional source has no height, so a compound target is refused in the
-//! forward direction whatever the grids.
+//! fail. A two-dimensional source has no height: libproj's operation from `EPSG:4326` to a
+//! compound target with `EPSG:3855` is the null offset (`proj=noop`), so a forward conversion
+//! gives height 0 and keeps the horizontal part, as `proj_trans` does (oracle, PROJ 9.9.0).
 
-use proj_rs::{Proj, ProjBuilder, ProjCreateError, ProjError};
+use proj_rs::{Proj, ProjBuilder, ProjCreateError};
 
 #[test]
-fn compound_target_creates_and_refuses_a_forward_conversion() {
+fn compound_target_takes_a_zero_height_as_libproj_does() {
     let proj = Proj::new_known_crs("EPSG:4326", "EPSG:4326+3855", None)
         .expect("creation must not need the geoid grid");
-    let error = proj
-        .convert((2.0_f64, 49.0_f64))
-        .expect_err("a height from a two-dimensional source is not built");
-    assert!(matches!(error, ProjError::Conversion(_)), "{error:?}");
+    // libproj: `EPSG:4326` to `EPSG:4326+3855`, (2, 49) gives (2, 49) with height 0.
+    let out = proj.convert((2.0_f64, 49.0_f64)).expect("forward");
+    assert_eq!(out, (2.0, 49.0));
+    let (east, north, height) = proj
+        .convert_xyz(2.0, 49.0, 0.0)
+        .expect("forward, three-dimensional");
+    assert_eq!((east, north, height), (2.0, 49.0, 0.0));
 }
 
 #[test]
@@ -33,7 +37,7 @@ fn compound_source_to_two_dimensional_target_through_the_builder() {
 }
 
 #[test]
-fn compound_target_refusal_is_not_taken_by_the_inverse() {
+fn compound_target_inverse_keeps_the_horizontal_part() {
     let proj = Proj::new_known_crs("EPSG:4326", "EPSG:4326+3855", None).expect("creation");
     // Inverse: the compound coordinate back to the two-dimensional source. The height is
     // dropped, which takes no value from the geoid.
