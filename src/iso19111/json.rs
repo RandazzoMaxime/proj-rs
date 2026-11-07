@@ -3237,6 +3237,7 @@ fn read_projected_crs(object: &Object, db: &DatabaseContext) -> Result<Projected
         base,
         conversion: read_user_conversion(child_object(object, "conversion")?, db)?,
         coordinate_system,
+        implicit_cs: false,
     })
 }
 
