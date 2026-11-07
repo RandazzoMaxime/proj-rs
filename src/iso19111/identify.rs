@@ -13,7 +13,7 @@ use super::factory::{AuthorityFactory, DatabaseContext, NameMatch};
 use super::model::{
     Axis, CartesianCS, Conversion, CoordinateSystem, Crs, Datum, DatumEnsemble,
     DerivedProjectedCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified,
-    Identifier, ProjectedCRS, UnitOfMeasure, VerticalCRS,
+    Identifier, ObjectDomain, ProjectedCRS, UnitOfMeasure, VerticalCRS,
 };
 
 const UNKNOWN_BASED_ON: &str = "Unknown based on ";
@@ -616,7 +616,7 @@ impl GeographicCRS {
             }
         }
         let mut crs = self.promote_to_3d();
-        stamp_promoted(&mut crs.identified);
+        crs.identified = promoted_properties(&self.identified);
         crs
     }
 
@@ -667,7 +667,7 @@ impl DerivedProjectedCRS {
             .axes
             .push(Axis::new("Ellipsoidal height", "h", "up", unit));
         Self {
-            identified: Identified::named(self.name()),
+            identified: promoted_properties(&self.identified),
             base: self.base.promote_to_3d(db),
             conversion: self.conversion.clone(),
             coordinate_system: CoordinateSystem::Cartesian(coordinate_system),
@@ -780,18 +780,8 @@ impl ProjectedCRS {
         coordinate_system
             .axes
             .push(Axis::new("Ellipsoidal height", "h", "up", unit));
-        let mut identified = Identified::named(self.name());
-        identified.domains = self.identified.domains.clone();
-        if self.identifiers().len() == 1 {
-            let identifier = &self.identifiers()[0];
-            identified.remarks = format!(
-                "Promoted to 3D from {}:{}",
-                identifier.code_space(),
-                identifier.code()
-            );
-        }
         Self {
-            identified,
+            identified: promoted_properties(&self.identified),
             base,
             conversion: self.conversion.clone(),
             coordinate_system,
@@ -1018,14 +1008,42 @@ fn easting_northing_metre(cs: &CartesianCS) -> bool {
         && axes[1].unit().name() == "metre"
 }
 
-fn stamp_promoted(identified: &mut Identified) {
-    let identifiers = identified.identifiers.clone();
-    identified.identifiers.clear();
-    if identifiers.len() == 1 {
-        identified.remarks = format!(
-            "Promoted to 3D from {}:{}",
-            identifiers[0].code_space(),
-            identifiers[0].code()
-        );
-    }
+/// The properties of a promoted CRS (`CRS::promoteTo3D`, `createProperties`, crs.cpp:1341).
+///
+/// The promoted CRS keeps its name. Each domain keeps only its extent, without the scope,
+/// since PROJ does not guarantee the scope in 3D. It has no identifier. Its remarks name
+/// the 2D source (`Promoted to 3D from AUTH:CODE`) and then keep the source remarks.
+fn promoted_properties(source: &Identified) -> Identified {
+    let mut identified = Identified::named(source.name.clone());
+    identified.domains = source
+        .domains
+        .iter()
+        .filter(|domain| {
+            domain.area.is_some()
+                || domain.south.is_some()
+                || domain.west.is_some()
+                || domain.north.is_some()
+                || domain.east.is_some()
+        })
+        .map(|domain| ObjectDomain {
+            scope: None,
+            ..domain.clone()
+        })
+        .collect();
+    identified.remarks = match source.identifiers.as_slice() {
+        [identifier] => {
+            let mut remarks = format!(
+                "Promoted to 3D from {}:{}",
+                identifier.code_space(),
+                identifier.code()
+            );
+            if !source.remarks.is_empty() {
+                remarks.push_str(". ");
+                remarks.push_str(&source.remarks);
+            }
+            remarks
+        }
+        _ => source.remarks.clone(),
+    };
+    identified
 }
