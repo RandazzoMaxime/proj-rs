@@ -161,6 +161,8 @@ pub struct Alternatives {
     current: Cell<Option<usize>>,
     /// The errno text of the last failed candidate, logged by the next retry (`trans.cpp:257-261`).
     last_failure: Cell<Option<&'static str>>,
+    /// The lines `proj_create_crs_to_crs` logs when it creates the pair (`crs_to_crs.cpp:650`).
+    creation: Vec<LogLine>,
 }
 
 /// Whether the candidates that are not instantiable may be chosen (`skipNonInstantiable`).
@@ -219,7 +221,24 @@ impl Alternatives {
             warn: Cell::new(policy == BestPolicy::Warn),
             current: Cell::new(None),
             last_failure: Cell::new(None),
+            creation: Vec::new(),
         }
+    }
+
+    /// The pair was created after `pj_warn_about_missing_grid` on its single first candidate
+    /// (`crs_to_crs.cpp:648-651`): the warning is a creation line, and it clears
+    /// `warnIfBestTransformationNotAvailable` (`trans.cpp:199-206`), so `proj_trans` skips the
+    /// candidates that are not instantiable from the first point on (`trans.cpp:237-239`).
+    pub(crate) fn warned_at_creation(mut self, line: LogLine) -> Self {
+        self.creation.push(line);
+        self.warn.set(false);
+        self
+    }
+
+    /// The lines logged when the pair was created, for the caller to write before the first point.
+    #[must_use]
+    pub fn creation_log(&self) -> &[LogLine] {
+        &self.creation
     }
 
     /// Number of candidates.

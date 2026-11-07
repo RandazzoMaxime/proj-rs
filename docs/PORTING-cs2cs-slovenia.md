@@ -190,3 +190,21 @@ cargo test --test slovenia_candidates
 cargo test --test cli_yaml
 UPDATE_DOCS=1 cargo test --test docs_in_sync --test progress_svg
 ```
+
+## Interaction with the PROJ_DEBUG lot (fixed in this lot)
+
+Once a compound pair goes through `select_alternatives`, `test_cs2cs_various.yaml#126`
+(EPSG:4326+5773 to EPSG:4326+5782, grid missing, `PROJ_DEBUG=2`) took the per-point path
+and logged a failed attempt and a retry, where PROJ logs the creation warning and goes
+straight to the ballpark. PROJ's order: `pj_warn_about_missing_grid` on the single first
+candidate at creation (crs_to_crs.cpp:648-651) clears `warnIfBestTransformationNotAvailable`
+(trans.cpp:199-206), so `proj_trans` skips the non-instantiable candidates from the first
+point (trans.cpp:237-239). `select_alternatives` now records that creation line on the
+`Alternatives` (`warned_at_creation`, `creation_log`), and `cs2cs` writes it when it builds
+the engine. #126 is identical to PROJ 9.9.0 again (stdout and stderr).
+
+Open, log lines only: at `EPSG:3912+5779 EPSG:3794+8690` on `500000 100000 300` with
+`PROJ_DEBUG=2`, the port first tries `... MGI 1901 to ETRS89-SVN [D96] (7) + SVS2000 height
+to SVS2010 height (1) ...` (grid `si_gurs_SLO-VTP2024.tif` missing) and logs that attempt;
+PROJ logs only `Using coordinate operation D48/GK to D96/TM (15) + ...`. The coordinates are
+identical (`499629.54 100485.44 300.00`); `main` before this lot gave `500000.00 100517.97`.
