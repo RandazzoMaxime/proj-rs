@@ -1437,6 +1437,20 @@ impl NamedAuthorityObject for VerticalCRS {
     }
 }
 
+impl NamedAuthorityObject for CompoundCRS {
+    fn name(&self) -> &str {
+        CompoundCRS::name(self)
+    }
+
+    fn identifiers(&self) -> &[Identifier] {
+        CompoundCRS::identifiers(self)
+    }
+
+    fn class(&self) -> u16 {
+        15
+    }
+}
+
 impl NamedAuthorityObject for GeodeticReferenceFrame {
     fn name(&self) -> &str {
         GeodeticReferenceFrame::name(self)
@@ -2652,6 +2666,61 @@ impl AuthorityFactory {
         self.objects_from_name(name, &["vertical_crs"], mode, 0, |factory, row| {
             factory.create_vertical_crs(&row.code)
         })
+    }
+
+    /// Compound CRS whose official name or alias matches `name`, as the
+    /// `createObjectsFromName` call of `CompoundCRS::identify` returns them.
+    pub(crate) fn create_compound_crs_by_name(
+        &self,
+        name: &str,
+        mode: NameMatch,
+    ) -> Result<Vec<CompoundCRS>, FactoryError> {
+        self.objects_from_name(name, &["compound_crs"], mode, 0, |factory, row| {
+            factory.create_compound_crs(&row.code)
+        })
+    }
+
+    /// `createCompoundCRSFromExisting`: the compound CRS of this factory whose horizontal
+    /// and vertical components are identified, one by one, as the components of `crs`.
+    /// A compound CRS with other than two components has none.
+    pub(crate) fn create_compound_crs_from_existing(&self, crs: &CompoundCRS) -> Vec<CompoundCRS> {
+        let components = crs.components();
+        if components.len() != 2 {
+            return Vec::new();
+        }
+        let horizontal = components[0].identify_with(Some(self));
+        let vertical = components[1].identify_with(Some(self));
+        if horizontal.is_empty() && vertical.is_empty() {
+            return Vec::new();
+        }
+        let mut sql =
+            "SELECT auth_name, code FROM compound_crs WHERE deprecated = 0 AND ".to_owned();
+        let mut params = Vec::new();
+        let mut add_and = false;
+        if !horizontal.is_empty() {
+            sql.push_str(&auth_name_code_in(&horizontal, &mut params, "horiz_crs_"));
+            add_and = true;
+        }
+        if !vertical.is_empty() {
+            if add_and {
+                sql.push_str(" AND ");
+            }
+            sql.push_str(&auth_name_code_in(&vertical, &mut params, "vertical_crs_"));
+            add_and = true;
+        }
+        if authority_restricts(&self.authority) {
+            if add_and {
+                sql.push_str(" AND ");
+            }
+            sql.push_str("auth_name = ?");
+            params.push(self.authority.clone());
+        }
+        let Ok(rows) = self.db.text_rows(&sql, &params) else {
+            return Vec::new();
+        };
+        rows.into_iter()
+            .filter_map(|row| self.child(&row[0]).create_compound_crs(&row[1]).ok())
+            .collect()
     }
 
     pub(crate) fn create_geodetic_crs_by_name(
@@ -8339,6 +8408,49 @@ fn direct_registry_operations(
 /// authority. An empty name and `any` do not restrict it.
 fn authority_restricts(name: &str) -> bool {
     !name.is_empty() && name != "any"
+}
+
+/// `buildSqlLookForAuthNameCode` (`factory.cpp:10098`): the SQL that matches the rows whose
+/// `prefix`-named authority and code are the first identifier of one of `list`, grouped by
+/// authority in sorted order. A bound CRS is looked up through its base CRS.
+fn auth_name_code_in(list: &[(Crs, i32)], params: &mut Vec<String>, prefix: &str) -> String {
+    let first_identifier = |crs: &Crs| -> Option<(String, String)> {
+        let identifier = match crs {
+            Crs::Bound(bound) => bound.source_crs().identifiers().first(),
+            other => other.identifiers().first(),
+        }?;
+        Some((
+            identifier.code_space().to_owned(),
+            identifier.code().to_owned(),
+        ))
+    };
+    let ids: Vec<(String, String)> = list
+        .iter()
+        .filter_map(|(crs, _)| first_identifier(crs))
+        .collect();
+    let authorities: BTreeSet<&str> = ids.iter().map(|(space, _)| space.as_str()).collect();
+    let mut sql = String::from("(");
+    for (index, authority) in authorities.iter().enumerate() {
+        if index > 0 {
+            sql.push_str(" OR ");
+        }
+        sql.push_str(&format!("( {prefix}auth_name = ? AND {prefix}code IN ("));
+        params.push((*authority).to_owned());
+        let mut first = true;
+        for (space, code) in &ids {
+            if space == authority {
+                if !first {
+                    sql.push(',');
+                }
+                first = false;
+                sql.push('?');
+                params.push(code.clone());
+            }
+        }
+        sql.push_str("))");
+    }
+    sql.push(')');
+    sql
 }
 
 /// The spelling of an authority name that `AuthorityFactory::create` (`factory.cpp:4400-4417`)

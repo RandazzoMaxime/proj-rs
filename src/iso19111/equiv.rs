@@ -387,6 +387,21 @@ impl CompoundCRS {
                 .zip(other.components())
                 .all(|(left, right)| left.is_equivalent_to(right))
     }
+
+    /// `isEquivalentTo` with `criterion`. Under a criterion other than `Strict` the CRS name
+    /// is not compared: the components are compared with the same criterion, in order.
+    #[must_use]
+    pub fn is_equivalent_to_with(&self, other: &Self, criterion: Equivalence) -> bool {
+        if criterion == Equivalence::Strict {
+            return self.is_equivalent_to(other);
+        }
+        self.components().len() == other.components().len()
+            && self
+                .components()
+                .iter()
+                .zip(other.components())
+                .all(|(left, right)| left.is_equivalent_to_with(right, criterion))
+    }
 }
 
 impl Crs {
@@ -405,12 +420,7 @@ impl Crs {
             }
             // Under a criterion other than `Strict`, the name of a compound CRS is not compared.
             (Self::Compound(left), Self::Compound(right)) if criterion != Equivalence::Strict => {
-                left.components().len() == right.components().len()
-                    && left
-                        .components()
-                        .iter()
-                        .zip(right.components())
-                        .all(|(left, right)| left.is_equivalent_to_with(right, criterion))
+                left.is_equivalent_to_with(right, criterion)
             }
             _ => self.is_equivalent_to(other),
         }
