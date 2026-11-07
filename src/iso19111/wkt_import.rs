@@ -2553,6 +2553,13 @@ impl WktParser {
                 coordinate_system = pole;
             }
         }
+        // io.cpp:4870-4874: a projected CRS with a 3D CS takes a 2D base promoted to 3D.
+        // The base of a 3D projected CRS is written without its CS, so it is read back here.
+        if coordinate_system.axes.len() == 3 && base.coordinate_system().axes().len() == 2 {
+            if let GeodeticCRS::Geographic(geographic) = &base {
+                base = GeodeticCRS::Geographic(geographic.promote_to_3d_with_db(self.db.as_ref()));
+            }
+        }
         let crs = ProjectedCRS {
             identified: props.identified(),
             base,
