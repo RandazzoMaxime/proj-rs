@@ -5,7 +5,9 @@
 use std::f64::consts::PI;
 
 use super::equiv::Equivalence;
-use super::factory::{CoordinateOperationContext, CoordinateOperationFactory, DatabaseContext};
+use super::factory::{
+    AuthorityFactory, CoordinateOperationContext, CoordinateOperationFactory, DatabaseContext,
+};
 use super::model::{
     BoundCRS, CompoundCRS, CoordinateOperation, Crs, FactoryError, GeodeticCRS, GeographicCRS,
     ObjectDomain, Parameter, ParameterValue, Transformation,
@@ -365,6 +367,16 @@ fn horizontal_bound(
     db: &DatabaseContext,
     authority: &str,
 ) -> Result<Option<Crs>, FactoryError> {
+    // `geodCRS && !geogCRS` (crs.cpp:659-665): a geocentric CRS is bound to EPSG:4978.
+    if let Crs::Geodetic(GeodeticCRS::Geocentric(_)) = crs {
+        let hub = Crs::Geodetic(GeodeticCRS::epsg_4978());
+        if has_known_datum(crs) && crs.is_equivalent_to_with(&hub, Equivalence::Equivalent) {
+            return Ok(None);
+        }
+        let operations = candidate_operations(db, crs, &hub, authority, geodetic_extent(crs, db))?;
+        return Ok(single_towgs84_candidate(operations)
+            .map(|transformation| bind(crs, hub, transformation)));
+    }
     let Some(geographic) = extract_geographic(crs) else {
         return Ok(None);
     };
@@ -378,7 +390,14 @@ fn horizontal_bound(
     }
     let hub = Crs::Geographic(GeographicCRS::epsg_4326());
     let source = Crs::Geographic(geographic.clone());
-    let operations = candidate_operations(db, &source, &hub, authority, bound_extent(crs))?;
+    let operations = candidate_operations(db, &source, &hub, authority, geodetic_extent(crs, db))?;
+    Ok(single_towgs84_candidate(operations).map(|transformation| bind(crs, hub, transformation)))
+}
+
+/// The one candidate with `+towgs84` parameters, as `createBoundCRSToWGS84IfPossible` takes it
+/// (crs.cpp:690-779): the first one counts, and a second one with parameters gives none.
+/// Ballpark geographic offsets and transformations without `+towgs84` do not count.
+fn single_towgs84_candidate(operations: Vec<CoordinateOperation>) -> Option<Transformation> {
     let mut count = 0_usize;
     let mut candidate = None;
     for operation in operations {
@@ -397,10 +416,22 @@ fn horizontal_bound(
         }
         count += 1;
     }
-    Ok(match candidate {
-        Some(transformation) if count == 1 => Some(bind(crs, hub, transformation)),
+    match candidate {
+        Some(transformation) if count == 1 => Some(transformation),
         _ => None,
-    })
+    }
+}
+
+/// A CRS whose datum is known: `datumNonNull()->nameStr() != "unknown"` of crs.cpp:662.
+fn has_known_datum(crs: &Crs) -> bool {
+    match crs {
+        Crs::Geodetic(GeodeticCRS::Geocentric(geocentric)) => geocentric
+            .datum()
+            .is_some_and(|datum| datum.name() != "unknown"),
+        _ => extract_geographic(crs)
+            .and_then(|geographic| geographic.datum())
+            .is_some_and(|datum| datum.name() != "unknown"),
+    }
 }
 
 /// A Helmert transformation, or the Helmert that follows a longitude rotation.
@@ -465,6 +496,27 @@ fn bound_extent(crs: &Crs) -> Option<ObjectDomain> {
         return None;
     }
     domains.first().cloned()
+}
+
+/// The `extent` of the geodetic branch of `createBoundCRSToWGS84IfPossible` (crs.cpp:688):
+/// [`bound_extent`], or, for a CRS with no usage (an imported WKT1, say), the extent of the
+/// database CRS that its identifier names, as `getResolvedCRS` takes it
+/// (coordinateoperationfactory.cpp:8220-8262). The vertical branch does not resolve.
+fn geodetic_extent(crs: &Crs, db: &DatabaseContext) -> Option<ObjectDomain> {
+    if crs.domains().is_empty() {
+        return resolved_domains(crs, db).and_then(|domains| domains.first().cloned());
+    }
+    bound_extent(crs)
+}
+
+/// The usages of the database CRS that the identifier of `crs` names, when it has one.
+fn resolved_domains(crs: &Crs, db: &DatabaseContext) -> Option<Vec<ObjectDomain>> {
+    let identifier = crs.identifiers().first()?;
+    let factory = AuthorityFactory::create(db, identifier.code_space());
+    let resolved = factory
+        .create_coordinate_reference_system(identifier.code())
+        .ok()?;
+    Some(resolved.domains().to_vec())
 }
 
 /// Two usages whose boxes do not nest. One domain, or a pair where one box
