@@ -376,14 +376,13 @@ impl Transformation {
             // are the same operation when their `+towgs84` values agree.
             if criterion == Equivalence::Equivalent && helmert_parameters_match(self, other) {
                 return crs_option(self.interpolation_crs(), other.interpolation_crs())
-                    && self.accuracy == other.accuracy
                     && self.inverted == other.inverted;
             }
             return false;
         }
         values_equivalent(&self.parameters, &other.parameters, criterion)
             && crs_option(self.interpolation_crs(), other.interpolation_crs())
-            && self.accuracy == other.accuracy
+            && (criterion != Equivalence::Strict || self.accuracy == other.accuracy)
             && self.inverted == other.inverted
     }
 }
