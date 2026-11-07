@@ -5,11 +5,11 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 55 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `core` | 50 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
 | `niche` | 14 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 41 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (55)
+## core (50)
 
 ### test_c_api.cpp (10)
 
@@ -46,7 +46,7 @@ The class comes from the test name alone, so check it when you port a test.
 
 - `operation.normalizeForVisualization`
 
-### test_operationfactory.cpp (35)
+### test_operationfactory.cpp (30)
 
 - `operation.geogCRS_to_geogCRS_context_inverse_needed`
 - `operation.vertCRS_to_geogCRS_context`
@@ -55,7 +55,6 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.geogCRS_to_geogCRS_init_IGNF_to_init_IGNF_context`
 - `operation.geogCRS_3D_source_datum_name_is_alias_to_geogCRS`
 - `operation.geogCRS_different_from_baseCRS_to_projCRS_context_compatible_area`
-- `operation.geogCRS_3D_to_projCRS_with_2D_geocentric_translation`
 - `operation.boundCRS_to_geogCRS_hubCRS_and_targetCRS_same_but_baseCRS_not`
 - `operation.ETRS89_3D_to_proj_string_with_geoidgrids_nadgrids`
 - `operation.nadgrids_with_pm`
@@ -66,17 +65,13 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.compoundCRS_to_compoundCRS_OSGB36_BNG_ODN_height_to_WGS84_EGM96`
 - `operation.compoundCRS_to_compoundCRS_concatenated_operation_with_two_vert_transformation`
 - `operation.compoundCRS_to_compoundCRS_concatenated_operation_with_two_vert_transformation_and_different_source_dest_interp`
-- `operation.compoundCRS_to_compoundCRS_issue_3328`
 - `operation.compoundCRS_to_compoundCRS_issue_3152_ch1903lv03_ln02_bound`
 - `operation.compoundCRS_to_compoundCRS_using_intermediate_of_horizontal_transform`
 - `operation.compoundCRS_to_geogCRS_3D_context`
-- `operation.compoundCRS_to_geogCRS_3D_with_3D_helmert_same_geog_src_target_context`
 - `operation.compoundCRS_to_geogCRS_2D_promote_to_3D_context`
 - `operation.compoundCRS_of_projCRS_to_geogCRS_3D_context`
 - `operation.compoundCRS_ftUS_to_geogCRS_ft`
 - `operation.compoundCRS_to_geogCRS_with_vertical_unit_change_and_complex_horizontal_change`
-- `operation.compoundCRS_to_geogCRS_with_height_depth_reversal`
-- `operation.compoundCRS_to_geogCRS_with_vertical_unit_change_and_height_depth_reversal`
 - `operation.compoundCRS_of_vertCRS_with_geoid_model_to_geogCRS`
 - `operation.compoundCRS_to_geogCRS_3D_Amersfoort_NAP_height_to_Amersfoort`
 - `operation.compoundCRS_to_geogCRS_3D_using_intermediate_of_horizontal_transform`
