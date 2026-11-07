@@ -111,3 +111,28 @@ fn equal_epochs_give_the_operation_without_epochs() {
         ["Null geographic offset from NAD83(CSRS)v7 to NAD83(CSRS)v7"]
     );
 }
+
+/// `projinfo -s EPSG:8254 -t EPSG:8254 --spatial-test intersects --grid-check none`, no epochs:
+/// the registry gives the point motion operation of the datum, and `createOperationsGeodToGeod`
+/// adds the null offset of the same CRS, first by its accuracy (0 m against 0.01 m).
+#[test]
+fn geographic_3d_to_itself_without_epochs_keeps_the_null_offset() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let crs = AuthorityFactory::create(&db, "EPSG")
+        .create_coordinate_reference_system("8254")
+        .expect("CRS");
+    let mut ctxt = CoordinateOperationContext::create(&db, "");
+    ctxt.set_spatial_criterion(SpatialCriterion::PartialIntersection)
+        .set_grid_availability_use(GridAvailabilityUse::IgnoreGridAvailability);
+    let list = CoordinateOperationFactory::create()
+        .create_operations(&crs, &crs, &ctxt)
+        .expect("operations");
+    let names: Vec<&str> = list.iter().map(CoordinateOperation::name).collect();
+    assert_eq!(
+        names,
+        [
+            "Null geographic offset from NAD83(CSRS)v7 to NAD83(CSRS)v7",
+            "Canada velocity grid v7"
+        ]
+    );
+}
