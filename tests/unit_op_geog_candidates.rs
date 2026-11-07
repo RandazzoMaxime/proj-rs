@@ -7,8 +7,9 @@
 //! [`assert_proj_eq`], except that a token with no `=` is compared exactly.
 
 use proj_rs::iso19111::{
-    AuthorityFactory, CoordinateOperation, CoordinateOperationContext, CoordinateOperationFactory,
-    Crs, DatabaseContext, GridAvailabilityUse, IntermediateCrsUse, ProjLines, WktParser,
+    AlternativeGridNames, AuthorityFactory, CoordinateOperation, CoordinateOperationContext,
+    CoordinateOperationFactory, Crs, DatabaseContext, GridAvailabilityUse, IntermediateCrsUse,
+    ProjLines, WktParser,
 };
 
 fn database() -> DatabaseContext {
@@ -70,6 +71,159 @@ fn assert_proj_eq(actual: &str, expected: &str) {
             }
             _ => assert_eq!(a, e, "{actual}"),
         }
+    }
+}
+
+/// `TEST(operation, geogCRS_to_geogCRS_context_inverse_needed)`
+#[test]
+fn operation_geog_crs_to_geog_crs_context_inverse_needed() {
+    let db = database();
+    let ntf = epsg(&db, "4275");
+    let etrs89 = epsg(&db, "4258");
+    {
+        let mut ctx = CoordinateOperationContext::create(&db, "EPSG");
+        ctx.set_grid_availability_use(GridAvailabilityUse::IgnoreGridAvailability)
+            .set_alternative_grid_names(AlternativeGridNames::Official);
+        let list = operations(&ntf, &etrs89, &ctx);
+        assert_eq!(list.len(), 3);
+        assert_proj_eq(
+            &proj(&db, &list[0]),
+            concat!(
+                "+proj=pipeline ",
+                "+step +proj=axisswap +order=2,1 ",
+                "+step +proj=unitconvert +xy_in=deg +xy_out=rad ",
+                "+step +proj=push +v_3 ",
+                "+step +proj=cart +ellps=clrk80ign ",
+                "+step +proj=helmert +x=-168 +y=-60 +z=320 ",
+                "+step +inv +proj=cart +ellps=GRS80 ",
+                "+step +proj=pop +v_3 ",
+                "+step +proj=unitconvert +xy_in=rad +xy_out=deg ",
+                "+step +proj=axisswap +order=2,1"
+            ),
+        );
+        assert_proj_eq(
+            &proj(&db, &list[1]),
+            concat!(
+                "+proj=pipeline ",
+                "+step +proj=axisswap +order=2,1 ",
+                "+step +proj=unitconvert +xy_in=deg +xy_out=rad ",
+                "+step +proj=push +v_3 ",
+                "+step +proj=cart +ellps=clrk80ign ",
+                "+step +proj=xyzgridshift +grids=fr_ign_gr3df97a.tif ",
+                "+grid_ref=output_crs +ellps=GRS80 ",
+                "+step +inv +proj=cart +ellps=GRS80 ",
+                "+step +proj=pop +v_3 ",
+                "+step +proj=unitconvert +xy_in=rad +xy_out=deg ",
+                "+step +proj=axisswap +order=2,1"
+            ),
+        );
+        assert_proj_eq(
+            &proj(&db, &list[2]),
+            concat!(
+                "+proj=pipeline ",
+                "+step +proj=axisswap +order=2,1 ",
+                "+step +proj=unitconvert +xy_in=deg +xy_out=rad ",
+                "+step +proj=hgridshift +grids=fr_ign_ntf_r93.tif ",
+                "+step +proj=unitconvert +xy_in=rad +xy_out=deg ",
+                "+step +proj=axisswap +order=2,1"
+            ),
+        );
+    }
+    {
+        let mut ctx = CoordinateOperationContext::create(&db, "EPSG");
+        ctx.set_grid_availability_use(GridAvailabilityUse::IgnoreGridAvailability);
+        let list = operations(&ntf, &etrs89, &ctx);
+        assert_eq!(list.len(), 3);
+        assert_proj_eq(
+            &proj(&db, &list[0]),
+            concat!(
+                "+proj=pipeline ",
+                "+step +proj=axisswap +order=2,1 ",
+                "+step +proj=unitconvert +xy_in=deg +xy_out=rad ",
+                "+step +proj=push +v_3 ",
+                "+step +proj=cart +ellps=clrk80ign ",
+                "+step +proj=xyzgridshift +grids=fr_ign_gr3df97a.tif ",
+                "+grid_ref=output_crs +ellps=GRS80 ",
+                "+step +inv +proj=cart +ellps=GRS80 ",
+                "+step +proj=pop +v_3 ",
+                "+step +proj=unitconvert +xy_in=rad +xy_out=deg ",
+                "+step +proj=axisswap +order=2,1"
+            ),
+        );
+        assert_proj_eq(
+            &proj(&db, &list[1]),
+            concat!(
+                "+proj=pipeline ",
+                "+step +proj=axisswap +order=2,1 ",
+                "+step +proj=unitconvert +xy_in=deg +xy_out=rad ",
+                "+step +proj=hgridshift +grids=fr_ign_ntf_r93.tif ",
+                "+step +proj=unitconvert +xy_in=rad +xy_out=deg ",
+                "+step +proj=axisswap +order=2,1"
+            ),
+        );
+        assert_proj_eq(
+            &proj(&db, &list[2]),
+            concat!(
+                "+proj=pipeline ",
+                "+step +proj=axisswap +order=2,1 ",
+                "+step +proj=unitconvert +xy_in=deg +xy_out=rad ",
+                "+step +proj=push +v_3 ",
+                "+step +proj=cart +ellps=clrk80ign ",
+                "+step +proj=helmert +x=-168 +y=-60 +z=320 ",
+                "+step +inv +proj=cart +ellps=GRS80 ",
+                "+step +proj=pop +v_3 ",
+                "+step +proj=unitconvert +xy_in=rad +xy_out=deg ",
+                "+step +proj=axisswap +order=2,1"
+            ),
+        );
+    }
+    {
+        let mut ctx = CoordinateOperationContext::create(&db, "EPSG");
+        ctx.set_grid_availability_use(GridAvailabilityUse::IgnoreGridAvailability);
+        let list = operations(&etrs89, &ntf, &ctx);
+        assert_eq!(list.len(), 3);
+        assert_proj_eq(
+            &proj(&db, &list[0]),
+            concat!(
+                "+proj=pipeline ",
+                "+step +proj=axisswap +order=2,1 ",
+                "+step +proj=unitconvert +xy_in=deg +xy_out=rad ",
+                "+step +proj=push +v_3 ",
+                "+step +proj=cart +ellps=GRS80 ",
+                "+step +inv +proj=xyzgridshift +grids=fr_ign_gr3df97a.tif ",
+                "+grid_ref=output_crs +ellps=GRS80 ",
+                "+step +inv +proj=cart +ellps=clrk80ign ",
+                "+step +proj=pop +v_3 ",
+                "+step +proj=unitconvert +xy_in=rad +xy_out=deg ",
+                "+step +proj=axisswap +order=2,1"
+            ),
+        );
+        assert_proj_eq(
+            &proj(&db, &list[1]),
+            concat!(
+                "+proj=pipeline ",
+                "+step +proj=axisswap +order=2,1 ",
+                "+step +proj=unitconvert +xy_in=deg +xy_out=rad ",
+                "+step +inv +proj=hgridshift +grids=fr_ign_ntf_r93.tif ",
+                "+step +proj=unitconvert +xy_in=rad +xy_out=deg ",
+                "+step +proj=axisswap +order=2,1"
+            ),
+        );
+        assert_proj_eq(
+            &proj(&db, &list[2]),
+            concat!(
+                "+proj=pipeline ",
+                "+step +proj=axisswap +order=2,1 ",
+                "+step +proj=unitconvert +xy_in=deg +xy_out=rad ",
+                "+step +proj=push +v_3 ",
+                "+step +proj=cart +ellps=GRS80 ",
+                "+step +proj=helmert +x=168 +y=60 +z=-320 ",
+                "+step +inv +proj=cart +ellps=clrk80ign ",
+                "+step +proj=pop +v_3 ",
+                "+step +proj=unitconvert +xy_in=rad +xy_out=deg ",
+                "+step +proj=axisswap +order=2,1"
+            ),
+        );
     }
 }
 
