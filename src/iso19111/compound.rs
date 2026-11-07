@@ -112,19 +112,7 @@ pub(super) fn compound_to_geog3d(
         return Ok(Vec::new());
     }
 
-    let mut vertical_ops = factory.create_operations(vertical, target, context)?;
-    let horizontal_datum = geographic_datum_name(geog_src);
-    let target_datum = geographic_datum_name(geog_dst);
-    if let Some(vertical_crs) = vertical_crs {
-        vertical_ops.extend(vertical_ballpark(
-            vertical,
-            vertical_crs,
-            horizontal_datum.as_deref(),
-            target_datum.as_deref(),
-            geog_dst,
-            target,
-        ));
-    }
+    let vertical_ops = factory.create_operations(vertical, target, context)?;
     if vertical_ops.is_empty() {
         return Ok(horizontal_ops);
     }
@@ -1105,16 +1093,18 @@ fn projected_compound_to_geog(
     };
     let horizontal_datum = geographic_datum_name(base_geog);
     let target_datum = geographic_datum_name(geog_dst);
-    let registered = factory
-        .create_operations(vertical, target, context)?
-        .into_iter()
-        .find(|operation| !operation.has_ballpark_transformation());
+    let vertical_ops = factory.create_operations(vertical, target, context)?;
+    let registered = vertical_ops
+        .iter()
+        .find(|operation| !operation.has_ballpark_transformation())
+        .cloned();
     let vertical_op = match registered {
         Some(operation) => operation,
-        None if factory
-            .create_operations(vertical, target, context)?
-            .is_empty() =>
-        {
+        // PROJ keeps every vertical transformation of `createOperations(vertical, target)`,
+        // the ballpark change of unit among them (createOperationsCompoundToGeog,
+        // coordinateoperationfactory.cpp:6782-6785, 6921-6924).
+        None if !vertical_ops.is_empty() => vertical_ops[0].clone(),
+        None => {
             let Some(operation) = vertical_ballpark(
                 vertical,
                 vertical_crs,
@@ -1127,7 +1117,6 @@ fn projected_compound_to_geog(
             };
             operation
         }
-        None => return Ok(None),
     };
     let Some(horizontal_op) = factory
         .create_candidates(&Crs::Projected(projected.clone()), &base, context)?
