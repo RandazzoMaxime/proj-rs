@@ -18,8 +18,8 @@ use super::alternatives::{
     WARN_SUFFIX,
 };
 use super::factory::{
-    operation_extent, sort_extents, GridAvailabilityUse, GridDescription, GridInfo, SortExtents,
-    SpatialCriterion,
+    operation_extent, sort_extents, AlternativeGridNames, GridAvailabilityUse, GridDescription,
+    GridInfo, SortExtents, SpatialCriterion,
 };
 use super::model::{
     Axis, BoundingBox, CoordinateOperation, Crs, EllipsoidalCS, GeodeticCRS,
@@ -342,6 +342,7 @@ fn best_operation_filtered(
                 &source_crs,
                 &target_crs,
                 availability,
+                AlternativeGridNames::Proj,
                 &extents,
             );
             ranked.push((operation, characteristics));
@@ -604,6 +605,7 @@ fn characteristics(
     source: &Crs,
     target: &Crs,
     availability: GridAvailabilityUse,
+    names: AlternativeGridNames,
     extents: &SortExtents,
 ) -> Characteristics {
     let name = operation.name().to_owned();
@@ -617,11 +619,16 @@ fn characteristics(
         Err(_) => (false, 0, false),
     };
     let grids = grid_names(operation);
+    // `gridsNeeded` reads the grid names of the operation: the PROJ names under
+    // `usePROJAlternativeGridNames`, the database names otherwise.
+    let named = match names {
+        AlternativeGridNames::Proj => proj_grids(operation, db).unwrap_or_else(|_| grids.clone()),
+        AlternativeGridNames::Official => grids.clone(),
+    };
     // Only `UseForSorting` looks at the disk: PROJ clears `gridsAvailable` under that policy alone.
     let grids_available = availability != GridAvailabilityUse::UseForSorting
-        || proj_grids(operation, db)
-            .is_ok_and(|names| names.iter().all(|grid| gridpath::available(grid)));
-    let known_names = proj_grids(operation, db).unwrap_or_else(|_| grids.clone());
+        || named.iter().all(|grid| gridpath::available(grid));
+    let known_names = named;
     let grids_known = known_names
         .iter()
         .all(|grid| db.grid_is_known(grid).unwrap_or(false));
@@ -1037,13 +1044,14 @@ pub(crate) fn sort_candidates(
     source: &Crs,
     target: &Crs,
     availability: GridAvailabilityUse,
+    names: AlternativeGridNames,
     extents: &SortExtents,
 ) -> Vec<CoordinateOperation> {
     let ranked = operations
         .into_iter()
         .map(|operation| {
             let characteristics =
-                characteristics(&operation, db, source, target, availability, extents);
+                characteristics(&operation, db, source, target, availability, names, extents);
             (operation, characteristics)
         })
         .collect();
@@ -1506,8 +1514,15 @@ fn rank(
     let ranked = operations
         .into_iter()
         .map(|operation| {
-            let characteristics =
-                characteristics(&operation, db, source, target, availability, extents);
+            let characteristics = characteristics(
+                &operation,
+                db,
+                source,
+                target,
+                availability,
+                AlternativeGridNames::Proj,
+                extents,
+            );
             (operation, characteristics)
         })
         .collect();
