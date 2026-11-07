@@ -708,6 +708,17 @@ fn adjacent_rule(steps: &mut Vec<Step>, cur: usize) -> Option<usize> {
         return Some(back_up(prev));
     }
 
+    // "set v_4=X" followed by "set v_4=X omit_fwd" is "set v_4=X"; "set v_4=X omit_inv" followed
+    // by "set v_4=X" is "set v_4=X" (io.cpp:9461-9487).
+    if plain && p.name == "set" && c.name == "set" && epoch_then_omit_fwd(p, c) {
+        steps.remove(cur);
+        return Some(cur);
+    }
+    if plain && p.name == "set" && c.name == "set" && omit_inv_then_epoch(p, c) {
+        steps.remove(prev);
+        return Some(prev);
+    }
+
     if p.name == "cart"
         && c.name == "cart"
         && c.inverted != p.inverted
@@ -910,6 +921,26 @@ fn back_up(position: usize) -> usize {
 
 fn one_param_only(step: &Step) -> bool {
     step.params.len() == 1
+}
+
+/// `set v_4=X` followed by `set v_4=X +omit_fwd` (io.cpp:9461-9473).
+fn epoch_then_omit_fwd(p: &Step, c: &Step) -> bool {
+    p.params.len() == 1
+        && c.params.len() == 2
+        && p.params[0].keyed("v_4")
+        && c.params[0].keyed("v_4")
+        && c.params[1].is("omit_fwd", "")
+        && p.params[0].value == c.params[0].value
+}
+
+/// `set v_4=X +omit_inv` followed by `set v_4=X` (io.cpp:9475-9487).
+fn omit_inv_then_epoch(p: &Step, c: &Step) -> bool {
+    p.params.len() == 2
+        && c.params.len() == 1
+        && p.params[0].keyed("v_4")
+        && c.params[0].keyed("v_4")
+        && p.params[1].is("omit_inv", "")
+        && p.params[0].value == c.params[0].value
 }
 
 fn one_param_same_key(p: &Step, c: &Step) -> bool {
