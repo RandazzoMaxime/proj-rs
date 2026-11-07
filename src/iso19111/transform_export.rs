@@ -569,8 +569,16 @@ fn horizontal_grid_shift(
         code => code,
     };
     let file = if gtiff {
+        // `_getHorizontalShiftGTIFFFilename` (singleoperation.cpp:2072-2089): the lat-lon file, then
+        // the ellipsoidal height file, which is the file of a NADCON5 3D method once substituted.
         file_by_code(operation, PARAMETER_LAT_LON_DIFFERENCE_FILE)
             .or_else(|| file_by_name(operation, "Latitude and longitude difference file"))
+            .or_else(|| {
+                file_by_name(
+                    operation,
+                    "Latitude, longitude and ellipsoidal height difference file",
+                )
+            })
     } else {
         match code {
             METHOD_NTV1 | METHOD_NTV2 => file_by_code(operation, PARAMETER_LAT_LON_DIFFERENCE_FILE)
