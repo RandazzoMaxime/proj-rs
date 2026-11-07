@@ -1,11 +1,12 @@
 //! `Lambert-93 + NGF-IGN69 height` (EPSG:2154+5720) to `WGS 84` 3D (EPSG:4979), as
-//! `projinfo -s EPSG:2154+5720 -t EPSG:4979 --spatial-test intersects` lists it. The expected
-//! names and PROJ strings are those of the PROJ 9.9.0 `projinfo` on the same database
-//! (`docs/PORTING-compound-lambert93-ngf.md`).
+//! `projinfo -s EPSG:2154+5720 -t EPSG:4979 --spatial-test intersects` lists it, and the
+//! `Vertical Offset and Slope` export. The expected names and PROJ strings are those of the
+//! PROJ 9.9.0 `projinfo` on the same database (`docs/PORTING-compound-lambert93-ngf.md`).
 
 use proj_rs::iso19111::{
-    create_from_user_input, CoordinateOperation, CoordinateOperationContext,
-    CoordinateOperationFactory, Crs, DatabaseContext, ProjLines, SpatialCriterion,
+    create_from_user_input, AlternativeGridNames, AuthorityFactory, CoordinateOperation,
+    CoordinateOperationContext, CoordinateOperationFactory, Crs, DatabaseContext, ProjLines,
+    SpatialCriterion,
 };
 
 fn epsg(db: &DatabaseContext, code: &str) -> Crs {
@@ -44,5 +45,22 @@ fn lambert93_ngf_ign69_to_wgs84_3d_using_names() {
          +x_0=700000 +y_0=6600000 +ellps=GRS80 +step +proj=vgridshift +grids=fr_ign_RAF18.tif \
          +multiplier=1 +step +proj=unitconvert +xy_in=rad +xy_out=deg \
          +step +proj=axisswap +order=2,1"
+    );
+}
+
+/// `DHHN2016 height to EVRF2007 height (1)` (EPSG:7838), a `Vertical Offset and Slope`:
+/// `projinfo urn:ogc:def:coordinateOperation:EPSG::7838 -o PROJ`.
+#[test]
+fn vertical_offset_and_slope_exports_vertoffset() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let operation = AuthorityFactory::create(&db, "EPSG")
+        .create_coordinate_operation("7838", AlternativeGridNames::Official)
+        .expect("EPSG:7838");
+    assert_eq!(
+        operation
+            .export_to_proj_string_with_database(&db, ProjLines::Single)
+            .expect("PROJ string"),
+        "+proj=vertoffset +lat_0=51.05 +lon_0=10.2166666666667 +dh=0.014 +slope_lat=-0.01 \
+         +slope_lon=0"
     );
 }
