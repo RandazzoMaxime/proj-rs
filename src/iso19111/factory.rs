@@ -5561,8 +5561,22 @@ impl CoordinateOperationFactory {
                 self, source, target, context,
             )?);
         }
-        // `createOperationsVertToVert` also runs when the registry gave no perfect operation.
+        // `findsOpsInRegistryWithIntermediate` for a vertical pair: it runs after the vertical
+        // pivots of `createOperationsFromDatabaseWithVertCRS`, with no direct result before the
+        // filter (coordinateoperationfactory.cpp:4449-4463, the call is not gated on geodetic CRS).
         let vertical_pair = matches!((source, target), (Crs::Vertical(_), Crs::Vertical(_)));
+        if registry
+            && vertical_pair
+            && found.is_empty()
+            && direct_unfiltered_empty
+            && context.intermediate_use != IntermediateCrsUse::Never
+            && context.intermediates.is_empty()
+            && !context.has_guard(GUARD_DATUM_INTERMEDIATE)
+        {
+            let codes = crs_codes_intermediate_operations(source, target, context)?;
+            found.extend(select_candidates(codes, source, target, context));
+        }
+        // `createOperationsVertToVert` also runs when the registry gave no perfect operation.
         if found.is_empty()
             || (vertical_pair
                 && !has_perfect_accuracy_result(
