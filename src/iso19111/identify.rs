@@ -4,14 +4,17 @@
 //! NAD27 / NAD83 candidate is returned only when the name is exactly the same
 //! and the CRS is equivalent. Every other match comes from `proj.db`.
 
+use std::collections::BTreeSet;
+
 use super::buildop::{OpProps, UtmHemisphere};
 use super::equiv::{
-    directions_and_units, ellipsoid_parameters_match, equivalent_name, identify_axes_match,
-    meridian_equivalent, same_epoch, vertical_crs_equivalent, Equivalence, IdentifyAxisOrder,
+    directions_and_units, ellipsoid_parameters_match, equivalent_name,
+    equivalent_name_bigger_differences, identify_axes_match, meridian_equivalent, same_epoch,
+    vertical_crs_equivalent, Equivalence, IdentifyAxisOrder,
 };
 use super::factory::{AuthorityFactory, DatabaseContext, NameMatch};
 use super::model::{
-    Axis, CartesianCS, Conversion, CoordinateSystem, Crs, Datum, DatumEnsemble,
+    Axis, CartesianCS, CompoundCRS, Conversion, CoordinateSystem, Crs, Datum, DatumEnsemble,
     DerivedProjectedCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified,
     Identifier, ObjectDomain, ProjectedCRS, UnitOfMeasure, VerticalCRS,
 };
@@ -120,6 +123,7 @@ impl Crs {
             Self::Geodetic(crs) => crs.identify_with(factory),
             Self::Projected(crs) => crs.identify_with(factory),
             Self::Vertical(crs) => crs.identify_with(factory),
+            Self::Compound(crs) => crs.identify_with(factory),
             _ => Vec::new(),
         }
     }
@@ -236,6 +240,180 @@ impl VerticalCRS {
         }
         Vec::new()
     }
+}
+
+impl CompoundCRS {
+    /// `CompoundCRS::identify` (crs.cpp:5595).
+    ///
+    /// The compound CRS of the factory's authority named by one of its identifiers. Else
+    /// the compound CRS of the same name, by equivalence of the components. Else the
+    /// compound CRS of the factory that has the same components, when the name is
+    /// unknown. Else, when the CRS has no identifier and two components, the compound of
+    /// the horizontal and vertical components, each identified at 70 or more.
+    #[must_use]
+    pub fn identify_with(&self, factory: Option<&AuthorityFactory>) -> Vec<(Crs, i32)> {
+        let Some(factory) = factory else {
+            return Vec::new();
+        };
+        let db = factory.database_context();
+        let this_name = self.name();
+        let components = self.components();
+        let criterion = if has_implicit_cs(&components[0])
+            || matches!(&components[0], Crs::Projected(projected)
+                if has_implicit_cs(&Crs::Geodetic(projected.base_crs().clone())))
+        {
+            Equivalence::ExceptAxisOrder
+        } else {
+            Equivalence::Equivalent
+        };
+        let insignificant_name = insignificant(this_name);
+        let mut found_equivalent_name = false;
+        let mut res: Vec<(CompoundCRS, i32)> = Vec::new();
+        if compatible_authority(self.identifiers(), factory) {
+            for identifier in self.identifiers() {
+                if !(factory.authority().is_empty()
+                    || identifier.code_space() == factory.authority())
+                {
+                    continue;
+                }
+                let looked = AuthorityFactory::create(db, identifier.code_space())
+                    .create_compound_crs(identifier.code());
+                if let Ok(found) = looked {
+                    let matched = self.is_equivalent_to_with(&found, criterion);
+                    return vec![(Crs::Compound(found), if matched { 100 } else { 25 })];
+                }
+            }
+        } else if !insignificant_name {
+            for approximate in [false, true] {
+                let mode = if approximate {
+                    NameMatch::Approximate
+                } else {
+                    NameMatch::Exact
+                };
+                let Ok(objects) = factory.create_compound_crs_by_name(this_name, mode) else {
+                    break;
+                };
+                for found in objects {
+                    let equivalent_name_match =
+                        equivalent_name_bigger_differences(this_name, found.name());
+                    found_equivalent_name |= equivalent_name_match;
+                    if self.is_equivalent_to_with(&found, criterion) {
+                        if found.name() == this_name {
+                            return vec![(Crs::Compound(found), 100)];
+                        }
+                        let confidence = if equivalent_name_match { 90 } else { 70 };
+                        res.push((found, confidence));
+                    } else {
+                        res.push((found, 25));
+                    }
+                }
+                if !res.is_empty() {
+                    break;
+                }
+            }
+        }
+        sort_compound_hits(this_name, &mut res);
+        if self.identifiers().is_empty()
+            && !found_equivalent_name
+            && res.first().is_none_or(|(_, confidence)| *confidence < 50)
+        {
+            let mut already_known: BTreeSet<(String, String)> = BTreeSet::new();
+            for (found, _) in &res {
+                if let Some(identifier) = found.identifiers().first() {
+                    already_known.insert((
+                        identifier.code_space().to_owned(),
+                        identifier.code().to_owned(),
+                    ));
+                }
+            }
+            for candidate in factory.create_compound_crs_from_existing(self) {
+                if let Some(identifier) = candidate.identifiers().first() {
+                    let key = (
+                        identifier.code_space().to_owned(),
+                        identifier.code().to_owned(),
+                    );
+                    if already_known.contains(&key) {
+                        continue;
+                    }
+                }
+                let confidence = if self.is_equivalent_to_with(&candidate, criterion) {
+                    if insignificant_name {
+                        90
+                    } else {
+                        70
+                    }
+                } else {
+                    25
+                };
+                res.push((candidate, confidence));
+            }
+            sort_compound_hits(this_name, &mut res);
+            // A single candidate at 90 with the same name is promoted to 100.
+            if let [(found, confidence)] = res.as_mut_slice() {
+                if *confidence == 90 && found.name() == this_name {
+                    *confidence = 100;
+                }
+            }
+        }
+        // Without an identifier and with no match, a horizontal and a vertical CRS that
+        // are themselves identified are combined into a compound CRS.
+        if self.identifiers().is_empty() && res.is_empty() && components.len() == 2 {
+            let horizontal = components[0].identify_with(Some(factory));
+            let vertical = components[1].identify_with(Some(factory));
+            if let (
+                [(horizontal_crs, horizontal_confidence)],
+                [(vertical_crs, vertical_confidence)],
+            ) = (horizontal.as_slice(), vertical.as_slice())
+            {
+                if *horizontal_confidence >= 70 && *vertical_confidence >= 70 {
+                    let name = format!("{} + {}", horizontal_crs.name(), vertical_crs.name());
+                    if let Ok(new_crs) = CompoundCRS::create(
+                        name.clone(),
+                        vec![horizontal_crs.clone(), vertical_crs.clone()],
+                    ) {
+                        let base = if this_name == name {
+                            100
+                        } else if equivalent_name_bigger_differences(this_name, &name) {
+                            90
+                        } else {
+                            70
+                        };
+                        res.push((
+                            new_crs,
+                            base.min(*horizontal_confidence.min(vertical_confidence)),
+                        ));
+                    }
+                }
+            }
+        }
+        // Keep only the results of the highest confidence.
+        if res.len() >= 2 {
+            let highest = res[0].1;
+            res.retain(|(_, confidence)| *confidence == highest);
+        }
+        res.into_iter()
+            .map(|(crs, confidence)| (Crs::Compound(crs), confidence))
+            .collect()
+    }
+}
+
+/// `CRS::hasImplicitCS` for the CRS kinds that carry the flag in this port.
+fn has_implicit_cs(crs: &Crs) -> bool {
+    match crs {
+        Crs::Geographic(crs) | Crs::Geodetic(GeodeticCRS::Geographic(crs)) => crs.implicit_cs,
+        _ => false,
+    }
+}
+
+/// `lambdaSort` of `CompoundCRS::identify`: confidence first, then the exact name of the
+/// CRS, then the name in byte order.
+fn sort_compound_hits(this_name: &str, hits: &mut [(CompoundCRS, i32)]) {
+    hits.sort_by(|(left, left_confidence), (right, right_confidence)| {
+        right_confidence
+            .cmp(left_confidence)
+            .then_with(|| prefer(left.name() == this_name, right.name() == this_name))
+            .then_with(|| left.name().cmp(right.name()))
+    });
 }
 
 fn compatible_authority(identifiers: &[Identifier], factory: &AuthorityFactory) -> bool {
