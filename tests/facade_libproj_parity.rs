@@ -23,6 +23,49 @@ fn polar_stereographic_3413_keeps_easting_first() {
     assert!(metres(north, -1_633_879.497_470_785), "{north}");
 }
 
+/// Without a grid, `EPSG:4326` to `EPSG:4267` has several candidates, and the facade chooses one
+/// per point as `proj_trans` does. The values are PROJ 9.9.0's (georust path, no grid).
+#[test]
+fn wgs84_to_nad27_without_grid_chooses_per_point() {
+    let proj = Proj::new_known_crs("EPSG:4326", "EPSG:4267", None).expect("pair");
+    let cases: [((f64, f64), (f64, f64)); 3] = [
+        ((-74.0, 40.0), (-74.000_426_385_734, 39.999_991_517_645)),
+        ((-100.0, 40.0), (-99.999_584_426_821, 40.000_003_116_098)),
+        ((-122.3, 47.6), (-122.298_780_307_473, 47.600_206_092_212)),
+    ];
+    for (input, want) in cases {
+        let (east, north) = proj.convert(input).expect("forward");
+        assert!((east - want.0).abs() < 1e-9, "{input:?}: {east}");
+        assert!((north - want.1).abs() < 1e-9, "{input:?}: {north}");
+    }
+}
+
+/// The inverse of the same pair, per point: PROJ 9.9.0's values, which return the input to about
+/// 1e-9 degrees.
+#[test]
+fn nad27_to_wgs84_inverse_without_grid_chooses_per_point() {
+    let proj = Proj::new_known_crs("EPSG:4326", "EPSG:4267", None).expect("pair");
+    let cases: [((f64, f64), (f64, f64)); 3] = [
+        (
+            (-74.000_426_385_734, 39.999_991_517_645),
+            (-73.999_999_997_658, 40.000_000_000_047),
+        ),
+        (
+            (-99.999_584_426_821, 40.000_003_116_098),
+            (-100.000_000_002_284, 39.999_999_999_983),
+        ),
+        (
+            (-122.298_780_307_473, 47.600_206_092_212),
+            (-122.300_000_003_561, 47.599_999_999_397),
+        ),
+    ];
+    for (input, want) in cases {
+        let (lon, lat) = proj.project(input, true).expect("inverse");
+        assert!((lon - want.0).abs() < 1e-9, "{input:?}: {lon}");
+        assert!((lat - want.1).abs() < 1e-9, "{input:?}: {lat}");
+    }
+}
+
 #[test]
 fn ups_north_32661_is_switched_for_visualization() {
     // EPSG:32661 writes north first along the 180 and 90 meridians, so it is switched.
