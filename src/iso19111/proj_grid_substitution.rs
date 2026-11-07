@@ -8,12 +8,13 @@
 //! `oputils.cpp:177`), and no version. Its method follows the PROJ grid format.
 //!
 //! Ported: the horizontal grid methods that PROJ writes as `HORIZONTAL_SHIFT_GTIFF` or
-//! `GENERAL_SHIFT_GTIFF` (NTv1, NTv2, NADCON and NADCON5 file pairs), in both directions, and
-//! the geoid file of a `Geographic3D to GravityRelatedHeight` method.
+//! `GENERAL_SHIFT_GTIFF` (NTv1, NTv2, NADCON and NADCON5 file pairs), in both directions, the
+//! geoid file of a `Geographic3D to GravityRelatedHeight` method, and the grid of the geocentric
+//! translation method 1087.
 //!
-//! Not ported: the `NTv1`, `NTv2` and `CTable2` grid formats (no `proj.db` row has them), the
-//! geocentric translation, velocity and regular vertical grid branches. For those the caller
-//! keeps the file rename it already made.
+//! Not ported: the `NTv1`, `NTv2` and `CTable2` grid formats (no `proj.db` row has them), and the
+//! velocity and regular vertical grid branches. For those the caller keeps the file rename it
+//! already made.
 
 use super::bound::{is_gravity_related_height, HORIZONTAL_SHIFT_GTIFF};
 use super::factory::DatabaseContext;
@@ -48,6 +49,11 @@ const NAME_GEOID_CORRECTION_FILENAME: &str = "Geoid (height correction) model fi
 /// `PROJ_WKT2_NAME_METHOD_GENERAL_SHIFT_GTIFF`.
 const GENERAL_SHIFT_GTIFF: &str = "GENERAL_SHIFT_GTIFF";
 
+/// `EPSG_CODE_METHOD_GEOCENTRIC_TRANSLATIONS_GEOG2D_DOMAIN_BY_GRID_IGN` and its parameter.
+const METHOD_GEOCENTRIC_TRANSLATIONS_BY_GRID_IGN: i32 = 1087;
+const PARAMETER_GEOCENTRIC_TRANSLATION_FILE: i32 = 8727;
+const NAME_GEOCENTRIC_TRANSLATION_FILE: &str = "Geocentric translation file";
+
 /// `Transformation::substitutePROJAlternativeGridNames` for the grid methods ported here.
 ///
 /// `None` when PROJ returns the transformation itself (`return self`), or for a branch this
@@ -63,7 +69,55 @@ pub(crate) fn substitute_proj_alternative_grid_names(
     if let Some(replacement) = horizontal_grid(transformation, db)? {
         return Ok(Some(replacement));
     }
-    geoid_model(transformation, db)
+    if let Some(replacement) = geoid_model(transformation, db)? {
+        return Ok(Some(replacement));
+    }
+    geocentric_grid(transformation, db)
+}
+
+/// The geocentric translation branch of `substitutePROJAlternativeGridNames`
+/// (`singleoperation.cpp:2599-2636`): method 1087 reads its grid from the `Geocentric translation
+/// file` parameter, and PROJ's name for the grid replaces it.
+fn geocentric_grid(
+    transformation: &Transformation,
+    db: &DatabaseContext,
+) -> Result<Option<Transformation>, FactoryError> {
+    if epsg_method_code(transformation) != METHOD_GEOCENTRIC_TRANSLATIONS_BY_GRID_IGN {
+        return Ok(None);
+    }
+    let Some(filename) = file_value(
+        transformation,
+        PARAMETER_GEOCENTRIC_TRANSLATION_FILE,
+        NAME_GEOCENTRIC_TRANSLATION_FILE,
+    ) else {
+        return Ok(None);
+    };
+    let Some((proj_filename, _format, inverse)) = db.proj_grid_alternative_format(&filename)?
+    else {
+        return Ok(None);
+    };
+    if inverse || filename == proj_filename {
+        // PROJ throws for an inverse direction here; no `proj.db` row has one for such a grid.
+        return Ok(None);
+    }
+    // `createSimilarPropertiesMethod`: the name and the identifier of the method.
+    let method = transformation.method();
+    let method = OperationMethod::named_code(
+        method.name().to_owned(),
+        method.code_space().to_owned(),
+        method.code().to_owned(),
+    );
+    Ok(Some(similar_operation(
+        transformation,
+        method,
+        vec![epsg_parameter(
+            PARAMETER_GEOCENTRIC_TRANSLATION_FILE,
+            NAME_GEOCENTRIC_TRANSLATION_FILE,
+            &proj_filename,
+        )],
+        transformation.source_crs().cloned(),
+        transformation.target_crs().cloned(),
+    )))
 }
 
 /// The horizontal branch of `substitutePROJAlternativeGridNames` (`singleoperation.cpp:2411-2530`).
