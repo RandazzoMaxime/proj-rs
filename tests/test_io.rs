@@ -1642,7 +1642,7 @@ fn wkt_parse_wkt1_polar_stereographic_latitude_of_origin_70() {
         "PARAMETER[\"latitude_of_origin\",70],\
          PARAMETER[\"central_meridian\",2],\
          PARAMETER[\"false_easting\",3],\
-         PARAMETER[\"false_northing\",4],",
+         PARAMETER[\"false_northing\",4]",
     ));
     assert_eq!(
         projected_proj_string(&crs),
@@ -1662,7 +1662,7 @@ fn wkt_parse_wkt1_polar_stereographic_latitude_of_origin_minus_70() {
         "PARAMETER[\"latitude_of_origin\",-70],\
          PARAMETER[\"central_meridian\",2],\
          PARAMETER[\"false_easting\",3],\
-         PARAMETER[\"false_northing\",4],",
+         PARAMETER[\"false_northing\",4]",
     ));
     let axes = crs.coordinate_system().axes();
     assert_eq!(axes[0].name(), "Easting");
@@ -1677,7 +1677,7 @@ fn wkt_parse_wkt1_polar_stereographic_latitude_of_origin_90() {
         "PARAMETER[\"latitude_of_origin\",90],\
          PARAMETER[\"central_meridian\",2],\
          PARAMETER[\"false_easting\",3],\
-         PARAMETER[\"false_northing\",4],",
+         PARAMETER[\"false_northing\",4]",
     ));
     assert_eq!(
         projected_proj_string(&crs),
@@ -1692,7 +1692,7 @@ fn wkt_parse_wkt1_polar_stereographic_latitude_of_origin_90_scale_factor_1() {
          PARAMETER[\"central_meridian\",2],\
          PARAMETER[\"scale_factor\",1],\
          PARAMETER[\"false_easting\",3],\
-         PARAMETER[\"false_northing\",4],",
+         PARAMETER[\"false_northing\",4]",
     ));
     assert_eq!(
         projected_proj_string(&crs),
@@ -1707,7 +1707,7 @@ fn wkt_parse_wkt1_polar_stereographic_scale_factor() {
          PARAMETER[\"central_meridian\",2],\
          PARAMETER[\"scale_factor\",0.99],\
          PARAMETER[\"false_easting\",3],\
-         PARAMETER[\"false_northing\",4],",
+         PARAMETER[\"false_northing\",4]",
     ));
     assert_eq!(
         projected_proj_string(&crs),
