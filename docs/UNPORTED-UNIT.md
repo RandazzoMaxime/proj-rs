@@ -77,7 +77,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.compoundCRS_with_horizontal_boundCRS_to_compoundCRS_with_derived_vertical`
 - `operation.compoundCRS_to_compoundCRS_concatenated_operation_with_two_vert_transformation`
 - `operation.compoundCRS_to_compoundCRS_concatenated_operation_with_two_vert_transformation_and_different_source_dest_interp`
-- `operation.compoundCRS_to_compoundCRS_issue_3328`
 - `operation.compoundCRS_to_compoundCRS_issue_3152_ch1903lv03_ln02_bound`
 - `operation.compoundCRS_to_compoundCRS_with_derivedVerticalCRS_ellipsoidal_height`
 - `operation.compoundCRS_to_compoundCRS_using_intermediate_of_horizontal_transform`
