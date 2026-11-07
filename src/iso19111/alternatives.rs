@@ -15,6 +15,55 @@ use std::cell::Cell;
 
 use crate::engine::{Coord, Operation};
 
+/// Severity of one PROJ log line: `PJ_LOG_ERROR` or `PJ_LOG_DEBUG` (`proj.h:373-381`). A line
+/// is written when the debug level of the context is at least its level (`log.cpp:104-115`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LogLevel {
+    /// `PJ_LOG_ERROR`: written at the default level.
+    Error,
+    /// `PJ_LOG_DEBUG`: written when `PROJ_DEBUG` is 2 or more.
+    Debug,
+}
+
+/// One PROJ log line of a transformation, handed to the caller instead of written. The binary
+/// decides whether it is written, as the debug level of the context decides in PROJ.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LogLine {
+    /// The level the line is logged at.
+    pub level: LogLevel,
+    /// The text, without the line break.
+    pub text: String,
+}
+
+impl LogLine {
+    /// A line logged at `PJ_LOG_ERROR`.
+    #[must_use]
+    pub fn error(text: impl Into<String>) -> Self {
+        Self {
+            level: LogLevel::Error,
+            text: text.into(),
+        }
+    }
+
+    /// A line logged at `PJ_LOG_DEBUG`.
+    #[must_use]
+    pub fn debug(text: impl Into<String>) -> Self {
+        Self {
+            level: LogLevel::Debug,
+            text: text.into(),
+        }
+    }
+}
+
+/// The sentence `pj_warn_about_missing_grid` adds under the warn policy, after the grids of the
+/// failed operation (`trans.cpp:199-205`). It is added once per transformation instance.
+pub const WARN_SUFFIX: &str = " This might become an error in a future PROJ major release. Set the ONLY_BEST option to YES or NO. This warning will no longer be emitted (for the current transformation instance).";
+
+/// `proj_context_errno_string` of `PROJ_ERR_OTHER_NO_INVERSE_OP` (`strerrno.cpp:42`). It is the
+/// errno of a candidate whose pipeline cannot run: the candidates whose grids are missing (the
+/// observed case, see `docs/PORTING-cs2cs-proj-debug.md`).
+const NO_INVERSE_OPERATION: &str = "No inverse operation";
+
 /// What `proj_create_crs_to_crs` does when the best operation may lack a grid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BestPolicy {
@@ -62,6 +111,8 @@ pub(crate) struct Bounds {
     reason = "each flag is one PROJ characteristic of the candidate"
 )]
 pub(crate) struct Item {
+    /// The operation name, as PROJ's `PJCoordOperation::name` (`Using coordinate operation`).
+    pub(crate) name: String,
     /// The PROJ string of the operation, or `None` when it has none.
     pub(crate) definition: Option<String>,
     /// The pipeline built from `definition`. `None` when the operation is not instantiable as a
@@ -106,6 +157,10 @@ pub struct Alternatives {
     first_axis: FirstAxis,
     /// `P->warnIfBestTransformationNotAvailable`: cleared by the first failure under `Warn`.
     warn: Cell<bool>,
+    /// `P->iCurCoordOp`: the candidate the last point used, `None` before the first point.
+    current: Cell<Option<usize>>,
+    /// The errno text of the last failed candidate, logged by the next retry (`trans.cpp:257-261`).
+    last_failure: Cell<Option<&'static str>>,
 }
 
 /// Whether the candidates that are not instantiable may be chosen (`skipNonInstantiable`).
@@ -162,6 +217,8 @@ impl Alternatives {
             source_axes,
             first_axis,
             warn: Cell::new(policy == BestPolicy::Warn),
+            current: Cell::new(None),
+            last_failure: Cell::new(None),
         }
     }
 
@@ -269,13 +326,29 @@ impl Alternatives {
         best
     }
 
-    /// `proj_trans` (forward) for one point, `trans.cpp:233-346`.
+    /// `proj_trans` (forward) for one point, `trans.cpp:233-346`, without the log lines.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::forward_logged`].
+    pub fn forward(&self, coord: Coord) -> Result<Coord, AlternativeError> {
+        self.forward_logged(coord, &mut Vec::new())
+    }
+
+    /// `proj_trans` (forward) for one point, `trans.cpp:233-346`. The lines PROJ logs while it
+    /// runs are appended to `log`, in PROJ's order: `Using coordinate operation` when the
+    /// candidate changes (`trans.cpp:269-276`), the retry lines (`trans.cpp:257-266`), the
+    /// warning of the first failure (`trans.cpp:289-298`), and the fallback (`trans.cpp:323-332`).
     ///
     /// # Errors
     ///
     /// [`AlternativeError::MissingGrid`] under [`BestPolicy::Error`] when the chosen operation
     /// fails, and [`AlternativeError::NoOperation`] when no candidate gives a result.
-    pub fn forward(&self, coord: Coord) -> Result<Coord, AlternativeError> {
+    pub fn forward_logged(
+        &self,
+        coord: Coord,
+        log: &mut Vec<LogLine>,
+    ) -> Result<Coord, AlternativeError> {
         let point = self.source_point(coord);
         // `skipNonInstantiable` of `proj_trans`: the creation flag, cleared while the warning is
         // still pending and under the other policies.
@@ -289,20 +362,47 @@ impl Alternatives {
             let Some(best) = self.suggest(point, &excluded, instantiability) else {
                 break;
             };
+            if retry > 0 {
+                // `proj_context_errno_string(oldErrno)` is logged at debug level, then the retry.
+                if let Some(text) = self.last_failure.take() {
+                    log.push(LogLine::debug(text));
+                }
+                log.push(LogLine::debug(
+                    "Did not result in valid result. Attempting a retry with another operation.",
+                ));
+            }
             let item = &self.items[best];
+            if self.current.get() != Some(best) {
+                log.push(LogLine::debug(format!(
+                    "Using coordinate operation {}",
+                    item.name
+                )));
+                self.current.set(Some(best));
+            }
             if let Some(operation) = &item.operation {
                 if let Ok(result) = operation.forward(coord) {
                     return Ok(result);
                 }
             }
+            // A candidate whose grids are missing has no pipeline to run.
+            self.last_failure
+                .set((!item.instantiable).then_some(NO_INVERSE_OPERATION));
             match self.policy {
                 BestPolicy::Error => {
-                    return Err(AlternativeError::MissingGrid(item.grid_message.clone()))
+                    // The error text is the caller's to write: it is the failure of the point.
+                    return Err(AlternativeError::MissingGrid(item.grid_message.clone()));
                 }
                 BestPolicy::Warn => {
-                    // `pj_warn_about_missing_grid` logs at debug level only. The first failure
-                    // makes later retries skip the candidates that are not instantiable.
-                    self.warn.set(false);
+                    // `pj_warn_about_missing_grid` logs at debug level, once per instance. The
+                    // first failure makes later retries skip the candidates that are not
+                    // instantiable.
+                    if self.warn.get() {
+                        log.push(LogLine::debug(format!(
+                            "{}{WARN_SUFFIX}",
+                            item.grid_message
+                        )));
+                        self.warn.set(false);
+                    }
                     instantiability = Instantiability::InstantiableOnly;
                 }
                 BestPolicy::Discard => {}
@@ -313,9 +413,16 @@ impl Alternatives {
             excluded[retry] = Some(best);
         }
         // `trans.cpp:308-342`: the first candidate that names no grid.
-        for item in &self.items {
+        for (index, item) in self.items.iter().enumerate() {
             if item.grid_free {
                 if let Some(operation) = &item.operation {
+                    if self.current.get() != Some(index) {
+                        log.push(LogLine::debug(format!(
+                            "Using coordinate operation {} as a fallback due to lack of more appropriate operations",
+                            item.name
+                        )));
+                        self.current.set(Some(index));
+                    }
                     return operation
                         .forward(coord)
                         .map_err(|_| AlternativeError::NoOperation);
