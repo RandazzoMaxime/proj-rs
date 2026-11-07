@@ -57,12 +57,11 @@ impl GeographicCRS {
             return false;
         };
         let official = |name: &str| db.geodetic_datum_equivalent(name).map(|found| found.0);
-        let (Some(left_official), Some(right_official)) =
-            (official(left.name()), official(right.name()))
-        else {
-            return false;
+        let same_official = match (official(left.name()), official(right.name())) {
+            (Some(left_official), Some(right_official)) => left_official == right_official,
+            _ => false,
         };
-        if left_official != right_official {
+        if !(same_official || frame_names_equivalent_by_db(left, right, db)) {
             return false;
         }
         let mut renamed = other.clone();
@@ -148,7 +147,8 @@ pub(crate) fn geodetic_frame(crs: &Crs) -> Option<GeodeticReferenceFrame> {
 
 /// `isEquivalentTo` of the datum of `crs` with `frame`, under the `EQUIVALENT` name rule.
 pub(crate) fn datum_equivalent_to_frame(crs: &Crs, frame: &GeodeticReferenceFrame) -> bool {
-    geodetic_frame(crs).is_some_and(|left| frame_equivalent_by(&left, frame, equivalent_name))
+    geodetic_frame(crs)
+        .is_some_and(|left| frame_equivalent_by(&left, frame, Equivalence::Equivalent))
 }
 
 /// `isSameGeodeticDatum`: the datums of two geodetic CRS, or their ensembles as datums, are
@@ -275,6 +275,88 @@ impl Conversion {
     }
 }
 
+/// `GeodeticReferenceFrame::hasEquivalentNameToUsingAlias` (datum.cpp:1602): the two datum names
+/// are one name through the official name or an alias of the authority identifier of `frame`.
+fn names_equivalent_by_identifier(
+    frame: &GeodeticReferenceFrame,
+    this_name: &str,
+    other_name: &str,
+    db: &super::factory::DatabaseContext,
+) -> bool {
+    let Some(identifier) = frame.identifiers().first() else {
+        return false;
+    };
+    let official = db.object_name("geodetic_datum", identifier.code_space(), identifier.code());
+    let aliases = db.get_aliases(
+        identifier.code_space(),
+        identifier.code(),
+        this_name,
+        "geodetic_datum",
+        "",
+    );
+    let matches = |name: &str| {
+        equivalent_name_bigger_differences(name, &official)
+            || aliases
+                .iter()
+                .any(|alias| equivalent_name_bigger_differences(name, alias))
+    };
+    matches(this_name) && matches(other_name)
+}
+
+/// `GeodeticReferenceFrame::hasEquivalentNameToUsingAlias` (datum.cpp:1602-1700): the names of
+/// two datums are one name through the official name or an alias of the identifier of either
+/// datum, or through an alias without identifier. An ESRI `D_` prefix is dropped first.
+fn frame_names_equivalent_by_db(
+    this: &GeodeticReferenceFrame,
+    other: &GeodeticReferenceFrame,
+    db: &super::factory::DatabaseContext,
+) -> bool {
+    let compare = |this_name: &str, other_name: &str| {
+        if this_name == other_name || this_name == "unknown" || other_name == "unknown" {
+            return true;
+        }
+        if starts_with_ci(this_name, "Unknown based on ")
+            || starts_with_ci(other_name, "Unknown based on ")
+        {
+            return false;
+        }
+        (!this.identifiers().is_empty()
+            && names_equivalent_by_identifier(this, this_name, other_name, db))
+            || (!other.identifiers().is_empty()
+                && names_equivalent_by_identifier(other, other_name, this_name, db))
+            || alias_names_equivalent(this_name, other_name, db)
+            || alias_names_equivalent(other_name, this_name, db)
+    };
+    let this_prefixed = starts_with_ci(this.name(), "D_");
+    let other_prefixed = starts_with_ci(other.name(), "D_");
+    if this_prefixed && !other_prefixed {
+        let stripped = &this.name()[2..];
+        equivalent_name_bigger_differences(stripped, other.name())
+            || compare(stripped, other.name())
+    } else if !this_prefixed && other_prefixed {
+        let stripped = &other.name()[2..];
+        equivalent_name_bigger_differences(this.name(), stripped) || compare(this.name(), stripped)
+    } else {
+        compare(this.name(), other.name())
+    }
+}
+
+/// `compareFromThisName` (datum.cpp:1673): `other_name` is an alias of the datum `this_name`.
+fn alias_names_equivalent(
+    this_name: &str,
+    other_name: &str,
+    db: &super::factory::DatabaseContext,
+) -> bool {
+    db.get_aliases("", "", this_name, "geodetic_datum", "")
+        .iter()
+        .any(|alias| equivalent_name_bigger_differences(other_name, alias))
+}
+
+/// ASCII case-insensitive `starts_with`, as `ci_starts_with`.
+fn starts_with_ci(text: &str, prefix: &str) -> bool {
+    text.len() >= prefix.len() && text[..prefix.len()].eq_ignore_ascii_case(prefix)
+}
+
 impl GeodeticCRS {
     /// `isEquivalentTo` with `criterion`.
     #[must_use]
@@ -372,6 +454,41 @@ impl EngineeringCRS {
         engineering_datum_equivalent(self.datum(), other.datum())
             && (axes_direction_and_unit(self.coordinate_system(), other.coordinate_system())
                 || cartesian_xy_versus_en(self.coordinate_system(), other.coordinate_system()))
+    }
+}
+
+impl ProjectedCRS {
+    /// `isEquivalentTo` with `criterion` and a database. The base CRS, when geographic, may
+    /// name its datum by an alias of the other datum's official name in `proj.db`.
+    #[must_use]
+    pub fn is_equivalent_to_with_database(
+        &self,
+        other: &Self,
+        criterion: Equivalence,
+        db: &super::factory::DatabaseContext,
+    ) -> bool {
+        if self.is_equivalent_to_with(other, criterion) {
+            return true;
+        }
+        if criterion == Equivalence::Strict {
+            return false;
+        }
+        let (GeodeticCRS::Geographic(left), GeodeticCRS::Geographic(right)) =
+            (self.base_crs(), other.base_crs())
+        else {
+            return false;
+        };
+        left.is_equivalent_to_with_database(right, criterion, db)
+            && conversion_equivalent_for(
+                self.deriving_conversion(),
+                other.deriving_conversion(),
+                criterion,
+            )
+            && cs_axes_match_for(
+                self.coordinate_system().axes(),
+                other.coordinate_system().axes(),
+                criterion,
+            )
     }
 }
 
@@ -535,7 +652,9 @@ fn geographic_equivalent(
 fn geographic_anchor(left: &GeographicCRS, right: &GeographicCRS, criterion: Equivalence) -> bool {
     if criterion != Equivalence::Strict {
         return match (datum_frame(left), datum_frame(right)) {
-            (Some(left), Some(right)) => frame_equivalent_by(&left, &right, equivalent_name),
+            (Some(left), Some(right)) => {
+                frame_equivalent_by(&left, &right, Equivalence::Equivalent)
+            }
             _ => false,
         };
     }
@@ -564,13 +683,14 @@ fn geodetic_equivalent(left: &GeodeticCRS, right: &GeodeticCRS, criterion: Equiv
                     left.ensemble.as_ref(),
                     right.ensemble.as_ref(),
                 ) {
-                    (Some(left), Some(right), _, _) => frame_equivalent(left, right),
+                    (Some(left), Some(right), _, _) => frame_equivalent_by(left, right, criterion),
                     (None, None, Some(left), Some(right)) => ensemble_equivalent(left, right),
                     _ => false,
                 }
-                && cs_axes_match(
+                && cs_axes_match_for(
                     left.coordinate_system().axes(),
                     right.coordinate_system().axes(),
+                    criterion,
                 )
         }
         (GeodeticCRS::Spherical(left), GeodeticCRS::Spherical(right)) => {
@@ -582,11 +702,15 @@ fn geodetic_equivalent(left: &GeodeticCRS, right: &GeodeticCRS, criterion: Equiv
                     left.ensemble.as_ref(),
                     right.ensemble.as_ref(),
                 ) {
-                    (Some(left), Some(right), _, _) => frame_equivalent(left, right),
+                    (Some(left), Some(right), _, _) => frame_equivalent_by(left, right, criterion),
                     (None, None, Some(left), Some(right)) => ensemble_equivalent(left, right),
                     _ => false,
                 }
-                && cs_axes_match(&left.coordinate_system.axes, &right.coordinate_system.axes)
+                && cs_axes_match_for(
+                    &left.coordinate_system.axes,
+                    &right.coordinate_system.axes,
+                    criterion,
+                )
         }
         _ => false,
     }
@@ -606,20 +730,60 @@ fn vertical_anchor(left: &VerticalCRS, right: &VerticalCRS) -> bool {
 }
 
 fn frame_equivalent(left: &GeodeticReferenceFrame, right: &GeodeticReferenceFrame) -> bool {
-    frame_equivalent_by(left, right, same_name)
+    frame_equivalent_by(left, right, Equivalence::Strict)
 }
 
-/// Datum comparison with a name rule: strict names are equal ignoring case, the
-/// `EQUIVALENT` criterion uses `Identifier::isEquivalentName`.
+/// Datum comparison for `criterion`. The strict criterion compares names ignoring case and
+/// the ellipsoid exactly. The other criteria compare the names with `isEquivalentName` and the
+/// ellipsoid to a relative `1e-10` (`Ellipsoid::_isEquivalentTo`).
 fn frame_equivalent_by(
     left: &GeodeticReferenceFrame,
     right: &GeodeticReferenceFrame,
-    names: fn(&str, &str) -> bool,
+    criterion: Equivalence,
 ) -> bool {
+    let strict = criterion == Equivalence::Strict;
+    let names: fn(&str, &str) -> bool = if strict { same_name } else { equivalent_name };
+    let ellipsoids_match = if strict {
+        ellipsoid_equivalent_by(left.ellipsoid(), right.ellipsoid(), same_name)
+    } else {
+        ellipsoid_equivalent_tolerant(left.ellipsoid(), right.ellipsoid())
+    };
     (names(left.name(), right.name()) || shares_epsg_code(left, right))
         && same_epoch(left.frame_reference_epoch(), right.frame_reference_epoch())
-        && ellipsoid_equivalent_by(left.ellipsoid(), right.ellipsoid(), names)
+        && ellipsoids_match
         && meridian_equivalent(left.prime_meridian(), right.prime_meridian())
+}
+
+/// `Ellipsoid::_isEquivalentTo` with a non-strict criterion: the semi-major axis, the semi-minor
+/// axis (computed when absent), and the inverse flattening when both have one, each to a
+/// relative `1e-10`. The names are not compared.
+fn ellipsoid_equivalent_tolerant(left: &Ellipsoid, right: &Ellipsoid) -> bool {
+    let close = |a: f64, b: f64| (a - b).abs() <= 1e-10 * a.abs();
+    let semi_minor = |ellipsoid: &Ellipsoid| {
+        ellipsoid.semi_minor_axis().map_or_else(
+            || {
+                let flattening = ellipsoid.inverse_flattening();
+                let major = ellipsoid.semi_major_axis().si_value();
+                if flattening == 0.0 {
+                    major
+                } else {
+                    major * (1.0 - 1.0 / flattening)
+                }
+            },
+            |minor| minor.si_value(),
+        )
+    };
+    close(
+        left.semi_major_axis().si_value(),
+        right.semi_major_axis().si_value(),
+    ) && close(semi_minor(left), semi_minor(right))
+        && match (
+            left.declared_inverse_flattening(),
+            right.declared_inverse_flattening(),
+        ) {
+            (Some(left), Some(right)) => close(left, right),
+            _ => true,
+        }
 }
 
 /// Two datums with the same EPSG code are the same datum, whatever their names.
@@ -1238,11 +1402,16 @@ pub(crate) fn identify_axes_match(
 pub(crate) fn ellipsoid_parameters_match(left: &Ellipsoid, right: &Ellipsoid) -> bool {
     let major = left.semi_major_axis().si_value();
     let other_major = right.semi_major_axis().si_value();
+    let flattening = left.inverse_flattening();
+    let other = right.inverse_flattening();
+    // `Ellipsoid::_isEquivalentTo` (datum.cpp:1112): "Clarke 1880 mod." is compared laxly.
+    if left.name() == "Clarke 1880 mod." || right.name() == "Clarke 1880 mod." {
+        return (major - other_major).abs() < 1e-8 * major.abs()
+            && (flattening - other).abs() < 1e-5 * flattening.abs();
+    }
     if (major - other_major).abs() > 1e-10 * major.abs() {
         return false;
     }
-    let flattening = left.inverse_flattening();
-    let other = right.inverse_flattening();
     let scale = flattening.abs().max(1.0);
     (flattening - other).abs() <= 1e-10 * scale
 }

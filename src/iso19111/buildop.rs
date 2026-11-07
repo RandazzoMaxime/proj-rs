@@ -2880,7 +2880,7 @@ fn lcc2sp_parallels_swapped(
     left: &super::model::Conversion,
     right: &super::model::Conversion,
 ) -> bool {
-    let near = |a: f64, b: f64| (a - b).abs() <= 1e-10 * a.abs().max(1.0);
+    let near = |a: f64, b: f64| (a - b).abs() <= 2e-10 * a.abs();
     near(left.numeric_degrees(8823), right.numeric_degrees(8824))
         && near(left.numeric_degrees(8824), right.numeric_degrees(8823))
         && [8821, 8822, 8826, 8827]

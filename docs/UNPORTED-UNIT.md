@@ -7,7 +7,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_crs.cpp
 
-- `crs.projectedCRS_identify_db`
 - `crs.scope_area_bbox_remark`
 - `crs.VerticalCRS_ensemble_exception_in_create`
 - `crs.boundCRS_crs_link`

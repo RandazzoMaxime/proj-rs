@@ -3017,6 +3017,8 @@ pub struct ProjectedCRS {
     pub(crate) base: GeodeticCRS,
     pub(crate) conversion: Conversion,
     pub(crate) coordinate_system: CartesianCS,
+    /// WKT1 `PROJCS` without `AXIS` nodes (`IMPLICIT_CS`). Identification then ignores axis order.
+    pub(crate) implicit_cs: bool,
 }
 
 impl ProjectedCRS {
@@ -3033,6 +3035,7 @@ impl ProjectedCRS {
             base,
             conversion,
             coordinate_system,
+            implicit_cs: false,
         }
     }
 
