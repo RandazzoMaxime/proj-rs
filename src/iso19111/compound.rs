@@ -1242,7 +1242,7 @@ fn vertical_ballpark(
         target.name()
     );
     let domain = match (crs_extent(vertical), crs_extent(target)) {
-        (Some(left), Some(right)) if left == right => left,
+        (Some(left), Some(right)) if left.is_equivalent_to(&right) => left,
         _ => world_extent(),
     };
     Transformation::create_from_code(
@@ -1761,7 +1761,7 @@ pub(super) fn vertical_to_vertical(source: &Crs, target: &Crs) -> Option<Coordin
         )
     };
     let domain = match (crs_extent(source), crs_extent(target)) {
-        (Some(left), Some(right)) if left == right => left,
+        (Some(left), Some(right)) if left.is_equivalent_to(&right) => left,
         _ => world_extent(),
     };
     let (code, values) = if reversal {
@@ -1839,7 +1839,7 @@ pub(crate) fn null_offset(source: &Crs, target: &Crs) -> Option<CoordinateOperat
         )
     };
     let domain = match (crs_extent(source), crs_extent(target)) {
-        (Some(left), Some(right)) if left == right => left,
+        (Some(left), Some(right)) if left.is_equivalent_to(&right) => left,
         _ => world_extent(),
     };
     let name = op_name(NULL_GEOGRAPHIC_OFFSET, source, target);
