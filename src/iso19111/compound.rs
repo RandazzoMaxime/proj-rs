@@ -23,9 +23,9 @@ use super::factory::{
     GUARD_SKIP_HORIZONTAL, GUARD_VERTICAL_INTERMEDIATE, GUARD_VERTICAL_PIVOT,
 };
 use super::model::{
-    Axis, BoundCRS, CompoundCRS, ConcatenatedOperation, ConcatenatedStep, CoordinateOperation, Crs,
-    GeographicCRS, GeoidModel, Identified, OperationMethod, Parameter, ParameterValue, ProjBased,
-    ProjBasedKind, Transformation, VerticalCRS,
+    Axis, BoundCRS, CompoundCRS, ConcatenatedOperation, ConcatenatedStep, Conversion,
+    CoordinateOperation, Crs, GeographicCRS, GeoidModel, Identified, OperationMethod, Parameter,
+    ParameterValue, ProjBased, ProjBasedKind, Transformation, VerticalCRS,
 };
 use super::pipeline::ProjLines;
 use super::FactoryError;
@@ -1750,36 +1750,51 @@ pub(super) fn vertical_to_vertical(source: &Crs, target: &Crs) -> Option<Coordin
         src.coordinate_system().axis(),
         Some(dst.coordinate_system().axis()),
     )?;
-    let same_datum = vertical_datum_name(src) == vertical_datum_name(dst);
-    let reversal = same_datum && scale == -1.0;
-    let name = if same_datum {
-        format!("Conversion from {} to {}", source.name(), target.name())
-    } else {
-        format!(
-            "Transformation from {} to {} (ballpark vertical transformation)",
-            source.name(),
-            target.name()
-        )
-    };
     let domain = match (crs_extent(source), crs_extent(target)) {
         (Some(left), Some(right)) if left.is_equivalent_to(&right) => left,
         _ => world_extent(),
     };
-    let (code, values) = if reversal {
-        (1068, Vec::new())
+    if vertical_datum_name(src) != vertical_datum_name(dst) {
+        return Transformation::create_from_code(
+            &OpProps::new().name(format!(
+                "Transformation from {} to {} (ballpark vertical transformation)",
+                source.name(),
+                target.name()
+            )),
+            source.clone(),
+            target.clone(),
+            1069,
+            vec![ParameterValue::scale(scale)],
+            domain,
+        )
+        .ok()
+        .map(CoordinateOperation::Transformation);
+    }
+    // Same datum: a Conversion in PROJ (`createOperationsVertToVert`, coordinateoperationfactory.cpp
+    // :6050-6064). A height/depth reversal of the same unit is method 1068; otherwise a change of
+    // vertical unit, whose factor is negated on a reversal.
+    let (src_axis, dst_axis) = (
+        src.coordinate_system().axis(),
+        dst.coordinate_system().axis(),
+    );
+    let reversal = (src_axis.direction() == "up" && dst_axis.direction() == "down")
+        || (src_axis.direction() == "down" && dst_axis.direction() == "up");
+    let unit_changes = src_axis.unit().conversion_to_si() != dst_axis.unit().conversion_to_si();
+    let props = OpProps::new().name(format!(
+        "Conversion from {} to {}",
+        source.name(),
+        target.name()
+    ));
+    let conversion = if unit_changes || !reversal {
+        Conversion::create_change_vertical_unit(&props, scale)
     } else {
-        (1069, vec![ParameterValue::scale(scale)])
+        Conversion::create_height_depth_reversal(&props)
     };
-    Transformation::create_from_code(
-        &OpProps::new().name(name),
-        source.clone(),
-        target.clone(),
-        code,
-        values,
-        domain,
-    )
-    .ok()
-    .map(CoordinateOperation::Transformation)
+    let mut conversion = conversion
+        .ok()?
+        .with_endpoints(source.clone(), target.clone());
+    conversion.identified.domains = vec![domain];
+    Some(CoordinateOperation::Conversion(conversion))
 }
 
 /// The scale of a change of vertical unit from `src` to `dst`, where `dst` is `None` for a

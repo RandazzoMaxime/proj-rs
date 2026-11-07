@@ -510,6 +510,9 @@ impl Conversion {
     /// with the direction, as [`Transformation::inverse`] swaps its own.
     #[must_use]
     pub fn inverse(&self) -> Self {
+        if let Some(inverse) = self.inverse_by_method() {
+            return inverse;
+        }
         let mut inverse = self.clone();
         inverse.inverted = !self.inverted;
         inverse.identified.name = super::geodetic_ops::inverse_operation_name(
@@ -523,6 +526,88 @@ impl Conversion {
             identifier.code_space = inverse_code_space(&identifier.code_space);
         }
         inverse
+    }
+
+    /// The PROJ string of the vertical conversions that need no CRS pair: a height/depth
+    /// reversal (1068, `axisswap +order=1,2,-3`) and a change of vertical unit (1069, the
+    /// `unitconvert` of `exportToPROJStringChangeVerticalUnit`, singleoperation.cpp:3564).
+    /// `None` for the other methods.
+    fn vertical_unit_proj_string(&self) -> Option<String> {
+        if self.method.code_space() != "EPSG" {
+            return None;
+        }
+        let code: i32 = self.method.code().parse().ok()?;
+        let mut formatter = super::pipeline::PipelineFormatter::with_grid_names(Vec::new());
+        match code {
+            1068 => {
+                formatter.add_step("axisswap");
+                formatter.add_param("order", "1,2,-3");
+            }
+            1069 => {
+                let factor = self
+                    .parameters
+                    .iter()
+                    .find(|parameter| parameter.code() == "1051")
+                    .and_then(|parameter| match parameter.value() {
+                        ParameterValue::Measure(measure) => Some(measure.si_value()),
+                        _ => None,
+                    })?;
+                super::transform_export::change_vertical_unit_by_factor(factor, &mut formatter);
+            }
+            _ => return None,
+        }
+        Some(formatter.finish(super::pipeline::ProjLines::Single))
+    }
+
+    /// `Conversion::inverse` (conversion.cpp:2706-2766) for a change of vertical unit (1069,
+    /// with the reciprocal factor), a change of unit without factor (1104) and a height/depth
+    /// reversal (1068): each is a new conversion of the same method, not an `InverseConversion`,
+    /// so it is written as a forward step. `None` for the other methods, and for a conversion
+    /// that is already an inverse.
+    fn inverse_by_method(&self) -> Option<Self> {
+        if self.inverted || self.method.code_space() != "EPSG" {
+            return None;
+        }
+        let code: i32 = self.method.code().parse().ok()?;
+        let name = super::geodetic_ops::inverse_operation_name(
+            self.name(),
+            self.source_crs(),
+            self.target_crs(),
+            super::geodetic_ops::NamedOperationKind::Conversion,
+        );
+        let props = OpProps::new().name(name);
+        let mut inverse = match code {
+            1069 => {
+                let factor = self
+                    .parameters
+                    .iter()
+                    .find(|parameter| parameter.code() == "1051")
+                    .and_then(|parameter| match parameter.value() {
+                        ParameterValue::Measure(measure) => Some(measure.si_value()),
+                        _ => None,
+                    })?;
+                if factor == 0.0 {
+                    return None;
+                }
+                Self::create_change_vertical_unit(&props, 1.0 / factor).ok()?
+            }
+            1104 => Self::create_change_vertical_unit_no_conv_factor(&props).ok()?,
+            1068 => Self::create_height_depth_reversal(&props).ok()?,
+            _ => return None,
+        };
+        inverse.identified.domains = self.identified.domains.clone();
+        for identifier in &self.identified.identifiers {
+            let mut identifier = identifier.clone();
+            identifier.code_space = inverse_code_space(&identifier.code_space);
+            inverse.identified.identifiers.push(identifier);
+        }
+        // `setCRSs(this, true)`: the CRS pair swapped.
+        Some(
+            match (self.target_crs().cloned(), self.source_crs().cloned()) {
+                (Some(source), Some(target)) => inverse.with_endpoints(source, target),
+                _ => inverse,
+            },
+        )
     }
 }
 
@@ -1163,6 +1248,9 @@ impl super::model::Conversion {
             formatter.ingest_proj_string(&forward_string);
             formatter.stop_inversion();
             return Ok(formatter.finish(super::pipeline::ProjLines::Single));
+        }
+        if let Some(text) = self.vertical_unit_proj_string() {
+            return Ok(text);
         }
         if let Some(text) = self.proj_ob_tran_string() {
             return Ok(text);
@@ -2707,6 +2795,15 @@ impl super::model::Conversion {
         props: &OpProps,
     ) -> Result<Self, FactoryError> {
         Self::from_code(props, 1104, Vec::new())
+    }
+
+    /// Height depth reversal, EPSG:1068, with no parameter.
+    ///
+    /// # Errors
+    ///
+    /// The method map is missing.
+    pub fn create_height_depth_reversal(props: &OpProps) -> Result<Self, FactoryError> {
+        Self::from_code(props, 1068, Vec::new())
     }
 
     /// Geographic/geocentric conversion, EPSG:9602.
