@@ -2234,6 +2234,18 @@ impl ConcatenatedStep {
     pub fn is_reverse(&self) -> bool {
         self.reverse
     }
+
+    /// The step in the direction it runs. PROJ keeps a reversed step as the inverse of its
+    /// operation (`ConcatenatedOperation::fixSteps` and `operations()`), so a flattened list
+    /// takes the inverse here, and the reverse flag is dropped.
+    #[must_use]
+    pub(crate) fn oriented_operation(&self) -> CoordinateOperation {
+        if self.reverse {
+            self.operation.inverse()
+        } else {
+            self.operation.clone()
+        }
+    }
 }
 
 /// Concatenated coordinate operation.
