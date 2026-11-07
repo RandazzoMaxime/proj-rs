@@ -1992,6 +1992,15 @@ impl WktParser {
             UnitKind::Unknown
         };
         let fallback = self.unit_in(parent, unit_kind)?;
+        // io.cpp:3081-3089: a VERT_CS without a UNIT takes metre, and the warning names the
+        // parent node. Its axes then take that unit, so none of them warns.
+        let fallback = match fallback {
+            None if ci_eq(parent_name, "VERT_CS") || ci_eq(parent_name, "VERTCS") => {
+                self.missing_unit(parent_name, &UnitOfMeasure::metre())?;
+                Some(UnitOfMeasure::metre())
+            }
+            other => other,
+        };
         let mut axes = Vec::new();
         for (index, axis_node) in parent.children_named("AXIS").into_iter().enumerate() {
             let frame = if ci_eq(parent_name, "GEOCCS") {

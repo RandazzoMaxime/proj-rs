@@ -114,3 +114,14 @@ fn wkt1_grammar_error_is_an_error_in_strict_mode() {
     };
     assert_eq!(message, "Parsing error : syntax error, unexpected ',', expecting UNIT or PARAMETER. Error occurred around:\nsting\",3],PARAMETER[\"false_northing\",4],,UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]\n                                        ^");
 }
+
+/// A VERT_CS without UNIT takes metre, and the warning names the VERT_CS node (io.cpp:3081),
+/// not an AXIS. Its AXIS comes before the UNIT the grammar wants (projinfo, PROJ 9.9.0).
+#[test]
+fn wkt1_vert_cs_without_unit_assumes_metre() {
+    let parser = lax("VERT_CS[\"Mean Sea Level\",VERT_DATUM[\"Mean Sea Level\",2005],AXIS[\"Gravity-related height (H)\",UP]]");
+    let expected_warnings: &[&str] = &["buildCS: missing UNIT in VERT_CS. Assuming metre"];
+    assert_eq!(parser.warnings(), expected_warnings);
+    let expected_grammar: &[&str] = &["Parsing error : syntax error, unexpected AXIS, expecting UNIT. Error occurred around:\nevel\",VERT_DATUM[\"Mean Sea Level\",2005],AXIS[\"Gravity-related height (H)\",UP]]\n                                        ^"];
+    assert_eq!(parser.grammar_errors(), expected_grammar);
+}

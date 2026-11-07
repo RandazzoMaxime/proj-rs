@@ -708,7 +708,7 @@ fn export_geographic(
             return export_ellipsoidal_height_compound(crs, formatter);
         }
         return Err(FactoryError::Format(
-            "WKT1 does not support a geographic 3D CRS".to_owned(),
+            "WKT1 does not support Geographic 3D CRS.".to_owned(),
         ));
     }
     if !formatter.wkt2 && formatter.esri && three_d && !formatter.allow_linunit {
