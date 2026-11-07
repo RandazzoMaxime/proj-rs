@@ -77,8 +77,8 @@ fn a_ballpark_only_pair_is_a_transformation() {
     // EPSG:2393 (KKJ / Finland): the ballpark is a geocentric translation and a Transverse Mercator.
     let kkj = Proj::new_known_crs("EPSG:4326", "EPSG:2393", None).expect("ballpark only");
     let (east, north) = kkj.convert((24.0_f64, 65.0_f64)).expect("forward");
-    assert!((east - 3_358_686.366_799_974_8).abs() < 1e-6, "{east}");
-    assert!((north - 7_214_830.355_803_429_1).abs() < 1e-6, "{north}");
+    assert!((east - 3_358_686.366_799_975).abs() < 1e-6, "{east}");
+    assert!((north - 7_214_830.355_803_429).abs() < 1e-6, "{north}");
 }
 
 /// A vertical grid named with `@` is optional: libproj builds the pipeline without it, and a

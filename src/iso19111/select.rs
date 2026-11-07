@@ -14,7 +14,8 @@
 //! caller keeps its previous path.
 
 use super::alternatives::{
-    Alternatives, BestPolicy, Bounds, FirstAxis, Item, LogLine, SourceAxes, WARN_SUFFIX,
+    Alternatives, BestPolicy, Bounds, DegreeOrder, FirstAxis, Item, LogLine, SourceAxes,
+    WARN_SUFFIX,
 };
 use super::factory::{
     operation_extent, sort_extents, GridAvailabilityUse, GridDescription, GridInfo, SortExtents,
@@ -1193,10 +1194,14 @@ pub fn select_alternatives_with_authority(
         source_to_crs: source_to_crs.as_ref(),
         target_to_crs: target_to_crs.as_ref(),
         geocentric,
-        source_lon_lat,
-        source_lat_lon,
-        target_lon_lat,
-        target_lat_lon,
+        source_order: DegreeOrder {
+            lon_lat: source_lon_lat,
+            lat_lon: source_lat_lon,
+        },
+        target_order: DegreeOrder {
+            lon_lat: target_lon_lat,
+            lat_lon: target_lat_lon,
+        },
         optional_grids_serve: false,
     };
     let mut prepared = preparer.prepare(&ranked);
@@ -1348,10 +1353,14 @@ pub(crate) fn facade_candidates(
                 source_to_crs: None,
                 target_to_crs: None,
                 geocentric,
-                source_lon_lat: false,
-                source_lat_lon: false,
-                target_lon_lat: false,
-                target_lat_lon: false,
+                source_order: DegreeOrder {
+                    lon_lat: false,
+                    lat_lon: false,
+                },
+                target_order: DegreeOrder {
+                    lon_lat: false,
+                    lat_lon: false,
+                },
                 optional_grids_serve: true,
             };
             let items = preparer.prepare(&ranked);
@@ -1384,10 +1393,14 @@ pub(crate) fn facade_candidates(
         source_to_crs: source_to_crs.as_ref(),
         target_to_crs: target_to_crs.as_ref(),
         geocentric,
-        source_lon_lat,
-        source_lat_lon,
-        target_lon_lat,
-        target_lat_lon,
+        source_order: DegreeOrder {
+            lon_lat: source_lon_lat,
+            lat_lon: source_lat_lon,
+        },
+        target_order: DegreeOrder {
+            lon_lat: target_lon_lat,
+            lat_lon: target_lat_lon,
+        },
         optional_grids_serve: true,
     };
     // Each candidate with the operation its pieces were prepared from, in PROJ's order.
@@ -1655,10 +1668,8 @@ struct Preparer<'a> {
     source_to_crs: Option<&'a Operation>,
     target_to_crs: Option<&'a Operation>,
     geocentric: bool,
-    source_lon_lat: bool,
-    source_lat_lon: bool,
-    target_lon_lat: bool,
-    target_lat_lon: bool,
+    source_order: DegreeOrder,
+    target_order: DegreeOrder,
     /// Whether a grid whose name starts with `@` is optional: PROJ's `isPROJInstantiable` does not
     /// count a missing optional grid (`singleoperation.cpp:347-354`). The facade sets it; `cs2cs`
     /// keeps the candidates it has always built.
@@ -1721,11 +1732,11 @@ impl Preparer<'_> {
                     offshore: area.contains("- offshore"),
                     unknown_area: area.is_empty() || area == "unknown",
                     priority: priority_operation(&characteristics.name),
-                    lon_lat_degree: self.source_lon_lat,
-                    lat_lon_degree: self.source_lat_lon,
+                    lon_lat_degree: self.source_order.lon_lat,
+                    lat_lon_degree: self.source_order.lat_lon,
                     target_bounds,
-                    target_lon_lat_degree: self.target_lon_lat,
-                    target_lat_lon_degree: self.target_lat_lon,
+                    target_lon_lat_degree: self.target_order.lon_lat,
+                    target_lat_lon_degree: self.target_order.lat_lon,
                     approximate: characteristics.approx,
                 });
             }
