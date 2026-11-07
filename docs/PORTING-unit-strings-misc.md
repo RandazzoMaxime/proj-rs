@@ -112,3 +112,25 @@ wall clock. The rest of the test is closed.
 | Rust test | PROJ | Status |
 |---|---|---|
 | `crs_create_bound_crs_to_wgs84_if_possible` | `crs.crs_createBoundCRSToWGS84IfPossible` | closed, commit 2 (on the base the first failing block is `PGP50`; the EPSG:4807 block that the triage named passes on the base, checked with a probe; the EPSG:2936 WKT1 round trip failed once `PGP50` passed) |
+
+## Open causes (not closed in this lot)
+
+The drafts of these tests are not in the tree: a test that fails is not committed. Each row says what
+was measured, what was tried, and what is still needed. The reference is PROJ 9.9.0 `projinfo` on the
+oracle database.
+
+| Test (PROJ name) | Ours | PROJ 9.9.0 | Status |
+|---|---|---|---|
+| `operation.vertCRS_to_geogCRS_context`, block 1 (`setUsePROJAlternativeGridNames(false)`) | `list[1]` is `Und_min1x1_egm2008_isw=82_WGS84_TideFree` | `list[1]` is `us_nga_egm08_25.tif` | Open. Not an export problem: the candidate order differs. PROJ's `SortFunction` (coordinateoperationfactory.cpp:966-1000) reads `gridsKnown` from `gridsNeeded` on the names the candidate holds. With the official names the 2.5' grid has no `proj.db` row by its PROJ name, so it is not known, and the 1' grid (accuracy 0.11 against 0.113) sorts first. Here the sort uses the PROJ names (`select.rs`, `characteristics`) and the default context holds the official names (`factory.rs`, `grid_names: Official`), where PROJ's default is `usePROJNames_ = true` (coordinateoperationfactory.cpp:175). Tried and reverted: the sort on the held names alone (block 1 passes, the default order of block 2 flips); the default set to PROJ names (blocks 1 and 2 pass, 6 unit tests regress, NAD83 and pivot cases, for instance `Unimplemented Inverse of NAD83(NSRS2007) to NAD83(2011)`, and the CLI and docs checks follow); removing the official-to-PROJ fallback of `look_for_grid_info` (not in PROJ's `lookForGridInfo`, factory.cpp:3398; no test changed). Needed: candidates that hold PROJ names in the default mode on every grid path (PROJ substitutes at creation, factory.cpp:6766-6953), then the sort on the held names. |
+| `operation.nadgrids_with_pm` | 25 tokens; `+step +proj=longlat +ellps=intl +pm=lisbon` after `+inv +proj=tmerc` | 21 tokens, no longlat step | Open. The candidate has the three PROJ parts (`Inverse of ...` + `Transformation from ... (with Greenwich prime meridian)` + the NTv2 step; `createFromNadgrids`, crs.cpp:5995-6010). PROJ's string of the same concatenation has no pm step; the pm-change step is not written in PROJ's concatenation and that was not traced. |
+| `operation.ETRS89_3D_to_proj_string_with_geoidgrids_nadgrids` | 25 tokens; the first `unitconvert` has no `z_in`/`z_out` | 27 tokens; `+xy_in=deg +z_in=m +xy_out=rad +z_out=m` | Open. The Rust writer of `addAngularUnitConvertAndAxisSwap` (`angular_unit_and_axis_swap`) matches crs.cpp:2446-2475. The z terms are missing from the first step, which is written by the vertical part (`geoid_grid_shift`, `horizontal_unit_and_axis_swap`, transform_export.rs). Which PROJ step carries z there was not traced. |
+| `operation.boundCRS_to_geogCRS_hubCRS_and_targetCRS_same_but_baseCRS_not` | `+proj=unitconvert +z_in=us-ft +z_out=m` (3 tokens) | `+proj=unitconvert +xy_in=deg +z_in=us-ft +xy_out=deg +z_out=m` (5 tokens) | Open. PROJ's candidate is a ballpark with the horizontal deg conversions. The branch of `createOperationsBoundToGeog` that gives it (coordinateoperationfactory.cpp:5578-5720, `skipHorizontalTransformation` at 5861) is not identified yet. |
+| `operation.normalizeForVisualization` (test_operation.cpp) | cases 1 and 2 pass; case 3 (4326 to EPSG:3040, source geographic and target projected inverted) fails in `proj()` | the PROJ string of the normalized operation is written | Open. After the WKT2_2019 round trip the normalized concatenated operation is equivalent, but one step conversion (the axis-order change at an end) has no CRS pair on import, so its PROJ string cannot be written: "a conversion step of a concatenated operation has no PROJ string in this crate". `fix_steps` (wkt_import.rs:3593) is called, and this was not traced further. |
+
+Other notes:
+
+- The drafts of the open tests were checked against PROJ 9.9.0 `test/unit` before the runs. The expected
+  strings were not changed to fit the output.
+- The full suite was run after each commit: 1669 passed, 4 failed (the open drafts only), 31 ignored,
+  at the head of commit 2, with `tests/unit_op_strings_misc.rs` in the tree. The committed head has no
+  failing test.
