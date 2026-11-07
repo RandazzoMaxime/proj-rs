@@ -29,6 +29,7 @@ mod normalize;
 mod parammap;
 mod pipeline;
 mod proj_crs;
+mod proj_grid_substitution;
 mod projfam;
 mod projstring;
 mod select;

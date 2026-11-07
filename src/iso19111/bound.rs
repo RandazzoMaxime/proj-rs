@@ -24,6 +24,8 @@ pub(super) const HEIGHT_TO_GEOG3D_METHOD: &str = "GravityRelatedHeight to Geogra
 
 const METHOD_NTV2: i32 = 9615;
 const METHOD_NADCON: i32 = 9613;
+/// `PROJ_WKT2_NAME_METHOD_HORIZONTAL_SHIFT_GTIFF`.
+pub(super) const HORIZONTAL_SHIFT_GTIFF: &str = "HORIZONTAL_SHIFT_GTIFF";
 const NTV2_FILE_PARAMETER: &str = "8656";
 const NADCON_LATITUDE_FILE_PARAMETER: &str = "8657";
 const NADCON_LONGITUDE_FILE_PARAMETER: &str = "8658";
@@ -188,8 +190,9 @@ impl Transformation {
         geoid_file_parameter(self)
     }
 
-    /// `getPROJ4NadgridsCompatibleFilename`: the grid of an NTv2 transformation,
-    /// or the latitude grid of a NADCON one that names both its grids.
+    /// `getPROJ4NadgridsCompatibleFilename` (`singleoperation.cpp:1998`): the grid of an NTv2
+    /// transformation, the latitude grid of a NADCON one that names both its grids, or the grid
+    /// of a `HORIZONTAL_SHIFT_GTIFF` method, which has no EPSG code.
     pub(crate) fn nadgrids_filename(&self) -> Option<&str> {
         let file = |code: &str| {
             self.parameters()
@@ -201,14 +204,26 @@ impl Transformation {
                     _ => None,
                 })
         };
-        match epsg_method_code(self) {
-            METHOD_NTV2 => file(NTV2_FILE_PARAMETER),
-            METHOD_NADCON => {
-                file(NADCON_LONGITUDE_FILE_PARAMETER)?;
-                file(NADCON_LATITUDE_FILE_PARAMETER)
+        if epsg_method_code(self) == METHOD_NTV2 {
+            if let Some(grid) = file(NTV2_FILE_PARAMETER) {
+                return Some(grid);
             }
-            _ => None,
         }
+        if epsg_method_code(self) == METHOD_NADCON
+            && file(NADCON_LONGITUDE_FILE_PARAMETER).is_some()
+        {
+            if let Some(grid) = file(NADCON_LATITUDE_FILE_PARAMETER) {
+                return Some(grid);
+            }
+        }
+        if self
+            .method()
+            .name()
+            .eq_ignore_ascii_case(HORIZONTAL_SHIFT_GTIFF)
+        {
+            return file(NTV2_FILE_PARAMETER);
+        }
+        None
     }
 
     /// `substitutePROJAlternativeGridNames`: each grid file name is replaced by the

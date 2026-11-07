@@ -3321,6 +3321,7 @@ impl AuthorityFactory {
                 SupersededOperations::Keep => RegistrySearch::Forward,
                 SupersededOperations::Discard => RegistrySearch::ForwardWithoutSuperseded,
             },
+            AlternativeGridNames::Official,
         )
     }
 
@@ -4123,6 +4124,31 @@ impl AuthorityFactory {
         Ok(parameters)
     }
 
+    /// `createCoordinateOperation` with `usePROJAlternativeGridNames`: a transformation built
+    /// with the official grid names is replaced by `substitutePROJAlternativeGridNames` when
+    /// that substitutes it (`proj_grid_substitution`). Otherwise it is built as the file rename
+    /// of [`AlternativeGridNames::Proj`] gives it, as before.
+    fn with_proj_grid_names(
+        &self,
+        grids: AlternativeGridNames,
+        build: impl Fn(AlternativeGridNames) -> Result<CoordinateOperation, FactoryError>,
+    ) -> Result<CoordinateOperation, FactoryError> {
+        if grids != AlternativeGridNames::Proj {
+            return build(grids);
+        }
+        let official = build(AlternativeGridNames::Official)?;
+        let CoordinateOperation::Transformation(transformation) = &official else {
+            return build(AlternativeGridNames::Proj);
+        };
+        match super::proj_grid_substitution::substitute_proj_alternative_grid_names(
+            transformation,
+            &self.db,
+        )? {
+            Some(replacement) => Ok(CoordinateOperation::Transformation(replacement)),
+            None => build(AlternativeGridNames::Proj),
+        }
+    }
+
     fn create_coordinate_operation_typed(
         &self,
         code: &str,
@@ -4148,10 +4174,13 @@ impl AuthorityFactory {
                 self.create_conversion(code)?,
             )),
             "helmert_transformation" => self.helmert(code).map(CoordinateOperation::Transformation),
-            "grid_transformation" => self
-                .grid_transformation(code, grids)
-                .map(CoordinateOperation::Transformation),
-            "other_transformation" => self.other_transformation(code, grids),
+            "grid_transformation" => self.with_proj_grid_names(grids, |names| {
+                self.grid_transformation(code, names)
+                    .map(CoordinateOperation::Transformation)
+            }),
+            "other_transformation" => {
+                self.with_proj_grid_names(grids, |names| self.other_transformation(code, names))
+            }
             "concatenated_operation" if concatenated == ConcatenatedSteps::Allow => self
                 .concatenated(code, grids)
                 .map(CoordinateOperation::Concatenated),
@@ -4920,6 +4949,9 @@ pub struct CoordinateOperationContext {
     inherited_extents: Option<(Option<ObjectDomain>, Option<ObjectDomain>)>,
     /// The anti-recursion guards of PROJ's `Private::Context`, as `GUARD_*` bits.
     pub(super) guards: u8,
+    /// `usePROJAlternativeGridNames`: the grid names of the registered operations, as the
+    /// database has them (`Official`) or as PROJ reads them (`Proj`).
+    grid_names: AlternativeGridNames,
 }
 
 impl CoordinateOperationContext {
@@ -4945,6 +4977,7 @@ impl CoordinateOperationContext {
             registry: RegistryUse::default(),
             inherited_extents: None,
             guards: 0,
+            grid_names: AlternativeGridNames::Official,
         }
     }
 
@@ -5014,6 +5047,15 @@ impl CoordinateOperationContext {
     /// Whether the availability of grids on disk orders the operations.
     pub fn set_grid_availability_use(&mut self, policy: GridAvailabilityUse) -> &mut Self {
         self.grid_availability = policy;
+        self
+    }
+
+    /// `setUsePROJAlternativeGridNames`: the grids of the registered operations are read as PROJ
+    /// names them. `Proj` substitutes the `grid_alternatives` of `proj.db` as
+    /// `substitutePROJAlternativeGridNames` does (`proj_grid_substitution`). The default is
+    /// `Official`, the names the database stores.
+    pub fn set_alternative_grid_names(&mut self, names: AlternativeGridNames) -> &mut Self {
+        self.grid_names = names;
         self
     }
 
@@ -5353,6 +5395,7 @@ impl CoordinateOperationFactory {
                         (pivot_auth, pivot_code),
                         boxes,
                         RegistrySearch::Both,
+                        context.grid_names,
                     )?;
                     let second = operations_between(
                         &context.db,
@@ -5361,6 +5404,7 @@ impl CoordinateOperationFactory {
                         (target_id.0.as_str(), target_id.1.as_str()),
                         boxes,
                         RegistrySearch::Both,
+                        context.grid_names,
                     )?;
                     if let (Some(left), Some(right)) = (first.first(), second.first()) {
                         found.push(CoordinateOperation::Concatenated(ConcatenatedOperation {
@@ -7538,8 +7582,15 @@ fn direct_registry_operations(
             SupersededOperations::Discard => RegistrySearch::Both,
             SupersededOperations::Keep => RegistrySearch::BothKeepingSuperseded,
         };
-        let mut operations =
-            operations_between(&context.db, &authority, source, target, crs_boxes, search)?;
+        let mut operations = operations_between(
+            &context.db,
+            &authority,
+            source,
+            target,
+            crs_boxes,
+            search,
+            context.grid_names,
+        )?;
         if context.discards_missing_grids() {
             // `rejectOpDueToMissingGrid`: an operation with a grid that is not returned when the
             // grid is neither on disk nor known to the database (`KNOWN_AVAILABLE`), or not on
@@ -7639,6 +7690,7 @@ fn operations_between(
     target: (&str, &str),
     crs_boxes: (Option<BoundingBox>, Option<BoundingBox>),
     search: RegistrySearch,
+    grids: AlternativeGridNames,
 ) -> Result<Vec<CoordinateOperation>, FactoryError> {
     let mut sql = "SELECT cov.source_crs_auth_name, cov.source_crs_code, \
          cov.target_crs_auth_name, cov.target_crs_code, cov.auth_name, cov.code, cov.table_name, \
@@ -7757,7 +7809,7 @@ fn operations_between(
         let operation = factory.create_coordinate_operation_typed(
             &row.code,
             ConcatenatedSteps::Allow,
-            AlternativeGridNames::Official,
+            grids,
             &row.table,
         )?;
         if row.source.0 == source.0 && row.source.1 == source.1 {
