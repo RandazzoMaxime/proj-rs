@@ -6003,23 +6003,25 @@ impl CoordinateOperationFactory {
             && !source.identifiers().is_empty()
             && !target.identifiers().is_empty();
         if registry
-            && direct_empty
             && !pivot_barred
             && context.intermediates.is_empty()
             && is_geodetic(source)
             && is_geodetic(target)
         {
-            let mut pivot = if context.has_guard(GUARD_DATUM_PIVOT) {
-                Vec::new()
-            } else {
+            // The datum pivot is tried only when the direct registry search gave nothing
+            // (coordinateoperationfactory.cpp:4404).
+            let mut pivot = if direct_empty && !context.has_guard(GUARD_DATUM_PIVOT) {
                 datum_pivot_operations(source, target, epochs, context)
+            } else {
+                Vec::new()
             };
             // `findsOpsInRegistryWithIntermediate(..., false)` (coordinateoperationfactory.cpp:
-            // 4436-4450): with no direct operation and no datum pivot, the registered CRS between
-            // the two are read first, and the result is filtered as the direct one is.
+            // 4449-4457): `ALWAYS` reads the registered CRS between the two whatever the direct
+            // and pivot results are; `IF_NO_DIRECT` only when there is no direct operation and no
+            // datum pivot. The result is filtered as the direct one is.
             let crs_codes_needed = context.intermediate_use != IntermediateCrsUse::Never
-                && direct_unfiltered_empty
-                && pivot.is_empty()
+                && (context.intermediate_use == IntermediateCrsUse::Always
+                    || (direct_unfiltered_empty && pivot.is_empty()))
                 && context.intermediates.is_empty()
                 && !context.has_guard(GUARD_DATUM_INTERMEDIATE)
                 && !same_geodetic_datum(source, target);
