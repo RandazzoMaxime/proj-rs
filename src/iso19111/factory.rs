@@ -5749,13 +5749,13 @@ impl CoordinateOperationFactory {
         found.extend(super::compound::compound_to_compound(
             self, source, target, context,
         )?);
-        // A compound to a bound CRS is the inverse of the bound CRS's base to that compound.
-        // PROJ's bound-to-compound special cases are not ported; this is its last fallback.
-        if let (Crs::Compound(_), Crs::Bound(bound)) = (source, target) {
+        // `boundDst && compoundSrc` (coordinateoperationfactory.cpp, "reverse of previous case"):
+        // the inverse of the bound CRS to the compound CRS.
+        if let (Crs::Compound(_), Crs::Bound(_)) = (source, target) {
             found.extend(
-                self.create_candidates(bound.source_crs(), source, context)?
-                    .into_iter()
-                    .map(|operation| operation.inverse()),
+                self.create_candidates(target, source, context)?
+                    .iter()
+                    .map(CoordinateOperation::inverse),
             );
         }
         if is_geodetic(source)
