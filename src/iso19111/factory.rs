@@ -7852,6 +7852,10 @@ fn pivot_domain(steps: &[CoordinateOperation]) -> Option<ObjectDomain> {
 /// accuracy leaves it unknown. Its domain is the intersection of the steps' extents, as
 /// `ConcatenatedOperation::createComputeMetadata` gives it (`joint_extent`).
 pub(super) fn pivot_concatenation(steps: Vec<CoordinateOperation>) -> ConcatenatedOperation {
+    // `ConcatenatedOperation::createComputeMetadata` takes the steps of a concatenated step in
+    // place of that step (concatenatedoperation.cpp:686-697): a registered concatenated operation
+    // in the pivot is named by its own steps (test_projinfo.yaml#90).
+    let steps = flatten_steps(steps);
     let name = steps
         .iter()
         .map(CoordinateOperation::name)
