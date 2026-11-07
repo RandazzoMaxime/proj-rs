@@ -107,7 +107,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.createOperation_ellipsoidal_ocentric_to_projected_of_ellipsoidal_ographic_west`
 - `operation.createOperation_derived_projected_crs`
 - `operation.geogCRS_to_compoundCRS_with_boundVerticalCRS_and_derivedProjected`
-- `operation.createOperation_point_motion_operation_geocentric_to_geog3D`
 - `operation.createOperation_point_motion_operation_NAD83_CSRS_v7_TO_ITRF2014`
 - `operation.createOperation_point_motion_operation_ITRF2014_to_NAD83_CSRS_v7`
 - `operation.createOperation_compound_to_compound_with_point_motion_operation`

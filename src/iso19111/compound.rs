@@ -1731,6 +1731,7 @@ fn proj_geoid_operation(
         accuracy_text: accuracy.map(|value| format!("{value}")),
         version: None,
         point_motion: false,
+        ballpark: false,
         source_epoch: None,
         target_epoch: None,
         inverted: false,
