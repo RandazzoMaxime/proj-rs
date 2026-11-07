@@ -81,6 +81,18 @@ fn a_ballpark_only_pair_is_a_transformation() {
     assert!((north - 7_214_830.355_803_429_1).abs() < 1e-6, "{north}");
 }
 
+/// A vertical grid named with `@` is optional: libproj builds the pipeline without it, and a
+/// missing optional grid is an identity step (`isPROJInstantiable` skips it,
+/// `singleoperation.cpp:347-354`). The CRS is the one `cs2cs` reads as `+geoidgrids=@...`.
+#[test]
+fn an_optional_missing_geoid_grid_is_an_identity_step() {
+    let source = "+proj=longlat +datum=WGS84 +units=m +geoidgrids=@i_dont_exist.tif +vunits=m +no_defs +type=crs";
+    let proj = Proj::new_known_crs(source, "EPSG:4979", None).expect("optional grid");
+    let (lon, lat, height) = proj.convert_xyz(2.0, 49.0, 0.0).expect("forward");
+    assert!(metres(lon, 2.0) && metres(lat, 49.0), "{lon} {lat}");
+    assert!(metres(height, 0.0), "{height}");
+}
+
 #[test]
 fn ups_north_32661_is_switched_for_visualization() {
     // EPSG:32661 writes north first along the 180 and 90 meridians, so it is switched.
