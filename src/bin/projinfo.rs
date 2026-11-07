@@ -1024,8 +1024,14 @@ fn candidates(options: &Options) -> Result<String, String> {
         }
     }
     if options.quiet && !operations.is_empty() {
-        return Ok(operation_bodies(&db, &source, &operations[0], options));
+        return Ok(without_final_newline(operation_bodies(
+            &db,
+            &source,
+            &operations[0],
+            options,
+        )));
     }
+    let grid_check = summary_grid_check(options);
     let mut out = format!("Candidate operations found: {}\n{note}", operations.len());
     for (index, operation) in operations.iter().enumerate() {
         if !options.summary {
@@ -1035,7 +1041,7 @@ fn candidates(options: &Options) -> Result<String, String> {
             out.push_str("-------------------------------------\n");
             out.push_str(&format!("Operation No. {}:\n\n", index + 1));
         }
-        out.push_str(&operation_heading(operation));
+        out.push_str(&operation_heading(&db, operation, grid_check));
         out.push('\n');
         if options.summary {
             continue;
@@ -1055,7 +1061,16 @@ fn candidates(options: &Options) -> Result<String, String> {
             }
         }
     }
-    Ok(out)
+    Ok(without_final_newline(out))
+}
+
+/// The text without the one newline that ends its last line: `main` prints the text with
+/// `println!`, as it does for every other output (`render` returns text in the same form).
+fn without_final_newline(text: String) -> String {
+    match text.strip_suffix('\n') {
+        Some(stripped) => stripped.to_owned(),
+        None => text,
+    }
 }
 
 /// The area of interest of the candidates, as `makeBboxFilter` resolves it with several matches an error.
@@ -1307,7 +1322,23 @@ fn promote(db: &proj_rs::DatabaseContext, crs: &proj_rs::Crs) -> proj_rs::Crs {
     }
 }
 
-fn operation_heading(operation: &proj_rs::CoordinateOperation) -> String {
+/// The grid check of `outputOperationSummary` (projinfo_lib.cpp:945): off when the
+/// environment variable `PROJINFO_NO_GRID_CHECK` is set, else the `--grid-check` policy.
+fn summary_grid_check(options: &Options) -> Option<proj_rs::GridAvailabilityUse> {
+    if std::env::var_os("PROJINFO_NO_GRID_CHECK").is_some() {
+        None
+    } else {
+        Some(options.grid_check.unwrap_or_default())
+    }
+}
+
+/// `outputOperationSummary` (projinfo_lib.cpp:898-962): one candidate on one line. It is
+/// the same line in the summary and in the full listing.
+fn operation_heading(
+    db: &proj_rs::DatabaseContext,
+    operation: &proj_rs::CoordinateOperation,
+    grid_check: Option<proj_rs::GridAvailabilityUse>,
+) -> String {
     let id = operation
         .identifiers()
         .first()
@@ -1330,6 +1361,24 @@ fn operation_heading(operation: &proj_rs::CoordinateOperation) -> String {
     }
     if operation.has_ballpark_transformation() {
         line.push_str(", has ballpark transformation");
+    }
+    if let Some(policy) = grid_check {
+        // `gridsNeeded(dbContext, false)`: a grid counts as available only when its file is
+        // on the search path, so `DiscardIfMissing`, not `KnownAvailable`.
+        let grids = operation
+            .grids_needed(db, proj_rs::GridAvailabilityUse::DiscardIfMissing)
+            .unwrap_or_default();
+        if let Some(missing) = grids.iter().find(|grid| !grid.info.available) {
+            line.push_str(", at least one grid missing");
+            if policy == proj_rs::GridAvailabilityUse::KnownAvailable
+                && !missing.info.package_name.is_empty()
+            {
+                line.push_str(" on the system, but available on CDN");
+            }
+        }
+    }
+    if operation.requires_per_coordinate_input_time() {
+        line.push_str(", time-dependent operation");
     }
     line
 }
