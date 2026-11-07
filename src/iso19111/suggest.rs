@@ -1,17 +1,32 @@
 //! Operation suggested for a coordinate, as `proj_get_suggested_operation`.
 //!
 //! `pj_create_prepared_operations` (`crs_to_crs.cpp`) gives each candidate the
-//! area of use of its operation, in the axis order of the source. A box that
+//! area of use of its operation, in the coordinates of the source. A box that
 //! crosses the antimeridian is two candidates. `pj_get_suggested_operation`
 //! (`trans.cpp`) then takes the first candidate whose box holds the coordinate,
 //! and replaces it by one of lower accuracy, or of the same accuracy and smaller
 //! pseudo area. An offshore area is never taken over a candidate already chosen.
 //!
-//! Only a geographic source is handled. The area boxes are read in degrees, as
-//! PROJ does for the axis units of those CRS.
+//! The kind of the source decides how the boxes and the point are read:
+//! - a geographic source: the boxes are in degrees, the point is in the axis order
+//!   of the source, with the degree-order fallback of `srcIsLonLatDegree`;
+//! - a projected source: the boxes are the longitude and latitude ones reprojected
+//!   into the source's coordinates (`reproject_bbox`, through the operation from the
+//!   geodetic base of the source, `create_operation_to_geog_crs`), and the point is
+//!   tested in them as it is;
+//! - a geocentric source: the boxes are in degrees, and the point is converted to
+//!   longitude and latitude first (`pjSrcGeocentricToLonLat`); a world box holds
+//!   every point.
+//!
+//! The target is not read here. PROJ also drops a candidate whose box cannot be
+//! reprojected into the target (`minxDst <= maxxDst`); this port keeps it.
 
-use super::model::{CoordinateOperation, Crs};
+use super::alternatives::Bounds;
+use super::factory::{geographic_of, DatabaseContext};
+use super::model::{CoordinateOperation, Crs, GeodeticCRS, GeographicCRS};
+use super::select::{geocentric_to_lon_lat, geodetic_to_crs, reference_base, reproject_box};
 use super::FactoryError;
+use crate::engine::{Coord, Operation};
 
 /// Axis order of a geographic source: the first axis is latitude or longitude.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -20,16 +35,24 @@ enum AxisOrder {
     LongitudeFirst,
 }
 
+/// How the source reads the point and the candidate boxes.
+enum SourceKind {
+    /// Geographic: the boxes are in degrees, in the axis order of the source.
+    Geographic(AxisOrder),
+    /// Projected: the boxes are in the source's coordinates, reprojected through this
+    /// operation from the geodetic base of the source (`pjGeogToSrc`, used forward).
+    Projected(Operation),
+    /// Geocentric: the point is converted to longitude and latitude by this operation
+    /// (`pjSrcGeocentricToLonLat`).
+    Geocentric(Operation),
+}
+
 /// One candidate: an operation's box, or one half of a box split at the antimeridian.
 struct Prepared {
     /// Position of the operation in the list the caller passed.
     index: usize,
-    /// Longitude bounds of this piece, in degrees.
-    west: f64,
-    east: f64,
-    /// Latitude bounds in degrees.
-    south: f64,
-    north: f64,
+    /// The box, in the coordinates of the source.
+    bounds: Bounds,
     pseudo_area: f64,
     accuracy: f64,
     offshore: bool,
@@ -37,22 +60,39 @@ struct Prepared {
     priority: bool,
 }
 
-/// Index in `operations` of the operation suggested for the forward coordinate `coord`,
-/// in the axis order of `source`. `None` when no operation covers it.
+/// Index in `operations` of the operation suggested for the forward coordinate `coord`
+/// (`x`, `y`, `z`), in the coordinates of `source`. `None` when no operation covers it.
 pub(super) fn suggested_forward(
     operations: &[CoordinateOperation],
     source: &Crs,
-    coord: (f64, f64),
+    coord: (f64, f64, f64),
 ) -> Result<Option<usize>, FactoryError> {
-    let order = axis_order(source)?;
+    // `proj_get_suggested_operation` returns the unique operation of a list of one, before
+    // any other check (`c_api.cpp`, "always use the unique operation").
     if operations.len() == 1 {
         return Ok(Some(0));
     }
-    let candidates = prepare(operations);
+    let Some(kind) = source_kind(source)? else {
+        // `pj_create_prepared_operations` prepares no candidate: no suggestion.
+        return Ok(None);
+    };
+    let candidates = prepare(operations, &kind);
+    let point = match &kind {
+        SourceKind::Geocentric(to_lon_lat) => to_lon_lat
+            .forward(Coord {
+                x: coord.0,
+                y: coord.1,
+                z: coord.2,
+                t: 0.0,
+            })
+            .ok()
+            .map(|lonlat| (lonlat.x, lonlat.y)),
+        SourceKind::Geographic(_) | SourceKind::Projected(_) => Some((coord.0, coord.1)),
+    };
     let mut best: Option<usize> = None;
     let mut best_accuracy = f64::MAX;
     for (position, candidate) in candidates.iter().enumerate() {
-        if !covers(candidate, coord, order) {
+        if !covers(candidate, point, &kind) {
             continue;
         }
         let replaces = match best {
@@ -76,13 +116,29 @@ pub(super) fn suggested_forward(
     Ok(best.map(|position| candidates[position].index))
 }
 
-/// Axis order of the source. Only a geographic CRS is accepted.
-fn axis_order(source: &Crs) -> Result<AxisOrder, FactoryError> {
-    let Crs::Geographic(geographic) = source else {
-        return Err(FactoryError::Unsupported(
-            "suggested operation needs a geographic source CRS".to_owned(),
-        ));
+/// The kind of the source. `None` when the source has no geodetic base to be read from, or the
+/// operation from that base cannot be built: PROJ then prepares no candidate.
+fn source_kind(source: &Crs) -> Result<Option<SourceKind>, FactoryError> {
+    if let Some(geographic) = geographic_of(source) {
+        return Ok(Some(SourceKind::Geographic(axis_order(geographic)?)));
+    }
+    let db = DatabaseContext::create()?;
+    if let Crs::Geodetic(GeodeticCRS::Geocentric(_)) = source {
+        return Ok(geocentric_to_lon_lat(source, &db)
+            .ok()
+            .map(SourceKind::Geocentric));
+    }
+    let Some(base) = reference_base(source) else {
+        return Ok(None);
     };
+    Ok(geodetic_to_crs(&base, source, &db)
+        .ok()
+        .flatten()
+        .map(SourceKind::Projected))
+}
+
+/// Axis order of a geographic source: its first axis is latitude or longitude.
+fn axis_order(geographic: &GeographicCRS) -> Result<AxisOrder, FactoryError> {
     let axes = geographic.coordinate_system().axes();
     match axes.first().map(|axis| axis.direction()) {
         Some("north" | "south") => Ok(AxisOrder::LatitudeFirst),
@@ -93,38 +149,44 @@ fn axis_order(source: &Crs) -> Result<AxisOrder, FactoryError> {
     }
 }
 
-/// `pj_create_prepared_operations`: one candidate per operation, two when the box
-/// crosses the antimeridian. An operation with no area of use spans the world.
-fn prepare(operations: &[CoordinateOperation]) -> Vec<Prepared> {
+/// `pj_create_prepared_operations`: one candidate per operation, two when the box crosses the
+/// antimeridian. An operation with no area of use spans the world. A piece whose box cannot be
+/// reprojected into a projected source is dropped (`minxSrc <= maxxSrc`).
+fn prepare(operations: &[CoordinateOperation], kind: &SourceKind) -> Vec<Prepared> {
     let mut candidates = Vec::new();
     for (index, operation) in operations.iter().enumerate() {
-        let (area, bounds) = area_of_use(operation);
-        let (west, south, east, north) = bounds;
+        let (area, (west, south, east, north)) = area_of_use(operation);
         let accuracy = operation.accuracy().unwrap_or(-1.0);
-        let name = operation.name();
-        let priority = priority_operation(name);
+        let priority = priority_operation(operation.name());
         let offshore = area.contains("- offshore");
         let unknown_area = area.is_empty() || area == "unknown";
-        let west_rad = west.to_radians();
-        let mut east_rad = east.to_radians();
-        if west_rad > east_rad {
-            east_rad += 2.0 * std::f64::consts::PI;
-        }
-        let pseudo_area =
-            (east_rad - west_rad) * (north.to_radians().sin() - south.to_radians().sin());
         let pieces = if west <= east {
             vec![(west, east)]
         } else {
             vec![(west, 180.0), (-180.0, east)]
         };
         for (piece_west, piece_east) in pieces {
+            let bounds = match kind {
+                SourceKind::Geographic(_) | SourceKind::Geocentric(_) => Some(Bounds {
+                    min_x: piece_west,
+                    min_y: south,
+                    max_x: piece_east,
+                    max_y: north,
+                }),
+                SourceKind::Projected(to_source) => {
+                    reproject_box(Some(to_source), piece_west, south, piece_east, north)
+                }
+            };
+            let Some(bounds) = bounds else {
+                continue;
+            };
+            // The pseudo area of the piece, as `add_coord_op_to_list` integrates it.
+            let w = piece_west.to_radians();
+            let e = piece_east.to_radians();
             candidates.push(Prepared {
                 index,
-                west: piece_west,
-                east: piece_east,
-                south,
-                north,
-                pseudo_area,
+                bounds,
+                pseudo_area: (e - w) * (north.to_radians().sin() - south.to_radians().sin()),
                 accuracy,
                 offshore,
                 unknown_area,
@@ -133,6 +195,42 @@ fn prepare(operations: &[CoordinateOperation]) -> Vec<Prepared> {
         }
     }
     candidates
+}
+
+/// `spatialCriterionOK` of `pj_get_suggested_operation` for one candidate. `point` is the
+/// point in the coordinates of the source, or its longitude and latitude for a geocentric
+/// source (`None` when it cannot be converted).
+fn covers(candidate: &Prepared, point: Option<(f64, f64)>, kind: &SourceKind) -> bool {
+    let bounds = &candidate.bounds;
+    match kind {
+        SourceKind::Projected(_) => point.is_some_and(|(x, y)| inside(bounds, x, y)),
+        SourceKind::Geocentric(_) => {
+            let world = bounds.min_x == -180.0
+                && bounds.min_y == -90.0
+                && bounds.max_x == 180.0
+                && bounds.max_y == 90.0;
+            world || point.is_some_and(|(x, y)| inside(bounds, x, y))
+        }
+        SourceKind::Geographic(order) => {
+            let Some((x, y)) = point else {
+                return false;
+            };
+            let (lat, lon) = match order {
+                AxisOrder::LatitudeFirst => (x, y),
+                AxisOrder::LongitudeFirst => (y, x),
+            };
+            if !(lat >= bounds.min_y && lat <= bounds.max_y) {
+                return false;
+            }
+            let inside_lon = |value: f64| value >= bounds.min_x && value <= bounds.max_x;
+            inside_lon(lon) || inside_lon(normalize_longitude(lon))
+        }
+    }
+}
+
+/// Inclusive test of a point in a box.
+fn inside(bounds: &Bounds, x: f64, y: f64) -> bool {
+    x >= bounds.min_x && x <= bounds.max_x && y >= bounds.min_y && y <= bounds.max_y
 }
 
 /// `isPriorityOp` of `PJCoordOperation`: the operations PROJ prefers at equal accuracy.
@@ -163,20 +261,6 @@ pub(super) fn area_of_use(operation: &CoordinateOperation) -> (String, (f64, f64
         );
     }
     (String::new(), (-180.0, -90.0, 180.0, 90.0))
-}
-
-/// Whether `coord` lies in the candidate box. The longitude is also tried normalised to
-/// [-180, 180], as the `srcIsLonLatDegree` and `srcIsLatLonDegree` branches do.
-fn covers(candidate: &Prepared, coord: (f64, f64), order: AxisOrder) -> bool {
-    let (lat, lon) = match order {
-        AxisOrder::LatitudeFirst => (coord.0, coord.1),
-        AxisOrder::LongitudeFirst => (coord.1, coord.0),
-    };
-    if !(lat >= candidate.south && lat <= candidate.north) {
-        return false;
-    }
-    let inside = |value: f64| value >= candidate.west && value <= candidate.east;
-    inside(lon) || inside(normalize_longitude(lon))
 }
 
 /// `normalizeLongitude` of `trans.cpp`.

@@ -101,8 +101,6 @@ and `PORT-NOTES-tests.md`.
 ## test_c_api.cpp
 
 - `CApi.proj_coordoperation_get_grid_used_fullname_caching`
-- `CApi.proj_create_operations_prime_meridian_non_greenwich`
-- `CApi.proj_get_suggested_operation_with_operations_without_area_of_use`
 - `CApi.proj_context_set_database_path_null`
 - `CApi.proj_context_set_database_path_aux`
 - `CApi.proj_context_set_database_path_error_1`
