@@ -823,6 +823,7 @@ impl Reader<'_> {
             inverted: false,
             source_epoch: None,
             target_epoch: None,
+            ballpark: false,
         })
     }
 
@@ -935,6 +936,7 @@ impl Reader<'_> {
             accuracy_text: None,
             version: None,
             point_motion: false,
+            ballpark: false,
             source_epoch: None,
             target_epoch: None,
             inverted: false,

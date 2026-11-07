@@ -2151,6 +2151,9 @@ pub struct Transformation {
     pub(crate) source_epoch: Option<f64>,
     /// Decimal year of the target coordinate epoch.
     pub(crate) target_epoch: Option<f64>,
+    /// `setHasBallparkTransformation(true)`: the operation is a ballpark whatever its name, such
+    /// as the forced PROJ-based geographic/geocentric conversion of `createOperationsGeodToGeod`.
+    pub(crate) ballpark: bool,
 }
 
 impl Transformation {
@@ -2464,14 +2467,14 @@ impl CoordinateOperation {
         }
     }
 
-    /// PROJ's `hasBallparkTransformation`: a transformation whose name says ballpark,
-    /// or a concatenated operation with such a step.
+    /// PROJ's `hasBallparkTransformation`: a transformation flagged as a ballpark, or whose name
+    /// says ballpark, or a concatenated operation with such a step.
     #[must_use]
     pub fn has_ballpark_transformation(&self) -> bool {
         match self {
             Self::Conversion(_) => false,
             Self::Transformation(operation) => {
-                operation.name().to_ascii_lowercase().contains("ballpark")
+                operation.ballpark || operation.name().to_ascii_lowercase().contains("ballpark")
             }
             Self::Concatenated(operation) => operation
                 .steps
