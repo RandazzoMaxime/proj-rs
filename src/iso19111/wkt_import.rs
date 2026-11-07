@@ -1799,17 +1799,9 @@ impl WktParser {
                 transformation_source.name()
             )),
             method: OperationMethod {
-                name: if values.iter().skip(3).any(|value| *value != 0.0) {
-                    "Position Vector transformation (geog2D domain)".to_owned()
-                } else {
-                    "Geocentric translations (geog2D domain)".to_owned()
-                },
+                name: "Position Vector transformation (geog2D domain)".to_owned(),
                 code_space: "EPSG".to_owned(),
-                code: if values.iter().skip(3).any(|value| *value != 0.0) {
-                    "9606".to_owned()
-                } else {
-                    "9603".to_owned()
-                },
+                code: "9606".to_owned(),
                 parameters: Vec::new(),
             },
             parameters,

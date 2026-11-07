@@ -10,7 +10,6 @@ and `PORT-NOTES-tests.md`.
 - `crs.scope_area_bbox_remark`
 - `crs.VerticalCRS_ensemble_exception_in_create`
 - `crs.boundCRS_crs_link`
-- `crs.boundCRS_identify_db`
 - `crs.crs_createBoundCRSToWGS84IfPossible`
 - `crs.normalizeForVisualization_derivedprojected_operation`
 - `crs.norway_ntm`

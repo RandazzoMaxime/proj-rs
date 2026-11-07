@@ -4,8 +4,7 @@ Branch `unit-fix-identify`, base `unit-core-passing-2` (3ccfd8a). Tests of PROJ 
 `test/unit/test_crs.cpp` that identify a CRS with an authority factory:
 `crs.compoundCRS_identify_db`, `crs.projectedCRS_identify_db`, `crs.boundCRS_identify_db`.
 Expected values come from that file, and each was checked against PROJ 9.9.0
-(`projinfo --identify` on the reference build). This commit is the projected step;
-the bound step follows on the same branch.
+(`projinfo --identify` on the reference build).
 
 ## Function map (PROJ 9.9.0 -> Rust)
 
@@ -14,6 +13,7 @@ the bound step follows on the same branch.
 | `CRS::identify` / `CRS::_identify` (crs.cpp:1224, 1562) | `Crs::identify_with` (src/iso19111/identify.rs) |
 | `CompoundCRS::identify` (crs.cpp:5595) | `CompoundCRS::identify_with` |
 | `ProjectedCRS::identify` (crs.cpp:4858) | `ProjectedCRS::identify_with`, `identify_base`, `identify_utm_zone`, `identify_projected_general`, `add_projected_candidate` |
+| `BoundCRS::_identify` (crs.cpp:6236) | `BoundCRS::identify_with` |
 | `createCompoundCRSFromExisting` (factory.cpp:10490) | `AuthorityFactory::create_compound_crs_from_existing` |
 | `createProjectedCRSFromExisting` (factory.cpp:10149) | `AuthorityFactory::create_projected_crs_from_existing` |
 | `buildSqlLookForAuthNameCode` (factory.cpp:10098) | `auth_name_code_in` |
@@ -64,3 +64,20 @@ Supporting pieces, each because a block of the test needs it:
 
 Test: `tests/unit_crs_identify_projected.rs`, `crs.projectedCRS_identify_db`. The C++ test
 has 37 blocks; the Rust test runs each through `block!` and reports every failing block.
+
+## Commit: bound CRS identification
+
+`BoundCRS::_identify` ported whole (crs.cpp:6236): the hub is EPSG:4326, each identified
+base is bound through the operation the database has from it to EPSG:4326 (the
+`PARTIAL_INTERSECTION` context), matched by PROJ string or by equivalence, with the
+concatenated `longitude rotation + Helmert` case and the `Null geographic offset` case.
+
+Supporting pieces:
+
+- `CoordinateOperation::is_equivalent_to_with`: the non-strict criteria compare a concatenated
+  operation step by step, each step as the operation it runs.
+- A WKT1 `TOWGS84` is a position vector (EPSG:9606) for every value list: PROJ pads the values
+  to seven and `createFromTOWGS84` uses seven values (io.cpp:2486-2505, crs.cpp:5973). The
+  import chose geocentric translations (9603) for zero rotations.
+
+Test: `tests/unit_crs_identify_core.rs`, `crs.boundCRS_identify_db`.
