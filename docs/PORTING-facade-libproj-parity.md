@@ -1,12 +1,11 @@
 # Port: the georust facade follows libproj's `proj_create_crs_to_crs`
 
-Status: **landed, one gap open**. `Proj::new_known_crs`, `Proj::new` of a pair, and
+Status: **landed, no gap open on the table**. `Proj::new_known_crs`, `Proj::new` of a pair, and
 `create_crs_to_crs_from_pj` now choose the candidates and transform as PROJ 9.9.0 does with
 `proj_create_crs_to_crs` (no options, so the default warning policy) and `proj_trans`, with the
 georust axis order. On the 40 pairs of the table below, both grid modes and both directions,
-156 of 160 cells equal the libproj georust path. The other pair (`EPSG:4326+5773` to
-`EPSG:4326+5782`) is a creation error here, listed under open items. The facade has no datum-bridge
-fallback any more: a pair the selection does not write is a creation error.
+160 of 160 cells equal the libproj georust path. The facade has no datum-bridge fallback any
+more: a pair the selection does not write is a creation error.
 
 Reference oracle: a C program (`scratchpad/facade-parity/oracle/georust_oracle.c`) that calls
 `proj_create_crs_to_crs`, `proj_normalize_for_visualization`, `proj_pj_info` and `proj_trans` of
@@ -19,7 +18,7 @@ three calls georust `proj` 0.31 makes. Two data sets: `proj.db` alone with the n
 | PROJ 9.9.0 | Rust |
 |---|---|
 | `proj_create_crs_to_crs`, no options: warning default, `ONLY_BEST` unset (`crs_to_crs.cpp:494-504`, `filemanager.cpp:2027`) | `select::facade_candidates`, the warning policy: the registry sorts `KNOWN_AVAILABLE` (`crs_to_crs.cpp:570-576`) |
-| one candidate, instantiable: returned at once (`crs_to_crs.cpp:617-647`) | `facade_candidates`, first branch; no rerun, and the ballpark is allowed |
+| one candidate whose grids are on disk: returned at once (`crs_to_crs.cpp:617-647`) | `facade_candidates`, first branch; no rerun, and the ballpark is allowed. The grids are read from disk, as the cs2cs path reads them (`select_alternatives`) |
 | the candidates prepared as `pj_create_prepared_operations` (`crs_to_crs.cpp:362-466`, `add_coord_op_to_list` 103-161): source and target boxes | `Preparer::prepare` in `select.rs`, one call per candidate, so each keeps its operation |
 | the rerun with `DISCARD_OPERATION_IF_MISSING_GRID` when no candidate is both instantiable and free of a ballpark step; the first list's non-ballpark candidates, then the rerun's (`crs_to_crs.cpp:668-751`) | `facade_candidates`, the `discarded` block |
 | more than one candidate: `alternativeCoordinateOperations`, chosen per point (`crs_to_crs.cpp:776-795`, `trans.cpp:233-346`) | `Route::Alternatives` in `proj_iso.rs`, `Alternatives::transform` in `alternatives.rs` |
@@ -52,6 +51,14 @@ Not an expectation change, a fix with its own test: `tests/facade_libproj_parity
 `polar_stereographic_3413_keeps_easting_first` (`EPSG:4326` to `EPSG:3413` at `(-45, 75)`:
 `(0, -1633879.497470785)`; the facade gave `(-1633879.497, 0)`), and `ups_north_32661_is_switched_for_visualization`.
 
+Not an expectation change, a fix with its own test (commit `66212f9`): `EPSG:4326+5773` to
+`EPSG:4326+5782` was a creation error. Its one candidate needs a grid that is not on disk, and
+`facade_candidates` returned that candidate at once, because the KNOWN_AVAILABLE sort marks it
+`grids_available`. The discard rerun never ran. The check now reads the grids on disk, as the
+cs2cs path does, and the rerun gives the null offset (`proj=noop ellps=GRS80`). The oracle gives
+the same definition and the identity in both modes. Test:
+`tests/facade_libproj_parity.rs` `compound_pair_with_a_missing_grid_is_the_identity_as_libproj`.
+
 New characterization tests, values from the oracle: `tests/facade_libproj_parity.rs`
 `wgs84_to_nad27_without_grid_chooses_per_point`, `nad27_to_wgs84_inverse_without_grid_chooses_per_point`,
 `a_ballpark_only_pair_is_a_transformation` (Xian 1980 is a zero offset; KKJ `EPSG:2393`);
@@ -62,7 +69,7 @@ NADCON grid that covers each point, with the test grids on the search path).
 
 Facade against the georust path of PROJ 9.9.0, 40 pairs with 1 to 6 points each (points in the
 georust order: longitude then latitude, or easting then northing). `equal` is a difference below
-1e-6 (metres or degrees; the largest is 7e-10 on the projected pairs, the rounding of the 12
+1e-6 (metres or degrees; the largest is 1.9e-09 on the projected pairs, the rounding of the 12
 printed decimals). The inverse rows take the oracle's forward output as input, and compare the
 inverse of both.
 
@@ -102,16 +109,16 @@ inverse of both.
 | ft-to-m | equal | equal | equal | equal |
 | compound-4326-to-3855 | equal | equal | equal | equal |
 | compound-3855-to-4326 | equal | equal | equal | equal |
-| compound-5773-5782 | creation differs | creation differs | creation differs | creation differs |
+| compound-5773-5782 | equal | equal | equal | equal |
 | wgs84-egm96-compound | equal | equal | equal | equal |
 | proj-nad27-wgs84-string | equal | equal | equal | equal |
 | proj-utm-string | equal | equal | equal | equal |
 | ballpark-only | equal | equal | equal | equal |
 | oblique-merc-nad83 | equal | equal | equal | equal |
 
-Summary: 156 of 160 cells equal (the largest difference among them is 1.9e-09). The
-4 differing cells are one pair (`compound-5773-5782`), in both modes and both directions, all
-of them a creation error on our side.
+Summary: 160 of 160 cells equal (the largest difference is 1.9e-09). No cell differs: the
+pair `compound-5773-5782`, which was a creation error before commit `66212f9`, is equal in
+both modes and both directions.
 
 The datum bridge of the former facade (`Body::Between`, `Crs::datum_bridge`, the Helmert selection
 of `crs.rs`) is removed: it was the path for a pair the selection did not write. The one pair that
@@ -121,29 +128,22 @@ its definition (`crs::check_crs`), not as a CRS object.
 
 ## Open items
 
-1. **The factory's discard rerun for a compound pair (blocks the missing-grid creation).** When the
-   only candidate of a pair needs a grid that is not on disk, PROJ's warning policy reruns the
-   search without the grid operations. For `EPSG:4326+5773` to `EPSG:4326+5782` the rerun list
-   holds the ballpark vertical transformation (`projinfo --grid-check discard_missing`:
-   `Transformation from EGM96 height to Alicante height (ballpark vertical transformation)`).
-   Our rerun returns no candidate for this pair (the facade sees the one missing-grid candidate
-   alone), so the facade cannot build PROJ's list, and a missing-grid single candidate keeps the
-   creation error. This is the factory's work (candidates, lot `#139`), not the facade's.
-   Trying the missing-grid route (`Route::Missing`, every point fails) before the optional-grid
-   rule regressed `test_cs2cs_various.yaml` #129 (`+geoidgrids=@i_dont_exist.tif` to `EPSG:4979`,
-   expected `49dN 2dE 0.000`): the optional grid counted as missing printed `* * inf`. The
-   optional-grid rule fixed that case, and the route was then not kept, for the reason above.
-2. **`EPSG:4326+5773` to `EPSG:4326+5782`.** libproj creates it: `def()` is `proj=noop ellps=GRS80`,
-   and the points are the identity (oracle, both modes and both directions). The facade refuses it
-   at creation, because its only candidate needs a grid. Same cause as 1.
+1. **A single missing-grid candidate whose rerun finds nothing stays a creation error.** When the
+   facade's only candidate needs a grid that is not on disk, `facade_candidates` reruns the search
+   without the grid operations (`crs_to_crs.cpp:668-735`). If the rerun finds nothing, the first list
+   stands (`crs_to_crs.cpp:733-751`), and the pair is refused at creation. No pair of the table is in
+   that case now. Pairs outside the table were not measured.
+2. **`EPSG:4326+5773` to `EPSG:4326+5782`.** Resolved in `66212f9`: the single-candidate check read
+   the grids from the sort's `grids_available` flag, not from disk, so the rerun never ran. See
+   "Changes of behaviour".
 3. **`Proj::def` after a transformation.** libproj's `proj_pj_info` reports the candidate that the
    last `proj_trans` used (`iCurCoordOp`, `info.cpp:168-171`). The facade reports the list before
    any point. Not in any test of the facade.
-4. **The inverse of a single missing-grid candidate.** Not reached: the same creation error as 1.
-5. **`cs2cs` path (1) is not this lot.** `select_alternatives` (`select.rs`, used by `cs2cs`)
-   returns a single missing-grid candidate at once (`op_count == 1`), where `proj_create_crs_to_crs`
-   reruns the search for it (`crs_to_crs.cpp:648-651`). `facade_candidates` does the rerun. The
-   `cs2cs` owner decides whether `cs2cs` follows; the facade and `cs2cs` differ for such a pair today.
+4. **The inverse of a single missing-grid candidate.** Resolved with item 2: the pair is the identity
+   in both directions, in both modes (table).
+5. **`cs2cs` path (1).** `select_alternatives` returned a single missing-grid candidate at once, where
+   `proj_create_crs_to_crs` reruns the search for it (`crs_to_crs.cpp:648-651`). The Slovenia lot
+   (`4964465`) makes the rerun, and the facade has used the same rule since `66212f9`.
 6. **The PROJJSON reader accepts a projected CRS without `coordinate_system`.** libproj refuses it.
    The import is outside this lot (`src/iso19111/json_read.rs`); the facade test now carries the
    axes, as libproj requires.
@@ -157,7 +157,8 @@ its definition (`crs::check_crs`), not as a CRS object.
 `tests/facade_libproj_parity.rs`: `polar_stereographic_3413_keeps_easting_first`,
 `ups_north_32661_is_switched_for_visualization`, `wgs84_to_nad27_without_grid_chooses_per_point`,
 `nad27_to_wgs84_inverse_without_grid_chooses_per_point`, `a_ballpark_only_pair_is_a_transformation`,
-`an_optional_missing_geoid_grid_is_an_identity_step`. `tests/facade_libproj_grids.rs`:
+`an_optional_missing_geoid_grid_is_an_identity_step`, `compound_pair_with_a_missing_grid_is_the_identity_as_libproj`.
+`tests/facade_libproj_grids.rs`:
 `nad27_to_nad83_takes_the_grid_that_covers_each_point`. Expected values: the oracle, not the code.
 
 ## Commands
@@ -184,6 +185,7 @@ PATH=<oracle-bin>:$PATH PROJ_DATA=<oracle-db> PROJ_CS2CS_REQUIRED=1 \
     PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY=YES cargo test --all-features --no-fail-fast
 ```
 
-Totals, the full suite on `fa77029` (the code is the same as the final commit of this lot; the only
-later change is this sheet): 152 test binaries, 1595 passed, 0 failed, 34 ignored, exit 0.
+Totals, the full suite on `66212f9` (the code of this lot; the only later change is this sheet), run
+with the PROJ 9.9.0 `cs2cs` on the PATH and `PROJ_CS2CS_REQUIRED=1`: 155 test binaries, 1612 passed,
+0 failed, 34 ignored, exit 0. `georust_parity` 25 of 25, `cli_yaml` passes with 0 cs2cs cases open.
 `cargo fmt --check` and `cargo clippy --all-targets --all-features -- -D warnings` pass.
