@@ -121,20 +121,21 @@ its definition (`crs::check_crs`), not as a CRS object.
 
 ## Open items
 
-1. **The factory's discard rerun for compound pairs (blocks the missing-grid creation).** When the
+1. **The factory's discard rerun for a compound pair (blocks the missing-grid creation).** When the
    only candidate of a pair needs a grid that is not on disk, PROJ's warning policy reruns the
-   search without the grid operations, and the rerun list holds a ballpark vertical or null
-   candidate. `projinfo --grid-check discard_missing` shows it for `EPSG:4326+5773` to
-   `EPSG:4326+5782` (`Transformation from EGM96 height to Alicante height (ballpark vertical
-   transformation)`). Our factory returns no such rerun candidate for this pair, so the facade
-   cannot build PROJ's list. The consequence, with the facade's missing-grid route tried and
-   reverted: `cs2cs` case `test_cs2cs_various.yaml` `EPSG:4326+3855` to `EPSG:4979` (grid
-   missing, expected `49dN 2dE 0.000`) printed `* * inf`. Until the factory gives PROJ's rerun
-   list, a missing-grid single candidate keeps the creation error. This is the factory's work
-   (candidates, the `#139` lot), not the facade's.
-2. **`EPSG:4326+5773` to `EPSG:4326+5782`.** libproj creates it (the null offset and the ballpark,
-   `proj=noop` for `def()`, identity values). The facade refuses it at creation, because its only
-   candidate needs a grid. Same cause as 1.
+   search without the grid operations. For `EPSG:4326+5773` to `EPSG:4326+5782` the rerun list
+   holds the ballpark vertical transformation (`projinfo --grid-check discard_missing`:
+   `Transformation from EGM96 height to Alicante height (ballpark vertical transformation)`).
+   Our rerun returns no candidate for this pair (the facade sees the one missing-grid candidate
+   alone), so the facade cannot build PROJ's list, and a missing-grid single candidate keeps the
+   creation error. This is the factory's work (candidates, lot `#139`), not the facade's.
+   Trying the missing-grid route (`Route::Missing`, every point fails) before the optional-grid
+   rule regressed `test_cs2cs_various.yaml` #129 (`+geoidgrids=@i_dont_exist.tif` to `EPSG:4979`,
+   expected `49dN 2dE 0.000`): the optional grid counted as missing printed `* * inf`. The
+   optional-grid rule fixed that case, and the route was then not kept, for the reason above.
+2. **`EPSG:4326+5773` to `EPSG:4326+5782`.** libproj creates it: `def()` is `proj=noop ellps=GRS80`,
+   and the points are the identity (oracle, both modes and both directions). The facade refuses it
+   at creation, because its only candidate needs a grid. Same cause as 1.
 3. **`Proj::def` after a transformation.** libproj's `proj_pj_info` reports the candidate that the
    last `proj_trans` used (`iCurCoordOp`, `info.cpp:168-171`). The facade reports the list before
    any point. Not in any test of the facade.
@@ -182,3 +183,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 PATH=<oracle-bin>:$PATH PROJ_DATA=<oracle-db> PROJ_CS2CS_REQUIRED=1 \
     PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY=YES cargo test --all-features --no-fail-fast
 ```
+
+Totals, the full suite on `fa77029` (the code is the same as the final commit of this lot; the only
+later change is this sheet): 152 test binaries, 1595 passed, 0 failed, 34 ignored, exit 0.
+`cargo fmt --check` and `cargo clippy --all-targets --all-features -- -D warnings` pass.
