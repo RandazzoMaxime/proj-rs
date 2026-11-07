@@ -6,7 +6,7 @@ The class comes from the test name alone, so check it when you port a test.
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
 | `core` | 57 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
-| `niche` | 16 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
+| `niche` | 14 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 41 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
 ## core (57)
@@ -86,13 +86,13 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.compoundCRS_to_proj_string_with_non_metre_height`
 - `operation.compoundCRS_to_PROJJSON_with_non_metre_height`
 
-## niche (16)
+## niche (14)
 
 ### test_crs.cpp (1)
 
 - `crs.normalizeForVisualization_derivedprojected_operation`
 
-### test_operationfactory.cpp (15)
+### test_operationfactory.cpp (13)
 
 - `operation.boundCRS_to_derived_geog_with_transformation_with_source_crs_being_base_crs_of_source_crs`
 - `operation.compoundCRS_with_derivedVerticalCRS_ellipsoidal_height_to_geog`
@@ -107,8 +107,6 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.createOperation_ellipsoidal_ocentric_to_projected_of_ellipsoidal_ographic_west`
 - `operation.createOperation_derived_projected_crs`
 - `operation.geogCRS_to_compoundCRS_with_boundVerticalCRS_and_derivedProjected`
-- `operation.createOperation_compound_to_compound_with_point_motion_operation`
-- `operation.createOperation_compound_to_compound_with_point_motion_operation_special_case_CGVD2013a`
 
 ## shape (41)
 

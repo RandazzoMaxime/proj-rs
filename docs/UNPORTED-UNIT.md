@@ -107,8 +107,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.createOperation_ellipsoidal_ocentric_to_projected_of_ellipsoidal_ographic_west`
 - `operation.createOperation_derived_projected_crs`
 - `operation.geogCRS_to_compoundCRS_with_boundVerticalCRS_and_derivedProjected`
-- `operation.createOperation_compound_to_compound_with_point_motion_operation`
-- `operation.createOperation_compound_to_compound_with_point_motion_operation_special_case_CGVD2013a`
 
 ## test_c_api.cpp
 
