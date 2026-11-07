@@ -8132,7 +8132,25 @@ fn pivot_endpoints(steps: &mut [CoordinateOperation], source: &Crs, target: &Crs
             }
         };
         super::bound_ops::set_endpoints(step, &new_source, &new_target);
+        if index == 0 {
+            set_leading_source(step, source);
+        }
     }
+}
+
+/// The source of the first step of a concatenated operation, recursively: the request source
+/// goes down to the leading leaf, so that its unit conversion is written for the request's
+/// dimension.
+fn set_leading_source(operation: &mut CoordinateOperation, source: &Crs) {
+    if let CoordinateOperation::Concatenated(concatenated) = operation {
+        if let Some(first) = concatenated.steps.first_mut() {
+            set_leading_source(&mut first.operation, source);
+        }
+    }
+    let Some(target) = super::bound_ops::operation_target(operation).cloned() else {
+        return;
+    };
+    super::bound_ops::set_endpoints(operation, source, &target);
 }
 
 /// `addModifiedIdentifier` with `derivedFrom` (coordinateoperationfactory.cpp:3297-3305): an
