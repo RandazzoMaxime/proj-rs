@@ -539,6 +539,34 @@ pub(super) fn compound_to_compound(
                 }
             }
         }
+
+        // `createOperationsCompoundToCompound`, coordinateoperationfactory.cpp:7769-7799: a single
+        // ballpark vertical change between two projected horizontal parts (`EPSG:3912+EPSG:5779 to
+        // EPSG:3794+EPSG:8690`). The registry operations of the horizontal pair are kept, each with
+        // the vertical change, which writes nothing.
+        if vertical_transforms.len() == 1
+            && vertical_transform.has_ballpark_transformation()
+            && matches!(src_components[0], Crs::Projected(_))
+            && matches!(dst_components[0], Crs::Projected(_))
+            && vertical_transform.name()
+                == format!(
+                    "Transformation from {} to {} (ballpark vertical transformation)",
+                    src_components[1].name(),
+                    dst_components[1].name()
+                )
+        {
+            for horizontal in
+                factory.registry_operations(&src_components[0], &dst_components[0], context)?
+            {
+                res.push(horizontal_null_vertical(
+                    source,
+                    target,
+                    &horizontal,
+                    vertical_transform,
+                    Crs::Geographic(dst_geog.clone()),
+                ));
+            }
+        }
     }
 
     for interpolation in &vector_interpolation {
@@ -949,6 +977,40 @@ fn horizontal_only(
         .iter()
         .map(|operation| retarget(operation, source, target))
         .collect())
+}
+
+/// `createHorizNullVerticalPROJBased` (coordinateoperationfactory.cpp:2884-2914): the horizontal
+/// operation alone, named `H + V`, with the extent of both steps and no accuracy. A ballpark
+/// vertical step makes the accuracy unknown.
+fn horizontal_null_vertical(
+    source: &Crs,
+    target: &Crs,
+    horizontal: &CoordinateOperation,
+    vertical: &CoordinateOperation,
+    interpolation: Crs,
+) -> CoordinateOperation {
+    let steps = vec![horizontal.clone(), vertical.clone()];
+    let mut operation = proj_based_operation(
+        format!("{} + {}", horizontal.name(), vertical.name()),
+        source,
+        target,
+        steps.clone(),
+        None,
+        ProjBased {
+            kind: ProjBasedKind::HorizNullVertical,
+            horizontal: horizontal.clone(),
+            vertical: vertical.clone(),
+            last: None,
+            interpolation,
+            inverted: false,
+        },
+    );
+    if let Some(Some(domain)) = super::derived::joint_extent(&steps) {
+        if let CoordinateOperation::Concatenated(concatenated) = &mut operation {
+            concatenated.identified.domains = vec![domain];
+        }
+    }
+    operation
 }
 
 /// `createHorizVerticalPROJBased`: a null horizontal part leaves the vertical

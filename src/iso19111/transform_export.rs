@@ -2543,6 +2543,9 @@ fn export_proj_based(
             formatter.pop_omit_z_unit_conversion();
             Ok(())
         }
+        ProjBasedKind::HorizNullVertical => {
+            export_operation_steps(&proj_based.horizontal, formatter)
+        }
         ProjBasedKind::HorizVerticalHoriz => {
             let save_horizontal = saves_horizontal_coordinates(proj_based);
             if save_horizontal {

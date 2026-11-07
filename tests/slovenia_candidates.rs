@@ -15,6 +15,15 @@ use proj_rs::iso19111::{
 /// The candidates of `projinfo -s source -t target --summary --spatial-test intersects` (the
 /// projinfo default grid policy, `UseForSorting`).
 fn candidates(source: &str, target: &str) -> Vec<CoordinateOperation> {
+    candidates_with(source, target, GridAvailabilityUse::UseForSorting)
+}
+
+/// The same with a grid policy (`--grid-check discard_missing` is `DiscardIfMissing`).
+fn candidates_with(
+    source: &str,
+    target: &str,
+    grids: GridAvailabilityUse,
+) -> Vec<CoordinateOperation> {
     // The database only: the oracle runs on a copy with no grid file, and `data/tests` holds the
     // NADCON grid (`conus`) that would make the NAD27 legs available.
     std::env::set_var("PROJ_DATA", concat!(env!("CARGO_MANIFEST_DIR"), "/data"));
@@ -24,7 +33,7 @@ fn candidates(source: &str, target: &str) -> Vec<CoordinateOperation> {
     let target = create_from_user_input(target, &db).expect("target");
     let mut context = CoordinateOperationContext::create(&db, "");
     context.set_spatial_criterion(SpatialCriterion::PartialIntersection);
-    context.set_grid_availability_use(GridAvailabilityUse::UseForSorting);
+    context.set_grid_availability_use(grids);
     CoordinateOperationFactory::create()
         .create_operations(&source, &target, &context)
         .expect("operations")
@@ -112,6 +121,62 @@ fn ed50_utm31_to_etrs89_utm31_has_the_eleven_candidates_of_projinfo() {
         "Inverse of UTM zone 31N + ED50 to ETRS89 (16) + UTM zone 31N",
         "Inverse of UTM zone 31N + ED50 to ETRS89 (17) + UTM zone 31N",
         "Inverse of UTM zone 31N + Ballpark geographic offset from ED50 to ETRS89 + UTM zone 31N",
+        ]
+    );
+}
+
+/// `projinfo -s EPSG:3912+EPSG:5779 -t EPSG:3794+EPSG:8690 --summary --spatial-test intersects
+/// --grid-check discard_missing` (PROJ 9.9.0, no grid file): 37 candidates. The 24 horizontal
+/// registry operations of `EPSG:3912 -> EPSG:3794` each combined with the ballpark vertical change
+/// (`createOperationsCompoundToCompound`, `coordinateoperationfactory.cpp:7769-7799`), after the
+/// 13 that go through the base geographic CRS.
+#[test]
+fn compound_pair_with_a_ballpark_vertical_has_the_thirty_seven_candidates_of_projinfo() {
+    let operations = candidates_with(
+        "EPSG:3912+EPSG:5779",
+        "EPSG:3794+EPSG:8690",
+        GridAvailabilityUse::DiscardIfMissing,
+    );
+    assert_eq!(
+        names(&operations),
+        [
+        "Inverse of Slovene National Grid + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation) + Ballpark geographic offset from MGI 1901 to ETRS89-SVN [D96] + Slovene National Grid",
+        "Inverse of Slovene National Grid + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation) + MGI 1901 to ETRS89-SVN [D96] (1) + Slovene National Grid",
+        "Inverse of Slovene National Grid + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation) + MGI 1901 to ETRS89-SVN [D96] (12) + Slovene National Grid",
+        "Inverse of Slovene National Grid + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation) + MGI 1901 to ETRS89-SVN [D96] (3) + Slovene National Grid",
+        "Inverse of Slovene National Grid + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation) + MGI 1901 to ETRS89-SVN [D96] (2) + Slovene National Grid",
+        "Inverse of Slovene National Grid + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation) + MGI 1901 to ETRS89-SVN [D96] (7) + Slovene National Grid",
+        "Inverse of Slovene National Grid + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation) + MGI 1901 to ETRS89-SVN [D96] (4) + Slovene National Grid",
+        "Inverse of Slovene National Grid + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation) + MGI 1901 to ETRS89-SVN [D96] (10) + Slovene National Grid",
+        "Inverse of Slovene National Grid + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation) + MGI 1901 to ETRS89-SVN [D96] (9) + Slovene National Grid",
+        "Inverse of Slovene National Grid + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation) + MGI 1901 to ETRS89-SVN [D96] (6) + Slovene National Grid",
+        "Inverse of Slovene National Grid + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation) + MGI 1901 to ETRS89-SVN [D96] (11) + Slovene National Grid",
+        "Inverse of Slovene National Grid + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation) + MGI 1901 to ETRS89-SVN [D96] (5) + Slovene National Grid",
+        "Inverse of Slovene National Grid + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation) + MGI 1901 to ETRS89-SVN [D96] (8) + Slovene National Grid",
+        "D48/GK to D96/TM (10) + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation)",
+        "D48/GK to D96/TM (2) + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation)",
+        "D48/GK to D96/TM (24) + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation)",
+        "D48/GK to D96/TM (22) + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation)",
+        "D48/GK to D96/TM (20) + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation)",
+        "D48/GK to D96/TM (4) + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation)",
+        "D48/GK to D96/TM (8) + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation)",
+        "D48/GK to D96/TM (5) + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation)",
+        "D48/GK to D96/TM (7) + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation)",
+        "D48/GK to D96/TM (21) + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation)",
+        "D48/GK to D96/TM (23) + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation)",
+        "D48/GK to D96/TM (6) + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation)",
+        "D48/GK to D96/TM (15) + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation)",
+        "D48/GK to D96/TM (1) + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation)",
+        "D48/GK to D96/TM (12) + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation)",
+        "D48/GK to D96/TM (9) + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation)",
+        "D48/GK to D96/TM (3) + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation)",
+        "D48/GK to D96/TM (13) + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation)",
+        "D48/GK to D96/TM (11) + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation)",
+        "D48/GK to D96/TM (19) + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation)",
+        "D48/GK to D96/TM (18) + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation)",
+        "D48/GK to D96/TM (16) + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation)",
+        "D48/GK to D96/TM (17) + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation)",
+        "D48/GK to D96/TM (14) + Transformation from SVS2000 height to SVS2010 height (ballpark vertical transformation)",
         ]
     );
 }

@@ -5230,6 +5230,37 @@ impl CoordinateOperationFactory {
         super::suggest::suggested_forward(operations, source, coord)
     }
 
+    /// The registry operations of a pair, and nothing else: PROJ's `createOperationsFromDatabase`
+    /// when it is called directly, as `createOperationsCompoundToCompound` does for the horizontal
+    /// parts (`coordinateoperationfactory.cpp:7790-7794`). No derived or datum branch runs.
+    pub(super) fn registry_operations(
+        &self,
+        source: &Crs,
+        target: &Crs,
+        context: &CoordinateOperationContext,
+    ) -> Result<Vec<CoordinateOperation>, FactoryError> {
+        if context.registry != RegistryUse::Database {
+            return Ok(Vec::new());
+        }
+        let (Some(source_id), Some(target_id)) = (
+            registry_identity(source, context),
+            registry_identity(target, context),
+        ) else {
+            return Ok(Vec::new());
+        };
+        let (source_extent, target_extent) = crs_extents_of(context, source, target);
+        let boxes = (
+            source_extent.as_ref().and_then(ObjectDomain::bounding_box),
+            target_extent.as_ref().and_then(ObjectDomain::bounding_box),
+        );
+        direct_registry_operations(
+            context,
+            (source_id.0.as_str(), source_id.1.as_str()),
+            (target_id.0.as_str(), target_id.1.as_str()),
+            boxes,
+        )
+    }
+
     /// PROJ's private `createOperations`: the candidates before the area, spatial, and
     /// accuracy filters. Only [`Self::create_operations`] applies them, once, so that the
     /// operations a derived CRS chains are not filtered twice.
