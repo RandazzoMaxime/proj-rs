@@ -64,3 +64,47 @@ against PROJ 9.9.0: `NZGD2000 -> ITRF96`, `ITRF96 -> NZGD2000`, `NZGD2000 -> ITR
 | #55 | ITRF2005 | `z` steps only | identical to PROJ 9.9.0, closed |
 | #56 | ITRF2008 | `z` steps only | identical to PROJ 9.9.0, closed |
 | #57 | ITRF2014 | `z` steps only | identical to PROJ 9.9.0, closed |
+
+## Follow-up: two regressions of commit 4 (branch `lot-projinfo-nz-defmodel-6`)
+
+Commit 4 returns a single-step pivot as is instead of a concatenation of one step. Two unit cases relied on that
+wrapper and failed from `443dc2f`; their expected values are PROJ 9.9.0's (`test_c_api.cpp`,
+`test_operationfactory.cpp`), confirmed with the reference `projinfo` and a traced build (`PROJ_DEBUG=3`).
+
+7. `iso19111: the vertical transformations of a compound stop at the hub` (`compound.rs`, `bound_ops.rs`,
+   `factory.rs`). Case: `CApi.proj_create_crs_to_crs_from_custom_compound_crs_with_NAD83_2011_and_geoidgrid_ref_
+   against_WGS84_to_WGS84_G1762`, EPSG:6340 + a vertical CRS bound to EPSG:4979 (`egm96_15.gtx`) to EPSG:7665.
+   - PROJ: `createOperationsCompoundToGeog` computes `verticalTransforms` under `SetSkipHorizontalTransform`
+     (coordinateoperationfactory.cpp:6745-6784). With `skipHorizontalTransformation`,
+     `createOperationsBoundToGeog` returns for a bound vertical CRS only the operations to its hub, plus a change
+     of vertical unit when the height axes differ (5856-5914). The vertical transform is `unknown to WGS 84
+     ellipsoidal height`, its interpolation CRS WGS 84, and `createHorizVerticalHorizPROJBased` chains
+     `NAD83(2011) to WGS 84 (1)`, the geoid grid and `WGS 84 to WGS 84 (G1762)` (6936-7140).
+   - Port before: `bound_to_geog` always went on from the hub to the target. The vertical operation was
+     `unknown to WGS 84 ellipsoidal height + WGS 84 to WGS 84 (G1762)`. Before commit 4 the second step was a
+     one-step concatenation, which `interpolation_geographic` (`getInterpolationGeogCRS`) does not count; after it,
+     a second transformation, so no interpolation CRS was found and `bound_compound_to_geog3d` fell back to the
+     horizontal operation to the target: the time-dependent `NAD83(2011) -> ITRF2008 -> WGS 84 (G1762)` pivot,
+     without the geoid grid.
+   - Port now: the flag `GUARD_SKIP_HORIZONTAL` of the context is set where PROJ sets it (`compound_vertical_pass`,
+     `bound_compound_to_geog3d`) and read in `bound_to_geog` (`skip_horizontal_transformation`). Both candidates
+     have PROJ's pipelines and extents.
+   - Remaining difference, not compared by the yaml or the unit case: the name of candidate 1 is `Inverse of UTM
+     zone 11N + NAD83(2011) to WGS 84 (1) + unknown to WGS 84 ellipsoidal height + WGS 84 to WGS 84 (G1762)`;
+     PROJ writes `Inverse of UTM zone 11N + unknown to WGS 84 ellipsoidal height using NAD83(2011) to WGS 84 (1)`.
+     PROJ first splits a derived horizontal component into its base (`NAD83(2011) + VerticalDummyCrs`,
+     6474-6510) and names the inner operation with `using` because the inverse of `WGS 84 to WGS 84 (G1762)` is
+     equivalent to `NAD83(2011) to WGS 84 (1)` (2821-2839). The port does not split a derived component for a
+     bound vertical part.
+8. `projinfo: a 3D pivot rebuilds a registered concatenated operation` (`factory.rs`,
+   `promote_pivot_operation_to_3d`). Case: `operation.geogCRS_promoted_to_3D_to_geogCRS_3D_context`, EPSG:4269
+   promoted to 3D to EPSG:6319 and back.
+   - PROJ: `createTransformations` with `sourceAndTargetAre3D` rebuilds a concatenated second step with
+     `createComputeMetadata` from its steps promoted to 3D (3318-3349): computed name, no identifier, summed
+     accuracy. The `DERIVED_FROM` marking of a null leg (3290-3317) is done before and dropped by the rebuild.
+   - Port before: each step's endpoints were promoted and the registered operation kept. With the null legs
+     dropped by commit 4, `PROJ:NAD83_TO_NAD83_2011_CONUS` came out as `NAD83 to NAD83(2011) (NADCON5, CONUS)`,
+     0.1 m, first. PROJ lists `NAD83 to NAD83(HARN) (47) + ... + NAD83(NSRS2007) to NAD83(2011) (1)`, 0.2 m.
+   - Port now: the same five candidates as PROJ, in its order, with its names, identifiers and accuracies.
+
+`test_projinfo.yaml` `#52` to `#57` stay closed; `cli_yaml` leaves `docs/UNPORTED-CLI.md` unchanged.
