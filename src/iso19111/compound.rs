@@ -14,7 +14,7 @@
 
 use super::bound::extract_geographic;
 use super::bound_ops::{operation_source, operation_target};
-use super::buildop::OpProps;
+use super::buildop::{concatenation_interpolation, interpolation_crs_of, OpProps};
 use super::derived::joint_extent;
 use super::equiv::{geodetic_frame, same_geodetic_datum, Equivalence};
 use super::factory::{
@@ -478,7 +478,7 @@ pub(super) fn compound_to_compound(
     let mut vector_interpolation: Vec<Crs> = Vec::new();
     for vertical_transform in &vertical_transforms {
         let mut interpolation = Crs::Geographic(src_geog.clone());
-        if let Some(interpolation_crs) = interpolation_of(vertical_transform) {
+        if let Some(interpolation_crs) = interpolation_crs_of(vertical_transform) {
             if !interpolation_names
                 .iter()
                 .any(|name| name == interpolation_crs.name())
@@ -648,15 +648,6 @@ fn two_steps(
     }
 }
 
-/// `CoordinateOperation::interpolationCRS`: set on a single operation only.
-fn interpolation_of(operation: &CoordinateOperation) -> Option<&Crs> {
-    match operation {
-        CoordinateOperation::Conversion(conversion) => conversion.interpolation_crs(),
-        CoordinateOperation::Transformation(transformation) => transformation.interpolation_crs(),
-        CoordinateOperation::Concatenated(_) => None,
-    }
-}
-
 fn is_ballpark_vertical(operation: &CoordinateOperation) -> bool {
     operation.name().contains(BALLPARK_VERTICAL_TRANSFORMATION)
 }
@@ -734,6 +725,7 @@ fn compute_metadata(
         .map(Box::new);
     let mut identified = Identified::named(name);
     identified.domains = extent.into_iter().collect();
+    let interpolation = concatenation_interpolation(&steps).map(Box::new);
     Some(CoordinateOperation::Concatenated(ConcatenatedOperation {
         identified,
         steps: steps
@@ -751,6 +743,7 @@ fn compute_metadata(
         source_epoch: None,
         target_epoch: None,
         proj_based: None,
+        interpolation,
     }))
 }
 
@@ -1020,6 +1013,8 @@ fn combine(
     if horizontal_is_null {
         return retarget(vertical, source, target);
     }
+    let interpolation =
+        concatenation_interpolation(&[horizontal.clone(), vertical.clone()]).map(Box::new);
     CoordinateOperation::Concatenated(ConcatenatedOperation {
         identified: Identified::named(format!("{} + {}", horizontal.name(), vertical.name())),
         steps: vec![
@@ -1040,6 +1035,7 @@ fn combine(
         source_epoch: None,
         target_epoch: None,
         proj_based: None,
+        interpolation,
     })
 }
 
@@ -1147,6 +1143,7 @@ fn chain(
             identified.domains = vec![domain];
         }
     }
+    let interpolation = concatenation_interpolation(&[first.clone(), second.clone()]).map(Box::new);
     CoordinateOperation::Concatenated(ConcatenatedOperation {
         identified,
         steps: vec![
@@ -1167,6 +1164,7 @@ fn chain(
         source_epoch: None,
         target_epoch: None,
         proj_based: None,
+        interpolation,
     })
 }
 
@@ -2234,6 +2232,7 @@ fn proj_based_operation(
         source_epoch: None,
         target_epoch: None,
         proj_based: Some(Box::new(proj_based)),
+        interpolation: None,
     })
 }
 

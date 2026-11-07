@@ -92,6 +92,13 @@ fn concatenated_of(
         }
         other => (other.accuracy(), false),
     };
+    let interpolation = super::buildop::concatenation_interpolation(
+        &steps
+            .iter()
+            .map(|step| step.operation.clone())
+            .collect::<Vec<_>>(),
+    )
+    .map(Box::new);
     ConcatenatedOperation {
         identified,
         steps,
@@ -104,6 +111,7 @@ fn concatenated_of(
         proj_based: None,
         source_epoch: None,
         target_epoch: None,
+        interpolation,
     }
 }
 

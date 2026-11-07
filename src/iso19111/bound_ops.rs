@@ -381,6 +381,7 @@ fn concatenate(operations: Vec<CoordinateOperation>) -> CoordinateOperation {
         .and_then(operation_target)
         .cloned()
         .map(Box::new);
+    let interpolation = super::buildop::concatenation_interpolation(&operations).map(Box::new);
     CoordinateOperation::Concatenated(ConcatenatedOperation {
         identified: Identified::named(name),
         steps: operations
@@ -398,6 +399,7 @@ fn concatenate(operations: Vec<CoordinateOperation>) -> CoordinateOperation {
         source_epoch: None,
         target_epoch: None,
         proj_based: None,
+        interpolation,
     })
 }
 
