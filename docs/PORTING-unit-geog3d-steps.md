@@ -99,17 +99,23 @@ the lot require. Their causes, as measured:
 | `operation_etrs89_3d_to_proj_string_with_geoidgrids_nadgrids` (`ETRS89_3D_to_proj_string_with_geoidgrids_nadgrids`) | `unitconvert +xy_in=deg +xy_out=rad` (25 tokens) | `unitconvert +xy_in=deg +z_in=m +xy_out=rad +z_out=m` (27 tokens) | The z terms of the first unitconvert of a concatenated candidate are not written. Not traced yet. |
 | `operation_bound_crs_to_geog_crs_hub_crs_and_target_crs_same_but_base_crs_not` (`boundCRS_to_geogCRS_hubCRS_and_targetCRS_same_but_baseCRS_not`) | `unitconvert +z_in=us-ft +z_out=m` | `unitconvert +xy_in=deg +z_in=us-ft +xy_out=deg +z_out=m` | The horizontal deg conversion of the bound CRS is missing (the `skipHorizontalTransformation` path of `createOperationsBoundToGeog`). Not in this commit. |
 
-Finding for the next commit: `compound::compound_to_geog3d` and `compound_vertical_pass` search the
-horizontal part against `target.demote_to_2d()`. PROJ's `createOperationsCompoundToGeog` searches it
-against the full target: `horizTransforms = createOperations(componentsSrc[0], sourceEpoch,
-targetCRS, targetEpoch, context)` (coordinateoperationfactory.cpp:6699-6704). The 2D search is the
-"geographic-to-geographic search for a 3D target" of PROJ, which the comment cites, but not the
-branch of the compound that the foot target takes.
+Finding: `compound::compound_to_geog3d` and `compound_vertical_pass` search the horizontal part
+against `target.demote_to_2d()`. PROJ's `createOperationsCompoundToGeog` searches it against the full
+target: `horizTransforms = createOperations(componentsSrc[0], sourceEpoch, targetCRS, targetEpoch,
+context)` (coordinateoperationfactory.cpp:6699-6704). Tried, not kept: the search against the 3D
+target in `compound_vertical_pass`. The foot target then gets a third candidate, `unitconvert +z_in=m
++z_out=ft` followed by the ballpark `+z_in=us-ft +z_out=ft`, where PROJ's last candidate is one merged
+`unitconvert` with the xy terms. No draft closed, so it was reverted. The next step is the
+same-datum height-change operation `Transformation from NAD83(2011) to NAD83(2011)` of PROJ, whose
+PROJ string carries the xy terms: its PROJ path is not traced yet.
 
-A separate attempt (not committed): wrapping the null-horizontal `combine` in
-`createHorizVerticalPROJBased` (`proj_based_horiz_vertical`, as PROJ's
-`MyPROJStringExportableHorizVertical` does, coordinateoperationfactory.cpp:2384-2417). It did not
-close any draft, and the foot target's last candidate still differs, so it was not kept.
+Tried, not kept: wrapping the null-horizontal `combine` in `createHorizVerticalPROJBased`
+(`proj_based_horiz_vertical`, as PROJ's `MyPROJStringExportableHorizVertical` does,
+coordinateoperationfactory.cpp:2384-2417). It did not close any draft, and the foot target's last
+candidate still differs, so it was not kept.
+
+Also checked: the ETRS89 geoid draft is not fixed by that wrapper either. Its candidate is a
+concatenation whose name begins `ETRS89 to WGS 84 (1) +`, not a null-horizontal one.
 
 ## Commands run
 
@@ -119,4 +125,8 @@ close any draft, and the foot target's last candidate still differs, so it was n
   (the drafts still open), 32 ignored.
 - After commit 1, with the drafts still in place: 1655 passed, 4 failed (the same open drafts, nothing else),
   32 ignored. `cli_yaml` passes and `docs/UNPORTED-CLI.md` is not reopened.
+- Final bar, at the head of the lot (commit 2 and this sheet, no open drafts in the tree):
+  `cargo test --all-features --no-fail-fast` with the reference environment: 1656 passed, 0 failed,
+  31 ignored. `(ulimit -s 1024; cargo test --all-features --test cli_yaml)`: passes.
+  `UPDATE_DOCS=1 cargo test --test docs_in_sync --test progress_svg` regenerated, then both pass.
 - `cargo clippy --all-targets --all-features -- -D warnings` and `cargo fmt --check`: clean.
