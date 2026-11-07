@@ -5,13 +5,13 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 75 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `core` | 57 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
 | `niche` | 19 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 41 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (75)
+## core (57)
 
-### test_c_api.cpp (13)
+### test_c_api.cpp (10)
 
 - `CApi.proj_coordoperation_get_grid_used_fullname_caching`
 - `CApi.proj_create_operations_prime_meridian_non_greenwich`
@@ -19,9 +19,6 @@ The class comes from the test name alone, so check it when you port a test.
 - `CApi.proj_normalize_for_visualization_with_alternatives`
 - `CApi.proj_normalize_for_visualization_with_alternatives_reverse`
 - `CApi.proj_coordoperation_create_inverse`
-- `CApi.proj_create_crs_to_crs_from_pj_accuracy_filter`
-- `CApi.proj_create_crs_to_crs_from_pj_ballpark_filter`
-- `CApi.proj_create_crs_to_crs_with_only_ballpark_transformations`
 - `CApi.proj_create_crs_to_crs_from_custom_compound_crs_with_NAD83_2011_and_geoidgrid_ref_against_NAD83_2011_to_WGS84_G1762`
 - `CApi.proj_create_vertical_crs_ex`
 - `CApi.proj_create_vertical_crs_ex_with_geog_crs`
@@ -49,52 +46,38 @@ The class comes from the test name alone, so check it when you port a test.
 
 - `operation.normalizeForVisualization`
 
-### test_operationfactory.cpp (52)
+### test_operationfactory.cpp (37)
 
 - `operation.geogCRS_to_geogCRS_context_inverse_needed`
 - `operation.vertCRS_to_geogCRS_context`
 - `operation.geog3DCRS_to_geog2DCRS_plus_vertCRS_context`
-- `operation.geog3DCRS_to_vertCRS_depth_context`
-- `operation.geog3DCRS_to_geog2DCRS_plus_vertCRS_depth_context`
 - `operation.geogCRS_to_geogCRS_CH1903_to_CH1903plus_context`
 - `operation.geogCRS_to_geogCRS_init_IGNF_to_init_IGNF_context`
-- `operation.esri_projectedCRS_to_geogCRS_with_ITRF_intermediate_context`
 - `operation.geogCRS_3D_source_datum_name_is_alias_to_geogCRS`
 - `operation.geogCRS_different_from_baseCRS_to_projCRS_context_compatible_area`
 - `operation.geogCRS_3D_to_projCRS_with_2D_geocentric_translation`
-- `operation.projCRS_to_projCRS_context_grid_offsets`
-- `operation.projCRS_to_projCRS_context_grid_offsets_non_metre_unit_noop`
 - `operation.boundCRS_to_geogCRS_hubCRS_and_targetCRS_same_but_baseCRS_not`
 - `operation.ETRS89_3D_to_proj_string_with_geoidgrids_nadgrids`
 - `operation.nadgrids_with_pm`
 - `operation.WGS84_G1762_to_compoundCRS_with_bound_vertCRS`
 - `operation.compoundCRS_with_boundGeogCRS_and_geoid_to_geodCRS_NAD2011_ctxt`
-- `operation.compoundCRS_with_vert_bound_to_bound_geog3D`
 - `operation.compoundCRS_to_compoundCRS_with_vertical_transform`
 - `operation.compoundCRS_to_compoundCRS_context`
-- `operation.compoundCRS_to_compoundCRS_WGS84_EGM96_to_WGS84_Belfast`
 - `operation.compoundCRS_to_compoundCRS_OSGB36_BNG_ODN_height_to_WGS84_EGM96`
-- `operation.compoundCRS_with_horizontal_boundCRS_to_compoundCRS_and_same_vertical`
 - `operation.compoundCRS_to_compoundCRS_concatenated_operation_with_two_vert_transformation`
 - `operation.compoundCRS_to_compoundCRS_concatenated_operation_with_two_vert_transformation_and_different_source_dest_interp`
 - `operation.compoundCRS_to_compoundCRS_issue_3328`
-- `operation.compoundCRS_to_compoundCRS_concatenated_operation_with_two_vert_transformation_and_ballpark_geog`
 - `operation.compoundCRS_to_compoundCRS_issue_3152_ch1903lv03_ln02_bound`
 - `operation.compoundCRS_to_compoundCRS_using_intermediate_of_horizontal_transform`
 - `operation.compoundCRS_to_geogCRS_3D_context`
 - `operation.compoundCRS_to_geogCRS_3D_with_3D_helmert_same_geog_src_target_context`
-- `operation.compoundCRS_to_geogCRS_3D_with_null_helmert_same_geog_src_target_context`
 - `operation.compoundCRS_to_geogCRS_2D_promote_to_3D_context`
 - `operation.compoundCRS_of_projCRS_to_geogCRS_3D_context`
-- `operation.compoundCRS_of_projCRS_from_wkt_without_id_or_extent_to_geogCRS`
 - `operation.compoundCRS_ftUS_to_geogCRS_ft`
 - `operation.compoundCRS_to_geogCRS_with_vertical_unit_change_and_complex_horizontal_change`
 - `operation.compoundCRS_to_geogCRS_with_height_depth_reversal`
 - `operation.compoundCRS_to_geogCRS_with_vertical_unit_change_and_height_depth_reversal`
 - `operation.compoundCRS_of_vertCRS_with_geoid_model_to_geogCRS`
-- `operation.compoundCRS_of_vertCRS_with_geoid_model_by_id_to_geogCRS`
-- `operation.compoundCRS_of_vertCRS_with_geoid_model_by_name_and_datum_ensemble`
-- `operation.compoundCRS_from_WKT2_no_id_to_geogCRS_3D_context`
 - `operation.compoundCRS_to_geogCRS_3D_Amersfoort_NAP_height_to_Amersfoort`
 - `operation.compoundCRS_to_geogCRS_3D_using_intermediate_of_horizontal_transform`
 - `operation.boundCRS_to_compoundCRS`
@@ -102,7 +85,6 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.IGNF_LAMB1_TO_EPSG_4326`
 - `operation.compoundCRS_to_proj_string_with_non_metre_height`
 - `operation.compoundCRS_to_PROJJSON_with_non_metre_height`
-- `operation.createOperation_compound_to_compound_with_Geographic3D_Offset_by_velocity_grid`
 
 ## niche (19)
 
