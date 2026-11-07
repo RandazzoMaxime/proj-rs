@@ -194,7 +194,6 @@ fn operation_compound_to_compound_concatenated_two_vert_transformation_different
 /// CGVD28 height. The CGVD28 height is referenced to NAD83(CSRS), so the chain goes through
 /// the 3D Helmert transformation between the two geographic CRS.
 #[test]
-#[ignore = "open: the 3D route through NAD83(CSRS) is missing; the first candidate is the ballpark EGM96 to CGVD28 change. Same compound-to-geographic path as the Belfast case, not traced"]
 fn operation_compound_to_compound_issue_3328() {
     let db = DatabaseContext::create().expect("proj.db");
     // "WGS 84 + EGM96 height"
