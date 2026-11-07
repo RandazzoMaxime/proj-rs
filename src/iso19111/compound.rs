@@ -1511,11 +1511,14 @@ fn compatible_transformations(first: &CoordinateOperation, second: &CoordinateOp
 
 /// `dynamic_cast<const Transformation *>` of PROJ's loops over the steps of an operation. The
 /// geographic/geocentric conversion (EPSG:9602) is a `Conversion` in PROJ, which those loops skip;
-/// here it is kept as a transformation, so it is excluded by its method.
+/// here it is kept as a transformation, so it is excluded by its method. A point motion operation
+/// is a `PointMotionOperation` in PROJ, a `SingleOperation` that is not a `Transformation`, so it
+/// is excluded too.
 fn is_transformation_step(operation: &CoordinateOperation) -> bool {
     matches!(
         operation,
-        CoordinateOperation::Transformation(transformation) if transformation.method().code() != "9602"
+        CoordinateOperation::Transformation(transformation)
+            if transformation.method().code() != "9602" && !transformation.is_point_motion()
     )
 }
 
