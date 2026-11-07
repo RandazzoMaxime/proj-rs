@@ -1219,6 +1219,7 @@ pub fn select_alternatives_with_authority(
     // `op_count == 1` returns the operation before any preparation (`crs_to_crs.cpp:617-647`).
     // `crs_to_crs.cpp:617-647`: a single operation is returned unless the default policy may
     // rerun the search with DISCARD (`mayNeedToReRunWithDiscardMissing`) and its grids are missing.
+    let mut creation_warning = None;
     if let [(operation, characteristics)] = ranked.as_slice() {
         let grids = proj_grids(operation, &db).unwrap_or_else(|_| grid_names(operation));
         let instantiable =
@@ -1227,6 +1228,12 @@ pub fn select_alternatives_with_authority(
             let best = single_operation(operation, characteristics, &db, &source_crs, &target_crs)?;
             return Ok(Selection::Single(best));
         }
+        // `crs_to_crs.cpp:648-651`: the single candidate is not instantiable, PROJ warns once at
+        // creation and goes on with the rerun.
+        creation_warning = Some(LogLine::debug(format!(
+            "{}{WARN_SUFFIX}",
+            missing_grid_message(operation.name(), &grids)
+        )));
     }
     if ranked.is_empty() {
         return Err(FactoryError::Format(format!(
@@ -1316,12 +1323,11 @@ pub fn select_alternatives_with_authority(
             } else {
                 FirstAxis::Other
             };
-            Ok(Selection::Several(Alternatives::new(
-                prepared,
-                policy,
-                source_axes,
-                first_axis,
-            )))
+            let alternatives = Alternatives::new(prepared, policy, source_axes, first_axis);
+            Ok(Selection::Several(match creation_warning {
+                Some(line) => alternatives.warned_at_creation(line),
+                None => alternatives,
+            }))
         }
     }
 }

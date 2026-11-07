@@ -5,7 +5,6 @@ A row remains when that case does not match the yaml.
 
 | id | app | reason | comment |
 |---|---|---|---|
-| `test_cs2cs_various.yaml#139` | cs2cs | expected 476763.303	95620.222 5.000 got 477131.509	95651.636 5.000 | - |
 | `test_projinfo.yaml#13` | projinfo | text mismatch expected: Candidate operations found: 9 DERIVED_FROM(EPSG):1313, NAD27 to NAD83 (4), 1.5 m, Canada - onshore - Alberta; British Columbia; Manitoba | - |
 | `test_projinfo.yaml#14` | projinfo | text mismatch expected: Candidate operations found: 10 ------------------------------------- Operation No. 1:  DERIVED_FROM(EPSG):1313, NAD27 to NAD83 (4), 1.5  | - |
 | `test_projinfo.yaml#23` | projinfo | exit 1 expected 0 GEOGCS should have a PRIMEM node  | Testing non compliant WKT1 |

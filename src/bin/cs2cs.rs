@@ -574,6 +574,9 @@ fn build_engine(
             authority,
         ) {
             Ok(Selection::Several(alternatives)) => {
+                for line in alternatives.creation_log() {
+                    print_line(line);
+                }
                 return Ok(BuiltEngine {
                     engine: Engine::Alternatives(Box::new(alternatives)),
                     path: BuildPath::Iso,
