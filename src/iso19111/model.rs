@@ -313,7 +313,10 @@ impl BoundingBox {
         (east - self.west) * ((self.north.to_radians()).sin() - (self.south.to_radians()).sin())
     }
 
-    /// Common part of two boxes that do not cross the antimeridian, or `None` when they are disjoint.
+    /// Common part of two boxes, or `None` when they are disjoint: `Extent::intersection`
+    /// (metadata.cpp:889-910) for one box each, a contained box first, then
+    /// `GeographicBoundingBox::Private::intersection` (metadata.cpp:423-493), which handles a box
+    /// that crosses the antimeridian and keeps the larger part when the result has two.
     #[must_use]
     pub fn intersection(&self, other: &Self) -> Option<Self> {
         if self.contains(other) {
@@ -322,11 +325,53 @@ impl BoundingBox {
         if other.contains(self) {
             return Some(*self);
         }
-        let west = self.west.max(other.west);
-        let east = self.east.min(other.east);
-        let south = self.south.max(other.south);
-        let north = self.north.min(other.north);
-        (west <= east && south <= north).then(|| Self::new(west, south, east, north))
+        self.private_intersection(other)
+    }
+
+    /// `GeographicBoundingBox::Private::intersection` (metadata.cpp:423-493).
+    fn private_intersection(&self, other: &Self) -> Option<Self> {
+        let (w, e, n, s) = (self.west, self.east, self.north, self.south);
+        let (ow, oe, on, os) = (other.west, other.east, other.north, other.south);
+        // Intersection along the latitude axis.
+        if n < os || s > on {
+            return None;
+        }
+        // This box is the world and the other crosses the antimeridian, or the reverse.
+        if w == -180.0 && e == 180.0 && ow > oe {
+            return Some(Self::new(ow, s.max(os), oe, n.min(on)));
+        }
+        if ow == -180.0 && oe == 180.0 && w > e {
+            return Some(Self::new(w, s.max(os), e, n.min(on)));
+        }
+        if w <= e {
+            if ow <= oe {
+                let west = w.max(ow);
+                let east = e.min(oe);
+                return (west < east).then(|| Self::new(west, s.max(os), east, n.min(on)));
+            }
+            // Longitudes outside [-180, 180] are not split (no infinite recursion).
+            if ow > 180.0 || oe < -180.0 {
+                return None;
+            }
+            // The larger of the two parts of the other box.
+            let first = self.private_intersection(&Self::new(ow, os, 180.0, on));
+            let second = self.private_intersection(&Self::new(-180.0, os, oe, on));
+            return match (first, second) {
+                (None, second) => second,
+                (first, None) => first,
+                (Some(first), Some(second)) => {
+                    if first.east - first.west > second.east - second.west {
+                        Some(first)
+                    } else {
+                        Some(second)
+                    }
+                }
+            };
+        }
+        if ow <= oe {
+            return other.private_intersection(self);
+        }
+        Some(Self::new(w.max(ow), s.max(os), e.min(oe), n.min(on)))
     }
 }
 

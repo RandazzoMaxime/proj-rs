@@ -22,8 +22,8 @@ use super::factory::{
 };
 use super::model::{
     Axis, BoundCRS, CompoundCRS, ConcatenatedOperation, ConcatenatedStep, Conversion,
-    CoordinateOperation, Crs, GeographicCRS, GeoidModel, Identified, OperationMethod, Parameter,
-    ParameterValue, ProjBased, ProjBasedKind, Transformation, VerticalCRS,
+    CoordinateOperation, Crs, GeographicCRS, GeoidModel, Identified, ObjectDomain, OperationMethod,
+    Parameter, ParameterValue, ProjBased, ProjBasedKind, Transformation, VerticalCRS,
 };
 use super::pipeline::ProjLines;
 use super::FactoryError;
@@ -1869,34 +1869,25 @@ fn geog_to_vertical_alternative(
     vertical: &Crs,
     context: &CoordinateOperationContext,
 ) -> Result<Vec<CoordinateOperation>, FactoryError> {
-    let Some(id) = vertical.identifiers().first() else {
-        return Ok(Vec::new());
-    };
     let Some(geographic) = geographic_of(geog) else {
         return Ok(Vec::new());
     };
     let mut inner = context.clone();
     inner.guards |= GUARD_ALTERNATIVE_GEOG;
-    let rows = context.database().query(
-        "SELECT auth_name, code FROM coordinate_operation_view WHERE target_crs_auth_name = ? \
-         AND target_crs_code = ? AND deprecated = 0",
-        &[id.code_space().to_owned(), id.code().to_owned()],
+    let (geog_extent, vertical_extent) = super::factory::crs_extents_of(context, geog, vertical);
+    let operations = super::factory::registry_operations_to(
+        context,
+        vertical,
+        (
+            geog_extent.as_ref().and_then(ObjectDomain::bounding_box),
+            vertical_extent
+                .as_ref()
+                .and_then(ObjectDomain::bounding_box),
+        ),
     )?;
     let axes = geographic.coordinate_system().axes();
     let mut res = Vec::new();
-    for row in &rows {
-        let operation =
-            super::factory::registered_operation(context, &row[0].text(), &row[1].text())?;
-        // The registry search of PROJ (`findOpsInRegistryDirectTo`) drops, under the grid
-        // availability of the context, an operation whose grid is missing.
-        if context.discards_missing_grids()
-            && !operation
-                .grids_needed(context.database(), context.grid_availability)?
-                .iter()
-                .all(|grid| grid.info.available)
-        {
-            continue;
-        }
+    for operation in operations {
         let Some(op_source) = operation.source_crs() else {
             continue;
         };
