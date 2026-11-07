@@ -856,6 +856,7 @@ impl Reader<'_> {
         }
         let identified = self.properties(object, false)?;
         let (accuracy, _) = accuracy_of(object)?;
+        let interpolation = super::buildop::concatenation_interpolation_of_steps(&steps);
         Ok(ConcatenatedOperation {
             identified,
             steps,
@@ -867,6 +868,7 @@ impl Reader<'_> {
             source_epoch: None,
             target_epoch: None,
             proj_based: None,
+            interpolation,
         })
     }
 

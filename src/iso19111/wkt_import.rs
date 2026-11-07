@@ -3486,6 +3486,7 @@ impl WktParser {
         if let (Some(source), Some(target)) = (&source, &target) {
             fix_steps(source, target, &mut steps);
         }
+        let interpolation = super::buildop::concatenation_interpolation_of_steps(&steps);
         Ok(ConcatenatedOperation {
             identified: props.identified(),
             steps,
@@ -3497,6 +3498,7 @@ impl WktParser {
             source_epoch: None,
             target_epoch: None,
             proj_based: None,
+            interpolation,
         })
     }
 }

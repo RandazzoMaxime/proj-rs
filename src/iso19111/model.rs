@@ -2266,6 +2266,9 @@ pub struct ConcatenatedOperation {
     /// `set` steps around the steps (`ConcatenatedOperation::_exportToPROJString`).
     pub(crate) source_epoch: Option<f64>,
     pub(crate) target_epoch: Option<f64>,
+    /// The interpolation CRS the steps share, as `ConcatenatedOperation::create` sets it
+    /// (`CoordinateOperation::interpolationCRS`, concatenatedoperation.cpp:177-256).
+    pub(crate) interpolation: Option<Box<Crs>>,
 }
 
 /// Which `MyPROJStringExportableHorizVertical*` of `coordinateoperationfactory.cpp` writes a
@@ -2326,6 +2329,12 @@ impl ConcatenatedOperation {
     #[must_use]
     pub fn name(&self) -> &str {
         &self.identified.name
+    }
+
+    /// Interpolation CRS the steps share, when they all name the same one.
+    #[must_use]
+    pub fn interpolation_crs(&self) -> Option<&Crs> {
+        self.interpolation.as_deref()
     }
 
     /// Authority identifiers.
