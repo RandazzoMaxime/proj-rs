@@ -75,7 +75,8 @@ pub use niche::{
 pub(crate) use normalize::normalize_for_visualization;
 pub use pipeline::ProjLines;
 pub use projstring::{create_crs_from_proj_string, create_crs_from_proj_string_with_database};
-pub(crate) use select::{best_operation_exact, same_datum_noop};
+pub(crate) use alternatives::Item;
+pub(crate) use select::{facade_candidates, same_datum_noop, FacadeCandidates};
 pub use select::{
     best_pipeline, best_pipeline_filtered, best_pipeline_filtered_with_authority,
     best_pipeline_with, best_pipeline_with_authority, only_best_default, Ballpark, BestOperation,

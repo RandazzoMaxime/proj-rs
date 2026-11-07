@@ -13,7 +13,7 @@
 
 use std::cell::Cell;
 
-use crate::engine::{Coord, Operation};
+use crate::engine::{Coord, Operation, TransformError};
 
 /// Severity of one PROJ log line: `PJ_LOG_ERROR` or `PJ_LOG_DEBUG` (`proj.h:373-381`). A line
 /// is written when the debug level of the context is at least its level (`log.cpp:104-115`).
@@ -343,6 +343,18 @@ impl Alternatives {
             best_accuracy = item.accuracy;
         }
         best
+    }
+
+    /// The inverse of the first candidate, for the facade until the per-point inverse is ported.
+    ///
+    /// # Errors
+    ///
+    /// [`TransformError::NoInverse`] when the first candidate has no pipeline to invert.
+    pub(crate) fn inverse_of_first(&self, coord: Coord) -> Result<Coord, TransformError> {
+        match self.items.first().and_then(|item| item.operation.as_ref()) {
+            Some(operation) => operation.inverse(coord),
+            None => Err(TransformError::NoInverse),
+        }
     }
 
     /// `proj_trans` (forward) for one point, `trans.cpp:233-346`, without the log lines.

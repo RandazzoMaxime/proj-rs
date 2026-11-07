@@ -12,10 +12,12 @@
 //! is neither geographic nor projected) returns `None`, and the caller keeps its
 //! previous path.
 
+use std::sync::Arc;
+
 use crate::engine::{Coord, Operation, TransformError};
 use crate::iso19111::{
-    best_operation_exact, same_datum_noop, Axis, CoordinateOperation, Crs, FactoryError,
-    GeodeticCRS, UnitOfMeasure,
+    facade_candidates, same_datum_noop, AlternativeError, Alternatives, Axis, BestPolicy,
+    CoordinateOperation, Crs, FacadeCandidates, FactoryError, GeodeticCRS, Item, UnitOfMeasure,
 };
 use crate::proj::{Direction, ProjError};
 
@@ -64,20 +66,29 @@ impl Side {
     }
 }
 
+/// What a pair transforms with: one operation, or the candidates `proj_trans` chooses from point
+/// by point (`alternatives.rs`).
+#[derive(Clone, Debug)]
+enum Route {
+    /// `proj_create_crs_to_crs` returns one operation.
+    Single(Operation),
+    /// Several candidates. `Arc` keeps the pipeline `Clone`, as its `Body` is.
+    Alternatives(Arc<Alternatives>),
+}
+
 /// The ISO pipeline of one pair, with the axis order of each side.
 #[derive(Clone, Debug)]
 pub(crate) struct IsoPipeline {
-    operation: Operation,
+    route: Route,
     source: Side,
     target: Side,
     /// Why the forward direction is refused, when the pair cannot take a height.
     refusal: Option<String>,
-    /// The ISO operation the pipeline was written from.
+    /// The ISO operation of the first candidate, as PROJ's `P` reports it.
     chosen: CoordinateOperation,
-    /// How many candidate operations libproj could build for the pair.
-    instantiable: usize,
-    /// The operation's PROJ string before an epoch is inserted, as `export` wrote it.
-    base_definition: String,
+    /// The PROJ string `proj_pj_info` reports before an epoch: the operation's own when it is the
+    /// only one, or the single instantiable candidate's. `None` is PROJ's deferred text.
+    reported: Option<String>,
     /// Coordinate epoch inserted as `proj=set` steps, when one side of the pair carries one.
     epoch: Option<f64>,
 }
@@ -95,36 +106,98 @@ pub(crate) fn iso_pipeline(from: &str, to: &str) -> Option<IsoPipeline> {
 /// PROJ inserts `+proj=set +v_4=<epoch>` at both ends of the pipeline
 /// (`proj_coordoperation_create_proj_crs_to_crs` when `coordinateEpoch` is set).
 /// The helmert then reads that time. No epoch leaves the coordinate time at 0,
-/// which is what an undated `proj_trans` passes.
+/// which is what an undated `proj_trans` passes. Each candidate carries the epoch.
 pub(crate) fn iso_pipeline_at(from: &str, to: &str, epoch: Option<f64>) -> Option<IsoPipeline> {
-    // A same-datum pair has no registered operation. PROJ still builds the null
-    // geographic offset, and that is the pipeline `def()` reports.
-    let choice = match best_operation_exact(from, to) {
-        Ok(choice) => choice,
-        // Only an empty candidate list. An approximate or grid-less choice stays
-        // on the caller's previous path instead of becoming a null offset.
+    let candidates = match facade_candidates(from, to) {
+        Ok(candidates) => candidates,
+        // Only an empty candidate list: a same-datum pair has no registered operation, and PROJ
+        // still builds its null geographic offset, which is the pipeline `def()` reports.
         Err(FactoryError::Format(message)) if message.starts_with("no operation from ") => {
-            same_datum_noop(from, to).ok()?
+            return null_offset_pipeline(from, to, epoch);
         }
         Err(_) => return None,
     };
-    let base_definition = choice.definition.clone();
-    let definition = match epoch {
-        Some(year) => with_epoch_steps(&choice.definition, year),
-        None => choice.definition,
+    let FacadeCandidates {
+        mut items,
+        first,
+        source_axes,
+        first_axis,
+        source,
+        target,
+    } = candidates;
+    let source_horizontal = horizontal_part(&source).filter(|crs| is_horizontal(crs))?;
+    let target_horizontal = horizontal_part(&target).filter(|crs| is_horizontal(crs))?;
+    let reported = reported_candidate(&items);
+    if let Some(year) = epoch {
+        for item in &mut items {
+            if let Some(definition) = &item.definition {
+                let text = with_epoch_steps(definition, year);
+                item.operation = Operation::create(&text).ok();
+                item.definition = Some(text);
+            }
+        }
+    }
+    let route = match items.len() {
+        0 => return None,
+        1 => {
+            // A candidate whose grids are missing, or an approximate one, stays on the caller's
+            // previous path for now.
+            let item = items.pop()?;
+            if !item.instantiable || item.approximate {
+                return None;
+            }
+            Route::Single(item.operation?)
+        }
+        _ => Route::Alternatives(Arc::new(Alternatives::new(
+            items,
+            BestPolicy::Warn,
+            source_axes,
+            first_axis,
+        ))),
     };
+    Some(IsoPipeline {
+        route,
+        source: Side::of(source_horizontal),
+        target: Side::of(target_horizontal),
+        refusal: refusal(&source, &target),
+        chosen: first,
+        reported,
+        epoch,
+    })
+}
+
+/// The PROJ string `proj_pj_info` reports for the candidates of a pair: the only candidate's, or
+/// the one instantiable candidate's. `None` when several can be built, which PROJ reports as
+/// deferred until `proj_trans` picks one.
+fn reported_candidate(items: &[Item]) -> Option<String> {
+    if let [only] = items {
+        return only.definition.clone();
+    }
+    let mut instantiable = items.iter().filter(|item| item.instantiable);
+    match (instantiable.next(), instantiable.next()) {
+        (Some(item), None) => item.definition.clone(),
+        _ => None,
+    }
+}
+
+/// The pipeline of a same-datum pair: PROJ's null geographic offset.
+fn null_offset_pipeline(from: &str, to: &str, epoch: Option<f64>) -> Option<IsoPipeline> {
+    let choice = same_datum_noop(from, to).ok()?;
     let (source, target) = (choice.source, choice.target);
     let source_horizontal = horizontal_part(&source).filter(|crs| is_horizontal(crs))?;
     let target_horizontal = horizontal_part(&target).filter(|crs| is_horizontal(crs))?;
+    let definition = match epoch {
+        Some(year) => with_epoch_steps(&choice.definition, year),
+        None => choice.definition.clone(),
+    };
     let operation = Operation::create(&definition).ok()?;
     Some(IsoPipeline {
-        operation,
+        route: Route::Single(operation),
         source: Side::of(source_horizontal),
         target: Side::of(target_horizontal),
         refusal: refusal(&source, &target),
         chosen: choice.operation,
-        instantiable: choice.instantiable,
-        base_definition,
+        reported: Some(choice.definition),
         epoch,
     })
 }
@@ -285,11 +358,6 @@ impl IsoPipeline {
         &self.chosen
     }
 
-    /// How many candidate operations libproj could build for the pair.
-    pub(crate) fn instantiable(&self) -> usize {
-        self.instantiable
-    }
-
     /// `proj_pj_info().definition` of this pair, after `proj_normalize_for_visualization`.
     ///
     /// One instantiable operation is that pipeline. The axis swap a lat-first or
@@ -299,10 +367,10 @@ impl IsoPipeline {
     /// picks one: `unavailable until proj_trans is called`. An epoch adds
     /// `proj=set v_4=<year>` at both ends.
     pub(crate) fn reported_definition(&self) -> Result<String, ProjError> {
-        if self.instantiable() != 1 {
+        let Some(reported) = &self.reported else {
             return Ok("unavailable until proj_trans is called".to_owned());
-        }
-        let visualized = visualization_definition(&self.base_definition, self.source, self.target);
+        };
+        let visualized = visualization_definition(reported, self.source, self.target);
         let finished = crate::proj_info::parameters_of_operation(&visualized)
             .map_err(|_| ProjError::Definition)?;
         Ok(match self.epoch {
@@ -316,19 +384,38 @@ impl IsoPipeline {
     pub(crate) fn map(&self, coord: Coord, way: Direction) -> Result<Coord, TransformError> {
         match way {
             Direction::Forward => {
-                let out = self
-                    .operation
-                    .forward(self.source.in_pipeline_order(coord))?;
+                let out = self.forward(self.source.in_pipeline_order(coord))?;
                 Ok(self.target.in_pipeline_order(out))
             }
             Direction::Inverse => {
-                let out = self
-                    .operation
-                    .inverse(self.target.in_pipeline_order(coord))?;
+                let out = self.inverse(self.target.in_pipeline_order(coord))?;
                 Ok(self.source.in_pipeline_order(out))
             }
         }
     }
+
+    /// `proj_trans` forward for one point, in the pipeline's own axis order.
+    fn forward(&self, coord: Coord) -> Result<Coord, TransformError> {
+        match &self.route {
+            Route::Single(operation) => operation.forward(coord),
+            Route::Alternatives(alternatives) => {
+                alternatives.forward(coord).map_err(|error| match error {
+                    AlternativeError::MissingGrid(_) => TransformError::OutsideGrid,
+                    AlternativeError::NoOperation => TransformError::OutsideDomain,
+                })
+            }
+        }
+    }
+
+    /// The inverse of one point, in the pipeline's own axis order. Several candidates use the
+    /// first one until the per-point inverse is ported.
+    fn inverse(&self, coord: Coord) -> Result<Coord, TransformError> {
+        match &self.route {
+            Route::Single(operation) => operation.inverse(coord),
+            Route::Alternatives(alternatives) => alternatives.inverse_of_first(coord),
+        }
+    }
+
 
     /// Whether the output of `way` writes degrees: the target of a forward transform, the
     /// source of an inverse one.
@@ -350,7 +437,7 @@ impl IsoPipeline {
     /// Whether the inverse direction exists, as for a native operation.
     pub(crate) fn has_inverse(&self) -> bool {
         !matches!(
-            self.operation.inverse(Coord::xy(0.0, 0.0)),
+            self.inverse(Coord::xy(0.0, 0.0)),
             Err(TransformError::NoInverse)
         )
     }
