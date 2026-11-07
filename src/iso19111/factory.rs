@@ -6369,13 +6369,10 @@ fn datum_pivot_operations(
         }
     }
     // `createTransformations` without `useOnlyDirectRegistryOp` (iterations 1 and 2): the full
-    // search between the candidates, first between two of the same kind, then of another.
-    // Kept to a CRS the registry does not know (a 3D promotion, a CRS read from WKT): with
-    // identifiers on both sides the registry chains of `createBetween...` come first.
-    if context.has_guard(GUARD_DATUM_PIVOT)
-        || (registry_identity(source, context).is_some()
-            && registry_identity(target, context).is_some())
-    {
+    // search between the candidates, first between two of the same kind, then of another. It
+    // runs for identified CRS too: PROJ's ETRF2005 to ETRF2014 result (the ITRF chains, not the
+    // ETRS89 pivot of the intermediate search) comes from here (test_projinfo.yaml#88).
+    if context.has_guard(GUARD_DATUM_PIVOT) {
         return Vec::new();
     }
     let kind = |crs: &Crs| match geographic_of(crs) {
