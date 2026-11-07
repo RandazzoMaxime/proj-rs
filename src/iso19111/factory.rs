@@ -5721,17 +5721,37 @@ impl CoordinateOperationFactory {
     }
 
     /// `proj_get_suggested_operation` (forward) on `operations`, the list from `source`
-    /// to a target: the index of the operation whose area of use holds `coord`, in the
-    /// axis order of `source`. An operation with no area of use covers the world.
+    /// to a target: the index of the operation whose area of use holds `coord`. `coord` is
+    /// in the coordinates of `source`: longitude and latitude in its axis order for a
+    /// geographic source, the projected coordinates for a projected one. An operation with no
+    /// area of use covers the world. See [`CoordinateOperationFactory::suggested_operation_xyz`]
+    /// for a geocentric source.
     ///
     /// # Errors
     ///
-    /// `source` is not a geographic CRS, or its axis order is not latitude or longitude.
+    /// `source` is a geographic CRS whose axis order is not latitude or longitude, or the
+    /// default database cannot be opened for a projected or geocentric source.
     pub fn suggested_operation(
         &self,
         operations: &[CoordinateOperation],
         source: &Crs,
         coord: (f64, f64),
+    ) -> Result<Option<usize>, FactoryError> {
+        self.suggested_operation_xyz(operations, source, (coord.0, coord.1, 0.0))
+    }
+
+    /// [`CoordinateOperationFactory::suggested_operation`] for a point with a height, as a
+    /// geocentric source needs (`proj_get_suggested_operation` takes a `PJ_COORD`). The
+    /// height is ignored by the other kinds of source.
+    ///
+    /// # Errors
+    ///
+    /// As [`CoordinateOperationFactory::suggested_operation`].
+    pub fn suggested_operation_xyz(
+        &self,
+        operations: &[CoordinateOperation],
+        source: &Crs,
+        coord: (f64, f64, f64),
     ) -> Result<Option<usize>, FactoryError> {
         super::suggest::suggested_forward(operations, source, coord)
     }

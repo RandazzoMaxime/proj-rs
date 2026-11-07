@@ -22,8 +22,9 @@ use super::factory::{
     SpatialCriterion,
 };
 use super::model::{
-    Axis, BoundingBox, CoordinateOperation, Crs, EllipsoidalCS, GeodeticCRS, GeographicCRS,
-    ObjectDomain, Parameter, ParameterValue, UnitOfMeasure,
+    Axis, BoundingBox, CoordinateOperation, Crs, EllipsoidalCS, GeodeticCRS,
+    GeodeticReferenceFrame, GeographicCRS, ObjectDomain, Parameter, ParameterValue, PrimeMeridian,
+    UnitOfMeasure,
 };
 use super::suggest::{area_of_use, priority_operation};
 use super::{
@@ -1552,7 +1553,7 @@ fn discard_missing(
 
 /// The CRS an operation to the CRS is taken from: its longitude and latitude CRS, or the CRS itself
 /// when it is geocentric (not reprojected, see [`geodetic_to_crs`]).
-fn reference_base(crs: &Crs) -> Option<Crs> {
+pub(super) fn reference_base(crs: &Crs) -> Option<Crs> {
     match crs {
         Crs::Geodetic(GeodeticCRS::Geocentric(_)) => Some(crs.clone()),
         _ => lon_lat_base(crs),
@@ -1560,9 +1561,10 @@ fn reference_base(crs: &Crs) -> Option<Crs> {
 }
 
 /// The longitude and latitude CRS on the datum of a CRS, as `create_operation_to_geog_crs` makes
-/// it (`crs_to_crs.cpp:174-224`). Its axis order is the one an operation from it to the CRS must
-/// bridge, so a latitude-first source gets its axis change here. The prime meridian is the CRS's
-/// own, not zero as PROJ makes it (not ported). `None` for a CRS with no geodetic datum.
+/// it (`crs_to_crs.cpp:174-224`): an unnamed datum with the ellipsoid of the CRS and the Greenwich
+/// prime meridian, since PROJ sets the prime meridian to zero. Its axis order is the one an
+/// operation from it to the CRS must bridge, so a latitude-first source gets its axis change here.
+/// `None` for a CRS with no geodetic datum.
 fn lon_lat_base(crs: &Crs) -> Option<Crs> {
     let geographic = match crs {
         Crs::Geographic(geographic) | Crs::Geodetic(GeodeticCRS::Geographic(geographic)) => {
@@ -1581,10 +1583,14 @@ fn lon_lat_base(crs: &Crs) -> Option<Crs> {
         Crs::Geodetic(_) => return None,
         _ => return None,
     };
+    // `proj_crs_get_datum_forced` gives the ellipsoid, and the prime meridian is set to zero.
+    let ellipsoid = geographic.ellipsoid()?.clone();
+    let datum =
+        GeodeticReferenceFrame::create("unnamed datum", ellipsoid, PrimeMeridian::greenwich());
     GeographicCRS::create(
         "unnamed crs",
-        geographic.datum().cloned(),
-        geographic.datum_ensemble().cloned(),
+        Some(datum),
+        None,
         EllipsoidalCS::create_longitude_latitude(UnitOfMeasure::degree()),
     )
     .ok()
@@ -1594,7 +1600,7 @@ fn lon_lat_base(crs: &Crs) -> Option<Crs> {
 /// The operation from the geodetic base of `crs` to `crs`, used to box the area of use of a
 /// candidate in the coordinates of `crs` (`create_operation_to_geog_crs`, reversed). A grid-free
 /// operation is preferred. `None` when `crs` is geocentric (not reprojected) or is its own base.
-fn geodetic_to_crs(
+pub(super) fn geodetic_to_crs(
     base: &Crs,
     crs: &Crs,
     db: &DatabaseContext,
@@ -1625,7 +1631,10 @@ fn geodetic_to_crs(
 
 /// `create_operation_geocentric_crs_to_geog_crs`: the one operation from a geocentric CRS to
 /// longitude and latitude on its own datum.
-fn geocentric_to_lon_lat(crs: &Crs, db: &DatabaseContext) -> Result<Operation, FactoryError> {
+pub(super) fn geocentric_to_lon_lat(
+    crs: &Crs,
+    db: &DatabaseContext,
+) -> Result<Operation, FactoryError> {
     let Crs::Geodetic(geocentric) = crs else {
         return Err(FactoryError::Format("not a geocentric CRS".to_owned()));
     };
@@ -1752,7 +1761,7 @@ impl Preparer<'_> {
 /// coordinates of the operation's target, from 20 samples per side of its boundary. The world
 /// is not reprojected. `None` when no sample gives a result. With no operation (a geographic
 /// CRS in its own axis order) the box is the longitude and latitude one.
-fn reproject_box(
+pub(super) fn reproject_box(
     operation: Option<&Operation>,
     west: f64,
     south: f64,

@@ -5,17 +5,15 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 47 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `core` | 45 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
 | `niche` | 14 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 41 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (47)
+## core (45)
 
-### test_c_api.cpp (10)
+### test_c_api.cpp (8)
 
 - `CApi.proj_coordoperation_get_grid_used_fullname_caching`
-- `CApi.proj_create_operations_prime_meridian_non_greenwich`
-- `CApi.proj_get_suggested_operation_with_operations_without_area_of_use`
 - `CApi.proj_normalize_for_visualization_with_alternatives`
 - `CApi.proj_normalize_for_visualization_with_alternatives_reverse`
 - `CApi.proj_coordoperation_create_inverse`
