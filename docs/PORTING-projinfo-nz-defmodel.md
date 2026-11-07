@@ -101,8 +101,9 @@ Investigated without a fix (for `#53` to `#57`):
 1. Fix the equivalence of the registry endpoints first, as its own lot: find why PROJ's
    `CoordinateOperation::_isEquivalentTo` accepts `EPSG:4289` and an unnamed 2D CRS with the same datum
    (`tests/unit_op_no_id_crs.rs`). Only then apply `pivot_endpoints` (the attempt 1 patch) on top of it.
-2. Find the function that builds the four-step candidate for ITRF97 (PROJ `createFromCRSCodesWithIntermediates`,
-   `io.cpp`, is not in the source tarball, so the trace is the reference). Give its first step the request's
+2. Find the function that builds the four-step candidate for ITRF97 (PROJ
+   `AuthorityFactory::createFromCRSCodesWithIntermediates`, `src/iso19111/factory.cpp:7630`, called from
+   `coordinateoperationfactory.cpp:2254`). Give its first step the request's
    endpoints, as `createTransformations` does.
 
 ## Result per case (`-o PROJ -q`, port before the reverted code, reference)
