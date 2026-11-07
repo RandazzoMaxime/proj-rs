@@ -1387,8 +1387,9 @@ fn combine(
         let mut operation =
             proj_based_horiz_vertical(source, target, horizontal, vertical, geog_dst);
         if let CoordinateOperation::Concatenated(concatenated) = &mut operation {
-            concatenated.identified.domains =
-                super::factory::operation_extent(vertical).into_iter().collect();
+            concatenated.identified.domains = super::factory::operation_extent(vertical)
+                .into_iter()
+                .collect();
         }
         return Some(operation);
     }
