@@ -77,6 +77,16 @@ File `tests/unit_op_geog3d_steps.rs` (PROJ 9.9.0 expected strings, copied from
 The four ledger lines are removed from `docs/UNPORTED-UNIT.md`, and the counts regenerated
 (`UPDATE_DOCS=1 cargo test --test docs_in_sync`, `UPDATE_DOCS=1 cargo test --test progress_svg`).
 
+## Commit 2 — a stale `#[ignore]` (test only, no code)
+
+`operation_compound_to_compound_issue_3328` (`compoundCRS_to_compoundCRS_issue_3328`,
+`tests/unit_op_compound_to_compound_2.rs`) carried an `#[ignore]` with the reason "the 3D route
+through NAD83(CSRS) is missing, missing leading push v_1 v_2". Run with `--ignored` on the base
+sources, it passes: the list starts with `+step +proj=push +v_1 +v_2` and the expected name and PROJ
+string match. The reason did not describe the code, so the test is not part of this lot's cause.
+The attribute is removed, and its ledger line in `docs/UNPORTED-UNIT.md`. Checked: the file's
+other tests are unchanged (8 pass, 5 still ignored, with their own reasons).
+
 ## Still open (drafts kept out of the tree)
 
 The drafts that still fail are kept in the scratch directory and are not committed, as the rules of
