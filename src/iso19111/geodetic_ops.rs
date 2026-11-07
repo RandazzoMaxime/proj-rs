@@ -29,10 +29,18 @@ const METHOD_GEOCENTRIC_TRANSLATIONS: i32 = 1031;
 /// Whether the datum of the two CRS is compared, or the operation is forced to be a ballpark.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum BallparkRule {
-    /// The same datum gives a null operation, a different one a ballpark.
-    ByDatum,
+    /// The same datum gives a null operation, a different one a ballpark. `same_datum` is the
+    /// result of `isSameGeodeticDatum` with the database, which the caller has made.
+    ByDatum { same_datum: bool },
     /// The operation is a ballpark whatever the datums.
     Forced,
+}
+
+impl BallparkRule {
+    /// The two CRS share a datum, and the operation is a null one.
+    pub(super) fn same_datum(self) -> bool {
+        matches!(self, Self::ByDatum { same_datum: true })
+    }
 }
 
 /// `getCRSQualifierStr`.
@@ -220,7 +228,7 @@ pub(super) fn geodetic_operations(
     if let (Some(left), Some(right)) = (source_geographic, target_geographic) {
         return geographic_to_geographic(source, target, left, right, rule);
     }
-    let same_datum = rule == BallparkRule::ByDatum && same_geodetic_datum(source, target);
+    let same_datum = rule.same_datum();
     match (
         is_geocentric(source),
         is_geocentric(target),
@@ -471,8 +479,7 @@ fn geocentric_translation(
     target: &Crs,
     rule: BallparkRule,
 ) -> Result<Transformation, FactoryError> {
-    let null = rule == BallparkRule::ByDatum
-        && (source.is_equivalent_to(target) || same_geodetic_datum(source, target));
+    let null = rule.same_datum();
     let prefix = if null {
         NULL_GEOCENTRIC_TRANSLATION
     } else {
@@ -603,7 +610,7 @@ fn geographic_to_geographic(
         return Ok(Vec::new());
     };
     let name = transformation_name(source.name(), target.name());
-    let same_datum = rule == BallparkRule::ByDatum && same_geodetic_datum(source, target);
+    let same_datum = rule.same_datum();
     let (source_height, target_height) = (vertical_unit(left), vertical_unit(right));
 
     let axis_reversal = axis_reversal_between(left, right);
@@ -725,7 +732,7 @@ fn geographic_offset(
     target: &Crs,
     rule: BallparkRule,
 ) -> Result<Transformation, FactoryError> {
-    let null = rule == BallparkRule::ByDatum && same_geodetic_datum(source, target);
+    let null = rule.same_datum();
     let prefix = if null {
         NULL_GEOGRAPHIC_OFFSET
     } else {

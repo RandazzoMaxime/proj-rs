@@ -8,7 +8,7 @@
 
 use proj_rs::iso19111::{
     AuthorityFactory, CoordinateOperation, CoordinateOperationContext, CoordinateOperationFactory,
-    Crs, DatabaseContext, GridAvailabilityUse, IntermediateCrsUse, ProjLines,
+    Crs, DatabaseContext, GridAvailabilityUse, IntermediateCrsUse, ProjLines, WktParser,
 };
 
 fn database() -> DatabaseContext {
@@ -19,6 +19,15 @@ fn epsg(db: &DatabaseContext, code: &str) -> Crs {
     AuthorityFactory::create(db, "EPSG")
         .create_coordinate_reference_system(code)
         .expect(code)
+}
+
+fn wkt_crs(wkt: &str) -> Crs {
+    WktParser::new()
+        .create_from_wkt(wkt)
+        .expect("wkt")
+        .crs()
+        .expect("crs")
+        .clone()
 }
 
 fn operations(
@@ -62,6 +71,43 @@ fn assert_proj_eq(actual: &str, expected: &str) {
             _ => assert_eq!(a, e, "{actual}"),
         }
     }
+}
+
+/// `TEST(operation, geogCRS_3D_source_datum_name_is_alias_to_geogCRS)`
+#[test]
+fn operation_geog_crs_3d_source_datum_name_is_alias_to_geog_crs() {
+    let db = database();
+    let ctx = CoordinateOperationContext::create(&db, "EPSG");
+
+    let src = wkt_crs(concat!(
+        "GEOGCRS[\"something\",\n",
+        "    DATUM[\"WGS84\",\n",
+        "        ELLIPSOID[\"WGS84\",6378137,298.257223563,\n",
+        "            LENGTHUNIT[\"metre\",1]],\n",
+        "        ID[\"EPSG\",6326]],\n",
+        "    PRIMEM[\"Greenwich\",0,\n",
+        "        ANGLEUNIT[\"Degree\",0.0174532925199433],\n",
+        "        ID[\"EPSG\",8901]],\n",
+        "    CS[ellipsoidal,3],\n",
+        "        AXIS[\"geodetic latitude (Lat)\",north,\n",
+        "            ORDER[1],\n",
+        "            ANGLEUNIT[\"degree\",0.0174532925199433]],\n",
+        "        AXIS[\"geodetic longitude (Lon)\",east,\n",
+        "            ORDER[2],\n",
+        "            ANGLEUNIT[\"degree\",0.0174532925199433]],\n",
+        "        AXIS[\"ellipsoidal height (h)\",up,\n",
+        "            ORDER[3],\n",
+        "            LENGTHUNIT[\"Meter\",1,\n",
+        "                ID[\"EPSG\",9001]]]]"
+    ));
+
+    let list = operations(&src, &epsg(&db, "4326"), &ctx);
+    assert_eq!(list.len(), 1);
+    assert_proj_eq(&proj(&db, &list[0]), "+proj=noop");
+    assert_eq!(
+        list[0].name(),
+        "Null geographic offset from something to WGS 84"
+    );
 }
 
 /// `TEST(operation, geogCRS_to_geogCRS_CH1903_to_CH1903plus_context)`
