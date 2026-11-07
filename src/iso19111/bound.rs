@@ -8,7 +8,7 @@ use super::equiv::Equivalence;
 use super::factory::{CoordinateOperationContext, CoordinateOperationFactory, DatabaseContext};
 use super::model::{
     BoundCRS, CompoundCRS, CoordinateOperation, Crs, FactoryError, GeodeticCRS, GeographicCRS,
-    Parameter, ParameterValue, Transformation,
+    ObjectDomain, Parameter, ParameterValue, Transformation,
 };
 
 /// EPSG method codes that `Transformation::isGeographic3DToGravityRelatedHeight` accepts.
@@ -342,7 +342,7 @@ fn vertical_bound(
     authority: &str,
 ) -> Result<Option<Crs>, FactoryError> {
     let hub = Crs::Geographic(GeographicCRS::epsg_4979());
-    let operations = candidate_operations(db, &hub, vertical, authority)?;
+    let operations = candidate_operations(db, &hub, vertical, authority, bound_extent(vertical))?;
     let mut candidate = None;
     for operation in operations {
         let CoordinateOperation::Transformation(transformation) = operation else {
@@ -378,7 +378,7 @@ fn horizontal_bound(
     }
     let hub = Crs::Geographic(GeographicCRS::epsg_4326());
     let source = Crs::Geographic(geographic.clone());
-    let operations = candidate_operations(db, &source, &hub, authority)?;
+    let operations = candidate_operations(db, &source, &hub, authority, bound_extent(crs))?;
     let mut count = 0_usize;
     let mut candidate = None;
     for operation in operations {
@@ -434,14 +434,37 @@ fn helmert_for_towgs84(operation: CoordinateOperation) -> Option<Transformation>
     }
 }
 
+/// The operations between `source` and `target` for the bound CRS of `crs`, with the area of
+/// interest that `CRS::createBoundCRSToWGS84IfPossible` gives its context (`extent`).
 fn candidate_operations(
     db: &DatabaseContext,
     source: &Crs,
     target: &Crs,
     authority: &str,
+    area: Option<ObjectDomain>,
 ) -> Result<Vec<CoordinateOperation>, FactoryError> {
-    let context = CoordinateOperationContext::create(db, authority);
+    let mut context = CoordinateOperationContext::create(db, authority);
+    context.set_area_of_interest(area);
     CoordinateOperationFactory::create().create_operations(source, target, &context)
+}
+
+/// The `extent` of `createBoundCRSToWGS84IfPossible` (crs.cpp:605-627): the domain of
+/// validity of the CRS, or the larger of its two domains when one contains the other.
+/// Several unrelated domains give none, as `bound_to_wgs84` refuses those CRS before.
+fn bound_extent(crs: &Crs) -> Option<ObjectDomain> {
+    let domains = crs.domains();
+    if let [outer, inner] = domains {
+        if let (Some(outer_box), Some(inner_box)) = (outer.bounding_box(), inner.bounding_box()) {
+            if outer_box.contains(&inner_box) {
+                return Some(outer.clone());
+            }
+            if inner_box.contains(&outer_box) {
+                return Some(inner.clone());
+            }
+        }
+        return None;
+    }
+    domains.first().cloned()
 }
 
 /// Two usages whose boxes do not nest. One domain, or a pair where one box
