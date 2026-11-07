@@ -54,7 +54,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_operationfactory.cpp
 
-- `operation.geogCRS_to_geogCRS_context_inverse_needed`
 - `operation.vertCRS_to_geogCRS_context`
 - `operation.geog3DCRS_to_geog2DCRS_plus_vertCRS_context`
 - `operation.geogCRS_to_geogCRS_init_IGNF_to_init_IGNF_context`
