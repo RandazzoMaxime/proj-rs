@@ -20,7 +20,7 @@ use super::equiv::{geodetic_frame, same_geodetic_datum, Equivalence};
 use super::factory::{
     crs_extent, geographic_of, world_extent, CoordinateOperationContext,
     CoordinateOperationFactory, DatabaseContext, GridAvailabilityUse, GUARD_ALTERNATIVE_GEOG,
-    GUARD_VERTICAL_INTERMEDIATE, GUARD_VERTICAL_PIVOT,
+    GUARD_SKIP_HORIZONTAL, GUARD_VERTICAL_INTERMEDIATE, GUARD_VERTICAL_PIVOT,
 };
 use super::model::{
     Axis, BoundCRS, CompoundCRS, ConcatenatedOperation, ConcatenatedStep, CoordinateOperation, Crs,
@@ -152,7 +152,10 @@ fn compound_vertical_pass(
     let target_2d = target.demote_to_2d(None);
     let inherited = context.with_inherited_extents(source, target);
     let horizontal_ops = factory.create_operations(horizontal, &target_2d, &inherited)?;
-    let mut vertical_ops = factory.create_candidates(vertical, target, &inherited)?;
+    // `SetSkipHorizontalTransform` (coordinateoperationfactory.cpp:6745-6784): the vertical
+    // transformations are searched with `skipHorizontalTransformation`.
+    let skip_horizontal = skip_horizontal_context(&inherited);
+    let mut vertical_ops = factory.create_candidates(vertical, target, &skip_horizontal)?;
     let has_all_grids = |operations: &[CoordinateOperation]| {
         operations.iter().any(|operation| {
             !operation.identifiers().is_empty()
@@ -176,7 +179,7 @@ fn compound_vertical_pass(
         && !geog_src.is_2d_part_of_3d(geog_dst)
     {
         let interp = src_geographic.promote_to_3d(Some(db));
-        let tmp = factory.create_candidates(vertical, &interp, &inherited)?;
+        let tmp = factory.create_candidates(vertical, &interp, &skip_horizontal)?;
         let tmp_has_grids = has_all_grids(&tmp);
         let registered = tmp
             .iter()
@@ -1933,7 +1936,8 @@ fn bound_compound_to_geog3d(
     if horizontal_ops.is_empty() {
         horizontal_ops.extend(null_offset(horizontal, target));
     }
-    let vertical_ops = factory.create_candidates(vertical, target, context)?;
+    let vertical_ops =
+        factory.create_candidates(vertical, target, &skip_horizontal_context(context))?;
     if horizontal_ops.is_empty() || vertical_ops.is_empty() {
         return Ok(horizontal_ops);
     }
@@ -2081,6 +2085,13 @@ fn bound_cancels(horizontal: &Crs, target: &Crs, interpolation: &GeographicCRS) 
             .is_equivalent_to_with(&interpolation.demote_to_2d(None), Equivalence::Equivalent)
 }
 
+/// `context` with `skipHorizontalTransformation` set, as `SetSkipHorizontalTransform` does.
+fn skip_horizontal_context(context: &CoordinateOperationContext) -> CoordinateOperationContext {
+    let mut inner = context.clone();
+    inner.guards |= GUARD_SKIP_HORIZONTAL;
+    inner
+}
+
 /// `getInterpolationGeogCRS`: the 2D geographic CRS a vertical operation interpolates in.
 fn interpolation_geographic(operation: &CoordinateOperation) -> Option<GeographicCRS> {
     let transformation = match operation {
@@ -2183,7 +2194,7 @@ fn horizontal_axes_reversed(src: &GeographicCRS, dst: &GeographicCRS) -> bool {
 }
 
 /// `demoteTo2D` then `promoteTo3D` with the given height axis, metres when there is none.
-fn promote_with_axis(geographic: &GeographicCRS, height: Option<Axis>) -> GeographicCRS {
+pub(super) fn promote_with_axis(geographic: &GeographicCRS, height: Option<Axis>) -> GeographicCRS {
     let mut promoted = geographic.demote_to_2d(None).promote_to_3d();
     if let Some(height) = height {
         if let Some(axis) = promoted.coordinate_system.axes.get_mut(2) {
