@@ -18,7 +18,6 @@ mod proj_export;
 
 use bounds::Dims;
 
-use crate::crs::Crs;
 use crate::engine::Operation;
 use crate::engine::TransformError as StepError;
 use crate::proj_iso::{iso_pipeline, iso_pipeline_at, IsoPipeline};
@@ -363,17 +362,8 @@ enum Body {
     /// [`Proj::new_known_crs`] of a pair the ISO 19111 selection writes as a pipeline. The
     /// facade boundary is applied around it, see [`crate::proj_iso`].
     Iso(Box<IsoPipeline>),
-    /// [`Proj::new_known_crs`]. Angular axes are degrees.
-    ///
-    /// `bridge` is a PROJ pipeline from source geodetic radians to target
-    /// geodetic radians. It is absent when no datum step is required.
-    Between {
-        source: Crs,
-        target: Crs,
-        bridge: Option<Operation>,
-    },
     /// [`Proj::new`] of one named CRS. Not itself a transform.
-    Single(Crs),
+    Single,
 }
 
 /// A coordinate transformation.
@@ -409,12 +399,12 @@ impl Proj {
             return Err(ProjCreateError::ProjError("empty definition".to_owned()));
         }
         if is_epsg(definition) {
-            let crs = Crs::parse(definition)?;
-            return Ok(built(Body::Single(crs), definition.to_owned(), None));
+            crate::crs::check_crs(definition)?;
+            return Ok(built(Body::Single, definition.to_owned(), None));
         }
         if crate::crs_text::is_crs_text(definition) {
-            let crs = Crs::from_well_known(definition)?;
-            return Ok(built(Body::Single(crs), definition.to_owned(), None));
+            crate::crs::check_well_known(definition)?;
+            return Ok(built(Body::Single, definition.to_owned(), None));
         }
         let op = Operation::create(definition).map_err(from_create)?;
         Ok(built(Body::Native(op), definition.to_owned(), None))
@@ -443,8 +433,8 @@ impl Proj {
     ) -> Result<Self, ProjCreateError> {
         reject_nul(from)?;
         reject_nul(to)?;
-        // The ISO 19111 selection first, as `cs2cs` takes it. The previous CRS path
-        // below is the fallback for a pair the selection does not write.
+        // The ISO 19111 selection, as `cs2cs` takes it. A pair the selection does not write is
+        // refused: libproj's creation has no other path for it.
         if let Some(pipeline) = iso_pipeline(from, to) {
             return Ok(built(
                 Body::Iso(Box::new(pipeline)),
@@ -452,18 +442,9 @@ impl Proj {
                 area,
             ));
         }
-        let source = Crs::parse(from)?;
-        let target = Crs::parse(to)?;
-        let bridge = source.datum_bridge(&target)?;
-        Ok(built(
-            Body::Between {
-                source,
-                target,
-                bridge,
-            },
-            format!("{from} -> {to}"),
-            area,
-        ))
+        Err(ProjCreateError::ProjError(format!(
+            "no transformation from {from} to {to}: the selection writes no pipeline for it"
+        )))
     }
 
     /// Build the transform from `self` to `target_crs`.
@@ -488,19 +469,19 @@ impl Proj {
                 "CRS-to-CRS options are not built".to_owned(),
             ));
         }
-        let Body::Single(source) = &self.body else {
+        if !matches!(self.body, Body::Single) {
             return Err(ProjCreateError::ProjError(
                 "source is not a single CRS".to_owned(),
             ));
-        };
-        let Body::Single(target) = &target_crs.body else {
+        }
+        if !matches!(target_crs.body, Body::Single) {
             return Err(ProjCreateError::ProjError(
                 "target is not a single CRS".to_owned(),
             ));
-        };
+        }
         // Two epochs are not a single `coordinateEpoch`. One epoch is applied on the
-        // ISO pipeline. If that pipeline cannot be built, the transform is refused:
-        // the datum-bridge fallback drops the time and would return an undated point.
+        // ISO pipeline. If that pipeline cannot be built, the transform is refused: no other
+        // path carries the time.
         if let Some(error) = crate::proj_meta::time_dependent_refusal(self, target_crs) {
             return Err(error);
         }
@@ -512,22 +493,10 @@ impl Proj {
                 area,
             ));
         }
-        if epoch.is_some() {
-            return Err(ProjCreateError::ProjError(
-                "coordinate epoch is not applied: the operation has no pipeline this build can time"
-                    .to_owned(),
-            ));
-        }
-        let bridge = source.datum_bridge(target)?;
-        Ok(built(
-            Body::Between {
-                source: source.clone(),
-                target: target.clone(),
-                bridge,
-            },
-            format!("{} -> {}", self.definition, target_crs.definition),
-            area,
-        ))
+        Err(ProjCreateError::ProjError(format!(
+            "no transformation from {} to {}: the selection writes no pipeline for it",
+            self.definition, target_crs.definition
+        )))
     }
 
     /// Build a coordinate metadata object: this CRS at `epoch`.
@@ -542,7 +511,7 @@ impl Proj {
     /// [`ProjCreateError::MetadataObjectCreation`] when `self` is a transform rather
     /// than a single CRS.
     pub fn coordinate_metadata_create(&self, epoch: f64) -> Result<Self, ProjCreateError> {
-        if !matches!(self.body, Body::Single(_)) {
+        if !matches!(self.body, Body::Single) {
             return Err(ProjCreateError::MetadataObjectCreation);
         }
         Ok(crate::proj_meta::with_epoch(self, epoch))
@@ -577,7 +546,7 @@ impl Proj {
     /// [`ProjError::UnknownAreaOfUse`] when this transform is not a CRS built from
     /// `EPSG:`, WKT, or PROJJSON, or when the CRS cannot be read.
     pub fn area_of_use(&self) -> Result<(Option<Area>, Option<String>), ProjError> {
-        if matches!(self.body, Body::Single(_)) {
+        if matches!(self.body, Body::Single) {
             return crate::proj_info::crs_area_of_use(&self.definition);
         }
         Err(ProjError::UnknownAreaOfUse)
@@ -644,7 +613,7 @@ impl Proj {
         }
         match &self.body {
             Body::Native(_) => crate::proj_info::operation_definition(&self.definition),
-            Body::Single(_) | Body::Between { .. } => Err(ProjError::Definition),
+            Body::Single => Err(ProjError::Definition),
             Body::Iso(pipeline) => pipeline.reported_definition(),
         }
     }
@@ -896,18 +865,10 @@ impl Proj {
 
     fn has_inverse(&self) -> bool {
         match &self.body {
-            Body::Single(_) => false,
+            Body::Single => false,
             Body::Iso(pipeline) => pipeline.has_inverse(),
             Body::Native(op) => {
                 !matches!(op.inverse(Xyzt::xy(0.0, 0.0)), Err(StepError::NoInverse))
-            }
-            Body::Between {
-                source,
-                target,
-                bridge,
-            } => {
-                direction_exists(source, target, bridge.as_ref(), Direction::Forward)
-                    && direction_exists(target, source, bridge.as_ref(), Direction::Inverse)
             }
         }
     }
@@ -962,7 +923,7 @@ impl Proj {
         report: Report,
     ) -> Result<Xyzt, ProjError> {
         let mapped = match &self.body {
-            Body::Single(_) => {
+            Body::Single => {
                 return Err(match report {
                     Report::Projection => {
                         ProjError::Projection("CRS is not a transform".to_owned())
@@ -979,23 +940,7 @@ impl Proj {
                     Direction::Forward => op.forward(coord),
                 }
             }
-            Body::Iso(pipeline) => {
-                pipeline.map(Xyzt { x, y, z, t: 0.0 }, way)
-            }
-            Body::Between {
-                source,
-                target,
-                bridge,
-            } => {
-                let (source, target, bridge_way) = match way {
-                    Direction::Inverse => (target, source, Direction::Inverse),
-                    Direction::Forward => (source, target, Direction::Forward),
-                };
-                source.to_geodetic(x, y, z).and_then(|coord| {
-                    apply_bridge(bridge.as_ref(), coord, bridge_way)
-                        .and_then(|coord| target.geodetic_out(coord))
-                })
-            }
+            Body::Iso(pipeline) => pipeline.map(Xyzt { x, y, z, t: 0.0 }, way),
         };
         mapped.map_err(|error| {
             // libproj words an invalid coordinate as `Invalid coordinate`.
@@ -1245,7 +1190,7 @@ fn port_info(searchpath: &str) -> Info {
 }
 
 fn built(body: Body, definition: String, area: Option<Area>) -> Proj {
-    let known = matches!(body, Body::Between { .. } | Body::Iso(_));
+    let known = matches!(body, Body::Iso(_));
     Proj {
         body,
         definition,
@@ -1275,33 +1220,4 @@ fn reject_nul(text: &str) -> Result<(), ProjCreateError> {
 
 fn from_create(error: CreateError) -> ProjCreateError {
     ProjCreateError::ProjError(error.to_string())
-}
-
-/// A sample point outside the domain still means the inverse exists.
-fn direction_exists(
-    source: &Crs,
-    target: &Crs,
-    bridge: Option<&Operation>,
-    way: Direction,
-) -> bool {
-    !matches!(
-        source.to_geodetic(0.0, 0.0, 0.0).and_then(|coord| {
-            apply_bridge(bridge, coord, way).and_then(|coord| target.geodetic_out(coord))
-        }),
-        Err(StepError::NoInverse)
-    )
-}
-
-fn apply_bridge(
-    bridge: Option<&Operation>,
-    coord: Xyzt,
-    way: Direction,
-) -> Result<Xyzt, StepError> {
-    let Some(bridge) = bridge else {
-        return Ok(coord);
-    };
-    match way {
-        Direction::Inverse => bridge.inverse(coord),
-        Direction::Forward => bridge.forward(coord),
-    }
 }

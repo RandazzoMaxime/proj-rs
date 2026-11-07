@@ -106,13 +106,13 @@ enum Exportable {
 fn exportable_of(proj: &Proj) -> Option<(Exportable, DatabaseContext)> {
     let db = DatabaseContext::create().ok()?;
     match &proj.body {
-        Body::Single(_) => {}
+        Body::Single => {}
         Body::Native(_) if has_crs_token(&proj.definition) => {}
         Body::Iso(pipeline) => {
             let normalized = normalize_for_visualization(pipeline.chosen())?;
             return Some((Exportable::Operation(Box::new(normalized)), db));
         }
-        Body::Native(_) | Body::Between { .. } => return None,
+        Body::Native(_) => return None,
     }
     let crs = create_from_user_input(&proj.definition, &db).ok()?;
     Some((Exportable::Crs(Box::new(crs)), db))

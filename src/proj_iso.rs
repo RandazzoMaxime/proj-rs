@@ -9,8 +9,7 @@
 //! first.
 //!
 //! A pair that the selection cannot write (no operation, a missing grid, a CRS that
-//! is neither geographic nor projected) returns `None`, and the caller keeps its
-//! previous path.
+//! is neither geographic nor projected) returns `None`, and the creation fails.
 
 use std::sync::Arc;
 
@@ -141,7 +140,7 @@ pub(crate) fn iso_pipeline_at(from: &str, to: &str, epoch: Option<f64>) -> Optio
         1 => {
             // One instantiable candidate is PROJ's single operation, approximate or not: the
             // default warning policy returns it at once (crs_to_crs.cpp:617-647). A candidate whose
-            // grids are missing stays on the caller's previous path.
+            // grids are missing is not built yet: the discard rerun it needs is not in the list.
             let item = items.pop()?;
             if !item.instantiable {
                 return None;
