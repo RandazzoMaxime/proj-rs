@@ -6468,13 +6468,13 @@ fn datum_pivot_operations(
                 // first or third leg is dropped, and the registry operation it leaves is marked
                 // `DERIVED_FROM`, as `addModifiedIdentifier` does.
                 let is_null_leg = first.is_none() || third.is_none();
-                let operation = if both_3d {
-                    promote_operation_to_3d(operation, &context.db)
+                let operation = if is_null_leg {
+                    derived_from_identifier(operation)
                 } else {
                     operation
                 };
-                let operation = if is_null_leg {
-                    derived_from_identifier(operation)
+                let operation = if both_3d {
+                    promote_pivot_operation_to_3d(operation, &context.db)
                 } else {
                     operation
                 };
@@ -6539,7 +6539,7 @@ fn datum_pivot_operations(
             .filter(|operation| !operation.has_ballpark_transformation())
             .map(|operation| {
                 let operation = if both_3d {
-                    promote_operation_to_3d(operation, &context.db)
+                    promote_pivot_operation_to_3d(operation, &context.db)
                 } else {
                     operation
                 };
@@ -7775,6 +7775,27 @@ fn promote_crs_to_3d(crs: &Crs, db: &DatabaseContext) -> Crs {
             GeodeticCRS::Geographic(geographic.promote_to_3d_with_db(Some(db))),
         ),
         other => other.clone(),
+    }
+}
+
+/// `createTransformations` with `sourceAndTargetAre3D` (coordinateoperationfactory.cpp:
+/// 3318-3349): a concatenated operation is rebuilt by `createComputeMetadata` from its steps, each
+/// with its endpoints promoted to 3D, so it loses its name, its identifiers and its registered
+/// accuracy for the computed ones; another operation has its endpoints promoted.
+fn promote_pivot_operation_to_3d(
+    operation: CoordinateOperation,
+    db: &DatabaseContext,
+) -> CoordinateOperation {
+    match operation {
+        CoordinateOperation::Concatenated(concatenated) if concatenated.proj_based.is_none() => {
+            let steps = concatenated
+                .steps
+                .iter()
+                .map(|step| promote_operation_to_3d(step.oriented_operation(), db))
+                .collect();
+            CoordinateOperation::Concatenated(pivot_concatenation(steps))
+        }
+        other => promote_operation_to_3d(other, db),
     }
 }
 
