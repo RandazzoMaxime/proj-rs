@@ -33,6 +33,12 @@ pub(super) fn derived_candidates(
     ))
 }
 
+/// Whether `crs` is a derived CRS (a projected CRS is one), the case `createOperationsDerivedTo`
+/// handles for a source.
+pub(super) fn is_derived(crs: &Crs) -> bool {
+    derived_parts(crs).is_some()
+}
+
 /// The deriving conversion of a derived CRS, with its CRS pair (base to derived, as the
 /// projection runs), and its base CRS.
 fn derived_parts(crs: &Crs) -> Option<(Conversion, Crs)> {

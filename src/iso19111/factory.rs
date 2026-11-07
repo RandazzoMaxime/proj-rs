@@ -5359,6 +5359,25 @@ impl CoordinateOperationFactory {
                 }
             }
         }
+        // `createOperations` (coordinateoperationfactory.cpp:3652-3656, 3694-3701): with a derived
+        // source (a projected CRS), the registry result is kept and `createOperationsDerivedTo`
+        // (5523) is appended, unless that result has a perfect accuracy (4351, 4577). The
+        // candidates appended here are then sorted and filtered with the grid policy, as in PROJ.
+        if super::derived::is_derived(source)
+            && !has_perfect_accuracy_result(
+                &found,
+                context,
+                source_extent.as_ref(),
+                target_extent.as_ref(),
+            )
+        {
+            if let Some(derived) =
+                super::derived::derived_candidates(self, source, target, context)?
+            {
+                found.extend(derived);
+                return Ok(found);
+            }
+        }
         if found.is_empty() {
             if let Some(derived) =
                 super::derived::derived_candidates(self, source, target, context)?
