@@ -2265,6 +2265,9 @@ pub(crate) enum ProjBasedKind {
     /// The source to an interpolation CRS, the vertical operation, then the interpolation
     /// CRS to the target.
     HorizVerticalHoriz,
+    /// The horizontal operation alone: the vertical one is a ballpark change that writes
+    /// nothing (`MyPROJStringExportableHorizNullVertical`, `coordinateoperationfactory.cpp:2569-2585`).
+    HorizNullVertical,
 }
 
 /// The parts of a [`ProjBasedKind`] pipeline.
