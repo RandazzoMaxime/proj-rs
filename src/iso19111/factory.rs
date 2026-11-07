@@ -5155,18 +5155,17 @@ impl CoordinateOperationFactory {
         target: &Crs,
         context: &CoordinateOperationContext,
     ) -> Result<Vec<CoordinateOperation>, FactoryError> {
-        self.create_operations_between_epochs(source, target, None, context)
+        self.create_operations_between_epochs(source, target, Epochs::default(), context)
     }
 
-    /// PROJ's `createOperations` with the coordinate epochs of the context: `epochs` is the
-    /// source and target epoch when both are set. The point motion branch of
-    /// `createOperationsFromDatabase` runs first, for two geodetic CRS at two epochs
-    /// (coordinateoperationfactory.cpp:4278-4345); when it gives nothing, the registry search runs.
+    /// PROJ's public `createOperations` with the coordinate epochs `epochs`: the candidates
+    /// (`candidates_at_epochs`), filtered and sorted, then the ballpark change of a vertical
+    /// source, as PROJ does in its private `createOperations`.
     fn create_operations_between_epochs(
         &self,
         source: &Crs,
         target: &Crs,
-        epochs: Option<(f64, f64)>,
+        epochs: Epochs,
         context: &CoordinateOperationContext,
     ) -> Result<Vec<CoordinateOperation>, FactoryError> {
         // `createOperations` starts from the canonical bound CRS of an input that has one.
@@ -5187,20 +5186,7 @@ impl CoordinateOperationFactory {
                 }
             }
         }
-        let point_motion = match epochs {
-            Some((source_epoch, target_epoch)) => self.point_motion_from_database(
-                &source,
-                source_epoch,
-                &target,
-                target_epoch,
-                context,
-            )?,
-            None => None,
-        };
-        let mut found = match point_motion {
-            Some(found) => found,
-            None => self.create_candidates(&source, &target, context)?,
-        };
+        let mut found = self.candidates_at_epochs(&source, epochs, &target, context)?;
         // The dispatch of `createOperations` for a vertical source and a geographic target appends
         // the ballpark change of unit to what the database gave (coordinateoperationfactory.cpp:
         // 3748-3751, 6107-6108). A geographic source and a vertical target take the reversed
@@ -5290,7 +5276,10 @@ impl CoordinateOperationFactory {
         target_epoch: Option<f64>,
         context: &CoordinateOperationContext,
     ) -> Result<Vec<CoordinateOperation>, FactoryError> {
-        let epochs = source_epoch.zip(target_epoch);
+        let epochs = Epochs {
+            source: source_epoch,
+            target: target_epoch,
+        };
         let operations = self.create_operations_between_epochs(source, target, epochs, context)?;
         Ok(operations
             .into_iter()
@@ -5476,6 +5465,43 @@ impl CoordinateOperationFactory {
         target: &Crs,
         context: &CoordinateOperationContext,
     ) -> Result<Vec<CoordinateOperation>, FactoryError> {
+        self.create_candidates_at(source, target, Epochs::default(), context)
+    }
+
+    /// PROJ's private `createOperations` with the coordinate epochs `epochs`: the point motion
+    /// branch of `createOperationsFromDatabase` first, for two geodetic CRS at two different
+    /// epochs (coordinateoperationfactory.cpp:4278-4345). When that branch does not apply, the
+    /// candidates of [`Self::create_candidates_at`]. Nothing is filtered, as in PROJ.
+    pub(super) fn candidates_at_epochs(
+        &self,
+        source: &Crs,
+        epochs: Epochs,
+        target: &Crs,
+        context: &CoordinateOperationContext,
+    ) -> Result<Vec<CoordinateOperation>, FactoryError> {
+        if let Some((source_epoch, target_epoch)) = epochs.differing() {
+            if let Some(found) = self.point_motion_from_database(
+                source,
+                source_epoch,
+                target,
+                target_epoch,
+                context,
+            )? {
+                return Ok(found);
+            }
+        }
+        self.create_candidates_at(source, target, epochs, context)
+    }
+
+    /// The candidates of [`Self::create_candidates`] at the coordinate epochs `epochs`: the epochs
+    /// reach the datum pivot, whose epoch change is a point motion of a candidate.
+    fn create_candidates_at(
+        &self,
+        source: &Crs,
+        target: &Crs,
+        epochs: Epochs,
+        context: &CoordinateOperationContext,
+    ) -> Result<Vec<CoordinateOperation>, FactoryError> {
         if let Some(operation) = super::projstring::operation_from_proj_extensions(source, target)?
         {
             return Ok(vec![operation]);
@@ -5655,7 +5681,7 @@ impl CoordinateOperationFactory {
             let mut pivot = if context.has_guard(GUARD_DATUM_PIVOT) {
                 Vec::new()
             } else {
-                datum_pivot_operations(source, target, context)
+                datum_pivot_operations(source, target, epochs, context)
             };
             // `findsOpsInRegistryWithIntermediate(..., false)` (coordinateoperationfactory.cpp:
             // 4436-4450): with no direct operation and no datum pivot, the registered CRS between
@@ -6446,16 +6472,111 @@ pub(super) fn forced_ballpark_operations(source: &Crs, target: &Crs) -> Vec<Coor
     .unwrap_or_default()
 }
 
+/// The coordinate epochs of a `createOperations` call: PROJ's `sourceEpoch` and `targetEpoch`.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(super) struct Epochs {
+    pub(super) source: Option<f64>,
+    pub(super) target: Option<f64>,
+}
+
+impl Epochs {
+    /// Both epochs, when both are set and differ (`!sourceEpoch->_isEquivalentTo(targetEpoch)`).
+    pub(super) fn differing(self) -> Option<(f64, f64)> {
+        match (self.source, self.target) {
+            (Some(source), Some(target)) if source != target => Some((source, target)),
+            _ => None,
+        }
+    }
+}
+
+/// The point motion operations of a geodetic CRS's datum, with PROJ's grid names
+/// (`getPointMotionOperationsFor(crs, true)`). Empty for a CRS that is not geodetic.
+fn point_motion_candidates(
+    crs: &Crs,
+    context: &CoordinateOperationContext,
+) -> Result<Vec<Transformation>, FactoryError> {
+    let Some(geodetic) = geodetic_of_crs(crs) else {
+        return Ok(Vec::new());
+    };
+    AuthorityFactory::create(&context.db, context.authority.as_str())
+        .get_point_motion_operations_for(&geodetic, AlternativeGridNames::Proj)
+}
+
+/// The epoch change of `createTransformations` (coordinateoperationfactory.cpp:3214-3235): with
+/// two different epochs, the operations of the source candidate at the two epochs when its datum
+/// has a point motion, else the same for the target candidate. Returns the list after the first
+/// leg and the list before the third one, which PROJ inserts around the second operation.
+fn pivot_epoch_changes(
+    factory: &CoordinateOperationFactory,
+    left: &Crs,
+    right: &Crs,
+    epochs: Epochs,
+    context: &CoordinateOperationContext,
+) -> Result<(Vec<CoordinateOperation>, Vec<CoordinateOperation>), FactoryError> {
+    if epochs.differing().is_none() {
+        return Ok((Vec::new(), Vec::new()));
+    }
+    if !point_motion_candidates(left, context)?.is_empty() {
+        let changes = factory.candidates_at_epochs(left, epochs, left, context)?;
+        return Ok((changes, Vec::new()));
+    }
+    if !point_motion_candidates(right, context)?.is_empty() {
+        let changes = factory.candidates_at_epochs(right, epochs, right, context)?;
+        return Ok((Vec::new(), changes));
+    }
+    Ok((Vec::new(), Vec::new()))
+}
+
+/// The chains of `createTransformations` (coordinateoperationfactory.cpp:3262-3320): for each
+/// index of the epoch changes, and for each second operation, the first leg, the source epoch
+/// change, the second operation, the target epoch change and the third leg. `prepare` is applied
+/// to each second operation first.
+fn pivot_chains(
+    second: &[CoordinateOperation],
+    first: Option<&CoordinateOperation>,
+    third: Option<&CoordinateOperation>,
+    epoch_changes: (&[CoordinateOperation], &[CoordinateOperation]),
+    prepare: impl Fn(CoordinateOperation) -> CoordinateOperation,
+    source: &Crs,
+    target: &Crs,
+) -> Vec<CoordinateOperation> {
+    let (changes_src, changes_dst) = epoch_changes;
+    let iterations = changes_src.len().max(changes_dst.len()).max(1);
+    let mut res = Vec::new();
+    for index in 0..iterations {
+        for operation in second {
+            let mut steps: Vec<CoordinateOperation> = Vec::new();
+            steps.extend(first.cloned());
+            steps.extend(changes_src.get(index).cloned());
+            steps.push(prepare(operation.clone()));
+            steps.extend(changes_dst.get(index).cloned());
+            steps.extend(third.cloned());
+            pivot_endpoints(&mut steps, source, target);
+            if let [only] = steps.as_slice() {
+                res.push(only.clone());
+                continue;
+            }
+            let domains = pivot_domain(&steps);
+            let mut concatenated = pivot_concatenation(steps);
+            concatenated.identified.domains = domains.into_iter().collect();
+            res.push(CoordinateOperation::Concatenated(concatenated));
+        }
+    }
+    res
+}
+
 /// The registered pass of `createOperationsWithDatumPivot`. Two geodetic CRS of different
 /// datums with no registered operation between them are linked through a geodetic CRS of
 /// each datum that has one. The first pair with a registered operation wins, the pair whose
-/// names match the requested CRS first, as PROJ orders them.
+/// names match the requested CRS first, as PROJ orders them. With two epochs, the epoch change
+/// of the candidates is inserted between the legs (`pivot_epoch_changes`).
 ///
-/// Not ported: the passes that recurse through a third CRS, the epoch-change operations
-/// (`PointMotionOperation`), and the preferred-authority order of the candidates.
+/// Not ported: the passes that recurse through a third CRS, and the preferred-authority order of
+/// the candidates.
 fn datum_pivot_operations(
     source: &Crs,
     target: &Crs,
+    epochs: Epochs,
     context: &CoordinateOperationContext,
 ) -> Vec<CoordinateOperation> {
     let (Some(source_datum), Some(target_datum)) = (
@@ -6471,6 +6592,7 @@ fn datum_pivot_operations(
     let both_3d = axis_count(source) == 3 && axis_count(target) == 3;
     let candidates_source = candidate_geodetic_crs(&authority, &source_datum);
     let candidates_target = candidate_geodetic_crs(&authority, &target_datum);
+    let factory = CoordinateOperationFactory::create();
     let mut pairs: Vec<(&Crs, &Crs)> = candidates_source
         .iter()
         .flat_map(|left| candidates_target.iter().map(move |right| (left, right)))
@@ -6500,6 +6622,11 @@ fn datum_pivot_operations(
                 .as_ref()
                 .and_then(ObjectDomain::bounding_box),
         );
+        let Ok((changes_src, changes_dst)) =
+            pivot_epoch_changes(&factory, left, right, epochs, context)
+        else {
+            continue;
+        };
         let second =
             direct_registry_operations(context, identity_of(left), identity_of(right), boxes)
                 .map(|operations| {
@@ -6507,7 +6634,7 @@ fn datum_pivot_operations(
                         .operations
                 })
                 .unwrap_or_default();
-        let linked: Vec<CoordinateOperation> = second
+        let second: Vec<CoordinateOperation> = second
             .into_iter()
             .filter(|operation| {
                 matches!(
@@ -6515,39 +6642,31 @@ fn datum_pivot_operations(
                     CoordinateOperation::Transformation(_) | CoordinateOperation::Concatenated(_)
                 )
             })
-            .map(|operation| {
-                // `createTransformations` (coordinateoperationfactory.cpp:3278-3330): a null
-                // first or third leg is dropped, and the registry operation it leaves is marked
-                // `DERIVED_FROM`, as `addModifiedIdentifier` does.
-                let is_null_leg = first.is_none() || third.is_none();
+            .collect();
+        // `createTransformations` (coordinateoperationfactory.cpp:3278-3330): a null first or
+        // third leg is dropped, and the registry operation it leaves is marked `DERIVED_FROM`, as
+        // `addModifiedIdentifier` does.
+        let is_null_leg = first.is_none() || third.is_none();
+        let linked = pivot_chains(
+            &second,
+            first.as_ref(),
+            third.as_ref(),
+            (&changes_src, &changes_dst),
+            |operation| {
                 let operation = if is_null_leg {
                     derived_from_identifier(operation)
                 } else {
                     operation
                 };
-                let operation = if both_3d {
+                if both_3d {
                     promote_pivot_operation_to_3d(operation, &context.db)
                 } else {
                     operation
-                };
-                let mut steps: Vec<CoordinateOperation> =
-                    [first.clone(), Some(operation), third.clone()]
-                        .into_iter()
-                        .flatten()
-                        .collect();
-                // `setCRSs` of the first and of the last step (coordinateoperationfactory.cpp:
-                // 3392-3399): the pair of the request, not the one of the candidates.
-                pivot_endpoints(&mut steps, source, target);
-                let domains = pivot_domain(&steps);
-                // `createComputeMetadata` of one operation is that operation (3399-3405).
-                if let [only] = steps.as_slice() {
-                    return only.clone();
                 }
-                let mut concatenated = pivot_concatenation(steps);
-                concatenated.identified.domains = domains.into_iter().collect();
-                CoordinateOperation::Concatenated(concatenated)
-            })
-            .collect();
+            },
+            source,
+            target,
+        );
         if !linked.is_empty() {
             return linked;
         }
@@ -6566,7 +6685,6 @@ fn datum_pivot_operations(
     };
     let mut inner = context.clone();
     inner.guards |= GUARD_DATUM_PIVOT;
-    let factory = CoordinateOperationFactory::create();
     // `createTransformations` of one pair: the operations between the two candidates, each one
     // linked to the two legs of the pivot.
     let linked_pair = |left: &Crs, right: &Crs| -> Vec<CoordinateOperation> {
@@ -6583,30 +6701,33 @@ fn datum_pivot_operations(
         else {
             return Vec::new();
         };
+        let Ok((changes_src, changes_dst)) =
+            pivot_epoch_changes(&factory, left, right, epochs, &inner)
+        else {
+            return Vec::new();
+        };
         let Ok(second) = factory.create_candidates(left, right, &inner) else {
             return Vec::new();
         };
-        second
+        let second: Vec<CoordinateOperation> = second
             .into_iter()
             .filter(|operation| !operation.has_ballpark_transformation())
-            .map(|operation| {
-                let operation = if both_3d {
+            .collect();
+        pivot_chains(
+            &second,
+            first.as_ref(),
+            third.as_ref(),
+            (&changes_src, &changes_dst),
+            |operation| {
+                if both_3d {
                     promote_pivot_operation_to_3d(operation, &context.db)
                 } else {
                     operation
-                };
-                let mut steps: Vec<CoordinateOperation> =
-                    [first.clone(), Some(operation), third.clone()]
-                        .into_iter()
-                        .flatten()
-                        .collect();
-                pivot_endpoints(&mut steps, source, target);
-                if let [only] = steps.as_slice() {
-                    return only.clone();
                 }
-                CoordinateOperation::Concatenated(pivot_concatenation(steps))
-            })
-            .collect()
+            },
+            source,
+            target,
+        )
     };
     for iteration in 1..=2 {
         // Named candidates, of the same kind in iteration 1 and of another kind in iteration 2.
