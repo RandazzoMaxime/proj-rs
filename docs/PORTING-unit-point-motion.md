@@ -27,3 +27,27 @@ factory from the geographic intermediate (not the forced one), as PROJ does. The
 
 Test: `operation_point_motion_operation_geocentric_to_geog3d` (`tests/unit_op_geog_point_motion_ctx.rs`).
 Ledger: the line `operation.createOperation_point_motion_operation_geocentric_to_geog3D` removed.
+
+### 2. The datum pivot with the epochs
+
+`createOperationsWithDatumPivot` (coordinateoperationfactory.cpp:3167-3541) passes the epochs to its
+sub-calls. The epoch change is `createTransformations` (`:3214-3235`): with two epochs that differ,
+the operations of the source candidate at the two epochs when its datum has a point motion
+(`getPointMotionOperationsFor`), else the same for the target candidate. Those operations are
+inserted between the first leg and the second operation, and the loop runs once per epoch change
+(`iEpochChange`), as `pivot_chains` does.
+
+Rust (`src/iso19111/factory.rs`): `Epochs` (the `sourceEpoch`/`targetEpoch` of a private
+`createOperations`), `candidates_at_epochs` (the point motion branch of `createOperationsFromDatabase`
+then the candidates), `create_candidates_at` (the candidates with the epochs; `create_candidates`
+is the call without them), `datum_pivot_operations` with `pivot_epoch_changes` and `pivot_chains`.
+
+The point motion of the pivot is the one of the source datum: for NAD83(CSRS)v7 to ITRF2014 the
+chain is the `NAD83(CSRS)v7 (geocentric)` candidate, the velocity operation from epoch 2002 to epoch
+2005, the Helmert pivot, and the ITRF2014 conversion. The second result of the epoch loop is the
+ballpark geocentric translation of the same candidate (`Ballpark geocentric translation`), which
+PROJ also keeps.
+
+Tests: `operation_point_motion_operation_nad83_csrs_v7_to_itrf2014` and
+`operation_point_motion_operation_itrf2014_to_nad83_csrs_v7` (`tests/unit_op_geog_point_motion_ctx.rs`).
+Ledger: the two lines removed from `docs/UNPORTED-UNIT.md`.
