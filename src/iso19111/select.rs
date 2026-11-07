@@ -34,7 +34,8 @@ use crate::gridpath;
 
 const NADCON_LONGITUDE_FILE_PARAMETER: &str = "8658";
 const BALLPARK_GEOGRAPHIC_OFFSET: &str = "Ballpark geographic offset";
-const BALLPARK_VERTICAL_TRANSFORMATION: &str = "Ballpark vertical transformation";
+/// `BALLPARK_VERTICAL_TRANSFORMATION` (`oputils.cpp:65-66`), in lower case: a name contains it.
+const BALLPARK_VERTICAL_TRANSFORMATION: &str = "ballpark vertical transformation";
 const NULL_GEOGRAPHIC_OFFSET: &str = "Null geographic offset";
 const NULL_GEOCENTRIC_TRANSLATION: &str = "Null geocentric translation";
 const BALLPARK_GEOCENTRIC_TRANSLATION: &str = "Ballpark geocentric translation";
