@@ -44,17 +44,40 @@ Reference: PROJ 9.9.0 sources (tag 9.9.0), `src/iso19111/`. Oracle: the real `pr
 5. `transform_export.rs`: GTiff methods are exported by name (`hgridshift`, `gridshift` for
    `GENERAL_SHIFT_GTIFF`).
 6. `bound.rs`: `nadgrids_filename` for the GTiff method.
-7. `compound.rs`: `vertical_geog_synthesized`, `is_synthesized_ballpark`.
+7. `compound.rs`: `vertical_geog_synthesized`, `is_synthesized_ballpark`; the vertical list of
+   `compound_to_geog3d` is `createOperations(vertical, target)` alone, and
+   `projected_compound_to_geog` keeps that list when it holds only ballparks (see below).
 8. `src/bin/projinfo.rs`: `--no-proj-grid-alternatives` sets `Official`; the default is `Proj`.
+
+## Finding: the ballpark of a compound CRS (replaces an outermost-only guard)
+
+An earlier version gated the ballpark dispatch with a guard bit, so that only the outermost
+`createOperations` appended it. That was not a PROJ rule. Removing the guard and tracing
+`unit_compound_axis_swap.rs` (its WKT, `-t EPSG:4979`, with the traced PROJ build) showed:
+
+- The nested call that PROJ makes for the vertical part, `createOperations(vertical, targetCRS)` in
+  `createOperationsCompoundToGeog` (`coordinateoperationfactory.cpp:6782-6785`, under
+  `SetSkipHorizontalTransform`), does produce the ballpark: the trace has
+  `createOperationsVertToGeog` then `createOperationsVertToGeogSynthetized` inside it.
+- PROJ keeps every vertical transformation of that list. The later step only looks for interpolation
+  CRS candidates (`:6847-6919`, which found none here), then combines the lists
+  (`:6921-6924`). A list of ballparks alone does not give an empty result.
+- Our `projected_compound_to_geog` took the first registered (non-ballpark) vertical operation, and
+  when there was none and the list was not empty it returned no result. The guard kept the list
+  empty, so the fallback `vertical_ballpark` built the same operation and the test passed. Without the
+  guard the list held the ballpark and the early return dropped it. The port now takes the first
+  operation of the list, as PROJ keeps the whole list.
+- `compound_to_geog3d` also appended a second copy of the ballpark to that list. Removed: the list is
+  PROJ's `verticalTransforms` alone.
+
+The trace line `TRACE_BRANCH_ONLY_VERT_BALLPARK` is in the instrumented copy of the sources, not in
+PROJ 9.9.0. The conditions above are read from the pristine 9.9.0 sources.
+
+The first ballpark of the list is taken, where PROJ loops over all of them. No test or table row
+has two ballparks for one pair.
 
 ## Deviations (stated, not hidden)
 
-- **Outermost dispatch only.** PROJ's dispatch in `createOperations` runs for every call. Our
-  sub-searches (the compound vertical part, the intermediate and alternative geog-to-vertical
-  routes) call `create_operations` too, and with the dispatch in them the compound unit test
-  `unit_compound_axis_swap.rs` changes its pipeline. A guard bit `GUARD_VERTICAL_DISPATCH` makes
-  only the outermost call append the ballpark. The test's expected pipeline is the oracle's (checked
-  with `projinfo -s <WKT> -t EPSG:4979 -o PROJ`, which prints the same string).
 - **Default context stays `Official`.** PROJ's `CoordinateOperationContext` defaults to
   `usePROJNames_ = true` (`operation/coordinateoperationfactory.cpp:175`). The library default is kept
   as `Official` so that cs2cs and the API do not change; `projinfo` sets `Proj`, as its CLI does.
@@ -75,6 +98,9 @@ Reference: PROJ 9.9.0 sources (tag 9.9.0), `src/iso19111/`. Oracle: the real `pr
   are not modelled in the vertical path.
 
 ## Oracle table
+
+"Before" is the lot's baseline bca19c5. The table was measured again after the rebase onto
+9a8bdb0 and after the guard was removed; it did not change.
 
 `table.py` runs the real `projinfo` and ours on each invocation. "Normalised" removes the two text
 gaps of the grid-availability lot (`, at least one grid missing`, `needed but not found`). A `DIFF`
