@@ -814,6 +814,35 @@ impl CoordinateOperation {
         }
     }
 
+    /// `isEquivalentTo` with `criterion`. Under a criterion other than `Strict`, a
+    /// concatenated operation is compared step by step with the same criterion, each step as
+    /// the operation it runs (`ConcatenatedOperation::_isEquivalentTo`). Two operations of
+    /// different kinds differ.
+    #[must_use]
+    pub fn is_equivalent_to_with(&self, other: &Self, criterion: Equivalence) -> bool {
+        if criterion == Equivalence::Strict {
+            return self.is_equivalent_to(other);
+        }
+        match (self, other) {
+            (Self::Conversion(left), Self::Conversion(right)) => {
+                left.is_equivalent_to_with(right, criterion)
+            }
+            (Self::Transformation(left), Self::Transformation(right)) => {
+                left.is_equivalent_to_with(right, criterion)
+            }
+            (Self::Concatenated(left), Self::Concatenated(right)) => {
+                let left_steps = left.steps();
+                let right_steps = right.steps();
+                left_steps.len() == right_steps.len()
+                    && left_steps.iter().zip(right_steps).all(|(left, right)| {
+                        step_operation(left)
+                            .is_equivalent_to_with(&step_operation(right), criterion)
+                    })
+            }
+            _ => false,
+        }
+    }
+
     /// The operation from the target to the source.
     #[must_use]
     pub fn inverse(&self) -> Self {
@@ -835,6 +864,16 @@ impl CoordinateOperation {
                 .iter()
                 .any(|step| step.operation.requires_per_coordinate_input_time()),
         }
+    }
+}
+
+/// The operation a concatenated step runs: the operation itself, or its inverse for a
+/// reversed step.
+fn step_operation(step: &ConcatenatedStep) -> CoordinateOperation {
+    if step.is_reverse() {
+        step.operation().inverse()
+    } else {
+        step.operation().clone()
     }
 }
 

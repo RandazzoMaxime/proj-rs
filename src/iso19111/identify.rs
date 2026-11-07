@@ -6,20 +6,28 @@
 
 use std::collections::BTreeSet;
 
+use super::bound::hub_is_wgs84;
 use super::buildop::UtmHemisphere;
 use super::equiv::{
     directions_and_units, ellipsoid_parameters_match, equivalent_name_bigger_differences,
     identify_axes_match, meridian_equivalent, same_epoch, vertical_crs_equivalent, Equivalence,
     IdentifyAxisOrder,
 };
-use super::factory::{same_unit, AuthorityFactory, DatabaseContext, NameMatch};
-use super::model::{
-    Axis, CartesianCS, CompoundCRS, CoordinateSystem, Crs, Datum, DatumEnsemble,
-    DerivedProjectedCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified,
-    Identifier, ObjectDomain, ProjectedCRS, VerticalCRS,
+use super::factory::{
+    same_unit, AuthorityFactory, CoordinateOperationContext, CoordinateOperationFactory,
+    DatabaseContext, NameMatch, SpatialCriterion,
 };
+use super::model::{
+    Axis, BoundCRS, CartesianCS, CompoundCRS, ConcatenatedStep, CoordinateOperation,
+    CoordinateSystem, Crs, Datum, DatumEnsemble, DerivedProjectedCRS, GeodeticCRS,
+    GeodeticReferenceFrame, GeographicCRS, Identified, Identifier, ObjectDomain, ProjectedCRS,
+    VerticalCRS,
+};
+use super::pipeline::ProjLines;
 
 const UNKNOWN_BASED_ON: &str = "Unknown based on ";
+const BALLPARK_GEOCENTRIC_TRANSLATION: &str = "Ballpark geocentric translation";
+const NULL_GEOGRAPHIC_OFFSET: &str = "Null geographic offset";
 
 struct Hit {
     crs: GeodeticCRS,
@@ -124,6 +132,7 @@ impl Crs {
             Self::Projected(crs) => crs.identify_with(factory),
             Self::Vertical(crs) => crs.identify_with(factory),
             Self::Compound(crs) => crs.identify_with(factory),
+            Self::Bound(crs) => crs.identify_with(factory),
             _ => Vec::new(),
         }
     }
@@ -395,6 +404,176 @@ impl CompoundCRS {
             .map(|(crs, confidence)| (Crs::Compound(crs), confidence))
             .collect()
     }
+}
+
+impl BoundCRS {
+    /// `BoundCRS::_identify` (crs.cpp:6236).
+    ///
+    /// Only a bound CRS whose hub is EPSG:4326 is identified. Each identified base CRS is
+    /// bound to that hub through the operation that the database has from it to EPSG:4326,
+    /// when the operation has the transformation of this CRS. A match at confidence 70 or
+    /// more keeps the transformation of the database, else the transformation of this CRS.
+    #[must_use]
+    pub fn identify_with(&self, factory: Option<&AuthorityFactory>) -> Vec<(Crs, i32)> {
+        let Some(factory) = factory else {
+            return Vec::new();
+        };
+        let db = factory.database_context();
+        let hub = self.target_crs();
+        let wgs84 = Crs::Geographic(GeographicCRS::epsg_4326());
+        let mut res: Vec<(Crs, i32)> = Vec::new();
+        let mut res_match_transf: Vec<(Crs, i32)> = Vec::new();
+        if !hub.is_equivalent_to_with(&wgs84, Equivalence::Equivalent) {
+            return res;
+        }
+        let transformation = self.transformation();
+        let ref_transf = transformation
+            .normalize_for_visualization()
+            .unwrap_or_else(|| transformation.clone());
+        let ref_transf_text = identify_proj_string(&ref_transf);
+        let ref_is_null_transform = hub_is_wgs84(hub)
+            && matches!(transformation, CoordinateOperation::Transformation(transf)
+                if transf.towgs84_strict().ok().flatten() == Some([0.0; 7]));
+        for (candidate, confidence) in self.source_crs().identify_with(Some(factory)) {
+            let geodetic = match &candidate {
+                Crs::Projected(projected) => Some(projected.base_crs().clone()),
+                Crs::Geographic(crs) => Some(GeodeticCRS::Geographic(crs.clone())),
+                Crs::Geodetic(crs) => Some(crs.clone()),
+                _ => None,
+            };
+            let Some(geodetic) = geodetic else {
+                continue;
+            };
+            let mut context = CoordinateOperationContext::create(db, factory.authority());
+            context.set_spatial_criterion(SpatialCriterion::PartialIntersection);
+            let ops = CoordinateOperationFactory::create()
+                .create_operations(&to_crs(geodetic), &wgs84, &context)
+                .unwrap_or_default();
+            let mut found_op = false;
+            for op in ops {
+                let op_normalized = op
+                    .normalize_for_visualization()
+                    .unwrap_or_else(|| op.clone());
+                let op_name = op.name();
+                if op_name.starts_with(BALLPARK_GEOCENTRIC_TRANSLATION)
+                    || op_name.starts_with(NULL_GEOGRAPHIC_OFFSET)
+                {
+                    if ref_is_null_transform {
+                        res.push((to_bound(&candidate, hub, transformation), confidence));
+                        found_op = true;
+                        break;
+                    }
+                    continue;
+                }
+                let op_text = identify_proj_string(&op_normalized);
+                let same_text = matches!(
+                    (&ref_transf_text, &op_text),
+                    (Some(reference), Some(text)) if reference == text
+                );
+                if same_text
+                    || op_normalized.is_equivalent_to_with(&ref_transf, Equivalence::Equivalent)
+                {
+                    if let CoordinateOperation::Transformation(transf) = &op {
+                        res_match_transf.push((
+                            to_bound_with(
+                                &candidate,
+                                hub,
+                                CoordinateOperation::Transformation(transf.clone()),
+                            ),
+                            confidence,
+                        ));
+                        found_op = true;
+                        break;
+                    }
+                    if let CoordinateOperation::Concatenated(concatenated) = &op {
+                        let steps = concatenated.steps();
+                        if steps.len() == 2 {
+                            let first = effective_operation(&steps[0]);
+                            let first_is_longitude_rotation = matches!(
+                                &first,
+                                CoordinateOperation::Transformation(transf)
+                                    if transf.method().code() == "9601"
+                            );
+                            let first_is_conversion =
+                                matches!(&first, CoordinateOperation::Conversion(_));
+                            let candidate_is_derived =
+                                matches!(candidate, Crs::Projected(_) | Crs::DerivedProjected(_));
+                            if first_is_longitude_rotation
+                                || (candidate_is_derived && first_is_conversion)
+                            {
+                                if let CoordinateOperation::Transformation(transf) =
+                                    effective_operation(&steps[1])
+                                {
+                                    if !transf.name().starts_with("Ballpark geo") {
+                                        res_match_transf.push((
+                                            to_bound_with(
+                                                &candidate,
+                                                hub,
+                                                CoordinateOperation::Transformation(transf),
+                                            ),
+                                            confidence,
+                                        ));
+                                        found_op = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if !found_op {
+                res.push((
+                    to_bound(&candidate, hub, transformation),
+                    confidence.min(70),
+                ));
+            }
+        }
+        if res_match_transf.is_empty() {
+            res
+        } else {
+            res_match_transf
+        }
+    }
+}
+
+/// `BoundCRS::create(candidate, hub, transformation)` as `_identify` builds the results.
+fn to_bound(source: &Crs, hub: &Crs, transformation: &CoordinateOperation) -> Crs {
+    to_bound_with(source, hub, transformation.clone())
+}
+
+fn to_bound_with(source: &Crs, hub: &Crs, transformation: CoordinateOperation) -> Crs {
+    Crs::Bound(BoundCRS::create(
+        source.clone(),
+        hub.clone(),
+        transformation,
+    ))
+}
+
+/// A step of a concatenated operation as PROJ holds it: the operation, inverted when the
+/// step runs in reverse.
+fn effective_operation(step: &ConcatenatedStep) -> CoordinateOperation {
+    if step.is_reverse() {
+        step.operation().inverse()
+    } else {
+        step.operation().clone()
+    }
+}
+
+/// `exportToPROJString(PROJStringFormatter::create())` of an operation, with the zero
+/// position-vector rotation removed as `BoundCRS::_identify` does. `None` when PROJ would
+/// throw.
+fn identify_proj_string(operation: &CoordinateOperation) -> Option<String> {
+    let text = match operation {
+        CoordinateOperation::Transformation(transf) => {
+            transf.export_to_proj_string(ProjLines::Single).ok()?
+        }
+        CoordinateOperation::Concatenated(concatenated) => {
+            concatenated.export_to_proj_string(ProjLines::Single).ok()?
+        }
+        CoordinateOperation::Conversion(_) => return None,
+    };
+    Some(text.replace(" +rx=0 +ry=0 +rz=0 +s=0 +convention=position_vector", ""))
 }
 
 /// `CRS::hasImplicitCS` for the CRS kinds that carry the flag in this port.
