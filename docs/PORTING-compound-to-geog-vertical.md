@@ -126,9 +126,8 @@ same angles).
     such text exists in `src/` (checked by grep). Only `#126` of the yaml uses them.
 - **`--only-best` and `--only-best=no` for the legacy path**: `OnlyBest::Discard` is new in
   attempt 2, and `cs2cs` maps `Some(false)` to it. The default (no option) stays `Off`.
-- **Facade**: `Proj::new_known_crs` keeps `OnlyBest::Off`, so `EPSG:4267` to `EPSG:4269` still
-  returns an error when the grid is missing (`tests/proj_facade.rs:95`). PROJ's `proj_create` with
-  the default warning policy would fall back here; that is a facade contract, not this lot.
+- **Facade**: resolved by [`docs/PORTING-facade-libproj-parity.md`](PORTING-facade-libproj-parity.md).
+  `Proj::new_known_crs("EPSG:4267", "EPSG:4269")` follows the rerun and creates with the WGS 84 pivot.
 - **Docs after attempt 2**: `docs/UNPORTED-CLI.md` loses `#128`, so `README.md`, `ROADMAP.md` and
   `docs/progress.svg` would need `UPDATE_DOCS=1 cargo test --test docs_in_sync` and
   `UPDATE_DOCS=1 cargo test --test progress_svg`. Reverted, so nothing to regenerate here.
@@ -178,10 +177,9 @@ Two existing tests asserted what PROJ does not do, and now follow PROJ:
   guard was lifted. It now calls `create_operation`, as PROJ does. The PROJ string is
   unchanged.
 
-Deliberate deviation, pending a decision: the georust facade (`best_operation_exact`)
-stays on `OnlyBest::Off`, without the rerun. With the rerun, `Proj::new_known_crs("EPSG:4267",
-"EPSG:4269")` with no grid succeeds through a WGS 84 Helmert pivot, as libproj does
-(crs_to_crs.cpp 688–690 names this case), while `tests/proj_facade.rs` asserts an error.
+Resolved by [`docs/PORTING-facade-libproj-parity.md`](PORTING-facade-libproj-parity.md): the
+georust facade now takes the rerun, and `Proj::new_known_crs("EPSG:4267", "EPSG:4269")` with no
+grid succeeds through the WGS 84 pivot, as libproj does (crs_to_crs.cpp 688–690).
 
 Seen, not fixed: for a compound target, `cs2cs` prints `39dE 3dS 0.000` where PROJ
 prints `39.00 -3.00 0.00` (`#126`, `#127`). The numbers agree, so the CLI harness,
