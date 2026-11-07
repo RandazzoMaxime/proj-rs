@@ -5,11 +5,11 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 43 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `core` | 38 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
 | `niche` | 14 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 41 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (43)
+## core (38)
 
 ### test_c_api.cpp (8)
 
@@ -39,15 +39,11 @@ The class comes from the test name alone, so check it when you port a test.
 
 - `operation.normalizeForVisualization`
 
-### test_operationfactory.cpp (30)
+### test_operationfactory.cpp (25)
 
-- `operation.geogCRS_to_geogCRS_context_inverse_needed`
 - `operation.vertCRS_to_geogCRS_context`
 - `operation.geog3DCRS_to_geog2DCRS_plus_vertCRS_context`
-- `operation.geogCRS_to_geogCRS_CH1903_to_CH1903plus_context`
 - `operation.geogCRS_to_geogCRS_init_IGNF_to_init_IGNF_context`
-- `operation.geogCRS_3D_source_datum_name_is_alias_to_geogCRS`
-- `operation.geogCRS_different_from_baseCRS_to_projCRS_context_compatible_area`
 - `operation.boundCRS_to_geogCRS_hubCRS_and_targetCRS_same_but_baseCRS_not`
 - `operation.ETRS89_3D_to_proj_string_with_geoidgrids_nadgrids`
 - `operation.nadgrids_with_pm`
@@ -68,7 +64,6 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.compoundCRS_of_vertCRS_with_geoid_model_to_geogCRS`
 - `operation.compoundCRS_to_geogCRS_3D_Amersfoort_NAP_height_to_Amersfoort`
 - `operation.compoundCRS_to_geogCRS_3D_using_intermediate_of_horizontal_transform`
-- `operation.IGNF_LAMB1_TO_EPSG_4326`
 - `operation.compoundCRS_to_proj_string_with_non_metre_height`
 - `operation.compoundCRS_to_PROJJSON_with_non_metre_height`
 
