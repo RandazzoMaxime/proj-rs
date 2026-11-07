@@ -86,6 +86,9 @@ pub(super) const GUARD_DATUM_INTERMEDIATE: u8 = 4;
 pub(super) const GUARD_DATUM_PIVOT: u8 = 8;
 /// `inCreateOperationsVertToVertWithIntermediateVert`.
 pub(super) const GUARD_VERTICAL_PIVOT: u8 = 16;
+/// Set while `createOperations` runs for a vertical source, so that the operations of its own
+/// sub-searches do not get the ballpark change of unit appended a second time.
+pub(super) const GUARD_VERTICAL_DISPATCH: u8 = 32;
 
 /// How the availability of an operation's grids enters the ordering.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -5165,7 +5168,24 @@ impl CoordinateOperationFactory {
                 }
             }
         }
-        let found = self.create_candidates(&source, &target, context)?;
+        // The searches below read `createOperations` again for their sub-CRS. Those calls are not
+        // the dispatch of PROJ's outer call, so they are marked as nested.
+        let nested = context.has_guard(GUARD_VERTICAL_DISPATCH);
+        let mut inner = context.clone();
+        inner.guards |= GUARD_VERTICAL_DISPATCH;
+        let mut found = self.create_candidates(&source, &target, &inner)?;
+        // The dispatch of `createOperations` for a vertical source and a geographic target appends
+        // the ballpark change of unit to what the database gave (coordinateoperationfactory.cpp:
+        // 3748-3751, 6107-6108). A geographic source and a vertical target take the reversed
+        // search instead, which returns what it finds without that change (`geogSrc && vertDst`,
+        // :4259-4276): the change comes only when it finds nothing. The geoid route has added it
+        // already (`create_candidates`), so it is not added twice.
+        if !nested
+            && (matches!(source, Crs::Vertical(_)) || found.is_empty())
+            && !found.iter().any(super::compound::is_synthesized_ballpark)
+        {
+            found.extend(super::compound::vertical_geog_synthesized(&source, &target));
+        }
         Ok(select_candidates(found, &source, &target, context))
     }
 
@@ -5332,6 +5352,17 @@ impl CoordinateOperationFactory {
         }
         if let Some(bound) = super::bound_ops::bound_candidates(self, source, target, context)? {
             return Ok(bound);
+        }
+        // `createOperationsFromDatabase` reads the geoid models of a 3D geographic CRS and a
+        // vertical CRS before the registry: a result ends the search, with the ballpark change of
+        // unit that PROJ appends to it (coordinateoperationfactory.cpp:4260-4271).
+        if context.registry == RegistryUse::Database {
+            let geoid = super::compound::geoid_vertical(source, target, context)?;
+            if !geoid.is_empty() {
+                let mut operations = geoid;
+                operations.extend(super::compound::vertical_geog_synthesized(source, target));
+                return Ok(operations);
+            }
         }
         let mut found = Vec::new();
         let mut direct_empty = true;
@@ -5503,7 +5534,7 @@ impl CoordinateOperationFactory {
             }
         }
         if registry && found.is_empty() {
-            found.extend(super::compound::geoid_vertical(source, target, context)?);
+            found.extend(promoted_registry_vertical(source, target, boxes, context)?);
         }
         if registry && found.is_empty() {
             found.extend(super::compound::vertical_geog_fallback(
@@ -6343,6 +6374,49 @@ fn datum_pivot_operations(
         }
     }
     Vec::new()
+}
+
+/// `createOperationsFromDatabase` (`coordinateoperationfactory.cpp:4359-4387`): a two-dimensional
+/// geographic CRS and a vertical CRS with no registered operation between them read the registry
+/// for the three-dimensional geographic CRS of the same datum. Each operation found keeps the CRS
+/// pair of the request (`setCRSs`).
+fn promoted_registry_vertical(
+    source: &Crs,
+    target: &Crs,
+    boxes: (Option<BoundingBox>, Option<BoundingBox>),
+    context: &CoordinateOperationContext,
+) -> Result<Vec<CoordinateOperation>, FactoryError> {
+    let is_geographic_2d = |crs: &Crs| {
+        geographic_of(crs)
+            .is_some_and(|geographic| geographic.coordinate_system().axes().len() == 2)
+    };
+    let (promoted_source, promoted_target) =
+        if is_geographic_2d(source) && matches!(target, Crs::Vertical(_)) {
+            (promote_crs_to_3d(source, &context.db), target.clone())
+        } else if is_geographic_2d(target) && matches!(source, Crs::Vertical(_)) {
+            (source.clone(), promote_crs_to_3d(target, &context.db))
+        } else {
+            return Ok(Vec::new());
+        };
+    let (Some(source_id), Some(target_id)) = (
+        registry_identity(&promoted_source, context),
+        registry_identity(&promoted_target, context),
+    ) else {
+        return Ok(Vec::new());
+    };
+    let found = direct_registry_operations(
+        context,
+        (source_id.0.as_str(), source_id.1.as_str()),
+        (target_id.0.as_str(), target_id.1.as_str()),
+        boxes,
+    )?;
+    Ok(found
+        .into_iter()
+        .map(|mut operation| {
+            super::bound_ops::set_endpoints(&mut operation, source, target);
+            operation
+        })
+        .collect())
 }
 
 /// `findsOpsInRegistryWithIntermediate` for a source CRS the registry does not know: each

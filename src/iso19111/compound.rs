@@ -1181,6 +1181,46 @@ fn chain(
     })
 }
 
+/// The ballpark change of unit to a geographic CRS of another datum, as `vertical_geog_synthesized`
+/// and `vertical_ballpark` name it.
+pub(super) fn is_synthesized_ballpark(operation: &CoordinateOperation) -> bool {
+    operation.name().contains(
+        "(ballpark vertical transformation, without ellipsoid height to vertical height correction)",
+    )
+}
+
+/// `createOperationsVertToGeogSynthetized` (`coordinateoperationfactory.cpp:6113`): the ballpark
+/// change of vertical unit between a vertical CRS and a geographic CRS of another datum, in the
+/// direction of the request. The reverse request inverts the operation, as PROJ does with
+/// `applyInverse`. It is appended to the operations of a vertical source and a geographic
+/// target (`createOperations`, `coordinateoperationfactory.cpp:3748-3751`, and `createOperationsVertToGeog`,
+/// `:6107-6108`), and to the geoid operations before the registry (`:4266-4271`). `None` when the
+/// datums are the same (PROJ builds a conversion there, not ported).
+pub(super) fn vertical_geog_synthesized(source: &Crs, target: &Crs) -> Option<CoordinateOperation> {
+    let (vertical, geog_crs, from_vertical) = match (source, target) {
+        (Crs::Vertical(_), other) => (source, other, true),
+        (other, Crs::Vertical(_)) => (target, other, false),
+        _ => return None,
+    };
+    let Crs::Vertical(vertical_crs) = vertical else {
+        return None;
+    };
+    let geog = geographic_of(geog_crs)?;
+    let operation = vertical_ballpark(
+        vertical,
+        vertical_crs,
+        None,
+        geographic_datum_name(geog).as_deref(),
+        geog,
+        geog_crs,
+    )?;
+    Some(if from_vertical {
+        operation
+    } else {
+        operation.inverse()
+    })
+}
+
 /// `createOperationsVertToGeogSynthetized`: the ballpark change of vertical unit
 /// from a vertical CRS to a 3D geographic CRS of another datum. `None` when the
 /// datums are the same, where PROJ builds a conversion instead (not ported).
