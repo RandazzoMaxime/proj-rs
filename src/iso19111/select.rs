@@ -1197,6 +1197,7 @@ pub fn select_alternatives_with_authority(
         source_lat_lon,
         target_lon_lat,
         target_lat_lon,
+        optional_grids_serve: false,
     };
     let mut prepared = preparer.prepare(&ranked);
     if policy != BestPolicy::Discard
@@ -1351,6 +1352,7 @@ pub(crate) fn facade_candidates(
                 source_lat_lon: false,
                 target_lon_lat: false,
                 target_lat_lon: false,
+                optional_grids_serve: true,
             };
             let items = preparer.prepare(&ranked);
             return Ok(FacadeCandidates {
@@ -1386,6 +1388,7 @@ pub(crate) fn facade_candidates(
         source_lat_lon,
         target_lon_lat,
         target_lat_lon,
+        optional_grids_serve: true,
     };
     // Each candidate with the operation its pieces were prepared from, in PROJ's order.
     let prepare_each = |candidates: &[(CoordinateOperation, Characteristics)]| {
@@ -1656,6 +1659,10 @@ struct Preparer<'a> {
     source_lat_lon: bool,
     target_lon_lat: bool,
     target_lat_lon: bool,
+    /// Whether a grid whose name starts with `@` is optional: PROJ's `isPROJInstantiable` does not
+    /// count a missing optional grid (`singleoperation.cpp:347-354`). The facade sets it; `cs2cs`
+    /// keeps the candidates it has always built.
+    optional_grids_serve: bool,
 }
 
 impl Preparer<'_> {
@@ -1672,8 +1679,11 @@ impl Preparer<'_> {
                 vec![(west, 180.0), (-180.0, east)]
             };
             let grids = proj_grids(operation, self.db).unwrap_or_else(|_| grid_names(operation));
-            let instantiable =
-                characteristics.exportable && grids.iter().all(|grid| gridpath::available(grid));
+            let instantiable = characteristics.exportable
+                && grids.iter().all(|grid| {
+                    gridpath::available(grid)
+                        || (self.optional_grids_serve && grid.starts_with('@'))
+                });
             let definition = export(operation, self.source, self.target, self.db).ok();
             for (piece_west, piece_east) in pieces {
                 let source_box = if self.geocentric {
