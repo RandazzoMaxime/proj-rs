@@ -71,3 +71,16 @@ fn summary_names_a_missing_grid_when_the_grid_check_is_on() {
          unknown id, Inverse of UTM zone 30N + ED50 to ETRS89 (7) + UTM zone 30N, 1.5 m, Spain - onshore mainland except northwest (north of 41°30'N and west of 4°30'W).\n"
     );
 }
+
+/// A WKT1 block is followed by a blank line (projinfo_lib.cpp:774, 799), and the output ends
+/// there. The WKT of a projected CRS ends in its AUTHORITY, so the text ends in `]]` and two
+/// newlines.
+#[test]
+fn wkt1_block_ends_with_a_blank_line() {
+    let text = projinfo_stdout(&["-o", "WKT1_GDAL", "EPSG:32631"], &[]);
+    assert!(
+        text.ends_with("AUTHORITY[\"EPSG\",\"32631\"]]\n\n"),
+        "{text:?}"
+    );
+    assert!(!text.ends_with("\n\n\n"), "{text:?}");
+}
