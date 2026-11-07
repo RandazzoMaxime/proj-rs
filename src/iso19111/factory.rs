@@ -8534,8 +8534,27 @@ fn resolve_crs(
                 if equivalent(found, crs) && !has_geoid {
                     return (found.clone(), extent, true);
                 }
-                return (crs.clone(), extent, changed);
+                if !matches!(crs, Crs::Compound(_)) {
+                    return (crs.clone(), extent, changed);
+                }
             }
+        }
+    }
+    // A compound CRS without identifier and without its own extent: the intersection of the
+    // extents of its components, each resolved (coordinateoperationfactory.cpp:8342-8356).
+    if let Crs::Compound(compound) = crs {
+        if approximate {
+            let mut resolved: Option<ObjectDomain> = None;
+            for component in compound.components() {
+                let (_, component_extent, _) = resolve_crs(component, context);
+                resolved = match (resolved, component_extent) {
+                    (Some(sofar), Some(part)) => intersect_extents(sofar, part),
+                    (None, Some(part)) => Some(part),
+                    (sofar, None) => sofar,
+                };
+            }
+            let changed = resolved != extent;
+            return (crs.clone(), resolved, changed);
         }
     }
     (crs.clone(), extent, false)
