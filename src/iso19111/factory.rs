@@ -86,9 +86,6 @@ pub(super) const GUARD_DATUM_INTERMEDIATE: u8 = 4;
 pub(super) const GUARD_DATUM_PIVOT: u8 = 8;
 /// `inCreateOperationsVertToVertWithIntermediateVert`.
 pub(super) const GUARD_VERTICAL_PIVOT: u8 = 16;
-/// Set while `createOperations` runs for a vertical source, so that the operations of its own
-/// sub-searches do not get the ballpark change of unit appended a second time.
-pub(super) const GUARD_VERTICAL_DISPATCH: u8 = 32;
 
 /// How the availability of an operation's grids enters the ordering.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -5168,20 +5165,14 @@ impl CoordinateOperationFactory {
                 }
             }
         }
-        // The searches below read `createOperations` again for their sub-CRS. Those calls are not
-        // the dispatch of PROJ's outer call, so they are marked as nested.
-        let nested = context.has_guard(GUARD_VERTICAL_DISPATCH);
-        let mut inner = context.clone();
-        inner.guards |= GUARD_VERTICAL_DISPATCH;
-        let mut found = self.create_candidates(&source, &target, &inner)?;
+        let mut found = self.create_candidates(&source, &target, context)?;
         // The dispatch of `createOperations` for a vertical source and a geographic target appends
         // the ballpark change of unit to what the database gave (coordinateoperationfactory.cpp:
         // 3748-3751, 6107-6108). A geographic source and a vertical target take the reversed
         // search instead, which returns what it finds without that change (`geogSrc && vertDst`,
         // :4259-4276): the change comes only when it finds nothing. The geoid route has added it
         // already (`create_candidates`), so it is not added twice.
-        if !nested
-            && (matches!(source, Crs::Vertical(_)) || found.is_empty())
+        if (matches!(source, Crs::Vertical(_)) || found.is_empty())
             && !found.iter().any(super::compound::is_synthesized_ballpark)
         {
             found.extend(super::compound::vertical_geog_synthesized(&source, &target));
