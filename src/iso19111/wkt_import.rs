@@ -8,6 +8,7 @@ use super::bound::extract_geographic;
 use super::buildop::{OpProps, UtmHemisphere};
 use super::equiv::Equivalence;
 use super::niche::{ParametricCS, ParametricDatum, TemporalCS, TemporalCsKind, TemporalDatum};
+use super::wkt1_syntax::wkt1_syntax_error;
 
 mod niche;
 use super::factory::{AuthorityFactory, DatabaseContext};
@@ -647,6 +648,19 @@ impl WktParser {
             self.esri = true;
             self.maybe_esri = false;
         }
+        let object = self.build_from_wkt(wkt)?;
+        // createFromWKT (io.cpp:8506-8520): once built, a WKT1 text is checked against the
+        // WKT1 grammar (`pj_wkt1_parse`). Strict mode fails, lax mode records the message.
+        if matches!(dialect, WktDialect::Wkt1Gdal | WktDialect::Wkt1Esri) {
+            if let Some(message) = wkt1_syntax_error(wkt) {
+                self.grammar(message)?;
+            }
+        }
+        Ok(object)
+    }
+
+    /// The object of `wkt`, before the grammar check of [`Self::create_from_wkt`].
+    fn build_from_wkt(&mut self, wkt: &str) -> Result<WktObject, FactoryError> {
         let (root, mut index) = parse_node(wkt, 0, 0)?;
         if ci_eq(&root.value, "DATUM")
             || ci_eq(&root.value, "GEODETICDATUM")
@@ -2075,11 +2089,23 @@ impl WktParser {
         if let Some(unit) = self.unit_in(node, UnitKind::Linear)? {
             return Ok(unit);
         }
-        self.recover(format!(
-            "buildCS: missing UNIT in {} node. Assuming metre",
-            node.value
-        ))?;
+        self.missing_unit(&node.value, &fallback)?;
         Ok(fallback)
+    }
+
+    /// `emitRecoverableMissingUNIT` (io.cpp:2845-2856). The warning names the parent node
+    /// keyword. In lax mode it also says the unit assumed, when that is metre or degree.
+    /// PROJ compares units by name (`UnitOfMeasure::operator==`, common.cpp:305).
+    fn missing_unit(&mut self, parent: &str, fallback: &UnitOfMeasure) -> Result<(), FactoryError> {
+        let mut message = format!("buildCS: missing UNIT in {parent}");
+        if !self.strict {
+            if fallback.name() == UnitOfMeasure::metre().name() {
+                message.push_str(". Assuming metre");
+            } else if fallback.name() == UnitOfMeasure::degree().name() {
+                message.push_str(". Assuming degree");
+            }
+        }
+        self.recover(message)
     }
 
     fn angular_or_warn(
@@ -2092,10 +2118,7 @@ impl WktParser {
                 return Ok(unit);
             }
         }
-        self.recover(format!(
-            "buildCS: missing UNIT in {} node. Assuming degree",
-            node.value
-        ))?;
+        self.missing_unit(&node.value, &fallback)?;
         Ok(fallback)
     }
 

@@ -989,8 +989,8 @@ fn candidates(options: &Options) -> Result<String, String> {
     let db = proj_rs::DatabaseContext::create().map_err(|error| error.to_string())?;
     let source_text = options.source.as_deref().unwrap_or("");
     let target_text = options.target.as_deref().unwrap_or("");
-    let source = build_crs(&db, load_named(&db, source_text, options.quiet)?, options);
-    let target = build_crs(&db, load_named(&db, target_text, options.quiet)?, options);
+    let source = build_crs(&db, load_named(&db, source_text, options)?, options);
+    let target = build_crs(&db, load_named(&db, target_text, options)?, options);
     let (source, target) = if options.promote_3d {
         (source, target)
     } else {
@@ -1186,9 +1186,9 @@ fn operation_bodies(
 fn load_named(
     db: &proj_rs::DatabaseContext,
     text: &str,
-    quiet: bool,
+    options: &Options,
 ) -> Result<proj_rs::Crs, String> {
-    if let Some(crs) = read_wkt(db, text, quiet) {
+    if let Some(crs) = read_wkt(db, text, options) {
         return crs;
     }
     proj_rs::create_from_user_input(text, db).map_err(|error| error.to_string())
@@ -1201,7 +1201,7 @@ fn load_named(
 fn read_wkt(
     db: &proj_rs::DatabaseContext,
     text: &str,
-    quiet: bool,
+    options: &Options,
 ) -> Option<Result<proj_rs::Crs, String>> {
     if proj_rs::WktParser::guess_dialect(text) == proj_rs::WktDialect::NotWkt {
         return None;
@@ -1213,7 +1213,7 @@ fn read_wkt(
         Ok(object) => object,
         Err(error) => return Some(Err(error.to_string())),
     };
-    if !quiet {
+    if !options.quiet {
         for warning in parser.warnings() {
             eprintln!("Warning: {warning}");
         }
@@ -1407,7 +1407,7 @@ fn operation_wkt(
 
 fn describe(options: &Options, text: &str) -> Result<String, String> {
     let db = database()?;
-    let object = match build_object(&db, text, options.kind, options.quiet)? {
+    let object = match build_object(&db, text, options.kind, options)? {
         proj_rs::AuthorityObject::Crs(crs) => {
             proj_rs::AuthorityObject::Crs(build_crs(&db, crs, options))
         }
@@ -1422,10 +1422,10 @@ fn build_object(
     db: &proj_rs::DatabaseContext,
     text: &str,
     kind: Option<ObjectKind>,
-    quiet: bool,
+    options: &Options,
 ) -> Result<proj_rs::AuthorityObject, String> {
     if matches!(kind, None | Some(ObjectKind::Crs)) {
-        if let Some(crs) = read_wkt(db, text, quiet) {
+        if let Some(crs) = read_wkt(db, text, options) {
             return crs.map(proj_rs::AuthorityObject::Crs);
         }
     }
