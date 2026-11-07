@@ -65,3 +65,50 @@ File `tests/unit_crs_strings_misc.rs`, PROJ `crs.norway_ntm`. The test stays in 
 |---|---|---|
 | `crs_norway_ntm_esri_wkt1_export` | `crs.norway_ntm`, first assertion (test_crs.cpp:8002-8006) | closed as a part, commit 1 (failed on the base: `GCS_ETRS89-NOR_EUREF89`) |
 | `crs_norway_ntm_esri_wkt1_import_identifies_5105` | `crs.norway_ntm`, ESRI import and identify (test_crs.cpp:8009-8021) | closed as a part, commit 1 (the base test stopped at the export; with the export fixed, the import gave base `ETRS89`) |
+
+## Commit 2 — `createBoundCRSToWGS84IfPossible`: geocentric CRS and the extent of an imported CRS
+
+### What was wrong
+
+The draft of `crs.crs_createBoundCRSToWGS84IfPossible` failed on two blocks (the EPSG:4807 block that
+the triage table named passes on the base; checked with a probe):
+
+1. `IGNF:PGP50`, a geocentric CRS, was returned unchanged. PROJ binds it to EPSG:4978.
+2. The WKT1 export of EPSG:2936 read back, with its usage missing, was bound to a Helmert it
+   should not take. PROJ resolves the CRS by its identifier and takes that CRS's extent, which
+   restricts the candidates to the area, and the two candidates with `+towgs84` then give no
+   binding.
+
+### What PROJ does
+
+- `CRS::createBoundCRSToWGS84IfPossible`, geodetic branch (crs.cpp:659-779): a geocentric CRS
+  (`geodCRS && !geogCRS`) takes `EPSG:4978` as hub, and the early return for a known datum
+  equivalent to the hub applies to it too (crs.cpp:662-667). The candidates are taken by the same
+  rules for both kinds: a transformation with `+towgs84`, or the second step of a longitude
+  rotation followed by a Helmert (crs.cpp:721-771). One candidate only.
+- The extent: `extent` comes from the domains of the CRS (crs.cpp:554-585). With none, the geodetic
+  branch calls `getResolvedCRS` (crs.cpp:688), which takes the extent of the database CRS named by
+  the identifier (coordinateoperationfactory.cpp:8220-8262). The vertical branch does not resolve.
+
+### Port
+
+| PROJ 9.9.0 | Rust (`src/iso19111/bound.rs`) |
+|---|---|
+| geodetic branch, `geodCRS && !geogCRS` -> EPSG:4978 (crs.cpp:659-665) | `horizontal_bound`, geocentric arm, `GeodeticCRS::epsg_4978` |
+| the candidate rule, shared by both kinds (crs.cpp:721-779) | `single_towgs84_candidate` (extracted from `horizontal_bound`) |
+| known datum check (crs.cpp:662) | `has_known_datum` |
+| `getResolvedCRS`, the extent of a CRS with no usage (coordinateoperationfactory.cpp:8220) | `geodetic_extent`, `resolved_domains`; the first usage of the resolved CRS, where PROJ takes the extent of all of them (a gap, see below) |
+
+Gap kept: PROJ's `getExtent` of the resolved CRS is the union of its usages; the port takes the first
+one. The resolution by identifier is not PROJ's full `getResolvedCRS` (the name match, the compound
+and other branches are not ported). Neither changes the one usage of the cases of this test.
+
+### Tests
+
+File `tests/unit_crs_bound_to_wgs84.rs`, PROJ `crs.crs_createBoundCRSToWGS84IfPossible`. The timing
+check of the C++ test (GDA2020 geocentric, `IF_NO_DIRECT_TRANSFORMATION`) is not ported: it measures a
+wall clock. The rest of the test is closed.
+
+| Rust test | PROJ | Status |
+|---|---|---|
+| `crs_create_bound_crs_to_wgs84_if_possible` | `crs.crs_createBoundCRSToWGS84IfPossible` | closed, commit 2 (on the base the first failing block is `PGP50`; the EPSG:4807 block that the triage named passes on the base, checked with a probe; the EPSG:2936 WKT1 round trip failed once `PGP50` passed) |
