@@ -94,9 +94,12 @@ Neither needs anything but the datum pivot: #88 is found by pass 1, and #89 by t
   PROJ 12). The ballpark is added by `create_candidates` when no candidate is of perfect accuracy
   under the strict filter; the PROJ rule is not checked here.
 - **EPSG:4936 to EPSG:7789** (neighbour): the port returns the registry inverses `Inverse of
-  ITRF2014 to ETRF2014 (2)`, `(1)`, `ETRF2020`, `ETRF2000` (`INVERSE(EPSG):8880` etc.), where PROJ
-  returns four concatenations through `ETRS89 (geog2D)` and `ETRS89 to ETRF2014`. Before and after
-  this lot the output is the same, so it is not caused here. Not investigated further.
+  ITRF2014 to ETRF2014 (2)`, `(1)`, `ETRF2020`, `ETRF2000` (`INVERSE(EPSG):8880` etc., single
+  steps), where PROJ returns four concatenations through `ETRS89 (geog2D)` and `ETRS89 to ETRF2014`.
+  PROJ gets them in pass 1, for the 2D pair ETRS89 (4258) to ITRF2014 (9000) (trace of
+  `EPSG:4936` to `EPSG:7789`, `iter=1`, then `findsOpsInRegistryWithIntermediate` on the 2D pair).
+  The port's four operations are single steps, so they do not come from the pivot; why the port
+  returns them is not traced. Before and after this lot the output is the same.
 - **EPSG:4230 to EPSG:4258** (ED50 to ETRS89, `--summary` without `--spatial-test`): the port gives
   1 candidate, PROJ 52. Same before and after this lot; the yaml case `test_cs2cs_various` uses
   other arguments and passes.
@@ -147,4 +150,8 @@ offset" line that PROJ does not print (see Open). The counts are PROJ's.
 The yaml ratchet runs after each commit: `cargo test --test cli_yaml` passes, and the ledger
 drops #88 and #89 in commit 2. The unit tests of the sheet's list (`pivot_candidate_set`,
 `concat_accuracy`, `unit_op_itrf2000_etrs89`, `unit_opfac_core_c_pivot2`, `datum_pivot`) pass after
-commits 1, 2 and 3. The full bar is run once on the head of the branch (see the final report).
+commits 1, 2 and 3.
+
+Full bar on the head of the branch, `cargo test --all-features --no-fail-fast` with PROJ 9.9.0 on
+`PATH` and `PROJ_CS2CS_REQUIRED=1`: 157 test binaries, 1625 passed, 0 failed, 34 ignored. `cargo fmt
+--check` and `cargo clippy --all-targets --all-features -- -D warnings` pass.
