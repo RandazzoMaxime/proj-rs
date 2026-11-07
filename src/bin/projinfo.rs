@@ -186,6 +186,8 @@ struct Options {
     grid_check: Option<proj_rs::GridAvailabilityUse>,
     accuracy: Option<f64>,
     hide_ballpark: bool,
+    /// `--no-proj-grid-alternatives`: the grid names of the candidates as the database has them.
+    alternative_grid_names: proj_rs::AlternativeGridNames,
     promote_3d: bool,
     normalize_axis_order: bool,
     output_id: Option<(String, String)>,
@@ -240,6 +242,7 @@ impl Options {
         let mut grid_check = None;
         let mut accuracy = None;
         let mut hide_ballpark = false;
+        let mut alternative_grid_names = proj_rs::AlternativeGridNames::Proj;
         let mut promote_3d = false;
         let mut normalize_axis_order = false;
         let mut output_id = None;
@@ -261,6 +264,8 @@ impl Options {
                 summary = true;
             } else if arg == "--hide-ballpark" {
                 hide_ballpark = true;
+            } else if arg == "--no-proj-grid-alternatives" {
+                alternative_grid_names = proj_rs::AlternativeGridNames::Official;
             } else if arg == "--3d" {
                 promote_3d = true;
             } else if arg == "--grid-check" {
@@ -502,6 +507,7 @@ impl Options {
             grid_check,
             accuracy,
             hide_ballpark,
+            alternative_grid_names,
             promote_3d,
             normalize_axis_order,
             output_id,
@@ -1148,6 +1154,7 @@ fn candidate_operations(
         .set_spatial_criterion(criterion)
         .set_crs_extent_use(options.crs_extent_use.unwrap_or_default())
         .set_grid_availability_use(options.grid_check.unwrap_or_default())
+        .set_alternative_grid_names(options.alternative_grid_names)
         .set_desired_accuracy(options.accuracy.unwrap_or(0.0))
         .set_ballpark_use(if options.hide_ballpark {
             proj_rs::BallparkUse::Forbid

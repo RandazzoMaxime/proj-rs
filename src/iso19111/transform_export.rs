@@ -497,6 +497,21 @@ fn grid_shift(
 }
 
 /// The file of the parameter with EPSG code `code`, when it is a file name.
+/// `HORIZONTAL_SHIFT_GTIFF` or `GENERAL_SHIFT_GTIFF`, or the inverse of one, as the names
+/// `_getHorizontalShiftGTIFFFilename` compares (`singleoperation.cpp:2064-2071`).
+fn is_gtiff_method(name: &str) -> bool {
+    let forward = match name.get(..INVERSE_OF_PREFIX.len()) {
+        Some(prefix) if prefix.eq_ignore_ascii_case(INVERSE_OF_PREFIX) => {
+            &name[INVERSE_OF_PREFIX.len()..]
+        }
+        _ => name,
+    };
+    forward.eq_ignore_ascii_case("HORIZONTAL_SHIFT_GTIFF")
+        || forward.eq_ignore_ascii_case("GENERAL_SHIFT_GTIFF")
+}
+
+const INVERSE_OF_PREFIX: &str = "Inverse of ";
+
 fn file_by_code(operation: &Transformation, code: i32) -> Option<String> {
     operation.parameters().iter().find_map(|parameter| {
         if parameter.code() != code.to_string() {
@@ -545,19 +560,28 @@ fn horizontal_grid_shift(
     target: Option<&Crs>,
     formatter: &mut PipelineFormatter,
 ) -> Result<bool, FactoryError> {
+    let method_name = operation.method().name();
+    // `_getHorizontalShiftGTIFFFilename`: a GTiff method is named, without an EPSG code, once
+    // `substitutePROJAlternativeGridNames` wrote it (`singleoperation.cpp:2020`).
+    let gtiff = is_gtiff_method(method_name);
     let code = match epsg_method_code(operation) {
         0 if operation.method().name().eq_ignore_ascii_case("CTABLE2") => METHOD_NTV2,
         code => code,
     };
-    let file = match code {
-        METHOD_NTV1 | METHOD_NTV2 => file_by_code(operation, PARAMETER_LAT_LON_DIFFERENCE_FILE)
-            .or_else(|| file_by_name(operation, "Latitude and longitude difference file")),
-        // The latitude file names the pair: `lookForGridAlternative` replaces it by one GTiff.
-        METHOD_NADCON | METHOD_NADCON5_2D | METHOD_NADCON5_3D => {
-            file_by_code(operation, PARAMETER_LONGITUDE_DIFFERENCE_FILE)
-                .and_then(|_| file_by_code(operation, PARAMETER_LATITUDE_DIFFERENCE_FILE))
+    let file = if gtiff {
+        file_by_code(operation, PARAMETER_LAT_LON_DIFFERENCE_FILE)
+            .or_else(|| file_by_name(operation, "Latitude and longitude difference file"))
+    } else {
+        match code {
+            METHOD_NTV1 | METHOD_NTV2 => file_by_code(operation, PARAMETER_LAT_LON_DIFFERENCE_FILE)
+                .or_else(|| file_by_name(operation, "Latitude and longitude difference file")),
+            // The latitude file names the pair: `lookForGridAlternative` replaces it by one GTiff.
+            METHOD_NADCON | METHOD_NADCON5_2D | METHOD_NADCON5_3D => {
+                file_by_code(operation, PARAMETER_LONGITUDE_DIFFERENCE_FILE)
+                    .and_then(|_| file_by_code(operation, PARAMETER_LATITUDE_DIFFERENCE_FILE))
+            }
+            _ => return Ok(false),
         }
-        _ => return Ok(false),
     };
     let Some(file) = file else {
         return Ok(false);
@@ -570,8 +594,13 @@ fn horizontal_grid_shift(
         .and_then(extract_geographic)
         .ok_or_else(|| geographic_required(method))?;
     let grid = formatter.grid_name(&file);
-    let nadcon5 = matches!(code, METHOD_NADCON5_2D | METHOD_NADCON5_3D);
-    if nadcon5 && grid == file {
+    // `methodName.find(GENERAL_SHIFT_GTIFF)`, and the NADCON5 EPSG methods.
+    let nadcon5 = if gtiff {
+        method_name.contains("GENERAL_SHIFT_GTIFF")
+    } else {
+        matches!(code, METHOD_NADCON5_2D | METHOD_NADCON5_3D)
+    };
+    if !gtiff && nadcon5 && grid == file {
         return Ok(false);
     }
     let inverse = formatter.grid_is_inverse(&file);
@@ -583,7 +612,16 @@ fn horizontal_grid_shift(
     }
     if nadcon5 {
         formatter.add_step("gridshift");
-        if code == METHOD_NADCON5_3D && source.coordinate_system().axes().len() == 2 {
+        // `parameterValue(PROJ_WKT2_PARAMETER_LATITUDE_LONGITUDE_ELLIPOISDAL_HEIGHT_DIFFERENCE_FILE)`
+        // for the GTiff method, the EPSG NADCON5 3D method otherwise.
+        let three_d = if gtiff {
+            operation.parameters().iter().any(|parameter| {
+                parameter.name() == "Latitude, longitude and ellipsoidal height difference file"
+            })
+        } else {
+            code == METHOD_NADCON5_3D
+        };
+        if three_d && source.coordinate_system().axes().len() == 2 {
             formatter.add_flag("no_z_transform");
         }
     } else {
