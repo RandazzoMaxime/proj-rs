@@ -27,7 +27,7 @@ fn operation_point_motion_operation_geog2d() {
         list[0]
             .export_to_proj_string_with_database(&db, ProjLines::Single)
             .expect("PROJ string"),
-        "+proj=pipeline +step +proj=set +v_4=2002 +step +proj=axisswap +order=2,1 +step +proj=unitconvert +xy_in=deg +z_in=m +xy_out=rad +z_out=m +step +proj=cart +ellps=GRS80 +step +proj=set +v_4=2002 +omit_fwd +step +proj=deformation +dt=8 +grids=ca_nrc_NAD83v70VG.tif +ellps=GRS80 +step +proj=set +v_4=2010 +omit_inv +step +inv +proj=cart +ellps=GRS80 +step +proj=unitconvert +xy_in=rad +z_in=m +xy_out=deg +z_out=m +step +proj=axisswap +order=2,1 +step +proj=set +v_4=2010"
+        "+proj=pipeline +step +proj=set +v_4=2002 +step +proj=axisswap +order=2,1 +step +proj=unitconvert +xy_in=deg +z_in=m +xy_out=rad +z_out=m +step +proj=cart +ellps=GRS80 +step +proj=set +v_4=2002 +omit_fwd +step +proj=deformation +dt=8 +grids=ca_nrc_NAD83v70VG.tif +ellps=GRS80 +step +proj=set +v_4=2010 +omit_inv +step +inv +proj=cart +ellps=GRS80 +step +proj=unitconvert +xy_in=rad +xy_out=deg +step +proj=axisswap +order=2,1 +step +proj=set +v_4=2010"
     );
     assert!(list[1].has_ballpark_transformation());
     assert_eq!(

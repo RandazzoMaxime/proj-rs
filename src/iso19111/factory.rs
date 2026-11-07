@@ -5149,6 +5149,20 @@ impl CoordinateOperationFactory {
         target: &Crs,
         context: &CoordinateOperationContext,
     ) -> Result<Vec<CoordinateOperation>, FactoryError> {
+        self.create_operations_between_epochs(source, target, None, context)
+    }
+
+    /// PROJ's `createOperations` with the coordinate epochs of the context: `epochs` is the
+    /// source and target epoch when both are set. The point motion branch of
+    /// `createOperationsFromDatabase` runs first, for two geodetic CRS at two epochs
+    /// (coordinateoperationfactory.cpp:4278-4345); when it gives nothing, the registry search runs.
+    fn create_operations_between_epochs(
+        &self,
+        source: &Crs,
+        target: &Crs,
+        epochs: Option<(f64, f64)>,
+        context: &CoordinateOperationContext,
+    ) -> Result<Vec<CoordinateOperation>, FactoryError> {
         // `createOperations` starts from the canonical bound CRS of an input that has one.
         let source = canonical_or_self(source);
         let target = canonical_or_self(target);
@@ -5167,7 +5181,20 @@ impl CoordinateOperationFactory {
                 }
             }
         }
-        let mut found = self.create_candidates(&source, &target, context)?;
+        let point_motion = match epochs {
+            Some((source_epoch, target_epoch)) => self.point_motion_from_database(
+                &source,
+                source_epoch,
+                &target,
+                target_epoch,
+                context,
+            )?,
+            None => None,
+        };
+        let mut found = match point_motion {
+            Some(found) => found,
+            None => self.create_candidates(&source, &target, context)?,
+        };
         // The dispatch of `createOperations` for a vertical source and a geographic target appends
         // the ballpark change of unit to what the database gave (coordinateoperationfactory.cpp:
         // 3748-3751, 6107-6108). A geographic source and a vertical target take the reversed
@@ -5247,9 +5274,8 @@ impl CoordinateOperationFactory {
 
     /// The operations of [`Self::create_operations`] with the epochs set on each of them.
     ///
-    /// PROJ also searches with the epochs (point motion and epoch change operations). This
-    /// crate searches without them and only attaches the epochs, which are exported for the
-    /// helmert and `defmodel` methods.
+    /// The point motion branch needs both epochs. The epoch change of
+    /// `createOperationsGeogToGeog` (coordinateoperationfactory.cpp:3226-3257) is not ported.
     fn create_operations_at_epochs(
         &self,
         source: &Crs,
@@ -5258,17 +5284,83 @@ impl CoordinateOperationFactory {
         target_epoch: Option<f64>,
         context: &CoordinateOperationContext,
     ) -> Result<Vec<CoordinateOperation>, FactoryError> {
-        let point_motion =
-            point_motion_between_epochs(source, source_epoch, target, target_epoch, context)?;
-        let operations = if point_motion.is_empty() {
-            self.create_operations(source, target, context)?
-        } else {
-            point_motion
-        };
+        let epochs = source_epoch.zip(target_epoch);
+        let operations = self.create_operations_between_epochs(source, target, epochs, context)?;
         Ok(operations
             .into_iter()
             .map(|operation| with_epochs(operation, source_epoch, target_epoch))
             .collect())
+    }
+
+    /// `createOperationsFromDatabase`, the point motion branch
+    /// (coordinateoperationfactory.cpp:4278-4345), for two geodetic CRS at two epochs.
+    ///
+    /// The point motion operations of the source datum are paired with those of the target
+    /// datum; when every pair is equivalent, each one gives the operation from the source to its
+    /// own CRS, the point motion with both epochs, and the operation from its CRS to the target,
+    /// concatenated. The forced ballpark of `createOperationsGeodToGeod` is appended. `None`
+    /// when the branch does not apply (the epochs are equal, a CRS is not geodetic, the lists
+    /// differ in length or in a pair), and the registry search runs.
+    fn point_motion_from_database(
+        &self,
+        source: &Crs,
+        source_epoch: f64,
+        target: &Crs,
+        target_epoch: f64,
+        context: &CoordinateOperationContext,
+    ) -> Result<Option<Vec<CoordinateOperation>>, FactoryError> {
+        if source_epoch == target_epoch {
+            return Ok(None);
+        }
+        let (Some(source_geodetic), Some(target_geodetic)) =
+            (geodetic_of_crs(source), geodetic_of_crs(target))
+        else {
+            return Ok(None);
+        };
+        let factory = AuthorityFactory::create(&context.db, context.authority.as_str());
+        let source_list = factory
+            .get_point_motion_operations_for(&source_geodetic, AlternativeGridNames::Proj)?;
+        if source_list.is_empty() {
+            return Ok(None);
+        }
+        let target_list = factory
+            .get_point_motion_operations_for(&target_geodetic, AlternativeGridNames::Proj)?;
+        if target_list.len() != source_list.len() {
+            return Ok(None);
+        }
+        let mut res = Vec::new();
+        for (from, to) in source_list.iter().zip(&target_list) {
+            if !from.is_equivalent_to_with(to, Equivalence::Equivalent) {
+                return Ok(None);
+            }
+            // The point motion has one CRS as source and target (`pmo->sourceCRS() ==
+            // pmo->targetCRS()`).
+            let Some(point_motion_crs) = from.source_crs().cloned() else {
+                return Ok(None);
+            };
+            let point_motion = point_motion_with_epochs(from.clone(), source_epoch, target_epoch);
+            let mut ops = Vec::new();
+            if !point_motion_crs.is_equivalent_to_with(source, Equivalence::Equivalent) {
+                let first = self.create_candidates(source, &point_motion_crs, context)?;
+                let Some(first) = first.into_iter().next() else {
+                    return Ok(None);
+                };
+                ops.push(first);
+            }
+            ops.push(CoordinateOperation::Transformation(point_motion));
+            if !point_motion_crs.is_equivalent_to_with(target, Equivalence::Equivalent) {
+                let last = self.create_candidates(&point_motion_crs, target, context)?;
+                let Some(last) = last.into_iter().next() else {
+                    return Ok(None);
+                };
+                ops.push(last);
+            }
+            if let Some(operation) = super::compound::compute_metadata(ops, context) {
+                res.push(operation);
+            }
+        }
+        res.extend(forced_ballpark_operations(source, target));
+        Ok(Some(res))
     }
 
     /// `proj_get_suggested_operation` (forward) on `operations`, the list from `source`
@@ -8798,78 +8890,30 @@ fn append_geographic_geocentric_tail(steps: &mut Vec<ConcatenatedStep>, target: 
     }
 }
 
-/// `createOperationsGeodToGeod` with two epochs: for one geodetic CRS at two different epochs,
-/// the point motion operations of the database that run from that CRS to itself, each with the
-/// two epochs.
-fn point_motion_between_epochs(
-    source: &Crs,
-    source_epoch: Option<f64>,
-    target: &Crs,
-    target_epoch: Option<f64>,
-    context: &CoordinateOperationContext,
-) -> Result<Vec<CoordinateOperation>, FactoryError> {
-    let (Some(source_epoch), Some(target_epoch)) = (source_epoch, target_epoch) else {
-        return Ok(Vec::new());
-    };
-    if source_epoch == target_epoch
-        || !source.is_equivalent_to_with(target, Equivalence::Equivalent)
-    {
-        return Ok(Vec::new());
+/// The geodetic CRS of a geodetic or geographic CRS, the `dynamic_pointer_cast` of
+/// `createOperationsFromDatabase` (coordinateoperationfactory.cpp:4286-4294).
+fn geodetic_of_crs(crs: &Crs) -> Option<GeodeticCRS> {
+    match crs {
+        Crs::Geographic(geographic) => Some(GeodeticCRS::Geographic(geographic.clone())),
+        Crs::Geodetic(geodetic) => Some(geodetic.clone()),
+        _ => None,
     }
-    let geodetic = match source {
-        Crs::Geographic(geographic) => GeodeticCRS::Geographic(geographic.clone()),
-        Crs::Geodetic(geodetic) => geodetic.clone(),
-        _ => return Ok(Vec::new()),
-    };
-    let factory = AuthorityFactory::create(&context.db, "");
-    let mut operations = Vec::new();
-    for mut transformation in
-        factory.get_point_motion_operations_for(&geodetic, AlternativeGridNames::Official)?
-    {
-        let same_crs = transformation
-            .source_crs()
-            .is_some_and(|crs| crs.is_equivalent_to_with(source, Equivalence::Equivalent));
-        transformation.point_motion = true;
-        transformation.source_epoch = Some(source_epoch);
-        transformation.target_epoch = Some(target_epoch);
-        if matches!(source, Crs::Geodetic(GeodeticCRS::Geocentric(_))) {
-            transformation.source = Some(Box::new(source.clone()));
-            transformation.target = Some(Box::new(source.clone()));
-            operations.push(CoordinateOperation::Transformation(transformation));
-            continue;
-        }
-        let operation = CoordinateOperation::Transformation(transformation);
-        if same_crs {
-            operations.push(operation);
-        } else {
-            operations.push(CoordinateOperation::Concatenated(
-                point_motion_concatenation(operation, source),
-            ));
-        }
-    }
-    if !operations.is_empty() {
-        operations.extend(forced_ballpark_operations(source, target));
-    }
-    Ok(operations)
 }
 
-/// A concatenated operation with one step, between the CRS of the source; the operation of a
-/// point motion whose CRS is the 3D form of the source, PROJ's `createComputeMetadata` with the
-/// conversions between the two forms left out.
-fn point_motion_concatenation(step: CoordinateOperation, source: &Crs) -> ConcatenatedOperation {
-    ConcatenatedOperation {
-        identified: Identified::named(step.name()),
-        steps: vec![ConcatenatedStep {
-            operation: step,
-            reverse: false,
-        }],
-        source: Some(Box::new(source.clone())),
-        target: Some(Box::new(source.clone())),
-        accuracy: None,
-        version: None,
-        computed_name: true,
-        proj_based: None,
-        source_epoch: None,
-        target_epoch: None,
-    }
+/// `PointMotionOperation::cloneWithEpochs` (singleoperation.cpp:5676-5703): the point motion with
+/// both epochs, and the name that says them, `<name> from epoch <s> to epoch <t>`.
+fn point_motion_with_epochs(
+    mut transformation: Transformation,
+    source_epoch: f64,
+    target_epoch: f64,
+) -> Transformation {
+    transformation.source_epoch = Some(source_epoch);
+    transformation.target_epoch = Some(target_epoch);
+    transformation.identified.name = format!(
+        "{} from epoch {} to epoch {}",
+        transformation.identified.name,
+        super::json::rounded_epoch_in_decimal_year(source_epoch),
+        super::json::rounded_epoch_in_decimal_year(target_epoch)
+    );
+    transformation
 }
