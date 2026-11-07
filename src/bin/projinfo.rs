@@ -14,7 +14,24 @@ use std::process::ExitCode;
 
 const RELEASE: &str = "Rel. 9.9.0, September 15th, 2026";
 
+/// Stack of the thread that runs the command. The operation factory nests a dozen calls whose
+/// unoptimized frames take up to 170 KiB each (the CRS values they hold), which outgrows the
+/// 1 MiB main thread of Windows on the compound pairs (`test_projinfo.yaml#62`). PROJ's C++
+/// frames are smaller; a larger stack keeps the port's call structure as it is.
+const STACK_SIZE: usize = 64 * 1024 * 1024;
+
 fn main() -> ExitCode {
+    let worker = std::thread::Builder::new()
+        .stack_size(STACK_SIZE)
+        .spawn(command)
+        .expect("spawn the projinfo thread");
+    match worker.join() {
+        Ok(code) => code,
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
+
+fn command() -> ExitCode {
     match run(&std::env::args().skip(1).collect::<Vec<_>>()) {
         Ok(output) => {
             if !output.is_empty() {
