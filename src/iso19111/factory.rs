@@ -7994,8 +7994,9 @@ fn frame_identity(frame: &GeodeticReferenceFrame) -> Option<(String, String)> {
 /// the member when the member is not the source datum (`ITRF2014 to ETRS89 (EPSG:4936)` is
 /// read through `ETRS89-DNK`, whose operation to ITRF2014 is inverted by the caller).
 ///
-/// Not ported: the interpolation CRS of the member operations (`setInterpolationCRS`), and
-/// the members that carry no identifier, which `createGeodeticCRSFromDatum` cannot read.
+/// The interpolation CRS of a member operation equal to the member CRS is replaced by the
+/// ensemble CRS (coordinateoperationfactory.cpp:4161-4170). Not ported: the members that carry no
+/// identifier, which `createGeodeticCRSFromDatum` cannot read.
 fn ensemble_to_other_geodetic(
     source: &Crs,
     target: &Crs,
@@ -8092,6 +8093,14 @@ fn ensemble_to_other_geodetic(
                 {
                     for op in ops.iter().filter(|op| !op.has_ballpark_transformation()) {
                         let mut new_op = op.clone();
+                        // An interpolation CRS that is the member CRS becomes the ensemble CRS
+                        // (coordinateoperationfactory.cpp:4164-4170, `setInterpolationCRS`).
+                        if interpolation_of(&new_op).is_some_and(|interpolation| {
+                            interpolation
+                                .is_equivalent_to_with(&member_geog, Equivalence::Equivalent)
+                        }) {
+                            set_interpolation_of(&mut new_op, source.clone());
+                        }
                         if let Some(last) = ops_last_conversion.first() {
                             let Some(joined) =
                                 concatenate_steps(vec![new_op, last.clone()], context)
@@ -8156,6 +8165,25 @@ fn ensemble_to_other_geodetic(
         }
     }
     Ok(new_ops)
+}
+
+/// `CoordinateOperation::interpolationCRS`: the interpolation CRS the operation stores, if any.
+fn interpolation_of(operation: &CoordinateOperation) -> Option<&Crs> {
+    match operation {
+        CoordinateOperation::Conversion(conversion) => conversion.interpolation_crs(),
+        CoordinateOperation::Transformation(transformation) => transformation.interpolation_crs(),
+        CoordinateOperation::Concatenated(concatenated) => concatenated.interpolation_crs(),
+    }
+}
+
+/// `CoordinateOperation::setInterpolationCRS`: stores `crs` as the interpolation CRS.
+fn set_interpolation_of(operation: &mut CoordinateOperation, crs: Crs) {
+    let crs = Some(Box::new(crs));
+    match operation {
+        CoordinateOperation::Conversion(conversion) => conversion.interpolation = crs,
+        CoordinateOperation::Transformation(transformation) => transformation.interpolation = crs,
+        CoordinateOperation::Concatenated(concatenated) => concatenated.interpolation = crs,
+    }
 }
 
 /// `setCRSs` on a copy: the source and target of the operation, as stored.
