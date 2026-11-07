@@ -8109,48 +8109,22 @@ fn pivot_domain(steps: &[CoordinateOperation]) -> Option<ObjectDomain> {
     extent
 }
 
-/// `setCRSs` on the first step (its source becomes `source`) and on the last one (its target
-/// becomes `target`), as `createTransformations` does on its subOps (coordinateoperationfactory
-/// .cpp:3392-3399). A step keeps the other end it stores.
+/// `Private::setCRSs` on the first step (its source becomes `source`) and on the last one (its
+/// target becomes `target`), as `createTransformations` does on its subOps
+/// (coordinateoperationfactory.cpp:3365-3372). `Private::setCRSs` is `setCRSsUpdateInverse`
+/// (coordinateoperationfactory.cpp:3127-3132), which also reaches the first and last steps of a
+/// concatenated subOp. A step keeps the other end it stores.
 fn pivot_endpoints(steps: &mut [CoordinateOperation], source: &Crs, target: &Crs) {
-    let count = steps.len();
-    for (index, step) in steps.iter_mut().enumerate() {
-        let new_source = if index == 0 {
-            source.clone()
-        } else {
-            match super::bound_ops::operation_source(step) {
-                Some(crs) => crs.clone(),
-                None => continue,
-            }
-        };
-        let new_target = if index + 1 == count {
-            target.clone()
-        } else {
-            match super::bound_ops::operation_target(step) {
-                Some(crs) => crs.clone(),
-                None => continue,
-            }
-        };
-        super::bound_ops::set_endpoints(step, &new_source, &new_target);
-        if index == 0 {
-            set_leading_source(step, source);
+    if let Some(first) = steps.first_mut() {
+        if let Some(first_target) = super::bound_ops::operation_target(first).cloned() {
+            super::bound_ops::set_endpoints_update_inverse(first, source, &first_target);
         }
     }
-}
-
-/// The source of the first step of a concatenated operation, recursively: the request source
-/// goes down to the leading leaf, so that its unit conversion is written for the request's
-/// dimension.
-fn set_leading_source(operation: &mut CoordinateOperation, source: &Crs) {
-    if let CoordinateOperation::Concatenated(concatenated) = operation {
-        if let Some(first) = concatenated.steps.first_mut() {
-            set_leading_source(&mut first.operation, source);
+    if let Some(last) = steps.last_mut() {
+        if let Some(last_source) = super::bound_ops::operation_source(last).cloned() {
+            super::bound_ops::set_endpoints_update_inverse(last, &last_source, target);
         }
     }
-    let Some(target) = super::bound_ops::operation_target(operation).cloned() else {
-        return;
-    };
-    super::bound_ops::set_endpoints(operation, source, &target);
 }
 
 /// `addModifiedIdentifier` with `derivedFrom` (coordinateoperationfactory.cpp:3297-3305): an

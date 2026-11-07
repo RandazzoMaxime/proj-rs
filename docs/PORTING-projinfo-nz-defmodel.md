@@ -15,7 +15,8 @@ against PROJ 9.9.0: `NZGD2000 -> ITRF96`, `ITRF96 -> NZGD2000`, `NZGD2000 -> ITR
 | `SingleOperation::_isEquivalentTo`, singleoperation.cpp:1483-1750 | `buildop.rs` `Transformation::is_equivalent_to_with`; `equiv.rs` `transformation_equivalent` |
 | `ConcatenatedOperation::_isEquivalentTo`, concatenatedoperation.cpp:954-975 | `buildop.rs` `ConcatenatedOperation::is_equivalent_to` |
 | `createOperationsWithDatumPivot` and `createTransformations`, coordinateoperationfactory.cpp:3167-3520 | `factory.rs` `datum_pivot_operations` |
-| `setCRSs` of the first and last subOp, 3365-3372 | `factory.rs` `pivot_endpoints`, `set_leading_source` |
+| `setCRSs` of the first and last subOp, 3365-3372 | `factory.rs` `pivot_endpoints` |
+| `Private::setCRSs` = `setCRSsUpdateInverse`, coordinateoperationfactory.cpp:3127-3132, singleoperation.cpp:240-272 | `bound_ops.rs` `set_endpoints_update_inverse` |
 | `addModifiedIdentifier` with `derivedFrom`, 3297-3305 | `factory.rs` `derived_from_identifier` |
 | `createComputeMetadata` of one operation, 3399-3405 | `factory.rs` `datum_pivot_operations` (a single step is returned as is) |
 | `createFromCRSCodesWithIntermediates`, factory.cpp:7630-8100 | not ported as a whole; not reached for these cases (see open points) |
@@ -37,14 +38,14 @@ against PROJ 9.9.0: `NZGD2000 -> ITRF96`, `ITRF96 -> NZGD2000`, `NZGD2000 -> ITR
 5. `projinfo: the leading step of a pivot takes the request source` (`factory.rs`, `set_leading_source`). The first
    leaf of a concatenated first step keeps the 3D source of the registry operation, so its PROJ string wrote
    `+z_in=m +z_out=m`. The request source goes down to that leaf. Closes `#53` to `#57`.
+6. `iso19111: the pivot endpoints follow setCRSsUpdateInverse` (`bound_ops.rs`, `factory.rs`). Replaces commit 5
+   with the PROJ mechanism. `createTransformations` calls `Private::setCRSs`, which is
+   `CoordinateOperation::setCRSsUpdateInverse`: on a concatenated operation it also sets, recursively, the source of
+   its first step and the target of its last step. That is why the first leaf of `Inverse of ITRF97 to NZGD2000 (1)`
+   gets the 2D request source in PROJ. Same cases closed, the special `set_leading_source` is gone.
 
 ## Open points (not blocking this lot)
 
-- Commit 5 is an observed match, not a line-by-line port. PROJ's `ConcatenatedOperation::createComputeMetadata`
-  (concatenatedoperation.cpp:686-790) flattens the steps of a concatenated subOp without changing their CRS, and
-  `fixSteps` is only called for parsed or registry concatenations (factory.cpp:7028). The mechanism by which PROJ
-  writes a 2D unit conversion for the first leaf of `Inverse of ITRF97 to NZGD2000 (1)` is not identified. The
-  reference output is matched for the seven cases checked above.
 - Commit 3: the interpolation CRS of a transformation is still compared. PROJ's `SingleOperation::_isEquivalentTo`
   does not compare it.
 - The candidate of `#53` to `#57` is the datum pivot's first result in both: the port's first datum pivot pair

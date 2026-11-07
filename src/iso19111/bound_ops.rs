@@ -364,6 +364,58 @@ pub(super) fn set_endpoints(operation: &mut CoordinateOperation, source: &Crs, t
     *stored_target = Some(Box::new(target.clone()));
 }
 
+/// `CoordinateOperation::setCRSsUpdateInverse` (singleoperation.cpp:240-272): the endpoints of
+/// `operation`, and for a concatenated operation, recursively, the source of its first step and
+/// the target of its last step. The inverse objects PROJ also updates are not stored here: an
+/// inverse is computed from the operation when needed.
+pub(super) fn set_endpoints_update_inverse(
+    operation: &mut CoordinateOperation,
+    source: &Crs,
+    target: &Crs,
+) {
+    set_endpoints(operation, source, target);
+    if let CoordinateOperation::Concatenated(concatenated) = operation {
+        if let Some(first) = concatenated.steps.first_mut() {
+            if let Some(first_target) = step_target(first).cloned() {
+                set_step_endpoints(first, source, &first_target);
+            }
+        }
+        if let Some(last) = concatenated.steps.last_mut() {
+            if let Some(last_source) = step_source(last).cloned() {
+                set_step_endpoints(last, &last_source, target);
+            }
+        }
+    }
+}
+
+/// The source of a step in the direction the concatenation runs it.
+fn step_source(step: &ConcatenatedStep) -> Option<&Crs> {
+    if step.reverse {
+        operation_target(&step.operation)
+    } else {
+        operation_source(&step.operation)
+    }
+}
+
+/// The target of a step in the direction the concatenation runs it.
+fn step_target(step: &ConcatenatedStep) -> Option<&Crs> {
+    if step.reverse {
+        operation_source(&step.operation)
+    } else {
+        operation_target(&step.operation)
+    }
+}
+
+/// [`set_endpoints_update_inverse`] on a step: a reversed step stores the forward operation, so
+/// its stored ends are the swapped ones.
+fn set_step_endpoints(step: &mut ConcatenatedStep, source: &Crs, target: &Crs) {
+    if step.reverse {
+        set_endpoints_update_inverse(&mut step.operation, target, source);
+    } else {
+        set_endpoints_update_inverse(&mut step.operation, source, target);
+    }
+}
+
 /// `ConcatenatedOperation::createComputeMetadata`: the steps, named by joining theirs.
 fn concatenate(operations: Vec<CoordinateOperation>) -> CoordinateOperation {
     let name = operations
