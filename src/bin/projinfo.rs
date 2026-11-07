@@ -183,6 +183,7 @@ struct Options {
     bbox: Option<String>,
     spatial_test: Option<SpatialTest>,
     crs_extent_use: Option<proj_rs::CrsExtentUse>,
+    grid_check: Option<proj_rs::GridAvailabilityUse>,
     accuracy: Option<f64>,
     hide_ballpark: bool,
     promote_3d: bool,
@@ -236,6 +237,7 @@ impl Options {
         let mut bbox = None;
         let mut spatial_test = None;
         let mut crs_extent_use = None;
+        let mut grid_check = None;
         let mut accuracy = None;
         let mut hide_ballpark = false;
         let mut promote_3d = false;
@@ -261,14 +263,25 @@ impl Options {
                 hide_ballpark = true;
             } else if arg == "--3d" {
                 promote_3d = true;
+            } else if arg == "--grid-check" {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| format!("missing value for {arg}"))?;
+                grid_check = Some(match value.to_ascii_lowercase().as_str() {
+                    "none" => proj_rs::GridAvailabilityUse::IgnoreGridAvailability,
+                    "discard_missing" => proj_rs::GridAvailabilityUse::DiscardIfMissing,
+                    "sort" => proj_rs::GridAvailabilityUse::UseForSorting,
+                    "known_available" => proj_rs::GridAvailabilityUse::KnownAvailable,
+                    _ => {
+                        return Err(format!(
+                            "Unrecognized value for option --grid-check: {value}"
+                        ))
+                    }
+                });
             } else if matches!(
                 arg,
-                "--grid-check"
-                    | "--pivot-crs"
-                    | "--main-db-path"
-                    | "--aux-db-path"
-                    | "--s_epoch"
-                    | "--t_epoch"
+                "--pivot-crs" | "--main-db-path" | "--aux-db-path" | "--s_epoch" | "--t_epoch"
             ) {
                 index += 1;
             } else if arg == "--normalize-axis-order" {
@@ -486,6 +499,7 @@ impl Options {
             bbox,
             spatial_test,
             crs_extent_use,
+            grid_check,
             accuracy,
             hide_ballpark,
             promote_3d,
@@ -1118,6 +1132,7 @@ fn candidate_operations(
         .set_area_of_interest(area.cloned())
         .set_spatial_criterion(criterion)
         .set_crs_extent_use(options.crs_extent_use.unwrap_or_default())
+        .set_grid_availability_use(options.grid_check.unwrap_or_default())
         .set_desired_accuracy(options.accuracy.unwrap_or(0.0))
         .set_ballpark_use(if options.hide_ballpark {
             proj_rs::BallparkUse::Forbid
