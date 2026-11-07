@@ -101,3 +101,15 @@ fn ups_north_32661_is_switched_for_visualization() {
     assert!(metres(east, 815_914.202_587_687), "{east}");
     assert!(metres(north, 815_914.202_587_687), "{north}");
 }
+
+/// `EPSG:4326+5773` to `EPSG:4326+5782`: its one candidate needs a grid that is not on disk, so
+/// PROJ's warning policy reruns the search, and the rerun gives the null offset of the two
+/// vertical datums (`proj=noop ellps=GRS80`). libproj creates the pair, and every point is the
+/// identity (C oracle, PROJ 9.9.0, both grid modes).
+#[test]
+fn compound_pair_with_a_missing_grid_is_the_identity_as_libproj() {
+    let proj = Proj::new_known_crs("EPSG:4326+5773", "EPSG:4326+5782", None).expect("pair");
+    let (lon, lat, height) = proj.convert_xyz(-3.0, 39.0, 0.0).expect("forward");
+    assert!(metres(lon, -3.0) && metres(lat, 39.0), "{lon} {lat}");
+    assert!(metres(height, 0.0), "{height}");
+}
