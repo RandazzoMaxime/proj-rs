@@ -2260,6 +2260,9 @@ fn proj_based_horiz_vertical_horiz(
             .join(" + ")
     };
     let accuracy = accuracy_sum(&steps.iter().collect::<Vec<_>>());
+    // The extent is the intersection of the steps' (`getExtent(ops, false, ...)`,
+    // `createHorizVerticalHorizPROJBased`, coordinateoperationfactory.cpp:2851-2864).
+    let domain = joint_extent(&steps).flatten();
     let mut operation = proj_based_operation(
         name,
         source,
@@ -2278,6 +2281,7 @@ fn proj_based_horiz_vertical_horiz(
     // A name joined from the steps is rebuilt from the inverted steps by the inverse.
     if let CoordinateOperation::Concatenated(concatenated) = &mut operation {
         concatenated.computed_name = !cancels;
+        concatenated.identified.domains = domain.into_iter().collect();
     }
     operation
 }
