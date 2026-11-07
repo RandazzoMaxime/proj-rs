@@ -57,10 +57,8 @@ and `PORT-NOTES-tests.md`.
 - `operation.geogCRS_to_geogCRS_context_inverse_needed`
 - `operation.vertCRS_to_geogCRS_context`
 - `operation.geog3DCRS_to_geog2DCRS_plus_vertCRS_context`
-- `operation.geogCRS_to_geogCRS_CH1903_to_CH1903plus_context`
 - `operation.geogCRS_to_geogCRS_init_IGNF_to_init_IGNF_context`
 - `operation.geogCRS_3D_source_datum_name_is_alias_to_geogCRS`
-- `operation.geogCRS_different_from_baseCRS_to_projCRS_context_compatible_area`
 - `operation.boundCRS_to_geogCRS_hubCRS_and_targetCRS_same_but_baseCRS_not`
 - `operation.boundCRS_to_derived_geog_with_transformation_with_source_crs_being_base_crs_of_source_crs`
 - `operation.ETRS89_3D_to_proj_string_with_geoidgrids_nadgrids`
@@ -85,7 +83,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.compoundCRS_of_vertCRS_with_geoid_model_to_geogCRS`
 - `operation.compoundCRS_to_geogCRS_3D_Amersfoort_NAP_height_to_Amersfoort`
 - `operation.compoundCRS_to_geogCRS_3D_using_intermediate_of_horizontal_transform`
-- `operation.IGNF_LAMB1_TO_EPSG_4326`
 - `operation.compoundCRS_to_proj_string_with_non_metre_height`
 - `operation.compoundCRS_with_derived_vertical_CRS`
 - `operation.compoundCRS_to_PROJJSON_with_non_metre_height`
