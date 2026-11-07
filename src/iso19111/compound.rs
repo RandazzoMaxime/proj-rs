@@ -1388,9 +1388,9 @@ fn flat_operations(operation: &CoordinateOperation) -> Vec<&CoordinateOperation>
 /// pair of CRS use the same transformation, in the same or the inverse direction.
 fn compatible_transformations(first: &CoordinateOperation, second: &CoordinateOperation) -> bool {
     for step_a in flat_operations(first) {
-        let CoordinateOperation::Transformation(_) = step_a else {
+        if !is_transformation_step(step_a) {
             continue;
-        };
+        }
         let name_a = normalize_2d_3d_in_name(step_a.name());
         let (Some(source_a), Some(target_a)) = (step_a.source_crs(), step_a.target_crs()) else {
             continue;
@@ -1399,9 +1399,9 @@ fn compatible_transformations(first: &CoordinateOperation, second: &CoordinateOp
             continue;
         }
         for step_b in flat_operations(second) {
-            let CoordinateOperation::Transformation(_) = step_b else {
+            if !is_transformation_step(step_b) {
                 continue;
-            };
+            }
             let (Some(source_b), Some(target_b)) = (step_b.source_crs(), step_b.target_crs())
             else {
                 continue;
@@ -1431,11 +1431,21 @@ fn compatible_transformations(first: &CoordinateOperation, second: &CoordinateOp
     true
 }
 
+/// `dynamic_cast<const Transformation *>` of PROJ's loops over the steps of an operation. The
+/// geographic/geocentric conversion (EPSG:9602) is a `Conversion` in PROJ, which those loops skip;
+/// here it is kept as a transformation, so it is excluded by its method.
+fn is_transformation_step(operation: &CoordinateOperation) -> bool {
+    matches!(
+        operation,
+        CoordinateOperation::Transformation(transformation) if transformation.method().code() != "9602"
+    )
+}
+
 /// The names of the geodetic datums of the transformations of an operation.
 fn datum_names_used(operation: &CoordinateOperation) -> std::collections::BTreeSet<String> {
     let mut names = std::collections::BTreeSet::new();
     for step in flat_operations(operation) {
-        if !matches!(step, CoordinateOperation::Transformation(_)) {
+        if !is_transformation_step(step) {
             continue;
         }
         for crs in [step.source_crs(), step.target_crs()].into_iter().flatten() {
