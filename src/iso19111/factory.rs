@@ -86,6 +86,8 @@ pub(super) const GUARD_DATUM_INTERMEDIATE: u8 = 4;
 pub(super) const GUARD_DATUM_PIVOT: u8 = 8;
 /// `inCreateOperationsVertToVertWithIntermediateVert`.
 pub(super) const GUARD_VERTICAL_PIVOT: u8 = 16;
+/// `inCreateOperationsGeogToGeogWithAlternativeGeog`.
+pub(super) const GUARD_GEOG_ALTERNATIVE: u8 = 32;
 
 /// How the availability of an operation's grids enters the ordering.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -5515,13 +5517,35 @@ impl CoordinateOperationFactory {
                 let codes = crs_codes_intermediate_operations(source, target, context)?;
                 pivot.extend(select_candidates(codes, source, target, context));
             }
+            // `!inCreateOperationsWithDatumPivotAntiRecursion && !inCreateOperationsWithIntermediate`
+            // (coordinateoperationfactory.cpp:4480-4484): the intermediate search is off inside a
+            // pivot or inside another intermediate search, such as the ensemble step's members.
             let intermediate_needed = direct_unfiltered_empty
+                && !context.has_guard(GUARD_DATUM_PIVOT)
+                && !context.has_guard(GUARD_DATUM_INTERMEDIATE)
                 && (pivot.is_empty() || only_ensemble_null_operations(&pivot));
             found.extend(pivot);
             if intermediate_needed {
                 found.extend(datum_based_intermediate_operations(
                     source, target, context,
                 )?);
+            }
+        }
+        // `createOperations`, the ensemble step (coordinateoperationfactory.cpp:4515-4572): one CRS
+        // defined by a datum ensemble and the other by a single datum. The operations go through
+        // each member of the ensemble. Not ported: `bTriedThroughIntermediateCRS`, so the step runs
+        // even where PROJ has already tried the registered intermediates.
+        if registry
+            && is_geodetic(source)
+            && is_geodetic(target)
+            && ensemble_step_applies(source, target, context)
+        {
+            if ensemble_of(source).is_some() && !target.domains().is_empty() {
+                found.extend(ensemble_to_other_geodetic(source, target, context)?);
+            } else if ensemble_of(target).is_some() && !source.domains().is_empty() {
+                for operation in ensemble_to_other_geodetic(target, source, context)? {
+                    found.push(operation.inverse());
+                }
             }
         }
         if registry && found.is_empty() {
@@ -7092,6 +7116,301 @@ fn only_ensemble_null_operations(operations: &[CoordinateOperation]) -> bool {
                 member_of_ensemble(source, target) || member_of_ensemble(target, source)
             })
         })
+}
+
+/// The guard and name conditions of the ensemble step (coordinateoperationfactory.cpp:4515-4534):
+/// exactly one of the two CRS has a datum ensemble, neither datum is a member of the other's
+/// ensemble, the datums differ, and the GDA94/GDA2020 to WGS 84 pairs keep their own operations.
+fn ensemble_step_applies(source: &Crs, target: &Crs, context: &CoordinateOperationContext) -> bool {
+    let source_ensemble = ensemble_of(source).is_some();
+    let target_ensemble = ensemble_of(target).is_some();
+    let gda = |name: &str| name == "GDA94" || name == "GDA2020";
+    !context.has_guard(GUARD_GEOG_ALTERNATIVE | GUARD_DATUM_INTERMEDIATE | GUARD_DATUM_PIVOT)
+        && source_ensemble != target_ensemble
+        && !same_geodetic_datum(source, target)
+        && !(source_ensemble && member_of_ensemble(target, source))
+        && !(target_ensemble && member_of_ensemble(source, target))
+        && !(gda(source.name()) && target.name() == "WGS 84")
+        && !(source.name() == "WGS 84" && gda(target.name()))
+}
+
+/// The kinds `getNatureOf` tells apart (coordinateoperationfactory.cpp:4059-4068).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GeodeticNature {
+    Geographic2D,
+    Geographic3D,
+    Geocentric,
+}
+
+impl GeodeticNature {
+    /// The `type` of the `geodetic_crs` rows, as `createGeodeticCRSFromDatum` filters them.
+    fn sql_type(self) -> &'static str {
+        match self {
+            Self::Geographic2D => "geographic 2D",
+            Self::Geographic3D => "geographic 3D",
+            Self::Geocentric => "geocentric",
+        }
+    }
+}
+
+/// `getNatureOf`: a geographic CRS by its axis count, any other geodetic CRS as geocentric.
+fn geodetic_nature(crs: &Crs) -> GeodeticNature {
+    match geographic_of(crs) {
+        Some(geographic) if geographic.coordinate_system().axes().len() == 2 => {
+            GeodeticNature::Geographic2D
+        }
+        Some(_) => GeodeticNature::Geographic3D,
+        None => GeodeticNature::Geocentric,
+    }
+}
+
+/// `ConcatenatedOperation::createComputeMetadata(steps, disallowEmptyIntersection)`: the steps,
+/// whose source is the source of the first one and whose target is the target of the last one.
+/// `None` when the extents of the steps do not meet and the context disallows that.
+fn concatenate_steps(
+    steps: Vec<CoordinateOperation>,
+    context: &CoordinateOperationContext,
+) -> Option<CoordinateOperation> {
+    if context.disallows_empty_intersection() && super::derived::joint_extent(&steps).is_none() {
+        return None;
+    }
+    let source = steps.first().and_then(|step| step.source_crs().cloned());
+    let target = steps.last().and_then(|step| step.target_crs().cloned());
+    let mut concatenated = pivot_concatenation(steps);
+    concatenated.source = source.map(Box::new);
+    concatenated.target = target.map(Box::new);
+    Some(CoordinateOperation::Concatenated(concatenated))
+}
+
+/// The `(authority, code)` of a geodetic reference frame, when it has an identifier.
+fn frame_identity(frame: &GeodeticReferenceFrame) -> Option<(String, String)> {
+    frame.identifiers().first().map(|identifier| {
+        (
+            identifier.code_space().to_owned(),
+            identifier.code().to_owned(),
+        )
+    })
+}
+
+/// `createOperationsEnsembleCRSToOtherGeodCRS` (coordinateoperationfactory.cpp:4047-4242):
+/// the operations from a CRS defined by a datum ensemble to a geodetic CRS of another datum,
+/// through each member of the ensemble that the area of the target covers. The member's own
+/// operation to `target` is the one that runs, joined to the null step from the ensemble to
+/// the member when the member is not the source datum (`ITRF2014 to ETRS89 (EPSG:4936)` is
+/// read through `ETRS89-DNK`, whose operation to ITRF2014 is inverted by the caller).
+///
+/// Not ported: the interpolation CRS of the member operations (`setInterpolationCRS`), and
+/// the members that carry no identifier, which `createGeodeticCRSFromDatum` cannot read.
+fn ensemble_to_other_geodetic(
+    source: &Crs,
+    target: &Crs,
+    context: &CoordinateOperationContext,
+) -> Result<Vec<CoordinateOperation>, FactoryError> {
+    let Some(source_ensemble) = ensemble_of(source) else {
+        return Ok(Vec::new());
+    };
+    let Some(target_extent) = target
+        .domains()
+        .first()
+        .and_then(ObjectDomain::bounding_box)
+    else {
+        return Ok(Vec::new());
+    };
+    // `AntiRecursionGuard`: the three guards are set for the whole function.
+    let mut guarded = context.clone();
+    guarded.guards |= GUARD_GEOG_ALTERNATIVE | GUARD_DATUM_INTERMEDIATE | GUARD_DATUM_PIVOT;
+    let context = &guarded;
+    let authority = AuthorityFactory::create(&context.db, context.authority.clone());
+    let factory = CoordinateOperationFactory::create();
+    let is_3d = axis_count(source) == 3 && axis_count(target) == 3;
+    let source_frame = geodetic_frame(source);
+    let target_frame = geodetic_frame(target);
+    let mut new_ops = Vec::new();
+    for iteration in 0..if is_3d { 2 } else { 1 } {
+        let intermediate = if !is_3d {
+            GeodeticNature::Geographic2D
+        } else if iteration == 0 {
+            GeodeticNature::Geographic3D
+        } else {
+            GeodeticNature::Geocentric
+        };
+        for member in source_ensemble.members() {
+            let Datum::Geodetic(member_frame) = member else {
+                continue;
+            };
+            let Some(member_extent) = member_frame
+                .domains()
+                .first()
+                .and_then(ObjectDomain::bounding_box)
+            else {
+                continue;
+            };
+            if !member_extent.intersects(&target_extent) {
+                continue;
+            }
+            if let Some(area) = context
+                .area_of_interest
+                .as_ref()
+                .and_then(ObjectDomain::bounding_box)
+            {
+                if !member_extent.intersects(&area) {
+                    continue;
+                }
+            }
+            let Some((member_auth, member_code)) = frame_identity(member_frame) else {
+                continue;
+            };
+            let member_crs = authority.create_geodetic_crs_from_datum(
+                &member_auth,
+                &member_code,
+                intermediate.sql_type(),
+            )?;
+            for member_geog in member_crs.into_iter().map(Crs::from) {
+                let mut ops: Vec<CoordinateOperation> = Vec::new();
+                let mut ops_last_conversion: Vec<CoordinateOperation> = Vec::new();
+                // The target datum's geocentric CRS, when a 3D geographic target needs one.
+                if geodetic_nature(&member_geog) == GeodeticNature::Geocentric
+                    && geodetic_nature(target) == GeodeticNature::Geographic3D
+                {
+                    if let Some((target_auth, target_code)) =
+                        target_frame.as_ref().and_then(frame_identity)
+                    {
+                        let geocentric = authority.create_geodetic_crs_from_datum(
+                            &target_auth,
+                            &target_code,
+                            GeodeticNature::Geocentric.sql_type(),
+                        )?;
+                        if let Some(first) = geocentric.into_iter().next() {
+                            let first = Crs::from(first);
+                            ops = factory.create_operations(&member_geog, &first, context)?;
+                            ops_last_conversion =
+                                factory.create_operations(&first, target, context)?;
+                        }
+                    }
+                }
+                if ops.is_empty() {
+                    ops_last_conversion.clear();
+                    ops = factory.create_operations(&member_geog, target, context)?;
+                }
+                if geodetic_nature(&member_geog) == geodetic_nature(source)
+                    && same_coordinate_system(&member_geog, source)
+                {
+                    for op in ops.iter().filter(|op| !op.has_ballpark_transformation()) {
+                        let mut new_op = op.clone();
+                        if let Some(last) = ops_last_conversion.first() {
+                            let Some(joined) =
+                                concatenate_steps(vec![new_op, last.clone()], context)
+                            else {
+                                continue;
+                            };
+                            new_op = joined;
+                        }
+                        new_ops.push(with_endpoints_of(new_op, source, target));
+                    }
+                } else {
+                    // A null transformation between an ensemble and one of its members: the
+                    // operation of the source to the member is the first one.
+                    let mut ops_first_conversion: Vec<CoordinateOperation> = Vec::new();
+                    let mut ops_first: Vec<CoordinateOperation> = Vec::new();
+                    if geodetic_nature(&member_geog) == GeodeticNature::Geocentric
+                        && geodetic_nature(source) == GeodeticNature::Geographic3D
+                    {
+                        if let Some((source_auth, source_code)) =
+                            source_frame.as_ref().and_then(frame_identity)
+                        {
+                            let geocentric = authority.create_geodetic_crs_from_datum(
+                                &source_auth,
+                                &source_code,
+                                GeodeticNature::Geocentric.sql_type(),
+                            )?;
+                            if let Some(first) = geocentric.into_iter().next() {
+                                let first = Crs::from(first);
+                                ops_first_conversion =
+                                    factory.create_operations(source, &first, context)?;
+                                let mut without_pivot = context.clone();
+                                without_pivot.guards &= !GUARD_DATUM_PIVOT;
+                                ops_first = factory.create_operations(
+                                    &first,
+                                    &member_geog,
+                                    &without_pivot,
+                                )?;
+                            }
+                        }
+                    }
+                    if ops_first.is_empty() {
+                        ops_first_conversion.clear();
+                        ops_first = factory.create_operations(source, &member_geog, context)?;
+                    }
+                    if let Some(op_first) = ops_first
+                        .first()
+                        .filter(|op| !op.has_ballpark_transformation())
+                    {
+                        for op in ops.iter().filter(|op| !op.has_ballpark_transformation()) {
+                            let mut steps = Vec::new();
+                            steps.extend(ops_first_conversion.first().cloned());
+                            steps.push(op_first.clone());
+                            steps.push(op.clone());
+                            steps.extend(ops_last_conversion.first().cloned());
+                            if let Some(joined) = concatenate_steps(steps, context) {
+                                new_ops.push(joined);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(new_ops)
+}
+
+/// `setCRSs` on a copy: the source and target of the operation, as stored.
+fn with_endpoints_of(
+    mut operation: CoordinateOperation,
+    source: &Crs,
+    target: &Crs,
+) -> CoordinateOperation {
+    match &mut operation {
+        CoordinateOperation::Conversion(conversion) => {
+            conversion.source = Some(Box::new(source.clone()));
+            conversion.target = Some(Box::new(target.clone()));
+        }
+        CoordinateOperation::Transformation(transformation) => {
+            transformation.source = Some(Box::new(source.clone()));
+            transformation.target = Some(Box::new(target.clone()));
+        }
+        CoordinateOperation::Concatenated(concatenated) => {
+            concatenated.source = Some(Box::new(source.clone()));
+            concatenated.target = Some(Box::new(target.clone()));
+        }
+    }
+    operation
+}
+
+/// `coordinateSystem()->_isEquivalentTo(...)` between two geodetic CRS, on the direction and
+/// the unit of each axis, in order.
+fn same_coordinate_system(left: &Crs, right: &Crs) -> bool {
+    let axes = |crs: &Crs| -> Vec<(String, f64, String)> {
+        geographic_of(crs).map_or_else(Vec::new, |geographic| {
+            geographic
+                .coordinate_system()
+                .axes()
+                .into_iter()
+                .map(|axis| {
+                    (
+                        axis.direction().to_owned(),
+                        axis.unit().conversion_to_si(),
+                        format!("{:?}", axis.unit().kind()),
+                    )
+                })
+                .collect()
+        })
+    };
+    let (left_axes, right_axes) = (axes(left), axes(right));
+    left_axes.len() == right_axes.len()
+        && left_axes
+            .iter()
+            .zip(&right_axes)
+            .all(|(a, b)| a.0 == b.0 && a.2 == b.2 && (a.1 - b.1).abs() <= 1e-10 * a.1.abs())
 }
 
 /// `isDatumInEnsemble`: the datum of `member` is a member of the ensemble of `ensemble`.
