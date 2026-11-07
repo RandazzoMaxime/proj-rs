@@ -712,18 +712,9 @@ impl WktParser {
             };
             return Ok(WktObject::Crs(Crs::Compound(compound)));
         }
-        let object = self.build_object(&root)?;
-        self.note_parameter_warnings(&object);
-        Ok(object)
-    }
-
-    fn note_parameter_warnings(&mut self, object: &WktObject) {
-        let messages = match object {
-            WktObject::Crs(Crs::Projected(crs)) => crs.deriving_conversion().validate_parameters(),
-            WktObject::Conversion(conversion) => conversion.validate_parameters(),
-            _ => Vec::new(),
-        };
-        self.warnings.extend(messages);
+        // No `validateParameters` notes here: PROJ adds them only to the C API's
+        // `out_warnings` (c_api.cpp:742-758), not to `WKTParser::warningList()`.
+        self.build_object(&root)
     }
 
     fn grammar(&mut self, message: impl Into<String>) -> Result<(), FactoryError> {
