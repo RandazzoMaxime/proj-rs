@@ -6495,7 +6495,44 @@ fn datum_pivot_operations(
     let mut inner = context.clone();
     inner.guards |= GUARD_DATUM_PIVOT;
     let factory = CoordinateOperationFactory::create();
+    // `createTransformations` of one pair: the operations between the two candidates, each one
+    // linked to the two legs of the pivot.
+    let linked_pair = |left: &Crs, right: &Crs| -> Vec<CoordinateOperation> {
+        let (left_leg, right_leg) = if both_3d {
+            (
+                promote_crs_to_3d(left, &context.db),
+                promote_crs_to_3d(right, &context.db),
+            )
+        } else {
+            (left.clone(), right.clone())
+        };
+        let (Some(first), Some(third)) =
+            (pivot_leg(source, &left_leg), pivot_leg(&right_leg, target))
+        else {
+            return Vec::new();
+        };
+        let Ok(second) = factory.create_candidates(left, right, &inner) else {
+            return Vec::new();
+        };
+        second
+            .into_iter()
+            .filter(|operation| !operation.has_ballpark_transformation())
+            .map(|operation| {
+                let operation = if both_3d {
+                    promote_operation_to_3d(operation, &context.db)
+                } else {
+                    operation
+                };
+                let steps = [first.clone(), Some(operation), third.clone()]
+                    .into_iter()
+                    .flatten()
+                    .collect();
+                CoordinateOperation::Concatenated(pivot_concatenation(steps))
+            })
+            .collect()
+    };
     for iteration in 1..=2 {
+        // Named candidates, of the same kind in iteration 1 and of another kind in iteration 2.
         for left in &candidates_source {
             if left.name() != source.name() {
                 continue;
@@ -6507,38 +6544,21 @@ fn datum_pivot_operations(
                 if (iteration == 1) != (kind(left) == kind(right)) {
                     continue;
                 }
-                let (left_leg, right_leg) = if both_3d {
-                    (
-                        promote_crs_to_3d(left, &context.db),
-                        promote_crs_to_3d(right, &context.db),
-                    )
-                } else {
-                    (left.clone(), right.clone())
-                };
-                let (Some(first), Some(third)) =
-                    (pivot_leg(source, &left_leg), pivot_leg(&right_leg, target))
-                else {
+                let linked = linked_pair(left, right);
+                if !linked.is_empty() {
+                    return linked;
+                }
+            }
+        }
+        // Every other pair, the candidates whose names differ from the request included. The
+        // pair of the two names of the request is left to the first loop.
+        for left in &candidates_source {
+            let same_source_name = left.name() == source.name();
+            for right in &candidates_target {
+                if same_source_name && right.name() == target.name() {
                     continue;
-                };
-                let Ok(second) = factory.create_candidates(left, right, &inner) else {
-                    continue;
-                };
-                let linked: Vec<CoordinateOperation> = second
-                    .into_iter()
-                    .filter(|operation| !operation.has_ballpark_transformation())
-                    .map(|operation| {
-                        let operation = if both_3d {
-                            promote_operation_to_3d(operation, &context.db)
-                        } else {
-                            operation
-                        };
-                        let steps = [first.clone(), Some(operation), third.clone()]
-                            .into_iter()
-                            .flatten()
-                            .collect();
-                        CoordinateOperation::Concatenated(pivot_concatenation(steps))
-                    })
-                    .collect();
+                }
+                let linked = linked_pair(left, right);
                 if !linked.is_empty() {
                     return linked;
                 }
