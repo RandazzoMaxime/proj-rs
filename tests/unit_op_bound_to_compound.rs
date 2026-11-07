@@ -195,3 +195,23 @@ fn operation_bound_crs_to_compound_with_hub_crs_same_as_compound_geographic_crs(
          +step +proj=axisswap +order=2,1"
     );
 }
+
+/// `TEST(operation, WGS84_G1762_to_compoundCRS_with_bound_vertCRS)`
+#[test]
+fn operation_wgs84_g1762_to_compound_with_bound_vert_crs() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let src = epsg(&db, "7665");
+    let dst =
+        create_crs_from_proj_string("+proj=longlat +datum=NAD83 +geoidgrids=@foo.gtx +type=crs")
+            .expect("dst");
+    let ctxt = partial_ignore_grids(&db, "");
+    let list = operations(&src, &dst, &ctxt);
+    assert!(list.len() >= 53, "{} operations", list.len());
+    assert_eq!(
+        proj(&db, &list[0]),
+        "+proj=pipeline +step +proj=axisswap +order=2,1 \
+         +step +proj=unitconvert +xy_in=deg +xy_out=rad \
+         +step +inv +proj=vgridshift +grids=@foo.gtx +multiplier=1 \
+         +step +proj=unitconvert +xy_in=rad +xy_out=deg"
+    );
+}
