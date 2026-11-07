@@ -18,9 +18,10 @@ use super::buildop::{concatenation_interpolation, interpolation_crs_of, OpProps}
 use super::derived::joint_extent;
 use super::equiv::{geodetic_frame, same_geodetic_datum, Equivalence};
 use super::factory::{
-    crs_extent, geographic_of, world_extent, CoordinateOperationContext,
-    CoordinateOperationFactory, DatabaseContext, GridAvailabilityUse, GUARD_ALTERNATIVE_GEOG,
-    GUARD_SKIP_HORIZONTAL, GUARD_VERTICAL_INTERMEDIATE, GUARD_VERTICAL_PIVOT,
+    crs_extent, geographic_of, point_motion_candidates, world_extent, CoordinateOperationContext,
+    CoordinateOperationFactory, DatabaseContext, Epochs, GridAvailabilityUse,
+    GUARD_ALTERNATIVE_GEOG, GUARD_SKIP_HORIZONTAL, GUARD_VERTICAL_INTERMEDIATE,
+    GUARD_VERTICAL_PIVOT,
 };
 use super::model::{
     Axis, BoundCRS, CompoundCRS, ConcatenatedOperation, ConcatenatedStep, CoordinateOperation, Crs,
@@ -269,16 +270,89 @@ pub(super) fn geog_to_compound(
         .collect())
 }
 
+/// The point motion block of `createOperationsCompoundToCompound` (coordinateoperationfactory.cpp:
+/// 7228-7290): two compound CRS whose horizontal parts are the same geographic CRS, at two
+/// different epochs, when that datum has a point motion. Each candidate chains the operations from
+/// the source to the geographic 3D CRS, the point motion of that CRS between the two epochs
+/// (`candidates_at_epochs`), and the operations from it to the target, with no ballpark operation
+/// at any of the three places. Empty when the block does not apply.
+pub(super) fn compound_point_motion(
+    factory: &CoordinateOperationFactory,
+    source: &Crs,
+    target: &Crs,
+    epochs: Epochs,
+    context: &CoordinateOperationContext,
+) -> Result<Vec<CoordinateOperation>, FactoryError> {
+    let (Crs::Compound(src), Crs::Compound(dst)) = (source, target) else {
+        return Ok(Vec::new());
+    };
+    let Some((source_epoch, target_epoch)) = epochs.differing() else {
+        return Ok(Vec::new());
+    };
+    let (src_components, dst_components) = (src.components(), dst.components());
+    if src_components.is_empty() || src_components.len() != dst_components.len() {
+        return Ok(Vec::new());
+    }
+    let (Some(src_geog), Some(dst_geog)) = (
+        src_components[0].extract_geographic_crs(),
+        dst_components[0].extract_geographic_crs(),
+    ) else {
+        return Ok(Vec::new());
+    };
+    if !src_geog.is_equivalent_to_with(&dst_geog, Equivalence::Equivalent) {
+        return Ok(Vec::new());
+    }
+    let src_geog = Crs::Geographic(src_geog);
+    if point_motion_candidates(&src_geog, context)?.is_empty() {
+        return Ok(Vec::new());
+    }
+    let geog3d = src_geog.promote_to_3d(Some(context.database()));
+    let ops_first = factory.create_candidates(source, &geog3d, context)?;
+    let ops_middle = factory.candidates_at_epochs(
+        &geog3d,
+        Epochs {
+            source: Some(source_epoch),
+            target: Some(target_epoch),
+        },
+        &geog3d,
+        context,
+    )?;
+    let ops_last = factory.create_candidates(&geog3d, target, context)?;
+    let mut res = Vec::new();
+    for first in ops_first
+        .iter()
+        .filter(|op| !op.has_ballpark_transformation())
+    {
+        for middle in ops_middle
+            .iter()
+            .filter(|op| !op.has_ballpark_transformation())
+        {
+            for last in ops_last
+                .iter()
+                .filter(|op| !op.has_ballpark_transformation())
+            {
+                res.extend(compute_metadata(
+                    vec![first.clone(), middle.clone(), last.clone()],
+                    context,
+                ));
+            }
+        }
+    }
+    Ok(res)
+}
+
 /// `createOperationsCompoundToCompound` for two compound CRS of the same number of components.
 /// The horizontal parts go through the geographic CRS of each, promoted to 3D: the registry
 /// operations between them, the vertical operations between the vertical parts, and the
 /// intermediate geographic CRS when the vertical operation is ballpark or a geoid trigger
-/// applies. Only the first of PROJ's branches that gives a result is kept. Epochs are not
-/// carried, so the point motion branch does not run.
+/// applies. Only the first of PROJ's branches that gives a result is kept. The point motion block
+/// comes first (`compound_point_motion`, called by the caller); the epochs reach the geographic
+/// pair of the intermediate step.
 pub(super) fn compound_to_compound(
     factory: &CoordinateOperationFactory,
     source: &Crs,
     target: &Crs,
+    epochs: Epochs,
     context: &CoordinateOperationContext,
 ) -> Result<Vec<CoordinateOperation>, FactoryError> {
     let (Crs::Compound(src), Crs::Compound(dst)) = (source, target) else {
@@ -302,7 +376,10 @@ pub(super) fn compound_to_compound(
     } else {
         Crs::Geographic(dst_geog.clone()).promote_to_3d(Some(db))
     };
-    let geog_ops = factory.create_candidates(&inter_src, &inter_dst, context)?;
+    // `createOperations(intermGeogSrc, sourceEpoch, intermGeogDst, targetEpoch)`: the epochs
+    // reach the geographic pair, whose point motion is read at them (coordinateoperationfactory.
+    // cpp:7255-7257).
+    let geog_ops = factory.candidates_at_epochs(&inter_src, epochs, &inter_dst, context)?;
     let mut res = Vec::new();
 
     if let (

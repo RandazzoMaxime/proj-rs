@@ -5738,6 +5738,18 @@ impl CoordinateOperationFactory {
             }
             found.extend(pivot);
         }
+        // The point motion block of `createOperationsCompoundToCompound` (coordinateoperationfactory.
+        // cpp:7228-7290), which runs after the registry for two compound CRS. Its result is the
+        // whole of that branch: PROJ returns from it, so nothing after it is added. The registry
+        // operations stay in `found`, as PROJ keeps them in `res`.
+        if matches!((source, target), (Crs::Compound(_), Crs::Compound(_))) {
+            let point_motion =
+                super::compound::compound_point_motion(self, source, target, epochs, context)?;
+            if !point_motion.is_empty() {
+                found.extend(point_motion);
+                return Ok(found);
+            }
+        }
         // `createOperations`, the ensemble step (coordinateoperationfactory.cpp:4524-4572): one CRS
         // defined by a datum ensemble and the other by a single datum. The operations go through
         // each member of the ensemble. Not ported: `bTriedThroughIntermediateCRS`, so the step runs
@@ -5825,7 +5837,7 @@ impl CoordinateOperationFactory {
             self, source, target, context,
         )?);
         found.extend(super::compound::compound_to_compound(
-            self, source, target, context,
+            self, source, target, epochs, context,
         )?);
         // `boundDst && compoundSrc` (coordinateoperationfactory.cpp, "reverse of previous case"):
         // the inverse of the bound CRS to the compound CRS.
@@ -6491,7 +6503,7 @@ impl Epochs {
 
 /// The point motion operations of a geodetic CRS's datum, with PROJ's grid names
 /// (`getPointMotionOperationsFor(crs, true)`). Empty for a CRS that is not geodetic.
-fn point_motion_candidates(
+pub(super) fn point_motion_candidates(
     crs: &Crs,
     context: &CoordinateOperationContext,
 ) -> Result<Vec<Transformation>, FactoryError> {

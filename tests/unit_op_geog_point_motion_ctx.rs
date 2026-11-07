@@ -179,3 +179,81 @@ fn operation_point_motion_operation_itrf2014_to_nad83_csrs_v7() {
     );
     assert!(list[1].has_ballpark_transformation());
 }
+
+/// `TEST(operation, createOperation_compound_to_compound_with_point_motion_operation)`
+#[test]
+fn operation_compound_to_compound_with_point_motion_operation() {
+    let db = database();
+    let nrcan = AuthorityFactory::create(&db, "NRCAN");
+    let source = nrcan
+        .create_coordinate_metadata("NAD83_CSRS_1997_MTM7_HT2_1997")
+        .expect("source");
+    let target = nrcan
+        .create_coordinate_metadata("NAD83_CSRS_2010_UTM19_CGVD2013_2010")
+        .expect("target");
+    let ctx = point_motion_context(&db);
+    let list = CoordinateOperationFactory::create()
+        .create_operations_between_metadata(&source, &target, &ctx)
+        .expect("operations");
+    assert!(!list.is_empty());
+    assert!(!list[0].has_ballpark_transformation());
+    assert_proj_eq(
+        &proj(&db, &list[0]),
+        concat!(
+            "+proj=pipeline ",
+            "+step +proj=set +v_4=1997 ",
+            "+step +inv +proj=tmerc +lat_0=0 +lon_0=-70.5 +k=0.9999 ",
+            "+x_0=304800 +y_0=0 +ellps=GRS80 ",
+            "+step +proj=vgridshift +grids=ca_nrc_HT2_1997.tif +multiplier=1 ",
+            "+step +proj=cart +ellps=GRS80 ",
+            "+step +proj=set +v_4=1997 +omit_fwd ",
+            "+step +proj=deformation +dt=13 +grids=ca_nrc_NAD83v70VG.tif ",
+            "+ellps=GRS80 ",
+            "+step +proj=set +v_4=2010 +omit_inv ",
+            "+step +inv +proj=cart +ellps=GRS80 ",
+            "+step +inv +proj=vgridshift +grids=ca_nrc_CGG2013an83.tif ",
+            "+multiplier=1 ",
+            "+step +proj=utm +zone=19 +ellps=GRS80 ",
+            "+step +proj=set +v_4=2010"
+        ),
+    );
+}
+
+/// `TEST(operation, createOperation_compound_to_compound_with_point_motion_operation_special_case_CGVD2013a)`
+#[test]
+fn operation_compound_to_compound_with_point_motion_operation_special_case_cgvd2013a() {
+    let db = database();
+    let nrcan = AuthorityFactory::create(&db, "NRCAN");
+    let source = nrcan
+        .create_coordinate_metadata("NAD83_CSRS_1997_UTM17_CGVD2013_1997")
+        .expect("source");
+    let target = nrcan
+        .create_coordinate_metadata("NAD83_CSRS_2002_UTM17_CGVD2013_2002")
+        .expect("target");
+    let ctx = point_motion_context(&db);
+    let list = CoordinateOperationFactory::create()
+        .create_operations_between_metadata(&source, &target, &ctx)
+        .expect("operations");
+    assert!(!list.is_empty());
+    assert!(!list[0].has_ballpark_transformation());
+    assert_proj_eq(
+        &proj(&db, &list[0]),
+        concat!(
+            "+proj=pipeline ",
+            "+step +proj=set +v_4=1997 ",
+            "+step +inv +proj=utm +zone=17 +ellps=GRS80 ",
+            "+step +proj=vgridshift +grids=ca_nrc_CGG2013an83.tif ",
+            "+multiplier=1 ",
+            "+step +proj=cart +ellps=GRS80 ",
+            "+step +proj=set +v_4=1997 +omit_fwd ",
+            "+step +proj=deformation +dt=5 +grids=ca_nrc_NAD83v70VG.tif ",
+            "+ellps=GRS80 ",
+            "+step +proj=set +v_4=2002 +omit_inv ",
+            "+step +inv +proj=cart +ellps=GRS80 ",
+            "+step +inv +proj=vgridshift +grids=ca_nrc_CGG2013an83.tif ",
+            "+multiplier=1 ",
+            "+step +proj=utm +zone=17 +ellps=GRS80 ",
+            "+step +proj=set +v_4=2002"
+        ),
+    );
+}
