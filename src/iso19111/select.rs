@@ -1185,6 +1185,7 @@ pub fn select_alternatives_with_authority(
         None
     };
     let (source_lon_lat, source_lat_lon) = degree_order(&source_crs);
+    let (target_lon_lat, target_lat_lon) = degree_order(&target_crs);
     let preparer = Preparer {
         db: &db,
         source: &source_crs,
@@ -1194,6 +1195,8 @@ pub fn select_alternatives_with_authority(
         geocentric,
         source_lon_lat,
         source_lat_lon,
+        target_lon_lat,
+        target_lat_lon,
     };
     let mut prepared = preparer.prepare(&ranked);
     if policy != BestPolicy::Discard
@@ -1259,7 +1262,9 @@ pub fn select_alternatives_with_authority(
             } else {
                 FirstAxis::Other
             };
-            let alternatives = Alternatives::new(prepared, policy, source_axes, first_axis);
+            // cs2cs inverts by swapping its CRS (`-I`), so the target's box is never read.
+            let alternatives =
+                Alternatives::new(prepared, policy, source_axes, SourceAxes::Plain, first_axis);
             Ok(Selection::Several(match creation_warning {
                 Some(line) => alternatives.warned_at_creation(line),
                 None => alternatives,
@@ -1284,6 +1289,8 @@ pub(crate) struct FacadeCandidates {
     pub(crate) first: CoordinateOperation,
     /// How the box test reads a point of the source (see [`SourceAxes`]).
     pub(crate) source_axes: SourceAxes,
+    /// How the box test reads a point of the target, for the inverse direction.
+    pub(crate) target_axes: SourceAxes,
     /// Whether the target writes latitude or northing first.
     pub(crate) first_axis: FirstAxis,
     /// The source and the target CRS, as read from their names.
@@ -1342,12 +1349,15 @@ pub(crate) fn facade_candidates(
                 geocentric,
                 source_lon_lat: false,
                 source_lat_lon: false,
+                target_lon_lat: false,
+                target_lat_lon: false,
             };
             let items = preparer.prepare(&ranked);
             return Ok(FacadeCandidates {
                 items,
                 first: operation.clone(),
                 source_axes: SourceAxes::Plain,
+                target_axes: SourceAxes::Plain,
                 first_axis: FirstAxis::Other,
                 source: source_crs,
                 target: target_crs,
@@ -1364,6 +1374,7 @@ pub(crate) fn facade_candidates(
     let source_to_crs = geodetic_to_crs(&source_base, &source_part, &db)?;
     let target_to_crs = geodetic_to_crs(&target_base, &target_part, &db)?;
     let (source_lon_lat, source_lat_lon) = degree_order(&source_part);
+    let (target_lon_lat, target_lat_lon) = degree_order(&target_part);
     let preparer = Preparer {
         db: &db,
         source: &source_crs,
@@ -1373,6 +1384,8 @@ pub(crate) fn facade_candidates(
         geocentric,
         source_lon_lat,
         source_lat_lon,
+        target_lon_lat,
+        target_lat_lon,
     };
     // Each candidate with the operation its pieces were prepared from, in PROJ's order.
     let prepare_each = |candidates: &[(CoordinateOperation, Characteristics)]| {
@@ -1427,10 +1440,18 @@ pub(crate) fn facade_candidates(
     } else {
         SourceAxes::Plain
     };
+    // A geocentric target is read through its own geographic position, as the source is. A
+    // target whose operation cannot be built is read as it is, and its box is the raw one.
+    let target_axes = if matches!(target_crs, Crs::Geodetic(GeodeticCRS::Geocentric(_))) {
+        geocentric_to_lon_lat(&target_crs, &db).map_or(SourceAxes::Plain, SourceAxes::Geocentric)
+    } else {
+        SourceAxes::Plain
+    };
     Ok(FacadeCandidates {
         items,
         first,
         source_axes,
+        target_axes,
         first_axis: if lat_or_northing_first(&target_crs) {
             FirstAxis::LatitudeOrNorthing
         } else {
@@ -1633,6 +1654,8 @@ struct Preparer<'a> {
     geocentric: bool,
     source_lon_lat: bool,
     source_lat_lon: bool,
+    target_lon_lat: bool,
+    target_lat_lon: bool,
 }
 
 impl Preparer<'_> {
@@ -1663,10 +1686,12 @@ impl Preparer<'_> {
                 } else {
                     reproject_box(self.source_to_crs, piece_west, south, piece_east, north)
                 };
-                let target_valid = self.target_to_crs.is_none()
-                    || reproject_box(self.target_to_crs, piece_west, south, piece_east, north)
-                        .is_some();
-                let Some(bounds) = source_box.filter(|_| target_valid) else {
+                let Some(target_bounds) =
+                    reproject_box(self.target_to_crs, piece_west, south, piece_east, north)
+                else {
+                    continue;
+                };
+                let Some(bounds) = source_box else {
                     continue;
                 };
                 let w = piece_west.to_radians();
@@ -1688,6 +1713,9 @@ impl Preparer<'_> {
                     priority: priority_operation(&characteristics.name),
                     lon_lat_degree: self.source_lon_lat,
                     lat_lon_degree: self.source_lat_lon,
+                    target_bounds,
+                    target_lon_lat_degree: self.target_lon_lat,
+                    target_lat_lon_degree: self.target_lat_lon,
                     approximate: characteristics.approx,
                 });
             }

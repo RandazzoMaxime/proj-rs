@@ -135,6 +135,12 @@ pub(crate) struct Item {
     pub(crate) lon_lat_degree: bool,
     /// `srcIsLatLonDegree`: the source is latitude first, in degrees.
     pub(crate) lat_lon_degree: bool,
+    /// The target box of this candidate, in the target's coordinates (`minxDst`...`maxyDst`).
+    pub(crate) target_bounds: Bounds,
+    /// `dstIsLonLatDegree`: the target is longitude first, in degrees.
+    pub(crate) target_lon_lat_degree: bool,
+    /// `dstIsLatLonDegree`: the target is latitude first, in degrees.
+    pub(crate) target_lat_lon_degree: bool,
     /// `ballpark` of `proj_coordoperation_has_ballpark_transformation`, kept for the rerun.
     pub(crate) approximate: bool,
 }
@@ -154,6 +160,8 @@ pub struct Alternatives {
     items: Vec<Item>,
     policy: BestPolicy,
     source_axes: SourceAxes,
+    /// How the target point is read for the inverse box test (`pjDstGeocentricToLonLat`).
+    target_axes: SourceAxes,
     first_axis: FirstAxis,
     /// `P->warnIfBestTransformationNotAvailable`: cleared by the first failure under `Warn`.
     warn: Cell<bool>,
@@ -211,12 +219,14 @@ impl Alternatives {
         items: Vec<Item>,
         policy: BestPolicy,
         source_axes: SourceAxes,
+        target_axes: SourceAxes,
         first_axis: FirstAxis,
     ) -> Self {
         Self {
             items,
             policy,
             source_axes,
+            target_axes,
             first_axis,
             warn: Cell::new(policy == BestPolicy::Warn),
             current: Cell::new(None),
@@ -265,9 +275,15 @@ impl Alternatives {
         self.policy
     }
 
-    /// The point in the source coordinates, as the box test reads it.
-    fn source_point(&self, coord: Coord) -> Option<(f64, f64)> {
-        match &self.source_axes {
+    /// The point in the box test's coordinates: the source's own for a forward transform, the
+    /// target's for an inverse one (`pj_get_suggested_operation`, `trans.cpp:77-148`).
+    fn box_point(&self, coord: Coord, forward: bool) -> Option<(f64, f64)> {
+        let axes = if forward {
+            &self.source_axes
+        } else {
+            &self.target_axes
+        };
+        match axes {
             SourceAxes::Plain => Some((coord.x, coord.y)),
             SourceAxes::Geocentric(to_geographic) => to_geographic
                 .forward(coord)
@@ -276,50 +292,86 @@ impl Alternatives {
         }
     }
 
-    /// `spatialCriterionOK` of `pj_get_suggested_operation`, forward direction.
-    fn covers(item: &Item, point: Option<(f64, f64)>, source_axes: &SourceAxes) -> bool {
-        if matches!(source_axes, SourceAxes::Geocentric(_)) {
-            // The geocentric branch (`trans.cpp:78-91`) has no normalisation, and a world box
-            // covers every point, whatever its conversion.
-            let world = item.bounds.min_x == -180.0
-                && item.bounds.min_y == -90.0
-                && item.bounds.max_x == 180.0
-                && item.bounds.max_y == 90.0;
-            return world || point.is_some_and(|(x, y)| inside(&item.bounds, x, y));
+    /// `spatialCriterionOK` of `pj_get_suggested_operation`, for a box and its two degree flags.
+    /// `geocentric` is whether the point is read through a geocentric-to-geographic operation
+    /// (`trans.cpp:78-91`, `113-126`), which has no normalisation, and a world box covers every
+    /// point whatever its conversion.
+    fn covers(
+        bounds: &Bounds,
+        lon_lat: bool,
+        lat_lon: bool,
+        point: Option<(f64, f64)>,
+        geocentric: bool,
+    ) -> bool {
+        if geocentric {
+            let world = bounds.min_x == -180.0
+                && bounds.min_y == -90.0
+                && bounds.max_x == 180.0
+                && bounds.max_y == 90.0;
+            return world || point.is_some_and(|(x, y)| inside(bounds, x, y));
         }
         let Some((x, y)) = point else {
             return false;
         };
-        if inside(&item.bounds, x, y) {
+        if inside(bounds, x, y) {
             return true;
         }
-        if item.lon_lat_degree
-            && y >= item.bounds.min_y
-            && y <= item.bounds.max_y
-            && normalize_longitude(x) >= item.bounds.min_x
-            && normalize_longitude(x) <= item.bounds.max_x
+        if lon_lat
+            && y >= bounds.min_y
+            && y <= bounds.max_y
+            && normalize_longitude(x) >= bounds.min_x
+            && normalize_longitude(x) <= bounds.max_x
         {
             return true;
         }
-        item.lat_lon_degree
-            && x >= item.bounds.min_x
-            && x <= item.bounds.max_x
-            && normalize_longitude(y) >= item.bounds.min_y
-            && normalize_longitude(y) <= item.bounds.max_y
+        lat_lon
+            && x >= bounds.min_x
+            && x <= bounds.max_x
+            && normalize_longitude(y) >= bounds.min_y
+            && normalize_longitude(y) <= bounds.max_y
     }
 
-    /// `pj_get_suggested_operation` (`trans.cpp:47-176`) for the forward direction: the index of
-    /// the candidate that serves `coord`, skipping `excluded`, or `None`.
+    /// `pj_get_suggested_operation` (`trans.cpp:47-176`) for one direction: the index of the
+    /// candidate that serves `point`, skipping `excluded`, or `None`.
     fn suggest(
         &self,
         point: Option<(f64, f64)>,
         excluded: &[Option<usize>; 2],
         instantiability: Instantiability,
+        forward: bool,
     ) -> Option<usize> {
+        let geocentric = matches!(
+            if forward {
+                &self.source_axes
+            } else {
+                &self.target_axes
+            },
+            SourceAxes::Geocentric(_)
+        );
         let mut best: Option<usize> = None;
         let mut best_accuracy = f64::MAX;
         for (index, item) in self.items.iter().enumerate() {
-            if excluded.contains(&Some(index)) || !Self::covers(item, point, &self.source_axes) {
+            if excluded.contains(&Some(index)) {
+                continue;
+            }
+            let covered = if forward {
+                Self::covers(
+                    &item.bounds,
+                    item.lon_lat_degree,
+                    item.lat_lon_degree,
+                    point,
+                    geocentric,
+                )
+            } else {
+                Self::covers(
+                    &item.target_bounds,
+                    item.target_lon_lat_degree,
+                    item.target_lat_lon_degree,
+                    point,
+                    geocentric,
+                )
+            };
+            if !covered {
                 continue;
             }
             let accepted = match best {
@@ -345,18 +397,6 @@ impl Alternatives {
         best
     }
 
-    /// The inverse of the first candidate, for the facade until the per-point inverse is ported.
-    ///
-    /// # Errors
-    ///
-    /// [`TransformError::NoInverse`] when the first candidate has no pipeline to invert.
-    pub(crate) fn inverse_of_first(&self, coord: Coord) -> Result<Coord, TransformError> {
-        match self.items.first().and_then(|item| item.operation.as_ref()) {
-            Some(operation) => operation.inverse(coord),
-            None => Err(TransformError::NoInverse),
-        }
-    }
-
     /// `proj_trans` (forward) for one point, `trans.cpp:233-346`, without the log lines.
     ///
     /// # Errors
@@ -380,7 +420,28 @@ impl Alternatives {
         coord: Coord,
         log: &mut Vec<LogLine>,
     ) -> Result<Coord, AlternativeError> {
-        let point = self.source_point(coord);
+        self.transform(coord, true, log)
+    }
+
+    /// `proj_trans` (inverse) for one point, `trans.cpp:233-346` with `PJ_INV`: the boxes are the
+    /// target's, and each candidate is inverted.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::forward`].
+    pub(crate) fn inverse(&self, coord: Coord) -> Result<Coord, AlternativeError> {
+        self.transform(coord, false, &mut Vec::new())
+    }
+
+    /// `proj_trans` for one point in one direction, `trans.cpp:233-346`. The log lines are
+    /// appended to `log` as [`Self::forward_logged`] describes.
+    fn transform(
+        &self,
+        coord: Coord,
+        forward: bool,
+        log: &mut Vec<LogLine>,
+    ) -> Result<Coord, AlternativeError> {
+        let point = self.box_point(coord, forward);
         // `skipNonInstantiable` of `proj_trans`: the creation flag, cleared while the warning is
         // still pending and under the other policies.
         let mut instantiability = if self.policy == BestPolicy::Warn && !self.warn.get() {
@@ -390,7 +451,7 @@ impl Alternatives {
         };
         let mut excluded: [Option<usize>; 2] = [None, None];
         for retry in 0..=2 {
-            let Some(best) = self.suggest(point, &excluded, instantiability) else {
+            let Some(best) = self.suggest(point, &excluded, instantiability, forward) else {
                 break;
             };
             if retry > 0 {
@@ -411,7 +472,7 @@ impl Alternatives {
                 self.current.set(Some(best));
             }
             if let Some(operation) = &item.operation {
-                if let Ok(result) = operation.forward(coord) {
+                if let Ok(result) = apply(operation, coord, forward) {
                     return Ok(result);
                 }
             }
@@ -454,12 +515,20 @@ impl Alternatives {
                         )));
                         self.current.set(Some(index));
                     }
-                    return operation
-                        .forward(coord)
+                    return apply(operation, coord, forward)
                         .map_err(|_| AlternativeError::NoOperation);
                 }
             }
         }
         Err(AlternativeError::NoOperation)
+    }
+}
+
+/// One point through a candidate, forward or inverse.
+fn apply(operation: &Operation, coord: Coord, forward: bool) -> Result<Coord, TransformError> {
+    if forward {
+        operation.forward(coord)
+    } else {
+        operation.inverse(coord)
     }
 }

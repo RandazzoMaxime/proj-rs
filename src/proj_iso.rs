@@ -121,6 +121,7 @@ pub(crate) fn iso_pipeline_at(from: &str, to: &str, epoch: Option<f64>) -> Optio
         mut items,
         first,
         source_axes,
+        target_axes,
         first_axis,
         source,
         target,
@@ -152,6 +153,7 @@ pub(crate) fn iso_pipeline_at(from: &str, to: &str, epoch: Option<f64>) -> Optio
             items,
             BestPolicy::Warn,
             source_axes,
+            target_axes,
             first_axis,
         ))),
     };
@@ -407,15 +409,18 @@ impl IsoPipeline {
         }
     }
 
-    /// The inverse of one point, in the pipeline's own axis order. Several candidates use the
-    /// first one until the per-point inverse is ported.
+    /// `proj_trans` inverse for one point, in the pipeline's own axis order.
     fn inverse(&self, coord: Coord) -> Result<Coord, TransformError> {
         match &self.route {
             Route::Single(operation) => operation.inverse(coord),
-            Route::Alternatives(alternatives) => alternatives.inverse_of_first(coord),
+            Route::Alternatives(alternatives) => {
+                alternatives.inverse(coord).map_err(|error| match error {
+                    AlternativeError::MissingGrid(_) => TransformError::OutsideGrid,
+                    AlternativeError::NoOperation => TransformError::OutsideDomain,
+                })
+            }
         }
     }
-
 
     /// Whether the output of `way` writes degrees: the target of a forward transform, the
     /// source of an inverse one.
