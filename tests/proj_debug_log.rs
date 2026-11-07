@@ -17,14 +17,19 @@ fn point(x: f64, y: f64, z: f64) -> Xyzt {
 }
 
 /// A data search path holding the database and no grid, so that every grid of the pairs below is
-/// missing, as in the yaml cases.
+/// missing, as in the yaml cases. Set up once per test process: the tests run in parallel, and on
+/// Windows a second copy over a `proj.db` another test has open fails with a sharing violation.
 fn use_grid_free_search_path() {
-    let dir = std::env::temp_dir().join(format!("proj-rs-proj-debug-log-{}", std::process::id()));
-    fs::create_dir_all(&dir).expect("scratch directory");
-    let database = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("data/proj.db");
-    fs::copy(&database, dir.join("proj.db")).expect("copy proj.db");
-    std::env::set_var("PROJ_DATA", &dir);
-    std::env::set_var("PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY", "YES");
+    static SETUP: std::sync::Once = std::sync::Once::new();
+    SETUP.call_once(|| {
+        let dir =
+            std::env::temp_dir().join(format!("proj-rs-proj-debug-log-{}", std::process::id()));
+        fs::create_dir_all(&dir).expect("scratch directory");
+        let database = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("data/proj.db");
+        fs::copy(&database, dir.join("proj.db")).expect("copy proj.db");
+        std::env::set_var("PROJ_DATA", &dir);
+        std::env::set_var("PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY", "YES");
+    });
 }
 
 /// `test_cs2cs_various.yaml#126`: a compound pair whose first candidate lacks its grids. PROJ
