@@ -57,7 +57,7 @@ impl Proj {
                 "densify_pts must be between 0-10000.".to_owned(),
             ));
         }
-        if matches!(self.body, Body::Single(_)) {
+        if matches!(self.body, Body::Single) {
             return Err(ProjError::Conversion(
                 "NULL transformation not allowed.".to_owned(),
             ));
@@ -88,7 +88,7 @@ impl Proj {
             } else {
                 Order::LonLat
             },
-            input_geocentric: dims == Dims::Three && self.input_is_geocentric(direction),
+            input_geocentric: false,
         };
         let forward = |x: f64, y: f64, z: f64| self.map_or_inf(x, y, z, direction);
         let backward = |x: f64, y: f64, z: f64| self.map_or_inf(x, y, z, opposite);
@@ -99,20 +99,13 @@ impl Proj {
     fn is_noop(&self) -> bool {
         match &self.body {
             Body::Native(_) => self.definition.trim() == "+proj=noop",
-            Body::Between { bridge, .. } => {
-                bridge.is_none()
-                    && self
-                        .definition
-                        .split_once(" -> ")
-                        .is_some_and(|(from, to)| from.trim() == to.trim())
-            }
             Body::Iso(_) => self
                 .def()
                 .ok()
                 .as_deref()
                 .and_then(crate::proj_info::proj_name)
                 .is_some_and(|name| name == "noop"),
-            Body::Single(_) => false,
+            Body::Single => false,
         }
     }
 
@@ -121,22 +114,8 @@ impl Proj {
     fn degree_output(&self, direction: Direction) -> bool {
         match &self.body {
             Body::Native(op) => op.degree_output(direction == Direction::Inverse),
-            Body::Between { source, target, .. } => match direction {
-                Direction::Forward => target.is_geographic(),
-                Direction::Inverse => source.is_geographic(),
-            },
             Body::Iso(pipeline) => pipeline.degree_output(direction),
-            Body::Single(_) => false,
-        }
-    }
-
-    fn input_is_geocentric(&self, direction: Direction) -> bool {
-        match &self.body {
-            Body::Between { source, target, .. } => match direction {
-                Direction::Forward => source.is_geocentric(),
-                Direction::Inverse => target.is_geocentric(),
-            },
-            Body::Native(_) | Body::Iso(_) | Body::Single(_) => false,
+            Body::Single => false,
         }
     }
 
@@ -147,7 +126,7 @@ impl Proj {
     /// PROJ reads it when no target CRS is attached.
     fn axis_order(&self, direction: Direction) -> Result<Order, ProjError> {
         match &self.body {
-            Body::Between { .. } | Body::Iso(_) => Ok(Order::LonLat),
+            Body::Iso(_) => Ok(Order::LonLat),
             Body::Native(_) => {
                 let text = self
                     .definition
@@ -178,7 +157,7 @@ impl Proj {
                     ProjError::Conversion("Unable to retrieve target CRS".to_owned())
                 })
             }
-            Body::Single(_) => Err(ProjError::Conversion(
+            Body::Single => Err(ProjError::Conversion(
                 "NULL transformation not allowed.".to_owned(),
             )),
         }

@@ -174,15 +174,25 @@ fn wkt_and_projjson_build_a_geographic_or_projected_crs() {
     assert!(metres(xy.0, 500_000.0), "{}", xy.0);
     assert!(metres(xy.1, 0.0), "{}", xy.1);
 
+    // libproj 9.9.0 refuses a PROJJSON projected CRS without `coordinate_system` ("Missing
+    // coordinate_system key", oracle), so the input carries its axes. The expected values are
+    // unchanged.
     let json = concat!(
-        r#"{"type":"ProjectedCRS","base_crs":{"type":"GeographicCRS","datum":{"ellipsoid":"#,
-        r#"{"semi_major_axis":6378137,"inverse_flattening":298.257223563}}},"conversion":"#,
-        r#"{"method":{"name":"Transverse Mercator"},"parameters":["#,
-        r#"{"name":"Latitude of natural origin","value":0},"#,
-        r#"{"name":"Longitude of natural origin","value":3},"#,
-        r#"{"name":"Scale factor at natural origin","value":0.9996},"#,
-        r#"{"name":"False easting","value":500000},"#,
-        r#"{"name":"False northing","value":0}]}}"#
+        r#"{"type":"ProjectedCRS","name":"UTM zone 31N","base_crs":{"type":"GeographicCRS","#,
+        r#""name":"WGS 84","datum":{"type":"GeodeticReferenceFrame","name":"World Geodetic System 1984","#,
+        r#""ellipsoid":{"name":"WGS 84","semi_major_axis":6378137,"inverse_flattening":298.257223563}},"#,
+        r#""coordinate_system":{"subtype":"ellipsoidal","axis":["#,
+        r#"{"name":"Geodetic latitude","abbreviation":"Lat","direction":"north","unit":"degree"},"#,
+        r#"{"name":"Geodetic longitude","abbreviation":"Lon","direction":"east","unit":"degree"}]}},"#,
+        r#""conversion":{"name":"UTM zone 31N","method":{"name":"Transverse Mercator"},"parameters":["#,
+        r#"{"name":"Latitude of natural origin","value":0,"unit":"degree"},"#,
+        r#"{"name":"Longitude of natural origin","value":3,"unit":"degree"},"#,
+        r#"{"name":"Scale factor at natural origin","value":0.9996,"unit":"unity"},"#,
+        r#"{"name":"False easting","value":500000,"unit":"metre"},"#,
+        r#"{"name":"False northing","value":0,"unit":"metre"}]},"#,
+        r#""coordinate_system":{"subtype":"Cartesian","axis":["#,
+        r#"{"name":"Easting","abbreviation":"E","direction":"east","unit":"metre"},"#,
+        r#"{"name":"Northing","abbreviation":"N","direction":"north","unit":"metre"}]}}"#
     );
     let from_json = Proj::new(json).expect("projjson");
     let exported = from_json

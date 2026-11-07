@@ -14,151 +14,35 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 use crate::engine::{CreateError, Operation};
 use crate::proj::ProjCreateError;
 use crate::projdb::{with_db, DbFail};
-use crate::Xyzt;
 
-/// How a CRS presents coordinates to the georust facade.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Kind {
-    /// Longitude and latitude, degrees on the public boundary.
-    Geographic,
-    /// Easting and northing, metres (or the CRS linear unit).
-    Projected,
-    /// Geocentric X, Y, Z, metres.
-    Geocentric,
-    /// Topocentric east, north, up, metres, about a geodetic or geocentric origin.
-    Topocentric,
+/// Checks that `text` names one CRS the facade builds: an `EPSG:` code, or a PROJ string that
+/// describes one CRS. `Proj::new` of a single CRS keeps the text, not a CRS object: a single CRS
+/// has no operation for a definition to report, and a pair is built from its names.
+///
+/// # Errors
+///
+/// [`ProjCreateError`] when the code is absent, needs a method this crate does not build, or the
+/// PROJ string does not build.
+pub(crate) fn check_crs(text: &str) -> Result<(), ProjCreateError> {
+    let text = text.trim();
+    if let Some(code) = authority_code(text) {
+        return check_epsg(code);
+    }
+    if text.contains("proj=") {
+        return check_proj(text);
+    }
+    Err(ProjCreateError::ProjError(format!("unknown CRS `{text}`")))
 }
 
-/// One coordinate reference system the facade can build.
-#[derive(Clone, Debug)]
-pub(crate) struct Crs {
-    kind: Kind,
-    op: Operation,
-    datum_auth: String,
-    datum_code: String,
-    /// Semi-major axis, metres, for a datum Helmert.
-    a: f64,
-    /// Inverse flattening. Absent when the ellipsoid is given by `b`.
-    rf: Option<f64>,
-    /// Semi-minor axis, metres, when inverse flattening is absent.
-    b: Option<f64>,
-}
-
-impl Crs {
-    /// Parse an `AUTHORITY:CODE` or a PROJ string that names one CRS.
-    ///
-    /// # Errors
-    ///
-    /// [`ProjCreateError`] when the code is absent, needs a method this crate
-    /// does not build, or the PROJ string does not build.
-    pub(crate) fn parse(text: &str) -> Result<Self, ProjCreateError> {
-        let text = text.trim();
-        if let Some(code) = authority_code(text) {
-            return from_epsg(code);
-        }
-        if text.contains("proj=") {
-            return from_proj(text);
-        }
-        Err(ProjCreateError::ProjError(format!("unknown CRS `{text}`")))
-    }
-
-    /// Geographic or projected CRS described by WKT or PROJJSON.
-    ///
-    /// # Errors
-    ///
-    /// [`ProjCreateError`] when the text is not one of those CRS kinds, or the
-    /// conversion method is not built.
-    pub(crate) fn from_well_known(text: &str) -> Result<Self, ProjCreateError> {
-        let definition = crate::crs_text::to_proj(text).map_err(ProjCreateError::ProjError)?;
-        from_proj(&definition)
-    }
-
-    /// Pipeline from geodetic radians on `self` to geodetic radians on `target`.
-    ///
-    /// `None` means the longitude and latitude are already on the target
-    /// datum: the datums match, or the registered Helmert is all zeros.
-    ///
-    /// # Errors
-    ///
-    /// [`ProjCreateError`] when the datums differ and every registered
-    /// operation needs a grid, a deformation model, or a method this crate
-    /// does not build.
-    pub(crate) fn datum_bridge(&self, target: &Self) -> Result<Option<Operation>, ProjCreateError> {
-        if self.datum_auth.is_empty()
-            || self.datum_code.is_empty()
-            || target.datum_auth.is_empty()
-            || target.datum_code.is_empty()
-        {
-            return Ok(None);
-        }
-        if self.datum_auth == target.datum_auth && self.datum_code == target.datum_code {
-            return Ok(None);
-        }
-        let helmert = with_db(|connection| {
-            select_helmert(
-                connection,
-                &self.datum_auth,
-                &self.datum_code,
-                &target.datum_auth,
-                &target.datum_code,
-            )
-        })
-        .map_err(db_fail)?;
-        match helmert {
-            HelmertPick::Identity => Ok(None),
-            HelmertPick::Shift(shift) => {
-                let definition = helmert_pipeline(self, target, &shift);
-                Operation::create(&definition).map(Some).map_err(create_error)
-            }
-            HelmertPick::Unsupported => Err(ProjCreateError::ProjError(format!(
-                "EPSG datum {} to {} needs a grid, a deformation model, or a method this crate does not build",
-                self.datum_code, target.datum_code
-            ))),
-        }
-    }
-
-    pub(crate) fn is_geographic(&self) -> bool {
-        self.kind == Kind::Geographic
-    }
-
-    pub(crate) fn is_geocentric(&self) -> bool {
-        self.kind == Kind::Geocentric
-    }
-
-    /// Geodetic radians on this CRS's ellipsoid, height in `z`.
-    ///
-    /// `z` is the third public axis: height, geocentric Z, or topocentric Up.
-    pub(crate) fn to_geodetic(
-        &self,
-        x: f64,
-        y: f64,
-        z: f64,
-    ) -> Result<Xyzt, crate::engine::TransformError> {
-        match self.kind {
-            Kind::Geographic => Ok(Xyzt {
-                x: x.to_radians(),
-                y: y.to_radians(),
-                z,
-                t: 0.0,
-            }),
-            Kind::Projected | Kind::Geocentric | Kind::Topocentric => {
-                self.op.inverse(Xyzt { x, y, z, t: 0.0 })
-            }
-        }
-    }
-
-    /// Public coordinates of this CRS from geodetic radians.
-    pub(crate) fn geodetic_out(&self, coord: Xyzt) -> Result<Xyzt, crate::engine::TransformError> {
-        match self.kind {
-            Kind::Geographic => Ok(Xyzt {
-                x: coord.x.to_degrees(),
-                y: coord.y.to_degrees(),
-                z: coord.z,
-                t: 0.0,
-            }),
-            Kind::Projected | Kind::Geocentric | Kind::Topocentric => self.op.forward(coord),
-        }
-    }
+/// Checks a geographic or projected CRS described by WKT or PROJJSON.
+///
+/// # Errors
+///
+/// [`ProjCreateError`] when the text is not one of those CRS kinds, or the conversion method is
+/// not built.
+pub(crate) fn check_well_known(text: &str) -> Result<(), ProjCreateError> {
+    let definition = crate::crs_text::to_proj(text).map_err(ProjCreateError::ProjError)?;
+    check_proj(&definition)
 }
 
 fn authority_code(text: &str) -> Option<u32> {
@@ -169,67 +53,42 @@ fn authority_code(text: &str) -> Option<u32> {
     code.parse().ok()
 }
 
-fn from_epsg(code: u32) -> Result<Crs, ProjCreateError> {
+fn check_epsg(code: u32) -> Result<(), ProjCreateError> {
     let loaded = with_db(|connection| load_crs(connection, code)).map_err(db_fail)?;
     let op = Operation::create(&loaded.definition).map_err(create_error)?;
-    let kind = match loaded.kind {
-        LoadedKind::Geographic => Kind::Geographic,
-        LoadedKind::Geocentric => Kind::Geocentric,
-        LoadedKind::Projected => {
-            if op.angular_input(false) && !op.angular_output(false) {
-                Kind::Projected
-            } else {
-                return Err(ProjCreateError::ProjError(format!(
-                    "EPSG:{code} is not a projected CRS"
-                )));
-            }
-        }
-    };
-    Ok(Crs {
-        kind,
-        op,
-        datum_auth: loaded.datum_auth,
-        datum_code: loaded.datum_code,
-        a: loaded.a,
-        rf: loaded.rf,
-        b: loaded.b,
-    })
+    match loaded.kind {
+        LoadedKind::Geographic | LoadedKind::Geocentric => Ok(()),
+        LoadedKind::Projected if op.angular_input(false) && !op.angular_output(false) => Ok(()),
+        LoadedKind::Projected => Err(ProjCreateError::ProjError(format!(
+            "EPSG:{code} is not a projected CRS"
+        ))),
+    }
 }
 
-fn from_proj(definition: &str) -> Result<Crs, ProjCreateError> {
+fn check_proj(definition: &str) -> Result<(), ProjCreateError> {
     if definition.contains("proj=pipeline") {
         return Err(ProjCreateError::ProjError(
             "a pipeline is not a CRS".to_owned(),
         ));
     }
     if is_topocentric_crs(definition) {
-        return from_topocentric(definition);
+        return check_topocentric(definition);
     }
     let op = Operation::create(definition).map_err(create_error)?;
-    let kind = if definition.contains("proj=cart") || definition.contains("proj=geocent") {
-        Kind::Geocentric
-    } else if definition.contains("proj=longlat")
+    let is_crs = definition.contains("proj=cart")
+        || definition.contains("proj=geocent")
+        || definition.contains("proj=longlat")
         || definition.contains("proj=latlong")
         || definition.contains("proj=latlon")
         || definition.contains("proj=lonlat")
-    {
-        Kind::Geographic
-    } else if op.angular_input(false) && !op.angular_output(false) {
-        Kind::Projected
+        || (op.angular_input(false) && !op.angular_output(false));
+    if is_crs {
+        Ok(())
     } else {
-        return Err(ProjCreateError::ProjError(format!(
+        Err(ProjCreateError::ProjError(format!(
             "`{definition}` is not a geographic, projected, or geocentric CRS"
-        )));
-    };
-    Ok(Crs {
-        kind,
-        op,
-        datum_auth: String::new(),
-        datum_code: String::new(),
-        a: 0.0,
-        rf: None,
-        b: None,
-    })
+        )))
+    }
 }
 
 fn is_topocentric_crs(definition: &str) -> bool {
@@ -245,7 +104,7 @@ fn is_topocentric_crs(definition: &str) -> bool {
 /// from geodetic to east, north, up, as PROJ's `buildProjectedCRS` does with a
 /// geocentric base. The ellipsoid is set on the pipeline header, which every
 /// step inherits; the origin stays on the topocentric step alone.
-fn from_topocentric(definition: &str) -> Result<Crs, ProjCreateError> {
+fn check_topocentric(definition: &str) -> Result<(), ProjCreateError> {
     let (ellipsoid, origin): (Vec<&str>, Vec<&str>) = definition
         .split_whitespace()
         .filter(|token| {
@@ -258,16 +117,8 @@ fn from_topocentric(definition: &str) -> Result<Crs, ProjCreateError> {
         ellipsoid.join(" "),
         origin.join(" ")
     );
-    let op = Operation::create(&pipeline).map_err(create_error)?;
-    Ok(Crs {
-        kind: Kind::Topocentric,
-        op,
-        datum_auth: String::new(),
-        datum_code: String::new(),
-        a: 0.0,
-        rf: None,
-        b: None,
-    })
+    Operation::create(&pipeline).map_err(create_error)?;
+    Ok(())
 }
 
 fn is_ellipsoid_key(bare: &str) -> bool {
@@ -821,75 +672,6 @@ fn format_f64(value: f64) -> String {
     text
 }
 
-enum HelmertPick {
-    Identity,
-    Shift(Shift),
-    Unsupported,
-}
-
-struct Shift {
-    forward: bool,
-    x: f64,
-    y: f64,
-    z: f64,
-    rx: f64,
-    ry: f64,
-    rz: f64,
-    scale: f64,
-    convention: Option<&'static str>,
-}
-
-fn select_helmert(
-    connection: &Connection,
-    from_auth: &str,
-    from_code: &str,
-    to_auth: &str,
-    to_code: &str,
-) -> Result<HelmertPick, rusqlite::Error> {
-    let from_datums = datum_family(connection, from_auth, from_code)?;
-    let to_datums = datum_family(connection, to_auth, to_code)?;
-    let mut binds = Vec::new();
-    let from_sql = datum_predicate("s", &from_datums, &mut binds);
-    let to_sql = datum_predicate("t", &to_datums, &mut binds);
-    let from_rev = datum_predicate("t", &from_datums, &mut binds);
-    let to_rev = datum_predicate("s", &to_datums, &mut binds);
-    let sql = format!(
-        "SELECT h.method_code, h.tx, h.ty, h.tz, h.rx, h.ry, h.rz, h.scale_difference,
-                h.accuracy, h.epoch, h.px, h.py, h.pz,
-                h.rate_tx, h.rate_ty, h.rate_tz, h.rate_rx, h.rate_ry, h.rate_rz,
-                h.rate_scale_difference,
-                h.translation_uom_auth_name, h.translation_uom_code,
-                h.rotation_uom_auth_name, h.rotation_uom_code,
-                h.scale_difference_uom_auth_name, h.scale_difference_uom_code,
-                s.datum_auth_name, s.datum_code
-         FROM helmert_transformation h
-         JOIN geodetic_crs s
-           ON s.auth_name = h.source_crs_auth_name AND s.code = h.source_crs_code
-         JOIN geodetic_crs t
-           ON t.auth_name = h.target_crs_auth_name AND t.code = h.target_crs_code
-         WHERE h.deprecated = 0
-           AND ((({from_sql}) AND ({to_sql})) OR (({from_rev}) AND ({to_rev})))"
-    );
-    let rows = {
-        let mut statement = connection.prepare(&sql)?;
-        let mapped =
-            statement.query_map(rusqlite::params_from_iter(binds.iter()), read_raw_helmert)?;
-        mapped.collect::<Result<Vec<_>, _>>()?
-    };
-    let Some(chosen) = rows
-        .into_iter()
-        .filter(|row| row.buildable)
-        .min_by(|left, right| accuracy_key(left.accuracy).total_cmp(&accuracy_key(right.accuracy)))
-    else {
-        return Ok(HelmertPick::Unsupported);
-    };
-    if chosen.is_zero() {
-        return Ok(HelmertPick::Identity);
-    }
-    let shift = chosen.shift(connection, &from_datums)?;
-    Ok(HelmertPick::Shift(shift))
-}
-
 fn datum_predicate(alias: &str, datums: &[(String, String)], binds: &mut Vec<String>) -> String {
     let mut parts = Vec::new();
     for (auth, code) in datums {
@@ -907,109 +689,6 @@ fn datum_predicate(alias: &str, datums: &[(String, String)], binds: &mut Vec<Str
     parts.join(" OR ")
 }
 
-fn accuracy_key(accuracy: Option<f64>) -> f64 {
-    accuracy.unwrap_or(f64::MAX)
-}
-
-struct RawHelmert {
-    buildable: bool,
-    accuracy: Option<f64>,
-    tx: f64,
-    ty: f64,
-    tz: f64,
-    rx: f64,
-    ry: f64,
-    rz: f64,
-    scale: f64,
-    convention: Option<&'static str>,
-    source: (String, String),
-    translation_auth: Option<String>,
-    translation_code: Option<String>,
-    rotation_auth: Option<String>,
-    rotation_code: Option<String>,
-    scale_auth: Option<String>,
-    scale_code: Option<String>,
-}
-
-impl RawHelmert {
-    fn is_zero(&self) -> bool {
-        self.tx == 0.0
-            && self.ty == 0.0
-            && self.tz == 0.0
-            && self.rx == 0.0
-            && self.ry == 0.0
-            && self.rz == 0.0
-            && self.scale == 0.0
-    }
-
-    fn shift(
-        &self,
-        connection: &Connection,
-        from_datums: &[(String, String)],
-    ) -> Result<Shift, rusqlite::Error> {
-        let translation = conv_of(connection, &self.translation_auth, &self.translation_code)?;
-        let rotation = conv_of(connection, &self.rotation_auth, &self.rotation_code)?;
-        let scale = conv_of(connection, &self.scale_auth, &self.scale_code)?;
-        let x = apply_factor(self.tx, translation).map_err(unsupported)?;
-        let y = apply_factor(self.ty, translation).map_err(unsupported)?;
-        let z = apply_factor(self.tz, translation).map_err(unsupported)?;
-        let rx = to_arcsec(self.rx, rotation).map_err(unsupported)?;
-        let ry = to_arcsec(self.ry, rotation).map_err(unsupported)?;
-        let rz = to_arcsec(self.rz, rotation).map_err(unsupported)?;
-        let scale = to_ppm(self.scale, scale).map_err(unsupported)?;
-        Ok(Shift {
-            forward: from_datums.iter().any(|datum| datum == &self.source),
-            x,
-            y,
-            z,
-            rx,
-            ry,
-            rz,
-            scale,
-            convention: self.convention,
-        })
-    }
-}
-
-fn read_raw_helmert(row: &Row<'_>) -> Result<RawHelmert, rusqlite::Error> {
-    let method = column_i64(row, 0)?;
-    let epoch = column_f64_opt(row, 9)?;
-    let px = column_f64_opt(row, 10)?.unwrap_or(0.0);
-    let py = column_f64_opt(row, 11)?.unwrap_or(0.0);
-    let pz = column_f64_opt(row, 12)?.unwrap_or(0.0);
-    let mut rated = false;
-    for index in 13..20 {
-        if column_f64_opt(row, index)?.unwrap_or(0.0) != 0.0 {
-            rated = true;
-        }
-    }
-    let convention = helmert_convention(method);
-    Ok(RawHelmert {
-        buildable: convention.is_some()
-            && epoch.is_none()
-            && px == 0.0
-            && py == 0.0
-            && pz == 0.0
-            && !rated,
-        accuracy: column_f64_opt(row, 8)?,
-        tx: column_f64_opt(row, 1)?.unwrap_or(0.0),
-        ty: column_f64_opt(row, 2)?.unwrap_or(0.0),
-        tz: column_f64_opt(row, 3)?.unwrap_or(0.0),
-        rx: column_f64_opt(row, 4)?.unwrap_or(0.0),
-        ry: column_f64_opt(row, 5)?.unwrap_or(0.0),
-        rz: column_f64_opt(row, 6)?.unwrap_or(0.0),
-        scale: column_f64_opt(row, 7)?.unwrap_or(0.0),
-        convention,
-        translation_auth: column_text_opt(row, 20)?,
-        translation_code: column_text_opt(row, 21)?,
-        rotation_auth: column_text_opt(row, 22)?,
-        rotation_code: column_text_opt(row, 23)?,
-        scale_auth: column_text_opt(row, 24)?,
-        scale_code: column_text_opt(row, 25)?,
-        source: (column_text(row, 26)?, column_text(row, 27)?),
-    })
-}
-
 fn conv_of(
     connection: &Connection,
     auth: &Option<String>,
@@ -1022,38 +701,6 @@ fn conv_of(
         }
         _ => Ok(None),
     }
-}
-
-fn helmert_convention(method: i64) -> Option<&'static str> {
-    match method {
-        1031 | 9603 | 1035 => Some(""),
-        1032 | 9607 | 1038 => Some("coordinate_frame"),
-        1033 | 9606 | 1037 => Some("position_vector"),
-        _ => None,
-    }
-}
-
-fn apply_factor(value: f64, conv: Option<f64>) -> Result<f64, String> {
-    if value == 0.0 {
-        return Ok(0.0);
-    }
-    to_metres(value, conv)
-}
-
-fn to_arcsec(value: f64, conv: Option<f64>) -> Result<f64, String> {
-    if value == 0.0 {
-        return Ok(0.0);
-    }
-    let factor = conv.ok_or_else(|| "rotation unit has no conversion factor".to_owned())?;
-    Ok((value * factor).to_degrees() * 3600.0)
-}
-
-fn to_ppm(value: f64, conv: Option<f64>) -> Result<f64, String> {
-    if value == 0.0 {
-        return Ok(0.0);
-    }
-    let factor = conv.unwrap_or(1e-6);
-    Ok(value * factor / 1e-6)
 }
 
 fn datum_family(
@@ -1076,46 +723,6 @@ fn datum_family(
         family.push(row?);
     }
     Ok(family)
-}
-
-fn helmert_pipeline(source: &Crs, target: &Crs, shift: &Shift) -> String {
-    let mut helmert = format!(
-        "+proj=helmert +x={} +y={} +z={}",
-        format_f64(shift.x),
-        format_f64(shift.y),
-        format_f64(shift.z)
-    );
-    if shift.rx != 0.0 || shift.ry != 0.0 || shift.rz != 0.0 || shift.scale != 0.0 {
-        helmert.push_str(&format!(
-            " +rx={} +ry={} +rz={} +s={}",
-            format_f64(shift.rx),
-            format_f64(shift.ry),
-            format_f64(shift.rz),
-            format_f64(shift.scale)
-        ));
-    }
-    if let Some(convention) = shift.convention.filter(|name| !name.is_empty()) {
-        if shift.rx != 0.0 || shift.ry != 0.0 || shift.rz != 0.0 {
-            helmert.push_str(" +convention=");
-            helmert.push_str(convention);
-        }
-    }
-    let inv = if shift.forward { "" } else { "+inv " };
-    format!(
-        "+proj=pipeline +step +proj=cart {} +step {inv}{helmert} +step +inv +proj=cart {}",
-        ellipsoid_args(source),
-        ellipsoid_args(target)
-    )
-}
-
-fn ellipsoid_args(crs: &Crs) -> String {
-    if let Some(rf) = crs.rf.filter(|rf| *rf > 0.0) {
-        format!("+a={} +rf={}", format_f64(crs.a), format_f64(rf))
-    } else if let Some(b) = crs.b {
-        format!("+a={} +b={}", format_f64(crs.a), format_f64(b))
-    } else {
-        format!("+a={} +b={}", format_f64(crs.a), format_f64(crs.a))
-    }
 }
 
 fn column_text(row: &Row<'_>, index: usize) -> Result<String, rusqlite::Error> {
