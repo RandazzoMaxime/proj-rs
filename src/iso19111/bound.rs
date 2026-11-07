@@ -448,7 +448,7 @@ fn candidate_operations(
     CoordinateOperationFactory::create().create_operations(source, target, &context)
 }
 
-/// The `extent` of `createBoundCRSToWGS84IfPossible` (crs.cpp:605-627): the domain of
+/// The `extent` of `createBoundCRSToWGS84IfPossible` (crs.cpp:554-585): the domain of
 /// validity of the CRS, or the larger of its two domains when one contains the other.
 /// Several unrelated domains give none, as `bound_to_wgs84` refuses those CRS before.
 fn bound_extent(crs: &Crs) -> Option<ObjectDomain> {

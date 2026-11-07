@@ -5518,7 +5518,7 @@ impl CoordinateOperationFactory {
                 pivot.extend(select_candidates(codes, source, target, context));
             }
             // `!inCreateOperationsWithDatumPivotAntiRecursion && !inCreateOperationsWithIntermediate`
-            // (coordinateoperationfactory.cpp:4480-4484): the intermediate search is off inside a
+            // (coordinateoperationfactory.cpp:4467-4468): the intermediate search is off inside a
             // pivot or inside another intermediate search, such as the ensemble step's members.
             let intermediate_needed = direct_unfiltered_empty
                 && !context.has_guard(GUARD_DATUM_PIVOT)
@@ -5531,7 +5531,7 @@ impl CoordinateOperationFactory {
                 )?);
             }
         }
-        // `createOperations`, the ensemble step (coordinateoperationfactory.cpp:4515-4572): one CRS
+        // `createOperations`, the ensemble step (coordinateoperationfactory.cpp:4524-4572): one CRS
         // defined by a datum ensemble and the other by a single datum. The operations go through
         // each member of the ensemble. Not ported: `bTriedThroughIntermediateCRS`, so the step runs
         // even where PROJ has already tried the registered intermediates.
@@ -7138,7 +7138,7 @@ fn only_ensemble_null_operations(operations: &[CoordinateOperation]) -> bool {
         })
 }
 
-/// The guard and name conditions of the ensemble step (coordinateoperationfactory.cpp:4515-4534):
+/// The guard and name conditions of the ensemble step (coordinateoperationfactory.cpp:4524-4545):
 /// exactly one of the two CRS has a datum ensemble, neither datum is a member of the other's
 /// ensemble, the datums differ, and the GDA94/GDA2020 to WGS 84 pairs keep their own operations.
 fn ensemble_step_applies(source: &Crs, target: &Crs, context: &CoordinateOperationContext) -> bool {
@@ -7414,7 +7414,7 @@ fn same_coordinate_system(left: &Crs, right: &Crs) -> bool {
             geographic
                 .coordinate_system()
                 .axes()
-                .into_iter()
+                .iter()
                 .map(|axis| {
                     (
                         axis.direction().to_owned(),
