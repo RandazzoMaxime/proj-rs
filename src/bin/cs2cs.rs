@@ -29,7 +29,23 @@ use rusqlite::Connection;
 
 const RELEASE: &str = "Rel. 9.9.0, September 15th, 2026";
 
+/// Stack of the thread that runs the command, as in `projinfo`: the unoptimized frames of the
+/// operation factory outgrow the 1 MiB main thread of Windows on some pairs
+/// (`test_cs2cs_various.yaml#125`, `EPSG:26915` to `EPSG:26715`).
+const STACK_SIZE: usize = 64 * 1024 * 1024;
+
 fn main() -> ExitCode {
+    let worker = std::thread::Builder::new()
+        .stack_size(STACK_SIZE)
+        .spawn(command)
+        .expect("spawn the cs2cs thread");
+    match worker.join() {
+        Ok(code) => code,
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
+
+fn command() -> ExitCode {
     // Reads `PROJ_DEBUG` first, as PROJ's context does: an invalid value is reported before anything.
     proj_debug_level();
     let prog = program_name();
