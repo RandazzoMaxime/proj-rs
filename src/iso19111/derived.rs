@@ -10,7 +10,7 @@ use super::factory::{
     intersect_extents, operation_extent, pivot_concatenation, CoordinateOperationContext,
     CoordinateOperationFactory,
 };
-use super::model::{Conversion, CoordinateOperation, Crs, ObjectDomain};
+use super::model::{ConcatenatedStep, Conversion, CoordinateOperation, Crs, ObjectDomain};
 use super::FactoryError;
 
 /// Candidates when `source` or `target` is a derived CRS, or `None` when neither is.
@@ -92,7 +92,12 @@ fn concatenate(
     for operation in operations {
         match operation {
             CoordinateOperation::Concatenated(concatenated) => {
-                steps.extend(concatenated.steps.iter().map(|step| step.operation.clone()));
+                steps.extend(
+                    concatenated
+                        .steps
+                        .iter()
+                        .map(ConcatenatedStep::oriented_operation),
+                );
             }
             other => steps.push(other.clone()),
         }

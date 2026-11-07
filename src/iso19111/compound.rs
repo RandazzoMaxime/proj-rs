@@ -777,7 +777,12 @@ pub(crate) fn flatten_steps(operations: Vec<CoordinateOperation>) -> Vec<Coordin
             CoordinateOperation::Concatenated(concatenated)
                 if concatenated.proj_based.is_none() =>
             {
-                steps.extend(concatenated.steps.into_iter().map(|step| step.operation));
+                steps.extend(
+                    concatenated
+                        .steps
+                        .iter()
+                        .map(ConcatenatedStep::oriented_operation),
+                );
             }
             other => steps.push(other),
         }
