@@ -13,7 +13,7 @@ use super::compound::{flatten_steps, get_accuracy, get_accuracy_of_steps, stored
 use super::coordinate_metadata::CoordinateMetadata;
 use super::equiv::{
     equivalent_name, equivalent_name_bigger_differences, geodetic_frame, same_geodetic_datum,
-    same_geographic_base, Equivalence,
+    same_geodetic_datum_with_database, same_geographic_base, Equivalence,
 };
 use super::json::create_from_user_input;
 use super::model::{
@@ -6010,6 +6010,9 @@ impl CoordinateOperationFactory {
         {
             // The datum pivot is tried only when the direct registry search gave nothing
             // (coordinateoperationfactory.cpp:4404).
+            // `sameGeodeticDatum` of createOperationsFromDatabase (coordinateoperationfactory.cpp:
+            // 4402), which compares the datums with the database.
+            let same_datum = same_geodetic_datum_with_database(source, target, &context.db);
             let mut pivot = if direct_empty && !context.has_guard(GUARD_DATUM_PIVOT) {
                 datum_pivot_operations(source, target, epochs, context)
             } else {
@@ -6024,7 +6027,7 @@ impl CoordinateOperationFactory {
                     || (direct_unfiltered_empty && pivot.is_empty()))
                 && context.intermediates.is_empty()
                 && !context.has_guard(GUARD_DATUM_INTERMEDIATE)
-                && !same_geodetic_datum(source, target);
+                && !same_datum;
             if crs_codes_needed {
                 let codes = crs_codes_intermediate_operations(source, target, context)?;
                 pivot.extend(select_candidates(codes, source, target, context));
@@ -6040,7 +6043,7 @@ impl CoordinateOperationFactory {
             let intermediate_tried = !context.has_guard(GUARD_DATUM_PIVOT)
                 && !context.has_guard(GUARD_DATUM_INTERMEDIATE)
                 && context.intermediate_use != IntermediateCrsUse::Never
-                && !same_geodetic_datum(source, target);
+                && !same_datum;
             let replaced = !direct_unfiltered_empty && use_only_replaced_operations(&res);
             if intermediate_tried && (direct_unfiltered_empty || replaced) {
                 let too_small = has_too_small_areas(&res, source, target, context);
@@ -6190,8 +6193,13 @@ impl CoordinateOperationFactory {
                 target_extent.as_ref(),
             )
         {
+            // `sameDatum` of createOperationsGeogToGeog and createBallparkGeographicOffset
+            // (coordinateoperationfactory.cpp:2961, 2306), with the database.
+            let rule = super::geodetic_ops::BallparkRule::ByDatum {
+                same_datum: same_geodetic_datum_with_database(source, target, &context.db),
+            };
             if registry && !found.is_empty() {
-                found.extend(ballpark_operations(source, target));
+                found.extend(ballpark_operations(source, target, rule));
                 found.extend(super::geodetic_ops::geographic_geocentric_ballpark(
                     source, target,
                 ));
@@ -6199,9 +6207,7 @@ impl CoordinateOperationFactory {
                 // No registered operation: the same geodetic conversions as
                 // `createOperation`, including a same-datum geographic/geocentric pair.
                 found.extend(super::geodetic_ops::geodetic_operations(
-                    source,
-                    target,
-                    super::geodetic_ops::BallparkRule::ByDatum,
+                    source, target, rule,
                 )?);
             }
         }
@@ -6738,8 +6744,12 @@ pub(super) fn geographic_of(crs: &Crs) -> Option<&GeographicCRS> {
 /// geocentric CRS. A null offset (same datum), a prime meridian shift, and a geographic to
 /// geocentric pair are not ported, and give nothing here. A same-datum height-unit change
 /// is [`super::compound::geographic_height_change`].
-fn ballpark_operations(source: &Crs, target: &Crs) -> Vec<CoordinateOperation> {
-    if same_geodetic_datum(source, target) {
+fn ballpark_operations(
+    source: &Crs,
+    target: &Crs,
+    rule: super::geodetic_ops::BallparkRule,
+) -> Vec<CoordinateOperation> {
+    if rule.same_datum() {
         return Vec::new();
     }
     forced_ballpark_operations(source, target)
@@ -6930,7 +6940,7 @@ fn datum_pivot_operations(
     ) else {
         return Vec::new();
     };
-    if same_geodetic_datum(source, target) {
+    if same_geodetic_datum_with_database(source, target, &context.db) {
         return Vec::new();
     }
     let authority = AuthorityFactory::create(&context.db, context.authority.clone());
