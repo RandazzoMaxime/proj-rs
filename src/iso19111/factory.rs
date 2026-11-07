@@ -6128,8 +6128,15 @@ impl CoordinateOperationFactory {
         // pivots of `createOperationsFromDatabaseWithVertCRS`, with no direct result before the
         // filter (coordinateoperationfactory.cpp:4449-4463, the call is not gated on geodetic CRS).
         let vertical_pair = matches!((source, target), (Crs::Vertical(_), Crs::Vertical(_)));
+        // A vertical CRS and a geographic CRS take the same search: `createOperationsFromDatabase`
+        // reaches it for them too when nothing was found before (e.g. `Kumul 34 height` to
+        // `WGS 84` through `EGM96 height`).
+        let vertical_geographic = matches!(
+            (source, target),
+            (Crs::Vertical(_), other) | (other, Crs::Vertical(_)) if geographic_of(other).is_some()
+        );
         if registry
-            && vertical_pair
+            && (vertical_pair || vertical_geographic)
             && found.is_empty()
             && direct_unfiltered_empty
             && context.intermediate_use != IntermediateCrsUse::Never
