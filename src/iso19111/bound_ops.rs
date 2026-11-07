@@ -8,19 +8,22 @@
 //! `createOperationsToGeod`: a bound CRS to a geodetic CRS that is not geographic, through a
 //! geographic 3D CRS on the target's datum.
 //!
-//! Not ported: the Clarke 1866 to NAD83 special case, the vertical unit change that
-//! `skipHorizontalTransformation` adds, and the vertical blocks of `createOperationsBoundToBound`
-//! (same vertical datum, same hub for vertical bases).
+//! Not ported: the Clarke 1866 to NAD83 special case and the vertical blocks of
+//! `createOperationsBoundToBound` (same vertical datum, same hub for vertical bases).
 
 use super::bound::extract_geographic;
+use super::buildop::OpProps;
 use super::equiv::{
     datum_equivalent_to_frame, ellipsoid_equivalent_loose, geodetic_frame, same_geodetic_datum,
     Equivalence,
 };
-use super::factory::{geographic_of, CoordinateOperationContext, CoordinateOperationFactory};
+use super::factory::{
+    geographic_of, CoordinateOperationContext, CoordinateOperationFactory, GUARD_SKIP_HORIZONTAL,
+};
 use super::model::{
-    BoundCRS, ConcatenatedOperation, ConcatenatedStep, CoordinateOperation, Crs, Ellipsoid,
-    EllipsoidalCS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified, UnitOfMeasure,
+    Axis, BoundCRS, ConcatenatedOperation, ConcatenatedStep, Conversion, CoordinateOperation, Crs,
+    Ellipsoid, EllipsoidalCS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Identified,
+    UnitOfMeasure,
 };
 use super::niche::DerivedKind;
 use super::FactoryError;
@@ -255,8 +258,14 @@ fn bound_to_geog(
         }
     }
 
-    if let (Crs::Vertical(_), Some(_)) = (base, hub_geog) {
+    if let (Crs::Vertical(_), Some(hub_geog)) = (base, hub_geog) {
         let firsts = factory.create_candidates(source, hub, context)?;
+        // `skipHorizontalTransformation` (coordinateoperationfactory.cpp:5861-5914): the vertical
+        // transformations of `createOperationsCompoundToGeog` stop at the hub, with a change of
+        // vertical unit when the height axis of the hub is not the one of the target.
+        if context.has_guard(GUARD_SKIP_HORIZONTAL) {
+            return skip_horizontal_transformation(firsts, hub, hub_geog, geog_dst);
+        }
         let lasts = factory.create_candidates(hub, target, context)?;
         let mut found = Vec::new();
         for first in &firsts {
@@ -272,6 +281,64 @@ fn bound_to_geog(
     }
 
     factory.create_candidates(base, target, context)
+}
+
+/// The `skipHorizontalTransformation` branch of `createOperationsBoundToGeog` (coordinate
+/// operationfactory.cpp:5861-5914) for a bound vertical CRS: the operations to the hub, followed
+/// by a change of vertical unit when both are 3D and their height axes differ in direction or
+/// unit.
+fn skip_horizontal_transformation(
+    firsts: Vec<CoordinateOperation>,
+    hub: &Crs,
+    hub_geog: &GeographicCRS,
+    geog_dst: &GeographicCRS,
+) -> Result<Vec<CoordinateOperation>, FactoryError> {
+    if firsts.is_empty() {
+        return Ok(firsts);
+    }
+    let (hub_axes, target_axes) = (
+        hub_geog.coordinate_system().axes(),
+        geog_dst.coordinate_system().axes(),
+    );
+    let (Some(src_axis), Some(dst_axis)) = (hub_axes.get(2), target_axes.get(2)) else {
+        return Ok(firsts);
+    };
+    if hub_axes.len() != 3
+        || target_axes.len() != 3
+        || (src_axis.direction() == dst_axis.direction()
+            && src_axis.unit().conversion_to_si() == dst_axis.unit().conversion_to_si())
+    {
+        return Ok(firsts);
+    }
+    let conv_src = src_axis.unit().conversion_to_si();
+    let conv_dst = dst_axis.unit().conversion_to_si();
+    if conv_dst == 0.0 {
+        return Err(FactoryError::Invalid(
+            "Conversion factor of target unit is 0".to_owned(),
+        ));
+    }
+    let up = |axis: &Axis| axis.direction().eq_ignore_ascii_case("up");
+    let down = |axis: &Axis| axis.direction().eq_ignore_ascii_case("down");
+    let reversal = (up(src_axis) && down(dst_axis)) || (down(src_axis) && up(dst_axis));
+    let factor = conv_src / conv_dst;
+    let hub_3d = Crs::Geographic(super::compound::promote_with_axis(
+        hub_geog,
+        Some(dst_axis.clone()),
+    ));
+    let conversion = Conversion::create_change_vertical_unit(
+        &OpProps::new().name("Change of vertical unit"),
+        if reversal { -factor } else { factor },
+    )?
+    .with_endpoints(hub.clone(), hub_3d);
+    Ok(firsts
+        .into_iter()
+        .map(|first| {
+            concatenate(vec![
+                first,
+                CoordinateOperation::Conversion(conversion.clone()),
+            ])
+        })
+        .collect())
 }
 
 /// `createOperationsBoundToGeog`, the Clarke 1866 case: a base on the Clarke 1866 ellipsoid

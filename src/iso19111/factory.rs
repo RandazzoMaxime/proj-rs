@@ -88,6 +88,9 @@ pub(super) const GUARD_DATUM_PIVOT: u8 = 8;
 pub(super) const GUARD_VERTICAL_PIVOT: u8 = 16;
 /// `inCreateOperationsGeogToGeogWithAlternativeGeog`.
 pub(super) const GUARD_GEOG_ALTERNATIVE: u8 = 32;
+/// `skipHorizontalTransformation`: not a guard, but a flag of the same `Private::Context`, set
+/// while `createOperationsCompoundToGeog` builds its vertical transformations.
+pub(super) const GUARD_SKIP_HORIZONTAL: u8 = 64;
 
 /// How the availability of an operation's grids enters the ordering.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
