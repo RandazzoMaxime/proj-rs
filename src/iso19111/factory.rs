@@ -6206,7 +6206,13 @@ impl CoordinateOperationFactory {
             let rule = super::geodetic_ops::BallparkRule::ByDatum {
                 same_datum: same_geodetic_datum_with_database(source, target, &context.db),
             };
-            if registry && !found.is_empty() {
+            // `createOperationsGeodToGeod` runs after a registry result without a perfect accuracy
+            // (coordinateoperationfactory.cpp:3664-3668): for two CRS of the same datum it adds the
+            // null offset, the axis order or the vertical unit change of
+            // `createOperationsGeogToGeog`, as without a registry result. For example the point
+            // motion operation `Canada velocity grid v7` of `NAD83(CSRS)v7` to itself comes with
+            // `Null geographic offset from NAD83(CSRS)v7 to NAD83(CSRS)v7`.
+            if registry && !found.is_empty() && !rule.same_datum() {
                 found.extend(ballpark_operations(source, target, rule));
                 found.extend(super::geodetic_ops::geographic_geocentric_ballpark(
                     source, target,
