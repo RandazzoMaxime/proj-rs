@@ -359,7 +359,9 @@ impl Transformation {
 
     /// `isEquivalentTo` with `criterion`.
     ///
-    /// The operation name is compared only for `Strict`, matching PROJ.
+    /// The operation name is compared only for `Strict`, matching PROJ. The source and target
+    /// CRS are not compared: `SingleOperation::_isEquivalentTo` (singleoperation.cpp:1483-1750)
+    /// compares the method and the parameter values only.
     #[must_use]
     pub fn is_equivalent_to_with(&self, other: &Self, criterion: Equivalence) -> bool {
         if criterion == Equivalence::Strict
@@ -371,17 +373,13 @@ impl Transformation {
             // A geocentric translation, position vector and coordinate frame rotation
             // are the same operation when their `+towgs84` values agree.
             if criterion == Equivalence::Equivalent && helmert_parameters_match(self, other) {
-                return crs_option(self.source_crs(), other.source_crs())
-                    && crs_option(self.target_crs(), other.target_crs())
-                    && crs_option(self.interpolation_crs(), other.interpolation_crs())
+                return crs_option(self.interpolation_crs(), other.interpolation_crs())
                     && self.accuracy == other.accuracy
                     && self.inverted == other.inverted;
             }
             return false;
         }
         values_equivalent(&self.parameters, &other.parameters, criterion)
-            && crs_option(self.source_crs(), other.source_crs())
-            && crs_option(self.target_crs(), other.target_crs())
             && crs_option(self.interpolation_crs(), other.interpolation_crs())
             && self.accuracy == other.accuracy
             && self.inverted == other.inverted
