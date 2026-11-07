@@ -185,6 +185,9 @@ struct Options {
     crs_extent_use: Option<proj_rs::CrsExtentUse>,
     grid_check: Option<proj_rs::GridAvailabilityUse>,
     accuracy: Option<f64>,
+    /// `--s_epoch` and `--t_epoch`: the coordinate epochs of the source and target, decimal years.
+    source_epoch: Option<f64>,
+    target_epoch: Option<f64>,
     hide_ballpark: bool,
     /// `--no-proj-grid-alternatives`: the grid names of the candidates as the database has them.
     alternative_grid_names: proj_rs::AlternativeGridNames,
@@ -241,6 +244,8 @@ impl Options {
         let mut crs_extent_use = None;
         let mut grid_check = None;
         let mut accuracy = None;
+        let mut source_epoch = None;
+        let mut target_epoch = None;
         let mut hide_ballpark = false;
         let mut alternative_grid_names = proj_rs::AlternativeGridNames::Proj;
         let mut promote_3d = false;
@@ -284,10 +289,20 @@ impl Options {
                         ))
                     }
                 });
-            } else if matches!(
-                arg,
-                "--pivot-crs" | "--main-db-path" | "--aux-db-path" | "--s_epoch" | "--t_epoch"
-            ) {
+            } else if matches!(arg, "--s_epoch" | "--t_epoch") {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| format!("missing value for {arg}"))?;
+                let epoch = value
+                    .parse::<f64>()
+                    .map_err(|_| format!("Invalid value for option {arg}: {value}"))?;
+                if arg == "--s_epoch" {
+                    source_epoch = Some(epoch);
+                } else {
+                    target_epoch = Some(epoch);
+                }
+            } else if matches!(arg, "--pivot-crs" | "--main-db-path" | "--aux-db-path") {
                 index += 1;
             } else if arg == "--normalize-axis-order" {
                 normalize_axis_order = true;
@@ -506,6 +521,8 @@ impl Options {
             crs_extent_use,
             grid_check,
             accuracy,
+            source_epoch,
+            target_epoch,
             hide_ballpark,
             alternative_grid_names,
             promote_3d,
@@ -997,7 +1014,10 @@ fn candidates(options: &Options) -> Result<String, String> {
     let target_text = options.target.as_deref().unwrap_or("");
     let source = build_crs(&db, load_named(&db, source_text, options)?, options);
     let target = build_crs(&db, load_named(&db, target_text, options)?, options);
-    let (source, target) = if options.promote_3d {
+    // `outputOperations` promotes by name only between two CRS: an epoch makes an input a
+    // `CoordinateMetadata`, which is not promoted (projinfo_lib.cpp:1047-1048).
+    let with_epoch = options.source_epoch.is_some() || options.target_epoch.is_some();
+    let (source, target) = if options.promote_3d || with_epoch {
         (source, target)
     } else {
         promote_by_name(&db, source_text, target_text, source, target)
@@ -1161,9 +1181,30 @@ fn candidate_operations(
         } else {
             proj_rs::BallparkUse::Allow
         });
-    proj_rs::CoordinateOperationFactory::create()
-        .create_operations(source, target, &context)
-        .map_err(|error| error.to_string())
+    // `outputOperations` (projinfo_lib.cpp:1085-1104): an input with an epoch is a
+    // `CoordinateMetadata`, and the factory searches with the epochs.
+    // The error of `buildObject` is caught by the caller of `outputOperations`
+    // (projinfo_lib.cpp:2223).
+    let metadata_error =
+        |error: proj_rs::FactoryError| format!("outputOperations() failed with: {error}");
+    let source_metadata = options
+        .source_epoch
+        .map(|epoch| proj_rs::iso19111::CoordinateMetadata::create(source, epoch, db))
+        .transpose()
+        .map_err(metadata_error)?;
+    let target_metadata = options
+        .target_epoch
+        .map(|epoch| proj_rs::iso19111::CoordinateMetadata::create(target, epoch, db))
+        .transpose()
+        .map_err(metadata_error)?;
+    let factory = proj_rs::CoordinateOperationFactory::create();
+    let operations = match (&source_metadata, &target_metadata) {
+        (Some(from), Some(to)) => factory.create_operations_between_metadata(from, to, &context),
+        (Some(from), None) => factory.create_operations_from_metadata(from, target, &context),
+        (None, Some(to)) => factory.create_operations_to_metadata(source, to, &context),
+        (None, None) => factory.create_operations(source, target, &context),
+    };
+    operations.map_err(|error| error.to_string())
 }
 
 fn proj_lines(options: &Options) -> proj_rs::ProjLines {
