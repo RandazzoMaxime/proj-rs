@@ -9,12 +9,12 @@
 //!
 //! Ported: the horizontal grid methods that PROJ writes as `HORIZONTAL_SHIFT_GTIFF` or
 //! `GENERAL_SHIFT_GTIFF` (NTv1, NTv2, NADCON and NADCON5 file pairs), in both directions, the
-//! geoid file of a `Geographic3D to GravityRelatedHeight` method, and the grid of the geocentric
-//! translation method 1087.
+//! geoid file of a `Geographic3D to GravityRelatedHeight` method, the grid of the geocentric
+//! translation method 1087, and the velocity grid of a point motion operation
+//! (`PointMotionOperation::substitutePROJAlternativeGridNames`).
 //!
 //! Not ported: the `NTv1`, `NTv2` and `CTable2` grid formats (no `proj.db` row has them), and the
-//! velocity and regular vertical grid branches. For those the caller keeps the file rename it
-//! already made.
+//! regular vertical grid branch. For those the caller keeps the file rename it already made.
 
 use super::bound::{is_gravity_related_height, HORIZONTAL_SHIFT_GTIFF};
 use super::factory::DatabaseContext;
@@ -54,6 +54,18 @@ const METHOD_GEOCENTRIC_TRANSLATIONS_BY_GRID_IGN: i32 = 1087;
 const PARAMETER_GEOCENTRIC_TRANSLATION_FILE: i32 = 8727;
 const NAME_GEOCENTRIC_TRANSLATION_FILE: &str = "Geocentric translation file";
 
+/// `EPSG_CODE_METHOD_POINT_MOTION_BY_GRID_CANADA_NTV2_VEL`, `..._GEOG3D_DOMAIN_..._NTV2_VEL` (the
+/// method of the Canada velocity grids, 1141) and `..._GEOCEN_DOMAIN_..._GRAVSOFT`.
+const METHOD_POINT_MOTION_BY_GRID_CANADA_NTV2_VEL: i32 = 1070;
+const METHOD_POINT_MOTION_GEOG3D_DOMAIN_NEU_VELOCITY_GRID_NTV2_VEL: i32 = 1141;
+const METHOD_POINT_MOTION_GEOCEN_DOMAIN_NEU_VELOCITY_GRID_GRAVSOFT: i32 = 1139;
+/// `EPSG_CODE_PARAMETER_POINT_MOTION_VELOCITY_GRID_FILE` and its name.
+const PARAMETER_POINT_MOTION_VELOCITY_GRID_FILE: i32 = 1050;
+const NAME_POINT_MOTION_VELOCITY_GRID_FILE: &str = "Point motion velocity grid file";
+/// `EPSG_CODE_PARAMETER_POINT_MOTION_VELOCITY_NORTH_GRID_FILE` and its name.
+const PARAMETER_POINT_MOTION_VELOCITY_NORTH_GRID_FILE: i32 = 1072;
+const NAME_POINT_MOTION_VELOCITY_NORTH_GRID_FILE: &str = "Point motion velocity north grid file";
+
 /// `Transformation::substitutePROJAlternativeGridNames` for the grid methods ported here.
 ///
 /// `None` when PROJ returns the transformation itself (`return self`), or for a branch this
@@ -66,6 +78,9 @@ pub(crate) fn substitute_proj_alternative_grid_names(
     transformation: &Transformation,
     db: &DatabaseContext,
 ) -> Result<Option<Transformation>, FactoryError> {
+    if let Some(replacement) = point_motion_grid(transformation, db)? {
+        return Ok(Some(replacement));
+    }
     if let Some(replacement) = horizontal_grid(transformation, db)? {
         return Ok(Some(replacement));
     }
@@ -73,6 +88,59 @@ pub(crate) fn substitute_proj_alternative_grid_names(
         return Ok(Some(replacement));
     }
     geocentric_grid(transformation, db)
+}
+
+/// `PointMotionOperation::substitutePROJAlternativeGridNames` (`singleoperation.cpp:5591-5629`):
+/// a velocity grid file of a point motion operation, read from its `Point motion velocity grid
+/// file` parameter (the north grid file for the Gravsoft method), is replaced by PROJ's name for
+/// it. The replacement is `createSimilarPropertiesOperation` with the same CRS pair, so its
+/// identifiers are `DERIVED_FROM(<authority>)`. The format and the inverse flag of the lookup are
+/// not read, as PROJ does not read them here.
+fn point_motion_grid(
+    transformation: &Transformation,
+    db: &DatabaseContext,
+) -> Result<Option<Transformation>, FactoryError> {
+    if !transformation.is_point_motion() {
+        return Ok(None);
+    }
+    let (code, name) = match epsg_method_code(transformation) {
+        METHOD_POINT_MOTION_BY_GRID_CANADA_NTV2_VEL
+        | METHOD_POINT_MOTION_GEOG3D_DOMAIN_NEU_VELOCITY_GRID_NTV2_VEL => (
+            PARAMETER_POINT_MOTION_VELOCITY_GRID_FILE,
+            NAME_POINT_MOTION_VELOCITY_GRID_FILE,
+        ),
+        METHOD_POINT_MOTION_GEOCEN_DOMAIN_NEU_VELOCITY_GRID_GRAVSOFT => (
+            PARAMETER_POINT_MOTION_VELOCITY_NORTH_GRID_FILE,
+            NAME_POINT_MOTION_VELOCITY_NORTH_GRID_FILE,
+        ),
+        _ => return Ok(None),
+    };
+    let Some(filename) = file_value(transformation, code, name) else {
+        return Ok(None);
+    };
+    let Some((proj_filename, _format, _inverse)) = db.proj_grid_alternative_format(&filename)?
+    else {
+        return Ok(None);
+    };
+    if filename == proj_filename {
+        return Ok(None);
+    }
+    // `createSimilarPropertiesMethod`: the name and the identifier of the method.
+    let method = transformation.method();
+    let method = OperationMethod::named_code(
+        method.name().to_owned(),
+        method.code_space().to_owned(),
+        method.code().to_owned(),
+    );
+    let mut replacement = similar_operation(
+        transformation,
+        method,
+        vec![epsg_parameter(code, name, &proj_filename)],
+        transformation.source_crs().cloned(),
+        transformation.target_crs().cloned(),
+    );
+    replacement.point_motion = true;
+    Ok(Some(replacement))
 }
 
 /// The geocentric translation branch of `substitutePROJAlternativeGridNames`
