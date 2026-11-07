@@ -58,6 +58,7 @@ const METHOD_GEOGRAPHIC_GEOCENTRIC: i32 = 9602;
 const METHOD_CHANGE_VERTICAL_UNIT: i32 = 1069;
 const METHOD_HEIGHT_DEPTH_REVERSAL: i32 = 1068;
 const METHOD_VERTICAL_OFFSET: i32 = 9616;
+const METHOD_VERTICAL_OFFSET_AND_SLOPE: i32 = 1046;
 const METHOD_CARTESIAN_GRID_OFFSETS: i32 = 9656;
 const METHOD_SEISMIC_BIN_GRID_I_EQ_J_PLUS_90: i32 = 9666;
 const METHOD_SEISMIC_BIN_GRID_I_EQ_J_MINUS_90: i32 = 1049;
@@ -317,6 +318,9 @@ fn export_forward(
     }
     if code == METHOD_VERTICAL_OFFSET {
         return vertical_offset(operation, source, target, formatter);
+    }
+    if code == METHOD_VERTICAL_OFFSET_AND_SLOPE {
+        return vertical_offset_and_slope(operation, source, target, formatter);
     }
     if code == METHOD_GEOCENTRIC_GRID_IGN {
         return geocentric_grid(operation, source, target, formatter);
@@ -1685,6 +1689,33 @@ fn vertical_offset(
         formatter.add_step("geogoffset");
         formatter.add_number("dh", offset);
     }
+    linear_unit_convert(target, formatter);
+    Ok(())
+}
+
+/// `Vertical Offset and Slope` (singleoperation.cpp:4255-4311): the linear unit of each
+/// vertical CRS around `vertoffset`, with the evaluation point in degrees, the offset in metres
+/// and the inclinations in arc-seconds. A compound CRS whose horizontal parts match contributes
+/// its vertical component.
+fn vertical_offset_and_slope(
+    operation: &Transformation,
+    source: Option<&Crs>,
+    target: Option<&Crs>,
+    formatter: &mut PipelineFormatter,
+) -> Result<(), FactoryError> {
+    let (source, target) = vertical_pair(source, target).map_err(|_| {
+        FactoryError::Format("Can apply Vertical offset and slope only to VerticalCRS".to_owned())
+    })?;
+    let degree = PI / 180.0;
+    formatter.start_inversion();
+    linear_unit_convert(source, formatter);
+    formatter.stop_inversion();
+    formatter.add_step("vertoffset");
+    formatter.add_number("lat_0", numeric(operation, 8617, degree));
+    formatter.add_number("lon_0", numeric(operation, 8618, degree));
+    formatter.add_number("dh", si_value(operation, 8603));
+    formatter.add_number("slope_lat", numeric(operation, 8730, ARC_SECOND));
+    formatter.add_number("slope_lon", numeric(operation, 8731, ARC_SECOND));
     linear_unit_convert(target, formatter);
     Ok(())
 }
