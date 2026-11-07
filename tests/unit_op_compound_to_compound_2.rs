@@ -91,7 +91,6 @@ fn operation_compound_to_compound_wgs84_egm96_to_wgs84_belfast() {
 /// TEST(operation, compoundCRS_to_compoundCRS_OSGB36_BNG_ODN_height_to_WGS84_EGM96): the
 /// British National Grid with the ODN height, to WGS 84 with the EGM96 height, both ways.
 #[test]
-#[ignore = "open: the first candidate is OSGB36 to WGS 84 (9) with the ODN height inverse, where PROJ chains OSGB36 to ETRS89-GBR (2) then ETRS89-GBR to WGS 84 (1); the candidate choice is not traced"]
 fn operation_compound_to_compound_osgb36_bng_odn_height_to_wgs84_egm96() {
     let db = DatabaseContext::create().expect("proj.db");
     let ctxt = ignore_grids(&db, "");
@@ -155,7 +154,6 @@ fn operation_compound_to_compound_osgb36_bng_odn_height_to_wgs84_egm96() {
 /// BD72 + Ostend height to Amersfoort + NAP height. The two vertical transformations have
 /// different interpolation CRS, and the result goes through ETRS89 on each side.
 #[test]
-#[ignore = "open: the first candidate has an extra 'Inverse of BD72 to ETRS89-BEL (3) + BD72 to ETRS89 (3)' pair that PROJ does not give; the chain is not traced (compound.rs compound_to_compound)"]
 fn operation_compound_to_compound_concatenated_two_vert_transformation_different_source_dest_interp(
 ) {
     let db = DatabaseContext::create().expect("proj.db");
@@ -776,7 +774,6 @@ fn operation_compound_to_compound_context() {
 /// PNGMG94 zone 54 + Kumul 34 height to WGS 84 (G2139) + EGM2008 height. The horizontal part
 /// goes through WGS 84 and WGS 84 (G2139) with a geographic offset, with grids known as available.
 #[test]
-#[ignore = "open: PROJ's only-vertical-ballpark branch (createOperationsCompoundToGeog, intermediate geographic CRS of the horizontal transforms, C++ 6860-6905) is not ported; the ballpark Kumul 34 to EGM2008 candidate comes first"]
 fn operation_compound_to_compound_using_intermediate_of_horizontal_transform() {
     let db = DatabaseContext::create().expect("proj.db");
     let mut ctxt = CoordinateOperationContext::create(&db, "");

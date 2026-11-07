@@ -143,6 +143,20 @@ fn export_projection(
     target: &Crs,
     formatter: &mut PipelineFormatter,
 ) -> Result<(), FactoryError> {
+    // A compound CRS stands for its first component (`horiz` of `Conversion::_exportToPROJString`,
+    // conversion.cpp:3886-3900 and 4420-4428): the factory sets compound CRS on the conversion
+    // of a compound's horizontal part.
+    let horizontal = |crs: &'_ Crs| -> Crs {
+        match crs {
+            Crs::Compound(compound) => compound
+                .components()
+                .first()
+                .cloned()
+                .unwrap_or_else(|| crs.clone()),
+            other => other.clone(),
+        }
+    };
+    let (source, target) = (&horizontal(source), &horizontal(target));
     if matches!(source, Crs::Projected(_)) {
         formatter.start_inversion();
         ingest(&projection_steps(target, source)?, formatter);

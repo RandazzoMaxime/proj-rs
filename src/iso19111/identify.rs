@@ -984,6 +984,57 @@ impl GeographicCRS {
         crs
     }
 
+    /// `CRS::promoteTo3D(newName, dbContext, verticalAxisIfNotAlreadyPresent)` (crs.cpp:
+    /// 1341-1459) with the height axis `axis`, or the ellipsoidal height in metres when `None`.
+    ///
+    /// With a database and one identifier, the same-name geographic 3D CRS is returned when its
+    /// height axis is equivalent to `axis` and this CRS is its 2D part. Otherwise `axis` is added
+    /// and the identifier is cleared.
+    #[must_use]
+    pub fn promote_to_3d_with_axis(
+        &self,
+        db: Option<&DatabaseContext>,
+        axis: Option<&Axis>,
+    ) -> Self {
+        let Some(axis) = axis else {
+            return self.promote_to_3d_with_db(db);
+        };
+        if self.coordinate_system.axes.len() != 2 {
+            return self.clone();
+        }
+        if let Some(db) = db {
+            if self.identifiers().len() == 1 {
+                let identifier = &self.identifiers()[0];
+                if let Ok(Some(found)) = AuthorityFactory::create(db, identifier.code_space())
+                    .create_geographic_3d_crs_from_name(self.name())
+                {
+                    let height_matches =
+                        found
+                            .coordinate_system()
+                            .axes()
+                            .get(2)
+                            .is_some_and(|height| {
+                                height.direction().eq_ignore_ascii_case(axis.direction())
+                                    && height.unit().kind() == axis.unit().kind()
+                                    && (height.unit().conversion_to_si()
+                                        - axis.unit().conversion_to_si())
+                                    .abs()
+                                        <= 1e-10
+                            });
+                    if height_matches && self.is_2d_part_of_3d(&found) {
+                        return found;
+                    }
+                }
+            }
+        }
+        let mut crs = self.promote_to_3d();
+        if let Some(height) = crs.coordinate_system.axes.get_mut(2) {
+            *height = axis.clone();
+        }
+        crs.identified = promoted_properties(&self.identified);
+        crs
+    }
+
     /// `GeographicCRS::demoteTo2D`.
     ///
     /// A database with one identifier returns the same-name geographic 2D CRS
