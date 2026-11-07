@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use rusqlite::{types::ValueRef, Connection};
 
-use super::buildop::OpProps;
+use super::buildop::{concatenation_interpolation, concatenation_interpolation_of_steps, OpProps};
 use super::compound::{flatten_steps, get_accuracy, get_accuracy_of_steps, stored_accuracy};
 use super::coordinate_metadata::CoordinateMetadata;
 use super::equiv::{
@@ -4583,6 +4583,7 @@ impl AuthorityFactory {
         }
         append_geographic_geocentric_tail(&mut steps, &target);
         super::wkt_import::check_steps_chaining(&steps, &source, &target)?;
+        let interpolation = concatenation_interpolation_of_steps(&steps);
         Ok(ConcatenatedOperation {
             identified: self.properties(
                 code,
@@ -4600,6 +4601,7 @@ impl AuthorityFactory {
             source_epoch: None,
             target_epoch: None,
             proj_based: None,
+            interpolation,
         })
     }
 
@@ -5431,6 +5433,9 @@ impl CoordinateOperationFactory {
                         context.grid_names,
                     )?;
                     if let (Some(left), Some(right)) = (first.first(), second.first()) {
+                        let interpolation =
+                            concatenation_interpolation(&[left.clone(), right.clone()])
+                                .map(Box::new);
                         found.push(CoordinateOperation::Concatenated(ConcatenatedOperation {
                             identified: Identified::named(format!(
                                 "{} + {}",
@@ -5455,6 +5460,7 @@ impl CoordinateOperationFactory {
                             source_epoch: None,
                             target_epoch: None,
                             proj_based: None,
+                            interpolation,
                         }));
                     }
                 }
@@ -7902,6 +7908,7 @@ pub(super) fn pivot_concatenation(steps: Vec<CoordinateOperation>) -> Concatenat
         .flatten()
         .into_iter()
         .collect();
+    let interpolation = concatenation_interpolation(&steps).map(Box::new);
     ConcatenatedOperation {
         identified,
         steps: steps
@@ -7919,6 +7926,7 @@ pub(super) fn pivot_concatenation(steps: Vec<CoordinateOperation>) -> Concatenat
         source_epoch: None,
         target_epoch: None,
         proj_based: None,
+        interpolation,
     }
 }
 
@@ -8871,6 +8879,7 @@ fn point_motion_between_epochs(
 /// point motion whose CRS is the 3D form of the source, PROJ's `createComputeMetadata` with the
 /// conversions between the two forms left out.
 fn point_motion_concatenation(step: CoordinateOperation, source: &Crs) -> ConcatenatedOperation {
+    let interpolation = concatenation_interpolation(std::slice::from_ref(&step)).map(Box::new);
     ConcatenatedOperation {
         identified: Identified::named(step.name()),
         steps: vec![ConcatenatedStep {
@@ -8885,5 +8894,6 @@ fn point_motion_concatenation(step: CoordinateOperation, source: &Crs) -> Concat
         proj_based: None,
         source_epoch: None,
         target_epoch: None,
+        interpolation,
     }
 }

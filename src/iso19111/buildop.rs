@@ -3,6 +3,7 @@
 //! The method and parameter names are the PROJ 9.9 maps in [`super::parammap`].
 
 use super::equiv::Equivalence;
+use super::factory::geographic_of;
 use super::model::{
     ConcatenatedOperation, ConcatenatedStep, Conversion, CoordinateOperation, Crs, FactoryError,
     Identified, Measure, ObjectDomain, OperationMethod, OperationParameter,
@@ -527,6 +528,61 @@ impl Conversion {
     }
 }
 
+/// `CoordinateOperation::interpolationCRS`: the interpolation CRS of a single operation, or of a
+/// concatenated one as `ConcatenatedOperation::create` set it.
+pub(crate) fn interpolation_crs_of(operation: &CoordinateOperation) -> Option<&Crs> {
+    match operation {
+        CoordinateOperation::Conversion(conversion) => conversion.interpolation_crs(),
+        CoordinateOperation::Transformation(transformation) => transformation.interpolation_crs(),
+        CoordinateOperation::Concatenated(concatenated) => concatenated.interpolation_crs(),
+    }
+}
+
+/// The interpolation CRS of a concatenation, as `ConcatenatedOperation::create` computes it
+/// (concatenatedoperation.cpp:177-249). The steps' interpolation CRS is kept while it is the
+/// same one in each step; a step without one resets the value, so a later step's CRS is taken.
+/// Two vertical steps through a geographic CRS take that geographic CRS.
+pub(crate) fn concatenation_interpolation(steps: &[CoordinateOperation]) -> Option<Crs> {
+    let mut interpolation: Option<Crs> = None;
+    let mut valid = true;
+    for step in steps {
+        if valid {
+            let sub = interpolation_crs_of(step).cloned();
+            match (&interpolation, sub) {
+                (None, sub) => interpolation = sub,
+                (Some(current), Some(sub))
+                    if sub.is_equivalent_to_with(current, Equivalence::Equivalent) => {}
+                _ => {
+                    interpolation = None;
+                    valid = false;
+                }
+            }
+        }
+    }
+    if let ([first, second], None) = (steps, &interpolation) {
+        if let (Some(Crs::Vertical(_)), Some(Crs::Vertical(_))) =
+            (first.source_crs(), second.target_crs())
+        {
+            if let (Some(geog1), Some(geog2)) = (first.target_crs(), second.source_crs()) {
+                if geographic_of(geog1).is_some()
+                    && geographic_of(geog2).is_some()
+                    && geog1.is_equivalent_to_with(geog2, Equivalence::Equivalent)
+                {
+                    interpolation = Some(geog1.clone());
+                }
+            }
+        }
+    }
+    interpolation
+}
+
+/// [`concatenation_interpolation`] of the operations of concatenated steps.
+pub(crate) fn concatenation_interpolation_of_steps(steps: &[ConcatenatedStep]) -> Option<Box<Crs>> {
+    let operations: Vec<CoordinateOperation> =
+        steps.iter().map(|step| step.operation.clone()).collect();
+    concatenation_interpolation(&operations).map(Box::new)
+}
+
 impl ConcatenatedOperation {
     /// `ConcatenatedOperation::create`: the source is the first step's source and the target
     /// the last step's target. An empty name becomes the step names joined by ` + `.
@@ -562,6 +618,7 @@ impl ConcatenatedOperation {
         let source = steps.first().and_then(CoordinateOperation::source_crs);
         let target = steps.last().and_then(CoordinateOperation::target_crs);
         let (source, target) = (source.cloned().map(Box::new), target.cloned().map(Box::new));
+        let interpolation = concatenation_interpolation(&steps).map(Box::new);
         let computed_name = props.name.as_deref().is_none_or(str::is_empty);
         let joined = steps
             .iter()
@@ -589,6 +646,7 @@ impl ConcatenatedOperation {
             proj_based: None,
             source_epoch: None,
             target_epoch: None,
+            interpolation,
         })
     }
 
