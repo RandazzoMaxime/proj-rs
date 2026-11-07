@@ -5307,6 +5307,12 @@ impl CoordinateOperationContext {
         self.grid_names
     }
 
+    /// `getUsePROJAlternativeGridNames`: whether the operations are read with the PROJ grid
+    /// names, the default unless the database names are set.
+    pub(super) fn uses_proj_grid_names(&self) -> bool {
+        self.grid_names == AlternativeGridNames::Proj
+    }
+
     /// This context, with the CRS extents of `source` and `target` for every sub-call, unless
     /// the outermost call already set them.
     pub(crate) fn with_inherited_extents(&self, source: &Crs, target: &Crs) -> Self {
@@ -6162,7 +6168,7 @@ impl CoordinateOperationFactory {
             found.extend(super::compound::geographic_height_change(source, target));
         }
         found.extend(super::compound::compound_to_geog3d(
-            self, source, target, context,
+            self, source, target, epochs, context,
         )?);
         // `createOperationsToGeod` for a compound CRS to a geocentric CRS.
         if let (Crs::Compound(_), Crs::Geodetic(geodetic)) = (source, target) {
@@ -6185,7 +6191,7 @@ impl CoordinateOperationFactory {
             }
         }
         found.extend(super::compound::geog_to_compound(
-            self, source, target, context,
+            self, source, target, epochs, context,
         )?);
         found.extend(super::compound::compound_to_compound(
             self, source, target, epochs, context,
