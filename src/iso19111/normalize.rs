@@ -8,7 +8,7 @@
 
 use super::model::{
     ConcatenatedOperation, ConcatenatedStep, Conversion, CoordinateOperation, Crs, GeodeticCRS,
-    Identified, Identifier, OperationMethod,
+    GeographicCRS, Identified, Identifier, OperationMethod,
 };
 use super::parammap;
 
@@ -160,25 +160,64 @@ fn reversal_step(source: Crs, target: Crs) -> Option<ConcatenatedStep> {
     })
 }
 
-/// `CRS::applyAxisOrderReversal` for a geographic or projected CRS: the two horizontal axes
-/// swapped, the name suffixed, the domains kept, a remark pointing at the identifier, and no
-/// identifier of its own. `None` for any other kind.
-fn reversed(crs: &Crs) -> Option<Crs> {
-    let mut reversed = match crs {
-        Crs::Geographic(_) | Crs::Projected(_) => crs.normalize_for_visualization(),
-        Crs::Geodetic(GeodeticCRS::Geographic(geographic)) => Crs::Geodetic(
-            GeodeticCRS::Geographic(geographic.normalize_for_visualization()),
-        ),
-        _ => return None,
-    };
-    match &mut reversed {
-        Crs::Geographic(crs) | Crs::Geodetic(GeodeticCRS::Geographic(crs)) => {
-            crs.identified.identifiers.clear();
+/// `CRS::applyAxisOrderReversal` (crs.cpp:1015-1125) for a geographic or projected CRS: the two
+/// horizontal axes are swapped whatever their order, and the CRS has no identifier of its own.
+/// `None` for any other kind.
+pub(crate) fn reversed(crs: &Crs) -> Option<Crs> {
+    Some(match crs {
+        Crs::Geographic(geographic) => Crs::Geographic(reversed_geographic(geographic)),
+        Crs::Geodetic(GeodeticCRS::Geographic(geographic)) => {
+            Crs::Geodetic(GeodeticCRS::Geographic(reversed_geographic(geographic)))
         }
-        Crs::Projected(crs) => crs.identified.identifiers.clear(),
+        Crs::Projected(projected) => {
+            let mut projected = projected.clone();
+            projected.coordinate_system.axes.swap(0, 1);
+            reverse_identified(&mut projected.identified);
+            Crs::Projected(projected)
+        }
         _ => return None,
-    }
-    Some(reversed)
+    })
+}
+
+fn reversed_geographic(geographic: &GeographicCRS) -> GeographicCRS {
+    let mut reversed = geographic.clone();
+    reversed.coordinate_system.axes.swap(0, 1);
+    reverse_identified(&mut reversed.identified);
+    reversed
+}
+
+/// The identified part of `createProperties` (crs.cpp:1017-1062): the name toggles the
+/// normalized suffix (or the "axis order reversed" one), the domains stay, the remarks say which
+/// identifier the axes come from, and no identifier is kept.
+fn reverse_identified(identified: &mut Identified) {
+    const REVERSED_SUFFIX: &str = " (with axis order reversed)";
+    const REMARKS_PREFIX: &str = "Axis order reversed compared to ";
+    let name = identified.name.clone();
+    identified.name = if let Some(base) = name.strip_suffix(NORMALIZED_SUFFIX) {
+        base.to_owned()
+    } else if let Some(base) = name.strip_suffix(REVERSED_SUFFIX) {
+        base.to_owned()
+    } else {
+        format!("{name}{NORMALIZED_SUFFIX}")
+    };
+    let remarks = std::mem::take(&mut identified.remarks);
+    identified.remarks = match identified.identifiers.as_slice() {
+        [_] if remarks.starts_with(REMARKS_PREFIX) => String::new(),
+        [identifier] => {
+            let mut text = format!(
+                "{REMARKS_PREFIX}{}:{}",
+                identifier.code_space(),
+                identifier.code()
+            );
+            if !remarks.is_empty() {
+                text.push_str(". ");
+                text.push_str(&remarks);
+            }
+            text
+        }
+        _ => remarks,
+    };
+    identified.identifiers.clear();
 }
 
 /// `CRS::mustAxisOrderBeSwitchedForVisualization`: the first two axes are north then east. A
