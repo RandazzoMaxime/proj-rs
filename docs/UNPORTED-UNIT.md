@@ -94,7 +94,6 @@ and `PORT-NOTES-tests.md`.
 - `CApi.proj_coordoperation_create_inverse`
 - `CApi.proj_context_copy_from_default`
 - `CApi.proj_context_clone`
-- `CApi.proj_create_crs_to_crs_from_custom_compound_crs_with_NAD83_2011_and_geoidgrid_ref_against_NAD83_2011_to_WGS84_G1762`
 - `CApi.proj_create_vertical_crs_ex`
 - `CApi.proj_create_vertical_crs_ex_with_geog_crs`
 - `CApi.proj_create_vertical_crs_ex_implied_accuracy`
