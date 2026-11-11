@@ -85,9 +85,13 @@ fn bound_to_bound(
             let firsts = factory.create_candidates(source, hub_src, context)?;
             let lasts = factory.create_candidates(hub_src, target, context)?;
             let mut found = Vec::new();
+            // `createComputeMetadata({opFirst, opLast})`: the steps are flattened and consecutive
+            // inverse steps cancel, so a bound CRS to a bound CRS with the same hub and the same
+            // transformation is the operation between their bases (coordinateoperationfactory.cpp:
+            // 6228-6240).
             for first in &firsts {
                 for last in &lasts {
-                    found.push(concatenate(vec![first.clone(), last.clone()]));
+                    found.extend(compute_metadata(vec![first.clone(), last.clone()], context));
                 }
             }
             if !found.is_empty() {

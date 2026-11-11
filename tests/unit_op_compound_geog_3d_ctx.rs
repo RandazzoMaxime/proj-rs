@@ -3,9 +3,9 @@
 //! from the C++ file. The reference commands are in `docs/PORTING-unit-op-compound-geog-3d-ctx.md`.
 
 use proj_rs::iso19111::{
-    create_from_user_input, CoordinateOperation, CoordinateOperationContext,
-    CoordinateOperationFactory, Crs, DatabaseContext, GridAvailabilityUse, ProjLines,
-    SpatialCriterion, WktObject, WktParser,
+    create_crs_from_proj_string, create_from_user_input, CoordinateOperation,
+    CoordinateOperationContext, CoordinateOperationFactory, Crs, DatabaseContext,
+    GridAvailabilityUse, ProjLines, SpatialCriterion, WktObject, WktParser,
 };
 
 /// `createFromUserInput("EPSG:<code>")`: a compound code such as `2225+6360` is accepted.
@@ -190,4 +190,40 @@ fn operation_compound_with_bound_geog_crs_and_geoid_to_geod_crs_nad2011_ctxt() {
         }
     }
     assert!(found);
+}
+
+/// `TEST(operation, ETRS89_3D_to_proj_string_with_geoidgrids_nadgrids)` (test_operationfactory.cpp:
+/// 4013-4040): ETRS89 3D to a Stereographic CRS given by a PROJ string with `+nadgrids`,
+/// `+geoidgrids` and `+geoid_crs=horizontal_crs`.
+///
+/// Reference: `projinfo -s EPSG:4937 -t "<the string below>" -o PROJ --single-line
+/// --spatial-test intersects --grid-check none` gives the same first candidate.
+#[test]
+fn operation_etrs89_3d_to_proj_string_with_geoidgrids_nadgrids() {
+    let db = DatabaseContext::create().expect("proj.db");
+    // ETRS89 3D
+    let src = epsg(&db, "4937");
+    let dst = create_crs_from_proj_string(
+        "+proj=sterea +lat_0=52.15616055555555 +lon_0=5.38763888888889 \
+         +k=0.9999079 +x_0=155000 +y_0=463000 +ellps=bessel \
+         +nadgrids=rdtrans2008.gsb +geoidgrids=naptrans2008.gtx \
+         +geoid_crs=horizontal_crs +units=m +type=crs",
+    )
+    .expect("the target CRS");
+    // `CoordinateOperationContext::create(authFactory, nullptr, 0.0)`, authority EPSG
+    let ctxt = CoordinateOperationContext::create(&db, "EPSG");
+    let list = operations(&src, &dst, &ctxt);
+    assert_eq!(list.len(), 2);
+    assert_eq!(
+        proj_without_db(&list[0]),
+        "+proj=pipeline \
+         +step +proj=axisswap +order=2,1 \
+         +step +proj=unitconvert +xy_in=deg +z_in=m +xy_out=rad +z_out=m \
+         +step +inv +proj=hgridshift +grids=rdtrans2008.gsb \
+         +step +inv +proj=vgridshift +grids=naptrans2008.gtx \
+         +multiplier=1 \
+         +step +proj=sterea +lat_0=52.1561605555556 \
+         +lon_0=5.38763888888889 +k=0.9999079 +x_0=155000 \
+         +y_0=463000 +ellps=bessel"
+    );
 }

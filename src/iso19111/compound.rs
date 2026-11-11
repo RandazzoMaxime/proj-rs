@@ -1290,13 +1290,22 @@ fn horiz_vertical_horiz_checked(
     ))
 }
 
-/// `setCRSs` on a copy: the source and target of the operation, with its identifiers kept.
+/// `setCRSs` of the factory on a copy: the source and target of the operation, with its
+/// identifiers kept. It is `CoordinateOperation::setCRSsUpdateInverse`
+/// (coordinateoperationfactory.cpp:3127-3132): for a concatenated operation the source also goes
+/// to its first step and the target to its last one (singleoperation.cpp:257-270), so the angular
+/// unit and axis steps a step writes follow the CRS the concatenation was given.
 fn with_endpoints(
     mut operation: CoordinateOperation,
     source: &Crs,
     target: &Crs,
 ) -> CoordinateOperation {
-    match &mut operation {
+    set_crss_update_inverse(&mut operation, source, target);
+    operation
+}
+
+fn set_crss_update_inverse(operation: &mut CoordinateOperation, source: &Crs, target: &Crs) {
+    match operation {
         CoordinateOperation::Conversion(conversion) => {
             conversion.source = Some(Box::new(source.clone()));
             conversion.target = Some(Box::new(target.clone()));
@@ -1308,9 +1317,47 @@ fn with_endpoints(
         CoordinateOperation::Concatenated(concatenated) => {
             concatenated.source = Some(Box::new(source.clone()));
             concatenated.target = Some(Box::new(target.clone()));
+            if let Some(first) = concatenated.steps.first_mut() {
+                update_step_end(first, EndOfStep::Source, source);
+            }
+            if let Some(last) = concatenated.steps.last_mut() {
+                update_step_end(last, EndOfStep::Target, target);
+            }
         }
     }
-    operation
+}
+
+/// The end of a step in the direction it runs.
+#[derive(Clone, Copy)]
+enum EndOfStep {
+    Source,
+    Target,
+}
+
+/// `first->setCRSsUpdateInverse(sourceCRSIn, firstTarget)` and
+/// `last->setCRSsUpdateInverse(lastSource, targetCRSIn)`: one end of the step is replaced, the
+/// other one is kept, and nothing changes when the step has no other end. A step that runs
+/// reversed stores its operation the other way round.
+fn update_step_end(step: &mut ConcatenatedStep, end: EndOfStep, crs: &Crs) {
+    let stored_source = operation_source(&step.operation).cloned();
+    let stored_target = operation_target(&step.operation).cloned();
+    let (running_source, running_target) = if step.reverse {
+        (stored_target, stored_source)
+    } else {
+        (stored_source, stored_target)
+    };
+    let (new_source, new_target) = match end {
+        EndOfStep::Source => (Some(crs.clone()), running_target),
+        EndOfStep::Target => (running_source, Some(crs.clone())),
+    };
+    let (Some(new_source), Some(new_target)) = (new_source, new_target) else {
+        return;
+    };
+    if step.reverse {
+        set_crss_update_inverse(&mut step.operation, &new_target, &new_source);
+    } else {
+        set_crss_update_inverse(&mut step.operation, &new_source, &new_target);
+    }
 }
 
 /// `createOperationsCompoundToGeog` for a 2D geographic target: the operations of the
@@ -1366,7 +1413,7 @@ fn horizontal_null_vertical(
             concatenated.identified.domains = vec![domain];
         }
     }
-    operation
+    with_remarks(operation, &[horizontal, vertical])
 }
 
 /// `createHorizVerticalPROJBased` (coordinateoperationfactory.cpp:2717-2793): a null horizontal
@@ -2653,6 +2700,54 @@ fn proj_based_operation(
     })
 }
 
+/// `getRemarks` (coordinateoperationfactory.cpp:2668-2713): the remarks of the operations that have
+/// some, each introduced by `For <name> (<authority>:<code>): `, one per line. The prefix of an
+/// inverse operation, in its name and in its authority, is dropped.
+fn get_remarks(operations: &[&CoordinateOperation]) -> String {
+    let mut remarks = String::new();
+    for operation in operations {
+        let own = operation.remarks();
+        if own.is_empty() {
+            continue;
+        }
+        if !remarks.is_empty() {
+            remarks.push('\n');
+        }
+        let name = operation.name();
+        remarks.push_str("For ");
+        remarks.push_str(name.strip_prefix("Inverse of ").unwrap_or(name));
+        if let Some(identifier) = operation.identifiers().first() {
+            let mut authority = identifier.code_space();
+            if let Some(inner) = authority
+                .strip_prefix("INVERSE(")
+                .and_then(|text| text.strip_suffix(')'))
+            {
+                authority = inner;
+            }
+            if let Some(inner) = authority
+                .strip_prefix("DERIVED_FROM(")
+                .and_then(|text| text.strip_suffix(')'))
+            {
+                authority = inner;
+            }
+            remarks.push_str(&format!(" ({authority}:{})", identifier.code()));
+        }
+        remarks.push_str(": ");
+        remarks.push_str(own);
+    }
+    remarks
+}
+
+/// The operation with the remarks of `operations` set (`REMARKS_KEY` of the properties).
+fn with_remarks(
+    mut operation: CoordinateOperation,
+    operations: &[&CoordinateOperation],
+) -> CoordinateOperation {
+    if let CoordinateOperation::Concatenated(concatenated) = &mut operation {
+        concatenated.identified.remarks = get_remarks(operations);
+    }
+    operation
+}
 /// `createHorizVerticalHorizPROJBased`.
 fn proj_based_horiz_vertical_horiz(
     source: &Crs,
@@ -2692,6 +2787,13 @@ fn proj_based_horiz_vertical_horiz(
             .join(" + ")
     };
     let accuracy = accuracy_sum(&steps.iter().collect::<Vec<_>>());
+    // `opsForRemarks`: the two cancelling operations leave the vertical one and the first one
+    // (coordinateoperationfactory.cpp:2818-2844).
+    let remarks = if cancels {
+        get_remarks(&[first, vertical])
+    } else {
+        get_remarks(&steps.iter().collect::<Vec<_>>())
+    };
     // The extent is the intersection of the steps' (`getExtent(ops, false, ...)`,
     // `createHorizVerticalHorizPROJBased`, coordinateoperationfactory.cpp:2851-2864).
     let domain = joint_extent(&steps).flatten();
@@ -2714,6 +2816,7 @@ fn proj_based_horiz_vertical_horiz(
     if let CoordinateOperation::Concatenated(concatenated) = &mut operation {
         concatenated.computed_name = !cancels;
         concatenated.identified.domains = domain.into_iter().collect();
+        concatenated.identified.remarks = remarks;
     }
     operation
 }
@@ -2735,19 +2838,23 @@ fn proj_based_horiz_vertical(
         )
     };
     let accuracy = accuracy_sum(&steps.iter().collect::<Vec<_>>());
-    proj_based_operation(
-        name,
-        source,
-        target,
-        steps,
-        accuracy,
-        ProjBased {
-            kind: ProjBasedKind::HorizVertical,
-            horizontal: horizontal.clone(),
-            vertical: vertical.clone(),
-            last: None,
-            interpolation: Crs::Geographic(geog_dst.clone()),
-            inverted: false,
-        },
+    let remarks_of: Vec<CoordinateOperation> = steps.clone();
+    with_remarks(
+        proj_based_operation(
+            name,
+            source,
+            target,
+            steps,
+            accuracy,
+            ProjBased {
+                kind: ProjBasedKind::HorizVertical,
+                horizontal: horizontal.clone(),
+                vertical: vertical.clone(),
+                last: None,
+                interpolation: Crs::Geographic(geog_dst.clone()),
+                inverted: false,
+            },
+        ),
+        &remarks_of.iter().collect::<Vec<_>>(),
     )
 }

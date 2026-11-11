@@ -6464,9 +6464,14 @@ fn transformation_step_count(operation: &CoordinateOperation) -> usize {
     }
 }
 
-/// The extent of a CRS: its first usage, or for a compound CRS the intersection of its components.
+/// The extent of a CRS: its first usage, or for a compound CRS without one the intersection of its
+/// components (`getExtentPossiblySynthetized`, oputils.cpp:502-525: the extent of the CRS itself
+/// first, so the registered extent of `EPSG:5500` is not replaced by a synthesized one).
 pub(crate) fn crs_extent(crs: &Crs) -> Option<ObjectDomain> {
     if let Crs::Compound(compound) = crs {
+        if let Some(own) = crs.domains().first() {
+            return Some(own.clone());
+        }
         let mut extent: Option<ObjectDomain> = None;
         for component in compound.components() {
             let Some(part) = crs_extent(component) else {
@@ -7432,7 +7437,7 @@ fn datum_based_intermediate_operations(
                     .create_coordinate_operation_typed(
                         &trfm.code,
                         ConcatenatedSteps::Allow,
-                        AlternativeGridNames::Official,
+                        context.alternative_grid_names(),
                         &trfm.table,
                     )
                     .ok()?;
@@ -7810,7 +7815,7 @@ fn crs_codes_intermediate_operations(
                     .create_coordinate_operation_typed(
                         &row[2].text(),
                         ConcatenatedSteps::Allow,
-                        AlternativeGridNames::Official,
+                        context.alternative_grid_names(),
                         &row[0].text(),
                     )
                     .ok(),
@@ -7818,7 +7823,7 @@ fn crs_codes_intermediate_operations(
                     .create_coordinate_operation_typed(
                         &row[6].text(),
                         ConcatenatedSteps::Allow,
-                        AlternativeGridNames::Official,
+                        context.alternative_grid_names(),
                         &row[4].text(),
                     )
                     .ok(),
