@@ -4,151 +4,178 @@ Source: PROJ 9.9.0, `test/unit/test_operationfactory.cpp`, five `TEST()`s of the
 class that stayed open in `docs/PORTING-niche-io-opfactory.md` (section 5, "Spherical
 planetocentric / planetographic"). Rust side: `tests/unit_niche_ocentric.rs`.
 
-Status: one branch ported (test 1), four tests written and not traced to a fix (tests 2 to 5).
-Nothing was measured by the author: every test below is "unverified" until the coordinator
-runs it.
+Status after round 2 (coordinator run of round 1 is the reference for the failures below):
 
-## 1. PROJ functions read
+- 4 tests in the tree: `operation_spherical_ocentric_spherical_to_ellipsoidal_north_west`,
+  `operation_ellipsoidal_ographic_west_to_projected_of_ellipsoidal_ographic_west`,
+  `operation_ellipsoidal_ographic_west_to_projected_of_ellipsoidal_ocentric`,
+  `operation_ellipsoidal_ocentric_to_projected_of_ellipsoidal_ographic_west`.
+- 1 test removed: `createOperation_bound_of_spherical_ocentric_to_same_type` (section 4).
+  Its branch, `bound_of_spherical_planetocentric_operations`, is reverted.
+- No test is `#[ignore]`d. Expected strings are the C++ strings (no change needed: the
+  copies were checked against `test_operationfactory.cpp` lines 10973-11157).
 
-| PROJ file | Lines | Role |
+Nothing was run by the author: every test below is unverified until the coordinator runs it.
+
+## 1. Round 1 failures: outputs, PROJ, cause
+
+Output of the coordinator run (`coordinator-test-round1.txt`), PROJ's expected output, and
+the trace in the PROJ 9.9.0 sources. Paths are under `src/iso19111/` of PROJ.
+
+### 1.1 `..._ographic_west_to_projected_of_ellipsoidal_ographic_west` (19901 -> 19911, forward)
+
+- Ours: `axisswap +order=2,-1`, `unitconvert deg->rad`, `eqc`, `axisswap -1,2`.
+- PROJ (test line 11038-11044): `axisswap +order=-2,1`, `unitconvert deg->rad`, `eqc`, `axisswap -1,2`.
+- Cause: `Conversion::_exportToPROJString` writes the source geographic CRS before the
+  projection, inverted (`formatter->startInversion(); srcGeodCRS->_exportToPROJString();
+  stopInversion()`, `operation/conversion.cpp:3908-3915`). The geographic export is
+  `unitconvert rad->deg` then `axisswap 2,-1` (`crs.cpp:2446-2475`, `addAxisSwap` at
+  `crs.cpp:2416-2440`). Reversed and inverted, it is `axisswap -2,1` then `unitconvert deg->rad`.
+  The inverse of `2,-1` is `-2,1`, which the port did not compute.
+- Fixed in 18c61d7 (`projstring.rs`, `projection_steps`, `inverse_axis_order`).
+
+### 1.2 `..._ographic_west_to_projected_of_ellipsoidal_ocentric` (19901 -> 19912, forward)
+
+- Ours: `Format("the source CRS is not geographic")` from `projection_steps`.
+- PROJ (test lines 11071-11076): `axisswap -2,1`, `unitconvert deg->rad`, `eqc +a=2440530 +b=2438260`.
+- Trace. `createOperations(19901, 19912)` goes to `derivedDst` (`coordinateoperationfactory.cpp:3704`):
+  inverse of `createOperations(19912, 19901)`. That is `createOperationsDerivedTo` (5523-5574),
+  which adds the inverse deriving conversion (19912 -> 19902) and the operations from the base
+  19902 (spherical, planetocentric) to 19901. The spherical branch
+  (`createOperationsFromSphericalPlanetocentric`, 5410-5463) gives `geoc` 19902 -> 19901, since
+  both datums are `Mercury (2015)` (`iau.sql:128-129`). `applyInverse` then gives
+  `[inv geoc, eqc (source 19902)]`. The eqc export takes its source as a spherical CRS:
+  inverted spherical export with `geoc +a +b` (`conversion.cpp:3908-3915`). The chain's
+  pairs cancel in the pipeline cleanup: `geoc`/`inv geoc`, `unitconvert rad->deg` /
+  `unitconvert deg->rad`, `axisswap 2,1` / `axisswap 2,1`. What remains is PROJ's string.
+- Fixed in 18c61d7 (spherical source branch: `spherical_source_projection`,
+  `inverted_spherical_steps`). The cancellation was not checked by a run.
+
+### 1.3 `operation_spherical_ocentric_spherical_to_ellipsoidal_north_west` (forward)
+
+- Ours: `axisswap 2,1`, `unitconvert deg->rad`, `inv geoc +R=2440530`, `unitconvert rad->deg`, `axisswap 2,-1`.
+- PROJ (test lines 11014-11015): `axisswap +order=1,-2` (both directions).
+- Trace. Datums differ by name: `Mercury (2015) - Sphere` and `Mercury (2015)`. The non-strict
+  name comparison (`common.cpp:930-949`) fails, so `IsSameDatum` is false and the path is the
+  intermediate one (`createOperationsFromSphericalPlanetocentric`, 5440-5462). The first leg,
+  the latitude conversion spherical -> interm, is exported with `omitProjLongLatIfPossible`
+  set (`conversion.cpp:3868`), and `GeodeticCRS::_exportToPROJString` then omits `geoc` for a
+  sphere on the zero meridian without TOWGS84 (`crs.cpp:2504-2511`). Our first leg wrote
+  `geoc +R`. With that step omitted, the cleanup merges the axis swaps and cancels the unit
+  pairs, which gives `axisswap 1,-2`.
+- Fixed in 85af950 (`transform_export.rs`, `geographic_geocentric_end`, with
+  `projstring::spherical_omits_geoc`).
+
+### 1.4 `operation_ellipsoidal_ocentric_to_projected_of_ellipsoidal_ographic_west` (19902 -> 19911)
+
+Passed in round 1. Commits 18c61d7 and 85af950 change code on its path (projection source
+steps for a west source, spherical omission). Its strings are unchanged in the cases the
+coordinator saw, but it must be run again.
+
+### 1.5 `createOperation_bound_of_spherical_ocentric_to_same_type` (removed)
+
+- Ours: `Format("Invalid nature of source and/or targetCRS for Geographic/Geocentric conversion")`.
+- PROJ (test lines 10910-10920): one `helmert +x=-3 +y=-3 +z=-3` between `push +v_3`/`pop +v_3`,
+  with `geoc +ellps=GRS80` before and `geoc +ellps=clrk66` after.
+- Cause found, not fixed: the first leg's source is a bound CRS. `Conversion::_exportToPROJString`
+  takes the base of a bound CRS (`conversion.cpp:3838-3845`), and the port does not
+  (`geographic_geocentric` only reads geodetic endpoints). The port had the branch
+  `createOperationsFromBoundOfSphericalPlanetocentric` (`coordinateoperationfactory.cpp:5467-5519`).
+- Why removed. After the base is taken, the expected output still needs one `helmert +x=-3`
+  (1 - 4 from the two `+towgs84`). The path `createOperationsBoundToBound` with equal hubs
+  (`coordinateoperationfactory.cpp:6219-6244`) gives two Helmert steps, `+x=1 ...` then
+  `+inv +x=4 ...`, and this lot did not find the PROJ step that merges them. The port has no
+  merge either (`pipeline.rs`: only zero Helmert steps are dropped). The reason to believe
+  the test passes is missing, so the test and its branch (`bound_of_spherical_planetocentric_operations`,
+  and its dispatch in `factory.rs`, both from commit 9ccd5a8) are removed.
+- Next step, for a later lot: trace `createOperationsBoundToBound` (6207-6281) and the
+  `helmert` composition (if any) in `io.cpp` `PROJStringFormatter::toString`. Then port the
+  bound endpoint in `geographic_geocentric` (`conversion.cpp:3838-3845`) and the branch.
+
+## 2. Changes in this branch
+
+| Commit | Change | PROJ reference |
 |---|---|---|
-| `test/unit/test_operationfactory.cpp` | 10896-10921 | `createOperation_bound_of_spherical_ocentric_to_same_type` |
-| same | 10973-11025 | `createOperation_spherical_ocentric_spherical_to_ellipsoidal_north_west` |
-| same | 11031-11058 | `createOperation_ellipsoidal_ographic_west_to_projected_of_ellipsoidal_ographic_west` |
-| same | 11064-11089 | `createOperation_ellipsoidal_ographic_west_to_projected_of_ellipsoidal_ocentric` |
-| same | 11126-11157 | `createOperation_ellipsoidal_ocentric_to_projected_of_ellipsoidal_ographic_west` |
-| `src/iso19111/operation/coordinateoperationfactory.cpp` | 3640-3700 | `createOperations`: registry, spherical source and target, bound source and target |
-| same | 3704-3707 | `derivedDst`: inverse of the reverse call |
-| same | 5410-5463 | `createOperationsFromSphericalPlanetocentric` |
-| same | 5467-5519 | `createOperationsFromBoundOfSphericalPlanetocentric` |
-| same | 5523-5550 | `createOperationsDerivedTo` (base of a projected source) |
-| same | 6207-6244 | `createOperationsBoundToBound`, same geographic hub |
-| `src/iso19111/crs.cpp` | 1937-1950 | `GeodeticCRS::isSphericalPlanetocentric` |
-| same | 2446-2475 | `GeodeticCRS::addAngularUnitConvertAndAxisSwap` |
-| same | 2481-2532 | `GeodeticCRS::_exportToPROJString`, spherical branch (`omitProjLongLatIfPossible`) |
+| 18c61d7 | `projection_steps`: the geographic source is written inverted (`inverse_axis_order`), and a spherical planetocentric source on a spherical base is accepted (`spherical_source_projection`, `inverted_spherical_steps`, `spherical_omits_geoc`) | `conversion.cpp:3908-3915`, `crs.cpp:2416-2440`, `crs.cpp:2504-2511`, `io.cpp:10317-10355` |
+| 85af950 | `geographic_geocentric_end`: a spherical end that `spherical_omits_geoc` writes its angular unit and axis order only | `conversion.cpp:3865-3876`, `crs.cpp:2504-2511` |
+| (this commit) | removal of the bound-of-spherical case: the function and its dispatch are reverted to the state before 9ccd5a8; the test is removed | section 1.5 |
 
-## 2. Map PROJ function -> Rust function
+Earlier commit `922d23f` (sheet) and `9ccd5a8` (branch, now reverted) stay in history.
+
+## 3. Map PROJ function -> Rust function (current tree)
 
 | PROJ | Rust | State |
 |---|---|---|
 | `createOperations`, spherical source (3659) | `factory.rs` `create_candidates_at`, `geodetic_ops::spherical_planetocentric_operations` | ported before this lot |
 | `createOperations`, spherical target (3664) | `factory.rs` `create_candidates_at`, inverse | ported before this lot |
-| `createOperationsFromBoundOfSphericalPlanetocentric` (5467) | `geodetic_ops.rs` `bound_of_spherical_planetocentric_operations` | **ported here** |
-| `createOperations`, boundSrc with spherical base (3676-3684) | `factory.rs` `create_candidates_at`, call to the function above | **ported here** |
-| `createOperations`, boundDst with spherical base, source not bound (3685-3692) | `factory.rs` `create_candidates_at`, inverse of `create_candidates(target, source)` | **ported here** |
-| `createOperationsBoundToBound`, same hub (6219-6244) | `bound_ops.rs` `bound_to_bound` | ported before this lot, not changed |
 | `createOperationsDerivedTo` (5523) | `derived.rs` `derived_candidates` | ported before this lot, not changed |
+| `Conversion::_exportToPROJString`, source geodetic export inverted (3908-3915) | `projstring.rs` `projection_steps`, `inverted_spherical_steps` | **ported here** (18c61d7) |
+| `GeodeticCRS::addAxisSwap` inverted (crs.cpp:2416) | `projstring.rs` `inverse_axis_order` | **ported here** (18c61d7) |
+| `GeodeticCRS::_exportToPROJString`, sphere omits geoc (crs.cpp:2504-2511) | `projstring.rs` `spherical_omits_geoc`; `transform_export.rs` `geographic_geocentric_end` | **ported here** (18c61d7, 85af950) |
+| `createOperationsFromBoundOfSphericalPlanetocentric` (5467) | none | removed (section 1.5) |
 | `GeodeticCRS::addAngularUnitConvertAndAxisSwap` (2446) | `transform_export.rs` `angular_unit_and_axis_swap` | ported before this lot, not changed |
 
-## 3. Map PROJ `TEST()` -> Rust test
+## 4. Map PROJ `TEST()` -> Rust test (current tree)
 
 | PROJ `TEST()` | Rust test (`tests/unit_niche_ocentric.rs`) | Status |
 |---|---|---|
-| `createOperation_bound_of_spherical_ocentric_to_same_type` | `operation_bound_of_spherical_ocentric_to_same_type` | unverified (see 5.1) |
-| `createOperation_spherical_ocentric_spherical_to_ellipsoidal_north_west` | `operation_spherical_ocentric_spherical_to_ellipsoidal_north_west` | unverified, open (see 5.2) |
-| `createOperation_ellipsoidal_ographic_west_to_projected_of_ellipsoidal_ographic_west` | `operation_ellipsoidal_ographic_west_to_projected_of_ellipsoidal_ographic_west` | unverified, open (see 5.3) |
-| `createOperation_ellipsoidal_ographic_west_to_projected_of_ellipsoidal_ocentric` | `operation_ellipsoidal_ographic_west_to_projected_of_ellipsoidal_ocentric` | unverified, open (see 5.3) |
-| `createOperation_ellipsoidal_ocentric_to_projected_of_ellipsoidal_ographic_west` | `operation_ellipsoidal_ocentric_to_projected_of_ellipsoidal_ographic_west` | unverified, open (see 5.3) |
+| `createOperation_spherical_ocentric_spherical_to_ellipsoidal_north_west` | `operation_spherical_ocentric_spherical_to_ellipsoidal_north_west` | unverified; fix 85af950 (section 1.3) |
+| `createOperation_ellipsoidal_ographic_west_to_projected_of_ellipsoidal_ographic_west` | `operation_ellipsoidal_ographic_west_to_projected_of_ellipsoidal_ographic_west` | unverified; fix 18c61d7 (section 1.1) |
+| `createOperation_ellipsoidal_ographic_west_to_projected_of_ellipsoidal_ocentric` | `operation_ellipsoidal_ographic_west_to_projected_of_ellipsoidal_ocentric` | unverified; fix 18c61d7 (section 1.2) |
+| `createOperation_ellipsoidal_ocentric_to_projected_of_ellipsoidal_ographic_west` | `operation_ellipsoidal_ocentric_to_projected_of_ellipsoidal_ographic_west` | passed in round 1; re-run needed (section 1.4) |
+| `createOperation_bound_of_spherical_ocentric_to_same_type` | none (removed) | open, section 1.5 |
 
-The expected strings and WKT are copied from the C++ file. Each test checks both directions,
-as the C++ test does, except test 1, which checks the forward direction only, as its C++ test.
+Each kept test checks both directions, as its C++ test does. Expected strings are C++ strings.
 
-## 4. Changes
+## 5. Deviations
 
-- `geodetic_ops.rs`: `bound_of_spherical_planetocentric_operations`. It returns `None` unless
-  the source is a bound CRS whose base is a spherical planetocentric CRS. The steps follow
-  the C++ function:
-  1. the intermediate geographic CRS `<base name> (geographic)`, on the datum of the base,
-     in latitude/longitude degrees, with the domains of the base (`addDomains`);
-  2. the binding transformation, cloned, with its source set to the intermediate CRS
-     (`setCRSs(transf, intermGeog, transfTarget)`), and the bound CRS on the intermediate
-     CRS and the hub of the source;
-  3. the first step `geographic_geocentric_conversion(base, intermediate)` from the source
-     bound CRS to the intermediate bound CRS;
-  4. the candidates from the intermediate bound CRS to the target, each one with its
-     endpoints set (`setCRSs(opSecondClone, intermBoundCRS, targetCRS)`), concatenated after
-     the first step.
-- `factory.rs` `create_candidates_at`: the call above, placed after the bare spherical checks
-  and before `bound_candidates`, as C++ places it before its bound logic. The mirror for a
-  bound target with a spherical base takes the inverse of the reverse call, and runs only when
-  the source is not a bound CRS (C++ `else if (boundDst)`).
-- `tests/unit_niche_ocentric.rs`: five tests, one per open `TEST()`.
+- `spherical_source_projection`: a spherical source takes the ellipsoid and prime meridian of
+  the projected base (C++ takes the base's own export). The `ob_tran` pole step and the
+  `+inv +proj=longlat` clause for a source on another meridian are not written for a
+  spherical source. Only the geographic source takes them.
+- `spherical_omits_geoc` needs a datum. Without one the `geoc` step is written, and the
+  inverted export returns a format error (`a spherical CRS has no datum`). C++ reads the
+  ellipsoid through `datumNonNull`, which the port does not model.
+- Omission of `geoc` in `geographic_geocentric_end` applies to every 9602 conversion with a
+  spherical planetocentric end, since the port builds the latitude conversion as EPSG:9602
+  (`geodetic_ops::geographic_geocentric_conversion`). C++ has a separate latitude method
+  whose export sets the omit flag (`conversion.cpp:3813-3868`). Within this lot the only
+  spherical ends are built by the planetocentric path, so the two coincide.
+- The projection source of a geographic CRS is inverted in every projection export
+  (`projection_steps`). PROJ does the same at `conversion.cpp:3908-3915`, so the change is
+  faithful, not specific to this lot.
 
-## 5. Open items
+## 6. Open items
 
-### 5.1 `createOperation_bound_of_spherical_ocentric_to_same_type` (ported, unverified)
+- Section 1.5: bound CRS of a spherical base (removed test, with the trace of the Helmert merge).
+- Section 1.2 and 1.3 rely on the cleanup of the pipeline cancelling the same pairs as PROJ's
+  `PROJStringFormatter::toString`. Not checked by a run.
+- The planetographic/planetocentric derived chain (`createOperationsDerivedTo` with a
+  spherical base) was matched for one test each, not in general.
 
-The C++ result is one `helmert +x=-3 +y=-3 +z=-3`. The two bound CRS have 1,2,3 and 4,5,6 to
-WGS 84, so `-3 = 1 - 4` is a single Helmert with a push/pop around it. In C++ the same-hub branch
-of `createOperationsBoundToBound` builds two operations, the source to WGS 84 and WGS 84 to the
-target, and concatenates them. The expected string therefore assumes that the two Helmert
-steps are merged when the pipeline is written. This is not traced: the Rust export of a
-concatenation of two Helmert steps has to be checked. If it does not merge them, the test
-fails on the step list, and the cause is that merge, not the new branch.
+## 7. Callers at risk
 
-Deviation: the target of the binding transformation is the target of the transformation
-(`transfTarget`), with the hub as fallback. The intermediate CRS has the domains of the base,
-as `addDomains` gives it. The spherical branch (`spherical_planetocentric_operations`) does not
-copy them, as its sheet records.
+- `projstring.rs` `projection_steps`: every projection with a geographic source. Only sources
+  whose inverted axis order differs from the order (a west or south first axis, such as
+  `2,-1` or `-1,2`) change; `2,1` and `1,2` are self-inverse. Grep of `tests/` and `src/`
+  finds no expectation of the old order (`order=2,-1` appears only in the new test file and
+  in `pipeline/tests.rs`, which tests the cleanup, not this export).
+- `projection_steps` for a spherical source: previously an error (`the source CRS is not
+  geographic`), now steps. Any candidate that was dropped because of this error can now
+  appear. Not checked by a run; the coordinator's full run of `cargo test --all-features`
+  is the check.
+- `geographic_geocentric_end`: a 9602 conversion with a sphere end on the zero meridian now
+  omits `geoc`. Grep of `tests/` finds no expectation of a spherical `geoc`; the WGS 84
+  spherical tests use a non-sphere ellipsoid and are unchanged.
 
-### 5.2 `createOperation_spherical_ocentric_spherical_to_ellipsoidal_north_west` (open)
-
-The expected string is only `+proj=axisswap +order=1,-2`, in both directions. The source and
-target are on the same body with different ellipsoids: a sphere of radius 2440530 (`Mercury
-(2015) - Sphere`) and the IAU ellipsoid with inverse flattening 1075.12 (`Mercury (2015)`).
-PROJ reaches the axis swap alone, so every other step of the path cancels or is omitted.
-
-The Rust path is `spherical_planetocentric_operations`, with `same_geodetic_datum` as the
-C++ `IsSameDatum`. The Rust export of a spherical end writes `geoc` unconditionally
-(`transform_export.rs`, `geodetic_export`, the `Geodetic::Spherical` arm). The C++ spherical
-export omits `geoc` for a sphere with zero prime meridian and no `towgs84` (`crs.cpp:2504-2511`,
-`omitProjLongLatIfPossible`). Whether that C++ rule also applies to the conversion's end is not
-traced here. This is the first thing to check. Next step: print the Rust steps for both
-directions, then compare with the steps of the C++ `createOperationsFromSphericalPlanetocentric`
-on the same pair.
-
-### 5.3 The four IAU planetographic/planetocentric projected cases (open)
-
-IAU_2015 `19901` is ellipsoidal with latitude and west-positive longitude. `19902` is
-spherical planetocentric (`GEODCRS`, no PROJ string export: `crs.cpp:2515`). `19911` is an
-equirectangular projection on `19901`. `19912` is the same projection on `19902`.
-
-- `19901 -> 19911` (test 3) is the deriving conversion of the target, with the source equal to
-  its base. The expected string has the west swap `-2,1` before and `-1,2` after the projection.
-- `19901 -> 19912` (test 4) and `19902 -> 19911` (test 5): the target base is not the source,
-  so PROJ goes through `derivedDst` (3704), the inverse of the reverse call, and then
-  `createOperationsDerivedTo` (5523), with the base of the projected CRS. The expected strings
-  show that the planetocentric base of `19912` adds no geocentric step on the ographic side
-  (test 4), and that the ocentric side of test 5 does add `inv geoc`.
-
-What is not known: whether the Rust derived path (`derived.rs`, `derived_candidates`) takes
-the spherical base of a projected CRS through `spherical_planetocentric_operations` as the
-C++ `createOperationsDerivedTo` does, and whether the west axis of the base gives the same
-`axisswap` steps. Neither was traced, and no change was made for these tests.
-
-Existing test `operation_create_operation_ellipsoidal_ocentric_to_projected_of_ellipsoidal_ocentric`
-(`tests/unit_opfac_core_c_bound3.rs`) covers the `19902 -> 19912` pair, which passes per its
-sheet (`docs/PORTING-lotc-bound3.md`). Its path is the one to compare against for tests 4 and 5.
-
-## 6. Callers at risk
-
-- `factory.rs` `create_candidates_at`: the new call applies to any source that is a bound CRS
-  with a spherical planetocentric base, and the mirror to any non-bound source with a bound
-  target of that kind. Grep of `tests/` and `src/iso19111/` finds no existing test with a bound
-  CRS on a spherical base: the only spherical PROJ strings in the tests are
-  `tests/unit_op_spherical_ocentric.rs` (no bound CRS) and `tests/unit_opfac_core_c_bound3.rs`
-  (projected CRS on a spherical base, no bound CRS). So no passing test should change, but
-  this is by grep, not by run.
-- `bound_ops.rs` `bound_candidates`: no longer reached for a bound CRS with a spherical base.
-- `geodetic_ops.rs` `spherical_planetocentric_operations`: unchanged. It is the one that the
-  intermediate of test 1 is built like.
-
-## 7. Verification
+## 8. Verification
 
 ```text
-cargo fmt -- src/iso19111/geodetic_ops.rs src/iso19111/factory.rs tests/unit_niche_ocentric.rs
+cargo fmt -- <touched files>
 node S:/Helix_Aero/lab/helix-cockpit/tools/devhub.mjs run --kind build -- cargo check -p proj-rs --tests
-  -> job 3823: succeeded in 23 s, no warning in the log
+  -> job 3841 (18c61d7): succeeded, no warning
+  -> job 3848 (85af950): succeeded, no warning
+  -> job 3849 (final tree, test removed, code reverted): succeeded, no warning
 ```
 
 Tests written, not run by the author: the coordinator runs them.
