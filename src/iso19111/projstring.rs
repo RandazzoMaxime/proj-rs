@@ -454,8 +454,12 @@ impl ProjectedCRS {
 pub(crate) fn operation_proj_string(source: &Crs, target: &Crs) -> Result<String, FactoryError> {
     let steps = projection_steps(source, target)?;
     // Geographic steps cancel inverse unit conversions and fold axis swaps.
-    // A projected or geocentric pipeline is already the text PROJ prints.
-    if geographic_of(target).is_some() {
+    // A projected or geocentric pipeline is already the text PROJ prints, unless it holds an
+    // inverted axis swap, which PROJ prints in its normal form (io.cpp:8938-8952).
+    let inverted_swap = steps
+        .iter()
+        .any(|step| step.starts_with("+inv +proj=axisswap"));
+    if geographic_of(target).is_some() || inverted_swap {
         let mut formatter = super::pipeline::PipelineFormatter::default();
         for step in &steps {
             formatter.ingest_proj_string(step);
@@ -597,6 +601,9 @@ pub(crate) fn projection_steps(source: &Crs, target: &Crs) -> Result<Vec<String>
     if let Some(steps) = topocentric_steps(source, projected)? {
         return Ok(steps);
     }
+    if let Crs::Geodetic(GeodeticCRS::Spherical(spherical)) = source {
+        return spherical_source_projection(spherical, projected);
+    }
     let Some(geographic) = geographic_of(source) else {
         return Err(FactoryError::Format(
             "the source CRS is not geographic".to_owned(),
@@ -613,9 +620,11 @@ pub(crate) fn projection_steps(source: &Crs, target: &Crs) -> Result<Vec<String>
             ));
         }
     };
+    // The source is written inverted, before the projection (`Conversion::_exportToPROJString`,
+    // conversion.cpp:3908-3915), see `source_axis_swap` for the axis swap.
     let mut steps = Vec::new();
     if let Some(order) = geographic_axis_order(geographic) {
-        steps.push(format!("+proj=axisswap +order={order}"));
+        steps.push(source_axis_swap(&order));
     }
     if let Some(step) = angular_unit_step(geographic) {
         steps.push(step);
@@ -648,6 +657,111 @@ pub(crate) fn projection_steps(source: &Crs, target: &Crs) -> Result<Vec<String>
         steps.push(format!("+proj=axisswap +order={order}"));
     }
     Ok(steps)
+}
+
+/// A projection of a spherical planetocentric source, on a spherical base. The source is written
+/// inverted before the projection, as in [`projection_steps`], then the projection on the base
+/// ellipsoid and prime meridian, then the projected unit and axis order.
+///
+/// Not ported: the `ob_tran` pole step and the longitude clause of a source on another meridian
+/// (`+inv +proj=longlat`), which only a geographic source takes.
+fn spherical_source_projection(
+    spherical: &SphericalGeodeticCRS,
+    projected: &ProjectedCRS,
+) -> Result<Vec<String>, FactoryError> {
+    let base = projected.base_crs();
+    if !matches!(base, GeodeticCRS::Spherical(_)) {
+        return Err(FactoryError::Format(
+            "the projected CRS base is not spherical".to_owned(),
+        ));
+    }
+    let mut steps = inverted_spherical_steps(spherical)?;
+    // The spherical source is written inverted as well (see `inverted_spherical_steps`).
+    let mut projection = projected.deriving_conversion().export_to_proj_string()?;
+    if let Some(ellipsoid) = base.ellipsoid() {
+        projection.push(' ');
+        projection.push_str(&ellipsoid_proj(ellipsoid));
+    }
+    if let Some(clause) = base
+        .datum()
+        .and_then(|frame| prime_meridian_proj(frame.prime_meridian()))
+    {
+        projection.push(' ');
+        projection.push_str(&clause);
+    }
+    steps.push(projection);
+    if let Some(step) = projected_unit_step(projected) {
+        steps.push(step);
+    }
+    if let Some(order) = projected_axis_order(projected) {
+        steps.push(format!("+proj=axisswap +order={order}"));
+    }
+    Ok(steps)
+}
+
+/// `GeodeticCRS::_exportToPROJString` of a spherical planetocentric CRS, inverted, the way
+/// `Conversion::_exportToPROJString` writes it (conversion.cpp:3908-3915): the axis swap, the
+/// degrees to radians, then `geoc` with its ellipsoid and prime meridian. `geoc` is omitted when
+/// [`spherical_omits_geoc`] holds.
+fn inverted_spherical_steps(spherical: &SphericalGeodeticCRS) -> Result<Vec<String>, FactoryError> {
+    let axes = spherical.coordinate_system.axes();
+    let Some(first) = axes.first() else {
+        return Err(FactoryError::Format(
+            "a spherical CRS has no axis".to_owned(),
+        ));
+    };
+    let to_radians = match angular_proj_unit(first.unit().conversion_to_si()) {
+        Some("deg") => "+proj=unitconvert +xy_in=deg +xy_out=rad",
+        Some("grad") => "+proj=unitconvert +xy_in=grad +xy_out=rad",
+        _ => {
+            return Err(FactoryError::Format(
+                "a spherical CRS is exported only in degrees or grads".to_owned(),
+            ));
+        }
+    };
+    let mut steps = Vec::new();
+    if let Some(order) = axis_order_text(axes) {
+        steps.push(source_axis_swap(&order));
+    }
+    steps.push(to_radians.to_owned());
+    if !spherical_omits_geoc(spherical) {
+        let Some(frame) = spherical.datum.as_ref() else {
+            return Err(FactoryError::Format(
+                "a spherical CRS has no datum".to_owned(),
+            ));
+        };
+        let mut geoc = format!("+inv +proj=geoc {}", ellipsoid_proj(frame.ellipsoid()));
+        if let Some(clause) = prime_meridian_proj(frame.prime_meridian()) {
+            geoc.push(' ');
+            geoc.push_str(&clause);
+        }
+        steps.push(geoc);
+    }
+    Ok(steps)
+}
+
+/// The axis swap of a source CRS, written inverted as `Conversion::_exportToPROJString` writes
+/// it (conversion.cpp:3908-3915). A swap that is its own inverse (`2,1`, `1,-2`) is written
+/// plainly, since PROJ's normal form of its inverse is the same (io.cpp:8938-8941). Any other
+/// order stays inverted, as PROJ stores it: its normal form differs (`inv 2,-1` is `-2,1`,
+/// io.cpp:8947-8952), and an inverse conversion that inverts these steps again must read back
+/// `2,-1`, which only the stored inverted form allows.
+fn source_axis_swap(order: &str) -> String {
+    if matches!(order, "2,1" | "1,-2") {
+        format!("+proj=axisswap +order={order}")
+    } else {
+        format!("+inv +proj=axisswap +order={order}")
+    }
+}
+
+/// Whether `GeodeticCRS::_exportToPROJString` omits `geoc` and the datum of a spherical
+/// planetocentric CRS: the longitude rotation is omitted when possible, which needs a sphere on
+/// the zero meridian (crs.cpp:2504-2511). The formatter's TOWGS84 and horizontal datum
+/// extensions are not set in these exports, so they do not count.
+pub(crate) fn spherical_omits_geoc(spherical: &SphericalGeodeticCRS) -> bool {
+    spherical.datum.as_ref().is_some_and(|frame| {
+        frame.ellipsoid().is_sphere() && prime_meridian_params(frame.prime_meridian()).is_none()
+    })
 }
 
 /// Axis order and angular unit from `source` into the axes of `target`.

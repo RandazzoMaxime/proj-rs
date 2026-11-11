@@ -38,7 +38,7 @@ use super::pipeline::{proj_number, PipelineFormatter, ProjLines};
 use super::projstring::{
     ellipsoid_of, ellipsoid_params, geodetic_member, geographic_of, meridian_of,
     prime_meridian_params, prime_meridian_radians_params, proj_unit_name, projected_axis_order,
-    well_known_pm_name,
+    spherical_omits_geoc, well_known_pm_name,
 };
 
 const YEAR: f64 = 31_556_925.445;
@@ -1506,7 +1506,9 @@ fn geographic_geocentric(
 }
 
 /// One end of a geographic/geocentric conversion. A geographic end with a zero prime
-/// meridian writes only its angular unit and axis order, not `longlat`.
+/// meridian writes only its angular unit and axis order, not `longlat`. A spherical
+/// planetocentric end omits `geoc` when `spherical_omits_geoc` holds, as the latitude
+/// conversion's export does (conversion.cpp:3868, crs.cpp:2504-2511).
 fn geographic_geocentric_end(
     geodetic: Geodetic<'_>,
     formatter: &mut PipelineFormatter,
@@ -1520,6 +1522,9 @@ fn geographic_geocentric_end(
             } else {
                 geodetic_export(geodetic, formatter)
             }
+        }
+        Geodetic::Spherical(spherical) if spherical_omits_geoc(spherical) => {
+            angular_unit_and_axis_swap(spherical.coordinate_system.axes(), formatter)
         }
         other => geodetic_export(other, formatter),
     }
