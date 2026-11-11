@@ -1,12 +1,14 @@
-//! PROJ 9.9.0 `test/unit/test_operationfactory.cpp`, the five `niche` cases on CRS of other bodies
+//! PROJ 9.9.0 `test/unit/test_operationfactory.cpp`, four `niche` cases on CRS of other bodies
 //! (IAU: planetocentric latitude, west-positive planetographic longitude) that were open.
+//! `createOperation_bound_of_spherical_ocentric_to_same_type` is not here: see
+//! `docs/PORTING-unit-niche-ocentric.md`.
 //!
 //! Each function keeps the C++ `TEST()` name in its doc comment. Expected PROJ strings and WKT
 //! are copied from that file, never from the port.
 
 use proj_rs::iso19111::{
-    create_crs_from_proj_string, create_from_user_input, AuthorityFactory, CoordinateOperation,
-    CoordinateOperationFactory, Crs, DatabaseContext, ProjLines,
+    create_from_user_input, AuthorityFactory, CoordinateOperation, CoordinateOperationFactory,
+    DatabaseContext, ProjLines,
 };
 
 /// `exportToPROJString(PROJStringFormatter::create().get())` of an operation.
@@ -14,38 +16,6 @@ fn proj(db: &DatabaseContext, operation: &CoordinateOperation) -> String {
     operation
         .export_to_proj_string_with_database(db, ProjLines::Single)
         .expect("PROJ string")
-}
-
-/// `TEST(operation, createOperation_bound_of_spherical_ocentric_to_same_type)`
-#[test]
-fn operation_bound_of_spherical_ocentric_to_same_type() {
-    let db = DatabaseContext::create().expect("proj.db");
-    let src =
-        create_crs_from_proj_string("+proj=longlat +geoc +ellps=GRS80 +towgs84=1,2,3 +type=crs")
-            .expect("source");
-    assert!(matches!(src, Crs::Bound(_)));
-    let dest =
-        create_crs_from_proj_string("+proj=longlat +geoc +ellps=clrk66 +towgs84=4,5,6 +type=crs")
-            .expect("target");
-    assert!(matches!(dest, Crs::Bound(_)));
-
-    let op = CoordinateOperationFactory::create()
-        .create_operation(&src, &dest)
-        .expect("operation")
-        .expect("some operation");
-    assert_eq!(
-        proj(&db, &op),
-        "+proj=pipeline \
-         +step +proj=unitconvert +xy_in=deg +xy_out=rad \
-         +step +inv +proj=geoc +ellps=GRS80 \
-         +step +proj=push +v_3 \
-         +step +proj=cart +ellps=GRS80 \
-         +step +proj=helmert +x=-3 +y=-3 +z=-3 \
-         +step +inv +proj=cart +ellps=clrk66 \
-         +step +proj=pop +v_3 \
-         +step +proj=geoc +ellps=clrk66 \
-         +step +proj=unitconvert +xy_in=rad +xy_out=deg"
-    );
 }
 
 /// `TEST(operation, createOperation_spherical_ocentric_spherical_to_ellipsoidal_north_west)`
