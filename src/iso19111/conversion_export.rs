@@ -146,13 +146,14 @@ fn export_projection(
     // A compound CRS stands for its first component (`horiz` of `Conversion::_exportToPROJString`,
     // conversion.cpp:3886-3900 and 4420-4428): the factory sets compound CRS on the conversion
     // of a compound's horizontal part.
+    // A bound first component stands for its base (`boundCRS->baseCRS()`, conversion.cpp:3896-3900).
     let horizontal = |crs: &'_ Crs| -> Crs {
         match crs {
-            Crs::Compound(compound) => compound
-                .components()
-                .first()
-                .cloned()
-                .unwrap_or_else(|| crs.clone()),
+            Crs::Compound(compound) => match compound.components().first() {
+                Some(Crs::Bound(bound)) => bound.source_crs().clone(),
+                Some(first) => first.clone(),
+                None => crs.clone(),
+            },
             other => other.clone(),
         }
     };
