@@ -55,12 +55,12 @@ fn capi_proj_normalize_for_visualization_with_alternatives() {
     let (x, y) = proj
         .convert((12.5_f64, 42.0_f64))
         .expect("forward, approximately Roma");
-    assert!((x - 1_789_912.462_647_830_37).abs() < 1e-8, "x = {x}");
-    assert!((y - 4_655_716.254_025_768_49).abs() < 1e-8, "y = {y}");
+    assert!((x - 1_789_912.462_647_830_4).abs() < 1e-8, "x = {x}");
+    assert!((y - 4_655_716.254_025_768_5).abs() < 1e-8, "y = {y}");
 
     let (lon, lat) = proj
         .project(
-            (1_789_912.462_647_830_37_f64, 4_655_716.254_025_768_49_f64),
+            (1_789_912.462_647_830_4_f64, 4_655_716.254_025_768_5_f64),
             true,
         )
         .expect("inverse, approximately Roma");
@@ -77,7 +77,7 @@ fn capi_proj_normalize_for_visualization_with_alternatives_reverse() {
     assert!(proj.degree_output(Direction::Forward));
 
     let (lon, lat) = proj
-        .convert((1_789_912.462_647_830_37_f64, 4_655_716.254_025_768_49_f64))
+        .convert((1_789_912.462_647_830_4_f64, 4_655_716.254_025_768_5_f64))
         .expect("forward, approximately Roma");
     assert!((lon - 12.5).abs() < 1e-8, "lon = {lon}");
     assert!((lat - 42.0).abs() < 1e-8, "lat = {lat}");
