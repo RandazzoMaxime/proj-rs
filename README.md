@@ -261,6 +261,14 @@ Unknown projection:     true
 
 This is [`examples/quickstart.rs`](examples/quickstart.rs).
 
+Two things `Proj` has beyond the georust surface, both from PROJ's C API:
+
+- `convert_xyzt(x, y, z, t)` gives the time of the point (decimal years) to a
+  time-dependent operation, such as a Helmert with `+t_epoch` or a deformation
+  model. `convert_xyz` is the same at `t = 0`, as `proj_trans_generic` does.
+- `degree_input(direction)` and `degree_output(direction)` say whether the
+  transform reads and writes degrees (`proj_degree_input`, `proj_degree_output`).
+
 ### On the command line
 
 `cs2cs`, `cct`, `proj` and `projinfo` are thin binaries over the library and
