@@ -597,6 +597,9 @@ pub(crate) fn projection_steps(source: &Crs, target: &Crs) -> Result<Vec<String>
     if let Some(steps) = topocentric_steps(source, projected)? {
         return Ok(steps);
     }
+    if let Crs::Geodetic(GeodeticCRS::Spherical(spherical)) = source {
+        return spherical_source_projection(spherical, projected);
+    }
     let Some(geographic) = geographic_of(source) else {
         return Err(FactoryError::Format(
             "the source CRS is not geographic".to_owned(),
@@ -613,9 +616,14 @@ pub(crate) fn projection_steps(source: &Crs, target: &Crs) -> Result<Vec<String>
             ));
         }
     };
+    // The source is written inverted, before the projection (`Conversion::_exportToPROJString`,
+    // conversion.cpp:3908-3915): `unitconvert` and the axis swap of the geographic CRS, each
+    // reversed, so the swap of a west or south first axis reads back its inverse.
     let mut steps = Vec::new();
     if let Some(order) = geographic_axis_order(geographic) {
-        steps.push(format!("+proj=axisswap +order={order}"));
+        if let Some(inverse) = inverse_axis_order(&order) {
+            steps.push(format!("+proj=axisswap +order={inverse}"));
+        }
     }
     if let Some(step) = angular_unit_step(geographic) {
         steps.push(step);
@@ -648,6 +656,112 @@ pub(crate) fn projection_steps(source: &Crs, target: &Crs) -> Result<Vec<String>
         steps.push(format!("+proj=axisswap +order={order}"));
     }
     Ok(steps)
+}
+
+/// A projection of a spherical planetocentric source, on a spherical base. The source is written
+/// inverted before the projection, as in [`projection_steps`], then the projection on the base
+/// ellipsoid and prime meridian, then the projected unit and axis order.
+///
+/// Not ported: the `ob_tran` pole step and the longitude clause of a source on another meridian
+/// (`+inv +proj=longlat`), which only a geographic source takes.
+fn spherical_source_projection(
+    spherical: &SphericalGeodeticCRS,
+    projected: &ProjectedCRS,
+) -> Result<Vec<String>, FactoryError> {
+    let base = projected.base_crs();
+    if !matches!(base, GeodeticCRS::Spherical(_)) {
+        return Err(FactoryError::Format(
+            "the projected CRS base is not spherical".to_owned(),
+        ));
+    }
+    let mut steps = inverted_spherical_steps(spherical)?;
+    let mut projection = projected.deriving_conversion().export_to_proj_string()?;
+    if let Some(ellipsoid) = base.ellipsoid() {
+        projection.push(' ');
+        projection.push_str(&ellipsoid_proj(ellipsoid));
+    }
+    if let Some(clause) = base
+        .datum()
+        .and_then(|frame| prime_meridian_proj(frame.prime_meridian()))
+    {
+        projection.push(' ');
+        projection.push_str(&clause);
+    }
+    steps.push(projection);
+    if let Some(step) = projected_unit_step(projected) {
+        steps.push(step);
+    }
+    if let Some(order) = projected_axis_order(projected) {
+        steps.push(format!("+proj=axisswap +order={order}"));
+    }
+    Ok(steps)
+}
+
+/// `GeodeticCRS::_exportToPROJString` of a spherical planetocentric CRS, inverted, the way
+/// `Conversion::_exportToPROJString` writes it (conversion.cpp:3908-3915): the axis swap, the
+/// degrees to radians, then `geoc` with its ellipsoid and prime meridian. `geoc` is omitted when
+/// [`spherical_omits_geoc`] holds.
+fn inverted_spherical_steps(spherical: &SphericalGeodeticCRS) -> Result<Vec<String>, FactoryError> {
+    let axes = spherical.coordinate_system.axes();
+    let Some(first) = axes.first() else {
+        return Err(FactoryError::Format(
+            "a spherical CRS has no axis".to_owned(),
+        ));
+    };
+    let to_radians = match angular_proj_unit(first.unit().conversion_to_si()) {
+        Some("deg") => "+proj=unitconvert +xy_in=deg +xy_out=rad",
+        Some("grad") => "+proj=unitconvert +xy_in=grad +xy_out=rad",
+        _ => {
+            return Err(FactoryError::Format(
+                "a spherical CRS is exported only in degrees or grads".to_owned(),
+            ));
+        }
+    };
+    let mut steps = Vec::new();
+    if let Some(order) = axis_order_text(axes) {
+        if let Some(inverse) = inverse_axis_order(&order) {
+            steps.push(format!("+proj=axisswap +order={inverse}"));
+        }
+    }
+    steps.push(to_radians.to_owned());
+    if !spherical_omits_geoc(spherical) {
+        let Some(frame) = spherical.datum.as_ref() else {
+            return Err(FactoryError::Format(
+                "a spherical CRS has no datum".to_owned(),
+            ));
+        };
+        let mut geoc = format!("+inv +proj=geoc {}", ellipsoid_proj(frame.ellipsoid()));
+        if let Some(clause) = prime_meridian_proj(frame.prime_meridian()) {
+            geoc.push(' ');
+            geoc.push_str(&clause);
+        }
+        steps.push(geoc);
+    }
+    Ok(steps)
+}
+
+/// Whether `GeodeticCRS::_exportToPROJString` omits `geoc` and the datum of a spherical
+/// planetocentric CRS: the longitude rotation is omitted when possible, which needs a sphere on
+/// the zero meridian (crs.cpp:2504-2511). The formatter's TOWGS84 and horizontal datum
+/// extensions are not set in these exports, so they do not count.
+pub(crate) fn spherical_omits_geoc(spherical: &SphericalGeodeticCRS) -> bool {
+    spherical.datum.as_ref().is_some_and(|frame| {
+        frame.ellipsoid().is_sphere() && prime_meridian_params(frame.prime_meridian()).is_none()
+    })
+}
+
+/// The order of an `axisswap` that undoes `order`. Output `k` of `order` is the input
+/// `|order[k]|`, negated when the sign is minus, so the inverse reads each input back from
+/// the output that carries it: `2,-1` is undone by `-2,1`.
+pub(crate) fn inverse_axis_order(order: &str) -> Option<String> {
+    let (first, second) = order.split_once(',')?;
+    let slots = [first.parse::<i32>().ok()?, second.parse::<i32>().ok()?];
+    let mut inverse = [0_i32; 2];
+    for (output, slot) in slots.iter().enumerate() {
+        let input = usize::try_from(slot.abs() - 1).ok()?;
+        *inverse.get_mut(input)? = (i32::try_from(output).ok()? + 1) * slot.signum();
+    }
+    Some(format!("{},{}", inverse[0], inverse[1]))
 }
 
 /// Axis order and angular unit from `source` into the axes of `target`.
