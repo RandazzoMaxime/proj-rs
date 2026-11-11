@@ -53,7 +53,6 @@ and `PORT-NOTES-tests.md`.
 ## test_operationfactory.cpp
 
 - `operation.geog3DCRS_to_geog2DCRS_plus_vertCRS_context`
-- `operation.geogCRS_to_geogCRS_init_IGNF_to_init_IGNF_context`
 - `operation.boundCRS_to_geogCRS_hubCRS_and_targetCRS_same_but_baseCRS_not`
 - `operation.boundCRS_to_derived_geog_with_transformation_with_source_crs_being_base_crs_of_source_crs`
 - `operation.nadgrids_with_pm`
@@ -64,7 +63,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.compoundCRS_to_compoundCRS_concatenated_operation_with_two_vert_transformation`
 - `operation.compoundCRS_to_compoundCRS_issue_3152_ch1903lv03_ln02_bound`
 - `operation.compoundCRS_to_compoundCRS_with_derivedVerticalCRS_ellipsoidal_height`
-- `operation.compoundCRS_to_proj_string_with_non_metre_height`
 - `operation.compoundCRS_with_derived_vertical_CRS`
 - `operation.compoundCRS_to_PROJJSON_with_non_metre_height`
 - `operation.createOperation_ossfuzz_18587`
