@@ -1,163 +1,139 @@
 # Porting sheet: three PROJ strings of concatenated operations (lot `unit-op-string-exports`)
 
-Branch `unit-op-string-exports`, base `origin/main`. Status: the three rows are still open. No
-code is changed and no test is added in this round. The reference PROJ 9.9.0 was used (round 2)
-to read the candidates and their PROJ strings. It located the difference for each row, but not
-yet the C++ function that causes it in the port. No draft test is committed: a draft that fails
-is not committed (lot rules), and the port of the missing branch was not identified.
+Branch `unit-op-string-exports`, base `origin/main`. Round 3 (coordinator round 2 probes).
 
-Open rows of `docs/UNPORTED-UNIT.md`, all three still listed there:
+## Status
 
-| PROJ `TEST()` | Ours (as the status of round 1 recorded it) | PROJ 9.9.0 |
-|---|---|---|
-| `operation.nadgrids_with_pm` | 25 tokens, with `+step +proj=longlat +ellps=intl +pm=lisbon` after `+inv +proj=tmerc` | 21 tokens, no longlat step |
-| `operation.ETRS89_3D_to_proj_string_with_geoidgrids_nadgrids` | first `unitconvert` is `+xy_in=deg +xy_out=rad` | `+xy_in=deg +z_in=m +xy_out=rad +z_out=m` |
-| `operation.boundCRS_to_geogCRS_hubCRS_and_targetCRS_same_but_baseCRS_not` | `+proj=unitconvert +z_in=us-ft +z_out=m` | `+proj=unitconvert +xy_in=deg +z_in=us-ft +xy_out=deg +z_out=m` |
+| Row | Status |
+|---|---|
+| `operation.nadgrids_with_pm` | Part closed: first assertion (EPSG:4326). Test `tests/unit_op_nadgrids_with_pm.rs`, commit `528e5fa`. The EPSG:4258 assertion and the WKT2 round trip are open (probe below). |
+| `operation.ETRS89_3D_to_proj_string_with_geoidgrids_nadgrids` | Open. First differing step found; C++ writer not yet ported. |
+| `operation.boundCRS_to_geogCRS_hubCRS_and_targetCRS_same_but_baseCRS_not` | Open. First differing step found; caller not yet identified. |
 
-Reference commands (`ref.ps1` in the brief directory, which runs PROJ 9.9.0). They are the
-options that match the C++ context of each `TEST()`; the Rust-side counterpart is the probe
-`port-scratch/unit-op-string-exports/probe_unit_op_strings.rs` (not in the tree).
-
-- Row 1, `nadgrids_with_pm`: source `+proj=tmerc +lat_0=39.66666666666666 +lon_0=1 +k=1 +x_0=200000
-  +y_0=300000 +ellps=intl +nadgrids=foo.gsb +pm=lisbon +units=m +type=crs`, target `EPSG:4326`, with
-  `--spatial-test intersects --grid-check none`. The C++ context is the default one (no grid option),
-  so `--grid-check none` is the closest option; the grid `foo.gsb` is absent in both.
-- Row 2, `ETRS89_3D_to_proj_string_with_geoidgrids_nadgrids`: source `EPSG:4937`, target the
-  `+proj=sterea ... +nadgrids=rdtrans2008.gsb +geoidgrids=naptrans2008.gtx +geoid_crs=horizontal_crs +units=m +type=crs`
-  string, same options.
-- Row 3, `boundCRS_to_geogCRS_...`: source the WKT `COMPD_CS["NAD83 + Ellipsoid (US Feet)", ...]` of
-  the test, target `EPSG:4979`, `--spatial-test intersects --grid-check none` (the C++ context is
-  `IGNORE_GRID_AVAILABILITY` + `PARTIAL_INTERSECTION`).
+The rows stay in `docs/UNPORTED-UNIT.md` until the coordinator updates the ledger. Commits of this
+lot: `8ec9629`, `461c755` (sheets), `528e5fa` (test). Compile of `528e5fa`:
+`devhub run --kind build -- cargo check -p proj-rs --tests`, job 3868, succeeded.
 
 ## Row 1: `operation.nadgrids_with_pm` (test_operationfactory.cpp:4044-4098)
 
-### Reference (PROJ 9.9.0)
+Source `+proj=tmerc +lat_0=39.66666666666666 +lon_0=1 +k=1 +x_0=200000 +y_0=300000 +ellps=intl
++nadgrids=foo.gsb +pm=lisbon +units=m +type=crs`.
 
-- Candidates: 1. Name: `Inverse of unknown + Transformation from unknown to unknown (with Greenwich
-  prime meridian) + unknown (with Greenwich prime meridian) to WGS84`, has ballpark, grid missing.
-- PROJ string (equal to the first assertion of the test, 21 tokens):
-  `+proj=pipeline +step +inv +proj=tmerc +lat_0=39.6666666666667 +lon_0=1 +k=1 +x_0=200000 +y_0=300000
-  +ellps=intl +pm=lisbon +step +proj=hgridshift +grids=foo.gsb +step +proj=unitconvert +xy_in=rad +xy_out=deg
-  +step +proj=axisswap +order=2,1`.
-- The longitude rotation on its own (lisbon geographic to Greenwich copy, `projinfo -s "+proj=longlat
-  +ellps=intl +pm=lisbon +type=crs" -t "+proj=longlat +ellps=intl +type=crs"`) is written in full:
-  `+step +proj=unitconvert +xy_in=deg +xy_out=rad +step +inv +proj=longlat +ellps=intl +pm=lisbon
-  +step +proj=unitconvert +xy_in=rad +xy_out=deg`. So PROJ does write the rotation as an inverse
-  `longlat` with `+pm=lisbon` (singleoperation.cpp:4844-4872, the branch where the well-known name
-  is taken from the offset itself, `PrimeMeridian::_exportToPROJString`).
-- The same tmerc without nadgrids, to EPSG:4326, gives `+proj=pipeline +step +inv +proj=tmerc ...
-  +pm=lisbon +step +proj=unitconvert +xy_in=rad +xy_out=deg +step +proj=axisswap +order=2,1`:
-  the rotation to the WGS 84 meridian is absent from the string, while its candidate name is
-  `Inverse of unknown + Transformation from unknown to unknown altered to use prime meridian of WGS 84 + ...`.
-- The reverse, longlat with lisbon to the tmerc, keeps the rotation: `+step +proj=unitconvert
-  +xy_in=deg +xy_out=rad +step +inv +proj=longlat +ellps=intl +pm=lisbon +step +proj=tmerc ... +pm=lisbon`.
+| Assertion | Port (coordinator probe, round 2) | PROJ 9.9.0 (`projinfo ... -o PROJ`) | Status |
+|---|---|---|---|
+| EPSG:4326, line 4058-4065 | `+proj=pipeline +step +inv +proj=tmerc +lat_0=39.6666666666667 +lon_0=1 +k=1 +x_0=200000 +y_0=300000 +ellps=intl +pm=lisbon +step +proj=hgridshift +grids=foo.gsb +step +proj=unitconvert +xy_in=rad +xy_out=deg +step +proj=axisswap +order=2,1`, 1 candidate | same string, 1 candidate | equal; test committed (`528e5fa`) |
+| EPSG:4258, line 4067-4079 (`ASSERT_GE(list.size(), 1)`) | not measured | same expected string | open, probe `probe_row1_rest_4258_and_wkt` |
+| WKT2_2019 round trip, line 4081-4097 | not measured | same expected string | open, same probe |
 
-### What the port does (C++ and Rust read, not run)
+Why the earlier round said "25 tokens with a longlat step": that was the output of a draft of the whole
+TEST(), not of the first assertion. The current port gives the reference string for EPSG:4326.
+The reference evidence on the rotation (lisbon to Greenwich, `inv longlat +pm=lisbon`) is in the
+round-2 version of this sheet, commit `461c755`.
 
-- Simplification rules of the PROJ formatter (io.cpp:8895-9428, read in full for the unit and axis
-  rules): none mentions `pm`. The only `longlat` rule (io.cpp:9018-9025) removes a `longlat` that has
-  only `ellps`; the rotation has `ellps` and `pm`, so that rule does not remove it.
-- The rotation is therefore dropped before the string is written, or by the export of the inverse
-  tmerc: `Conversion::_exportToPROJString` (conversion.cpp:3768-3920) exports the base geographic CRS
-  of the projected CRS (`setOmitProjLongLatIfPossible(true)`, conversion.cpp:3910-3914), and
-  `GeodeticCRS` export omits `longlat` when possible (crs.cpp:2504-2511). The `applyTargetCRSModifiers`
-  switch (conversion.cpp:4110-4118) is the next thing to read. Not verified.
-- The port (`transform_export.rs:2437-2488`, `longitude_rotation`) writes the rotation with the same
-  branches as singleoperation.cpp:4844-4874, so the difference is the caller that decides whether the
-  rotation is exported at all, on the tmerc side. That caller is not yet traced in the Rust
-  (`transform_export.rs` conversion export of an inverse projection, `bound_ops.rs`).
-
-### Cause status
-
-Not identified. Next step: read conversion.cpp:3768-3800 and 4100-4125 and 4422-4440 to find which
-branch of `Conversion::_exportToPROJString` drops the target-side geographic step for an inverse
-projection with a non-Greenwich prime meridian; then the Rust counterpart in `transform_export.rs`.
-A test is written only after that.
+Reference command for the 4326 assertion (the `TEST()` context is the default one; `--grid-check none`
+is the closest option, the grid `foo.gsb` is absent in both):
+`projinfo -s "+proj=tmerc ... +pm=lisbon +units=m +type=crs" -t EPSG:4326 -o PROJ --spatial-test intersects --grid-check none --single-line`.
 
 ## Row 2: `operation.ETRS89_3D_to_proj_string_with_geoidgrids_nadgrids` (test_operationfactory.cpp:4013-4040)
 
-### Reference (PROJ 9.9.0)
+Source `EPSG:4937`, target `+proj=sterea +lat_0=52.15616055555555 +lon_0=5.38763888888889 +k=0.9999079
++x_0=155000 +y_0=463000 +ellps=bessel +nadgrids=rdtrans2008.gsb +geoidgrids=naptrans2008.gtx
++geoid_crs=horizontal_crs +units=m +type=crs`.
 
-- Candidates: 2.
-- Candidate 1 name: `ETRS89 to WGS 84 (1) + Inverse of unknown to WGS84 + Null geographic offset from
-  unknown (geog2D) to unknown (geog3D) + Inverse of unknown to unknown ellipsoidal height + unknown`.
-  Its PROJ string equals the expected string of the C++ test (27 tokens):
-  `+proj=pipeline +step +proj=axisswap +order=2,1 +step +proj=unitconvert +xy_in=deg +z_in=m +xy_out=rad
-  +z_out=m +step +inv +proj=hgridshift +grids=rdtrans2008.gsb +step +inv +proj=vgridshift
-  +grids=naptrans2008.gtx +multiplier=1 +step +proj=sterea ...`.
-- Candidate 2 (ballpark, `Ballpark geographic offset from ETRS89 to WGS 84 + ...`) has the same string.
-- So the missing part is exactly the `z_in=m z_out=m` pair in the first `unitconvert`, which the
-  formatter merges with the xy step (io.cpp:9106-9139, the `combine unitconvert (xy) and unitconvert (z)` rule).
+Probe: not run yet. The coordinator's round-2 run did not include it; the probe is written in
+`port-scratch/unit-op-string-exports/probe_unit_op_strings_r2.rs` (`probe_row2_etrs89_3d_geoid`), with
+EPSG:4937 built by `AuthorityFactory::create(&db, "EPSG").create_coordinate_reference_system("4937")`.
+The API of that call is the one used by `tests/unit_crs_strings_misc.rs`; not compiled by the author.
 
-### What the port does (read, not run)
+Reference (PROJ 9.9.0, `projinfo -s EPSG:4937 -t "<sterea>" -o PROJ --spatial-test intersects --grid-check none`):
 
-- `transform_export.rs:652-703` `geoid_grid_shift` writes its horizontal part with
-  `horizontal_unit_and_axis_swap` (`transform_export.rs:1270-1284`), which never writes z. That matches
-  singleoperation.cpp:4733-4738, where `pushOmitZUnitConversion` is used.
-- So the z-only step is not written by the geoid part, in PROJ or in the port. It comes from the
-  `Null geographic offset from geog2D to geog3D` operation (the 2D to 3D step between the Amersfoort
-  geographic CRS and its 3D version), whose PROJ export must write the z unit conversion. Its export
-  is not traced: the `createBallparkGeographicOffset` branch (coordinateoperationfactory.cpp:2298-2342)
-  calls `Transformation::createGeographic3DOffsets` for a 3D CRS, and the export of that method
-  (`singleoperation.cpp`, the geographic offsets branch) was not read.
+- Candidate 1 (the expected string of the C++ test, 27 tokens):
+  `+proj=pipeline +step +proj=axisswap +order=2,1 +step +proj=unitconvert +xy_in=deg +z_in=m +xy_out=rad +z_out=m +step +inv +proj=hgridshift +grids=rdtrans2008.gsb +step +inv +proj=vgridshift +grids=naptrans2008.gtx +multiplier=1 +step +proj=sterea ...`.
+  Name: `ETRS89 to WGS 84 (1) + Inverse of unknown to WGS84 + Null geographic offset from unknown (geog2D) to unknown (geog3D) + Inverse of unknown to unknown ellipsoidal height + unknown`.
+- Candidate 2: same string, name `Ballpark geographic offset from ETRS89 to WGS 84 + ...`.
 
-### Cause status
+Port (round 1 measurement, the draft of the whole TEST()): 25 tokens, the first `unitconvert` is
+`+xy_in=deg +xy_out=rad`; the z pair `z_in=m z_out=m` is absent.
 
-Not identified: which PROJ export writes the z-only `unitconvert` of the null 2D-to-3D offset.
-Next step: read the export of `Geographic3D Offsets` / the null offset in singleoperation.cpp, and the
-Rust counterpart in `geodetic_ops.rs` (`geographic_offset`) and `transform_export.rs`.
+First differing step: the first `unitconvert` (`z_in=m` / `z_out=m` missing).
+
+C++ read in this round:
+
+- The null 2D-to-3D offset is `createBallparkGeographicOffset` (coordinateoperationfactory.cpp:2298-2349),
+  which calls `Transformation::createGeographic3DOffsets` for a 3D CRS. Its export
+  (singleoperation.cpp:3964-4018, `EPSG_CODE_METHOD_GEOGRAPHIC3D_OFFSETS`) is the inverse of
+  `sourceCRSGeog->addAngularUnitConvertAndAxisSwap` plus `targetCRSGeog->addAngularUnitConvertAndAxisSwap`,
+  with a `geogoffset` step only when an offset is non-zero.
+- `GeodeticCRS::addAngularUnitConvertAndAxisSwap` (crs.cpp:2446-2475) writes `z_in`/`z_out` when the CRS
+  has three axes and `omitZUnitConversion()` is false.
+- Rust: `transform_export.rs:2411-2432` `angular_unit_and_axis_swap` does the same, including the z terms
+  for 3 axes and the omit flag (`transform_export.rs:2422`). The Geographic3D offsets export of the port
+  must therefore be called with a 2D CRS on one side, or the z terms are lost elsewhere. Not verified.
+- The omit-z flag is pushed and popped in balance in `export_proj_based` (`transform_export.rs:2634-2686`),
+  so a leak of the flag is not the cause.
+
+Cause status: the writer is the same function on both sides; the difference is in which CRS (2D or 3D)
+reaches it, or in a simplification of the z pair. The next probe that settles it: the operation list of the
+port before the simplification of the pipeline (not exposed by the public API). Until then no code.
 
 ## Row 3: `operation.boundCRS_to_geogCRS_hubCRS_and_targetCRS_same_but_baseCRS_not` (test_operationfactory.cpp:3423-3459)
 
-### Reference (PROJ 9.9.0)
+Source: the WKT `COMPD_CS["NAD83 + Ellipsoid (US Feet)", ...]` of the test, target `EPSG:4979`.
 
-- Candidates: 1. Name: `Transformation from NAD83 (Ellipsoid (US Feet)) to NAD83 + Transformation from
-  NAD83 to WGS84`.
-- PROJ string: `+proj=unitconvert +xy_in=deg +z_in=us-ft +xy_out=deg +z_out=m` (5 tokens), equal to the test.
-- The second leg alone, NAD83 (2D) to WGS 84 (3D), has `+proj=noop` in the reference
-  (`projinfo -s EPSG:4269 -t EPSG:4979 -o PROJ`, the candidate `Ballpark geographic offset from NAD83
-  to WGS 84`, and the null `NAD83 to WGS 84 (1)` candidate). So the horizontal `xy_in=deg xy_out=deg`
-  of the expected string comes from the first leg, the bound transformation.
-- The first leg writes the z conversion `exportToPROJStringChangeVerticalUnit` (singleoperation.cpp:3251-3290),
-  which writes only `z_in`/`z_out`. The horizontal `deg` terms are therefore written by a caller
-  that exports the source and target CRS of the transformation (the `applySourceCRSModifiers` branch,
-  conversion.cpp:3887-3915, with the 3D geographic source `NAD83 (Ellipsoid US Feet)`), not by the
-  unit-change method itself. Not traced yet.
+| | Port (coordinator probe, round 2) | PROJ 9.9.0 |
+|---|---|---|
+| Candidates | 1 | 1 |
+| Name | not printed | `Transformation from NAD83 (Ellipsoid (US Feet)) to NAD83 + Transformation from NAD83 to WGS84` |
+| PROJ string | `+proj=pipeline +step +proj=unitconvert +z_in=us-ft +z_out=m +step +proj=axisswap +order=2,1` | `+proj=unitconvert +xy_in=deg +z_in=us-ft +xy_out=deg +z_out=m` |
 
-### What the port does (read, not run)
+First differing step: the first `unitconvert` (PROJ has `xy_in=deg` / `xy_out=deg` merged with the z pair;
+the port has the z pair alone). Second difference: the port ends with `axisswap order=2,1`, PROJ has none.
 
-- `bound_ops.rs:304-453` `bound_to_geog` has the vertical block (430-450) with the same order as
-  coordinateoperationfactory.cpp:5856-5948. The output is the 3-token form: the first leg writes the
-  z conversion alone, the second is `noop`-like. So the port lacks the horizontal `deg` terms of the
-  first leg. Which function of the port writes the z conversion of a bound transformation with the
-  horizontal part of its CRS is not yet traced (`transform_export.rs`, the change-of-vertical-unit
-  branch and the CRS modifiers of the transformation export).
+Reference facts:
 
-### Cause status
+- The second leg alone, NAD83 (2D) to WGS 84 (3D) (`projinfo -s EPSG:4269 -t EPSG:4979 -o PROJ`), is
+  `+proj=noop` in the null candidates, so the horizontal `deg` terms of the expected string come from the
+  first leg, `Transformation from NAD83 (Ellipsoid (US Feet)) to NAD83`.
+- Reading the PROJ string as a sequence (formatter rules io.cpp:9106-9139 and 9248-9279): the expected
+  step is the merge of `[unitconvert xy deg->rad][unitconvert z us-ft->m][unitconvert xy rad->deg]`.
+  The first and last steps are the angular conversions of a geographic CRS in degrees, i.e. the source and
+  target `addAngularUnitConvertAndAxisSwap`; the axis swaps of a source and a target both in lat/lon cancel
+  (io.cpp:9382-9389 and 9369-9380), which is why PROJ has no `axisswap`. This is a derivation from the
+  formatter rules, not measured.
 
-Not identified: the caller that adds the horizontal terms for the first leg.
+C++ read: the first leg's vertical unit change is written by `exportToPROJStringChangeVerticalUnit`
+(singleoperation.cpp:3251-3290), which writes only `z_in`/`z_out`. So the horizontal terms are added by a
+caller that exports the CRS modifiers: `Conversion::_exportToPROJString` with `applySourceCRSModifiers`
+(conversion.cpp:3887-3915) and the target modifiers (conversion.cpp:4422). Which of these applies to the
+first leg (the bound transformation, `createOperationsBoundToGeog` 5787-5812 or 5856-5948) is not
+established.
 
-## Probes for the coordinator (not in the tree)
+Rust read: `bound_ops.rs:304-453` has the vertical block with the order of coordinateoperationfactory.cpp
+5856-5948. The horizontal terms are missing from its first leg.
 
-`port-scratch/unit-op-string-exports/probe_unit_op_strings.rs` has two tests, `probe_row1_nadgrids_with_pm`
-and `probe_row3_bound_to_geog_hub_same_base_not`. They print the PROJ string of every candidate the
-port gives for those pairs and assert nothing. To run them, copy the file to `tests/probe_unit_op_strings.rs`
-and run `cargo test --test probe_unit_op_strings -- --nocapture`. The API names used come from
-`tests/unit_op_bound_family.rs` and `tests/unit_op_towgs84_pm_3d.rs`. The probe is not compiled
-by the author: an error in it is to be reported back, not fixed in the tree.
+Cause status: the caller that writes the horizontal terms of the first leg is not identified. Next step:
+read conversion.cpp:3887-3915 and 4422-4440 for the case of a change of vertical unit with a 3D geographic
+source, then the Rust path of the same export in `transform_export.rs`.
 
-Please send the output of the two probes in the next round. It gives the candidates of the port to
-set against the reference lists above.
+## Probes requested (not in the tree)
 
-Row 2 has no probe: the constructor for `EPSG:4937` is not confirmed in the crate, so a probe for it
-was not written.
+1. `port-scratch/unit-op-string-exports/probe_unit_op_strings_r2.rs`, two tests:
+   `probe_row1_rest_4258_and_wkt` (row 1, assertions 2 and 3) and `probe_row2_etrs89_3d_geoid` (row 2).
+   Copy to `tests/probe_unit_op_strings_r2.rs`, run `cargo test -p proj-rs --test probe_unit_op_strings_r2 -- --nocapture`.
+   Not compiled by the author.
+2. Row 3 with the operation name printed: the same probe as round 2 plus `op.name()` if it is public; if
+   not, the coordinator's output of the candidate name is enough.
+3. Row 2 has no measured port output yet; the probe in (1) provides it.
 
 ## Callers at risk
 
-None: no shared code is changed by this lot in this round.
+None: the only code change of the lot is a new test file (`528e5fa`). No shared code is changed.
 
 ## Tests
 
-No test is written or committed in this round.
+- `tests/unit_op_nadgrids_with_pm.rs`, `operation_nadgrids_with_pm_to_epsg_4326`: expected to pass.
+  Reason: the port's output for exactly this source, target and context was measured in round 2 (probe
+  `probe_row1_nadgrids_with_pm`, identical string, one candidate); the expected string is copied from
+  test_operationfactory.cpp:4059-4065. The author did not run it.
 
-Tests written, not run by the author: the coordinator runs them. (Here: none.)
+Tests written, not run by the author: the coordinator runs them.
