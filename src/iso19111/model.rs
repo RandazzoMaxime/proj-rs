@@ -3177,9 +3177,46 @@ pub struct GeoidModel {
     pub(crate) identifiers: Vec<Identifier>,
     /// PROJJSON `interpolation_crs`: the CRS the model interpolates in.
     pub(crate) interpolation_crs: Option<Box<Crs>>,
+    /// Accuracy of the model in metres, the `ACCURACY=` of PROJ's `GEOID_MODEL` transformation.
+    /// Set, it is the accuracy of the geoid operation (`getProjGeoidTransformation`).
+    pub(crate) accuracy: Option<f64>,
 }
 
 impl GeoidModel {
+    /// Geoid model called `name`, with no identifier, no interpolation CRS and no accuracy.
+    ///
+    /// A name `PROJ <grid>` is a geoid grid file, read as `getProjGeoidTransformation` does.
+    #[must_use]
+    pub fn create(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            identifiers: Vec::new(),
+            interpolation_crs: None,
+            accuracy: None,
+        }
+    }
+
+    /// Attach an authority identifier. A model with one is looked up in the registry by it.
+    #[must_use]
+    pub fn with_identifier(mut self, code_space: &str, code: &str) -> Self {
+        self.identifiers.push(Identifier::new(code_space, code));
+        self
+    }
+
+    /// Set the geographic CRS the model interpolates in.
+    #[must_use]
+    pub fn with_interpolation_crs(mut self, crs: GeographicCRS) -> Self {
+        self.interpolation_crs = Some(Box::new(Crs::Geographic(crs)));
+        self
+    }
+
+    /// Set the accuracy of the model in metres.
+    #[must_use]
+    pub fn with_accuracy(mut self, accuracy: f64) -> Self {
+        self.accuracy = Some(accuracy);
+        self
+    }
+
     /// Model name.
     #[must_use]
     pub fn name(&self) -> &str {
@@ -3190,6 +3227,12 @@ impl GeoidModel {
     #[must_use]
     pub fn identifiers(&self) -> &[Identifier] {
         &self.identifiers
+    }
+
+    /// Accuracy of the model in metres, when it is set.
+    #[must_use]
+    pub fn accuracy(&self) -> Option<f64> {
+        self.accuracy
     }
 }
 
@@ -3210,6 +3253,15 @@ impl VerticalCRS {
             coordinate_system,
             geoid_models: Vec::new(),
         }
+    }
+
+    /// The vertical CRS with `model` as its geoid model, in place of any other.
+    ///
+    /// This is the `GEOID_MODEL` property of PROJ's `VerticalCRS::create`.
+    #[must_use]
+    pub fn with_geoid_model(mut self, model: GeoidModel) -> Self {
+        self.geoid_models = vec![model];
+        self
     }
 
     /// Vertical CRS defined by a datum ensemble.
