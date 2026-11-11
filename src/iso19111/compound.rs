@@ -23,7 +23,8 @@ use super::factory::{
 use super::model::{
     Axis, BoundCRS, CompoundCRS, ConcatenatedOperation, ConcatenatedStep, Conversion,
     CoordinateOperation, Crs, GeographicCRS, GeoidModel, Identified, OperationMethod, Parameter,
-    ParameterValue, ProjBased, ProjBasedKind, Transformation, VerticalCRS,
+    ParameterValue, ProjBased, ProjBasedKind, Transformation, UnitOfMeasure, VerticalCRS,
+    VerticalCS,
 };
 use super::pipeline::ProjLines;
 use super::FactoryError;
@@ -1520,8 +1521,12 @@ fn vertical_ballpark(
 /// `createOperationsGeogToVertFromGeoid` for a vertical CRS with geoid models, and a 3D
 /// geographic CRS in metres, either way round (`applyInverse` for a vertical source). Each
 /// model gives its registered operation by identifier or by name, or a gravity-related height
-/// transformation on its PROJ grid (`PROJ <grid>`). Only the operations whose target is the
-/// vertical CRS are kept: the change of vertical unit and datum pivot of PROJ are not ported.
+/// transformation on its PROJ grid (`PROJ <grid>`).
+///
+/// A vertical CRS in metres keeps only the operations whose vertical side is the CRS itself, as
+/// before. Any other vertical unit takes PROJ's `useTransf` path: the operations are on the metre
+/// copy of the CRS (`vertCRSMetre`), joined to the CRS by a change of unit, or a ballpark change
+/// when the datums differ (`geoid_vertical_non_metre`).
 pub(super) fn geoid_vertical(
     source: &Crs,
     target: &Crs,
@@ -1539,27 +1544,16 @@ pub(super) fn geoid_vertical(
     let vertical_axis = vertical.coordinate_system().axis();
     if geog_axes.len() != 3
         || geog_axes[2].unit().conversion_to_si() != 1.0
-        || vertical_axis.unit().conversion_to_si() != 1.0
         || vertical_axis.direction() != "up"
     {
         return Ok(Vec::new());
     }
+    if vertical_axis.unit().conversion_to_si() != 1.0 {
+        return geoid_vertical_non_metre(vertical, geog, from_vertical, context);
+    }
     let mut operations = Vec::new();
     for model in vertical.geoid_models() {
-        let model_operations = match model.identifiers.first() {
-            Some(id) => vec![super::factory::registered_operation(
-                context,
-                id.code_space(),
-                id.code(),
-            )?],
-            None => match model.name().strip_prefix("PROJ ") {
-                Some(grid) => proj_geoid_operation(vertical, geog, model, grid, context)?
-                    .into_iter()
-                    .collect(),
-                None => super::factory::geoid_model_operations(context, model.name())?,
-            },
-        };
-        for operation in model_operations {
+        for operation in model_operations(vertical, geog, model, context)? {
             let to_vertical = match (operation.source_crs(), operation.target_crs()) {
                 (Some(Crs::Vertical(_)), Some(Crs::Geographic(_))) => Some(operation),
                 (Some(Crs::Geographic(_)), Some(Crs::Vertical(_))) => Some(operation.inverse()),
@@ -1586,6 +1580,136 @@ pub(super) fn geoid_vertical(
         .iter()
         .map(CoordinateOperation::inverse)
         .collect())
+}
+
+/// The operations of one geoid model between `vertical_metre` and `geog`, in the vertical to
+/// geographic orientation: the registered operation of its identifier, or of its name, or the
+/// gravity-related height transformation on its PROJ grid (`getProjGeoidTransformation`).
+fn model_operations(
+    vertical_metre: &VerticalCRS,
+    geog: &GeographicCRS,
+    model: &GeoidModel,
+    context: &CoordinateOperationContext,
+) -> Result<Vec<CoordinateOperation>, FactoryError> {
+    Ok(match model.identifiers.first() {
+        Some(id) => vec![super::factory::registered_operation(
+            context,
+            id.code_space(),
+            id.code(),
+        )?],
+        None => match model.name().strip_prefix("PROJ ") {
+            Some(grid) => proj_geoid_operation(vertical_metre, geog, model, grid, context)?
+                .into_iter()
+                .collect(),
+            None => super::factory::geoid_model_operations(context, model.name())?,
+        },
+    })
+}
+
+/// `createOperationsGeogToVertFromGeoid` (coordinateoperationfactory.cpp:4629-4871) for a
+/// vertical CRS whose unit is not the metre, or whose axis is not up in metres. The geoid
+/// operations go to the metre copy of the CRS, `vertCRSMetre`. Each one whose vertical side is
+/// not the CRS is joined to it by a conversion (`createOperationsVertToVert`), from the CRS to
+/// that side, as `useTransf` appends it. The reverse request inverts the result.
+///
+/// The geographic CRS with a height unit other than the metre is not ported: `geoid_vertical`
+/// returns before this function for it.
+fn geoid_vertical_non_metre(
+    vertical: &VerticalCRS,
+    geog: &GeographicCRS,
+    from_vertical: bool,
+    context: &CoordinateOperationContext,
+) -> Result<Vec<CoordinateOperation>, FactoryError> {
+    let vertical_crs = Crs::Vertical(vertical.clone());
+    let vertical_metre = vertical_metre_crs(vertical);
+    let mut operations = Vec::new();
+    for model in vertical.geoid_models() {
+        for operation in model_operations(&vertical_metre, geog, model, context)? {
+            let to_vertical = match (operation.source_crs(), operation.target_crs()) {
+                (Some(Crs::Vertical(_)), Some(Crs::Geographic(_))) => Some(operation),
+                (Some(Crs::Geographic(_)), Some(Crs::Vertical(_))) => Some(operation.inverse()),
+                _ => None,
+            };
+            let Some(operation) = to_vertical else {
+                continue;
+            };
+            let Some(Crs::Vertical(operation_vertical)) = operation.source_crs().cloned() else {
+                continue;
+            };
+            if Crs::Vertical(operation_vertical.clone()).is_equivalent_to(&vertical_crs) {
+                operations.push(operation);
+                continue;
+            }
+            // `createOperationsVertToVert(op->targetCRS(), targetCRS)` in the request direction:
+            // the conversion runs from this CRS to the operation's vertical side.
+            let Some(conversion) =
+                vertical_to_vertical(&vertical_crs, &Crs::Vertical(operation_vertical))
+            else {
+                continue;
+            };
+            let steps = vec![conversion, operation];
+            operations.push(CoordinateOperation::Concatenated(
+                concatenate_vertical_steps(steps, &vertical_crs, geog),
+            ));
+        }
+    }
+    if from_vertical {
+        return Ok(operations);
+    }
+    Ok(operations
+        .iter()
+        .map(CoordinateOperation::inverse)
+        .collect())
+}
+
+/// `ConcatenatedOperation::createComputeMetadata` of the two steps of a vertical CRS to a
+/// geographic CRS, with the vertical CRS as its source and the geographic one as its target.
+fn concatenate_vertical_steps(
+    steps: Vec<CoordinateOperation>,
+    vertical: &Crs,
+    geog: &GeographicCRS,
+) -> ConcatenatedOperation {
+    let mut concatenated = super::factory::pivot_concatenation(steps);
+    concatenated.source = Some(Box::new(vertical.clone()));
+    concatenated.target = Some(Box::new(Crs::Geographic(geog.clone())));
+    concatenated
+}
+
+/// `getNameVertCRSMetre` (coordinateoperationfactory.cpp:4697-4717): the name of the metre copy
+/// of a vertical CRS. A trailing unit is dropped, a depth becomes a height, and `(metre)` is
+/// appended when the name had no unit.
+fn vertical_metre_name(name: &str) -> String {
+    if name.is_empty() {
+        return "unnamed".to_owned();
+    }
+    let mut ret = name.to_owned();
+    let mut have_original_unit = false;
+    if ret.ends_with(')') {
+        if let Some(pos) = ret.rfind(" (") {
+            have_original_unit = true;
+            ret.truncate(pos);
+        }
+    }
+    if let Some(pos) = ret.rfind(" depth") {
+        ret.truncate(pos);
+        ret.push_str(" height");
+    }
+    if !have_original_unit {
+        ret.push_str(" (metre)");
+    }
+    ret
+}
+
+/// `vertCRSMetre` of `createOperationsGeogToVertFromGeoid`: the vertical CRS in metres, up, with
+/// the datum of `vertical` and the name of `vertical_metre_name`. It has no geoid model.
+fn vertical_metre_crs(vertical: &VerticalCRS) -> VerticalCRS {
+    VerticalCRS {
+        identified: Identified::named(vertical_metre_name(vertical.name())),
+        datum: vertical.datum.clone(),
+        ensemble: vertical.ensemble.clone(),
+        coordinate_system: VerticalCS::create_gravity_related_height(UnitOfMeasure::metre()),
+        geoid_models: Vec::new(),
+    }
 }
 
 /// `createOperationsFromDatabaseWithVertCRS` for a geographic CRS and a vertical CRS that no
@@ -1913,7 +2037,10 @@ fn geog_to_vertical_alternative(
 /// `getProjGeoidTransformation` for a model named `PROJ <grid>`: the gravity-related height
 /// transformation from the vertical CRS to the geographic CRS on that grid. Among the
 /// operations on the grid, those whose target has the datum of the vertical CRS are kept
-/// when there are any. The most accurate one gives the accuracy and the area of use.
+/// when there are any. The accuracy is the model's when it has one, as `modelAccuracies` is
+/// used in place of the search; otherwise the most accurate registered operation on the grid
+/// gives it. The area of use is that operation's, or the first candidate's when the model's
+/// accuracy is used.
 fn proj_geoid_operation(
     vertical: &VerticalCRS,
     geog: &GeographicCRS,
@@ -1940,11 +2067,13 @@ fn proj_geoid_operation(
     };
     let mut best: Option<usize> = None;
     let mut accuracy = -1.0_f64;
-    for (index, operation) in candidates.iter().enumerate() {
-        let candidate = operation.accuracy().unwrap_or(-1.0);
-        if candidate - accuracy > 1e-10 {
-            accuracy = candidate;
-            best = Some(index);
+    if model.accuracy.is_none() {
+        for (index, operation) in candidates.iter().enumerate() {
+            let candidate = operation.accuracy().unwrap_or(-1.0);
+            if candidate - accuracy > 1e-10 {
+                accuracy = candidate;
+                best = Some(index);
+            }
         }
     }
     let domain = best
@@ -1956,7 +2085,9 @@ fn proj_geoid_operation(
         Some(Crs::Geographic(interpolation)) => interpolation.clone(),
         _ => geog.clone(),
     };
-    let accuracy = (accuracy >= 0.0).then_some(accuracy);
+    let accuracy = model
+        .accuracy
+        .or_else(|| (accuracy >= 0.0).then_some(accuracy));
     let mut identified = Identified::named(op_name(
         "Transformation",
         &Crs::Vertical(vertical.clone()),
