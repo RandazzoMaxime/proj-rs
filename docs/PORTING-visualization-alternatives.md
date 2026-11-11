@@ -7,7 +7,7 @@ Tests written, not run by the author: the coordinator runs them.
 
 ## Coordinator run, round 1
 
-Output in the scratch directory, `coordinator-test-round1.txt`.
+Output of the coordinator's run, not in the tree.
 
 | Test | Result | Our output | Handling in this branch |
 |---|---|---|---|
