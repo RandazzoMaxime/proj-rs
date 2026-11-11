@@ -160,12 +160,14 @@ fn reversal_step(source: Crs, target: Crs) -> Option<ConcatenatedStep> {
     })
 }
 
-/// `CRS::applyAxisOrderReversal` for a geographic or projected CRS: the two horizontal axes
-/// swapped, the name suffixed, the domains kept, a remark pointing at the identifier, and no
-/// identifier of its own. `None` for any other kind.
+/// `CRS::applyAxisOrderReversal` for a geographic, projected or derived projected CRS: the two
+/// horizontal axes swapped, the name suffixed, the domains kept, a remark pointing at the
+/// identifier, and no identifier of its own. `None` for any other kind.
 pub(crate) fn reversed(crs: &Crs) -> Option<Crs> {
     let mut reversed = match crs {
-        Crs::Geographic(_) | Crs::Projected(_) => crs.normalize_for_visualization(),
+        Crs::Geographic(_) | Crs::Projected(_) | Crs::DerivedProjected(_) => {
+            crs.normalize_for_visualization()
+        }
         Crs::Geodetic(GeodeticCRS::Geographic(geographic)) => Crs::Geodetic(
             GeodeticCRS::Geographic(geographic.normalize_for_visualization()),
         ),
@@ -176,6 +178,7 @@ pub(crate) fn reversed(crs: &Crs) -> Option<Crs> {
             crs.identified.identifiers.clear();
         }
         Crs::Projected(crs) => crs.identified.identifiers.clear(),
+        Crs::DerivedProjected(crs) => crs.identified.identifiers.clear(),
         _ => return None,
     }
     Some(reversed)
@@ -195,6 +198,8 @@ pub(crate) fn must_axis_order_be_switched(crs: &Crs) -> bool {
             crs.coordinate_system().axes()
         }
         Crs::Projected(crs) => crs.coordinate_system().axes(),
+        // `mustAxisOrderBeSwitchedForVisualizationInternal` also reads a derived projected CRS.
+        Crs::DerivedProjected(crs) => crs.coordinate_system().axes(),
         _ => return false,
     };
     matches!(axes, [first, second, ..]
