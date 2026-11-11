@@ -5497,10 +5497,14 @@ impl CoordinateOperationFactory {
         let source = canonical_or_self(source);
         let target = canonical_or_self(target);
         check_same_celestial_body(&source, &target)?;
-        let (source, source_extent, source_changed) = resolve_crs(&source, context);
-        let (target, target_extent, target_changed) = resolve_crs(&target, context);
+        let (source, source_extent, _) = resolve_crs(&source, context);
+        let (target, target_extent, _) = resolve_crs(&target, context);
+        // PROJ builds its private context once, with the extents of the two CRS of the outermost
+        // call, and every sub-call filters on them (coordinateoperationfactory.cpp:8082-8094,
+        // `Private::Context(sourceCRSExtent, targetCRSExtent, context)`). An extent that is
+        // unknown stays unknown for the sub-calls: they do not take the one of their own CRS.
         let mut resolved_context = context.clone();
-        if resolved_context.inherited_extents.is_none() && (source_changed || target_changed) {
+        if resolved_context.inherited_extents.is_none() {
             resolved_context.inherited_extents = Some((source_extent, target_extent));
         }
         let context = &resolved_context;
