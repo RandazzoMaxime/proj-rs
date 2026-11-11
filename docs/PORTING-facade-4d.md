@@ -62,5 +62,11 @@ run them. The coordinator ran, through devhub:
   `UPDATE_DOCS`: see the commit.
 - `cargo fmt --check`: clean.
 
-Not run in this lot: `cargo clippy --all-targets --all-features -- -D warnings` and the full
-`cargo test --all-features`. They are run once on the gathered lots.
+- `cargo clippy -p proj-rs --all-targets --all-features -- -D warnings`: clean. It refused the
+  17-digit literal `35.000_003_665_064_803` (`excessive_precision`); the test writes
+  `35.000_003_665_064_8`, the same `f64`.
+- `cargo test -p proj-rs --all-features --no-fail-fast`, on a Windows workstation without the
+  reference `cs2cs`: 1685 passed, 11 failed, 28 ignored. The same 11 tests fail on `main`
+  (`c57d7d2`) on that machine, whose `PROJ_DATA` points at an OSGeo4W install that holds real
+  grids; the cause was not confirmed by a second run. No test fails on this branch only. CI is
+  the reference run.

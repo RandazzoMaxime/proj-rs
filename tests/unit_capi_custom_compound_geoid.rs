@@ -117,7 +117,8 @@ fn capi_proj_create_crs_to_crs_custom_compound_nad83_2011_to_wgs84_g1762() {
     let (x, y, z, _t) = proj
         .convert_xyzt(35.0, -118.0, 0.0, 2010.0)
         .expect("point at 2010");
-    near(x, 35.000_003_665_064_803, 1e-9);
+    // PROJ writes 35.000003665064803; the last digit is beyond an f64.
+    near(x, 35.000_003_665_064_8, 1e-9);
     near(y, -118.000_014_142_212_14, 1e-9);
     near(z, -32.8110, 1e-3);
 }
