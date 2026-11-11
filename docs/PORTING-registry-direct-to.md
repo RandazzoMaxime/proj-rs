@@ -11,18 +11,33 @@ Follows `docs/PORTING-compound-lambert93-ngf.md` ("Open: the superseded `(4)` ca
 
 | Step | State |
 |---|---|
-| 1. `GeographicBoundingBox::Private::intersection` | Written (patch in scratch), **not committed**: it reopens `issue_4550` (measured by the previous attempt, see below). |
-| 2. Trace of `issue_4550` | Open. The reference gives the expected candidate and its extent; the Rust cause is not found. |
-| 3. `findOpsInRegistryDirectTo` | **Ported**, commit `f35d484`. Compiles (`cargo check -p proj-rs --tests`, job 3858, succeeded). Effect on the candidate lists **not measured**: the coordinator runs the probe and the suites. |
-| 4. `issue_3328` test context | Committed, `c2c901d`. Not run by the author. |
+| 1. `GeographicBoundingBox::Private::intersection` | **Ported**, commit `6baca41`, with `tests/unit_metadata_extent.rs`. |
+| 2. Cause of `issue_4550` | **Found and fixed**, commit `8fc3e7e`: the extents of the outermost pair reach every sub-call. See "Step 2". |
+| 3. `findOpsInRegistryDirectTo` | **Ported**, commit `f35d484`. |
+| 4. `issue_3328` test context | Committed, `c2c901d`. |
 
-Nothing above is closed by a measurement of the author. The rules of the lot apply: the
-coordinator decides whether commit `f35d484` stays.
+The three code commits hold together: each alone reopens a test, the three together reopen none
+(measured, see "Measured by the coordinator").
+
+## Measured by the coordinator
+
+All through the job queue, on Windows, without the reference `cs2cs` on the PATH.
+
+| Tree | Result |
+|---|---|
+| `f35d484` alone, full suite | reopens `unit_op_compound_derived::operation_compound_to_geog_2d_promote_to_3d_context` (131 candidates for 133) |
+| `f35d484` + step 1 + step 2 (`8fc3e7e`), full suite | 1682 passed, 11 failed, 28 ignored: the same 11 tests fail on `main` (`c57d7d2`) on that machine (its `PROJ_DATA` points at an OSGeo4W install with real grids; cause not confirmed by a second run). No test fails on this branch only. `cli_yaml` passes, `docs/UNPORTED-CLI.md` unchanged. |
+| same tree, `unit_op_compound_to_compound_2` | 11 passed, 2 ignored, in 24 s (119 s on `main`) |
+| same tree, probe `EPSG:5720` -> `EPSG:4979` | 4 candidates, `(3)`, `(5)`, `(2)`, ballpark: the reference list (was 5 with `(4)`) |
+| `f35d484` alone, probe `EPSG:2154+5720` -> `EPSG:4979` | 6 candidates, as the reference (was 8). Not probed again on the final tree. |
+| `f35d484` alone, probe `EPSG:5720` -> `EPSG:4965` | 2 candidates, as `test_projinfo.yaml:1276` |
+| same tree, `issue_4550` pair, default criterion | **1 candidate**, as the reference. On `main` the port gives 310 (see "Step 2"). |
+| `cargo clippy -p proj-rs --all-targets --all-features -- -D warnings`, `cargo fmt --check` | clean |
 
 ## Reference PROJ 9.9.0 (run by the author)
 
-Command forms: `ref.ps1 projinfo ... --spatial-test intersects --grid-check none`. Outputs are in
-`port-scratch\lot-registry-direct-to\` (`ref-*.txt`), not in the tree.
+Command forms: `projinfo ... --spatial-test intersects --grid-check none` on the build of
+`tools/build-reference.sh`. The outputs are not in the tree.
 
 | Pair | PROJ 9.9.0 candidates | Names (summary) |
 |---|---|---|
@@ -113,8 +128,9 @@ Calls `findOpsInRegistryDirectTo(targetCRS)`; keeps the operations whose source 
 
 | PROJ 9.9.0 | Rust | Status |
 |---|---|---|
-| `GeographicBoundingBox::Private::intersection` (metadata.cpp:422-493) | `model.rs` `BoundingBox::intersection` (min/max) | patch, not committed (step 1) |
-| `Extent::intersection`, single boxes (metadata.cpp:889-910) | `factory.rs` `intersect_extents` | unchanged |
+| `GeographicBoundingBox::Private::intersection` (metadata.cpp:422-493) | `model.rs` `BoundingBox::intersection` | ported, commit `6baca41` |
+| `Extent::intersection`, single boxes (metadata.cpp:889-910) | `model.rs` `BoundingBox::extent_intersection`, used by `factory.rs` `intersect_extents` | ported, commit `6baca41` |
+| `Private::Context(sourceCRSExtent, targetCRSExtent, context)` (coordinateoperationfactory.cpp:8082-8094) | `factory.rs` `create_operations_between_epochs`, `inherited_extents` | fixed, commit `8fc3e7e` |
 | `GeographicBoundingBox::contains` / `intersects` | `model.rs` `contains` / `intersects` | identical |
 | `getExtent(ops)` (oputils.cpp:529-555) | `derived.rs` `joint_extent` | open point 2 below |
 | `FilterResults` (coordinateoperationfactory.cpp:1380-1415) | `factory.rs` `filter_and_sort` | unchanged |
@@ -128,46 +144,72 @@ Calls `findOpsInRegistryDirectTo(targetCRS)`; keeps the operations whose source 
 
 | PROJ `TEST()` | Rust test | Status |
 |---|---|---|
-| `TEST(metadata, extent)` (test_metadata.cpp:66-280), box cases about the antimeridian | none committed (step 1 patch in scratch) | open |
-| `TEST(operation, compoundCRS_to_compoundCRS_issue_3328)` (test_operationfactory.cpp:6643) | `tests/unit_op_compound_to_compound_2.rs` `operation_compound_to_compound_issue_3328` | context authority `""` (commit `c2c901d`), unverified |
-| `TEST(operation, compoundCRS_to_compoundCRS_issue_4550)` (test_operationfactory.cpp:7063) | `tests/unit_op_compound_to_compound_2.rs` `operation_compound_to_compound_issue_4550` | unchanged; expected candidate in the table above |
+| `TEST(metadata, extent)` (test_metadata.cpp:66-280), box cases about the antimeridian | `tests/unit_metadata_extent.rs` `metadata_extent_antimeridian_boxes` | passes |
+| `TEST(operation, compoundCRS_to_compoundCRS_issue_3328)` (test_operationfactory.cpp:6643) | `tests/unit_op_compound_to_compound_2.rs` `operation_compound_to_compound_issue_3328` | context authority `""` (commit `c2c901d`), passes |
+| `TEST(operation, compoundCRS_to_compoundCRS_issue_4550)` (test_operationfactory.cpp:7063) | `tests/unit_op_compound_to_compound_2.rs` `operation_compound_to_compound_issue_4550` | unchanged, passes; the port now gives the one candidate of PROJ |
 | `projinfo -s EPSG:5720 -t EPSG:4965 -o PROJ` (test/cli/test_projinfo.yaml:1276) | `tests/cli_yaml/test_projinfo.yaml:1276` (copied from PROJ) | existing; the finder must keep it |
 
 No new test is committed for the registry port: PROJ has no `TEST()` for the candidate list of
 `EPSG:5720` -> `EPSG:4979`. The pairs to compare are in the table of the reference section; the
-probe prints them: `port-scratch\lot-registry-direct-to\probe_registry_direct_to.rs`.
+coordinator probed them (see "Measured by the coordinator").
 
-## Step 1: box intersection (not committed)
+## Step 1: box intersection (commit `6baca41`)
 
-The port is in `port-scratch\lot-registry-direct-to\step1-box-intersection.patch`, with the test
-`unit_metadata_extent.rs` (same directory). It compiled (devhub job 3824). It adds
-`BoundingBox::extent_intersection` (`pub(crate)`, the `Extent::intersection` shortcut, used by the
-Extent-level callers `select.rs` `pseudo_area_of` and `factory.rs` `SortExtents::new`).
+`BoundingBox::intersection` is `GeographicBoundingBox::Private::intersection` (metadata.cpp:423-493),
+line for line: a box that crosses the antimeridian is split and its larger part is kept, and two
+boxes that only touch in longitude do not intersect (`resW < resE`). `BoundingBox::extent_intersection`
+(`pub(crate)`) is the `Extent::intersection` shortcut of metadata.cpp:889-910, used by the extent-level
+callers (`select.rs` `pseudo_area_of`, `factory.rs` `intersect_extents` and `SortExtents::new`).
+Test: `tests/unit_metadata_extent.rs`, the antimeridian cases of `TEST(metadata, extent)`.
 
-Why not committed: the previous attempt (`docs/PORTING-compound-lambert93-ngf.md`, "Attempt 2")
-measured that the port reopens `issue_4550`: the target `EPSG:32610+5703` gets an extent, 470
-candidates instead of 808 before the filter, and PROJ's candidate is no longer built. That was
-measured on the previous tree; it has not been re-measured here.
+Before, the intersection was a min/max. For `EPSG:32610+5703` (UTM zone 10N, -126..-120, with NAVD88,
+172.42..-66.91 across the antimeridian) it gave the box 172.42..-120 where PROJ gives -126..-120.
 
-## Step 2: trace of `issue_4550` (open)
+## Step 2: cause of `issue_4550` (commit `8fc3e7e`)
 
-Read so far:
+The previous attempt found that step 1 alone reopens `issue_4550`. The cause is not in step 1.
 
-1. The reference gives one candidate with `STRICT_CONTAINMENT`, extent World. The candidate is
-   built in the two-pass loop 7452-7545, from op1 (the inverse of the source projection), op2 (the
-   `Transformation from NAD83(HARN) to WGS84` of the source datum, null), op3 (the vertical
-   conversion and UTM).
-2. Inference from the code, not measured: before the port, the target `EPSG:32610+5703` has no
-   extent (the min/max box intersection of UTM 10N and the antimeridian-crossing NAVD88 box is
-   empty), so no filter runs. With the port it has one (-126..-120), and the filter 1388-1415 runs.
-   The previous attempt measured the loss of the candidate with the port.
-3. The difference is in one of: the extent of op1, of op2, of op3, or in `joint_extent`
-   (derived.rs:166-175), which skips a step without an extent where `getExtent(ops)`
-   (oputils.cpp:537-542) returns `nullptr` when `emptyIntersection` is set.
+What PROJ does, from a build with `-DTRACE_CREATE_OPERATIONS -DENABLE_TRACING` (`PROJ_TRACE_FILE`)
+and from `projinfo`:
 
-Next step (for the coordinator, with the probe `probe_4550_default_criterion`): the candidates of the
-Rust port for the pair, with their extents, against the one reference candidate above (World). If
-the Rust candidate set is empty or differs, the first comparison is the extent of op1, op2, op3.
+1. The source of the test is a WKT1 compound whose horizontal part has `TOWGS84`: a `BoundCRS`.
+   `CRS::getResolvedCRS` (coordinateoperationfactory.cpp:8219-8360) resolves geographic, projected and
+   compound CRS only, so the extent of the source is **unknown**. Check: `--crs-extent-use intersection`
+   gives 330 candidates (no area of interest, which needs one unknown extent), and `--bbox` on the
+   extent of EPSG:2927 gives 30 candidates that use GEOID18.
+2. The area of interest (`SMALLEST`, `computeAreaOfInterest`, 1263-1291) is then the extent of the
+   target, -126..-120 by 14.51..71.4. No CONUS geoid operation contains it (their north is 49.38).
+3. PROJ builds its private context once (`Private::Context(sourceCRSExtent, targetCRSExtent, context)`,
+   8082-8094) and every registry lookup of every sub-call filters on those two extents
+   (`FilterResults` at 1953, 2021 and 2279). The trace shows `findOpsInRegistryDirectTo({any} -->
+   NAVD88 height)`: `filtering reduced from 7 to 0`, in each sub-call.
+4. So `WGS 84 3D -> target` and `NAD83(HARN) 3D -> target` start with a ballpark operation,
+   `hasNonTrivialTargetTransf` is false (7485-7487), the intermediate branch leaves `res` empty, and the
+   vertical-to-vertical fallback (7653-7656) gives the one candidate of the test.
+
+What the port did:
+
+- `create_operations_between_epochs` set `inherited_extents` only when resolving a CRS had changed
+  an extent. Here nothing changes (the source is unknown, the target is unchanged), so each sub-call
+  took the extents of **its own** CRS (`crs_extents_of`).
+- With that, on `main`, the pair gives 310 candidates. The first applies `NAD83(HARN) to NAVD88 height
+  (9)` (Alaska) and then its inverse; the two cancel in the PROJ string, which is why the test passed.
+- With step 1 alone, the target extent becomes right, and the list is empty.
+
+The fix: the extents of the outermost pair are always inherited. Step 3 is needed too: without the
+`FilterResults` of `findOpsInRegistryDirectTo`, the leg `WGS 84 3D -> target` keeps 111 non-ballpark
+candidates in the port (measured with a temporary trace) where PROJ has only the ballpark one.
+
+Still different from PROJ on this pair, not in this lot: the one candidate is named `Inverse of
+unknown + Conversion from NAVD88 height (ftUS) to NAVD88 height + NAD83(HARN) to WGS 84 (1) + UTM zone
+10N` with the extent of `NAD83(HARN) to WGS 84 (1)`, where PROJ has `Inverse of unknown +
+Transformation from NAD83(HARN) to WGS84 + Conversion ... + UTM zone 10N` with the extent World: PROJ
+keeps the `TOWGS84` transformation of the bound source, the port takes the registered one. The PROJ
+strings are the same. `EPSG:4957` -> `EPSG:5703` also differs: 0 candidates here, 1 (the ballpark)
+in PROJ, on `main` as on this branch.
+
+Callers at risk of `8fc3e7e`: every sub-call of every pair whose CRS extents were not changed by
+the resolution, which is most pairs. The full suite is the measure (table above).
 
 ## Step 3: `findOpsInRegistryDirectTo` (ported, commit `f35d484`)
 
@@ -208,25 +250,23 @@ and `EPSG:5720` -> `EPSG:4965` (cli yaml). The existing modes of `operations_bet
 (`Forward`, `ForwardWithoutSuperseded`, `Both`, `BothKeepingSuperseded`) are not changed by the
 new branches.
 
-Not measured: whether the candidate lists match the reference above. The probe does it.
+Measured: see "Measured by the coordinator".
 
 ## Step 4: test context of `issue_3328` (committed)
 
 `operation_compound_to_compound_issue_3328` built its context with the authority `"EPSG"`. The C++
 `TEST()` builds its authority factory with `std::string()` (test_operationfactory.cpp:6644-6645).
-The Rust test now uses `""` (commit `c2c901d`). The previous attempt's note says the test passes
-with `""`; not run by the author.
+The Rust test now uses `""` (commit `c2c901d`). Run by the coordinator: it passes.
 
 ## Existing callers at risk (summary)
 
-- `model.rs` `BoundingBox::intersection`: step 1 patch only.
+- `model.rs` `BoundingBox::intersection`: commit `6baca41`.
 - `select.rs` `pseudo_area_of`, `factory.rs` `intersect_extents`, `SortExtents::new`, `has_too_small_areas`,
-  `operation_extent`, `crs_extent`, `derived.rs` `joint_extent`, `compound.rs` `compute_metadata`: step 1
-  patch only.
+  `operation_extent`, `crs_extent`, `derived.rs` `joint_extent`, `compound.rs` `compute_metadata`: commit
+  `6baca41`.
 - `factory.rs` registry block 6120-6127 and `compound.rs` `vertical_geog_fallback`,
   `geog_to_vertical_alternative`: commit `f35d484`.
-- `tests/unit_op_compound_to_compound_2.rs` `issue_4550`: reopened by the step 1 patch (measured by the
-  previous attempt).
+- Every sub-call of `create_operations`: commit `8fc3e7e` (the inherited extents).
 
 ## Deliberate deviations (committed)
 
@@ -234,16 +274,15 @@ See step 3 (1 to 4).
 
 ## Commands run
 
-- `node S:/Helix_Aero/lab/helix-cockpit/tools/devhub.mjs run --kind build -- cargo check -p proj-rs --tests`:
-  step 1 tree job 3824, step 4 tree job 3833, registry port tree job 3858: all succeeded.
-- `ref.ps1` with the options of the reference section.
-- `cargo fmt`.
+- The reference: `tools/build-reference.sh` (PROJ 9.9.0), `projinfo` with the options of the reference
+  section; a second build of the same sources with `-DCMAKE_CXX_FLAGS="-DTRACE_CREATE_OPERATIONS
+  -DENABLE_TRACING"` and `PROJ_TRACE_FILE=<file>` for the trace of step 2.
+- `cargo test -p proj-rs --test unit_op_compound_to_compound_2 --test unit_metadata_extent --test
+  unit_op_compound_derived`, then `cargo test -p proj-rs --all-features --no-fail-fast`.
+- `cargo clippy -p proj-rs --all-targets --all-features -- -D warnings`, `cargo fmt --check`.
+- Probes (throwaway tests, not in the tree) printed the candidate count, names and extents of the
+  pairs of "Measured by the coordinator".
 
-## Probe for the coordinator (not in the tree)
-
-`port-scratch\lot-registry-direct-to\probe_registry_direct_to.rs`: copy to `tests/`, run
-`cargo test --test probe_registry_direct_to -- --nocapture --test-threads=1`, and return the `PROBE`
-lines. Four tests: `5720 -> 4979`, `2154+5720 -> 4979`, `5720 -> 4965`, and `issue_4550` with the
-default criterion. Each prints the candidate count, then the name and the PROJ string of each candidate.
-
-Tests written, not run by the author: the coordinator runs them.
+Steps 3 and 4 and the patch of step 1 were written by a port agent (Claude Haiku 5.5) that could not run
+them. The coordinator session traced the cause of `issue_4550` with the reference build, wrote step 2,
+and ran the tests.
