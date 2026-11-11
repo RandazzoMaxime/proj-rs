@@ -703,6 +703,27 @@ impl Proj {
         Ok((coord.x, coord.y, coord.z))
     }
 
+    /// Convert a four-dimensional coordinate in the forward direction.
+    ///
+    /// `t` is the coordinate time in decimal years, the fourth axis of PROJ's `proj_trans`.
+    /// It drives the time-dependent steps of the operation, such as a Helmert with
+    /// `+t_epoch` or a deformation model. A step that takes no time ignores it.
+    /// Units match [`Self::convert_xyz`]. [`Self::convert_xyz`] is this method at `t = 0`.
+    ///
+    /// # Errors
+    ///
+    /// [`ProjError`] when the object is not a transform or the point has no image.
+    pub fn convert_xyzt(
+        &self,
+        x: f64,
+        y: f64,
+        z: f64,
+        t: f64,
+    ) -> Result<(f64, f64, f64, f64), ProjError> {
+        let coord = self.map_xyzt(x, y, z, t, Direction::Forward, Report::Conversion)?;
+        Ok((coord.x, coord.y, coord.z, coord.t))
+    }
+
     /// Convert a slice in place, forward only.
     ///
     /// # Errors
@@ -922,6 +943,18 @@ impl Proj {
         way: Direction,
         report: Report,
     ) -> Result<Xyzt, ProjError> {
+        self.map_xyzt(x, y, z, 0.0, way, report)
+    }
+
+    fn map_xyzt(
+        &self,
+        x: f64,
+        y: f64,
+        z: f64,
+        t: f64,
+        way: Direction,
+        report: Report,
+    ) -> Result<Xyzt, ProjError> {
         let mapped = match &self.body {
             Body::Single => {
                 return Err(match report {
@@ -934,13 +967,13 @@ impl Proj {
                 });
             }
             Body::Native(op) => {
-                let coord = Xyzt { x, y, z, t: 0.0 };
+                let coord = Xyzt { x, y, z, t };
                 match way {
                     Direction::Inverse => op.inverse(coord),
                     Direction::Forward => op.forward(coord),
                 }
             }
-            Body::Iso(pipeline) => pipeline.map(Xyzt { x, y, z, t: 0.0 }, way),
+            Body::Iso(pipeline) => pipeline.map(Xyzt { x, y, z, t }, way),
         };
         mapped.map_err(|error| {
             // libproj words an invalid coordinate as `Invalid coordinate`.
