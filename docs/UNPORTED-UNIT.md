@@ -74,10 +74,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.compoundCRS_to_PROJJSON_with_non_metre_height`
 - `operation.createOperation_ossfuzz_18587`
 - `operation.createOperation_bound_of_spherical_ocentric_to_same_type`
-- `operation.createOperation_spherical_ocentric_spherical_to_ellipsoidal_north_west`
-- `operation.createOperation_ellipsoidal_ographic_west_to_projected_of_ellipsoidal_ographic_west`
-- `operation.createOperation_ellipsoidal_ographic_west_to_projected_of_ellipsoidal_ocentric`
-- `operation.createOperation_ellipsoidal_ocentric_to_projected_of_ellipsoidal_ographic_west`
 - `operation.createOperation_derived_projected_crs`
 - `operation.geogCRS_to_compoundCRS_with_boundVerticalCRS_and_derivedProjected`
 
@@ -90,13 +86,9 @@ and `PORT-NOTES-tests.md`.
 - `CApi.proj_context_set_database_path_error_2`
 - `CApi.proj_clone_of_obj_with_alternative_operations`
 - `CApi.proj_normalize_for_visualization_with_alternatives`
-- `CApi.proj_normalize_for_visualization_with_alternatives_reverse`
 - `CApi.proj_coordoperation_create_inverse`
 - `CApi.proj_context_copy_from_default`
 - `CApi.proj_context_clone`
-- `CApi.proj_create_vertical_crs_ex`
-- `CApi.proj_create_vertical_crs_ex_with_geog_crs`
-- `CApi.proj_create_vertical_crs_ex_implied_accuracy`
 - `CApi.proj_context_set_sqlite3_vfs_name`
 - `CApi.proj_context_set_sqlite3_vfs_name__from_global_context`
 - `CApi.use_proj4_init_rules`

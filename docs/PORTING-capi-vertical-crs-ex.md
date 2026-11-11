@@ -100,7 +100,7 @@ operation in `concatenatedoperation.cpp`. The accuracy assertions rely on the ex
 
 ## This lot sits on the registry-direct-to lot
 
-The branch starts from `lot-registry-direct-to`, not from `main`: it must be merged after it.
+The lot needs the registry-direct-to lot, which is merged before it.
 
 On `main`, the non-metre path of this lot reopens
 `unit_op_compound_to_compound_2::operation_compound_to_compound_issue_4550` (a vertical CRS in US
