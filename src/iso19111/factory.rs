@@ -8867,6 +8867,7 @@ fn same_authority(source: &Crs, base: &GeodeticCRS) -> bool {
 
 struct OperationRow {
     source: (String, String),
+    target: (String, String),
     auth: String,
     code: String,
     table: String,
@@ -8891,6 +8892,13 @@ enum RegistrySearch {
     Both,
     /// As [`Self::Both`], with the superseded rows kept (`setDiscardSuperseded(false)`).
     BothKeepingSuperseded,
+    /// The rows that have the target as source or as target, with an empty source
+    /// (`createFromCoordinateReferenceSystemCodes`, `tryReverseOrder`,
+    /// `reportOnlyIntersectingTransformations`, `discardSuperseded`): the rows read backwards are
+    /// inverted, and only the rows that intersect both CRS extents are kept.
+    IntoTarget,
+    /// As [`Self::IntoTarget`], with the superseded rows kept.
+    IntoTargetKeepingSuperseded,
 }
 
 /// Registered operations between two CRS read in the authorities of `findOpsInRegistryDirect`.
@@ -8918,17 +8926,7 @@ fn direct_registry_operations(
             context.alternative_grid_names(),
         )?;
         if context.discards_missing_grids() {
-            // `rejectOpDueToMissingGrid`: an operation with a grid that is not returned when the
-            // grid is neither on disk nor known to the database (`KNOWN_AVAILABLE`), or not on
-            // disk (`DISCARD_OPERATION_IF_MISSING_GRID`).
-            let mut kept = Vec::with_capacity(operations.len());
-            for operation in operations {
-                let grids = operation.grids_needed(&context.db, context.grid_availability)?;
-                if grids.iter().all(|grid| grid.info.available) {
-                    kept.push(operation);
-                }
-            }
-            operations = kept;
+            operations = retain_available_grids(context, operations)?;
         }
         found.extend(operations);
         if authority != "PROJ" && !found.is_empty() {
@@ -8936,6 +8934,77 @@ fn direct_registry_operations(
         }
     }
     Ok(found)
+}
+
+/// `rejectOpDueToMissingGrid`: the operations whose grids are all available. An operation with a
+/// grid that is not returned when the grid is neither on disk nor known to the database
+/// (`KNOWN_AVAILABLE`), or not on disk (`DISCARD_OPERATION_IF_MISSING_GRID`), is dropped.
+fn retain_available_grids(
+    context: &CoordinateOperationContext,
+    operations: Vec<CoordinateOperation>,
+) -> Result<Vec<CoordinateOperation>, FactoryError> {
+    let mut kept = Vec::with_capacity(operations.len());
+    for operation in operations {
+        let grids = operation.grids_needed(&context.db, context.grid_availability)?;
+        if grids.iter().all(|grid| grid.info.available) {
+            kept.push(operation);
+        }
+    }
+    Ok(kept)
+}
+
+/// `findOpsInRegistryDirectTo` (coordinateoperationfactory.cpp:1973-2033): the registered
+/// operations that have `target` as source or as target, read in the authorities of its
+/// identifiers. The first identifier whose operations are found gives the result, filtered by
+/// [`filter_and_sort`]; PROJ operations are kept while the next authority is read too.
+/// `extents` are the CRS extents of the context (`context.extent1` and `context.extent2`).
+///
+/// Not ported: the consistency check of each identifier (`buildCRSIds` reads the CRS of the
+/// identifier back); a registry identifier is taken as it is.
+pub(super) fn find_ops_in_registry_direct_to(
+    context: &CoordinateOperationContext,
+    target: &Crs,
+    extents: &SortExtents,
+) -> Result<Vec<CoordinateOperation>, FactoryError> {
+    let boxes = (
+        extents.source.as_ref().and_then(ObjectDomain::bounding_box),
+        extents.target.as_ref().and_then(ObjectDomain::bounding_box),
+    );
+    for identifier in target.identifiers() {
+        let (target_auth, target_code) = (identifier.code_space(), identifier.code());
+        if target_auth.is_empty() {
+            continue;
+        }
+        let mut res = Vec::new();
+        for authority in
+            candidate_authorities(&context.db, &context.authority, target_auth, target_auth)?
+        {
+            let search = match context.superseded {
+                SupersededOperations::Discard => RegistrySearch::IntoTarget,
+                SupersededOperations::Keep => RegistrySearch::IntoTargetKeepingSuperseded,
+            };
+            let mut found = operations_between(
+                &context.db,
+                &authority,
+                ("", ""),
+                (target_auth, target_code),
+                boxes,
+                search,
+                context.alternative_grid_names(),
+            )?;
+            if context.discards_missing_grids() {
+                found = retain_available_grids(context, found)?;
+            }
+            res.extend(found);
+            if authority == "PROJ" {
+                continue;
+            }
+            if !res.is_empty() {
+                return Ok(filter_and_sort(res, context, extents).operations);
+            }
+        }
+    }
+    Ok(Vec::new())
 }
 
 /// `hasAuthorityRestriction` (`factory.cpp:4138-4140`): the SQL of a lookup is restricted to one
@@ -9083,13 +9152,29 @@ fn operations_between(
          AND cov.target_crs_auth_name = ? AND cov.target_crs_code = ?";
     let reverse = "cov.source_crs_auth_name = ? AND cov.source_crs_code = ? \
          AND cov.target_crs_auth_name = ? AND cov.target_crs_code = ?";
+    let into_target = matches!(
+        search,
+        RegistrySearch::IntoTarget | RegistrySearch::IntoTargetKeepingSuperseded
+    );
     let mut params = vec![
         source.0.to_owned(),
         source.1.to_owned(),
         target.0.to_owned(),
         target.1.to_owned(),
     ];
-    if matches!(
+    if into_target {
+        // `((source = T) OR (target = T))` with the target CRS T, factory.cpp:7386-7395.
+        sql.push_str(
+            "((cov.source_crs_auth_name = ? AND cov.source_crs_code = ?) OR \
+             (cov.target_crs_auth_name = ? AND cov.target_crs_code = ?))",
+        );
+        params = vec![
+            target.0.to_owned(),
+            target.1.to_owned(),
+            target.0.to_owned(),
+            target.1.to_owned(),
+        ];
+    } else if matches!(
         search,
         RegistrySearch::Both | RegistrySearch::BothKeepingSuperseded
     ) {
@@ -9121,6 +9206,7 @@ fn operations_between(
         let replacement = (!row[12].empty()).then(|| (row[12].text(), row[13].text()));
         parsed.push(OperationRow {
             source: (row[0].text(), row[1].text()),
+            target: (row[2].text(), row[3].text()),
             auth: row[4].text(),
             code: row[5].text(),
             table: row[6].text(),
@@ -9151,7 +9237,9 @@ fn operations_between(
     let superseded = |row: &OperationRow| {
         !matches!(
             search,
-            RegistrySearch::Forward | RegistrySearch::BothKeepingSuperseded
+            RegistrySearch::Forward
+                | RegistrySearch::BothKeepingSuperseded
+                | RegistrySearch::IntoTargetKeepingSuperseded
         ) && row
             .replacement
             .as_ref()
@@ -9165,10 +9253,13 @@ fn operations_between(
             .all(|extent| bbox.as_ref().is_none_or(|bbox| bbox.intersects(extent)))
     };
     let intersecting = kept.iter().any(|row| intersects_crs(&row.bbox));
+    // `reportOnlyIntersectingTransformations` (factory.cpp:7484-7488): with it, the rows that do
+    // not intersect the CRS extents are never reported.
+    let report_only_intersecting = into_target;
     let mut seen = BTreeSet::new();
     let mut operations = Vec::new();
     for row in kept {
-        if intersecting && !intersects_crs(&row.bbox) {
+        if (intersecting || report_only_intersecting) && !intersects_crs(&row.bbox) {
             continue;
         }
         if !seen.insert((row.auth.clone(), row.code.clone())) {
@@ -9181,7 +9272,14 @@ fn operations_between(
             grids,
             &row.table,
         )?;
-        if row.source.0 == source.0 && row.source.1 == source.1 {
+        // `tryReverseOrder` (factory.cpp:7517-7524): with an empty source, a row whose target is
+        // not the target CRS is read backwards.
+        let kept_as_registered = if into_target {
+            row.target.0 == target.0 && row.target.1 == target.1
+        } else {
+            row.source.0 == source.0 && row.source.1 == source.1
+        };
+        if kept_as_registered {
             operations.push(operation);
         } else {
             operations.push(operation.inverse());
