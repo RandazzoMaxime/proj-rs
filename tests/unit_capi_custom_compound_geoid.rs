@@ -3,7 +3,8 @@
 //!
 //! The compound is given to the pipeline selection as its WKT2 text, since the facade takes CRS
 //! text and not objects. The C test passes the compound object to `proj_create_crs_to_crs_from_pj`.
-//! The `t` of each input is not used by these static CRS.
+//! The first test has static CRS, so its `t` is not used. The second one is NAD83(2011) to
+//! WGS 84 (G1762), a time-dependent Helmert: its input is given the epoch 2010 as `t`.
 
 mod common;
 
@@ -91,4 +92,32 @@ fn capi_proj_create_crs_to_crs_custom_compound_geoidgrid_ref_against_wgs84() {
     near(x, 35.094_993_072_71, 1e-9);
     near(y, -118.640_148_689_21, 1e-9);
     near(z, 117.655, 1e-3);
+}
+
+/// `TEST_F(CApi, proj_create_crs_to_crs_from_custom_compound_crs_with_NAD83_2011_and_geoidgrid_ref_against_NAD83_2011_to_WGS84_G1762)`
+///
+/// NAD83(2011) 2D (EPSG:6318) and its 3D bound vertical part on EGM96, to WGS 84 (G1762)
+/// (EPSG:7665). The horizontal Helmert has `+t_epoch=1997`: the point at epoch 2010 is given
+/// as `t` through [`Proj::convert_xyzt`]. Axes are latitude, longitude, height, as the CRS.
+#[test]
+fn capi_proj_create_crs_to_crs_custom_compound_nad83_2011_to_wgs84_g1762() {
+    common::use_fixture_search_path();
+    let db = DatabaseContext::create().expect("proj.db");
+    let epsg = AuthorityFactory::create(&db, "EPSG");
+    let in_crs_h = epsg
+        .create_coordinate_reference_system("6318")
+        .expect("6318");
+    let in_crs_3d = epsg
+        .create_coordinate_reference_system("6319")
+        .expect("6319");
+    let in_crs_v = bound_vertical_crs(dummy_vertical_crs(), in_crs_3d, "egm96_15.gtx");
+    let in_compound = CompoundCRS::create("Compound", vec![in_crs_h, in_crs_v]).expect("compound");
+
+    let proj = pipeline_for(&compound_text(&in_compound, &db));
+    let (x, y, z, _t) = proj
+        .convert_xyzt(35.0, -118.0, 0.0, 2010.0)
+        .expect("point at 2010");
+    near(x, 35.000_003_665_064_803, 1e-9);
+    near(y, -118.000_014_142_212_14, 1e-9);
+    near(z, -32.8110, 1e-3);
 }
