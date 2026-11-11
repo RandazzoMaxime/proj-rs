@@ -12,8 +12,9 @@ use super::factory::{
     CoordinateOperationFactory,
 };
 use super::model::{
-    Axis, Conversion, CoordinateOperation, Crs, EllipsoidalCS, GeodeticCRS, GeodeticReferenceFrame,
-    GeographicCRS, Measure, ObjectDomain, ParameterValue, Transformation, UnitOfMeasure,
+    Axis, BoundCRS, Conversion, CoordinateOperation, Crs, EllipsoidalCS, GeodeticCRS,
+    GeodeticReferenceFrame, GeographicCRS, Measure, ObjectDomain, ParameterValue, Transformation,
+    UnitOfMeasure,
 };
 use super::{FactoryError, OpProps};
 
@@ -409,6 +410,64 @@ pub(super) fn spherical_planetocentric_operations(
             CoordinateOperation::Concatenated(pivot_concatenation(vec![first.clone(), second]))
         })
         .collect())
+}
+
+/// `createOperationsFromBoundOfSphericalPlanetocentric`: a bound CRS whose base is a spherical
+/// planetocentric CRS. The base goes to a geographic CRS of its datum (the geographic/geocentric
+/// latitude conversion). A bound CRS on that geographic CRS keeps the binding transformation,
+/// with its source set to that CRS (`setCRSs`). The operations from that bound CRS to the target
+/// follow, each one with the source and target of the pair (`setCRSs`).
+///
+/// `None` when the source is not a bound CRS of a spherical planetocentric base.
+///
+/// # Errors
+///
+/// An operation cannot be built from the CRS.
+pub(super) fn bound_of_spherical_planetocentric_operations(
+    factory: &CoordinateOperationFactory,
+    source: &Crs,
+    target: &Crs,
+    context: &CoordinateOperationContext,
+) -> Result<Option<Vec<CoordinateOperation>>, FactoryError> {
+    let Crs::Bound(bound) = source else {
+        return Ok(None);
+    };
+    let base = bound.source_crs();
+    if !is_spherical_planetocentric(base) {
+        return Ok(None);
+    }
+    let Crs::Geodetic(GeodeticCRS::Spherical(spherical)) = base else {
+        return Ok(None);
+    };
+    let mut geographic = GeographicCRS::create(
+        format!("{} (geographic)", spherical.identified.name),
+        spherical.datum.clone(),
+        spherical.ensemble.clone(),
+        EllipsoidalCS::create_latitude_longitude(UnitOfMeasure::degree()),
+    )?;
+    geographic.identified.domains = base.domains().to_vec();
+    let intermediate = Crs::Geographic(geographic);
+
+    let hub = bound.target_crs().clone();
+    let mut binding = bound.transformation().clone();
+    let binding_target = super::bound_ops::operation_target(&binding)
+        .cloned()
+        .unwrap_or_else(|| hub.clone());
+    super::bound_ops::set_endpoints(&mut binding, &intermediate, &binding_target);
+    let intermediate_bound = Crs::Bound(BoundCRS::create(intermediate.clone(), hub, binding));
+
+    let mut first =
+        CoordinateOperation::Transformation(geographic_geocentric_conversion(base, &intermediate)?);
+    super::bound_ops::set_endpoints(&mut first, source, &intermediate_bound);
+
+    let mut found = Vec::new();
+    for mut second in factory.create_candidates(&intermediate_bound, target, context)? {
+        super::bound_ops::set_endpoints(&mut second, &intermediate_bound, target);
+        found.push(CoordinateOperation::Concatenated(pivot_concatenation(
+            vec![first.clone(), second],
+        )));
+    }
+    Ok(Some(found))
 }
 
 /// A geocentric source and a geographic target, or the reverse, on different datums: the

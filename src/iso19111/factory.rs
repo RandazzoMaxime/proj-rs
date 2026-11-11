@@ -5863,6 +5863,25 @@ impl CoordinateOperationFactory {
                 .map(CoordinateOperation::inverse)
                 .collect());
         }
+        // `createOperationsFromBoundOfSphericalPlanetocentric` (coordinateoperationfactory.cpp:
+        // 3676-3684), then its mirror for a bound target: `else if (boundDst)` is reached only
+        // when the source is not a bound CRS (3685-3692).
+        if let Some(operations) = super::geodetic_ops::bound_of_spherical_planetocentric_operations(
+            self, source, target, context,
+        )? {
+            return Ok(operations);
+        }
+        if let Crs::Bound(target_bound) = target {
+            if !matches!(source, Crs::Bound(_))
+                && super::geodetic_ops::is_spherical_planetocentric(target_bound.source_crs())
+            {
+                return Ok(self
+                    .create_candidates(target, source, context)?
+                    .iter()
+                    .map(CoordinateOperation::inverse)
+                    .collect());
+            }
+        }
         if let Some(bound) = super::bound_ops::bound_candidates(self, source, target, context)? {
             return Ok(bound);
         }
