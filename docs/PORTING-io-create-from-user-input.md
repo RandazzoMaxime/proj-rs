@@ -114,7 +114,7 @@ instead of a PROJ-based CRS.
 
 ## Round 2: coordinator run of the test (round 1)
 
-Our output (`coordinator-test-round1.txt`): `io_create_from_user_input` FAILED at
+Our output (the coordinator's run): `io_create_from_user_input` FAILED at
 `tests/unit_io_create_from_user_input.rs:40`, `read_without_database("+proj=unhandled +type=crs").is_err()`
 was false. The test stops at its first failing assert, so this is the only failure reported; the
 blocks after it had not run.
@@ -153,5 +153,4 @@ of `createFromUserInput` (io.cpp 8157-8299) does not exclude texts with `:` or `
 
 Tests written, not run by the author: the coordinator runs them.
 
-Commands run: `cargo fmt`; `node S:/Helix_Aero/lab/helix-cockpit/tools/devhub.mjs run --kind build
--- cargo check -p proj-rs --tests` (job 3816, round 1; job 3834, round 2, succeeded).
+Commands run: `cargo fmt`; `cargo check -p proj-rs --tests` (a run, round 1; a run, round 2, succeeded).
