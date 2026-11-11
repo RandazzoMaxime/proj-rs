@@ -454,8 +454,12 @@ impl ProjectedCRS {
 pub(crate) fn operation_proj_string(source: &Crs, target: &Crs) -> Result<String, FactoryError> {
     let steps = projection_steps(source, target)?;
     // Geographic steps cancel inverse unit conversions and fold axis swaps.
-    // A projected or geocentric pipeline is already the text PROJ prints.
-    if geographic_of(target).is_some() {
+    // A projected or geocentric pipeline is already the text PROJ prints, unless it holds an
+    // inverted axis swap, which PROJ prints in its normal form (io.cpp:8938-8952).
+    let inverted_swap = steps
+        .iter()
+        .any(|step| step.starts_with("+inv +proj=axisswap"));
+    if geographic_of(target).is_some() || inverted_swap {
         let mut formatter = super::pipeline::PipelineFormatter::default();
         for step in &steps {
             formatter.ingest_proj_string(step);
@@ -617,13 +621,10 @@ pub(crate) fn projection_steps(source: &Crs, target: &Crs) -> Result<Vec<String>
         }
     };
     // The source is written inverted, before the projection (`Conversion::_exportToPROJString`,
-    // conversion.cpp:3908-3915): `unitconvert` and the axis swap of the geographic CRS, each
-    // reversed, so the swap of a west or south first axis reads back its inverse.
+    // conversion.cpp:3908-3915), see `source_axis_swap` for the axis swap.
     let mut steps = Vec::new();
     if let Some(order) = geographic_axis_order(geographic) {
-        if let Some(inverse) = inverse_axis_order(&order) {
-            steps.push(format!("+proj=axisswap +order={inverse}"));
-        }
+        steps.push(source_axis_swap(&order));
     }
     if let Some(step) = angular_unit_step(geographic) {
         steps.push(step);
@@ -675,6 +676,7 @@ fn spherical_source_projection(
         ));
     }
     let mut steps = inverted_spherical_steps(spherical)?;
+    // The spherical source is written inverted as well (see `inverted_spherical_steps`).
     let mut projection = projected.deriving_conversion().export_to_proj_string()?;
     if let Some(ellipsoid) = base.ellipsoid() {
         projection.push(' ');
@@ -719,9 +721,7 @@ fn inverted_spherical_steps(spherical: &SphericalGeodeticCRS) -> Result<Vec<Stri
     };
     let mut steps = Vec::new();
     if let Some(order) = axis_order_text(axes) {
-        if let Some(inverse) = inverse_axis_order(&order) {
-            steps.push(format!("+proj=axisswap +order={inverse}"));
-        }
+        steps.push(source_axis_swap(&order));
     }
     steps.push(to_radians.to_owned());
     if !spherical_omits_geoc(spherical) {
@@ -740,6 +740,20 @@ fn inverted_spherical_steps(spherical: &SphericalGeodeticCRS) -> Result<Vec<Stri
     Ok(steps)
 }
 
+/// The axis swap of a source CRS, written inverted as `Conversion::_exportToPROJString` writes
+/// it (conversion.cpp:3908-3915). A swap that is its own inverse (`2,1`, `1,-2`) is written
+/// plainly, since PROJ's normal form of its inverse is the same (io.cpp:8938-8941). Any other
+/// order stays inverted, as PROJ stores it: its normal form differs (`inv 2,-1` is `-2,1`,
+/// io.cpp:8947-8952), and an inverse conversion that inverts these steps again must read back
+/// `2,-1`, which only the stored inverted form allows.
+fn source_axis_swap(order: &str) -> String {
+    if matches!(order, "2,1" | "1,-2") {
+        format!("+proj=axisswap +order={order}")
+    } else {
+        format!("+inv +proj=axisswap +order={order}")
+    }
+}
+
 /// Whether `GeodeticCRS::_exportToPROJString` omits `geoc` and the datum of a spherical
 /// planetocentric CRS: the longitude rotation is omitted when possible, which needs a sphere on
 /// the zero meridian (crs.cpp:2504-2511). The formatter's TOWGS84 and horizontal datum
@@ -748,20 +762,6 @@ pub(crate) fn spherical_omits_geoc(spherical: &SphericalGeodeticCRS) -> bool {
     spherical.datum.as_ref().is_some_and(|frame| {
         frame.ellipsoid().is_sphere() && prime_meridian_params(frame.prime_meridian()).is_none()
     })
-}
-
-/// The order of an `axisswap` that undoes `order`. Output `k` of `order` is the input
-/// `|order[k]|`, negated when the sign is minus, so the inverse reads each input back from
-/// the output that carries it: `2,-1` is undone by `-2,1`.
-pub(crate) fn inverse_axis_order(order: &str) -> Option<String> {
-    let (first, second) = order.split_once(',')?;
-    let slots = [first.parse::<i32>().ok()?, second.parse::<i32>().ok()?];
-    let mut inverse = [0_i32; 2];
-    for (output, slot) in slots.iter().enumerate() {
-        let input = usize::try_from(slot.abs() - 1).ok()?;
-        *inverse.get_mut(input)? = (i32::try_from(output).ok()? + 1) * slot.signum();
-    }
-    Some(format!("{},{}", inverse[0], inverse[1]))
 }
 
 /// Axis order and angular unit from `source` into the axes of `target`.
