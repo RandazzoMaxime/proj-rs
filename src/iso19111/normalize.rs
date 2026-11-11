@@ -7,8 +7,8 @@
 //! `proj_as_wkt` write for a pair is this one.
 
 use super::model::{
-    ConcatenatedOperation, ConcatenatedStep, Conversion, CoordinateOperation, Crs, GeodeticCRS,
-    Identified, Identifier, OperationMethod,
+    Axis, ConcatenatedOperation, ConcatenatedStep, Conversion, CoordinateOperation, Crs,
+    GeodeticCRS, Identified, Identifier, OperationMethod,
 };
 use super::parammap;
 
@@ -187,7 +187,7 @@ pub(crate) fn reversed(crs: &Crs) -> Option<Crs> {
 /// `CRS::mustAxisOrderBeSwitchedForVisualization`: the first two axes are north then east. A
 /// compound CRS follows its first component.
 pub(crate) fn must_axis_order_be_switched(crs: &Crs) -> bool {
-    let axes = match crs {
+    let axes: Vec<&Axis> = match crs {
         Crs::Compound(compound) => {
             return compound
                 .components()
@@ -195,13 +195,13 @@ pub(crate) fn must_axis_order_be_switched(crs: &Crs) -> bool {
                 .is_some_and(must_axis_order_be_switched)
         }
         Crs::Geographic(crs) | Crs::Geodetic(GeodeticCRS::Geographic(crs)) => {
-            crs.coordinate_system().axes()
+            crs.coordinate_system().axes().iter().collect()
         }
-        Crs::Projected(crs) => crs.coordinate_system().axes(),
+        Crs::Projected(crs) => crs.coordinate_system().axes().iter().collect(),
         // `mustAxisOrderBeSwitchedForVisualizationInternal` also reads a derived projected CRS.
         Crs::DerivedProjected(crs) => crs.coordinate_system().axes(),
         _ => return false,
     };
-    matches!(axes, [first, second, ..]
+    matches!(axes.as_slice(), [first, second, ..]
         if first.direction() == "north" && second.direction() == "east")
 }
