@@ -2801,10 +2801,10 @@ pub(super) fn projected_from_proj_string(tokens: &[(String, String)]) -> Result<
             .copied()
             .find(|method| method.proj_aux.is_none() && covers(method))
     }) else {
-        // `+proj=unknown` and a name that is not an identifier are refused.
-        // Other unmapped names (`mbt_s`, `peirce_q`, `ob_tran`) stay PROJ-based
-        // CRSs when `+type=crs` is set.
-        if token(tokens, "type") == "crs" && proj_identifier(proj) {
+        // A name outside PROJ's table is refused (`pj_create` fails on it).
+        // Other unmapped names PROJ knows (`mbt_s`, `peirce_q`, `ob_tran`) stay
+        // PROJ-based CRSs when `+type=crs` is set.
+        if token(tokens, "type") == "crs" && is_pj_list_name(proj) {
             if let Some(derived) = derived_geographic_ob_tran(tokens)? {
                 return Ok(derived);
             }
@@ -2961,18 +2961,207 @@ fn spherical_from_proj_string(tokens: &[(String, String)]) -> Result<Crs, Factor
     )))
 }
 
-/// A `+proj=` with no EPSG method (`peirce_q` horizontal, `ob_tran`, `mbt_s`).
-///
-/// The conversion is `PROJ {name}` plus the numeric parameters. The string is
-/// kept as the extension only when `keeps_proj_string` holds, and its keys are
-/// the ones `pj` recognizes.
-/// A PROJ method name: letters, digits, and underscores, and not `unknown`.
-fn proj_identifier(proj: &str) -> bool {
-    !proj.is_empty()
-        && proj != "unknown"
-        && proj
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+/// The projection names of PROJ 9.9.0 `src/pj_list.h` (`PROJ_HEAD`), the table `pj_init`
+/// searches (`locate_constructor`, `init.cpp` 424-434). A `+proj=` outside it makes
+/// `pj_create_internal` fail, and `createFromPROJString` refuses the string (`io.cpp` 12799-12896).
+const PJ_LIST_NAMES: &[&str] = &[
+    "adams_hemi",
+    "adams_ws1",
+    "adams_ws2",
+    "aea",
+    "aeqd",
+    "affine",
+    "airy",
+    "aitoff",
+    "alsk",
+    "apian",
+    "august",
+    "axisswap",
+    "bacon",
+    "bertin1953",
+    "bipc",
+    "boggs",
+    "bonne",
+    "calcofi",
+    "cart",
+    "cass",
+    "cc",
+    "ccon",
+    "cea",
+    "chamb",
+    "collg",
+    "col_urban",
+    "comill",
+    "crast",
+    "defmodel",
+    "deformation",
+    "denoy",
+    "dsea",
+    "airocean",
+    "eck1",
+    "eck2",
+    "eck3",
+    "eck4",
+    "eck5",
+    "eck6",
+    "eqearth",
+    "eqc",
+    "eqdc",
+    "euler",
+    "etmerc",
+    "fahey",
+    "fouc",
+    "fouc_s",
+    "gall",
+    "geoc",
+    "geocent",
+    "geogoffset",
+    "geos",
+    "gins8",
+    "gn_sinu",
+    "gnom",
+    "goode",
+    "gridshift",
+    "gs48",
+    "gs50",
+    "guyou",
+    "hammer",
+    "hatano",
+    "healpix",
+    "rhealpix",
+    "helmert",
+    "hgridshift",
+    "horner",
+    "hourglass",
+    "igh",
+    "igh_o",
+    "imoll",
+    "imoll_o",
+    "imw_p",
+    "interrupted",
+    "isea",
+    "ivea",
+    "kav5",
+    "kav7",
+    "krovak",
+    "labrd",
+    "laea",
+    "lagrng",
+    "larr",
+    "lask",
+    "lonlat",
+    "latlon",
+    "latlong",
+    "longlat",
+    "lcc",
+    "lcca",
+    "leac",
+    "lee_os",
+    "loxim",
+    "lsat",
+    "mbt_s",
+    "mbt_fps",
+    "mbtfpp",
+    "mbtfpq",
+    "mbtfps",
+    "merc",
+    "mil_os",
+    "mill",
+    "misrsom",
+    "mod_krovak",
+    "moll",
+    "molobadekas",
+    "molodensky",
+    "murd1",
+    "murd2",
+    "murd3",
+    "natearth",
+    "natearth2",
+    "nell",
+    "nell_h",
+    "nicol",
+    "nsper",
+    "nzmg",
+    "noop",
+    "ob_tran",
+    "ocea",
+    "oea",
+    "omerc",
+    "ortel",
+    "ortho",
+    "pconic",
+    "patterson",
+    "peirce_q",
+    "pipeline",
+    "poly",
+    "pop",
+    "push",
+    "putp1",
+    "putp2",
+    "putp3",
+    "putp3p",
+    "putp4p",
+    "putp5",
+    "putp5p",
+    "putp6",
+    "putp6p",
+    "qua_aut",
+    "qsc",
+    "robin",
+    "rouss",
+    "rpoly",
+    "s2",
+    "sch",
+    "set",
+    "sinu",
+    "som",
+    "somerc",
+    "spilhaus",
+    "stere",
+    "sterea",
+    "gstmerc",
+    "tcc",
+    "tcea",
+    "times",
+    "tinshift",
+    "tissot",
+    "tmerc",
+    "tmerczoned",
+    "tobmerc",
+    "topocentric",
+    "tpeqd",
+    "tpers",
+    "tsea",
+    "unitconvert",
+    "ups",
+    "urm5",
+    "urmfps",
+    "utm",
+    "vandg",
+    "vandg2",
+    "vandg3",
+    "vandg4",
+    "vertoffset",
+    "vitk1",
+    "vgridshift",
+    "wag1",
+    "wag2",
+    "wag3",
+    "wag4",
+    "wag5",
+    "wag6",
+    "wag7",
+    "webmerc",
+    "weren",
+    "wink1",
+    "wink2",
+    "wintri",
+    "xyzgridshift",
+];
+
+/// Whether `proj` is a projection name of PROJ's table (see [`PJ_LIST_NAMES`]).
+fn is_pj_list_name(proj: &str) -> bool {
+    PJ_LIST_NAMES.contains(&proj)
 }
 
 /// `PROJStringParser` on `+proj=ob_tran +o_proj=longlat` (or lonlat, latlong, latlon): a
@@ -2996,6 +3185,11 @@ fn derived_geographic_ob_tran(tokens: &[(String, String)]) -> Result<Option<Crs>
     .map(|derived| Some(Crs::Derived(derived)))
 }
 
+/// A `+proj=` with no EPSG method (`peirce_q` horizontal, `ob_tran`, `mbt_s`).
+///
+/// The conversion is `PROJ {name}` plus the numeric parameters. The string is
+/// kept as the extension only when `keeps_proj_string` holds, and its keys are
+/// the ones `pj` recognizes.
 fn proj_based_projected(tokens: &[(String, String)]) -> Result<Crs, FactoryError> {
     let mut crs = proj_based_shell(tokens)?;
     if geographic_ob_tran(&crs.conversion.method.name) {

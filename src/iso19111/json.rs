@@ -6,7 +6,9 @@
 
 use super::buildop::OpProps;
 use super::equiv;
-use super::factory::{AuthorityFactory, AuthorityObject, DatabaseContext, NameMatch, ObjectType};
+use super::factory::{
+    AlternativeGridNames, AuthorityFactory, AuthorityObject, DatabaseContext, NameMatch, ObjectType,
+};
 use super::json_read::{create_object_from_json, JsonObject};
 use super::model::{
     Axis, BoundCRS, CartesianCS, CompoundCRS, ConcatenatedOperation, Conversion,
@@ -22,7 +24,7 @@ use super::niche::{
     TemporalCsKind, TemporalDatum, PROLEPTIC_GREGORIAN,
 };
 use super::parammap::{method_by_code, method_by_name};
-use super::projstring::create_crs_from_proj_string_with_database;
+use super::projstring::{create_crs_from_proj_string, create_crs_from_proj_string_with_database};
 use super::wkt_import::WktParser;
 use crate::crs_text::{self, Object, Value};
 
@@ -1778,9 +1780,27 @@ pub fn create_from_user_input_with_init_rules(
     db: &DatabaseContext,
     rules: InitRules,
 ) -> Result<Crs, FactoryError> {
+    create_from_user_input_with_optional_database(text, Some(db), rules)
+}
+
+/// [`create_from_user_input_with_init_rules`] with an optional database, as PROJ's
+/// `createFromUserInput(text, dbContext, usePROJ4InitRules)` with `dbContext` possibly null.
+///
+/// Without a database, the texts that need one are refused: authority codes, URNs, the OGC CRS
+/// URLs, object names, and an `init=` PROJ string. The PROJ strings, the WKT, and the
+/// `AUTO:` forms are read as before.
+///
+/// # Errors
+///
+/// As [`create_from_user_input`]. A text that needs a database is an error when `db` is `None`.
+pub fn create_from_user_input_with_optional_database(
+    text: &str,
+    db: Option<&DatabaseContext>,
+    rules: InitRules,
+) -> Result<Crs, FactoryError> {
     let text = text.trim();
     if text.starts_with('{') {
-        return import_json(text, db);
+        return import_json(text, require_database(db)?);
     }
     if let Some(crs) = crs_from_ogc_auto(text)? {
         return Ok(crs);
@@ -1790,27 +1810,44 @@ pub fn create_from_user_input_with_init_rules(
     }
     let bare = text.strip_prefix('+').unwrap_or(text);
     if bare.starts_with("proj=") || text.contains(" +proj=") || text.contains(" proj=") {
-        return create_crs_from_proj_string_with_database(text, db);
+        return match db {
+            Some(db) => create_crs_from_proj_string_with_database(text, db),
+            None => create_crs_from_proj_string(text),
+        };
     }
-    // An OGC CRS URL contains colons, so it must be tried before `AUTH:CODE`.
-    if is_ogc_crs_url(text) {
-        return import_ogc_crs_url(text, db);
-    }
-    if let Some(crs) = crs_from_authority_code(text, db)? {
-        return Ok(crs);
-    }
-    if !text.contains(['[', '+', ':']) || text.contains(" + ") {
-        if let Some(crs) = crs_from_name(text, db)? {
+    if let Some(db) = db {
+        // An OGC CRS URL contains colons, so it must be tried before `AUTH:CODE`.
+        if is_ogc_crs_url(text) {
+            return import_ogc_crs_url(text, db);
+        }
+        if let Some(crs) = crs_from_authority_code(text, db)? {
+            return Ok(crs);
+        }
+        if let Some(crs) = crs_from_urn(text, db)? {
             return Ok(crs);
         }
     }
+    if let Some(db) = db {
+        if !text.contains(['[', '+', ':']) || text.contains(" + ") {
+            if let Some(crs) = crs_from_name(text, db)? {
+                return Ok(crs);
+            }
+        }
+    }
     let mut parser = WktParser::new();
-    parser.attach_database(db.clone());
+    if let Some(db) = db {
+        parser.attach_database(db.clone());
+    }
     parser
         .create_from_wkt(text)?
         .crs()
         .cloned()
         .ok_or_else(|| FactoryError::Invalid("WKT is not a CRS".to_owned()))
+}
+
+/// The database a text needs, or PROJ's `no database context specified`.
+fn require_database(db: Option<&DatabaseContext>) -> Result<&DatabaseContext, FactoryError> {
+    db.ok_or_else(|| FactoryError::Format("no database context specified".to_owned()))
 }
 
 /// Whether a PROJ string has a `proj=` step, not only `init=` and flags.
@@ -1826,7 +1863,7 @@ fn has_proj_step(text: &str) -> bool {
 /// `epsg:` and `IGNF:` forms are refused, as PROJ does.
 fn crs_from_init_text(
     text: &str,
-    db: &DatabaseContext,
+    db: Option<&DatabaseContext>,
     rules: InitRules,
 ) -> Result<Crs, FactoryError> {
     let mut title: Option<String> = None;
@@ -1865,7 +1902,7 @@ fn crs_from_init_text(
             "init={name} with parameters beside over, no_defs, wktext and type=crs is not expanded"
         )));
     }
-    let crs = create_from_user_input(&format!("{authority}:{code}"), db)?;
+    let crs = create_from_user_input(&format!("{authority}:{code}"), require_database(db)?)?;
     match crs {
         Crs::Geographic(geographic) => {
             let cs = match geographic.coordinate_system().axes() {
@@ -2057,6 +2094,35 @@ fn crs_from_authority_code(text: &str, db: &DatabaseContext) -> Result<Option<Cr
                 return Ok(Some(crs));
             }
         }
+        // `io.cpp` 7851-7887: the versioned authorities of the name (`IAU` is read in
+        // `IAU_2015`), then the authority whose name matches it ignoring case (`epsg:4326`).
+        for versioned in db.versioned_authorities_from_name(tokens[0]) {
+            let versioned_factory = AuthorityFactory::create(db, versioned);
+            if let Ok(crs) = versioned_factory.create_coordinate_reference_system(tokens[1]) {
+                return Ok(Some(crs));
+            }
+        }
+        for candidate in db.authorities()? {
+            if !candidate.eq_ignore_ascii_case(tokens[0]) {
+                continue;
+            }
+            let candidate_factory = AuthorityFactory::create(db, candidate);
+            return match candidate_factory.create_coordinate_reference_system(tokens[1]) {
+                Ok(crs) => Ok(Some(crs)),
+                Err(error) => {
+                    let parts: Vec<&str> = tokens[1].split('+').collect();
+                    match parts.as_slice() {
+                        [first, second] => Ok(Some(implicit_compound(
+                            &candidate_factory,
+                            first,
+                            &candidate_factory,
+                            second,
+                        )?)),
+                        _ => Err(error),
+                    }
+                }
+            };
+        }
         let parts: Vec<&str> = tokens[1].split('+').collect();
         if parts.len() == 2 {
             return Ok(Some(implicit_compound(
@@ -2088,6 +2154,243 @@ fn implicit_compound(
     let vertical = second_factory.create_coordinate_reference_system(second_code)?;
     let name = format!("{} + {}", horizontal.name(), vertical.name());
     CompoundCRS::create_lax(name, vec![horizontal, vertical])
+}
+
+/// The OGC URN forms of `createFromUserInput` that give a CRS (`io.cpp`, 8015-8155): the
+/// `urn:ogc:def:crs,` combinations, and the `urn:ogc:def:TYPE:AUTH:VERSION:CODE` form with its
+/// legacy spellings. `Ok(None)` when the text is none of them.
+fn crs_from_urn(text: &str, db: &DatabaseContext) -> Result<Option<Crs>, FactoryError> {
+    if text.starts_with("urn:ogc:def:crs,") {
+        return crs_from_urn_combination(text, db).map(Some);
+    }
+    if text.contains(' ') {
+        return Ok(None);
+    }
+    let tokens: Vec<&str> = text.split(':').collect();
+    if tokens.len() == 7 && tokens[0].eq_ignore_ascii_case("urn") {
+        // `urn:ogc:def:crs:EPSG::4326`, and `URN:OGC:DEF:CRS:OGC:1.3:CRS84` with `CRS` as type.
+        let kind = if tokens[3] == "CRS" { "crs" } else { tokens[3] };
+        return crs_from_urn_part(db, kind, tokens[4], tokens[5], tokens[6]).map(Some);
+    }
+    if tokens.len() == 6 && tokens[0] == "urn" && tokens[2] != "def" {
+        // Legacy `urn:opengis:crs:EPSG::4326`, without `def`.
+        return crs_from_urn_part(db, tokens[2], tokens[3], tokens[4], tokens[5]).map(Some);
+    }
+    if tokens.len() == 6 && tokens[0] == "urn" {
+        // Legacy `urn:x-ogc:def:crs:EPSG:4326`, without the version.
+        return crs_from_urn_part(db, tokens[3], tokens[4], "", tokens[5]).map(Some);
+    }
+    Ok(None)
+}
+
+/// `createFromURNPart` (`io.cpp` 7652-7707): the object `code` of `authority`. When that fails,
+/// an empty `version` tries the versioned authorities of the name, and a `version` tries the
+/// authority it names.
+///
+/// # Errors
+///
+/// The object type is not a CRS, or no authority gives the code.
+fn crs_from_urn_part(
+    db: &DatabaseContext,
+    kind: &str,
+    authority: &str,
+    version: &str,
+    code: &str,
+) -> Result<Crs, FactoryError> {
+    if kind != "crs" {
+        return Err(FactoryError::Format(format!(
+            "object type {kind} is not read as a CRS"
+        )));
+    }
+    let error =
+        match AuthorityFactory::create(db, authority).create_coordinate_reference_system(code) {
+            Ok(crs) => return Ok(crs),
+            Err(error) => error,
+        };
+    if version.is_empty() {
+        for versioned in db.versioned_authorities_from_name(authority) {
+            if let Ok(crs) = crs_from_urn_part(db, kind, &versioned, "", code) {
+                return Ok(crs);
+            }
+        }
+        return Err(error);
+    }
+    match db.versioned_authority(authority, version) {
+        Some(versioned) => crs_from_urn_part(db, kind, &versioned, "", code),
+        None => Err(error),
+    }
+}
+
+/// `urn:ogc:def:crs,crs:AUTH:CODE,...` (`io.cpp` 7915-8090): a compound CRS of its components, or
+/// the derived CRS of `urn:ogc:def:crs,crs:...,cs:...,coordinateOperation:...`.
+fn crs_from_urn_combination(text: &str, db: &DatabaseContext) -> Result<Crs, FactoryError> {
+    let parts: Vec<&str> = text.split(',').collect();
+    if parts.len() == 4
+        && parts[1].starts_with("crs:")
+        && parts[2].starts_with("cs:")
+        && parts[3].starts_with("coordinateOperation:")
+    {
+        return crs_from_urn_derived(&parts, db);
+    }
+    let mut components = Vec::new();
+    let mut name = String::new();
+    for part in &parts[1..] {
+        let tokens: Vec<&str> = part.split(':').collect();
+        if tokens.len() != 4 {
+            return Err(FactoryError::Format(format!(
+                "invalid crs component: {part}"
+            )));
+        }
+        if tokens[0] != "crs" {
+            return Err(FactoryError::Format(format!(
+                "unexpected object type: {}",
+                tokens[0]
+            )));
+        }
+        let crs = AuthorityFactory::create(db, tokens[1])
+            .create_coordinate_reference_system(tokens[3])?;
+        if !name.is_empty() {
+            name.push_str(" + ");
+        }
+        name.push_str(crs.name());
+        components.push(crs);
+    }
+    Ok(Crs::Compound(CompoundCRS::create(name, components)?))
+}
+
+/// The derived CRS of `urn:ogc:def:crs,crs:BASE,cs:CS,coordinateOperation:CONVERSION`
+/// (`io.cpp` 7920-8058). The name is `base / conversion`, with ` (3D)` after a 3D geographic base.
+fn crs_from_urn_derived(parts: &[&str], db: &DatabaseContext) -> Result<Crs, FactoryError> {
+    let crs_tokens: Vec<&str> = parts[1].split(':').collect();
+    let cs_tokens: Vec<&str> = parts[2].split(':').collect();
+    let op_tokens: Vec<&str> = parts[3].split(':').collect();
+    if crs_tokens.len() != 4 {
+        return Err(FactoryError::Format(format!(
+            "invalid crs component: {}",
+            parts[1]
+        )));
+    }
+    if cs_tokens.len() != 4 {
+        return Err(FactoryError::Format(format!(
+            "invalid cs component: {}",
+            parts[2]
+        )));
+    }
+    if op_tokens.len() != 4 {
+        return Err(FactoryError::Format(format!(
+            "invalid coordinateOperation component: {}",
+            parts[3]
+        )));
+    }
+    let base = AuthorityFactory::create(db, crs_tokens[1])
+        .create_coordinate_reference_system(crs_tokens[3])?;
+    let cs = AuthorityFactory::create(db, cs_tokens[1]).create_coordinate_system(cs_tokens[3])?;
+    let operation = AuthorityFactory::create(db, op_tokens[1])
+        .create_coordinate_operation(op_tokens[3], AlternativeGridNames::Proj)?;
+    let unsupported = || {
+        FactoryError::Format(
+            "unsupported combination of baseCRS, CS and coordinateOperation for a DerivedCRS"
+                .to_owned(),
+        )
+    };
+    let CoordinateOperation::Conversion(conversion) = operation else {
+        return Err(unsupported());
+    };
+
+    let base_name = base.name().to_owned();
+    let geographic = match &base {
+        Crs::Geographic(geographic) | Crs::Geodetic(GeodeticCRS::Geographic(geographic)) => {
+            Some(geographic.clone())
+        }
+        _ => None,
+    };
+    let mut name = base_name.clone();
+    if let Some(geographic) = &geographic {
+        if geographic.coordinate_system().axes().len() == 3 && !base_name.contains("3D") {
+            name.push_str(" (3D)");
+        }
+    }
+    name.push_str(" / ");
+    name.push_str(conversion.name());
+
+    if let Some(geographic) = geographic {
+        return match cs {
+            CoordinateSystem::Cartesian(cartesian) => Ok(Crs::Projected(ProjectedCRS::create(
+                name,
+                GeodeticCRS::Geographic(geographic),
+                conversion,
+                cartesian,
+            ))),
+            CoordinateSystem::Ellipsoidal(_) => Ok(Crs::Derived(DerivedCRS::create(
+                name, base, conversion, cs,
+            )?)),
+            _ => Err(unsupported()),
+        };
+    }
+    if matches!(base, Crs::Geodetic(_)) && matches!(cs, CoordinateSystem::Cartesian(_)) {
+        return Ok(Crs::Derived(DerivedCRS::create(
+            name, base, conversion, cs,
+        )?));
+    }
+    if let Crs::Projected(projected) = &base {
+        return Ok(Crs::DerivedProjected(DerivedProjectedCRS::create(
+            name,
+            projected.clone(),
+            conversion,
+            cs,
+        )));
+    }
+    if matches!(base, Crs::Vertical(_)) && matches!(cs, CoordinateSystem::Vertical(_)) {
+        let unit_name = cs
+            .axes()
+            .first()
+            .map(|axis| axis.unit().name().to_owned())
+            .unwrap_or_default();
+        let name = vertical_renamed(&base_name, conversion.method(), &unit_name).unwrap_or(name);
+        return Ok(Crs::Derived(DerivedCRS::create(
+            name, base, conversion, cs,
+        )?));
+    }
+    Err(unsupported())
+}
+
+/// The name of a derived vertical CRS whose conversion changes the vertical unit, or reverses
+/// the height (`io.cpp` 8003-8052). `None` keeps the composed name.
+fn vertical_renamed(base_name: &str, method: &OperationMethod, unit_name: &str) -> Option<String> {
+    let method_code = if method.code_space() == "EPSG" {
+        method.code().parse::<i32>().unwrap_or(0)
+    } else {
+        0
+    };
+    let mut new_name = base_name.to_owned();
+    let mut unit_suffix = "";
+    for suffix in [" (ft)", " (ftUS)"] {
+        if let Some(stripped) = new_name.strip_suffix(suffix) {
+            unit_suffix = suffix;
+            new_name = stripped.to_owned();
+            break;
+        }
+    }
+    match method_code {
+        // EPSG:1069 `Change of Vertical Unit` and EPSG:1104 without a conversion factor.
+        1069 | 1104 => match unit_name {
+            "metre" => Some(new_name),
+            "foot" => Some(format!("{new_name} (ft)")),
+            "US survey foot" => Some(format!("{new_name} (ftUS)")),
+            _ => None,
+        },
+        // EPSG:1068 `Height Depth reversal`.
+        1068 => {
+            if let Some(stem) = new_name.strip_suffix(" height") {
+                Some(format!("{stem} depth{unit_suffix}"))
+            } else {
+                new_name
+                    .strip_suffix(" depth")
+                    .map(|stem| format!("{stem} height{unit_suffix}"))
+            }
+        }
+        _ => None,
+    }
 }
 
 const OGC_CRS_URL_PREFIXES: &[&str] = &[
