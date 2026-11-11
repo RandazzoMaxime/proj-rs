@@ -11,9 +11,9 @@ Branch `unit-op-string-exports`, base `origin/main`. Round 4 (coordinator round 
 | `operation.boundCRS_to_geogCRS_hubCRS_and_targetCRS_same_but_baseCRS_not` | Open. First differing step found (horizontal terms of the first leg). Caller not yet identified. |
 
 Commits of this lot: `8ec9629`, `461c755`, `af9badc` (sheets), `528e5fa`, `3d83ea8` (tests). Compile of
-`3d83ea8`: `devhub run --kind build -- cargo check -p proj-rs --tests`, job 3883, succeeded.
-Coordinator run of round 3 (job 3882): `unit_op_nadgrids_with_pm` 1 passed, probes ran; output in
-`port-scratch/unit-op-string-exports/coordinator-round3-output.txt`.
+`3d83ea8`: `cargo check -p proj-rs --tests`, succeeded.
+Coordinator run of round 3: `unit_op_nadgrids_with_pm` 1 passed, probes ran; output in
+the coordinator's run.
 
 ## Row 1: `operation.nadgrids_with_pm` (test_operationfactory.cpp:4044-4098)
 
@@ -30,7 +30,7 @@ Source `+proj=tmerc +lat_0=39.66666666666666 +lon_0=1 +k=1 +x_0=200000 +y_0=3000
 
 - Port: `+step +proj=longlat +ellps=intl +pm=lisbon`, not inverted, right after `+inv +proj=tmerc`.
 - PROJ: no longlat step in the string.
-- Reference, the same rotation on its own (`ref.ps1 projinfo`, `--single-line`):
+- Reference, the same rotation on its own (`projinfo`, `--single-line`):
   - lisbon to Greenwich: `+proj=pipeline +step +proj=unitconvert +xy_in=deg +xy_out=rad +step +inv +proj=longlat +ellps=intl +pm=lisbon +step +proj=unitconvert +xy_in=rad +xy_out=deg`
   - Greenwich to lisbon: `+proj=pipeline +step +proj=unitconvert +xy_in=deg +xy_out=rad +step +proj=longlat +ellps=intl +pm=lisbon +step +proj=unitconvert +xy_in=rad +xy_out=deg`
 - So the port's step has the direction of Greenwich to lisbon (non-inverted), while
@@ -112,13 +112,13 @@ Cause status: not identified.
 
 ## Probes requested (not in the tree)
 
-1. `port-scratch/unit-op-string-exports/probe_unit_op_strings_r3.rs`, two tests:
+1. `probe_unit_op_strings_r3.rs`, two tests:
    `probe_rotation_lisbon_to_greenwich` and `probe_rotation_greenwich_to_lisbon`. They print the port's candidates
    for the two directions of the rotation, to set against the two reference lines of Row 1. Copy to
    `tests/probe_unit_op_strings_r3.rs`, run `cargo test -p proj-rs --test probe_unit_op_strings_r3 -- --nocapture`.
    Not compiled by the author.
 2. Row 2 with the 3D case isolated: `EPSG:4937` to `EPSG:4979` (3D to 3D), and `EPSG:4937` to `EPSG:4258`
-   (3D to 2D), in the port and with `ref.ps1 projinfo ... -o PROJ --spatial-test intersects --grid-check none`.
+   (3D to 2D), in the port and with `projinfo ... -o PROJ --spatial-test intersects --grid-check none`.
    If the port's 4937 to 4979 has no z pair either, the source CRS reaches the writer in 2D.
 3. Row 1, WKT round trip: the port's candidate names, if `op.name()` is public, for candidates [0] and [1].
 4. Row 3: the candidate name, as in round 2.
@@ -130,9 +130,9 @@ Only the tests of this lot (`unit_op_nadgrids_with_pm.rs`). No shared code is ch
 ## Tests
 
 - `tests/unit_op_nadgrids_with_pm.rs`:
-  - `operation_nadgrids_with_pm_to_epsg_4326`: measured by the coordinator (round 3, job 3882), passes.
+  - `operation_nadgrids_with_pm_to_epsg_4326`: measured by the coordinator (round 3), passes.
   - `operation_nadgrids_with_pm_to_epsg_4258`: the first candidate's string was measured by the coordinator
-    (round 3, job 3882) equal to the expected string; the test asserts the list is non-empty and checks
+    (round 3) equal to the expected string; the test asserts the list is non-empty and checks
     `list[0]`. Expected to pass; not run by the author.
 
 Tests written, not run by the author: the coordinator runs them.
