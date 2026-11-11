@@ -730,6 +730,7 @@ impl Reader<'_> {
             name: identified.name,
             identifiers: identified.identifiers,
             interpolation_crs,
+            accuracy: None,
         })
     }
 

@@ -5,21 +5,17 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 27 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
-| `niche` | 14 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
+| `core` | 23 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `niche` | 10 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 41 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (27)
+## core (23)
 
-### test_c_api.cpp (7)
+### test_c_api.cpp (3)
 
 - `CApi.proj_coordoperation_get_grid_used_fullname_caching`
 - `CApi.proj_normalize_for_visualization_with_alternatives`
-- `CApi.proj_normalize_for_visualization_with_alternatives_reverse`
 - `CApi.proj_coordoperation_create_inverse`
-- `CApi.proj_create_vertical_crs_ex`
-- `CApi.proj_create_vertical_crs_ex_with_geog_crs`
-- `CApi.proj_create_vertical_crs_ex_implied_accuracy`
 
 ### test_crs.cpp (2)
 
@@ -56,13 +52,13 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.compoundCRS_to_proj_string_with_non_metre_height`
 - `operation.compoundCRS_to_PROJJSON_with_non_metre_height`
 
-## niche (14)
+## niche (10)
 
 ### test_crs.cpp (1)
 
 - `crs.normalizeForVisualization_derivedprojected_operation`
 
-### test_operationfactory.cpp (13)
+### test_operationfactory.cpp (9)
 
 - `operation.boundCRS_to_derived_geog_with_transformation_with_source_crs_being_base_crs_of_source_crs`
 - `operation.compoundCRS_with_derivedVerticalCRS_ellipsoidal_height_to_geog`
@@ -71,10 +67,6 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.compoundCRS_with_derived_vertical_CRS`
 - `operation.createOperation_ossfuzz_18587`
 - `operation.createOperation_bound_of_spherical_ocentric_to_same_type`
-- `operation.createOperation_spherical_ocentric_spherical_to_ellipsoidal_north_west`
-- `operation.createOperation_ellipsoidal_ographic_west_to_projected_of_ellipsoidal_ographic_west`
-- `operation.createOperation_ellipsoidal_ographic_west_to_projected_of_ellipsoidal_ocentric`
-- `operation.createOperation_ellipsoidal_ocentric_to_projected_of_ellipsoidal_ographic_west`
 - `operation.createOperation_derived_projected_crs`
 - `operation.geogCRS_to_compoundCRS_with_boundVerticalCRS_and_derivedProjected`
 

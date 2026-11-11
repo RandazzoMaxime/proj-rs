@@ -2380,6 +2380,7 @@ impl WktParser {
                     name: geoid.to_uppercase(),
                     identifiers: Vec::new(),
                     interpolation_crs: None,
+                    accuracy: None,
                 });
             }
         }
@@ -2395,6 +2396,7 @@ impl WktParser {
                 name: props.name,
                 identifiers: props.identifiers,
                 interpolation_crs: None,
+                accuracy: None,
             });
         }
         Ok(VerticalCRS {

@@ -66,7 +66,7 @@ pub use model::{
     Conversion, CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble,
     DerivedConversion, DerivedProjectedCRS, Ellipsoid, EllipsoidalCS, EngineeringCRS,
     EngineeringDatum, FactoryError, GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame,
-    GeographicCRS, Identifier, Measure, Meridian, ObjectDomain, OperationMethod,
+    GeographicCRS, GeoidModel, Identifier, Measure, Meridian, ObjectDomain, OperationMethod,
     OperationParameter, OperationParameterValue, OrdinalCS, Parameter, ParameterValue,
     PrimeMeridian, ProjectedCRS, RealizationMethod, SphericalCS, Transformation, UnitKind,
     UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame,
