@@ -11,7 +11,7 @@ planetocentric / planetographic"). Rust side: `tests/unit_niche_ocentric.rs`.
   `operation_ellipsoidal_ographic_west_to_projected_of_ellipsoidal_ographic_west`,
   `operation_ellipsoidal_ographic_west_to_projected_of_ellipsoidal_ocentric`,
   `operation_ellipsoidal_ocentric_to_projected_of_ellipsoidal_ographic_west`.
-- Round-2 coordinator run (`coordinator-test-round2.txt`): three of the four passed. The
+- Round-2 coordinator run (the coordinator's run): three of the four passed. The
   failing one was the inverse half of `..._ographic_west_to_projected_of_ellipsoidal_ographic_west`.
   Its cause and fix are in section 1.1. The coordinator also reports that eleven other tests of
   the full suite fail on `main` on that machine; they are not in this lot.
@@ -24,7 +24,7 @@ planetocentric / planetographic"). Rust side: `tests/unit_niche_ocentric.rs`.
 
 ### 1.1 Round 2: inverse of `..._ographic_west_to_projected_of_ellipsoidal_ographic_west` (19911 -> 19901)
 
-- Ours (`coordinator-test-round2.txt`, line 7):
+- Ours (the coordinator's run, line 7):
   `+inv axisswap -1,2`, `+inv eqc ...`, `unitconvert rad->deg`, `+inv axisswap -2,1`.
 - PROJ (test lines 11051-11057): `+inv axisswap -1,2`, `+inv eqc ...`, `unitconvert rad->deg`,
   `axisswap 2,-1`.
@@ -178,11 +178,11 @@ means the fixes above, which the coordinator must run.
 
 ```text
 cargo fmt -- <touched files>
-node S:/Helix_Aero/lab/helix-cockpit/tools/devhub.mjs run --kind build -- cargo check -p proj-rs --tests
-  -> job 3841 (18c61d7): succeeded
-  -> job 3848 (85af950): succeeded
-  -> job 3849 (cf02b79 tree): succeeded
-  -> job 3855 and 3856 (510ee50): succeeded, no warning
+cargo check -p proj-rs --tests
+  -> a run (18c61d7): succeeded
+  -> a run (85af950): succeeded
+  -> a run (cf02b79 tree): succeeded
+  -> a run and 3856 (510ee50): succeeded, no warning
 ```
 
 Tests written, not run by the author: the coordinator runs them.
