@@ -1549,7 +1549,14 @@ pub(super) fn geoid_vertical(
         return Ok(Vec::new());
     }
     if vertical_axis.unit().conversion_to_si() != 1.0 {
-        return geoid_vertical_non_metre(vertical, geog, from_vertical, context);
+        let operations = geoid_vertical_non_metre(vertical, geog, context)?;
+        if from_vertical {
+            return Ok(operations);
+        }
+        return Ok(operations
+            .iter()
+            .map(CoordinateOperation::inverse)
+            .collect());
     }
     let mut operations = Vec::new();
     for model in vertical.geoid_models() {
@@ -1610,14 +1617,14 @@ fn model_operations(
 /// vertical CRS whose unit is not the metre, or whose axis is not up in metres. The geoid
 /// operations go to the metre copy of the CRS, `vertCRSMetre`. Each one whose vertical side is
 /// not the CRS is joined to it by a conversion (`createOperationsVertToVert`), from the CRS to
-/// that side, as `useTransf` appends it. The reverse request inverts the result.
+/// that side, as `useTransf` appends it. The operations run from the vertical CRS to the
+/// geographic one; the caller inverts them for the reverse request.
 ///
 /// The geographic CRS with a height unit other than the metre is not ported: `geoid_vertical`
 /// returns before this function for it.
 fn geoid_vertical_non_metre(
     vertical: &VerticalCRS,
     geog: &GeographicCRS,
-    from_vertical: bool,
     context: &CoordinateOperationContext,
 ) -> Result<Vec<CoordinateOperation>, FactoryError> {
     let vertical_crs = Crs::Vertical(vertical.clone());
@@ -1653,13 +1660,7 @@ fn geoid_vertical_non_metre(
             ));
         }
     }
-    if from_vertical {
-        return Ok(operations);
-    }
-    Ok(operations
-        .iter()
-        .map(CoordinateOperation::inverse)
-        .collect())
+    Ok(operations)
 }
 
 /// `ConcatenatedOperation::createComputeMetadata` of the two steps of a vertical CRS to a

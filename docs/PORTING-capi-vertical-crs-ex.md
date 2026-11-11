@@ -98,6 +98,34 @@ operation in `concatenatedoperation.cpp`. The accuracy assertions rely on the ex
   `tests/unit_opfac_core_c_vert.rs`, `tests/unit_io_core_b.rs` (PROJJSON import), and
   `cargo test --test cli_yaml`.
 
-Compilation: `cargo check -p proj-rs --tests` through devhub, job 3820, succeeded with no warning.
+## This lot sits on the registry-direct-to lot
 
-Tests written, not run by the author: the coordinator runs them.
+The branch starts from `lot-registry-direct-to`, not from `main`: it must be merged after it.
+
+On `main`, the non-metre path of this lot reopens
+`unit_op_compound_to_compound_2::operation_compound_to_compound_issue_4550` (a vertical CRS in US
+survey feet with the registered model `GEOID18`): the first candidate goes through `GEOID18` and
+back, where PROJ gives the vertical-to-vertical fallback. The cause is not in this lot. PROJ keeps
+the extents of the outermost pair for every sub-call, intersects boxes across the antimeridian, and
+filters the registry lookup to a vertical CRS (`findOpsInRegistryDirectTo`); the port did none of the
+three, and `main` passed that test only because the non-metre path gave nothing. The three are fixed
+in `docs/PORTING-registry-direct-to.md` ("Step 2"), which holds the trace.
+
+A first version of this lot hid the case behind a condition on the model (`PROJ <grid>` models
+without identifier only). That condition has no counterpart in PROJ and is **not** in this branch:
+a registered model on a non-metre vertical CRS takes the `useTransf` path, as in PROJ.
+
+## Commands run
+
+The code and the tests were written by a port agent (Claude Haiku 5.5) that could not run them.
+The coordinator session ran, on Windows, without the reference `cs2cs` on the PATH:
+
+- `cargo test -p proj-rs --test unit_capi_vertical_crs_ex --test unit_op_compound_to_compound_2
+  --test unit_op_compound_to_geog_2`: 3, 11 (2 ignored) and 6 passed.
+- `cargo test -p proj-rs --all-features --no-fail-fast`: 1685 passed, 11 failed, 28 ignored. The same
+  11 tests fail on `main` (`c57d7d2`) on that machine (its `PROJ_DATA` points at an OSGeo4W install
+  with real grids; cause not confirmed by a second run). No test fails on this branch only. That
+  run was before the last change, which moves the inversion of `geoid_vertical_non_metre` to its
+  caller for the `fn_params_excessive_bools` lint; the three test files above were run after it.
+- `cargo clippy -p proj-rs --all-targets --all-features -- -D warnings`, `cargo fmt --check`: clean.
+- The `issue_4550` pair with the default criterion: 1 candidate, as PROJ 9.9.0 `projinfo`.
