@@ -30,6 +30,7 @@ authority-fallback forms those blocks need.
 | 7-token and legacy 6-token URN | `crs_from_urn` | ported |
 | 2-token `AUTH:CODE`, versioned and ci fallback (7851-7887) | `crs_from_authority_code` | ported; the `+` split runs inside the case-insensitive candidate, as in PROJ |
 | `init=` refusal without a database | `crs_from_init_text` takes `Option<&DatabaseContext>` | ported |
+| `pj_create` refuses a name outside `pj_list.h` (io.cpp 12799-12896) | `PJ_LIST_NAMES`, `is_pj_list_name` (`projstring.rs`) | ported (round 2) |
 
 ## Map: PROJ `TEST()` -> Rust test
 
@@ -96,6 +97,12 @@ resolved instead of rejected:
 No existing signature changed. `create_from_user_input` and `create_from_user_input_with_init_rules`
 keep their parameters.
 
+Round 2 (`projstring.rs`): a `+proj=` name is now a PROJ-based CRS only when it is in PROJ's
+`pj_list.h`. The only existing test strings with `+type=crs` use PROJ names (checked by grep over
+`tests/` and `src/`); `refused("proj=unknown +type=crs")` in `tests/test_io_units.rs` already
+expected an error. Callers that pass a made-up `+proj=` name with `+type=crs` now get an error
+instead of a PROJ-based CRS.
+
 ## Open
 
 - The blocks listed under "Not covered": the object kinds (operation, ensemble, ellipsoid, prime
@@ -105,7 +112,46 @@ keep their parameters.
   ensemble and operation names in passes 2 and 4, and the ci authority lookup of the factory.
   Not reviewed in this lot.
 
+## Round 2: coordinator run of the test (round 1)
+
+Our output (`coordinator-test-round1.txt`): `io_create_from_user_input` FAILED at
+`tests/unit_io_create_from_user_input.rs:40`, `read_without_database("+proj=unhandled +type=crs").is_err()`
+was false. The test stops at its first failing assert, so this is the only failure reported; the
+blocks after it had not run.
+
+PROJ's output: `createFromUserInput("+proj=unhandled +type=crs", nullptr)` throws
+`ParsingException` (test_io.cpp:13722). Trace: `createFromUserInput` routes the `+proj=` text to
+`PROJStringParser().createFromPROJString` (io.cpp 7804-7818). The structure check leaves
+`unexpectedStructure` set (`unhandled` is no projected step, io.cpp 12740-12749), then
+`pj_create_internal(... +disable_grid_presence_check)` fails because `pj_init` looks the name up in
+`pj_list.h` and does not find it (init.cpp 424-434). `valid` is false and the `ParsingException`
+of io.cpp 12894-12896 is thrown.
+
+Our trace: `crs_from_proj_string` (`projstring.rs`) found no method for `unhandled`, and then
+built a PROJ-based projected CRS for any identifier-like name when `+type=crs` is set. A name that
+PROJ does not know is not a PROJ-based CRS.
+
+Fix (commit "projstring: a +proj name outside PROJ's table is refused as a CRS"): the name must be
+in PROJ 9.9.0's `pj_list.h` table (`PJ_LIST_NAMES`). `mbt_s`, `peirce_q` and `ob_tran` stay
+PROJ-based, as before. The old `proj_identifier` check is removed.
+
+Audit of the blocks after line 40, by reasoning against the C++ (none of them has run yet):
+
+- Error-variant asserts (`NotFound`): an unknown authority or code is `NoSuchAuthorityCodeException`
+  in PROJ; ours is `FactoryError::NotFound` through `FactoryError::missing`.
+- Token splits: PROJ's `split` (`internal.cpp` 301-311) keeps empty fields, as Rust's `split` does,
+  so the URN token counts of the error cases match.
+- Versioned and case-insensitive authority fallback (io.cpp 7851-7887), IAU and `epsg:4326`.
+- Compound and derived URNs (io.cpp 7920-8058): name composition, `(3D)`, the derived geodetic,
+  geographic, projected and vertical kinds, and the vertical unit and height/depth renames
+  (io.cpp 8003-8052). `US survey foot` is the name of EPSG 9003 in both (static.cpp 338).
+- `WGS 84` exact name with two matches, and `WGS84` alias: the 2-D pick (io.cpp 8175-8185).
+
+Still open, not in this test: `NN2000:2018 height` (line 13767) is refused here. The name search
+of `createFromUserInput` (io.cpp 8157-8299) does not exclude texts with `:` or `+`; our gate in
+`crs_from_name` (`json.rs`, `!text.contains(['[', '+', ':'])`) does. Not changed in this lot.
+
 Tests written, not run by the author: the coordinator runs them.
 
 Commands run: `cargo fmt`; `node S:/Helix_Aero/lab/helix-cockpit/tools/devhub.mjs run --kind build
--- cargo check -p proj-rs --tests` (job 3816, succeeded, no warning in the log tail).
+-- cargo check -p proj-rs --tests` (job 3816, round 1; job 3834, round 2, succeeded).
