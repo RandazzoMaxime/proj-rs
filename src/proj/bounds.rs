@@ -109,16 +109,6 @@ impl Proj {
         }
     }
 
-    /// Whether `direction` writes degrees. The output is the target of a
-    /// forward transform and the source of an inverse one.
-    fn degree_output(&self, direction: Direction) -> bool {
-        match &self.body {
-            Body::Native(op) => op.degree_output(direction == Direction::Inverse),
-            Body::Iso(pipeline) => pipeline.degree_output(direction),
-            Body::Single => false,
-        }
-    }
-
     /// Whether the output of `direction` has longitude first.
     ///
     /// A CRS pair is always longitude, latitude here. A bare PROJ pipeline has

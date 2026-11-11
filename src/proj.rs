@@ -724,6 +724,29 @@ impl Proj {
         Ok((coord.x, coord.y, coord.z, coord.t))
     }
 
+    /// Whether this transform reads degrees, rather than radians or CRS units, in `direction`.
+    ///
+    /// The input of `direction` is the output of the opposite direction, as PROJ's
+    /// `proj_degree_input` defines it. A CRS object is not a transform and reads no angular
+    /// unit: `false`.
+    #[must_use]
+    pub fn degree_input(&self, direction: Direction) -> bool {
+        self.degree_output(direction.opposite())
+    }
+
+    /// Whether this transform writes degrees, rather than radians or CRS units, in `direction`.
+    ///
+    /// A CRS pair is normalized (`proj_normalize_for_visualization`): its output is the target
+    /// of a forward transform and the source of an inverse one.
+    #[must_use]
+    pub fn degree_output(&self, direction: Direction) -> bool {
+        match &self.body {
+            Body::Native(op) => op.degree_output(direction == Direction::Inverse),
+            Body::Iso(pipeline) => pipeline.degree_output(direction),
+            Body::Single => false,
+        }
+    }
+
     /// Convert a slice in place, forward only.
     ///
     /// # Errors
