@@ -665,22 +665,24 @@ fn pseudo_area_of(operation: Option<BoundingBox>, extents: &SortExtents) -> f64 
     let bbox_of = |domain: Option<&ObjectDomain>| domain.and_then(ObjectDomain::bounding_box);
     let area_of = |bbox: Option<BoundingBox>| bbox.map_or(0.0, |bbox| bbox.pseudo_area());
     if let Some(area) = bbox_of(extents.area.as_ref()) {
-        return area_of(operation.intersection(&area));
+        return area_of(operation.extent_intersection(&area));
     }
     let source = bbox_of(extents.source.as_ref());
     let target = bbox_of(extents.target.as_ref());
     match (source, target) {
         (Some(source), Some(target)) => {
-            let x = operation.intersection(&source);
-            let y = operation.intersection(&target);
+            let x = operation.extent_intersection(&source);
+            let y = operation.extent_intersection(&target);
             let both = match (x, y) {
-                (Some(x), Some(y)) => x.intersection(&y).map_or(0.0, |bbox| bbox.pseudo_area()),
+                (Some(x), Some(y)) => x
+                    .extent_intersection(&y)
+                    .map_or(0.0, |bbox| bbox.pseudo_area()),
                 _ => 0.0,
             };
             area_of(x) + area_of(y) - both
         }
-        (Some(source), None) => area_of(operation.intersection(&source)),
-        (None, Some(target)) => area_of(operation.intersection(&target)),
+        (Some(source), None) => area_of(operation.extent_intersection(&source)),
+        (None, Some(target)) => area_of(operation.extent_intersection(&target)),
         (None, None) => operation.pseudo_area(),
     }
 }

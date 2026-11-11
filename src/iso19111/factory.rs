@@ -6514,7 +6514,9 @@ pub(super) fn intersect_extents(sofar: ObjectDomain, part: ObjectDomain) -> Opti
             if right.contains(&left) {
                 return Some(sofar);
             }
-            Some(ObjectDomain::from_bounding_box(left.intersection(&right)?))
+            Some(ObjectDomain::from_bounding_box(
+                left.extent_intersection(&right)?,
+            ))
         }
         _ => Some(sofar),
     }
@@ -6573,7 +6575,9 @@ impl SortExtents {
             (Some(area), _) => Some(area.clone()),
             (None, CrsExtentUse::Intersection) => match (&source, &target) {
                 (Some(left), Some(right)) => match (left.bounding_box(), right.bounding_box()) {
-                    (Some(a), Some(b)) => a.intersection(&b).map(ObjectDomain::from_bounding_box),
+                    (Some(a), Some(b)) => a
+                        .extent_intersection(&b)
+                        .map(ObjectDomain::from_bounding_box),
                     _ => None,
                 },
                 _ => None,
