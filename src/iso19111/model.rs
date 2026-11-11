@@ -313,20 +313,76 @@ impl BoundingBox {
         (east - self.west) * ((self.north.to_radians()).sin() - (self.south.to_radians()).sin())
     }
 
-    /// Common part of two boxes that do not cross the antimeridian, or `None` when they are disjoint.
+    /// `GeographicBoundingBox::intersection` (metadata.cpp:423-493), with the antimeridian rules
+    /// of PROJ: a box that crosses the antimeridian is split and its larger part is kept. `None`
+    /// when the boxes are disjoint, or when their longitudes overlap by no positive width.
     #[must_use]
     pub fn intersection(&self, other: &Self) -> Option<Self> {
+        let (w, e, s, n) = (self.west, self.east, self.south, self.north);
+        let (ow, oe, os, on) = (other.west, other.east, other.south, other.north);
+
+        // Check intersection along the latitude axis
+        if n < os || s > on {
+            return None;
+        }
+
+        // Check world coverage of this box, and the other box overlapping the antimeridian
+        if w == -180.0 && e == 180.0 && ow > oe {
+            return Some(Self::new(ow, s.max(os), oe, n.min(on)));
+        }
+
+        // Check world coverage of the other box, and this box overlapping the antimeridian
+        if ow == -180.0 && oe == 180.0 && w > e {
+            return Some(Self::new(w, s.max(os), e, n.min(on)));
+        }
+
+        // Normal bounding box ?
+        if w <= e {
+            if ow <= oe {
+                let res_w = w.max(ow);
+                let res_e = e.min(oe);
+                return (res_w < res_e).then(|| Self::new(res_w, s.max(os), res_e, n.min(on)));
+            }
+
+            // Bail out on longitudes not in [-180,180]
+            if ow > 180.0 || oe < -180.0 {
+                return None;
+            }
+
+            // Return the larger of the two parts of the multipolygon
+            let inter1 = self.intersection(&Self::new(ow, os, 180.0, on));
+            let inter2 = self.intersection(&Self::new(-180.0, os, oe, on));
+            return match (inter1, inter2) {
+                (None, inter2) => inter2,
+                (inter1, None) => inter1,
+                (Some(first), Some(second)) => {
+                    Some(if first.east - first.west > second.east - second.west {
+                        first
+                    } else {
+                        second
+                    })
+                }
+            };
+        }
+
+        // This box crosses the antimeridian
+        if ow <= oe {
+            return other.intersection(self);
+        }
+        Some(Self::new(w.max(ow), s.max(os), e.min(oe), n.min(on)))
+    }
+
+    /// `Extent::intersection` of two single boxes (metadata.cpp:889-910): a box that contains the
+    /// other is kept whole, otherwise the box intersection. `None` when there is no intersection.
+    #[must_use]
+    pub(crate) fn extent_intersection(&self, other: &Self) -> Option<Self> {
         if self.contains(other) {
             return Some(*other);
         }
         if other.contains(self) {
             return Some(*self);
         }
-        let west = self.west.max(other.west);
-        let east = self.east.min(other.east);
-        let south = self.south.max(other.south);
-        let north = self.north.min(other.north);
-        (west <= east && south <= north).then(|| Self::new(west, south, east, north))
+        self.intersection(other)
     }
 }
 

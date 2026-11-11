@@ -198,7 +198,8 @@ fn operation_compound_to_compound_issue_3328() {
     let src = parse(&db, "EPSG:4326+5773");
     // "WGS 84 + CGVD28 height"
     let dst = parse(&db, "EPSG:4326+5713");
-    let ctxt = partial_ignore_grids(&db, "EPSG");
+    // The C++ test builds its authority factory with an empty authority (`std::string()`).
+    let ctxt = partial_ignore_grids(&db, "");
     let list = operations(&src, &dst, &ctxt);
     assert!(!list.is_empty());
     assert_eq!(

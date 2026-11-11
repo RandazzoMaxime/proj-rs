@@ -15,10 +15,10 @@ use super::buildop::{concatenation_interpolation, interpolation_crs_of, OpProps}
 use super::derived::joint_extent;
 use super::equiv::{geodetic_frame, same_geodetic_datum, Equivalence};
 use super::factory::{
-    crs_extent, geographic_of, point_motion_candidates, world_extent, CoordinateOperationContext,
-    CoordinateOperationFactory, DatabaseContext, Epochs, GridAvailabilityUse,
-    GUARD_ALTERNATIVE_GEOG, GUARD_SKIP_HORIZONTAL, GUARD_VERTICAL_INTERMEDIATE,
-    GUARD_VERTICAL_PIVOT,
+    crs_extent, find_ops_in_registry_direct_to, geographic_of, point_motion_candidates,
+    sort_extents, world_extent, CoordinateOperationContext, CoordinateOperationFactory,
+    DatabaseContext, Epochs, GridAvailabilityUse, SortExtents, GUARD_ALTERNATIVE_GEOG,
+    GUARD_SKIP_HORIZONTAL, GUARD_VERTICAL_INTERMEDIATE, GUARD_VERTICAL_PIVOT,
 };
 use super::model::{
     Axis, BoundCRS, CompoundCRS, ConcatenatedOperation, ConcatenatedStep, Conversion,
@@ -1612,7 +1612,8 @@ pub(super) fn vertical_geog_fallback(
         res = geog_to_vertical_intermediate(factory, geog, vertical, context)?;
     }
     if res.is_empty() && !context.has_guard(GUARD_ALTERNATIVE_GEOG) {
-        res = geog_to_vertical_alternative(factory, geog, vertical, context)?;
+        let extents = sort_extents(context, source, target);
+        res = geog_to_vertical_alternative(factory, geog, vertical, context, &extents)?;
     }
     if from_vertical {
         res = res.iter().map(CoordinateOperation::inverse).collect();
@@ -1863,40 +1864,25 @@ fn geog_to_vertical_intermediate(
     Ok(res)
 }
 
+/// `createOperationsGeogToVertWithAlternativeGeog` (coordinateoperationfactory.cpp:5073-5137):
+/// the registered operations to the vertical CRS from any geographic CRS, found by
+/// `findOpsInRegistryDirectTo`. A source with a third axis in another unit than the metre is
+/// preceded by a unit change of the geographic CRS.
 fn geog_to_vertical_alternative(
     factory: &CoordinateOperationFactory,
     geog: &Crs,
     vertical: &Crs,
     context: &CoordinateOperationContext,
+    extents: &SortExtents,
 ) -> Result<Vec<CoordinateOperation>, FactoryError> {
-    let Some(id) = vertical.identifiers().first() else {
-        return Ok(Vec::new());
-    };
     let Some(geographic) = geographic_of(geog) else {
         return Ok(Vec::new());
     };
     let mut inner = context.clone();
     inner.guards |= GUARD_ALTERNATIVE_GEOG;
-    let rows = context.database().query(
-        "SELECT auth_name, code FROM coordinate_operation_view WHERE target_crs_auth_name = ? \
-         AND target_crs_code = ? AND deprecated = 0",
-        &[id.code_space().to_owned(), id.code().to_owned()],
-    )?;
     let axes = geographic.coordinate_system().axes();
     let mut res = Vec::new();
-    for row in &rows {
-        let operation =
-            super::factory::registered_operation(context, &row[0].text(), &row[1].text())?;
-        // The registry search of PROJ (`findOpsInRegistryDirectTo`) drops, under the grid
-        // availability of the context, an operation whose grid is missing.
-        if context.discards_missing_grids()
-            && !operation
-                .grids_needed(context.database(), context.grid_availability)?
-                .iter()
-                .all(|grid| grid.info.available)
-        {
-            continue;
-        }
+    for operation in find_ops_in_registry_direct_to(context, vertical, extents)? {
         let Some(op_source) = operation.source_crs() else {
             continue;
         };
