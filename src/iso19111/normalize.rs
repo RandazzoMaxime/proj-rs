@@ -163,7 +163,7 @@ fn reversal_step(source: Crs, target: Crs) -> Option<ConcatenatedStep> {
 /// `CRS::applyAxisOrderReversal` for a geographic or projected CRS: the two horizontal axes
 /// swapped, the name suffixed, the domains kept, a remark pointing at the identifier, and no
 /// identifier of its own. `None` for any other kind.
-fn reversed(crs: &Crs) -> Option<Crs> {
+pub(crate) fn reversed(crs: &Crs) -> Option<Crs> {
     let mut reversed = match crs {
         Crs::Geographic(_) | Crs::Projected(_) => crs.normalize_for_visualization(),
         Crs::Geodetic(GeodeticCRS::Geographic(geographic)) => Crs::Geodetic(

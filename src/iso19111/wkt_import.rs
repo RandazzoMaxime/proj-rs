@@ -8,6 +8,7 @@ use super::bound::extract_geographic;
 use super::buildop::{OpProps, UtmHemisphere};
 use super::equiv::Equivalence;
 use super::niche::{ParametricCS, ParametricDatum, TemporalCS, TemporalCsKind, TemporalDatum};
+use super::normalize::reversed;
 use super::wkt1_syntax::wkt1_syntax_error;
 
 mod niche;
@@ -3589,9 +3590,12 @@ fn remove_inverse_of(props: &mut Props) {
 
 /// `ConcatenatedOperation::fixSteps`, for a CONVERSION step without CRSs at either end.
 /// A projected CRS stands for its base geodetic CRS on the step's side, and the step is
-/// inverted when it runs from the projected CRS. Axis-order steps, the intermediate
-/// conversions, and the derived-CRS branches of the other side are not ported yet.
+/// inverted when it runs from the projected CRS. The axis-order reversals at the ends are set
+/// first ([`fix_axis_order_ends`]), and the intermediate conversions are set by
+/// [`fix_intermediate_conversion`]. The height-depth branch of the last step (EPSG:7987) is not
+/// ported yet.
 fn fix_steps(source: &Crs, target: &Crs, steps: &mut [ConcatenatedStep]) {
+    fix_axis_order_ends(source, target, steps);
     let last = steps.len() - 1;
     for index in 0..steps.len() {
         if matches!(
@@ -3602,6 +3606,7 @@ fn fix_steps(source: &Crs, target: &Crs, steps: &mut [ConcatenatedStep]) {
             continue;
         }
         if index != 0 && index != last {
+            fix_intermediate_conversion(steps, index);
             continue;
         }
         let next_source = steps
@@ -3674,6 +3679,95 @@ fn fix_steps(source: &Crs, target: &Crs, steps: &mut [ConcatenatedStep]) {
             }
         }
     }
+}
+
+/// The axis-order reversals at both ends, before the other heuristics
+/// (concatenatedoperation.cpp:302-330). A reversal without CRSs at the front takes the
+/// concatenated source and its reversed CRS; one at the back takes the reversed concatenated
+/// target and the target. The intermediate steps then read these CRSs as their neighbours.
+fn fix_axis_order_ends(source: &Crs, target: &Crs, steps: &mut [ConcatenatedStep]) {
+    let [first, .., last] = steps else {
+        return;
+    };
+    if is_bare_axis_order_reversal(&first.operation) {
+        if let Some(reversed_source) = reversed(source) {
+            set_operation_crss(&mut first.operation, source.clone(), reversed_source);
+        }
+    }
+    if is_bare_axis_order_reversal(&last.operation) {
+        if let Some(reversed_target) = reversed(target) {
+            set_operation_crss(&mut last.operation, reversed_target, target.clone());
+        }
+    }
+}
+
+/// `isAxisOrderReversal` of a conversion (2D and 3D method) with no CRS at either end.
+fn is_bare_axis_order_reversal(operation: &CoordinateOperation) -> bool {
+    match operation {
+        CoordinateOperation::Conversion(conversion) => {
+            conversion.source_crs().is_none()
+                && conversion.target_crs().is_none()
+                && matches!(conversion.method().code(), "9843" | "9844")
+        }
+        _ => false,
+    }
+}
+
+/// A conversion between two other steps (concatenatedoperation.cpp:461-513). It takes the target
+/// of the previous step and the source of the next one. A conversion from a projected CRS to a
+/// geographic one is inverted instead. The EPSG:7989 name check of PROJ issue 4116 inverts the
+/// next step when its name says it runs the other way, and then takes that step's source as its
+/// target.
+fn fix_intermediate_conversion(steps: &mut [ConcatenatedStep], index: usize) {
+    if !matches!(steps[index].operation, CoordinateOperation::Conversion(_)) {
+        return;
+    }
+    let (Some(left), Some(right)) = (
+        steps[index - 1].operation.target_crs().cloned(),
+        steps[index + 1].operation.source_crs().cloned(),
+    ) else {
+        return;
+    };
+    if matches!(left, Crs::Projected(_)) && is_geographic_crs(&right) {
+        steps[index].operation = steps[index].operation.inverse();
+        set_operation_crss(&mut steps[index].operation, left, right);
+        return;
+    }
+    set_operation_crss(&mut steps[index].operation, left.clone(), right);
+
+    let name = steps[index].operation.name().to_owned();
+    let next_name = steps[index + 1].operation.name().to_owned();
+    let (Some(to), Some(next_to)) = (name.find(" to "), next_name.find(" to ")) else {
+        return;
+    };
+    let conversion_to = &name[to + " to ".len()..];
+    let next_from = &next_name[..next_to];
+    let next_to_name = &next_name[next_to + " to ".len()..];
+    if !next_to_name.contains(conversion_to)
+        || next_from.contains(conversion_to)
+        || steps[index + 1].operation.source_crs().is_none()
+    {
+        return;
+    }
+    steps[index + 1].operation = steps[index + 1].operation.inverse();
+    if let Some(next_source) = steps[index + 1].operation.source_crs().cloned() {
+        set_operation_crss(&mut steps[index].operation, left, next_source);
+    }
+}
+
+/// `setCRSsUpdateInverse` of an operation: a conversion takes the pair, other kinds keep theirs.
+fn set_operation_crss(operation: &mut CoordinateOperation, source: Crs, target: Crs) {
+    if let CoordinateOperation::Conversion(conversion) = operation {
+        set_step_crss(conversion, source, target);
+    }
+}
+
+/// `dynamic_cast<GeographicCRS>` on a CRS, for the geographic and geodetic kinds.
+fn is_geographic_crs(crs: &Crs) -> bool {
+    matches!(
+        crs,
+        Crs::Geographic(_) | Crs::Geodetic(GeodeticCRS::Geographic(_))
+    )
 }
 
 /// `ConcatenatedOperation::fixSteps`, for a transformation step: it is reversed when its
