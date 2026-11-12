@@ -64,8 +64,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.compoundCRS_to_compoundCRS_issue_3152_ch1903lv03_ln02_bound`
 - `operation.compoundCRS_to_compoundCRS_with_derivedVerticalCRS_ellipsoidal_height`
 - `operation.compoundCRS_with_derived_vertical_CRS`
-- `operation.compoundCRS_to_PROJJSON_with_non_metre_height`
-- `operation.createOperation_ossfuzz_18587`
 - `operation.createOperation_bound_of_spherical_ocentric_to_same_type`
 - `operation.createOperation_derived_projected_crs`
 - `operation.geogCRS_to_compoundCRS_with_boundVerticalCRS_and_derivedProjected`

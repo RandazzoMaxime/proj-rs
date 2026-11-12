@@ -5,11 +5,11 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 16 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
-| `niche` | 10 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
+| `core` | 15 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `niche` | 9 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 41 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (16)
+## core (15)
 
 ### test_c_api.cpp (3)
 
@@ -34,7 +34,7 @@ The class comes from the test name alone, so check it when you port a test.
 
 - `operation.normalizeForVisualization`
 
-### test_operationfactory.cpp (8)
+### test_operationfactory.cpp (7)
 
 - `operation.geog3DCRS_to_geog2DCRS_plus_vertCRS_context`
 - `operation.boundCRS_to_geogCRS_hubCRS_and_targetCRS_same_but_baseCRS_not`
@@ -43,22 +43,20 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.compoundCRS_to_compoundCRS_context`
 - `operation.compoundCRS_to_compoundCRS_concatenated_operation_with_two_vert_transformation`
 - `operation.compoundCRS_to_compoundCRS_issue_3152_ch1903lv03_ln02_bound`
-- `operation.compoundCRS_to_PROJJSON_with_non_metre_height`
 
-## niche (10)
+## niche (9)
 
 ### test_crs.cpp (1)
 
 - `crs.normalizeForVisualization_derivedprojected_operation`
 
-### test_operationfactory.cpp (9)
+### test_operationfactory.cpp (8)
 
 - `operation.boundCRS_to_derived_geog_with_transformation_with_source_crs_being_base_crs_of_source_crs`
 - `operation.compoundCRS_with_derivedVerticalCRS_ellipsoidal_height_to_geog`
 - `operation.compoundCRS_with_horizontal_boundCRS_to_compoundCRS_with_derived_vertical`
 - `operation.compoundCRS_to_compoundCRS_with_derivedVerticalCRS_ellipsoidal_height`
 - `operation.compoundCRS_with_derived_vertical_CRS`
-- `operation.createOperation_ossfuzz_18587`
 - `operation.createOperation_bound_of_spherical_ocentric_to_same_type`
 - `operation.createOperation_derived_projected_crs`
 - `operation.geogCRS_to_compoundCRS_with_boundVerticalCRS_and_derivedProjected`
