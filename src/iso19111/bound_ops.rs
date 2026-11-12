@@ -15,6 +15,7 @@
 //! `createOperationsBoundToBound` (same vertical datum, same hub for vertical bases).
 
 use super::bound::extract_geographic;
+use super::bound_vert::bound_to_vert;
 use super::buildop::OpProps;
 use super::compound::compute_metadata;
 use super::equiv::{
@@ -46,6 +47,9 @@ pub(super) fn bound_candidates(
         (Crs::Bound(bound), Crs::Compound(compound)) => {
             bound_to_compound(factory, source, bound, target, compound, context).map(Some)
         }
+        (Crs::Bound(bound), Crs::Vertical(_)) => {
+            bound_to_vert(factory, bound, target, context).map(Some)
+        }
         (Crs::Bound(bound), _) if geographic_of(target).is_some() => {
             bound_to_geog(factory, source, bound, target, context).map(Some)
         }
@@ -54,7 +58,10 @@ pub(super) fn bound_candidates(
         }
         (_, Crs::Bound(_))
             if geographic_of(source).is_some()
-                || matches!(source, Crs::Geodetic(GeodeticCRS::Geocentric(_))) =>
+                || matches!(
+                    source,
+                    Crs::Geodetic(GeodeticCRS::Geocentric(_)) | Crs::Vertical(_)
+                ) =>
         {
             let forward = factory.create_candidates(target, source, context)?;
             Ok(Some(
@@ -697,7 +704,7 @@ fn concatenate(operations: Vec<CoordinateOperation>) -> CoordinateOperation {
 
 /// The binding transformation, with the bound CRS endpoints when it carries none. A bound
 /// projected CRS binds the geographic CRS of its base, as `createFromTOWGS84` does.
-fn with_endpoints(bound: &BoundCRS) -> CoordinateOperation {
+pub(super) fn with_endpoints(bound: &BoundCRS) -> CoordinateOperation {
     let mut operation = bound.transformation().clone();
     if let CoordinateOperation::Transformation(transformation) = &mut operation {
         let base = bound.source_crs();
