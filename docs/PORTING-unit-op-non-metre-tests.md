@@ -1,35 +1,58 @@
-# Port: compound CRS with a non-metre height, and the IGNF `init=` pair (lot `unit-op-non-metre-tests`)
+# Port: compound CRS with a non-metre height, the IGNF `init=` pair, a fuzzer string
 
-Source: PROJ 9.9.0 `test/unit/test_operationfactory.cpp`. This lot adds two tests and no code: both
-already pass on `main`, they only pin behavior the earlier lots produced.
+Source: PROJ 9.9.0 `test/unit/test_operationfactory.cpp`, `src/iso19111/io.cpp`,
+`src/iso19111/operation/coordinateoperationfactory.cpp`. Tests: `tests/unit_op_non_metre_height_export.rs`
+(expected values copied from the C++).
 
-| PROJ `TEST()` | Rust test | What it pins |
+| PROJ `TEST()` | Rust test | State |
 |---|---|---|
-| `compoundCRS_to_proj_string_with_non_metre_height` | `operation_compound_to_proj_string_with_non_metre_height` | `EPSG:6318+5703` to a PROJ string geographic CRS with `+vunits=us-ft`: the first operation writes the vertical unit change once, in the last `unitconvert` |
-| `geogCRS_to_geogCRS_init_IGNF_to_init_IGNF_context` | `operation_geog_crs_to_geog_crs_init_ignf_to_init_ignf_context` | `+init=IGNF:NTFG` to `+init=IGNF:RGF93G` under the PROJ 4 init rules (`InitRules::Proj4`): two operations, the NTF to RGF93 grid shift first |
+| `compoundCRS_to_proj_string_with_non_metre_height` | `operation_compound_to_proj_string_with_non_metre_height` | passed on `main` |
+| `geogCRS_to_geogCRS_init_IGNF_to_init_IGNF_context` | `operation_geog_crs_to_geog_crs_init_ignf_to_init_ignf_context` | passed on `main` |
+| `createOperation_ossfuzz_18587` | `operation_create_operation_ossfuzz_18587` | closed here |
+| `compoundCRS_to_PROJJSON_with_non_metre_height` | `operation_compound_to_projjson_with_non_metre_height` | closed here |
 
-Expected names and strings are copied from the C++ (`tests/unit_op_non_metre_height_export.rs`).
+## `createOperation_ossfuzz_18587`
 
-## Not in this lot
+`type=crs proj=pipeline step proj=merc vunits=m nadgrids=@x proj="\nproj=pipeline step\n"` must be read
+as a CRS. PROJ 9.9.0 `projinfo` reads it as a Mercator CRS with a `nadgrids` bound; the quoted value of
+the second `proj` is a parameter of the one step. Two differences:
 
-Two more `TEST()`s of the same family were written and **fail** on `main`; they stay open and in the
-ledger:
+1. **Quotes.** `PROJStringSyntaxParser` splits with `pj_trim_argv` (io.cpp:10190-10203): blanks, newlines
+   included, separate the words except inside double quotes, which are dropped. `parse_pipeline` split on
+   every blank, so the quoted `step` opened a second, empty step.
+2. **`type`.** `getParamValue(step, "type")` for a single step reads the step, then the global parameters
+   (io.cpp:12754-12758); the port read the step only.
 
-- `compoundCRS_to_PROJJSON_with_non_metre_height`: the source is a compound with a `GEOIDMODEL`
-  `us_noaa_g2012bu0.tif` vertical CRS in US survey feet, the target a projected 3D CRS in feet. The
-  port picks `us_noaa_g2018u0.tif` (the registered NAVD88 candidate) where PROJ uses the grid of the
-  geoid model. In PROJ the vertical operation comes from `createOperationsGeogToVertFromGeoid`
-  (coordinateoperationfactory.cpp:4629-4871), whose `useTransf` joins a height-unit change when the
-  geographic CRS has a non-metre height axis (4635-4691). The port's `geoid_vertical` returns nothing
-  for a geographic CRS with a non-metre height; a first attempt to port that branch was not verified.
-- `createOperation_ossfuzz_18587`: `create_crs_from_proj_string` refuses
-  `type=crs proj=pipeline step proj=merc vunits=m nadgrids=@x proj="\nproj=pipeline step\n"`
-  (`unsupported +proj=pipeline for a CRS`). PROJ reads `type` with `getParamValue`, which looks at the
-  global parameters first (io.cpp:12754-12758); the port reads only the step's.
+The test checks what the C++ one does: the string is accepted as a CRS, and `create_operation` returns.
+
+## `compoundCRS_to_PROJJSON_with_non_metre_height`
+
+The source is a compound CRS read from PROJJSON, with a vertical CRS in US survey feet and a
+`geoid_model` `PROJ us_noaa_g2012bu0.tif`; the target is a projected 3D CRS whose base CRS PROJJSON reads
+as a `GeodeticCRS::Geographic`. PROJ builds the vertical operation from the model
+(`createOperationsGeogToVertFromGeoid`, coordinateoperationfactory.cpp:4629-4871) and gives two
+candidates, the first with the grid `us_noaa_g2012bu0.tif`. The port gave twelve, the first with the
+registered NAVD88 grid `us_noaa_g2018u0.tif`.
+
+Two causes, both needed (each alone leaves the test failing):
+
+1. `geoid_vertical` matched `Crs::Geographic` only, so the base CRS PROJJSON reads, held as
+   `Crs::Geodetic(GeodeticCRS::Geographic(..))`, skipped the geoid models and fell through to the
+   registry. It now reads the geographic CRS with `geographic_of`, as the other callers do.
+2. The base CRS of the target has its height in US survey feet, and `geoid_vertical` returned nothing for
+   a geographic CRS with a non-metre height axis. PROJ's `useTransf` (4641-4672) takes the operations of
+   the geographic CRS with a metre height, and joins each to the geographic CRS of the operation with
+   the height axis of the request, by a change of height unit (`createOperationsGeogToGeog`).
+   `geoid_vertical_non_metre_geographic` does that with `geographic_height_change`.
+
+After the change the port gives the two candidates PROJ gives, the first made of the vertical
+conversion, the model transformation, then `Transformation from NAD83(2011) to NAD83(2011)`.
 
 ## Commands run
 
 On a Windows workstation, without the reference `cs2cs`: `cargo fmt --check`,
 `cargo clippy -p proj-rs --all-targets --all-features -- -D warnings` (clean),
-`cargo test -p proj-rs --test unit_op_non_metre_height_export` (2 passed). The tests were written by a
-port agent (Claude Haiku 5.5) that could not run them.
+`cargo test -p proj-rs --test unit_op_non_metre_height_export` (4 passed), the full suite
+(`cargo test -p proj-rs --all-features --no-fail-fast`), `UPDATE_DOCS=1 cargo test --test docs_in_sync
+--test progress_svg`, then without. The JSON strings of the PROJJSON test are the C++ literals of
+`test_operationfactory.cpp:10299-10521` and `10534-10680`, un-escaped.

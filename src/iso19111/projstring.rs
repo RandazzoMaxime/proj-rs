@@ -3367,11 +3367,39 @@ struct ParsedPipeline {
     global_type_crs: bool,
 }
 
+/// The words of a PROJ string, as `pj_trim_argv` splits them: blanks (newlines included) separate
+/// words, except inside double quotes, whose characters are kept and the quotes dropped.
+fn split_quoted_words(text: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut in_word = false;
+    let mut in_quote = false;
+    for ch in text.chars() {
+        if ch == '"' {
+            in_quote = !in_quote;
+            in_word = true;
+        } else if ch.is_whitespace() && !in_quote {
+            if in_word {
+                words.push(std::mem::take(&mut current));
+                in_word = false;
+            }
+        } else {
+            current.push(ch);
+            in_word = true;
+        }
+    }
+    if in_word {
+        words.push(current);
+    }
+    words
+}
+
 /// `+proj=pipeline` steps, keeping a leading `+type=crs`.
 fn parse_pipeline(definition: &str) -> Option<ParsedPipeline> {
-    let words: Vec<&str> = definition
-        .split_whitespace()
-        .map(|word| word.strip_prefix('+').unwrap_or(word))
+    let words_owned = split_quoted_words(definition);
+    let words: Vec<&str> = words_owned
+        .iter()
+        .map(|word| word.strip_prefix('+').unwrap_or(word.as_str()))
         .collect();
     if !words.contains(&"proj=pipeline") {
         return None;
@@ -3483,8 +3511,13 @@ fn pipeline_crs(definition: &str) -> Result<Crs, FactoryError> {
     if geog.len() > 2 || units.len() > 2 || swaps.len() > 2 {
         unexpected = true;
     }
+    // `getParamValue(step, "type")` for one step reads the step, then the global parameters
+    // (io.cpp:12754-12758); several steps read the global ones only.
     let type_ok = if steps.len() == 1 {
-        step_value(&steps[0], "type") == "crs"
+        match step_value(&steps[0], "type") {
+            "" => parsed.global_type_crs,
+            value => value == "crs",
+        }
     } else {
         parsed.global_type_crs
     };

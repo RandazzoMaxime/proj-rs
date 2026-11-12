@@ -1584,16 +1584,23 @@ pub(super) fn geoid_vertical(
         (geog, Crs::Vertical(vertical)) => (vertical, geog, false),
         _ => return Ok(Vec::new()),
     };
-    let Crs::Geographic(geog) = geog else {
+    let Some(geog) = geographic_of(geog) else {
         return Ok(Vec::new());
     };
     let geog_axes = geog.coordinate_system().axes();
     let vertical_axis = vertical.coordinate_system().axis();
-    if geog_axes.len() != 3
-        || geog_axes[2].unit().conversion_to_si() != 1.0
-        || vertical_axis.direction() != "up"
-    {
+    if geog_axes.len() != 3 || vertical_axis.direction() != "up" {
         return Ok(Vec::new());
+    }
+    if geog_axes[2].unit().conversion_to_si() != 1.0 {
+        let operations = geoid_vertical_non_metre_geographic(vertical, geog, context)?;
+        if from_vertical {
+            return Ok(operations);
+        }
+        return Ok(operations
+            .iter()
+            .map(CoordinateOperation::inverse)
+            .collect());
     }
     if vertical_axis.unit().conversion_to_si() != 1.0 {
         let operations = geoid_vertical_non_metre(vertical, geog, context)?;
@@ -1634,6 +1641,40 @@ pub(super) fn geoid_vertical(
         .iter()
         .map(CoordinateOperation::inverse)
         .collect())
+}
+
+/// `useTransf` for a geographic CRS whose height unit is not the metre
+/// (coordinateoperationfactory.cpp:4641-4672). The operations are those of the metre copy of the
+/// geographic CRS; each one is joined to the geographic CRS of the operation with the height axis of
+/// the request, by the change of height unit (`createOperationsGeogToGeog` of the two). The result
+/// runs from the vertical CRS to the geographic one; the caller inverts it for the reverse request.
+fn geoid_vertical_non_metre_geographic(
+    vertical: &VerticalCRS,
+    geog: &GeographicCRS,
+    context: &CoordinateOperationContext,
+) -> Result<Vec<CoordinateOperation>, FactoryError> {
+    let height_axis = geog.coordinate_system().axes().get(2).cloned();
+    let geog_metre = Crs::Geographic(promote_with_axis(geog, None));
+    let vertical_crs = Crs::Vertical(vertical.clone());
+    let metre_operations = geoid_vertical(&vertical_crs, &geog_metre, context)?;
+    let mut operations = Vec::new();
+    for operation in metre_operations {
+        let Some(Crs::Geographic(operation_geog)) = operation.target_crs().cloned() else {
+            continue;
+        };
+        // `tmpCRSWithSrcZ`: the geographic CRS of the operation, with the height axis of the request.
+        let with_request_height =
+            Crs::Geographic(promote_with_axis(&operation_geog, height_axis.clone()));
+        let Some(unit_change) =
+            geographic_height_change(&Crs::Geographic(operation_geog), &with_request_height)
+        else {
+            continue;
+        };
+        if let Some(joined) = compute_metadata(vec![operation, unit_change], context) {
+            operations.push(joined);
+        }
+    }
+    Ok(operations)
 }
 
 /// The operations of one geoid model between `vertical_metre` and `geog`, in the vertical to
