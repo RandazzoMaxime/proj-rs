@@ -81,9 +81,7 @@ and `PORT-NOTES-tests.md`.
 - `CApi.proj_context_clone`
 - `CApi.proj_context_set_sqlite3_vfs_name`
 - `CApi.proj_context_set_sqlite3_vfs_name__from_global_context`
-- `CApi.use_proj4_init_rules`
 - `CApi.use_proj4_init_rules_from_global_context`
 - `CApi.proj_get_insert_statements`
 - `CApi.open_plenty_of_contexts`
-- `CApi.concurrent_context`
 
