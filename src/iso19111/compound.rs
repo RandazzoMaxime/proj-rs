@@ -94,7 +94,10 @@ pub(super) fn compound_to_geog3d(
         Crs::Bound(bound) if matches!(bound.source_crs(), Crs::Vertical(_)) => {}
         _ => return Ok(Vec::new()),
     }
-    if matches!(horizontal, Crs::Bound(_)) || matches!(vertical, Crs::Bound(_)) {
+    // A bound vertical part keeps the approximation below. A bound horizontal part takes the same
+    // search as any other: PROJ's `createOperationsCompoundToGeog` has no branch for it beyond the
+    // derived and the bound-and-bound ones handled above (coordinateoperationfactory.cpp:6473-6685).
+    if matches!(vertical, Crs::Bound(_)) {
         return bound_compound_to_geog3d(factory, source, target, context);
     }
     let Some(geog_src) = extract_geographic(horizontal) else {

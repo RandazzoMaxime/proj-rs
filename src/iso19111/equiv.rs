@@ -450,6 +450,23 @@ impl VerticalCRS {
                 std::slice::from_ref(other.coordinate_system().axis()),
             )
     }
+
+    /// `VerticalCRS::_isEquivalentTo` (crs.cpp, `SingleCRS::baseIsEquivalentTo`) under a criterion
+    /// other than `Strict`: the names are compared as `Identifier::isEquivalentName` does, the
+    /// datum (or ensemble) must match, and the axis is compared by its direction and unit only,
+    /// as `CoordinateSystemAxis::_isEquivalentTo` does outside the strict criterion.
+    #[must_use]
+    pub fn is_equivalent_to_with(&self, other: &Self, criterion: Equivalence) -> bool {
+        if criterion == Equivalence::Strict {
+            return self.is_equivalent_to(other);
+        }
+        equivalent_name(self.name(), other.name())
+            && vertical_anchor(self, other)
+            && axes_direction_and_unit(
+                &CoordinateSystem::Vertical(self.coordinate_system().clone()),
+                &CoordinateSystem::Vertical(other.coordinate_system().clone()),
+            )
+    }
 }
 
 impl EngineeringCRS {
@@ -556,6 +573,23 @@ impl Crs {
                 left.is_equivalent_to_with(right, criterion)
             }
             (Self::Projected(left), Self::Projected(right)) => {
+                left.is_equivalent_to_with(right, criterion)
+            }
+            (Self::Vertical(left), Self::Vertical(right)) if criterion != Equivalence::Strict => {
+                left.is_equivalent_to_with(right, criterion)
+            }
+            // `GeographicCRS::_isEquivalentTo` (crs.cpp:3239): under a criterion other than
+            // `Strict`, the name of the CRS and the names of its axes are not compared, only the
+            // datum (or ensemble) and the axes' directions and units.
+            (Self::Geographic(left), Self::Geographic(right))
+                if criterion != Equivalence::Strict =>
+            {
+                left.is_equivalent_to_with(right, criterion)
+            }
+            (Self::Geodetic(GeodeticCRS::Geographic(left)), Self::Geographic(right))
+            | (Self::Geographic(left), Self::Geodetic(GeodeticCRS::Geographic(right)))
+                if criterion != Equivalence::Strict =>
+            {
                 left.is_equivalent_to_with(right, criterion)
             }
             // Under a criterion other than `Strict`, the name of a compound CRS is not compared.
