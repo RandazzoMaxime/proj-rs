@@ -8983,8 +8983,23 @@ pub(super) fn find_ops_in_registry_direct_to(
         extents.source.as_ref().and_then(ObjectDomain::bounding_box),
         extents.target.as_ref().and_then(ObjectDomain::bounding_box),
     );
-    for identifier in target.identifiers() {
-        let (target_auth, target_code) = (identifier.code_space(), identifier.code());
+    // `buildCRSIds` (coordinateoperationfactory.cpp:1776-1825): the identifiers of the CRS, or
+    // when it has none the identifier of the registered CRS of that name it is equivalent to.
+    let mut ids: Vec<(String, String)> = target
+        .identifiers()
+        .iter()
+        .map(|identifier| {
+            (
+                identifier.code_space().to_owned(),
+                identifier.code().to_owned(),
+            )
+        })
+        .collect();
+    if ids.is_empty() {
+        ids.extend(registry_identity(target, context));
+    }
+    for (target_auth, target_code) in &ids {
+        let (target_auth, target_code) = (target_auth.as_str(), target_code.as_str());
         if target_auth.is_empty() {
             continue;
         }

@@ -61,7 +61,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.compoundCRS_to_compoundCRS_context`
 - `operation.compoundCRS_with_horizontal_boundCRS_to_compoundCRS_with_derived_vertical`
 - `operation.compoundCRS_to_compoundCRS_concatenated_operation_with_two_vert_transformation`
-- `operation.compoundCRS_to_compoundCRS_issue_3152_ch1903lv03_ln02_bound`
 - `operation.compoundCRS_to_compoundCRS_with_derivedVerticalCRS_ellipsoidal_height`
 - `operation.compoundCRS_with_derived_vertical_CRS`
 - `operation.createOperation_bound_of_spherical_ocentric_to_same_type`

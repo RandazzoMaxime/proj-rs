@@ -422,10 +422,9 @@ fn operation_compound_to_compound_issue_2232() {
 /// (CH1903 / LV03 with a Helmert transformation to WGS 84) plus the LN02 height, to WGS 84 +
 /// EGM2008 height. The bound transformation is used, in both directions.
 #[test]
-#[ignore = "open: a compound of a bound CRS and a vertical CRS has no candidate to WGS 84 + EGM2008. The bound hub is not seen as equivalent (equiv.rs Crs::is_equivalent_to_with has no geographic arm), and enabling it gives a candidate that drops the LN02 height (bound_compound_to_geog3d)"]
 fn operation_compound_to_compound_issue_3152_ch1903lv03_ln02_bound() {
     let db = DatabaseContext::create().expect("proj.db");
-    let ctxt = ignore_grids(&db, "");
+    let ctxt = partial_ignore_grids(&db, "");
     let wkt = "COMPOUNDCRS[\"CH1903 / LV03 + LN02 height\",\n\
         BOUNDCRS[\n\
             SOURCECRS[\n\
@@ -688,7 +687,7 @@ fn operation_compound_to_compound_utm31_to_utm32_with_odn_height() {
 /// vertical grid, the NAD27 grid and the NAD83(NSRS2007) inverse. The ballpark candidate,
 /// with the same horizontal chain, is among them.
 #[test]
-#[ignore = "open: the NGVD29 to NAVD88 (3) registry candidate with the VERTCON grid is not built, only the ballpark vertical candidates are (compound_vertical_pass, horiz_vertical_horiz_checked)"]
+#[ignore = "open: the first candidate is right, but its WKT2 round trip writes another PROJ string: after the import the vertical unit change and the vgridshift come before the axis swap and the degree conversion"]
 fn operation_compound_to_compound_context() {
     let db = DatabaseContext::create().expect("proj.db");
     let ctxt = partial_ignore_grids(&db, "EPSG");
