@@ -5,22 +5,16 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 14 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
-| `niche` | 9 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
-| `shape` | 41 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
+| `core` | 10 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `niche` | 4 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
+| `shape` | 40 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (14)
+## core (10)
 
-### test_c_api.cpp (3)
+### test_c_api.cpp (2)
 
-- `CApi.proj_coordoperation_get_grid_used_fullname_caching`
 - `CApi.proj_normalize_for_visualization_with_alternatives`
 - `CApi.proj_coordoperation_create_inverse`
-
-### test_crs.cpp (2)
-
-- `crs.boundCRS_crs_link`
-- `crs.norway_ntm`
 
 ### test_factory.cpp (1)
 
@@ -29,10 +23,6 @@ The class comes from the test name alone, so check it when you port a test.
 ### test_io.cpp (1)
 
 - `io.createFromUserInput`
-
-### test_operation.cpp (1)
-
-- `operation.normalizeForVisualization`
 
 ### test_operationfactory.cpp (6)
 
@@ -43,24 +33,19 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.compoundCRS_to_compoundCRS_context`
 - `operation.compoundCRS_to_compoundCRS_concatenated_operation_with_two_vert_transformation`
 
-## niche (9)
+## niche (4)
 
 ### test_crs.cpp (1)
 
 - `crs.normalizeForVisualization_derivedprojected_operation`
 
-### test_operationfactory.cpp (8)
+### test_operationfactory.cpp (3)
 
 - `operation.boundCRS_to_derived_geog_with_transformation_with_source_crs_being_base_crs_of_source_crs`
-- `operation.compoundCRS_with_derivedVerticalCRS_ellipsoidal_height_to_geog`
 - `operation.compoundCRS_with_horizontal_boundCRS_to_compoundCRS_with_derived_vertical`
-- `operation.compoundCRS_to_compoundCRS_with_derivedVerticalCRS_ellipsoidal_height`
-- `operation.compoundCRS_with_derived_vertical_CRS`
 - `operation.createOperation_bound_of_spherical_ocentric_to_same_type`
-- `operation.createOperation_derived_projected_crs`
-- `operation.geogCRS_to_compoundCRS_with_boundVerticalCRS_and_derivedProjected`
 
-## shape (41)
+## shape (40)
 
 ### test_c_api.cpp (14)
 
@@ -79,10 +64,9 @@ The class comes from the test name alone, so check it when you port a test.
 - `CApi.open_plenty_of_contexts`
 - `CApi.concurrent_context`
 
-### test_crs.cpp (2)
+### test_crs.cpp (1)
 
 - `crs.scope_area_bbox_remark`
-- `crs.VerticalCRS_ensemble_exception_in_create`
 
 ### test_factory.cpp (25)
 
