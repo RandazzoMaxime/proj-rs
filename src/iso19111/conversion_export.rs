@@ -12,8 +12,9 @@
 //! conversions read from the database (and the inverse of a bare one) keep their
 //! refusal.
 
-use super::model::{Conversion, Crs, FactoryError, ParameterValue};
-use super::pipeline::{PipelineFormatter, ProjLines};
+use super::model::{Axis, Conversion, Crs, FactoryError, ParameterValue, UnitKind};
+use super::niche::DerivedKind;
+use super::pipeline::{proj_number, PipelineFormatter, ProjLines};
 use super::projstring::projection_steps;
 use super::transform_export::{
     axis_order_reversal, cartesian_unit_and_axis_swap, change_vertical_unit_by_factor,
@@ -68,7 +69,9 @@ impl Conversion {
                         .to_owned(),
                 ));
             };
-            export_projection(source, target, formatter)?;
+            if !export_proj_method(self, source, target, formatter)? {
+                export_projection(source, target, formatter)?;
+            }
         }
         if self.inverted {
             formatter.stop_inversion();
@@ -145,6 +148,84 @@ fn vertical_unit_factor(source: Option<&Crs>, target: Option<&Crs>) -> Result<f6
     };
     Ok(source.coordinate_system().axis().unit().conversion_to_si()
         / target.coordinate_system().axis().unit().conversion_to_si())
+}
+
+/// `Conversion::_exportToPROJString` of a PROJ method (`PROJ <step> <params>`) between a
+/// projected or vertical source and a derived projected or vertical target. Such a derived CRS
+/// has no base projection to invert, so PROJ writes the step itself: the source inverted with its
+/// unit and axis order, the step, its parameter values in SI, then the target's unit and axis
+/// order (conversion.cpp:3738-3745, 3666-3700, 3906-3922 and 4467-4475). `false` for any other
+/// pair, which keeps the projection path.
+///
+/// # Errors
+///
+/// A parameter value is not a linear measure, which this crate does not write for a PROJ method.
+fn export_proj_method(
+    conversion: &Conversion,
+    source: &Crs,
+    target: &Crs,
+    formatter: &mut PipelineFormatter,
+) -> Result<bool, FactoryError> {
+    let Some(method) = conversion.method().name().strip_prefix("PROJ ") else {
+        return Ok(false);
+    };
+    let is_vertical = |crs: &Crs| {
+        matches!(crs, Crs::Vertical(_))
+            || matches!(crs, Crs::Derived(derived) if derived.kind() == DerivedKind::Vertical)
+    };
+    let source_axes: Option<Vec<Axis>> = match source {
+        Crs::Projected(projected) => Some(projected.coordinate_system().axes().to_vec()),
+        other if is_vertical(other) => None,
+        _ => return Ok(false),
+    };
+    let target_axes: Option<Vec<Axis>> = match target {
+        Crs::DerivedProjected(derived) => Some(
+            derived
+                .coordinate_system()
+                .axes()
+                .into_iter()
+                .cloned()
+                .collect(),
+        ),
+        other if is_vertical(other) => None,
+        _ => return Ok(false),
+    };
+    let mut values = Vec::new();
+    for parameter in conversion.parameters() {
+        let ParameterValue::Measure(measure) = parameter.value() else {
+            return Err(FactoryError::Format(
+                "a PROJ method with a parameter that is not a measure has no PROJ string in this crate"
+                    .to_owned(),
+            ));
+        };
+        if measure.unit().kind() != UnitKind::Linear {
+            return Err(FactoryError::Format(
+                "a PROJ method with an angular parameter has no PROJ string in this crate"
+                    .to_owned(),
+            ));
+        }
+        values.push((parameter.name().to_owned(), measure.si_value()));
+    }
+    if let Some(axes) = &source_axes {
+        formatter.start_inversion();
+        cartesian_unit_and_axis_swap(axes, formatter);
+        formatter.stop_inversion();
+    }
+    let mut tokens = method.split(' ');
+    formatter.add_step(tokens.next().unwrap_or_default());
+    for token in tokens {
+        match token.split_once('=') {
+            Some((key, value)) => formatter.add_param(key, value),
+            None => formatter.add_flag(token),
+        }
+    }
+    for (name, value) in values {
+        formatter.add_param(&name, &proj_number(value));
+    }
+    if let Some(axes) = &target_axes {
+        cartesian_unit_and_axis_swap(axes, formatter);
+    }
+    Ok(true)
 }
 
 /// `PROJ-based operation method: ` and the PROJ string after it.

@@ -8,7 +8,6 @@ and `PORT-NOTES-tests.md`.
 ## test_crs.cpp
 
 - `crs.scope_area_bbox_remark`
-- `crs.normalizeForVisualization_derivedprojected_operation`
 
 ## test_factory.cpp
 
@@ -54,7 +53,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.nadgrids_with_pm`
 - `operation.compoundCRS_to_compoundCRS_with_vertical_transform`
 - `operation.compoundCRS_to_compoundCRS_context`
-- `operation.compoundCRS_with_horizontal_boundCRS_to_compoundCRS_with_derived_vertical`
 - `operation.compoundCRS_to_compoundCRS_concatenated_operation_with_two_vert_transformation`
 - `operation.createOperation_bound_of_spherical_ocentric_to_same_type`
 

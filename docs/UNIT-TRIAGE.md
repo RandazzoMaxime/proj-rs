@@ -6,8 +6,8 @@ The class comes from the test name alone, so check it when you port a test.
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
 | `core` | 10 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
-| `niche` | 4 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
-| `shape` | 40 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
+| `niche` | 2 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
+| `shape` | 38 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
 ## core (10)
 
@@ -33,21 +33,16 @@ The class comes from the test name alone, so check it when you port a test.
 - `operation.compoundCRS_to_compoundCRS_context`
 - `operation.compoundCRS_to_compoundCRS_concatenated_operation_with_two_vert_transformation`
 
-## niche (4)
+## niche (2)
 
-### test_crs.cpp (1)
-
-- `crs.normalizeForVisualization_derivedprojected_operation`
-
-### test_operationfactory.cpp (3)
+### test_operationfactory.cpp (2)
 
 - `operation.boundCRS_to_derived_geog_with_transformation_with_source_crs_being_base_crs_of_source_crs`
-- `operation.compoundCRS_with_horizontal_boundCRS_to_compoundCRS_with_derived_vertical`
 - `operation.createOperation_bound_of_spherical_ocentric_to_same_type`
 
-## shape (40)
+## shape (38)
 
-### test_c_api.cpp (14)
+### test_c_api.cpp (12)
 
 - `CApi.proj_context_set_database_path_null`
 - `CApi.proj_context_set_database_path_aux`
@@ -58,11 +53,9 @@ The class comes from the test name alone, so check it when you port a test.
 - `CApi.proj_context_clone`
 - `CApi.proj_context_set_sqlite3_vfs_name`
 - `CApi.proj_context_set_sqlite3_vfs_name__from_global_context`
-- `CApi.use_proj4_init_rules`
 - `CApi.use_proj4_init_rules_from_global_context`
 - `CApi.proj_get_insert_statements`
 - `CApi.open_plenty_of_contexts`
-- `CApi.concurrent_context`
 
 ### test_crs.cpp (1)
 
