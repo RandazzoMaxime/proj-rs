@@ -7,8 +7,8 @@
 //! `proj_as_wkt` write for a pair is this one.
 
 use super::model::{
-    ConcatenatedOperation, ConcatenatedStep, Conversion, CoordinateOperation, Crs, GeodeticCRS,
-    GeographicCRS, Identified, Identifier, OperationMethod,
+    ConcatenatedOperation, ConcatenatedStep, Conversion, CoordinateOperation, CoordinateSystem,
+    Crs, GeodeticCRS, GeographicCRS, Identified, Identifier, OperationMethod,
 };
 use super::parammap;
 
@@ -175,6 +175,14 @@ pub(crate) fn reversed(crs: &Crs) -> Option<Crs> {
             reverse_identified(&mut projected.identified);
             Crs::Projected(projected)
         }
+        Crs::DerivedProjected(derived) => {
+            let mut derived = derived.clone();
+            if let CoordinateSystem::Cartesian(cs) = &mut derived.coordinate_system {
+                cs.axes.swap(0, 1);
+            }
+            reverse_identified(&mut derived.identified);
+            Crs::DerivedProjected(derived)
+        }
         _ => return None,
     })
 }
@@ -234,6 +242,11 @@ pub(crate) fn must_axis_order_be_switched(crs: &Crs) -> bool {
             crs.coordinate_system().axes()
         }
         Crs::Projected(crs) => crs.coordinate_system().axes(),
+        Crs::DerivedProjected(crs) => {
+            let axes = crs.coordinate_system().axes();
+            return matches!(axes.as_slice(), [first, second, ..]
+                if first.direction() == "north" && second.direction() == "east");
+        }
         _ => return false,
     };
     matches!(axes, [first, second, ..]

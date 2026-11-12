@@ -10,7 +10,6 @@ and `PORT-NOTES-tests.md`.
 - `crs.scope_area_bbox_remark`
 - `crs.VerticalCRS_ensemble_exception_in_create`
 - `crs.boundCRS_crs_link`
-- `crs.normalizeForVisualization_derivedprojected_operation`
 - `crs.norway_ntm`
 
 ## test_factory.cpp
@@ -59,7 +58,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.compoundCRS_with_derivedVerticalCRS_ellipsoidal_height_to_geog`
 - `operation.compoundCRS_to_compoundCRS_with_vertical_transform`
 - `operation.compoundCRS_to_compoundCRS_context`
-- `operation.compoundCRS_with_horizontal_boundCRS_to_compoundCRS_with_derived_vertical`
 - `operation.compoundCRS_to_compoundCRS_concatenated_operation_with_two_vert_transformation`
 - `operation.compoundCRS_to_compoundCRS_with_derivedVerticalCRS_ellipsoidal_height`
 - `operation.compoundCRS_with_derived_vertical_CRS`

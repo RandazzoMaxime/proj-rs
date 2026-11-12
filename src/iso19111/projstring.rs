@@ -1234,7 +1234,11 @@ fn axis_order_text(axes: &[Axis]) -> Option<String> {
 /// East-then-north needs none. A polar CRS whose axes are both north or both
 /// south, named northing then easting, swaps as `2,1` (UPS North and South).
 pub(crate) fn projected_axis_order(crs: &ProjectedCRS) -> Option<String> {
-    let axes = crs.coordinate_system().axes();
+    axes_order(crs.coordinate_system().axes())
+}
+
+/// [`projected_axis_order`] for the axes of a projected or derived projected CRS.
+pub(crate) fn axes_order(axes: &[Axis]) -> Option<String> {
     if axes.len() < 2 {
         return None;
     }

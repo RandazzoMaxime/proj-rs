@@ -36,9 +36,9 @@ use super::model::{
 };
 use super::pipeline::{proj_number, PipelineFormatter, ProjLines};
 use super::projstring::{
-    ellipsoid_of, ellipsoid_params, geodetic_member, geographic_of, meridian_of,
-    prime_meridian_params, prime_meridian_radians_params, proj_unit_name, projected_axis_order,
-    spherical_omits_geoc, well_known_pm_name,
+    axes_order, ellipsoid_of, ellipsoid_params, geodetic_member, geographic_of, meridian_of,
+    prime_meridian_params, prime_meridian_radians_params, proj_unit_name, spherical_omits_geoc,
+    well_known_pm_name,
 };
 
 const YEAR: f64 = 31_556_925.445;
@@ -1949,7 +1949,12 @@ fn grid_offset_endpoint(crs: Option<&Crs>) -> Result<Option<&ProjectedCRS>, Fact
 /// `ProjectedCRS::addUnitConvertAndAxisSwap` outside a CRS: the metre
 /// conversion when an axis is not metre, then the axis order.
 fn projected_unit_and_axis_swap(projected: &ProjectedCRS, formatter: &mut PipelineFormatter) {
-    let axes = projected.coordinate_system().axes();
+    axes_unit_and_axis_swap(projected.coordinate_system().axes(), formatter);
+}
+
+/// `ProjectedCRS::addUnitConvertAndAxisSwap(axisList, formatter, false)`: the same for the axes of
+/// a projected or derived projected CRS, which PROJ runs on the axis list alone.
+pub(crate) fn axes_unit_and_axis_swap(axes: &[Axis], formatter: &mut PipelineFormatter) {
     let Some(first) = axes.first() else {
         return;
     };
@@ -1973,7 +1978,7 @@ fn projected_unit_and_axis_swap(projected: &ProjectedCRS, formatter: &mut Pipeli
             formatter.add_param("z_out", &unit_text(height));
         }
     }
-    if let Some(order) = projected_axis_order(projected) {
+    if let Some(order) = axes_order(axes) {
         formatter.add_step("axisswap");
         formatter.add_param("order", &order);
     }
