@@ -343,7 +343,12 @@ impl ProjectedCRS {
     }
 
     fn export_with(&self, extras: &ProjExtras<'_>) -> Result<String, FactoryError> {
-        if let Some(text) = self.pseudo_mercator_proj().filter(|_| !extras.has_shift()) {
+        if let Some(mut text) = self.pseudo_mercator_proj().filter(|_| !extras.has_shift()) {
+            // The generic export writes `+over` after `+nadgrids=@null` and before `+wktext`
+            // (`CRS::_exportToPROJString`, reached by the pseudo-Mercator branch too).
+            if self.identified.over {
+                text = text.replacen(" +wktext", " +over +wktext", 1);
+            }
             return Ok(text);
         }
         if let Some(text) = self

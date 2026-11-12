@@ -3,6 +3,9 @@
 //! Each function is one `TEST_F(CApi, ...)` name. Values are the ones the C++
 //! test asserts. The C entry points are the ISO 19111 objects in this crate.
 
+use proj_rs::iso19111::{
+    create_from_user_input, create_from_user_input_with_init_rules, InitRules,
+};
 use proj_rs::{
     AlternativeGridNames, AuthorityFactory, BoundCRS, CartesianCS, Conversion, CoordinateOperation,
     CoordinateSystem, Crs, DatabaseContext, Datum, DeprecatedCodes, DerivedProjectedCRS, Direction,
@@ -1513,4 +1516,71 @@ fn c_api_proj_trans_bounds_3d_geocentric_to_geog2d_lon_lat_ordered() {
     near(max[1], 50.0, 0.15);
     near(min[2], -57_187.0, 1.0);
     near(max[2], 56_862.2, 1.0);
+}
+
+/// `TEST_F(CApi, use_proj4_init_rules)`. PROJ keeps the rules on the
+/// `PJ_CONTEXT`; here they are the `InitRules` argument of the call. The
+/// default rules refuse `init=`, the PROJ 4 rules read it.
+#[test]
+fn c_api_use_proj4_init_rules() {
+    let db = db();
+    assert!(create_from_user_input("+init=epsg:28992 +over", &db).is_err());
+
+    {
+        // Test +over
+        let crs =
+            create_from_user_input_with_init_rules("+init=epsg:28992 +over", &db, InitRules::Proj4)
+                .expect("+init=epsg:28992 +over");
+        let Crs::Projected(projected) = &crs else {
+            panic!("projected CRS expected");
+        };
+        let datum = projected.base_crs().datum().expect("datum");
+        assert_eq!(datum.name(), "Amersfoort");
+        assert_eq!(
+            crs.export_to_proj_string().expect("PROJ 5 string"),
+            "+proj=sterea +lat_0=52.1561605555556 +lon_0=5.38763888888889 +k=0.9999079 \
+             +x_0=155000 +y_0=463000 +ellps=bessel +units=m +over +no_defs +type=crs"
+        );
+    }
+
+    {
+        // Test +over on epsg:3857
+        let crs =
+            create_from_user_input_with_init_rules("+init=epsg:3857 +over", &db, InitRules::Proj4)
+                .expect("+init=epsg:3857 +over");
+        assert_eq!(
+            crs.export_to_proj_string().expect("PROJ 5 string"),
+            "+proj=merc +a=6378137 +b=6378137 +lat_ts=0 +lon_0=0 +x_0=0 +y_0=0 +k=1 \
+             +units=m +nadgrids=@null +over +wktext +no_defs +type=crs"
+        );
+    }
+
+    assert!(create_from_user_input("+init=epsg:28992 +over", &db).is_err());
+}
+
+/// `TEST_F(CApi, concurrent_context)`. Four threads each open a database
+/// handle 60 times and build two CRSs from it. A `DatabaseContext` stands for
+/// the `PJ_CONTEXT`. The C++ `proj_cleanup()` has no counterpart: nothing
+/// global is kept, so dropping the handles releases everything.
+#[test]
+fn c_api_concurrent_context() {
+    let threads: Vec<_> = (0..4)
+        .map(|_| {
+            std::thread::spawn(|| {
+                for code in 0..60 {
+                    let db = db();
+                    let factory = AuthorityFactory::create(&db, "EPSG");
+                    factory
+                        .create_coordinate_reference_system("4326")
+                        .expect("EPSG:4326");
+                    factory
+                        .create_coordinate_reference_system(&(32600 + code).to_string())
+                        .expect("EPSG:326xx");
+                }
+            })
+        })
+        .collect();
+    for thread in threads {
+        thread.join().expect("thread");
+    }
 }
