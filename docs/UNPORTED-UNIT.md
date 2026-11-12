@@ -48,7 +48,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_operation.cpp
 
-- `operation.normalizeForVisualization`
 
 ## test_operationfactory.cpp
 
@@ -69,7 +68,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_c_api.cpp
 
-- `CApi.proj_coordoperation_get_grid_used_fullname_caching`
 - `CApi.proj_context_set_database_path_null`
 - `CApi.proj_context_set_database_path_aux`
 - `CApi.proj_context_set_database_path_error_1`

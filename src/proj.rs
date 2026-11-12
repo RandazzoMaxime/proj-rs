@@ -20,6 +20,9 @@ use bounds::Dims;
 
 use crate::engine::Operation;
 use crate::engine::TransformError as StepError;
+use crate::iso19111::{
+    Conversion, CoordinateOperation, DatabaseContext, GridAvailabilityUse, GridDescription, OpProps,
+};
 use crate::proj_iso::{iso_pipeline, iso_pipeline_at, IsoPipeline};
 use crate::{CreateError, Xyzt};
 
@@ -138,6 +141,9 @@ pub enum ProjError {
     ExportToJson,
     /// WKT export is not built.
     ExportToWkt,
+    /// The grids of the operation could not be read: the definition is not a PROJ-based
+    /// operation, or the database rejects a lookup.
+    GridsNeeded(String),
 }
 
 impl fmt::Display for ProjError {
@@ -180,6 +186,10 @@ impl fmt::Display for ProjError {
                 .write_str("The definition could not be represented in the requested JSON format"),
             Self::ExportToWkt => formatter
                 .write_str("The definition could not be represented in the requested WKT format"),
+            Self::GridsNeeded(message) => write!(
+                formatter,
+                "The grids of the operation could not be read: {message}"
+            ),
         }
     }
 }
@@ -616,6 +626,34 @@ impl Proj {
             Body::Single => Err(ProjError::Definition),
             Body::Iso(pipeline) => pipeline.reported_definition(),
         }
+    }
+
+    /// The grids this object needs, as `proj_coordoperation_get_grid_used_count` and
+    /// `proj_coordoperation_get_grid_used` give them: one per grid file parameter of the
+    /// operation or of its steps, sorted by name, without repeats. Each entry gives the file on
+    /// the search path (`full_name`, empty when absent), its package and download record.
+    ///
+    /// A grid the database knows counts as available when network access is enabled, as
+    /// `considerKnownGridsAsAvailable`. The result is computed on each call, so two calls give
+    /// the same entries.
+    ///
+    /// # Errors
+    ///
+    /// The definition is not a PROJ-based operation, or the database rejects a lookup.
+    pub fn grids_needed(&self) -> Result<Vec<GridDescription>, ProjError> {
+        let operation = Conversion::create_proj_based(&OpProps::new(), &self.definition)
+            .map(CoordinateOperation::Conversion)
+            .map_err(|error| ProjError::GridsNeeded(error.to_string()))?;
+        let db =
+            DatabaseContext::create().map_err(|error| ProjError::GridsNeeded(error.to_string()))?;
+        let known = if self.net.enabled {
+            GridAvailabilityUse::KnownAvailable
+        } else {
+            GridAvailabilityUse::UseForSorting
+        };
+        operation
+            .grids_needed(&db, known)
+            .map_err(|error| ProjError::GridsNeeded(error.to_string()))
     }
 
     /// Version of the PROJ release this port follows.

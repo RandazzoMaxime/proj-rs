@@ -7,8 +7,8 @@
 //! `proj_as_wkt` write for a pair is this one.
 
 use super::model::{
-    ConcatenatedOperation, ConcatenatedStep, Conversion, CoordinateOperation, Crs, GeodeticCRS,
-    GeographicCRS, Identified, Identifier, OperationMethod,
+    CompoundCRS, ConcatenatedOperation, ConcatenatedStep, Conversion, CoordinateOperation, Crs,
+    GeodeticCRS, GeographicCRS, Identified, Identifier, OperationMethod,
 };
 use super::parammap;
 
@@ -160,9 +160,10 @@ fn reversal_step(source: Crs, target: Crs) -> Option<ConcatenatedStep> {
     })
 }
 
-/// `CRS::applyAxisOrderReversal` (crs.cpp:1015-1125) for a geographic or projected CRS: the two
-/// horizontal axes are swapped whatever their order, and the CRS has no identifier of its own.
-/// `None` for any other kind.
+/// `CRS::applyAxisOrderReversal` (crs.cpp:1015-1125). A geographic or projected CRS has its two
+/// horizontal axes swapped whatever their order. A compound CRS reverses its first component and
+/// keeps the others, its name joining the component names with ` + `. Its identifier is dropped,
+/// as for the other kinds. `None` for any other kind, or for a compound CRS without components.
 pub(crate) fn reversed(crs: &Crs) -> Option<Crs> {
     Some(match crs {
         Crs::Geographic(geographic) => Crs::Geographic(reversed_geographic(geographic)),
@@ -172,8 +173,25 @@ pub(crate) fn reversed(crs: &Crs) -> Option<Crs> {
         Crs::Projected(projected) => {
             let mut projected = projected.clone();
             projected.coordinate_system.axes.swap(0, 1);
-            reverse_identified(&mut projected.identified);
+            reverse_identified(&mut projected.identified, None);
             Crs::Projected(projected)
+        }
+        Crs::Compound(compound) => {
+            let (first, rest) = compound.components.split_first()?;
+            let first = reversed(first)?;
+            let mut name = first.name().to_owned();
+            let mut components = vec![first];
+            for component in rest {
+                name.push_str(" + ");
+                name.push_str(component.name());
+                components.push(component.clone());
+            }
+            let mut identified = compound.identified.clone();
+            reverse_identified(&mut identified, Some(name));
+            Crs::Compound(CompoundCRS {
+                identified,
+                components,
+            })
         }
         _ => return None,
     })
@@ -182,23 +200,28 @@ pub(crate) fn reversed(crs: &Crs) -> Option<Crs> {
 fn reversed_geographic(geographic: &GeographicCRS) -> GeographicCRS {
     let mut reversed = geographic.clone();
     reversed.coordinate_system.axes.swap(0, 1);
-    reverse_identified(&mut reversed.identified);
+    reverse_identified(&mut reversed.identified, None);
     reversed
 }
 
-/// The identified part of `createProperties` (crs.cpp:1017-1062): the name toggles the
-/// normalized suffix (or the "axis order reversed" one), the domains stay, the remarks say which
-/// identifier the axes come from, and no identifier is kept.
-fn reverse_identified(identified: &mut Identified) {
+/// The identified part of `createProperties` (crs.cpp:1017-1062): the name is `new_name` when
+/// given, otherwise it toggles the normalized suffix (or the "axis order reversed" one). The
+/// domains stay, the remarks say which identifier the axes come from, and no identifier is kept.
+fn reverse_identified(identified: &mut Identified, new_name: Option<String>) {
     const REVERSED_SUFFIX: &str = " (with axis order reversed)";
     const REMARKS_PREFIX: &str = "Axis order reversed compared to ";
     let name = identified.name.clone();
-    identified.name = if let Some(base) = name.strip_suffix(NORMALIZED_SUFFIX) {
-        base.to_owned()
-    } else if let Some(base) = name.strip_suffix(REVERSED_SUFFIX) {
-        base.to_owned()
-    } else {
-        format!("{name}{NORMALIZED_SUFFIX}")
+    identified.name = match new_name {
+        Some(new_name) => new_name,
+        None => {
+            if let Some(base) = name.strip_suffix(NORMALIZED_SUFFIX) {
+                base.to_owned()
+            } else if let Some(base) = name.strip_suffix(REVERSED_SUFFIX) {
+                base.to_owned()
+            } else {
+                format!("{name}{NORMALIZED_SUFFIX}")
+            }
+        }
     };
     let remarks = std::mem::take(&mut identified.remarks);
     identified.remarks = match identified.identifiers.as_slice() {

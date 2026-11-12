@@ -817,6 +817,16 @@ fn collect_file_parameters(operation: &CoordinateOperation, names: &mut Vec<Stri
             .map(Parameter::value)
             .collect(),
         CoordinateOperation::Conversion(conversion) => {
+            // A PROJ-based operation keeps its PROJ string in the method name, and its grids are
+            // the `grids` and `file` values of that string (`PROJBasedOperation::gridsNeeded`).
+            if let Some(text) = conversion
+                .method
+                .name()
+                .strip_prefix(PROJ_BASED_METHOD_PREFIX)
+            {
+                names.extend(proj_based_grid_names(text));
+                return;
+            }
             conversion.parameters.iter().map(Parameter::value).collect()
         }
         CoordinateOperation::Concatenated(concatenated) => {
@@ -835,6 +845,30 @@ fn collect_file_parameters(operation: &CoordinateOperation, names: &mut Vec<Stri
             );
         }
     }
+}
+
+/// The prefix of the method name of a PROJ-based operation, followed by its PROJ string.
+const PROJ_BASED_METHOD_PREFIX: &str = "PROJ-based operation method: ";
+
+/// `PROJStringFormatter::getUsedGridNames` (io.cpp 10512-10525): the comma-separated values of
+/// the `grids` and `file` parameters of every step, as written. A name is listed once.
+fn proj_based_grid_names(text: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    for token in text.split_whitespace() {
+        let token = token.trim_start_matches('+');
+        let Some((key, value)) = token.split_once('=') else {
+            continue;
+        };
+        if key == "grids" || key == "file" {
+            names.extend(
+                value
+                    .split(',')
+                    .filter(|name| !name.is_empty())
+                    .map(str::to_owned),
+            );
+        }
+    }
+    names
 }
 
 /// `lookForGridInfo` for a grid the database has no row for: available when its file is on
