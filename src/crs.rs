@@ -859,7 +859,17 @@ fn dictionary_section(spec: &str) -> Result<String, CreateError> {
         .ok_or(CreateError::IllegalValue("init"))?;
     let path = crate::network::find_file(file).ok_or(CreateError::IllegalValue("init"))?;
     let text = std::fs::read(path).map_err(|_| CreateError::IllegalValue("init"))?;
-    section_words(&String::from_utf8_lossy(&text), section).ok_or(CreateError::IllegalValue("init"))
+    let text = String::from_utf8_lossy(&text);
+    // A dictionary section may have no `<>` end marker: its header line is then the definition
+    // (`pj_init_ctx` with a dictionary file, as the `proj_context` tests use it).
+    if let Some(words) = section_words(&text, section) {
+        return Ok(words);
+    }
+    let header = format!("<{section}>");
+    text.lines()
+        .find_map(|line| line.trim().strip_prefix(header.as_str()))
+        .map(|body| body.trim().to_owned())
+        .ok_or(CreateError::IllegalValue("init"))
 }
 
 pub(crate) fn init_definition(spec: &str) -> Result<String, CreateError> {
