@@ -40,6 +40,11 @@ fn open_memory() -> Result<Connection, rusqlite::Error> {
     Ok(connection)
 }
 
+/// The bytes of the embedded `proj.db`.
+pub(crate) fn embedded_bytes() -> &'static [u8] {
+    PROJ_DB
+}
+
 /// A private connection to the embedded `proj.db`.
 ///
 /// Each call deserializes the bytes. The shared slot used by [`with_db`] stays

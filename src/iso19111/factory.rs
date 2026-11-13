@@ -4,9 +4,10 @@
 //! code is an error. A `text_definition` is not turned into a coordinate.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use rusqlite::{types::ValueRef, Connection};
+use rusqlite::{types::ValueRef, Connection, OpenFlags};
 
 use super::buildop::{concatenation_interpolation, concatenation_interpolation_of_steps, OpProps};
 use super::compound::{flatten_steps, get_accuracy, get_accuracy_of_steps, stored_accuracy};
@@ -176,6 +177,202 @@ const DEGREE_SI: f64 = std::f64::consts::PI / 180.0;
 const ARC_SECOND_SI: f64 = DEGREE_SI / 3600.0;
 const FACTOR_EPS: f64 = 1e-10;
 
+/// `DATABASE.LAYOUT.VERSION` of a database, as PROJ's `SQLiteHandle` keeps it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Layout {
+    major: i64,
+    minor: i64,
+}
+
+/// Layout this factory reads: `DATABASE.LAYOUT.VERSION` 1.7 (PROJ 9.9).
+const LAYOUT_MAJOR: i64 = 1;
+const LAYOUT_MINOR: i64 = 7;
+
+/// Schema name of the main database once auxiliary databases are attached.
+const MAIN_SCHEMA: &str = "db_0";
+
+fn db_error(error: rusqlite::Error) -> FactoryError {
+    FactoryError::Sql(error.to_string())
+}
+
+/// The `DATABASE.LAYOUT.VERSION` rows of the database at `schema`, which is
+/// `""` for the connection's own database or `"db_N."` for an attached one.
+fn layout_rows(conn: &Connection, schema: &str) -> Result<Vec<(String, String)>, FactoryError> {
+    let sql = format!(
+        "SELECT key, CAST(value AS TEXT) FROM {schema}metadata WHERE key IN \
+         ('DATABASE.LAYOUT.VERSION.MAJOR', 'DATABASE.LAYOUT.VERSION.MINOR')"
+    );
+    let mut statement = conn.prepare(&sql).map_err(db_error)?;
+    let rows = statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .map_err(db_error)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
+}
+
+/// Turns the rows of [`layout_rows`] into a [`Layout`], with PROJ's messages
+/// (`SQLiteHandle::checkDatabaseLayout`).
+fn layout_from_rows(rows: &[(String, String)], path: &str) -> Result<Layout, FactoryError> {
+    if rows.len() != 2 {
+        return Err(FactoryError::Sql(format!(
+            "{path} lacks DATABASE.LAYOUT.VERSION.MAJOR / DATABASE.LAYOUT.VERSION.MINOR \
+             metadata. It comes from another PROJ installation."
+        )));
+    }
+    let mut major = 0;
+    let mut minor = 0;
+    for (key, value) in rows {
+        let number = value.trim().parse::<i64>().unwrap_or(0);
+        if key == "DATABASE.LAYOUT.VERSION.MAJOR" {
+            major = number;
+        } else {
+            minor = number;
+        }
+    }
+    if major != LAYOUT_MAJOR {
+        return Err(FactoryError::Sql(format!(
+            "{path} contains DATABASE.LAYOUT.VERSION.MAJOR = {major} whereas {LAYOUT_MAJOR} \
+             is expected. It comes from another PROJ installation."
+        )));
+    }
+    if minor < LAYOUT_MINOR {
+        return Err(FactoryError::Sql(format!(
+            "{path} contains DATABASE.LAYOUT.VERSION.MINOR = {minor} whereas a number >= \
+             {LAYOUT_MINOR} is expected. It comes from another PROJ installation."
+        )));
+    }
+    Ok(Layout { major, minor })
+}
+
+/// Checks the layout of the main database at `schema` (see [`layout_rows`]).
+fn check_main_layout(conn: &Connection, schema: &str, path: &str) -> Result<Layout, FactoryError> {
+    layout_from_rows(&layout_rows(conn, schema)?, path)
+}
+
+/// Checks an attached auxiliary database `schema` (`"db_N"`) against the main
+/// layout. A database without a `metadata` table, or without layout rows, is
+/// accepted as PROJ accepts sparse auxiliary databases.
+fn check_auxiliary_layout(
+    conn: &Connection,
+    schema: &str,
+    path: &str,
+    main_path: &str,
+    main: Layout,
+) -> Result<(), FactoryError> {
+    let has_metadata: i64 = conn
+        .query_row(
+            &format!("SELECT COUNT(*) FROM {schema}.sqlite_master WHERE name = 'metadata'"),
+            [],
+            |row| row.get(0),
+        )
+        .map_err(db_error)?;
+    if has_metadata == 0 {
+        return Ok(());
+    }
+    let rows = layout_rows(conn, &format!("{schema}."))?;
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let layout = layout_from_rows(&rows, path)?;
+    if layout != main {
+        return Err(FactoryError::Sql(format!(
+            "Auxiliary database {path} contains a DATABASE.LAYOUT.VERSION =  {}.{} which is \
+             different from the one from the main database {main_path} which is {}.{}",
+            layout.major, layout.minor, main.major, main.minor
+        )));
+    }
+    Ok(())
+}
+
+/// Quotes an SQL identifier.
+fn quote_identifier(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+/// Attaches the file at `path` as `schema`. The connection has no
+/// `SQLITE_OPEN_CREATE`, so a missing file is an error and is not created.
+fn attach(conn: &Connection, schema: &str, path: &Path) -> Result<(), FactoryError> {
+    let label = path.display().to_string();
+    let Some(file) = path.to_str() else {
+        return Err(FactoryError::Sql(format!(
+            "Open of {label} failed: not UTF-8"
+        )));
+    };
+    conn.execute(&format!("ATTACH DATABASE ? AS {schema}"), [file])
+        .map(|_| ())
+        .map_err(|error| FactoryError::Sql(format!("Open of {label} failed: {error}")))
+}
+
+/// PROJ's `attachExtraDatabases` view step: each table or view of `db_0` is
+/// replaced by a temporary view that unions the same-named table of every
+/// attached database that has it. Views are re-created as temporary views.
+fn create_temp_views(conn: &Connection, databases: usize) -> Result<(), FactoryError> {
+    let objects = {
+        let mut statement = conn
+            .prepare(
+                "SELECT name, type, sql FROM db_0.sqlite_master \
+                 WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_stat%' \
+                 ORDER BY rowid",
+            )
+            .map_err(db_error)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(db_error)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(db_error)?
+    };
+    for (name, kind, sql) in objects {
+        if kind != "table" {
+            conn.execute_batch(&sql.replace("CREATE VIEW", "CREATE TEMP VIEW"))
+                .map_err(db_error)?;
+            continue;
+        }
+        let quoted = quote_identifier(&name);
+        let columns = {
+            let mut statement = conn
+                .prepare(&format!(
+                    "PRAGMA db_0.table_info({})",
+                    quote_identifier(&name)
+                ))
+                .map_err(db_error)?;
+            let rows = statement
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(db_error)?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(db_error)?
+                .iter()
+                .map(|column| quote_identifier(column))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let mut view = format!("CREATE TEMP VIEW {quoted} AS ");
+        let mut first = true;
+        for index in 0..databases {
+            let select = format!("SELECT {columns} FROM db_{index}.{quoted}");
+            // A sparse auxiliary database may lack the table: it is skipped.
+            if conn.prepare(&format!("{select} LIMIT 0")).is_err() {
+                continue;
+            }
+            if !first {
+                // PROJ keeps UNION (not UNION ALL) for conversion_method.
+                view.push_str(if name == "conversion_method" {
+                    " UNION "
+                } else {
+                    " UNION ALL "
+                });
+            }
+            view.push_str(&select);
+            first = false;
+        }
+        conn.execute_batch(&view).map_err(db_error)?;
+    }
+    Ok(())
+}
+
 /// Embedded PROJ 9.9 database.
 ///
 /// `DatabaseContext::create` checks `DATABASE.LAYOUT.VERSION` the way PROJ
@@ -183,11 +380,37 @@ const FACTOR_EPS: f64 = 1e-10;
 #[derive(Clone)]
 pub struct DatabaseContext {
     conn: Arc<Mutex<Connection>>,
+    attachment: Attachment,
+}
+
+/// How the tables of a [`DatabaseContext`] are reached.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Attachment {
+    /// One database, read by its own name.
+    Direct,
+    /// The main database is attached as `db_0`, the auxiliary ones as
+    /// `db_1`, `db_2`, ..., and every table is a temporary view over them.
+    Auxiliary,
+}
+
+impl Attachment {
+    /// Schema prefix of the main database in a statement: `""` or `"db_0."`.
+    fn main_schema(self) -> &'static str {
+        match self {
+            Self::Direct => "",
+            Self::Auxiliary => "db_0.",
+        }
+    }
 }
 
 impl std::fmt::Debug for DatabaseContext {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("DatabaseContext { proj.db }")
+        match self.attachment {
+            Attachment::Direct => formatter.write_str("DatabaseContext { proj.db }"),
+            Attachment::Auxiliary => {
+                formatter.write_str("DatabaseContext { proj.db with auxiliary databases }")
+            }
+        }
     }
 }
 
@@ -201,45 +424,100 @@ impl DatabaseContext {
     pub fn create() -> Result<Self, FactoryError> {
         let conn =
             projdb::open_connection().map_err(|error| FactoryError::Sql(error.to_string()))?;
-        let db = Self {
-            conn: Arc::new(Mutex::new(conn)),
+        check_main_layout(&conn, "", "proj.db")?;
+        Ok(Self::from_connection(conn, Attachment::Direct))
+    }
+
+    /// Open the `proj.db` file at `path`, read-only, with the layout check of
+    /// [`DatabaseContext::create`].
+    ///
+    /// # Errors
+    ///
+    /// The file cannot be opened, is not an SQLite database, or its layout
+    /// version is not 1.7 or newer.
+    pub fn open(path: &Path) -> Result<Self, FactoryError> {
+        let label = path.display().to_string();
+        let conn = Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .map_err(|error| FactoryError::Sql(format!("Open of {label} failed: {error}")))?;
+        check_main_layout(&conn, "", &label)?;
+        Ok(Self::from_connection(conn, Attachment::Direct))
+    }
+
+    /// `DatabaseContext::create(path, auxiliary_dbs)` of PROJ.
+    ///
+    /// The main database is the file at `path`, or the embedded `proj.db`
+    /// when `path` is `None`. The auxiliary databases are attached after it, in
+    /// order, and every factory reads the union of them as PROJ does: an
+    /// object missing from the main database is looked up in the auxiliary
+    /// ones. With no auxiliary database this is [`DatabaseContext::open`] or
+    /// [`DatabaseContext::create`].
+    ///
+    /// # Errors
+    ///
+    /// The main or an auxiliary database cannot be opened (a missing file is
+    /// an error, not created), is not an SQLite database, or has a layout
+    /// version that differs from the main one or is not 1.7 or newer.
+    pub fn create_with_auxiliary(
+        path: Option<&Path>,
+        auxiliary: &[PathBuf],
+    ) -> Result<Self, FactoryError> {
+        if auxiliary.is_empty() {
+            return match path {
+                Some(path) => Self::open(path),
+                None => Self::create(),
+            };
+        }
+        // No SQLITE_OPEN_CREATE: ATTACH of a missing file fails, as in PROJ.
+        let mut conn = Connection::open_with_flags(
+            ":memory:",
+            OpenFlags::SQLITE_OPEN_READ_WRITE
+                | OpenFlags::SQLITE_OPEN_NO_MUTEX
+                | OpenFlags::SQLITE_OPEN_URI,
+        )
+        .map_err(db_error)?;
+        let main_label = match path {
+            Some(path) => {
+                attach(&conn, MAIN_SCHEMA, path)?;
+                path.display().to_string()
+            }
+            None => {
+                conn.execute_batch(&format!("ATTACH DATABASE ':memory:' AS {MAIN_SCHEMA}"))
+                    .map_err(db_error)?;
+                conn.deserialize_bytes(MAIN_SCHEMA, projdb::embedded_bytes())
+                    .map_err(db_error)?;
+                "proj.db".to_owned()
+            }
         };
-        db.check_layout()?;
-        Ok(db)
+        let main = check_main_layout(&conn, "db_0.", &main_label)?;
+        for (index, path) in auxiliary.iter().enumerate() {
+            let schema = format!("db_{}", index + 1);
+            attach(&conn, &schema, path)?;
+            check_auxiliary_layout(
+                &conn,
+                &schema,
+                &path.display().to_string(),
+                &main_label,
+                main,
+            )?;
+        }
+        create_temp_views(&conn, auxiliary.len() + 1)?;
+        Ok(Self::from_connection(conn, Attachment::Auxiliary))
+    }
+
+    fn from_connection(conn: Connection, attachment: Attachment) -> Self {
+        Self {
+            conn: Arc::new(Mutex::new(conn)),
+            attachment,
+        }
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Connection> {
         self.conn
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
-    }
-
-    fn check_layout(&self) -> Result<(), FactoryError> {
-        let rows = self.query(
-            "SELECT key, value FROM metadata WHERE key IN \
-             ('DATABASE.LAYOUT.VERSION.MAJOR', 'DATABASE.LAYOUT.VERSION.MINOR')",
-            &[],
-        )?;
-        if rows.len() != 2 {
-            return Err(FactoryError::Sql(
-                "proj.db lacks DATABASE.LAYOUT.VERSION.MAJOR / MINOR".to_owned(),
-            ));
-        }
-        let mut major = String::new();
-        let mut minor = String::new();
-        for row in &rows {
-            if row[0].text() == "DATABASE.LAYOUT.VERSION.MAJOR" {
-                major = row[1].text();
-            } else {
-                minor = row[1].text();
-            }
-        }
-        if major != "1" || minor.parse::<i64>().unwrap_or(0) < 7 {
-            return Err(FactoryError::Sql(format!(
-                "proj.db layout is {major}.{minor}; 1.7 or newer is required"
-            )));
-        }
-        Ok(())
     }
 
     /// CRS whose name, or alias, equals `name` ignoring case, as PROJ's
@@ -818,7 +1096,10 @@ impl DatabaseContext {
             "'trigger'",
         ] {
             let rows = self.query(
-                &format!("SELECT sql||';' FROM sqlite_master WHERE type = {kind} ORDER BY rowid"),
+                &format!(
+                    "SELECT sql||';' FROM {}sqlite_master WHERE type = {kind} ORDER BY rowid",
+                    self.attachment.main_schema()
+                ),
                 &[],
             )?;
             statements.extend(rows.into_iter().map(|row| row[0].text()));
