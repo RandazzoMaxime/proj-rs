@@ -219,13 +219,31 @@ fn auxiliary_is_attached_to_a_file_main_database_too() {
     assert_eq!(geographic_name(&db, "EPSG", "4326"), "WGS 84");
 }
 
+/// `TEST(factory, attachExtraDatabases_auxiliary)`, second block: the file
+/// auxiliary and an empty `:memory:` one together. Both lookups succeed.
+#[test]
+fn auxiliary_file_and_memory_auxiliary_are_both_attached() {
+    let scratch = Scratch::new("aux-and-memory");
+    let other = auxiliary_with_other_crs(&scratch);
+    let db = DatabaseContext::create_with_auxiliary(None, &[other, PathBuf::from(":memory:")])
+        .expect("attach file and :memory:");
+    assert_eq!(geographic_name(&db, "EPSG", "4326"), "WGS 84");
+    assert_eq!(geographic_name(&db, "OTHER", "OTHER_4326"), "WGS 84");
+}
+
+/// `TEST(factory, attachExtraDatabases_auxiliary)`, third block: an empty
+/// `:memory:` auxiliary. The main object is found, the auxiliary one is a
+/// `FactoryException` in PROJ, a `NotFound` here.
 #[test]
 fn memory_auxiliary_database_is_empty() {
     let db = DatabaseContext::create_with_auxiliary(None, &[PathBuf::from(":memory:")])
         .expect("attach :memory:");
     assert_eq!(geographic_name(&db, "EPSG", "4326"), "WGS 84");
     let factory = AuthorityFactory::create(&db, "OTHER");
-    assert!(factory.create_geographic_crs("OTHER_4326").is_err());
+    assert!(matches!(
+        factory.create_geographic_crs("OTHER_4326"),
+        Err(FactoryError::NotFound { .. })
+    ));
 }
 
 #[test]
