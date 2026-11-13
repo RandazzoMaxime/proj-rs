@@ -5,6 +5,8 @@
 mod dms;
 #[path = "support/geod_cli.rs"]
 mod geod_cli;
+#[path = "support/lists.rs"]
+mod lists;
 
 use std::process::ExitCode;
 

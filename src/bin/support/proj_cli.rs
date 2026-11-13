@@ -26,6 +26,7 @@ use super::dms::{
     c_strtod, direction_of, dmstor, format_number, program_name, rtodms, Direction, Dms, Width,
     RAD_TO_DEG,
 };
+use crate::lists;
 
 /// Step of the numerical derivatives in `pj_factors`, radians.
 const DERIV_STEP: f64 = 1e-5;
@@ -53,6 +54,9 @@ pub(crate) fn run() -> ExitCode {
             return ExitCode::from(1);
         }
     };
+    if let Some(list) = &options.list {
+        return list_switch(&program, list);
+    }
     let job = match Job::open(&options) {
         Ok(job) => job,
         Err(message) => {
@@ -97,6 +101,56 @@ pub(crate) fn run() -> ExitCode {
     }
     let _ = stdout.write_all(&output);
     ExitCode::SUCCESS
+}
+
+/// The `-l` switch: the list its text names, then exit (`proj.cpp`). `p` and `P` are the short
+/// and long projection lists, `=ID` one projection, `e` the ellipsoids, `u` the units.
+fn list_switch(program: &str, list: &str) -> ExitCode {
+    let text = match list.chars().next() {
+        None | Some('p') => projections(false),
+        Some('P') => projections(true),
+        Some('=') => projection(&list[1..]),
+        Some('e') => lists::ellipsoids(),
+        Some('u') => lists::units(),
+        Some(other) => {
+            let _ = writeln!(io::stderr(), "{program}: invalid list option: l{other}");
+            return ExitCode::from(1);
+        }
+    };
+    let _ = io::stdout().write_all(text.as_bytes());
+    ExitCode::SUCCESS
+}
+
+/// The projections of `proj_list_operations`, the short list (first line of each) or the long
+/// one (whole descriptions). `latlong`, `longlat` and `geocent` are left out, as `proj.cpp`
+/// leaves them out.
+fn projections(long: bool) -> String {
+    let mut out = String::new();
+    for entry in proj_rs::listing::PROJECTIONS {
+        if matches!(entry.id, "latlong" | "longlat" | "geocent") {
+            continue;
+        }
+        out.push_str(&format!("{} : ", entry.id));
+        if long {
+            out.push_str(entry.description);
+            out.push('\n');
+        } else {
+            out.push_str(entry.description.split('\n').next().unwrap_or(""));
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// `proj -l=ID`: the whole description of the projection `id`, when it is in the list.
+fn projection(id: &str) -> String {
+    match proj_rs::listing::PROJECTIONS
+        .iter()
+        .find(|entry| entry.id == id)
+    {
+        Some(entry) => format!("{:>9} : {}\n", entry.id, entry.description),
+        None => String::new(),
+    }
 }
 
 /// The eight bytes of a native double, from a slice of at least eight.
@@ -156,6 +210,8 @@ struct Options {
     prescale: Option<f64>,
     /// `-m` without `-I`: the factor applied to the output of the forward projection.
     postscale: Option<f64>,
+    /// `-l`: the text after the `l`, which selects the list to print.
+    list: Option<String>,
 }
 
 impl Options {
@@ -176,6 +232,7 @@ impl Options {
             error_text: "*\t*".to_owned(),
             prescale: None,
             postscale: None,
+            list: None,
         };
         let mut scale = None;
         let mut plus = Vec::new();
@@ -199,6 +256,11 @@ impl Options {
                         'o' => options.bin_out = true,
                         'r' => options.reverse_in = true,
                         's' => options.reverse_out = true,
+                        'l' => {
+                            // `-l` lists and exits: the rest of the switch is its argument.
+                            options.list = Some(chars.as_str().to_owned());
+                            return Ok(options);
+                        }
                         'e' => {
                             index += 1;
                             options.error_text = args
