@@ -1162,7 +1162,7 @@ fn export_nonconformant_geographic(
     crs: &GeographicCRS,
     formatter: &mut WktFormatter,
 ) -> Result<(), FactoryError> {
-    let flat = geographic_without_height(crs);
+    let flat = nonconformant_geographic_2d(crs, formatter.db.as_ref());
     let compound_name = format!("{} + {}", crs.name(), crs.name());
     formatter.start_node("COMPD_CS", NodeId::Absent);
     formatter.add_quoted(&compound_name);
@@ -1179,18 +1179,17 @@ fn export_nonconformant_projected(
     crs: &ProjectedCRS,
     formatter: &mut WktFormatter,
 ) -> Result<(), FactoryError> {
-    let mut flat = crs.clone();
-    flat.coordinate_system.axes.truncate(2);
-    flat.identified.allow_non_conformant_wkt1 = false;
-    if let GeodeticCRS::Geographic(base) = &mut flat.base {
-        *base = geographic_without_height(base);
-    }
+    let db = formatter.db.clone();
+    let flat = nonconformant_projected_2d(crs, db.as_ref());
     let compound_name = format!("{} + {}", crs.name(), crs.base.name());
     formatter.start_node("COMPD_CS", NodeId::Absent);
     formatter.add_quoted(&compound_name);
     export_projected(&flat, formatter)?;
-    match &flat.base {
-        GeodeticCRS::Geographic(base) => export_geographic(base, formatter)?,
+    match &crs.base {
+        GeodeticCRS::Geographic(base) => {
+            let base = geographic_without_height(&base.demote_to_2d(db.as_ref()));
+            export_geographic(&base, formatter)?;
+        }
         GeodeticCRS::Geocentric(base) => export_geocentric(base, formatter)?,
         GeodeticCRS::Spherical(base) => export_spherical(
             &base.identified,
@@ -1210,6 +1209,35 @@ fn geographic_without_height(crs: &GeographicCRS) -> GeographicCRS {
     flat.identified.allow_non_conformant_wkt1 = false;
     flat.identified.original_compound = None;
     flat
+}
+
+/// The 2D geographic CRS a non-conformant WKT1 export writes (`crs.cpp`, `GeographicCRS::
+/// _exportToWKT`): the demoted CRS, or the EPSG CRS it identifies with confidence 100.
+fn nonconformant_geographic_2d(crs: &GeographicCRS, db: Option<&DatabaseContext>) -> GeographicCRS {
+    let demoted = geographic_without_height(&crs.demote_to_2d(db));
+    if let Some(db) = db {
+        let epsg = AuthorityFactory::create(db, "EPSG");
+        if let [(Crs::Geographic(found), 100)] = demoted.identify_with(Some(&epsg)).as_slice() {
+            return geographic_without_height(found);
+        }
+    }
+    demoted
+}
+
+/// The 2D projected CRS a non-conformant WKT1 export writes (`crs.cpp`, `ProjectedCRS::
+/// _exportToWKT`): the demoted CRS, or the EPSG CRS it identifies with confidence 100.
+fn nonconformant_projected_2d(crs: &ProjectedCRS, db: Option<&DatabaseContext>) -> ProjectedCRS {
+    let mut demoted = crs.demote_to_2d(db);
+    demoted.identified.allow_non_conformant_wkt1 = false;
+    if let Some(db) = db {
+        let epsg = AuthorityFactory::create(db, "EPSG");
+        if let [(Crs::Projected(found), 100)] = demoted.identify_with(Some(&epsg)).as_slice() {
+            let mut found = found.clone();
+            found.identified.allow_non_conformant_wkt1 = false;
+            return found;
+        }
+    }
+    demoted
 }
 
 /// `PROJCS,VERTCS` for an ESRI projected 3D CRS whose datum has one ellipsoidal-height CRS.

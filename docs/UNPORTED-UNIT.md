@@ -12,10 +12,6 @@ and `PORT-NOTES-tests.md`.
 
 - `factory.objectInsertion`
 
-## test_io.cpp
-
-- `io.createFromUserInput`
-
 ## test_operation.cpp
 
 
