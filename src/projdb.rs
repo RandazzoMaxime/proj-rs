@@ -2,9 +2,12 @@
 
 use std::cell::Cell;
 use std::fmt;
+use std::path::Path;
 use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
-use rusqlite::Connection;
+use rusqlite::backup::Backup;
+use rusqlite::{Connection, OpenFlags};
 
 const PROJ_DB: &[u8] = include_bytes!("../data/proj.db");
 
@@ -34,10 +37,22 @@ fn open_embedded() -> Result<Mutex<Connection>, String> {
         .map_err(|error| error.to_string())
 }
 
-fn open_memory() -> Result<Connection, rusqlite::Error> {
+/// The embedded bytes as a read-only in-memory image.
+fn read_only_image() -> Result<Connection, rusqlite::Error> {
     let mut connection = Connection::open_in_memory()?;
     connection.deserialize_bytes(rusqlite::MAIN_DB, PROJ_DB)?;
     Ok(connection)
+}
+
+/// Copy the main database of `source` into `target`, which stays writable: an
+/// insert session writes to it and rolls the writes back.
+fn copy_into(source: &Connection, mut target: Connection) -> Result<Connection, rusqlite::Error> {
+    Backup::new(source, &mut target)?.run_to_completion(i32::MAX, Duration::ZERO, None)?;
+    Ok(target)
+}
+
+fn open_memory() -> Result<Connection, rusqlite::Error> {
+    copy_into(&read_only_image()?, Connection::open_in_memory()?)
 }
 
 /// A private connection to the embedded `proj.db`.
@@ -46,6 +61,31 @@ fn open_memory() -> Result<Connection, rusqlite::Error> {
 /// free, so an ISO 19111 factory can nest queries without taking that lock.
 pub(crate) fn open_connection() -> Result<Connection, DbFail> {
     open_memory().map_err(|error| DbFail::Open(error.to_string()))
+}
+
+/// The embedded `proj.db` opened through the SQLite VFS `vfs`.
+///
+/// SQLite looks the VFS up before it reads anything, so an unknown name fails
+/// here as it would for a file. The message is PROJ's `Open of <path> failed`.
+pub(crate) fn open_embedded_with_vfs(vfs: &str) -> Result<Connection, DbFail> {
+    let open = || -> Result<Connection, rusqlite::Error> {
+        let target = Connection::open_with_flags_and_vfs(":memory:", OpenFlags::default(), vfs)?;
+        copy_into(&read_only_image()?, target)
+    };
+    open().map_err(|_| DbFail::Open("Open of proj.db failed".to_owned()))
+}
+
+/// The database file at `path`, opened read-only as PROJ opens `proj.db`.
+///
+/// `vfs` names the SQLite VFS to open it through, or `None` for SQLite's
+/// default.
+pub(crate) fn open_file(path: &Path, vfs: Option<&str>) -> Result<Connection, DbFail> {
+    let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_FULL_MUTEX;
+    let opened = match vfs {
+        Some(name) => Connection::open_with_flags_and_vfs(path, flags, name),
+        None => Connection::open_with_flags(path, flags),
+    };
+    opened.map_err(|_| DbFail::Open(format!("Open of {} failed", path.display())))
 }
 
 fn slot() -> &'static Result<Mutex<Connection>, String> {

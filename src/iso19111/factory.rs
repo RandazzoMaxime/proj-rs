@@ -4,6 +4,8 @@
 //! code is an error. A `text_definition` is not turned into a coordinate.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use rusqlite::{types::ValueRef, Connection};
@@ -183,6 +185,8 @@ const FACTOR_EPS: f64 = 1e-10;
 #[derive(Clone)]
 pub struct DatabaseContext {
     conn: Arc<Mutex<Connection>>,
+    /// Set while an insert session is open on this database; shared by clones.
+    insert_session: Arc<AtomicBool>,
 }
 
 impl std::fmt::Debug for DatabaseContext {
@@ -199,13 +203,43 @@ impl DatabaseContext {
     /// The bytes cannot be deserialized, or the layout version is not the one
     /// this factory reads.
     pub fn create() -> Result<Self, FactoryError> {
-        let conn =
-            projdb::open_connection().map_err(|error| FactoryError::Sql(error.to_string()))?;
+        Self::open(None, None)
+    }
+
+    /// Open a `proj.db`: the file at `path`, read-only, or the embedded
+    /// database when `path` is `None`. `sqlite_vfs` names the SQLite VFS to
+    /// open it through; `None` is SQLite's default VFS.
+    ///
+    /// # Errors
+    ///
+    /// The file cannot be opened (including an unknown VFS name), the embedded
+    /// bytes cannot be deserialized, or the layout version is not the one this
+    /// factory reads.
+    pub fn open(path: Option<&Path>, sqlite_vfs: Option<&str>) -> Result<Self, FactoryError> {
+        let opened = match (path, sqlite_vfs) {
+            (Some(path), vfs) => projdb::open_file(path, vfs),
+            (None, Some(vfs)) => projdb::open_embedded_with_vfs(vfs),
+            (None, None) => projdb::open_connection(),
+        };
+        let conn = opened.map_err(|error| FactoryError::Sql(error.to_string()))?;
         let db = Self {
             conn: Arc::new(Mutex::new(conn)),
+            insert_session: Arc::new(AtomicBool::new(false)),
         };
         db.check_layout()?;
         Ok(db)
+    }
+
+    /// Whether an insert session is open on this database.
+    pub(super) fn insert_session_flag(&self) -> &AtomicBool {
+        &self.insert_session
+    }
+
+    /// Run `sql` as a batch, such as an `INSERT` or a savepoint command.
+    pub(super) fn execute_batch(&self, sql: &str) -> Result<(), FactoryError> {
+        self.lock()
+            .execute_batch(sql)
+            .map_err(|error| FactoryError::Sql(format!("Cannot execute {sql}: {error}")))
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Connection> {
