@@ -8612,7 +8612,7 @@ fn has_too_small_areas(
                 (Some(x), Some(y)) => pseudo_area(intersection(x, y)),
                 _ => 0.0,
             };
-            pseudo_area(x.clone()) + pseudo_area(y.clone()) - both
+            pseudo_area(x) + pseudo_area(y) - both
         } else if let Some(first) = &extent1 {
             pseudo_area(intersection(&extent_op, first))
         } else if let Some(second) = &extent2 {
