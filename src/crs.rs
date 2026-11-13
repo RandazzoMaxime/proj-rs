@@ -858,23 +858,19 @@ fn dictionary_section(spec: &str) -> Result<String, CreateError> {
         .split_once(':')
         .ok_or(CreateError::IllegalValue("init"))?;
     let path = crate::network::find_file(file).ok_or(CreateError::IllegalValue("init"))?;
-    let text = std::fs::read_to_string(path).map_err(|_| CreateError::IllegalValue("init"))?;
-    for line in text.lines() {
-        let Some(rest) = line.trim().strip_prefix('<') else {
-            continue;
-        };
-        if let Some((name, body)) = rest.split_once('>') {
-            if name == section {
-                return Ok(body.trim().to_owned());
-            }
-        }
-    }
-    Err(CreateError::IllegalValue("init"))
+    let text = std::fs::read(path).map_err(|_| CreateError::IllegalValue("init"))?;
+    section_words(&String::from_utf8_lossy(&text), section)
+        .ok_or(CreateError::IllegalValue("init"))
 }
 
 pub(crate) fn init_definition(spec: &str) -> Result<String, CreateError> {
     let spec = spec.trim();
     if let Some((file, section)) = spec.split_once(':') {
+        // PROJ expands `+init=IGNF:CODE` from proj.db, as it does `epsg:`, when no
+        // `IGNF` file is on the data path (`pj_get_init_items`, `src/init.cpp`).
+        if file == "IGNF" {
+            return ignf_definition(section);
+        }
         if !file.eq_ignore_ascii_case("epsg") {
             return init_file_section(file, section);
         }
@@ -907,6 +903,17 @@ pub(crate) fn init_definition(spec: &str) -> Result<String, CreateError> {
     }
 }
 
+/// The PROJ string of the `IGNF` CRS `code`, from proj.db, with its datum shift to WGS 84
+/// (`create_bound_crs_to_wgs84_if_possible`), as `+init=epsg:` does for a projected CRS.
+fn ignf_definition(code: &str) -> Result<String, CreateError> {
+    let db = crate::DatabaseContext::create().map_err(|_| CreateError::Unsupported("proj.db"))?;
+    let crs = crate::iso19111::create_from_user_input(&format!("IGNF:{code}"), &db)
+        .map_err(|_| CreateError::IllegalValue("init"))?;
+    crs.create_bound_crs_to_wgs84_if_possible(&db)
+        .export_to_proj_string()
+        .map_err(|_| CreateError::IllegalValue("init"))
+}
+
 /// The `<section>` of PROJ's `+init=file:section` init file, as the text PROJ
 /// adds to the definition: the lines between `<section>` and the `<>` that
 /// ends it, joined by spaces. `#` lines are comments.
@@ -914,7 +921,6 @@ pub(crate) fn init_definition(spec: &str) -> Result<String, CreateError> {
 /// The file is searched on the PROJ data path, as `pj_init` does. Without it,
 /// `nad27:3901` keeps its built-in definition, which the gie suite relies on.
 fn init_file_section(file: &str, section: &str) -> Result<String, CreateError> {
-    let header = format!("<{section}>");
     let Some(path) = crate::gridpath::resolve(file) else {
         if file == "nad27" && section == "3901" {
             return Ok(
@@ -925,7 +931,16 @@ fn init_file_section(file: &str, section: &str) -> Result<String, CreateError> {
         return Err(CreateError::Unsupported("init file"));
     };
     let text = std::fs::read(path).map_err(|_| CreateError::Unsupported("init file"))?;
-    let text = String::from_utf8_lossy(&text);
+    section_words(&String::from_utf8_lossy(&text), section)
+        .ok_or(CreateError::IllegalValue("init"))
+}
+
+/// The words of `<section>` in an init file text: the lines after the header
+/// up to the `<>` end marker, `#` lines skipped. `None` when the section or
+/// its end marker is missing. The `<section>` header may carry words on its
+/// own line, as in `<5002> proj=tmerc ...`.
+fn section_words(text: &str, section: &str) -> Option<String> {
+    let header = format!("<{section}>");
     let mut inside = false;
     let mut parts: Vec<&str> = Vec::new();
     for line in text.lines() {
@@ -934,25 +949,16 @@ fn init_file_section(file: &str, section: &str) -> Result<String, CreateError> {
             if let Some(rest) = line.strip_prefix(header.as_str()) {
                 inside = true;
                 push_init_words(rest, &mut parts);
-                if parts.last() == Some(&"<>") {
-                    break;
-                }
             }
-            continue;
+        } else if !line.starts_with('#') {
+            push_init_words(line, &mut parts);
         }
-        if line.starts_with('#') {
-            continue;
-        }
-        push_init_words(line, &mut parts);
         if parts.last() == Some(&"<>") {
-            break;
+            parts.pop();
+            return Some(parts.join(" "));
         }
     }
-    if !inside || parts.last() != Some(&"<>") {
-        return Err(CreateError::IllegalValue("init"));
-    }
-    parts.pop();
-    Ok(parts.join(" "))
+    None
 }
 
 /// Words of one init-file line, with the `<>` end marker kept as a word.
