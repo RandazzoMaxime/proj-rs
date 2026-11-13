@@ -56,6 +56,10 @@ enum Readiness {
     Rejected,
 }
 
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "the gie state carries the direction and the CRS-pair flags of gie.cpp"
+)]
 struct OpState {
     readiness: Readiness,
     operation: Option<Operation>,
@@ -264,6 +268,10 @@ fn open_crs(state: &mut OpState) {
     }
 }
 
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "inverse is the gie direction flag, as in PROJ gie.cpp"
+)]
 fn deviation(
     state: &OpState,
     operation: &Operation,
@@ -445,6 +453,10 @@ fn score_roundtrip(args: &str, state: &OpState, counts: &mut Counts, notes: &mut
     }
 }
 
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "inverse is the gie direction flag, as in PROJ gie.cpp"
+)]
 fn step(operation: &Operation, inverse: bool, coord: Xyzt) -> Result<Xyzt, TransformError> {
     if inverse {
         operation.inverse(coord)

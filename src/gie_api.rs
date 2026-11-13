@@ -116,7 +116,7 @@ pub fn xy_dist(a: Coord, b: Coord) -> f64 {
     (a.x - b.x).hypot(a.y - b.y)
 }
 /// The projection ids of `proj -l` in PROJ 9.9.0, in its order.
-pub const OPERATIONS: &[&str] = &[
+const OPERATIONS: &[&str] = &[
     "adams_hemi",
     "adams_ws1",
     "adams_ws2",

@@ -90,6 +90,7 @@ const ERROR_CODES: &[(&str, i32)] = &[
 ];
 
 #[derive(Default)]
+#[expect(clippy::struct_excessive_bools, reason = "one field per gie.cpp flag")]
 struct Options {
     help: bool,
     version: bool,
@@ -224,9 +225,10 @@ fn main() -> ExitCode {
     }
     for file in &options.files {
         if File::open(file).is_err() {
-            eprint!(
-                "{}Cannot open specified input file '{file}' - bye!\n",
-                delim()
+            eprintln!(
+                "{}
+Cannot open specified input file '{file}' - bye!",
+                delim().trim_end()
             );
             return ExitCode::from(1);
         }
@@ -237,16 +239,17 @@ fn main() -> ExitCode {
         let text = match std::fs::read_to_string(file) {
             Ok(text) => text,
             Err(_) => {
-                eprint!(
-                    "{}Cannot open specified input file '{file}' - bye!\n",
-                    delim()
+                eprintln!(
+                    "{}
+Cannot open specified input file '{file}' - bye!",
+                    delim().trim_end()
                 );
                 return ExitCode::from(1);
             }
         };
         let report = run_text(&text, &config);
         if verbosity > 0 {
-            let _ = write!(out, "{}Reading file '{file}'\n", delim());
+            let _ = writeln!(out, "{}Reading file '{file}'", delim());
         }
         if verbosity >= 0 {
             for note in &report.notes {
@@ -258,9 +261,9 @@ fn main() -> ExitCode {
         grand.failed += counts.failed;
         grand.skipped += counts.skipped;
         if verbosity > 0 {
-            let _ = write!(
+            let _ = writeln!(
                 out,
-                "{}total: {:2} tests succeeded, {:2} tests skipped, {:2} tests {}\n",
+                "{}total: {:2} tests succeeded, {:2} tests skipped, {:2} tests {}",
                 delim(),
                 counts.passed,
                 counts.skipped,
@@ -275,9 +278,9 @@ fn main() -> ExitCode {
     }
     if verbosity > 0 {
         if options.files.len() > 1 {
-            let _ = write!(
+            let _ = writeln!(
                 out,
-                "{}Grand total: {}. Success: {}, Skipped: {}, Failure: {}\n",
+                "{}Grand total: {}. Success: {}, Skipped: {}, Failure: {}",
                 delim(),
                 grand.passed + grand.failed + grand.skipped,
                 grand.passed,
@@ -285,7 +288,7 @@ fn main() -> ExitCode {
                 grand.failed
             );
         }
-        let _ = write!(out, "{}", delim());
+        let _ = writeln!(out, "{}", delim().trim_end());
     } else if grand.failed > 0 && verbosity >= 0 {
         let _ = write!(out, "Failures: {}", grand.failed);
     }

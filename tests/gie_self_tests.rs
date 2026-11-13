@@ -27,10 +27,6 @@ fn inv(op: &Operation, c: Xyzt) -> Xyzt {
     op.inverse(c).expect("inverse")
 }
 
-fn xy(x: f64, y: f64) -> Xyzt {
-    Xyzt::xy(x, y)
-}
-
 /// `cart_selftest` (gie_self_tests.cpp). The context moves of the C test
 /// (`proj_context_set`) have no counterpart: a Rust object holds no context.
 #[test]
@@ -306,7 +302,7 @@ fn proj_create_crs_to_crs() {
     let p = Proj::new_known_crs("EPSG:25832", "EPSG:25833", None).expect("25832 to 25833");
     let (x, y, _) = p.convert_xyz(700_000.0, 6_000_000.0, 0.0).expect("convert");
     assert!((x - 307_788.876_117_105_7).abs() <= 1e-8, "{x}");
-    assert!((y - 5_999_669.303_603_762_8).abs() <= 1e-8, "{y}");
+    assert!((y - 5_999_669.303_603_763).abs() <= 1e-8, "{y}");
 
     // PROJ strings are accepted as CRS sides.
     assert!(Proj::new_known_crs(
