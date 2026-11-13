@@ -1,6 +1,6 @@
 # Port — Helmert à 7 paramètres
 
-Source : PROJ 9.4, `+proj=helmert`. Les valeurs de référence viennent de `cct`.
+Source : PROJ 9.9.0 (porté d'abord depuis 9.4), `+proj=helmert`. Les valeurs de référence viennent de `cct`, remesurées avec 9.9.0 (identiques).
 
 ## Correspondance d'API
 

@@ -1,6 +1,6 @@
 //! Transverse Mercator exact (Poder / Engsager), ordre 6.
 //!
-//! Portage du comportement de `src/projections/tmerc.cpp` (PROJ 9.4), algorithme
+//! Portage du comportement de `src/projections/tmerc.cpp` (PROJ 9.9), algorithme
 //! `PODER_ENGSAGER`. C'est le défaut `tmerc_default_algo` et donc le chemin UTM.
 //! La correspondance avec le C est dans `docs/PORTING-tmerc.md`.
 //!
@@ -460,7 +460,7 @@ impl Tmerc {
     }
 }
 
-/// Coefficients de `setup_exact` (PROJ 9.4). `n` est l'aplatissement troisième.
+/// Coefficients de `setup_exact` (PROJ 9.9). `n` est l'aplatissement troisième.
 fn engsager(
     n: f64,
     k0: f64,
