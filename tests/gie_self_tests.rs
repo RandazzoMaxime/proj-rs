@@ -435,15 +435,15 @@ const HATT_TO_GGRS: &str = " +proj=horner +ellps=bessel +fwd_origin=0.0, 0.0 +de
 #[test]
 fn horner_selftest() {
     let tc32 = Operation::create(TC32_UTM32).expect("tc32");
-    let a = xy(878_354.8539, 6_125_305.4245);
+    let a = xy(878354.8539, 6125305.4245);
     let (_, dist) = tc32
         .roundtrip(Direction::Forward, one(), a)
         .expect("roundtrip");
     assert!(dist <= 0.01, "{dist}");
 
     let sb = Operation::create(SB_UTM32).expect("sb");
-    let a = xy(495_136.8544, 6_130_821.2945);
-    let c = xy(620_000.0, 6_130_000.0);
+    let a = xy(495136.8544, 6130821.2945);
+    let c = xy(620000.0, 6130000.0);
     let b = fwd(&sb, a);
     assert!(xy_dist(b, c) <= 0.001, "{}", xy_dist(b, c));
     let b = inv(&sb, c);
@@ -458,15 +458,15 @@ fn horner_selftest() {
 #[test]
 fn horner_only_fwd_selftest() {
     let tc32 = Operation::create(TC32_UTM32_FWD_ONLY).expect("tc32 fwd only");
-    let a = xy(878_354.8539, 6_125_305.4245);
+    let a = xy(878354.8539, 6125305.4245);
     let (_, dist) = tc32
         .roundtrip(Direction::Forward, one(), a)
         .expect("roundtrip");
     assert!(dist <= 0.01, "{dist}");
 
     let hatt = Operation::create(HATT_TO_GGRS).expect("hatt");
-    let a = xy(-10_157.950, -21_121.093);
-    let c = xy(360_028.794, 4_490_989.862);
+    let a = xy(-10157.950, -21121.093);
+    let c = xy(360028.794, 4490989.862);
     let b = fwd(&hatt, a);
     assert!(xy_dist(b, c) <= 0.001, "{}", xy_dist(b, c));
     let b = inv(&hatt, c);
@@ -477,8 +477,8 @@ fn horner_only_fwd_selftest() {
     assert!(dist <= 0.01, "{dist}");
 
     let sb = Operation::create(SB_UTM32_FWD_ONLY).expect("sb fwd only");
-    let a = xy(495_136.8544, 6_130_821.2945);
-    let c = xy(620_000.0, 6_130_000.0);
+    let a = xy(495136.8544, 6130821.2945);
+    let c = xy(620000.0, 6130000.0);
     let b = fwd(&sb, a);
     assert!(xy_dist(b, c) <= 0.001, "{}", xy_dist(b, c));
     let b = inv(&sb, c);

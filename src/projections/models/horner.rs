@@ -74,13 +74,13 @@ pub(super) fn keys() -> &'static [&'static str] {
 
 /// Number of real coefficients of a polynomial of `order`: `(n+1)(n+2)/2`.
 fn real_count(order: u32) -> usize {
-    let n = order as usize;
+    let n = index(order);
     (n + 1) * (n + 2) / 2
 }
 
 /// Number of complex coefficient pairs: `2n+2` reals.
 fn complex_count(order: u32) -> usize {
-    2 * order as usize + 2
+    2 * index(order) + 2
 }
 
 /// `parse_coefs` of `horner.cpp`: `None` when the key is absent. Each value is a
@@ -223,7 +223,7 @@ fn double_real_eval(
 
 /// One-dimensional Horner sum of `gen_pol` on the coefficients `cx` at `x`.
 fn single_real_eval(order: u32, cx: &[f64], x: f64, order_offset: u32) -> f64 {
-    let sz = order as usize + 1;
+    let sz = index(order) + 1;
     let mut ix = sz;
     ix -= 1;
     let mut u = cx[ix];
@@ -239,7 +239,7 @@ fn single_real_eval(order: u32, cx: &[f64], x: f64, order_offset: u32) -> f64 {
 /// Complex Horner sum: coefficients are `(Cn0 + i Ce0, Cn1 + i Ce1, ...)`.
 fn complex_eval(order: u32, c: &[f64], e: f64, n: f64, order_offset: u32) -> (f64, f64) {
     let sz = complex_count(order);
-    let beg = order_offset as usize * 2;
+    let beg = index(order_offset) * 2;
     let mut idx = sz;
     idx -= 1;
     let mut big_e = c[idx];
@@ -408,4 +408,9 @@ impl Step for Horner {
     fn distance_ellipsoid(&self) -> (f64, f64) {
         (self.a, self.es)
     }
+}
+
+/// A polynomial order or offset as an index. Orders are at most 10000.
+fn index(value: u32) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
 }
