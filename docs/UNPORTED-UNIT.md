@@ -12,20 +12,10 @@ and `PORT-NOTES-tests.md`.
 ## test_factory.cpp
 
 - `factory.AuthorityFactory_createDynamicVerticalDatum`
-- `FactoryWithTmpDatabase.AuthorityFactory_test_with_fake_EPSG_database`
-- `FactoryWithTmpDatabase.AuthorityFactory_test_inversion_first_and_last_steps_of_concat_op`
-- `FactoryWithTmpDatabase.AuthorityFactory_test_with_fake_EPSG_and_OTHER_database`
-- `FactoryWithTmpDatabase.AuthorityFactory_test_sorting_of_coordinate_operations`
-- `FactoryWithTmpDatabase.AuthorityFactory_createFromCRSCodesWithIntermediates_source_equals_target`
-- `FactoryWithTmpDatabase.AuthorityFactory_createFromCRSCodesWithIntermediates_case_source_pivot_target_pivot`
-- `FactoryWithTmpDatabase.AuthorityFactory_createFromCRSCodesWithIntermediates_case_source_pivot_pivot_target`
-- `FactoryWithTmpDatabase.AuthorityFactory_createFromCRSCodesWithIntermediates_case_pivot_source_pivot_target`
-- `FactoryWithTmpDatabase.AuthorityFactory_createFromCRSCodesWithIntermediates_case_pivot_source_target_pivot`
 - `FactoryWithTmpDatabase.AuthorityFactory_proj_based_transformation`
 - `FactoryWithTmpDatabase.AuthorityFactory_wkt_based_transformation`
 - `FactoryWithTmpDatabase.AuthorityFactory_wkt_based_transformation_not_wkt`
 - `FactoryWithTmpDatabase.AuthorityFactory_wkt_based_transformation_not_co_wkt`
-- `FactoryWithTmpDatabase.getAuthorities`
 - `FactoryWithTmpDatabase.lookForGridInfo`
 - `FactoryWithTmpDatabase.lookForGridInfo_from_old_name_with_new_grid_available`
 - `FactoryWithTmpDatabase.custom_geodetic_crs`

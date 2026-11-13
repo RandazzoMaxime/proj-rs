@@ -3922,6 +3922,39 @@ impl AuthorityFactory {
         )
     }
 
+    /// `createFromCRSCodesWithIntermediates` of PROJ 9.9.0, with the defaults of its grid, superseded
+    /// and extent arguments: the operations from the CRS `source` to the CRS `target`, each given as
+    /// an authority name and a code, through a registered CRS X. When `intermediates` is not empty,
+    /// X is one of its `(authority, code)` pairs; when it is empty, any registered CRS is X. The
+    /// factory authority, when it is not empty, restricts the operations and the pivots.
+    ///
+    /// # Errors
+    ///
+    /// A source or target CRS cannot be read, or a selected operation cannot be instantiated.
+    pub fn create_from_crs_codes_with_intermediates(
+        &self,
+        source: (&str, &str),
+        target: (&str, &str),
+        intermediates: &[(&str, &str)],
+    ) -> Result<Vec<CoordinateOperation>, FactoryError> {
+        if source == target {
+            return Ok(Vec::new());
+        }
+        let source_crs = AuthorityFactory::create(&self.db, source.0)
+            .create_coordinate_reference_system(source.1)?;
+        let target_crs = AuthorityFactory::create(&self.db, target.0)
+            .create_coordinate_reference_system(target.1)?;
+        let mut context = CoordinateOperationContext::create(&self.db, self.authority.as_str());
+        context.superseded = SupersededOperations::Keep;
+        context.grid_names = AlternativeGridNames::Official;
+        crs_codes_intermediate_operations(
+            &source_crs,
+            &target_crs,
+            &context,
+            PivotScope::Listed(intermediates),
+        )
+    }
+
     /// The point motion operations registered for the datum of `crs`, in database order.
     ///
     /// A point motion operation has the same CRS as source and target.
@@ -6328,7 +6361,12 @@ impl CoordinateOperationFactory {
                 && !context.has_guard(GUARD_DATUM_INTERMEDIATE)
                 && !same_datum;
             if crs_codes_needed {
-                let codes = crs_codes_intermediate_operations(source, target, context)?;
+                let codes = crs_codes_intermediate_operations(
+                    source,
+                    target,
+                    context,
+                    PivotScope::Operations,
+                )?;
                 pivot.extend(select_candidates(codes, source, target, context));
             }
             // `!inCreateOperationsWithDatumPivotAntiRecursion && !inCreateOperationsWithIntermediate`
@@ -6434,7 +6472,8 @@ impl CoordinateOperationFactory {
             && context.intermediates.is_empty()
             && !context.has_guard(GUARD_DATUM_INTERMEDIATE)
         {
-            let codes = crs_codes_intermediate_operations(source, target, context)?;
+            let codes =
+                crs_codes_intermediate_operations(source, target, context, PivotScope::Operations)?;
             found.extend(select_candidates(codes, source, target, context));
         }
         // `createOperationsVertToVert` also runs when the registry gave no perfect operation.
@@ -7884,6 +7923,17 @@ fn pivot_allowed(source: &Crs, target: &Crs, pivot: &Crs) -> bool {
     true
 }
 
+/// Which search reads the pivots of [`crs_codes_intermediate_operations`].
+#[derive(Clone, Copy)]
+enum PivotScope<'a> {
+    /// The operations search of `createOperations`: any registered CRS, geographic ones only for
+    /// a geographic pair, and the CRS extents bound the legs.
+    Operations,
+    /// `createFromCRSCodesWithIntermediates` with a pivot list and its defaults: only the
+    /// `(authority, code)` pairs of the list, any CRS kind, and no extent other than the legs'.
+    Listed(&'a [(&'a str, &'a str)]),
+}
+
 /// `createFromCRSCodesWithIntermediates` (factory.cpp:7630-8241): the operations from `source` to
 /// `target` through a registered CRS X, read by the four joins PROJ runs in turn. X is the target
 /// of the first leg and the source of the second (`source -> X -> target`), or the same in
@@ -7893,13 +7943,15 @@ fn pivot_allowed(source: &Crs, target: &Crs, pivot: &Crs) -> bool {
 /// ones, and when its pivot is not an irrelevant one. The grid rejection of PROJ applies to the
 /// concatenation.
 ///
-/// Not ported: the explicit intermediate CRS list (`getIntermediateCRS`), the `EXPLAIN`-free
-/// `intersects_bbox` (the extents are compared in Rust, with `BoundingBox::intersects`), and the
-/// error of an invalid row, which is skipped as the datum-based search does.
+/// Not ported: the `allowedAuthorities` and intersecting-extent arguments of the public call, the
+/// `EXPLAIN`-free `intersects_bbox` (the extents are compared in Rust, with
+/// `BoundingBox::intersects`), and the error of an invalid row, which is skipped as the datum-based
+/// search does.
 fn crs_codes_intermediate_operations(
     source: &Crs,
     target: &Crs,
     context: &CoordinateOperationContext,
+    scope: PivotScope<'_>,
 ) -> Result<Vec<CoordinateOperation>, FactoryError> {
     let (Some(source_id), Some(target_id)) = (
         registry_identity(source, context),
@@ -7913,14 +7965,26 @@ fn crs_codes_intermediate_operations(
     let db = &context.db;
     let source_key = (source_id.0.as_str(), source_id.1.as_str());
     let target_key = (target_id.0.as_str(), target_id.1.as_str());
-    let allowed = pivot_authorities(context, &source_id.0, &target_id.0)?;
+    let operations = matches!(scope, PivotScope::Operations);
+    let pivots: &[(&str, &str)] = match scope {
+        PivotScope::Operations => &[],
+        PivotScope::Listed(list) => list,
+    };
+    let allowed = if operations {
+        pivot_authorities(context, &source_id.0, &target_id.0)?
+    } else {
+        Vec::new()
+    };
     let both_geographic = geographic_of(source).is_some() && geographic_of(target).is_some();
     // `allowedIntermediateObjectType == GEOGRAPHIC_CRS`: a geographic pair with no intermediate
     // CRS given takes geographic intermediates only (factory.cpp is called at 4436 with that type).
-    let geographic_intermediates = both_geographic && context.intermediates.is_empty();
-    let skip_intersection = context.crs_extent_use == CrsExtentUse::Ignore;
+    // The public call takes the default, `ObjectType::CRS`, which does not restrict them.
+    let geographic_intermediates =
+        operations && both_geographic && context.intermediates.is_empty();
+    let skip_intersection = operations && context.crs_extent_use == CrsExtentUse::Ignore;
     let extra: Vec<BoundingBox> = match context.crs_extent_use {
         CrsExtentUse::Ignore => Vec::new(),
+        _ if !operations => Vec::new(),
         _ => [source, target]
             .into_iter()
             .filter_map(|crs| crs_extent(crs).and_then(|extent| extent.bounding_box()))
@@ -8045,6 +8109,19 @@ fn crs_codes_intermediate_operations(
         if authority_restricts(&context.authority) {
             sql.push_str("AND v1.auth_name = ? AND v2.auth_name = ? ");
             params.extend([context.authority.clone(), context.authority.clone()]);
+        }
+        // `buildIntermediateWhere`: X is one of the pivots of the list. The join equates the
+        // other column of `v2` with X, so `v1` alone names it.
+        if !pivots.is_empty() {
+            let pairs = vec![
+                format!("(v1.{role}_crs_auth_name = ? AND v1.{role}_crs_code = ?)");
+                pivots.len()
+            ];
+            sql.push_str(&format!("AND ({}) ", pairs.join(" OR ")));
+            for (authority, code) in pivots {
+                params.push((*authority).to_owned());
+                params.push((*code).to_owned());
+            }
         }
         sql.push_str(
             "ORDER BY (CASE WHEN v1.accuracy IS NULL THEN 1 ELSE 0 END) + \
