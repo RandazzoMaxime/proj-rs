@@ -382,16 +382,18 @@ fn c_api_proj_create_ellipsoidal_3d_cs() {
     let metre = UnitOfMeasure::metre();
     let cs = EllipsoidalCS::create_latitude_longitude_height(degree.clone(), metre.clone());
     assert_eq!(cs.axes().len(), 3);
-    check_axis(&cs.axes()[0], "Latitude", "Lat", "north", &degree);
-    check_axis(&cs.axes()[1], "Longitude", "Lon", "east", &degree);
+    // Synthetic lat/lon axes use the PROJ abbreviations `lat`/`lon` (createLAT_NORTH and
+    // createLONG_EAST, coordinatesystem.cpp:890-900; test_c_api.cpp:4947).
+    check_axis(&cs.axes()[0], "Latitude", "lat", "north", &degree);
+    check_axis(&cs.axes()[1], "Longitude", "lon", "east", &degree);
     check_axis(&cs.axes()[2], "Ellipsoidal height", "h", "up", &metre);
 
     let angular = UnitOfMeasure::new("foo", 0.5, UnitKind::Angular);
     let linear = UnitOfMeasure::new("bar", 0.6, UnitKind::Linear);
     let cs = EllipsoidalCS::create_longitude_latitude_height(angular.clone(), linear.clone());
     assert_eq!(cs.axes().len(), 3);
-    check_axis(&cs.axes()[0], "Longitude", "Lon", "east", &angular);
-    check_axis(&cs.axes()[1], "Latitude", "Lat", "north", &angular);
+    check_axis(&cs.axes()[0], "Longitude", "lon", "east", &angular);
+    check_axis(&cs.axes()[1], "Latitude", "lat", "north", &angular);
     check_axis(&cs.axes()[2], "Ellipsoidal height", "h", "up", &linear);
 }
 
