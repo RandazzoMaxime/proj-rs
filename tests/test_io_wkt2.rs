@@ -223,7 +223,6 @@ fn wkt_parse_wkt2_epsg_4979() {
 }
 
 #[test]
-#[ignore = "open: the ID version is folded into the authority name, IAU_2015 instead of IAU with version 2015 (wkt_import.rs identifiers)"]
 fn wkt_parse_wkt2_spherical_planetocentric() {
     let wkt = r#"GEODCRS["Mercury (2015) / Ocentric",
     DATUM["Mercury (2015)",
@@ -599,7 +598,6 @@ fn wkt_parse_wkt2_2019_simplified_projected() {
 }
 
 #[test]
-#[ignore = "open: the Longitude of origin parameter without ID is not read, so lon_0 is 0 (wkt_import.rs, parammap.rs)"]
 fn wkt_parse_wkt2_2019_projected_3d() {
     let wkt = r#"PROJCRS["WGS 84 (G1762) / UTM zone 31N 3D",BASEGEOGCRS["WGS 84",DATUM["World Geodetic System of 1984 (G1762)",ELLIPSOID["WGS 84",6378137,298.257223563,LENGTHUNIT["metre",1.0]]]],CONVERSION["Some conversion 3D",METHOD["Transverse Mercator (3D)"],PARAMETER["Latitude of origin",0.0,ANGLEUNIT["degree",0.0174532925199433]],PARAMETER["Longitude of origin",3.0,ANGLEUNIT["degree",0.0174532925199433]],PARAMETER["Scale factor",1,SCALEUNIT["unity",1.0]],PARAMETER["False easting",0.0,LENGTHUNIT["metre",1.0]],PARAMETER["False northing",0.0,LENGTHUNIT["metre",1.0]]],CS[Cartesian,3],AXIS["(E)",east,ORDER[1]],AXIS["(N)",north,ORDER[2]],AXIS["ellipsoidal height (h)",up,ORDER[3]],LENGTHUNIT["metre",1.0]]"#;
     let crs = Crs::Projected(parse(wkt).projected().expect("crs").clone());
@@ -612,7 +610,6 @@ fn wkt_parse_wkt2_2019_projected_3d() {
 }
 
 #[test]
-#[ignore = "open: the Longitude of origin parameter without ID is not read, so lon_0 is 0 and the UTM zone is not recognised (wkt_import.rs, parammap.rs)"]
 fn wkt_parse_wkt2_2019_projected_utm_3d() {
     let wkt = r#"PROJCRS["WGS 84 (G1762) / UTM zone 31N 3D",BASEGEOGCRS["WGS 84",DATUM["World Geodetic System of 1984 (G1762)",ELLIPSOID["WGS 84",6378137,298.257223563,LENGTHUNIT["metre",1.0]]]],CONVERSION["UTM zone 31N 3D",METHOD["Transverse Mercator (3D)"],PARAMETER["Latitude of origin",0.0,ANGLEUNIT["degree",0.0174532925199433]],PARAMETER["Longitude of origin",3.0,ANGLEUNIT["degree",0.0174532925199433]],PARAMETER["Scale factor",0.9996,SCALEUNIT["unity",1.0]],PARAMETER["False easting",500000.0,LENGTHUNIT["metre",1.0]],PARAMETER["False northing",0.0,LENGTHUNIT["metre",1.0]]],CS[Cartesian,3],AXIS["(E)",east,ORDER[1]],AXIS["(N)",north,ORDER[2]],AXIS["ellipsoidal height (h)",up,ORDER[3]],LENGTHUNIT["metre",1.0]]"#;
     let crs = Crs::Projected(parse(wkt).projected().expect("crs").clone());
@@ -625,7 +622,6 @@ fn wkt_parse_wkt2_2019_projected_utm_3d() {
 }
 
 #[test]
-#[ignore = "open: a base GEODCRS with EPSG 4978 imports as geographic, PROJ keeps it geocentric (wkt_import.rs)"]
 fn wkt_parse_wkt2_2019_projected_with_base_geocentric() {
     let wkt = r#"PROJCRS["EPSG topocentric example B",
     BASEGEODCRS["WGS 84",
@@ -676,7 +672,6 @@ fn wkt_parse_wkt2_2019_projected_with_base_geocentric() {
 }
 
 #[test]
-#[ignore = "open: the natural origin and false easting codes 8801 8802 8806 8807 are read as 0 for Equidistant Conic (parammap.rs)"]
 fn wkt_parse_wkt2_2019_eqdc_non_epsg() {
     let crs = parse(
         r#"PROJCRS["unknown",
@@ -1332,7 +1327,6 @@ fn wkt_parse_boundcrs_transformation_from_codes() {
 }
 
 #[test]
-#[ignore = "open: the EPSG code for Interpolation CRS parameter is dropped on import, so one parameter is left instead of two without a database (wkt_import.rs)"]
 fn wkt_parse_boundcrs_with_interpolation_as_parameter() {
     let wkt = r#"BOUNDCRS[
     SOURCECRS[
@@ -1363,8 +1357,8 @@ fn wkt_parse_boundcrs_with_interpolation_as_parameter() {
     ABRIDGEDTRANSFORMATION["unknown to WGS84 ellipsoidal height",
         METHOD["GravityRelatedHeight to Geographic3D"],
         PARAMETERFILE["Geoid (height correction) model file","@foo.gtx",
-            ID["EPSG",8666]]],
-        PARAMETER["EPSG code for Interpolation CRS",7886]]"#;
+            ID["EPSG",8666]],
+        PARAMETER["EPSG code for Interpolation CRS",7886]]]"#;
     {
         let bound = parse(wkt).bound().expect("crs").clone();
         let transformation = transformation_of(&bound);
