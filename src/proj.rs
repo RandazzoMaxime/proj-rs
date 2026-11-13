@@ -1096,6 +1096,24 @@ impl Default for ProjBuilder {
     }
 }
 
+/// Whether a builder uses the grid chunk cache.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GridCacheMode {
+    /// Grids are read from the cache when fresh, and stored there after a download.
+    Enabled,
+    /// Grids are downloaded each time and nothing is written to the cache.
+    Disabled,
+}
+
+/// How long a checked remote file stays fresh in the grid chunk cache.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GridCacheTtl {
+    /// A checked file never expires.
+    Never,
+    /// A checked file expires after this many seconds. Zero never expires, as in PROJ.
+    Seconds(u32),
+}
+
 impl ProjBuilder {
     /// Create a builder.
     ///
@@ -1320,8 +1338,85 @@ impl ProjBuilder {
         reason = "georust proj 0.31 grid_cache_enable takes a bool"
     )]
     pub fn grid_cache_enable(&mut self, enable: bool) -> Result<(), ProjError> {
-        self.net.cache_enabled = enable;
+        self.set_grid_cache_enabled(if enable {
+            GridCacheMode::Enabled
+        } else {
+            GridCacheMode::Disabled
+        })
+    }
+
+    /// Enable or disable the grid chunk cache (`proj_grid_cache_set_enable`).
+    ///
+    /// # Errors
+    ///
+    /// Never.
+    pub fn set_grid_cache_enabled(&mut self, mode: GridCacheMode) -> Result<(), ProjError> {
+        self.net.cache_enabled = mode == GridCacheMode::Enabled;
         Ok(())
+    }
+
+    /// Set the database of the grid chunk cache (`proj_grid_cache_set_filename`). The default
+    /// is `cache.db` in the user-writable directory.
+    ///
+    /// # Errors
+    ///
+    /// Never.
+    pub fn set_grid_cache_path<P: AsRef<Path>>(&mut self, path: P) -> Result<(), ProjError> {
+        self.net.cache_path = Some(path.as_ref().to_path_buf());
+        Ok(())
+    }
+
+    /// The database of the grid chunk cache this builder uses.
+    #[must_use]
+    pub fn grid_cache_path(&self) -> PathBuf {
+        self.net.cache_settings().path
+    }
+
+    /// Limit the grid chunk cache to `megabytes` MiB (`proj_grid_cache_set_max_size`). `None`
+    /// is no limit. `Some(0)` reads `PROJ_GRID_CACHE_MAX_SIZE_BYTES` in bytes, a debugging
+    /// override as in PROJ, and no limit when that is unset.
+    ///
+    /// # Errors
+    ///
+    /// Never.
+    pub fn set_grid_cache_max_size_mb(&mut self, megabytes: Option<u32>) -> Result<(), ProjError> {
+        self.net.cache_max_bytes = match megabytes {
+            None => None,
+            Some(0) => std::env::var("PROJ_GRID_CACHE_MAX_SIZE_BYTES")
+                .ok()
+                .filter(|value| !value.is_empty())
+                .and_then(|value| value.trim().parse::<u64>().ok())
+                .filter(|bytes| *bytes > 0),
+            Some(mb) => Some(u64::from(mb) * 1024 * 1024),
+        };
+        Ok(())
+    }
+
+    /// How long a checked remote file is trusted before it is fetched again
+    /// (`proj_grid_cache_set_ttl`).
+    ///
+    /// # Errors
+    ///
+    /// Never.
+    pub fn set_grid_cache_ttl(&mut self, ttl: GridCacheTtl) -> Result<(), ProjError> {
+        self.net.cache_ttl_seconds = match ttl {
+            GridCacheTtl::Never => -1,
+            GridCacheTtl::Seconds(seconds) => i64::from(seconds),
+        };
+        Ok(())
+    }
+
+    /// Delete the grid chunk cache database (`proj_grid_cache_clear`). Nothing happens when the
+    /// cache is off, as PROJ opens nothing then.
+    ///
+    /// # Errors
+    ///
+    /// [`ProjError::Path`] when the database exists and cannot be removed.
+    pub fn clear_grid_cache(&self) -> Result<(), ProjError> {
+        if !self.net.cache_enabled {
+            return Ok(());
+        }
+        crate::network_cache::clear(&self.net.cache_settings().path).map_err(|_| ProjError::Path)
     }
 
     /// Version of the PROJ release this port follows.

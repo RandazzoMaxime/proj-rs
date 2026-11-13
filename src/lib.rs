@@ -46,6 +46,7 @@ pub mod listing;
 pub mod math;
 mod merc;
 pub mod names;
+pub mod projsync;
 pub mod version;
 
 /// The deformation models (`+proj=defmodel`): the master file parser, the
@@ -68,6 +69,7 @@ pub mod tinshift {
 }
 mod network;
 pub use network::{NetworkCallbacks, NetworkError, NetworkHandle, OpenReply};
+mod network_cache;
 mod ported;
 mod proj;
 mod proj_info;
@@ -92,8 +94,8 @@ pub use gie_api::{
 };
 pub use ported::{bench_definition, PORTED};
 pub use proj::{
-    Area, Coord, CoordinateType, Direction, Info, Proj, ProjBuilder, ProjCreateError, ProjError,
-    ProjInfo,
+    Area, Coord, CoordinateType, Direction, GridCacheMode, GridCacheTtl, Info, Proj, ProjBuilder,
+    ProjCreateError, ProjError, ProjInfo,
 };
 pub use transform::{Transform, TransformError};
 

@@ -108,3 +108,40 @@ HTTP que `src/network.rs`. Ce lot ne le touche pas (autre agent).
 cargo test --test unit_network_core --test unit_network_endpoint_env --test unit_network_local --test network_grid
 cargo test --lib callback_tests
 ```
+
+## Cache et projsync (lot network-cache-projsync)
+
+Fiche : `docs/PORTING-network-cache.md`. Les lignes du tableau des 26 TEST() ci-dessus
+ne sont pas réécrites ; ce qui suit les complète pour les cas de ce lot.
+
+| TEST() C++ | Test Rust | Statut |
+|---|---|---|
+| `networking.cache_basic` | `tests/unit_network_cache.rs::cache_basic` | porté, sur serveur local : tête LRU = chunk 0, un second build ne fait aucune requête. Écart : fichier entier, pas de lecture par plages (fiche, point 1). |
+| `networking.proj_grid_cache_clear` | `tests/unit_network_cache.rs::proj_grid_cache_clear` | porté : la base est créée par un build, supprimée par `clear_grid_cache`. |
+| `networking.cache_saturation` | `tests/unit_network_cache.rs::cache_saturation` | porté : limite de 2 chunks par `PROJ_GRID_CACHE_MAX_SIZE_BYTES=32768`, 2 lignes dans `chunk_data`, `chunks` et `linked_chunks`. |
+| `networking.cache_ttl` | `tests/unit_network_cache.rs::cache_ttl` | porté : TTL négatif = données corrompues utilisées (build en échec), TTL 86400 = téléchargement de nouveau, `lastChecked`, `lastModified` et `etag` mis à jour. |
+| `networking.cache_lock` | `tests/unit_network_cache.rs::cache_lock` | porté : build sans cache après 25 essais, durée au moins 650 ms (calendrier de PROJ). Écart : PROJ vérifie `>= 1` s en secondes entières (fiche, point 3). |
+| `networking.curl_hgridshift` | `tests/unit_network_grids.rs::curl_hgridshift` | porté avec fixture `fr_ign_gr3df97a.tif` (xyzgridshift, trois échantillons) ; valeurs du binaire réseau de référence sur les mêmes octets (fiche, points 4 et 6). `proj_assign_context` non porté (point 5). |
+| `networking.curl_vgridshift` | `tests/unit_network_grids.rs::curl_vgridshift` | porté avec fixture `us_nga_egm08_25.tif` ; valeur de référence `14.6249995232`, pas `-31.89` du CDN. |
+| `networking.curl_vgridshift_vertcon` | `tests/unit_network_grids.rs::curl_vgridshift_vertcon` | porté avec fixture `us_noaa_vertcone.tif` ; valeur de référence `-0.1295000091`, pas `-0.15` du CDN. |
+
+Non portés dans ce lot, hors de sa liste : `networking.basic` (partie réseau activé),
+`initial_check`, `network_endpoint_*`, `download_whole_files`, `file_api`,
+`proj_coordoperation_get_grid_used`, `pyproj_issue_1192`,
+`do_not_attempt_network_access_known_available_network_on`, et les cas à callbacks
+(`custom`, `getfilesize`, `simul_*`) : voir les lignes du tableau ci-dessus.
+
+### projsync (`src/apps/projsync.cpp`, `test/cli/test_projsync.sh`)
+
+Porté : `src/bin/projsync.rs` (options de `projsync.cpp`, plus `--help` et `--version`),
+bibliothèque `src/projsync.rs` (analyseur JSON sans dépendance avec la limite de
+profondeur 128, index, sélection, téléchargement avec enregistrement dans `cache.db`).
+`tests/unit_projsync.rs` : 20 tests. Tous les cas du script sont là (liste, `--all`,
+`--source-id`, `--area-of-use`, `--file` avec deuxième passage « already downloaded »,
+`--bbox` dont les fenêtres de l'antiméridien, `--exclude-world-coverage`, `--verbose` avec
+versions retirées ou ajoutées) ; les sorties attendues sont celles du binaire de référence
+sur le même index. Écarts : téléchargement non conditionnel, `--system-directory` lié à
+`PROJ_DATA`/`PROJ_LIB`, index de test au lieu de `files.geojson` du CDN, téléchargement
+réel non comparé au binaire de référence (fiche, points 7 à 9).
+
+Commande : `cargo test --test unit_projsync --test unit_network_cache --test unit_network_grids`

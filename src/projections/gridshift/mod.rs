@@ -265,7 +265,9 @@ fn deferred<S: Step + 'static>(
     match make(params, frame, grids) {
         Ok(step) => Ok(Some(Box::new(step))),
         Err(CreateError::IllegalValue("grids"))
-            if crate::network::grids_may_be_deferred() && missing_downloadable(grids) =>
+            if crate::network::grids_may_be_deferred()
+                && missing_downloadable(grids)
+                && !crate::network::last_fetch_not_found() =>
         {
             let placeholder = make(params, frame, "null")?;
             Ok(Some(Box::new(Deferred {
@@ -274,6 +276,7 @@ fn deferred<S: Step + 'static>(
                 frame: frame.clone(),
                 grids: grids.to_owned(),
                 make,
+                network: crate::network::context(),
                 loaded: std::sync::OnceLock::new(),
             })))
         }
@@ -298,6 +301,10 @@ struct Deferred<S> {
     frame: Frame,
     grids: String,
     make: fn(&Params, &Frame, &str) -> Result<S, CreateError>,
+    /// The network settings in force when the step was built (the builder's endpoint, cache and
+    /// callbacks): the grids are fetched with them, not with the process defaults of the thread
+    /// that happens to transform.
+    network: crate::network::GridContext,
     loaded: std::sync::OnceLock<S>,
 }
 
@@ -306,8 +313,10 @@ impl<S: Step> Deferred<S> {
         if let Some(step) = self.loaded.get() {
             return Ok(step);
         }
-        let step = (self.make)(&self.params, &self.frame, &self.grids)
-            .map_err(|_| TransformError::NetworkUnavailable)?;
+        let step = crate::network::with_context(&self.network, || {
+            (self.make)(&self.params, &self.frame, &self.grids)
+        })
+        .map_err(|_| TransformError::NetworkUnavailable)?;
         Ok(self.loaded.get_or_init(|| step))
     }
 }

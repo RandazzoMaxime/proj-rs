@@ -41,6 +41,10 @@ path = "src/bin/geod.rs"
 name = "invgeod"
 path = "src/bin/invgeod.rs"
 
+[[bin]]
+name = "projsync"
+path = "src/bin/projsync.rs"
+
 [features]
 geo-types = ["dep:geo-types"]
 
