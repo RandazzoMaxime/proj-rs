@@ -15,6 +15,10 @@ use serde_yaml::Value;
 const FILES: &[&str] = &[
     "test_cct.yaml",
     "test_cs2cs_various.yaml",
+    "test_cs2cs_datumfile.yaml",
+    "test_cs2cs_flaky.yaml",
+    "test_cs2cs_ignf.yaml",
+    "test_cs2cs_ntv2.yaml",
     "test_projinfo.yaml",
     "test_proj.yaml",
     "test_proj_nad27.yaml",
@@ -182,6 +186,60 @@ fn cs2cs_locale_script() {
         if want.starts_with("###") && got.starts_with("###") {
             continue;
         }
+        assert!(
+            want.split_whitespace().eq(got.split_whitespace()),
+            "expected {want}\ngot {got}"
+        );
+    }
+}
+
+/// `test_projinfo.sh` of PROJ: `projinfo --dump-db-structure --output-id HOBU:XXXX EPSG:4326`
+/// gives the SQL of an auxiliary database, which the script loads with `sqlite3`. This test loads
+/// it with the crate's SQLite instead. `PROJ_AUX_DB` names that database for `projinfo HOBU:XXXX`,
+/// whose output is compared with `test_projinfo_out.dist` line by line, ignoring the amount of
+/// white space as `diff -u -b` does.
+#[test]
+fn projinfo_aux_script() {
+    const SEPARATOR: &str = "##############################################################";
+    let scratch = std::env::temp_dir().join(format!("proj-rs-projinfo-aux-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&scratch);
+    fs::create_dir_all(&scratch).expect("scratch directory");
+    let aux = scratch.join("tmp_projinfo_aux.db");
+    let dump = Command::new(env!("CARGO_BIN_EXE_projinfo"))
+        .args([
+            "--dump-db-structure",
+            "--output-id",
+            "HOBU:XXXX",
+            "EPSG:4326",
+        ])
+        .output()
+        .expect("run projinfo --dump-db-structure");
+    assert!(dump.status.success(), "dump failed");
+    let sql = String::from_utf8(dump.stdout).expect("UTF-8 dump");
+    {
+        let connection = rusqlite::Connection::open(&aux).expect("open the auxiliary database");
+        // The `sqlite3` shell of the script leaves foreign keys off.
+        connection
+            .pragma_update(None, "foreign_keys", false)
+            .expect("foreign keys off");
+        connection.execute_batch(&sql).expect("load the dump");
+    }
+    let shown = Command::new(env!("CARGO_BIN_EXE_projinfo"))
+        .arg("HOBU:XXXX")
+        .env("PROJ_AUX_DB", &aux)
+        .output()
+        .expect("run projinfo HOBU:XXXX");
+    let _ = fs::remove_dir_all(&scratch);
+    let mut actual = format!("{SEPARATOR}\nTesting PROJ_AUX_DB environment variable\n");
+    actual.push_str(&String::from_utf8_lossy(&shown.stdout));
+    actual.push('\n');
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/cli_yaml");
+    let expected = fs::read_to_string(root.join("test_projinfo_out.dist"))
+        .expect("test_projinfo_out.dist");
+    let want: Vec<&str> = expected.lines().collect();
+    let got: Vec<&str> = actual.lines().collect();
+    assert_eq!(want.len(), got.len(), "line count\ngot:\n{actual}");
+    for (want, got) in want.iter().zip(&got) {
         assert!(
             want.split_whitespace().eq(got.split_whitespace()),
             "expected {want}\ngot {got}"

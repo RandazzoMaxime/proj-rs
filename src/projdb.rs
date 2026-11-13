@@ -33,6 +33,7 @@ impl std::error::Error for DbFail {}
 
 fn open_embedded() -> Result<Mutex<Connection>, String> {
     read_only_image()
+        .and_then(with_aux)
         .map(Mutex::new)
         .map_err(|error| error.to_string())
 }
@@ -44,6 +45,71 @@ fn read_only_image() -> Result<Connection, rusqlite::Error> {
     Ok(connection)
 }
 
+/// `connection` with the auxiliary databases of `PROJ_AUX_DB` (`:`-separated paths) attached.
+fn with_aux(connection: Connection) -> Result<Connection, rusqlite::Error> {
+    attach_aux(&connection)?;
+    Ok(connection)
+}
+
+/// `DatabaseContext::attachExtraDatabases`, for the connections of this process: each auxiliary
+/// database of `PROJ_AUX_DB` is attached, and its rows of every base table are copied into the
+/// table of the same name in the main database. A row of the auxiliary database replaces the
+/// main row with the same key. The views of the main database then read both, as PROJ's
+/// queries do. `metadata` is not copied: each database's layout is checked on its own.
+fn attach_aux(connection: &Connection) -> Result<(), rusqlite::Error> {
+    let Ok(paths) = std::env::var("PROJ_AUX_DB") else {
+        return Ok(());
+    };
+    let mut aliases = Vec::new();
+    for (index, path) in paths.split(':').filter(|path| !path.is_empty()).enumerate() {
+        let alias = format!("aux{index}");
+        let quoted = path.replace('\'', "''");
+        connection.execute_batch(&format!("ATTACH DATABASE '{quoted}' AS {alias}"))?;
+        aliases.push(alias);
+    }
+    let tables: Vec<String> = connection
+        .prepare(
+            "SELECT name FROM main.sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+        )?
+        .query_map([], |row| row.get(0))?
+        .collect::<Result<_, _>>()?;
+    // `usage` refers to the objects of every other table (`usage_insert_trigger`), so it is
+    // copied last.
+    let mut order: Vec<&String> = tables
+        .iter()
+        .filter(|table| table.as_str() != "metadata" && table.as_str() != "usage")
+        .collect();
+    order.extend(tables.iter().filter(|table| table.as_str() == "usage"));
+    for table in order {
+        let columns: Vec<String> = connection
+            .prepare(&format!("PRAGMA main.table_info(\"{table}\")"))?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<Result<_, _>>()?;
+        let list = columns
+            .iter()
+            .map(|column| format!("\"{column}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        for alias in &aliases {
+            let present: Option<String> = connection
+                .query_row(
+                    &format!(
+                        "SELECT name FROM {alias}.sqlite_master WHERE type = 'table' AND name = ?1"
+                    ),
+                    [table],
+                    |row| row.get(0),
+                )
+                .ok();
+            if present.is_some() {
+                connection.execute_batch(&format!(
+                    "INSERT OR REPLACE INTO main.\"{table}\" ({list}) SELECT {list} FROM {alias}.\"{table}\""
+                ))?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Copy the main database of `source` into `target`, which stays writable. An
 /// insert session writes to it and rolls the writes back.
 fn copy_into(source: &Connection, mut target: Connection) -> Result<Connection, rusqlite::Error> {
@@ -53,7 +119,7 @@ fn copy_into(source: &Connection, mut target: Connection) -> Result<Connection, 
 
 /// A writable in-memory copy of the embedded `proj.db`.
 fn open_memory() -> Result<Connection, rusqlite::Error> {
-    copy_into(&read_only_image()?, Connection::open_in_memory()?)
+    copy_into(&read_only_image()?, Connection::open_in_memory()?).and_then(with_aux)
 }
 
 /// The bytes of the embedded `proj.db`.
@@ -76,7 +142,7 @@ pub(crate) fn open_connection() -> Result<Connection, DbFail> {
 pub(crate) fn open_embedded_with_vfs(vfs: &str) -> Result<Connection, DbFail> {
     let open = || -> Result<Connection, rusqlite::Error> {
         let target = Connection::open_with_flags_and_vfs(":memory:", OpenFlags::default(), vfs)?;
-        copy_into(&read_only_image()?, target)
+        copy_into(&read_only_image()?, target).and_then(with_aux)
     };
     open().map_err(|_| DbFail::Open("Open of proj.db failed".to_owned()))
 }
