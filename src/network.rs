@@ -15,6 +15,10 @@ use std::time::Duration;
 
 const CDN_ENDPOINT: &str = "https://cdn.proj.org";
 const MAX_GRID_BYTES: u64 = 512 * 1024 * 1024;
+/// `gridChunkCache.max_size` default in PROJ 9.9.0 (`cache_size_MB = 300` in `proj.ini`).
+const DEFAULT_CACHE_MAX_BYTES: u64 = 300 * 1024 * 1024;
+/// `gridChunkCache.ttl` default in PROJ 9.9.0 (`cache_ttl_sec = 86400`).
+const DEFAULT_CACHE_TTL_SECONDS: i64 = crate::network_cache::DEFAULT_TTL_SECONDS;
 
 thread_local! {
     static ACTIVE: RefCell<Option<GridContext>> = const { RefCell::new(None) };
@@ -32,6 +36,13 @@ pub(crate) struct GridContext {
     /// `Some(true)` is `ONLY_BEST=YES`, `Some(false)` is `ONLY_BEST=NO`, and `None` is no
     /// setting: `crs_to_crs` then keeps PROJ's warning default.
     pub(crate) only_best_default: Option<bool>,
+    /// The grid chunk database, `proj_grid_cache_set_filename`. `None` is `cache.db` in the
+    /// user-writable directory.
+    pub(crate) cache_path: Option<PathBuf>,
+    /// The size limit of the chunk database in bytes; `None` is no limit.
+    pub(crate) cache_max_bytes: Option<u64>,
+    /// Seconds before a cached file is checked again; zero or less never expires.
+    pub(crate) cache_ttl_seconds: i64,
     cache_dir: Option<PathBuf>,
     search_paths: Vec<PathBuf>,
     ca_bundle: Option<PathBuf>,
@@ -55,7 +66,6 @@ impl std::fmt::Debug for FileFinder {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Download {
     pub(crate) url: String,
-    pub(crate) file_name: String,
 }
 
 /// Whether a missing grid is fetched.
@@ -71,20 +81,23 @@ pub(crate) fn decide_download(name: &str) -> Option<Download> {
         return None;
     }
     let url = remote_url_in(&ctx, name)?;
-    let file_name = cache_file_name_for(&url, name)?;
-    Some(Download { url, file_name })
+    // A URL with no file name at its end is not a grid to fetch.
+    cache_file_name_for(&url, name)?;
+    Some(Download { url })
 }
 
-/// Download the grid [`decide_download`] selected and, when the cache is on,
-/// write it under the user-writable directory.
+/// Download the grid [`decide_download`] selected. With the cache on, the grid is read from
+/// the chunk database when its entry is fresh, else downloaded and stored there
+/// ([`crate::network_cache::fetch_grid`]).
 pub(crate) fn fetch_missing(name: &str) -> Option<Vec<u8>> {
     let download = decide_download(name)?;
-    let bytes = http_get(&download.url)?;
     let ctx = context();
-    if ctx.cache_enabled {
-        let _stored = store_cache(&ctx, &download.file_name, &bytes);
+    if !ctx.cache_enabled {
+        return http_get(&download.url);
     }
-    Some(bytes)
+    crate::network_cache::fetch_grid(&ctx.cache_settings(), &download.url, || {
+        http_get_validated(&download.url)
+    })
 }
 
 /// `proj_grid_name` for an old short name such as `alaska`.
@@ -231,6 +244,9 @@ impl GridContext {
             endpoint: String::new(),
             cache_enabled: true,
             only_best_default: None,
+            cache_path: None,
+            cache_max_bytes: Some(DEFAULT_CACHE_MAX_BYTES),
+            cache_ttl_seconds: DEFAULT_CACHE_TTL_SECONDS,
             cache_dir: None,
             search_paths: Vec::new(),
             ca_bundle: None,
@@ -265,6 +281,20 @@ impl GridContext {
 
     pub(crate) fn cache_directory(&self) -> PathBuf {
         self.cache_dir.clone().unwrap_or_else(default_user_dir)
+    }
+
+    /// The chunk database this context reads and writes: the path set on the builder, else
+    /// `cache.db` in the user-writable directory (`pj_context_get_grid_cache_filename`).
+    pub(crate) fn cache_settings(&self) -> crate::network_cache::Settings {
+        let path = self.cache_path.clone().unwrap_or_else(|| {
+            self.cache_directory()
+                .join(crate::network_cache::DEFAULT_FILE_NAME)
+        });
+        crate::network_cache::Settings {
+            path,
+            max_bytes: self.cache_max_bytes,
+            ttl_seconds: self.cache_ttl_seconds,
+        }
     }
 
     pub(crate) fn searchpath(&self) -> String {
@@ -421,29 +451,23 @@ fn cache_file_name(name: &str) -> Option<String> {
     }
 }
 
-fn store_cache(ctx: &GridContext, file_name: &str, bytes: &[u8]) -> Option<PathBuf> {
-    let dir = ctx.cache_directory();
-    std::fs::create_dir_all(&dir).ok()?;
-    let dest = dir.join(file_name);
-    let temporary = dir.join(format!(".{file_name}.download"));
-    std::fs::write(&temporary, bytes).ok()?;
-    if dest.is_file() {
-        let _removed = std::fs::remove_file(&dest);
-    }
-    if std::fs::rename(&temporary, &dest).is_err() {
-        let _removed = std::fs::remove_file(&temporary);
-        return None;
-    }
-    Some(dest)
+fn http_get(url: &str) -> Option<Vec<u8>> {
+    http_get_validated(url).map(|fetched| fetched.body)
 }
 
-fn http_get(url: &str) -> Option<Vec<u8>> {
+/// A `GET` that follows the redirects, with the `Last-Modified` and `ETag` of the reply.
+pub(crate) fn http_get_validated(url: &str) -> Option<crate::network_cache::Fetched> {
     let mut url = url.to_owned();
     for _ in 0..4 {
         let target = parse_http_url(&url)?;
         let reply = http_exchange(&target)?;
         if reply.status == 200 {
-            return Some(reply.body);
+            let validator = |name| header_value(&reply.headers, name).unwrap_or("").to_owned();
+            return Some(crate::network_cache::Fetched {
+                last_modified: validator("last-modified"),
+                etag: validator("etag"),
+                body: reply.body,
+            });
         }
         if !matches!(reply.status, 301 | 302 | 303 | 307 | 308) {
             return None;
@@ -681,6 +705,15 @@ fn apply_ini(text: &str, ctx: &mut GridContext, skip: &IniSkip) {
             "cdn_endpoint" if !skip.endpoint => ctx.endpoint = value.to_owned(),
             "network" if !skip.network => ctx.enabled = truthy(value),
             "cache_enabled" => ctx.cache_enabled = truthy(value),
+            // filemanager.cpp:2083-2086: a positive size in MB, else unlimited.
+            "cache_size_MB" => {
+                ctx.cache_max_bytes = value
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|megabytes| *megabytes > 0)
+                    .map(|megabytes| megabytes.saturating_mul(1024 * 1024));
+            }
+            "cache_ttl_sec" => ctx.cache_ttl_seconds = value.parse().unwrap_or(0),
             "only_best_default" if !skip.only_best => ctx.only_best_default = Some(truthy(value)),
             _ => {}
         }
@@ -819,7 +852,6 @@ mod tests {
         let on =
             with_context(&ctx, || decide_download("proj_rs_no_such_grid.tif")).expect("network on");
         assert_eq!(on.url, "http://127.0.0.1:9/proj_rs_no_such_grid.tif");
-        assert_eq!(on.file_name, "proj_rs_no_such_grid.tif");
     }
 
     #[test]

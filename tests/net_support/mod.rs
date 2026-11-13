@@ -28,6 +28,15 @@ pub(crate) struct LocalServer {
 impl LocalServer {
     /// Serve `routes` on a free port of `127.0.0.1` until the server is dropped.
     pub(crate) fn spawn(routes: Vec<Route>) -> Self {
+        Self::spawn_with_headers(routes, Vec::new())
+    }
+
+    /// Serve `routes`, adding `headers` (name, value) to every reply, such as `ETag` or
+    /// `Last-Modified`.
+    pub(crate) fn spawn_with_headers(
+        routes: Vec<Route>,
+        headers: Vec<(&'static str, &'static str)>,
+    ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind 127.0.0.1");
         let port = listener.local_addr().expect("local address").port();
         let requests = Arc::new(Mutex::new(Vec::new()));
@@ -40,7 +49,7 @@ impl LocalServer {
                     break;
                 }
                 if let Ok(stream) = stream {
-                    answer(stream, &routes, &requests_thread);
+                    answer(stream, &routes, &headers, &requests_thread);
                 }
             }
         });
@@ -77,7 +86,12 @@ impl Drop for LocalServer {
     }
 }
 
-fn answer(mut stream: TcpStream, routes: &[Route], requests: &Mutex<Vec<String>>) {
+fn answer(
+    mut stream: TcpStream,
+    routes: &[Route],
+    headers: &[(&'static str, &'static str)],
+    requests: &Mutex<Vec<String>>,
+) {
     let _timeout = stream.set_read_timeout(Some(Duration::from_secs(5)));
     let mut buffer = [0_u8; 4096];
     let read = stream.read(&mut buffer).unwrap_or(0);
@@ -91,10 +105,14 @@ fn answer(mut stream: TcpStream, routes: &[Route], requests: &Mutex<Vec<String>>
         None => (404, b""),
     };
     let reason = if status == 200 { "OK" } else { "Not Found" };
-    let header = format!(
-        "HTTP/1.1 {status} {reason}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+    let mut header = format!(
+        "HTTP/1.1 {status} {reason}\r\nContent-Length: {}\r\nConnection: close\r\n",
         body.len()
     );
+    for (name, value) in headers {
+        header.push_str(&format!("{name}: {value}\r\n"));
+    }
+    header.push_str("\r\n");
     let _sent = stream
         .write_all(header.as_bytes())
         .and_then(|()| stream.write_all(body))
