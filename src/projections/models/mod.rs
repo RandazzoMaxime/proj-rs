@@ -17,6 +17,7 @@ mod grid;
 mod inflate;
 mod json;
 mod tinshift;
+pub use tinshift::{FallbackStrategy, TinShiftEvaluator, TinShiftFile, TinShiftFileError};
 
 use std::path::PathBuf;
 

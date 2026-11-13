@@ -42,6 +42,15 @@ mod lcc;
 pub mod math;
 mod merc;
 pub mod names;
+pub mod version;
+
+/// The triangulation shift files (`+proj=tinshift`): the file parser with its
+/// header accessors, and the evaluator.
+pub mod tinshift {
+    pub use crate::projections::{
+        FallbackStrategy, TinShiftEvaluator, TinShiftFile, TinShiftFileError,
+    };
+}
 mod network;
 mod ported;
 mod proj;

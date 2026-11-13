@@ -41,6 +41,7 @@ mod lcca;
 mod misc;
 mod mod_ster;
 mod models;
+pub use models::{FallbackStrategy, TinShiftEvaluator, TinShiftFile, TinShiftFileError};
 mod more;
 mod nsper;
 mod nzmg;
