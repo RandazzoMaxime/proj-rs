@@ -10,7 +10,7 @@
 use std::error::Error;
 use std::ffi::NulError;
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 mod bounds;
 #[path = "proj_export.rs"]
@@ -1224,6 +1224,39 @@ impl ProjBuilder {
         std::fs::create_dir_all(path).map_err(|_| ProjError::Path)?;
         self.net.set_cache_dir(path.to_path_buf());
         Ok(())
+    }
+
+    /// The directories added by [`Self::set_search_paths`], in order.
+    #[must_use]
+    pub fn search_paths(&self) -> Vec<PathBuf> {
+        self.net.added_search_paths().to_vec()
+    }
+
+    /// The user-writable directory, as set by [`Self::set_user_writable_directory`].
+    #[must_use]
+    pub fn user_writable_directory(&self) -> Option<PathBuf> {
+        self.net.user_writable_dir().map(Path::to_path_buf)
+    }
+
+    /// Set the CA bundle used for network requests (`proj_context_set_ca_bundle_path`).
+    ///
+    /// # Errors
+    ///
+    /// [`ProjError::Path`] when the path is not valid UTF-8 or holds a nul byte.
+    pub fn set_ca_bundle_path<P: AsRef<Path>>(&mut self, path: P) -> Result<(), ProjError> {
+        let path = path.as_ref();
+        let text = path.to_str().ok_or(ProjError::Path)?;
+        if text.contains('\0') {
+            return Err(ProjError::Path);
+        }
+        self.net.set_ca_bundle(path.to_path_buf());
+        Ok(())
+    }
+
+    /// The CA bundle set by [`Self::set_ca_bundle_path`], if any.
+    #[must_use]
+    pub fn ca_bundle_path(&self) -> Option<PathBuf> {
+        self.net.ca_bundle().map(Path::to_path_buf)
     }
 
     /// Enable or disable the local cache of downloaded grids.

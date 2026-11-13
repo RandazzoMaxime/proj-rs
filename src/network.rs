@@ -9,7 +9,7 @@ use std::cell::RefCell;
 use std::ffi::{OsStr, OsString};
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -34,6 +34,7 @@ pub(crate) struct GridContext {
     pub(crate) only_best_default: Option<bool>,
     cache_dir: Option<PathBuf>,
     search_paths: Vec<PathBuf>,
+    ca_bundle: Option<PathBuf>,
 }
 
 /// A grid the caller should fetch. The URL is `endpoint + "/" + filename`.
@@ -206,6 +207,7 @@ impl GridContext {
             only_best_default: None,
             cache_dir: None,
             search_paths: Vec::new(),
+            ca_bundle: None,
         };
         let env_network = nonempty_env("PROJ_NETWORK");
         let env_endpoint = nonempty_env("PROJ_NETWORK_ENDPOINT");
@@ -253,6 +255,25 @@ impl GridContext {
 
     pub(crate) fn set_cache_dir(&mut self, path: PathBuf) {
         self.cache_dir = Some(path);
+    }
+
+    /// The directory set by `set_user_writable_directory`, if any.
+    pub(crate) fn user_writable_dir(&self) -> Option<&Path> {
+        self.cache_dir.as_deref()
+    }
+
+    /// The directories added by `set_search_paths`, in order.
+    pub(crate) fn added_search_paths(&self) -> &[PathBuf] {
+        &self.search_paths
+    }
+
+    /// The CA bundle set by `set_ca_bundle_path`, if any.
+    pub(crate) fn ca_bundle(&self) -> Option<&Path> {
+        self.ca_bundle.as_deref()
+    }
+
+    pub(crate) fn set_ca_bundle(&mut self, path: PathBuf) {
+        self.ca_bundle = Some(path);
     }
 }
 

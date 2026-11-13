@@ -54,6 +54,16 @@ pub enum Nodata {
     Found,
 }
 
+/// PROJ's `compensateNTConvention` flag of `valueAt`: the sign convention of
+/// the longitude shift of an NTv1, NTv2 or CTable2 grid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NtConvention {
+    /// The longitude shift as stored (`compensateNTConvention = false`).
+    Plain,
+    /// The longitude shift negated (`compensateNTConvention = true`).
+    Compensated,
+}
+
 /// Extent and resolution of a grid, as `ExtentAndRes` in PROJ.
 ///
 /// For a geographic grid the bounds are in radians.
@@ -412,18 +422,38 @@ impl<'a> Grid<'a> {
         Some(nodata)
     }
 
-    /// The longitude and latitude shift of a pixel, in radians. Defined for
-    /// horizontal grids only; `None` for other grids and out-of-range pixels.
-    /// The null grid returns zero shifts.
+    /// The longitude and latitude shift of a pixel, in radians, with the
+    /// plain convention. See [`Self::horizontal_value_at`].
     #[must_use]
     pub fn horizontal_shift(&self, x: usize, y: usize) -> Option<(f32, f32)> {
+        self.horizontal_value_at(x, y, NtConvention::Plain)
+    }
+
+    /// The longitude and latitude shift of a pixel, in radians (`valueAt` of the
+    /// horizontal grids). `None` for other grids and out-of-range pixels; the
+    /// null grid returns zero shifts.
+    ///
+    /// `convention` is PROJ's `compensateNTConvention`. For an NTv2 or CTable2
+    /// grid, [`NtConvention::Compensated`] negates the longitude shift
+    /// (`grids.cpp`, `NTv2Grid::valueAt`, `CTable2Grid::valueAt`). The GTiff
+    /// reader and the null grid ignore it, as PROJ does.
+    #[must_use]
+    pub fn horizontal_value_at(
+        &self,
+        x: usize,
+        y: usize,
+        convention: NtConvention,
+    ) -> Option<(f32, f32)> {
         let Some(node) = self.node() else {
             return Some((0.0, 0.0));
         };
         let x = i32::try_from(x).ok()?;
         let y = i32::try_from(y).ok()?;
         let (lon, lat) = h_corner(node, x, y)?;
-        Some((f32_from_f64(lon), f32_from_f64(lat)))
+        let lon = f32_from_f64(lon);
+        let negate = convention == NtConvention::Compensated
+            && matches!(self.set.format, "ntv2" | "ctable2");
+        Some((if negate { -lon } else { lon }, f32_from_f64(lat)))
     }
 
     /// Whether `value` is the nodata marker of this grid.

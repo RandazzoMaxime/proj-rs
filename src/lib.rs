@@ -30,6 +30,7 @@ mod crs;
 mod crs_text;
 mod ellipsoid;
 mod engine;
+pub mod errno;
 mod error;
 #[cfg(feature = "geo-types")]
 mod geo_impl;
@@ -38,7 +39,9 @@ mod gridpath;
 mod helmert;
 pub mod iso19111;
 mod lcc;
+pub mod math;
 mod merc;
+pub mod names;
 mod network;
 mod ported;
 mod proj;
@@ -71,7 +74,7 @@ pub use transform::{Transform, TransformError};
 pub mod grids {
     pub use crate::projections::{
         ExtentAndRes, GenericShiftGridSet, Grid, GridError, HorizontalShiftGridSet, Nodata,
-        VerticalShiftGridSet,
+        NtConvention, VerticalShiftGridSet,
     };
 }
 

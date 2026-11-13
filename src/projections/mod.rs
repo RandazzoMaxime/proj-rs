@@ -25,7 +25,7 @@ mod gnom;
 mod gridshift;
 pub use gridshift::public::{
     ExtentAndRes, GenericShiftGridSet, Grid, GridError, HorizontalShiftGridSet, Nodata,
-    VerticalShiftGridSet,
+    NtConvention, VerticalShiftGridSet,
 };
 mod guyou;
 mod healpix;

@@ -53,15 +53,19 @@ as `proj_rs::grids`.
 - **Null grid.** The null grid is 3 by 3 over the world, has no samples, and
   `value_at` returns zero for any index, as `NullGenericShiftGrid::valueAt` does.
 
+## The NTv2 convention flag
+
+C++ `valueAt(x, y, compensateNTConvention, lon, lat)` for NTv1, NTv2 and
+CTable2 negates the longitude shift when the flag is set (`grids.cpp` lines
+1929, 2051, 2173). `horizontal_value_at(x, y, NtConvention)` exposes it. The
+flag only acts on `ntv2` and `ctable2` sets; `gtiff` and the null grid ignore
+it, as `GTiffHGrid::valueAt` does. `NTv1` is not read by the crate, so it has
+no branch. Tests: `tests/unit_grids_ntv2_convention.rs`.
+
 ## Not ported
 
-- **`compensateNTConvention`.** C++ `valueAt(x, y, compensate, lon, lat)` for
-  NTv1, NTv2 and CTable2 negates the longitude shift when the flag is set
-  (`grids.cpp`, `NTv2Grid::valueAt`). `horizontal_shift` does not take the flag.
-  No test in `test_grids.cpp` uses it, and it is a sign convention of the
-  transform caller. Cause: the flag is not wired through the shared horizontal
-  node reader, so exposing it would need a change in `h_corner`.
 - **`reassign_context`.** See above.
+- **NTv1.** The crate reads NTv2, CTable2 and GTiff horizontal grids only.
 
 ## Tests
 
