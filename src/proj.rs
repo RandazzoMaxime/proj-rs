@@ -124,7 +124,8 @@ pub enum ProjError {
     Utf8Error(std::str::Utf8Error),
     /// A coordinate could not be converted to the requested float.
     FloatConversion,
-    /// Network download is not built.
+    /// A grid is not on disk and could not be downloaded when the point was transformed:
+    /// PROJ `PROJ_ERR_OTHER_NETWORK_ERROR`.
     Network,
     /// Remote grid callbacks are not built.
     RemoteCallbacks,
@@ -165,9 +166,9 @@ impl fmt::Display for ProjError {
             Self::Path => formatter.write_str("Couldn't convert path to slice"),
             Self::Utf8Error(_) => formatter.write_str("Couldn't convert bytes from PROJ to UTF-8"),
             Self::FloatConversion => formatter.write_str("Couldn't convert number to f64"),
-            Self::Network => {
-                formatter.write_str("Network download functionality could not be enabled")
-            }
+            Self::Network => formatter.write_str(
+                "A grid is not on disk and could not be downloaded when the point was transformed",
+            ),
             Self::RemoteCallbacks => {
                 formatter.write_str("Could not set remote grid download callbacks")
             }
@@ -393,6 +394,9 @@ pub struct Proj {
     /// The steps of a PROJ pipeline made by [`Proj::new`], kept for the inverse and the layout
     /// of [`Proj::as_proj_string`]. `None` for the other bodies.
     pipeline: Option<Pipeline>,
+    /// The name of the candidate operation this object was taken from, as PROJ's description
+    /// of `proj_trans_get_last_used_operation`. `None` for every other object.
+    candidate_name: Option<String>,
 }
 
 impl Proj {
@@ -577,9 +581,13 @@ impl Proj {
         if matches!(self.body, Body::Native(_)) {
             let definition = self.def().ok();
             let id = definition.as_deref().and_then(crate::proj_info::proj_name);
+            let description = self
+                .candidate_name
+                .clone()
+                .unwrap_or_else(|| crate::proj_info::OPERATION_DESCRIPTION.to_owned());
             return ProjInfo {
                 id,
-                description: Some(crate::proj_info::OPERATION_DESCRIPTION.to_owned()),
+                description: Some(description),
                 definition,
                 has_inverse: self.has_inverse(),
                 accuracy: -1.0,
@@ -1043,6 +1051,9 @@ impl Proj {
             Body::Iso(pipeline) => pipeline.map(Xyzt { x, y, z, t }, way),
         };
         mapped.map_err(|error| {
+            if error == crate::engine::TransformError::NetworkUnavailable {
+                return ProjError::Network;
+            }
             // libproj words an invalid coordinate as `Invalid coordinate`.
             let message = match error {
                 crate::engine::TransformError::InvalidCoord => "Invalid coordinate".to_owned(),
@@ -1264,6 +1275,16 @@ impl ProjBuilder {
         self.net.clear_file_finder();
     }
 
+    /// Fetch missing grids through `callbacks` instead of the built-in HTTP client
+    /// (`proj_context_set_network_callbacks`). Network access must also be on: the callbacks
+    /// are not called otherwise.
+    pub fn set_network_callbacks(
+        &mut self,
+        callbacks: std::sync::Arc<dyn crate::NetworkCallbacks>,
+    ) {
+        self.net.set_callbacks(crate::network::Callbacks(callbacks));
+    }
+
     /// Set the CA bundle used for network requests (`proj_context_set_ca_bundle_path`).
     ///
     /// # Errors
@@ -1358,6 +1379,7 @@ fn built(body: Body, definition: String, area: Option<Area>) -> Proj {
         net: crate::network::context(),
         epoch: None,
         pipeline: None,
+        candidate_name: None,
     }
 }
 
@@ -1442,6 +1464,7 @@ impl Proj {
                     let op = item.operation.clone()?;
                     let mut proj = built(Body::Native(op), definition.clone(), None);
                     proj.pipeline = Some(Pipeline::parse(&definition));
+                    proj.candidate_name = Some(item.name.clone());
                     Some(proj)
                 }
                 None if pipeline.is_alternatives() => None,

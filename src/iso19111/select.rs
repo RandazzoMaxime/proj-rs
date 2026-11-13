@@ -1801,9 +1801,9 @@ impl Preparer<'_> {
                 let e = piece_east.to_radians();
                 items.push(Item {
                     name: characteristics.name.clone(),
-                    operation: definition
-                        .as_deref()
-                        .and_then(|text| Operation::create(text).ok()),
+                    operation: definition.as_deref().and_then(|text| {
+                        crate::network::with_deferred_grids(|| Operation::create(text)).ok()
+                    }),
                     definition: definition.clone(),
                     instantiable,
                     grid_free: grid_names(operation).is_empty(),

@@ -7,17 +7,122 @@
 
 use std::cell::RefCell;
 use std::ffi::{OsStr, OsString};
+use std::fmt;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration;
 
 const CDN_ENDPOINT: &str = "https://cdn.proj.org";
 const MAX_GRID_BYTES: u64 = 512 * 1024 * 1024;
+/// Bytes asked for by each `open` and each `read_range`, PROJ's `DOWNLOAD_CHUNK_SIZE`.
+const CALLBACK_CHUNK_SIZE: usize = 16384;
+
+/// An open remote file, as the application's callbacks name it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct NetworkHandle(pub u64);
+
+/// What `open` gives back: the handle, and the bytes of the first range it was asked for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OpenReply {
+    /// The handle later `header`, `read_range` and `close` calls take.
+    pub handle: NetworkHandle,
+    /// The bytes read, at most the size asked for.
+    pub data: Vec<u8>,
+}
+
+/// A remote read that failed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum NetworkError {
+    /// `open` failed. The text is the application's message.
+    Open(String),
+    /// `read_range` failed. The text is the application's message.
+    ReadRange(String),
+}
+
+impl fmt::Display for NetworkError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Open(message) => write!(formatter, "cannot open the remote file: {message}"),
+            Self::ReadRange(message) => write!(formatter, "cannot read the remote file: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for NetworkError {}
+
+/// Replaces the built-in HTTP client for grids that are not on disk, as PROJ's
+/// `proj_context_set_network_callbacks`.
+///
+/// A grid is fetched by one `open(url, 0, 16384)`, then `read_range` calls of 16384 bytes
+/// until the size given by the `Content-Range` header (`header`) is reached, then `close`.
+/// Each call is made on the thread that builds or transforms.
+pub trait NetworkCallbacks: Send + Sync {
+    /// Open `url` and read `size_to_read` bytes from `offset`.
+    ///
+    /// # Errors
+    ///
+    /// [`NetworkError::Open`] when the file cannot be opened.
+    fn open(&self, url: &str, offset: u64, size_to_read: usize) -> Result<OpenReply, NetworkError>;
+
+    /// The value of a response header of an open file, `None` when it is absent.
+    fn header(&self, handle: NetworkHandle, name: &str) -> Option<String> {
+        let _unused = (handle, name);
+        None
+    }
+
+    /// Read `size_to_read` bytes of an open file from `offset`.
+    ///
+    /// # Errors
+    ///
+    /// [`NetworkError::ReadRange`] when the read fails.
+    fn read_range(
+        &self,
+        handle: NetworkHandle,
+        offset: u64,
+        size_to_read: usize,
+    ) -> Result<Vec<u8>, NetworkError>;
+
+    /// Release an open file. Called once per `open`, also after an error.
+    fn close(&self, handle: NetworkHandle);
+}
+
+/// The callbacks a builder registered, as the context holds them.
+#[derive(Clone)]
+pub(crate) struct Callbacks(pub(crate) Arc<dyn NetworkCallbacks>);
+
+impl fmt::Debug for Callbacks {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Callbacks")
+    }
+}
 
 thread_local! {
     static ACTIVE: RefCell<Option<GridContext>> = const { RefCell::new(None) };
+    static DEFER_GRIDS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether a grid that is not on disk may be left for the first transform: only while the
+/// candidates of a CRS pair are built. An explicit operation string fails at creation, as PROJ
+/// does with an unreachable endpoint (`proj_create` gives `NULL`).
+pub(crate) fn grids_may_be_deferred() -> bool {
+    DEFER_GRIDS.with(std::cell::Cell::get)
+}
+
+/// Run `body` with [`grids_may_be_deferred`] on, then restore the previous setting.
+pub(crate) fn with_deferred_grids<T>(body: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            DEFER_GRIDS.with(|flag| flag.set(self.0));
+        }
+    }
+    let previous = DEFER_GRIDS.with(|flag| flag.replace(true));
+    let _restore = Restore(previous);
+    body()
 }
 
 /// Network, cache and `ONLY_BEST` default settings for one builder, or the process default.
@@ -36,6 +141,7 @@ pub(crate) struct GridContext {
     search_paths: Vec<PathBuf>,
     ca_bundle: Option<PathBuf>,
     file_finder: Option<FileFinder>,
+    callbacks: Option<Callbacks>,
 }
 
 /// The caller's file lookup, consulted before the search directories.
@@ -79,12 +185,64 @@ pub(crate) fn decide_download(name: &str) -> Option<Download> {
 /// write it under the user-writable directory.
 pub(crate) fn fetch_missing(name: &str) -> Option<Vec<u8>> {
     let download = decide_download(name)?;
-    let bytes = http_get(&download.url)?;
     let ctx = context();
+    let bytes = match &ctx.callbacks {
+        Some(callbacks) => fetch_with_callbacks(callbacks.0.as_ref(), &download.url)?,
+        None => http_get(&download.url)?,
+    };
     if ctx.cache_enabled {
         let _stored = store_cache(&ctx, &download.file_name, &bytes);
     }
     Some(bytes)
+}
+
+/// The whole file at `url`, read through the application's callbacks in 16384-byte ranges.
+///
+/// The total size comes from the `Content-Range` header (`bytes 0-16383/4153510`, or
+/// `bytes=0-16383/...` in the C++ tests). Without it, the first reply is the whole file.
+/// Any failure gives `None`, and the handle is closed in every case.
+fn fetch_with_callbacks(callbacks: &dyn NetworkCallbacks, url: &str) -> Option<Vec<u8>> {
+    let first = callbacks.open(url, 0, CALLBACK_CHUNK_SIZE).ok()?;
+    let handle = first.handle;
+    let bytes = read_remaining(callbacks, handle, first.data);
+    callbacks.close(handle);
+    bytes
+}
+
+fn read_remaining(
+    callbacks: &dyn NetworkCallbacks,
+    handle: NetworkHandle,
+    first: Vec<u8>,
+) -> Option<Vec<u8>> {
+    let total = callbacks
+        .header(handle, "Content-Range")
+        .and_then(|value| content_range_total(&value))
+        .unwrap_or_else(|| u64::try_from(first.len()).unwrap_or(u64::MAX));
+    if total > MAX_GRID_BYTES {
+        return None;
+    }
+    let mut bytes = first;
+    let chunk = u64::try_from(CALLBACK_CHUNK_SIZE).unwrap_or(u64::MAX);
+    while u64::try_from(bytes.len()).ok()? < total {
+        let offset = u64::try_from(bytes.len()).ok()?;
+        let wanted = usize::try_from((total - offset).min(chunk)).ok()?;
+        let part = callbacks.read_range(handle, offset, wanted).ok()?;
+        if part.is_empty() {
+            return None;
+        }
+        bytes.extend_from_slice(&part);
+    }
+    bytes.truncate(usize::try_from(total).ok()?);
+    if bytes.is_empty() {
+        None
+    } else {
+        Some(bytes)
+    }
+}
+
+/// The total size after the `/` of a `Content-Range` value, `bytes 0-16383/4153510`.
+fn content_range_total(value: &str) -> Option<u64> {
+    value.rsplit_once('/')?.1.trim().parse().ok()
 }
 
 /// `proj_grid_name` for an old short name such as `alaska`.
@@ -235,6 +393,7 @@ impl GridContext {
             search_paths: Vec::new(),
             ca_bundle: None,
             file_finder: None,
+            callbacks: None,
         };
         let env_network = nonempty_env("PROJ_NETWORK");
         let env_endpoint = nonempty_env("PROJ_NETWORK_ENDPOINT");
@@ -309,6 +468,10 @@ impl GridContext {
 
     pub(crate) fn clear_file_finder(&mut self) {
         self.file_finder = None;
+    }
+
+    pub(crate) fn set_callbacks(&mut self, callbacks: Callbacks) {
+        self.callbacks = Some(callbacks);
     }
 }
 
@@ -835,5 +998,108 @@ mod tests {
             decision.is_none(),
             "the vendored alaska grid is not fetched"
         );
+    }
+}
+
+#[cfg(test)]
+mod callback_tests {
+    use super::{
+        content_range_total, fetch_with_callbacks, NetworkCallbacks, NetworkError, NetworkHandle,
+        OpenReply,
+    };
+    use std::sync::Mutex;
+
+    /// A remote file served by the test, which records each call. The callbacks are the boundary
+    /// of the crate, so they are the only thing faked here.
+    struct Served {
+        body: Vec<u8>,
+        opens: Mutex<Vec<(u64, usize)>>,
+        reads: Mutex<Vec<(u64, usize)>>,
+        closes: Mutex<usize>,
+    }
+
+    impl Served {
+        fn slice(&self, offset: u64, size: usize) -> Vec<u8> {
+            let start = usize::try_from(offset)
+                .unwrap_or(usize::MAX)
+                .min(self.body.len());
+            let end = start.saturating_add(size).min(self.body.len());
+            self.body[start..end].to_vec()
+        }
+    }
+
+    impl NetworkCallbacks for Served {
+        fn open(
+            &self,
+            _url: &str,
+            offset: u64,
+            size_to_read: usize,
+        ) -> Result<OpenReply, NetworkError> {
+            if let Ok(mut opens) = self.opens.lock() {
+                opens.push((offset, size_to_read));
+            }
+            Ok(OpenReply {
+                handle: NetworkHandle(7),
+                data: self.slice(offset, size_to_read),
+            })
+        }
+
+        fn header(&self, _handle: NetworkHandle, name: &str) -> Option<String> {
+            (name == "Content-Range").then(|| format!("bytes 0-16383/{}", self.body.len()))
+        }
+
+        fn read_range(
+            &self,
+            _handle: NetworkHandle,
+            offset: u64,
+            size_to_read: usize,
+        ) -> Result<Vec<u8>, NetworkError> {
+            if let Ok(mut reads) = self.reads.lock() {
+                reads.push((offset, size_to_read));
+            }
+            Ok(self.slice(offset, size_to_read))
+        }
+
+        fn close(&self, _handle: NetworkHandle) {
+            if let Ok(mut closes) = self.closes.lock() {
+                *closes += 1;
+            }
+        }
+    }
+
+    /// The whole file comes back in 16384-byte ranges after the first one, and the handle is
+    /// closed once.
+    #[test]
+    fn whole_file_is_read_in_16384_byte_ranges() {
+        let body: Vec<u8> = (0..40_000_u32)
+            .map(|value| u8::try_from(value % 251).unwrap_or(0))
+            .collect();
+        let served = Served {
+            body: body.clone(),
+            opens: Mutex::new(Vec::new()),
+            reads: Mutex::new(Vec::new()),
+            closes: Mutex::new(0),
+        };
+        let bytes = fetch_with_callbacks(&served, "https://foo/my.tif").expect("fetched");
+        assert_eq!(bytes, body);
+        assert_eq!(*served.opens.lock().expect("lock"), vec![(0, 16384)]);
+        assert_eq!(
+            *served.reads.lock().expect("lock"),
+            vec![(16384, 16384), (32768, 7232)]
+        );
+        assert_eq!(*served.closes.lock().expect("lock"), 1);
+    }
+
+    #[test]
+    fn content_range_gives_the_total_size() {
+        assert_eq!(
+            content_range_total("bytes 0-16383/4153510"),
+            Some(4_153_510)
+        );
+        assert_eq!(
+            content_range_total("bytes=0-16383/10000000"),
+            Some(10_000_000)
+        );
+        assert_eq!(content_range_total("bytes */*"), None);
     }
 }

@@ -114,6 +114,9 @@ pub enum TransformError {
     InvalidCoord,
     /// A coordinate was not finite.
     NonFinite,
+    /// A shift grid is not on disk and the network did not give it at transform time:
+    /// PROJ `PROJ_ERR_OTHER_NETWORK_ERROR`.
+    NetworkUnavailable,
 }
 
 impl fmt::Display for TransformError {
@@ -125,6 +128,7 @@ impl fmt::Display for TransformError {
             Self::NoInverse => "inverse is not available",
             Self::InvalidCoord => "coordinate is invalid",
             Self::NonFinite => "coordinate is not finite",
+            Self::NetworkUnavailable => "a grid could not be downloaded",
         })
     }
 }

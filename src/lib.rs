@@ -67,6 +67,7 @@ pub mod tinshift {
     };
 }
 mod network;
+pub use network::{NetworkCallbacks, NetworkError, NetworkHandle, OpenReply};
 mod ported;
 mod proj;
 mod proj_info;

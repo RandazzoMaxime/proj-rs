@@ -484,6 +484,7 @@ fn errno_name(error: TransformError) -> &'static str {
         TransformError::InvalidCoord => "coord_transfm_invalid_coord",
         TransformError::NoInverse => "no_inverse_op",
         TransformError::NonFinite => "coord_transfm_invalid_coord",
+        TransformError::NetworkUnavailable => "network_error",
     }
 }
 
