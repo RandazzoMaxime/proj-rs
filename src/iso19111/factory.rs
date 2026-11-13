@@ -4471,12 +4471,13 @@ impl AuthorityFactory {
             .one(&sql, code)
             .map_err(|_| FactoryError::missing("geodetic CRS", &self.authority, code))?;
         if !row[6].empty() {
-            return Err(FactoryError::wrap(
-                "geodetic CRS",
-                &self.authority,
+            return self.geodetic_crs_from_text(
                 code,
-                "text_definition is not expanded",
-            ));
+                &row[6].text(),
+                &row[0].text(),
+                &row[7],
+                &row[8].text(),
+            );
         }
         let cs = self
             .child(&row[2].text())
@@ -4532,6 +4533,68 @@ impl AuthorityFactory {
             }
         };
         Ok(crs)
+    }
+
+    /// A `geodetic_crs` row whose `text_definition` is an object written as text, as
+    /// `AuthorityFactory::createGeodeticCRS` of factory.cpp: the object the text names, with
+    /// the name, identifier and flags of the row. A text that names this same row again is
+    /// refused, as `DatabaseContext::Private::RecursionDetector` refuses it.
+    fn geodetic_crs_from_text(
+        &self,
+        code: &str,
+        text: &str,
+        name: &str,
+        deprecated: &Cell,
+        remarks: &str,
+    ) -> Result<GeodeticCRS, FactoryError> {
+        let key = (self.authority.clone(), code.to_owned());
+        if EXPANDING.with(|stack| stack.borrow().contains(&key)) {
+            return Err(FactoryError::wrap(
+                "geodetic CRS",
+                &self.authority,
+                code,
+                "recursive text definition",
+            ));
+        }
+        EXPANDING.with(|stack| stack.borrow_mut().push(key));
+        let expanded = self.expand_geodetic_text(code, text, name, deprecated, remarks);
+        EXPANDING.with(|stack| stack.borrow_mut().pop());
+        expanded
+    }
+
+    fn expand_geodetic_text(
+        &self,
+        code: &str,
+        text: &str,
+        name: &str,
+        deprecated: &Cell,
+        remarks: &str,
+    ) -> Result<GeodeticCRS, FactoryError> {
+        let identified = self.properties(code, name, deprecated, remarks, "geodetic_crs")?;
+        let not_geodetic = || {
+            FactoryError::wrap(
+                "geodetic CRS",
+                &self.authority,
+                code,
+                "text definition does not express a geodetic CRS",
+            )
+        };
+        let object = super::json::create_from_user_input(&add_type_crs_if_needed(text), &self.db)?;
+        match object {
+            Crs::Bound(bound) => {
+                let base = as_geodetic(bound.source_crs()).ok_or_else(not_geodetic)?;
+                let base = with_identified(base, identified);
+                let bound = super::model::BoundCRS::create(
+                    Crs::Geodetic(base),
+                    bound.target_crs().clone(),
+                    bound.transformation().clone(),
+                );
+                as_geodetic(&bound.base_crs_with_canonical_bound_crs()).ok_or_else(not_geodetic)
+            }
+            other => as_geodetic(&other)
+                .map(|crs| with_identified(crs, identified))
+                .ok_or_else(not_geodetic),
+        }
     }
 
     fn geodetic_datum(
@@ -5100,6 +5163,9 @@ impl AuthorityFactory {
              param9_auth_name, param9_code, param9_name, param9_value, param9_uom_auth_name, param9_uom_code \
              FROM other_transformation WHERE auth_name = ? AND code = ?";
         let row = self.one(sql, code)?;
+        if row[2].text() == "PROJ" && row[3].text() == "WKT" {
+            return self.proj_method_operation(&row);
+        }
         let mut parameters = Vec::new();
         if !row[12].empty() {
             parameters.push(self.grid_parameter(
@@ -5156,6 +5222,37 @@ impl AuthorityFactory {
             }));
         }
         Ok(CoordinateOperation::Transformation(transformation))
+    }
+
+    /// The `other_transformation` row whose method is `PROJ` and `WKT`, as `createOperation` of
+    /// factory.cpp: the `COORDINATEOPERATION` that the method name spells keeps its own name and
+    /// gets the source and target CRS of the row. A method `PROJString` stays a transformation
+    /// of the generic path, whose method name is the PROJ string.
+    fn proj_method_operation(&self, row: &[Cell]) -> Result<CoordinateOperation, FactoryError> {
+        let source = self
+            .child(&row[5].text())
+            .create_coordinate_reference_system(&row[6].text())?;
+        let target = self
+            .child(&row[7].text())
+            .create_coordinate_reference_system(&row[8].text())?;
+        let mut parser = super::wkt_import::WktParser::new();
+        let operation = match parser.create_from_wkt(&row[4].text())? {
+            super::wkt_import::WktObject::Transformation(transformation) => {
+                CoordinateOperation::Transformation(transformation)
+            }
+            super::wkt_import::WktObject::Conversion(conversion) => {
+                CoordinateOperation::Conversion(conversion)
+            }
+            super::wkt_import::WktObject::Concatenated(concatenated) => {
+                CoordinateOperation::Concatenated(concatenated)
+            }
+            _ => {
+                return Err(FactoryError::Invalid(
+                    "WKT string does not express a coordinate operation".to_owned(),
+                ))
+            }
+        };
+        Ok(with_endpoints_of(operation, &source, &target))
     }
 
     fn concatenated(
@@ -8582,6 +8679,50 @@ fn set_interpolation_of(operation: &mut CoordinateOperation, crs: Crs) {
         CoordinateOperation::Conversion(conversion) => conversion.interpolation = crs,
         CoordinateOperation::Transformation(transformation) => transformation.interpolation = crs,
         CoordinateOperation::Concatenated(concatenated) => concatenated.interpolation = crs,
+    }
+}
+
+thread_local! {
+    /// The `(authority, code)` of the geodetic CRS rows whose text definition is being
+    /// expanded: a text that names one of them again is a recursion.
+    static EXPANDING: std::cell::RefCell<Vec<(String, String)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// `pj_add_type_crs_if_needed`: a PROJ string without `type=crs` gets it, so that it reads as a
+/// CRS.
+fn add_type_crs_if_needed(text: &str) -> String {
+    let proj_text = ["proj=", "+proj=", "+init=", "+title="]
+        .iter()
+        .any(|prefix| text.starts_with(prefix));
+    if proj_text && !text.contains("type=crs") {
+        format!("{text} +type=crs")
+    } else {
+        text.to_owned()
+    }
+}
+
+/// The geodetic CRS of `crs`, when it is one.
+fn as_geodetic(crs: &Crs) -> Option<GeodeticCRS> {
+    match crs {
+        Crs::Geographic(geographic) => Some(GeodeticCRS::Geographic(geographic.clone())),
+        Crs::Geodetic(geodetic) => Some(geodetic.clone()),
+        _ => None,
+    }
+}
+
+/// `cloneWithProps`: the geodetic CRS with the identification of a `geodetic_crs` row.
+fn with_identified(crs: GeodeticCRS, identified: Identified) -> GeodeticCRS {
+    match crs {
+        GeodeticCRS::Geographic(crs) => {
+            GeodeticCRS::Geographic(GeographicCRS { identified, ..crs })
+        }
+        GeodeticCRS::Geocentric(crs) => {
+            GeodeticCRS::Geocentric(GeocentricCRS { identified, ..crs })
+        }
+        GeodeticCRS::Spherical(crs) => {
+            GeodeticCRS::Spherical(super::model::SphericalGeodeticCRS { identified, ..crs })
+        }
     }
 }
 

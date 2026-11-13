@@ -63,6 +63,38 @@ impl CoordinateMetadata {
     }
 }
 
+/// The coordinate metadata a `urn:ogc:def:coordinateMetadata:AUTH:VERSION:CODE` text names, as
+/// `createFromURNPart` reads it (PROJ's extension of the OGC URN syntax). `None` when the text
+/// is not such a URN.
+///
+/// # Errors
+///
+/// The text is such a URN, but its authority, version or code is not in `db`.
+pub fn coordinate_metadata_from_urn(
+    text: &str,
+    db: &DatabaseContext,
+) -> Result<Option<CoordinateMetadata>, FactoryError> {
+    let Some(rest) = text.strip_prefix("urn:ogc:def:coordinateMetadata:") else {
+        return Ok(None);
+    };
+    let parts: Vec<&str> = rest.split(':').collect();
+    let [authority, version, code] = parts[..] else {
+        return Err(FactoryError::Invalid(format!(
+            "{text} is not a coordinateMetadata URN"
+        )));
+    };
+    let authority = if version.is_empty() {
+        authority.to_owned()
+    } else {
+        db.versioned_authority(authority, version).ok_or_else(|| {
+            FactoryError::Invalid(format!("unknown version {version} of {authority}"))
+        })?
+    };
+    AuthorityFactory::create(db, authority)
+        .create_coordinate_metadata(code)
+        .map(Some)
+}
+
 /// Whether the geodetic CRS of `crs` has a point motion operation in `db`.
 fn has_point_motion(crs: &Crs, db: &DatabaseContext) -> Result<bool, FactoryError> {
     let Some(geodetic) = extract_geodetic(crs) else {

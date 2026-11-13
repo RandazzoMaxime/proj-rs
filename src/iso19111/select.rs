@@ -734,6 +734,10 @@ pub(crate) fn grid_names(operation: &CoordinateOperation) -> Vec<String> {
 fn collect_grids(operation: &CoordinateOperation, names: &mut Vec<String>) {
     match operation {
         CoordinateOperation::Transformation(transformation) => {
+            if let Some(text) = proj_method_text(transformation) {
+                // `PROJBasedOperation::gridsNeeded` reads the grids of the PROJ string.
+                names.extend(super::pipeline::used_grid_names(text));
+            }
             for parameter in transformation.parameters() {
                 // A NADCON pair is one GTiff once its alternative is substituted: only the
                 // latitude file counts.
@@ -809,13 +813,28 @@ impl CoordinateOperation {
 }
 
 /// The file names of the file parameters of `operation`, then of its steps, in order.
+/// The PROJ string of a transformation whose method is a PROJ string: a `PROJString` row, which
+/// names it as its method, or a PROJ-based method written with its text.
+fn proj_method_text(transformation: &super::model::Transformation) -> Option<&str> {
+    let method = transformation.method();
+    if method.code_space() == "PROJ" && method.code() == "PROJString" {
+        return Some(method.name());
+    }
+    method.name().strip_prefix("PROJ-based operation method: ")
+}
+
 fn collect_file_parameters(operation: &CoordinateOperation, names: &mut Vec<String>) {
     let values: Vec<&ParameterValue> = match operation {
-        CoordinateOperation::Transformation(transformation) => transformation
-            .parameters()
-            .iter()
-            .map(Parameter::value)
-            .collect(),
+        CoordinateOperation::Transformation(transformation) => {
+            if let Some(text) = proj_method_text(transformation) {
+                names.extend(super::pipeline::used_grid_names(text));
+            }
+            transformation
+                .parameters()
+                .iter()
+                .map(Parameter::value)
+                .collect()
+        }
         CoordinateOperation::Conversion(conversion) => {
             // A PROJ-based operation keeps its PROJ string in the method name, and its grids are
             // the `grids` and `file` values of that string (`PROJBasedOperation::gridsNeeded`).

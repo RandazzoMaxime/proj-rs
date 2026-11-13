@@ -44,7 +44,7 @@ pub use alternatives::{
     AlternativeError, Alternatives, BestPolicy, LogLevel, LogLine, WARN_SUFFIX,
 };
 pub use buildop::{AxisOrderReversal, OpProps};
-pub use coordinate_metadata::CoordinateMetadata;
+pub use coordinate_metadata::{coordinate_metadata_from_urn, CoordinateMetadata};
 pub use crs_ops::{ParameterLinearUnit, Wgs84Dynamic};
 pub use equiv::{equivalent_name, equivalent_name_bigger_differences, Equivalence};
 pub use factory::{
