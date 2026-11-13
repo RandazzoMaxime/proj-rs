@@ -8261,13 +8261,9 @@ fn pivot_allowed(source: &Crs, target: &Crs, pivot: &Crs) -> bool {
             return false;
         }
     }
-    if source.starts_with("NAD83(CSRS)")
+    !(source.starts_with("NAD83(CSRS)")
         && target.starts_with("NAD83(CSRS)")
-        && (pivot == "NAD83" || pivot == "WGS 84")
-    {
-        return false;
-    }
-    true
+        && (pivot == "NAD83" || pivot == "WGS 84"))
 }
 
 /// Which search reads the pivots of [`crs_codes_intermediate_operations`].

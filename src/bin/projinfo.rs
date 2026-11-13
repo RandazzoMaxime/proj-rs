@@ -729,7 +729,7 @@ fn complete_shell(args: &[String]) -> Result<String, String> {
             if info.deprecated || !info.name.starts_with(last_arg.as_str()) {
                 continue;
             }
-            let mut name = info.name.clone();
+            let mut name = info.name;
             if last == "+" || last == "/" {
                 if let Some(pos) = name.find(last.as_str()) {
                     if name.as_bytes().get(pos + 1) == Some(&b' ') {
