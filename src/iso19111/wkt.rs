@@ -528,6 +528,19 @@ impl WktFormatter {
             self.add_number(east);
             self.end_node();
         }
+        if let Some(vertical) = &domain.vertical {
+            self.start_node("VERTICALEXTENT", NodeId::Absent);
+            self.add_number(vertical.minimum);
+            self.add_number(vertical.maximum);
+            self.export_unit(&vertical.unit, None);
+            self.end_node();
+        }
+        if let Some(temporal) = &domain.temporal {
+            self.start_node("TIMEEXTENT", NodeId::Absent);
+            self.add_raw(&temporal.start);
+            self.add_raw(&temporal.stop);
+            self.end_node();
+        }
     }
 }
 

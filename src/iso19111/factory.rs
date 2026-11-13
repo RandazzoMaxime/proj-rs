@@ -208,6 +208,73 @@ impl DatabaseContext {
         Ok(db)
     }
 
+    /// An empty database with the tables, views and triggers of the embedded
+    /// `proj.db` and its layout version, and no authority rows. This is what
+    /// PROJ's `createStructure` builds in the unit tests. Fill it with
+    /// [`Self::execute_sql`].
+    ///
+    /// # Errors
+    ///
+    /// The embedded schema cannot be read or replayed.
+    pub fn with_empty_structure() -> Result<Self, FactoryError> {
+        let sql_error = |error: rusqlite::Error| FactoryError::Sql(error.to_string());
+        let source =
+            projdb::open_connection().map_err(|error| FactoryError::Sql(error.to_string()))?;
+        let schema: Vec<String> = {
+            let mut statement = source
+                .prepare(
+                    "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL \
+                     AND name NOT LIKE 'sqlite_%' ORDER BY rowid",
+                )
+                .map_err(sql_error)?;
+            let rows = statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(sql_error)?;
+            rows.collect::<Result<_, _>>().map_err(sql_error)?
+        };
+        let layout: Vec<(String, String)> = {
+            let mut statement = source
+                .prepare(
+                    "SELECT key, value FROM metadata \
+                     WHERE key IN ('DATABASE.LAYOUT.VERSION.MAJOR', 'DATABASE.LAYOUT.VERSION.MINOR')",
+                )
+                .map_err(sql_error)?;
+            let rows = statement
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .map_err(sql_error)?;
+            rows.collect::<Result<_, _>>().map_err(sql_error)?
+        };
+        let conn = Connection::open_in_memory().map_err(sql_error)?;
+        for sql in &schema {
+            conn.execute_batch(sql).map_err(sql_error)?;
+        }
+        for (key, value) in &layout {
+            conn.execute(
+                "INSERT INTO metadata (key, value) VALUES (?1, ?2)",
+                [key, value],
+            )
+            .map_err(sql_error)?;
+        }
+        let db = Self {
+            conn: Arc::new(Mutex::new(conn)),
+        };
+        db.check_layout()?;
+        Ok(db)
+    }
+
+    /// Run `sql` on this database, one statement or several. A database from
+    /// [`Self::create`] lives in memory, so a change is seen only through this
+    /// handle and its clones.
+    ///
+    /// # Errors
+    ///
+    /// The SQL fails, for example when a trigger rejects a row.
+    pub fn execute_sql(&self, sql: &str) -> Result<(), FactoryError> {
+        self.lock()
+            .execute_batch(sql)
+            .map_err(|error| FactoryError::Sql(error.to_string()))
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, Connection> {
         self.conn
             .lock()
@@ -3424,12 +3491,124 @@ impl AuthorityFactory {
         })
     }
 
-    /// Derived projected CRS.
+    /// Projected CRS whose definition is only `text_definition`, as PROJ's
+    /// `buildProjectedCRS` does: the text is read with `createFromUserInput`
+    /// (WKT, PROJ string), and the result takes the row's name, identifier,
+    /// deprecation flag and usages. A bound CRS keeps its bound as the canonical
+    /// bound CRS.
     ///
     /// # Errors
     ///
-    /// The code is missing or `text_definition` is set.
+    /// The code is missing, the text is not read, or it is not a projected CRS.
+    pub(crate) fn projected_crs_from_definition(
+        &self,
+        code: &str,
+    ) -> Result<ProjectedCRS, FactoryError> {
+        let row = self
+            .one(
+                "SELECT name, text_definition, deprecated FROM projected_crs \
+                 WHERE auth_name = ? AND code = ?",
+                code,
+            )
+            .map_err(|_| FactoryError::missing("projected CRS", &self.authority, code))?;
+        if row[1].empty() {
+            return Err(FactoryError::wrap(
+                "projected CRS",
+                &self.authority,
+                code,
+                "text_definition is not expanded",
+            ));
+        }
+        // A PROJ string stored in the row defines a CRS: `+type=crs` is implied.
+        let mut text = row[1].text();
+        if text.trim_start().starts_with('+') && !text.contains("+type=") {
+            text.push_str(" +type=crs");
+        }
+        let parsed = create_from_user_input(&text, &self.db).map_err(|error| {
+            FactoryError::wrap(
+                "projected CRS",
+                &self.authority,
+                code,
+                format!("text_definition cannot be read: {error}"),
+            )
+        })?;
+        let (crs, canonical) = match parsed {
+            Crs::Projected(crs) => (crs, None),
+            Crs::Bound(bound) => match bound.source.as_ref() {
+                Crs::Projected(crs) => (crs.clone(), Some(bound)),
+                _ => {
+                    return Err(FactoryError::wrap(
+                        "projected CRS",
+                        &self.authority,
+                        code,
+                        "text_definition is not a projected CRS",
+                    ))
+                }
+            },
+            _ => {
+                return Err(FactoryError::wrap(
+                    "projected CRS",
+                    &self.authority,
+                    code,
+                    "text_definition is not a projected CRS",
+                ))
+            }
+        };
+        let ProjectedCRS {
+            mut identified,
+            base,
+            conversion,
+            coordinate_system,
+            implicit_cs,
+        } = crs;
+        identified.name = row[0].text();
+        identified.deprecated = row[2].flag();
+        identified.domains = self.usages("projected_crs", code)?;
+        let already = identified.identifiers.iter().any(|identifier| {
+            identifier.code_space() == self.authority && identifier.code() == code
+        });
+        if !already {
+            identified
+                .identifiers
+                .push(Identifier::new(self.authority.clone(), code));
+        }
+        if let Some(bound) = canonical {
+            identified.canonical_bound = Some(Box::new(bound));
+        }
+        Ok(ProjectedCRS {
+            identified,
+            base,
+            conversion,
+            coordinate_system,
+            implicit_cs,
+        })
+    }
+
+    /// Derived projected CRS. A row whose only definition is `text_definition`
+    /// (a `DERIVEDPROJCRS` WKT) is expanded by
+    /// [`Self::derived_projected_crs_from_definition`].
+    ///
+    /// # Errors
+    ///
+    /// The code is missing, or the stored text is not a derived projected CRS.
     pub fn create_derived_projected_crs(
+        &self,
+        code: &str,
+    ) -> Result<DerivedProjectedCRS, FactoryError> {
+        match self.create_derived_projected_crs_from_columns(code) {
+            Ok(crs) => Ok(crs),
+            Err(error) => self
+                .derived_projected_crs_from_definition(code)
+                .or(Err(error)),
+        }
+    }
+
+    /// Derived projected CRS built from the relational columns.
+    ///
+    /// # Errors
+    ///
+    /// The code is missing, or `text_definition` is set.
+    pub(crate) fn create_derived_projected_crs_from_columns(
         &self,
         code: &str,
     ) -> Result<DerivedProjectedCRS, FactoryError> {
@@ -3467,6 +3646,75 @@ impl AuthorityFactory {
                 "",
                 "derived_projected_crs",
             )?,
+            base,
+            conversion,
+            coordinate_system,
+        })
+    }
+
+    /// Derived projected CRS whose definition is only `text_definition`, read
+    /// with `createFromUserInput` as the projected case does
+    /// ([`Self::projected_crs_from_definition`]). The result takes the row's
+    /// name, identifier, deprecation flag and usages.
+    ///
+    /// # Errors
+    ///
+    /// The code is missing, the text is not read, or it is not a derived projected CRS.
+    pub(crate) fn derived_projected_crs_from_definition(
+        &self,
+        code: &str,
+    ) -> Result<DerivedProjectedCRS, FactoryError> {
+        let row = self
+            .one(
+                "SELECT name, text_definition, deprecated FROM derived_projected_crs \
+                 WHERE auth_name = ? AND code = ?",
+                code,
+            )
+            .map_err(|_| FactoryError::missing("derived projected CRS", &self.authority, code))?;
+        if row[1].empty() {
+            return Err(FactoryError::wrap(
+                "derived projected CRS",
+                &self.authority,
+                code,
+                "text_definition is not expanded",
+            ));
+        }
+        let text = row[1].text();
+        let parsed = create_from_user_input(&text, &self.db).map_err(|error| {
+            FactoryError::wrap(
+                "derived projected CRS",
+                &self.authority,
+                code,
+                format!("text_definition cannot be read: {error}"),
+            )
+        })?;
+        let Crs::DerivedProjected(crs) = parsed else {
+            return Err(FactoryError::wrap(
+                "derived projected CRS",
+                &self.authority,
+                code,
+                "text_definition is not a derived projected CRS",
+            ));
+        };
+        let DerivedProjectedCRS {
+            mut identified,
+            base,
+            conversion,
+            coordinate_system,
+        } = crs;
+        identified.name = row[0].text();
+        identified.deprecated = row[2].flag();
+        identified.domains = self.usages("derived_projected_crs", code)?;
+        let already = identified.identifiers.iter().any(|identifier| {
+            identifier.code_space() == self.authority && identifier.code() == code
+        });
+        if !already {
+            identified
+                .identifiers
+                .push(Identifier::new(self.authority.clone(), code));
+        }
+        Ok(DerivedProjectedCRS {
+            identified,
             base,
             conversion,
             coordinate_system,
@@ -6539,6 +6787,8 @@ pub(super) fn world_extent() -> ObjectDomain {
         west: Some(-180.0),
         north: Some(90.0),
         east: Some(180.0),
+        vertical: None,
+        temporal: None,
     }
 }
 
@@ -9374,6 +9624,8 @@ fn domain_from_extent(
         west: bbox.1,
         north: bbox.2,
         east: bbox.3,
+        vertical: None,
+        temporal: None,
     })
 }
 

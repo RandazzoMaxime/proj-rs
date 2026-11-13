@@ -7,7 +7,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_crs.cpp
 
-- `crs.scope_area_bbox_remark`
 - `crs.VerticalCRS_ensemble_exception_in_create`
 - `crs.boundCRS_crs_link`
 - `crs.normalizeForVisualization_derivedprojected_operation`
@@ -15,7 +14,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_factory.cpp
 
-- `factory.AuthorityFactory_createDynamicVerticalDatum`
 - `FactoryWithTmpDatabase.AuthorityFactory_test_with_fake_EPSG_database`
 - `FactoryWithTmpDatabase.AuthorityFactory_test_inversion_first_and_last_steps_of_concat_op`
 - `FactoryWithTmpDatabase.AuthorityFactory_test_with_fake_EPSG_and_OTHER_database`
@@ -33,8 +31,6 @@ and `PORT-NOTES-tests.md`.
 - `FactoryWithTmpDatabase.lookForGridInfo`
 - `FactoryWithTmpDatabase.lookForGridInfo_from_old_name_with_new_grid_available`
 - `FactoryWithTmpDatabase.custom_geodetic_crs`
-- `FactoryWithTmpDatabase.custom_projected_crs`
-- `FactoryWithTmpDatabase.custom_derived_projected_crs`
 - `FactoryWithTmpDatabase.CoordinateMetadata`
 - `factory.attachExtraDatabases_auxiliary`
 - `factory.attachExtraDatabases_auxiliary_error`

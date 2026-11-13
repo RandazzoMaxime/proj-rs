@@ -103,6 +103,8 @@ fn empty_domain() -> ObjectDomain {
         west: None,
         north: None,
         east: None,
+        vertical: None,
+        temporal: None,
     }
 }
 

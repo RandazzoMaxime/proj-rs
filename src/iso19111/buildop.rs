@@ -1304,6 +1304,9 @@ impl super::model::Conversion {
         if let Some(text) = self.proj_ob_tran_string() {
             return Ok(text);
         }
+        if let Some(text) = self.proj_based_string() {
+            return Ok(text);
+        }
         if self.method.name.eq_ignore_ascii_case("Adams_Square_II") {
             return Ok(adams_square_ii_proj(self));
         }
@@ -1509,6 +1512,22 @@ impl super::model::Conversion {
 
     /// `Conversion::_exportToPROJString` of a `PROJ ob_tran o_proj=...` method: the method
     /// name is the PROJ operation, and each parameter is `+name=value` in degrees.
+    /// A PROJ-based method, `PROJ <name> [flags and key=value terms]`, whose projection the
+    /// method table does not know (`PROJ mbt_s`): written back as `+proj=<name>` with its
+    /// terms, and its numeric parameters in their own unit.
+    fn proj_based_string(&self) -> Option<String> {
+        let rest = self.method.name().strip_prefix("PROJ ")?;
+        let mut words = rest.split(' ').filter(|word| !word.is_empty());
+        let proj = words.next()?;
+        let mut parts = vec![format!("+proj={proj}")];
+        parts.extend(words.map(|word| format!("+{word}")));
+        for parameter in &self.parameters {
+            let measure = measure_ref(&parameter.value)?;
+            push_number(&mut parts, &parameter.name, measure.value());
+        }
+        Some(parts.join(" "))
+    }
+
     fn proj_ob_tran_string(&self) -> Option<String> {
         let rest = self.method.name().strip_prefix("PROJ ob_tran o_proj=")?;
         let mut parts = vec![format!("+proj=ob_tran +o_proj={rest}")];
