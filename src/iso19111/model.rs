@@ -2,6 +2,9 @@
 
 use std::fmt;
 
+use super::equiv::Equivalence;
+use super::factory::DatabaseContext;
+
 /// Opening `proj.db`, an authority code, or a WKT export failed.
 #[derive(Debug)]
 pub enum FactoryError {
@@ -3597,17 +3600,40 @@ impl CompoundCRS {
         self
     }
 
-    /// `CompoundCRS::createLax`: a geographic CRS plus an ellipsoidal-height
-    /// vertical CRS (`VERT_DATUM` type `2002`) becomes one geographic 3D CRS.
-    ///
-    /// The promoted CRS keeps the horizontal name and drops authority codes.
-    /// PROJ's other lax case, a second geographic CRS equivalent to the first,
-    /// is not handled here.
+    /// `CompoundCRS::createLax` without a database: see
+    /// [`Self::create_lax_with_database`].
     ///
     /// # Errors
     ///
     /// The components are not a valid compound CRS.
     pub fn create_lax(name: impl Into<String>, components: Vec<Crs>) -> Result<Crs, FactoryError> {
+        Self::create_lax_with_database(name, components, None)
+    }
+
+    /// `CompoundCRS::createLax` (`crs.cpp`): two components that PROJ accepts as one CRS.
+    ///
+    /// - A geographic or projected CRS followed by a geographic CRS equivalent to its horizontal
+    ///   part (`EPSG:4326+4326`, `EPSG:32631+4326`) is the first component promoted to 3D, marked
+    ///   as a non-conformant WKT1 export.
+    /// - A geographic CRS followed by a geographic CRS that is not equivalent is an error: the
+    ///   second one is not a vertical part.
+    /// - A geographic CRS plus an ellipsoidal-height vertical CRS (`VERT_DATUM` type `2002`)
+    ///   becomes one geographic 3D CRS, which keeps the horizontal name and drops authority codes.
+    ///
+    /// # Errors
+    ///
+    /// The components are not a valid compound CRS, as PROJ's
+    /// `InvalidCompoundCRSException`: a [`FactoryError::Invalid`].
+    pub fn create_lax_with_database(
+        name: impl Into<String>,
+        components: Vec<Crs>,
+        db: Option<&DatabaseContext>,
+    ) -> Result<Crs, FactoryError> {
+        if let [horizontal, second] = components.as_slice() {
+            if let Some(crs) = lax_geographic_pair(horizontal, second, db)? {
+                return Ok(crs);
+            }
+        }
         if let [horizontal, Crs::Vertical(vertical)] = components.as_slice() {
             if vertical
                 .datum
@@ -3666,6 +3692,63 @@ fn ellipsoidal_height_geographic(
         axis.unit().clone(),
     ));
     promoted
+}
+
+/// The geographic case of `CompoundCRS::createLax` (`crs.cpp`): `first` is a geographic or
+/// projected CRS (or a bound one of them), and `second` a geographic CRS. `None` when the pair is
+/// not of that shape.
+///
+/// # Errors
+///
+/// `second` is not equivalent to the horizontal part of `first`.
+fn lax_geographic_pair(
+    first: &Crs,
+    second: &Crs,
+    db: Option<&DatabaseContext>,
+) -> Result<Option<Crs>, FactoryError> {
+    let (Crs::Geographic(second_geographic)
+    | Crs::Geodetic(GeodeticCRS::Geographic(second_geographic))) = second
+    else {
+        return Ok(None);
+    };
+    let horizontal_source = match first {
+        Crs::Bound(bound) => bound.source_crs(),
+        other => other,
+    };
+    let horizontal: Option<&GeographicCRS> = match horizontal_source {
+        Crs::Geographic(geographic) | Crs::Geodetic(GeodeticCRS::Geographic(geographic)) => {
+            Some(geographic)
+        }
+        Crs::Projected(projected) => match projected.base_crs() {
+            GeodeticCRS::Geographic(geographic) => Some(geographic),
+            _ => None,
+        },
+        _ => return Ok(None),
+    };
+    let demoted = second_geographic.demote_to_2d(db);
+    let equivalent = horizontal.is_some_and(|horizontal| {
+        horizontal.is_equivalent_to_with(&demoted, Equivalence::Equivalent)
+    });
+    if !equivalent {
+        return Err(FactoryError::Invalid(
+            "The 'vertical' geographic CRS is not equivalent to the geographic CRS of the horizontal part"
+                .to_owned(),
+        ));
+    }
+    let mut promoted = first.promote_to_3d(db);
+    set_non_conformant_wkt1(&mut promoted);
+    Ok(Some(promoted))
+}
+
+/// `allowNonConformantWKT1Export`: a geographic or projected CRS whose WKT1 export is a
+/// `COMPD_CS` of its two parts.
+fn set_non_conformant_wkt1(crs: &mut Crs) {
+    match crs {
+        Crs::Geographic(geographic) => geographic.identified.allow_non_conformant_wkt1 = true,
+        Crs::Projected(projected) => projected.identified.allow_non_conformant_wkt1 = true,
+        Crs::Bound(bound) => set_non_conformant_wkt1(&mut bound.source),
+        _ => {}
+    }
 }
 
 /// Bound CRS: a source CRS, a hub, and the transformation that binds them.
