@@ -3564,12 +3564,14 @@ impl WktParser {
         } else {
             UnitOfMeasure::degree()
         };
-        let mut parameters = self.parameters_of(
-            node,
-            &UnitOfMeasure::metre(),
-            &angular,
-            ParameterSyntax::Abridged,
-        )?;
+        // Only an `ABRIDGEDTRANSFORMATION` states its Helmert parameters in the EPSG units that
+        // `convertFromAbridged` fixes; a `COORDINATEOPERATION` carries its own units.
+        let syntax = if ci_eq(&node.value, "ABRIDGEDTRANSFORMATION") {
+            ParameterSyntax::Abridged
+        } else {
+            ParameterSyntax::Wkt
+        };
+        let mut parameters = self.parameters_of(node, &UnitOfMeasure::metre(), &angular, syntax)?;
         let method_code = method_props
             .identifiers
             .first()
