@@ -282,7 +282,6 @@ fn wkt_parse_wkt2_geocentric_definingtransformation() {
 }
 
 #[test]
-#[ignore = "open: a CRS from +proj=pipeline is refused, unsupported +proj=pipeline for a CRS (projstring.rs)"]
 fn wkt_parse_wkt2_krovak_modified_south_west() {
     let wkt = r#"PROJCRS["S-JTSK/05 / Modified Krovak",
     BASEGEOGCRS["S-JTSK/05",
@@ -372,7 +371,6 @@ fn wkt_parse_wkt2_krovak_modified_south_west() {
 }
 
 #[test]
-#[ignore = "open: a CRS from +proj=pipeline is refused, unsupported +proj=pipeline for a CRS (projstring.rs)"]
 fn wkt_parse_wkt2_krovak_modified_east_north() {
     let wkt = r#"PROJCRS["S-JTSK/05 / Modified Krovak East North",
     BASEGEOGCRS["S-JTSK/05",

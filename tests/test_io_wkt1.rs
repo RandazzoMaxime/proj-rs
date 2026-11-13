@@ -438,7 +438,6 @@ fn wkt_parse_wkt1_geographic_deprecated() {
 }
 
 #[test]
-#[ignore = "open: EXTENSION[PROJ4] is dropped on import and export: the model keeps no such node"]
 fn wkt_parse_wkt1_geographic_with_proj4_extension() {
     let wkt = r#"GEOGCS["WGS 84",
     DATUM["unknown",
@@ -467,7 +466,6 @@ fn wkt_parse_wkt1_geographic_with_proj4_extension() {
 }
 
 #[test]
-#[ignore = "open: EXTENSION[PROJ4] is dropped on import and export: the model keeps no such node"]
 fn wkt_parse_wkt1_geocentric_with_proj4_extension() {
     let wkt = r#"GEOCCS["WGS 84",
     DATUM["unknown",
@@ -495,7 +493,6 @@ fn wkt_parse_wkt1_geocentric_with_proj4_extension() {
 }
 
 #[test]
-#[ignore = "open: EXTENSION[PROJ4] is dropped on import and export: the model keeps no such node"]
 fn wkt_parse_wkt1_projected_with_proj4_extension() {
     let wkt = r#"PROJCS["unnamed",
     GEOGCS["WGS 84",

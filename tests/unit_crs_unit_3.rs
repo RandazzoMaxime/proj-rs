@@ -1,7 +1,6 @@
 //! PROJ 9.9.0 `test/unit/test_crs.cpp`, lot 3: `boundCRS_crs_link` and
-//! `VerticalCRS_ensemble_exception_in_create`, and `normalizeForVisualization_derivedprojected_operation`
-//! (ignored: the derived projected export is not ported). Expected values are the C++ literals.
-//! The sheet is `docs/PORTING-crs-unit-3.md`.
+//! `VerticalCRS_ensemble_exception_in_create`, and `normalizeForVisualization_derivedprojected_operation`.
+//! Expected values are the C++ literals. The sheet is `docs/PORTING-crs-unit-3.md`.
 
 use proj_rs::iso19111::{
     BoundCRS, CartesianCS, Conversion, CoordinateOperationFactory, CoordinateSystem, Crs,
@@ -76,11 +75,10 @@ fn crs_bound_crs_link() {
 /// The derived projected CRS of `createDerivedProjectedCRSNorthingEasting` (test_crs.cpp:4817)
 /// has a PROJ unimplemented conversion and northing/easting axes in feet.
 ///
-/// Ignored: the operation from EPSG:4326 to the derived CRS is an inverted concatenation whose
-/// conversion step runs from the derived CRS. `conversion_export.rs` writes a projected
-/// source only, so the export fails with "the source CRS is not geographic". See the sheet.
+/// The operation from EPSG:4326 to the derived CRS is an inverted concatenation whose conversion
+/// step runs from the derived CRS. Its export, and the normalized one, match the C++ literals.
+/// See `docs/PORTING-wkt-extension-pipeline.md`.
 #[test]
-#[ignore = "derived projected conversion export not ported: see docs/PORTING-crs-unit-3.md"]
 fn crs_normalize_for_visualization_derivedprojected_operation() {
     let db = DatabaseContext::create().expect("proj.db");
     let derived = DerivedProjectedCRS::create(
