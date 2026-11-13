@@ -17,7 +17,7 @@ candidates. Three are closed (one of them a replacement); two stay open with a s
 | `crs.norway_ntm` | `tests/unit_crs_strings_misc.rs`: `crs_norway_ntm_esri_wkt1_export`, `crs_norway_ntm_esri_wkt1_import_identifies_5105` (already there), `crs_norway_ntm_wkt2_before_epsg_12_025_is_equivalent_to_5105` (new) | Closed. The WKT2 import is equivalent to EPSG:5105. |
 | `crs.boundCRS_crs_link` | `tests/unit_crs_unit_3.rs`: `crs_bound_crs_link` | Closed, with a deviation (below). The `use_count()` and `expired()` blocks are not ported. |
 | `crs.VerticalCRS_ensemble_exception_in_create` | `tests/unit_crs_unit_3.rs`: `crs_vertical_crs_ensemble_exception_in_create` | Closed, as a replacement for `crs.scope_area_bbox_remark`, which is blocked (below). The no-datum case is not expressible (below). |
-| `crs.normalizeForVisualization_derivedprojected_operation` | `tests/unit_crs_unit_3.rs`: `crs_normalize_for_visualization_derivedprojected_operation` (`#[ignore]`) | Open. The test is written with the C++ literals; it fails at the export step (below). |
+| `crs.normalizeForVisualization_derivedprojected_operation` | `tests/unit_crs_unit_3.rs`: `crs_normalize_for_visualization_derivedprojected_operation` | Closed in the next lot, `docs/PORTING-wkt-extension-pipeline.md`: the test runs without `#[ignore]` and passes on the current code. The section below is the status at the time of this lot. |
 | `crs.scope_area_bbox_remark` | none | Open. Blocked: no vertical or temporal extent in the model (below). |
 | `factory.AuthorityFactory_createDynamicVerticalDatum` | none | Open. The C++ test is compiled out, and its expectation disagrees with the 9.9.0 database (below). |
 
@@ -59,7 +59,8 @@ needed, it is a separate check.
 
 ## Open, with the cause
 
-- **`normalizeForVisualization_derivedprojected_operation`.** `create_operation(EPSG:4326, derived)` is
+- **`normalizeForVisualization_derivedprojected_operation`** (status at the time of this lot; the test passes
+  now, see the table). `create_operation(EPSG:4326, derived)` is
   the inverse of a concatenation whose conversion step runs from the derived CRS to the projected base.
   `conversion_export.rs::export_projection` inverts only a projected source (`matches!(source,
   Crs::Projected(_))`), so the derived source goes to `projection_steps(derived, utm)`, which fails with
