@@ -981,7 +981,6 @@ fn wkt_parse_compoundcrs() {
 }
 
 #[test]
-#[ignore = "open: COMPD_CS imports as CompoundCRS, PROJ gives a 3D ProjectedCRS (wkt_import.rs compound builder)"]
 fn wkt_parse_compd_cs_non_conformant_horizontal_plus_horizontal_as_in_las() {
     let obj = parse(
         r#"COMPD_CS["horizontal + vertical",
@@ -1028,7 +1027,6 @@ fn wkt_parse_compd_cs_non_conformant_horizontal_plus_horizontal_as_in_las() {
 }
 
 #[test]
-#[ignore = "open: COMPD_CS imports as CompoundCRS, PROJ gives a BoundCRS (wkt_import.rs compound builder)"]
 fn wkt_parse_compd_cs_non_conformant_horizontal_towgs84_plus_horizontal_as_in_las() {
     let wkt = r#"COMPD_CS["WGS 84 + WGS 84",
     GEOGCS["WGS 84",
@@ -1067,7 +1065,6 @@ fn wkt_parse_compd_cs_non_conformant_horizontal_towgs84_plus_horizontal_as_in_la
 }
 
 #[test]
-#[ignore = "open: COMPD_CS imports as CompoundCRS, PROJ gives a BoundCRS (wkt_import.rs compound builder)"]
 fn wkt_parse_compd_cs_horizontal_bound_geog_plus_vertical_ellipsoidal_height() {
     // See https://github.com/OSGeo/PROJ/issues/2228
     let wkt = r#"COMPD_CS["NAD83 + Ellipsoid (Meters)",
@@ -1104,7 +1101,6 @@ fn wkt_parse_compd_cs_horizontal_bound_geog_plus_vertical_ellipsoidal_height() {
 }
 
 #[test]
-#[ignore = "open: COMPD_CS imports as CompoundCRS, PROJ folds the ellipsoidal height into a 3D ProjectedCRS (wkt_import.rs compound builder)"]
 fn wkt_parse_compd_cs_horizontal_projected_plus_vertical_ellipsoidal_height() {
     // Variant of above
     let wkt = r#"COMPD_CS["WGS 84 / UTM zone 31N + Ellipsoid (Meters)",
@@ -1151,7 +1147,6 @@ fn wkt_parse_compd_cs_horizontal_projected_plus_vertical_ellipsoidal_height() {
 }
 
 #[test]
-#[ignore = "open: COMPD_CS imports as CompoundCRS, PROJ folds the ellipsoidal height into a 3D GeographicCRS (wkt_import.rs compound builder)"]
 fn wkt_parse_compd_cs_horizontal_geog_plus_vertical_ellipsoidal_height_non_metre() {
     // See https://github.com/OSGeo/PROJ/issues/2232
     let wkt = r#"COMPD_CS["NAD83 + Ellipsoid (US Feet)",
@@ -1208,7 +1203,6 @@ fn wkt_parse_implicit_compound_crs_esri() {
 }
 
 #[test]
-#[ignore = "open: the ESRI export names the implicit VERTCS after the datum, D_WGS_1984, where PROJ keeps WGS_1984 (wkt.rs)"]
 fn wkt_parse_implicit_compound_crs_geographic_with_ellipsoidal_height_esri() {
     let wkt = r#"GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137.0,298.257223563]],PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]],VERTCS["WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137.0,298.257223563]],PARAMETER["Vertical_Shift",0.0],PARAMETER["Direction",1.0],UNIT["Meter",1.0]]"#;
     let dbcontext = DatabaseContext::create().expect("proj.db");
@@ -1228,7 +1222,6 @@ fn wkt_parse_implicit_compound_crs_geographic_with_ellipsoidal_height_esri() {
 }
 
 #[test]
-#[ignore = "open: COMPD_CS imports as CompoundCRS, PROJ gives a 3D ProjectedCRS (wkt_import.rs compound builder)"]
 fn wkt_parse_implicit_compound_crs_projected_with_ellipsoidal_height_esri() {
     let wkt = r#"PROJCS["WGS_1984_UTM_Zone_31N",GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137.0,298.257223563]],PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]],PROJECTION["Transverse_Mercator"],PARAMETER["False_Easting",500000.0],PARAMETER["False_Northing",0.0],PARAMETER["Central_Meridian",3.0],PARAMETER["Scale_Factor",0.9996],PARAMETER["Latitude_Of_Origin",0.0],UNIT["Meter",1.0]],VERTCS["WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137.0,298.257223563]],PARAMETER["Vertical_Shift",0.0],PARAMETER["Direction",1.0],UNIT["Meter",1.0]]"#;
     let dbcontext = DatabaseContext::create().expect("proj.db");
