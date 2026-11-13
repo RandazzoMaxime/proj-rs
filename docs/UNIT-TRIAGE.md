@@ -5,60 +5,12 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 10 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
-| `niche` | 2 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
-| `shape` | 12 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
+| `core` | 0 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `niche` | 0 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
+| `shape` | 0 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (10)
+## core (0)
 
-### test_c_api.cpp (2)
+## niche (0)
 
-- `CApi.proj_normalize_for_visualization_with_alternatives`
-- `CApi.proj_coordoperation_create_inverse`
-
-### test_factory.cpp (1)
-
-- `factory.AuthorityFactory_createDynamicVerticalDatum`
-
-### test_io.cpp (1)
-
-- `io.createFromUserInput`
-
-### test_operationfactory.cpp (6)
-
-- `operation.geog3DCRS_to_geog2DCRS_plus_vertCRS_context`
-- `operation.boundCRS_to_geogCRS_hubCRS_and_targetCRS_same_but_baseCRS_not`
-- `operation.nadgrids_with_pm`
-- `operation.compoundCRS_to_compoundCRS_with_vertical_transform`
-- `operation.compoundCRS_to_compoundCRS_context`
-- `operation.compoundCRS_to_compoundCRS_concatenated_operation_with_two_vert_transformation`
-
-## niche (2)
-
-### test_operationfactory.cpp (2)
-
-- `operation.boundCRS_to_derived_geog_with_transformation_with_source_crs_being_base_crs_of_source_crs`
-- `operation.createOperation_bound_of_spherical_ocentric_to_same_type`
-
-## shape (12)
-
-### test_c_api.cpp (8)
-
-- `CApi.proj_clone_of_obj_with_alternative_operations`
-- `CApi.proj_context_copy_from_default`
-- `CApi.proj_context_clone`
-- `CApi.proj_context_set_sqlite3_vfs_name`
-- `CApi.proj_context_set_sqlite3_vfs_name__from_global_context`
-- `CApi.use_proj4_init_rules_from_global_context`
-- `CApi.proj_get_insert_statements`
-- `CApi.open_plenty_of_contexts`
-
-### test_crs.cpp (1)
-
-- `crs.scope_area_bbox_remark`
-
-### test_factory.cpp (3)
-
-- `FactoryWithTmpDatabase.custom_projected_crs`
-- `FactoryWithTmpDatabase.custom_derived_projected_crs`
-- `factory.objectInsertion`
+## shape (0)
