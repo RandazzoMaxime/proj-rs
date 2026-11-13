@@ -85,7 +85,9 @@ pub use engine::{
     lpz_dist, parse_gie_coord, xyz_dist, Coord as Xyzt, CreateError, CrsPipeline, Operation,
     TransformError as StepError,
 };
-pub use gie_api::{list_ellps, list_operations, list_prime_meridians, xy_dist, BatchError};
+pub use gie_api::{
+    list_ellps, list_operations, list_prime_meridians, xy_dist, BatchError, Factors,
+};
 pub use ported::{bench_definition, PORTED};
 pub use proj::{
     Area, Coord, CoordinateType, Direction, Info, Proj, ProjBuilder, ProjCreateError, ProjError,

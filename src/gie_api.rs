@@ -325,3 +325,117 @@ pub fn list_ellps() -> Vec<&'static str> {
 pub fn list_prime_meridians() -> &'static [(&'static str, f64)] {
     crate::iso19111::PRIME_MERIDIANS
 }
+
+/// `PJ_FACTORS`: the cartographic characteristics of a projection at one point.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Factors {
+    /// Meridian scale `h`.
+    pub meridional_scale: f64,
+    /// Parallel scale `k`.
+    pub parallel_scale: f64,
+    /// Areal scale `s`.
+    pub areal_scale: f64,
+    /// Angular distortion `omega`, in radians.
+    pub angular_distortion: f64,
+    /// Meridian-parallel angle `theta'`, in radians.
+    pub meridian_parallel_angle: f64,
+    /// Meridian convergence, in radians.
+    pub meridian_convergence: f64,
+    /// Tissot ellipse semi-major axis.
+    pub tissot_semimajor: f64,
+    /// Tissot ellipse semi-minor axis.
+    pub tissot_semiminor: f64,
+}
+
+/// `DEFAULT_H` of `factors.cpp`: the step of the numerical derivatives, in radians.
+const DEFAULT_STEP: f64 = 1e-5;
+/// `EPS` of `factors.cpp`.
+const FACTOR_EPS: f64 = 1e-12;
+
+impl Operation {
+    /// `proj_factors` of a projection: the numerical derivatives of the forward
+    /// transform (`pj_deriv`, central differences of step `1e-5` rad) and the
+    /// scale factors of `pj_factors`. Input is longitude and latitude in radians.
+    ///
+    /// Outputs are in metres (the transform's linear unit is metres); the
+    /// derivatives are divided by the semi-major axis, as PROJ's unit-sphere
+    /// `P->fwd` is.
+    ///
+    /// # Errors
+    ///
+    /// [`TransformError::InvalidCoord`] when the latitude or longitude is out of
+    /// range, and [`TransformError::OutsideDomain`] when a stencil point has no image.
+    pub fn factors(&self, lon: f64, lat: f64) -> Result<Factors, TransformError> {
+        let half_pi = std::f64::consts::FRAC_PI_2;
+        if (lat.abs() - half_pi) > FACTOR_EPS || lon.abs() > 10.0 {
+            return Err(TransformError::InvalidCoord);
+        }
+        let h = DEFAULT_STEP;
+        let lat = if lat.abs() > half_pi - h {
+            if lat < 0.0 {
+                -(half_pi - h)
+            } else {
+                half_pi - h
+            }
+        } else {
+            lat
+        };
+        let (a, es) = self.distance_ellipsoid();
+        let point = |l: f64, p: f64| -> Result<(f64, f64), TransformError> {
+            if p.abs() > half_pi {
+                return Err(TransformError::OutsideDomain);
+            }
+            let out = self.forward(Coord {
+                x: l,
+                y: p,
+                z: 0.0,
+                t: 0.0,
+            })?;
+            Ok((out.x / a, out.y / a))
+        };
+        // The stencil of `pj_deriv`: (+,+), (+,-), (-,-), (-,+) in (lam, phi).
+        let (x1, y1) = point(lon + h, lat + h)?;
+        let (x2, y2) = point(lon + h, lat - h)?;
+        let (x3, y3) = point(lon - h, lat - h)?;
+        let (x4, y4) = point(lon - h, lat + h)?;
+        let four_h = 4.0 * h;
+        let x_l = (x1 + x2 - x3 - x4) / four_h;
+        let y_p = (y1 - y2 - y3 + y4) / four_h;
+        let x_p = (x1 - x2 - x3 + x4) / four_h;
+        let y_l = (y1 + y2 - y3 - y4) / four_h;
+
+        let cosphi = lat.cos();
+        let mut hs = x_p.hypot(y_p);
+        let mut k = x_l.hypot(y_l) / cosphi;
+        let r = if es == 0.0 {
+            1.0
+        } else {
+            let mut t = lat.sin();
+            t = 1.0 - es * t * t;
+            let n = t.sqrt();
+            hs *= t * n / (1.0 - es);
+            k *= n;
+            t * t / (1.0 - es)
+        };
+        let conv = -x_p.atan2(y_p);
+        let s = (y_p * x_l - x_p * y_l) * r / cosphi;
+        let thetap = (s / (hs * k)).clamp(-1.0, 1.0).asin();
+        let mut t = k * k + hs * hs;
+        let a_axis = (t + 2.0 * s).sqrt();
+        t -= 2.0 * s;
+        let t = if t > 0.0 { t.sqrt() } else { 0.0 };
+        let b = 0.5 * (a_axis - t);
+        let a_axis = 0.5 * (a_axis + t);
+        let omega = 2.0 * ((a_axis - b) / (a_axis + b)).clamp(-1.0, 1.0).asin();
+        Ok(Factors {
+            meridional_scale: hs,
+            parallel_scale: k,
+            areal_scale: s,
+            angular_distortion: omega,
+            meridian_parallel_angle: thetap,
+            meridian_convergence: conv,
+            tissot_semimajor: a_axis,
+            tissot_semiminor: b,
+        })
+    }
+}

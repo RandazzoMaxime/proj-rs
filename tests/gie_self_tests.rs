@@ -492,3 +492,52 @@ fn horner_only_fwd_selftest() {
 fn xy(x: f64, y: f64) -> Xyzt {
     Xyzt::xy(x, y)
 }
+
+/// `proj_factors` (gie.proj_factors): Mercator and UTM, as projection strings. The
+/// C test's EPSG CRS blocks and its `+units=ft` block are not here (see the audit).
+#[test]
+fn proj_factors() {
+    let merc = Operation::create("+proj=merc +ellps=WGS84").expect("merc");
+    let f = merc
+        .factors(12f64.to_radians(), 55f64.to_radians())
+        .expect("factors");
+    assert!(
+        f.angular_distortion.abs() <= 1e-7,
+        "{}",
+        f.angular_distortion
+    );
+    assert!(
+        (f.meridian_parallel_angle - std::f64::consts::FRAC_PI_2).abs() <= 1e-7,
+        "{}",
+        f.meridian_parallel_angle
+    );
+    assert_eq!(f.meridian_convergence, 0.0);
+
+    let utm = Operation::create("+proj=utm +zone=32 +ellps=GRS80").expect("utm");
+    let f = utm.factors(9f64.to_radians(), 0.0).expect("factors");
+    assert!(
+        (f.meridional_scale - 0.9996).abs() <= 1e-8,
+        "{}",
+        f.meridional_scale
+    );
+    assert!(
+        (f.parallel_scale - 0.9996).abs() <= 1e-8,
+        "{}",
+        f.parallel_scale
+    );
+    assert!(
+        f.angular_distortion.abs() <= 1e-7,
+        "{}",
+        f.angular_distortion
+    );
+    assert!(
+        (f.meridian_parallel_angle - std::f64::consts::FRAC_PI_2).abs() <= 1e-7,
+        "{}",
+        f.meridian_parallel_angle
+    );
+    assert!(
+        (f.areal_scale - 0.999_200_16).abs() <= 1e-7,
+        "{}",
+        f.areal_scale
+    );
+}
