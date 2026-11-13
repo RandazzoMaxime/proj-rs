@@ -373,6 +373,7 @@ impl Props {
         let mut identified = Identified {
             name: self.name.clone(),
             identifiers: self.identifiers.clone(),
+            aliases: Vec::new(),
             remarks: self.remarks.clone(),
             deprecated: self.deprecated,
             domains: self.domains.clone(),
@@ -427,6 +428,8 @@ pub enum WktObject {
     EngineeringDatum(EngineeringDatum),
     /// `ENSEMBLE`.
     Ensemble(DatumEnsemble),
+    /// `ID` or `AUTHORITY` on its own, with the `CITATION` and `URI` nodes that follow the code.
+    Identifier(Identifier),
     /// Any coordinate reference system.
     Crs(Crs),
     /// `CONVERSION`, including a WKT1 `PROJECTION`.
@@ -712,6 +715,9 @@ impl WktParser {
     /// The object of `wkt`, before the grammar check of [`Self::create_from_wkt`].
     fn build_from_wkt(&mut self, wkt: &str) -> Result<WktObject, FactoryError> {
         let (root, mut index) = parse_node(wkt, 0, 0)?;
+        if ci_eq(&root.value, "ID") {
+            return Ok(WktObject::Identifier(self.build_standalone_id(&root)?));
+        }
         if ci_eq(&root.value, "DATUM")
             || ci_eq(&root.value, "GEODETICDATUM")
             || ci_eq(&root.value, "TRF")
@@ -925,6 +931,20 @@ impl WktParser {
             return Ok(WktObject::Concatenated(self.build_concatenated(node)?));
         }
         Err(invalid(format!("unhandled keyword: {name}")))
+    }
+
+    /// An `ID` on its own. `build_id` reads the code space, the code and the version; the
+    /// `CITATION` and `URI` nodes after them are read here, so a CRS keeps its identifiers as before.
+    fn build_standalone_id(&mut self, node: &WktNode) -> Result<Identifier, FactoryError> {
+        let mut identifier = self.build_id(node, node)?;
+        for child in &node.children {
+            if ci_eq(&child.value, "CITATION") {
+                identifier.authority_citation = child.children.first().map(strip_quotes);
+            } else if ci_eq(&child.value, "URI") {
+                identifier.uri = child.children.first().map(strip_quotes);
+            }
+        }
+        Ok(identifier)
     }
 
     fn build_id(&mut self, node: &WktNode, parent: &WktNode) -> Result<Identifier, FactoryError> {

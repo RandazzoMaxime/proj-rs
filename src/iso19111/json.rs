@@ -1121,6 +1121,21 @@ fn write_ellipsoid(writer: &mut Writer, ellipsoid: &Ellipsoid, db: &DatabaseCont
     writer.end_object();
 }
 
+impl PrimeMeridian {
+    /// PROJJSON for this prime meridian, including `"type": "PrimeMeridian"`.
+    ///
+    /// # Errors
+    ///
+    /// The format cannot represent the object.
+    pub fn export_to_json(
+        &self,
+        db: &DatabaseContext,
+        format: &JsonFormat,
+    ) -> Result<String, FactoryError> {
+        UserObject::PrimeMeridian(self.clone()).export_to_json(db, format)
+    }
+}
+
 impl Ellipsoid {
     /// PROJJSON for this ellipsoid, including `"type": "Ellipsoid"`.
     #[must_use]

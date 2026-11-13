@@ -23,6 +23,7 @@ mod identify;
 mod insert;
 mod json;
 mod json_read;
+mod metadata;
 mod model;
 mod niche;
 mod normalize;
@@ -61,15 +62,16 @@ pub use json::{
     InitRules, JsonFormat, JsonLines, UserObject,
 };
 pub use json_read::{create_object_from_json, JsonObject};
+pub use metadata::{Citation, DataEpoch, Extent};
 pub use model::{
     Axis, BoundCRS, BoundingBox, CartesianCS, CompoundCRS, ConcatenatedOperation, ConcatenatedStep,
     Conversion, CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble,
-    DerivedConversion, DerivedProjectedCRS, Ellipsoid, EllipsoidalCS, EngineeringCRS,
-    EngineeringDatum, FactoryError, GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame,
-    GeographicCRS, GeoidModel, Identifier, Measure, Meridian, ObjectDomain, OperationMethod,
-    OperationParameter, OperationParameterValue, OrdinalCS, Parameter, ParameterValue,
-    PrimeMeridian, ProjectedCRS, RealizationMethod, SphericalCS, Transformation, UnitKind,
-    UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame,
+    DerivedConversion, DerivedProjectedCRS, Ellipsoid, EllipsoidShape, EllipsoidalCS,
+    EngineeringCRS, EngineeringDatum, FactoryError, GeocentricCRS, GeodeticCRS,
+    GeodeticReferenceFrame, GeographicCRS, GeoidModel, Identifier, Measure, Meridian, ObjectDomain,
+    OperationMethod, OperationParameter, OperationParameterValue, OrdinalCS, Parameter,
+    ParameterValue, PrimeMeridian, ProjectedCRS, RealizationMethod, SphericalCS, Transformation,
+    UnitKind, UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame,
 };
 pub use niche::{
     parametric_unit, DerivedCRS, DerivedKind, ParametricCRS, ParametricCS, ParametricDatum,
