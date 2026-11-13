@@ -6,9 +6,10 @@ use std::collections::BTreeSet;
 
 use proj_rs::{
     insert_statements, AlternativeGridNames, AuthorityFactory, AuthorityObject, Axis, CartesianCS,
-    CoordinateOperation, CoordinateOperationContext, CoordinateOperationFactory, Crs,
-    DatabaseContext, DeprecatedCodes, EllipsoidalCS, Equivalence, Measure, Meridian, ObjectType,
-    SpatialCriterion, UnitKind, UnitOfMeasure, WktConvention, WktFormatter, WktObject, WktParser,
+    ComponentCodes, CoordinateOperation, CoordinateOperationContext, CoordinateOperationFactory,
+    Crs, DatabaseContext, DeprecatedCodes, EllipsoidalCS, Equivalence, Measure, Meridian,
+    ObjectType, SpatialCriterion, UnitKind, UnitOfMeasure, WktConvention, WktFormatter, WktObject,
+    WktParser,
 };
 
 fn parse(wkt: &str) -> WktObject {
@@ -619,7 +620,15 @@ fn c_api_proj_get_insert_statements() {
     let crs = AuthorityObject::Crs(parsed.crs().expect("crs").clone());
     let statements = |allowed: &[&str]| {
         let allowed: Vec<String> = allowed.iter().map(|name| (*name).to_owned()).collect();
-        insert_statements(&db, &crs, "HOBU", "XXXX", &allowed).expect("statements")
+        insert_statements(
+            &db,
+            &crs,
+            "HOBU",
+            "XXXX",
+            ComponentCodes::FromParentCode,
+            &allowed,
+        )
+        .expect("statements")
     };
 
     let list = statements(&["EPSG", "PROJ"]);

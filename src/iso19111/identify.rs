@@ -10,8 +10,7 @@ use super::bound::hub_is_wgs84;
 use super::buildop::UtmHemisphere;
 use super::equiv::{
     directions_and_units, ellipsoid_parameters_match, equivalent_name_bigger_differences,
-    identify_axes_match, meridian_equivalent, same_epoch, vertical_crs_equivalent, Equivalence,
-    IdentifyAxisOrder,
+    identify_axes_match, meridian_equivalent, same_epoch, Equivalence, IdentifyAxisOrder,
 };
 use super::factory::{
     same_unit, AuthorityFactory, CoordinateOperationContext, CoordinateOperationFactory,
@@ -207,7 +206,9 @@ impl VerticalCRS {
                 let looked = AuthorityFactory::create(db, identifier.code_space())
                     .create_vertical_crs(identifier.code());
                 if let Ok(found) = looked {
-                    let confidence = if vertical_crs_equivalent(self, &found) {
+                    // `_isEquivalentTo(crs, EQUIVALENT)`, as PROJ compares an identified CRS.
+                    let confidence = if self.is_equivalent_to_with(&found, Equivalence::Equivalent)
+                    {
                         100
                     } else {
                         25
@@ -230,7 +231,7 @@ impl VerticalCRS {
             };
             let mut hits: Vec<(VerticalCRS, i32)> = Vec::new();
             for found in objects {
-                if vertical_crs_equivalent(self, &found) {
+                if self.is_equivalent_to_with(&found, Equivalence::Equivalent) {
                     if found.name() == name {
                         return vec![(Crs::Vertical(found), 100)];
                     }

@@ -114,7 +114,8 @@ pub use iso19111::{
     WktStrictness, CALENDAR_PROLEPTIC_GREGORIAN,
 };
 pub use iso19111::{
-    create_from_user_input_with_init_rules, suggests_code_for, CodeForm, InitRules, InsertSession,
+    create_from_user_input_with_init_rules, suggests_code_for, CodeForm, ComponentCodes, InitRules,
+    InsertSession,
 };
 pub use iso19111::{
     DerivedCRS, ParametricCRS, ParametricCS, ParametricDatum, TemporalCRS, TemporalCS,

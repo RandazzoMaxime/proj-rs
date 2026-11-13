@@ -214,6 +214,13 @@ impl ObjectDomain {
         self.temporal.as_ref()
     }
 
+    /// The same domain with `scope` as its scope text.
+    #[must_use]
+    pub fn with_scope(mut self, scope: impl Into<String>) -> Self {
+        self.scope = Some(scope.into());
+        self
+    }
+
     /// Extent with no description and the bounding box `bbox`, as an area of interest.
     #[must_use]
     pub fn from_bounding_box(bbox: BoundingBox) -> Self {
@@ -960,6 +967,15 @@ pub struct PrimeMeridian {
 }
 
 impl PrimeMeridian {
+    /// A prime meridian called `name`, `longitude` east of Greenwich.
+    #[must_use]
+    pub fn create(name: impl Into<String>, longitude: Measure) -> Self {
+        Self {
+            identified: Identified::named(name),
+            longitude,
+        }
+    }
+
     /// Name. An empty name exports as `Greenwich`.
     #[must_use]
     pub fn name(&self) -> &str {
@@ -1055,6 +1071,13 @@ impl GeodeticReferenceFrame {
     #[must_use]
     pub fn with_anchor(mut self, anchor: impl Into<String>) -> Self {
         self.identified.anchor = Some(anchor.into());
+        self
+    }
+
+    /// `ANCHOR_EPOCH`: the epoch of the anchor, in years.
+    #[must_use]
+    pub fn with_anchor_epoch(mut self, epoch: f64) -> Self {
+        self.identified.anchor_epoch = Some(epoch);
         self
     }
 
@@ -1238,6 +1261,13 @@ impl VerticalReferenceFrame {
     #[must_use]
     pub fn with_anchor(mut self, anchor: impl Into<String>) -> Self {
         self.identified.anchor = Some(anchor.into());
+        self
+    }
+
+    /// `ANCHOR_EPOCH`: the epoch of the anchor, in years.
+    #[must_use]
+    pub fn with_anchor_epoch(mut self, epoch: f64) -> Self {
+        self.identified.anchor_epoch = Some(epoch);
         self
     }
 
@@ -2755,6 +2785,13 @@ impl GeographicCRS {
         })
     }
 
+    /// The usages of this CRS, replaced by `domains`.
+    #[must_use]
+    pub fn with_domains(mut self, domains: Vec<ObjectDomain>) -> Self {
+        self.identified.domains = domains;
+        self
+    }
+
     /// Usages recorded for this CRS.
     #[must_use]
     pub fn domains(&self) -> &[ObjectDomain] {
@@ -3087,6 +3124,22 @@ impl GeodeticCRS {
             Self::Geographic(crs) => CoordinateSystem::Ellipsoidal(crs.coordinate_system.clone()),
             Self::Geocentric(crs) => CoordinateSystem::Cartesian(crs.coordinate_system.clone()),
             Self::Spherical(crs) => CoordinateSystem::Spherical(crs.coordinate_system.clone()),
+        }
+    }
+
+    /// The usages of this CRS, replaced by `domains`.
+    #[must_use]
+    pub fn with_domains(self, domains: Vec<ObjectDomain>) -> Self {
+        match self {
+            Self::Geographic(crs) => Self::Geographic(crs.with_domains(domains)),
+            Self::Geocentric(mut crs) => {
+                crs.identified.domains = domains;
+                Self::Geocentric(crs)
+            }
+            Self::Spherical(mut crs) => {
+                crs.identified.domains = domains;
+                Self::Spherical(crs)
+            }
         }
     }
 

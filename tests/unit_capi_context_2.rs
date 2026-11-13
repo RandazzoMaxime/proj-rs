@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use proj_rs::{
-    suggests_code_for, AuthorityFactory, AuthorityObject, CodeForm, Context, DatabaseContext,
-    DatabaseSource, FactoryError, InitRules, InsertSession, WktParser,
+    suggests_code_for, AuthorityFactory, AuthorityObject, CodeForm, ComponentCodes, Context,
+    DatabaseContext, DatabaseSource, FactoryError, InitRules, InsertSession, WktParser,
 };
 
 static GLOBAL_DEFAULTS: Mutex<()> = Mutex::new(());
@@ -196,7 +196,13 @@ fn c_api_proj_get_insert_statements() {
     assert!(InsertSession::start(&db).is_err());
 
     let list = session
-        .statements_for(&crs, "HOBU", "XXXX", &default_allowed)
+        .statements_for(
+            &crs,
+            "HOBU",
+            "XXXX",
+            ComponentCodes::FromParentCode,
+            &default_allowed,
+        )
         .expect("statements");
     assert_eq!(
         list[0],
@@ -208,7 +214,13 @@ fn c_api_proj_get_insert_statements() {
 
     // The objects of the first call are in the session: nothing to insert again.
     let again = session
-        .statements_for(&crs, "HOBU", "XXXX", &default_allowed)
+        .statements_for(
+            &crs,
+            "HOBU",
+            "XXXX",
+            ComponentCodes::FromParentCode,
+            &default_allowed,
+        )
         .expect("statements");
     assert!(again.is_empty());
 
@@ -216,7 +228,13 @@ fn c_api_proj_get_insert_statements() {
     drop(session);
     let session = InsertSession::start(&db).expect("second session");
     let list = session
-        .statements_for(&crs, "HOBU", "XXXX", &default_allowed)
+        .statements_for(
+            &crs,
+            "HOBU",
+            "XXXX",
+            ComponentCodes::FromParentCode,
+            &default_allowed,
+        )
         .expect("statements");
     assert_eq!(list.len(), 4);
     drop(session);
@@ -227,7 +245,13 @@ fn c_api_proj_get_insert_statements() {
     let count = |allowed: &[String]| {
         let session = InsertSession::start(&db).expect("session");
         session
-            .statements_for(&crs, "HOBU", "XXXX", allowed)
+            .statements_for(
+                &crs,
+                "HOBU",
+                "XXXX",
+                ComponentCodes::FromParentCode,
+                allowed,
+            )
             .expect("statements")
             .len()
     };
