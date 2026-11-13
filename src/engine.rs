@@ -150,6 +150,38 @@ pub(crate) struct Params {
     items: Vec<(String, Option<String>)>,
 }
 
+/// The words of a PROJ string line: separated by white space, except inside a double-quoted
+/// span, whose spaces stay and whose quote characters are dropped (`pj_mkparam_ws`, so
+/// `+nadgrids="dir with space/myconus"` is one word).
+fn split_quoted(line: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let mut in_quote = false;
+    let mut started = false;
+    for ch in line.chars() {
+        match ch {
+            '"' => {
+                in_quote = !in_quote;
+                started = true;
+            }
+            ch if ch.is_whitespace() && !in_quote => {
+                if started {
+                    words.push(std::mem::take(&mut word));
+                    started = false;
+                }
+            }
+            ch => {
+                word.push(ch);
+                started = true;
+            }
+        }
+    }
+    if started {
+        words.push(word);
+    }
+    words
+}
+
 impl Params {
     /// Parse a PROJ string. `+` is optional. `#` starts a comment.
     ///
@@ -161,8 +193,8 @@ impl Params {
         let mut items = Vec::new();
         for raw_line in input.lines() {
             let line = raw_line.split('#').next().unwrap_or("");
-            for token in line.split_whitespace() {
-                let token = token.trim_start_matches('+');
+            for word in split_quoted(line) {
+                let token = word.trim_start_matches('+');
                 if token.is_empty() {
                     continue;
                 }

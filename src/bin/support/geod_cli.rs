@@ -7,8 +7,8 @@
 //! inverse mode. `+lat_1 +lon_1 ...` arguments select the arc and geodesic
 //! modes, which take no input file.
 //!
-//! Not ported: `-l` (lists of ellipsoids and units) and `+sunits` (a unit
-//! other than metres), which need PROJ's unit and ellipsoid tables.
+//! `-l` lists the ellipsoids (`-l`, `-le`) or the linear units (`-lu`) and exits. `+units=`
+//! names the unit of the distances, from proj.db.
 
 use std::f64::consts::PI;
 use std::io::{self, Read, Write};
@@ -16,6 +16,8 @@ use std::process::ExitCode;
 
 use proj_rs::geod::{Geod, Line};
 use proj_rs::Operation;
+
+use crate::lists;
 
 use super::dms::{
     c_strtod, direction_of, dmstor, format_number, program_name, rtodms, Direction, Dms, Width,
@@ -65,6 +67,13 @@ pub(crate) fn run() -> ExitCode {
     if let Err(message) = parse_args(&args, &mut options, &mut pargs, &mut files) {
         return fail(&program, &message);
     }
+    if let Some(list) = &options.list {
+        return match list.chars().next() {
+            None | Some('e') => list_out(&lists::ellipsoids()),
+            Some('u') => list_out(&lists::units()),
+            Some(other) => fail(&program, &format!("invalid list option: l{other}")),
+        };
+    }
     let (mut calc, mode) = match setup(&pargs) {
         Ok(setup) => setup,
         Err(message) => return fail(&program, &message),
@@ -104,6 +113,12 @@ pub(crate) fn run() -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// The text of a list option, written on standard output: status 0, as `geod.cpp` exits.
+fn list_out(text: &str) -> ExitCode {
+    let _ = io::stdout().write_all(text.as_bytes());
+    ExitCode::SUCCESS
+}
+
 /// Message and status of `emess(1, ...)`.
 fn fail(program: &str, message: &str) -> ExitCode {
     let mut stderr = io::stderr();
@@ -129,6 +144,8 @@ struct Options {
     osform: Option<String>,
     /// `-w` and `-W`: how angles are written in degrees, minutes and seconds.
     dms: Dms,
+    /// `-l`: the text after the `l`, which selects the list to print.
+    list: Option<String>,
 }
 
 impl Options {
@@ -160,6 +177,11 @@ fn parse_args(
                     b'a' => options.full = true,
                     b'I' => options.inverse = true,
                     b'p' => options.pos_azi = true,
+                    b'l' => {
+                        // `-l` lists and exits: the rest of the switch is its argument.
+                        options.list = Some(String::from_utf8_lossy(&arg[j + 1..]).into_owned());
+                        return Ok(());
+                    }
                     b't' => {
                         j += 1;
                         let tag = *arg.get(j).ok_or("missing -t col. 1 tag")?;
@@ -238,6 +260,18 @@ fn setup(pargs: &[String]) -> Result<(Calc, Option<Mode>), String> {
     let mut calc = Calc::new(Geod::new(a, flattening));
 
     let value = |key: &str| pargs.iter().find_map(|parg| arg_value(parg, key));
+    // `geod_set`: `pj_param(..., "sunits")` reads the key `units` (its first letter names the
+    // type, `s`), so `+units=` names the unit of the distances, from proj.db.
+    if let Some(name) = value("units") {
+        let factor = proj_rs::listing::linear_units()
+            .unwrap_or_default()
+            .into_iter()
+            .find(|unit| unit.short_name == name)
+            .map(|unit| unit.conv_factor)
+            .ok_or_else(|| format!("{name} unknown unit conversion id"))?;
+        calc.to_meter = factor;
+        calc.fr_meter = 1.0 / factor;
+    }
     if value("lat_1").is_none() {
         return Ok((calc, None));
     }
@@ -338,6 +372,10 @@ struct Calc {
     al21: f64,
     distance: f64,
     line: Option<Line>,
+    /// `to_meter` of `geod_set`: the factor from the unit of the input distance to metres.
+    to_meter: f64,
+    /// `fr_meter` of `geod_set`: the factor from metres to the unit of the printed distance.
+    fr_meter: f64,
 }
 
 impl Calc {
@@ -352,6 +390,8 @@ impl Calc {
             al21: 0.0,
             distance: 0.0,
             line: None,
+            to_meter: 1.0,
+            fr_meter: 1.0,
         }
     }
 
@@ -501,7 +541,7 @@ fn parse_record(line: &[u8], options: &Options, calc: &mut Calc) -> usize {
         calc.al12 = take_angle(&mut s);
         let (distance, used) = c_strtod(&line[s..]);
         s += used;
-        calc.distance = distance;
+        calc.distance = distance * calc.to_meter;
         calc.pre();
         calc.forward();
     }
@@ -518,7 +558,7 @@ fn parse_record(line: &[u8], options: &Options, calc: &mut Calc) -> usize {
 
 /// The values one record writes, before the rest of its line.
 fn record_text(options: &Options, calc: &Calc) -> String {
-    let distance = number_text(options.osform(), calc.distance);
+    let distance = number_text(options.osform(), calc.distance * calc.fr_meter);
     let az12 = azimuth_text(calc.al12, options);
     let az21 = azimuth_text(calc.al21, options);
     if options.full {

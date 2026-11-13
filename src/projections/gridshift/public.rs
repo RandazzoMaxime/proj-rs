@@ -12,8 +12,8 @@
 use std::fmt;
 
 use super::{
-    f32_from_f64, geotiff, gtx_name, h_corner, is_ctable2, ntv2, open_generic, open_horizontal,
-    open_vertical, opened_name, read_grid, Eps, Extent, Fail, GridSet, Hit, Node,
+    f32_from_f64, geotiff, gtx_name, h_corner, is_ctable2, ntv1, ntv2, open_generic,
+    open_horizontal, open_vertical, opened_name, read_grid, Eps, Extent, Fail, GridSet, Hit, Node,
 };
 
 /// Why a shift grid could not be opened.
@@ -198,6 +198,7 @@ fn format_of(kind: Kind, request: &str) -> &'static str {
     };
     match kind {
         Kind::Horizontal if ntv2::is_ntv2(&bytes) => "ntv2",
+        Kind::Horizontal if ntv1::is_ntv1(&bytes) => "ntv1",
         Kind::Horizontal if geotiff::is_tiff(&bytes) => "gtiff",
         Kind::Horizontal if is_ctable2(&bytes) => "ctable2",
         Kind::Vertical if geotiff::is_tiff(&bytes) => "gtiff",
@@ -236,7 +237,7 @@ macro_rules! shift_grid_set {
                 &self.opened.name
             }
 
-            /// The file format: `"gtiff"`, `"gtx"`, `"ntv2"`, `"ctable2"` or `"null"`.
+            /// The file format: `"gtiff"`, `"gtx"`, `"ntv1"`, `"ntv2"`, `"ctable2"` or `"null"`.
             ///
             /// Empty when the file cannot be read again to identify it.
             #[must_use]
@@ -452,7 +453,7 @@ impl<'a> Grid<'a> {
         let (lon, lat) = h_corner(node, x, y)?;
         let lon = f32_from_f64(lon);
         let negate = convention == NtConvention::Compensated
-            && matches!(self.set.format, "ntv2" | "ctable2");
+            && matches!(self.set.format, "ntv1" | "ntv2" | "ctable2");
         Some((if negate { -lon } else { lon }, f32_from_f64(lat)))
     }
 

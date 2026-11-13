@@ -3,6 +3,8 @@
 
 #[path = "support/dms.rs"]
 mod dms;
+#[path = "support/lists.rs"]
+mod lists;
 #[path = "support/proj_cli.rs"]
 mod proj_cli;
 

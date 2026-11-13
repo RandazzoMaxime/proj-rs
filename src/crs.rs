@@ -865,6 +865,11 @@ fn dictionary_section(spec: &str) -> Result<String, CreateError> {
 pub(crate) fn init_definition(spec: &str) -> Result<String, CreateError> {
     let spec = spec.trim();
     if let Some((file, section)) = spec.split_once(':') {
+        // PROJ expands `+init=IGNF:CODE` from proj.db, as it does `epsg:`, when no
+        // `IGNF` file is on the data path (`pj_get_init_items`, `src/init.cpp`).
+        if file == "IGNF" {
+            return ignf_definition(section);
+        }
         if !file.eq_ignore_ascii_case("epsg") {
             return init_file_section(file, section);
         }
@@ -895,6 +900,17 @@ pub(crate) fn init_definition(spec: &str) -> Result<String, CreateError> {
         Err(DbFail::Open(_)) => Err(CreateError::Unsupported("proj.db")),
         Err(DbFail::Sql(_)) => Err(CreateError::IllegalValue("init")),
     }
+}
+
+/// The PROJ string of the `IGNF` CRS `code`, from proj.db, with its datum shift to WGS 84
+/// (`create_bound_crs_to_wgs84_if_possible`), as `+init=epsg:` does for a projected CRS.
+fn ignf_definition(code: &str) -> Result<String, CreateError> {
+    let db = crate::DatabaseContext::create().map_err(|_| CreateError::Unsupported("proj.db"))?;
+    let crs = crate::iso19111::create_from_user_input(&format!("IGNF:{code}"), &db)
+        .map_err(|_| CreateError::IllegalValue("init"))?;
+    crs.create_bound_crs_to_wgs84_if_possible(&db)
+        .export_to_proj_string()
+        .map_err(|_| CreateError::IllegalValue("init"))
 }
 
 /// The `<section>` of PROJ's `+init=file:section` init file, as the text PROJ
@@ -929,18 +945,13 @@ fn init_section_from_text(text: &str, section: &str) -> Result<String, CreateErr
             if let Some(rest) = line.strip_prefix(header.as_str()) {
                 inside = true;
                 push_init_words(rest, &mut parts);
-                if parts.last() == Some(&"<>") {
-                    break;
-                }
             }
-            continue;
+        } else if !line.starts_with('#') {
+            push_init_words(line, &mut parts);
         }
-        if line.starts_with('#') {
-            continue;
-        }
-        push_init_words(line, &mut parts);
         if parts.last() == Some(&"<>") {
-            break;
+            parts.pop();
+            return Ok(parts.join(" "));
         }
     }
     // A section may end at the end of the file instead of at `<>` (`pj_init_ctx` reads to the

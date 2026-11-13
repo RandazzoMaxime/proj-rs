@@ -7,6 +7,7 @@
 //! `decide_download` may fetch it into the cache before the file is opened.
 
 mod geotiff;
+mod ntv1;
 mod ntv2;
 pub(super) mod public;
 
@@ -404,6 +405,10 @@ fn open_horizontal(name: &str) -> Result<GridSet, Fail> {
     if ntv2::is_ntv2(&bytes) {
         let grids = ntv2::load(&bytes).map_err(|()| Fail::Invalid)?;
         return Ok(GridSet::from_ntv2(grids));
+    }
+    if ntv1::is_ntv1(&bytes) {
+        let grid = ntv1::load(&bytes).map_err(|()| Fail::Invalid)?;
+        return Ok(GridSet::from_ntv2(vec![grid]));
     }
     if geotiff::is_tiff(&bytes) {
         return GridSet::from_tiff_horizontal(&bytes);
