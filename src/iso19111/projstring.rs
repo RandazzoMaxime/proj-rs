@@ -343,7 +343,12 @@ impl ProjectedCRS {
     }
 
     fn export_with(&self, extras: &ProjExtras<'_>) -> Result<String, FactoryError> {
-        if let Some(text) = self.pseudo_mercator_proj().filter(|_| !extras.has_shift()) {
+        if let Some(mut text) = self.pseudo_mercator_proj().filter(|_| !extras.has_shift()) {
+            // The generic export writes `+over` after `+nadgrids=@null` and before `+wktext`
+            // (`CRS::_exportToPROJString`, reached by the pseudo-Mercator branch too).
+            if self.identified.over {
+                text = text.replacen(" +wktext", " +over +wktext", 1);
+            }
             return Ok(text);
         }
         if let Some(text) = self
@@ -351,6 +356,16 @@ impl ProjectedCRS {
             .extension_proj4
             .clone()
             .filter(|_| !extras.has_shift())
+            // A PROJ-based CRS whose string kept only `+proj=`, or only the `+towgs84` that a
+            // bound CRS takes, is written from its method and datum
+            // (`projinfo "+proj=mbt_s +unused_flag +type=crs" -o PROJ`).
+            .filter(|text| {
+                text.split_whitespace().any(|term| {
+                    term.strip_prefix('+')
+                        .and_then(|term| term.split('=').next())
+                        .is_some_and(|key| !matches!(key, "proj" | "type" | "towgs84"))
+                })
+            })
         {
             // `ingestPROJString` drops `+type=crs` and the CRS formatter puts it back.
             if text.contains("+type=crs") {
@@ -1234,7 +1249,12 @@ fn axis_order_text(axes: &[Axis]) -> Option<String> {
 /// East-then-north needs none. A polar CRS whose axes are both north or both
 /// south, named northing then easting, swaps as `2,1` (UPS North and South).
 pub(crate) fn projected_axis_order(crs: &ProjectedCRS) -> Option<String> {
-    let axes = crs.coordinate_system().axes();
+    axes_order(crs.coordinate_system().axes())
+}
+
+/// [`projected_axis_order`] on the axes of any Cartesian coordinate system, so that a derived
+/// projected CRS takes the same trailing swap as its `ProjectedCRS` would.
+pub(crate) fn axes_order(axes: &[Axis]) -> Option<String> {
     if axes.len() < 2 {
         return None;
     }
@@ -1506,6 +1526,16 @@ fn proj_datum_name(code: &str) -> Option<&'static str> {
         "6267" => Some("NAD27"),
         "6269" => Some("NAD83"),
         _ => None,
+    }
+}
+
+/// The code space and code of an EPSG code of a method or parameter of a map. A
+/// map entry with no EPSG code (`0`) has no identifier, as PROJ leaves it.
+fn epsg_identifier(code: i32) -> (&'static str, String) {
+    if code == 0 {
+        ("", String::new())
+    } else {
+        ("EPSG", code.to_string())
     }
 }
 
@@ -2839,19 +2869,17 @@ pub(super) fn projected_from_proj_string(tokens: &[(String, String)]) -> Result<
                 unit: parameter_unit.clone(),
             }),
         };
+        let (code_space, code) = epsg_identifier(param.epsg_code);
         parameters.push(Conversion::parameter(
             param.wkt2_name,
-            "EPSG",
-            &param.epsg_code.to_string(),
+            code_space,
+            &code,
             value,
         ));
     }
-    let mut conversion = Conversion::create_with_method(
-        method.wkt2_name,
-        "EPSG",
-        &method.epsg_code.to_string(),
-        parameters,
-    );
+    let (method_space, method_code) = epsg_identifier(method.epsg_code);
+    let mut conversion =
+        Conversion::create_with_method(method.wkt2_name, method_space, &method_code, parameters);
     conversion.identified = Identified::named("unknown");
     if tokens.iter().any(|(key, _)| key == "approx") && matches!(proj, "tmerc" | "utm") {
         conversion.identified.proj_method_override = Some(format!("{proj} approx"));

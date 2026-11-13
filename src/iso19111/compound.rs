@@ -91,6 +91,8 @@ pub(super) fn compound_to_geog3d(
     }
     match vertical {
         Crs::Vertical(_) => {}
+        // A derived vertical CRS is a `VerticalCRS` in PROJ (issue 4175).
+        Crs::Derived(derived) if derived.kind() == super::niche::DerivedKind::Vertical => {}
         Crs::Bound(bound) if matches!(bound.source_crs(), Crs::Vertical(_)) => {}
         _ => return Ok(Vec::new()),
     }
@@ -259,9 +261,8 @@ fn compound_horizontal_vertical(
         }
         (false, registered)
     };
-    // `SetGeogCRSOfVertCRS` (coordinateoperationfactory.cpp:6760-6777): the datum of the
-    // geographic CRS of the source is what an `Ellipsoid` vertical datum means.
-    let horizontal_datum = geographic_datum_name(geog_src);
+    // `SetGeogCRSOfVertCRS` (coordinateoperationfactory.cpp:6760-6777): the geographic CRS of the
+    // source is what an `Ellipsoid` vertical datum means, see `vertical_to_geog_candidates`.
     let mut res = Vec::new();
     let mut vertical_transforms = Vec::new();
     if let Some(vertical_crs) = vertical.extract_vertical_crs() {
@@ -272,7 +273,7 @@ fn compound_horizontal_vertical(
             vertical,
             &vertical_crs,
             target,
-            horizontal_datum.as_deref(),
+            geog_src,
             &skip_horizontal,
         )?;
         let (found_with_all_grids, _) = has_all_grids(&vertical_transforms);
@@ -291,7 +292,7 @@ fn compound_horizontal_vertical(
                 vertical,
                 &vertical_crs,
                 &geog_tmp,
-                horizontal_datum.as_deref(),
+                geog_src,
                 &skip_horizontal,
             )?;
             let (found_with_all_grids_2, found_registered) = has_all_grids(&vertical_tmp);
@@ -337,7 +338,7 @@ fn compound_horizontal_vertical(
                     vertical,
                     &vertical_crs,
                     geog_tmp,
-                    horizontal_datum.as_deref(),
+                    geog_src,
                     context,
                 )?;
                 if vertical_tmp
@@ -450,16 +451,20 @@ fn vertical_to_geog_candidates(
     vertical: &Crs,
     vertical_crs: &VerticalCRS,
     geographic: &Crs,
-    horizontal_datum: Option<&str>,
+    horizontal: &GeographicCRS,
     context: &CoordinateOperationContext,
 ) -> Result<Vec<CoordinateOperation>, FactoryError> {
-    let mut operations = factory.create_candidates(vertical, geographic, context)?;
+    let horizontal_datum = geographic_datum_name(horizontal);
+    let mut operations = match same_datum_derived_vertical(vertical, geographic, horizontal) {
+        Some(first) => vec![first],
+        None => factory.create_candidates(vertical, geographic, context)?,
+    };
     if !operations.iter().any(is_synthesized_ballpark) {
         if let Some(geog) = geographic_of(geographic) {
             operations.extend(vertical_ballpark(
                 vertical,
                 vertical_crs,
-                horizontal_datum,
+                horizontal_datum.as_deref(),
                 geographic_datum_name(geog).as_deref(),
                 geog,
                 geographic,
@@ -467,6 +472,31 @@ fn vertical_to_geog_candidates(
         }
     }
     Ok(operations)
+}
+
+/// `createOperationsDerivedTo` for a derived vertical CRS over an `Ellipsoid` vertical datum, to a
+/// geographic CRS of the datum of the compound's horizontal part (`geogCRSOfVertCRSStack`): the
+/// second leg is the same-datum change of vertical unit, which PROJ removes as a no-op
+/// (coordinateoperationfactory.cpp:5547-5565). Only the inverse of the deriving conversion is left.
+/// `None` for the other cases, which take the candidates of the factory.
+fn same_datum_derived_vertical(
+    vertical: &Crs,
+    geographic: &Crs,
+    horizontal: &GeographicCRS,
+) -> Option<CoordinateOperation> {
+    let Crs::Derived(derived) = vertical else {
+        return None;
+    };
+    if derived.kind() != super::niche::DerivedKind::Vertical {
+        return None;
+    }
+    let (conversion, base) = super::derived::derived_parts(vertical)?;
+    let Crs::Vertical(base) = base else {
+        return None;
+    };
+    let same_datum = vertical_datum_name(&base).as_deref() == Some("Ellipsoid")
+        && same_geodetic_datum(&Crs::Geographic(horizontal.clone()), geographic);
+    same_datum.then(|| CoordinateOperation::Conversion(conversion.inverse()))
 }
 
 /// The operations of the horizontal part to the interpolation CRS, in 2D, and those from the

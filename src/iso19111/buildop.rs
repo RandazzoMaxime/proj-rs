@@ -10,17 +10,10 @@ use super::model::{
     OperationParameterValue, Parameter, ParameterValue, Transformation, UnitKind,
 };
 use super::parammap::{self, MethodMap, ParamMap};
-use super::pipeline::proj_number;
+use super::pipeline::{proj_number, TmercExport};
 
 mod projections;
 mod transformations;
-
-/// Whether transverse Mercator export inserts `+approx`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum TmercApprox {
-    Yes,
-    No,
-}
 
 /// Northern or southern UTM hemisphere.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -757,21 +750,23 @@ impl ConcatenatedOperation {
             })
             .collect();
         let mut inverse = self.clone();
-        inverse.identified.name = if self.computed_name {
-            steps
-                .iter()
-                .map(|step| step.operation.name())
-                .collect::<Vec<_>>()
-                .join(" + ")
-        } else if self.proj_based.is_some() {
+        inverse.identified.name = if self.proj_based.is_some() {
             // `PROJBasedOperation::inverse` names the inverse with `createPropertiesForInverse`
-            // (oputils.cpp:231-316), for an operation that is not a `ConcatenatedOperation`.
+            // (oputils.cpp:231-316), whatever the name was built from: PROJ keeps the name it
+            // gives a PROJ-based operation (`computeConcatenatedName` in
+            // `createHorizVerticalHorizPROJBased`), it does not rebuild it from the steps.
             super::geodetic_ops::inverse_operation_name(
                 self.name(),
                 self.source_crs(),
                 self.target_crs(),
                 super::geodetic_ops::NamedOperationKind::ProjBased,
             )
+        } else if self.computed_name {
+            steps
+                .iter()
+                .map(|step| step.operation.name())
+                .collect::<Vec<_>>()
+                .join(" + ")
         } else {
             concatenated_inverse_name(self.name())
         };
@@ -1255,7 +1250,7 @@ impl super::model::Conversion {
     /// The method cannot be written as a PROJ string, or a parameter value is outside
     /// the range PROJ accepts. An inverse is the forward string inside `+inv`.
     pub fn export_to_proj_string(&self) -> Result<String, FactoryError> {
-        self.export_to_proj_inner(TmercApprox::No)
+        self.export_to_proj_inner(TmercExport::Exact)
     }
 
     /// Same as [`Self::export_to_proj_string`], with `+approx` on transverse Mercator.
@@ -1264,10 +1259,10 @@ impl super::model::Conversion {
     ///
     /// The method cannot be written as a PROJ string.
     pub fn export_to_proj_string_approx_tmerc(&self) -> Result<String, FactoryError> {
-        self.export_to_proj_inner(TmercApprox::Yes)
+        self.export_to_proj_inner(TmercExport::Approximate)
     }
 
-    fn export_to_proj_inner(&self, approx_tmerc: TmercApprox) -> Result<String, FactoryError> {
+    fn export_to_proj_inner(&self, approx_tmerc: TmercExport) -> Result<String, FactoryError> {
         if let Some(text) = self
             .method
             .name()
@@ -1302,6 +1297,9 @@ impl super::model::Conversion {
             return Ok(text);
         }
         if let Some(text) = self.proj_ob_tran_string() {
+            return Ok(text);
+        }
+        if let Some(text) = self.proj_based_string() {
             return Ok(text);
         }
         if self.method.name.eq_ignore_ascii_case("Adams_Square_II") {
@@ -1391,7 +1389,7 @@ impl super::model::Conversion {
         if code == 9807 || (code == 1111 && self.method.code.is_empty()) {
             if let Some((zone, hemisphere)) = self.utm_zone() {
                 let mut parts = vec!["+proj=utm".to_owned()];
-                if approx_tmerc == TmercApprox::Yes {
+                if approx_tmerc == TmercExport::Approximate {
                     parts.push("+approx".to_owned());
                 }
                 parts.push(format!("+zone={zone}"));
@@ -1414,7 +1412,7 @@ impl super::model::Conversion {
             )));
         };
         let mut parts = vec![format!("+proj={proj_name}")];
-        if approx_tmerc == TmercApprox::Yes && (code == 9807 || code == 1111) {
+        if approx_tmerc == TmercExport::Approximate && (code == 9807 || code == 1111) {
             parts.push("+approx".to_owned());
         }
         if let Some(aux) = mapped.proj_aux {
@@ -1509,6 +1507,22 @@ impl super::model::Conversion {
 
     /// `Conversion::_exportToPROJString` of a `PROJ ob_tran o_proj=...` method: the method
     /// name is the PROJ operation, and each parameter is `+name=value` in degrees.
+    /// A PROJ-based method, `PROJ <name> [flags and key=value terms]`, whose projection the
+    /// method table does not know (`PROJ mbt_s`): written back as `+proj=<name>` with its
+    /// terms, and its numeric parameters in their own unit.
+    fn proj_based_string(&self) -> Option<String> {
+        let rest = self.method.name().strip_prefix("PROJ ")?;
+        let mut words = rest.split(' ').filter(|word| !word.is_empty());
+        let proj = words.next()?;
+        let mut parts = vec![format!("+proj={proj}")];
+        parts.extend(words.map(|word| format!("+{word}")));
+        for parameter in &self.parameters {
+            let measure = measure_ref(&parameter.value)?;
+            push_number(&mut parts, &parameter.name, measure.value());
+        }
+        Some(parts.join(" "))
+    }
+
     fn proj_ob_tran_string(&self) -> Option<String> {
         let rest = self.method.name().strip_prefix("PROJ ob_tran o_proj=")?;
         let mut parts = vec![format!("+proj=ob_tran +o_proj={rest}")];

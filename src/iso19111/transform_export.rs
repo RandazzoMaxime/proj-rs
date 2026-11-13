@@ -31,14 +31,14 @@ use super::json::rounded_epoch_in_decimal_year;
 use super::model::{
     Axis, ConcatenatedOperation, CoordinateOperation, CoordinateSystem, Crs, Ellipsoid,
     FactoryError, GeocentricCRS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, Measure,
-    ParameterValue, ProjBased, ProjBasedKind, ProjectedCRS, SphericalGeodeticCRS, Transformation,
-    UnitKind, UnitOfMeasure, VerticalCRS,
+    Parameter, ParameterValue, ProjBased, ProjBasedKind, ProjectedCRS, SphericalGeodeticCRS,
+    Transformation, UnitKind, UnitOfMeasure, VerticalCRS,
 };
-use super::pipeline::{proj_number, PipelineFormatter, ProjLines};
+use super::pipeline::{proj_number, PipelineFormatter, ProjLines, TmercExport};
 use super::projstring::{
-    ellipsoid_of, ellipsoid_params, geodetic_member, geographic_of, meridian_of,
-    prime_meridian_params, prime_meridian_radians_params, proj_unit_name, projected_axis_order,
-    spherical_omits_geoc, well_known_pm_name,
+    axes_order, ellipsoid_of, ellipsoid_params, geodetic_member, geographic_of, meridian_of,
+    prime_meridian_params, prime_meridian_radians_params, proj_unit_name, spherical_omits_geoc,
+    well_known_pm_name,
 };
 
 const YEAR: f64 = 31_556_925.445;
@@ -168,8 +168,27 @@ impl CoordinateOperation {
         db: &DatabaseContext,
         lines: ProjLines,
     ) -> Result<String, FactoryError> {
+        self.export_to_proj_string_with_tmerc(db, lines, TmercExport::Exact)
+    }
+
+    /// `exportToPROJString` with the transverse Mercator setting of `PROJStringFormatter`:
+    /// [`TmercExport::Approximate`] writes `+approx` on each `tmerc` and `utm` step, as
+    /// `setUseApproxTMerc(true)` does. The grids are written as in
+    /// [`Self::export_to_proj_string_with_database`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::export_to_proj_string_with_database`].
+    pub fn export_to_proj_string_with_tmerc(
+        &self,
+        db: &DatabaseContext,
+        lines: ProjLines,
+        tmerc: TmercExport,
+    ) -> Result<String, FactoryError> {
         let names = super::select::proj_grid_names(self, db)?;
-        let mut formatter = PipelineFormatter::with_grid_names(names).with_grid_steps();
+        let mut formatter = PipelineFormatter::with_grid_names(names)
+            .with_grid_steps()
+            .with_tmerc(tmerc);
         match self {
             Self::Transformation(transformation) => transformation.export_steps(&mut formatter)?,
             Self::Concatenated(concatenated) => concatenated.export_steps(&mut formatter)?,
@@ -180,6 +199,42 @@ impl CoordinateOperation {
 }
 
 impl ConcatenatedOperation {
+    /// The PROJ-based operation of `createPROJBased` as PROJ holds it: a transformation between
+    /// the CRS pair whose method is `PROJ-based operation method: ` and its PROJ string. `None`
+    /// for any other concatenated operation.
+    ///
+    /// # Errors
+    ///
+    /// The steps cannot be written as a PROJ string.
+    pub(crate) fn proj_based_transformation(&self) -> Result<Option<Transformation>, FactoryError> {
+        if self.proj_based.is_none() || self.source.is_none() || self.target.is_none() {
+            return Ok(None);
+        }
+        let text = self.export_to_proj_string(ProjLines::Single)?;
+        Ok(Some(Transformation {
+            identified: self.identified.clone(),
+            method: super::model::OperationMethod::create(
+                format!("PROJ-based operation method: {text}"),
+                Vec::new(),
+            ),
+            parameters: Vec::new(),
+            source: self.source.clone(),
+            target: self.target.clone(),
+            interpolation: None,
+            accuracy: self.accuracy,
+            accuracy_text: self.accuracy_text(),
+            version: self.version.clone(),
+            point_motion: false,
+            inverted: false,
+            source_epoch: None,
+            target_epoch: None,
+            ballpark: self
+                .steps
+                .iter()
+                .any(|step| step.operation().has_ballpark_transformation()),
+        }))
+    }
+
     /// `exportToPROJString` of a concatenated operation: its steps in order, each
     /// reversed when the step direction is `reverse`.
     ///
@@ -265,6 +320,11 @@ fn export_forward(
         formatter.ingest_proj_string(text);
         return Ok(());
     }
+    if operation.method().code_space() == "PROJ" && operation.method().code() == "PROJString" {
+        // A `PROJString` row of `other_transformation` names its PROJ string as the method.
+        formatter.ingest_proj_string(method_name);
+        return Ok(());
+    }
     if method_name.eq_ignore_ascii_case("Inverse of Geographic3D to GravityRelatedHeight")
         || method_name.eq_ignore_ascii_case("Inverse of Geog3D to Geog2D+GravityRelatedHeight")
     {
@@ -317,10 +377,10 @@ fn export_forward(
         return Ok(());
     }
     if code == METHOD_VERTICAL_OFFSET {
-        return vertical_offset(operation, source, target, formatter);
+        return vertical_offset(operation.parameters(), source, target, formatter);
     }
     if code == METHOD_VERTICAL_OFFSET_AND_SLOPE {
-        return vertical_offset_and_slope(operation, source, target, formatter);
+        return vertical_offset_and_slope(operation.parameters(), source, target, formatter);
     }
     if code == METHOD_GEOCENTRIC_GRID_IGN {
         return geocentric_grid(operation, source, target, formatter);
@@ -1290,17 +1350,44 @@ fn unimplemented(operation: &Transformation) -> FactoryError {
 /// The EPSG method code, or 0 when the method has no EPSG identifier.
 fn epsg_method_code(operation: &Transformation) -> i32 {
     let method = operation.method();
-    if method.code_space() == "EPSG" {
+    let identified = if method.code_space() == "EPSG" {
         method.code().parse().unwrap_or(0)
     } else {
         0
+    };
+    if identified != 0 {
+        return identified;
     }
+    // `OperationMethod::getEPSGCode`: a method without an EPSG identifier takes the code
+    // of its name.
+    super::parammap::method_by_name(method.name()).map_or(0, |known| known.epsg_code)
 }
 
 /// The measure of the parameter with EPSG code `code`, as PROJ's
 /// `parameterValueMeasure(code)`. Absent or not a measure gives `None`.
 fn measure_by_code(operation: &Transformation, code: i32) -> Option<&Measure> {
-    operation.parameters().iter().find_map(|parameter| {
+    if let Some(measure) = measure_in(operation.parameters(), code) {
+        return Some(measure);
+    }
+    // `OperationParameter::getEPSGCode`: a parameter without an EPSG identifier takes the
+    // code of its name, within the method the name gives.
+    let method = super::parammap::method_by_name(operation.method().name())?;
+    let known = method.params.iter().find(|known| known.epsg_code == code)?;
+    operation
+        .parameters()
+        .iter()
+        .find(|parameter| {
+            parameter.code().is_empty() && names_match(parameter.name(), known.wkt2_name)
+        })
+        .and_then(|parameter| match parameter.value() {
+            ParameterValue::Measure(measure) => Some(measure),
+            _ => None,
+        })
+}
+
+/// The measure of the parameter `code` in a list of parameters of a conversion or a transformation.
+fn measure_in(parameters: &[Parameter], code: i32) -> Option<&Measure> {
+    parameters.iter().find_map(|parameter| {
         if parameter.code() == code.to_string() {
             match parameter.value() {
                 ParameterValue::Measure(measure) => Some(measure),
@@ -1486,9 +1573,11 @@ fn geographic_geocentric(
     target: Option<&Crs>,
     formatter: &mut PipelineFormatter,
 ) -> Result<(), FactoryError> {
+    // A bound end is read through its base, as `Conversion::_exportToPROJString` does
+    // (conversion.cpp:3838-3845).
     let (Some(source), Some(target)) = (
-        source.and_then(geodetic_front),
-        target.and_then(geodetic_front),
+        source.and_then(bound_base).and_then(geodetic_front),
+        target.and_then(bound_base).and_then(geodetic_front),
     ) else {
         return Err(invalid_geographic_geocentric());
     };
@@ -1679,8 +1768,8 @@ fn geographic_offset(
 /// `Vertical Offset`: the linear unit of each vertical CRS, and `geogoffset +dh`
 /// when the offset is not zero. A compound CRS whose horizontal parts match
 /// contributes its vertical component.
-fn vertical_offset(
-    operation: &Transformation,
+pub(super) fn vertical_offset(
+    parameters: &[Parameter],
     source: Option<&Crs>,
     target: Option<&Crs>,
     formatter: &mut PipelineFormatter,
@@ -1689,7 +1778,7 @@ fn vertical_offset(
     formatter.start_inversion();
     linear_unit_convert(source, formatter);
     formatter.stop_inversion();
-    let offset = si_value(operation, 8603);
+    let offset = measure_in(parameters, 8603).map_or(0.0, Measure::si_value);
     if offset != 0.0 {
         formatter.add_step("geogoffset");
         formatter.add_number("dh", offset);
@@ -1702,8 +1791,8 @@ fn vertical_offset(
 /// vertical CRS around `vertoffset`, with the evaluation point in degrees, the offset in metres
 /// and the inclinations in arc-seconds. A compound CRS whose horizontal parts match contributes
 /// its vertical component.
-fn vertical_offset_and_slope(
-    operation: &Transformation,
+pub(super) fn vertical_offset_and_slope(
+    parameters: &[Parameter],
     source: Option<&Crs>,
     target: Option<&Crs>,
     formatter: &mut PipelineFormatter,
@@ -1712,15 +1801,17 @@ fn vertical_offset_and_slope(
         FactoryError::Format("Can apply Vertical offset and slope only to VerticalCRS".to_owned())
     })?;
     let degree = PI / 180.0;
+    // `parameterValueNumeric(code, unit)` and `parameterValueNumericAsSI(code)` over `parameters`.
+    let si = |code: i32| measure_in(parameters, code).map_or(0.0, Measure::si_value);
     formatter.start_inversion();
     linear_unit_convert(source, formatter);
     formatter.stop_inversion();
     formatter.add_step("vertoffset");
-    formatter.add_number("lat_0", numeric(operation, 8617, degree));
-    formatter.add_number("lon_0", numeric(operation, 8618, degree));
-    formatter.add_number("dh", si_value(operation, 8603));
-    formatter.add_number("slope_lat", numeric(operation, 8730, ARC_SECOND));
-    formatter.add_number("slope_lon", numeric(operation, 8731, ARC_SECOND));
+    formatter.add_number("lat_0", si(8617) / degree);
+    formatter.add_number("lon_0", si(8618) / degree);
+    formatter.add_number("dh", si(8603));
+    formatter.add_number("slope_lat", si(8730) / ARC_SECOND);
+    formatter.add_number("slope_lon", si(8731) / ARC_SECOND);
     linear_unit_convert(target, formatter);
     Ok(())
 }
@@ -1843,7 +1934,7 @@ pub(super) fn change_vertical_unit_by_factor(factor: f64, formatter: &mut Pipeli
 fn vertical_pair<'a>(
     source: Option<&'a Crs>,
     target: Option<&'a Crs>,
-) -> Result<(&'a VerticalCRS, &'a VerticalCRS), FactoryError> {
+) -> Result<(&'a UnitOfMeasure, &'a UnitOfMeasure), FactoryError> {
     let (source, target) = match (source, target) {
         (Some(Crs::Compound(source_crs)), Some(Crs::Compound(target_crs)))
             if source_crs.components().first().is_some_and(|left| {
@@ -1860,7 +1951,7 @@ fn vertical_pair<'a>(
         }
         other => other,
     };
-    match (vertical_crs(source), vertical_crs(target)) {
+    match (vertical_unit(source), vertical_unit(target)) {
         (Some(source), Some(target)) => Ok((source, target)),
         _ => Err(FactoryError::Format(
             "Can apply Vertical offset only to VerticalCRS".to_owned(),
@@ -1868,15 +1959,23 @@ fn vertical_pair<'a>(
     }
 }
 
-fn vertical_crs(crs: Option<&Crs>) -> Option<&VerticalCRS> {
+/// The unit of a vertical CRS, a derived vertical CRS included (`DerivedVerticalCRS` is a
+/// `VerticalCRS` in PROJ, so `dynamic_cast<const crs::VerticalCRS *>` accepts it).
+fn vertical_unit(crs: Option<&Crs>) -> Option<&UnitOfMeasure> {
     match crs {
-        Some(Crs::Vertical(vertical)) => Some(vertical),
+        Some(Crs::Vertical(vertical)) => Some(vertical.coordinate_system().axis().unit()),
+        Some(Crs::Derived(derived)) if derived.kind() == super::niche::DerivedKind::Vertical => {
+            derived
+                .coordinate_system()
+                .axes()
+                .first()
+                .map(|axis| axis.unit())
+        }
         _ => None,
     }
 }
 
-fn linear_unit_convert(vertical: &VerticalCRS, formatter: &mut PipelineFormatter) {
-    let unit = vertical.coordinate_system().axis().unit();
+fn linear_unit_convert(unit: &UnitOfMeasure, formatter: &mut PipelineFormatter) {
     if unit.conversion_to_si() == 1.0 {
         return;
     }
@@ -1949,7 +2048,12 @@ fn grid_offset_endpoint(crs: Option<&Crs>) -> Result<Option<&ProjectedCRS>, Fact
 /// `ProjectedCRS::addUnitConvertAndAxisSwap` outside a CRS: the metre
 /// conversion when an axis is not metre, then the axis order.
 fn projected_unit_and_axis_swap(projected: &ProjectedCRS, formatter: &mut PipelineFormatter) {
-    let axes = projected.coordinate_system().axes();
+    cartesian_unit_and_axis_swap(projected.coordinate_system().axes(), formatter);
+}
+
+/// The unit and axis order of a Cartesian coordinate system, as
+/// `ProjectedCRS::addUnitConvertAndAxisSwap` writes them for its axes.
+pub(super) fn cartesian_unit_and_axis_swap(axes: &[Axis], formatter: &mut PipelineFormatter) {
     let Some(first) = axes.first() else {
         return;
     };
@@ -1973,7 +2077,7 @@ fn projected_unit_and_axis_swap(projected: &ProjectedCRS, formatter: &mut Pipeli
             formatter.add_param("z_out", &unit_text(height));
         }
     }
-    if let Some(order) = projected_axis_order(projected) {
+    if let Some(order) = axes_order(axes) {
         formatter.add_step("axisswap");
         formatter.add_param("order", &order);
     }
@@ -2351,6 +2455,14 @@ enum Geodetic<'a> {
 }
 
 /// The geodetic CRS of `crs`, or of its first component when `crs` is compound.
+/// The base of a bound CRS, or the CRS itself.
+fn bound_base(crs: &Crs) -> Option<&Crs> {
+    match crs {
+        Crs::Bound(bound) => bound_base(bound.source_crs()),
+        other => Some(other),
+    }
+}
+
 fn geodetic_front(crs: &Crs) -> Option<Geodetic<'_>> {
     match crs {
         Crs::Compound(compound) => compound.components().first().and_then(geodetic_direct),

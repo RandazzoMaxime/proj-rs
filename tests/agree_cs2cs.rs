@@ -6,10 +6,6 @@ use std::process::{Command, Stdio};
 
 /// The PROJ `cs2cs` on `PATH`, if there is one. `PROJ_CS2CS_REQUIRED` turns a
 /// missing binary into a failure, as the CI does.
-#[expect(
-    clippy::print_stderr,
-    reason = "the skip is reported to the reader of the test output"
-)]
 fn proj_cs2cs() -> Option<std::path::PathBuf> {
     // `cargo test` puts `target/` on `PATH`. Our own `cs2cs` binary lives
     // there and must not shadow the PROJ install this test compares against.
@@ -29,7 +25,11 @@ fn proj_cs2cs() -> Option<std::path::PathBuf> {
             std::env::var_os("PROJ_CS2CS_REQUIRED").is_none(),
             "PROJ_CS2CS_REQUIRED is set but no PROJ cs2cs is on PATH"
         );
-        eprintln!("skipped: no PROJ cs2cs on PATH");
+        // The skip is reported to the reader of the test output.
+        drop(writeln!(
+            std::io::stderr(),
+            "skipped: no PROJ cs2cs on PATH"
+        ));
     }
     found
 }

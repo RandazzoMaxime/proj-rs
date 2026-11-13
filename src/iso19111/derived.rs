@@ -47,7 +47,7 @@ pub(super) fn derived_base(crs: &Crs) -> Option<Crs> {
 
 /// The deriving conversion of a derived CRS, with its CRS pair (base to derived, as the
 /// projection runs), and its base CRS.
-fn derived_parts(crs: &Crs) -> Option<(Conversion, Crs)> {
+pub(super) fn derived_parts(crs: &Crs) -> Option<(Conversion, Crs)> {
     let (conversion, base) = match crs {
         Crs::Projected(projected) => (
             projected.deriving_conversion(),

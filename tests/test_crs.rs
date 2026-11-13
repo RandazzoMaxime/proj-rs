@@ -4,10 +4,11 @@
 
 use proj_rs::{
     create_crs_from_proj_string, create_from_user_input, AuthorityFactory, Axis, CartesianCS,
-    Conversion, CoordinateSystem, Crs, DatabaseContext, Datum, DatumEnsemble, EllipsoidalCS,
-    EllipsoidalHeightPolicy, Equivalence, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS,
-    LinunitPolicy, OpProps, OutputAxisRule, PrimeMeridian, ProjectedCRS, UnitKind, UnitOfMeasure,
-    VerticalReferenceFrame, WktConvention, WktFormatter, WktLines, WktParser, WktStrictness,
+    Conversion, CoordinateOperationFactory, CoordinateSystem, Crs, DatabaseContext, Datum,
+    DatumEnsemble, DerivedProjectedCRS, EllipsoidalCS, EllipsoidalHeightPolicy, Equivalence,
+    GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, LinunitPolicy, OpProps, OutputAxisRule,
+    PrimeMeridian, ProjLines, ProjectedCRS, UnitKind, UnitOfMeasure, VerticalReferenceFrame,
+    WktConvention, WktFormatter, WktLines, WktParser, WktStrictness,
 };
 
 fn export(crs: &GeographicCRS, convention: WktConvention) -> String {
@@ -2799,5 +2800,45 @@ USAGE[SCOPE[\"scope\"],AREA[\"area.\"]]]";
         crs.export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2019))
             .expect("WKT2"),
         expected
+    );
+}
+
+/// `TEST(crs, normalizeForVisualization_derivedprojected_operation)`: the operation from
+/// EPSG:4326 to a derived projected CRS with north/east foot axes, before and after
+/// `normalizeForVisualization`. Expected PROJ strings are those of the PROJ 9.9.0 test.
+#[test]
+fn crs_normalize_for_visualization_derivedprojected_operation() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let derived = DerivedProjectedCRS::create(
+        "derived projectedCRS",
+        utm_31n(),
+        Conversion::create_with_method("PROJ unimplemented", "", "", Vec::new())
+            .with_name("unnamed"),
+        CoordinateSystem::Cartesian(CartesianCS::create_northing_easting(UnitOfMeasure::foot())),
+    );
+    let source = Crs::Geographic(GeographicCRS::epsg_4326());
+    let target = Crs::DerivedProjected(derived);
+
+    let op = CoordinateOperationFactory::create()
+        .create_operation(&source, &target)
+        .expect("operation")
+        .expect("an operation");
+    assert_eq!(
+        op.export_to_proj_string_with_database(&db, ProjLines::Single)
+            .expect("PROJ"),
+        "+proj=pipeline +step +proj=axisswap +order=2,1 +step \
+         +proj=unitconvert +xy_in=deg +xy_out=rad +step +proj=utm +zone=31 \
+         +ellps=WGS84 +step +proj=unimplemented +step +proj=unitconvert \
+         +xy_in=m +xy_out=ft +step +proj=axisswap +order=2,1"
+    );
+
+    let normalized = op.normalize_for_visualization().expect("normalized");
+    assert_eq!(
+        normalized
+            .export_to_proj_string_with_database(&db, ProjLines::Single)
+            .expect("PROJ"),
+        "+proj=pipeline +step +proj=unitconvert +xy_in=deg +xy_out=rad +step \
+         +proj=utm +zone=31 +ellps=WGS84 +step +proj=unimplemented +step \
+         +proj=unitconvert +xy_in=m +xy_out=ft"
     );
 }

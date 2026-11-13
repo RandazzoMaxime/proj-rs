@@ -2,9 +2,8 @@
 //! pair with alternative operations (forward and reverse), and the degree queries
 //! `proj_degree_input` and `proj_degree_output` on the normalized objects.
 //!
-//! Expected values are copied from the C++ tests without change. The check of the
-//! `proj_pj_info` definition after `proj_trans` in `..._with_alternatives` is not here: the
-//! candidate that `proj_trans` selects is not recorded by this facade (see the sheet).
+//! Expected values are copied from the C++ tests without change. The `proj_pj_info` definition
+//! after `proj_trans` in `..._with_alternatives` is the candidate the point used (`Proj::proj_info`).
 
 use proj_rs::iso19111::{AuthorityFactory, CoordinateOperationFactory, DatabaseContext, ProjLines};
 use proj_rs::{Direction, Proj};
@@ -51,12 +50,30 @@ fn capi_proj_normalize_for_visualization_with_alternatives() {
     let proj = Proj::new_known_crs("EPSG:4326", "EPSG:3003", None).expect("pair");
     assert!(proj.degree_input(Direction::Forward));
     assert!(!proj.degree_output(Direction::Forward));
+    // Before any point, PROJ has no chosen candidate (`info.cpp` 178-186).
+    assert_eq!(
+        proj.proj_info().definition.as_deref(),
+        Some("unavailable until proj_trans is called")
+    );
 
     let (x, y) = proj
         .convert((12.5_f64, 42.0_f64))
         .expect("forward, approximately Roma");
     assert!((x - 1_789_912.462_647_830_4).abs() < 1e-8, "x = {x}");
     assert!((y - 4_655_716.254_025_768_5).abs() < 1e-8, "y = {y}");
+    // The candidate the point used is the one `proj_pj_info` reports (`info.cpp` 170-171).
+    assert_eq!(
+        proj.proj_info().definition.as_deref(),
+        Some(
+            "proj=pipeline step proj=unitconvert xy_in=deg xy_out=rad \
+             step proj=push v_3 step proj=cart ellps=WGS84 \
+             step inv proj=helmert x=-104.1 y=-49.1 z=-9.9 rx=0.971 \
+             ry=-2.917 rz=0.714 s=-11.68 convention=position_vector \
+             step inv proj=cart ellps=intl step proj=pop v_3 \
+             step proj=tmerc lat_0=0 lon_0=9 k=0.9996 x_0=1500000 \
+             y_0=0 ellps=intl"
+        )
+    );
 
     let (lon, lat) = proj
         .project(

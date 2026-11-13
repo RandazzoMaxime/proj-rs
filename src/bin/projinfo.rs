@@ -729,7 +729,7 @@ fn complete_shell(args: &[String]) -> Result<String, String> {
             if info.deprecated || !info.name.starts_with(last_arg.as_str()) {
                 continue;
             }
-            let mut name = info.name.clone();
+            let mut name = info.name;
             if last == "+" || last == "/" {
                 if let Some(pos) = name.find(last.as_str()) {
                     if name.as_bytes().get(pos + 1) == Some(&b' ') {
@@ -1854,8 +1854,15 @@ fn sql_text(
     } else {
         options.authorities.clone()
     };
-    let statements = proj_rs::insert_statements(db, object, authority, code, &allowed)
-        .map_err(|error| error.to_string())?;
+    let statements = proj_rs::insert_statements(
+        db,
+        object,
+        authority,
+        code,
+        proj_rs::ComponentCodes::FromParentCode,
+        &allowed,
+    )
+    .map_err(|error| error.to_string())?;
     Ok(statements.join("\n"))
 }
 

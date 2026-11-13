@@ -2,22 +2,105 @@
 //! `proj.db`: the insert path of `DatabaseContext::getInsertStatementsFor` in
 //! `factory.cpp`.
 //!
-//! Covered: prime meridian, ellipsoid, geodetic datum, geographic and
-//! geocentric CRS, and projected CRS with its conversion, with the units,
-//! coordinate systems, and usages they need. A datum ensemble that is not
-//! already in the database, a vertical or compound CRS, and a bound CRS are
-//! errors. Each call starts from the database as it is; objects inserted by an
-//! earlier call are not seen.
+//! Covered: prime meridian, ellipsoid, geodetic and vertical datum, datum
+//! ensembles, geographic, geocentric, projected, vertical and compound CRS,
+//! and a bound CRS (its base CRS is written), with the conversions, units,
+//! coordinate systems, and usages they need. The codes of the parts come from
+//! [`ComponentCodes`]. Datums of other kinds, and objects that have no insert
+//! in this build, are errors.
+//!
+//! An [`InsertSession`] keeps what the calls insert: each statement is run
+//! inside the session's savepoint as soon as it is produced, so a later call
+//! sees the objects of an earlier one and returns nothing for an object that
+//! is already inserted. Closing the session rolls the savepoint back, as PROJ
+//! discards its temporary database.
 
 use super::equiv::{directions_and_units, ellipsoid_equivalent_loose};
 use super::factory::{AuthorityFactory, AuthorityObject, DatabaseContext, NameMatch, ObjectType};
 use super::model::{
-    Axis, CoordinateSystem, Crs, Datum, Ellipsoid, FactoryError, GeodeticCRS,
-    GeodeticReferenceFrame, Identifier, ObjectDomain, Parameter, ParameterValue, PrimeMeridian,
-    ProjectedCRS, UnitKind, UnitOfMeasure,
+    Axis, CompoundCRS, CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble, Ellipsoid,
+    FactoryError, GeodeticCRS, GeodeticReferenceFrame, Identifier, ObjectDomain, Parameter,
+    ParameterValue, PrimeMeridian, ProjectedCRS, UnitKind, UnitOfMeasure, VerticalCRS,
+    VerticalReferenceFrame,
 };
 use super::parammap::{method_by_code, method_by_name, MethodMap};
 use super::wkt::format_g;
+
+/// An insertion session on a database: PROJ's
+/// `startInsertStatementsSession()` and `stopInsertStatementsSession()`.
+///
+/// Only one session may be open on a database at a time, and the session is
+/// shared by its clones. Dropping the session discards what it inserted.
+#[derive(Debug)]
+pub struct InsertSession {
+    db: DatabaseContext,
+}
+
+/// The savepoint that holds the rows of an [`InsertSession`].
+const SESSION_SAVEPOINT: &str = "proj_insert_session";
+
+impl InsertSession {
+    /// Open a session on `db`.
+    ///
+    /// # Errors
+    ///
+    /// A session is already open on `db`.
+    pub fn start(db: &DatabaseContext) -> Result<Self, FactoryError> {
+        if db
+            .insert_session_flag()
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(FactoryError::Invalid(
+                "startInsertStatementsSession() cannot be invoked until \
+                 stopInsertStatementsSession() is."
+                    .to_owned(),
+            ));
+        }
+        if let Err(error) = db.execute_batch(&format!("SAVEPOINT {SESSION_SAVEPOINT}")) {
+            db.insert_session_flag()
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+            return Err(error);
+        }
+        Ok(Self { db: db.clone() })
+    }
+
+    /// The SQL statements that write `object` into `auth_name` under `code`,
+    /// as [`insert_statements`], inside this session.
+    ///
+    /// # Errors
+    ///
+    /// As [`insert_statements`]. A statement that fails to run in the session
+    /// is an error, and the session should be dropped.
+    pub fn statements_for(
+        &self,
+        object: &AuthorityObject,
+        auth_name: &str,
+        code: &str,
+        components: ComponentCodes,
+        allowed: &[String],
+    ) -> Result<Vec<String>, FactoryError> {
+        let mut writer = Writer {
+            db: &self.db,
+            allowed,
+            components,
+            statements: Vec::new(),
+        };
+        writer.object(object, auth_name, code)?;
+        Ok(writer.statements)
+    }
+}
+
+impl Drop for InsertSession {
+    fn drop(&mut self) {
+        // PROJ ignores errors while it stops a session as well.
+        let _ = self.db.execute_batch(&format!(
+            "ROLLBACK TO {SESSION_SAVEPOINT}; RELEASE {SESSION_SAVEPOINT};"
+        ));
+        self.db
+            .insert_session_flag()
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
 
 /// The SQL statements that write `object` into `auth_name` under `code`.
 ///
@@ -25,30 +108,43 @@ use super::wkt::format_g;
 /// `projinfo --authority` names them; `auth_name` is always one of them. The
 /// result is empty when `object` is already known under that name.
 ///
+/// This opens a temporary [`InsertSession`], so the statements of one call are
+/// not seen by the next call. Use a session to insert several objects.
+///
 /// # Errors
 ///
 /// `object` has no insert in this build, a database lookup fails, or a part of
-/// `object` has no authority code and no PROJ name to stand in for one.
+/// `object` has no authority code and no PROJ name to stand in for one. A
+/// session is already open on `db`.
 pub fn insert_statements(
     db: &DatabaseContext,
     object: &AuthorityObject,
     auth_name: &str,
     code: &str,
+    components: ComponentCodes,
     allowed: &[String],
 ) -> Result<Vec<String>, FactoryError> {
-    let mut writer = Writer {
-        db,
-        allowed,
-        statements: Vec::new(),
-    };
-    writer.object(object, auth_name, code)?;
-    Ok(writer.statements)
+    InsertSession::start(db)?.statements_for(object, auth_name, code, components, allowed)
 }
 
 struct Writer<'a> {
     db: &'a DatabaseContext,
     allowed: &'a [String],
+    components: ComponentCodes,
     statements: Vec<String>,
+}
+
+/// How the objects that a new object needs, and that the database does not
+/// have, get their codes: the `numericCode` argument of PROJ's
+/// `getInsertStatementsFor()`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ComponentCodes {
+    /// Each part takes the next free number of its table, as
+    /// `suggestsCodeFor(..., true)` gives it.
+    Numeric,
+    /// Each part's code is its kind's prefix and the code of the new object,
+    /// such as `GEODETIC_DATUM_<code>` or `COMPONENT_<code>_<n>`.
+    FromParentCode,
 }
 
 /// `%q`: a text value between single quotes, with its quotes doubled.
@@ -67,13 +163,39 @@ fn number(value: f64) -> String {
     }
 }
 
+/// A text value between quotes, or `NULL`.
+fn optional(text: Option<&str>) -> String {
+    match text {
+        Some(text) => format!("'{}'", quote(text)),
+        None => "NULL".to_owned(),
+    }
+}
+
 fn unsupported(what: &str) -> FactoryError {
     FactoryError::Format(format!("cannot insert {what} into a database"))
 }
 
 impl Writer<'_> {
-    fn push(&mut self, sql: String) {
+    /// Record `sql` and run it in the session, so that the lookups that follow
+    /// see the row it writes.
+    fn push(&mut self, sql: String) -> Result<(), FactoryError> {
+        self.db.execute_batch(&sql)?;
         self.statements.push(sql);
+        Ok(())
+    }
+
+    /// The code of a part that is written as `object` into `auth`: the next
+    /// number under [`ComponentCodes::Numeric`], else `derived()`.
+    fn part_code(
+        &self,
+        object: &AuthorityObject,
+        auth: &str,
+        derived: impl FnOnce() -> String,
+    ) -> Result<String, FactoryError> {
+        match self.components {
+            ComponentCodes::Numeric => suggests_code_for(self.db, object, auth, CodeForm::Numeric),
+            ComponentCodes::FromParentCode => Ok(derived()),
+        }
     }
 
     /// Authorities whose existing objects may stand in for an object that
@@ -96,6 +218,10 @@ impl Writer<'_> {
             AuthorityObject::Datum(Datum::Geodetic(datum)) => {
                 self.geodetic_datum(datum, auth, code)
             }
+            AuthorityObject::Datum(Datum::Vertical(datum)) => {
+                self.vertical_datum(datum, auth, code)
+            }
+            AuthorityObject::DatumEnsemble(ensemble) => self.datum_ensemble(ensemble, auth, code),
             AuthorityObject::Crs(crs) => self.crs(crs, auth, code),
             _ => Err(unsupported("this kind of object")),
         }
@@ -125,6 +251,13 @@ impl Writer<'_> {
             }
             Crs::Geodetic(geodetic) => self.geodetic(geodetic, auth, code),
             Crs::Projected(projected) => self.projected(projected, auth, code),
+            Crs::Vertical(vertical) => self.vertical_crs(vertical, auth, code),
+            Crs::Compound(compound) => self.compound_crs(compound, auth, code),
+            Crs::Bound(bound) => {
+                // PROJ inserts the base CRS of a bound CRS, and no bound CRS row.
+                let base = bound.source_crs().clone();
+                self.crs(&base, auth, code)
+            }
             _ => Err(unsupported("this kind of CRS")),
         }
     }
@@ -132,14 +265,22 @@ impl Writer<'_> {
     fn geodetic(&mut self, crs: &GeodeticCRS, auth: &str, code: &str) -> Result<(), FactoryError> {
         let (datum_auth, datum_code) = if let Some(ensemble) = crs.datum_ensemble() {
             let object = AuthorityObject::DatumEnsemble(ensemble.clone());
-            self.existing(auth, &object)?
-                .ok_or_else(|| unsupported("a datum ensemble that the database does not know"))?
+            match self.existing(auth, &object)? {
+                Some(known) => known,
+                None => {
+                    let datum_code =
+                        self.part_code(&object, auth, || format!("GEODETIC_DATUM_{code}"))?;
+                    self.datum_ensemble(ensemble, auth, &datum_code)?;
+                    (auth.to_owned(), datum_code)
+                }
+            }
         } else if let Some(datum) = crs.datum() {
             let object = AuthorityObject::Datum(Datum::Geodetic(datum.clone()));
             match self.existing(auth, &object)? {
                 Some(known) => known,
                 None => {
-                    let datum_code = format!("GEODETIC_DATUM_{code}");
+                    let datum_code =
+                        self.part_code(&object, auth, || format!("GEODETIC_DATUM_{code}"))?;
                     self.geodetic_datum(datum, auth, &datum_code)?;
                     (auth.to_owned(), datum_code)
                 }
@@ -167,7 +308,7 @@ impl Writer<'_> {
             quote(&cs_code),
             quote(&datum_auth),
             quote(&datum_code),
-        ));
+        ))?;
         self.usages(crs.domains(), "geodetic_crs", auth, code)
     }
 
@@ -199,13 +340,13 @@ impl Writer<'_> {
                 (auth.to_owned(), base_code)
             }
         };
-        let conversion_code = format!("CONVERSION_{code}");
-        self.conversion(
-            crs.deriving_conversion(),
-            crs.domains(),
+        let conversion = crs.deriving_conversion();
+        let conversion_code = self.part_code(
+            &AuthorityObject::Operation(CoordinateOperation::Conversion(conversion.clone())),
             auth,
-            &conversion_code,
+            || format!("CONVERSION_{code}"),
         )?;
+        self.conversion(conversion, crs.domains(), auth, &conversion_code)?;
         let (cs_auth, cs_code) = self.coordinate_system(
             &CoordinateSystem::Cartesian(crs.coordinate_system().clone()),
             "PROJECTED_CRS",
@@ -223,7 +364,7 @@ impl Writer<'_> {
             quote(&base_code),
             quote(auth),
             quote(&conversion_code),
-        ));
+        ))?;
         self.usages(crs.domains(), "projected_crs", auth, code)
     }
 
@@ -331,7 +472,7 @@ impl Writer<'_> {
             sql.push_str(",NULL,NULL,NULL,NULL,NULL,NULL");
         }
         sql.push_str(",0);");
-        self.push(sql);
+        self.push(sql)?;
         self.usages(domains, "conversion", auth, code)
     }
 
@@ -377,7 +518,7 @@ impl Writer<'_> {
             quote(&unit_code),
             inverse_flattening,
             semi_minor,
-        ));
+        ))?;
         Ok(())
     }
 
@@ -409,7 +550,7 @@ impl Writer<'_> {
             quote(code),
             quote(name),
             number(semi_major),
-        ));
+        ))?;
         Ok((auth.to_owned(), code.to_owned()))
     }
 
@@ -433,7 +574,7 @@ impl Writer<'_> {
             number(longitude.value()),
             quote(&unit_auth),
             quote(&unit_code),
-        ));
+        ))?;
         Ok(())
     }
 
@@ -448,29 +589,28 @@ impl Writer<'_> {
             return Ok(());
         }
         let ellipsoid = datum.ellipsoid();
-        let (ellipsoid_auth, ellipsoid_code) =
-            match self.existing(auth, &AuthorityObject::Ellipsoid(ellipsoid.clone()))? {
-                Some(known) => known,
-                None => {
-                    let ellipsoid_code = format!("ELLPS_{code}");
-                    self.ellipsoid(ellipsoid, auth, &ellipsoid_code)?;
-                    (auth.to_owned(), ellipsoid_code)
-                }
-            };
+        let (ellipsoid_auth, ellipsoid_code) = match self
+            .existing(auth, &AuthorityObject::Ellipsoid(ellipsoid.clone()))?
+        {
+            Some(known) => known,
+            None => {
+                let object = AuthorityObject::Ellipsoid(ellipsoid.clone());
+                let ellipsoid_code = self.part_code(&object, auth, || format!("ELLPS_{code}"))?;
+                self.ellipsoid(ellipsoid, auth, &ellipsoid_code)?;
+                (auth.to_owned(), ellipsoid_code)
+            }
+        };
         let meridian = datum.prime_meridian();
         let (meridian_auth, meridian_code) =
             match self.existing(auth, &AuthorityObject::PrimeMeridian(meridian.clone()))? {
                 Some(known) => known,
                 None => {
-                    let meridian_code = format!("PM_{code}");
+                    let object = AuthorityObject::PrimeMeridian(meridian.clone());
+                    let meridian_code = self.part_code(&object, auth, || format!("PM_{code}"))?;
                     self.prime_meridian(meridian, auth, &meridian_code)?;
                     (auth.to_owned(), meridian_code)
                 }
             };
-        let optional = |text: Option<&str>| match text {
-            Some(text) => format!("'{}'", quote(text)),
-            None => "NULL".to_owned(),
-        };
         let frame_epoch = datum
             .frame_reference_epoch()
             .map_or_else(|| "NULL".to_owned(), number);
@@ -489,7 +629,7 @@ impl Writer<'_> {
             quote(&meridian_code),
             optional(datum.publication_date()),
             optional(anchor),
-        ));
+        ))?;
         self.usages(datum.domains(), "geodetic_datum", auth, code)
     }
 
@@ -557,6 +697,266 @@ impl Writer<'_> {
         Ok(None)
     }
 
+    /// `getInsertStatementsFor(VerticalReferenceFrame)`: the row, then its usages.
+    fn vertical_datum(
+        &mut self,
+        datum: &VerticalReferenceFrame,
+        auth: &str,
+        code: &str,
+    ) -> Result<(), FactoryError> {
+        let object = AuthorityObject::Datum(Datum::Vertical(datum.clone()));
+        if self.existing(auth, &object)?.as_ref() == Some(&(auth.to_owned(), code.to_owned())) {
+            return Ok(());
+        }
+        let frame_epoch = datum
+            .frame_reference_epoch()
+            .map_or_else(|| "NULL".to_owned(), number);
+        let anchor = datum.anchor().filter(|text| !text.is_empty());
+        let anchor_epoch = datum
+            .anchor_epoch()
+            .map_or_else(|| "NULL".to_owned(), |epoch| format!("{epoch:.3}"));
+        self.push(format!(
+            "INSERT INTO vertical_datum VALUES('{}','{}','{}','',{},{frame_epoch},NULL,{},{anchor_epoch},0);",
+            quote(auth),
+            quote(code),
+            quote(datum.name()),
+            optional(datum.publication_date()),
+            optional(anchor),
+        ))?;
+        self.usages(datum.domains(), "vertical_datum", auth, code)
+    }
+
+    /// `getInsertStatementsFor(DatumEnsemble)`: the members that the database
+    /// lacks, the ensemble row, its usages, then one member row per member.
+    fn datum_ensemble(
+        &mut self,
+        ensemble: &DatumEnsemble,
+        auth: &str,
+        code: &str,
+    ) -> Result<(), FactoryError> {
+        let object = AuthorityObject::DatumEnsemble(ensemble.clone());
+        if self.existing(auth, &object)?.as_ref() == Some(&(auth.to_owned(), code.to_owned())) {
+            return Ok(());
+        }
+        let mut members_id: Vec<(String, String)> = Vec::new();
+        for (position, member) in ensemble.members().iter().enumerate() {
+            let member_object = AuthorityObject::Datum(member.clone());
+            let (member_auth, member_code) = match self.existing(auth, &member_object)? {
+                Some(known) => known,
+                None => {
+                    let member_code = self.part_code(&member_object, auth, || {
+                        format!("MEMBER_{}_OF_{code}", position + 1)
+                    })?;
+                    self.statements_of_datum(member, auth, &member_code)?;
+                    (auth.to_owned(), member_code)
+                }
+            };
+            members_id.push((member_auth, member_code));
+        }
+
+        let first = members_id
+            .first()
+            .ok_or_else(|| FactoryError::Format("a datum ensemble without members".to_owned()))?;
+        let is_geodetic = matches!(ensemble.members().first(), Some(Datum::Geodetic(_)));
+        let accuracy = format!("{:.6}", ensemble.positional_accuracy());
+        let table = if is_geodetic {
+            "geodetic_datum"
+        } else {
+            "vertical_datum"
+        };
+        if is_geodetic {
+            let first_datum = AuthorityFactory::create(self.db, first.0.as_str())
+                .create_geodetic_datum(&first.1)?;
+            let (ellipsoid_auth, ellipsoid_code) = first_datum
+                .ellipsoid()
+                .identifiers()
+                .first()
+                .map(|id| (id.code_space().to_owned(), id.code().to_owned()))
+                .ok_or_else(|| unsupported("an ellipsoid without identifier"))?;
+            let (meridian_auth, meridian_code) = first_datum
+                .prime_meridian()
+                .identifiers()
+                .first()
+                .map(|id| (id.code_space().to_owned(), id.code().to_owned()))
+                .ok_or_else(|| unsupported("a prime meridian without identifier"))?;
+            self.push(format!(
+                "INSERT INTO geodetic_datum VALUES('{}','{}','{}','','{}','{}','{}','{}',NULL,NULL,{accuracy},{},{},0);",
+                quote(auth),
+                quote(code),
+                quote(ensemble.name()),
+                quote(&ellipsoid_auth),
+                quote(&ellipsoid_code),
+                quote(&meridian_auth),
+                quote(&meridian_code),
+                optional(first_datum.anchor().filter(|text| !text.is_empty())),
+                first_datum
+                    .anchor_epoch()
+                    .map_or_else(|| "NULL".to_owned(), |epoch| format!("{epoch:.3}")),
+            ))?;
+        } else {
+            let first_datum = AuthorityFactory::create(self.db, first.0.as_str())
+                .create_vertical_datum(&first.1)?;
+            self.push(format!(
+                "INSERT INTO vertical_datum VALUES('{}','{}','{}','',NULL,NULL,{accuracy},{},{},0);",
+                quote(auth),
+                quote(code),
+                quote(ensemble.name()),
+                optional(first_datum.anchor().filter(|text| !text.is_empty())),
+                first_datum
+                    .anchor_epoch()
+                    .map_or_else(|| "NULL".to_owned(), |epoch| format!("{epoch:.3}")),
+            ))?;
+        }
+        self.usages(ensemble.domains(), table, auth, code)?;
+
+        let member_table = if is_geodetic {
+            "geodetic_datum_ensemble_member"
+        } else {
+            "vertical_datum_ensemble_member"
+        };
+        for (position, (member_auth, member_code)) in members_id.iter().enumerate() {
+            self.push(format!(
+                "INSERT INTO {member_table} VALUES('{}','{}','{}','{}',{});",
+                quote(auth),
+                quote(code),
+                quote(member_auth),
+                quote(member_code),
+                position + 1,
+            ))?;
+        }
+        Ok(())
+    }
+
+    /// The statements of a datum that is one member of an ensemble, under `code`.
+    fn statements_of_datum(
+        &mut self,
+        datum: &Datum,
+        auth: &str,
+        code: &str,
+    ) -> Result<(), FactoryError> {
+        match datum {
+            Datum::Geodetic(geodetic) => self.geodetic_datum(geodetic, auth, code),
+            Datum::Vertical(vertical) => self.vertical_datum(vertical, auth, code),
+            Datum::Engineering(_) => Err(unsupported("an engineering datum")),
+        }
+    }
+
+    /// `getInsertStatementsFor(VerticalCRS)`: its datum, its coordinate system,
+    /// then the row and its usages.
+    fn vertical_crs(
+        &mut self,
+        crs: &VerticalCRS,
+        auth: &str,
+        code: &str,
+    ) -> Result<(), FactoryError> {
+        let (datum_auth, datum_code) = if let Some(ensemble) = crs.datum_ensemble() {
+            let object = AuthorityObject::DatumEnsemble(ensemble.clone());
+            match self.existing(auth, &object)? {
+                Some(known) => known,
+                None => {
+                    let datum_code =
+                        self.part_code(&object, auth, || format!("VERTICAL_DATUM_{code}"))?;
+                    self.datum_ensemble(ensemble, auth, &datum_code)?;
+                    (auth.to_owned(), datum_code)
+                }
+            }
+        } else if let Some(datum) = crs.datum() {
+            let object = AuthorityObject::Datum(Datum::Vertical(datum.clone()));
+            match self.existing(auth, &object)? {
+                Some(known) => known,
+                None => {
+                    let datum_code =
+                        self.part_code(&object, auth, || format!("VERTICAL_DATUM_{code}"))?;
+                    self.vertical_datum(datum, auth, &datum_code)?;
+                    (auth.to_owned(), datum_code)
+                }
+            }
+        } else {
+            return Err(unsupported("a vertical CRS without a datum"));
+        };
+        let (cs_auth, cs_code) = self.coordinate_system(
+            &CoordinateSystem::Vertical(crs.coordinate_system().clone()),
+            "VERTICAL_CRS",
+            auth,
+            code,
+        )?;
+        self.push(format!(
+            "INSERT INTO vertical_crs VALUES('{}','{}','{}','','{}','{}','{}','{}',0);",
+            quote(auth),
+            quote(code),
+            quote(crs.name()),
+            quote(&cs_auth),
+            quote(&cs_code),
+            quote(&datum_auth),
+            quote(&datum_code),
+        ))?;
+        self.usages(crs.domains(), "vertical_crs", auth, code)
+    }
+
+    /// `getInsertStatementsFor(CompoundCRS)`: each component, identified in the
+    /// allowed authorities or else inserted, then the row and its usages.
+    fn compound_crs(
+        &mut self,
+        crs: &CompoundCRS,
+        auth: &str,
+        code: &str,
+    ) -> Result<(), FactoryError> {
+        let components = crs.components();
+        let [first, second] = components else {
+            return Err(FactoryError::Format(
+                "Cannot insert compound CRS with number of components != 2".to_owned(),
+            ));
+        };
+        let mut authorities = self.allowed.to_vec();
+        authorities.push(auth.to_owned());
+        let mut components_id: Vec<(String, String)> = Vec::new();
+        for (position, component) in [first, second].into_iter().enumerate() {
+            // PROJ keeps the last authority whose best match has an identifier.
+            let mut found: Option<(String, String)> = None;
+            for authority in &authorities {
+                let factory = AuthorityFactory::create(self.db, authority.as_str());
+                for (candidate, confidence) in component.identify_with(Some(&factory)) {
+                    if confidence == 100 {
+                        if let Some(id) = candidate.identifiers().first() {
+                            found = Some((id.code_space().to_owned(), id.code().to_owned()));
+                            break;
+                        }
+                    }
+                    if found.is_some() {
+                        break;
+                    }
+                }
+            }
+            let (component_auth, component_code) = match found {
+                Some(known) => known,
+                None => {
+                    let object = AuthorityObject::Crs(component.clone());
+                    let component_code = self.part_code(&object, auth, || {
+                        format!("COMPONENT_{code}_{}", position + 1)
+                    })?;
+                    self.crs(component, auth, &component_code)?;
+                    (auth.to_owned(), component_code)
+                }
+            };
+            components_id.push((component_auth, component_code));
+        }
+        let [(first_auth, first_code), (second_auth, second_code)] = components_id.as_slice()
+        else {
+            return Err(unsupported("a compound CRS with other than two components"));
+        };
+        self.push(format!(
+            "INSERT INTO compound_crs VALUES('{}','{}','{}','','{}','{}','{}','{}',0);",
+            quote(auth),
+            quote(code),
+            quote(crs.name()),
+            quote(first_auth),
+            quote(first_code),
+            quote(second_auth),
+            quote(second_code),
+        ))?;
+        self.usages(crs.domains(), "compound_crs", auth, code)
+    }
+
     /// `identifyOrInsert` for a unit: its own authority code, else a
     /// database unit with the same kind and factor, else a new row under
     /// `owner`.
@@ -617,7 +1017,7 @@ impl Writer<'_> {
             quote(unit.name()),
             unit_type,
             number(factor),
-        ));
+        ))?;
         Ok((owner.to_owned(), code))
     }
 
@@ -688,7 +1088,7 @@ impl Writer<'_> {
             quote(owner),
             quote(&code),
             axes.len(),
-        ));
+        ))?;
         for (index, axis) in axes.iter().enumerate() {
             let (unit_auth, unit_code) = self.unit(axis.unit(), owner)?;
             self.push(format!(
@@ -703,33 +1103,14 @@ impl Writer<'_> {
                 index + 1,
                 quote(&unit_auth),
                 quote(&unit_code),
-            ));
+            ))?;
         }
         Ok((owner.to_owned(), code))
     }
 
     /// `findFreeCode`: `prototype`, else `prototype_2` to `prototype_9`.
     fn free_code(&self, table: &str, auth: &str, prototype: &str) -> Result<String, FactoryError> {
-        for counter in 1..10 {
-            let candidate = if counter == 1 {
-                prototype.to_owned()
-            } else {
-                format!("{prototype}_{counter}")
-            };
-            let taken = !self
-                .db
-                .text_rows(
-                    &format!("SELECT 1 FROM {table} WHERE auth_name = ? AND code = ?"),
-                    &[auth.to_owned(), candidate.clone()],
-                )?
-                .is_empty();
-            if !taken {
-                return Ok(candidate);
-            }
-        }
-        Err(FactoryError::Format(format!(
-            "Cannot insert {table}: too many similar codes"
-        )))
+        find_free_code(self.db, table, auth, prototype)
     }
 
     /// `identifyOrInsertUsages`: one `usage` row per domain, with the scope
@@ -755,7 +1136,7 @@ impl Writer<'_> {
                 quote(&usage_code),
                 quote(auth),
                 quote(code),
-            ));
+            ))?;
             return Ok(());
         }
         let mut lookup_authorities = vec![auth.to_owned()];
@@ -783,7 +1164,7 @@ impl Writer<'_> {
                                 quote(auth),
                                 quote(&scope_code),
                                 quote(scope),
-                            ));
+                            ))?;
                             (auth.to_owned(), scope_code)
                         }
                     }
@@ -832,7 +1213,7 @@ impl Writer<'_> {
                                 number(north),
                                 number(west),
                                 number(east),
-                            ));
+                            ))?;
                             (auth.to_owned(), extent_code)
                         }
                     }
@@ -853,7 +1234,7 @@ impl Writer<'_> {
                 quote(&extent_code),
                 quote(&scope_auth),
                 quote(&scope_code),
-            ));
+            ))?;
         }
         Ok(())
     }
@@ -862,6 +1243,144 @@ impl Writer<'_> {
 /// `CoordinateSystem::_isEquivalentTo` with `EQUIVALENT`: the same kind, and
 /// axes that match in direction and unit. Names are not compared, since the
 /// database's coordinate systems have none.
+/// `findFreeCode`: `prototype`, else `prototype_2` to `prototype_9`, whichever
+/// no row of `table` holds under `auth`.
+fn find_free_code(
+    db: &DatabaseContext,
+    table: &str,
+    auth: &str,
+    prototype: &str,
+) -> Result<String, FactoryError> {
+    for counter in 1..10 {
+        let candidate = if counter == 1 {
+            prototype.to_owned()
+        } else {
+            format!("{prototype}_{counter}")
+        };
+        let taken = !db
+            .text_rows(
+                &format!("SELECT 1 FROM {table} WHERE auth_name = ? AND code = ?"),
+                &[auth.to_owned(), candidate.clone()],
+            )?
+            .is_empty();
+        if !taken {
+            return Ok(candidate);
+        }
+    }
+    Err(FactoryError::Format(format!(
+        "Cannot insert {table}: too many similar codes"
+    )))
+}
+
+/// The table `suggests_code_for` looks in: the one `object` would be written
+/// to, as `DatabaseContext::suggestsCodeFor` chooses it.
+fn suggested_table(object: &AuthorityObject) -> Result<&'static str, FactoryError> {
+    Ok(match object {
+        AuthorityObject::PrimeMeridian(_) => "prime_meridian",
+        AuthorityObject::Ellipsoid(_) => "ellipsoid",
+        AuthorityObject::Datum(Datum::Geodetic(_)) => "geodetic_datum",
+        AuthorityObject::Datum(Datum::Vertical(_)) => "vertical_datum",
+        AuthorityObject::DatumEnsemble(ensemble) => match ensemble.members().first() {
+            Some(Datum::Geodetic(_)) => "geodetic_datum",
+            _ => "vertical_datum",
+        },
+        AuthorityObject::Crs(_) => "crs_view",
+        AuthorityObject::Operation(CoordinateOperation::Conversion(_)) => "conversion",
+        _ => return Err(unsupported("a code suggestion for this object")),
+    })
+}
+
+/// The form of the code [`suggests_code_for`] returns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CodeForm {
+    /// The next number after the largest all-digit code of the authority.
+    Numeric,
+    /// The name of the object in capitals, made free in its table.
+    FromName,
+}
+
+/// `DatabaseContext::suggestsCodeFor` (`factory.cpp`): a code that `object`
+/// could take in `auth_name`.
+///
+/// With [`CodeForm::Numeric`], the code is one more than the largest all-digit code
+/// of the table under `auth_name` (`1` when there is none). Otherwise it is
+/// the upper-cased name of `object`, with each run of other characters turned
+/// into `_`, made free in the table with a `_2` to `_9` suffix if needed. A
+/// bound CRS is suggested from its source CRS.
+///
+/// # Errors
+///
+/// `object` is not a kind that gets a suggested code (a datum that is neither
+/// geodetic nor vertical, a unit, an extent, a derived operation), or every
+/// candidate code is taken.
+pub fn suggests_code_for(
+    db: &DatabaseContext,
+    object: &AuthorityObject,
+    auth_name: &str,
+    form: CodeForm,
+) -> Result<String, FactoryError> {
+    if let AuthorityObject::Crs(Crs::Bound(bound)) = object {
+        let source = AuthorityObject::Crs(bound.source_crs().clone());
+        return suggests_code_for(db, &source, auth_name, form);
+    }
+    let table = suggested_table(object)?;
+    if form == CodeForm::Numeric {
+        let rows = db.text_rows(
+            &format!(
+                "SELECT MAX(code) FROM {table} WHERE auth_name = ? AND code >= '1' \
+                 AND code <= '999999999' AND upper(code) = lower(code)"
+            ),
+            &[auth_name.to_owned()],
+        )?;
+        // `atoi` of the maximum, or of NULL when the table has no such code.
+        let largest = rows
+            .first()
+            .and_then(|row| row.first())
+            .map_or(0, |text| atoi(text));
+        return Ok((largest + 1).to_string());
+    }
+
+    // `toupper` of the name, then each run of characters that are not letters
+    // or digits becomes one `_` between the words.
+    let mut code = String::new();
+    let mut insert_underscore = false;
+    for ch in object.name().chars().map(|ch| ch.to_ascii_uppercase()) {
+        if ch.is_ascii_digit() || ch.is_ascii_uppercase() {
+            if insert_underscore && !code.ends_with('_') {
+                code.push('_');
+            }
+            code.push(ch);
+            insert_underscore = false;
+        } else {
+            insert_underscore = true;
+        }
+    }
+    find_free_code(db, table, auth_name, &code)
+}
+
+/// `atoi`: the optional sign and the digits at the start of `text`, after its
+/// leading white space; `0` when there are none.
+fn atoi(text: &str) -> i64 {
+    let text = text.trim_start();
+    let (negative, digits) = match text.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, text.strip_prefix('+').unwrap_or(text)),
+    };
+    let value: i64 = digits
+        .bytes()
+        .take_while(u8::is_ascii_digit)
+        .fold(0, |value, digit| {
+            value
+                .saturating_mul(10)
+                .saturating_add(i64::from(digit - b'0'))
+        });
+    if negative {
+        -value
+    } else {
+        value
+    }
+}
+
 fn same_system(candidate: &CoordinateSystem, system: &CoordinateSystem) -> bool {
     let owned =
         |system: &CoordinateSystem| -> Vec<Axis> { system.axes().into_iter().cloned().collect() };
@@ -890,6 +1409,7 @@ fn object_type(object: &AuthorityObject) -> ObjectType {
         AuthorityObject::Ellipsoid(_) => ObjectType::Ellipsoid,
         AuthorityObject::PrimeMeridian(_) => ObjectType::PrimeMeridian,
         AuthorityObject::DatumEnsemble(_) => ObjectType::DatumEnsemble,
+        AuthorityObject::Datum(Datum::Vertical(_)) => ObjectType::VerticalReferenceFrame,
         _ => ObjectType::GeodeticReferenceFrame,
     }
 }
@@ -920,6 +1440,9 @@ fn same_kind(
         AuthorityObject::Datum(Datum::Geodetic(_)) => {
             AuthorityObject::Datum(Datum::Geodetic(factory.create_geodetic_datum(code)?))
         }
+        AuthorityObject::Datum(Datum::Vertical(_)) => {
+            AuthorityObject::Datum(Datum::Vertical(factory.create_vertical_datum(code)?))
+        }
         AuthorityObject::DatumEnsemble(_) => {
             AuthorityObject::DatumEnsemble(factory.create_datum_ensemble(code)?)
         }
@@ -939,6 +1462,10 @@ fn equivalent(candidate: &AuthorityObject, object: &AuthorityObject) -> bool {
         (
             AuthorityObject::Datum(Datum::Geodetic(known)),
             AuthorityObject::Datum(Datum::Geodetic(other)),
+        ) => known.is_equivalent_to(other),
+        (
+            AuthorityObject::Datum(Datum::Vertical(known)),
+            AuthorityObject::Datum(Datum::Vertical(other)),
         ) => known.is_equivalent_to(other),
         (AuthorityObject::DatumEnsemble(known), AuthorityObject::DatumEnsemble(other)) => {
             known.is_equivalent_to(other)

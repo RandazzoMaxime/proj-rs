@@ -53,7 +53,9 @@ impl GeographicCRS {
         if criterion == Equivalence::Strict {
             return false;
         }
-        let (Some(left), Some(right)) = (self.datum(), other.datum()) else {
+        // `SingleCRS::baseIsEquivalentTo` (crs.cpp:1686-1691) compares `datumNonNull`: an
+        // ensemble stands for its `asDatum`, as `datum_frame` builds it.
+        let (Some(left), Some(right)) = (datum_frame(self), datum_frame(other)) else {
             return false;
         };
         let official = |name: &str| db.geodetic_datum_equivalent(name).map(|found| found.0);
@@ -61,12 +63,14 @@ impl GeographicCRS {
             (Some(left_official), Some(right_official)) => left_official == right_official,
             _ => false,
         };
-        if !(same_official || frame_names_equivalent_by_db(left, right, db)) {
+        if !(same_official || frame_names_equivalent_by_db(&left, &right, db)) {
             return false;
         }
         let mut renamed = other.clone();
         if let Some(datum) = renamed.datum.as_mut() {
             datum.identified.name = left.name().to_owned();
+        } else if let Some(ensemble) = renamed.ensemble.as_mut() {
+            ensemble.identified.name = left.name().to_owned();
         }
         self.is_equivalent_to_with(&renamed, criterion)
     }
@@ -427,16 +431,6 @@ impl ProjectedCRS {
                 criterion,
             )
     }
-}
-
-/// `VerticalCRS::_isEquivalentTo` with EQUIVALENT: the datum anchor and the axis, the name
-/// not compared.
-pub(crate) fn vertical_crs_equivalent(left: &VerticalCRS, right: &VerticalCRS) -> bool {
-    vertical_anchor(left, right)
-        && cs_axes_match(
-            std::slice::from_ref(left.coordinate_system().axis()),
-            std::slice::from_ref(right.coordinate_system().axis()),
-        )
 }
 
 impl VerticalCRS {
@@ -1105,6 +1099,15 @@ pub fn equivalent_name(left: &str, right: &str) -> bool {
     folded_name(left) == folded_name(right)
 }
 
+/// The two comparisons of `Identifier::isEquivalentName`: with or without its bigger differences.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NameComparison {
+    /// `biggerDifferencesAllowed = false`.
+    Exact,
+    /// `biggerDifferencesAllowed = true`, the default of PROJ's `isEquivalentName`.
+    BiggerDifferences,
+}
+
 /// `areEquivalentParameters`: names PROJ treats as one parameter, such as
 /// `latitude_of_origin` and `latitude_of_center`.
 pub(crate) fn are_equivalent_parameters(left: &str, right: &str) -> bool {
@@ -1175,6 +1178,14 @@ fn folded_name(name: &str) -> String {
 /// after a separator or a digit are shortened to their first letter, and
 /// `19dd` is read as `dd`. `EGM2008 height` is equivalent to `EGM2008`.
 pub fn equivalent_name_bigger_differences(left: &str, right: &str) -> bool {
+    equivalent_name_with(left, right, NameComparison::BiggerDifferences)
+}
+
+/// `Identifier::isEquivalentName(left, right, biggerDifferencesAllowed)` (`metadata.cpp`). The
+/// reading of `19dd` as `dd` is in both comparisons; `zone`, `height` and `north`/`south` are
+/// read only in the bigger one.
+pub(crate) fn equivalent_name_with(left: &str, right: &str, comparison: NameComparison) -> bool {
+    let bigger = comparison == NameComparison::BiggerDifferences;
     let a: Vec<char> = left.chars().collect();
     let b: Vec<char> = right.chars().collect();
     let at = |text: &[char], idx: usize| text.get(idx).copied().unwrap_or('\0');
@@ -1233,21 +1244,23 @@ pub fn equivalent_name_bigger_differences(left: &str, right: &str) -> bool {
             last_b = '9';
             continue;
         }
-        let zone_a = skip_word(ca, &a, &mut i, "zone");
-        let zone_b = skip_word(cb, &b, &mut j, "zone");
-        if zone_a || zone_b {
-            continue;
-        }
-        let height_a = skip_word(ca, &a, &mut i, "height");
-        let height_b = skip_word(cb, &b, &mut j, "height");
-        if height_a || height_b {
-            continue;
-        }
-        if !shorten_word(ca, &a, &mut i, "north") {
-            shorten_word(ca, &a, &mut i, "south");
-        }
-        if !shorten_word(cb, &b, &mut j, "north") {
-            shorten_word(cb, &b, &mut j, "south");
+        if bigger {
+            let zone_a = skip_word(ca, &a, &mut i, "zone");
+            let zone_b = skip_word(cb, &b, &mut j, "zone");
+            if zone_a || zone_b {
+                continue;
+            }
+            let height_a = skip_word(ca, &a, &mut i, "height");
+            let height_b = skip_word(cb, &b, &mut j, "height");
+            if height_a || height_b {
+                continue;
+            }
+            if !shorten_word(ca, &a, &mut i, "north") {
+                shorten_word(ca, &a, &mut i, "south");
+            }
+            if !shorten_word(cb, &b, &mut j, "north") {
+                shorten_word(cb, &b, &mut j, "south");
+            }
         }
         if let Some(replacement) = accent_ascii(ca) {
             ca = replacement;

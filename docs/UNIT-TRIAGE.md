@@ -5,109 +5,12 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 14 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
-| `niche` | 9 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
-| `shape` | 41 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
+| `core` | 0 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `niche` | 0 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
+| `shape` | 0 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (14)
+## core (0)
 
-### test_c_api.cpp (3)
+## niche (0)
 
-- `CApi.proj_coordoperation_get_grid_used_fullname_caching`
-- `CApi.proj_normalize_for_visualization_with_alternatives`
-- `CApi.proj_coordoperation_create_inverse`
-
-### test_crs.cpp (2)
-
-- `crs.boundCRS_crs_link`
-- `crs.norway_ntm`
-
-### test_factory.cpp (1)
-
-- `factory.AuthorityFactory_createDynamicVerticalDatum`
-
-### test_io.cpp (1)
-
-- `io.createFromUserInput`
-
-### test_operation.cpp (1)
-
-- `operation.normalizeForVisualization`
-
-### test_operationfactory.cpp (6)
-
-- `operation.geog3DCRS_to_geog2DCRS_plus_vertCRS_context`
-- `operation.boundCRS_to_geogCRS_hubCRS_and_targetCRS_same_but_baseCRS_not`
-- `operation.nadgrids_with_pm`
-- `operation.compoundCRS_to_compoundCRS_with_vertical_transform`
-- `operation.compoundCRS_to_compoundCRS_context`
-- `operation.compoundCRS_to_compoundCRS_concatenated_operation_with_two_vert_transformation`
-
-## niche (9)
-
-### test_crs.cpp (1)
-
-- `crs.normalizeForVisualization_derivedprojected_operation`
-
-### test_operationfactory.cpp (8)
-
-- `operation.boundCRS_to_derived_geog_with_transformation_with_source_crs_being_base_crs_of_source_crs`
-- `operation.compoundCRS_with_derivedVerticalCRS_ellipsoidal_height_to_geog`
-- `operation.compoundCRS_with_horizontal_boundCRS_to_compoundCRS_with_derived_vertical`
-- `operation.compoundCRS_to_compoundCRS_with_derivedVerticalCRS_ellipsoidal_height`
-- `operation.compoundCRS_with_derived_vertical_CRS`
-- `operation.createOperation_bound_of_spherical_ocentric_to_same_type`
-- `operation.createOperation_derived_projected_crs`
-- `operation.geogCRS_to_compoundCRS_with_boundVerticalCRS_and_derivedProjected`
-
-## shape (41)
-
-### test_c_api.cpp (14)
-
-- `CApi.proj_context_set_database_path_null`
-- `CApi.proj_context_set_database_path_aux`
-- `CApi.proj_context_set_database_path_error_1`
-- `CApi.proj_context_set_database_path_error_2`
-- `CApi.proj_clone_of_obj_with_alternative_operations`
-- `CApi.proj_context_copy_from_default`
-- `CApi.proj_context_clone`
-- `CApi.proj_context_set_sqlite3_vfs_name`
-- `CApi.proj_context_set_sqlite3_vfs_name__from_global_context`
-- `CApi.use_proj4_init_rules`
-- `CApi.use_proj4_init_rules_from_global_context`
-- `CApi.proj_get_insert_statements`
-- `CApi.open_plenty_of_contexts`
-- `CApi.concurrent_context`
-
-### test_crs.cpp (2)
-
-- `crs.scope_area_bbox_remark`
-- `crs.VerticalCRS_ensemble_exception_in_create`
-
-### test_factory.cpp (25)
-
-- `FactoryWithTmpDatabase.AuthorityFactory_test_with_fake_EPSG_database`
-- `FactoryWithTmpDatabase.AuthorityFactory_test_inversion_first_and_last_steps_of_concat_op`
-- `FactoryWithTmpDatabase.AuthorityFactory_test_with_fake_EPSG_and_OTHER_database`
-- `FactoryWithTmpDatabase.AuthorityFactory_test_sorting_of_coordinate_operations`
-- `FactoryWithTmpDatabase.AuthorityFactory_createFromCRSCodesWithIntermediates_source_equals_target`
-- `FactoryWithTmpDatabase.AuthorityFactory_createFromCRSCodesWithIntermediates_case_source_pivot_target_pivot`
-- `FactoryWithTmpDatabase.AuthorityFactory_createFromCRSCodesWithIntermediates_case_source_pivot_pivot_target`
-- `FactoryWithTmpDatabase.AuthorityFactory_createFromCRSCodesWithIntermediates_case_pivot_source_pivot_target`
-- `FactoryWithTmpDatabase.AuthorityFactory_createFromCRSCodesWithIntermediates_case_pivot_source_target_pivot`
-- `FactoryWithTmpDatabase.AuthorityFactory_proj_based_transformation`
-- `FactoryWithTmpDatabase.AuthorityFactory_wkt_based_transformation`
-- `FactoryWithTmpDatabase.AuthorityFactory_wkt_based_transformation_not_wkt`
-- `FactoryWithTmpDatabase.AuthorityFactory_wkt_based_transformation_not_co_wkt`
-- `FactoryWithTmpDatabase.getAuthorities`
-- `FactoryWithTmpDatabase.lookForGridInfo`
-- `FactoryWithTmpDatabase.lookForGridInfo_from_old_name_with_new_grid_available`
-- `FactoryWithTmpDatabase.custom_geodetic_crs`
-- `FactoryWithTmpDatabase.custom_projected_crs`
-- `FactoryWithTmpDatabase.custom_derived_projected_crs`
-- `FactoryWithTmpDatabase.CoordinateMetadata`
-- `factory.attachExtraDatabases_auxiliary`
-- `factory.attachExtraDatabases_auxiliary_error`
-- `FactoryWithTmpDatabase.createOperations_exact_transform_not_whole_area`
-- `FactoryWithTmpDatabase.check_fixup_direction_concatenated_inverse_map_projection`
-- `factory.objectInsertion`
+## shape (0)

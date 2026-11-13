@@ -475,6 +475,19 @@ fn demote_derived_geographic(crs: &DerivedCRS, db: Option<&DatabaseContext>) -> 
     })
 }
 
+/// The hub and the TOWGS84 transformation of a bound CRS whose base has just been promoted to
+/// 3D, as `BoundCRS::promoteTo3D` does (crs.cpp:1479-1487). The other bound CRS keep their hub.
+pub(super) fn promote_bound_hub_to_3d(crs: &mut Crs, db: Option<&DatabaseContext>) {
+    let Crs::Bound(bound) = crs else {
+        return;
+    };
+    if !operation_has_towgs84(&bound.transformation) {
+        return;
+    }
+    *bound.target = bound.target.promote_to_3d(db);
+    bound.transformation = promote_operation(&bound.transformation, db);
+}
+
 fn promote_bound(crs: &BoundCRS, db: Option<&DatabaseContext>) -> Crs {
     let source = crs.source.promote_to_3d(db);
     if operation_has_towgs84(&crs.transformation) {

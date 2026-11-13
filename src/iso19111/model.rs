@@ -2,6 +2,9 @@
 
 use std::fmt;
 
+use super::equiv::Equivalence;
+use super::factory::DatabaseContext;
+
 /// Opening `proj.db`, an authority code, or a WKT export failed.
 #[derive(Debug)]
 pub enum FactoryError {
@@ -140,6 +143,10 @@ pub struct ObjectDomain {
     pub(crate) west: Option<f64>,
     pub(crate) north: Option<f64>,
     pub(crate) east: Option<f64>,
+    /// `VERTICALEXTENT` of the extent, when the object has one.
+    pub(crate) vertical: Option<VerticalExtent>,
+    /// `TIMEEXTENT` of the extent, when the object has one.
+    pub(crate) temporal: Option<TemporalExtent>,
 }
 
 impl ObjectDomain {
@@ -195,6 +202,25 @@ impl ObjectDomain {
             && same_optional(self.east, other.east)
     }
 
+    /// Vertical extent, when the extent has one.
+    #[must_use]
+    pub fn vertical_extent(&self) -> Option<&VerticalExtent> {
+        self.vertical.as_ref()
+    }
+
+    /// Temporal extent, when the extent has one.
+    #[must_use]
+    pub fn temporal_extent(&self) -> Option<&TemporalExtent> {
+        self.temporal.as_ref()
+    }
+
+    /// The same domain with `scope` as its scope text.
+    #[must_use]
+    pub fn with_scope(mut self, scope: impl Into<String>) -> Self {
+        self.scope = Some(scope.into());
+        self
+    }
+
     /// Extent with no description and the bounding box `bbox`, as an area of interest.
     #[must_use]
     pub fn from_bounding_box(bbox: BoundingBox) -> Self {
@@ -205,6 +231,8 @@ impl ObjectDomain {
             west: Some(bbox.west),
             north: Some(bbox.north),
             east: Some(bbox.east),
+            vertical: None,
+            temporal: None,
         }
     }
 
@@ -426,12 +454,63 @@ pub(crate) struct Identified {
     pub(crate) over: bool,
 }
 
-/// Vertical extent of an object usage, as PROJJSON writes it.
+/// Vertical extent of an object usage, as PROJJSON and WKT2 write it.
 #[derive(Clone, Debug)]
-pub(crate) struct VerticalExtent {
+pub struct VerticalExtent {
     pub(crate) minimum: f64,
     pub(crate) maximum: f64,
     pub(crate) unit: UnitOfMeasure,
+}
+
+impl VerticalExtent {
+    /// Lower bound, in `unit()`.
+    #[must_use]
+    pub fn minimum(&self) -> f64 {
+        self.minimum
+    }
+
+    /// Upper bound, in `unit()`.
+    #[must_use]
+    pub fn maximum(&self) -> f64 {
+        self.maximum
+    }
+
+    /// Unit of the bounds.
+    #[must_use]
+    pub fn unit(&self) -> &UnitOfMeasure {
+        &self.unit
+    }
+}
+
+impl PartialEq for VerticalExtent {
+    fn eq(&self, other: &Self) -> bool {
+        self.minimum == other.minimum
+            && self.maximum == other.maximum
+            && self.unit.name() == other.unit.name()
+            && self.unit.kind() == other.unit.kind()
+            && self.unit.conversion_to_si() == other.unit.conversion_to_si()
+    }
+}
+
+/// Temporal extent of an object usage: the start and the stop of its validity, as text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TemporalExtent {
+    pub(crate) start: String,
+    pub(crate) stop: String,
+}
+
+impl TemporalExtent {
+    /// Start of the extent, as written (for example `2002-04-01`).
+    #[must_use]
+    pub fn start(&self) -> &str {
+        &self.start
+    }
+
+    /// Stop of the extent, as written.
+    #[must_use]
+    pub fn stop(&self) -> &str {
+        &self.stop
+    }
 }
 
 impl Identified {
@@ -888,6 +967,15 @@ pub struct PrimeMeridian {
 }
 
 impl PrimeMeridian {
+    /// A prime meridian called `name`, `longitude` east of Greenwich.
+    #[must_use]
+    pub fn create(name: impl Into<String>, longitude: Measure) -> Self {
+        Self {
+            identified: Identified::named(name),
+            longitude,
+        }
+    }
+
     /// Name. An empty name exports as `Greenwich`.
     #[must_use]
     pub fn name(&self) -> &str {
@@ -983,6 +1071,13 @@ impl GeodeticReferenceFrame {
     #[must_use]
     pub fn with_anchor(mut self, anchor: impl Into<String>) -> Self {
         self.identified.anchor = Some(anchor.into());
+        self
+    }
+
+    /// `ANCHOR_EPOCH`: the epoch of the anchor, in years.
+    #[must_use]
+    pub fn with_anchor_epoch(mut self, epoch: f64) -> Self {
+        self.identified.anchor_epoch = Some(epoch);
         self
     }
 
@@ -1166,6 +1261,13 @@ impl VerticalReferenceFrame {
     #[must_use]
     pub fn with_anchor(mut self, anchor: impl Into<String>) -> Self {
         self.identified.anchor = Some(anchor.into());
+        self
+    }
+
+    /// `ANCHOR_EPOCH`: the epoch of the anchor, in years.
+    #[must_use]
+    pub fn with_anchor_epoch(mut self, epoch: f64) -> Self {
+        self.identified.anchor_epoch = Some(epoch);
         self
     }
 
@@ -2683,6 +2785,13 @@ impl GeographicCRS {
         })
     }
 
+    /// The usages of this CRS, replaced by `domains`.
+    #[must_use]
+    pub fn with_domains(mut self, domains: Vec<ObjectDomain>) -> Self {
+        self.identified.domains = domains;
+        self
+    }
+
     /// Usages recorded for this CRS.
     #[must_use]
     pub fn domains(&self) -> &[ObjectDomain] {
@@ -3015,6 +3124,22 @@ impl GeodeticCRS {
             Self::Geographic(crs) => CoordinateSystem::Ellipsoidal(crs.coordinate_system.clone()),
             Self::Geocentric(crs) => CoordinateSystem::Cartesian(crs.coordinate_system.clone()),
             Self::Spherical(crs) => CoordinateSystem::Spherical(crs.coordinate_system.clone()),
+        }
+    }
+
+    /// The usages of this CRS, replaced by `domains`.
+    #[must_use]
+    pub fn with_domains(self, domains: Vec<ObjectDomain>) -> Self {
+        match self {
+            Self::Geographic(crs) => Self::Geographic(crs.with_domains(domains)),
+            Self::Geocentric(mut crs) => {
+                crs.identified.domains = domains;
+                Self::Geocentric(crs)
+            }
+            Self::Spherical(mut crs) => {
+                crs.identified.domains = domains;
+                Self::Spherical(crs)
+            }
         }
     }
 
@@ -3528,17 +3653,40 @@ impl CompoundCRS {
         self
     }
 
-    /// `CompoundCRS::createLax`: a geographic CRS plus an ellipsoidal-height
-    /// vertical CRS (`VERT_DATUM` type `2002`) becomes one geographic 3D CRS.
-    ///
-    /// The promoted CRS keeps the horizontal name and drops authority codes.
-    /// PROJ's other lax case, a second geographic CRS equivalent to the first,
-    /// is not handled here.
+    /// `CompoundCRS::createLax` without a database: see
+    /// [`Self::create_lax_with_database`].
     ///
     /// # Errors
     ///
     /// The components are not a valid compound CRS.
     pub fn create_lax(name: impl Into<String>, components: Vec<Crs>) -> Result<Crs, FactoryError> {
+        Self::create_lax_with_database(name, components, None)
+    }
+
+    /// `CompoundCRS::createLax` (`crs.cpp`): two components that PROJ accepts as one CRS.
+    ///
+    /// - A geographic or projected CRS followed by a geographic CRS equivalent to its horizontal
+    ///   part (`EPSG:4326+4326`, `EPSG:32631+4326`) is the first component promoted to 3D, marked
+    ///   as a non-conformant WKT1 export.
+    /// - A geographic CRS followed by a geographic CRS that is not equivalent is an error: the
+    ///   second one is not a vertical part.
+    /// - A geographic CRS plus an ellipsoidal-height vertical CRS (`VERT_DATUM` type `2002`)
+    ///   becomes one geographic 3D CRS, which keeps the horizontal name and drops authority codes.
+    ///
+    /// # Errors
+    ///
+    /// The components are not a valid compound CRS, as PROJ's
+    /// `InvalidCompoundCRSException`: a [`FactoryError::Invalid`].
+    pub fn create_lax_with_database(
+        name: impl Into<String>,
+        components: Vec<Crs>,
+        db: Option<&DatabaseContext>,
+    ) -> Result<Crs, FactoryError> {
+        if let [horizontal, second] = components.as_slice() {
+            if let Some(crs) = lax_geographic_pair(horizontal, second, db)? {
+                return Ok(crs);
+            }
+        }
         if let [horizontal, Crs::Vertical(vertical)] = components.as_slice() {
             if vertical
                 .datum
@@ -3597,6 +3745,63 @@ fn ellipsoidal_height_geographic(
         axis.unit().clone(),
     ));
     promoted
+}
+
+/// The geographic case of `CompoundCRS::createLax` (`crs.cpp`): `first` is a geographic or
+/// projected CRS (or a bound one of them), and `second` a geographic CRS. `None` when the pair is
+/// not of that shape.
+///
+/// # Errors
+///
+/// `second` is not equivalent to the horizontal part of `first`.
+fn lax_geographic_pair(
+    first: &Crs,
+    second: &Crs,
+    db: Option<&DatabaseContext>,
+) -> Result<Option<Crs>, FactoryError> {
+    let (Crs::Geographic(second_geographic)
+    | Crs::Geodetic(GeodeticCRS::Geographic(second_geographic))) = second
+    else {
+        return Ok(None);
+    };
+    let horizontal_source = match first {
+        Crs::Bound(bound) => bound.source_crs(),
+        other => other,
+    };
+    let horizontal: Option<&GeographicCRS> = match horizontal_source {
+        Crs::Geographic(geographic) | Crs::Geodetic(GeodeticCRS::Geographic(geographic)) => {
+            Some(geographic)
+        }
+        Crs::Projected(projected) => match projected.base_crs() {
+            GeodeticCRS::Geographic(geographic) => Some(geographic),
+            _ => None,
+        },
+        _ => return Ok(None),
+    };
+    let demoted = second_geographic.demote_to_2d(db);
+    let equivalent = horizontal.is_some_and(|horizontal| {
+        horizontal.is_equivalent_to_with(&demoted, Equivalence::Equivalent)
+    });
+    if !equivalent {
+        return Err(FactoryError::Invalid(
+            "The 'vertical' geographic CRS is not equivalent to the geographic CRS of the horizontal part"
+                .to_owned(),
+        ));
+    }
+    let mut promoted = first.promote_to_3d(db);
+    set_non_conformant_wkt1(&mut promoted);
+    Ok(Some(promoted))
+}
+
+/// `allowNonConformantWKT1Export`: a geographic or projected CRS whose WKT1 export is a
+/// `COMPD_CS` of its two parts.
+fn set_non_conformant_wkt1(crs: &mut Crs) {
+    match crs {
+        Crs::Geographic(geographic) => geographic.identified.allow_non_conformant_wkt1 = true,
+        Crs::Projected(projected) => projected.identified.allow_non_conformant_wkt1 = true,
+        Crs::Bound(bound) => set_non_conformant_wkt1(&mut bound.source),
+        _ => {}
+    }
 }
 
 /// Bound CRS: a source CRS, a hub, and the transformation that binds them.

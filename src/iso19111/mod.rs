@@ -44,7 +44,7 @@ pub use alternatives::{
     AlternativeError, Alternatives, BestPolicy, LogLevel, LogLine, WARN_SUFFIX,
 };
 pub use buildop::{AxisOrderReversal, OpProps};
-pub use coordinate_metadata::CoordinateMetadata;
+pub use coordinate_metadata::{coordinate_metadata_from_urn, CoordinateMetadata};
 pub use crs_ops::{ParameterLinearUnit, Wgs84Dynamic};
 pub use equiv::{equivalent_name, equivalent_name_bigger_differences, Equivalence};
 pub use factory::{
@@ -54,7 +54,7 @@ pub use factory::{
     IntermediateCrsUse, NameMatch, NameSpelling, ObjectType, OfficialName, SpatialCriterion,
     SupersededOperations, UnitInfo,
 };
-pub use insert::insert_statements;
+pub use insert::{insert_statements, suggests_code_for, CodeForm, ComponentCodes, InsertSession};
 pub use json::{
     create_from_user_input, create_from_user_input_with_init_rules,
     create_from_user_input_with_optional_database, create_object_from_user_input, epsg_identity,
@@ -77,7 +77,8 @@ pub use niche::{
     CALENDAR_PROLEPTIC_GREGORIAN,
 };
 pub(crate) use normalize::normalize_for_visualization;
-pub use pipeline::ProjLines;
+pub(crate) use pipeline::Pipeline;
+pub use pipeline::{ProjLines, ProjStringLayout, TmercExport};
 pub use projstring::{create_crs_from_proj_string, create_crs_from_proj_string_with_database};
 pub use select::{
     best_pipeline, best_pipeline_filtered, best_pipeline_filtered_with_authority,

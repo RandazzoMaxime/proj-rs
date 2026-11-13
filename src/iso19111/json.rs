@@ -5,9 +5,12 @@
 //! `versioned_auth_name_mapping`.
 
 use super::buildop::OpProps;
-use super::equiv;
+use super::compound::compute_metadata;
+use super::coordinate_metadata::CoordinateMetadata;
+use super::equiv::{self, NameComparison};
 use super::factory::{
-    AlternativeGridNames, AuthorityFactory, AuthorityObject, DatabaseContext, NameMatch, ObjectType,
+    AlternativeGridNames, AuthorityFactory, AuthorityObject, CoordinateOperationContext,
+    DatabaseContext, NameMatch, ObjectType,
 };
 use super::json_read::{create_object_from_json, JsonObject};
 use super::model::{
@@ -1570,7 +1573,7 @@ fn write_usage(
         }
         [domain] => {
             write_domain_members(writer, domain);
-            if let Some(vertical) = vertical {
+            if let (Some(vertical), None) = (vertical, &domain.vertical) {
                 write_vertical_extent(writer, vertical);
             }
         }
@@ -1631,6 +1634,16 @@ fn write_domain_members(writer: &mut Writer, domain: &ObjectDomain) {
         writer.key("east_longitude");
         writer.number(east);
         writer.end_object();
+    }
+    if let Some(vertical) = &domain.vertical {
+        write_vertical_extent(writer, vertical);
+    }
+    if let Some(temporal) = &domain.temporal {
+        write_temporal_extent(
+            writer,
+            Some(temporal.start.as_str()),
+            Some(temporal.stop.as_str()),
+        );
     }
 }
 
@@ -1798,39 +1811,54 @@ pub fn create_from_user_input_with_optional_database(
     db: Option<&DatabaseContext>,
     rules: InitRules,
 ) -> Result<Crs, FactoryError> {
+    match read_user_object(text, db, rules)? {
+        UserObject::Crs(crs) => Ok(crs),
+        _ => Err(FactoryError::Invalid(format!(
+            "{text}: not a coordinate reference system"
+        ))),
+    }
+}
+
+/// The routing of PROJ's `createFromUserInput` (`io.cpp` 7711-8302) for every object it returns:
+/// the JSON, PROJ string, OGC URL, `AUTH:CODE`, URN, name and WKT forms. A name is searched
+/// before the WKT, except for a text with `[`, which PROJ reads as WKT first.
+fn read_user_object(
+    text: &str,
+    db: Option<&DatabaseContext>,
+    rules: InitRules,
+) -> Result<UserObject, FactoryError> {
     let text = text.trim();
     if text.starts_with('{') {
-        return import_json(text, require_database(db)?);
+        return import_json(text, require_database(db)?).map(UserObject::Crs);
     }
     if let Some(crs) = crs_from_ogc_auto(text)? {
-        return Ok(crs);
+        return Ok(UserObject::Crs(crs));
     }
     if is_proj_string_text(text) && text.contains("init=") && !has_proj_step(text) {
-        return crs_from_init_text(text, db, rules);
+        return crs_from_init_text(text, db, rules).map(UserObject::Crs);
     }
     let bare = text.strip_prefix('+').unwrap_or(text);
     if bare.starts_with("proj=") || text.contains(" +proj=") || text.contains(" proj=") {
         return match db {
             Some(db) => create_crs_from_proj_string_with_database(text, db),
             None => create_crs_from_proj_string(text),
-        };
+        }
+        .map(UserObject::Crs);
     }
     if let Some(db) = db {
         // An OGC CRS URL contains colons, so it must be tried before `AUTH:CODE`.
         if is_ogc_crs_url(text) {
-            return import_ogc_crs_url(text, db);
+            return import_ogc_crs_url(text, db).map(UserObject::Crs);
         }
         if let Some(crs) = crs_from_authority_code(text, db)? {
-            return Ok(crs);
+            return Ok(UserObject::Crs(crs));
         }
         if let Some(crs) = crs_from_urn(text, db)? {
-            return Ok(crs);
+            return Ok(UserObject::Crs(crs));
         }
-    }
-    if let Some(db) = db {
-        if !text.contains(['[', '+', ':']) || text.contains(" + ") {
-            if let Some(crs) = crs_from_name(text, db)? {
-                return Ok(crs);
+        if !text.contains('[') {
+            if let Some(object) = object_from_name(text, db)? {
+                return Ok(object);
             }
         }
     }
@@ -1842,6 +1870,7 @@ pub fn create_from_user_input_with_optional_database(
         .create_from_wkt(text)?
         .crs()
         .cloned()
+        .map(UserObject::Crs)
         .ok_or_else(|| FactoryError::Invalid("WKT is not a CRS".to_owned()))
 }
 
@@ -1977,90 +2006,148 @@ fn epsg_code_of(crs: &Crs) -> Option<String> {
 /// `createFromUserInput` does for names. An exact name first, then an
 /// approximate one for a single name; several matches keep the 2D one, then
 /// the 3D one, and anything else is an error.
-fn crs_from_name(text: &str, db: &DatabaseContext) -> Result<Option<Crs>, FactoryError> {
-    if let Some((left, right)) = text.split_once(" + ") {
-        let (Some(first), Some(second)) = (
-            crs_named_one(left.trim(), db, NameMatch::Approximate)?,
-            crs_named_one(right.trim(), db, NameMatch::Approximate)?,
-        ) else {
-            return Ok(None);
+/// The name search of `createFromUserInput` (`io.cpp` 8157-8299): the compound of two names
+/// first, then four passes. The passes are an exact CRS match, an exact match of the other
+/// kinds, then the same two with an approximate match. An approximate match is kept only when
+/// its name is shorter than twice the text, and a text of at most four bytes gets the two exact
+/// passes only, so `foo` does not match `Amersfoort`.
+fn object_from_name(text: &str, db: &DatabaseContext) -> Result<Option<UserObject>, FactoryError> {
+    let compound = compound_of_names(text, db);
+    let passes = if text.len() <= 4 { 2 } else { 4 };
+    for pass in 0..passes {
+        let approximate = pass >= 2;
+        let mode = if approximate {
+            NameMatch::Approximate
+        } else {
+            NameMatch::Exact
         };
-        return Ok(Some(Crs::Compound(CompoundCRS::create(
-            format!("{} + {}", first.name(), second.name()),
-            vec![first, second],
-        )?)));
+        let types: &[ObjectType] = if pass == 0 || pass == 2 {
+            &[ObjectType::Crs]
+        } else {
+            &[
+                ObjectType::Ellipsoid,
+                ObjectType::Datum,
+                ObjectType::DatumEnsemble,
+                ObjectType::CoordinateOperation,
+            ]
+        };
+        if let Some(object) = search_object(db, text, mode, types)? {
+            if !approximate || authority_object_name(&object).len() < 2 * text.len() {
+                return user_object_of(object).map(Some);
+            }
+        }
+        if let Some(crs) = &compound {
+            if !approximate || crs.name().len() < 2 * text.len() {
+                return Ok(Some(UserObject::Crs(crs.clone())));
+            }
+        }
     }
-    if let Some(crs) = crs_named_one(text, db, NameMatch::Exact)? {
-        return Ok(Some(crs));
-    }
-    // PROJ's `createFromUserInput` tries an approximate match only for a text
-    // longer than four bytes, and keeps it only when its name is shorter than
-    // twice the text, so `EGM2008` does not pick `EGM2008 height`.
-    if text.len() <= 4 {
-        return Ok(None);
-    }
-    Ok(crs_named_one(text, db, NameMatch::Approximate)?
-        .filter(|crs| crs.name().len() < 2 * text.len()))
+    Ok(None)
 }
 
-fn crs_named_one(
-    text: &str,
+/// `A + B` for two names that are each a CRS (`io.cpp` 8229-8250). An error on either name, or a
+/// `CompoundCRS::create` that fails, gives no compound: PROJ catches it.
+fn compound_of_names(text: &str, db: &DatabaseContext) -> Option<Crs> {
+    let parts: Vec<&str> = text.split(" + ").collect();
+    let [left, right] = parts.as_slice() else {
+        return None;
+    };
+    let first = crs_of_compound_name(left, db).ok().flatten()?;
+    let second = crs_of_compound_name(right, db).ok().flatten()?;
+    let name = format!("{} + {}", first.name(), second.name());
+    CompoundCRS::create(name, vec![first, second])
+        .ok()
+        .map(Crs::Compound)
+}
+
+/// One name of a compound: a CRS, exact first, then approximate (`io.cpp` `searchCRS`).
+fn crs_of_compound_name(name: &str, db: &DatabaseContext) -> Result<Option<Crs>, FactoryError> {
+    for mode in [NameMatch::Exact, NameMatch::Approximate] {
+        if let Some(AuthorityObject::Crs(crs)) = search_object(db, name, mode, &[ObjectType::Crs])?
+        {
+            return Ok(Some(crs));
+        }
+    }
+    Ok(None)
+}
+
+/// `searchObject` of `createFromUserInput` (`io.cpp` 8161-8211): the one object of `types` named
+/// `name`. Several matches keep the 2D geographic CRS, then the 3D one, then the one whose name is
+/// equivalent to the text (the exact comparison first, then the one that allows bigger
+/// differences). Otherwise they are an error, PROJ's `several objects matching this name`.
+fn search_object(
     db: &DatabaseContext,
+    name: &str,
     mode: NameMatch,
-) -> Result<Option<Crs>, FactoryError> {
-    let codes = db.crs_codes_named(text)?;
-    let mut found = Vec::new();
-    for (authority, code) in &codes {
-        found.push(
-            AuthorityFactory::create(db, authority).create_coordinate_reference_system(code)?,
-        );
+    types: &[ObjectType],
+) -> Result<Option<AuthorityObject>, FactoryError> {
+    let mut found =
+        AuthorityFactory::create(db, "").create_objects_from_name(name, types, mode, 10)?;
+    if found.len() <= 1 {
+        return Ok(found.pop());
     }
-    if found.is_empty() && mode == NameMatch::Approximate {
-        for object in AuthorityFactory::create(db, "").create_objects_from_name(
-            text,
-            &[ObjectType::Crs],
-            NameMatch::Approximate,
-            10,
-        )? {
-            if let AuthorityObject::Crs(crs) = object {
-                found.push(crs);
+    if matches!(types, [ObjectType::Crs]) {
+        for dimension in [2, 3] {
+            let geographic = found.iter().position(|object| {
+                matches!(object, AuthorityObject::Crs(crs) if geographic_dimension(crs) == Some(dimension))
+            });
+            if let Some(index) = geographic {
+                return Ok(Some(found.swap_remove(index)));
             }
         }
     }
-    match found.len() {
-        0 => Ok(None),
-        1 => Ok(found.pop()),
-        _ => {
-            for dimension in [2, 3] {
-                if let Some(crs) = found
-                    .iter()
-                    .find(|crs| geographic_dimension(crs) == Some(dimension))
-                {
-                    return Ok(Some(crs.clone()));
-                }
-            }
-            for bigger_differences in [false, true] {
-                let equivalent: Vec<&Crs> = found
-                    .iter()
-                    .filter(|crs| {
-                        if bigger_differences {
-                            equiv::equivalent_name_bigger_differences(crs.name(), text)
-                        } else {
-                            equiv::equivalent_name(crs.name(), text)
-                        }
-                    })
-                    .collect();
-                if let [only] = equivalent.as_slice() {
-                    return Ok(Some((*only).clone()));
-                }
-            }
-            let names: Vec<&str> = found.iter().map(Crs::name).collect();
-            Err(FactoryError::Invalid(format!(
-                "several objects matching this name: {}",
-                names.join(", ")
-            )))
+    for comparison in [NameComparison::Exact, NameComparison::BiggerDifferences] {
+        let equivalent: Vec<usize> = found
+            .iter()
+            .enumerate()
+            .filter(|(_, object)| {
+                equiv::equivalent_name_with(authority_object_name(object), name, comparison)
+            })
+            .map(|(index, _)| index)
+            .collect();
+        if let [only] = equivalent.as_slice() {
+            return Ok(Some(found.swap_remove(*only)));
         }
     }
+    let names: Vec<&str> = found.iter().map(authority_object_name).collect();
+    Err(FactoryError::Invalid(format!(
+        "several objects matching this name: {}",
+        names.join(", ")
+    )))
+}
+
+/// The name of an object found by name, as PROJ's `nameStr()` gives it.
+fn authority_object_name(object: &AuthorityObject) -> &str {
+    match object {
+        AuthorityObject::Crs(crs) => crs.name(),
+        AuthorityObject::PrimeMeridian(meridian) => meridian.name(),
+        AuthorityObject::Ellipsoid(ellipsoid) => ellipsoid.name(),
+        AuthorityObject::Datum(Datum::Geodetic(frame)) => frame.name(),
+        AuthorityObject::Datum(Datum::Vertical(frame)) => frame.name(),
+        AuthorityObject::Datum(Datum::Engineering(datum)) => datum.name(),
+        AuthorityObject::DatumEnsemble(ensemble) => ensemble.name(),
+        AuthorityObject::Operation(operation) => operation.name(),
+        AuthorityObject::Extent(_) | AuthorityObject::Unit(_) => "",
+    }
+}
+
+/// The [`UserObject`] of an object found by name.
+fn user_object_of(object: AuthorityObject) -> Result<UserObject, FactoryError> {
+    Ok(match object {
+        AuthorityObject::Crs(crs) => UserObject::Crs(crs),
+        AuthorityObject::PrimeMeridian(meridian) => UserObject::PrimeMeridian(meridian),
+        AuthorityObject::Ellipsoid(ellipsoid) => UserObject::Ellipsoid(ellipsoid),
+        AuthorityObject::Datum(Datum::Geodetic(frame)) => UserObject::GeodeticDatum(frame),
+        AuthorityObject::Datum(Datum::Vertical(frame)) => UserObject::VerticalDatum(frame),
+        AuthorityObject::Datum(Datum::Engineering(datum)) => UserObject::EngineeringDatum(datum),
+        AuthorityObject::DatumEnsemble(ensemble) => UserObject::Ensemble(ensemble),
+        AuthorityObject::Operation(operation) => UserObject::Operation(operation),
+        AuthorityObject::Extent(_) | AuthorityObject::Unit(_) => {
+            return Err(FactoryError::Invalid(
+                "not an object of createFromUserInput".to_owned(),
+            ))
+        }
+    })
 }
 
 /// The axis count of a geographic CRS. A geocentric CRS is not one.
@@ -2113,6 +2200,7 @@ fn crs_from_authority_code(text: &str, db: &DatabaseContext) -> Result<Option<Cr
                     let parts: Vec<&str> = tokens[1].split('+').collect();
                     match parts.as_slice() {
                         [first, second] => Ok(Some(implicit_compound(
+                            db,
                             &candidate_factory,
                             first,
                             &candidate_factory,
@@ -2126,7 +2214,7 @@ fn crs_from_authority_code(text: &str, db: &DatabaseContext) -> Result<Option<Cr
         let parts: Vec<&str> = tokens[1].split('+').collect();
         if parts.len() == 2 {
             return Ok(Some(implicit_compound(
-                &factory, parts[0], &factory, parts[1],
+                db, &factory, parts[0], &factory, parts[1],
             )?));
         }
         return Err(FactoryError::missing("CRS", tokens[0], tokens[1]));
@@ -2137,7 +2225,7 @@ fn crs_from_authority_code(text: &str, db: &DatabaseContext) -> Result<Option<Cr
             let first = AuthorityFactory::create(db, tokens[0]);
             let second = AuthorityFactory::create(db, center[1]);
             return Ok(Some(implicit_compound(
-                &first, center[0], &second, tokens[2],
+                db, &first, center[0], &second, tokens[2],
             )?));
         }
     }
@@ -2145,6 +2233,7 @@ fn crs_from_authority_code(text: &str, db: &DatabaseContext) -> Result<Option<Cr
 }
 
 fn implicit_compound(
+    db: &DatabaseContext,
     first_factory: &AuthorityFactory,
     first_code: &str,
     second_factory: &AuthorityFactory,
@@ -2153,7 +2242,7 @@ fn implicit_compound(
     let horizontal = first_factory.create_coordinate_reference_system(first_code)?;
     let vertical = second_factory.create_coordinate_reference_system(second_code)?;
     let name = format!("{} + {}", horizontal.name(), vertical.name());
-    CompoundCRS::create_lax(name, vec![horizontal, vertical])
+    CompoundCRS::create_lax_with_database(name, vec![horizontal, vertical], Some(db))
 }
 
 /// The OGC URN forms of `createFromUserInput` that give a CRS (`io.cpp`, 8015-8155): the
@@ -3094,23 +3183,32 @@ fn unit_kind_name(type_name: &str) -> UnitKind {
     }
 }
 
-/// A CRS, or a datum PROJJSON can name at the root. `createFromUserInput` in PROJ returns either.
+/// An object `createFromUserInput` returns: a CRS, a datum, a datum ensemble, a prime meridian, an
+/// ellipsoid, a coordinate operation or a coordinate metadata.
 #[derive(Clone, Debug)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "a geodetic datum carries an ellipsoid; the other objects do not"
-)]
 pub enum UserObject {
     /// A coordinate reference system.
     Crs(Crs),
     /// A geodetic reference frame, including a dynamic one.
     GeodeticDatum(GeodeticReferenceFrame),
+    /// A vertical reference frame.
+    VerticalDatum(VerticalReferenceFrame),
     /// A parametric datum.
     ParametricDatum(ParametricDatum),
     /// An engineering datum.
     EngineeringDatum(EngineeringDatum),
     /// A temporal datum.
     TemporalDatum(TemporalDatum),
+    /// A datum ensemble.
+    Ensemble(DatumEnsemble),
+    /// A prime meridian.
+    PrimeMeridian(PrimeMeridian),
+    /// An ellipsoid.
+    Ellipsoid(Ellipsoid),
+    /// A coordinate operation, a single one or a concatenated one.
+    Operation(CoordinateOperation),
+    /// A CRS with a coordinate epoch, from `AUTH:CODE@epoch`.
+    CoordinateMetadata(CoordinateMetadata),
 }
 
 impl UserObject {
@@ -3165,18 +3263,62 @@ impl UserObject {
                 },
                 db,
             ),
+            Self::VerticalDatum(datum) => export_wrapped(format, |writer| {
+                write_vertical_datum_members(
+                    writer,
+                    datum,
+                    db,
+                    Place::top(ident(datum.identifiers())),
+                )
+            }),
+            Self::Ensemble(ensemble) => export_wrapped(format, |writer| {
+                writer.key("type");
+                writer.string("DatumEnsemble");
+                write_ensemble_members(writer, ensemble, db)
+            }),
+            Self::PrimeMeridian(meridian) => export_wrapped(format, |writer| {
+                writer.key("type");
+                writer.string("PrimeMeridian");
+                write_meridian_members(
+                    writer,
+                    meridian,
+                    db,
+                    Place::top(ident(meridian.identifiers())),
+                );
+                Ok(())
+            }),
+            Self::Ellipsoid(ellipsoid) => Ok(ellipsoid.export_to_json(db, format)),
+            Self::Operation(operation) => operation.export_to_json_with(db, format),
+            Self::CoordinateMetadata(metadata) => export_wrapped(format, |writer| {
+                writer.key("type");
+                writer.string("CoordinateMetadata");
+                writer.key("crs");
+                writer.start_object();
+                let crs = metadata.crs();
+                write_crs(writer, crs, db, Place::top(crs_ident(crs)))?;
+                writer.end_object();
+                if let Some(epoch) = metadata.coordinate_epoch() {
+                    writer.key("coordinateEpoch");
+                    writer.number(epoch);
+                }
+                Ok(())
+            }),
         }
     }
 }
 
-/// `createFromUserInput` for a CRS or a root datum.
+/// `createFromUserInput` for any object: a CRS, a datum, a datum ensemble, a prime meridian, an
+/// ellipsoid, a coordinate operation, or a CRS with a coordinate epoch.
 ///
-/// JSON whose `type` is a datum returns that datum. Every other accepted text is a CRS, the same
-/// objects [`create_from_user_input`] builds.
+/// JSON whose `type` is a datum returns that datum. The URN forms `urn:ogc:def:datum:`,
+/// `ensemble:`, `meridian:`, `ellipsoid:` and `coordinateOperation:` (one, or a `coordinateOperation,`
+/// list that concatenates them) return that object. `AUTH:CODE@epoch` returns a coordinate
+/// metadata. Every other accepted text is a CRS, the same objects [`create_from_user_input`]
+/// builds.
 ///
 /// # Errors
 ///
-/// The text is not a CRS or a datum this importer accepts.
+/// The text is not an object this importer accepts, or an authority code is missing.
 pub fn create_object_from_user_input(
     text: &str,
     db: &DatabaseContext,
@@ -3185,7 +3327,151 @@ pub fn create_object_from_user_input(
     if text.starts_with('{') {
         return import_user_object(text, db);
     }
-    Ok(UserObject::Crs(create_from_user_input(text, db)?))
+    if let Some(object) = object_from_urn(text, db)? {
+        return Ok(object);
+    }
+    if let Some(metadata) = coordinate_metadata_from_text(text, db)? {
+        return Ok(UserObject::CoordinateMetadata(metadata));
+    }
+    read_user_object(text, Some(db), InitRules::Iso19111)
+}
+
+/// The object a typed OGC URN names, when `text` is one that is not a CRS: `None` for a CRS URN
+/// and for any other text. `urn:ogc:def:coordinateOperation,` is the concatenation of the
+/// operations it lists (`io.cpp`, `createFromUserInput`, `urn:ogc:def:coordinateOperation,`).
+fn object_from_urn(text: &str, db: &DatabaseContext) -> Result<Option<UserObject>, FactoryError> {
+    if text.starts_with("urn:ogc:def:coordinateOperation,") {
+        return concatenated_operation_from_urn(text, db)
+            .map(|operation| Some(UserObject::Operation(operation)));
+    }
+    if text.contains(' ') {
+        return Ok(None);
+    }
+    let tokens: Vec<&str> = text.split(':').collect();
+    if tokens.len() != 7 || !tokens[0].eq_ignore_ascii_case("urn") || tokens[1] != "ogc" {
+        return Ok(None);
+    }
+    let kind = tokens[3];
+    if !matches!(
+        kind,
+        "datum" | "ensemble" | "meridian" | "ellipsoid" | "coordinateOperation"
+    ) {
+        return Ok(None);
+    }
+    read_urn_object(db, tokens[4], tokens[5], &|factory| {
+        typed_object(factory, kind, tokens[6])
+    })
+    .map(Some)
+}
+
+/// `createFromURNPart` for an object that is not a CRS (`io.cpp` 7652-7707): the object `code`
+/// of `authority`, with the versioned fallback of the CRS form. The versioned authorities are
+/// tried when `version` is empty, and the one `version` names otherwise.
+fn read_urn_object<T>(
+    db: &DatabaseContext,
+    authority: &str,
+    version: &str,
+    read: &dyn Fn(&AuthorityFactory) -> Result<T, FactoryError>,
+) -> Result<T, FactoryError> {
+    let error = match read(&AuthorityFactory::create(db, authority)) {
+        Ok(object) => return Ok(object),
+        Err(error) => error,
+    };
+    if version.is_empty() {
+        for versioned in db.versioned_authorities_from_name(authority) {
+            if let Ok(object) = read_urn_object(db, &versioned, "", read) {
+                return Ok(object);
+            }
+        }
+        return Err(error);
+    }
+    match db.versioned_authority(authority, version) {
+        Some(versioned) => read_urn_object(db, &versioned, "", read),
+        None => Err(error),
+    }
+}
+
+/// The object of kind `kind` (`datum`, `ensemble`, `meridian`, `ellipsoid`, `coordinateOperation`)
+/// with `code` in `factory`.
+fn typed_object(
+    factory: &AuthorityFactory,
+    kind: &str,
+    code: &str,
+) -> Result<UserObject, FactoryError> {
+    Ok(match kind {
+        "datum" => match factory.create_datum(code)? {
+            Datum::Geodetic(frame) => UserObject::GeodeticDatum(frame),
+            Datum::Vertical(frame) => UserObject::VerticalDatum(frame),
+            Datum::Engineering(datum) => UserObject::EngineeringDatum(datum),
+        },
+        "ensemble" => UserObject::Ensemble(factory.create_datum_ensemble(code)?),
+        "meridian" => UserObject::PrimeMeridian(factory.create_prime_meridian(code)?),
+        "ellipsoid" => UserObject::Ellipsoid(factory.create_ellipsoid(code)?),
+        _ => UserObject::Operation(
+            factory.create_coordinate_operation(code, AlternativeGridNames::Proj)?,
+        ),
+    })
+}
+
+/// `urn:ogc:def:coordinateOperation,coordinateOperation:AUTH::CODE,...`: the operations of the
+/// list, concatenated in order. Each item is `coordinateOperation:AUTH::CODE`, with an empty
+/// version and no further element; any other shape is a parsing error.
+fn concatenated_operation_from_urn(
+    text: &str,
+    db: &DatabaseContext,
+) -> Result<CoordinateOperation, FactoryError> {
+    let items = text
+        .strip_prefix("urn:ogc:def:coordinateOperation,")
+        .unwrap_or_default()
+        .split(',');
+    let mut operations = Vec::new();
+    for item in items {
+        let parts: Vec<&str> = item.split(':').collect();
+        let [kind, authority, version, code] = parts.as_slice() else {
+            return Err(FactoryError::Format(format!(
+                "{item}: not a coordinateOperation URN item"
+            )));
+        };
+        if *kind != "coordinateOperation" || !version.is_empty() {
+            return Err(FactoryError::Format(format!(
+                "{item}: not a coordinateOperation URN item"
+            )));
+        }
+        operations.push(read_urn_object(db, authority, "", &|factory| {
+            factory.create_coordinate_operation(code, AlternativeGridNames::Proj)
+        })?);
+    }
+    let context = CoordinateOperationContext::create(db, "");
+    compute_metadata(operations, &context)
+        .ok_or_else(|| FactoryError::Format("the operations of the URN do not meet".to_owned()))
+}
+
+/// `AUTH:CODE@epoch` (or `CRS @ epoch`, with spaces): the CRS with that coordinate epoch, as
+/// `CoordinateMetadata::create` builds it. `None` when `text` has no `@` or names a PROJ string,
+/// a WKT, or a JSON object.
+fn coordinate_metadata_from_text(
+    text: &str,
+    db: &DatabaseContext,
+) -> Result<Option<CoordinateMetadata>, FactoryError> {
+    if text.contains(['[', '+', '{']) {
+        return Ok(None);
+    }
+    let Some((crs_text, epoch_text)) = text.split_once('@') else {
+        return Ok(None);
+    };
+    let (crs_text, epoch_text) = (crs_text.trim(), epoch_text.trim());
+    let epoch: f64 = epoch_text.parse().map_err(|_| {
+        FactoryError::Format(format!(
+            "{epoch_text}: not a decimal year of a CoordinateMetadata"
+        ))
+    })?;
+    if crs_text.is_empty() {
+        return Err(FactoryError::Format(
+            "a CoordinateMetadata needs a CRS before @".to_owned(),
+        ));
+    }
+    let crs = create_from_user_input(crs_text, db)?;
+    CoordinateMetadata::create(&crs, epoch, db).map(Some)
 }
 
 fn export_wrapped(
