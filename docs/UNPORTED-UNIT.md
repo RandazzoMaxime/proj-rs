@@ -21,6 +21,4 @@ and `PORT-NOTES-tests.md`.
 
 ## test_operationfactory.cpp
 
-- `operation.boundCRS_to_geogCRS_hubCRS_and_targetCRS_same_but_baseCRS_not`
-- `operation.compoundCRS_to_compoundCRS_concatenated_operation_with_two_vert_transformation`
 

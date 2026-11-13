@@ -441,11 +441,8 @@ fn operation_compound_to_compound_concatenated_two_vert_transformation() {
 
 /// The names of the second candidate of `operation_compound_to_compound_concatenated_two_vert_transformation`,
 /// as PROJ 9.9.0 names them (`projinfo -s EPSG:8360 -t EPSG:7423`, operation 2, and its reverse,
-/// operation 2 of `projinfo -s EPSG:7423 -t EPSG:8360`). The Rust candidate names its second step
-/// `Inverse of 'Inverse of ...'`, where PROJ names it `'...'`: the step runs the same pipeline with
-/// the opposite orientation flag.
+/// operation 2 of `projinfo -s EPSG:7423 -t EPSG:8360`). The Rust names are the same strings.
 #[test]
-#[ignore = "open: the second step is named Inverse of 'Inverse of E' where PROJ 9.9.0 names it 'E'; the pipeline is the same"]
 fn operation_compound_to_compound_concatenated_two_vert_transformation_names() {
     let db = DatabaseContext::create().expect("proj.db");
     let source = epsg(&db, "8360");

@@ -83,8 +83,6 @@ fn operation_geog3d_crs_to_geog2d_crs_plus_vert_crs_context() {
 
 /// `TEST(operation, boundCRS_to_geogCRS_hubCRS_and_targetCRS_same_but_baseCRS_not)`.
 #[test]
-#[ignore = "open: the WKT COMPD_CS import gives a 2D WGS 84 hub, PROJ's is 3D (3 axes), so the \
-            export has no z_in/z_out pair on the NAD83 to WGS 84 step (io.cpp, bound_import.rs)"]
 fn operation_bound_crs_to_geog_crs_hub_and_target_same_but_base_not() {
     const WKT: &str = r#"COMPD_CS["NAD83 + Ellipsoid (US Feet)",
         GEOGCS["NAD83",

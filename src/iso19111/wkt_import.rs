@@ -3372,7 +3372,9 @@ impl WktParser {
             return Err(invalid("a compound CRS needs at least two components"));
         }
         if ci_eq(&node.value, "COMPD_CS") {
-            if let Some(promoted) = lax_compd_cs(props.name.clone(), components.clone())? {
+            if let Some(promoted) =
+                lax_compd_cs(props.name.clone(), components.clone(), self.db.as_ref())?
+            {
                 return Ok(WktObject::Crs(promoted));
             }
         }
@@ -4007,7 +4009,11 @@ fn is_interpolation_parameter(parameter: &Parameter) -> bool {
 /// An equivalent second geographic CRS promotes the first CRS to 3D and marks it
 /// for a non-conformant WKT1 export. A vertical datum of type `2002` promotes
 /// with that axis and keeps the original compound for WKT1.
-fn lax_compd_cs(name: String, mut components: Vec<Crs>) -> Result<Option<Crs>, FactoryError> {
+fn lax_compd_cs(
+    name: String,
+    mut components: Vec<Crs>,
+    db: Option<&DatabaseContext>,
+) -> Result<Option<Crs>, FactoryError> {
     if components.len() != 2 {
         return Ok(None);
     }
@@ -4067,6 +4073,7 @@ fn lax_compd_cs(name: String, mut components: Vec<Crs>) -> Result<Option<Crs>, F
             };
             let mut promoted = first;
             add_height_axis(&mut promoted, height, &new_name);
+            super::crs_ops::promote_bound_hub_to_3d(&mut promoted, db);
             attach_compound(&mut promoted, compound);
             return Ok(Some(promoted));
         }
