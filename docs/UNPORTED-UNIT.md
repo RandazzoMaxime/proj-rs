@@ -63,7 +63,6 @@ and `PORT-NOTES-tests.md`.
 - `operation.compoundCRS_to_compoundCRS_concatenated_operation_with_two_vert_transformation`
 - `operation.compoundCRS_to_compoundCRS_with_derivedVerticalCRS_ellipsoidal_height`
 - `operation.compoundCRS_with_derived_vertical_CRS`
-- `operation.createOperation_bound_of_spherical_ocentric_to_same_type`
 - `operation.createOperation_derived_projected_crs`
 - `operation.geogCRS_to_compoundCRS_with_boundVerticalCRS_and_derivedProjected`
 
@@ -74,9 +73,6 @@ and `PORT-NOTES-tests.md`.
 - `CApi.proj_context_set_database_path_aux`
 - `CApi.proj_context_set_database_path_error_1`
 - `CApi.proj_context_set_database_path_error_2`
-- `CApi.proj_clone_of_obj_with_alternative_operations`
-- `CApi.proj_normalize_for_visualization_with_alternatives`
-- `CApi.proj_coordoperation_create_inverse`
 - `CApi.proj_context_copy_from_default`
 - `CApi.proj_context_clone`
 - `CApi.proj_context_set_sqlite3_vfs_name`

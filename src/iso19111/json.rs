@@ -5,9 +5,12 @@
 //! `versioned_auth_name_mapping`.
 
 use super::buildop::OpProps;
+use super::compound::compute_metadata;
+use super::coordinate_metadata::CoordinateMetadata;
 use super::equiv;
 use super::factory::{
-    AlternativeGridNames, AuthorityFactory, AuthorityObject, DatabaseContext, NameMatch, ObjectType,
+    AlternativeGridNames, AuthorityFactory, AuthorityObject, CoordinateOperationContext,
+    DatabaseContext, NameMatch, ObjectType,
 };
 use super::json_read::{create_object_from_json, JsonObject};
 use super::model::{
@@ -3094,23 +3097,32 @@ fn unit_kind_name(type_name: &str) -> UnitKind {
     }
 }
 
-/// A CRS, or a datum PROJJSON can name at the root. `createFromUserInput` in PROJ returns either.
+/// An object `createFromUserInput` returns: a CRS, a datum, a datum ensemble, a prime meridian, an
+/// ellipsoid, a coordinate operation or a coordinate metadata.
 #[derive(Clone, Debug)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "a geodetic datum carries an ellipsoid; the other objects do not"
-)]
 pub enum UserObject {
     /// A coordinate reference system.
     Crs(Crs),
     /// A geodetic reference frame, including a dynamic one.
     GeodeticDatum(GeodeticReferenceFrame),
+    /// A vertical reference frame.
+    VerticalDatum(VerticalReferenceFrame),
     /// A parametric datum.
     ParametricDatum(ParametricDatum),
     /// An engineering datum.
     EngineeringDatum(EngineeringDatum),
     /// A temporal datum.
     TemporalDatum(TemporalDatum),
+    /// A datum ensemble.
+    Ensemble(DatumEnsemble),
+    /// A prime meridian.
+    PrimeMeridian(PrimeMeridian),
+    /// An ellipsoid.
+    Ellipsoid(Ellipsoid),
+    /// A coordinate operation, a single one or a concatenated one.
+    Operation(CoordinateOperation),
+    /// A CRS with a coordinate epoch, from `AUTH:CODE@epoch`.
+    CoordinateMetadata(CoordinateMetadata),
 }
 
 impl UserObject {
@@ -3165,18 +3177,30 @@ impl UserObject {
                 },
                 db,
             ),
+            Self::VerticalDatum(_)
+            | Self::Ensemble(_)
+            | Self::PrimeMeridian(_)
+            | Self::Ellipsoid(_)
+            | Self::Operation(_)
+            | Self::CoordinateMetadata(_) => Err(FactoryError::Format(
+                "PROJJSON export of this object kind is not written by this port".to_owned(),
+            )),
         }
     }
 }
 
-/// `createFromUserInput` for a CRS or a root datum.
+/// `createFromUserInput` for any object: a CRS, a datum, a datum ensemble, a prime meridian, an
+/// ellipsoid, a coordinate operation, or a CRS with a coordinate epoch.
 ///
-/// JSON whose `type` is a datum returns that datum. Every other accepted text is a CRS, the same
-/// objects [`create_from_user_input`] builds.
+/// JSON whose `type` is a datum returns that datum. The URN forms `urn:ogc:def:datum:`,
+/// `ensemble:`, `meridian:`, `ellipsoid:` and `coordinateOperation:` (one, or a `coordinateOperation,`
+/// list that concatenates them) return that object. `AUTH:CODE@epoch` returns a coordinate
+/// metadata. Every other accepted text is a CRS, the same objects [`create_from_user_input`]
+/// builds.
 ///
 /// # Errors
 ///
-/// The text is not a CRS or a datum this importer accepts.
+/// The text is not an object this importer accepts, or an authority code is missing.
 pub fn create_object_from_user_input(
     text: &str,
     db: &DatabaseContext,
@@ -3185,7 +3209,151 @@ pub fn create_object_from_user_input(
     if text.starts_with('{') {
         return import_user_object(text, db);
     }
+    if let Some(object) = object_from_urn(text, db)? {
+        return Ok(object);
+    }
+    if let Some(metadata) = coordinate_metadata_from_text(text, db)? {
+        return Ok(UserObject::CoordinateMetadata(metadata));
+    }
     Ok(UserObject::Crs(create_from_user_input(text, db)?))
+}
+
+/// The object a typed OGC URN names, when `text` is one that is not a CRS: `None` for a CRS URN
+/// and for any other text. `urn:ogc:def:coordinateOperation,` is the concatenation of the
+/// operations it lists (`io.cpp`, `createFromUserInput`, `urn:ogc:def:coordinateOperation,`).
+fn object_from_urn(text: &str, db: &DatabaseContext) -> Result<Option<UserObject>, FactoryError> {
+    if text.starts_with("urn:ogc:def:coordinateOperation,") {
+        return concatenated_operation_from_urn(text, db)
+            .map(|operation| Some(UserObject::Operation(operation)));
+    }
+    if text.contains(' ') {
+        return Ok(None);
+    }
+    let tokens: Vec<&str> = text.split(':').collect();
+    if tokens.len() != 7 || !tokens[0].eq_ignore_ascii_case("urn") || tokens[1] != "ogc" {
+        return Ok(None);
+    }
+    let kind = tokens[3];
+    if !matches!(
+        kind,
+        "datum" | "ensemble" | "meridian" | "ellipsoid" | "coordinateOperation"
+    ) {
+        return Ok(None);
+    }
+    read_urn_object(db, tokens[4], tokens[5], &|factory| {
+        typed_object(factory, kind, tokens[6])
+    })
+    .map(Some)
+}
+
+/// `createFromURNPart` for an object that is not a CRS (`io.cpp` 7652-7707): the object `code`
+/// of `authority`, with the versioned fallback of the CRS form. The versioned authorities are
+/// tried when `version` is empty, and the one `version` names otherwise.
+fn read_urn_object<T>(
+    db: &DatabaseContext,
+    authority: &str,
+    version: &str,
+    read: &dyn Fn(&AuthorityFactory) -> Result<T, FactoryError>,
+) -> Result<T, FactoryError> {
+    let error = match read(&AuthorityFactory::create(db, authority)) {
+        Ok(object) => return Ok(object),
+        Err(error) => error,
+    };
+    if version.is_empty() {
+        for versioned in db.versioned_authorities_from_name(authority) {
+            if let Ok(object) = read_urn_object(db, &versioned, "", read) {
+                return Ok(object);
+            }
+        }
+        return Err(error);
+    }
+    match db.versioned_authority(authority, version) {
+        Some(versioned) => read_urn_object(db, &versioned, "", read),
+        None => Err(error),
+    }
+}
+
+/// The object of kind `kind` (`datum`, `ensemble`, `meridian`, `ellipsoid`, `coordinateOperation`)
+/// with `code` in `factory`.
+fn typed_object(
+    factory: &AuthorityFactory,
+    kind: &str,
+    code: &str,
+) -> Result<UserObject, FactoryError> {
+    Ok(match kind {
+        "datum" => match factory.create_datum(code)? {
+            Datum::Geodetic(frame) => UserObject::GeodeticDatum(frame),
+            Datum::Vertical(frame) => UserObject::VerticalDatum(frame),
+            Datum::Engineering(datum) => UserObject::EngineeringDatum(datum),
+        },
+        "ensemble" => UserObject::Ensemble(factory.create_datum_ensemble(code)?),
+        "meridian" => UserObject::PrimeMeridian(factory.create_prime_meridian(code)?),
+        "ellipsoid" => UserObject::Ellipsoid(factory.create_ellipsoid(code)?),
+        _ => UserObject::Operation(
+            factory.create_coordinate_operation(code, AlternativeGridNames::Proj)?,
+        ),
+    })
+}
+
+/// `urn:ogc:def:coordinateOperation,coordinateOperation:AUTH::CODE,...`: the operations of the
+/// list, concatenated in order. Each item is `coordinateOperation:AUTH::CODE`, with an empty
+/// version and no further element; any other shape is a parsing error.
+fn concatenated_operation_from_urn(
+    text: &str,
+    db: &DatabaseContext,
+) -> Result<CoordinateOperation, FactoryError> {
+    let items = text
+        .strip_prefix("urn:ogc:def:coordinateOperation,")
+        .unwrap_or_default()
+        .split(',');
+    let mut operations = Vec::new();
+    for item in items {
+        let parts: Vec<&str> = item.split(':').collect();
+        let [kind, authority, version, code] = parts.as_slice() else {
+            return Err(FactoryError::Format(format!(
+                "{item}: not a coordinateOperation URN item"
+            )));
+        };
+        if *kind != "coordinateOperation" || !version.is_empty() {
+            return Err(FactoryError::Format(format!(
+                "{item}: not a coordinateOperation URN item"
+            )));
+        }
+        operations.push(read_urn_object(db, authority, "", &|factory| {
+            factory.create_coordinate_operation(code, AlternativeGridNames::Proj)
+        })?);
+    }
+    let context = CoordinateOperationContext::create(db, "");
+    compute_metadata(operations, &context)
+        .ok_or_else(|| FactoryError::Format("the operations of the URN do not meet".to_owned()))
+}
+
+/// `AUTH:CODE@epoch` (or `CRS @ epoch`, with spaces): the CRS with that coordinate epoch, as
+/// `CoordinateMetadata::create` builds it. `None` when `text` has no `@` or names a PROJ string,
+/// a WKT, or a JSON object.
+fn coordinate_metadata_from_text(
+    text: &str,
+    db: &DatabaseContext,
+) -> Result<Option<CoordinateMetadata>, FactoryError> {
+    if text.contains(['[', '+', '{']) {
+        return Ok(None);
+    }
+    let Some((crs_text, epoch_text)) = text.split_once('@') else {
+        return Ok(None);
+    };
+    let (crs_text, epoch_text) = (crs_text.trim(), epoch_text.trim());
+    let epoch: f64 = epoch_text.parse().map_err(|_| {
+        FactoryError::Format(format!(
+            "{epoch_text}: not a decimal year of a CoordinateMetadata"
+        ))
+    })?;
+    if crs_text.is_empty() {
+        return Err(FactoryError::Format(
+            "a CoordinateMetadata needs a CRS before @".to_owned(),
+        ));
+    }
+    let crs = create_from_user_input(crs_text, db)?;
+    CoordinateMetadata::create(&crs, epoch, db).map(Some)
 }
 
 fn export_wrapped(

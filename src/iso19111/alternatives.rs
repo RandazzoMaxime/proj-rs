@@ -202,6 +202,15 @@ pub struct Alternatives {
     creation: Vec<LogLine>,
 }
 
+/// The state a `proj_trans` leaves between two points: `P->iCurCoordOp`, the pending warning and
+/// the last failure. See [`Alternatives::save_state`].
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PointState {
+    current: Option<usize>,
+    warn: bool,
+    last_failure: Option<&'static str>,
+}
+
 /// Whether the candidates that are not instantiable may be chosen (`skipNonInstantiable`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Instantiability {
@@ -262,6 +271,43 @@ impl Alternatives {
             last_failure: Cell::new(None),
             creation: Vec::new(),
         }
+    }
+
+    /// The candidate the last point used, `P->iCurCoordOp` (`info.cpp` 170-171). `None` before
+    /// the first point, and after a point that found no candidate.
+    pub(crate) fn current_item(&self) -> Option<&Item> {
+        self.current.get().and_then(|best| self.items.get(best))
+    }
+
+    /// The state the points leave behind: the candidate, the warning flag and the last failure.
+    pub(crate) fn save_state(&self) -> PointState {
+        PointState {
+            current: self.current.get(),
+            warn: self.warn.get(),
+            last_failure: self.last_failure.get(),
+        }
+    }
+
+    /// Puts back a state of [`Self::save_state`], after a probe that is not a `proj_trans`.
+    pub(crate) fn restore_state(&self, state: PointState) {
+        self.current.set(state.current);
+        self.warn.set(state.warn);
+        self.last_failure.set(state.last_failure);
+    }
+
+    /// `PJCoordOperation::operator==` over the lists (`proj_internal.h` 424-433): the same
+    /// candidates in the same order, with the same names, boxes and accuracy, and the same PROJ
+    /// string for each. PROJ compares the candidate objects with `PJ_COMP_STRICT`; the strings
+    /// stand in for that comparison, which is exact for the candidates this port builds from them.
+    pub(crate) fn is_equivalent_to(&self, other: &Self) -> bool {
+        self.items.len() == other.items.len()
+            && self.items.iter().zip(&other.items).all(|(a, b)| {
+                a.name == b.name
+                    && a.bounds == b.bounds
+                    && a.target_bounds == b.target_bounds
+                    && a.accuracy == b.accuracy
+                    && a.definition == b.definition
+            })
     }
 
     /// The pair was created after `pj_warn_about_missing_grid` on its single first candidate

@@ -24,6 +24,36 @@ pub enum ProjLines {
     Single,
 }
 
+/// The layout of a PROJ pipeline text: the options of `proj_as_proj_string`.
+///
+/// PROJ reads `MULTILINE` (default `NO`), `INDENTATION_WIDTH` (default 2) and `MAX_LINE_LENGTH`
+/// (default 80). A line that would pass `max_line_length` columns is broken before its next
+/// parameter, which then starts under the step's own `+step ` text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProjStringLayout {
+    /// One line, `MULTILINE=NO`.
+    Single,
+    /// One step per line, `MULTILINE=YES`.
+    Multi {
+        /// Spaces before each `+step` line, `INDENTATION_WIDTH`.
+        indentation_width: usize,
+        /// Longest line before a parameter moves to the next line, `MAX_LINE_LENGTH`.
+        max_line_length: usize,
+    },
+}
+
+impl From<ProjLines> for ProjStringLayout {
+    fn from(lines: ProjLines) -> Self {
+        match lines {
+            ProjLines::Single => Self::Single,
+            ProjLines::Multi => Self::Multi {
+                indentation_width: 2,
+                max_line_length: 80,
+            },
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct Param {
     key: String,
@@ -201,12 +231,17 @@ impl PipelineFormatter {
     }
 
     /// Runs the optimizations and prints the pipeline.
-    pub(crate) fn finish(mut self, lines: ProjLines) -> String {
+    pub(crate) fn finish(self, lines: ProjLines) -> String {
+        self.finish_layout(lines.into())
+    }
+
+    /// [`Self::finish`] with the full layout of `proj_as_proj_string`.
+    pub(crate) fn finish_layout(mut self, layout: ProjStringLayout) -> String {
         self.drop_noops();
         self.normalize_inverses();
         self.merge_adjacent();
         self.rewrite_patterns();
-        self.render(lines)
+        self.render(layout)
     }
 
     /// The pattern rewrites of PROJ's `PROJStringFormatter`, run until none applies: grid
@@ -255,21 +290,28 @@ impl PipelineFormatter {
         }
     }
 
-    fn render(self, lines: ProjLines) -> String {
-        let multi = lines == ProjLines::Multi;
+    fn render(self, layout: ProjStringLayout) -> String {
+        let (multi, indentation, max_line_length) = match layout {
+            ProjStringLayout::Single => (false, 0, usize::MAX),
+            ProjStringLayout::Multi {
+                indentation_width,
+                max_line_length,
+            } => (true, indentation_width, max_line_length),
+        };
         let mut result = String::new();
+        // Columns before each `+step` line: the `INDENTATION_WIDTH` under `+proj=pipeline`.
         let mut indent = 0;
         if self.steps.len() > 1 || self.steps.first().is_some_and(|step| step.inverted) {
             result.push_str("+proj=pipeline");
             if multi {
-                indent += 1;
+                indent = indentation;
             }
         }
         for step in &self.steps {
             let mut line = if result.is_empty() {
                 String::new()
             } else if multi {
-                format!("{}+step", " ".repeat(indent * 2))
+                format!("{}+step", " ".repeat(indent))
             } else {
                 " +step".to_owned()
             };
@@ -289,12 +331,12 @@ impl PipelineFormatter {
                     kv.push('=');
                     kv.push_str(&param.value);
                 }
-                if multi && line.len() + kv.len() > 80 {
+                if multi && line.len() + kv.len() > max_line_length {
                     if !result.is_empty() {
                         result.push('\n');
                     }
                     result.push_str(&line);
-                    line = " ".repeat(indent * 2 + "+step ".len());
+                    line = " ".repeat(indent + "+step ".len());
                 } else if !line.is_empty() {
                     line.push(' ');
                 }
@@ -310,6 +352,57 @@ impl PipelineFormatter {
         } else {
             result
         }
+    }
+}
+
+/// A PROJ pipeline kept as its steps, so that it can be inverted and written with any layout.
+///
+/// `proj_coordoperation_create_inverse` inverts the operation of a pipeline and writes it back with
+/// `proj_as_proj_string`. Global parameters and `title=` are not kept, as in
+/// [`parse_proj_string`].
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Pipeline {
+    steps: Vec<Step>,
+}
+
+impl Pipeline {
+    /// The steps of a PROJ pipeline text, or of one step.
+    pub(crate) fn parse(text: &str) -> Self {
+        Self {
+            steps: parse_proj_string(text),
+        }
+    }
+
+    /// The inverse of the steps: the same steps in reverse order, each one inverted.
+    ///
+    /// A `push` (or `pop`) that becomes inverted is written as its opposite without `+inv`, as
+    /// PROJ writes `pop` for `inv +proj=push`. The other inversions are left to the formatter,
+    /// which drops those it can print without `+inv` (`normalize_inverses`).
+    pub(crate) fn inverse(&self) -> Self {
+        let steps = self
+            .steps
+            .iter()
+            .rev()
+            .map(|step| {
+                let mut inverse = step.clone();
+                inverse.inverted = !step.inverted;
+                if inverse.inverted && matches!(step.name.as_str(), "push" | "pop") {
+                    inverse.name = if step.name == "push" { "pop" } else { "push" }.to_owned();
+                    inverse.inverted = false;
+                }
+                inverse
+            })
+            .collect();
+        Self { steps }
+    }
+
+    /// The text of the steps, as `PROJStringFormatter` writes them with `layout`.
+    pub(crate) fn render(&self, layout: ProjStringLayout) -> String {
+        PipelineFormatter {
+            steps: self.steps.clone(),
+            ..PipelineFormatter::default()
+        }
+        .finish_layout(layout)
     }
 }
 

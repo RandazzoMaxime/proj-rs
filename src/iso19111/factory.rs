@@ -5867,6 +5867,23 @@ impl CoordinateOperationFactory {
                 .map(CoordinateOperation::inverse)
                 .collect());
         }
+        // `boundSrc` on a spherical planetocentric base, then `boundDst` on one, as in
+        // `createOperations` (coordinateoperationfactory.cpp:3675-3695).
+        if let Crs::Bound(bound) = source {
+            if super::geodetic_ops::is_spherical_planetocentric(bound.source_crs()) {
+                return super::bound_ops::bound_of_spherical_planetocentric(
+                    self, source, bound, target, context,
+                );
+            }
+        } else if let Crs::Bound(bound) = target {
+            if super::geodetic_ops::is_spherical_planetocentric(bound.source_crs()) {
+                return Ok(self
+                    .create_candidates(target, source, context)?
+                    .iter()
+                    .map(CoordinateOperation::inverse)
+                    .collect());
+            }
+        }
         if let Some(bound) = super::bound_ops::bound_candidates(self, source, target, context)? {
             return Ok(bound);
         }

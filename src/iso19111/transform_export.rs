@@ -1486,9 +1486,11 @@ fn geographic_geocentric(
     target: Option<&Crs>,
     formatter: &mut PipelineFormatter,
 ) -> Result<(), FactoryError> {
+    // A bound end is read through its base, as `Conversion::_exportToPROJString` does
+    // (conversion.cpp:3838-3845).
     let (Some(source), Some(target)) = (
-        source.and_then(geodetic_front),
-        target.and_then(geodetic_front),
+        source.and_then(bound_base).and_then(geodetic_front),
+        target.and_then(bound_base).and_then(geodetic_front),
     ) else {
         return Err(invalid_geographic_geocentric());
     };
@@ -2351,6 +2353,14 @@ enum Geodetic<'a> {
 }
 
 /// The geodetic CRS of `crs`, or of its first component when `crs` is compound.
+/// The base of a bound CRS, or the CRS itself.
+fn bound_base(crs: &Crs) -> Option<&Crs> {
+    match crs {
+        Crs::Bound(bound) => bound_base(bound.source_crs()),
+        other => Some(other),
+    }
+}
+
 fn geodetic_front(crs: &Crs) -> Option<Geodetic<'_>> {
     match crs {
         Crs::Compound(compound) => compound.components().first().and_then(geodetic_direct),
