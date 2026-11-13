@@ -57,6 +57,8 @@ fn c_api_proj_context_copy_from_default() {
     assert_eq!(context.database_path(), Some(copy.as_path()));
     let database = context.database().expect("database from the copy");
     assert!(knows_epsg_4326(&database));
+    // Windows refuses to remove a file that a connection still holds open.
+    drop(database);
     std::fs::remove_file(&copy).expect("remove copy");
 }
 
