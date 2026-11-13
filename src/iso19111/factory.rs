@@ -5,6 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use rusqlite::{types::ValueRef, Connection, OpenFlags};
@@ -381,6 +382,8 @@ fn create_temp_views(conn: &Connection, databases: usize) -> Result<(), FactoryE
 pub struct DatabaseContext {
     conn: Arc<Mutex<Connection>>,
     attachment: Attachment,
+    /// Set while an insert session is open on this database; shared by clones.
+    insert_session: Arc<AtomicBool>,
 }
 
 /// How the tables of a [`DatabaseContext`] are reached.
@@ -511,6 +514,7 @@ impl DatabaseContext {
         Self {
             conn: Arc::new(Mutex::new(conn)),
             attachment,
+            insert_session: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -576,6 +580,41 @@ impl DatabaseContext {
         self.lock()
             .execute_batch(sql)
             .map_err(|error| FactoryError::Sql(error.to_string()))
+    }
+
+    /// The database of a context whose main file is `path` (or the embedded
+    /// one when `None`), opened through the SQLite VFS `vfs`. Only the main
+    /// database is read: this is [`DatabaseContext::create`] or
+    /// [`DatabaseContext::open`] with a named VFS, and `open` keeps SQLite's
+    /// default.
+    ///
+    /// # Errors
+    ///
+    /// The VFS is unknown, the file cannot be opened, or its layout is not the
+    /// one this factory reads.
+    pub(crate) fn open_with_vfs(path: Option<&Path>, vfs: &str) -> Result<Self, FactoryError> {
+        let (conn, label) = match path {
+            Some(path) => (
+                projdb::open_file(path, Some(vfs)),
+                path.display().to_string(),
+            ),
+            None => (projdb::open_embedded_with_vfs(vfs), "proj.db".to_owned()),
+        };
+        let conn = conn.map_err(|error| FactoryError::Sql(error.to_string()))?;
+        check_main_layout(&conn, "", &label)?;
+        Ok(Self::from_connection(conn, Attachment::Direct))
+    }
+
+    /// Whether an insert session is open on this database.
+    pub(super) fn insert_session_flag(&self) -> &AtomicBool {
+        &self.insert_session
+    }
+
+    /// Run `sql` as a batch, such as an `INSERT` or a savepoint command.
+    pub(super) fn execute_batch(&self, sql: &str) -> Result<(), FactoryError> {
+        self.lock()
+            .execute_batch(sql)
+            .map_err(|error| FactoryError::Sql(format!("Cannot execute {sql}: {error}")))
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Connection> {

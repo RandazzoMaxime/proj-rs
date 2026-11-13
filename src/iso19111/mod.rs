@@ -54,7 +54,7 @@ pub use factory::{
     IntermediateCrsUse, NameMatch, NameSpelling, ObjectType, OfficialName, SpatialCriterion,
     SupersededOperations, UnitInfo,
 };
-pub use insert::insert_statements;
+pub use insert::{insert_statements, suggests_code_for, CodeForm, InsertSession};
 pub use json::{
     create_from_user_input, create_from_user_input_with_init_rules,
     create_from_user_input_with_optional_database, create_object_from_user_input, epsg_identity,

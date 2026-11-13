@@ -24,6 +24,7 @@
 //! left.
 
 mod angle;
+mod context;
 mod coord;
 mod crs;
 mod crs_text;
@@ -53,6 +54,7 @@ mod tmerc;
 mod tmerc_approx;
 mod transform;
 
+pub use context::{Context, ContextBuilder, DatabaseSource};
 pub use engine::{
     lpz_dist, parse_gie_coord, xyz_dist, Coord as Xyzt, CreateError, CrsPipeline, Operation,
     TransformError as StepError,
@@ -110,6 +112,9 @@ pub use iso19111::{
     UnitInfo, UnitKind, UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame,
     Wgs84Dynamic, WktConvention, WktDialect, WktFormatter, WktLines, WktNode, WktObject, WktParser,
     WktStrictness, CALENDAR_PROLEPTIC_GREGORIAN,
+};
+pub use iso19111::{
+    create_from_user_input_with_init_rules, suggests_code_for, CodeForm, InitRules, InsertSession,
 };
 pub use iso19111::{
     DerivedCRS, ParametricCRS, ParametricCS, ParametricDatum, TemporalCRS, TemporalCS,

@@ -23,11 +23,4 @@ and `PORT-NOTES-tests.md`.
 
 - `operation.boundCRS_to_geogCRS_hubCRS_and_targetCRS_same_but_baseCRS_not`
 - `operation.compoundCRS_to_compoundCRS_concatenated_operation_with_two_vert_transformation`
-- `CApi.proj_context_copy_from_default`
-- `CApi.proj_context_clone`
-- `CApi.proj_context_set_sqlite3_vfs_name`
-- `CApi.proj_context_set_sqlite3_vfs_name__from_global_context`
-- `CApi.use_proj4_init_rules_from_global_context`
-- `CApi.proj_get_insert_statements`
-- `CApi.open_plenty_of_contexts`
 

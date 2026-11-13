@@ -39,7 +39,7 @@ cc = "1.1"
 geo-types = { version = "0.7.16", optional = true }
 # 0.37 is edition 2021 and does not declare a rust-version above 1.83.
 # `serialize` opens the embedded proj.db with `deserialize_bytes`.
-rusqlite = { version = "0.37.0", features = ["bundled", "serialize"] }
+rusqlite = { version = "0.37.0", features = ["bundled", "serialize", "backup"] }
 # GeoTIFF grids. `deflate` only: the test grids are uncompressed, deflate, or deflate+predictor.
 tiff = { version = "0.10.3", default-features = false, features = ["deflate"] }
 # HTTPS grid download. 0.2.14 is rust-version 1.80 and uses SChannel on Windows.
