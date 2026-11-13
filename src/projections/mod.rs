@@ -23,6 +23,10 @@ mod eqdc;
 mod geos;
 mod gnom;
 mod gridshift;
+pub use gridshift::public::{
+    ExtentAndRes, GenericShiftGridSet, Grid, GridError, HorizontalShiftGridSet, Nodata,
+    VerticalShiftGridSet,
+};
 mod guyou;
 mod healpix;
 mod hourglass;

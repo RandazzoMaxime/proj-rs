@@ -8,6 +8,7 @@
 
 mod geotiff;
 mod ntv2;
+pub(super) mod public;
 
 use std::collections::BTreeMap;
 use std::f64::consts::{PI, TAU};

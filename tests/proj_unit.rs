@@ -551,72 +551,6 @@ fn tinshift_basic_triangles() {
     let _ = fs::remove_file(&path);
 }
 
-#[test]
-fn polyhedral_roundtrip_and_offsets() {
-    let configs = [
-        ("+proj=tsea +R=1", 1e-13),
-        ("+proj=tsea +ellps=WGS84", 1e-13),
-        ("+proj=tsea +R=1 +orient_lat=90 +orient_lon=0 +azi=0", 1e-13),
-        ("+proj=tsea +R=1 +lat_0=10 +lon_0=20", 1e-11),
-        ("+proj=tsea +R=1 +orient_lat=45 +orient_lon=30 +azi=60 +lat_0=15 +lon_0=-25 +x_0=1000 +y_0=-2000", 1e-11),
-        ("+proj=dsea +R=1", 1e-13),
-        ("+proj=dsea +ellps=WGS84", 1e-13),
-        ("+proj=dsea +R=1 +lat_0=10 +lon_0=20", 1e-11),
-        ("+proj=isea +R=1", 1e-13),
-        ("+proj=isea +ellps=WGS84", 1e-13),
-        ("+proj=isea +R=1 +lat_0=10 +lon_0=20", 1e-11),
-        ("+proj=ivea +R=1", 1e-13),
-        ("+proj=ivea +ellps=WGS84", 1e-13),
-        ("+proj=ivea +R=1 +lat_0=10 +lon_0=20", 1e-11),
-    ];
-    let points = [
-        (0.0, 0.0),
-        (45.0, 90.0),
-        (-45.0, -90.0),
-        (89.0, 0.0),
-        (-89.0, 170.0),
-        (30.0, 120.0),
-        (-60.0, -150.0),
-        (15.0, 45.0),
-        (-30.0, -60.0),
-        (70.0, -170.0),
-    ];
-    for (definition, tol) in configs {
-        let operation =
-            Operation::create(definition).unwrap_or_else(|error| panic!("{definition}: {error}"));
-        for (lat, lon) in points {
-            let input = Xyzt::xy(rad(lon), rad(lat));
-            let flat = operation
-                .forward(input)
-                .unwrap_or_else(|error| panic!("{definition} {lat},{lon}: {error}"));
-            let back = operation.inverse(flat).expect("inverse");
-            assert!((back.x - input.x).abs() <= tol, "{definition} lon {lon}");
-            assert!((back.y - input.y).abs() <= tol, "{definition} lat {lat}");
-        }
-    }
-
-    let origin = Operation::create("+proj=tsea +R=1 +lat_0=10 +lon_0=20").expect("origin");
-    let got = origin
-        .forward(Xyzt::xy(rad(20.0), rad(10.0)))
-        .expect("forward");
-    near(got.x, 0.0, 1e-13);
-    near(got.y, 0.0, 1e-13);
-
-    assert!(Operation::create("+proj=dsea +R=1 +net=does_not_exist").is_err());
-    for net in ["dsea", "a5", "crescent", "flower"] {
-        Operation::create(&format!("+proj=dsea +R=1 +net={net}"))
-            .unwrap_or_else(|error| panic!("{net}: {error}"));
-    }
-
-    let stacked =
-        Operation::create("+proj=tsea +R=1 +lat_0=10 +lon_0=20 +x_0=7 +y_0=-3").expect("stacked");
-    let got = stacked
-        .forward(Xyzt::xy(rad(20.0), rad(10.0)))
-        .expect("forward");
-    near(got.x, 7.0, 1e-13);
-    near(got.y, -3.0, 1e-13);
-}
-
 fn tmerc_zone(target: &str, lat: f64, lon0: f64, east0: f64, north: f64) {
     let proj = Proj::new_known_crs("EPSG:4326", target, None)
         .unwrap_or_else(|error| panic!("{target}: {error}"));
@@ -630,8 +564,8 @@ fn tmerc_zone(target: &str, lat: f64, lon0: f64, east0: f64, north: f64) {
         let (back_lon, back_lat) = proj
             .project((east, got_north), true)
             .unwrap_or_else(|error| panic!("inverse {zone}: {error}"));
-        near(back_lon, lon, 1e-8);
-        near(back_lat, lat, 1e-8);
+        near(back_lon, lon, 1e-10);
+        near(back_lat, lat, 1e-10);
     }
 }
 

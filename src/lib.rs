@@ -66,6 +66,15 @@ pub use proj::{
 };
 pub use transform::{Transform, TransformError};
 
+/// Read access to PROJ shift grids (`grids.hpp`): horizontal, vertical and
+/// generic sets, their grids and subgrids, pixels and metadata.
+pub mod grids {
+    pub use crate::projections::{
+        ExtentAndRes, GenericShiftGridSet, Grid, GridError, HorizontalShiftGridSet, Nodata,
+        VerticalShiftGridSet,
+    };
+}
+
 pub mod wkt {
     //! WKT export types from georust `proj` 0.31.
     //!
