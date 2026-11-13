@@ -17,6 +17,11 @@ mod grid;
 mod inflate;
 mod json;
 mod tinshift;
+pub use defmodel::{
+    decimal_year_from_iso8601, Authority, Bound, Component, DefmodelError, Displacement, Epoch,
+    EpochScaleFactor, Evaluator, Grid, GridProvider, GridSet, Link, MasterFile, SpatialExtent,
+    SpatialModel, TimeExtent, TimeFunction,
+};
 pub use tinshift::{FallbackStrategy, TinShiftEvaluator, TinShiftFile, TinShiftFileError};
 
 use std::path::PathBuf;

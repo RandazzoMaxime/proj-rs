@@ -256,13 +256,6 @@ impl<'a> Parser<'a> {
     }
 }
 
-pub(super) fn obj<'a>(
-    map: &'a BTreeMap<String, Value>,
-    key: &str,
-) -> Option<&'a BTreeMap<String, Value>> {
-    map.get(key)?.as_object()
-}
-
 pub(super) fn arr<'a>(map: &'a BTreeMap<String, Value>, key: &str) -> Option<&'a [Value]> {
     map.get(key)?.as_array()
 }
@@ -273,8 +266,4 @@ pub(super) fn req_str<'a>(map: &'a BTreeMap<String, Value>, key: &str) -> Option
 
 pub(super) fn opt_str<'a>(map: &'a BTreeMap<String, Value>, key: &str) -> Option<&'a str> {
     map.get(key).and_then(Value::as_str)
-}
-
-pub(super) fn req_f64(map: &BTreeMap<String, Value>, key: &str) -> Option<f64> {
-    map.get(key)?.as_f64()
 }
