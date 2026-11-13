@@ -874,14 +874,10 @@ fn dictionary_section(spec: &str) -> Result<String, CreateError> {
 
 pub(crate) fn init_definition(spec: &str) -> Result<String, CreateError> {
     let spec = spec.trim();
-    if let Some(zone) = spec.strip_prefix("nad27:") {
-        if zone == "3901" {
-            return Ok(
-                "proj=lcc datum=NAD27 lon_0=-81 lat_1=34d58 lat_2=33d46 lat_0=33 x_0=609601.2192024384 y_0=0"
-                    .to_owned(),
-            );
+    if let Some((file, section)) = spec.split_once(':') {
+        if !file.eq_ignore_ascii_case("epsg") {
+            return init_file_section(file, section);
         }
-        return Err(CreateError::IllegalValue("init"));
     }
     let code = spec
         .strip_prefix("epsg:")
@@ -908,6 +904,64 @@ pub(crate) fn init_definition(spec: &str) -> Result<String, CreateError> {
         Ok(loaded) => Ok(loaded.definition),
         Err(DbFail::Open(_)) => Err(CreateError::Unsupported("proj.db")),
         Err(DbFail::Sql(_)) => Err(CreateError::IllegalValue("init")),
+    }
+}
+
+/// The `<section>` of PROJ's `+init=file:section` init file, as the text PROJ
+/// adds to the definition: the lines between `<section>` and the `<>` that
+/// ends it, joined by spaces. `#` lines are comments.
+///
+/// The file is searched on the PROJ data path, as `pj_init` does. Without it,
+/// `nad27:3901` keeps its built-in definition, which the gie suite relies on.
+fn init_file_section(file: &str, section: &str) -> Result<String, CreateError> {
+    let header = format!("<{section}>");
+    let Some(path) = crate::gridpath::resolve(file) else {
+        if file == "nad27" && section == "3901" {
+            return Ok(
+                "proj=lcc datum=NAD27 lon_0=-81 lat_1=34d58 lat_2=33d46 lat_0=33 x_0=609601.2192024384 y_0=0"
+                    .to_owned(),
+            );
+        }
+        return Err(CreateError::Unsupported("init file"));
+    };
+    let text = std::fs::read(path).map_err(|_| CreateError::Unsupported("init file"))?;
+    let text = String::from_utf8_lossy(&text);
+    let mut inside = false;
+    let mut parts: Vec<&str> = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if !inside {
+            if let Some(rest) = line.strip_prefix(header.as_str()) {
+                inside = true;
+                push_init_words(rest, &mut parts);
+                if parts.last() == Some(&"<>") {
+                    break;
+                }
+            }
+            continue;
+        }
+        if line.starts_with('#') {
+            continue;
+        }
+        push_init_words(line, &mut parts);
+        if parts.last() == Some(&"<>") {
+            break;
+        }
+    }
+    if !inside || parts.last() != Some(&"<>") {
+        return Err(CreateError::IllegalValue("init"));
+    }
+    parts.pop();
+    Ok(parts.join(" "))
+}
+
+/// Words of one init-file line, with the `<>` end marker kept as a word.
+fn push_init_words<'a>(line: &'a str, parts: &mut Vec<&'a str>) {
+    for word in line.split_whitespace() {
+        if parts.last() == Some(&"<>") {
+            return;
+        }
+        parts.push(word);
     }
 }
 

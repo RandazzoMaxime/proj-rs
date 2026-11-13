@@ -1,0 +1,13 @@
+//! `invgeod`: the inverse of `geod`, the same program run in inverse mode.
+//! The work is in `support/geod_cli.rs`.
+
+#[path = "support/dms.rs"]
+mod dms;
+#[path = "support/geod_cli.rs"]
+mod geod_cli;
+
+use std::process::ExitCode;
+
+fn main() -> ExitCode {
+    geod_cli::run()
+}

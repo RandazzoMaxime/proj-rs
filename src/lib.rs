@@ -34,6 +34,7 @@ pub mod errno;
 mod error;
 #[cfg(feature = "geo-types")]
 mod geo_impl;
+pub mod geod;
 mod geodesic;
 mod gridpath;
 mod helmert;

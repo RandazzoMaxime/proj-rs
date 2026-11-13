@@ -35,6 +35,15 @@ mod legacy;
 
 const EPS_LAT: f64 = 1e-12;
 
+/// Whether an [`Operation`] keeps the datum shift its definition implies.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DatumMode {
+    /// The shift is part of the operation.
+    Shift,
+    /// Only the projection: `pj_fwd`, as `proj` runs it.
+    Projection,
+}
+
 /// Four-dimensional coordinate. Angular axes are radians inside an operation.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Coord {
@@ -956,6 +965,24 @@ impl Operation {
     /// `urn:ogc:def:coordinateOperation:NKG::` is read from `proj.db`. A step
     /// that needs a grid is [`CreateError::Unsupported`], not a coordinate.
     pub fn create(definition: &str) -> Result<Self, CreateError> {
+        Self::create_with(definition, DatumMode::Shift)
+    }
+
+    /// The projection of `definition` alone, as PROJ's `proj` applies it.
+    ///
+    /// The same definition as [`Operation::create`], without its datum shift:
+    /// `+towgs84`, `+nadgrids` and `+geoidgrids`, which `+datum=` and `+init=`
+    /// may add, are dropped. The ellipsoid of the datum is kept. PROJ's forward
+    /// projection (`pj_fwd`) applies no datum shift.
+    ///
+    /// # Errors
+    ///
+    /// The same errors as [`Operation::create`].
+    pub fn create_projection(definition: &str) -> Result<Self, CreateError> {
+        Self::create_with(definition, DatumMode::Projection)
+    }
+
+    fn create_with(definition: &str, datum: DatumMode) -> Result<Self, CreateError> {
         // `+init=FILE:SECTION` names a dictionary line; it is replaced by that line first.
         let expanded = crate::crs::expand_dictionary_init(definition)?;
         let definition = expanded.as_deref().unwrap_or(definition);
@@ -981,6 +1008,11 @@ impl Operation {
             });
         }
         prepare_params(&mut params)?;
+        if datum == DatumMode::Projection {
+            for key in ["towgs84", "nadgrids", "geoidgrids"] {
+                params.remove(key);
+            }
+        }
         let name = params.text("proj").unwrap_or("").to_owned();
         if name.is_empty() {
             return Err(CreateError::MissingArgument("proj"));
@@ -1948,8 +1980,11 @@ pub(crate) fn cartesian_to_geodetic(earth: Ellipsoid, x: f64, y: f64, z: f64) ->
     let b_div = 1.0 - earth.flattening();
     let p_b = p_div * b_div;
     let norm = (z_div * z_div + p_b * p_b).sqrt();
+    // PROJ's `cart.cpp` multiplies by the reciprocal of each norm. The rounding
+    // of that decides the sign of a height that is zero, as for the pole.
     let (c, s) = if norm != 0.0 {
-        (p_b / norm, z_div / norm)
+        let inv_norm = 1.0 / norm;
+        (p_b * inv_norm, z_div * inv_norm)
     } else {
         (1.0, 0.0)
     };
@@ -1960,8 +1995,9 @@ pub(crate) fn cartesian_to_geodetic(earth: Ellipsoid, x: f64, y: f64, z: f64) ->
         let sign = if z >= 0.0 { 1.0 } else { -1.0 };
         (0.0, sign, sign * FRAC_PI_2)
     } else if norm_phi != 0.0 {
-        let cosphi = x_phi / norm_phi;
-        let sinphi = y_phi / norm_phi;
+        let inv_norm_phi = 1.0 / norm_phi;
+        let cosphi = x_phi * inv_norm_phi;
+        let sinphi = y_phi * inv_norm_phi;
         (cosphi, sinphi, (y_phi / x_phi).atan())
     } else {
         (1.0, 0.0, 0.0)
