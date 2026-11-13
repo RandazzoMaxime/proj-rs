@@ -1754,6 +1754,25 @@ impl<K: Kernel + 'static> Step for Classic<K> {
     }
 }
 
+/// `fwd_prepare` of PROJ 9.9.0 (`fwd.cpp`): a latitude beyond the pole by more than
+/// `EPS_LAT` is `PROJ_ERR_COORD_TRANSFM_INVALID_COORD`, and one within it is clamped to the
+/// pole.
+pub(crate) fn latitude_gate(lat: f64) -> Result<f64, TransformError> {
+    if lat.abs() <= FRAC_PI_2 {
+        return Ok(lat);
+    }
+    if lat > 0.0 {
+        if lat - FRAC_PI_2 > EPS_LAT {
+            return Err(TransformError::InvalidCoord);
+        }
+        Ok(FRAC_PI_2)
+    } else if lat - FRAC_PI_2 < -EPS_LAT {
+        Err(TransformError::InvalidCoord)
+    } else {
+        Ok(-FRAC_PI_2)
+    }
+}
+
 /// Angular forward prepare: latitude gate, `lon_0`, prime meridian, geocentric latitude.
 pub(crate) fn prepare_forward(
     frame: &Frame,
@@ -1763,18 +1782,7 @@ pub(crate) fn prepare_forward(
     if !lon.is_finite() || !lat.is_finite() {
         return Err(TransformError::NonFinite);
     }
-    if lat.abs() > FRAC_PI_2 {
-        if lat > 0.0 {
-            if lat - FRAC_PI_2 > EPS_LAT {
-                return Err(TransformError::InvalidCoord);
-            }
-            lat = FRAC_PI_2;
-        } else if lat - FRAC_PI_2 < -EPS_LAT {
-            return Err(TransformError::InvalidCoord);
-        } else {
-            lat = -FRAC_PI_2;
-        }
-    }
+    lat = latitude_gate(lat)?;
     if lon.abs() > PI {
         if lon.abs() > 10.0 {
             return Err(TransformError::InvalidCoord);
@@ -1862,7 +1870,9 @@ where
 {
     fn forward(&self, coord: Coord) -> Result<Coord, TransformError> {
         // `pm=` is subtracted before the kernel, as in `fwd_prepare`.
-        let projected = (self.forward_xy)(coord.x - self.frame.from_greenwich, coord.y)?;
+        // The latitude gate of `fwd_prepare` applies to every forward projection.
+        let lat = latitude_gate(coord.y)?;
+        let projected = (self.forward_xy)(coord.x - self.frame.from_greenwich, lat)?;
         Ok(Coord {
             x: self.frame.fr_meter * projected.east,
             y: self.frame.fr_meter * projected.north,

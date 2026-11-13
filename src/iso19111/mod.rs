@@ -33,6 +33,7 @@ mod proj_crs;
 mod proj_grid_substitution;
 mod projfam;
 mod projstring;
+pub(crate) use projstring::PRIME_MERIDIANS;
 mod select;
 mod suggest;
 mod transform_export;
