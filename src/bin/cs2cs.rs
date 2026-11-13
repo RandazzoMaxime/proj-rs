@@ -588,7 +588,7 @@ fn build_engine(
     // `--authority` is `AUTHORITY=` of `proj_create_crs_to_crs`: no option is every authority.
     let authority = authority.unwrap_or("");
     let mut iso = IsoStatus::NotTried;
-    // `+init=AUTH:CODE` is the database CRS `AUTH:CODE` for PROJ's pair selection
+    // `+init=IGNF:CODE` is the database CRS `IGNF:CODE` for PROJ's pair selection
     // (`proj_create_crs_to_crs_from_pj`), not its expanded PROJ string.
     let iso_source = init_side_as_code(source);
     let iso_target = init_side_as_code(target);
@@ -881,8 +881,9 @@ fn canonical_side(text: &str) -> String {
     }
 }
 
-/// `AUTH:CODE` for a side that is only `+init=AUTH:CODE` (`epsg:` or `IGNF:`), as PROJ
-/// reads it as the database CRS; any other text is returned as it is.
+/// `IGNF:CODE` for a side that is only `+init=IGNF:CODE`, as PROJ reads it as the database CRS.
+/// Any other text is returned as it is: an `epsg:` init keeps the PROJ-string path, whose axis
+/// order its tests rely on (`test_cs2cs_various.yaml#59`, `#67`, `#68`).
 fn init_side_as_code(text: &str) -> String {
     let trimmed = text.trim();
     let Some(rest) = trimmed
@@ -895,7 +896,7 @@ fn init_side_as_code(text: &str) -> String {
         return text.to_owned();
     };
     let auth_upper = auth.to_ascii_uppercase();
-    if (auth_upper == "EPSG" || auth_upper == "IGNF")
+    if auth_upper == "IGNF"
         && !code.is_empty()
         && code
             .chars()
@@ -1728,10 +1729,11 @@ fn geoid_without_height(source: &str, target: &str) -> String {
     if !has_geoid(target) || has_height(source) {
         return target.to_owned();
     }
-    let source_is_3d = proj_rs::DatabaseContext::create()
-        .ok()
-        .and_then(|db| {
-            proj_rs::create_from_user_input(&init_side_as_code(source), &db)
+    let authority_text = init_authority(source).map(|(auth, code)| format!("{auth}:{code}"));
+    let source_is_3d = authority_text
+        .and_then(|text| {
+            let db = proj_rs::DatabaseContext::create().ok()?;
+            proj_rs::create_from_user_input(&text, &db)
                 .ok()
                 .map(|crs| is_3d_crs(&crs))
         })
