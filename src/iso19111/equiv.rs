@@ -433,16 +433,6 @@ impl ProjectedCRS {
     }
 }
 
-/// `VerticalCRS::_isEquivalentTo` with EQUIVALENT: the datum anchor and the axis, the name
-/// not compared.
-pub(crate) fn vertical_crs_equivalent(left: &VerticalCRS, right: &VerticalCRS) -> bool {
-    vertical_anchor(left, right)
-        && cs_axes_match(
-            std::slice::from_ref(left.coordinate_system().axis()),
-            std::slice::from_ref(right.coordinate_system().axis()),
-        )
-}
-
 impl VerticalCRS {
     /// Strict vertical-CRS equivalence.
     #[must_use]

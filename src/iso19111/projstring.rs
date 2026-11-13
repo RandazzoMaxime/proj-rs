@@ -1529,6 +1529,16 @@ fn proj_datum_name(code: &str) -> Option<&'static str> {
     }
 }
 
+/// The code space and code of an EPSG code of a method or parameter of a map. A
+/// map entry with no EPSG code (`0`) has no identifier, as PROJ leaves it.
+fn epsg_identifier(code: i32) -> (&'static str, String) {
+    if code == 0 {
+        ("", String::new())
+    } else {
+        ("EPSG", code.to_string())
+    }
+}
+
 fn epsg_code(identifiers: &[Identifier]) -> Option<&str> {
     identifiers
         .iter()
@@ -2859,19 +2869,17 @@ pub(super) fn projected_from_proj_string(tokens: &[(String, String)]) -> Result<
                 unit: parameter_unit.clone(),
             }),
         };
+        let (code_space, code) = epsg_identifier(param.epsg_code);
         parameters.push(Conversion::parameter(
             param.wkt2_name,
-            "EPSG",
-            &param.epsg_code.to_string(),
+            code_space,
+            &code,
             value,
         ));
     }
-    let mut conversion = Conversion::create_with_method(
-        method.wkt2_name,
-        "EPSG",
-        &method.epsg_code.to_string(),
-        parameters,
-    );
+    let (method_space, method_code) = epsg_identifier(method.epsg_code);
+    let mut conversion =
+        Conversion::create_with_method(method.wkt2_name, method_space, &method_code, parameters);
     conversion.identified = Identified::named("unknown");
     if tokens.iter().any(|(key, _)| key == "approx") && matches!(proj, "tmerc" | "utm") {
         conversion.identified.proj_method_override = Some(format!("{proj} approx"));

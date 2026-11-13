@@ -1854,8 +1854,15 @@ fn sql_text(
     } else {
         options.authorities.clone()
     };
-    let statements = proj_rs::insert_statements(db, object, authority, code, &allowed)
-        .map_err(|error| error.to_string())?;
+    let statements = proj_rs::insert_statements(
+        db,
+        object,
+        authority,
+        code,
+        proj_rs::ComponentCodes::FromParentCode,
+        &allowed,
+    )
+    .map_err(|error| error.to_string())?;
     Ok(statements.join("\n"))
 }
 

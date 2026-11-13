@@ -10,7 +10,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_factory.cpp
 
-- `factory.objectInsertion`
 
 ## test_io.cpp
 
