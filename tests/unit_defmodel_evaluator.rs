@@ -507,7 +507,7 @@ fn defmodel_evaluator_horizontal_unit_metre() {
     );
     let provider = Provider {
         geographic: true,
-        node: grid.clone(),
+        node: grid,
     };
 
     // (longitude, lat, expected de, expected dn, expected dz, displacement,

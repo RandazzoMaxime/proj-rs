@@ -116,7 +116,7 @@ fn defmodel_basic() {
         assert!(is_parsing_error(&jcopy));
     }
     {
-        let mut jcopy = j_min_valid.clone();
+        let mut jcopy = j_min_valid;
         remove(&mut jcopy, &["time_extent", "last"]);
         assert!(is_parsing_error(&jcopy));
     }

@@ -150,7 +150,7 @@ fn defmodel_evaluate_piecewise() {
 
     // Two identical epochs
     {
-        let mut j = j_full_valid.clone();
+        let mut j = j_full_valid;
         piecewise_param(
             &mut j,
             "model",
