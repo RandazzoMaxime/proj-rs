@@ -5,11 +5,49 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 0 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `core` | 26 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
 | `niche` | 0 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 0 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (0)
+## core (26)
+
+### gie_self_tests.cpp (8)
+
+- `gie.cart_selftest`
+- `gie.info_functions`
+- `gie.proj_factors`
+- `gie.proj_create_crs_to_crs_PULKOVO42_ETRS89`
+- `gie.proj_create_crs_to_crs_WGS84_EGM08_to_WGS84`
+- `gie.proj_trans_with_a_crs`
+- `gie.proj_create_crs_to_crs_from_pj_force_over`
+- `gieTest.proj_create_crs_to_crs`
+
+### test_common.cpp (2)
+
+- `common.identifiedobject_alias_invalid_type`
+- `common.identifiedobject_alias_array_of_invalid_type`
+
+### test_network.cpp (11)
+
+- `networking.initial_check`
+- `networking.basic`
+- `networking.custom`
+- `networking.getfilesize`
+- `networking.simul_read_range_error`
+- `networking.simul_file_change_while_opened`
+- `networking.download_whole_files`
+- `networking.file_api`
+- `networking.proj_coordoperation_get_grid_used`
+- `networking.pyproj_issue_1192`
+- `networking.do_not_attempt_network_access_known_available_network_on`
+
+### test_projinfo_lib.cpp (5)
+
+- `projinfo_lib.simple`
+- `projinfo_lib.error`
+- `projinfo_lib.warning`
+- `projinfo_lib.use_ctx`
+- `projinfo_lib.works_without_cb`
 
 ## niche (0)
 
