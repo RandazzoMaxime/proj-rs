@@ -1573,7 +1573,7 @@ fn write_usage(
         }
         [domain] => {
             write_domain_members(writer, domain);
-            if let Some(vertical) = vertical {
+            if let (Some(vertical), None) = (vertical, &domain.vertical) {
                 write_vertical_extent(writer, vertical);
             }
         }
@@ -1634,6 +1634,16 @@ fn write_domain_members(writer: &mut Writer, domain: &ObjectDomain) {
         writer.key("east_longitude");
         writer.number(east);
         writer.end_object();
+    }
+    if let Some(vertical) = &domain.vertical {
+        write_vertical_extent(writer, vertical);
+    }
+    if let Some(temporal) = &domain.temporal {
+        write_temporal_extent(
+            writer,
+            Some(temporal.start.as_str()),
+            Some(temporal.stop.as_str()),
+        );
     }
 }
 

@@ -7,13 +7,9 @@ and `PORT-NOTES-tests.md`.
 
 ## test_crs.cpp
 
-- `crs.scope_area_bbox_remark`
 
 ## test_factory.cpp
 
-- `factory.AuthorityFactory_createDynamicVerticalDatum`
-- `FactoryWithTmpDatabase.custom_projected_crs`
-- `FactoryWithTmpDatabase.custom_derived_projected_crs`
 - `factory.objectInsertion`
 
 ## test_io.cpp

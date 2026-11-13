@@ -356,6 +356,16 @@ impl ProjectedCRS {
             .extension_proj4
             .clone()
             .filter(|_| !extras.has_shift())
+            // A PROJ-based CRS whose string kept only `+proj=`, or only the `+towgs84` that a
+            // bound CRS takes, is written from its method and datum
+            // (`projinfo "+proj=mbt_s +unused_flag +type=crs" -o PROJ`).
+            .filter(|text| {
+                text.split_whitespace().any(|term| {
+                    term.strip_prefix('+')
+                        .and_then(|term| term.split('=').next())
+                        .is_some_and(|key| !matches!(key, "proj" | "type" | "towgs84"))
+                })
+            })
         {
             // `ingestPROJString` drops `+type=crs` and the CRS formatter puts it back.
             if text.contains("+type=crs") {

@@ -19,8 +19,8 @@ use super::model::{
     EngineeringCRS, EngineeringDatum, FactoryError, GeocentricCRS, GeodeticCRS,
     GeodeticReferenceFrame, GeographicCRS, GeoidModel, Identified, Identifier, Measure, Meridian,
     ObjectDomain, OperationMethod, OrdinalCS, Parameter, ParameterValue, PrimeMeridian,
-    ProjectedCRS, SphericalCS, SphericalGeodeticCRS, Transformation, UnitKind, UnitOfMeasure,
-    VerticalCRS, VerticalCS, VerticalReferenceFrame,
+    ProjectedCRS, SphericalCS, SphericalGeodeticCRS, TemporalExtent, Transformation, UnitKind,
+    UnitOfMeasure, VerticalCRS, VerticalCS, VerticalExtent, VerticalReferenceFrame,
 };
 
 pub(crate) const EARTH_RADIUS: f64 = 6_375_000.0;
@@ -1058,7 +1058,14 @@ impl WktParser {
         let scope = node.child(&["SCOPE"]);
         let area = node.child(&["AREA"]);
         let bbox = node.child(&["BBOX"]);
-        if scope.is_none() && area.is_none() && bbox.is_none() {
+        let vertical = node.child(&["VERTICALEXTENT"]);
+        let temporal = node.child(&["TIMEEXTENT"]);
+        if scope.is_none()
+            && area.is_none()
+            && bbox.is_none()
+            && vertical.is_none()
+            && temporal.is_none()
+        {
             return Ok(None);
         }
         let scope = scope
@@ -1087,6 +1094,22 @@ impl WktParser {
         } else {
             (None, None, None, None)
         };
+        let vertical = match vertical {
+            Some(node) => Some(self.build_vertical_extent(node)?),
+            None => None,
+        };
+        let temporal = match temporal {
+            Some(node) if node.children.len() == 2 => Some(TemporalExtent {
+                start: strip_quotes(&node.children[0]),
+                stop: strip_quotes(&node.children[1]),
+            }),
+            Some(_) => {
+                return Err(invalid(
+                    "not the required number of children in TIMEEXTENT node",
+                ))
+            }
+            None => None,
+        };
         Ok(Some(ObjectDomain {
             scope,
             area,
@@ -1094,7 +1117,29 @@ impl WktParser {
             west,
             north,
             east,
+            vertical,
+            temporal,
         }))
+    }
+
+    /// `VERTICALEXTENT[minimum, maximum{, unit}]`; the unit is the metre when absent.
+    fn build_vertical_extent(&mut self, node: &WktNode) -> Result<VerticalExtent, FactoryError> {
+        if node.children.len() < 2 || node.children.len() > 3 {
+            return Err(invalid(
+                "not the required number of children in VERTICALEXTENT node",
+            ));
+        }
+        let minimum = as_f64(&node.children[0])?;
+        let maximum = as_f64(&node.children[1])?;
+        let unit = match node.child(&["LENGTHUNIT", "UNIT"]) {
+            Some(unit) => self.build_unit(unit, UnitKind::Linear)?,
+            None => UnitOfMeasure::metre(),
+        };
+        Ok(VerticalExtent {
+            minimum,
+            maximum,
+            unit,
+        })
     }
 
     fn build_unit(
@@ -5030,42 +5075,6 @@ impl AuthorityFactory {
     }
 
     fn projected_from_text(&self, code: &str) -> Result<ProjectedCRS, FactoryError> {
-        let Some(text) =
-            self.database_context()
-                .text_definition("projected_crs", self.authority(), code)
-        else {
-            return Err(FactoryError::missing(
-                "projected CRS",
-                self.authority(),
-                code,
-            ));
-        };
-        if !text.starts_with("PROJCS") {
-            return Err(FactoryError::wrap(
-                "projected CRS",
-                self.authority(),
-                code,
-                "text_definition is not expanded",
-            ));
-        }
-        let mut parser = WktParser::new();
-        parser.attach_database(self.database_context().clone());
-        let object = parser.create_from_wkt(&text)?;
-        let Some(Crs::Projected(crs)) = object.crs().cloned() else {
-            return Err(FactoryError::wrap(
-                "projected CRS",
-                self.authority(),
-                code,
-                "text_definition is not a projected CRS",
-            ));
-        };
-        let already = crs.identifiers().iter().any(|identifier| {
-            identifier.code_space() == self.authority() && identifier.code() == code
-        });
-        if already {
-            Ok(crs)
-        } else {
-            Ok(crs.with_identifier(self.authority(), code))
-        }
+        self.projected_crs_from_definition(code)
     }
 }

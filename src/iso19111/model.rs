@@ -140,6 +140,10 @@ pub struct ObjectDomain {
     pub(crate) west: Option<f64>,
     pub(crate) north: Option<f64>,
     pub(crate) east: Option<f64>,
+    /// `VERTICALEXTENT` of the extent, when the object has one.
+    pub(crate) vertical: Option<VerticalExtent>,
+    /// `TIMEEXTENT` of the extent, when the object has one.
+    pub(crate) temporal: Option<TemporalExtent>,
 }
 
 impl ObjectDomain {
@@ -195,6 +199,18 @@ impl ObjectDomain {
             && same_optional(self.east, other.east)
     }
 
+    /// Vertical extent, when the extent has one.
+    #[must_use]
+    pub fn vertical_extent(&self) -> Option<&VerticalExtent> {
+        self.vertical.as_ref()
+    }
+
+    /// Temporal extent, when the extent has one.
+    #[must_use]
+    pub fn temporal_extent(&self) -> Option<&TemporalExtent> {
+        self.temporal.as_ref()
+    }
+
     /// Extent with no description and the bounding box `bbox`, as an area of interest.
     #[must_use]
     pub fn from_bounding_box(bbox: BoundingBox) -> Self {
@@ -205,6 +221,8 @@ impl ObjectDomain {
             west: Some(bbox.west),
             north: Some(bbox.north),
             east: Some(bbox.east),
+            vertical: None,
+            temporal: None,
         }
     }
 
@@ -426,12 +444,63 @@ pub(crate) struct Identified {
     pub(crate) over: bool,
 }
 
-/// Vertical extent of an object usage, as PROJJSON writes it.
+/// Vertical extent of an object usage, as PROJJSON and WKT2 write it.
 #[derive(Clone, Debug)]
-pub(crate) struct VerticalExtent {
+pub struct VerticalExtent {
     pub(crate) minimum: f64,
     pub(crate) maximum: f64,
     pub(crate) unit: UnitOfMeasure,
+}
+
+impl VerticalExtent {
+    /// Lower bound, in `unit()`.
+    #[must_use]
+    pub fn minimum(&self) -> f64 {
+        self.minimum
+    }
+
+    /// Upper bound, in `unit()`.
+    #[must_use]
+    pub fn maximum(&self) -> f64 {
+        self.maximum
+    }
+
+    /// Unit of the bounds.
+    #[must_use]
+    pub fn unit(&self) -> &UnitOfMeasure {
+        &self.unit
+    }
+}
+
+impl PartialEq for VerticalExtent {
+    fn eq(&self, other: &Self) -> bool {
+        self.minimum == other.minimum
+            && self.maximum == other.maximum
+            && self.unit.name() == other.unit.name()
+            && self.unit.kind() == other.unit.kind()
+            && self.unit.conversion_to_si() == other.unit.conversion_to_si()
+    }
+}
+
+/// Temporal extent of an object usage: the start and the stop of its validity, as text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TemporalExtent {
+    pub(crate) start: String,
+    pub(crate) stop: String,
+}
+
+impl TemporalExtent {
+    /// Start of the extent, as written (for example `2002-04-01`).
+    #[must_use]
+    pub fn start(&self) -> &str {
+        &self.start
+    }
+
+    /// Stop of the extent, as written.
+    #[must_use]
+    pub fn stop(&self) -> &str {
+        &self.stop
+    }
 }
 
 impl Identified {

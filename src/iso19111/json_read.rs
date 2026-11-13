@@ -10,8 +10,8 @@ use super::model::{
     CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble, Ellipsoid, EllipsoidalCS,
     FactoryError, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, GeoidModel, Identified,
     Identifier, Measure, Meridian, ObjectDomain, Parameter, ParameterValue, PrimeMeridian,
-    ProjectedCRS, SphericalCS, Transformation, UnitKind, UnitOfMeasure, VerticalCRS, VerticalCS,
-    VerticalExtent, VerticalReferenceFrame,
+    ProjectedCRS, SphericalCS, TemporalExtent, Transformation, UnitKind, UnitOfMeasure,
+    VerticalCRS, VerticalCS, VerticalExtent, VerticalReferenceFrame,
 };
 use super::niche::DerivedCRS;
 use crate::crs_text::{self, Object, Value};
@@ -346,7 +346,22 @@ impl Reader<'_> {
             }
             bounds = Some((south, west, north, east));
         }
-        if scope.is_none() && area.is_none() && bounds.is_none() {
+        let vertical = Self::build_vertical_extent(object)?;
+        let temporal = if contains(object, "temporal_extent") {
+            let extent = get_object(object, "temporal_extent")?;
+            Some(TemporalExtent {
+                start: get_string(extent, "start")?.to_owned(),
+                stop: get_string(extent, "end")?.to_owned(),
+            })
+        } else {
+            None
+        };
+        if scope.is_none()
+            && area.is_none()
+            && bounds.is_none()
+            && vertical.is_none()
+            && temporal.is_none()
+        {
             return Ok(None);
         }
         Ok(Some(ObjectDomain {
@@ -356,6 +371,8 @@ impl Reader<'_> {
             west: bounds.map(|b| b.1),
             north: bounds.map(|b| b.2),
             east: bounds.map(|b| b.3),
+            vertical,
+            temporal,
         }))
     }
 
