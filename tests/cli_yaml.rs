@@ -17,6 +17,9 @@ const FILES: &[&str] = &[
     "test_cs2cs_various.yaml",
     "test_projinfo.yaml",
     "test_proj.yaml",
+    "test_proj_nad27.yaml",
+    "test_proj_nad83.yaml",
+    "test_invproj.yaml",
 ];
 
 struct Case {
@@ -75,10 +78,144 @@ fn cli_yaml_suites() {
     );
 }
 
+/// `test_cs2cs_locale.sh` of PROJ: six `cs2cs` runs, each under a `####` line
+/// and a title. The script compares the whole with `test_cs2cs_locale_out.dist`
+/// by `diff -u -b`, which ignores the amount of white space, as the lines
+/// compared here do.
+#[test]
+fn cs2cs_locale_script() {
+    const SEPARATOR: &str = "##############################################################";
+    let two_points = "0d00'00.000\"W 0d00'00.000\"N 0.0\n79d00'00.000\"W 45d00'00.000\"N 0.0\n";
+    let geodetic_inputs = "0d00'00.000\"W 0d00'00.000\"N 0.0\n79d00'00.000\"W 45d00'00.000\"N 0.0\n12d00'00.000\"W 45d00'00.000\"N 0.0\n0d00'00.000\"W 90d00'00.000\"N 0.0\n";
+    let sections: [(&str, &[&str], &str); 6] = [
+        (
+            "Between two 3parameter approximations on same ellipsoid",
+            &[
+                "+proj=latlong",
+                "+ellps=bessel",
+                "+towgs84=5,0,0",
+                "+to",
+                "+proj=latlong",
+                "+ellps=bessel",
+                "+towgs84=1,0,0",
+                "-E",
+            ],
+            two_points,
+        ),
+        (
+            "Test input in grad",
+            &["EPSG:4807", "EPSG:27572", "-E"],
+            "64.44444444 2.9586342556\n",
+        ),
+        (
+            "Test geocentric x/y/z generation.",
+            &[
+                "+proj=latlong",
+                "+datum=WGS84",
+                "+to",
+                "+proj=geocent",
+                "+datum=WGS84",
+                "-E",
+            ],
+            "0d00'00.001\"W 0d00'00.001\"N 0.0\n0d00'00.001\"W 0d00'00.001\"N 10.0\n79d00'00.000\"W 45d00'00.000\"N 0.0\n45d00'00.000\"W 89d59'59.990\"N 0.0\n",
+        ),
+        (
+            "Test geocentric x/y/z consumption.",
+            &[
+                "+proj=geocent",
+                "+datum=WGS84",
+                "+to",
+                "+proj=latlong",
+                "+datum=WGS84",
+                "-E",
+            ],
+            "6378137.00      -0.00 0.00\n6378147.00      -0.00 0.00\n861996.98       -4434590.01 4487348.41\n0.00    -0.00 6356752.31\n",
+        ),
+        (
+            "Test conversion from geodetic latlong to geocentric latlong",
+            &[
+                "+proj=latlong",
+                "+datum=WGS84",
+                "+to",
+                "+proj=latlong",
+                "+datum=WGS84",
+                "+geoc",
+                "-E",
+            ],
+            geodetic_inputs,
+        ),
+        (
+            "Test conversion from geocentric latlong to geodetic latlong",
+            &[
+                "+proj=latlong",
+                "+datum=WGS84",
+                "+geoc",
+                "+to",
+                "+proj=latlong",
+                "+datum=WGS84",
+                "-E",
+            ],
+            "0d00'00.000\"W 0d00'00.000\"N 0.0\n79d00'00.000\"W 44d48'27.276\"N 0.000\n12d00'00.000\"W 44d48'27.276\"N 0.0\n0d00'00.000\"W 90d00'00.000\"N 0.0\n",
+        ),
+    ];
+    let mut actual = String::new();
+    for (title, args, input) in sections {
+        actual.push_str(SEPARATOR);
+        actual.push('\n');
+        actual.push_str(title);
+        actual.push('\n');
+        actual.push_str(&run_cs2cs(args, input));
+    }
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/cli_yaml");
+    let expected = fs::read_to_string(root.join("test_cs2cs_locale_out.dist"))
+        .expect("test_cs2cs_locale_out.dist");
+    let expected_lines = content_lines(&expected);
+    let actual_lines = content_lines(&actual);
+    assert_eq!(
+        expected_lines.len(),
+        actual_lines.len(),
+        "line count\nexpected:\n{expected}\ngot:\n{actual}"
+    );
+    for (want, got) in expected_lines.iter().zip(&actual_lines) {
+        // The script's `####` rules differ in width from section to section:
+        // a rule is compared as a rule, whatever its width.
+        if want.starts_with("###") && got.starts_with("###") {
+            continue;
+        }
+        assert!(
+            want.split_whitespace().eq(got.split_whitespace()),
+            "expected {want}\ngot {got}"
+        );
+    }
+}
+
+/// Runs `cs2cs` with `args` and `input` as the locale script does, and
+/// returns its standard output.
+fn run_cs2cs(args: &[&str], input: &str) -> String {
+    use std::io::Write;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_cs2cs"))
+        .args(args)
+        .env("PROJ_NETWORK", "OFF")
+        .env("PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY", "YES")
+        .env("PROJ_DATA", common::fixture_search_path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn cs2cs");
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(input.as_bytes())
+            .expect("write cs2cs input");
+    }
+    let output = child.wait_with_output().expect("cs2cs output");
+    String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n")
+}
+
 fn render(failures: &[(&Case, String)]) -> String {
     let mut out = String::from(
         "# Unported CLI cases\n\n\
-         The yaml runner executes `cct`, `cs2cs`, `projinfo`, and `proj`.\n\
+         The yaml runner executes `cct`, `cs2cs`, `projinfo`, `proj`, and `invproj`.\n\
          A row remains when that case does not match the yaml.\n\n\
          | id | app | reason | comment |\n\
          |---|---|---|---|\n",
@@ -378,6 +515,7 @@ fn run_case(case: &Case) -> Result<(), String> {
         "cs2cs" => env!("CARGO_BIN_EXE_cs2cs"),
         "projinfo" => env!("CARGO_BIN_EXE_projinfo"),
         "proj" => env!("CARGO_BIN_EXE_proj"),
+        "invproj" => env!("CARGO_BIN_EXE_invproj"),
         other => return Err(format!("no binary for {other}")),
     };
     let scratch = std::env::temp_dir().join(format!(

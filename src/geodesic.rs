@@ -136,6 +136,14 @@ extern "C" {
 }
 
 impl Geodesic {
+    /// `geod_init(&g, a, f)`: an ellipsoid of semi-major axis `a` in metres.
+    pub(crate) fn new(a: f64, f: f64) -> Self {
+        let mut g = Self::zero();
+        // SAFETY: `g` is a complete `Geodesic` and `geod_init` writes every field.
+        unsafe { geod_init(&mut g, a, f) };
+        g
+    }
+
     /// Unit ellipsoid of flattening `f`, matching `geod_init(&g, 1, f)`.
     pub(crate) fn unit(f: f64) -> Self {
         let mut g = Self::zero();
@@ -179,6 +187,33 @@ impl Geodesic {
             );
         }
         (distance, azimuth)
+    }
+
+    /// `geod_inverse` of PROJ's geod: length in metres and both azimuths in degrees.
+    pub(crate) fn inverse_full(
+        &self,
+        lat1: f64,
+        lon1: f64,
+        lat2: f64,
+        lon2: f64,
+    ) -> (f64, f64, f64) {
+        let mut distance = 0.0;
+        let mut azimuth1 = 0.0;
+        let mut azimuth2 = 0.0;
+        // SAFETY: `self` was initialized and the output pointers are live locals.
+        unsafe {
+            geod_inverse(
+                self,
+                lat1,
+                lon1,
+                lat2,
+                lon2,
+                &mut distance,
+                &mut azimuth1,
+                &mut azimuth2,
+            );
+        }
+        (distance, azimuth1, azimuth2)
     }
 
     /// Point reached by travelling `distance` along `azimuth` degrees.
@@ -280,6 +315,40 @@ impl GeodesicLine {
             c4a: [0.0; 6],
             caps: 0,
         }
+    }
+
+    /// `geod_lineinit` with no capability, as `geod_pre` of PROJ's geod.
+    /// Angles are in degrees.
+    pub(crate) fn plain(earth: &Geodesic, lat1: f64, lon1: f64, azimuth: f64) -> Self {
+        let mut line = Self::zero();
+        // SAFETY: both structs match the C layout and `geod_lineinit` fills the line.
+        unsafe { geod_lineinit(&mut line, earth, lat1, lon1, azimuth, 0) };
+        line
+    }
+
+    /// `geod_position` of PROJ's geod: latitude, longitude and back azimuth in
+    /// degrees, at `distance` metres along the line.
+    pub(crate) fn position_azimuth(&self, distance: f64) -> (f64, f64, f64) {
+        let mut lat = 0.0;
+        let mut lon = 0.0;
+        let mut azimuth = 0.0;
+        // SAFETY: `self` was initialized by `geod_lineinit`, and the output pointers are live locals.
+        unsafe {
+            geod_genposition(
+                self,
+                0,
+                distance,
+                &mut lat,
+                &mut lon,
+                &mut azimuth,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            );
+        }
+        (lat, lon, azimuth)
     }
 
     /// Position at distance `distance`. Returns latitude, longitude, the
