@@ -104,6 +104,13 @@ fn command() -> ExitCode {
     } else {
         promoted_by_name(&source, &target)
     };
+    // Without `--3d` a source with no height keeps none: PROJ applies the target's geoid model
+    // only to a height it has (`cs2cs.cpp`, the 2D to 3D promotion).
+    let build_target = if opts.promote_3d {
+        build_target
+    } else {
+        geoid_without_height(&build_source, &build_target)
+    };
     let filter = CandidateFilter {
         accuracy: opts.accuracy,
         ballpark: if opts.allow_ballpark {
@@ -1675,6 +1682,35 @@ fn promoted_text(crs: &proj_rs::Crs, db: &proj_rs::DatabaseContext) -> Option<St
     Some(format!("{}:{}", identifier.code_space(), identifier.code()))
 }
 
+/// `target` without its `+geoidgrids` when `source` has no height: the geoid model of a
+/// target is a height correction, and a source with no height has none to correct. `source` has
+/// a height when it names a vertical key or is a 3D CRS (`+init=AUTH:CODE` included).
+fn geoid_without_height(source: &str, target: &str) -> String {
+    let has_geoid = |text: &str| {
+        text.split_whitespace()
+            .any(|token| token.trim_start_matches('+').starts_with("geoidgrids="))
+    };
+    if !has_geoid(target) || has_height(source) {
+        return target.to_owned();
+    }
+    let source_is_3d = proj_rs::DatabaseContext::create()
+        .ok()
+        .and_then(|db| {
+            proj_rs::create_from_user_input(&init_side_as_code(source), &db)
+                .ok()
+                .map(|crs| is_3d_crs(&crs))
+        })
+        .unwrap_or(false);
+    if source_is_3d {
+        return target.to_owned();
+    }
+    target
+        .split_whitespace()
+        .filter(|token| !token.trim_start_matches('+').starts_with("geoidgrids="))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// `is3DCRS` in `src/apps/cs2cs.cpp` (lines 361-376): a compound CRS, or a geographic,
 /// geodetic (geocentric included), projected or derived projected CRS with three axes.
 fn is_3d_crs(crs: &proj_rs::Crs) -> bool {
@@ -1730,7 +1766,17 @@ impl Catalog {
             return layout_from_proj(&name, def);
         }
         if let Some((auth, code)) = init_authority(def) {
-            return self.authority(&auth, &code);
+            let mut side = self.authority(&auth, &code);
+            // `+geoidgrids` makes PROJ's CRS a compound of the horizontal CRS and a geoid
+            // model, which is neither geographic nor projected: plain numbers, not DMS
+            // (`instantiate_crs`, `cs2cs.cpp`).
+            if def
+                .split_whitespace()
+                .any(|token| token.trim_start_matches('+').starts_with("geoidgrids="))
+            {
+                side.layout = Layout::Other;
+            }
+            return side;
         }
         if let Some(horizontal) = compound_notation(def) {
             // `instantiate_crs` reads the compound CRS as neither geographic nor projected, so its
