@@ -74,13 +74,13 @@ pub(crate) fn run() -> ExitCode {
     // PROJ keeps one error state for the whole run: after a failed factor
     // computation, the later `-S` lines report it too.
     let mut error_seen = false;
-    if options.bin_in {
+    if options.binary.input {
         // `process`: each record is two native doubles, `PJ_UV`; no tag, no echo.
         for record_bytes in input.chunks_exact(16) {
             let u = f64::from_ne_bytes(to_array(&record_bytes[..8]));
             let v = f64::from_ne_bytes(to_array(&record_bytes[8..]));
             let measure = measure(u, v, &options, &job, &mut error_seen);
-            if options.bin_out {
+            if options.binary.output {
                 output.extend_from_slice(&binary_out(&measure));
             } else {
                 output.extend_from_slice(text_out(&measure, &options, &job).as_bytes());
@@ -91,7 +91,7 @@ pub(crate) fn run() -> ExitCode {
         let mut pos = 0;
         while let Some(line) = next_line(&input, &mut pos) {
             if line.first() == Some(&options.tag()) {
-                if !options.bin_out {
+                if !options.binary.output {
                     output.extend_from_slice(&line);
                 }
                 continue;
@@ -107,8 +107,8 @@ pub(crate) fn run() -> ExitCode {
 /// and long projection lists, `=ID` one projection, `e` the ellipsoids, `u` the units.
 fn list_switch(program: &str, list: &str) -> ExitCode {
     let text = match list.chars().next() {
-        None | Some('p') => projections(false),
-        Some('P') => projections(true),
+        None | Some('p') => projections(Detail::Name),
+        Some('P') => projections(Detail::Full),
         Some('=') => projection(&list[1..]),
         Some('e') => lists::ellipsoids(),
         Some('u') => lists::units(),
@@ -121,17 +121,26 @@ fn list_switch(program: &str, list: &str) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// How much of a projection's description `-l` prints.
+#[derive(PartialEq, Eq)]
+enum Detail {
+    /// The first line only: the name.
+    Name,
+    /// The whole description.
+    Full,
+}
+
 /// The projections of `proj_list_operations`, the short list (first line of each) or the long
 /// one (whole descriptions). `latlong`, `longlat` and `geocent` are left out, as `proj.cpp`
 /// leaves them out.
-fn projections(long: bool) -> String {
+fn projections(detail: Detail) -> String {
     let mut out = String::new();
     for entry in proj_rs::listing::PROJECTIONS {
         if matches!(entry.id, "latlong" | "longlat" | "geocent") {
             continue;
         }
         out.push_str(&format!("{} : ", entry.id));
-        if long {
+        if detail == Detail::Full {
             out.push_str(entry.description);
             out.push('\n');
         } else {
@@ -177,13 +186,27 @@ fn atoi(text: &str) -> i64 {
 /// for text that is no number, and PROJ refuses 0.
 fn scale_argument(text: &str) -> Result<f64, String> {
     let value = match text.get(..2) {
-        Some("1/" | "1:") => 1.0 / c_strtod(text[2..].as_bytes()).0,
+        Some("1/" | "1:") => 1.0 / c_strtod(&text.as_bytes()[2..]).0,
         _ => c_strtod(text.as_bytes()).0,
     };
     if value == 0.0 || !value.is_finite() {
         return Err("invalid scale argument".to_owned());
     }
     Ok(value)
+}
+
+/// `-r` and `-s`: which of the input and output pairs is read or written second, first.
+#[derive(Default)]
+struct Reversal {
+    input: bool,
+    output: bool,
+}
+
+/// `-i`, `-o` and `-b`: which of the input and output is native doubles.
+#[derive(Default)]
+struct Binary {
+    input: bool,
+    output: bool,
 }
 
 /// The switches of `proj.cpp` that this port takes.
@@ -196,14 +219,10 @@ struct Options {
     dms: Dms,
     definition: String,
     crs: Option<String>,
-    /// `-r`: the input pair is read as (second, first).
-    reverse_in: bool,
-    /// `-s`: the output pair is written second, first.
-    reverse_out: bool,
-    /// `-i` and `-b`: the input is native doubles, two per point.
-    bin_in: bool,
-    /// `-o` and `-b`: the output is native doubles, two per point.
-    bin_out: bool,
+    /// `-r` (input) and `-s` (output): the pair is written second, first.
+    reversal: Reversal,
+    /// `-i` (input) and `-o` (output), both with `-b`: native doubles, two per point.
+    binary: Binary,
     /// `-e`: the text written for a point that cannot be projected.
     error_text: String,
     /// `-m` with `-I`: the factor applied to the input before the inverse.
@@ -225,10 +244,8 @@ impl Options {
             dms: Dms::default(),
             definition: String::new(),
             crs: None,
-            reverse_in: false,
-            reverse_out: false,
-            bin_in: false,
-            bin_out: false,
+            reversal: Reversal::default(),
+            binary: Binary::default(),
             error_text: "*\t*".to_owned(),
             prescale: None,
             postscale: None,
@@ -249,13 +266,13 @@ impl Options {
                         'I' => options.inverse = true,
                         'S' => options.factors = true,
                         'b' => {
-                            options.bin_in = true;
-                            options.bin_out = true;
+                            options.binary.input = true;
+                            options.binary.output = true;
                         }
-                        'i' => options.bin_in = true,
-                        'o' => options.bin_out = true,
-                        'r' => options.reverse_in = true,
-                        's' => options.reverse_out = true,
+                        'i' => options.binary.input = true,
+                        'o' => options.binary.output = true,
+                        'r' => options.reversal.input = true,
+                        's' => options.reversal.output = true,
                         'l' => {
                             // `-l` lists and exits: the rest of the switch is its argument.
                             options.list = Some(chars.as_str().to_owned());
@@ -529,13 +546,13 @@ fn record(line: &[u8], options: &Options, job: &Job, error_seen: &mut bool) -> V
     };
     s += used;
     // `-r`: the first number read is the second coordinate.
-    let (u, v) = if options.reverse_in {
+    let (u, v) = if options.reversal.input {
         (second, first)
     } else {
         (first, second)
     };
     let measure = measure(u, v, options, job, error_seen);
-    if options.bin_out {
+    if options.binary.output {
         return binary_out(&measure).to_vec();
     }
     let mut out = Vec::new();
@@ -626,11 +643,19 @@ fn coordinates_text(a: f64, b: f64, options: &Options, job: &Job) -> String {
         if let Some(format) = &options.oform {
             let first = format_number(format, lon).unwrap_or_default();
             let second = format_number(format, lat).unwrap_or_default();
-            joined(first, second, options.reverse_out)
+            if options.reversal.output {
+                joined(second, first)
+            } else {
+                joined(first, second)
+            }
         } else {
             let first = rtodms(a, options.dms, b'E', b'W');
             let second = rtodms(b, options.dms, b'N', b'S');
-            joined(first, second, options.reverse_out)
+            if options.reversal.output {
+                joined(second, first)
+            } else {
+                joined(first, second)
+            }
         }
     } else {
         let (east, north) = if job.degrees_forward {
@@ -641,16 +666,17 @@ fn coordinates_text(a: f64, b: f64, options: &Options, job: &Job) -> String {
         let format = options.oform.as_deref().unwrap_or("%.2f");
         let first = format_number(format, east).unwrap_or_default();
         let second = format_number(format, north).unwrap_or_default();
-        joined(first, second, job.north_first != options.reverse_out)
+        if job.north_first != options.reversal.output {
+            joined(second, first)
+        } else {
+            joined(first, second)
+        }
     }
 }
 
-fn joined(first: String, second: String, swap: bool) -> String {
-    if swap {
-        format!("{second}\t{first}")
-    } else {
-        format!("{first}\t{second}")
-    }
+/// The two coordinates separated by a tab, in the order given.
+fn joined(first: String, second: String) -> String {
+    format!("{first}\t{second}")
 }
 
 /// The binary output of a measured point: its two native doubles, or the error marker of

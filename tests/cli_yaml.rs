@@ -234,8 +234,8 @@ fn projinfo_aux_script() {
     actual.push_str(&String::from_utf8_lossy(&shown.stdout));
     actual.push('\n');
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/cli_yaml");
-    let expected = fs::read_to_string(root.join("test_projinfo_out.dist"))
-        .expect("test_projinfo_out.dist");
+    let expected =
+        fs::read_to_string(root.join("test_projinfo_out.dist")).expect("test_projinfo_out.dist");
     let want: Vec<&str> = expected.lines().collect();
     let got: Vec<&str> = actual.lines().collect();
     assert_eq!(want.len(), got.len(), "line count\ngot:\n{actual}");
