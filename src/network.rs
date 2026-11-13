@@ -35,6 +35,20 @@ pub(crate) struct GridContext {
     cache_dir: Option<PathBuf>,
     search_paths: Vec<PathBuf>,
     ca_bundle: Option<PathBuf>,
+    file_finder: Option<FileFinder>,
+}
+
+/// The caller's file lookup, consulted before the search directories.
+#[derive(Clone)]
+pub(crate) struct FileFinder(pub(crate) std::sync::Arc<FinderFn>);
+
+/// The callable a [`FileFinder`] holds.
+pub(crate) type FinderFn = dyn Fn(&str) -> Option<PathBuf> + Send + Sync;
+
+impl std::fmt::Debug for FileFinder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("FileFinder")
+    }
 }
 
 /// A grid the caller should fetch. The URL is `endpoint + "/" + filename`.
@@ -160,6 +174,18 @@ fn split_directories(value: &OsStr) -> Vec<PathBuf> {
         .collect()
 }
 
+/// A dictionary or other file looked up by name: the caller's file finder first,
+/// then the search directories (`pj_open_lib`).
+pub(crate) fn find_file(name: &str) -> Option<PathBuf> {
+    let ctx = context();
+    if let Some(finder) = &ctx.file_finder {
+        if let Some(path) = (finder.0)(name) {
+            return Some(path);
+        }
+    }
+    crate::gridpath::resolve(name)
+}
+
 pub(crate) fn cache_dir_if_enabled() -> Option<PathBuf> {
     let ctx = context();
     // The skip covers the default directory only. A directory set on the
@@ -208,6 +234,7 @@ impl GridContext {
             cache_dir: None,
             search_paths: Vec::new(),
             ca_bundle: None,
+            file_finder: None,
         };
         let env_network = nonempty_env("PROJ_NETWORK");
         let env_endpoint = nonempty_env("PROJ_NETWORK_ENDPOINT");
@@ -257,11 +284,6 @@ impl GridContext {
         self.cache_dir = Some(path);
     }
 
-    /// The directory set by `set_user_writable_directory`, if any.
-    pub(crate) fn user_writable_dir(&self) -> Option<&Path> {
-        self.cache_dir.as_deref()
-    }
-
     /// The directories added by `set_search_paths`, in order.
     pub(crate) fn added_search_paths(&self) -> &[PathBuf] {
         &self.search_paths
@@ -274,6 +296,19 @@ impl GridContext {
 
     pub(crate) fn set_ca_bundle(&mut self, path: PathBuf) {
         self.ca_bundle = Some(path);
+    }
+
+    /// Forget the directory set by `set_user_writable_directory`: the default is used again.
+    pub(crate) fn clear_cache_dir(&mut self) {
+        self.cache_dir = None;
+    }
+
+    pub(crate) fn set_file_finder(&mut self, finder: FileFinder) {
+        self.file_finder = Some(finder);
+    }
+
+    pub(crate) fn clear_file_finder(&mut self) {
+        self.file_finder = None;
     }
 }
 

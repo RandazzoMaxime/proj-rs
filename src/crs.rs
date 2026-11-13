@@ -823,6 +823,55 @@ fn real_to_i64(value: f64) -> i64 {
 /// # Errors
 ///
 /// [`CreateError::IllegalValue`] when the section is not a CRS this crate builds.
+/// Replace each `+init=FILE:SECTION` dictionary step by the text of its `<SECTION>` line
+/// (`pj_init_ctx` with a file, `src/init.cpp`). `None` when the definition has no such step.
+/// `epsg:`, `IGNF:` and `nad27:` steps are not dictionaries and are left to `init_definition`.
+pub(crate) fn expand_dictionary_init(definition: &str) -> Result<Option<String>, CreateError> {
+    let mut changed = false;
+    let mut tokens = Vec::new();
+    for token in definition.split_whitespace() {
+        let spec = token
+            .strip_prefix('+')
+            .unwrap_or(token)
+            .strip_prefix("init=");
+        match spec {
+            Some(spec) if is_dictionary_spec(spec) => {
+                tokens.push(dictionary_section(spec)?);
+                changed = true;
+            }
+            _ => tokens.push(token.to_owned()),
+        }
+    }
+    Ok(changed.then(|| tokens.join(" ")))
+}
+
+fn is_dictionary_spec(spec: &str) -> bool {
+    let lower = spec.to_ascii_lowercase();
+    spec.contains(':')
+        && !lower.starts_with("epsg:")
+        && !lower.starts_with("ignf:")
+        && !lower.starts_with("nad27:")
+}
+
+fn dictionary_section(spec: &str) -> Result<String, CreateError> {
+    let (file, section) = spec
+        .split_once(':')
+        .ok_or(CreateError::IllegalValue("init"))?;
+    let path = crate::network::find_file(file).ok_or(CreateError::IllegalValue("init"))?;
+    let text = std::fs::read_to_string(path).map_err(|_| CreateError::IllegalValue("init"))?;
+    for line in text.lines() {
+        let Some(rest) = line.trim().strip_prefix('<') else {
+            continue;
+        };
+        if let Some((name, body)) = rest.split_once('>') {
+            if name == section {
+                return Ok(body.trim().to_owned());
+            }
+        }
+    }
+    Err(CreateError::IllegalValue("init"))
+}
+
 pub(crate) fn init_definition(spec: &str) -> Result<String, CreateError> {
     let spec = spec.trim();
     if let Some(zone) = spec.strip_prefix("nad27:") {

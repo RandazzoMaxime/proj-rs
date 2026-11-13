@@ -1232,10 +1232,36 @@ impl ProjBuilder {
         self.net.added_search_paths().to_vec()
     }
 
-    /// The user-writable directory, as set by [`Self::set_user_writable_directory`].
+    /// The user-writable directory: the one set by [`Self::set_user_writable_directory`],
+    /// else PROJ's default directory.
     #[must_use]
-    pub fn user_writable_directory(&self) -> Option<PathBuf> {
-        self.net.user_writable_dir().map(Path::to_path_buf)
+    pub fn user_writable_directory(&self) -> PathBuf {
+        self.net.cache_directory()
+    }
+
+    /// Forget the directory set by [`Self::set_user_writable_directory`]; the default is
+    /// used again. This is `proj_context_set_user_writable_directory(ctx, NULL, ...)`.
+    pub fn clear_user_writable_directory(&mut self) {
+        self.net.clear_cache_dir();
+    }
+
+    /// Set a file finder, consulted before the search directories when a dictionary
+    /// (`+init=FILE:SECTION`) or a grid is looked up. It receives the file name and returns
+    /// the path to read, or `None` to let the search directories answer.
+    ///
+    /// This is `proj_context_set_file_finder`, without the context and user-data arguments of
+    /// the C callback: a Rust closure carries its own state.
+    pub fn set_file_finder<F>(&mut self, finder: F)
+    where
+        F: Fn(&str) -> Option<PathBuf> + Send + Sync + 'static,
+    {
+        self.net
+            .set_file_finder(crate::network::FileFinder(std::sync::Arc::new(finder)));
+    }
+
+    /// Remove the file finder set by [`Self::set_file_finder`].
+    pub fn clear_file_finder(&mut self) {
+        self.net.clear_file_finder();
     }
 
     /// Set the CA bundle used for network requests (`proj_context_set_ca_bundle_path`).

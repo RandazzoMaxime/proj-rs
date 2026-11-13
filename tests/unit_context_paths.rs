@@ -25,7 +25,7 @@ fn proj_context_set_user_writable_directory() {
         .set_user_writable_directory(&dir)
         .expect("create writable dir");
     assert!(dir.is_dir());
-    assert_eq!(builder.user_writable_directory(), Some(dir.clone()));
+    assert_eq!(builder.user_writable_directory(), dir.clone());
     let _ = fs::remove_dir_all(&dir);
 }
 

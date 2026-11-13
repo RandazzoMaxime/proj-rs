@@ -956,6 +956,9 @@ impl Operation {
     /// `urn:ogc:def:coordinateOperation:NKG::` is read from `proj.db`. A step
     /// that needs a grid is [`CreateError::Unsupported`], not a coordinate.
     pub fn create(definition: &str) -> Result<Self, CreateError> {
+        // `+init=FILE:SECTION` names a dictionary line; it is replaced by that line first.
+        let expanded = crate::crs::expand_dictionary_init(definition)?;
+        let definition = expanded.as_deref().unwrap_or(definition);
         if let Some(step) = nkg::from_definition(definition)? {
             return Ok(Self {
                 step: std::sync::Arc::from(step),
