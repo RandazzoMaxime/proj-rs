@@ -352,7 +352,15 @@ fn geographic_of(crs: &Crs) -> Option<GeographicCRS> {
 /// Greenwich's); a base with no geographic CRS is its own source.
 pub(super) fn transformation_source_of(base: &Crs) -> Crs {
     match geographic_of(base) {
-        Some(geographic) => Crs::Geographic(greenwich_based(&geographic)),
+        Some(geographic) => {
+            let mut copy = greenwich_based(&geographic);
+            // The copy keeps the coordinate system of the base, so a 3D base stays 3D
+            // (`GeographicCRS::create(..., sourceCRSGeog->coordinateSystem())`).
+            if geographic.coordinate_system().axes().len() == 3 {
+                copy.coordinate_system = geographic.coordinate_system().clone();
+            }
+            Crs::Geographic(copy)
+        }
         None => base.clone(),
     }
 }
