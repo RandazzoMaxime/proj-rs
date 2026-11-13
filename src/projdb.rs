@@ -32,7 +32,7 @@ impl fmt::Display for DbFail {
 impl std::error::Error for DbFail {}
 
 fn open_embedded() -> Result<Mutex<Connection>, String> {
-    open_memory()
+    read_only_image()
         .map(Mutex::new)
         .map_err(|error| error.to_string())
 }
@@ -44,20 +44,26 @@ fn read_only_image() -> Result<Connection, rusqlite::Error> {
     Ok(connection)
 }
 
-/// Copy the main database of `source` into `target`, which stays writable: an
+/// Copy the main database of `source` into `target`, which stays writable. An
 /// insert session writes to it and rolls the writes back.
 fn copy_into(source: &Connection, mut target: Connection) -> Result<Connection, rusqlite::Error> {
     Backup::new(source, &mut target)?.run_to_completion(i32::MAX, Duration::ZERO, None)?;
     Ok(target)
 }
 
+/// A writable in-memory copy of the embedded `proj.db`.
 fn open_memory() -> Result<Connection, rusqlite::Error> {
     copy_into(&read_only_image()?, Connection::open_in_memory()?)
 }
 
-/// A private connection to the embedded `proj.db`.
+/// The bytes of the embedded `proj.db`.
+pub(crate) fn embedded_bytes() -> &'static [u8] {
+    PROJ_DB
+}
+
+/// A private, writable connection to the embedded `proj.db`.
 ///
-/// Each call deserializes the bytes. The shared slot used by [`with_db`] stays
+/// Each call copies the bytes. The shared slot used by [`with_db`] stays
 /// free, so an ISO 19111 factory can nest queries without taking that lock.
 pub(crate) fn open_connection() -> Result<Connection, DbFail> {
     open_memory().map_err(|error| DbFail::Open(error.to_string()))
@@ -75,10 +81,8 @@ pub(crate) fn open_embedded_with_vfs(vfs: &str) -> Result<Connection, DbFail> {
     open().map_err(|_| DbFail::Open("Open of proj.db failed".to_owned()))
 }
 
-/// The database file at `path`, opened read-only as PROJ opens `proj.db`.
-///
-/// `vfs` names the SQLite VFS to open it through, or `None` for SQLite's
-/// default.
+/// The database file at `path`, opened read-only as PROJ opens `proj.db`,
+/// through the SQLite VFS `vfs` or SQLite's default when `None`.
 pub(crate) fn open_file(path: &Path, vfs: Option<&str>) -> Result<Connection, DbFail> {
     let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_FULL_MUTEX;
     let opened = match vfs {

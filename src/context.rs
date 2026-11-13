@@ -7,8 +7,9 @@
 //! functions, which are PROJ's `proj_context_*(NULL, ...)` calls.
 //!
 //! The database opened from a context is a [`DatabaseContext`]. Auxiliary
-//! databases are stored but not attached yet: [`Context::database`] refuses
-//! them rather than ignoring them.
+//! databases are attached by [`DatabaseContext::create_with_auxiliary`]. A
+//! named SQLite VFS is applied to the main database only, and it is refused
+//! together with auxiliary databases.
 
 use std::path::{Path, PathBuf};
 use std::sync::{PoisonError, RwLock};
@@ -190,15 +191,21 @@ impl Context {
     ///
     /// The file cannot be opened, including through an unknown SQLite VFS (the
     /// message is PROJ's `Open of <path> failed`). The layout version is not
-    /// the one this factory reads. Auxiliary databases are set: they are not
-    /// attached yet.
+    /// the one this factory reads. A SQLite VFS is named together with
+    /// auxiliary databases: this is not supported yet.
     pub fn database(&self) -> Result<DatabaseContext, FactoryError> {
-        if !self.settings.auxiliary.is_empty() {
-            return Err(FactoryError::Invalid(
-                "auxiliary databases are not attached yet".to_owned(),
-            ));
+        match self.sqlite_vfs_name() {
+            None => DatabaseContext::create_with_auxiliary(
+                self.database_path(),
+                &self.settings.auxiliary,
+            ),
+            Some(vfs) if self.settings.auxiliary.is_empty() => {
+                DatabaseContext::open_with_vfs(self.database_path(), vfs)
+            }
+            Some(_) => Err(FactoryError::Invalid(
+                "auxiliary databases with a SQLite VFS are not supported yet".to_owned(),
+            )),
         }
-        DatabaseContext::open(self.database_path(), self.sqlite_vfs_name())
     }
 
     /// `createFromUserInput` with the `init=` rules of this context.

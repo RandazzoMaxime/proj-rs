@@ -343,7 +343,12 @@ impl ProjectedCRS {
     }
 
     fn export_with(&self, extras: &ProjExtras<'_>) -> Result<String, FactoryError> {
-        if let Some(text) = self.pseudo_mercator_proj().filter(|_| !extras.has_shift()) {
+        if let Some(mut text) = self.pseudo_mercator_proj().filter(|_| !extras.has_shift()) {
+            // The generic export writes `+over` after `+nadgrids=@null` and before `+wktext`
+            // (`CRS::_exportToPROJString`, reached by the pseudo-Mercator branch too).
+            if self.identified.over {
+                text = text.replacen(" +wktext", " +over +wktext", 1);
+            }
             return Ok(text);
         }
         if let Some(text) = self
@@ -1234,7 +1239,12 @@ fn axis_order_text(axes: &[Axis]) -> Option<String> {
 /// East-then-north needs none. A polar CRS whose axes are both north or both
 /// south, named northing then easting, swaps as `2,1` (UPS North and South).
 pub(crate) fn projected_axis_order(crs: &ProjectedCRS) -> Option<String> {
-    let axes = crs.coordinate_system().axes();
+    axes_order(crs.coordinate_system().axes())
+}
+
+/// [`projected_axis_order`] on the axes of any Cartesian coordinate system, so that a derived
+/// projected CRS takes the same trailing swap as its `ProjectedCRS` would.
+pub(crate) fn axes_order(axes: &[Axis]) -> Option<String> {
     if axes.len() < 2 {
         return None;
     }

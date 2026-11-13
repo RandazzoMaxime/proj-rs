@@ -6,7 +6,8 @@
 //! `vgridshift`, and the `omit_fwd`/`omit_inv` flags it sets), the Krovak
 //! `axis=swu` merge, and the `set` epoch merge. Skipping one keeps the same
 //! transform with more steps, so the text differs from PROJ on those inputs.
-//! The PROJ string parser reads `init=` as a parameter and drops global parameters.
+//! The PROJ string parser reads `init=` as a parameter. The global parameters of an
+//! ingested pipeline are kept and printed after `+proj=pipeline`.
 //! Values are written without quoting, which is enough for the numbers and
 //! names an operation produces.
 
@@ -52,6 +53,8 @@ struct Step {
 #[derive(Debug, Default)]
 pub(crate) struct PipelineFormatter {
     steps: Vec<Step>,
+    /// Global parameters of an ingested pipeline, written after `+proj=pipeline`.
+    globals: Vec<Param>,
     /// Index of the first step of each open inversion.
     inversions: Vec<usize>,
     /// Drops `unitconvert` steps that change nothing, as PROJ does once a
@@ -147,7 +150,8 @@ impl PipelineFormatter {
     ///
     /// A pipeline string, or one step string such as `+proj=axisswap +order=2,1`.
     pub(crate) fn ingest_proj_string(&mut self, text: &str) {
-        self.steps.extend(parse_proj_string(text));
+        let steps = parse_proj_string(text, &mut self.globals);
+        self.steps.extend(steps);
     }
 
     pub(crate) fn add_param(&mut self, key: &str, value: &str) {
@@ -259,8 +263,19 @@ impl PipelineFormatter {
         let multi = lines == ProjLines::Multi;
         let mut result = String::new();
         let mut indent = 0;
-        if self.steps.len() > 1 || self.steps.first().is_some_and(|step| step.inverted) {
+        if self.steps.len() > 1
+            || self.steps.first().is_some_and(|step| step.inverted)
+            || !self.globals.is_empty()
+        {
             result.push_str("+proj=pipeline");
+            for param in &self.globals {
+                result.push_str(" +");
+                result.push_str(&param.key);
+                if !param.value.is_empty() {
+                    result.push('=');
+                    result.push_str(&param.value);
+                }
+            }
             if multi {
                 indent += 1;
             }
@@ -383,12 +398,34 @@ fn normalize_inverse(step: &mut Step) {
     }
 }
 
+/// `PROJStringFormatter::getUsedGridNames` of a PROJ string: the names in the `grids` and
+/// `file` parameters of its steps, each split at commas, without repeats and sorted.
+pub(crate) fn used_grid_names(text: &str) -> Vec<String> {
+    let mut globals = Vec::new();
+    let mut names = std::collections::BTreeSet::new();
+    for step in parse_proj_string(text, &mut globals) {
+        for param in step.params {
+            if param.key == "grids" || param.key == "file" {
+                names.extend(
+                    param
+                        .value
+                        .split(',')
+                        .filter(|name| !name.is_empty())
+                        .map(str::to_owned),
+                );
+            }
+        }
+    }
+    names.into_iter().collect()
+}
+
 /// PROJ `PROJStringSyntaxParser`, for a string with or without `+proj=pipeline`.
 ///
-/// Tokens are split on whitespace with the leading `+` removed. Global parameters
-/// (before the first step) and `title=` are dropped. `init=` is read as a parameter, so
-/// it prints differently from PROJ.
-fn parse_proj_string(text: &str) -> Vec<Step> {
+/// Tokens are split on whitespace with the leading `+` removed. Global parameters of a
+/// pipeline (before its first step) go to `globals`, as `PROJStringSyntaxParser` keeps
+/// them. `title=` is dropped. `init=` is read as a parameter, so it prints differently
+/// from PROJ.
+fn parse_proj_string(text: &str, globals: &mut Vec<Param>) -> Vec<Step> {
     let tokens: Vec<&str> = text
         .split_whitespace()
         .map(|token| token.strip_prefix('+').unwrap_or(token))
@@ -412,6 +449,8 @@ fn parse_proj_string(text: &str) -> Vec<Step> {
                     Some(step) if step.name.is_empty() => step.name = name.to_owned(),
                     _ => push_param(&mut steps, word),
                 }
+            } else if steps.is_empty() {
+                globals.push(split_param(word));
             } else {
                 push_param(&mut steps, word);
             }
@@ -456,14 +495,19 @@ fn new_step(name: &str) -> Step {
 }
 
 /// Appends `token` (`key` or `key=value`) to the last step. A token before any step is
-/// a global parameter, which is dropped.
+/// not kept here: the pipeline parser sends it to the global parameters.
 fn push_param(steps: &mut [Step], token: &str) {
-    let (key, value) = token.split_once('=').unwrap_or((token, ""));
     if let Some(step) = steps.last_mut() {
-        step.params.push(Param {
-            key: key.to_owned(),
-            value: value.to_owned(),
-        });
+        step.params.push(split_param(token));
+    }
+}
+
+/// The parameter of a token `key` or `key=value`.
+fn split_param(token: &str) -> Param {
+    let (key, value) = token.split_once('=').unwrap_or((token, ""));
+    Param {
+        key: key.to_owned(),
+        value: value.to_owned(),
     }
 }
 

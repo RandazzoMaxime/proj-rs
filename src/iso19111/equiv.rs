@@ -53,7 +53,9 @@ impl GeographicCRS {
         if criterion == Equivalence::Strict {
             return false;
         }
-        let (Some(left), Some(right)) = (self.datum(), other.datum()) else {
+        // `SingleCRS::baseIsEquivalentTo` (crs.cpp:1686-1691) compares `datumNonNull`: an
+        // ensemble stands for its `asDatum`, as `datum_frame` builds it.
+        let (Some(left), Some(right)) = (datum_frame(self), datum_frame(other)) else {
             return false;
         };
         let official = |name: &str| db.geodetic_datum_equivalent(name).map(|found| found.0);
@@ -61,12 +63,14 @@ impl GeographicCRS {
             (Some(left_official), Some(right_official)) => left_official == right_official,
             _ => false,
         };
-        if !(same_official || frame_names_equivalent_by_db(left, right, db)) {
+        if !(same_official || frame_names_equivalent_by_db(&left, &right, db)) {
             return false;
         }
         let mut renamed = other.clone();
         if let Some(datum) = renamed.datum.as_mut() {
             datum.identified.name = left.name().to_owned();
+        } else if let Some(ensemble) = renamed.ensemble.as_mut() {
+            ensemble.identified.name = left.name().to_owned();
         }
         self.is_equivalent_to_with(&renamed, criterion)
     }
