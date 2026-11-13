@@ -3352,6 +3352,17 @@ impl WktParser {
             .child(&["ABRIDGEDTRANSFORMATION", "COORDINATEOPERATION"])
             .ok_or_else(|| invalid("missing ABRIDGEDTRANSFORMATION"))?;
         let mut transformation = self.build_transformation(operation)?;
+        // `buildTransformationForBoundCRS` (io.cpp:5361-5376): the abridged transformation runs
+        // from `createBoundCRSSourceTransformationCRS(base, target)`, so from a Greenwich copy of
+        // the base geographic CRS when its prime meridian is not Greenwich's.
+        if transformation.source.is_none() {
+            transformation.source = Some(Box::new(super::bound_import::transformation_source_of(
+                &source,
+            )));
+        }
+        if transformation.target.is_none() {
+            transformation.target = Some(Box::new(target.clone()));
+        }
         // A `Geographic3D to GravityRelatedHeight` transformation of a vertical CRS bound to a
         // geographic CRS goes the other way round: the method becomes
         // `GravityRelatedHeight to Geographic3D` on the same file (`buildTransformationForBoundCRS`).

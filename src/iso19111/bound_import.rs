@@ -316,10 +316,7 @@ pub(crate) fn bind_towgs84(crs: Crs, values: &[f64]) -> Result<Crs, FactoryError
 /// `BoundCRS::createFromNadgrids`: an NTv2 transformation from the geographic
 /// CRS of `crs` (on a Greenwich meridian) to WGS 84.
 pub(super) fn bind_nadgrids(crs: Crs, filename: &str) -> Crs {
-    let source = match geographic_of(&crs) {
-        Some(geographic) => Crs::Geographic(greenwich_based(&geographic)),
-        None => crs.clone(),
-    };
+    let source = transformation_source_of(&crs);
     let target = Crs::Geographic(GeographicCRS::epsg_4326());
     let transformation = Transformation {
         identified: Identified::named(format!("{} to WGS84", source.name())),
@@ -346,6 +343,17 @@ fn geographic_of(crs: &Crs) -> Option<GeographicCRS> {
     match extract_geodetic(crs)? {
         GeodeticCRS::Geographic(geographic) => Some(geographic),
         _ => None,
+    }
+}
+
+/// `createBoundCRSSourceTransformationCRS` (crs.cpp:5989-6010): the source CRS of the binding
+/// transformation of a bound CRS whose base is `base`. The geographic CRS of the base, on a
+/// Greenwich meridian (a copy named `(with Greenwich prime meridian)` when its meridian is not
+/// Greenwich's); a base with no geographic CRS is its own source.
+pub(super) fn transformation_source_of(base: &Crs) -> Crs {
+    match geographic_of(base) {
+        Some(geographic) => Crs::Geographic(greenwich_based(&geographic)),
+        None => base.clone(),
     }
 }
 
