@@ -29,7 +29,7 @@ slows an existing case says so in its PR.
 | 9 | PROJ string parser | ✅ | `Operation::create` in `src/engine.rs`. An unknown `+proj` is a creation error |
 | 10 | `gie` runner, vendored PROJ 9.9 suite, ratchet | ✅ | `tests/gie_run.rs`, `tests/gie/passing.txt` |
 | 11 | Geodetic ↔ geocentric cartesian (`cart`) | ✅ | |
-| 12 | libproj baseline in the bench | 🟡 | `build.rs` links libproj only when an import library sits at one fixed Windows path, so the `ratio` column is not reproducible elsewhere |
+| 12 | libproj baseline in the bench | ✅ | `build.rs` links libproj from `PROJ_RS_LIBPROJ_DIR`, else from the active conda environment (`CONDA_PREFIX`), on Linux, macOS and Windows. `tools/build-reference.sh` builds one. Without a libproj the `ratio` column stays empty |
 | 13 | Pipeline engine (`+proj=pipeline`, `+inv`, `+step`) | ✅ | |
 | 14 | georust `proj` facade | 🟡 | The API surface and `geo-types` feature exist (`src/proj.rs`, `tests/proj_facade.rs`). georust's own tests and examples are not yet run against it, and no differential test compares the two crates |
 | 15 | Built-in CRS table for `new_known_crs` | ✅ | Replaced by something larger: the full PROJ 9.9 `proj.db` is embedded and opened with `rusqlite` |

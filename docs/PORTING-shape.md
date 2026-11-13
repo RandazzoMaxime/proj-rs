@@ -1,5 +1,19 @@
 # Porting sheet: the `shape` class (test_c_api, test_crs, test_factory, test_io)
 
+> **Status, superseded.** Every test listed below has since been ported and
+> `docs/UNPORTED-UNIT.md` is empty. The causes written here describe the
+> state when this sheet was written and are kept as history. The work that
+> closed them: the database layer (`DatabaseContext::open`,
+> `create_with_auxiliary`, `with_empty_structure`) in
+> [`PORTING-database-open.md`](PORTING-database-open.md) and
+> [`PORTING-factory-tmpdb-1.md`](PORTING-factory-tmpdb-1.md),
+> [`-2.md`](PORTING-factory-tmpdb-2.md); the context type in
+> [`PORTING-capi-context-2.md`](PORTING-capi-context-2.md) and
+> [`PORTING-capi-database-path.md`](PORTING-capi-database-path.md); object
+> insertion in [`PORTING-object-insertion.md`](PORTING-object-insertion.md);
+> the custom CRS rows in
+> [`PORTING-crs-factory-closing.md`](PORTING-crs-factory-closing.md).
+
 Source, PROJ 9.9.0: `test/unit/test_c_api.cpp`, `test_crs.cpp`, `test_factory.cpp` and `test_io.cpp`, fetched from the 9.9.0 tag. The `shape` class of `docs/UNIT-TRIAGE.md` holds 76 `TEST()` names that check the C++ object model or the C ABI. This lot ports the ones that still pin a value a Rust user can observe: **20 ported, 56 documented** (76 in total). Expected text and numbers are copied from the C++ tests. New tests are in `tests/unit_shape.rs`.
 
 ## Test mapping (20 ported)
