@@ -25,21 +25,11 @@ and `PORT-NOTES-tests.md`.
 - `FactoryWithTmpDatabase.AuthorityFactory_createFromCRSCodesWithIntermediates_case_source_pivot_pivot_target`
 - `FactoryWithTmpDatabase.AuthorityFactory_createFromCRSCodesWithIntermediates_case_pivot_source_pivot_target`
 - `FactoryWithTmpDatabase.AuthorityFactory_createFromCRSCodesWithIntermediates_case_pivot_source_target_pivot`
-- `FactoryWithTmpDatabase.AuthorityFactory_proj_based_transformation`
-- `FactoryWithTmpDatabase.AuthorityFactory_wkt_based_transformation`
-- `FactoryWithTmpDatabase.AuthorityFactory_wkt_based_transformation_not_wkt`
-- `FactoryWithTmpDatabase.AuthorityFactory_wkt_based_transformation_not_co_wkt`
 - `FactoryWithTmpDatabase.getAuthorities`
-- `FactoryWithTmpDatabase.lookForGridInfo`
-- `FactoryWithTmpDatabase.lookForGridInfo_from_old_name_with_new_grid_available`
-- `FactoryWithTmpDatabase.custom_geodetic_crs`
 - `FactoryWithTmpDatabase.custom_projected_crs`
 - `FactoryWithTmpDatabase.custom_derived_projected_crs`
-- `FactoryWithTmpDatabase.CoordinateMetadata`
 - `factory.attachExtraDatabases_auxiliary`
 - `factory.attachExtraDatabases_auxiliary_error`
-- `FactoryWithTmpDatabase.createOperations_exact_transform_not_whole_area`
-- `FactoryWithTmpDatabase.check_fixup_direction_concatenated_inverse_map_projection`
 - `factory.objectInsertion`
 
 ## test_io.cpp

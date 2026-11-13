@@ -8,6 +8,8 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
+pub(crate) mod tmp_db;
+
 /// `TEST()` names per PROJ 9.9.0 unit file, ported or not.
 pub(crate) const UNIT_TOTALS: [(&str, usize); 6] = [
     ("test_c_api.cpp", 152),

@@ -265,6 +265,11 @@ fn export_forward(
         formatter.ingest_proj_string(text);
         return Ok(());
     }
+    if operation.method().code_space() == "PROJ" && operation.method().code() == "PROJString" {
+        // A `PROJString` row of `other_transformation` names its PROJ string as the method.
+        formatter.ingest_proj_string(method_name);
+        return Ok(());
+    }
     if method_name.eq_ignore_ascii_case("Inverse of Geographic3D to GravityRelatedHeight")
         || method_name.eq_ignore_ascii_case("Inverse of Geog3D to Geog2D+GravityRelatedHeight")
     {
@@ -1290,26 +1295,39 @@ fn unimplemented(operation: &Transformation) -> FactoryError {
 /// The EPSG method code, or 0 when the method has no EPSG identifier.
 fn epsg_method_code(operation: &Transformation) -> i32 {
     let method = operation.method();
-    if method.code_space() == "EPSG" {
+    let identified = if method.code_space() == "EPSG" {
         method.code().parse().unwrap_or(0)
     } else {
         0
+    };
+    if identified != 0 {
+        return identified;
     }
+    // `OperationMethod::getEPSGCode`: a method without an EPSG identifier takes the code
+    // of its name.
+    super::parammap::method_by_name(method.name()).map_or(0, |known| known.epsg_code)
 }
 
 /// The measure of the parameter with EPSG code `code`, as PROJ's
 /// `parameterValueMeasure(code)`. Absent or not a measure gives `None`.
 fn measure_by_code(operation: &Transformation, code: i32) -> Option<&Measure> {
-    operation.parameters().iter().find_map(|parameter| {
-        if parameter.code() == code.to_string() {
-            match parameter.value() {
-                ParameterValue::Measure(measure) => Some(measure),
-                _ => None,
-            }
-        } else {
-            None
-        }
-    })
+    let by_code = operation
+        .parameters()
+        .iter()
+        .find(|parameter| parameter.code() == code.to_string());
+    // `OperationParameter::getEPSGCode`: a parameter without an EPSG identifier takes the
+    // code of its name, within the method the name gives.
+    let parameter = by_code.or_else(|| {
+        let method = super::parammap::method_by_name(operation.method().name())?;
+        let known = method.params.iter().find(|known| known.epsg_code == code)?;
+        operation.parameters().iter().find(|parameter| {
+            parameter.code().is_empty() && names_match(parameter.name(), known.wkt2_name)
+        })
+    })?;
+    match parameter.value() {
+        ParameterValue::Measure(measure) => Some(measure),
+        _ => None,
+    }
 }
 
 fn measure_by_name<'a>(operation: &'a Transformation, name: &str) -> Option<&'a Measure> {
