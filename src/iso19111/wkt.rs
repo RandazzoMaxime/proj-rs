@@ -607,6 +607,31 @@ impl Crs {
     }
 }
 
+impl super::coordinate_metadata::CoordinateMetadata {
+    /// Write this coordinate metadata into `formatter` and return the WKT:
+    /// `COORDINATEMETADATA[<crs>, EPOCH[<year>]]`, the epoch node only when there is one.
+    ///
+    /// # Errors
+    ///
+    /// The formatter is not WKT2:2019, as PROJ's `CoordinateMetadata::_exportToWKT` requires.
+    pub fn export_to_wkt(&self, formatter: &mut WktFormatter) -> Result<String, FactoryError> {
+        if !formatter.wkt2 || !formatter.keywords_2019 {
+            return Err(FactoryError::Format(
+                "CoordinateMetadata can only be exported since WKT2:2019".to_owned(),
+            ));
+        }
+        formatter.start_node("COORDINATEMETADATA", NodeId::Absent);
+        export_crs(self.crs(), formatter)?;
+        if let Some(epoch) = self.coordinate_epoch() {
+            formatter.start_node("EPOCH", NodeId::Absent);
+            formatter.add_number(epoch);
+            formatter.end_node();
+        }
+        formatter.end_node();
+        Ok(std::mem::take(&mut formatter.result))
+    }
+}
+
 pub(crate) fn export_crs(crs: &Crs, formatter: &mut WktFormatter) -> Result<(), FactoryError> {
     match crs {
         Crs::Geographic(crs) => export_geographic(crs, formatter)?,

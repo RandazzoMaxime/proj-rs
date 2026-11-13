@@ -6,6 +6,7 @@
 
 use super::bound::extract_geographic;
 use super::buildop::{OpProps, UtmHemisphere};
+use super::coordinate_metadata::CoordinateMetadata;
 use super::equiv::Equivalence;
 use super::niche::{ParametricCS, ParametricDatum, TemporalCS, TemporalCsKind, TemporalDatum};
 use super::normalize::reversed;
@@ -413,10 +414,6 @@ impl Props {
 
 /// Parsed WKT object. The variant is the dynamic type PROJ would return.
 #[derive(Clone, Debug)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "each WKT object owns its full ISO 19111 graph"
-)]
 pub enum WktObject {
     /// `ELLIPSOID` or `SPHEROID`.
     Ellipsoid(Ellipsoid),
@@ -432,6 +429,8 @@ pub enum WktObject {
     Identifier(Identifier),
     /// Any coordinate reference system.
     Crs(Crs),
+    /// `COORDINATEMETADATA`, a CRS with its coordinate epoch (WKT2:2019).
+    CoordinateMetadata(CoordinateMetadata),
     /// `CONVERSION`, including a WKT1 `PROJECTION`.
     Conversion(Conversion),
     /// `COORDINATEOPERATION`.
@@ -718,6 +717,9 @@ impl WktParser {
         if ci_eq(&root.value, "ID") {
             return Ok(WktObject::Identifier(self.build_standalone_id(&root)?));
         }
+        if ci_eq(&root.value, "COORDINATEMETADATA") {
+            return self.build_coordinate_metadata(&root);
+        }
         if ci_eq(&root.value, "DATUM")
             || ci_eq(&root.value, "GEODETICDATUM")
             || ci_eq(&root.value, "TRF")
@@ -795,6 +797,39 @@ impl WktParser {
             self.grammar_errors.push(message);
             Ok(())
         }
+    }
+
+    /// `COORDINATEMETADATA[<crs>, EPOCH[<year>]]`: the CRS, and the epoch when there is one.
+    ///
+    /// The database, when the parser has one, decides whether a static CRS with a point motion
+    /// operation takes an epoch (`CoordinateMetadata::create`). Without one, only a dynamic CRS
+    /// does.
+    fn build_coordinate_metadata(&mut self, node: &WktNode) -> Result<WktObject, FactoryError> {
+        let Some(crs_node) = node
+            .children
+            .iter()
+            .find(|child| !ci_eq(&child.value, "EPOCH"))
+        else {
+            return Err(invalid("COORDINATEMETADATA has no CRS"));
+        };
+        let WktObject::Crs(crs) = self.build_object(crs_node)? else {
+            return Err(invalid("COORDINATEMETADATA does not hold a CRS"));
+        };
+        let epoch = match node.child(&["EPOCH"]) {
+            Some(epoch) => {
+                if epoch.children.len() != 1 {
+                    return Err(invalid("Invalid EPOCH node"));
+                }
+                Some(as_f64(&epoch.children[0])?)
+            }
+            None => None,
+        };
+        let metadata = match (epoch, self.db.as_ref()) {
+            (Some(epoch), Some(db)) => CoordinateMetadata::create(&crs, epoch, db)?,
+            (Some(epoch), None) => CoordinateMetadata::create_without_database(&crs, epoch)?,
+            (None, _) => CoordinateMetadata::create_without_epoch(&crs)?,
+        };
+        Ok(WktObject::CoordinateMetadata(metadata))
     }
 
     fn vertcs_follows(&self, wkt: &str, mut index: usize) -> bool {

@@ -66,12 +66,12 @@ pub use metadata::{Citation, DataEpoch, Extent};
 pub use model::{
     Axis, BoundCRS, BoundingBox, CartesianCS, CompoundCRS, ConcatenatedOperation, ConcatenatedStep,
     Conversion, CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble,
-    DerivedConversion, DerivedProjectedCRS, Ellipsoid, EllipsoidShape, EllipsoidalCS,
-    EngineeringCRS, EngineeringDatum, FactoryError, GeocentricCRS, GeodeticCRS,
-    GeodeticReferenceFrame, GeographicCRS, GeoidModel, Identifier, Measure, Meridian, ObjectDomain,
-    OperationMethod, OperationParameter, OperationParameterValue, OrdinalCS, Parameter,
-    ParameterValue, PrimeMeridian, ProjectedCRS, RealizationMethod, SphericalCS, Transformation,
-    UnitKind, UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame,
+    DerivedConversion, DerivedProjectedCRS, DynamicGeodeticReferenceFrame, Ellipsoid,
+    EllipsoidShape, EllipsoidalCS, EngineeringCRS, EngineeringDatum, FactoryError, GeocentricCRS,
+    GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, GeoidModel, Identifier, Measure, Meridian,
+    ObjectDomain, OperationMethod, OperationParameter, OperationParameterValue, OrdinalCS,
+    Parameter, ParameterValue, PrimeMeridian, ProjectedCRS, RealizationMethod, SphericalCS,
+    Transformation, UnitKind, UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame,
 };
 pub use niche::{
     parametric_unit, DerivedCRS, DerivedKind, ParametricCRS, ParametricCS, ParametricDatum,

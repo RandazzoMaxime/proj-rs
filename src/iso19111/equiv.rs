@@ -1017,15 +1017,12 @@ fn close_si(left: f64, right: f64, max_relative_error: f64) -> bool {
     (left - right).abs() <= max_relative_error * left.abs()
 }
 
+/// Two datum ensembles are equivalent when their names are. PROJ's `DatumEnsemble` has no
+/// `_isEquivalentTo` of its own: it inherits `ObjectUsage::_isEquivalentTo`, which is
+/// `IdentifiedObject::_isEquivalentTo`, a name comparison under the strict criterion. The
+/// accuracy and the members are not compared (the C++ marks the check `TODO: incomplete`).
 fn ensemble_equivalent(left: &DatumEnsemble, right: &DatumEnsemble) -> bool {
     same_name(left.name(), right.name())
-        && left.positional_accuracy() == right.positional_accuracy()
-        && left.members().len() == right.members().len()
-        && left
-            .members()
-            .iter()
-            .zip(right.members())
-            .all(|(left, right)| datum_equivalent(left, right))
 }
 
 fn datum_equivalent(left: &Datum, right: &Datum) -> bool {

@@ -1251,6 +1251,52 @@ impl PrimeMeridian {
     }
 }
 
+/// `DynamicGeodeticReferenceFrame`: a geodetic datum with a frame reference epoch, which makes it
+/// dynamic. It is a [`GeodeticReferenceFrame`] with the epoch set, and derefs to it.
+#[derive(Clone, Debug)]
+pub struct DynamicGeodeticReferenceFrame(GeodeticReferenceFrame);
+
+impl DynamicGeodeticReferenceFrame {
+    /// `DynamicGeodeticReferenceFrame::create(props, ellipsoid, anchor, primeMeridian,
+    /// frameReferenceEpoch, deformationModelName)`.
+    ///
+    /// `frame_reference_epoch` is a decimal year (the C++ takes a `Measure` in years).
+    /// `None` for `anchor` or `deformation_model` leaves that member absent, as an unset C++ `optional`.
+    #[must_use]
+    pub fn create(
+        name: impl Into<String>,
+        ellipsoid: Ellipsoid,
+        anchor: Option<String>,
+        prime_meridian: PrimeMeridian,
+        frame_reference_epoch: f64,
+        deformation_model: Option<String>,
+    ) -> Self {
+        let mut frame = GeodeticReferenceFrame::create(name, ellipsoid, prime_meridian)
+            .with_frame_epoch(frame_reference_epoch);
+        if let Some(anchor) = anchor {
+            frame = frame.with_anchor(anchor);
+        }
+        if let Some(model) = deformation_model {
+            frame = frame.with_deformation_model(model);
+        }
+        Self(frame)
+    }
+}
+
+impl std::ops::Deref for DynamicGeodeticReferenceFrame {
+    type Target = GeodeticReferenceFrame;
+
+    fn deref(&self) -> &GeodeticReferenceFrame {
+        &self.0
+    }
+}
+
+impl From<DynamicGeodeticReferenceFrame> for GeodeticReferenceFrame {
+    fn from(frame: DynamicGeodeticReferenceFrame) -> Self {
+        frame.0
+    }
+}
+
 /// Geodetic datum, including a dynamic frame when an epoch is set.
 #[derive(Clone, Debug)]
 pub struct GeodeticReferenceFrame {
@@ -1922,8 +1968,8 @@ impl EllipsoidalCS {
         Self {
             identified: Identified::default(),
             axes: vec![
-                Axis::new("Latitude", "Lat", "north", unit.clone()),
-                Axis::new("Longitude", "Lon", "east", unit),
+                Axis::new("Latitude", "lat", "north", unit.clone()),
+                Axis::new("Longitude", "lon", "east", unit),
             ],
         }
     }
@@ -1946,8 +1992,8 @@ impl EllipsoidalCS {
         Self {
             identified: Identified::default(),
             axes: vec![
-                Axis::new("Longitude", "Lon", "east", unit.clone()),
-                Axis::new("Latitude", "Lat", "north", unit),
+                Axis::new("Longitude", "lon", "east", unit.clone()),
+                Axis::new("Latitude", "lat", "north", unit),
             ],
         }
     }
@@ -1958,8 +2004,8 @@ impl EllipsoidalCS {
         Self {
             identified: Identified::default(),
             axes: vec![
-                Axis::new("Longitude", "Lon", "east", angular.clone()),
-                Axis::new("Latitude", "Lat", "north", angular),
+                Axis::new("Longitude", "lon", "east", angular.clone()),
+                Axis::new("Latitude", "lat", "north", angular),
                 Axis::new("Ellipsoidal height", "h", "up", linear),
             ],
         }
@@ -1971,8 +2017,8 @@ impl EllipsoidalCS {
         Self {
             identified: Identified::default(),
             axes: vec![
-                Axis::new("Latitude", "Lat", "north", angular.clone()),
-                Axis::new("Longitude", "Lon", "east", angular),
+                Axis::new("Latitude", "lat", "north", angular.clone()),
+                Axis::new("Longitude", "lon", "east", angular),
                 Axis::new("Ellipsoidal height", "h", "up", linear),
             ],
         }

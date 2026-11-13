@@ -12,7 +12,7 @@ use super::factory::{
     AlternativeGridNames, AuthorityFactory, AuthorityObject, CoordinateOperationContext,
     DatabaseContext, NameMatch, ObjectType,
 };
-use super::json_read::{create_object_from_json, JsonObject};
+use super::json_read::{create_object_from_json, read_crs_value, JsonObject};
 use super::model::{
     Axis, BoundCRS, CartesianCS, CompoundCRS, ConcatenatedOperation, Conversion,
     CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble, DerivedProjectedCRS,
@@ -3791,7 +3791,41 @@ fn import_user_object(text: &str, db: &DatabaseContext) -> Result<UserObject, Fa
             object, db,
         )?)),
         "TemporalDatum" => Ok(UserObject::TemporalDatum(read_temporal_datum(object, db)?)),
+        "CoordinateMetadata" => Ok(UserObject::CoordinateMetadata(read_coordinate_metadata(
+            object, db,
+        )?)),
         other => Err(invalid(format!("PROJJSON type {other} is not imported"))),
+    }
+}
+
+/// A `CoordinateMetadata` PROJJSON object: its `crs` object, and the `coordinateEpoch` as a
+/// decimal year when the object has one. The epoch goes through `CoordinateMetadata::create`, so
+/// a static CRS takes one only with a point motion operation, as in the other readers.
+fn read_coordinate_metadata(
+    object: &Object,
+    db: &DatabaseContext,
+) -> Result<CoordinateMetadata, FactoryError> {
+    let crs_value = object
+        .get("crs")
+        .ok_or_else(|| invalid("PROJJSON CoordinateMetadata is missing its crs"))?;
+    // The strict reader keeps the frame epoch and the deformation model; the lenient one does not.
+    let crs = match read_crs_value(crs_value, db) {
+        Some(crs) => crs,
+        None => {
+            let crs = crs_value
+                .as_object()
+                .ok_or_else(|| invalid("PROJJSON CoordinateMetadata crs is not an object"))?;
+            read_crs_object(crs, db)?
+        }
+    };
+    match object.get("coordinateEpoch") {
+        None => CoordinateMetadata::create_without_epoch(&crs),
+        Some(value) => {
+            let epoch = value
+                .as_f64()
+                .ok_or_else(|| invalid("PROJJSON coordinateEpoch is not a number"))?;
+            CoordinateMetadata::create(&crs, epoch, db)
+        }
     }
 }
 

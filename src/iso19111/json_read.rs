@@ -77,6 +77,19 @@ pub fn create_object_from_json(text: &str, db: Option<&DatabaseContext>) -> Read
     reader.create(&value)
 }
 
+/// The CRS that a PROJJSON member `value` holds, read by the strict reader. `None` when the value
+/// is not a CRS this reader builds, so the caller can try its lenient reader.
+pub(super) fn read_crs_value(value: &Value, db: &DatabaseContext) -> Option<Crs> {
+    let mut reader = Reader {
+        db: Some(db),
+        deformation_model: None,
+    };
+    match reader.create(value) {
+        Ok(JsonObject::Crs(crs)) => Some(crs),
+        _ => None,
+    }
+}
+
 struct Reader<'a> {
     db: Option<&'a DatabaseContext>,
     deformation_model: Option<String>,
