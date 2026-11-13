@@ -41,7 +41,12 @@ mod lcca;
 mod misc;
 mod mod_ster;
 mod models;
-pub use models::{FallbackStrategy, TinShiftEvaluator, TinShiftFile, TinShiftFileError};
+pub use models::{
+    decimal_year_from_iso8601, Authority, Bound, Component, DefmodelError, Displacement, Epoch,
+    EpochScaleFactor, Evaluator, FallbackStrategy, Grid as DefmodelGrid, GridProvider, GridSet,
+    Link, MasterFile, SpatialExtent, SpatialModel, TimeExtent, TimeFunction, TinShiftEvaluator,
+    TinShiftFile, TinShiftFileError,
+};
 mod more;
 mod nsper;
 mod nzmg;

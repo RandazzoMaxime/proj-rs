@@ -45,6 +45,17 @@ mod merc;
 pub mod names;
 pub mod version;
 
+/// The deformation models (`+proj=defmodel`): the master file parser, the
+/// time functions, and the evaluator over a [`GridProvider`](defmodel::GridProvider).
+pub mod defmodel {
+    pub use crate::projections::DefmodelGrid as Grid;
+    pub use crate::projections::{
+        decimal_year_from_iso8601, Authority, Bound, Component, DefmodelError, Displacement, Epoch,
+        EpochScaleFactor, Evaluator, GridProvider, GridSet, Link, MasterFile, SpatialExtent,
+        SpatialModel, TimeExtent, TimeFunction,
+    };
+}
+
 /// The triangulation shift files (`+proj=tinshift`): the file parser with its
 /// header accessors, and the evaluator.
 pub mod tinshift {
