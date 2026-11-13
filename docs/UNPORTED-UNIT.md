@@ -32,8 +32,6 @@ and `PORT-NOTES-tests.md`.
 - `FactoryWithTmpDatabase.custom_projected_crs`
 - `FactoryWithTmpDatabase.custom_derived_projected_crs`
 - `FactoryWithTmpDatabase.CoordinateMetadata`
-- `factory.attachExtraDatabases_auxiliary`
-- `factory.attachExtraDatabases_auxiliary_error`
 - `FactoryWithTmpDatabase.createOperations_exact_transform_not_whole_area`
 - `FactoryWithTmpDatabase.check_fixup_direction_concatenated_inverse_map_projection`
 - `factory.objectInsertion`
@@ -58,10 +56,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_c_api.cpp
 
-- `CApi.proj_context_set_database_path_null`
-- `CApi.proj_context_set_database_path_aux`
-- `CApi.proj_context_set_database_path_error_1`
-- `CApi.proj_context_set_database_path_error_2`
 - `CApi.proj_clone_of_obj_with_alternative_operations`
 - `CApi.proj_normalize_for_visualization_with_alternatives`
 - `CApi.proj_coordoperation_create_inverse`
