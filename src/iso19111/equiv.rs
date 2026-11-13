@@ -7,8 +7,8 @@
 use super::model::{
     ensemble_name_as_datum, Axis, CompoundCRS, Conversion, CoordinateOperation, CoordinateSystem,
     Crs, Datum, DatumEnsemble, Ellipsoid, EngineeringCRS, EngineeringDatum, GeodeticCRS,
-    GeodeticReferenceFrame, GeographicCRS, Identified, Parameter, ParameterValue, PrimeMeridian,
-    ProjectedCRS, Transformation, VerticalCRS, VerticalReferenceFrame,
+    GeodeticReferenceFrame, GeographicCRS, Identified, Measure, Parameter, ParameterValue,
+    PrimeMeridian, ProjectedCRS, Transformation, VerticalCRS, VerticalReferenceFrame,
 };
 
 /// How much two ISO 19111 objects may differ and still compare equal.
@@ -186,7 +186,11 @@ pub(crate) fn same_geodetic_datum_with_database(
     let names = equivalent_name(left.name(), right.name())
         || frame_names_equivalent_by_db(&left, &right, db);
     names
-        && ellipsoid_equivalent_tolerant(left.ellipsoid(), right.ellipsoid())
+        && ellipsoid_equivalent_criterion(
+            left.ellipsoid(),
+            right.ellipsoid(),
+            Equivalence::Equivalent,
+        )
         && meridian_equivalent(left.prime_meridian(), right.prime_meridian())
 }
 
@@ -219,6 +223,12 @@ impl GeodeticReferenceFrame {
         frame_equivalent(self, other)
     }
 
+    /// `isEquivalentTo` with `criterion`: [`Equivalence::Strict`] is [`Self::is_equivalent_to`].
+    #[must_use]
+    pub fn is_equivalent_to_with(&self, other: &Self, criterion: Equivalence) -> bool {
+        frame_equivalent_by(self, other, criterion)
+    }
+
     /// Equivalence against a [`Datum`], false when the kind differs.
     #[must_use]
     pub fn is_equivalent_to_datum(&self, other: &Datum) -> bool {
@@ -230,13 +240,19 @@ impl VerticalReferenceFrame {
     /// Strict vertical-datum equivalence.
     #[must_use]
     pub fn is_equivalent_to(&self, other: &Self) -> bool {
-        vertical_equivalent(self, other)
+        self.is_equivalent_to_with(other, Equivalence::Strict)
+    }
+
+    /// `isEquivalentTo` with `criterion`.
+    #[must_use]
+    pub fn is_equivalent_to_with(&self, other: &Self, criterion: Equivalence) -> bool {
+        vertical_equivalent(self, other, criterion)
     }
 
     /// Equivalence against a [`Datum`], false when the kind differs.
     #[must_use]
     pub fn is_equivalent_to_datum(&self, other: &Datum) -> bool {
-        matches!(other, Datum::Vertical(datum) if vertical_equivalent(self, datum))
+        matches!(other, Datum::Vertical(datum) if vertical_equivalent(self, datum, Equivalence::Strict))
     }
 }
 
@@ -274,7 +290,13 @@ impl Ellipsoid {
     /// Strict ellipsoid equivalence.
     #[must_use]
     pub fn is_equivalent_to(&self, other: &Self) -> bool {
-        ellipsoid_equivalent(self, other)
+        self.is_equivalent_to_with(other, Equivalence::Strict)
+    }
+
+    /// `isEquivalentTo` with `criterion`.
+    #[must_use]
+    pub fn is_equivalent_to_with(&self, other: &Self, criterion: Equivalence) -> bool {
+        ellipsoid_equivalent_criterion(self, other, criterion)
     }
 }
 
@@ -283,6 +305,12 @@ impl PrimeMeridian {
     #[must_use]
     pub fn is_equivalent_to(&self, other: &Self) -> bool {
         meridian_equivalent(self, other)
+    }
+
+    /// `isEquivalentTo` with `criterion`.
+    #[must_use]
+    pub fn is_equivalent_to_with(&self, other: &Self, criterion: Equivalence) -> bool {
+        meridian_equivalent_criterion(self, other, criterion)
     }
 }
 
@@ -774,7 +802,12 @@ fn vertical_anchor(left: &VerticalCRS, right: &VerticalCRS) -> bool {
         left.datum_ensemble(),
         right.datum_ensemble(),
     ) {
-        (Some(left), Some(right), _, _) => vertical_equivalent(left, right),
+        // Name and epoch, as before the criteria were ported. The CRS layer does not compare the
+        // realization method or the anchor here (see `docs/PORTING-unit-core.md`).
+        (Some(left), Some(right), _, _) => {
+            same_name(left.name(), right.name())
+                && same_epoch(left.frame_reference_epoch(), right.frame_reference_epoch())
+        }
         (None, None, Some(left), Some(right)) => ensemble_equivalent(left, right),
         _ => false,
     }
@@ -784,57 +817,119 @@ fn frame_equivalent(left: &GeodeticReferenceFrame, right: &GeodeticReferenceFram
     frame_equivalent_by(left, right, Equivalence::Strict)
 }
 
-/// Datum comparison for `criterion`. The strict criterion compares names ignoring case and
-/// the ellipsoid exactly. The other criteria compare the names with `isEquivalentName` and the
-/// ellipsoid to a relative `1e-10` (`Ellipsoid::_isEquivalentTo`).
+/// `GeodeticReferenceFrame::_isEquivalentTo` for `criterion` (datum.cpp:1572 and :1588): the names
+/// and the usage of the datum (`Datum::_isEquivalentTo`), the frame epoch, the prime meridian and
+/// the ellipsoid. Two frames that share an EPSG code are one datum whatever their names. That rule
+/// predates the criteria and is kept.
 fn frame_equivalent_by(
     left: &GeodeticReferenceFrame,
     right: &GeodeticReferenceFrame,
     criterion: Equivalence,
 ) -> bool {
-    let strict = criterion == Equivalence::Strict;
-    let names: fn(&str, &str) -> bool = if strict { same_name } else { equivalent_name };
-    let ellipsoids_match = if strict {
-        ellipsoid_equivalent_by(left.ellipsoid(), right.ellipsoid(), same_name)
-    } else {
-        ellipsoid_equivalent_tolerant(left.ellipsoid(), right.ellipsoid())
-    };
-    (names(left.name(), right.name()) || shares_epsg_code(left, right))
-        && same_epoch(left.frame_reference_epoch(), right.frame_reference_epoch())
-        && ellipsoids_match
-        && meridian_equivalent(left.prime_meridian(), right.prime_meridian())
+    (datum_name_equivalent(left.name(), right.name(), criterion) || shares_epsg_code(left, right))
+        && epoch_equivalent(
+            left.frame_reference_epoch(),
+            right.frame_reference_epoch(),
+            criterion,
+        )
+        && if criterion == Equivalence::Strict {
+            // The CRS layer compares the ellipsoids of its frames by exact SI values, as before
+            // the criteria were ported (the unit names and the parameter presence are not read).
+            ellipsoid_equivalent_by(left.ellipsoid(), right.ellipsoid(), same_name)
+        } else {
+            ellipsoid_equivalent_criterion(left.ellipsoid(), right.ellipsoid(), criterion)
+        }
+        && meridian_equivalent_criterion(left.prime_meridian(), right.prime_meridian(), criterion)
 }
 
-/// `Ellipsoid::_isEquivalentTo` with a non-strict criterion: the semi-major axis, the semi-minor
-/// axis (computed when absent), and the inverse flattening when both have one, each to a
-/// relative `1e-10`. The names are not compared.
-fn ellipsoid_equivalent_tolerant(left: &Ellipsoid, right: &Ellipsoid) -> bool {
-    let close = |a: f64, b: f64| (a - b).abs() <= 1e-10 * a.abs();
-    let semi_minor = |ellipsoid: &Ellipsoid| {
-        ellipsoid.semi_minor_axis().map_or_else(
-            || {
-                let flattening = ellipsoid.inverse_flattening();
-                let major = ellipsoid.semi_major_axis().si_value();
-                if flattening == 0.0 {
-                    major
-                } else {
-                    major * (1.0 - 1.0 / flattening)
-                }
-            },
-            |minor| minor.si_value(),
+/// Name equality of an object other than a geodetic datum, for `criterion`
+/// (`IdentifiedObject::_isEquivalentTo`). The strict criterion is case-insensitive equality. The
+/// others are `Identifier::isEquivalentName` with its default `biggerDifferencesAllowed`, or the
+/// `unknown`/`unnamed` pair.
+fn object_name_equivalent(left: &str, right: &str, criterion: Equivalence) -> bool {
+    names_equivalent_with(left, right, criterion, never_alias)
+}
+
+/// Name equality of a geodetic datum, for `criterion`: [`object_name_equivalent`] and the rules of
+/// `GeodeticReferenceFrame::hasEquivalentNameToUsingAlias` without a database.
+fn datum_name_equivalent(left: &str, right: &str, criterion: Equivalence) -> bool {
+    names_equivalent_with(left, right, criterion, datum_alias_equivalent)
+}
+
+fn names_equivalent_with(
+    left: &str,
+    right: &str,
+    criterion: Equivalence,
+    alias: fn(&str, &str) -> bool,
+) -> bool {
+    if criterion == Equivalence::Strict {
+        return same_name(left, right);
+    }
+    equivalent_name_bigger_differences(left, right)
+        || alias(left, right)
+        || matches!(
+            (left, right),
+            ("unknown", "unnamed") | ("unnamed", "unknown")
         )
-    };
-    close(
-        left.semi_major_axis().si_value(),
-        right.semi_major_axis().si_value(),
-    ) && close(semi_minor(left), semi_minor(right))
-        && match (
-            left.declared_inverse_flattening(),
-            right.declared_inverse_flattening(),
-        ) {
-            (Some(left), Some(right)) => close(left, right),
-            _ => true,
+}
+
+fn never_alias(_: &str, _: &str) -> bool {
+    false
+}
+
+/// `GeodeticReferenceFrame::hasEquivalentNameToUsingAlias` without a database: an `unknown` name
+/// matches any name, and an Esri `D_` prefix on one side is ignored (cf. PROJ issue 4514).
+fn datum_alias_equivalent(this: &str, other: &str) -> bool {
+    let same_or_unknown = |a: &str, b: &str| a == b || a == "unknown" || b == "unknown";
+    match (has_prefix_ci(this, "D_"), has_prefix_ci(other, "D_")) {
+        (true, false) => {
+            let stripped = &this[2..];
+            equivalent_name_bigger_differences(stripped, other) || same_or_unknown(stripped, other)
         }
+        (false, true) => {
+            let stripped = &other[2..];
+            equivalent_name_bigger_differences(this, stripped) || same_or_unknown(this, stripped)
+        }
+        _ => same_or_unknown(this, other),
+    }
+}
+
+fn has_prefix_ci(text: &str, prefix: &str) -> bool {
+    text.get(..prefix.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+}
+
+/// The frame epochs of two frames for `criterion`. Only two dynamic frames compare their epochs,
+/// so one epoch alone is ignored, except under the strict criterion, where the frame types must
+/// match (`DynamicGeodeticReferenceFrame::_isEquivalentTo`).
+fn epoch_equivalent(left: Option<f64>, right: Option<f64>, criterion: Equivalence) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => {
+            if criterion == Equivalence::Strict {
+                left == right
+            } else {
+                close_si(left, right, 1e-10)
+            }
+        }
+        (None, None) => true,
+        _ => criterion != Equivalence::Strict,
+    }
+}
+
+/// `VerticalReferenceFrame::_isEquivalentTo` for `criterion` (datum.cpp:2377): names, usage, the
+/// realization method, and the frame epoch as for the geodetic frames.
+fn vertical_equivalent(
+    left: &VerticalReferenceFrame,
+    right: &VerticalReferenceFrame,
+    criterion: Equivalence,
+) -> bool {
+    object_name_equivalent(left.name(), right.name(), criterion)
+        && left.realization_method() == right.realization_method()
+        && epoch_equivalent(
+            left.frame_reference_epoch(),
+            right.frame_reference_epoch(),
+            criterion,
+        )
 }
 
 /// Two datums with the same EPSG code are the same datum, whatever their names.
@@ -848,9 +943,78 @@ fn shares_epsg_code(left: &GeodeticReferenceFrame, right: &GeodeticReferenceFram
     })
 }
 
-fn vertical_equivalent(left: &VerticalReferenceFrame, right: &VerticalReferenceFrame) -> bool {
-    same_name(left.name(), right.name())
-        && same_epoch(left.frame_reference_epoch(), right.frame_reference_epoch())
+/// The name of the Clarke 1880 ellipsoid that PROJ compares loosely.
+const CLARKE_1880_MOD: &str = "Clarke 1880 mod.";
+
+/// `Ellipsoid::_isEquivalentTo` for `criterion` (datum.cpp:1102). The strict criterion compares
+/// the names and the presence of each parameter. The others leave out the names, and compare the
+/// computed semi-minor axis. Values are compared with `Measure::_isEquivalentTo`.
+pub(crate) fn ellipsoid_equivalent_criterion(
+    left: &Ellipsoid,
+    right: &Ellipsoid,
+    criterion: Equivalence,
+) -> bool {
+    let strict = criterion == Equivalence::Strict;
+    if strict && !same_name(left.name(), right.name()) {
+        return false;
+    }
+    if !strict && (left.name() == CLARKE_1880_MOD || right.name() == CLARKE_1880_MOD) {
+        let major = left.semi_major_axis().si_value();
+        let flattening = left.inverse_flattening();
+        return (major - right.semi_major_axis().si_value()).abs() < 1e-8 * major.abs()
+            && (flattening - right.inverse_flattening()).abs() < 1e-5 * flattening.abs();
+    }
+    if !measure_equivalent(left.semi_major_axis(), right.semi_major_axis(), criterion) {
+        return false;
+    }
+    if let (Some(left_minor), Some(right_minor)) = (left.semi_minor_axis(), right.semi_minor_axis())
+    {
+        if !measure_equivalent(left_minor, right_minor, criterion) {
+            return false;
+        }
+    }
+    if let (Some(left_rf), Some(right_rf)) = (
+        left.declared_inverse_flattening(),
+        right.declared_inverse_flattening(),
+    ) {
+        if !measure_equivalent(
+            &Measure::scale(left_rf),
+            &Measure::scale(right_rf),
+            criterion,
+        ) {
+            return false;
+        }
+    }
+    if strict {
+        left.semi_minor_axis().is_some() == right.semi_minor_axis().is_some()
+            && left.declared_inverse_flattening().is_some()
+                == right.declared_inverse_flattening().is_some()
+    } else {
+        measure_equivalent(
+            &left.computed_semi_minor_axis(),
+            &right.computed_semi_minor_axis(),
+            criterion,
+        )
+    }
+}
+
+/// `Measure::_isEquivalentTo` at the default relative error of `1e-10`. The strict criterion is
+/// `Measure::operator==`: the same value in the same unit.
+fn measure_equivalent(left: &Measure, right: &Measure, criterion: Equivalence) -> bool {
+    if criterion == Equivalence::Strict {
+        left == right
+    } else {
+        close_si(left.si_value(), right.si_value(), 1e-10)
+    }
+}
+
+/// Two SI values equal to `max_relative_error` of the first one. Infinite values are equal when
+/// they have the same sign, as `Measure::_isEquivalentTo` does.
+fn close_si(left: f64, right: f64, max_relative_error: f64) -> bool {
+    if left.is_infinite() && right.is_infinite() {
+        return left * right > 0.0;
+    }
+    (left - right).abs() <= max_relative_error * left.abs()
 }
 
 fn ensemble_equivalent(left: &DatumEnsemble, right: &DatumEnsemble) -> bool {
@@ -867,16 +1031,14 @@ fn ensemble_equivalent(left: &DatumEnsemble, right: &DatumEnsemble) -> bool {
 fn datum_equivalent(left: &Datum, right: &Datum) -> bool {
     match (left, right) {
         (Datum::Geodetic(left), Datum::Geodetic(right)) => frame_equivalent(left, right),
-        (Datum::Vertical(left), Datum::Vertical(right)) => vertical_equivalent(left, right),
+        (Datum::Vertical(left), Datum::Vertical(right)) => {
+            vertical_equivalent(left, right, Equivalence::Strict)
+        }
         (Datum::Engineering(left), Datum::Engineering(right)) => {
             same_name(left.name(), right.name())
         }
         _ => false,
     }
-}
-
-fn ellipsoid_equivalent(left: &Ellipsoid, right: &Ellipsoid) -> bool {
-    ellipsoid_equivalent_by(left, right, same_name)
 }
 
 /// Ellipsoid comparison with the `EQUIVALENT` name rule.
@@ -900,8 +1062,30 @@ fn ellipsoid_equivalent_by(
 }
 
 pub(crate) fn meridian_equivalent(left: &PrimeMeridian, right: &PrimeMeridian) -> bool {
-    same_name(left.name(), right.name())
-        && (left.longitude().si_value() - right.longitude().si_value()).abs() <= 1e-12
+    meridian_equivalent_criterion(left, right, Equivalence::Strict)
+}
+
+/// `PrimeMeridian::_isEquivalentTo` for `criterion` (datum.cpp:553): the name, and the longitude.
+/// The strict criterion compares the longitude exactly, the others to a relative `1e-8`, since
+/// MapInfo writes Paris with fewer digits.
+pub(crate) fn meridian_equivalent_criterion(
+    left: &PrimeMeridian,
+    right: &PrimeMeridian,
+    criterion: Equivalence,
+) -> bool {
+    object_name_equivalent(left.name(), right.name(), criterion)
+        && if criterion == Equivalence::Strict {
+            // Kept from before the criteria were ported: the CRS layer compares the same meridian
+            // written in another angular unit (`Degree` and `degree`), which PROJ's strict
+            // `Measure::operator==` would refuse. Documented in `docs/PORTING-unit-core.md`.
+            (left.longitude().si_value() - right.longitude().si_value()).abs() <= 1e-12
+        } else {
+            close_si(
+                left.longitude().si_value(),
+                right.longitude().si_value(),
+                1e-8,
+            )
+        }
 }
 
 /// Empty and `"Unknown engineering datum"` match (`EngineeringDatum::_isEquivalentTo`).

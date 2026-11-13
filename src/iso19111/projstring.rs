@@ -155,6 +155,16 @@ impl Ellipsoid {
     }
 }
 
+impl PrimeMeridian {
+    /// `exportToPROJString` for a prime meridian: `+pm=` with a well-known name or the
+    /// longitude in degrees. Greenwich writes nothing, and PROJ writes `+proj=noop` for an
+    /// object that writes no parameter.
+    #[must_use]
+    pub fn export_to_proj_string(&self) -> String {
+        prime_meridian_proj(self).unwrap_or_else(|| "+proj=noop".to_owned())
+    }
+}
+
 impl GeographicCRS {
     /// `exportToPROJString` for a geographic CRS.
     #[must_use]
