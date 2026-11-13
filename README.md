@@ -150,20 +150,10 @@ is a **failure**, and tolerances are never loosened.
 
 </details>
 
-#### How the suite got here
-
-| Step | Pass | Fail | Skipped | Share of 6,856 |
-|---|---:|---:|---:|---|
-| PROJ 9.9 builtins complete | 2,743 | 0 | 4,113 | `████████░░░░░░░░░░░░` 40.0% |
-| `proj.db`, Adams, Guyou, Peirce, Spilhaus | 6,301 | 0 | 555 | `██████████████████░░` 91.9% |
-| Conversions, test grids, deformation models | 6,657 | 0 | 199 | `███████████████████░` 97.1% |
-| CDN grids present on disk | 6,678 | 0 | 178 | `███████████████████░` 97.4% |
-| PROJ 9.9.0 test data vendored, CTABLE2 sign, NKG, `epsg_grid`, network `tinshift` | 6,856 | 0 | 0 | `████████████████████` 100% |
-
-Offline, the 45 CDN cases are not run, so the offline count is 6,811 / 6,811.
-The last row is the state of this checkout. `tests/gie/passing.txt` holds the
-live count for each mode, `offline` and `network`, and the test fails if the
-count moves without that file moving with it.
+Offline, the 45 cases that need CDN grids are not run, so the offline count is
+6,811 / 6,811 and the count with `PROJ_NETWORK=ON` is 6,856 / 6,856.
+`tests/gie/passing.txt` holds the live count for each mode, `offline` and
+`network`, and the test fails if the count moves without that file moving with it.
 
 ### Unit tests and CLI cases
 
