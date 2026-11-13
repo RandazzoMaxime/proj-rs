@@ -858,18 +858,8 @@ fn dictionary_section(spec: &str) -> Result<String, CreateError> {
         .split_once(':')
         .ok_or(CreateError::IllegalValue("init"))?;
     let path = crate::network::find_file(file).ok_or(CreateError::IllegalValue("init"))?;
-    let text = std::fs::read_to_string(path).map_err(|_| CreateError::IllegalValue("init"))?;
-    for line in text.lines() {
-        let Some(rest) = line.trim().strip_prefix('<') else {
-            continue;
-        };
-        if let Some((name, body)) = rest.split_once('>') {
-            if name == section {
-                return Ok(body.trim().to_owned());
-            }
-        }
-    }
-    Err(CreateError::IllegalValue("init"))
+    let text = std::fs::read(path).map_err(|_| CreateError::IllegalValue("init"))?;
+    init_section_from_text(&String::from_utf8_lossy(&text), section)
 }
 
 pub(crate) fn init_definition(spec: &str) -> Result<String, CreateError> {
@@ -914,7 +904,6 @@ pub(crate) fn init_definition(spec: &str) -> Result<String, CreateError> {
 /// The file is searched on the PROJ data path, as `pj_init` does. Without it,
 /// `nad27:3901` keeps its built-in definition, which the gie suite relies on.
 fn init_file_section(file: &str, section: &str) -> Result<String, CreateError> {
-    let header = format!("<{section}>");
     let Some(path) = crate::gridpath::resolve(file) else {
         if file == "nad27" && section == "3901" {
             return Ok(
@@ -925,7 +914,13 @@ fn init_file_section(file: &str, section: &str) -> Result<String, CreateError> {
         return Err(CreateError::Unsupported("init file"));
     };
     let text = std::fs::read(path).map_err(|_| CreateError::Unsupported("init file"))?;
-    let text = String::from_utf8_lossy(&text);
+    init_section_from_text(&String::from_utf8_lossy(&text), section)
+}
+
+/// The words of the `<SECTION>` entry of an init dictionary: it runs from `<SECTION>` to the
+/// closing `<>`, may span several lines, and skips `#` comment lines (`pj_init_ctx`).
+fn init_section_from_text(text: &str, section: &str) -> Result<String, CreateError> {
+    let header = format!("<{section}>");
     let mut inside = false;
     let mut parts: Vec<&str> = Vec::new();
     for line in text.lines() {
@@ -948,10 +943,14 @@ fn init_file_section(file: &str, section: &str) -> Result<String, CreateError> {
             break;
         }
     }
-    if !inside || parts.last() != Some(&"<>") {
+    // A section may end at the end of the file instead of at `<>` (`pj_init_ctx` reads to the
+    // end of the stream), as the `proj_context_test.cpp` dictionary does.
+    if !inside {
         return Err(CreateError::IllegalValue("init"));
     }
-    parts.pop();
+    if parts.last() == Some(&"<>") {
+        parts.pop();
+    }
     Ok(parts.join(" "))
 }
 
