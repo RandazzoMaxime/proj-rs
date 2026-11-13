@@ -56,6 +56,54 @@ fn assign_parameter_codes(method_code: &str, parameters: &mut [Parameter]) {
     }
 }
 
+/// How [`WktParser::parameters_of`] reads the `PARAMETER` nodes of a node.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ParameterSyntax {
+    /// Any node: the unit comes from the node, or from the parameter name.
+    Wkt,
+    /// The parameters of an `ABRIDGEDTRANSFORMATION` (`consumeParameters` with `isAbridged`).
+    Abridged,
+}
+
+/// `OperationParameterValue::convertFromAbridged`: one of the seven Helmert parameters of an
+/// abridged transformation, by its EPSG name or its EPSG code. Gives the EPSG code, the unit
+/// PROJ reads the value in, and the value in that unit. Rotations are arc-seconds, and a scale
+/// difference `s` is `(s - 1) * 1e6` parts per million.
+fn convert_from_abridged(
+    name: &str,
+    value: f64,
+    epsg_code: i32,
+) -> Option<(i32, UnitOfMeasure, f64)> {
+    const HELMERT: [(&str, i32); 7] = [
+        ("X-axis translation", 8605),
+        ("Y-axis translation", 8606),
+        ("Z-axis translation", 8607),
+        ("X-axis rotation", 8608),
+        ("Y-axis rotation", 8609),
+        ("Z-axis rotation", 8610),
+        ("Scale difference", 8611),
+    ];
+    let (_, code) = HELMERT
+        .iter()
+        .find(|(wkt2, code)| super::equiv::equivalent_name(name, wkt2) || epsg_code == *code)?;
+    let arc_second = UnitOfMeasure::new("arc-second", DEGREE_SI / 3600.0, UnitKind::Angular);
+    Some(match *code {
+        8605..=8607 => (*code, UnitOfMeasure::metre(), value),
+        8608..=8610 => (*code, arc_second, value),
+        _ => (
+            *code,
+            UnitOfMeasure {
+                name: "parts per million".to_owned(),
+                factor: 1e-6,
+                kind: UnitKind::Scale,
+                code_space: "EPSG".to_owned(),
+                code: "9202".to_owned(),
+            },
+            (value - 1.0) * 1e6,
+        ),
+    })
+}
+
 fn same_parameter_name(left: &str, right: &str) -> bool {
     let fold = |name: &str| {
         name.chars()
@@ -2796,7 +2844,7 @@ impl WktParser {
             remove_inverse_of(&mut props);
             remove_inverse_of(&mut method_props);
         }
-        let mut parameters = self.parameters_of(node, &linear, &angular)?;
+        let mut parameters = self.parameters_of(node, &linear, &angular, ParameterSyntax::Wkt)?;
         let interpolation = self.take_interpolation_crs(&mut parameters);
         let conversion = Conversion {
             identified: props.identified(),
@@ -2955,7 +3003,7 @@ impl WktParser {
                 return Ok(conversion);
             }
         }
-        let mut parameters = self.parameters_of(node, &linear, &angular)?;
+        let mut parameters = self.parameters_of(node, &linear, &angular, ParameterSyntax::Wkt)?;
         let polar_variant_b = ci_eq(&method_name, "Polar_Stereographic")
             && parameters
                 .iter()
@@ -3201,6 +3249,7 @@ impl WktParser {
         node: &WktNode,
         linear: &UnitOfMeasure,
         angular: &UnitOfMeasure,
+        syntax: ParameterSyntax,
     ) -> Result<Vec<Parameter>, FactoryError> {
         let mut parameters = Vec::new();
         for child in &node.children {
@@ -3225,7 +3274,9 @@ impl WktParser {
                         unit = guess_parameter_unit(&props.name, linear, angular);
                         // An abridged `Scale difference` without UNIT is the unity scale
                         // `1 + ppm * 1e-6` (`ParameterValue::_exportToWKT`): read it in ppm.
-                        if props.name == "Scale difference"
+                        // The abridged path converts it in `convert_from_abridged` instead.
+                        if syntax == ParameterSyntax::Wkt
+                            && props.name == "Scale difference"
                             && unit.as_ref().is_some_and(|unit| {
                                 unit.kind == UnitKind::Scale && unit.factor == 1.0
                             })
@@ -3238,6 +3289,19 @@ impl WktParser {
                                 code_space: "EPSG".to_owned(),
                                 code: "9202".to_owned(),
                             });
+                        }
+                    }
+                    if syntax == ParameterSyntax::Abridged {
+                        let epsg_code = match props.identifiers.as_slice() {
+                            [id] if id.code_space == "EPSG" => id.code.parse().unwrap_or(0),
+                            _ => 0,
+                        };
+                        if let Some((code, fixed_unit, converted)) =
+                            convert_from_abridged(&props.name, number, epsg_code)
+                        {
+                            unit = Some(fixed_unit);
+                            number = converted;
+                            props.identifiers = vec![Identifier::new("EPSG", code.to_string())];
                         }
                     }
                     if is_interpolation_code_parameter(&props) {
@@ -3500,7 +3564,12 @@ impl WktParser {
         } else {
             UnitOfMeasure::degree()
         };
-        let mut parameters = self.parameters_of(node, &UnitOfMeasure::metre(), &angular)?;
+        let mut parameters = self.parameters_of(
+            node,
+            &UnitOfMeasure::metre(),
+            &angular,
+            ParameterSyntax::Abridged,
+        )?;
         let method_code = method_props
             .identifiers
             .first()
