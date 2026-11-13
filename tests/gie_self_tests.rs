@@ -424,3 +424,71 @@ fn list_functions() {
     assert_ne!(list_ellps().len(), 0);
     assert_eq!(list_prime_meridians().len(), 14);
 }
+
+const TC32_UTM32: &str = " +proj=horner +ellps=intl +range=500000 +fwd_origin=877605.269066,6125810.306769 +inv_origin=877605.760036,6125811.281773 +deg=4 +fwd_v=6.1258112678e+06,9.9999971567e-01,1.5372750011e-10,5.9300860915e-15,2.2609497633e-19,4.3188227445e-05,2.8225130416e-10,7.8740007114e-16,-1.7453997279e-19,1.6877465415e-10,-1.1234649773e-14,-1.7042333358e-18,-7.9303467953e-15,-5.2906832535e-19,3.9984284847e-19 +fwd_u=8.7760574982e+05,9.9999752475e-01,2.8817299305e-10,5.5641310680e-15,-1.5544700949e-18,-4.1357045890e-05,4.2106213519e-11,2.8525551629e-14,-1.9107771273e-18,3.3615590093e-10,2.4380247154e-14,-2.0241230315e-18,1.2429019719e-15,5.3886155968e-19,-1.0167505000e-18 +inv_v=6.1258103208e+06,1.0000002826e+00,-1.5372762184e-10,-5.9304261011e-15,-2.2612705361e-19,-4.3188331419e-05,-2.8225549995e-10,-7.8529116371e-16,1.7476576773e-19,-1.6875687989e-10,1.1236475299e-14,1.7042518057e-18,7.9300735257e-15,5.2881862699e-19,-3.9990736798e-19 +inv_u=8.7760527928e+05,1.0000024735e+00,-2.8817540032e-10,-5.5627059451e-15,1.5543637570e-18,4.1357152105e-05,-4.2114813612e-11,-2.8523713454e-14,1.9109017837e-18,-3.3616407783e-10,-2.4382678126e-14,2.0245020199e-18,-1.2441377565e-15,-5.3885232238e-19,1.0167203661e-18";
+const SB_UTM32: &str = " +proj=horner +ellps=intl +range=500000 +tolerance=0.0005 +fwd_origin=4.94690026817276e+05,6.13342113183056e+06 +inv_origin=6.19480258923588e+05,6.13258568148837e+06 +deg=3 +fwd_c=6.13258562111350e+06,6.19480105709997e+05,9.99378966275206e-01,-2.82153291753490e-02,-2.27089979140026e-10,-1.77019590701470e-09,1.08522286274070e-14,2.11430298751604e-15 +inv_c=6.13342118787027e+06,4.94690181709311e+05,9.99824464710368e-01,2.82279070814774e-02,7.66123542220864e-11,1.78425334628927e-09,-1.05584823306400e-14,-3.32554258683744e-15";
+const TC32_UTM32_FWD_ONLY: &str = " +proj=horner +ellps=intl +range=10000000 +fwd_origin=877605.269066,6125810.306769 +deg=4 +fwd_v=6.1258112678e+06,9.9999971567e-01,1.5372750011e-10,5.9300860915e-15,2.2609497633e-19,4.3188227445e-05,2.8225130416e-10,7.8740007114e-16,-1.7453997279e-19,1.6877465415e-10,-1.1234649773e-14,-1.7042333358e-18,-7.9303467953e-15,-5.2906832535e-19,3.9984284847e-19 +fwd_u=8.7760574982e+05,9.9999752475e-01,2.8817299305e-10,5.5641310680e-15,-1.5544700949e-18,-4.1357045890e-05,4.2106213519e-11,2.8525551629e-14,-1.9107771273e-18,3.3615590093e-10,2.4380247154e-14,-2.0241230315e-18,1.2429019719e-15,5.3886155968e-19,-1.0167505000e-18";
+const SB_UTM32_FWD_ONLY: &str = " +proj=horner +ellps=intl +range=10000000 +fwd_origin=4.94690026817276e+05,6.13342113183056e+06 +deg=3 +fwd_c=6.13258562111350e+06,6.19480105709997e+05,9.99378966275206e-01,-2.82153291753490e-02,-2.27089979140026e-10,-1.77019590701470e-09,1.08522286274070e-14,2.11430298751604e-15";
+const HATT_TO_GGRS: &str = " +proj=horner +ellps=bessel +fwd_origin=0.0, 0.0 +deg=2 +range=10000000 +fwd_u=370552.68, 0.9997155, -1.08e-09, 0.0175123, 2.04e-09, 1.63e-09 +fwd_v=4511927.23, 0.9996979, 5.60e-10, -0.0174755, -1.65e-09, -6.50e-10";
+
+/// `horner_selftest`: two horner polynomials, forward and inverse, and a round trip.
+#[test]
+fn horner_selftest() {
+    let tc32 = Operation::create(TC32_UTM32).expect("tc32");
+    let a = xy(878_354.8539, 6_125_305.4245);
+    let (_, dist) = tc32
+        .roundtrip(Direction::Forward, one(), a)
+        .expect("roundtrip");
+    assert!(dist <= 0.01, "{dist}");
+
+    let sb = Operation::create(SB_UTM32).expect("sb");
+    let a = xy(495_136.8544, 6_130_821.2945);
+    let c = xy(620_000.0, 6_130_000.0);
+    let b = fwd(&sb, a);
+    assert!(xy_dist(b, c) <= 0.001, "{}", xy_dist(b, c));
+    let b = inv(&sb, c);
+    assert!(xy_dist(b, a) <= 0.001, "{}", xy_dist(b, a));
+    let (_, dist) = sb
+        .roundtrip(Direction::Forward, one(), a)
+        .expect("roundtrip");
+    assert!(dist <= 0.01, "{dist}");
+}
+
+/// `horner_only_fwd_selftest`: the forward-only polynomials of the C test.
+#[test]
+fn horner_only_fwd_selftest() {
+    let tc32 = Operation::create(TC32_UTM32_FWD_ONLY).expect("tc32 fwd only");
+    let a = xy(878_354.8539, 6_125_305.4245);
+    let (_, dist) = tc32
+        .roundtrip(Direction::Forward, one(), a)
+        .expect("roundtrip");
+    assert!(dist <= 0.01, "{dist}");
+
+    let hatt = Operation::create(HATT_TO_GGRS).expect("hatt");
+    let a = xy(-10_157.950, -21_121.093);
+    let c = xy(360_028.794, 4_490_989.862);
+    let b = fwd(&hatt, a);
+    assert!(xy_dist(b, c) <= 0.001, "{}", xy_dist(b, c));
+    let b = inv(&hatt, c);
+    assert!(xy_dist(b, a) <= 0.001, "{}", xy_dist(b, a));
+    let (_, dist) = hatt
+        .roundtrip(Direction::Forward, one(), a)
+        .expect("roundtrip");
+    assert!(dist <= 0.01, "{dist}");
+
+    let sb = Operation::create(SB_UTM32_FWD_ONLY).expect("sb fwd only");
+    let a = xy(495_136.8544, 6_130_821.2945);
+    let c = xy(620_000.0, 6_130_000.0);
+    let b = fwd(&sb, a);
+    assert!(xy_dist(b, c) <= 0.001, "{}", xy_dist(b, c));
+    let b = inv(&sb, c);
+    assert!(xy_dist(b, a) <= 0.001, "{}", xy_dist(b, a));
+    let (_, dist) = sb
+        .roundtrip(Direction::Forward, one(), a)
+        .expect("roundtrip");
+    assert!(dist <= 0.01, "{dist}");
+}
+
+fn xy(x: f64, y: f64) -> Xyzt {
+    Xyzt::xy(x, y)
+}
