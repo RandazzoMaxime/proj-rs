@@ -77,7 +77,7 @@ pub use niche::{
     CALENDAR_PROLEPTIC_GREGORIAN,
 };
 pub(crate) use normalize::normalize_for_visualization;
-pub use pipeline::ProjLines;
+pub use pipeline::{ProjLines, TmercExport};
 pub use projstring::{create_crs_from_proj_string, create_crs_from_proj_string_with_database};
 pub use select::{
     best_pipeline, best_pipeline_filtered, best_pipeline_filtered_with_authority,

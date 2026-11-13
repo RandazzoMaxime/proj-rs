@@ -52,9 +52,15 @@ pub(super) fn bound_candidates(
         (Crs::Bound(_), Crs::Geodetic(geodetic)) => {
             bound_to_geod(factory, source, geodetic, target, context).map(Some)
         }
+        (Crs::Bound(bound), Crs::Vertical(_)) => {
+            bound_to_vertical(factory, bound, target, context).map(Some)
+        }
         (_, Crs::Bound(_))
             if geographic_of(source).is_some()
-                || matches!(source, Crs::Geodetic(GeodeticCRS::Geocentric(_))) =>
+                || matches!(
+                    source,
+                    Crs::Geodetic(GeodeticCRS::Geocentric(_)) | Crs::Vertical(_)
+                ) =>
         {
             let forward = factory.create_candidates(target, source, context)?;
             Ok(Some(
@@ -63,6 +69,26 @@ pub(super) fn bound_candidates(
         }
         _ => Ok(None),
     }
+}
+
+/// `createOperationsBoundToVert` (coordinateoperationfactory.cpp, `createOperationsBoundToVert`):
+/// a vertical base whose hub is the target vertical CRS gives the binding transformation itself.
+/// Otherwise the base CRS of the bound is taken to the target.
+fn bound_to_vertical(
+    factory: &CoordinateOperationFactory,
+    bound: &BoundCRS,
+    target: &Crs,
+    context: &CoordinateOperationContext,
+) -> Result<Vec<CoordinateOperation>, FactoryError> {
+    let hub_is_target = matches!(bound.source_crs(), Crs::Vertical(_))
+        && matches!(bound.target_crs(), Crs::Vertical(_))
+        && bound
+            .target_crs()
+            .is_equivalent_to_with(target, Equivalence::Equivalent);
+    if hub_is_target {
+        return Ok(vec![with_endpoints(bound)]);
+    }
+    factory.create_candidates(bound.source_crs(), target, context)
 }
 
 /// `createOperationsBoundToBound`, without its vertical blocks: when both hubs are the same

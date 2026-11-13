@@ -10,17 +10,10 @@ use super::model::{
     OperationParameterValue, Parameter, ParameterValue, Transformation, UnitKind,
 };
 use super::parammap::{self, MethodMap, ParamMap};
-use super::pipeline::proj_number;
+use super::pipeline::{proj_number, TmercExport};
 
 mod projections;
 mod transformations;
-
-/// Whether transverse Mercator export inserts `+approx`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum TmercApprox {
-    Yes,
-    No,
-}
 
 /// Northern or southern UTM hemisphere.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1255,7 +1248,7 @@ impl super::model::Conversion {
     /// The method cannot be written as a PROJ string, or a parameter value is outside
     /// the range PROJ accepts. An inverse is the forward string inside `+inv`.
     pub fn export_to_proj_string(&self) -> Result<String, FactoryError> {
-        self.export_to_proj_inner(TmercApprox::No)
+        self.export_to_proj_inner(TmercExport::Exact)
     }
 
     /// Same as [`Self::export_to_proj_string`], with `+approx` on transverse Mercator.
@@ -1264,10 +1257,10 @@ impl super::model::Conversion {
     ///
     /// The method cannot be written as a PROJ string.
     pub fn export_to_proj_string_approx_tmerc(&self) -> Result<String, FactoryError> {
-        self.export_to_proj_inner(TmercApprox::Yes)
+        self.export_to_proj_inner(TmercExport::Approximate)
     }
 
-    fn export_to_proj_inner(&self, approx_tmerc: TmercApprox) -> Result<String, FactoryError> {
+    fn export_to_proj_inner(&self, approx_tmerc: TmercExport) -> Result<String, FactoryError> {
         if let Some(text) = self
             .method
             .name()
@@ -1391,7 +1384,7 @@ impl super::model::Conversion {
         if code == 9807 || (code == 1111 && self.method.code.is_empty()) {
             if let Some((zone, hemisphere)) = self.utm_zone() {
                 let mut parts = vec!["+proj=utm".to_owned()];
-                if approx_tmerc == TmercApprox::Yes {
+                if approx_tmerc == TmercExport::Approximate {
                     parts.push("+approx".to_owned());
                 }
                 parts.push(format!("+zone={zone}"));
@@ -1414,7 +1407,7 @@ impl super::model::Conversion {
             )));
         };
         let mut parts = vec![format!("+proj={proj_name}")];
-        if approx_tmerc == TmercApprox::Yes && (code == 9807 || code == 1111) {
+        if approx_tmerc == TmercExport::Approximate && (code == 9807 || code == 1111) {
             parts.push("+approx".to_owned());
         }
         if let Some(aux) = mapped.proj_aux {

@@ -687,7 +687,6 @@ fn operation_compound_to_compound_utm31_to_utm32_with_odn_height() {
 /// vertical grid, the NAD27 grid and the NAD83(NSRS2007) inverse. The ballpark candidate,
 /// with the same horizontal chain, is among them.
 #[test]
-#[ignore = "open: the first candidate is right, but its WKT2 round trip writes another PROJ string: after the import the vertical unit change and the vgridshift come before the axis swap and the degree conversion"]
 fn operation_compound_to_compound_context() {
     let db = DatabaseContext::create().expect("proj.db");
     let ctxt = partial_ignore_grids(&db, "EPSG");
@@ -722,12 +721,14 @@ fn operation_compound_to_compound_context() {
             .export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2019))
             .expect("wkt");
         let imported = WktParser::new().create_from_wkt(&wkt).expect("parse");
-        let WktObject::Concatenated(concatenated) = imported else {
-            panic!("not a concatenated operation: {wkt}");
+        // PROJ writes a PROJ-based operation as one COORDINATEOPERATION whose method is the
+        // PROJ string, so the import is a transformation.
+        let WktObject::Transformation(transformation) = imported else {
+            panic!("not a coordinate operation: {wkt}");
         };
         assert_eq!(
             proj_string,
-            proj(&db, &CoordinateOperation::Concatenated(concatenated))
+            proj(&db, &CoordinateOperation::Transformation(transformation))
         );
     }
 

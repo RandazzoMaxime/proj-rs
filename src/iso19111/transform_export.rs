@@ -34,7 +34,7 @@ use super::model::{
     Parameter, ParameterValue, ProjBased, ProjBasedKind, ProjectedCRS, SphericalGeodeticCRS,
     Transformation, UnitKind, UnitOfMeasure, VerticalCRS,
 };
-use super::pipeline::{proj_number, PipelineFormatter, ProjLines};
+use super::pipeline::{proj_number, PipelineFormatter, ProjLines, TmercExport};
 use super::projstring::{
     axes_order, ellipsoid_of, ellipsoid_params, geodetic_member, geographic_of, meridian_of,
     prime_meridian_params, prime_meridian_radians_params, proj_unit_name, spherical_omits_geoc,
@@ -168,8 +168,27 @@ impl CoordinateOperation {
         db: &DatabaseContext,
         lines: ProjLines,
     ) -> Result<String, FactoryError> {
+        self.export_to_proj_string_with_tmerc(db, lines, TmercExport::Exact)
+    }
+
+    /// `exportToPROJString` with the transverse Mercator setting of `PROJStringFormatter`:
+    /// [`TmercExport::Approximate`] writes `+approx` on each `tmerc` and `utm` step, as
+    /// `setUseApproxTMerc(true)` does. The grids are written as in
+    /// [`Self::export_to_proj_string_with_database`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::export_to_proj_string_with_database`].
+    pub fn export_to_proj_string_with_tmerc(
+        &self,
+        db: &DatabaseContext,
+        lines: ProjLines,
+        tmerc: TmercExport,
+    ) -> Result<String, FactoryError> {
         let names = super::select::proj_grid_names(self, db)?;
-        let mut formatter = PipelineFormatter::with_grid_names(names).with_grid_steps();
+        let mut formatter = PipelineFormatter::with_grid_names(names)
+            .with_grid_steps()
+            .with_tmerc(tmerc);
         match self {
             Self::Transformation(transformation) => transformation.export_steps(&mut formatter)?,
             Self::Concatenated(concatenated) => concatenated.export_steps(&mut formatter)?,
@@ -180,6 +199,42 @@ impl CoordinateOperation {
 }
 
 impl ConcatenatedOperation {
+    /// The PROJ-based operation of `createPROJBased` as PROJ holds it: a transformation between
+    /// the CRS pair whose method is `PROJ-based operation method: ` and its PROJ string. `None`
+    /// for any other concatenated operation.
+    ///
+    /// # Errors
+    ///
+    /// The steps cannot be written as a PROJ string.
+    pub(crate) fn proj_based_transformation(&self) -> Result<Option<Transformation>, FactoryError> {
+        if self.proj_based.is_none() || self.source.is_none() || self.target.is_none() {
+            return Ok(None);
+        }
+        let text = self.export_to_proj_string(ProjLines::Single)?;
+        Ok(Some(Transformation {
+            identified: self.identified.clone(),
+            method: super::model::OperationMethod::create(
+                format!("PROJ-based operation method: {text}"),
+                Vec::new(),
+            ),
+            parameters: Vec::new(),
+            source: self.source.clone(),
+            target: self.target.clone(),
+            interpolation: None,
+            accuracy: self.accuracy,
+            accuracy_text: self.accuracy_text(),
+            version: self.version.clone(),
+            point_motion: false,
+            inverted: false,
+            source_epoch: None,
+            target_epoch: None,
+            ballpark: self
+                .steps
+                .iter()
+                .any(|step| step.operation().has_ballpark_transformation()),
+        }))
+    }
+
     /// `exportToPROJString` of a concatenated operation: its steps in order, each
     /// reversed when the step direction is `reverse`.
     ///

@@ -2516,6 +2516,10 @@ fn export_concatenated(
             "Transformation can only be exported to WKT2:2019".to_owned(),
         ));
     }
+    // `PROJBasedOperation::_exportToWKT` with a CRS pair: one transformation, not its steps.
+    if let Some(transformation) = concatenated.proj_based_transformation()? {
+        return export_transformation(&transformation, formatter);
+    }
     let (source, target) = concatenated.crs_pair().ok_or_else(|| {
         FactoryError::Format(format!(
             "concatenated operation {} has no CRS pair",

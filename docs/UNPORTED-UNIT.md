@@ -27,10 +27,7 @@ and `PORT-NOTES-tests.md`.
 
 - `operation.geog3DCRS_to_geog2DCRS_plus_vertCRS_context`
 - `operation.boundCRS_to_geogCRS_hubCRS_and_targetCRS_same_but_baseCRS_not`
-- `operation.boundCRS_to_derived_geog_with_transformation_with_source_crs_being_base_crs_of_source_crs`
 - `operation.nadgrids_with_pm`
-- `operation.compoundCRS_to_compoundCRS_with_vertical_transform`
-- `operation.compoundCRS_to_compoundCRS_context`
 - `operation.compoundCRS_to_compoundCRS_concatenated_operation_with_two_vert_transformation`
 - `operation.createOperation_bound_of_spherical_ocentric_to_same_type`
 

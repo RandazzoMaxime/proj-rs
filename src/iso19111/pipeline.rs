@@ -25,6 +25,18 @@ pub enum ProjLines {
     Single,
 }
 
+/// Whether the transverse Mercator and UTM steps of a PROJ string carry `+approx`, as
+/// `PROJStringFormatter::setUseApproxTMerc` sets it. The default writes the exact projection.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TmercExport {
+    /// `+proj=tmerc` and `+proj=utm`, without `+approx`.
+    #[default]
+    Exact,
+    /// `+proj=tmerc +approx` and `+proj=utm +approx`, the series PROJ uses for the approximate
+    /// transverse Mercator.
+    Approximate,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct Param {
     key: String,
@@ -69,6 +81,8 @@ pub(crate) struct PipelineFormatter {
     omit_z_unit_depth: usize,
     /// Open `pushOmitHorizontalConversionInVertTransformation` scopes.
     omit_horizontal_depth: usize,
+    /// Whether the transverse Mercator and UTM steps are written with `+approx`.
+    tmerc: TmercExport,
 }
 
 impl PipelineFormatter {
@@ -84,6 +98,12 @@ impl PipelineFormatter {
     /// Lets the grid and deformation methods write their steps.
     pub(crate) fn with_grid_steps(mut self) -> Self {
         self.grid_steps = true;
+        self
+    }
+
+    /// Writes the transverse Mercator and UTM steps with or without `+approx`.
+    pub(crate) fn with_tmerc(mut self, tmerc: TmercExport) -> Self {
+        self.tmerc = tmerc;
         self
     }
 
@@ -150,8 +170,28 @@ impl PipelineFormatter {
     ///
     /// A pipeline string, or one step string such as `+proj=axisswap +order=2,1`.
     pub(crate) fn ingest_proj_string(&mut self, text: &str) {
-        let steps = parse_proj_string(text, &mut self.globals);
+        let mut steps = parse_proj_string(text, &mut self.globals);
+        if self.tmerc == TmercExport::Approximate {
+            for step in &mut steps {
+                self.mark_approx(step);
+            }
+        }
         self.steps.extend(steps);
+    }
+
+    /// `+approx` right after `+proj=` on a transverse Mercator or UTM step, as
+    /// `PROJStringFormatter` writes it with `setUseApproxTMerc`.
+    fn mark_approx(&self, step: &mut Step) {
+        let is_tmerc = matches!(step.name.as_str(), "tmerc" | "utm");
+        if is_tmerc && !step.params.iter().any(|param| param.keyed("approx")) {
+            step.params.insert(
+                0,
+                Param {
+                    key: "approx".to_owned(),
+                    value: String::new(),
+                },
+            );
+        }
     }
 
     pub(crate) fn add_param(&mut self, key: &str, value: &str) {
@@ -381,16 +421,6 @@ fn normalize_inverse(step: &mut Step) {
             step.params[2].value = values[0].clone();
             step.params[1].value = values[3].clone();
             step.params[3].value = values[1].clone();
-            step.inverted = false;
-        }
-        "geogoffset" => {
-            for param in &mut step.params {
-                if matches!(param.key.as_str(), "dlat" | "dlon" | "dh") {
-                    if let Ok(value) = param.value.parse::<f64>() {
-                        param.value = proj_number(0.0 - value);
-                    }
-                }
-            }
             step.inverted = false;
         }
         "set" => step.inverted = false,
