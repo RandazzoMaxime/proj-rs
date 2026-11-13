@@ -750,21 +750,23 @@ impl ConcatenatedOperation {
             })
             .collect();
         let mut inverse = self.clone();
-        inverse.identified.name = if self.computed_name {
-            steps
-                .iter()
-                .map(|step| step.operation.name())
-                .collect::<Vec<_>>()
-                .join(" + ")
-        } else if self.proj_based.is_some() {
+        inverse.identified.name = if self.proj_based.is_some() {
             // `PROJBasedOperation::inverse` names the inverse with `createPropertiesForInverse`
-            // (oputils.cpp:231-316), for an operation that is not a `ConcatenatedOperation`.
+            // (oputils.cpp:231-316), whatever the name was built from: PROJ keeps the name it
+            // gives a PROJ-based operation (`computeConcatenatedName` in
+            // `createHorizVerticalHorizPROJBased`), it does not rebuild it from the steps.
             super::geodetic_ops::inverse_operation_name(
                 self.name(),
                 self.source_crs(),
                 self.target_crs(),
                 super::geodetic_ops::NamedOperationKind::ProjBased,
             )
+        } else if self.computed_name {
+            steps
+                .iter()
+                .map(|step| step.operation.name())
+                .collect::<Vec<_>>()
+                .join(" + ")
         } else {
             concatenated_inverse_name(self.name())
         };
