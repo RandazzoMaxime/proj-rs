@@ -581,10 +581,14 @@ fn build_engine(
     // `--authority` is `AUTHORITY=` of `proj_create_crs_to_crs`: no option is every authority.
     let authority = authority.unwrap_or("");
     let mut iso = IsoStatus::NotTried;
+    // `+init=AUTH:CODE` is the database CRS `AUTH:CODE` for PROJ's pair selection
+    // (`proj_create_crs_to_crs_from_pj`), not its expanded PROJ string.
+    let iso_source = init_side_as_code(source);
+    let iso_target = init_side_as_code(target);
     if area.is_none() && iso_serves_pair(source, target) {
         match proj_rs::iso19111::select_alternatives_with_authority(
-            source,
-            target,
+            &iso_source,
+            &iso_target,
             policy_of(only_best),
             filter,
             authority,
@@ -609,15 +613,20 @@ fn build_engine(
             Err(error) => iso = IsoStatus::Failed(error.to_string()),
         }
         if filter != CandidateFilter::NONE {
-            return select_pipeline_filtered(source, target, only_best, filter, authority).map(
-                |engine| BuiltEngine {
-                    engine,
-                    path: BuildPath::Iso,
-                    iso,
-                },
-            );
+            return select_pipeline_filtered(
+                &iso_source,
+                &iso_target,
+                only_best,
+                filter,
+                authority,
+            )
+            .map(|engine| BuiltEngine {
+                engine,
+                path: BuildPath::Iso,
+                iso,
+            });
         }
-        match select_pipeline(source, target, only_best, authority) {
+        match select_pipeline(&iso_source, &iso_target, only_best, authority) {
             Ok(engine) => {
                 return Ok(BuiltEngine {
                     engine,
@@ -862,6 +871,32 @@ fn canonical_side(text: &str) -> String {
             .and_then(|crs| crs.export_to_proj_string())
             .unwrap_or_else(|_| text.to_owned()),
         Err(_) => text.to_owned(),
+    }
+}
+
+/// `AUTH:CODE` for a side that is only `+init=AUTH:CODE` (`epsg:` or `IGNF:`), as PROJ
+/// reads it as the database CRS; any other text is returned as it is.
+fn init_side_as_code(text: &str) -> String {
+    let trimmed = text.trim();
+    let Some(rest) = trimmed
+        .strip_prefix("+init=")
+        .or_else(|| trimmed.strip_prefix("init="))
+    else {
+        return text.to_owned();
+    };
+    let Some((auth, code)) = rest.split_once(':') else {
+        return text.to_owned();
+    };
+    let auth_upper = auth.to_ascii_uppercase();
+    if (auth_upper == "EPSG" || auth_upper == "IGNF")
+        && !code.is_empty()
+        && code
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    {
+        format!("{auth_upper}:{code}")
+    } else {
+        text.to_owned()
     }
 }
 
@@ -1694,8 +1729,8 @@ impl Catalog {
         if let Some(name) = explicit_proj(def) {
             return layout_from_proj(&name, def);
         }
-        if let Some(code) = init_epsg(def) {
-            return self.authority("EPSG", &code.to_string());
+        if let Some((auth, code)) = init_authority(def) {
+            return self.authority(&auth, &code);
         }
         if let Some(horizontal) = compound_notation(def) {
             // `instantiate_crs` reads the compound CRS as neither geographic nor projected, so its
@@ -1803,8 +1838,7 @@ impl Catalog {
         if explicit_proj(def).is_some() {
             return Some(synthesize_longlat(def));
         }
-        let (auth, code) = first_auth(def)
-            .or_else(|| init_epsg(def).map(|code| ("EPSG".to_owned(), code.to_string())))?;
+        let (auth, code) = first_auth(def).or_else(|| init_authority(def))?;
         let (base_auth, base_code) = projected_base(self.db.as_ref()?, &auth, &code)?;
         Some(format!("{base_auth}:{base_code}"))
     }
@@ -1882,16 +1916,23 @@ fn explicit_proj(def: &str) -> Option<String> {
     None
 }
 
-fn init_epsg(def: &str) -> Option<i64> {
+/// The `(authority, code)` of the first `+init=` of `def` when it is `epsg:CODE` (a number) or
+/// `IGNF:CODE`: the two authorities PROJ expands from proj.db (`pj_get_init_items`).
+fn init_authority(def: &str) -> Option<(String, String)> {
     for token in def.split_whitespace() {
         let token = token.trim_start_matches('+');
         let Some(rest) = token.strip_prefix("init=") else {
             continue;
         };
-        let rest = rest
+        if let Some(code) = rest
             .strip_prefix("epsg:")
-            .or_else(|| rest.strip_prefix("EPSG:"))?;
-        return rest.split(['+', ':']).next()?.parse().ok();
+            .or_else(|| rest.strip_prefix("EPSG:"))
+        {
+            let code: i64 = code.split(['+', ':']).next()?.parse().ok()?;
+            return Some(("EPSG".to_owned(), code.to_string()));
+        }
+        let code = rest.strip_prefix("IGNF:")?;
+        return Some(("IGNF".to_owned(), code.split(['+', ':']).next()?.to_owned()));
     }
     None
 }

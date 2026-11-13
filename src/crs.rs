@@ -859,8 +859,7 @@ fn dictionary_section(spec: &str) -> Result<String, CreateError> {
         .ok_or(CreateError::IllegalValue("init"))?;
     let path = crate::network::find_file(file).ok_or(CreateError::IllegalValue("init"))?;
     let text = std::fs::read(path).map_err(|_| CreateError::IllegalValue("init"))?;
-    section_words(&String::from_utf8_lossy(&text), section)
-        .ok_or(CreateError::IllegalValue("init"))
+    section_words(&String::from_utf8_lossy(&text), section).ok_or(CreateError::IllegalValue("init"))
 }
 
 pub(crate) fn init_definition(spec: &str) -> Result<String, CreateError> {
@@ -931,8 +930,7 @@ fn init_file_section(file: &str, section: &str) -> Result<String, CreateError> {
         return Err(CreateError::Unsupported("init file"));
     };
     let text = std::fs::read(path).map_err(|_| CreateError::Unsupported("init file"))?;
-    section_words(&String::from_utf8_lossy(&text), section)
-        .ok_or(CreateError::IllegalValue("init"))
+    section_words(&String::from_utf8_lossy(&text), section).ok_or(CreateError::IllegalValue("init"))
 }
 
 /// The words of `<section>` in an init file text: the lines after the header
