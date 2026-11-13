@@ -93,3 +93,23 @@ fn proj_context_user_writable_directory_default_and_reset() {
     assert_eq!(builder.user_writable_directory(), default);
     let _ = fs::remove_dir_all(&new_path);
 }
+
+/// The negative of `read_grid_from_user_writable_directory`: the dictionary is written where the
+/// context does not look, so `+init=` fails. Once the directory is set, the same text reads.
+#[test]
+fn dictionary_absent_before_user_writable_directory_is_set() {
+    let dir = scratch_dir("writable-negative");
+    write_dictionary(&dir, "temp_proj_dic5");
+    assert!(
+        ProjBuilder::new()
+            .proj("+init=temp_proj_dic5:MY_PIPELINE")
+            .is_err(),
+        "the dictionary is not in the default search path"
+    );
+    let mut builder = ProjBuilder::new();
+    builder
+        .set_user_writable_directory(&dir)
+        .expect("writable directory");
+    assert!(builder.proj("+init=temp_proj_dic5:MY_PIPELINE").is_ok());
+    let _ = fs::remove_dir_all(&dir);
+}
