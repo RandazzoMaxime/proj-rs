@@ -913,14 +913,17 @@ fn init_side_as_code(text: &str) -> String {
 /// ISO candidates would drop it.
 fn iso_serves_pair(source: &str, target: &str) -> bool {
     const FLAGS: [&str; 3] = ["approx", "over", "lon_wrap"];
+    // A quoted value (`+nadgrids="dir with space/myconus"`) is read by the PROJ-string parser
+    // only: the ISO import splits its text on white space and keeps the quotes.
     [source, target].iter().all(|side| {
         !projish(side)
-            || !FLAGS.iter().any(|flag| {
-                side.split_whitespace().any(|token| {
-                    let bare = token.trim_start_matches('+');
-                    bare == *flag || bare.starts_with(&format!("{flag}="))
-                })
-            })
+            || (!side.contains('"')
+                && !FLAGS.iter().any(|flag| {
+                    side.split_whitespace().any(|token| {
+                        let bare = token.trim_start_matches('+');
+                        bare == *flag || bare.starts_with(&format!("{flag}="))
+                    })
+                }))
     })
 }
 
@@ -1070,9 +1073,33 @@ fn names_datum(definition: &str) -> bool {
     })
 }
 
+/// The words of a definition, split on white space outside double quotes. A quoted span is
+/// one word and keeps its quotes, so the word can be joined back and read again.
+fn raw_words(definition: &str) -> Vec<&str> {
+    let mut words = Vec::new();
+    let mut start = None;
+    let mut in_quote = false;
+    for (index, ch) in definition.char_indices() {
+        if ch == '"' {
+            in_quote = !in_quote;
+            start.get_or_insert(index);
+        } else if ch.is_whitespace() && !in_quote {
+            if let Some(begin) = start.take() {
+                words.push(&definition[begin..index]);
+            }
+        } else {
+            start.get_or_insert(index);
+        }
+    }
+    if let Some(begin) = start {
+        words.push(&definition[begin..]);
+    }
+    words
+}
+
 fn strip_datum(definition: &str) -> String {
     let mut parts = Vec::new();
-    for token in definition.split_whitespace() {
+    for token in raw_words(definition) {
         let bare = token.trim_start_matches('+');
         if bare.starts_with("towgs84=")
             || bare == "towgs84"
@@ -1418,7 +1445,15 @@ fn parse(args: &[String]) -> Result<Options, AppError> {
             if !slot.is_empty() {
                 slot.push(' ');
             }
-            slot.push_str(arg);
+            // One argument with white space (`+nadgrids=dir with space/myconus`) stays one word
+            // of the definition: the definition is split again, as PROJ's `pj_mkparam_ws` does.
+            if arg.contains(char::is_whitespace) && !arg.contains('"') {
+                slot.push('"');
+                slot.push_str(arg);
+                slot.push('"');
+            } else {
+                slot.push_str(arg);
+            }
         } else if !have_to {
             opts.source = arg.to_owned();
         } else if opts.target.is_empty() {
