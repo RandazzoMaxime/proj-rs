@@ -326,19 +326,60 @@ impl IsoPipeline {
         &self.chosen
     }
 
+    /// The candidate the last point of `proj_trans` used (`P->iCurCoordOp`), if any.
+    pub(crate) fn current_item(&self) -> Option<&Item> {
+        match &self.route {
+            Route::Alternatives(alternatives) => alternatives.current_item(),
+            Route::Single(_) => None,
+        }
+    }
+
+    /// Whether the pair has several candidates, from which a point chooses one.
+    pub(crate) fn is_alternatives(&self) -> bool {
+        matches!(self.route, Route::Alternatives(_))
+    }
+
+    /// `proj_is_equivalent_to` with `PJ_COMP_STRICT` for two pipelines: the candidate lists are
+    /// compared as PROJ compares them, a single operation by its text and its epoch.
+    pub(crate) fn is_equivalent_to(&self, other: &Self) -> bool {
+        match (&self.route, &other.route) {
+            (Route::Alternatives(a), Route::Alternatives(b)) => {
+                a.is_equivalent_to(b) && self.epoch == other.epoch
+            }
+            (Route::Single(_), Route::Single(_)) => {
+                self.reported == other.reported && self.epoch == other.epoch
+            }
+            _ => false,
+        }
+    }
+
+    /// `proj_pj_info().description` of this pair: the name of the candidate the last point
+    /// used (`info.cpp` 170-171), else the name of the ISO operation the pipeline was written from.
+    pub(crate) fn description(&self) -> &str {
+        match self.current_item() {
+            Some(item) => &item.name,
+            None => self.chosen.name(),
+        }
+    }
+
     /// `proj_pj_info().definition` of this pair, after `proj_normalize_for_visualization`.
     ///
     /// One instantiable operation is that pipeline. The axis swap a lat-first or
     /// northing-first side contributes is not in the string: normalization folds
     /// it into the CRS, which is what georust stores (`new_known_crs` normalizes).
     /// Several instantiable operations are the text PROJ stores until `proj_trans`
-    /// picks one: `unavailable until proj_trans is called`. An epoch adds
-    /// `proj=set v_4=<year>` at both ends.
+    /// picks one: `unavailable until proj_trans is called`. Once a point has been
+    /// transformed, the candidate that point used is reported instead, as PROJ does
+    /// (`info.cpp` 170-171). An epoch adds `proj=set v_4=<year>` at both ends.
     pub(crate) fn reported_definition(&self) -> Result<String, ProjError> {
-        let Some(reported) = &self.reported else {
-            return Ok("unavailable until proj_trans is called".to_owned());
+        let reported = match self.current_item() {
+            Some(item) => item.definition.clone().ok_or(ProjError::Definition)?,
+            None => match &self.reported {
+                Some(reported) => reported.clone(),
+                None => return Ok("unavailable until proj_trans is called".to_owned()),
+            },
         };
-        let visualized = visualization_definition(reported, self.source, self.target);
+        let visualized = visualization_definition(&reported, self.source, self.target);
         let finished = crate::proj_info::parameters_of_operation(&visualized)
             .map_err(|_| ProjError::Definition)?;
         Ok(match self.epoch {
@@ -398,11 +439,19 @@ impl IsoPipeline {
     }
 
     /// Whether the inverse direction exists, as for a native operation.
+    ///
+    /// The probe is not a `proj_trans`: the candidate it picks, and the warning state it may
+    /// clear, are put back afterwards, so a later point still sees what `proj_trans` left.
     pub(crate) fn has_inverse(&self) -> bool {
-        !matches!(
-            self.inverse(Coord::xy(0.0, 0.0)),
-            Err(TransformError::NoInverse)
-        )
+        let saved = match &self.route {
+            Route::Alternatives(alternatives) => Some(alternatives.save_state()),
+            Route::Single(_) => None,
+        };
+        let probe = self.inverse(Coord::xy(0.0, 0.0));
+        if let (Route::Alternatives(alternatives), Some(saved)) = (&self.route, saved) {
+            alternatives.restore_state(saved);
+        }
+        !matches!(probe, Err(TransformError::NoInverse))
     }
 }
 

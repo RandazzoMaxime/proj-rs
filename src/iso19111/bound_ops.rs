@@ -91,6 +91,48 @@ fn bound_to_vertical(
     factory.create_candidates(bound.source_crs(), target, context)
 }
 
+/// `createOperationsFromBoundOfSphericalPlanetocentric` (coordinateoperationfactory.cpp:5467-5519):
+/// a bound CRS whose base is spherical planetocentric. An intermediate geographic CRS on the datum
+/// of the base takes the binding transformation, so that the transformation reads a geographic
+/// source. The base goes to that intermediate CRS by the geographic/geocentric conversion, then
+/// the intermediate bound CRS goes to the target.
+pub(super) fn bound_of_spherical_planetocentric(
+    factory: &CoordinateOperationFactory,
+    source: &Crs,
+    bound: &BoundCRS,
+    target: &Crs,
+    context: &CoordinateOperationContext,
+) -> Result<Vec<CoordinateOperation>, FactoryError> {
+    let base = bound.source_crs();
+    let Crs::Geodetic(GeodeticCRS::Spherical(spherical)) = base else {
+        return Ok(Vec::new());
+    };
+    let intermediate = Crs::Geographic(GeographicCRS::create(
+        format!("{} (geographic)", spherical.identified.name),
+        spherical.datum.clone(),
+        spherical.ensemble.clone(),
+        EllipsoidalCS::create_latitude_longitude(UnitOfMeasure::degree()),
+    )?);
+    let hub = bound.target_crs().clone();
+    let mut transformation = bound.transformation().clone();
+    let transformation_target = operation_target(&transformation)
+        .cloned()
+        .unwrap_or_else(|| hub.clone());
+    set_endpoints(&mut transformation, &intermediate, &transformation_target);
+    let intermediate_bound =
+        Crs::Bound(BoundCRS::create(intermediate.clone(), hub, transformation));
+    let mut first = CoordinateOperation::Transformation(
+        super::geodetic_ops::geographic_geocentric_conversion(base, &intermediate)?,
+    );
+    set_endpoints(&mut first, source, &intermediate_bound);
+    let mut found = Vec::new();
+    for mut second in factory.create_candidates(&intermediate_bound, target, context)? {
+        set_endpoints(&mut second, &intermediate_bound, target);
+        found.extend(compute_metadata(vec![first.clone(), second], context));
+    }
+    Ok(found)
+}
+
 /// `createOperationsBoundToBound`, without its vertical blocks: when both hubs are the same
 /// geographic CRS, the source to its hub, then the hub to the target. Otherwise the base
 /// CRS of the source to the base CRS of the target.

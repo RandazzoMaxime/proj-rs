@@ -27,13 +27,6 @@ and `PORT-NOTES-tests.md`.
 
 - `operation.boundCRS_to_geogCRS_hubCRS_and_targetCRS_same_but_baseCRS_not`
 - `operation.compoundCRS_to_compoundCRS_concatenated_operation_with_two_vert_transformation`
-- `operation.createOperation_bound_of_spherical_ocentric_to_same_type`
-
-## test_c_api.cpp
-
-- `CApi.proj_clone_of_obj_with_alternative_operations`
-- `CApi.proj_normalize_for_visualization_with_alternatives`
-- `CApi.proj_coordoperation_create_inverse`
 - `CApi.proj_context_copy_from_default`
 - `CApi.proj_context_clone`
 - `CApi.proj_context_set_sqlite3_vfs_name`

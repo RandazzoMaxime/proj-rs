@@ -21,7 +21,8 @@ use bounds::Dims;
 use crate::engine::Operation;
 use crate::engine::TransformError as StepError;
 use crate::iso19111::{
-    Conversion, CoordinateOperation, DatabaseContext, GridAvailabilityUse, GridDescription, OpProps,
+    Conversion, CoordinateOperation, DatabaseContext, GridAvailabilityUse, GridDescription,
+    OpProps, Pipeline, ProjStringLayout,
 };
 use crate::proj_iso::{iso_pipeline, iso_pipeline_at, IsoPipeline};
 use crate::{CreateError, Xyzt};
@@ -389,6 +390,9 @@ pub struct Proj {
     net: crate::network::GridContext,
     /// The epoch of a coordinate metadata object, see [`crate::proj_meta`]. `None` otherwise.
     pub(crate) epoch: Option<f64>,
+    /// The steps of a PROJ pipeline made by [`Proj::new`], kept for the inverse and the layout
+    /// of [`Proj::as_proj_string`]. `None` for the other bodies.
+    pipeline: Option<Pipeline>,
 }
 
 impl Proj {
@@ -417,7 +421,9 @@ impl Proj {
             return Ok(built(Body::Single, definition.to_owned(), None));
         }
         let op = Operation::create(definition).map_err(from_create)?;
-        Ok(built(Body::Native(op), definition.to_owned(), None))
+        let mut proj = built(Body::Native(op), definition.to_owned(), None);
+        proj.pipeline = Some(Pipeline::parse(definition));
+        Ok(proj)
     }
 
     /// Transform from `from` to `to`.
@@ -588,7 +594,7 @@ impl Proj {
         };
         let description = match &self.body {
             Body::Iso(_) if deferred => Some("unavailable until proj_trans is called".to_owned()),
-            Body::Iso(pipeline) => Some(pipeline.chosen().name().to_owned()),
+            Body::Iso(pipeline) => Some(pipeline.description().to_owned()),
             _ => Some(self.definition.clone()),
         };
         ProjInfo {
@@ -1292,6 +1298,7 @@ fn built(body: Body, definition: String, area: Option<Area>) -> Proj {
         known,
         net: crate::network::context(),
         epoch: None,
+        pipeline: None,
     }
 }
 
@@ -1314,4 +1321,90 @@ fn reject_nul(text: &str) -> Result<(), ProjCreateError> {
 
 fn from_create(error: CreateError) -> ProjCreateError {
     ProjCreateError::ProjError(error.to_string())
+}
+
+// `proj_coordoperation_create_inverse` and `proj_as_proj_string` of a pipeline.
+impl Proj {
+    /// The inverse of this coordinate operation, as `proj_coordoperation_create_inverse`.
+    ///
+    /// Only a PROJ pipeline made by [`Proj::new`] has steps to invert. The inverse keeps its own
+    /// steps, so it can be written again with [`Proj::as_proj_string`].
+    ///
+    /// # Errors
+    ///
+    /// [`ProjCreateError`] when this object is a single CRS, when it is a pair selected from
+    /// CRS definitions (its operation is not kept as steps), or when the inverse text does not
+    /// build.
+    pub fn coordoperation_create_inverse(&self) -> Result<Self, ProjCreateError> {
+        let (Body::Native(_), Some(pipeline)) = (&self.body, &self.pipeline) else {
+            return Err(ProjCreateError::ProjError(
+                "the object is not a PROJ pipeline".to_owned(),
+            ));
+        };
+        let inverse = pipeline.inverse();
+        let text = inverse.render(ProjStringLayout::Single);
+        let op = Operation::create(&text).map_err(from_create)?;
+        let mut proj = built(Body::Native(op), text, None);
+        proj.pipeline = Some(inverse);
+        Ok(proj)
+    }
+
+    /// The PROJ string of this pipeline, laid out as `proj_as_proj_string` with `layout`.
+    ///
+    /// The steps are the ones [`Proj::new`] read. Global parameters and `title=` are not kept,
+    /// so the text is the pipeline's steps, not the input string.
+    ///
+    /// # Errors
+    ///
+    /// [`ProjError::Definition`] when this object is not a PROJ pipeline made by [`Proj::new`].
+    pub fn as_proj_string(&self, layout: ProjStringLayout) -> Result<String, ProjError> {
+        match (&self.body, &self.pipeline) {
+            (Body::Native(_), Some(pipeline)) => Ok(pipeline.render(layout)),
+            _ => Err(ProjError::Definition),
+        }
+    }
+}
+
+// Alternatives of a pair, `proj_trans_get_last_used_operation` and `proj_is_equivalent_to`.
+impl Proj {
+    /// The operation the last point of [`Self::convert`] used, as
+    /// `proj_trans_get_last_used_operation`.
+    ///
+    /// For a pair with alternative operations, this is the candidate the last point chose, as a
+    /// transform of its own. A pair with one operation gives a copy of itself, which libproj also
+    /// gives once a point was transformed; this port does not record that point, so it gives the
+    /// copy before any point too. Other objects give `None`.
+    #[must_use]
+    pub fn last_used_operation(&self) -> Option<Self> {
+        match &self.body {
+            Body::Iso(pipeline) => match pipeline.current_item() {
+                Some(item) => {
+                    let definition = item.definition.clone()?;
+                    let op = item.operation.clone()?;
+                    let mut proj = built(Body::Native(op), definition.clone(), None);
+                    proj.pipeline = Some(Pipeline::parse(&definition));
+                    Some(proj)
+                }
+                None if pipeline.is_alternatives() => None,
+                None => Some(self.clone()),
+            },
+            _ => None,
+        }
+    }
+
+    /// Whether two transforms are equivalent, as `proj_is_equivalent_to` with `PJ_COMP_STRICT`.
+    ///
+    /// Two pairs with alternatives are equivalent when their candidate lists are (see
+    /// `Alternatives::is_equivalent_to`). A single CRS or a PROJ string is compared by its
+    /// text, not by the CRS it names: two codes for one CRS are not equivalent here.
+    #[must_use]
+    pub fn is_equivalent_to(&self, other: &Self) -> bool {
+        match (&self.body, &other.body) {
+            (Body::Iso(a), Body::Iso(b)) => a.is_equivalent_to(b),
+            (Body::Native(_), Body::Native(_)) | (Body::Single, Body::Single) => {
+                self.definition == other.definition
+            }
+            _ => false,
+        }
+    }
 }
