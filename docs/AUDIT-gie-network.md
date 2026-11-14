@@ -39,7 +39,7 @@ runner déplacé dans `proj_rs::gie` (`src/gie.rs`).
 | `gie.unitconvert_selftest_date` | `gie_self_tests.rs::unitconvert_selftest_date` | porté |
 | `gie.horner_selftest` | `gie_self_tests.rs::horner_selftest` | porté (`src/projections/models/horner.rs`, `horner.cpp`) |
 | `gie.horner_only_fwd_selftest` | `gie_self_tests.rs::horner_only_fwd_selftest` | porté |
-| `gie.proj_create_crs_to_crs_PULKOVO42_ETRS89` | `gie_self_tests.rs::proj_create_crs_to_crs_pulkovo42_etrs89` | partiel : valeurs et aller-retour portés. Non portés : le texte `proj_pj_info().definition` (la crate renvoie `EPSG:4179 -> EPSG:4258`, pas le pipeline PROJ), les noms de CRS source et cible (pas de `proj_get_name` sur un transform), et le texte « unavailable until proj_trans is called » (artefact de construction paresseuse, sans équivalent). |
+| `gie.proj_create_crs_to_crs_PULKOVO42_ETRS89` | `gie_self_tests.rs::proj_create_crs_to_crs_pulkovo42_etrs89` | porté, toutes les 12 assertions. `proj_pj_info().definition` (« unavailable until proj_trans is called », puis les deux pipelines) : `Proj::definition_in_authority_order()`, dans l'ordre de `proj_create_crs_to_crs` avec les `axisswap` de bout de pipeline ; `Proj::proj_info().definition` garde le texte normalisé de la crate. `proj_get_name` nul : `Proj::name()`. Noms de CRS : `Proj::source_crs()` et `target_crs()`. `P->fwd` nul avant un point : `last_used_operation()` vide. `proj_trans_generic` : `convert_array`. Détail dans `docs/PORTING-gie-network.md`. |
 | `gie.proj_create_crs_to_crs_WGS84_EGM08_to_WGS84` | — | écart : `EPSG:4326+3855 -> EPSG:4979` donne « Inverse of WGS 84 to EGM2008 height (1) » (grille `us_nga_egm08_25.tif` absente). PROJ donne « ... ballpark ». Cause : `Proj::new_known_crs` utilise `OnlyBest::Off` (façade, `src/iso19111/select.rs`), qui ne relance pas la recherche avec écartement des grilles absentes comme `proj_create_crs_to_crs` (`crs_to_crs.cpp:668-735`). La liste des trois candidats est identique à PROJ (`projinfo`). Correction non faite : elle touche les tests de parité de la façade. |
 | `gie.proj_create_crs_to_crs_outside_area_of_use` | `gie_self_tests.rs::proj_create_crs_to_crs_outside_area_of_use` | porté |
 | `gie.proj_create_crs_to_crs_with_area_large` | `gie_self_tests.rs::proj_create_crs_to_crs_with_area_large` | porté (l'aire est stockée sans influer sur la sélection ; les valeurs coïncident ici) |
@@ -51,8 +51,8 @@ runner déplacé dans `proj_rs::gie` (`src/gie.rs`).
 | `gieTest.proj_create_crs_to_crs_EPSG_4326` (TEST_F) | `gie_self_tests.rs::proj_create_crs_to_crs_epsg_4326` | porté (entrée en longitude, latitude : ordre de la crate). |
 | `gieTest.proj_create_crs_to_crs_proj_longlat` (TEST_F) | `gie_self_tests.rs::proj_create_crs_to_crs_proj_longlat` | porté |
 
-Compte sur les 20 tests C++ : 19 ont un test Rust (16 complets, dont `cart_selftest`
-avec 3 assertions sans équivalent ; 3 partiels : `PULKOVO42`, `proj_create_crs_to_crs`,
+Compte sur les 20 tests C++ : 19 ont un test Rust (17 complets, dont `cart_selftest`
+avec 3 assertions sans équivalent ; 2 partiels : `proj_create_crs_to_crs`,
 `proj_factors`), et 1 est un écart (`proj_create_crs_to_crs_WGS84_EGM08`). `tests/gie_self_tests.rs`
 contient 19 fonctions : les 18 tests C++ de ce fichier et `nan_input_gives_no_coordinate`,
 tirée de `io_predicates`. `tests/gie_info_functions.rs` porte `info_functions`

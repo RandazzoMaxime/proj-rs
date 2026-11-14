@@ -346,6 +346,25 @@ impl IsoPipeline {
         &self.chosen
     }
 
+    /// `proj_get_name` of this pair: the operation's name for one operation. A set of candidates
+    /// is PROJ's dummy `P`, which has no ISO object, so it has no name.
+    pub(crate) fn operation_name(&self) -> Option<String> {
+        match &self.route {
+            Route::Single(_) => Some(self.chosen.name().to_owned()),
+            Route::Alternatives(_) => None,
+        }
+    }
+
+    /// `proj_get_source_crs` of this pair: the first candidate's source CRS.
+    pub(crate) fn source_crs(&self) -> Option<Crs> {
+        self.chosen.source_crs().cloned()
+    }
+
+    /// `proj_get_target_crs` of this pair: the first candidate's target CRS.
+    pub(crate) fn target_crs(&self) -> Option<Crs> {
+        self.chosen.target_crs().cloned()
+    }
+
     /// The candidate the last point of `proj_trans` used (`P->iCurCoordOp`), if any.
     pub(crate) fn current_item(&self) -> Option<&Item> {
         match &self.route {
@@ -384,14 +403,25 @@ impl IsoPipeline {
 
     /// `proj_pj_info().definition` of this pair, after `proj_normalize_for_visualization`.
     ///
-    /// One instantiable operation is that pipeline. The axis swap a lat-first or
-    /// northing-first side contributes is not in the string: normalization folds
-    /// it into the CRS, which is what georust stores (`new_known_crs` normalizes).
+    /// One instantiable operation is that pipeline. In the normalized order (what
+    /// [`Self::reported_definition`] gives, and what `new_known_crs` stores, since it normalizes),
+    /// the axis swap a lat-first or northing-first side contributes is not in the string.
     /// Several instantiable operations are the text PROJ stores until `proj_trans`
     /// picks one: `unavailable until proj_trans is called`. Once a point has been
     /// transformed, the candidate that point used is reported instead, as PROJ does
     /// (`info.cpp` 170-171). An epoch adds `proj=set v_4=<year>` at both ends.
     pub(crate) fn reported_definition(&self) -> Result<String, ProjError> {
+        self.definition_text(AxisOrder::Normalized)
+    }
+
+    /// The text of this pair in the order `proj_create_crs_to_crs` gives, before
+    /// normalization: [`Self::reported_definition`] with the swap of each lat-first side back at
+    /// its end of the pipeline, as the C test `proj_create_crs_to_crs_PULKOVO42_ETRS89` reads.
+    pub(crate) fn authority_definition(&self) -> Result<String, ProjError> {
+        self.definition_text(AxisOrder::Authority)
+    }
+
+    fn definition_text(&self, order: AxisOrder) -> Result<String, ProjError> {
         let reported = match self.current_item() {
             Some(item) => item.definition.clone().ok_or(ProjError::Definition)?,
             None => match &self.reported {
@@ -400,7 +430,11 @@ impl IsoPipeline {
             },
         };
         let visualized = visualization_definition(&reported, self.source, self.target);
-        let finished = crate::proj_info::parameters_of_operation(&visualized)
+        let ordered = match order {
+            AxisOrder::Normalized => visualized,
+            AxisOrder::Authority => with_authority_swaps(&visualized, self.source, self.target),
+        };
+        let finished = crate::proj_info::parameters_of_operation(&ordered)
             .map_err(|_| ProjError::Definition)?;
         Ok(match self.epoch {
             Some(year) => with_epoch_steps(&finished, year),
@@ -500,6 +534,35 @@ fn visualization_definition(definition: &str, source: Side, target: Side) -> Str
         tokens = drop_trailing_swap(tokens);
     }
     tokens.join(" ")
+}
+
+/// The axis order a pair's pipeline text is written in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AxisOrder {
+    /// The order of the object this crate builds: the swap of a lat-first side is not in the text.
+    Normalized,
+    /// The order `proj_create_crs_to_crs` gives: the swap of a lat-first side is in the text.
+    Authority,
+}
+
+/// The swaps `proj_create_crs_to_crs` puts at the ends of a pipeline: `axisswap order=2,1` first
+/// when the source writes latitude first, last when the target does. A text that is not a
+/// pipeline has none: PROJ gives `proj=noop` for a pair with no axis to swap.
+fn with_authority_swaps(visualized: &str, source: Side, target: Side) -> String {
+    let tokens = bare_tokens(visualized);
+    if tokens.first().map(String::as_str) != Some("proj=pipeline") {
+        return visualized.to_owned();
+    }
+    let swap = ["step", "proj=axisswap", "order=2,1"];
+    let mut out = vec!["proj=pipeline".to_owned()];
+    if source.lead == Lead::LatOrNorthing {
+        out.extend(swap.map(str::to_owned));
+    }
+    out.extend(tokens.into_iter().skip(1));
+    if target.lead == Lead::LatOrNorthing {
+        out.extend(swap.map(str::to_owned));
+    }
+    out.join(" ")
 }
 
 fn bare_tokens(definition: &str) -> Vec<String> {
