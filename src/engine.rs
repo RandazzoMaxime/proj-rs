@@ -11,6 +11,7 @@
 //! what `src/fwd.cpp` does for `PJ_IO_UNITS_CLASSIC`.
 
 use crate::angle::adjlon;
+use crate::context::Context;
 use crate::ellipsoid::PJ_ELLPS;
 
 use crate::tmerc_approx::ApproxTmerc;
@@ -110,7 +111,7 @@ pub enum TransformError {
     MissingTime,
     /// This direction is not defined.
     NoInverse,
-    /// Latitude or longitude is not usable.
+    /// Latitude or longitude is not usable: PROJ `PROJ_ERR_COORD_TRANSFM_INVALID_COORD`.
     InvalidCoord,
     /// A coordinate was not finite.
     NonFinite,
@@ -982,6 +983,8 @@ pub(crate) trait Step: Send + Sync {
 #[derive(Clone)]
 pub struct Operation {
     step: std::sync::Arc<dyn Step>,
+    /// Shared, so that cloning an operation (one per candidate) copies a pointer, not the context.
+    context: std::sync::Arc<Context>,
 }
 
 impl fmt::Debug for Operation {
@@ -1025,6 +1028,7 @@ impl Operation {
         if let Some(step) = nkg::from_definition(definition)? {
             return Ok(Self {
                 step: std::sync::Arc::from(step),
+                context: std::sync::Arc::new(Context::new()),
             });
         }
         let mut params = Params::parse(definition)?;
@@ -1041,6 +1045,7 @@ impl Operation {
         if name == "pipeline" {
             return Ok(Self {
                 step: std::sync::Arc::from(build_pipeline(definition)?),
+                context: std::sync::Arc::new(Context::new()),
             });
         }
         prepare_params(&mut params)?;
@@ -1055,7 +1060,28 @@ impl Operation {
         }
         let frame = Frame::from_params(&params)?;
         let step = finish_step(&name, &params, &frame)?;
-        Ok(Self { step })
+        Ok(Self {
+            step,
+            context: std::sync::Arc::new(Context::new()),
+        })
+    }
+
+    /// The context of this operation, PROJ's `P->ctx`. A new operation holds the process
+    /// default, `Context::new()`, as `proj_create(PJ_DEFAULT_CTX, ...)` does.
+    ///
+    /// The operation keeps the context; a transform does not read it yet. The `proj.db`
+    /// reads of `+init=epsg:` and of the NKG operations use the embedded database, not this
+    /// context's.
+    #[must_use]
+    pub fn context(&self) -> &Context {
+        &self.context
+    }
+
+    /// `proj_context_set(P, ctx)`: the context this operation keeps from now on. The
+    /// operation keeps its own copy, so the caller may drop `context` afterwards, as
+    /// `proj_context_destroy` allows. PROJ's `NULL` is `Context::new()`.
+    pub fn set_context(&mut self, context: Context) {
+        self.context = std::sync::Arc::new(context);
     }
 
     /// Forward transform.

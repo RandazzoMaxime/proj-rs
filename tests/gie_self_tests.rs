@@ -7,8 +7,8 @@
 
 use proj_rs::errno::PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE;
 use proj_rs::{
-    list_ellps, list_operations, list_prime_meridians, xy_dist, BatchError, Direction, Operation,
-    Proj, ProjError, StepError, Xyzt,
+    list_ellps, list_operations, list_prime_meridians, xy_dist, BatchError, Context, Direction,
+    Operation, Proj, ProjError, StepError, Xyzt,
 };
 use std::num::NonZeroUsize;
 
@@ -29,7 +29,7 @@ fn inv(op: &Operation, c: Xyzt) -> Xyzt {
 }
 
 /// `cart_selftest` (gie_self_tests.cpp). The context moves of the C test
-/// (`proj_context_set`) have no counterpart: a Rust object holds no context.
+/// (`proj_context_set`, `P->ctx`) are `Operation::set_context` and `Operation::context`.
 #[test]
 fn cart_selftest() {
     let utm = Operation::create("+proj=utm; +zone=32; +ellps=GRS80").expect("utm with ;");
@@ -43,12 +43,14 @@ fn cart_selftest() {
     };
     let b = fwd(&utm, a0);
     let a = inv(&utm, b);
+    // PJ_IDENT (null projection): the coordinate is returned as it is, no call here.
     let a = fwd(&utm, a);
     assert!(xy_dist(a, b) <= 2e-9);
+    // proj_errno_reset(P): an operation keeps no error state, errors are returned values.
     let b_argv = fwd(&argv_style, a0);
     assert!(xy_dist(b_argv, b) <= 2e-9);
 
-    let cart = Operation::create("+proj=cart +ellps=GRS80").expect("cart");
+    let mut cart = Operation::create("+proj=cart +ellps=GRS80").expect("cart");
     let a = Xyzt {
         x: 12f64.to_radians(),
         y: 55f64.to_radians(),
@@ -88,7 +90,22 @@ fn cart_selftest() {
         .expect("roundtrip");
     assert!(d <= 4e-9, "{d}");
     let b = inv(&cart, south);
+
+    // Move the operation to a context of its own (proj_context_create, proj_context_set).
+    // The C check that the new context is not the default one is a pointer comparison:
+    // a Rust `Context` is a value, so it has no counterpart.
+    let default = Context::new();
+    let ctx = Context::new();
+    cart.set_context(ctx.clone());
+    assert_eq!(cart.context(), &ctx);
     let b = fwd(&cart, b);
+
+    // Move it back to the default context (proj_context_set(P, NULL)).
+    cart.set_context(default.clone());
+    assert_eq!(cart.context(), &default);
+
+    // proj_context_destroy(ctx): the operation no longer uses it.
+    drop(ctx);
     let _ = inv(&cart, b);
 
     // proj_trans_generic with three coordinates, as points.
@@ -108,9 +125,13 @@ fn cart_selftest() {
     let a = fwd(&utm32, obs0);
     let b = fwd(&utm32, obs1);
     let mut arr = [obs0, obs1];
-    utm32
-        .transform_array(Direction::Forward, &mut arr)
-        .expect("two points");
+    // proj_trans_generic returns n == 2: the slice holds two points, the whole slice is done.
+    // proj_trans_array returns 0: `Ok(())`.
+    assert_eq!(
+        utm32.transform_array(Direction::Forward, &mut arr),
+        Ok(()),
+        "two points"
+    );
     assert_eq!(arr[0], a);
     assert_eq!(arr[1], b);
     assert_eq!(arr[0].z, 45.0);
@@ -139,9 +160,38 @@ fn cart_selftest() {
         "two invalid latitudes"
     );
     for failed in [coords[0], coords[2]] {
-        assert!(failed.x.is_infinite() && failed.y.is_infinite() && failed.z.is_infinite());
+        assert_eq!(failed.x, f64::INFINITY);
+        assert_eq!(failed.y, f64::INFINITY);
+        assert_eq!(failed.z, f64::INFINITY);
     }
     assert_eq!(coords[1], b);
+
+    // A constant z: the C test passes one height `h = 27` for both points (stride 0). A Rust
+    // point carries its own z, so the constant is the z of each point. The C z buffers
+    // (`obs[i].z` kept at 45 and 50, `h` written back) have no counterpart.
+    let mut constant = [
+        Xyzt {
+            x: 12f64.to_radians(),
+            y: 55f64.to_radians(),
+            z: 27.0,
+            t: 0.0,
+        },
+        Xyzt {
+            x: 12f64.to_radians(),
+            y: 56f64.to_radians(),
+            z: 27.0,
+            t: 0.0,
+        },
+    ];
+    utm32
+        .transform_array(Direction::Forward, &mut constant)
+        .expect("constant z");
+    assert_eq!(constant[0].x, a.x);
+    assert_eq!(constant[0].y, a.y);
+    assert_eq!(constant[1].x, b.x);
+    assert_eq!(constant[1].y, b.y);
+    assert_eq!(constant[0].z, 27.0);
+    assert_ne!(constant[1].z, 50.0);
 
     // Two failed points for different reasons: the generic code.
     let mut coords = [

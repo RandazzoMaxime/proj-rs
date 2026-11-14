@@ -28,8 +28,10 @@ Audit détaillé : `docs/AUDIT-gie-network.md`.
 - `gie` : les erreurs de structure `<gie>` ne sont pas signalées.
 - `proj_trans_generic` (tableaux strides) : porté comme `transform_array`
   sur des points, qui est la forme Rust équivalente.
-- Changement de contexte (`proj_context_set`) : pas d'équivalent, un objet
-  Rust ne porte pas de contexte.
+- Changement de contexte (`proj_context_set`) : `Operation::set_context` et
+  `Operation::context` (`src/engine.rs`). Le contexte est gardé, pas lu : les lectures
+  de `proj.db` (`+init=epsg:`, NKG) passent par la base embarquée, donc aucun résultat
+  ne dépend encore du contexte.
 - Porte de latitude : une correction du moteur (voir `latitude_gate`) est
   nécessaire, la crate donnait `OutsideDomain` pour une latitude de 95° en UTM.
 - `proj_info().release` : « 9.9.0 » ici, « Rel. 9.9.0 (hash), date » dans PROJ.
@@ -58,6 +60,41 @@ Audit détaillé : `docs/AUDIT-gie-network.md`.
   `Proj::def` renvoie maintenant ses paramètres (avec `ellps=GRS80` par défaut,
   comme `pj_init`), au lieu d'une erreur. Les chaînes qui sont des CRS gardent
   leur reconstruction ; un datum inconnu reste une erreur.
+
+## cart_selftest (`TEST(gie, cart_selftest)`)
+
+Porté de bout en bout, sauf trois assertions sans équivalent observable :
+
+- `ASSERT_NE(ctx, pj_get_default_ctx())` : comparaison de pointeurs entre deux
+  `PJ_CONTEXT`. Un `Context` est une valeur, il n'y a pas de singleton à comparer.
+- `ASSERT_EQ(45, obs[0].lpz.z)` et `ASSERT_EQ(50, obs[1].lpz.z)` : `proj_trans_generic`
+  avec `z` à `stride` nul lit et écrit un tampon `h` séparé. L'API point par point
+  (`Xyzt`) n'a pas de tampon `z` séparé.
+
+Forme retenue pour le contexte : `Operation::create` garde `Context::new()`
+(`proj_create(PJ_DEFAULT_CTX, ...)`), `set_context` remplace la copie (un
+`Context` est une valeur, donc `proj_context_destroy` est un `drop`). Le contexte
+est gardé, pas lu : les lectures de `proj.db` (`+init=epsg:`, NKG) passent par la base
+embarquée (`with_db`), pas par le contexte de l'opération.
+`ASSERT_EQ(pj_get_default_ctx(), P->ctx)` devient une égalité de valeur avec un
+`Context::new()` pris au début du test.
+
+Autres appels sans assertion ou sans équivalent direct :
+
+- `proj_errno_reset(P)` : pas d'état d'erreur par objet, les erreurs sont des
+  valeurs de retour.
+- `PJ_IDENT` : la coordonnée est renvoyée telle quelle, aucun appel Rust.
+- `n == 2` de `proj_trans_generic` et `proj_trans_array == 0` : `Ok(())` de
+  `transform_array` sur le tableau entier.
+- `PROJ_ERR_COORD_TRANSFM_INVALID_COORD` et `PROJ_ERR_COORD_TRANSFM` : les
+  variantes `BatchError::Uniform(TransformError::InvalidCoord)` et
+  `BatchError::Mixed`. `BatchError` n'a pas de `code()` ; la variante `Mixed` est
+  documentée avec son code.
+
+Valeurs contrôlées avec `proj` et `cs2cs` 9.9.0 (`target/proj-reference/build/bin`),
+identiques à la crate à la précision affichée : UTM zone 32 GRS80 de (12°, 55°) :
+`691875.632139660767 6098907.825005011633` ; cart GRS80 de (12°, 55°, 100) :
+`3586525.761058 762339.584111 5201465.438293`.
 
 ## Commandes
 
