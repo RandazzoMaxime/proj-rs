@@ -208,6 +208,15 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
 - `projsync` : non commencé.
 - `basic` (partie « on ») : `fr_ign_ntf_r93.tif` absent du dépôt et de la référence. Sa
   condition `networkAccessOK` vient de `initial_check`, non porté (voir ci-dessus).
+- `download_whole_files` : non porté, et c'est une cause de données, pas de code. Le test attend
+  `z` = 36.5909996032715 (lon 12, lat 56) sur `dk_sdfe_dvr90.tif`, téléchargé depuis
+  `cdn.proj.org`. Ce fichier n'est ni dans le dépôt, ni dans `target/proj-reference`, ni sur le
+  système ; le CDN est refusé (403 au `CONNECT`, mesuré avec `libproj` 9.9.0). Sans les octets,
+  la valeur et les trois rappels de progression ne se mesurent pas, et un fichier de
+  substitution donnerait des valeurs non issues de PROJ. Il manque aussi l'API de téléchargement
+  (`proj_is_download_needed`, `proj_download_file` avec progression, `pj_find_file`), le
+  `lookForGridInfo` public et `proj_grid_info` avec contexte réseau. Détail ligne à ligne :
+  `docs/AUDIT-network.md`, section « download_whole_files ».
 
 ## Commandes
 
