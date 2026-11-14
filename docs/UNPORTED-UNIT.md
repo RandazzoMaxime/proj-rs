@@ -29,7 +29,6 @@ and `PORT-NOTES-tests.md`.
 - `networking.basic`
 - `networking.download_whole_files`
 - `networking.file_api`
-- `networking.proj_coordoperation_get_grid_used`
 - `networking.pyproj_issue_1192`
 
 ## test_projinfo_lib.cpp
