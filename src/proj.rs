@@ -22,8 +22,9 @@ use crate::engine::Operation;
 use crate::engine::TransformError as StepError;
 use crate::gie_api::Factors;
 use crate::iso19111::{
-    Conversion, CoordinateOperation, Crs, DatabaseContext, GridAvailabilityUse, GridDescription,
-    OpProps, Pipeline, ProjStringLayout,
+    Conversion, CoordinateOperation, CoordinateOperationContext, CoordinateOperationFactory, Crs,
+    DatabaseContext, FactoryError, GridAvailabilityUse, GridDescription, OpProps, Pipeline,
+    ProjStringLayout,
 };
 use crate::proj_iso::{iso_pipeline, iso_pipeline_at, IsoPipeline};
 use crate::{CreateError, Xyzt};
@@ -1286,6 +1287,27 @@ impl ProjBuilder {
     ) -> Result<Proj, ProjCreateError> {
         crate::network::with_context(&self.net, || {
             source_crs.create_crs_to_crs_from_pj(target_crs, area, options)
+        })
+    }
+
+    /// Operations from `source` to `target`, built under this builder's network settings and
+    /// callbacks. Same outcome as [`CoordinateOperationFactory::create_operations`].
+    ///
+    /// The operation factory reads no grid over the network itself: PROJ's
+    /// `proj_create_operations` makes no call either, and this method keeps that property
+    /// observable through the callbacks registered on the builder.
+    ///
+    /// # Errors
+    ///
+    /// [`FactoryError`] from [`CoordinateOperationFactory::create_operations`].
+    pub fn create_operations(
+        &self,
+        source: &Crs,
+        target: &Crs,
+        context: &CoordinateOperationContext,
+    ) -> Result<Vec<CoordinateOperation>, FactoryError> {
+        crate::network::with_context(&self.net, || {
+            CoordinateOperationFactory::create().create_operations(source, target, context)
         })
     }
 

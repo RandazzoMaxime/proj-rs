@@ -1,8 +1,8 @@
 //! PROJ `test/unit/test_network.cpp`, the network cases that need no grid read in ranges: the
 //! callbacks (`custom`, `getfilesize`, `simul_open_error`, `simul_read_range_error`), the
-//! `network_endpoint_api_and_not_reachable_*` cases, and the operation factory case
-//! `pyproj_issue_1192`. Nothing here reaches `cdn.proj.org`: the endpoint is a local address with
-//! no server.
+//! `network_endpoint_api_and_not_reachable_*` cases, and the operation factory cases
+//! `pyproj_issue_1192` and `do_not_attempt_network_access_known_available_network_on`. Nothing
+//! here reaches `cdn.proj.org`: the endpoint is a local address with no server.
 //!
 //! The assertions are PROJ's. `HUGE_VAL` with `PROJ_ERR_OTHER_NETWORK_ERROR` is
 //! `Err(ProjError::Network)` here, and the description of the last used operation is the
@@ -11,6 +11,7 @@
 
 use std::collections::HashMap;
 use std::f64::consts::PI;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use std::net::TcpListener;
@@ -813,4 +814,182 @@ fn pyproj_issue_1192() {
             }
         }
     }
+}
+
+/// Counts every callback the builder makes. Every method counts once, `header` included, so the
+/// count is the number of network calls PROJ would make.
+struct CountingCallbacks {
+    calls: Arc<AtomicUsize>,
+}
+
+impl NetworkCallbacks for CountingCallbacks {
+    fn open(
+        &self,
+        _url: &str,
+        _offset: u64,
+        _size_to_read: usize,
+    ) -> Result<OpenReply, NetworkError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Err(NetworkError::Open("Cannot open file".to_owned()))
+    }
+
+    fn header(&self, _handle: NetworkHandle, _name: &str) -> Option<String> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        None
+    }
+
+    fn read_range(
+        &self,
+        _handle: NetworkHandle,
+        _offset: u64,
+        _size_to_read: usize,
+    ) -> Result<Vec<u8>, NetworkError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Err(NetworkError::ReadRange("no file is open".to_owned()))
+    }
+
+    fn close(&self, _handle: NetworkHandle) {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+/// The 79 operations of PROJ 9.9.0 from EPSG:4326 to EPSG:4267 under `KNOWN_AVAILABLE` and
+/// `PARTIAL_INTERSECTION`, in PROJ's order (`proj_list_get` from 0 to 78). The same list with
+/// network off, measured with `libproj` 9.9.0.
+const DO_NOT_ATTEMPT_NAMES: [&str; 79] = [
+    "Inverse of NAD27 to WGS 84 (33)",
+    "Inverse of NAD27 to WGS 84 (3)",
+    "Inverse of NAD27 to WGS 84 (79)",
+    "Inverse of NAD27 to WGS 84 (4)",
+    "Inverse of NAD27 to WGS 84 (13)",
+    "Inverse of NAD27 to WGS 84 (85)",
+    "Inverse of NAD27 to WGS 84 (6)",
+    "Inverse of NAD27 to WGS 84 (5)",
+    "Inverse of NAD27 to WGS 84 (18)",
+    "Inverse of NAD27 to WGS 84 (78)",
+    "Inverse of NAD27 to WGS 84 (11)",
+    "Inverse of NAD27 to WGS 84 (12)",
+    "Inverse of NAD27 to WGS 84 (7)",
+    "Inverse of NAD27 to WGS 84 (1)",
+    "Inverse of NAD27 to WGS 84 (34)",
+    "Inverse of NAD27 to WGS 84 (10)",
+    "Inverse of NAD27 to WGS 84 (2)",
+    "Inverse of NAD27 to WGS 84 (84)",
+    "Inverse of NAD27 to WGS 84 (88)",
+    "Inverse of NAD27 to WGS 84 (30)",
+    "Inverse of NAD27 to WGS 84 (14)",
+    "Inverse of NAD27 to WGS 84 (36)",
+    "Inverse of NAD27 to WGS 84 (32)",
+    "Inverse of NAD27 to WGS 84 (71)",
+    "Inverse of NAD27 to WGS 84 (72)",
+    "Inverse of NAD27 to WGS 84 (43)",
+    "Inverse of NAD27 to WGS 84 (58)",
+    "Inverse of NAD27 to WGS 84 (68)",
+    "Inverse of NAD27 to WGS 84 (54)",
+    "Inverse of NAD27 to WGS 84 (8)",
+    "Inverse of NAD27 to WGS 84 (16)",
+    "Inverse of NAD27 to WGS 84 (80)",
+    "Inverse of NAD27 to WGS 84 (40)",
+    "Inverse of NAD27 to WGS 84 (61)",
+    "Inverse of NAD27 to WGS 84 (81)",
+    "Inverse of NAD27 to WGS 84 (55)",
+    "Inverse of NAD27 to WGS 84 (63)",
+    "Inverse of NAD27 to WGS 84 (38)",
+    "Inverse of NAD27 to WGS 84 (64)",
+    "Inverse of NAD27 to WGS 84 (41)",
+    "Inverse of NAD27 to WGS 84 (57)",
+    "Inverse of NAD27 to WGS 84 (67)",
+    "Inverse of NAD27 to WGS 84 (76)",
+    "Inverse of NAD27 to WGS 84 (21)",
+    "Inverse of NAD27 to WGS 84 (42)",
+    "Inverse of NAD27 to WGS 84 (59)",
+    "Inverse of NAD27 to WGS 84 (77)",
+    "Inverse of NAD27 to WGS 84 (60)",
+    "Inverse of NAD27 to WGS 84 (73)",
+    "Inverse of NAD27 to WGS 84 (74)",
+    "Inverse of NAD27 to WGS 84 (45)",
+    "Inverse of NAD27 to WGS 84 (44)",
+    "Inverse of NAD27 to WGS 84 (69)",
+    "Inverse of NAD27 to WGS 84 (50)",
+    "Inverse of NAD27 to WGS 84 (48)",
+    "Inverse of NAD27 to WGS 84 (49)",
+    "Inverse of NAD27 to WGS 84 (65)",
+    "Inverse of NAD27 to WGS 84 (47)",
+    "Inverse of NAD27 to WGS 84 (56)",
+    "Inverse of NAD27 to WGS 84 (37)",
+    "Inverse of NAD27 to WGS 84 (89)",
+    "Inverse of NAD27 to WGS 84 (87)",
+    "Inverse of NAD27 to WGS 84 (39)",
+    "Inverse of NAD27 to WGS 84 (75)",
+    "Inverse of NAD27 to WGS 84 (51)",
+    "Inverse of NAD27 to WGS 84 (66)",
+    "Inverse of NAD27 to WGS 84 (53)",
+    "Inverse of NAD27 to WGS 84 (70)",
+    "Inverse of NAD27 to WGS 84 (86)",
+    "Inverse of NAD27 to WGS 84 (46)",
+    "Inverse of NAD27 to WGS 84 (17)",
+    "Inverse of NAD27 to WGS 84 (22)",
+    "Inverse of NAD27 to WGS 84 (52)",
+    "Inverse of NAD27 to WGS 84 (82)",
+    "Inverse of NAD27 to WGS 84 (62)",
+    "Inverse of NAD27 to WGS 84 (83)",
+    "Inverse of NAD27 to WGS 84 (15)",
+    "Inverse of NAD27 to WGS 84 (9)",
+    "Ballpark geographic offset from WGS 84 to NAD27",
+];
+
+/// `networking.do_not_attempt_network_access_known_available_network_on`: with network on and
+/// callbacks registered on the builder, the operation factory in `KNOWN_AVAILABLE` mode creates
+/// the operations of PROJ 9.9.0 and makes no callback call. The control below shows the counter
+/// is wired: an absent grid named by an explicit string reaches `open` once.
+#[test]
+fn do_not_attempt_network_access_known_available_network_on() {
+    let db = DatabaseContext::create().expect("embedded proj.db");
+    let from = create_from_user_input("EPSG:4326", &db).expect("EPSG:4326");
+    let to = create_from_user_input("EPSG:4267", &db).expect("EPSG:4267");
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut builder = ProjBuilder::new();
+    builder.enable_network(true).expect("network on");
+    builder
+        .set_url_endpoint(&unreachable_endpoint())
+        .expect("endpoint");
+    builder.set_network_callbacks(Arc::new(CountingCallbacks {
+        calls: Arc::clone(&calls),
+    }));
+    // `ASSERT_TRUE(proj_context_set_network_callbacks(...))`: the Rust registration returns
+    // nothing and cannot fail, so its outcome is the network state the builder reports here.
+    assert!(builder.network_enabled());
+
+    let mut context = CoordinateOperationContext::create(&db, "");
+    context
+        .set_grid_availability_use(GridAvailabilityUse::KnownAvailable)
+        .set_spatial_criterion(SpatialCriterion::PartialIntersection);
+    let operations = builder
+        .create_operations(&from, &to, &context)
+        .expect("operations");
+
+    // PROJ: `EXPECT_GE(num_operations, 10)`. The exact list is checked below.
+    assert!(operations.len() >= 10, "{} operations", operations.len());
+    let names: Vec<&str> = operations.iter().map(CoordinateOperation::name).collect();
+    assert_eq!(names, DO_NOT_ATTEMPT_NAMES);
+
+    // PROJ: `EXPECT_FALSE(networkActivity)`.
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        0,
+        "callback calls by the factory"
+    );
+
+    // Control: the counter sees a fetch. PROJ makes one `open` for this explicit string and
+    // `proj_create` gives `NULL`.
+    let control = builder
+        .clone()
+        .proj("+proj=hgridshift +grids=proj_rs_no_such_grid.tif");
+    assert!(control.is_err(), "the absent grid must not build");
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "callback calls of the control"
+    );
 }
