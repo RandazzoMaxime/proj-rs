@@ -27,7 +27,6 @@ and `PORT-NOTES-tests.md`.
 
 - `networking.initial_check`
 - `networking.basic`
-- `networking.download_whole_files`
 - `networking.file_api`
 - `networking.pyproj_issue_1192`
 
