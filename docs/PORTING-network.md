@@ -24,7 +24,10 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
 | `proj_is_download_needed`, `proj_download_file` (`networkfilemanager.cpp:2523-2880`) | `src/network_download.rs` (`is_download_needed`, `download`) ; `ProjBuilder::is_download_needed`, `ProjBuilder::download_file`, `TtlSetting`, `DownloadProgress` (`src/proj.rs`) |
 | `pj_find_file(…, disable_network)` (`filemanager.cpp:1942`), `proj_grid_info` avec le réseau du contexte (`grids.cpp:3928`), `lookForGridInfo` et ses deux résultats (`factory.cpp:3398`) | `ProjBuilder::find_local_file`, `ProjBuilder::grid_info`, `ProjBuilder::look_for_grid_info` (`GridLookup`, `src/iso19111/factory.rs`, `grid_lookup`) |
 | `HTTPS_PROXY` / `https_proxy` (curl, tunnel `CONNECT`) | `src/network.rs` (`connect`, `https_proxy`, `open_tunnel`, `bypasses_proxy`) |
+| `proj_context_set_fileapi`, `PROJ_FILE_API`, `FileManager::open/exists/mkdir/unlink/rename` (`filemanager.cpp:880-1100`, `1180-1213`) | `src/file_api.rs` (`FileApi`, `ApiFile`, `FileAccess`), `ProjBuilder::set_file_api` ; `src/network.rs` (`read_file`, `create_directory_all`, `create_for_write`, `remove_file`, `rename_file`, `is_file_with`) |
 | `networking.download_whole_files` (`test_network.cpp:1859`, 37 assertions) | `tests/unit_network_download.rs` (1 cas, contre le vrai CDN) |
+| `networking.file_api` (`test_network.cpp:2043`, 15 assertions) | `tests/unit_network_file_api.rs` (1 cas, contre le vrai CDN) |
+| sonde `initial_check` (`cdn_reachable`), partagée | `tests/net_cdn/mod.rs` (incluse par `#[path]` dans les deux cas) |
 | `src/apps/projsync.cpp`, `test/cli/test_projsync.sh` | non porté (voir l'audit) |
 
 ## Décisions et écarts volontaires
@@ -211,6 +214,47 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
   CDN injoignable. Le test retourne tôt si la sonde échoue, comme PROJ, et il l'écrit dans la
   sortie du test. Ce retour anticipé ne vérifie rien : c'est le seul cas où le test ne porte pas.
 
+## API de fichiers
+
+La fiche de `file_api` : les callbacks de `PROJ_FILE_API` deviennent deux traits publics,
+`FileApi` (`open`, `exists`, `mkdir`, `unlink`, `rename`) et `ApiFile` (`Read + Write + Seek`),
+enregistrés par `ProjBuilder::set_file_api`, comme `set_network_callbacks`. Écarts :
+
+- **`close` est le `Drop`.** Un `ApiFile` est fermé quand il est lâché (`close_cbk` de PROJ, appelé
+  par le destructeur de `FileApiAdapter`). Le cas de test le mesure dans son `Drop`.
+- **`user_data` est l'état du trait** (`Arc` partagé), pas un pointeur passé à chaque appel.
+- **Pas de `tell`** : c'est `Seek::stream_position`. Pas de `version` ni de `PROJ_OPEN_ACCESS` à part :
+  `FileAccess` (`ReadOnly`, `ReadUpdate`, `Create`).
+- **`set_file_api` ne renvoie rien.** PROJ renvoie `0` si un des dix callbacks manque
+  (`filemanager.cpp:1197`) ; le trait est complet à la compilation, donc `ASSERT_TRUE(proj_context_set_fileapi(...))`
+  n'a pas d'équivalent.
+- **Un `FileApi` passe par le contexte, comme les callbacks réseau.** `GridContext` le porte ; un `Proj`
+  créé par le builder le garde, et ses grilles se lisent à travers lui (`with_context`).
+- **Lecture d'une grille.** `read_file` fait `seek(0, END)`, `seek(0, SET)`, puis `read` jusqu'à la fin,
+  comme `FileManager::open` pour `proj.ini` (`filemanager.cpp:2049-2055`). PROJ lit les TIFF par `seek`
+  et `read` de libtiff (tuiles et IFD, `grids.cpp:969-995`). Le port lit le fichier entier avec le
+  décodeur du crate : la séquence d'appels n'est pas celle de PROJ, seule la présence de `read` et de
+  `seek` est vérifiée.
+- **Ordre de l'exists de répertoire.** `create_directory_all` fait `exists` de chaque niveau depuis le
+  bas, puis `mkdir` depuis le haut, comme `CreateDirectoryRecursively` (`filemanager.cpp:1155`).
+
+Mesuré avec `libproj` 9.9.0 (sonde C hors dépôt, non versionnée : `probe.c`, `PROJ_FULL_FILE_CHUNK_SIZE=30000`,
+répertoire utilisateur absent, TIFF et curl), la séquence du téléchargement est : `open` en lecture seule
+(vérification du fichier local par `is_download_needed`, `networkfilemanager.cpp:2541`), `exists` (répertoire),
+`exists` (parent), `mkdir`, deux autres `open` en lecture seule (non identifiés), `open` en création,
+12 `write` (11 de 30000 octets, puis 1904), `close`, `unlink` de la cible, `rename` du temporaire, `exists`
+(répertoire, `cache.db`). Aucun `read`. La lecture de la grille, réseau coupé : `open` en lecture seule,
+`seek`, `tell`, `read`, `close`, et `z` = 36.590999603271491. Le port vérifie la présence du fichier local
+par `exists`, sans `open` : il ne fait donc pas ces trois `open` en lecture seule, et le reste de la séquence
+est le même.
+
+**Opérations restées sur `std::fs`** (hors de l'API) : `proj.ini`, lu par `GridContext::load` avant que
+l'application ait pu poser son `FileApi` (`network.rs`, `read_proj_ini`) ; le répertoire de la base de
+cache de morceaux et son `clear` (`network_cache.rs`, `DiskChunkCache::open`, `clear`) ; `projsync`
+(`src/projsync.rs`, téléchargement d'index) ; la recherche de fichiers de la CLI gie (`src/gie.rs`,
+`is_file`). Les grilles, modèles, dictionnaires `+init=FILE:SECTION` et métadonnées de grille passent par
+l'API (`gridpath::resolve`, `gridpath::read`, `network::read_file`).
+
 ## Ce qui reste ouvert
 
 - Lecture par morceaux pour les GeoTIFF compressés (deflate), à prédicteur ou planaires : ils
@@ -222,8 +266,12 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
   `vgridshift` recharge), et pour les lectures entières (`read_whole`).
 - Validation de cache par `ETag` et `Last-Modified` : cache disque (lot cache).
 - Cache SQLite : TTL, taille max, verrou, `proj_grid_cache_clear` (lot cache, autre agent).
-- API de fichiers (`file_api`). L'API de téléchargement est sur `ProjBuilder` (voir Décisions) ; ni
-  façade C, ni vérification par `Range`.
+- API de fichiers : routée pour la recherche, les lectures de grilles, modèles et dictionnaires, le
+  répertoire utilisateur et le téléchargement (voir « API de fichiers »). Restent sur `std::fs` :
+  `proj.ini`, le répertoire et l'effacement du cache de morceaux, `projsync`, la CLI gie. Ni façade C,
+  ni vérification par `Range`.
+- `docs/UNPORTED-UNIT.md` liste encore `networking.file_api` : ce lot ne l'a pas retiré (consigne : ne
+  pas éditer le ledger). Le retrait suit avec `UPDATE_DOCS=1 cargo test --test docs_in_sync`.
 - Façade C des opérations (`proj_create_operations`, contexte de fabrique C) : absente. Le cas
   de `do_not_attempt_network_access_known_available_network_on` est couvert par
   `ProjBuilder::create_operations`, sans façade C.
@@ -259,6 +307,7 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
 ```
 cargo test --test unit_network_core --test unit_network_endpoint_env --test unit_network_local --test network_grid
 cargo test --test unit_network_download
+cargo test --test unit_network_file_api
 cargo test --test unit_network_core proj_coordoperation_get_grid_used
 cargo test --lib callback_tests
 cargo +1.100.0 clippy --all-targets --all-features -- -D warnings

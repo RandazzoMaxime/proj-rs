@@ -138,7 +138,7 @@ fn file_init_info(name: &str, path: PathBuf) -> InitInfo {
         version: "Unknown".to_owned(),
         lastupdate: "Unknown".to_owned(),
     };
-    let section = std::fs::read(&path)
+    let section = crate::network::read_file(&path)
         .ok()
         .and_then(|bytes| section_text(&bytes, "metadata"));
     if let Some(section) = section {

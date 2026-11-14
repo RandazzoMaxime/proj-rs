@@ -946,7 +946,7 @@ fn dictionary_section(spec: &str) -> Result<String, CreateError> {
         .split_once(':')
         .ok_or(CreateError::IllegalValue("init"))?;
     let path = crate::network::find_file(file).ok_or(CreateError::IllegalValue("init"))?;
-    let text = std::fs::read(path).map_err(|_| CreateError::IllegalValue("init"))?;
+    let text = crate::network::read_file(&path).map_err(|_| CreateError::IllegalValue("init"))?;
     init_section_from_text(&String::from_utf8_lossy(&text), section)
 }
 
@@ -1017,7 +1017,8 @@ fn init_file_section(file: &str, section: &str) -> Result<String, CreateError> {
         }
         return Err(CreateError::Unsupported("init file"));
     };
-    let text = std::fs::read(path).map_err(|_| CreateError::Unsupported("init file"))?;
+    let text =
+        crate::network::read_file(&path).map_err(|_| CreateError::Unsupported("init file"))?;
     init_section_from_text(&String::from_utf8_lossy(&text), section)
 }
 
