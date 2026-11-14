@@ -54,8 +54,8 @@ pub use factory::{
     AlternativeGridNames, AuthorityFactory, AuthorityObject, BallparkUse, CelestialBodyInfo,
     CoordinateOperationContext, CoordinateOperationFactory, CrsExtentUse, CrsInfo, DatabaseContext,
     DeprecatedCodes, GeodeticComponents, GridAvailabilityUse, GridDescription, GridInfo,
-    IntermediateCrsUse, NameMatch, NameSpelling, ObjectType, OfficialName, SpatialCriterion,
-    SupersededOperations, UnitInfo,
+    GridLookup, IntermediateCrsUse, NameMatch, NameSpelling, ObjectType, OfficialName,
+    SpatialCriterion, SupersededOperations, UnitInfo,
 };
 pub use insert::{insert_statements, suggests_code_for, CodeForm, ComponentCodes, InsertSession};
 pub use json::{

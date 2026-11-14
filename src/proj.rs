@@ -23,8 +23,8 @@ use crate::engine::TransformError as StepError;
 use crate::gie_api::Factors;
 use crate::iso19111::{
     Conversion, CoordinateOperation, CoordinateOperationContext, CoordinateOperationFactory, Crs,
-    DatabaseContext, FactoryError, GridAvailabilityUse, GridDescription, OpProps, Pipeline,
-    ProjStringLayout, RemoteGrids,
+    DatabaseContext, FactoryError, GridAvailabilityUse, GridDescription, GridLookup, OpProps,
+    Pipeline, ProjStringLayout, RemoteGrids,
 };
 use crate::proj_iso::{iso_pipeline, iso_pipeline_at, IsoPipeline};
 use crate::{CreateError, Xyzt};
@@ -1237,6 +1237,23 @@ pub enum GridCacheMode {
     Disabled,
 }
 
+/// The progress callback of [`ProjBuilder::download_file`]: it gets the builder that downloads,
+/// and the fraction of the file written, and returns `false` to stop the download.
+pub type DownloadProgress<'a> = dyn FnMut(&ProjBuilder, f64) -> bool + 'a;
+
+/// Whether a download checks a file already on disk against the server (PROJ's
+/// `ignore_ttl_setting`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TtlSetting {
+    /// A record older than the TTL of the grid cache is checked against the server, which may
+    /// say the file changed (PROJ `ignore_ttl_setting = FALSE`).
+    Respect,
+    /// The record is trusted and no request is sent (PROJ `ignore_ttl_setting = TRUE`). The
+    /// comment in PROJ's header says the opposite; its code, and the case that measures it,
+    /// follow this reading.
+    Ignore,
+}
+
 /// How long a checked remote file stays fresh in the grid chunk cache.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GridCacheTtl {
@@ -1571,6 +1588,71 @@ impl ProjBuilder {
             return Ok(());
         }
         crate::network_cache::clear(&self.net.cache_settings().path).map_err(|_| ProjError::Path)
+    }
+
+    /// Whether `name` must be downloaded before it is used: `proj_is_download_needed`. The file
+    /// is needed when it is not in the user-writable directory, or when `cache.db` has no record
+    /// of it. `ttl` says whether an old record is checked against the server.
+    ///
+    /// # Errors
+    ///
+    /// [`ProjError::Network`] when network access is off.
+    pub fn is_download_needed(&self, name: &str, ttl: TtlSetting) -> Result<bool, ProjError> {
+        crate::network_download::is_download_needed(&self.net, name, ttl)
+    }
+
+    /// Download `name` into the user-writable directory, unless it is current:
+    /// `proj_download_file`. `progress` gets this builder and the fraction of the file written
+    /// after each piece, the first piece excepted; it returns `false` to stop the download. The
+    /// file is put under its name only when it is complete.
+    ///
+    /// # Errors
+    ///
+    /// [`ProjError::Network`] when network access is off, the server does not answer, or
+    /// `progress` stops the download; [`ProjError::Path`] when the file cannot be written.
+    pub fn download_file(
+        &self,
+        name: &str,
+        ttl: TtlSetting,
+        mut progress: Option<&mut DownloadProgress<'_>>,
+    ) -> Result<(), ProjError> {
+        let mut report = |fraction: f64| match progress.as_mut() {
+            Some(callback) => callback(self, fraction),
+            None => true,
+        };
+        crate::network_download::download(&self.net, name, ttl, &mut report)
+    }
+
+    /// The file `name` resolves to on the search path, without network access: `pj_find_file`
+    /// with `disable_network`. `None` when it is not on disk.
+    #[must_use]
+    pub fn find_local_file(&self, name: &str) -> Option<PathBuf> {
+        crate::network::with_context(&self.net, || crate::network::find_file(name))
+    }
+
+    /// The grid file `name` gives, read with the network of this builder: `proj_grid_info`. A grid
+    /// that is not on disk is read from the endpoint when the network is on, and then its
+    /// `filename` is `None`. `None` when the name is not a grid the crate reads.
+    #[must_use]
+    pub fn grid_info(&self, name: &str) -> Option<crate::info::GridFileInfo> {
+        crate::network::with_context(&self.net, || crate::info::grid_info(name))
+    }
+
+    /// `lookForGridInfo` of the database, under the network of this builder: whether `proj.db`
+    /// has a row for `name` (`in_database`), and its record. `known` is PROJ's
+    /// `considerKnownGridsAsAvailable`. A grid with no row is available when its file is on disk.
+    ///
+    /// # Errors
+    ///
+    /// [`FactoryError`] when the database cannot be opened or rejects the statement.
+    pub fn look_for_grid_info(
+        &self,
+        name: &str,
+        known: GridAvailabilityUse,
+    ) -> Result<GridLookup, FactoryError> {
+        crate::network::with_context(&self.net, || {
+            DatabaseContext::create().and_then(|database| database.grid_lookup(name, known))
+        })
     }
 
     /// Version of the PROJ release this port follows.
