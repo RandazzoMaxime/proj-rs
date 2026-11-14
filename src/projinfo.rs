@@ -47,10 +47,25 @@ pub enum Status {
 ///
 /// Panics when that thread cannot be spawned, or when the command panics.
 pub fn run(args: &[&str]) -> Report {
+    run_on(None, args)
+}
+
+/// Runs `projinfo` with the arguments `args` on the database of `context`: `projinfo()` of
+/// `projinfo_lib.cpp` with that context. The context is copied, so the same one can serve
+/// several calls.
+///
+/// # Panics
+///
+/// Panics when the command thread cannot be spawned, or when the command panics.
+pub fn run_with_context(context: &crate::Context, args: &[&str]) -> Report {
+    run_on(Some(context.clone()), args)
+}
+
+fn run_on(context: Option<crate::Context>, args: &[&str]) -> Report {
     let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
     let worker = std::thread::Builder::new()
         .stack_size(STACK_SIZE)
-        .spawn(move || command(&args))
+        .spawn(move || command(&args, context.as_ref()))
         .expect("spawn the projinfo thread");
     match worker.join() {
         Ok(report) => report,
@@ -58,9 +73,9 @@ pub fn run(args: &[&str]) -> Report {
     }
 }
 
-fn command(args: &[String]) -> Report {
+fn command(args: &[String], context: Option<&crate::Context>) -> Report {
     let mut warnings = Vec::new();
-    match execute(args, &mut warnings) {
+    match execute(args, &mut warnings, context) {
         Ok(output) => Report {
             output,
             warnings,
@@ -89,9 +104,13 @@ enum Failure {
 
 /// The command. Its warnings are pushed to `warnings` as they occur, so they keep their
 /// order before the output or the error.
-fn execute(args: &[String], warnings: &mut Vec<String>) -> Result<String, Failure> {
+fn execute(
+    args: &[String],
+    warnings: &mut Vec<String>,
+    context: Option<&crate::Context>,
+) -> Result<String, Failure> {
     if args.len() >= 2 && args[0] == "completion" {
-        return complete_shell(&args[2..])
+        return complete_shell(&args[2..], context)
             .map(|text| text.trim_end_matches('\n').to_owned())
             .map_err(Failure::Plain);
     }
@@ -132,25 +151,25 @@ fn execute(args: &[String], warnings: &mut Vec<String>) -> Result<String, Failur
     }
     let mut lines = Vec::new();
     if options.dump_db_structure {
-        let db = database().map_err(Failure::Plain)?;
+        let db = database(context).map_err(Failure::Plain)?;
         lines.extend(
             db.database_structure()
                 .map_err(|error| Failure::Plain(error.to_string()))?,
         );
     }
     if let Some(filter) = options.list_crs.as_deref() {
-        let db = database().map_err(Failure::Plain)?;
+        let db = database(context).map_err(Failure::Plain)?;
         lines.extend(list_crs(&options, filter, &db)?);
     }
     if options.source.is_some() && options.target.is_some() {
-        lines.push(candidates(&options, warnings).map_err(Failure::Plain)?);
+        lines.push(candidates(&options, warnings, context).map_err(Failure::Plain)?);
     } else if let Some(code) = options.code.as_deref() {
         if options.quiet && options.dialects.len() != 1 {
             return Err(Failure::Usage(
                 "-q can only be used with a single output format".to_owned(),
             ));
         }
-        lines.push(describe(&options, code, warnings).map_err(Failure::Plain)?);
+        lines.push(describe(&options, code, warnings, context).map_err(Failure::Plain)?);
     } else if !(options.dump_db_structure || options.list_crs.is_some()) {
         return Err(Failure::Usage("missing EPSG code".to_owned()));
     }
@@ -158,8 +177,14 @@ fn execute(args: &[String], warnings: &mut Vec<String>) -> Result<String, Failur
     Ok(lines.join("\n"))
 }
 
-fn database() -> Result<crate::DatabaseContext, String> {
-    crate::DatabaseContext::create().map_err(|error| error.to_string())
+/// The database of a run: the one of `context`, or the default one when there is no context
+/// (`projinfo()` with a null context).
+fn database(context: Option<&crate::Context>) -> Result<crate::DatabaseContext, String> {
+    match context {
+        Some(context) => context.database(),
+        None => crate::DatabaseContext::create(),
+    }
+    .map_err(|error| error.to_string())
 }
 
 /// The grid search path, one directory per line.
@@ -632,7 +657,7 @@ fn classify_dialect(text: &str) -> Result<Option<Dialect>, String> {
 
 /// Shell completion, as `suggestCompletion` in `projinfo_lib.cpp`. `args`
 /// are the words after `projinfo completion projinfo`.
-fn complete_shell(args: &[String]) -> Result<String, String> {
+fn complete_shell(args: &[String], context: Option<&crate::Context>) -> Result<String, String> {
     const KNOWN_OPTIONS: &[&str] = &[
         "-o",
         "-k",
@@ -669,7 +694,7 @@ fn complete_shell(args: &[String]) -> Result<String, String> {
     if args.iter().any(String::is_empty) {
         return Ok(String::new());
     }
-    let db = database()?;
+    let db = database(context)?;
     let authorities = || db.authorities().unwrap_or_default();
     let line = |words: &[String]| format!("{}\n", words.join(" "));
     let Some(last) = args.last() else {
@@ -1056,8 +1081,12 @@ fn parse_bbox(text: &str) -> Result<crate::BoundingBox, String> {
     Ok(crate::BoundingBox::new(*west, *south, *east, *north))
 }
 
-fn candidates(options: &Options, warnings: &mut Vec<String>) -> Result<String, String> {
-    let db = crate::DatabaseContext::create().map_err(|error| error.to_string())?;
+fn candidates(
+    options: &Options,
+    warnings: &mut Vec<String>,
+    context: Option<&crate::Context>,
+) -> Result<String, String> {
+    let db = database(context)?;
     let source_text = options.source.as_deref().unwrap_or("");
     let target_text = options.target.as_deref().unwrap_or("");
     let source = build_crs(
@@ -1547,8 +1576,13 @@ fn operation_wkt(
         .map_err(|error| error.to_string())
 }
 
-fn describe(options: &Options, text: &str, warnings: &mut Vec<String>) -> Result<String, String> {
-    let db = database()?;
+fn describe(
+    options: &Options,
+    text: &str,
+    warnings: &mut Vec<String>,
+    context: Option<&crate::Context>,
+) -> Result<String, String> {
+    let db = database(context)?;
     let object = match build_object(&db, text, options.kind, options, warnings)? {
         crate::AuthorityObject::Crs(crs) => {
             crate::AuthorityObject::Crs(build_crs(&db, crs, options))
@@ -1994,6 +2028,7 @@ mod tests {
             &Options::parse(&["EPSG:4326".to_owned()]).expect("options"),
             "EPSG:4326",
             &mut Vec::new(),
+            None,
         )
         .expect("describe");
         assert!(text.starts_with("PROJ.4 string:\n+proj=longlat +datum=WGS84 +no_defs +type=crs\n"));
