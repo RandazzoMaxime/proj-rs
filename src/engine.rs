@@ -983,7 +983,8 @@ pub(crate) trait Step: Send + Sync {
 #[derive(Clone)]
 pub struct Operation {
     step: std::sync::Arc<dyn Step>,
-    context: Context,
+    /// Shared, so that cloning an operation (one per candidate) copies a pointer, not the context.
+    context: std::sync::Arc<Context>,
 }
 
 impl fmt::Debug for Operation {
@@ -1027,7 +1028,7 @@ impl Operation {
         if let Some(step) = nkg::from_definition(definition)? {
             return Ok(Self {
                 step: std::sync::Arc::from(step),
-                context: Context::new(),
+                context: std::sync::Arc::new(Context::new()),
             });
         }
         let mut params = Params::parse(definition)?;
@@ -1044,7 +1045,7 @@ impl Operation {
         if name == "pipeline" {
             return Ok(Self {
                 step: std::sync::Arc::from(build_pipeline(definition)?),
-                context: Context::new(),
+                context: std::sync::Arc::new(Context::new()),
             });
         }
         prepare_params(&mut params)?;
@@ -1061,7 +1062,7 @@ impl Operation {
         let step = finish_step(&name, &params, &frame)?;
         Ok(Self {
             step,
-            context: Context::new(),
+            context: std::sync::Arc::new(Context::new()),
         })
     }
 
@@ -1080,7 +1081,7 @@ impl Operation {
     /// operation keeps its own copy, so the caller may drop `context` afterwards, as
     /// `proj_context_destroy` allows. PROJ's `NULL` is `Context::new()`.
     pub fn set_context(&mut self, context: Context) {
-        self.context = context;
+        self.context = std::sync::Arc::new(context);
     }
 
     /// Forward transform.
