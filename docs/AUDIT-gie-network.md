@@ -31,7 +31,7 @@ runner déplacé dans `proj_rs::gie` (`src/gie.rs`).
 | Test C++ | Test Rust | Statut |
 |---|---|---|
 | `gie.cart_selftest` | `gie_self_tests.rs::cart_selftest` | partiel : UTM, cart 3D, pôles, `transform_array`. Les changements de contexte (`proj_context_set`, `P->ctx`) ne sont pas portés : un objet Rust ne porte pas de contexte. |
-| `gie.info_functions` | — | écart : `proj_init_info` (métadonnées d'un fichier `+init`) n'a pas d'API ; `proj_grid_info` n'est pas exposé ; `proj_rtodms2`/`proj_dmstor` sont dans `src/bin/support/dms.rs`, non exposés à la bibliothèque. |
+| `gie.info_functions` | `tests/gie_info_functions.rs::info_functions` (et `init_info_reads_the_metadata_section_of_a_file`) | porté, toutes les assertions : `proj_info` (`proj_rs::info::library_info`), `proj_pj_info` (`Proj::proj_info`), `proj_grid_info` (`info::grid_info`), `proj_init_info` (`info::init_info`), `proj_rtodms2` et `proj_dmstor` (`proj_rs::dms`). Écarts de forme seulement : `release` vaut « 9.9.0 » ici (« Rel. 9.9.0 (…) » dans PROJ), le test vérifie qu'il est non vide comme le C ; le bloc TIFF tourne ici, la référence de build est sans TIFF, et ses valeurs sont les littéraux du C. |
 | `gie.proj_factors` | `gie_self_tests.rs::proj_factors` | partiel : Mercator et UTM portés (`Operation::factors`, `factors.cpp` + `pj_deriv`). Non portés : les blocs EPSG:3395, EPSG:2222, EPSG:3044, EPSG:27571, EPSG:5972, EPSG:4326 (CRS, `proj_factors` sur un objet CRS non implémenté) et le bloc `+units=ft` (la sortie n'est pas convertie en mètres). |
 | `gie.list_functions` | `gie_self_tests.rs::list_functions` | porté (`proj_list_operations` : 190 ids de `proj -l`) |
 | `gie.io_predicates` | `gie_self_tests.rs::io_predicates` | porté ; `P->inverted = 1` est traduit par la direction `inverse = true` de la même opération. |
@@ -51,11 +51,19 @@ runner déplacé dans `proj_rs::gie` (`src/gie.rs`).
 | `gieTest.proj_create_crs_to_crs_EPSG_4326` (TEST_F) | `gie_self_tests.rs::proj_create_crs_to_crs_epsg_4326` | porté (entrée en longitude, latitude : ordre de la crate). |
 | `gieTest.proj_create_crs_to_crs_proj_longlat` (TEST_F) | `gie_self_tests.rs::proj_create_crs_to_crs_proj_longlat` | porté |
 
-Compte sur les 20 tests C++ : 17 ont un test Rust (13 complets, 4 partiels :
-`cart_selftest`, `PULKOVO42`, `proj_create_crs_to_crs`, `proj_factors`), et 3 sont des écarts (`info_functions`,
-`proj_create_crs_to_crs_WGS84_EGM08`, `proj_create_crs_to_crs_from_pj_force_over`). `tests/gie_self_tests.rs`
+Compte sur les 20 tests C++ : 18 ont un test Rust (14 complets, 4 partiels :
+`cart_selftest`, `PULKOVO42`, `proj_create_crs_to_crs`, `proj_factors`), et 2 sont
+des écarts (`proj_create_crs_to_crs_WGS84_EGM08`,
+`proj_create_crs_to_crs_from_pj_force_over`). `tests/gie_self_tests.rs`
 contient 15 fonctions : les 14 ci-dessus et `nan_input_gives_no_coordinate`,
-tirée de `io_predicates`.
+tirée de `io_predicates`. `tests/gie_info_functions.rs` porte `info_functions`
+et une fonction de contrôle sur un fichier `+init` (`tests/gie/test_init_metadata`).
+
+Correction de comportement liée à ce test : `Proj::def` et `Proj::proj_info`
+donnent maintenant les paramètres d'une projection qui n'est pas une CRS
+(`+proj=utm; +zone=32; +ellps=GRS80` donne `proj=utm zone=32 ellps=GRS80`,
+comme `proj_pj_info`). Avant, ils renvoyaient `None` / une erreur. Voir
+`operation_definition` dans `src/proj_info.rs`.
 
 Correction apportée au moteur, nécessaire au test `cart_selftest` : la porte de
 latitude de `fwd_prepare` (`fwd.cpp`) n'était pas appliquée aux projections
@@ -89,5 +97,5 @@ téléchargement via le même mini serveur HTTP que le lot réseau. Le binaire
 ## Commandes
 
 ```
-cargo test --offline --test gie_cli --test gie_run --test gie_self_tests
+cargo test --offline --test gie_cli --test gie_run --test gie_self_tests --test gie_info_functions
 ```

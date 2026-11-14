@@ -79,10 +79,13 @@ pub(crate) fn operation_definition(text: &str) -> Result<String, ProjError> {
     match proj_kind(text).as_deref() {
         Some("pipeline") => pipeline_definition(text),
         Some("cart") => raw_parameters(text),
-        _ => {
-            let exported = export_crs(text)?;
-            init_definition(&exported)
-        }
+        _ => match export_crs(text) {
+            Ok(exported) => init_definition(&exported),
+            // Not a CRS, such as the projection `+proj=utm`: PROJ reports the parameters
+            // `pj_get_def` gives it, with `pj_shrink`'s `;` separators gone. A datum the
+            // parameters name still fails in `raw_tokens`.
+            Err(_) => raw_parameters(&text.replace(';', " ")),
+        },
     }
 }
 

@@ -308,7 +308,9 @@ pub struct Info {
     pub release: String,
     /// Version string.
     pub version: String,
-    /// Extra grid search path set on the builder. Empty when none was added.
+    /// Search path, directories joined by `:` (`;` on Windows). From
+    /// [`Proj::lib_info`] it is the paths added on the builder, empty when none
+    /// was added; from [`crate::info::library_info`] it is the default search path.
     pub searchpath: String,
 }
 
@@ -1451,7 +1453,7 @@ enum Report {
     Conversion,
 }
 
-fn port_info(searchpath: &str) -> Info {
+pub(crate) fn port_info(searchpath: &str) -> Info {
     Info {
         major: 9,
         minor: 9,
