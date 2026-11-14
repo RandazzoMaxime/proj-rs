@@ -106,6 +106,15 @@ impl RemoteFile {
         self.total
     }
 
+    /// The `Last-Modified` and `ETag` of the first reply that gave a size, empty when absent.
+    /// PROJ's `FileProperties` of a download are these (`get_props_from_headers`).
+    pub(crate) fn validators(&self) -> (String, String) {
+        self.baseline
+            .as_ref()
+            .map(|first| (first.last_modified.clone(), first.etag.clone()))
+            .unwrap_or_default()
+    }
+
     /// Whether a reply showed that the file changed while it was open. The chunks of the reply
     /// that showed it are the new file's, the chunks read before are gone.
     pub(crate) fn has_changed(&self) -> bool {

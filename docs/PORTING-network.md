@@ -21,6 +21,10 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
 | `src/apps/gie.cpp` (`network_error`) | `src/gie.rs` (`errno_name`) |
 | `test/unit/test_network.cpp` (26 TEST) | `tests/unit_network_core.rs` (12 cas, dont `custom`, `getfilesize`, `simul_read_range_error`, `simul_file_change_while_opened`, `proj_coordoperation_get_grid_used`, `pyproj_issue_1192` et `do_not_attempt_network_access_known_available_network_on`), `tests/unit_network_endpoint_env.rs` (1 cas), `tests/unit_network_local.rs` (2 cas), `src/network.rs` `callback_tests` (2 tests hors liste) |
 | serveur de test local (remplace `cdn.proj.org`) | `tests/net_support/mod.rs` |
+| `proj_is_download_needed`, `proj_download_file` (`networkfilemanager.cpp:2523-2880`) | `src/network_download.rs` (`is_download_needed`, `download`) ; `ProjBuilder::is_download_needed`, `ProjBuilder::download_file`, `TtlSetting`, `DownloadProgress` (`src/proj.rs`) |
+| `pj_find_file(…, disable_network)` (`filemanager.cpp:1942`), `proj_grid_info` avec le réseau du contexte (`grids.cpp:3928`), `lookForGridInfo` et ses deux résultats (`factory.cpp:3398`) | `ProjBuilder::find_local_file`, `ProjBuilder::grid_info`, `ProjBuilder::look_for_grid_info` (`GridLookup`, `src/iso19111/factory.rs`, `grid_lookup`) |
+| `HTTPS_PROXY` / `https_proxy` (curl, tunnel `CONNECT`) | `src/network.rs` (`connect`, `https_proxy`, `open_tunnel`, `bypasses_proxy`) |
+| `networking.download_whole_files` (`test_network.cpp:1859`, 37 assertions) | `tests/unit_network_download.rs` (1 cas, contre le vrai CDN) |
 | `src/apps/projsync.cpp`, `test/cli/test_projsync.sh` | non porté (voir l'audit) |
 
 ## Décisions et écarts volontaires
@@ -171,6 +175,42 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
   `https://cdn.proj.org` est confirmé contre `libproj` 9.9.0 (`proj_context_get_url_endpoint`).
   Détail : `docs/AUDIT-network.md`, ligne 1.
 
+- **Téléchargement en une requête, sans `Range`.** PROJ vérifie un fichier par une requête
+  d'un octet et le télécharge par `Range`, en morceaux de `PROJ_FULL_FILE_CHUNK_SIZE` (1 MiB par
+  défaut). Le client HTTP du crate n'envoie pas de `Range` : la vérification et le téléchargement
+  lisent le fichier entier en une requête, puis l'écrivent par morceaux de la même taille. Les
+  rappels de progression sont ceux de PROJ (un après chaque morceau, sauf le premier) et
+  l'enregistrement dans `cache.db` aussi. Ce qui change : le trafic (331904 octets au lieu d'un
+  octet pour la vérification). Avec des callbacks réseau enregistrés, le téléchargement lit par
+  morceaux comme PROJ (`RemoteFile::read_at`).
+- **TTL.** `TtlSetting::Ignore` (`ignore_ttl_setting = TRUE`) n'envoie aucune requête : c'est le
+  code de PROJ (`if (!ignore_ttl_setting)` dans `proj_is_download_needed`). Le commentaire de
+  l'en-tête de PROJ dit le contraire ; le cas `download_whole_files` mesure le code.
+- **Contexte.** Le crate n'a pas de contexte par défaut modifiable. Le cas C++ bascule le réseau
+  du contexte par défaut et d'un second contexte ; ici chaque état est un `ProjBuilder`
+  (`enable_network`), et un `Proj` garde le réseau du builder qui l'a créé. `grid_info` et
+  `look_for_grid_info` prennent donc le réseau de leur builder.
+- **Rappel de progression.** Le rappel reçoit le `&ProjBuilder` qui télécharge
+  (`DownloadProgress = dyn FnMut(&ProjBuilder, f64) -> bool`). La comparaison
+  `vectPct.back().first == ctx` devient `ptr::eq`, sur chaque rappel.
+- **Erreurs.** Sans réseau, serveur muet, rappel qui arrête, ou fichier impossible à écrire :
+  `ProjError::Network` ou `ProjError::Path`. PROJ renvoie `false` et journalise.
+- **Enregistrement.** `lastModified` et `etag` absents sont stockés comme `''` ; PROJ les stocke
+  comme `NULL`. La comparaison est la même, PROJ lisant `NULL` comme `""`.
+- **Cache désactivé.** Comme PROJ, un téléchargement sans cache écrit le fichier puis échoue
+  (`ProjError::Network`), car `DiskChunkCache::open` n'ouvre rien.
+- **`lookForGridInfo` sans ligne.** La branche sans ligne ne consulte que le disque. PROJ ouvre
+  aussi la grille à distance quand le réseau est actif (`open_resource_file`). Le cas n'en a pas
+  besoin : après le téléchargement la grille est sur disque, et avant, le réseau est coupé.
+- **Proxy HTTPS.** Ajouté : `https_proxy` puis `HTTPS_PROXY` (l'ordre de curl), `no_proxy` puis
+  `NO_PROXY` par nom ou par domaine (pas de plage CIDR), un `CONNECT` par requête. Seules les
+  requêtes `https` passent par le proxy. Un proxy avec identifiants est ignoré : connexion directe.
+  C'est la condition pour que le CDN soit joignable dans ce bac à sable, où le DNS direct échoue.
+- **Sonde.** `cdn_reachable` est la requête de `initial_check` (`Range: bytes=0-1`, `206`), faite
+  par le test et non par le client du crate, pour qu'un téléchargement cassé ne passe pas pour un
+  CDN injoignable. Le test retourne tôt si la sonde échoue, comme PROJ, et il l'écrit dans la
+  sortie du test. Ce retour anticipé ne vérifie rien : c'est le seul cas où le test ne porte pas.
+
 ## Ce qui reste ouvert
 
 - Lecture par morceaux pour les GeoTIFF compressés (deflate), à prédicteur ou planaires : ils
@@ -182,8 +222,8 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
   `vgridshift` recharge), et pour les lectures entières (`read_whole`).
 - Validation de cache par `ETag` et `Last-Modified` : cache disque (lot cache).
 - Cache SQLite : TTL, taille max, verrou, `proj_grid_cache_clear` (lot cache, autre agent).
-- API de téléchargement explicite (`is_download_needed`, `download_file`) et API de fichiers
-  (`file_api`).
+- API de fichiers (`file_api`). L'API de téléchargement est sur `ProjBuilder` (voir Décisions) ; ni
+  façade C, ni vérification par `Range`.
 - Façade C des opérations (`proj_create_operations`, contexte de fabrique C) : absente. Le cas
   de `do_not_attempt_network_access_known_available_network_on` est couvert par
   `ProjBuilder::create_operations`, sans façade C.
@@ -208,20 +248,17 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
 - `projsync` : non commencé.
 - `basic` (partie « on ») : `fr_ign_ntf_r93.tif` absent du dépôt et de la référence. Sa
   condition `networkAccessOK` vient de `initial_check`, non porté (voir ci-dessus).
-- `download_whole_files` : non porté, et c'est une cause de données, pas de code. Le test attend
-  `z` = 36.5909996032715 (lon 12, lat 56) sur `dk_sdfe_dvr90.tif`, téléchargé depuis
-  `cdn.proj.org`. Ce fichier n'est ni dans le dépôt, ni dans `target/proj-reference`, ni sur le
-  système ; le CDN est refusé (403 au `CONNECT`, mesuré avec `libproj` 9.9.0). Sans les octets,
-  la valeur et les trois rappels de progression ne se mesurent pas, et un fichier de
-  substitution donnerait des valeurs non issues de PROJ. Il manque aussi l'API de téléchargement
-  (`proj_is_download_needed`, `proj_download_file` avec progression, `pj_find_file`), le
-  `lookForGridInfo` public et `proj_grid_info` avec contexte réseau. Détail ligne à ligne :
-  `docs/AUDIT-network.md`, section « download_whole_files ».
+- `pj_find_file` avec `disable_network = false` : non porté. `find_local_file` ne regarde que le
+  disque.
+- `docs/UNPORTED-UNIT.md` liste encore `networking.download_whole_files`. Ce lot ne l'a pas retiré
+  (consigne : ne pas éditer le ledger) : le retrait suit avec `UPDATE_DOCS=1 cargo test --test
+  docs_in_sync`, par le mainteneur.
 
 ## Commandes
 
 ```
 cargo test --test unit_network_core --test unit_network_endpoint_env --test unit_network_local --test network_grid
+cargo test --test unit_network_download
 cargo test --test unit_network_core proj_coordoperation_get_grid_used
 cargo test --lib callback_tests
 cargo +1.100.0 clippy --all-targets --all-features -- -D warnings

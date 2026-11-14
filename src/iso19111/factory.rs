@@ -1336,15 +1336,34 @@ impl DatabaseContext {
         name: &str,
         known: GridAvailabilityUse,
     ) -> Result<Option<GridInfo>, FactoryError> {
+        let lookup = self.grid_lookup(name, known)?;
+        Ok(lookup.in_database.then_some(lookup.info))
+    }
+
+    /// `lookForGridInfo` with both of its results: whether the database has a row for `name`
+    /// (the return value of PROJ), and the record. A grid with no row is still `available` when
+    /// its file is on the search path (PROJ's `gridAvailable`), and then `full_name` is its path.
+    ///
+    /// # Errors
+    ///
+    /// The database rejects the statement.
+    pub(crate) fn grid_lookup(
+        &self,
+        name: &str,
+        known: GridAvailabilityUse,
+    ) -> Result<GridLookup, FactoryError> {
         if name == "null" {
-            return Ok(Some(GridInfo {
-                full_name: String::new(),
-                package_name: String::new(),
-                url: String::new(),
-                direct_download: false,
-                open_license: true,
-                available: true,
-            }));
+            return Ok(GridLookup {
+                in_database: true,
+                info: GridInfo {
+                    full_name: String::new(),
+                    package_name: String::new(),
+                    url: String::new(),
+                    direct_download: false,
+                    open_license: true,
+                    available: true,
+                },
+            });
         }
         let rows = self.query(
             "SELECT grid_packages.package_name, grid_alternatives.url, \
@@ -1362,10 +1381,13 @@ impl DatabaseContext {
             // An official grid name is looked up under the PROJ name that replaces it.
             if let Some((alternative, _)) = self.proj_grid_alternative(name)? {
                 if alternative != name {
-                    return self.look_for_grid_info(&alternative, known);
+                    return self.grid_lookup(&alternative, known);
                 }
             }
-            return Ok(None);
+            return Ok(GridLookup {
+                in_database: false,
+                info: unlisted_grid(name),
+            });
         };
         let package_name = row[0].text();
         let url = if row[1].empty() {
@@ -1398,14 +1420,17 @@ impl DatabaseContext {
                 full_name = path.to_string_lossy().into_owned();
             }
         }
-        Ok(Some(GridInfo {
-            full_name,
-            package_name,
-            url,
-            direct_download,
-            open_license,
-            available,
-        }))
+        Ok(GridLookup {
+            in_database: true,
+            info: GridInfo {
+                full_name,
+                package_name,
+                url,
+                direct_download,
+                open_license,
+                available,
+            },
+        })
     }
 
     /// Geographic CRS built the way `proj_create_geographic_crs` builds one.
@@ -1598,6 +1623,32 @@ fn license_flag(primary: &Cell, fallback: &Cell) -> bool {
         fallback.text() == "1"
     } else {
         primary.text() == "1"
+    }
+}
+
+/// The answer of `lookForGridInfo`: whether `proj.db` has a row for the grid (PROJ's return
+/// value), and the record. A grid with no row can still be `info.available` on disk.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GridLookup {
+    /// The database has a row for the grid, under its name or its old name.
+    pub in_database: bool,
+    /// The record. Without a row, only `full_name` and `available` are set.
+    pub info: GridInfo,
+}
+
+/// The record of a grid with no row in `proj.db`: available when its file is on the search path.
+fn unlisted_grid(name: &str) -> GridInfo {
+    let path = crate::gridpath::resolve(name);
+    GridInfo {
+        full_name: path
+            .as_ref()
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        package_name: String::new(),
+        url: String::new(),
+        direct_download: false,
+        open_license: false,
+        available: path.is_some(),
     }
 }
 

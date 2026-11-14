@@ -248,6 +248,20 @@ impl DiskChunkCache {
         Ok(())
     }
 
+    /// Set the time of the last check of a whole-file download of `url` (`UPDATE ... lastChecked`).
+    /// Nothing changes when `url` has no record.
+    pub(crate) fn set_download_last_checked(
+        &self,
+        url: &str,
+        checked: i64,
+    ) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE downloaded_file_properties SET lastChecked = ?1 WHERE url = ?2",
+            params![checked, url],
+        )?;
+        Ok(())
+    }
+
     /// The chunk `index` of `url`, with its real length, and moved to the head of the LRU list.
     pub(crate) fn chunk(&self, url: &str, index: u64) -> Option<Vec<u8>> {
         let offset = i64::try_from(index.checked_mul(CHUNK_SIZE)?).ok()?;

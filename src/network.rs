@@ -596,6 +596,15 @@ fn join_endpoint(endpoint: &str, file: &str) -> Option<String> {
     }
 }
 
+/// The URL of `name`, as PROJ's `build_url` gives it (`networkfilemanager.cpp`): a path or a URL
+/// is its own URL, and a plain name follows the endpoint. Empty when the endpoint is empty.
+pub(crate) fn build_url(ctx: &GridContext, name: &str) -> String {
+    if is_http(name) || is_explicit_path(name) {
+        return name.to_owned();
+    }
+    join_endpoint(&ctx.endpoint, name).unwrap_or_default()
+}
+
 fn bare_short_name(name: &str) -> bool {
     plain_name(name) && !name.contains(".tif")
 }
@@ -637,7 +646,8 @@ fn is_explicit_path(name: &str) -> bool {
         && (bytes[2] == b'\\' || bytes[2] == b'/')
 }
 
-fn cache_file_name(name: &str) -> Option<String> {
+/// The file name at the end of `name`, the file a download is stored under.
+pub(crate) fn cache_file_name(name: &str) -> Option<String> {
     if name.is_empty() || name.contains('\0') || name.split(['/', '\\']).any(|part| part == "..") {
         return None;
     }
@@ -761,13 +771,7 @@ struct HttpReply {
 }
 
 fn http_exchange(target: &HttpTarget) -> Option<HttpReply> {
-    let stream = TcpStream::connect((target.host.as_str(), target.port)).ok()?;
-    stream
-        .set_read_timeout(Some(Duration::from_secs(30)))
-        .ok()?;
-    stream
-        .set_write_timeout(Some(Duration::from_secs(30)))
-        .ok()?;
+    let stream = connect(target)?;
     if target.https {
         let connector = native_tls::TlsConnector::new().ok()?;
         let tls = connector.connect(&target.host, stream).ok()?;
@@ -775,6 +779,80 @@ fn http_exchange(target: &HttpTarget) -> Option<HttpReply> {
     } else {
         read_http(stream, target)
     }
+}
+
+/// The TCP stream to `target`: direct, or through the `CONNECT` tunnel of the HTTPS proxy when
+/// [`https_proxy`] names one. Both ways have the timeouts of a request.
+fn connect(target: &HttpTarget) -> Option<TcpStream> {
+    let proxy = https_proxy(target);
+    let (host, port) = match &proxy {
+        Some((host, port)) => (host.as_str(), *port),
+        None => (target.host.as_str(), target.port),
+    };
+    let stream = TcpStream::connect((host, port)).ok()?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(30)))
+        .ok()?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(30)))
+        .ok()?;
+    match proxy {
+        Some(_) => open_tunnel(stream, target),
+        None => Some(stream),
+    }
+}
+
+/// The HTTPS proxy an `https` request goes through, as `(host, port)`: `https_proxy`, else
+/// `HTTPS_PROXY`, as curl reads them. Nothing when the host is listed in `no_proxy` or `NO_PROXY`,
+/// or when the proxy URL carries credentials, which are not sent. A plain `http` request is never
+/// sent through the proxy.
+fn https_proxy(target: &HttpTarget) -> Option<(String, u16)> {
+    if !target.https || bypasses_proxy(&target.host) {
+        return None;
+    }
+    let value = nonempty_env("https_proxy").or_else(|| nonempty_env("HTTPS_PROXY"))?;
+    let rest = value
+        .strip_prefix("http://")
+        .or_else(|| value.strip_prefix("https://"))
+        .unwrap_or(&value);
+    let authority = rest.split('/').next()?;
+    if authority.is_empty() || authority.contains('@') {
+        return None;
+    }
+    split_host_port(authority, 80)
+}
+
+/// Whether `no_proxy` (or `NO_PROXY`) lists `host`: `*`, the host itself, or a domain it is in.
+fn bypasses_proxy(host: &str) -> bool {
+    let Some(list) = nonempty_env("no_proxy").or_else(|| nonempty_env("NO_PROXY")) else {
+        return false;
+    };
+    let host = host.to_ascii_lowercase();
+    list.split(',')
+        .map(|entry| entry.trim().trim_start_matches('.').to_ascii_lowercase())
+        .filter(|entry| !entry.is_empty())
+        .any(|entry| entry == "*" || host == entry || host.ends_with(&format!(".{entry}")))
+}
+
+/// Asks the proxy for a `CONNECT` tunnel to `target`. The reply head is read one byte at a time,
+/// so no byte of the TLS handshake that follows is read here. `None` unless the proxy answers 200.
+fn open_tunnel(mut stream: TcpStream, target: &HttpTarget) -> Option<TcpStream> {
+    let request = format!(
+        "CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\nUser-Agent: proj-rs\r\n\r\n",
+        host = target.host,
+        port = target.port
+    );
+    stream.write_all(request.as_bytes()).ok()?;
+    let mut head = Vec::new();
+    let mut byte = [0_u8; 1];
+    while !head.ends_with(b"\r\n\r\n") {
+        if head.len() > 16_384 || stream.read(&mut byte).ok()? == 0 {
+            return None;
+        }
+        head.push(byte[0]);
+    }
+    let status_line = std::str::from_utf8(&head).ok()?.lines().next()?;
+    (status_line.split_whitespace().nth(1)? == "200").then_some(stream)
 }
 
 fn read_http(mut stream: impl Read + Write, target: &HttpTarget) -> Option<HttpReply> {

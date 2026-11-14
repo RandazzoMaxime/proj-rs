@@ -4,7 +4,7 @@
 //! Not ported here, with the cause in `docs/AUDIT-network.md`: the callback cases (`getfilesize`,
 //! `simul_*`; `custom` is in `unit_network_core.rs`), the SQLite grid cache (`cache_*`,
 //! `proj_grid_cache_clear`), the
-//! explicit download API (`download_whole_files`, `file_api`), and the lazy grid errors of
+//! file API (`file_api`), and the lazy grid errors of
 //! `network_endpoint_api_and_not_reachable_*`.
 
 use proj_rs::ProjBuilder;

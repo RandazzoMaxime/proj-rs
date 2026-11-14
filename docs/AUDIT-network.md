@@ -44,7 +44,7 @@ restent lues entières), validation de la fraîcheur d'un fichier ouvert par `ET
 `Last-Modified` pour les autres étapes que `vgridshift` et pour le cache disque (seule
 `vgridshift` recharge, voir `docs/PORTING-network.md`), cache SQLite (TTL, taille max, verrou :
 lot cache, autre agent),
-API de téléchargement explicite, API de fichiers, façade C des opérations
+API de fichiers, façade C des opérations
 (`proj_create_operations` et contexte de fabrique C : la fabrique Rust est utilisée à la place,
 par `ProjBuilder::create_operations` quand des callbacks sont enregistrés, voir
 `do_not_attempt_network_access_known_available_network_on` et `pyproj_issue_1192`).
@@ -70,6 +70,7 @@ Tests de l'API existants, hors liste C++ : `tests/network_grid.rs`
 | `networking.network_endpoint_api_and_not_reachable_vgridshift` | `tests/unit_network_core.rs::endpoint_api_not_reachable_vgridshift` | porté (`POSGAR 2007 to SRVN16 height (1)`) |
 | `networking.do_not_attempt_network_access_known_available_network_on` | `tests/unit_network_core.rs::do_not_attempt_network_access_known_available_network_on` | porté : mesuré sur `libproj` 9.9.0 (sonde C reproduisant le TEST, `probe2.c` non versionnée) : `EPSG:4326` vers `EPSG:4267`, `KNOWN_AVAILABLE`, `PARTIAL_INTERSECTION`, réseau on, callbacks enregistrés : 79 opérations (noms et ordre identiques, réseau off aussi), 0 appel de callback ; témoin : `+proj=hgridshift +grids=proj_rs_no_such_grid.tif` donne `NULL` et un `open`. Port : `ProjBuilder::create_operations` (nouvelle API, enveloppe `with_context` comme les autres créations du builder), liste exacte, 0 appel, témoin à 1 appel. `ASSERT_TRUE` de `proj_context_set_network_callbacks` : sans objet en Rust (l'enregistrement ne renvoie rien) ; voir `docs/PORTING-network.md`. |
 | `networking.proj_coordoperation_get_grid_used` | `tests/unit_network_core.rs::proj_coordoperation_get_grid_used` | porté, avec octets de substitution : les trois assertions du TEST (`shortName`, `fullName` vide, `url` `https://cdn.proj.org/nz_linz_nzgd2000-c120100904-grid01.tif`), deux créations. Mesuré sur `libproj` 9.9.0 (sonde C `grid_used_probe.c`, non versionnée, mêmes callbacks) : avec les octets servis, `available` 1, `directDownload` 0, `openLicense` 0, une seule `open(url, 0, 16384)` pour les deux créations, aucun appel pendant `proj_coordoperation_get_grid_used` ; sans callbacks, `proj_create` renvoie `NULL`. Le port : `Proj::grids_needed` ouvre une grille sans ligne en base à `endpoint/nom` quand le réseau est actif (`network::open_remote_grid`, `RemoteGrids::Open`). Le test ne reproduit pas la garde `networkAccessOK` : il tourne toujours, puisque les callbacks répondent sans I/O. Écarts : `docs/PORTING-network.md`. |
+| `networking.download_whole_files` | `tests/unit_network_download.rs::download_whole_files` | porté, contre le vrai CDN : les 37 assertions une à une (section « download_whole_files (porté) ») ; valeurs de PROJ 9.9.0 mesurées avec `libproj`. |
 
 Tests unitaires ajoutés hors liste C++ (`src/network.rs`, `mod callback_tests`) :
 la lecture entière d'une grille par callbacks en plages de 16384 octets
@@ -80,7 +81,7 @@ l'extraction de la taille depuis `Content-Range`.
 
 | # | TEST() C++ | Statut | Cause exacte si écart |
 |---|---|---|---|
-| 1 | `initial_check` | écart, sans objet (0 assertion) | Le TEST (lignes 90-111 de `test_network.cpp`) n'a aucun `ASSERT` ni `EXPECT` : c'est une sonde. `GET https://cdn.proj.org/fr_ign_ntf_r93.tif` avec `CURLOPT_RANGE` `0-1` (le format `%llu-%llu` de PROJ), puis `networkAccessOK = (code == 206)`. PROJ traite tout code `< 300` comme un succès pour une plage (`networkfilemanager.cpp`, lignes 1774 à 1786). Seule consommatrice : `basic` (lignes 143 et 169, `if (networkAccessOK)`), dont la partie « on » n'est pas portée (ligne 2). Rien à porter : sans assertion, il n'y a pas de valeur PROJ à reprendre. La sonde ne peut pas tourner ici (proxy : `CONNECT tunnel failed, response 403` vers `cdn.proj.org`), et la porter demanderait un `Range` que la crate n'envoie pas (`http_get`) et un appel au CDN réel dans les tests. Le défaut de l'endpoint, `https://cdn.proj.org`, est confirmé contre le `libproj` 9.9.0 de référence (`proj_context_get_url_endpoint`, réseau désactivé par défaut). |
+| 1 | `initial_check` | écart, sans objet (0 assertion) | Le TEST (lignes 90-111 de `test_network.cpp`) n'a aucun `ASSERT` ni `EXPECT` : c'est une sonde. `GET https://cdn.proj.org/fr_ign_ntf_r93.tif` avec `CURLOPT_RANGE` `0-1` (le format `%llu-%llu` de PROJ), puis `networkAccessOK = (code == 206)`. PROJ traite tout code `< 300` comme un succès pour une plage (`networkfilemanager.cpp`, lignes 1774 à 1786). Seule consommatrice : `basic` (lignes 143 et 169, `if (networkAccessOK)`), dont la partie « on » n'est pas portée (ligne 2). Rien à porter : sans assertion, il n'y a pas de valeur PROJ à reprendre. La sonde est reprise par `tests/unit_network_download.rs` (`cdn_reachable`, même requête, `206` attendu) : le CDN répond ici par `HTTPS_PROXY`, que le client HTTP suit depuis ce lot (`CONNECT`, `src/network.rs`). Le défaut de l'endpoint, `https://cdn.proj.org`, est confirmé contre le `libproj` 9.9.0 de référence (`proj_context_get_url_endpoint`, réseau désactivé par défaut). |
 | 2 | `basic` | partiel | Partie « off » portée (ligne 1 de la table). Partie « on » non portée : les valeurs `1.9992776848` / `48.9999322600` viennent de `fr_ign_ntf_r93.tif`, absent du dépôt et de `build/data` de la référence ; sans grille, aucune valeur PROJ à comparer. |
 | 3 | `curl_invalid_resource` | porté | Voir « Cas portés ». |
 | 4 | `custom` | porté | Voir « Cas portés ». |
@@ -101,108 +102,101 @@ l'extraction de la taille depuis `Content-Range`.
 | 19 | `cache_saturation` | écart, lot cache | `proj_grid_cache_set_max_size` absent ; la base SQLite n'existe pas (voir 17). |
 | 20 | `cache_ttl` | écart, lot cache | `proj_grid_cache_set_ttl` absent (valeur `-1` refusée, `86400` acceptée) ; pas de métadonnées de fraîcheur. |
 | 21 | `cache_lock` | écart, lot cache | Verrou de cache multi-processus absent. |
-| 22 | `download_whole_files` | écart, bloqué par les octets du CDN | Non porté : la valeur attendue (`z` 36.5909996032715) et les trois rappels de progression dépendent de `dk_sdfe_dvr90.tif`, fichier du CDN absent du dépôt, de la référence et du système, et le CDN est refusé. Détail et mesures : section « download_whole_files » ci-dessous. |
+| 22 | `download_whole_files` | porté | `tests/unit_network_download.rs::download_whole_files`, contre le vrai CDN (`dk_sdfe_dvr90.tif`, 331904 octets). Les 37 assertions sont portées une à une (section « download_whole_files (porté) »). Écarts : `docs/PORTING-network.md`. |
 | 23 | `file_api` | écart | `proj_context_set_fileapi` (open, read, write, close, exists, mkdir, unlink, rename) absent. Toutes les lectures de grilles passent par `std::fs` (`gridpath::read`, `read_resource`) : une API de fichiers demande de les router toutes. |
 | 24 | `proj_coordoperation_get_grid_used` | porté, avec octets de substitution | Les trois assertions sont portées (nom, nom complet vide, URL `https://cdn.proj.org/...`), à chaque création. Le fichier CDN n'est pas dans le dépôt et le réseau est coupé : sans octets, `proj_create` renvoie `NULL` (mesuré, `libproj` 9.9.0, « could not find required grid(s) »). Le test sert donc les 956 octets de la fixture egm96 tronquée sous cette URL. Les valeurs asserties ne dépendent pas du contenu ; ce qui en dépend (séquence d'appels avec le vrai fichier, `available` d'un vrai fichier) n'est pas mesuré. Voir « Cas portés dans ce lot ». |
 | 25 | `pyproj_issue_1192` | porté | `tests/unit_network_core.rs::pyproj_issue_1192`. Pas de façade C : le contexte de fabrique est `CoordinateOperationContext` (public), avec `GridAvailabilityUse::IgnoreGridAvailability` et `SpatialCriterion::PartialIntersection`. La liste (10 opérations, noms et ordre) et les drapeaux d'instanciabilité (réseau off : 8 vraies ; réseau on : 10) sont ceux de `libproj` 9.9.0 mesurés avec une sonde C. Écarts et lacune (opérations à grille absente, réseau on) : `docs/PORTING-network.md`. |
 | 26 | `do_not_attempt_network_access_known_available_network_on` | porté | Voir « Cas portés dans ce lot ». La façade C reste absente : la fabrique passe par `ProjBuilder::create_operations`, qui applique le contexte du builder. |
 
-Compte : 26 TEST() C++ ; 14 portés (`curl_invalid_resource`, `simul_open_error`,
-`simul_file_change_while_opened`,
-`simul_read_range_error`, `network_endpoint_env_variable`, `custom`, `getfilesize`, `proj_coordoperation_get_grid_used` (avec octets de substitution), `pyproj_issue_1192`, `do_not_attempt_network_access_known_available_network_on`, et les quatre
-`not_reachable`) ; 1 partiel (`basic`) ; 11 écarts, dont 5 du lot cache (17 à 21) et `initial_check` (sans objet).
+Compte : 26 TEST() C++ ; 15 portés (les 14 de la liste ci-dessus, et `download_whole_files`) ; 1 partiel (`basic`) ; 10 écarts : `initial_check` (sans objet), `file_api`, les cinq du lot cache (17 à 21), et les trois `curl_*` du tableau (9 à 11), que le lot cache porte dans la section ci-dessus.
 
-## download_whole_files : cause de l'écart (non porté)
+## download_whole_files (porté)
 
-Le TEST C++ (`test/unit/test_network.cpp:1859`, 37 lignes `EXPECT_`/`ASSERT_`) n'est pas
-porté. Il ne s'agit pas d'un choix de lot : trois obstacles, dont le premier seul suffit.
+Le TEST C++ (`test/unit/test_network.cpp:1859`, 37 lignes `EXPECT_`/`ASSERT_`) est porté dans
+`tests/unit_network_download.rs::download_whole_files`, contre le vrai CDN : il télécharge
+`https://cdn.proj.org/dk_sdfe_dvr90.tif` (331904 octets) dans le répertoire utilisateur d'un dossier
+temporaire. Comme le TEST, il retourne tôt si le CDN ne répond pas (`networkAccessOK`). La sonde est la
+requête de `initial_check` (`cdn_reachable` : `GET` de `fr_ign_ntf_r93.tif` avec `Range: bytes=0-1`,
+`206` attendu), faite par le test lui-même et non par le client du crate : un téléchargement cassé ne
+peut donc pas passer pour un CDN injoignable.
 
-Liste des assertions (ligne du C++, ce qu'elle vérifie, statut du port) :
+Ce qui bloquait, et ce qui a été levé :
 
-| Ligne | Assertion | Statut |
-|---|---|---|
-| 1875-1877 | `proj_grid_info` : filename `""`, gridname `dk_sdfe_dvr90.tif`, format `gtiff` (réseau on) | bloqué : la référence sans CDN donne `missing` |
-| 1889, 1892 | `lookForGridInfo` faux, `gridAvailable` faux | API `pub(crate)` seulement ; valeurs mesurables |
-| 1896 | `proj_is_download_needed` vrai | mesuré `1` (référence) ; API absente en Rust |
-| 1899, 1902 | `pj_find_file(disable_network)` faux, chaîne vide | API absente |
-| 1904 | `proj_download_file` vrai | bloqué : CDN refusé |
-| 1907, 1910 | `pj_find_file` vrai après téléchargement, chemin non vide | bloqué (fichier) |
-| 1914, 1917 | `lookForGridInfo` faux, `gridAvailable` vrai | bloqué (fichier) |
-| 1920 | le fichier `proj_test_tmp/dk_sdfe_dvr90.tif` s'ouvre | bloqué (fichier) |
-| 1932 | `proj_create` du pipeline `vgridshift` réussit | bloqué : mesuré `NULL` 1029 sans fichier |
-| 1939 | `z` = 36.5909996032715 à 1e-10 près | bloqué : valeur des octets du CDN |
-| 1944 | `proj_is_download_needed` faux après téléchargement | bloqué (fichier) |
-| 1950-1957 | `cache.db` ouvrable, `UPDATE ... lastChecked = 0` exécuté | cache SQLite du test, forme à confirmer |
-| 1963 | TTL ignoré : `proj_is_download_needed(..., true)` faux | API absente |
-| 1969-1977 | `lastChecked` vaut toujours 0 (`SQLITE_ROW`, `int64` 0) | API absente |
-| 1983 | `proj_is_download_needed` faux : recontrôle sur le CDN (`lastChecked` expiré), pas de téléchargement | bloqué : dépend du CDN |
-| 1989-1997 | `lastChecked` mis à jour (non nul) | API absente |
-| 2007-2008 | `UPDATE ... lastModified = 'foo'` exécuté | cache SQLite du test |
-| 2013 | `proj_is_download_needed` vrai après `lastModified` invalide (contrôle sur le CDN) | bloqué : dépend du CDN |
-| 2026 | `proj_download_file` avec progression vrai | bloqué : CDN refusé |
-| 2028 | trois rappels de progression (taille du fichier entre 200001 et 300000 octets, morceaux de 100000) | bloqué (fichier) |
-| 2029 | dernier rappel sur `ctx` | bloqué (fichier) |
-| 2030 | dernier pourcentage = 1.0 | bloqué (fichier) |
+1. Le client HTTP du crate ne suivait pas `HTTPS_PROXY`. Ici le CDN n'est joignable que par `CONNECT`
+   (le DNS direct échoue). Ajouté dans `src/network.rs` (`connect`, `https_proxy`, `open_tunnel`,
+   `bypasses_proxy`). Sans lui, la sonde échouerait et le cas rendrait un succès vide.
+2. Les API manquaient : `proj_is_download_needed`, `proj_download_file` avec progression,
+   `pj_find_file` sans réseau, `lookForGridInfo` avec `found` et `gridAvailable`, `proj_grid_info`
+   avec le réseau du contexte. Ajoutées sur `ProjBuilder` (`src/network_download.rs`, `src/proj.rs`),
+   avec `TtlSetting`, `DownloadProgress` et `GridLookup` (`src/iso19111/factory.rs`).
+3. Les octets : le fichier est sur le CDN et le test le télécharge. Aucun fichier de substitution
+   n'est fabriqué ni copié dans le dépôt.
 
-Les assertions qui ne lisent que l'état (base, API de téléchargement, cache SQLite du test) seraient
-portables une fois l'API ajoutée. Les autres dépendent du CDN : le fichier, ou le contrôle de
-fraîcheur qui l'interroge. La valeur `z` et les rappels de progression ne se vérifient qu'avec
-les octets du CDN.
+Mesures de PROJ 9.9.0 (`libproj` 9.9.0 TIFF et curl, sonde C hors dépôt, `PROJ_DATA` de la référence,
+réseau par `HTTPS_PROXY`) :
 
-1. **Le fichier attendu n'existe pas hors CDN.** Le test télécharge
-   `https://cdn.proj.org/dk_sdfe_dvr90.tif` (URL construite depuis l'endpoint, le nom
-   n'a pas de ligne dans `proj.db`, voir 3). Recherche sur tout le système de fichiers
-   (`find / -iname 'dk_sdfe*'`) : rien ; ni `tests/`, `data/`, ni `target/proj-reference/`
-   (`build/data`, `src/data`) ne le contiennent. Or la valeur attendue
-   `z = 36.5909996032715` (lon 12, lat 56, `vgridshift` multiplicateur 1) et les trois rappels de
-   progression (taille du fichier entre 200001 et 300000 octets avec `PROJ_FULL_FILE_CHUNK_SIZE=100000`)
-   ne se calculent qu'avec ces octets. Un fichier de substitution donnerait des valeurs que
-   nous aurions choisies, pas celles de PROJ 9.9.0 : c'est exactement ce que la règle
-   « valeurs attendues venant de PROJ » interdit. Le CDN est refusé par le proxy
-   (mesuré : `Cannot open https://cdn.proj.org/dk_sdfe_dvr90.tif: CONNECT tunnel failed,
-   response 403` avec la référence).
-2. **Mesures de la référence sans le fichier** (`libproj` 9.9.0 TIFF+curl, réseau activé
-   sur le contexte et sur le contexte par défaut, sonde C non versionnée) :
-   - `proj_grid_info("dk_sdfe_dvr90.tif")` : `filename` vide, `gridname` vide, `format`
-     `missing`. Le test attend `gridname` = `dk_sdfe_dvr90.tif` et `format` = `gtiff`
-     (lignes 1874-1877). Cette assertion dépend donc aussi du CDN, pas seulement du fichier.
-   - `proj_is_download_needed(ctx, "dk_sdfe_dvr90.tif", 0)` : `1`, comme `ASSERT_TRUE` de la
-     ligne 1896.
-   - `proj_create` du pipeline `vgridshift` : `NULL`, `proj_context_errno` 1029 (`File not
-     found or invalid`). Le test l'attend réussi après téléchargement (ligne 1932).
-3. **La base ne connaît pas le nom.** `proj.db` de la référence : 479 lignes dans
-   `grid_alternatives`, aucune pour `dk_sdfe_dvr90.tif` (les entrées DVR90 sont
-   `dk_sdfi_dvr90_2002/2013/2023.tif` et `dk_kds_dvr90_evrf2019*.tif`). `lookForGridInfo`
-   renvoie donc `false` : c'est la première assertion attendue par le test (ligne 1889),
-   mais la liste de `gridAvailable` ensuite dépend du fichier téléchargé.
+- `proj_grid_info("dk_sdfe_dvr90.tif")`, réseau activé : `filename` vide, `gridname`
+  `dk_sdfe_dvr90.tif`, `format` `gtiff`.
+- Avant le téléchargement : `proj_is_download_needed` 1 ; `pj_find_file(disable_network)` 0, chaîne
+  vide ; `lookForGridInfo` faux ; `gridAvailable` faux.
+- `proj_download_file` sans rappel : 1. Le fichier fait 331904 octets. Ensuite `pj_find_file` 1, et
+  `proj_create` du pipeline `vgridshift` réussit.
+- `z` = 36.590999603271491 (lon 12, lat 56).
+- `lastChecked = 0`, puis `proj_is_download_needed(…, true)` : 0, et `lastChecked` reste 0 ;
+  `(…, false)` : 0, et `lastChecked` est mis à jour ; `lastModified = 'foo'`, puis `(…, false)` : 1.
+- `proj_download_file` avec rappel : 1, trois rappels. Pourcentages 0.60258387967605087 (200000
+  octets), 0.90387581951407636 (300000), 1 (331904). Le premier morceau n'est pas rapporté.
 
-Ce que le port devrait ajouter, hors des octets (aucune de ces API n'existe en Rust public) :
+Les 37 assertions du TEST, une à une (ligne du C++, assertion, équivalent du port, statut) :
 
-- `proj_is_download_needed(ctx, name, ignore_ttl)` et `proj_download_file(ctx, name, ignore_ttl,
-  callback, data)` : un nom de grille, pas l'index `files.geojson` de `projsync` (qui a
-  `is_download_needed`/`download` pour `projsync` seulement, `src/projsync.rs:411`, `:434`).
-  Le TTL de `downloaded_file_properties` (`src/network_cache.rs:212-246`) n'est lu ni écrit par
-  le chemin de téléchargement d'une grille (`network::fetch_grid` passe par la table
-  `properties`, `src/network_cache.rs:176`).
-- `pj_find_file(ctx, name, out, size, disable_network)` : une option `enum` plutôt qu'un
-  booléen public, selon la convention du crate.
-- Téléchargement entier par morceaux de taille configurable (`PROJ_FULL_FILE_CHUNK_SIZE`,
-  100000 dans le test) avec rappel de progression. Le port fixe 16384 octets pour les
-  lectures entières (`fetch_with_callbacks`) et n'a pas de rappel de progression.
-- `proj_grid_info` avec le contexte réseau : `info::grid_info(name)` (`src/info.rs:63`) est une
-  fonction libre qui ne lit que le chemin de recherche local.
-- `lookForGridInfo` exposé sur le contexte : `look_for_grid_info` est `pub(crate)`
-  (`src/iso19111/factory.rs:1334`).
-- Variables d'environnement `PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY`, `PROJ_USER_WRITABLE_DIRECTORY`
-  et `PROJ_FULL_FILE_CHUNK_SIZE` mises par le test au milieu de l'exécution, et `sqlite3`
-  ouvert sur `cache.db` pour lire et forcer `lastChecked` puis `lastModified` : la forme de
-  ce cache (`downloaded_file_properties`) doit correspondre à PROJ.
+| Ligne C++ | Assertion | Équivalent dans `tests/unit_network_download.rs` | Statut |
+|---|---|---|---|
+| 1875 | `proj_grid_info` : `filename` vide | `grid_info.filename.is_none()` | porté |
+| 1876 | `proj_grid_info` : `gridname` = `dk_sdfe_dvr90.tif` | `grid_info.gridname` | porté |
+| 1877 | `proj_grid_info` : `format` = `gtiff` | `grid_info.format` | porté |
+| 1889 | `lookForGridInfo` faux (pas de ligne en base) | `!before.in_database` | porté |
+| 1892 | `gridAvailable` faux avant téléchargement | `!before.info.available` | porté |
+| 1896 | `proj_is_download_needed` vrai | `is_download_needed(GRID, Respect)` | porté |
+| 1899 | `pj_find_file(disable_network)` faux | `find_local_file(GRID).is_none()` | porté |
+| 1902 | chaîne de sortie vide | même condition : pas de chemin | porté |
+| 1904 | `proj_download_file` vrai | `download_file(GRID, Respect, None)` réussit | porté |
+| 1907 | `pj_find_file` vrai après téléchargement | `find_local_file(GRID)` renvoie un chemin | porté |
+| 1910 | chemin non vide | `!local.as_os_str().is_empty()` | porté |
+| 1914 | `lookForGridInfo` faux après téléchargement (pas de ligne) | `!after.in_database` | porté |
+| 1917 | `gridAvailable` vrai après téléchargement | `after.info.available` | porté |
+| 1920 | le fichier `dk_sdfe_dvr90.tif` s'ouvre | `File::open(dir.join(GRID))` | porté |
+| 1932 | `proj_create` du pipeline `vgridshift` réussit | `ctx.clone().proj(PIPELINE)` | porté |
+| 1939 | `z` = 36.5909996032715 à 1e-10 près | `convert_xyz(12, 56, 0)`, `(z - EXPECTED_Z).abs() <= 1e-10` | porté |
+| 1944 | `proj_is_download_needed` faux après téléchargement | `is_download_needed(GRID, Respect)` | porté |
+| 1950 | `cache.db` ouvrable | `rusqlite::Connection::open` sur `grid_cache_path()` | porté |
+| 1956 | `prepare` de `UPDATE ... lastChecked = 0` non nul | `execute` (erreur sinon) | porté |
+| 1957 | `UPDATE` exécuté (`SQLITE_DONE`) | `execute` renvoie `Ok` | porté |
+| 1963 | TTL ignoré : `proj_is_download_needed(…, true)` faux | `is_download_needed(GRID, Ignore)` | porté |
+| 1969 | `cache.db` ouvrable (second accès) | `Connection::open` | porté |
+| 1975 | `SELECT lastChecked` : préparation non nulle | `query_row` | porté |
+| 1976 | `SELECT lastChecked` : ligne (`SQLITE_ROW`) | `query_row` renvoie une ligne | porté |
+| 1977 | `lastChecked` vaut 0 | `assert_eq!(last_checked, 0)` | porté |
+| 1983 | recontrôle sur le CDN : faux, `lastChecked` expiré | `is_download_needed(GRID, Respect)` | porté |
+| 1989 | `cache.db` ouvrable (troisième accès) | `Connection::open` | porté |
+| 1995 | `SELECT lastChecked` : préparation non nulle | `query_row` | porté |
+| 1996 | `SELECT lastChecked` : ligne | `query_row` | porté |
+| 1997 | `lastChecked` mis à jour (non nul) | `assert_ne!(last_checked, 0)` | porté |
+| 2007 | `UPDATE ... lastModified = 'foo'` : préparation | `execute` | porté |
+| 2008 | `UPDATE` exécuté | `execute` | porté |
+| 2013 | `proj_is_download_needed` vrai après `lastModified` invalide | `is_download_needed(GRID, Respect)` | porté |
+| 2026 | `proj_download_file` avec progression vrai | `download_file(GRID, Respect, Some(&mut progress))` | porté |
+| 2028 | trois rappels de progression | `calls.len() == 3` | porté |
+| 2029 | le contexte reçu par le rappel est celui du téléchargement | `ptr::eq(downloader, &ctx)` sur chaque rappel : le rappel reçoit le `&ProjBuilder` | porté, adapté |
+| 2030 | dernier pourcentage = 1.0 | `pcts.last() == Some(1.0)` | porté |
 
-Pour une tentative future, la condition est le fichier : il faut `dk_sdfe_dvr90.tif` du CDN
-(ou une copie hors ligne fournie par le mainteneur, avec sa taille et sa valeur `z` mesurées
-par `libproj` 9.9.0 sur les mêmes octets). Sans lui, le port reste sans valeur de référence.
-Un test partiel (sans `z`, ou avec un autre fichier) ne serait pas le TEST porté et n'est pas
-commité.
+Le test ajoute deux assertions qui ne sont pas dans le TEST : les deux pourcentages intermédiaires,
+mesurés sur `libproj` 9.9.0 (0.60258387967605087 et 0.90387581951407636), à 1e-15 près.
+
+Écarts et choix du port (détail dans `docs/PORTING-network.md`) : le client HTTP n'envoie pas de
+`Range`, donc la vérification et le téléchargement lisent le fichier entier en une requête ; le
+contexte est un `ProjBuilder` (le cas C++ bascule le contexte par défaut) ; `TtlSetting::Ignore` ne
+fait aucune requête, comme le code de PROJ (son commentaire d'en-tête dit l'inverse) ; la branche sans
+ligne de `lookForGridInfo` ne lit que le disque.
 
 ## projsync (`src/apps/projsync.cpp`, `test/cli/test_projsync.sh`) : écart total
 
@@ -218,6 +212,7 @@ HTTP que `src/network.rs`. Ce lot ne le touche pas (autre agent).
 
 ```
 cargo test --test unit_network_core --test unit_network_endpoint_env --test unit_network_local --test network_grid
+cargo test --test unit_network_download
 cargo test --lib callback_tests
 ```
 

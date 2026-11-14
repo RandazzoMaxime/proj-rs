@@ -74,6 +74,7 @@ mod network;
 pub use network::{NetworkCallbacks, NetworkError, NetworkHandle, OpenReply};
 mod network_cache;
 mod network_chunks;
+mod network_download;
 mod ported;
 mod proj;
 mod proj_info;
@@ -98,8 +99,8 @@ pub use gie_api::{
 };
 pub use ported::{bench_definition, PORTED};
 pub use proj::{
-    Area, Coord, CoordinateType, Direction, ForceOver, GridCacheMode, GridCacheTtl, Info, Proj,
-    ProjBuilder, ProjCreateError, ProjError, ProjInfo,
+    Area, Coord, CoordinateType, Direction, DownloadProgress, ForceOver, GridCacheMode,
+    GridCacheTtl, Info, Proj, ProjBuilder, ProjCreateError, ProjError, ProjInfo, TtlSetting,
 };
 pub use transform::{Transform, TransformError};
 
@@ -150,14 +151,15 @@ pub use iso19111::{
     DerivedConversion, DerivedKind, DerivedProjectedCRS, EllipsoidShape, EllipsoidalCS,
     EllipsoidalHeightPolicy, EngineeringCRS, EngineeringDatum, Equivalence, Extent, FactoryError,
     GeocentricCRS, GeodeticCRS, GeodeticComponents, GeodeticReferenceFrame, GeographicCRS,
-    GridAvailabilityUse, GridDescription, GridInfo, Identifier, IntermediateCrsUse, LinunitPolicy,
-    Measure, Meridian, NameMatch, NameSpelling, ObjectDomain, ObjectType, OfficialName, OpProps,
-    OperationMethod, OperationParameter, OperationParameterValue, OrdinalCS, OutputAxisRule,
-    Parameter, ParameterLinearUnit, ParameterValue, PrimeMeridian, ProjLines, ProjStringLayout,
-    ProjectedCRS, RealizationMethod, SpatialCriterion, SphericalCS, SupersededOperations,
-    TemporalKind, TmercExport, Transformation, UnitInfo, UnitKind, UnitOfMeasure, VerticalCRS,
-    VerticalCS, VerticalReferenceFrame, Wgs84Dynamic, WktConvention, WktDialect, WktFormatter,
-    WktLines, WktNode, WktObject, WktParser, WktStrictness, CALENDAR_PROLEPTIC_GREGORIAN,
+    GridAvailabilityUse, GridDescription, GridInfo, GridLookup, Identifier, IntermediateCrsUse,
+    LinunitPolicy, Measure, Meridian, NameMatch, NameSpelling, ObjectDomain, ObjectType,
+    OfficialName, OpProps, OperationMethod, OperationParameter, OperationParameterValue, OrdinalCS,
+    OutputAxisRule, Parameter, ParameterLinearUnit, ParameterValue, PrimeMeridian, ProjLines,
+    ProjStringLayout, ProjectedCRS, RealizationMethod, SpatialCriterion, SphericalCS,
+    SupersededOperations, TemporalKind, TmercExport, Transformation, UnitInfo, UnitKind,
+    UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame, Wgs84Dynamic, WktConvention,
+    WktDialect, WktFormatter, WktLines, WktNode, WktObject, WktParser, WktStrictness,
+    CALENDAR_PROLEPTIC_GREGORIAN,
 };
 pub use iso19111::{
     create_from_user_input_with_init_rules, suggests_code_for, CodeForm, ComponentCodes, InitRules,
