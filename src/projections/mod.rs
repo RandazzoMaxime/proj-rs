@@ -23,6 +23,10 @@ mod eqdc;
 mod geos;
 mod gnom;
 mod gridshift;
+pub use gridshift::public::{
+    ExtentAndRes, GenericShiftGridSet, Grid, GridError, HorizontalShiftGridSet, Nodata,
+    NtConvention, VerticalShiftGridSet,
+};
 mod guyou;
 mod healpix;
 mod hourglass;
@@ -37,6 +41,12 @@ mod lcca;
 mod misc;
 mod mod_ster;
 mod models;
+pub use models::{
+    decimal_year_from_iso8601, Authority, Bound, Component, DefmodelError, Displacement, Epoch,
+    EpochScaleFactor, Evaluator, FallbackStrategy, Grid as DefmodelGrid, GridProvider, GridSet,
+    Link, MasterFile, SpatialExtent, SpatialModel, TimeExtent, TimeFunction, TinShiftEvaluator,
+    TinShiftFile, TinShiftFileError,
+};
 mod more;
 mod nsper;
 mod nzmg;

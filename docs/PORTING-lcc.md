@@ -1,12 +1,12 @@
 # Port — Lambert conforme conique
 
-Source : PROJ 9.4, `src/projections/lcc.cpp`, `src/tsfn.cpp`, `src/msfn.cpp`,
+Source : PROJ 9.9.0 (porté d'abord depuis 9.4), `src/projections/lcc.cpp`, `src/tsfn.cpp`, `src/msfn.cpp`,
 `src/phi2.cpp`. Lambert-93 (EPSG:2154) est ce cône sur GRS80 :
 parallèles 49° et 44°, origine 46,5°N 3°E, faux origine (700 km, 6 600 km).
 
 ## Correspondance d'API
 
-| PROJ 9.4 | PROJ-RS |
+| PROJ 9.9 | PROJ-RS |
 |---|---|
 | `PJ_PROJECTION(lcc)` | `Lcc::try_new` |
 | paramètres EPSG:2154 | `Lcc::lambert93` |
@@ -56,4 +56,4 @@ cargo test --all-features lcc
 cargo clippy --all-targets --all-features -- -D warnings
 ```
 
-Références produites par `cs2cs` de PROJ 9.4.0, tolérance 1e-6 m.
+Références produites par `cs2cs` de PROJ 9.4.0, remesurées avec 9.9.0 (identiques à tous les chiffres affichés), tolérance 1e-6 m.

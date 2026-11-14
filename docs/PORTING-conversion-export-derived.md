@@ -28,7 +28,7 @@ Rust, in the worktree:
 |---|---|---|
 | `export_proj_method` | `src/iso19111/conversion_export.rs` | New. A `PROJ <step>` conversion from a projected or vertical source to a derived projected or vertical target. Writes the C++ sequence above. Any other pair returns `false` and keeps the projection path. |
 | `export_steps` | `src/iso19111/conversion_export.rs` | Calls `export_proj_method` before `export_projection`. |
-| `axes_unit_and_axis_swap` | `src/iso19111/transform_export.rs` | Was `projected_unit_and_axis_swap(&ProjectedCRS)`. The body now takes an axis slice, so a derived CRS can use it. The projected wrapper is unchanged. |
+| `cartesian_unit_and_axis_swap` | `src/iso19111/transform_export.rs` | Was `projected_unit_and_axis_swap(&ProjectedCRS)`. The body now takes an axis slice, so a derived CRS can use it. The projected wrapper is unchanged. |
 | `axes_order` | `src/iso19111/projstring.rs` | Was the body of `projected_axis_order(&ProjectedCRS)`, now on an axis slice. `projected_axis_order` calls it. |
 | `must_axis_order_be_switched`, `reversed` | `src/iso19111/normalize.rs` | Now handle `Crs::DerivedProjected`. A north-then-east derived CRS is reversed by `normalizeForVisualization`, as `DerivedProjectedCRS::normalize_for_visualization` in `projstring.rs` already does for the CRS itself. |
 

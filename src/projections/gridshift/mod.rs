@@ -7,7 +7,9 @@
 //! `decide_download` may fetch it into the cache before the file is opened.
 
 mod geotiff;
+mod ntv1;
 mod ntv2;
+pub(super) mod public;
 
 use std::collections::BTreeMap;
 use std::f64::consts::{PI, TAU};
@@ -237,11 +239,115 @@ pub(crate) fn build(
     frame: &Frame,
 ) -> Result<Option<Box<dyn Step>>, CreateError> {
     match name {
-        "hgridshift" => Ok(Some(Box::new(horizontal(params, frame)?))),
-        "vgridshift" => Ok(Some(Box::new(vertical(params, frame)?))),
-        "gridshift" => Ok(Some(Box::new(generic(params, frame)?))),
-        "xyzgridshift" => Ok(Some(Box::new(xyz_shift(params, frame)?))),
+        "hgridshift" => deferred(params, frame, horizontal),
+        "vgridshift" => deferred(params, frame, vertical),
+        "gridshift" => deferred(params, frame, generic),
+        "xyzgridshift" => deferred(params, frame, xyz_shift),
         _ => Ok(None),
+    }
+}
+
+/// The shift step for `params`, or a step that loads its grids at the first transform.
+///
+/// Inside a CRS pair's candidates, a named grid that is missing but downloadable does not fail
+/// the candidate: the download is attempted again at each transform, and a point whose grid is
+/// still absent gives a network error, which ends the point (`trans.cpp:284`). Outside those
+/// candidates, and for an explicit path or URL, the step fails at creation as before.
+///
+/// The step is built once with `grids=null`, so its axes and ellipsoid are right before any
+/// grid is loaded. A transform with the grids absent gives [`TransformError::NetworkUnavailable`].
+fn deferred<S: Step + 'static>(
+    params: &Params,
+    frame: &Frame,
+    make: fn(&Params, &Frame, &str) -> Result<S, CreateError>,
+) -> Result<Option<Box<dyn Step>>, CreateError> {
+    let grids = required_grids(params)?;
+    match make(params, frame, grids) {
+        Ok(step) => Ok(Some(Box::new(step))),
+        Err(CreateError::IllegalValue("grids"))
+            if crate::network::grids_may_be_deferred()
+                && missing_downloadable(grids)
+                && !crate::network::last_fetch_not_found() =>
+        {
+            let placeholder = make(params, frame, "null")?;
+            Ok(Some(Box::new(Deferred {
+                placeholder,
+                params: params.clone(),
+                frame: frame.clone(),
+                grids: grids.to_owned(),
+                make,
+                network: crate::network::context(),
+                loaded: std::sync::OnceLock::new(),
+            })))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// One of the listed grids is a bare name that is not on disk and that the network can fetch.
+fn missing_downloadable(grids: &str) -> bool {
+    grids.split(',').any(|raw| {
+        let name = raw.strip_prefix('@').unwrap_or(raw);
+        let bare = !name.is_empty() && !name.contains(['/', '\\', ':']);
+        bare && crate::gridpath::resolve(name).is_none()
+            && crate::network::decide_download(name).is_some()
+    })
+}
+
+/// A shift step whose grids are fetched when they are first needed.
+struct Deferred<S> {
+    placeholder: S,
+    params: Params,
+    frame: Frame,
+    grids: String,
+    make: fn(&Params, &Frame, &str) -> Result<S, CreateError>,
+    /// The network settings in force when the step was built (the builder's endpoint, cache and
+    /// callbacks): the grids are fetched with them, not with the process defaults of the thread
+    /// that happens to transform.
+    network: crate::network::GridContext,
+    loaded: std::sync::OnceLock<S>,
+}
+
+impl<S: Step> Deferred<S> {
+    fn resolve(&self) -> Result<&S, TransformError> {
+        if let Some(step) = self.loaded.get() {
+            return Ok(step);
+        }
+        let step = crate::network::with_context(&self.network, || {
+            (self.make)(&self.params, &self.frame, &self.grids)
+        })
+        .map_err(|_| TransformError::NetworkUnavailable)?;
+        Ok(self.loaded.get_or_init(|| step))
+    }
+}
+
+impl<S: Step> Step for Deferred<S> {
+    fn forward(&self, coord: Coord) -> Result<Coord, TransformError> {
+        self.resolve()?.forward(coord)
+    }
+
+    fn inverse(&self, coord: Coord) -> Result<Coord, TransformError> {
+        self.resolve()?.inverse(coord)
+    }
+
+    fn input_kind(&self) -> IoKind {
+        self.placeholder.input_kind()
+    }
+
+    fn output_kind(&self) -> IoKind {
+        self.placeholder.output_kind()
+    }
+
+    fn distance_ellipsoid(&self) -> (f64, f64) {
+        self.placeholder.distance_ellipsoid()
+    }
+
+    fn computes_height(&self) -> bool {
+        self.placeholder.computes_height()
+    }
+
+    fn needs_pipeline_stack(&self) -> bool {
+        self.placeholder.needs_pipeline_stack()
     }
 }
 
@@ -269,8 +375,8 @@ struct Generic {
     es: f64,
 }
 
-fn horizontal(params: &Params, frame: &Frame) -> Result<Horizontal, CreateError> {
-    let sets = load_all(required_grids(params)?, open_horizontal)?;
+fn horizontal(params: &Params, frame: &Frame, grids: &str) -> Result<Horizontal, CreateError> {
+    let sets = load_all(grids, open_horizontal)?;
     Ok(Horizontal {
         sets,
         t_epoch: params.number("t_epoch")?.unwrap_or(0.0),
@@ -280,8 +386,8 @@ fn horizontal(params: &Params, frame: &Frame) -> Result<Horizontal, CreateError>
     })
 }
 
-fn vertical(params: &Params, frame: &Frame) -> Result<Vertical, CreateError> {
-    let sets = load_all(required_grids(params)?, open_vertical)?;
+fn vertical(params: &Params, frame: &Frame, grids: &str) -> Result<Vertical, CreateError> {
+    let sets = load_all(grids, open_vertical)?;
     Ok(Vertical {
         sets,
         multiplier: params.number("multiplier")?.unwrap_or(-1.0),
@@ -292,8 +398,8 @@ fn vertical(params: &Params, frame: &Frame) -> Result<Vertical, CreateError> {
     })
 }
 
-fn generic(params: &Params, frame: &Frame) -> Result<Generic, CreateError> {
-    let sets = load_all(required_grids(params)?, open_generic)?;
+fn generic(params: &Params, frame: &Frame, grids: &str) -> Result<Generic, CreateError> {
+    let sets = load_all(grids, open_generic)?;
     let interpolation = match params.text("interpolation") {
         None => Interp::FromGrid,
         Some("bilinear") => Interp::Bilinear,
@@ -403,6 +509,10 @@ fn open_horizontal(name: &str) -> Result<GridSet, Fail> {
     if ntv2::is_ntv2(&bytes) {
         let grids = ntv2::load(&bytes).map_err(|()| Fail::Invalid)?;
         return Ok(GridSet::from_ntv2(grids));
+    }
+    if ntv1::is_ntv1(&bytes) {
+        let grid = ntv1::load(&bytes).map_err(|()| Fail::Invalid)?;
+        return Ok(GridSet::from_ntv2(vec![grid]));
     }
     if geotiff::is_tiff(&bytes) {
         return GridSet::from_tiff_horizontal(&bytes);
@@ -1970,8 +2080,8 @@ struct XyzShift {
     es: f64,
 }
 
-fn xyz_shift(params: &Params, frame: &Frame) -> Result<XyzShift, CreateError> {
-    let sets = load_all(required_grids(params)?, open_generic)?;
+fn xyz_shift(params: &Params, frame: &Frame, grids: &str) -> Result<XyzShift, CreateError> {
+    let sets = load_all(grids, open_generic)?;
     if sets.is_empty() {
         return Err(CreateError::IllegalValue("grids"));
     }

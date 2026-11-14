@@ -23,7 +23,7 @@ use crate::ellipsoid::PJ_ELLPS;
 use crate::projections::{angular_proj_unit, linear_proj_unit};
 
 /// PROJ's `proj_list_prime_meridians`, in degrees, for `+pm=NAME`.
-const PRIME_MERIDIANS: &[(&str, f64)] = &[
+pub(crate) const PRIME_MERIDIANS: &[(&str, f64)] = &[
     ("greenwich", 0.0),
     ("lisbon", -(9.0 + 7.0 / 60.0 + 54.862 / 3600.0)),
     ("paris", 2.0 + 20.0 / 60.0 + 14.025 / 3600.0),
@@ -152,6 +152,16 @@ impl Ellipsoid {
     #[must_use]
     pub fn export_to_proj_string(&self) -> String {
         ellipsoid_proj(self)
+    }
+}
+
+impl PrimeMeridian {
+    /// `exportToPROJString` for a prime meridian: `+pm=` with a well-known name or the
+    /// longitude in degrees. Greenwich writes nothing, and PROJ writes `+proj=noop` for an
+    /// object that writes no parameter.
+    #[must_use]
+    pub fn export_to_proj_string(&self) -> String {
+        prime_meridian_proj(self).unwrap_or_else(|| "+proj=noop".to_owned())
     }
 }
 

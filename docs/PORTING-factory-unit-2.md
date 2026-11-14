@@ -76,6 +76,8 @@ Non portés, sans tentative ou avec une API absente :
 - `AuthorityFactory_createDynamicVerticalDatum` : `#ifdef no_more_dynamic_vertical_datum`
   dans PROJ 9.9.0 (voir `docs/PORTING-factory-unit.md`).
 - `FactoryWithTmpDatabase.*` : base temporaire et création d'objets non exposées.
+  *(Obsolète : ces tests sont portés depuis, voir `docs/PORTING-database-open.md`,
+  `PORTING-factory-tmpdb-1.md`, `-2.md` et `PORTING-crs-factory-closing.md`.)*
 
 ## Commandes
 

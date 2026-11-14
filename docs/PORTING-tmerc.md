@@ -1,6 +1,6 @@
 # Port — Transverse Mercator exact et UTM
 
-Source : PROJ 9.4, `src/projections/tmerc.cpp`, algorithme `PODER_ENGSAGER`
+Source : PROJ 9.9.0 (porté d'abord depuis 9.4), `src/projections/tmerc.cpp`, algorithme `PODER_ENGSAGER`
 (`setup_exact`, `exact_e_fwd`, `exact_e_inv`). C'est le défaut
 `tmerc_default_algo` de `proj.ini`, donc le chemin de `+proj=utm` sans
 `+approx`.
@@ -9,7 +9,7 @@ Le lot 2 porte le chemin scalaire. Le lot 4 ajoute le traitement par paquets.
 
 ## Correspondance d'API
 
-| PROJ 9.4 | PROJ-RS |
+| PROJ 9.9 | PROJ-RS |
 |---|---|
 | `PJ_PROJECTION(utm)` + `+zone` + `+south` | `Tmerc::utm(UtmZone, Hemisphere, Ellipsoid)` |
 | `PJ_PROJECTION(tmerc)` / `etmerc` | `Tmerc::try_new` |
@@ -48,7 +48,7 @@ sous 10 nm.
   L'information est la même : le point est hors domaine, ou la latitude est
   illégale. Il n'y a pas de valeur sentinelle dans l'API Rust.
 - `+approx` / `+algo=auto` / Evenden–Snyder ne sont pas portés. Ce n'est pas
-  le défaut de PROJ 9.4 sur cette installation.
+  le défaut de PROJ sur cette installation (9.4 puis 9.9.0, inchangé).
 - La sphère (`es = 0`) n'existe pas : `Ellipsoid::try_new` refuse un
   aplatissement nul. PROJ bascule alors sur l'algorithme approché.
 - `+over` (ne pas ramener la longitude) n'est pas exposé. `adjlon` est
@@ -72,5 +72,5 @@ cargo test --all-features tmerc
 cargo clippy --all-targets --all-features -- -D warnings
 ```
 
-Les valeurs de référence viennent de `cs2cs` (PROJ 9.4.0) sur cette machine,
+Les valeurs de référence viennent de `cs2cs` (PROJ 9.4.0 à l'origine ; remesurées avec 9.9.0, identiques à tous les chiffres affichés),
 tolérance 1e-6 m. L'écart réel observé sur ces points est bien en dessous.

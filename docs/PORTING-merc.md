@@ -1,12 +1,12 @@
 # Port — Mercator
 
-Source : PROJ 9.4, `src/projections/merc.cpp`.
+Source : PROJ 9.9.0 (porté d'abord depuis 9.4), `src/projections/merc.cpp`.
 
 Deux modèles, comme PROJ : la sphère (`a = b`) et l'ellipsoïde.
 
 ## Correspondance d'API
 
-| PROJ 9.4 | PROJ-RS |
+| PROJ 9.9 | PROJ-RS |
 |---|---|
 | `+proj=merc +a=6378137 +b=6378137 +lat_ts=0 +k=1` | `Mercator::web` |
 | `+proj=merc +ellps=…` | `Mercator::try_ellipsoid` |
@@ -47,5 +47,5 @@ cargo test --all-features merc
 cargo clippy --all-targets --all-features -- -D warnings
 ```
 
-Références `cs2cs` de PROJ 9.4.0, tolérance 1e-4 m (les sorties `cs2cs -d 6`
+Références `cs2cs` de PROJ 9.4.0, remesurées avec 9.9.0 (identiques), tolérance 1e-4 m (les sorties `cs2cs -d 6`
 sont au micromètre ; 1e-4 m laisse de la marge sans masquer une formule fausse).

@@ -72,7 +72,9 @@ fn object_kind(object: &WktObject) -> &'static str {
         }
         WktObject::EngineeringDatum(_) => "engineering datum",
         WktObject::Ensemble(_) => "datum ensemble",
+        WktObject::Identifier(_) => "identifier",
         WktObject::Crs(crs) => crs_kind(crs),
+        WktObject::CoordinateMetadata(_) => "coordinate metadata",
         WktObject::Conversion(_) => "conversion",
         WktObject::Transformation(_) => "transformation",
         WktObject::Concatenated(_) => "concatenated operation",

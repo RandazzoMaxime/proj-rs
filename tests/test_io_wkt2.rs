@@ -223,7 +223,6 @@ fn wkt_parse_wkt2_epsg_4979() {
 }
 
 #[test]
-#[ignore = "open: the ID version is folded into the authority name, IAU_2015 instead of IAU with version 2015 (wkt_import.rs identifiers)"]
 fn wkt_parse_wkt2_spherical_planetocentric() {
     let wkt = r#"GEODCRS["Mercury (2015) / Ocentric",
     DATUM["Mercury (2015)",
@@ -282,7 +281,6 @@ fn wkt_parse_wkt2_geocentric_definingtransformation() {
 }
 
 #[test]
-#[ignore = "open: a CRS from +proj=pipeline is refused, unsupported +proj=pipeline for a CRS (projstring.rs)"]
 fn wkt_parse_wkt2_krovak_modified_south_west() {
     let wkt = r#"PROJCRS["S-JTSK/05 / Modified Krovak",
     BASEGEOGCRS["S-JTSK/05",
@@ -372,7 +370,6 @@ fn wkt_parse_wkt2_krovak_modified_south_west() {
 }
 
 #[test]
-#[ignore = "open: a CRS from +proj=pipeline is refused, unsupported +proj=pipeline for a CRS (projstring.rs)"]
 fn wkt_parse_wkt2_krovak_modified_east_north() {
     let wkt = r#"PROJCRS["S-JTSK/05 / Modified Krovak East North",
     BASEGEOGCRS["S-JTSK/05",
@@ -599,7 +596,6 @@ fn wkt_parse_wkt2_2019_simplified_projected() {
 }
 
 #[test]
-#[ignore = "open: the Longitude of origin parameter without ID is not read, so lon_0 is 0 (wkt_import.rs, parammap.rs)"]
 fn wkt_parse_wkt2_2019_projected_3d() {
     let wkt = r#"PROJCRS["WGS 84 (G1762) / UTM zone 31N 3D",BASEGEOGCRS["WGS 84",DATUM["World Geodetic System of 1984 (G1762)",ELLIPSOID["WGS 84",6378137,298.257223563,LENGTHUNIT["metre",1.0]]]],CONVERSION["Some conversion 3D",METHOD["Transverse Mercator (3D)"],PARAMETER["Latitude of origin",0.0,ANGLEUNIT["degree",0.0174532925199433]],PARAMETER["Longitude of origin",3.0,ANGLEUNIT["degree",0.0174532925199433]],PARAMETER["Scale factor",1,SCALEUNIT["unity",1.0]],PARAMETER["False easting",0.0,LENGTHUNIT["metre",1.0]],PARAMETER["False northing",0.0,LENGTHUNIT["metre",1.0]]],CS[Cartesian,3],AXIS["(E)",east,ORDER[1]],AXIS["(N)",north,ORDER[2]],AXIS["ellipsoidal height (h)",up,ORDER[3]],LENGTHUNIT["metre",1.0]]"#;
     let crs = Crs::Projected(parse(wkt).projected().expect("crs").clone());
@@ -612,7 +608,6 @@ fn wkt_parse_wkt2_2019_projected_3d() {
 }
 
 #[test]
-#[ignore = "open: the Longitude of origin parameter without ID is not read, so lon_0 is 0 and the UTM zone is not recognised (wkt_import.rs, parammap.rs)"]
 fn wkt_parse_wkt2_2019_projected_utm_3d() {
     let wkt = r#"PROJCRS["WGS 84 (G1762) / UTM zone 31N 3D",BASEGEOGCRS["WGS 84",DATUM["World Geodetic System of 1984 (G1762)",ELLIPSOID["WGS 84",6378137,298.257223563,LENGTHUNIT["metre",1.0]]]],CONVERSION["UTM zone 31N 3D",METHOD["Transverse Mercator (3D)"],PARAMETER["Latitude of origin",0.0,ANGLEUNIT["degree",0.0174532925199433]],PARAMETER["Longitude of origin",3.0,ANGLEUNIT["degree",0.0174532925199433]],PARAMETER["Scale factor",0.9996,SCALEUNIT["unity",1.0]],PARAMETER["False easting",500000.0,LENGTHUNIT["metre",1.0]],PARAMETER["False northing",0.0,LENGTHUNIT["metre",1.0]]],CS[Cartesian,3],AXIS["(E)",east,ORDER[1]],AXIS["(N)",north,ORDER[2]],AXIS["ellipsoidal height (h)",up,ORDER[3]],LENGTHUNIT["metre",1.0]]"#;
     let crs = Crs::Projected(parse(wkt).projected().expect("crs").clone());
@@ -625,7 +620,6 @@ fn wkt_parse_wkt2_2019_projected_utm_3d() {
 }
 
 #[test]
-#[ignore = "open: a base GEODCRS with EPSG 4978 imports as geographic, PROJ keeps it geocentric (wkt_import.rs)"]
 fn wkt_parse_wkt2_2019_projected_with_base_geocentric() {
     let wkt = r#"PROJCRS["EPSG topocentric example B",
     BASEGEODCRS["WGS 84",
@@ -676,7 +670,6 @@ fn wkt_parse_wkt2_2019_projected_with_base_geocentric() {
 }
 
 #[test]
-#[ignore = "open: the natural origin and false easting codes 8801 8802 8806 8807 are read as 0 for Equidistant Conic (parammap.rs)"]
 fn wkt_parse_wkt2_2019_eqdc_non_epsg() {
     let crs = parse(
         r#"PROJCRS["unknown",
@@ -834,7 +827,6 @@ fn wkt_parse_vertcs_wkt1_esri() {
 }
 
 #[test]
-#[ignore = "open: the alias EGM2008_Geoid has source ESRI_OLD in proj.db and the lookup asks only for source ESRI (wkt_import.rs)"]
 fn wkt_parse_vertcs_wkt1_esri_context() {
     let wkt = r#"VERTCS["EGM2008_Geoid",VDATUM["EGM2008_Geoid"],PARAMETER["Vertical_Shift",0.0],PARAMETER["Direction",1.0],UNIT["Meter",1.0]]"#;
     let crs = parse_db(wkt).vertical().expect("crs").clone();
@@ -852,7 +844,6 @@ fn wkt_parse_vertcs_wkt1_esri_down() {
 }
 
 #[test]
-#[ignore = "open: the LAS vertical name NAVD88 - Geoid03 (Feet) is not mapped to EPSG 6360, the name stays (wkt_import.rs)"]
 fn wkt_parse_vertcrs_wkt1_las_ftus() {
     let wkt = r#"VERT_CS["NAVD88 - Geoid03 (Feet)",    VERT_DATUM["unknown",2005],    UNIT["US survey foot",0.3048006096012192,        AUTHORITY["EPSG","9003"]],    AXIS["Up",UP]]"#;
     let crs = parse(wkt).vertical().expect("crs").clone();
@@ -875,7 +866,6 @@ fn wkt_parse_vertcrs_wkt1_las_ftus() {
 }
 
 #[test]
-#[ignore = "open: the LAS vertical name NAVD88 via Geoid09 is not mapped to EPSG 5703, the name stays (wkt_import.rs)"]
 fn wkt_parse_vertcrs_wkt1_las_metre() {
     let wkt = r#"VERT_CS["NAVD88 via Geoid09",    VERT_DATUM["unknown",2005],    UNIT["metre",1.0,        AUTHORITY["EPSG","9001"]],    AXIS["Up",UP]]"#;
     let crs = parse(wkt).vertical().expect("crs").clone();
@@ -897,7 +887,6 @@ fn wkt_parse_vertcrs_wkt1_las_metre() {
 }
 
 #[test]
-#[ignore = "open: the LAS vertical name NAVD88 - Geoid03 (Feet) has no alias row in proj.db and no LAS rule here, so the name stays (wkt_import.rs)"]
 fn wkt_parse_compoundcrs_wkt1_las_only_geoid_name() {
     // Yes, this WKT is quite odd...
     let wkt = r#"COMPD_CS["NAD83 / NAD83 / South Dakota South / Geoid 2012A (ftUS)",PROJCS["NAD83 / NAD83 / South Dakota South / Geoid 2012A (ftUS)",GEOGCS["NAD83 / NAD83 / South Dakota South / Geoid 2012A (ftUS)",DATUM["NAD83",SPHEROID["GRS80",6378137.000,298.257222100,AUTHORITY["EPSG","0"]],AUTHORITY["EPSG","0"]],PRIMEM["Greenwich",0.0000000000000000,AUTHORITY["EPSG","8901"]],UNIT["US survey foot",0.30480060960121918567,AUTHORITY["EPSG","9003"]],AUTHORITY["EPSG","0"]],PROJECTION["Lambert_Conformal_Conic_2SP",AUTHORITY["EPSG","9802"]],PARAMETER["standard_parallel_1",44.4000000000000057],PARAMETER["standard_parallel_2",42.8333333333333357],PARAMETER["latitude_of_origin",42.3333333333333499],PARAMETER["central_meridian",-100.3333333333333428],PARAMETER["false_easting",1968500.000],PARAMETER["false_northing",0.000],UNIT["US survey foot",0.30480060960121918567,AUTHORITY["EPSG","9003"]],AXIS["Easting",EAST],AXIS["Northing",NORTH],AUTHORITY["EPSG","0"]],VERT_CS["Geoid 2012A",VERT_DATUM["Geoid 2012A",2005],UNIT["US survey foot",0.30480060960121918567,AUTHORITY["EPSG","9003"]],AXIS["Gravity-related height",UP],AUTHORITY["EPSG","0"]],AUTHORITY["EPSG","0"]]"#;
@@ -992,7 +981,6 @@ fn wkt_parse_compoundcrs() {
 }
 
 #[test]
-#[ignore = "open: COMPD_CS imports as CompoundCRS, PROJ gives a 3D ProjectedCRS (wkt_import.rs compound builder)"]
 fn wkt_parse_compd_cs_non_conformant_horizontal_plus_horizontal_as_in_las() {
     let obj = parse(
         r#"COMPD_CS["horizontal + vertical",
@@ -1039,7 +1027,6 @@ fn wkt_parse_compd_cs_non_conformant_horizontal_plus_horizontal_as_in_las() {
 }
 
 #[test]
-#[ignore = "open: COMPD_CS imports as CompoundCRS, PROJ gives a BoundCRS (wkt_import.rs compound builder)"]
 fn wkt_parse_compd_cs_non_conformant_horizontal_towgs84_plus_horizontal_as_in_las() {
     let wkt = r#"COMPD_CS["WGS 84 + WGS 84",
     GEOGCS["WGS 84",
@@ -1078,7 +1065,6 @@ fn wkt_parse_compd_cs_non_conformant_horizontal_towgs84_plus_horizontal_as_in_la
 }
 
 #[test]
-#[ignore = "open: COMPD_CS imports as CompoundCRS, PROJ gives a BoundCRS (wkt_import.rs compound builder)"]
 fn wkt_parse_compd_cs_horizontal_bound_geog_plus_vertical_ellipsoidal_height() {
     // See https://github.com/OSGeo/PROJ/issues/2228
     let wkt = r#"COMPD_CS["NAD83 + Ellipsoid (Meters)",
@@ -1115,7 +1101,6 @@ fn wkt_parse_compd_cs_horizontal_bound_geog_plus_vertical_ellipsoidal_height() {
 }
 
 #[test]
-#[ignore = "open: COMPD_CS imports as CompoundCRS, PROJ folds the ellipsoidal height into a 3D ProjectedCRS (wkt_import.rs compound builder)"]
 fn wkt_parse_compd_cs_horizontal_projected_plus_vertical_ellipsoidal_height() {
     // Variant of above
     let wkt = r#"COMPD_CS["WGS 84 / UTM zone 31N + Ellipsoid (Meters)",
@@ -1162,7 +1147,6 @@ fn wkt_parse_compd_cs_horizontal_projected_plus_vertical_ellipsoidal_height() {
 }
 
 #[test]
-#[ignore = "open: COMPD_CS imports as CompoundCRS, PROJ folds the ellipsoidal height into a 3D GeographicCRS (wkt_import.rs compound builder)"]
 fn wkt_parse_compd_cs_horizontal_geog_plus_vertical_ellipsoidal_height_non_metre() {
     // See https://github.com/OSGeo/PROJ/issues/2232
     let wkt = r#"COMPD_CS["NAD83 + Ellipsoid (US Feet)",
@@ -1219,7 +1203,6 @@ fn wkt_parse_implicit_compound_crs_esri() {
 }
 
 #[test]
-#[ignore = "open: the ESRI export names the implicit VERTCS after the datum, D_WGS_1984, where PROJ keeps WGS_1984 (wkt.rs)"]
 fn wkt_parse_implicit_compound_crs_geographic_with_ellipsoidal_height_esri() {
     let wkt = r#"GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137.0,298.257223563]],PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]],VERTCS["WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137.0,298.257223563]],PARAMETER["Vertical_Shift",0.0],PARAMETER["Direction",1.0],UNIT["Meter",1.0]]"#;
     let dbcontext = DatabaseContext::create().expect("proj.db");
@@ -1239,7 +1222,6 @@ fn wkt_parse_implicit_compound_crs_geographic_with_ellipsoidal_height_esri() {
 }
 
 #[test]
-#[ignore = "open: COMPD_CS imports as CompoundCRS, PROJ gives a 3D ProjectedCRS (wkt_import.rs compound builder)"]
 fn wkt_parse_implicit_compound_crs_projected_with_ellipsoidal_height_esri() {
     let wkt = r#"PROJCS["WGS_1984_UTM_Zone_31N",GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137.0,298.257223563]],PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]],PROJECTION["Transverse_Mercator"],PARAMETER["False_Easting",500000.0],PARAMETER["False_Northing",0.0],PARAMETER["Central_Meridian",3.0],PARAMETER["Scale_Factor",0.9996],PARAMETER["Latitude_Of_Origin",0.0],UNIT["Meter",1.0]],VERTCS["WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137.0,298.257223563]],PARAMETER["Vertical_Shift",0.0],PARAMETER["Direction",1.0],UNIT["Meter",1.0]]"#;
     let dbcontext = DatabaseContext::create().expect("proj.db");
@@ -1296,29 +1278,46 @@ fn wkt_parse_boundcrs_of_verticalcrs_to_geog3dcrs() {
 }
 
 #[test]
-#[ignore = "open: getTOWGS84Parameters has no public accessor on Transformation"]
 fn wkt_parse_boundcrs_transformation_from_names() {
     let wkt = r#"BOUNDCRS[SOURCECRS[PROJCRS["my PROJCRS",BASEGEOGCRS["my GEOGCRS",DATUM["World Geodetic System 1984",ELLIPSOID["WGS 84",6378137,298.257223563]],PRIMEM["Greenwich",0,ANGLEUNIT["degree",0.0174532925199433]]],CONVERSION["UTM zone 31S",METHOD["Transverse Mercator"],PARAMETER["Latitude of natural origin",0,ANGLEUNIT["degree",0.0174532925199433]],PARAMETER["Longitude of natural origin",3,ANGLEUNIT["degree",0.0174532925199433]],PARAMETER["Scale factor at natural origin",0.9996,SCALEUNIT["unity",1]],PARAMETER["False easting",500000,LENGTHUNIT["metre",1]],PARAMETER["False northing",10000000,LENGTHUNIT["metre",1]]],CS[Cartesian,2],AXIS["easting (E)",east,ORDER[1],LENGTHUNIT["metre",1]],AXIS["northing (N)",north,ORDER[2],LENGTHUNIT["metre",1]]]],TARGETCRS[GEOGCRS["WGS 84",DATUM["World Geodetic System 1984",ELLIPSOID["WGS 84",6378137,298.257223563,LENGTHUNIT["metre",1]]],PRIMEM["Greenwich",0,ANGLEUNIT["degree",0.0174532925199433]],CS[ellipsoidal,2],AXIS["geodetic latitude (Lat)",north,ORDER[1],ANGLEUNIT["degree",0.0174532925199433]],AXIS["geodetic longitude (Lon)",east,ORDER[2],ANGLEUNIT["degree",0.0174532925199433]],ID["EPSG",4326]]],ABRIDGEDTRANSFORMATION["Transformation to WGS84",METHOD["Coordinate Frame"],PARAMETER["X-axis translation",1],PARAMETER["Y-axis translation",2],PARAMETER["Z-axis translation",3],PARAMETER["X-axis rotation",-4],PARAMETER["Y-axis rotation",-5],PARAMETER["Z-axis rotation",-6],PARAMETER["Scale difference",1.000007]]]"#;
     let crs = parse(wkt).bound().expect("crs").clone();
     assert_eq!(crs.source_crs().name(), "my PROJCRS");
     assert_eq!(crs.target_crs().name(), "WGS 84");
-    // The seven TOWGS84 values, through getTOWGS84Parameters(true), are the
-    // open part: Transformation exposes no such accessor.
+    let proj_rs::CoordinateOperation::Transformation(transformation) = crs.transformation() else {
+        panic!("the binding operation is not a transformation");
+    };
+    // getTOWGS84Parameters(true) of test_io.cpp: the rotations are inverted for a
+    // coordinate frame method, the scale is in ppm.
+    let params = transformation
+        .towgs84_parameters()
+        .expect("parameters")
+        .expect("Helmert values");
+    for (value, expected) in params.iter().zip([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]) {
+        assert!((value - expected).abs() < 1e-10, "{value} != {expected}");
+    }
 }
 
 #[test]
-#[ignore = "open: getTOWGS84Parameters has no public accessor on Transformation"]
 fn wkt_parse_boundcrs_transformation_from_codes() {
     let wkt = r#"BOUNDCRS[SOURCECRS[PROJCRS["my PROJCRS",BASEGEOGCRS["my GEOGCRS",DATUM["World Geodetic System 1984",ELLIPSOID["WGS 84",6378137,298.257223563]],PRIMEM["Greenwich",0,ANGLEUNIT["degree",0.0174532925199433]]],CONVERSION["UTM zone 31S",METHOD["Transverse Mercator"],PARAMETER["Latitude of natural origin",0,ANGLEUNIT["degree",0.0174532925199433]],PARAMETER["Longitude of natural origin",3,ANGLEUNIT["degree",0.0174532925199433]],PARAMETER["Scale factor at natural origin",0.9996,SCALEUNIT["unity",1]],PARAMETER["False easting",500000,LENGTHUNIT["metre",1]],PARAMETER["False northing",10000000,LENGTHUNIT["metre",1]]],CS[Cartesian,2],AXIS["easting (E)",east,ORDER[1],LENGTHUNIT["metre",1]],AXIS["northing (N)",north,ORDER[2],LENGTHUNIT["metre",1]]]],TARGETCRS[GEOGCRS["WGS 84",DATUM["World Geodetic System 1984",ELLIPSOID["WGS 84",6378137,298.257223563,LENGTHUNIT["metre",1]]],PRIMEM["Greenwich",0,ANGLEUNIT["degree",0.0174532925199433]],CS[ellipsoidal,2],AXIS["geodetic latitude (Lat)",north,ORDER[1],ANGLEUNIT["degree",0.0174532925199433]],AXIS["geodetic longitude (Lon)",east,ORDER[2],ANGLEUNIT["degree",0.0174532925199433]],ID["EPSG",4326]]],ABRIDGEDTRANSFORMATION["Transformation to WGS84",METHOD["bla",ID["EPSG",1032]],PARAMETER["tx",1,ID["EPSG",8605]],PARAMETER["ty",2,ID["EPSG",8606]],PARAMETER["tz",3,ID["EPSG",8607]],PARAMETER["rotx",-4,ID["EPSG",8608]],PARAMETER["roty",-5,ID["EPSG",8609]],PARAMETER["rotz",-6,ID["EPSG",8610]],PARAMETER["scale",1.000007,ID["EPSG",8611]]]]"#;
     let crs = parse(wkt).bound().expect("crs").clone();
     assert_eq!(crs.source_crs().name(), "my PROJCRS");
     assert_eq!(crs.target_crs().name(), "WGS 84");
-    // The seven TOWGS84 values, through getTOWGS84Parameters(true), are the
-    // open part: Transformation exposes no such accessor.
+    let proj_rs::CoordinateOperation::Transformation(transformation) = crs.transformation() else {
+        panic!("the binding operation is not a transformation");
+    };
+    // getTOWGS84Parameters(true) of test_io.cpp: the rotations are inverted for a
+    // coordinate frame method, the scale is in ppm.
+    let params = transformation
+        .towgs84_parameters()
+        .expect("parameters")
+        .expect("Helmert values");
+    for (value, expected) in params.iter().zip([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]) {
+        assert!((value - expected).abs() < 1e-10, "{value} != {expected}");
+    }
 }
 
 #[test]
-#[ignore = "open: the EPSG code for Interpolation CRS parameter is dropped on import, so one parameter is left instead of two without a database (wkt_import.rs)"]
 fn wkt_parse_boundcrs_with_interpolation_as_parameter() {
     let wkt = r#"BOUNDCRS[
     SOURCECRS[
@@ -1349,8 +1348,8 @@ fn wkt_parse_boundcrs_with_interpolation_as_parameter() {
     ABRIDGEDTRANSFORMATION["unknown to WGS84 ellipsoidal height",
         METHOD["GravityRelatedHeight to Geographic3D"],
         PARAMETERFILE["Geoid (height correction) model file","@foo.gtx",
-            ID["EPSG",8666]]],
-        PARAMETER["EPSG code for Interpolation CRS",7886]]"#;
+            ID["EPSG",8666]],
+        PARAMETER["EPSG code for Interpolation CRS",7886]]]"#;
     {
         let bound = parse(wkt).bound().expect("crs").clone();
         let transformation = transformation_of(&bound);

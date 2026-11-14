@@ -4,8 +4,8 @@ PROJ 9.9.0 sources: `src/trans_bounds.cpp` (`proj_trans_bounds`,
 `proj_trans_bounds_3D` and their helpers) and `test/unit/test_c_api.cpp`.
 
 This lot takes the `proj_trans_bounds*` `TEST()`s that are open in
-`docs/UNPORTED-UNIT.md`. Of the 22 open ones, 17 pass here. The other 5 stay
-open, with the causes below.
+`docs/UNPORTED-UNIT.md`. Of the 22 open ones, 17 were ported here. The other 5
+were later ported too, in `tests/unit_trans_bounds_blocked.rs` (see below).
 
 ## API mapping
 
@@ -57,22 +57,24 @@ The `proj_trans_bounds_densify_0`, `_densify_100`, `_normalized`, and
 `_3d_geog3D_to_geocentric` tests were ported before this lot, in
 `tests/proj_unit.rs` and `tests/test_c_api.rs`.
 
-## Blocked: 5 `TEST()`s stay open
+## The 5 `TEST()`s once listed as blocked: now ported
 
-These are not written as Rust tests: a test that cannot pass would be red,
-and `#[ignore]` is not used. Each cause was checked with
-`Proj::new_known_crs` against the crate:
+These were listed as blocked by `OGC:` and `ESRI:` codes, inline WKT and a
+compound CRS (`EPSG:9707`). Those pairs now resolve through
+`Proj::new_known_crs`, so the five are ported in
+`tests/unit_trans_bounds_blocked.rs`, with PROJ's expected values and
+tolerances, under the C++ names:
 
-| `TEST()` | Cause |
+| `TEST()` | Rust test |
 |---|---|
-| `proj_trans_bounds_ignore_inf` | `OGC:CRS84` is not read: `unknown CRS` (only `EPSG:` codes and PROJ strings are). |
-| `proj_trans_bounds_ignore_inf_geographic` | The inline `PROJCS[...]` WKT is not read by `Proj::new_known_crs`: `unknown CRS`. |
-| `proj_trans_bounds_to_compound_crs` | `EPSG:9707` is a compound CRS, which `proj.db` loading does not build: `EPSG:9707 (compound) is not built`. |
-| `proj_trans_bounds_world_geodetic_to_spilhaus` | `OGC:CRS84` and `ESRI:54099` are not read: `unknown CRS`. |
-| `proj_trans_bounds_3D_ignore_inf` | `OGC:CRS84` and `ESRI:102036` are not read: `unknown CRS`. |
+| `proj_trans_bounds_ignore_inf` | `c_api_proj_trans_bounds_ignore_inf` |
+| `proj_trans_bounds_ignore_inf_geographic` | `c_api_proj_trans_bounds_ignore_inf_geographic` (inline `PROJCS`, passed to `new_known_crs`) |
+| `proj_trans_bounds_to_compound_crs` | `c_api_proj_trans_bounds_to_compound_crs` (`EPSG:9707`) |
+| `proj_trans_bounds_world_geodetic_to_spilhaus` | `c_api_proj_trans_bounds_world_geodetic_to_spilhaus` |
+| `proj_trans_bounds_3D_ignore_inf` | `c_api_proj_trans_bounds_3d_ignore_inf` |
 
-They need the `OGC:` and `ESRI:` authorities or inline WKT, which are part of
-the ISO 19111 CRS work (`src/iso19111/`), not of this lot.
+The 2D test of the compound case is the identity: `EPSG:4326` and `EPSG:9707`
+share their horizontal part, so the box comes back unchanged.
 
 ## Deliberate differences
 

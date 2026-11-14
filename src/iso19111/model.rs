@@ -4,6 +4,7 @@ use std::fmt;
 
 use super::equiv::Equivalence;
 use super::factory::DatabaseContext;
+use super::metadata::Citation;
 
 /// Opening `proj.db`, an authority code, or a WKT export failed.
 #[derive(Debug)]
@@ -96,14 +97,16 @@ pub struct Identifier {
     /// Kept only when no database folded it into the code space (`IAU_2015`).
     /// PROJJSON writes the same field as `version`.
     pub(crate) version: Option<String>,
-    /// PROJJSON `authority_citation`.
+    /// PROJJSON `authority_citation`, and the title of the `CITATION` of an `ID`.
     pub(crate) authority_citation: Option<String>,
     /// PROJJSON `uri`.
     pub(crate) uri: Option<String>,
+    /// `Identifier::description`.
+    pub(crate) description: Option<String>,
 }
 
 impl Identifier {
-    /// Code space such as `EPSG`.
+    /// Code space such as `EPSG`. Empty when the identifier has none.
     #[must_use]
     pub fn code_space(&self) -> &str {
         &self.code_space
@@ -115,6 +118,15 @@ impl Identifier {
         &self.code
     }
 
+    /// Identifier with `code` and no other part. Add the rest with the `with_*` methods.
+    ///
+    /// This is `Identifier::create(code, properties)` for the properties that a PROJ caller sets one
+    /// by one. A numeric code is given as its text.
+    #[must_use]
+    pub fn create(code: impl Into<String>) -> Self {
+        Self::new("", code)
+    }
+
     pub(crate) fn new(code_space: impl Into<String>, code: impl Into<String>) -> Self {
         Self {
             code_space: code_space.into(),
@@ -122,15 +134,65 @@ impl Identifier {
             version: None,
             authority_citation: None,
             uri: None,
+            description: None,
         }
     }
 
-    pub(crate) fn with_version(mut self, version: impl Into<String>) -> Self {
+    /// The code space, such as `EPSG`.
+    #[must_use]
+    pub fn with_code_space(mut self, code_space: impl Into<String>) -> Self {
+        self.code_space = code_space.into();
+        self
+    }
+
+    /// The authority, the title of `citation`.
+    #[must_use]
+    pub fn with_authority(mut self, citation: Citation) -> Self {
+        self.authority_citation = citation.title;
+        self
+    }
+
+    /// The version. An empty version is no version.
+    #[must_use]
+    pub fn with_version(mut self, version: impl Into<String>) -> Self {
         let version = version.into();
         if !version.is_empty() {
             self.version = Some(version);
         }
         self
+    }
+
+    /// The description of the identifier.
+    #[must_use]
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    /// Authority citation, when the identifier has one.
+    #[must_use]
+    pub fn authority(&self) -> Option<Citation> {
+        self.authority_citation
+            .as_ref()
+            .map(|title| Citation::new(title.clone()))
+    }
+
+    /// Version, when the identifier has one.
+    #[must_use]
+    pub fn version(&self) -> Option<&str> {
+        self.version.as_deref()
+    }
+
+    /// Description, when the identifier has one.
+    #[must_use]
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_deref()
+    }
+
+    /// URI of the identifier, when it has one.
+    #[must_use]
+    pub fn uri(&self) -> Option<&str> {
+        self.uri.as_deref()
     }
 }
 
@@ -267,6 +329,71 @@ impl BoundingBox {
             east,
             north,
         }
+    }
+
+    /// `GeographicBoundingBox::create`: a checked box in degrees.
+    ///
+    /// A zero-width or zero-height box is widened by one ULP on each side, unless it sits on the
+    /// world limit (`create`, metadata.cpp:244). A point or a line then still meets the boxes that
+    /// contain it on that edge.
+    ///
+    /// # Errors
+    ///
+    /// A bound is NaN, or the south bound is north of the north bound.
+    pub fn create(west: f64, south: f64, east: f64, north: f64) -> Result<Self, FactoryError> {
+        if west.is_nan() || south.is_nan() || east.is_nan() || north.is_nan() {
+            return Err(FactoryError::Invalid(
+                "a bounding box bound is NaN".to_owned(),
+            ));
+        }
+        if south > north {
+            return Err(FactoryError::Invalid(
+                "the south bound of a bounding box is north of its north bound".to_owned(),
+            ));
+        }
+        let (mut west, mut east) = (west, east);
+        if west == east {
+            if west > -180.0 {
+                west = next_down(west);
+            }
+            if east < 180.0 {
+                east = next_up(east);
+            }
+        }
+        let (mut south, mut north) = (south, north);
+        if south == north {
+            if south > -90.0 {
+                south = next_down(south);
+            }
+            if north < 90.0 {
+                north = next_up(north);
+            }
+        }
+        Ok(Self::new(west, south, east, north))
+    }
+
+    /// `GeographicBoundingBox::westBoundLongitude`, in degrees.
+    #[must_use]
+    pub fn west_bound_longitude(&self) -> f64 {
+        self.west
+    }
+
+    /// `GeographicBoundingBox::eastBoundLongitude`, in degrees.
+    #[must_use]
+    pub fn east_bound_longitude(&self) -> f64 {
+        self.east
+    }
+
+    /// `GeographicBoundingBox::southBoundLatitude`, in degrees.
+    #[must_use]
+    pub fn south_bound_latitude(&self) -> f64 {
+        self.south
+    }
+
+    /// `GeographicBoundingBox::northBoundLatitude`, in degrees.
+    #[must_use]
+    pub fn north_bound_latitude(&self) -> f64 {
+        self.north
     }
 
     /// `GeographicBoundingBox::contains`, with the antimeridian rules of PROJ.
@@ -414,6 +541,26 @@ impl BoundingBox {
     }
 }
 
+/// `std::nextafter(x, +inf)`, without `f64::next_up` (stable only from Rust 1.86, and the MSRV is 1.83).
+fn next_up(x: f64) -> f64 {
+    if x.is_nan() || x == f64::INFINITY {
+        return x;
+    }
+    if x == 0.0 {
+        return f64::from_bits(1);
+    }
+    if x > 0.0 {
+        f64::from_bits(x.to_bits() + 1)
+    } else {
+        f64::from_bits(x.to_bits() - 1)
+    }
+}
+
+/// `std::nextafter(x, -inf)`.
+fn next_down(x: f64) -> f64 {
+    -next_up(-x)
+}
+
 fn same_optional(left: Option<f64>, right: Option<f64>) -> bool {
     match (left, right) {
         (Some(left), Some(right)) => left == right,
@@ -427,6 +574,8 @@ fn same_optional(left: Option<f64>, right: Option<f64>) -> bool {
 pub(crate) struct Identified {
     pub(crate) name: String,
     pub(crate) identifiers: Vec<Identifier>,
+    /// `IdentifiedObject::aliases`, in the order they were given.
+    pub(crate) aliases: Vec<String>,
     pub(crate) remarks: String,
     pub(crate) deprecated: bool,
     pub(crate) domains: Vec<ObjectDomain>,
@@ -518,6 +667,7 @@ impl Identified {
         Self {
             name: name.into(),
             identifiers: Vec::new(),
+            aliases: Vec::new(),
             remarks: String::new(),
             deprecated: false,
             domains: Vec::new(),
@@ -577,6 +727,13 @@ pub enum UnitKind {
     None,
     /// A database type this crate does not classify.
     Unknown,
+}
+
+/// `UnitOfMeasure::operator==`: units are the same when they have the same name.
+impl PartialEq for UnitOfMeasure {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
 }
 
 impl UnitOfMeasure {
@@ -652,6 +809,42 @@ impl UnitOfMeasure {
         }
     }
 
+    /// SI radian, EPSG:9101.
+    #[must_use]
+    pub fn radian() -> Self {
+        Self {
+            name: "radian".to_owned(),
+            factor: 1.0,
+            kind: UnitKind::Angular,
+            code_space: String::new(),
+            code: String::new(),
+        }
+    }
+
+    /// Julian year of 365.25 days, the time unit of a coordinate epoch.
+    #[must_use]
+    pub fn year() -> Self {
+        Self {
+            name: "year".to_owned(),
+            factor: 31_557_600.0,
+            kind: UnitKind::Time,
+            code_space: String::new(),
+            code: String::new(),
+        }
+    }
+
+    /// `UnitOfMeasure::NONE`: a value with no unit, as `Measure(double)` has.
+    #[must_use]
+    pub fn none() -> Self {
+        Self {
+            name: String::new(),
+            factor: 1.0,
+            kind: UnitKind::None,
+            code_space: String::new(),
+            code: String::new(),
+        }
+    }
+
     /// Authority code written on this unit when the surrounding node has none.
     #[must_use]
     pub fn with_identifier(
@@ -699,14 +892,20 @@ impl UnitOfMeasure {
     }
 }
 
-/// A scalar and the unit it is expressed in.
-#[derive(Clone, Debug)]
+/// A scalar and the unit it is expressed in. Two measures are equal when their values and units are.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Measure {
     pub(crate) value: f64,
     pub(crate) unit: UnitOfMeasure,
 }
 
 impl Measure {
+    /// Measure of `value` in `unit`. This is `Measure(value, unit)` in PROJ.
+    #[must_use]
+    pub fn new(value: f64, unit: UnitOfMeasure) -> Self {
+        Self { value, unit }
+    }
+
     /// Numeric value, in [`Self::unit`].
     #[must_use]
     pub fn value(&self) -> f64 {
@@ -723,6 +922,12 @@ impl Measure {
     #[must_use]
     pub fn si_value(&self) -> f64 {
         self.value * self.unit.factor
+    }
+
+    /// `Measure::convertToUnit`: the value expressed in `target`.
+    #[must_use]
+    pub fn convert_to_unit(&self, target: &UnitOfMeasure) -> f64 {
+        self.convert_to(target)
     }
 
     pub(crate) fn convert_to(&self, target: &UnitOfMeasure) -> f64 {
@@ -758,6 +963,17 @@ impl Measure {
             unit: UnitOfMeasure::unity(),
         }
     }
+}
+
+/// How an ellipsoid is given, besides its semi-major axis.
+#[derive(Clone, Debug, PartialEq)]
+pub enum EllipsoidShape {
+    /// A sphere: the semi-minor axis equals the semi-major axis.
+    Sphere,
+    /// The inverse flattening `1/f`. Zero means a sphere.
+    InverseFlattening(f64),
+    /// The semi-minor axis, as a length.
+    SemiMinorAxis(Measure),
 }
 
 /// Reference ellipsoid.
@@ -844,17 +1060,44 @@ impl Ellipsoid {
         self.inverse_flattening
     }
 
-    /// Sphere: stored `b` equals `a`, or inverse flattening is zero.
+    /// Sphere: stored `b` equals `a`, or there is no inverse flattening, or it is zero.
     #[must_use]
     pub fn is_sphere(&self) -> bool {
         if let Some(minor) = &self.semi_minor {
             let major = self.semi_major.si_value();
             return (minor.si_value() - major).abs() <= 1e-10 * major.abs();
         }
-        self.inverse_flattening == Some(0.0)
+        !matches!(self.inverse_flattening, Some(rf) if rf != 0.0)
     }
 
-    /// Flattened sphere with no authority code.
+    /// `Ellipsoid::createSphere`, `createFlattenedSphere` and `createTwoAxis` in one constructor.
+    ///
+    /// The name is the object name (empty stays empty), `semi_major` is the semi-major axis in any
+    /// unit, and `celestial_body` is the body the ellipsoid is of (`Earth` for the Earth). A zero
+    /// inverse flattening is a sphere, as in PROJ, so the inverse flattening is then absent.
+    #[must_use]
+    pub fn create(
+        name: impl Into<String>,
+        semi_major: Measure,
+        shape: EllipsoidShape,
+        celestial_body: impl Into<String>,
+    ) -> Self {
+        let (inverse_flattening, semi_minor) = match shape {
+            EllipsoidShape::Sphere => (None, None),
+            EllipsoidShape::InverseFlattening(0.0) => (None, None),
+            EllipsoidShape::InverseFlattening(rf) => (Some(rf), None),
+            EllipsoidShape::SemiMinorAxis(minor) => (None, Some(minor)),
+        };
+        Self {
+            identified: Identified::named(name),
+            semi_major,
+            inverse_flattening,
+            semi_minor,
+            body: celestial_body.into(),
+        }
+    }
+
+    /// Flattened sphere with no authority code, in metres.
     ///
     /// This is `Ellipsoid::createFlattenedSphere` for a name that is not in
     /// `proj.db`. An empty name stays empty.
@@ -864,19 +1107,15 @@ impl Ellipsoid {
         semi_major_metre: f64,
         inverse_flattening: f64,
     ) -> Self {
-        Self {
-            identified: Identified::named(name),
-            semi_major: Measure {
-                value: semi_major_metre,
-                unit: UnitOfMeasure::metre(),
-            },
-            inverse_flattening: Some(inverse_flattening),
-            semi_minor: None,
-            body: "Earth".to_owned(),
-        }
+        Self::create(
+            name,
+            Measure::length(semi_major_metre),
+            EllipsoidShape::InverseFlattening(inverse_flattening),
+            "Earth",
+        )
     }
 
-    /// Ellipsoid given by its two semi-axes, with no authority code.
+    /// Ellipsoid given by its two semi-axes in metres, with no authority code.
     ///
     /// This is `Ellipsoid::createTwoAxis` for a name that is not in `proj.db`.
     #[must_use]
@@ -885,19 +1124,12 @@ impl Ellipsoid {
         semi_major_metre: f64,
         semi_minor_metre: f64,
     ) -> Self {
-        Self {
-            identified: Identified::named(name),
-            semi_major: Measure {
-                value: semi_major_metre,
-                unit: UnitOfMeasure::metre(),
-            },
-            inverse_flattening: None,
-            semi_minor: Some(Measure {
-                value: semi_minor_metre,
-                unit: UnitOfMeasure::metre(),
-            }),
-            body: "Earth".to_owned(),
-        }
+        Self::create(
+            name,
+            Measure::length(semi_major_metre),
+            EllipsoidShape::SemiMinorAxis(Measure::length(semi_minor_metre)),
+            "Earth",
+        )
     }
 
     /// WGS 84, EPSG:7030.
@@ -1019,6 +1251,52 @@ impl PrimeMeridian {
     }
 }
 
+/// `DynamicGeodeticReferenceFrame`: a geodetic datum with a frame reference epoch, which makes it
+/// dynamic. It is a [`GeodeticReferenceFrame`] with the epoch set, and derefs to it.
+#[derive(Clone, Debug)]
+pub struct DynamicGeodeticReferenceFrame(GeodeticReferenceFrame);
+
+impl DynamicGeodeticReferenceFrame {
+    /// `DynamicGeodeticReferenceFrame::create(props, ellipsoid, anchor, primeMeridian,
+    /// frameReferenceEpoch, deformationModelName)`.
+    ///
+    /// `frame_reference_epoch` is a decimal year (the C++ takes a `Measure` in years).
+    /// `None` for `anchor` or `deformation_model` leaves that member absent, as an unset C++ `optional`.
+    #[must_use]
+    pub fn create(
+        name: impl Into<String>,
+        ellipsoid: Ellipsoid,
+        anchor: Option<String>,
+        prime_meridian: PrimeMeridian,
+        frame_reference_epoch: f64,
+        deformation_model: Option<String>,
+    ) -> Self {
+        let mut frame = GeodeticReferenceFrame::create(name, ellipsoid, prime_meridian)
+            .with_frame_epoch(frame_reference_epoch);
+        if let Some(anchor) = anchor {
+            frame = frame.with_anchor(anchor);
+        }
+        if let Some(model) = deformation_model {
+            frame = frame.with_deformation_model(model);
+        }
+        Self(frame)
+    }
+}
+
+impl std::ops::Deref for DynamicGeodeticReferenceFrame {
+    type Target = GeodeticReferenceFrame;
+
+    fn deref(&self) -> &GeodeticReferenceFrame {
+        &self.0
+    }
+}
+
+impl From<DynamicGeodeticReferenceFrame> for GeodeticReferenceFrame {
+    fn from(frame: DynamicGeodeticReferenceFrame) -> Self {
+        frame.0
+    }
+}
+
 /// Geodetic datum, including a dynamic frame when an epoch is set.
 #[derive(Clone, Debug)]
 pub struct GeodeticReferenceFrame {
@@ -1064,6 +1342,14 @@ impl GeodeticReferenceFrame {
     #[must_use]
     pub fn with_frame_epoch(mut self, epoch: f64) -> Self {
         self.frame_epoch = Some(epoch);
+        self
+    }
+
+    /// This frame with a deformation model, which makes it a dynamic frame with
+    /// [`Self::with_frame_epoch`].
+    #[must_use]
+    pub fn with_deformation_model(mut self, model: impl Into<String>) -> Self {
+        self.deformation_model = Some(model.into());
         self
     }
 
@@ -1257,6 +1543,14 @@ impl VerticalReferenceFrame {
         self
     }
 
+    /// This datum with a deformation model, which makes it a dynamic datum with
+    /// [`Self::with_frame_epoch`].
+    #[must_use]
+    pub fn with_deformation_model(mut self, model: impl Into<String>) -> Self {
+        self.deformation_model = Some(model.into());
+        self
+    }
+
     /// This datum with an anchor definition.
     #[must_use]
     pub fn with_anchor(mut self, anchor: impl Into<String>) -> Self {
@@ -1365,6 +1659,13 @@ impl EngineeringDatum {
             identified: Identified::named(name),
         }
     }
+
+    /// This datum with an anchor definition.
+    #[must_use]
+    pub fn with_anchor(mut self, anchor: impl Into<String>) -> Self {
+        self.identified.anchor = Some(anchor.into());
+        self
+    }
 }
 
 /// One datum, whichever kind the database row describes.
@@ -1420,15 +1721,17 @@ impl DatumEnsemble {
     ///
     /// # Errors
     ///
-    /// The member list is empty, or the members are not all the same datum kind.
+    /// There are fewer than two members, the members are not all the same datum kind, or two
+    /// geodetic members differ in ellipsoid or prime meridian (`DatumEnsemble` constructor,
+    /// datum.cpp:2126).
     pub fn create(
         name: impl Into<String>,
         members: Vec<Datum>,
         accuracy: f64,
     ) -> Result<Self, FactoryError> {
-        if members.is_empty() {
+        if members.len() < 2 {
             return Err(FactoryError::Invalid(
-                "a datum ensemble needs at least one member".to_owned(),
+                "a datum ensemble needs at least two members".to_owned(),
             ));
         }
         let kind = std::mem::discriminant(&members[0]);
@@ -1439,6 +1742,23 @@ impl DatumEnsemble {
             return Err(FactoryError::Invalid(
                 "datum ensemble members must share one datum type".to_owned(),
             ));
+        }
+        if let Datum::Geodetic(first) = &members[0] {
+            for member in &members[1..] {
+                let Datum::Geodetic(frame) = member else {
+                    continue;
+                };
+                if !first.ellipsoid.is_equivalent_to(&frame.ellipsoid) {
+                    return Err(FactoryError::Invalid(
+                        "datum ensemble members must have the same ellipsoid".to_owned(),
+                    ));
+                }
+                if !first.prime_meridian.is_equivalent_to(&frame.prime_meridian) {
+                    return Err(FactoryError::Invalid(
+                        "datum ensemble members must have the same prime meridian".to_owned(),
+                    ));
+                }
+            }
         }
         Ok(Self {
             identified: Identified::named(name),
@@ -1648,8 +1968,8 @@ impl EllipsoidalCS {
         Self {
             identified: Identified::default(),
             axes: vec![
-                Axis::new("Latitude", "Lat", "north", unit.clone()),
-                Axis::new("Longitude", "Lon", "east", unit),
+                Axis::new("Latitude", "lat", "north", unit.clone()),
+                Axis::new("Longitude", "lon", "east", unit),
             ],
         }
     }
@@ -1672,8 +1992,8 @@ impl EllipsoidalCS {
         Self {
             identified: Identified::default(),
             axes: vec![
-                Axis::new("Longitude", "Lon", "east", unit.clone()),
-                Axis::new("Latitude", "Lat", "north", unit),
+                Axis::new("Longitude", "lon", "east", unit.clone()),
+                Axis::new("Latitude", "lat", "north", unit),
             ],
         }
     }
@@ -1684,8 +2004,8 @@ impl EllipsoidalCS {
         Self {
             identified: Identified::default(),
             axes: vec![
-                Axis::new("Longitude", "Lon", "east", angular.clone()),
-                Axis::new("Latitude", "Lat", "north", angular),
+                Axis::new("Longitude", "lon", "east", angular.clone()),
+                Axis::new("Latitude", "lat", "north", angular),
                 Axis::new("Ellipsoidal height", "h", "up", linear),
             ],
         }
@@ -1697,8 +2017,8 @@ impl EllipsoidalCS {
         Self {
             identified: Identified::default(),
             axes: vec![
-                Axis::new("Latitude", "Lat", "north", angular.clone()),
-                Axis::new("Longitude", "Lon", "east", angular),
+                Axis::new("Latitude", "lat", "north", angular.clone()),
+                Axis::new("Longitude", "lon", "east", angular),
                 Axis::new("Ellipsoidal height", "h", "up", linear),
             ],
         }
@@ -1989,6 +2309,64 @@ impl OperationParameter {
         Self {
             identified: Identified::named(name),
         }
+    }
+
+    /// Authority identifiers, in the order they were given.
+    #[must_use]
+    pub fn identifiers(&self) -> &[Identifier] {
+        &self.identified.identifiers
+    }
+
+    /// Aliases, in the order they were given.
+    #[must_use]
+    pub fn aliases(&self) -> &[String] {
+        &self.identified.aliases
+    }
+
+    /// The first alias, or empty when there is none (`IdentifiedObject::alias`).
+    #[must_use]
+    pub fn alias(&self) -> &str {
+        self.identified.aliases.first().map_or("", String::as_str)
+    }
+
+    /// Remarks. Empty when there are none.
+    #[must_use]
+    pub fn remarks(&self) -> &str {
+        &self.identified.remarks
+    }
+
+    /// Whether the parameter is deprecated.
+    #[must_use]
+    pub fn is_deprecated(&self) -> bool {
+        self.identified.deprecated
+    }
+
+    /// This parameter with one more identifier, after the ones it has.
+    #[must_use]
+    pub fn with_identifier_object(mut self, identifier: Identifier) -> Self {
+        self.identified.identifiers.push(identifier);
+        self
+    }
+
+    /// This parameter with one more alias, after the ones it has.
+    #[must_use]
+    pub fn with_alias(mut self, alias: impl Into<String>) -> Self {
+        self.identified.aliases.push(alias.into());
+        self
+    }
+
+    /// This parameter with remarks.
+    #[must_use]
+    pub fn with_remarks(mut self, remarks: impl Into<String>) -> Self {
+        self.identified.remarks = remarks.into();
+        self
+    }
+
+    /// This parameter, marked as deprecated.
+    #[must_use]
+    pub fn with_deprecated(mut self) -> Self {
+        self.identified.deprecated = true;
+        self
     }
 
     /// This parameter with the identifier `code_space:code`, such as `EPSG:8656`.

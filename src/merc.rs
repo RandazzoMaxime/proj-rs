@@ -1,6 +1,6 @@
 //! Mercator sphérique (Web Mercator) et ellipsoïdal.
 //!
-//! Portage de `src/projections/merc.cpp` (PROJ 9.4). Voir `docs/PORTING-merc.md`.
+//! Portage de `src/projections/merc.cpp` (PROJ 9.9). Voir `docs/PORTING-merc.md`.
 
 use crate::angle::adjlon;
 use crate::lcc::{phi2, tsfn};

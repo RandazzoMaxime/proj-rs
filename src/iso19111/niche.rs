@@ -68,7 +68,9 @@ impl TemporalDatum {
         }
     }
 
-    pub(crate) fn is_equivalent_to(&self, other: &Self) -> bool {
+    /// Strict temporal-datum equivalence: the same name, time origin and calendar.
+    #[must_use]
+    pub fn is_equivalent_to(&self, other: &Self) -> bool {
         self.name() == other.name()
             && self.origin == other.origin
             && self.calendar == other.calendar
@@ -112,6 +114,13 @@ impl ParametricDatum {
         Self {
             identified: Identified::named(name),
         }
+    }
+
+    /// This datum with an anchor definition.
+    #[must_use]
+    pub fn with_anchor(mut self, anchor: impl Into<String>) -> Self {
+        self.identified.anchor = Some(anchor.into());
+        self
     }
 }
 

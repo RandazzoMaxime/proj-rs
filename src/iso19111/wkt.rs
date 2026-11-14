@@ -8,6 +8,7 @@ use super::esri_parammap::{
     esri_method, find_parameter, mercator_variant_b, squared_eccentricity, EsriChoice, EsriParam,
 };
 use super::factory::{AuthorityFactory, AuthorityObject, DatabaseContext, NameMatch, ObjectType};
+use super::niche::{ParametricDatum, TemporalDatum};
 use super::wkt_import::WktParser;
 
 mod niche;
@@ -602,6 +603,31 @@ impl Crs {
     /// 3D CRS. WKT2:2019 accepts both.
     pub fn export_to_wkt(&self, formatter: &mut WktFormatter) -> Result<String, FactoryError> {
         export_crs(self, formatter)?;
+        Ok(std::mem::take(&mut formatter.result))
+    }
+}
+
+impl super::coordinate_metadata::CoordinateMetadata {
+    /// Write this coordinate metadata into `formatter` and return the WKT:
+    /// `COORDINATEMETADATA[<crs>, EPOCH[<year>]]`, the epoch node only when there is one.
+    ///
+    /// # Errors
+    ///
+    /// The formatter is not WKT2:2019, as PROJ's `CoordinateMetadata::_exportToWKT` requires.
+    pub fn export_to_wkt(&self, formatter: &mut WktFormatter) -> Result<String, FactoryError> {
+        if !formatter.wkt2 || !formatter.keywords_2019 {
+            return Err(FactoryError::Format(
+                "CoordinateMetadata can only be exported since WKT2:2019".to_owned(),
+            ));
+        }
+        formatter.start_node("COORDINATEMETADATA", NodeId::Absent);
+        export_crs(self.crs(), formatter)?;
+        if let Some(epoch) = self.coordinate_epoch() {
+            formatter.start_node("EPOCH", NodeId::Absent);
+            formatter.add_number(epoch);
+            formatter.end_node();
+        }
+        formatter.end_node();
         Ok(std::mem::take(&mut formatter.result))
     }
 }
@@ -1576,7 +1602,14 @@ impl DatumEnsemble {
     ///
     /// The formatter cannot represent a value on the ensemble.
     pub fn export_to_wkt(&self, formatter: &mut WktFormatter) -> Result<String, FactoryError> {
-        export_ensemble(self, formatter);
+        // `ENSEMBLE` is WKT2:2019 only: before it, a geodetic ensemble is written as its datum
+        // (`DatumEnsemble::asDatum`), as the CRS writers do.
+        let geodetic = matches!(self.members.first(), Some(Datum::Geodetic(_)));
+        if geodetic && !(formatter.wkt2 && formatter.keywords_2019) {
+            export_ensemble_as_datum(self, formatter);
+        } else {
+            export_ensemble(self, formatter);
+        }
         Ok(std::mem::take(&mut formatter.result))
     }
 }
@@ -1591,6 +1624,112 @@ impl Ellipsoid {
         export_ellipsoid(self, formatter);
         Ok(std::mem::take(&mut formatter.result))
     }
+}
+
+impl TemporalDatum {
+    /// Write this temporal datum as a `TDATUM` node into `formatter` and return the WKT.
+    ///
+    /// # Errors
+    ///
+    /// The formatter is not WKT2: a temporal datum has no WKT1 form.
+    pub fn export_to_wkt(&self, formatter: &mut WktFormatter) -> Result<String, FactoryError> {
+        if !formatter.wkt2 {
+            return Err(FactoryError::Format(
+                "a temporal datum can only be exported to WKT2".to_owned(),
+            ));
+        }
+        formatter.start_node("TDATUM", node_from_ids(&self.identified.identifiers));
+        formatter.add_quoted(self.name());
+        if formatter.keywords_2019 {
+            formatter.start_node("CALENDAR", NodeId::Absent);
+            formatter.add_quoted(&self.calendar);
+            formatter.end_node();
+        }
+        if !self.origin.is_empty() {
+            formatter.start_node("TIMEORIGIN", NodeId::Absent);
+            if is_iso_8601(&self.origin) {
+                formatter.add_raw(&self.origin);
+            } else {
+                formatter.add_quoted(&self.origin);
+            }
+            formatter.end_node();
+        }
+        formatter.format_ids(&self.identified.identifiers);
+        formatter.end_node();
+        Ok(std::mem::take(&mut formatter.result))
+    }
+}
+
+impl ParametricDatum {
+    /// Write this parametric datum as a `PDATUM` node into `formatter` and return the WKT.
+    ///
+    /// # Errors
+    ///
+    /// The formatter is not WKT2: a parametric datum has no WKT1 form.
+    pub fn export_to_wkt(&self, formatter: &mut WktFormatter) -> Result<String, FactoryError> {
+        if !formatter.wkt2 {
+            return Err(FactoryError::Format(
+                "a parametric datum can only be exported to WKT2".to_owned(),
+            ));
+        }
+        formatter.start_node("PDATUM", node_from_ids(&self.identified.identifiers));
+        formatter.add_quoted(self.name());
+        if let Some(anchor) = self.anchor_definition() {
+            formatter.start_node("ANCHOR", NodeId::Absent);
+            formatter.add_quoted(anchor);
+            formatter.end_node();
+        }
+        formatter.format_ids(&self.identified.identifiers);
+        formatter.end_node();
+        Ok(std::mem::take(&mut formatter.result))
+    }
+}
+
+impl Identifier {
+    /// Write this identifier as a WKT2 `ID` node into `formatter` and return the WKT. The
+    /// citation of the authority and the URI follow the code, as `CITATION` and `URI` nodes.
+    ///
+    /// # Errors
+    ///
+    /// The formatter is not WKT2: WKT1 has no node for the citation or the URI.
+    pub fn export_to_wkt(&self, formatter: &mut WktFormatter) -> Result<String, FactoryError> {
+        if !formatter.wkt2 {
+            return Err(FactoryError::Format(
+                "an identifier with a citation or a URI can only be exported to WKT2".to_owned(),
+            ));
+        }
+        formatter.start_node("ID", NodeId::Absent);
+        formatter.add_quoted(&self.code_space);
+        if is_integer_code(&self.code) {
+            formatter.add_raw(&self.code);
+        } else {
+            formatter.add_quoted(&self.code);
+        }
+        if let Some(version) = &self.version {
+            if is_number_token(version) {
+                formatter.add_raw(version);
+            } else {
+                formatter.add_quoted(version);
+            }
+        }
+        if let Some(title) = &self.authority_citation {
+            formatter.start_node("CITATION", NodeId::Absent);
+            formatter.add_quoted(title);
+            formatter.end_node();
+        }
+        if let Some(uri) = &self.uri {
+            formatter.start_node("URI", NodeId::Absent);
+            formatter.add_quoted(uri);
+            formatter.end_node();
+        }
+        formatter.end_node();
+        Ok(std::mem::take(&mut formatter.result))
+    }
+}
+
+/// `DateTime::isISO_8601`: the text starts with a digit and holds no space.
+fn is_iso_8601(text: &str) -> bool {
+    text.starts_with(|c: char| c.is_ascii_digit()) && !text.contains(' ')
 }
 
 fn export_geodetic_datum(datum: &GeodeticReferenceFrame, formatter: &mut WktFormatter) {

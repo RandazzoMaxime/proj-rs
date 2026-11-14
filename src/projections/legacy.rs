@@ -73,6 +73,12 @@ pub(super) fn wrap(
         if grids.is_empty() {
             return Err(CreateError::IllegalValue("nadgrids"));
         }
+        // A name with white space is quoted, as `pj_mkparam_ws` reads it back.
+        let grids = if grids.contains(char::is_whitespace) {
+            format!("\"{grids}\"")
+        } else {
+            grids.to_owned()
+        };
         Some(open(&format!("+proj=hgridshift +grids={grids}"))?)
     } else {
         None

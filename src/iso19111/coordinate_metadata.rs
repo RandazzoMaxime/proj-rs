@@ -22,15 +22,47 @@ impl CoordinateMetadata {
     ///
     /// `crs` is static and has no point motion operation in `db`.
     pub fn create(crs: &Crs, epoch: f64, db: &DatabaseContext) -> Result<Self, FactoryError> {
-        if !crs.is_dynamic_with(Wgs84Dynamic::TreatAsDynamic) && !has_point_motion(crs, db)? {
-            return Err(FactoryError::Invalid(
-                "Coordinate epoch should not be provided for a static CRS".to_owned(),
-            ));
+        Self::checked(crs, epoch, Some(db))
+    }
+
+    /// `CoordinateMetadata::create(crs, epoch)`, the overload with no database context. A
+    /// static CRS is then refused, since no point motion operation can be looked up. A dynamic
+    /// CRS, and WGS 84 under its dynamic reading, are accepted.
+    ///
+    /// # Errors
+    ///
+    /// `crs` is static.
+    pub fn create_without_database(crs: &Crs, epoch: f64) -> Result<Self, FactoryError> {
+        Self::checked(crs, epoch, None)
+    }
+
+    fn checked(crs: &Crs, epoch: f64, db: Option<&DatabaseContext>) -> Result<Self, FactoryError> {
+        if !crs.is_dynamic_with(Wgs84Dynamic::TreatAsDynamic) {
+            let point_motion = match db {
+                Some(db) => has_point_motion(crs, db)?,
+                None => false,
+            };
+            if !point_motion {
+                return Err(FactoryError::Invalid(
+                    "Coordinate epoch should not be provided for a static CRS".to_owned(),
+                ));
+            }
         }
         Ok(Self {
             crs: crs.clone(),
             epoch: Some(epoch),
         })
+    }
+
+    /// `CoordinateMetadata::promoteTo3D(newName, dbContext)`: this object with its CRS promoted
+    /// to 3D (`Crs::promote_to_3d`), and the same epoch. A CRS already 3D is kept. The name is the
+    /// CRS's own, which is what PROJ does for an empty `newName`.
+    #[must_use]
+    pub fn promote_to_3d(&self, db: Option<&DatabaseContext>) -> Self {
+        Self {
+            crs: self.crs.promote_to_3d(db),
+            epoch: self.epoch,
+        }
     }
 
     /// `CoordinateMetadata::create(crs)`: `crs` with no epoch. Only a static CRS takes none.

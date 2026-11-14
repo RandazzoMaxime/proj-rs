@@ -1,7 +1,7 @@
 //! Lambert conforme conique ellipsoïdal.
 //!
 //! Portage de `src/projections/lcc.cpp` et de `pj_tsfn` / `pj_msfn` / `pj_phi2`
-//! (PROJ 9.4). Lambert-93 est ce cône sur GRS80. Voir `docs/PORTING-lcc.md`.
+//! (PROJ 9.9). Lambert-93 est ce cône sur GRS80. Voir `docs/PORTING-lcc.md`.
 
 use crate::angle::adjlon;
 use crate::{Ellipsoid, Geographic, Projected, ProjectionError};
@@ -437,7 +437,7 @@ pub(crate) fn phi2(ts: f64, e: f64) -> f64 {
     sinhpsi2tanphi((1.0 / ts - ts) / 2.0, e).atan()
 }
 
-/// Newton de `GeographicLib`, recopié de `pj_sinhpsi2tanphi` (PROJ 9.4).
+/// Newton de `GeographicLib`, recopié de `pj_sinhpsi2tanphi` (PROJ 9.9).
 #[expect(
     clippy::similar_names,
     reason = "tau, taup and tau1 are the names in PROJ pj_sinhpsi2tanphi"

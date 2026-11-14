@@ -823,16 +823,56 @@ fn real_to_i64(value: f64) -> i64 {
 /// # Errors
 ///
 /// [`CreateError::IllegalValue`] when the section is not a CRS this crate builds.
+/// Replace each `+init=FILE:SECTION` dictionary step by the text of its `<SECTION>` line
+/// (`pj_init_ctx` with a file, `src/init.cpp`). `None` when the definition has no such step.
+/// `epsg:`, `IGNF:` and `nad27:` steps are not dictionaries and are left to `init_definition`.
+pub(crate) fn expand_dictionary_init(definition: &str) -> Result<Option<String>, CreateError> {
+    let mut changed = false;
+    let mut tokens = Vec::new();
+    for token in definition.split_whitespace() {
+        let spec = token
+            .strip_prefix('+')
+            .unwrap_or(token)
+            .strip_prefix("init=");
+        match spec {
+            Some(spec) if is_dictionary_spec(spec) => {
+                tokens.push(dictionary_section(spec)?);
+                changed = true;
+            }
+            _ => tokens.push(token.to_owned()),
+        }
+    }
+    Ok(changed.then(|| tokens.join(" ")))
+}
+
+fn is_dictionary_spec(spec: &str) -> bool {
+    let lower = spec.to_ascii_lowercase();
+    spec.contains(':')
+        && !lower.starts_with("epsg:")
+        && !lower.starts_with("ignf:")
+        && !lower.starts_with("nad27:")
+}
+
+fn dictionary_section(spec: &str) -> Result<String, CreateError> {
+    let (file, section) = spec
+        .split_once(':')
+        .ok_or(CreateError::IllegalValue("init"))?;
+    let path = crate::network::find_file(file).ok_or(CreateError::IllegalValue("init"))?;
+    let text = std::fs::read(path).map_err(|_| CreateError::IllegalValue("init"))?;
+    init_section_from_text(&String::from_utf8_lossy(&text), section)
+}
+
 pub(crate) fn init_definition(spec: &str) -> Result<String, CreateError> {
     let spec = spec.trim();
-    if let Some(zone) = spec.strip_prefix("nad27:") {
-        if zone == "3901" {
-            return Ok(
-                "proj=lcc datum=NAD27 lon_0=-81 lat_1=34d58 lat_2=33d46 lat_0=33 x_0=609601.2192024384 y_0=0"
-                    .to_owned(),
-            );
+    if let Some((file, section)) = spec.split_once(':') {
+        // PROJ expands `+init=IGNF:CODE` from proj.db, as it does `epsg:`, when no
+        // `IGNF` file is on the data path (`pj_get_init_items`, `src/init.cpp`).
+        if file == "IGNF" {
+            return ignf_definition(section);
         }
-        return Err(CreateError::IllegalValue("init"));
+        if !file.eq_ignore_ascii_case("epsg") {
+            return init_file_section(file, section);
+        }
     }
     let code = spec
         .strip_prefix("epsg:")
@@ -859,6 +899,79 @@ pub(crate) fn init_definition(spec: &str) -> Result<String, CreateError> {
         Ok(loaded) => Ok(loaded.definition),
         Err(DbFail::Open(_)) => Err(CreateError::Unsupported("proj.db")),
         Err(DbFail::Sql(_)) => Err(CreateError::IllegalValue("init")),
+    }
+}
+
+/// The PROJ string of the `IGNF` CRS `code`, from proj.db, with its datum shift to WGS 84
+/// (`create_bound_crs_to_wgs84_if_possible`), as `+init=epsg:` does for a projected CRS.
+fn ignf_definition(code: &str) -> Result<String, CreateError> {
+    let db = crate::DatabaseContext::create().map_err(|_| CreateError::Unsupported("proj.db"))?;
+    let crs = crate::iso19111::create_from_user_input(&format!("IGNF:{code}"), &db)
+        .map_err(|_| CreateError::IllegalValue("init"))?;
+    crs.create_bound_crs_to_wgs84_if_possible(&db)
+        .export_to_proj_string()
+        .map_err(|_| CreateError::IllegalValue("init"))
+}
+
+/// The `<section>` of PROJ's `+init=file:section` init file, as the text PROJ
+/// adds to the definition: the lines between `<section>` and the `<>` that
+/// ends it, joined by spaces. `#` lines are comments.
+///
+/// The file is searched on the PROJ data path, as `pj_init` does. Without it,
+/// `nad27:3901` keeps its built-in definition, which the gie suite relies on.
+fn init_file_section(file: &str, section: &str) -> Result<String, CreateError> {
+    let Some(path) = crate::gridpath::resolve(file) else {
+        if file == "nad27" && section == "3901" {
+            return Ok(
+                "proj=lcc datum=NAD27 lon_0=-81 lat_1=34d58 lat_2=33d46 lat_0=33 x_0=609601.2192024384 y_0=0"
+                    .to_owned(),
+            );
+        }
+        return Err(CreateError::Unsupported("init file"));
+    };
+    let text = std::fs::read(path).map_err(|_| CreateError::Unsupported("init file"))?;
+    init_section_from_text(&String::from_utf8_lossy(&text), section)
+}
+
+/// The words of the `<SECTION>` entry of an init dictionary: it runs from `<SECTION>` to the
+/// closing `<>`, may span several lines, and skips `#` comment lines (`pj_init_ctx`).
+fn init_section_from_text(text: &str, section: &str) -> Result<String, CreateError> {
+    let header = format!("<{section}>");
+    let mut inside = false;
+    let mut parts: Vec<&str> = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if !inside {
+            if let Some(rest) = line.strip_prefix(header.as_str()) {
+                inside = true;
+                push_init_words(rest, &mut parts);
+            }
+        } else if !line.starts_with('#') {
+            push_init_words(line, &mut parts);
+        }
+        if parts.last() == Some(&"<>") {
+            parts.pop();
+            return Ok(parts.join(" "));
+        }
+    }
+    // A section may end at the end of the file instead of at `<>` (`pj_init_ctx` reads to the
+    // end of the stream), as the `proj_context_test.cpp` dictionary does.
+    if !inside {
+        return Err(CreateError::IllegalValue("init"));
+    }
+    if parts.last() == Some(&"<>") {
+        parts.pop();
+    }
+    Ok(parts.join(" "))
+}
+
+/// Words of one init-file line, with the `<>` end marker kept as a word.
+fn push_init_words<'a>(line: &'a str, parts: &mut Vec<&'a str>) {
+    for word in line.split_whitespace() {
+        if parts.last() == Some(&"<>") {
+            return;
+        }
+        parts.push(word);
     }
 }
 

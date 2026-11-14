@@ -1246,7 +1246,6 @@ fn wkt_parse_ensemble_vdatum() {
 }
 
 #[test]
-#[ignore = "open: buildCS has no temporal coordinate system, CS[temporal,1] in an ENGCRS is refused (wkt_import.rs build_cs)"]
 fn wkt_parse_invalid_engineeingcrs() {
     assert!(WktParser::new()
         .create_from_wkt(

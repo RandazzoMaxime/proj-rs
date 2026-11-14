@@ -218,7 +218,14 @@ fn main() {
     }
     let batch_path = proj_rs::batch_path();
     let simd = batch_path == "avx2";
-    let passes = GIE_PASSES.trim();
+    // `passing.txt` holds one line per mode (`offline N`, `network N`); the history keeps the
+    // network count, as `bench/record.sh` does.
+    let passes = GIE_PASSES
+        .lines()
+        .find_map(|line| line.strip_prefix("network "))
+        .map(str::trim)
+        .filter(|count| !count.is_empty() && count.bytes().all(|byte| byte.is_ascii_digit()))
+        .unwrap_or("0");
     let mut ratio_rows = String::new();
     for (name, proj_ns) in &ratios {
         let ours = cases

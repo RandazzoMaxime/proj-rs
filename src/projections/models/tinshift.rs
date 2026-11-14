@@ -20,7 +20,17 @@ enum Fallback {
     NearestCentroid,
 }
 
+/// The header fields of a JSON triangulation file; empty for a GeoPackage.
+#[derive(Clone, Default)]
+struct Header {
+    file_type: String,
+    format_version: String,
+    input_crs: String,
+    output_crs: String,
+}
+
 struct Tin {
+    header: Header,
     horizontal: bool,
     vertical: bool,
     columns: usize,
@@ -187,7 +197,20 @@ fn parse_json(text: &str) -> Option<Tin> {
         }
         triangles.push([a, b, c]);
     }
+    let text_of = |key: &str| {
+        root.get(key)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let header = Header {
+        file_type: text_of("file_type"),
+        format_version: version.to_owned(),
+        input_crs: text_of("input_crs"),
+        output_crs: text_of("output_crs"),
+    };
     Some(Tin {
+        header,
         horizontal,
         vertical,
         columns: stored,
@@ -355,6 +378,7 @@ fn load_gpkg(bytes: &[u8]) -> Result<Tin, CreateError> {
         return Err(CreateError::IllegalValue("file"));
     }
     Ok(Tin {
+        header: Header::default(),
         horizontal,
         vertical,
         columns: stored,
@@ -453,6 +477,124 @@ impl Step for TinShift {
 
     fn distance_ellipsoid(&self) -> (f64, f64) {
         (self.a, self.es)
+    }
+}
+
+/// The fallback used when a point is outside every triangle
+/// (`fallbackStrategy()` in PROJ).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FallbackStrategy {
+    /// No fallback: a point outside the triangles has no value.
+    None,
+    /// Use the nearest triangle side.
+    NearestSide,
+    /// Use the nearest triangle centroid.
+    NearestCentroid,
+}
+
+/// A triangulation file that does not parse (`ParsingException` in PROJ).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TinShiftFileError;
+
+impl std::fmt::Display for TinShiftFileError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("invalid triangulation file")
+    }
+}
+
+impl std::error::Error for TinShiftFileError {}
+
+/// A parsed JSON triangulation file (`TINShiftJSONFile` in PROJ).
+pub struct TinShiftFile {
+    tin: Tin,
+}
+
+impl std::fmt::Debug for TinShiftFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TinShiftFile")
+            .field("file_type", &self.tin.header.file_type)
+            .field("format_version", &self.tin.header.format_version)
+            .finish_non_exhaustive()
+    }
+}
+
+impl TinShiftFile {
+    /// Parse the text of a JSON triangulation file.
+    ///
+    /// # Errors
+    ///
+    /// [`TinShiftFileError`] when the text is not a valid triangulation file.
+    pub fn parse(text: &str) -> Result<Self, TinShiftFileError> {
+        parse_json(text)
+            .map(|tin| Self { tin })
+            .ok_or(TinShiftFileError)
+    }
+
+    /// The `file_type` field, `"triangulation_file"` for a valid file.
+    #[must_use]
+    pub fn file_type(&self) -> &str {
+        &self.tin.header.file_type
+    }
+
+    /// The `format_version` field.
+    #[must_use]
+    pub fn format_version(&self) -> &str {
+        &self.tin.header.format_version
+    }
+
+    /// The `input_crs` field.
+    #[must_use]
+    pub fn input_crs(&self) -> &str {
+        &self.tin.header.input_crs
+    }
+
+    /// The `output_crs` field.
+    #[must_use]
+    pub fn output_crs(&self) -> &str {
+        &self.tin.header.output_crs
+    }
+
+    /// The fallback strategy of the file; [`FallbackStrategy::None`] when the
+    /// file names none.
+    #[must_use]
+    pub fn fallback_strategy(&self) -> FallbackStrategy {
+        match self.tin.fallback {
+            Fallback::None => FallbackStrategy::None,
+            Fallback::NearestSide => FallbackStrategy::NearestSide,
+            Fallback::NearestCentroid => FallbackStrategy::NearestCentroid,
+        }
+    }
+}
+
+/// The evaluator of a triangulation file (`TINShiftJSONEvaluator` in PROJ).
+#[derive(Debug)]
+pub struct TinShiftEvaluator {
+    file: TinShiftFile,
+}
+
+impl TinShiftEvaluator {
+    /// An evaluator for `file`.
+    #[must_use]
+    pub fn new(file: TinShiftFile) -> Self {
+        Self { file }
+    }
+
+    /// The forward transform of a point, `None` when no triangle covers it.
+    #[must_use]
+    pub fn forward(&self, x: f64, y: f64, z: f64) -> Option<[f64; 3]> {
+        self.file
+            .tin
+            .apply(x, y, z, true)
+            .map(|(x, y, z)| [x, y, z])
+    }
+
+    /// The inverse transform of a point, `None` when no triangle covers it.
+    #[must_use]
+    pub fn inverse(&self, x: f64, y: f64, z: f64) -> Option<[f64; 3]> {
+        self.file
+            .tin
+            .apply(x, y, z, false)
+            .map(|(x, y, z)| [x, y, z])
     }
 }
 

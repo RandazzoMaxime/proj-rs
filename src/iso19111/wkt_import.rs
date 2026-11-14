@@ -6,6 +6,7 @@
 
 use super::bound::extract_geographic;
 use super::buildop::{OpProps, UtmHemisphere};
+use super::coordinate_metadata::CoordinateMetadata;
 use super::equiv::Equivalence;
 use super::niche::{ParametricCS, ParametricDatum, TemporalCS, TemporalCsKind, TemporalDatum};
 use super::normalize::reversed;
@@ -54,6 +55,54 @@ fn assign_parameter_codes(method_code: &str, parameters: &mut [Parameter]) {
             parameter.code_space = "EPSG".to_owned();
         }
     }
+}
+
+/// How [`WktParser::parameters_of`] reads the `PARAMETER` nodes of a node.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ParameterSyntax {
+    /// Any node: the unit comes from the node, or from the parameter name.
+    Wkt,
+    /// The parameters of an `ABRIDGEDTRANSFORMATION` (`consumeParameters` with `isAbridged`).
+    Abridged,
+}
+
+/// `OperationParameterValue::convertFromAbridged`: one of the seven Helmert parameters of an
+/// abridged transformation, by its EPSG name or its EPSG code. Gives the EPSG code, the unit
+/// PROJ reads the value in, and the value in that unit. Rotations are arc-seconds, and a scale
+/// difference `s` is `(s - 1) * 1e6` parts per million.
+fn convert_from_abridged(
+    name: &str,
+    value: f64,
+    epsg_code: i32,
+) -> Option<(i32, UnitOfMeasure, f64)> {
+    const HELMERT: [(&str, i32); 7] = [
+        ("X-axis translation", 8605),
+        ("Y-axis translation", 8606),
+        ("Z-axis translation", 8607),
+        ("X-axis rotation", 8608),
+        ("Y-axis rotation", 8609),
+        ("Z-axis rotation", 8610),
+        ("Scale difference", 8611),
+    ];
+    let (_, code) = HELMERT
+        .iter()
+        .find(|(wkt2, code)| super::equiv::equivalent_name(name, wkt2) || epsg_code == *code)?;
+    let arc_second = UnitOfMeasure::new("arc-second", DEGREE_SI / 3600.0, UnitKind::Angular);
+    Some(match *code {
+        8605..=8607 => (*code, UnitOfMeasure::metre(), value),
+        8608..=8610 => (*code, arc_second, value),
+        _ => (
+            *code,
+            UnitOfMeasure {
+                name: "parts per million".to_owned(),
+                factor: 1e-6,
+                kind: UnitKind::Scale,
+                code_space: "EPSG".to_owned(),
+                code: "9202".to_owned(),
+            },
+            (value - 1.0) * 1e6,
+        ),
+    })
 }
 
 fn same_parameter_name(left: &str, right: &str) -> bool {
@@ -325,6 +374,7 @@ impl Props {
         let mut identified = Identified {
             name: self.name.clone(),
             identifiers: self.identifiers.clone(),
+            aliases: Vec::new(),
             remarks: self.remarks.clone(),
             deprecated: self.deprecated,
             domains: self.domains.clone(),
@@ -364,10 +414,6 @@ impl Props {
 
 /// Parsed WKT object. The variant is the dynamic type PROJ would return.
 #[derive(Clone, Debug)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "each WKT object owns its full ISO 19111 graph"
-)]
 pub enum WktObject {
     /// `ELLIPSOID` or `SPHEROID`.
     Ellipsoid(Ellipsoid),
@@ -379,8 +425,12 @@ pub enum WktObject {
     EngineeringDatum(EngineeringDatum),
     /// `ENSEMBLE`.
     Ensemble(DatumEnsemble),
+    /// `ID` or `AUTHORITY` on its own, with the `CITATION` and `URI` nodes that follow the code.
+    Identifier(Identifier),
     /// Any coordinate reference system.
     Crs(Crs),
+    /// `COORDINATEMETADATA`, a CRS with its coordinate epoch (WKT2:2019).
+    CoordinateMetadata(CoordinateMetadata),
     /// `CONVERSION`, including a WKT1 `PROJECTION`.
     Conversion(Conversion),
     /// `COORDINATEOPERATION`.
@@ -664,6 +714,12 @@ impl WktParser {
     /// The object of `wkt`, before the grammar check of [`Self::create_from_wkt`].
     fn build_from_wkt(&mut self, wkt: &str) -> Result<WktObject, FactoryError> {
         let (root, mut index) = parse_node(wkt, 0, 0)?;
+        if ci_eq(&root.value, "ID") {
+            return Ok(WktObject::Identifier(self.build_standalone_id(&root)?));
+        }
+        if ci_eq(&root.value, "COORDINATEMETADATA") {
+            return self.build_coordinate_metadata(&root);
+        }
         if ci_eq(&root.value, "DATUM")
             || ci_eq(&root.value, "GEODETICDATUM")
             || ci_eq(&root.value, "TRF")
@@ -741,6 +797,39 @@ impl WktParser {
             self.grammar_errors.push(message);
             Ok(())
         }
+    }
+
+    /// `COORDINATEMETADATA[<crs>, EPOCH[<year>]]`: the CRS, and the epoch when there is one.
+    ///
+    /// The database, when the parser has one, decides whether a static CRS with a point motion
+    /// operation takes an epoch (`CoordinateMetadata::create`). Without one, only a dynamic CRS
+    /// does.
+    fn build_coordinate_metadata(&mut self, node: &WktNode) -> Result<WktObject, FactoryError> {
+        let Some(crs_node) = node
+            .children
+            .iter()
+            .find(|child| !ci_eq(&child.value, "EPOCH"))
+        else {
+            return Err(invalid("COORDINATEMETADATA has no CRS"));
+        };
+        let WktObject::Crs(crs) = self.build_object(crs_node)? else {
+            return Err(invalid("COORDINATEMETADATA does not hold a CRS"));
+        };
+        let epoch = match node.child(&["EPOCH"]) {
+            Some(epoch) => {
+                if epoch.children.len() != 1 {
+                    return Err(invalid("Invalid EPOCH node"));
+                }
+                Some(as_f64(&epoch.children[0])?)
+            }
+            None => None,
+        };
+        let metadata = match (epoch, self.db.as_ref()) {
+            (Some(epoch), Some(db)) => CoordinateMetadata::create(&crs, epoch, db)?,
+            (Some(epoch), None) => CoordinateMetadata::create_without_database(&crs, epoch)?,
+            (None, _) => CoordinateMetadata::create_without_epoch(&crs)?,
+        };
+        Ok(WktObject::CoordinateMetadata(metadata))
     }
 
     fn vertcs_follows(&self, wkt: &str, mut index: usize) -> bool {
@@ -877,6 +966,20 @@ impl WktParser {
             return Ok(WktObject::Concatenated(self.build_concatenated(node)?));
         }
         Err(invalid(format!("unhandled keyword: {name}")))
+    }
+
+    /// An `ID` on its own. `build_id` reads the code space, the code and the version; the
+    /// `CITATION` and `URI` nodes after them are read here, so a CRS keeps its identifiers as before.
+    fn build_standalone_id(&mut self, node: &WktNode) -> Result<Identifier, FactoryError> {
+        let mut identifier = self.build_id(node, node)?;
+        for child in &node.children {
+            if ci_eq(&child.value, "CITATION") {
+                identifier.authority_citation = child.children.first().map(strip_quotes);
+            } else if ci_eq(&child.value, "URI") {
+                identifier.uri = child.children.first().map(strip_quotes);
+            }
+        }
+        Ok(identifier)
     }
 
     fn build_id(&mut self, node: &WktNode, parent: &WktNode) -> Result<Identifier, FactoryError> {
@@ -2796,7 +2899,7 @@ impl WktParser {
             remove_inverse_of(&mut props);
             remove_inverse_of(&mut method_props);
         }
-        let mut parameters = self.parameters_of(node, &linear, &angular)?;
+        let mut parameters = self.parameters_of(node, &linear, &angular, ParameterSyntax::Wkt)?;
         let interpolation = self.take_interpolation_crs(&mut parameters);
         let conversion = Conversion {
             identified: props.identified(),
@@ -2955,7 +3058,7 @@ impl WktParser {
                 return Ok(conversion);
             }
         }
-        let mut parameters = self.parameters_of(node, &linear, &angular)?;
+        let mut parameters = self.parameters_of(node, &linear, &angular, ParameterSyntax::Wkt)?;
         let polar_variant_b = ci_eq(&method_name, "Polar_Stereographic")
             && parameters
                 .iter()
@@ -3201,6 +3304,7 @@ impl WktParser {
         node: &WktNode,
         linear: &UnitOfMeasure,
         angular: &UnitOfMeasure,
+        syntax: ParameterSyntax,
     ) -> Result<Vec<Parameter>, FactoryError> {
         let mut parameters = Vec::new();
         for child in &node.children {
@@ -3225,7 +3329,9 @@ impl WktParser {
                         unit = guess_parameter_unit(&props.name, linear, angular);
                         // An abridged `Scale difference` without UNIT is the unity scale
                         // `1 + ppm * 1e-6` (`ParameterValue::_exportToWKT`): read it in ppm.
-                        if props.name == "Scale difference"
+                        // The abridged path converts it in `convert_from_abridged` instead.
+                        if syntax == ParameterSyntax::Wkt
+                            && props.name == "Scale difference"
                             && unit.as_ref().is_some_and(|unit| {
                                 unit.kind == UnitKind::Scale && unit.factor == 1.0
                             })
@@ -3238,6 +3344,19 @@ impl WktParser {
                                 code_space: "EPSG".to_owned(),
                                 code: "9202".to_owned(),
                             });
+                        }
+                    }
+                    if syntax == ParameterSyntax::Abridged {
+                        let epsg_code = match props.identifiers.as_slice() {
+                            [id] if id.code_space == "EPSG" => id.code.parse().unwrap_or(0),
+                            _ => 0,
+                        };
+                        if let Some((code, fixed_unit, converted)) =
+                            convert_from_abridged(&props.name, number, epsg_code)
+                        {
+                            unit = Some(fixed_unit);
+                            number = converted;
+                            props.identifiers = vec![Identifier::new("EPSG", code.to_string())];
                         }
                     }
                     if is_interpolation_code_parameter(&props) {
@@ -3500,7 +3619,14 @@ impl WktParser {
         } else {
             UnitOfMeasure::degree()
         };
-        let mut parameters = self.parameters_of(node, &UnitOfMeasure::metre(), &angular)?;
+        // Only an `ABRIDGEDTRANSFORMATION` states its Helmert parameters in the EPSG units that
+        // `convertFromAbridged` fixes; a `COORDINATEOPERATION` carries its own units.
+        let syntax = if ci_eq(&node.value, "ABRIDGEDTRANSFORMATION") {
+            ParameterSyntax::Abridged
+        } else {
+            ParameterSyntax::Wkt
+        };
+        let mut parameters = self.parameters_of(node, &UnitOfMeasure::metre(), &angular, syntax)?;
         let method_code = method_props
             .identifiers
             .first()

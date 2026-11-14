@@ -50,8 +50,18 @@ fn missing_grid_is_fetched_only_when_the_network_is_on() {
         server.paths(),
         vec!["/proj_rs_missing_hgrid.tif".to_owned()]
     );
-    let cached = std::fs::read(cache.0.join("proj_rs_missing_hgrid.tif")).expect("cached bytes");
-    assert_eq!(cached, fixture);
+    // The grid is in the chunk database `cache.db`, not a file of the directory, as in PROJ 9.9.0.
+    assert!(!cache.0.join("proj_rs_missing_hgrid.tif").is_file());
+    let database = rusqlite::Connection::open(cache.0.join("cache.db")).expect("chunk database");
+    let url = format!("{}/proj_rs_missing_hgrid.tif", server.url);
+    let size: i64 = database
+        .query_row(
+            "SELECT fileSize FROM properties WHERE url = ?1",
+            [url],
+            |row| row.get(0),
+        )
+        .expect("cached properties");
+    assert_eq!(usize::try_from(size).ok(), Some(fixture.len()));
 
     let local = proj_rs::Proj::new("+proj=gridshift +grids=tests/test_hgrid_with_subgrid.tif")
         .expect("vendored grid");

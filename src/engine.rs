@@ -35,6 +35,15 @@ mod legacy;
 
 const EPS_LAT: f64 = 1e-12;
 
+/// Whether an [`Operation`] keeps the datum shift its definition implies.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DatumMode {
+    /// The shift is part of the operation.
+    Shift,
+    /// Only the projection: `pj_fwd`, as `proj` runs it.
+    Projection,
+}
+
 /// Four-dimensional coordinate. Angular axes are radians inside an operation.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Coord {
@@ -105,6 +114,9 @@ pub enum TransformError {
     InvalidCoord,
     /// A coordinate was not finite.
     NonFinite,
+    /// A shift grid is not on disk and the network did not give it at transform time:
+    /// PROJ `PROJ_ERR_OTHER_NETWORK_ERROR`.
+    NetworkUnavailable,
 }
 
 impl fmt::Display for TransformError {
@@ -116,6 +128,7 @@ impl fmt::Display for TransformError {
             Self::NoInverse => "inverse is not available",
             Self::InvalidCoord => "coordinate is invalid",
             Self::NonFinite => "coordinate is not finite",
+            Self::NetworkUnavailable => "a grid could not be downloaded",
         })
     }
 }
@@ -141,6 +154,38 @@ pub(crate) struct Params {
     items: Vec<(String, Option<String>)>,
 }
 
+/// The words of a PROJ string line: separated by white space, except inside a double-quoted
+/// span, whose spaces stay and whose quote characters are dropped (`pj_mkparam_ws`, so
+/// `+nadgrids="dir with space/myconus"` is one word).
+fn split_quoted(line: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let mut in_quote = false;
+    let mut started = false;
+    for ch in line.chars() {
+        match ch {
+            '"' => {
+                in_quote = !in_quote;
+                started = true;
+            }
+            ch if ch.is_whitespace() && !in_quote => {
+                if started {
+                    words.push(std::mem::take(&mut word));
+                    started = false;
+                }
+            }
+            ch => {
+                word.push(ch);
+                started = true;
+            }
+        }
+    }
+    if started {
+        words.push(word);
+    }
+    words
+}
+
 impl Params {
     /// Parse a PROJ string. `+` is optional. `#` starts a comment.
     ///
@@ -152,8 +197,8 @@ impl Params {
         let mut items = Vec::new();
         for raw_line in input.lines() {
             let line = raw_line.split('#').next().unwrap_or("");
-            for token in line.split_whitespace() {
-                let token = token.trim_start_matches('+');
+            for word in split_quoted(line) {
+                let token = word.trim_start_matches('+');
                 if token.is_empty() {
                     continue;
                 }
@@ -956,6 +1001,27 @@ impl Operation {
     /// `urn:ogc:def:coordinateOperation:NKG::` is read from `proj.db`. A step
     /// that needs a grid is [`CreateError::Unsupported`], not a coordinate.
     pub fn create(definition: &str) -> Result<Self, CreateError> {
+        Self::create_with(definition, DatumMode::Shift)
+    }
+
+    /// The projection of `definition` alone, as PROJ's `proj` applies it.
+    ///
+    /// The same definition as [`Operation::create`], without its datum shift:
+    /// `+towgs84`, `+nadgrids` and `+geoidgrids`, which `+datum=` and `+init=`
+    /// may add, are dropped. The ellipsoid of the datum is kept. PROJ's forward
+    /// projection (`pj_fwd`) applies no datum shift.
+    ///
+    /// # Errors
+    ///
+    /// The same errors as [`Operation::create`].
+    pub fn create_projection(definition: &str) -> Result<Self, CreateError> {
+        Self::create_with(definition, DatumMode::Projection)
+    }
+
+    fn create_with(definition: &str, datum: DatumMode) -> Result<Self, CreateError> {
+        // `+init=FILE:SECTION` names a dictionary line; it is replaced by that line first.
+        let expanded = crate::crs::expand_dictionary_init(definition)?;
+        let definition = expanded.as_deref().unwrap_or(definition);
         if let Some(step) = nkg::from_definition(definition)? {
             return Ok(Self {
                 step: std::sync::Arc::from(step),
@@ -978,6 +1044,11 @@ impl Operation {
             });
         }
         prepare_params(&mut params)?;
+        if datum == DatumMode::Projection {
+            for key in ["towgs84", "nadgrids", "geoidgrids"] {
+                params.remove(key);
+            }
+        }
         let name = params.text("proj").unwrap_or("").to_owned();
         if name.is_empty() {
             return Err(CreateError::MissingArgument("proj"));
@@ -1719,6 +1790,25 @@ impl<K: Kernel + 'static> Step for Classic<K> {
     }
 }
 
+/// `fwd_prepare` of PROJ 9.9.0 (`fwd.cpp`): a latitude beyond the pole by more than
+/// `EPS_LAT` is `PROJ_ERR_COORD_TRANSFM_INVALID_COORD`, and one within it is clamped to the
+/// pole.
+pub(crate) fn latitude_gate(lat: f64) -> Result<f64, TransformError> {
+    if lat.abs() <= FRAC_PI_2 {
+        return Ok(lat);
+    }
+    if lat > 0.0 {
+        if lat - FRAC_PI_2 > EPS_LAT {
+            return Err(TransformError::InvalidCoord);
+        }
+        Ok(FRAC_PI_2)
+    } else if lat - FRAC_PI_2 < -EPS_LAT {
+        Err(TransformError::InvalidCoord)
+    } else {
+        Ok(-FRAC_PI_2)
+    }
+}
+
 /// Angular forward prepare: latitude gate, `lon_0`, prime meridian, geocentric latitude.
 pub(crate) fn prepare_forward(
     frame: &Frame,
@@ -1728,18 +1818,7 @@ pub(crate) fn prepare_forward(
     if !lon.is_finite() || !lat.is_finite() {
         return Err(TransformError::NonFinite);
     }
-    if lat.abs() > FRAC_PI_2 {
-        if lat > 0.0 {
-            if lat - FRAC_PI_2 > EPS_LAT {
-                return Err(TransformError::InvalidCoord);
-            }
-            lat = FRAC_PI_2;
-        } else if lat - FRAC_PI_2 < -EPS_LAT {
-            return Err(TransformError::InvalidCoord);
-        } else {
-            lat = -FRAC_PI_2;
-        }
-    }
+    lat = latitude_gate(lat)?;
     if lon.abs() > PI {
         if lon.abs() > 10.0 {
             return Err(TransformError::InvalidCoord);
@@ -1827,7 +1906,9 @@ where
 {
     fn forward(&self, coord: Coord) -> Result<Coord, TransformError> {
         // `pm=` is subtracted before the kernel, as in `fwd_prepare`.
-        let projected = (self.forward_xy)(coord.x - self.frame.from_greenwich, coord.y)?;
+        // The latitude gate of `fwd_prepare` applies to every forward projection.
+        let lat = latitude_gate(coord.y)?;
+        let projected = (self.forward_xy)(coord.x - self.frame.from_greenwich, lat)?;
         Ok(Coord {
             x: self.frame.fr_meter * projected.east,
             y: self.frame.fr_meter * projected.north,
@@ -1945,8 +2026,11 @@ pub(crate) fn cartesian_to_geodetic(earth: Ellipsoid, x: f64, y: f64, z: f64) ->
     let b_div = 1.0 - earth.flattening();
     let p_b = p_div * b_div;
     let norm = (z_div * z_div + p_b * p_b).sqrt();
+    // PROJ's `cart.cpp` multiplies by the reciprocal of each norm. The rounding
+    // of that decides the sign of a height that is zero, as for the pole.
     let (c, s) = if norm != 0.0 {
-        (p_b / norm, z_div / norm)
+        let inv_norm = 1.0 / norm;
+        (p_b * inv_norm, z_div * inv_norm)
     } else {
         (1.0, 0.0)
     };
@@ -1957,8 +2041,9 @@ pub(crate) fn cartesian_to_geodetic(earth: Ellipsoid, x: f64, y: f64, z: f64) ->
         let sign = if z >= 0.0 { 1.0 } else { -1.0 };
         (0.0, sign, sign * FRAC_PI_2)
     } else if norm_phi != 0.0 {
-        let cosphi = x_phi / norm_phi;
-        let sinphi = y_phi / norm_phi;
+        let inv_norm_phi = 1.0 / norm_phi;
+        let cosphi = x_phi * inv_norm_phi;
+        let sinphi = y_phi * inv_norm_phi;
         (cosphi, sinphi, (y_phi / x_phi).atan())
     } else {
         (1.0, 0.0, 0.0)

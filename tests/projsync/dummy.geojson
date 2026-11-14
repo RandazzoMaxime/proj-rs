@@ -1,0 +1,8 @@
+{
+"type": "FeatureCollection",
+"features": [
+{ "type": "Feature", "properties": { "url": "https://example.com/removed_in_1.7.tif", "name": "removed_in_1.7", "area_of_use": "Australia", "source_id": "au_ga", "version_removed": "1.7", "file_size": 60878523 }, "geometry": { "type": "Polygon", "coordinates": [ [ [ 93.0, -61.0 ], [ 174.0, -61.0 ], [ 174.0, -8.0 ], [ 93.0, -8.0 ], [ 93.0, -61.0 ] ] ] } },
+{ "type": "Feature", "properties": { "url": "https://example.com/added_in_99_99.tif", "name": "added_in_99_99.tif", "area_of_use": "Australia", "source_id": "au_ga", "version_added": "99.99", "file_size": 60878523 }, "geometry": { "type": "Polygon", "coordinates": [ [ [ 93.0, -61.0 ], [ 174.0, -61.0 ], [ 174.0, -8.0 ], [ 93.0, -8.0 ], [ 93.0, -61.0 ] ] ] } },
+{ "type": "Feature", "properties": { "url": "https://example.com/without_version.tif", "name": "without_version.tif", "area_of_use": "Australia", "source_id": "au_ga", "file_size": 60878523 }, "geometry": { "type": "Polygon", "coordinates": [ [ [ 93.0, -61.0 ], [ 174.0, -61.0 ], [ 174.0, -8.0 ], [ 93.0, -8.0 ], [ 93.0, -61.0 ] ] ] } }
+]
+}

@@ -104,6 +104,13 @@ fn command() -> ExitCode {
     } else {
         promoted_by_name(&source, &target)
     };
+    // Without `--3d` a source with no height keeps none: PROJ applies the target's geoid model
+    // only to a height it has (`cs2cs.cpp`, the 2D to 3D promotion).
+    let build_target = if opts.promote_3d {
+        build_target
+    } else {
+        geoid_without_height(&build_source, &build_target)
+    };
     let filter = CandidateFilter {
         accuracy: opts.accuracy,
         ballpark: if opts.allow_ballpark {
@@ -581,10 +588,14 @@ fn build_engine(
     // `--authority` is `AUTHORITY=` of `proj_create_crs_to_crs`: no option is every authority.
     let authority = authority.unwrap_or("");
     let mut iso = IsoStatus::NotTried;
+    // `+init=IGNF:CODE` is the database CRS `IGNF:CODE` for PROJ's pair selection
+    // (`proj_create_crs_to_crs_from_pj`), not its expanded PROJ string.
+    let iso_source = init_side_as_code(source);
+    let iso_target = init_side_as_code(target);
     if area.is_none() && iso_serves_pair(source, target) {
         match proj_rs::iso19111::select_alternatives_with_authority(
-            source,
-            target,
+            &iso_source,
+            &iso_target,
             policy_of(only_best),
             filter,
             authority,
@@ -609,15 +620,20 @@ fn build_engine(
             Err(error) => iso = IsoStatus::Failed(error.to_string()),
         }
         if filter != CandidateFilter::NONE {
-            return select_pipeline_filtered(source, target, only_best, filter, authority).map(
-                |engine| BuiltEngine {
-                    engine,
-                    path: BuildPath::Iso,
-                    iso,
-                },
-            );
+            return select_pipeline_filtered(
+                &iso_source,
+                &iso_target,
+                only_best,
+                filter,
+                authority,
+            )
+            .map(|engine| BuiltEngine {
+                engine,
+                path: BuildPath::Iso,
+                iso,
+            });
         }
-        match select_pipeline(source, target, only_best, authority) {
+        match select_pipeline(&iso_source, &iso_target, only_best, authority) {
             Ok(engine) => {
                 return Ok(BuiltEngine {
                     engine,
@@ -865,20 +881,50 @@ fn canonical_side(text: &str) -> String {
     }
 }
 
+/// `IGNF:CODE` for a side that is only `+init=IGNF:CODE`, as PROJ reads it as the database CRS.
+/// Any other text is returned as it is: an `epsg:` init keeps the PROJ-string path, whose axis
+/// order its tests rely on (`test_cs2cs_various.yaml#59`, `#67`, `#68`).
+fn init_side_as_code(text: &str) -> String {
+    let trimmed = text.trim();
+    let Some(rest) = trimmed
+        .strip_prefix("+init=")
+        .or_else(|| trimmed.strip_prefix("init="))
+    else {
+        return text.to_owned();
+    };
+    let Some((auth, code)) = rest.split_once(':') else {
+        return text.to_owned();
+    };
+    let auth_upper = auth.to_ascii_uppercase();
+    if auth_upper == "IGNF"
+        && !code.is_empty()
+        && code
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    {
+        format!("{auth_upper}:{code}")
+    } else {
+        text.to_owned()
+    }
+}
+
 /// Whether path (1) serves the pair. An EPSG token, a name or a CRS with an EPSG identity always
 /// goes there. A PROJ string goes there too unless it carries a flag the ISO import does not
 /// represent (`+approx`, `+over`, `+lon_wrap`): PROJ creates those CRS with the flag, and the
 /// ISO candidates would drop it.
 fn iso_serves_pair(source: &str, target: &str) -> bool {
     const FLAGS: [&str; 3] = ["approx", "over", "lon_wrap"];
+    // A quoted value (`+nadgrids="dir with space/myconus"`) is read by the PROJ-string parser
+    // only: the ISO import splits its text on white space and keeps the quotes.
     [source, target].iter().all(|side| {
         !projish(side)
-            || !FLAGS.iter().any(|flag| {
-                side.split_whitespace().any(|token| {
-                    let bare = token.trim_start_matches('+');
-                    bare == *flag || bare.starts_with(&format!("{flag}="))
-                })
-            })
+            || (!side.contains('"')
+                && !FLAGS.iter().any(|flag| {
+                    side.split_whitespace().any(|token| {
+                        let bare = token.trim_start_matches('+');
+                        bare == *flag || bare.starts_with(&format!("{flag}="))
+                    })
+                }))
     })
 }
 
@@ -1028,9 +1074,33 @@ fn names_datum(definition: &str) -> bool {
     })
 }
 
+/// The words of a definition, split on white space outside double quotes. A quoted span is
+/// one word and keeps its quotes, so the word can be joined back and read again.
+fn raw_words(definition: &str) -> Vec<&str> {
+    let mut words = Vec::new();
+    let mut start = None;
+    let mut in_quote = false;
+    for (index, ch) in definition.char_indices() {
+        if ch == '"' {
+            in_quote = !in_quote;
+            start.get_or_insert(index);
+        } else if ch.is_whitespace() && !in_quote {
+            if let Some(begin) = start.take() {
+                words.push(&definition[begin..index]);
+            }
+        } else {
+            start.get_or_insert(index);
+        }
+    }
+    if let Some(begin) = start {
+        words.push(&definition[begin..]);
+    }
+    words
+}
+
 fn strip_datum(definition: &str) -> String {
     let mut parts = Vec::new();
-    for token in definition.split_whitespace() {
+    for token in raw_words(definition) {
         let bare = token.trim_start_matches('+');
         if bare.starts_with("towgs84=")
             || bare == "towgs84"
@@ -1376,7 +1446,15 @@ fn parse(args: &[String]) -> Result<Options, AppError> {
             if !slot.is_empty() {
                 slot.push(' ');
             }
-            slot.push_str(arg);
+            // One argument with white space (`+nadgrids=dir with space/myconus`) stays one word
+            // of the definition: the definition is split again, as PROJ's `pj_mkparam_ws` does.
+            if arg.contains(char::is_whitespace) && !arg.contains('"') {
+                slot.push('"');
+                slot.push_str(arg);
+                slot.push('"');
+            } else {
+                slot.push_str(arg);
+            }
         } else if !have_to {
             opts.source = arg.to_owned();
         } else if opts.target.is_empty() {
@@ -1640,6 +1718,36 @@ fn promoted_text(crs: &proj_rs::Crs, db: &proj_rs::DatabaseContext) -> Option<St
     Some(format!("{}:{}", identifier.code_space(), identifier.code()))
 }
 
+/// `target` without its `+geoidgrids` when `source` has no height: the geoid model of a
+/// target is a height correction, and a source with no height has none to correct. `source` has
+/// a height when it names a vertical key or is a 3D CRS (`+init=AUTH:CODE` included).
+fn geoid_without_height(source: &str, target: &str) -> String {
+    let has_geoid = |text: &str| {
+        text.split_whitespace()
+            .any(|token| token.trim_start_matches('+').starts_with("geoidgrids="))
+    };
+    if !has_geoid(target) || has_height(source) {
+        return target.to_owned();
+    }
+    let authority_text = init_authority(source).map(|(auth, code)| format!("{auth}:{code}"));
+    let source_is_3d = authority_text
+        .and_then(|text| {
+            let db = proj_rs::DatabaseContext::create().ok()?;
+            proj_rs::create_from_user_input(&text, &db)
+                .ok()
+                .map(|crs| is_3d_crs(&crs))
+        })
+        .unwrap_or(false);
+    if source_is_3d {
+        return target.to_owned();
+    }
+    target
+        .split_whitespace()
+        .filter(|token| !token.trim_start_matches('+').starts_with("geoidgrids="))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// `is3DCRS` in `src/apps/cs2cs.cpp` (lines 361-376): a compound CRS, or a geographic,
 /// geodetic (geocentric included), projected or derived projected CRS with three axes.
 fn is_3d_crs(crs: &proj_rs::Crs) -> bool {
@@ -1694,8 +1802,18 @@ impl Catalog {
         if let Some(name) = explicit_proj(def) {
             return layout_from_proj(&name, def);
         }
-        if let Some(code) = init_epsg(def) {
-            return self.authority("EPSG", &code.to_string());
+        if let Some((auth, code)) = init_authority(def) {
+            let mut side = self.authority(&auth, &code);
+            // `+geoidgrids` makes PROJ's CRS a compound of the horizontal CRS and a geoid
+            // model, which is neither geographic nor projected: plain numbers, not DMS
+            // (`instantiate_crs`, `cs2cs.cpp`).
+            if def
+                .split_whitespace()
+                .any(|token| token.trim_start_matches('+').starts_with("geoidgrids="))
+            {
+                side.layout = Layout::Other;
+            }
+            return side;
         }
         if let Some(horizontal) = compound_notation(def) {
             // `instantiate_crs` reads the compound CRS as neither geographic nor projected, so its
@@ -1803,8 +1921,7 @@ impl Catalog {
         if explicit_proj(def).is_some() {
             return Some(synthesize_longlat(def));
         }
-        let (auth, code) = first_auth(def)
-            .or_else(|| init_epsg(def).map(|code| ("EPSG".to_owned(), code.to_string())))?;
+        let (auth, code) = first_auth(def).or_else(|| init_authority(def))?;
         let (base_auth, base_code) = projected_base(self.db.as_ref()?, &auth, &code)?;
         Some(format!("{base_auth}:{base_code}"))
     }
@@ -1882,16 +1999,23 @@ fn explicit_proj(def: &str) -> Option<String> {
     None
 }
 
-fn init_epsg(def: &str) -> Option<i64> {
+/// The `(authority, code)` of the first `+init=` of `def` when it is `epsg:CODE` (a number) or
+/// `IGNF:CODE`: the two authorities PROJ expands from proj.db (`pj_get_init_items`).
+fn init_authority(def: &str) -> Option<(String, String)> {
     for token in def.split_whitespace() {
         let token = token.trim_start_matches('+');
         let Some(rest) = token.strip_prefix("init=") else {
             continue;
         };
-        let rest = rest
+        if let Some(code) = rest
             .strip_prefix("epsg:")
-            .or_else(|| rest.strip_prefix("EPSG:"))?;
-        return rest.split(['+', ':']).next()?.parse().ok();
+            .or_else(|| rest.strip_prefix("EPSG:"))
+        {
+            let code: i64 = code.split(['+', ':']).next()?.parse().ok()?;
+            return Some(("EPSG".to_owned(), code.to_string()));
+        }
+        let code = rest.strip_prefix("IGNF:")?;
+        return Some(("IGNF".to_owned(), code.split(['+', ':']).next()?.to_owned()));
     }
     None
 }

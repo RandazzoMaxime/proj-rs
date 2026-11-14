@@ -10,7 +10,7 @@
 use std::error::Error;
 use std::ffi::NulError;
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 mod bounds;
 #[path = "proj_export.rs"]
@@ -124,7 +124,8 @@ pub enum ProjError {
     Utf8Error(std::str::Utf8Error),
     /// A coordinate could not be converted to the requested float.
     FloatConversion,
-    /// Network download is not built.
+    /// A grid is not on disk and could not be downloaded when the point was transformed:
+    /// PROJ `PROJ_ERR_OTHER_NETWORK_ERROR`.
     Network,
     /// Remote grid callbacks are not built.
     RemoteCallbacks,
@@ -165,9 +166,9 @@ impl fmt::Display for ProjError {
             Self::Path => formatter.write_str("Couldn't convert path to slice"),
             Self::Utf8Error(_) => formatter.write_str("Couldn't convert bytes from PROJ to UTF-8"),
             Self::FloatConversion => formatter.write_str("Couldn't convert number to f64"),
-            Self::Network => {
-                formatter.write_str("Network download functionality could not be enabled")
-            }
+            Self::Network => formatter.write_str(
+                "A grid is not on disk and could not be downloaded when the point was transformed",
+            ),
             Self::RemoteCallbacks => {
                 formatter.write_str("Could not set remote grid download callbacks")
             }
@@ -393,6 +394,9 @@ pub struct Proj {
     /// The steps of a PROJ pipeline made by [`Proj::new`], kept for the inverse and the layout
     /// of [`Proj::as_proj_string`]. `None` for the other bodies.
     pipeline: Option<Pipeline>,
+    /// The name of the candidate operation this object was taken from, as PROJ's description
+    /// of `proj_trans_get_last_used_operation`. `None` for every other object.
+    candidate_name: Option<String>,
 }
 
 impl Proj {
@@ -577,9 +581,13 @@ impl Proj {
         if matches!(self.body, Body::Native(_)) {
             let definition = self.def().ok();
             let id = definition.as_deref().and_then(crate::proj_info::proj_name);
+            let description = self
+                .candidate_name
+                .clone()
+                .unwrap_or_else(|| crate::proj_info::OPERATION_DESCRIPTION.to_owned());
             return ProjInfo {
                 id,
-                description: Some(crate::proj_info::OPERATION_DESCRIPTION.to_owned()),
+                description: Some(description),
                 definition,
                 has_inverse: self.has_inverse(),
                 accuracy: -1.0,
@@ -1043,6 +1051,9 @@ impl Proj {
             Body::Iso(pipeline) => pipeline.map(Xyzt { x, y, z, t }, way),
         };
         mapped.map_err(|error| {
+            if error == crate::engine::TransformError::NetworkUnavailable {
+                return ProjError::Network;
+            }
             // libproj words an invalid coordinate as `Invalid coordinate`.
             let message = match error {
                 crate::engine::TransformError::InvalidCoord => "Invalid coordinate".to_owned(),
@@ -1083,6 +1094,24 @@ impl Default for ProjBuilder {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Whether a builder uses the grid chunk cache.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GridCacheMode {
+    /// Grids are read from the cache when fresh, and stored there after a download.
+    Enabled,
+    /// Grids are downloaded each time and nothing is written to the cache.
+    Disabled,
+}
+
+/// How long a checked remote file stays fresh in the grid chunk cache.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GridCacheTtl {
+    /// A checked file never expires.
+    Never,
+    /// A checked file expires after this many seconds. Zero never expires, as in PROJ.
+    Seconds(u32),
 }
 
 impl ProjBuilder {
@@ -1226,6 +1255,75 @@ impl ProjBuilder {
         Ok(())
     }
 
+    /// The directories added by [`Self::set_search_paths`], in order.
+    #[must_use]
+    pub fn search_paths(&self) -> Vec<PathBuf> {
+        self.net.added_search_paths().to_vec()
+    }
+
+    /// The user-writable directory: the one set by [`Self::set_user_writable_directory`],
+    /// else PROJ's default directory.
+    #[must_use]
+    pub fn user_writable_directory(&self) -> PathBuf {
+        self.net.cache_directory()
+    }
+
+    /// Forget the directory set by [`Self::set_user_writable_directory`]; the default is
+    /// used again. This is `proj_context_set_user_writable_directory(ctx, NULL, ...)`.
+    pub fn clear_user_writable_directory(&mut self) {
+        self.net.clear_cache_dir();
+    }
+
+    /// Set a file finder, consulted before the search directories when a dictionary
+    /// (`+init=FILE:SECTION`) or a grid is looked up. It receives the file name and returns
+    /// the path to read, or `None` to let the search directories answer.
+    ///
+    /// This is `proj_context_set_file_finder`, without the context and user-data arguments of
+    /// the C callback: a Rust closure carries its own state.
+    pub fn set_file_finder<F>(&mut self, finder: F)
+    where
+        F: Fn(&str) -> Option<PathBuf> + Send + Sync + 'static,
+    {
+        self.net
+            .set_file_finder(crate::network::FileFinder(std::sync::Arc::new(finder)));
+    }
+
+    /// Remove the file finder set by [`Self::set_file_finder`].
+    pub fn clear_file_finder(&mut self) {
+        self.net.clear_file_finder();
+    }
+
+    /// Fetch missing grids through `callbacks` instead of the built-in HTTP client
+    /// (`proj_context_set_network_callbacks`). Network access must also be on: the callbacks
+    /// are not called otherwise.
+    pub fn set_network_callbacks(
+        &mut self,
+        callbacks: std::sync::Arc<dyn crate::NetworkCallbacks>,
+    ) {
+        self.net.set_callbacks(crate::network::Callbacks(callbacks));
+    }
+
+    /// Set the CA bundle used for network requests (`proj_context_set_ca_bundle_path`).
+    ///
+    /// # Errors
+    ///
+    /// [`ProjError::Path`] when the path is not valid UTF-8 or holds a nul byte.
+    pub fn set_ca_bundle_path<P: AsRef<Path>>(&mut self, path: P) -> Result<(), ProjError> {
+        let path = path.as_ref();
+        let text = path.to_str().ok_or(ProjError::Path)?;
+        if text.contains('\0') {
+            return Err(ProjError::Path);
+        }
+        self.net.set_ca_bundle(path.to_path_buf());
+        Ok(())
+    }
+
+    /// The CA bundle set by [`Self::set_ca_bundle_path`], if any.
+    #[must_use]
+    pub fn ca_bundle_path(&self) -> Option<PathBuf> {
+        self.net.ca_bundle().map(Path::to_path_buf)
+    }
+
     /// Enable or disable the local cache of downloaded grids.
     ///
     /// The cache is on by default (`cache_enabled` in `proj.ini`). When it is
@@ -1240,8 +1338,85 @@ impl ProjBuilder {
         reason = "georust proj 0.31 grid_cache_enable takes a bool"
     )]
     pub fn grid_cache_enable(&mut self, enable: bool) -> Result<(), ProjError> {
-        self.net.cache_enabled = enable;
+        self.set_grid_cache_enabled(if enable {
+            GridCacheMode::Enabled
+        } else {
+            GridCacheMode::Disabled
+        })
+    }
+
+    /// Enable or disable the grid chunk cache (`proj_grid_cache_set_enable`).
+    ///
+    /// # Errors
+    ///
+    /// Never.
+    pub fn set_grid_cache_enabled(&mut self, mode: GridCacheMode) -> Result<(), ProjError> {
+        self.net.cache_enabled = mode == GridCacheMode::Enabled;
         Ok(())
+    }
+
+    /// Set the database of the grid chunk cache (`proj_grid_cache_set_filename`). The default
+    /// is `cache.db` in the user-writable directory.
+    ///
+    /// # Errors
+    ///
+    /// Never.
+    pub fn set_grid_cache_path<P: AsRef<Path>>(&mut self, path: P) -> Result<(), ProjError> {
+        self.net.cache_path = Some(path.as_ref().to_path_buf());
+        Ok(())
+    }
+
+    /// The database of the grid chunk cache this builder uses.
+    #[must_use]
+    pub fn grid_cache_path(&self) -> PathBuf {
+        self.net.cache_settings().path
+    }
+
+    /// Limit the grid chunk cache to `megabytes` MiB (`proj_grid_cache_set_max_size`). `None`
+    /// is no limit. `Some(0)` reads `PROJ_GRID_CACHE_MAX_SIZE_BYTES` in bytes, a debugging
+    /// override as in PROJ, and no limit when that is unset.
+    ///
+    /// # Errors
+    ///
+    /// Never.
+    pub fn set_grid_cache_max_size_mb(&mut self, megabytes: Option<u32>) -> Result<(), ProjError> {
+        self.net.cache_max_bytes = match megabytes {
+            None => None,
+            Some(0) => std::env::var("PROJ_GRID_CACHE_MAX_SIZE_BYTES")
+                .ok()
+                .filter(|value| !value.is_empty())
+                .and_then(|value| value.trim().parse::<u64>().ok())
+                .filter(|bytes| *bytes > 0),
+            Some(mb) => Some(u64::from(mb) * 1024 * 1024),
+        };
+        Ok(())
+    }
+
+    /// How long a checked remote file is trusted before it is fetched again
+    /// (`proj_grid_cache_set_ttl`).
+    ///
+    /// # Errors
+    ///
+    /// Never.
+    pub fn set_grid_cache_ttl(&mut self, ttl: GridCacheTtl) -> Result<(), ProjError> {
+        self.net.cache_ttl_seconds = match ttl {
+            GridCacheTtl::Never => -1,
+            GridCacheTtl::Seconds(seconds) => i64::from(seconds),
+        };
+        Ok(())
+    }
+
+    /// Delete the grid chunk cache database (`proj_grid_cache_clear`). Nothing happens when the
+    /// cache is off, as PROJ opens nothing then.
+    ///
+    /// # Errors
+    ///
+    /// [`ProjError::Path`] when the database exists and cannot be removed.
+    pub fn clear_grid_cache(&self) -> Result<(), ProjError> {
+        if !self.net.cache_enabled {
+            return Ok(());
+        }
+        crate::network_cache::clear(&self.net.cache_settings().path).map_err(|_| ProjError::Path)
     }
 
     /// Version of the PROJ release this port follows.
@@ -1299,6 +1474,7 @@ fn built(body: Body, definition: String, area: Option<Area>) -> Proj {
         net: crate::network::context(),
         epoch: None,
         pipeline: None,
+        candidate_name: None,
     }
 }
 
@@ -1383,6 +1559,7 @@ impl Proj {
                     let op = item.operation.clone()?;
                     let mut proj = built(Body::Native(op), definition.clone(), None);
                     proj.pipeline = Some(Pipeline::parse(&definition));
+                    proj.candidate_name = Some(item.name.clone());
                     Some(proj)
                 }
                 None if pipeline.is_alternatives() => None,

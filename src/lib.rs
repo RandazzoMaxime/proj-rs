@@ -30,16 +30,46 @@ mod crs;
 mod crs_text;
 mod ellipsoid;
 mod engine;
+pub mod errno;
 mod error;
 #[cfg(feature = "geo-types")]
 mod geo_impl;
+pub mod geod;
 mod geodesic;
+pub mod gie;
+mod gie_api;
 mod gridpath;
 mod helmert;
 pub mod iso19111;
 mod lcc;
+pub mod listing;
+pub mod math;
 mod merc;
+pub mod names;
+pub mod projsync;
+pub mod version;
+
+/// The deformation models (`+proj=defmodel`): the master file parser, the
+/// time functions, and the evaluator over a [`GridProvider`](defmodel::GridProvider).
+pub mod defmodel {
+    pub use crate::projections::DefmodelGrid as Grid;
+    pub use crate::projections::{
+        decimal_year_from_iso8601, Authority, Bound, Component, DefmodelError, Displacement, Epoch,
+        EpochScaleFactor, Evaluator, GridProvider, GridSet, Link, MasterFile, SpatialExtent,
+        SpatialModel, TimeExtent, TimeFunction,
+    };
+}
+
+/// The triangulation shift files (`+proj=tinshift`): the file parser with its
+/// header accessors, and the evaluator.
+pub mod tinshift {
+    pub use crate::projections::{
+        FallbackStrategy, TinShiftEvaluator, TinShiftFile, TinShiftFileError,
+    };
+}
 mod network;
+pub use network::{NetworkCallbacks, NetworkError, NetworkHandle, OpenReply};
+mod network_cache;
 mod ported;
 mod proj;
 mod proj_info;
@@ -59,12 +89,24 @@ pub use engine::{
     lpz_dist, parse_gie_coord, xyz_dist, Coord as Xyzt, CreateError, CrsPipeline, Operation,
     TransformError as StepError,
 };
+pub use gie_api::{
+    list_ellps, list_operations, list_prime_meridians, xy_dist, BatchError, Factors,
+};
 pub use ported::{bench_definition, PORTED};
 pub use proj::{
-    Area, Coord, CoordinateType, Direction, Info, Proj, ProjBuilder, ProjCreateError, ProjError,
-    ProjInfo,
+    Area, Coord, CoordinateType, Direction, GridCacheMode, GridCacheTtl, Info, Proj, ProjBuilder,
+    ProjCreateError, ProjError, ProjInfo,
 };
 pub use transform::{Transform, TransformError};
+
+/// Read access to PROJ shift grids (`grids.hpp`): horizontal, vertical and
+/// generic sets, their grids and subgrids, pixels and metadata.
+pub mod grids {
+    pub use crate::projections::{
+        ExtentAndRes, GenericShiftGridSet, Grid, GridError, HorizontalShiftGridSet, Nodata,
+        NtConvention, VerticalShiftGridSet,
+    };
+}
 
 pub mod wkt {
     //! WKT export types from georust `proj` 0.31.
@@ -98,20 +140,20 @@ pub use iso19111::{
     epsg_identity, equivalent_name, equivalent_name_bigger_differences, insert_statements,
     parametric_unit, AlternativeGridNames, AuthorityFactory, AuthorityObject, Axis,
     AxisOrderReversal, BallparkUse, BoundCRS, BoundingBox, CartesianCS, CelestialBodyInfo,
-    CompoundCRS, ConcatenatedOperation, ConcatenatedStep, Conversion, CoordinateOperation,
-    CoordinateOperationContext, CoordinateOperationFactory, CoordinateSystem, Crs, CrsExtentUse,
-    CrsInfo, DatabaseContext, Datum, DatumEnsemble, DeprecatedCodes, DerivedConversion,
-    DerivedKind, DerivedProjectedCRS, EllipsoidalCS, EllipsoidalHeightPolicy, EngineeringCRS,
-    EngineeringDatum, Equivalence, FactoryError, GeocentricCRS, GeodeticCRS, GeodeticComponents,
-    GeodeticReferenceFrame, GeographicCRS, GridAvailabilityUse, GridDescription, GridInfo,
-    Identifier, IntermediateCrsUse, LinunitPolicy, Measure, Meridian, NameMatch, NameSpelling,
-    ObjectDomain, ObjectType, OfficialName, OpProps, OperationMethod, OperationParameter,
-    OperationParameterValue, OrdinalCS, OutputAxisRule, Parameter, ParameterLinearUnit,
-    ParameterValue, PrimeMeridian, ProjLines, ProjStringLayout, ProjectedCRS, RealizationMethod,
-    SpatialCriterion, SphericalCS, SupersededOperations, TemporalKind, TmercExport, Transformation,
-    UnitInfo, UnitKind, UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame,
-    Wgs84Dynamic, WktConvention, WktDialect, WktFormatter, WktLines, WktNode, WktObject, WktParser,
-    WktStrictness, CALENDAR_PROLEPTIC_GREGORIAN,
+    Citation, CompoundCRS, ConcatenatedOperation, ConcatenatedStep, Conversion,
+    CoordinateOperation, CoordinateOperationContext, CoordinateOperationFactory, CoordinateSystem,
+    Crs, CrsExtentUse, CrsInfo, DataEpoch, DatabaseContext, Datum, DatumEnsemble, DeprecatedCodes,
+    DerivedConversion, DerivedKind, DerivedProjectedCRS, EllipsoidShape, EllipsoidalCS,
+    EllipsoidalHeightPolicy, EngineeringCRS, EngineeringDatum, Equivalence, Extent, FactoryError,
+    GeocentricCRS, GeodeticCRS, GeodeticComponents, GeodeticReferenceFrame, GeographicCRS,
+    GridAvailabilityUse, GridDescription, GridInfo, Identifier, IntermediateCrsUse, LinunitPolicy,
+    Measure, Meridian, NameMatch, NameSpelling, ObjectDomain, ObjectType, OfficialName, OpProps,
+    OperationMethod, OperationParameter, OperationParameterValue, OrdinalCS, OutputAxisRule,
+    Parameter, ParameterLinearUnit, ParameterValue, PrimeMeridian, ProjLines, ProjStringLayout,
+    ProjectedCRS, RealizationMethod, SpatialCriterion, SphericalCS, SupersededOperations,
+    TemporalKind, TmercExport, Transformation, UnitInfo, UnitKind, UnitOfMeasure, VerticalCRS,
+    VerticalCS, VerticalReferenceFrame, Wgs84Dynamic, WktConvention, WktDialect, WktFormatter,
+    WktLines, WktNode, WktObject, WktParser, WktStrictness, CALENDAR_PROLEPTIC_GREGORIAN,
 };
 pub use iso19111::{
     create_from_user_input_with_init_rules, suggests_code_for, CodeForm, ComponentCodes, InitRules,

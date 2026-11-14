@@ -11,17 +11,42 @@ use std::path::PathBuf;
 pub(crate) mod tmp_db;
 
 /// `TEST()` names per PROJ 9.9.0 unit file, ported or not.
-pub(crate) const UNIT_TOTALS: [(&str, usize); 6] = [
+pub(crate) const UNIT_TOTALS: [(&str, usize); 24] = [
     ("test_c_api.cpp", 152),
     ("test_crs.cpp", 197),
     ("test_factory.cpp", 113),
     ("test_io.cpp", 454),
     ("test_operation.cpp", 162),
     ("test_operationfactory.cpp", 274),
+    ("gie_self_tests.cpp", 20),
+    ("pj_phi2_test.cpp", 1),
+    ("proj_angular_io_test.cpp", 5),
+    ("proj_context_test.cpp", 5),
+    ("proj_errno_string_test.cpp", 3),
+    ("test_common.cpp", 13),
+    ("test_coordinates.cpp", 3),
+    ("test_datum.cpp", 22),
+    ("test_defmodel.cpp", 13),
+    ("test_grids.cpp", 10),
+    ("test_metadata.cpp", 12),
+    ("test_misc.cpp", 1),
+    ("test_network.cpp", 26),
+    ("test_polyhedral.cpp", 5),
+    ("test_projinfo_lib.cpp", 5),
+    ("test_tinshift.cpp", 1),
+    ("test_tmerczoned.cpp", 8),
+    ("test_util.cpp", 2),
 ];
-/// Cases per PROJ CLI, from the yaml files.
-pub(crate) const CLI_TOTALS: [(&str, usize); 4] =
-    [("cct", 18), ("cs2cs", 143), ("proj", 4), ("projinfo", 111)];
+/// Cases per PROJ CLI, from the yaml files in `tests/cli_yaml` (and `test_gie.yaml`, which
+/// `tests/gie_cli.rs` runs).
+pub(crate) const CLI_TOTALS: [(&str, usize); 6] = [
+    ("cct", 18),
+    ("cs2cs", 197),
+    ("gie", 4),
+    ("invproj", 1),
+    ("proj", 494),
+    ("projinfo", 111),
+];
 
 pub(crate) fn read(name: &str) -> String {
     fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(name)).expect(name)

@@ -4,14 +4,9 @@ PROJ 9.9.0 sources: `test/unit` and `test/cli`. The Rust tests call `Operation` 
 
 ## CLI
 
-`tests/cli_yaml.rs` reads the vendored copies of `test_cct.yaml`, `test_cs2cs_various.yaml`, `test_projinfo.yaml`, and `test_proj.yaml` and runs `cct` and `cs2cs`. Comparison is numeric, line by line: every number of the line, in PROJ's order, with the same count. The third number (a height or a Z) counts like the first two, and a line whose two axes are swapped is a mismatch. PROJ's own runner compares the text, so a looser check let wrong heights and swapped axes pass; the 14 cases it hid are back in `docs/UNPORTED-CLI.md`. The georust axis order of `Proj::new_known_crs` is checked by the facade tests, not here.
+`tests/cli_yaml.rs` reads the vendored copies of PROJ's `test/cli` yaml files (`test_cct`, `test_cs2cs_various`, `test_cs2cs_ntv2`, `test_cs2cs_datumfile`, `test_cs2cs_ignf`, `test_cs2cs_flaky`, `test_projinfo`, `test_proj`, `test_proj_nad27`, `test_proj_nad83`, `test_invproj`) and runs `cct`, `cs2cs`, `proj`, `invproj` and `projinfo`. Comparison is numeric, line by line: every number of the line, in PROJ's order, with the same count; the third number counts like the first two, and a line whose two axes are swapped is a mismatch. `test_gie.yaml` runs the `gie` binary from `tests/gie_cli.rs`; `test_projsync.sh`, `test_projinfo.sh` and `test_cs2cs_locale.sh` are Rust tests (`tests/unit_projsync.rs`, `cs2cs_locale_script`, `projinfo_aux_script`). A case that does not match stays in `docs/UNPORTED-CLI.md` with its reason.
 
-A case is not executed, and is listed in `docs/UNPORTED-CLI.md`, when:
-
-- the executable is `proj`, `geod`, `gie`, or `projsync` (no such binary);
-- it needs a flag, an input file, DMS input, a third axis, `+pm` / `+geoc`, an authority other than `EPSG:`, grad CRS `EPSG:4807`, stderr text, or a non-zero status.
-
-`test_proj.yaml` is entirely in that list.
+`test_cs2cs_ignf.yaml` sets `PROJ_NETWORK: ON` and needs the CDN: where the CDN is unreachable, PROJ itself gives `* inf` for 14 of its cases.
 
 ## Unit tests ported as Rust tests
 

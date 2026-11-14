@@ -411,6 +411,7 @@ impl IsoPipeline {
                 alternatives.forward(coord).map_err(|error| match error {
                     AlternativeError::MissingGrid(_) => TransformError::OutsideGrid,
                     AlternativeError::NoOperation => TransformError::OutsideDomain,
+                    AlternativeError::Network => TransformError::NetworkUnavailable,
                 })
             }
         }
@@ -424,6 +425,7 @@ impl IsoPipeline {
                 alternatives.inverse(coord).map_err(|error| match error {
                     AlternativeError::MissingGrid(_) => TransformError::OutsideGrid,
                     AlternativeError::NoOperation => TransformError::OutsideDomain,
+                    AlternativeError::Network => TransformError::NetworkUnavailable,
                 })
             }
         }

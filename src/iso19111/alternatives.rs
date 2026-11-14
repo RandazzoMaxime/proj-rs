@@ -86,6 +86,10 @@ pub enum AlternativeError {
     MissingGrid(String),
     /// Every candidate failed, or none covers the point and none is grid-free.
     NoOperation,
+    /// The chosen operation's grid is not on disk and the network did not give it. PROJ returns
+    /// the point at once with `PROJ_ERR_OTHER_NETWORK_ERROR` (`trans.cpp:284`): no other
+    /// candidate is tried.
+    Network,
 }
 
 /// How the point is compared with the area of use of the candidates.
@@ -544,8 +548,12 @@ impl Alternatives {
                 self.current.set(Some(best));
             }
             if let Some(operation) = &item.operation {
-                if let Ok(result) = apply(operation, coord, way) {
-                    return Ok(result);
+                match apply(operation, coord, way) {
+                    Ok(result) => return Ok(result),
+                    Err(TransformError::NetworkUnavailable) => {
+                        return Err(AlternativeError::Network);
+                    }
+                    Err(_) => {}
                 }
             }
             // A candidate whose grids are missing has no pipeline to run.

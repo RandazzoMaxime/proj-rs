@@ -14,9 +14,16 @@
 mod defmodel;
 mod deformation;
 mod grid;
+mod horner;
 mod inflate;
 mod json;
 mod tinshift;
+pub use defmodel::{
+    decimal_year_from_iso8601, Authority, Bound, Component, DefmodelError, Displacement, Epoch,
+    EpochScaleFactor, Evaluator, Grid, GridProvider, GridSet, Link, MasterFile, SpatialExtent,
+    SpatialModel, TimeExtent, TimeFunction,
+};
+pub use tinshift::{FallbackStrategy, TinShiftEvaluator, TinShiftFile, TinShiftFileError};
 
 use std::path::PathBuf;
 
@@ -71,6 +78,7 @@ pub(crate) fn extra_keys(name: &str) -> Option<&'static [&'static str]> {
         "deformation" => Some(deformation::keys()),
         "defmodel" => Some(defmodel::keys()),
         "tinshift" => Some(tinshift::keys()),
+        "horner" => Some(horner::keys()),
         _ => None,
     }
 }
@@ -81,7 +89,7 @@ pub(crate) fn build(
     frame: &Frame,
 ) -> Result<Option<Box<dyn Step>>, CreateError> {
     let extra = match name {
-        "deformation" | "defmodel" | "tinshift" => extra_keys(name).unwrap_or(&[]),
+        "deformation" | "defmodel" | "tinshift" | "horner" => extra_keys(name).unwrap_or(&[]),
         _ => return Ok(None),
     };
     for (key, _) in params.entries() {
@@ -93,6 +101,7 @@ pub(crate) fn build(
         "deformation" => deformation::build(params, frame)?,
         "defmodel" => defmodel::build(params, frame)?,
         "tinshift" => tinshift::build(params, frame)?,
+        "horner" => horner::build(params, frame)?,
         _ => return Ok(None),
     };
     Ok(Some(step))
