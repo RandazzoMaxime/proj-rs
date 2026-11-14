@@ -31,7 +31,6 @@ and `PORT-NOTES-tests.md`.
 - `networking.file_api`
 - `networking.proj_coordoperation_get_grid_used`
 - `networking.pyproj_issue_1192`
-- `networking.do_not_attempt_network_access_known_available_network_on`
 
 ## test_projinfo_lib.cpp
 

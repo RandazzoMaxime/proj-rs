@@ -41,7 +41,8 @@ restent lues entières), validation de la fraîcheur d'un fichier ouvert par `ET
 lot cache, autre agent),
 API de téléchargement explicite, API de fichiers, façade C des opérations
 (`proj_create_operations` et contexte de fabrique C : la fabrique Rust est utilisée à la place,
-voir `pyproj_issue_1192`).
+par `ProjBuilder::create_operations` quand des callbacks sont enregistrés, voir
+`do_not_attempt_network_access_known_available_network_on` et `pyproj_issue_1192`).
 
 Tests de l'API existants, hors liste C++ : `tests/network_grid.rs`
 (téléchargement dans le cache, réseau off, chemin de recherche).
@@ -62,6 +63,7 @@ Tests de l'API existants, hors liste C++ : `tests/network_grid.rs`
 | `networking.network_endpoint_api_and_not_reachable_hgridshift` | `tests/unit_network_core.rs::endpoint_api_not_reachable_hgridshift` | porté (`MGI to ETRS89 (8)`) |
 | `networking.network_endpoint_api_and_not_reachable_xyzgridshift` | `tests/unit_network_core.rs::endpoint_api_not_reachable_xyzgridshift` | porté (`NTF to ETRS89-FRA [RGF93 v1] (1)`) |
 | `networking.network_endpoint_api_and_not_reachable_vgridshift` | `tests/unit_network_core.rs::endpoint_api_not_reachable_vgridshift` | porté (`POSGAR 2007 to SRVN16 height (1)`) |
+| `networking.do_not_attempt_network_access_known_available_network_on` | `tests/unit_network_core.rs::do_not_attempt_network_access_known_available_network_on` | porté : mesuré sur `libproj` 9.9.0 (sonde C reproduisant le TEST, `probe2.c` non versionnée) : `EPSG:4326` vers `EPSG:4267`, `KNOWN_AVAILABLE`, `PARTIAL_INTERSECTION`, réseau on, callbacks enregistrés : 79 opérations (noms et ordre identiques, réseau off aussi), 0 appel de callback ; témoin : `+proj=hgridshift +grids=proj_rs_no_such_grid.tif` donne `NULL` et un `open`. Port : `ProjBuilder::create_operations` (nouvelle API, enveloppe `with_context` comme les autres créations du builder), liste exacte, 0 appel, témoin à 1 appel. `ASSERT_TRUE` de `proj_context_set_network_callbacks` : sans objet en Rust (l'enregistrement ne renvoie rien) ; voir `docs/PORTING-network.md`. |
 
 Tests unitaires ajoutés hors liste C++ (`src/network.rs`, `mod callback_tests`) :
 la lecture entière d'une grille par callbacks en plages de 16384 octets
@@ -97,12 +99,12 @@ l'extraction de la taille depuis `Content-Range`.
 | 23 | `file_api` | écart | `proj_context_set_fileapi` (open, read, write, close, exists, mkdir, unlink, rename) absent. Toutes les lectures de grilles passent par `std::fs` (`gridpath::read`, `read_resource`) : une API de fichiers demande de les router toutes. |
 | 24 | `proj_coordoperation_get_grid_used` | écart | Le test exige que `proj_create("proj=vgridshift grids=nz_linz_nzgd2000-c120100904-grid01.tif")` réussisse avec le CDN, et que l'URL soit `https://cdn.proj.org/...`. Mesuré avec le `libproj` de référence (`proj_create` avec l'endpoint par défaut, réseau bloqué) : `NULL`, « could not find required grid(s) ». Et le `proj.db` de référence n'a aucune ligne pour ce nom (479 lignes de `grid_alternatives`, aucune pour `c120100904`) : PROJ laisse donc l'URL vide. Le port de l'assertion demande le fichier CDN, qui n'est pas dans le dépôt. Le port de `GridInfo` (`lookForGridInfo`) suit PROJ et est déjà en place. |
 | 25 | `pyproj_issue_1192` | porté | `tests/unit_network_core.rs::pyproj_issue_1192`. Pas de façade C : le contexte de fabrique est `CoordinateOperationContext` (public), avec `GridAvailabilityUse::IgnoreGridAvailability` et `SpatialCriterion::PartialIntersection`. La liste (10 opérations, noms et ordre) et les drapeaux d'instanciabilité (réseau off : 8 vraies ; réseau on : 10) sont ceux de `libproj` 9.9.0 mesurés avec une sonde C. Écarts et lacune (opérations à grille absente, réseau on) : `docs/PORTING-network.md`. |
-| 26 | `do_not_attempt_network_access_known_available_network_on` | écart | Façade C absente : `proj_create_operations` avec `PROJ_GRID_AVAILABILITY_KNOWN_AVAILABLE` (la fabrique Rust est là, voir 25), et le contrôle « aucune activité réseau » par callbacks, qui exige que la fabrique passe par le contexte du builder. |
+| 26 | `do_not_attempt_network_access_known_available_network_on` | porté | Voir « Cas portés dans ce lot ». La façade C reste absente : la fabrique passe par `ProjBuilder::create_operations`, qui applique le contexte du builder. |
 
-Compte : 26 TEST() C++ ; 12 portés (`curl_invalid_resource`, `simul_open_error`,
+Compte : 26 TEST() C++ ; 13 portés (`curl_invalid_resource`, `simul_open_error`,
 `simul_file_change_while_opened`,
-`simul_read_range_error`, `network_endpoint_env_variable`, `custom`, `getfilesize`, `pyproj_issue_1192`, et les quatre
-`not_reachable`) ; 1 partiel (`basic`) ; 13 écarts, dont 5 du lot cache (17 à 21).
+`simul_read_range_error`, `network_endpoint_env_variable`, `custom`, `getfilesize`, `pyproj_issue_1192`, `do_not_attempt_network_access_known_available_network_on`, et les quatre
+`not_reachable`) ; 1 partiel (`basic`) ; 12 écarts, dont 5 du lot cache (17 à 21).
 
 ## projsync (`src/apps/projsync.cpp`, `test/cli/test_projsync.sh`) : écart total
 

@@ -16,8 +16,9 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
 | `trans.cpp:284` (erreur réseau d'un candidat : arrêt du point) | `src/iso19111/alternatives.rs` (`AlternativeError::Network`) |
 | `proj_trans_get_last_used_operation`, `proj_pj_info` | `Proj::last_used_operation`, `Proj::proj_info` (`candidate_name`) |
 | `DatabaseContext::lookForGridInfo` (`factory.cpp:3400`) | `src/iso19111/factory.rs` (`look_for_grid_info`), `src/iso19111/select.rs` (`unrecorded_grid`) |
+| `proj_create_operations` avec le contexte de fabrique (callbacks du contexte) | `ProjBuilder::create_operations` (`src/proj.rs`), enveloppe `with_context` comme les autres créations du builder |
 | `src/apps/gie.cpp` (`network_error`) | `src/gie.rs` (`errno_name`) |
-| `test/unit/test_network.cpp` (26 TEST) | `tests/unit_network_core.rs` (10 cas, dont `custom`, `getfilesize`, `simul_read_range_error`, `simul_file_change_while_opened` et `pyproj_issue_1192`), `tests/unit_network_endpoint_env.rs` (1 cas), `tests/unit_network_local.rs` (2 cas), `src/network.rs` `callback_tests` (2 tests hors liste) |
+| `test/unit/test_network.cpp` (26 TEST) | `tests/unit_network_core.rs` (11 cas, dont `custom`, `getfilesize`, `simul_read_range_error`, `simul_file_change_while_opened`, `pyproj_issue_1192` et `do_not_attempt_network_access_known_available_network_on`), `tests/unit_network_endpoint_env.rs` (1 cas), `tests/unit_network_local.rs` (2 cas), `src/network.rs` `callback_tests` (2 tests hors liste) |
 | serveur de test local (remplace `cdn.proj.org`) | `tests/net_support/mod.rs` |
 | `src/apps/projsync.cpp`, `test/cli/test_projsync.sh` | non porté (voir l'audit) |
 
@@ -105,6 +106,24 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
   réseau désactivé donne `UseForSorting` (grilles sur disque seulement). Mesuré (sonde C
   contre `libproj` 9.9.0, non versionnée) : 10 opérations dans les deux cas, mêmes noms et même
   ordre ; instanciables 8 réseau off, 10 réseau on.
+- **Fabrique sous le contexte du builder (`do_not_attempt_network_access_known_available_network_on`).**
+  Les callbacks sont attachés au `ProjBuilder`, pas à `CoordinateOperationContext`, donc la
+  fabrique ne les voit pas sans un passage par le builder. Ajout : `ProjBuilder::create_operations`,
+  qui applique `with_context(&self.net, ...)` comme `proj_known_crs`. Sans cette enveloppe, un
+  appel réseau éventuel de la fabrique échapperait aux callbacks et le compteur ne le verrait pas.
+  Mesuré (sonde C contre `libproj` 9.9.0, `probe2.c` non versionnée) : `EPSG:4326` vers
+  `EPSG:4267`, `KNOWN_AVAILABLE`, `PARTIAL_INTERSECTION`, réseau on : 79 opérations, les mêmes
+  noms dans le même ordre qu'en réseau off, 0 appel de callback. Le test asserte la liste exacte
+  (79 noms), plus forte que `EXPECT_GE(num_operations, 10)` de PROJ, qui reste aussi asserté.
+  Témoin : `+proj=hgridshift +grids=proj_rs_no_such_grid.tif` donne `NULL` et un seul `open`
+  en PROJ ; le port donne le même compte, ce qui prouve que le compteur est câblé. Aujourd'hui
+  la fabrique ne fait aucun appel réseau (les grilles sont cherchées sur disque) : le test
+  garde cette propriété, il ne prouve pas qu'un appel existe ailleurs.
+  Écarts : (a) `ASSERT_TRUE(proj_context_set_network_callbacks(...))` : `set_network_callbacks`
+  ne renvoie rien et ne peut pas échouer ; l'assertion n'a pas d'équivalent, l'état réseau est
+  vérifié par `network_enabled()`. (b) L'endpoint est une adresse locale sans serveur, comme les
+  autres cas de ce lot, au lieu de `cdn.proj.org` : une fabrique qui tenterait un accès passerait
+  par les callbacks, rien n'atteint donc le réseau.
 - **Réseau absent ici (`networkAccessOK`).** `initial_check` est faux : `cdn.proj.org` est refusé
   (403 du proxy), donc le test C++ sort tôt. Le port ne dépend pas du CDN et n'est pas conditionné
   par `networkAccessOK`. La partie réseau activé est mesurée avec le CDN refusé ; la réponse de
@@ -128,15 +147,15 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
 - Cache SQLite : TTL, taille max, verrou, `proj_grid_cache_clear` (lot cache, autre agent).
 - API de téléchargement explicite (`is_download_needed`, `download_file`) et API de fichiers
   (`file_api`).
-- Façade C des opérations (`proj_create_operations`, contexte de fabrique C) : absente.
-  `do_not_attempt_network_access_known_available_network_on` reste bloqué : il exige
-  `PROJ_GRID_AVAILABILITY_KNOWN_AVAILABLE` et le contrôle « aucune activité réseau » par
-  callbacks, donc une fabrique qui passe par le contexte du builder.
+- Façade C des opérations (`proj_create_operations`, contexte de fabrique C) : absente. Le cas
+  de `do_not_attempt_network_access_known_available_network_on` est couvert par
+  `ProjBuilder::create_operations`, sans façade C.
 - Création paresseuse d'une opération seule dont la grille est absente (réseau activé) : PROJ
   construit `P` sans la grille (`proj_list_get`), la crate ne le fait que pour les candidats d'une
   paire (`grids_may_be_deferred`), et aucune API publique ne construit une opération seule. Les
   deux opérations 00 et 02 de `pyproj_issue_1192` ne sont donc vérifiées que par leur chaîne PROJ.
-- `docs/UNPORTED-UNIT.md` liste encore `networking.pyproj_issue_1192` : ce lot ne l'a pas retiré
+- `docs/UNPORTED-UNIT.md` liste encore `networking.pyproj_issue_1192` et
+  `networking.do_not_attempt_network_access_known_available_network_on` : ce lot ne les a pas retirés
   (consigne : ne pas éditer le ledger). Le retrait suit avec `UPDATE_DOCS=1 cargo test --test
   docs_in_sync`.
 - `projsync` : non commencé.
