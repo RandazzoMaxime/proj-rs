@@ -19,7 +19,6 @@ and `PORT-NOTES-tests.md`.
 ## gie_self_tests.cpp
 
 - `gie.proj_factors`
-- `gie.proj_create_crs_to_crs_PULKOVO42_ETRS89`
 - `gie.proj_create_crs_to_crs_WGS84_EGM08_to_WGS84`
 - `gieTest.proj_create_crs_to_crs`
 
