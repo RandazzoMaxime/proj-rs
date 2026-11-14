@@ -108,13 +108,43 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
 - **Fabrique d'opérations (`pyproj_issue_1192`).** Pas de façade C : le contexte de fabrique
   est `CoordinateOperationContext`, avec `GridAvailabilityUse::IgnoreGridAvailability` et
   `SpatialCriterion::PartialIntersection`, et la liste vient de
-  `CoordinateOperationFactory::create_operations`. Aucune API ajoutée. Le drapeau réseau de
+  `CoordinateOperationFactory::create_operations`. Le drapeau réseau de
   `proj_coordoperation_is_instantiable(ctx, P)` est traduit par
   `CoordinateOperation::is_proj_instantiable` : réseau activé donne `KnownAvailable`
   (`considerKnownGridsAsAvailable` : une grille que la base connaît compte comme disponible),
   réseau désactivé donne `UseForSorting` (grilles sur disque seulement). Mesuré (sonde C
-  contre `libproj` 9.9.0, non versionnée) : 10 opérations dans les deux cas, mêmes noms et même
-  ordre ; instanciables 8 réseau off, 10 réseau on.
+  contre `libproj` 9.9.0, CDN joignable, cache de grilles off, non versionnée) : 10 opérations
+  dans les deux cas, mêmes noms et même ordre ; instanciables 8 réseau off (opérations 00 et 02
+  sans grille locale), 10 réseau on ; les chaînes PROJ sont identiques dans les deux cas.
+- **Instanciation d'une opération (`ProjBuilder::proj_from_operation`, ajouté par ce lot).**
+  Équivalent de `proj_list_get` (`pj_obj_create`) : la chaîne PROJ de l'opération est construite
+  avec la base, puis lue comme `Proj::new`. Réseau actif : une grille absente mais téléchargeable
+  n'est pas ouverte à la création, comme `defer_grid_opening` de PROJ (mesuré : zéro `open` pendant
+  `proj_list_get`, `proj_coordoperation_is_instantiable` et `proj_pj_info`, avec des callbacks qui
+  refusent tout). Le port : `grids_defer_at_creation` (`src/network.rs`), que lit
+  `gridshift::deferred` pour sauter la tentative de création d'une grille téléchargeable ; les
+  candidats de paire (`grids_may_be_deferred`) gardent leur comportement. Réseau inactif, ou grille
+  ni sur disque ni téléchargeable : erreur (`ProjCreateError`). PROJ rend alors un `PJ` sans id ;
+  écart d'API assumé, asserté par le test.
+- **`Proj::proj_info` ne lit pas la grille (ajouté par ce lot).** `has_inverse` teste
+  l'inverse en passant un point dans le pipeline, ce qui, sur une grille différée, la lisait
+  (mesuré par le test : deux `open` au `proj_info`). `with_inverse_probe` fait répondre le
+  placeholder pendant ce seul test, sans lire la grille ; PROJ ne fait aucune E/S dans
+  `proj_pj_info`.
+- **Fabrique `IGNORED` avec réseau (écart, non porté).** Avec `IGNORED` et le réseau actif,
+  PROJ ouvre à la création les grilles distantes des lignes de la base : sonde C avec callbacks
+  refusés, `proj_create_operations` pour `EPSG:4326` vers `EPSG:2964` fait deux `open`
+  (`https://cdn.proj.org/ca_nrc_ntv2_0.tif`, `https://cdn.proj.org/us_noaa_alaska.tif`). Le port
+  (`CoordinateOperationFactory::create_operations`) ne les ouvre pas. Aucun effet mesuré sur la liste
+  ni sur les drapeaux (mêmes valeurs avec les ouvertures refusées). Les deux grilles ont une ligne
+  avec `open_license = 1` (`proj.db`).
+- **Hypothèse « sonder le CDN » (`is_proj_instantiable`, non changé).** Ce lot supposait que
+  l'instanciabilité avec réseau actif devait sonder le CDN. Pour cette liste ce n'est pas le cas :
+  `lookForGridInfo` (`iso19111/factory.cpp`) compte disponible une grille à ligne qui a un paquet
+  ou une licence ouverte, et les deux grilles de la liste ont la licence ouverte. Le port fait la
+  même chose (`KnownAvailable`), et le résultat mesuré est identique. La sonde de PROJ
+  (`resolveFullFilename` avec le réseau actif, `filemanager.cpp`) vise les lignes sans paquet ni
+  licence ouverte ; ce cas n'est pas dans la liste et n'est pas porté.
 - **Fabrique sous le contexte du builder (`do_not_attempt_network_access_known_available_network_on`).**
   Les callbacks sont attachés au `ProjBuilder`, pas à `CoordinateOperationContext`, donc la
   fabrique ne les voit pas sans un passage par le builder. Ajout : `ProjBuilder::create_operations`,
@@ -162,16 +192,14 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
   les callbacks répondent sans I/O, donc le test tourne partout.
   **Sans callbacks.** Non testé : le chemin HTTP télécharge le fichier entier. Il n'est atteint
   que si le réseau est actif sans callbacks.
-- **Réseau absent ici (`networkAccessOK`).** Mesure faite quand `cdn.proj.org` était refusé
-  (403 du proxy) : `initial_check` était faux. Le port ne dépend pas du CDN et n'est pas conditionné
-  par `networkAccessOK`. La partie réseau activé est mesurée avec le CDN refusé ; la réponse de
-  PROJ est la même (10 instanciables) : l'instanciabilité ne dépend que du drapeau, pas du
-  téléchargement. Un CDN qui répond n'est mesuré que pour `basic` (section « networking.basic (porté) »
-  de `docs/AUDIT-network.md`), pas pour `pyproj_issue_1192`.
-- **Id de `proj_pj_info`.** PROJ donne `pipeline` pour chaque opération instanciable (mesuré).
-  Le test vérifie `proj_info().id == "pipeline"` sur les opérations construites hors ligne (8),
-  et la chaîne `+proj=pipeline` pour les deux autres (grilles absentes). La description de PROJ
-  est le nom de l'opération, vérifié par la liste des noms.
+- **`pyproj_issue_1192` et `networkAccessOK`.** Le test retourne tôt quand la sonde
+  (`tests/net_cdn`) ne répond pas, comme le TEST. Ce lot l'a exécuté avec le vrai CDN (sonde
+  `206`), donc sans fichier de substitution. Les valeurs mesurées avec le CDN joignable sont celles
+  décrites plus haut (10 opérations, 8 et 10 instanciables, id `pipeline`) : aucune n'a changé.
+- **Id de `proj_pj_info`.** PROJ donne `pipeline` pour chaque opération instanciable, réseau on
+  et off (mesuré). Le test asserte cet id pour chaque opération instanciable construite par
+  `proj_from_operation`, sous les deux réglages, et une erreur pour les non instanciables. Le nom
+  de l'opération (`proj_pj_info().description` en PROJ) est vérifié par la liste des noms.
 
 - **Sonde `initial_check`.** Le TEST C++ n'a aucune assertion ; il pose `networkAccessOK` par un `GET`
   sur `cdn.proj.org` (`Range: 0-1`, code 206). Pas de test de la sonde elle-même : il n'y a pas de
@@ -302,16 +330,17 @@ l'API (`gridpath::resolve`, `gridpath::read`, `network::read_file`).
 - Façade C des opérations (`proj_create_operations`, contexte de fabrique C) : absente. Le cas
   de `do_not_attempt_network_access_known_available_network_on` est couvert par
   `ProjBuilder::create_operations`, sans façade C.
-- Création paresseuse d'une opération seule dont la grille est absente (réseau activé) : PROJ
-  construit `P` sans la grille (`proj_list_get`), la crate ne le fait que pour les candidats d'une
-  paire (`grids_may_be_deferred`), et aucune API publique ne construit une opération seule. Les
-  deux opérations 00 et 02 de `pyproj_issue_1192` ne sont donc vérifiées que par leur chaîne PROJ.
+- Création paresseuse d'une opération seule (réseau activé) : portée par
+  `ProjBuilder::proj_from_operation` (ce lot). Les opérations 00 et 02 de `pyproj_issue_1192` sont
+  construites et asserties (id `pipeline`), pas seulement par leur chaîne PROJ.
+- Lecture de la grille au premier point d'une opération construite par `proj_from_operation` :
+  le chemin de transformation différé existe (`Deferred::resolve`), mais ce lot ne l'asserte pas.
 - Grille sans ligne, réseau actif, sans callbacks : la sonde télécharge le fichier entier (pas
   de `Range` dans le client HTTP du crate), PROJ n'en lit que le premier morceau. Sans test.
 - `proj_coordoperation_is_instantiable` avec réseau actif : PROJ passe par `gridsNeeded`
   (`singleoperation.cpp:339-356`), donc interroge le réseau pour une grille sans ligne ; le port
   (`is_proj_instantiable`, `RemoteGrids::Skip`) ne le fait pas. Non mesuré pour une grille sans
-  ligne, et ce lot ne modifie pas `pyproj_issue_1192`.
+  ligne. Ce lot ne modifie pas `is_proj_instantiable` (voir « Hypothèse » plus haut).
 - `proj_coordoperation_get_grid_used` ne porte pas de drapeau `gridopen` : l'API Rust donne
   `available` seulement.
 - Grille `http(s)://` sans ligne : son URL est prise telle quelle, sans sonde (comportement

@@ -124,6 +124,8 @@ const DEFAULT_CACHE_TTL_SECONDS: i64 = crate::network_cache::DEFAULT_TTL_SECONDS
 thread_local! {
     static ACTIVE: RefCell<Option<GridContext>> = const { RefCell::new(None) };
     static DEFER_GRIDS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static DEFER_AT_CREATION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static INVERSE_PROBE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static LAST_NOT_FOUND: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
@@ -151,6 +153,45 @@ pub(crate) fn with_deferred_grids<T>(body: impl FnOnce() -> T) -> T {
         }
     }
     let previous = DEFER_GRIDS.with(|flag| flag.replace(true));
+    let _restore = Restore(previous);
+    body()
+}
+
+/// Whether a grid that is not on disk but can be downloaded is left for the first transform
+/// without any attempt at creation: PROJ's `defer_grid_opening`, which `pj_obj_create` sets when
+/// the network is on. Set by [`with_grids_deferred_at_creation`].
+pub(crate) fn grids_defer_at_creation() -> bool {
+    DEFER_AT_CREATION.with(std::cell::Cell::get)
+}
+
+/// Whether the transform being run only asks whether an inverse exists (`Proj::has_inverse`),
+/// so a deferred grid is not read for it. Set by [`with_inverse_probe`].
+pub(crate) fn inverse_probe_only() -> bool {
+    INVERSE_PROBE.with(std::cell::Cell::get)
+}
+
+/// Run `body` with [`inverse_probe_only`] on, then restore the previous setting.
+pub(crate) fn with_inverse_probe<T>(body: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            INVERSE_PROBE.with(|flag| flag.set(self.0));
+        }
+    }
+    let previous = INVERSE_PROBE.with(|flag| flag.replace(true));
+    let _restore = Restore(previous);
+    body()
+}
+
+/// Run `body` with [`grids_defer_at_creation`] on, then restore the previous setting.
+pub(crate) fn with_grids_deferred_at_creation<T>(body: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            DEFER_AT_CREATION.with(|flag| flag.set(self.0));
+        }
+    }
+    let previous = DEFER_AT_CREATION.with(|flag| flag.replace(true));
     let _restore = Restore(previous);
     body()
 }
