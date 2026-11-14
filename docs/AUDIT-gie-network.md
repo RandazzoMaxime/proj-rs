@@ -46,16 +46,15 @@ runner déplacé dans `proj_rs::gie` (`src/gie.rs`).
 | `gie.proj_create_crs_to_crs_with_longitude_outside_minus_180_180` | `gie_self_tests.rs::proj_create_crs_to_crs_with_longitude_outside_minus_180_180` | porté. L'axe normalisé est le seul de la crate : `P` et `Pnormalized` du C++ donnent le même appel. |
 | `gie.proj_trans_generic` | `gie_self_tests.rs::proj_trans_generic` | porté via `transform_array` (les tableaux strides de `proj_trans_generic` ne sont pas une API Rust). |
 | `gie.proj_trans_with_a_crs` | `gie_self_tests.rs::trans_with_a_crs_is_an_error` | porté : `HUGE_VAL` est `Err(ProjError::NotATransform)`, dont `code()` vaut `PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE` (`src/errno.rs`). |
-| `gie.proj_create_crs_to_crs_from_pj_force_over` | — | écart : l'option `FORCE_OVER` et le drapeau `P->over` ne sont pas implémentés. |
+| `gie.proj_create_crs_to_crs_from_pj_force_over` | `gie_self_tests.rs::proj_create_crs_to_crs_from_pj_force_over` | porté, les 46 `ASSERT_`/`EXPECT_` du C++ (la boucle sur les alternatives compte pour une). `FORCE_OVER=YES` donne le drapeau `P->over` (`ForceOver::Yes`, lu par `force_over()`), que reçoivent chaque projection du pipeline et chaque candidat (`Operation::create_over`). Écarts de forme : `Pnormalized` est `P` (la façade est déjà en longitude, latitude) ; `t = HUGE_VAL` n'est pas passé ; le contexte et `proj_destroy` sont des `Drop`. Détail dans `docs/PORTING-gie-network.md`. |
 | `gieTest.proj_create_crs_to_crs` (TEST_F) | `gie_self_tests.rs::proj_create_crs_to_crs` | partiel : valeurs portées, noms de CRS non (voir PULKOVO). |
 | `gieTest.proj_create_crs_to_crs_EPSG_4326` (TEST_F) | `gie_self_tests.rs::proj_create_crs_to_crs_epsg_4326` | porté (entrée en longitude, latitude : ordre de la crate). |
 | `gieTest.proj_create_crs_to_crs_proj_longlat` (TEST_F) | `gie_self_tests.rs::proj_create_crs_to_crs_proj_longlat` | porté |
 
-Compte sur les 20 tests C++ : 18 ont un test Rust (15 complets, dont `cart_selftest`
+Compte sur les 20 tests C++ : 19 ont un test Rust (16 complets, dont `cart_selftest`
 avec 3 assertions sans équivalent ; 3 partiels : `PULKOVO42`, `proj_create_crs_to_crs`,
-`proj_factors`), et 2 sont des écarts (`proj_create_crs_to_crs_WGS84_EGM08`,
-`proj_create_crs_to_crs_from_pj_force_over`). `tests/gie_self_tests.rs`
-contient 15 fonctions : les 14 ci-dessus et `nan_input_gives_no_coordinate`,
+`proj_factors`), et 1 est un écart (`proj_create_crs_to_crs_WGS84_EGM08`). `tests/gie_self_tests.rs`
+contient 19 fonctions : les 18 tests C++ de ce fichier et `nan_input_gives_no_coordinate`,
 tirée de `io_predicates`. `tests/gie_info_functions.rs` porte `info_functions`
 et une fonction de contrôle sur un fichier `+init` (`tests/gie/test_init_metadata`).
 

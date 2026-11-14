@@ -43,7 +43,7 @@ yet**: see [Status at a glance](#status-at-a-glance).
 
 Each square is **one test case of PROJ 9.9.0 itself**. Green: PROJ-RS passes it.
 Grey: still open. In all, <!--gen:all_percent-->99.7<!--/gen-->% of the cases pass
-(<!--gen:all_done-->9164<!--/gen--> of <!--gen:all_total-->9188<!--/gen-->). The left panel is the numeric suite (`gie`), complete. The right
+(<!--gen:all_done-->9165<!--/gen--> of <!--gen:all_total-->9188<!--/gen-->). The left panel is the numeric suite (`gie`), complete. The right
 panel is what is left: PROJ's C++ unit tests, which cover the ISO 19111 model,
 WKT and the operation factory, and the command-line cases. The chart is drawn
 from the same ledgers as the tables below by `tests/progress_svg.rs`, so it
@@ -163,7 +163,7 @@ The same goes for the CLI cases in [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md
 
 | Suite | Ported and passing | Not yet | |
 |---|---:|---:|:-:|
-| PROJ C++ unit tests | <!--gen:unit_ported-->1486<!--/gen--> | <!--gen:unit_open-->21<!--/gen--> | <!--gen:unit_icon-->🟡<!--/gen--> |
+| PROJ C++ unit tests | <!--gen:unit_ported-->1487<!--/gen--> | <!--gen:unit_open-->20<!--/gen--> | <!--gen:unit_icon-->🟡<!--/gen--> |
 | `cct` CLI cases | <!--gen:cli_cct_ported-->18<!--/gen--> | <!--gen:cli_cct_open-->0<!--/gen--> | <!--gen:cli_cct_icon-->✅<!--/gen--> |
 | `cs2cs` CLI cases | <!--gen:cli_cs2cs_ported-->194<!--/gen--> | <!--gen:cli_cs2cs_open-->3<!--/gen--> | <!--gen:cli_cs2cs_icon-->🟡<!--/gen--> |
 | `gie` CLI cases | <!--gen:cli_gie_ported-->4<!--/gen--> | <!--gen:cli_gie_open-->0<!--/gen--> | <!--gen:cli_gie_icon-->✅<!--/gen--> |
@@ -186,7 +186,7 @@ The same goes for the CLI cases in [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md
 | `test_io.cpp` | <!--gen:test_io_ported-->454<!--/gen--> | <!--gen:test_io_open-->0<!--/gen--> |
 | `test_operation.cpp` | <!--gen:test_operation_ported-->162<!--/gen--> | <!--gen:test_operation_open-->0<!--/gen--> |
 | `test_operationfactory.cpp` | <!--gen:test_operationfactory_ported-->274<!--/gen--> | <!--gen:test_operationfactory_open-->0<!--/gen--> |
-| `gie_self_tests.cpp` | <!--gen:gie_self_tests_ported-->15<!--/gen--> | <!--gen:gie_self_tests_open-->5<!--/gen--> |
+| `gie_self_tests.cpp` | <!--gen:gie_self_tests_ported-->16<!--/gen--> | <!--gen:gie_self_tests_open-->4<!--/gen--> |
 | `pj_phi2_test.cpp` | <!--gen:pj_phi2_test_ported-->1<!--/gen--> | <!--gen:pj_phi2_test_open-->0<!--/gen--> |
 | `proj_angular_io_test.cpp` | <!--gen:proj_angular_io_test_ported-->5<!--/gen--> | <!--gen:proj_angular_io_test_open-->0<!--/gen--> |
 | `proj_context_test.cpp` | <!--gen:proj_context_test_ported-->5<!--/gen--> | <!--gen:proj_context_test_open-->0<!--/gen--> |

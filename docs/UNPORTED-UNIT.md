@@ -21,7 +21,6 @@ and `PORT-NOTES-tests.md`.
 - `gie.proj_factors`
 - `gie.proj_create_crs_to_crs_PULKOVO42_ETRS89`
 - `gie.proj_create_crs_to_crs_WGS84_EGM08_to_WGS84`
-- `gie.proj_create_crs_to_crs_from_pj_force_over`
 - `gieTest.proj_create_crs_to_crs`
 
 ## test_common.cpp

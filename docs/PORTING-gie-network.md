@@ -96,6 +96,41 @@ identiques à la crate à la précision affichée : UTM zone 32 GRS80 de (12°, 
 `691875.632139660767 6098907.825005011633` ; cart GRS80 de (12°, 55°, 100) :
 `3586525.761058 762339.584111 5201465.438293`.
 
+## proj_create_crs_to_crs_from_pj_force_over (`TEST(gie, ...)`, l. 1520-1759)
+
+Porté avec ses 46 `ASSERT_`/`EXPECT_`, dans `tests/gie_self_tests.rs`. Le test
+a été écrit avant l'implémentation : sa première compilation échouait (`ForceOver`
+et `force_over()` absents). Après le correctif, il passe. Une mutation qui retire
+`over` des paramètres du moteur le fait échouer sur `EXPECT_LT(output_over.xyz.x, 0)`
+(`tests/gie_self_tests.rs`, assertion `x_over < 0.0`), puis le code est restauré.
+
+- `FORCE_OVER=YES` : `ForceOver::Yes` est lu par `Proj::force_over()`. Le drapeau
+  est passé à chaque projection : `Operation::create_over` ajoute `over` aux
+  paramètres d'une projection, ou à l'en-tête d'un pipeline (les étapes héritent
+  des paramètres d'en-tête, `build_pipeline`). C'est `ctx->forceOver` pendant
+  `pj_init` (`init.cpp:603-605`).
+- Candidats : `iso_pipeline_at` reconstruit chaque candidat avec le drapeau
+  (`crs_to_crs.cpp:671`, `:743`). `Proj::alternatives_force_over()` donne un
+  drapeau par candidat, tous égaux au drapeau du transform comme en PROJ.
+  Limite : pour `EPSG:4326` vers `EPSG:27700`, le tmerc ne change pas avec
+  `over`, donc le test ne voit pas l'effet sur les candidats, seulement leur
+  drapeau.
+- Options : seul `FORCE_OVER=` est lu, avec la règle de PROJ (`yes`, sans
+  distinction de casse, active le drapeau ; une autre valeur le laisse
+  éteint ; un `NO` ultérieur ne le réinitialise pas). Toute autre option est
+  refusée avec l'erreur d'avant (`ACCURACY=0.05` reste refusé,
+  `tests/proj_unit.rs`).
+- Écarts de forme, sans effet sur les valeurs : `proj_normalize_for_visualization`
+  est l'identité sur la façade, dont la paire est déjà en longitude, latitude, donc
+  `Pnormalized` est `P` ; `t = HUGE_VAL` n'est pas passé (aucun temps lu ici) ; le
+  contexte et `proj_destroy` sont des `Drop`.
+- Ajout au C : `alternatives.len() > 1`, la phrase du commentaire C « more than one
+  coordinate operation candidate » écrite en assertion.
+- Contrôle contre le binaire de référence 9.9.0 (`target/proj-reference/build/bin`,
+  `PROJ_DATA` et `LD_LIBRARY_PATH` de la référence) : `cs2cs +over` sur `-220 0`
+  donne `-24490287.97`, et `cs2cs` sans `+over` sur `140 0` donne `15584728.71`, les
+  valeurs du C++ à la précision affichée.
+
 ## Commandes
 
 ```

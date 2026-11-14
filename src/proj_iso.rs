@@ -16,7 +16,7 @@ use crate::iso19111::{
     facade_candidates, same_datum_noop, AlternativeError, Alternatives, Axis, BestPolicy,
     CoordinateOperation, Crs, FacadeCandidates, FactoryError, GeodeticCRS, Item, UnitOfMeasure,
 };
-use crate::proj::{Direction, ProjError};
+use crate::proj::{Direction, ForceOver, ProjError};
 
 /// Which axis a CRS writes first in the pipeline.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,16 +93,25 @@ pub(crate) struct IsoPipeline {
 /// A compound CRS (a horizontal part and a vertical one) is read by its horizontal part:
 /// the axis order and the units come from there. Its vertical part is in the pipeline.
 pub(crate) fn iso_pipeline(from: &str, to: &str) -> Option<IsoPipeline> {
-    iso_pipeline_at(from, to, None)
+    iso_pipeline_at(from, to, None, ForceOver::No)
 }
 
-/// [`iso_pipeline`] with a coordinate epoch.
+/// [`iso_pipeline`] with a coordinate epoch and the `over` flag of `FORCE_OVER`.
 ///
 /// PROJ inserts `+proj=set +v_4=<epoch>` at both ends of the pipeline
 /// (`proj_coordoperation_create_proj_crs_to_crs` when `coordinateEpoch` is set).
 /// The helmert then reads that time. No epoch leaves the coordinate time at 0,
 /// which is what an undated `proj_trans` passes. Each candidate carries the epoch.
-pub(crate) fn iso_pipeline_at(from: &str, to: &str, epoch: Option<f64>) -> Option<IsoPipeline> {
+///
+/// `over` is set on every candidate, as `crs_to_crs.cpp:671` and `:743` set `op.pj->over`:
+/// each projection of the candidate's pipeline then keeps its longitudes
+/// (`Operation::create_over`).
+pub(crate) fn iso_pipeline_at(
+    from: &str,
+    to: &str,
+    epoch: Option<f64>,
+    over: ForceOver,
+) -> Option<IsoPipeline> {
     let candidates = match facade_candidates(from, to) {
         Ok(candidates) => candidates,
         // Only an empty candidate list: a same-datum pair has no registered operation, and PROJ
@@ -128,8 +137,19 @@ pub(crate) fn iso_pipeline_at(from: &str, to: &str, epoch: Option<f64>) -> Optio
         for item in &mut items {
             if let Some(definition) = &item.definition {
                 let text = with_epoch_steps(definition, year);
-                item.operation = Operation::create(&text).ok();
+                item.operation = Operation::create_over(&text, over).ok();
                 item.definition = Some(text);
+            }
+        }
+    } else if over == ForceOver::Yes {
+        // The candidates were built with their grids deferred (`select.rs`); the same build with
+        // the flag keeps that, so a candidate with a missing grid stays a candidate.
+        for item in &mut items {
+            if let Some(definition) = &item.definition {
+                item.operation = crate::network::with_deferred_grids(|| {
+                    Operation::create_over(definition, over)
+                })
+                .ok();
             }
         }
     }
@@ -428,6 +448,14 @@ impl IsoPipeline {
                     AlternativeError::Network => TransformError::NetworkUnavailable,
                 })
             }
+        }
+    }
+
+    /// Number of candidates kept for `proj_trans` to choose from, 0 for a single operation.
+    pub(crate) fn alternative_count(&self) -> usize {
+        match &self.route {
+            Route::Alternatives(alternatives) => alternatives.len(),
+            Route::Single(_) => 0,
         }
     }
 
