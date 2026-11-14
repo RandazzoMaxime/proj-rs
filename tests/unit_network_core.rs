@@ -1,5 +1,5 @@
 //! PROJ `test/unit/test_network.cpp`, the network cases that need no grid read in ranges: the
-//! callbacks (`custom`, `getfilesize`, `simul_open_error`) and the `network_endpoint_api_and_not_reachable_*`
+//! callbacks (`custom`, `getfilesize`, `simul_open_error`, `simul_read_range_error`) and the `network_endpoint_api_and_not_reachable_*`
 //! cases. Nothing here reaches `cdn.proj.org`: the endpoint is a local address with no server.
 //!
 //! The assertions are PROJ's. `HUGE_VAL` with `PROJ_ERR_OTHER_NETWORK_ERROR` is
@@ -99,6 +99,13 @@ enum Call {
         offset: u64,
         size: usize,
         response: Vec<u8>,
+    },
+    /// A `read_range` that the callbacks refuse with `message`, as PROJ's `errorMsg`.
+    ReadRangeFails {
+        file: usize,
+        offset: u64,
+        size: usize,
+        message: &'static str,
     },
     Close {
         file: usize,
@@ -213,14 +220,25 @@ impl NetworkCallbacks for Exchange {
         let answer = self.expect(
             &format!("read_range({offset}, {size_to_read})"),
             |call, state| {
-                let Call::ReadRange {
-                    file,
-                    offset: expected_offset,
-                    size,
-                    response,
-                } = call
-                else {
-                    return None;
+                let (file, expected_offset, size, reply) = match call {
+                    Call::ReadRange {
+                        file,
+                        offset,
+                        size,
+                        response,
+                    } => (file, offset, size, Ok(response.clone())),
+                    Call::ReadRangeFails {
+                        file,
+                        offset,
+                        size,
+                        message,
+                    } => (
+                        file,
+                        offset,
+                        size,
+                        Err(NetworkError::ReadRange((*message).to_owned())),
+                    ),
+                    _ => return None,
                 };
                 if *expected_offset != offset
                     || *size != size_to_read
@@ -228,11 +246,13 @@ impl NetworkCallbacks for Exchange {
                 {
                     return None;
                 }
-                Some(response.clone())
+                Some(reply)
             },
         );
-        answer.ok_or_else(|| {
-            NetworkError::ReadRange("the exchange did not expect this read".to_owned())
+        answer.unwrap_or_else(|| {
+            Err(NetworkError::ReadRange(
+                "the exchange did not expect this read".to_owned(),
+            ))
         })
     }
 
@@ -426,6 +446,112 @@ fn getfilesize() {
     exchange.reached(after_creation);
     drop(proj);
     exchange.reached(after_creation);
+}
+
+/// `networking.simul_read_range_error`: the grid is the uncompressed `egm96_15` of `custom`, and
+/// the `read_range` of its second tile is refused with "read range error".
+///
+/// Creation and the first transform (lat 49, 1.25) are those of `custom`. The second transform
+/// (lat -49) calls `read_range(3670016, 278528)` on the handle of the first tile, and nothing
+/// else: no header is read after the refused read. The handle is closed by `proj_destroy`.
+///
+/// Measured against PROJ 9.9.0 (`libproj` of `target/proj-reference`, a C harness with the same
+/// callbacks): creation `open(url, 0, 16384)`, three headers, `close`; first transform
+/// `open(url, 524288, 278528)`, three headers, `z` 1.25; second transform
+/// `read_range(3670016, 278528)`, then no call, `z` `HUGE_VAL` and `proj_errno` 4099
+/// (`PROJ_ERR_OTHER_NETWORK_ERROR`); `close` at `proj_destroy`.
+#[test]
+fn simul_read_range_error() {
+    let url = "https://foo/read_range_error.tif";
+    let fixture = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/data/tests/egm96_15_uncompressed_truncated.tif"
+    ))
+    .expect("the truncated egm96 fixture");
+    assert_eq!(fixture.len(), 956);
+    let mut head = fixture;
+    head.resize(16384, 0);
+    let tile: Vec<u8> = std::iter::repeat_n(1.25_f32.to_le_bytes(), 278528 / 4)
+        .flatten()
+        .collect();
+    let headers = |file: usize| {
+        [
+            Call::Header {
+                file,
+                key: "Content-Range",
+                value: "bytes=0-16383/10000000",
+            },
+            Call::Header {
+                file,
+                key: "Last-Modified",
+                value: "some_date",
+            },
+            Call::Header {
+                file,
+                key: "ETag",
+                value: "some_etag",
+            },
+        ]
+    };
+    let mut calls = vec![Call::Open {
+        file: 1,
+        url,
+        offset: 0,
+        size: 16384,
+        response: head,
+    }];
+    calls.extend(headers(1));
+    calls.push(Call::Close { file: 1 });
+    let after_creation = calls.len();
+    calls.push(Call::Open {
+        file: 2,
+        url,
+        offset: 524288,
+        size: 278528,
+        response: tile,
+    });
+    calls.extend(headers(2));
+    let after_first_transform = calls.len();
+    calls.push(Call::ReadRangeFails {
+        file: 2,
+        offset: 3670016,
+        size: 278528,
+        message: "read range error",
+    });
+    let after_second_transform = calls.len();
+    calls.push(Call::Close { file: 2 });
+    let after_destroy = calls.len();
+
+    let exchange = Arc::new(Exchange::new(calls));
+    let mut builder = ProjBuilder::new();
+    builder.grid_cache_enable(false).expect("cache off");
+    builder.enable_network(true).expect("network on");
+    let callbacks: Arc<dyn NetworkCallbacks> = Arc::<Exchange>::clone(&exchange);
+    builder.set_network_callbacks(callbacks);
+    let definition = format!("+proj=vgridshift +grids={url} +multiplier=1");
+
+    let proj = builder
+        .proj(&definition)
+        .expect("the grid is read at creation");
+    exchange.reached(after_creation);
+
+    // Radians, as in `custom`: the operation has no unit conversion.
+    let longitude = 2.0 / 180.0 * PI;
+    let (_, _, z) = proj
+        .convert_xyz(longitude, 49.0 / 180.0 * PI, 0.0)
+        .expect("lat 49 is in the grid");
+    assert_eq!(z, 1.25);
+    exchange.reached(after_first_transform);
+
+    let result = proj.convert_xyz(longitude, -49.0 / 180.0 * PI, 0.0);
+    assert!(
+        matches!(result, Err(ProjError::Network)),
+        "lat -49 is a network error, not {result:?}"
+    );
+    exchange.reached(after_second_transform);
+
+    drop(proj);
+    exchange.reached(after_destroy);
 }
 
 /// The operation of a CRS pair whose grid is unreachable is created. Forward, forward, then
