@@ -27,7 +27,6 @@ and `PORT-NOTES-tests.md`.
 
 - `networking.initial_check`
 - `networking.basic`
-- `networking.custom`
 - `networking.getfilesize`
 - `networking.simul_read_range_error`
 - `networking.simul_file_change_while_opened`
