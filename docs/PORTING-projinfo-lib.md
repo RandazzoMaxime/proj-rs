@@ -71,6 +71,20 @@ PROJ_DATA=$R/data LD_LIBRARY_PATH=$R/lib $R/bin/projinfo EPSG:25832 -o WKT1_GDAL
 
 Sortie identique à celle du port (`PROJCS["ETRS89 / UTM zone 32N"`, code 0).
 
+Test `TEST(projinfo_lib, warning)` (ajouté ensuite, sans changement de la lib) : le port
+donnait déjà la sortie de PROJ. Deux tests Rust (`warning_returns_zero`,
+`warning_found_error_when_exporting_wkt1_gdal`) sur `EPSG:4937 -o WKT1_GDAL`, qui écrit
+`Error when exporting to WKT1:GDAL: WKT1 does not support Geographic 3D CRS.` sur la voie WARN
+et sort avec 0. Référence PROJ 9.9.0, stdout et stderr comparés séparément au binaire du port :
+identiques (stdout `WKT1:GDAL string:`, stderr la ligne d'avertissement).
+
+```bash
+R=target/proj-reference/build
+PROJ_DATA=$R/data LD_LIBRARY_PATH=$R/lib $R/bin/projinfo EPSG:4937 -o WKT1_GDAL
+# stderr : Error when exporting to WKT1:GDAL: WKT1 does not support Geographic 3D CRS.
+# code de retour 0
+```
+
 Référence PROJ 9.9.0 pour `error` (le même `argv` que le test, un seul argument) :
 
 ```bash
@@ -82,7 +96,6 @@ PROJ_DATA=$R/data LD_LIBRARY_PATH=$R/lib $R/bin/projinfo doesnotwork
 
 ## Hors de ce lot
 
-- `warning` : le test reste à écrire ; le comportement est déjà celui de PROJ.
 - `use_ctx` : écart réel (pas de contexte dans l'API, trois sites `DatabaseContext::create()`).
 - `works_without_cb` : pas d'équivalent Rust (pas de callback).
 - `docs/UNPORTED-UNIT.md`, `README.md`, `ROADMAP.md`, `docs/UNIT-TRIAGE.md` : non modifiés ici,
