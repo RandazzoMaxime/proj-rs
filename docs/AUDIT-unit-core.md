@@ -53,8 +53,8 @@ the row, in `tests/unit_core_datum.rs`, `tests/unit_core_common.rs` or `tests/un
 | `common::identifiedobject_identifier_array_of_identifier` | gap: no identifier list on `OperationParameter` | `identifiedobject_identifier_array_of_identifier` | typed builder |
 | `common::identifiedobject_identifier_array_of_invalid_type` | route: PROJJSON reader | `identifiedobject_identifier_array_of_invalid_type` | note 6 |
 | `common::identifiedobject_alias_array_of_string` | gap: no aliases on `Identified` | `identifiedobject_alias_array_of_string` | typed builder |
-| `common::identifiedobject_alias_invalid_type` | **not written** | none | note 4 |
-| `common::identifiedobject_alias_array_of_invalid_type` | **not written** | none | note 4 |
+| `common::identifiedobject_alias_invalid_type` | written: `tests/unit_common_alias.rs` (untyped `PropertyMap`) | `identifiedobject_alias_invalid_type` | note 4 |
+| `common::identifiedobject_alias_array_of_invalid_type` | written: `tests/unit_common_alias.rs` (untyped `PropertyMap`) | `identifiedobject_alias_array_of_invalid_type` | note 4 |
 | `common::DataEpoch` | gap: no `DataEpoch` type | `data_epoch` | |
 
 ## test_metadata.cpp (12)
@@ -86,8 +86,8 @@ the row, in `tests/unit_core_datum.rs`, `tests/unit_core_common.rs` or `tests/un
 3. There is no `DynamicGeodeticReferenceFrame` or `DynamicVerticalReferenceFrame` type. As in the
    WKT and PROJJSON readers, a dynamic frame is a frame with a frame reference epoch and a
    deformation model, set with `with_frame_epoch` and `with_deformation_model`.
-4. Not written: `identifiedobject_alias_invalid_type` and `identifiedobject_alias_array_of_invalid_type`.
-   Both check that a `PropertyMap` alias has a text type. The PROJJSON reader does not read
+4. Both are written in `tests/unit_common_alias.rs`, through the untyped `PropertyMap` added by the
+   propertymap lot (`docs/PORTING-propertymap.md`). They check that a `PropertyMap` alias has a text type. The PROJJSON reader does not read
    `alias` (`src/src/iso19111/io.cpp` has no `"alias"` key), so there is no runtime input to
    refuse. In Rust the alias is `&str`, and the wrong type is a compile error.
 5. Identifier names (`metadata::Identifier_isEquivalentName`): the C++ cases `"\xc3"` (a lone UTF-8
