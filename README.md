@@ -43,7 +43,7 @@ yet**: see [Status at a glance](#status-at-a-glance).
 
 Each square is **one test case of PROJ 9.9.0 itself**. Green: PROJ-RS passes it.
 Grey: still open. In all, <!--gen:all_percent-->99.8<!--/gen-->% of the cases pass
-(<!--gen:all_done-->9170<!--/gen--> of <!--gen:all_total-->9188<!--/gen-->). The left panel is the numeric suite (`gie`), complete. The right
+(<!--gen:all_done-->9171<!--/gen--> of <!--gen:all_total-->9188<!--/gen-->). The left panel is the numeric suite (`gie`), complete. The right
 panel is what is left: PROJ's C++ unit tests, which cover the ISO 19111 model,
 WKT and the operation factory, and the command-line cases. The chart is drawn
 from the same ledgers as the tables below by `tests/progress_svg.rs`, so it
@@ -163,7 +163,7 @@ The same goes for the CLI cases in [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md
 
 | Suite | Ported and passing | Not yet | |
 |---|---:|---:|:-:|
-| PROJ C++ unit tests | <!--gen:unit_ported-->1492<!--/gen--> | <!--gen:unit_open-->15<!--/gen--> | <!--gen:unit_icon-->🟡<!--/gen--> |
+| PROJ C++ unit tests | <!--gen:unit_ported-->1493<!--/gen--> | <!--gen:unit_open-->14<!--/gen--> | <!--gen:unit_icon-->🟡<!--/gen--> |
 | `cct` CLI cases | <!--gen:cli_cct_ported-->18<!--/gen--> | <!--gen:cli_cct_open-->0<!--/gen--> | <!--gen:cli_cct_icon-->✅<!--/gen--> |
 | `cs2cs` CLI cases | <!--gen:cli_cs2cs_ported-->194<!--/gen--> | <!--gen:cli_cs2cs_open-->3<!--/gen--> | <!--gen:cli_cs2cs_icon-->🟡<!--/gen--> |
 | `gie` CLI cases | <!--gen:cli_gie_ported-->4<!--/gen--> | <!--gen:cli_gie_open-->0<!--/gen--> | <!--gen:cli_gie_icon-->✅<!--/gen--> |
@@ -200,7 +200,7 @@ The same goes for the CLI cases in [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md
 | `test_misc.cpp` | <!--gen:test_misc_ported-->1<!--/gen--> | <!--gen:test_misc_open-->0<!--/gen--> |
 | `test_network.cpp` | <!--gen:test_network_ported-->15<!--/gen--> | <!--gen:test_network_open-->11<!--/gen--> |
 | `test_polyhedral.cpp` | <!--gen:test_polyhedral_ported-->5<!--/gen--> | <!--gen:test_polyhedral_open-->0<!--/gen--> |
-| `test_projinfo_lib.cpp` | <!--gen:test_projinfo_lib_ported-->3<!--/gen--> | <!--gen:test_projinfo_lib_open-->2<!--/gen--> |
+| `test_projinfo_lib.cpp` | <!--gen:test_projinfo_lib_ported-->4<!--/gen--> | <!--gen:test_projinfo_lib_open-->1<!--/gen--> |
 | `test_tinshift.cpp` | <!--gen:test_tinshift_ported-->1<!--/gen--> | <!--gen:test_tinshift_open-->0<!--/gen--> |
 | `test_tmerczoned.cpp` | <!--gen:test_tmerczoned_ported-->8<!--/gen--> | <!--gen:test_tmerczoned_open-->0<!--/gen--> |
 | `test_util.cpp` | <!--gen:test_util_ported-->2<!--/gen--> | <!--gen:test_util_open-->0<!--/gen--> |
