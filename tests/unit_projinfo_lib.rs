@@ -11,7 +11,7 @@
 //! (`projinfo_lib.cpp`, the `strm.cwarn` of the WKT1:GDAL block). `use_ctx` runs two codes,
 //! `EPSG:25832` and `EPSG:25833`, on one context through `run_with_context`.
 
-use proj_rs::projinfo::{run, run_with_context, Status};
+use proj_rs::projinfo::{run, run_with_callback, run_with_context, LogLevel, Status};
 use proj_rs::Context;
 
 const SIMPLE_ARGS: [&str; 3] = ["EPSG:25832", "-o", "WKT1_GDAL"];
@@ -107,4 +107,45 @@ fn use_ctx() {
             report.output
         );
     }
+}
+
+/// `TEST(projinfo_lib, works_without_cb)`: `projinfo(nullptr, argc, argv, nullptr, nullptr)`
+/// with `EPSG:25832 -o WKT1_GDAL` returns 0 without a callback (the C++ comment: "Testing it
+/// doesn't crash"). Confirmed on libproj 9.9.0: `res = 0`.
+#[test]
+fn works_without_cb() {
+    assert_eq!(run_with_callback(None, &SIMPLE_ARGS, None), Status::Success);
+}
+
+/// The callback of `simple`, through `run_with_callback`: an INFO message holds the WKT1:GDAL
+/// name of EPSG:25832, and nothing is written on the WARN or ERR level.
+#[test]
+fn callback_receives_the_info_message() {
+    let mut messages: Vec<(LogLevel, String)> = Vec::new();
+    let mut callback = |level: LogLevel, text: &str| messages.push((level, text.to_owned()));
+    let status = run_with_callback(None, &SIMPLE_ARGS, Some(&mut callback));
+    assert_eq!(status, Status::Success);
+    assert!(
+        messages.iter().any(|(level, text)| *level == LogLevel::Info
+            && text.contains("PROJCS[\"ETRS89 / UTM zone 32N\"")),
+        "{messages:?}"
+    );
+    assert!(
+        messages.iter().all(|(level, _)| *level == LogLevel::Info),
+        "{messages:?}"
+    );
+}
+
+/// The ERR level of `error`: `doesnotwork` gives an ERR message and the status 1.
+#[test]
+fn callback_receives_the_error_message() {
+    let mut messages: Vec<(LogLevel, String)> = Vec::new();
+    let mut callback = |level: LogLevel, text: &str| messages.push((level, text.to_owned()));
+    let status = run_with_callback(None, &ERROR_ARGS, Some(&mut callback));
+    assert_eq!(status, Status::Failure);
+    assert!(
+        messages.iter().any(|(level, text)| *level == LogLevel::Err
+            && text.contains("parsing of 'doesnotwork' failed")),
+        "{messages:?}"
+    );
 }
