@@ -762,6 +762,21 @@ fn collect_grids(operation: &CoordinateOperation, names: &mut Vec<String>) {
     }
 }
 
+/// Whether a grid that is on no `proj.db` row and not on disk is asked of the network, to learn
+/// its URL and whether it is available (`lookForGridInfo`, the branch without a row).
+///
+/// PROJ asks in `proj_coordoperation_get_grid_used_count` (`gridsNeeded` on a built object), and
+/// in `proj_coordoperation_is_instantiable`. The factory's own checks switch the network off
+/// (`factory.cpp`, `DisableNetwork`). This port asks only in `Proj::grids_needed`: the factory
+/// and `is_proj_instantiable` keep looking at the disk, so the operation lists do not change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RemoteGrids {
+    /// Look at the disk only: a grid with no row and no file is unavailable, with no URL.
+    Skip,
+    /// With the network on, open the file at its endpoint URL (`network::open_remote_grid`).
+    Open,
+}
+
 impl CoordinateOperation {
     /// `gridsNeeded`: each grid named by a file parameter of the operation or of its steps,
     /// sorted by name, without repeats (PROJ keeps them in a set of the names).
@@ -777,6 +792,20 @@ impl CoordinateOperation {
         db: &DatabaseContext,
         known: GridAvailabilityUse,
     ) -> Result<Vec<GridDescription>, FactoryError> {
+        self.grids_needed_with(db, known, RemoteGrids::Skip)
+    }
+
+    /// [`Self::grids_needed`], with `remote` deciding whether a grid on no row is opened.
+    ///
+    /// # Errors
+    ///
+    /// The database rejects a grid lookup.
+    pub(crate) fn grids_needed_with(
+        &self,
+        db: &DatabaseContext,
+        known: GridAvailabilityUse,
+        remote: RemoteGrids,
+    ) -> Result<Vec<GridDescription>, FactoryError> {
         let mut names = Vec::new();
         collect_file_parameters(self, &mut names);
         names.sort();
@@ -786,7 +815,7 @@ impl CoordinateOperation {
             .map(|short_name| {
                 let info = match db.look_for_grid_info(&short_name, known)? {
                     Some(info) => info,
-                    None => unrecorded_grid(&short_name),
+                    None => unrecorded_grid(&short_name, remote),
                 };
                 Ok(GridDescription { short_name, info })
             })
@@ -891,16 +920,24 @@ fn proj_based_grid_names(text: &str) -> Vec<String> {
 }
 
 /// `lookForGridInfo` for a grid the database has no row for: available when its file is on
-/// the search path, and a URL when the name is one.
-fn unrecorded_grid(name: &str) -> GridInfo {
+/// the search path, and a URL when the name is one. With `remote` on [`RemoteGrids::Open`], a
+/// grid that is not on disk is available at the URL the network opens it at, and that URL is
+/// its URL (`resolveFullFilename` in PROJ, which clears the full name of a remote file).
+fn unrecorded_grid(name: &str, remote: RemoteGrids) -> GridInfo {
     let url = if name.starts_with("http://") || name.starts_with("https://") {
         name.to_owned()
     } else {
         String::new()
     };
-    let (full_name, available) = match gridpath::resolve(name) {
-        Some(path) if url.is_empty() => (path.to_string_lossy().into_owned(), true),
-        _ => (String::new(), false),
+    let (full_name, url, available) = match gridpath::resolve(name) {
+        Some(path) if url.is_empty() => (path.to_string_lossy().into_owned(), url, true),
+        _ if url.is_empty() && remote == RemoteGrids::Open => {
+            match crate::network::open_remote_grid(name) {
+                Some(remote_url) => (String::new(), remote_url, true),
+                None => (String::new(), url, false),
+            }
+        }
+        _ => (String::new(), url, false),
     };
     GridInfo {
         full_name,

@@ -233,6 +233,26 @@ pub(crate) fn fetch_missing(name: &str) -> Option<Vec<u8>> {
     })
 }
 
+/// The URL of a grid that is not on disk and has no `proj.db` row, when the network can open it.
+///
+/// PROJ's `FileManager::open_resource_file` opens `endpoint/name` (`filemanager.cpp`, 1859-1915),
+/// and `lookForGridInfo` gives that URL, and the grid as available, when the open succeeds
+/// (`factory.cpp`, the branch without a row). With callbacks only the first chunk is asked, as
+/// `open(url, 0, 16384)`. Without them the built-in client fetches the whole file, since it sends
+/// no `Range`. `None` when the network is off, the name is not a grid to fetch, or the open fails.
+pub(crate) fn open_remote_grid(name: &str) -> Option<String> {
+    let download = decide_download(name)?;
+    match context().callbacks() {
+        Some(callbacks) => {
+            let mut file = crate::network_chunks::RemoteFile::new(&download.url, callbacks);
+            let opened = file.read_at(0, crate::network_chunks::CHUNK_SIZE).is_ok();
+            file.release();
+            opened.then_some(download.url)
+        }
+        None => http_get(&download.url).map(|_| download.url),
+    }
+}
+
 /// The whole file at `url`, read through the application's callbacks in 16384-byte chunks
 /// (`network_chunks`).
 ///

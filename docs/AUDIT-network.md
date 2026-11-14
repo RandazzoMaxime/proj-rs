@@ -32,6 +32,11 @@ cache en fichiers dans le répertoire utilisateur (`grid_cache_enable`,
   `NULL`, vérifié avec la référence).
 - `last_used_operation()` donne le nom du candidat (`ProjInfo::description`), comme
   `proj_pj_info` de `proj_trans_get_last_used_operation`.
+- `Proj::grids_needed` (`proj_coordoperation_get_grid_used`) : une grille sans ligne en base et
+  absente du disque est ouverte à `endpoint/nom` quand le réseau est actif (`network::open_remote_grid`,
+  premier morceau par callbacks) ; son URL est celle-ci et elle est disponible. La fabrique et
+  `is_proj_instantiable` ne l'interrogent pas (`RemoteGrids::Skip`), comme `factory.cpp` coupe le
+  réseau.
 
 Ce qui manque : lecture paresseuse des seuls GeoTIFF à tuiles non compressés (les
 grilles en bandes, compressées, à bandes planaires, et les grilles non-TIFF
@@ -64,6 +69,7 @@ Tests de l'API existants, hors liste C++ : `tests/network_grid.rs`
 | `networking.network_endpoint_api_and_not_reachable_xyzgridshift` | `tests/unit_network_core.rs::endpoint_api_not_reachable_xyzgridshift` | porté (`NTF to ETRS89-FRA [RGF93 v1] (1)`) |
 | `networking.network_endpoint_api_and_not_reachable_vgridshift` | `tests/unit_network_core.rs::endpoint_api_not_reachable_vgridshift` | porté (`POSGAR 2007 to SRVN16 height (1)`) |
 | `networking.do_not_attempt_network_access_known_available_network_on` | `tests/unit_network_core.rs::do_not_attempt_network_access_known_available_network_on` | porté : mesuré sur `libproj` 9.9.0 (sonde C reproduisant le TEST, `probe2.c` non versionnée) : `EPSG:4326` vers `EPSG:4267`, `KNOWN_AVAILABLE`, `PARTIAL_INTERSECTION`, réseau on, callbacks enregistrés : 79 opérations (noms et ordre identiques, réseau off aussi), 0 appel de callback ; témoin : `+proj=hgridshift +grids=proj_rs_no_such_grid.tif` donne `NULL` et un `open`. Port : `ProjBuilder::create_operations` (nouvelle API, enveloppe `with_context` comme les autres créations du builder), liste exacte, 0 appel, témoin à 1 appel. `ASSERT_TRUE` de `proj_context_set_network_callbacks` : sans objet en Rust (l'enregistrement ne renvoie rien) ; voir `docs/PORTING-network.md`. |
+| `networking.proj_coordoperation_get_grid_used` | `tests/unit_network_core.rs::proj_coordoperation_get_grid_used` | porté, avec octets de substitution : les trois assertions du TEST (`shortName`, `fullName` vide, `url` `https://cdn.proj.org/nz_linz_nzgd2000-c120100904-grid01.tif`), deux créations. Mesuré sur `libproj` 9.9.0 (sonde C `grid_used_probe.c`, non versionnée, mêmes callbacks) : avec les octets servis, `available` 1, `directDownload` 0, `openLicense` 0, une seule `open(url, 0, 16384)` pour les deux créations, aucun appel pendant `proj_coordoperation_get_grid_used` ; sans callbacks, `proj_create` renvoie `NULL`. Le port : `Proj::grids_needed` ouvre une grille sans ligne en base à `endpoint/nom` quand le réseau est actif (`network::open_remote_grid`, `RemoteGrids::Open`). Le test ne reproduit pas la garde `networkAccessOK` : il tourne toujours, puisque les callbacks répondent sans I/O. Écarts : `docs/PORTING-network.md`. |
 
 Tests unitaires ajoutés hors liste C++ (`src/network.rs`, `mod callback_tests`) :
 la lecture entière d'une grille par callbacks en plages de 16384 octets
@@ -97,14 +103,14 @@ l'extraction de la taille depuis `Content-Range`.
 | 21 | `cache_lock` | écart, lot cache | Verrou de cache multi-processus absent. |
 | 22 | `download_whole_files` | écart | `proj_is_download_needed(ctx, name, ignore_ttl)`, `proj_download_file` (avec progression) et `pj_find_file` : aucune API publique. L'état testé (`lookForGridInfo`) est dans la base du cache (lot cache). |
 | 23 | `file_api` | écart | `proj_context_set_fileapi` (open, read, write, close, exists, mkdir, unlink, rename) absent. Toutes les lectures de grilles passent par `std::fs` (`gridpath::read`, `read_resource`) : une API de fichiers demande de les router toutes. |
-| 24 | `proj_coordoperation_get_grid_used` | écart | Le test exige que `proj_create("proj=vgridshift grids=nz_linz_nzgd2000-c120100904-grid01.tif")` réussisse avec le CDN, et que l'URL soit `https://cdn.proj.org/...`. Mesuré avec le `libproj` de référence (`proj_create` avec l'endpoint par défaut, réseau bloqué) : `NULL`, « could not find required grid(s) ». Et le `proj.db` de référence n'a aucune ligne pour ce nom (479 lignes de `grid_alternatives`, aucune pour `c120100904`) : PROJ laisse donc l'URL vide. Le port de l'assertion demande le fichier CDN, qui n'est pas dans le dépôt. Le port de `GridInfo` (`lookForGridInfo`) suit PROJ et est déjà en place. |
+| 24 | `proj_coordoperation_get_grid_used` | porté, avec octets de substitution | Les trois assertions sont portées (nom, nom complet vide, URL `https://cdn.proj.org/...`), à chaque création. Le fichier CDN n'est pas dans le dépôt et le réseau est coupé : sans octets, `proj_create` renvoie `NULL` (mesuré, `libproj` 9.9.0, « could not find required grid(s) »). Le test sert donc les 956 octets de la fixture egm96 tronquée sous cette URL. Les valeurs asserties ne dépendent pas du contenu ; ce qui en dépend (séquence d'appels avec le vrai fichier, `available` d'un vrai fichier) n'est pas mesuré. Voir « Cas portés dans ce lot ». |
 | 25 | `pyproj_issue_1192` | porté | `tests/unit_network_core.rs::pyproj_issue_1192`. Pas de façade C : le contexte de fabrique est `CoordinateOperationContext` (public), avec `GridAvailabilityUse::IgnoreGridAvailability` et `SpatialCriterion::PartialIntersection`. La liste (10 opérations, noms et ordre) et les drapeaux d'instanciabilité (réseau off : 8 vraies ; réseau on : 10) sont ceux de `libproj` 9.9.0 mesurés avec une sonde C. Écarts et lacune (opérations à grille absente, réseau on) : `docs/PORTING-network.md`. |
 | 26 | `do_not_attempt_network_access_known_available_network_on` | porté | Voir « Cas portés dans ce lot ». La façade C reste absente : la fabrique passe par `ProjBuilder::create_operations`, qui applique le contexte du builder. |
 
-Compte : 26 TEST() C++ ; 13 portés (`curl_invalid_resource`, `simul_open_error`,
+Compte : 26 TEST() C++ ; 14 portés (`curl_invalid_resource`, `simul_open_error`,
 `simul_file_change_while_opened`,
-`simul_read_range_error`, `network_endpoint_env_variable`, `custom`, `getfilesize`, `pyproj_issue_1192`, `do_not_attempt_network_access_known_available_network_on`, et les quatre
-`not_reachable`) ; 1 partiel (`basic`) ; 12 écarts, dont 5 du lot cache (17 à 21).
+`simul_read_range_error`, `network_endpoint_env_variable`, `custom`, `getfilesize`, `proj_coordoperation_get_grid_used` (avec octets de substitution), `pyproj_issue_1192`, `do_not_attempt_network_access_known_available_network_on`, et les quatre
+`not_reachable`) ; 1 partiel (`basic`) ; 11 écarts, dont 5 du lot cache (17 à 21) et `initial_check` (sans objet).
 
 ## projsync (`src/apps/projsync.cpp`, `test/cli/test_projsync.sh`) : écart total
 
@@ -141,7 +147,6 @@ ne sont pas réécrites ; ce qui suit les complète pour les cas de ce lot.
 
 Non portés dans ce lot, hors de sa liste : `networking.basic` (partie réseau activé),
 `initial_check`, `network_endpoint_*`, `download_whole_files`, `file_api`,
-`proj_coordoperation_get_grid_used`,
 `do_not_attempt_network_access_known_available_network_on`, et les cas à callbacks
 (`simul_*`) : voir les lignes du tableau ci-dessus.
 

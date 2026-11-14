@@ -1,8 +1,10 @@
 //! PROJ `test/unit/test_network.cpp`, the network cases that need no grid read in ranges: the
 //! callbacks (`custom`, `getfilesize`, `simul_open_error`, `simul_read_range_error`), the
 //! `network_endpoint_api_and_not_reachable_*` cases, and the operation factory cases
-//! `pyproj_issue_1192` and `do_not_attempt_network_access_known_available_network_on`. Nothing
-//! here reaches `cdn.proj.org`: the endpoint is a local address with no server.
+//! `pyproj_issue_1192` and `do_not_attempt_network_access_known_available_network_on`, and
+//! `proj_coordoperation_get_grid_used`. Nothing here reaches `cdn.proj.org` over the network: the
+//! endpoint is a local address with no server, and the one CDN URL that `grid_used` names is
+//! answered by the callbacks.
 //!
 //! The assertions are PROJ's. `HUGE_VAL` with `PROJ_ERR_OTHER_NETWORK_ERROR` is
 //! `Err(ProjError::Network)` here, and the description of the last used operation is the
@@ -992,4 +994,119 @@ fn do_not_attempt_network_access_known_available_network_on() {
         1,
         "callback calls of the control"
     );
+}
+
+/// Serves the bytes of one file under one URL, and refuses every other URL. Each `open` and
+/// `read_range` gives the bytes of the file at the offset asked; `Content-Range` gives its size.
+struct ServeOneFile {
+    url: &'static str,
+    bytes: Vec<u8>,
+    /// Every `open` the callbacks received, as `(url, offset, size_to_read)`.
+    opens: Mutex<Vec<(String, u64, usize)>>,
+}
+
+impl ServeOneFile {
+    /// Up to `size` bytes of the file from `offset`, fewer at its end.
+    fn slice(&self, offset: u64, size: usize) -> Vec<u8> {
+        let len = self.bytes.len();
+        let start = usize::try_from(offset).unwrap_or(usize::MAX).min(len);
+        let end = start.saturating_add(size).min(len);
+        self.bytes[start..end].to_vec()
+    }
+}
+
+impl NetworkCallbacks for ServeOneFile {
+    fn open(&self, url: &str, offset: u64, size_to_read: usize) -> Result<OpenReply, NetworkError> {
+        if let Ok(mut opens) = self.opens.lock() {
+            opens.push((url.to_owned(), offset, size_to_read));
+        }
+        if url != self.url {
+            return Err(NetworkError::Open("Cannot open file".to_owned()));
+        }
+        Ok(OpenReply {
+            handle: NetworkHandle(1),
+            data: self.slice(offset, size_to_read),
+        })
+    }
+
+    fn header(&self, _handle: NetworkHandle, name: &str) -> Option<String> {
+        (name == "Content-Range").then(|| {
+            let total = self.bytes.len();
+            format!("bytes 0-{}/{total}", total.saturating_sub(1))
+        })
+    }
+
+    fn read_range(
+        &self,
+        _handle: NetworkHandle,
+        offset: u64,
+        size_to_read: usize,
+    ) -> Result<Vec<u8>, NetworkError> {
+        Ok(self.slice(offset, size_to_read))
+    }
+
+    fn close(&self, _handle: NetworkHandle) {}
+}
+
+/// `networking.proj_coordoperation_get_grid_used` (`test/unit/test_network.cpp`): the grid of
+/// `proj=vgridshift grids=nz_linz_nzgd2000-c120100904-grid01.tif` is in neither `proj.db` nor on
+/// disk. With the network on, the grid is the file at the CDN URL: its short name is the name it
+/// is asked by, its full name is empty, and its URL is `https://cdn.proj.org/` and the name. Two
+/// creations give the same answer.
+///
+/// The CDN file is not in the repository and the sandbox has no route to the CDN, so the
+/// callbacks answer the one URL with the first 956 bytes of the truncated egm96 fixture, and
+/// refuse every other URL. The three assertions of the C++ test do not depend on the bytes: they
+/// name the file, not its content. `proj.db` has no row for this name, so the URL is the one PROJ
+/// gives when the open of the CDN URL succeeds, as `FileManager::open_resource_file` does.
+///
+/// The `available` flag and the open are not asserted by the C++ test. They are the values PROJ
+/// 9.9.0 gives for the same callbacks (`libproj` probe, `TIFF`+`curl` build): `available` 1,
+/// `directDownload` 0, `openLicense` 0, one `open(url, 0, 16384)` for the two creations, with no
+/// call from the `grids_needed` queries.
+#[test]
+fn proj_coordoperation_get_grid_used() {
+    const NAME: &str = "nz_linz_nzgd2000-c120100904-grid01.tif";
+    const URL: &str = "https://cdn.proj.org/nz_linz_nzgd2000-c120100904-grid01.tif";
+    let bytes = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/data/tests/egm96_15_uncompressed_truncated.tif"
+    ))
+    .expect("the truncated egm96 fixture");
+    assert_eq!(bytes.len(), 956);
+
+    let served = Arc::new(ServeOneFile {
+        url: URL,
+        bytes,
+        opens: Mutex::new(Vec::new()),
+    });
+    let mut builder = ProjBuilder::new();
+    builder.grid_cache_enable(false).expect("cache off");
+    builder.enable_network(true).expect("network on");
+    let shared: Arc<dyn NetworkCallbacks> = Arc::<ServeOneFile>::clone(&served);
+    builder.set_network_callbacks(shared);
+
+    for creation in 0..2 {
+        let proj = builder
+            .clone()
+            .proj(&format!("proj=vgridshift grids={NAME}"))
+            .expect("the vgridshift of the CDN grid");
+        let grids = proj.grids_needed().expect("the grids the operation needs");
+        assert_eq!(grids.len(), 1, "creation {creation}: one grid");
+        let grid = &grids[0];
+        // PROJ: `EXPECT_EQ(std::string(shortName), ...)`.
+        assert_eq!(grid.short_name, NAME, "creation {creation}: short name");
+        // PROJ: `EXPECT_EQ(std::string(fullName), "")`.
+        assert_eq!(grid.info.full_name, "", "creation {creation}: full name");
+        // PROJ: `EXPECT_EQ(std::string(url), "https://cdn.proj.org/...")`.
+        assert_eq!(grid.info.url, URL, "creation {creation}: url");
+        // Measured with PROJ 9.9.0, not asserted by the C++ test.
+        assert!(grid.info.available, "creation {creation}: available");
+        assert!(!grid.info.direct_download, "creation {creation}: direct");
+        assert!(!grid.info.open_license, "creation {creation}: open license");
+    }
+
+    // Measured with PROJ 9.9.0: one open for the two creations, with the first chunk.
+    let opens = served.opens.lock().expect("lock").clone();
+    assert_eq!(opens, vec![(URL.to_owned(), 0, 16384)], "callback opens");
 }

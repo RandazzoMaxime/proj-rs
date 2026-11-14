@@ -15,10 +15,11 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
 | `grids.cpp:3222` (`pj_generic_grid_init`), `grids.cpp:3234` | `src/projections/gridshift/mod.rs` (`deferred`, `Deferred`) |
 | `trans.cpp:284` (erreur réseau d'un candidat : arrêt du point) | `src/iso19111/alternatives.rs` (`AlternativeError::Network`) |
 | `proj_trans_get_last_used_operation`, `proj_pj_info` | `Proj::last_used_operation`, `Proj::proj_info` (`candidate_name`) |
-| `DatabaseContext::lookForGridInfo` (`factory.cpp:3400`) | `src/iso19111/factory.rs` (`look_for_grid_info`), `src/iso19111/select.rs` (`unrecorded_grid`) |
+| `DatabaseContext::lookForGridInfo` (`factory.cpp:3400`) | `src/iso19111/factory.rs` (`look_for_grid_info`), `src/iso19111/select.rs` (`unrecorded_grid`, `RemoteGrids`), `src/network.rs` (`open_remote_grid`, la branche réseau de `open_resource_file`, `filemanager.cpp:1859-1915`) |
+| `proj_coordoperation_get_grid_used_count`, `proj_coordoperation_get_grid_used` (`c_api.cpp:7905-7990`) | `Proj::grids_needed` (`src/proj.rs`), sous `with_context` ; `RemoteGrids::Open` |
 | `proj_create_operations` avec le contexte de fabrique (callbacks du contexte) | `ProjBuilder::create_operations` (`src/proj.rs`), enveloppe `with_context` comme les autres créations du builder |
 | `src/apps/gie.cpp` (`network_error`) | `src/gie.rs` (`errno_name`) |
-| `test/unit/test_network.cpp` (26 TEST) | `tests/unit_network_core.rs` (11 cas, dont `custom`, `getfilesize`, `simul_read_range_error`, `simul_file_change_while_opened`, `pyproj_issue_1192` et `do_not_attempt_network_access_known_available_network_on`), `tests/unit_network_endpoint_env.rs` (1 cas), `tests/unit_network_local.rs` (2 cas), `src/network.rs` `callback_tests` (2 tests hors liste) |
+| `test/unit/test_network.cpp` (26 TEST) | `tests/unit_network_core.rs` (12 cas, dont `custom`, `getfilesize`, `simul_read_range_error`, `simul_file_change_while_opened`, `proj_coordoperation_get_grid_used`, `pyproj_issue_1192` et `do_not_attempt_network_access_known_available_network_on`), `tests/unit_network_endpoint_env.rs` (1 cas), `tests/unit_network_local.rs` (2 cas), `src/network.rs` `callback_tests` (2 tests hors liste) |
 | serveur de test local (remplace `cdn.proj.org`) | `tests/net_support/mod.rs` |
 | `src/apps/projsync.cpp`, `test/cli/test_projsync.sh` | non porté (voir l'audit) |
 
@@ -124,6 +125,35 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
   vérifié par `network_enabled()`. (b) L'endpoint est une adresse locale sans serveur, comme les
   autres cas de ce lot, au lieu de `cdn.proj.org` : une fabrique qui tenterait un accès passerait
   par les callbacks, rien n'atteint donc le réseau.
+- **Grille sans ligne, ouverte par le réseau (`proj_coordoperation_get_grid_used`).** Le TEST
+  veut `url` = `https://cdn.proj.org/nz_linz_nzgd2000-c120100904-grid01.tif` pour une grille que
+  `proj.db` ne connaît pas (aucune ligne pour `c120100904`, mesuré sur les 479 lignes de
+  `grid_alternatives`). PROJ n'obtient cette URL que si `open(endpoint/nom)` réussit dans
+  `FileManager::open_resource_file` : `lookForGridInfo` prend alors l'URL, `fullFilename` est vidé,
+  et `gridAvailable` vaut vrai (`factory.cpp`, branche sans ligne). Le port fait la même chose
+  dans `unrecorded_grid` avec `RemoteGrids::Open`, uniquement dans `Proj::grids_needed`, sous le
+  contexte du builder. La sonde est `network::open_remote_grid` : avec callbacks, `read_at(0, 16384)`,
+  donc `open(url, 0, 16384)` puis `close`, comme PROJ ; sans callbacks, un `GET` du fichier entier
+  (le client HTTP du crate n'envoie pas de `Range`). Mesuré : sans octets servis, `proj_create`
+  renvoie `NULL` (« could not find required grid(s) »), donc la création sert de preuve que la
+  grille est ouverte. Les autres appelants (`factory.rs`, `compound.rs`, `projinfo.rs`,
+  `is_proj_instantiable`) gardent `RemoteGrids::Skip` : la fabrique coupe le réseau
+  (`factory.cpp:4363`, `DisableNetwork`), et ce lot ne change pas ses listes.
+  **Octets de substitution.** Le fichier CDN `nz_linz_nzgd2000-c120100904-grid01.tif` n'est pas
+  dans le dépôt et le proxy refuse `cdn.proj.org`. Le test sert les 956 octets de
+  `data/tests/egm96_15_uncompressed_truncated.tif` sous cette URL (`ServeOneFile`) et refuse les
+  autres URL. Les trois assertions du TEST portent sur le nom et l'URL, pas sur le contenu : elles
+  sont les mêmes avec les octets de la référence, qui ne sont pas disponibles. Mesuré avec les
+  mêmes octets (sonde C `grid_used_probe.c`, non versionnée) : `short` le nom, `full` vide,
+  `url` le CDN, `direct` 0, `open` 0, `available` 1 ; une seule `open(url, 0, 16384)` pour les
+  deux créations, et aucun appel pendant les deux `proj_coordoperation_get_grid_used`. Le test
+  asserte ces drapeaux et ce compte, mesurés avec ces octets. Ce qui dépend du vrai fichier n'est
+  pas porté : la séquence d'appels de callbacks sur le vrai GeoTIFF, et `available` d'un vrai
+  fichier (ouvert ou non, la valeur de l'URL ne change pas).
+  **Garde `networkAccessOK`.** Le TEST sort tôt quand le CDN ne répond pas. Le port ne sort pas :
+  les callbacks répondent sans I/O, donc le test tourne partout.
+  **Sans callbacks.** Non testé : le chemin HTTP télécharge le fichier entier. Il n'est atteint
+  que si le réseau est actif sans callbacks.
 - **Réseau absent ici (`networkAccessOK`).** `initial_check` est faux : `cdn.proj.org` est refusé
   (403 du proxy), donc le test C++ sort tôt. Le port ne dépend pas du CDN et n'est pas conditionné
   par `networkAccessOK`. La partie réseau activé est mesurée avec le CDN refusé ; la réponse de
@@ -154,6 +184,16 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
   construit `P` sans la grille (`proj_list_get`), la crate ne le fait que pour les candidats d'une
   paire (`grids_may_be_deferred`), et aucune API publique ne construit une opération seule. Les
   deux opérations 00 et 02 de `pyproj_issue_1192` ne sont donc vérifiées que par leur chaîne PROJ.
+- Grille sans ligne, réseau actif, sans callbacks : la sonde télécharge le fichier entier (pas
+  de `Range` dans le client HTTP du crate), PROJ n'en lit que le premier morceau. Sans test.
+- `proj_coordoperation_is_instantiable` avec réseau actif : PROJ passe par `gridsNeeded`
+  (`singleoperation.cpp:339-356`), donc interroge le réseau pour une grille sans ligne ; le port
+  (`is_proj_instantiable`, `RemoteGrids::Skip`) ne le fait pas. Non mesuré pour une grille sans
+  ligne, et ce lot ne modifie pas `pyproj_issue_1192`.
+- `proj_coordoperation_get_grid_used` ne porte pas de drapeau `gridopen` : l'API Rust donne
+  `available` seulement.
+- Grille `http(s)://` sans ligne : son URL est prise telle quelle, sans sonde (comportement
+  antérieur, `unrecorded_grid`) ; PROJ n'écrit l'URL qu'après une ouverture réussie.
 - `docs/UNPORTED-UNIT.md` liste encore `networking.pyproj_issue_1192` et
   `networking.do_not_attempt_network_access_known_available_network_on` : ce lot ne les a pas retirés
   (consigne : ne pas éditer le ledger). Le retrait suit avec `UPDATE_DOCS=1 cargo test --test
@@ -165,6 +205,7 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
 
 ```
 cargo test --test unit_network_core --test unit_network_endpoint_env --test unit_network_local --test network_grid
+cargo test --test unit_network_core proj_coordoperation_get_grid_used
 cargo test --lib callback_tests
 cargo +1.100.0 clippy --all-targets --all-features -- -D warnings
 ```
