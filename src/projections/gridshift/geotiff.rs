@@ -12,7 +12,7 @@ use tiff::decoder::ifd::Value;
 use tiff::decoder::{Decoder, DecodingResult};
 use tiff::tags::Tag;
 
-use super::tiles::{ImageTiles, LazyIfd, Samples};
+use super::tiles::{ImageTiles, Layout, LazyIfd, Samples};
 use super::{Domain, Extent};
 use crate::network_chunks::{RemoteFile, RemoteReader};
 
@@ -79,7 +79,7 @@ enum Mode<'a> {
 /// Why an image is not read: it is broken, or it is one the lazy reader does not handle.
 enum IfdFail {
     Invalid,
-    /// Strips, planar bands, compression or a predictor: the file is read whole.
+    /// Planar bands, compression or a predictor: the file is read whole.
     NotLazy,
 }
 
@@ -191,15 +191,19 @@ fn read_ifd<R: Read + Seek>(decoder: &mut Decoder<R>, mode: Mode<'_>) -> Result<
     let samples = match mode {
         Mode::Eager => Samples::Flat(decode_samples(decoder, width_u, height_u, spp, storage)?),
         Mode::Lazy { file, order } => {
-            if !lazy_readable(decoder, storage)? {
+            let Some(layout) = lazy_layout(decoder, storage)? else {
                 return Err(IfdFail::NotLazy);
-            }
+            };
+            let (offset_tag, count_tag) = match layout {
+                Layout::Tiles => (Tag::TileOffsets, Tag::TileByteCounts),
+                Layout::Strips => (Tag::StripOffsets, Tag::StripByteCounts),
+            };
             let tile = decoder.chunk_dimensions();
             let offsets = decoder
-                .get_tag_u64_vec(Tag::TileOffsets)
+                .get_tag_u64_vec(offset_tag)
                 .map_err(|_| IfdFail::Invalid)?;
             let counts = decoder
-                .get_tag_u64_vec(Tag::TileByteCounts)
+                .get_tag_u64_vec(count_tag)
                 .map_err(|_| IfdFail::Invalid)?;
             if offsets.len() != counts.len() {
                 return Err(IfdFail::Invalid);
@@ -211,6 +215,7 @@ fn read_ifd<R: Read + Seek>(decoder: &mut Decoder<R>, mode: Mode<'_>) -> Result<
                 bits,
                 format,
                 order,
+                layout,
                 places: offsets.into_iter().zip(counts).collect(),
             };
             Samples::Lazy(Arc::new(LazyIfd::new(Arc::clone(file), image)?))
@@ -245,15 +250,26 @@ fn read_ifd<R: Read + Seek>(decoder: &mut Decoder<R>, mode: Mode<'_>) -> Result<
     })
 }
 
-/// Whether the image's samples can be read tile by tile from the file: tiles, chunky samples,
-/// no compression and no predictor. Anything else is read whole, as [`load`] reads it.
-fn lazy_readable<R: Read + Seek>(decoder: &mut Decoder<R>, storage: Storage) -> Result<bool, ()> {
-    if matches!(storage, Storage::Separate) || decoder.get_tag_u32(Tag::TileWidth).is_err() {
-        return Ok(false);
+/// How the samples of an image are read from the file, when they can be read chunk by chunk:
+/// tiles or strips, with chunky samples, no compression and no predictor. `None` for anything
+/// else, which is read whole, as [`load`] reads it.
+fn lazy_layout<R: Read + Seek>(
+    decoder: &mut Decoder<R>,
+    storage: Storage,
+) -> Result<Option<Layout>, ()> {
+    if matches!(storage, Storage::Separate) {
+        return Ok(None);
     }
     let compression = optional_u32(decoder, Tag::Compression)?.unwrap_or(1);
     let predictor = optional_u32(decoder, Tag::Predictor)?.unwrap_or(1);
-    Ok(compression == 1 && predictor == 1)
+    if compression != 1 || predictor != 1 {
+        return Ok(None);
+    }
+    if decoder.get_tag_u32(Tag::TileWidth).is_ok() {
+        Ok(Some(Layout::Tiles))
+    } else {
+        Ok(Some(Layout::Strips))
+    }
 }
 
 fn supported_sample(format: u32, bits: u32) -> bool {

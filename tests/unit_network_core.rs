@@ -1,5 +1,5 @@
 //! PROJ `test/unit/test_network.cpp`, the network cases that need no grid read in ranges: the
-//! callbacks (`custom`, `simul_open_error`) and the `network_endpoint_api_and_not_reachable_*`
+//! callbacks (`custom`, `getfilesize`, `simul_open_error`) and the `network_endpoint_api_and_not_reachable_*`
 //! cases. Nothing here reaches `cdn.proj.org`: the endpoint is a local address with no server.
 //!
 //! The assertions are PROJ's. `HUGE_VAL` with `PROJ_ERR_OTHER_NETWORK_ERROR` is
@@ -360,6 +360,72 @@ fn custom() {
         .expect("lat 49 is in the grid");
     assert_eq!(z, 1.25);
     exchange.reached(after_destroy);
+}
+
+/// `networking.getfilesize`: the grid is a single-strip GeoTIFF of which the callbacks serve
+/// only the first 550 bytes, while `Content-Range` gives the file as 4153510 bytes.
+///
+/// Creation opens `(url, 0, 16384)`, reads its three headers and closes, and reads no strip: the
+/// strip is not in the reply. The second creation on the same builder makes no call, the
+/// first 16384-byte chunk being kept. No transform is run here, so the size from
+/// `Content-Range` is not used by a read.
+#[test]
+fn getfilesize() {
+    let url = "https://foo/getfilesize.tif";
+    let fixture = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/data/tests/test_vgrid_single_strip_truncated.tif"
+    ))
+    .expect("the single-strip fixture");
+    assert!(fixture.len() >= 550, "the reply is the first 550 bytes");
+    let head = fixture[..550].to_vec();
+    let calls = vec![
+        Call::Open {
+            file: 1,
+            url,
+            offset: 0,
+            size: 16384,
+            response: head,
+        },
+        Call::Header {
+            file: 1,
+            key: "Content-Range",
+            value: "bytes 0-16383/4153510",
+        },
+        Call::Header {
+            file: 1,
+            key: "Last-Modified",
+            value: "some_date",
+        },
+        Call::Header {
+            file: 1,
+            key: "ETag",
+            value: "some_etag",
+        },
+        Call::Close { file: 1 },
+    ];
+    let after_creation = calls.len();
+
+    let exchange = Arc::new(Exchange::new(calls));
+    let mut builder = ProjBuilder::new();
+    builder.grid_cache_enable(false).expect("cache off");
+    builder.enable_network(true).expect("network on");
+    let callbacks: Arc<dyn NetworkCallbacks> = Arc::<Exchange>::clone(&exchange);
+    builder.set_network_callbacks(callbacks);
+    let definition = format!("+proj=vgridshift +grids={url} +multiplier=1");
+
+    let proj = builder
+        .clone()
+        .proj(&definition)
+        .expect("the grid is created from its first chunk");
+    exchange.reached(after_creation);
+    drop(proj);
+    exchange.reached(after_creation);
+
+    let proj = builder.proj(&definition).expect("second creation");
+    exchange.reached(after_creation);
+    drop(proj);
+    exchange.reached(after_creation);
 }
 
 /// The operation of a CRS pair whose grid is unreachable is created. Forward, forward, then
