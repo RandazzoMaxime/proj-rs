@@ -27,6 +27,7 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
 | `proj_context_set_fileapi`, `PROJ_FILE_API`, `FileManager::open/exists/mkdir/unlink/rename` (`filemanager.cpp:880-1100`, `1180-1213`) | `src/file_api.rs` (`FileApi`, `ApiFile`, `FileAccess`), `ProjBuilder::set_file_api` ; `src/network.rs` (`read_file`, `create_directory_all`, `create_for_write`, `remove_file`, `rename_file`, `is_file_with`) |
 | `networking.download_whole_files` (`test_network.cpp:1859`, 37 assertions) | `tests/unit_network_download.rs` (1 cas, contre le vrai CDN) |
 | `networking.file_api` (`test_network.cpp:2043`, 15 assertions) | `tests/unit_network_file_api.rs` (1 cas, contre le vrai CDN) |
+| `networking.basic` (`test_network.cpp:121`, quatre états et une valeur) | `tests/unit_network_basic.rs` (1 cas, contre le vrai CDN) ; `tests/unit_network_local.rs` garde en plus le cas « off, aucune requête » |
 | sonde `initial_check` (`cdn_reachable`), partagée | `tests/net_cdn/mod.rs` (incluse par `#[path]` dans les deux cas) |
 | `src/apps/projsync.cpp`, `test/cli/test_projsync.sh` | non porté (voir l'audit) |
 
@@ -161,22 +162,22 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
   les callbacks répondent sans I/O, donc le test tourne partout.
   **Sans callbacks.** Non testé : le chemin HTTP télécharge le fichier entier. Il n'est atteint
   que si le réseau est actif sans callbacks.
-- **Réseau absent ici (`networkAccessOK`).** `initial_check` est faux : `cdn.proj.org` est refusé
-  (403 du proxy), donc le test C++ sort tôt. Le port ne dépend pas du CDN et n'est pas conditionné
+- **Réseau absent ici (`networkAccessOK`).** Mesure faite quand `cdn.proj.org` était refusé
+  (403 du proxy) : `initial_check` était faux. Le port ne dépend pas du CDN et n'est pas conditionné
   par `networkAccessOK`. La partie réseau activé est mesurée avec le CDN refusé ; la réponse de
   PROJ est la même (10 instanciables) : l'instanciabilité ne dépend que du drapeau, pas du
-  téléchargement. Un CDN qui répond n'a pas été mesuré.
+  téléchargement. Un CDN qui répond n'est mesuré que pour `basic` (section « networking.basic (porté) »
+  de `docs/AUDIT-network.md`), pas pour `pyproj_issue_1192`.
 - **Id de `proj_pj_info`.** PROJ donne `pipeline` pour chaque opération instanciable (mesuré).
   Le test vérifie `proj_info().id == "pipeline"` sur les opérations construites hors ligne (8),
   et la chaîne `+proj=pipeline` pour les deux autres (grilles absentes). La description de PROJ
   est le nom de l'opération, vérifié par la liste des noms.
 
-- **Sonde `initial_check` non portée.** Le TEST C++ n'a aucune assertion. Il pose
-  `networkAccessOK` par un `GET` sur `cdn.proj.org` (`Range: 0-1`, code 206), et seul
-  `basic` le lit. Pas de test Rust : il n'y a pas de valeur PROJ à comparer, et une sonde
-  CDN ne peut pas tourner dans le bac à sable (proxy en 403). Le défaut
-  `https://cdn.proj.org` est confirmé contre `libproj` 9.9.0 (`proj_context_get_url_endpoint`).
-  Détail : `docs/AUDIT-network.md`, ligne 1.
+- **Sonde `initial_check`.** Le TEST C++ n'a aucune assertion ; il pose `networkAccessOK` par un `GET`
+  sur `cdn.proj.org` (`Range: 0-1`, code 206). Pas de test de la sonde elle-même : il n'y a pas de
+  valeur PROJ à comparer. Sa requête est reprise par `tests/net_cdn/mod.rs` (`cdn_reachable`), qui garde
+  `basic`, `download_whole_files` et `file_api`. Le défaut `https://cdn.proj.org` est confirmé contre
+  `libproj` 9.9.0 (`proj_context_get_url_endpoint`). Détail : `docs/AUDIT-network.md`, ligne 1.
 
 - **Téléchargement en une requête, sans `Range`.** PROJ vérifie un fichier par une requête
   d'un octet et le télécharge par `Range`, en morceaux de `PROJ_FULL_FILE_CHUNK_SIZE` (1 MiB par
@@ -213,6 +214,32 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
   par le test et non par le client du crate, pour qu'un téléchargement cassé ne passe pas pour un
   CDN injoignable. Le test retourne tôt si la sonde échoue, comme PROJ, et il l'écrit dans la
   sortie du test. Ce retour anticipé ne vérifie rien : c'est le seul cas où le test ne porte pas.
+
+## networking.basic (porté)
+
+Le TEST (`test/unit/test_network.cpp:121`) est porté en entier dans `tests/unit_network_basic.rs`. Table
+ligne par ligne, valeurs et commandes : `docs/AUDIT-network.md`, section « networking.basic (porté) ». Choix
+du port :
+
+- **Environnement.** `putenv("PROJ_NETWORK=ON")` devient `std::env::set_var`, et `putenv("PROJ_NETWORK=")`
+  devient `set_var("PROJ_NETWORK", "")`, qui est « absent » pour PROJ comme pour `nonempty_env`. Au départ
+  la variable est aussi posée vide, pour que l'état « off » ne dépende pas de l'environnement de l'appelant.
+  Le cas est le seul test de son binaire, donc aucune course sur l'environnement.
+- **Contexte.** Chaque état est un `ProjBuilder`. `ProjBuilder::new` lit `PROJ_NETWORK` à sa création, comme
+  `proj_context_create`. L'état 4 pose `enable_network(true)`, comme `proj_context_set_enable_network`.
+  `proj_cleanup` est sans objet : le contexte par défaut interne (`default_context`, `OnceLock` de
+  `src/network.rs`) ne sert pas aux créations du builder, qui passent par `with_context`, et les états ne
+  partagent aucun cache mémoire entre builders.
+- **Cache de grilles.** Coupé pour les états 1, 3 et 4 (`set_grid_cache_enabled(GridCacheMode::Disabled)`),
+  comme `proj_grid_cache_set_enable(ctx, false)`. L'état 2 le garde à sa valeur par défaut, comme le TEST.
+- **Répertoire utilisateur.** Un dossier temporaire du processus (`set_user_writable_directory`), supprimé à la
+  fin. Rien n'est écrit dans le dépôt ni dans le répertoire de l'utilisateur.
+- **Réseau du CDN.** Quand la sonde `cdn_reachable` échoue, les états qui exigent le CDN ne sont pas
+  vérifiés, comme `if (networkAccessOK)` ; les états « off » le sont toujours. Quand la sonde répond, les
+  quatre états et la valeur sont vérifiés contre `https://cdn.proj.org/fr_ign_ntf_r93.tif`.
+- **Preuve de vérification.** Le test a passé dès le premier lancement, sans modification de `src/`. Pour
+  prouver que l'assertion de valeur est active, la valeur attendue a été remplacée par `1.9992776858` : échec
+  (`longitude 1.9992776847752205 against PROJ 1.9992776858`), puis rétablissement de la valeur de PROJ.
 
 ## API de fichiers
 
@@ -294,13 +321,12 @@ l'API (`gridpath::resolve`, `gridpath::read`, `network::read_file`).
   (consigne : ne pas éditer le ledger). Le retrait suit avec `UPDATE_DOCS=1 cargo test --test
   docs_in_sync`.
 - `projsync` : non commencé.
-- `basic` (partie « on ») : `fr_ign_ntf_r93.tif` absent du dépôt et de la référence. Sa
-  condition `networkAccessOK` vient de `initial_check`, non porté (voir ci-dessus).
+- `basic` : porté en entier (voir « networking.basic (porté) »). Rien ne reste ouvert pour ce cas.
 - `pj_find_file` avec `disable_network = false` : non porté. `find_local_file` ne regarde que le
   disque.
-- `docs/UNPORTED-UNIT.md` liste encore `networking.download_whole_files`. Ce lot ne l'a pas retiré
-  (consigne : ne pas éditer le ledger) : le retrait suit avec `UPDATE_DOCS=1 cargo test --test
-  docs_in_sync`, par le mainteneur.
+- `docs/UNPORTED-UNIT.md` liste encore `networking.download_whole_files` et `networking.basic`. Ce lot ne
+  les a pas retirés (consigne : ne pas éditer le ledger) : le retrait suit avec `UPDATE_DOCS=1 cargo test
+  --test docs_in_sync`, par le mainteneur.
 
 ## Commandes
 
@@ -309,6 +335,7 @@ cargo test --test unit_network_core --test unit_network_endpoint_env --test unit
 cargo test --test unit_network_download
 cargo test --test unit_network_file_api
 cargo test --test unit_network_core proj_coordoperation_get_grid_used
+cargo test --test unit_network_basic
 cargo test --lib callback_tests
 cargo +1.100.0 clippy --all-targets --all-features -- -D warnings
 ```
