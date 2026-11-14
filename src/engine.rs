@@ -940,6 +940,13 @@ pub(crate) trait Step: Send + Sync {
     /// Semi-major axis and `e²` used when an angular error is turned into metres.
     fn distance_ellipsoid(&self) -> (f64, f64);
 
+    /// Metres in one unit of the forward output: `to_meter` of the frame, 0.3048 for
+    /// `+units=ft`. `pj_deriv` differentiates the raw projection, which is in metres, so the
+    /// factors of [`Operation::factors`] scale the output by this before they divide by `a`.
+    fn output_to_metre(&self) -> f64 {
+        1.0
+    }
+
     /// `true` when this step computes the third axis from its input, as PROJ's `fwd3d`
     /// and `inv3d` do (`sch`, `cart`). A 2D step passes the height through.
     fn computes_height(&self) -> bool {
@@ -1152,6 +1159,11 @@ impl Operation {
     #[must_use]
     pub fn distance_ellipsoid(&self) -> (f64, f64) {
         self.step.distance_ellipsoid()
+    }
+
+    /// Metres in one unit of this operation's forward output, see `Step::output_to_metre`.
+    pub(crate) fn output_to_metre(&self) -> f64 {
+        self.step.output_to_metre()
     }
 
     /// Whether the operation computes the third axis from its input, as PROJ's
@@ -1830,6 +1842,10 @@ impl<K: Kernel + 'static> Step for Classic<K> {
     fn distance_ellipsoid(&self) -> (f64, f64) {
         (self.frame.earth.a(), self.frame.earth.es())
     }
+
+    fn output_to_metre(&self) -> f64 {
+        self.frame.to_meter
+    }
 }
 
 /// `fwd_prepare` of PROJ 9.9.0 (`fwd.cpp`): a latitude beyond the pole by more than
@@ -1982,6 +1998,10 @@ where
 
     fn distance_ellipsoid(&self) -> (f64, f64) {
         (self.frame.earth.a(), self.frame.earth.es())
+    }
+
+    fn output_to_metre(&self) -> f64 {
+        self.frame.to_meter
     }
 }
 

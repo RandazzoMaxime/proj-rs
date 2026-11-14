@@ -3,7 +3,8 @@
 //! enumerations. Each follows PROJ 9.9.0 (`trans.cpp`, `dist.cpp`, `apps` lists).
 
 use crate::engine::{lpz_dist, xyz_dist, Coord, Operation, TransformError};
-use crate::proj::Direction;
+use crate::proj::{Direction, ProjError};
+use crate::{create_from_user_input, Crs, DatabaseContext};
 use std::num::NonZeroUsize;
 
 /// The error of [`Operation::transform_array`], as `proj_trans_array` reports it.
@@ -357,15 +358,25 @@ impl Operation {
     /// transform (`pj_deriv`, central differences of step `1e-5` rad) and the
     /// scale factors of `pj_factors`. Input is longitude and latitude in radians.
     ///
-    /// Outputs are in metres (the transform's linear unit is metres); the
-    /// derivatives are divided by the semi-major axis, as PROJ's unit-sphere
-    /// `P->fwd` is.
+    /// The derivatives are of the output in metres: a forward output in another linear unit,
+    /// such as `+units=ft`, is multiplied by its `to_meter` first. They are then divided by
+    /// the semi-major axis, as PROJ's unit-sphere `P->fwd` is.
     ///
     /// # Errors
     ///
     /// [`TransformError::InvalidCoord`] when the latitude or longitude is out of
     /// range, and [`TransformError::OutsideDomain`] when a stencil point has no image.
     pub fn factors(&self, lon: f64, lat: f64) -> Result<Factors, TransformError> {
+        self.factors_in_metres(lon, lat, self.output_to_metre())
+    }
+
+    /// [`Self::factors`] when one unit of the forward output is `to_metre` metres.
+    pub(crate) fn factors_in_metres(
+        &self,
+        lon: f64,
+        lat: f64,
+        to_metre: f64,
+    ) -> Result<Factors, TransformError> {
         let half_pi = std::f64::consts::FRAC_PI_2;
         if (lat.abs() - half_pi) > FACTOR_EPS || lon.abs() > 10.0 {
             return Err(TransformError::InvalidCoord);
@@ -391,7 +402,7 @@ impl Operation {
                 z: 0.0,
                 t: 0.0,
             })?;
-            Ok((out.x / a, out.y / a))
+            Ok((out.x * to_metre / a, out.y * to_metre / a))
         };
         // The stencil of `pj_deriv`: (+,+), (+,-), (-,-), (-,+) in (lam, phi).
         let (x1, y1) = point(lon + h, lat + h)?;
@@ -438,4 +449,51 @@ impl Operation {
             tissot_semiminor: b,
         })
     }
+}
+
+/// `proj_factors` of a single CRS, which [`crate::Proj::new`] keeps as its text: an `EPSG:`
+/// code, WKT, or PROJJSON. PROJ's `proj_factors` (`factors.cpp`) takes the projection of the
+/// CRS: the conversion of a projected CRS, the horizontal CRS of a compound CRS, and the base
+/// projection with the deriving affine of a derived projected CRS. A geographic CRS has no
+/// projection: `PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE`, which is [`ProjError::NotATransform`].
+///
+/// # Errors
+///
+/// [`ProjError::Definition`] when the text does not read as a CRS, [`ProjError::NotATransform`]
+/// for a CRS without a projection, and [`ProjError::InvalidCoordinate`] for a latitude or
+/// longitude that `proj_factors` rejects.
+pub(crate) fn crs_factors(text: &str, lon: f64, lat: f64) -> Result<Factors, ProjError> {
+    let db = DatabaseContext::create().map_err(|_| ProjError::Definition)?;
+    let crs = create_from_user_input(text, &db).map_err(|_| ProjError::Definition)?;
+    crs_factors_of(&crs, lon, lat)
+}
+
+fn crs_factors_of(crs: &Crs, lon: f64, lat: f64) -> Result<Factors, ProjError> {
+    let factors = match crs {
+        // `proj_crs_get_sub_crs(ctx, pj, 0)`: the first component, the horizontal CRS.
+        Crs::Compound(compound) => {
+            let first = compound
+                .components()
+                .first()
+                .ok_or(ProjError::NotATransform)?;
+            return crs_factors_of(first, lon, lat);
+        }
+        Crs::Projected(projected) => {
+            let definition = Crs::Projected(projected.clone())
+                .export_to_proj_string()
+                .map_err(|_| ProjError::Definition)?;
+            let op =
+                Operation::create_projection(&definition).map_err(|_| ProjError::Definition)?;
+            op.factors(lon, lat)
+        }
+        Crs::DerivedProjected(derived) => {
+            let (definition, unit) = crate::crs::derived_projected_pipeline(derived)
+                .map_err(|_| ProjError::Definition)?;
+            let op =
+                Operation::create_projection(&definition).map_err(|_| ProjError::Definition)?;
+            op.factors_in_metres(lon, lat, unit)
+        }
+        _ => return Err(ProjError::NotATransform),
+    };
+    factors.map_err(|_| ProjError::InvalidCoordinate)
 }

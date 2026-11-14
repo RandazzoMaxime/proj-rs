@@ -10,6 +10,7 @@ use proj_rs::{
     list_ellps, list_operations, list_prime_meridians, xy_dist, BatchError, Context, Direction,
     ForceOver, Operation, Proj, ProjError, StepError, Xyzt,
 };
+use std::f64::consts::FRAC_PI_2;
 use std::num::NonZeroUsize;
 
 fn one() -> NonZeroUsize {
@@ -797,51 +798,343 @@ fn xy(x: f64, y: f64) -> Xyzt {
     Xyzt::xy(x, y)
 }
 
-/// `proj_factors` (gie.proj_factors): Mercator and UTM, as projection strings. The
-/// C test's EPSG CRS blocks and its `+units=ft` block are not here (see the audit).
+/// The three derived projected CRS of the C test (`DERIVEDPROJCRS`), generated from its
+/// literals: the UTM zone 32 base with no scale change, with A1 = B2 = 1.0001, and with the
+/// same in feet. The C string concatenation is the same text with its newlines.
+const DERIVED_UTM_WKT: &str = r#"DERIVEDPROJCRS["unknown",
+    BASEPROJCRS["unknown",
+        BASEGEOGCRS["unknown",
+            DATUM["Unknown based on GRS 1980 ellipsoid",
+                ELLIPSOID["GRS 1980",6378137,298.257222101,
+                    LENGTHUNIT["metre",1],
+                    ID["EPSG",7019]]],
+            PRIMEM["Greenwich",0,
+                ANGLEUNIT["degree",0.0174532925199433],
+                ID["EPSG",8901]]],
+        CONVERSION["UTM zone 32N",
+            METHOD["Transverse Mercator",
+                ID["EPSG",9807]],
+            PARAMETER["Latitude of natural origin",0,
+                ANGLEUNIT["degree",0.0174532925199433],
+                ID["EPSG",8801]],
+            PARAMETER["Longitude of natural origin",9,
+                ANGLEUNIT["degree",0.0174532925199433],
+                ID["EPSG",8802]],
+            PARAMETER["Scale factor at natural origin",0.9996,
+                SCALEUNIT["unity",1],
+                ID["EPSG",8805]],
+            PARAMETER["False easting",500000,
+                LENGTHUNIT["metre",1],
+                ID["EPSG",8806]],
+            PARAMETER["False northing",0,
+                LENGTHUNIT["metre",1],
+                ID["EPSG",8807]],
+            ID["EPSG",16032]]],
+    DERIVINGCONVERSION["Scale change",
+        METHOD["Affine parametric transformation",
+            ID["EPSG",9624]],
+        PARAMETER["A0",0,
+            LENGTHUNIT["metre",1],
+            ID["EPSG",8623]],
+        PARAMETER["A1",1,
+            SCALEUNIT["coefficient",1],
+            ID["EPSG",8624]],
+        PARAMETER["A2",0,
+            SCALEUNIT["coefficient",1],
+            ID["EPSG",8625]],
+        PARAMETER["B0",0,
+            LENGTHUNIT["metre",1],
+            ID["EPSG",8639]],
+        PARAMETER["B1",0,
+            SCALEUNIT["coefficient",1],
+            ID["EPSG",8640]],
+        PARAMETER["B2",1,
+            SCALEUNIT["coefficient",1],
+            ID["EPSG",8641]]],
+    CS[Cartesian,2],
+        AXIS["easting (X)",east,
+            ORDER[1],
+            LENGTHUNIT["metre",1]],
+        AXIS["northing (Y)",north,
+            ORDER[2],
+            LENGTHUNIT["metre",1]]]"#;
+
+const DERIVED_SCALE_WKT: &str = r#"DERIVEDPROJCRS["unknown",
+    BASEPROJCRS["unknown",
+        BASEGEOGCRS["unknown",
+            DATUM["Unknown based on GRS 1980 ellipsoid",
+                ELLIPSOID["GRS 1980",6378137,298.257222101,
+                    LENGTHUNIT["metre",1],
+                    ID["EPSG",7019]]],
+            PRIMEM["Greenwich",0,
+                ANGLEUNIT["degree",0.0174532925199433],
+                ID["EPSG",8901]]],
+        CONVERSION["UTM zone 32N",
+            METHOD["Transverse Mercator",
+                ID["EPSG",9807]],
+            PARAMETER["Latitude of natural origin",0,
+                ANGLEUNIT["degree",0.0174532925199433],
+                ID["EPSG",8801]],
+            PARAMETER["Longitude of natural origin",9,
+                ANGLEUNIT["degree",0.0174532925199433],
+                ID["EPSG",8802]],
+            PARAMETER["Scale factor at natural origin",0.9996,
+                SCALEUNIT["unity",1],
+                ID["EPSG",8805]],
+            PARAMETER["False easting",500000,
+                LENGTHUNIT["metre",1],
+                ID["EPSG",8806]],
+            PARAMETER["False northing",0,
+                LENGTHUNIT["metre",1],
+                ID["EPSG",8807]],
+            ID["EPSG",16032]]],
+    DERIVINGCONVERSION["Scale change",
+        METHOD["Affine parametric transformation",
+            ID["EPSG",9624]],
+        PARAMETER["A0",0,
+            LENGTHUNIT["metre",1],
+            ID["EPSG",8623]],
+        PARAMETER["A1",1.0001,
+            SCALEUNIT["coefficient",1],
+            ID["EPSG",8624]],
+        PARAMETER["A2",0,
+            SCALEUNIT["coefficient",1],
+            ID["EPSG",8625]],
+        PARAMETER["B0",0,
+            LENGTHUNIT["metre",1],
+            ID["EPSG",8639]],
+        PARAMETER["B1",0,
+            SCALEUNIT["coefficient",1],
+            ID["EPSG",8640]],
+        PARAMETER["B2",1.0001,
+            SCALEUNIT["coefficient",1],
+            ID["EPSG",8641]]],
+    CS[Cartesian,2],
+        AXIS["easting (X)",east,
+            ORDER[1],
+            LENGTHUNIT["metre",1]],
+        AXIS["northing (Y)",north,
+            ORDER[2],
+            LENGTHUNIT["metre",1]]]"#;
+
+const DERIVED_FOOT_WKT: &str = r#"DERIVEDPROJCRS["unknown",
+    BASEPROJCRS["unknown",
+        BASEGEOGCRS["unknown",
+            DATUM["Unknown based on GRS 1980 ellipsoid",
+                ELLIPSOID["GRS 1980",6378137,298.257222101,
+                    LENGTHUNIT["metre",1],
+                    ID["EPSG",7019]]],
+            PRIMEM["Greenwich",0,
+                ANGLEUNIT["degree",0.0174532925199433],
+                ID["EPSG",8901]]],
+        CONVERSION["UTM zone 32N",
+            METHOD["Transverse Mercator",
+                ID["EPSG",9807]],
+            PARAMETER["Latitude of natural origin",0,
+                ANGLEUNIT["degree",0.0174532925199433],
+                ID["EPSG",8801]],
+            PARAMETER["Longitude of natural origin",9,
+                ANGLEUNIT["degree",0.0174532925199433],
+                ID["EPSG",8802]],
+            PARAMETER["Scale factor at natural origin",0.9996,
+                SCALEUNIT["unity",1],
+                ID["EPSG",8805]],
+            PARAMETER["False easting",500000,
+                LENGTHUNIT["metre",1],
+                ID["EPSG",8806]],
+            PARAMETER["False northing",0,
+                LENGTHUNIT["metre",1],
+                ID["EPSG",8807]],
+            ID["EPSG",16032]]],
+    DERIVINGCONVERSION["Scale change",
+        METHOD["Affine parametric transformation",
+            ID["EPSG",9624]],
+        PARAMETER["A0",0,
+            LENGTHUNIT["metre",1],
+            ID["EPSG",8623]],
+        PARAMETER["A1",3.2811679790026242,
+            SCALEUNIT["coefficient",1],
+            ID["EPSG",8624]],
+        PARAMETER["A2",0,
+            SCALEUNIT["coefficient",1],
+            ID["EPSG",8625]],
+        PARAMETER["B0",0,
+            LENGTHUNIT["metre",1],
+            ID["EPSG",8639]],
+        PARAMETER["B1",0,
+            SCALEUNIT["coefficient",1],
+            ID["EPSG",8640]],
+        PARAMETER["B2",3.2811679790026242,
+            SCALEUNIT["coefficient",1],
+            ID["EPSG",8641]]],
+    CS[Cartesian,2],
+        AXIS["easting (X)",east,
+            ORDER[1],
+            LENGTHUNIT["foot",0.3048]],
+        AXIS["northing (Y)",north,
+            ORDER[2],
+            LENGTHUNIT["foot",0.3048]]]"#;
+
+/// `expect_near` of the C test: `EXPECT_NEAR(actual, expected, tolerance)`.
+fn expect_near(actual: f64, expected: f64, tolerance: f64) {
+    assert!(
+        (actual - expected).abs() <= tolerance,
+        "{actual} is not within {tolerance} of {expected}"
+    );
+}
+
+/// `gie.proj_factors`, assertion by assertion (gie_self_tests.cpp:486-881): the 46
+/// `ASSERT_` and `EXPECT_` of the C test, in the order of the C source.
+///
+/// The C `P` is `Proj::new` of the same definition, and `proj_factors(P, lp)` is
+/// `Proj::factors(lon, lat)` with the angles in radians. `proj_errno` is the `Result`: a
+/// failure is `Err`, and the zero struct that the C test reads after a failure has no Rust
+/// value. `proj_destroy` and `proj_errno_reset` are `Drop` and the `Err` value.
 #[test]
 fn proj_factors() {
-    let merc = Operation::create("+proj=merc +ellps=WGS84").expect("merc");
-    let f = merc
-        .factors(12f64.to_radians(), 55f64.to_radians())
-        .expect("factors");
-    assert!(
-        f.angular_distortion.abs() <= 1e-7,
-        "{}",
-        f.angular_distortion
-    );
-    assert!(
-        (f.meridian_parallel_angle - std::f64::consts::FRAC_PI_2).abs() <= 1e-7,
-        "{}",
-        f.meridian_parallel_angle
-    );
-    assert_eq!(f.meridian_convergence, 0.0);
+    // Mercator, at 12 E, 55 N.
+    let a = (12f64.to_radians(), 55f64.to_radians());
+    let merc = Proj::new("+proj=merc +ellps=WGS84").expect("merc");
+    let factors = merc.factors(a.0, a.1).expect("factors"); // ASSERT_FALSE(proj_errno(P))
+    expect_near(factors.angular_distortion, 0.0, 1e-7);
+    expect_near(factors.meridian_parallel_angle, FRAC_PI_2, 1e-7);
+    assert_eq!(factors.meridian_convergence, 0.0);
 
-    let utm = Operation::create("+proj=utm +zone=32 +ellps=GRS80").expect("utm");
-    let f = utm.factors(9f64.to_radians(), 0.0).expect("factors");
-    assert!(
-        (f.meridional_scale - 0.9996).abs() <= 1e-8,
-        "{}",
-        f.meridional_scale
-    );
-    assert!(
-        (f.parallel_scale - 0.9996).abs() <= 1e-8,
-        "{}",
-        f.parallel_scale
-    );
-    assert!(
-        f.angular_distortion.abs() <= 1e-7,
-        "{}",
-        f.angular_distortion
-    );
-    assert!(
-        (f.meridian_parallel_angle - std::f64::consts::FRAC_PI_2).abs() <= 1e-7,
-        "{}",
-        f.meridian_parallel_angle
-    );
-    assert!(
-        (f.areal_scale - 0.999_200_16).abs() <= 1e-7,
-        "{}",
-        f.areal_scale
-    );
+    // Test with a projected CRS: EPSG:3395 is the same Mercator on WGS 84.
+    {
+        let epsg = Proj::new("EPSG:3395").expect("EPSG:3395");
+        let factors2 = epsg.factors(a.0, a.1).expect("factors");
+        assert_eq!(factors.angular_distortion, factors2.angular_distortion);
+        assert_eq!(
+            factors.meridian_parallel_angle,
+            factors2.meridian_parallel_angle
+        );
+        assert_eq!(factors.meridian_convergence, factors2.meridian_convergence);
+        assert_eq!(factors.tissot_semimajor, factors2.tissot_semimajor);
+    }
+
+    // Test with a projected CRS with feet unit, at 110 W, 30 N.
+    let c = ((-110f64).to_radians(), 30f64.to_radians());
+    let factors = {
+        let feet = Proj::new(
+            "+proj=tmerc +lat_0=31 +lon_0=-110.166666666667 +k=0.9999 +x_0=213360 +y_0=0 \
+             +ellps=GRS80 +units=ft",
+        )
+        .expect("tmerc in feet");
+        let factors = feet.factors(c.0, c.1).expect("factors");
+        expect_near(factors.meridional_scale, 0.99990319, 1e-8);
+        expect_near(factors.parallel_scale, 0.99990319, 1e-8);
+        expect_near(factors.angular_distortion, 0.0, 1e-7);
+        expect_near(factors.meridian_parallel_angle, FRAC_PI_2, 1e-7);
+        factors
+    };
+    {
+        let epsg = Proj::new("EPSG:2222").expect("EPSG:2222");
+        let factors2 = epsg.factors(c.0, c.1).expect("factors");
+        expect_near(factors.meridional_scale, factors2.meridional_scale, 1e-10);
+        expect_near(factors.parallel_scale, factors2.parallel_scale, 1e-10);
+        expect_near(
+            factors.angular_distortion,
+            factors2.angular_distortion,
+            1e-10,
+        );
+        expect_near(
+            factors.meridian_parallel_angle,
+            factors2.meridian_parallel_angle,
+            1e-109,
+        );
+    }
+
+    // Test with a projected CRS with northing, easting axis order: UTM zone 32, at 9 E, 0 N.
+    let u = (9f64.to_radians(), 0.0);
+    let factors = {
+        let utm = Proj::new("+proj=utm +zone=32 +ellps=GRS80").expect("utm");
+        let factors = utm.factors(u.0, u.1).expect("factors");
+        expect_near(factors.meridional_scale, 0.9996, 1e-8);
+        expect_near(factors.parallel_scale, 0.9996, 1e-8);
+        expect_near(factors.angular_distortion, 0.0, 1e-7);
+        expect_near(factors.meridian_parallel_angle, FRAC_PI_2, 1e-7);
+        expect_near(factors.areal_scale, 0.999_200_16, 1e-7);
+        factors
+    };
+    {
+        let epsg = Proj::new("EPSG:3044").expect("EPSG:3044");
+        let factors2 = epsg.factors(u.0, u.1).expect("factors");
+        expect_near(factors.meridional_scale, factors2.meridional_scale, 1e-10);
+        expect_near(factors.parallel_scale, factors2.parallel_scale, 1e-10);
+        expect_near(
+            factors.angular_distortion,
+            factors2.angular_distortion,
+            1e-10,
+        );
+        expect_near(
+            factors.meridian_parallel_angle,
+            factors2.meridian_parallel_angle,
+            1e-109,
+        );
+        expect_near(factors.areal_scale, factors2.areal_scale, 1e-109);
+    }
+
+    // Test with a projected CRS whose datum has a non-Greenwich prime meridian.
+    {
+        let epsg = Proj::new("EPSG:27571").expect("EPSG:27571");
+        let factors2 = epsg
+            .factors(0.0689738f64.to_radians(), 49.508567f64.to_radians())
+            .expect("factors");
+        expect_near(factors2.meridional_scale, 1.0 - 12.26478760 * 1e-5, 1e-8);
+    }
+
+    // Test with a compound CRS of a projected CRS. The second call checks the cached
+    // internal object of the C test; here each call builds its own.
+    {
+        let epsg = Proj::new("EPSG:5972").expect("EPSG:5972");
+        let point = (10.729030600f64.to_radians(), 59.916494500f64.to_radians());
+        let factors2 = epsg.factors(point.0, point.1).expect("factors");
+        expect_near(factors2.meridional_scale, 1.0 - 28.54587730 * 1e-5, 1e-8);
+        let factors2 = epsg.factors(point.0, point.1).expect("factors");
+        expect_near(factors2.meridional_scale, 1.0 - 28.54587730 * 1e-5, 1e-8);
+    }
+
+    // Test with a geographic CRS: an error, with PROJ's code.
+    {
+        let geographic = Proj::new("EPSG:4326").expect("EPSG:4326");
+        let error = geographic
+            .factors(a.0, a.1)
+            .expect_err("a geographic CRS has no factors");
+        assert_ne!(error.code(), 0);
+        assert_eq!(error.code(), PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE);
+    }
+
+    // Test with a dummy derived projected CRS, identical to the UTM zone 32 CRS above.
+    {
+        let derived = Proj::new(DERIVED_UTM_WKT).expect("derived UTM");
+        let factors = derived.factors(u.0, u.1).expect("factors");
+        expect_near(factors.meridional_scale, 0.9996, 1e-8);
+        expect_near(factors.parallel_scale, 0.9996, 1e-8);
+        expect_near(factors.angular_distortion, 0.0, 1e-7);
+        expect_near(factors.meridian_parallel_angle, FRAC_PI_2, 1e-7);
+        expect_near(factors.areal_scale, 0.999_200_16, 1e-7);
+    }
+
+    // Test with a derived projected CRS, with slight scale change.
+    {
+        let derived = Proj::new(DERIVED_SCALE_WKT).expect("derived scale change");
+        let factors = derived.factors(u.0, u.1).expect("factors");
+        expect_near(factors.meridional_scale, 0.999_699_96, 1e-8);
+        expect_near(factors.parallel_scale, 0.999_699_96, 1e-8);
+        expect_near(factors.angular_distortion, 0.0, 1e-7);
+        expect_near(factors.meridian_parallel_angle, FRAC_PI_2, 1e-7);
+        expect_near(factors.areal_scale, 0.999_400_01, 1e-7);
+    }
+
+    // Same as above but with foot unit.
+    {
+        let derived = Proj::new(DERIVED_FOOT_WKT).expect("derived in feet");
+        let factors = derived.factors(u.0, u.1).expect("factors");
+        expect_near(factors.meridional_scale, 0.999_699_96, 1e-8);
+        expect_near(factors.parallel_scale, 0.999_699_96, 1e-8);
+        expect_near(factors.angular_distortion, 0.0, 1e-7);
+        expect_near(factors.meridian_parallel_angle, FRAC_PI_2, 1e-7);
+        expect_near(factors.areal_scale, 0.999_400_01, 1e-7);
+    }
 }

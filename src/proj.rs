@@ -20,6 +20,7 @@ use bounds::Dims;
 
 use crate::engine::Operation;
 use crate::engine::TransformError as StepError;
+use crate::gie_api::Factors;
 use crate::iso19111::{
     Conversion, CoordinateOperation, Crs, DatabaseContext, GridAvailabilityUse, GridDescription,
     OpProps, Pipeline, ProjStringLayout,
@@ -142,6 +143,9 @@ pub enum ProjError {
     /// The object is a CRS, not a coordinate operation, so it transforms nothing: PROJ
     /// `PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE`.
     NotATransform,
+    /// A latitude or longitude that `proj_factors` rejects, or a stencil point with no image:
+    /// PROJ `PROJ_ERR_COORD_TRANSFM_INVALID_COORD`.
+    InvalidCoordinate,
     /// PROJJSON export is not built.
     ExportToJson,
     /// WKT export is not built.
@@ -188,6 +192,7 @@ impl fmt::Display for ProjError {
                 formatter.write_str("The current definition could not be retrieved")
             }
             Self::NotATransform => formatter.write_str("CRS is not a transform"),
+            Self::InvalidCoordinate => formatter.write_str("Invalid coordinate"),
             Self::ExportToJson => formatter
                 .write_str("The definition could not be represented in the requested JSON format"),
             Self::ExportToWkt => formatter
@@ -851,6 +856,32 @@ impl Proj {
     pub fn convert_xyz(&self, x: f64, y: f64, z: f64) -> Result<(f64, f64, f64), ProjError> {
         let coord = self.map_xyz(x, y, z, Direction::Forward, Report::Conversion)?;
         Ok((coord.x, coord.y, coord.z))
+    }
+
+    /// The cartographic characteristics at one point: `proj_factors`.
+    ///
+    /// `lon` and `lat` are radians, as PROJ's `PJ_COORD` is. A projection string gives its own
+    /// factors. A single CRS, from `EPSG:`, WKT or PROJJSON, gives the factors of its projection
+    /// in metres: the conversion of a projected CRS, the horizontal CRS of a compound CRS, and
+    /// the derived projected CRS with its deriving affine. The derivatives are numerical, with a
+    /// step of `1e-5` radians, as `factors.cpp` takes them.
+    ///
+    /// # Errors
+    ///
+    /// [`ProjError::NotATransform`] for a CRS with no projection, such as a geographic CRS,
+    /// [`ProjError::InvalidCoordinate`] when the latitude or longitude is out of range or a
+    /// stencil point has no image, and [`ProjError::Conversion`] for a CRS-to-CRS transform,
+    /// whose factors are not built.
+    pub fn factors(&self, lon: f64, lat: f64) -> Result<Factors, ProjError> {
+        match &self.body {
+            Body::Native(op) => op
+                .factors(lon, lat)
+                .map_err(|_| ProjError::InvalidCoordinate),
+            Body::Single => crate::gie_api::crs_factors(&self.definition, lon, lat),
+            Body::Iso(_) => Err(ProjError::Conversion(
+                "the factors of a CRS-to-CRS transform are not built".to_owned(),
+            )),
+        }
     }
 
     /// Convert a four-dimensional coordinate in the forward direction.

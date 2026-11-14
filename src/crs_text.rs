@@ -14,6 +14,16 @@ pub(crate) fn is_crs_text(text: &str) -> bool {
     is_wkt_head(text) || text.starts_with('{')
 }
 
+/// The text is WKT for a derived projected CRS, `DERIVEDPROJCRS[`.
+pub(crate) fn is_derived_projected(text: &str) -> bool {
+    let text = trim_bom(text);
+    let head: String = text
+        .chars()
+        .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+        .collect();
+    head.eq_ignore_ascii_case("DERIVEDPROJCRS") && text[head.len()..].trim_start().starts_with('[')
+}
+
 /// PROJ string for a geographic or projected CRS.
 ///
 /// # Errors

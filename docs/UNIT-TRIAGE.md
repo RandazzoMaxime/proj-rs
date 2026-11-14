@@ -5,15 +5,14 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 17 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `core` | 16 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
 | `niche` | 0 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 0 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (17)
+## core (16)
 
-### gie_self_tests.cpp (2)
+### gie_self_tests.cpp (1)
 
-- `gie.proj_factors`
 - `gie.proj_create_crs_to_crs_WGS84_EGM08_to_WGS84`
 
 ### test_common.cpp (2)
