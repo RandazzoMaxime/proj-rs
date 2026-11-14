@@ -1,11 +1,16 @@
-//! PROJ `test/unit/test_projinfo_lib.cpp`, `TEST(projinfo_lib, simple)`, through
-//! `proj_rs::projinfo::run`. The expected values are PROJ 9.9.0's: the status 0 that
-//! `projinfo()` returns, and the INFO text of `EPSG:25832 -o WKT1_GDAL`, which holds
+//! PROJ `test/unit/test_projinfo_lib.cpp`, `TEST(projinfo_lib, simple)` and
+//! `TEST(projinfo_lib, error)`, through `proj_rs::projinfo::run`. The expected values are
+//! PROJ 9.9.0's: the status that `projinfo()` returns, and the text of the INFO or ERR
+//! channel. `simple` reads `EPSG:25832 -o WKT1_GDAL`, whose INFO holds
 //! `PROJCS["ETRS89 / UTM zone 32N"` (`projinfo_lib.cpp`, `outputObject`, WKT1:GDAL block).
+//! `error` reads `doesnotwork`, whose ERR line is
+//! `input string: parsing of 'doesnotwork' failed: unrecognized format / unknown name`
+//! (`projinfo_lib.cpp`, `buildObject`, the `strm.cerr` of the `catch`).
 
 use proj_rs::projinfo::{run, Status};
 
 const SIMPLE_ARGS: [&str; 3] = ["EPSG:25832", "-o", "WKT1_GDAL"];
+const ERROR_ARGS: [&str; 1] = ["doesnotwork"];
 
 /// `EXPECT_EQ(res, 0)`: `projinfo()` returns 0 for a CRS written in WKT1:GDAL.
 #[test]
@@ -23,5 +28,28 @@ fn simple_found_etrs89_utm_zone_32n() {
         report.output.contains("PROJCS[\"ETRS89 / UTM zone 32N\""),
         "{}",
         report.output
+    );
+}
+
+/// `EXPECT_EQ(res, 1)`: `projinfo()` returns 1 when `doesnotwork` is neither a known format
+/// nor a known name.
+#[test]
+fn error_returns_one() {
+    let report = run(&ERROR_ARGS);
+    assert_eq!(report.status, Status::Failure);
+}
+
+/// `EXPECT_EQ(found, true)`: an ERR line holds `unrecognized format / unknown name`. The text
+/// is written on the ERR channel, so it is in `errors` and not in the output.
+#[test]
+fn error_found_unrecognized_format() {
+    let report = run(&ERROR_ARGS);
+    assert!(
+        report
+            .errors
+            .iter()
+            .any(|line| line.contains("unrecognized format / unknown name")),
+        "{:?}",
+        report.errors
     );
 }

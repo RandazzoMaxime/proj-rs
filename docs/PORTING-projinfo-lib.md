@@ -1,7 +1,9 @@
 # Port : `projinfo_lib` (API de bibliothèque `proj_rs::projinfo`)
 
 Lot : déplacer la logique du binaire `projinfo` dans la bibliothèque, pour exposer
-l'équivalent de `projinfo()` de PROJ 9.9.0, et porter `TEST(projinfo_lib, simple)`.
+l'équivalent de `projinfo()` de PROJ 9.9.0, et porter `TEST(projinfo_lib, simple)` et
+`TEST(projinfo_lib, error)` (le second, ajouté ensuite, ne change pas la lib : le port
+donnait déjà la sortie de PROJ).
 Audit des cinq `TEST()` : [AUDIT-projinfo-lib.md](AUDIT-projinfo-lib.md).
 
 ## Carte
@@ -52,7 +54,7 @@ Commandes lancées (depuis la racine du worktree) :
 
 ```bash
 export CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0
-cargo test --test unit_projinfo_lib          # 2 tests, verts (rouge avant l'API)
+cargo test --test unit_projinfo_lib          # 4 tests, verts (rouge avant l'API)
 cargo test --test cli_projinfo_text          # 3 tests, verts
 cargo test --test cli_yaml                   # 14 échecs, tous test_cs2cs_ignf.yaml (CDN)
 git checkout docs/UNPORTED-CLI.md            # restauré après cli_yaml
@@ -69,9 +71,18 @@ PROJ_DATA=$R/data LD_LIBRARY_PATH=$R/lib $R/bin/projinfo EPSG:25832 -o WKT1_GDAL
 
 Sortie identique à celle du port (`PROJCS["ETRS89 / UTM zone 32N"`, code 0).
 
+Référence PROJ 9.9.0 pour `error` (le même `argv` que le test, un seul argument) :
+
+```bash
+R=target/proj-reference/build
+PROJ_DATA=$R/data LD_LIBRARY_PATH=$R/lib $R/bin/projinfo doesnotwork
+# stderr : input string: parsing of 'doesnotwork' failed: unrecognized format / unknown name
+# code de retour 1, stdout vide ; le binaire du port donne la même chose, octet pour octet
+```
+
 ## Hors de ce lot
 
-- `error`, `warning` : le test reste à écrire ; le comportement est déjà celui de PROJ.
+- `warning` : le test reste à écrire ; le comportement est déjà celui de PROJ.
 - `use_ctx` : écart réel (pas de contexte dans l'API, trois sites `DatabaseContext::create()`).
 - `works_without_cb` : pas d'équivalent Rust (pas de callback).
 - `docs/UNPORTED-UNIT.md`, `README.md`, `ROADMAP.md`, `docs/UNIT-TRIAGE.md` : non modifiés ici,
