@@ -1235,14 +1235,6 @@ pub fn select_alternatives_in_area(
     let db = DatabaseContext::create()?;
     let source_crs = create_from_user_input(source, &db)?;
     let target_crs = create_from_user_input(target, &db)?;
-    // Compound to compound only. A compound on one side alone (`EPSG:4326+3855 -> EPSG:4979`)
-    // keeps the previous path: its candidates are the same, but the first one tried differs
-    // from PROJ's (`test_cs2cs_various.yaml#118-121`, see docs/PORTING-cs2cs-slovenia.md).
-    if matches!(source_crs, Crs::Compound(_)) != matches!(target_crs, Crs::Compound(_)) {
-        return Err(FactoryError::Format(format!(
-            "{source} to {target}: a compound CRS on one side only is not prepared here"
-        )));
-    }
     let (Some(source_base), Some(target_base)) =
         (reference_base(&source_crs), reference_base(&target_crs))
     else {
@@ -1253,6 +1245,20 @@ pub fn select_alternatives_in_area(
     let mut context = CoordinateOperationContext::create(&db, authority);
     context.set_spatial_criterion(SpatialCriterion::PartialIntersection);
     context.set_area_of_interest(area);
+    // `crs_to_crs.cpp:566-573`: the grid availability is KNOWN_AVAILABLE when ONLY_BEST warns, errs,
+    // or the network is on, and DISCARD_OPERATION_IF_MISSING_GRID otherwise (`ONLY_BEST=NO`, and
+    // `only_best_default = off`). The factory itself applies it, intermediate CRS included: it drops
+    // the operations whose grids are unknown to the database (KNOWN_AVAILABLE) or missing from the
+    // disk (DISCARD). A filter on a list built without it keeps only the operations with no grid at
+    // all under DISCARD, and loses the pivots PROJ lists (NAD27 to NAD83 through WGS 84); under
+    // KNOWN_AVAILABLE it keeps `Inverse of WGS 84 to EGM2008 height (2)` and tries it first.
+    let network_enabled = crate::network::GridContext::load().enabled;
+    context.set_grid_availability_use(match policy {
+        BestPolicy::Discard if !network_enabled => GridAvailabilityUse::DiscardIfMissing,
+        BestPolicy::Discard | BestPolicy::Warn | BestPolicy::Error => {
+            GridAvailabilityUse::KnownAvailable
+        }
+    });
     let operations = CoordinateOperationFactory::create()
         .create_operations(&source_crs, &target_crs, &context)?
         .into_iter()
@@ -1283,8 +1289,7 @@ pub fn select_alternatives_in_area(
     let mut creation_warning = None;
     if let [(operation, characteristics)] = ranked.as_slice() {
         let grids = proj_grids(operation, &db).unwrap_or_else(|_| grid_names(operation));
-        let instantiable =
-            characteristics.exportable && grids.iter().all(|grid| gridpath::available(grid));
+        let instantiable = characteristics.exportable && grids.iter().all(|grid| grid_serves(grid));
         if policy != BestPolicy::Warn || instantiable {
             let best = single_operation(operation, characteristics, &db, &source_crs, &target_crs)?;
             return Ok(Selection::Single(best));
@@ -1326,7 +1331,7 @@ pub fn select_alternatives_in_area(
             lon_lat: target_lon_lat,
             lat_lon: target_lat_lon,
         },
-        optional_grids_serve: false,
+        optional_grids_serve: true,
     };
     let mut prepared = preparer.prepare(&ranked);
     if policy != BestPolicy::Discard
@@ -1677,7 +1682,7 @@ fn single_operation(
     target: &Crs,
 ) -> Result<BestOperation, FactoryError> {
     let grids = proj_grids(operation, db)?;
-    if !grids.iter().all(|grid| gridpath::available(grid)) {
+    if !grids.iter().all(|grid| grid_serves(grid)) {
         return Ok(BestOperation::MissingGrid {
             message: missing_grid_message(&characteristics.name, &grids),
         });
@@ -1692,6 +1697,12 @@ fn single_operation(
         definition: export(operation, source, target, db)?,
         lat_or_northing_first: lat_or_northing_first(target),
     })
+}
+
+/// A grid a pipeline can be built without: on disk, or optional (`+geoidgrids=@name`), which PROJ
+/// skips when it is missing.
+fn grid_serves(grid: &str) -> bool {
+    gridpath::available(grid) || grid.starts_with('@')
 }
 
 /// `createOperations` with DISCARD: the candidates whose grids are on disk, in the same order.
