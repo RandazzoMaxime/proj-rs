@@ -65,7 +65,7 @@ pub(crate) fn resolve(name: &str) -> Option<PathBuf> {
 /// Bytes of a grid, from disk or from [`crate::network::decide_download`].
 pub(crate) fn read(name: &str) -> Option<Vec<u8>> {
     if let Some(path) = resolve(name) {
-        return std::fs::read(path).ok();
+        return crate::network::read_file(&path).ok();
     }
     crate::network::fetch_missing(name)
 }
@@ -80,19 +80,21 @@ fn locate(name: &str) -> Option<PathBuf> {
     if name.starts_with("http://") || name.starts_with("https://") {
         return None;
     }
+    let api = crate::network::file_api();
+    let api = api.as_deref();
     let given = Path::new(name);
-    if !name.is_empty() && given.is_file() {
+    if !name.is_empty() && crate::network::is_file_with(api, given) {
         return Some(given.to_path_buf());
     }
     let file_name = given.file_name()?;
     for directory in search_directories() {
         let nested = directory.join(name);
-        if nested.is_file() {
+        if crate::network::is_file_with(api, &nested) {
             return Some(nested);
         }
         if file_name != given.as_os_str() {
             let bare = directory.join(file_name);
-            if bare.is_file() {
+            if crate::network::is_file_with(api, &bare) {
                 return Some(bare);
             }
         }

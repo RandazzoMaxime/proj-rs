@@ -8,12 +8,14 @@
 use std::cell::RefCell;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
-use std::io::{Read, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+use crate::file_api::{FileAccess, FileApi};
 
 const CDN_ENDPOINT: &str = "https://cdn.proj.org";
 pub(crate) const MAX_GRID_BYTES: u64 = 512 * 1024 * 1024;
@@ -177,6 +179,17 @@ pub(crate) struct GridContext {
     ca_bundle: Option<PathBuf>,
     file_finder: Option<FileFinder>,
     callbacks: Option<Callbacks>,
+    file_api: Option<FileApiHandle>,
+}
+
+/// The application's file operations of a context, shared with its clones.
+#[derive(Clone)]
+pub(crate) struct FileApiHandle(pub(crate) Arc<dyn FileApi>);
+
+impl fmt::Debug for FileApiHandle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("FileApi")
+    }
 }
 
 /// The caller's file lookup, consulted before the search directories.
@@ -445,6 +458,7 @@ impl GridContext {
             ca_bundle: None,
             file_finder: None,
             callbacks: None,
+            file_api: None,
         };
         let env_network = nonempty_env("PROJ_NETWORK");
         let env_endpoint = nonempty_env("PROJ_NETWORK_ENDPOINT");
@@ -537,6 +551,86 @@ impl GridContext {
     /// The callbacks of this context, shared with its clones, when the application set some.
     pub(crate) fn callbacks(&self) -> Option<Callbacks> {
         self.callbacks.clone()
+    }
+
+    pub(crate) fn set_file_api(&mut self, api: Arc<dyn FileApi>) {
+        self.file_api = Some(FileApiHandle(api));
+    }
+
+    /// The file operations of this context, when the application set some.
+    pub(crate) fn file_api(&self) -> Option<Arc<dyn FileApi>> {
+        self.file_api.as_ref().map(|handle| Arc::clone(&handle.0))
+    }
+}
+
+/// The file operations of the current context: see [`GridContext::file_api`].
+pub(crate) fn file_api() -> Option<Arc<dyn FileApi>> {
+    context().file_api()
+}
+
+/// `Path::is_file`, or the file API's `exists` when there is one (`FileManager::exists`).
+pub(crate) fn is_file_with(api: Option<&dyn FileApi>, path: &Path) -> bool {
+    api.map_or_else(|| path.is_file(), |api| api.exists(path))
+}
+
+/// The bytes of the file at `path`. Through the file API of the current context when it has one,
+/// as PROJ reads a whole file (`pj_load_ini`, `filemanager.cpp:2049`): `seek` to the end for the
+/// size, `seek` back to the start, then `read`. Else with `std::fs`.
+pub(crate) fn read_file(path: &Path) -> io::Result<Vec<u8>> {
+    let Some(api) = file_api() else {
+        return std::fs::read(path);
+    };
+    let mut file = api.open(path, FileAccess::ReadOnly)?;
+    let _size = file.seek(SeekFrom::End(0))?;
+    file.seek(SeekFrom::Start(0))?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
+/// `create_dir_all` of `path`, through the file API of `ctx` when it has one. The missing
+/// directories are made from the top, each with `mkdir`, as PROJ's `CreateDirectoryRecursively`.
+pub(crate) fn create_directory_all(ctx: &GridContext, path: &Path) -> io::Result<()> {
+    match ctx.file_api() {
+        Some(api) => make_directories(api.as_ref(), path),
+        None => std::fs::create_dir_all(path),
+    }
+}
+
+fn make_directories(api: &dyn FileApi, path: &Path) -> io::Result<()> {
+    if api.exists(path) {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            make_directories(api, parent)?;
+        }
+    }
+    api.mkdir(path)
+}
+
+/// Create `path` for writing from its start, through the file API of `ctx` when it has one. The
+/// file is closed when the returned writer is dropped.
+pub(crate) fn create_for_write(ctx: &GridContext, path: &Path) -> io::Result<Box<dyn Write>> {
+    match ctx.file_api() {
+        Some(api) => Ok(Box::new(api.open(path, FileAccess::Create)?)),
+        None => Ok(Box::new(std::fs::File::create(path)?)),
+    }
+}
+
+/// Delete `path`, through the file API of `ctx` when it has one.
+pub(crate) fn remove_file(ctx: &GridContext, path: &Path) -> io::Result<()> {
+    match ctx.file_api() {
+        Some(api) => api.unlink(path),
+        None => std::fs::remove_file(path),
+    }
+}
+
+/// Rename `from` to `to`, through the file API of `ctx` when it has one.
+pub(crate) fn rename_file(ctx: &GridContext, from: &Path, to: &Path) -> io::Result<()> {
+    match ctx.file_api() {
+        Some(api) => api.rename(from, to),
+        None => std::fs::rename(from, to),
     }
 }
 

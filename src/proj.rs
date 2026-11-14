@@ -1420,7 +1420,7 @@ impl ProjBuilder {
         if text.contains('\0') {
             return Err(ProjError::Path);
         }
-        std::fs::create_dir_all(path).map_err(|_| ProjError::Path)?;
+        crate::network::create_directory_all(&self.net, path).map_err(|_| ProjError::Path)?;
         self.net.set_cache_dir(path.to_path_buf());
         Ok(())
     }
@@ -1472,6 +1472,14 @@ impl ProjBuilder {
     ) {
         self.net
             .set_callbacks(crate::network::Callbacks::new(callbacks));
+    }
+
+    /// Do the file operations of this builder through `api` (`proj_context_set_fileapi`): the
+    /// existence checks of the grid search, the reads of grids and dictionaries, the creation of
+    /// the user-writable directory, and the download of a grid. A `Proj` created from this builder
+    /// reads its grids through `api` too.
+    pub fn set_file_api(&mut self, api: std::sync::Arc<dyn crate::FileApi>) {
+        self.net.set_file_api(api);
     }
 
     /// Set the CA bundle used for network requests (`proj_context_set_ca_bundle_path`).
