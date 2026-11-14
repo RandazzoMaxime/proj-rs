@@ -21,9 +21,11 @@ use crate::lists;
 
 use super::dms::{
     c_strtod, direction_of, dmstor, format_number, program_name, rtodms, Direction, Dms, Width,
-    DEG_TO_RAD, RAD_TO_DEG,
+    RAD_TO_DEG,
 };
 
+/// `DEG_TO_RAD` of PROJ, the constant of `src/geodesic.rs`.
+const DEG_TO_RAD: f64 = 0.017_453_292_519_943_296;
 /// `MAXLINE` of `geod.cpp`: `fgets` reads one byte less than this.
 const MAX_LINE: usize = 200;
 /// `MAX_PARGS` of `geod.cpp`: the most `+` arguments.

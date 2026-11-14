@@ -1,0 +1,3 @@
+# Init file fixture for tests/gie_info_functions.rs: read for its metadata section only.
+<metadata> version=1.2 origin=Test lastupdate=2024-05-17
+<test> +proj=utm +zone=32 +ellps=GRS80

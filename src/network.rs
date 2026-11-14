@@ -309,6 +309,28 @@ pub(crate) fn search_paths() -> Vec<PathBuf> {
     context().search_paths
 }
 
+/// The default search path as `proj_info` reports it: the directories added to the
+/// default context, or else the data directories when none were added.
+pub(crate) fn default_searchpath() -> String {
+    let added = search_paths();
+    if added.is_empty() {
+        join_directories(&data_directories())
+    } else {
+        join_directories(&added)
+    }
+}
+
+/// Directories joined by the search path separator of the platform: `;` on
+/// Windows, `:` elsewhere. A directory that is not UTF-8 is left out.
+fn join_directories(directories: &[PathBuf]) -> String {
+    let separator = if cfg!(windows) { ";" } else { ":" };
+    directories
+        .iter()
+        .filter_map(|path| path.to_str())
+        .collect::<Vec<_>>()
+        .join(separator)
+}
+
 /// The data directories, read from the environment on each lookup as PROJ does.
 ///
 /// `PROJ_DATA`, else the legacy `PROJ_LIB`, replaces the default data
@@ -466,12 +488,7 @@ impl GridContext {
     }
 
     pub(crate) fn searchpath(&self) -> String {
-        let separator = if cfg!(windows) { ";" } else { ":" };
-        self.search_paths
-            .iter()
-            .filter_map(|path| path.to_str())
-            .collect::<Vec<_>>()
-            .join(separator)
+        join_directories(&self.search_paths)
     }
 
     pub(crate) fn push_search_path(&mut self, path: PathBuf) {
