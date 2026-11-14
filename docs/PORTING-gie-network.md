@@ -164,6 +164,32 @@ et `force_over()` absents). Après le correctif, il passe. Une mutation qui reti
   donne `-24490287.97`, et `cs2cs` sans `+over` sur `140 0` donne `15584728.71`, les
   valeurs du C++ à la précision affichée.
 
+## proj_create_crs_to_crs (`TEST_F(gieTest, ...)`, `gie_self_tests.cpp` l. 264-299)
+
+Porté de bout en bout, les 8 assertions. Le C ne vérifie que le nom du CRS source
+(« ETRS89 / UTM zone 32N ») ; il n'y a pas d'assertion de nom cible, donc pas
+d'assertion ajoutée.
+
+- `EXPECT_NEAR` sur `(307788.8761171057, 5999669.3036037628)` à 1e-8 : `convert_xyz`.
+  Valeurs relues avec `cs2cs -f %.10f` 9.9.0. `5_999_669.303_603_763` en Rust est le
+  même `f64` que `5999669.3036037628` du C (vérifié : `float()` des deux donne la même
+  valeur).
+- `proj_get_source_crs` puis `proj_get_name` : `Proj::source_crs()` puis `Crs::name()`,
+  lus après le point comme dans le C.
+- Deux `ASSERT_TRUE(P != nullptr)` et deux `EXPECT_TRUE(... == nullptr)` : `is_ok()` et
+  `is_err()` de `new_known_crs`. La chaîne PROJ `proj=utm +zone=32 +datum=WGS84` est
+  acceptée comme côté de paire.
+
+Cause de l'assertion absente jusque-là : `Proj::source_crs()` renvoyait `None` pour
+EPSG:25832→25833. L'opération choisie est « Inverse of UTM zone 32N + UTM zone 33N »
+(`projinfo`), une concaténation créée par `derived_to` (`src/iso19111/derived.rs`).
+`concatenate` appelait `pivot_concatenation`, qui laisse `source` et `target` à `None`.
+PROJ fixe les CRS de la concaténation à `operationsIn[0]->sourceCRS()` et
+`operationsIn.back()->targetCRS()` (`concatenatedoperation.cpp:242-256`). Correctif : ces
+deux CRS sont posés dans `concatenate`, seul appelant de ce chemin. Le reste de
+`pivot_concatenation` (pivot de datum) n'est pas modifié. Conséquence visible : les
+concaténations dérivées portent désormais leurs CRS, comme en PROJ.
+
 ## Commandes
 
 ```
