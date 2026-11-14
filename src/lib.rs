@@ -48,6 +48,7 @@ pub mod listing;
 pub mod math;
 mod merc;
 pub mod names;
+pub mod projinfo;
 pub mod projsync;
 pub mod version;
 
