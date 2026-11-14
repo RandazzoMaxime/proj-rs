@@ -42,8 +42,8 @@ yet**: see [Status at a glance](#status-at-a-glance).
 </p>
 
 Each square is **one test case of PROJ 9.9.0 itself**. Green: PROJ-RS passes it.
-Grey: still open. In all, <!--gen:all_percent-->99.9<!--/gen-->% of the cases pass
-(<!--gen:all_done-->9183<!--/gen--> of <!--gen:all_total-->9188<!--/gen-->). The left panel is the numeric suite (`gie`), complete. The right
+Grey: still open. In all, <!--gen:all_percent-->100.0<!--/gen-->% of the cases pass
+(<!--gen:all_done-->9185<!--/gen--> of <!--gen:all_total-->9188<!--/gen-->). The left panel is the numeric suite (`gie`), complete. The right
 panel is what is left: PROJ's C++ unit tests, which cover the ISO 19111 model,
 WKT and the operation factory, and the command-line cases. The chart is drawn
 from the same ledgers as the tables below by `tests/progress_svg.rs`, so it
@@ -163,7 +163,7 @@ The same goes for the CLI cases in [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md
 
 | Suite | Ported and passing | Not yet | |
 |---|---:|---:|:-:|
-| PROJ C++ unit tests | <!--gen:unit_ported-->1502<!--/gen--> | <!--gen:unit_open-->5<!--/gen--> | <!--gen:unit_icon-->🟡<!--/gen--> |
+| PROJ C++ unit tests | <!--gen:unit_ported-->1504<!--/gen--> | <!--gen:unit_open-->3<!--/gen--> | <!--gen:unit_icon-->🟡<!--/gen--> |
 | `cct` CLI cases | <!--gen:cli_cct_ported-->18<!--/gen--> | <!--gen:cli_cct_open-->0<!--/gen--> | <!--gen:cli_cct_icon-->✅<!--/gen--> |
 | `cs2cs` CLI cases | <!--gen:cli_cs2cs_ported-->197<!--/gen--> | <!--gen:cli_cs2cs_open-->0<!--/gen--> | <!--gen:cli_cs2cs_icon-->✅<!--/gen--> |
 | `gie` CLI cases | <!--gen:cli_gie_ported-->4<!--/gen--> | <!--gen:cli_gie_open-->0<!--/gen--> | <!--gen:cli_gie_icon-->✅<!--/gen--> |
@@ -191,7 +191,7 @@ The same goes for the CLI cases in [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md
 | `proj_angular_io_test.cpp` | <!--gen:proj_angular_io_test_ported-->5<!--/gen--> | <!--gen:proj_angular_io_test_open-->0<!--/gen--> |
 | `proj_context_test.cpp` | <!--gen:proj_context_test_ported-->5<!--/gen--> | <!--gen:proj_context_test_open-->0<!--/gen--> |
 | `proj_errno_string_test.cpp` | <!--gen:proj_errno_string_test_ported-->3<!--/gen--> | <!--gen:proj_errno_string_test_open-->0<!--/gen--> |
-| `test_common.cpp` | <!--gen:test_common_ported-->11<!--/gen--> | <!--gen:test_common_open-->2<!--/gen--> |
+| `test_common.cpp` | <!--gen:test_common_ported-->13<!--/gen--> | <!--gen:test_common_open-->0<!--/gen--> |
 | `test_coordinates.cpp` | <!--gen:test_coordinates_ported-->3<!--/gen--> | <!--gen:test_coordinates_open-->0<!--/gen--> |
 | `test_datum.cpp` | <!--gen:test_datum_ported-->22<!--/gen--> | <!--gen:test_datum_open-->0<!--/gen--> |
 | `test_defmodel.cpp` | <!--gen:test_defmodel_ported-->13<!--/gen--> | <!--gen:test_defmodel_open-->0<!--/gen--> |
