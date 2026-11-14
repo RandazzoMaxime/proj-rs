@@ -17,7 +17,7 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
 | `proj_trans_get_last_used_operation`, `proj_pj_info` | `Proj::last_used_operation`, `Proj::proj_info` (`candidate_name`) |
 | `DatabaseContext::lookForGridInfo` (`factory.cpp:3400`) | `src/iso19111/factory.rs` (`look_for_grid_info`), `src/iso19111/select.rs` (`unrecorded_grid`) |
 | `src/apps/gie.cpp` (`network_error`) | `src/gie.rs` (`errno_name`) |
-| `test/unit/test_network.cpp` (26 TEST) | `tests/unit_network_core.rs` (8 cas, dont `custom`, `getfilesize` et `simul_read_range_error`), `tests/unit_network_endpoint_env.rs` (1 cas), `tests/unit_network_local.rs` (2 cas), `src/network.rs` `callback_tests` (2 tests hors liste) |
+| `test/unit/test_network.cpp` (26 TEST) | `tests/unit_network_core.rs` (9 cas, dont `custom`, `getfilesize`, `simul_read_range_error` et `simul_file_change_while_opened`), `tests/unit_network_endpoint_env.rs` (1 cas), `tests/unit_network_local.rs` (2 cas), `src/network.rs` `callback_tests` (2 tests hors liste) |
 | serveur de test local (remplace `cdn.proj.org`) | `tests/net_support/mod.rs` |
 | `src/apps/projsync.cpp`, `test/cli/test_projsync.sh` | non porté (voir l'audit) |
 
@@ -71,10 +71,24 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
   et la tuile est notée. Le point est recalculé une fois la tuile lue, si bien que
   l'interpolation ne voit jamais un échantillon absent. Une lecture en échec termine le point
   par `NetworkUnavailable`, comme une grille absente.
-- **En-têtes demandés, non comparés.** `Last-Modified` et `ETag` sont demandés après chaque
-  appel pour garder la séquence de PROJ, mais leurs valeurs ne sont pas comparées : la
-  détection d'un fichier changé pendant l'ouverture (`simul_file_change_while_opened`) reste
-  un écart.
+- **Fichier changé pendant l'ouverture (`simul_file_change_while_opened`).** Après chaque
+  appel, les trois en-têtes sont demandés dans l'ordre de PROJ. La première réponse qui donne
+  une taille (`Content-Range`) fixe la référence (taille, `Last-Modified`, `ETag`). Une réponse
+  suivante différente met le fichier en `changed` et vide le cache de morceaux du contexte
+  (`clearMemoryCache` de PROJ, puis `m_hasChanged`) : `network_chunks::RemoteFile::observe`.
+  Le point en cours est arrêté à la lecture de tuile qui le constate (`tiles::with_tiles_watch`),
+  la grille en vigueur est lâchée (son fichier se ferme), puis rechargée depuis
+  `(url, 0, 16384)`, et le point est refait (`Vertical::transform`, `VerticalGrids::reload`).
+  Le cache de morceaux garde la tuile lue après le changement, donc le second passage ne
+  fait aucun appel. Mesuré avec `libproj` 9.9.0 (sonde C, `probe.c` non versionnée) : la
+  séquence est celle du test, `close` du fichier 2 avant `open` du fichier 3, et `close` du
+  fichier 3 à `proj_destroy`. Une création ferme son fichier après lecture (`load_all`), comme
+  PROJ (mesuré : `close` avant la transformation), mais un rechargement le garde ouvert.
+  Écarts : seule `vgridshift` recharge ; `hgridshift`, `gridshift` et `xyzgridshift` gardent
+  leurs grilles figées (même mécanisme, pas de cas de la liste qui le demande). `reload`
+  recharge toutes les grilles de l'étape, PROJ seulement celle du changement (un seul fichier
+  dans le test). Une lecture entière (`read_whole`) ne déclenche pas de rechargement. Le
+  nombre de rechargements par point est borné à `MAX_RELOADS` (8), PROJ boucle sans borne.
 - **Forme du trait.** `open` renvoie les premiers octets avec un handle (`OpenReply`), au lieu
   d'un tampon et d'une chaîne d'erreur passés en paramètres. Les erreurs sont typées
   (`NetworkError::Open`, `ReadRange`). Les en-têtes passent par `header`, avec une valeur
@@ -89,9 +103,9 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
   un GeoTIFF en bandes compressé ou planaire, lu par morceaux avec la séquence de PROJ.
 - Lecture paresseuse hors `gridshift` : `read_resource` (modèles `deformation`, `tinshift`,
   `defmodel`, `nkg`) lit encore les grilles entières (`fetch_missing`, `fetch_with_callbacks`).
-- Validation de la fraîcheur d'un fichier ouvert (`ETag`, `Last-Modified`) : bloque
-  `simul_file_change_while_opened`.
-- Validation de cache par `ETag` et `Last-Modified`.
+- Rechargement au changement pour `hgridshift`, `gridshift` et `xyzgridshift` (seule
+  `vgridshift` recharge), et pour les lectures entières (`read_whole`).
+- Validation de cache par `ETag` et `Last-Modified` : cache disque (lot cache).
 - Cache SQLite : TTL, taille max, verrou, `proj_grid_cache_clear` (lot cache, autre agent).
 - API de téléchargement explicite (`is_download_needed`, `download_file`) et API de fichiers
   (`file_api`).

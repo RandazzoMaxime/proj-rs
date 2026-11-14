@@ -554,6 +554,106 @@ fn simul_read_range_error() {
     exchange.reached(after_destroy);
 }
 
+/// `networking.simul_file_change_while_opened`: the grid is the `egm96_15` GeoTIFF of `custom`, and
+/// its file changes while it is open. The first tile read (lat 49) reads the tile as the aligned
+/// cover `(524288, 278528)`, and that reply has a `Last-Modified` other than the one of the
+/// creation. PROJ then drops the grid (its file closes), loads it again from `(url, 0, 16384)`, and
+/// runs the point again: the tile is in the chunk cache, so the second run makes no call. The
+/// creation's file is closed before the transform, the reloaded one stays open until the operation
+/// is destroyed.
+///
+/// The value is PROJ's 1.25, from the tile of the changed file.
+#[test]
+fn simul_file_change_while_opened() {
+    let url = "https://foo/file_change_while_opened.tif";
+    let fixture = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/data/tests/egm96_15_uncompressed_truncated.tif"
+    ))
+    .expect("the truncated egm96 fixture");
+    assert_eq!(fixture.len(), 956);
+    let mut head = fixture;
+    head.resize(16384, 0);
+    let tile = |value: f32| -> Vec<u8> {
+        std::iter::repeat_n(value.to_le_bytes(), 278528 / 4)
+            .flatten()
+            .collect()
+    };
+    let headers = |file: usize, last_modified: &'static str| {
+        [
+            Call::Header {
+                file,
+                key: "Content-Range",
+                value: "bytes=0-16383/10000000",
+            },
+            Call::Header {
+                file,
+                key: "Last-Modified",
+                value: last_modified,
+            },
+            Call::Header {
+                file,
+                key: "ETag",
+                value: "some_etag",
+            },
+        ]
+    };
+    let mut calls = vec![Call::Open {
+        file: 1,
+        url,
+        offset: 0,
+        size: 16384,
+        response: head.clone(),
+    }];
+    calls.extend(headers(1, "some_date"));
+    calls.push(Call::Close { file: 1 });
+    let after_creation = calls.len();
+    calls.push(Call::Open {
+        file: 2,
+        url,
+        offset: 524288,
+        size: 278528,
+        response: tile(1.25),
+    });
+    calls.extend(headers(2, "some_date CHANGED!!!!"));
+    calls.push(Call::Close { file: 2 });
+    calls.push(Call::Open {
+        file: 3,
+        url,
+        offset: 0,
+        size: 16384,
+        response: head,
+    });
+    calls.extend(headers(3, "some_date CHANGED!!!!"));
+    let after_transform = calls.len();
+    calls.push(Call::Close { file: 3 });
+    let after_destroy = calls.len();
+
+    let exchange = Arc::new(Exchange::new(calls));
+    let mut builder = ProjBuilder::new();
+    builder.grid_cache_enable(false).expect("cache off");
+    builder.enable_network(true).expect("network on");
+    let callbacks: Arc<dyn NetworkCallbacks> = Arc::<Exchange>::clone(&exchange);
+    builder.set_network_callbacks(callbacks);
+    let definition = format!("+proj=vgridshift +grids={url} +multiplier=1");
+
+    let proj = builder
+        .proj(&definition)
+        .expect("the grid is read at creation");
+    exchange.reached(after_creation);
+
+    // Radians: the operation has no unit conversion, as the C++ `PJ_COORD` input.
+    let longitude = 2.0 / 180.0 * PI;
+    let (_, _, z) = proj
+        .convert_xyz(longitude, 49.0 / 180.0 * PI, 0.0)
+        .expect("lat 49 is in the grid");
+    assert_eq!(z, 1.25);
+    exchange.reached(after_transform);
+
+    drop(proj);
+    exchange.reached(after_destroy);
+}
+
 /// The operation of a CRS pair whose grid is unreachable is created. Forward, forward, then
 /// inverse, each transform gives a network error, and the last used operation is the candidate
 /// PROJ names in `description`.

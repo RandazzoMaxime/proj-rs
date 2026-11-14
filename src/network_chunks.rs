@@ -34,6 +34,12 @@ impl ChunkCache {
         self.chunks.get(url)?.get(&index).map(Vec::as_slice)
     }
 
+    /// Forgets every chunk, of every file (`clearMemoryCache` in PROJ 9.9.0).
+    fn clear(&mut self) {
+        self.chunks.clear();
+        self.bytes = 0;
+    }
+
     /// Stores the chunks of `data`, which starts at chunk `first`.
     fn store(&mut self, url: &str, first: u64, data: &[u8]) {
         let file = self.chunks.entry(url.to_owned()).or_default();
@@ -58,6 +64,15 @@ impl ChunkCache {
     }
 }
 
+/// The properties of a file that its replies give: the size from `Content-Range`, and the
+/// `Last-Modified` and `ETag` headers (empty when absent). PROJ's `FileProperties`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Validators {
+    size: u64,
+    last_modified: String,
+    etag: String,
+}
+
 /// One remote file read through the callbacks. Dropping it closes its handle.
 #[derive(Debug)]
 pub(crate) struct RemoteFile {
@@ -66,6 +81,12 @@ pub(crate) struct RemoteFile {
     handle: Option<NetworkHandle>,
     /// The size of the file, from `Content-Range`. A reply that ends early also sets it.
     total: Option<u64>,
+    /// The properties of the first reply that gave a size. A later reply that differs means the
+    /// file changed while it was open.
+    baseline: Option<Validators>,
+    /// Set once a reply differs from `baseline`: the chunks were dropped, and the file is not
+    /// compared again (PROJ's `m_hasChanged`).
+    changed: bool,
 }
 
 impl RemoteFile {
@@ -75,12 +96,20 @@ impl RemoteFile {
             callbacks,
             handle: None,
             total: None,
+            baseline: None,
+            changed: false,
         }
     }
 
     /// The size of the file, once a reply has given it.
     pub(crate) fn size(&self) -> Option<u64> {
         self.total
+    }
+
+    /// Whether a reply showed that the file changed while it was open. The chunks of the reply
+    /// that showed it are the new file's, the chunks read before are gone.
+    pub(crate) fn has_changed(&self) -> bool {
+        self.changed
     }
 
     fn cache(&self) -> MutexGuard<'_, ChunkCache> {
@@ -102,11 +131,16 @@ impl RemoteFile {
         let end = offset.saturating_add(u64::try_from(len).unwrap_or(u64::MAX));
         let first = offset / chunk;
         let last = (end - 1) / chunk;
+        // The chunks of the range as they are before the fetch: a fetch that finds the file
+        // changed empties the cache, and this read must still get its chunks.
+        let cached: Vec<Option<Vec<u8>>> = (first..=last)
+            .map(|index| self.cache().get(&self.url, index).map(<[u8]>::to_vec))
+            .collect();
         let fetched = match self.missing_span(first, last) {
             Some((low, high)) => Some((low, self.fetch(low, high)?)),
             None => None,
         };
-        Ok(self.assemble(offset, end, first, last, fetched.as_ref()))
+        Ok(self.assemble(offset, end, first, last, fetched.as_ref(), &cached))
     }
 
     /// The first and the last missing chunk of `first..=last`, when there is one.
@@ -155,24 +189,39 @@ impl RemoteFile {
         Ok(data)
     }
 
-    /// The headers after a call. `Content-Range` gives the size of the file. `Last-Modified` and
-    /// `ETag` are asked as PROJ asks them, but not compared: PROJ uses them to notice a file that
-    /// changes while it is open, which is not reproduced here.
+    /// The headers after a call, asked in PROJ's order: `Content-Range`, then `Last-Modified` and
+    /// `ETag`. `Content-Range` gives the size of the file. The first reply that gives a size sets
+    /// the baseline; a later one that differs in size, `Last-Modified` or `ETag` means the file
+    /// changed while it was open. The chunks are then dropped, as `clearMemoryCache` does in PROJ.
     fn observe(&mut self, handle: NetworkHandle) {
         let imp = self.callbacks.imp();
-        if let Some(total) = imp
+        let total = imp
             .header(handle, "Content-Range")
-            .and_then(|value| content_range_total(&value))
-        {
-            self.total = Some(total);
+            .and_then(|value| content_range_total(&value));
+        let last_modified = imp.header(handle, "Last-Modified");
+        let etag = imp.header(handle, "ETag");
+        let Some(size) = total else {
+            return;
+        };
+        self.total = Some(size);
+        let now = Validators {
+            size,
+            last_modified: last_modified.unwrap_or_default(),
+            etag: etag.unwrap_or_default(),
+        };
+        match &self.baseline {
+            None => self.baseline = Some(now),
+            Some(first) if *first != now && !self.changed => {
+                self.changed = true;
+                self.cache().clear();
+            }
+            Some(_) => {}
         }
-        let _last_modified = imp.header(handle, "Last-Modified");
-        let _etag = imp.header(handle, "ETag");
     }
 
     /// The bytes of `offset..end`, from the chunks `first..=last`. The chunks of the call that
-    /// fetched them (`fetched`, from its first chunk) come first; the others come from the cache.
-    /// Stops at the end of the file.
+    /// fetched them (`fetched`, from its first chunk) come first; the others are in `cached`, as
+    /// they were before the call. Stops at the end of the file.
     fn assemble(
         &self,
         offset: u64,
@@ -180,9 +229,9 @@ impl RemoteFile {
         first: u64,
         last: u64,
         fetched: Option<&(u64, Vec<u8>)>,
+        cached: &[Option<Vec<u8>>],
     ) -> Vec<u8> {
         let chunk = chunk_bytes();
-        let cache = self.cache();
         let mut out = Vec::new();
         for index in first..=last {
             let piece: &[u8] = match fetched {
@@ -190,7 +239,11 @@ impl RemoteFile {
                     let from = usize::try_from((index - low) * chunk).unwrap_or(usize::MAX);
                     &data[from..(from + CHUNK_SIZE).min(data.len())]
                 }
-                _ => match cache.get(&self.url, index) {
+                _ => match usize::try_from(index - first)
+                    .ok()
+                    .and_then(|position| cached.get(position))
+                    .and_then(Option::as_deref)
+                {
                     Some(piece) => piece,
                     None => break,
                 },
