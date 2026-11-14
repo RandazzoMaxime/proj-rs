@@ -164,6 +164,13 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
   et la chaîne `+proj=pipeline` pour les deux autres (grilles absentes). La description de PROJ
   est le nom de l'opération, vérifié par la liste des noms.
 
+- **Sonde `initial_check` non portée.** Le TEST C++ n'a aucune assertion. Il pose
+  `networkAccessOK` par un `GET` sur `cdn.proj.org` (`Range: 0-1`, code 206), et seul
+  `basic` le lit. Pas de test Rust : il n'y a pas de valeur PROJ à comparer, et une sonde
+  CDN ne peut pas tourner dans le bac à sable (proxy en 403). Le défaut
+  `https://cdn.proj.org` est confirmé contre `libproj` 9.9.0 (`proj_context_get_url_endpoint`).
+  Détail : `docs/AUDIT-network.md`, ligne 1.
+
 ## Ce qui reste ouvert
 
 - Lecture par morceaux pour les GeoTIFF compressés (deflate), à prédicteur ou planaires : ils
@@ -199,7 +206,17 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
   (consigne : ne pas éditer le ledger). Le retrait suit avec `UPDATE_DOCS=1 cargo test --test
   docs_in_sync`.
 - `projsync` : non commencé.
-- `basic` (partie « on ») : `fr_ign_ntf_r93.tif` absent du dépôt et de la référence.
+- `basic` (partie « on ») : `fr_ign_ntf_r93.tif` absent du dépôt et de la référence. Sa
+  condition `networkAccessOK` vient de `initial_check`, non porté (voir ci-dessus).
+- `download_whole_files` : non porté, et c'est une cause de données, pas de code. Le test attend
+  `z` = 36.5909996032715 (lon 12, lat 56) sur `dk_sdfe_dvr90.tif`, téléchargé depuis
+  `cdn.proj.org`. Ce fichier n'est ni dans le dépôt, ni dans `target/proj-reference`, ni sur le
+  système ; le CDN est refusé (403 au `CONNECT`, mesuré avec `libproj` 9.9.0). Sans les octets,
+  la valeur et les trois rappels de progression ne se mesurent pas, et un fichier de
+  substitution donnerait des valeurs non issues de PROJ. Il manque aussi l'API de téléchargement
+  (`proj_is_download_needed`, `proj_download_file` avec progression, `pj_find_file`), le
+  `lookForGridInfo` public et `proj_grid_info` avec contexte réseau. Détail ligne à ligne :
+  `docs/AUDIT-network.md`, section « download_whole_files ».
 
 ## Commandes
 

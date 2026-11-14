@@ -129,6 +129,13 @@ cargo test --lib projinfo               # 7 tests, verts (describe reçoit None 
 
 ## Hors de ce lot
 
-- `works_without_cb` : pas d'équivalent Rust (pas de callback).
+- `works_without_cb` : non porté, par choix. Son assertion (`res == 0` pour
+  `EPSG:25832 -o WKT1_GDAL`, `cb` et `user_data` nuls) est déjà `simple_returns_zero`, avec le
+  même `argv` et le même attendu. Le cas « cb nul » n'a pas de forme Rust : `run` ne prend pas de
+  callback, et un paramètre `Option<callback>` ajouté pour ce seul test créerait une deuxième voie
+  de sortie à côté de `Report`. Un changement d'API ne se justifie que si un usage réel demande
+  un callback.
+  Référence PROJ 9.9.0 : un programme C qui appelle `projinfo(NULL, 3, argv, NULL, NULL)`, compilé
+  contre `libproj.so` (`PROJ_DATA` = données de la référence), rend `res=0` et sort normalement.
 - `docs/UNPORTED-UNIT.md`, `README.md`, `ROADMAP.md`, `docs/UNIT-TRIAGE.md` : non modifiés ici,
   ils sont régénérés avec `UPDATE_DOCS=1 cargo test --test docs_in_sync`.
