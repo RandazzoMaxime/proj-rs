@@ -123,6 +123,7 @@ fn command() -> ExitCode {
         &build_source,
         &build_target,
         area,
+        opts.area_name.as_deref(),
         opts.only_best,
         filter,
         opts.authority.as_deref(),
@@ -581,6 +582,7 @@ fn build_engine(
     source: &str,
     target: &str,
     area: Option<Area>,
+    area_name: Option<&str>,
     only_best: Option<bool>,
     filter: CandidateFilter,
     authority: Option<&str>,
@@ -592,13 +594,33 @@ fn build_engine(
     // (`proj_create_crs_to_crs_from_pj`), not its expanded PROJ string.
     let iso_source = init_side_as_code(source);
     let iso_target = init_side_as_code(target);
-    if area.is_none() && iso_serves_pair(source, target) {
-        match proj_rs::iso19111::select_alternatives_with_authority(
+    // `--bbox` and `--area` are the area of interest of `proj_create_crs_to_crs_from_pj`: the
+    // same selection runs with it (`proj_operation_factory_context_set_area_of_interest`, and
+    // `..._set_area_of_interest_name` for `--area`, which keeps the description of the extent).
+    let area_domain = match (area, area_name) {
+        (Some(area), name) => {
+            let named = name.and_then(proj_rs::iso19111::area_of_interest_from_name);
+            match named {
+                Some(domain) => Some(domain),
+                None => {
+                    match proj_rs::BoundingBox::create(area.west, area.south, area.east, area.north)
+                    {
+                        Ok(bbox) => Some(proj_rs::ObjectDomain::from_bounding_box(bbox)),
+                        Err(error) => return Err(InitError::Cause(error.to_string())),
+                    }
+                }
+            }
+        }
+        (None, _) => None,
+    };
+    if iso_serves_pair(source, target) {
+        match proj_rs::iso19111::select_alternatives_in_area(
             &iso_source,
             &iso_target,
             policy_of(only_best),
             filter,
             authority,
+            area_domain,
         ) {
             Ok(Selection::Several(alternatives)) => {
                 for line in alternatives.creation_log() {

@@ -85,13 +85,14 @@ pub(crate) use pipeline::Pipeline;
 pub use pipeline::{ProjLines, ProjStringLayout, TmercExport};
 pub use projstring::{create_crs_from_proj_string, create_crs_from_proj_string_with_database};
 pub use select::{
+    area_of_interest_from_name, best_pipeline_logged, best_pipeline_logged_with_authority,
+    select_alternatives, select_alternatives_in_area, select_alternatives_with_authority,
+    PipelineLog, Selection,
+};
+pub use select::{
     best_pipeline, best_pipeline_filtered, best_pipeline_filtered_with_authority,
     best_pipeline_with, best_pipeline_with_authority, only_best_default, Ballpark, BestOperation,
     CandidateFilter, OnlyBest,
-};
-pub use select::{
-    best_pipeline_logged, best_pipeline_logged_with_authority, select_alternatives,
-    select_alternatives_with_authority, PipelineLog, Selection,
 };
 pub(crate) use select::{facade_candidates, same_datum_noop, FacadeCandidates};
 pub use wkt::{

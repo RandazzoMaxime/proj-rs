@@ -28,8 +28,8 @@ use super::model::{
 };
 use super::suggest::{area_of_use, priority_operation};
 use super::{
-    create_from_user_input, CoordinateOperationContext, CoordinateOperationFactory,
-    DatabaseContext, FactoryError, ProjLines,
+    create_from_user_input, AuthorityFactory, CoordinateOperationContext,
+    CoordinateOperationFactory, DatabaseContext, FactoryError, NameMatch, ProjLines,
 };
 use crate::engine::{Coord, Operation};
 use crate::gridpath;
@@ -1210,6 +1210,28 @@ pub fn select_alternatives_with_authority(
     filter: CandidateFilter,
     authority: &str,
 ) -> Result<Selection, FactoryError> {
+    select_alternatives_in_area(source, target, policy, filter, authority, None)
+}
+
+/// [`select_alternatives_with_authority`] with an area of interest, the box of
+/// `proj_area_set_bbox` that `cs2cs --bbox` and `--area` pass to
+/// `proj_create_crs_to_crs_from_pj` (`proj_operation_factory_context_set_area_of_interest`, and
+/// `..._set_area_of_interest_name` for `--area`, whose domain keeps the description of the named
+/// extent: `FilterResults` then keeps only the operations whose extent has that description,
+/// `coordinateoperationfactory.cpp:1313-1346`). The operations are filtered and sorted with that
+/// area, and the sort extents carry it.
+///
+/// # Errors
+///
+/// As [`select_alternatives`]; also a box whose bounds are not a valid box.
+pub fn select_alternatives_in_area(
+    source: &str,
+    target: &str,
+    policy: BestPolicy,
+    filter: CandidateFilter,
+    authority: &str,
+    area: Option<ObjectDomain>,
+) -> Result<Selection, FactoryError> {
     let db = DatabaseContext::create()?;
     let source_crs = create_from_user_input(source, &db)?;
     let target_crs = create_from_user_input(target, &db)?;
@@ -1230,6 +1252,7 @@ pub fn select_alternatives_with_authority(
     };
     let mut context = CoordinateOperationContext::create(&db, authority);
     context.set_spatial_criterion(SpatialCriterion::PartialIntersection);
+    context.set_area_of_interest(area);
     let operations = CoordinateOperationFactory::create()
         .create_operations(&source_crs, &target_crs, &context)?
         .into_iter()
@@ -1403,6 +1426,29 @@ pub(crate) struct FacadeCandidates {
     /// The source and the target CRS, as read from their names.
     pub(crate) source: Crs,
     pub(crate) target: Crs,
+}
+
+/// The area of interest `proj_operation_factory_context_set_area_of_interest_name` makes of an
+/// area name (`c_api.cpp:8153-8185`): the extent of the one area of use of that name, with its
+/// description. `None` when no extent, or several, carry the name.
+#[must_use]
+pub fn area_of_interest_from_name(name: &str) -> Option<ObjectDomain> {
+    let db = DatabaseContext::create().ok()?;
+    let factory = AuthorityFactory::create(&db, "");
+    let mut matches = factory
+        .list_area_of_use_from_name(name, NameMatch::Exact)
+        .ok()?;
+    if matches.len() != 1 {
+        matches = factory
+            .list_area_of_use_from_name(name, NameMatch::Approximate)
+            .ok()?;
+    }
+    match matches.as_slice() {
+        [(authority, code)] => AuthorityFactory::create(&db, authority.as_str())
+            .create_extent(code)
+            .ok(),
+        _ => None,
+    }
 }
 
 /// [`FacadeCandidates`] of `source` to `target`.

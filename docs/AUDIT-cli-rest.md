@@ -30,8 +30,7 @@ Cas ouverts, avec la cause exacte :
 
 | Cas | Cause |
 |---|---|
-| `test_cs2cs_ignf.yaml#9`, `#17` (`+init=IGNF:LAMBE` vers LAMB93 et GEOPORTALFXX, points hors de la grille NTF) | PROJ (`trans.cpp`, repli sur la première candidate sans grille) utilise le candidat `towgs84` du CRS lié (`BoundCRS`) des `+init=`. La liste de candidats de ce port est celle des CRS de la base ; ajouter le CRS lié change l'ordre des candidats à grille (essai : 19/34 au lieu de 32/34). |
-| `test_cs2cs_datumfile.yaml#3` (`--bbox -141.01,40.04,-47.74,83.17 NAD27 NAD83`) | Le chemin `facade` (sensible à l'aire) donne la valeur attendue, mais changerait `--area` (`test_cs2cs_various.yaml#4` de datumfile, le point hors aire doit donner `*`). Le raccourci EPSG (`legacy-epsg`) ignore l'aire et choisit une grille hors de la zone. Pas de sélection par aire qui donne les deux comportements. |
+| (aucun) | `test_cs2cs_ignf.yaml#9`, `#17` et `test_cs2cs_datumfile.yaml#3` sont portés : les causes relevées ici (candidat `towgs84` du CRS lié ; chemin `facade` et `--area`) étaient fausses. Voir `docs/PORTING-cs2cs-ignf-area.md`. |
 
 ## Écarts de `proj`, `geod` et `projinfo` relevés
 

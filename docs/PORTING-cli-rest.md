@@ -69,8 +69,6 @@ Sources : PROJ 9.9.0 `src/apps/proj.cpp`, `geod.cpp`, `geod_set.cpp`, `cs2cs.cpp
 
 | Écart | Cause exacte |
 |---|---|
-| `test_cs2cs_ignf.yaml#9`, `#17` | Voir AUDIT : candidat `towgs84` du CRS lié absent de la liste des candidats. |
-| `test_cs2cs_datumfile.yaml#3` (`--bbox`) | Voir AUDIT : le chemin `facade` est sensible à l'aire mais change `--area`. |
 | `proj -S` omega à la latitude -80 (`100 -80`, `+ellps=GRS80` Mercator) | PROJ dérive la projection unitaire (`fwd` sans `fwd_finalize`, `deriv.cpp`) ; ici la dérivée passe par les mètres de `forward`. Les points conformes donnent 0, comme PROJ ; à -80 l'écart est 5e-7 rad. |
 | `proj -b/-i/-o` : derniers bits | L'ordre des opérations de `tmerc`/`utm` inverse et de Mercator diffère de PROJ : écart d'un à deux ulps, non visible en texte. |
 | `proj -v`, `-V` | Non porté : le dump de moniteur (`pj_pr_list`, `vprocess`) est une sortie interne de PROJ. |
