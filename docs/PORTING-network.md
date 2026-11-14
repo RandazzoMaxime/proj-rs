@@ -17,7 +17,7 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
 | `proj_trans_get_last_used_operation`, `proj_pj_info` | `Proj::last_used_operation`, `Proj::proj_info` (`candidate_name`) |
 | `DatabaseContext::lookForGridInfo` (`factory.cpp:3400`) | `src/iso19111/factory.rs` (`look_for_grid_info`), `src/iso19111/select.rs` (`unrecorded_grid`) |
 | `src/apps/gie.cpp` (`network_error`) | `src/gie.rs` (`errno_name`) |
-| `test/unit/test_network.cpp` (26 TEST) | `tests/unit_network_core.rs` (7 cas, dont `custom` et `getfilesize`), `tests/unit_network_endpoint_env.rs` (1 cas), `tests/unit_network_local.rs` (2 cas), `src/network.rs` `callback_tests` (2 tests hors liste) |
+| `test/unit/test_network.cpp` (26 TEST) | `tests/unit_network_core.rs` (8 cas, dont `custom`, `getfilesize` et `simul_read_range_error`), `tests/unit_network_endpoint_env.rs` (1 cas), `tests/unit_network_local.rs` (2 cas), `src/network.rs` `callback_tests` (2 tests hors liste) |
 | serveur de test local (remplace `cdn.proj.org`) | `tests/net_support/mod.rs` |
 | `src/apps/projsync.cpp`, `test/cli/test_projsync.sh` | non porté (voir l'audit) |
 
@@ -27,6 +27,9 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
   Ici, `Proj::convert_*` et `project` renvoient `Err(ProjError::Network)`, c'est-à-dire une
   valeur typée au lieu d'un sentinelle et d'un errno global. `TransformError::NetworkUnavailable`
   est le type interne, traduit en `ProjError::Network` au niveau de `Proj`.
+  Mesuré pour une tuile refusée par `read_range` (`simul_read_range_error`, `libproj` 9.9.0) :
+  `HUGE_VAL`, `proj_errno` 4099, et aucun appel après le `read_range` refusé (ni en-tête, ni
+  nouvelle lecture) ; le handle reste ouvert jusqu'à `proj_destroy`.
 - **Construction paresseuse, seulement pour les candidats.** PROJ crée une opération dont
   une grille nommée manque et est téléchargeable, puis retente le téléchargement à chaque
   transformation. Ici, cela ne vaut que pour les candidats d'une paire de CRS
@@ -87,8 +90,7 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
 - Lecture paresseuse hors `gridshift` : `read_resource` (modèles `deformation`, `tinshift`,
   `defmodel`, `nkg`) lit encore les grilles entières (`fetch_missing`, `fetch_with_callbacks`).
 - Validation de la fraîcheur d'un fichier ouvert (`ETag`, `Last-Modified`) : bloque
-  `simul_file_change_while_opened`. `simul_read_range_error` est lisible par le même chemin,
-  non porté ici.
+  `simul_file_change_while_opened`.
 - Validation de cache par `ETag` et `Last-Modified`.
 - Cache SQLite : TTL, taille max, verrou, `proj_grid_cache_clear` (lot cache, autre agent).
 - API de téléchargement explicite (`is_download_needed`, `download_file`) et API de fichiers
