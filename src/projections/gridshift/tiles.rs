@@ -146,6 +146,22 @@ impl LazyIfd {
         })
     }
 
+    /// Whether the file of this image changed while it was open (see `RemoteFile::has_changed`).
+    fn has_changed(&self) -> bool {
+        self.file
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .has_changed()
+    }
+
+    /// Closes the file of this image, if it is open. A tile read after this opens it again.
+    pub(super) fn release(&self) {
+        self.file
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .release();
+    }
+
     /// The number of samples a tile holds in the file: a whole tile, or for a strip the rows that
     /// the image has in it.
     fn expected_len(&self, tile: usize) -> usize {
@@ -255,4 +271,38 @@ fn passes<T>(body: &impl Fn() -> Result<T, TransformError>) -> Result<T, Transfo
         }
     }
     Err(TransformError::NetworkUnavailable)
+}
+
+/// [`with_tiles`] for a grid whose file may change while it is open. The second value is `true`
+/// when a tile read found its file changed: the first value is then not an answer, and the grid
+/// must be loaded again before the point is run again (PROJ's `shouldRetry`).
+pub(super) fn with_tiles_watch<T>(
+    body: impl Fn() -> Result<T, TransformError>,
+) -> (Result<T, TransformError>, bool) {
+    let outer = take_missing();
+    let answer = passes_watch(&body);
+    MISSING.with(|missing| *missing.borrow_mut() = outer);
+    answer
+}
+
+/// [`passes`], which stops at the first tile read that finds its file changed.
+fn passes_watch<T>(
+    body: &impl Fn() -> Result<T, TransformError>,
+) -> (Result<T, TransformError>, bool) {
+    for _ in 0..MAX_PASSES {
+        let answer = body();
+        let missing = take_missing();
+        if missing.is_empty() {
+            return (answer, false);
+        }
+        for (lazy, tile) in missing {
+            if lazy.load(tile).is_err() {
+                return (Err(TransformError::NetworkUnavailable), false);
+            }
+            if lazy.has_changed() {
+                return (Err(TransformError::NetworkUnavailable), true);
+            }
+        }
+    }
+    (Err(TransformError::NetworkUnavailable), false)
 }

@@ -14,13 +14,13 @@ mod tiles;
 
 use std::collections::BTreeMap;
 use std::f64::consts::{PI, TAU};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use crate::angle::adjlon;
 use crate::engine::{
     cartesian_to_geodetic, Coord, CreateError, Frame, IoKind, Params, Step, TransformError,
 };
-use tiles::{with_tiles, Samples};
+use tiles::{with_tiles, with_tiles_watch, Samples};
 
 const REL: f64 = 1e-5;
 const ARCSEC: f64 = (PI / 180.0) / 3600.0;
@@ -362,12 +362,63 @@ struct Horizontal {
 }
 
 struct Vertical {
-    sets: Vec<GridSet>,
+    sets: VerticalGrids,
     multiplier: f64,
     t_epoch: f64,
     t_final: f64,
     a: f64,
     es: f64,
+}
+
+/// The grid sets of a vertical shift, which are loaded again when a grid file changes while it is
+/// open: PROJ's `VerticalShiftGridSet::reopen`. They are loaded at the first transform when they
+/// are not in force, in the network context the step was built in.
+struct VerticalGrids {
+    grids: String,
+    network: crate::network::GridContext,
+    current: RwLock<Option<Arc<[GridSet]>>>,
+}
+
+impl VerticalGrids {
+    fn new(grids: &str, sets: Vec<GridSet>) -> Self {
+        Self {
+            grids: grids.to_owned(),
+            network: crate::network::context(),
+            current: RwLock::new(Some(sets.into())),
+        }
+    }
+
+    /// The sets in force, loaded first when they are not.
+    fn current(&self) -> Result<Arc<[GridSet]>, TransformError> {
+        let read = self.current.read().unwrap_or_else(PoisonError::into_inner);
+        if let Some(sets) = read.as_ref() {
+            return Ok(Arc::clone(sets));
+        }
+        drop(read);
+        let mut slot = self.current.write().unwrap_or_else(PoisonError::into_inner);
+        if let Some(sets) = slot.as_ref() {
+            return Ok(Arc::clone(sets));
+        }
+        let sets: Arc<[GridSet]> = self.load()?.into();
+        *slot = Some(Arc::clone(&sets));
+        Ok(sets)
+    }
+
+    /// Loads the sets again. The sets in force are dropped first, so that their files close before
+    /// the files of the new sets open, as PROJ does. When the load fails, nothing is in force, and
+    /// the next transform tries again.
+    fn reload(&self) -> Result<(), TransformError> {
+        let mut slot = self.current.write().unwrap_or_else(PoisonError::into_inner);
+        *slot = None;
+        let sets: Arc<[GridSet]> = self.load()?.into();
+        *slot = Some(sets);
+        Ok(())
+    }
+
+    fn load(&self) -> Result<Vec<GridSet>, TransformError> {
+        crate::network::with_context(&self.network, || load_names(&self.grids, open_vertical))
+            .map_err(|_| TransformError::NetworkUnavailable)
+    }
 }
 
 struct Generic {
@@ -391,7 +442,7 @@ fn horizontal(params: &Params, frame: &Frame, grids: &str) -> Result<Horizontal,
 fn vertical(params: &Params, frame: &Frame, grids: &str) -> Result<Vertical, CreateError> {
     let sets = load_all(grids, open_vertical)?;
     Ok(Vertical {
-        sets,
+        sets: VerticalGrids::new(grids, sets),
         multiplier: params.number("multiplier")?.unwrap_or(-1.0),
         t_epoch: params.number("t_epoch")?.unwrap_or(0.0),
         t_final: parse_t_final(params)?,
@@ -471,7 +522,22 @@ fn f64_u64(value: u64) -> f64 {
     }
 }
 
+/// The grid sets of `text` at creation: their files are closed once read, as PROJ closes the file
+/// of a grid it has read at creation. A transform opens them again when it needs a tile.
 fn load_all(
+    text: &str,
+    open: fn(&str) -> Result<GridSet, Fail>,
+) -> Result<Vec<GridSet>, CreateError> {
+    let sets = load_names(text, open)?;
+    for set in &sets {
+        set.release_remote();
+    }
+    Ok(sets)
+}
+
+/// The grid sets of `text`, one per grid name, as they are opened: their files stay as the open
+/// left them.
+fn load_names(
     text: &str,
     open: fn(&str) -> Result<GridSet, Fail>,
 ) -> Result<Vec<GridSet>, CreateError> {
@@ -606,7 +672,6 @@ fn read_grid(name: &str) -> Result<Source, Fail> {
         .map_err(|_| Fail::Missing)?;
     if geotiff::is_tiff(&head) {
         if let Ok(Some(ifds)) = geotiff::load_remote(&file) {
-            lock_file(&file).release();
             return Ok(Source::Tiles(ifds));
         }
     }
@@ -639,6 +704,15 @@ impl GridSet {
             roots: Vec::new(),
             first_root: None,
             null: false,
+        }
+    }
+
+    /// Closes the remote files of the tiles of this set, if they are open.
+    fn release_remote(&self) {
+        for node in &self.nodes {
+            if let Samples::Lazy(lazy) = &node.samples {
+                lazy.release();
+            }
         }
     }
 
@@ -1856,11 +1930,11 @@ impl Horizontal {
 
 impl Step for Vertical {
     fn forward(&self, coord: Coord) -> Result<Coord, TransformError> {
-        with_tiles(|| self.shift(coord, Way::Forward))
+        self.transform(coord, Way::Forward)
     }
 
     fn inverse(&self, coord: Coord) -> Result<Coord, TransformError> {
-        with_tiles(|| self.shift(coord, Way::Inverse))
+        self.transform(coord, Way::Inverse)
     }
 
     fn input_kind(&self) -> IoKind {
@@ -1876,17 +1950,38 @@ impl Step for Vertical {
     }
 }
 
+/// The most times one point is run again on grids loaded again. PROJ has no bound, and stops when
+/// a grid no longer changes under the transform.
+const MAX_RELOADS: usize = 8;
+
 impl Vertical {
-    fn shift(&self, coord: Coord, way: Way) -> Result<Coord, TransformError> {
+    /// A point, with the grids in force. A tile read that finds its file changed while it was open
+    /// gives no answer: the grids are loaded again and the point is run again, as PROJ's
+    /// `grid_apply_internal` does with `shouldRetry`.
+    fn transform(&self, coord: Coord, way: Way) -> Result<Coord, TransformError> {
+        for _ in 0..MAX_RELOADS {
+            let sets = self.sets.current()?;
+            let (answer, changed) = with_tiles_watch(|| self.shift(&sets, coord, way));
+            if !changed {
+                return answer;
+            }
+            // The sets in force are released before the reload, so that their files close first.
+            drop(sets);
+            self.sets.reload()?;
+        }
+        Err(TransformError::NetworkUnavailable)
+    }
+
+    fn shift(&self, sets: &[GridSet], coord: Coord, way: Way) -> Result<Coord, TransformError> {
         let inverse = matches!(way, Way::Inverse);
         if !in_window(self.t_final, self.t_epoch, coord.t) {
             return Ok(coord);
         }
         let coord = geographic_in(coord)?;
-        if self.sets.is_empty() {
+        if sets.is_empty() {
             return Ok(coord);
         }
-        let Some(located) = find_vertical(&self.sets, coord.x, coord.y) else {
+        let Some(located) = find_vertical(sets, coord.x, coord.y) else {
             return Err(TransformError::OutsideGrid);
         };
         let Located::At(set, id) = located else {

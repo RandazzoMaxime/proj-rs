@@ -35,8 +35,9 @@ cache en fichiers dans le répertoire utilisateur (`grid_cache_enable`,
 
 Ce qui manque : lecture paresseuse des seuls GeoTIFF à tuiles non compressés (les
 grilles en bandes, compressées, à bandes planaires, et les grilles non-TIFF
-restent lues entières), validation de cache par `ETag` et `Last-Modified`
-(les en-têtes sont demandés, pas comparés), cache SQLite (TTL, taille max, verrou :
+restent lues entières), validation de la fraîcheur d'un fichier ouvert par `ETag` et
+`Last-Modified` pour les autres étapes que `vgridshift` et pour le cache disque (seule
+`vgridshift` recharge, voir `docs/PORTING-network.md`), cache SQLite (TTL, taille max, verrou :
 lot cache, autre agent),
 API de téléchargement explicite, API de fichiers, façade des opérations
 (`proj_create_operations` et contexte de fabrique).
@@ -54,6 +55,7 @@ Tests de l'API existants, hors liste C++ : `tests/network_grid.rs`
 | `networking.getfilesize` | `tests/unit_network_core.rs::getfilesize` | porté : séquence d'appels de PROJ à l'identique (création : `open(url, 0, 16384)` sur une réponse de 550 octets, `Content-Range` à 4153510, trois en-têtes, `close` ; seconde création sur le même builder sans aucun appel). Le test ne transforme rien. Les bandes non compressées sont lues par morceaux, comme les tuiles ; voir `docs/PORTING-network.md`. |
 | `networking.simul_open_error` | `tests/unit_network_core.rs::simul_open_error_fails_creation_after_one_open` | porté : une seule ouverture `(url, 0, 16384)`, erreur, pas de création |
 | `networking.simul_read_range_error` | `tests/unit_network_core.rs::simul_read_range_error` | porté : séquence de PROJ à l'identique, mesurée sur `libproj` 9.9.0 (harnais C, mêmes callbacks) : création `open(url, 0, 16384)`, trois en-têtes, `close` ; premier point (lat 49) `open(url, 524288, 278528)`, trois en-têtes, `z` 1.25 ; second point (lat -49) `read_range(3670016, 278528)` refusé « read range error », puis aucun appel (pas d'en-tête), `z` `HUGE_VAL` et `proj_errno` 4099 (`PROJ_ERR_OTHER_NETWORK_ERROR`), port : `Err(ProjError::Network)` ; `close` à `proj_destroy`. Aucun changement d'implémentation : la lecture par tuiles de `custom` gère déjà l'erreur. |
+| `networking.simul_file_change_while_opened` | `tests/unit_network_core.rs::simul_file_change_while_opened` | porté : séquence de PROJ à l'identique, mesurée sur `libproj` 9.9.0 (programme C, callbacks qui journalisent, fixture `egm96_15_uncompressed_truncated.tif`) : création `open(url, 0, 16384)`, trois en-têtes, `close` ; transformation (lat 49) `open(url, 524288, 278528)`, trois en-têtes dont `Last-Modified` = `some_date CHANGED!!!!`, `close` du fichier 2, `open(url, 0, 16384)` du fichier 3, trois en-têtes ; `z` 1.25 ; `close` du fichier 3 à `proj_destroy`. Port : détection par `RemoteFile::observe`, rechargement de `vgridshift` (`VerticalGrids`) et second passage du point. Écarts de la fiche : `PORTING-network.md`. |
 | `networking.network_endpoint_env_variable` | `tests/unit_network_endpoint_env.rs::network_endpoint_env_variable` | porté : `PROJ_NETWORK_ENDPOINT` lu au builder, `EPSG:4269 -> EPSG:4152` construit, transformation en erreur réseau |
 | `networking.network_endpoint_api_and_not_reachable_gridshift` | `tests/unit_network_core.rs::endpoint_api_not_reachable_gridshift` | porté (`NAD83 to NAD83(HARN) (47)`, aller, aller, inverse) |
 | `networking.network_endpoint_api_and_not_reachable_hgridshift` | `tests/unit_network_core.rs::endpoint_api_not_reachable_hgridshift` | porté (`MGI to ETRS89 (8)`) |
@@ -76,7 +78,7 @@ l'extraction de la taille depuis `Content-Range`.
 | 5 | `getfilesize` | porté | Voir « Cas portés ». Mesuré avant le port : PROJ 9.9.0 fait `open(url, 0, 16384)`, `Content-Range`, `Last-Modified`, `ETag`, `close` à la création, puis aucun appel ; une transformation demande `open(url, 950272, 16384)` (sonde C). Le port lit les bandes à `StripOffsets`/`StripByteCounts` par morceaux, la dernière bande ne comptant que ses lignes, et `Content-Range` donne la taille même si la réponse est plus courte. Vérifié contre le fichier local, non commité : `test_hgrid_strip.tif` (4 lignes, bandes de 3, dernière bande d'une ligne) et `test_vgrid_bigendian.tif` (bande unique, gros-boutiste) donnent les mêmes bits sur un balayage du globe au degré (16 points dans la grille, aucun écart). |
 | 6 | `simul_open_error` | porté | Voir « Cas portés ». |
 | 7 | `simul_read_range_error` | porté | Voir « Cas portés ». |
-| 8 | `simul_file_change_while_opened` | écart | La validation par `ETag` / `Last-Modified` entre deux lectures manque : la crate demande ces en-têtes après chaque appel, sans les comparer. |
+| 8 | `simul_file_change_while_opened` | porté | Voir « Cas portés ». |
 | 9 | `curl_hgridshift` | écart | Grille CDN `fr_ign_gr3df97a.tif` absente du dépôt. Valeurs de référence : tentées avec le `proj` de référence sur `tests/gie/tests/test_hgrid_with_subgrid.tif` (et `test_hgrid_degree.tif`), refusées avec `could not find required grid(s)` quel que soit le chemin. Cause de ce refus non élucidée ; sans valeur PROJ, pas de port. |
 | 10 | `curl_vgridshift` | écart | Même cause que 9 (`egm08_25.tif`, absente ; pas de fixture de référence chargée par `proj`). |
 | 11 | `curl_vgridshift_vertcon` | écart | Même cause que 9 (`vertcone.tif`, absente). |
@@ -96,10 +98,10 @@ l'extraction de la taille depuis `Content-Range`.
 | 25 | `pyproj_issue_1192` | écart | `proj_create_operation_factory_context`, `proj_operation_factory_context_set_grid_availability_use`, `proj_coordoperation_is_instantiable` : aucune façade. La logique existe en Rust public (`CoordinateOperationFactory::create_operations`, `GridAvailabilityUse`, `Proj` candidats), mais pas branchée sur le contexte réseau du builder. |
 | 26 | `do_not_attempt_network_access_known_available_network_on` | écart | Même cause que 25 : `proj_create_operations` avec `PROJ_GRID_AVAILABILITY_KNOWN_AVAILABLE`, et le contrôle « aucune activité réseau » par callbacks, qui exige que la fabrique passe par le contexte du builder. |
 
-Compte : 26 TEST() C++ ; 10 portés (`curl_invalid_resource`, `simul_open_error`,
+Compte : 26 TEST() C++ ; 11 portés (`curl_invalid_resource`, `simul_open_error`,
+`simul_file_change_while_opened`,
 `simul_read_range_error`, `network_endpoint_env_variable`, `custom`, `getfilesize`, et les quatre
-`not_reachable`) ; 1 partiel (`basic`) ; 15 écarts, dont 5 du lot cache (17 à 21) et 1 à lecture
-par plages (8).
+`not_reachable`) ; 1 partiel (`basic`) ; 14 écarts, dont 5 du lot cache (17 à 21).
 
 ## projsync (`src/apps/projsync.cpp`, `test/cli/test_projsync.sh`) : écart total
 

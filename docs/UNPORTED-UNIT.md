@@ -27,7 +27,6 @@ and `PORT-NOTES-tests.md`.
 
 - `networking.initial_check`
 - `networking.basic`
-- `networking.simul_file_change_while_opened`
 - `networking.download_whole_files`
 - `networking.file_api`
 - `networking.proj_coordoperation_get_grid_used`
