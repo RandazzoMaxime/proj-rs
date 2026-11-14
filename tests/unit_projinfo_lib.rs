@@ -8,9 +8,11 @@
 //! (`projinfo_lib.cpp`, `buildObject`, the `strm.cerr` of the `catch`). `warning` reads
 //! `EPSG:4937 -o WKT1_GDAL`: a 3D geographic CRS cannot be written in WKT1, so the WARN line
 //! `Error when exporting to WKT1:GDAL: ...` is written and the status stays 0
-//! (`projinfo_lib.cpp`, the `strm.cwarn` of the WKT1:GDAL block).
+//! (`projinfo_lib.cpp`, the `strm.cwarn` of the WKT1:GDAL block). `use_ctx` runs two codes,
+//! `EPSG:25832` and `EPSG:25833`, on one context through `run_with_context`.
 
-use proj_rs::projinfo::{run, Status};
+use proj_rs::projinfo::{run, run_with_context, Status};
+use proj_rs::Context;
 
 const SIMPLE_ARGS: [&str; 3] = ["EPSG:25832", "-o", "WKT1_GDAL"];
 const ERROR_ARGS: [&str; 1] = ["doesnotwork"];
@@ -79,4 +81,30 @@ fn warning_found_error_when_exporting_wkt1_gdal() {
         "{:?}",
         report.warnings
     );
+}
+
+/// `TEST(projinfo_lib, use_ctx)`: one context serves two calls. Each call returns 0
+/// (`EXPECT_EQ(res, 0)`) and its INFO text holds `PROJCS["ETRS89 / UTM zone 3`
+/// (`EXPECT_EQ(found, true)`). The full names, as PROJ 9.9.0 writes them for these codes, are
+/// checked as well: EPSG:25832 is `ETRS89 / UTM zone 32N`, EPSG:25833 is `ETRS89 / UTM zone 33N`.
+#[test]
+fn use_ctx() {
+    let context = Context::new();
+    for (code, name) in [
+        ("EPSG:25832", "ETRS89 / UTM zone 32N"),
+        ("EPSG:25833", "ETRS89 / UTM zone 33N"),
+    ] {
+        let report = run_with_context(&context, &[code, "-o", "WKT1_GDAL"]);
+        assert_eq!(report.status, Status::Success, "{code}");
+        assert!(
+            report.output.contains("PROJCS[\"ETRS89 / UTM zone 3"),
+            "{}",
+            report.output
+        );
+        assert!(
+            report.output.contains(&format!("PROJCS[\"{name}\"")),
+            "{}",
+            report.output
+        );
+    }
 }
