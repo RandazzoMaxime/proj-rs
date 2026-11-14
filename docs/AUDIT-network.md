@@ -62,7 +62,7 @@ Tests de l'API existants, hors liste C++ : `tests/network_grid.rs`
 
 | TEST() C++ | Test Rust | Statut |
 |---|---|---|
-| `networking.basic` (réseau off par défaut, pipeline nul, aucune requête) | `tests/unit_network_local.rs::basic_network_is_off_by_default_and_makes_no_request` | partiel : la partie « réseau off » est portée ; la partie « activé par `PROJ_NETWORK=ON` puis par l'API » (valeurs `1.9992776848`) ne l'est pas, voir plus bas |
+| `networking.basic` (réseau off, `PROJ_NETWORK=ON`, retour à off, réseau par l'API, valeur) | `tests/unit_network_basic.rs::basic` | porté, contre le vrai CDN (`fr_ign_ntf_r93.tif`) : les quatre états et la valeur `1.9992776848` / `48.99993226`, mesurés avec `libproj` 9.9.0 ; section « networking.basic (porté) ». Hors liste : `tests/unit_network_local.rs::basic_network_is_off_by_default_and_makes_no_request` (aucune requête reçue par un serveur local). |
 | `networking.curl_invalid_resource` | `tests/unit_network_local.rs::curl_invalid_resource` | porté sur serveur local : 404, `proj` renvoie une erreur, une seule requête |
 | `networking.custom` | `tests/unit_network_core.rs::custom` | porté : séquence d'appels de PROJ à l'identique (création : `open(url, 0, 16384)`, trois en-têtes, `close` ; premier point (lat 49) : `open(url, 524288, 278528)`, trois en-têtes ; second point (lat -49) : `read_range(3670016, 278528)` sur le même handle, trois en-têtes ; `close` à `proj_destroy` ; seconde création sur le même builder sans aucun appel), valeurs `1.25`, `2.25`, `1.25`. La séquence des octets de tuile vient de `TileByteCounts` (262144 octets, couverture alignée à 278528) ; voir `docs/PORTING-network.md`. |
 | `networking.getfilesize` | `tests/unit_network_core.rs::getfilesize` | porté : séquence d'appels de PROJ à l'identique (création : `open(url, 0, 16384)` sur une réponse de 550 octets, `Content-Range` à 4153510, trois en-têtes, `close` ; seconde création sur le même builder sans aucun appel). Le test ne transforme rien. Les bandes non compressées sont lues par morceaux, comme les tuiles ; voir `docs/PORTING-network.md`. |
@@ -87,8 +87,8 @@ l'extraction de la taille depuis `Content-Range`.
 
 | # | TEST() C++ | Statut | Cause exacte si écart |
 |---|---|---|---|
-| 1 | `initial_check` | écart, sans objet (0 assertion) | Le TEST (lignes 90-111 de `test_network.cpp`) n'a aucun `ASSERT` ni `EXPECT` : c'est une sonde. `GET https://cdn.proj.org/fr_ign_ntf_r93.tif` avec `CURLOPT_RANGE` `0-1` (le format `%llu-%llu` de PROJ), puis `networkAccessOK = (code == 206)`. PROJ traite tout code `< 300` comme un succès pour une plage (`networkfilemanager.cpp`, lignes 1774 à 1786). Seule consommatrice : `basic` (lignes 143 et 169, `if (networkAccessOK)`), dont la partie « on » n'est pas portée (ligne 2). Rien à porter : sans assertion, il n'y a pas de valeur PROJ à reprendre. La sonde est reprise par `tests/unit_network_download.rs` (`cdn_reachable`, même requête, `206` attendu) : le CDN répond ici par `HTTPS_PROXY`, que le client HTTP suit depuis ce lot (`CONNECT`, `src/network.rs`). Le défaut de l'endpoint, `https://cdn.proj.org`, est confirmé contre le `libproj` 9.9.0 de référence (`proj_context_get_url_endpoint`, réseau désactivé par défaut). |
-| 2 | `basic` | partiel | Partie « off » portée (ligne 1 de la table). Partie « on » non portée : les valeurs `1.9992776848` / `48.9999322600` viennent de `fr_ign_ntf_r93.tif`, absent du dépôt et de `build/data` de la référence ; sans grille, aucune valeur PROJ à comparer. |
+| 1 | `initial_check` | écart, sans objet (0 assertion) | Le TEST (lignes 90-111 de `test_network.cpp`) n'a aucun `ASSERT` ni `EXPECT` : c'est une sonde. `GET https://cdn.proj.org/fr_ign_ntf_r93.tif` avec `CURLOPT_RANGE` `0-1` (le format `%llu-%llu` de PROJ), puis `networkAccessOK = (code == 206)`. PROJ traite tout code `< 300` comme un succès pour une plage (`networkfilemanager.cpp`, lignes 1774 à 1786). Consommatrice : `basic` (lignes 143 et 169, `if (networkAccessOK)`), portée en entier (ligne 2). Rien à porter : sans assertion, il n'y a pas de valeur PROJ à reprendre. La sonde est reprise par `tests/net_cdn/mod.rs` (`cdn_reachable`, même requête, `206` attendu), utilisée par `tests/unit_network_basic.rs`, `tests/unit_network_download.rs` et `tests/unit_network_file_api.rs` : le CDN répond ici par `HTTPS_PROXY`, que le client HTTP suit depuis ce lot (`CONNECT`, `src/network.rs`). Le défaut de l'endpoint, `https://cdn.proj.org`, est confirmé contre le `libproj` 9.9.0 de référence (`proj_context_get_url_endpoint`, réseau désactivé par défaut). |
+| 2 | `basic` | porté | Les quatre états et la valeur, contre le vrai CDN : voir « networking.basic (porté) ». |
 | 3 | `curl_invalid_resource` | porté | Voir « Cas portés ». |
 | 4 | `custom` | porté | Voir « Cas portés ». |
 | 5 | `getfilesize` | porté | Voir « Cas portés ». Mesuré avant le port : PROJ 9.9.0 fait `open(url, 0, 16384)`, `Content-Range`, `Last-Modified`, `ETag`, `close` à la création, puis aucun appel ; une transformation demande `open(url, 950272, 16384)` (sonde C). Le port lit les bandes à `StripOffsets`/`StripByteCounts` par morceaux, la dernière bande ne comptant que ses lignes, et `Content-Range` donne la taille même si la réponse est plus courte. Vérifié contre le fichier local, non commité : `test_hgrid_strip.tif` (4 lignes, bandes de 3, dernière bande d'une ligne) et `test_vgrid_bigendian.tif` (bande unique, gros-boutiste) donnent les mêmes bits sur un balayage du globe au degré (16 points dans la grille, aucun écart). |
@@ -114,7 +114,7 @@ l'extraction de la taille depuis `Content-Range`.
 | 25 | `pyproj_issue_1192` | porté | `tests/unit_network_core.rs::pyproj_issue_1192`. Pas de façade C : le contexte de fabrique est `CoordinateOperationContext` (public), avec `GridAvailabilityUse::IgnoreGridAvailability` et `SpatialCriterion::PartialIntersection`. La liste (10 opérations, noms et ordre) et les drapeaux d'instanciabilité (réseau off : 8 vraies ; réseau on : 10) sont ceux de `libproj` 9.9.0 mesurés avec une sonde C. Écarts et lacune (opérations à grille absente, réseau on) : `docs/PORTING-network.md`. |
 | 26 | `do_not_attempt_network_access_known_available_network_on` | porté | Voir « Cas portés dans ce lot ». La façade C reste absente : la fabrique passe par `ProjBuilder::create_operations`, qui applique le contexte du builder. |
 
-Compte : 26 TEST() C++ ; 16 portés (les 14 de la liste ci-dessus, `download_whole_files` et `file_api`) ; 1 partiel (`basic`) ; 9 écarts : `initial_check` (sans objet), les cinq du lot cache (17 à 21), et les trois `curl_*` du tableau (9 à 11), que le lot cache porte dans la section ci-dessus.
+Compte : 26 TEST() C++ ; 17 portés (les 16 déjà marqués « porté », plus `basic`, qui n'est plus partiel) ; 0 partiel ; 9 écarts : `initial_check` (sans objet), les cinq du lot cache (17 à 21), et les trois `curl_*` du tableau (9 à 11), que le lot cache porte dans la section ci-dessus.
 
 ## download_whole_files (porté)
 
@@ -251,6 +251,44 @@ l'état du trait. La lecture d'une grille fait un `seek` à la fin, un `seek` au
 `FileManager::open` pour `proj.ini`, `filemanager.cpp:2049`), au lieu des `seek`/`read` par tuiles de
 libtiff. Les opérations restées sur `std::fs` sont listées dans `docs/PORTING-network.md`.
 
+## networking.basic (porté)
+
+Le TEST C++ (`test/unit/test_network.cpp:121`) est porté en entier dans `tests/unit_network_basic.rs::basic`,
+contre le vrai fichier du CDN, `https://cdn.proj.org/fr_ign_ntf_r93.tif`. Il enchaîne quatre états du même
+pipeline (`hgridshift` sur ce fichier) et une valeur :
+
+| Ligne C++ | Assertion | Équivalent dans `tests/unit_network_basic.rs` | Statut |
+|---|---|---|---|
+| 90-111 | `initial_check` : `networkAccessOK` (`206` attendu) | `cdn_reachable()` (`tests/net_cdn`), sonde sans assertion | porté |
+| 133 | `ASSERT_EQ(P, nullptr)`, réseau off par défaut | `!network_enabled()`, `proj(PIPELINE).is_err()` | porté |
+| 143-145 | `PROJ_NETWORK=ON` : `ASSERT_NE(P, nullptr)` si `networkAccessOK` | `ProjBuilder::new()` après `PROJ_NETWORK=ON`, `is_ok()` si la sonde répond | porté |
+| 158 | `ASSERT_EQ(P, nullptr)` après `PROJ_NETWORK=` (vide) | `is_err()` sur un builder neuf | porté |
+| 169-175 | réseau par l'API : `ASSERT_NE(P, nullptr)` si `networkAccessOK`, sinon `ASSERT_EQ(P, nullptr)` et retour | `enable_network(true)`, `is_ok()` ou `is_err()` | porté |
+| 180 | `EXPECT_NEAR(longitude, 1.9992776848, 1e-10)` | `convert((2.0, 49.0))`, `(lon - 1.9992776848).abs() <= 1e-10` | porté |
+| 181 | `EXPECT_NEAR(lat, 48.9999322600, 1e-10)` | même transformation, `(lat - 48.9999322600).abs() <= 1e-10` | porté |
+
+Valeurs de PROJ 9.9.0, mesurées avec `libproj` 9.9.0 (sonde C hors dépôt, mêmes quatre états, TIFF et curl,
+CDN joint par `HTTPS_PROXY`) : `proj_create` renvoie `NULL` (erreur 1029, fichier de grille introuvable ou
+invalide) hors réseau et après `PROJ_NETWORK=` vide ; il renvoie un pipeline avec `PROJ_NETWORK=ON` et avec
+l'API ; la transformation de (2, 49) donne lon `1.9992776847752205`, lat `48.999932259999646`. Le port
+donne la même longitude, au bit près.
+
+Ce qui a été fait, dans l'ordre : le test a été écrit, puis lancé avant toute modification du code. Il a passé
+du premier coup : le port existant (grille par le CDN, `PROJ_NETWORK`, `enable_network`) suffisait, et aucune
+API n'a été ajoutée. Pour vérifier que l'assertion de valeur est active, la valeur attendue a été
+remplacée par `1.9992776858` : le test échoue (`longitude 1.9992776847752205 against PROJ 1.9992776858`),
+puis la valeur de PROJ est rétablie.
+
+Écarts (détail dans `docs/PORTING-network.md`) : `PROJ_NETWORK` est posé par `set_var`, vide pour « absent »
+comme `putenv` ; le cas est le seul test de son binaire, donc sans course sur l'environnement ; chaque état
+est un `ProjBuilder` (pas le contexte par défaut) ; le répertoire utilisateur est un dossier temporaire ; le
+cache de grilles est coupé pour les états 1, 3 et 4, comme dans le TEST. `proj_cleanup` n'a pas d'équivalent :
+`ProjBuilder::new` relit `PROJ_NETWORK` à chaque appel.
+
+Le cas local `tests/unit_network_local.rs::basic_network_is_off_by_default_and_makes_no_request` reste en
+place, hors liste : il vérifie qu'un état « off » n'envoie aucune requête, ce que le CDN réel ne permet pas
+d'observer.
+
 ## projsync (`src/apps/projsync.cpp`, `test/cli/test_projsync.sh`) : écart total
 
 Non commencé dans ce lot. Le binaire `[[bin]] projsync` n'existe pas, et
@@ -265,6 +303,7 @@ HTTP que `src/network.rs`. Ce lot ne le touche pas (autre agent).
 
 ```
 cargo test --test unit_network_core --test unit_network_endpoint_env --test unit_network_local --test network_grid
+cargo test --test unit_network_basic
 cargo test --test unit_network_download
 cargo test --test unit_network_file_api
 cargo test --lib callback_tests
