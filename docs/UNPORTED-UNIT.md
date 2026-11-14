@@ -25,7 +25,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_network.cpp
 
-- `networking.pyproj_issue_1192`
 
 ## test_projinfo_lib.cpp
 
