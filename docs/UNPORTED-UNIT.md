@@ -45,7 +45,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_projinfo_lib.cpp
 
-- `projinfo_lib.simple`
 - `projinfo_lib.error`
 - `projinfo_lib.warning`
 - `projinfo_lib.use_ctx`
