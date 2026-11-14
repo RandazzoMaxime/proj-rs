@@ -70,6 +70,8 @@ pub mod tinshift {
         FallbackStrategy, TinShiftEvaluator, TinShiftFile, TinShiftFileError,
     };
 }
+mod file_api;
+pub use file_api::{ApiFile, FileAccess, FileApi};
 mod network;
 pub use network::{NetworkCallbacks, NetworkError, NetworkHandle, OpenReply};
 mod network_cache;

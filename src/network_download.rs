@@ -8,7 +8,6 @@
 //! Where this differs from PROJ, the reason is in `docs/PORTING-network.md`: the built-in client
 //! sends no `Range`, so the check and the download each read the whole file in one request.
 
-use std::fs::{self, File};
 use std::io::Write;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -45,7 +44,8 @@ pub(crate) fn is_download_needed(
     let Some(file_name) = network::cache_file_name(&url) else {
         return Ok(false);
     };
-    if !ctx.cache_directory().join(file_name).is_file() {
+    let local = ctx.cache_directory().join(file_name);
+    if !network::is_file_with(ctx.file_api().as_deref(), &local) {
         return Ok(true);
     }
     let Some(cache) = open_cache(ctx) else {
@@ -97,24 +97,24 @@ pub(crate) fn download(
     let url = network::build_url(ctx, name);
     let file_name = network::cache_file_name(&url).ok_or(ProjError::Network)?;
     let directory = ctx.cache_directory();
-    fs::create_dir_all(&directory).map_err(|_| ProjError::Path)?;
+    network::create_directory_all(ctx, &directory).map_err(|_| ProjError::Path)?;
     let local = directory.join(&file_name);
     let count = TEMPORARY_COUNT.fetch_add(1, Ordering::Relaxed);
     let temporary = directory.join(format!("{file_name}{}_{count}", std::process::id()));
 
-    let mut out = File::create(&temporary).map_err(|_| ProjError::Path)?;
-    let written = write_download(ctx, &url, &mut out, report);
+    let mut out = network::create_for_write(ctx, &temporary).map_err(|_| ProjError::Path)?;
+    let written = write_download(ctx, &url, out.as_mut(), report);
     drop(out);
     let record = match written {
         Ok(record) => record,
         Err(error) => {
-            let _gone = fs::remove_file(&temporary);
+            let _gone = network::remove_file(ctx, &temporary);
             return Err(error);
         }
     };
-    let _replaced = fs::remove_file(&local);
-    if fs::rename(&temporary, &local).is_err() {
-        let _gone = fs::remove_file(&temporary);
+    let _replaced = network::remove_file(ctx, &local);
+    if network::rename_file(ctx, &temporary, &local).is_err() {
+        let _gone = network::remove_file(ctx, &temporary);
         return Err(ProjError::Path);
     }
     store_record(ctx, &url, &record)
@@ -125,7 +125,7 @@ pub(crate) fn download(
 fn write_download(
     ctx: &GridContext,
     url: &str,
-    out: &mut File,
+    out: &mut dyn Write,
     report: &mut dyn FnMut(f64) -> bool,
 ) -> Result<FileProperties, ProjError> {
     let chunk = chunk_size();
@@ -173,7 +173,7 @@ fn write_download(
 /// Writes the `total` bytes of a file: `first` is its first piece, and `read(offset, len)` gives
 /// the next ones. After each piece after the first, `report` gets the fraction written.
 fn copy_pieces(
-    out: &mut File,
+    out: &mut dyn Write,
     total: u64,
     first: Vec<u8>,
     chunk: u64,
@@ -207,7 +207,7 @@ fn fraction(written: u64, total: u64) -> f64 {
     written as f64 / total as f64
 }
 
-fn write_piece(out: &mut File, bytes: &[u8]) -> Result<u64, ProjError> {
+fn write_piece(out: &mut dyn Write, bytes: &[u8]) -> Result<u64, ProjError> {
     out.write_all(bytes).map_err(|_| ProjError::Path)?;
     Ok(u64::try_from(bytes.len()).unwrap_or(u64::MAX))
 }
@@ -228,12 +228,20 @@ fn store_record(ctx: &GridContext, url: &str, record: &FileProperties) -> Result
         .map_err(|_| ProjError::Network)
 }
 
-/// The record database, when the grid cache is on (PROJ's `DiskChunkCache::open`).
+/// The record database, when the grid cache is on (PROJ's `DiskChunkCache::open`). Its directory is
+/// made through the file API of `ctx`, as PROJ makes the user-writable directory.
 fn open_cache(ctx: &GridContext) -> Option<DiskChunkCache> {
     if !ctx.cache_enabled {
         return None;
     }
-    DiskChunkCache::open(&ctx.cache_settings().path)
+    let path = ctx.cache_settings().path;
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        let _made = network::create_directory_all(ctx, parent);
+    }
+    DiskChunkCache::open(&path)
 }
 
 /// The size of a download piece: `PROJ_FULL_FILE_CHUNK_SIZE` when it is a positive number, else

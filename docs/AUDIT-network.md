@@ -37,6 +37,12 @@ cache en fichiers dans le répertoire utilisateur (`grid_cache_enable`,
   premier morceau par callbacks) ; son URL est celle-ci et elle est disponible. La fabrique et
   `is_proj_instantiable` ne l'interrogent pas (`RemoteGrids::Skip`), comme `factory.cpp` coupe le
   réseau.
+- `ProjBuilder::set_file_api` (`src/file_api.rs`) : l'API de fichiers de PROJ
+  (`proj_context_set_fileapi`, dix callbacks deviennent les traits `FileApi` et `ApiFile`).
+  Passent par elle : la recherche des grilles (`exists`), la lecture des grilles, modèles et
+  dictionnaires (`open`, `seek`, `read`), la création du répertoire utilisateur (`exists`,
+  `mkdir`), et le téléchargement (`open` en création, `write`, `close`, `unlink`, `rename`).
+  Mesuré : `docs/PORTING-network.md`, section « API de fichiers ».
 
 Ce qui manque : lecture paresseuse des seuls GeoTIFF à tuiles non compressés (les
 grilles en bandes, compressées, à bandes planaires, et les grilles non-TIFF
@@ -44,7 +50,7 @@ restent lues entières), validation de la fraîcheur d'un fichier ouvert par `ET
 `Last-Modified` pour les autres étapes que `vgridshift` et pour le cache disque (seule
 `vgridshift` recharge, voir `docs/PORTING-network.md`), cache SQLite (TTL, taille max, verrou :
 lot cache, autre agent),
-API de fichiers, façade C des opérations
+façade C des opérations
 (`proj_create_operations` et contexte de fabrique C : la fabrique Rust est utilisée à la place,
 par `ProjBuilder::create_operations` quand des callbacks sont enregistrés, voir
 `do_not_attempt_network_access_known_available_network_on` et `pyproj_issue_1192`).
@@ -103,12 +109,12 @@ l'extraction de la taille depuis `Content-Range`.
 | 20 | `cache_ttl` | écart, lot cache | `proj_grid_cache_set_ttl` absent (valeur `-1` refusée, `86400` acceptée) ; pas de métadonnées de fraîcheur. |
 | 21 | `cache_lock` | écart, lot cache | Verrou de cache multi-processus absent. |
 | 22 | `download_whole_files` | porté | `tests/unit_network_download.rs::download_whole_files`, contre le vrai CDN (`dk_sdfe_dvr90.tif`, 331904 octets). Les 37 assertions sont portées une à une (section « download_whole_files (porté) »). Écarts : `docs/PORTING-network.md`. |
-| 23 | `file_api` | écart | `proj_context_set_fileapi` (open, read, write, close, exists, mkdir, unlink, rename) absent. Toutes les lectures de grilles passent par `std::fs` (`gridpath::read`, `read_resource`) : une API de fichiers demande de les router toutes. |
+| 23 | `file_api` | porté | `tests/unit_network_file_api.rs::file_api`, contre le vrai CDN : les 15 assertions (section « file_api (porté) »). L'API est `ProjBuilder::set_file_api`. Écarts : `docs/PORTING-network.md`. |
 | 24 | `proj_coordoperation_get_grid_used` | porté, avec octets de substitution | Les trois assertions sont portées (nom, nom complet vide, URL `https://cdn.proj.org/...`), à chaque création. Le fichier CDN n'est pas dans le dépôt et le réseau est coupé : sans octets, `proj_create` renvoie `NULL` (mesuré, `libproj` 9.9.0, « could not find required grid(s) »). Le test sert donc les 956 octets de la fixture egm96 tronquée sous cette URL. Les valeurs asserties ne dépendent pas du contenu ; ce qui en dépend (séquence d'appels avec le vrai fichier, `available` d'un vrai fichier) n'est pas mesuré. Voir « Cas portés dans ce lot ». |
 | 25 | `pyproj_issue_1192` | porté | `tests/unit_network_core.rs::pyproj_issue_1192`. Pas de façade C : le contexte de fabrique est `CoordinateOperationContext` (public), avec `GridAvailabilityUse::IgnoreGridAvailability` et `SpatialCriterion::PartialIntersection`. La liste (10 opérations, noms et ordre) et les drapeaux d'instanciabilité (réseau off : 8 vraies ; réseau on : 10) sont ceux de `libproj` 9.9.0 mesurés avec une sonde C. Écarts et lacune (opérations à grille absente, réseau on) : `docs/PORTING-network.md`. |
 | 26 | `do_not_attempt_network_access_known_available_network_on` | porté | Voir « Cas portés dans ce lot ». La façade C reste absente : la fabrique passe par `ProjBuilder::create_operations`, qui applique le contexte du builder. |
 
-Compte : 26 TEST() C++ ; 15 portés (les 14 de la liste ci-dessus, et `download_whole_files`) ; 1 partiel (`basic`) ; 10 écarts : `initial_check` (sans objet), `file_api`, les cinq du lot cache (17 à 21), et les trois `curl_*` du tableau (9 à 11), que le lot cache porte dans la section ci-dessus.
+Compte : 26 TEST() C++ ; 16 portés (les 14 de la liste ci-dessus, `download_whole_files` et `file_api`) ; 1 partiel (`basic`) ; 9 écarts : `initial_check` (sans objet), les cinq du lot cache (17 à 21), et les trois `curl_*` du tableau (9 à 11), que le lot cache porte dans la section ci-dessus.
 
 ## download_whole_files (porté)
 
@@ -198,6 +204,53 @@ contexte est un `ProjBuilder` (le cas C++ bascule le contexte par défaut) ; `Tt
 fait aucune requête, comme le code de PROJ (son commentaire d'en-tête dit l'inverse) ; la branche sans
 ligne de `lookForGridInfo` ne lit que le disque.
 
+## file_api (porté)
+
+Le TEST C++ (`test/unit/test_network.cpp:2043`) est porté dans `tests/unit_network_file_api.rs::file_api`,
+contre le vrai CDN, avec la même garde que `download_whole_files` (sonde partagée :
+`tests/net_cdn/mod.rs`, la requête de `initial_check`). Le TEST installe un `PROJ_FILE_API` à dix
+callbacks, télécharge `dk_sdfe_dvr90.tif` à travers eux, puis lit la grille à travers eux, réseau coupé.
+Le port : `ProjBuilder::set_file_api` (`src/file_api.rs`), avec le trait `FileApi` (`open`, `exists`,
+`mkdir`, `unlink`, `rename`) et le trait `ApiFile` (`Read + Write + Seek`). Le cas enregistre les
+appels par nom (`open`, `read`, `write`, `seek`, `close`, `exists`, `mkdir`, `unlink`, `rename`) au lieu
+des drapeaux `in_*` ; chaque callback est `std::fs`.
+
+Séquence mesurée avec `libproj` 9.9.0 (sonde C hors dépôt, non versionnée ; TIFF et curl ;
+`PROJ_FULL_FILE_CHUNK_SIZE=30000` ; répertoire utilisateur absent) :
+
+- téléchargement : `open` en lecture seule de la cible (vérification de `is_download_needed`,
+  `networkfilemanager.cpp:2541`), `exists` du répertoire puis de son parent, `mkdir`, deux autres
+  `open` en lecture seule (non identifiés), `open` en création, 12 `write` (11 de 30000 octets, puis
+  1904), `close`, `unlink` de la cible, `rename` du temporaire, `exists` du répertoire (ouverture de
+  `cache.db`). Aucun `read`. Le port vérifie la présence de la cible par `exists`, sans ces `open` ;
+- lecture : `proj_create` réseau coupé, puis la transformation : `open` en lecture seule, `seek`,
+  `tell`, `read` par tuiles, `close` ; `z` = 36.590999603271491, comme `download_whole_files`.
+
+Les 15 assertions du TEST, une à une :
+
+| Ligne C++ | Assertion | Équivalent dans `tests/unit_network_file_api.rs` | Statut |
+|---|---|---|---|
+| 2137 | `proj_context_set_fileapi` vrai | `set_file_api` (ne renvoie rien) | sans objet : le trait est complet à la compilation ; PROJ renvoie `0` si un callback manque (`filemanager.cpp:1197`) |
+| 2139 | `proj_is_download_needed` vrai | `is_download_needed(GRID, Respect)` | porté |
+| 2141-2142 | `proj_download_file` vrai | `download_file(GRID, Respect, None)` réussit | porté |
+| 2144 | `in_open` | `seen("open")` | porté |
+| 2145 | `!in_read` après le téléchargement | `!seen("read")` | porté |
+| 2146 | `in_write` | `seen("write")` | porté |
+| 2147 | `in_close` | `seen("close")` (le `Drop` du fichier) | porté |
+| 2148 | `in_exists` | `seen("exists")` | porté |
+| 2149 | `in_mkdir` | `seen("mkdir")` | porté |
+| 2150 | `in_unlink` | `seen("unlink")` | porté |
+| 2151 | `in_rename` | `seen("rename")` | porté |
+| 2162 | `proj_create` non nul | `proj(PIPELINE)` réussit | porté |
+| 2169 | `z` = 36.5909996032715 à 1e-10 | `convert_xyz(12, 56, 0)`, `\|z - EXPECTED_Z\| <= 1e-10` | porté |
+| 2173 | `in_read` | `seen("read")` | porté |
+| 2174 | `in_seek` | `seen("seek")` | porté |
+
+Écarts (détail dans `docs/PORTING-network.md`) : `close` est le `Drop` du fichier, et `user_data` est
+l'état du trait. La lecture d'une grille fait un `seek` à la fin, un `seek` au début, puis `read` (comme
+`FileManager::open` pour `proj.ini`, `filemanager.cpp:2049`), au lieu des `seek`/`read` par tuiles de
+libtiff. Les opérations restées sur `std::fs` sont listées dans `docs/PORTING-network.md`.
+
 ## projsync (`src/apps/projsync.cpp`, `test/cli/test_projsync.sh`) : écart total
 
 Non commencé dans ce lot. Le binaire `[[bin]] projsync` n'existe pas, et
@@ -213,6 +266,7 @@ HTTP que `src/network.rs`. Ce lot ne le touche pas (autre agent).
 ```
 cargo test --test unit_network_core --test unit_network_endpoint_env --test unit_network_local --test network_grid
 cargo test --test unit_network_download
+cargo test --test unit_network_file_api
 cargo test --lib callback_tests
 ```
 

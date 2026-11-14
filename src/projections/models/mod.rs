@@ -126,7 +126,7 @@ fn cdn_name(name: &str) -> Option<&str> {
 
 fn read_resource(name: &str) -> Result<Vec<u8>, CreateError> {
     let bytes = if let Ok(path) = resolve(name) {
-        std::fs::read(&path).map_err(|_| CreateError::IllegalValue("file"))?
+        crate::network::read_file(&path).map_err(|_| CreateError::IllegalValue("file"))?
     } else {
         crate::network::fetch_missing(name).ok_or(CreateError::IllegalValue("file"))?
     };
