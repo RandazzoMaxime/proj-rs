@@ -504,14 +504,19 @@ fn proj_create_crs_to_crs_from_pj_force_over() {
     }
 }
 
-/// `gieTest, proj_create_crs_to_crs` (TEST_F). The CRS-name assertions of the C test
-/// are not here: this crate has no `proj_get_name` on a transform.
+/// `gieTest, proj_create_crs_to_crs` (TEST_F), every assertion of the C test. The source
+/// CRS is read after the point, as in the C test: `proj_get_source_crs` is
+/// `Proj::source_crs`, and `proj_get_name` on it is `Crs::name`. The C test checks only
+/// the source name; it has no target-name assertion, so there is none here.
 #[test]
 fn proj_create_crs_to_crs() {
     let p = Proj::new_known_crs("EPSG:25832", "EPSG:25833", None).expect("25832 to 25833");
     let (x, y, _) = p.convert_xyz(700_000.0, 6_000_000.0, 0.0).expect("convert");
     assert!((x - 307_788.876_117_105_7).abs() <= 1e-8, "{x}");
     assert!((y - 5_999_669.303_603_763).abs() <= 1e-8, "{y}");
+
+    let source = p.source_crs().expect("source CRS");
+    assert_eq!(source.name(), "ETRS89 / UTM zone 32N");
 
     // PROJ strings are accepted as CRS sides.
     assert!(Proj::new_known_crs(

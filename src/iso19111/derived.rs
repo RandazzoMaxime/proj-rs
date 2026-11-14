@@ -114,7 +114,19 @@ fn concatenate(
         None if context.disallows_empty_intersection() => return None,
         None => None,
     };
+    // `setCRSs(operationsIn[0]->sourceCRS(), operationsIn.back()->targetCRS())`
+    // (concatenatedoperation.cpp:242-256): the pair's CRSs are the ends of the steps.
+    let source = steps
+        .first()
+        .and_then(CoordinateOperation::source_crs)
+        .cloned();
+    let target = steps
+        .last()
+        .and_then(CoordinateOperation::target_crs)
+        .cloned();
     let mut concatenated = pivot_concatenation(steps);
+    concatenated.source = source.map(Box::new);
+    concatenated.target = target.map(Box::new);
     if let Some(domain) = extent {
         concatenated.identified.domains = vec![domain];
     }
