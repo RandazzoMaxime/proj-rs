@@ -15,8 +15,10 @@ fn gie(args: &[&str]) -> Output {
         .expect("run gie")
 }
 
+/// The output as text. The program prints its own file name, which ends in `.exe` on Windows;
+/// PROJ's yaml runner substitutes the bare program name, so the extension is dropped here.
 fn text(bytes: &[u8]) -> String {
-    String::from_utf8_lossy(bytes).into_owned()
+    String::from_utf8_lossy(bytes).replace("gie.exe", "gie")
 }
 
 #[test]
