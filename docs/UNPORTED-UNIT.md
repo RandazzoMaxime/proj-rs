@@ -27,7 +27,6 @@ and `PORT-NOTES-tests.md`.
 
 - `networking.initial_check`
 - `networking.basic`
-- `networking.file_api`
 - `networking.pyproj_issue_1192`
 
 ## test_projinfo_lib.cpp
