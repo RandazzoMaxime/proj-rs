@@ -129,13 +129,17 @@ cargo test --lib projinfo               # 7 tests, verts (describe reçoit None 
 
 ## Hors de ce lot
 
-- `works_without_cb` : non porté, par choix. Son assertion (`res == 0` pour
-  `EPSG:25832 -o WKT1_GDAL`, `cb` et `user_data` nuls) est déjà `simple_returns_zero`, avec le
-  même `argv` et le même attendu. Le cas « cb nul » n'a pas de forme Rust : `run` ne prend pas de
-  callback, et un paramètre `Option<callback>` ajouté pour ce seul test créerait une deuxième voie
-  de sortie à côté de `Report`. Un changement d'API ne se justifie que si un usage réel demande
-  un callback.
+- `works_without_cb` : porté (lot suivant). Décision du mainteneur : l'API reçoit le callback
+  optionnel de PROJ. `projinfo::run_with_callback(context, args, callback) -> Status` prend un
+  `Option<Callback>` (`projinfo_cb_t`, `LogLevel { Info, Warn, Err }` pour
+  `PJ_PROJINFO_LOG_LEVEL`) ; avec `None` la commande tourne et n'écrit rien, comme
+  `Stream::doit` (`projinfo_lib.cpp`, l. 101). `run` et `run_with_context` gardent `Report`.
+  Écart : les messages sont remis une fois la commande terminée (avertissements, sortie INFO en
+  un seul bloc, erreurs), alors que PROJ appelle le callback pendant l'exécution.
   Référence PROJ 9.9.0 : un programme C qui appelle `projinfo(NULL, 3, argv, NULL, NULL)`, compilé
   contre `libproj.so` (`PROJ_DATA` = données de la référence), rend `res=0` et sort normalement.
+  Tests : `works_without_cb`, `callback_receives_the_info_message` (le texte de `simple`),
+  `callback_receives_the_error_message` (le niveau ERR de `error`). Le test et l'API ont été
+  écrits ensemble (l'API n'existait pas, le test ne compilait pas avant).
 - `docs/UNPORTED-UNIT.md`, `README.md`, `ROADMAP.md`, `docs/UNIT-TRIAGE.md` : non modifiés ici,
   ils sont régénérés avec `UPDATE_DOCS=1 cargo test --test docs_in_sync`.

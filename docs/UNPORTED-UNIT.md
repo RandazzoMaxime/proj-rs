@@ -29,4 +29,3 @@ and `PORT-NOTES-tests.md`.
 
 ## test_projinfo_lib.cpp
 
-- `projinfo_lib.works_without_cb`

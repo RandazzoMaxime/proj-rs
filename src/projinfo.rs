@@ -61,6 +61,52 @@ pub fn run_with_context(context: &crate::Context, args: &[&str]) -> Report {
     run_on(Some(context.clone()), args)
 }
 
+/// `PJ_PROJINFO_LOG_LEVEL` (`projapps_lib.h`): the channel a message of `projinfo()` is written on.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LogLevel {
+    /// `PJ_PROJINFO_LOG_LEVEL_INFO`: the output, which the binary prints on stdout.
+    Info,
+    /// `PJ_PROJINFO_LOG_LEVEL_WARN`: a warning.
+    Warn,
+    /// `PJ_PROJINFO_LOG_LEVEL_ERR`: an error, or the usage text.
+    Err,
+}
+
+/// The callback of `projinfo()` (`projinfo_cb_t`): it receives each message with its level.
+pub type Callback<'a> = &'a mut dyn FnMut(LogLevel, &str);
+
+/// `projinfo()` of `projinfo_lib.cpp` with its callback: runs `projinfo` with the arguments
+/// `args`, on the database of `context` (the default one when `None`, as a null context), and
+/// hands each message to `callback`, which is optional as in PROJ (a null `cb`: the command
+/// runs and writes nothing, and only its status is returned).
+///
+/// The messages are delivered once the command is over, in the order PROJ writes them: the
+/// warnings, then the output on the INFO level (in one piece, as the WKT of `simple` is read
+/// from one call), then the errors. PROJ calls the callback while it runs.
+///
+/// # Panics
+///
+/// Panics when the command thread cannot be spawned, or when the command panics.
+pub fn run_with_callback(
+    context: Option<&crate::Context>,
+    args: &[&str],
+    callback: Option<Callback<'_>>,
+) -> Status {
+    let report = run_on(context.cloned(), args);
+    if let Some(callback) = callback {
+        for warning in &report.warnings {
+            callback(LogLevel::Warn, warning);
+        }
+        if !report.output.is_empty() {
+            callback(LogLevel::Info, &report.output);
+        }
+        for error in &report.errors {
+            callback(LogLevel::Err, error);
+        }
+    }
+    report.status
+}
+
 fn run_on(context: Option<crate::Context>, args: &[&str]) -> Report {
     let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
     let worker = std::thread::Builder::new()
