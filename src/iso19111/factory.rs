@@ -7656,10 +7656,18 @@ fn datum_pivot_operations(
     let candidates_source = candidate_geodetic_crs(&authority, &source_datum);
     let candidates_target = candidate_geodetic_crs(&authority, &target_datum);
     let factory = CoordinateOperationFactory::create();
-    let mut pairs: Vec<(&Crs, &Crs)> = candidates_source
-        .iter()
-        .flat_map(|left| candidates_target.iter().map(move |right| (left, right)))
-        .collect();
+    // `nIters = (isIGNF(sourceCRS) && isIGNF(targetCRS)) ? 1 : 3`
+    // (coordinateoperationfactory.cpp:3425-3440): between two IGNF CRS PROJ does one single pass
+    // that allows the full search at once, with no direct-only pass and no kind filter.
+    let single_pass = is_ignf(source) && is_ignf(target);
+    let mut pairs: Vec<(&Crs, &Crs)> = if single_pass {
+        Vec::new()
+    } else {
+        candidates_source
+            .iter()
+            .flat_map(|left| candidates_target.iter().map(move |right| (left, right)))
+            .collect()
+    };
     pairs.sort_by_key(|(left, right)| {
         u8::from(!(left.name() == source.name() && right.name() == target.name()))
     });
@@ -7792,8 +7800,10 @@ fn datum_pivot_operations(
             target,
         )
     };
-    for iteration in 1..=2 {
-        // Named candidates, of the same kind in iteration 1 and of another kind in iteration 2.
+    let iterations = if single_pass { 0..=0 } else { 1..=2 };
+    for iteration in iterations {
+        // Named candidates, of the same kind in iteration 1 and of another kind in iteration 2;
+        // the single pass of two IGNF CRS (iteration 0) has no kind filter.
         for left in &candidates_source {
             if left.name() != source.name() {
                 continue;
@@ -7802,7 +7812,7 @@ fn datum_pivot_operations(
                 if right.name() != target.name() {
                     continue;
                 }
-                if (iteration == 1) != (kind(left) == kind(right)) {
+                if iteration != 0 && (iteration == 1) != (kind(left) == kind(right)) {
                     continue;
                 }
                 let linked = linked_pair(left, right);
@@ -9386,6 +9396,14 @@ fn identity_of(crs: &Crs) -> (&str, &str) {
     crs.identifiers().first().map_or(("", ""), |identifier| {
         (identifier.code_space(), identifier.code())
     })
+}
+
+/// `isIGNF` of `createOperationsWithDatumPivot` (coordinateoperationfactory.cpp:3436-3439): the
+/// first identifier of the CRS is in the `IGNF` code space.
+fn is_ignf(crs: &Crs) -> bool {
+    crs.identifiers()
+        .first()
+        .is_some_and(|identifier| identifier.code_space() == "IGNF")
 }
 
 /// Non-deprecated geodetic CRS of the datum, in the database order.

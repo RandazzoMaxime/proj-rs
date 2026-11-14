@@ -592,13 +592,24 @@ fn build_engine(
     // (`proj_create_crs_to_crs_from_pj`), not its expanded PROJ string.
     let iso_source = init_side_as_code(source);
     let iso_target = init_side_as_code(target);
-    if area.is_none() && iso_serves_pair(source, target) {
-        match proj_rs::iso19111::select_alternatives_with_authority(
+    // `--bbox` and `--area` are the area of interest of `proj_create_crs_to_crs_from_pj`: the
+    // same selection runs with it (`proj_operation_factory_context_set_area_of_interest`).
+    let area_box = match area {
+        Some(area) => match proj_rs::BoundingBox::create(area.west, area.south, area.east, area.north)
+        {
+            Ok(bbox) => Some(bbox),
+            Err(error) => return Err(InitError::Cause(error.to_string())),
+        },
+        None => None,
+    };
+    if iso_serves_pair(source, target) {
+        match proj_rs::iso19111::select_alternatives_in_area(
             &iso_source,
             &iso_target,
             policy_of(only_best),
             filter,
             authority,
+            area_box,
         ) {
             Ok(Selection::Several(alternatives)) => {
                 for line in alternatives.creation_log() {

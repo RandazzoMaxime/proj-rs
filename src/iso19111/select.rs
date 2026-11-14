@@ -1210,6 +1210,25 @@ pub fn select_alternatives_with_authority(
     filter: CandidateFilter,
     authority: &str,
 ) -> Result<Selection, FactoryError> {
+    select_alternatives_in_area(source, target, policy, filter, authority, None)
+}
+
+/// [`select_alternatives_with_authority`] with an area of interest, the box of
+/// `proj_area_set_bbox` that `cs2cs --bbox` and `--area` pass to
+/// `proj_create_crs_to_crs_from_pj` (`proj_operation_factory_context_set_area_of_interest`). The
+/// operations are filtered and sorted with that area, and the sort extents carry it.
+///
+/// # Errors
+///
+/// As [`select_alternatives`]; also a box whose bounds are not a valid box.
+pub fn select_alternatives_in_area(
+    source: &str,
+    target: &str,
+    policy: BestPolicy,
+    filter: CandidateFilter,
+    authority: &str,
+    area: Option<BoundingBox>,
+) -> Result<Selection, FactoryError> {
     let db = DatabaseContext::create()?;
     let source_crs = create_from_user_input(source, &db)?;
     let target_crs = create_from_user_input(target, &db)?;
@@ -1230,6 +1249,7 @@ pub fn select_alternatives_with_authority(
     };
     let mut context = CoordinateOperationContext::create(&db, authority);
     context.set_spatial_criterion(SpatialCriterion::PartialIntersection);
+    context.set_area_of_interest(area.map(ObjectDomain::from_bounding_box));
     let operations = CoordinateOperationFactory::create()
         .create_operations(&source_crs, &target_crs, &context)?
         .into_iter()

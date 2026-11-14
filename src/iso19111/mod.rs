@@ -91,7 +91,7 @@ pub use select::{
 };
 pub use select::{
     best_pipeline_logged, best_pipeline_logged_with_authority, select_alternatives,
-    select_alternatives_with_authority, PipelineLog, Selection,
+    select_alternatives_in_area, select_alternatives_with_authority, PipelineLog, Selection,
 };
 pub(crate) use select::{facade_candidates, same_datum_noop, FacadeCandidates};
 pub use wkt::{
