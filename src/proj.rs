@@ -1422,7 +1422,8 @@ impl ProjBuilder {
         &mut self,
         callbacks: std::sync::Arc<dyn crate::NetworkCallbacks>,
     ) {
-        self.net.set_callbacks(crate::network::Callbacks(callbacks));
+        self.net
+            .set_callbacks(crate::network::Callbacks::new(callbacks));
     }
 
     /// Set the CA bundle used for network requests (`proj_context_set_ca_bundle_path`).

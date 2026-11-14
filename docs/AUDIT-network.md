@@ -17,8 +17,12 @@ cache en fichiers dans le répertoire utilisateur (`grid_cache_enable`,
 
 - `NetworkCallbacks` (trait, `NetworkHandle`, `OpenReply`, `NetworkError`),
   enregistrable par `ProjBuilder::set_network_callbacks`. Une grille absente est
-  lue entière par un `open(url, 0, 16384)`, puis des `read_range` de 16384 octets
-  jusqu'à la taille du `Content-Range`, puis `close` (`fetch_with_callbacks`).
+  ouverte par son premier morceau, `open(url, 0, 16384)`, avec les en-têtes puis `close`.
+  Si c'est un GeoTIFF à tuiles non compressé, ses tuiles sont lues au calcul, comme
+  PROJ : `open` puis `read_range` sur le même handle, gardé jusqu'à la destruction du
+  `Proj`, et un cache de morceaux par contexte (`src/network_chunks.rs`,
+  `src/projections/gridshift/tiles.rs`). Les autres grilles sont lues entières, par
+  morceaux de 16384 octets jusqu'à la taille du `Content-Range` (`fetch_with_callbacks`).
 - Erreur typée au calcul : `ProjError::Network` (PROJ `PROJ_ERR_OTHER_NETWORK_ERROR`)
   quand la grille d'un candidat de paire de CRS est absente et que le réseau ne la
   donne pas. Le point s'arrête là, sans nouvelle tentative (`trans.cpp:284`).
@@ -29,9 +33,11 @@ cache en fichiers dans le répertoire utilisateur (`grid_cache_enable`,
 - `last_used_operation()` donne le nom du candidat (`ProjInfo::description`), comme
   `proj_pj_info` de `proj_trans_get_last_used_operation`.
 
-Ce qui manque : lecture paresseuse par plages des grilles (la grille est lue
-entière à la construction, `read_resource`), validation de cache par `ETag` et
-`Last-Modified`, cache SQLite (TTL, taille max, verrou : lot cache, autre agent),
+Ce qui manque : lecture paresseuse des seuls GeoTIFF à tuiles non compressés (les
+grilles en bandes, compressées, à bandes planaires, et les grilles non-TIFF
+restent lues entières), validation de cache par `ETag` et `Last-Modified`
+(les en-têtes sont demandés, pas comparés), cache SQLite (TTL, taille max, verrou :
+lot cache, autre agent),
 API de téléchargement explicite, API de fichiers, façade des opérations
 (`proj_create_operations` et contexte de fabrique).
 
@@ -44,6 +50,7 @@ Tests de l'API existants, hors liste C++ : `tests/network_grid.rs`
 |---|---|---|
 | `networking.basic` (réseau off par défaut, pipeline nul, aucune requête) | `tests/unit_network_local.rs::basic_network_is_off_by_default_and_makes_no_request` | partiel : la partie « réseau off » est portée ; la partie « activé par `PROJ_NETWORK=ON` puis par l'API » (valeurs `1.9992776848`) ne l'est pas, voir plus bas |
 | `networking.curl_invalid_resource` | `tests/unit_network_local.rs::curl_invalid_resource` | porté sur serveur local : 404, `proj` renvoie une erreur, une seule requête |
+| `networking.custom` | `tests/unit_network_core.rs::custom` | porté : séquence d'appels de PROJ à l'identique (création : `open(url, 0, 16384)`, trois en-têtes, `close` ; premier point (lat 49) : `open(url, 524288, 278528)`, trois en-têtes ; second point (lat -49) : `read_range(3670016, 278528)` sur le même handle, trois en-têtes ; `close` à `proj_destroy` ; seconde création sur le même builder sans aucun appel), valeurs `1.25`, `2.25`, `1.25`. La séquence des octets de tuile vient de `TileByteCounts` (262144 octets, couverture alignée à 278528) ; voir `docs/PORTING-network.md`. |
 | `networking.simul_open_error` | `tests/unit_network_core.rs::simul_open_error_fails_creation_after_one_open` | porté : une seule ouverture `(url, 0, 16384)`, erreur, pas de création |
 | `networking.network_endpoint_env_variable` | `tests/unit_network_endpoint_env.rs::network_endpoint_env_variable` | porté : `PROJ_NETWORK_ENDPOINT` lu au builder, `EPSG:4269 -> EPSG:4152` construit, transformation en erreur réseau |
 | `networking.network_endpoint_api_and_not_reachable_gridshift` | `tests/unit_network_core.rs::endpoint_api_not_reachable_gridshift` | porté (`NAD83 to NAD83(HARN) (47)`, aller, aller, inverse) |
@@ -63,11 +70,11 @@ l'extraction de la taille depuis `Content-Range`.
 | 1 | `initial_check` | écart, sans objet | Sonde de disponibilité du CDN : `GET` avec `Range: 0-1` sur `cdn.proj.org`, attend `206`. Elle ne sert qu'à conditionner les autres cas (`networkAccessOK`) ; ici le serveur local remplace le CDN et les cas ne sont pas conditionnés. La crate n'envoie pas de `Range`. |
 | 2 | `basic` | partiel | Partie « off » portée (ligne 1 de la table). Partie « on » non portée : les valeurs `1.9992776848` / `48.9999322600` viennent de `fr_ign_ntf_r93.tif`, absent du dépôt et de `build/data` de la référence ; sans grille, aucune valeur PROJ à comparer. |
 | 3 | `curl_invalid_resource` | porté | Voir « Cas portés ». |
-| 4 | `custom` | écart | Les callbacks existent, mais la séquence d'événements de PROJ suppose une lecture paresseuse : la grille est ouverte à `proj_create` (`open(0, 16384)`, en-têtes, `close`), puis rouverte au calcul à `offset 524288` et lue à `3670016`. La crate lit la grille entière à la construction (`read_resource`, `src/projections/models/mod.rs`) : il faut une lecture de grille par plages. |
-| 5 | `getfilesize` | écart | Même cause que 4 : `open(0, 16384)` seul à la création, puis une seconde création qui rouvre le fichier tronqué ; la taille est lue dans `Content-Range`, sans lecture des tuiles. |
+| 4 | `custom` | porté | Voir « Cas portés ». |
+| 5 | `getfilesize` | écart, non porté | Un seul test par lot. Le test fait une création avec `open(0, 16384)`, trois en-têtes, `close` (fichier de 550 octets, `Content-Range` à 4153510), puis une seconde création qui n'appelle rien. Le chemin de `custom` le fait déjà pour la seconde création ; le reste (grille non tuilée ou fichier tronqué) n'est pas mesuré ici. Une grille non tuilée est lue entière par repli, ce qui ajouterait des appels. À mesurer dans un lot dédié. |
 | 6 | `simul_open_error` | porté | Voir « Cas portés ». |
-| 7 | `simul_read_range_error` | écart | Même cause que 4 : l'erreur de `read_range` doit survenir au calcul (`HUGE_VAL`) après une ouverture à `524288`, ce qui suppose la lecture par plages. |
-| 8 | `simul_file_change_while_opened` | écart | Même cause que 4, plus la validation par `ETag` / `Last-Modified` entre deux lectures : la crate ne compare pas les en-têtes d'un fichier déjà ouvert. |
+| 7 | `simul_read_range_error` | écart, non porté | Un test par lot. La lecture par tuiles de `custom` existe : l'erreur de `read_range` au calcul y devient `NetworkUnavailable`, puis `ProjError::Network`. Non vérifié contre la référence : le `HUGE_VAL` et le `proj_errno` de ce cas précis. |
+| 8 | `simul_file_change_while_opened` | écart | La validation par `ETag` / `Last-Modified` entre deux lectures manque : la crate demande ces en-têtes après chaque appel, sans les comparer. |
 | 9 | `curl_hgridshift` | écart | Grille CDN `fr_ign_gr3df97a.tif` absente du dépôt. Valeurs de référence : tentées avec le `proj` de référence sur `tests/gie/tests/test_hgrid_with_subgrid.tif` (et `test_hgrid_degree.tif`), refusées avec `could not find required grid(s)` quel que soit le chemin. Cause de ce refus non élucidée ; sans valeur PROJ, pas de port. |
 | 10 | `curl_vgridshift` | écart | Même cause que 9 (`egm08_25.tif`, absente ; pas de fixture de référence chargée par `proj`). |
 | 11 | `curl_vgridshift_vertcon` | écart | Même cause que 9 (`vertcone.tif`, absente). |
@@ -87,10 +94,10 @@ l'extraction de la taille depuis `Content-Range`.
 | 25 | `pyproj_issue_1192` | écart | `proj_create_operation_factory_context`, `proj_operation_factory_context_set_grid_availability_use`, `proj_coordoperation_is_instantiable` : aucune façade. La logique existe en Rust public (`CoordinateOperationFactory::create_operations`, `GridAvailabilityUse`, `Proj` candidats), mais pas branchée sur le contexte réseau du builder. |
 | 26 | `do_not_attempt_network_access_known_available_network_on` | écart | Même cause que 25 : `proj_create_operations` avec `PROJ_GRID_AVAILABILITY_KNOWN_AVAILABLE`, et le contrôle « aucune activité réseau » par callbacks, qui exige que la fabrique passe par le contexte du builder. |
 
-Compte : 26 TEST() C++ ; 7 portés (`curl_invalid_resource`, `simul_open_error`,
-`network_endpoint_env_variable`, et les quatre `not_reachable`) ; 1 partiel
-(`basic`) ; 18 écarts, dont 5 du lot cache (17 à 21) et 4 à lecture par plages
-(4, 5, 7, 8).
+Compte : 26 TEST() C++ ; 8 portés (`curl_invalid_resource`, `simul_open_error`,
+`network_endpoint_env_variable`, `custom`, et les quatre `not_reachable`) ; 1 partiel
+(`basic`) ; 17 écarts, dont 5 du lot cache (17 à 21) et 3 à lecture par plages
+(5, 7, 8).
 
 ## projsync (`src/apps/projsync.cpp`, `test/cli/test_projsync.sh`) : écart total
 
@@ -129,7 +136,7 @@ Non portés dans ce lot, hors de sa liste : `networking.basic` (partie réseau a
 `initial_check`, `network_endpoint_*`, `download_whole_files`, `file_api`,
 `proj_coordoperation_get_grid_used`, `pyproj_issue_1192`,
 `do_not_attempt_network_access_known_available_network_on`, et les cas à callbacks
-(`custom`, `getfilesize`, `simul_*`) : voir les lignes du tableau ci-dessus.
+(`getfilesize`, `simul_*`) : voir les lignes du tableau ci-dessus.
 
 ### projsync (`src/apps/projsync.cpp`, `test/cli/test_projsync.sh`)
 

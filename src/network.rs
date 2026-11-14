@@ -11,14 +11,12 @@ use std::fmt;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::OnceLock;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const CDN_ENDPOINT: &str = "https://cdn.proj.org";
-const MAX_GRID_BYTES: u64 = 512 * 1024 * 1024;
-/// Bytes asked for by each `open` and each `read_range`, PROJ's `DOWNLOAD_CHUNK_SIZE`.
-const CALLBACK_CHUNK_SIZE: usize = 16384;
+pub(crate) const MAX_GRID_BYTES: u64 = 512 * 1024 * 1024;
 
 /// An open remote file, as the application's callbacks name it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -90,9 +88,26 @@ pub trait NetworkCallbacks: Send + Sync {
     fn close(&self, handle: NetworkHandle);
 }
 
-/// The callbacks a builder registered, as the context holds them.
+/// The callbacks a builder registered, as the context holds them, with the chunks they have
+/// served (`network_chunks`). Clones share the callbacks and the chunks.
 #[derive(Clone)]
-pub(crate) struct Callbacks(pub(crate) Arc<dyn NetworkCallbacks>);
+pub(crate) struct Callbacks {
+    imp: Arc<dyn NetworkCallbacks>,
+    pub(crate) chunks: Arc<Mutex<crate::network_chunks::ChunkCache>>,
+}
+
+impl Callbacks {
+    pub(crate) fn new(imp: Arc<dyn NetworkCallbacks>) -> Self {
+        Self {
+            imp,
+            chunks: Arc::new(Mutex::new(crate::network_chunks::ChunkCache::default())),
+        }
+    }
+
+    pub(crate) fn imp(&self) -> &dyn NetworkCallbacks {
+        self.imp.as_ref()
+    }
+}
 
 impl fmt::Debug for Callbacks {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -208,7 +223,7 @@ pub(crate) fn fetch_missing(name: &str) -> Option<Vec<u8>> {
     let download = decide_download(name)?;
     let ctx = context();
     if let Some(callbacks) = &ctx.callbacks {
-        return fetch_with_callbacks(callbacks.0.as_ref(), &download.url);
+        return fetch_with_callbacks(callbacks, &download.url);
     }
     if !ctx.cache_enabled {
         return http_get(&download.url);
@@ -218,52 +233,21 @@ pub(crate) fn fetch_missing(name: &str) -> Option<Vec<u8>> {
     })
 }
 
-/// The whole file at `url`, read through the application's callbacks in 16384-byte ranges.
+/// The whole file at `url`, read through the application's callbacks in 16384-byte chunks
+/// (`network_chunks`).
 ///
 /// The total size comes from the `Content-Range` header (`bytes 0-16383/4153510`, or
 /// `bytes=0-16383/...` in the C++ tests). Without it, the first reply is the whole file.
 /// Any failure gives `None`, and the handle is closed in every case.
-fn fetch_with_callbacks(callbacks: &dyn NetworkCallbacks, url: &str) -> Option<Vec<u8>> {
-    let first = callbacks.open(url, 0, CALLBACK_CHUNK_SIZE).ok()?;
-    let handle = first.handle;
-    let bytes = read_remaining(callbacks, handle, first.data);
-    callbacks.close(handle);
+fn fetch_with_callbacks(callbacks: &Callbacks, url: &str) -> Option<Vec<u8>> {
+    let mut file = crate::network_chunks::RemoteFile::new(url, callbacks.clone());
+    let bytes = file.read_whole(MAX_GRID_BYTES);
+    file.release();
     bytes
 }
 
-fn read_remaining(
-    callbacks: &dyn NetworkCallbacks,
-    handle: NetworkHandle,
-    first: Vec<u8>,
-) -> Option<Vec<u8>> {
-    let total = callbacks
-        .header(handle, "Content-Range")
-        .and_then(|value| content_range_total(&value))
-        .unwrap_or_else(|| u64::try_from(first.len()).unwrap_or(u64::MAX));
-    if total > MAX_GRID_BYTES {
-        return None;
-    }
-    let mut bytes = first;
-    let chunk = u64::try_from(CALLBACK_CHUNK_SIZE).unwrap_or(u64::MAX);
-    while u64::try_from(bytes.len()).ok()? < total {
-        let offset = u64::try_from(bytes.len()).ok()?;
-        let wanted = usize::try_from((total - offset).min(chunk)).ok()?;
-        let part = callbacks.read_range(handle, offset, wanted).ok()?;
-        if part.is_empty() {
-            return None;
-        }
-        bytes.extend_from_slice(&part);
-    }
-    bytes.truncate(usize::try_from(total).ok()?);
-    if bytes.is_empty() {
-        None
-    } else {
-        Some(bytes)
-    }
-}
-
 /// The total size after the `/` of a `Content-Range` value, `bytes 0-16383/4153510`.
-fn content_range_total(value: &str) -> Option<u64> {
+pub(crate) fn content_range_total(value: &str) -> Option<u64> {
     value.rsplit_once('/')?.1.trim().parse().ok()
 }
 
@@ -528,6 +512,11 @@ impl GridContext {
 
     pub(crate) fn set_callbacks(&mut self, callbacks: Callbacks) {
         self.callbacks = Some(callbacks);
+    }
+
+    /// The callbacks of this context, shared with its clones, when the application set some.
+    pub(crate) fn callbacks(&self) -> Option<Callbacks> {
+        self.callbacks.clone()
     }
 }
 
@@ -1067,10 +1056,10 @@ mod tests {
 #[cfg(test)]
 mod callback_tests {
     use super::{
-        content_range_total, fetch_with_callbacks, NetworkCallbacks, NetworkError, NetworkHandle,
-        OpenReply,
+        content_range_total, fetch_with_callbacks, Callbacks, NetworkCallbacks, NetworkError,
+        NetworkHandle, OpenReply,
     };
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
 
     /// A remote file served by the test, which records each call. The callbacks are the boundary
     /// of the crate, so they are the only thing faked here.
@@ -1137,13 +1126,15 @@ mod callback_tests {
         let body: Vec<u8> = (0..40_000_u32)
             .map(|value| u8::try_from(value % 251).unwrap_or(0))
             .collect();
-        let served = Served {
+        let served = Arc::new(Served {
             body: body.clone(),
             opens: Mutex::new(Vec::new()),
             reads: Mutex::new(Vec::new()),
             closes: Mutex::new(0),
-        };
-        let bytes = fetch_with_callbacks(&served, "https://foo/my.tif").expect("fetched");
+        });
+        let imp: Arc<dyn NetworkCallbacks> = Arc::<Served>::clone(&served);
+        let callbacks = Callbacks::new(imp);
+        let bytes = fetch_with_callbacks(&callbacks, "https://foo/my.tif").expect("fetched");
         assert_eq!(bytes, body);
         assert_eq!(*served.opens.lock().expect("lock"), vec![(0, 16384)]);
         assert_eq!(

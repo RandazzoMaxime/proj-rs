@@ -73,6 +73,7 @@ pub mod tinshift {
 mod network;
 pub use network::{NetworkCallbacks, NetworkError, NetworkHandle, OpenReply};
 mod network_cache;
+mod network_chunks;
 mod ported;
 mod proj;
 mod proj_info;

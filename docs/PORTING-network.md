@@ -9,13 +9,15 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
 |---|---|
 | `src/filemanager.cpp` (téléchargement, cache), `src/networkfileapi` | `src/network.rs` (interne, `pub(crate)`) |
 | `proj_context_set_network_callbacks` | `NetworkCallbacks` (trait public), `ProjBuilder::set_network_callbacks`, `src/network.rs` |
+| `NetworkFile`, `DOWNLOAD_CHUNK_SIZE`, cache de morceaux (`filemanager.cpp`) | `src/network_chunks.rs` (`RemoteFile`, `ChunkCache`, `RemoteReader`) |
+| `GTiffGrid`, lecture des tuiles au calcul (`grids.cpp`, libtiff) | `src/projections/gridshift/geotiff.rs` (`load_remote`, `raw_samples`), `src/projections/gridshift/tiles.rs` (`LazyIfd`, `with_tiles`) |
 | `proj_context_set_url_endpoint`, `PROJ_NETWORK_ENDPOINT` | `ProjBuilder::set_url_endpoint`, `GridContext::load` |
 | `grids.cpp:3222` (`pj_generic_grid_init`), `grids.cpp:3234` | `src/projections/gridshift/mod.rs` (`deferred`, `Deferred`) |
 | `trans.cpp:284` (erreur réseau d'un candidat : arrêt du point) | `src/iso19111/alternatives.rs` (`AlternativeError::Network`) |
 | `proj_trans_get_last_used_operation`, `proj_pj_info` | `Proj::last_used_operation`, `Proj::proj_info` (`candidate_name`) |
 | `DatabaseContext::lookForGridInfo` (`factory.cpp:3400`) | `src/iso19111/factory.rs` (`look_for_grid_info`), `src/iso19111/select.rs` (`unrecorded_grid`) |
 | `src/apps/gie.cpp` (`network_error`) | `src/gie.rs` (`errno_name`) |
-| `test/unit/test_network.cpp` (26 TEST) | `tests/unit_network_core.rs` (5 cas), `tests/unit_network_endpoint_env.rs` (1 cas), `tests/unit_network_local.rs` (2 cas), `src/network.rs` `callback_tests` (2 tests hors liste) |
+| `test/unit/test_network.cpp` (26 TEST) | `tests/unit_network_core.rs` (6 cas, dont `custom`), `tests/unit_network_endpoint_env.rs` (1 cas), `tests/unit_network_local.rs` (2 cas), `src/network.rs` `callback_tests` (2 tests hors liste) |
 | serveur de test local (remplace `cdn.proj.org`) | `tests/net_support/mod.rs` |
 | `src/apps/projsync.cpp`, `test/cli/test_projsync.sh` | non porté (voir l'audit) |
 
@@ -38,11 +40,30 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
 - **Pas de nouvelle tentative sur erreur réseau.** Un candidat en erreur réseau arrête le
   point (`trans.cpp:284`) ; la boucle de nouvelles tentatives ne passe pas au candidat sans
   grille, qui donnerait une identité silencieuse.
-- **Callbacks : grille entière par plages, pas paresseuse.** `fetch_with_callbacks` lit la
-  grille entière (`open(url, 0, 16384)`, puis `read_range` par 16384 octets jusqu'à la taille
-  de `Content-Range`, puis `close`). PROJ lit les tuiles au calcul, ce qui fixe la séquence
-  d'événements des cas `custom`, `getfilesize`, `simul_*`. Ces cas restent écarts (voir
-  l'audit) : sans lecture paresseuse des grilles, la séquence ne peut pas coïncider.
+- **Callbacks : lecture par morceaux, tuiles à la demande (`custom`).** La création ouvre le
+  premier morceau, `open(url, 0, 16384)`, puis les en-têtes `Content-Range`, `Last-Modified`,
+  `ETag`, puis `close` : c'est la séquence de PROJ à la création. Les morceaux lus sont gardés
+  dans un cache partagé par les clones d'un même `ProjBuilder` (`ChunkCache`, 300 Mo, vidé en
+  entier au-delà ; PROJ évince par âge). Une tuile est lue à son `TileOffsets` sur
+  `TileByteCounts` octets (262144 pour `egm96_15`), pas sur la seule partie utile : le
+  décodeur `tiff` lit 214016 octets pour la dernière rangée (721 lignes), ce qui donne une
+  couverture de 229376 octets et non les 278528 de PROJ (mesuré). Le handle de la première
+  tuile sert aux suivantes (`read_range`) et se ferme à la destruction de la grille (`Drop`) ;
+  celui de la création se ferme avant la fin de `proj_create`.
+- **Restriction de la lecture par tuiles.** Seuls les GeoTIFF à tuiles, non compressés, sans
+  prédicteur, à échantillons entrelacés, sont lus par tuile. Les autres (bandes, deflate,
+  bandes planaires, non-TIFF) sont lus entiers par `read_whole` : leur séquence d'appels n'est
+  pas celle de PROJ (il y a les `read_range` du reste du fichier). Le décodage des tuiles est
+  ici (`raw_samples` : u16, i16, u32, i32, f32, f64, ordre d'octets du fichier) ; le décodeur
+  `tiff` ne sert qu'à lire les IFD.
+- **Nouvelle passe par point (`with_tiles`).** Un échantillon d'une tuile non lue donne `None`
+  et la tuile est notée. Le point est recalculé une fois la tuile lue, si bien que
+  l'interpolation ne voit jamais un échantillon absent. Une lecture en échec termine le point
+  par `NetworkUnavailable`, comme une grille absente.
+- **En-têtes demandés, non comparés.** `Last-Modified` et `ETag` sont demandés après chaque
+  appel pour garder la séquence de PROJ, mais leurs valeurs ne sont pas comparées : la
+  détection d'un fichier changé pendant l'ouverture (`simul_file_change_while_opened`) reste
+  un écart.
 - **Forme du trait.** `open` renvoie les premiers octets avec un handle (`OpenReply`), au lieu
   d'un tampon et d'une chaîne d'erreur passés en paramètres. Les erreurs sont typées
   (`NetworkError::Open`, `ReadRange`). Les en-têtes passent par `header`, avec une valeur
@@ -52,9 +73,14 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
 
 ## Ce qui reste ouvert
 
-- Lecture paresseuse par plages des grilles (la grille est lue entière, `read_resource` et
-  `gridpath::read`). Bloque `custom`, `getfilesize`, `simul_read_range_error`,
-  `simul_file_change_while_opened`.
+- Lecture par tuiles pour les GeoTIFF en bandes, compressés (deflate) ou planaires : ils sont
+  lus entiers (`read_whole`), la séquence de PROJ n'est pas reproduite. Le cas `getfilesize`
+  (création, puis seconde création sans appel) n'est pas porté ; à mesurer ensuite.
+- Lecture paresseuse hors `gridshift` : `read_resource` (modèles `deformation`, `tinshift`,
+  `defmodel`, `nkg`) lit encore les grilles entières (`fetch_missing`, `fetch_with_callbacks`).
+- Validation de la fraîcheur d'un fichier ouvert (`ETag`, `Last-Modified`) : bloque
+  `simul_file_change_while_opened`. `simul_read_range_error` est lisible par le même chemin,
+  non porté ici.
 - Validation de cache par `ETag` et `Last-Modified`.
 - Cache SQLite : TTL, taille max, verrou, `proj_grid_cache_clear` (lot cache, autre agent).
 - API de téléchargement explicite (`is_download_needed`, `download_file`) et API de fichiers
