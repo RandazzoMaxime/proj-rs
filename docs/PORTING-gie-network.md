@@ -190,6 +190,41 @@ deux CRS sont posés dans `concatenate`, seul appelant de ce chemin. Le reste de
 `pivot_concatenation` (pivot de datum) n'est pas modifié. Conséquence visible : les
 concaténations dérivées portent désormais leurs CRS, comme en PROJ.
 
+## proj_factors (`TEST(gie, proj_factors)`, l. 486-881)
+
+Source : `factors.cpp` (`proj_factors`, `pj_factors`, `pj_deriv` de `deriv.cpp`).
+Port : `Operation::factors` et `Operation::factors_in_metres` (`src/gie_api.rs`),
+`Proj::factors` (`src/proj.rs`), `crs_factors` (`src/gie_api.rs`),
+`derived_projected_pipeline` et la vérification de `DERIVEDPROJCRS` (`src/crs.rs`).
+Les 46 assertions du C++ sont dans `tests/gie_self_tests.rs::proj_factors`. Les valeurs
+viennent du C++ et ont été relues avec `libproj.so` 9.9.0 (un programme C dans le
+scratchpad : par exemple `EPSG:2222` donne `thetap = 1.5707963118937354`, la même valeur
+que la chaîne `+units=ft`, au bit près).
+
+- Sortie en mètres. `pj_deriv` dérive le `P->fwd` brut, en mètres. Le port multiplie la
+  sortie par `to_meter` du repère (`Step::output_to_metre`) avant de diviser par `a` :
+  `+units=ft` donne l'échelle de la grille en mètres, 0.99990319 et non 3.28. Pour
+  `Mercator` et `UTM`, le facteur vaut 1 et le résultat est inchangé au bit près.
+- CRS projeté (`EPSG:3395`, `2222`, `3044`, `27571`) : PROJ construit un couple
+  géographique normalisé vers un projeté en mètres, puis un pipeline. Le port prend la
+  chaîne d'export du CRS (`Crs::export_to_proj_string`) comme une seule opération, avec
+  la sortie dans l'unité du CRS et sa conversion. Les dérivées et les facteurs sont les
+  mêmes ; le pipeline PROJ n'est pas construit.
+- Composé (`EPSG:5972`) : le premier composant, comme `proj_crs_get_sub_crs(…, 0)`.
+  `Proj::new("EPSG:5972")` est accepté quand ce composant est géographique ou projeté
+  (avant : « not built »).
+- CRS dérivé (`DERIVEDPROJCRS`, trois blocs du test) : le pipeline est la base, avec son
+  ellipsoïde dans l'en-tête (`a` et `e²` du pipeline viennent de l'en-tête), puis
+  l'affine de la conversion dérivée. `factors_in_metres` reçoit l'unité de l'axe
+  (0.3048 pour le pied), comme `fr_meter` de `factors.cpp`. `Proj::new` accepte ce WKT
+  désormais (avant : refusé).
+- Erreurs : un CRS sans projection (géographique) donne `NotATransform`, code
+  `PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE` (1027, lu sur la référence). Toute erreur de
+  latitude, de longitude ou de point sans image donne `InvalidCoordinate`, code
+  `PROJ_ERR_COORD_TRANSFM_INVALID_COORD`. PROJ écrit le même code dans les deux cas.
+- Un `Proj` issu d'une transformation CRS à CRS (`Body::Iso`) n'a pas de facteurs : une
+  erreur `Conversion` le dit, PROJ en donne.
+
 ## Commandes
 
 ```

@@ -41,8 +41,71 @@ pub(crate) fn check_crs(text: &str) -> Result<(), ProjCreateError> {
 /// [`ProjCreateError`] when the text is not one of those CRS kinds, or the conversion method is
 /// not built.
 pub(crate) fn check_well_known(text: &str) -> Result<(), ProjCreateError> {
+    if crate::crs_text::is_derived_projected(text) {
+        return check_derived_projected(text);
+    }
     let definition = crate::crs_text::to_proj(text).map_err(ProjCreateError::ProjError)?;
     check_proj(&definition)
+}
+
+/// Checks a derived projected CRS given as WKT: its pipeline must build, see
+/// [`derived_projected_pipeline`].
+fn check_derived_projected(text: &str) -> Result<(), ProjCreateError> {
+    let crs = user_crs(text)?;
+    let crate::iso19111::Crs::DerivedProjected(derived) = &crs else {
+        return Err(ProjCreateError::ProjError(format!(
+            "{text} is not a derived projected CRS"
+        )));
+    };
+    let (definition, _) = derived_projected_pipeline(derived)?;
+    Operation::create_projection(&definition).map_err(create_error)?;
+    Ok(())
+}
+
+/// The CRS that `text` reads as, from the embedded database.
+fn user_crs(text: &str) -> Result<crate::iso19111::Crs, ProjCreateError> {
+    let db = crate::DatabaseContext::create()
+        .map_err(|error| ProjCreateError::ProjError(error.to_string()))?;
+    crate::create_from_user_input(text, &db)
+        .map_err(|error| ProjCreateError::ProjError(error.to_string()))
+}
+
+/// The PROJ pipeline that `proj_factors` builds for a derived projected CRS (`factors.cpp`,
+/// the derived branch): the base projection, then the deriving affine. The base ellipsoid
+/// goes in the pipeline header, as `a` and `e²` of the pipeline are read from it. The output
+/// is in the axis unit of the derived CRS, whose metres per unit are returned with it.
+pub(crate) fn derived_projected_pipeline(
+    derived: &crate::iso19111::DerivedProjectedCRS,
+) -> Result<(String, f64), ProjCreateError> {
+    let base = crate::iso19111::Crs::Projected(derived.base_crs().clone())
+        .export_to_proj_string()
+        .map_err(|error| ProjCreateError::ProjError(error.to_string()))?;
+    let base: Vec<&str> = base
+        .split_whitespace()
+        .filter(|token| !matches!(*token, "+no_defs" | "+type=crs"))
+        .collect();
+    let ellipsoid: Vec<&str> = base
+        .iter()
+        .copied()
+        .filter(|token| is_ellipsoid_key(token.trim_start_matches('+')))
+        .collect();
+    let affine = derived
+        .deriving_conversion()
+        .export_to_proj_string()
+        .map_err(|error| ProjCreateError::ProjError(error.to_string()))?;
+    let unit = derived
+        .coordinate_system()
+        .axes()
+        .first()
+        .ok_or_else(|| ProjCreateError::ProjError("a derived CRS has no axis".to_owned()))?
+        .unit()
+        .conversion_to_si();
+    let definition = format!(
+        "+proj=pipeline {} +step {} +step {affine}",
+        ellipsoid.join(" "),
+        base.join(" ")
+    );
+    Ok((definition, unit))
 }
 
 fn authority_code(text: &str) -> Option<u32> {
@@ -54,7 +117,16 @@ fn authority_code(text: &str) -> Option<u32> {
 }
 
 fn check_epsg(code: u32) -> Result<(), ProjCreateError> {
-    let loaded = with_db(|connection| load_crs(connection, code)).map_err(db_fail)?;
+    let loaded = match with_db(|connection| load_crs(connection, code)) {
+        Ok(loaded) => loaded,
+        Err(error) => {
+            return if has_horizontal_component(code) {
+                Ok(())
+            } else {
+                Err(db_fail(error))
+            };
+        }
+    };
     let op = Operation::create(&loaded.definition).map_err(create_error)?;
     match loaded.kind {
         LoadedKind::Geographic | LoadedKind::Geocentric => Ok(()),
@@ -63,6 +135,22 @@ fn check_epsg(code: u32) -> Result<(), ProjCreateError> {
             "EPSG:{code} is not a projected CRS"
         ))),
     }
+}
+
+/// A compound CRS, such as `EPSG:5972`, is accepted when its first component, the horizontal
+/// CRS that `proj_factors` reads, is a geographic or projected CRS.
+fn has_horizontal_component(code: u32) -> bool {
+    let Ok(db) = crate::DatabaseContext::create() else {
+        return false;
+    };
+    matches!(
+        crate::create_from_user_input(&format!("EPSG:{code}"), &db),
+        Ok(crate::iso19111::Crs::Compound(compound))
+            if matches!(
+                compound.components().first(),
+                Some(crate::iso19111::Crs::Projected(_) | crate::iso19111::Crs::Geographic(_))
+            )
+    )
 }
 
 fn check_proj(definition: &str) -> Result<(), ProjCreateError> {

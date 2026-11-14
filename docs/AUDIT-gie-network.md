@@ -32,7 +32,7 @@ runner déplacé dans `proj_rs::gie` (`src/gie.rs`).
 |---|---|---|
 | `gie.cart_selftest` | `gie_self_tests.rs::cart_selftest` | porté, sauf 3 assertions sans équivalent observable : `ASSERT_NE(ctx, pj_get_default_ctx())` (identité de pointeurs entre contextes) et les deux `ASSERT_EQ` sur le tampon `z` de `obs[]` (45 et 50, tampon à `stride` nul, absent de l'API point par point). Le changement de contexte (`proj_context_set`, `P->ctx`) est porté par `Operation::context` / `Operation::set_context`. Détail dans `docs/PORTING-gie-network.md`. |
 | `gie.info_functions` | `tests/gie_info_functions.rs::info_functions` (et `init_info_reads_the_metadata_section_of_a_file`) | porté, toutes les assertions : `proj_info` (`proj_rs::info::library_info`), `proj_pj_info` (`Proj::proj_info`), `proj_grid_info` (`info::grid_info`), `proj_init_info` (`info::init_info`), `proj_rtodms2` et `proj_dmstor` (`proj_rs::dms`). Écarts de forme seulement : `release` vaut « 9.9.0 » ici (« Rel. 9.9.0 (…) » dans PROJ), le test vérifie qu'il est non vide comme le C ; le bloc TIFF tourne ici, la référence de build est sans TIFF, et ses valeurs sont les littéraux du C. |
-| `gie.proj_factors` | `gie_self_tests.rs::proj_factors` | partiel : Mercator et UTM portés (`Operation::factors`, `factors.cpp` + `pj_deriv`). Non portés : les blocs EPSG:3395, EPSG:2222, EPSG:3044, EPSG:27571, EPSG:5972, EPSG:4326 (CRS, `proj_factors` sur un objet CRS non implémenté) et le bloc `+units=ft` (la sortie n'est pas convertie en mètres). |
+| `gie.proj_factors` | `gie_self_tests.rs::proj_factors` | porté, les 46 `ASSERT_`/`EXPECT_` du C++ (`ASSERT_FALSE(proj_errno)` compte pour un). `Proj::factors` : projection (`Operation::factors`), CRS `EPSG:` ou WKT (premier composant d'un composé, conversion d'un CRS projeté, base et affine d'un `DERIVEDPROJCRS`), sortie convertie en mètres (`+units=ft`, unité d'axe). Ajout : le code exact `PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE` (1027) pour `EPSG:4326`, lu sur la référence. Écarts de forme : pas de `proj_errno_reset` ni de struct nulle après erreur (`Err`). Détail dans `docs/PORTING-gie-network.md`. |
 | `gie.list_functions` | `gie_self_tests.rs::list_functions` | porté (`proj_list_operations` : 190 ids de `proj -l`) |
 | `gie.io_predicates` | `gie_self_tests.rs::io_predicates` | porté ; `P->inverted = 1` est traduit par la direction `inverse = true` de la même opération. |
 | `gie.unitconvert_selftest` | `gie_self_tests.rs::unitconvert_selftest` | porté |
@@ -51,8 +51,8 @@ runner déplacé dans `proj_rs::gie` (`src/gie.rs`).
 | `gieTest.proj_create_crs_to_crs_EPSG_4326` (TEST_F) | `gie_self_tests.rs::proj_create_crs_to_crs_epsg_4326` | porté (entrée en longitude, latitude : ordre de la crate). |
 | `gieTest.proj_create_crs_to_crs_proj_longlat` (TEST_F) | `gie_self_tests.rs::proj_create_crs_to_crs_proj_longlat` | porté |
 
-Compte sur les 20 tests C++ : 19 ont un test Rust (18 complets, dont `cart_selftest`
-avec 3 assertions sans équivalent ; 1 partiel : `proj_factors`), et 1 est un écart
+Compte sur les 20 tests C++ : 19 ont un test Rust (19 complets, dont `cart_selftest`
+avec 3 assertions sans équivalent), et 1 est un écart
 (`proj_create_crs_to_crs_WGS84_EGM08`). `tests/gie_self_tests.rs`
 contient 19 fonctions : les 18 tests C++ de ce fichier et `nan_input_gives_no_coordinate`,
 tirée de `io_predicates`. `tests/gie_info_functions.rs` porte `info_functions`
