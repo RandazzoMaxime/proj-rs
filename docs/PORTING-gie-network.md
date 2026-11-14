@@ -225,6 +225,66 @@ que la chaîne `+units=ft`, au bit près).
 - Un `Proj` issu d'une transformation CRS à CRS (`Body::Iso`) n'a pas de facteurs : une
   erreur `Conversion` le dit, PROJ en donne.
 
+## proj_create_crs_to_crs_WGS84_EGM08_to_WGS84 (`TEST(gie, ...)`, `gie_self_tests.cpp` l. 1351-1362)
+
+Porté, les 2 assertions. `ASSERT_TRUE(P != nullptr)` devient `expect` sur
+`Proj::new_known_crs("EPSG:4326+3855", "EPSG:4979")`. `EXPECT_EQ` sur
+`proj_pj_info(P).description`, lu avant tout point, devient `Proj::proj_info().description`.
+Test : `tests/gie_self_tests.rs::proj_create_crs_to_crs_wgs84_egm08_to_wgs84`, écrit avant
+le correctif (échec : « Inverse of WGS 84 to EGM2008 height (1) »).
+
+Littéral vérifié contre PROJ 9.9.0 : un programme C de contrôle, compilé hors dépôt contre
+`target/proj-reference/build/lib` avec `PROJ_DATA` de la référence, donne « Transformation
+from EGM2008 height to WGS 84 (ballpark vertical transformation, without ellipsoid height to
+vertical height correction) » avec l'appel sans option, `ONLY_BEST=YES` et `ONLY_BEST=NO`.
+Sans grille `us_nga_egm08_25.tif` sur disque, PROJ donne `proj=noop ellps=GRS80`.
+
+Ce que fait PROJ, relevé avec `proj_create_operations` :
+
+- `KNOWN_AVAILABLE` : deux candidats, dans cet ordre, « Inverse of WGS 84 to EGM2008
+  height (1) » (non instanciable, non ballpark), puis le ballpark (instanciable).
+  Même zone d'utilisation (monde) pour les deux.
+- `DISCARD_OPERATION_IF_MISSING_GRID` : un seul candidat, le ballpark.
+- `proj_create_crs_to_crs` relance la recherche (`crs_to_crs.cpp:685-735`) parce qu'aucun
+  candidat n'est à la fois instanciable et sans ballpark.
+- `proj_pj_info` d'un ensemble d'alternatives (`info.cpp:168-196`) prend le seul candidat
+  instanciable, son nom et sa définition ; avec plusieurs, « unavailable until proj_trans
+  is called ». Ici, le ballpark.
+- La liste finale de `proj_create_crs_to_crs` ne compte qu'une opération : `proj_get_name`
+  renvoie le nom du ballpark, alors qu'un ensemble d'alternatives n'a pas de nom (le test
+  de Pulkovo le vérifie : `proj_get_name` NULL). Vérifié avec `proj_get_name` sur
+  `EPSG:4326+3855 -> EPSG:4979` (ballpark), `EPSG:4179 -> EPSG:4258` (NULL) et
+  `EPSG:4326 -> EPSG:3857`.
+
+Cause de l'écart de description : la liste de la recherche de la crate (`KNOWN_AVAILABLE`,
+relance comprise, `facade_candidates` dans `src/iso19111/select.rs`) est celle de PROJ. Le
+défaut était dans
+`IsoPipeline::description()` (`src/proj_iso.rs`) : avant un point, elle prenait
+`chosen`, le premier candidat, alors que la définition suivait déjà la règle de
+`info.cpp`. Correctif : `reported_candidate` garde aussi le nom du candidat rapporté
+(`reported_name`), `description()` le lit, et un ensemble de plusieurs candidats sans point
+donne le texte différé, comme `definition_text`. La sélection n'a pas changé.
+
+Écart restant, hors du test C (non corrigé) : la crate garde les deux candidats
+(`[EGM2008 (1), ballpark]`) : `Proj::name()` vaut donc `None` pour cette paire, et
+`last_used_operation()` donne le ballpark après un point, alors que PROJ garde une seule
+opération (`proj_get_name` = ballpark, aucun candidat utilisé). Le mécanisme qui écarte
+le candidat (1) dans PROJ n'est pas identifié : le bloc de fusion de la relance
+(`crs_to_crs.cpp:735-745`) garde les opérations non ballpark de la première liste, ce qui
+donnerait deux éléments. Les nombres et la description coïncident.
+
+Écarts et corrections de l'audit :
+
+- `docs/AUDIT-gie-network.md` attribuait l'écart à `OnlyBest::Off` dans
+  `Proj::new_known_crs`. C'est inexact : la façade appelle `facade_candidates`, pas
+  `best_pipeline_with(OnlyBest::Off)`, et cette fonction relance déjà la recherche. Le mode
+  `OnlyBest::Unset` de `select.rs` n'est pas utilisé par la façade.
+- La relance de PROJ n'a pas `ONLY_BEST` : elle appelle `DISCARD_OPERATION_IF_MISSING_GRID`
+  seul (`crs_to_crs.cpp:685-690`). La crate fait de même.
+- Point après le candidat (contrôle manuel, non commité) : `convert_xyz(20, 52, 10)` donne
+  `(20, 52, 10)` dans PROJ et dans la crate, et la description reste le ballpark avant et
+  après le point.
+
 ## Commandes
 
 ```

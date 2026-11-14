@@ -40,7 +40,7 @@ runner déplacé dans `proj_rs::gie` (`src/gie.rs`).
 | `gie.horner_selftest` | `gie_self_tests.rs::horner_selftest` | porté (`src/projections/models/horner.rs`, `horner.cpp`) |
 | `gie.horner_only_fwd_selftest` | `gie_self_tests.rs::horner_only_fwd_selftest` | porté |
 | `gie.proj_create_crs_to_crs_PULKOVO42_ETRS89` | `gie_self_tests.rs::proj_create_crs_to_crs_pulkovo42_etrs89` | porté, toutes les 12 assertions. `proj_pj_info().definition` (« unavailable until proj_trans is called », puis les deux pipelines) : `Proj::definition_in_authority_order()`, dans l'ordre de `proj_create_crs_to_crs` avec les `axisswap` de bout de pipeline ; `Proj::proj_info().definition` garde le texte normalisé de la crate. `proj_get_name` nul : `Proj::name()`. Noms de CRS : `Proj::source_crs()` et `target_crs()`. `P->fwd` nul avant un point : `last_used_operation()` vide. `proj_trans_generic` : `convert_array`. Détail dans `docs/PORTING-gie-network.md`. |
-| `gie.proj_create_crs_to_crs_WGS84_EGM08_to_WGS84` | — | écart : `EPSG:4326+3855 -> EPSG:4979` donne « Inverse of WGS 84 to EGM2008 height (1) » (grille `us_nga_egm08_25.tif` absente). PROJ donne « ... ballpark ». Cause : `Proj::new_known_crs` utilise `OnlyBest::Off` (façade, `src/iso19111/select.rs`), qui ne relance pas la recherche avec écartement des grilles absentes comme `proj_create_crs_to_crs` (`crs_to_crs.cpp:668-735`). La liste des trois candidats est identique à PROJ (`projinfo`). Correction non faite : elle touche les tests de parité de la façade. |
+| `gie.proj_create_crs_to_crs_WGS84_EGM08_to_WGS84` | `gie_self_tests.rs::proj_create_crs_to_crs_wgs84_egm08_to_wgs84` | porté, les 2 assertions. `EPSG:4326+3855 -> EPSG:4979` : la recherche (`KNOWN_AVAILABLE`, puis la relance de `crs_to_crs.cpp:685-735`) donne deux candidats, EGM2008 (1) (grille absente, non instanciable) et le ballpark. `proj_pj_info` nomme le seul candidat instanciable (`info.cpp:168-196`) ; la façade nommait le premier. Correctif : `IsoPipeline::description` (`src/proj_iso.rs`). Écart restant, hors de ce test : PROJ ne garde qu'une opération (`proj_get_name` = le ballpark), la crate garde les deux candidats, donc `Proj::name()` vaut `None` pour cette paire. Détail dans `docs/PORTING-gie-network.md`. |
 | `gie.proj_create_crs_to_crs_outside_area_of_use` | `gie_self_tests.rs::proj_create_crs_to_crs_outside_area_of_use` | porté |
 | `gie.proj_create_crs_to_crs_with_area_large` | `gie_self_tests.rs::proj_create_crs_to_crs_with_area_large` | porté (l'aire est stockée sans influer sur la sélection ; les valeurs coïncident ici) |
 | `gie.proj_create_crs_to_crs_with_longitude_outside_minus_180_180` | `gie_self_tests.rs::proj_create_crs_to_crs_with_longitude_outside_minus_180_180` | porté. L'axe normalisé est le seul de la crate : `P` et `Pnormalized` du C++ donnent le même appel. |
@@ -51,11 +51,10 @@ runner déplacé dans `proj_rs::gie` (`src/gie.rs`).
 | `gieTest.proj_create_crs_to_crs_EPSG_4326` (TEST_F) | `gie_self_tests.rs::proj_create_crs_to_crs_epsg_4326` | porté (entrée en longitude, latitude : ordre de la crate). |
 | `gieTest.proj_create_crs_to_crs_proj_longlat` (TEST_F) | `gie_self_tests.rs::proj_create_crs_to_crs_proj_longlat` | porté |
 
-Compte sur les 20 tests C++ : 19 ont un test Rust (19 complets, dont `cart_selftest`
-avec 3 assertions sans équivalent), et 1 est un écart
-(`proj_create_crs_to_crs_WGS84_EGM08`). `tests/gie_self_tests.rs`
-contient 19 fonctions : les 18 tests C++ de ce fichier et `nan_input_gives_no_coordinate`,
-tirée de `io_predicates`. `tests/gie_info_functions.rs` porte `info_functions`
+Compte sur les 20 tests C++ : 20 ont un test Rust (20 complets, dont `cart_selftest`
+avec 3 assertions sans équivalent), et aucun n'est un écart.
+`tests/gie_self_tests.rs` contient 20 fonctions : les 19 tests C++ de ce fichier et
+`nan_input_gives_no_coordinate`, tirée de `io_predicates`. `tests/gie_info_functions.rs` porte `info_functions`
 et une fonction de contrôle sur un fichier `+init` (`tests/gie/test_init_metadata`).
 
 Correction de comportement liée à ce test : `Proj::def` et `Proj::proj_info`

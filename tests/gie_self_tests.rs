@@ -655,6 +655,22 @@ fn proj_create_crs_to_crs_pulkovo42_etrs89() {
     );
 }
 
+/// `proj_create_crs_to_crs_WGS84_EGM08_to_WGS84`, both assertions of the C test: the pair is
+/// created (`ASSERT_TRUE(P != nullptr)`), and its description, read before any point, is the
+/// ballpark vertical transformation. No EGM2008 grid is on disk, so the candidate that needs it
+/// is left out and PROJ's rerun keeps the ballpark one.
+#[test]
+fn proj_create_crs_to_crs_wgs84_egm08_to_wgs84() {
+    let p = Proj::new_known_crs("EPSG:4326+3855", "EPSG:4979", None).expect("4326+3855 to 4979");
+    assert_eq!(
+        p.proj_info().description.as_deref(),
+        Some(
+            "Transformation from EGM2008 height to WGS 84 (ballpark vertical \
+             transformation, without ellipsoid height to vertical height correction)"
+        )
+    );
+}
+
 /// `proj_create_crs_to_crs_with_area_large`: the area of use is given.
 #[test]
 fn proj_create_crs_to_crs_with_area_large() {

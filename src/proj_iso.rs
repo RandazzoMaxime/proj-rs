@@ -18,6 +18,10 @@ use crate::iso19111::{
 };
 use crate::proj::{Direction, ForceOver, ProjError};
 
+/// The text `proj_pj_info` gives for a set of candidates that no point has picked yet
+/// (`info.cpp:190-191`).
+const DEFERRED_TEXT: &str = "unavailable until proj_trans is called";
+
 /// Which axis a CRS writes first in the pipeline.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Lead {
@@ -84,6 +88,9 @@ pub(crate) struct IsoPipeline {
     /// The PROJ string `proj_pj_info` reports before an epoch: the operation's own when it is the
     /// only one, or the single instantiable candidate's. `None` is PROJ's deferred text.
     reported: Option<String>,
+    /// The name of the candidate `reported` comes from: the description `proj_pj_info` gives
+    /// before a point (`info.cpp:168-196`). `None` for a single operation, which has its own.
+    reported_name: Option<String>,
     /// Coordinate epoch inserted as `proj=set` steps, when one side of the pair carries one.
     epoch: Option<f64>,
 }
@@ -132,7 +139,7 @@ pub(crate) fn iso_pipeline_at(
     } = candidates;
     let source_horizontal = horizontal_part(&source).filter(|crs| is_horizontal(crs))?;
     let target_horizontal = horizontal_part(&target).filter(|crs| is_horizontal(crs))?;
-    let reported = reported_candidate(&items);
+    let (reported, reported_name) = reported_candidate(&items).unzip();
     if let Some(year) = epoch {
         for item in &mut items {
             if let Some(definition) = &item.definition {
@@ -179,22 +186,28 @@ pub(crate) fn iso_pipeline_at(
         target: Side::of(target_horizontal),
         chosen: first,
         reported,
+        reported_name,
         epoch,
     })
 }
 
-/// The PROJ string `proj_pj_info` reports for the candidates of a pair: the only candidate's, or
-/// the one instantiable candidate's. `None` when several can be built, which PROJ reports as
-/// deferred until `proj_trans` picks one.
-fn reported_candidate(items: &[Item]) -> Option<String> {
-    if let [only] = items {
-        return only.definition.clone();
-    }
-    let mut instantiable = items.iter().filter(|item| item.instantiable);
-    match (instantiable.next(), instantiable.next()) {
-        (Some(item), None) => item.definition.clone(),
-        _ => None,
-    }
+/// The PROJ string and the name `proj_pj_info` reports for the candidates of a pair: the only
+/// candidate's, or the one instantiable candidate's (`info.cpp:168-196`). `None` when several can
+/// be built, which PROJ reports as deferred until `proj_trans` picks one.
+fn reported_candidate(items: &[Item]) -> Option<(String, String)> {
+    let item = match items {
+        [only] => only,
+        _ => {
+            let mut instantiable = items.iter().filter(|item| item.instantiable);
+            match (instantiable.next(), instantiable.next()) {
+                (Some(item), None) => item,
+                _ => return None,
+            }
+        }
+    };
+    item.definition
+        .clone()
+        .map(|definition| (definition, item.name.clone()))
 }
 
 /// The pipeline of a same-datum pair: PROJ's null geographic offset.
@@ -214,6 +227,7 @@ fn null_offset_pipeline(from: &str, to: &str, epoch: Option<f64>) -> Option<IsoP
         target: Side::of(target_horizontal),
         chosen: choice.operation,
         reported: Some(choice.definition),
+        reported_name: None,
         epoch,
     })
 }
@@ -393,11 +407,17 @@ impl IsoPipeline {
     }
 
     /// `proj_pj_info().description` of this pair: the name of the candidate the last point
-    /// used (`info.cpp` 170-171), else the name of the ISO operation the pipeline was written from.
+    /// used (`info.cpp` 170-171). Before a point, a single operation is the one it was written
+    /// from; a set of candidates reports the one instantiable candidate (`info.cpp:168-196`), and
+    /// the deferred text when there are several.
     pub(crate) fn description(&self) -> &str {
-        match self.current_item() {
-            Some(item) => &item.name,
-            None => self.chosen.name(),
+        if let Some(item) = self.current_item() {
+            return &item.name;
+        }
+        match (&self.route, &self.reported_name) {
+            (Route::Single(_), _) => self.chosen.name(),
+            (Route::Alternatives(_), Some(name)) => name,
+            (Route::Alternatives(_), None) => DEFERRED_TEXT,
         }
     }
 
@@ -426,7 +446,7 @@ impl IsoPipeline {
             Some(item) => item.definition.clone().ok_or(ProjError::Definition)?,
             None => match &self.reported {
                 Some(reported) => reported.clone(),
-                None => return Ok("unavailable until proj_trans is called".to_owned()),
+                None => return Ok(DEFERRED_TEXT.to_owned()),
             },
         };
         let visualized = visualization_definition(&reported, self.source, self.target);
