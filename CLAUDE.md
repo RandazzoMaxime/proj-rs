@@ -23,8 +23,14 @@ comparer n'importe quelle paire au vrai PROJ, pas seulement les cas des yaml.
 
 ## Règles de travail
 
-- Personne ne pousse sur `main`. Chaque changement passe par une branche et une PR.
-  Ne pas fusionner : le mainteneur est seul à fusionner.
+- Personne ne pousse sur `main`, sauf l'administrateur du dépôt (Maxime Randazzo, avec ses
+  droits admin). Tout autre changement passe par une branche et une PR. Ne pas fusionner :
+  le mainteneur est seul à fusionner. Exception : quand l'administrateur le demande
+  explicitement, Claude fusionne la PR dont la CI est verte (squash). Claude ne pousse
+  jamais sur `main` lui-même et ne contourne aucun ruleset : un push direct refusé se
+  règle par une PR.
+- Claude travaille sur des branches `claude/<sujet>` (une par lot ou par test) et peut les
+  créer sans demander.
 - Un lot = une PR, un seul sujet. Ne pas mélanger deux lots dans une branche.
 - Un port commence par les tests qui caractérisent le comportement PROJ, puis
   l'implémentation. Les valeurs attendues viennent de PROJ 9.9.0, jamais du
