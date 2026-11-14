@@ -34,6 +34,7 @@ mod proj_grid_substitution;
 mod projfam;
 mod projstring;
 pub(crate) use projstring::PRIME_MERIDIANS;
+pub(crate) use select::RemoteGrids;
 mod select;
 mod suggest;
 mod transform_export;

@@ -24,7 +24,7 @@ use crate::gie_api::Factors;
 use crate::iso19111::{
     Conversion, CoordinateOperation, CoordinateOperationContext, CoordinateOperationFactory, Crs,
     DatabaseContext, FactoryError, GridAvailabilityUse, GridDescription, OpProps, Pipeline,
-    ProjStringLayout,
+    ProjStringLayout, RemoteGrids,
 };
 use crate::proj_iso::{iso_pipeline, iso_pipeline_at, IsoPipeline};
 use crate::{CreateError, Xyzt};
@@ -758,19 +758,28 @@ impl Proj {
     ///
     /// The definition is not a PROJ-based operation, or the database rejects a lookup.
     pub fn grids_needed(&self) -> Result<Vec<GridDescription>, ProjError> {
-        let operation = Conversion::create_proj_based(&OpProps::new(), &self.definition)
-            .map(CoordinateOperation::Conversion)
-            .map_err(|error| ProjError::GridsNeeded(error.to_string()))?;
-        let db =
-            DatabaseContext::create().map_err(|error| ProjError::GridsNeeded(error.to_string()))?;
-        let known = if self.net.enabled {
-            GridAvailabilityUse::KnownAvailable
-        } else {
-            GridAvailabilityUse::UseForSorting
-        };
-        operation
-            .grids_needed(&db, known)
-            .map_err(|error| ProjError::GridsNeeded(error.to_string()))
+        crate::network::with_context(&self.net, || {
+            let operation = Conversion::create_proj_based(&OpProps::new(), &self.definition)
+                .map(CoordinateOperation::Conversion)
+                .map_err(|error| ProjError::GridsNeeded(error.to_string()))?;
+            let db = DatabaseContext::create()
+                .map_err(|error| ProjError::GridsNeeded(error.to_string()))?;
+            let known = if self.net.enabled {
+                GridAvailabilityUse::KnownAvailable
+            } else {
+                GridAvailabilityUse::UseForSorting
+            };
+            // The network is asked for a grid on no row, as `proj_coordoperation_get_grid_used`
+            // does with the network on (`lookForGridInfo`, `resolveFullFilename`).
+            let remote = if self.net.enabled {
+                RemoteGrids::Open
+            } else {
+                RemoteGrids::Skip
+            };
+            operation
+                .grids_needed_with(&db, known, remote)
+                .map_err(|error| ProjError::GridsNeeded(error.to_string()))
+        })
     }
 
     /// Version of the PROJ release this port follows.
