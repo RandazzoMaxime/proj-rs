@@ -45,7 +45,8 @@ fn read_only_image() -> Result<Connection, rusqlite::Error> {
     Ok(connection)
 }
 
-/// `connection` with the auxiliary databases of `PROJ_AUX_DB` (`:`-separated paths) attached.
+/// `connection` with the auxiliary databases of `PROJ_AUX_DB` attached: the paths are separated
+/// by `;` on Windows and by `:` elsewhere, as `DatabaseContext::create` reads them.
 fn with_aux(connection: Connection) -> Result<Connection, rusqlite::Error> {
     attach_aux(&connection)?;
     Ok(connection)
@@ -61,7 +62,12 @@ fn attach_aux(connection: &Connection) -> Result<(), rusqlite::Error> {
         return Ok(());
     };
     let mut aliases = Vec::new();
-    for (index, path) in paths.split(':').filter(|path| !path.is_empty()).enumerate() {
+    let separator = if cfg!(windows) { ';' } else { ':' };
+    for (index, path) in paths
+        .split(separator)
+        .filter(|path| !path.is_empty())
+        .enumerate()
+    {
         let alias = format!("aux{index}");
         let quoted = path.replace('\'', "''");
         connection.execute_batch(&format!("ATTACH DATABASE '{quoted}' AS {alias}"))?;
