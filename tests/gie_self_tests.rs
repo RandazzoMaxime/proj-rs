@@ -5,9 +5,10 @@
 //! `P->` internals) is not written here; `docs/AUDIT-gie-network.md` lists each one
 //! with its cause. The PROJ-string constants are generated from the C++ literals.
 
+use proj_rs::errno::PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE;
 use proj_rs::{
     list_ellps, list_operations, list_prime_meridians, xy_dist, BatchError, Direction, Operation,
-    Proj, StepError, Xyzt,
+    Proj, ProjError, StepError, Xyzt,
 };
 use std::num::NonZeroUsize;
 
@@ -288,11 +289,16 @@ fn unitconvert_selftest_date() {
     test_date(date_to_dec, 18991231.0, 1899.9972603);
 }
 
-/// `proj_trans` on a CRS object (not a transform) fails: `PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE`.
+/// `gie.proj_trans_with_a_crs`: `proj_trans` on a CRS object (not a transform) returns
+/// `HUGE_VAL` and sets `PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE`. `HUGE_VAL` is the `Err`.
 #[test]
 fn trans_with_a_crs_is_an_error() {
     let crs = Proj::new("EPSG:4326").expect("EPSG:4326 is a CRS");
-    assert!(crs.convert_xyzt(0.0, 0.0, 0.0, 0.0).is_err());
+    let error = crs
+        .convert_xyzt(0.0, 0.0, 0.0, 0.0)
+        .expect_err("a CRS has no image");
+    assert!(matches!(error, ProjError::NotATransform), "{error:?}");
+    assert_eq!(error.code(), PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE);
 }
 
 /// `gieTest, proj_create_crs_to_crs` (TEST_F). The CRS-name assertions of the C test

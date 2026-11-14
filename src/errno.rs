@@ -126,6 +126,7 @@ impl ProjError {
             | Self::HeaderError(_)
             | Self::DownloadError(..) => PROJ_ERR_OTHER_NETWORK_ERROR,
             Self::FloatConversion => PROJ_ERR_COORD_TRANSFM_INVALID_COORD,
+            Self::NotATransform => PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE,
             _ => PROJ_ERR_COORD_TRANSFM,
         }
     }

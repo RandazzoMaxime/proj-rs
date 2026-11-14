@@ -45,15 +45,14 @@ runner déplacé dans `proj_rs::gie` (`src/gie.rs`).
 | `gie.proj_create_crs_to_crs_with_area_large` | `gie_self_tests.rs::proj_create_crs_to_crs_with_area_large` | porté (l'aire est stockée sans influer sur la sélection ; les valeurs coïncident ici) |
 | `gie.proj_create_crs_to_crs_with_longitude_outside_minus_180_180` | `gie_self_tests.rs::proj_create_crs_to_crs_with_longitude_outside_minus_180_180` | porté. L'axe normalisé est le seul de la crate : `P` et `Pnormalized` du C++ donnent le même appel. |
 | `gie.proj_trans_generic` | `gie_self_tests.rs::proj_trans_generic` | porté via `transform_array` (les tableaux strides de `proj_trans_generic` ne sont pas une API Rust). |
-| `gie.proj_trans_with_a_crs` | `gie_self_tests.rs::trans_with_a_crs_is_an_error` | partiel : l'erreur est vérifiée, pas le code `PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE`. |
+| `gie.proj_trans_with_a_crs` | `gie_self_tests.rs::trans_with_a_crs_is_an_error` | porté : `HUGE_VAL` est `Err(ProjError::NotATransform)`, dont `code()` vaut `PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE` (`src/errno.rs`). |
 | `gie.proj_create_crs_to_crs_from_pj_force_over` | — | écart : l'option `FORCE_OVER` et le drapeau `P->over` ne sont pas implémentés. |
 | `gieTest.proj_create_crs_to_crs` (TEST_F) | `gie_self_tests.rs::proj_create_crs_to_crs` | partiel : valeurs portées, noms de CRS non (voir PULKOVO). |
 | `gieTest.proj_create_crs_to_crs_EPSG_4326` (TEST_F) | `gie_self_tests.rs::proj_create_crs_to_crs_epsg_4326` | porté (entrée en longitude, latitude : ordre de la crate). |
 | `gieTest.proj_create_crs_to_crs_proj_longlat` (TEST_F) | `gie_self_tests.rs::proj_create_crs_to_crs_proj_longlat` | porté |
 
-Compte sur les 20 tests C++ : 17 ont un test Rust (12 complets, 5 partiels :
-`cart_selftest`, `PULKOVO42`, `trans_with_a_crs`, `proj_create_crs_to_crs`,
-`proj_factors`), et 3 sont des écarts (`info_functions`,
+Compte sur les 20 tests C++ : 17 ont un test Rust (13 complets, 4 partiels :
+`cart_selftest`, `PULKOVO42`, `proj_create_crs_to_crs`, `proj_factors`), et 3 sont des écarts (`info_functions`,
 `proj_create_crs_to_crs_WGS84_EGM08`, `proj_create_crs_to_crs_from_pj_force_over`). `tests/gie_self_tests.rs`
 contient 15 fonctions : les 14 ci-dessus et `nan_input_gives_no_coordinate`,
 tirée de `io_predicates`.

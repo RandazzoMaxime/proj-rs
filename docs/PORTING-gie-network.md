@@ -22,8 +22,6 @@ Audit détaillé : `docs/AUDIT-gie-network.md`.
 - `gie -vv` : pas de compteurs roundtrips / échecs séparés (la bibliothèque
   renvoie un total par fichier).
 - `gie` : les erreurs de structure `<gie>` ne sont pas signalées.
-- `proj_trans` sur un objet CRS : une erreur `ProjError`, pas le code
-  `PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE` exact.
 - `proj_trans_generic` (tableaux strides) : porté comme `transform_array`
   sur des points, qui est la forme Rust équivalente.
 - Changement de contexte (`proj_context_set`) : pas d'équivalent, un objet
@@ -36,3 +34,6 @@ Audit détaillé : `docs/AUDIT-gie-network.md`.
 ```
 cargo test --offline --test gie_cli --test gie_run --test gie_self_tests
 ```
+`gie.proj_trans_with_a_crs` : porté. `proj_trans` sur un CRS renvoie `Err(ProjError::NotATransform)` (C++ : `HUGE_VAL`, `PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE`).
+Le code vient de `ProjError::code()` (`src/errno.rs`) ; la variante `Conversion` donnait `PROJ_ERR_COORD_TRANSFM` (2048), écart corrigé.
+Test : `tests/gie_self_tests.rs::trans_with_a_crs_is_an_error`, écrit avant le correctif (échec : 2048 au lieu de 1027).

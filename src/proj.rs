@@ -139,6 +139,9 @@ pub enum ProjError {
     DownloadError(String, String, u8),
     /// The operation has no recoverable definition.
     Definition,
+    /// The object is a CRS, not a coordinate operation, so it transforms nothing: PROJ
+    /// `PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE`.
+    NotATransform,
     /// PROJJSON export is not built.
     ExportToJson,
     /// WKT export is not built.
@@ -184,6 +187,7 @@ impl fmt::Display for ProjError {
             Self::Definition => {
                 formatter.write_str("The current definition could not be retrieved")
             }
+            Self::NotATransform => formatter.write_str("CRS is not a transform"),
             Self::ExportToJson => formatter
                 .write_str("The definition could not be represented in the requested JSON format"),
             Self::ExportToWkt => formatter
@@ -726,7 +730,8 @@ impl Proj {
     /// Convert coordinates in the forward direction.
     ///
     /// Units match [`Self::project`]. A failure is a [`ProjError::Conversion`],
-    /// as in georust `proj`.
+    /// as in georust `proj`; a CRS object, which is not a transform, fails with
+    /// [`ProjError::NotATransform`].
     ///
     /// # Errors
     ///
@@ -1031,16 +1036,9 @@ impl Proj {
         report: Report,
     ) -> Result<Xyzt, ProjError> {
         let mapped = match &self.body {
-            Body::Single => {
-                return Err(match report {
-                    Report::Projection => {
-                        ProjError::Projection("CRS is not a transform".to_owned())
-                    }
-                    Report::Conversion => {
-                        ProjError::Conversion("CRS is not a transform".to_owned())
-                    }
-                });
-            }
+            // PROJ's `proj_trans` on a CRS sets `PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE`,
+            // whichever of project or convert is asked: the report kind does not apply.
+            Body::Single => return Err(ProjError::NotATransform),
             Body::Native(op) => {
                 let coord = Xyzt { x, y, z, t };
                 match way {
