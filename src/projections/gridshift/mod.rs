@@ -10,14 +10,17 @@ mod geotiff;
 mod ntv1;
 mod ntv2;
 pub(super) mod public;
+mod tiles;
 
 use std::collections::BTreeMap;
 use std::f64::consts::{PI, TAU};
+use std::sync::{Arc, Mutex};
 
 use crate::angle::adjlon;
 use crate::engine::{
     cartesian_to_geodetic, Coord, CreateError, Frame, IoKind, Params, Step, TransformError,
 };
+use tiles::{with_tiles, Samples};
 
 const REL: f64 = 1e-5;
 const ARCSEC: f64 = (PI / 180.0) / 3600.0;
@@ -129,7 +132,7 @@ struct Node {
     extent: Extent,
     bottom_up: bool,
     spp: usize,
-    samples: Vec<f32>,
+    samples: Samples,
     scale: Vec<f64>,
     offset: Vec<f64>,
     nodata: Option<f32>,
@@ -155,8 +158,7 @@ impl Node {
         let x_us = usize::try_from(x).ok()?;
         let y_us = usize::try_from(y_tiff).ok()?;
         let width = usize::try_from(self.width).ok()?;
-        let index = (y_us * width + x_us) * self.spp + sample;
-        let raw = *self.samples.get(index)?;
+        let raw = self.samples.get(x_us, y_us, sample, width, self.spp)?;
         if self.nodata.is_some_and(|nodata| raw == nodata) {
             return Some(raw);
         }
@@ -505,7 +507,10 @@ fn open_horizontal(name: &str) -> Result<GridSet, Fail> {
     if name == "null" {
         return Ok(GridSet::null_grid());
     }
-    let bytes = read_grid(name)?;
+    let bytes = match read_grid(name)? {
+        Source::Tiles(ifds) => return GridSet::from_tiff_horizontal(ifds),
+        Source::Bytes(bytes) => bytes,
+    };
     if ntv2::is_ntv2(&bytes) {
         let grids = ntv2::load(&bytes).map_err(|()| Fail::Invalid)?;
         return Ok(GridSet::from_ntv2(grids));
@@ -515,7 +520,8 @@ fn open_horizontal(name: &str) -> Result<GridSet, Fail> {
         return Ok(GridSet::from_ntv2(vec![grid]));
     }
     if geotiff::is_tiff(&bytes) {
-        return GridSet::from_tiff_horizontal(&bytes);
+        let ifds = geotiff::load(&bytes).map_err(|()| Fail::Invalid)?;
+        return GridSet::from_tiff_horizontal(ifds);
     }
     if is_ctable2(&bytes) {
         return GridSet::from_ctable2(&bytes);
@@ -531,9 +537,13 @@ fn open_vertical(name: &str) -> Result<GridSet, Fail> {
     if name == "null" {
         return Ok(GridSet::null_grid());
     }
-    let bytes = read_grid(name)?;
+    let bytes = match read_grid(name)? {
+        Source::Tiles(ifds) => return GridSet::from_tiff_vertical(ifds),
+        Source::Bytes(bytes) => bytes,
+    };
     if geotiff::is_tiff(&bytes) {
-        return GridSet::from_tiff_vertical(&bytes);
+        let ifds = geotiff::load(&bytes).map_err(|()| Fail::Invalid)?;
+        return GridSet::from_tiff_vertical(ifds);
     }
     // `VerticalShiftGridSet::open` (`grids.cpp`, 1631) tests the file it opened, so a
     // `grid_alternatives` fallback such as `us_nga_egm96_15.tif` -> `egm96_15.gtx` is GTX.
@@ -563,15 +573,54 @@ fn open_generic(name: &str) -> Result<GridSet, Fail> {
     if name == "null" {
         return Ok(GridSet::null_grid());
     }
-    let bytes = read_grid(name)?;
+    let bytes = match read_grid(name)? {
+        Source::Tiles(ifds) => return GridSet::from_tiff_generic(ifds),
+        Source::Bytes(bytes) => bytes,
+    };
     if geotiff::is_tiff(&bytes) {
-        return GridSet::from_tiff_generic(&bytes);
+        let ifds = geotiff::load(&bytes).map_err(|()| Fail::Invalid)?;
+        return GridSet::from_tiff_generic(ifds);
     }
     Err(Fail::Invalid)
 }
 
-fn read_grid(name: &str) -> Result<Vec<u8>, Fail> {
-    crate::gridpath::read(name).ok_or(Fail::Missing)
+/// A grid as it is read: its bytes, or the images of a TIFF served by the callbacks, read tile
+/// by tile when they are needed.
+enum Source {
+    Bytes(Vec<u8>),
+    Tiles(Vec<geotiff::RawIfd>),
+}
+
+/// The grid `name`. A grid the callbacks serve is opened with its first chunk: when that is a
+/// TIFF this reads uncompressed tiles only, which stay in the file (`Source::Tiles`). Any other
+/// grid is read whole, as before.
+fn read_grid(name: &str) -> Result<Source, Fail> {
+    let Some(file) = crate::network_chunks::callback_file(name) else {
+        return crate::gridpath::read(name)
+            .map(Source::Bytes)
+            .ok_or(Fail::Missing);
+    };
+    let file = Arc::new(Mutex::new(file));
+    let head = lock_file(&file)
+        .read_at(0, crate::network_chunks::CHUNK_SIZE)
+        .map_err(|_| Fail::Missing)?;
+    if geotiff::is_tiff(&head) {
+        if let Ok(Some(ifds)) = geotiff::load_remote(&file) {
+            lock_file(&file).release();
+            return Ok(Source::Tiles(ifds));
+        }
+    }
+    let bytes = lock_file(&file)
+        .read_whole(crate::network::MAX_GRID_BYTES)
+        .ok_or(Fail::Missing)?;
+    Ok(Source::Bytes(bytes))
+}
+
+fn lock_file(
+    file: &Mutex<crate::network_chunks::RemoteFile>,
+) -> std::sync::MutexGuard<'_, crate::network_chunks::RemoteFile> {
+    file.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 impl GridSet {
@@ -603,7 +652,7 @@ impl GridSet {
                 extent: grid.extent,
                 bottom_up: true,
                 spp,
-                samples: grid.samples,
+                samples: Samples::Flat(grid.samples),
                 scale: Vec::new(),
                 offset: Vec::new(),
                 nodata: None,
@@ -625,8 +674,7 @@ impl GridSet {
         set
     }
 
-    fn from_tiff_horizontal(bytes: &[u8]) -> Result<Self, Fail> {
-        let ifds = geotiff::load(bytes).map_err(|()| Fail::Invalid)?;
+    fn from_tiff_horizontal(ifds: Vec<geotiff::RawIfd>) -> Result<Self, Fail> {
         let mut set = Self::fresh();
         let mut lat_i = 0_usize;
         let mut lon_i = 1_usize;
@@ -708,8 +756,7 @@ impl GridSet {
         Ok(set)
     }
 
-    fn from_tiff_vertical(bytes: &[u8]) -> Result<Self, Fail> {
-        let ifds = geotiff::load(bytes).map_err(|()| Fail::Invalid)?;
+    fn from_tiff_vertical(ifds: Vec<geotiff::RawIfd>) -> Result<Self, Fail> {
         let mut set = Self::fresh();
         let mut sample = 0_usize;
         for (index, ifd) in ifds.into_iter().enumerate() {
@@ -751,8 +798,7 @@ impl GridSet {
         Ok(set)
     }
 
-    fn from_tiff_generic(bytes: &[u8]) -> Result<Self, Fail> {
-        let ifds = geotiff::load(bytes).map_err(|()| Fail::Invalid)?;
+    fn from_tiff_generic(ifds: Vec<geotiff::RawIfd>) -> Result<Self, Fail> {
         let mut set = Self::fresh();
         for (index, ifd) in ifds.into_iter().enumerate() {
             if skipped_page(ifd.subfile, index)? {
@@ -818,7 +864,7 @@ impl GridSet {
                 extent,
                 bottom_up: true,
                 spp: 1,
-                samples,
+                samples: Samples::Flat(samples),
                 scale: Vec::new(),
                 offset: Vec::new(),
                 nodata: Some(f32::NAN),
@@ -884,7 +930,7 @@ impl GridSet {
                 extent,
                 bottom_up: true,
                 spp: 2,
-                samples,
+                samples: Samples::Flat(samples),
                 scale: Vec::new(),
                 offset: Vec::new(),
                 nodata: None,
@@ -1704,14 +1750,14 @@ impl Step for Horizontal {
         if !in_window(self.t_final, self.t_epoch, coord.t) {
             return Ok(coord);
         }
-        self.apply(coord, Way::Forward)
+        with_tiles(|| self.apply(coord, Way::Forward))
     }
 
     fn inverse(&self, coord: Coord) -> Result<Coord, TransformError> {
         if !in_window(self.t_final, self.t_epoch, coord.t) {
             return Ok(coord);
         }
-        self.apply(coord, Way::Inverse)
+        with_tiles(|| self.apply(coord, Way::Inverse))
     }
 
     fn input_kind(&self) -> IoKind {
@@ -1810,11 +1856,11 @@ impl Horizontal {
 
 impl Step for Vertical {
     fn forward(&self, coord: Coord) -> Result<Coord, TransformError> {
-        self.shift(coord, Way::Forward)
+        with_tiles(|| self.shift(coord, Way::Forward))
     }
 
     fn inverse(&self, coord: Coord) -> Result<Coord, TransformError> {
-        self.shift(coord, Way::Inverse)
+        with_tiles(|| self.shift(coord, Way::Inverse))
     }
 
     fn input_kind(&self) -> IoKind {
@@ -1863,7 +1909,7 @@ impl Vertical {
 
 impl Step for Generic {
     fn forward(&self, coord: Coord) -> Result<Coord, TransformError> {
-        let mut out = self.apply(coord, Way::Forward)?;
+        let mut out = with_tiles(|| self.apply(coord, Way::Forward))?;
         out.x += self.model.offset_x;
         out.y += self.model.offset_y;
         Ok(out)
@@ -1872,7 +1918,7 @@ impl Step for Generic {
     fn inverse(&self, mut coord: Coord) -> Result<Coord, TransformError> {
         coord.x -= self.model.offset_x;
         coord.y -= self.model.offset_y;
-        self.apply(coord, Way::Inverse)
+        with_tiles(|| self.apply(coord, Way::Inverse))
     }
 
     fn input_kind(&self) -> IoKind {
@@ -2192,17 +2238,17 @@ fn iterative_xyz(shift: &XyzShift, input: Coord, factor: f64) -> Result<Coord, T
 impl Step for XyzShift {
     fn forward(&self, coord: Coord) -> Result<Coord, TransformError> {
         if self.grid_ref_is_input {
-            direct_xyz(self, coord, 1.0)
+            with_tiles(|| direct_xyz(self, coord, 1.0))
         } else {
-            iterative_xyz(self, coord, 1.0)
+            with_tiles(|| iterative_xyz(self, coord, 1.0))
         }
     }
 
     fn inverse(&self, coord: Coord) -> Result<Coord, TransformError> {
         if self.grid_ref_is_input {
-            iterative_xyz(self, coord, -1.0)
+            with_tiles(|| iterative_xyz(self, coord, -1.0))
         } else {
-            direct_xyz(self, coord, -1.0)
+            with_tiles(|| direct_xyz(self, coord, -1.0))
         }
     }
 

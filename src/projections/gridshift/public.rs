@@ -11,9 +11,11 @@
 
 use std::fmt;
 
+use super::tiles::read_samples;
 use super::{
     f32_from_f64, geotiff, gtx_name, h_corner, is_ctable2, ntv1, ntv2, open_generic,
     open_horizontal, open_vertical, opened_name, read_grid, Eps, Extent, Fail, GridSet, Hit, Node,
+    Source,
 };
 
 /// Why a shift grid could not be opened.
@@ -193,8 +195,11 @@ fn format_of(kind: Kind, request: &str) -> &'static str {
     }
     // The bytes are read a second time here: the open functions own the
     // parsing, and a sniff of the magic numbers would duplicate it.
-    let Ok(bytes) = read_grid(request) else {
-        return "";
+    let bytes = match read_grid(request) {
+        Ok(Source::Bytes(bytes)) => bytes,
+        // Only a TIFF is read by tile, and every kind of grid reads TIFF.
+        Ok(Source::Tiles(_)) => return "gtiff",
+        Err(_) => return "",
     };
     match kind {
         Kind::Horizontal if ntv2::is_ntv2(&bytes) => "ntv2",
@@ -371,7 +376,8 @@ impl<'a> Grid<'a> {
     }
 
     /// The value of one sample of one pixel. `None` past the last sample or
-    /// the last pixel. The null grid returns zero for any index.
+    /// the last pixel, and when the tile holding it cannot be read. The null
+    /// grid returns zero for any index.
     #[must_use]
     pub fn value_at(&self, x: usize, y: usize, sample: usize) -> Option<f32> {
         let Some(node) = self.node() else {
@@ -379,7 +385,7 @@ impl<'a> Grid<'a> {
         };
         let x = i32::try_from(x).ok()?;
         let y = i32::try_from(y).ok()?;
-        node.value(sample, x, y)
+        read_samples(|| node.value(sample, x, y))
     }
 
     /// Fill `out` with the samples of a block of pixels, in the order row by
@@ -450,7 +456,7 @@ impl<'a> Grid<'a> {
         };
         let x = i32::try_from(x).ok()?;
         let y = i32::try_from(y).ok()?;
-        let (lon, lat) = h_corner(node, x, y)?;
+        let (lon, lat) = read_samples(|| h_corner(node, x, y))?;
         let lon = f32_from_f64(lon);
         let negate = convention == NtConvention::Compensated
             && matches!(self.set.format, "ntv1" | "ntv2" | "ctable2");

@@ -5,13 +5,23 @@
 //! floating-point predictor. Georeferencing and GDAL metadata stay here.
 
 use std::collections::BTreeMap;
-use std::io::Cursor;
+use std::io::{Cursor, Read, Seek};
+use std::sync::{Arc, Mutex};
 
 use tiff::decoder::ifd::Value;
 use tiff::decoder::{Decoder, DecodingResult};
 use tiff::tags::Tag;
 
+use super::tiles::{ImageTiles, LazyIfd, Samples};
 use super::{Domain, Extent};
+use crate::network_chunks::{RemoteFile, RemoteReader};
+
+/// The byte order of a TIFF file, from its first two bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ByteOrder {
+    Little,
+    Big,
+}
 
 #[derive(Clone, Copy)]
 enum Storage {
@@ -38,7 +48,7 @@ pub(super) struct RawIfd {
     pub extent: Extent,
     pub bottom_up: bool,
     pub spp: usize,
-    pub samples: Vec<f32>,
+    pub samples: Samples,
     pub scale: Vec<f64>,
     pub offset: Vec<f64>,
     pub nodata: Option<f32>,
@@ -55,13 +65,37 @@ pub(super) fn is_tiff(bytes: &[u8]) -> bool {
             || (bytes[3] == 0x2B && bytes[2] == 0))
 }
 
+/// Where the samples of an image go: decoded now, or left in the file for [`LazyIfd`].
+#[derive(Clone, Copy)]
+enum Mode<'a> {
+    Eager,
+    /// The tiles stay in `file`, read by [`LazyIfd::load`], in the file's byte `order`.
+    Lazy {
+        file: &'a Arc<Mutex<RemoteFile>>,
+        order: ByteOrder,
+    },
+}
+
+/// Why an image is not read: it is broken, or it is one the lazy reader does not handle.
+enum IfdFail {
+    Invalid,
+    /// Strips, planar bands, compression or a predictor: the file is read whole.
+    NotLazy,
+}
+
+impl From<()> for IfdFail {
+    fn from((): ()) -> Self {
+        Self::Invalid
+    }
+}
+
 pub(super) fn load(bytes: &[u8]) -> Result<Vec<RawIfd>, ()> {
     let mut decoder = Decoder::new(Cursor::new(bytes)).map_err(|_| ())?;
     let mut out = Vec::new();
     loop {
-        match read_ifd(&mut decoder) {
+        match read_ifd(&mut decoder, Mode::Eager) {
             Ok(ifd) => out.push(ifd),
-            Err(()) => {
+            Err(_) => {
                 if out.is_empty() {
                     return Err(());
                 }
@@ -82,30 +116,69 @@ pub(super) fn load(bytes: &[u8]) -> Result<Vec<RawIfd>, ()> {
     }
 }
 
-fn read_ifd(decoder: &mut Decoder<Cursor<&[u8]>>) -> Result<RawIfd, ()> {
+/// The images of a TIFF read through `file`, with their tiles left in the file until a sample of
+/// them is needed. `Ok(None)` when an image is one this does not read by tile: the caller then
+/// reads the whole file and calls [`load`]. `Err` when the file is not a TIFF it can read.
+pub(super) fn load_remote(file: &Arc<Mutex<RemoteFile>>) -> Result<Option<Vec<RawIfd>>, ()> {
+    // The byte order is the first two bytes of the file, which the decoder reads too.
+    let head = file
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .read_at(0, 2)
+        .map_err(|_| ())?;
+    let order = if head.as_slice() == b"MM" {
+        ByteOrder::Big
+    } else {
+        ByteOrder::Little
+    };
+    let mut decoder = Decoder::new(RemoteReader::new(Arc::clone(file))).map_err(|_| ())?;
+    let mut out = Vec::new();
+    loop {
+        let mode = Mode::Lazy { file, order };
+        match read_ifd(&mut decoder, mode) {
+            Ok(ifd) => out.push(ifd),
+            Err(IfdFail::NotLazy) => return Ok(None),
+            Err(IfdFail::Invalid) => {
+                if out.is_empty() {
+                    return Err(());
+                }
+                break;
+            }
+        }
+        if !decoder.more_images() {
+            break;
+        }
+        if decoder.next_image().is_err() {
+            break;
+        }
+    }
+    Ok(Some(out))
+}
+
+fn read_ifd<R: Read + Seek>(decoder: &mut Decoder<R>, mode: Mode<'_>) -> Result<RawIfd, IfdFail> {
     let (width_u, height_u) = decoder.dimensions().map_err(|_| ())?;
     if width_u == 0 || height_u == 0 {
-        return Err(());
+        return Err(IfdFail::Invalid);
     }
     let width = i32::try_from(width_u).map_err(|_| ())?;
     let height = i32::try_from(height_u).map_err(|_| ())?;
     let spp_u = required_u32(decoder, Tag::SamplesPerPixel)?;
     if spp_u == 0 {
-        return Err(());
+        return Err(IfdFail::Invalid);
     }
     let spp = usize::try_from(spp_u).map_err(|_| ())?;
     let bits = first_unsigned(decoder, Tag::BitsPerSample)?;
     let format = first_unsigned(decoder, Tag::SampleFormat)?;
     if !supported_sample(format, bits) {
-        return Err(());
+        return Err(IfdFail::Invalid);
     }
     let planar = required_u32(decoder, Tag::PlanarConfiguration)?;
     if planar != 1 && planar != 2 {
-        return Err(());
+        return Err(IfdFail::Invalid);
     }
     if let Some(photo) = optional_u32(decoder, Tag::PhotometricInterpretation)? {
         if photo != 1 {
-            return Err(());
+            return Err(IfdFail::Invalid);
         }
     }
     let subfile = optional_u32(decoder, Tag::NewSubfileType)?.unwrap_or(0);
@@ -115,7 +188,34 @@ fn read_ifd(decoder: &mut Decoder<Cursor<&[u8]>>) -> Result<RawIfd, ()> {
     } else {
         Storage::Chunky
     };
-    let samples = decode_samples(decoder, width_u, height_u, spp, storage)?;
+    let samples = match mode {
+        Mode::Eager => Samples::Flat(decode_samples(decoder, width_u, height_u, spp, storage)?),
+        Mode::Lazy { file, order } => {
+            if !lazy_readable(decoder, storage)? {
+                return Err(IfdFail::NotLazy);
+            }
+            let tile = decoder.chunk_dimensions();
+            let offsets = decoder
+                .get_tag_u64_vec(Tag::TileOffsets)
+                .map_err(|_| IfdFail::Invalid)?;
+            let counts = decoder
+                .get_tag_u64_vec(Tag::TileByteCounts)
+                .map_err(|_| IfdFail::Invalid)?;
+            if offsets.len() != counts.len() {
+                return Err(IfdFail::Invalid);
+            }
+            let image = ImageTiles {
+                size: (width_u, height_u),
+                tile,
+                spp,
+                bits,
+                format,
+                order,
+                places: offsets.into_iter().zip(counts).collect(),
+            };
+            Samples::Lazy(Arc::new(LazyIfd::new(Arc::clone(file), image)?))
+        }
+    };
     let text = optional_string(decoder, Tag::from_u16_exhaustive(GDAL_METADATA))?;
     let fields = text
         .map(|value| parse_gdal(&value, spp))
@@ -145,6 +245,17 @@ fn read_ifd(decoder: &mut Decoder<Cursor<&[u8]>>) -> Result<RawIfd, ()> {
     })
 }
 
+/// Whether the image's samples can be read tile by tile from the file: tiles, chunky samples,
+/// no compression and no predictor. Anything else is read whole, as [`load`] reads it.
+fn lazy_readable<R: Read + Seek>(decoder: &mut Decoder<R>, storage: Storage) -> Result<bool, ()> {
+    if matches!(storage, Storage::Separate) || decoder.get_tag_u32(Tag::TileWidth).is_err() {
+        return Ok(false);
+    }
+    let compression = optional_u32(decoder, Tag::Compression)?.unwrap_or(1);
+    let predictor = optional_u32(decoder, Tag::Predictor)?.unwrap_or(1);
+    Ok(compression == 1 && predictor == 1)
+}
+
 fn supported_sample(format: u32, bits: u32) -> bool {
     matches!(
         (format, bits),
@@ -152,8 +263,8 @@ fn supported_sample(format: u32, bits: u32) -> bool {
     )
 }
 
-fn decode_samples(
-    decoder: &mut Decoder<Cursor<&[u8]>>,
+fn decode_samples<R: Read + Seek>(
+    decoder: &mut Decoder<R>,
     width: u32,
     height: u32,
     spp: usize,
@@ -247,7 +358,65 @@ fn place(
     Ok(())
 }
 
-fn to_f32(decoded: DecodingResult) -> Result<Vec<f32>, ()> {
+/// The samples of an uncompressed tile, as `f32`. `format` and `bits` are the image's
+/// `SampleFormat` and `BitsPerSample`, already checked by [`supported_sample`].
+pub(super) fn raw_samples(
+    bytes: &[u8],
+    format: u32,
+    bits: u32,
+    order: ByteOrder,
+) -> Result<Vec<f32>, ()> {
+    let size = usize::try_from(bits / 8).map_err(|_| ())?;
+    if size == 0 || bytes.len() % size != 0 {
+        return Err(());
+    }
+    let mut out = Vec::with_capacity(bytes.len() / size);
+    for piece in bytes.chunks_exact(size) {
+        let value = match (format, bits) {
+            (1, 16) => f32::from(word::<u16>(piece, order)?),
+            (2, 16) => f32::from(word::<i16>(piece, order)?),
+            (1, 32) => f32_from_u32(word::<u32>(piece, order)?),
+            (2, 32) => f32_from_i32(word::<i32>(piece, order)?),
+            (3, 32) => word::<f32>(piece, order)?,
+            (3, 64) => f32_from_f64(word::<f64>(piece, order)?),
+            _ => return Err(()),
+        };
+        out.push(value);
+    }
+    Ok(out)
+}
+
+/// One sample of `piece`, in the file's byte order.
+fn word<T: TiffWord>(piece: &[u8], order: ByteOrder) -> Result<T, ()> {
+    T::from_piece(piece, order).ok_or(())
+}
+
+/// A sample type that a TIFF stores in a fixed number of bytes.
+trait TiffWord: Sized {
+    fn from_piece(piece: &[u8], order: ByteOrder) -> Option<Self>;
+}
+
+macro_rules! tiff_word {
+    ($($ty:ty),*) => {
+        $(
+            impl TiffWord for $ty {
+                fn from_piece(piece: &[u8], order: ByteOrder) -> Option<Self> {
+                    let bytes: [u8; std::mem::size_of::<$ty>()] = piece.try_into().ok()?;
+                    Some(if order == ByteOrder::Big {
+                        <$ty>::from_be_bytes(bytes)
+                    } else {
+                        <$ty>::from_le_bytes(bytes)
+                    })
+                }
+            }
+        )*
+    };
+}
+
+tiff_word!(u16, i16, u32, i32, f32, f64);
+
+/// The samples of one decoded chunk, as `f32` (every grid sample is a float in PROJ).
+pub(super) fn to_f32(decoded: DecodingResult) -> Result<Vec<f32>, ()> {
     match decoded {
         DecodingResult::U16(values) => Ok(values.into_iter().map(f32::from).collect()),
         DecodingResult::I16(values) => Ok(values.into_iter().map(f32::from).collect()),
@@ -292,8 +461,8 @@ fn f32_from_f64(value: f64) -> f32 {
     }
 }
 
-fn read_extent(
-    decoder: &mut Decoder<Cursor<&[u8]>>,
+fn read_extent<R: Read + Seek>(
+    decoder: &mut Decoder<R>,
     width: u32,
     height: u32,
 ) -> Result<(Extent, bool), ()> {
@@ -442,18 +611,18 @@ fn parse_nodata(text: &str) -> Option<f32> {
     Some(f32_from_f64(value))
 }
 
-fn required_u32(decoder: &mut Decoder<Cursor<&[u8]>>, tag: Tag) -> Result<u32, ()> {
+fn required_u32<R: Read + Seek>(decoder: &mut Decoder<R>, tag: Tag) -> Result<u32, ()> {
     first_unsigned(decoder, tag)
 }
 
-fn optional_u32(decoder: &mut Decoder<Cursor<&[u8]>>, tag: Tag) -> Result<Option<u32>, ()> {
+fn optional_u32<R: Read + Seek>(decoder: &mut Decoder<R>, tag: Tag) -> Result<Option<u32>, ()> {
     match decoder.find_tag(tag).map_err(|_| ())? {
         Some(value) => Ok(Some(unsigned_value(value)?)),
         None => Ok(None),
     }
 }
 
-fn first_unsigned(decoder: &mut Decoder<Cursor<&[u8]>>, tag: Tag) -> Result<u32, ()> {
+fn first_unsigned<R: Read + Seek>(decoder: &mut Decoder<R>, tag: Tag) -> Result<u32, ()> {
     let value = decoder.find_tag(tag).map_err(|_| ())?.ok_or(())?;
     unsigned_value(value)
 }
@@ -474,23 +643,73 @@ fn unsigned_value(value: Value) -> Result<u32, ()> {
     }
 }
 
-fn optional_u16s(decoder: &mut Decoder<Cursor<&[u8]>>, tag: Tag) -> Result<Option<Vec<u16>>, ()> {
+fn optional_u16s<R: Read + Seek>(
+    decoder: &mut Decoder<R>,
+    tag: Tag,
+) -> Result<Option<Vec<u16>>, ()> {
     match decoder.find_tag(tag).map_err(|_| ())? {
         Some(value) => Ok(Some(value.into_u16_vec().map_err(|_| ())?)),
         None => Ok(None),
     }
 }
 
-fn optional_f64s(decoder: &mut Decoder<Cursor<&[u8]>>, tag: Tag) -> Result<Option<Vec<f64>>, ()> {
+fn optional_f64s<R: Read + Seek>(
+    decoder: &mut Decoder<R>,
+    tag: Tag,
+) -> Result<Option<Vec<f64>>, ()> {
     match decoder.find_tag(tag).map_err(|_| ())? {
         Some(value) => Ok(Some(value.into_f64_vec().map_err(|_| ())?)),
         None => Ok(None),
     }
 }
 
-fn optional_string(decoder: &mut Decoder<Cursor<&[u8]>>, tag: Tag) -> Result<Option<String>, ()> {
+fn optional_string<R: Read + Seek>(
+    decoder: &mut Decoder<R>,
+    tag: Tag,
+) -> Result<Option<String>, ()> {
     match decoder.find_tag(tag).map_err(|_| ())? {
         Some(value) => Ok(Some(value.into_string().map_err(|_| ())?)),
         None => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{raw_samples, ByteOrder};
+
+    /// The samples of a tile are read in the file's byte order, whatever the sample type: a
+    /// `u16` of `0x0102` is 258 in a big-endian file and 513 in a little-endian one.
+    #[test]
+    fn raw_samples_follow_the_file_byte_order() {
+        assert_eq!(
+            raw_samples(&[0x01, 0x02], 1, 16, ByteOrder::Big),
+            Ok(vec![258.0])
+        );
+        assert_eq!(
+            raw_samples(&[0x01, 0x02], 1, 16, ByteOrder::Little),
+            Ok(vec![513.0])
+        );
+        assert_eq!(
+            raw_samples(&[0xFF, 0xFE], 2, 16, ByteOrder::Big),
+            Ok(vec![-2.0])
+        );
+        let float = 1.25_f32.to_be_bytes();
+        assert_eq!(raw_samples(&float, 3, 32, ByteOrder::Big), Ok(vec![1.25]));
+        let float = 1.25_f32.to_le_bytes();
+        assert_eq!(
+            raw_samples(&float, 3, 32, ByteOrder::Little),
+            Ok(vec![1.25])
+        );
+    }
+
+    /// A tile of a type the grid readers do not take, or a byte count that is not whole
+    /// samples, is an error and not a short tile.
+    #[test]
+    fn raw_samples_refuse_other_types_and_partial_samples() {
+        assert_eq!(raw_samples(&[0x01], 1, 8, ByteOrder::Big), Err(()));
+        assert_eq!(
+            raw_samples(&[0x01, 0x02, 0x03], 1, 16, ByteOrder::Big),
+            Err(())
+        );
     }
 }
