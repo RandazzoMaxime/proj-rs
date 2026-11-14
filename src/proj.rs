@@ -384,6 +384,20 @@ enum Body {
     Single,
 }
 
+/// Whether the longitudes of a CRS-to-CRS transform are wrapped to the principal range.
+///
+/// This is the `over` flag of PROJ's `P->over`, set by the `FORCE_OVER` option of
+/// `proj_create_crs_to_crs_from_pj` (`crs_to_crs.cpp:532`). With [`ForceOver::Yes`] a
+/// projection keeps a longitude outside ]-180, 180] instead of wrapping it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ForceOver {
+    /// No `FORCE_OVER=YES`: longitudes are wrapped (the default).
+    #[default]
+    No,
+    /// `FORCE_OVER=YES`: longitudes are not wrapped.
+    Yes,
+}
+
 /// A coordinate transformation.
 ///
 /// Build one with [`Proj::new`], [`Proj::new_known_crs`], or [`ProjBuilder`].
@@ -397,6 +411,8 @@ pub struct Proj {
     net: crate::network::GridContext,
     /// The epoch of a coordinate metadata object, see [`crate::proj_meta`]. `None` otherwise.
     pub(crate) epoch: Option<f64>,
+    /// PROJ's `P->over`, set by [`Proj::create_crs_to_crs_from_pj`] and kept by its candidates.
+    over: ForceOver,
     /// The steps of a PROJ pipeline made by [`Proj::new`], kept for the inverse and the layout
     /// of [`Proj::as_proj_string`]. `None` for the other bodies.
     pipeline: Option<Pipeline>,
@@ -477,24 +493,21 @@ impl Proj {
     ///
     /// Both objects must be single CRS values, such as `Proj::new("EPSG:4326")`.
     ///
+    /// `options` takes `FORCE_OVER=YES` ([`ForceOver::Yes`]), which keeps the longitudes
+    /// outside ]-180, 180] in the projections of the pipeline. `FORCE_OVER=NO` and an
+    /// empty list change nothing. Read the flag back with [`Self::force_over`].
+    ///
     /// # Errors
     ///
     /// [`ProjCreateError`] when either object is already a transform, or `options`
-    /// asks for a database search this port does not do.
+    /// holds an option other than `FORCE_OVER`, which this port does not build.
     pub fn create_crs_to_crs_from_pj(
         &self,
         target_crs: &Self,
         area: Option<Area>,
         options: Option<Vec<&str>>,
     ) -> Result<Self, ProjCreateError> {
-        if options
-            .as_ref()
-            .is_some_and(|items| items.iter().any(|item| !item.is_empty()))
-        {
-            return Err(ProjCreateError::ProjError(
-                "CRS-to-CRS options are not built".to_owned(),
-            ));
-        }
+        let over = crs_to_crs_force_over(options.as_deref())?;
         if !matches!(self.body, Body::Single) {
             return Err(ProjCreateError::ProjError(
                 "source is not a single CRS".to_owned(),
@@ -512,17 +525,40 @@ impl Proj {
             return Err(error);
         }
         let epoch = crate::proj_meta::epoch_to_apply(self, target_crs);
-        if let Some(pipeline) = iso_pipeline_at(&self.definition, &target_crs.definition, epoch) {
-            return Ok(built(
+        if let Some(pipeline) =
+            iso_pipeline_at(&self.definition, &target_crs.definition, epoch, over)
+        {
+            let mut transform = built(
                 Body::Iso(Box::new(pipeline)),
                 format!("{} -> {}", self.definition, target_crs.definition),
                 area,
-            ));
+            );
+            transform.over = over;
+            return Ok(transform);
         }
         Err(ProjCreateError::ProjError(format!(
             "no transformation from {} to {}: the selection writes no pipeline for it",
             self.definition, target_crs.definition
         )))
+    }
+
+    /// The `over` flag of this object, PROJ's `P->over`: [`ForceOver::Yes`] when it was built
+    /// with `FORCE_OVER=YES`. An object not built by [`Self::create_crs_to_crs_from_pj`] is
+    /// [`ForceOver::No`].
+    #[must_use]
+    pub fn force_over(&self) -> ForceOver {
+        self.over
+    }
+
+    /// The `over` flag of each candidate of this transform, in the order PROJ keeps them in
+    /// `alternativeCoordinateOperations`. Every candidate carries the flag of its transform.
+    /// Empty when the transform has one operation, or is not a CRS-to-CRS pair.
+    #[must_use]
+    pub fn alternatives_force_over(&self) -> Vec<ForceOver> {
+        match &self.body {
+            Body::Iso(pipeline) => vec![self.over; pipeline.alternative_count()],
+            Body::Native(_) | Body::Single => Vec::new(),
+        }
     }
 
     /// Build a coordinate metadata object: this CRS at `epoch`.
@@ -1473,9 +1509,40 @@ fn built(body: Body, definition: String, area: Option<Area>) -> Proj {
         known,
         net: crate::network::context(),
         epoch: None,
+        over: ForceOver::No,
         pipeline: None,
         candidate_name: None,
     }
+}
+
+/// The options of `proj_create_crs_to_crs_from_pj` that this port builds, as its `ForceOver`.
+///
+/// Only `FORCE_OVER=` is read, as `crs_to_crs.cpp:532-534` reads it: a value equal to `yes`
+/// (any case) sets the flag, any other value leaves it off, and a later item does not clear it.
+/// An empty item is skipped. Any other item is refused with the error this port has always
+/// given for options: `AUTHORITY`, `ACCURACY`, `ALLOW_BALLPARK`, `ONLY_BEST` and a misspelt
+/// name alike.
+fn crs_to_crs_force_over(options: Option<&[&str]>) -> Result<ForceOver, ProjCreateError> {
+    const PREFIX: &str = "FORCE_OVER=";
+    let mut over = ForceOver::No;
+    for item in options
+        .unwrap_or_default()
+        .iter()
+        .filter(|item| !item.is_empty())
+    {
+        let is_force_over = item
+            .get(..PREFIX.len())
+            .is_some_and(|head| head.eq_ignore_ascii_case(PREFIX));
+        if !is_force_over {
+            return Err(ProjCreateError::ProjError(
+                "CRS-to-CRS options are not built".to_owned(),
+            ));
+        }
+        if item[PREFIX.len()..].eq_ignore_ascii_case("yes") {
+            over = ForceOver::Yes;
+        }
+    }
+    Ok(over)
 }
 
 fn is_epsg(definition: &str) -> bool {

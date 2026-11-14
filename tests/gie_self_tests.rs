@@ -8,7 +8,7 @@
 use proj_rs::errno::PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE;
 use proj_rs::{
     list_ellps, list_operations, list_prime_meridians, xy_dist, BatchError, Context, Direction,
-    Operation, Proj, ProjError, StepError, Xyzt,
+    ForceOver, Operation, Proj, ProjError, StepError, Xyzt,
 };
 use std::num::NonZeroUsize;
 
@@ -349,6 +349,159 @@ fn trans_with_a_crs_is_an_error() {
         .expect_err("a CRS has no image");
     assert!(matches!(error, ProjError::NotATransform), "{error:?}");
     assert_eq!(error.code(), PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE);
+}
+
+/// `gie.proj_create_crs_to_crs_from_pj_force_over`, assertion by assertion.
+///
+/// The C input is latitude first and this crate takes longitude, latitude, so each point
+/// is written (longitude, latitude): the C `(lat 0, long 140)` is `(140, 0)`, and the C
+/// `(lat 0, long -220)` is `(-220, 0)`. The C `t = HUGE_VAL` is not passed: no time is read
+/// here. The context calls and `proj_destroy` are `Drop`. `proj_normalize_for_visualization`
+/// is the identity on this facade, whose pair is already in longitude, latitude order, so
+/// `Pnormalized` is `P` itself. The count check on the alternatives (`> 1`) is the C
+/// comment "more than one coordinate operation candidate", written as an assertion.
+#[test]
+fn proj_create_crs_to_crs_from_pj_force_over() {
+    let epsg27700 = Proj::new("EPSG:27700").expect("EPSG:27700");
+    let epsg4326 = Proj::new("EPSG:4326").expect("EPSG:4326");
+    let epsg3857 = Proj::new("EPSG:3857").expect("EPSG:3857");
+
+    {
+        // FORCE_OVER=YES, EPSG:4326 to EPSG:3857.
+        let p = epsg4326
+            .create_crs_to_crs_from_pj(&epsg3857, None, Some(vec!["FORCE_OVER=YES"]))
+            .expect("P");
+        assert_eq!(p.force_over(), ForceOver::Yes); // ASSERT_TRUE(P->over)
+
+        let (x, y, _) = p.convert_xyz(140.0, 0.0, 0.0).expect("output");
+        let (x_over, y_over, _) = p.convert_xyz(-220.0, 0.0, 0.0).expect("output_over");
+        let p_clone = p.clone();
+        let (x_clone_over, _, _) = p_clone.convert_xyz(-220.0, 0.0, 0.0).expect("clone");
+        let (lon_inv, lat_inv): (f64, f64) = p.project((x, y), true).expect("input_inv");
+        let (lon_over_inv, lat_over_inv): (f64, f64) =
+            p.project((x_over, y_over), true).expect("input_over_inv");
+
+        // Web Mercator x's between 0 and 180 longitude come out positive.
+        // But when forcing the over flag, the -220 calculation makes it flip.
+        assert!(x > 0.0, "{x}"); // EXPECT_GT(output.xyz.x, 0)
+        assert!(x_over < 0.0, "{x_over}"); // EXPECT_LT(output_over.xyz.x, 0)
+
+        assert!((x - 15_584_728.711_058_298).abs() <= 1e-8, "{x}");
+        assert!((x_over - -24_490_287.974_520_184).abs() <= 1e-8, "{x_over}");
+
+        assert_eq!(x_clone_over, x_over); // EXPECT_EQ(output_clone_over, output_over)
+
+        // The distance from 140 to 180 and -220 to -180 should be pretty much the same.
+        let dx_o = (x - 20_037_508.342_789_244).abs();
+        let dx_over = (x_over + 20_037_508.342_789_244).abs();
+        let dx = (dx_o - dx_over).abs();
+        assert!((dx - 0.0).abs() <= 1e-8, "{dx}");
+
+        // The inverse operations get back close to the input: C input.xyz.x is the
+        // latitude, input.xyz.y the longitude.
+        assert!((0.0 - lat_inv).abs() <= 1e-8, "{lat_inv}");
+        assert!((140.0 - lon_inv).abs() <= 1e-8, "{lon_inv}");
+        assert!((0.0 - lat_over_inv).abs() <= 1e-8, "{lat_over_inv}");
+        assert!((-220.0 - lon_over_inv).abs() <= 1e-8, "{lon_over_inv}");
+
+        let normalized = &p;
+        assert_eq!(normalized.force_over(), ForceOver::Yes); // ASSERT_TRUE(Pnormalized->over)
+        let (x_over_normalized, _, _) = normalized
+            .convert_xyz(-220.0, 0.0, 0.0)
+            .expect("output_over_normalized");
+        assert!(
+            (x_over_normalized - -24_490_287.974_520_184).abs() <= 1e-8,
+            "{x_over_normalized}"
+        );
+    }
+
+    {
+        // FORCE_OVER=NO: the flag stays off, the longitudes wrap.
+        let p = epsg4326
+            .create_crs_to_crs_from_pj(&epsg3857, None, Some(vec!["FORCE_OVER=NO"]))
+            .expect("P");
+        assert_eq!(p.force_over(), ForceOver::No); // ASSERT_FALSE(P->over)
+
+        let (x, _, _) = p.convert_xyz(140.0, 0.0, 0.0).expect("output");
+        let (x_not_over, _, _) = p.convert_xyz(-220.0, 0.0, 0.0).expect("output_notOver");
+        assert!(x > 0.0, "{x}"); // EXPECT_GT(output.xyz.x, 0)
+        assert!(x_not_over > 0.0, "{x_not_over}"); // EXPECT_GT(output_notOver.xyz.x, 0)
+        assert!((x - 15_584_728.711_058_298).abs() <= 1e-8, "{x}");
+        assert!(
+            (x_not_over - 15_584_728.711_058_298).abs() <= 1e-8,
+            "{x_not_over}"
+        );
+    }
+
+    {
+        // No options: the same as FORCE_OVER=NO.
+        let p = epsg4326
+            .create_crs_to_crs_from_pj(&epsg3857, None, None)
+            .expect("P");
+        assert_eq!(p.force_over(), ForceOver::No); // ASSERT_FALSE(P->over)
+
+        let (x, _, _) = p.convert_xyz(140.0, 0.0, 0.0).expect("output");
+        let (x_not_over, _, _) = p.convert_xyz(-220.0, 0.0, 0.0).expect("output_notOver");
+        assert!(x > 0.0, "{x}"); // EXPECT_GT(output.xyz.x, 0)
+        assert!(x_not_over > 0.0, "{x_not_over}"); // EXPECT_GT(output_notOver.xyz.x, 0)
+        assert!((x - 15_584_728.711_058_298).abs() <= 1e-8, "{x}");
+        assert!(
+            (x_not_over - 15_584_728.711_058_298).abs() <= 1e-8,
+            "{x_not_over}"
+        );
+    }
+
+    {
+        // EPSG:4326 to EPSG:27700 has more than one coordinate operation candidate.
+        let p = epsg4326
+            .create_crs_to_crs_from_pj(&epsg27700, None, Some(vec!["FORCE_OVER=YES"]))
+            .expect("P");
+        assert_eq!(p.force_over(), ForceOver::Yes); // ASSERT_TRUE(P->over)
+
+        let (x, y, _) = p.convert_xyz(140.0, 0.0, 0.0).expect("output");
+        let (x_over, y_over, _) = p.convert_xyz(-220.0, 0.0, 0.0).expect("output_over");
+
+        // Doesn't actually change the result for this tmerc transformation.
+        assert!((x - 4_980_122.749_364_435).abs() <= 1e-8, "{x}");
+        assert!((y - 14_467_212.882_603_768).abs() <= 1e-8, "{y}");
+        assert!((x_over - 4_980_122.749_364_435).abs() <= 1e-8, "{x_over}");
+        assert!((y_over - 14_467_212.882_603_768).abs() <= 1e-8, "{y_over}");
+
+        let normalized = &p;
+        assert_eq!(normalized.force_over(), ForceOver::Yes); // ASSERT_TRUE(Pnormalized->over)
+        let alternatives = normalized.alternatives_force_over();
+        assert!(alternatives.len() > 1, "{}", alternatives.len());
+        for over in alternatives {
+            assert_eq!(over, ForceOver::Yes); // ASSERT_TRUE(op.pj->over)
+        }
+
+        let (x_over_normalized, y_over_normalized, _) = normalized
+            .convert_xyz(-220.0, 0.0, 0.0)
+            .expect("output_over_normalized");
+        assert!(
+            (x_over_normalized - 4_980_122.749_364_435).abs() <= 1e-8,
+            "{x_over_normalized}"
+        );
+        assert!(
+            (y_over_normalized - 14_467_212.882_603_768).abs() <= 1e-8,
+            "{y_over_normalized}"
+        );
+    }
+
+    {
+        // Negative test for 27700: FORCE_OVER=NO.
+        let p = epsg4326
+            .create_crs_to_crs_from_pj(&epsg27700, None, Some(vec!["FORCE_OVER=NO"]))
+            .expect("P");
+        assert_eq!(p.force_over(), ForceOver::No); // ASSERT_FALSE(P->over)
+
+        let (x, y, _) = p.convert_xyz(140.0, 0.0, 0.0).expect("output");
+        let (x_over, y_over, _) = p.convert_xyz(-220.0, 0.0, 0.0).expect("output_over");
+        assert!((x - 4_980_122.749_364_435).abs() <= 1e-8, "{x}");
+        assert!((y - 14_467_212.882_603_768).abs() <= 1e-8, "{y}");
+        assert!((x_over - 4_980_122.749_364_435).abs() <= 1e-8, "{x_over}");
+        assert!((y_over - 14_467_212.882_603_768).abs() <= 1e-8, "{y_over}");
+    }
 }
 
 /// `gieTest, proj_create_crs_to_crs` (TEST_F). The CRS-name assertions of the C test

@@ -97,8 +97,8 @@ pub use gie_api::{
 };
 pub use ported::{bench_definition, PORTED};
 pub use proj::{
-    Area, Coord, CoordinateType, Direction, GridCacheMode, GridCacheTtl, Info, Proj, ProjBuilder,
-    ProjCreateError, ProjError, ProjInfo,
+    Area, Coord, CoordinateType, Direction, ForceOver, GridCacheMode, GridCacheTtl, Info, Proj,
+    ProjBuilder, ProjCreateError, ProjError, ProjInfo,
 };
 pub use transform::{Transform, TransformError};
 

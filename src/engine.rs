@@ -13,6 +13,7 @@
 use crate::angle::adjlon;
 use crate::context::Context;
 use crate::ellipsoid::PJ_ELLPS;
+use crate::proj::ForceOver;
 
 use crate::tmerc_approx::ApproxTmerc;
 use crate::{
@@ -1004,7 +1005,15 @@ impl Operation {
     /// `urn:ogc:def:coordinateOperation:NKG::` is read from `proj.db`. A step
     /// that needs a grid is [`CreateError::Unsupported`], not a coordinate.
     pub fn create(definition: &str) -> Result<Self, CreateError> {
-        Self::create_with(definition, DatumMode::Shift)
+        Self::create_with(definition, DatumMode::Shift, ForceOver::No)
+    }
+
+    /// [`Operation::create`] with the `over` flag of `FORCE_OVER`: every projection of the
+    /// definition keeps its longitudes outside ]-180, 180], as `pj_init` sets `P->over` on each
+    /// object it builds while `ctx->forceOver` is set (`init.cpp:603-605`). A pipeline passes the
+    /// flag to each step through its header, as its steps inherit the header's parameters.
+    pub(crate) fn create_over(definition: &str, over: ForceOver) -> Result<Self, CreateError> {
+        Self::create_with(definition, DatumMode::Shift, over)
     }
 
     /// The projection of `definition` alone, as PROJ's `proj` applies it.
@@ -1018,10 +1027,14 @@ impl Operation {
     ///
     /// The same errors as [`Operation::create`].
     pub fn create_projection(definition: &str) -> Result<Self, CreateError> {
-        Self::create_with(definition, DatumMode::Projection)
+        Self::create_with(definition, DatumMode::Projection, ForceOver::No)
     }
 
-    fn create_with(definition: &str, datum: DatumMode) -> Result<Self, CreateError> {
+    fn create_with(
+        definition: &str,
+        datum: DatumMode,
+        over: ForceOver,
+    ) -> Result<Self, CreateError> {
         // `+init=FILE:SECTION` names a dictionary line; it is replaced by that line first.
         let expanded = crate::crs::expand_dictionary_init(definition)?;
         let definition = expanded.as_deref().unwrap_or(definition);
@@ -1044,9 +1057,12 @@ impl Operation {
         }
         if name == "pipeline" {
             return Ok(Self {
-                step: std::sync::Arc::from(build_pipeline(definition)?),
+                step: std::sync::Arc::from(build_pipeline(definition, over)?),
                 context: std::sync::Arc::new(Context::new()),
             });
+        }
+        if over == ForceOver::Yes {
+            params.items.push(("over".to_owned(), None));
         }
         prepare_params(&mut params)?;
         if datum == DatumMode::Projection {
@@ -2244,7 +2260,7 @@ impl Step for Pipeline {
     }
 }
 
-fn build_pipeline(definition: &str) -> Result<Pipeline, CreateError> {
+fn build_pipeline(definition: &str, over: ForceOver) -> Result<Pipeline, CreateError> {
     let parts = split_pipeline(definition);
     if parts.len() < 2 || !parts[0].contains("proj=pipeline") || step_precedes_pipeline(definition)
     {
@@ -2253,7 +2269,11 @@ fn build_pipeline(definition: &str) -> Result<Pipeline, CreateError> {
     if parts[0].matches("proj=").count() > 1 {
         return Err(CreateError::IllegalValue("pipeline"));
     }
-    let header_params = Params::parse(&parts[0])?;
+    let mut header_params = Params::parse(&parts[0])?;
+    if over == ForceOver::Yes {
+        // Each step inherits the header's parameters below, so every projection step gets `over`.
+        header_params.items.push(("over".to_owned(), None));
+    }
     let frame = Frame::from_params(&header_params).unwrap_or_else(|_| {
         Frame::from_params(&Params::parse("+proj=pipeline +ellps=GRS80").expect("GRS80 pipeline"))
             .expect("GRS80 frame")
