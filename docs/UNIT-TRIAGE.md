@@ -5,20 +5,19 @@ The class comes from the test name alone, so check it when you port a test.
 
 | Class | Open | Port | Meaning |
 |---|---:|---|---|
-| `core` | 4 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
+| `core` | 3 | first | Pins a result a user sees: WKT, PROJ string, PROJJSON, identification, chosen operation, a transformed number |
 | `niche` | 0 | second | A result too, on rare CRS kinds: temporal, parametric, derived, engineering, other bodies |
 | `shape` | 0 | last, or never | Checks the shape of the C++ object model or the C ABI (clone, context, equivalence criteria, tmp databases). The Rust API differs on purpose; port only what still pins a behavior |
 
-## core (4)
+## core (3)
 
 ### test_common.cpp (2)
 
 - `common.identifiedobject_alias_invalid_type`
 - `common.identifiedobject_alias_array_of_invalid_type`
 
-### test_network.cpp (2)
+### test_network.cpp (1)
 
-- `networking.initial_check`
 - `networking.pyproj_issue_1192`
 
 ## niche (0)
