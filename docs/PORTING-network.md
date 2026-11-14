@@ -17,7 +17,7 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
 | `proj_trans_get_last_used_operation`, `proj_pj_info` | `Proj::last_used_operation`, `Proj::proj_info` (`candidate_name`) |
 | `DatabaseContext::lookForGridInfo` (`factory.cpp:3400`) | `src/iso19111/factory.rs` (`look_for_grid_info`), `src/iso19111/select.rs` (`unrecorded_grid`) |
 | `src/apps/gie.cpp` (`network_error`) | `src/gie.rs` (`errno_name`) |
-| `test/unit/test_network.cpp` (26 TEST) | `tests/unit_network_core.rs` (9 cas, dont `custom`, `getfilesize`, `simul_read_range_error` et `simul_file_change_while_opened`), `tests/unit_network_endpoint_env.rs` (1 cas), `tests/unit_network_local.rs` (2 cas), `src/network.rs` `callback_tests` (2 tests hors liste) |
+| `test/unit/test_network.cpp` (26 TEST) | `tests/unit_network_core.rs` (10 cas, dont `custom`, `getfilesize`, `simul_read_range_error`, `simul_file_change_while_opened` et `pyproj_issue_1192`), `tests/unit_network_endpoint_env.rs` (1 cas), `tests/unit_network_local.rs` (2 cas), `src/network.rs` `callback_tests` (2 tests hors liste) |
 | serveur de test local (remplace `cdn.proj.org`) | `tests/net_support/mod.rs` |
 | `src/apps/projsync.cpp`, `test/cli/test_projsync.sh` | non porté (voir l'audit) |
 
@@ -95,6 +95,25 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
   par défaut `None`.
 - **Dernier candidat.** `last_used_operation` porte le nom du candidat choisi au dernier
   point, qui est la description de `proj_pj_info` en PROJ.
+- **Fabrique d'opérations (`pyproj_issue_1192`).** Pas de façade C : le contexte de fabrique
+  est `CoordinateOperationContext`, avec `GridAvailabilityUse::IgnoreGridAvailability` et
+  `SpatialCriterion::PartialIntersection`, et la liste vient de
+  `CoordinateOperationFactory::create_operations`. Aucune API ajoutée. Le drapeau réseau de
+  `proj_coordoperation_is_instantiable(ctx, P)` est traduit par
+  `CoordinateOperation::is_proj_instantiable` : réseau activé donne `KnownAvailable`
+  (`considerKnownGridsAsAvailable` : une grille que la base connaît compte comme disponible),
+  réseau désactivé donne `UseForSorting` (grilles sur disque seulement). Mesuré (sonde C
+  contre `libproj` 9.9.0, non versionnée) : 10 opérations dans les deux cas, mêmes noms et même
+  ordre ; instanciables 8 réseau off, 10 réseau on.
+- **Réseau absent ici (`networkAccessOK`).** `initial_check` est faux : `cdn.proj.org` est refusé
+  (403 du proxy), donc le test C++ sort tôt. Le port ne dépend pas du CDN et n'est pas conditionné
+  par `networkAccessOK`. La partie réseau activé est mesurée avec le CDN refusé ; la réponse de
+  PROJ est la même (10 instanciables) : l'instanciabilité ne dépend que du drapeau, pas du
+  téléchargement. Un CDN qui répond n'a pas été mesuré.
+- **Id de `proj_pj_info`.** PROJ donne `pipeline` pour chaque opération instanciable (mesuré).
+  Le test vérifie `proj_info().id == "pipeline"` sur les opérations construites hors ligne (8),
+  et la chaîne `+proj=pipeline` pour les deux autres (grilles absentes). La description de PROJ
+  est le nom de l'opération, vérifié par la liste des noms.
 
 ## Ce qui reste ouvert
 
@@ -109,8 +128,17 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
 - Cache SQLite : TTL, taille max, verrou, `proj_grid_cache_clear` (lot cache, autre agent).
 - API de téléchargement explicite (`is_download_needed`, `download_file`) et API de fichiers
   (`file_api`).
-- Façade des opérations (`proj_create_operations`, contexte de fabrique) : bloque
-  `pyproj_issue_1192` et `do_not_attempt_network_access_known_available_network_on`.
+- Façade C des opérations (`proj_create_operations`, contexte de fabrique C) : absente.
+  `do_not_attempt_network_access_known_available_network_on` reste bloqué : il exige
+  `PROJ_GRID_AVAILABILITY_KNOWN_AVAILABLE` et le contrôle « aucune activité réseau » par
+  callbacks, donc une fabrique qui passe par le contexte du builder.
+- Création paresseuse d'une opération seule dont la grille est absente (réseau activé) : PROJ
+  construit `P` sans la grille (`proj_list_get`), la crate ne le fait que pour les candidats d'une
+  paire (`grids_may_be_deferred`), et aucune API publique ne construit une opération seule. Les
+  deux opérations 00 et 02 de `pyproj_issue_1192` ne sont donc vérifiées que par leur chaîne PROJ.
+- `docs/UNPORTED-UNIT.md` liste encore `networking.pyproj_issue_1192` : ce lot ne l'a pas retiré
+  (consigne : ne pas éditer le ledger). Le retrait suit avec `UPDATE_DOCS=1 cargo test --test
+  docs_in_sync`.
 - `projsync` : non commencé.
 - `basic` (partie « on ») : `fr_ign_ntf_r93.tif` absent du dépôt et de la référence.
 

@@ -39,8 +39,9 @@ restent lues entières), validation de la fraîcheur d'un fichier ouvert par `ET
 `Last-Modified` pour les autres étapes que `vgridshift` et pour le cache disque (seule
 `vgridshift` recharge, voir `docs/PORTING-network.md`), cache SQLite (TTL, taille max, verrou :
 lot cache, autre agent),
-API de téléchargement explicite, API de fichiers, façade des opérations
-(`proj_create_operations` et contexte de fabrique).
+API de téléchargement explicite, API de fichiers, façade C des opérations
+(`proj_create_operations` et contexte de fabrique C : la fabrique Rust est utilisée à la place,
+voir `pyproj_issue_1192`).
 
 Tests de l'API existants, hors liste C++ : `tests/network_grid.rs`
 (téléchargement dans le cache, réseau off, chemin de recherche).
@@ -95,13 +96,13 @@ l'extraction de la taille depuis `Content-Range`.
 | 22 | `download_whole_files` | écart | `proj_is_download_needed(ctx, name, ignore_ttl)`, `proj_download_file` (avec progression) et `pj_find_file` : aucune API publique. L'état testé (`lookForGridInfo`) est dans la base du cache (lot cache). |
 | 23 | `file_api` | écart | `proj_context_set_fileapi` (open, read, write, close, exists, mkdir, unlink, rename) absent. Toutes les lectures de grilles passent par `std::fs` (`gridpath::read`, `read_resource`) : une API de fichiers demande de les router toutes. |
 | 24 | `proj_coordoperation_get_grid_used` | écart | Le test exige que `proj_create("proj=vgridshift grids=nz_linz_nzgd2000-c120100904-grid01.tif")` réussisse avec le CDN, et que l'URL soit `https://cdn.proj.org/...`. Mesuré avec le `libproj` de référence (`proj_create` avec l'endpoint par défaut, réseau bloqué) : `NULL`, « could not find required grid(s) ». Et le `proj.db` de référence n'a aucune ligne pour ce nom (479 lignes de `grid_alternatives`, aucune pour `c120100904`) : PROJ laisse donc l'URL vide. Le port de l'assertion demande le fichier CDN, qui n'est pas dans le dépôt. Le port de `GridInfo` (`lookForGridInfo`) suit PROJ et est déjà en place. |
-| 25 | `pyproj_issue_1192` | écart | `proj_create_operation_factory_context`, `proj_operation_factory_context_set_grid_availability_use`, `proj_coordoperation_is_instantiable` : aucune façade. La logique existe en Rust public (`CoordinateOperationFactory::create_operations`, `GridAvailabilityUse`, `Proj` candidats), mais pas branchée sur le contexte réseau du builder. |
-| 26 | `do_not_attempt_network_access_known_available_network_on` | écart | Même cause que 25 : `proj_create_operations` avec `PROJ_GRID_AVAILABILITY_KNOWN_AVAILABLE`, et le contrôle « aucune activité réseau » par callbacks, qui exige que la fabrique passe par le contexte du builder. |
+| 25 | `pyproj_issue_1192` | porté | `tests/unit_network_core.rs::pyproj_issue_1192`. Pas de façade C : le contexte de fabrique est `CoordinateOperationContext` (public), avec `GridAvailabilityUse::IgnoreGridAvailability` et `SpatialCriterion::PartialIntersection`. La liste (10 opérations, noms et ordre) et les drapeaux d'instanciabilité (réseau off : 8 vraies ; réseau on : 10) sont ceux de `libproj` 9.9.0 mesurés avec une sonde C. Écarts et lacune (opérations à grille absente, réseau on) : `docs/PORTING-network.md`. |
+| 26 | `do_not_attempt_network_access_known_available_network_on` | écart | Façade C absente : `proj_create_operations` avec `PROJ_GRID_AVAILABILITY_KNOWN_AVAILABLE` (la fabrique Rust est là, voir 25), et le contrôle « aucune activité réseau » par callbacks, qui exige que la fabrique passe par le contexte du builder. |
 
-Compte : 26 TEST() C++ ; 11 portés (`curl_invalid_resource`, `simul_open_error`,
+Compte : 26 TEST() C++ ; 12 portés (`curl_invalid_resource`, `simul_open_error`,
 `simul_file_change_while_opened`,
-`simul_read_range_error`, `network_endpoint_env_variable`, `custom`, `getfilesize`, et les quatre
-`not_reachable`) ; 1 partiel (`basic`) ; 14 écarts, dont 5 du lot cache (17 à 21).
+`simul_read_range_error`, `network_endpoint_env_variable`, `custom`, `getfilesize`, `pyproj_issue_1192`, et les quatre
+`not_reachable`) ; 1 partiel (`basic`) ; 13 écarts, dont 5 du lot cache (17 à 21).
 
 ## projsync (`src/apps/projsync.cpp`, `test/cli/test_projsync.sh`) : écart total
 
@@ -138,7 +139,7 @@ ne sont pas réécrites ; ce qui suit les complète pour les cas de ce lot.
 
 Non portés dans ce lot, hors de sa liste : `networking.basic` (partie réseau activé),
 `initial_check`, `network_endpoint_*`, `download_whole_files`, `file_api`,
-`proj_coordoperation_get_grid_used`, `pyproj_issue_1192`,
+`proj_coordoperation_get_grid_used`,
 `do_not_attempt_network_access_known_available_network_on`, et les cas à callbacks
 (`simul_*`) : voir les lignes du tableau ci-dessus.
 

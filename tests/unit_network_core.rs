@@ -1,6 +1,8 @@
 //! PROJ `test/unit/test_network.cpp`, the network cases that need no grid read in ranges: the
-//! callbacks (`custom`, `getfilesize`, `simul_open_error`, `simul_read_range_error`) and the `network_endpoint_api_and_not_reachable_*`
-//! cases. Nothing here reaches `cdn.proj.org`: the endpoint is a local address with no server.
+//! callbacks (`custom`, `getfilesize`, `simul_open_error`, `simul_read_range_error`), the
+//! `network_endpoint_api_and_not_reachable_*` cases, and the operation factory case
+//! `pyproj_issue_1192`. Nothing here reaches `cdn.proj.org`: the endpoint is a local address with
+//! no server.
 //!
 //! The assertions are PROJ's. `HUGE_VAL` with `PROJ_ERR_OTHER_NETWORK_ERROR` is
 //! `Err(ProjError::Network)` here, and the description of the last used operation is the
@@ -13,7 +15,11 @@ use std::sync::{Arc, Mutex};
 
 use std::net::TcpListener;
 
-use proj_rs::{NetworkCallbacks, NetworkError, NetworkHandle, OpenReply, ProjBuilder, ProjError};
+use proj_rs::{
+    create_from_user_input, CoordinateOperation, CoordinateOperationContext,
+    CoordinateOperationFactory, DatabaseContext, GridAvailabilityUse, NetworkCallbacks,
+    NetworkError, NetworkHandle, OpenReply, ProjBuilder, ProjError, ProjLines, SpatialCriterion,
+};
 
 /// A `http://` address that nothing listens on: the port of a listener that is then dropped.
 /// PROJ's test uses `http://0.0.0.0` for the same case.
@@ -710,4 +716,101 @@ fn endpoint_api_not_reachable_vgridshift() {
         (-60.0, -40.0),
         "POSGAR 2007 to SRVN16 height (1)",
     );
+}
+
+/// The operations of `networking.pyproj_issue_1192` (EPSG:4326 to EPSG:2964), in the order of
+/// `proj_list_get`. Measured on PROJ 9.9.0 (`libproj`, TIFF and curl build) with a C probe.
+const ISSUE_1192_NAMES: [&str; 10] = [
+    "Inverse of NAD27 to WGS 84 (85) + Alaska Albers",
+    "Inverse of NAD27 to WGS 84 (7) + Alaska Albers",
+    "Inverse of NAD27 to WGS 84 (33) + Alaska Albers",
+    "Inverse of NAD27 to WGS 84 (3) + Alaska Albers",
+    "Inverse of NAD27 to WGS 84 (13) + Alaska Albers",
+    "Inverse of NAD27 to WGS 84 (14) + Alaska Albers",
+    "Inverse of NAD27 to WGS 84 (10) + Alaska Albers",
+    "Inverse of NAD27 to WGS 84 (21) + Alaska Albers",
+    "Inverse of NAD27 to WGS 84 (22) + Alaska Albers",
+    "Ballpark geographic offset from WGS 84 to NAD27 + Alaska Albers",
+];
+
+/// `proj_coordoperation_is_instantiable` with the network off, PROJ 9.9.0: operations 00 and 02
+/// name grids that are not on disk.
+const ISSUE_1192_INSTANTIABLE_NETWORK_OFF: [bool; 10] =
+    [false, true, false, true, true, true, true, true, true, true];
+
+/// The same with the network on, PROJ 9.9.0: every operation is instantiable, the grids that the
+/// database knows counting as available.
+const ISSUE_1192_INSTANTIABLE_NETWORK_ON: [bool; 10] = [true; 10];
+
+/// `networking.pyproj_issue_1192`: the factory context of the C++ test (grid availability
+/// IGNORED, spatial criterion PARTIAL_INTERSECTION, all authorities), run once with the network
+/// on and once off. Each instantiable operation has a `proj_pj_info` id.
+///
+/// `proj_coordoperation_is_instantiable(ctx, P)` reads the network flag of the context. Here the
+/// flag is the grid availability: network on is `KnownAvailable` (a grid the database knows
+/// counts as available, `considerKnownGridsAsAvailable`), network off is `UseForSorting` (only
+/// the grids on disk). No download happens in either half: PROJ's answer with the network on is
+/// the same with cdn.proj.org refused, which is the case here.
+///
+/// The id is PROJ's `proj_pj_info` id of a pipeline, `pipeline`. Only the operations whose grids
+/// are on disk can be built here (`ProjBuilder::proj` reads the grid at creation). The network-on
+/// operations that need a grid not on disk are checked by their PROJ string only: PROJ builds
+/// them lazily, which the Rust API does not offer for a single operation.
+#[test]
+fn pyproj_issue_1192() {
+    let db = DatabaseContext::create().expect("embedded proj.db");
+    let from = create_from_user_input("EPSG:4326", &db).expect("EPSG:4326");
+    let to = create_from_user_input("EPSG:2964", &db).expect("EPSG:2964");
+
+    let halves = [
+        (
+            false,
+            GridAvailabilityUse::UseForSorting,
+            ISSUE_1192_INSTANTIABLE_NETWORK_OFF,
+        ),
+        (
+            true,
+            GridAvailabilityUse::KnownAvailable,
+            ISSUE_1192_INSTANTIABLE_NETWORK_ON,
+        ),
+    ];
+    for (network_on, known, expected) in halves {
+        let mut context = CoordinateOperationContext::create(&db, "");
+        context
+            .set_grid_availability_use(GridAvailabilityUse::IgnoreGridAvailability)
+            .set_spatial_criterion(SpatialCriterion::PartialIntersection);
+        let operations = CoordinateOperationFactory::create()
+            .create_operations(&from, &to, &context)
+            .expect("operations");
+
+        let names: Vec<&str> = operations.iter().map(CoordinateOperation::name).collect();
+        assert_eq!(names, ISSUE_1192_NAMES, "network on: {network_on}");
+
+        let flags: Vec<bool> = operations
+            .iter()
+            .map(|operation| operation.is_proj_instantiable(&db, known))
+            .collect();
+        assert_eq!(flags, expected, "network on: {network_on}");
+
+        for (operation, instantiable) in operations.iter().zip(flags) {
+            if !instantiable {
+                continue;
+            }
+            let definition = operation
+                .export_to_proj_string_with_database(&db, ProjLines::Single)
+                .expect("the operation has a PROJ string");
+            assert!(
+                definition.starts_with("+proj=pipeline"),
+                "{}: {definition}",
+                operation.name()
+            );
+            if !network_on {
+                let proj = ProjBuilder::new()
+                    .proj(&definition)
+                    .expect("no grid is needed to build it");
+                let info = proj.proj_info();
+                assert_eq!(info.id.as_deref(), Some("pipeline"), "{}", operation.name());
+            }
+        }
+    }
 }
