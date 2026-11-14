@@ -21,7 +21,7 @@ use bounds::Dims;
 use crate::engine::Operation;
 use crate::engine::TransformError as StepError;
 use crate::iso19111::{
-    Conversion, CoordinateOperation, DatabaseContext, GridAvailabilityUse, GridDescription,
+    Conversion, CoordinateOperation, Crs, DatabaseContext, GridAvailabilityUse, GridDescription,
     OpProps, Pipeline, ProjStringLayout,
 };
 use crate::proj_iso::{iso_pipeline, iso_pipeline_at, IsoPipeline};
@@ -656,6 +656,42 @@ impl Proj {
         }
     }
 
+    /// The name of the operation this transform stands for, as `proj_get_name` gives it.
+    ///
+    /// A pair with one operation is that operation's name. A pair with several candidates
+    /// has none: PROJ keeps a set of candidates, which has no ISO object of its own, so the
+    /// name stays `None` before and after a point. A candidate from
+    /// [`Self::last_used_operation`] is named as the candidate. A PROJ string and a single
+    /// CRS give `None`: a CRS is not a transform, and its name is read with
+    /// [`crate::iso19111::create_from_user_input`].
+    #[must_use]
+    pub fn name(&self) -> Option<String> {
+        match &self.body {
+            Body::Iso(pipeline) => pipeline.operation_name(),
+            Body::Native(_) => self.candidate_name.clone(),
+            Body::Single => None,
+        }
+    }
+
+    /// The source CRS of a pair, as `proj_get_source_crs` gives it: the CRS of the first
+    /// candidate, as it was given to the factory. `None` for other objects.
+    #[must_use]
+    pub fn source_crs(&self) -> Option<Crs> {
+        match &self.body {
+            Body::Iso(pipeline) => pipeline.source_crs(),
+            _ => None,
+        }
+    }
+
+    /// The target CRS of a pair, as `proj_get_target_crs` gives it. See [`Self::source_crs`].
+    #[must_use]
+    pub fn target_crs(&self) -> Option<Crs> {
+        match &self.body {
+            Body::Iso(pipeline) => pipeline.target_crs(),
+            _ => None,
+        }
+    }
+
     /// Definition of this object, as libproj reports it.
     ///
     /// For a PROJ string this is the CRS the string reads as, written back as
@@ -681,6 +717,25 @@ impl Proj {
             Body::Native(_) => crate::proj_info::operation_definition(&self.definition),
             Body::Single => Err(ProjError::Definition),
             Body::Iso(pipeline) => pipeline.reported_definition(),
+        }
+    }
+
+    /// The definition of this pair in the order `proj_create_crs_to_crs` gives, as
+    /// `proj_pj_info` reports it before `proj_normalize_for_visualization`.
+    ///
+    /// A lat-first source keeps `step proj=axisswap order=2,1` at the start of the pipeline, and
+    /// a lat-first target keeps it at the end. [`Self::def`] and [`Self::proj_info`] give the
+    /// normalized text instead, the text of the object this crate builds, which takes
+    /// longitude first. A pair with several candidates gives `unavailable until proj_trans is
+    /// called`, as [`Self::def`] does. Other objects give what [`Self::def`] gives.
+    ///
+    /// # Errors
+    ///
+    /// [`ProjError::Definition`], as [`Self::def`].
+    pub fn definition_in_authority_order(&self) -> Result<String, ProjError> {
+        match &self.body {
+            Body::Iso(pipeline) => pipeline.authority_definition(),
+            _ => self.def(),
         }
     }
 

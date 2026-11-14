@@ -544,19 +544,109 @@ fn proj_create_crs_to_crs_proj_longlat() {
     assert!(y.abs() <= 1e-9, "{y}");
 }
 
-/// `proj_create_crs_to_crs_PULKOVO42_ETRS89`: values and the pipeline text after the
-/// first transform. The CRS names and the "unavailable until proj_trans" text are C
-/// internals (lazy construction) and are not checked.
+/// `proj_create_crs_to_crs_PULKOVO42_ETRS89`, every assertion of the C test.
+///
+/// Until a point is transformed, PROJ's `P` is a set of candidates: `proj_pj_info` gives
+/// the deferred text, `proj_get_name` gives NULL, and `P->fwd` is NULL (no candidate is
+/// instantiated). Here that state is `last_used_operation() == None`. After a point, the
+/// definition and the name are those of the candidate the point used.
 #[test]
 fn proj_create_crs_to_crs_pulkovo42_etrs89() {
+    const DEFERRED: &str = "unavailable until proj_trans is called";
+    // The C strings of the two `proj_pj_info(P).definition` checks, concatenated.
+    const ROMANIA: &str = "proj=pipeline step proj=axisswap order=2,1 \
+        step proj=unitconvert xy_in=deg xy_out=rad step proj=push v_3 \
+        step proj=cart ellps=krass step proj=helmert x=2.3287 y=-147.0425 z=-92.0802 \
+        rx=0.3092483 ry=-0.32482185 rz=-0.49729934 s=5.68906266 \
+        convention=coordinate_frame step inv proj=cart ellps=GRS80 \
+        step proj=pop v_3 step proj=unitconvert xy_in=rad xy_out=deg step proj=axisswap \
+        order=2,1";
+    const POLAND: &str = "proj=pipeline step proj=axisswap order=2,1 \
+        step proj=unitconvert xy_in=deg xy_out=rad step proj=push v_3 step proj=cart \
+        ellps=krass step proj=helmert x=33.4 y=-146.6 z=-76.3 rx=-0.359 \
+        ry=-0.053 rz=0.844 s=-0.84 convention=position_vector step inv \
+        proj=cart ellps=GRS80 step proj=pop v_3 step proj=unitconvert xy_in=rad \
+        xy_out=deg step proj=axisswap order=2,1";
+
     let p = Proj::new_known_crs("EPSG:4179", "EPSG:4258", None).expect("4179 to 4258");
-    // Longitude, latitude order here: the C test gives latitude 45, longitude 25.
+    assert_eq!(p.proj_info().definition.as_deref(), Some(DEFERRED));
+    assert_eq!(p.name(), None);
+    assert!(p.last_used_operation().is_none());
+    // The CRS of each side is read even before any point.
+    let source = p.source_crs().expect("source CRS");
+    assert_eq!(source.name(), "Pulkovo 1942(58)");
+    let target = p.target_crs().expect("target CRS");
+    assert_eq!(target.name(), "ETRS89");
+
+    // Romania. The C test gives latitude 45 and longitude 25; this crate takes (lon, lat).
     let (lon, lat, _) = p.convert_xyz(25.0, 45.0, 0.0).expect("convert");
     assert!((lat - 44.999_701_238).abs() <= 1e-9, "{lat}");
     assert!((lon - 24.998_474_948).abs() <= 1e-9, "{lon}");
+    assert_eq!(
+        p.definition_in_authority_order().expect("definition"),
+        ROMANIA
+    );
+    // This crate's pair takes longitude first, so its own text has no swap at the ends.
+    let normalized = ROMANIA.replace(" step proj=axisswap order=2,1", "");
+    assert_eq!(
+        p.proj_info().definition.as_deref(),
+        Some(normalized.as_str())
+    );
+    assert_eq!(
+        p.proj_info().description.as_deref(),
+        Some("Pulkovo 1942(58) to ETRS89 (4)")
+    );
+    let used = p
+        .last_used_operation()
+        .expect("candidate of the last point");
+    assert_eq!(
+        used.name().as_deref(),
+        Some("Pulkovo 1942(58) to ETRS89 (4)")
+    );
+
     let (back_lon, back_lat): (f64, f64) = p.project((lon, lat), true).expect("inverse");
     assert!((back_lat - 45.0).abs() <= 1e-8, "{back_lat}");
     assert!((back_lon - 25.0).abs() <= 1e-8, "{back_lon}");
+
+    // proj_trans_generic: the same Romania point through the array call. This crate has no
+    // strides, so the point is one element of a slice.
+    let mut points = [(25.0_f64, 45.0_f64)];
+    p.convert_array(&mut points).expect("array");
+    assert!(
+        (points[0].1 - 44.999_701_238).abs() <= 1e-9,
+        "{:?}",
+        points[0]
+    );
+    assert!(
+        (points[0].0 - 24.998_474_948).abs() <= 1e-9,
+        "{:?}",
+        points[0]
+    );
+
+    // Poland: a different candidate is chosen for this point.
+    let (lon, lat, _) = p.convert_xyz(20.0, 52.0, 0.0).expect("convert");
+    assert!((lat - 51.999_714_150).abs() <= 1e-9, "{lat}");
+    assert!((lon - 19.998_187_811).abs() <= 1e-9, "{lon}");
+    assert_eq!(
+        p.definition_in_authority_order().expect("definition"),
+        POLAND
+    );
+    let normalized = POLAND.replace(" step proj=axisswap order=2,1", "");
+    assert_eq!(
+        p.proj_info().definition.as_deref(),
+        Some(normalized.as_str())
+    );
+    assert_eq!(
+        p.proj_info().description.as_deref(),
+        Some("Pulkovo 1942(58) to ETRS89 (1)")
+    );
+    let used = p
+        .last_used_operation()
+        .expect("candidate of the last point");
+    assert_eq!(
+        used.name().as_deref(),
+        Some("Pulkovo 1942(58) to ETRS89 (1)")
+    );
 }
 
 /// `proj_create_crs_to_crs_with_area_large`: the area of use is given.

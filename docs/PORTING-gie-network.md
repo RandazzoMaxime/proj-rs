@@ -60,6 +60,39 @@ Audit détaillé : `docs/AUDIT-gie-network.md`.
   `Proj::def` renvoie maintenant ses paramètres (avec `ellps=GRS80` par défaut,
   comme `pj_init`), au lieu d'une erreur. Les chaînes qui sont des CRS gardent
   leur reconstruction ; un datum inconnu reste une erreur.
+- `proj_pj_info().definition` d'une paire : `Proj::def` et `Proj::proj_info` donnent
+  le texte normalisé de l'objet que la crate exécute (longitude d'abord, sans
+  `axisswap` de bout de pipeline, comme `proj_normalize_for_visualization`). Le C de
+  `proj_create_crs_to_crs_PULKOVO42_ETRS89` lit l'objet non normalisé :
+  `Proj::definition_in_authority_order` le donne. Vérifié à la main contre PROJ 9.9.0
+  sur EPSG:4326→3857, →32661, →25832, EPSG:32661→4326, EPSG:4807→4326, EPSG:4258→25832,
+  EPSG:2230→26946, et les noops (EPSG:4326→4326, →4979). Non mesuré : l'ordre des
+  `proj=set v_4` (epoch) par rapport aux swaps ; la crate les met après.
+
+## proj_create_crs_to_crs_PULKOVO42_ETRS89 (`TEST(gie, ...)`, `gie_self_tests.cpp` l. 1269-1347)
+
+Porté de bout en bout, les 12 assertions. Correspondance :
+
+- `proj_pj_info(P).definition` avant le premier point, « unavailable until
+  proj_trans is called » : `Proj::proj_info().definition` (`info.cpp` 190-191).
+- `proj_get_name(P) == NULL` : `Proj::name()` vaut `None` pour une paire à plusieurs
+  candidats. PROJ garde un objet « dummy » sans `iso_obj` (`crs_to_crs.cpp:787`).
+  Pour une paire à une opération, c'est son nom ; pour un candidat de
+  `last_used_operation()`, c'est son nom ; un CRS seul et une chaîne PROJ donnent
+  `None` (écart : un CRS n'est pas une transformation).
+- `P->fwd`, `fwd3d`, `fwd4d` nuls : `last_used_operation()` vaut `None` tant qu'aucun
+  candidat n'a été instancié par un point (même état).
+- `proj_get_source_crs` / `proj_get_target_crs` sur P : `Proj::source_crs()` et
+  `target_crs()`, le CRS du premier candidat (`c_api.cpp` 2630). Écart : `None` pour
+  un candidat de `last_used_operation()` (`Item` ne garde pas ses CRS).
+- `proj_trans` FWD puis INV, `proj_trans_generic` FWD : `convert_xyz`, `project` et
+  `convert_array` (pas de pas dans la crate, un tableau d'un point).
+- `proj_pj_info(P).definition` après le point de Roumanie et après celui de Pologne :
+  `Proj::definition_in_authority_order()`. Les deux pipelines du C sont des littéraux
+  de test, vérifiés contre `cs2cs`/`proj` 9.9.0 et un programme C de contrôle
+  (`proj_create_crs_to_crs` + `proj_pj_info` + `proj_trans_get_last_used_operation`,
+  hors dépôt) : le nom du candidat est « Pulkovo 1942(58) to ETRS89 (4) » pour la
+  Roumanie, « ... (1) » pour la Pologne.
 
 ## cart_selftest (`TEST(gie, cart_selftest)`)
 
