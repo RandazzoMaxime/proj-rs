@@ -17,7 +17,7 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
 | `proj_trans_get_last_used_operation`, `proj_pj_info` | `Proj::last_used_operation`, `Proj::proj_info` (`candidate_name`) |
 | `DatabaseContext::lookForGridInfo` (`factory.cpp:3400`) | `src/iso19111/factory.rs` (`look_for_grid_info`), `src/iso19111/select.rs` (`unrecorded_grid`) |
 | `src/apps/gie.cpp` (`network_error`) | `src/gie.rs` (`errno_name`) |
-| `test/unit/test_network.cpp` (26 TEST) | `tests/unit_network_core.rs` (6 cas, dont `custom`), `tests/unit_network_endpoint_env.rs` (1 cas), `tests/unit_network_local.rs` (2 cas), `src/network.rs` `callback_tests` (2 tests hors liste) |
+| `test/unit/test_network.cpp` (26 TEST) | `tests/unit_network_core.rs` (7 cas, dont `custom` et `getfilesize`), `tests/unit_network_endpoint_env.rs` (1 cas), `tests/unit_network_local.rs` (2 cas), `src/network.rs` `callback_tests` (2 tests hors liste) |
 | serveur de test local (remplace `cdn.proj.org`) | `tests/net_support/mod.rs` |
 | `src/apps/projsync.cpp`, `test/cli/test_projsync.sh` | non porté (voir l'audit) |
 
@@ -50,10 +50,18 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
   couverture de 229376 octets et non les 278528 de PROJ (mesuré). Le handle de la première
   tuile sert aux suivantes (`read_range`) et se ferme à la destruction de la grille (`Drop`) ;
   celui de la création se ferme avant la fin de `proj_create`.
-- **Restriction de la lecture par tuiles.** Seuls les GeoTIFF à tuiles, non compressés, sans
-  prédicteur, à échantillons entrelacés, sont lus par tuile. Les autres (bandes, deflate,
-  bandes planaires, non-TIFF) sont lus entiers par `read_whole` : leur séquence d'appels n'est
-  pas celle de PROJ (il y a les `read_range` du reste du fichier). Le décodage des tuiles est
+- **Bandes lues par morceaux (`getfilesize`).** Une image en bandes non compressée est lue
+  comme les tuiles (`Layout::Strips`) : la bande est lue à son `StripOffsets` sur
+  `StripByteCounts` octets, la dernière bande ne donne que ses lignes, `RowsPerStrip` est
+  plafonné à la hauteur (une bande unique peut valoir 2^32 - 1). `Content-Range` donne la taille
+  du fichier même quand la réponse est plus courte : avant ce lot, une réponse courte fixait la
+  fin du fichier, ce qui aurait bloqué la lecture à 550 octets. Sans `Content-Range`, la règle
+  reste celle d'avant. Mesuré : une transformation après création demande `open(url, 950272,
+  16384)` dans PROJ, le même bloc que le port.
+- **Restriction de la lecture par morceaux.** Seuls les GeoTIFF à tuiles ou à bandes, non
+  compressés, sans prédicteur, à échantillons entrelacés, sont lus par morceaux. Les autres
+  (deflate, prédicteur, bandes planaires, non-TIFF) sont lus entiers par `read_whole` : leur
+  séquence d'appels n'est pas celle de PROJ (il y a les `read_range` du reste du fichier). Le décodage des tuiles est
   ici (`raw_samples` : u16, i16, u32, i32, f32, f64, ordre d'octets du fichier) ; le décodeur
   `tiff` ne sert qu'à lire les IFD.
 - **Nouvelle passe par point (`with_tiles`).** Un échantillon d'une tuile non lue donne `None`
@@ -73,9 +81,9 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
 
 ## Ce qui reste ouvert
 
-- Lecture par tuiles pour les GeoTIFF en bandes, compressés (deflate) ou planaires : ils sont
-  lus entiers (`read_whole`), la séquence de PROJ n'est pas reproduite. Le cas `getfilesize`
-  (création, puis seconde création sans appel) n'est pas porté ; à mesurer ensuite.
+- Lecture par morceaux pour les GeoTIFF compressés (deflate), à prédicteur ou planaires : ils
+  sont lus entiers (`read_whole`), la séquence de PROJ n'est pas reproduite. Non mesuré ici :
+  un GeoTIFF en bandes compressé ou planaire, lu par morceaux avec la séquence de PROJ.
 - Lecture paresseuse hors `gridshift` : `read_resource` (modèles `deformation`, `tinshift`,
   `defmodel`, `nkg`) lit encore les grilles entières (`fetch_missing`, `fetch_with_callbacks`).
 - Validation de la fraîcheur d'un fichier ouvert (`ETag`, `Last-Modified`) : bloque

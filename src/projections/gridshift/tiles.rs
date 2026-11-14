@@ -1,6 +1,7 @@
-//! Grid samples read tile by tile from a remote GeoTIFF, as PROJ reads them (`GTiffGrid`): a
-//! tile is read when one of its samples is needed, not when the grid is opened. The tile is
-//! read whole, as its `TileByteCounts` size, so the ranges asked of the callbacks are PROJ's.
+//! Grid samples read tile by tile (or strip by strip) from a remote GeoTIFF, as PROJ reads them
+//! (`GTiffGrid`): a tile is read when one of its samples is needed, not when the grid is opened.
+//! The tile is read whole, as its `TileByteCounts` (or `StripByteCounts`) size, so the ranges
+//! asked of the callbacks are PROJ's.
 //!
 //! A sample of a tile that is not read yet gives `None`, and the tile is noted. [`with_tiles`]
 //! then reads the noted tiles and runs the point again, so that the answer is the one a grid
@@ -54,28 +55,42 @@ impl Samples {
     }
 }
 
+/// How the samples of an image are cut in the file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Layout {
+    /// Tiles, all of the tile size, with padding at the right and bottom edges.
+    Tiles,
+    /// Strips of the full image width. The last one holds only the rows left.
+    Strips,
+}
+
 /// The layout of one image of a TIFF, as its tags give it.
 pub(super) struct ImageTiles {
     /// The image size, in pixels.
     pub(super) size: (u32, u32),
-    /// The tile size, in pixels (`TileWidth`, `TileLength`).
+    /// The tile size (`TileWidth`, `TileLength`), or the strip size (the width, `RowsPerStrip`).
     pub(super) tile: (u32, u32),
     pub(super) spp: usize,
     /// `BitsPerSample` and `SampleFormat` of the samples.
     pub(super) bits: u32,
     pub(super) format: u32,
     pub(super) order: ByteOrder,
-    /// The file offset and the byte count of each tile, as `TileOffsets` and `TileByteCounts`.
+    pub(super) layout: Layout,
+    /// The file offset and the byte count of each tile or strip, as `TileOffsets` and
+    /// `TileByteCounts`, or `StripOffsets` and `StripByteCounts`.
     pub(super) places: Vec<(u64, u64)>,
 }
 
-/// One image of a remote TIFF, whose tiles are read on first need.
+/// One image of a remote TIFF, whose tiles or strips are read on first need.
 pub(super) struct LazyIfd {
     file: Arc<Mutex<RemoteFile>>,
     tile_w: usize,
     tile_h: usize,
     /// Tiles per row.
     across: usize,
+    /// The image height, which bounds the rows of the last strip.
+    height: usize,
+    layout: Layout,
     spp: usize,
     bits: u32,
     format: u32,
@@ -89,12 +104,19 @@ pub(super) struct LazyIfd {
 
 impl LazyIfd {
     pub(super) fn new(file: Arc<Mutex<RemoteFile>>, image: ImageTiles) -> Result<Self, ()> {
-        let (tile_w, tile_h) = image.tile;
-        let tile_w = usize::try_from(tile_w).map_err(|_| ())?;
-        let tile_h = usize::try_from(tile_h).map_err(|_| ())?;
+        let tile_w = usize::try_from(image.tile.0).map_err(|_| ())?;
         let width = usize::try_from(image.size.0).map_err(|_| ())?;
         let height = usize::try_from(image.size.1).map_err(|_| ())?;
+        // A single strip may be `RowsPerStrip` = 2^32 - 1: the rows of the image are the strip.
+        let tile_h = usize::try_from(image.tile.1).map_err(|_| ())?;
+        let tile_h = match image.layout {
+            Layout::Tiles => tile_h,
+            Layout::Strips => tile_h.min(height),
+        };
         if tile_w == 0 || tile_h == 0 || image.spp == 0 {
+            return Err(());
+        }
+        if image.layout == Layout::Strips && tile_w != width {
             return Err(());
         }
         let across = width.div_ceil(tile_w);
@@ -112,6 +134,8 @@ impl LazyIfd {
             tile_w,
             tile_h,
             across,
+            height,
+            layout: image.layout,
             spp: image.spp,
             bits: image.bits,
             format: image.format,
@@ -120,6 +144,19 @@ impl LazyIfd {
             places: image.places,
             tiles: (0..count).map(|_| OnceLock::new()).collect(),
         })
+    }
+
+    /// The number of samples a tile holds in the file: a whole tile, or for a strip the rows that
+    /// the image has in it.
+    fn expected_len(&self, tile: usize) -> usize {
+        match self.layout {
+            Layout::Tiles => self.tile_len,
+            Layout::Strips => {
+                let top = tile.saturating_mul(self.tile_h);
+                let rows = self.height.saturating_sub(top).min(self.tile_h);
+                rows * self.tile_w * self.spp
+            }
+        }
     }
 
     /// The tile that holds sample `sample` of pixel `(x, y)`, and its position in that tile.
@@ -159,7 +196,7 @@ impl LazyIfd {
             return Err(());
         }
         let values = geotiff::raw_samples(&bytes, self.format, self.bits, self.order)?;
-        if values.len() != self.tile_len {
+        if values.len() != self.expected_len(tile) {
             return Err(());
         }
         // A concurrent load of the same tile gives the same samples: either set is kept.

@@ -592,8 +592,8 @@ enum Source {
 }
 
 /// The grid `name`. A grid the callbacks serve is opened with its first chunk: when that is a
-/// TIFF this reads uncompressed tiles only, which stay in the file (`Source::Tiles`). Any other
-/// grid is read whole, as before.
+/// TIFF this reads uncompressed tiles or strips, chunky, which stay in the file
+/// (`Source::Tiles`). Any other grid is read whole, as before.
 fn read_grid(name: &str) -> Result<Source, Fail> {
     let Some(file) = crate::network_chunks::callback_file(name) else {
         return crate::gridpath::read(name)

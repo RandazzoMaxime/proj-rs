@@ -51,6 +51,7 @@ Tests de l'API existants, hors liste C++ : `tests/network_grid.rs`
 | `networking.basic` (réseau off par défaut, pipeline nul, aucune requête) | `tests/unit_network_local.rs::basic_network_is_off_by_default_and_makes_no_request` | partiel : la partie « réseau off » est portée ; la partie « activé par `PROJ_NETWORK=ON` puis par l'API » (valeurs `1.9992776848`) ne l'est pas, voir plus bas |
 | `networking.curl_invalid_resource` | `tests/unit_network_local.rs::curl_invalid_resource` | porté sur serveur local : 404, `proj` renvoie une erreur, une seule requête |
 | `networking.custom` | `tests/unit_network_core.rs::custom` | porté : séquence d'appels de PROJ à l'identique (création : `open(url, 0, 16384)`, trois en-têtes, `close` ; premier point (lat 49) : `open(url, 524288, 278528)`, trois en-têtes ; second point (lat -49) : `read_range(3670016, 278528)` sur le même handle, trois en-têtes ; `close` à `proj_destroy` ; seconde création sur le même builder sans aucun appel), valeurs `1.25`, `2.25`, `1.25`. La séquence des octets de tuile vient de `TileByteCounts` (262144 octets, couverture alignée à 278528) ; voir `docs/PORTING-network.md`. |
+| `networking.getfilesize` | `tests/unit_network_core.rs::getfilesize` | porté : séquence d'appels de PROJ à l'identique (création : `open(url, 0, 16384)` sur une réponse de 550 octets, `Content-Range` à 4153510, trois en-têtes, `close` ; seconde création sur le même builder sans aucun appel). Le test ne transforme rien. Les bandes non compressées sont lues par morceaux, comme les tuiles ; voir `docs/PORTING-network.md`. |
 | `networking.simul_open_error` | `tests/unit_network_core.rs::simul_open_error_fails_creation_after_one_open` | porté : une seule ouverture `(url, 0, 16384)`, erreur, pas de création |
 | `networking.network_endpoint_env_variable` | `tests/unit_network_endpoint_env.rs::network_endpoint_env_variable` | porté : `PROJ_NETWORK_ENDPOINT` lu au builder, `EPSG:4269 -> EPSG:4152` construit, transformation en erreur réseau |
 | `networking.network_endpoint_api_and_not_reachable_gridshift` | `tests/unit_network_core.rs::endpoint_api_not_reachable_gridshift` | porté (`NAD83 to NAD83(HARN) (47)`, aller, aller, inverse) |
@@ -71,7 +72,7 @@ l'extraction de la taille depuis `Content-Range`.
 | 2 | `basic` | partiel | Partie « off » portée (ligne 1 de la table). Partie « on » non portée : les valeurs `1.9992776848` / `48.9999322600` viennent de `fr_ign_ntf_r93.tif`, absent du dépôt et de `build/data` de la référence ; sans grille, aucune valeur PROJ à comparer. |
 | 3 | `curl_invalid_resource` | porté | Voir « Cas portés ». |
 | 4 | `custom` | porté | Voir « Cas portés ». |
-| 5 | `getfilesize` | écart, non porté | Un seul test par lot. Le test fait une création avec `open(0, 16384)`, trois en-têtes, `close` (fichier de 550 octets, `Content-Range` à 4153510), puis une seconde création qui n'appelle rien. Le chemin de `custom` le fait déjà pour la seconde création ; le reste (grille non tuilée ou fichier tronqué) n'est pas mesuré ici. Une grille non tuilée est lue entière par repli, ce qui ajouterait des appels. À mesurer dans un lot dédié. |
+| 5 | `getfilesize` | porté | Voir « Cas portés ». Mesuré avant le port : PROJ 9.9.0 fait `open(url, 0, 16384)`, `Content-Range`, `Last-Modified`, `ETag`, `close` à la création, puis aucun appel ; une transformation demande `open(url, 950272, 16384)` (sonde C). Le port lit les bandes à `StripOffsets`/`StripByteCounts` par morceaux, la dernière bande ne comptant que ses lignes, et `Content-Range` donne la taille même si la réponse est plus courte. Vérifié contre le fichier local, non commité : `test_hgrid_strip.tif` (4 lignes, bandes de 3, dernière bande d'une ligne) et `test_vgrid_bigendian.tif` (bande unique, gros-boutiste) donnent les mêmes bits sur un balayage du globe au degré (16 points dans la grille, aucun écart). |
 | 6 | `simul_open_error` | porté | Voir « Cas portés ». |
 | 7 | `simul_read_range_error` | écart, non porté | Un test par lot. La lecture par tuiles de `custom` existe : l'erreur de `read_range` au calcul y devient `NetworkUnavailable`, puis `ProjError::Network`. Non vérifié contre la référence : le `HUGE_VAL` et le `proj_errno` de ce cas précis. |
 | 8 | `simul_file_change_while_opened` | écart | La validation par `ETag` / `Last-Modified` entre deux lectures manque : la crate demande ces en-têtes après chaque appel, sans les comparer. |
@@ -94,10 +95,10 @@ l'extraction de la taille depuis `Content-Range`.
 | 25 | `pyproj_issue_1192` | écart | `proj_create_operation_factory_context`, `proj_operation_factory_context_set_grid_availability_use`, `proj_coordoperation_is_instantiable` : aucune façade. La logique existe en Rust public (`CoordinateOperationFactory::create_operations`, `GridAvailabilityUse`, `Proj` candidats), mais pas branchée sur le contexte réseau du builder. |
 | 26 | `do_not_attempt_network_access_known_available_network_on` | écart | Même cause que 25 : `proj_create_operations` avec `PROJ_GRID_AVAILABILITY_KNOWN_AVAILABLE`, et le contrôle « aucune activité réseau » par callbacks, qui exige que la fabrique passe par le contexte du builder. |
 
-Compte : 26 TEST() C++ ; 8 portés (`curl_invalid_resource`, `simul_open_error`,
-`network_endpoint_env_variable`, `custom`, et les quatre `not_reachable`) ; 1 partiel
-(`basic`) ; 17 écarts, dont 5 du lot cache (17 à 21) et 3 à lecture par plages
-(5, 7, 8).
+Compte : 26 TEST() C++ ; 9 portés (`curl_invalid_resource`, `simul_open_error`,
+`network_endpoint_env_variable`, `custom`, `getfilesize`, et les quatre `not_reachable`) ; 1
+partiel (`basic`) ; 16 écarts, dont 5 du lot cache (17 à 21) et 2 à lecture par plages
+(7, 8).
 
 ## projsync (`src/apps/projsync.cpp`, `test/cli/test_projsync.sh`) : écart total
 
@@ -136,7 +137,7 @@ Non portés dans ce lot, hors de sa liste : `networking.basic` (partie réseau a
 `initial_check`, `network_endpoint_*`, `download_whole_files`, `file_api`,
 `proj_coordoperation_get_grid_used`, `pyproj_issue_1192`,
 `do_not_attempt_network_access_known_available_network_on`, et les cas à callbacks
-(`getfilesize`, `simul_*`) : voir les lignes du tableau ci-dessus.
+(`simul_*`) : voir les lignes du tableau ci-dessus.
 
 ### projsync (`src/apps/projsync.cpp`, `test/cli/test_projsync.sh`)
 

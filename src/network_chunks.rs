@@ -146,8 +146,9 @@ impl RemoteFile {
             }
         };
         self.observe(handle);
-        if data.len() < size {
-            // The reply ends before the size asked for: the file ends there.
+        if self.total.is_none() && data.len() < size {
+            // No `Content-Range`, and the reply ends before the size asked for: the file ends
+            // there. With `Content-Range`, the size is that one, whatever the reply holds.
             self.total = Some(start.saturating_add(u64::try_from(data.len()).unwrap_or(0)));
         }
         self.cache().store(&self.url, low, &data);
