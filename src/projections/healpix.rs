@@ -1,9 +1,8 @@
 //! HEALPix and rHEALPix.
 //!
-//! The sphere formulas return radians. On an ellipsoid PROJ replaces `a` with
-//! the authalic radius `a * sqrt(qp / 2)` after the authalic-latitude step, so
-//! the kernel scales by that factor and the classic wrapper still multiplies
-//! by the original `a`.
+//! The sphere formulas return radians. On an ellipsoid the frame's `a` becomes
+//! the authalic radius `a * sqrt(qp / 2)`, as `P->a` in `healpix.cpp`: the
+//! kernel's output is then PROJ's unit, which `pj_factors` differentiates.
 
 #![allow(
     clippy::pedantic,
@@ -12,6 +11,7 @@
 
 use crate::engine::{classic_step, CreateError, Frame, Kernel, Params, TransformError};
 use crate::projmath::{authalic_forward, authalic_inverse, authalic_q};
+use crate::Ellipsoid;
 use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI};
 
 const EPS: f64 = 1e-15;
@@ -296,7 +296,6 @@ struct Healpix {
     south_square: i32,
     rot: f64,
     ellipsoidal: bool,
-    scale: f64,
     n: f64,
     e: f64,
     es: f64,
@@ -331,12 +330,10 @@ impl Kernel for Healpix {
         } else {
             rotate(x, y, -self.rot)
         };
-        Ok((x * self.scale, y * self.scale))
+        Ok((x, y))
     }
 
     fn inverse(&self, x: f64, y: f64) -> Result<(f64, f64), TransformError> {
-        let x = x / self.scale;
-        let y = y / self.scale;
         let (x, y) = if self.rhealpix {
             if !in_image(x, y, true, self.north_square, self.south_square) {
                 return Err(TransformError::OutsideDomain);
@@ -383,7 +380,11 @@ pub(crate) fn build(
     } else {
         2.0
     };
-    let scale = if ellipsoidal { (0.5 * qp).sqrt() } else { 1.0 };
+    let mut frame = frame.clone();
+    if ellipsoidal {
+        frame.earth = Ellipsoid::try_from_a_es(earth.a() * (0.5 * qp).sqrt(), earth.es())
+            .map_err(|_| CreateError::IllegalValue("a"))?;
+    }
     let kernel = match name {
         "healpix" => Healpix {
             rhealpix: false,
@@ -391,7 +392,6 @@ pub(crate) fn build(
             south_square: 0,
             rot: params.radians("rot_xy")?.unwrap_or(0.0),
             ellipsoidal,
-            scale,
             n: earth.n(),
             e: earth.e(),
             es: earth.es(),
@@ -404,7 +404,6 @@ pub(crate) fn build(
             south_square: square(params, "south_square")?,
             rot: 0.0,
             ellipsoidal,
-            scale,
             n: earth.n(),
             e: earth.e(),
             es: earth.es(),
@@ -413,5 +412,5 @@ pub(crate) fn build(
         },
         _ => return Ok(None),
     };
-    Ok(Some(classic_step(frame, kernel)))
+    Ok(Some(classic_step(&frame, kernel)))
 }

@@ -81,6 +81,7 @@ pub(crate) fn from_definition(definition: &str) -> Result<Option<Box<dyn Step>>,
 fn unused_frame() -> Frame {
     Frame {
         earth: Ellipsoid::grs80(),
+        factor_es: Ellipsoid::grs80().es(),
         lam0: 0.0,
         phi0: 0.0,
         x0: 0.0,

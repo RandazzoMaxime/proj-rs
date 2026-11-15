@@ -518,6 +518,8 @@ fn leak_key(key: &str) -> &'static str {
 pub(crate) struct Frame {
     /// Ellipsoid used by the kernel and by angular tolerances.
     pub earth: Ellipsoid,
+    /// `e²` that `pj_factors` reads (`P->es`): 0 when the setup forces a sphere.
+    pub factor_es: f64,
     /// Central meridian, radians.
     pub lam0: f64,
     /// Latitude of origin, radians.
@@ -575,6 +577,12 @@ impl Frame {
         };
         let from_greenwich = prime_meridian(params)?;
         let earth = spherify(params, earth, phi0)?;
+        let factor_es =
+            if crate::projections::forces_sphere_factors(params.text("proj").unwrap_or("")) {
+                0.0
+            } else {
+                earth.es()
+            };
         let lon_wrap = if params.flag("lon_wrap") {
             let center = params.radians("lon_wrap")?.unwrap_or(0.0);
             // init.cpp: `!(fabs(center) < 10 * 2 * pi)`, which is also false for NaN.
@@ -587,6 +595,7 @@ impl Frame {
         };
         Ok(Self {
             earth,
+            factor_es,
             lam0,
             phi0,
             x0: params.number("x_0")?.unwrap_or(0.0),

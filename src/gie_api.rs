@@ -421,7 +421,7 @@ fn unit_factors(unit: UnitProjection<'_>, lon: f64, lat: f64) -> Result<Factors,
     let [x_l, y_p, x_p, y_l] = pj_deriv(lam, lat, DEFAULT_STEP, |l, p| {
         unit.forward.unit_forward(l, p)
     })?;
-    factors_from_derivatives(x_l, y_p, x_p, y_l, lat, frame.earth.es())
+    factors_from_derivatives(x_l, y_p, x_p, y_l, lat, frame.factor_es)
 }
 
 fn check_factor_range(lon: f64, lat: f64) -> Result<(), TransformError> {

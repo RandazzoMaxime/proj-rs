@@ -400,6 +400,7 @@ pub(crate) fn build(
     let mut frame = frame.clone();
     frame.earth = Ellipsoid::try_from_a_es(frame.earth.a(), 0.0)
         .map_err(|_| CreateError::IllegalValue("a"))?;
+    frame.factor_es = 0.0;
     Ok(Some(classic_step(
         &frame,
         PeirceQ {

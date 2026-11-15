@@ -73,6 +73,22 @@ Sources : PROJ 9.9.0 `src/apps/proj.cpp`, `geod.cpp`, `geod_set.cpp`, `cs2cs.cpp
    et `ellps=GRS80` sans ellipsoïde (`append_default_ellipsoid_to_paralist`). Un jeton
    ajouté seulement pour la liste est caché des lectures. `pj_datum_set` lit `nadgrids`, sinon
    `towgs84`. `pj_ellipsoid` ne lit pas `ellps` quand `R` est là. La mesure : `tests/cli_proj_verbose.rs`.
+10. **Facteurs `proj -S` des projections sphériques.** `pj_factors` lit `P->es`. Le setup
+    de PROJ met `P->es = 0` pour les projections « Sph » seules (`adams.cpp`, `bacon.cpp`,
+    `crast.cpp`, `eck4.cpp`, `gnom.cpp`, `lagrng.cpp`, `sconics.cpp`, `sts.cpp`,
+    `putp4p.cpp`, `rpoly.cpp`, `wag2.cpp`, `wink2.cpp`). Le port gardait l'ellipsoïde de
+    `+ellps=` : écart de 0,1 à 1 % sur le facteur d'aire. `Frame::factor_es` porte le `es` lu
+    par `pj_factors` ; `projections::forces_sphere_factors` donne la liste. `gnom` garde `es = 0`
+    même avec un ellipsoïde, comme `gnom.cpp`. `peirce_q` et `bertin1953` mettent leur
+    `factor_es` à 0, comme leur cadre sphérique. Mesure (`tests/cli_proj_factors.rs`, 12 cas
+    de 3 points) : identiques à la référence au bit près. Parité : 72 écarts fermés.
+11. **rHEALPix ellipsoïdal : rayon authalique.** `healpix.cpp` pose `P->a = a · sqrt(qp / 2)`
+    (lignes 623 et 667). Le port gardait `a` et multipliait le noyau par ce facteur : les
+    dérivées étaient divisées par `a`, donc les facteurs étaient trop grands de `a / R_A`,
+    soit 0,11 %. Le cadre porte maintenant le rayon authalique, et le noyau sort l'unité de
+    PROJ. Mesure : facteurs `rhealpix` identiques (`tests/cli_proj_factors.rs`) ; `proj-fwd`
+    `healpix` et `rhealpix` (6 conversions) deviennent identiques au texte. Parité : 6 écarts
+    fermés.
 
 ## Écarts volontaires vers PROJ
 
@@ -107,6 +123,7 @@ Sources : PROJ 9.9.0 `src/apps/proj.cpp`, `geod.cpp`, `geod_set.cpp`, `cs2cs.cpp
 | `proj -v` avec `+proj=pipeline` | Non porté : la liste d'un pipeline est vide ici, PROJ liste une projection. |
 | `proj +datum=… +R=…` : valeur | PROJ prend la sphère de `R`. Ici la branche `datum` de `earth_from_params` prend l'ellipsoïde du datum : `merc +datum=WGS84 +R=6371000` donne 222638.98, PROJ 222389.85. La liste, elle, suit PROJ (`R` lu). Écart de valeur antérieur à ce lot. |
 | `proj +no_defs` seul, `+rf=` sans `+a=` | PROJ refuse : `Must specify ellipsoid or sphere`. Ici GRS80 par défaut. Écart de validation antérieur à ce lot. |
+| `gnom +ellps=` (forward, `-f %.12f`) | x diffère de 5e-10 m sur 2 points sur 6 (`proj-factors-0007`, lignes 2 et 6). Les facteurs sont identiques. Le forward ellipsoïdal (`gnom_e`, `geod`) n'est pas porté au bit près ; cause non identifiée. |
 
 ## Sortie binaire `-b`, `-i`, `-o` au bit près
 

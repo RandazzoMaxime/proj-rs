@@ -61,86 +61,8 @@ cs2cs-proj-datum-diff-0038:3	cs2cs EPSG:32347 +to EPSG:32194 : écart de positio
 cs2cs-proj-datum-diff-0038:4	cs2cs EPSG:32347 +to EPSG:32194 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
 cs2cs-proj-datum-diff-0038:5	cs2cs EPSG:32347 +to EPSG:32194 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
 cs2cs-proj-datum-diff-0038:6	cs2cs EPSG:32347 +to EPSG:32194 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
-proj-factors-0001:1	facteurs -S faux pour +proj=adams_hemi +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0001:2	facteurs -S faux pour +proj=adams_hemi +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0001:3	facteurs -S faux pour +proj=adams_hemi +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0001:4	facteurs -S faux pour +proj=adams_hemi +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0001:5	facteurs -S faux pour +proj=adams_hemi +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0001:6	facteurs -S faux pour +proj=adams_hemi +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0002:1	facteurs -S faux pour +proj=apian +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0002:2	facteurs -S faux pour +proj=apian +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0002:3	facteurs -S faux pour +proj=apian +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0002:4	facteurs -S faux pour +proj=apian +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0002:5	facteurs -S faux pour +proj=apian +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0002:6	facteurs -S faux pour +proj=apian +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
 proj-factors-0003:1	facteurs -S faux pour +proj=cart +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
 proj-factors-0003:2	facteurs -S faux pour +proj=cart +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0004:1	facteurs -S faux pour +proj=crast +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0004:2	facteurs -S faux pour +proj=crast +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0004:3	facteurs -S faux pour +proj=crast +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0004:4	facteurs -S faux pour +proj=crast +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0004:5	facteurs -S faux pour +proj=crast +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0004:6	facteurs -S faux pour +proj=crast +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0005:1	facteurs -S faux pour +proj=eck4 +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0005:2	facteurs -S faux pour +proj=eck4 +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0005:3	facteurs -S faux pour +proj=eck4 +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0005:4	facteurs -S faux pour +proj=eck4 +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0005:5	facteurs -S faux pour +proj=eck4 +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0005:6	facteurs -S faux pour +proj=eck4 +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0006:1	facteurs -S faux pour +proj=fouc +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0006:2	facteurs -S faux pour +proj=fouc +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0006:3	facteurs -S faux pour +proj=fouc +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0006:4	facteurs -S faux pour +proj=fouc +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0006:5	facteurs -S faux pour +proj=fouc +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0006:6	facteurs -S faux pour +proj=fouc +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0007:1	facteurs -S faux pour +proj=gnom +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0007:2	facteurs -S faux pour +proj=gnom +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0007:3	facteurs -S faux pour +proj=gnom +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0007:4	facteurs -S faux pour +proj=gnom +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0007:5	facteurs -S faux pour +proj=gnom +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0007:6	facteurs -S faux pour +proj=gnom +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0008:1	facteurs -S faux pour +proj=rhealpix +north_square=1 +south_square=2 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0008:2	facteurs -S faux pour +proj=rhealpix +north_square=1 +south_square=2 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0008:3	facteurs -S faux pour +proj=rhealpix +north_square=1 +south_square=2 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0008:4	facteurs -S faux pour +proj=rhealpix +north_square=1 +south_square=2 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0008:5	facteurs -S faux pour +proj=rhealpix +north_square=1 +south_square=2 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0008:6	facteurs -S faux pour +proj=rhealpix +north_square=1 +south_square=2 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0010:1	facteurs -S faux pour +proj=lagrng +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0010:2	facteurs -S faux pour +proj=lagrng +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0010:3	facteurs -S faux pour +proj=lagrng +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0010:4	facteurs -S faux pour +proj=lagrng +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0010:5	facteurs -S faux pour +proj=lagrng +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0010:6	facteurs -S faux pour +proj=lagrng +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0013:1	facteurs -S faux pour +proj=murd2 +lat_1=30 +lat_2=45 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0013:2	facteurs -S faux pour +proj=murd2 +lat_1=30 +lat_2=45 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0013:3	facteurs -S faux pour +proj=murd2 +lat_1=30 +lat_2=45 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0013:4	facteurs -S faux pour +proj=murd2 +lat_1=30 +lat_2=45 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0013:5	facteurs -S faux pour +proj=murd2 +lat_1=30 +lat_2=45 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0013:6	facteurs -S faux pour +proj=murd2 +lat_1=30 +lat_2=45 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0015:1	facteurs -S faux pour +proj=putp4p +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0015:2	facteurs -S faux pour +proj=putp4p +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0015:3	facteurs -S faux pour +proj=putp4p +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0015:4	facteurs -S faux pour +proj=putp4p +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0015:5	facteurs -S faux pour +proj=putp4p +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0015:6	facteurs -S faux pour +proj=putp4p +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0016:1	facteurs -S faux pour +proj=rpoly +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0016:2	facteurs -S faux pour +proj=rpoly +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0016:3	facteurs -S faux pour +proj=rpoly +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0016:4	facteurs -S faux pour +proj=rpoly +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0016:5	facteurs -S faux pour +proj=rpoly +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0016:6	facteurs -S faux pour +proj=rpoly +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0020:1	facteurs -S faux pour +proj=wag2 +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0020:2	facteurs -S faux pour +proj=wag2 +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0020:3	facteurs -S faux pour +proj=wag2 +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0020:4	facteurs -S faux pour +proj=wag2 +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0020:5	facteurs -S faux pour +proj=wag2 +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0020:6	facteurs -S faux pour +proj=wag2 +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0021:1	facteurs -S faux pour +proj=wink2 +lat_1=40 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0021:2	facteurs -S faux pour +proj=wink2 +lat_1=40 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0021:3	facteurs -S faux pour +proj=wink2 +lat_1=40 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0021:4	facteurs -S faux pour +proj=wink2 +lat_1=40 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0021:5	facteurs -S faux pour +proj=wink2 +lat_1=40 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0021:6	facteurs -S faux pour +proj=wink2 +lat_1=40 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
 proj-fwd-0045:1	geocent (avant) : résultat faux, X proche de 0 contre plusieurs Mm	à ouvrir
 proj-fwd-0045:2	geocent (avant) : résultat faux, X proche de 0 contre plusieurs Mm	à ouvrir
 proj-fwd-0045:3	geocent (avant) : résultat faux, X proche de 0 contre plusieurs Mm	à ouvrir

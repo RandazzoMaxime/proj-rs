@@ -151,6 +151,26 @@ pub(crate) fn extra_keys(name: &str) -> Option<&'static [&'static str]> {
     }
 }
 
+/// Projections whose PROJ setup sets `P->es = 0`: `pj_factors` then sees a sphere, whatever the
+/// ellipsoid given. Their forward keeps the semi-major axis, so only the factors change.
+pub(crate) fn forces_sphere_factors(name: &str) -> bool {
+    matches!(
+        name,
+        "adams_hemi"
+            | "apian"
+            | "crast"
+            | "eck4"
+            | "fouc"
+            | "gnom"
+            | "lagrng"
+            | "murd2"
+            | "putp4p"
+            | "rpoly"
+            | "wag2"
+            | "wink2"
+    )
+}
+
 pub(crate) fn build(
     name: &str,
     params: &Params,
