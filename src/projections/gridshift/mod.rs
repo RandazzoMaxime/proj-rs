@@ -264,26 +264,29 @@ fn deferred<S: Step + 'static>(
     make: fn(&Params, &Frame, &str) -> Result<S, CreateError>,
 ) -> Result<Option<Box<dyn Step>>, CreateError> {
     let grids = required_grids(params)?;
-    match make(params, frame, grids) {
-        Ok(step) => Ok(Some(Box::new(step))),
-        Err(CreateError::IllegalValue("grids"))
-            if crate::network::grids_may_be_deferred()
-                && missing_downloadable(grids)
-                && !crate::network::last_fetch_not_found() =>
-        {
-            let placeholder = make(params, frame, "null")?;
-            Ok(Some(Box::new(Deferred {
-                placeholder,
-                params: params.clone(),
-                frame: frame.clone(),
-                grids: grids.to_owned(),
-                make,
-                network: crate::network::context(),
-                loaded: std::sync::OnceLock::new(),
-            })))
+    // With `proj_from_operation` (PROJ's `defer_grid_opening`), a grid that can be downloaded is
+    // not tried at creation: the placeholder is the step until the first transform.
+    let defer_now = crate::network::grids_defer_at_creation() && missing_downloadable(grids);
+    if !defer_now {
+        match make(params, frame, grids) {
+            Ok(step) => return Ok(Some(Box::new(step))),
+            Err(CreateError::IllegalValue("grids"))
+                if crate::network::grids_may_be_deferred()
+                    && missing_downloadable(grids)
+                    && !crate::network::last_fetch_not_found() => {}
+            Err(error) => return Err(error),
         }
-        Err(error) => Err(error),
     }
+    let placeholder = make(params, frame, "null")?;
+    Ok(Some(Box::new(Deferred {
+        placeholder,
+        params: params.clone(),
+        frame: frame.clone(),
+        grids: grids.to_owned(),
+        make,
+        network: crate::network::context(),
+        loaded: std::sync::OnceLock::new(),
+    })))
 }
 
 /// One of the listed grids is a bare name that is not on disk and that the network can fetch.
@@ -311,6 +314,13 @@ struct Deferred<S> {
 }
 
 impl<S: Step> Deferred<S> {
+    /// `Proj::has_inverse` runs a point through the pipeline to learn whether an inverse exists.
+    /// That answer does not depend on the grid, so the placeholder gives it and the grid is not
+    /// read (PROJ's `proj_pj_info` reads no grid).
+    fn only_probed(&self) -> bool {
+        self.loaded.get().is_none() && crate::network::inverse_probe_only()
+    }
+
     fn resolve(&self) -> Result<&S, TransformError> {
         if let Some(step) = self.loaded.get() {
             return Ok(step);
@@ -325,10 +335,16 @@ impl<S: Step> Deferred<S> {
 
 impl<S: Step> Step for Deferred<S> {
     fn forward(&self, coord: Coord) -> Result<Coord, TransformError> {
+        if self.only_probed() {
+            return self.placeholder.forward(coord);
+        }
         self.resolve()?.forward(coord)
     }
 
     fn inverse(&self, coord: Coord) -> Result<Coord, TransformError> {
+        if self.only_probed() {
+            return self.placeholder.inverse(coord);
+        }
         self.resolve()?.inverse(coord)
     }
 
@@ -658,8 +674,9 @@ enum Source {
 }
 
 /// The grid `name`. A grid the callbacks serve is opened with its first chunk: when that is a
-/// TIFF this reads uncompressed tiles or strips, chunky, which stay in the file
-/// (`Source::Tiles`). Any other grid is read whole, as before.
+/// TIFF whose tiles or strips are read chunk by chunk (Deflate or uncompressed, with or without a
+/// predictor, chunky or planar), its chunks stay in the file (`Source::Tiles`). Any other grid is
+/// read whole, as before.
 fn read_grid(name: &str) -> Result<Source, Fail> {
     let Some(file) = crate::network_chunks::callback_file(name) else {
         return crate::gridpath::read(name)

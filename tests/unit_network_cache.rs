@@ -18,7 +18,6 @@ use proj_rs::{GridCacheMode, GridCacheTtl, ProjBuilder};
 use rusqlite::Connection;
 
 #[path = "net_support/grids.rs"]
-#[expect(dead_code, reason = "this file serves the cache grid only")]
 mod grids;
 #[path = "net_support/mod.rs"]
 #[expect(dead_code, reason = "this file serves with spawn_with_headers only")]

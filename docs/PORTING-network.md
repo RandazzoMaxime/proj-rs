@@ -10,7 +10,7 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
 | `src/filemanager.cpp` (téléchargement, cache), `src/networkfileapi` | `src/network.rs` (interne, `pub(crate)`) |
 | `proj_context_set_network_callbacks` | `NetworkCallbacks` (trait public), `ProjBuilder::set_network_callbacks`, `src/network.rs` |
 | `NetworkFile`, `DOWNLOAD_CHUNK_SIZE`, cache de morceaux (`filemanager.cpp`) | `src/network_chunks.rs` (`RemoteFile`, `ChunkCache`, `RemoteReader`) |
-| `GTiffGrid`, lecture des tuiles au calcul (`grids.cpp`, libtiff) | `src/projections/gridshift/geotiff.rs` (`load_remote`, `raw_samples`), `src/projections/gridshift/tiles.rs` (`LazyIfd`, `with_tiles`) |
+| `GTiffGrid`, lecture des tuiles au calcul (`grids.cpp`, libtiff) | `src/projections/gridshift/geotiff.rs` (`load_remote`, `lazy_layout`, `raw_samples`), `src/projections/gridshift/tiles.rs` (`LazyIfd`, `read_raw`, `read_decoded`, `with_tiles`) |
 | `proj_context_set_url_endpoint`, `PROJ_NETWORK_ENDPOINT` | `ProjBuilder::set_url_endpoint`, `GridContext::load` |
 | `grids.cpp:3222` (`pj_generic_grid_init`), `grids.cpp:3234` | `src/projections/gridshift/mod.rs` (`deferred`, `Deferred`) |
 | `trans.cpp:284` (erreur réseau d'un candidat : arrêt du point) | `src/iso19111/alternatives.rs` (`AlternativeError::Network`) |
@@ -19,7 +19,7 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
 | `proj_coordoperation_get_grid_used_count`, `proj_coordoperation_get_grid_used` (`c_api.cpp:7905-7990`) | `Proj::grids_needed` (`src/proj.rs`), sous `with_context` ; `RemoteGrids::Open` |
 | `proj_create_operations` avec le contexte de fabrique (callbacks du contexte) | `ProjBuilder::create_operations` (`src/proj.rs`), enveloppe `with_context` comme les autres créations du builder |
 | `src/apps/gie.cpp` (`network_error`) | `src/gie.rs` (`errno_name`) |
-| `test/unit/test_network.cpp` (26 TEST) | `tests/unit_network_core.rs` (12 cas, dont `custom`, `getfilesize`, `simul_read_range_error`, `simul_file_change_while_opened`, `proj_coordoperation_get_grid_used`, `pyproj_issue_1192` et `do_not_attempt_network_access_known_available_network_on`), `tests/unit_network_endpoint_env.rs` (1 cas), `tests/unit_network_local.rs` (2 cas), `src/network.rs` `callback_tests` (2 tests hors liste) |
+| `test/unit/test_network.cpp` (26 TEST) | `tests/unit_network_core.rs` (12 cas, dont `custom`, `getfilesize`, `simul_read_range_error`, `simul_file_change_while_opened`, `pyproj_issue_1192`, `do_not_attempt_network_access_known_available_network_on` et `second_creation_of_a_multi_chunk_grid`, cas propre au port), `tests/unit_network_grid_used.rs` (1 cas, `proj_coordoperation_get_grid_used`, contre le vrai CDN), `tests/unit_network_compressed_grid.rs` (2 cas hors liste : GeoTIFF déflaté planaire, en bandes et en tuiles, hors ligne), `tests/unit_network_compressed_cdn.rs` (1 cas hors liste : le GeoTIFF déflaté du CDN, contre le vrai CDN), `tests/unit_network_endpoint_env.rs` (1 cas), `tests/unit_network_local.rs` (2 cas), `src/network.rs` `callback_tests` (2 tests hors liste) |
 | serveur de test local (remplace `cdn.proj.org`) | `tests/net_support/mod.rs` |
 | `proj_is_download_needed`, `proj_download_file` (`networkfilemanager.cpp:2523-2880`) | `src/network_download.rs` (`is_download_needed`, `download`) ; `ProjBuilder::is_download_needed`, `ProjBuilder::download_file`, `TtlSetting`, `DownloadProgress` (`src/proj.rs`) |
 | `pj_find_file(…, disable_network)` (`filemanager.cpp:1942`), `proj_grid_info` avec le réseau du contexte (`grids.cpp:3928`), `lookForGridInfo` et ses deux résultats (`factory.cpp:3398`) | `ProjBuilder::find_local_file`, `ProjBuilder::grid_info`, `ProjBuilder::look_for_grid_info` (`GridLookup`, `src/iso19111/factory.rs`, `grid_lookup`) |
@@ -28,6 +28,7 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
 | `networking.download_whole_files` (`test_network.cpp:1859`, 37 assertions) | `tests/unit_network_download.rs` (1 cas, contre le vrai CDN) |
 | `networking.file_api` (`test_network.cpp:2043`, 15 assertions) | `tests/unit_network_file_api.rs` (1 cas, contre le vrai CDN) |
 | `networking.basic` (`test_network.cpp:121`, quatre états et une valeur) | `tests/unit_network_basic.rs` (1 cas, contre le vrai CDN) ; `tests/unit_network_local.rs` garde en plus le cas « off, aucune requête » |
+| `networking.curl_hgridshift`, `curl_vgridshift`, `curl_vgridshift_vertcon` (`test_network.cpp:1109`, `1144`, `1180`) | `tests/unit_network_grids.rs` (3 cas, contre le vrai CDN) |
 | sonde `initial_check` (`cdn_reachable`), partagée | `tests/net_cdn/mod.rs` (incluse par `#[path]` dans les deux cas) |
 | `src/apps/projsync.cpp`, `test/cli/test_projsync.sh` | `src/bin/projsync.rs`, `src/projsync.rs` ; `tests/unit_projsync.rs` (22 cas, les 15 appels du script) ; cache et téléchargement : `docs/PORTING-network-cache.md` ; table de couverture : `docs/AUDIT-network.md`, section projsync |
 
@@ -71,12 +72,34 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
   fin du fichier, ce qui aurait bloqué la lecture à 550 octets. Sans `Content-Range`, la règle
   reste celle d'avant. Mesuré : une transformation après création demande `open(url, 950272,
   16384)` dans PROJ, le même bloc que le port.
-- **Restriction de la lecture par morceaux.** Seuls les GeoTIFF à tuiles ou à bandes, non
-  compressés, sans prédicteur, à échantillons entrelacés, sont lus par morceaux. Les autres
-  (deflate, prédicteur, bandes planaires, non-TIFF) sont lus entiers par `read_whole` : leur
-  séquence d'appels n'est pas celle de PROJ (il y a les `read_range` du reste du fichier). Le décodage des tuiles est
-  ici (`raw_samples` : u16, i16, u32, i32, f32, f64, ordre d'octets du fichier) ; le décodeur
-  `tiff` ne sert qu'à lire les IFD.
+- **GeoTIFF compressé lu par morceaux (`lazy_layout`).** Un GeoTIFF à tuiles ou à bandes, à
+  échantillons entrelacés ou planaires, est lu par morceaux si sa compression est aucune (1), le
+  Deflate (8) ou l'ancien Deflate (32946), et son prédicteur 1, 2 ou 3. Un morceau sans
+  compression ni prédicteur est lu comme ses octets (`raw_samples`, `Reading::Raw`), comme avant.
+  Un morceau compressé, ou prédit, est lu par le décodeur `tiff` (`Reading::Decoded`) : celui-ci
+  annule la compression et le prédicteur. Les octets du morceau sont lus une fois, par un seul
+  `read_at` (arrondi aux morceaux de 16384 octets : c'est ce que PROJ mesure, un `read_range` par
+  bande ou tuile), puis donnés au décodeur par une fenêtre (`RemoteReader::set_window`) qui ne lit
+  rien d'autre : hors de la fenêtre, la lecture est la fin des données. La création ne lit que
+  `open(url, 0, 16384)` et les en-têtes, y compris pour le GeoTIFF déflaté du CDN.
+  Mesuré, hors ligne et sur le CDN, appels et valeurs égaux à `libproj` 9.9.0 (voir « GeoTIFF
+  compressé, mesures »). Limites : les autres compressions (LZW, PackBits, JPEG, CCITT) et les
+  prédicteurs autres que 1 à 3 restent lus entiers par `read_whole` ; le prédicteur 2 et l'ancien
+  Deflate sont acceptés et ne sont pas mesurés contre `libproj`. Un morceau de tuile partielle
+  d'un plan autre que le premier est rendu par `tiff` 0.10.3 avec ses lignes de remplissage : le
+  décodage ne prend que les lignes de l'image (`read_decoded`), car `chunk_data_dimensions` lit
+  le remplissage du bas à partir de l'index du morceau et non de sa ligne dans le plan. La
+  largeur, elle, est juste. Le décodage des bandes non compressées reste `raw_samples` (`u16`,
+  `i16`, `u32`, `i32`, `f32`, `f64`, ordre d'octets du fichier) ; le décodeur `tiff` lit les IFD.
+- **Taille de la plage demandée (`fetch`).** `NetworkFile::read` (`networkfilemanager.cpp:1349`)
+  demande `nBlocs * 16384` octets à partir du morceau, sans tronquer à la fin du fichier : un
+  `read_range(344064, 131072)` pour une grille de 460261 octets (mesuré). `RemoteFile::fetch`
+  tronquait à la taille du fichier (`read_range(344064, 116197)`) ; il ne tronque plus. Un
+  morceau qui commence après la fin n'est pas demandé, comme avant. Écart restant : PROJ
+  augmente le nombre de blocs demandés pour des lectures séquentielles (doublement, plafonné à
+  64 blocs) et s'arrête au premier bloc déjà en cache ; `fetch` demande la plage manquante
+  entière, de son premier au dernier morceau manquant (sans heuristique). Les mesures ci-dessous
+  n'ont pas de lecture séquentielle, donc pas de différence visible.
 - **Nouvelle passe par point (`with_tiles`).** Un échantillon d'une tuile non lue donne `None`
   et la tuile est notée. Le point est recalculé une fois la tuile lue, si bien que
   l'interpolation ne voit jamais un échantillon absent. Une lecture en échec termine le point
@@ -108,13 +131,43 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
 - **Fabrique d'opérations (`pyproj_issue_1192`).** Pas de façade C : le contexte de fabrique
   est `CoordinateOperationContext`, avec `GridAvailabilityUse::IgnoreGridAvailability` et
   `SpatialCriterion::PartialIntersection`, et la liste vient de
-  `CoordinateOperationFactory::create_operations`. Aucune API ajoutée. Le drapeau réseau de
+  `CoordinateOperationFactory::create_operations`. Le drapeau réseau de
   `proj_coordoperation_is_instantiable(ctx, P)` est traduit par
   `CoordinateOperation::is_proj_instantiable` : réseau activé donne `KnownAvailable`
   (`considerKnownGridsAsAvailable` : une grille que la base connaît compte comme disponible),
   réseau désactivé donne `UseForSorting` (grilles sur disque seulement). Mesuré (sonde C
-  contre `libproj` 9.9.0, non versionnée) : 10 opérations dans les deux cas, mêmes noms et même
-  ordre ; instanciables 8 réseau off, 10 réseau on.
+  contre `libproj` 9.9.0, CDN joignable, cache de grilles off, non versionnée) : 10 opérations
+  dans les deux cas, mêmes noms et même ordre ; instanciables 8 réseau off (opérations 00 et 02
+  sans grille locale), 10 réseau on ; les chaînes PROJ sont identiques dans les deux cas.
+- **Instanciation d'une opération (`ProjBuilder::proj_from_operation`, ajouté par ce lot).**
+  Équivalent de `proj_list_get` (`pj_obj_create`) : la chaîne PROJ de l'opération est construite
+  avec la base, puis lue comme `Proj::new`. Réseau actif : une grille absente mais téléchargeable
+  n'est pas ouverte à la création, comme `defer_grid_opening` de PROJ (mesuré : zéro `open` pendant
+  `proj_list_get`, `proj_coordoperation_is_instantiable` et `proj_pj_info`, avec des callbacks qui
+  refusent tout). Le port : `grids_defer_at_creation` (`src/network.rs`), que lit
+  `gridshift::deferred` pour sauter la tentative de création d'une grille téléchargeable ; les
+  candidats de paire (`grids_may_be_deferred`) gardent leur comportement. Réseau inactif, ou grille
+  ni sur disque ni téléchargeable : erreur (`ProjCreateError`). PROJ rend alors un `PJ` sans id ;
+  écart d'API assumé, asserté par le test.
+- **`Proj::proj_info` ne lit pas la grille (ajouté par ce lot).** `has_inverse` teste
+  l'inverse en passant un point dans le pipeline, ce qui, sur une grille différée, la lisait
+  (mesuré par le test : deux `open` au `proj_info`). `with_inverse_probe` fait répondre le
+  placeholder pendant ce seul test, sans lire la grille ; PROJ ne fait aucune E/S dans
+  `proj_pj_info`.
+- **Fabrique `IGNORED` avec réseau (écart, non porté).** Avec `IGNORED` et le réseau actif,
+  PROJ ouvre à la création les grilles distantes des lignes de la base : sonde C avec callbacks
+  refusés, `proj_create_operations` pour `EPSG:4326` vers `EPSG:2964` fait deux `open`
+  (`https://cdn.proj.org/ca_nrc_ntv2_0.tif`, `https://cdn.proj.org/us_noaa_alaska.tif`). Le port
+  (`CoordinateOperationFactory::create_operations`) ne les ouvre pas. Aucun effet mesuré sur la liste
+  ni sur les drapeaux (mêmes valeurs avec les ouvertures refusées). Les deux grilles ont une ligne
+  avec `open_license = 1` (`proj.db`).
+- **Hypothèse « sonder le CDN » (`is_proj_instantiable`, non changé).** Ce lot supposait que
+  l'instanciabilité avec réseau actif devait sonder le CDN. Pour cette liste ce n'est pas le cas :
+  `lookForGridInfo` (`iso19111/factory.cpp`) compte disponible une grille à ligne qui a un paquet
+  ou une licence ouverte, et les deux grilles de la liste ont la licence ouverte. Le port fait la
+  même chose (`KnownAvailable`), et le résultat mesuré est identique. La sonde de PROJ
+  (`resolveFullFilename` avec le réseau actif, `filemanager.cpp`) vise les lignes sans paquet ni
+  licence ouverte ; ce cas n'est pas dans la liste et n'est pas porté.
 - **Fabrique sous le contexte du builder (`do_not_attempt_network_access_known_available_network_on`).**
   Les callbacks sont attachés au `ProjBuilder`, pas à `CoordinateOperationContext`, donc la
   fabrique ne les voit pas sans un passage par le builder. Ajout : `ProjBuilder::create_operations`,
@@ -147,31 +200,44 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
   grille est ouverte. Les autres appelants (`factory.rs`, `compound.rs`, `projinfo.rs`,
   `is_proj_instantiable`) gardent `RemoteGrids::Skip` : la fabrique coupe le réseau
   (`factory.cpp:4363`, `DisableNetwork`), et ce lot ne change pas ses listes.
-  **Octets de substitution.** Le fichier CDN `nz_linz_nzgd2000-c120100904-grid01.tif` n'est pas
-  dans le dépôt et le proxy refuse `cdn.proj.org`. Le test sert les 956 octets de
-  `data/tests/egm96_15_uncompressed_truncated.tif` sous cette URL (`ServeOneFile`) et refuse les
-  autres URL. Les trois assertions du TEST portent sur le nom et l'URL, pas sur le contenu : elles
-  sont les mêmes avec les octets de la référence, qui ne sont pas disponibles. Mesuré avec les
-  mêmes octets (sonde C `grid_used_probe.c`, non versionnée) : `short` le nom, `full` vide,
-  `url` le CDN, `direct` 0, `open` 0, `available` 1 ; une seule `open(url, 0, 16384)` pour les
-  deux créations, et aucun appel pendant les deux `proj_coordoperation_get_grid_used`. Le test
-  asserte ces drapeaux et ce compte, mesurés avec ces octets. Ce qui dépend du vrai fichier n'est
-  pas porté : la séquence d'appels de callbacks sur le vrai GeoTIFF, et `available` d'un vrai
-  fichier (ouvert ou non, la valeur de l'URL ne change pas).
-  **Garde `networkAccessOK`.** Le TEST sort tôt quand le CDN ne répond pas. Le port ne sort pas :
-  les callbacks répondent sans I/O, donc le test tourne partout.
-  **Sans callbacks.** Non testé : le chemin HTTP télécharge le fichier entier. Il n'est atteint
-  que si le réseau est actif sans callbacks.
-- **Réseau absent ici (`networkAccessOK`).** Mesure faite quand `cdn.proj.org` était refusé
-  (403 du proxy) : `initial_check` était faux. Le port ne dépend pas du CDN et n'est pas conditionné
-  par `networkAccessOK`. La partie réseau activé est mesurée avec le CDN refusé ; la réponse de
-  PROJ est la même (10 instanciables) : l'instanciabilité ne dépend que du drapeau, pas du
-  téléchargement. Un CDN qui répond n'est mesuré que pour `basic` (section « networking.basic (porté) »
-  de `docs/AUDIT-network.md`), pas pour `pyproj_issue_1192`.
-- **Id de `proj_pj_info`.** PROJ donne `pipeline` pour chaque opération instanciable (mesuré).
-  Le test vérifie `proj_info().id == "pipeline"` sur les opérations construites hors ligne (8),
-  et la chaîne `+proj=pipeline` pour les deux autres (grilles absentes). La description de PROJ
-  est le nom de l'opération, vérifié par la liste des noms.
+  **Contre le vrai CDN.** `tests/unit_network_grid_used.rs` interroge `cdn.proj.org` comme le
+  TEST C++, sans callbacks (le client HTTP du crate, `HTTPS_PROXY` suivi). Il est gardé par la
+  sonde `cdn_reachable` : sans réponse `206`, il sort tôt, comme `networkAccessOK`. Répertoire
+  utilisateur temporaire, cache de grilles désactivé. Les trois assertions du TEST sont là, et
+  deux créations. Mesuré avec `libproj` 9.9.0 (TIFF+curl, `PROJ_DATA` de la référence) sur le même
+  fichier de 460261 octets (GeoTIFF déflaté, 55×52) : `proj_create` non NULL aux deux créations,
+  `shortName` le nom, `fullName` vide, `packageName` vide, `url` le CDN, `directDownload` 0,
+  `openLicense` 0, `available` 1, un seul grid. Le port donne les mêmes valeurs. Il n'y a pas de
+  drapeau `gridopen` dans l'API C 9.9.0 (`proj_coordoperation_get_grid_used` ne renvoie que
+  `available`).
+  **Séquence d'appels sur le vrai fichier (mesurée, non assertée).** PROJ, callbacks qui
+  journalisent : création 0 `open(url, 0, 16384)`, trois en-têtes, `close` ; création 1 aucun appel.
+  Le crate : création 0 `open(url, 0, 16384)`, puis 28 `read_range` de 16384 octets (jusqu'à
+  `458752`), trois en-têtes après chaque appel, `close` ; création 1 aucun appel. Le GeoTIFF
+  déflaté est lu entier : voir « Ce qui reste ouvert ». Les valeurs renvoyées ne changent pas.
+  **Défaut trouvé et corrigé : seconde création avec callbacks.** Sur ce fichier, avec callbacks,
+  la seconde création échouait (`ProjError("illegal value for +grids")`, PROJ : non NULL). La
+  taille du fichier était gardée par le `RemoteFile` de la première création, pas dans le cache de
+  morceaux partagé : la seconde lisait le premier morceau et le prenait pour le fichier entier.
+  Correction : `network_chunks::ChunkCache` garde la taille par URL (`sizes`), vidée avec les
+  morceaux (`clearMemoryCache`). Test rouge, sortie avant correction :
+  `creation 1: proj_create is not NULL: Some(ProjError("illegal value for +grids"))`, dans
+  `tests/unit_network_core.rs::second_creation_of_a_multi_chunk_grid` (`data/tests/egm96_15.gtx`,
+  259240 octets, 16 morceaux, sous `https://foo/`). Vert après correction. PROJ mesuré sur ce
+  même fichier : une seule `open(url, 0, 16384)` pour les deux créations, aucun appel à la seconde.
+  Écart restant : la référence `Last-Modified`/`ETag` (`baseline`) reste par `RemoteFile`. Un
+  fichier modifié entre deux créations n'est donc pas détecté à la seconde, comme PROJ le fait
+  par son cache de propriétés ; seule la taille est gardée d'une création à l'autre.
+  **Garde `networkAccessOK`.** Le TEST sort tôt quand le CDN ne répond pas ; le test du crate fait
+  de même (`cdn_reachable`).
+- **`pyproj_issue_1192` et `networkAccessOK`.** Le test retourne tôt quand la sonde
+  (`tests/net_cdn`) ne répond pas, comme le TEST. Ce lot l'a exécuté avec le vrai CDN (sonde
+  `206`), donc sans fichier de substitution. Les valeurs mesurées avec le CDN joignable sont celles
+  décrites plus haut (10 opérations, 8 et 10 instanciables, id `pipeline`) : aucune n'a changé.
+- **Id de `proj_pj_info`.** PROJ donne `pipeline` pour chaque opération instanciable, réseau on
+  et off (mesuré). Le test asserte cet id pour chaque opération instanciable construite par
+  `proj_from_operation`, sous les deux réglages, et une erreur pour les non instanciables. Le nom
+  de l'opération (`proj_pj_info().description` en PROJ) est vérifié par la liste des noms.
 
 - **Sonde `initial_check`.** Le TEST C++ n'a aucune assertion ; il pose `networkAccessOK` par un `GET`
   sur `cdn.proj.org` (`Range: 0-1`, code 206). Pas de test de la sonde elle-même : il n'y a pas de
@@ -241,6 +307,48 @@ du port :
   prouver que l'assertion de valeur est active, la valeur attendue a été remplacée par `1.9992776858` : échec
   (`longitude 1.9992776847752205 against PROJ 1.9992776858`), puis rétablissement de la valeur de PROJ.
 
+## networking.curl_* (porté contre le vrai CDN)
+
+Les trois TEST (`test/unit/test_network.cpp:1109`, `1144`, `1180`) sont portés dans
+`tests/unit_network_grids.rs`, avec les grilles réelles de `https://cdn.proj.org`. Ils ne
+dépendent plus de fixtures : les trois grilles de substitution (`fr_ign_gr3df97a.tif`,
+`us_nga_egm08_25.tif`, `us_noaa_vertcone.tif`, écrites par `tests/net_support/grids.rs`) ont été
+retirées, leurs seuls appelants étant ces trois cas. Table ligne par ligne :
+`docs/AUDIT-network.md`, lignes 9 à 11 et « Cas portés ». Choix du port :
+
+- **Garde `networkAccessOK`.** Chaque cas sort tôt quand la sonde `cdn_reachable` échoue, comme
+  `if (!networkAccessOK) return;`. Le cas ne sort pas en silence sans le dire : il l'écrit dans la
+  sortie du test.
+- **Contexte.** Un `ProjBuilder` par cas, cache de grilles coupé (`proj_grid_cache_set_enable(false)`),
+  réseau activé (`proj_context_set_enable_network(true)`), répertoire utilisateur temporaire du
+  processus (`set_user_writable_directory`), supprimé à la fin. Le cache étant coupé, rien n'y est écrit.
+- **Assertions.** Les trois `EXPECT_NEAR` de chaque TEST sont repris avec leurs tolérances (1e-8 pour
+  lat/lon, 1e-2 pour la hauteur), et `ASSERT_NE(P, nullptr)` devient le `expect` de la création.
+  Les valeurs de libproj 9.9.0 sont ajoutées, mesurées avec un programme C contre `libproj` 9.9.0
+  (réseau et TIFF, `%.17g`, `PROJ_DATA` de la référence), et vérifiées à 1e-9. Mesures :
+
+  | cas | entrée | sortie (lat, lon, hauteur) |
+  |---|---|---|
+  | `curl_hgridshift` | `EPSG:4275` vers `EPSG:4171`, `(lon, lat) = (2, 49)` | `48.999932260028217`, `1.9992776848010316`, `0` |
+  | `curl_vgridshift` | `EPSG:4979` vers `EPSG:4326+3855`, `(150, -30, 0)` | `-29.999999999999996`, `150`, `-31.889799118042117` |
+  | `curl_vgridshift_vertcon` | `EPSG:4269+7968` vers `EPSG:4269+5703`, `(-80, 40, 0)` | `40`, `-80`, `-0.15375280380249004` |
+
+  Les grilles utilisées sont celles du journal de `libproj` (`PROJ_DEBUG=3`) : `fr_ign_gr3df97a.tif`,
+  `us_nga_egm08_25.tif`, `us_noaa_vertcone.tif`. Les commentaires C++ écrivent `egm08_25.tif` et
+  `vertcone.tif` ; le CDN et PROJ demandent les noms préfixés `us_nga_` et `us_noaa_`.
+- **Ce que le vrai fichier change par rapport aux fixtures.** Les fixtures donnaient des valeurs de
+  référence qui ne sont pas celles du CDN : `14.6249995232` au lieu de `-31.889799118042117` pour
+  `curl_vgridshift`, `-0.1295000091` au lieu de `-0.153752803802490` pour `curl_vgridshift_vertcon`,
+  et pour `curl_hgridshift` un décalage de `48.9968893575` / `1.9999925459` au lieu de
+  `48.9999322600` / `1.9992776848`. Les trois cas passent contre le vrai CDN dès la première exécution,
+  sans changement de `src/` : aucun écart avec PROJ n'a été trouvé.
+- **Preuve que l'assertion de valeur est active.** La hauteur attendue de `curl_vgridshift_vertcon`
+  a été remplacée par `-0.1295000091` (la valeur de la fixture) : échec, `height -0.15375280380249004
+  against PROJ`, dans `tests/unit_network_grids.rs:145`. La valeur a été rétablie avant les
+  lancements suivants.
+- **Non porté.** `proj_assign_context` sur la transformation, puis la destruction du contexte : le
+  port n'a pas d'équivalent (`ProjBuilder` possède son réseau, voir « Contexte » plus haut).
+
 ## API de fichiers
 
 La fiche de `file_api` : les callbacks de `PROJ_FILE_API` deviennent deux traits publics,
@@ -282,19 +390,109 @@ cache de morceaux et son `clear` (`network_cache.rs`, `DiskChunkCache::open`, `c
 `is_file`). Les grilles, modèles, dictionnaires `+init=FILE:SECTION` et métadonnées de grille passent par
 l'API (`gridpath::resolve`, `gridpath::read`, `network::read_file`).
 
+## GeoTIFF compressé, mesures
+
+Mesures avec `libproj` 9.9.0 (callbacks qui journalisent, `proj=vgridshift grids=<nom>
+multiplier=1`, `proj_trans(PJ_FWD)`), sur les mêmes octets que les tests. Création de chaque grille :
+`open(url, 0, 16384)`, trois en-têtes, `close`, comme le crate maintenant.
+
+- Hors ligne, en bandes (`data/tests/planar_deflate_predictor3.tif`, 31705 octets, planaire,
+  Deflate, prédicteur 3, une bande par morceau aux décalages 530, 12171 et 23018). `(20, 50)`,
+  bande 2 (`vertical_offset`), morceau 1 : `open(url, 16384, 16384)`, trois en-têtes, z =
+  0.8661957234144211. `(41, 37)`, même morceau : aucun appel, z = 0.6664930284023288.
+  Test : `tests/unit_network_compressed_grid.rs::a_point_reads_the_strip_it_needs`.
+- Hors ligne, en tuiles (`data/tests/planar_deflate_predictor3_tiled.tif`, 30094 octets, tuiles
+  de 32 pixels sur 100 par 70, 36 tuiles, planaire, Deflate, prédicteur 3). `(20.125, 49.875)`, tuile
+  intérieure 26409 à 27364 : `open(url, 16384, 16384)`, trois en-têtes, z = 0.859148681163788.
+  `(34.625, 42.875)`, tuile de bord (4 par 6 pixels utiles, 29927 à 30094) : aucun appel, z =
+  0.880941569805145. Test : `a_tiled_grid_reads_the_tile_of_each_point`.
+- Le CDN (`nz_linz_nzgd2000-c120100904-grid01.tif`, 460261 octets, 4 images, planaires, Deflate,
+  prédicteur 3, une bande par morceau, 55 par 52 pixels pour l'image de base). L'image choisie pour
+  `(171.9, -43.55)` a sa bande 2 (`vertical_offset`) à 347367, 112894 octets : `read_range(344064,
+  131072)`, les morceaux 21 à 28 (le bloc aligné, comme pour les autres lectures). `(169, -45)` :
+  `open(url, 16384, 16384)`. Test : `tests/unit_network_compressed_cdn.rs`.
+
+Non mesuré contre `libproj` : GeoTIFF déflaté chunky (`PlanarConfiguration` 1), prédicteur 2, ancien
+Deflate (32946), tuiles de bord chunky. Ces cas passent par le même décodeur ; leurs valeurs et leurs
+appels ne sont pas établis avec `libproj`.
+
+## projsync
+
+Source : `src/apps/projsync.cpp` (652 lignes), `test/cli/test_projsync.sh` (212 lignes). Port :
+`src/bin/projsync.rs` (options, affichage, codes de sortie), `src/projsync.rs` (index JSON, sélection,
+téléchargement avec enregistrement dans `cache.db`), `tests/unit_projsync.rs` (22 tests). Les tests
+tournent sur un serveur local (`files.geojson` et une fixture de 17 octets `proj-rs test grid` à la place
+de `fr_ign_ntf_r93.tif`), avec l'index de test `tests/projsync/files.geojson`. Les sorties attendues sont
+celles du `projsync` 9.9.0 de référence sur le même index (`--local-geojson-file`), l'endpoint remplacé.
+
+**Options.** Toutes les options de `projsync.cpp` sont lues : `--endpoint`, `--user-writable-directory`,
+`--system-directory`, `--target-dir`, `--local-geojson-file`, `--list-files`, `--source-id`, `--area-of-use`,
+`--file`, `--bbox`, `--spatial-test`, `--dry-run`, `--exclude-world-coverage`, `--all`,
+`--no-version-filtering`, `-q`/`--quiet`, `--verbose`. Ajouts Rust : `--user-directory` (alias de
+`--user-writable-directory`), `--help`, `--version`.
+
+Écarts vérifiés dans le code :
+
+- `--user-writable-directory` : sans effet, comme le C++. La cible par défaut est
+  `ProjBuilder::user_writable_directory()`, qui lit `PROJ_USER_WRITABLE_DIRECTORY` (`src/network.rs`,
+  `default_user_dir`).
+- `--system-directory` : le C++ prend le répertoire relatif de la bibliothèque, puis `PROJ_DATA` compilé.
+  Le Rust prend le premier chemin de `PROJ_DATA`, sinon de `PROJ_LIB` (`system_directory`,
+  `src/bin/projsync.rs`), et sort en erreur si aucun n'est défini.
+- Téléchargement non conditionnel : un fichier dont l'enregistrement a expiré est téléchargé de nouveau
+  en entier, sans requête conditionnelle (en-tête de `src/projsync.rs`, `is_download_needed`).
+- Index : `tests/projsync/files.geojson` (et la constante `DUMMY` de `tests/unit_projsync.rs`, miroir du
+  `dummy.geojson` du script), pas le `files.geojson` du CDN.
+
+**Options sans aucun test dans `tests/unit_projsync.rs`** : `--spatial-test` (`contains`, `intersects`),
+`-q`/`--quiet`, `--no-version-filtering`, `--system-directory`, `--user-writable-directory`
+(et `--user-directory`).
+
+**Cas du script `test_projsync.sh`** :
+
+| Lignes du script | Cas | Test Rust | Statut |
+|---|---|---|---|
+| 22-27 | saut si `cdn.proj.org` ne répond pas | sans objet (serveur local) | sans objet |
+| 34-40 | `--list-files --target-dir` ; ligne `at_bev_README.txt,,at_bev` | `list_files_fetches_the_index_and_records_it` | couvert (liste entière comparée) |
+| 42-51 | `PROJ_USER_WRITABLE_DIRECTORY` ; `cache.db` et `files.geojson` présents | le même test, avec `--target-dir` et les deux fichiers vérifiés | partiel : la variable d'environnement n'est pas testée |
+| 53-59 | `--all --dry-run` | `all_dry_run_lists_every_file` | couvert |
+| 62-68 | `--source-id fr_ign --dry-run` | `source_id_selects_by_part_of_the_id` | couvert |
+| 71-78 | `--source-id non_existing` : code 1, avertissement, liste | `unknown_source_id_fails_and_lists_the_known_ones` | couvert |
+| 81-87 | `--area-of-use France --dry-run` | `area_of_use_selects_by_part_of_the_name` | couvert |
+| 90-97 | `--area-of-use non_existing` : code 1, avertissement, liste | `unknown_area_of_use_fails_and_lists_the_known_ones` | couvert |
+| 100-111 | `--file ntf_r93` : téléchargement, fichier présent | `file_downloads_once_and_then_says_it_is_already_there` | couvert (fichier de 17 octets, pas le TIF du CDN) |
+| 113-119 | second `--file ntf_r93` : « already downloaded » | le même test | couvert |
+| 124-131 | `--file non_existing` : code 1, avertissement, liste | `unknown_file_fails_and_lists_the_known_ones` | couvert |
+| 134-141 | `--bbox 2,49,3,50 --dry-run` | `bbox_selects_the_grids_that_overlap_it` | couvert |
+| 144-154 | `--exclude-world-coverage` | `exclude_world_coverage_drops_the_world_grids` | couvert |
+| 157-184 | trois fenêtres de l'antiméridien | `bbox_across_the_antimeridian_finds_the_pacific_grids` | couvert |
+| 186-206 | `--source-id au_ga --verbose --dry-run --local-geojson-file dummy.geojson` (versions retirée et ajoutée, sans version) | `verbose_reports_the_files_left_out_by_version` | couvert |
+| 208-212 | nettoyage, code 0 | sans objet | sans objet |
+
+Le test `file_downloads_once_and_then_says_it_is_already_there` vérifie la sortie et le fichier téléchargé.
+Le contenu du fichier n'est pas comparé au binaire de référence : c'est la fixture de 17 octets, pas le TIF du CDN.
+
+Commandes : `cargo test --test unit_projsync`.
+
 ## Ce qui reste ouvert
 
+- GeoTIFF compressés autres que Deflate (LZW, PackBits, JPEG, CCITT) et prédicteurs hors 1 à 3 : lus
+  entiers (`read_whole`), la séquence de PROJ n'est pas reproduite. Voir « GeoTIFF compressé, mesures »
+  pour ce qui est mesuré.
+
 - Lecture par morceaux pour les GeoTIFF compressés (deflate), à prédicteur ou planaires : ils
-  sont lus entiers (`read_whole`), la séquence de PROJ n'est pas reproduite. Non mesuré ici :
-  un GeoTIFF en bandes compressé ou planaire, lu par morceaux avec la séquence de PROJ.
+  sont lus entiers (`read_whole`), la séquence de PROJ n'est pas reproduite. Mesuré sur le vrai
+  GeoTIFF déflaté du CDN (`nz_linz_nzgd2000-c120100904-grid01.tif`, 460261 octets) : à la création,
+  le crate fait 28 `read_range` que PROJ ne fait pas (PROJ : `open` et en-têtes seulement). Les
+  valeurs renvoyées sont les mêmes. Non mesuré : un GeoTIFF en bandes compressé ou planaire, lu par
+  morceaux avec la séquence de PROJ.
 - Lecture paresseuse hors `gridshift` : `read_resource` (modèles `deformation`, `tinshift`,
   `defmodel`, `nkg`) lit encore les grilles entières (`fetch_missing`, `fetch_with_callbacks`).
 - Rechargement au changement pour `hgridshift`, `gridshift` et `xyzgridshift` (seule
   `vgridshift` recharge), et pour les lectures entières (`read_whole`).
-- Validation de cache par `ETag` et `Last-Modified` : cache disque, sans requête conditionnelle
-  (`docs/PORTING-network-cache.md`, point 2).
-- Cache de grilles (SQLite : TTL, taille max, verrou, `proj_grid_cache_clear`) : porté, écarts dans
-  `docs/PORTING-network-cache.md`.
+- Validation de cache par `ETag` et `Last-Modified` : cache disque (lot cache).
+- Cache SQLite : TTL, taille max, verrou, `proj_grid_cache_clear` ont des tests (`tests/unit_network_cache.rs`,
+  cinq cas sur serveur local, voir l'audit) ; les écarts de la couche cache sont dans `docs/PORTING-network-cache.md`.
 - API de fichiers : routée pour la recherche, les lectures de grilles, modèles et dictionnaires, le
   répertoire utilisateur et le téléchargement (voir « API de fichiers »). Restent sur `std::fs` :
   `proj.ini`, le répertoire et l'effacement du cache de morceaux, `projsync`, la CLI gie. Ni façade C,
@@ -302,23 +500,26 @@ l'API (`gridpath::resolve`, `gridpath::read`, `network::read_file`).
 - Façade C des opérations (`proj_create_operations`, contexte de fabrique C) : absente. Le cas
   de `do_not_attempt_network_access_known_available_network_on` est couvert par
   `ProjBuilder::create_operations`, sans façade C.
-- Création paresseuse d'une opération seule dont la grille est absente (réseau activé) : PROJ
-  construit `P` sans la grille (`proj_list_get`), la crate ne le fait que pour les candidats d'une
-  paire (`grids_may_be_deferred`), et aucune API publique ne construit une opération seule. Les
-  deux opérations 00 et 02 de `pyproj_issue_1192` ne sont donc vérifiées que par leur chaîne PROJ.
+- Création paresseuse d'une opération seule (réseau activé) : portée par
+  `ProjBuilder::proj_from_operation` (ce lot). Les opérations 00 et 02 de `pyproj_issue_1192` sont
+  construites et asserties (id `pipeline`), pas seulement par leur chaîne PROJ.
+- Lecture de la grille au premier point d'une opération construite par `proj_from_operation` :
+  le chemin de transformation différé existe (`Deferred::resolve`), mais ce lot ne l'asserte pas.
 - Grille sans ligne, réseau actif, sans callbacks : la sonde télécharge le fichier entier (pas
-  de `Range` dans le client HTTP du crate), PROJ n'en lit que le premier morceau. Sans test.
+  de `Range` dans le client HTTP du crate), PROJ n'en lit que le premier morceau. Les valeurs
+  sont testées contre le vrai CDN (`tests/unit_network_grid_used.rs`), la requête ne l'est pas.
 - `proj_coordoperation_is_instantiable` avec réseau actif : PROJ passe par `gridsNeeded`
   (`singleoperation.cpp:339-356`), donc interroge le réseau pour une grille sans ligne ; le port
   (`is_proj_instantiable`, `RemoteGrids::Skip`) ne le fait pas. Non mesuré pour une grille sans
-  ligne, et ce lot ne modifie pas `pyproj_issue_1192`.
+  ligne. Ce lot ne modifie pas `is_proj_instantiable` (voir « Hypothèse » plus haut).
 - `proj_coordoperation_get_grid_used` ne porte pas de drapeau `gridopen` : l'API Rust donne
   `available` seulement.
 - Grille `http(s)://` sans ligne : son URL est prise telle quelle, sans sonde (comportement
   antérieur, `unrecorded_grid`) ; PROJ n'écrit l'URL qu'après une ouverture réussie.
-- `docs/UNPORTED-UNIT.md` et `docs/UNIT-TRIAGE.md` ne listent plus que `networking.pyproj_issue_1192`
-  (voir la lacune ci-dessus). Le retrait est au mainteneur (`UPDATE_DOCS=1 cargo test --test
-  docs_in_sync`).
+- `docs/UNPORTED-UNIT.md` liste encore `networking.pyproj_issue_1192` et
+  `networking.do_not_attempt_network_access_known_available_network_on` : ce lot ne les a pas retirés
+  (consigne : ne pas éditer le ledger). Le retrait suit avec `UPDATE_DOCS=1 cargo test --test
+  docs_in_sync`.
 - `projsync` : porté (lot cache). Fiche : `docs/PORTING-network-cache.md` ; couverture des 15 appels du
   script : `docs/AUDIT-network.md`, section projsync.
 - `basic` : porté en entier (voir « networking.basic (porté) »). Rien ne reste ouvert pour ce cas.
@@ -331,9 +532,11 @@ l'API (`gridpath::resolve`, `gridpath::read`, `network::read_file`).
 cargo test --test unit_network_core --test unit_network_endpoint_env --test unit_network_local --test network_grid
 cargo test --test unit_network_download
 cargo test --test unit_network_file_api
-cargo test --test unit_network_core proj_coordoperation_get_grid_used
+cargo test --test unit_network_grid_used
+cargo test --test unit_network_core second_creation_of_a_multi_chunk_grid
 cargo test --test unit_network_basic
 cargo test --lib callback_tests
-cargo test --test unit_projsync --test unit_network_cache --test unit_network_grids
+cargo test --test unit_network_cache --test unit_network_grids
+cargo test --test unit_projsync
 cargo +1.100.0 clippy --all-targets --all-features -- -D warnings
 ```

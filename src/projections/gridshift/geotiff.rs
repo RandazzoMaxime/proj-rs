@@ -12,7 +12,7 @@ use tiff::decoder::ifd::Value;
 use tiff::decoder::{Decoder, DecodingResult};
 use tiff::tags::Tag;
 
-use super::tiles::{ImageTiles, Layout, LazyIfd, Samples};
+use super::tiles::{ImageTiles, Layout, LazyIfd, Reading, Samples, Storage};
 use super::{Domain, Extent};
 use crate::network_chunks::{RemoteFile, RemoteReader};
 
@@ -21,12 +21,6 @@ use crate::network_chunks::{RemoteFile, RemoteReader};
 pub(super) enum ByteOrder {
     Little,
     Big,
-}
-
-#[derive(Clone, Copy)]
-enum Storage {
-    Chunky,
-    Separate,
 }
 
 struct GdalFields {
@@ -69,17 +63,20 @@ pub(super) fn is_tiff(bytes: &[u8]) -> bool {
 #[derive(Clone, Copy)]
 enum Mode<'a> {
     Eager,
-    /// The tiles stay in `file`, read by [`LazyIfd::load`], in the file's byte `order`.
+    /// The chunks stay in `file`, read by [`LazyIfd::load`], in the file's byte `order`. `ifd` is
+    /// the index of the image in the file.
     Lazy {
         file: &'a Arc<Mutex<RemoteFile>>,
         order: ByteOrder,
+        ifd: usize,
     },
 }
 
 /// Why an image is not read: it is broken, or it is one the lazy reader does not handle.
 enum IfdFail {
     Invalid,
-    /// Planar bands, compression or a predictor: the file is read whole.
+    /// A compression or a predictor that the decoder of the lazy reader does not undo: the file is
+    /// read whole.
     NotLazy,
 }
 
@@ -134,7 +131,11 @@ pub(super) fn load_remote(file: &Arc<Mutex<RemoteFile>>) -> Result<Option<Vec<Ra
     let mut decoder = Decoder::new(RemoteReader::new(Arc::clone(file))).map_err(|_| ())?;
     let mut out = Vec::new();
     loop {
-        let mode = Mode::Lazy { file, order };
+        let mode = Mode::Lazy {
+            file,
+            order,
+            ifd: out.len(),
+        };
         match read_ifd(&mut decoder, mode) {
             Ok(ifd) => out.push(ifd),
             Err(IfdFail::NotLazy) => return Ok(None),
@@ -190,8 +191,8 @@ fn read_ifd<R: Read + Seek>(decoder: &mut Decoder<R>, mode: Mode<'_>) -> Result<
     };
     let samples = match mode {
         Mode::Eager => Samples::Flat(decode_samples(decoder, width_u, height_u, spp, storage)?),
-        Mode::Lazy { file, order } => {
-            let Some(layout) = lazy_layout(decoder, storage)? else {
+        Mode::Lazy { file, order, ifd } => {
+            let Some((layout, reading)) = lazy_layout(decoder)? else {
                 return Err(IfdFail::NotLazy);
             };
             let (offset_tag, count_tag) = match layout {
@@ -216,6 +217,9 @@ fn read_ifd<R: Read + Seek>(decoder: &mut Decoder<R>, mode: Mode<'_>) -> Result<
                 format,
                 order,
                 layout,
+                storage,
+                reading,
+                ifd,
                 places: offsets.into_iter().zip(counts).collect(),
             };
             Samples::Lazy(Arc::new(LazyIfd::new(Arc::clone(file), image)?))
@@ -250,26 +254,26 @@ fn read_ifd<R: Read + Seek>(decoder: &mut Decoder<R>, mode: Mode<'_>) -> Result<
     })
 }
 
-/// How the samples of an image are read from the file, when they can be read chunk by chunk:
-/// tiles or strips, with chunky samples, no compression and no predictor. `None` for anything
-/// else, which is read whole, as [`load`] reads it.
-fn lazy_layout<R: Read + Seek>(
-    decoder: &mut Decoder<R>,
-    storage: Storage,
-) -> Result<Option<Layout>, ()> {
-    if matches!(storage, Storage::Separate) {
-        return Ok(None);
-    }
+/// How the chunks of an image are read from the file, when they can be read chunk by chunk: tiles
+/// or strips, and the compression and the predictor are ones the reader undoes. `Raw` is no
+/// compression and no predictor, read as the bytes are. `Decoded` is Deflate (`Compression` 8, or
+/// 32946 for the old Deflate), with or without a predictor, or no compression with the predictor 2
+/// or 3: the TIFF decoder undoes them. `None` for anything else, which is read whole, as [`load`]
+/// reads it.
+fn lazy_layout<R: Read + Seek>(decoder: &mut Decoder<R>) -> Result<Option<(Layout, Reading)>, ()> {
     let compression = optional_u32(decoder, Tag::Compression)?.unwrap_or(1);
     let predictor = optional_u32(decoder, Tag::Predictor)?.unwrap_or(1);
-    if compression != 1 || predictor != 1 {
-        return Ok(None);
-    }
-    if decoder.get_tag_u32(Tag::TileWidth).is_ok() {
-        Ok(Some(Layout::Tiles))
+    let reading = match (compression, predictor) {
+        (1, 1) => Reading::Raw,
+        (1 | 8 | 32_946, 1..=3) => Reading::Decoded,
+        _ => return Ok(None),
+    };
+    let layout = if decoder.get_tag_u32(Tag::TileWidth).is_ok() {
+        Layout::Tiles
     } else {
-        Ok(Some(Layout::Strips))
-    }
+        Layout::Strips
+    };
+    Ok(Some((layout, reading)))
 }
 
 fn supported_sample(format: u32, bits: u32) -> bool {

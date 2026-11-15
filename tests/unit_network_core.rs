@@ -2,9 +2,8 @@
 //! callbacks (`custom`, `getfilesize`, `simul_open_error`, `simul_read_range_error`), the
 //! `network_endpoint_api_and_not_reachable_*` cases, and the operation factory cases
 //! `pyproj_issue_1192` and `do_not_attempt_network_access_known_available_network_on`, and
-//! `proj_coordoperation_get_grid_used`. Nothing here reaches `cdn.proj.org` over the network: the
-//! endpoint is a local address with no server, and the one CDN URL that `grid_used` names is
-//! answered by the callbacks.
+//! Nothing here reaches `cdn.proj.org` over the network: the endpoint is a local address with no
+//! server, and the CDN URLs the cases name are answered by the callbacks.
 //!
 //! The assertions are PROJ's. `HUGE_VAL` with `PROJ_ERR_OTHER_NETWORK_ERROR` is
 //! `Err(ProjError::Network)` here, and the description of the last used operation is the
@@ -16,7 +15,12 @@ use std::f64::consts::PI;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+use std::fs;
 use std::net::TcpListener;
+
+#[path = "net_cdn/mod.rs"]
+mod net_cdn;
+use net_cdn::cdn_reachable;
 
 use proj_rs::{
     create_from_user_input, CoordinateOperation, CoordinateOperationContext,
@@ -747,20 +751,30 @@ const ISSUE_1192_INSTANTIABLE_NETWORK_ON: [bool; 10] = [true; 10];
 
 /// `networking.pyproj_issue_1192`: the factory context of the C++ test (grid availability
 /// IGNORED, spatial criterion PARTIAL_INTERSECTION, all authorities), run once with the network
-/// on and once off. Each instantiable operation has a `proj_pj_info` id.
+/// on and once off.
 ///
 /// `proj_coordoperation_is_instantiable(ctx, P)` reads the network flag of the context. Here the
 /// flag is the grid availability: network on is `KnownAvailable` (a grid the database knows
 /// counts as available, `considerKnownGridsAsAvailable`), network off is `UseForSorting` (only
-/// the grids on disk). No download happens in either half: PROJ's answer with the network on is
-/// the same with cdn.proj.org refused, which is the case here.
+/// the grids on disk). PROJ does not probe the CDN for this list: the two grids that are not on
+/// disk (`us_noaa_alaska.tif`, `ca_nrc_ntv2_0.tif`) have open-licence rows in `proj.db`.
 ///
-/// The id is PROJ's `proj_pj_info` id of a pipeline, `pipeline`. Only the operations whose grids
-/// are on disk can be built here (`ProjBuilder::proj` reads the grid at creation). The network-on
-/// operations that need a grid not on disk are checked by their PROJ string only: PROJ builds
-/// them lazily, which the Rust API does not offer for a single operation.
+/// Each operation is instantiated as `proj_list_get` does, under the builder's network settings
+/// (`ProjBuilder::proj_from_operation`). An instantiable one gives a PJ whose `proj_pj_info` id is
+/// `pipeline`, including the network-on operations whose grid is not on disk. A non-instantiable
+/// one gives an error: PROJ gives a PJ with a null id, which this API does not expose.
+///
+/// The grid cache is off and the user-writable directory is a temporary folder. The endpoint is
+/// the default, `https://cdn.proj.org`, and the test returns early when that CDN does not answer
+/// (`networkAccessOK`, `initial_check`). With the network on, instantiating the operations opens
+/// no grid, checked with a builder whose every open is refused (PROJ measured: no open from
+/// `proj_list_get`, `proj_coordoperation_is_instantiable` or `proj_pj_info`), and writes none to
+/// the user directory. Reading the grids at a transform is not checked here.
 #[test]
 fn pyproj_issue_1192() {
+    if !cdn_reachable() {
+        return;
+    }
     let db = DatabaseContext::create().expect("embedded proj.db");
     let from = create_from_user_input("EPSG:4326", &db).expect("EPSG:4326");
     let to = create_from_user_input("EPSG:2964", &db).expect("EPSG:2964");
@@ -795,10 +809,29 @@ fn pyproj_issue_1192() {
             .collect();
         assert_eq!(flags, expected, "network on: {network_on}");
 
-        for (operation, instantiable) in operations.iter().zip(flags) {
-            if !instantiable {
-                continue;
-            }
+        let dir = std::env::temp_dir().join(format!(
+            "proj-rs-pyproj-issue-1192-{}-{}",
+            std::process::id(),
+            if network_on { "on" } else { "off" }
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        let mut builder = ProjBuilder::new();
+        builder.grid_cache_enable(false).expect("cache off");
+        builder
+            .set_user_writable_directory(&dir)
+            .expect("user directory");
+        builder.enable_network(network_on).expect("network");
+
+        // The same settings with every network open refused: an instantiable operation is built
+        // with no open at all, because PROJ defers the grids of an operation until a transform.
+        let refused = Arc::new(FailingOpen::default());
+        let refused_opens = Arc::clone(&refused);
+        let mut refusing = ProjBuilder::new();
+        refusing.grid_cache_enable(false).expect("cache off");
+        refusing.enable_network(network_on).expect("network");
+        refusing.set_network_callbacks(refused);
+
+        for (index, (operation, instantiable)) in operations.iter().zip(flags).enumerate() {
             let definition = operation
                 .export_to_proj_string_with_database(&db, ProjLines::Single)
                 .expect("the operation has a PROJ string");
@@ -807,14 +840,41 @@ fn pyproj_issue_1192() {
                 "{}: {definition}",
                 operation.name()
             );
-            if !network_on {
-                let proj = ProjBuilder::new()
-                    .proj(&definition)
-                    .expect("no grid is needed to build it");
-                let info = proj.proj_info();
-                assert_eq!(info.id.as_deref(), Some("pipeline"), "{}", operation.name());
-            }
+            let label = format!("network on: {network_on}, operation {index}");
+            let expected_id = instantiable.then_some("pipeline");
+            assert_instantiation(&builder, operation, &db, expected_id, &label);
+            assert_instantiation(&refusing, operation, &db, expected_id, &label);
         }
+        let opens = refused_opens.opens.lock().expect("lock").len();
+        assert_eq!(
+            opens, 0,
+            "network on: {network_on}: creating the operations opens no grid"
+        );
+        let written = fs::read_dir(&dir).map_or(0, Iterator::count);
+        assert_eq!(
+            written, 0,
+            "network on: {network_on}: creating the operations writes no grid"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+/// `proj_list_get` for one operation of the list: a PJ whose `proj_pj_info` id is `pipeline` when
+/// the operation is instantiable, else an error (PROJ gives a PJ with a null id).
+fn assert_instantiation(
+    builder: &ProjBuilder,
+    operation: &CoordinateOperation,
+    db: &DatabaseContext,
+    expected_id: Option<&str>,
+    label: &str,
+) {
+    let built = builder.proj_from_operation(operation, db);
+    match expected_id {
+        Some(id) => {
+            let proj = built.unwrap_or_else(|error| panic!("{label}: {error}"));
+            assert_eq!(proj.proj_info().id.as_deref(), Some(id), "{label}");
+        }
+        None => assert!(built.is_err(), "{label}: not instantiable"),
     }
 }
 
@@ -1048,33 +1108,22 @@ impl NetworkCallbacks for ServeOneFile {
     fn close(&self, _handle: NetworkHandle) {}
 }
 
-/// `networking.proj_coordoperation_get_grid_used` (`test/unit/test_network.cpp`): the grid of
-/// `proj=vgridshift grids=nz_linz_nzgd2000-c120100904-grid01.tif` is in neither `proj.db` nor on
-/// disk. With the network on, the grid is the file at the CDN URL: its short name is the name it
-/// is asked by, its full name is empty, and its URL is `https://cdn.proj.org/` and the name. Two
-/// creations give the same answer.
+/// A grid of more than one chunk, created twice with the callbacks answering. PROJ gives the grid
+/// on both creations and asks for the file once, in the first: the grid is read at the first
+/// transform, and the second creation finds its chunks in the context cache.
 ///
-/// The CDN file is not in the repository and the sandbox has no route to the CDN, so the
-/// callbacks answer the one URL with the first 956 bytes of the truncated egm96 fixture, and
-/// refuse every other URL. The three assertions of the C++ test do not depend on the bytes: they
-/// name the file, not its content. `proj.db` has no row for this name, so the URL is the one PROJ
-/// gives when the open of the CDN URL succeeds, as `FileManager::open_resource_file` does.
-///
-/// The `available` flag and the open are not asserted by the C++ test. They are the values PROJ
-/// 9.9.0 gives for the same callbacks (`libproj` probe, `TIFF`+`curl` build): `available` 1,
-/// `directDownload` 0, `openLicense` 0, one `open(url, 0, 16384)` for the two creations, with no
-/// call from the `grids_needed` queries.
+/// The file is `data/tests/egm96_15.gtx` (259240 bytes, 16 chunks), served under `https://foo/`.
+/// The expected calls are PROJ 9.9.0's, measured with `libproj` 9.9.0 (TIFF and curl build,
+/// callbacks that journal, the same file): creation 0 `open(url, 0, 16384)`, three headers,
+/// `close`; creation 1 gives an operation with no call.
 #[test]
-fn proj_coordoperation_get_grid_used() {
-    const NAME: &str = "nz_linz_nzgd2000-c120100904-grid01.tif";
-    const URL: &str = "https://cdn.proj.org/nz_linz_nzgd2000-c120100904-grid01.tif";
+fn second_creation_of_a_multi_chunk_grid() {
+    const URL: &str = "https://foo/egm96_15.gtx";
     let bytes = std::fs::read(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/data/tests/egm96_15_uncompressed_truncated.tif"
+        "/data/tests/egm96_15.gtx"
     ))
-    .expect("the truncated egm96 fixture");
-    assert_eq!(bytes.len(), 956);
-
+    .expect("the egm96 gtx fixture");
     let served = Arc::new(ServeOneFile {
         url: URL,
         bytes,
@@ -1087,26 +1136,16 @@ fn proj_coordoperation_get_grid_used() {
     builder.set_network_callbacks(shared);
 
     for creation in 0..2 {
-        let proj = builder
+        let result = builder
             .clone()
-            .proj(&format!("proj=vgridshift grids={NAME}"))
-            .expect("the vgridshift of the CDN grid");
-        let grids = proj.grids_needed().expect("the grids the operation needs");
-        assert_eq!(grids.len(), 1, "creation {creation}: one grid");
-        let grid = &grids[0];
-        // PROJ: `EXPECT_EQ(std::string(shortName), ...)`.
-        assert_eq!(grid.short_name, NAME, "creation {creation}: short name");
-        // PROJ: `EXPECT_EQ(std::string(fullName), "")`.
-        assert_eq!(grid.info.full_name, "", "creation {creation}: full name");
-        // PROJ: `EXPECT_EQ(std::string(url), "https://cdn.proj.org/...")`.
-        assert_eq!(grid.info.url, URL, "creation {creation}: url");
-        // Measured with PROJ 9.9.0, not asserted by the C++ test.
-        assert!(grid.info.available, "creation {creation}: available");
-        assert!(!grid.info.direct_download, "creation {creation}: direct");
-        assert!(!grid.info.open_license, "creation {creation}: open license");
+            .proj(&format!("proj=vgridshift grids={URL}"));
+        assert!(
+            result.is_ok(),
+            "creation {creation}: proj_create is not NULL: {:?}",
+            result.err()
+        );
     }
 
-    // Measured with PROJ 9.9.0: one open for the two creations, with the first chunk.
     let opens = served.opens.lock().expect("lock").clone();
     assert_eq!(opens, vec![(URL.to_owned(), 0, 16384)], "callback opens");
 }

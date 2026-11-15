@@ -1,5 +1,6 @@
 //! PROJ's `initial_check` (`test/unit/test_network.cpp:90`), shared by the cases that need the real
-//! CDN file: `download_whole_files` and `file_api`. Each case includes this file with `#[path]`.
+//! CDN file: `basic`, `download_whole_files`, `file_api` and `proj_coordoperation_get_grid_used`.
+//! Each case includes this file with `#[path]`.
 //!
 //! `cdn_reachable` is `GET https://cdn.proj.org/fr_ign_ntf_r93.tif` with `Range: bytes=0-1`, and
 //! the CDN is reachable when it answers `206`. Through `HTTPS_PROXY` when it is set, as curl goes
@@ -44,7 +45,7 @@ pub(crate) fn cdn_reachable() -> bool {
 }
 
 /// A TCP stream to the CDN: direct, or through the `CONNECT` tunnel of `HTTPS_PROXY`.
-fn tunnel_to_cdn() -> Option<TcpStream> {
+pub(crate) fn tunnel_to_cdn() -> Option<TcpStream> {
     let proxy = ["https_proxy", "HTTPS_PROXY"]
         .iter()
         .find_map(|name| std::env::var(name).ok().filter(|value| !value.is_empty()));
