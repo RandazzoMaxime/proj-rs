@@ -6625,20 +6625,17 @@ impl CoordinateOperationFactory {
         if let (true, Some(source_id), Some(target_id)) =
             (registry, source_identity, target_identity)
         {
-            found.extend(direct_registry_operations(
+            let direct = direct_registry_operations(
                 context,
                 (source_id.0.as_str(), source_id.1.as_str()),
                 (target_id.0.as_str(), target_id.1.as_str()),
                 boxes,
-            )?);
-            direct_unfiltered_empty = found.is_empty();
-            direct_empty = filter_and_sort(
-                found.clone(),
-                context,
-                &sort_extents(context, source, target),
-            )
-            .operations
-            .is_empty();
+            )?;
+            direct_unfiltered_empty = direct.is_empty();
+            let direct =
+                filter_and_sort(direct, context, &sort_extents(context, source, target)).operations;
+            direct_empty = direct.is_empty();
+            found.extend(direct);
             let pivots_used = match context.intermediate_use {
                 IntermediateCrsUse::Never => false,
                 IntermediateCrsUse::Allow => direct_empty,

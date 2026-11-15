@@ -167,3 +167,42 @@ fn pivot_with_a_leg_outside_the_crs_extent_is_kept_without_extent_use() {
         ]
     );
 }
+
+/// `projinfo -s EPSG:26898 -t EPSG:26957 --summary --spatial-test intersects` (PROJ 9.9.0): two
+/// pivots through WGS 84, one with the NAD83(CSRS) (2) leg and one with the (1) leg, and no
+/// ballpark. The pivot is searched by the inner candidate pass of `createOperationsWithDatumPivot`
+/// and the intermediate block that follows it (factory.rs `datum_pivot_operations`, `create_candidates_at`).
+#[test]
+fn mtm1_to_delaware_keeps_both_wgs84_pivots() {
+    let operations = candidates(
+        "EPSG:26898",
+        "EPSG:26957",
+        GridAvailabilityUse::UseForSorting,
+    );
+    assert_eq!(
+        names(&operations),
+        [
+            "Inverse of MTM zone 1 + NAD83(CSRS) to WGS 84 (2) + Inverse of NAD83 to WGS 84 (1) + SPCS83 Delaware zone (meter)",
+            "Inverse of MTM zone 1 + NAD83(CSRS) to WGS 84 (1) + Inverse of NAD83 to WGS 84 (1) + SPCS83 Delaware zone (meter)",
+        ]
+    );
+}
+
+/// `projinfo -s EPSG:26898 -t EPSG:26957 --summary --spatial-test intersects --crs-extent-use none`
+/// (PROJ 9.9.0): the 2 m direct operation, then the ballpark. Already the port's output.
+#[test]
+fn mtm1_to_delaware_without_extent_use_keeps_the_direct_operation() {
+    let operations = candidates_with_extent_use(
+        "EPSG:26898",
+        "EPSG:26957",
+        GridAvailabilityUse::UseForSorting,
+        CrsExtentUse::Ignore,
+    );
+    assert_eq!(
+        names(&operations),
+        [
+            "Inverse of MTM zone 1 + Inverse of NAD83 to NAD83(CSRS) (4) + SPCS83 Delaware zone (meter)",
+            "Inverse of MTM zone 1 + Ballpark geographic offset from NAD83(CSRS) to NAD83 + SPCS83 Delaware zone (meter)",
+        ]
+    );
+}

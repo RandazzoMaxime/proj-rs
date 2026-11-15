@@ -1,8 +1,9 @@
 # Fiche d'état — candidats pivot de `cs2cs` (lot P4)
 
-Statut : familles A (sept cas) et C fermées. Famille B ouverte. Le cas `EPSG:26898 → EPSG:26957`
-reste ouvert, cause non établie (voir « Non vérifié »). Mesure de la branche intégrée (A et C) : `tools/compare-cs2cs.sh`, 285 cas, deux modes,
-`same 279 / tol 4 / num 2 / status 0` ; parité : 4159 identiques, 12 hors seuil (famille B et 26898).
+Statut : familles A (sept cas), C et D (`EPSG:26898 → EPSG:26957`) fermées. Famille B ouverte.
+Mesure (`tools/compare-cs2cs.sh --no-build`, 285 cas) : `same 280 / tol 4 / num 1 / status 0`,
+avant `same 279 / tol 4 / num 2 / status 0`. Parité : 4165 identiques, 6 hors seuil (famille B),
+avant 4159 et 12.
 
 Référence : PROJ 9.9.0, `src/iso19111/operation/coordinateoperationfactory.cpp` et
 `src/iso19111/factory.cpp`. Port : `src/iso19111/factory.rs` (`datum_pivot_operations`,
@@ -237,6 +238,61 @@ hauteur était juste par hasard. Le pivot est donc à corriger avec la famille A
 Non vérifié : les chemins de repli (`SidePair`, EPSG, façade) avec `--3d`. Les cas
 `--3d` du corpus (`tools/compare-cs2cs`) et du registre de parité ne les touchent pas.
 
+## Famille D — pivot par WGS 84 que le port ne construisait pas (fermée)
+
+Cas : `EPSG:26898 → EPSG:26957` (six lignes de `known.tsv`, 1,24 m en est).
+
+PROJ garde deux pivots par WGS 84, 5 m et 6 m :
+`Inverse of MTM zone 1 + NAD83(CSRS) to WGS 84 (2) + Inverse of NAD83 to WGS 84 (1) + SPCS83
+Delaware zone (meter)` et la même avec `(1)`. Le port ne gardait que le ballpark.
+
+Ce cas ne vient pas de la famille A. Le port d'avant `572fc58` donnait déjà le ballpark seul
+(`projinfo` d'avant A, même sortie en `--crs-extent-use both`).
+
+### Cause
+
+Sonde (libproj 9.9.0 instrumentée, copie hors dépôt, appels de `findsOpsInRegistryWithIntermediate`
+étiquetés) :
+
+- Le registre direct `NAD83 → NAD83(CSRS)` rend un op : `NAD83 to NAD83(CSRS) (4)`, 2 m, emprise
+  « Canada offshore ». Les emprises de l'appel externe (Terre-Neuve, Delaware) l'écartent : après
+  filtre, `res` est vide. Avant filtre, le résultat n'est pas vide (`resFindDirectNonEmptyBeforeFiltering`).
+- `createOperationsFromDatabase` ouvre alors la porte des pivots intermédiaires
+  (coordinateoperationfactory.cpp:4472-4474) : `useOnlyReplacedOperations(res)` est vrai sur une
+  liste vide. `findsOpsInRegistryWithIntermediate` rend les deux pivots (appel de la porte, cpp:4503,
+  `INTERMEDIATE raw=2`).
+- Le port gardait l'op de registre non filtré dans `found`. Sa porte exige `!direct_unfiltered_empty`
+  et lit `found`, qui contient le 2 m : porte fermée, aucun pivot.
+- Même défaut dans la passe par datum : `create_candidates` rend le 2 m non filtré, la jambe
+  `NAD83 → NAD83(CSRS)` le relie à des jambes nulles, et ce pivot ferme la porte. PROJ ne le
+  rend pas : `createOperations` appelle `findOpsInRegistryDirect`, qui filtre (cpp:1953).
+
+### Correction (lot P4d)
+
+`create_candidates_at` (`src/iso19111/factory.rs`) : le résultat du registre direct est filtré par
+`filter_and_sort` avant d'entrer dans `found`, comme `findOpsInRegistryDirect`. Le drapeau
+`direct_unfiltered_empty` garde la valeur d'avant filtre.
+
+Mesure :
+
+- `tests/pivot_candidate_set.rs` : `mtm1_to_delaware_keeps_both_wgs84_pivots` échoue avant la
+  correction (le port rend le ballpark seul) et passe après (liste de `projinfo`).
+  `mtm1_to_delaware_without_extent_use_keeps_the_direct_operation` passe avant et après.
+- `tools/compare-cs2cs.sh --no-build` : seul le cas 26898 change, `num → same`.
+- `cargo test --test parity` : avant `identiques 4159 · hors seuil 12`, après `identiques 4165 ·
+  hors seuil 6`. Six écarts connus disparus, retirés de `known.tsv`, zéro nouveau.
+
+### Non mesuré (reste de la famille D)
+
+- Les autres points où le port lit `found` sans filtre : `has_too_small_areas` et le test
+  `res.is_empty()` de la porte. PROJ les lit sur `res` filtré. Identique pour ce cas, non mesuré ailleurs.
+- Le drapeau : PROJ ne le lève que pour les autres autorités que `PROJ` (`if (authName == "PROJ")
+  continue;`, cpp:1944). Le port ne fait pas cette distinction.
+- La conversion de projection poussée dans `found` avant le registre (`projection_uses_source`) :
+  PROJ ne la met pas dans `res`.
+- `datum_pivot_operations` appelle `direct_registry_operations` avec les emprises des CRS candidats
+  (`boxes`) ; PROJ lit `context.extent1/2`. Voir « Reste ouvert dans la même famille » (A).
+
 ## Écart trouvé hors registre (non mesuré, non corrigé)
 
 `precedes` (`src/iso19111/select.rs`, branche ETRS89) contient une règle que PROJ 9.9.0
@@ -252,8 +308,4 @@ parité ne l'a mesuré. À traiter dans un lot séparé, après mesure.
 
 ## Non vérifié
 
-- `EPSG:26898 → EPSG:26957` : le port ne donne que le ballpark, PROJ garde deux pivots par WGS 84
-  (`NAD83(CSRS) to WGS 84 (1 et 2) + Inverse of NAD83 to WGS 84 (1)`, 5 m et 6 m). Ici le port
-  manque des pivots, alors que la famille A les retirait à tort. Cause non établie, non tentée. Le
-  cas reste `num`.
-- Les familles A, B et C ne sont pas vérifiées sur d'autres paires que celles listées.
+- Les familles A, B, C et D ne sont pas vérifiées sur d'autres paires que celles listées.
