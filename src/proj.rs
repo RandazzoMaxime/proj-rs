@@ -1129,6 +1129,7 @@ impl Proj {
         Ok(points)
     }
 
+    #[inline]
     fn map_point<F: CoordinateType>(
         &self,
         x: F,
@@ -1139,6 +1140,7 @@ impl Proj {
         self.map_f64(x.into_f64()?, y.into_f64()?, way, report)
     }
 
+    #[inline]
     fn map_f64(
         &self,
         x: f64,
@@ -1150,6 +1152,7 @@ impl Proj {
         Ok((coord.x, coord.y))
     }
 
+    #[inline]
     fn map_xyz(
         &self,
         x: f64,
@@ -1161,6 +1164,7 @@ impl Proj {
         self.map_xyzt(x, y, z, 0.0, way, report)
     }
 
+    #[inline]
     fn map_xyzt(
         &self,
         x: f64,
@@ -1183,20 +1187,25 @@ impl Proj {
             }
             Body::Iso(pipeline) => pipeline.map(Xyzt { x, y, z, t }, way),
         };
-        mapped.map_err(|error| {
-            if error == crate::engine::TransformError::NetworkUnavailable {
-                return ProjError::Network;
-            }
-            // libproj words an invalid coordinate as `Invalid coordinate`.
-            let message = match error {
-                crate::engine::TransformError::InvalidCoord => "Invalid coordinate".to_owned(),
-                other => other.to_string(),
-            };
-            match report {
-                Report::Projection => ProjError::Projection(message),
-                Report::Conversion => ProjError::Conversion(message),
-            }
-        })
+        mapped.map_err(|error| Self::facade_error(error, report))
+    }
+
+    /// The facade error of a failed step, built only when a point fails.
+    #[cold]
+    #[inline(never)]
+    fn facade_error(error: crate::engine::TransformError, report: Report) -> ProjError {
+        if error == crate::engine::TransformError::NetworkUnavailable {
+            return ProjError::Network;
+        }
+        // libproj words an invalid coordinate as `Invalid coordinate`.
+        let message = match error {
+            crate::engine::TransformError::InvalidCoord => "Invalid coordinate".to_owned(),
+            other => other.to_string(),
+        };
+        match report {
+            Report::Projection => ProjError::Projection(message),
+            Report::Conversion => ProjError::Conversion(message),
+        }
     }
 }
 
