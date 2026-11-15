@@ -89,6 +89,18 @@ Sources : PROJ 9.9.0 `src/apps/proj.cpp`, `geod.cpp`, `geod_set.cpp`, `cs2cs.cpp
     PROJ. Mesure : facteurs `rhealpix` identiques (`tests/cli_proj_factors.rs`) ; `proj-fwd`
     `healpix` et `rhealpix` (6 conversions) deviennent identiques au texte. Parité : 6 écarts
     fermés.
+12. **`geocent` et `cart` dans `proj`.** Le port construisait `geocent` comme `cart` :
+    `proj +proj=geocent` rendait X, Y en mètres. Dans l'app `proj`, PROJ n'ajoute pas l'étape
+    cartésienne : la définition porte `break_cs2cs_recursion` et `cs2cs_emulation_setup` sort
+    tôt (`create.cpp:65`). `geocent` reste alors l'identité sur les radians (`geocent.cpp`), et
+    la sortie passe par `fwd_finalize` (× `fr_meter`). Le port suit ce chemin quand le drapeau
+    est là (`build_geocent`, `GeocentIdentity`). `cs2cs` et `cct` gardent la conversion 3D : sans
+    le drapeau, PROJ l'ajoute par l'émulation. Facteurs `-S` : `pj_deriv` dérive `P->fwd` brut.
+    Pour `cart`, ce brut est en mètres, sans division par `a` (`CartStep` expose
+    `UnitForward`). Mesure : `tests/cli_proj_cart_geocent.rs` (9 cas écrits par la référence,
+    comparaison exacte). Registre parité : 14 écarts retirés (`proj-fwd-0045`,
+    `proj-inv-0035`, `proj-factors-0003` lignes 1 et 2). Hors seuil : `proj-fwd` 36 → 30,
+    `proj-inv` 11 → 5, `proj-factors` 80 → 78.
 
 ## Écarts volontaires vers PROJ
 

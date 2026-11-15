@@ -61,17 +61,3 @@ cs2cs-proj-datum-diff-0038:3	cs2cs EPSG:32347 +to EPSG:32194 : écart de positio
 cs2cs-proj-datum-diff-0038:4	cs2cs EPSG:32347 +to EPSG:32194 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
 cs2cs-proj-datum-diff-0038:5	cs2cs EPSG:32347 +to EPSG:32194 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
 cs2cs-proj-datum-diff-0038:6	cs2cs EPSG:32347 +to EPSG:32194 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
-proj-factors-0003:1	facteurs -S faux pour +proj=cart +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-factors-0003:2	facteurs -S faux pour +proj=cart +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-fwd-0045:1	geocent (avant) : résultat faux, X proche de 0 contre plusieurs Mm	à ouvrir
-proj-fwd-0045:2	geocent (avant) : résultat faux, X proche de 0 contre plusieurs Mm	à ouvrir
-proj-fwd-0045:3	geocent (avant) : résultat faux, X proche de 0 contre plusieurs Mm	à ouvrir
-proj-fwd-0045:4	geocent (avant) : résultat faux, X proche de 0 contre plusieurs Mm	à ouvrir
-proj-fwd-0045:5	geocent (avant) : résultat faux, X proche de 0 contre plusieurs Mm	à ouvrir
-proj-fwd-0045:6	geocent (avant) : résultat faux, X proche de 0 contre plusieurs Mm	à ouvrir
-proj-inv-0035:1	geocent (inverse) : longitude fausse d'environ 158 degrés	à ouvrir
-proj-inv-0035:2	geocent (inverse) : longitude fausse d'environ 158 degrés	à ouvrir
-proj-inv-0035:3	geocent (inverse) : longitude fausse d'environ 158 degrés	à ouvrir
-proj-inv-0035:4	geocent (inverse) : longitude fausse d'environ 158 degrés	à ouvrir
-proj-inv-0035:5	geocent (inverse) : longitude fausse d'environ 158 degrés	à ouvrir
-proj-inv-0035:6	geocent (inverse) : longitude fausse d'environ 158 degrés	à ouvrir

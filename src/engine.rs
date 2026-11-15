@@ -1576,7 +1576,7 @@ const CATALOGUE: &[Built] = &[
     Built {
         name: "geocent",
         keys: &[],
-        build: build_cart,
+        build: build_geocent,
     },
     Built {
         name: "longlat",
@@ -1931,6 +1931,17 @@ fn build_cart(_params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateEr
     Ok(Box::new(CartStep {
         frame: frame.clone(),
     }))
+}
+
+/// `proj` adds `break_cs2cs_recursion`, and PROJ then builds no cartesian step for `geocent`:
+/// it stays the identity on the 2D interface. `cs2cs` and `cct` keep the 3D conversion.
+fn build_geocent(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateError> {
+    if params.flag("break_cs2cs_recursion") {
+        return Ok(Box::new(GeocentIdentity {
+            frame: frame.clone(),
+        }));
+    }
+    build_cart(params, frame)
 }
 
 fn build_longlat(_params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateError> {
@@ -2318,6 +2329,25 @@ impl Step for CartStep {
     fn computes_height(&self) -> bool {
         true
     }
+
+    fn unit_projection(&self) -> Option<UnitProjection<'_>> {
+        Some(UnitProjection {
+            frame: &self.frame,
+            forward: self,
+        })
+    }
+}
+
+impl UnitForward for CartStep {
+    fn lam0(&self) -> f64 {
+        self.frame.lam0
+    }
+
+    /// PROJ's `P->fwd` of `cart` is in metres: no `fr_meter`, no division by `a`.
+    fn unit_forward(&self, lam: f64, phi: f64) -> Result<(f64, f64), TransformError> {
+        let (x, y, _) = geodetic_to_cartesian(self.frame.earth, lam, phi, 0.0);
+        Ok((x, y))
+    }
 }
 
 pub(crate) fn geodetic_to_cartesian(
@@ -2390,6 +2420,70 @@ fn geocentric_radius(a: f64, b_div_a: f64, cosphi: f64, sinphi: f64) -> f64 {
     let b2 = b_div_a * b_div_a;
     let b2sin2 = b2 * sin2;
     a * ((cos2 + b2 * b2sin2) / (cos2 + b2sin2)).sqrt()
+}
+
+/// PROJ's `geocent` as the `proj` app runs it: `P->fwd` is the identity on radians, and the
+/// output is scaled by the frame's units (`fwd_finalize`, `CARTESIAN`).
+struct GeocentIdentity {
+    frame: Frame,
+}
+
+impl UnitForward for GeocentIdentity {
+    fn lam0(&self) -> f64 {
+        self.frame.lam0
+    }
+
+    fn unit_forward(&self, lam: f64, phi: f64) -> Result<(f64, f64), TransformError> {
+        Ok((lam, phi))
+    }
+}
+
+impl Step for GeocentIdentity {
+    fn forward(&self, coord: Coord) -> Result<Coord, TransformError> {
+        let (lam, phi) = prepare_forward(&self.frame, coord.x, coord.y)?;
+        Ok(Coord {
+            x: self.frame.fr_meter * lam,
+            y: self.frame.fr_meter * phi,
+            z: self.frame.fr_meter * coord.z,
+            t: coord.t,
+        })
+    }
+
+    fn inverse(&self, coord: Coord) -> Result<Coord, TransformError> {
+        let mut phi = self.frame.to_meter * coord.y;
+        if self.frame.geoc {
+            phi = geographic_to_geocentric(phi, self.frame.earth.one_es());
+        }
+        let mut lam = self.frame.to_meter * coord.x + self.frame.from_greenwich + self.frame.lam0;
+        if !self.frame.over {
+            lam = adjlon(lam);
+        }
+        Ok(Coord {
+            x: lam,
+            y: phi,
+            z: self.frame.vto_meter * (self.frame.to_meter * coord.z) - self.frame.z0,
+            t: coord.t,
+        })
+    }
+
+    fn input_kind(&self) -> IoKind {
+        IoKind::Angular
+    }
+
+    fn output_kind(&self) -> IoKind {
+        IoKind::Cartesian
+    }
+
+    fn distance_ellipsoid(&self) -> (f64, f64) {
+        (self.frame.earth.a(), self.frame.earth.es())
+    }
+
+    fn unit_projection(&self) -> Option<UnitProjection<'_>> {
+        Some(UnitProjection {
+            frame: &self.frame,
+            forward: self,
+        })
+    }
 }
 
 struct LongLat {

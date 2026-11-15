@@ -363,9 +363,9 @@ impl Operation {
     /// (`pj_deriv`, central differences of step `1e-5` rad) and the scale factors of
     /// `pj_factors`. Input is longitude and latitude in radians.
     ///
-    /// A projection with a unit-ellipsoid forward is differentiated as PROJ differentiates its
-    /// `P->fwd`: no unit conversion and no semi-major axis. Any other operation is
-    /// differentiated in metres, divided by the semi-major axis.
+    /// A step with a `P->fwd` (a projection, `cart`, `geocent`) is differentiated as PROJ
+    /// differentiates that raw forward: no unit conversion and no semi-major axis. Any other
+    /// operation is differentiated in metres, divided by the semi-major axis.
     ///
     /// # Errors
     ///
