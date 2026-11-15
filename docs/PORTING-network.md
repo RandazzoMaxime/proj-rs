@@ -83,8 +83,9 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
   rien d'autre : hors de la fenêtre, la lecture est la fin des données. La création ne lit que
   `open(url, 0, 16384)` et les en-têtes, y compris pour le GeoTIFF déflaté du CDN.
   Mesuré, hors ligne et sur le CDN, appels et valeurs égaux à `libproj` 9.9.0 (voir « GeoTIFF
-  compressé, mesures »). Limites : les autres compressions (LZW, PackBits, JPEG, CCITT) et les
-  prédicteurs autres que 1 à 3 restent lus entiers par `read_whole` ; le prédicteur 2 et l'ancien
+  compressé, mesures »). Limites : les autres compressions (PackBits, JPEG, CCITT) et les
+  prédicteurs autres que 1 à 3 restent lus entiers par `read_whole` (LZW : voir « GeoTIFF
+  compressé, mesures ») ; le prédicteur 2 et l'ancien
   Deflate sont acceptés et ne sont pas mesurés contre `libproj`. Un morceau de tuile partielle
   d'un plan autre que le premier est rendu par `tiff` 0.10.3 avec ses lignes de remplissage : le
   décodage ne prend que les lignes de l'image (`read_decoded`), car `chunk_data_dimensions` lit
@@ -430,6 +431,52 @@ Non mesuré contre `libproj` : GeoTIFF déflaté chunky (`PlanarConfiguration` 1
 Deflate (32946), tuiles de bord chunky. Ces cas passent par le même décodeur ; leurs valeurs et leurs
 appels ne sont pas établis avec `libproj`.
 
+LZW (`Compression` 5), prédicteurs 1 à 3, sur le réseau : décodé par `gridshift/lzw.rs`. Le crate
+`tiff` n'a pas son lecteur LZW dans ce build (feature `lzw` absente ; l'activer ajouterait `weezl`).
+Valeurs mesurées contre `libproj` 9.9.0 par les grilles Deflate équivalentes :
+`data/tests/lzw_predictor3_planar.tif` (bandes, une par morceau) et
+`data/tests/lzw_predictor3_planar_tiled.tif` (tuiles de bord), qui ont les échantillons de
+`planar_deflate_predictor3*.tif` à l'octet près (libtiff). Appels : modèle du Deflate (`open(url,
+32768, 16384)` pour le morceau de la bande 2), non mesurés, la référence `libproj` n'a pas libtiff.
+Contre libtiff, sur des fixtures hors dépôt : chunky float32 prédicteur 3 (pas de 2 échantillons,
+4800 valeurs) et int16 prédicteur 2 (bandes de 16 lignes, 2000 valeurs) : écart inférieur à 1e-9 au
+centre de chaque pixel (arrondi de l'interpolation).
+Fixtures : `tools/make-lzw-grid.py`.
+
+Non fait : LZW en fichier local (chemin sans callbacks, `geotiff::load`) reste refusé : la lecture
+entière passe par le crate `tiff`, sans LZW.
+
+### Inventaire des GeoTIFF du CDN
+
+Index `https://cdn.proj.org/files.geojson` : 393 fichiers `.tif` sur 32 pays (65 autres : README,
+JSON, grilles non-TIFF). En-tête lu (`Range: bytes=0-65535`) pour 384 fichiers ; les 9 dont l'IFD
+est au-delà (8 danois, 1 hongrois) lus entiers. Un seul LZW : `cz_cuzk_table_-y-x_3_v1710.tif`.
+
+| Compression | Prédicteur | Planaire | Disposition | Échantillons | Grilles | Pays |
+|---|---|---|---|---|---|---|
+| Deflate | 3 | planaire | tuiles | float32 ×1 | 93 | 21 |
+| Deflate | 3 | planaire | bandes | float32 ×2 | 91 | 9 |
+| Deflate | 3 | planaire | bandes | float32 ×1 | 78 | 13 |
+| Deflate | 3 | planaire | bandes | float32 ×3 | 28 | 4 |
+| Deflate | 3 | planaire | bandes | float32 ×4 | 25 | 8 |
+| Deflate | 3 | chunky | bandes | float32 ×2 | 11 | 1 |
+| Deflate | 3 | planaire | tuiles | float32 ×2 | 10 | 5 |
+| Deflate | 3 | planaire | tuiles | float32 ×4 | 10 | 6 |
+| Deflate | 2 | planaire | tuiles | int32 ×1 | 10 | 1 |
+| Deflate | 3 | chunky | tuiles | float32 ×1 | 8 | 2 |
+| Deflate | 3 | chunky | tuiles | float32 ×2 | 8 | 1 |
+| Deflate | 2 | chunky | bandes | float32 ×2 | 7 | 1 |
+| Deflate | 3 | chunky | tuiles | float32 ×3 | 6 | 1 |
+| Deflate | 3 | planaire | tuiles | float32 ×3 | 2 | 2 |
+| Deflate | 3 | chunky | bandes | float32 ×3 | 2 | 1 |
+| Deflate | 3 | planaire | bandes | float32 ×6 | 1 | 1 |
+| Deflate | 3 | planaire | tuiles | float32 ×6 | 1 | 1 |
+| Deflate | 1 | planaire | bandes | float32 ×3 | 1 | 1 |
+| **LZW** | 3 | chunky | bandes | float32 ×2 | 1 | 1 |
+
+Les prédicteurs 2 sur float32 (7 grilles danoises, Deflate) sont lus par le crate `tiff`, comme avant :
+non mesurés contre `libproj`.
+
 ## projsync
 
 Source : `src/apps/projsync.cpp` (652 lignes), `test/cli/test_projsync.sh` (212 lignes). Port :
@@ -490,9 +537,10 @@ Commandes : `cargo test --test unit_projsync`.
 
 ## Ce qui reste ouvert
 
-- GeoTIFF compressés autres que Deflate (LZW, PackBits, JPEG, CCITT) et prédicteurs hors 1 à 3 : lus
-  entiers (`read_whole`), la séquence de PROJ n'est pas reproduite. Voir « GeoTIFF compressé, mesures »
-  pour ce qui est mesuré.
+- GeoTIFF compressés en PackBits, JPEG, CCITT et prédicteurs hors 1 à 3 : lus entiers (`read_whole`),
+  la séquence de PROJ n'est pas reproduite. LZW (prédicteurs 1 à 3) est lu par morceaux sur le réseau ;
+  reste ouvert le LZW en fichier local, refusé faute de lecteur LZW dans le chemin entier. Voir « GeoTIFF
+  compressé, mesures » pour ce qui est mesuré.
 
 - Lecture par morceaux pour les GeoTIFF compressés (deflate), à prédicteur ou planaires : ils
   sont lus entiers (`read_whole`), la séquence de PROJ n'est pas reproduite. Mesuré sur le vrai

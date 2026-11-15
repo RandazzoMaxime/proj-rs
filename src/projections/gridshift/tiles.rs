@@ -18,6 +18,7 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use tiff::decoder::Decoder;
 
 use super::geotiff::{self, ByteOrder};
+use super::lzw::{self, Predictor};
 use crate::engine::TransformError;
 use crate::network_chunks::{RemoteFile, RemoteReader};
 
@@ -80,11 +81,13 @@ pub(super) enum Storage {
 }
 
 /// How a chunk is read: its bytes as they are, which is an uncompressed chunk without predictor,
-/// or its bytes decoded by the TIFF decoder, which undoes the compression and the predictor.
+/// or its bytes decoded by the TIFF decoder, which undoes the compression and the predictor. LZW
+/// chunks are decoded by [`super::lzw`], with their predictor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Reading {
     Raw,
     Decoded,
+    Lzw(Predictor),
 }
 
 /// The layout of one image of a TIFF, as its tags give it.
@@ -288,6 +291,7 @@ impl LazyIfd {
         let values = match self.reading {
             Reading::Raw => self.read_raw(chunk)?,
             Reading::Decoded => self.read_decoded(chunk)?,
+            Reading::Lzw(predictor) => self.read_lzw(chunk, predictor)?,
         };
         // A concurrent load of the same chunk gives the same samples: either set is kept.
         let _ = cell.set(values.into_boxed_slice());
@@ -301,6 +305,33 @@ impl LazyIfd {
         let bytes = self.read_file(offset, size)?;
         let values = geotiff::raw_samples(&bytes, self.format, self.bits, self.order)?;
         if values.len() != self.expected_len(self.plane_tile(chunk)) {
+            return Err(());
+        }
+        Ok(values)
+    }
+
+    /// The samples of an LZW chunk: its codes decoded, then its predictor undone row by row. Its
+    /// rows are `tile_w` pixels wide, as the file stores them, and the chunk is as long as
+    /// [`Self::expected_len`] says, as [`Self::read_raw`] checks.
+    fn read_lzw(&self, chunk: usize, predictor: Predictor) -> Result<Vec<f32>, ()> {
+        let (offset, count) = *self.places.get(chunk).ok_or(())?;
+        let size = usize::try_from(count).map_err(|_| ())?;
+        let bytes = self.read_file(offset, size)?;
+        let len = self.expected_len(self.plane_tile(chunk));
+        let sample_size = usize::try_from(self.bits / 8).map_err(|_| ())?;
+        let mut raw = lzw::decode(&bytes, len.checked_mul(sample_size).ok_or(())?)?;
+        let row_samples = self.tile_w.checked_mul(self.chunk_spp).ok_or(())?;
+        let row_bytes = row_samples.checked_mul(sample_size).ok_or(())?;
+        lzw::undo_predictor(
+            &mut raw,
+            row_bytes,
+            self.chunk_spp,
+            self.bits,
+            predictor,
+            self.order,
+        )?;
+        let values = geotiff::raw_samples(&raw, self.format, self.bits, self.order)?;
+        if values.len() != len {
             return Err(());
         }
         Ok(values)

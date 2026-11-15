@@ -48,9 +48,10 @@ cache en fichiers dans le répertoire utilisateur (`grid_cache_enable`,
   `mkdir`), et le téléchargement (`open` en création, `write`, `close`, `unlink`, `rename`).
   Mesuré : `docs/PORTING-network.md`, section « API de fichiers ».
 
-Ce qui manque : lecture paresseuse des GeoTIFF compressés autrement qu'en Deflate (LZW,
-PackBits, JPEG, CCITT, ... : lus entiers, comme les grilles non-TIFF) et des prédicteurs
-autres que 1 à 3, rechargement au changement pour les autres étapes que `vgridshift`
+Ce qui manque : lecture paresseuse des GeoTIFF compressés en PackBits, JPEG, CCITT, ... (lus
+entiers, comme les grilles non-TIFF) et des prédicteurs autres que 1 à 3. Le LZW passe par morceaux
+sur le réseau ; en fichier local il reste refusé (lecture entière sans lecteur LZW). Rechargement au
+changement pour les autres étapes que `vgridshift`
 (`hgridshift`, `gridshift`, `xyzgridshift` : le changement est enregistré, la grille n'est pas
 rechargée), validation par `ETag` et `Last-Modified` du cache disque quand les callbacks servent
 les grilles (le cache en mémoire, par URL, est fait par le lot `shared-validators`),
