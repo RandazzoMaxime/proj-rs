@@ -2,7 +2,6 @@
 
 Statut : familles A (sept cas) et C fermées. Famille B ouverte. Le cas `EPSG:26898 → EPSG:26957`
 reste ouvert, cause non établie (voir « Non vérifié »). Mesure de la branche intégrée : voir le
-commit qui suit l'intégration de A et C.
 
 Référence : PROJ 9.9.0, `src/iso19111/operation/coordinateoperationfactory.cpp` et
 `src/iso19111/factory.cpp`. Port : `src/iso19111/factory.rs` (`datum_pivot_operations`,
