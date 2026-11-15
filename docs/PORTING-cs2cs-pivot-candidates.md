@@ -1,7 +1,8 @@
 # Fiche d'état — candidats pivot de `cs2cs` (lot P4)
 
 Statut : familles A (sept cas) et C fermées. Famille B ouverte. Le cas `EPSG:26898 → EPSG:26957`
-reste ouvert, cause non établie (voir « Non vérifié »). Mesure de la branche intégrée : voir le
+reste ouvert, cause non établie (voir « Non vérifié »). Mesure de la branche intégrée (A et C) : `tools/compare-cs2cs.sh`, 285 cas, deux modes,
+`same 279 / tol 4 / num 2 / status 0` ; parité : 4159 identiques, 12 hors seuil (famille B et 26898).
 
 Référence : PROJ 9.9.0, `src/iso19111/operation/coordinateoperationfactory.cpp` et
 `src/iso19111/factory.cpp`. Port : `src/iso19111/factory.rs` (`datum_pivot_operations`,
