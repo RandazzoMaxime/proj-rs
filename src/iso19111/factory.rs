@@ -6730,6 +6730,7 @@ impl CoordinateOperationFactory {
         let pivot_barred = context.intermediate_use == IntermediateCrsUse::Never
             && !source.identifiers().is_empty()
             && !target.identifiers().is_empty();
+        let mut tried_through_intermediate = false;
         if registry
             && !pivot_barred
             && context.intermediates.is_empty()
@@ -6789,6 +6790,7 @@ impl CoordinateOperationFactory {
                     || (all_time_dependent && !source.is_dynamic() && !target.is_dynamic())
                     || only_ensemble_null_operations(&res)
                 {
+                    tried_through_intermediate = true;
                     let with_intermediate =
                         datum_based_intermediate_operations(source, target, context)?;
                     if too_small && !res.is_empty() {
@@ -6821,9 +6823,10 @@ impl CoordinateOperationFactory {
         }
         // `createOperations`, the ensemble step (coordinateoperationfactory.cpp:4524-4572): one CRS
         // defined by a datum ensemble and the other by a single datum. The operations go through
-        // each member of the ensemble. Not ported: `bTriedThroughIntermediateCRS`, so the step runs
-        // even where PROJ has already tried the registered intermediates.
+        // each member of the ensemble. Skipped once the intermediate search ran
+        // (`!bTriedThroughIntermediateCRS`, cpp:4524), or EPSG:10608 alone joins the pivot.
         if registry
+            && !tried_through_intermediate
             && is_geodetic(source)
             && is_geodetic(target)
             && ensemble_step_applies(source, target, context)

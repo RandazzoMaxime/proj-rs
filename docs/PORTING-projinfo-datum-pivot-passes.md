@@ -82,8 +82,9 @@ Neither needs anything but the datum pivot: #88 is found by pass 1, and #89 by t
   `createOperations` between the CRS and its candidate, except for the axis-order case.
 - **The entry to the pivot** tests the filtered direct result (`direct_empty`), where PROJ tests the
   unfiltered one (`res.empty()`, `:4404`).
-- **The ensemble step** (`:4524`) is not skipped when `bTriedThroughIntermediateCRS` is set
-  (`:4465`, `:4524-4525`); the port does not track it. Pre-existing.
+- **The ensemble step** (`:4524`) is skipped when `bTriedThroughIntermediateCRS` is set
+  (`:4502`, `:4524`), as of lot C4 (`tried_through_intermediate` in `factory.rs`). Before, the step
+  added `EPSG:10608` alone to ITRF2020 to WGS 84 (4978), ahead of PROJ's pivot.
 - **The intermediate search of PROJ with `useCreateBetween...`** is the datum-based one
   (`datum_based_intermediate_operations`); the CRS-code one (`crs_codes_intermediate_operations`)
   is still gated by `pivot.is_empty()`, not by PROJ's `res.empty() || !foundInstantiableOp`

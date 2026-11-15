@@ -7,8 +7,8 @@ Référence : `cs2cs` 9.9.0 compilé sans TIFF (`target/proj-reference`).
 
 | Mode | Cas | identique | écart ≤ 1e-6 | écart > 1e-6 | statut différent | format texte |
 |---|---|---|---|---|---|---|
-| CRS séparés par des blancs (défaut) | 272 | 264 | 2 | 2 | 4 | 0 |
-| un seul argument par CRS (`-1`) | 272 | 264 | 2 | 2 | 4 | 0 |
+| CRS séparés par des blancs (défaut) | 272 | @X |
+| un seul argument par CRS (`-1`) | 272 | @X |
 
 Historique (identique / écart ≤ 1e-6 / écart > 1e-6 / statut différent) :
 
@@ -18,15 +18,15 @@ Historique (identique / écart ≤ 1e-6 / écart > 1e-6 / statut différent) :
 | Lot C1 (grades, écart 1) | 213 / 48 / 4 / 7 | 208 / 45 / 4 / 15 |
 | Lots C2 (écarts 5, 7) et D (`proj` bit à bit, branche `c4c6a55` et suivants) | 262 / 2 / 4 / 4 | 262 / 2 / 4 / 4 |
 | Lot C3b (`+init=epsg:`, écarts 3 et 4) | 264 / 2 / 2 / 4 | 264 / 2 / 2 / 4 |
+| Lot C4 (ITRF2020 ↔ WGS 84, écart 2) | @Y | @Y |
 
 Le lot D (ordre des opérations de PROJ dans merc, tmerc, lcc, atanh de la libm) fait passer 46 cas « écart ≤ 1e-6 » à « identique ».
 
 - 272 cas, 226 paires distinctes, 60 cas avec option (`--only-best`, `--3d`,
   `-I`, `--no-ballpark`, `--s_epoch`, `--t_epoch`).
 - L'écart toléré le plus grand vaut 2,8e-9 dans l'unité de sortie.
-- Les lignes restantes à écart > 1e-6 ou à statut différent se ramènent aux
-  causes encore ouvertes 2 et 6, classées par gravité plus bas. Les causes
-  1, 3, 4, 5 et 7 sont corrigées.
+- Les lignes restantes à statut différent relèvent de la cause encore ouverte 6,
+  classée plus bas. Les causes 1, 2, 3, 4, 5 et 7 sont corrigées.
 - Le cas 4267 vers 4269 : identique au `cs2cs` de référence dans les 6 variantes
   mesurées. L'écart connu décrit dans `PORTING-cs2cs-grid-policy.md` ne se
   reproduit plus (voir plus bas).
@@ -107,7 +107,7 @@ printf '48.8582 2.2945 0\n' | target/release/cs2cs -d 10 EPSG:4326 +to EPSG:4807
 Test : `tests/cs2cs_grad_units.rs`, 8 cas (entrée et sortie en grades, un
 deuxième CRS en grades `EPSG:4810`, DMS par défaut).
 
-**2. ITRF2020 (9988) vers WGS 84 (4978) : 0,33 à 0,42 m (classe c)**
+**2. ITRF2020 (9988) vers WGS 84 (4978) : 0,33 à 0,42 m (classe c) — fermé, lot C4**
 
 ```sh
 tools/compare-cs2cs.sh --no-build -k 'EPSG:9988|EPSG:4978'
@@ -115,13 +115,19 @@ printf '4200985 168325 4780236\n' | target/proj-reference/build/bin/cs2cs -d 10 
 ```
 
 - Référence : `4200985.3753091125 168324.5839754438 4780235.6707992153`.
-- Port : `4200985 168325 4780236` (identité).
+- Port avant : `4200985 168325 4780236` (identité, opération `EPSG:10608`).
 
-Choix d'opération différent. La référence retient une opération composée sans
-code EPSG (`unknown id`, 4 étapes, 2,01 m). Le port retient
-`EPSG:10608` (0,01 m). `projinfo` n'affiche que `+proj=noop` pour
-l'opération de la référence, ce qui cache le décalage de 0,4 m (non détaillé).
-Le cas inverse `EPSG:4978 → EPSG:9988` a le même écart.
+Cause : le pas d'ensemble de `createOperations` ajoutait `EPSG:10608` seul
+(0,01 m) devant le pivot datum. PROJ fixe `bTriedThroughIntermediateCRS` dans
+le bloc intermédiaire (`coordinateoperationfactory.cpp:4502`) et saute le pas
+d'ensemble (`:4524`) : le pivot WGS 84 (G2296) en geog2D (2,01 m, 4 étapes,
+`unknown id`) reste seul. Correction : `tried_through_intermediate` dans
+`src/iso19111/factory.rs`. Liste de 40 candidats identique à
+`projinfo -s EPSG:9988 -t EPSG:4978 --spatial-test intersects`, premier compris.
+Le cas inverse `EPSG:4978 → EPSG:9988` est identique aussi.
+
+Tests : `tests/ensemble_step_pivot.rs` (ordre des candidats ; sortie de
+`cs2cs` contre les valeurs PROJ). Les écarts 3 et 4 restent ouverts.
 
 **3. `+init=epsg:27700` vers `+init=epsg:4326` : environ 100 m (classe c), fermé par le lot C3b**
 
@@ -319,3 +325,7 @@ matrice ne le met pas à l'épreuve.
   d'opération de ces paires ne sont pas lus par `projinfo`.
 - Le candidat de `EPSG:4326 → EPSG:4936` diffère (référence 2, port 1), sans
   effet numérique sur les points testés.
+- `projinfo -s EPSG:7789 -t EPSG:4978 --spatial-test intersects` : port 58 candidats,
+  référence 56 (lot C4 sans effet : 58 avant et après). La liste diffère sur des
+  pivots ITRF2014 vers NZGD2000 et NAD83 (numéros d'étape ou candidats en plus) ;
+  cause non mesurée.
