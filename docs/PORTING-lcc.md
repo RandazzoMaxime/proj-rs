@@ -34,10 +34,10 @@ parallèles 49° et 44°, origine 46,5°N 3°E, faux origine (700 km, 6 600 km).
 - Les échecs sont des `Result`, pas des messages anglais posés via `proj_errno`.
 - `Lcc::lambert93` panique si les constantes officielles devenaient illégales.
   Ce n'est pas un chemin d'entrée utilisateur.
-- Le lot par paquets écrit `NaN` là où `forward` renvoie `Err`. `pow(ts, n)`
-  y devient `exp(n · ln(ts))`. `batch_matches_scalar_within_ten_nanometres`
-  garde l'écart sous 10 nm. Les points à moins de `1e-10` rad du pôle
-  restent sur le chemin scalaire.
+- Le lot par paquets (`forward_batch`, `inverse_batch`, voir `docs/PORTING-simd.md`) écrit
+  `NaN` là où `forward` ou `inverse` renvoie `Err`. `pow(ts, n)` y devient `exp(n · ln(ts))` à
+  l'aller. `tests/simd_batch.rs` garde l'écart sous 1e-7 m et 1e-12°. Les points à moins de
+  `1e-10` rad du pôle, et un `rho` nul à l'inverse, restent sur le chemin scalaire.
 
 ## Quirks conservés
 

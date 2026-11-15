@@ -182,6 +182,46 @@ fn main() {
         cases.push((name.to_owned(), ns));
     }
 
+    // Batch inverses and Mercator. The projected inputs come from the forward batch.
+    type Points = (Vec<f64>, Vec<f64>);
+    let project = |batch: Batch<'_>, points: &Points| -> Points {
+        let (mut x, mut y) = (vec![0.0; N], vec![0.0; N]);
+        batch(&points.0, &points.1, &mut x, &mut y);
+        (x, y)
+    };
+    let utm_xy = project(&|a, b, c, d| utm.forward_batch(a, b, c, d), &utm_center);
+    let l93_xy = project(&|a, b, c, d| l93.forward_batch(a, b, c, d), &france);
+    let web_xy = project(&|a, b, c, d| web.forward_batch(a, b, c, d), &world);
+    let more: [(&str, Batch<'_>, &Points); 4] = [
+        (
+            "utm31_inverse_batch",
+            &|a, b, c, d| utm.inverse_batch(a, b, c, d),
+            &utm_xy,
+        ),
+        (
+            "lambert93_inverse_batch",
+            &|a, b, c, d| l93.inverse_batch(a, b, c, d),
+            &l93_xy,
+        ),
+        (
+            "webmerc_batch",
+            &|a, b, c, d| web.forward_batch(a, b, c, d),
+            &world,
+        ),
+        (
+            "webmerc_inverse_batch",
+            &|a, b, c, d| web.inverse_batch(a, b, c, d),
+            &web_xy,
+        ),
+    ];
+    for (name, batch, (first, second)) in more {
+        let ns = time_stable(first.len(), || {
+            batch(black_box(first), black_box(second), &mut east, &mut north);
+        });
+        black_box((&east, &north));
+        cases.push((name.to_owned(), ns));
+    }
+
     // Lot 7: Helmert on geocentric coordinates around France.
     let xyz: Vec<(f64, f64, f64)> = zip(&france)
         .iter()

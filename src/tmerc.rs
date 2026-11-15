@@ -6,6 +6,8 @@
 //!
 //! L'algorithme approché d'Evenden / Snyder (`+approx`) est dans `tmerc_approx`.
 
+mod batch;
+
 use crate::angle::adjlon;
 use crate::{Ellipsoid, Geographic, Projected, ProjectionError};
 
@@ -253,8 +255,11 @@ impl Tmerc {
         Ok((ce, phi))
     }
 
-    /// Convertit un lot. Un point hors domaine est écrit `NaN` (le `HUGE_VAL`
-    /// de PROJ) et le lot continue.
+    /// Convertit un lot de degrés en mètres. Un point hors domaine est écrit `NaN` (le
+    /// `HUGE_VAL` de PROJ) et le lot continue.
+    ///
+    /// Avec AVX2, quatre points sont calculés à la fois ; l'écart avec [`Self::forward`] vient
+    /// des fonctions mathématiques vectorielles, quelques dizaines de nanomètres au plus.
     ///
     /// # Panics
     ///
@@ -266,197 +271,25 @@ impl Tmerc {
         east: &mut [f64],
         north: &mut [f64],
     ) {
-        let n = lon_deg.len();
-        assert_eq!(
-            lat_deg.len(),
-            n,
-            "latitude length {0} != {n}",
-            lat_deg.len()
-        );
-        assert_eq!(east.len(), n, "easting length {0} != {n}", east.len());
-        assert_eq!(north.len(), n, "northing length {0} != {n}", north.len());
-        #[cfg(target_arch = "x86_64")]
-        if std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma") {
-            // SAFETY: AVX2 and FMA were just detected on this CPU.
-            unsafe { self.forward_batch_avx2(lon_deg, lat_deg, east, north) };
-            return;
-        }
-        for i in 0..n {
-            if let Ok(xy) = self.forward(lon_deg[i], lat_deg[i]) {
-                east[i] = xy.east;
-                north[i] = xy.north;
-            } else {
-                east[i] = f64::NAN;
-                north[i] = f64::NAN;
-            }
-        }
+        crate::simd::run(&batch::Forward(self), lon_deg, lat_deg, east, north);
     }
 
-    /// # Safety
+    /// Convertit un lot de mètres en degrés (longitude, latitude). Un point hors domaine est
+    /// écrit `NaN` et le lot continue.
     ///
-    /// Le fil d'exécution doit supporter AVX2 et FMA.
-    #[cfg(target_arch = "x86_64")]
-    #[target_feature(enable = "avx2,fma")]
-    unsafe fn forward_batch_avx2(
-        &self,
-        lon_deg: &[f64],
-        lat_deg: &[f64],
-        east: &mut [f64],
-        north: &mut [f64],
-    ) {
-        let n = lon_deg.len();
-        let n4 = n & !3;
-        let mut i = 0;
-        while i < n4 {
-            // SAFETY: `i + 4 <= n` and this function requires AVX2 and FMA.
-            unsafe { self.forward4(lon_deg, lat_deg, east, north, i) };
-            i += 4;
-        }
-        while i < n {
-            if let Ok(xy) = self.forward(lon_deg[i], lat_deg[i]) {
-                east[i] = xy.east;
-                north[i] = xy.north;
-            } else {
-                east[i] = f64::NAN;
-                north[i] = f64::NAN;
-            }
-            i += 1;
-        }
-    }
-
-    /// # Safety
+    /// Même contrat que [`Self::forward_batch`] pour l'écart avec [`Self::inverse`].
     ///
-    /// AVX2 et FMA requis. `i + 4` ne dépasse aucune des quatre tranches.
-    #[cfg(target_arch = "x86_64")]
-    #[target_feature(enable = "avx2,fma")]
-    #[expect(
-        clippy::similar_names,
-        reason = "Cn and Ce are the paired terms of PROJ exact_e_fwd"
-    )]
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the vector form stays one straight-line copy of exact_e_fwd"
-    )]
-    unsafe fn forward4(
+    /// # Panics
+    ///
+    /// Panique si les quatre tranches n'ont pas la même longueur.
+    pub fn inverse_batch(
         &self,
-        lon_deg: &[f64],
-        lat_deg: &[f64],
-        east: &mut [f64],
-        north: &mut [f64],
-        i: usize,
+        east: &[f64],
+        north: &[f64],
+        lon_deg: &mut [f64],
+        lat_deg: &mut [f64],
     ) {
-        use crate::simd::{atan2_4, cos4, load4, sin4, sqrt4, store4};
-        use std::arch::x86_64::{
-            _mm256_add_pd, _mm256_div_pd, _mm256_mul_pd, _mm256_set1_pd, _mm256_sub_pd,
-        };
-
-        #[expect(
-            clippy::multiple_unsafe_ops_per_block,
-            reason = "one Poder/Engsager formula; a block per intrinsic would hide it"
-        )]
-        // SAFETY: AVX2 kernel. Slice loads and stores stay inside `i..i+4`.
-        unsafe {
-            let deg = _mm256_set1_pd(std::f64::consts::PI / 180.0);
-            let lon_r = _mm256_mul_pd(load4(lon_deg, i), deg);
-            let lat_r = _mm256_mul_pd(load4(lat_deg, i), deg);
-            let mut lat_s = [0.0; 4];
-            let mut lon_s = [0.0; 4];
-            store4(&mut lat_s, 0, lat_r);
-            store4(&mut lon_s, 0, lon_r);
-            let half = std::f64::consts::FRAC_PI_2;
-            if lat_s
-                .iter()
-                .any(|p| !p.is_finite() || p.abs() > half + 1e-12)
-            {
-                for k in 0..4 {
-                    if let Ok(xy) = self.forward(lon_deg[i + k], lat_deg[i + k]) {
-                        east[i + k] = xy.east;
-                        north[i + k] = xy.north;
-                    } else {
-                        east[i + k] = f64::NAN;
-                        north[i + k] = f64::NAN;
-                    }
-                }
-                return;
-            }
-            for lat in &mut lat_s {
-                *lat = (*lat).clamp(-half, half);
-            }
-            for lon in &mut lon_s {
-                *lon = adjlon(adjlon(*lon) - self.lam0);
-            }
-            let phi = load4(&lat_s, 0);
-            let lam = load4(&lon_s, 0);
-            let two_phi = _mm256_add_pd(phi, phi);
-            let sin_2 = sin4(two_phi);
-            let cos_2 = cos4(two_phi);
-            // gatg sur 4 voies : même récurrence que le scalaire, coefficients diffusés.
-            let mut h2 = _mm256_set1_pd(0.0);
-            let mut h1 = _mm256_set1_pd(self.cbg[ORDER - 1]);
-            let two = _mm256_add_pd(cos_2, cos_2);
-            let mut h = h2;
-            for idx in (0..ORDER - 1).rev() {
-                let p = _mm256_set1_pd(self.cbg[idx]);
-                h = _mm256_add_pd(_mm256_mul_pd(two, h1), _mm256_sub_pd(p, h2));
-                h2 = h1;
-                h1 = h;
-            }
-            let mut cn = _mm256_add_pd(phi, _mm256_mul_pd(h, sin_2));
-            let sin_cn = sin4(cn);
-            let cos_cn = cos4(cn);
-            let sin_ce = sin4(lam);
-            let cos_ce = cos4(lam);
-            let prod = _mm256_mul_pd(cos_cn, cos_ce);
-            cn = atan2_4(sin_cn, prod);
-            let inv_denom = _mm256_div_pd(
-                _mm256_set1_pd(1.0),
-                sqrt4(_mm256_add_pd(
-                    _mm256_mul_pd(sin_cn, sin_cn),
-                    _mm256_mul_pd(prod, prod),
-                )),
-            );
-            let tan_ce = _mm256_mul_pd(_mm256_mul_pd(sin_ce, cos_cn), inv_denom);
-            let mut ce_s = [0.0; 4];
-            let mut cn_s = [0.0; 4];
-            let mut sin_a = [0.0; 4];
-            let mut cos_a = [0.0; 4];
-            let mut sinh_a = [0.0; 4];
-            let mut cosh_a = [0.0; 4];
-            store4(&mut ce_s, 0, tan_ce);
-            for v in &mut ce_s {
-                let ax = v.abs();
-                *v = (ax + (ax * ax + 1.0).sqrt()).ln().copysign(*v);
-            }
-            let two_inv = _mm256_add_pd(inv_denom, inv_denom);
-            let two_inv_sq = _mm256_mul_pd(two_inv, inv_denom);
-            let tmp_r = _mm256_mul_pd(prod, two_inv_sq);
-            store4(&mut cn_s, 0, cn);
-            store4(&mut sin_a, 0, _mm256_mul_pd(sin_cn, tmp_r));
-            store4(
-                &mut cos_a,
-                0,
-                _mm256_sub_pd(_mm256_mul_pd(prod, tmp_r), _mm256_set1_pd(1.0)),
-            );
-            store4(&mut sinh_a, 0, _mm256_mul_pd(tan_ce, two_inv));
-            store4(
-                &mut cosh_a,
-                0,
-                _mm256_sub_pd(two_inv_sq, _mm256_set1_pd(1.0)),
-            );
-            for k in 0..4 {
-                let (d_cn, d_ce) =
-                    clenshaw_complex(&self.gtu, sin_a[k], cos_a[k], sinh_a[k], cosh_a[k]);
-                cn_s[k] += d_cn;
-                ce_s[k] += d_ce;
-                if ce_s[k].abs() <= CE_LIMIT {
-                    east[i + k] = self.a * (self.qn * ce_s[k]) + self.x0;
-                    north[i + k] = self.a * (self.qn * cn_s[k] + self.zb) + self.y0;
-                } else {
-                    east[i + k] = f64::NAN;
-                    north[i + k] = f64::NAN;
-                }
-            }
-        }
+        crate::simd::run(&batch::Inverse(self), east, north, lon_deg, lat_deg);
     }
 }
 

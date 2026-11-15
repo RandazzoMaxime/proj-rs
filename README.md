@@ -306,9 +306,10 @@ As in PROJ, `EPSG:4326` on the command line reads latitude first. Use a
 - **Dependencies stay small.** Three direct ones (`rusqlite`, `tiff`,
   `native-tls`), a fourth optional (`geo-types`), 37 crates in the default tree.
 
-The batch path (`forward_batch`) uses AVX2 on x86-64. On Linux glibc it calls
-libmvec. On Windows it uses the C runtime math library, one lane at a time.
-Other targets run the scalar loop. CI builds on Ubuntu 24.04 and Windows, and checks
+The batch path (`forward_batch` and `inverse_batch` of `Tmerc`, `Lcc` and
+`Mercator`) uses AVX2 on x86-64. On Linux glibc it calls libmvec. On Windows it
+uses the C runtime math library, one lane at a time. Other targets run the
+scalar loop. Design, precision and limits: [`docs/PORTING-simd.md`](docs/PORTING-simd.md). CI builds on Ubuntu 24.04 and Windows, and checks
 against the PROJ 9.9.0 binaries from conda-forge.
 
 ### Grids

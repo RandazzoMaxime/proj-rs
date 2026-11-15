@@ -125,17 +125,14 @@ pub mod wkt {
     pub use crate::proj::{WktOptions, WktOutputAxis, WktVersion};
 }
 
-/// Path taken by [`Tmerc::forward_batch`] and [`Lcc::forward_batch`] on this host.
+/// Path taken by the batch conversions (`forward_batch` and `inverse_batch` of [`Tmerc`],
+/// [`Lcc`] and [`Mercator`]) on this host.
 ///
-/// `avx2` is the vector path. On Windows it uses the CRT math library one lane
-/// at a time, not glibc libmvec. `scalar` is the one-point loop.
+/// `avx2` is the vector path. Off Linux with glibc it calls the C math library one lane at a
+/// time, not libmvec. `scalar` is the one-point loop.
 #[must_use]
 pub fn batch_path() -> &'static str {
-    #[cfg(target_arch = "x86_64")]
-    if std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma") {
-        return "avx2";
-    }
-    "scalar"
+    simd::batch_path()
 }
 
 pub use coord::{Geographic, Projected};

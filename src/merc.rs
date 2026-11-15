@@ -2,6 +2,8 @@
 //!
 //! Portage de `src/projections/merc.cpp` (PROJ 9.9). Voir `docs/PORTING-merc.md`.
 
+mod batch;
+
 use crate::angle::adjlon;
 use crate::lcc::{phi2, tsfn};
 use crate::{Ellipsoid, Geographic, Projected, ProjectionError};
@@ -163,6 +165,43 @@ impl Mercator {
             east: self.a * x + self.x0,
             north: self.a * y + self.y0,
         })
+    }
+
+    /// Convertit un lot de degrés en mètres. Un point refusé par [`Self::forward`] est écrit
+    /// `NaN`.
+    ///
+    /// Avec AVX2, quatre points sont calculés à la fois ; l'écart avec [`Self::forward`] vient
+    /// des fonctions mathématiques vectorielles.
+    ///
+    /// # Panics
+    ///
+    /// Panique si les quatre tranches n'ont pas la même longueur.
+    pub fn forward_batch(
+        &self,
+        lon_deg: &[f64],
+        lat_deg: &[f64],
+        east: &mut [f64],
+        north: &mut [f64],
+    ) {
+        crate::simd::run(&batch::Forward(self), lon_deg, lat_deg, east, north);
+    }
+
+    /// Convertit un lot de mètres en degrés (longitude, latitude). Un point refusé par
+    /// [`Self::inverse`] est écrit `NaN`.
+    ///
+    /// Même contrat que [`Self::forward_batch`] pour l'écart avec [`Self::inverse`].
+    ///
+    /// # Panics
+    ///
+    /// Panique si les quatre tranches n'ont pas la même longueur.
+    pub fn inverse_batch(
+        &self,
+        east: &[f64],
+        north: &[f64],
+        lon_deg: &mut [f64],
+        lat_deg: &mut [f64],
+    ) {
+        crate::simd::run(&batch::Inverse(self), east, north, lon_deg, lat_deg);
     }
 
     /// Mètres vers degrés.
