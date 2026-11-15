@@ -1,83 +1,89 @@
-# Port : ballpark à méridien altéré (écart 6, fiche d'état)
+# Port : ballpark à méridien altéré (écart 6, fermé)
 
 Source : PROJ 9.9.0, tag `9.9.0`. `src/iso19111/operation/coordinateoperationfactory.cpp` :
-`createOperationsGeogToGeog` (2927-3110, branches de méridien), `createOperationsGeodToGeod`
-(5236), `createOperationsFromDatabase` (vers 4300-4580), `FilterResults` (1213-1440),
-`removeSyntheticNullTransforms` (1585). `src/trans.cpp` (230-345) : repli entre candidats.
+`createOperationsGeogToGeog` (2923-3108, branches de méridien), `FilterResults` (1213-1440,
+dont `hasOpThatContainsAreaOfInterestAndNoGrid` aux lignes 1359 et 1396),
+`removeSyntheticNullTransforms` (1585), `findsOpsInRegistryWithIntermediate` (retour à 2279-2287),
+`createOperationsFromDatabase` (4247-4585, branche `ALWAYS` à 4452-4456), `createOperations`
+public (8066-8124).
 
 ## Constat
 
 `cs2cs EPSG:4807 +to EPSG:2154`, point `43.2999763919 3.0333132353` (grades) : la référence
-imprime `880453.0554161093 5764316.2342027659`, le port `* * inf`.
+imprime `880453.0554161093 5764316.2342027659`, le port `* * inf` avant ce lot.
 
-Le point est hors de `ntf_r93.gsb` (emprise 41° à 52° N, lue dans l'en-tête NTv2). PROJ
-prend alors le candidat à aire mondiale `Inverse of Transformation from ETRS89-FRA [RGF93 v1]
-to NTF (Paris) altered to use prime meridian of ETRS89-FRA [RGF93 v1] + Ballpark geographic
-offset from NTF (Paris) altered ...` (`trans.cpp`, repli sur les autres candidats). Ce candidat
-n'existe pas dans la liste du port.
-
-| Mesure | Référence | Port |
-|---|---|---|
-| `projinfo -s EPSG:4807 -t EPSG:2154 --grid-check none` | 3 candidats | 2 candidats |
-| `projinfo ... --grid-check discard_missing` | 2 | 1 |
+Le point est hors de `ntf_r93.gsb` (emprise 41° à 52° N). PROJ prend alors le candidat à aire
+mondiale « Ballpark geographic offset » sur le méridien altéré. Le port ne le produisait pas.
 
 ## Cause
 
-`factory.rs`, `forced_ballpark_operations` et `ballpark_operations` rendent `Vec::new()` dès que
-les méridiens de Paris et de Greenwich diffèrent. Le port de `createOperationsGeogToGeog`, qui
-gère ces trois branches (`geodetic_ops.rs`, `geographic_to_geographic`), n'est pas appelé
-pour ce cas. Il existe donc deux copies de la même règle, dont une incomplète.
+Deux défauts, dans l'ordre où ils interviennent.
 
-## Correctif essayé (non commité)
+1. Deux copies de la règle du méridien. `forced_ballpark_operations` (`factory.rs`) rendait
+   `Vec::new()` quand les méridiens différaient, alors que `geographic_to_geographic`
+   (`geodetic_ops.rs`, `createOperationsGeogToGeog`) porte les trois branches. Le correctif
+   délègue à `geographic_to_geographic` avec `BallparkRule::Forced`.
 
-`forced_ballpark_operations` délègue les deux CRS géographiques à
-`geodetic_ops::geographic_to_geographic` avec `BallparkRule::Forced`. Le port de la copie
-sans méridien est supprimé. Mesures :
+2. Le candidat à méridien altéré ne survit pas à la recherche par CRS intermédiaire en
+   `ALWAYS`. PROJ fait de `findsOpsInRegistryWithIntermediate` un simple `FilterResults(..., false)`
+   (2279-2287) : filtre d'emprise et de précision, sans tri ni retrait. Le port appliquait en plus
+   `select_candidates` (tri, `removeUninterestingOps`, dédoublonnage) à ce résultat intermédiaire.
+   Or la liste intermédiaire contient un candidat sans grille, `NTF (Paris) to NTF (1) + NTF to
+   WGS 84 (1) + Inverse of ETRS89-FRA [RGF93 v1] to WGS 84 (1)`, qui couvre la France. L'appel
+   public lit ce candidat dans `hasOpThatContainsAreaOfInterestAndNoGrid` (1359, 1396), et
+   `removeSyntheticNullTransforms` retire alors le ballpark, dernier de la liste (1585). Le port
+   perdait ce candidat avant l'appel public, donc gardait le ballpark à tort.
 
-- le point ci-dessus : `880453.0554161093 5764316.2342027659`, identique à la référence ;
-- `projinfo --grid-check none` : 3 candidats, le troisième nommé comme dans PROJ ;
-- matrice `tools/compare-cs2cs.sh`, défaut : 259 identiques / 2 écarts ≤ 1e-6 / 4 écarts >
-  1e-6 / 7 statuts → 261 / 4 / 4 / 3 ; `-1` : 251 / 2 / 4 / 15 → 253 / 4 / 4 / 11. Les quatre
-  lignes 4807 s'améliorent ; aucune ne s'aggrave ;
-- `cargo test --test cs2cs_grad_units --test cs2cs_grid_policy_candidates --test facade_libproj_grids` : vert ;
-- `cargo test --test cli_yaml` : une exécution sur quatre a rendu `test_projinfo.yaml#83`
-  en sortie 101 (panique). Les trois autres exécutions et 150 lancements isolés de ce cas
-  sont verts. Cause non trouvée.
+Sonde : `libproj` 9.9.0 recompilé en local avec `coordinateoperationfactory.cpp` instrumenté
+(hors du dépôt). En `ALWAYS`, `IGNORE_GRID_AVAILABILITY`, emprise `SMALLEST` : la liste
+intermédiaire contient 5 candidats, dont le sans grille ; `hasOp...` vaut 1 ; le ballpark est
+retiré. Sans le candidat sans grille (contexte `NEVER`), le ballpark reste.
 
-## Régression bloquante
+## Correctif (lot C7)
 
-`cargo test --all-features` : 260 binaires, 2102 passés, 1 échec :
-`tests/unit_op_geog_concatenated_ntf.rs:27`, `left: 3, right: 2`.
+- `factory.rs` : `forced_ballpark_operations` délègue à `geographic_to_geographic`, avec
+  `BallparkRule::Forced` (repris du patch C5). `geodetic_ops.rs` : `geographic_to_geographic`
+  devient `pub(super)`.
+- `factory.rs` : la branche `ALWAYS` de la recherche par CRS intermédiaire applique `filter_only`
+  (filtre seul, comme `FilterResults(..., false)`) au lieu de `select_candidates`. Les branches
+  vertical (`vertical_geographic`) gardent `select_candidates` : PROJ y passe par la même
+  fonction, à vérifier dans un lot séparé.
+- `tests/unit_op_geog_concatenated_ntf.rs` : le test portait `IntermediateCRSUse::Allow`
+  (`IF_NO_DIRECT_TRANSFORMATION`). PROJ écrit `ALWAYS` dans `test_operationfactory.cpp:1330`.
+  Le test passe à `Always`. Un second test (`..._if_no_direct_keeps_the_ballpark`) fixe le
+  résultat `IF_NO_DIRECT` de PROJ : 3 candidats, le troisième est le ballpark.
 
-Le test reprend `TEST(operation, geogCRS_to_geogCRS_context_concatenated_operation)` de
-PROJ 9.9.0 (`src/test/unit/test_operationfactory.cpp`, ligne 1330). Ce contexte est
-`IGNORE_GRID_AVAILABILITY` et `IntermediateCRSUse::ALWAYS`. PROJ rend 2 candidats, le
-port en rend 3 : le ballpark à méridien altéré s'ajoute aux deux candidats passant par le
-CRS intermédiaire.
+## Mesures (référence `libproj` 9.9.0)
 
-Mesure côté port (instrumentation temporaire, retirée) : `has_perfect_accuracy_result` vaut
-`false` sur les deux candidats trouvés, `(1)` et `(2)`. Le port ne coupe donc pas à cet
-endroit.
+| Contexte | Référence | Port avant | Port après |
+|---|---|---|---|
+| `ALWAYS`, `IGNORE_GRID_AVAILABILITY` (test 1330) | 2 | 2 (avec `Always` seul) | 2 |
+| `IF_NO_DIRECT` (défaut de `cs2cs`), même contexte | 3 | 2 | 3 |
+| `ALWAYS` avec le correctif de délégation seul | 2 | 3 | - |
 
-Hypothèses non tranchées :
+- `cs2cs -d 10 EPSG:4807 +to EPSG:2154` au point ci-dessus : `880453.0554161093 5764316.2342027659`,
+  identique à la référence à 1e-6 près (écart 1,16e-10 en x) ;
+- `unit_op_geog_concatenated_ntf` : 2 passés ;
+- `tools/compare-cs2cs.sh --no-build`, défaut et `-1` : 268 identiques / 4 écarts ≤ 1e-6 / 0 écart
+  > 1e-6 / 0 statut (avant : 266 / 2 / 0 / 4) ;
+- tests ciblés et `cli_yaml` : voir le rapport du lot.
 
-- le filtre de `FilterResults` appliqué au résultat final, ou `removeSyntheticNullTransforms`
-  (`coordinateoperationfactory.cpp:1585`) ;
-- le retour anticipé de `createOperationsFromDatabase` (vers 4574), qui n'est pris qu'avec
-  `doFilterAndCheckPerfectOp`, donc avec le mode `ALWAYS`.
+## Tests ajoutés
 
-Un correctif qui retire le ballpark pour `ALWAYS` seul serait une rustine : il ne suivrait
-pas PROJ. Le correctif n'est donc pas commité.
+- `tests/cs2cs_ntf_grid_ballpark.rs` : la paire ci-dessus, `PROJ_DATA=data:data/tests`
+  (la grille `ntf_r93.gsb` est lue, le point est hors emprise).
+- `tests/unit_network_ntf_outside_grid.rs` : `EPSG:4807 → EPSG:4171` à `60 10`, réseau ON,
+  attendu `54.0000000000 11.3372291667`. Passe sur le CDN (`tests/net_cdn`) ; sans CDN, le test
+  affiche un message et ne vérifie rien.
+- `tests/unit_op_geog_concatenated_ntf.rs` : `Always` (2 candidats) et `IF_NO_DIRECT` (3 candidats).
 
-## Prochaine étape
+Rouge avant le correctif (source de `HEAD`) : les deux tests `cs2cs_ntf_grid_ballpark` et
+`unit_network_ntf_outside_grid` échouent. Le second test d'`unit_op_geog_concatenated_ntf` échoue
+(2 au lieu de 3).
 
-1. Lire dans PROJ 9.9.0 le chemin exact qui retire le ballpark en `ALWAYS` (les deux pistes
-   ci-dessus, puis `createOperations` au niveau supérieur). Le porter entier, sans
-   simplification.
-2. Réappliquer le correctif de délégation, puis vérifier dans cet ordre :
-   `unit_op_geog_concatenated_ntf`, `cs2cs_grid_policy_candidates`, `cli_yaml`, la matrice
-   `-1` et défaut, et la suite complète.
-3. Ajouter un test de la paire dans `tests/` (binaire propre : le chemin de recherche
-   `PROJ_DATA` est global au processus) : `select_alternatives("EPSG:4807", "EPSG:2154",
-   BestPolicy::Warn, ...)` avec `PROJ_DATA=data:data/tests`, point `43.29997639190
-   3.03331323530 0`, attendu `880453.0554161093 5764316.2342027659`.
+## Écarts ouverts
+
+- Branches vertical de `findsOpsInRegistryWithIntermediate` : `select_candidates` reste, à
+  comparer à PROJ (lot séparé).
+- `EPSG:4807 → EPSG:2154` avec `--no-ballpark` : écart de 1,16e-10 en x avec la référence, qui
+  était identique au bit près. Cause non trouvée ; dans la tolérance.

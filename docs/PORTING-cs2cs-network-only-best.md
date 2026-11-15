@@ -26,12 +26,18 @@ Limites :
 Le banc est hors dépôt : `scratchpad/net-lotF/bench.sh` (sorties dans `scratchpad/net-lotF/before/`,
 tableau généré par `scratchpad/net-lotF/make_table.py`).
 
-## Écart mesuré : point hors grille, réseau ON (ouvert)
+## Écart mesuré : point hors grille, réseau ON (fermé, lot C7)
 
 Entrée `60 10`, `EPSG:4807` vers `EPSG:4171`, réseau ON.
 
 - Référence : `54.0000000000 11.3372291667`, par le candidat « Ballpark geographic offset ».
-- Port : `*	* inf`. Aucun candidat ne donne de résultat.
+- Port avant le lot C7 : `*	* inf`. Aucun candidat ne donne de résultat.
+- Port après le lot C7 : `54.0000000000 11.3372291667`, identique. Le candidat sans grille
+  de la recherche intermédiaire et la règle du méridien altéré sont portés. Détail :
+  `PORTING-cs2cs-prime-meridian-ballpark.md`. Test : `tests/unit_network_ntf_outside_grid.rs`
+  (réseau, CDN requis ; sans CDN le test ne vérifie rien).
+
+Le texte ci-dessous décrit l'état avant le lot C7.
 
 Cause. La référence liste trois candidats (`projinfo -s EPSG:4807 -t EPSG:4171 --spatial-test
 intersects -o PROJ`, `PROJ_NETWORK=ON`) :

@@ -7,8 +7,8 @@ Référence : `cs2cs` 9.9.0 compilé sans TIFF (`target/proj-reference`).
 
 | Mode | Cas | identique | écart ≤ 1e-6 | écart > 1e-6 | statut différent | format texte |
 |---|---|---|---|---|---|---|
-| CRS séparés par des blancs (défaut) | 275 | 269 | 2 | 0 | 4 | 0 |
-| un seul argument par CRS (`-1`) | 275 | 269 | 2 | 0 | 4 | 0 |
+| CRS séparés par des blancs (défaut) | 275 | @A |
+| un seul argument par CRS (`-1`) | 275 | @A |
 
 Historique (identique / écart ≤ 1e-6 / écart > 1e-6 / statut différent) :
 
@@ -20,14 +20,15 @@ Historique (identique / écart ≤ 1e-6 / écart > 1e-6 / statut différent) :
 | Lot C3b (`+init=epsg:`, écarts 3 et 4) | 264 / 2 / 2 / 4 | 264 / 2 / 2 / 4 |
 | Lot C4 (ITRF2020 ↔ WGS 84, écart 2) | 266 / 2 / 0 / 4 | 266 / 2 / 0 / 4 |
 | Lot C6 (méthode 9808, 3 cas ajoutés ; mesure avant C6 sur ces 275 cas : 266 / 2 / 3 / 4) | 269 / 2 / 0 / 4 | 269 / 2 / 0 / 4 |
+| Lot C7 (ballpark à méridien altéré, écart 6) | @B | @B |
 
 Le lot D (ordre des opérations de PROJ dans merc, tmerc, lcc, atanh de la libm) fait passer 46 cas « écart ≤ 1e-6 » à « identique ».
 
 - 275 cas, 229 paires distinctes, 60 cas avec option (`--only-best`, `--3d`,
   `-I`, `--no-ballpark`, `--s_epoch`, `--t_epoch`).
 - L'écart toléré le plus grand vaut 2,8e-9 dans l'unité de sortie.
-- Les lignes restantes à statut différent relèvent de la cause encore ouverte 6,
-  classée plus bas. Les causes 1, 2, 3, 4, 5 et 7 sont corrigées.
+- Plus aucune ligne à statut différent. Les causes 1 à 7 sont corrigées ; la cause 6 l'est
+  par le lot C7 (`PORTING-cs2cs-prime-meridian-ballpark.md`).
 - Le cas 4267 vers 4269 : identique au `cs2cs` de référence dans les 6 variantes
   mesurées. L'écart connu décrit dans `PORTING-cs2cs-grid-policy.md` ne se
   reproduit plus (voir plus bas).
@@ -69,11 +70,11 @@ Chaque point est donc dans l'emprise du CRS. La matrice couvre :
 
 | Option | Cas | Résultat |
 |---|---|---|
-| `--only-best` | 11 | identique, sauf 4807 vers 2154 (statut, cause 6) |
+| `--only-best` | 11 | identique (4807 vers 2154 fermé par le lot C7) |
 | `--only-best=no` | 5 | identique |
-| `--3d` | 8 | identique, sauf 4807 vers 2154 (statut, cause 6) |
+| `--3d` | 8 | 4807 vers 2154 à 1,2e-10 près (lot C7) |
 | `-I` | 9 | identique (écart 1 fermé, lot C1) |
-| `--no-ballpark` | 6 | identique |
+| `--no-ballpark` | 6 | 4807 vers 2154 à 1,2e-10 près (lot C7) |
 | `--s_epoch`, `--t_epoch` | 21 | identique (cause 7 corrigée, 3 cas auparavant en statut différent) |
 
 ## Écarts, classés par gravité
@@ -216,12 +217,14 @@ mode défaut ne change pas (209, 48, 8, 7).
 argument sans guillemets. PROJ donne `*	* inf` (code 0), le port refuse
 `+with` (code 3). Cause distincte, hors lot : voir `PORTING-cli-rest.md`.
 
-**6. NTF (Paris) vers RGF93, statut : le port renvoie `* * inf` (d) — ouvert, cause trouvée, correctif non commité**
+**6. NTF (Paris) vers RGF93, statut : le port renvoyait `* * inf` (d) — corrigé (lot C7)**
 
 Cas : `EPSG:4807 → EPSG:4171`, `EPSG:4807 → EPSG:2154`, et ses variantes
-`--only-best` et `--3d`. Le lot C1 supposait une cause d'unité. La mesure
+`--only-best`, `--3d`, `--no-ballpark`. Le lot C1 supposait une cause d'unité. La mesure
 l'infirme : la ligne `* * inf` est la même avant et après la correction des
-grades.
+grades. Causes : copie incomplète de la règle du méridien altéré, et candidat sans grille
+retiré trop tôt pendant la recherche par CRS intermédiaire (`ALWAYS`). Détail et
+correctif : `PORTING-cs2cs-prime-meridian-ballpark.md`.
 
 ```sh
 tools/compare-cs2cs.sh --no-build -k 'EPSG:4807|EPSG:2154'
@@ -231,7 +234,7 @@ printf '43.2999763919 3.0333132353\n' | target/release/cs2cs -d 10 EPSG:4807 +to
 
 - Référence (`PROJ_DATA` du comparateur, avec `data/tests/ntf_r93.gsb`) :
   `880453.0554161093 5764316.2342027659`.
-- Port : `* * inf`.
+- Port avant le lot : `* * inf`.
 
 Sans la grille `data/tests/ntf_r93.gsb` (`PROJ_DATA` = la seule référence), le
 port et la référence donnent les mêmes valeurs à 1e-10 près :
@@ -243,10 +246,10 @@ La référence ouvre `fr_ign_ntf_r93.tif` (absent), puis `ntf_r93.gsb` via la ta
 `grid_alternatives`. Le point est hors de l'emprise de la grille (41° à 52° N) : PROJ
 prend le candidat à aire mondiale, un ballpark à méridien altéré (Paris vers Greenwich)
 que le port ne construit pas (`projinfo --grid-check none` : 3 candidats chez PROJ, 2
-chez le port). Un correctif de délégation à `geographic_to_geographic` donne la valeur
-exacte et ne modifie aucun autre écart de la matrice, mais il casse
-`unit_op_geog_concatenated_ntf` (contexte `ALWAYS`, PROJ attend 2 candidats). Non
-commité. Détail, mesures et prochaine étape : `PORTING-cs2cs-prime-meridian-ballpark.md`.
+chez le port avant le lot). Après le lot : `880453.0554161093 5764316.2342027659`, et la
+matrice passe à 268 identiques / 4 écarts ≤ 1e-6. Le test `unit_op_geog_concatenated_ntf`
+portait `IF_NO_DIRECT` là où PROJ écrit `ALWAYS` : il est corrigé, et un test fixe le
+résultat `IF_NO_DIRECT` (3 candidats).
 
 **7. Époques sur un CRS statique (d) — corrigé (lot C2, écart 7)**
 

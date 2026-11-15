@@ -6764,7 +6764,7 @@ impl CoordinateOperationFactory {
                     context,
                     PivotScope::Operations,
                 )?;
-                pivot.extend(select_candidates(codes, source, target, context));
+                pivot.extend(filter_only(codes, source, target, context));
             }
             // `!inCreateOperationsWithDatumPivotAntiRecursion && !inCreateOperationsWithIntermediate`
             // (coordinateoperationfactory.cpp:4467-4468): the intermediate search is off inside a
@@ -7064,6 +7064,19 @@ fn with_epochs(
         }
         other => other,
     }
+}
+
+/// `findsOpsInRegistryWithIntermediate` returns `FilterResults(res, ..., false).getRes()`: the
+/// filter only. The sort and the removals run once, on the outer list, whose filter reads the
+/// no-grid candidate here (`hasOpThatContainsAreaOfInterestAndNoGrid`).
+fn filter_only(
+    operations: Vec<CoordinateOperation>,
+    source: &Crs,
+    target: &Crs,
+    context: &CoordinateOperationContext,
+) -> Vec<CoordinateOperation> {
+    let extents = sort_extents(context, source, target);
+    filter_and_sort(operations, context, &extents).operations
 }
 
 fn select_candidates(
@@ -7520,62 +7533,28 @@ fn ballpark_operations(
 /// [`ballpark_operations`] without the same-datum exception: `createOperationsGeodToGeod` with
 /// `forceBallpark`.
 pub(super) fn forced_ballpark_operations(source: &Crs, target: &Crs) -> Vec<CoordinateOperation> {
-    let (name, code, values, domain) = match (geographic_of(source), geographic_of(target)) {
-        (Some(left), Some(right)) => {
-            let meridian = |crs: &Crs| {
-                geodetic_frame(crs).map(|frame| frame.prime_meridian().longitude().si_value())
-            };
-            if meridian(source) != meridian(target) {
-                return Vec::new();
-            }
-            let three_d = left.coordinate_system().axes().len() == 3
-                || right.coordinate_system().axes().len() == 3;
-            let (code, values) = if three_d {
-                (
-                    9660,
-                    vec![
-                        ParameterValue::angle(0.0),
-                        ParameterValue::angle(0.0),
-                        ParameterValue::length(0.0),
-                    ],
-                )
-            } else {
-                (
-                    9619,
-                    vec![ParameterValue::angle(0.0), ParameterValue::angle(0.0)],
-                )
-            };
-            let domain = match (crs_extent(source), crs_extent(target)) {
-                (Some(left), Some(right)) if left == right => left,
-                _ => world_extent(),
-            };
-            (
-                format!(
-                    "Ballpark geographic offset from {} to {}",
-                    source.name(),
-                    target.name()
-                ),
-                code,
-                values,
-                domain,
-            )
-        }
-        _ => match (source, target) {
-            (
-                Crs::Geodetic(GeodeticCRS::Geocentric(_)),
-                Crs::Geodetic(GeodeticCRS::Geocentric(_)),
-            ) => (
-                format!(
-                    "Ballpark geocentric translation from {} to {}",
-                    source.name(),
-                    target.name()
-                ),
-                1031,
-                vec![ParameterValue::length(0.0); 3],
-                world_extent(),
+    if let (Some(left), Some(right)) = (geographic_of(source), geographic_of(target)) {
+        return super::geodetic_ops::geographic_to_geographic(
+            source,
+            target,
+            left,
+            right,
+            super::geodetic_ops::BallparkRule::Forced,
+        )
+        .unwrap_or_default();
+    }
+    let (name, code, values, domain) = match (source, target) {
+        (Crs::Geodetic(GeodeticCRS::Geocentric(_)), Crs::Geodetic(GeodeticCRS::Geocentric(_))) => (
+            format!(
+                "Ballpark geocentric translation from {} to {}",
+                source.name(),
+                target.name()
             ),
-            _ => return Vec::new(),
-        },
+            1031,
+            vec![ParameterValue::length(0.0); 3],
+            world_extent(),
+        ),
+        _ => return Vec::new(),
     };
     Transformation::create_from_code(
         &OpProps::new().name(name),

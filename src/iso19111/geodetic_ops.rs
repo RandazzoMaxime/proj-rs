@@ -603,7 +603,7 @@ pub(super) fn axis_order_change(
 }
 
 /// `createOperationsGeogToGeog`.
-fn geographic_to_geographic(
+pub(super) fn geographic_to_geographic(
     source: &Crs,
     target: &Crs,
     left: &GeographicCRS,
