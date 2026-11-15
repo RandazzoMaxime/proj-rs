@@ -15,7 +15,6 @@ struct Case<'a> {
     exit: i32,
 }
 
-
 fn run(bin: &str, args: &[&str], input: &str) -> (i32, String, String) {
     let mut child = Command::new(bin)
         .args(args)
