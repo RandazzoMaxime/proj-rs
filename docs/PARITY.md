@@ -152,6 +152,13 @@ cargo test --test parity -- --ignored --nocapture      # une dizaine de minutes 
 soit 50 928 lignes comparées. Le test `parity_wide_against_proj_9_9_0` est ignoré par défaut
 (il apparaît « 1 ignored », jamais « passed » sans avoir tourné).
 
+Les attendus viennent de PROJ 9.9.0 sous Linux (glibc). Une autre libm arrondit autrement les
+fonctions transcendantes, et les points mal conditionnés (géodésiques entre points antipodaux
+ou presque confondus, coordonnées de 1e11 m) passent alors les seuils. Ces écarts sont nommés
+dans `known-<os>.tsv` du corpus (`known-windows.tsv` pour la libm MSVC), lu seulement hors
+glibc : sous Linux le registre reste `known.tsv` seul, et ailleurs un écart nouveau ou disparu
+échoue toujours.
+
 Premier passage : 355 écarts. Corrigés depuis : la chaîne composé → géocentrique sans emprise
 ni précision, l'emprise des ballparks, l'inverse de Cassini, `proj -S` sur `s2`, `alsk`,
 `gs50`. Listes `projinfo` : 3 fermées dans le lot Q2 (identifiant des candidats horizontaux seuls,

@@ -658,7 +658,15 @@ fn check_corpus(dir: &str, source: Source<'_>) {
     }
     print_summary(cases.len(), &stats);
 
-    let known = read_known(&known_path);
+    let mut known = read_known(&known_path);
+    // The expected values come from PROJ 9.9.0 on Linux (glibc). Another libm rounds otherwise,
+    // and the ill-conditioned points (near-antipodal geodesics, huge coordinates) move past the
+    // thresholds: their deviations are named in `known-<os>.tsv`, read only off glibc.
+    if !cfg!(all(target_os = "linux", target_env = "gnu")) {
+        known.extend(read_known(
+            &root.join(format!("known-{}.tsv", std::env::consts::OS)),
+        ));
+    }
     let observed: BTreeSet<String> = deviations.iter().map(|d| d.key.clone()).collect();
     if let Ok(path) = std::env::var("PARITY_REPORT") {
         write_report(Path::new(&path), &deviations, &known);
