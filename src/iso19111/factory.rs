@@ -8068,8 +8068,16 @@ fn datum_based_intermediate_operations(
             );
         }
     }
-    let source_id = identity_of(source);
-    let target_id = identity_of(target);
+    // `buildCRSIds` (coordinateoperationfactory.cpp:1775-1870): the identifiers of the CRS, or
+    // the one a CRS without identifier has by name, as the intermediate of `createOperationsToGeod`.
+    let source_ids = registry_identity(source, context);
+    let target_ids = registry_identity(target, context);
+    let source_id = source_ids
+        .as_ref()
+        .map_or(identity_of(source), |id| (id.0.as_str(), id.1.as_str()));
+    let target_id = target_ids
+        .as_ref()
+        .map_or(identity_of(target), |id| (id.0.as_str(), id.1.as_str()));
     if source_id.0.is_empty() || target_id.0.is_empty() || source_id == target_id {
         return Ok(Vec::new());
     }

@@ -86,3 +86,20 @@ fn registered_vertical_chain_counts_as_registered() {
         ]
     );
 }
+
+/// `projinfo -s EPSG:4911 -t EPSG:10157 --summary --spatial-test intersects` (PROJ 9.9.0): the intermediate geographic 3D CRS of `createOperationsToGeod` has no identifier: `buildCRSIds` (coordinateoperationfactory.cpp:1775-1870) gives it the one of its name, so the datum based intermediates find the ETRF realizations.
+#[test]
+fn geocentric_to_compound_names_the_intermediate_by_its_name() {
+    assert_eq!(
+        names("EPSG:4911", "EPSG:10157"),
+        [
+            "Conversion from ITRF89 (geocentric) to ITRF89 (geog3D) + Inverse of Transformation from CD UK & Ireland VORF08 depth to ITRF89 (ballpark vertical transformation, without ellipsoid height to vertical height correction) + Inverse of Ballpark geographic offset from ETRS89 to ITRF89",
+            "Conversion from ITRF89 (geocentric) to ITRF89 (geog3D) + Inverse of Transformation from CD UK & Ireland VORF08 depth to ITRF89 (ballpark vertical transformation, without ellipsoid height to vertical height correction) + Inverse of Conversion from ITRF89 (geocentric) to ITRF89 (geog3D) + ITRF89 to ETRF89 (1) + Inverse of Conversion from ETRF89 (geog2D) to ETRF89 (geocentric) + Inverse of ETRS89 to ETRF89",
+            "Conversion from ITRF89 (geocentric) to ITRF89 (geog3D) + Inverse of Transformation from CD UK & Ireland VORF08 depth to ITRF89 (ballpark vertical transformation, without ellipsoid height to vertical height correction) + Inverse of Conversion from ITRF89 (geocentric) to ITRF89 (geog3D) + ITRF89 to ETRF2020 (1) + Inverse of Conversion from ETRF2020 (geog2D) to ETRF2020 (geocentric) + Inverse of ETRS89 to ETRF2020",
+            "Conversion from ITRF89 (geocentric) to ITRF89 (geog3D) + Inverse of Transformation from CD UK & Ireland VORF08 depth to ITRF89 (ballpark vertical transformation, without ellipsoid height to vertical height correction) + Inverse of Conversion from ITRF89 (geocentric) to ITRF89 (geog3D) + ITRF89 to ETRF2014 (1) + Inverse of Conversion from ETRF2014 (geog2D) to ETRF2014 (geocentric) + Inverse of ETRS89 to ETRF2014",
+            "Conversion from ITRF89 (geocentric) to ITRF89 (geog3D) + Inverse of Transformation from CD UK & Ireland VORF08 depth to ITRF89 (ballpark vertical transformation, without ellipsoid height to vertical height correction) + Inverse of Conversion from ITRF89 (geocentric) to ITRF89 (geog3D) + ITRF89 to ETRF2000 (1) + Inverse of Conversion from ETRF2000 (geog2D) to ETRF2000 (geocentric) + Inverse of ETRS89 to ETRF2000",
+            "Conversion from ITRF89 (geocentric) to ITRF89 (geog3D) + Inverse of Transformation from CD UK & Ireland VORF08 depth to ITRF89 (ballpark vertical transformation, without ellipsoid height to vertical height correction) + Inverse of Conversion from ITRF89 (geocentric) to ITRF89 (geog3D) + ITRF89 to ITRF2014 (1) + ITRF2014 to ETRF2014 (1) + Inverse of NKG_ETRF14 to ETRF2014 + NKG_ETRF14 to ETRF92@2000.0 + ETRF92@2000.0 to ETRF92@1994.704 using nkgrf17vel + Inverse of Conversion from ETRS89 (geog2D) to ETRS89 (geocentric)",
+            "Conversion from ITRF89 (geocentric) to ITRF89 (geog3D) + Inverse of Transformation from CD UK & Ireland VORF08 depth to ITRF89 (ballpark vertical transformation, without ellipsoid height to vertical height correction) + Inverse of Conversion from ITRF89 (geocentric) to ITRF89 (geog3D) + ITRF89 to ITRF2000 (1) + ITRF2000 to ETRF2000 (2) + Inverse of NKG_ETRF00 to ETRF2000 + NKG_ETRF00 to ETRF92@2000.0 + ETRF92@2000.0 to ETRF92@1994.704 using nkgrf03vel_realigned + Inverse of Conversion from ETRS89 (geog2D) to ETRS89 (geocentric)",
+        ]
+    );
+}
