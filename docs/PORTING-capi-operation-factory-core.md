@@ -5,8 +5,7 @@ Source : PROJ 9.9.0, `test/unit/test_c_api.cpp` (28 cas `CApi.*`),
 (3 cas `factory.*`). Chaque fonction est un `TEST`, le nom C++ figure dans sa doc
 (Rust : `tests/unit_capi_*.rs`, `tests/unit_op_*.rs`, `tests/unit_factory_*.rs`).
 
-Bilan au 2026-11-15 : 35 cas portés, 1 partiel, 0 absent (36 au total).
-Partiel : `operation.normalizeForVisualization` (bloc composé non porté, voir plus bas).
+Bilan au 2026-11-15 : 36 cas portés, 0 partiel, 0 absent (36 au total).
 
 ## Constat du 2026-11-15
 
@@ -65,7 +64,7 @@ compté ici.
 
 | `TEST` PROJ 9.9.0 | Test Rust | Statut | Cause ou écart |
 |---|---|---|---|
-| `operation.normalizeForVisualization` | `tests/unit_op_normalize_for_visualization.rs` | partiel | Le bloc composé (`CompoundCRS`, `BoundCRS::createFromTOWGS84`, aller-retour WKT2 par opération) n'est pas porté. Le port couvre les autres blocs. |
+| `operation.normalizeForVisualization` | `tests/unit_op_normalize_for_visualization.rs` | porté | Les six blocs du `TEST`, dont le composé et le lié (`BoundCRS::createFromTOWGS84`). Le niveau CRS du composé a son test à part (`crs_normalize_for_visualization_compound`, lot Q9). |
 | `operation.PointMotionOperation_with_epochs` | `tests/unit_io_point_motion.rs` | porté | |
 | `operation.operation_Position_Vector_geocen_and_geocen_translations_NEU_velocities_gtg_with_source_epoch` | `tests/unit_op_geocen_gtg.rs` | porté | |
 | `operation.operation_geocen_translations_by_grid_and_geocen_translations_NEU_velocities_gtg` | `tests/unit_op_geocen_gtg.rs` | porté | |
@@ -108,10 +107,52 @@ Lot du 2026-11-15 :
 
 ## Cas ouverts
 
-Dans `test_c_api.cpp`, aucun cas n'est ouvert. Dans `test_operation.cpp`, un cas est
-partiel : `operation.normalizeForVisualization`. Son bloc composé demande
-`CompoundCRS` et `BoundCRS::createFromTOWGS84`, et l'aller-retour WKT2 par opération.
-Ce lot ne le porte pas.
+Aucun cas n'est ouvert ni partiel dans `test_c_api.cpp` et `test_operation.cpp`.
+
+Le bloc composé et le bloc lié de `operation.normalizeForVisualization` étaient déjà dans
+`tests/unit_op_normalize_for_visualization.rs` (commit `ead2c4c`) et passaient : la fiche
+disait « non porté » à tort. Le lot Q9 a corrigé le seul écart réel, au niveau CRS (voir
+« Lot Q9 »).
+
+## Lot Q9 : normalisation d'un CRS composé
+
+`CRS::normalizeForVisualization` (crs.cpp 1129-1168) inverse le premier composant d'un CRS
+composé quand il en a besoin. Le port ne le faisait pas : `Crs::normalize_for_visualization`
+(`src/iso19111/projstring.rs`) laissait le composé tel quel, et `projinfo --normalize-axis-order`
+aussi. Corrigé dans `projstring.rs`, avec `must_axis_order_be_switched` et `reversed` de
+`normalize.rs`, comme PROJ.
+
+Mesure avant (libproj 9.9.0 et port, même commande) :
+
+```
+projinfo "EPSG:4326+3855" -o WKT2:2019 -q --single-line --normalize-axis-order
+libproj : COMPOUNDCRS["WGS 84 (with axis order normalized for visualization) + EGM2008 height", GEOGCRS["WGS 84 (with axis order normalized for visualization)", ...
+port    : COMPOUNDCRS["WGS 84 + EGM2008 height", GEOGCRS["WGS 84", ...   (avant le correctif)
+port    : COMPOUNDCRS["WGS 84 (with axis order normalized for visualization) + EGM2008 height", ...   (après)
+```
+
+Tests (`tests/unit_op_normalize_for_visualization.rs`), écrits d'abord :
+
+```
+avant : crs_normalize_for_visualization_compound   FAILED (left: "WGS 84 + EGM2008 height")
+        crs_normalize_for_visualization_bound      ok (le port normalisait déjà la base, comme libproj)
+après : test result: ok. 3 passed; 0 failed; 0 ignored
+```
+
+Non-régression, après le correctif :
+
+```
+cargo test --test test_operation       test result: ok. 62 passed; 0 failed; 0 ignored
+cargo test --test test_c_api           test result: ok. 52 passed; 0 failed; 0 ignored
+cargo test --test cli_yaml             test result: ok. 3 passed; 0 failed; 0 ignored   (avant et après)
+cargo test --test parity               test result: ok. 2 passed; 0 failed; 2 ignored
+cargo +stable fmt --check              code 0
+cargo +stable clippy --all-targets --all-features -- -D warnings   code 0
+```
+
+Le lié n'a pas de correctif : libproj normalise la base du lié, le port aussi. Mesure :
+`projinfo` sur un BOUNDCRS (base NAD83, axes nord-est) avec `--normalize-axis-order -o WKT2:2019`
+donne `NAD83 (with axis order normalized for visualization)` des deux côtés.
 
 ## Commandes lancées et résultats
 

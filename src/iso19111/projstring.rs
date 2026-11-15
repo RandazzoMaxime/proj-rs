@@ -13,6 +13,7 @@ use super::model::{
     ParameterValue, PrimeMeridian, ProjectedCRS, SphericalCS, SphericalGeodeticCRS, UnitKind,
     UnitOfMeasure, VerticalCRS,
 };
+use super::normalize::{must_axis_order_be_switched, reversed};
 use super::parammap::{method_by_code, MethodMap, ParamMap, OTHER_METHODS, PROJECTION_METHODS};
 use super::pipeline::proj_number;
 use super::proj_crs;
@@ -284,8 +285,9 @@ impl Crs {
         }
     }
 
-    /// `normalizeForVisualization` for a geographic, projected, or bound CRS. A bound CRS
-    /// normalizes its base and keeps its hub and transformation.
+    /// `normalizeForVisualization` for a geographic, projected, compound, or bound CRS. A compound
+    /// CRS reverses its first component when that one needs it. A bound CRS normalizes its base
+    /// and keeps its hub and transformation.
     #[must_use]
     pub fn normalize_for_visualization(&self) -> Self {
         match self {
@@ -299,6 +301,9 @@ impl Crs {
                 crs.target_crs().clone(),
                 crs.transformation().clone(),
             )),
+            Self::Compound(_) if must_axis_order_be_switched(self) => {
+                reversed(self).unwrap_or_else(|| self.clone())
+            }
             other => other.clone(),
         }
     }
