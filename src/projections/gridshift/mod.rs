@@ -2380,10 +2380,13 @@ enum XyzIteration {
 }
 
 impl XyzShift {
-    /// The iteration of a forward (`inverse` false) or inverse point: `grid_ref=input_crs` iterates
-    /// the inverse, `output_crs` iterates the forward path.
-    fn iteration(&self, inverse: bool) -> XyzIteration {
-        if self.grid_ref_is_input == inverse {
+    /// `grid_ref=input_crs` iterates the inverse, `output_crs` iterates the forward path.
+    fn iteration(&self, way: Way) -> XyzIteration {
+        let iterate = match way {
+            Way::Forward => !self.grid_ref_is_input,
+            Way::Inverse => self.grid_ref_is_input,
+        };
+        if iterate {
             XyzIteration::Iterative
         } else {
             XyzIteration::Direct
@@ -2407,11 +2410,11 @@ impl XyzShift {
 
 impl Step for XyzShift {
     fn forward(&self, coord: Coord) -> Result<Coord, TransformError> {
-        self.transform(coord, 1.0, self.iteration(false))
+        self.transform(coord, 1.0, self.iteration(Way::Forward))
     }
 
     fn inverse(&self, coord: Coord) -> Result<Coord, TransformError> {
-        self.transform(coord, -1.0, self.iteration(true))
+        self.transform(coord, -1.0, self.iteration(Way::Inverse))
     }
 
     fn input_kind(&self) -> IoKind {
