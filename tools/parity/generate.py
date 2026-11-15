@@ -213,7 +213,9 @@ def projection_defs(ids):
 
 
 class Generator:
-    def __init__(self, catalog, reference, rng):
+    def __init__(self, catalog, reference, rng, points=6, world=0.0):
+        self.points = points
+        self.world = world
         self.cat = catalog
         self.ref = reference
         self.rng = rng
@@ -237,9 +239,12 @@ class Generator:
         if width >= 359.0:
             fixed += [(south + 10, 179.9), (south + 10, -179.9)]
         points = [(lat, wrap(lon)) for lat, lon in fixed]
-        while len(points) < count:
+        outside = int(count * self.world)
+        while len(points) < count - outside:
             lat = self.rng.uniform(south, north)
             points.append((lat, wrap(west + width * self.rng.random())))
+        while len(points) < count:
+            points.append((self.rng.uniform(-89.0, 89.0), self.rng.uniform(-179.9, 179.9)))
         return points
 
     def pool(self, crs):
@@ -248,7 +253,7 @@ class Generator:
             return self.pools[crs["ref"]]
         lines = []
         if crs["kind"] in ("geog2d", "geog3d"):
-            for lat, lon in self.geo_points(crs["ext"], 40):
+            for lat, lon in self.geo_points(crs["ext"], max(40, 4 * self.points)):
                 first, second = (lat, lon) if crs["lat_first"] else (lon, lat)
                 parts = [f"{first:.9f}", f"{second:.9f}"]
                 if crs["dims"] == 3:
@@ -257,7 +262,7 @@ class Generator:
         else:
             src, dims = ("EPSG:4326", 2) if crs["kind"] == "proj" else ("EPSG:4979", 3)
             inputs = []
-            for lat, lon in self.geo_points(crs["ext"], 48):
+            for lat, lon in self.geo_points(crs["ext"], max(48, 5 * self.points)):
                 tail = "" if dims == 2 else f" {self.rng.uniform(-100, 4000):.3f}"
                 inputs.append(f"{lat:.9f} {lon:.9f}{tail}")
             _, out = self.ref.run("cs2cs", ["-d", "12", src, "+to", crs["ref"]], inputs)
@@ -266,11 +271,11 @@ class Generator:
         self.pools[crs["ref"]] = lines
         return lines
 
-    def sample(self, crs, k=6):
+    def sample(self, crs, k=None):
         pool = self.pool(crs)
         if len(pool) < 3:
             return []
-        return self.rng.sample(pool, min(k, len(pool)))
+        return self.rng.sample(pool, min(k or self.points, len(pool)))
 
     def pick(self, group_a, group_b, overlap_pref=0.8, same_datum=False):
         """Une paire (a, b) dont les emprises se recouvrent (souvent), sans grille manquante."""
@@ -310,6 +315,38 @@ class Generator:
             "args": args, "input": lines, "kinds": kinds,
         })
         return True
+
+
+def emit_text(gen, family, tool, args):
+    """Une invocation sans entrée, comparée au texte (liste des candidats de `projinfo`)."""
+    code, out = gen.ref.run(tool, args, [])
+    if code != 0 or not out:
+        gen.dropped[family] += 1
+        return False
+    gen.counts[family] += 1
+    gen.cases.append({
+        "id": f"{family}-{gen.counts[family]:04d}", "family": family, "tool": tool,
+        "args": args, "input": [], "kinds": ["text"],
+    })
+    return True
+
+
+def fam_projinfo(gen, want):
+    """`projinfo -s A -t B --summary` : la liste des candidats, comparée au texte."""
+    kinds = ["geog2d", "geog3d", "geocent", "proj", "compound"]
+    counter = [0]
+
+    def make():
+        counter[0] += 1
+        src = gen.cat.by_kind[kinds[counter[0] % len(kinds)]]
+        dst = gen.cat.by_kind[gen.rng.choice(kinds)]
+        pair = gen.pick(src, dst)
+        if pair is None:
+            return False
+        a, b = pair
+        return emit_text(gen, "projinfo-candidates", "projinfo",
+                         ["-s", a["ref"], "-t", b["ref"], "--spatial-test", "intersects", "--summary"])
+    return attempts(want, make)
 
 
 def attempts(want, make):
@@ -509,39 +546,43 @@ def local_points(gen, count):
     return [f"{gen.rng.uniform(-30, 30):.9f} {gen.rng.uniform(-50, 50):.9f}" for _ in range(count)]
 
 
-def fam_projections(gen, inv_count=50, fac_count=25):
+def fam_projections(gen, inv_count=50, fac_count=25, per=3):
     defs = projection_defs(gen.ids)
     for pid in gen.ids:
-        lines = local_points(gen, 3) + [f"{gen.rng.uniform(-170, 170):.9f} "
-                                        f"{gen.rng.uniform(-80, 80):.9f}" for _ in range(3)]
+        lines = local_points(gen, per) + [f"{gen.rng.uniform(-170, 170):.9f} "
+                                          f"{gen.rng.uniform(-80, 80):.9f}" for _ in range(per)]
         gen.emit("proj-fwd", "proj", ["-f", "%.12f", *defs[pid].split()], lines, ["m", "m"])
     inverse = 0
     for pid in gen.ids:
         if inverse >= inv_count:
             break
-        _, forward = gen.ref.run("proj", ["-f", "%.12f", *defs[pid].split()], local_points(gen, 6))
+        _, forward = gen.ref.run("proj", ["-f", "%.12f", *defs[pid].split()],
+                                 local_points(gen, 2 * per))
         good = [o for o in forward if valid_line(o, 2)]
         if len(good) >= 3 and gen.emit("proj-inv", "proj", ["-I", "-f", "%.12f", *defs[pid].split()],
-                                       good[:6], ["deg", "deg"]):
+                                       good[:2 * per], ["deg", "deg"]):
             inverse += 1
     step = max(1, len(gen.ids) // fac_count)
     for pid in gen.ids[::step][:fac_count]:
-        gen.emit("proj-factors", "proj", ["-S", "-f", "%.12f", *defs[pid].split()], local_points(gen, 6),
+        gen.emit("proj-factors", "proj", ["-S", "-f", "%.12f", *defs[pid].split()],
+                 local_points(gen, 2 * per),
                  ["m", "m"] + ["fac"] * 6)
 
 
-def build(gen):
+def build(gen, scale=1, projinfo=0):
     gen.ids = re.findall(r'id: "([^"]+)"', (ROOT / "src/listing.rs").read_text(encoding="utf-8"))
-    fam_geo2d(gen, 90)
-    fam_heights(gen, 90)
-    fam_proj(gen, 100)
-    fam_compound(gen, 40)
-    fam_vertical(gen, 15)
-    fam_inverse(gen, 30)
-    fam_options(gen, 45)
-    fam_epoch(gen, 40)
-    fam_cct(gen)
-    fam_projections(gen)
+    fam_geo2d(gen, 90 * scale)
+    fam_heights(gen, 90 * scale)
+    fam_proj(gen, 100 * scale)
+    fam_compound(gen, 40 * scale)
+    fam_vertical(gen, 15 * scale)
+    fam_inverse(gen, 30 * scale)
+    fam_options(gen, 45 * scale)
+    fam_epoch(gen, 40 * scale)
+    fam_cct(gen, per_template=2 * scale)
+    fam_projections(gen, inv_count=50 * scale, fac_count=25 * scale, per=3 * scale)
+    if projinfo:
+        fam_projinfo(gen, projinfo)
 
 
 def main():
@@ -550,10 +591,16 @@ def main():
     parser.add_argument("--reference-dir", default=os.environ.get(
         "PROJ_REFERENCE_DIR", str(ROOT / "target/proj-reference")))
     parser.add_argument("--out", default=str(ROOT / "tests/parity/cases.jsonl"))
+    parser.add_argument("--scale", type=int, default=1, help="multiplie le nombre d'invocations")
+    parser.add_argument("--points", type=int, default=6, help="points par invocation cs2cs")
+    parser.add_argument("--world", type=float, default=0.0,
+                        help="part des points tirés dans le monde entier, hors emprise comprise")
+    parser.add_argument("--projinfo", type=int, default=0, help="paires projinfo --summary")
     options = parser.parse_args()
     catalog = Catalog(Path(options.reference_dir) / "build/data/proj.db")
-    gen = Generator(catalog, Reference(options.reference_dir), random.Random(options.seed))
-    build(gen)
+    gen = Generator(catalog, Reference(options.reference_dir), random.Random(options.seed),
+                    points=options.points, world=options.world)
+    build(gen, scale=options.scale, projinfo=options.projinfo)
     with open(options.out, "w", encoding="utf-8") as out:
         for case in gen.cases:
             out.write(json.dumps(case, ensure_ascii=True) + "\n")

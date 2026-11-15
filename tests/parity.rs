@@ -26,6 +26,8 @@ enum Kind {
     Degree,
     Time,
     Factor,
+    /// A whole line compared as text: the candidate list of `projinfo --summary`.
+    Text,
 }
 
 impl Kind {
@@ -35,6 +37,7 @@ impl Kind {
             "deg" => Kind::Degree,
             "t" => Kind::Time,
             "fac" => Kind::Factor,
+            "text" => Kind::Text,
             other => panic!("genre de champ inconnu dans cases.jsonl : {other}"),
         }
     }
@@ -46,6 +49,7 @@ impl Kind {
             Kind::Degree => diff <= TOLERANCE_DEGREE,
             Kind::Time => diff <= TOLERANCE_TIME,
             Kind::Factor => diff <= TOLERANCE_FACTOR * expected.abs().max(actual.abs()),
+            Kind::Text => false,
         }
     }
 }
@@ -184,6 +188,16 @@ fn is_error(tokens: &[String]) -> bool {
 }
 
 fn compare(expected: &str, actual: &str, kinds: &[Kind]) -> Outcome {
+    if kinds == [Kind::Text] {
+        return if expected == actual {
+            Outcome::Identical
+        } else {
+            Outcome::Deviation(
+                Class::Value,
+                format!("attendu «{expected}», obtenu «{actual}»"),
+            )
+        };
+    }
     let want = tokens(expected);
     let got = tokens(actual);
     let (want_error, got_error) = (is_error(&want), is_error(&got));
@@ -253,6 +267,7 @@ fn binary(tool: &str) -> &'static str {
         "cs2cs" => env!("CARGO_BIN_EXE_cs2cs"),
         "proj" => env!("CARGO_BIN_EXE_proj"),
         "cct" => env!("CARGO_BIN_EXE_cct"),
+        "projinfo" => env!("CARGO_BIN_EXE_projinfo"),
         other => panic!("outil inconnu dans cases.jsonl : {other}"),
     }
 }
@@ -443,7 +458,19 @@ fn print_summary(cases: usize, stats: &BTreeMap<String, Stats>) {
 
 #[test]
 fn parity_against_proj_9_9_0() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/parity");
+    check_corpus("tests/parity");
+}
+
+/// The wide corpus (about 50 000 conversions, see docs/PARITY.md): several minutes, so it runs
+/// on demand with `cargo test --test parity -- --ignored`.
+#[test]
+#[ignore = "corpus large : cargo test --test parity -- --ignored"]
+fn parity_wide_against_proj_9_9_0() {
+    check_corpus("tests/parity/wide");
+}
+
+fn check_corpus(dir: &str) {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(dir);
     let cases = load_cases(&root.join("cases.jsonl"));
     let expected = load_expected(&root.join("expected.jsonl"));
     let known_path = root.join("known.tsv");
