@@ -206,3 +206,33 @@ fn mtm1_to_delaware_without_extent_use_keeps_the_direct_operation() {
         ]
     );
 }
+
+/// `projinfo -s EPSG:7815 -t EPSG:4232 --summary --spatial-test intersects` (PROJ 9.9.0):
+/// `Fahud to WGS 84 (1)` is superseded by `(3)`, both legs of the datum-based pivot, so it is
+/// dropped (`createBetweenGeodeticCRSWithDatumBasedIntermediates`, factory.cpp:8576-8658).
+#[test]
+fn datum_based_pivot_drops_a_superseded_leg() {
+    let operations = candidates("EPSG:7815", "EPSG:4232", GridAvailabilityUse::UseForSorting);
+    assert_eq!(
+        names(&operations),
+        [
+            "Conversion from WGS 84 (Transit) (geocentric) to WGS 84 (Transit) (geog2D) + Inverse of WGS 84 to WGS 84 (Transit) + Inverse of Fahud to WGS 84 (3)",
+            "Conversion from WGS 84 (Transit) (geocentric) to WGS 84 (Transit) (geog2D) + Inverse of WGS 84 to WGS 84 (Transit) + Inverse of Fahud to WGS 84 (2)",
+        ]
+    );
+}
+
+/// `projinfo -s EPSG:7912 -t EPSG:4959 --summary --spatial-test intersects` (PROJ 9.9.0): of the
+/// chain `ITRF96 to NZGD2000 (1)` to `(7)`, each replacing the one before, only `(7)` is left.
+#[test]
+fn datum_based_pivot_keeps_the_last_replacement_of_a_chain() {
+    let operations = candidates("EPSG:7912", "EPSG:4959", GridAvailabilityUse::UseForSorting);
+    assert_eq!(
+        names(&operations),
+        [
+            "Conversion from ITRF2014 (geog3D) to ITRF2014 (geocentric) + ITRF2014 to ITRF96 (2) + Conversion from ITRF96 (geocentric) to ITRF96 (geog3D) + ITRF96 to NZGD2000 (7)",
+            "Conversion from ITRF2014 (geog3D) to ITRF2014 (geocentric) + Inverse of ITRF96 to ITRF2014 (1) + Conversion from ITRF96 (geocentric) to ITRF96 (geog3D) + ITRF96 to NZGD2000 (7)",
+            "Ballpark geographic offset from ITRF2014 to NZGD2000",
+        ]
+    );
+}

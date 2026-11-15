@@ -8204,11 +8204,29 @@ fn datum_based_intermediate_operations(
             .clone()
     };
 
-    let mut pair_operations = Vec::new();
+    let mut instantiable = Vec::new();
     for (first, second) in candidates {
-        let (Some(mut op1), Some(mut op2)) = (operation_of(first), operation_of(second)) else {
+        let (Some(op1), Some(op2)) = (operation_of(first), operation_of(second)) else {
             continue;
         };
+        instantiable.push((first, second, op1, op2));
+    }
+    let superseded = if context.superseded == SupersededOperations::Discard {
+        superseded_by_listed(
+            db,
+            instantiable
+                .iter()
+                .flat_map(|(first, second, _, _)| [*first, *second]),
+        )?
+    } else {
+        BTreeSet::new()
+    };
+
+    let mut pair_operations = Vec::new();
+    for (first, second, mut op1, mut op2) in instantiable {
+        if superseded.contains(&first.key()) || superseded.contains(&second.key()) {
+            continue;
+        }
         if first.situation == "src_is_tgt" {
             op1 = op1.inverse();
         }
@@ -9143,6 +9161,51 @@ struct DatumTrfm {
     auth: String,
     code: String,
     bbox: BoundingBox,
+}
+
+impl DatumTrfm {
+    fn key(&self) -> (String, String, String) {
+        (self.table.clone(), self.auth.clone(), self.code.clone())
+    }
+}
+
+/// The supersession pass of `createBetweenGeodeticCRSWithDatumBasedIntermediates`
+/// (factory.cpp:8576-8658): an operation of the candidates is dropped when one of its
+/// replacements of the same table and same CRS pair is a candidate too.
+fn superseded_by_listed<'a>(
+    db: &DatabaseContext,
+    listed: impl Iterator<Item = &'a DatumTrfm>,
+) -> Result<BTreeSet<(String, String, String)>, FactoryError> {
+    let keys: BTreeSet<(String, String, String)> = listed.map(DatumTrfm::key).collect();
+    if keys.is_empty() {
+        return Ok(BTreeSet::new());
+    }
+    let codes: BTreeSet<(&str, &str)> = keys
+        .iter()
+        .map(|(_, auth, code)| (auth.as_str(), code.as_str()))
+        .collect();
+    let condition = vec![
+        "(superseded_table_name = ? AND replacement_table_name = superseded_table_name \
+         AND superseded_auth_name = ? AND superseded_code = ?)";
+        keys.len()
+    ]
+    .join(" OR ");
+    let sql = format!(
+        "SELECT superseded_table_name, superseded_auth_name, superseded_code, \
+         replacement_auth_name, replacement_code FROM supersession \
+         WHERE same_source_target_crs = 1 AND ({condition})"
+    );
+    let params: Vec<String> = keys
+        .iter()
+        .flat_map(|(table, auth, code)| [table.clone(), auth.clone(), code.clone()])
+        .collect();
+    let mut superseded = BTreeSet::new();
+    for row in db.query(&sql, &params)? {
+        if codes.contains(&(row[3].text().as_str(), row[4].text().as_str())) {
+            superseded.insert((row[0].text(), row[1].text(), row[2].text()));
+        }
+    }
+    Ok(superseded)
 }
 
 /// `useIrrelevantPivot`: a concatenated operation whose inner pivot is one of the two CRS
