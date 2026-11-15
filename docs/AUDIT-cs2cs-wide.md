@@ -215,7 +215,7 @@ mode défaut ne change pas (209, 48, 8, 7).
 argument sans guillemets. PROJ donne `*	* inf` (code 0), le port refuse
 `+with` (code 3). Cause distincte, hors lot : voir `PORTING-cli-rest.md`.
 
-**6. NTF (Paris) vers RGF93, statut : le port renvoie `* * inf` (d) — ouvert, cause réattribuée**
+**6. NTF (Paris) vers RGF93, statut : le port renvoie `* * inf` (d) — ouvert, cause trouvée, correctif non commité**
 
 Cas : `EPSG:4807 → EPSG:4171`, `EPSG:4807 → EPSG:2154`, et ses variantes
 `--only-best` et `--3d`. Le lot C1 supposait une cause d'unité. La mesure
@@ -238,15 +238,14 @@ port et la référence donnent les mêmes valeurs à 1e-10 près :
 `38.9698363107 2.7305003045` (2154 vers 4807), `38.9701211876 5.0666926700`
 (4807 vers 4171). Ce sont les valeurs de `tests/cs2cs_grad_units.rs`.
 
-Avec la grille, la référence ouvre `fr_ign_ntf_r93.tif` (absent), puis
-`ntf_r93.gsb` : la table `grid_alternatives` de `proj.db` relie les deux
-(`old_proj_grid_name`). Le port répond `* * inf` en mode par défaut, avec
-`--only-best` et avec `--3d`. Il lit `nadgrids=fr_ign_ntf_r93.tif` sans erreur
-(même valeur que la référence). La défaillance est donc dans la sélection ISO
-(`PROJ_RS_TRACE_PATH=1` : `path=iso`) ou dans le pipeline de l'opération
-retenue. Non vérifié. Prochaine étape : comparer l'opération retenue avec
-`projinfo -s EPSG:4807 -t EPSG:2154 -o PROJ` et la trace `PROJ_DEBUG=3`. La
-fiche de référence est `PORTING-cs2cs-grid-policy.md`.
+La référence ouvre `fr_ign_ntf_r93.tif` (absent), puis `ntf_r93.gsb` via la table
+`grid_alternatives`. Le point est hors de l'emprise de la grille (41° à 52° N) : PROJ
+prend le candidat à aire mondiale, un ballpark à méridien altéré (Paris vers Greenwich)
+que le port ne construit pas (`projinfo --grid-check none` : 3 candidats chez PROJ, 2
+chez le port). Un correctif de délégation à `geographic_to_geographic` donne la valeur
+exacte et ne modifie aucun autre écart de la matrice, mais il casse
+`unit_op_geog_concatenated_ntf` (contexte `ALWAYS`, PROJ attend 2 candidats). Non
+commité. Détail, mesures et prochaine étape : `PORTING-cs2cs-prime-meridian-ballpark.md`.
 
 **7. Époques sur un CRS statique (d) — corrigé (lot C2, écart 7)**
 
@@ -315,8 +314,8 @@ matrice ne le met pas à l'épreuve.
 - Les messages d'erreur sur la sortie d'erreur (stderr) ne sont pas comparés.
   Ils diffèrent (par exemple `proj_create: crs not found` contre
   `no transformation`). Le comparateur ne classe que stdout et les codes retour.
-- La cause de l'écart 6 est réattribuée à la grille (`ntf_r93.gsb`), pas à l'unité ; non corrigée.
-  Les écarts 3 et 4 sont fermés (lot C3b).
+- L'écart 6 reste ouvert : cause trouvée (candidat ballpark à méridien modifié non construit),
+  correctif non commité (`PORTING-cs2cs-prime-meridian-ballpark.md`). Les écarts 3 et 4 sont fermés (lot C3b).
 - `+init=epsg:4807` (hors matrice) : PROJ imprime en DMS, longitude d'abord, un
   point qui n'est pas celui du port (`+init=epsg:4326 +to +init=epsg:4807` sur
   `48.8582 2.2945` : PROJ `46d31'12.678"E 2d17'30.494"N`). Le port garde sa
