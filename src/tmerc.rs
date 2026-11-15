@@ -12,6 +12,8 @@ use crate::projmath::{
 };
 use crate::{Ellipsoid, Geographic, Projected, ProjectionError};
 
+mod batch;
+
 const ORDER: usize = 6;
 /// Seuil `|Ce|` de PROJ, au-delà duquel le point est hors domaine (~150°).
 const CE_LIMIT: f64 = 2.623_395_162_778;
@@ -306,15 +308,7 @@ impl Tmerc {
             unsafe { self.forward_batch_avx2(lon_deg, lat_deg, east, north) };
             return;
         }
-        for i in 0..n {
-            if let Ok(xy) = self.forward(lon_deg[i], lat_deg[i]) {
-                east[i] = xy.east;
-                north[i] = xy.north;
-            } else {
-                east[i] = f64::NAN;
-                north[i] = f64::NAN;
-            }
-        }
+        self.forward_batch_portable(lon_deg, lat_deg, east, north);
     }
 
     /// # Safety

@@ -132,7 +132,7 @@ Causes corrigées :
 Reste ouvert :
 
 - Chemin par paquets (`forward_batch`, AVX2) : ses opérations vectorielles ne suivent pas PROJ
-  bit à bit. La CLI ne l'emploie pas.
+  bit à bit (mesure : [`PORTING-batch-path.md`](PORTING-batch-path.md)). La CLI ne l'emploie pas.
 - `+algo=auto`, `tmerc` sphérique et `+over` : non mesurés.
 - `sinhpsi2tanphi` non convergent : PROJ rend la dernière valeur et pose `errno`, ce port
   renvoie `OutsideDomain`. Non rencontré dans la grille.
