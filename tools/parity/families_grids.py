@@ -158,14 +158,16 @@ def grid_names(proj_string):
     return names
 
 
+def crs_members(gen, ref, ext):
+    """CRS d'une opération de grille : le CRS lui-même, ou les composés qui ont ce vertical."""
+    if ref in gen.cat.by_ref and gen.cat.by_ref[ref]["kind"] != "vert":
+        return [gen.cat.by_ref[ref]]
+    return [c for c in gen.cat.by_kind["compound"] if c["vert"] == ref and overlap(c["ext"], ext)]
+
+
 def grid_pairs(gen, op, grids_dir, cache):
     """Couples (source, cible) dont la première opération PROJ utilise une grille de `grids_dir`."""
-    def members(ref):
-        if ref in gen.cat.by_ref and gen.cat.by_ref[ref]["kind"] != "vert":
-            return [gen.cat.by_ref[ref]]
-        return [c for c in gen.cat.by_kind["compound"] if c["vert"] == ref and overlap(c["ext"], op["ext"])]
-
-    sources, targets = members(op["src"]), members(op["dst"])
+    sources, targets = crs_members(gen, op["src"], op["ext"]), crs_members(gen, op["dst"], op["ext"])
     if not sources or not targets:
         return []
     pairs = []

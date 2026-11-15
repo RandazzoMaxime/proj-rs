@@ -6,12 +6,15 @@
 //! Les écarts connus sont dans `tests/parity/known.tsv`.
 
 mod common;
+#[path = "net_cdn/mod.rs"]
+mod net_cdn;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use serde_yaml::Value;
 
@@ -81,6 +84,39 @@ enum Outcome {
     Within,
     BothError,
     Deviation(Class, String),
+}
+
+/// Where the binaries get their grids, and whether the network is on.
+#[derive(Clone, Copy)]
+enum Source<'a> {
+    /// The repository fixtures, network off.
+    Local,
+    /// The fixtures plus a grid directory (docs/PARITY.md, grid corpus), network off.
+    Grids(&'a str),
+    /// The grid files of cdn.proj.org, network on, a new empty user directory per invocation.
+    Network,
+}
+
+/// An empty user-writable directory for one invocation, removed when dropped: no cache survives
+/// from a previous run, so each invocation fetches its grid chunks itself.
+struct FreshUserDir(PathBuf);
+
+impl FreshUserDir {
+    fn new() -> Self {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let index = NEXT.fetch_add(1, Ordering::Relaxed);
+        let path =
+            std::env::temp_dir().join(format!("proj-rs-parity-net-{}-{index}", std::process::id()));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir_all(&path).expect("créer le dossier utilisateur de la suite réseau");
+        Self(path)
+    }
+}
+
+impl Drop for FreshUserDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
 }
 
 struct Case {
@@ -274,17 +310,25 @@ fn shell_quote(arg: &str) -> String {
     format!("'{}'", arg.replace('\'', "'\\''"))
 }
 
-fn repro(case: &Case, grids: Option<&str>) -> String {
+fn repro(case: &Case, source: Source<'_>) -> String {
     let input: Vec<String> = case.input.iter().map(|line| shell_quote(line)).collect();
     let args: Vec<String> = case.args.iter().map(|arg| shell_quote(arg)).collect();
-    let data = if grids.is_some() {
-        "data:data/tests:$PARITY_GRIDS_DIR"
-    } else {
-        "data:data/tests"
+    let environment = match source {
+        Source::Local => {
+            "PROJ_DATA=data:data/tests PROJ_NETWORK=OFF \
+                          PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY=YES"
+        }
+        Source::Grids(_) => {
+            "PROJ_DATA=data:data/tests:$PARITY_GRIDS_DIR PROJ_NETWORK=OFF \
+                             PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY=YES"
+        }
+        Source::Network => {
+            "PROJ_DATA=data PROJ_NETWORK=ON \
+                            PROJ_USER_WRITABLE_DIRECTORY=$(mktemp -d)"
+        }
     };
     format!(
-        "printf '%s\\n' {} | PROJ_DATA={data} PROJ_NETWORK=OFF PROJ_ONLY_BEST_DEFAULT=NO \
-         PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY=YES target/debug/{} {}",
+        "printf '%s\\n' {} | {environment} PROJ_ONLY_BEST_DEFAULT=NO target/debug/{} {}",
         input.join(" "),
         case.tool,
         args.join(" ")
@@ -303,19 +347,38 @@ fn binary(tool: &str) -> &'static str {
     }
 }
 
-fn run(case: &Case, grids: Option<&str>) -> (i64, Vec<String>) {
-    let mut data = common::fixture_search_path();
-    if let Some(dir) = grids {
+fn run(case: &Case, source: Source<'_>) -> (i64, Vec<String>) {
+    let mut data = match source {
+        Source::Network => PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("data")
+            .display()
+            .to_string(),
+        Source::Local | Source::Grids(_) => common::fixture_search_path(),
+    };
+    if let Source::Grids(dir) = source {
         data.push(if cfg!(windows) { ';' } else { ':' });
         data.push_str(dir);
     }
-    let mut child = Command::new(binary(&case.tool))
+    let user_dir = matches!(source, Source::Network).then(FreshUserDir::new);
+    let mut command = Command::new(binary(&case.tool));
+    command
         .args(&case.args)
-        .env("PROJ_NETWORK", "OFF")
         // Recorded with build/data/proj.ini (only_best_default = off), which this search path lacks.
         .env("PROJ_ONLY_BEST_DEFAULT", "NO")
-        .env("PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY", "YES")
-        .env("PROJ_DATA", data)
+        .env("PROJ_DATA", data);
+    match &user_dir {
+        Some(dir) => {
+            command
+                .env("PROJ_NETWORK", "ON")
+                .env("PROJ_USER_WRITABLE_DIRECTORY", &dir.0);
+        }
+        None => {
+            command
+                .env("PROJ_NETWORK", "OFF")
+                .env("PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY", "YES");
+        }
+    }
+    let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -358,11 +421,11 @@ impl Stats {
 fn check_invocation(
     case: &Case,
     expected: &Expected,
-    grids: Option<&str>,
+    source: Source<'_>,
     deviations: &mut Vec<Deviation>,
     stats: &mut Stats,
 ) {
-    let (code, got) = run(case, grids);
+    let (code, got) = run(case, source);
     let lines = expected.out.len().max(got.len());
     stats.invocations += 1;
     stats.conversions += lines;
@@ -372,7 +435,7 @@ fn check_invocation(
             family: case.family.clone(),
             class,
             detail,
-            repro: repro(case, grids),
+            repro: repro(case, source),
         });
     };
     if (expected.rc != 0) != (code != 0) {
@@ -500,7 +563,7 @@ fn print_summary(cases: usize, stats: &BTreeMap<String, Stats>) {
 
 #[test]
 fn parity_against_proj_9_9_0() {
-    check_corpus("tests/parity", None);
+    check_corpus("tests/parity", Source::Local);
 }
 
 /// The wide corpus (about 50 000 conversions, see docs/PARITY.md): several minutes, so it runs
@@ -508,13 +571,13 @@ fn parity_against_proj_9_9_0() {
 #[test]
 #[ignore = "corpus large : cargo test --test parity -- --ignored"]
 fn parity_wide_against_proj_9_9_0() {
-    check_corpus("tests/parity/wide", None);
+    check_corpus("tests/parity/wide", Source::Local);
 }
 
 /// `geod` and `invgeod` on their own corpus (docs/PARITY.md, section geod).
 #[test]
 fn parity_geod_against_proj_9_9_0() {
-    check_corpus("tests/parity/geod", None);
+    check_corpus("tests/parity/geod", Source::Local);
 }
 
 /// The export corpus: CRS, operations, datums and ellipsoids written by `projinfo` in every
@@ -540,10 +603,24 @@ fn parity_grids_against_proj_9_9_0() {
         Path::new(&dir).is_dir(),
         "PARITY_GRIDS_DIR n'est pas un dossier : {dir}"
     );
-    check_corpus("tests/parity/grids", Some(&dir));
+    check_corpus("tests/parity/grids", Source::Grids(&dir));
 }
 
-fn check_corpus(dir: &str, grids: Option<&str>) {
+/// The CDN corpus (docs/PARITY.md, section réseau): every pair uses a grid of cdn.proj.org, the
+/// network is on and each invocation starts from an empty user directory. The CDN probe comes
+/// first: without it the corpus would compare nothing, so the test fails instead of passing.
+#[test]
+#[ignore = "réseau : cargo test --test parity -- --ignored"]
+fn parity_network_against_proj_9_9_0() {
+    assert!(
+        net_cdn::cdn_reachable(),
+        "cdn.proj.org ne répond pas (sonde tests/net_cdn/mod.rs : GET avec Range, 206 attendu). \
+         Le corpus réseau ne peut pas être comparé : vérifier la connexion ou HTTPS_PROXY."
+    );
+    check_corpus("tests/parity/network", Source::Network);
+}
+
+fn check_corpus(dir: &str, source: Source<'_>) {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(dir);
     let cases = load_cases(&root.join("cases.jsonl"));
     let expected = load_expected(&root.join("expected.jsonl"));
@@ -565,7 +642,7 @@ fn check_corpus(dir: &str, grids: Option<&str>) {
                                 .unwrap_or_else(|| panic!("{} absent de expected.jsonl", case.id));
                             let mut found = Vec::new();
                             let mut stats = Stats::default();
-                            check_invocation(case, reference, grids, &mut found, &mut stats);
+                            check_invocation(case, reference, source, &mut found, &mut stats);
                             (found, stats)
                         })
                         .collect::<Vec<_>>()

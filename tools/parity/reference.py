@@ -3,6 +3,7 @@
 import os
 import re
 import subprocess
+import tempfile
 
 from common import ROOT
 
@@ -10,28 +11,40 @@ from common import ROOT
 class Reference:
     """Lance les binaires de la référence avec l'environnement de la suite."""
 
-    def __init__(self, ref_dir, grids_dir=None):
+    def __init__(self, ref_dir, grids_dir=None, network=False):
+        """`network` : grilles du CDN, réseau ON, un dossier utilisateur VIDE par invocation."""
         self.ref = ref_dir
+        self.network = network
         self.env = os.environ.copy()
-        search = f"{ref_dir}/build/data:{grids_dir}" if grids_dir \
-            else f"{ref_dir}/build/data:{ROOT}/data:{ROOT}/data/tests"
-        self.env.update({
-            "PROJ_DATA": search,
-            "PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY": "YES",
-            "PROJ_NETWORK": "OFF",
-            "LD_LIBRARY_PATH": f"{ref_dir}/build/lib",
-        })
+        if network:
+            search = f"{ref_dir}/build/data"
+            self.env.update({"PROJ_DATA": search, "PROJ_NETWORK": "ON"})
+            self.env.pop("PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY", None)
+        else:
+            search = f"{ref_dir}/build/data:{grids_dir}" if grids_dir \
+                else f"{ref_dir}/build/data:{ROOT}/data:{ROOT}/data/tests"
+            self.env.update({"PROJ_DATA": search, "PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY": "YES",
+                             "PROJ_NETWORK": "OFF"})
+        self.env["LD_LIBRARY_PATH"] = f"{ref_dir}/build/lib"
 
     def run(self, tool, args, lines):
         text = "".join(f"{line}\n" for line in lines)
-        proc = subprocess.run([f"{self.ref}/build/bin/{tool}", *args], input=text,
-                              capture_output=True, text=True, env=self.env, check=False)
-        return proc.returncode, proc.stdout.splitlines()
+        if not self.network:
+            return _exec(self.ref, self.env, tool, args, text)
+        with tempfile.TemporaryDirectory(prefix="parity-net-") as user_dir:
+            return _exec(self.ref, {**self.env, "PROJ_USER_WRITABLE_DIRECTORY": user_dir},
+                         tool, args, text)
 
     def grid_free(self, src, dst):
         proc = subprocess.run([f"{self.ref}/build/bin/projinfo", "-s", src, "-t", dst],
                               capture_output=True, text=True, env=self.env, check=False)
         return proc.returncode == 0 and "grid missing" not in proc.stdout
+
+
+def _exec(ref, env, tool, args, text):
+    proc = subprocess.run([f"{ref}/build/bin/{tool}", *args], input=text,
+                          capture_output=True, text=True, env=env, check=False)
+    return proc.returncode, proc.stdout.splitlines()
 
 
 def projection_defs(ids):

@@ -39,6 +39,7 @@ from families_grids import (
 )
 from families_export import fam_projinfo_export
 from families_geod import fam_geod
+from families_network import fam_network
 from families_proj import fam_cct, fam_projections
 from generator import Generator
 from reference import Reference
@@ -81,6 +82,9 @@ def main():
                         help="familles geod seules (N par famille), pour tests/parity/geod")
     parser.add_argument("--export", type=int, default=0, metavar="N",
                         help="corpus projinfo-export seul : environ N objets (tests/parity/export)")
+    parser.add_argument("--network", type=int, default=0,
+                        help="N paires dont l'opération utilise une grille du CDN (réseau ON), "
+                        "pour tests/parity/network")
     options = parser.parse_args()
     catalog = Catalog(Path(options.reference_dir) / "build/data/proj.db")
     if options.grid_select:
@@ -88,12 +92,17 @@ def main():
         ops, sizes = select_grid_ops(candidates, catalog, options.grid_count, options.seed)
         write_grid_selection(ops, sizes, Path(options.grid_ops), GRID_LIST)
         return
-    gen = Generator(catalog, Reference(options.reference_dir, options.grids_dir),
+    gen = Generator(catalog, Reference(options.reference_dir, options.grids_dir,
+                                       network=options.network > 0),
                     random.Random(options.seed), points=options.points, world=options.world)
     if options.export:
         fam_projinfo_export(gen, options.export)
     elif options.grids_dir:
         build_grids(gen, options.grids_dir, options.grid_ops, options.points)
+    elif options.network:
+        candidates = grid_candidates(Path(options.reference_dir) / "build/data/proj.db")
+        pairs = fam_network(gen, candidates, options.network, options.points)
+        print(f"{pairs} paires retenues parmi {len(candidates)} opérations à grille du CDN")
     elif options.geod:
         fam_geod(gen, options.geod)
     else:
