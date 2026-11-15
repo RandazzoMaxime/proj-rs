@@ -120,29 +120,6 @@ fn samples_of(width: u16, height: u16, pixel: impl Fn(f32, f32) -> Vec<f32>) -> 
     out
 }
 
-/// The horizontal grid served as `fr_ign_gr3df97a.tif` and as `fr_ign_ntf_r93.tif`: three
-/// samples (the shifts in `xyzgridshift` order), 40 x 32 pixels of 0.5 degree over
-/// `lon -10..10`, `lat 40..56`.
-pub(crate) fn france_xyz_grid() -> Vec<u8> {
-    let samples = samples_of(40, 32, |col, row| {
-        vec![0.5 + 0.01 * col, -0.25 - 0.02 * row, 0.1 * row]
-    });
-    geotiff(40, 32, -10.0, 56.0, 0.5, 3, &samples)
-}
-
-/// The global geoid grid served as `us_nga_egm08_25.tif`: 72 x 36 pixels of 5 degrees.
-pub(crate) fn global_geoid_grid() -> Vec<u8> {
-    let samples = samples_of(72, 36, |col, row| vec![-20.0 + 0.1 * col - 0.05 * row]);
-    geotiff(72, 36, -180.0, 90.0, 5.0, 1, &samples)
-}
-
-/// The NGVD29 to NAVD88 grid served as `us_noaa_vertcone.tif`: 60 x 30 pixels of 1 degree over
-/// `lon -130..-70`, `lat 25..55`.
-pub(crate) fn conus_vertical_grid() -> Vec<u8> {
-    let samples = samples_of(60, 30, |col, row| vec![-0.15 + 0.001 * col - 0.002 * row]);
-    geotiff(60, 30, -130.0, 55.0, 1.0, 1, &samples)
-}
-
 /// The grid of the cache tests, served as `fr_ign_ntf_r93.tif`: three samples, 128 x 96 pixels
 /// of 0.25 degree over `lon -10..22`, `lat 32..56`. At about 144 KiB it spans nine 16 KiB
 /// chunks, more than the two the saturation test keeps.

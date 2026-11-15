@@ -95,9 +95,9 @@ l'extraction de la taille depuis `Content-Range`.
 | 6 | `simul_open_error` | porté | Voir « Cas portés ». |
 | 7 | `simul_read_range_error` | porté | Voir « Cas portés ». |
 | 8 | `simul_file_change_while_opened` | porté | Voir « Cas portés ». |
-| 9 | `curl_hgridshift` | écart | Grille CDN `fr_ign_gr3df97a.tif` absente du dépôt. Valeurs de référence : tentées avec le `proj` de référence sur `tests/gie/tests/test_hgrid_with_subgrid.tif` (et `test_hgrid_degree.tif`), refusées avec `could not find required grid(s)` quel que soit le chemin. Cause de ce refus non élucidée ; sans valeur PROJ, pas de port. |
-| 10 | `curl_vgridshift` | écart | Même cause que 9 (`egm08_25.tif`, absente ; pas de fixture de référence chargée par `proj`). |
-| 11 | `curl_vgridshift_vertcon` | écart | Même cause que 9 (`vertcone.tif`, absente). |
+| 9 | `curl_hgridshift` | porté contre le vrai CDN | `fr_ign_gr3df97a.tif` lu sur `https://cdn.proj.org`, le TEST C++ entier (trois `EXPECT_NEAR`) et les valeurs de libproj 9.9.0 mesurées sur cette grille. Voir « Cas portés » et `docs/PORTING-network.md`. |
+| 10 | `curl_vgridshift` | porté contre le vrai CDN | `us_nga_egm08_25.tif` (le nom que PROJ demande au CDN ; le commentaire C++ dit `egm08_25.tif`) lu sur le CDN, le TEST entier. |
+| 11 | `curl_vgridshift_vertcon` | porté contre le vrai CDN | `us_noaa_vertcone.tif` (le nom demandé au CDN ; le commentaire C++ dit `vertcone.tif`) lu sur le CDN, le TEST entier. |
 | 12 | `network_endpoint_env_variable` | porté | Voir « Cas portés ». |
 | 13 | `network_endpoint_api_and_not_reachable_gridshift` | porté | Voir « Cas portés ». |
 | 14 | `network_endpoint_api_and_not_reachable_xyzgridshift` | porté | Voir « Cas portés ». |
@@ -304,6 +304,7 @@ HTTP que `src/network.rs`. Ce lot ne le touche pas (autre agent).
 ```
 cargo test --test unit_network_core --test unit_network_endpoint_env --test unit_network_local --test network_grid
 cargo test --test unit_network_basic
+cargo test --test unit_network_grids
 cargo test --test unit_network_download
 cargo test --test unit_network_file_api
 cargo test --lib callback_tests
@@ -321,9 +322,9 @@ ne sont pas réécrites ; ce qui suit les complète pour les cas de ce lot.
 | `networking.cache_saturation` | `tests/unit_network_cache.rs::cache_saturation` | porté : limite de 2 chunks par `PROJ_GRID_CACHE_MAX_SIZE_BYTES=32768`, 2 lignes dans `chunk_data`, `chunks` et `linked_chunks`. |
 | `networking.cache_ttl` | `tests/unit_network_cache.rs::cache_ttl` | porté : TTL négatif = données corrompues utilisées (build en échec), TTL 86400 = téléchargement de nouveau, `lastChecked`, `lastModified` et `etag` mis à jour. |
 | `networking.cache_lock` | `tests/unit_network_cache.rs::cache_lock` | porté : build sans cache après 25 essais, durée au moins 650 ms (calendrier de PROJ). Écart : PROJ vérifie `>= 1` s en secondes entières (fiche, point 3). |
-| `networking.curl_hgridshift` | `tests/unit_network_grids.rs::curl_hgridshift` | porté avec fixture `fr_ign_gr3df97a.tif` (xyzgridshift, trois échantillons) ; valeurs du binaire réseau de référence sur les mêmes octets (fiche, points 4 et 6). `proj_assign_context` non porté (point 5). |
-| `networking.curl_vgridshift` | `tests/unit_network_grids.rs::curl_vgridshift` | porté avec fixture `us_nga_egm08_25.tif` ; valeur de référence `14.6249995232`, pas `-31.89` du CDN. |
-| `networking.curl_vgridshift_vertcon` | `tests/unit_network_grids.rs::curl_vgridshift_vertcon` | porté avec fixture `us_noaa_vertcone.tif` ; valeur de référence `-0.1295000091`, pas `-0.15` du CDN. |
+| `networking.curl_hgridshift` | `tests/unit_network_grids.rs::curl_hgridshift` | porté contre le vrai CDN (`fr_ign_gr3df97a.tif`) : trois assertions C++ aux tolérances de PROJ, plus les valeurs de libproj 9.9.0 mesurées à 1e-9. `proj_assign_context` non porté (point 5 de la fiche). |
+| `networking.curl_vgridshift` | `tests/unit_network_grids.rs::curl_vgridshift` | porté contre le vrai CDN (`us_nga_egm08_25.tif`) : trois assertions C++ et la hauteur mesurée `-31.889799118042117`. |
+| `networking.curl_vgridshift_vertcon` | `tests/unit_network_grids.rs::curl_vgridshift_vertcon` | porté contre le vrai CDN (`us_noaa_vertcone.tif`) : trois assertions C++ et la hauteur mesurée `-0.15375280380249004`. |
 
 Non portés dans ce lot, hors de sa liste : `networking.basic` (partie réseau activé),
 `initial_check`, `network_endpoint_*`, `download_whole_files`, `file_api`,

@@ -28,6 +28,7 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
 | `networking.download_whole_files` (`test_network.cpp:1859`, 37 assertions) | `tests/unit_network_download.rs` (1 cas, contre le vrai CDN) |
 | `networking.file_api` (`test_network.cpp:2043`, 15 assertions) | `tests/unit_network_file_api.rs` (1 cas, contre le vrai CDN) |
 | `networking.basic` (`test_network.cpp:121`, quatre états et une valeur) | `tests/unit_network_basic.rs` (1 cas, contre le vrai CDN) ; `tests/unit_network_local.rs` garde en plus le cas « off, aucune requête » |
+| `networking.curl_hgridshift`, `curl_vgridshift`, `curl_vgridshift_vertcon` (`test_network.cpp:1109`, `1144`, `1180`) | `tests/unit_network_grids.rs` (3 cas, contre le vrai CDN) |
 | sonde `initial_check` (`cdn_reachable`), partagée | `tests/net_cdn/mod.rs` (incluse par `#[path]` dans les deux cas) |
 | `src/apps/projsync.cpp`, `test/cli/test_projsync.sh` | non porté (voir l'audit) |
 
@@ -268,6 +269,48 @@ du port :
 - **Preuve de vérification.** Le test a passé dès le premier lancement, sans modification de `src/`. Pour
   prouver que l'assertion de valeur est active, la valeur attendue a été remplacée par `1.9992776858` : échec
   (`longitude 1.9992776847752205 against PROJ 1.9992776858`), puis rétablissement de la valeur de PROJ.
+
+## networking.curl_* (porté contre le vrai CDN)
+
+Les trois TEST (`test/unit/test_network.cpp:1109`, `1144`, `1180`) sont portés dans
+`tests/unit_network_grids.rs`, avec les grilles réelles de `https://cdn.proj.org`. Ils ne
+dépendent plus de fixtures : les trois grilles de substitution (`fr_ign_gr3df97a.tif`,
+`us_nga_egm08_25.tif`, `us_noaa_vertcone.tif`, écrites par `tests/net_support/grids.rs`) ont été
+retirées, leurs seuls appelants étant ces trois cas. Table ligne par ligne :
+`docs/AUDIT-network.md`, lignes 9 à 11 et « Cas portés ». Choix du port :
+
+- **Garde `networkAccessOK`.** Chaque cas sort tôt quand la sonde `cdn_reachable` échoue, comme
+  `if (!networkAccessOK) return;`. Le cas ne sort pas en silence sans le dire : il l'écrit dans la
+  sortie du test.
+- **Contexte.** Un `ProjBuilder` par cas, cache de grilles coupé (`proj_grid_cache_set_enable(false)`),
+  réseau activé (`proj_context_set_enable_network(true)`), répertoire utilisateur temporaire du
+  processus (`set_user_writable_directory`), supprimé à la fin. Le cache étant coupé, rien n'y est écrit.
+- **Assertions.** Les trois `EXPECT_NEAR` de chaque TEST sont repris avec leurs tolérances (1e-8 pour
+  lat/lon, 1e-2 pour la hauteur), et `ASSERT_NE(P, nullptr)` devient le `expect` de la création.
+  Les valeurs de libproj 9.9.0 sont ajoutées, mesurées avec un programme C contre `libproj` 9.9.0
+  (réseau et TIFF, `%.17g`, `PROJ_DATA` de la référence), et vérifiées à 1e-9. Mesures :
+
+  | cas | entrée | sortie (lat, lon, hauteur) |
+  |---|---|---|
+  | `curl_hgridshift` | `EPSG:4275` vers `EPSG:4171`, `(lon, lat) = (2, 49)` | `48.999932260028217`, `1.9992776848010316`, `0` |
+  | `curl_vgridshift` | `EPSG:4979` vers `EPSG:4326+3855`, `(150, -30, 0)` | `-29.999999999999996`, `150`, `-31.889799118042117` |
+  | `curl_vgridshift_vertcon` | `EPSG:4269+7968` vers `EPSG:4269+5703`, `(-80, 40, 0)` | `40`, `-80`, `-0.15375280380249004` |
+
+  Les grilles utilisées sont celles du journal de `libproj` (`PROJ_DEBUG=3`) : `fr_ign_gr3df97a.tif`,
+  `us_nga_egm08_25.tif`, `us_noaa_vertcone.tif`. Les commentaires C++ écrivent `egm08_25.tif` et
+  `vertcone.tif` ; le CDN et PROJ demandent les noms préfixés `us_nga_` et `us_noaa_`.
+- **Ce que le vrai fichier change par rapport aux fixtures.** Les fixtures donnaient des valeurs de
+  référence qui ne sont pas celles du CDN : `14.6249995232` au lieu de `-31.889799118042117` pour
+  `curl_vgridshift`, `-0.1295000091` au lieu de `-0.153752803802490` pour `curl_vgridshift_vertcon`,
+  et pour `curl_hgridshift` un décalage de `48.9968893575` / `1.9999925459` au lieu de
+  `48.9999322600` / `1.9992776848`. Les trois cas passent contre le vrai CDN dès la première exécution,
+  sans changement de `src/` : aucun écart avec PROJ n'a été trouvé.
+- **Preuve que l'assertion de valeur est active.** La hauteur attendue de `curl_vgridshift_vertcon`
+  a été remplacée par `-0.1295000091` (la valeur de la fixture) : échec, `height -0.15375280380249004
+  against PROJ`, dans `tests/unit_network_grids.rs:145`. La valeur a été rétablie avant les
+  lancements suivants.
+- **Non porté.** `proj_assign_context` sur la transformation, puis la destruction du contexte : le
+  port n'a pas d'équivalent (`ProjBuilder` possède son réseau, voir « Contexte » plus haut).
 
 ## API de fichiers
 
