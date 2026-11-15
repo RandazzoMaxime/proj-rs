@@ -98,10 +98,9 @@ vecteur, d'où 37,6 → 27,4.
 
 ## Ce qui n'est pas couvert
 
-- `Operation`, `Proj::convert_array` et le moteur de pipeline travaillent point par point
-  (`Step::forward`, `Arc<dyn Step>`). Les lots ne sont atteints que par `Tmerc`, `Lcc` et
-  `Mercator`. Les brancher demande un `Step::forward_batch` et une décision sur l'erreur d'un
-  point (`convert_array` laisse la tranche inchangée si un point échoue) : lot à part.
+- `Proj::convert_array` et `project_array` utilisent ces lots pour Transverse Mercator exact,
+  Lambert conique conforme et Mercator sans `+over` (`docs/PORTING-batch-api.md`). `Proj::convert`,
+  `Operation::forward` et les points un à un restent scalaires.
 - Les autres projections (aea, eqc, stere, …) et Helmert n'ont pas de noyau vectoriel. Helmert
   fait 9 ns par point en scalaire.
 - Hors Linux avec glibc, les fonctions mathématiques sont celles de la bibliothèque C, une voie
