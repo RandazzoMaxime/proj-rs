@@ -282,3 +282,16 @@ fn datum_pivot_reads_the_crs_of_a_datum_ensemble() {
         ]
     );
 }
+
+/// `projinfo -s EPSG:4970 -t EPSG:7659 --summary --spatial-test intersects` (PROJ 9.9.0): a result of the datum pivot whose steps are PROJ transformations (`WGS 84 to WGS 84 (G873)`) does not end the search (`hasResultSetOnlyResultsWithPROJStep`, coordinateoperationfactory.cpp:3136-3163): the IGNF pairs add theirs.
+#[test]
+fn the_pivot_keeps_going_after_results_with_a_proj_step() {
+    let operations = candidates("EPSG:4970", "EPSG:7659", GridAvailabilityUse::UseForSorting);
+    assert_eq!(
+        names(&operations),
+        [
+            "Conversion from RGR92 (geocentric) to RGR92 (geog3D) + RGR92 to WGS 84 (1) + WGS 84 to WGS 84 (G873)",
+            "Conversion from RGR92 to RGR92 (geographic) + RGR92 (RESEAU GEODESIQUE DE LA REUNION 1992) vers WGS 84 + WGS 84 to WGS 84 (G873)",
+        ]
+    );
+}

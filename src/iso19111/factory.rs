@@ -7767,6 +7767,10 @@ fn datum_pivot_operations(
     pairs.sort_by_key(|(left, right)| {
         u8::from(!(left.name() == source.name() && right.name() == target.name()))
     });
+    // `res` of `createOperationsWithDatumPivot`: the results of a pair whose steps are all PROJ
+    // transformations do not end the search (`hasResultSetOnlyResultsWithPROJStep`), the next
+    // pairs add theirs.
+    let mut res: Vec<CoordinateOperation> = Vec::new();
     for (left, right) in pairs {
         let (left_leg, right_leg) = if both_3d {
             (
@@ -7834,8 +7838,9 @@ fn datum_pivot_operations(
             source,
             target,
         );
-        if !linked.is_empty() {
-            return linked;
+        res.extend(linked);
+        if !res.is_empty() && !only_results_with_proj_step(&res) {
+            return res;
         }
     }
     // `createTransformations` without `useOnlyDirectRegistryOp` (iterations 1 and 2): the full
@@ -7843,7 +7848,7 @@ fn datum_pivot_operations(
     // runs for identified CRS too: PROJ's ETRF2005 to ETRF2014 result (the ITRF chains, not the
     // ETRS89 pivot of the intermediate search) comes from here (test_projinfo.yaml#88).
     if context.has_guard(GUARD_DATUM_PIVOT) {
-        return Vec::new();
+        return res;
     }
     let kind = |crs: &Crs| match geographic_of(crs) {
         Some(geographic) if geographic.coordinate_system().axes().len() == 3 => 1,
@@ -7911,9 +7916,9 @@ fn datum_pivot_operations(
                 if iteration != 0 && (iteration == 1) != (kind(left) == kind(right)) {
                     continue;
                 }
-                let linked = linked_pair(left, right);
-                if !linked.is_empty() {
-                    return linked;
+                res.extend(linked_pair(left, right));
+                if !res.is_empty() && !only_results_with_proj_step(&res) {
+                    return res;
                 }
             }
         }
@@ -7925,14 +7930,32 @@ fn datum_pivot_operations(
                 if same_source_name && right.name() == target.name() {
                     continue;
                 }
-                let linked = linked_pair(left, right);
-                if !linked.is_empty() {
-                    return linked;
+                res.extend(linked_pair(left, right));
+                if !res.is_empty() && !only_results_with_proj_step(&res) {
+                    return res;
                 }
             }
         }
     }
-    Vec::new()
+    res
+}
+
+/// `hasResultSetOnlyResultsWithPROJStep` (coordinateoperationfactory.cpp:3136-3163): every
+/// operation is a concatenation with a step identified in the `PROJ` code space.
+fn only_results_with_proj_step(operations: &[CoordinateOperation]) -> bool {
+    operations.iter().all(|operation| {
+        let CoordinateOperation::Concatenated(concatenated) = operation else {
+            return false;
+        };
+        concatenated.steps.iter().any(|step| {
+            step.operation.identifiers().first().is_some_and(|id| {
+                matches!(
+                    id.code_space(),
+                    "PROJ" | "INVERSE(PROJ)" | "DERIVED_FROM(PROJ)"
+                )
+            })
+        })
+    })
 }
 
 /// `createOperationsFromDatabase` (`coordinateoperationfactory.cpp:4359-4387`): a two-dimensional
