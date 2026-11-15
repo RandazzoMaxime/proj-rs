@@ -313,6 +313,56 @@ fn file_downloads_once_and_then_says_it_is_already_there() {
     let _removed = std::fs::remove_file(&file);
 }
 
+/// Without `--endpoint` the endpoint is the CDN, as in the script. The index is local, so the run
+/// stays offline.
+#[test]
+fn default_endpoint_is_the_cdn() {
+    let dir = TestDir::new("default-endpoint");
+    let local = dir.path().join("index.geojson");
+    std::fs::write(&local, INDEX).expect("local index");
+    let output = Command::new(env!("CARGO_BIN_EXE_projsync"))
+        .args(["--source-id", "fr_ign", "--dry-run", "--local-geojson-file"])
+        .arg(&local)
+        .arg("--target-dir")
+        .arg(dir.path())
+        .env_remove("PROJ_NETWORK_ENDPOINT")
+        .output()
+        .expect("projsync runs");
+    assert!(output.status.success(), "{}", stderr_of(&output));
+    assert_eq!(
+        stdout_of(&output),
+        format!(
+            "Downloading from {REFERENCE_ENDPOINT} into {}\n{SOURCE_FR_IGN}",
+            dir.path().display()
+        )
+    );
+}
+
+/// Without `--target-dir` the target is the user-writable directory, `PROJ_USER_WRITABLE_DIRECTORY`:
+/// the script runs most of its cases this way.
+#[test]
+fn default_target_is_the_user_writable_directory() {
+    let dir = TestDir::new("default-target");
+    let server = server();
+    let output = Command::new(env!("CARGO_BIN_EXE_projsync"))
+        .arg("--endpoint")
+        .arg(server.url())
+        .args(["--file", "ntf_r93"])
+        .env("PROJ_USER_WRITABLE_DIRECTORY", dir.path())
+        .output()
+        .expect("projsync runs");
+    assert!(output.status.success(), "{}", stderr_of(&output));
+    let url = format!("{}/fr_ign_ntf_r93.tif", server.url());
+    assert_eq!(
+        body_of(&output, dir.path(), &server),
+        format!("Total to download: 12345 bytes\nDownloading {url}... (1 / 1)\n")
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("fr_ign_ntf_r93.tif")).expect("downloaded"),
+        b"proj-rs test grid"
+    );
+}
+
 #[test]
 fn unknown_file_fails_and_lists_the_known_ones() {
     let dir = TestDir::new("unknown-file");

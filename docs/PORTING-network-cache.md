@@ -47,7 +47,7 @@ réseau : `docs/PORTING-network.md`.
 3. **`cache_lock`.** PROJ compte le temps en secondes entières (`time_t`, `>= 1`). Ici la
    durée réelle est vérifiée contre le calendrier de PROJ : 25 essais, soit 650 ms au
    minimum.
-4. **Valeurs de référence.** Le CDN (`cdn.proj.org`) n'est pas accessible. Les grilles sont
+4. **Valeurs de référence.** Les tests de ce lot ne lisent pas `cdn.proj.org` : les grilles sont
    des fixtures à nous, et les valeurs (`1.9992776848`, `-31.89`, `-0.15` du C++) ne sont pas
    reprises : chaque test porte la valeur que PROJ 9.9.0 donne sur les mêmes octets.
 5. **`proj_assign_context`** (dans les trois cas `curl_*`) n'est pas porté : le contexte
@@ -55,7 +55,7 @@ réseau : `docs/PORTING-network.md`.
 6. **Binaire de référence.** `tools/build-reference.sh` compile PROJ sans curl ni TIFF.
    Dans ce build, `cs2cs` répond `Network functionality not available`, ne lit pas les
    `.tif`, et c'est la cause du `could not find required grid(s)` des fixtures. Les valeurs
-   viennent donc de `target/proj-reference/build-net` (curl et TIFF activés). Même avec
+   viennent donc de `target/proj-reference-net/build` (curl et TIFF activés). Même avec
    curl, ce build télécharge mal depuis un serveur sans `206` (`python3 -m http.server`) :
    `proj_download_file` échoue sur `files.geojson`. Les calculs de grille sont faits sur
    les fichiers locaux (mêmes octets).
@@ -64,12 +64,14 @@ réseau : `docs/PORTING-network.md`.
    premier répertoire de `PROJ_DATA` ou `PROJ_LIB`, et échoue sans l'un des deux : PROJ
    utilise un répertoire « share » compilé, que la crate n'expose pas.
 8. **`projsync` : téléchargement.** Même écart que le point 2 : un fichier expiré est
-   téléchargé à nouveau. La ligne `Downloading ...` du mode réel n'est pas comparée au
-   binaire de référence (point 6) : le texte vient de `projsync.cpp`, lignes 588-613.
+   téléchargé à nouveau. Le mode réel (`--file ntf_r93`) a été joué sur les deux binaires, CDN
+   joint par `HTTPS_PROXY` : même ligne `Downloading ...`, même code de sortie, même fichier
+   (93581 octets).
 9. **`projsync` : index.** L'index des tests est un fichier de test de même forme que
-   `files.geojson`, pas celui du CDN. Les sorties en mode `--dry-run`, `--list-files` et
-   messages d'erreur sont celles du binaire de référence sur ce même index (data version
-   1.25).
+   `files.geojson`, pas celui du CDN. Les sorties en mode `--dry-run`, `--list-files`, le
+   téléchargement réel et les messages d'erreur sont ceux du binaire de référence sur ce même
+   index (data version 1.25) : les quinze appels du script, identiques
+   (`docs/AUDIT-network.md`, section projsync).
 10. **Booléens.** Les options publiques n'ont pas de paramètre `bool` : `GridCacheMode`,
     `GridCacheTtl`, `SpatialTest`, `WorldCoverage`, `VersionFiltering`. `grid_cache_enable(bool)`
     reste, pour la compatibilité, et s'appuie sur `set_grid_cache_enabled`.
@@ -84,19 +86,19 @@ Binaire de référence avec curl et TIFF (une fois, sous Debian/Ubuntu avec `lib
 et `libtiff-dev`) :
 
 ```
-cmake -S target/proj-reference/src -B target/proj-reference/build-net \
+cmake -S target/proj-reference/src -B target/proj-reference-net/build \
   -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DENABLE_TIFF=ON -DENABLE_CURL=ON \
   -DBUILD_PROJSYNC=ON -DEXE_SQLITE3=$PWD/target/proj-reference/shim/sqlite3
-cmake --build target/proj-reference/build-net
+cmake --build target/proj-reference-net/build
 ```
 
 Comparaison d'une grille (exemple, `cct` sur la fixture écrite par
 `tests/net_support/grids.rs::cache_grid`) :
 
 ```
-echo "2 49 0 0" | PROJ_DATA=target/proj-reference/build-net/data \
-  LD_LIBRARY_PATH=target/proj-reference/build-net/lib \
-  target/proj-reference/build-net/bin/cct -d 10 +proj=pipeline \
+echo "2 49 0 0" | PROJ_DATA=target/proj-reference-net/build/data \
+  LD_LIBRARY_PATH=target/proj-reference-net/build/lib \
+  target/proj-reference-net/build/bin/cct -d 10 +proj=pipeline \
   +step +proj=unitconvert +xy_in=deg +xy_out=rad \
   +step +proj=hgridshift +grids=<fichier.tif> \
   +step +proj=unitconvert +xy_in=rad +xy_out=deg

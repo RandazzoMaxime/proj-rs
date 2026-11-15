@@ -29,7 +29,7 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
 | `networking.file_api` (`test_network.cpp:2043`, 15 assertions) | `tests/unit_network_file_api.rs` (1 cas, contre le vrai CDN) |
 | `networking.basic` (`test_network.cpp:121`, quatre états et une valeur) | `tests/unit_network_basic.rs` (1 cas, contre le vrai CDN) ; `tests/unit_network_local.rs` garde en plus le cas « off, aucune requête » |
 | sonde `initial_check` (`cdn_reachable`), partagée | `tests/net_cdn/mod.rs` (incluse par `#[path]` dans les deux cas) |
-| `src/apps/projsync.cpp`, `test/cli/test_projsync.sh` | non porté (voir l'audit) |
+| `src/apps/projsync.cpp`, `test/cli/test_projsync.sh` | `src/bin/projsync.rs`, `src/projsync.rs` ; `tests/unit_projsync.rs` (22 cas, les 15 appels du script) ; cache et téléchargement : `docs/PORTING-network-cache.md` ; table de couverture : `docs/AUDIT-network.md`, section projsync |
 
 ## Décisions et écarts volontaires
 
@@ -291,14 +291,14 @@ l'API (`gridpath::resolve`, `gridpath::read`, `network::read_file`).
   `defmodel`, `nkg`) lit encore les grilles entières (`fetch_missing`, `fetch_with_callbacks`).
 - Rechargement au changement pour `hgridshift`, `gridshift` et `xyzgridshift` (seule
   `vgridshift` recharge), et pour les lectures entières (`read_whole`).
-- Validation de cache par `ETag` et `Last-Modified` : cache disque (lot cache).
-- Cache SQLite : TTL, taille max, verrou, `proj_grid_cache_clear` (lot cache, autre agent).
+- Validation de cache par `ETag` et `Last-Modified` : cache disque, sans requête conditionnelle
+  (`docs/PORTING-network-cache.md`, point 2).
+- Cache de grilles (SQLite : TTL, taille max, verrou, `proj_grid_cache_clear`) : porté, écarts dans
+  `docs/PORTING-network-cache.md`.
 - API de fichiers : routée pour la recherche, les lectures de grilles, modèles et dictionnaires, le
   répertoire utilisateur et le téléchargement (voir « API de fichiers »). Restent sur `std::fs` :
   `proj.ini`, le répertoire et l'effacement du cache de morceaux, `projsync`, la CLI gie. Ni façade C,
   ni vérification par `Range`.
-- `docs/UNPORTED-UNIT.md` liste encore `networking.file_api` : ce lot ne l'a pas retiré (consigne : ne
-  pas éditer le ledger). Le retrait suit avec `UPDATE_DOCS=1 cargo test --test docs_in_sync`.
 - Façade C des opérations (`proj_create_operations`, contexte de fabrique C) : absente. Le cas
   de `do_not_attempt_network_access_known_available_network_on` est couvert par
   `ProjBuilder::create_operations`, sans façade C.
@@ -316,17 +316,14 @@ l'API (`gridpath::resolve`, `gridpath::read`, `network::read_file`).
   `available` seulement.
 - Grille `http(s)://` sans ligne : son URL est prise telle quelle, sans sonde (comportement
   antérieur, `unrecorded_grid`) ; PROJ n'écrit l'URL qu'après une ouverture réussie.
-- `docs/UNPORTED-UNIT.md` liste encore `networking.pyproj_issue_1192` et
-  `networking.do_not_attempt_network_access_known_available_network_on` : ce lot ne les a pas retirés
-  (consigne : ne pas éditer le ledger). Le retrait suit avec `UPDATE_DOCS=1 cargo test --test
-  docs_in_sync`.
-- `projsync` : non commencé.
+- `docs/UNPORTED-UNIT.md` et `docs/UNIT-TRIAGE.md` ne listent plus que `networking.pyproj_issue_1192`
+  (voir la lacune ci-dessus). Le retrait est au mainteneur (`UPDATE_DOCS=1 cargo test --test
+  docs_in_sync`).
+- `projsync` : porté (lot cache). Fiche : `docs/PORTING-network-cache.md` ; couverture des 15 appels du
+  script : `docs/AUDIT-network.md`, section projsync.
 - `basic` : porté en entier (voir « networking.basic (porté) »). Rien ne reste ouvert pour ce cas.
 - `pj_find_file` avec `disable_network = false` : non porté. `find_local_file` ne regarde que le
   disque.
-- `docs/UNPORTED-UNIT.md` liste encore `networking.download_whole_files` et `networking.basic`. Ce lot ne
-  les a pas retirés (consigne : ne pas éditer le ledger) : le retrait suit avec `UPDATE_DOCS=1 cargo test
-  --test docs_in_sync`, par le mainteneur.
 
 ## Commandes
 
@@ -337,5 +334,6 @@ cargo test --test unit_network_file_api
 cargo test --test unit_network_core proj_coordoperation_get_grid_used
 cargo test --test unit_network_basic
 cargo test --lib callback_tests
+cargo test --test unit_projsync --test unit_network_cache --test unit_network_grids
 cargo +1.100.0 clippy --all-targets --all-features -- -D warnings
 ```
