@@ -19,7 +19,7 @@ use std::f64::consts::PI;
 use std::sync::{Arc, Mutex};
 
 #[path = "net_support/grids.rs"]
-#[allow(dead_code)]
+#[expect(dead_code, reason = "this test uses the GeoTIFF writers only")]
 mod grids;
 
 use proj_rs::{NetworkCallbacks, NetworkError, NetworkHandle, OpenReply, ProjBuilder};
@@ -79,6 +79,10 @@ impl Journal {
         }
     }
 
+    #[expect(
+        clippy::fn_params_excessive_bools,
+        reason = "the journal stores, per handle, whether it read the changed file"
+    )]
     fn version(&self, changed: bool) -> &[u8] {
         if changed {
             &self.after
@@ -210,10 +214,7 @@ fn hgridshift_forward_reloads_the_grid_when_its_file_changed() {
     let (x, y, _) = proj
         .convert_xyz(radians(3.0, 2.0).0, radians(3.0, 2.0).1, 0.0)
         .expect("(3, 2) is in the grid");
-    assert_point(
-        (x, y),
-        (0.052_388_966_379_986_059, 0.034_921_129_449_964_679),
-    );
+    assert_point((x, y), (0.052_388_966_379_986_06, 0.034_921_129_449_964_68));
     drop(proj);
     assert_in_order(&journal.lines(), HGRID_RELOAD);
 }
@@ -233,10 +234,7 @@ fn hgridshift_inverse_reloads_the_grid_when_its_file_changed() {
     let (x, y) = proj
         .project((lon, lat), true)
         .expect("(3, 2) is in the grid");
-    assert_point(
-        (x, y),
-        (0.052_330_788_739_673_707, 0.034_892_040_629_808_503),
-    );
+    assert_point((x, y), (0.052_330_788_739_673_71, 0.034_892_040_629_808_5));
     drop(proj);
     assert_in_order(&journal.lines(), HGRID_RELOAD);
 }
@@ -263,18 +261,12 @@ fn hgridshift_operation_made_before_the_change_reads_the_changed_chunk() {
     let (x, y, _) = second
         .convert_xyz(lon, lat, 0.0)
         .expect("(3, 2) is in the grid");
-    assert_point(
-        (x, y),
-        (0.052_388_966_379_986_059, 0.034_921_129_449_964_679),
-    );
+    assert_point((x, y), (0.052_388_966_379_986_06, 0.034_921_129_449_964_68));
     let calls_before = journal.lines().len();
     let (x, y, _) = first
         .convert_xyz(lon, lat, 0.0)
         .expect("(3, 2) is in the grid");
-    assert_point(
-        (x, y),
-        (0.052_388_966_379_986_059, 0.034_921_129_449_964_679),
-    );
+    assert_point((x, y), (0.052_388_966_379_986_06, 0.034_921_129_449_964_68));
     assert_eq!(
         journal.lines().len(),
         calls_before,
@@ -302,7 +294,7 @@ fn hgridshift_unchanged_file_is_not_reloaded() {
         .expect("(3, 2) is in the grid");
     assert_point(
         (x, y),
-        (0.052_369_573_833_821_605, 0.034_911_433_176_882_452),
+        (0.052_369_573_833_821_605, 0.034_911_433_176_882_45),
     );
     drop(proj);
     assert_eq!(journal.lines(), HGRID_UNCHANGED);
@@ -347,10 +339,7 @@ fn gridshift_inverse_reloads_the_grid_when_its_file_changed() {
     let (x, y) = proj
         .project((lon, lat), true)
         .expect("(3, 2) is in the grid");
-    assert_point(
-        (x, y),
-        (0.052_330_788_738_963_31, 0.034_892_040_629_453_308),
-    );
+    assert_point((x, y), (0.052_330_788_738_963_31, 0.034_892_040_629_453_31));
     drop(proj);
     assert_in_order(&journal.lines(), GRIDSHIFT_RELOAD);
 }
@@ -372,7 +361,7 @@ fn gridshift_unchanged_file_is_not_reloaded() {
         .expect("(3, 2) is in the grid");
     assert_point(
         (x, y),
-        (0.052_369_573_833_452_074, 0.034_911_433_176_697_683),
+        (0.052_369_573_833_452_074, 0.034_911_433_176_697_68),
     );
     drop(proj);
     assert_eq!(journal.lines(), GRIDSHIFT_UNCHANGED);
@@ -399,10 +388,7 @@ fn xyzgridshift_reloads_the_grid_when_its_file_changed() {
     let (x, y, z) = proj
         .convert_xyz(lon, lat, 0.0)
         .expect("(3, 2) is in the grid");
-    assert_point(
-        (x, y),
-        (0.052_359_747_744_978_966, 0.034_906_636_158_660_999),
-    );
+    assert_point((x, y), (0.052_359_747_744_978_966, 0.034_906_636_158_661));
     assert!((z - 1.470_891_110_599_041).abs() < 1e-9, "z {z}");
     drop(proj);
     let lines = journal.lines();
