@@ -23,6 +23,9 @@ here and 7 m in PROJ.
 - `src/iso19111/factory.rs` `pivot_concatenation`: the accuracy is `getAccuracy` of the flattened
   steps, stored with `stored_accuracy` (was the maximum of the steps).
 - `tests/concat_accuracy.rs` (new, 3 tests).
+- `src/projinfo.rs` `operation_heading`: a summed accuracy without its text prints `%.15g`
+  (`format_g`), as `projinfo` writes PROJ's accuracy string: `0.12` for a sum that is
+  `0.12000000000000001` in binary. Closes the list `EPSG:7927 -> EPSG:9452` (registry `projinfo-candidates-0851`).
 
 ## PROJ file:line map
 

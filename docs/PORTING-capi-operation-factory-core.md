@@ -2,111 +2,197 @@
 
 Source : PROJ 9.9.0, `test/unit/test_c_api.cpp` (28 cas `CApi.*`),
 `test/unit/test_operation.cpp` (5 cas `operation.*`), `test/unit/test_factory.cpp`
-(3 cas `factory.*`). Tests : `tests/unit_capi_operation_factory_core.rs`. Chaque
-fonction est un `TEST`, le nom C++ figure dans sa doc.
+(3 cas `factory.*`). Chaque fonction est un `TEST`, le nom C++ figure dans sa doc
+(Rust : `tests/unit_capi_*.rs`, `tests/unit_op_*.rs`, `tests/unit_factory_*.rs`).
 
-Bilan : 5 cas portés, 31 ouverts (36 au total).
+Bilan au 2026-11-15 : 36 cas portés, 0 partiel, 0 absent (36 au total).
 
-## Cas portés
+## Constat du 2026-11-15
 
-| PROJ 9.9.0 | Rust |
-|---|---|
-| `CApi.proj_crs_create_bound_crs_to_WGS84_on_invalid_type` | `capi_proj_crs_create_bound_crs_to_wgs84_on_invalid_type` |
-| `CApi.proj_create_from_database_grid_alternative_null_old_proj_grid_name` | `capi_proj_create_from_database_grid_alternative_null_old_proj_grid_name` |
-| `CApi.proj_create_operations` | `capi_proj_create_operations` |
-| `CApi.proj_create_operations_allow_ballpark_transformations` | `capi_proj_create_operations_allow_ballpark_transformations` |
-| `CApi.proj_trans_bounds_to_compound_crs` | `capi_proj_trans_bounds_to_compound_crs` |
+Cette fiche donnait 31 cas ouverts. Au commit de départ (`8cfd059`), la plupart avaient
+déjà un test Rust vert. Les statuts « ouvert » étaient restés d'un état antérieur. Les
+trois lignes suivantes restaient vraiment ouvertes et ont été corrigées dans ce lot :
 
-## Cas ouverts
+- `CApi.proj_coordoperation_get_grid_used` : l'URL de la grille n'était pas réécrite
+  avec l'endpoint du contexte. Corrigé : `CoordinateOperation::grids_needed_at`.
+- `CApi.proj_create_crs_to_crs_from_pj_accuracy_filter` et `_ballpark_filter` : les
+  options `ACCURACY=` et `ALLOW_BALLPARK=` étaient refusées au lieu d'être appliquées.
+  Corrigé : `Proj::create_crs_to_crs_from_pj` les lit et filtre les candidats.
 
-Chaque cas ouvert a une raison d'une ligne. Aucun n'est affaibli dans le
-fichier de tests : un cas non porté n'a pas de fonction.
+Le test `tests/proj_unit.rs` assertait un refus de `ACCURACY=0.05` sur EPSG:4326 vers
+EPSG:32631. PROJ garde cette opération (précision 0 m, `projinfo` 9.9.0). L'assertion
+est passée à `is_ok()`.
 
-### CApi
+## Inventaire : `test_c_api.cpp`
 
-| PROJ 9.9.0 | Raison |
-|---|---|
-| `CApi.proj_coordoperation_get_grid_used` | Pas de liste des grilles utilisées par une opération : `DatabaseContext::grid_info` ne renvoie que l'URL d'une grille par nom, sans réécrire l'URL avec l'endpoint du contexte. |
-| `CApi.proj_coordoperation_get_grid_used_fullname_caching` | Même absence de liste des grilles utilisées ; le cas est aussi sous `TIFF_ENABLED`. |
-| `CApi.proj_coordoperation_is_instantiable` | Pas d'API publique d'instanciabilité d'une opération. |
-| `CApi.proj_get_suggested_operation_for_NAD83_to_NAD83_HARN` | La suggestion est portée (`CoordinateOperationFactory::suggested_operation`), mais la liste diffère : `BoundingBox::intersection` ne découpe pas l'extension de EPSG:4152, qui traverse l'antiméridien (144,58 → −64,51). « NAD83 to NAD83(HARN) (47) » est trié après « (33) », donc la suggestion donne « (33) ». |
-| `CApi.proj_create_operations_prime_meridian_non_greenwich` | Source projetée (EPSG:27562) : la suggestion n'est portée que pour un CRS géographique (erreur `Unsupported`), et le nombre de grilles utilisées n'est pas exposé. |
-| `CApi.proj_get_suggested_operation_with_operations_without_area_of_use` | Source géocentrique (EPSG:6317) : la suggestion n'est portée que pour un CRS géographique. |
-| `CApi.proj_create_operations_discard_superseded` | `CoordinateOperationContext` n'a pas de drapeau « discard superseded » ; la recherche `RegistrySearch::Both` n'a pas de variante sans obsolètes (seule `Forward` en a une). |
-| `CApi.proj_create_operations_dont_discard_superseded` | Même absence du drapeau ; le test asserte les deux comptes (4 et 5). |
-| `CApi.proj_create_operations_with_pivot` | Le pivot automatique (sans `set_intermediate_crs`) n'est pas porté : PROJ donne « ED50 to ETRS89 (10) + ETRS89 to ETRS89-FRA [RGF93 v1] », le crate ne donne que le ballpark. |
-| `CApi.proj_normalize_for_visualization_with_alternatives` | Les coordonnées normalisées sont reproduites (écart < 1e-8), mais le texte du pipeline attendu n'est pas exposé : `Proj::def` renvoie « unavailable until proj_trans is called ». |
-| `CApi.proj_normalize_for_visualization_with_alternatives_reverse` | `Proj` n'expose pas `proj_degree_input` / `proj_degree_output`, que le test asserte. |
-| `CApi.proj_coordoperation_create_inverse` | `proj_as_proj_string` avec `MULTILINE`, `INDENTATION_WIDTH=4`, `MAX_LINE_LENGTH=40` : `ProjLines::Multi` a une largeur fixe de 80 colonnes et une indentation de 2. |
-| `CApi.proj_create_crs_to_crs_from_pj_accuracy_filter` | `Proj::create_crs_to_crs_from_pj` rejette toute option non vide (`ACCURACY=0.05`) au lieu de filtrer par précision. |
-| `CApi.proj_create_crs_to_crs_from_pj_ballpark_filter` | Même rejet des options (`ALLOW_BALLPARK=NO`). |
-| `CApi.proj_create_crs_to_crs_with_only_ballpark_transformations` | EPSG:25831+5773 n'est pas construit par `Proj::new_known_crs` (constat de `docs/PORTING-capi-factory-core.md`, non re-sondé dans ce lot). |
-| `CApi.proj_create_crs_to_crs_from_custom_compound_crs_with_NAD83_2011_and_geoidgrid_ref_against_WGS84_to_WGS84_G1762` | Le CRS composé avec vertical lié (`proj_crs_create_bound_vertical_crs`, `egm96_15.gtx`) n'est pas un objet que `Proj` accepte ; la chaîne ballpark n'est pas portée. |
-| `CApi.proj_create_crs_to_crs_from_custom_compound_crs_with_NAD83_2011_and_geoidgrid_ref_against_NAD83_2011_to_WGS84_G1762` | Même raison. |
-| `CApi.proj_create_vertical_crs_ex` | Constructeur `proj_create_vertical_crs_ex` (grille de géoïde, `ACCURACY`) absent. |
-| `CApi.proj_create_vertical_crs_ex_with_geog_crs` | Même absence ; la surcharge avec un CRS géographique n'existe pas. |
-| `CApi.proj_create_vertical_crs_ex_implied_accuracy` | Même absence ; la précision implicite du géoïde n'est pas dérivée. |
-| `CApi.proj_trans_bounds_ignore_inf` | `ESRI:102036` (gnomonique ellipsoïdale, lat_0 = −90) ne donne aucun point fini : `gnom_e_forward` renvoie « hors domaine » pour (180, −89), alors que les attendus C supposent des points finis dans la boîte. Défaut du port gnomonique, hors lot. |
-| `CApi.proj_trans_bounds_ignore_inf_geographic` | Le `PROJCS[...]` WKT1 en ligne n'est pas lu par `Proj::new_known_crs` (« unknown CRS »). |
-| `CApi.proj_trans_bounds_3D_ignore_inf` | Même cause que `proj_trans_bounds_ignore_inf`. |
+| `TEST` PROJ 9.9.0 | Test Rust | Statut | Cause ou écart |
+|---|---|---|---|
+| `CApi.proj_crs_create_bound_crs_to_WGS84_on_invalid_type` | `tests/unit_capi_operation_factory_core.rs` | porté | Fixture remplacée par EPSG:32631. |
+| `CApi.proj_create_from_database_grid_alternative_null_old_proj_grid_name` | `tests/unit_capi_operation_factory_core.rs` | porté | Aucun. |
+| `CApi.proj_create_operations` | `tests/unit_capi_operation_factory_core.rs` | porté | `EXPECT_GE(idx, -1)` devient `is_ok()` : pas de code -1 en Rust. |
+| `CApi.proj_create_operations_allow_ballpark_transformations` | `tests/unit_capi_operation_factory_core.rs` | porté | Aucun. |
+| `CApi.proj_trans_bounds_to_compound_crs` | `tests/unit_capi_operation_factory_core.rs` | porté | Boîte en longitude d'abord. |
+| `CApi.proj_get_suggested_operation_for_NAD83_to_NAD83_HARN` | `tests/unit_capi_suggested_nad83_harn.rs` | porté | « NAD83 to NAD83(HARN) (47) », comme PROJ. |
+| `CApi.proj_create_operations_prime_meridian_non_greenwich` | `tests/unit_capi_operations_suggest.rs` | porté | Compte de grilles par `grids_needed` (1). |
+| `CApi.proj_get_suggested_operation_with_operations_without_area_of_use` | `tests/unit_capi_operations_suggest.rs` | porté | `EXPECT_GE(idx, 0)` devient `is_some()`. |
+| `CApi.proj_create_operations_discard_superseded` | `tests/unit_capi_discard_superseded.rs` | porté | 4 opérations. |
+| `CApi.proj_create_operations_dont_discard_superseded` | `tests/unit_capi_discard_superseded.rs` | porté | 5 opérations. |
+| `CApi.proj_create_operations_with_pivot` | `tests/unit_capi_pivot_always.rs` | porté | Quatre contextes. |
+| `CApi.proj_create_vertical_crs_ex` | `tests/unit_capi_vertical_crs_ex.rs` | porté | Voir `docs/PORTING-capi-vertical-crs-ex.md`. |
+| `CApi.proj_create_vertical_crs_ex_with_geog_crs` | `tests/unit_capi_vertical_crs_ex.rs` | porté | Aller-retour PROJJSON inclus. |
+| `CApi.proj_create_vertical_crs_ex_implied_accuracy` | `tests/unit_capi_vertical_crs_ex.rs` | porté | Précision 0,15 à 1e-10 près. |
+| `CApi.proj_coordoperation_get_grid_used` | `tests/unit_capi_grid_used.rs` (2 tests) | porté | Endpoint `https://example.com` appliqué à l'URL. L'index 1 hors liste renvoie `None` ; l'index -1 n'existe pas en Rust. |
+| `CApi.proj_coordoperation_get_grid_used_fullname_caching` | `tests/unit_capi_grid_used_caching.rs` | porté | Le `TEST` C++ est sous `TIFF_ENABLED` ; le port tourne sans condition. |
+| `CApi.proj_coordoperation_is_instantiable` | `tests/unit_capi_coordop_instantiable.rs` | porté | `is_proj_instantiable` avec grilles connues. |
+| `CApi.proj_normalize_for_visualization_with_alternatives` | `tests/unit_capi_normalize_alternatives.rs` | porté | Pipeline et coordonnées à 1e-8 près. |
+| `CApi.proj_normalize_for_visualization_with_alternatives_reverse` | `tests/unit_capi_normalize_alternatives.rs` | porté | `degree_input` / `degree_output`. |
+| `CApi.proj_coordoperation_create_inverse` | `tests/unit_capi_coordop_create_inverse.rs` | porté | `ProjStringLayout::Multi` : indentation et largeur réglables. |
+| `CApi.proj_create_crs_to_crs_from_pj_accuracy_filter` | `tests/unit_capi_crs_to_crs_filters.rs` | porté | `ACCURACY=100` garde le couple, `ACCURACY=0.05` le refuse. |
+| `CApi.proj_create_crs_to_crs_from_pj_ballpark_filter` | `tests/unit_capi_crs_to_crs_filters.rs` | porté | `ALLOW_BALLPARK=YES` garde, `NO` refuse. |
+| `CApi.proj_create_crs_to_crs_with_only_ballpark_transformations` | `tests/unit_capi_crs_to_crs_filters.rs` | porté | Par `Proj::new_known_crs`, pas par `proj_create_crs_to_crs`. |
+| `CApi.proj_create_crs_to_crs_from_custom_compound_crs_with_NAD83_2011_and_geoidgrid_ref_against_WGS84_to_WGS84_G1762` | `tests/unit_capi_custom_compound_geoid.rs` | porté | Le composé est passé en WKT2, pas en objet. |
+| `CApi.proj_create_crs_to_crs_from_custom_compound_crs_with_NAD83_2011_and_geoidgrid_ref_against_NAD83_2011_to_WGS84_G1762` | `tests/unit_capi_custom_compound_geoid.rs` | porté | Idem. Époque 2010 en entrée. |
+| `CApi.proj_trans_bounds_ignore_inf` | `tests/unit_capi_trans_bounds_esri.rs` | porté | ESRI:102036. |
+| `CApi.proj_trans_bounds_ignore_inf_geographic` | `tests/unit_capi_trans_bounds_esri.rs` | porté | |
+| `CApi.proj_trans_bounds_3D_ignore_inf` | `tests/unit_capi_trans_bounds_esri.rs` | porté | |
 
-### operation
+Le `TEST` `CApi.proj_concatoperation_get_step`, qui appelle aussi `proj_create_operations`,
+est porté dans `tests/unit_shape.rs` (lot `shape`, `docs/PORTING-shape.md`). Il n'est pas
+compté ici.
 
-| PROJ 9.9.0 | Raison |
-|---|---|
-| `operation.normalizeForVisualization` | Non porté dans ce lot (test lu en partie) : combine `CompoundCRS`, `BoundCRS::createFromTOWGS84` et un aller-retour WKT2 par opération. |
-| `operation.PointMotionOperation_with_epochs` | Non porté dans ce lot. |
-| `operation.operation_Position_Vector_geocen_and_geocen_translations_NEU_velocities_gtg_with_source_epoch` | Non porté dans ce lot. |
-| `operation.operation_geocen_translations_by_grid_and_geocen_translations_NEU_velocities_gtg` | Non porté dans ce lot. |
-| `operation.operation_geocen_translations_NEU_velocities_gtg` | Non porté dans ce lot. |
+## Inventaire : `test_operation.cpp` et `test_factory.cpp`
 
-### factory
-
-| PROJ 9.9.0 | Raison |
-|---|---|
-| `factory.AuthorityFactory_createDynamicVerticalDatum` | Le test est sous `#ifdef no_more_dynamic_vertical_datum` (`test_factory.cpp`, l. 320-330) : non compilé dans PROJ 9.9.0 ; la base 9.9 n'a pas de `frame_reference_epoch` pour EPSG:1096 (voir `docs/PORTING-factory-unit.md`). |
-| `factory.AuthorityFactory_build_all_concatenated` | Neuf codes doivent échouer avec « Inconsistent chaining of CRS in operations » ; le crate n'a pas de contrôle de chaînage (voir `docs/PORTING-capi-factory-core.md`). |
-| `factory.ogc_timecrs` | `AuthorityFactory` (autorité OGC) ne lit pas `AnsiDate`, `JulianDate`, `UnixTime` : erreur `NotFound` (vérifié). |
+| `TEST` PROJ 9.9.0 | Test Rust | Statut | Cause ou écart |
+|---|---|---|---|
+| `operation.normalizeForVisualization` | `tests/unit_op_normalize_for_visualization.rs` | porté | Les six blocs du `TEST`, dont le composé et le lié (`BoundCRS::createFromTOWGS84`). Le niveau CRS du composé a son test à part (`crs_normalize_for_visualization_compound`, lot Q9). |
+| `operation.PointMotionOperation_with_epochs` | `tests/unit_io_point_motion.rs` | porté | |
+| `operation.operation_Position_Vector_geocen_and_geocen_translations_NEU_velocities_gtg_with_source_epoch` | `tests/unit_op_geocen_gtg.rs` | porté | |
+| `operation.operation_geocen_translations_by_grid_and_geocen_translations_NEU_velocities_gtg` | `tests/unit_op_geocen_gtg.rs` | porté | |
+| `operation.operation_geocen_translations_NEU_velocities_gtg` | `tests/unit_op_geocen_gtg.rs` | porté | |
+| `factory.AuthorityFactory_createDynamicVerticalDatum` | `tests/unit_factory_dynamic_vdatum.rs` | porté | Le `TEST` est sous `#ifdef no_more_dynamic_vertical_datum`, donc non compilé en PROJ 9.9.0 ; le port fixe le comportement de la base 9.9. |
+| `factory.AuthorityFactory_build_all_concatenated` | `tests/unit_factory_build_all_concatenated.rs` | porté | Les neuf codes échouent. Le message « Inconsistent chaining » n'est pas comparé. |
+| `factory.ogc_timecrs` | `tests/unit_factory_ogc_timecrs.rs` | porté | |
 
 ## Écarts volontaires
 
-- Pas d'handles C. `proj_list_get(list, -1)` n'a pas d'équivalent : le test
+- Pas de handles C. `proj_list_get(list, -1)` n'a pas d'équivalent : le test
   asserte seulement `list.get(len)` (`None`).
-- `CApi.proj_crs_create_bound_crs_to_WGS84_on_invalid_type` : le fixture
-  `createProjectedCRS()` de PROJ est remplacé par EPSG:32631 (projected CRS de la
-  base). L'assertion, un objet qui n'est pas un CRS, est portée telle quelle.
-- `CApi.proj_trans_bounds_to_compound_crs` : `Proj::transform_bounds_in` prend la
-  boîte en longitude d'abord. La boîte C `(40, -120, 64, -80)` en latitude d'abord
-  est donc `(-120, 40, -80, 64)`. Le chemin no-op renvoie la boîte inchangée.
 - `CApi.proj_create_operations` : `EXPECT_GE(idx, -1)` de PROJ devient
   `suggested_operation(...).is_ok()`. Il n'y a pas de code `-1` en Rust.
+- `CApi.proj_coordoperation_get_grid_used` : l'endpoint du contexte C est un argument
+  de `CoordinateOperation::grids_needed_at`. Il n'existe pas de contexte à lire.
+- `Proj::create_crs_to_crs_from_pj` : `ACCURACY` non numérique est une erreur (PROJ lit 0
+  par `pj_atof`). `AUTHORITY` et `ONLY_BEST` restent refusés.
+- `CApi.proj_crs_create_bound_crs_to_WGS84_on_invalid_type` : le fixture
+  `createProjectedCRS()` de PROJ est remplacé par EPSG:32631 (projected CRS de la base).
 
 ## Modifications de `src/`
 
-- `src/iso19111/suggest.rs` (nouveau) : `pj_create_prepared_operations`
-  (boîte d'aire d'utilisation, découpe à l'antiméridien, pseudo-aire, précision,
-  drapeaux offshore, inconnu et prioritaire) et `pj_get_suggested_operation`
-  (premier candidat qui couvre le point, puis précision plus basse, puis pseudo-aire
-  plus petite). Source géographique uniquement, degrés supposés.
+Lot initial (commits antérieurs) :
+
+- `src/iso19111/suggest.rs` (nouveau) : `pj_create_prepared_operations` et
+  `pj_get_suggested_operation`. Source géographique uniquement, degrés supposés.
 - `src/iso19111/factory.rs` : `CoordinateOperationFactory::suggested_operation`.
-- `src/iso19111/mod.rs` : `mod suggest;`.
-- `src/proj/bounds.rs` : `is_noop` d'un pipeline ISO vaut quand le pipeline est
-  `noop` (PROJ : `pj_info.id == "noop"`), au lieu de comparer les noms de CRS.
-  Effet : `proj_trans_bounds` sur un no-op renvoie la boîte sans contrôle de
-  densification, comme PROJ. C'est un changement de comportement ; la suite complète
-  passe.
+- `src/proj/bounds.rs` : `is_noop` d'un pipeline ISO vaut quand le pipeline est `noop`.
+
+Lot du 2026-11-15 :
+
+- `src/iso19111/select.rs` : `facade_candidates` prend un `CandidateFilter` et refuse
+  une liste vidée par le filtre (message `every operation ... is filtered out`, pas
+  « no operation from », pour ne pas tomber sur le noop de même datum). Ajout de
+  `CoordinateOperation::grids_needed_at` et de `endpoint_url`.
+- `src/proj_iso.rs` : `iso_pipeline_at` prend le `CandidateFilter`.
+- `src/proj.rs` : `crs_to_crs_options` lit `FORCE_OVER`, `ACCURACY`, `ALLOW_BALLPARK`.
+  `Proj::grids_needed` passe l'endpoint du `Proj` à la résolution des URL.
+
+## Cas ouverts
+
+Aucun cas n'est ouvert ni partiel dans `test_c_api.cpp` et `test_operation.cpp`.
+
+Le bloc composé et le bloc lié de `operation.normalizeForVisualization` étaient déjà dans
+`tests/unit_op_normalize_for_visualization.rs` (commit `ead2c4c`) et passaient : la fiche
+disait « non porté » à tort. Le lot Q9 a corrigé le seul écart réel, au niveau CRS (voir
+« Lot Q9 »).
+
+## Lot Q9 : normalisation d'un CRS composé
+
+`CRS::normalizeForVisualization` (crs.cpp 1129-1168) inverse le premier composant d'un CRS
+composé quand il en a besoin. Le port ne le faisait pas : `Crs::normalize_for_visualization`
+(`src/iso19111/projstring.rs`) laissait le composé tel quel, et `projinfo --normalize-axis-order`
+aussi. Corrigé dans `projstring.rs`, avec `must_axis_order_be_switched` et `reversed` de
+`normalize.rs`, comme PROJ.
+
+Mesure avant (libproj 9.9.0 et port, même commande) :
+
+```
+projinfo "EPSG:4326+3855" -o WKT2:2019 -q --single-line --normalize-axis-order
+libproj : COMPOUNDCRS["WGS 84 (with axis order normalized for visualization) + EGM2008 height", GEOGCRS["WGS 84 (with axis order normalized for visualization)", ...
+port    : COMPOUNDCRS["WGS 84 + EGM2008 height", GEOGCRS["WGS 84", ...   (avant le correctif)
+port    : COMPOUNDCRS["WGS 84 (with axis order normalized for visualization) + EGM2008 height", ...   (après)
+```
+
+Tests (`tests/unit_op_normalize_for_visualization.rs`), écrits d'abord :
+
+```
+avant : crs_normalize_for_visualization_compound   FAILED (left: "WGS 84 + EGM2008 height")
+        crs_normalize_for_visualization_bound      ok (le port normalisait déjà la base, comme libproj)
+après : test result: ok. 3 passed; 0 failed; 0 ignored
+```
+
+Non-régression, après le correctif :
+
+```
+cargo test --test test_operation       test result: ok. 62 passed; 0 failed; 0 ignored
+cargo test --test test_c_api           test result: ok. 52 passed; 0 failed; 0 ignored
+cargo test --test cli_yaml             test result: ok. 3 passed; 0 failed; 0 ignored   (avant et après)
+cargo test --test parity               test result: ok. 2 passed; 0 failed; 2 ignored
+cargo +stable fmt --check              code 0
+cargo +stable clippy --all-targets --all-features -- -D warnings   code 0
+```
+
+Le lié n'a pas de correctif : libproj normalise la base du lié, le port aussi. Mesure :
+`projinfo` sur un BOUNDCRS (base NAD83, axes nord-est) avec `--normalize-axis-order -o WKT2:2019`
+donne `NAD83 (with axis order normalized for visualization)` des deux côtés.
 
 ## Commandes lancées et résultats
 
+Lot initial (2026-11-15, 1re session) :
+
 ```
-cargo fmt --check                       # code 0, sortie vide
-cargo clippy --all-targets --all-features -- -D warnings   # code 0
-PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY=YES cargo test --all-features --no-fail-fast
-  # 1346 passed, 0 failed, 26 ignored (ignorés préexistants, dans d'autres fichiers)
-cargo test --test unit_capi_operation_factory_core   # 5 passed
+cargo test --test test_c_api -- --test-threads=1                  # test result: ok. 52 passed; 0 failed; 0 ignored
+cargo test --test unit_capi_operation_factory_core                # test result: ok. 5 passed; 0 failed; 0 ignored
+cargo test --test unit_capi_suggested_nad83_harn                  # test result: ok. 1 passed; 0 failed; 0 ignored
+cargo test --test unit_capi_operations_suggest                    # test result: ok. 2 passed; 0 failed; 0 ignored
+cargo test --test unit_capi_discard_superseded                    # test result: ok. 2 passed; 0 failed; 0 ignored
+cargo test --test unit_capi_pivot_always                          # test result: ok. 1 passed; 0 failed; 0 ignored
+cargo test --test unit_capi_vertical_crs_ex                       # test result: ok. 3 passed; 0 failed; 0 ignored
+cargo test --test cli_yaml -- --test-threads=1                    # test result: ok. 3 passed; 0 failed; 0 ignored
+cargo test --test unit_network_core -- --test-threads=1           # test result: ok. 14 passed; 0 failed; 0 ignored
+cargo test --test test_operationfactory -- --test-threads=1       # test result: ok. 9 passed; 0 failed; 0 ignored
+cargo test --test docs_in_sync -- --test-threads=1                # test result: ok. 2 passed; 0 failed; 0 ignored
+$R/build/bin/projinfo -s EPSG:4267 -t EPSG:4269 -o PROJ --spatial-test intersects   # Candidate operations found: 10 ; 1re : NAD27 to NAD83 (4)
+$R/build/bin/projinfo -s EPSG:4230 -t EPSG:4171 --summary        # Candidate operations found: 1 ; ED50 to ETRS89 (10) + ETRS89 to ETRS89-FRA [RGF93 v1]
+$R/build/bin/projinfo -s EPSG:4203 -t EPSG:4326 --spatial-test intersects   # Candidate operations found: 4
+$R/build/bin/projinfo -s EPSG:4326 -t EPSG:32631                  # EPSG:16031, UTM zone 31N, 0 m
 ```
 
-Bench : `CONTRIBUTING.md` demande d'ajouter les cas du lot à `src/bin/bench.rs`
-et une ligne à `bench/history.jsonl`. Ce bench mesure le débit par point des
-projections (ns par point). Il n'a pas été étendu à ces cas de fabrique et
-d'opérations : non fait dans ce lot.
+2e session du 2026-11-15 (filtres `ACCURACY` / `ALLOW_BALLPARK`, endpoint de grille) :
+
+```
+avant (tests écrits d'abord, implémentation absente) :
+  unit_capi_crs_to_crs_filters   test result: FAILED. 1 passed; 2 failed   (accuracy, ballpark : assertions positives)
+après :
+  unit_capi_crs_to_crs_filters   test result: ok. 3 passed; 0 failed; 0 ignored
+  proj_unit                      test result: ok. 35 passed; 0 failed; 0 ignored   (avant : 34 passed, 1 failed, assertion de refus)
+  unit_capi_grid_used            test result: ok. 2 passed; 0 failed; 0 ignored   (avant : 1 passed, sans endpoint)
+  test_c_api                     test result: ok. 52 passed; 0 failed; 0 ignored
+  cli_yaml                       test result: ok. 3 passed; 0 failed; 0 ignored
+  test_operationfactory          test result: ok. 9 passed; 0 failed; 0 ignored
+  parity (710 cas, petit corpus) test result: ok. 1 passed; 0 failed; 1 ignored (wide)
+  + 33 autres binaires liés aux options CRS-to-CRS, au réseau et aux facades : tous `ok`, 0 failed
+cargo +stable fmt --check                                          # code 0 après `cargo +stable fmt`
+cargo +stable clippy --all-targets --all-features -- -D warnings   # code 0
+```
+
+Pour `grid_used`, l'implémentation a été écrite avant le test : l'ordre TDD n'a pas été
+respecté sur ce point. Le test a été ajouté ensuite, et il passe.

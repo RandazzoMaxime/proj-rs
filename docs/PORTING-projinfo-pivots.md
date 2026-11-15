@@ -59,10 +59,10 @@ before this lot fails after it: `cargo test --test cli_yaml` passes, and no row 
    for the registry search). Without that guard, the member pairs gained candidates through
    the ETRS89 realization that PROJ does not give: `#15`, `#37` and `#68` regressed in the
    first try of this commit, and pass again after the guard.
-   Deviations: `bTriedThroughIntermediateCRS` is not tracked, so the step runs even where
-   PROJ has tried the registered intermediates; the interpolation CRS of a member operation is
-   not set; a member without an identifier is skipped, since `createGeodeticCRSFromDatum`
-   needs one.
+   `bTriedThroughIntermediateCRS` is tracked (lot C4): the step is skipped once the
+   intermediate block ran (`:4502`, `:4524`). Deviations: the interpolation CRS of a member
+   operation is not set; a member without an identifier is skipped, since
+   `createGeodeticCRSFromDatum` needs one.
 
 3. **"time-dependent operation" suffix** (closes #65). `projinfo_lib.cpp:964-966` appends
    the text after the grid check when `requiresPerCoordinateInputTime()` holds. The port never

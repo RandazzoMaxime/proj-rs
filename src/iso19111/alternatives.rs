@@ -584,22 +584,28 @@ impl Alternatives {
             }
             excluded[retry] = Some(best);
         }
-        // `trans.cpp:308-342`: the first candidate that names no grid.
-        for (index, item) in self.items.iter().enumerate() {
-            if item.grid_free {
-                if let Some(operation) = &item.operation {
-                    if self.current.get() != Some(index) {
-                        log.push(LogLine::debug(format!(
-                            "Using coordinate operation {} as a fallback due to lack of more appropriate operations",
-                            item.name
-                        )));
-                        self.current.set(Some(index));
-                    }
-                    return apply(operation, coord, way).map_err(|_| AlternativeError::NoOperation);
-                }
-            }
+        // `trans.cpp:308-342`: the first candidate that names no grid, with no retry. A candidate
+        // whose PROJ string could not be built stays in PROJ's list as an object that cannot run,
+        // so taking it fails the point (EPSG:10644 to EPSG:11069, a unit mismatch in its string).
+        let Some((index, item)) = self
+            .items
+            .iter()
+            .enumerate()
+            .find(|(_, item)| item.grid_free)
+        else {
+            return Err(AlternativeError::NoOperation);
+        };
+        if self.current.get() != Some(index) {
+            log.push(LogLine::debug(format!(
+                "Using coordinate operation {} as a fallback due to lack of more appropriate operations",
+                item.name
+            )));
+            self.current.set(Some(index));
         }
-        Err(AlternativeError::NoOperation)
+        let Some(operation) = &item.operation else {
+            return Err(AlternativeError::NoOperation);
+        };
+        apply(operation, coord, way).map_err(|_| AlternativeError::NoOperation)
     }
 }
 

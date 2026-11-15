@@ -1,9 +1,7 @@
 //! PROJ 9.9.0 `test/unit/test_operation.cpp`: `TEST(operation, normalizeForVisualization)`.
 //!
-//! The blocks follow the C++ test in order. Expected PROJ strings and the WKT2_2019 round trip are
-//! copied from that test. Not in this file, see `docs/PORTING-visualization-alternatives.md`:
-//! the compound source block (case 5, grid order), and the bound source block (case 6), whose
-//! PROJ string depends on the export of a transformation with a bound source, not checked.
+//! The blocks follow the C++ test in order, all six. Expected PROJ strings and the WKT2_2019 round
+//! trip are copied from that test. The CRS-level cases (compound, bound) are below it.
 
 use proj_rs::iso19111::{
     AlternativeGridNames, AuthorityFactory, BoundCRS, CompoundCRS, CoordinateOperation,
@@ -207,4 +205,75 @@ fn operation_normalize_for_visualization() {
              +step +proj=unitconvert +xy_in=rad +xy_out=deg"
         );
     }
+}
+
+/// `CRS::normalizeForVisualization` on a compound CRS reverses its first component and keeps the
+/// others (crs.cpp 1129-1140, 1015-1125). `projinfo "EPSG:4326+3855" --normalize-axis-order
+/// -o WKT2:2019` (PROJ 9.9.0) names the result `WGS 84 (with axis order normalized for
+/// visualization) + EGM2008 height`.
+#[test]
+fn crs_normalize_for_visualization_compound() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let factory = AuthorityFactory::create(&db, "EPSG");
+    let compound = |first: &str| {
+        Crs::Compound(
+            CompoundCRS::create(
+                "",
+                vec![
+                    factory
+                        .create_coordinate_reference_system(first)
+                        .expect("first"),
+                    factory
+                        .create_coordinate_reference_system("3855")
+                        .expect("EPSG:3855"),
+                ],
+            )
+            .expect("compound"),
+        )
+    };
+
+    let normalized = compound("4326").normalize_for_visualization();
+    assert_eq!(
+        normalized.name(),
+        "WGS 84 (with axis order normalized for visualization) + EGM2008 height"
+    );
+    let Crs::Compound(normalized) = normalized else {
+        panic!("a compound CRS stays compound");
+    };
+    let components = normalized.components();
+    assert_eq!(
+        components[0].name(),
+        "WGS 84 (with axis order normalized for visualization)"
+    );
+    assert_eq!(components[1].name(), "EGM2008 height");
+
+    let projected = compound("32631");
+    assert_eq!(
+        projected.normalize_for_visualization().name(),
+        projected.name()
+    );
+}
+
+/// `CRS::normalizeForVisualization` on a bound CRS normalizes its base and keeps the hub and the
+/// transformation (crs.cpp 1162-1168). `projinfo` on the same bound CRS, with
+/// `--normalize-axis-order -o WKT2:2019`, names the base `NAD83 (with axis order normalized for
+/// visualization)` (PROJ 9.9.0).
+#[test]
+fn crs_normalize_for_visualization_bound() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let factory = AuthorityFactory::create(&db, "EPSG");
+    let base = factory
+        .create_coordinate_reference_system("4269")
+        .expect("EPSG:4269");
+    let bound = Crs::Bound(
+        BoundCRS::from_towgs84(base, &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]).expect("bound"),
+    );
+    let normalized = bound.normalize_for_visualization();
+    let Crs::Bound(normalized) = normalized else {
+        panic!("a bound CRS stays bound");
+    };
+    assert_eq!(
+        normalized.source_crs().name(),
+        "NAD83 (with axis order normalized for visualization)"
+    );
 }

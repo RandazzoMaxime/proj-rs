@@ -300,21 +300,25 @@ fn degrees_text(value: f64, letter: Option<char>, format: DmsFormat, room: usize
     let r = (value * conv + 0.5).floor();
     let sec = (r / res) % 60.0;
     let r = (r / res60).floor();
-    // Whole numbers: `{min}` and `{deg}` print them as C's `%d` does.
-    let min = r % 60.0;
-    let deg = (r / 60.0).floor();
+    let min = c_int(r % 60.0);
+    let deg = c_int((r / 60.0).floor());
     let suffix = letter.map(String::from).unwrap_or_default();
     if format.width == DmsWidth::Fixed {
         let width = fract + 2 + usize::from(fract > 0);
-        let text = format!("{deg}d{min:02}'{sec:0width$.fract$}\"{suffix}");
+        let seconds = if sec.is_finite() {
+            format!("{sec:0width$.fract$}")
+        } else {
+            format!("{:>width$}", c_fixed(sec, fract))
+        };
+        let text = format!("{deg}d{min:02}'{seconds}\"{suffix}");
         cut(&text, room)
     } else if sec != 0.0 {
-        let text = format!("{deg}d{min}'{sec:.fract$}\"{suffix}");
+        let text = format!("{deg}d{min}'{}\"{suffix}", c_fixed(sec, fract));
         let mut bytes = cut(&text, room);
         let suffix_len = if letter.is_some() { 3 } else { 2 };
         trim_seconds(&mut bytes, suffix_len);
         bytes
-    } else if min != 0.0 {
+    } else if min != 0 {
         cut(&format!("{deg}d{min}'{suffix}"), room)
     } else {
         cut(&format!("{deg}d{suffix}"), room)
@@ -326,6 +330,35 @@ fn cut(text: &str, room: usize) -> Vec<u8> {
     let mut bytes = text.as_bytes().to_vec();
     bytes.truncate(room);
     bytes
+}
+
+/// C's `(int)` of a double on x86-64: NaN and out-of-range values give `INT_MIN`.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::as_conversions,
+    reason = "the range was checked against i32"
+)]
+fn c_int(value: f64) -> i32 {
+    let whole = value.trunc();
+    if (-2_147_483_648.0..=2_147_483_647.0).contains(&whole) {
+        whole as i32
+    } else {
+        i32::MIN
+    }
+}
+
+/// `%.Nf` of C for the seconds, where a NaN keeps the sign it carries.
+fn c_fixed(value: f64, decimals: usize) -> String {
+    if value.is_nan() {
+        let text = if value.is_sign_negative() {
+            "-nan"
+        } else {
+            "nan"
+        };
+        text.to_owned()
+    } else {
+        format!("{value:.decimals$}")
+    }
 }
 
 /// PROJ's removal of the zeros before a suffix of `suffix_len` bytes, which is the
@@ -409,6 +442,24 @@ mod tests {
     fn rtodms_fixed_width_keeps_zeros() {
         let format = DmsFormat::new(2, DmsWidth::Fixed).expect("two decimals");
         assert_eq!(rtodms(0.0, HEMISPHERE, format, usize::MAX), "0d00'00.00\"N");
+    }
+
+    #[test]
+    fn rtodms_non_finite_follows_c_int_cast() {
+        let format = DmsFormat::default();
+        let negative_nan = f64::from_bits(f64::NAN.to_bits() | (1 << 63));
+        assert_eq!(
+            rtodms(f64::NAN, DmsSign::Minus, format, usize::MAX),
+            "-2147483648d-2147483648'nan\""
+        );
+        assert_eq!(
+            rtodms(negative_nan, HEMISPHERE, format, usize::MAX),
+            "-2147483648d-2147483648'-nan\"N"
+        );
+        assert_eq!(
+            rtodms(3.0e9_f64.to_radians(), HEMISPHERE, format, usize::MAX),
+            "-2147483648dN"
+        );
     }
 
     #[test]

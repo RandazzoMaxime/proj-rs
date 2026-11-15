@@ -19,7 +19,8 @@ Le lot 2 porte le chemin scalaire. Le lot 4 ajoute le traitement par paquets.
 | latitude hors [−π/2, π/2] | `Err(ProjectionError::InvalidLatitude)` |
 | `+zone` invalide | `UtmZone::try_new` → `Err(ProjectionError::InvalidZone)` |
 | `+south` | `Hemisphere::South` (pas un `bool`) |
-| `gatg`, `clens`, `clenS`, `setup_exact` | fonctions privées du même nom de rôle |
+| `pj_auxlat_coeffs`, `pj_auxlat_convert`, `pj_rectifying_radius`, `setup_exact` | `projmath` (même suite de Clenshaw) ; `engsager` assemble `cgb`, `cbg`, `utg`, `gtu`, `Qn`, `Zb` |
+| `clenS` | `clenshaw_complex` |
 
 `fwd_finalize` multiplie par `a` et ajoute `x0` / `y0`. C'est dans `forward_rad`,
 pas dans la série.

@@ -6380,6 +6380,50 @@ impl CoordinateOperationFactory {
         Ok(Some(res))
     }
 
+    /// `createOperationsGeodToGeod` for a geographic and a geocentric CRS of different datums
+    /// (coordinateoperationfactory.cpp:5366-5387): the geographic intermediate of the geocentric
+    /// CRS, then the full `createOperations` from it to the other CRS, registry and datum pivot
+    /// included. The reverse pair is the inverse. `None` for the other pairs.
+    fn geographic_geocentric_pivot(
+        &self,
+        source: &Crs,
+        target: &Crs,
+        rule: super::geodetic_ops::BallparkRule,
+        context: &CoordinateOperationContext,
+    ) -> Result<Option<Vec<CoordinateOperation>>, FactoryError> {
+        if rule.same_datum() {
+            return Ok(None);
+        }
+        let source_geocentric = matches!(source, Crs::Geodetic(GeodeticCRS::Geocentric(_)));
+        let target_geocentric = matches!(target, Crs::Geodetic(GeodeticCRS::Geocentric(_)));
+        let source_geographic = geographic_of(source).is_some();
+        let target_geographic = geographic_of(target).is_some();
+        if !((source_geocentric && target_geographic) || (source_geographic && target_geocentric)) {
+            return Ok(None);
+        }
+        if !source_geocentric {
+            let reverse = self
+                .geographic_geocentric_pivot(target, source, rule, context)?
+                .unwrap_or_default();
+            return Ok(Some(
+                reverse.iter().map(CoordinateOperation::inverse).collect(),
+            ));
+        }
+        let intermediate = super::geodetic_ops::geocentric_intermediate(source)?;
+        let first = CoordinateOperation::Transformation(
+            super::geodetic_ops::geographic_geocentric_conversion(source, &intermediate)?,
+        );
+        let mut found = Vec::new();
+        for second in self.create_candidates(&intermediate, target, context)? {
+            if let Some(operation) =
+                super::compound::compute_metadata(vec![first.clone(), second], context)
+            {
+                found.push(operation);
+            }
+        }
+        Ok(Some(found))
+    }
+
     /// `createOperationsGeodToGeod` with `forceBallpark` (coordinateoperationfactory.cpp:
     /// 5236-5523), for two geodetic CRS. Two geographic CRS: [`forced_ballpark_operations`]. A
     /// geographic and a geocentric CRS of the same datum: the flagged PROJ-based conversion. On
@@ -6625,20 +6669,17 @@ impl CoordinateOperationFactory {
         if let (true, Some(source_id), Some(target_id)) =
             (registry, source_identity, target_identity)
         {
-            found.extend(direct_registry_operations(
+            let direct = direct_registry_operations(
                 context,
                 (source_id.0.as_str(), source_id.1.as_str()),
                 (target_id.0.as_str(), target_id.1.as_str()),
                 boxes,
-            )?);
-            direct_unfiltered_empty = found.is_empty();
-            direct_empty = filter_and_sort(
-                found.clone(),
-                context,
-                &sort_extents(context, source, target),
-            )
-            .operations
-            .is_empty();
+            )?;
+            direct_unfiltered_empty = direct.is_empty();
+            let direct =
+                filter_and_sort(direct, context, &sort_extents(context, source, target)).operations;
+            direct_empty = direct.is_empty();
+            found.extend(direct);
             let pivots_used = match context.intermediate_use {
                 IntermediateCrsUse::Never => false,
                 IntermediateCrsUse::Allow => direct_empty,
@@ -6730,6 +6771,7 @@ impl CoordinateOperationFactory {
         let pivot_barred = context.intermediate_use == IntermediateCrsUse::Never
             && !source.identifiers().is_empty()
             && !target.identifiers().is_empty();
+        let mut tried_through_intermediate = false;
         if registry
             && !pivot_barred
             && context.intermediates.is_empty()
@@ -6763,7 +6805,7 @@ impl CoordinateOperationFactory {
                     context,
                     PivotScope::Operations,
                 )?;
-                pivot.extend(select_candidates(codes, source, target, context));
+                pivot.extend(filter_only(codes, source, target, context));
             }
             // `!inCreateOperationsWithDatumPivotAntiRecursion && !inCreateOperationsWithIntermediate`
             // (coordinateoperationfactory.cpp:4467-4468): the intermediate search is off inside a
@@ -6789,6 +6831,7 @@ impl CoordinateOperationFactory {
                     || (all_time_dependent && !source.is_dynamic() && !target.is_dynamic())
                     || only_ensemble_null_operations(&res)
                 {
+                    tried_through_intermediate = true;
                     let with_intermediate =
                         datum_based_intermediate_operations(source, target, context)?;
                     if too_small && !res.is_empty() {
@@ -6821,9 +6864,10 @@ impl CoordinateOperationFactory {
         }
         // `createOperations`, the ensemble step (coordinateoperationfactory.cpp:4524-4572): one CRS
         // defined by a datum ensemble and the other by a single datum. The operations go through
-        // each member of the ensemble. Not ported: `bTriedThroughIntermediateCRS`, so the step runs
-        // even where PROJ has already tried the registered intermediates.
+        // each member of the ensemble. Skipped once the intermediate search ran
+        // (`!bTriedThroughIntermediateCRS`, cpp:4524), or EPSG:10608 alone joins the pivot.
         if registry
+            && !tried_through_intermediate
             && is_geodetic(source)
             && is_geodetic(target)
             && ensemble_step_applies(source, target, context)
@@ -6900,11 +6944,12 @@ impl CoordinateOperationFactory {
         }
         // A geocentric CRS to a compound CRS is the inverse of the compound CRS to it.
         if let (Crs::Geodetic(_), Crs::Compound(_)) = (source, target) {
-            if geographic_of(source).is_none() && !context.has_guard(GUARD_DATUM_INTERMEDIATE) {
-                let mut inner = context.clone();
-                inner.guards |= GUARD_DATUM_INTERMEDIATE;
+            // `applyInverse(createOperations(targetCRS, sourceCRS, context))`
+            // (coordinateoperationfactory.cpp:3782-3786), with the same context: the intermediate
+            // searches of the compound side run as in a direct request.
+            if geographic_of(source).is_none() {
                 found.extend(
-                    self.create_candidates(target, source, &inner)?
+                    self.create_candidates(target, source, context)?
                         .iter()
                         .map(CoordinateOperation::inverse),
                 );
@@ -6947,9 +6992,18 @@ impl CoordinateOperationFactory {
             // `Null geographic offset from NAD83(CSRS)v7 to NAD83(CSRS)v7`.
             if registry && !found.is_empty() && !rule.same_datum() {
                 found.extend(ballpark_operations(source, target, rule));
-                found.extend(super::geodetic_ops::geographic_geocentric_ballpark(
-                    source, target,
-                ));
+                // A geographic and a geocentric CRS go through the geographic CRS of the
+                // geocentric one and the full `createOperations` (coordinateoperationfactory.cpp:
+                // 5314-5331), registry operations included, as without a registry result.
+                if let Some(operations) =
+                    self.geographic_geocentric_pivot(source, target, rule, context)?
+                {
+                    found.extend(operations);
+                }
+            } else if let Some(operations) =
+                self.geographic_geocentric_pivot(source, target, rule, context)?
+            {
+                found.extend(operations);
             } else {
                 // No registered operation: the same geodetic conversions as
                 // `createOperation`, including a same-datum geographic/geocentric pair.
@@ -7061,6 +7115,19 @@ fn with_epochs(
         }
         other => other,
     }
+}
+
+/// `findsOpsInRegistryWithIntermediate` returns `FilterResults(res, ..., false).getRes()`: the
+/// filter only. The sort and the removals run once, on the outer list, whose filter reads the
+/// no-grid candidate here (`hasOpThatContainsAreaOfInterestAndNoGrid`).
+fn filter_only(
+    operations: Vec<CoordinateOperation>,
+    source: &Crs,
+    target: &Crs,
+    context: &CoordinateOperationContext,
+) -> Vec<CoordinateOperation> {
+    let extents = sort_extents(context, source, target);
+    filter_and_sort(operations, context, &extents).operations
 }
 
 fn select_candidates(
@@ -7205,7 +7272,14 @@ pub(crate) fn crs_extent(crs: &Crs) -> Option<ObjectDomain> {
 
 /// Extent of an operation: its first usage, or the intersection of its steps for a concatenated one.
 pub(crate) fn operation_extent(operation: &CoordinateOperation) -> Option<ObjectDomain> {
-    if matches!(operation, CoordinateOperation::Conversion(_)) {
+    // The geographic/geocentric conversion (EPSG:9602) is a `Conversion` in PROJ, kept here as a
+    // transformation: `getExtent` gives it the world all the same.
+    let geographic_geocentric = matches!(
+        operation,
+        CoordinateOperation::Transformation(transformation)
+            if transformation.method().code() == "9602"
+    );
+    if matches!(operation, CoordinateOperation::Conversion(_)) || geographic_geocentric {
         return Some(world_extent());
     }
     if let Some(domain) = operation.domains().first() {
@@ -7517,62 +7591,28 @@ fn ballpark_operations(
 /// [`ballpark_operations`] without the same-datum exception: `createOperationsGeodToGeod` with
 /// `forceBallpark`.
 pub(super) fn forced_ballpark_operations(source: &Crs, target: &Crs) -> Vec<CoordinateOperation> {
-    let (name, code, values, domain) = match (geographic_of(source), geographic_of(target)) {
-        (Some(left), Some(right)) => {
-            let meridian = |crs: &Crs| {
-                geodetic_frame(crs).map(|frame| frame.prime_meridian().longitude().si_value())
-            };
-            if meridian(source) != meridian(target) {
-                return Vec::new();
-            }
-            let three_d = left.coordinate_system().axes().len() == 3
-                || right.coordinate_system().axes().len() == 3;
-            let (code, values) = if three_d {
-                (
-                    9660,
-                    vec![
-                        ParameterValue::angle(0.0),
-                        ParameterValue::angle(0.0),
-                        ParameterValue::length(0.0),
-                    ],
-                )
-            } else {
-                (
-                    9619,
-                    vec![ParameterValue::angle(0.0), ParameterValue::angle(0.0)],
-                )
-            };
-            let domain = match (crs_extent(source), crs_extent(target)) {
-                (Some(left), Some(right)) if left == right => left,
-                _ => world_extent(),
-            };
-            (
-                format!(
-                    "Ballpark geographic offset from {} to {}",
-                    source.name(),
-                    target.name()
-                ),
-                code,
-                values,
-                domain,
-            )
-        }
-        _ => match (source, target) {
-            (
-                Crs::Geodetic(GeodeticCRS::Geocentric(_)),
-                Crs::Geodetic(GeodeticCRS::Geocentric(_)),
-            ) => (
-                format!(
-                    "Ballpark geocentric translation from {} to {}",
-                    source.name(),
-                    target.name()
-                ),
-                1031,
-                vec![ParameterValue::length(0.0); 3],
-                world_extent(),
+    if let (Some(left), Some(right)) = (geographic_of(source), geographic_of(target)) {
+        return super::geodetic_ops::geographic_to_geographic(
+            source,
+            target,
+            left,
+            right,
+            super::geodetic_ops::BallparkRule::Forced,
+        )
+        .unwrap_or_default();
+    }
+    let (name, code, values, domain) = match (source, target) {
+        (Crs::Geodetic(GeodeticCRS::Geocentric(_)), Crs::Geodetic(GeodeticCRS::Geocentric(_))) => (
+            format!(
+                "Ballpark geocentric translation from {} to {}",
+                source.name(),
+                target.name()
             ),
-            _ => return Vec::new(),
-        },
+            1031,
+            vec![ParameterValue::length(0.0); 3],
+            world_extent(),
+        ),
+        _ => return Vec::new(),
     };
     Transformation::create_from_code(
         &OpProps::new().name(name),
@@ -8125,11 +8165,13 @@ fn datum_based_intermediate_operations(
         }
     }
 
+    let (extent_source, extent_target) = crs_extents_of(context, source, target);
     let extra: Vec<BoundingBox> = match context.crs_extent_use {
         CrsExtentUse::Ignore => Vec::new(),
-        _ => [source, target]
+        _ => [extent_source, extent_target]
             .into_iter()
-            .filter_map(|crs| crs_extent(crs).and_then(|extent| extent.bounding_box()))
+            .flatten()
+            .filter_map(|extent| extent.bounding_box())
             .collect(),
     };
     let skip_intermediate_intersection = context.crs_extent_use == CrsExtentUse::Ignore;
@@ -8175,11 +8217,29 @@ fn datum_based_intermediate_operations(
             .clone()
     };
 
-    let mut pair_operations = Vec::new();
+    let mut instantiable = Vec::new();
     for (first, second) in candidates {
-        let (Some(mut op1), Some(mut op2)) = (operation_of(first), operation_of(second)) else {
+        let (Some(op1), Some(op2)) = (operation_of(first), operation_of(second)) else {
             continue;
         };
+        instantiable.push((first, second, op1, op2));
+    }
+    let superseded = if context.superseded == SupersededOperations::Discard {
+        superseded_by_listed(
+            db,
+            instantiable
+                .iter()
+                .flat_map(|(first, second, _, _)| [*first, *second]),
+        )?
+    } else {
+        BTreeSet::new()
+    };
+
+    let mut pair_operations = Vec::new();
+    for (first, second, mut op1, mut op2) in instantiable {
+        if superseded.contains(&first.key()) || superseded.contains(&second.key()) {
+            continue;
+        }
         if first.situation == "src_is_tgt" {
             op1 = op1.inverse();
         }
@@ -8386,12 +8446,16 @@ fn crs_codes_intermediate_operations(
     let geographic_intermediates =
         operations && both_geographic && context.intermediates.is_empty();
     let skip_intersection = operations && context.crs_extent_use == CrsExtentUse::Ignore;
+    // The legs must meet the CRS extents of the outermost call (PROJ's `context.extent1/2`), not
+    // those of this sub-call: a pivot whose leg misses the target CRS extent is dropped there.
+    let (extent_source, extent_target) = crs_extents_of(context, source, target);
     let extra: Vec<BoundingBox> = match context.crs_extent_use {
         CrsExtentUse::Ignore => Vec::new(),
         _ if !operations => Vec::new(),
-        _ => [source, target]
+        _ => [extent_source, extent_target]
             .into_iter()
-            .filter_map(|crs| crs_extent(crs).and_then(|extent| extent.bounding_box()))
+            .flatten()
+            .filter_map(|extent| extent.bounding_box())
             .collect(),
     };
     let date_of = |crs: &Crs| {
@@ -9112,6 +9176,51 @@ struct DatumTrfm {
     bbox: BoundingBox,
 }
 
+impl DatumTrfm {
+    fn key(&self) -> (String, String, String) {
+        (self.table.clone(), self.auth.clone(), self.code.clone())
+    }
+}
+
+/// The supersession pass of `createBetweenGeodeticCRSWithDatumBasedIntermediates`
+/// (factory.cpp:8576-8658): an operation of the candidates is dropped when one of its
+/// replacements of the same table and same CRS pair is a candidate too.
+fn superseded_by_listed<'a>(
+    db: &DatabaseContext,
+    listed: impl Iterator<Item = &'a DatumTrfm>,
+) -> Result<BTreeSet<(String, String, String)>, FactoryError> {
+    let keys: BTreeSet<(String, String, String)> = listed.map(DatumTrfm::key).collect();
+    if keys.is_empty() {
+        return Ok(BTreeSet::new());
+    }
+    let codes: BTreeSet<(&str, &str)> = keys
+        .iter()
+        .map(|(_, auth, code)| (auth.as_str(), code.as_str()))
+        .collect();
+    let condition = vec![
+        "(superseded_table_name = ? AND replacement_table_name = superseded_table_name \
+         AND superseded_auth_name = ? AND superseded_code = ?)";
+        keys.len()
+    ]
+    .join(" OR ");
+    let sql = format!(
+        "SELECT superseded_table_name, superseded_auth_name, superseded_code, \
+         replacement_auth_name, replacement_code FROM supersession \
+         WHERE same_source_target_crs = 1 AND ({condition})"
+    );
+    let params: Vec<String> = keys
+        .iter()
+        .flat_map(|(table, auth, code)| [table.clone(), auth.clone(), code.clone()])
+        .collect();
+    let mut superseded = BTreeSet::new();
+    for row in db.query(&sql, &params)? {
+        if codes.contains(&(row[3].text().as_str(), row[4].text().as_str())) {
+            superseded.insert((row[0].text(), row[1].text(), row[2].text()));
+        }
+    }
+    Ok(superseded)
+}
+
 /// `useIrrelevantPivot`: a concatenated operation whose inner pivot is one of the two CRS
 /// being converted is not a pivot of the pair.
 fn useless_pivot(
@@ -9238,6 +9347,20 @@ fn promote_operation_to_3d(
 /// An ensemble CRS has no datum code of its own. The ensemble code is the datum code
 /// `geodetic_crs.datum_code` stores, such as EPSG:6326 for WGS 84.
 fn datum_identity(crs: &Crs, db: &DatabaseContext) -> Option<(String, String)> {
+    // `DatumEnsemble::asDatum` (datum.cpp:1943-1963) keeps the identifier of the ensemble: GR96
+    // is EPSG:1421, not the deprecated EPSG:6747 its datum name finds.
+    let ensemble = match crs {
+        Crs::Geographic(geographic) => geographic.datum_ensemble(),
+        Crs::Geodetic(geodetic) => geodetic.datum_ensemble(),
+        _ => None,
+    };
+    if let Some(identifier) = ensemble.and_then(|ensemble| ensemble.identified.identifiers.first())
+    {
+        return Some((
+            identifier.code_space().to_owned(),
+            identifier.code().to_owned(),
+        ));
+    }
     let frame = geodetic_frame(crs)?;
     if let Some(identifier) = frame.identifiers().first() {
         return Some((

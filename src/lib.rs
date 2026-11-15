@@ -94,7 +94,7 @@ mod transform;
 pub use context::{Context, ContextBuilder, DatabaseSource};
 pub use engine::{
     lpz_dist, parse_gie_coord, xyz_dist, Coord as Xyzt, CreateError, CrsPipeline, Operation,
-    TransformError as StepError,
+    ParamUse, TransformError as StepError,
 };
 pub use gie_api::{
     list_ellps, list_operations, list_prime_meridians, xy_dist, BatchError, Factors,
@@ -125,17 +125,19 @@ pub mod wkt {
     pub use crate::proj::{WktOptions, WktOutputAxis, WktVersion};
 }
 
-/// Path taken by [`Tmerc::forward_batch`] and [`Lcc::forward_batch`] on this host.
+/// Path taken by [`Tmerc::forward_batch`] on this host.
 ///
-/// `avx2` is the vector path. On Windows it uses the CRT math library one lane
-/// at a time, not glibc libmvec. `scalar` is the one-point loop.
+/// `avx2` is the vector path on x86-64 with avx2+fma. On Windows it uses the CRT
+/// math library one lane at a time, not glibc libmvec. `portable` is the 4-lane
+/// Rust loop, used elsewhere. [`Lcc::forward_batch`] has no portable loop: off AVX2
+/// it runs the one-point loop (`docs/PORTING-batch-path.md`).
 #[must_use]
 pub fn batch_path() -> &'static str {
     #[cfg(target_arch = "x86_64")]
     if std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma") {
         return "avx2";
     }
-    "scalar"
+    "portable"
 }
 
 pub use coord::{Geographic, Projected};

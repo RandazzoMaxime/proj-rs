@@ -1989,3 +1989,17 @@ tests:
             BBOX[50.75,2.53,55.77,7.22]],
         ID["EPSG",11037],
         REMARK["Horizontal component of national realization of ETRS89 in the Netherlands, aligned to ETRF2000."]]
+- comment: South oriented Transverse Mercator (EPSG:2046) exports as tmerc with axis=wsu, no trailing axis swap
+  args: -o PROJ EPSG:2046
+  out: |
+    PROJ.4 string:
+    +proj=tmerc +axis=wsu +lat_0=0 +lon_0=15 +k=1 +x_0=0 +y_0=0 +ellps=WGS84 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs +type=crs
+- comment: Geographic to south oriented Transverse Mercator (EPSG:2046) pipeline, no trailing axis swap
+  args: -s EPSG:4326 -t EPSG:2046 -o PROJ -q --single-line
+  out: "+proj=pipeline +step +proj=axisswap +order=2,1 +step +proj=unitconvert +xy_in=deg +xy_out=rad +step +proj=tmerc +axis=wsu +lat_0=0 +lon_0=15 +k=1 +x_0=0 +y_0=0 +ellps=WGS84\n"
+- comment: South oriented Transverse Mercator (EPSG:2046) to geographic pipeline, no trailing axis swap
+  args: -s EPSG:2046 -t EPSG:4326 -o PROJ -q --single-line
+  out: "+proj=pipeline +step +inv +proj=tmerc +axis=wsu +lat_0=0 +lon_0=15 +k=1 +x_0=0 +y_0=0 +ellps=WGS84 +step +proj=unitconvert +xy_in=rad +xy_out=deg +step +proj=axisswap +order=2,1\n"
+- comment: South oriented Transverse Mercator (EPSG:2046) to EPSG:2055 pipeline, no trailing axis swap
+  args: -s EPSG:2046 -t EPSG:2055 -o PROJ -q --single-line
+  out: "+proj=pipeline +step +inv +proj=tmerc +axis=wsu +lat_0=0 +lon_0=15 +k=1 +x_0=0 +y_0=0 +ellps=WGS84 +step +proj=tmerc +axis=wsu +lat_0=0 +lon_0=33 +k=1 +x_0=0 +y_0=0 +ellps=WGS84\n"

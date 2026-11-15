@@ -188,7 +188,12 @@ fn trim_fraction(text: &str) -> String {
 
 fn non_finite(value: f64) -> Option<String> {
     if value.is_nan() {
-        Some("nan".to_owned())
+        let text = if value.is_sign_negative() {
+            "-nan"
+        } else {
+            "nan"
+        };
+        Some(text.to_owned())
     } else if value.is_infinite() {
         Some(if value > 0.0 { "inf" } else { "-inf" }.to_owned())
     } else {
@@ -213,5 +218,16 @@ mod tests {
         assert_eq!(format_number("%g", 0.000_1).as_deref(), Some("0.0001"));
         assert_eq!(format_number("%.3e", 12345.0).as_deref(), Some("1.234e+04"));
         assert_eq!(format_number("3f", 1.0), None);
+    }
+
+    #[test]
+    fn format_number_keeps_the_sign_of_nan() {
+        let negative_nan = f64::from_bits(f64::NAN.to_bits() | (1 << 63));
+        assert_eq!(format_number("%.3f", f64::NAN).as_deref(), Some("nan"));
+        assert_eq!(format_number("%.3f", negative_nan).as_deref(), Some("-nan"));
+        assert_eq!(
+            format_number("%08.2f", f64::NAN).as_deref(),
+            Some("     nan")
+        );
     }
 }

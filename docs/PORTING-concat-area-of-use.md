@@ -54,6 +54,14 @@ candidate); the port gave `3711110.40 587711.72 5136639.38` (PD/83 candidate, wo
    ensemble special case (0.1 m legs). Effect: `PD/83 to WGS 84 (1) + Inverse of ED50 to WGS 84 (2)`
    is 6 m here and 7 m in PROJ. It changes the sort, and so the per-point choice of some pairs
    (see the `EPSG:4312 EPSG:4230` line below).
+4. Extent of a geographic-geocentric step (EPSG:9602) in a concatenated candidate. Open. Giving it
+   the world (as PROJ's `getExtent` does for a `Conversion`) makes `projinfo --summary` write `World`
+   as PROJ does in five lists of the wide corpus (`projinfo-candidates-0064`, `0398`, `0497`,
+   `0767`, `0799`). It breaks list `0291` (`EPSG:9005 -> EPSG:9010`, line 2), where PROJ writes
+   `World.` for `Ballpark geographic offset from IGS00 to IGS05 (geographic) + Conversion from IGS05
+   (geographic) to IGS05`. The two candidates have the same step kinds and database domains (1262,
+   `World.`), so the rule is not yet known. Reverted for that reason: a list that passes does not
+   reopen.
 
 ## Oracle comparison (`projinfo --summary`, default spatial test)
 

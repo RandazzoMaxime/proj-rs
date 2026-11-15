@@ -93,7 +93,7 @@ PROJ's own, and a case counts only when it passes.
 | ISO 19111 model, WKT and PROJJSON | 🟡 | CRS model, authority factory, CRS identification against `proj.db`, WKT1 and WKT2 import and export, PROJJSON. See [`docs/CRS-API.md`](docs/CRS-API.md) |
 | georust `proj` facade | 🟡 | `Proj`, `ProjBuilder`, `Coord`, `Transform`, `Area`, errors and the `geo-types` feature exist. <!--gen:georust_pass-->25<!--/gen--> of <!--gen:georust_total-->25<!--/gen--> of georust `proj` 0.31's own unit tests pass against it ([`tests/georust_parity.rs`](tests/georust_parity.rs)); the rest are listed there as gaps |
 | Command-line tools | 🟡 | `cct`, `cs2cs`, `proj`, `invproj`, `geod`, `invgeod`, `gie`, `projinfo` and `projsync` over the library; <!--gen:cli_matched-->825<!--/gen--> of <!--gen:cli_total-->825<!--/gen--> PROJ CLI cases match |
-| SIMD batch path | ✅ | AVX2 on x86-64. Other targets run the scalar loop |
+| SIMD batch path | ✅ | AVX2 + FMA on x86-64. Off AVX2, `Tmerc` runs a portable 4-lane loop (bit-identical, 25–34 % faster on x86-64); `Lcc` runs the scalar loop |
 
 ✅ done and verified &nbsp;·&nbsp; 🟡 working, with known gaps listed below
 
@@ -160,6 +160,7 @@ Offline, the 45 cases that need CDN grids are not run, so the offline count is
 PROJ's C++ unit tests are ported one `TEST()` at a time, and the ones not
 ported yet are listed by name in [`docs/UNPORTED-UNIT.md`](docs/UNPORTED-UNIT.md).
 The same goes for the CLI cases in [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md).
+About 4000 conversions across the CRS families, `proj`, and `cct` are compared with PROJ 9.9.0 in [`docs/PARITY.md`](docs/PARITY.md).
 
 | Suite | Ported and passing | Not yet | |
 |---|---:|---:|:-:|
@@ -306,10 +307,13 @@ As in PROJ, `EPSG:4326` on the command line reads latitude first. Use a
 - **Dependencies stay small.** Three direct ones (`rusqlite`, `tiff`,
   `native-tls`), a fourth optional (`geo-types`), 37 crates in the default tree.
 
-The batch path (`forward_batch`) uses AVX2 on x86-64. On Linux glibc it calls
-libmvec. On Windows it uses the C runtime math library, one lane at a time.
-Other targets run the scalar loop. CI builds on Ubuntu 24.04 and Windows, and checks
-against the PROJ 9.9.0 binaries from conda-forge.
+The batch path (`forward_batch`) uses AVX2 on every x86-64 CPU with AVX2 and FMA. On
+Linux glibc it calls libmvec. On Windows it uses the C runtime math library, one lane
+at a time. Off AVX2, `Tmerc::forward_batch` runs a portable 4-lane loop, bit-identical to
+the scalar path and 25–34 % faster on x86-64; `Lcc::forward_batch` runs the scalar loop.
+The AVX2 path is not bit-identical to the scalar path: at most 33 ulps, 7.5 nm
+on 10 000 measured points ([`docs/PORTING-batch-path.md`](docs/PORTING-batch-path.md)). CI builds on Ubuntu 24.04
+and Windows, and checks against the PROJ 9.9.0 binaries from conda-forge.
 
 ### Grids
 
@@ -444,5 +448,10 @@ are in [CONTRIBUTING.md](CONTRIBUTING.md).
 PROJ-RS is released under the [MIT license](LICENSE). It stands on the work of
 the PROJ authors, Charles Karney (geodesics), and Knud Poder and Karsten
 Engsager (exact Transverse Mercator). Third-party notices are in
-[NOTICE.md](NOTICE.md). Lints follow
+[NOTICE.md](NOTICE.md).
+
+The embedded `proj.db` contains the EPSG Geodetic Parameter Dataset, owned by
+IOGP and subject to the [EPSG Dataset Terms of Use](https://epsg.org/terms-of-use.html):
+free of charge, no distribution for profit, IOGP ownership acknowledged. Anyone
+who redistributes PROJ-RS passes these terms on. See [NOTICE.md](NOTICE.md). Lints follow
 [BeautifulRust](https://github.com/morganlinton/BeautifulRust).

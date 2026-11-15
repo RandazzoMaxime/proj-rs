@@ -1516,7 +1516,7 @@ fn operation_heading(
         .unwrap_or_else(|| "unknown id".to_owned());
     let accuracy = match (operation.accuracy_text(), operation.accuracy(), operation) {
         (Some(text), _, _) => format!("{text} m"),
-        (None, Some(value), _) => format!("{value} m"),
+        (None, Some(value), _) => format!("{} m", crate::iso19111::format_g(value, 15)),
         (None, None, crate::CoordinateOperation::Conversion(_)) => "0 m".to_owned(),
         _ => "unknown accuracy".to_owned(),
     };
@@ -1729,6 +1729,11 @@ fn create_default(
     db: &crate::DatabaseContext,
     text: &str,
 ) -> Result<crate::AuthorityObject, String> {
+    if let Some(operation) = crate::iso19111::proj_based_operation_of_text(text) {
+        return operation
+            .map(crate::AuthorityObject::Operation)
+            .map_err(|error| error.to_string());
+    }
     match crate::create_from_user_input(text, db) {
         Ok(crs) => Ok(crate::AuthorityObject::Crs(crs)),
         Err(_) if name_like(text) => search_default(db, text)
@@ -1889,20 +1894,23 @@ fn render(
     }
     for dialect in &options.dialects {
         let exported = match dialect {
+            // outputObject leaves a conversion out of the WKT1 dialects (projinfo_lib.cpp:752, 782).
+            Dialect::Wkt1Gdal | Dialect::Wkt1Esri if is_conversion(object) => Ok(None),
             Dialect::Proj => proj_text(object, db, proj_lines(options)),
-            Dialect::ProjJson => match object {
-                crate::AuthorityObject::Crs(crs) => crs
-                    .export_to_json(db)
-                    .map(Some)
-                    .map_err(|error| error.to_string()),
-                _ => Err("cannot write PROJJSON for this object".to_owned()),
-            },
+            Dialect::ProjJson => object
+                .export_to_json_with(db, &crate::iso19111::JsonFormat::default())
+                .map(Some)
+                .map_err(|error| error.to_string()),
             Dialect::Sql => sql_text(object, db, options).map(Some),
-            Dialect::Wkt2_2015 => wkt(object, db, crate::WktConvention::Wkt2_2015).map(Some),
-            Dialect::Wkt2_2019 => wkt(object, db, crate::WktConvention::Wkt2_2019).map(Some),
-            Dialect::Wkt1Gdal => wkt(object, db, crate::WktConvention::Wkt1Gdal)
+            Dialect::Wkt2_2015 => {
+                wkt(object, db, options, crate::WktConvention::Wkt2_2015).map(Some)
+            }
+            Dialect::Wkt2_2019 => {
+                wkt(object, db, options, crate::WktConvention::Wkt2_2019).map(Some)
+            }
+            Dialect::Wkt1Gdal => wkt(object, db, options, crate::WktConvention::Wkt1Gdal)
                 .map(|text| Some(format!("{text}\n"))),
-            Dialect::Wkt1Esri => wkt(object, db, crate::WktConvention::Wkt1Esri)
+            Dialect::Wkt1Esri => wkt(object, db, options, crate::WktConvention::Wkt1Esri)
                 .map(|text| Some(format!("{text}\n"))),
         };
         let body = match exported {
@@ -2025,20 +2033,50 @@ fn proj_text(
             .map(Some)
             .map_err(|error| error.to_string()),
         crate::AuthorityObject::Ellipsoid(ellipsoid) => Ok(Some(ellipsoid.export_to_proj_string())),
-        crate::AuthorityObject::Operation(operation) => operation
-            .export_to_proj_string_with_database(db, lines)
-            .map(Some)
-            .map_err(|error| error.to_string()),
+        crate::AuthorityObject::Operation(operation) => match proj_based_text(operation) {
+            Some(text) => Ok(Some(text)),
+            None => operation
+                .export_to_proj_string_with_database(db, lines)
+                .map(Some)
+                .map_err(|error| error.to_string()),
+        },
         _ => Ok(None),
     }
+}
+
+fn is_conversion(object: &crate::AuthorityObject) -> bool {
+    matches!(
+        object,
+        crate::AuthorityObject::Operation(crate::CoordinateOperation::Conversion(_))
+    )
+}
+
+/// The PROJ string of a PROJ-based conversion without its CRS pair: the string itself, as PROJ's
+/// `exportToPROJString` writes it (`SingleOperation::exportToPROJStringGeneric`).
+fn proj_based_text(operation: &crate::CoordinateOperation) -> Option<String> {
+    let crate::CoordinateOperation::Conversion(conversion) = operation else {
+        return None;
+    };
+    if conversion.source_crs().is_some() || conversion.target_crs().is_some() {
+        return None;
+    }
+    conversion
+        .method()
+        .name()
+        .strip_prefix("PROJ-based operation method: ")
+        .map(str::to_owned)
 }
 
 fn wkt(
     object: &crate::AuthorityObject,
     db: &crate::DatabaseContext,
+    options: &Options,
     convention: crate::WktConvention,
 ) -> Result<String, String> {
     let mut formatter = crate::WktFormatter::create(convention).with_database(db.clone());
+    if options.single_line {
+        formatter.set_lines(crate::WktLines::Single);
+    }
     let text = match object {
         crate::AuthorityObject::Crs(crs) => crs.export_to_wkt(&mut formatter),
         crate::AuthorityObject::Ellipsoid(ellipsoid) => ellipsoid.export_to_wkt(&mut formatter),

@@ -1,4 +1,4 @@
-//! PROJ 9.9.0 `test/unit/test_c_api_990.cpp`, `proj_create_operations` with and without
+//! PROJ 9.9.0 `test/unit/test_c_api.cpp`, `proj_create_operations` with and without
 //! `proj_operation_factory_context_set_discard_superseded`: AGD84 (EPSG:4203) to WGS 84 (EPSG:4326).
 
 use proj_rs::iso19111::{

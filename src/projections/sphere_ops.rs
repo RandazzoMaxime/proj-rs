@@ -228,6 +228,7 @@ fn bertin_step(frame: &Frame) -> Result<Box<dyn crate::engine::Step>, CreateErro
     placed.phi0 = DELTA_PHI;
     placed.earth = Ellipsoid::try_from_a_es(frame.earth.a(), 0.0)
         .map_err(|_| CreateError::IllegalValue("a"))?;
+    placed.factor_es = 0.0;
     Ok(classic_step(
         &placed,
         Bertin1953 {

@@ -202,11 +202,13 @@ pub(super) fn bound_to_geod(
     let Some(last) = lasts.first() else {
         return Ok(Vec::new());
     };
+    // `ConcatenatedOperation::createComputeMetadata` (coordinateoperationfactory.cpp:7203-7206):
+    // the joint extent and summed accuracy of the steps; an empty intersection is skipped.
     Ok(firsts
         .into_iter()
-        .map(|mut first| {
+        .filter_map(|mut first| {
             set_endpoints(&mut first, source, &intermediate);
-            concatenate(vec![first, last.clone()])
+            compute_metadata(vec![first, last.clone()], context)
         })
         .collect())
 }

@@ -1,10 +1,9 @@
 //! PROJ 9.9.0 `test/unit/test_c_api.cpp`: the candidate filters of `proj_create_crs_to_crs_from_pj`
 //! (`ACCURACY`, `ALLOW_BALLPARK`) and the ballpark-only pair `EPSG:25831+5773` to `EPSG:7665`.
 //!
-//! The `ACCURACY` and `ALLOW_BALLPARK` options are checked on the ISO 19111 selection
-//! ([`best_pipeline_filtered`]): [`Proj::create_crs_to_crs_from_pj`] refuses every option,
-//! so a null result from it would not test the filter. The call without options goes through
-//! [`Proj::create_crs_to_crs_from_pj`], as the C test does.
+//! The `ACCURACY` and `ALLOW_BALLPARK` options go through [`Proj::create_crs_to_crs_from_pj`],
+//! as the C test does. The same filter is also checked on the ISO 19111 selection
+//! ([`best_pipeline_filtered`]).
 
 mod common;
 
@@ -24,6 +23,12 @@ fn capi_proj_create_crs_to_crs_from_pj_accuracy_filter() {
     let src = Proj::new("EPSG:4326").expect("EPSG:4326");
     let dst = Proj::new("EPSG:4258").expect("EPSG:4258");
     assert!(src.create_crs_to_crs_from_pj(&dst, None, None).is_ok());
+    assert!(src
+        .create_crs_to_crs_from_pj(&dst, None, Some(vec!["ACCURACY=100"]))
+        .is_ok());
+    assert!(src
+        .create_crs_to_crs_from_pj(&dst, None, Some(vec!["ACCURACY=0.05"]))
+        .is_err());
 
     let filter = CandidateFilter {
         accuracy: Some(0.05),
@@ -44,6 +49,12 @@ fn capi_proj_create_crs_to_crs_from_pj_ballpark_filter() {
     let src = Proj::new("EPSG:4267").expect("EPSG:4267");
     let dst = Proj::new("EPSG:4258").expect("EPSG:4258");
     assert!(src.create_crs_to_crs_from_pj(&dst, None, None).is_ok());
+    assert!(src
+        .create_crs_to_crs_from_pj(&dst, None, Some(vec!["ALLOW_BALLPARK=YES"]))
+        .is_ok());
+    assert!(src
+        .create_crs_to_crs_from_pj(&dst, None, Some(vec!["ALLOW_BALLPARK=NO"]))
+        .is_err());
 
     let filter = CandidateFilter {
         accuracy: None,

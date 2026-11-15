@@ -14,6 +14,7 @@
 mod defmodel;
 mod deformation;
 mod grid;
+mod grid_tiff;
 mod horner;
 mod inflate;
 mod json;

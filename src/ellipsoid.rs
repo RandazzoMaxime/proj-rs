@@ -207,12 +207,13 @@ impl Ellipsoid {
         }
         let f = 1.0 / inv_f;
         let es = f * (2.0 - f);
+        let e = es.sqrt();
         Ok(Self {
             a,
             f,
             es,
-            e: es.sqrt(),
-            n: f / (2.0 - f),
+            e,
+            n: third_flattening(e),
             ra: 1.0 / a,
         })
     }
@@ -320,16 +321,23 @@ impl Ellipsoid {
         } else {
             1.0 - (1.0 - es).sqrt()
         };
-        let n = if f == 0.0 { 0.0 } else { f / (2.0 - f) };
+        let e = es.sqrt();
         Ok(Self {
             a,
             f,
             es,
-            e: es.sqrt(),
-            n,
+            e,
+            n: third_flattening(e),
             ra: 1.0 / a,
         })
     }
+}
+
+/// Aplatissement troisième comme `pj_ell_set` de PROJ : `tan²(asin(e) / 2)`. La forme
+/// `f / (2 − f)` donne les mêmes réels mais d'autres bits.
+fn third_flattening(e: f64) -> f64 {
+    let t = (e.asin() / 2.0).tan();
+    t * t
 }
 
 #[cfg(test)]

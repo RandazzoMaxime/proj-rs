@@ -93,9 +93,11 @@ fn child_is_cartesian(name: &str) -> bool {
 fn child_definition(target: &str, params: &Params) -> String {
     let mut parts = vec![format!("proj={target}")];
     for (key, value) in params.entries() {
+        // `proj` adds this marker to the parent only; a strict child create refuses it.
         if matches!(
             key,
             "proj"
+                | "break_cs2cs_recursion"
                 | "o_proj"
                 | "o_lat_p"
                 | "o_lon_p"

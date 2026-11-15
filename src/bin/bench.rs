@@ -155,7 +155,7 @@ fn main() {
         &|p| web.inverse(p).ok().map(|g| g.lat_deg),
     );
 
-    // Lots 4, 5: batch paths (AVX2 on Linux glibc, scalar loop elsewhere).
+    // Lots 4, 5: batch paths (AVX2 where the CPU has it, otherwise see `batch_path`).
     let (mut east, mut north) = (vec![0.0; N], vec![0.0; N]);
     let batches: [(&str, Batch<'_>, _); 3] = [
         (

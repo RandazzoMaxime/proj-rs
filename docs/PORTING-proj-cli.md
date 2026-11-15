@@ -16,9 +16,9 @@ options de `proj` (voir « Hors périmètre »).
 | CRS composé, premier sous-CRS projeté (`proj_crs_get_sub_crs(P, 0)`) | `Crs::Compound` → `components().first()` |
 | `proj_create_crs_to_crs_from_pj(geogNorm, P)` | `Operation::create` sur `ProjectedCRS::export_to_proj_string` |
 | ordre des axes du CRS (sortie) | `Job::north_first` : le nord est imprimé d'abord |
-| `proj_factors` / `pj_factors` | `Job::factors` |
-| `pj_deriv` (différences centrées, h = 1e-5 rad) | `Job::derivatives` |
-| `aasin` (borne à ±π/2, sans erreur) | `aasin` |
+| `proj_factors` / `pj_factors` | `Job::factors`, qui appelle `Operation::factors` (`unit_factors`) |
+| `pj_deriv` (différences centrées, h = 1e-5 rad) | `pj_deriv` de `gie_api.rs` |
+| `aasin` (±π/2 au-delà de 1, erreur au-delà de 1 + 1e-14) | `projmath::aasin` : les facteurs deviennent `*` |
 | `%g` de `limited_fprintf` / `printf` | `format_g` (format C : `8.53878e-07`) |
 | `emess(3, …)` | sortie avec le code 3 |
 | `proj_errno` partagé (contexte par défaut) | `error_seen` dans `main` |
@@ -30,6 +30,7 @@ options de `proj` (voir « Hors périmètre »).
 | `EPSG:27571 -S` : pm de Paris, facteurs 0,999877 | `tests/cli_yaml`, `test_proj.yaml#3` |
 | `EPSG:5972 -S` : premier sous-CRS projeté d'un composé | `tests/cli_yaml`, `test_proj.yaml#4` |
 | `EPSG:32620 -S` (non-régression) | `tests/cli_yaml`, `test_proj.yaml#2` |
+| `proj -S` Mercator, tmerc, LCC, stéréographique, Robinson, `+units=ft` : valeurs au bit près | `tests/cli_proj_factors.rs` |
 | `%g` de C : six chiffres, zéros retirés, exposant à deux chiffres | `format_g_matches_c_printf` |
 | zéros de fin retirés, entiers conservés | `trim_zeros_keeps_integers` |
 
