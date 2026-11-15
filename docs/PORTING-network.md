@@ -86,7 +86,8 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
   compressé, mesures »). Limites : les autres compressions (PackBits, JPEG, CCITT) et les
   prédicteurs autres que 1 à 3 restent lus entiers par `read_whole` (LZW : voir « GeoTIFF
   compressé, mesures ») ; le prédicteur 2 et l'ancien
-  Deflate sont acceptés et ne sont pas mesurés contre `libproj`. Un morceau de tuile partielle
+  Deflate sont acceptés et ne sont pas mesurés contre `libproj`. JPEG et CCITT ne sont pas lus
+  (« GeoTIFF JPEG et CCITT »). Un morceau de tuile partielle
   d'un plan autre que le premier est rendu par `tiff` 0.10.3 avec ses lignes de remplissage : le
   décodage ne prend que les lignes de l'image (`read_decoded`), car `chunk_data_dimensions` lit
   le remplissage du bas à partir de l'index du morceau et non de sa ligne dans le plan. La
@@ -452,14 +453,46 @@ Mesures contre `libproj` 9.9.0 lié à libtiff (`proj-reference-net`, `cct -d 17
   (21.3, 45.7) : 4.7599535295655623e-35 avec PackBits, 0.5760 pour le même échantillon prédit en LZW.
   Cause probable : libtiff n'enregistre pas le prédicteur pour PackBits (non vérifié dans ses
   sources). Le crate suit libtiff.
-- Hors champ : JPEG (`Compression` 7) et CCITT (2) : libtiff refuse le décodage (« Not a JPEG
-  file », « Bits/sample must be 1 »), PROJ ouvre la grille et donne `inf`. Le crate refuse la
-  grille à la création (« illegal value for +grids »). Écart d'erreur, non corrigé.
+- JPEG (`Compression` 7) et CCITT (2, 3, 4) : libtiff refuse le décodage (« Not a JPEG file »,
+  « Bits/sample must be 1 »). PROJ ouvre la grille et ses valeurs sont `inf`, sans erreur. Le
+  crate fait pareil (lot Q9, voir « GeoTIFF JPEG et CCITT »). Old JPEG (6) : PROJ refuse la
+  création (« could not find required grid(s) »), le crate aussi, avec un autre message.
 - Prédicteur 2 en big-endian (LZW) : non mesuré.
 
 Fixtures : `tools/make-lzw-grid.py` (`--tiled`, `--big-endian`, `--codec packbits`,
 `--predictor 1`). Test local : `tests/unit_grid_codecs.rs` ; réseau :
 `tests/unit_network_compressed_grid.rs` (`a_big_endian_lzw_*`, `a_packbits_grid_*`).
+
+## GeoTIFF JPEG et CCITT
+
+Fixtures : `data/tests/planar_deflate_predictor3_jpeg.tif` (`Compression` 7) et
+`..._ccitt.tif` (2). Ce sont les octets du Deflate planaire, avec le tag 259 changé
+(`tools/patch-compression-tag.py`) : libtiff ne décode rien, PROJ ouvre la grille quand même.
+
+Mesures contre `libproj` 9.9.0 lié à libtiff (`proj-reference-net`, `cct -d 17 +proj=vgridshift
++grids=<fichier> +multiplier=1`, entrée `lon lat 0`) :
+
+| `Compression` | `(20, 50)` | `(41.5, 37.2)` | `(21.5, 45.5)` | `(0, 0)` hors grille | code de sortie |
+|---|---|---|---|---|---|
+| 7 (JPEG) | `inf` | `inf` | `inf` | `TRANSFORMATION ERROR` | 0 |
+| 2 (CCITT RLE) | `inf` | `inf` | | `TRANSFORMATION ERROR` | 0 |
+| 3 (CCITT T4) | `inf` | `inf` | | `TRANSFORMATION ERROR` | 0 |
+| 4 (CCITT T6) | `inf` | `inf` | | `TRANSFORMATION ERROR` | 0 |
+| 6 (old JPEG) | creation refusée : `could not find required grid(s)` | | | | 1 |
+
+Sortie de libtiff (sur stderr) : « Not a JPEG file: starts with 0x78 0x9c » pour 7, « Bits/sample
+must be 1 for Group 3/4 encoding/decoding » pour 2. La valeur `inf` est celle de `z` ; la
+sortie ne porte aucune erreur de transformation.
+
+Le port (même commande) : création réussie pour 2 et 7, `inf` aux points dans la grille, comme
+PROJ. Hors grille, il imprime `*` et sort en 0 ; PROJ imprime `TRANSFORMATION ERROR` : écart de
+présentation déjà présent sur les grilles Deflate, non traité ici. Avant le lot : création
+refusée (`illegal value for +grids`, code 1) pour 2 et 7. Pour 6, le port refuse la création
+comme PROJ, mais avec un autre message (`illegal value for +grids`, code 1).
+
+Test : `tests/unit_grid_codecs.rs::a_jpeg_or_ccitt_grid_opens_and_its_values_are_infinite`
+(JPEG et CCITT 2). Les codes 3 et 4 sont mesurés, sans fixture ni test. Le chemin réseau
+(`Mode::Lazy`) n'appelle aucun morceau pour ces images, PROJ non mesuré sur ce point.
 
 ### Inventaire des GeoTIFF du CDN
 
@@ -591,10 +624,12 @@ pour `hgridshift` et `gridshift` ; `xyzgridshift`).
 
 ## Ce qui reste ouvert
 
-- GeoTIFF compressés en JPEG, CCITT et prédicteurs hors 1 à 3 : lus entiers (`read_whole`), la
-  séquence de PROJ n'est pas reproduite, et l'erreur diffère (PROJ donne `inf`, le crate refuse la grille).
-  LZW et PackBits sont lus par morceaux sur le réseau et entiers en local ; voir « GeoTIFF compressé,
-  mesures ».
+- GeoTIFF compressés en prédicteurs hors 1 à 3 : lus entiers (`read_whole`), la séquence de PROJ
+  n'est pas reproduite. LZW et PackBits sont lus par morceaux sur le réseau et entiers en local ;
+  voir « GeoTIFF compressé, mesures ». JPEG et CCITT ne sont pas lus (lot Q9, « GeoTIFF JPEG et
+  CCITT ») : le crate ne fait aucun appel réseau pour eux, PROJ non mesuré sur ce point.
+- GeoTIFF JPEG ou CCITT de 8 bits : refusé à la création par le crate (`supported_sample` : entiers
+  de 16 ou 32 bits, flottants de 32 ou 64). PROJ non mesuré sur un tel fichier.
 
 - Lecture par morceaux pour les GeoTIFF compressés (deflate), à prédicteur ou planaires : ils
   sont lus entiers (`read_whole`), la séquence de PROJ n'est pas reproduite. Mesuré sur le vrai

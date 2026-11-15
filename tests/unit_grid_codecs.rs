@@ -126,3 +126,17 @@ fn a_packbits_grid_ignores_its_predictor_as_libtiff_does() {
         "(20, 50)",
     );
 }
+
+/// libtiff refuses to decode JPEG (`Compression` 7) and CCITT (2) samples, but PROJ opens the grid
+/// and its values are `inf`, with no error: `cct` prints `inf` and exits 0. The fixtures are the
+/// Deflate grid with its `Compression` tag patched (`tools/patch-compression-tag.py`).
+#[test]
+fn a_jpeg_or_ccitt_grid_opens_and_its_values_are_infinite() {
+    for grid in [
+        "planar_deflate_predictor3_jpeg.tif",
+        "planar_deflate_predictor3_ccitt.tif",
+    ] {
+        assert_eq!(vertical_offset(grid, 20.0, 50.0), f64::INFINITY, "{grid}");
+        assert_eq!(vertical_offset(grid, 41.5, 37.2), f64::INFINITY, "{grid}");
+    }
+}

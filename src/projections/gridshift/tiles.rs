@@ -23,10 +23,12 @@ use crate::network_chunks::{RemoteFile, RemoteReader};
 use crate::projections::tiff_codec::predictor::{self, Predictor};
 use crate::projections::tiff_codec::{lzw, packbits, ByteOrder};
 
-/// The samples of one image: in memory, or in the remote file, by chunk.
+/// The samples of one image: in memory, in the remote file by chunk, or not read at all (JPEG and
+/// CCITT, see `is_undecoded`), where every value is `inf` as libproj 9.9.0 gives it.
 pub(super) enum Samples {
     Flat(Vec<f32>),
     Lazy(Arc<LazyIfd>),
+    Undecoded,
 }
 
 impl Samples {
@@ -60,6 +62,7 @@ impl Samples {
                     }
                 }
             }
+            Self::Undecoded => Some(f32::INFINITY),
         }
     }
 }

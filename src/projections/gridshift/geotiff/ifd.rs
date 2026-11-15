@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use tiff::decoder::Decoder;
 use tiff::tags::Tag;
 
-use super::coded::{codec_tags, coded_of, decode_coded_samples, Whole};
+use super::coded::{codec_tags, coded_of, decode_coded_samples, is_undecoded, Whole};
 use super::gdal::{parse_gdal, parse_nodata, GdalFields, GDAL_METADATA, GDAL_NODATA};
 use super::georef::read_extent;
 use super::lazy::lazy_layout;
@@ -83,24 +83,23 @@ pub(super) fn read_ifd<R: Read + Seek>(
     } else {
         Storage::Chunky
     };
+    let (compression, predictor) = codec_tags(decoder)?;
     let samples = match mode {
-        Mode::Eager { order } => {
-            let (compression, predictor) = codec_tags(decoder)?;
-            match coded_of(compression, predictor, bits, format) {
-                Some(coded) => {
-                    let whole = Whole {
-                        size: (width_u, height_u),
-                        spp,
-                        storage,
-                        bits,
-                        format,
-                        order,
-                    };
-                    Samples::Flat(decode_coded_samples(decoder, coded, &whole)?)
-                }
-                None => Samples::Flat(decode_samples(decoder, width_u, height_u, spp, storage)?),
+        _ if is_undecoded(compression) => Samples::Undecoded,
+        Mode::Eager { order } => match coded_of(compression, predictor, bits, format) {
+            Some(coded) => {
+                let whole = Whole {
+                    size: (width_u, height_u),
+                    spp,
+                    storage,
+                    bits,
+                    format,
+                    order,
+                };
+                Samples::Flat(decode_coded_samples(decoder, coded, &whole)?)
             }
-        }
+            None => Samples::Flat(decode_samples(decoder, width_u, height_u, spp, storage)?),
+        },
         Mode::Lazy { file, order, ifd } => {
             let Some((layout, reading)) = lazy_layout(decoder, bits, format)? else {
                 return Err(IfdFail::NotLazy);

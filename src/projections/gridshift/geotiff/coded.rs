@@ -24,6 +24,12 @@ pub(super) fn coded_of(compression: u32, predictor: u32, bits: u32, format: u32)
     }
 }
 
+/// The compressions whose samples are never read: JPEG (7) and CCITT (2, 3, 4). libtiff refuses them
+/// and PROJ still opens the grid. Old JPEG (6) is refused at creation by PROJ too.
+pub(super) fn is_undecoded(compression: u32) -> bool {
+    matches!(compression, 2 | 3 | 4 | 7)
+}
+
 /// The predictor of an LZW image: none, 2 for integers of 16 or 32 bits, and 3 for floats of 32 or
 /// 64 bits. `None` for the others.
 fn lzw_predictor(predictor: u32, bits: u32, format: u32) -> Option<Predictor> {
