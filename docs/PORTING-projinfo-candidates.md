@@ -1,110 +1,58 @@
-# projinfo: candidate operations between two CRS
+# Fiche d'état — listes `projinfo --summary` du gros corpus (lot Q2b)
 
-Port of the candidate-listing path of `projinfo` from PROJ 9.9.0 that
-`-s X -t Y` takes: the area of interest (`--bbox`, `--area`), the spatial
-test (`--spatial-test`, and the automatic note), `--crs-extent-use`,
-`--accuracy`, and `--summary`. The C++ it follows is `outputOperations` in
-`src/apps/projinfo_lib.cpp`, `makeBboxFilter`, and in
-`src/iso19111/operation/coordinateoperationfactory.cpp`: `createOperations`,
-`filterAndSort` and `FilterResults` (`filterOut`, `sort`, `andSort`). The
-registry query is `AuthorityFactory::createFromCoordinateReferenceSystemCodes`
-in `factory.cpp`.
+Lot : cas A (candidats « ballpark vertical », composé → géographique) et B (jambe
+« axis order change (geographic3D horizontal) » absente dans les pivots) de
+`tests/parity/wide/known.tsv`. Aucun correctif conservé : deux tentatives, les deux annulées.
 
-Not covered: the grids and deformation models (another lot), the datum pivot,
-and the compound and vertical paths. The ballpark operations of two same-kind
-geodetic CRS are covered by `PORTING-projinfo-pivot-ballpark.md`. See below.
+## Mesure de base
 
-## API mapping
+- 38 listes lues ; 35 diffèrent de PROJ 9.9.0, 3 sont identiques (`0640`, `0750`, `0851`).
+- Registre `tests/parity/wide/known.tsv` : 131 lignes, toutes de ces 35 listes.
+- La consigne parlait de 32 listes ouvertes ; la mesure donne 35. La mesure fait foi.
 
-| PROJ (C++) | Rust |
-|---|---|
-| `outputOperations` (candidate count, note, summary) | `candidates`, `candidate_operations` (`src/bin/projinfo.rs`) |
-| `makeBboxFilter` | `candidate_area` (`--bbox` and `--area`, several matches an error) |
-| `CoordinateOperationContext::setAreaOfInterest`, `setSpatialCriterion`, `setSourceAndTargetCRSExtentUse`, `setDesiredAccuracy` | `CoordinateOperationContext::set_area_of_interest`, `set_spatial_criterion`, `set_crs_extent_use`, `set_desired_accuracy` |
-| `SpatialCriterion` | `SpatialCriterion` (`StrictContainment`, `PartialIntersection`) |
-| `SourceTargetCRSExtentUse` | `CrsExtentUse` (`Ignore`, `Both`, `Intersection`, `Smallest`) |
-| `getExtent(op)`, `getExtentPossiblySynthetized(crs)` | `operation_extent`, `crs_extent` |
-| `Extent::contains`, `intersects`, `intersection`, `getPseudoArea` | `extent_contains`, `extent_intersects`, `intersect_extents`, `BoundingBox::{contains, intersects, intersection, pseudo_area}` (`src/iso19111/model.rs`) |
-| `FilterResults::filterOut`, `andSort` (extent and accuracy part) | `filter_and_sort`, `accuracy_allowed` |
-| `getAccuracy` | `accuracy_allowed` (`Conversion` is 0 m, unknown is -1) |
-| `createFromCoordinateReferenceSystemCodes`, the `tryReverseOrder` and `discardSuperseded` rows, the intersecting pass | `operations_between` with `RegistrySearch::Both` |
-| the same, public overload (`tryReverseOrder` false) | `AuthorityFactory::create_from_coordinate_reference_system_codes` with `RegistrySearch::Forward` |
-| `outputOperations`, accuracy text `accuracies[0]->value()` | `CoordinateOperation::accuracy_text`, `Transformation::accuracy_text` |
+## Tentative 1 — garde d'intermédiaire sur l'appel inverse (annulée)
 
-New public items: `BoundingBox`, `SpatialCriterion`, `CrsExtentUse`,
-`ObjectDomain::from_bounding_box`, `ObjectDomain::bounding_box`,
-`CoordinateOperation::accuracy_text`, and the context setters above.
-`BoundingBox` replaces the CLI's `GeoBox`, so the list-crs filter and the
-candidate filter share one implementation.
+Port : `src/iso19111/factory.rs`, bloc « geocentric CRS to compound CRS is the inverse »
+(`create_candidates`, vers la ligne 6948). L'appel inverse `create_candidates(target, source)`
+posait `GUARD_DATUM_INTERMEDIATE` sur tout son sous-arbre. Test : ne plus le poser.
 
-## Test mapping
+Effet mesuré sur le gros corpus (`cargo test --test parity parity_wide -- --ignored`, 1656 s) :
 
-Yaml cases, `tests/cli_yaml/test_projinfo.yaml`, numbered as the runner numbers them.
+- lignes fermées : `0107` (4/4), `0237` (2/2), `0057` (lignes 1, 2), `0142` (lignes 3, 4), `0257` (ligne 3) ;
+- écarts nouveaux, donc échec du test : `0142` lignes 5, 6, 7 (PROJ 4 lignes, port 7) et
+  `0257` lignes 1, 4, 5 (PROJ 2 candidats, port 4). Ces listes étaient identiques sur ces lignes.
 
-| Cases | Options | Status |
-|---|---|---|
-| 15, 17, 18 | `--bbox`, `--area EPSG:3237`, `--area 'Denmark - onshore'` | pass |
-| 19, 20, 21 | `--area` with several matches, no match, `WRONG:CODE` | pass (exit 1 and stderr) |
-| 51 | `--accuracy 0.05` | pass |
+Cause de la régression : le port bloque la recherche par CRS intermédiaires, puis PROJ
+la fait dans le sous-appel. Les candidats ajoutés pour `0142` et `0257` passent par
+`ETRF2014` / `ETRF96` → `ETRS89-NLD [AGRS2010]`, et PROJ ne les produit pas. Dans PROJ, la recherche
+intermédiaire imbriquée est conditionnée par la présence de résultats directs non filtrés
+(`coordinateoperationfactory.cpp:4449-4457`). `0107` et `0237` n'ont pas de résultat direct ;
+`0142` et `0257` en ont. Le port ne reproduit pas cette condition dans l'appel imbriqué.
+Piste pour la tentative suivante : reproduire la condition de 4449-4457 dans l'appel
+imbriqué avant de retirer le garde.
 
-Rust tests: `contains_follows_the_antimeridian_rules` and
-`intersects_follows_the_antimeridian_rules` now run on `BoundingBox`
-(`src/bin/projinfo.rs`), with the same cases as before.
+## Tentative 2 — jambe de troisième rang par `geodetic_operations` (annulée)
 
-## Open candidate cases and their causes
+Port : `pivot_leg` (`src/iso19111/factory.rs`) prenait la conversion EPSG:9602 nue pour une
+jambe géographique ↔ géocentrique. Test : passer par `geodetic_operations` (port de
+`createOperationsGeodToGeod`, `coordinateoperationfactory.cpp:5300-5390`), premier résultat.
 
-Each cause was checked against the reference output for the case unless marked.
+Effet : aucun, sur les 38 listes (sortie identique à la base, 3 identiques).
+Les listes B (`0205`, `0735`, `0785`) ne passent pas par cette jambe : le candidat de PROJ
+vient de `createOperationsToGeod`. Annulée faute d'effet mesuré.
 
-| Cases | Reference | Cause |
-|---|---|---|
-| 13, 14 | `DERIVED_FROM(EPSG):` prefix on some ids, `, at least one grid missing` suffix | The suffix needs grid availability, which is the grids lot. The prefix is not investigated. |
-| 16, 31 | `Inverse of UTM zone 31N + ...` | `Conversion` has no inverse, so a registry conversion read in reverse is dropped. |
-| 25, 27, 38, 39 | Vertical or height operations | The vertical and geoid paths (`createOperationsVertToGeog`, `createOperationsGeogToVertFromGeoid`) are not ported. Not investigated per case. |
-| 26 | 3 candidates, ours 2 | Probably the vertical path as above. Not investigated. |
-| 29, 30 | `WGS 84 + EGM96 height` | Closed by the compound lot: the name promotion and the vertical branch of `createOperationsCompoundToGeog`, see `PORTING-compound-resolution.md`. |
-| 32 | `EPSG:4326+3855 --3d` from a projected CRS | Projected source: `createOperationsDerivedTo` is not ported (`PORTING-compound-resolution.md`). |
-| 36, 37, 68 | Concatenated operations through a datum | `createOperationsWithDatumPivot` is not ported. |
-| 108 | `EPSG:4979` to a projected compound CRS | Projected horizontal component, same cause as 32. |
-| 88, 89, 90 | `Conversion from ... (geocentric) + ...` chains | Same datum-pivot path, with geocentric conversions. Not investigated per case. |
-| 84 | `Canada velocity grid` step | Grid lot (deformation grid). |
-| 106 | `+proj=noop` for a same CRS | Not investigated. |
+## Catégorie B — cause pour `0205`, `0735`, `0785`, `0128`
 
-## Deliberate differences
+PROJ construit le candidat `… + axis order change (geographic3D horizontal) + Conversion from X
+(geographic) to X` avec une jambe dont le CRS intermédiaire est nommé `X (geographic)`, en lat/lon.
+Cette jambe sort de `createOperationsGeodToGeod`, branche des datums différents
+(`coordinateoperationfactory.cpp:5354-5370`) : `interm_crs` lon/lat puis `createOperations(interm,
+cible)`. Le port ne construit pas ce candidat : le chemin pivot n'atteint pas cette jambe
+(le candidat `ETRS89-FRO [2008] … WGS 84 (Transit)` manque entièrement). Non résolu.
 
-- **Ballpark operations** are synthesized for a geographic pair or a geocentric
-  pair of different datums, and the candidate list drops them under
-  `--hide-ballpark`. The same-datum null offsets, the prime meridian shift, and
-  the geographic/geocentric pairs are not. See `PORTING-projinfo-pivot-ballpark.md`.
-- **Only registry operations, the deriving conversion, and the pivots of
-  `CoordinateOperationContext::set_intermediate_crs`** are candidates. No
-  datum-pivot or derived-CRS path. The vertical branch of compound CRS is
-  partial (`PORTING-compound-resolution.md`).
-- **Inverses** are built for registry transformations only (`Transformation::inverse`).
-  A reverse-direction registry conversion or concatenation is dropped, where
-  PROJ returns its inverse.
-- **Supersession** is always applied, as PROJ does by default. `--show-superseded`
-  is not implemented.
-- **Sort**: `create_operations` orders the candidates with the `SortFunction`
-  port that cs2cs uses (`select::sort_candidates`). Its area is the extent
-  intersected with the CRS extents, not with an area of interest.
-- **Not ported**: `removeUninterestingOps`, `removeDuplicateOps`.
-  `removeSyntheticNullTransforms` and the `hasOpThatContainsAreaOfInterestAndNoGrid`
-  flag it reads are ported (ballpark lot).
-- **`BoundingBox::intersection`** handles boxes that do not cross the
-  antimeridian. PROJ's intersection for a box that crosses it is not ported.
-- **Accuracy text**: a database `REAL` accuracy keeps SQLite's text (`1.0`,
-  `0.113`). An accuracy that PROJ synthesizes uses Rust's `f64` text (`5`).
-- **Area of interest** from `--area` uses the extent's description as well as
-  its box, as `FilterResults` does with `foundExtentWithExpectedDescription`.
+## Reste ouvert
 
-## Verification
-
-- `cargo test --test cli_yaml` with the PROJ 9.9.0 binaries on `PATH`, on a
-  fresh `origin/main` and on this branch: 59 open `projinfo` rows on `main`,
-  52 here. Cases 15, 17, 18, 19, 20, 21 and 51 closed. No row open here
-  that was passing on `main`, in any yaml suite.
-- `cargo fmt --check` and `cargo clippy --all-targets --all-features -- -D warnings`: clean.
-- `cargo test --all-features --no-fail-fast`: every test binary reports 0 failed.
-- Ballpark lot (`PORTING-projinfo-pivot-ballpark.md`): 50 open `projinfo` rows
-  on `origin/main`, 46 after it. Cases 11, 12, 34 and 107 closed. Across all yaml
-  suites, 90 open rows before, 82 after, none newly open.
+- A : `0142`, `0257`, `0567` (et `0434`, `0679`, `0829`, non analysées) ; voir la tentative 1.
+- B : `0205`, `0735`, `0785`, `0128` ; voir ci-dessus.
+- E (emprise EPSG:9602) : non abordée dans ce lot.
+- C et D : hors lot.
