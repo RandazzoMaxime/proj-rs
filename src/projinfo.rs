@@ -1516,7 +1516,7 @@ fn operation_heading(
         .unwrap_or_else(|| "unknown id".to_owned());
     let accuracy = match (operation.accuracy_text(), operation.accuracy(), operation) {
         (Some(text), _, _) => format!("{text} m"),
-        (None, Some(value), _) => format!("{value} m"),
+        (None, Some(value), _) => format!("{} m", crate::iso19111::format_g(value, 15)),
         (None, None, crate::CoordinateOperation::Conversion(_)) => "0 m".to_owned(),
         _ => "unknown accuracy".to_owned(),
     };
