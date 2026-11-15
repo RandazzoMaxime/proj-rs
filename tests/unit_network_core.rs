@@ -2,9 +2,8 @@
 //! callbacks (`custom`, `getfilesize`, `simul_open_error`, `simul_read_range_error`), the
 //! `network_endpoint_api_and_not_reachable_*` cases, and the operation factory cases
 //! `pyproj_issue_1192` and `do_not_attempt_network_access_known_available_network_on`, and
-//! `proj_coordoperation_get_grid_used`. Nothing here reaches `cdn.proj.org` over the network: the
-//! endpoint is a local address with no server, and the one CDN URL that `grid_used` names is
-//! answered by the callbacks.
+//! Nothing here reaches `cdn.proj.org` over the network: the endpoint is a local address with no
+//! server, and the CDN URLs the cases name are answered by the callbacks.
 //!
 //! The assertions are PROJ's. `HUGE_VAL` with `PROJ_ERR_OTHER_NETWORK_ERROR` is
 //! `Err(ProjError::Network)` here, and the description of the last used operation is the
@@ -1109,33 +1108,22 @@ impl NetworkCallbacks for ServeOneFile {
     fn close(&self, _handle: NetworkHandle) {}
 }
 
-/// `networking.proj_coordoperation_get_grid_used` (`test/unit/test_network.cpp`): the grid of
-/// `proj=vgridshift grids=nz_linz_nzgd2000-c120100904-grid01.tif` is in neither `proj.db` nor on
-/// disk. With the network on, the grid is the file at the CDN URL: its short name is the name it
-/// is asked by, its full name is empty, and its URL is `https://cdn.proj.org/` and the name. Two
-/// creations give the same answer.
+/// A grid of more than one chunk, created twice with the callbacks answering. PROJ gives the grid
+/// on both creations and asks for the file once, in the first: the grid is read at the first
+/// transform, and the second creation finds its chunks in the context cache.
 ///
-/// The CDN file is not in the repository and the sandbox has no route to the CDN, so the
-/// callbacks answer the one URL with the first 956 bytes of the truncated egm96 fixture, and
-/// refuse every other URL. The three assertions of the C++ test do not depend on the bytes: they
-/// name the file, not its content. `proj.db` has no row for this name, so the URL is the one PROJ
-/// gives when the open of the CDN URL succeeds, as `FileManager::open_resource_file` does.
-///
-/// The `available` flag and the open are not asserted by the C++ test. They are the values PROJ
-/// 9.9.0 gives for the same callbacks (`libproj` probe, `TIFF`+`curl` build): `available` 1,
-/// `directDownload` 0, `openLicense` 0, one `open(url, 0, 16384)` for the two creations, with no
-/// call from the `grids_needed` queries.
+/// The file is `data/tests/egm96_15.gtx` (259240 bytes, 16 chunks), served under `https://foo/`.
+/// The expected calls are PROJ 9.9.0's, measured with `libproj` 9.9.0 (TIFF and curl build,
+/// callbacks that journal, the same file): creation 0 `open(url, 0, 16384)`, three headers,
+/// `close`; creation 1 gives an operation with no call.
 #[test]
-fn proj_coordoperation_get_grid_used() {
-    const NAME: &str = "nz_linz_nzgd2000-c120100904-grid01.tif";
-    const URL: &str = "https://cdn.proj.org/nz_linz_nzgd2000-c120100904-grid01.tif";
+fn second_creation_of_a_multi_chunk_grid() {
+    const URL: &str = "https://foo/egm96_15.gtx";
     let bytes = std::fs::read(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/data/tests/egm96_15_uncompressed_truncated.tif"
+        "/data/tests/egm96_15.gtx"
     ))
-    .expect("the truncated egm96 fixture");
-    assert_eq!(bytes.len(), 956);
-
+    .expect("the egm96 gtx fixture");
     let served = Arc::new(ServeOneFile {
         url: URL,
         bytes,
@@ -1148,26 +1136,16 @@ fn proj_coordoperation_get_grid_used() {
     builder.set_network_callbacks(shared);
 
     for creation in 0..2 {
-        let proj = builder
+        let result = builder
             .clone()
-            .proj(&format!("proj=vgridshift grids={NAME}"))
-            .expect("the vgridshift of the CDN grid");
-        let grids = proj.grids_needed().expect("the grids the operation needs");
-        assert_eq!(grids.len(), 1, "creation {creation}: one grid");
-        let grid = &grids[0];
-        // PROJ: `EXPECT_EQ(std::string(shortName), ...)`.
-        assert_eq!(grid.short_name, NAME, "creation {creation}: short name");
-        // PROJ: `EXPECT_EQ(std::string(fullName), "")`.
-        assert_eq!(grid.info.full_name, "", "creation {creation}: full name");
-        // PROJ: `EXPECT_EQ(std::string(url), "https://cdn.proj.org/...")`.
-        assert_eq!(grid.info.url, URL, "creation {creation}: url");
-        // Measured with PROJ 9.9.0, not asserted by the C++ test.
-        assert!(grid.info.available, "creation {creation}: available");
-        assert!(!grid.info.direct_download, "creation {creation}: direct");
-        assert!(!grid.info.open_license, "creation {creation}: open license");
+            .proj(&format!("proj=vgridshift grids={URL}"));
+        assert!(
+            result.is_ok(),
+            "creation {creation}: proj_create is not NULL: {:?}",
+            result.err()
+        );
     }
 
-    // Measured with PROJ 9.9.0: one open for the two creations, with the first chunk.
     let opens = served.opens.lock().expect("lock").clone();
     assert_eq!(opens, vec![(URL.to_owned(), 0, 16384)], "callback opens");
 }

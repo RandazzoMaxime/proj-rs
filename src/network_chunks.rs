@@ -22,10 +22,13 @@ pub(crate) const CHUNK_SIZE: usize = 16384;
 /// the cache is emptied before the next read. PROJ evicts by age, which is not reproduced.
 const CACHE_MAX_BYTES: usize = 300 * 1024 * 1024;
 
-/// The chunks read so far, by URL and chunk index.
+/// The chunks read so far, by URL and chunk index, and the size of each file those replies gave.
+/// The size is kept with the chunks: a second `RemoteFile` of the same URL knows where the file
+/// ends without a call, as PROJ keeps a file's properties in its context.
 #[derive(Default)]
 pub(crate) struct ChunkCache {
     chunks: HashMap<String, HashMap<u64, Vec<u8>>>,
+    sizes: HashMap<String, u64>,
     bytes: usize,
 }
 
@@ -34,9 +37,10 @@ impl ChunkCache {
         self.chunks.get(url)?.get(&index).map(Vec::as_slice)
     }
 
-    /// Forgets every chunk, of every file (`clearMemoryCache` in PROJ 9.9.0).
+    /// Forgets every chunk and every size, of every file (`clearMemoryCache` in PROJ 9.9.0).
     fn clear(&mut self) {
         self.chunks.clear();
+        self.sizes.clear();
         self.bytes = 0;
     }
 
@@ -91,13 +95,27 @@ pub(crate) struct RemoteFile {
 
 impl RemoteFile {
     pub(crate) fn new(url: &str, callbacks: Callbacks) -> Self {
+        let total = callbacks
+            .chunks
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .sizes
+            .get(url)
+            .copied();
         Self {
             url: url.to_owned(),
             callbacks,
             handle: None,
-            total: None,
+            total,
             baseline: None,
             changed: false,
+        }
+    }
+
+    /// Keeps the size of the file in the cache shared by the files of the builder.
+    fn remember_size(&self) {
+        if let Some(total) = self.total {
+            self.cache().sizes.insert(self.url.clone(), total);
         }
     }
 
@@ -195,6 +213,7 @@ impl RemoteFile {
             self.total = Some(start.saturating_add(u64::try_from(data.len()).unwrap_or(0)));
         }
         self.cache().store(&self.url, low, &data);
+        self.remember_size();
         Ok(data)
     }
 
@@ -226,6 +245,7 @@ impl RemoteFile {
             }
             Some(_) => {}
         }
+        self.remember_size();
     }
 
     /// The bytes of `offset..end`, from the chunks `first..=last`. The chunks of the call that
