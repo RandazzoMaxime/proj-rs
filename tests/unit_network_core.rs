@@ -16,7 +16,12 @@ use std::f64::consts::PI;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+use std::fs;
 use std::net::TcpListener;
+
+#[path = "net_cdn/mod.rs"]
+mod net_cdn;
+use net_cdn::cdn_reachable;
 
 use proj_rs::{
     create_from_user_input, CoordinateOperation, CoordinateOperationContext,
@@ -747,20 +752,30 @@ const ISSUE_1192_INSTANTIABLE_NETWORK_ON: [bool; 10] = [true; 10];
 
 /// `networking.pyproj_issue_1192`: the factory context of the C++ test (grid availability
 /// IGNORED, spatial criterion PARTIAL_INTERSECTION, all authorities), run once with the network
-/// on and once off. Each instantiable operation has a `proj_pj_info` id.
+/// on and once off.
 ///
 /// `proj_coordoperation_is_instantiable(ctx, P)` reads the network flag of the context. Here the
 /// flag is the grid availability: network on is `KnownAvailable` (a grid the database knows
 /// counts as available, `considerKnownGridsAsAvailable`), network off is `UseForSorting` (only
-/// the grids on disk). No download happens in either half: PROJ's answer with the network on is
-/// the same with cdn.proj.org refused, which is the case here.
+/// the grids on disk). PROJ does not probe the CDN for this list: the two grids that are not on
+/// disk (`us_noaa_alaska.tif`, `ca_nrc_ntv2_0.tif`) have open-licence rows in `proj.db`.
 ///
-/// The id is PROJ's `proj_pj_info` id of a pipeline, `pipeline`. Only the operations whose grids
-/// are on disk can be built here (`ProjBuilder::proj` reads the grid at creation). The network-on
-/// operations that need a grid not on disk are checked by their PROJ string only: PROJ builds
-/// them lazily, which the Rust API does not offer for a single operation.
+/// Each operation is instantiated as `proj_list_get` does, under the builder's network settings
+/// (`ProjBuilder::proj_from_operation`). An instantiable one gives a PJ whose `proj_pj_info` id is
+/// `pipeline`, including the network-on operations whose grid is not on disk. A non-instantiable
+/// one gives an error: PROJ gives a PJ with a null id, which this API does not expose.
+///
+/// The grid cache is off and the user-writable directory is a temporary folder. The endpoint is
+/// the default, `https://cdn.proj.org`, and the test returns early when that CDN does not answer
+/// (`networkAccessOK`, `initial_check`). With the network on, instantiating the operations opens
+/// no grid, checked with a builder whose every open is refused (PROJ measured: no open from
+/// `proj_list_get`, `proj_coordoperation_is_instantiable` or `proj_pj_info`), and writes none to
+/// the user directory. Reading the grids at a transform is not checked here.
 #[test]
 fn pyproj_issue_1192() {
+    if !cdn_reachable() {
+        return;
+    }
     let db = DatabaseContext::create().expect("embedded proj.db");
     let from = create_from_user_input("EPSG:4326", &db).expect("EPSG:4326");
     let to = create_from_user_input("EPSG:2964", &db).expect("EPSG:2964");
@@ -795,10 +810,29 @@ fn pyproj_issue_1192() {
             .collect();
         assert_eq!(flags, expected, "network on: {network_on}");
 
-        for (operation, instantiable) in operations.iter().zip(flags) {
-            if !instantiable {
-                continue;
-            }
+        let dir = std::env::temp_dir().join(format!(
+            "proj-rs-pyproj-issue-1192-{}-{}",
+            std::process::id(),
+            if network_on { "on" } else { "off" }
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        let mut builder = ProjBuilder::new();
+        builder.grid_cache_enable(false).expect("cache off");
+        builder
+            .set_user_writable_directory(&dir)
+            .expect("user directory");
+        builder.enable_network(network_on).expect("network");
+
+        // The same settings with every network open refused: an instantiable operation is built
+        // with no open at all, because PROJ defers the grids of an operation until a transform.
+        let refused = Arc::new(FailingOpen::default());
+        let refused_opens = Arc::clone(&refused);
+        let mut refusing = ProjBuilder::new();
+        refusing.grid_cache_enable(false).expect("cache off");
+        refusing.enable_network(network_on).expect("network");
+        refusing.set_network_callbacks(refused);
+
+        for (index, (operation, instantiable)) in operations.iter().zip(flags).enumerate() {
             let definition = operation
                 .export_to_proj_string_with_database(&db, ProjLines::Single)
                 .expect("the operation has a PROJ string");
@@ -807,14 +841,41 @@ fn pyproj_issue_1192() {
                 "{}: {definition}",
                 operation.name()
             );
-            if !network_on {
-                let proj = ProjBuilder::new()
-                    .proj(&definition)
-                    .expect("no grid is needed to build it");
-                let info = proj.proj_info();
-                assert_eq!(info.id.as_deref(), Some("pipeline"), "{}", operation.name());
-            }
+            let label = format!("network on: {network_on}, operation {index}");
+            let expected_id = instantiable.then_some("pipeline");
+            assert_instantiation(&builder, operation, &db, expected_id, &label);
+            assert_instantiation(&refusing, operation, &db, expected_id, &label);
         }
+        let opens = refused_opens.opens.lock().expect("lock").len();
+        assert_eq!(
+            opens, 0,
+            "network on: {network_on}: creating the operations opens no grid"
+        );
+        let written = fs::read_dir(&dir).map_or(0, Iterator::count);
+        assert_eq!(
+            written, 0,
+            "network on: {network_on}: creating the operations writes no grid"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+/// `proj_list_get` for one operation of the list: a PJ whose `proj_pj_info` id is `pipeline` when
+/// the operation is instantiable, else an error (PROJ gives a PJ with a null id).
+fn assert_instantiation(
+    builder: &ProjBuilder,
+    operation: &CoordinateOperation,
+    db: &DatabaseContext,
+    expected_id: Option<&str>,
+    label: &str,
+) {
+    let built = builder.proj_from_operation(operation, db);
+    match expected_id {
+        Some(id) => {
+            let proj = built.unwrap_or_else(|error| panic!("{label}: {error}"));
+            assert_eq!(proj.proj_info().id.as_deref(), Some(id), "{label}");
+        }
+        None => assert!(built.is_err(), "{label}: not instantiable"),
     }
 }
 

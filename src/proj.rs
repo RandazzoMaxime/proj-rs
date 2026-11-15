@@ -24,7 +24,7 @@ use crate::gie_api::Factors;
 use crate::iso19111::{
     Conversion, CoordinateOperation, CoordinateOperationContext, CoordinateOperationFactory, Crs,
     DatabaseContext, FactoryError, GridAvailabilityUse, GridDescription, GridLookup, OpProps,
-    Pipeline, ProjStringLayout, RemoteGrids,
+    Pipeline, ProjLines, ProjStringLayout, RemoteGrids,
 };
 use crate::proj_iso::{iso_pipeline, iso_pipeline_at, IsoPipeline};
 use crate::{CreateError, Xyzt};
@@ -1103,7 +1103,8 @@ impl Proj {
             Body::Single => false,
             Body::Iso(pipeline) => pipeline.has_inverse(),
             Body::Native(op) => {
-                !matches!(op.inverse(Xyzt::xy(0.0, 0.0)), Err(StepError::NoInverse))
+                let probe = crate::network::with_inverse_probe(|| op.inverse(Xyzt::xy(0.0, 0.0)));
+                !matches!(probe, Err(StepError::NoInverse))
             }
         }
     }
@@ -1319,9 +1320,12 @@ impl ProjBuilder {
     /// Operations from `source` to `target`, built under this builder's network settings and
     /// callbacks. Same outcome as [`CoordinateOperationFactory::create_operations`].
     ///
-    /// The operation factory reads no grid over the network itself: PROJ's
-    /// `proj_create_operations` makes no call either, and this method keeps that property
-    /// observable through the callbacks registered on the builder.
+    /// The operation factory reads no grid over the network itself, with the grid availability
+    /// `KnownAvailable` (`proj_create_operations` makes no call then, as
+    /// `do_not_attempt_network_access_known_available_network_on` checks). With `IGNORED` and the
+    /// network on, PROJ opens the remote grids of the database rows (measured: two opens for
+    /// `EPSG:4326` to `EPSG:2964`); this port does not, see `docs/PORTING-network.md`. The
+    /// callbacks registered on the builder observe either case.
     ///
     /// # Errors
     ///
@@ -1334,6 +1338,32 @@ impl ProjBuilder {
     ) -> Result<Vec<CoordinateOperation>, FactoryError> {
         crate::network::with_context(&self.net, || {
             CoordinateOperationFactory::create().create_operations(source, target, context)
+        })
+    }
+
+    /// One operation of a list, instantiated as PROJ's `proj_list_get` does, under this builder's
+    /// network settings and callbacks.
+    ///
+    /// The operation's PROJ string is built with `db`, then read as [`Proj::new`] reads it. With
+    /// the network on, a grid that is not on disk but can be downloaded is not opened at creation:
+    /// PROJ defers it (`defer_grid_opening`), and so does this method, so the grid is fetched when
+    /// a point is transformed. With the network off, or for a grid that is neither on disk nor
+    /// downloadable, the creation fails.
+    ///
+    /// # Errors
+    ///
+    /// [`ProjCreateError::ProjError`] when the operation has no PROJ string, or when the string
+    /// does not build (a grid that cannot be found, with the network off).
+    pub fn proj_from_operation(
+        &self,
+        operation: &CoordinateOperation,
+        db: &DatabaseContext,
+    ) -> Result<Proj, ProjCreateError> {
+        let definition = operation
+            .export_to_proj_string_with_database(db, ProjLines::Single)
+            .map_err(|error| ProjCreateError::ProjError(error.to_string()))?;
+        crate::network::with_context(&self.net, || {
+            crate::network::with_grids_deferred_at_creation(|| Proj::new(&definition))
         })
     }
 
