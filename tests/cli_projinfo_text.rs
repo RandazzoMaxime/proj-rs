@@ -153,6 +153,20 @@ fn conversion_is_left_out_of_wkt1() {
     assert_eq!(text, "", "{text:?}");
 }
 
+/// The WKT2:2019 of a vertical datum keeps its anchor epoch, as `ANCHOREPOCH` after `ANCHOR`
+/// (PROJ 9.9.0 `VerticalReferenceFrame::_exportToWKT`).
+#[test]
+fn vertical_datum_writes_its_anchor_epoch() {
+    let text = projinfo_stdout(
+        &["EPSG:11329", "-o", "WKT2:2019", "-q"],
+        &[("PROJINFO_NO_GRID_CHECK", "YES")],
+    );
+    assert!(
+        text.contains("VDATUM[\"Japanese Geodetic Datum 2024 (vertical)\",\n            ANCHOREPOCH[2024.415]]"),
+        "{text}"
+    );
+}
+
 /// A vertical offset grid that PROJ reads under another name keeps its operation as a
 /// `DERIVED_FROM` identifier with no version (`createSimilarPropertiesOperation`).
 #[test]
