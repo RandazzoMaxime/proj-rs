@@ -1895,11 +1895,11 @@ fn render(
                 .map(Some)
                 .map_err(|error| error.to_string()),
             Dialect::Sql => sql_text(object, db, options).map(Some),
-            Dialect::Wkt2_2015 => wkt(object, db, crate::WktConvention::Wkt2_2015).map(Some),
-            Dialect::Wkt2_2019 => wkt(object, db, crate::WktConvention::Wkt2_2019).map(Some),
-            Dialect::Wkt1Gdal => wkt(object, db, crate::WktConvention::Wkt1Gdal)
+            Dialect::Wkt2_2015 => wkt(object, db, options, crate::WktConvention::Wkt2_2015).map(Some),
+            Dialect::Wkt2_2019 => wkt(object, db, options, crate::WktConvention::Wkt2_2019).map(Some),
+            Dialect::Wkt1Gdal => wkt(object, db, options, crate::WktConvention::Wkt1Gdal)
                 .map(|text| Some(format!("{text}\n"))),
-            Dialect::Wkt1Esri => wkt(object, db, crate::WktConvention::Wkt1Esri)
+            Dialect::Wkt1Esri => wkt(object, db, options, crate::WktConvention::Wkt1Esri)
                 .map(|text| Some(format!("{text}\n"))),
         };
         let body = match exported {
@@ -2033,9 +2033,13 @@ fn proj_text(
 fn wkt(
     object: &crate::AuthorityObject,
     db: &crate::DatabaseContext,
+    options: &Options,
     convention: crate::WktConvention,
 ) -> Result<String, String> {
     let mut formatter = crate::WktFormatter::create(convention).with_database(db.clone());
+    if options.single_line {
+        formatter.set_lines(crate::WktLines::Single);
+    }
     let text = match object {
         crate::AuthorityObject::Crs(crs) => crs.export_to_wkt(&mut formatter),
         crate::AuthorityObject::Ellipsoid(ellipsoid) => ellipsoid.export_to_wkt(&mut formatter),

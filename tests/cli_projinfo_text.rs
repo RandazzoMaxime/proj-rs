@@ -106,3 +106,19 @@ fn projjson_writes_ellipsoid_and_operation() {
         "{operation}"
     );
 }
+
+/// `--single-line` puts a WKT on one line, as PROJ 9.9.0 does; the multi-line default stays.
+#[test]
+fn single_line_flag_joins_wkt2_lines() {
+    let single = projinfo_stdout(
+        &["EPSG:4618", "-o", "WKT2:2019", "--single-line", "-q"],
+        &[("PROJINFO_NO_GRID_CHECK", "YES")],
+    );
+    assert_eq!(single.lines().count(), 1, "{single}");
+    assert!(single.starts_with("GEOGCRS[\"SAD69\","), "{single}");
+    let multi = projinfo_stdout(
+        &["EPSG:4618", "-o", "WKT2:2019", "-q"],
+        &[("PROJINFO_NO_GRID_CHECK", "YES")],
+    );
+    assert!(multi.lines().count() > 1, "{multi}");
+}
