@@ -13,7 +13,7 @@ use super::model::{
     ParameterValue, PrimeMeridian, ProjectedCRS, SphericalCS, SphericalGeodeticCRS, UnitKind,
     UnitOfMeasure, VerticalCRS,
 };
-use super::parammap::{MethodMap, ParamMap, OTHER_METHODS, PROJECTION_METHODS};
+use super::parammap::{method_by_code, MethodMap, ParamMap, OTHER_METHODS, PROJECTION_METHODS};
 use super::pipeline::proj_number;
 use super::proj_crs;
 use super::projfam;
@@ -678,7 +678,7 @@ pub(crate) fn projection_steps(source: &Crs, target: &Crs) -> Result<Vec<String>
     if let Some(step) = projected_unit_step(projected) {
         steps.push(step);
     }
-    if let Some(order) = projected_axis_order(projected) {
+    if let Some(order) = trailing_axis_order(projected) {
         steps.push(format!("+proj=axisswap +order={order}"));
     }
     Ok(steps)
@@ -718,7 +718,7 @@ fn spherical_source_projection(
     if let Some(step) = projected_unit_step(projected) {
         steps.push(step);
     }
-    if let Some(order) = projected_axis_order(projected) {
+    if let Some(order) = trailing_axis_order(projected) {
         steps.push(format!("+proj=axisswap +order={order}"));
     }
     Ok(steps)
@@ -1260,6 +1260,25 @@ fn axis_order_text(axes: &[Axis]) -> Option<String> {
 /// south, named northing then easting, swaps as `2,1` (UPS North and South).
 pub(crate) fn projected_axis_order(crs: &ProjectedCRS) -> Option<String> {
     axes_order(crs.coordinate_system().axes())
+}
+
+/// The trailing swap of a projected CRS in its conversion export. A method whose `proj_aux` is
+/// `axis=` writes its own axis order (`+axis=wsu`), so no swap follows it (conversion.cpp
+/// 4285-4313 sets `bAxisSpecFound`, read by crs.cpp 4768).
+fn trailing_axis_order(projected: &ProjectedCRS) -> Option<String> {
+    let writes_axis = projected
+        .deriving_conversion()
+        .method()
+        .code()
+        .parse::<i32>()
+        .ok()
+        .and_then(method_by_code)
+        .is_some_and(|method| method.proj_aux.is_some_and(|aux| aux.starts_with("axis=")));
+    if writes_axis {
+        None
+    } else {
+        projected_axis_order(projected)
+    }
 }
 
 /// [`projected_axis_order`] on the axes of any Cartesian coordinate system, so that a derived

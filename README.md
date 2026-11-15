@@ -92,7 +92,7 @@ PROJ's own, and a case counts only when it passes.
 | Embedded `proj.db` and EPSG resolution | ✅ | Built from the PROJ 9.9.0 SQL, opened in memory with `rusqlite` |
 | ISO 19111 model, WKT and PROJJSON | 🟡 | CRS model, authority factory, CRS identification against `proj.db`, WKT1 and WKT2 import and export, PROJJSON. See [`docs/CRS-API.md`](docs/CRS-API.md) |
 | georust `proj` facade | 🟡 | `Proj`, `ProjBuilder`, `Coord`, `Transform`, `Area`, errors and the `geo-types` feature exist. <!--gen:georust_pass-->25<!--/gen--> of <!--gen:georust_total-->25<!--/gen--> of georust `proj` 0.31's own unit tests pass against it ([`tests/georust_parity.rs`](tests/georust_parity.rs)); the rest are listed there as gaps |
-| Command-line tools | 🟡 | `cct`, `cs2cs`, `proj`, `invproj`, `geod`, `invgeod`, `gie`, `projinfo` and `projsync` over the library; <!--gen:cli_matched-->824<!--/gen--> of <!--gen:cli_total-->825<!--/gen--> PROJ CLI cases match |
+| Command-line tools | 🟡 | `cct`, `cs2cs`, `proj`, `invproj`, `geod`, `invgeod`, `gie`, `projinfo` and `projsync` over the library; <!--gen:cli_matched-->825<!--/gen--> of <!--gen:cli_total-->825<!--/gen--> PROJ CLI cases match |
 | SIMD batch path | ✅ | AVX2 on x86-64. Other targets run the scalar loop |
 
 ✅ done and verified &nbsp;·&nbsp; 🟡 working, with known gaps listed below
@@ -165,7 +165,7 @@ The same goes for the CLI cases in [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md
 |---|---:|---:|:-:|
 | PROJ C++ unit tests | <!--gen:unit_ported-->1507<!--/gen--> | <!--gen:unit_open-->0<!--/gen--> | <!--gen:unit_icon-->✅<!--/gen--> |
 | `cct` CLI cases | <!--gen:cli_cct_ported-->18<!--/gen--> | <!--gen:cli_cct_open-->0<!--/gen--> | <!--gen:cli_cct_icon-->✅<!--/gen--> |
-| `cs2cs` CLI cases | <!--gen:cli_cs2cs_ported-->196<!--/gen--> | <!--gen:cli_cs2cs_open-->1<!--/gen--> | <!--gen:cli_cs2cs_icon-->🟡<!--/gen--> |
+| `cs2cs` CLI cases | <!--gen:cli_cs2cs_ported-->197<!--/gen--> | <!--gen:cli_cs2cs_open-->0<!--/gen--> | <!--gen:cli_cs2cs_icon-->✅<!--/gen--> |
 | `gie` CLI cases | <!--gen:cli_gie_ported-->4<!--/gen--> | <!--gen:cli_gie_open-->0<!--/gen--> | <!--gen:cli_gie_icon-->✅<!--/gen--> |
 | `invproj` CLI cases | <!--gen:cli_invproj_ported-->1<!--/gen--> | <!--gen:cli_invproj_open-->0<!--/gen--> | <!--gen:cli_invproj_icon-->✅<!--/gen--> |
 | `proj` CLI cases | <!--gen:cli_proj_ported-->494<!--/gen--> | <!--gen:cli_proj_open-->0<!--/gen--> | <!--gen:cli_proj_icon-->✅<!--/gen--> |

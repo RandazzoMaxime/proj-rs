@@ -624,10 +624,7 @@ fn build_engine(
         }
         (None, _) => None,
     };
-    if iso_serves_pair(source, target)
-        && !init_side_south_oriented(source)
-        && !init_side_south_oriented(target)
-    {
+    if iso_serves_pair(source, target) {
         match proj_rs::iso19111::select_alternatives_in_area_with_rules(
             &iso_source,
             &iso_target,
@@ -943,28 +940,6 @@ fn init_side_as_code(text: &str) -> String {
     } else {
         text.to_owned()
     }
-}
-
-/// Whether a `+init=epsg:` side is a south-oriented Transverse Mercator. Its ISO pipeline gives the
-/// opposite signs to the reference (`docs/AUDIT-cs2cs-wide.md`, `EPSG:2046`), so such a side
-/// keeps the PROJ-string route.
-fn init_side_south_oriented(text: &str) -> bool {
-    if !text.to_ascii_lowercase().contains("init=epsg:") {
-        return false;
-    }
-    let Ok(db) = proj_rs::iso19111::DatabaseContext::create() else {
-        return false;
-    };
-    matches!(
-        proj_rs::iso19111::create_from_user_input_with_init_rules(
-            text,
-            &db,
-            proj_rs::iso19111::InitRules::Proj4,
-        ),
-        Ok(proj_rs::iso19111::Crs::Projected(projected))
-            if projected.deriving_conversion().method().name()
-                == "Transverse Mercator (South Orientated)"
-    )
 }
 
 /// Whether path (1) serves the pair. An EPSG token, a name or a CRS with an EPSG identity always

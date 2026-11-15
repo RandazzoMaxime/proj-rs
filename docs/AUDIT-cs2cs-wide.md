@@ -7,8 +7,8 @@ Référence : `cs2cs` 9.9.0 compilé sans TIFF (`target/proj-reference`).
 
 | Mode | Cas | identique | écart ≤ 1e-6 | écart > 1e-6 | statut différent | format texte |
 |---|---|---|---|---|---|---|
-| CRS séparés par des blancs (défaut) | 272 | 266 | 2 | 0 | 4 | 0 |
-| un seul argument par CRS (`-1`) | 272 | 266 | 2 | 0 | 4 | 0 |
+| CRS séparés par des blancs (défaut) | 275 | 269 | 2 | 0 | 4 | 0 |
+| un seul argument par CRS (`-1`) | 275 | 269 | 2 | 0 | 4 | 0 |
 
 Historique (identique / écart ≤ 1e-6 / écart > 1e-6 / statut différent) :
 
@@ -19,10 +19,11 @@ Historique (identique / écart ≤ 1e-6 / écart > 1e-6 / statut différent) :
 | Lots C2 (écarts 5, 7) et D (`proj` bit à bit, branche `c4c6a55` et suivants) | 262 / 2 / 4 / 4 | 262 / 2 / 4 / 4 |
 | Lot C3b (`+init=epsg:`, écarts 3 et 4) | 264 / 2 / 2 / 4 | 264 / 2 / 2 / 4 |
 | Lot C4 (ITRF2020 ↔ WGS 84, écart 2) | 266 / 2 / 0 / 4 | 266 / 2 / 0 / 4 |
+| Lot C6 (méthode 9808, 3 cas ajoutés ; mesure avant C6 sur ces 275 cas : 266 / 2 / 3 / 4) | 269 / 2 / 0 / 4 | 269 / 2 / 0 / 4 |
 
 Le lot D (ordre des opérations de PROJ dans merc, tmerc, lcc, atanh de la libm) fait passer 46 cas « écart ≤ 1e-6 » à « identique ».
 
-- 272 cas, 226 paires distinctes, 60 cas avec option (`--only-best`, `--3d`,
+- 275 cas, 229 paires distinctes, 60 cas avec option (`--only-best`, `--3d`,
   `-I`, `--no-ballpark`, `--s_epoch`, `--t_epoch`).
 - L'écart toléré le plus grand vaut 2,8e-9 dans l'unité de sortie.
 - Les lignes restantes à statut différent relèvent de la cause encore ouverte 6,
@@ -305,12 +306,12 @@ matrice ne le met pas à l'épreuve.
 
 ## Non vérifié et non fait
 
-- `tests/cli_yaml` : 3 suites vertes après le lot C3b. Le cas `test_cs2cs_init_epsg.yaml#10`
-  (paire mixte `EPSG:2046` vers `+init=epsg:4326`) reste ouvert, voir la fiche
+- `tests/cli_yaml` : 3 suites vertes après le lot C6. Le cas `test_cs2cs_init_epsg.yaml#10`
+  (paire mixte `EPSG:2046` vers `+init=epsg:4326`) est fermé par le lot C6, voir la fiche
   `PORTING-cs2cs-init-towgs84.md`.
-- Projection sud-orientée (méthode 9808, `EPSG:2046` à `2055`) : la sélection ISO donne les signes
-  opposés à la référence (mesuré lot C3b, `EPSG:2046 +to EPSG:4326`). Aucun cas de `cases.txt` ne
-  la couvre, donc la matrice ne la voit pas. Ouvert.
+- Projection sud-orientée (méthode 9808, `EPSG:2046` à `2055`) : fermée par le lot C6. Cause :
+  une permutation d'axes finale `-1,-2` que PROJ n'écrit pas quand la méthode porte `+axis=wsu`.
+  Trois cas (`EPSG:2046`, `EPSG:4326`, `EPSG:22275`) entrent dans `cases.txt`.
 - Les messages d'erreur sur la sortie d'erreur (stderr) ne sont pas comparés.
   Ils diffèrent (par exemple `proj_create: crs not found` contre
   `no transformation`). Le comparateur ne classe que stdout et les codes retour.
