@@ -236,3 +236,30 @@ fn datum_based_pivot_keeps_the_last_replacement_of_a_chain() {
         ]
     );
 }
+
+/// `projinfo -s EPSG:20037 -t EPSG:6548 --summary --spatial-test intersects` (PROJ 9.9.0): the
+/// three replacements share one velocity grid. Their first step, a `Geographic3D offsets` whose
+/// source is the compound CRS, has no PROJ string, so `removeDuplicateOps` keeps all three.
+#[test]
+fn unexportable_candidates_are_not_merged_as_duplicates() {
+    let operations = candidates(
+        "EPSG:20037",
+        "EPSG:6548",
+        GridAvailabilityUse::UseForSorting,
+    );
+    let tail = "Conversion from NAD83(2011) (geocentric) to NAD83(2011) (geog2D) + SPCS83 Ohio North zone (meter)";
+    let leg = |version: &str, rank: &str| {
+        format!(
+            "Null geographic offset from NAD83(CSRS)v4 (geog2D) to NAD83(CSRS)v4 (geog3D) + NAD83(CSRS)v4 to NAD83(CSRS){version} ({rank}) + Conversion from NAD83(CSRS){version} (geog3D) to NAD83(CSRS){version} (geocentric) + NAD83(CSRS){version} to NAD83(2011) (1) + {tail}"
+        )
+    };
+    assert_eq!(
+        names(&operations),
+        [
+            "Ballpark geographic offset from NAD83(CSRS)v4 to NAD83(2011) + SPCS83 Ohio North zone (meter)".to_owned(),
+            leg("v8", "3"),
+            leg("v7", "3"),
+            leg("v6", "4"),
+        ]
+    );
+}
