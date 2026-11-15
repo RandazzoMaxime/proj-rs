@@ -431,7 +431,7 @@ Non mesuré contre `libproj` : GeoTIFF déflaté chunky (`PlanarConfiguration` 1
 Deflate (32946), tuiles de bord chunky. Ces cas passent par le même décodeur ; leurs valeurs et leurs
 appels ne sont pas établis avec `libproj`.
 
-LZW (`Compression` 5), prédicteurs 1 à 3, sur le réseau : décodé par `gridshift/lzw.rs`. Le crate
+LZW (`Compression` 5), prédicteurs 1 à 3, sur le réseau : décodé par `tiff_codec/lzw.rs` (prédicteurs : `tiff_codec/predictor.rs`). Le crate
 `tiff` n'a pas son lecteur LZW dans ce build (feature `lzw` absente ; l'activer ajouterait `weezl`).
 Valeurs mesurées contre `libproj` 9.9.0 par les grilles Deflate équivalentes :
 `data/tests/lzw_predictor3_planar.tif` (bandes, une par morceau) et

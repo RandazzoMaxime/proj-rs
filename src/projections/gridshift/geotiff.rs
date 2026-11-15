@@ -12,17 +12,11 @@ use tiff::decoder::ifd::Value;
 use tiff::decoder::{Decoder, DecodingResult};
 use tiff::tags::Tag;
 
-use super::lzw::Predictor;
 use super::tiles::{ImageTiles, Layout, LazyIfd, Reading, Samples, Storage};
 use super::{Domain, Extent};
 use crate::network_chunks::{RemoteFile, RemoteReader};
-
-/// The byte order of a TIFF file, from its first two bytes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum ByteOrder {
-    Little,
-    Big,
-}
+use crate::projections::tiff_codec::predictor::Predictor;
+use crate::projections::tiff_codec::ByteOrder;
 
 struct GdalFields {
     meta: BTreeMap<(i32, String), String>,
@@ -719,7 +713,8 @@ fn optional_string<R: Read + Seek>(
 
 #[cfg(test)]
 mod tests {
-    use super::{raw_samples, ByteOrder};
+    use super::raw_samples;
+    use crate::projections::tiff_codec::ByteOrder;
 
     /// The samples of a tile are read in the file's byte order, whatever the sample type: a
     /// `u16` of `0x0102` is 258 in a big-endian file and 513 in a little-endian one.

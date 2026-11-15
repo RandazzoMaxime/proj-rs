@@ -7,7 +7,6 @@
 //! `decide_download` may fetch it into the cache before the file is opened.
 
 mod geotiff;
-mod lzw;
 mod ntv1;
 mod ntv2;
 pub(super) mod public;

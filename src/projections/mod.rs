@@ -73,6 +73,7 @@ mod spheroid;
 mod spilhaus;
 mod stere;
 mod sterea;
+mod tiff_codec;
 mod tmerczoned;
 mod topocentric;
 mod tpeqd;

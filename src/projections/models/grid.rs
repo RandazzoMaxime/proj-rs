@@ -6,6 +6,8 @@
 //! `valueAt` indexes.
 
 use super::inflate::zlib_decode;
+use crate::projections::tiff_codec::predictor::{undo_predictor, Predictor};
+use crate::projections::tiff_codec::ByteOrder;
 
 const DEG_TO_RAD: f64 = std::f64::consts::PI / 180.0;
 
@@ -59,38 +61,6 @@ impl Grid {
             }
         }
         x + eps >= self.west && x - eps <= self.east
-    }
-}
-
-/// Inverse of libtiff `fpAcc`: byte prefix-sum, then little-endian byte gather.
-fn float_predictor(row: &mut [u8], stride: usize, bps: usize) {
-    if stride == 0 || bps == 0 || row.len() % (bps * stride) != 0 {
-        return;
-    }
-    let mut count = row.len();
-    if stride == 1 {
-        let mut cursor = 0usize;
-        while count > 1 {
-            row[cursor + 1] = row[cursor + 1].wrapping_add(row[cursor]);
-            cursor += 1;
-            count -= 1;
-        }
-    } else {
-        let mut cursor = 0usize;
-        while count > stride {
-            for _ in 0..stride {
-                row[cursor + stride] = row[cursor + stride].wrapping_add(row[cursor]);
-                cursor += 1;
-            }
-            count -= stride;
-        }
-    }
-    let words = row.len() / bps;
-    let tmp = row.to_vec();
-    for word in 0..words {
-        for byte in 0..bps {
-            row[bps * word + byte] = tmp[(bps - byte - 1) * words + word];
-        }
     }
 }
 
@@ -293,12 +263,15 @@ fn open_tiff(bytes: &[u8]) -> Option<Grid> {
         let stride = if planar == 2 { 1 } else { samples };
         let row_bytes = width.checked_mul(4)?.checked_mul(stride)?;
         for strip in &mut strips {
-            if row_bytes == 0 || strip.len() % row_bytes != 0 {
-                return None;
-            }
-            for row in strip.chunks_mut(row_bytes) {
-                float_predictor(row, stride, 4);
-            }
+            undo_predictor(
+                strip,
+                row_bytes,
+                stride,
+                32,
+                Predictor::Float,
+                ByteOrder::Little,
+            )
+            .ok()?;
         }
     }
     let placed = tiff_extent(&entries, bytes, width, height)?;

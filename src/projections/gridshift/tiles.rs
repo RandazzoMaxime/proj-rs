@@ -17,10 +17,12 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use tiff::decoder::Decoder;
 
-use super::geotiff::{self, ByteOrder};
-use super::lzw::{self, Predictor};
+use super::geotiff;
 use crate::engine::TransformError;
 use crate::network_chunks::{RemoteFile, RemoteReader};
+use crate::projections::tiff_codec::lzw;
+use crate::projections::tiff_codec::predictor::{self, Predictor};
+use crate::projections::tiff_codec::ByteOrder;
 
 /// The samples of one image: in memory, or in the remote file, by chunk.
 pub(super) enum Samples {
@@ -322,7 +324,7 @@ impl LazyIfd {
         let mut raw = lzw::decode(&bytes, len.checked_mul(sample_size).ok_or(())?)?;
         let row_samples = self.tile_w.checked_mul(self.chunk_spp).ok_or(())?;
         let row_bytes = row_samples.checked_mul(sample_size).ok_or(())?;
-        lzw::undo_predictor(
+        predictor::undo_predictor(
             &mut raw,
             row_bytes,
             self.chunk_spp,
