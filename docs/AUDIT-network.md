@@ -51,10 +51,12 @@ cache en fichiers dans le répertoire utilisateur (`grid_cache_enable`,
 Ce qui manque : lecture paresseuse des GeoTIFF compressés en PackBits, JPEG, CCITT, ... (lus
 entiers, comme les grilles non-TIFF) et des prédicteurs autres que 1 à 3. Le LZW passe par morceaux
 sur le réseau ; en fichier local il reste refusé (lecture entière sans lecteur LZW). Rechargement au
-changement pour les autres étapes que `vgridshift`
-(`hgridshift`, `gridshift`, `xyzgridshift` : le changement est enregistré, la grille n'est pas
-rechargée), validation par `ETag` et `Last-Modified` du cache disque quand les callbacks servent
-les grilles (le cache en mémoire, par URL, est fait par le lot `shared-validators`),
+changement : `vgridshift`, `hgridshift` et `gridshift` rechargent comme PROJ (lot Q8, « Rechargement
+par étape » dans `docs/PORTING-network.md`) ; `xyzgridshift` recharge aussi, PROJ 9.9.0 plante sur ce
+cas (SIGSEGV mesuré) ; `deformation` et les lectures entières ne rechargent pas. Validation par
+`ETag` et `Last-Modified` du cache disque : faite sans callbacks (requête du premier morceau à
+l'expiration, lot Q8) ; avec les callbacks, le crate n'utilise pas `cache.db` (le cache en mémoire, par
+URL, est fait par le lot `shared-validators`),
 façade C des opérations
 (`proj_create_operations` et contexte de fabrique C : pas de handle C. Les `TEST` de `test_c_api.cpp`
 qui appellent `proj_create_operations` sont portés sur l'API Rust, voir
@@ -385,8 +387,6 @@ attendues de `tests/unit_projsync.rs` (`LIST`, `ALL`, `UNKNOWN_*`, `VERBOSE_DUMM
 sorties de la référence, à l'endpoint près.
 
 Écarts, avec leur cause :
-- téléchargement non conditionnel : un fichier dont l'enregistrement a expiré est téléchargé de
-  nouveau, sans `If-None-Match` (fiche cache, points 2 et 8) ;
 - `--system-directory` prend le premier répertoire de `PROJ_DATA` ou `PROJ_LIB`, pas le répertoire
   « share » compilé de PROJ (fiche cache, point 7) ;
 - index : `tests/projsync/files.geojson`, de même forme que le `files.geojson` du CDN, pas celui du

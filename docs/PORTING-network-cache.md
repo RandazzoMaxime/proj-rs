@@ -41,9 +41,18 @@ réseau : `docs/PORTING-network.md`.
    (`http_get_validated`), sans `Range`. Le lot « lecture par plages » devra écrire les
    seuls chunks lus, comme PROJ. Les deux compteurs de `cache_saturation` (2 chunks, 2
    lignes de liens) restent vrais, car la grille de test fait 9 chunks.
-2. **Pas de requête conditionnelle.** Une entrée expirée est téléchargée en entier. PROJ
-   envoie `If-None-Match` / `If-Modified-Since` et garde le cache sur un `304`. Les
-   en-têtes `ETag` et `Last-Modified` sont stockés, comme PROJ.
+2. **Pas de requête conditionnelle, vérification par le premier morceau.** PROJ n'envoie aucune
+   requête conditionnelle : `If-None-Match`, `If-Modified-Since`, `If-Match` et `If-Range` n'apparaissent
+   pas dans ses sources (`grep`). Une entrée expirée est vérifiée par la requête du premier morceau,
+   `open(url, 0, 16384)` (`NetworkFile::open`, `networkfilemanager.cpp:1306`). Sa réponse donne la taille
+   (`Content-Range`) et les validateurs : s'ils sont ceux du cache, les morceaux restent et seul
+   `lastChecked` bouge ; sinon les morceaux sont invalidés (`NetworkFilePropertiesCache::insert`,
+   `:1093`). Le port fait la même requête (`Range: bytes=0-16383`, `network::http_probe`) et garde le
+   cache si rien ne change (`network_cache::fetch_grid`). Sur un écart, il télécharge le fichier entier et
+   réécrit le cache : PROJ relirait les morceaux à la demande. Les `ETag` et `Last-Modified` sont stockés,
+   comme PROJ. Tests : `expired_entry_is_checked_with_its_first_chunk_and_kept_when_unchanged` et
+   `expired_entry_with_other_validators_is_downloaded_again` (`tests/unit_network_cache.rs`, serveur local
+   qui sert `Range`, `tests/net_support/mod.rs`).
 3. **`cache_lock`.** PROJ compte le temps en secondes entières (`time_t`, `>= 1`). Ici la
    durée réelle est vérifiée contre le calendrier de PROJ : 25 essais, soit 650 ms au
    minimum.
@@ -63,8 +72,10 @@ réseau : `docs/PORTING-network.md`.
    `--version` ne sont pas dans PROJ 9.9.0 : ils sont ajoutés. `--system-directory` prend le
    premier répertoire de `PROJ_DATA` ou `PROJ_LIB`, et échoue sans l'un des deux : PROJ
    utilise un répertoire « share » compilé, que la crate n'expose pas.
-8. **`projsync` : téléchargement.** Même écart que le point 2 : un fichier expiré est
-   téléchargé à nouveau. Le mode réel (`--file ntf_r93`) a été joué sur les deux binaires, CDN
+8. **`projsync` : téléchargement.** Un fichier expiré est vérifié par la requête du premier octet
+   (`Range: bytes=0-0`, `proj_is_download_needed` : `open(url, 0, 1)`, `networkfilemanager.cpp:2580`) et
+   n'est téléchargé de nouveau que si sa taille ou un validateur a changé (`network_download::is_download_needed`).
+   Le mode réel (`--file ntf_r93`) a été joué sur les deux binaires, CDN
    joint par `HTTPS_PROXY` : même ligne `Downloading ...`, même code de sortie, même fichier
    (93581 octets).
 9. **`projsync` : index.** L'index des tests est un fichier de test de même forme que

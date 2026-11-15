@@ -112,11 +112,13 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
   n'importe quel `RemoteFile` de cette URL est comparée à eux. Une réponse qui diffère, pour un
   fichier qui n'a pas encore vu le changement, vide les morceaux de cette URL
   (`ChunkCache::forget_chunks`), met les propriétés à celles de la réponse, et marque le fichier
-  `changed` (`network_chunks::RemoteFile::observe`). Le point en cours est arrêté à la lecture de
-  tuile qui le constate (`tiles::with_tiles_watch`), la grille en vigueur est lâchée (son fichier
-  se ferme), puis rechargée depuis `(url, 0, 16384)`, et le point est refait (`Vertical::transform`,
-  `VerticalGrids::reload`). Le cache de morceaux garde la tuile lue après le changement, donc le
-  second passage ne fait aucun appel.
+  `changed` (`network_chunks::RemoteFile::observe`). Les lectures de tuiles de la passe en cours se
+  terminent, comme PROJ finit l'interpolation avant `hasChanged` (`tiles::with_tiles_watch`). La
+  grille en vigueur est ensuite lâchée (son fichier se ferme), rechargée depuis `(url, 0, 16384)`
+  (`with_reloads`, `GridSets::reload`), et le point est refait. Le cache de morceaux garde la tuile
+  lue après le changement, donc le second passage ne fait aucun appel. Les trois en-têtes ne sont
+  demandés qu'avant le changement : après un appel sur un fichier qui l'a vu, PROJ ne les demande
+  plus (`m_hasChanged`, `networkfilemanager.cpp:1431`), et `observe` fait de même.
 
   Séquences mesurées avec `libproj` 9.9.0 (sonde C non versionnée, dans le scratchpad de la
   session ; fixture `egm96_15_uncompressed_truncated.tif`, tailles et en-têtes du test) :
@@ -550,6 +552,43 @@ Le contenu du fichier n'est pas comparé au binaire de référence : c'est la fi
 
 Commandes : `cargo test --test unit_projsync`.
 
+## Rechargement par étape (lot Q8)
+
+Mesures : sonde C hors dépôt, contre `libproj` 9.9.0 de `target/proj-reference-net` (TIFF et curl),
+callbacks qui journalisent, la version B servie à partir de la deuxième ouverture (`Last-Modified`
+`some_date CHANGED!!!!`). Fichiers de 64 × 64 pixels de 0,5° : `hgridshift` (2 échantillons, latitude
+puis longitude, en secondes d'arc), `gridshift` (2 échantillons, `TYPE=HORIZONTAL_OFFSET`),
+`xyzgridshift` (3 échantillons, en mètres, en pipeline géocentrique). Source : `src/grids.cpp`,
+`src/transformations/{gridshift,xyzgridshift,deformation,tinshift}.cpp`.
+
+| Étape | PROJ 9.9.0 | Port |
+|---|---|---|
+| `vgridshift` | `read_vgrid_value` : `hasChanged` après les lectures, `VerticalShiftGridSet::reopen`, point refait (`grids.cpp:3684`) | `Vertical::transform` → `with_reloads` |
+| `hgridshift` | `pj_hgrid_apply_internal` (`grids.cpp:3429`, `3447`) et `pj_hgrid_value` (`3576`) : `reopen`, point refait (`shouldRetry`) | `Horizontal::forward`, `inverse` → `with_reloads` |
+| `gridshift` | `grid_apply_internal` (`transformations/gridshift.cpp:622`, `667`) : `GenericShiftGridSet::reopen`, `shouldRetry` | `Generic::forward`, `inverse` → `with_reloads` |
+| `xyzgridshift` | aucun `reopen` : `get_grid_values` se rappelle sans fin (`xyzgridshift.cpp:102-106`), SIGSEGV, code de sortie 139 (mesuré, pile `get_grid_values` répétée sous `gdb`) | `XyzShift::transform` → `with_reloads` : écart, voir plus bas |
+| `deformation`, chemin à trois échantillons | même code que `xyzgridshift` (`deformation.cpp:121-125`), non mesuré | non porté : les grilles de `deformation` sont lues entières |
+| `tinshift` (JSON) | le fichier est lu entier à la création (`tinshift.cpp:140`) : rien n'est ouvert ensuite | sans objet |
+
+Séquence mesurée, `hgridshift` et `gridshift` (identique à l'inverse) : création `open(url, 0, 16384)`,
+trois en-têtes, `read_range(32768, 16384)` (l'IFD), trois en-têtes, `close`. Transformation :
+`open(url, 16384, 16384)`, en-têtes `CHANGED`, `read_range(32768, 32768)` (la fin de la bande, sans
+en-tête), `close`, puis `open(url, 0, 16384)`, trois en-têtes `CHANGED`, et le point est refait sur la
+version B. L'opération créée avant le changement, dans le même builder, ne fait aucun appel : elle lit
+le morceau rechargé dans le cache partagé, et donne la valeur de la version B.
+
+Écarts restants :
+- Tailles de lecture : PROJ lit le reste de la bande dans la même passe (`read_range(32768, 32768)`) ;
+  le port ne lit que les morceaux que l'interpolation demande (lectures par morceaux de `geotiff.rs`).
+  Après le rechargement, le port relit l'IFD (`read_range(32768, 16384)`) que PROJ a déjà en cache.
+  Les tests vérifient l'ordre des appels de PROJ (ouverture du changement, fermeture, rechargement),
+  les valeurs, et l'absence d'appel de l'opération restée ancienne. Le journal exact n'est pas repris.
+- `xyzgridshift` : PROJ ne donne aucune valeur sur un fichier changé (SIGSEGV). Le port recharge comme
+  les autres étapes ; la valeur attendue est celle de PROJ pour la version B lue sans changement.
+
+Tests : `tests/unit_network_grid_change.rs` (huit cas : aller, inverse, deux opérations, sans changement,
+pour `hgridshift` et `gridshift` ; `xyzgridshift`).
+
 ## Ce qui reste ouvert
 
 - GeoTIFF compressés en JPEG, CCITT et prédicteurs hors 1 à 3 : lus entiers (`read_whole`), la
@@ -565,14 +604,14 @@ Commandes : `cargo test --test unit_projsync`.
   morceaux avec la séquence de PROJ.
 - Lecture paresseuse hors `gridshift` : `read_resource` (modèles `deformation`, `tinshift`,
   `defmodel`, `nkg`) lit encore les grilles entières (`fetch_missing`, `fetch_with_callbacks`).
-- Rechargement au changement pour `hgridshift`, `gridshift` et `xyzgridshift` : seule
-  `vgridshift` recharge (`Vertical::transform`). Les autres enregistrent le changement de leur
-  fichier sans recharger leur grille. Pas de rechargement non plus pour les lectures entières
-  (`read_whole`).
-- Validation par `ETag` et `Last-Modified` du cache disque : avec les callbacks, le crate
-  n'utilise pas `cache.db`. PROJ le fait quand le cache est activé (mesuré : deux processus, TTL
-  valide, détection au calcul ; TTL dépassée, pas de détection). Le cache en mémoire, par URL, est
-  fait (lot `shared-validators`).
+- Rechargement : `deformation` (chemin à trois échantillons), les lectures entières (`read_whole`) et
+  `read_resource` (modèles `deformation`, `tinshift`, `defmodel`, `nkg`) ne rechargent pas. Voir
+  « Rechargement par étape ».
+- Validation par `ETag` et `Last-Modified` du cache disque : sans callbacks, faite à l'expiration par la
+  requête du premier morceau (fiche `PORTING-network-cache.md`, point 2). Avec les callbacks, le crate
+  n'utilise pas `cache.db` : PROJ le fait quand le cache est activé (mesuré : deux processus, TTL valide,
+  détection au calcul ; TTL dépassée, pas de détection). Le cache en mémoire, par URL, est fait (lot
+  `shared-validators`).
 - Propriétés par builder, pas par processus. PROJ garde les propriétés et les morceaux dans des
   statiques du processus : une création sur un autre contexte du même processus voit le changement
   (mesuré : détection au calcul). Le crate les garde par `ProjBuilder` : un second builder ne voit
