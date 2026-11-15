@@ -31,19 +31,26 @@ PROJ 9.9.0 reference: `test/cli/test_cs2cs_various.yaml`, "Test MGI datum gives 
   runner accepts it under its tolerance. An exact match needs the 7-parameter Helmert path checked
   against PROJ's `pj_datum_transform`.
 
-- Open (measured, not fixed): `+init=epsg:27700` (OSGB36) to WGS 84 is about 100 m off
-  (`cs2cs +init=epsg:27700 +to +init=epsg:4326`, ref `-0.1283539405 51.5039908276`, port
-  `-0.1267476799 51.5034800370`). The expansion matches PROJ's export of 27700 (no `+towgs84`: the
-  only candidate to WGS 84 is a grid), and PROJ's string route gives the same port value. PROJ does
-  not take the string here: `cs2cs` calls `proj_create("+init=epsg:27700 +type=crs")`, which returns
-  the database CRS object (`src/iso19111/io.cpp:12514-12620`, axis override at 12598-12612). The
-  fix is to route the `+init=epsg:` side through the ISO selection with that override, which
-  broke `test_cs2cs_various.yaml#59 #67 #68` before (see `PORTING-cli-rest.md`, point 3).
-  Mixed pairs (one `EPSG:`, one `+init=`) are refused by the port today.
+- Closed (lot C3b): `+init=epsg:27700` to WGS 84 was about 100 m off, because the port expanded the
+  side to a PROJ string. PROJ's `cs2cs` calls `proj_create` under the PROJ 4 rules, which return the
+  database CRS with its axes forced (`src/iso19111/io.cpp:12514-12640`). The port now parses a
+  `+init=epsg:` side that way (`InitRules::Proj4`, `select_alternatives_in_area_with_rules`) and
+  runs the ISO selection on it. `cs2cs +init=epsg:27700 +to +init=epsg:4326` gives the reference
+  to 10 decimals. Pairs with a `+towgs84` or another parameter beside `over`, `no_defs`, `wktext`
+  and `type=crs` stay on the PROJ-string route, as PROJ reads them.
+- Open: a south-oriented Transverse Mercator (EPSG:2046 to 2055, method 9808) gives the opposite
+  signs in the ISO pipeline. `EPSG:2046 +to EPSG:4326` on `-1000000 -3000000 0` gives
+  `-26.7538956993 4.9773628124`, the reference `26.7538956993 25.0226371876`. This is on the plain
+  `EPSG:` route too, which this lot does not touch. `cs2cs` therefore keeps a `+init=` side of such a
+  CRS on the PROJ-string route (`init_side_south_oriented` in `src/bin/cs2cs.rs`). The mixed pair
+  `EPSG:2046 +to +init=epsg:4326` is not fixed: its ISO side is the plain `EPSG:` one, so it stays
+  open in `docs/UNPORTED-CLI.md` (`test_cs2cs_init_epsg.yaml#10`).
 
 ## Ledger
 
-`test_cs2cs_various.yaml#59` now passes and leaves `docs/UNPORTED-CLI.md`.
+`test_cs2cs_various.yaml#59` (MGI, #207) keeps passing, and so do `#67` and `#68` (bug 244, the
+`+proj=aeqd` pair), which the axis override protects. `test_cs2cs_init_epsg.yaml`: 11 of 12 cases
+pass; `#10` stays open (see above).
 
 ## Commands run
 
@@ -52,3 +59,6 @@ PROJ 9.9.0 reference: `test/cli/test_cs2cs_various.yaml`, "Test MGI datum gives 
 - `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings` : clean.
 - Full `cargo test --all-features --no-fail-fast` : only `agree_cs2cs::named_crs_pairs_match_cs2cs`
   fails, with the same numbers as on `main`.
+- Lot C3b : `cargo test --test cli_yaml` : `test result: ok. 3 passed`. `cargo test --test
+  agree_cs2cs` runs against the reference only with the reference `cs2cs` on `PATH` and
+  `PROJ_CS2CS_REQUIRED=1`; without them the test returns at once. So run it that way: 2 passed.

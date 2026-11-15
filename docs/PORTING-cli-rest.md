@@ -32,9 +32,13 @@ Sources : PROJ 9.9.0 `src/apps/proj.cpp`, `geod.cpp`, `geod_set.cpp`, `cs2cs.cpp
    défauts (`lon_0`, `lat_0`, `k`, `x_0`) s'appliquaient. Corrige les 225 cas nad83.
 2. **`+init=IGNF:CODE`** est lu dans proj.db comme `+init=epsg:` (`pj_get_init_items`).
 3. **`cs2cs` et les CRS de base.** Un côté `+init=IGNF:CODE` passe à la sélection ISO sous
-   la forme `IGNF:CODE`. Les `+init=epsg:` restent sur le chemin des chaînes PROJ : passer
-   aussi les `epsg:` par la sélection ISO a changé l'ordre des axes de
-   `test_cs2cs_various.yaml#59`, `#67`, `#68` (régression mesurée, annulée).
+   la forme `IGNF:CODE`. Un côté `+init=epsg:CODE` passe à la sélection ISO sous la forme
+   de son CRS de la base, avec les axes forcés (`io.cpp` 12514-12640, règles PROJ 4 que
+   `cs2cs` active). Il reste sur le chemin des chaînes PROJ s'il porte un paramètre autre
+   que `over`, `no_defs`, `wktext`, `type=crs`, ou s'il est une projection sud-orientée
+   (`init_side_south_oriented`). Passer les `epsg:` sans cet override a changé l'ordre des
+   axes de `test_cs2cs_various.yaml#59`, `#67`, `#68` (régression mesurée, annulée) ; avec
+   l'override ces cas restent verts. Fiche : `PORTING-cs2cs-init-towgs84.md`.
 4. **`+geoidgrids` en destination** : la destination est un CRS composé (`instantiate_crs`),
    donc des nombres bruts, pas du DMS. Sans `--3d`, une source sans hauteur ne reçoit pas le
    géoïde (la source 2D n'a pas de hauteur à corriger) ; une source 3D (`+init=epsg:4979`) ou

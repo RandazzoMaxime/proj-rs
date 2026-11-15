@@ -7,8 +7,8 @@ Référence : `cs2cs` 9.9.0 compilé sans TIFF (`target/proj-reference`).
 
 | Mode | Cas | identique | écart ≤ 1e-6 | écart > 1e-6 | statut différent | format texte |
 |---|---|---|---|---|---|---|
-| CRS séparés par des blancs (défaut) | 272 | 262 | 2 | 4 | 4 | 0 |
-| un seul argument par CRS (`-1`) | 272 | 262 | 2 | 4 | 4 | 0 |
+| CRS séparés par des blancs (défaut) | 272 | @X |
+| un seul argument par CRS (`-1`) | 272 | @X |
 
 Historique (identique / écart ≤ 1e-6 / écart > 1e-6 / statut différent) :
 
@@ -17,6 +17,7 @@ Historique (identique / écart ≤ 1e-6 / écart > 1e-6 / statut différent) :
 | Mesure initiale (`267bda5`) | 209 / 48 / 8 / 7 | 204 / 45 / 8 / 15 |
 | Lot C1 (grades, écart 1) | 213 / 48 / 4 / 7 | 208 / 45 / 4 / 15 |
 | Lots C2 (écarts 5, 7) et D (`proj` bit à bit, branche `c4c6a55` et suivants) | 262 / 2 / 4 / 4 | 262 / 2 / 4 / 4 |
+| Lot C3b (`+init=epsg:`, écarts 3 et 4) | @Y | @Y |
 
 Le lot D (ordre des opérations de PROJ dans merc, tmerc, lcc, atanh de la libm) fait passer 46 cas « écart ≤ 1e-6 » à « identique ».
 
@@ -24,8 +25,8 @@ Le lot D (ordre des opérations de PROJ dans merc, tmerc, lcc, atanh de la libm)
   `-I`, `--no-ballpark`, `--s_epoch`, `--t_epoch`).
 - L'écart toléré le plus grand vaut 2,8e-9 dans l'unité de sortie.
 - Les lignes restantes à écart > 1e-6 ou à statut différent se ramènent aux
-  causes encore ouvertes 2, 3, 4 et 6, classées par gravité plus bas. Les causes
-  1, 5 et 7 sont corrigées.
+  causes encore ouvertes 2 et 6, classées par gravité plus bas. Les causes
+  1, 3, 4, 5 et 7 sont corrigées.
 - Le cas 4267 vers 4269 : identique au `cs2cs` de référence dans les 6 variantes
   mesurées. L'écart connu décrit dans `PORTING-cs2cs-grid-policy.md` ne se
   reproduit plus (voir plus bas).
@@ -122,7 +123,10 @@ code EPSG (`unknown id`, 4 étapes, 2,01 m). Le port retient
 l'opération de la référence, ce qui cache le décalage de 0,4 m (non détaillé).
 Le cas inverse `EPSG:4978 → EPSG:9988` a le même écart.
 
-**3. `+init=epsg:27700` vers `+init=epsg:4326` : environ 100 m (classe c)**
+**3. `+init=epsg:27700` vers `+init=epsg:4326` : environ 100 m (classe c), fermé par le lot C3b**
+
+Après le lot : le port donne `-0.1283539405 51.5039908276 0`, identique à la référence à 10
+décimales. Le texte ci-dessous est la mesure d'avant le lot.
 
 ```sh
 tools/compare-cs2cs.sh --no-build -k '+init=epsg:27700|+init=epsg:4326'
@@ -146,16 +150,17 @@ et ses opérations EPSG (`src/iso19111/io.cpp:12514-12620`). Vérifié :
 - La référence donne `-0.1267476799 51.5034800370` pour cette même chaîne écrite en ligne :
   le calcul du port est juste, c'est la route qui diffère.
 
-Pour corriger, il faut router le côté `+init=epsg:` par la sélection ISO, avec l'override
-d'ordre des axes de `io.cpp:12598-12612` (lon/lat, E/N). C'est ce qui a déjà cassé
-`test_cs2cs_various.yaml#59`, `#67`, `#68` (`docs/PORTING-cli-rest.md`, point 3). Une paire
-mixte (un côté `EPSG:`, un côté `+init=`) est refusée par le port aujourd'hui
-(`no transformation … the selection writes no pipeline`), la référence la traite.
+Correction (lot C3b) : le côté `+init=epsg:` passe par la sélection ISO, avec l'override d'ordre
+des axes de `io.cpp:12598-12612`. Le passage naïf avait cassé `test_cs2cs_various.yaml#59`,
+`#67`, `#68` ; avec l'override ils restent verts (`docs/PORTING-cli-rest.md`, point 3). Une paire
+mixte (un côté `EPSG:`, un côté `+init=`) passe aussi, comme dans la référence.
 
-Non corrigé (lot C3, deux tentatives : l'hypothèse du `+towgs84` de l'export lié est réfutée, la
-route objet est confirmée).
+L'hypothèse du `+towgs84` de l'export lié (lot C3) était réfutée, la route objet est confirmée.
 
-**4. `+init=epsg:4326` vers `+init=epsg:2154` : 1,04e-4 m en nord (classe b)**
+**4. `+init=epsg:4326` vers `+init=epsg:2154` : 1,04e-4 m en nord (classe b), fermé par le lot C3b**
+
+Après le lot : `648237.1028543997 6862249.4434044389 0`, à 1e-10 m près de la référence
+(`648237.1028543998`). Le même chemin que l'écart 3 le corrige.
 
 ```sh
 tools/compare-cs2cs.sh --no-build -k '+init=epsg:4326|+init=epsg:2154'
@@ -295,12 +300,17 @@ matrice ne le met pas à l'épreuve.
 
 ## Non vérifié et non fait
 
-- `tests/cli_yaml` n'a pas été lancé : aucun changement dans `src/`.
+- `tests/cli_yaml` : 3 suites vertes après le lot C3b. Le cas `test_cs2cs_init_epsg.yaml#10`
+  (paire mixte `EPSG:2046` vers `+init=epsg:4326`) reste ouvert, voir la fiche
+  `PORTING-cs2cs-init-towgs84.md`.
+- Projection sud-orientée (méthode 9808, `EPSG:2046` à `2055`) : la sélection ISO donne les signes
+  opposés à la référence (mesuré lot C3b, `EPSG:2046 +to EPSG:4326`). Aucun cas de `cases.txt` ne
+  la couvre, donc la matrice ne la voit pas. Ouvert.
 - Les messages d'erreur sur la sortie d'erreur (stderr) ne sont pas comparés.
   Ils diffèrent (par exemple `proj_create: crs not found` contre
   `no transformation`). Le comparateur ne classe que stdout et les codes retour.
 - La cause de l'écart 6 est réattribuée à la grille (`ntf_r93.gsb`), pas à l'unité ; non corrigée.
-  Les causes des écarts 3 et 4 sont mesurées (points 3 et 4), pas corrigées.
+  Les écarts 3 et 4 sont fermés (lot C3b).
 - `+init=epsg:4807` (hors matrice) : PROJ imprime en DMS, longitude d'abord, un
   point qui n'est pas celui du port (`+init=epsg:4326 +to +init=epsg:4807` sur
   `48.8582 2.2945` : PROJ `46d31'12.678"E 2d17'30.494"N`). Le port garde sa
