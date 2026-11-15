@@ -129,7 +129,9 @@ cause. Le port n'est pas corrigé dans ce lot : c'est la phase de correction.
 Après les lots de correction (P1 à P4, voir `docs/PORTING-cs2cs-pivot-candidates.md`,
 `docs/PORTING-mod-ster.md`, `docs/PORTING-cli-rest.md`) : 4171 identiques (texte),
 64 dans le seuil, 1 erreur des deux côtés, 0 hors seuil, 0 statut, 0 forme. Le registre
-`known.tsv` ne contient plus aucun écart.
+`known.tsv` ne contient plus aucun écart. Le lot geod (`docs/PORTING-cli-geod.md`) a
+mis le signe des NaN de `%f` : `proj-fwd-0063` (`-nan`) devient identique, soit
+4172 identiques et 0 erreur des deux côtés.
 
 Les 64 « dans le seuil » sont des derniers chiffres : le plus grand écart est sous 1e-9 m,
 six ordres de grandeur sous le seuil de 5e-4 m. Ils ne font pas échouer le test.
@@ -261,3 +263,7 @@ unité `+sunits` (m, km, us-ft, mi) et un format (DMS par défaut, `-a`, `-p`,
 Corpus généré le 2026-11-15 : 1511 invocations, 6514 entrées, 8290 conversions
 (entrées et lignes de sortie du mode ligne). Les références : `geod`, `invgeod`
 de PROJ 9.9.0. La fiche de port est `docs/PORTING-cli-geod.md`.
+
+Premier passage : 350 écarts, tous dans `known.tsv` avec leur cause (348 lignes
+vides qui perdaient leur saut de ligne, 2 NaN en DMS). Corrigés depuis : 8290
+conversions identiques, aucun écart connu, aucun écart hors seuil.
