@@ -20,8 +20,6 @@ and `PORT-NOTES-tests.md`.
 
 ## test_common.cpp
 
-- `common.identifiedobject_alias_invalid_type`
-- `common.identifiedobject_alias_array_of_invalid_type`
 
 ## test_network.cpp
 

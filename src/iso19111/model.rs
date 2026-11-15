@@ -5,6 +5,7 @@ use std::fmt;
 use super::equiv::Equivalence;
 use super::factory::DatabaseContext;
 use super::metadata::Citation;
+use super::property::{set_identified_properties, InvalidValueTypeError, PropertyMap};
 
 /// Opening `proj.db`, an authority code, or a WKT export failed.
 #[derive(Debug)]
@@ -2309,6 +2310,20 @@ impl OperationParameter {
         Self {
             identified: Identified::named(name),
         }
+    }
+
+    /// `OperationParameter::create(properties)`: the parameter that `properties` describes. The
+    /// keys of `IdentifiedObject` are read (name, identifiers, aliases, remarks, deprecated), with
+    /// the value types PROJ accepts for each. Other keys are ignored. Named `create_from_properties`
+    /// because [`OperationParameter::create`] already takes the name.
+    ///
+    /// # Errors
+    ///
+    /// A key holds a value of a type that PROJ refuses for it, such as a `Citation` alias.
+    pub fn create_from_properties(properties: &PropertyMap) -> Result<Self, InvalidValueTypeError> {
+        let mut identified = Identified::named(String::new());
+        set_identified_properties(&mut identified, properties)?;
+        Ok(Self { identified })
     }
 
     /// Authority identifiers, in the order they were given.

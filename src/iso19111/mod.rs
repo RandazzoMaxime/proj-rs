@@ -33,6 +33,7 @@ mod proj_crs;
 mod proj_grid_substitution;
 mod projfam;
 mod projstring;
+mod property;
 pub(crate) use projstring::PRIME_MERIDIANS;
 pub(crate) use select::RemoteGrids;
 mod select;
@@ -84,6 +85,10 @@ pub(crate) use normalize::normalize_for_visualization;
 pub(crate) use pipeline::Pipeline;
 pub use pipeline::{ProjLines, ProjStringLayout, TmercExport};
 pub use projstring::{create_crs_from_proj_string, create_crs_from_proj_string_with_database};
+pub use property::{
+    InvalidValueTypeError, PropertyMap, PropertyValue, ALIAS_KEY, DEPRECATED_KEY, IDENTIFIERS_KEY,
+    NAME_KEY, REMARKS_KEY,
+};
 pub use select::{
     area_of_interest_from_name, best_pipeline_logged, best_pipeline_logged_with_authority,
     select_alternatives, select_alternatives_in_area, select_alternatives_with_authority,

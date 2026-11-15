@@ -1,6 +1,6 @@
 //! PROJ 9.9.0 `test/unit/test_common.cpp`, the 13 `TEST(common, ...)` cases. Expected values are the
-//! ones the C++ asserts. The alias invalid-type cases are not written: see
-//! `docs/AUDIT-unit-core.md`, note 4.
+//! ones the C++ asserts. The two alias invalid-type cases are in `tests/unit_common_alias.rs`, through
+//! the untyped `PropertyMap`: see `docs/PORTING-propertymap.md`.
 
 use proj_rs::iso19111::create_object_from_json;
 use proj_rs::{
