@@ -1,0 +1,46 @@
+#Mercator
+#	Cyl, Sph&Ell
+#	lat_ts=
+# +proj=merc +ellps=GRS80 +break_cs2cs_recursion
+#Final Earth figure: ellipsoid
+#  Major axis (a): 6378137.000
+#  1/flattening: 298.257222
+#  squared eccentricity: 0.006694380023
+# tag line
+ tagA
+Longitude: 2dE [ 2 ]
+Latitude:  49dN [ 49 ]
+Easting (x):   222638.98
+Northing (y):  6242596.00
+Meridian scale (h) : 1.52134430  ( 52.13 % error )
+Parallel scale (k) : 1.52134430  ( 52.13 % error )
+Areal scale (s):     2.31448848  ( 131.4 % error )
+Angular distortion (w): 0.000
+Meridian/Parallel angle: 90.00000
+Convergence : 0d [ -0.00000000 ]
+Max-min (Tissot axis a-b) scale error: 1.52134 1.52134
+
+Longitude: 0dE [ 0 ]
+Latitude:  0dN [ 0 ]
+Easting (x):   0.00
+Northing (y):  0.00
+Meridian scale (h) : 1.00000000  ( 1.689e-09 % error )
+Parallel scale (k) : 1.00000000  ( 0 % error )
+Areal scale (s):     1.00000000  ( 1.689e-09 % error )
+Angular distortion (w): 0.000
+Meridian/Parallel angle: 90.00000
+Convergence : 0d [ -0.00000000 ]
+Max-min (Tissot axis a-b) scale error: 1.00000 1.00000
+
+Longitude: 3dE [ 3 ]
+Latitude:  50dN [ 50 ]
+Easting (x):   333958.47
+Northing (y):  6413524.59
+Meridian scale (h) : 1.55266505  ( 55.27 % error )
+Parallel scale (k) : 1.55266505  ( 55.27 % error )
+Areal scale (s):     2.41076875  ( 141.1 % error )
+Angular distortion (w): 0.000
+Meridian/Parallel angle: 90.00000
+Convergence : 0d [ -0.00000000 ]
+Max-min (Tissot axis a-b) scale error: 1.55267 1.55267
+

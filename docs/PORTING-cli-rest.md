@@ -1,7 +1,7 @@
 # Port — CLI `cs2cs`, `proj`, `geod` et `projinfo` : yaml restants et listes
 
 Sources : PROJ 9.9.0 `src/apps/proj.cpp`, `geod.cpp`, `geod_set.cpp`, `cs2cs.cpp` ;
-`src/init.cpp`, `src/trans.cpp`, `src/grids.cpp`, `src/ellps.cpp`, `src/list.cpp`,
+`src/init.cpp`, `src/trans.cpp`, `src/grids.cpp`, `src/ellps.cpp`, `src/list.cpp`, `src/pr_list.cpp`, `src/param.cpp`, `src/ell_set.cpp`, `src/datum_set.cpp`, `src/datums.cpp`, `src/apps/utils.cpp` (`limited_fprintf_for_number`),
 `src/projections/*.cpp` (`PROJ_HEAD`) ; `src/iso19111/c_api.cpp` et `factory.cpp`
 (`getUnitList`) ; `src/test/cli/` (yaml et `test_projinfo.sh`). Audit :
 [AUDIT-cli-rest.md](AUDIT-cli-rest.md).
@@ -11,13 +11,14 @@ Sources : PROJ 9.9.0 `src/apps/proj.cpp`, `geod.cpp`, `geod_set.cpp`, `cs2cs.cpp
 | Fichier | Rôle |
 |---|---|
 | `src/crs.rs` | `section_words` : une section `<n> ... <>` d'un fichier `+init=` est lue en entier ; `ignf_definition` : `+init=IGNF:CODE` depuis proj.db. |
-| `src/engine.rs` | `split_quoted` : un mot entre guillemets reste un mot (`+nadgrids="dir with space/myconus"`). |
+| `src/engine.rs` | `split_quoted` : un mot entre guillemets reste un mot (`+nadgrids="dir with space/myconus"`). `Params` : la liste de jetons de `paralist`, avec le marquage « lu ». `Operation::parameters`, `ParamUse`. |
 | `src/projections/legacy.rs` | Le nom de grille d'un `+datum=` avec espaces est cité dans la chaîne reconstruite. |
 | `src/projections/gridshift/ntv1.rs` | Lecteur NTv1 (`.dat`), port de `NTv1Grid::open` et `valueAt`. |
 | `src/projdb.rs` | `PROJ_AUX_DB` : bases auxiliaires attachées et lignes copiées dans les tables. |
 | `src/listing.rs` | Données publiques : `PROJECTIONS` (192), `ELLIPSOIDS` (46), `linear_units()` (proj.db). Générées depuis les sources de PROJ ; la table est la donnée, pas le générateur. |
 | `src/bin/cs2cs.rs` | `init_side_as_code` (IGNF seulement), `init_authority`, `geoid_without_height`, `raw_words`, réunion des arguments `+` (`parse`), `check_epochs`. |
-| `src/bin/support/proj_cli.rs` | `-d -e -m -r -s -i -o -b -l`, contrôles `fwd_prepare` de `pj_fwd`. |
+| `src/bin/support/proj_cli.rs` | `-d -e -m -r -s -i -o -b -l -v -V`, contrôles `fwd_prepare` de `pj_fwd`, `break_cs2cs_recursion` ajouté à la définition. |
+| `src/bin/support/proj_monitor.rs` | `-v` : `pj_pr_list` et `pr_list` (72 colonnes). `-V` : figure de l'ellipsoïde, `vprocess` (un bloc par point). |
 | `src/bin/support/geod_cli.rs` | `-l`, `-le`, `-lu`, `+units=`. |
 | `src/bin/support/lists.rs` | Affichage des listes d'ellipsoïdes et d'unités, comme `proj.cpp` et `geod.cpp`. |
 | `tests/cli_yaml.rs` | `FILES` : +6 yaml (argv, datumfile, epoch, ntv2, ignf, flaky) ; `projinfo_aux_script`. |
@@ -62,6 +63,13 @@ Sources : PROJ 9.9.0 `src/apps/proj.cpp`, `geod.cpp`, `geod_set.cpp`, `cs2cs.cpp
    géodésique a des opérations de mouvement ponctuel. WGS 84 est dynamique : `EPSG:4326` et
    `EPSG:4978` acceptent une époque. Même règle que `CoordinateMetadata::create`.
 
+9. **`proj -v` suit la liste de PROJ.** `Params` garde chaque jeton dans l'ordre, doublons
+   compris. Une lecture marque le premier jeton de sa clé, comme `pj_param_exists`. Les
+   ajouts vont en fin de liste : `+datum=` ajoute `ellps=` puis `towgs84=` (`datum_set.cpp`),
+   et `ellps=GRS80` sans ellipsoïde (`append_default_ellipsoid_to_paralist`). Un jeton
+   ajouté seulement pour la liste est caché des lectures. `pj_datum_set` lit `nadgrids`, sinon
+   `towgs84`. `pj_ellipsoid` ne lit pas `ellps` quand `R` est là. La mesure : `tests/cli_proj_verbose.rs`.
+
 ## Écarts volontaires vers PROJ
 
 1. **`+sunits=` n'existe pas dans PROJ** : `geod_set` lit `pj_param(..., "sunits")`, et
@@ -81,13 +89,21 @@ Sources : PROJ 9.9.0 `src/apps/proj.cpp`, `geod.cpp`, `geod_set.cpp`, `cs2cs.cpp
    `Rel. 9.9.0 ...` et la fin `program abnormally terminated`. Seul le code de sortie est
    comparé.
 
+5. **Clés inconnues acceptées par `proj`.** PROJ accepte `+foo=bar` et le liste « non
+   utilisé ». `Operation::create` refuse toujours une clé inconnue (`UnknownParameter`). La CLI
+   passe par `create_projection_keeping_unknown` : `proj +foo=1` réussit, comme dans PROJ.
+   Avant ce lot, la CLI refusait.
+
 ## Écarts ouverts
 
 | Écart | Cause exacte |
 |---|---|
 | `proj -S` oméga au bit près, exact Tmerc et UTM zone 31 : 2 points sur 88 (tmerc `-120 60`, `-60 -85`), 3 sur 88 (UTM) | PROJ affiche un bruit de 1e-6 là où le port affiche 0, ou l'inverse : écart d'un ulp dans la dérivée numérique. Cause exacte non identifiée. Les coefficients de `setup_exact` (`pj_auxlat_coeffs`, `Qn`, `Zb`) ne sont pas comparés octet à octet ; `pj_auxlat_convert` avec l'ordre de PROJ n'a rien changé (86 et 85 avant et après). |
-| `proj -v`, `-V` | Non porté : le dump de moniteur (`pj_pr_list`, `vprocess`) est une sortie interne de PROJ. |
 | `cs2cs +nadgrids=dir with space/myconus` en un argument sans guillemets (`-111 44`) | PROJ lit `with` et `space/myconus` comme paramètres sans `+`, ils restent inutilisés ; `dir` n'est pas trouvé : `*	* inf`, code 0. Le port rejette `+with` (`check_keys`, `src/engine.rs`) : code 3. Même cause que `+foo=1` sur `+proj=utm` : PROJ ignore une clé inconnue sur ce chemin, le port la refuse. Corriger `check_keys` touche tout le moteur : lot à part, avec un test par projection. |
+| `proj -V` et `-S` : facteurs à l'origine et au pôle | `0 0` (merc, GRS80) : h − 1 = 2.404e-11, la référence 1.689e-11 ; `2 90` : `h = 1321159.39654668`, la référence `…654613`. Même valeur par `Operation::factors` et `Job::factors` : l'écart vient de l'ordre de la différence finie (`factors_in_metres`, `Job::derivatives`). Les autres points (`2 49`, `3 50`, `-3 40`) sont identiques. Les tests comparent ces lignes à 1e-9 relatif (`check_factors_within_tolerance`). À fermer avec le calcul des dérivées. |
+| `proj -v` avec `+proj=pipeline` | Non porté : la liste d'un pipeline est vide ici, PROJ liste une projection. |
+| `proj +datum=… +R=…` : valeur | PROJ prend la sphère de `R`. Ici la branche `datum` de `earth_from_params` prend l'ellipsoïde du datum : `merc +datum=WGS84 +R=6371000` donne 222638.98, PROJ 222389.85. La liste, elle, suit PROJ (`R` lu). Écart de valeur antérieur à ce lot. |
+| `proj +no_defs` seul, `+rf=` sans `+a=` | PROJ refuse : `Must specify ellipsoid or sphere`. Ici GRS80 par défaut. Écart de validation antérieur à ce lot. |
 
 ## Sortie binaire `-b`, `-i`, `-o` au bit près
 
@@ -124,6 +140,7 @@ Reste ouvert :
 export CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0
 R=/chemin/vers/target/proj-reference
 PROJ_RS_LIBPROJ_DIR=$R/build/lib cargo test --test cli_yaml     # yaml et projinfo_aux_script
+PROJ_RS_LIBPROJ_DIR=$R/build/lib cargo test --test cli_proj_verbose  # proj -v, -V (sorties de référence)
 ```
 
 Comparaison à la main avec le binaire de référence, sur les mêmes arguments :

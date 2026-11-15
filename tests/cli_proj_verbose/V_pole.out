@@ -1,0 +1,20 @@
+#Mercator
+#	Cyl, Sph&Ell
+#	lat_ts=
+# +proj=merc +ellps=GRS80 +break_cs2cs_recursion
+#Final Earth figure: ellipsoid
+#  Major axis (a): 6378137.000
+#  1/flattening: 298.257222
+#  squared eccentricity: 0.006694380023
+Longitude: 2dE [ 2 ]
+Latitude:  90dN [ 90 ]
+Easting (x):   222638.98
+Northing (y):  242485887.61
+Meridian scale (h) : 1321159.39654613  ( 1.321e+08 % error )
+Parallel scale (k) : 99664.71893231  ( 9.966e+06 % error )
+Areal scale (s):     131672979921.54916382  ( 1.317e+13 % error )
+Angular distortion (w): 118.568
+Meridian/Parallel angle: 90.00000
+Convergence : 0d [ -0.00000000 ]
+Max-min (Tissot axis a-b) scale error: 1321159.39655 99664.71893
+

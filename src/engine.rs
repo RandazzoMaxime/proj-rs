@@ -150,18 +150,52 @@ impl From<ProjectionError> for TransformError {
     }
 }
 
-/// Parsed `+key=value` list. The first occurrence of a key wins, matching PROJ.
+/// Parsed `+key=value` list, kept as PROJ's `paralist`: every token in order, duplicates
+/// included. A lookup reads the first visible token of its key and marks it used, as
+/// `pj_param_exists` does. A hidden token is listed but never read.
 #[derive(Clone, Debug)]
 pub(crate) struct Params {
-    items: Vec<(String, Option<String>)>,
+    items: Vec<Item>,
 }
 
-/// The words of a PROJ string line: separated by white space, except inside a double-quoted
-/// span, whose spaces stay and whose quote characters are dropped (`pj_mkparam_ws`, so
-/// `+nadgrids="dir with space/myconus"` is one word).
-fn split_quoted(line: &str) -> Vec<String> {
+#[derive(Debug)]
+struct Item {
+    key: String,
+    value: Option<String>,
+    text: String,
+    visible: bool,
+    /// Atomic, not a `Cell`: a `Params` is kept inside a step, which must be `Sync`.
+    used: std::sync::atomic::AtomicBool,
+}
+
+impl Clone for Item {
+    fn clone(&self) -> Self {
+        Self {
+            key: self.key.clone(),
+            value: self.value.clone(),
+            text: self.text.clone(),
+            visible: self.visible,
+            used: std::sync::atomic::AtomicBool::new(self.is_used()),
+        }
+    }
+}
+
+/// One parameter of an [`Operation`], as `proj -v` lists it (`pj_pr_list`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ParamUse {
+    /// The parameter without its `+`: `ellps=GRS80`, `break_cs2cs_recursion`.
+    pub text: String,
+    /// Whether the operation read the parameter. An unread one is listed as not used.
+    pub used: bool,
+}
+
+/// The words of a PROJ string line, as (text as written, value): separated by white space,
+/// except inside a double-quoted span, whose spaces stay and whose quote characters are dropped
+/// from the value (`pj_mkparam_ws`, so `+nadgrids="dir with space/myconus"` is one word).
+fn split_quoted(line: &str) -> Vec<(String, String)> {
     let mut words = Vec::new();
     let mut word = String::new();
+    let mut raw = String::new();
     let mut in_quote = false;
     let mut started = false;
     for ch in line.chars() {
@@ -169,23 +203,45 @@ fn split_quoted(line: &str) -> Vec<String> {
             '"' => {
                 in_quote = !in_quote;
                 started = true;
+                raw.push(ch);
             }
             ch if ch.is_whitespace() && !in_quote => {
                 if started {
-                    words.push(std::mem::take(&mut word));
+                    words.push((std::mem::take(&mut raw), std::mem::take(&mut word)));
                     started = false;
                 }
             }
             ch => {
                 word.push(ch);
+                raw.push(ch);
                 started = true;
             }
         }
     }
     if started {
-        words.push(word);
+        words.push((raw, word));
     }
     words
+}
+
+impl Item {
+    fn new(key: &str, value: Option<String>, text: &str, visible: bool) -> Self {
+        Self {
+            key: key.to_owned(),
+            value,
+            text: text.to_owned(),
+            visible,
+            used: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    fn mark_used(&self) {
+        self.used.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn is_used(&self) -> bool {
+        self.used.load(std::sync::atomic::Ordering::Relaxed)
+    }
 }
 
 impl Params {
@@ -196,66 +252,135 @@ impl Params {
     /// [`CreateError::IllegalValue`] when a token is not `key` or `key=value`.
     pub(crate) fn parse(input: &str) -> Result<Self, CreateError> {
         let input = shrink_equals(input);
-        let mut items = Vec::new();
+        let mut items: Vec<Item> = Vec::new();
         for raw_line in input.lines() {
             let line = raw_line.split('#').next().unwrap_or("");
-            for word in split_quoted(line) {
+            for (raw, word) in split_quoted(line) {
                 let token = word.trim_start_matches('+');
                 if token.is_empty() {
                     continue;
                 }
+                let text = raw.trim_start_matches('+');
                 if let Some((key, value)) = token.split_once('=') {
                     if key.is_empty() {
                         return Err(CreateError::IllegalValue("parameter"));
                     }
-                    push_first(&mut items, key, Some(value.to_owned()));
+                    items.push(Item::new(key, Some(value.to_owned()), text, true));
                 } else if comma_continuation(&items, token) {
                     // `towgs84 = 1, 2, 3` survives as separate tokens after `=`.
-                    if let Some((_, Some(value))) = items.last_mut() {
-                        value.push_str(token);
+                    if let Some(item) = items.last_mut() {
+                        if let Some(value) = item.value.as_mut() {
+                            value.push_str(token);
+                            item.text.push_str(text);
+                        }
                     }
                 } else {
-                    push_first(&mut items, token, None);
+                    items.push(Item::new(token, None, text, true));
                 }
             }
         }
         Ok(Self { items })
     }
 
-    fn get(&self, key: &str) -> Option<&Option<String>> {
+    /// The first visible token of `key`, marked as read.
+    fn read(&self, key: &str) -> Option<&Item> {
+        let item = self.lookup(key)?;
+        item.mark_used();
+        Some(item)
+    }
+
+    /// The first visible token of `key`, without marking it.
+    fn lookup(&self, key: &str) -> Option<&Item> {
         self.items
             .iter()
-            .find(|(name, _)| name == key)
-            .map(|(_, value)| value)
+            .find(|item| item.visible && item.key == key)
+    }
+
+    /// Whether `key` is visible, without marking it: a check the code makes for itself, not a
+    /// read of the parameter.
+    fn contains(&self, key: &str) -> bool {
+        self.lookup(key).is_some()
+    }
+
+    fn first_visible(&self) -> impl Iterator<Item = &Item> {
+        self.items.iter().enumerate().filter_map(|(index, item)| {
+            let shadowed = self.items[..index]
+                .iter()
+                .any(|earlier| earlier.visible && earlier.key == item.key);
+            (item.visible && !shadowed).then_some(item)
+        })
     }
 
     /// Keys in first-seen order.
     pub(crate) fn entries(&self) -> impl Iterator<Item = (&str, Option<&str>)> {
-        self.items
-            .iter()
-            .map(|(key, value)| (key.as_str(), value.as_deref()))
+        self.first_visible()
+            .map(|item| (item.key.as_str(), item.value.as_deref()))
     }
 
-    fn insert_missing(&mut self, key: &str, value: Option<String>) {
-        if !self.flag(key) {
-            self.items.push((key.to_owned(), value));
+    fn pairs(&self) -> Vec<(String, Option<String>)> {
+        self.first_visible()
+            .map(|item| (item.key.clone(), item.value.clone()))
+            .collect()
+    }
+
+    /// Append a token to the list, at the end, as PROJ's expansions do. A hidden token is
+    /// listed but not read. Returns its position.
+    fn append(&mut self, text: &str, visible: bool) -> usize {
+        let (key, value) = match text.split_once('=') {
+            Some((key, value)) => (key, Some(value.to_owned())),
+            None => (text, None),
+        };
+        self.items.push(Item::new(key, value, text, visible));
+        self.items.len() - 1
+    }
+
+    /// Drop every token of `key`: the `init` that an expansion replaces.
+    fn remove(&mut self, key: &str) {
+        self.items.retain(|item| item.key != key);
+    }
+
+    /// Keep every token of `key` in the list, but out of the lookups: a projection reads no datum
+    /// shift, and PROJ's `pj_datum_set` has already read it.
+    fn hide(&mut self, key: &str) {
+        for item in &mut self.items {
+            if item.key == key {
+                item.visible = false;
+            }
         }
     }
 
-    fn remove(&mut self, key: &str) {
-        self.items.retain(|(name, _)| name != key);
+    /// The reads of `pj_datum_set` and `pj_init`, which happen with or without a datum name: the
+    /// first `nadgrids`, else the first `towgs84`, and the first `geoidgrids`.
+    fn read_datum_keys(&self) {
+        let first = |key: &str| self.items.iter().find(|item| item.key == key);
+        if let Some(item) = first("nadgrids").or_else(|| first("towgs84")) {
+            item.mark_used();
+        }
+        if let Some(item) = first("geoidgrids") {
+            item.mark_used();
+        }
     }
 
-    /// The key is present, with or without a value.
+    fn listing(&self) -> Vec<ParamUse> {
+        self.items
+            .iter()
+            .map(|item| ParamUse {
+                text: item.text.clone(),
+                used: item.is_used(),
+            })
+            .collect()
+    }
+
+    /// The key is present, with or without a value. A lookup, so it marks the token as read.
     #[must_use]
     pub(crate) fn flag(&self, key: &str) -> bool {
-        self.get(key).is_some()
+        self.read(key).is_some()
     }
 
     /// Raw text after `=`.
     #[must_use]
     pub(crate) fn text(&self, key: &str) -> Option<&str> {
-        self.get(key).and_then(|value| value.as_deref())
+        self.read(key).and_then(|item| item.value.as_deref())
     }
 
     /// Numeric parameter, underscores allowed.
@@ -323,12 +448,15 @@ impl Params {
     }
 
     fn keys(&self) -> impl Iterator<Item = &str> {
-        self.items.iter().map(|(key, _)| key.as_str())
+        self.first_visible().map(|item| item.key.as_str())
     }
 }
 
-fn comma_continuation(items: &[(String, Option<String>)], token: &str) -> bool {
-    let Some((_, Some(value))) = items.last() else {
+fn comma_continuation(items: &[Item], token: &str) -> bool {
+    let Some(Item {
+        value: Some(value), ..
+    }) = items.last()
+    else {
         return false;
     };
     if !value.ends_with(',') {
@@ -359,13 +487,6 @@ fn shrink_equals(input: &str) -> String {
         }
     }
     out
-}
-
-fn push_first(items: &mut Vec<(String, Option<String>)>, key: &str, value: Option<String>) {
-    if items.iter().any(|(name, _)| name == key) {
-        return;
-    }
-    items.push((key.to_owned(), value));
 }
 
 fn leak_key(key: &str) -> &'static str {
@@ -485,10 +606,16 @@ impl Frame {
 }
 
 fn earth_from_params(params: &Params) -> Result<Ellipsoid, CreateError> {
+    // `pj_ellipsoid` reads `R` before `ellps`, and does not read `ellps` when `R` is there.
+    let ellps = if params.flag("R") {
+        None
+    } else {
+        params.text("ellps")
+    };
     if let Some(name) = params.text("datum") {
         return datum_ellipsoid(name);
     }
-    let mut earth = if let Some(name) = params.text("ellps") {
+    let mut earth = if let Some(name) = ellps {
         named_ellipsoid(name)?
     } else if !has_size(params) {
         Ellipsoid::grs80()
@@ -712,43 +839,68 @@ fn prepare_params(params: &mut Params) -> Result<(), CreateError> {
     Ok(())
 }
 
+/// `init.cpp` appends the expansion of `+init=` to the list. A token the list already has
+/// stays listed, but hidden: the first one is the one that is read.
 fn expand_init(params: &mut Params) -> Result<(), CreateError> {
     let Some(spec) = params.text("init").map(str::to_owned) else {
         return Ok(());
     };
     let definition = crate::crs::init_definition(&spec)?;
     let extra = Params::parse(&definition)?;
-    for (key, value) in extra.items {
-        if key == "no_defs" {
-            continue;
-        }
-        params.insert_missing(&key, value);
+    for item in extra.items {
+        let visible = !params.contains(&item.key);
+        params.items.push(Item {
+            visible,
+            used: std::sync::atomic::AtomicBool::new(false),
+            ..item
+        });
     }
     params.remove("init");
     Ok(())
 }
 
+/// `pj_datum_set` appends the ellipsoid and the shift of `+datum=`, then reads the shift keys.
+/// The appended tokens are visible only where the list has no earlier one of their key.
 fn expand_datum(params: &mut Params) -> Result<(), CreateError> {
-    let Some(name) = params.text("datum").map(str::to_owned) else {
-        return Ok(());
-    };
-    let Some((ellps, shift)) = datum_record(&name) else {
-        return Err(CreateError::IllegalValue("datum"));
-    };
-    if !params.flag("ellps") && !params.flag("a") && !params.flag("R") {
-        params.insert_missing("ellps", Some(ellps.to_owned()));
-    }
-    match shift {
-        DatumShift::None => {}
-        DatumShift::Towgs84(text) if !params.flag("towgs84") && !params.flag("nadgrids") => {
-            params.insert_missing("towgs84", Some(text.to_owned()));
+    if let Some(name) = params.text("datum").map(str::to_owned) {
+        let Some((ellps, shift)) = datum_record(&name) else {
+            return Err(CreateError::IllegalValue("datum"));
+        };
+        let visible = !params.contains("ellps") && !params.contains("a") && !params.contains("R");
+        params.append(&format!("ellps={ellps}"), visible);
+        match shift {
+            // PROJ's table gives these datums `towgs84=0,0,0`: listed, and no shift applied.
+            DatumShift::None => {
+                params.append("towgs84=0,0,0", false);
+            }
+            DatumShift::Towgs84(text) => {
+                let visible = !params.contains("towgs84") && !params.contains("nadgrids");
+                params.append(&format!("towgs84={text}"), visible);
+            }
+            DatumShift::Nadgrids(text) => {
+                let visible = !params.contains("nadgrids") && !params.contains("towgs84");
+                params.append(&format!("nadgrids={text}"), visible);
+            }
         }
-        DatumShift::Nadgrids(text) if !params.flag("nadgrids") && !params.flag("towgs84") => {
-            params.insert_missing("nadgrids", Some(text.to_owned()));
-        }
-        DatumShift::Towgs84(_) | DatumShift::Nadgrids(_) => {}
     }
+    params.read_datum_keys();
     Ok(())
+}
+
+/// `append_default_ellipsoid_to_paralist`: without `no_defs`, a datum, an ellipsoid or a shape,
+/// `ellps=GRS80` is appended, listed but not visible. `pj_ellipsoid` reads it, unless `R` is
+/// there to overrule it.
+fn append_default_ellipsoid(params: &mut Params) {
+    let given = ["no_defs", "datum", "ellps", "a", "b", "rf", "f", "e", "es"]
+        .iter()
+        .any(|key| params.flag(key));
+    if given {
+        return;
+    }
+    let index = params.append("ellps=GRS80", false);
+    if !params.contains("R") {
+        params.items[index].mark_used();
+    }
 }
 
 fn named_ellipsoid(name: &str) -> Result<Ellipsoid, CreateError> {
@@ -999,6 +1151,15 @@ pub struct Operation {
     step: std::sync::Arc<dyn Step>,
     /// Shared, so that cloning an operation (one per candidate) copies a pointer, not the context.
     context: std::sync::Arc<Context>,
+    /// What `proj -v` lists; shared, like the context.
+    parameters: std::sync::Arc<[ParamUse]>,
+}
+
+/// Whether creation refuses a key that no projection reads. PROJ accepts such a key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UnknownKeys {
+    Refuse,
+    Keep,
 }
 
 impl fmt::Debug for Operation {
@@ -1018,7 +1179,12 @@ impl Operation {
     /// `urn:ogc:def:coordinateOperation:NKG::` is read from `proj.db`. A step
     /// that needs a grid is [`CreateError::Unsupported`], not a coordinate.
     pub fn create(definition: &str) -> Result<Self, CreateError> {
-        Self::create_with(definition, DatumMode::Shift, ForceOver::No)
+        Self::create_with(
+            definition,
+            DatumMode::Shift,
+            ForceOver::No,
+            UnknownKeys::Refuse,
+        )
     }
 
     /// [`Operation::create`] with the `over` flag of `FORCE_OVER`: every projection of the
@@ -1026,7 +1192,7 @@ impl Operation {
     /// object it builds while `ctx->forceOver` is set (`init.cpp:603-605`). A pipeline passes the
     /// flag to each step through its header, as its steps inherit the header's parameters.
     pub(crate) fn create_over(definition: &str, over: ForceOver) -> Result<Self, CreateError> {
-        Self::create_with(definition, DatumMode::Shift, over)
+        Self::create_with(definition, DatumMode::Shift, over, UnknownKeys::Refuse)
     }
 
     /// The projection of `definition` alone, as PROJ's `proj` applies it.
@@ -1040,13 +1206,41 @@ impl Operation {
     ///
     /// The same errors as [`Operation::create`].
     pub fn create_projection(definition: &str) -> Result<Self, CreateError> {
-        Self::create_with(definition, DatumMode::Projection, ForceOver::No)
+        Self::create_with(
+            definition,
+            DatumMode::Projection,
+            ForceOver::No,
+            UnknownKeys::Refuse,
+        )
+    }
+
+    /// [`Operation::create_projection`] that keeps a key no projection reads, as PROJ does: such a
+    /// key is listed by [`Operation::parameters`] as not used. `proj -v` and `proj -V` use it.
+    ///
+    /// # Errors
+    ///
+    /// The same errors as [`Operation::create`], except an unknown key.
+    pub fn create_projection_keeping_unknown(definition: &str) -> Result<Self, CreateError> {
+        Self::create_with(
+            definition,
+            DatumMode::Projection,
+            ForceOver::No,
+            UnknownKeys::Keep,
+        )
+    }
+
+    /// The parameters of the definition in PROJ's order, each with whether the operation read it.
+    /// Empty for a pipeline and for an NKG operation, which PROJ lists differently.
+    #[must_use]
+    pub fn parameters(&self) -> &[ParamUse] {
+        &self.parameters
     }
 
     fn create_with(
         definition: &str,
         datum: DatumMode,
         over: ForceOver,
+        unknown: UnknownKeys,
     ) -> Result<Self, CreateError> {
         // `+init=FILE:SECTION` names a dictionary line; it is replaced by that line first.
         let expanded = crate::crs::expand_dictionary_init(definition)?;
@@ -1055,9 +1249,12 @@ impl Operation {
             return Ok(Self {
                 step: std::sync::Arc::from(step),
                 context: std::sync::Arc::new(Context::new()),
+                parameters: std::sync::Arc::from(Vec::new()),
             });
         }
         let mut params = Params::parse(definition)?;
+        // `proj` adds this flag to the definition, and PROJ reads it: `proj -v` lists it as used.
+        let _ = params.flag("break_cs2cs_recursion");
         // `+init=epsg:CODE` expands to a proj string before the name is required.
         expand_init(&mut params)?;
         let name = params.text("proj").unwrap_or("").to_owned();
@@ -1070,17 +1267,19 @@ impl Operation {
         }
         if name == "pipeline" {
             return Ok(Self {
-                step: std::sync::Arc::from(build_pipeline(definition, over)?),
+                step: std::sync::Arc::from(build_pipeline(definition, over, unknown)?),
                 context: std::sync::Arc::new(Context::new()),
+                parameters: std::sync::Arc::from(Vec::new()),
             });
         }
         if over == ForceOver::Yes {
-            params.items.push(("over".to_owned(), None));
+            params.append("over", true);
         }
         prepare_params(&mut params)?;
+        append_default_ellipsoid(&mut params);
         if datum == DatumMode::Projection {
             for key in ["towgs84", "nadgrids", "geoidgrids"] {
-                params.remove(key);
+                params.hide(key);
             }
         }
         let name = params.text("proj").unwrap_or("").to_owned();
@@ -1088,10 +1287,11 @@ impl Operation {
             return Err(CreateError::MissingArgument("proj"));
         }
         let frame = Frame::from_params(&params)?;
-        let step = finish_step(&name, &params, &frame)?;
+        let step = finish_step(&name, &params, &frame, unknown)?;
         Ok(Self {
             step,
             context: std::sync::Arc::new(Context::new()),
+            parameters: std::sync::Arc::from(params.listing()),
         })
     }
 
@@ -1229,9 +1429,16 @@ fn catalogue() -> &'static [Built] {
 
 type SharedStep = std::sync::Arc<dyn Step>;
 
-fn finish_step(name: &str, params: &Params, frame: &Frame) -> Result<SharedStep, CreateError> {
+fn finish_step(
+    name: &str,
+    params: &Params,
+    frame: &Frame,
+    unknown: UnknownKeys,
+) -> Result<SharedStep, CreateError> {
     let inner = build_step(name, params, frame)?;
-    check_keys(name, params)?;
+    if unknown == UnknownKeys::Refuse {
+        check_keys(name, params)?;
+    }
     if legacy::applies(name, params) {
         legacy::wrap(inner, params, frame)
     } else {
@@ -2323,7 +2530,11 @@ impl Step for Pipeline {
     }
 }
 
-fn build_pipeline(definition: &str, over: ForceOver) -> Result<Pipeline, CreateError> {
+fn build_pipeline(
+    definition: &str,
+    over: ForceOver,
+    unknown: UnknownKeys,
+) -> Result<Pipeline, CreateError> {
     let parts = split_pipeline(definition);
     if parts.len() < 2 || !parts[0].contains("proj=pipeline") || step_precedes_pipeline(definition)
     {
@@ -2335,7 +2546,7 @@ fn build_pipeline(definition: &str, over: ForceOver) -> Result<Pipeline, CreateE
     let mut header_params = Params::parse(&parts[0])?;
     if over == ForceOver::Yes {
         // Each step inherits the header's parameters below, so every projection step gets `over`.
-        header_params.items.push(("over".to_owned(), None));
+        header_params.append("over", true);
     }
     let frame = Frame::from_params(&header_params).unwrap_or_else(|_| {
         Frame::from_params(&Params::parse("+proj=pipeline +ellps=GRS80").expect("GRS80 pipeline"))
@@ -2344,12 +2555,16 @@ fn build_pipeline(definition: &str, over: ForceOver) -> Result<Pipeline, CreateE
     let mut steps = Vec::new();
     for chunk in parts.iter().skip(1) {
         let mut step_params = Params::parse(chunk)?;
-        for (key, value) in &header_params.items {
+        for (key, value) in header_params.pairs() {
             if key == "proj" || key == "step" || key == "inv" {
                 continue;
             }
-            if !step_params.flag(key) {
-                step_params.items.push((key.clone(), value.clone()));
+            if !step_params.flag(&key) {
+                let text = match value {
+                    Some(value) => format!("{key}={value}"),
+                    None => key,
+                };
+                step_params.append(&text, true);
             }
         }
         prepare_params(&mut step_params)?;
@@ -2365,7 +2580,7 @@ fn build_pipeline(definition: &str, over: ForceOver) -> Result<Pipeline, CreateE
             return Err(CreateError::MissingArgument("proj"));
         }
         let step_frame = Frame::from_params(&step_params)?;
-        let step = finish_step(&name, &step_params, &step_frame)?;
+        let step = finish_step(&name, &step_params, &step_frame, unknown)?;
         steps.push(PipeStep {
             inverted,
             omit_fwd,

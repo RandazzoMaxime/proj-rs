@@ -1,0 +1,6 @@
+#Transverse Mercator
+#	Cyl, Sph&Ell
+#	approx
+# +proj=tmerc +datum=NAD83 +lon_0=-142 +lat_0=54 +k=.9999 +x_0=500000 +y_0=0
+# +no_defs +break_cs2cs_recursion +ellps=GRS80 +towgs84=0,0,0
+3098444.57	7931304.24

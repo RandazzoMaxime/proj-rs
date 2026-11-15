@@ -94,7 +94,7 @@ mod transform;
 pub use context::{Context, ContextBuilder, DatabaseSource};
 pub use engine::{
     lpz_dist, parse_gie_coord, xyz_dist, Coord as Xyzt, CreateError, CrsPipeline, Operation,
-    TransformError as StepError,
+    ParamUse, TransformError as StepError,
 };
 pub use gie_api::{
     list_ellps, list_operations, list_prime_meridians, xy_dist, BatchError, Factors,

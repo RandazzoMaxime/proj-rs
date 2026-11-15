@@ -11,10 +11,10 @@
 //!
 //! Also: `-d` (decimals), `-e` (text of an unprojectable point), `-m` (scale), `-r`/`-s`
 //! (reversed input and output), and `-i`/`-o`/`-b` (native doubles, two per point).
+//! `-v` lists the parameters of the operation, `-V` also prints a labelled block per point (see
+//! `proj_monitor.rs`).
 //!
-//! Not ported: the lists `-l` (see `geod`/`proj` lists in `docs/PORTING-cli-rest.md`) and the
-//! monitor output of `-v`/`-V`, which prints PROJ's internal parameter dump; they answer as an
-//! invalid option.
+//! Not ported: the lists `-l` (see `geod`/`proj` lists in `docs/PORTING-cli-rest.md`).
 
 use std::f64::consts::FRAC_PI_2;
 use std::io::{self, Read, Write};
@@ -27,6 +27,9 @@ use super::dms::{
     RAD_TO_DEG,
 };
 use crate::lists;
+
+#[path = "proj_monitor.rs"]
+mod monitor;
 
 /// `MAX_LINE` of `proj.cpp`: `fgets` reads one byte less than this.
 const MAX_LINE: usize = 200;
@@ -67,6 +70,27 @@ pub(crate) fn run() -> ExitCode {
     }
     let mut stdout = io::stdout().lock();
     let mut output = Vec::new();
+    if options.monitor != Monitor::Off {
+        output.extend_from_slice(monitor::parameter_list(&job).as_bytes());
+    }
+    if options.monitor == Monitor::Figure {
+        output.extend_from_slice(monitor::figure(&job, &options).as_bytes());
+        if options.binary.input || options.binary.output {
+            let _ = stdout.write_all(&output);
+            let _ = writeln!(
+                io::stderr(),
+                "{program}: while processing file: <stdin>\nbinary I/O not available in -V option"
+            );
+            return ExitCode::from(1);
+        }
+        let mut errors = Vec::new();
+        monitor::verbose_lines(&input, &options, &job, &mut output, &mut errors);
+        for error in errors {
+            let _ = writeln!(io::stderr(), "{program}: {error}");
+        }
+        let _ = stdout.write_all(&output);
+        return ExitCode::SUCCESS;
+    }
     // PROJ keeps one error state for the whole run: after a failed factor
     // computation, the later `-S` lines report it too.
     let mut error_seen = false;
@@ -227,6 +251,16 @@ struct Options {
     postscale: Option<f64>,
     /// `-l`: the text after the `l`, which selects the list to print.
     list: Option<String>,
+    /// `-v` and `-V`: what the monitor prints before the output.
+    monitor: Monitor,
+}
+
+/// The monitor switch: `-v` prints the parameter list, `-V` also the figure and one block per point.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Monitor {
+    Off,
+    List,
+    Figure,
 }
 
 impl Options {
@@ -246,6 +280,7 @@ impl Options {
             prescale: None,
             postscale: None,
             list: None,
+            monitor: Monitor::Off,
         };
         let mut scale = None;
         let mut plus = Vec::new();
@@ -261,6 +296,9 @@ impl Options {
                         'E' => options.echo = true,
                         'I' => options.inverse = true,
                         'S' => options.factors = true,
+                        'v' if options.monitor == Monitor::Off => options.monitor = Monitor::List,
+                        'v' => {}
+                        'V' => options.monitor = Monitor::Figure,
                         'b' => {
                             options.binary.input = true;
                             options.binary.output = true;
@@ -374,8 +412,11 @@ impl Job {
             None if options.definition.is_empty() => return Err("missing projection".to_owned()),
             None => (options.definition.clone(), false),
         };
-        let operation =
-            Operation::create_projection(&definition).map_err(|error| error.to_string())?;
+        // `proj.cpp` adds `break_cs2cs_recursion` after the user's parameters, before PROJ's own
+        // defaults; `proj -v` lists it. An unknown key is kept, as PROJ keeps it.
+        let listed = format!("{definition} +break_cs2cs_recursion");
+        let operation = Operation::create_projection_keeping_unknown(&listed)
+            .map_err(|error| error.to_string())?;
         let degrees_forward = operation.angular_output(false)
             || definition.contains("o_proj=lat")
             || definition.contains("o_proj=long");

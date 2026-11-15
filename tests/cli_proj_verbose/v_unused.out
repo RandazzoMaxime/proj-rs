@@ -1,0 +1,7 @@
+#Mercator
+#	Cyl, Sph&Ell
+#	lat_ts=
+# +proj=merc +ellps=GRS80 +break_cs2cs_recursion
+#--- following specified but NOT used
+# +foo=bar +lat_1=10
+222638.98	6242596.00

@@ -41,5 +41,5 @@ Cas ouverts, avec la cause exacte :
 | `proj -d -e -m -r -s -i -o -b` | Porté (`docs/PORTING-cli-rest.md`). Comparé au binaire de référence sur 27 combinaisons. |
 | `proj -S` omega à la latitude -80 | Écart d'environ 5e-7 rad, reste ouvert (voir PORTING). |
 | `proj -b/-i/-o` : derniers bits | Porté : 0 octet différent sur 11 projections, deux sens, 5151 points par projection (`tests/cli_binary.rs`). Voir PORTING. |
-| `proj -v`, `-V` (dump du moniteur) | Non porté : sortie interne de PROJ (`pj_pr_list`, `vprocess`). |
+| `proj -v`, `-V` (liste des paramètres, moniteur) | Porté (`docs/PORTING-cli-rest.md`). Comparé au binaire de référence sur 23 sorties. Écarts résiduels : facteurs à l'origine et au pôle, pipeline (voir PORTING). |
 | Texte d'erreur (`emess`) | Non comparé par les yaml ; le format court de ce port diffère. |

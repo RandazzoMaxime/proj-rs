@@ -1,0 +1,4 @@
+#Mercator
+#	Cyl, Sph&Ell
+#	lat_ts=
+# +proj=merc +ellps=GRS80 +break_cs2cs_recursion
