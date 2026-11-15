@@ -74,14 +74,26 @@ Sources : PROJ 9.9.0 `src/apps/proj.cpp`, `geod.cpp`, `geod_set.cpp`, `cs2cs.cpp
    ajouté seulement pour la liste est caché des lectures. `pj_datum_set` lit `nadgrids`, sinon
    `towgs84`. `pj_ellipsoid` ne lit pas `ellps` quand `R` est là. La mesure : `tests/cli_proj_verbose.rs`.
 10. **Facteurs `proj -S` des projections sphériques.** `pj_factors` lit `P->es`. Le setup
-    de PROJ met `P->es = 0` pour les projections « Sph » seules (`adams.cpp`, `bacon.cpp`,
-    `crast.cpp`, `eck4.cpp`, `gnom.cpp`, `lagrng.cpp`, `sconics.cpp`, `sts.cpp`,
-    `putp4p.cpp`, `rpoly.cpp`, `wag2.cpp`, `wink2.cpp`). Le port gardait l'ellipsoïde de
+    de PROJ met `P->es = 0` pour les projections « Sph ». Le port gardait l'ellipsoïde de
     `+ellps=` : écart de 0,1 à 1 % sur le facteur d'aire. `Frame::factor_es` porte le `es` lu
-    par `pj_factors` ; `projections::forces_sphere_factors` donne la liste. `gnom` garde `es = 0`
-    même avec un ellipsoïde, comme `gnom.cpp`. `peirce_q` et `bertin1953` mettent leur
-    `factor_es` à 0, comme leur cadre sphérique. Mesure (`tests/cli_proj_factors.rs`, 12 cas
-    de 3 points) : identiques à la référence au bit près. Parité : 72 écarts fermés.
+    par `pj_factors` ; `projections::forces_sphere_factors` donne la liste (103 noms).
+    Inventaire : `grep -n "es = 0" src/projections/*.cpp` dans les sources de PROJ 9.9.0,
+    puis, pour chaque `PJ_PROJECTION`, le graphe d'appels vers ce setup. Un setup partagé
+    (`sts`, `eck3`, `moll`, `sconics`, `gn_sinu`, `adams`, `mod_ster`, `aitoff`, `urmfps`,
+    `nsper`) sert plusieurs projections. Exceptions : `sinu` (`Sph&Ell`) pose `es = 0` dans
+    la branche `P->es == 0` seulement, donc reste ellipsoïdal ; `krovak`, `alsk`, `gs50`
+    posent une constante non nulle ; `peirce_q` et `bertin1953` posent `factor_es` à 0 dans
+    leur module (`peirce.rs`, `sphere_ops.rs`), donc hors liste. `gnom`, `gs48`, `lee_os`,
+    `mil_os` ont une forward ellipsoïdale ou un rayon fixe, mais leur `es = 0` est
+    inconditionnel : ils restent dans la liste. Un test « factors ignorent l'ellipsoïde »
+    (`proj +ellps` contre `+R=a`) ne suffit pas pour ces quatre-là : il faut lire le setup.
+    Mesure (`tests/cli_proj_factors.rs`, 93 cas de 3 points, `tests/cli_proj_factors/sphere.tsv`,
+    écrits par `proj -S -f %.12f +ellps=WGS84` de la référence) : avant la liste, 91 sur 93
+    rouges ; après, tous verts, les x et y à 1e-6 m près (écart `mbtfpp`, voir « Écarts ouverts »).
+    Témoins ellipsoïdaux (`cea`, `eqc`, `healpix`, `laea`, hors liste) : leurs facteurs
+    restent ellipsoïdaux et passent.
+    Parité : le corpus n'a aucun cas `-S` sur ces projections ; rapport identique avant et après
+    (4117 identiques, 64 dans le seuil, 1 des deux côtés, 54 hors seuil).
 11. **rHEALPix ellipsoïdal : rayon authalique.** `healpix.cpp` pose `P->a = a · sqrt(qp / 2)`
     (lignes 623 et 667). Le port gardait `a` et multipliait le noyau par ce facteur : les
     dérivées étaient divisées par `a`, donc les facteurs étaient trop grands de `a / R_A`,
@@ -136,6 +148,8 @@ Sources : PROJ 9.9.0 `src/apps/proj.cpp`, `geod.cpp`, `geod_set.cpp`, `cs2cs.cpp
 | `proj +datum=… +R=…` : valeur | PROJ prend la sphère de `R`. Ici la branche `datum` de `earth_from_params` prend l'ellipsoïde du datum : `merc +datum=WGS84 +R=6371000` donne 222638.98, PROJ 222389.85. La liste, elle, suit PROJ (`R` lu). Écart de valeur antérieur à ce lot. |
 | `proj +no_defs` seul, `+rf=` sans `+a=` | PROJ refuse : `Must specify ellipsoid or sphere`. Ici GRS80 par défaut. Écart de validation antérieur à ce lot. |
 | `gnom +ellps=` (forward, `-f %.12f`) | x diffère de 5e-10 m sur 2 points sur 6 (`proj-factors-0007`, lignes 2 et 6). Les facteurs sont identiques. Le forward ellipsoïdal (`gnom_e`, `geod`) n'est pas porté au bit près ; cause non identifiée. |
+| `mbtfpp +ellps=WGS84` (forward, `-f %.12f`, `tests/cli_proj_factors/sphere.tsv`) | y diffère de 4,7e-10 m sur 1 point sur 3 ; les facteurs sont identiques. Ordre des opérations de la forward, cause non identifiée. La mesure tolère 1e-6 m sur x et y. |
+| `aeqd +ellps=WGS84` (forward, `-f %.12f`) | x diffère de 4,6e-10 m sur 1 point sur 3 ; les facteurs sont identiques. Projection ellipsoïdale, hors liste sphérique : écart de forward non traité ici. Retirée des témoins de `cli_proj_factors`. |
 
 ## Sortie binaire `-b`, `-i`, `-o` au bit près
 

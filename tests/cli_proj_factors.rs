@@ -5,8 +5,9 @@
 //! arguments and input. The comparison is exact, byte for byte: the omega
 //! column is the last digit that a numerical derivative can move.
 
+use std::ffi::OsStr;
 use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::{Command, ExitStatus, Stdio};
 
 struct Case {
     name: &'static str,
@@ -209,32 +210,90 @@ const CASES: &[Case] = &[
     },
 ];
 
+fn run_proj(
+    args: impl IntoIterator<Item = impl AsRef<OsStr>>,
+    input: &str,
+) -> (ExitStatus, String) {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_proj"))
+        .args(args)
+        .env("PROJ_NETWORK", "OFF")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn proj");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(input.as_bytes())
+        .expect("write input");
+    let output = child.wait_with_output().expect("proj output");
+    (
+        output.status,
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+    )
+}
+
 #[test]
 fn proj_factors_match_reference_output() {
     let mut failures = Vec::new();
     for case in CASES {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_proj"))
-            .args(case.args)
-            .env("PROJ_NETWORK", "OFF")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn proj");
-        child
-            .stdin
-            .take()
-            .expect("stdin")
-            .write_all(case.input.as_bytes())
-            .expect("write input");
-        let output = child.wait_with_output().expect("proj output");
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        if !output.status.success() || stdout != case.stdout {
+        let (status, stdout) = run_proj(case.args, case.input);
+        if !status.success() || stdout != case.stdout {
             failures.push(format!(
                 "{}: status {:?}\n got:      {stdout:?}\n expected: {:?}",
                 case.name,
-                output.status.code(),
+                status.code(),
                 case.stdout
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// One row per case: `kind|name|extra args|three points|expected stdout`. `kind` is `sphere`
+/// (PROJ's setup sets `P->es = 0`) or `ellipsoid` (a control that must keep the ellipsoid).
+/// Points are `lon lat` joined by `;`; the expected lines are joined by the two characters `\n`.
+const SPHERE_CASES: &str = include_str!("cli_proj_factors/sphere.tsv");
+
+/// The factor column is compared as text. The x and y columns may differ by forward rounding
+/// (`mbtfpp`: 5e-10 m, see `docs/PORTING-cli-rest.md`), so they are compared within 1e-6 m.
+fn same_xy_and_factors(got: &str, expected: &str) -> bool {
+    let (got, expected): (Vec<&str>, Vec<&str>) =
+        (got.lines().collect(), expected.lines().collect());
+    got.len() == expected.len()
+        && got.iter().zip(&expected).all(|(g, e)| {
+            let (g, e): (Vec<&str>, Vec<&str>) = (g.split('\t').collect(), e.split('\t').collect());
+            g.len() == 3 && e.len() == 3 && close(g[0], e[0]) && close(g[1], e[1]) && g[2] == e[2]
+        })
+}
+
+fn close(a: &str, b: &str) -> bool {
+    match (a.parse::<f64>(), b.parse::<f64>()) {
+        (Ok(a), Ok(b)) => (a - b).abs() <= 1e-6,
+        _ => false,
+    }
+}
+
+#[test]
+fn proj_factors_sphere_projections_match_reference_output() {
+    let mut failures = Vec::new();
+    for line in SPHERE_CASES.lines() {
+        let parts: Vec<&str> = line.split('|').collect();
+        let [kind, name, extra, points, expected] = parts[..] else {
+            panic!("malformed row: {line}");
+        };
+        let proj = format!("+proj={name}");
+        let mut args = vec!["-S", "-f", "%.12f", proj.as_str(), "+ellps=WGS84"];
+        args.extend(extra.split_whitespace());
+        let input: String = points.split(';').map(|p| format!("{p}\n")).collect();
+        let expected = expected.replace("\\n", "\n");
+        let (status, stdout) = run_proj(&args, &input);
+        if !status.success() || !same_xy_and_factors(&stdout, &expected) {
+            failures.push(format!(
+                "{kind} {name}: status {:?}\n got:      {stdout:?}\n expected: {expected:?}",
+                status.code()
             ));
         }
     }
