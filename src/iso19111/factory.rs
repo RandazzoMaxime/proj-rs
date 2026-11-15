@@ -7266,7 +7266,14 @@ pub(crate) fn crs_extent(crs: &Crs) -> Option<ObjectDomain> {
 
 /// Extent of an operation: its first usage, or the intersection of its steps for a concatenated one.
 pub(crate) fn operation_extent(operation: &CoordinateOperation) -> Option<ObjectDomain> {
-    if matches!(operation, CoordinateOperation::Conversion(_)) {
+    // The geographic/geocentric conversion (EPSG:9602) is a `Conversion` in PROJ, kept here as a
+    // transformation: `getExtent` gives it the world all the same.
+    let geographic_geocentric = matches!(
+        operation,
+        CoordinateOperation::Transformation(transformation)
+            if transformation.method().code() == "9602"
+    );
+    if matches!(operation, CoordinateOperation::Conversion(_)) || geographic_geocentric {
         return Some(world_extent());
     }
     if let Some(domain) = operation.domains().first() {
