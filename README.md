@@ -453,5 +453,7 @@ Engsager (exact Transverse Mercator). Third-party notices are in
 The embedded `proj.db` contains the EPSG Geodetic Parameter Dataset, owned by
 IOGP and subject to the [EPSG Dataset Terms of Use](https://epsg.org/terms-of-use.html):
 free of charge, no distribution for profit, IOGP ownership acknowledged. Anyone
-who redistributes PROJ-RS passes these terms on. See [NOTICE.md](NOTICE.md). Lints follow
+who redistributes PROJ-RS passes these terms on. It also holds the ESRI
+(Apache-2.0), IGNF (Licence Ouverte 2.0) and NKG (CC BY 4.0) registries. See
+[NOTICE.md](NOTICE.md). Lints follow
 [BeautifulRust](https://github.com/morganlinton/BeautifulRust).

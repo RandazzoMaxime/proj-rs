@@ -39,16 +39,35 @@ The Terms of Use are the reference; this summary does not replace them.
 
 ## Other registries in `data/proj.db`
 
-`data/proj.db` also holds, as PROJ 9.9.0 ships them:
+`data/proj.db` also holds, as PROJ 9.9.0 ships them, three registries under
+their own open licences. The sources were checked on 2026-11-15.
 
-- ESRI projection engine definitions, ArcGIS Pro 3.6 (2025-12-01);
-- the IGNF geodetic registry of the French national mapping agency, version
-  3.1.0 (2019-05-24), from
-  <https://raw.githubusercontent.com/rouault/proj-resources/master/IGNF.v3.1.0.xml>;
-- the Nordic transformations of the Nordic Geodetic Commission (NKG), version
-  1.0.w (2025-02-13), from <https://github.com/NordicGeodesy/NordicTransformations>.
+- **ESRI** projection engine definitions, ArcGIS Pro 3.6 (2025-12-01).
+  Copyright 2010-2026 Esri, licensed under the Apache License, Version 2.0, as
+  stated in <https://github.com/Esri/projection-engine-db-doc> (README,
+  « Licensing », and `license.txt`; the repository has no `NOTICE` file). A
+  copy of the licence is in
+  [`data/licenses/Apache-2.0-Esri.txt`](data/licenses/Apache-2.0-Esri.txt).
+  The data are converted into the tables of `proj.db` by PROJ's
+  `build_db_from_esri.py`, unchanged in this crate.
+- **IGNF** geodetic registry of the French national mapping agency (IGN),
+  version 3.1.0 (2019-05-24), from
+  <https://raw.githubusercontent.com/rouault/proj-resources/master/IGNF.v3.1.0.xml>.
+  The file carries no licence of its own. Since 1 January 2021 the data IGN
+  publishes without third-party rights are under the Licence Ouverte / Open
+  Licence 2.0 (Etalab), by decision of its board of 11 December 2020; the IGNF
+  registry is such data. Attribution: « Source : IGN — registre IGNF 3.1.0,
+  2019-05-24 ». Licence text:
+  <https://www.etalab.gouv.fr/licence-ouverte-open-licence/>.
+- **NKG** Nordic transformations of the Nordic Geodetic Commission, version
+  1.0.w (2025-02-13), from <https://github.com/NordicGeodesy/NordicTransformations>,
+  under the Creative Commons Attribution 4.0 International licence, as its
+  `LICENSE` states. Attribution: « Nordic Geodetic Commission (NKG),
+  NordicTransformations 1.0.w ». A copy of the licence is in
+  [`data/licenses/CC-BY-4.0-NKG.txt`](data/licenses/CC-BY-4.0-NKG.txt).
 
-Their terms are those of their publishers.
+None of these terms forbids a commercial use. The EPSG Terms of Use above do
+forbid distributing the EPSG Dataset for profit.
 
 ## Exact Transverse Mercator
 
