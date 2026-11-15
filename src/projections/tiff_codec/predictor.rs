@@ -107,7 +107,7 @@ fn put(bytes: &mut [u8], value: u32, order: ByteOrder) {
             ByteOrder::Little => 8 * index,
             ByteOrder::Big => 8 * (len - 1 - index),
         };
-        bytes[index] = ((value >> shift) & 0xFF) as u8;
+        bytes[index] = u8::try_from((value >> shift) & 0xFF).unwrap_or_default();
     }
 }
 

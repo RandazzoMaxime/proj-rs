@@ -70,7 +70,9 @@ struct Table {
 impl Table {
     fn new() -> Self {
         // Entries from 256 on are written when they are added, before any code reads them.
-        let last: Vec<u8> = (0..TABLE).map(|index| index as u8).collect();
+        let last: Vec<u8> = (0..TABLE)
+            .map(|index| u8::try_from(index % 256).unwrap_or_default())
+            .collect();
         Self {
             prefix: vec![0; TABLE],
             first: last.clone(),
