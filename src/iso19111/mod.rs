@@ -91,8 +91,9 @@ pub use property::{
 };
 pub use select::{
     area_of_interest_from_name, best_pipeline_logged, best_pipeline_logged_with_authority,
-    select_alternatives, select_alternatives_in_area, select_alternatives_in_area_with_rules,
-    select_alternatives_with_authority, PipelineLog, Selection,
+    select_alternatives, select_alternatives_for_crs, select_alternatives_in_area,
+    select_alternatives_in_area_with_rules, select_alternatives_with_authority, PipelineLog,
+    Selection, SelectionRequest,
 };
 pub use select::{
     best_pipeline, best_pipeline_filtered, best_pipeline_filtered_with_authority,

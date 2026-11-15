@@ -1,9 +1,9 @@
 # Fiche d'état — candidats pivot de `cs2cs` (lot P4)
 
-Statut : ouvert. Les trois familles d'écarts de `tests/parity/known.tsv` restent
-ouvertes. Une tentative sur la famille A a échoué ; elle est annulée. Une tentative
-sur la famille C a échoué ; elle est annulée. Les cas sont dans
-`tools/compare-cs2cs/cases.txt` (10 cas, tous en `num`).
+Statut : famille C fermée pour `--3d EPSG:7680 +to EPSG:2657`. Les familles A et B
+restent ouvertes. `--3d EPSG:8698 +to EPSG:32427` reste en écart (famille A), et sa
+hauteur change désormais (voir famille A). Les cas sont dans
+`tools/compare-cs2cs/cases.txt` (285 cas : `same 272 / tol 4 / text 0 / num 9`).
 
 Référence : PROJ 9.9.0, `src/iso19111/operation/coordinateoperationfactory.cpp`.
 Port : `src/iso19111/factory.rs` (`datum_pivot_operations`,
@@ -108,12 +108,38 @@ Cas : `--3d EPSG:7680 → EPSG:2657` (110 m), `--3d EPSG:8698 → EPSG:32427` (3
 
 - Changement : `--3d` promeut chaque côté avec `promoted_text` (identifiant de la CRS
   promue).
-- Résultat : sortie inchangée. La CRS 3D promue de `EPSG:7680` n'a sans doute pas
-  d'identifiant, donc aucune promotion n'a eu lieu.
-- Annulée.
+- Résultat : sortie inchangée. La CRS 3D promue de `EPSG:7680` n'a pas d'identifiant :
+  la promotion par texte ne peut rien donner.
 
-Prochain pas : `cs2cs` doit construire depuis l'objet CRS promu (sans passer par un
-texte), ce qui demande une entrée de `build_engine` qui accepte un `Crs`.
+### Correction (lot P4a)
+
+PROJ promeut les deux CRS sans condition d'identifiant (`cs2cs.cpp:881-892`) puis
+appelle `proj_create_crs_to_crs_from_pj` sur les objets. Le port fait pareil :
+
+- `src/iso19111/select.rs` : `select_alternatives_for_crs` prend deux `Crs` et une
+  `SelectionRequest` (politique, filtre, autorité, zone). `select_alternatives_in_area_with_rules`
+  lit les textes puis l'appelle : même chemin pour les appels existants.
+- `src/bin/cs2cs.rs` : avec `--3d`, `iso_selection` lit chaque côté en `InitRules::Proj4`,
+  le promeut (`Crs::promote_to_3d`) et passe les objets. Les textes restent les noms des
+  messages d'erreur. Les replis par texte (chemins « side pair », EPSG, façade) ne sont
+  pas promus : c'est l'état d'avant, et PROJ n'a pas ces replis.
+
+Mesure (référence PROJ 9.9.0, `-d 10`) :
+
+| Cas | Avant | Après |
+|---|---|---|
+| `--3d EPSG:7680 +to EPSG:2657`, 6 points du corpus | premier point : `-10002064.3159` contre PROJ `-10002177.5276` | identique à la sortie PROJ (`same`) |
+| `--3d EPSG:8698 +to EPSG:32427`, 6 points, premier point | x : 31,8 m de moins ; hauteur `1904.806` (juste) | x : 31,8 m de moins ; hauteur `1909.451` (4,6 m de trop) |
+| `--3d EPSG:8698`, écart maximal des 6 points (corpus `compare-cs2cs`) | non relevé | x 34,3 m ; y 6,7 m ; hauteur 4,98 m |
+| `--3d` 8936, 7659, 9002 (déjà justes) | identiques | identiques |
+
+Le cas `EPSG:8698` ne passe pas. Le pivot de la famille A est retenu (voir ci-dessus). Sur
+ce pivot, la hauteur est déplacée par le passage géocentrique 3D ; PROJ garde le ballpark,
+qui ne touche pas la hauteur. Avant ce lot, la sortie `--3d` était la sortie 2D, donc la
+hauteur était juste par hasard. Le pivot est donc à corriger avec la famille A, pas à part.
+
+Non vérifié : les chemins de repli (`SidePair`, EPSG, façade) avec `--3d`. Les cas
+`--3d` du corpus (`tools/compare-cs2cs`) et du registre de parité ne les touchent pas.
 
 ## Écart trouvé hors registre (non mesuré, non corrigé)
 

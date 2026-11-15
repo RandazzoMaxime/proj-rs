@@ -1263,6 +1263,54 @@ pub fn select_alternatives_in_area_with_rules(
     let db = DatabaseContext::create()?;
     let source_crs = create_from_user_input_with_init_rules(source, &db, rules)?;
     let target_crs = create_from_user_input_with_init_rules(target, &db, rules)?;
+    select_alternatives_for_crs(
+        &db,
+        source_crs,
+        target_crs,
+        (source, target),
+        SelectionRequest {
+            policy,
+            filter,
+            authority,
+            area,
+        },
+    )
+}
+
+/// The options of `proj_create_crs_to_crs` that [`select_alternatives_for_crs`] takes.
+#[derive(Debug)]
+pub struct SelectionRequest<'a> {
+    /// The `ONLY_BEST` state.
+    pub policy: BestPolicy,
+    /// The accuracy, ballpark and grid filter of the candidates.
+    pub filter: CandidateFilter,
+    /// The `AUTHORITY=` option (`""` is every authority).
+    pub authority: &'a str,
+    /// The area of interest (`--bbox`, `--area`).
+    pub area: Option<ObjectDomain>,
+}
+
+/// [`select_alternatives_in_area_with_rules`] over CRS objects, as `proj_create_crs_to_crs_from_pj`
+/// takes them: `cs2cs --3d` builds the pair from the CRS promoted to 3D. `labels` are the texts of
+/// the sides, which the error messages name.
+///
+/// # Errors
+///
+/// As [`select_alternatives_in_area_with_rules`].
+pub fn select_alternatives_for_crs(
+    db: &DatabaseContext,
+    source_crs: Crs,
+    target_crs: Crs,
+    labels: (&str, &str),
+    request: SelectionRequest<'_>,
+) -> Result<Selection, FactoryError> {
+    let (source, target) = labels;
+    let SelectionRequest {
+        policy,
+        filter,
+        authority,
+        area,
+    } = request;
     let (Some(source_base), Some(target_base)) =
         (reference_base(&source_crs), reference_base(&target_crs))
     else {
@@ -1270,7 +1318,7 @@ pub fn select_alternatives_in_area_with_rules(
             "{source} or {target} has no geodetic base to prepare its candidates"
         )));
     };
-    let mut context = CoordinateOperationContext::create(&db, authority);
+    let mut context = CoordinateOperationContext::create(db, authority);
     context.set_spatial_criterion(SpatialCriterion::PartialIntersection);
     context.set_area_of_interest(area);
     // `crs_to_crs.cpp:566-573`: the grid availability is KNOWN_AVAILABLE when ONLY_BEST warns, errs,
@@ -1301,7 +1349,7 @@ pub fn select_alternatives_in_area_with_rules(
     };
     let ranked = rank(
         operations,
-        &db,
+        db,
         &source_crs,
         &target_crs,
         availability,
@@ -1316,10 +1364,10 @@ pub fn select_alternatives_in_area_with_rules(
     // rerun the search with DISCARD (`mayNeedToReRunWithDiscardMissing`) and its grids are missing.
     let mut creation_warning = None;
     if let [(operation, characteristics)] = ranked.as_slice() {
-        let grids = proj_grids(operation, &db).unwrap_or_else(|_| grid_names(operation));
+        let grids = proj_grids(operation, db).unwrap_or_else(|_| grid_names(operation));
         let instantiable = characteristics.exportable && grids.iter().all(|grid| grid_serves(grid));
         if policy != BestPolicy::Warn || instantiable {
-            let best = single_operation(operation, characteristics, &db, &source_crs, &target_crs)?;
+            let best = single_operation(operation, characteristics, db, &source_crs, &target_crs)?;
             return Ok(Selection::Single(best));
         }
         // `crs_to_crs.cpp:648-651`: the single candidate is not instantiable, PROJ warns once at
@@ -1334,18 +1382,18 @@ pub fn select_alternatives_in_area_with_rules(
             "no operation from {source} to {target}"
         )));
     }
-    let source_to_crs = geodetic_to_crs(&source_base, &source_crs, &db)?;
-    let target_to_crs = geodetic_to_crs(&target_base, &target_crs, &db)?;
+    let source_to_crs = geodetic_to_crs(&source_base, &source_crs, db)?;
+    let target_to_crs = geodetic_to_crs(&target_base, &target_crs, db)?;
     let geocentric = matches!(source_crs, Crs::Geodetic(GeodeticCRS::Geocentric(_)));
     let to_lon_lat = if geocentric {
-        Some(geocentric_to_lon_lat(&source_crs, &db)?)
+        Some(geocentric_to_lon_lat(&source_crs, db)?)
     } else {
         None
     };
     let (source_lon_lat, source_lat_lon) = degree_order(&source_crs);
     let (target_lon_lat, target_lat_lon) = degree_order(&target_crs);
     let preparer = Preparer {
-        db: &db,
+        db,
         source: &source_crs,
         target: &target_crs,
         source_to_crs: source_to_crs.as_ref(),
@@ -1380,7 +1428,7 @@ pub fn select_alternatives_in_area_with_rules(
             .unwrap_or_default();
         let discarded = discard_missing(rank(
             discard_ops,
-            &db,
+            db,
             &source_crs,
             &target_crs,
             GridAvailabilityUse::UseForSorting,

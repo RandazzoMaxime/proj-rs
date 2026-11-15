@@ -123,9 +123,17 @@ fn command() -> ExitCode {
             Ballpark::Forbidden
         },
     };
+    let promotion = if opts.promote_3d {
+        Promotion::To3d
+    } else {
+        Promotion::Off
+    };
     let built = match build_engine(
-        &build_source,
-        &build_target,
+        Pair {
+            source: &build_source,
+            target: &build_target,
+            promotion,
+        },
         area,
         opts.area_name.as_deref(),
         opts.only_best,
@@ -589,15 +597,33 @@ fn trace_path(built: &BuiltEngine) {
     }
 }
 
+/// The two sides as the user wrote them, and whether `--3d` promotes them before the pair is built.
+struct Pair<'a> {
+    source: &'a str,
+    target: &'a str,
+    promotion: Promotion,
+}
+
+/// `--3d` (`cs2cs.cpp`, `promoteTo3D`): both CRS are promoted to 3D before the pair is built.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Promotion {
+    Off,
+    To3d,
+}
+
 fn build_engine(
-    source: &str,
-    target: &str,
+    pair: Pair<'_>,
     area: Option<Area>,
     area_name: Option<&str>,
     only_best: Option<bool>,
     filter: CandidateFilter,
     authority: Option<&str>,
 ) -> Result<BuiltEngine, InitError> {
+    let Pair {
+        source,
+        target,
+        promotion,
+    } = pair;
     // `--authority` is `AUTHORITY=` of `proj_create_crs_to_crs`: no option is every authority.
     let authority = authority.unwrap_or("");
     let mut iso = IsoStatus::NotTried;
@@ -625,14 +651,14 @@ fn build_engine(
         (None, _) => None,
     };
     if iso_serves_pair(source, target) {
-        match proj_rs::iso19111::select_alternatives_in_area_with_rules(
+        match iso_selection(
             &iso_source,
             &iso_target,
+            promotion,
             policy_of(only_best),
             filter,
             authority,
             area_domain,
-            proj_rs::iso19111::InitRules::Proj4,
         ) {
             Ok(Selection::Several(alternatives)) => {
                 for line in alternatives.creation_log() {
@@ -714,6 +740,48 @@ fn build_engine(
             iso,
         })
         .map_err(|error| InitError::Cause(error.to_string()))
+}
+
+/// The ISO selection of a pair. With `--3d` the pair is built from the CRS promoted to 3D, as
+/// `proj_create_crs_to_crs_from_pj` takes the objects `cs2cs.cpp` promotes; the texts stay the
+/// names the error messages give.
+fn iso_selection(
+    iso_source: &str,
+    iso_target: &str,
+    promotion: Promotion,
+    policy: BestPolicy,
+    filter: CandidateFilter,
+    authority: &str,
+    area: Option<proj_rs::ObjectDomain>,
+) -> Result<Selection, proj_rs::FactoryError> {
+    if promotion == Promotion::Off {
+        return proj_rs::iso19111::select_alternatives_in_area_with_rules(
+            iso_source,
+            iso_target,
+            policy,
+            filter,
+            authority,
+            area,
+            proj_rs::iso19111::InitRules::Proj4,
+        );
+    }
+    let db = proj_rs::DatabaseContext::create()?;
+    let rules = proj_rs::iso19111::InitRules::Proj4;
+    let source = proj_rs::iso19111::create_from_user_input_with_init_rules(iso_source, &db, rules)?;
+    let target = proj_rs::iso19111::create_from_user_input_with_init_rules(iso_target, &db, rules)?;
+    let request = proj_rs::iso19111::SelectionRequest {
+        policy,
+        filter,
+        authority,
+        area,
+    };
+    proj_rs::iso19111::select_alternatives_for_crs(
+        &db,
+        source.promote_to_3d(Some(&db)),
+        target.promote_to_3d(Some(&db)),
+        (iso_source, iso_target),
+        request,
+    )
 }
 
 /// The `ONLY_BEST` state of `proj_create_crs_to_crs` for `--only-best`, `--only-best=no`, or no

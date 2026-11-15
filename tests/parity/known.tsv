@@ -13,18 +13,12 @@ cs2cs-inverse-0027:3	cs2cs -I EPSG:32352 vers EPSG:22525 : écart de 0,87 m, tra
 cs2cs-inverse-0027:4	cs2cs -I EPSG:32352 vers EPSG:22525 : écart de 0,87 m, transformation à comparer	à ouvrir
 cs2cs-inverse-0027:5	cs2cs -I EPSG:32352 vers EPSG:22525 : écart de 0,87 m, transformation à comparer	à ouvrir
 cs2cs-inverse-0027:6	cs2cs -I EPSG:32352 vers EPSG:22525 : écart de 0,87 m, transformation à comparer	à ouvrir
-cs2cs-option-3d-0006:1	cs2cs --3d EPSG:7680 vers EPSG:2657 : écart de 110 m, transformation 3D à comparer	à ouvrir
-cs2cs-option-3d-0006:2	cs2cs --3d EPSG:7680 vers EPSG:2657 : écart de 110 m, transformation 3D à comparer	à ouvrir
-cs2cs-option-3d-0006:3	cs2cs --3d EPSG:7680 vers EPSG:2657 : écart de 110 m, transformation 3D à comparer	à ouvrir
-cs2cs-option-3d-0006:4	cs2cs --3d EPSG:7680 vers EPSG:2657 : écart de 110 m, transformation 3D à comparer	à ouvrir
-cs2cs-option-3d-0006:5	cs2cs --3d EPSG:7680 vers EPSG:2657 : écart de 110 m, transformation 3D à comparer	à ouvrir
-cs2cs-option-3d-0006:6	cs2cs --3d EPSG:7680 vers EPSG:2657 : écart de 110 m, transformation 3D à comparer	à ouvrir
-cs2cs-option-3d-0008:1	cs2cs --3d EPSG:8698 vers EPSG:32427 : écart de 3 m, transformation 3D à comparer	à ouvrir
-cs2cs-option-3d-0008:2	cs2cs --3d EPSG:8698 vers EPSG:32427 : écart de 3 m, transformation 3D à comparer	à ouvrir
-cs2cs-option-3d-0008:3	cs2cs --3d EPSG:8698 vers EPSG:32427 : écart de 3 m, transformation 3D à comparer	à ouvrir
-cs2cs-option-3d-0008:4	cs2cs --3d EPSG:8698 vers EPSG:32427 : écart de 3 m, transformation 3D à comparer	à ouvrir
-cs2cs-option-3d-0008:5	cs2cs --3d EPSG:8698 vers EPSG:32427 : écart de 3 m, transformation 3D à comparer	à ouvrir
-cs2cs-option-3d-0008:6	cs2cs --3d EPSG:8698 vers EPSG:32427 : écart de 3 m, transformation 3D à comparer	à ouvrir
+cs2cs-option-3d-0008:1	cs2cs --3d EPSG:8698 vers EPSG:32427 : pivot retenu à la place du ballpark (famille A), hauteur touchée	à ouvrir
+cs2cs-option-3d-0008:2	cs2cs --3d EPSG:8698 vers EPSG:32427 : pivot retenu à la place du ballpark (famille A), hauteur touchée	à ouvrir
+cs2cs-option-3d-0008:3	cs2cs --3d EPSG:8698 vers EPSG:32427 : pivot retenu à la place du ballpark (famille A), hauteur touchée	à ouvrir
+cs2cs-option-3d-0008:4	cs2cs --3d EPSG:8698 vers EPSG:32427 : pivot retenu à la place du ballpark (famille A), hauteur touchée	à ouvrir
+cs2cs-option-3d-0008:5	cs2cs --3d EPSG:8698 vers EPSG:32427 : pivot retenu à la place du ballpark (famille A), hauteur touchée	à ouvrir
+cs2cs-option-3d-0008:6	cs2cs --3d EPSG:8698 vers EPSG:32427 : pivot retenu à la place du ballpark (famille A), hauteur touchée	à ouvrir
 cs2cs-proj-datum-diff-0007:1	cs2cs EPSG:32229 +to EPSG:5111 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
 cs2cs-proj-datum-diff-0007:2	cs2cs EPSG:32229 +to EPSG:5111 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
 cs2cs-proj-datum-diff-0007:3	cs2cs EPSG:32229 +to EPSG:5111 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
