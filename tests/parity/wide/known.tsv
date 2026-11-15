@@ -1,7 +1,6 @@
 # Écarts connus du gros corpus (tests/parity.rs, parity_wide).
 # Colonnes : clé « id:ligne », cause courte, renvoi à une fiche.
 # Un écart listé ne fait pas échouer ; un écart nouveau ou disparu oui.
-cs2cs-compound-geog3d-0045:10	PROJ refuse le 2e candidat (« Mismatched units between step 1 and 2 », pipeline.cpp), le port le calcule	docs/PARITY.md
 projinfo-candidates-0057:1	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
 projinfo-candidates-0057:2	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
 projinfo-candidates-0057:3	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md

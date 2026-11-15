@@ -144,11 +144,14 @@ soit 50 928 lignes comparées. Le test `parity_wide_against_proj_9_9_0` est igno
 Premier passage : 355 écarts. Corrigés depuis : la chaîne composé → géocentrique sans emprise
 ni précision, l'emprise des ballparks, l'inverse de Cassini, `proj -S` sur `s2`, `alsk`,
 `gs50`. État actuel : 50 219 identiques, 560 dans le seuil, aucun écart de valeur sur les
-conversions. Le registre `tests/parity/wide/known.tsv` garde 135 lignes :
+conversions. Le registre `tests/parity/wide/known.tsv` garde 134 lignes, toutes de 38 listes
+`projinfo` : ensemble de candidats différent entre CRS composés, verticaux et géocentriques (111),
+texte d'un candidat (17), emprise « World » contre « World. » (6). Aucune ne change les
+coordonnées de `cs2cs` sur le corpus.
 
-- 134 lignes de 38 listes `projinfo` : ensemble de candidats différent entre CRS composés,
-  verticaux et géocentriques (111), texte d'un candidat (17), emprise « World » contre
-  « World. » (6). Aucune ne change les coordonnées de `cs2cs` sur le corpus.
-- 1 statut : `EPSG:10644 → EPSG:11069`, un point hors emprise. PROJ refuse son second
-  candidat (« Mismatched units between step 1 and 2 », contrôle d'unités de `pipeline.cpp`)
-  et rend `* * inf` ; le port le calcule.
+Repli de `proj_trans` reproduit tel quel : pour un point hors de toutes les emprises, PROJ prend
+le premier candidat sans grille, sans nouvel essai, même si sa chaîne PROJ n'a pas pu être
+construite. `EPSG:10644 → EPSG:11069` : le premier candidat convertit deux fois les degrés en
+radians (bug de PROJ, « Mismatched units between step 1 and 2 », reproduit à l'identique par le
+port), donc `* * inf` hors de Saba (`tests/cs2cs_fallback_broken_candidate.rs`). Candidat à une
+correction en phase 2.
