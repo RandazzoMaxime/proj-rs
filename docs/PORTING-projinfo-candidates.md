@@ -1,4 +1,4 @@
-# Fiche d'état — listes `projinfo --summary` du gros corpus (lot Q2b)
+# Fiche d'état — listes `projinfo --summary` du gros corpus (lots Q2b à Q2d)
 
 Lot : cas A (candidats « ballpark vertical », composé → géographique) et B (jambe
 « axis order change (geographic3D horizontal) » absente dans les pivots) de
@@ -77,9 +77,39 @@ Cette jambe sort de `createOperationsGeodToGeod`, branche des datums différents
 cible)`. Le port ne construit pas ce candidat : le chemin pivot n'atteint pas cette jambe
 (le candidat `ETRS89-FRO [2008] … WGS 84 (Transit)` manque entièrement). Non résolu.
 
+## Lot Q2d — six causes trouvées par traçage, corrigées
+
+Traçage : PROJ 9.9.0 recompilé avec `TRACE_CREATE_OPERATIONS` et `ENABLE_TRACING`, sondes
+temporaires dans `filterAndSort`, `createComputeMetadata` et les `catch` des constructions
+PROJ-based ; port instrumenté dans une copie jetable. Chaque cause a son test de
+caractérisation (valeurs PROJ, rouge sur l'ancien code) dans `tests/pivot_candidate_set.rs` ou
+`tests/compound_candidate_set.rs`.
+
+1. **Chaîne PROJ écrite à la construction.** `PROJBasedOperation::create`
+   (projbasedoperation.cpp:115-130) écrit la chaîne PROJ du candidat composé ; une méthode que
+   PROJ n'écrit pas (`Geographic3D to Depth (gtx)` 1121, `Time-specific Position Vector` 1065…)
+   lève une exception et le candidat est abandonné. `proj_based_operation` (compound.rs) rend
+   désormais `None` dans ce cas.
+2. **Supersession dans `createBetweenGeodeticCRSWithDatumBasedIntermediates`**
+   (factory.cpp:8576-8658) : une jambe remplacée par une autre jambe du lot est retirée
+   (`superseded_by_listed`, factory.rs).
+3. **Emprise du pont géographique ⇄ géocentrique** (EPSG:9602) : une `Conversion` chez PROJ,
+   donc d'emprise `World` (`getExtent`, oputils.cpp:464). `operation_extent` la traite ainsi.
+4. **Géographique ⇄ géocentrique de datums différents après un résultat du registre** :
+   `createOperationsGeodToGeod` passe par `X (geographic)` et le `createOperations` complet
+   (coordinateoperationfactory.cpp:5314-5331), pas seulement par un décalage approximatif.
+5. **Ensemble de datums** : `datum_identity` garde l'identifiant de l'ensemble
+   (`DatumEnsemble::asDatum`, datum.cpp:1943-1963). GR96 est EPSG:1421, pas le datum déprécié
+   EPSG:6747 que son nom trouvait.
+6. **Géocentrique → composé** : l'inverse de `createOperations(composé, géocentrique)` avec le
+   même contexte (coordinateoperationfactory.cpp:3782-3786), sans la garde
+   `GUARD_DATUM_INTERMEDIATE`. Et `hasIdentifiers` lit les étapes d'une opération enchaînée
+   (coordinateoperationfactory.cpp:3110-3122) dans le choix des opérations verticales.
+
+Au passage : `Geographic3D offsets` refuse un CRS composé (singleoperation.cpp:3973-4002), avec
+les messages exacts de PROJ ; une opération sans chaîne PROJ n'est donc plus fusionnée comme
+doublon par `removeDuplicateOps` (`0934`).
+
 ## Reste ouvert
 
-- A : `0142`, `0257`, `0567` (et `0434`, `0679`, `0829`, non analysées) ; voir la tentative 1.
-- B : `0205`, `0735`, `0785`, `0128` ; voir ci-dessus.
-- E (emprise EPSG:9602) : non abordée dans ce lot.
-- C et D : hors lot.
+Voir le registre `tests/parity/wide/known.tsv` après le lot Q2d.
