@@ -252,11 +252,16 @@ fn shell_quote(arg: &str) -> String {
     format!("'{}'", arg.replace('\'', "'\\''"))
 }
 
-fn repro(case: &Case) -> String {
+fn repro(case: &Case, grids: Option<&str>) -> String {
     let input: Vec<String> = case.input.iter().map(|line| shell_quote(line)).collect();
     let args: Vec<String> = case.args.iter().map(|arg| shell_quote(arg)).collect();
+    let data = if grids.is_some() {
+        "data:data/tests:$PARITY_GRIDS_DIR"
+    } else {
+        "data:data/tests"
+    };
     format!(
-        "printf '%s\\n' {} | PROJ_DATA=data:data/tests PROJ_NETWORK=OFF \
+        "printf '%s\\n' {} | PROJ_DATA={data} PROJ_NETWORK=OFF \
          PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY=YES target/debug/{} {}",
         input.join(" "),
         case.tool,
@@ -274,12 +279,17 @@ fn binary(tool: &str) -> &'static str {
     }
 }
 
-fn run(case: &Case) -> (i64, Vec<String>) {
+fn run(case: &Case, grids: Option<&str>) -> (i64, Vec<String>) {
+    let mut data = common::fixture_search_path();
+    if let Some(dir) = grids {
+        data.push(if cfg!(windows) { ';' } else { ':' });
+        data.push_str(dir);
+    }
     let mut child = Command::new(binary(&case.tool))
         .args(&case.args)
         .env("PROJ_NETWORK", "OFF")
         .env("PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY", "YES")
-        .env("PROJ_DATA", common::fixture_search_path())
+        .env("PROJ_DATA", data)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -319,10 +329,11 @@ impl Stats {
 fn check_invocation(
     case: &Case,
     expected: &Expected,
+    grids: Option<&str>,
     deviations: &mut Vec<Deviation>,
     stats: &mut Stats,
 ) {
-    let (code, got) = run(case);
+    let (code, got) = run(case, grids);
     let lines = expected.out.len().max(got.len());
     stats.invocations += 1;
     stats.conversions += lines;
@@ -332,7 +343,7 @@ fn check_invocation(
             family: case.family.clone(),
             class,
             detail,
-            repro: repro(case),
+            repro: repro(case, grids),
         });
     };
     if (expected.rc != 0) != (code != 0) {
@@ -460,7 +471,7 @@ fn print_summary(cases: usize, stats: &BTreeMap<String, Stats>) {
 
 #[test]
 fn parity_against_proj_9_9_0() {
-    check_corpus("tests/parity");
+    check_corpus("tests/parity", None);
 }
 
 /// The wide corpus (about 50 000 conversions, see docs/PARITY.md): several minutes, so it runs
@@ -468,10 +479,28 @@ fn parity_against_proj_9_9_0() {
 #[test]
 #[ignore = "corpus large : cargo test --test parity -- --ignored"]
 fn parity_wide_against_proj_9_9_0() {
-    check_corpus("tests/parity/wide");
+    check_corpus("tests/parity/wide", None);
 }
 
-fn check_corpus(dir: &str) {
+/// The grid corpus (about 10 000 conversions, see docs/PARITY.md): its grid files are in
+/// PARITY_GRIDS_DIR, made by tools/parity/fetch-grids.sh from tests/parity/grids/grids.txt.
+#[test]
+#[ignore = "corpus avec grilles : PARITY_GRIDS_DIR=... cargo test --test parity -- --ignored"]
+fn parity_grids_against_proj_9_9_0() {
+    let dir = std::env::var("PARITY_GRIDS_DIR").unwrap_or_else(|_| {
+        panic!(
+            "PARITY_GRIDS_DIR absent : lancer tools/parity/fetch-grids.sh <dossier>, puis \
+             PARITY_GRIDS_DIR=<dossier> cargo test --test parity -- --ignored"
+        )
+    });
+    assert!(
+        Path::new(&dir).is_dir(),
+        "PARITY_GRIDS_DIR n'est pas un dossier : {dir}"
+    );
+    check_corpus("tests/parity/grids", Some(&dir));
+}
+
+fn check_corpus(dir: &str, grids: Option<&str>) {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(dir);
     let cases = load_cases(&root.join("cases.jsonl"));
     let expected = load_expected(&root.join("expected.jsonl"));
@@ -493,7 +522,7 @@ fn check_corpus(dir: &str) {
                                 .unwrap_or_else(|| panic!("{} absent de expected.jsonl", case.id));
                             let mut found = Vec::new();
                             let mut stats = Stats::default();
-                            check_invocation(case, reference, &mut found, &mut stats);
+                            check_invocation(case, reference, grids, &mut found, &mut stats);
                             (found, stats)
                         })
                         .collect::<Vec<_>>()

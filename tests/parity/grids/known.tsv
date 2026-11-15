@@ -1,0 +1,4 @@
+# Écarts connus du corpus avec grilles (tests/parity.rs, parity_grids).
+# Colonnes : clé « id:ligne », cause courte, renvoi à une fiche.
+# Un écart listé ne fait pas échouer ; un écart nouveau ou disparu oui.
+cs2cs-grid-out-geoid_like-0024:8	choix d'alternative : proj_trans essaie NAD83(2011)/us_noaa_g2018u0 avant NAD83(FBN)/us_noaa_geoid03_conus, le port garde la tête de projinfo (4,5 cm)	docs/PARITY.md

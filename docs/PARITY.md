@@ -17,6 +17,8 @@ sont dans le dépôt.
 | `tests/parity/expected.jsonl` | Code de sortie et sortie standard de la référence, ligne à ligne. |
 | `tests/parity/known.tsv` | Écarts connus : clé `id:ligne`, cause courte, renvoi à une fiche. |
 | `tests/parity.rs` | Relance nos binaires `cs2cs`, `proj`, `cct` et compare. |
+| `tools/parity/fetch-grids.sh` | Recrée le dossier des grilles du corpus avec grilles (`tests/parity/grids/grids.txt`). |
+| `tests/parity/grids/` | Corpus avec grilles : `cases.jsonl`, `expected.jsonl`, `known.tsv`, `ops.tsv`, `grids.txt`. |
 
 ## Commandes
 
@@ -155,3 +157,66 @@ construite. `EPSG:10644 → EPSG:11069` : le premier candidat convertit deux foi
 radians (bug de PROJ, « Mismatched units between step 1 and 2 », reproduit à l'identique par le
 port), donc `* * inf` hors de Saba (`tests/cs2cs_fallback_broken_candidate.rs`). Candidat à une
 correction en phase 2.
+
+## Corpus avec grilles (`tests/parity/grids`)
+
+Le petit et le gros corpus n'ont aucune grille : la référence `target/proj-reference`
+est compilée sans TIFF, et le générateur écarte les paires qui demandent une grille
+absente. Ce corpus utilise `target/proj-reference-net` (compilée avec TIFF et curl) et
+les grilles du CDN `https://cdn.proj.org`.
+
+Choix des opérations : 150 opérations de grille EPSG non dépréciées (`hgridshift`,
+`gridshift`, `vgridshift`, `geoid_like`, `geocentricoffset`, `velocity_grid`), tirées
+avec la graine `20261117` parmi les fichiers de 30 Mo au plus, équilibrées par méthode et
+par pays. Elles tiennent dans `tests/parity/grids/ops.tsv`. Elles touchent 151 fichiers,
+287 Mo : `tests/parity/grids/grids.txt`.
+
+```sh
+RN=/chemin/proj-reference-net          # PROJ 9.9.0 avec TIFF et curl
+# 1. Tirer les opérations (réseau : tailles CDN). À refaire seulement si le choix change.
+PROJ_REFERENCE_DIR=$RN python3 tools/parity/generate.py --grid-select --seed 20261117 --grid-count 150
+# 2. Télécharger les grilles (287 Mo) dans target/parity-grids
+tools/parity/fetch-grids.sh target/parity-grids
+# 3. Générer le corpus, puis enregistrer la référence
+PROJ_REFERENCE_DIR=$RN python3 tools/parity/generate.py --grids-dir target/parity-grids \
+  --points 28 --seed 20261117 --out tests/parity/grids/cases.jsonl
+PROJ_REFERENCE_DIR=$RN tools/parity/record.sh --cases tests/parity/grids/cases.jsonl \
+  --out tests/parity/grids/expected.jsonl --grids-dir target/parity-grids
+# 4. Lancer (ignoré par défaut ; sans PARITY_GRIDS_DIR le test échoue)
+PARITY_GRIDS_DIR=$PWD/target/parity-grids cargo test --test parity parity_grids -- --ignored --nocapture
+```
+
+Pour chaque opération, le générateur tire quatre couples de CRS au plus. Un couple
+ne reste que si la première opération de `projinfo` sans grille manquante utilise une
+grille présente dans le dossier. Par paire, trois invocations `cs2cs` : points dans
+l'emprise de l'opération (`in`), points du monde entier, donc souvent hors grille (`out`),
+et sens inverse `-I` (`inv`). Les pipelines directs `cct` (une étape `hgridshift`,
+`gridshift` ou `vgridshift`) complètent le corpus.
+
+Mesure : 460 invocations, 10 276 conversions (`in` 3 836, `out` 1 918, `inv` 3 836,
+`cct` 686), 137 paires. Limites : les points « dans la grille » sont tirés dans le
+rectangle de l'opération, pas dans la couverture exacte de la grille ; `velocity_grid`
+(2 opérations) ne donne aucune paire ; `us_nga_egm08_25` (80 Mo) est écarté.
+
+Premier passage (graine `20261117`, 28 points) :
+
+| Classe | Conversions |
+|---|---|
+| Identique (texte) | 10 275 |
+| Dans le seuil | 0 |
+| Erreur des deux côtés | 0 |
+| Hors seuil | 1 (0,01 %) |
+| Statut (code de sortie) | 0 |
+| Forme (lignes absentes) | 0 |
+
+Le seul écart, `cs2cs-grid-out-geoid_like-0024:8` (`EPSG:6364 → EPSG:8801`, point
+33,918 N 99,467 W, dans le CONUS) : pour ce point, PROJ essaie d'abord l'opération
+NAD83(2011) avec `us_noaa_g2018u0.tif` (`PROJ_DEBUG=3` ouvre cette grille en premier).
+Le port prend la première opération de `projinfo`, NAD83(FBN) avec
+`us_noaa_geoid03_conus.tif`. `cct` mesure les deux géoïdes à ce point : 3797,495905946656
+pour `g2018u0` (valeur de PROJ), 3797,540472221235 pour `geoid03` (valeur du port). Écart
+de 4,5 cm, qui vient du choix de l'alternative, pas d'une grille mal lue. Cause de
+l'ordre (fabrique d'opérations ou `proj_trans`) non isolée dans ce lot : écart connu,
+inscrit dans `tests/parity/grids/known.tsv`.
+
+Seuil d'alerte : 0,01 % hors seuil, sous les 5 %.
