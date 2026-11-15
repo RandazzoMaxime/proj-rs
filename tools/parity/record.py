@@ -18,8 +18,9 @@ def main():
     parser.add_argument("--reference-dir", required=True)
     parser.add_argument("--cases", default=str(ROOT / "tests/parity/cases.jsonl"))
     parser.add_argument("--out", default=str(ROOT / "tests/parity/expected.jsonl"))
+    parser.add_argument("--grids-dir", help="dossier des grilles (corpus avec grilles)")
     options = parser.parse_args()
-    reference = Reference(options.reference_dir)
+    reference = Reference(options.reference_dir, options.grids_dir)
     count = 0
     with open(options.cases, encoding="utf-8") as cases, \
             open(options.out, "w", encoding="utf-8") as out:
