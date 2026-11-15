@@ -19,7 +19,7 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
 | `proj_coordoperation_get_grid_used_count`, `proj_coordoperation_get_grid_used` (`c_api.cpp:7905-7990`) | `Proj::grids_needed` (`src/proj.rs`), sous `with_context` ; `RemoteGrids::Open` |
 | `proj_create_operations` avec le contexte de fabrique (callbacks du contexte) | `ProjBuilder::create_operations` (`src/proj.rs`), enveloppe `with_context` comme les autres créations du builder |
 | `src/apps/gie.cpp` (`network_error`) | `src/gie.rs` (`errno_name`) |
-| `test/unit/test_network.cpp` (26 TEST) | `tests/unit_network_core.rs` (14 cas, dont `custom`, `getfilesize`, `simul_read_range_error`, `simul_file_change_while_opened`, `pyproj_issue_1192`, `do_not_attempt_network_access_known_available_network_on` et `second_creation_of_a_multi_chunk_grid`, `simul_file_change_between_two_creations` et `simul_file_change_with_a_new_builder`, cas propres au port), `tests/unit_network_grid_used.rs` (1 cas, `proj_coordoperation_get_grid_used`, contre le vrai CDN), `tests/unit_network_endpoint_env.rs` (1 cas), `tests/unit_network_local.rs` (2 cas), `src/network.rs` `callback_tests` (2 tests hors liste) |
+| `test/unit/test_network.cpp` (26 TEST) | `tests/unit_network_core.rs` (14 cas, dont `custom`, `getfilesize`, `simul_read_range_error`, `simul_file_change_while_opened`, `pyproj_issue_1192`, `do_not_attempt_network_access_known_available_network_on` et `second_creation_of_a_multi_chunk_grid`, cas propre au port), `tests/unit_network_grid_used.rs` (1 cas, `proj_coordoperation_get_grid_used`, contre le vrai CDN), `tests/unit_network_endpoint_env.rs` (1 cas), `tests/unit_network_local.rs` (2 cas), `tests/unit_network_grids.rs` (3 cas, contre le vrai CDN), `tests/unit_network_cache.rs` (5 cas, serveur local), `src/network.rs` `callback_tests` (2 tests hors liste) |
 | serveur de test local (remplace `cdn.proj.org`) | `tests/net_support/mod.rs` |
 | `proj_is_download_needed`, `proj_download_file` (`networkfilemanager.cpp:2523-2880`) | `src/network_download.rs` (`is_download_needed`, `download`) ; `ProjBuilder::is_download_needed`, `ProjBuilder::download_file`, `TtlSetting`, `DownloadProgress` (`src/proj.rs`) |
 | `pj_find_file(…, disable_network)` (`filemanager.cpp:1942`), `proj_grid_info` avec le réseau du contexte (`grids.cpp:3928`), `lookForGridInfo` et ses deux résultats (`factory.cpp:3398`) | `ProjBuilder::find_local_file`, `ProjBuilder::grid_info`, `ProjBuilder::look_for_grid_info` (`GridLookup`, `src/iso19111/factory.rs`, `grid_lookup`) |
@@ -28,8 +28,9 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
 | `networking.download_whole_files` (`test_network.cpp:1859`, 37 assertions) | `tests/unit_network_download.rs` (1 cas, contre le vrai CDN) |
 | `networking.file_api` (`test_network.cpp:2043`, 15 assertions) | `tests/unit_network_file_api.rs` (1 cas, contre le vrai CDN) |
 | `networking.basic` (`test_network.cpp:121`, quatre états et une valeur) | `tests/unit_network_basic.rs` (1 cas, contre le vrai CDN) ; `tests/unit_network_local.rs` garde en plus le cas « off, aucune requête » |
+| `networking.curl_hgridshift`, `curl_vgridshift`, `curl_vgridshift_vertcon` (`test_network.cpp:1109`, `1144`, `1180`) | `tests/unit_network_grids.rs` (3 cas, contre le vrai CDN) |
 | sonde `initial_check` (`cdn_reachable`), partagée | `tests/net_cdn/mod.rs` (incluse par `#[path]` dans les deux cas) |
-| `src/apps/projsync.cpp`, `test/cli/test_projsync.sh` | non porté (voir l'audit) |
+| `src/apps/projsync.cpp`, `test/cli/test_projsync.sh` | `src/bin/projsync.rs` (options, affichage, codes de sortie), `src/projsync.rs` (index, sélection, téléchargement), `tests/unit_projsync.rs` (20 tests) ; écarts dans la section « projsync » |
 
 ## Décisions et écarts volontaires
 
@@ -298,6 +299,48 @@ du port :
   prouver que l'assertion de valeur est active, la valeur attendue a été remplacée par `1.9992776858` : échec
   (`longitude 1.9992776847752205 against PROJ 1.9992776858`), puis rétablissement de la valeur de PROJ.
 
+## networking.curl_* (porté contre le vrai CDN)
+
+Les trois TEST (`test/unit/test_network.cpp:1109`, `1144`, `1180`) sont portés dans
+`tests/unit_network_grids.rs`, avec les grilles réelles de `https://cdn.proj.org`. Ils ne
+dépendent plus de fixtures : les trois grilles de substitution (`fr_ign_gr3df97a.tif`,
+`us_nga_egm08_25.tif`, `us_noaa_vertcone.tif`, écrites par `tests/net_support/grids.rs`) ont été
+retirées, leurs seuls appelants étant ces trois cas. Table ligne par ligne :
+`docs/AUDIT-network.md`, lignes 9 à 11 et « Cas portés ». Choix du port :
+
+- **Garde `networkAccessOK`.** Chaque cas sort tôt quand la sonde `cdn_reachable` échoue, comme
+  `if (!networkAccessOK) return;`. Le cas ne sort pas en silence sans le dire : il l'écrit dans la
+  sortie du test.
+- **Contexte.** Un `ProjBuilder` par cas, cache de grilles coupé (`proj_grid_cache_set_enable(false)`),
+  réseau activé (`proj_context_set_enable_network(true)`), répertoire utilisateur temporaire du
+  processus (`set_user_writable_directory`), supprimé à la fin. Le cache étant coupé, rien n'y est écrit.
+- **Assertions.** Les trois `EXPECT_NEAR` de chaque TEST sont repris avec leurs tolérances (1e-8 pour
+  lat/lon, 1e-2 pour la hauteur), et `ASSERT_NE(P, nullptr)` devient le `expect` de la création.
+  Les valeurs de libproj 9.9.0 sont ajoutées, mesurées avec un programme C contre `libproj` 9.9.0
+  (réseau et TIFF, `%.17g`, `PROJ_DATA` de la référence), et vérifiées à 1e-9. Mesures :
+
+  | cas | entrée | sortie (lat, lon, hauteur) |
+  |---|---|---|
+  | `curl_hgridshift` | `EPSG:4275` vers `EPSG:4171`, `(lon, lat) = (2, 49)` | `48.999932260028217`, `1.9992776848010316`, `0` |
+  | `curl_vgridshift` | `EPSG:4979` vers `EPSG:4326+3855`, `(150, -30, 0)` | `-29.999999999999996`, `150`, `-31.889799118042117` |
+  | `curl_vgridshift_vertcon` | `EPSG:4269+7968` vers `EPSG:4269+5703`, `(-80, 40, 0)` | `40`, `-80`, `-0.15375280380249004` |
+
+  Les grilles utilisées sont celles du journal de `libproj` (`PROJ_DEBUG=3`) : `fr_ign_gr3df97a.tif`,
+  `us_nga_egm08_25.tif`, `us_noaa_vertcone.tif`. Les commentaires C++ écrivent `egm08_25.tif` et
+  `vertcone.tif` ; le CDN et PROJ demandent les noms préfixés `us_nga_` et `us_noaa_`.
+- **Ce que le vrai fichier change par rapport aux fixtures.** Les fixtures donnaient des valeurs de
+  référence qui ne sont pas celles du CDN : `14.6249995232` au lieu de `-31.889799118042117` pour
+  `curl_vgridshift`, `-0.1295000091` au lieu de `-0.153752803802490` pour `curl_vgridshift_vertcon`,
+  et pour `curl_hgridshift` un décalage de `48.9968893575` / `1.9999925459` au lieu de
+  `48.9999322600` / `1.9992776848`. Les trois cas passent contre le vrai CDN dès la première exécution,
+  sans changement de `src/` : aucun écart avec PROJ n'a été trouvé.
+- **Preuve que l'assertion de valeur est active.** La hauteur attendue de `curl_vgridshift_vertcon`
+  a été remplacée par `-0.1295000091` (la valeur de la fixture) : échec, `height -0.15375280380249004
+  against PROJ`, dans `tests/unit_network_grids.rs:145`. La valeur a été rétablie avant les
+  lancements suivants.
+- **Non porté.** `proj_assign_context` sur la transformation, puis la destruction du contexte : le
+  port n'a pas d'équivalent (`ProjBuilder` possède son réseau, voir « Contexte » plus haut).
+
 ## API de fichiers
 
 La fiche de `file_api` : les callbacks de `PROJ_FILE_API` deviennent deux traits publics,
@@ -339,6 +382,64 @@ cache de morceaux et son `clear` (`network_cache.rs`, `DiskChunkCache::open`, `c
 `is_file`). Les grilles, modèles, dictionnaires `+init=FILE:SECTION` et métadonnées de grille passent par
 l'API (`gridpath::resolve`, `gridpath::read`, `network::read_file`).
 
+## projsync
+
+Source : `src/apps/projsync.cpp` (652 lignes), `test/cli/test_projsync.sh` (212 lignes). Port :
+`src/bin/projsync.rs` (options, affichage, codes de sortie), `src/projsync.rs` (index JSON, sélection,
+téléchargement avec enregistrement dans `cache.db`), `tests/unit_projsync.rs` (20 tests). Les tests
+tournent sur un serveur local (`files.geojson` et une fixture de 17 octets `proj-rs test grid` à la place
+de `fr_ign_ntf_r93.tif`), avec l'index de test `tests/projsync/files.geojson`. Les sorties attendues sont
+celles du `projsync` 9.9.0 de référence sur le même index (`--local-geojson-file`), l'endpoint remplacé.
+
+**Options.** Toutes les options de `projsync.cpp` sont lues : `--endpoint`, `--user-writable-directory`,
+`--system-directory`, `--target-dir`, `--local-geojson-file`, `--list-files`, `--source-id`, `--area-of-use`,
+`--file`, `--bbox`, `--spatial-test`, `--dry-run`, `--exclude-world-coverage`, `--all`,
+`--no-version-filtering`, `-q`/`--quiet`, `--verbose`. Ajouts Rust : `--user-directory` (alias de
+`--user-writable-directory`), `--help`, `--version`.
+
+Écarts vérifiés dans le code :
+
+- `--user-writable-directory` : sans effet, comme le C++. La cible par défaut est
+  `ProjBuilder::user_writable_directory()`, qui lit `PROJ_USER_WRITABLE_DIRECTORY` (`src/network.rs`,
+  `default_user_dir`).
+- `--system-directory` : le C++ prend le répertoire relatif de la bibliothèque, puis `PROJ_DATA` compilé.
+  Le Rust prend le premier chemin de `PROJ_DATA`, sinon de `PROJ_LIB` (`system_directory`,
+  `src/bin/projsync.rs`), et sort en erreur si aucun n'est défini.
+- Téléchargement non conditionnel : un fichier dont l'enregistrement a expiré est téléchargé de nouveau
+  en entier, sans requête conditionnelle (en-tête de `src/projsync.rs`, `is_download_needed`).
+- Index : `tests/projsync/files.geojson` (et la constante `DUMMY` de `tests/unit_projsync.rs`, miroir du
+  `dummy.geojson` du script), pas le `files.geojson` du CDN.
+
+**Options sans aucun test dans `tests/unit_projsync.rs`** : `--spatial-test` (`contains`, `intersects`),
+`-q`/`--quiet`, `--no-version-filtering`, `--system-directory`, `--user-writable-directory`
+(et `--user-directory`).
+
+**Cas du script `test_projsync.sh`** :
+
+| Lignes du script | Cas | Test Rust | Statut |
+|---|---|---|---|
+| 22-27 | saut si `cdn.proj.org` ne répond pas | sans objet (serveur local) | sans objet |
+| 34-40 | `--list-files --target-dir` ; ligne `at_bev_README.txt,,at_bev` | `list_files_fetches_the_index_and_records_it` | couvert (liste entière comparée) |
+| 42-51 | `PROJ_USER_WRITABLE_DIRECTORY` ; `cache.db` et `files.geojson` présents | le même test, avec `--target-dir` et les deux fichiers vérifiés | partiel : la variable d'environnement n'est pas testée |
+| 53-59 | `--all --dry-run` | `all_dry_run_lists_every_file` | couvert |
+| 62-68 | `--source-id fr_ign --dry-run` | `source_id_selects_by_part_of_the_id` | couvert |
+| 71-78 | `--source-id non_existing` : code 1, avertissement, liste | `unknown_source_id_fails_and_lists_the_known_ones` | couvert |
+| 81-87 | `--area-of-use France --dry-run` | `area_of_use_selects_by_part_of_the_name` | couvert |
+| 90-97 | `--area-of-use non_existing` : code 1, avertissement, liste | `unknown_area_of_use_fails_and_lists_the_known_ones` | couvert |
+| 100-111 | `--file ntf_r93` : téléchargement, fichier présent | `file_downloads_once_and_then_says_it_is_already_there` | couvert (fichier de 17 octets, pas le TIF du CDN) |
+| 113-119 | second `--file ntf_r93` : « already downloaded » | le même test | couvert |
+| 124-131 | `--file non_existing` : code 1, avertissement, liste | `unknown_file_fails_and_lists_the_known_ones` | couvert |
+| 134-141 | `--bbox 2,49,3,50 --dry-run` | `bbox_selects_the_grids_that_overlap_it` | couvert |
+| 144-154 | `--exclude-world-coverage` | `exclude_world_coverage_drops_the_world_grids` | couvert |
+| 157-184 | trois fenêtres de l'antiméridien | `bbox_across_the_antimeridian_finds_the_pacific_grids` | couvert |
+| 186-206 | `--source-id au_ga --verbose --dry-run --local-geojson-file dummy.geojson` (versions retirée et ajoutée, sans version) | `verbose_reports_the_files_left_out_by_version` | couvert |
+| 208-212 | nettoyage, code 0 | sans objet | sans objet |
+
+Le test `file_downloads_once_and_then_says_it_is_already_there` vérifie la sortie et le fichier téléchargé.
+Le contenu du fichier n'est pas comparé au binaire de référence : c'est la fixture de 17 octets, pas le TIF du CDN.
+
+Commandes : `cargo test --test unit_projsync`.
+
 ## Ce qui reste ouvert
 
 - Lecture par morceaux pour les GeoTIFF compressés (deflate), à prédicteur ou planaires : ils
@@ -371,7 +472,8 @@ l'API (`gridpath::resolve`, `gridpath::read`, `network::read_file`).
 - Taille sans `Content-Range` : la taille déduite d'une réponse courte n'est plus partagée entre
   deux `RemoteFile` de la même URL (elle l'était avant ce lot). PROJ n'a pas ce cas : sans
   `Content-Range`, la création échoue.
-- Cache SQLite : TTL, taille max, verrou, `proj_grid_cache_clear` (lot cache, autre agent).
+- Cache SQLite : TTL, taille max, verrou, `proj_grid_cache_clear` ont des tests (`tests/unit_network_cache.rs`,
+  cinq cas sur serveur local, voir l'audit) ; les écarts de la couche cache sont dans `docs/PORTING-network-cache.md`.
 - API de fichiers : routée pour la recherche, les lectures de grilles, modèles et dictionnaires, le
   répertoire utilisateur et le téléchargement (voir « API de fichiers »). Restent sur `std::fs` :
   `proj.ini`, le répertoire et l'effacement du cache de morceaux, `projsync`, la CLI gie. Ni façade C,
@@ -401,7 +503,7 @@ l'API (`gridpath::resolve`, `gridpath::read`, `network::read_file`).
   `networking.do_not_attempt_network_access_known_available_network_on` : ce lot ne les a pas retirés
   (consigne : ne pas éditer le ledger). Le retrait suit avec `UPDATE_DOCS=1 cargo test --test
   docs_in_sync`.
-- `projsync` : non commencé.
+- `projsync` : porté, écarts et cas non testés dans la section « projsync ».
 - `basic` : porté en entier (voir « networking.basic (porté) »). Rien ne reste ouvert pour ce cas.
 - `pj_find_file` avec `disable_network = false` : non porté. `find_local_file` ne regarde que le
   disque.
@@ -419,5 +521,7 @@ cargo test --test unit_network_grid_used
 cargo test --test unit_network_core second_creation_of_a_multi_chunk_grid
 cargo test --test unit_network_basic
 cargo test --lib callback_tests
+cargo test --test unit_network_cache --test unit_network_grids
+cargo test --test unit_projsync
 cargo +1.100.0 clippy --all-targets --all-features -- -D warnings
 ```
