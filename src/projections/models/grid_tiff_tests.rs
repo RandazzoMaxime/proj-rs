@@ -2,6 +2,11 @@
 //! way PROJ does (`planar_deflate_predictor3.tif` and the other fixtures). The tiled file below
 //! holds the same samples in 4 by 4 tiles, so the two grids must agree at every sample.
 
+#![expect(
+    clippy::as_conversions,
+    reason = "fixture builder: small test sizes and indices written as TIFF fields"
+)]
+
 use super::open_tiff;
 use crate::projections::models::grid::Grid;
 
