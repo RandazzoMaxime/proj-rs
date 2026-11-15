@@ -17,8 +17,8 @@ use crate::proj::ForceOver;
 
 use crate::tmerc_approx::ApproxTmerc;
 use crate::{
-    Cone, Ellipsoid, EllipsoidError, Geographic, Hemisphere, Lcc, Mercator, Projected,
-    ProjectionError, Tmerc, UtmZone,
+    Ellipsoid, EllipsoidError, Geographic, Hemisphere, Lcc, Mercator, Projected, ProjectionError,
+    Tmerc, UtmZone,
 };
 use std::f64::consts::{FRAC_PI_2, PI};
 use std::fmt;
@@ -1500,40 +1500,17 @@ fn auto_is_exact_only(es: f64, phi0: f64, k0: f64) -> bool {
     es > 0.1 || phi0 != 0.0 || (k0 - 1.0).abs() > 0.01
 }
 
-fn native_exact(frame: &Frame, tmerc: Tmerc) -> Box<dyn Step> {
-    let inverse = tmerc.clone();
-    let unit = tmerc.clone();
-    Box::new(
-        NativeProjected::new(
-            frame,
-            move |lon, lat| tmerc.forward_rad(lon, lat),
-            move |xy| inverse.inverse(xy),
-        )
-        .with_unit(UnitFn {
-            lam0: frame.lam0,
-            forward: move |lam: f64, phi: f64| -> Result<(f64, f64), TransformError> {
-                Ok(unit.fwd_unit(lam, phi)?)
-            },
-        }),
-    )
+/// Transverse Mercator exacte dans le cadre de `Classic` : méridien central et faux sont
+/// ceux du cadre, comme `fwd_prepare` et `fwd_finalize` de PROJ.
+fn classic_tmerc(frame: &Frame) -> Box<dyn Step> {
+    let kernel = Tmerc::from_radians(frame.earth, 0.0, frame.phi0, frame.k0, 0.0, 0.0);
+    Box::new(Classic::new(frame.clone(), kernel))
 }
 
-fn native_approx(frame: &Frame, approx: ApproxTmerc) -> Box<dyn Step> {
-    let inverse = approx;
-    let unit = approx;
-    Box::new(
-        NativeProjected::new(
-            frame,
-            move |lon, lat| approx.forward(lon, lat),
-            move |xy| inverse.inverse(xy),
-        )
-        .with_unit(UnitFn {
-            lam0: frame.lam0,
-            forward: move |lam: f64, phi: f64| -> Result<(f64, f64), TransformError> {
-                Ok(unit.fwd_unit(lam, phi)?)
-            },
-        }),
-    )
+/// Transverse Mercator approchée dans le cadre de `Classic`, comme `tmerc` avec `+approx`.
+fn classic_approx(frame: &Frame) -> Box<dyn Step> {
+    let kernel = ApproxTmerc::from_radians(frame.earth, 0.0, frame.phi0, frame.k0, 0.0, 0.0);
+    Box::new(Classic::new(frame.clone(), kernel))
 }
 
 fn native_auto(
@@ -1615,20 +1592,10 @@ fn build_tmerc(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateEr
         return Ok(sphere_tmerc_step(frame));
     }
     match algo {
-        TmercAlgo::Evenden => Ok(native_approx(
-            frame,
-            approx_from_degrees(
-                frame,
-                frame.lam0.to_degrees(),
-                frame.phi0.to_degrees(),
-                frame.k0,
-                frame.x0,
-                frame.y0,
-            )?,
-        )),
-        TmercAlgo::Exact => Ok(native_exact(frame, exact_from_frame(frame)?)),
+        TmercAlgo::Evenden => Ok(classic_approx(frame)),
+        TmercAlgo::Exact => Ok(classic_tmerc(frame)),
         TmercAlgo::Auto if auto_is_exact_only(frame.earth.es(), frame.phi0, frame.k0) => {
-            Ok(native_exact(frame, exact_from_frame(frame)?))
+            Ok(classic_tmerc(frame))
         }
         TmercAlgo::Auto => {
             let exact = exact_from_frame(frame)?;
@@ -1657,7 +1624,7 @@ fn build_etmerc(_params: &Params, frame: &Frame) -> Result<Box<dyn Step>, Create
     if frame.earth.es() == 0.0 {
         return Err(CreateError::IllegalValue("ellps"));
     }
-    Ok(native_exact(frame, exact_from_frame(frame)?))
+    Ok(classic_tmerc(frame))
 }
 
 fn build_utm(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateError> {
@@ -1680,21 +1647,22 @@ fn build_utm(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateErro
         Hemisphere::North => 0.0,
         Hemisphere::South => 10_000_000.0,
     };
-    let lam0 = lon0.to_radians();
-    let zone_frame = Frame {
-        lam0: (f64::from(zone.number()) - 1.0 + 0.5) * std::f64::consts::PI / 30.0
-            - std::f64::consts::PI,
-        ..frame.clone()
-    };
+    let lam0 = crate::tmerc::utm_central_meridian(zone);
     let k0 = 0.9996;
     let exact =
         || Tmerc::utm(zone, hemisphere, frame.earth).map_err(|_| CreateError::IllegalValue("zone"));
     let approx = || approx_from_degrees(frame, lon0, 0.0, k0, 500_000.0, y0);
+    let mut utm_frame = frame.clone();
+    utm_frame.lam0 = lam0;
+    utm_frame.phi0 = 0.0;
+    utm_frame.k0 = k0;
+    utm_frame.x0 = 500_000.0;
+    utm_frame.y0 = y0;
     match algo {
-        TmercAlgo::Evenden => Ok(native_approx(&zone_frame, approx()?)),
-        TmercAlgo::Exact => Ok(native_exact(&zone_frame, exact()?)),
+        TmercAlgo::Evenden => Ok(classic_approx(&utm_frame)),
+        TmercAlgo::Exact => Ok(classic_tmerc(&utm_frame)),
         TmercAlgo::Auto if auto_is_exact_only(frame.earth.es(), 0.0, k0) => {
-            Ok(native_exact(&zone_frame, exact()?))
+            Ok(classic_tmerc(&utm_frame))
         }
         TmercAlgo::Auto => Ok(native_auto(
             frame,
@@ -1711,31 +1679,9 @@ fn build_utm(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateErro
 fn build_lcc(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateError> {
     let lat1 = params.radians("lat_1")?.unwrap_or(frame.phi0);
     let lat2 = params.radians("lat_2")?.unwrap_or(lat1);
-    let cone = Cone {
-        lon0_deg: frame.lam0.to_degrees(),
-        lat0_deg: frame.phi0.to_degrees(),
-        lat1_deg: lat1.to_degrees(),
-        lat2_deg: lat2.to_degrees(),
-        x0: frame.x0,
-        y0: frame.y0,
-        k0: frame.k0,
-    };
-    let lcc = Lcc::try_new(frame.earth, cone).map_err(|_| CreateError::IllegalValue("lat_1"))?;
-    let inverse = lcc.clone();
-    let unit = lcc.clone();
-    Ok(Box::new(
-        NativeProjected::new(
-            frame,
-            move |lon, lat| lcc.forward(lon.to_degrees(), lat.to_degrees()),
-            move |xy| inverse.inverse(xy),
-        )
-        .with_unit(UnitFn {
-            lam0: frame.lam0,
-            forward: move |lam: f64, phi: f64| -> Result<(f64, f64), TransformError> {
-                Ok(unit.fwd_unit(lam, phi)?)
-            },
-        }),
-    ))
+    let lcc = Lcc::from_radians(frame.earth, 0.0, frame.phi0, lat1, lat2, frame.k0)
+        .map_err(|_| CreateError::IllegalValue("lat_1"))?;
+    Ok(Box::new(Classic::new(frame.clone(), lcc)))
 }
 
 fn build_merc(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateError> {
@@ -1750,46 +1696,15 @@ fn build_merc(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateErr
             crate::projmath::msfn(lat_ts.sin(), lat_ts.cos(), frame.earth.es())
         };
     }
+    // Origine nulle : le méridien central et les faux viennent du cadre, comme dans PROJ.
     let merc = if frame.earth.es() == 0.0 {
-        Mercator::try_sphere(
-            frame.earth.a(),
-            frame.lam0.to_degrees(),
-            k0,
-            frame.x0,
-            frame.y0,
-        )
-        .map_err(|_| CreateError::IllegalValue("k_0"))?
+        Mercator::try_sphere(frame.earth.a(), 0.0, k0, 0.0, 0.0)
+            .map_err(|_| CreateError::IllegalValue("k_0"))?
     } else {
-        Mercator::try_ellipsoid(frame.earth, frame.lam0.to_degrees(), k0, frame.x0, frame.y0)
+        Mercator::try_ellipsoid(frame.earth, 0.0, k0, 0.0, 0.0)
             .map_err(|_| CreateError::IllegalValue("k_0"))?
     };
-    let over = frame.over;
-    let unit = merc;
-    Ok(Box::new(
-        NativeProjected::new(
-            frame,
-            move |lon, lat| {
-                if over {
-                    merc.forward_rad_over(lon, lat)
-                } else {
-                    merc.forward(lon.to_degrees(), lat.to_degrees())
-                }
-            },
-            move |xy| {
-                if over {
-                    merc.inverse_over(xy)
-                } else {
-                    merc.inverse(xy)
-                }
-            },
-        )
-        .with_unit(UnitFn {
-            lam0: frame.lam0,
-            forward: move |lam: f64, phi: f64| -> Result<(f64, f64), TransformError> {
-                Ok(unit.fwd_unit(lam, phi))
-            },
-        }),
-    ))
+    Ok(Box::new(Classic::new(frame.clone(), merc)))
 }
 
 fn build_helmert(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateError> {
@@ -1843,25 +1758,6 @@ pub(crate) struct UnitProjection<'a> {
     pub(crate) forward: &'a dyn UnitForward,
 }
 
-/// A native kernel as a [`UnitForward`]: its closure and its central meridian.
-pub(crate) struct UnitFn<F> {
-    pub(crate) lam0: f64,
-    pub(crate) forward: F,
-}
-
-impl<F> UnitForward for UnitFn<F>
-where
-    F: Fn(f64, f64) -> Result<(f64, f64), TransformError> + Send + Sync,
-{
-    fn lam0(&self) -> f64 {
-        self.lam0
-    }
-
-    fn unit_forward(&self, lam: f64, phi: f64) -> Result<(f64, f64), TransformError> {
-        (self.forward)(lam, phi)
-    }
-}
-
 struct Classic<K> {
     frame: Frame,
     kernel: K,
@@ -1880,6 +1776,46 @@ impl<K: Kernel + 'static> UnitForward for Classic<K> {
 
     fn unit_forward(&self, lam: f64, phi: f64) -> Result<(f64, f64), TransformError> {
         self.kernel.forward(lam, phi)
+    }
+}
+
+impl Kernel for Mercator {
+    fn forward(&self, lam: f64, phi: f64) -> Result<(f64, f64), TransformError> {
+        Ok(self.fwd_unit(lam, phi))
+    }
+
+    fn inverse(&self, x: f64, y: f64) -> Result<(f64, f64), TransformError> {
+        self.inv_unit(x, y).map_err(Into::into)
+    }
+}
+
+impl Kernel for Lcc {
+    fn forward(&self, lam: f64, phi: f64) -> Result<(f64, f64), TransformError> {
+        self.fwd_unit(lam, phi).map_err(Into::into)
+    }
+
+    fn inverse(&self, x: f64, y: f64) -> Result<(f64, f64), TransformError> {
+        self.inv_unit(x, y).map_err(Into::into)
+    }
+}
+
+impl Kernel for ApproxTmerc {
+    fn forward(&self, lam: f64, phi: f64) -> Result<(f64, f64), TransformError> {
+        self.fwd_unit(lam, phi).map_err(Into::into)
+    }
+
+    fn inverse(&self, x: f64, y: f64) -> Result<(f64, f64), TransformError> {
+        Ok(self.inv_unit(x, y))
+    }
+}
+
+impl Kernel for Tmerc {
+    fn forward(&self, lam: f64, phi: f64) -> Result<(f64, f64), TransformError> {
+        self.fwd_unit(lam, phi).map_err(Into::into)
+    }
+
+    fn inverse(&self, x: f64, y: f64) -> Result<(f64, f64), TransformError> {
+        self.inv_unit(x, y).map_err(Into::into)
     }
 }
 
@@ -2048,7 +1984,6 @@ struct NativeProjected<F, I> {
     frame: Frame,
     forward_xy: F,
     inverse_xy: I,
-    unit: Option<Box<dyn UnitForward>>,
 }
 
 impl<F, I> NativeProjected<F, I>
@@ -2061,14 +1996,7 @@ where
             frame: frame.clone(),
             forward_xy,
             inverse_xy,
-            unit: None,
         }
-    }
-
-    /// Attach the unit-ellipsoid forward of this projection, see [`Step::unit_projection`].
-    fn with_unit(mut self, unit: impl UnitForward + 'static) -> Self {
-        self.unit = Some(Box::new(unit));
-        self
     }
 }
 
@@ -2117,13 +2045,6 @@ where
 
     fn output_to_metre(&self) -> f64 {
         self.frame.to_meter
-    }
-
-    fn unit_projection(&self) -> Option<UnitProjection<'_>> {
-        self.unit.as_deref().map(|forward| UnitProjection {
-            frame: &self.frame,
-            forward,
-        })
     }
 }
 

@@ -10,6 +10,18 @@
 
 use std::f64::consts::FRAC_PI_2;
 
+unsafe extern "C" {
+    #[link_name = "atanh"]
+    fn libm_atanh(x: f64) -> f64;
+}
+
+/// `atanh` de la libm C, comme PROJ : le `f64::atanh` de Rust diffère d'un ulp sur un tiers des entrées.
+#[must_use]
+pub(crate) fn atanh(x: f64) -> f64 {
+    // SAFETY: `atanh` de la libm C ne prend qu'un `f64` et ne lit ni n'écrit de mémoire.
+    unsafe { libm_atanh(x) }
+}
+
 const ONE_TOL: f64 = 1.000_000_000_000_01;
 const ATOL: f64 = 1e-50;
 const ORDER: usize = 6;
@@ -29,13 +41,6 @@ pub(crate) enum AuxLat {
     )]
     Geocentric = 2,
     Rectifying = 3,
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "conformal latitude is used by the transverse Mercator port"
-        )
-    )]
     Conformal = 4,
     Authalic = 5,
 }
@@ -106,7 +111,7 @@ pub(crate) fn tsfn(phi: f64, sinphi: f64, e: f64) -> f64 {
     } else {
         (1.0 - sinphi) / cosphi
     };
-    (e * (e * sinphi).atanh()).exp() * factor
+    (e * atanh(e * sinphi)).exp() * factor
 }
 
 /// Inverse isometric latitude, PROJ 9.9 `pj_phi2`.
@@ -126,7 +131,7 @@ pub(crate) fn sinhpsi2tanphi(taup: f64, e: f64) -> Result<f64, ()> {
     let e2m = 1.0 - e * e;
     let stol = tol * 1.0_f64.max(taup.abs());
     let mut tau = if taup.abs() > 70.0 {
-        taup * (e * e.atanh()).exp()
+        taup * (e * atanh(e)).exp()
     } else {
         taup / e2m
     };
@@ -139,9 +144,9 @@ pub(crate) fn sinhpsi2tanphi(taup: f64, e: f64) -> Result<f64, ()> {
             return Err(());
         }
         let tau1 = (1.0 + tau * tau).sqrt();
-        let sig = (e * (e * tau / tau1).atanh()).sinh();
+        let sig = (e * atanh(e * tau / tau1)).sinh();
         let taupa = (1.0 + sig * sig).sqrt() * tau - sig * tau1;
-        let dtau = ((taup - taupa) * (1.0 + e2m * tau * tau))
+        let dtau = ((taup - taupa) * (1.0 + e2m * (tau * tau)))
             / (e2m * tau1 * (1.0 + taupa * taupa).sqrt());
         tau += dtau;
         if !(dtau.abs() >= stol) {
@@ -168,7 +173,7 @@ pub(crate) fn authalic_q(sinphi: f64, e: f64, one_es: f64) -> f64 {
         if one_minus == 0.0 {
             return f64::INFINITY;
         }
-        one_es * (sinphi / one_minus + e_sinphi.atanh() / e)
+        one_es * (sinphi / one_minus + atanh(e_sinphi) / e)
     } else {
         2.0 * sinphi
     }
@@ -243,7 +248,14 @@ pub(crate) fn auxlat_coeffs(n: f64, auxin: AuxLat, auxout: AuxLat) -> Option<[f6
 /// Convert auxiliary latitude `zeta` with coefficients from [`auxlat_coeffs`].
 #[must_use]
 pub(crate) fn auxlat_convert(zeta: f64, f: &[f64]) -> f64 {
-    zeta + clenshaw(zeta.sin(), zeta.cos(), f)
+    auxlat_convert_sincos(zeta, zeta.sin(), zeta.cos(), f)
+}
+
+/// [`auxlat_convert`] avec le sinus et le cosinus de `zeta` déjà calculés
+/// (`pj_auxlat_convert` à trois arguments de PROJ).
+#[must_use]
+pub(crate) fn auxlat_convert_sincos(zeta: f64, szeta: f64, czeta: f64, f: &[f64]) -> f64 {
+    zeta + clenshaw(szeta, czeta, f)
 }
 
 /// Meridional distance `M/a` and its inverse, order 6 in the third flattening.
@@ -322,7 +334,7 @@ pub(crate) fn authalic_inverse(beta: f64, n: f64, e: f64, es: f64, one_es: f64, 
         let cosphi = phi.cos();
         let one_minus = 1.0 - es * sinphi * sinphi;
         let dphi = (one_minus * one_minus) / (2.0 * cosphi)
-            * (q_div - sinphi / one_minus - (e * sinphi).atanh() / e);
+            * (q_div - sinphi / one_minus - atanh(e * sinphi) / e);
         // Negated so a NaN step stops the iteration, as PROJ's Newton loop does.
         #[expect(
             clippy::neg_cmp_op_on_partial_ord,

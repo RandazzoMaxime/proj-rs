@@ -81,8 +81,36 @@ Sources : PROJ 9.9.0 `src/apps/proj.cpp`, `geod.cpp`, `geod_set.cpp`, `cs2cs.cpp
 | Écart | Cause exacte |
 |---|---|
 | `proj -S` oméga au bit près, exact Tmerc et UTM zone 31 : 2 points sur 88 (tmerc `-120 60`, `-60 -85`), 3 sur 88 (UTM) | PROJ affiche un bruit de 1e-6 là où le port affiche 0, ou l'inverse : écart d'un ulp dans la dérivée numérique. Cause exacte non identifiée. Les coefficients de `setup_exact` (`pj_auxlat_coeffs`, `Qn`, `Zb`) ne sont pas comparés octet à octet ; `pj_auxlat_convert` avec l'ordre de PROJ n'a rien changé (86 et 85 avant et après). |
-| `proj -b/-i/-o` : derniers bits | L'ordre des opérations de `tmerc`/`utm` inverse et de Mercator diffère de PROJ : écart d'un à deux ulps, non visible en texte. |
 | `proj -v`, `-V` | Non porté : le dump de moniteur (`pj_pr_list`, `vprocess`) est une sortie interne de PROJ. |
+
+## Sortie binaire `-b`, `-i`, `-o` au bit près
+
+Mesure : `proj -b` et `proj -I -b` contre le binaire de référence, sur une grille de 101 × 51
+points par projection, dans les deux sens, pour 11 projections (Mercator ellipsoïdal et sphérique,
+`tmerc`, `utm` zone 31 nord et sud, `tmerc +approx`, `lcc`, `aea`, `laea`, `eqc`, `stere`) :
+0 octet différent. Avant : jusqu'à 22528 ulps (`utm` inverse), 1024 (`tmerc` inverse), 195 (`lcc`), 21 (Mercator).
+Les grands nombres d'ulps tombent près de zéro, où un ulp est très petit.
+`tests/cli_binary.rs` fige les octets de 16 cas.
+
+Causes corrigées :
+
+- `atanh` : `f64::atanh` de Rust diffère de la libm sur environ 34 % des entrées. `projmath::atanh`
+  appelle la libm C, comme PROJ.
+- Aller-retour degrés / radians supprimé : Mercator, `tmerc`, `utm`, `tmerc +approx` et `lcc`
+  passent par le cadre `Classic` (`fwd_prepare`, `fwd_finalize`).
+- Aplatissement troisième `n = tan²(asin(e) / 2)` comme `pj_ell_set`, et non `f / (2 − f)`.
+- Méridien central UTM `(zone + 0,5) π / 30 − π` comme `PJ_PROJECTION(utm)`, et non des degrés.
+- Séries `tmerc` : `pj_auxlat_coeffs` et `pj_auxlat_convert` de `projmath` ; inverse à trois arguments.
+- Newton de `sinhpsi2tanphi` : `e2m * (tau * tau)`, même association que PROJ.
+- `aea` : pas de clamp sur `asin(qs / qp)`. PROJ rend NaN hors de [−1, 1].
+
+Reste ouvert :
+
+- Chemin par paquets (`forward_batch`, AVX2) : ses opérations vectorielles ne suivent pas PROJ
+  bit à bit. La CLI ne l'emploie pas.
+- `+algo=auto`, `tmerc` sphérique et `+over` : non mesurés.
+- `sinhpsi2tanphi` non convergent : PROJ rend la dernière valeur et pose `errno`, ce port
+  renvoie `OutsideDomain`. Non rencontré dans la grille.
 
 ## Commandes
 

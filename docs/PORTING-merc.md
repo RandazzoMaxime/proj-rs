@@ -37,7 +37,8 @@ d'échelle au parallèle sécant sans test.
 ## Quirks conservés
 
 - Abscisse `k0 · λ` dans les deux modèles. Seule l'ordonnée change.
-- Ordonnée ellipsoïdale `−k0 · ln(tsfn)`, identique à PROJ.
+- Ordonnée ellipsoïdale `k0 · (asinh(sin φ / cos φ) − e · atanh(e · sin φ))`, comme `merc_e_forward`
+  de PROJ, et non `−k0 · ln(tsfn)` : mêmes réels, autres bits. Inverse par `sinhpsi2tanphi`.
 - Seuil `1e-10` rad avant le pôle.
 
 ## Vérification

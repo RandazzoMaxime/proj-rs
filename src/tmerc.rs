@@ -7,6 +7,9 @@
 //! L'algorithme approché d'Evenden / Snyder (`+approx`) est dans `tmerc_approx`.
 
 use crate::angle::adjlon;
+use crate::projmath::{
+    auxlat_coeffs, auxlat_convert, auxlat_convert_sincos, rectifying_radius, AuxLat,
+};
 use crate::{Ellipsoid, Geographic, Projected, ProjectionError};
 
 const ORDER: usize = 6;
@@ -49,6 +52,12 @@ impl UtmZone {
     }
 }
 
+/// Méridien central de la zone, en radians, comme `PJ_PROJECTION(utm)` de PROJ :
+/// `(zone + 0,5) π / 30 − π` avec la zone à partir de 0. Passer par des degrés changerait les bits.
+pub(crate) fn utm_central_meridian(zone: UtmZone) -> f64 {
+    (f64::from(zone.0) - 0.5) * std::f64::consts::PI / 30.0 - std::f64::consts::PI
+}
+
 /// Transverse Mercator préparé (coefficients de la série déjà calculés).
 #[derive(Clone, Debug)]
 pub struct Tmerc {
@@ -89,12 +98,31 @@ impl Tmerc {
         if !k0.is_finite() || k0 == 0.0 {
             return Err(ProjectionError::InvalidScale);
         }
-        let phi0 = lat0_deg.to_radians();
+        Ok(Self::from_radians(
+            ell,
+            lon0_deg.to_radians(),
+            lat0_deg.to_radians(),
+            k0,
+            x0,
+            y0,
+        ))
+    }
+
+    /// Même projection, origine en radians. Le cadre de `engine` (`fwd_prepare`,
+    /// `fwd_finalize`) porte le méridien central et les faux, donc ce noyau les reçoit à zéro.
+    pub(crate) fn from_radians(
+        ell: Ellipsoid,
+        lam0: f64,
+        phi0: f64,
+        k0: f64,
+        x0: f64,
+        y0: f64,
+    ) -> Self {
         let (qn, zb, cgb, cbg, utg, gtu) = engsager(ell.n(), k0, phi0);
-        Ok(Self {
+        Self {
             a: ell.a(),
             ra: ell.ra(),
-            lam0: lon0_deg.to_radians(),
+            lam0,
             x0,
             y0,
             qn,
@@ -103,7 +131,7 @@ impl Tmerc {
             cbg,
             utg,
             gtu,
-        })
+        }
     }
 
     /// UTM : `k0 = 0.9996`, faux est 500 000 m, méridien central de la zone.
@@ -117,12 +145,12 @@ impl Tmerc {
         hemisphere: Hemisphere,
         ell: Ellipsoid,
     ) -> Result<Self, ProjectionError> {
-        let lon0 = (f64::from(zone.0) - 0.5) * 6.0 - 180.0;
+        let lam0 = utm_central_meridian(zone);
         let y0 = match hemisphere {
             Hemisphere::North => 0.0,
             Hemisphere::South => 10_000_000.0,
         };
-        Self::try_new(ell, lon0, 0.0, 0.9996, 500_000.0, y0)
+        Ok(Self::from_radians(ell, lam0, 0.0, 0.9996, 500_000.0, y0))
     }
 
     /// Degrés vers mètres.
@@ -187,7 +215,7 @@ impl Tmerc {
         reason = "Cn and Ce are the paired northing/easting terms in PROJ exact_e_fwd"
     )]
     pub(crate) fn fwd_unit(&self, lam: f64, phi: f64) -> Result<(f64, f64), ProjectionError> {
-        let mut cn = gatg(&self.cbg, phi, (2.0 * phi).cos(), (2.0 * phi).sin());
+        let mut cn = auxlat_convert(phi, &self.cbg);
         let sin_cn = cn.sin();
         let cos_cn = cn.cos();
         let sin_ce = lam.sin();
@@ -222,7 +250,7 @@ impl Tmerc {
         clippy::similar_names,
         reason = "Cn and Ce are the paired terms in PROJ exact_e_inv"
     )]
-    fn inv_unit(&self, x: f64, y: f64) -> Result<(f64, f64), ProjectionError> {
+    pub(crate) fn inv_unit(&self, x: f64, y: f64) -> Result<(f64, f64), ProjectionError> {
         let mut cn = (y - self.zb) / self.qn;
         let mut ce = x / self.qn;
         if ce.abs() > CE_LIMIT {
@@ -244,12 +272,9 @@ impl Tmerc {
         let sinh_ce = ce.sinh();
         ce = sinh_ce.atan2(cos_cn);
         let modulus = sinh_ce.hypot(cos_cn);
-        cn = sin_cn.atan2(modulus);
-
-        let tmp = 2.0 * modulus / (sinh_ce * sinh_ce + 1.0);
-        let sin_2_cn = sin_cn * tmp;
-        let cos_2_cn = tmp * modulus - 1.0;
-        let phi = gatg(&self.cgb, cn, cos_2_cn, sin_2_cn);
+        let rr = sin_cn.hypot(modulus);
+        let cn_geo = sin_cn.atan2(modulus);
+        let phi = auxlat_convert_sincos(cn_geo, sin_cn / rr, modulus / rr, &self.cgb);
         Ok((ce, phi))
     }
 
@@ -460,7 +485,7 @@ impl Tmerc {
     }
 }
 
-/// Coefficients de `setup_exact` (PROJ 9.9). `n` est l'aplatissement troisième.
+/// Coefficients et constantes de `setup_exact` (PROJ 9.9). `n` est l'aplatissement troisième.
 fn engsager(
     n: f64,
     k0: f64,
@@ -473,106 +498,17 @@ fn engsager(
     [f64; ORDER],
     [f64; ORDER],
 ) {
-    let mut cgb = [0.0; ORDER];
-    let mut cbg = [0.0; ORDER];
-    let mut utg = [0.0; ORDER];
-    let mut gtu = [0.0; ORDER];
-
-    let mut np = n;
-    cgb[0] = n
-        * (2.0
-            + n * (-2.0 / 3.0
-                + n * (-2.0 + n * (116.0 / 45.0 + n * (26.0 / 45.0 + n * (-2854.0 / 675.0))))));
-    cbg[0] = n
-        * (-2.0
-            + n * (2.0 / 3.0
-                + n * (4.0 / 3.0
-                    + n * (-82.0 / 45.0 + n * (32.0 / 45.0 + n * (4642.0 / 4725.0))))));
-    np *= n;
-    cgb[1] = np
-        * (7.0 / 3.0
-            + n * (-8.0 / 5.0 + n * (-227.0 / 45.0 + n * (2704.0 / 315.0 + n * (2323.0 / 945.0)))));
-    cbg[1] = np
-        * (5.0 / 3.0
-            + n * (-16.0 / 15.0 + n * (-13.0 / 9.0 + n * (904.0 / 315.0 + n * (-1522.0 / 945.0)))));
-    np *= n;
-    cgb[2] =
-        np * (56.0 / 15.0 + n * (-136.0 / 35.0 + n * (-1262.0 / 105.0 + n * (73814.0 / 2835.0))));
-    cbg[2] = np * (-26.0 / 15.0 + n * (34.0 / 21.0 + n * (8.0 / 5.0 + n * (-12686.0 / 2835.0))));
-    np *= n;
-    cgb[3] = np * (4279.0 / 630.0 + n * (-332.0 / 35.0 + n * (-399_572.0 / 14_175.0)));
-    cbg[3] = np * (1237.0 / 630.0 + n * (-12.0 / 5.0 + n * (-24_832.0 / 14_175.0)));
-    np *= n;
-    cgb[4] = np * (4174.0 / 315.0 + n * (-144_838.0 / 6237.0));
-    cbg[4] = np * (-734.0 / 315.0 + n * (109_598.0 / 31_185.0));
-    np *= n;
-    cgb[5] = np * (601_676.0 / 22_275.0);
-    cbg[5] = np * (444_337.0 / 155_925.0);
-
-    np = n * n;
-    let qn = k0 / (1.0 + n) * (1.0 + np * (1.0 / 4.0 + np * (1.0 / 64.0 + np / 256.0)));
-    utg[0] = n
-        * (-0.5
-            + n * (2.0 / 3.0
-                + n * (-37.0 / 96.0
-                    + n * (1.0 / 360.0 + n * (81.0 / 512.0 + n * (-96_199.0 / 604_800.0))))));
-    gtu[0] = n
-        * (0.5
-            + n * (-2.0 / 3.0
-                + n * (5.0 / 16.0
-                    + n * (41.0 / 180.0 + n * (-127.0 / 288.0 + n * (7891.0 / 37_800.0))))));
-    utg[1] = np
-        * (-1.0 / 48.0
-            + n * (-1.0 / 15.0
-                + n * (437.0 / 1440.0 + n * (-46.0 / 105.0 + n * (1_118_711.0 / 3_870_720.0)))));
-    gtu[1] = np
-        * (13.0 / 48.0
-            + n * (-3.0 / 5.0
-                + n * (557.0 / 1440.0 + n * (281.0 / 630.0 + n * (-1_983_433.0 / 1_935_360.0)))));
-    np *= n;
-    utg[2] =
-        np * (-17.0 / 480.0 + n * (37.0 / 840.0 + n * (209.0 / 4480.0 + n * (-5569.0 / 90_720.0))));
-    gtu[2] = np
-        * (61.0 / 240.0
-            + n * (-103.0 / 140.0 + n * (15_061.0 / 26_880.0 + n * (167_603.0 / 181_440.0))));
-    np *= n;
-    utg[3] = np * (-4397.0 / 161_280.0 + n * (11.0 / 504.0 + n * (830_251.0 / 7_257_600.0)));
-    gtu[3] = np * (49_561.0 / 161_280.0 + n * (-179.0 / 168.0 + n * (6_601_661.0 / 7_257_600.0)));
-    np *= n;
-    utg[4] = np * (-4583.0 / 161_280.0 + n * (108_847.0 / 3_991_680.0));
-    gtu[4] = np * (34_729.0 / 80_640.0 + n * (-3_418_889.0 / 1_995_840.0));
-    np *= n;
-    utg[5] = np * (-20_648_693.0 / 638_668_800.0);
-    gtu[5] = np * (212_378_941.0 / 319_334_400.0);
-
-    let z = gatg(&cbg, phi0, (2.0 * phi0).cos(), (2.0 * phi0).sin());
-    let zb = -qn * (z + clens(&gtu, 2.0 * z));
+    let coefficients = |auxin, auxout| {
+        auxlat_coeffs(n, auxin, auxout).expect("tmerc conversion is generated by pj_auxlat_coeffs")
+    };
+    let cgb = coefficients(AuxLat::Conformal, AuxLat::Geographic);
+    let cbg = coefficients(AuxLat::Geographic, AuxLat::Conformal);
+    let utg = coefficients(AuxLat::Rectifying, AuxLat::Conformal);
+    let gtu = coefficients(AuxLat::Conformal, AuxLat::Rectifying);
+    let qn = k0 * rectifying_radius(n);
+    let z = auxlat_convert(phi0, &cbg);
+    let zb = -qn * auxlat_convert(z, &gtu);
     (qn, zb, cgb, cbg, utg, gtu)
-}
-
-fn gatg(p1: &[f64; ORDER], b: f64, cos_2b: f64, sin_2b: f64) -> f64 {
-    let two = 2.0 * cos_2b;
-    let mut h2 = 0.0;
-    let mut h1 = p1[ORDER - 1];
-    let mut h = 0.0;
-    for idx in (0..ORDER - 1).rev() {
-        h = -h2 + two * h1 + p1[idx];
-        h2 = h1;
-        h1 = h;
-    }
-    b + h * sin_2b
-}
-
-fn clens(a: &[f64; ORDER], arg_r: f64) -> f64 {
-    let r = 2.0 * arg_r.cos();
-    let mut hr1 = 0.0;
-    let mut hr = a[ORDER - 1];
-    for idx in (0..ORDER - 1).rev() {
-        let hr2 = hr1;
-        hr1 = hr;
-        hr = -hr2 + r * hr1 + a[idx];
-    }
-    arg_r.sin() * hr
 }
 
 fn clenshaw_complex(
