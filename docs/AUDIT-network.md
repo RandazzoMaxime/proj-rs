@@ -96,9 +96,9 @@ l'extraction de la taille depuis `Content-Range`.
 | 6 | `simul_open_error` | porté | Voir « Cas portés ». |
 | 7 | `simul_read_range_error` | porté | Voir « Cas portés ». |
 | 8 | `simul_file_change_while_opened` | porté | Voir « Cas portés ». |
-| 9 | `curl_hgridshift` | porté avec substitution | Grille `fr_ign_gr3df97a.tif` remplacée par une fixture GeoTIFF synthétique (`tests/net_support/grids.rs`), servie par le serveur local sous ce nom. Valeurs : `cs2cs` 9.9.0 sur ces mêmes octets (`48.9968893575`, `1.9999925459`), pas celles du CDN. `tests/unit_network_grids.rs::curl_hgridshift`. |
-| 10 | `curl_vgridshift` | porté avec substitution | Grille `us_nga_egm08_25.tif` remplacée par une fixture synthétique servie localement. Valeur de référence `14.6249995232` (PROJ 9.9.0 sur ces octets), au lieu de `-31.89` du CDN. `tests/unit_network_grids.rs::curl_vgridshift`. |
-| 11 | `curl_vgridshift_vertcon` | porté avec substitution | Grille `us_noaa_vertcone.tif` remplacée par une fixture synthétique servie localement. Valeur de référence `-0.1295000091` (PROJ 9.9.0 sur ces octets), au lieu de `-0.15` du CDN. `tests/unit_network_grids.rs::curl_vgridshift_vertcon`. |
+| 9 | `curl_hgridshift` | porté contre le vrai CDN | `fr_ign_gr3df97a.tif` lu sur `https://cdn.proj.org`, le TEST C++ entier (trois `EXPECT_NEAR`) et les valeurs de libproj 9.9.0 mesurées sur cette grille. Voir « Cas portés » et `docs/PORTING-network.md`. |
+| 10 | `curl_vgridshift` | porté contre le vrai CDN | `us_nga_egm08_25.tif` (le nom que PROJ demande au CDN ; le commentaire C++ dit `egm08_25.tif`) lu sur le CDN, le TEST entier. |
+| 11 | `curl_vgridshift_vertcon` | porté contre le vrai CDN | `us_noaa_vertcone.tif` (le nom demandé au CDN ; le commentaire C++ dit `vertcone.tif`) lu sur le CDN, le TEST entier. |
 | 12 | `network_endpoint_env_variable` | porté avec substitution | Endpoint `http://127.0.0.1:<port fermé>/` au lieu de `http://0.0.0.0/` (même absence de serveur ; le test le dit lui-même). `tests/unit_network_endpoint_env.rs`. Voir « Cas portés ». |
 | 13 | `network_endpoint_api_and_not_reachable_gridshift` | porté avec substitution | Endpoint `http://127.0.0.1:<port fermé>` au lieu de `http://0.0.0.0` (`proj_context_set_url_endpoint`). `tests/unit_network_core.rs::endpoint_api_not_reachable_gridshift`. Voir « Cas portés ». |
 | 14 | `network_endpoint_api_and_not_reachable_xyzgridshift` | porté avec substitution | Même substitution d'endpoint que 13. `tests/unit_network_core.rs::endpoint_api_not_reachable_xyzgridshift`. |
@@ -115,7 +115,7 @@ l'extraction de la taille depuis `Content-Range`.
 | 25 | `pyproj_issue_1192` | porté en entier | `tests/unit_network_core.rs::pyproj_issue_1192`, contre le vrai CDN (`tests/net_cdn`, retour tôt si `networkAccessOK` échoue ; exécuté ici, la sonde répond). Asserté, réseau on puis off : la liste (10 opérations, noms et ordre), l'instanciabilité de chaque opération (off : 8 vraies, on : 10), et pour chaque opération instanciable l'id `pipeline` de `proj_pj_info` via `ProjBuilder::proj_from_operation` (ajouté par ce lot, équivalent de `proj_list_get`), y compris les opérations 00 et 02 dont la grille n'est pas sur disque ; avec des ouvertures refusées, zéro `open` à l'instanciation. Mesuré contre `libproj` 9.9.0 (sonde C, CDN joignable, cache de grilles off). Écarts (fabrique `IGNORED` avec réseau qui ouvre les grilles, opération non instanciable rendue en erreur au lieu d'un PJ sans id) : `docs/PORTING-network.md`. |
 | 26 | `do_not_attempt_network_access_known_available_network_on` | porté | Voir « Cas portés dans ce lot ». La façade C reste absente : la fabrique passe par `ProjBuilder::create_operations`, qui applique le contexte du builder. |
 
-Compte : 26 TEST() C++ ; 1 sans objet (`initial_check`, 0 assertion, retiré du registre) ; 10 portés (`basic`, `custom`, `getfilesize`, `simul_open_error`, `simul_read_range_error`, `simul_file_change_while_opened`, `download_whole_files`, `file_api`, `pyproj_issue_1192`, `do_not_attempt_network_access_known_available_network_on`) ; 15 portés avec substitution (`curl_invalid_resource`, les trois `curl_*` des lignes 9 à 11, `network_endpoint_env_variable`, les quatre `network_endpoint_api_*`, les cinq cas de cache des lignes 17 à 21, `proj_coordoperation_get_grid_used`) ; 0 partiel ; 0 écart.
+Compte : 26 TEST() C++ ; 1 sans objet (`initial_check`, 0 assertion, retiré du registre) ; 13 portés (`basic`, `curl_hgridshift`, `curl_vgridshift`, `curl_vgridshift_vertcon`, `custom`, `getfilesize`, `simul_open_error`, `simul_read_range_error`, `simul_file_change_while_opened`, `download_whole_files`, `file_api`, `pyproj_issue_1192`, `do_not_attempt_network_access_known_available_network_on`) ; 12 portés avec substitution (`curl_invalid_resource`, `network_endpoint_env_variable`, les quatre `network_endpoint_api_*`, les cinq cas de cache des lignes 17 à 21, `proj_coordoperation_get_grid_used`) ; 0 partiel ; 0 écart.
 
 ## download_whole_files (porté)
 
@@ -303,6 +303,7 @@ variable `PROJ_USER_WRITABLE_DIRECTORY` (non testée).
 ```
 cargo test --test unit_network_core --test unit_network_endpoint_env --test unit_network_local --test network_grid
 cargo test --test unit_network_basic
+cargo test --test unit_network_grids
 cargo test --test unit_network_download
 cargo test --test unit_network_file_api
 cargo test --lib callback_tests
@@ -320,9 +321,9 @@ sont à jour pour ces cas ; ce qui suit détaille les cas de ce lot.
 | `networking.cache_saturation` | `tests/unit_network_cache.rs::cache_saturation` | porté : limite de 2 chunks par `PROJ_GRID_CACHE_MAX_SIZE_BYTES=32768`, 2 lignes dans `chunk_data`, `chunks` et `linked_chunks`. |
 | `networking.cache_ttl` | `tests/unit_network_cache.rs::cache_ttl` | porté : TTL négatif = données corrompues utilisées (build en échec), TTL 86400 = téléchargement de nouveau, `lastChecked`, `lastModified` et `etag` mis à jour. |
 | `networking.cache_lock` | `tests/unit_network_cache.rs::cache_lock` | porté : build sans cache après 25 essais, durée au moins 650 ms (calendrier de PROJ). Écart : PROJ vérifie `>= 1` s en secondes entières (fiche, point 3). |
-| `networking.curl_hgridshift` | `tests/unit_network_grids.rs::curl_hgridshift` | porté avec fixture `fr_ign_gr3df97a.tif` (xyzgridshift, trois échantillons) ; valeurs du binaire réseau de référence sur les mêmes octets (fiche, points 4 et 6). `proj_assign_context` non porté (point 5). |
-| `networking.curl_vgridshift` | `tests/unit_network_grids.rs::curl_vgridshift` | porté avec fixture `us_nga_egm08_25.tif` ; valeur de référence `14.6249995232`, pas `-31.89` du CDN. |
-| `networking.curl_vgridshift_vertcon` | `tests/unit_network_grids.rs::curl_vgridshift_vertcon` | porté avec fixture `us_noaa_vertcone.tif` ; valeur de référence `-0.1295000091`, pas `-0.15` du CDN. |
+| `networking.curl_hgridshift` | `tests/unit_network_grids.rs::curl_hgridshift` | porté contre le vrai CDN (`fr_ign_gr3df97a.tif`) : trois assertions C++ aux tolérances de PROJ, plus les valeurs de libproj 9.9.0 mesurées à 1e-9. `proj_assign_context` non porté (point 5 de la fiche). |
+| `networking.curl_vgridshift` | `tests/unit_network_grids.rs::curl_vgridshift` | porté contre le vrai CDN (`us_nga_egm08_25.tif`) : trois assertions C++ et la hauteur mesurée `-31.889799118042117`. |
+| `networking.curl_vgridshift_vertcon` | `tests/unit_network_grids.rs::curl_vgridshift_vertcon` | porté contre le vrai CDN (`us_noaa_vertcone.tif`) : trois assertions C++ et la hauteur mesurée `-0.15375280380249004`. |
 
 Non portés dans ce lot, hors de sa liste : `networking.basic` (partie réseau activé),
 `initial_check`, `network_endpoint_*`, `download_whole_files`, `file_api`,
