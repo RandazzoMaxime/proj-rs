@@ -154,9 +154,14 @@ impl Exchange {
 
     /// Every call up to `count` was made as expected, and none was unexpected.
     fn reached(&self, count: usize) {
-        let state = self.state.lock().expect("lock");
-        assert!(state.errors.is_empty(), "{:?}", state.errors);
-        assert_eq!(state.next, count, "calls made as expected");
+        // The lock is released before the assertions: a failed assertion must not poison it,
+        // since the `close` calls of the drops that follow would panic in a destructor.
+        let (errors, next) = {
+            let state = self.state.lock().expect("lock");
+            (state.errors.clone(), state.next)
+        };
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(next, count, "calls made as expected");
     }
 
     /// Checks the call against the next expected one. `matches` gives the answer when the call
@@ -664,6 +669,281 @@ fn simul_file_change_while_opened() {
     exchange.reached(after_transform);
 
     drop(proj);
+    exchange.reached(after_destroy);
+}
+
+/// The file changes between two creations of the same builder. PROJ 9.9.0 keeps the
+/// `Last-Modified`, `ETag` and size of a file per URL, in the process, so the second creation
+/// compares with them and the first transform that reads a tile not in the cache sees the change.
+///
+/// Measured with `libproj` 9.9.0 (a C probe, callbacks that journal, the same fixture and the
+/// same headers as `simul_file_change_while_opened`): creation 1 `open(url, 0, 16384)`, the three
+/// headers (`bytes=0-16383/10000000`, `some_date`, `some_etag`), `close`; the file then changes
+/// (size 10000100, `some_date CHANGED!!!!`, `some_etag CHANGED`); creation 2 makes no call, the
+/// head is in the chunk cache. The transform of the second operation (lat 49) reads the tile at
+/// 524288 as `open(url, 524288, 278528)` with the changed headers, `close`, then reloads its grid
+/// with `open(url, 0, 16384)` and the same headers. Its value is 2.25, the tile of the changed
+/// file. The transform of the first operation (lat -49) reads the tile at 3670016 with `open` and
+/// the headers, and does not reload; its value is 2.25 too. Destroying the first operation closes
+/// its handle, destroying the second closes the reloaded one. The grid cache gives the same calls
+/// in one process, on or off, and with a new context.
+#[test]
+fn simul_file_change_between_two_creations() {
+    const URL: &str = "https://foo/file_change_between_creations.tif";
+    const SIZE: &str = "bytes=0-16383/10000000";
+    const CHANGED_SIZE: &str = "bytes=0-16383/10000100";
+    let fixture = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/data/tests/egm96_15_uncompressed_truncated.tif"
+    ))
+    .expect("the truncated egm96 fixture");
+    assert_eq!(fixture.len(), 956);
+    let mut head = fixture;
+    head.resize(16384, 0);
+    let tile = |value: f32| -> Vec<u8> {
+        std::iter::repeat_n(value.to_le_bytes(), 278528 / 4)
+            .flatten()
+            .collect()
+    };
+    let headers =
+        |file: usize, size: &'static str, last_modified: &'static str, etag: &'static str| {
+            [
+                Call::Header {
+                    file,
+                    key: "Content-Range",
+                    value: size,
+                },
+                Call::Header {
+                    file,
+                    key: "Last-Modified",
+                    value: last_modified,
+                },
+                Call::Header {
+                    file,
+                    key: "ETag",
+                    value: etag,
+                },
+            ]
+        };
+
+    let mut calls = vec![Call::Open {
+        file: 1,
+        url: URL,
+        offset: 0,
+        size: 16384,
+        response: head.clone(),
+    }];
+    calls.extend(headers(1, SIZE, "some_date", "some_etag"));
+    calls.push(Call::Close { file: 1 });
+    let after_creation = calls.len();
+    calls.push(Call::Open {
+        file: 2,
+        url: URL,
+        offset: 524288,
+        size: 278528,
+        response: tile(2.25),
+    });
+    calls.extend(headers(
+        2,
+        CHANGED_SIZE,
+        "some_date CHANGED!!!!",
+        "some_etag CHANGED",
+    ));
+    calls.push(Call::Close { file: 2 });
+    calls.push(Call::Open {
+        file: 3,
+        url: URL,
+        offset: 0,
+        size: 16384,
+        response: head,
+    });
+    calls.extend(headers(
+        3,
+        CHANGED_SIZE,
+        "some_date CHANGED!!!!",
+        "some_etag CHANGED",
+    ));
+    let after_transform = calls.len();
+    calls.push(Call::Open {
+        file: 4,
+        url: URL,
+        offset: 3670016,
+        size: 278528,
+        response: tile(2.25),
+    });
+    calls.extend(headers(
+        4,
+        CHANGED_SIZE,
+        "some_date CHANGED!!!!",
+        "some_etag CHANGED",
+    ));
+    let after_first_transform = calls.len();
+    calls.push(Call::Close { file: 4 });
+    let after_first_destroy = calls.len();
+    calls.push(Call::Close { file: 3 });
+    let after_destroy = calls.len();
+
+    let exchange = Arc::new(Exchange::new(calls));
+    let mut builder = ProjBuilder::new();
+    builder.grid_cache_enable(false).expect("cache off");
+    builder.enable_network(true).expect("network on");
+    let callbacks: Arc<dyn NetworkCallbacks> = Arc::<Exchange>::clone(&exchange);
+    builder.set_network_callbacks(callbacks);
+    let definition = format!("+proj=vgridshift +grids={URL} +multiplier=1");
+
+    let first = builder
+        .clone()
+        .proj(&definition)
+        .expect("the grid is read at creation");
+    exchange.reached(after_creation);
+
+    // The file has changed. The head is in the chunk cache: no call.
+    let second = builder
+        .clone()
+        .proj(&definition)
+        .expect("the grid is read at the second creation");
+    exchange.reached(after_creation);
+
+    // Radians: the operation has no unit conversion, as the C++ `PJ_COORD` input.
+    let longitude = 2.0 / 180.0 * PI;
+    let (_, _, z) = second
+        .convert_xyz(longitude, 49.0 / 180.0 * PI, 0.0)
+        .expect("lat 49 is in the grid");
+    assert_eq!(z, 2.25, "the tile of the changed file");
+    exchange.reached(after_transform);
+
+    let (_, _, z) = first
+        .convert_xyz(longitude, -49.0 / 180.0 * PI, 0.0)
+        .expect("lat -49 is in the grid");
+    assert_eq!(z, 2.25, "the first operation reads the changed file too");
+    exchange.reached(after_first_transform);
+
+    drop(first);
+    exchange.reached(after_first_destroy);
+    drop(second);
+    exchange.reached(after_destroy);
+}
+
+/// The file changes between the creation of an operation in one builder and the creation of a
+/// second one in another builder. PROJ measured with `libproj` 9.9.0, the grid cache off, two
+/// processes: the second process reads the head before any tile, so it takes the changed file as
+/// its reference and nothing is detected.
+///
+/// Calls: creation 1 `open(url, 0, 16384)`, three headers, `close`; creation 2 (a new builder)
+/// `open(url, 0, 16384)` with the changed headers, `close`; the transform (lat 49) reads the tile
+/// at 524288 with `open` and the changed headers, with no `close` and no reload; the handle closes
+/// at destroy. The value is 2.25.
+#[test]
+fn simul_file_change_with_a_new_builder() {
+    const URL: &str = "https://foo/file_change_new_builder.tif";
+    let fixture = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/data/tests/egm96_15_uncompressed_truncated.tif"
+    ))
+    .expect("the truncated egm96 fixture");
+    let mut head = fixture;
+    head.resize(16384, 0);
+    let tile = |value: f32| -> Vec<u8> {
+        std::iter::repeat_n(value.to_le_bytes(), 278528 / 4)
+            .flatten()
+            .collect()
+    };
+    let headers =
+        |file: usize, size: &'static str, last_modified: &'static str, etag: &'static str| {
+            [
+                Call::Header {
+                    file,
+                    key: "Content-Range",
+                    value: size,
+                },
+                Call::Header {
+                    file,
+                    key: "Last-Modified",
+                    value: last_modified,
+                },
+                Call::Header {
+                    file,
+                    key: "ETag",
+                    value: etag,
+                },
+            ]
+        };
+    const SIZE: &str = "bytes=0-16383/10000000";
+    const CHANGED_SIZE: &str = "bytes=0-16383/10000100";
+
+    let mut calls = vec![Call::Open {
+        file: 1,
+        url: URL,
+        offset: 0,
+        size: 16384,
+        response: head.clone(),
+    }];
+    calls.extend(headers(1, SIZE, "some_date", "some_etag"));
+    calls.push(Call::Close { file: 1 });
+    let after_first_creation = calls.len();
+    calls.push(Call::Open {
+        file: 2,
+        url: URL,
+        offset: 0,
+        size: 16384,
+        response: head,
+    });
+    calls.extend(headers(
+        2,
+        CHANGED_SIZE,
+        "some_date CHANGED!!!!",
+        "some_etag CHANGED",
+    ));
+    calls.push(Call::Close { file: 2 });
+    let after_second_creation = calls.len();
+    calls.push(Call::Open {
+        file: 3,
+        url: URL,
+        offset: 524288,
+        size: 278528,
+        response: tile(2.25),
+    });
+    calls.extend(headers(
+        3,
+        CHANGED_SIZE,
+        "some_date CHANGED!!!!",
+        "some_etag CHANGED",
+    ));
+    let after_transform = calls.len();
+    calls.push(Call::Close { file: 3 });
+    let after_destroy = calls.len();
+
+    let exchange = Arc::new(Exchange::new(calls));
+    let definition = format!("+proj=vgridshift +grids={URL} +multiplier=1");
+    let callbacks: Arc<dyn NetworkCallbacks> = Arc::<Exchange>::clone(&exchange);
+
+    let mut first_builder = ProjBuilder::new();
+    first_builder.grid_cache_enable(false).expect("cache off");
+    first_builder.enable_network(true).expect("network on");
+    first_builder.set_network_callbacks(Arc::clone(&callbacks));
+    let first = first_builder
+        .proj(&definition)
+        .expect("the grid is read at creation");
+    exchange.reached(after_first_creation);
+
+    let mut second_builder = ProjBuilder::new();
+    second_builder.grid_cache_enable(false).expect("cache off");
+    second_builder.enable_network(true).expect("network on");
+    second_builder.set_network_callbacks(callbacks);
+    let second = second_builder
+        .proj(&definition)
+        .expect("the grid is read at the second creation");
+    exchange.reached(after_second_creation);
+
+    let longitude = 2.0 / 180.0 * PI;
+    let (_, _, z) = second
+        .convert_xyz(longitude, 49.0 / 180.0 * PI, 0.0)
+        .expect("lat 49 is in the grid");
+    assert_eq!(z, 2.25, "the tile of the changed file");
+    exchange.reached(after_transform);
+
+    drop(second);
+    drop(first);
     exchange.reached(after_destroy);
 }
 
