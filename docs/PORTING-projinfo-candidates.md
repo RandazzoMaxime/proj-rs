@@ -41,6 +41,33 @@ Effet : aucun, sur les 38 listes (sortie identique à la base, 3 identiques).
 Les listes B (`0205`, `0735`, `0785`) ne passent pas par cette jambe : le candidat de PROJ
 vient de `createOperationsToGeod`. Annulée faute d'effet mesuré.
 
+## Tentative 3 — mesure fine du garde retiré (annulée, lot Q2c)
+
+Relecture de PROJ : le chemin inverse `geodSrc && compoundDst` (`coordinateoperationfactory.cpp:3782`)
+appelle `createOperations(compound, geocentrique)` avec le même contexte, sans drapeau
+`inCreateOperationsWithIntermediate`. La recherche intermédiaire (4449) s'y applique donc.
+Le port la conditionne déjà sur le résultat direct vide (`direct_unfiltered_empty`). La condition
+manquante n'est pas identifiée.
+
+Mesure, garde retiré seul (`projinfo --summary`, lignes comparées à la référence) :
+
+| Liste | Base : port / PROJ (lignes différentes) | Garde retiré : port / PROJ (lignes différentes) |
+|---|---|---|
+| `0107` | 2 / 5 (1) | 5 / 5 (aucune) |
+| `0237` | 2 / 3 (1) | 3 / 3 (aucune) |
+| `0057` | 3 / 4 (1, 2, 3) | 4 / 4 (3, 4) |
+| `0142` | 3 / 4 (1, 3) | 7 / 4 (1, plus trois candidats en trop) |
+| `0257` | 3 / 3 (3) | 5 / 3 (1, deux candidats en trop) |
+| `0567` | 3 / 8 (1, 3) | 7 / 8 (1, 3 à 7) |
+
+Les trois candidats en trop de `0142` ont une aire `4859`, une précision de 0,34 m et un préfixe
+« Conversion from ETRF2014 (geocentric) to ETRF2014 (geog3D) + Inverse of Conversion … » : aller
+puis retour par la même conversion. PROJ ne les liste pas. Cause non établie (hypothèse : un pas
+géographique de même datum passe dans la recherche imbriquée). Le garde reste en place.
+
+Piste suivante : tracer, par instrumentation temporaire, quelle branche du port produit ces
+candidats, avant toute nouvelle modification du garde.
+
 ## Catégorie B — cause pour `0205`, `0735`, `0785`, `0128`
 
 PROJ construit le candidat `… + axis order change (geographic3D horizontal) + Conversion from X
