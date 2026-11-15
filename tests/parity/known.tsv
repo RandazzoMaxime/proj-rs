@@ -141,42 +141,12 @@ proj-factors-0021:3	facteurs -S faux pour +proj=wink2 +lat_1=40 : écart sur le 
 proj-factors-0021:4	facteurs -S faux pour +proj=wink2 +lat_1=40 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
 proj-factors-0021:5	facteurs -S faux pour +proj=wink2 +lat_1=40 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
 proj-factors-0021:6	facteurs -S faux pour +proj=wink2 +lat_1=40 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
-proj-fwd-0008:1	alsk : écart de position de quelques dizaines de mètres	à ouvrir
-proj-fwd-0008:2	alsk : écart de position de quelques dizaines de mètres	à ouvrir
-proj-fwd-0008:3	alsk : écart de position de quelques dizaines de mètres	à ouvrir
-proj-fwd-0008:4	alsk : écart de position de quelques dizaines de mètres	à ouvrir
-proj-fwd-0008:5	alsk : écart de position de quelques dizaines de mètres	à ouvrir
-proj-fwd-0008:6	alsk : écart de position de quelques dizaines de mètres	à ouvrir
 proj-fwd-0045:1	geocent (avant) : résultat faux, X proche de 0 contre plusieurs Mm	à ouvrir
 proj-fwd-0045:2	geocent (avant) : résultat faux, X proche de 0 contre plusieurs Mm	à ouvrir
 proj-fwd-0045:3	geocent (avant) : résultat faux, X proche de 0 contre plusieurs Mm	à ouvrir
 proj-fwd-0045:4	geocent (avant) : résultat faux, X proche de 0 contre plusieurs Mm	à ouvrir
 proj-fwd-0045:5	geocent (avant) : résultat faux, X proche de 0 contre plusieurs Mm	à ouvrir
 proj-fwd-0045:6	geocent (avant) : résultat faux, X proche de 0 contre plusieurs Mm	à ouvrir
-proj-fwd-0051:1	gs48 (avant) : écart de l'ordre de 10 Mm sur de grandes coordonnées	à ouvrir
-proj-fwd-0051:2	gs48 (avant) : écart de l'ordre de 10 Mm sur de grandes coordonnées	à ouvrir
-proj-fwd-0051:3	gs48 (avant) : écart de l'ordre de 10 Mm sur de grandes coordonnées	à ouvrir
-proj-fwd-0051:4	gs48 (avant) : écart de l'ordre de 10 Mm sur de grandes coordonnées	à ouvrir
-proj-fwd-0051:5	gs48 (avant) : écart de l'ordre de 10 Mm sur de grandes coordonnées	à ouvrir
-proj-fwd-0051:6	gs48 (avant) : écart de l'ordre de 10 Mm sur de grandes coordonnées	à ouvrir
-proj-fwd-0052:1	gs50 (avant) : écart relatif de 1e-5 sur de très grandes coordonnées	à ouvrir
-proj-fwd-0052:2	gs50 (avant) : écart relatif de 1e-5 sur de très grandes coordonnées	à ouvrir
-proj-fwd-0052:3	gs50 (avant) : écart relatif de 1e-5 sur de très grandes coordonnées	à ouvrir
-proj-fwd-0052:4	gs50 (avant) : écart relatif de 1e-5 sur de très grandes coordonnées	à ouvrir
-proj-fwd-0052:5	gs50 (avant) : écart relatif de 1e-5 sur de très grandes coordonnées	à ouvrir
-proj-fwd-0052:6	gs50 (avant) : écart relatif de 1e-5 sur de très grandes coordonnées	à ouvrir
-proj-fwd-0078:1	lee_os (avant) : écart de dizaines de km	à ouvrir
-proj-fwd-0078:2	lee_os (avant) : écart de dizaines de km	à ouvrir
-proj-fwd-0078:3	lee_os (avant) : écart de dizaines de km	à ouvrir
-proj-fwd-0078:4	lee_os (avant) : écart de dizaines de km	à ouvrir
-proj-fwd-0078:5	lee_os (avant) : écart de dizaines de km	à ouvrir
-proj-fwd-0078:6	lee_os (avant) : écart de dizaines de km	à ouvrir
-proj-fwd-0087:1	mil_os (avant) : écart de l'ordre du kilomètre	à ouvrir
-proj-fwd-0087:2	mil_os (avant) : écart de l'ordre du kilomètre	à ouvrir
-proj-fwd-0087:3	mil_os (avant) : écart de l'ordre du kilomètre	à ouvrir
-proj-fwd-0087:4	mil_os (avant) : écart de l'ordre du kilomètre	à ouvrir
-proj-fwd-0087:5	mil_os (avant) : écart de l'ordre du kilomètre	à ouvrir
-proj-fwd-0087:6	mil_os (avant) : écart de l'ordre du kilomètre	à ouvrir
 proj-fwd-0102:1	ob_tran avec o_proj=moll : erreur (code 3) là où PROJ calcule	à ouvrir
 proj-fwd-0102:2	ob_tran avec o_proj=moll : erreur (code 3) là où PROJ calcule	à ouvrir
 proj-fwd-0102:3	ob_tran avec o_proj=moll : erreur (code 3) là où PROJ calcule	à ouvrir
@@ -190,8 +160,3 @@ proj-inv-0035:3	geocent (inverse) : longitude fausse d'environ 158 degrés	à ou
 proj-inv-0035:4	geocent (inverse) : longitude fausse d'environ 158 degrés	à ouvrir
 proj-inv-0035:5	geocent (inverse) : longitude fausse d'environ 158 degrés	à ouvrir
 proj-inv-0035:6	geocent (inverse) : longitude fausse d'environ 158 degrés	à ouvrir
-proj-inv-0040:1	gs48 (inverse) : écart de 0,19 degré sur la latitude	à ouvrir
-proj-inv-0040:3	gs48 (inverse) : écart de 0,19 degré sur la latitude	à ouvrir
-proj-inv-0040:4	gs48 (inverse) : écart de 0,19 degré sur la latitude	à ouvrir
-proj-inv-0040:5	gs48 (inverse) : écart de 0,19 degré sur la latitude	à ouvrir
-proj-inv-0040:6	gs48 (inverse) : écart de 0,19 degré sur la latitude	à ouvrir
