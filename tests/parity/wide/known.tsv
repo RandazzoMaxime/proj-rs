@@ -1,45 +1,12 @@
 # Écarts connus du gros corpus (tests/parity.rs, parity_wide).
 # Colonnes : clé « id:ligne », cause courte, renvoi à une fiche.
 # Un écart listé ne fait pas échouer ; un écart nouveau ou disparu oui.
-projinfo-candidates-0057:1	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0057:2	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
 projinfo-candidates-0057:3	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
 projinfo-candidates-0057:4	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0064:5	projinfo : emprise « World » contre « World. » (étendue synthétique ou de la base)	docs/PARITY.md
-projinfo-candidates-0107:1	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0107:3	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0107:4	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0107:5	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
 projinfo-candidates-0128:2	projinfo : texte d'un candidat différent (étapes, emprise ou précision)	docs/PARITY.md
-projinfo-candidates-0142:1	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0142:3	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0142:4	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0164:2	projinfo : texte d'un candidat différent (étapes, emprise ou précision)	docs/PARITY.md
-projinfo-candidates-0205:1	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0205:3	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0237:1	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0237:3	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0257:3	projinfo : texte d'un candidat différent (étapes, emprise ou précision)	docs/PARITY.md
 projinfo-candidates-0275:3	projinfo : emprise « World » contre « World. » (étendue synthétique ou de la base)	docs/PARITY.md
-projinfo-candidates-0398:2	projinfo : emprise « World » contre « World. » (étendue synthétique ou de la base)	docs/PARITY.md
-projinfo-candidates-0434:2	projinfo : texte d'un candidat différent (étapes, emprise ou précision)	docs/PARITY.md
-projinfo-candidates-0434:3	projinfo : texte d'un candidat différent (étapes, emprise ou précision)	docs/PARITY.md
-projinfo-candidates-0434:4	projinfo : texte d'un candidat différent (étapes, emprise ou précision)	docs/PARITY.md
-projinfo-candidates-0434:5	projinfo : texte d'un candidat différent (étapes, emprise ou précision)	docs/PARITY.md
-projinfo-candidates-0434:6	projinfo : texte d'un candidat différent (étapes, emprise ou précision)	docs/PARITY.md
-projinfo-candidates-0482:1	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0482:3	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0482:4	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0482:5	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0482:6	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0484:1	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0484:3	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0484:4	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0484:5	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0484:6	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
 projinfo-candidates-0494:2	projinfo : texte d'un candidat différent (étapes, emprise ou précision)	docs/PARITY.md
 projinfo-candidates-0494:3	projinfo : texte d'un candidat différent (étapes, emprise ou précision)	docs/PARITY.md
-projinfo-candidates-0497:2	projinfo : emprise « World » contre « World. » (étendue synthétique ou de la base)	docs/PARITY.md
 projinfo-candidates-0567:1	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
 projinfo-candidates-0567:3	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
 projinfo-candidates-0567:4	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
@@ -47,88 +14,5 @@ projinfo-candidates-0567:5	projinfo : ensemble de candidats différent (composé
 projinfo-candidates-0567:6	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
 projinfo-candidates-0567:7	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
 projinfo-candidates-0567:8	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0609:1	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0609:4	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0609:5	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0609:6	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0609:7	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0616:1	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0616:10	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0616:11	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0616:12	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0616:13	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0616:14	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0616:15	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0616:16	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0616:3	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0616:4	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0616:5	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0616:6	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0616:7	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0616:8	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0616:9	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0679:1	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0679:2	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0679:3	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0679:4	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0679:5	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0679:6	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0679:7	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0679:8	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0681:1	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0681:2	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0681:3	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0691:1	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0691:3	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0735:1	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0735:3	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
 projinfo-candidates-0737:1	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
 projinfo-candidates-0737:3	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0767:2	projinfo : emprise « World » contre « World. » (étendue synthétique ou de la base)	docs/PARITY.md
-projinfo-candidates-0775:1	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0775:15	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0775:16	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0775:17	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0775:18	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0775:19	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0785:1	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0785:3	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0799:5	projinfo : emprise « World » contre « World. » (étendue synthétique ou de la base)	docs/PARITY.md
-projinfo-candidates-0829:1	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0829:3	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0829:4	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0829:5	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0829:6	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0833:1	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0833:10	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0833:11	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0833:12	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0833:13	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0833:14	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0833:15	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0833:16	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0833:17	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0833:2	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0833:3	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0833:4	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0833:5	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0833:6	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0833:7	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0833:8	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0833:9	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0927:1	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0927:3	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0927:4	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0934:2	projinfo : texte d'un candidat différent (étapes, emprise ou précision)	docs/PARITY.md
-projinfo-candidates-0934:3	projinfo : texte d'un candidat différent (étapes, emprise ou précision)	docs/PARITY.md
-projinfo-candidates-0934:4	projinfo : texte d'un candidat différent (étapes, emprise ou précision)	docs/PARITY.md
-projinfo-candidates-0934:5	projinfo : texte d'un candidat différent (étapes, emprise ou précision)	docs/PARITY.md
-projinfo-candidates-0945:1	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0945:3	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0945:4	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0945:5	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0985:1	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0985:3	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0996:1	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0996:4	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md
-projinfo-candidates-0996:5	projinfo : ensemble de candidats différent (composé/vertical/géocentrique)	docs/PARITY.md

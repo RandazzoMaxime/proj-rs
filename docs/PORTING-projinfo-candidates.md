@@ -112,4 +112,12 @@ doublon par `removeDuplicateOps` (`0934`).
 
 ## Reste ouvert
 
-Voir le registre `tests/parity/wide/known.tsv` après le lot Q2d.
+Grand corpus après le lot Q2d : 0 écart nouveau, 116 des 131 lignes du registre fermées. Restent
+15 lignes de 6 listes :
+
+- `0567` : composé → géocentrique, 4 candidats ETRF perdus dans `bound_to_geod` ; le même calcul
+  avec l'intermédiaire lu en WKT les trouve (contexte ou CRS intermédiaire à comparer).
+- `0737` : le pivot de datum ne parcourt pas les paires de CRS IGNF dans l'ordre de PROJ.
+- `0057` : un candidat vertical par une autre variante (offset nul 2D/3D contre ballpark).
+- `0128` : chemin ESRI (`GCS_MONREF_1997`) au lieu de `axis order change + X (geographic)`.
+- `0275`, `0494` : « World. » au lieu de « World » sur une variante du chemin `X (geographic)`.
