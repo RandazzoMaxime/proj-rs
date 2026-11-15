@@ -219,14 +219,13 @@ Premier passage (graine `20261117`, 28 points) :
 | Forme (lignes absentes) | 0 |
 
 Le seul écart, `cs2cs-grid-out-geoid_like-0024:8` (`EPSG:6364 → EPSG:8801`, point
-33,918 N 99,467 W, dans le CONUS) : pour ce point, PROJ essaie d'abord l'opération
-NAD83(2011) avec `us_noaa_g2018u0.tif` (`PROJ_DEBUG=3` ouvre cette grille en premier).
-Le port prend la première opération de `projinfo`, NAD83(FBN) avec
-`us_noaa_geoid03_conus.tif`. `cct` mesure les deux géoïdes à ce point : 3797,495905946656
-pour `g2018u0` (valeur de PROJ), 3797,540472221235 pour `geoid03` (valeur du port). Écart
-de 4,5 cm, qui vient du choix de l'alternative, pas d'une grille mal lue. Cause de
-l'ordre (fabrique d'opérations ou `proj_trans`) non isolée dans ce lot : écart connu,
-inscrit dans `tests/parity/grids/known.tsv`.
+33,918 N 99,467 W, dans le CONUS), donnait 3797,540472221235 au lieu de 3797,495905946656
+(4,5 cm). Cause : la référence lit `build/data/proj.ini` (`only_best_default = off`), donc
+PROJ écarte les candidats dont une grille manque. Le harnais ne charge pas ce fichier : PROJ
+prend alors sa politique par défaut (`Warn`), garde le candidat NAD83(FBN) à géoïde ballpark
+et donne la valeur du port. Le harnais passe `PROJ_ONLY_BEST_DEFAULT=NO`, le même réglage.
+Avec les deux réglages, le port et PROJ concordent (`tests/cs2cs_grid_geoid_tie.rs`).
+Le registre `tests/parity/grids/known.tsv` ne contient plus d'écart.
 
 Seuil d'alerte : 0,01 % hors seuil, sous les 5 %.
 

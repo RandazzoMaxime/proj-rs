@@ -283,7 +283,7 @@ fn repro(case: &Case, grids: Option<&str>) -> String {
         "data:data/tests"
     };
     format!(
-        "printf '%s\\n' {} | PROJ_DATA={data} PROJ_NETWORK=OFF \
+        "printf '%s\\n' {} | PROJ_DATA={data} PROJ_NETWORK=OFF PROJ_ONLY_BEST_DEFAULT=NO \
          PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY=YES target/debug/{} {}",
         input.join(" "),
         case.tool,
@@ -312,6 +312,8 @@ fn run(case: &Case, grids: Option<&str>) -> (i64, Vec<String>) {
     let mut child = Command::new(binary(&case.tool))
         .args(&case.args)
         .env("PROJ_NETWORK", "OFF")
+        // Recorded with build/data/proj.ini (only_best_default = off), which this search path lacks.
+        .env("PROJ_ONLY_BEST_DEFAULT", "NO")
         .env("PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY", "YES")
         .env("PROJ_DATA", data)
         .stdin(Stdio::piped())
