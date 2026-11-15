@@ -518,10 +518,6 @@ fn write_report(path: &Path, deviations: &[Deviation], known: &BTreeMap<String, 
     fs::write(path, out).expect("écrire le rapport de parité");
 }
 
-#[expect(
-    clippy::print_stdout,
-    reason = "résumé de la suite, affiché avec --nocapture"
-)]
 fn print_summary(cases: usize, stats: &BTreeMap<String, Stats>) {
     let mut total = Stats::default();
     for family in stats.values() {
