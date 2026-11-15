@@ -10,7 +10,8 @@ import argparse
 import json
 from pathlib import Path
 
-from generate import ROOT, Reference
+from common import ROOT
+from reference import Reference
 
 
 def main():

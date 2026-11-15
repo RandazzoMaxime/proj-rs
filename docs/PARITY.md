@@ -11,7 +11,7 @@ sont dans le dépôt.
 
 | Fichier | Rôle |
 |---|---|
-| `tools/parity/generate.py` | Tire les entrées (graine fixe) et écrit `tests/parity/cases.jsonl`. |
+| `tools/parity/generate.py` | Tire les entrées (graine fixe) et écrit `tests/parity/cases.jsonl`. Assemble les modules `common.py`, `catalog.py`, `reference.py`, `generator.py`, `families_cs2cs.py`, `families_proj.py`, `families_grids.py`. |
 | `tools/parity/record.sh`, `record.py` | Lance PROJ 9.9.0 sur chaque invocation et écrit `tests/parity/expected.jsonl`. |
 | `tests/parity/cases.jsonl` | Une invocation par ligne : outil, arguments, lignes d'entrée, genre de chaque champ. |
 | `tests/parity/expected.jsonl` | Code de sortie et sortie standard de la référence, ligne à ligne. |
@@ -99,7 +99,7 @@ figer un nouveau corpus. Le premier passage est à 4,4 %.
 
 ## Ajouter une famille
 
-1. Ajouter une fonction `fam_*` dans `tools/parity/generate.py` et l'appeler dans `build`.
+1. Ajouter une fonction `fam_*` dans le module de sa famille (`families_cs2cs.py`, `families_proj.py`, `families_grids.py`) et l'appeler dans `build` (`generate.py`).
 2. Donner à chaque invocation le genre de chaque champ de sortie (`kinds`).
 3. Régénérer `cases.jsonl`, réenregistrer `expected.jsonl`, relancer la suite.
 4. Classer chaque nouvel écart : grille absente d'un côté, bug du port, écart
