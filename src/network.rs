@@ -1371,9 +1371,11 @@ mod callback_tests {
         let bytes = fetch_with_callbacks(&callbacks, "https://foo/my.tif").expect("fetched");
         assert_eq!(bytes, body);
         assert_eq!(*served.opens.lock().expect("lock"), vec![(0, 16384)]);
+        // The last range is a whole chunk, past the end of the file, as PROJ's `NetworkFile::read`
+        // asks it (`networkfilemanager.cpp:1349`): the callbacks answer with the 7232 bytes left.
         assert_eq!(
             *served.reads.lock().expect("lock"),
-            vec![(16384, 16384), (32768, 7232)]
+            vec![(16384, 16384), (32768, 16384)]
         );
         assert_eq!(*served.closes.lock().expect("lock"), 1);
     }
