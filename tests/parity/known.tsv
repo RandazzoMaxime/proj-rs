@@ -7,51 +7,9 @@ cs2cs-h3d-geog3d-geocent-0012:3	EPSG:6310 vers ITRF2000 : écart de 2 m, opérat
 cs2cs-h3d-geog3d-geocent-0012:4	EPSG:6310 vers ITRF2000 : écart de 2 m, opération 3D à comparer	à ouvrir
 cs2cs-h3d-geog3d-geocent-0012:5	EPSG:6310 vers ITRF2000 : écart de 2 m, opération 3D à comparer	à ouvrir
 cs2cs-h3d-geog3d-geocent-0012:6	EPSG:6310 vers ITRF2000 : écart de 2 m, opération 3D à comparer	à ouvrir
-cs2cs-inverse-0027:1	cs2cs -I EPSG:32352 vers EPSG:22525 : écart de 0,87 m, transformation à comparer	à ouvrir
-cs2cs-inverse-0027:2	cs2cs -I EPSG:32352 vers EPSG:22525 : écart de 0,87 m, transformation à comparer	à ouvrir
-cs2cs-inverse-0027:3	cs2cs -I EPSG:32352 vers EPSG:22525 : écart de 0,87 m, transformation à comparer	à ouvrir
-cs2cs-inverse-0027:4	cs2cs -I EPSG:32352 vers EPSG:22525 : écart de 0,87 m, transformation à comparer	à ouvrir
-cs2cs-inverse-0027:5	cs2cs -I EPSG:32352 vers EPSG:22525 : écart de 0,87 m, transformation à comparer	à ouvrir
-cs2cs-inverse-0027:6	cs2cs -I EPSG:32352 vers EPSG:22525 : écart de 0,87 m, transformation à comparer	à ouvrir
-cs2cs-option-3d-0008:1	cs2cs --3d EPSG:8698 vers EPSG:32427 : pivot retenu à la place du ballpark (famille A), hauteur touchée	à ouvrir
-cs2cs-option-3d-0008:2	cs2cs --3d EPSG:8698 vers EPSG:32427 : pivot retenu à la place du ballpark (famille A), hauteur touchée	à ouvrir
-cs2cs-option-3d-0008:3	cs2cs --3d EPSG:8698 vers EPSG:32427 : pivot retenu à la place du ballpark (famille A), hauteur touchée	à ouvrir
-cs2cs-option-3d-0008:4	cs2cs --3d EPSG:8698 vers EPSG:32427 : pivot retenu à la place du ballpark (famille A), hauteur touchée	à ouvrir
-cs2cs-option-3d-0008:5	cs2cs --3d EPSG:8698 vers EPSG:32427 : pivot retenu à la place du ballpark (famille A), hauteur touchée	à ouvrir
-cs2cs-option-3d-0008:6	cs2cs --3d EPSG:8698 vers EPSG:32427 : pivot retenu à la place du ballpark (famille A), hauteur touchée	à ouvrir
-cs2cs-proj-datum-diff-0007:1	cs2cs EPSG:32229 +to EPSG:5111 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
-cs2cs-proj-datum-diff-0007:2	cs2cs EPSG:32229 +to EPSG:5111 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
-cs2cs-proj-datum-diff-0007:3	cs2cs EPSG:32229 +to EPSG:5111 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
-cs2cs-proj-datum-diff-0007:4	cs2cs EPSG:32229 +to EPSG:5111 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
-cs2cs-proj-datum-diff-0007:5	cs2cs EPSG:32229 +to EPSG:5111 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
-cs2cs-proj-datum-diff-0007:6	cs2cs EPSG:32229 +to EPSG:5111 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
-cs2cs-proj-datum-diff-0009:1	cs2cs EPSG:3701 +to EPSG:32545 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
-cs2cs-proj-datum-diff-0009:2	cs2cs EPSG:3701 +to EPSG:32545 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
-cs2cs-proj-datum-diff-0009:3	cs2cs EPSG:3701 +to EPSG:32545 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
-cs2cs-proj-datum-diff-0009:4	cs2cs EPSG:3701 +to EPSG:32545 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
-cs2cs-proj-datum-diff-0009:5	cs2cs EPSG:3701 +to EPSG:32545 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
-cs2cs-proj-datum-diff-0009:6	cs2cs EPSG:3701 +to EPSG:32545 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
 cs2cs-proj-datum-diff-0011:1	cs2cs EPSG:26898 +to EPSG:26957 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
 cs2cs-proj-datum-diff-0011:2	cs2cs EPSG:26898 +to EPSG:26957 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
 cs2cs-proj-datum-diff-0011:3	cs2cs EPSG:26898 +to EPSG:26957 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
 cs2cs-proj-datum-diff-0011:4	cs2cs EPSG:26898 +to EPSG:26957 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
 cs2cs-proj-datum-diff-0011:5	cs2cs EPSG:26898 +to EPSG:26957 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
 cs2cs-proj-datum-diff-0011:6	cs2cs EPSG:26898 +to EPSG:26957 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
-cs2cs-proj-datum-diff-0024:1	cs2cs EPSG:21350 +to EPSG:32502 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
-cs2cs-proj-datum-diff-0024:2	cs2cs EPSG:21350 +to EPSG:32502 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
-cs2cs-proj-datum-diff-0024:3	cs2cs EPSG:21350 +to EPSG:32502 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
-cs2cs-proj-datum-diff-0024:4	cs2cs EPSG:21350 +to EPSG:32502 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
-cs2cs-proj-datum-diff-0024:5	cs2cs EPSG:21350 +to EPSG:32502 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
-cs2cs-proj-datum-diff-0024:6	cs2cs EPSG:21350 +to EPSG:32502 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
-cs2cs-proj-datum-diff-0034:1	cs2cs EPSG:32260 +to EPSG:5896 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
-cs2cs-proj-datum-diff-0034:2	cs2cs EPSG:32260 +to EPSG:5896 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
-cs2cs-proj-datum-diff-0034:3	cs2cs EPSG:32260 +to EPSG:5896 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
-cs2cs-proj-datum-diff-0034:4	cs2cs EPSG:32260 +to EPSG:5896 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
-cs2cs-proj-datum-diff-0034:5	cs2cs EPSG:32260 +to EPSG:5896 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
-cs2cs-proj-datum-diff-0034:6	cs2cs EPSG:32260 +to EPSG:5896 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
-cs2cs-proj-datum-diff-0038:1	cs2cs EPSG:32347 +to EPSG:32194 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
-cs2cs-proj-datum-diff-0038:2	cs2cs EPSG:32347 +to EPSG:32194 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
-cs2cs-proj-datum-diff-0038:3	cs2cs EPSG:32347 +to EPSG:32194 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
-cs2cs-proj-datum-diff-0038:4	cs2cs EPSG:32347 +to EPSG:32194 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
-cs2cs-proj-datum-diff-0038:5	cs2cs EPSG:32347 +to EPSG:32194 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
-cs2cs-proj-datum-diff-0038:6	cs2cs EPSG:32347 +to EPSG:32194 : écart de position, opération ou grille à comparer à PROJ	à ouvrir

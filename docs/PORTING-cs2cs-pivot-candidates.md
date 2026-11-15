@@ -1,13 +1,13 @@
 # Fiche d'état — candidats pivot de `cs2cs` (lot P4)
 
-Statut : famille C fermée pour `--3d EPSG:7680 +to EPSG:2657`. Les familles A et B
-restent ouvertes. `--3d EPSG:8698 +to EPSG:32427` reste en écart (famille A), et sa
-hauteur change désormais (voir famille A). Les cas sont dans
-`tools/compare-cs2cs/cases.txt` (285 cas : `same 272 / tol 4 / text 0 / num 9`).
+Statut : familles A (sept cas) et C fermées. Famille B ouverte. Le cas `EPSG:26898 → EPSG:26957`
+reste ouvert, cause non établie (voir « Non vérifié »). Mesure de la branche intégrée : voir le
+commit qui suit l'intégration de A et C.
 
-Référence : PROJ 9.9.0, `src/iso19111/operation/coordinateoperationfactory.cpp`.
-Port : `src/iso19111/factory.rs` (`datum_pivot_operations`,
-`crs_codes_intermediate_operations`, `filter_and_sort`), `src/bin/cs2cs.rs`.
+Référence : PROJ 9.9.0, `src/iso19111/operation/coordinateoperationfactory.cpp` et
+`src/iso19111/factory.cpp`. Port : `src/iso19111/factory.rs` (`datum_pivot_operations`,
+`crs_codes_intermediate_operations`, `datum_based_intermediate_operations`, `filter_and_sort`),
+`src/bin/cs2cs.rs`.
 
 ## Le `proj.db` n'est pas la cause
 
@@ -29,56 +29,74 @@ L'écart de md5 vient de l'état physique des pages, pas du contenu.
 Avec les 10 cas du lot ajoutés (285 cas) : `same 271 / tol 4 / text 0 / num 10 /
 lines 0 / status 0`, en défaut et avec `-1`. Les 10 cas ajoutés sont tous `num`.
 
-## Famille A — candidat pivot gardé par le port, écarté par PROJ
+## Famille A — candidat pivot gardé par le port, écarté par PROJ (fermée)
 
 Cas : `EPSG:3701 → EPSG:32545` (17 m en est, 3 m en nord), `EPSG:32260 → EPSG:5896`,
-`EPSG:22525 → EPSG:32352` avec `-I`.
+`EPSG:22525 → EPSG:32352` avec `-I`, `EPSG:32229 → EPSG:5111`, `EPSG:21350 → EPSG:32502`,
+`EPSG:32347 → EPSG:32194`, `--3d EPSG:8698 → EPSG:32427`.
 
-Le port garde un candidat par pivot WGS 84 :
-`Inverse of Wisconsin Transverse Mercator 83 + NAD83(NSRS2007) to WGS 84 (1) +
-Inverse of WGS 72BE to WGS 84 (1) + UTM zone 45S`, 4 m, étendue « Puerto Rico ... USA ».
-PROJ ne garde que le ballpark `Ballpark geographic offset from NAD83(NSRS2007) to
-WGS 72BE`.
+Le port gardait un pivot par WGS 84 : `Inverse of Wisconsin Transverse Mercator 83 + NAD83(NSRS2007)
+to WGS 84 (1) + Inverse of WGS 72BE to WGS 84 (1) + UTM zone 45S`, 4 m, étendue « Puerto Rico ...
+USA » (EPSG:15931). PROJ ne gardait que le ballpark.
 
-Mesures avec `projinfo -s EPSG:3701 -t EPSG:32545 -o PROJ --summary` :
+### Cause
 
-| Option | PROJ 9.9.0 | Port |
-|---|---|---|
-| `--crs-extent-use none` | pivot 4 m + ballpark | pivot 4 m + ballpark |
-| `--crs-extent-use both` | ballpark | ballpark |
-| défaut (`smallest`) | ballpark | pivot 4 m |
-| `--bbox -100,30,-80,50` | ballpark | pivot 4 m |
-| `--bbox 84,-80,90,0` | ballpark | ballpark |
-| `--pivot-crs never` | ballpark | pivot 4 m |
+Le pivot passe par une recherche de CRS intermédiaire : `WGS 72BE → NAD83(NSRS2007)` est lu par
+`createFromCRSCodesWithIntermediates` (appelée par `findsOpsInRegistryWithIntermediate`,
+coordinateoperationfactory.cpp:2238), et la recherche par datum (`createBetweenGeodeticCRSWithDatumBasedIntermediates`)
+a le même contrôle. Ces deux recherches reçoivent `context.extent1` et `context.extent2`, les
+emprises des CRS de l'appel le plus externe, héritées par tous les sous-appels (`Private::Context`,
+coordinateoperationfactory.cpp:8082-8094). Chaque jambe `v1` et `v2` doit couper ces deux emprises
+(factory.cpp:7845-7870, `intersects_bbox`).
 
-Le pivot vient donc de la recherche datum-pivot (`datum_pivot_operations`), pas de la
-recherche par CRS intermédiaire. Dès qu'une étendue de CRS est active, PROJ retire le
-pivot. Une `--bbox` utilisateur ne suffit pas à le retirer : l'étendue des CRS reste
-active, et c'est elle qui compte.
+Pour `EPSG:3701 → EPSG:32545`, l'emprise du second CRS est la zone UTM 45S (84°E à 90°E, 80°S à
+0°). La jambe `NAD83(NSRS2007) → WGS 84 (1)` (EPSG:15931, 14,92°N à 74,71°N, 167,65°E à 63,88°O)
+ne la coupe pas : PROJ l'écarte, et ne garde que le ballpark.
 
-Pour `EPSG:22525 → EPSG:32352` (`-I`), le port a 8 candidats pivot ; PROJ n'a que le
-ballpark. Pour `EPSG:32260 → EPSG:5896`, le port en a 2 ; PROJ n'a que le ballpark.
+Le port lisait les emprises des CRS de l'appel de sous-recherche (`WGS 72BE` et `NAD83(NSRS2007)`,
+toutes deux « monde » ou proches), et gardait la jambe. Le port lit désormais les emprises héritées :
+`crs_extents_of(context, source, target)`, comme PROJ. Corrigé dans les deux recherches
+(`crs_codes_intermediate_operations` et `datum_based_intermediate_operations`) : la correction de
+la seule recherche par CRS ne suffit pas (mesuré : le pivot reste).
+
+### Sonde (libproj 9.9.0 instrumentée, copie hors dépôt)
+
+- Défaut (`smallest`) : `createOperationsWithDatumPivot` ne produit rien pour `WGS 72BE → NAD83`.
+  `findsOpsInRegistryWithIntermediate` → `createFromCRSCodesWithIntermediates` rend 0 ligne.
+- `--crs-extent-use none` : la même recherche rend 2 lignes, dont
+  `WGS 72BE to WGS 84 (1) + Inverse of NAD83(NSRS2007) to WGS 84 (1)`.
+- Le filtre final (`FilterResults`, emprise de la zone la plus petite, contenu strict) garderait le
+  pivot s'il existait. La cause est donc en amont, dans la recherche intermédiaire.
+
+### Mesure
+
+`tools/compare-cs2cs.sh --no-build` (285 cas) : avant `same 271 / tol 4 / text 0 / num 10 / lines 0 /
+status 0` ; après `same 278 / tol 4 / text 0 / num 3 / lines 0 / status 0`. Les 7 cas de la famille
+A passent en `same`.
+
+`cargo test --test parity` : avant `identiques 3974 · dans le seuil 68 · erreur des deux côtés 1 ·
+hors seuil 187 · statut 1 · forme 6` ; après `identiques 4016 · dans le seuil 68 · erreur des deux
+côtés 1 · hors seuil 145 · statut 1 · forme 6`. 42 écarts connus disparus (les 7 cas, six lignes
+chacun, retirés de `known.tsv`), 0 écart nouveau.
+
+`tests/pivot_candidate_set.rs` : deux tests (`pivot_with_a_leg_outside_the_crs_extent_is_dropped`,
+`pivot_with_a_leg_outside_the_crs_extent_is_kept_without_extent_use`), valeurs de
+`projinfo -s EPSG:3701 -t EPSG:32545 --summary --spatial-test intersects` (PROJ 9.9.0) et de
+`--crs-extent-use none`.
 
 ### Tentative 1 (annulée)
 
-- Changement : dans `datum_pivot_operations`, le lookup registre de chaque jambe prend
-  les étendues héritées (`crs_extents_of`) au lieu des étendues des CRS de la jambe.
-- Motif : `createTransformations` appelle `findOpsInRegistryDirect` avec
-  `context.extent1` et `context.extent2` (coordinateoperationfactory.cpp:3278-3340 et
-  1930-1960).
-- Résultat : aucun effet sur `EPSG:3701 → EPSG:32545`, toujours un pivot.
-- Annulée (`git checkout`), car sans gain démontré.
+- Changement : dans `datum_pivot_operations`, la recherche registre de chaque jambe prend les
+  étendues héritées au lieu de celles de la jambe.
+- Résultat : aucun effet sur `EPSG:3701 → EPSG:32545`. La recherche qui compte est la recherche
+  intermédiaire, pas la recherche registre des jambes.
 
-### Ce qui reste à établir
+### Reste ouvert dans la même famille
 
-Le code de PROJ qui retire le pivot n'est pas identifié. Les lectures de
-`FilterResults`, du lookup registre (préférence « intersecting », `factory.cpp:7440-7490`)
-et de `createOperationsWithDatumPivot` ne le montrent pas. La bibliothèque de référence
-n'a pas de trace utilisable (`PROJ_DEBUG` ne journalise rien dans les candidats).
-
-Prochain pas suggéré : instrumenter le port (sortie temporaire des candidats de
-`datum_pivot_operations` par jambe), puis comparer aux résultats intermédiaires de
-PROJ obtenus par `projinfo` avec les options d'étendue ci-dessus.
+`datum_pivot_operations` appelle `direct_registry_operations` avec les emprises des CRS candidats
+(`boxes`). PROJ lit `context.extent1/2` (`createFromCoordinateReferenceSystemCodes`,
+coordinateoperationfactory.cpp:1942-1953). Aucun cas mesuré ne change avec cette correction : elle
+n'est pas faite.
 
 ## Famille B — candidat absent du port : pivot 3D
 
@@ -156,7 +174,8 @@ parité ne l'a mesuré. À traiter dans un lot séparé, après mesure.
 
 ## Non vérifié
 
-- Les autres paires des 10 cas (`EPSG:32229 → EPSG:5111`, `EPSG:26898 → EPSG:26957`,
-  `EPSG:21350 → EPSG:32502`, `EPSG:32347 → EPSG:32194`) : pas de diagnostic. Elles
-  restent `num`.
-- La famille A n'est vérifiée que sur 3 paires.
+- `EPSG:26898 → EPSG:26957` : le port ne donne que le ballpark, PROJ garde deux pivots par WGS 84
+  (`NAD83(CSRS) to WGS 84 (1 et 2) + Inverse of NAD83 to WGS 84 (1)`, 5 m et 6 m). Ici le port
+  manque des pivots, alors que la famille A les retirait à tort. Cause non établie, non tentée. Le
+  cas reste `num`.
+- Les familles A, B et C ne sont pas vérifiées sur d'autres paires que celles listées.

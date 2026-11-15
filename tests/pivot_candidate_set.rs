@@ -8,12 +8,23 @@
 
 use proj_rs::iso19111::{
     create_from_user_input, CoordinateOperation, CoordinateOperationContext,
-    CoordinateOperationFactory, DatabaseContext, GridAvailabilityUse, SpatialCriterion,
+    CoordinateOperationFactory, CrsExtentUse, DatabaseContext, GridAvailabilityUse,
+    SpatialCriterion,
 };
 
 /// The candidates of `projinfo -s source -t target --summary --spatial-test intersects`, with
 /// the grid policy given (`DiscardIfMissing` is `--grid-check discard_missing`).
 fn candidates(source: &str, target: &str, grids: GridAvailabilityUse) -> Vec<CoordinateOperation> {
+    candidates_with_extent_use(source, target, grids, CrsExtentUse::Smallest)
+}
+
+/// [`candidates`] with the CRS extent use given (`projinfo --crs-extent-use`).
+fn candidates_with_extent_use(
+    source: &str,
+    target: &str,
+    grids: GridAvailabilityUse,
+    extent_use: CrsExtentUse,
+) -> Vec<CoordinateOperation> {
     // The database only: the oracle runs on a copy with no grid file, and `data/tests` holds the
     // NADCON grid (`conus`) that would make the NAD27 legs available.
     std::env::set_var("PROJ_DATA", concat!(env!("CARGO_MANIFEST_DIR"), "/data"));
@@ -24,6 +35,7 @@ fn candidates(source: &str, target: &str, grids: GridAvailabilityUse) -> Vec<Coo
     let mut context = CoordinateOperationContext::create(&db, "");
     context.set_spatial_criterion(SpatialCriterion::PartialIntersection);
     context.set_grid_availability_use(grids);
+    context.set_crs_extent_use(extent_use);
     CoordinateOperationFactory::create()
         .create_operations(&source, &target, &context)
         .expect("operations")
@@ -116,5 +128,42 @@ fn pivot_leg_with_a_missing_grid_is_discarded() {
     assert_eq!(
         names(&operations),
         ["PD/83 to ETRS89 (1) + ETRS89 to WGS 84 (1) + Conversion from WGS 84 (geog2D) to WGS 84 (geocentric)"]
+    );
+}
+
+/// `projinfo -s EPSG:3701 -t EPSG:32545 --summary --spatial-test intersects` (PROJ 9.9.0): the
+/// ballpark only. The pivot through WGS 84 has a leg that does not meet the extent of UTM zone 45S,
+/// the target CRS: the intermediate search drops that leg, as `createFromCRSCodesWithIntermediates`
+/// does with the CRS extents of the outermost call.
+#[test]
+fn pivot_with_a_leg_outside_the_crs_extent_is_dropped() {
+    let operations = candidates(
+        "EPSG:3701",
+        "EPSG:32545",
+        GridAvailabilityUse::UseForSorting,
+    );
+    assert_eq!(
+        names(&operations),
+        ["Inverse of Wisconsin Transverse Mercator 83 + Ballpark geographic offset from NAD83(NSRS2007) to WGS 72BE + UTM zone 45S"]
+    );
+}
+
+/// `projinfo -s EPSG:3701 -t EPSG:32545 --summary --spatial-test intersects --crs-extent-use none`
+/// (PROJ 9.9.0): the same pivot is kept, with the ballpark after it. The extent of the CRS is what
+/// drops it in the test above.
+#[test]
+fn pivot_with_a_leg_outside_the_crs_extent_is_kept_without_extent_use() {
+    let operations = candidates_with_extent_use(
+        "EPSG:3701",
+        "EPSG:32545",
+        GridAvailabilityUse::UseForSorting,
+        CrsExtentUse::Ignore,
+    );
+    assert_eq!(
+        names(&operations),
+        [
+            "Inverse of Wisconsin Transverse Mercator 83 + NAD83(NSRS2007) to WGS 84 (1) + Inverse of WGS 72BE to WGS 84 (1) + UTM zone 45S",
+            "Inverse of Wisconsin Transverse Mercator 83 + Ballpark geographic offset from NAD83(NSRS2007) to WGS 72BE + UTM zone 45S",
+        ]
     );
 }

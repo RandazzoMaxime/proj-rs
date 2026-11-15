@@ -8107,11 +8107,13 @@ fn datum_based_intermediate_operations(
         }
     }
 
+    let (extent_source, extent_target) = crs_extents_of(context, source, target);
     let extra: Vec<BoundingBox> = match context.crs_extent_use {
         CrsExtentUse::Ignore => Vec::new(),
-        _ => [source, target]
+        _ => [extent_source, extent_target]
             .into_iter()
-            .filter_map(|crs| crs_extent(crs).and_then(|extent| extent.bounding_box()))
+            .flatten()
+            .filter_map(|extent| extent.bounding_box())
             .collect(),
     };
     let skip_intermediate_intersection = context.crs_extent_use == CrsExtentUse::Ignore;
@@ -8368,12 +8370,16 @@ fn crs_codes_intermediate_operations(
     let geographic_intermediates =
         operations && both_geographic && context.intermediates.is_empty();
     let skip_intersection = operations && context.crs_extent_use == CrsExtentUse::Ignore;
+    // The legs must meet the CRS extents of the outermost call (PROJ's `context.extent1/2`), not
+    // those of this sub-call: a pivot whose leg misses the target CRS extent is dropped there.
+    let (extent_source, extent_target) = crs_extents_of(context, source, target);
     let extra: Vec<BoundingBox> = match context.crs_extent_use {
         CrsExtentUse::Ignore => Vec::new(),
         _ if !operations => Vec::new(),
-        _ => [source, target]
+        _ => [extent_source, extent_target]
             .into_iter()
-            .filter_map(|crs| crs_extent(crs).and_then(|extent| extent.bounding_box()))
+            .flatten()
+            .filter_map(|extent| extent.bounding_box())
             .collect(),
     };
     let date_of = |crs: &Crs| {
