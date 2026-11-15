@@ -45,7 +45,7 @@ pub(crate) fn cdn_reachable() -> bool {
 }
 
 /// A TCP stream to the CDN: direct, or through the `CONNECT` tunnel of `HTTPS_PROXY`.
-fn tunnel_to_cdn() -> Option<TcpStream> {
+pub(crate) fn tunnel_to_cdn() -> Option<TcpStream> {
     let proxy = ["https_proxy", "HTTPS_PROXY"]
         .iter()
         .find_map(|name| std::env::var(name).ok().filter(|value| !value.is_empty()));

@@ -10,7 +10,7 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
 | `src/filemanager.cpp` (téléchargement, cache), `src/networkfileapi` | `src/network.rs` (interne, `pub(crate)`) |
 | `proj_context_set_network_callbacks` | `NetworkCallbacks` (trait public), `ProjBuilder::set_network_callbacks`, `src/network.rs` |
 | `NetworkFile`, `DOWNLOAD_CHUNK_SIZE`, cache de morceaux (`filemanager.cpp`) | `src/network_chunks.rs` (`RemoteFile`, `ChunkCache`, `RemoteReader`) |
-| `GTiffGrid`, lecture des tuiles au calcul (`grids.cpp`, libtiff) | `src/projections/gridshift/geotiff.rs` (`load_remote`, `raw_samples`), `src/projections/gridshift/tiles.rs` (`LazyIfd`, `with_tiles`) |
+| `GTiffGrid`, lecture des tuiles au calcul (`grids.cpp`, libtiff) | `src/projections/gridshift/geotiff.rs` (`load_remote`, `lazy_layout`, `raw_samples`), `src/projections/gridshift/tiles.rs` (`LazyIfd`, `read_raw`, `read_decoded`, `with_tiles`) |
 | `proj_context_set_url_endpoint`, `PROJ_NETWORK_ENDPOINT` | `ProjBuilder::set_url_endpoint`, `GridContext::load` |
 | `grids.cpp:3222` (`pj_generic_grid_init`), `grids.cpp:3234` | `src/projections/gridshift/mod.rs` (`deferred`, `Deferred`) |
 | `trans.cpp:284` (erreur réseau d'un candidat : arrêt du point) | `src/iso19111/alternatives.rs` (`AlternativeError::Network`) |
@@ -19,7 +19,7 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
 | `proj_coordoperation_get_grid_used_count`, `proj_coordoperation_get_grid_used` (`c_api.cpp:7905-7990`) | `Proj::grids_needed` (`src/proj.rs`), sous `with_context` ; `RemoteGrids::Open` |
 | `proj_create_operations` avec le contexte de fabrique (callbacks du contexte) | `ProjBuilder::create_operations` (`src/proj.rs`), enveloppe `with_context` comme les autres créations du builder |
 | `src/apps/gie.cpp` (`network_error`) | `src/gie.rs` (`errno_name`) |
-| `test/unit/test_network.cpp` (26 TEST) | `tests/unit_network_core.rs` (12 cas, dont `custom`, `getfilesize`, `simul_read_range_error`, `simul_file_change_while_opened`, `pyproj_issue_1192`, `do_not_attempt_network_access_known_available_network_on` et `second_creation_of_a_multi_chunk_grid`, cas propre au port), `tests/unit_network_grid_used.rs` (1 cas, `proj_coordoperation_get_grid_used`, contre le vrai CDN), `tests/unit_network_endpoint_env.rs` (1 cas), `tests/unit_network_local.rs` (2 cas), `tests/unit_network_grids.rs` (3 cas, contre le vrai CDN), `tests/unit_network_cache.rs` (5 cas, serveur local), `src/network.rs` `callback_tests` (2 tests hors liste) |
+| `test/unit/test_network.cpp` (26 TEST) | `tests/unit_network_core.rs` (12 cas, dont `custom`, `getfilesize`, `simul_read_range_error`, `simul_file_change_while_opened`, `pyproj_issue_1192`, `do_not_attempt_network_access_known_available_network_on` et `second_creation_of_a_multi_chunk_grid`, cas propre au port), `tests/unit_network_grid_used.rs` (1 cas, `proj_coordoperation_get_grid_used`, contre le vrai CDN), `tests/unit_network_compressed_grid.rs` (2 cas hors liste : GeoTIFF déflaté planaire, en bandes et en tuiles, hors ligne), `tests/unit_network_compressed_cdn.rs` (1 cas hors liste : le GeoTIFF déflaté du CDN, contre le vrai CDN), `tests/unit_network_endpoint_env.rs` (1 cas), `tests/unit_network_local.rs` (2 cas), `src/network.rs` `callback_tests` (2 tests hors liste) |
 | serveur de test local (remplace `cdn.proj.org`) | `tests/net_support/mod.rs` |
 | `proj_is_download_needed`, `proj_download_file` (`networkfilemanager.cpp:2523-2880`) | `src/network_download.rs` (`is_download_needed`, `download`) ; `ProjBuilder::is_download_needed`, `ProjBuilder::download_file`, `TtlSetting`, `DownloadProgress` (`src/proj.rs`) |
 | `pj_find_file(…, disable_network)` (`filemanager.cpp:1942`), `proj_grid_info` avec le réseau du contexte (`grids.cpp:3928`), `lookForGridInfo` et ses deux résultats (`factory.cpp:3398`) | `ProjBuilder::find_local_file`, `ProjBuilder::grid_info`, `ProjBuilder::look_for_grid_info` (`GridLookup`, `src/iso19111/factory.rs`, `grid_lookup`) |
@@ -72,12 +72,34 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
   fin du fichier, ce qui aurait bloqué la lecture à 550 octets. Sans `Content-Range`, la règle
   reste celle d'avant. Mesuré : une transformation après création demande `open(url, 950272,
   16384)` dans PROJ, le même bloc que le port.
-- **Restriction de la lecture par morceaux.** Seuls les GeoTIFF à tuiles ou à bandes, non
-  compressés, sans prédicteur, à échantillons entrelacés, sont lus par morceaux. Les autres
-  (deflate, prédicteur, bandes planaires, non-TIFF) sont lus entiers par `read_whole` : leur
-  séquence d'appels n'est pas celle de PROJ (il y a les `read_range` du reste du fichier). Le décodage des tuiles est
-  ici (`raw_samples` : u16, i16, u32, i32, f32, f64, ordre d'octets du fichier) ; le décodeur
-  `tiff` ne sert qu'à lire les IFD.
+- **GeoTIFF compressé lu par morceaux (`lazy_layout`).** Un GeoTIFF à tuiles ou à bandes, à
+  échantillons entrelacés ou planaires, est lu par morceaux si sa compression est aucune (1), le
+  Deflate (8) ou l'ancien Deflate (32946), et son prédicteur 1, 2 ou 3. Un morceau sans
+  compression ni prédicteur est lu comme ses octets (`raw_samples`, `Reading::Raw`), comme avant.
+  Un morceau compressé, ou prédit, est lu par le décodeur `tiff` (`Reading::Decoded`) : celui-ci
+  annule la compression et le prédicteur. Les octets du morceau sont lus une fois, par un seul
+  `read_at` (arrondi aux morceaux de 16384 octets : c'est ce que PROJ mesure, un `read_range` par
+  bande ou tuile), puis donnés au décodeur par une fenêtre (`RemoteReader::set_window`) qui ne lit
+  rien d'autre : hors de la fenêtre, la lecture est la fin des données. La création ne lit que
+  `open(url, 0, 16384)` et les en-têtes, y compris pour le GeoTIFF déflaté du CDN.
+  Mesuré, hors ligne et sur le CDN, appels et valeurs égaux à `libproj` 9.9.0 (voir « GeoTIFF
+  compressé, mesures »). Limites : les autres compressions (LZW, PackBits, JPEG, CCITT) et les
+  prédicteurs autres que 1 à 3 restent lus entiers par `read_whole` ; le prédicteur 2 et l'ancien
+  Deflate sont acceptés et ne sont pas mesurés contre `libproj`. Un morceau de tuile partielle
+  d'un plan autre que le premier est rendu par `tiff` 0.10.3 avec ses lignes de remplissage : le
+  décodage ne prend que les lignes de l'image (`read_decoded`), car `chunk_data_dimensions` lit
+  le remplissage du bas à partir de l'index du morceau et non de sa ligne dans le plan. La
+  largeur, elle, est juste. Le décodage des bandes non compressées reste `raw_samples` (`u16`,
+  `i16`, `u32`, `i32`, `f32`, `f64`, ordre d'octets du fichier) ; le décodeur `tiff` lit les IFD.
+- **Taille de la plage demandée (`fetch`).** `NetworkFile::read` (`networkfilemanager.cpp:1349`)
+  demande `nBlocs * 16384` octets à partir du morceau, sans tronquer à la fin du fichier : un
+  `read_range(344064, 131072)` pour une grille de 460261 octets (mesuré). `RemoteFile::fetch`
+  tronquait à la taille du fichier (`read_range(344064, 116197)`) ; il ne tronque plus. Un
+  morceau qui commence après la fin n'est pas demandé, comme avant. Écart restant : PROJ
+  augmente le nombre de blocs demandés pour des lectures séquentielles (doublement, plafonné à
+  64 blocs) et s'arrête au premier bloc déjà en cache ; `fetch` demande la plage manquante
+  entière, de son premier au dernier morceau manquant (sans heuristique). Les mesures ci-dessous
+  n'ont pas de lecture séquentielle, donc pas de différence visible.
 - **Nouvelle passe par point (`with_tiles`).** Un échantillon d'une tuile non lue donne `None`
   et la tuile est notée. Le point est recalculé une fois la tuile lue, si bien que
   l'interpolation ne voit jamais un échantillon absent. Une lecture en échec termine le point
@@ -368,6 +390,32 @@ cache de morceaux et son `clear` (`network_cache.rs`, `DiskChunkCache::open`, `c
 `is_file`). Les grilles, modèles, dictionnaires `+init=FILE:SECTION` et métadonnées de grille passent par
 l'API (`gridpath::resolve`, `gridpath::read`, `network::read_file`).
 
+## GeoTIFF compressé, mesures
+
+Mesures avec `libproj` 9.9.0 (callbacks qui journalisent, `proj=vgridshift grids=<nom>
+multiplier=1`, `proj_trans(PJ_FWD)`), sur les mêmes octets que les tests. Création de chaque grille :
+`open(url, 0, 16384)`, trois en-têtes, `close`, comme le crate maintenant.
+
+- Hors ligne, en bandes (`data/tests/planar_deflate_predictor3.tif`, 31705 octets, planaire,
+  Deflate, prédicteur 3, une bande par morceau aux décalages 530, 12171 et 23018). `(20, 50)`,
+  bande 2 (`vertical_offset`), morceau 1 : `open(url, 16384, 16384)`, trois en-têtes, z =
+  0.8661957234144211. `(41, 37)`, même morceau : aucun appel, z = 0.6664930284023288.
+  Test : `tests/unit_network_compressed_grid.rs::a_point_reads_the_strip_it_needs`.
+- Hors ligne, en tuiles (`data/tests/planar_deflate_predictor3_tiled.tif`, 30094 octets, tuiles
+  de 32 pixels sur 100 par 70, 36 tuiles, planaire, Deflate, prédicteur 3). `(20.125, 49.875)`, tuile
+  intérieure 26409 à 27364 : `open(url, 16384, 16384)`, trois en-têtes, z = 0.859148681163788.
+  `(34.625, 42.875)`, tuile de bord (4 par 6 pixels utiles, 29927 à 30094) : aucun appel, z =
+  0.880941569805145. Test : `a_tiled_grid_reads_the_tile_of_each_point`.
+- Le CDN (`nz_linz_nzgd2000-c120100904-grid01.tif`, 460261 octets, 4 images, planaires, Deflate,
+  prédicteur 3, une bande par morceau, 55 par 52 pixels pour l'image de base). L'image choisie pour
+  `(171.9, -43.55)` a sa bande 2 (`vertical_offset`) à 347367, 112894 octets : `read_range(344064,
+  131072)`, les morceaux 21 à 28 (le bloc aligné, comme pour les autres lectures). `(169, -45)` :
+  `open(url, 16384, 16384)`. Test : `tests/unit_network_compressed_cdn.rs`.
+
+Non mesuré contre `libproj` : GeoTIFF déflaté chunky (`PlanarConfiguration` 1), prédicteur 2, ancien
+Deflate (32946), tuiles de bord chunky. Ces cas passent par le même décodeur ; leurs valeurs et leurs
+appels ne sont pas établis avec `libproj`.
+
 ## projsync
 
 Source : `src/apps/projsync.cpp` (652 lignes), `test/cli/test_projsync.sh` (212 lignes). Port :
@@ -427,6 +475,10 @@ Le contenu du fichier n'est pas comparé au binaire de référence : c'est la fi
 Commandes : `cargo test --test unit_projsync`.
 
 ## Ce qui reste ouvert
+
+- GeoTIFF compressés autres que Deflate (LZW, PackBits, JPEG, CCITT) et prédicteurs hors 1 à 3 : lus
+  entiers (`read_whole`), la séquence de PROJ n'est pas reproduite. Voir « GeoTIFF compressé, mesures »
+  pour ce qui est mesuré.
 
 - Lecture par morceaux pour les GeoTIFF compressés (deflate), à prédicteur ou planaires : ils
   sont lus entiers (`read_whole`), la séquence de PROJ n'est pas reproduite. Mesuré sur le vrai

@@ -148,7 +148,7 @@ impl RemoteFile {
 
     /// Up to `len` bytes from `offset`, fewer at the end of the file. The chunks the range
     /// touches come from the cache when they are there; the missing ones are asked in one call,
-    /// rounded out to whole chunks and clamped to the size of the file.
+    /// rounded out to whole chunks.
     pub(crate) fn read_at(&mut self, offset: u64, len: usize) -> Result<Vec<u8>, NetworkError> {
         if len == 0 {
             return Ok(Vec::new());
@@ -182,16 +182,15 @@ impl RemoteFile {
         Some((low, high))
     }
 
-    /// Asks the callbacks for the chunks `low..=high` (clamped to the size of the file), stores
-    /// them, and returns the bytes read.
+    /// Asks the callbacks for the chunks `low..=high`, stores them, and returns the bytes read.
+    /// The request is whole chunks, past the end of the file too, as PROJ's `NetworkFile::read`
+    /// asks it: the callbacks answer with what the file holds. A chunk that starts past the end
+    /// is not asked.
     fn fetch(&mut self, low: u64, high: u64) -> Result<Vec<u8>, NetworkError> {
         let chunk = chunk_bytes();
         let start = low.saturating_mul(chunk);
-        let mut stop = high.saturating_add(1).saturating_mul(chunk);
-        if let Some(total) = self.total {
-            stop = stop.min(total);
-        }
-        if stop <= start {
+        let stop = high.saturating_add(1).saturating_mul(chunk);
+        if self.total.is_some_and(|total| start >= total) || stop <= start {
             return Ok(Vec::new());
         }
         let size = usize::try_from(stop - start).unwrap_or(usize::MAX);
@@ -348,19 +347,50 @@ fn len_u64(bytes: &[u8]) -> u64 {
 
 /// `Read` and `Seek` over a [`RemoteFile`] shared with the grid that reads it, so that the TIFF
 /// decoder reads only the ranges it asks for.
+///
+/// A window (`set_window`) replaces the file for one range that the caller has read already: a
+/// read inside it is served from its bytes, and a read past it is the end of the data. A chunk
+/// decoded from a window is read once from the callbacks, one `read_range` per strip or tile, as
+/// PROJ's measured reads are.
 #[derive(Clone, Debug)]
 pub(crate) struct RemoteReader {
     file: Arc<Mutex<RemoteFile>>,
     position: u64,
+    /// The file offset of `bytes[0]`, and the bytes of the window.
+    window: Option<(u64, Vec<u8>)>,
 }
 
 impl RemoteReader {
     pub(crate) fn new(file: Arc<Mutex<RemoteFile>>) -> Self {
-        Self { file, position: 0 }
+        Self {
+            file,
+            position: 0,
+            window: None,
+        }
+    }
+
+    /// Serves the reads from `bytes`, which are the file from `start`, instead of the callbacks.
+    pub(crate) fn set_window(&mut self, start: u64, bytes: Vec<u8>) {
+        self.window = Some((start, bytes));
     }
 
     fn file(&self) -> MutexGuard<'_, RemoteFile> {
         self.file.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The bytes of the window at the position, up to `len`; `None` when there is no window.
+    fn window_read(&mut self, len: usize) -> Option<Vec<u8>> {
+        let (start, bytes) = self.window.as_ref()?;
+        let from = self
+            .position
+            .checked_sub(*start)
+            .and_then(|offset| usize::try_from(offset).ok())
+            .unwrap_or(usize::MAX);
+        let served = bytes
+            .get(from..)
+            .map(|rest| rest[..rest.len().min(len)].to_vec())
+            .unwrap_or_default();
+        Some(served)
     }
 }
 
@@ -368,6 +398,12 @@ impl Read for RemoteReader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if buf.is_empty() {
             return Ok(0);
+        }
+        if let Some(served) = self.window_read(buf.len()) {
+            let count = served.len();
+            buf[..count].copy_from_slice(&served);
+            self.position = self.position.saturating_add(len_u64(&served));
+            return Ok(count);
         }
         let bytes = self
             .file()

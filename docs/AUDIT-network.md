@@ -20,10 +20,12 @@ cache en fichiers dans le répertoire utilisateur (`grid_cache_enable`,
 - `NetworkCallbacks` (trait, `NetworkHandle`, `OpenReply`, `NetworkError`),
   enregistrable par `ProjBuilder::set_network_callbacks`. Une grille absente est
   ouverte par son premier morceau, `open(url, 0, 16384)`, avec les en-têtes puis `close`.
-  Si c'est un GeoTIFF à tuiles non compressé, ses tuiles sont lues au calcul, comme
+  Si c'est un GeoTIFF à tuiles ou à bandes, non compressé ou déflaté (Deflate, avec ou
+  sans prédicteur, chunky ou planaire), ses tuiles ou bandes sont lues au calcul, comme
   PROJ : `open` puis `read_range` sur le même handle, gardé jusqu'à la destruction du
   `Proj`, et un cache de morceaux par contexte (`src/network_chunks.rs`,
-  `src/projections/gridshift/tiles.rs`). Les autres grilles sont lues entières, par
+  `src/projections/gridshift/tiles.rs`). La création ne lit que le premier morceau, comme
+  PROJ, y compris pour la grille déflatée du CDN. Les autres grilles sont lues entières, par
   morceaux de 16384 octets jusqu'à la taille du `Content-Range` (`fetch_with_callbacks`).
 - Erreur typée au calcul : `ProjError::Network` (PROJ `PROJ_ERR_OTHER_NETWORK_ERROR`)
   quand la grille d'un candidat de paire de CRS est absente et que le réseau ne la
@@ -46,9 +48,9 @@ cache en fichiers dans le répertoire utilisateur (`grid_cache_enable`,
   `mkdir`), et le téléchargement (`open` en création, `write`, `close`, `unlink`, `rename`).
   Mesuré : `docs/PORTING-network.md`, section « API de fichiers ».
 
-Ce qui manque : lecture paresseuse des seuls GeoTIFF à tuiles non compressés (les
-grilles en bandes, compressées, à bandes planaires, et les grilles non-TIFF
-restent lues entières), validation de la fraîcheur d'un fichier ouvert par `ETag` et
+Ce qui manque : lecture paresseuse des GeoTIFF compressés autrement qu'en Deflate (LZW,
+PackBits, JPEG, CCITT, ... : lus entiers, comme les grilles non-TIFF) et des prédicteurs
+autres que 1 à 3, validation de la fraîcheur d'un fichier ouvert par `ETag` et
 `Last-Modified` pour les autres étapes que `vgridshift` et pour le cache disque (seule
 `vgridshift` recharge, voir `docs/PORTING-network.md`),
 façade C des opérations
@@ -76,13 +78,26 @@ Tests de l'API existants, hors liste C++ : `tests/network_grid.rs`
 | `networking.network_endpoint_api_and_not_reachable_xyzgridshift` | `tests/unit_network_core.rs::endpoint_api_not_reachable_xyzgridshift` | porté (`NTF to ETRS89-FRA [RGF93 v1] (1)`) |
 | `networking.network_endpoint_api_and_not_reachable_vgridshift` | `tests/unit_network_core.rs::endpoint_api_not_reachable_vgridshift` | porté (`POSGAR 2007 to SRVN16 height (1)`) |
 | `networking.do_not_attempt_network_access_known_available_network_on` | `tests/unit_network_core.rs::do_not_attempt_network_access_known_available_network_on` | porté : mesuré sur `libproj` 9.9.0 (sonde C reproduisant le TEST, `probe2.c` non versionnée) : `EPSG:4326` vers `EPSG:4267`, `KNOWN_AVAILABLE`, `PARTIAL_INTERSECTION`, réseau on, callbacks enregistrés : 79 opérations (noms et ordre identiques, réseau off aussi), 0 appel de callback ; témoin : `+proj=hgridshift +grids=proj_rs_no_such_grid.tif` donne `NULL` et un `open`. Port : `ProjBuilder::create_operations` (nouvelle API, enveloppe `with_context` comme les autres créations du builder), liste exacte, 0 appel, témoin à 1 appel. `ASSERT_TRUE` de `proj_context_set_network_callbacks` : sans objet en Rust (l'enregistrement ne renvoie rien) ; voir `docs/PORTING-network.md`. |
-| `networking.proj_coordoperation_get_grid_used` | `tests/unit_network_grid_used.rs::proj_coordoperation_get_grid_used` | porté contre le vrai CDN : les trois assertions du TEST (`shortName`, `fullName` vide, `url` `https://cdn.proj.org/nz_linz_nzgd2000-c120100904-grid01.tif`), deux créations, sans callbacks, gardé par la sonde `cdn_reachable` (sortie anticipée sans `206`). Valeurs de `libproj` 9.9.0 sur le même fichier (460261 octets) : `available` 1, `directDownload` 0, `openLicense` 0, `packageName` vide, un grid. Le port : `Proj::grids_needed` ouvre une grille sans ligne en base à `endpoint/nom` quand le réseau est actif (`network::open_remote_grid`, `RemoteGrids::Open`). Le vrai fichier a révélé un défaut corrigé : la seconde création avec callbacks échouait sur une grille de plus d'un morceau (`tests/unit_network_core.rs::second_creation_of_a_multi_chunk_grid`, rouge puis vert ; `src/network_chunks.rs`, taille gardée par URL dans le cache partagé). Écart restant : séquence d'appels à la création sur le GeoTIFF déflaté (28 `read_range` au lieu de 0). Écarts : `docs/PORTING-network.md`. |
+| `networking.proj_coordoperation_get_grid_used` | `tests/unit_network_grid_used.rs::proj_coordoperation_get_grid_used` | porté contre le vrai CDN : les trois assertions du TEST (`shortName`, `fullName` vide, `url` `https://cdn.proj.org/nz_linz_nzgd2000-c120100904-grid01.tif`), deux créations, sans callbacks, gardé par la sonde `cdn_reachable` (sortie anticipée sans `206`). Valeurs de `libproj` 9.9.0 sur le même fichier (460261 octets) : `available` 1, `directDownload` 0, `openLicense` 0, `packageName` vide, un grid. Le port : `Proj::grids_needed` ouvre une grille sans ligne en base à `endpoint/nom` quand le réseau est actif (`network::open_remote_grid`, `RemoteGrids::Open`). Le vrai fichier a révélé un défaut corrigé : la seconde création avec callbacks échouait sur une grille de plus d'un morceau (`tests/unit_network_core.rs::second_creation_of_a_multi_chunk_grid`, rouge puis vert ; `src/network_chunks.rs`, taille gardée par URL dans le cache partagé). La séquence d'appels sur le GeoTIFF déflaté du CDN, mesurée avec `libproj` 9.9.0 par callbacks qui journalisent, est reprise par `tests/unit_network_compressed_cdn.rs` (création `open(url, 0, 16384)`, trois en-têtes, `close` ; points `open(url, 16384, 16384)` et `read_range(344064, 131072)`), avec les valeurs de `libproj` ; elle était lue entière (28 `read_range`). Écarts : `docs/PORTING-network.md`. |
 | `networking.download_whole_files` | `tests/unit_network_download.rs::download_whole_files` | porté, contre le vrai CDN : les 37 assertions une à une (section « download_whole_files (porté) ») ; valeurs de PROJ 9.9.0 mesurées avec `libproj`. |
 
 Tests unitaires ajoutés hors liste C++ (`src/network.rs`, `mod callback_tests`) :
 la lecture entière d'une grille par callbacks en plages de 16384 octets
 (`open` puis `read_range` aux offsets 16384 et 32768, un seul `close`), et
 l'extraction de la taille depuis `Content-Range`.
+
+Tests ajoutés pour le GeoTIFF compressé (hors liste C++, valeurs et séquences de `libproj`
+9.9.0 mesurées sur les mêmes octets) : `tests/unit_network_compressed_grid.rs` (deux
+grilles hors ligne, `data/tests/planar_deflate_predictor3.tif` en bandes et
+`planar_deflate_predictor3_tiled.tif` en tuiles de 32 pixels, planaires, Deflate et
+prédicteur 3, fabriquées par `tools/make-planar-deflate-grid.py`) et
+`tests/unit_network_compressed_cdn.rs` (le vrai `nz_linz_nzgd2000-c120100904-grid01.tif`, par
+requêtes `Range` au CDN, gardé par la sonde `cdn_reachable`). Le rouge a été vu avant le
+correctif : création avec `read_range` jusqu'à la fin du fichier (16384 puis 15321 octets sur
+le fichier hors ligne, 28 `read_range` sur le CDN). Le correctif rend aussi la taille des
+morceaux demandés identique à celle de PROJ : `NetworkFile::read` ne tronque pas la plage à
+la fin du fichier (`read_range(344064, 131072)` pour une grille de 460261 octets), ce que
+faisait `RemoteFile::fetch`.
 
 ## Tableau complet des 26 TEST()
 
