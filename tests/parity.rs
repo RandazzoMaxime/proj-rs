@@ -271,7 +271,13 @@ fn run(case: &Case) -> (i64, Vec<String>) {
     if let Some(mut stdin) = child.stdin.take() {
         let mut text = case.input.join("\n");
         text.push('\n');
-        stdin.write_all(text.as_bytes()).expect("écrire l'entrée");
+        // A binary that exits before reading (an error case) closes the pipe: its exit code and
+        // output are what get compared, so a broken pipe is not a failure here.
+        match stdin.write_all(text.as_bytes()) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {}
+            Err(error) => panic!("écrire l'entrée : {error}"),
+        }
     }
     let output = child.wait_with_output().expect("sortie du binaire");
     let code = output.status.code().map_or(-1, i64::from);
