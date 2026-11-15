@@ -79,18 +79,22 @@ Contre `cs2cs` 9.9.0 (2 003 points par projection, aller puis retour) : moins de
 vectoriel est AVX2 ; l'AVX-512 n'est pas utilisé). Nanosecondes par point sur un million de
 points. « Scalaire » est la boucle sur `forward` ou `inverse` du même run.
 
-| cas | scalaire | lot avant | lot après |
-|---|---:|---:|---:|
-| UTM 31 aller | 88,7 | 37,6 | 26,0 |
-| Lambert-93 aller | 62,4 | 20,3 | 19,5 |
-| UTM 31 retour | 102,1 | (scalaire) | 21,3 |
-| Lambert-93 retour | 206,3 | (scalaire) | 56,3 |
-| Web Mercator aller | 45,4 | (scalaire) | 11,2 |
-| Web Mercator retour | 35,4 | (scalaire) | 6,0 |
+| cas | scalaire | lot avant | lot après | gain sur le scalaire |
+|---|---:|---:|---:|---:|
+| UTM 31 aller | 89,1 | 37,6 | 27,4 | 3,3× |
+| Lambert-93 aller | 62,0 | 20,3 | 19,8 | 3,1× |
+| UTM 31 retour | 107,9 | (scalaire) | 23,0 | 4,7× |
+| Lambert-93 retour | 208,2 | (scalaire) | 59,1 | 3,5× |
+| Web Mercator aller | 46,2 | (scalaire) | 11,1 | 4,2× |
+| Web Mercator retour | 35,3 | (scalaire) | 6,0 | 5,9× |
+
+Les deux lignes de `bench/history.jsonl` (`8cfd059`, puis le commit de ce lot) sont celles dont
+viennent les colonnes « avant » et « après » : un run varie de quelques pour cent d'un lancement
+à l'autre.
 
 Le noyau Transverse Mercator aller ne calculait avant que les sinus et cosinus en vecteur : les
 séries de Clenshaw, `asinh` et `adjlon` restaient voie par voie. Elles sont maintenant en
-vecteur, d'où 37,6 → 26,0.
+vecteur, d'où 37,6 → 27,4.
 
 ## Ce qui n'est pas couvert
 
