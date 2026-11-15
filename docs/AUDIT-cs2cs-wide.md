@@ -7,8 +7,8 @@ Référence : `cs2cs` 9.9.0 compilé sans TIFF (`target/proj-reference`).
 
 | Mode | Cas | identique | écart ≤ 1e-6 | écart > 1e-6 | statut différent | format texte |
 |---|---|---|---|---|---|---|
-| CRS séparés par des blancs (défaut) | 275 | @A |
-| un seul argument par CRS (`-1`) | 275 | @A |
+| CRS séparés par des blancs (défaut) | 275 | 271 | 4 | 0 | 0 | 0 |
+| un seul argument par CRS (`-1`) | 275 | 271 | 4 | 0 | 0 | 0 |
 
 Historique (identique / écart ≤ 1e-6 / écart > 1e-6 / statut différent) :
 
@@ -20,7 +20,7 @@ Historique (identique / écart ≤ 1e-6 / écart > 1e-6 / statut différent) :
 | Lot C3b (`+init=epsg:`, écarts 3 et 4) | 264 / 2 / 2 / 4 | 264 / 2 / 2 / 4 |
 | Lot C4 (ITRF2020 ↔ WGS 84, écart 2) | 266 / 2 / 0 / 4 | 266 / 2 / 0 / 4 |
 | Lot C6 (méthode 9808, 3 cas ajoutés ; mesure avant C6 sur ces 275 cas : 266 / 2 / 3 / 4) | 269 / 2 / 0 / 4 | 269 / 2 / 0 / 4 |
-| Lot C7 (ballpark à méridien altéré, écart 6) | @B | @B |
+| Lot C7 (ballpark à méridien altéré, écart 6) | 271 / 4 / 0 / 0 | 271 / 4 / 0 / 0 |
 
 Le lot D (ordre des opérations de PROJ dans merc, tmerc, lcc, atanh de la libm) fait passer 46 cas « écart ≤ 1e-6 » à « identique ».
 
