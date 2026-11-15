@@ -1410,8 +1410,8 @@ fn horizontal_only(
         operations.extend(null_offset(horizontal, target));
     }
     Ok(operations
-        .iter()
-        .map(|operation| retarget(operation, source, target))
+        .into_iter()
+        .map(|operation| with_endpoints(operation, source, target))
         .collect())
 }
 
@@ -1485,30 +1485,6 @@ fn combine(
         concatenated.identified.domains = domain.into_iter().collect();
     }
     Some(operation)
-}
-
-/// The copy PROJ builds from a vertical operation: same name, method and
-/// parameters, the compound source and the target, and no identifier. Its
-/// accuracy is written as a double, as `toString(accuracy)` does, so `1.0` reads `1`.
-fn retarget(operation: &CoordinateOperation, source: &Crs, target: &Crs) -> CoordinateOperation {
-    match operation {
-        CoordinateOperation::Transformation(transformation) => {
-            let mut copy = transformation.clone();
-            copy.identified.identifiers.clear();
-            copy.source = Some(Box::new(source.clone()));
-            copy.target = Some(Box::new(target.clone()));
-            copy.accuracy_text = copy.accuracy.map(|value| format!("{value}"));
-            CoordinateOperation::Transformation(copy)
-        }
-        CoordinateOperation::Concatenated(concatenated) => {
-            let mut copy = concatenated.clone();
-            copy.identified.identifiers.clear();
-            copy.source = Some(Box::new(source.clone()));
-            copy.target = Some(Box::new(target.clone()));
-            CoordinateOperation::Concatenated(copy)
-        }
-        CoordinateOperation::Conversion(_) => operation.clone(),
-    }
 }
 
 /// The ballpark change of unit to a geographic CRS of another datum, as `vertical_geog_synthesized`
