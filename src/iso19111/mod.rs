@@ -65,6 +65,7 @@ pub use json::{
     create_from_user_input_with_optional_database, create_object_from_user_input, epsg_identity,
     InitRules, JsonFormat, JsonLines, UserObject,
 };
+pub(crate) use json::proj_based_operation_of_text;
 pub use json_read::{create_object_from_json, JsonObject};
 pub use metadata::{Citation, DataEpoch, Extent};
 pub use model::{

@@ -122,3 +122,22 @@ fn single_line_flag_joins_wkt2_lines() {
     );
     assert!(multi.lines().count() > 1, "{multi}");
 }
+
+/// A PROJ string without `+type=crs` is a PROJ-based operation, even with `+towgs84`, not a
+/// bound CRS (PROJ 9.9.0 `createFromPROJString`, the `unexpectedStructure` branch).
+#[test]
+fn proj_string_without_type_crs_is_a_proj_based_operation() {
+    let text = projinfo_stdout(
+        &[
+            "+proj=utm +zone=41 +ellps=intl +towgs84=-164,-17,-104,0,0,0,0 +units=m +no_defs",
+            "-o",
+            "WKT2:2019",
+            "-q",
+        ],
+        &[("PROJINFO_NO_GRID_CHECK", "YES")],
+    );
+    assert_eq!(
+        text,
+        "CONVERSION[\"PROJ-based coordinate operation\",\n    METHOD[\"PROJ-based operation method: +proj=utm +zone=41 +ellps=intl +towgs84=-164,-17,-104,0,0,0,0 +units=m +no_defs\"]]\n"
+    );
+}

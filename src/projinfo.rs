@@ -1729,6 +1729,11 @@ fn create_default(
     db: &crate::DatabaseContext,
     text: &str,
 ) -> Result<crate::AuthorityObject, String> {
+    if let Some(operation) = crate::iso19111::proj_based_operation_of_text(text) {
+        return operation
+            .map(crate::AuthorityObject::Operation)
+            .map_err(|error| error.to_string());
+    }
     match crate::create_from_user_input(text, db) {
         Ok(crs) => Ok(crate::AuthorityObject::Crs(crs)),
         Err(_) if name_like(text) => search_default(db, text)
@@ -2022,12 +2027,31 @@ fn proj_text(
             .map(Some)
             .map_err(|error| error.to_string()),
         crate::AuthorityObject::Ellipsoid(ellipsoid) => Ok(Some(ellipsoid.export_to_proj_string())),
-        crate::AuthorityObject::Operation(operation) => operation
-            .export_to_proj_string_with_database(db, lines)
-            .map(Some)
-            .map_err(|error| error.to_string()),
+        crate::AuthorityObject::Operation(operation) => match proj_based_text(operation) {
+            Some(text) => Ok(Some(text)),
+            None => operation
+                .export_to_proj_string_with_database(db, lines)
+                .map(Some)
+                .map_err(|error| error.to_string()),
+        },
         _ => Ok(None),
     }
+}
+
+/// The PROJ string of a PROJ-based conversion without its CRS pair: the string itself, as PROJ's
+/// `exportToPROJString` writes it (`SingleOperation::exportToPROJStringGeneric`).
+fn proj_based_text(operation: &crate::CoordinateOperation) -> Option<String> {
+    let crate::CoordinateOperation::Conversion(conversion) = operation else {
+        return None;
+    };
+    if conversion.source_crs().is_some() || conversion.target_crs().is_some() {
+        return None;
+    }
+    conversion
+        .method()
+        .name()
+        .strip_prefix("PROJ-based operation method: ")
+        .map(str::to_owned)
 }
 
 fn wkt(
