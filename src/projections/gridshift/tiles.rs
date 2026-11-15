@@ -510,7 +510,9 @@ pub(super) fn with_tiles_watch<T>(
     answer
 }
 
-/// [`passes`], which stops at the first chunk read that finds its file changed.
+/// [`passes`], which reports a change once the chunks of the pass are read: PROJ finishes the
+/// reads of an interpolation before it checks `hasChanged`, and the later reads of the pass
+/// are in the cache for the reloaded grid.
 fn passes_watch<T>(
     body: &impl Fn() -> Result<T, TransformError>,
 ) -> (Result<T, TransformError>, bool) {
@@ -520,13 +522,15 @@ fn passes_watch<T>(
         if missing.is_empty() {
             return (answer, false);
         }
+        let mut changed = false;
         for (lazy, chunk) in missing {
             if lazy.load(chunk).is_err() {
                 return (Err(TransformError::NetworkUnavailable), false);
             }
-            if lazy.has_changed() {
-                return (Err(TransformError::NetworkUnavailable), true);
-            }
+            changed |= lazy.has_changed();
+        }
+        if changed {
+            return (Err(TransformError::NetworkUnavailable), true);
         }
     }
     (Err(TransformError::NetworkUnavailable), false)
