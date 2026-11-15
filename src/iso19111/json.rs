@@ -2165,6 +2165,21 @@ fn user_object_of(object: AuthorityObject) -> Result<UserObject, FactoryError> {
     })
 }
 
+impl AuthorityObject {
+    /// PROJJSON for this object in `format`, as `proj_as_projjson` writes any object.
+    ///
+    /// # Errors
+    ///
+    /// The object is an extent or a unit, or a part of it has no PROJJSON export here.
+    pub fn export_to_json_with(
+        &self,
+        db: &DatabaseContext,
+        format: &JsonFormat,
+    ) -> Result<String, FactoryError> {
+        user_object_of(self.clone())?.export_to_json(db, format)
+    }
+}
+
 /// The axis count of a geographic CRS. A geocentric CRS is not one.
 fn geographic_dimension(crs: &Crs) -> Option<usize> {
     match crs {

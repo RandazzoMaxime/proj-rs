@@ -84,3 +84,25 @@ fn wkt1_block_ends_with_a_blank_line() {
     );
     assert!(!text.ends_with("\n\n\n"), "{text:?}");
 }
+
+/// `projinfo -o PROJJSON` writes any object, not only a CRS: an ellipsoid or an operation
+/// (PROJ 9.9.0 `outputObject`, `proj_as_projjson`).
+#[test]
+fn projjson_writes_ellipsoid_and_operation() {
+    let ellipsoid = projinfo_stdout(
+        &["-k", "ellipsoid", "EPSG:1024", "-o", "PROJJSON", "-q"],
+        &[("PROJINFO_NO_GRID_CHECK", "YES")],
+    );
+    assert_eq!(
+        ellipsoid,
+        "{\n  \"$schema\": \"https://proj.org/schemas/v0.7/projjson.schema.json\",\n  \"type\": \"Ellipsoid\",\n  \"name\": \"CGCS2000\",\n  \"semi_major_axis\": 6378137,\n  \"inverse_flattening\": 298.257222101,\n  \"id\": {\n    \"authority\": \"EPSG\",\n    \"code\": 1024\n  }\n}\n"
+    );
+    let operation = projinfo_stdout(
+        &["-k", "operation", "EPSG:11182", "-o", "PROJJSON", "-q"],
+        &[("PROJINFO_NO_GRID_CHECK", "YES")],
+    );
+    assert!(
+        operation.starts_with("{\n  \"$schema\": \"https://proj.org/schemas/v0.7/projjson.schema.json\",\n  \"type\": \"Transformation\",\n  \"name\": \"ETRS89-BIH [BH_ETRS89] to ETRF2000 (1)\",\n"),
+        "{operation}"
+    );
+}

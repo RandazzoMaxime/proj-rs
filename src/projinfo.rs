@@ -1890,13 +1890,10 @@ fn render(
     for dialect in &options.dialects {
         let exported = match dialect {
             Dialect::Proj => proj_text(object, db, proj_lines(options)),
-            Dialect::ProjJson => match object {
-                crate::AuthorityObject::Crs(crs) => crs
-                    .export_to_json(db)
-                    .map(Some)
-                    .map_err(|error| error.to_string()),
-                _ => Err("cannot write PROJJSON for this object".to_owned()),
-            },
+            Dialect::ProjJson => object
+                .export_to_json_with(db, &crate::iso19111::JsonFormat::default())
+                .map(Some)
+                .map_err(|error| error.to_string()),
             Dialect::Sql => sql_text(object, db, options).map(Some),
             Dialect::Wkt2_2015 => wkt(object, db, crate::WktConvention::Wkt2_2015).map(Some),
             Dialect::Wkt2_2019 => wkt(object, db, crate::WktConvention::Wkt2_2019).map(Some),
