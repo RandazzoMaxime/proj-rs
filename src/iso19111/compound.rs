@@ -247,13 +247,15 @@ fn compound_horizontal_vertical(
     let has_all_grids = |operations: &[CoordinateOperation]| -> (bool, bool) {
         let mut registered = false;
         for operation in operations {
-            if operation.identifiers().is_empty() {
+            // `hasIdentifiers` reads the steps of a concatenated operation too
+            // (coordinateoperationfactory.cpp:3110-3122, 6715).
+            if !has_identifiers(operation) {
                 continue;
             }
             registered = true;
             if ignore_grids
                 || operation
-                    .grids_needed(db, GridAvailabilityUse::KnownAvailable)
+                    .grids_needed(db, context.grid_availability)
                     .is_ok_and(|grids| grids.iter().all(|grid| grid.info.available))
             {
                 return (true, true);

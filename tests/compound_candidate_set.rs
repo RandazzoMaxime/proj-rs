@@ -55,3 +55,34 @@ fn a_vertical_grid_without_proj_string_drops_its_candidates() {
         ]
     );
 }
+
+/// `projinfo -s EPSG:8401 -t EPSG:12216 --summary --spatial-test intersects` (PROJ 9.9.0): the inverse of the compound CRS to the geocentric CRS, with the same context: the
+/// pivots through ETRF2000 and ITRF2020 of the intermediate search are kept.
+#[test]
+fn geocentric_to_compound_searches_intermediates() {
+    assert_eq!(
+        names("EPSG:8401", "EPSG:12216"),
+        [
+            "Conversion from ETRF2014 (geocentric) to ETRF2014 (geog3D) + Inverse of Transformation from MSL-NLD depth to ETRF2014 (ballpark vertical transformation, without ellipsoid height to vertical height correction) + Inverse of Ballpark geographic offset from ETRS89-NLD [AGRS2010] to ETRF2014",
+            "Conversion from ETRF2014 (geocentric) to ETRF2014 (geog3D) + Inverse of Transformation from MSL-NLD depth to ETRF2014 (ballpark vertical transformation, without ellipsoid height to vertical height correction) + Inverse of Conversion from ETRF2014 (geocentric) to ETRF2014 (geog3D) + ETRF2014 to ETRF2000 (1) + Inverse of ETRS89-NLD [AGRS2010] to ETRF2000 (1) + Inverse of Conversion from ETRS89-NLD [AGRS2010] (geog2D) to ETRS89-NLD [AGRS2010] (geocentric)",
+            "Conversion from ETRF2014 (geocentric) to ETRF2014 (geog3D) + Inverse of Transformation from MSL-NLD depth to ETRF2014 (ballpark vertical transformation, without ellipsoid height to vertical height correction) + Inverse of Conversion from ETRF2014 (geocentric) to ETRF2014 (geog3D) + Inverse of ITRF2020 to ETRF2014 (1) + ITRF2020 to ETRS89-NLD [AGRS2010] (1) + Inverse of Conversion from ETRS89-NLD [AGRS2010] (geog2D) to ETRS89-NLD [AGRS2010] (geocentric)",
+        ]
+    );
+}
+
+/// `projinfo -s EPSG:7423 -t EPSG:10283 --summary --spatial-test intersects` (PROJ 9.9.0): the vertical chains through DHHN2016 and LN02 have no identifier of their own, but
+/// their steps have (`hasIdentifiers`), so the vertical operations to the source geographic CRS
+/// are added.
+#[test]
+fn registered_vertical_chain_counts_as_registered() {
+    assert_eq!(
+        names("EPSG:7423", "EPSG:10283"),
+        [
+            "ETRS89 to ETRS89-DEU [ETRS89/DREF91/2016] + Inverse of DHHN2016 height to EVRF2007 height (1) + Inverse of ETRS89-DEU [ETRS89/DREF91/2016] to DHHN2016 height (1)",
+            "ETRS89 to ETRS89-DEU [ETRS89/DREF91/2016] + Inverse of LN02 height to EVRF2007 height (1) + Inverse of ETRS89 to LN02 height",
+            "Ballpark geographic offset from ETRS89 to ETRS89-DEU [ETRS89/DREF91/2016] + Inverse of LN02 height to EVRF2007 height (1) + Inverse of ETRS89 to LN02 height",
+            "ETRS89 to ETRS89-DEU [ETRS89/DREF91/2016] + Transformation from EVRF2007 height to ETRS89 (ballpark vertical transformation, without ellipsoid height to vertical height correction)",
+            "Ballpark geographic offset from ETRS89 to ETRS89-DEU [ETRS89/DREF91/2016] + Transformation from EVRF2007 height to ETRS89 (ballpark vertical transformation, without ellipsoid height to vertical height correction)",
+        ]
+    );
+}

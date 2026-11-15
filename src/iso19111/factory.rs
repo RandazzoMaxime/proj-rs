@@ -6944,11 +6944,12 @@ impl CoordinateOperationFactory {
         }
         // A geocentric CRS to a compound CRS is the inverse of the compound CRS to it.
         if let (Crs::Geodetic(_), Crs::Compound(_)) = (source, target) {
-            if geographic_of(source).is_none() && !context.has_guard(GUARD_DATUM_INTERMEDIATE) {
-                let mut inner = context.clone();
-                inner.guards |= GUARD_DATUM_INTERMEDIATE;
+            // `applyInverse(createOperations(targetCRS, sourceCRS, context))`
+            // (coordinateoperationfactory.cpp:3782-3786), with the same context: the intermediate
+            // searches of the compound side run as in a direct request.
+            if geographic_of(source).is_none() {
                 found.extend(
-                    self.create_candidates(target, source, &inner)?
+                    self.create_candidates(target, source, context)?
                         .iter()
                         .map(CoordinateOperation::inverse),
                 );
