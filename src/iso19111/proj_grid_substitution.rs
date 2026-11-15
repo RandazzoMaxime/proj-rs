@@ -9,12 +9,12 @@
 //!
 //! Ported: the horizontal grid methods that PROJ writes as `HORIZONTAL_SHIFT_GTIFF` or
 //! `GENERAL_SHIFT_GTIFF` (NTv1, NTv2, NADCON and NADCON5 file pairs), in both directions, the
-//! geoid file of a `Geographic3D to GravityRelatedHeight` method, the grid of the geocentric
-//! translation method 1087, and the velocity grid of a point motion operation
-//! (`PointMotionOperation::substitutePROJAlternativeGridNames`).
+//! geoid file of a `Geographic3D to GravityRelatedHeight` method, the VERTCON and regular vertical
+//! grid files, the grid of the geocentric translation method 1087, and the velocity grid of a
+//! point motion operation (`PointMotionOperation::substitutePROJAlternativeGridNames`).
 //!
-//! Not ported: the `NTv1`, `NTv2` and `CTable2` grid formats (no `proj.db` row has them), and the
-//! regular vertical grid branch. For those the caller keeps the file rename it already made.
+//! Not ported: the `NTv1`, `NTv2` and `CTable2` grid formats (no `proj.db` row has them). For
+//! those the caller keeps the file rename it already made.
 
 use super::bound::{is_gravity_related_height, HORIZONTAL_SHIFT_GTIFF};
 use super::factory::DatabaseContext;
@@ -45,6 +45,15 @@ const NAME_LATITUDE_LONGITUDE_ELLIPOISDAL_HEIGHT_DIFFERENCE_FILE: &str =
 /// `EPSG_CODE_PARAMETER_GEOID_CORRECTION_FILENAME` and its name.
 const PARAMETER_GEOID_CORRECTION_FILENAME: i32 = 8666;
 const NAME_GEOID_CORRECTION_FILENAME: &str = "Geoid (height correction) model file";
+
+/// `EPSG_CODE_PARAMETER_VERTICAL_OFFSET_FILE` and `EPSG_CODE_PARAMETER_GEOID_MODEL_DIFFERENCE_FILE`.
+const PARAMETER_VERTICAL_OFFSET_FILE: i32 = 8732;
+const NAME_VERTICAL_OFFSET_FILE: &str = "Vertical offset file";
+const PARAMETER_GEOID_MODEL_DIFFERENCE_FILE: i32 = 1063;
+const NAME_GEOID_MODEL_DIFFERENCE_FILE: &str = "Geoid model difference file";
+/// `EPSG_CODE_METHOD_VERTCON` and the `isRegularVerticalGridMethod` methods (`singleoperation.cpp`).
+const METHOD_VERTCON: i32 = 9658;
+const REGULAR_VERTICAL_GRID_METHODS: [i32; 8] = [1071, 1080, 1084, 1085, 1101, 1112, 1126, 1129];
 
 /// `PROJ_WKT2_NAME_METHOD_GENERAL_SHIFT_GTIFF`.
 const GENERAL_SHIFT_GTIFF: &str = "GENERAL_SHIFT_GTIFF";
@@ -87,7 +96,63 @@ pub(crate) fn substitute_proj_alternative_grid_names(
     if let Some(replacement) = geoid_model(transformation, db)? {
         return Ok(Some(replacement));
     }
+    if let Some(replacement) = vertical_grid(transformation, db)? {
+        return Ok(Some(replacement));
+    }
     geocentric_grid(transformation, db)
+}
+
+/// The VERTCON and regular vertical grid branch of `substitutePROJAlternativeGridNames`
+/// (`singleoperation.cpp:2713-2770`): the vertical offset file, or the geoid model difference
+/// file when there is none, is replaced by PROJ's name for it. The method keeps its name and
+/// identifier; the parameter is the EPSG one, by code.
+fn vertical_grid(
+    transformation: &Transformation,
+    db: &DatabaseContext,
+) -> Result<Option<Transformation>, FactoryError> {
+    let method = epsg_method_code(transformation);
+    if method != METHOD_VERTCON && !REGULAR_VERTICAL_GRID_METHODS.contains(&method) {
+        return Ok(None);
+    }
+    let (code, name, filename) = match file_value(
+        transformation,
+        PARAMETER_VERTICAL_OFFSET_FILE,
+        NAME_VERTICAL_OFFSET_FILE,
+    ) {
+        Some(filename) => (PARAMETER_VERTICAL_OFFSET_FILE, NAME_VERTICAL_OFFSET_FILE, filename),
+        None => match file_value(
+            transformation,
+            PARAMETER_GEOID_MODEL_DIFFERENCE_FILE,
+            NAME_GEOID_MODEL_DIFFERENCE_FILE,
+        ) {
+            Some(filename) => (
+                PARAMETER_GEOID_MODEL_DIFFERENCE_FILE,
+                NAME_GEOID_MODEL_DIFFERENCE_FILE,
+                filename,
+            ),
+            None => return Ok(None),
+        },
+    };
+    let Some((proj_filename, _format, inverse)) = db.proj_grid_alternative_format(&filename)?
+    else {
+        return Ok(None);
+    };
+    if inverse || filename == proj_filename {
+        return Ok(None);
+    }
+    let method = transformation.method();
+    let method = OperationMethod::named_code(
+        method.name().to_owned(),
+        method.code_space().to_owned(),
+        method.code().to_owned(),
+    );
+    Ok(Some(similar_operation(
+        transformation,
+        method,
+        vec![epsg_parameter(code, name, &proj_filename)],
+        transformation.source_crs().cloned(),
+        transformation.target_crs().cloned(),
+    )))
 }
 
 /// `PointMotionOperation::substitutePROJAlternativeGridNames` (`singleoperation.cpp:5591-5629`):

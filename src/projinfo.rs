@@ -1894,6 +1894,8 @@ fn render(
     }
     for dialect in &options.dialects {
         let exported = match dialect {
+            // outputObject leaves a conversion out of the WKT1 dialects (projinfo_lib.cpp:752, 782).
+            Dialect::Wkt1Gdal | Dialect::Wkt1Esri if is_conversion(object) => Ok(None),
             Dialect::Proj => proj_text(object, db, proj_lines(options)),
             Dialect::ProjJson => object
                 .export_to_json_with(db, &crate::iso19111::JsonFormat::default())
@@ -2036,6 +2038,13 @@ fn proj_text(
         },
         _ => Ok(None),
     }
+}
+
+fn is_conversion(object: &crate::AuthorityObject) -> bool {
+    matches!(
+        object,
+        crate::AuthorityObject::Operation(crate::CoordinateOperation::Conversion(_))
+    )
 }
 
 /// The PROJ string of a PROJ-based conversion without its CRS pair: the string itself, as PROJ's

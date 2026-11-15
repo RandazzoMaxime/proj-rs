@@ -141,3 +141,27 @@ fn proj_string_without_type_crs_is_a_proj_based_operation() {
         "CONVERSION[\"PROJ-based coordinate operation\",\n    METHOD[\"PROJ-based operation method: +proj=utm +zone=41 +ellps=intl +towgs84=-164,-17,-104,0,0,0,0 +units=m +no_defs\"]]\n"
     );
 }
+
+/// A conversion is left out of the WKT1 dialects (PROJ 9.9.0 `outputObject`, the
+/// `!Conversion` guard), so `-o WKT1_GDAL` prints nothing for it.
+#[test]
+fn conversion_is_left_out_of_wkt1() {
+    let text = projinfo_stdout(
+        &["-k", "operation", "EPSG:3856", "-o", "WKT1_GDAL", "-q"],
+        &[("PROJINFO_NO_GRID_CHECK", "YES")],
+    );
+    assert_eq!(text, "", "{text:?}");
+}
+
+/// A vertical offset grid that PROJ reads under another name keeps its operation as a
+/// `DERIVED_FROM` identifier with no version (`createSimilarPropertiesOperation`).
+#[test]
+fn vertical_grid_operation_takes_the_proj_grid_name() {
+    let text = projinfo_stdout(
+        &["-k", "operation", "EPSG:7863", "-o", "WKT2:2019", "-q"],
+        &[("PROJINFO_NO_GRID_CHECK", "YES")],
+    );
+    assert!(text.contains("ID[\"DERIVED_FROM(EPSG)\",7863]"), "{text}");
+    assert!(text.contains("PARAMETERFILE[\"Vertical offset file\",\"nz_linz_dublht1960-nzvd2016.tif\"]"), "{text}");
+    assert!(!text.contains("VERSION[\"LINZ-NZ DUBL\"]"), "{text}");
+}
