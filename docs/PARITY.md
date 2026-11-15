@@ -124,3 +124,31 @@ Après les lots de correction (P1 à P4, voir `docs/PORTING-cs2cs-pivot-candidat
 
 Les 64 « dans le seuil » sont des derniers chiffres : le plus grand écart est sous 1e-9 m,
 six ordres de grandeur sous le seuil de 5e-4 m. Ils ne font pas échouer le test.
+
+## Gros corpus (`tests/parity/wide`)
+
+Graine `20261116`, échelle 6, 12 points par invocation, 15 % des points tirés dans le
+monde entier (hors emprise du CRS compris), 1000 paires `projinfo --summary` :
+
+```sh
+python3 tools/parity/generate.py --seed 20261116 --scale 6 --points 12 --world 0.15 \
+  --projinfo 1000 --out tests/parity/wide/cases.jsonl
+tools/parity/record.sh --cases tests/parity/wide/cases.jsonl --out tests/parity/wide/expected.jsonl
+cargo test --test parity -- --ignored --nocapture      # une dizaine de minutes en debug
+```
+
+4274 invocations : 48 551 conversions (`cs2cs`, `proj`, `cct`) et 1000 listes de candidats,
+soit 50 928 lignes comparées. Le test `parity_wide_against_proj_9_9_0` est ignoré par défaut
+(il apparaît « 1 ignored », jamais « passed » sans avoir tourné).
+
+Premier passage : 355 écarts. Corrigés depuis : la chaîne composé → géocentrique sans emprise
+ni précision, l'emprise des ballparks, l'inverse de Cassini, `proj -S` sur `s2`, `alsk`,
+`gs50`. État actuel : 50 219 identiques, 560 dans le seuil, aucun écart de valeur sur les
+conversions. Le registre `tests/parity/wide/known.tsv` garde 135 lignes :
+
+- 134 lignes de 38 listes `projinfo` : ensemble de candidats différent entre CRS composés,
+  verticaux et géocentriques (111), texte d'un candidat (17), emprise « World » contre
+  « World. » (6). Aucune ne change les coordonnées de `cs2cs` sur le corpus.
+- 1 statut : `EPSG:10644 → EPSG:11069`, un point hors emprise. PROJ refuse son second
+  candidat (« Mismatched units between step 1 and 2 », contrôle d'unités de `pipeline.cpp`)
+  et rend `* * inf` ; le port le calcule.
