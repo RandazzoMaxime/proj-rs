@@ -325,7 +325,7 @@ impl Transformation {
         if self.has_translation_inverse() {
             // PROJ writes the inverse of these methods with negated values, not `+inv`.
             inverse.negate_values();
-        } else if !self.point_motion {
+        } else if !self.point_motion && self.method.code() != "9602" {
             inverse.inverted = !self.inverted;
         }
         std::mem::swap(&mut inverse.source, &mut inverse.target);

@@ -21,6 +21,7 @@ use super::factory::{
     operation_extent, sort_extents, AlternativeGridNames, GridAvailabilityUse, GridDescription,
     GridInfo, SortExtents, SpatialCriterion,
 };
+use super::introsort::sorted_indices;
 use super::model::{
     Axis, BoundingBox, CoordinateOperation, Crs, EllipsoidalCS, GeodeticCRS,
     GeodeticReferenceFrame, GeographicCRS, ObjectDomain, Parameter, ParameterValue, PrimeMeridian,
@@ -1188,21 +1189,20 @@ pub(crate) fn sort_candidates(
         .collect()
 }
 
-/// Insertion sort on `precedes`. Each candidate is placed before the first
-/// element it precedes, so ties keep their registry order and the result never
-/// depends on a comparison that is not a total order.
+/// `std::sort(res.begin(), res.end(), SortFunction(map))`: the permutation of libstdc++ on
+/// `precedes`, whose ties come out in that algorithm's order, not in the registry order.
 fn sort(
     candidates: Vec<(CoordinateOperation, Characteristics)>,
 ) -> Vec<(CoordinateOperation, Characteristics)> {
-    let mut sorted: Vec<(CoordinateOperation, Characteristics)> = Vec::new();
-    for candidate in candidates {
-        let at = sorted
-            .iter()
-            .position(|other| precedes(&candidate.1, &other.1))
-            .unwrap_or(sorted.len());
-        sorted.insert(at, candidate);
-    }
-    sorted
+    let order = sorted_indices(candidates.len(), |left, right| {
+        precedes(&candidates[left].1, &candidates[right].1)
+    });
+    let mut slots: Vec<Option<(CoordinateOperation, Characteristics)>> =
+        candidates.into_iter().map(Some).collect();
+    order
+        .into_iter()
+        .filter_map(|index| slots[index].take())
+        .collect()
 }
 
 /// What `proj_create_crs_to_crs` makes of a pair under a [`BestPolicy`].

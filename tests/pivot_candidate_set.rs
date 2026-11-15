@@ -295,3 +295,39 @@ fn the_pivot_keeps_going_after_results_with_a_proj_step() {
         ]
     );
 }
+
+/// `projinfo -s EPSG:8989 -t EPSG:4913 --summary --spatial-test intersects` (PROJ 9.9.0): the
+/// candidates through ITRF2020 are listed twice before `removeUninterestingOps`, once as the
+/// datum pivot builds them and once as the inverse of the geocentric to geographic search, whose
+/// two conversions cancel. `std::sort` is not stable: it puts the second copy first, and its area
+/// is `World` (the synthetic extent of the last conversion), not `World.` (the one of the
+/// registry).
+#[test]
+fn equal_candidates_keep_the_copy_that_std_sort_puts_first() {
+    let operations = candidates("EPSG:8989", "EPSG:4913", GridAvailabilityUse::UseForSorting);
+    let areas: Vec<Option<&str>> = operations
+        .iter()
+        .map(|operation| {
+            operation
+                .domains()
+                .first()
+                .and_then(|domain| domain.description())
+        })
+        .collect();
+    let europe = Some(
+        "Europe - onshore and offshore - ETRF extent - approximately 16\u{b0}W to 33\u{b0}E and 33\u{b0}N to 84\u{b0}N.",
+    );
+    assert_eq!(
+        areas,
+        [
+            Some("World."),
+            Some("World"),
+            Some("World."),
+            Some("World."),
+            Some("World."),
+            europe,
+            europe,
+            europe,
+        ]
+    );
+}
