@@ -103,3 +103,27 @@ fn geocentric_to_compound_names_the_intermediate_by_its_name() {
         ]
     );
 }
+
+/// `projinfo -s EPSG:10659 -t EPSG:11078 --summary --spatial-test intersects` (PROJ 9.9.0): the
+/// first two candidates are PROJ-based operations whose pipeline is the vertical grid alone (the
+/// horizontal steps cancel). PROJ sets their time flag from that pipeline
+/// (`PROJStringFormatter::requiresPerCoordinateInputTime`), so none is time-dependent although a
+/// step of the horizontal chain is.
+#[test]
+fn a_proj_based_operation_takes_its_time_flag_from_its_pipeline() {
+    std::env::set_var("PROJ_DATA", concat!(env!("CARGO_MANIFEST_DIR"), "/data"));
+    std::env::set_var("PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY", "YES");
+    let db = DatabaseContext::create().expect("database");
+    let source = create_from_user_input("EPSG:10659", &db).expect("source");
+    let target = create_from_user_input("EPSG:11078", &db).expect("target");
+    let mut context = CoordinateOperationContext::create(&db, "");
+    context.set_spatial_criterion(SpatialCriterion::PartialIntersection);
+    let operations = CoordinateOperationFactory::create()
+        .create_operations(&source, &target, &context)
+        .expect("operations");
+    let flags: Vec<bool> = operations
+        .iter()
+        .map(CoordinateOperation::requires_per_coordinate_input_time)
+        .collect();
+    assert_eq!(flags, [false; 6]);
+}
