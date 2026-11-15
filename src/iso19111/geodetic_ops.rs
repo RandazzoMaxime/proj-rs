@@ -743,7 +743,7 @@ fn geographic_offset(
         BALLPARK_GEOGRAPHIC_OFFSET
     };
     let domain: ObjectDomain = match (crs_extent(source), crs_extent(target)) {
-        (Some(left), Some(right)) if left == right => left,
+        (Some(left), Some(right)) if left.is_equivalent_to(&right) => left,
         _ => world_extent(),
     };
     let three_d = geographic_axes(source) == Some(3) || geographic_axes(target) == Some(3);

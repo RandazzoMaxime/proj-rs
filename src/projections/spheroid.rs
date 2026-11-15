@@ -114,6 +114,7 @@ mod tests {
         Frame {
             earth: Ellipsoid::grs80(),
             factor_es: Ellipsoid::grs80().es(),
+            factor_one_es: Ellipsoid::grs80().one_es(),
             lam0: 0.0,
             phi0: 0.0,
             x0: 0.0,

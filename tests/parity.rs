@@ -48,7 +48,9 @@ impl Kind {
             Kind::Metre => diff <= TOLERANCE_METRE,
             Kind::Degree => diff <= TOLERANCE_DEGREE,
             Kind::Time => diff <= TOLERANCE_TIME,
-            Kind::Factor => diff <= TOLERANCE_FACTOR * expected.abs().max(actual.abs()),
+            // Relative, but absolute near zero: an angular distortion of 0 against 1e-6 degree
+            // is the finite-difference noise of `pj_deriv`, printed with six digits.
+            Kind::Factor => diff <= TOLERANCE_FACTOR * expected.abs().max(actual.abs()).max(1.0),
             Kind::Text => false,
         }
     }

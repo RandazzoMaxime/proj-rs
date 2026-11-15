@@ -22,6 +22,7 @@ mod eqc;
 mod eqdc;
 mod geos;
 mod gnom;
+mod generic_inverse;
 mod gridshift;
 pub use gridshift::public::{
     ExtentAndRes, GenericShiftGridSet, Grid, GridError, HorizontalShiftGridSet, Nodata,

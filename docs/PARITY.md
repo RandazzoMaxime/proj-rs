@@ -62,6 +62,11 @@ Seuils, par genre de champ (`kinds` dans `cases.jsonl`) :
 - facteurs d'échelle de `proj -S` (`fac`) : 1e-5 relatif. `proj -S` imprime
   avec `%g` (six chiffres). Un arrondi du sixième chiffre donne un écart relatif
   d'environ 7e-6. Le seuil du plan (1e-6) échouerait donc sur de l'arrondi.
+  Près de zéro, le seuil devient absolu (1e-5) : la distorsion angulaire vaut
+  0 d'un côté et 1e-6 degré de l'autre quand le bruit des différences finies de
+  `pj_deriv` tombe autrement (`krovak`, `omerc`).
+- texte (`text`) : la ligne entière, à l'identique. Sert aux listes de candidats
+  de `projinfo --summary` (famille `projinfo-candidates` du gros corpus).
 
 `cs2cs` écrit toujours trois valeurs (z = 0 sans hauteur), quatre avec le temps.
 Le corpus en tient compte.

@@ -520,6 +520,9 @@ pub(crate) struct Frame {
     pub earth: Ellipsoid,
     /// `e²` that `pj_factors` reads (`P->es`): 0 when the setup forces a sphere.
     pub factor_es: f64,
+    /// `1 - e²` that `pj_factors` reads (`P->one_es`). A setup that changes `P->es` alone, as
+    /// `alsk` and `gs50` do, leaves it at the value of the input ellipsoid.
+    pub factor_one_es: f64,
     /// Central meridian, radians.
     pub lam0: f64,
     /// Latitude of origin, radians.
@@ -596,6 +599,7 @@ impl Frame {
         Ok(Self {
             earth,
             factor_es,
+            factor_one_es: earth.one_es(),
             lam0,
             phi0,
             x0: params.number("x_0")?.unwrap_or(0.0),

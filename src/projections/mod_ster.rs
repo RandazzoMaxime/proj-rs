@@ -73,6 +73,8 @@ pub(crate) fn build(
     let chio = if es != 0.0 { conformal(phi0, e) } else { phi0 };
     let mut placed = frame.clone();
     placed.earth = Ellipsoid::try_from_a_es(a, es).map_err(|_| CreateError::IllegalValue("a"))?;
+    // `pj_factors` reads the `P->es` set by the setup.
+    placed.factor_es = es;
     placed.lam0 = lam0_deg.to_radians();
     placed.phi0 = phi0;
     Ok(Some(classic_step(

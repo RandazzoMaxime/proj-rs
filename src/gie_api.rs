@@ -398,7 +398,7 @@ impl Operation {
             Ok((out.x * to_metre / a, out.y * to_metre / a))
         };
         let [x_l, y_p, x_p, y_l] = pj_deriv(lon, lat, DEFAULT_STEP, point)?;
-        factors_from_derivatives(x_l, y_p, x_p, y_l, lat, es)
+        factors_from_derivatives(x_l, y_p, x_p, y_l, lat, es, 1.0 - es)
     }
 }
 
@@ -421,7 +421,7 @@ fn unit_factors(unit: UnitProjection<'_>, lon: f64, lat: f64) -> Result<Factors,
     let [x_l, y_p, x_p, y_l] = pj_deriv(lam, lat, DEFAULT_STEP, |l, p| {
         unit.forward.unit_forward(l, p)
     })?;
-    factors_from_derivatives(x_l, y_p, x_p, y_l, lat, frame.factor_es)
+    factors_from_derivatives(x_l, y_p, x_p, y_l, lat, frame.factor_es, frame.factor_one_es)
 }
 
 fn check_factor_range(lon: f64, lat: f64) -> Result<(), TransformError> {
@@ -493,6 +493,7 @@ fn factors_from_derivatives(
     y_l: f64,
     lat: f64,
     es: f64,
+    one_es: f64,
 ) -> Result<Factors, TransformError> {
     let cosphi = lat.cos();
     let mut hs = x_p.hypot(y_p);
@@ -503,9 +504,9 @@ fn factors_from_derivatives(
         let mut t = lat.sin();
         t = 1.0 - es * t * t;
         let n = t.sqrt();
-        hs *= t * n / (1.0 - es);
+        hs *= t * n / one_es;
         k *= n;
-        t * t / (1.0 - es)
+        t * t / one_es
     };
     let conv = -x_p.atan2(y_p);
     let s = (y_p * x_l - x_p * y_l) * r / cosphi;
