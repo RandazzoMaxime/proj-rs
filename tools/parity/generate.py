@@ -37,6 +37,7 @@ from families_grids import (
     select_grid_ops,
     write_grid_selection,
 )
+from families_export import fam_projinfo_export
 from families_geod import fam_geod
 from families_proj import fam_cct, fam_projections
 from generator import Generator
@@ -78,6 +79,8 @@ def main():
     parser.add_argument("--grid-ops", default=str(GRID_OPS), help="liste d'opérations (ops.tsv)")
     parser.add_argument("--geod", type=int, default=0,
                         help="familles geod seules (N par famille), pour tests/parity/geod")
+    parser.add_argument("--export", type=int, default=0, metavar="N",
+                        help="corpus projinfo-export seul : environ N objets (tests/parity/export)")
     options = parser.parse_args()
     catalog = Catalog(Path(options.reference_dir) / "build/data/proj.db")
     if options.grid_select:
@@ -87,7 +90,9 @@ def main():
         return
     gen = Generator(catalog, Reference(options.reference_dir, options.grids_dir),
                     random.Random(options.seed), points=options.points, world=options.world)
-    if options.grids_dir:
+    if options.export:
+        fam_projinfo_export(gen, options.export)
+    elif options.grids_dir:
         build_grids(gen, options.grids_dir, options.grid_ops, options.points)
     elif options.geod:
         fam_geod(gen, options.geod)

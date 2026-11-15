@@ -269,3 +269,37 @@ de PROJ 9.9.0. La fiche de port est `docs/PORTING-cli-geod.md`.
 Premier passage : 350 écarts, tous dans `known.tsv` avec leur cause (348 lignes
 vides qui perdaient leur saut de ligne, 2 NaN en DMS). Corrigés depuis : 8290
 conversions identiques, aucun écart connu, aucun écart hors seuil.
+
+## Exports d'objets (`tests/parity/export`)
+
+Famille `projinfo-export` (`tools/parity/families_export.py`, option `--export N`) : CRS
+de tous types, opérations, datums et ellipsoïdes EPSG, tirés dans la `proj.db` de la
+référence. Projections et conversions sont stratifiées par méthode. Chaque objet sort en
+PROJ, WKT2:2019, WKT2:2015, WKT1_GDAL, WKT1_ESRI et PROJJSON (`projinfo CODE -o FORMAT -q`),
+et un objet sur cinq aussi en `--single-line`. Comparaison ligne à ligne, genre `text`.
+
+```sh
+python3 tools/parity/generate.py --seed 20261118 --export 1500 --out tests/parity/export/cases.jsonl
+tools/parity/record.sh --cases tests/parity/export/cases.jsonl --out tests/parity/export/expected.jsonl
+cargo test --test parity parity_export -- --ignored --nocapture     # environ 9 min en debug
+```
+
+8935 invocations, 1441 objets : 5897 CRS EPSG, 2232 opérations (`-k operation`), 434 datums,
+310 ellipsoïdes, 62 définitions PROJ avec `+towgs84`. Aucune invocation ne sort en erreur
+dans la référence.
+
+Premier passage, non corrigé : 326 998 lignes, 225 541 identiques, 2 838 hors seuil de texte,
+98 619 « forme » (lignes absentes ou en trop) ; soit 31 % de lignes différentes, au-delà du
+seuil de 20 % : les causes sont à classer avant toute correction. Les cinq principales :
+
+| Cause | Lignes |
+|---|---|
+| PROJJSON non écrit pour `-k operation`, `-k datum`, `-k ellipsoid` (« cannot write PROJJSON ») | 82 757 |
+| `--single-line` ignoré pour les WKT (sortie sur plusieurs lignes) | 11 446 |
+| Définitions PROJ (`+towgs84`) : PROJJSON, WKT en `BOUNDCRS` au lieu de `CONVERSION` | 3 915 |
+| `-k operation` en WKT et PROJ : texte des objets, WKT1 vide dans la référence | 3 027 |
+| CRS EPSG : texte des WKT | 312 |
+
+Le test `parity_export_against_proj_9_9_0` est ignoré par défaut : environ 9 minutes en
+debug, au-delà du seuil de 30 secondes. Pas encore de `known.tsv` : les écarts ne sont pas
+classés.

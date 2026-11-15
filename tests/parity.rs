@@ -517,6 +517,14 @@ fn parity_geod_against_proj_9_9_0() {
     check_corpus("tests/parity/geod", None);
 }
 
+/// The export corpus: CRS, operations, datums and ellipsoids written by `projinfo` in every
+/// export format (about 9 000 invocations, see docs/PARITY.md). About 9 minutes in debug.
+#[test]
+#[ignore = "corpus d'exports : cargo test --test parity parity_export -- --ignored"]
+fn parity_export_against_proj_9_9_0() {
+    check_corpus("tests/parity/export", None);
+}
+
 /// The grid corpus (about 10 000 conversions, see docs/PARITY.md): its grid files are in
 /// PARITY_GRIDS_DIR, made by tools/parity/fetch-grids.sh from tests/parity/grids/grids.txt.
 #[test]
