@@ -4,6 +4,7 @@
 //! decodes strips, tiles, endianness, BigTIFF, deflate and the floating-point predictor; LZW is
 //! decoded by `tiff_codec`. Georeferencing and GDAL metadata stay here.
 
+mod coded;
 mod gdal;
 mod georef;
 mod ifd;
@@ -50,10 +51,15 @@ pub(super) fn is_tiff(bytes: &[u8]) -> bool {
 }
 
 pub(super) fn load(bytes: &[u8]) -> Result<Vec<RawIfd>, ()> {
+    let order = if bytes.starts_with(b"MM") {
+        ByteOrder::Big
+    } else {
+        ByteOrder::Little
+    };
     let mut decoder = Decoder::new(Cursor::new(bytes)).map_err(|_| ())?;
     let mut out = Vec::new();
     loop {
-        match read_ifd(&mut decoder, Mode::Eager) {
+        match read_ifd(&mut decoder, Mode::Eager { order }) {
             Ok(ifd) => out.push(ifd),
             Err(_) => {
                 if out.is_empty() {

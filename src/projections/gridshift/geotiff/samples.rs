@@ -65,7 +65,7 @@ pub(super) fn decode_samples<R: Read + Seek>(
     Ok(dest)
 }
 
-fn place(
+pub(super) fn place(
     dest: &mut [f32],
     width: usize,
     spp: usize,

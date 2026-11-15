@@ -431,20 +431,33 @@ Non mesuré contre `libproj` : GeoTIFF déflaté chunky (`PlanarConfiguration` 1
 Deflate (32946), tuiles de bord chunky. Ces cas passent par le même décodeur ; leurs valeurs et leurs
 appels ne sont pas établis avec `libproj`.
 
-LZW (`Compression` 5), prédicteurs 1 à 3, sur le réseau : décodé par `tiff_codec/lzw.rs` (prédicteurs : `tiff_codec/predictor.rs`). Le crate
-`tiff` n'a pas son lecteur LZW dans ce build (feature `lzw` absente ; l'activer ajouterait `weezl`).
-Valeurs mesurées contre `libproj` 9.9.0 par les grilles Deflate équivalentes :
-`data/tests/lzw_predictor3_planar.tif` (bandes, une par morceau) et
-`data/tests/lzw_predictor3_planar_tiled.tif` (tuiles de bord), qui ont les échantillons de
-`planar_deflate_predictor3*.tif` à l'octet près (libtiff). Appels : modèle du Deflate (`open(url,
-32768, 16384)` pour le morceau de la bande 2), non mesurés, la référence `libproj` n'a pas libtiff.
-Contre libtiff, sur des fixtures hors dépôt : chunky float32 prédicteur 3 (pas de 2 échantillons,
-4800 valeurs) et int16 prédicteur 2 (bandes de 16 lignes, 2000 valeurs) : écart inférieur à 1e-9 au
-centre de chaque pixel (arrondi de l'interpolation).
-Fixtures : `tools/make-lzw-grid.py`.
+LZW (`Compression` 5) et PackBits (`Compression` 32773) : décodés par `tiff_codec` (`lzw.rs`,
+`packbits.rs`, prédicteurs dans `predictor.rs`), en fichier local comme sur le réseau. Le crate `tiff`
+n'a pas son lecteur LZW dans ce build (feature `lzw` absente ; l'activer ajouterait `weezl`).
 
-Non fait : LZW en fichier local (chemin sans callbacks, `geotiff::load`) reste refusé : la lecture
-entière passe par le crate `tiff`, sans LZW.
+Mesures contre `libproj` 9.9.0 lié à libtiff (`proj-reference-net`, `cct -d 17`, `vgridshift`) :
+- LZW prédicteur 3, little-endian : `data/tests/lzw_predictor3_planar.tif` (bandes) et
+  `lzw_predictor3_planar_tiled.tif` (tuiles de bord) ont les échantillons de
+  `planar_deflate_predictor3*.tif` à l'octet près ; mêmes valeurs que ce Deflate. Appels sur le
+  réseau : modèle du Deflate (`open(url, 32768, 16384)` pour le morceau de la bande 2), non mesurés.
+- LZW prédicteur 3, big-endian : `lzw_be_predictor3_planar.tif` et `..._tiled.tif`. libtiff donne les
+  valeurs du little-endian. Les plans du prédicteur sont les mêmes octets dans les deux ordres ; le
+  décodeur les range dans l'ordre du fichier (`undo_float`). Une première version, aux plans rangés
+  à l'envers, donnait 1e35 : écart attrapé par la mesure.
+- PackBits sans prédicteur : `packbits_planar_tiled.tif`, mêmes valeurs que le Deflate.
+- PackBits avec prédicteur 3 : `packbits_predictor3_planar_tiled.tif`. libtiff ignore le prédicteur
+  avec PackBits : une constante `0x3F` revient brute (`0.7470588`), là où LZW la traite. Mesure à
+  (21.3, 45.7) : 4.7599535295655623e-35 avec PackBits, 0.5760 pour le même échantillon prédit en LZW.
+  Cause probable : libtiff n'enregistre pas le prédicteur pour PackBits (non vérifié dans ses
+  sources). Le crate suit libtiff.
+- Hors champ : JPEG (`Compression` 7) et CCITT (2) : libtiff refuse le décodage (« Not a JPEG
+  file », « Bits/sample must be 1 »), PROJ ouvre la grille et donne `inf`. Le crate refuse la
+  grille à la création (« illegal value for +grids »). Écart d'erreur, non corrigé.
+- Prédicteur 2 en big-endian (LZW) : non mesuré.
+
+Fixtures : `tools/make-lzw-grid.py` (`--tiled`, `--big-endian`, `--codec packbits`,
+`--predictor 1`). Test local : `tests/unit_grid_codecs.rs` ; réseau :
+`tests/unit_network_compressed_grid.rs` (`a_big_endian_lzw_*`, `a_packbits_grid_*`).
 
 ### Inventaire des GeoTIFF du CDN
 
@@ -474,8 +487,10 @@ est au-delà (8 danois, 1 hongrois) lus entiers. Un seul LZW : `cz_cuzk_table_-y
 | Deflate | 1 | planaire | bandes | float32 ×3 | 1 | 1 |
 | **LZW** | 3 | chunky | bandes | float32 ×2 | 1 | 1 |
 
-Les prédicteurs 2 sur float32 (7 grilles danoises, Deflate) sont lus par le crate `tiff`, comme avant :
-non mesurés contre `libproj`.
+Les sept grilles danoises Deflate, prédicteur 2, float32, chunky, en bandes
+(`dk_sdfi_{s34j,gs,gsb,kk,os,s34s,s45b}_2022.tif`, horizontales, `hgridshift`) sont lues par le crate
+`tiff`. Mesurées contre `libproj` 9.9.0 : écart nul à 12 décimales sur un à quatre points dans
+l'emprise de chacune (`proj-reference-net`, `cct -d 12`).
 
 ## projsync
 
@@ -537,10 +552,10 @@ Commandes : `cargo test --test unit_projsync`.
 
 ## Ce qui reste ouvert
 
-- GeoTIFF compressés en PackBits, JPEG, CCITT et prédicteurs hors 1 à 3 : lus entiers (`read_whole`),
-  la séquence de PROJ n'est pas reproduite. LZW (prédicteurs 1 à 3) est lu par morceaux sur le réseau ;
-  reste ouvert le LZW en fichier local, refusé faute de lecteur LZW dans le chemin entier. Voir « GeoTIFF
-  compressé, mesures » pour ce qui est mesuré.
+- GeoTIFF compressés en JPEG, CCITT et prédicteurs hors 1 à 3 : lus entiers (`read_whole`), la
+  séquence de PROJ n'est pas reproduite, et l'erreur diffère (PROJ donne `inf`, le crate refuse la grille).
+  LZW et PackBits sont lus par morceaux sur le réseau et entiers en local ; voir « GeoTIFF compressé,
+  mesures ».
 
 - Lecture par morceaux pour les GeoTIFF compressés (deflate), à prédicteur ou planaires : ils
   sont lus entiers (`read_whole`), la séquence de PROJ n'est pas reproduite. Mesuré sur le vrai

@@ -1,14 +1,14 @@
 //! One image of a TIFF: its header, its georeferencing, its metadata, and its samples, decoded
 //! now or left in the file for the lazy reader.
 
+use std::collections::BTreeMap;
 use std::io::{Read, Seek};
 use std::sync::{Arc, Mutex};
-
-use std::collections::BTreeMap;
 
 use tiff::decoder::Decoder;
 use tiff::tags::Tag;
 
+use super::coded::{codec_tags, coded_of, decode_coded_samples, Whole};
 use super::gdal::{parse_gdal, parse_nodata, GdalFields, GDAL_METADATA, GDAL_NODATA};
 use super::georef::read_extent;
 use super::lazy::lazy_layout;
@@ -22,7 +22,8 @@ use crate::projections::tiff_codec::ByteOrder;
 /// Where the samples of an image go: decoded now, or left in the file for [`LazyIfd`].
 #[derive(Clone, Copy)]
 pub(super) enum Mode<'a> {
-    Eager,
+    /// The samples are decoded now, in the file's byte `order`.
+    Eager { order: ByteOrder },
     /// The chunks stay in `file`, read by [`LazyIfd::load`], in the file's byte `order`. `ifd` is
     /// the index of the image in the file.
     Lazy {
@@ -83,9 +84,25 @@ pub(super) fn read_ifd<R: Read + Seek>(
         Storage::Chunky
     };
     let samples = match mode {
-        Mode::Eager => Samples::Flat(decode_samples(decoder, width_u, height_u, spp, storage)?),
+        Mode::Eager { order } => {
+            let (compression, predictor) = codec_tags(decoder)?;
+            match coded_of(compression, predictor, bits, format) {
+                Some(coded) => {
+                    let whole = Whole {
+                        size: (width_u, height_u),
+                        spp,
+                        storage,
+                        bits,
+                        format,
+                        order,
+                    };
+                    Samples::Flat(decode_coded_samples(decoder, coded, &whole)?)
+                }
+                None => Samples::Flat(decode_samples(decoder, width_u, height_u, spp, storage)?),
+            }
+        }
         Mode::Lazy { file, order, ifd } => {
-            let Some((layout, reading)) = lazy_layout(decoder, order, bits, format)? else {
+            let Some((layout, reading)) = lazy_layout(decoder, bits, format)? else {
                 return Err(IfdFail::NotLazy);
             };
             let (offset_tag, count_tag) = match layout {

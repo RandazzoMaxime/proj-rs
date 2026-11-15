@@ -14,7 +14,7 @@ pub(crate) enum Predictor {
 
 /// Undoes `predictor` in place, row by row: each row is `row_bytes` long, and its samples are
 /// `stride` samples apart (the samples of a pixel when chunky, one when planar). `bits` is the
-/// sample size; `Float` is for little-endian files only.
+/// sample size, and `order` the byte order of the file.
 pub(crate) fn undo_predictor(
     out: &mut [u8],
     row_bytes: usize,
@@ -39,11 +39,8 @@ pub(crate) fn undo_predictor(
             Ok(())
         }
         Predictor::Float => {
-            if order != ByteOrder::Little {
-                return Err(());
-            }
             for row in out.chunks_exact_mut(row_bytes) {
-                undo_float(row, stride, size)?;
+                undo_float(row, stride, size, order)?;
             }
             Ok(())
         }
@@ -70,8 +67,9 @@ fn undo_horizontal(row: &mut [u8], stride: usize, size: usize, order: ByteOrder)
 }
 
 /// libtiff's `fpAcc` in reverse: a running sum of the bytes `stride` apart over the whole row, then
-/// the byte planes, most significant first, gathered into little-endian samples.
-fn undo_float(row: &mut [u8], stride: usize, size: usize) -> Result<(), ()> {
+/// the byte planes, most significant first, gathered into samples of the file's byte order. The
+/// planes are the same bytes in either order; only the gather differs.
+fn undo_float(row: &mut [u8], stride: usize, size: usize, order: ByteOrder) -> Result<(), ()> {
     if size == 0 || row.len() % size != 0 {
         return Err(());
     }
@@ -82,7 +80,11 @@ fn undo_float(row: &mut [u8], stride: usize, size: usize) -> Result<(), ()> {
     let planes = row.to_vec();
     for index in 0..words {
         for byte in 0..size {
-            row[index * size + byte] = planes[(size - 1 - byte) * words + index];
+            let plane = match order {
+                ByteOrder::Little => size - 1 - byte,
+                ByteOrder::Big => byte,
+            };
+            row[index * size + byte] = planes[plane * words + index];
         }
     }
     Ok(())
@@ -175,6 +177,31 @@ mod tests {
             let expected: Vec<u8> = values
                 .iter()
                 .flat_map(|value| value.to_le_bytes())
+                .collect();
+            assert_eq!(row, expected, "stride {stride}");
+        }
+    }
+
+    /// The planes of a big-endian file are the same bytes: the gather alone writes the samples in
+    /// the file's order.
+    #[test]
+    fn float_predictor_gathers_big_endian_samples() {
+        let values = [0.25_f32, -1.5, 3.75e-3, 1024.0, -0.0, 7.0];
+        for stride in [1, 2] {
+            let mut row = float_encode(&values, stride);
+            let row_bytes = row.len();
+            undo_predictor(
+                &mut row,
+                row_bytes,
+                stride,
+                32,
+                Predictor::Float,
+                ByteOrder::Big,
+            )
+            .expect("row");
+            let expected: Vec<u8> = values
+                .iter()
+                .flat_map(|value| value.to_be_bytes())
                 .collect();
             assert_eq!(row, expected, "stride {stride}");
         }
