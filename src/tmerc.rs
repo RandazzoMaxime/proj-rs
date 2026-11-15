@@ -274,6 +274,22 @@ impl Tmerc {
         crate::simd::run(&batch::Forward(self), lon_deg, lat_deg, east, north);
     }
 
+    /// Comme [`Self::forward_batch`], pour des radians absolus : le contrat de
+    /// [`Self::forward_rad`].
+    ///
+    /// # Panics
+    ///
+    /// Panique si les quatre tranches n'ont pas la même longueur.
+    pub fn forward_rad_batch(
+        &self,
+        lon_rad: &[f64],
+        lat_rad: &[f64],
+        east: &mut [f64],
+        north: &mut [f64],
+    ) {
+        crate::simd::run(&batch::ForwardRad(self), lon_rad, lat_rad, east, north);
+    }
+
     /// Convertit un lot de mètres en degrés (longitude, latitude). Un point hors domaine est
     /// écrit `NaN` et le lot continue.
     ///

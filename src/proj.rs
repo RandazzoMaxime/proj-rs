@@ -427,6 +427,9 @@ pub struct Proj {
     candidate_name: Option<String>,
 }
 
+/// Points a slice conversion hands to the transform at a time.
+const FILL_CHUNK: usize = 4096;
+
 impl Proj {
     /// Build a transform from a PROJ string, one CRS from an `EPSG:` code, or
     /// a minimal WKT or PROJJSON geographic or projected CRS.
@@ -940,9 +943,16 @@ impl Proj {
 
     /// Convert a slice in place, forward only.
     ///
+    /// The slice goes through the transform at once, so a projection with a vector kernel
+    /// (Transverse Mercator and UTM, Lambert conformal conic, Mercator, see
+    /// [`batch_path`](crate::batch_path)) converts four points at a time. Its values agree with
+    /// [`Self::convert`] to about 1e-8 m (the error of the vector math functions), and are the
+    /// same bits for a transform with no vector kernel.
+    ///
     /// # Errors
     ///
-    /// [`ProjError`] when any point fails. The slice is left unchanged.
+    /// [`ProjError`] when any point fails: the error [`Self::convert`] gives for the first
+    /// failing point. The slice is left unchanged.
     pub fn convert_array<'a, C, F>(&self, points: &'a mut [C]) -> Result<&'a mut [C], ProjError>
     where
         C: Coord<F>,
@@ -951,7 +961,7 @@ impl Proj {
         self.fill_array(points, Direction::Forward)
     }
 
-    /// Project a slice in place.
+    /// Project a slice in place. Same contract as [`Self::convert_array`].
     ///
     /// # Errors
     ///
@@ -1118,10 +1128,37 @@ impl Proj {
         C: Coord<F>,
         F: CoordinateType,
     {
-        let mut converted = Vec::with_capacity(points.len());
+        if points.is_empty() {
+            return Ok(points);
+        }
+        if matches!(self.body, Body::Single) {
+            return Err(ProjError::NotATransform);
+        }
+        let mut coords = Vec::with_capacity(points.len());
         for point in &*points {
-            let (x, y) = self.map_point(point.x(), point.y(), way, Report::Conversion)?;
-            converted.push(C::from_xy(F::from_f64(x)?, F::from_f64(y)?));
+            coords.push(Xyzt::xy(point.x().into_f64()?, point.y().into_f64()?));
+        }
+        // The transform runs a chunk at a time: a failing point ends the call at the end of its
+        // chunk, not after the whole slice, so a slice that fails early does not go on to
+        // download grids or choose candidates for every later point.
+        for chunk in coords.chunks_mut(FILL_CHUNK) {
+            let mut failed = vec![None; chunk.len()];
+            match &self.body {
+                Body::Native(op) => match way {
+                    Direction::Forward => op.forward_batch(chunk, &mut failed),
+                    Direction::Inverse => op.inverse_batch(chunk, &mut failed),
+                },
+                Body::Iso(pipeline) => pipeline.map_batch(chunk, way, &mut failed),
+                Body::Single => {}
+            }
+            // The first failing point of the chunk, as the points one at a time would report it.
+            if let Some(error) = failed.into_iter().flatten().next() {
+                return Err(Self::facade_error(error, Report::Conversion));
+            }
+        }
+        let mut converted = Vec::with_capacity(coords.len());
+        for coord in &coords {
+            converted.push(C::from_xy(F::from_f64(coord.x)?, F::from_f64(coord.y)?));
         }
         for (point, value) in points.iter_mut().zip(converted) {
             *point = value;

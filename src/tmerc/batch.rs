@@ -12,6 +12,9 @@ use crate::simd::Lanes;
 /// `forward` en lot : degrés vers mètres.
 pub(super) struct Forward<'a>(pub(super) &'a Tmerc);
 
+/// `forward_rad` en lot : radians vers mètres.
+pub(super) struct ForwardRad<'a>(pub(super) &'a Tmerc);
+
 /// `inverse` en lot : mètres vers degrés.
 pub(super) struct Inverse<'a>(pub(super) &'a Tmerc);
 
@@ -31,6 +34,25 @@ impl Lanes for Forward<'_> {
         lat_deg: crate::simd::V4,
     ) -> Option<(crate::simd::V4, crate::simd::V4)> {
         vector::forward(self.0, tok, lon_deg, lat_deg)
+    }
+}
+
+impl Lanes for ForwardRad<'_> {
+    fn point(&self, lon_rad: f64, lat_rad: f64) -> (f64, f64) {
+        self.0
+            .forward_rad(lon_rad, lat_rad)
+            .map_or((f64::NAN, f64::NAN), |xy| (xy.east, xy.north))
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[inline(always)]
+    fn lanes(
+        &self,
+        tok: crate::simd::Avx2,
+        lon_rad: crate::simd::V4,
+        lat_rad: crate::simd::V4,
+    ) -> Option<(crate::simd::V4, crate::simd::V4)> {
+        vector::forward_rad(self.0, tok, lon_rad, lat_rad)
     }
 }
 
@@ -110,14 +132,19 @@ mod vector {
 
     /// [`Tmerc::forward`] sur quatre points.
     #[inline(always)]
+    pub(super) fn forward(t: &Tmerc, tok: Avx2, lon_deg: V4, lat_deg: V4) -> Option<(V4, V4)> {
+        let k = |value| V4::splat(tok, value);
+        forward_rad(t, tok, lon_deg * k(DEG_TO_RAD), lat_deg * k(DEG_TO_RAD))
+    }
+
+    /// [`Tmerc::forward_rad`] sur quatre points.
+    #[inline(always)]
     #[expect(
         clippy::similar_names,
         reason = "Cn and Ce are the paired terms of PROJ exact_e_fwd"
     )]
-    pub(super) fn forward(t: &Tmerc, tok: Avx2, lon_deg: V4, lat_deg: V4) -> Option<(V4, V4)> {
+    pub(super) fn forward_rad(t: &Tmerc, tok: Avx2, lon_r: V4, lat_r: V4) -> Option<(V4, V4)> {
         let k = |value| V4::splat(tok, value);
-        let lon_r = lon_deg * k(DEG_TO_RAD);
-        let lat_r = lat_deg * k(DEG_TO_RAD);
         if !kernels::latitude_in_domain(tok, lat_r)
             .and(lon_r.is_finite())
             .all()
