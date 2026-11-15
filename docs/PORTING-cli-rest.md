@@ -16,11 +16,11 @@ Sources : PROJ 9.9.0 `src/apps/proj.cpp`, `geod.cpp`, `geod_set.cpp`, `cs2cs.cpp
 | `src/projections/gridshift/ntv1.rs` | Lecteur NTv1 (`.dat`), port de `NTv1Grid::open` et `valueAt`. |
 | `src/projdb.rs` | `PROJ_AUX_DB` : bases auxiliaires attachées et lignes copiées dans les tables. |
 | `src/listing.rs` | Données publiques : `PROJECTIONS` (192), `ELLIPSOIDS` (46), `linear_units()` (proj.db). Générées depuis les sources de PROJ ; la table est la donnée, pas le générateur. |
-| `src/bin/cs2cs.rs` | `init_side_as_code` (IGNF seulement), `init_authority`, `geoid_without_height`, `raw_words`, réunion des arguments `+` (`parse`). |
+| `src/bin/cs2cs.rs` | `init_side_as_code` (IGNF seulement), `init_authority`, `geoid_without_height`, `raw_words`, réunion des arguments `+` (`parse`), `check_epochs`. |
 | `src/bin/support/proj_cli.rs` | `-d -e -m -r -s -i -o -b -l`, contrôles `fwd_prepare` de `pj_fwd`. |
 | `src/bin/support/geod_cli.rs` | `-l`, `-le`, `-lu`, `+units=`. |
 | `src/bin/support/lists.rs` | Affichage des listes d'ellipsoïdes et d'unités, comme `proj.cpp` et `geod.cpp`. |
-| `tests/cli_yaml.rs` | `FILES` : +5 yaml (argv, datumfile, ntv2, ignf, flaky) ; `projinfo_aux_script`. |
+| `tests/cli_yaml.rs` | `FILES` : +6 yaml (argv, datumfile, epoch, ntv2, ignf, flaky) ; `projinfo_aux_script`. |
 | `tests/cli_yaml/` | `test_cs2cs_*.yaml`, `test_projinfo_out.dist`. |
 | `data/tests/dir with space/myconus` | Copie de `conus`, comme la règle CMake de PROJ (`src/data/CMakeLists.txt`). |
 
@@ -56,6 +56,11 @@ Sources : PROJ 9.9.0 `src/apps/proj.cpp`, `geod.cpp`, `geod_set.cpp`, `cs2cs.cpp
    Mesure (`tests/cli_proj_factors.rs`, 8 cas écrits par la référence) : Mercator, LCC,
    stéréographique et Robinson sont identiques à la référence sur 88 points pris un par un.
    Le reste est dans « Écarts ouverts ».
+8. **Époques sur un CRS statique.** `--s_epoch` et `--t_epoch` créent une métadonnée de
+   coordonnées de leur côté (`check_epochs`, `src/bin/cs2cs.rs`). Un CRS statique la refuse
+   (code 3, « Coordinate epoch should not be provided for a static CRS ») sauf si son CRS
+   géodésique a des opérations de mouvement ponctuel. WGS 84 est dynamique : `EPSG:4326` et
+   `EPSG:4978` acceptent une époque. Même règle que `CoordinateMetadata::create`.
 
 ## Écarts volontaires vers PROJ
 

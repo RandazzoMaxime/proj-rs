@@ -7,19 +7,23 @@ Référence : `cs2cs` 9.9.0 compilé sans TIFF (`target/proj-reference`).
 
 | Mode | Cas | identique | écart ≤ 1e-6 | écart > 1e-6 | statut différent | format texte |
 |---|---|---|---|---|---|---|
-| CRS séparés par des blancs (défaut) | 272 | 213 | 48 | 4 | 7 | 0 |
-| un seul argument par CRS (`-1`) | 272 | 208 | 45 | 4 | 15 | 0 |
+| CRS séparés par des blancs (défaut) | 272 | @D |
+| un seul argument par CRS (`-1`) | 272 | @U |
 
-Avant le lot C1 (unités grades) : défaut 209 / 48 / 8 / 7 ; `-1` 204 / 45 / 8 / 15.
-Les 4 écarts numériques fermés sont les cas 4807 ci-dessous (écart 1).
+Historique (identique / écart ≤ 1e-6 / écart > 1e-6 / statut différent) :
+
+| Étape | défaut | `-1` |
+|---|---|---|
+| Mesure initiale (`267bda5`) | 209 / 48 / 8 / 7 | 204 / 45 / 8 / 15 |
+| Lot C1 (grades, écart 1) | 213 / 48 / 4 / 7 | 208 / 45 / 4 / 15 |
+| Lot C2 (écarts 5 et 7) | voir tableau du haut | voir tableau du haut |
 
 - 272 cas, 226 paires distinctes, 60 cas avec option (`--only-best`, `--3d`,
   `-I`, `--no-ballpark`, `--s_epoch`, `--t_epoch`).
 - L'écart toléré le plus grand vaut 2,8e-9 dans l'unité de sortie.
-- Les 11 lignes à écart > 1e-6 ou à statut différent, en mode par défaut, se
-  ramènent à 5 causes distinctes (2, 3-4, 6, 7). Elles sont classées par gravité
-  plus bas. Le mode `-1` ajoute 8 lignes à statut différent (argument `+`
-  multi-mots, cause 5 ci-dessous).
+- Les lignes restantes à écart > 1e-6 ou à statut différent se ramènent aux
+  causes encore ouvertes 2, 3, 4 et 6, classées par gravité plus bas. Les causes
+  1, 5 et 7 sont corrigées.
 - Le cas 4267 vers 4269 : identique au `cs2cs` de référence dans les 6 variantes
   mesurées. L'écart connu décrit dans `PORTING-cs2cs-grid-policy.md` ne se
   reproduit plus (voir plus bas).
@@ -66,7 +70,7 @@ Chaque point est donc dans l'emprise du CRS. La matrice couvre :
 | `--3d` | 8 | identique, sauf 4807 vers 2154 (statut, cause 6) |
 | `-I` | 9 | identique (écart 1 fermé, lot C1) |
 | `--no-ballpark` | 6 | identique |
-| `--s_epoch`, `--t_epoch` | 21 | identique, sauf 3 cas (cause 7) |
+| `--s_epoch`, `--t_epoch` | 21 | identique (cause 7 corrigée, 3 cas auparavant en statut différent) |
 
 ## Écarts, classés par gravité
 
@@ -231,22 +235,30 @@ retenue. Non vérifié. Prochaine étape : comparer l'opération retenue avec
 `projinfo -s EPSG:4807 -t EPSG:2154 -o PROJ` et la trace `PROJ_DEBUG=3`. La
 fiche de référence est `PORTING-cs2cs-grid-policy.md`.
 
-**7. Époques sur un CRS statique (d)**
+**7. Époques sur un CRS statique (d) — corrigé (lot C2, écart 7)**
 
 Cas : `EPSG:7789 → EPSG:4936 [--s_epoch 2015 --t_epoch 2010]`,
 `EPSG:4936 → EPSG:7789 [--s_epoch 2019]`, `EPSG:9988 → EPSG:4936 [--s_epoch
 2005 --t_epoch 2015]`. La référence refuse avec « Coordinate epoch should not
-be provided for a static CRS » (code 3). Le port accepte.
+be provided for a static CRS » (code 3). Le port acceptait.
 
 ```sh
 tools/compare-cs2cs.sh --no-build -k 'EPSG:4936|EPSG:7789|--s_epoch 2019'
 printf '4200985 168325 4780236\n' | target/proj-reference/build/bin/cs2cs -d 10 --s_epoch 2019 EPSG:4936 +to EPSG:7789
 ```
 
-La règle de la référence ne s'applique pas à `EPSG:4978` : `--t_epoch 2020`
-y est accepté des deux côtés. Les époques sur `EPSG:7930`, `EPSG:9067` et
-`EPSG:4937` concordent. Cause non vérifiée (la base de données ou le contrôle
-de l'époque).
+Cause : PROJ crée la métadonnée de coordonnées de chaque côté qui a une époque
+(`proj_coordinate_metadata_create`, `src/iso19111/coordinates.cpp`,
+`CoordinateMetadata::create`). Un CRS non dynamique n'est accepté que si son
+CRS géodésique a des opérations de mouvement ponctuel dans la base. WGS 84
+compte comme dynamique : `EPSG:4326`, `EPSG:4979` et `EPSG:4978` acceptent
+une époque. `EPSG:4936` et `EPSG:4258` ne l'acceptent pas. Le port avait la
+même règle (`src/iso19111/coordinate_metadata.rs`) mais `cs2cs` ne l'appelait
+pas. Correction : `check_epochs` dans `src/bin/cs2cs.rs`, avec le même code de
+sortie (3) et la même cause. Test : `tests/cli_yaml/test_cs2cs_epoch.yaml`
+(10 cas, dont 5 refus et 5 acceptations, sorties de la référence).
+
+Les époques sur `EPSG:7930`, `EPSG:9067` et `EPSG:4937` concordaient déjà.
 
 ## Cas 4267 vers 4269
 

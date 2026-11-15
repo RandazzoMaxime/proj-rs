@@ -17,6 +17,7 @@ const FILES: &[&str] = &[
     "test_cs2cs_various.yaml",
     "test_cs2cs_argv.yaml",
     "test_cs2cs_datumfile.yaml",
+    "test_cs2cs_epoch.yaml",
     "test_cs2cs_flaky.yaml",
     "test_cs2cs_ignf.yaml",
     "test_cs2cs_ntv2.yaml",

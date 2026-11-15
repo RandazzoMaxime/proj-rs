@@ -104,6 +104,10 @@ fn command() -> ExitCode {
     } else {
         promoted_by_name(&source, &target)
     };
+    if let Err(error) = check_epochs(&opts, &build_source, &build_target) {
+        report(&prog, error.code, &error.message, None);
+        return exit_code(error.code);
+    }
     // Without `--3d` a source with no height keeps none: PROJ applies the target's geoid model
     // only to a height it has (`cs2cs.cpp`, the 2D to 3D promotion).
     let build_target = if opts.promote_3d {
@@ -1694,6 +1698,35 @@ fn resolve_pair(
     let src_side = catalog.layout(&source);
     let dst_side = catalog.layout(&target);
     Ok((source, target, src_side, dst_side))
+}
+
+/// `--s_epoch` and `--t_epoch` give a side a coordinate epoch: PROJ creates the coordinate
+/// metadata of that side (`proj_coordinate_metadata_create`), and a static CRS refuses it.
+/// WGS 84 counts as dynamic, so `EPSG:4326` takes an epoch.
+fn check_epochs(opts: &Options, source: &str, target: &str) -> Result<(), AppError> {
+    let sides = [
+        ("source", source, opts.source_epoch),
+        ("target", target, opts.target_epoch),
+    ];
+    for (side, definition, epoch) in sides {
+        let Some(epoch) = epoch else { continue };
+        epoch_on_side(definition, epoch).map_err(|cause| {
+            fail(
+                3,
+                format!("cannot instantiate {side} coordinate system\ncause: {cause}"),
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn epoch_on_side(definition: &str, epoch: f64) -> Result<(), String> {
+    let db = proj_rs::DatabaseContext::create().map_err(|error| error.to_string())?;
+    let crs = proj_rs::iso19111::create_from_user_input(definition, &db)
+        .map_err(|error| error.to_string())?;
+    proj_rs::iso19111::CoordinateMetadata::create(&crs, epoch, &db)
+        .map(|_| ())
+        .map_err(|error| error.to_string())
 }
 
 /// The texts the engine is built from. PROJ's `cs2cs` promotes a CRS given by its name to the
