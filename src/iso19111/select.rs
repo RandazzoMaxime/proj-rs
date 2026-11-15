@@ -28,8 +28,9 @@ use super::model::{
 };
 use super::suggest::{area_of_use, priority_operation};
 use super::{
-    create_from_user_input, AuthorityFactory, CoordinateOperationContext,
-    CoordinateOperationFactory, DatabaseContext, FactoryError, NameMatch, ProjLines,
+    create_from_user_input, create_from_user_input_with_init_rules, AuthorityFactory,
+    CoordinateOperationContext, CoordinateOperationFactory, DatabaseContext, FactoryError,
+    InitRules, NameMatch, ProjLines,
 };
 use crate::engine::{Coord, Operation};
 use crate::gridpath;
@@ -1232,9 +1233,36 @@ pub fn select_alternatives_in_area(
     authority: &str,
     area: Option<ObjectDomain>,
 ) -> Result<Selection, FactoryError> {
+    select_alternatives_in_area_with_rules(
+        source,
+        target,
+        policy,
+        filter,
+        authority,
+        area,
+        InitRules::Iso19111,
+    )
+}
+
+/// [`select_alternatives_in_area`] with the `init=` rules of the sides: under
+/// [`InitRules::Proj4`] a `+init=epsg:CODE` side is the database CRS with its axes forced, as
+/// `cs2cs` reads it (`proj_create` under the PROJ 4 rules, `cs2cs.cpp:403-405`).
+///
+/// # Errors
+///
+/// As [`select_alternatives_in_area`].
+pub fn select_alternatives_in_area_with_rules(
+    source: &str,
+    target: &str,
+    policy: BestPolicy,
+    filter: CandidateFilter,
+    authority: &str,
+    area: Option<ObjectDomain>,
+    rules: InitRules,
+) -> Result<Selection, FactoryError> {
     let db = DatabaseContext::create()?;
-    let source_crs = create_from_user_input(source, &db)?;
-    let target_crs = create_from_user_input(target, &db)?;
+    let source_crs = create_from_user_input_with_init_rules(source, &db, rules)?;
+    let target_crs = create_from_user_input_with_init_rules(target, &db, rules)?;
     let (Some(source_base), Some(target_base)) =
         (reference_base(&source_crs), reference_base(&target_crs))
     else {
