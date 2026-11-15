@@ -6991,9 +6991,14 @@ impl CoordinateOperationFactory {
             // `Null geographic offset from NAD83(CSRS)v7 to NAD83(CSRS)v7`.
             if registry && !found.is_empty() && !rule.same_datum() {
                 found.extend(ballpark_operations(source, target, rule));
-                found.extend(super::geodetic_ops::geographic_geocentric_ballpark(
-                    source, target,
-                ));
+                // A geographic and a geocentric CRS go through the geographic CRS of the
+                // geocentric one and the full `createOperations` (coordinateoperationfactory.cpp:
+                // 5314-5331), registry operations included, as without a registry result.
+                if let Some(operations) =
+                    self.geographic_geocentric_pivot(source, target, rule, context)?
+                {
+                    found.extend(operations);
+                }
             } else if let Some(operations) =
                 self.geographic_geocentric_pivot(source, target, rule, context)?
             {
