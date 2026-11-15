@@ -448,5 +448,10 @@ are in [CONTRIBUTING.md](CONTRIBUTING.md).
 PROJ-RS is released under the [MIT license](LICENSE). It stands on the work of
 the PROJ authors, Charles Karney (geodesics), and Knud Poder and Karsten
 Engsager (exact Transverse Mercator). Third-party notices are in
-[NOTICE.md](NOTICE.md). Lints follow
+[NOTICE.md](NOTICE.md).
+
+The embedded `proj.db` contains the EPSG Geodetic Parameter Dataset, owned by
+IOGP and subject to the [EPSG Dataset Terms of Use](https://epsg.org/terms-of-use.html):
+free of charge, no distribution for profit, IOGP ownership acknowledged. Anyone
+who redistributes PROJ-RS passes these terms on. See [NOTICE.md](NOTICE.md). Lints follow
 [BeautifulRust](https://github.com/morganlinton/BeautifulRust).
