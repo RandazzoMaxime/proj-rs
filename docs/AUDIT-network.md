@@ -55,7 +55,9 @@ autres que 1 à 3, rechargement au changement pour les autres étapes que `vgrid
 rechargée), validation par `ETag` et `Last-Modified` du cache disque quand les callbacks servent
 les grilles (le cache en mémoire, par URL, est fait par le lot `shared-validators`),
 façade C des opérations
-(`proj_create_operations` et contexte de fabrique C : la fabrique Rust est utilisée à la place,
+(`proj_create_operations` et contexte de fabrique C : pas de handle C. Les `TEST` de `test_c_api.cpp`
+qui appellent `proj_create_operations` sont portés sur l'API Rust, voir
+`docs/PORTING-capi-operation-factory-core.md`. La fabrique Rust est utilisée à la place,
 par `ProjBuilder::create_operations` quand des callbacks sont enregistrés, voir
 `do_not_attempt_network_access_known_available_network_on` et `pyproj_issue_1192`).
 

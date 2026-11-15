@@ -70,6 +70,10 @@ the capital `D` that clippy rejects in identifiers (`promote_to_3d`).
 
 ## Left open
 
+Mise à jour du 2026-11-15 : chaque cas de cette liste a un test Rust vert. Les tests
+sont au tableau d'inventaire de `docs/PORTING-capi-operation-factory-core.md`. Le texte
+ci-dessous décrit l'état à la date du lot ; il n'est plus à jour pour ces cas.
+
 - `CApi.proj_crs_create_bound_crs_to_WGS84_on_invalid_type`: the method is on `Crs`, so a conversion argument cannot be represented.
 - `factory.AuthorityFactory_createDynamicVerticalDatum`: the `TEST()` is under `#ifdef no_more_dynamic_vertical_datum` and is not compiled in PROJ 9.9.0. EPSG:1096 has no frame reference epoch. See `docs/PORTING-factory-unit.md`.
 - `factory.ogc_timecrs`: `Crs` has no temporal variant (`AnsiDate`, `JulianDate`, `UnixTime`).

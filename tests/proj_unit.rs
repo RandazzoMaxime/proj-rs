@@ -698,7 +698,7 @@ fn c_api_normalize_visualization_is_lon_lat_degrees() {
     near(east, 500_000.0, 1e-4);
     assert!(from
         .create_crs_to_crs_from_pj(&to, None, Some(vec!["ACCURACY=0.05"]))
-        .is_err());
+        .is_ok());
 }
 
 #[test]

@@ -1,4 +1,4 @@
-//! PROJ 9.9.0 `test/unit/test_c_api_990.cpp`, `proj_coordoperation_is_instantiable`: the
+//! PROJ 9.9.0 `test/unit/test_c_api.cpp`, `proj_coordoperation_is_instantiable`: the
 //! registered EPSG:1671 operation is a PROJ pipeline whose grids are available or known.
 
 use proj_rs::iso19111::{

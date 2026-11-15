@@ -778,6 +778,22 @@ pub(crate) enum RemoteGrids {
     Open,
 }
 
+/// The CDN URL of a grid written under the context `endpoint`, as `lookForGridInfo` writes it.
+/// `endpoint` is kept when it is empty or the URL is not on the CDN.
+fn endpoint_url(endpoint: &str, url: &str) -> String {
+    const CDN: &str = "https://cdn.proj.org/";
+    match url.strip_prefix(CDN) {
+        Some(rest) if !endpoint.is_empty() => {
+            if endpoint.ends_with('/') {
+                format!("{endpoint}{rest}")
+            } else {
+                format!("{endpoint}/{rest}")
+            }
+        }
+        _ => url.to_owned(),
+    }
+}
+
 impl CoordinateOperation {
     /// `gridsNeeded`: each grid named by a file parameter of the operation or of its steps,
     /// sorted by name, without repeats (PROJ keeps them in a set of the names).
@@ -793,10 +809,26 @@ impl CoordinateOperation {
         db: &DatabaseContext,
         known: GridAvailabilityUse,
     ) -> Result<Vec<GridDescription>, FactoryError> {
-        self.grids_needed_with(db, known, RemoteGrids::Skip)
+        self.grids_needed_with(db, known, RemoteGrids::Skip, "")
     }
 
-    /// [`Self::grids_needed`], with `remote` deciding whether a grid on no row is opened.
+    /// [`Self::grids_needed`] with the grid download `endpoint` of the context: a database URL
+    /// that starts with `https://cdn.proj.org/` is written under `endpoint`
+    /// (`lookForGridInfo`, `factory.cpp:3511-3517`). An empty endpoint changes no URL.
+    ///
+    /// # Errors
+    ///
+    /// The database rejects a grid lookup.
+    pub fn grids_needed_at(
+        &self,
+        db: &DatabaseContext,
+        known: GridAvailabilityUse,
+        endpoint: &str,
+    ) -> Result<Vec<GridDescription>, FactoryError> {
+        self.grids_needed_with(db, known, RemoteGrids::Skip, endpoint)
+    }
+
+    /// [`Self::grids_needed_at`], with `remote` deciding whether a grid on no row is opened.
     ///
     /// # Errors
     ///
@@ -806,6 +838,7 @@ impl CoordinateOperation {
         db: &DatabaseContext,
         known: GridAvailabilityUse,
         remote: RemoteGrids,
+        endpoint: &str,
     ) -> Result<Vec<GridDescription>, FactoryError> {
         let mut names = Vec::new();
         collect_file_parameters(self, &mut names);
@@ -814,10 +847,11 @@ impl CoordinateOperation {
         names
             .into_iter()
             .map(|short_name| {
-                let info = match db.look_for_grid_info(&short_name, known)? {
+                let mut info = match db.look_for_grid_info(&short_name, known)? {
                     Some(info) => info,
                     None => unrecorded_grid(&short_name, remote),
                 };
+                info.url = endpoint_url(endpoint, &info.url);
                 Ok(GridDescription { short_name, info })
             })
             .collect()
@@ -1532,26 +1566,38 @@ pub fn area_of_interest_from_name(name: &str) -> Option<ObjectDomain> {
     }
 }
 
-/// [`FacadeCandidates`] of `source` to `target`.
+/// [`FacadeCandidates`] of `source` to `target`, over the candidates `filter` keeps.
 ///
 /// # Errors
 ///
 /// A CRS cannot be read, no candidate is registered (the message starts with `no operation
-/// from`), or no candidate can be prepared.
+/// from`), every registered candidate is filtered out (`every operation ... is filtered out`),
+/// or no candidate can be prepared.
 pub(crate) fn facade_candidates(
     source: &str,
     target: &str,
+    filter: CandidateFilter,
 ) -> Result<FacadeCandidates, FactoryError> {
     let db = DatabaseContext::create()?;
     let source_crs = create_from_user_input(source, &db)?;
     let target_crs = create_from_user_input(target, &db)?;
     let mut context = CoordinateOperationContext::create(&db, "");
     context.set_spatial_criterion(SpatialCriterion::PartialIntersection);
-    let operations = CoordinateOperationFactory::create().create_operations(
+    let registered = CoordinateOperationFactory::create().create_operations(
         &source_crs,
         &target_crs,
         &context,
     )?;
+    let registered_count = registered.len();
+    let operations: Vec<_> = registered
+        .into_iter()
+        .filter(|operation| filter.keeps(operation))
+        .collect();
+    if operations.is_empty() && registered_count > 0 {
+        return Err(FactoryError::Format(format!(
+            "every operation from {source} to {target} is filtered out"
+        )));
+    }
     let extents = sort_extents(&context, &source_crs, &target_crs);
     // The warning policy asks KNOWN_AVAILABLE: the sort does not look at the disk.
     let ranked = rank(
