@@ -283,9 +283,12 @@ pub(crate) fn fetch_missing(name: &str) -> Option<Vec<u8>> {
     if !ctx.cache_enabled {
         return http_get(&download.url);
     }
-    crate::network_cache::fetch_grid(&ctx.cache_settings(), &download.url, || {
-        http_get_validated(&download.url)
-    })
+    crate::network_cache::fetch_grid(
+        &ctx.cache_settings(),
+        &download.url,
+        || http_probe(&download.url, "bytes=0-16383"),
+        || http_get_validated(&download.url),
+    )
 }
 
 /// The URL of a grid that is not on disk and has no `proj.db` row, when the network can open it.
@@ -801,25 +804,50 @@ fn http_get(url: &str) -> Option<Vec<u8>> {
 
 /// A `GET` that follows the redirects, with the `Last-Modified` and `ETag` of the reply.
 pub(crate) fn http_get_validated(url: &str) -> Option<crate::network_cache::Fetched> {
+    let reply = http_fetch(url, None)?;
+    if reply.status != 200 || reply.body.is_empty() {
+        return None;
+    }
+    let validator = |name| header_value(&reply.headers, name).unwrap_or("").to_owned();
+    Some(crate::network_cache::Fetched {
+        last_modified: validator("last-modified"),
+        etag: validator("etag"),
+        body: reply.body,
+    })
+}
+
+/// What PROJ reads from its one-byte request for a file (`proj_is_download_needed`, which calls
+/// `get_props_from_headers`): the total size from `Content-Range`, and the validators, empty when
+/// absent. A reply without `Content-Range` has no size.
+pub(crate) struct Probe {
+    pub(crate) size: Option<u64>,
+    pub(crate) last_modified: String,
+    pub(crate) etag: String,
+}
+
+/// The headers of the reply to `url` asked with `Range: range`, as PROJ asks a file's first
+/// chunk (`bytes=0-16383`) or first byte (`bytes=0-0`). `None` when the request fails.
+pub(crate) fn http_probe(url: &str, range: &str) -> Option<Probe> {
+    let reply = http_fetch(url, Some(range))?;
+    let validator = |name| header_value(&reply.headers, name).unwrap_or("").to_owned();
+    Some(Probe {
+        size: header_value(&reply.headers, "content-range").and_then(content_range_total),
+        last_modified: validator("last-modified"),
+        etag: validator("etag"),
+    })
+}
+
+/// The last reply of `url` that is not a redirect, the redirects followed (at most four), with
+/// `range` as the `Range` header when given. Sets `LAST_NOT_FOUND` for a 404 or a 410.
+fn http_fetch(url: &str, range: Option<&str>) -> Option<HttpReply> {
     LAST_NOT_FOUND.with(|flag| flag.set(false));
     let mut url = url.to_owned();
     for _ in 0..4 {
         let target = parse_http_url(&url)?;
-        let reply = http_exchange(&target)?;
-        if reply.status == 200 {
-            if reply.body.is_empty() {
-                return None;
-            }
-            let validator = |name| header_value(&reply.headers, name).unwrap_or("").to_owned();
-            return Some(crate::network_cache::Fetched {
-                last_modified: validator("last-modified"),
-                etag: validator("etag"),
-                body: reply.body,
-            });
-        }
+        let reply = http_exchange(&target, range)?;
         if !matches!(reply.status, 301 | 302 | 303 | 307 | 308) {
             LAST_NOT_FOUND.with(|flag| flag.set(matches!(reply.status, 404 | 410)));
-            return None;
+            return Some(reply);
         }
         let location = header_value(&reply.headers, "location")?;
         url = resolve_location(&target, location)?;
@@ -906,14 +934,14 @@ struct HttpReply {
     body: Vec<u8>,
 }
 
-fn http_exchange(target: &HttpTarget) -> Option<HttpReply> {
+fn http_exchange(target: &HttpTarget, range: Option<&str>) -> Option<HttpReply> {
     let stream = connect(target)?;
     if target.https {
         let connector = native_tls::TlsConnector::new().ok()?;
         let tls = connector.connect(&target.host, stream).ok()?;
-        read_http(tls, target)
+        read_http(tls, target, range)
     } else {
-        read_http(stream, target)
+        read_http(stream, target, range)
     }
 }
 
@@ -991,14 +1019,19 @@ fn open_tunnel(mut stream: TcpStream, target: &HttpTarget) -> Option<TcpStream> 
     (status_line.split_whitespace().nth(1)? == "200").then_some(stream)
 }
 
-fn read_http(mut stream: impl Read + Write, target: &HttpTarget) -> Option<HttpReply> {
+fn read_http(
+    mut stream: impl Read + Write,
+    target: &HttpTarget,
+    range: Option<&str>,
+) -> Option<HttpReply> {
     let host = if (target.https && target.port == 443) || (!target.https && target.port == 80) {
         target.host.clone()
     } else {
         format!("{}:{}", target.host, target.port)
     };
+    let range = range.map_or_else(String::new, |range| format!("Range: {range}\r\n"));
     let request = format!(
-        "GET {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: proj-rs\r\nConnection: close\r\n\r\n",
+        "GET {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: proj-rs\r\n{range}Connection: close\r\n\r\n",
         path = target.path
     );
     stream.write_all(request.as_bytes()).ok()?;

@@ -17,6 +17,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection, ErrorCode, OptionalExtension};
 
+use crate::network::Probe;
+
 /// `DOWNLOAD_CHUNK_SIZE` in PROJ: every chunk is this long, the last one of a file may be shorter.
 pub(crate) const CHUNK_SIZE: u64 = 16 * 1024;
 
@@ -262,6 +264,16 @@ impl DiskChunkCache {
         Ok(())
     }
 
+    /// Set the time of the last check of the chunks of `url` (`UPDATE properties ... lastChecked`),
+    /// as PROJ's `NetworkFilePropertiesCache::insert` does on every open.
+    pub(crate) fn set_last_checked(&self, url: &str, checked: i64) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE properties SET lastChecked = ?1 WHERE url = ?2",
+            params![checked, url],
+        )?;
+        Ok(())
+    }
+
     /// The chunk `index` of `url`, with its real length, and moved to the head of the LRU list.
     pub(crate) fn chunk(&self, url: &str, index: u64) -> Option<Vec<u8>> {
         let offset = i64::try_from(index.checked_mul(CHUNK_SIZE)?).ok()?;
@@ -462,13 +474,17 @@ impl Drop for DiskChunkCache {
     }
 }
 
-/// The grid of `url`, from the cache when its entry is fresh and complete, else downloaded with
-/// `download` and stored (`NetworkChunkCache::get` and `NetworkFilePropertiesCache::tryGet`).
+/// The grid of `url`, from the cache when its entry is fresh and complete. An expired entry is
+/// checked with `first_chunk`, the first chunk of the file as PROJ asks it (`open(url, 0, 16384)`):
+/// when its size and validators are the stored ones, the chunks are kept and only the check time
+/// moves. Otherwise the grid is `download`ed and stored (`NetworkChunkCache::get` and
+/// `NetworkFilePropertiesCache::tryGet`). No request is conditional.
 ///
 /// When the cache cannot be opened, the download is returned and nothing is stored.
 pub(crate) fn fetch_grid(
     settings: &Settings,
     url: &str,
+    first_chunk: impl FnOnce() -> Option<Probe>,
     download: impl FnOnce() -> Option<Fetched>,
 ) -> Option<Vec<u8>> {
     let Some(cache) = DiskChunkCache::open(&settings.path) else {
@@ -477,6 +493,15 @@ pub(crate) fn fetch_grid(
     let now = unix_now();
     if let Some(props) = cache.properties(url) {
         if !expired(&props, settings.ttl_seconds, now) {
+            if let Some(bytes) = cache.assemble(url, props.size) {
+                return Some(bytes);
+            }
+        } else if first_chunk().is_some_and(|reply| {
+            reply.size == Some(props.size)
+                && reply.last_modified == props.last_modified
+                && reply.etag == props.etag
+        }) {
+            let _checked = cache.set_last_checked(url, now);
             if let Some(bytes) = cache.assemble(url, props.size) {
                 return Some(bytes);
             }
