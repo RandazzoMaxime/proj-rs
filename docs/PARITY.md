@@ -288,18 +288,35 @@ cargo test --test parity parity_export -- --ignored --nocapture     # environ 9 
 310 ellipsoïdes, 62 définitions PROJ avec `+towgs84`. Aucune invocation ne sort en erreur
 dans la référence.
 
-Premier passage, non corrigé : 326 998 lignes, 225 541 identiques, 2 838 hors seuil de texte,
-98 619 « forme » (lignes absentes ou en trop) ; soit 31 % de lignes différentes, au-delà du
-seuil de 20 % : les causes sont à classer avant toute correction. Les cinq principales :
+Premier passage, avant corrections : 326 998 lignes comparées, 101 457 différentes (31 %) :
+98 619 « forme » (lignes absentes ou en trop), 2 838 « valeur ».
 
-| Cause | Lignes |
+Corrections, une par commit (lignes différentes fermées dans `known.tsv`) :
+
+| Cause | Lignes fermées |
 |---|---|
-| PROJJSON non écrit pour `-k operation`, `-k datum`, `-k ellipsoid` (« cannot write PROJJSON ») | 82 757 |
-| `--single-line` ignoré pour les WKT (sortie sur plusieurs lignes) | 11 446 |
-| Définitions PROJ (`+towgs84`) : PROJJSON, WKT en `BOUNDCRS` au lieu de `CONVERSION` | 3 915 |
-| `-k operation` en WKT et PROJ : texte des objets, WKT1 vide dans la référence | 3 027 |
-| CRS EPSG : texte des WKT | 312 |
+| PROJJSON pour `-k operation`, `-k datum`, `-k ellipsoid` : même écrivain que les CRS (`AuthorityObject` → `UserObject`) | 81 709 |
+| `--single-line` appliqué aux WKT | 11 578 |
+| Chaîne PROJ sans `+type=crs` = opération PROJ-based, même avec `+towgs84` (côté `projinfo` seul, les lecteurs CRS de `cs2cs` gardent leur CRS) ; chaîne exportée telle quelle ; `parameters` toujours écrit | 3 775 |
+| Conversion absente des dialectes WKT1 ; branche « fichier de grille verticale » de la substitution (VERTCON, méthodes régulières) | 869 |
+| `ANCHOREPOCH` d'un VDATUM en WKT2:2019 | 163 |
 
-Le test `parity_export_against_proj_9_9_0` est ignoré par défaut : environ 9 minutes en
-debug, au-delà du seuil de 30 secondes. Pas encore de `known.tsv` : les écarts ne sont pas
-classés.
+Après : 311 641 lignes comparées (le compte prend le plus long des deux côtés : avant, une sortie
+vide ne comptait aucune ligne de la nôtre), 3 570 différentes (1,1 %) : 496 « forme », 3 074
+« valeur » (une ligne décalée par un écart amont devient « valeur »). Identiques : 308 071.
+Le registre `known.tsv` ne contient plus que ces causes :
+
+| Motif (libellé du registre) | Lignes |
+|---|---|
+| Substitution de grille PROJ non portée : `VERSION` gardé, `DERIVED_FROM` absent (grilles de vitesse NEU, déformation NZ, GTG, grilles de type `Geographic3D to Depth`) | 2 552 |
+| Nom de l'inverse : suffixe « (approx. inversion) » absent | 377 |
+| Pont géographique/géocentrique typé `Transformation` au lieu de `Conversion` (`factory.rs`, hors lot) | 172 |
+| `-k operation` sans CRS en PROJ : projection seule (`webmerc`, `laea`, `eqc`…) non exportée | 97 |
+| Autres écarts de texte d'opération (WKT ou JSON) | 110 |
+| Autres écarts de texte de CRS | 205 |
+| WKT1_ESRI : nom ou alias ESRI d'un CRS EPSG | 44 |
+| PROJ d'un CRS : `+to_meter`, `+towgs84`, `+R_A` | 13 |
+
+Le test `parity_export_against_proj_9_9_0` est ignoré par défaut : environ 9 à 11 minutes en
+debug, au-delà du seuil de 30 secondes. Le registre le fait passer tel quel ; une régression
+sur une ligne fermée le fait échouer.
