@@ -1418,6 +1418,11 @@ impl DatabaseContext {
             if let Some(path) = crate::gridpath::resolve(name) {
                 available = true;
                 full_name = path.to_string_lossy().into_owned();
+            } else if let Some(remote) = crate::network::open_remote_grid(name) {
+                // `resolveFullFilename` opens the grid with `open_resource_file`, which reads it
+                // from the network when it is on (factory.cpp:3441-3450, 3520-3522).
+                available = true;
+                full_name = remote;
             }
         }
         Ok(GridLookup {

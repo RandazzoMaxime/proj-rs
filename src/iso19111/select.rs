@@ -1821,10 +1821,12 @@ fn single_operation(
     })
 }
 
-/// A grid a pipeline can be built without: on disk, or optional (`+geoidgrids=@name`), which PROJ
-/// skips when it is missing.
+/// A grid a pipeline can be built without: on disk, on the network when it is on, or optional
+/// (`+geoidgrids=@name`), which PROJ skips when it is missing.
 fn grid_serves(grid: &str) -> bool {
-    gridpath::available(grid) || grid.starts_with('@')
+    gridpath::available(grid)
+        || grid.starts_with('@')
+        || crate::network::open_remote_grid(grid).is_some()
 }
 
 /// `createOperations` with DISCARD: the candidates whose grids are on disk, in the same order.

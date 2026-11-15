@@ -204,20 +204,19 @@ grille (défaut et `--no-ballpark` sans écart au passage 2). Les blocs (bandes 
    height (1) » et une inverse ballpark, sans l'opération dérivée. Vérifié pour `→ EPSG:9517` avec
    `projinfo` réseau OFF : l'écart ne vient pas du réseau. Ouvert, hors de ce lot.
 
-2. **`--only-best` (72 invocations, 16 paires, p. ex. `EPSG:8251 → EPSG:6658`,
-   `EPSG:20037 → EPSG:9715`, `EPSG:7911 → EPSG:6655`).** Les candidats sont les mêmes, dans le même
-   ordre, et `Using coordinate operation` est identique à PROJ pour `EPSG:8251 → EPSG:6658`. PROJ
-   applique l'étape `vgridshift` du premier candidat ; le port rend la hauteur inchangée.
-   Mesuré : `cct` sur le pipeline du premier candidat donne la valeur de PROJ, et `cs2cs` sans
-   option aussi. Avec `--only-best`, le pipeline retenu est celui du candidat ballpark sans grille
-   (`single_engine`). La branche de sélection exacte n'est pas identifiée : en instrumentant la
-   transformation des candidats, aucun appel n'apparaît sous `--only-best`. Ouvert.
+2. **`--only-best` (72 invocations, 16 paires) : corrigé.** Cause : `lookForGridInfo`
+   (factory.cpp:3398-3540) résout une grille connue de `proj.db` avec `open_resource_file`, qui
+   l'ouvre sur le réseau quand il est actif ; la grille est alors disponible. Le port ne regardait
+   que le disque (`grid_lookup`, et `grid_serves` du choix `--only-best`), jugeait le premier
+   candidat « grille manquante » et retombait sur le ballpark. Les deux ouvrent maintenant la grille
+   par `network::open_remote_grid`. Corpus réseau : 0 écart nouveau, les 72 lignes fermées. Test :
+   `tests/network_grid_available.rs` (serveur local). `projinfo` réseau ON n'écrit plus « at least
+   one grid missing » pour une telle grille.
 
-3. **`projinfo` réseau ON (hors corpus).** `projinfo -o PROJ` écrit « at least one grid missing »
-   pour une grille du CDN que la référence tient pour disponible. `grids_needed(DiscardIfMissing)`
-   côté port n'ouvre pas le CDN (`lookForGridInfo`, branche « ligne présente », non reproduite).
-   Le choix de candidat de `cs2cs` passe par `gridpath::available`, qui accepte le réseau : pas
-   touché par ce point. Ouvert.
+3. **`projinfo` réseau ON (hors corpus) : corrigé avec le point 2.** Même cause : la branche
+   « ligne présente » de `lookForGridInfo` ouvre maintenant la grille sur le réseau. Mesuré :
+   `projinfo -s EPSG:9288 -t EPSG:11036` réseau ON liste `INVERSE(EPSG):12219` comme la référence,
+   sans « at least one grid missing ».
 
 ### Volume réseau (étape 3)
 
