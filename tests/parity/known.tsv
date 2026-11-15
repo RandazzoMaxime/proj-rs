@@ -147,13 +147,6 @@ proj-fwd-0045:3	geocent (avant) : résultat faux, X proche de 0 contre plusieurs
 proj-fwd-0045:4	geocent (avant) : résultat faux, X proche de 0 contre plusieurs Mm	à ouvrir
 proj-fwd-0045:5	geocent (avant) : résultat faux, X proche de 0 contre plusieurs Mm	à ouvrir
 proj-fwd-0045:6	geocent (avant) : résultat faux, X proche de 0 contre plusieurs Mm	à ouvrir
-proj-fwd-0102:1	ob_tran avec o_proj=moll : erreur (code 3) là où PROJ calcule	à ouvrir
-proj-fwd-0102:2	ob_tran avec o_proj=moll : erreur (code 3) là où PROJ calcule	à ouvrir
-proj-fwd-0102:3	ob_tran avec o_proj=moll : erreur (code 3) là où PROJ calcule	à ouvrir
-proj-fwd-0102:4	ob_tran avec o_proj=moll : erreur (code 3) là où PROJ calcule	à ouvrir
-proj-fwd-0102:5	ob_tran avec o_proj=moll : erreur (code 3) là où PROJ calcule	à ouvrir
-proj-fwd-0102:6	ob_tran avec o_proj=moll : erreur (code 3) là où PROJ calcule	à ouvrir
-proj-fwd-0102:rc	ob_tran avec o_proj=moll : erreur (code 3) là où PROJ calcule	à ouvrir
 proj-inv-0035:1	geocent (inverse) : longitude fausse d'environ 158 degrés	à ouvrir
 proj-inv-0035:2	geocent (inverse) : longitude fausse d'environ 158 degrés	à ouvrir
 proj-inv-0035:3	geocent (inverse) : longitude fausse d'environ 158 degrés	à ouvrir
