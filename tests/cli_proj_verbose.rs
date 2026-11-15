@@ -15,18 +15,11 @@ struct Case<'a> {
     exit: i32,
 }
 
-/// The data path of the reference runs: the vendored data, then its fixtures (`nad83` lives there).
-const PROJ_DATA: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/data:",
-    env!("CARGO_MANIFEST_DIR"),
-    "/data/tests"
-);
 
 fn run(bin: &str, args: &[&str], input: &str) -> (i32, String, String) {
     let mut child = Command::new(bin)
         .args(args)
-        .env("PROJ_DATA", PROJ_DATA)
+        .env("PROJ_DATA", common::fixture_search_path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -259,7 +252,7 @@ fn monitor_prints_the_figure_and_the_factors_of_each_point() {
         bin: "proj",
         args: &args,
         input: "2 49\n3 50\n-3 40\n",
-        expected: include_str!("cli_proj_verbose/V_points.out"),
+        expected: include_str!("cli_proj_verbose/monitor_points.out"),
         exit: 0,
     });
 }
@@ -270,7 +263,7 @@ fn monitor_inverse_reads_plain_numbers_with_three_decimals() {
         bin: "proj",
         args: &["-V", "-I", "+proj=utm", "+zone=31", "+datum=WGS84"],
         input: "200000 300000\n",
-        expected: include_str!("cli_proj_verbose/V_inverse_utm.out"),
+        expected: include_str!("cli_proj_verbose/monitor_inverse_utm.out"),
         exit: 0,
     });
 }
@@ -283,7 +276,7 @@ fn monitor_f_sets_the_number_format_of_the_figure_too() {
         bin: "proj",
         args: &args,
         input: "2 49\n",
-        expected: include_str!("cli_proj_verbose/V_format.out"),
+        expected: include_str!("cli_proj_verbose/monitor_format.out"),
         exit: 0,
     });
 }
@@ -297,7 +290,7 @@ fn monitor_copies_tag_lines_and_echoes_text_after_the_numbers() {
         bin: "proj",
         args: &args,
         input: "# tag line\n2 49 tagA\nI\n3 50\n",
-        expected: include_str!("cli_proj_verbose/V_tag_text.out"),
+        expected: include_str!("cli_proj_verbose/monitor_tag_text.out"),
         exit: 0,
     });
 }
@@ -310,7 +303,7 @@ fn monitor_refuses_binary_io_after_printing_the_header() {
     assert_eq!(code, 1);
     assert_eq!(
         stdout,
-        include_str!("cli_proj_verbose/V_binary_refused.out")
+        include_str!("cli_proj_verbose/monitor_binary_refused.out")
     );
     assert!(
         stderr.contains("binary I/O not available in -V option"),
@@ -324,7 +317,7 @@ fn monitor_on_a_sphere_prints_the_radius() {
         bin: "proj",
         args: &["-V", "+proj=tmerc", "+R=6371000"],
         input: "2 49\n",
-        expected: include_str!("cli_proj_verbose/V_sphere.out"),
+        expected: include_str!("cli_proj_verbose/monitor_sphere.out"),
         exit: 0,
     });
 }
@@ -337,7 +330,7 @@ fn monitor_applies_m_as_the_output_factor_of_the_forward_projection() {
         bin: "proj",
         args: &args,
         input: "2 49\n",
-        expected: include_str!("cli_proj_verbose/V_postscale.out"),
+        expected: include_str!("cli_proj_verbose/monitor_postscale.out"),
         exit: 0,
     });
 }
@@ -351,7 +344,7 @@ fn monitor_applies_units_to_the_printed_coordinates() {
         bin: "proj",
         args: &args,
         input: "2 49\n",
-        expected: include_str!("cli_proj_verbose/V_feet.out"),
+        expected: include_str!("cli_proj_verbose/monitor_feet.out"),
         exit: 0,
     });
 }
@@ -365,7 +358,7 @@ fn monitor_echoes_an_unreadable_line_as_zero_then_its_text() {
         bin: "proj",
         args: &args,
         input: "abc def\n2 49\n",
-        expected: include_str!("cli_proj_verbose/V_bad_line.out"),
+        expected: include_str!("cli_proj_verbose/monitor_bad_line.out"),
         exit: 0,
     });
 }
@@ -378,7 +371,7 @@ fn monitor_d_sets_the_decimals_of_the_coordinates() {
         bin: "proj",
         args: &args,
         input: "2 49\n",
-        expected: include_str!("cli_proj_verbose/V_digits.out"),
+        expected: include_str!("cli_proj_verbose/monitor_digits.out"),
         exit: 0,
     });
 }
@@ -392,7 +385,7 @@ fn monitor_pole_of_mercator_keeps_the_finite_values_of_pj_fwd() {
         bin: "proj",
         args: &args,
         input: "2 90\n",
-        expected: include_str!("cli_proj_verbose/V_pole.out"),
+        expected: include_str!("cli_proj_verbose/monitor_pole.out"),
         exit: 0,
     });
 }
@@ -405,7 +398,7 @@ fn monitor_invproj_inverts_and_prints_the_figure() {
         bin: "invproj",
         args: &args,
         input: "222638.98 6242596\n",
-        expected: include_str!("cli_proj_verbose/V_invproj.out"),
+        expected: include_str!("cli_proj_verbose/monitor_invproj.out"),
         exit: 0,
     });
 }

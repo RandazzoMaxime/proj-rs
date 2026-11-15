@@ -19,9 +19,9 @@ fn geoid_tie_takes_the_g2018_candidate_as_proj_does() {
     std::env::set_var(
         "PROJ_DATA",
         format!(
-            "{}/data:{}/data/tests:{grids}",
-            env!("CARGO_MANIFEST_DIR"),
-            env!("CARGO_MANIFEST_DIR")
+            "{root}/data{separator}{root}/data/tests{separator}{grids}",
+            root = env!("CARGO_MANIFEST_DIR"),
+            separator = if cfg!(windows) { ';' } else { ':' }
         ),
     );
     std::env::set_var("PROJ_NETWORK", "OFF");

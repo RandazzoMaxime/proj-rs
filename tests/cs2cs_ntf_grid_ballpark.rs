@@ -20,11 +20,10 @@ fn point(x: f64, y: f64, z: f64) -> Xyzt {
 fn ntf_to_rgf93_takes_the_prime_meridian_ballpark_outside_the_grid() {
     std::env::set_var(
         "PROJ_DATA",
-        concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/data:",
-            env!("CARGO_MANIFEST_DIR"),
-            "/data/tests"
+        format!(
+            "{root}/data{separator}{root}/data/tests",
+            root = env!("CARGO_MANIFEST_DIR"),
+            separator = if cfg!(windows) { ';' } else { ':' }
         ),
     );
     std::env::set_var("PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY", "YES");
