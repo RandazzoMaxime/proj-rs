@@ -4,7 +4,9 @@ Référence : PROJ 9.9.0, `test/unit/test_network.cpp` (26 `TEST(networking, ...
 dont la plupart sous `#ifdef CURL_ENABLED`), `src/apps/projsync.cpp`,
 `test/cli/test_projsync.sh`.
 
-Légende : **porté** = assertions C++ reprises ; **partiel** = une partie
+Légende : **porté** = assertions C++ reprises, mêmes entrées ; **porté avec substitution**
+= assertions C++ reprises, mais une entrée est remplacée (serveur local au lieu du CDN,
+fixture synthétique, endpoint local), la substitution est nommée ; **partiel** = une partie
 portée, le reste listé ; **écart** = pas de test, cause exacte donnée.
 
 Le port de la couche réseau est `src/network.rs` (`pub(crate)`) et la façade
@@ -48,8 +50,7 @@ Ce qui manque : lecture paresseuse des seuls GeoTIFF à tuiles non compressés (
 grilles en bandes, compressées, à bandes planaires, et les grilles non-TIFF
 restent lues entières), validation de la fraîcheur d'un fichier ouvert par `ETag` et
 `Last-Modified` pour les autres étapes que `vgridshift` et pour le cache disque (seule
-`vgridshift` recharge, voir `docs/PORTING-network.md`), cache SQLite (TTL, taille max, verrou :
-lot cache, autre agent),
+`vgridshift` recharge, voir `docs/PORTING-network.md`),
 façade C des opérations
 (`proj_create_operations` et contexte de fabrique C : la fabrique Rust est utilisée à la place,
 par `ProjBuilder::create_operations` quand des callbacks sont enregistrés, voir
@@ -89,32 +90,32 @@ l'extraction de la taille depuis `Content-Range`.
 |---|---|---|---|
 | 1 | `initial_check` | sans objet (0 assertion), retiré du registre | Décision du mainteneur : un TEST sans assertion n'a rien à porter, il sort du registre des tests ouverts sans test Rust nommé `initial_check`. Le TEST (lignes 90-111 de `test_network.cpp`) n'a aucun `ASSERT` ni `EXPECT` : c'est une sonde. `GET https://cdn.proj.org/fr_ign_ntf_r93.tif` avec `CURLOPT_RANGE` `0-1` (le format `%llu-%llu` de PROJ), puis `networkAccessOK = (code == 206)`. PROJ traite tout code `< 300` comme un succès pour une plage (`networkfilemanager.cpp`, lignes 1774 à 1786). Consommatrice : `basic` (lignes 143 et 169, `if (networkAccessOK)`), portée en entier (ligne 2). Rien à porter : sans assertion, il n'y a pas de valeur PROJ à reprendre. La sonde est reprise par `tests/net_cdn/mod.rs` (`cdn_reachable`, même requête, `206` attendu), utilisée par `tests/unit_network_basic.rs`, `tests/unit_network_download.rs` et `tests/unit_network_file_api.rs` : le CDN répond ici par `HTTPS_PROXY`, que le client HTTP suit depuis ce lot (`CONNECT`, `src/network.rs`). Le défaut de l'endpoint, `https://cdn.proj.org`, est confirmé contre le `libproj` 9.9.0 de référence (`proj_context_get_url_endpoint`, réseau désactivé par défaut). |
 | 2 | `basic` | porté | Les quatre états et la valeur, contre le vrai CDN : voir « networking.basic (porté) ». |
-| 3 | `curl_invalid_resource` | porté | Voir « Cas portés ». |
+| 3 | `curl_invalid_resource` | porté avec substitution | Substitution : un serveur local répond 404 à `/i_do_not.exist/my.tif`, au lieu de `https://i_do_not.exist/my.tif` (nom qui ne se résout pas). Même attente : `proj` renvoie une erreur, une seule requête (`tests/unit_network_local.rs`). |
 | 4 | `custom` | porté | Voir « Cas portés ». |
 | 5 | `getfilesize` | porté | Voir « Cas portés ». Mesuré avant le port : PROJ 9.9.0 fait `open(url, 0, 16384)`, `Content-Range`, `Last-Modified`, `ETag`, `close` à la création, puis aucun appel ; une transformation demande `open(url, 950272, 16384)` (sonde C). Le port lit les bandes à `StripOffsets`/`StripByteCounts` par morceaux, la dernière bande ne comptant que ses lignes, et `Content-Range` donne la taille même si la réponse est plus courte. Vérifié contre le fichier local, non commité : `test_hgrid_strip.tif` (4 lignes, bandes de 3, dernière bande d'une ligne) et `test_vgrid_bigendian.tif` (bande unique, gros-boutiste) donnent les mêmes bits sur un balayage du globe au degré (16 points dans la grille, aucun écart). |
 | 6 | `simul_open_error` | porté | Voir « Cas portés ». |
 | 7 | `simul_read_range_error` | porté | Voir « Cas portés ». |
 | 8 | `simul_file_change_while_opened` | porté | Voir « Cas portés ». |
-| 9 | `curl_hgridshift` | écart | Grille CDN `fr_ign_gr3df97a.tif` absente du dépôt. Valeurs de référence : tentées avec le `proj` de référence sur `tests/gie/tests/test_hgrid_with_subgrid.tif` (et `test_hgrid_degree.tif`), refusées avec `could not find required grid(s)` quel que soit le chemin. Cause de ce refus non élucidée ; sans valeur PROJ, pas de port. |
-| 10 | `curl_vgridshift` | écart | Même cause que 9 (`egm08_25.tif`, absente ; pas de fixture de référence chargée par `proj`). |
-| 11 | `curl_vgridshift_vertcon` | écart | Même cause que 9 (`vertcone.tif`, absente). |
-| 12 | `network_endpoint_env_variable` | porté | Voir « Cas portés ». |
-| 13 | `network_endpoint_api_and_not_reachable_gridshift` | porté | Voir « Cas portés ». |
-| 14 | `network_endpoint_api_and_not_reachable_xyzgridshift` | porté | Voir « Cas portés ». |
-| 15 | `network_endpoint_api_and_not_reachable_hgridshift` | porté | Voir « Cas portés ». |
-| 16 | `network_endpoint_api_and_not_reachable_vgridshift` | porté | Voir « Cas portés ». |
-| 17 | `cache_basic` | écart, lot cache | Attend la base SQLite du cache de grilles de PROJ (`pj_context_get_grid_cache_filename`). La crate écrit des fichiers bruts (`store_cache`). Traité par le lot cache (`src/network_cache.rs`, autre agent). |
-| 18 | `proj_grid_cache_clear` | écart, lot cache | `proj_grid_cache_set_filename`, `proj_grid_cache_clear` : absents de la façade ; même lot. |
-| 19 | `cache_saturation` | écart, lot cache | `proj_grid_cache_set_max_size` absent ; la base SQLite n'existe pas (voir 17). |
-| 20 | `cache_ttl` | écart, lot cache | `proj_grid_cache_set_ttl` absent (valeur `-1` refusée, `86400` acceptée) ; pas de métadonnées de fraîcheur. |
-| 21 | `cache_lock` | écart, lot cache | Verrou de cache multi-processus absent. |
+| 9 | `curl_hgridshift` | porté contre le vrai CDN | `fr_ign_gr3df97a.tif` lu sur `https://cdn.proj.org`, le TEST C++ entier (trois `EXPECT_NEAR`) et les valeurs de libproj 9.9.0 mesurées sur cette grille. Voir « Cas portés » et `docs/PORTING-network.md`. |
+| 10 | `curl_vgridshift` | porté contre le vrai CDN | `us_nga_egm08_25.tif` (le nom que PROJ demande au CDN ; le commentaire C++ dit `egm08_25.tif`) lu sur le CDN, le TEST entier. |
+| 11 | `curl_vgridshift_vertcon` | porté contre le vrai CDN | `us_noaa_vertcone.tif` (le nom demandé au CDN ; le commentaire C++ dit `vertcone.tif`) lu sur le CDN, le TEST entier. |
+| 12 | `network_endpoint_env_variable` | porté avec substitution | Endpoint `http://127.0.0.1:<port fermé>/` au lieu de `http://0.0.0.0/` (même absence de serveur ; le test le dit lui-même). `tests/unit_network_endpoint_env.rs`. Voir « Cas portés ». |
+| 13 | `network_endpoint_api_and_not_reachable_gridshift` | porté avec substitution | Endpoint `http://127.0.0.1:<port fermé>` au lieu de `http://0.0.0.0` (`proj_context_set_url_endpoint`). `tests/unit_network_core.rs::endpoint_api_not_reachable_gridshift`. Voir « Cas portés ». |
+| 14 | `network_endpoint_api_and_not_reachable_xyzgridshift` | porté avec substitution | Même substitution d'endpoint que 13. `tests/unit_network_core.rs::endpoint_api_not_reachable_xyzgridshift`. |
+| 15 | `network_endpoint_api_and_not_reachable_hgridshift` | porté avec substitution | Même substitution d'endpoint que 13. `tests/unit_network_core.rs::endpoint_api_not_reachable_hgridshift`. |
+| 16 | `network_endpoint_api_and_not_reachable_vgridshift` | porté avec substitution | Même substitution d'endpoint que 13. `tests/unit_network_core.rs::endpoint_api_not_reachable_vgridshift`. |
+| 17 | `cache_basic` | porté avec substitution | Serveur local au lieu du CDN : `/fr_ign_ntf_r93.tif`, grille synthétique (`grids::cache_grid()`) avec `Last-Modified` et `ETag`. La base est lue par `rusqlite` au lieu de `sqlite3`. `tests/unit_network_cache.rs::cache_basic` (base SQLite `cache.db`, tête LRU, second build sans requête). |
+| 18 | `proj_grid_cache_clear` | porté avec substitution | Même serveur local et même grille que 17 ; `clear_grid_cache` supprime la base. `tests/unit_network_cache.rs::proj_grid_cache_clear`. |
+| 19 | `cache_saturation` | porté avec substitution | Même serveur local que 17 ; limite de 32768 octets lue dans `PROJ_GRID_CACHE_MAX_SIZE_BYTES`, deux lignes dans `chunk_data`, `chunks` et `linked_chunks`. `tests/unit_network_cache.rs::cache_saturation`. |
+| 20 | `cache_ttl` | porté avec substitution | Même serveur local que 17 ; les trois états (`Never`, `Seconds(86400)`, entrée expirée) sont assertés sur `properties` et `chunk_data`. `tests/unit_network_cache.rs::cache_ttl`. |
+| 21 | `cache_lock` | porté avec substitution | Même serveur local que 17 ; verrou `BEGIN EXCLUSIVE` tenu par une seconde connexion, `PROJ_LOCK_MAX_ITERS=25`, durée d'au moins 650 ms. `tests/unit_network_cache.rs::cache_lock`. |
 | 22 | `download_whole_files` | porté | `tests/unit_network_download.rs::download_whole_files`, contre le vrai CDN (`dk_sdfe_dvr90.tif`, 331904 octets). Les 37 assertions sont portées une à une (section « download_whole_files (porté) »). Écarts : `docs/PORTING-network.md`. |
 | 23 | `file_api` | porté | `tests/unit_network_file_api.rs::file_api`, contre le vrai CDN : les 15 assertions (section « file_api (porté) »). L'API est `ProjBuilder::set_file_api`. Écarts : `docs/PORTING-network.md`. |
 | 24 | `proj_coordoperation_get_grid_used` | porté contre le vrai CDN | Les trois assertions sont portées (nom, nom complet vide, URL `https://cdn.proj.org/...`), à chaque création, contre le fichier réel (`tests/unit_network_grid_used.rs`). Pas de drapeau `gridopen` dans l'API C 9.9.0. Séquence d'appels à la création sur le GeoTIFF déflaté : écart mesuré, non assertée. Voir « Cas portés dans ce lot ». |
 | 25 | `pyproj_issue_1192` | porté en entier | `tests/unit_network_core.rs::pyproj_issue_1192`, contre le vrai CDN (`tests/net_cdn`, retour tôt si `networkAccessOK` échoue ; exécuté ici, la sonde répond). Asserté, réseau on puis off : la liste (10 opérations, noms et ordre), l'instanciabilité de chaque opération (off : 8 vraies, on : 10), et pour chaque opération instanciable l'id `pipeline` de `proj_pj_info` via `ProjBuilder::proj_from_operation` (ajouté par ce lot, équivalent de `proj_list_get`), y compris les opérations 00 et 02 dont la grille n'est pas sur disque ; avec des ouvertures refusées, zéro `open` à l'instanciation. Mesuré contre `libproj` 9.9.0 (sonde C, CDN joignable, cache de grilles off). Écarts (fabrique `IGNORED` avec réseau qui ouvre les grilles, opération non instanciable rendue en erreur au lieu d'un PJ sans id) : `docs/PORTING-network.md`. |
 | 26 | `do_not_attempt_network_access_known_available_network_on` | porté | Voir « Cas portés dans ce lot ». La façade C reste absente : la fabrique passe par `ProjBuilder::create_operations`, qui applique le contexte du builder. |
 
-Compte : 26 TEST() C++ ; 17 portés (les 16 déjà marqués « porté », plus `basic`, qui n'est plus partiel) ; 0 partiel ; 9 écarts : `initial_check` (sans objet), les cinq du lot cache (17 à 21), et les trois `curl_*` du tableau (9 à 11), que le lot cache porte dans la section ci-dessus.
+Compte : 26 TEST() C++ ; 1 sans objet (`initial_check`, 0 assertion, retiré du registre) ; 14 portés (`basic`, `proj_coordoperation_get_grid_used`, `curl_hgridshift`, `curl_vgridshift`, `curl_vgridshift_vertcon`, `custom`, `getfilesize`, `simul_open_error`, `simul_read_range_error`, `simul_file_change_while_opened`, `download_whole_files`, `file_api`, `pyproj_issue_1192`, `do_not_attempt_network_access_known_available_network_on`) ; 11 portés avec substitution (`curl_invalid_resource`, `network_endpoint_env_variable`, les quatre `network_endpoint_api_*`, les cinq cas de cache des lignes 17 à 21) ; 0 partiel ; 0 écart.
 
 ## download_whole_files (porté)
 
@@ -289,21 +290,20 @@ Le cas local `tests/unit_network_local.rs::basic_network_is_off_by_default_and_m
 place, hors liste : il vérifie qu'un état « off » n'envoie aucune requête, ce que le CDN réel ne permet pas
 d'observer.
 
-## projsync (`src/apps/projsync.cpp`, `test/cli/test_projsync.sh`) : écart total
+## projsync (`src/apps/projsync.cpp`, `test/cli/test_projsync.sh`) : porté
 
-Non commencé dans ce lot. Le binaire `[[bin]] projsync` n'existe pas, et
-`test/cli/test_projsync.sh` (212 lignes) n'est pas porté. Ce qu'il faut :
-options (`--source-id`, `--area-of-use`, `--file`, `--all`, `--list-files`,
-`--dry-run`, `--system-directory`, `--user-directory`, `--quiet`,
-`--verbose`, `--version`, `--help`) ; lecture de `files.geojson` avec un
-analyseur JSON minimal sans dépendance ; téléchargement via le même client
-HTTP que `src/network.rs`. Ce lot ne le touche pas (autre agent).
+Ce qui est porté, les écarts et ce qui n'est pas testé sont dans la section
+« projsync » de `docs/PORTING-network.md`, avec le détail des cas du script. Résumé :
+le binaire `projsync` (`src/bin/projsync.rs`), la bibliothèque `src/projsync.rs` et
+`tests/unit_projsync.rs` (20 tests) existent ; les cas du script sont couverts, sauf la
+variable `PROJ_USER_WRITABLE_DIRECTORY` (non testée).
 
 ## Commandes
 
 ```
 cargo test --test unit_network_core --test unit_network_endpoint_env --test unit_network_local --test network_grid
 cargo test --test unit_network_basic
+cargo test --test unit_network_grids
 cargo test --test unit_network_download
 cargo test --test unit_network_file_api
 cargo test --lib callback_tests
@@ -312,7 +312,7 @@ cargo test --lib callback_tests
 ## Cache et projsync (lot network-cache-projsync)
 
 Fiche : `docs/PORTING-network-cache.md`. Les lignes du tableau des 26 TEST() ci-dessus
-ne sont pas réécrites ; ce qui suit les complète pour les cas de ce lot.
+sont à jour pour ces cas ; ce qui suit détaille les cas de ce lot.
 
 | TEST() C++ | Test Rust | Statut |
 |---|---|---|
@@ -321,9 +321,9 @@ ne sont pas réécrites ; ce qui suit les complète pour les cas de ce lot.
 | `networking.cache_saturation` | `tests/unit_network_cache.rs::cache_saturation` | porté : limite de 2 chunks par `PROJ_GRID_CACHE_MAX_SIZE_BYTES=32768`, 2 lignes dans `chunk_data`, `chunks` et `linked_chunks`. |
 | `networking.cache_ttl` | `tests/unit_network_cache.rs::cache_ttl` | porté : TTL négatif = données corrompues utilisées (build en échec), TTL 86400 = téléchargement de nouveau, `lastChecked`, `lastModified` et `etag` mis à jour. |
 | `networking.cache_lock` | `tests/unit_network_cache.rs::cache_lock` | porté : build sans cache après 25 essais, durée au moins 650 ms (calendrier de PROJ). Écart : PROJ vérifie `>= 1` s en secondes entières (fiche, point 3). |
-| `networking.curl_hgridshift` | `tests/unit_network_grids.rs::curl_hgridshift` | porté avec fixture `fr_ign_gr3df97a.tif` (xyzgridshift, trois échantillons) ; valeurs du binaire réseau de référence sur les mêmes octets (fiche, points 4 et 6). `proj_assign_context` non porté (point 5). |
-| `networking.curl_vgridshift` | `tests/unit_network_grids.rs::curl_vgridshift` | porté avec fixture `us_nga_egm08_25.tif` ; valeur de référence `14.6249995232`, pas `-31.89` du CDN. |
-| `networking.curl_vgridshift_vertcon` | `tests/unit_network_grids.rs::curl_vgridshift_vertcon` | porté avec fixture `us_noaa_vertcone.tif` ; valeur de référence `-0.1295000091`, pas `-0.15` du CDN. |
+| `networking.curl_hgridshift` | `tests/unit_network_grids.rs::curl_hgridshift` | porté contre le vrai CDN (`fr_ign_gr3df97a.tif`) : trois assertions C++ aux tolérances de PROJ, plus les valeurs de libproj 9.9.0 mesurées à 1e-9. `proj_assign_context` non porté (point 5 de la fiche). |
+| `networking.curl_vgridshift` | `tests/unit_network_grids.rs::curl_vgridshift` | porté contre le vrai CDN (`us_nga_egm08_25.tif`) : trois assertions C++ et la hauteur mesurée `-31.889799118042117`. |
+| `networking.curl_vgridshift_vertcon` | `tests/unit_network_grids.rs::curl_vgridshift_vertcon` | porté contre le vrai CDN (`us_noaa_vertcone.tif`) : trois assertions C++ et la hauteur mesurée `-0.15375280380249004`. |
 
 Non portés dans ce lot, hors de sa liste : `networking.basic` (partie réseau activé),
 `initial_check`, `network_endpoint_*`, `download_whole_files`, `file_api`,
@@ -339,8 +339,12 @@ profondeur 128, index, sélection, téléchargement avec enregistrement dans `ca
 `--source-id`, `--area-of-use`, `--file` avec deuxième passage « already downloaded »,
 `--bbox` dont les fenêtres de l'antiméridien, `--exclude-world-coverage`, `--verbose` avec
 versions retirées ou ajoutées) ; les sorties attendues sont celles du binaire de référence
-sur le même index. Écarts : téléchargement non conditionnel, `--system-directory` lié à
-`PROJ_DATA`/`PROJ_LIB`, index de test au lieu de `files.geojson` du CDN, téléchargement
-réel non comparé au binaire de référence (fiche, points 7 à 9).
+sur le même index ; le contenu du fichier téléchargé (`proj-rs test grid`) n'est pas comparé au binaire de référence. Écarts :
+téléchargement non conditionnel, `--system-directory` lié à `PROJ_DATA`/`PROJ_LIB` (PROJ
+prend aussi le répertoire relatif de la bibliothèque et `PROJ_DATA` compilé), index de test
+au lieu de `files.geojson` du CDN. Non testés dans `unit_projsync.rs` : `--spatial-test`,
+`-q`/`--quiet`, `--no-version-filtering`, `--system-directory`, `--user-writable-directory`
+(et `--user-directory`), la variable `PROJ_USER_WRITABLE_DIRECTORY` du script (le test passe
+`--target-dir`). Détail : `docs/PORTING-network.md`, section « projsync ».
 
 Commande : `cargo test --test unit_projsync --test unit_network_cache --test unit_network_grids`
