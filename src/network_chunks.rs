@@ -1,9 +1,11 @@
 //! Ranged reads of a remote file through the application's callbacks, as PROJ reads a grid
 //! (`NetworkFile`, `DOWNLOAD_CHUNK_SIZE` in `src/filemanager.cpp`).
 //!
-//! The file is read in chunks of [`CHUNK_SIZE`] bytes. The chunks already read are kept in a
-//! cache shared by every file of the same builder, so a second creation or a second transform
-//! asks the callbacks for nothing it already has. A range with missing chunks is one call:
+//! The file is read in chunks of [`CHUNK_SIZE`] bytes. The chunks already read, and the properties
+//! of each URL (size, `Last-Modified`, `ETag`), are kept in a cache shared by every file of the
+//! same builder. A second creation or a second transform asks the callbacks for nothing it already
+//! has, and every reply is compared with the properties of its URL. A range with missing chunks is
+//! one call:
 //! `open` when no handle is open for the file, `read_range` on the handle otherwise. The handle
 //! stays open until the file is released, which is what lets a tile read after creation reuse
 //! it. After each call the headers `Content-Range`, `Last-Modified` and `ETag` are asked, in
@@ -22,13 +24,14 @@ pub(crate) const CHUNK_SIZE: usize = 16384;
 /// the cache is emptied before the next read. PROJ evicts by age, which is not reproduced.
 const CACHE_MAX_BYTES: usize = 300 * 1024 * 1024;
 
-/// The chunks read so far, by URL and chunk index, and the size of each file those replies gave.
-/// The size is kept with the chunks: a second `RemoteFile` of the same URL knows where the file
-/// ends without a call, as PROJ keeps a file's properties in its context.
+/// The chunks read so far, by URL and chunk index, and the properties of each URL: the size and the
+/// `Last-Modified` and `ETag` of the reply that set them (`gNetworkFileProperties` of PROJ 9.9.0,
+/// kept per URL and shared by every `RemoteFile` of the builder). A second `RemoteFile` of the same
+/// URL knows where the file ends without a call, and compares its replies with the properties.
 #[derive(Default)]
 pub(crate) struct ChunkCache {
     chunks: HashMap<String, HashMap<u64, Vec<u8>>>,
-    sizes: HashMap<String, u64>,
+    properties: HashMap<String, Validators>,
     bytes: usize,
 }
 
@@ -37,11 +40,13 @@ impl ChunkCache {
         self.chunks.get(url)?.get(&index).map(Vec::as_slice)
     }
 
-    /// Forgets every chunk and every size, of every file (`clearMemoryCache` in PROJ 9.9.0).
-    fn clear(&mut self) {
-        self.chunks.clear();
-        self.sizes.clear();
-        self.bytes = 0;
+    /// Forgets the chunks of `url` when its file changed. PROJ empties every chunk in memory
+    /// (`clearMemoryCache`); the chunks of the other URLs are kept here.
+    fn forget_chunks(&mut self, url: &str) {
+        if let Some(file) = self.chunks.remove(url) {
+            let freed: usize = file.values().map(Vec::len).sum();
+            self.bytes = self.bytes.saturating_sub(freed);
+        }
     }
 
     /// Stores the chunks of `data`, which starts at chunk `first`.
@@ -85,11 +90,8 @@ pub(crate) struct RemoteFile {
     handle: Option<NetworkHandle>,
     /// The size of the file, from `Content-Range`. A reply that ends early also sets it.
     total: Option<u64>,
-    /// The properties of the first reply that gave a size. A later reply that differs means the
-    /// file changed while it was open.
-    baseline: Option<Validators>,
-    /// Set once a reply differs from `baseline`: the chunks were dropped, and the file is not
-    /// compared again (PROJ's `m_hasChanged`).
+    /// Set once a reply differs from the properties of the URL: the chunks of the URL were
+    /// dropped, and this file is not compared again (PROJ's `m_hasChanged`).
     changed: bool,
 }
 
@@ -99,23 +101,15 @@ impl RemoteFile {
             .chunks
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .sizes
+            .properties
             .get(url)
-            .copied();
+            .map(|known| known.size);
         Self {
             url: url.to_owned(),
             callbacks,
             handle: None,
             total,
-            baseline: None,
             changed: false,
-        }
-    }
-
-    /// Keeps the size of the file in the cache shared by the files of the builder.
-    fn remember_size(&self) {
-        if let Some(total) = self.total {
-            self.cache().sizes.insert(self.url.clone(), total);
         }
     }
 
@@ -124,12 +118,13 @@ impl RemoteFile {
         self.total
     }
 
-    /// The `Last-Modified` and `ETag` of the first reply that gave a size, empty when absent.
-    /// PROJ's `FileProperties` of a download are these (`get_props_from_headers`).
+    /// The `Last-Modified` and `ETag` the URL has now, empty when absent. A download stores them as
+    /// its properties (`get_props_from_headers`), once its first range is read.
     pub(crate) fn validators(&self) -> (String, String) {
-        self.baseline
-            .as_ref()
-            .map(|first| (first.last_modified.clone(), first.etag.clone()))
+        self.cache()
+            .properties
+            .get(&self.url)
+            .map(|known| (known.last_modified.clone(), known.etag.clone()))
             .unwrap_or_default()
     }
 
@@ -213,14 +208,16 @@ impl RemoteFile {
             self.total = Some(start.saturating_add(u64::try_from(data.len()).unwrap_or(0)));
         }
         self.cache().store(&self.url, low, &data);
-        self.remember_size();
         Ok(data)
     }
 
     /// The headers after a call, asked in PROJ's order: `Content-Range`, then `Last-Modified` and
-    /// `ETag`. `Content-Range` gives the size of the file. The first reply that gives a size sets
-    /// the baseline; a later one that differs in size, `Last-Modified` or `ETag` means the file
-    /// changed while it was open. The chunks are then dropped, as `clearMemoryCache` does in PROJ.
+    /// `ETag`. `Content-Range` gives the size of the file. A reply that gives a size is compared
+    /// with the properties of the URL in the shared cache, as PROJ compares each reply with the
+    /// properties of its file (`NetworkFile::read`). Without properties for the URL, the reply
+    /// sets them. A reply that differs means the file changed while it was open: the chunks of
+    /// the URL are dropped, the properties become the reply's, and this file is marked changed
+    /// (PROJ's `gNetworkFileProperties.insert` and `clearMemoryCache`, then `m_hasChanged`).
     fn observe(&mut self, handle: NetworkHandle) {
         let imp = self.callbacks.imp();
         let total = imp
@@ -237,15 +234,19 @@ impl RemoteFile {
             last_modified: last_modified.unwrap_or_default(),
             etag: etag.unwrap_or_default(),
         };
-        match &self.baseline {
-            None => self.baseline = Some(now),
-            Some(first) if *first != now && !self.changed => {
-                self.changed = true;
-                self.cache().clear();
-            }
-            Some(_) => {}
+        let shared = Arc::clone(&self.callbacks.chunks);
+        let mut cache = shared.lock().unwrap_or_else(PoisonError::into_inner);
+        let differs = cache
+            .properties
+            .get(&self.url)
+            .is_some_and(|known| *known != now);
+        if !differs {
+            cache.properties.insert(self.url.clone(), now);
+        } else if !self.changed {
+            self.changed = true;
+            cache.forget_chunks(&self.url);
+            cache.properties.insert(self.url.clone(), now);
         }
-        self.remember_size();
     }
 
     /// The bytes of `offset..end`, from the chunks `first..=last`. The chunks of the call that

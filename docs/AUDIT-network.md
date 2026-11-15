@@ -46,9 +46,11 @@ cache en fichiers dans le répertoire utilisateur (`grid_cache_enable`,
 
 Ce qui manque : lecture paresseuse des seuls GeoTIFF à tuiles non compressés (les
 grilles en bandes, compressées, à bandes planaires, et les grilles non-TIFF
-restent lues entières), validation de la fraîcheur d'un fichier ouvert par `ETag` et
-`Last-Modified` pour les autres étapes que `vgridshift` et pour le cache disque (seule
-`vgridshift` recharge, voir `docs/PORTING-network.md`), cache SQLite (TTL, taille max, verrou :
+restent lues entières), rechargement au changement pour les autres étapes que `vgridshift`
+(`hgridshift`, `gridshift`, `xyzgridshift` : le changement est enregistré, la grille n'est pas
+rechargée ; seule `vgridshift` recharge), validation par `ETag` et `Last-Modified` du cache disque
+quand les callbacks servent les grilles (le cache en mémoire, par URL, est fait par le lot
+`shared-validators`), cache SQLite (TTL, taille max, verrou :
 lot cache, autre agent),
 façade C des opérations
 (`proj_create_operations` et contexte de fabrique C : la fabrique Rust est utilisée à la place,
@@ -69,6 +71,7 @@ Tests de l'API existants, hors liste C++ : `tests/network_grid.rs`
 | `networking.simul_open_error` | `tests/unit_network_core.rs::simul_open_error_fails_creation_after_one_open` | porté : une seule ouverture `(url, 0, 16384)`, erreur, pas de création |
 | `networking.simul_read_range_error` | `tests/unit_network_core.rs::simul_read_range_error` | porté : séquence de PROJ à l'identique, mesurée sur `libproj` 9.9.0 (harnais C, mêmes callbacks) : création `open(url, 0, 16384)`, trois en-têtes, `close` ; premier point (lat 49) `open(url, 524288, 278528)`, trois en-têtes, `z` 1.25 ; second point (lat -49) `read_range(3670016, 278528)` refusé « read range error », puis aucun appel (pas d'en-tête), `z` `HUGE_VAL` et `proj_errno` 4099 (`PROJ_ERR_OTHER_NETWORK_ERROR`), port : `Err(ProjError::Network)` ; `close` à `proj_destroy`. Aucun changement d'implémentation : la lecture par tuiles de `custom` gère déjà l'erreur. |
 | `networking.simul_file_change_while_opened` | `tests/unit_network_core.rs::simul_file_change_while_opened` | porté : séquence de PROJ à l'identique, mesurée sur `libproj` 9.9.0 (programme C, callbacks qui journalisent, fixture `egm96_15_uncompressed_truncated.tif`) : création `open(url, 0, 16384)`, trois en-têtes, `close` ; transformation (lat 49) `open(url, 524288, 278528)`, trois en-têtes dont `Last-Modified` = `some_date CHANGED!!!!`, `close` du fichier 2, `open(url, 0, 16384)` du fichier 3, trois en-têtes ; `z` 1.25 ; `close` du fichier 3 à `proj_destroy`. Port : détection par `RemoteFile::observe`, rechargement de `vgridshift` (`VerticalGrids`) et second passage du point. Écarts de la fiche : `PORTING-network.md`. |
+| `networking.simul_file_change_while_opened` (deuxième création, cas propre au port) | `tests/unit_network_core.rs::simul_file_change_between_two_creations`, `tests/unit_network_core.rs::simul_file_change_with_a_new_builder` | porté : séquences mesurées avec `libproj` 9.9.0 (sonde C, même fixture, mêmes en-têtes). Même builder, cache désactivé ou activé, contexte neuf : création 2 sans appel, changement détecté au premier calcul sur une tuile non en cache, rechargement de la grille, valeur 2.25 ; l'ancienne opération lit le fichier changé sans recharger. Deux builders (cas deux processus, cache désactivé chez PROJ) : rien n'est détecté. Non portés : les cas deux processus avec le cache disque (TTL valide, TTL dépassée), voir `docs/PORTING-network.md`. |
 | `networking.network_endpoint_env_variable` | `tests/unit_network_endpoint_env.rs::network_endpoint_env_variable` | porté : `PROJ_NETWORK_ENDPOINT` lu au builder, `EPSG:4269 -> EPSG:4152` construit, transformation en erreur réseau |
 | `networking.network_endpoint_api_and_not_reachable_gridshift` | `tests/unit_network_core.rs::endpoint_api_not_reachable_gridshift` | porté (`NAD83 to NAD83(HARN) (47)`, aller, aller, inverse) |
 | `networking.network_endpoint_api_and_not_reachable_hgridshift` | `tests/unit_network_core.rs::endpoint_api_not_reachable_hgridshift` | porté (`MGI to ETRS89 (8)`) |

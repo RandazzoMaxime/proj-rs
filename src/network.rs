@@ -91,7 +91,8 @@ pub trait NetworkCallbacks: Send + Sync {
 }
 
 /// The callbacks a builder registered, as the context holds them, with the chunks they have
-/// served (`network_chunks`). Clones share the callbacks and the chunks.
+/// served and the properties of their files (`network_chunks`). Clones share the callbacks and
+/// the cache.
 #[derive(Clone)]
 pub(crate) struct Callbacks {
     imp: Arc<dyn NetworkCallbacks>,

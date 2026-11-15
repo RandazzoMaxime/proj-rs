@@ -19,7 +19,7 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
 | `proj_coordoperation_get_grid_used_count`, `proj_coordoperation_get_grid_used` (`c_api.cpp:7905-7990`) | `Proj::grids_needed` (`src/proj.rs`), sous `with_context` ; `RemoteGrids::Open` |
 | `proj_create_operations` avec le contexte de fabrique (callbacks du contexte) | `ProjBuilder::create_operations` (`src/proj.rs`), enveloppe `with_context` comme les autres créations du builder |
 | `src/apps/gie.cpp` (`network_error`) | `src/gie.rs` (`errno_name`) |
-| `test/unit/test_network.cpp` (26 TEST) | `tests/unit_network_core.rs` (12 cas, dont `custom`, `getfilesize`, `simul_read_range_error`, `simul_file_change_while_opened`, `pyproj_issue_1192`, `do_not_attempt_network_access_known_available_network_on` et `second_creation_of_a_multi_chunk_grid`, cas propre au port), `tests/unit_network_grid_used.rs` (1 cas, `proj_coordoperation_get_grid_used`, contre le vrai CDN), `tests/unit_network_endpoint_env.rs` (1 cas), `tests/unit_network_local.rs` (2 cas), `src/network.rs` `callback_tests` (2 tests hors liste) |
+| `test/unit/test_network.cpp` (26 TEST) | `tests/unit_network_core.rs` (14 cas, dont `custom`, `getfilesize`, `simul_read_range_error`, `simul_file_change_while_opened`, `pyproj_issue_1192`, `do_not_attempt_network_access_known_available_network_on` et `second_creation_of_a_multi_chunk_grid`, `simul_file_change_between_two_creations` et `simul_file_change_with_a_new_builder`, cas propres au port), `tests/unit_network_grid_used.rs` (1 cas, `proj_coordoperation_get_grid_used`, contre le vrai CDN), `tests/unit_network_endpoint_env.rs` (1 cas), `tests/unit_network_local.rs` (2 cas), `src/network.rs` `callback_tests` (2 tests hors liste) |
 | serveur de test local (remplace `cdn.proj.org`) | `tests/net_support/mod.rs` |
 | `proj_is_download_needed`, `proj_download_file` (`networkfilemanager.cpp:2523-2880`) | `src/network_download.rs` (`is_download_needed`, `download`) ; `ProjBuilder::is_download_needed`, `ProjBuilder::download_file`, `TtlSetting`, `DownloadProgress` (`src/proj.rs`) |
 | `pj_find_file(…, disable_network)` (`filemanager.cpp:1942`), `proj_grid_info` avec le réseau du contexte (`grids.cpp:3928`), `lookForGridInfo` et ses deux résultats (`factory.cpp:3398`) | `ProjBuilder::find_local_file`, `ProjBuilder::grid_info`, `ProjBuilder::look_for_grid_info` (`GridLookup`, `src/iso19111/factory.rs`, `grid_lookup`) |
@@ -82,23 +82,36 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
   l'interpolation ne voit jamais un échantillon absent. Une lecture en échec termine le point
   par `NetworkUnavailable`, comme une grille absente.
 - **Fichier changé pendant l'ouverture (`simul_file_change_while_opened`).** Après chaque
-  appel, les trois en-têtes sont demandés dans l'ordre de PROJ. La première réponse qui donne
-  une taille (`Content-Range`) fixe la référence (taille, `Last-Modified`, `ETag`). Une réponse
-  suivante différente met le fichier en `changed` et vide le cache de morceaux du contexte
-  (`clearMemoryCache` de PROJ, puis `m_hasChanged`) : `network_chunks::RemoteFile::observe`.
-  Le point en cours est arrêté à la lecture de tuile qui le constate (`tiles::with_tiles_watch`),
-  la grille en vigueur est lâchée (son fichier se ferme), puis rechargée depuis
-  `(url, 0, 16384)`, et le point est refait (`Vertical::transform`, `VerticalGrids::reload`).
-  Le cache de morceaux garde la tuile lue après le changement, donc le second passage ne
-  fait aucun appel. Mesuré avec `libproj` 9.9.0 (sonde C, `probe.c` non versionnée) : la
-  séquence est celle du test, `close` du fichier 2 avant `open` du fichier 3, et `close` du
-  fichier 3 à `proj_destroy`. Une création ferme son fichier après lecture (`load_all`), comme
-  PROJ (mesuré : `close` avant la transformation), mais un rechargement le garde ouvert.
-  Écarts : seule `vgridshift` recharge ; `hgridshift`, `gridshift` et `xyzgridshift` gardent
-  leurs grilles figées (même mécanisme, pas de cas de la liste qui le demande). `reload`
-  recharge toutes les grilles de l'étape, PROJ seulement celle du changement (un seul fichier
-  dans le test). Une lecture entière (`read_whole`) ne déclenche pas de rechargement. Le
-  nombre de rechargements par point est borné à `MAX_RELOADS` (8), PROJ boucle sans borne.
+  appel, les trois en-têtes sont demandés dans l'ordre de PROJ. La taille (`Content-Range`),
+  `Last-Modified` et `ETag` d'une URL sont gardés dans le cache partagé du builder
+  (`ChunkCache::properties`, par URL, comme `gNetworkFileProperties` de PROJ) : chaque réponse de
+  n'importe quel `RemoteFile` de cette URL est comparée à eux. Une réponse qui diffère, pour un
+  fichier qui n'a pas encore vu le changement, vide les morceaux de cette URL
+  (`ChunkCache::forget_chunks`), met les propriétés à celles de la réponse, et marque le fichier
+  `changed` (`network_chunks::RemoteFile::observe`). Le point en cours est arrêté à la lecture de
+  tuile qui le constate (`tiles::with_tiles_watch`), la grille en vigueur est lâchée (son fichier
+  se ferme), puis rechargée depuis `(url, 0, 16384)`, et le point est refait (`Vertical::transform`,
+  `VerticalGrids::reload`). Le cache de morceaux garde la tuile lue après le changement, donc le
+  second passage ne fait aucun appel.
+
+  Séquences mesurées avec `libproj` 9.9.0 (sonde C non versionnée, dans le scratchpad de la
+  session ; fixture `egm96_15_uncompressed_truncated.tif`, tailles et en-têtes du test) :
+  - même processus, cache de grilles désactivé ou activé, création 2 sur le même contexte ou sur un
+    contexte neuf : création 2 sans appel ; premier calcul (lat 49, tuile 524288 non en cache) :
+    `open(url, 524288, 278528)`, trois en-têtes du fichier changé, `close`, `open(url, 0, 16384)`,
+    trois en-têtes, valeur 2.25 ; calcul sur l'ancienne opération (lat -49, tuile 3670016) :
+    `open`, trois en-têtes, aucun rechargement, valeur 2.25 ; fermetures à `proj_destroy`.
+  - deux processus, cache désactivé : création 2 fait `open(url, 0, 16384)` et lit les en-têtes du
+    fichier changé, qui deviennent la référence ; le calcul ne détecte rien (`open` de la tuile,
+    trois en-têtes, pas de rechargement), valeur 2.25.
+  - deux processus, cache activé, TTL 86400 : création 2 sans appel (propriétés et morceau 0 lus dans
+    `cache.db`) ; calcul comme dans le même processus (détection, rechargement).
+  - deux processus, cache activé, TTL 1 s, création 2 après 2 s : propriétés expirées, la création 2
+    relit `open(url, 0, 16384)` ; le calcul ne détecte rien, comme le cache désactivé.
+
+  Ce lot porte les cas de même builder (`simul_file_change_between_two_creations`) et de deux
+  builders en deux processus, cache désactivé (`simul_file_change_with_a_new_builder`). Les cas
+  deux processus avec le cache disque, et les écarts, sont plus bas.
 - **Forme du trait.** `open` renvoie les premiers octets avec un handle (`OpenReply`), au lieu
   d'un tampon et d'une chaîne d'erreur passés en paramètres. Les erreurs sont typées
   (`NetworkError::Open`, `ReadRange`). Les en-têtes passent par `header`, avec une valeur
@@ -202,9 +215,10 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
   `tests/unit_network_core.rs::second_creation_of_a_multi_chunk_grid` (`data/tests/egm96_15.gtx`,
   259240 octets, 16 morceaux, sous `https://foo/`). Vert après correction. PROJ mesuré sur ce
   même fichier : une seule `open(url, 0, 16384)` pour les deux créations, aucun appel à la seconde.
-  Écart restant : la référence `Last-Modified`/`ETag` (`baseline`) reste par `RemoteFile`. Un
-  fichier modifié entre deux créations n'est donc pas détecté à la seconde, comme PROJ le fait
-  par son cache de propriétés ; seule la taille est gardée d'une création à l'autre.
+  Écart fermé par le lot `shared-validators` : la référence `Last-Modified`/`ETag` et la taille
+  sont par URL dans le cache partagé, plus par `RemoteFile`. Un fichier modifié entre deux créations
+  du même builder est détecté au premier calcul qui lit une tuile non en cache, comme PROJ
+  (`simul_file_change_between_two_creations`). Voir « Fichier changé pendant l'ouverture ».
   **Garde `networkAccessOK`.** Le TEST sort tôt quand le CDN ne répond pas ; le test du crate fait
   de même (`cdn_reachable`).
 - **`pyproj_issue_1192` et `networkAccessOK`.** Le test retourne tôt quand la sonde
@@ -335,9 +349,28 @@ l'API (`gridpath::resolve`, `gridpath::read`, `network::read_file`).
   morceaux avec la séquence de PROJ.
 - Lecture paresseuse hors `gridshift` : `read_resource` (modèles `deformation`, `tinshift`,
   `defmodel`, `nkg`) lit encore les grilles entières (`fetch_missing`, `fetch_with_callbacks`).
-- Rechargement au changement pour `hgridshift`, `gridshift` et `xyzgridshift` (seule
-  `vgridshift` recharge), et pour les lectures entières (`read_whole`).
-- Validation de cache par `ETag` et `Last-Modified` : cache disque (lot cache).
+- Rechargement au changement pour `hgridshift`, `gridshift` et `xyzgridshift` : seule
+  `vgridshift` recharge (`Vertical::transform`). Les autres enregistrent le changement de leur
+  fichier sans recharger leur grille. Pas de rechargement non plus pour les lectures entières
+  (`read_whole`).
+- Validation par `ETag` et `Last-Modified` du cache disque : avec les callbacks, le crate
+  n'utilise pas `cache.db`. PROJ le fait quand le cache est activé (mesuré : deux processus, TTL
+  valide, détection au calcul ; TTL dépassée, pas de détection). Le cache en mémoire, par URL, est
+  fait (lot `shared-validators`).
+- Propriétés par builder, pas par processus. PROJ garde les propriétés et les morceaux dans des
+  statiques du processus : une création sur un autre contexte du même processus voit le changement
+  (mesuré : détection au calcul). Le crate les garde par `ProjBuilder` : un second builder ne voit
+  pas le fichier du premier (`simul_file_change_with_a_new_builder`, le cas deux processus où PROJ
+  ne détecte rien).
+- Suppression par URL. PROJ vide tous les morceaux en mémoire au changement (`clearMemoryCache`) ;
+  le crate ne vide que ceux de l'URL. Non mesuré avec deux URL dans un builder.
+- Création sans comparaison. Le `NetworkFile::open` de PROJ, quand le morceau 0 n'est pas en
+  cache, remplace les propriétés sans les comparer ; le crate les compare. Il signale donc un
+  changement là où PROJ n'en signale pas, et seulement si le morceau 0 manque alors que les
+  propriétés sont là (éviction du cache, cas non atteint par les tests).
+- Taille sans `Content-Range` : la taille déduite d'une réponse courte n'est plus partagée entre
+  deux `RemoteFile` de la même URL (elle l'était avant ce lot). PROJ n'a pas ce cas : sans
+  `Content-Range`, la création échoue.
 - Cache SQLite : TTL, taille max, verrou, `proj_grid_cache_clear` (lot cache, autre agent).
 - API de fichiers : routée pour la recherche, les lectures de grilles, modèles et dictionnaires, le
   répertoire utilisateur et le téléchargement (voir « API de fichiers »). Restent sur `std::fs` :
