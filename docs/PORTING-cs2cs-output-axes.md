@@ -195,4 +195,39 @@ geographic 2D/3D, compound, geocentric, projected, `OGC:CRS84`, PROJ strings, `-
 `-f`, `-w`. 24 identical. The one difference predates this lot (same output on `main`):
 `EPSG:4326 EPSG:4807` on `49 2`, PROJ `49d0'0.26"N 0d20'11.363"W 0.000`, the port
 `54.44 -0.37 0.00`. The target's grad unit is printed as plain numbers instead of being
-converted to degrees and written in DMS. Open item.
+converted to degrees and written in DMS. Closed by lot C1, see below: the port now prints
+`49d0'0.26"N 0d20'11.363"W 0.000`, identical to PROJ.
+
+## Grad units (lot C1)
+
+- `src/apps/cs2cs.cpp:274-313` `instantiate_crs`: a geographic CRS with a latitude or longitude
+  first axis is `isLongLatCS`, whatever its unit. `toRadians` is the axis factor (`pi/200` for grads).
+- `cs2cs.cpp:1014-1017`: the input is read by `dmstor` only when `srcToRadians == pi/180`. A grad
+  source reads plain numbers, in grads. The pipeline converts them (`unitconvert xy_in=grad`).
+- `cs2cs.cpp:211-244`: a geographic target always prints degrees, `destToRadians * RAD_TO_DEG`
+  for the decimal form, and DMS when no `-d` or `-f` is given. The target unit does not change that.
+
+Port: `Layout::AngularLongLat { to_degrees }` in `src/bin/cs2cs.rs`, set by `layout_of_type` from
+the axis factor in `proj.db` (`axis_to_radians`). The target's `to_degrees` multiplies the two
+result values in `emit_line`. The DMS path and the lat-first order use `Layout::is_geographic`.
+The input path is unchanged. A `+init=` side keeps its former plain layout: PROJ prints
+`+init=epsg:4807` as DMS, longitude first, and the port does not model that (open, see below).
+
+Measured against PROJ 9.9.0 (`-d 10`): `EPSG:4807 +to EPSG:4326` on `54.2869662585 -0.0466709370`
+gives `48.8582000005 2.2945000049`; `EPSG:4326 +to EPSG:4807` on `48.8582 2.2945` gives
+`48.8582696327 -0.0420038433`. Before the fix the port was right on the input direction only.
+The second grad CRS `EPSG:4810` is checked as well. Radian CRS: `proj.db` has none (no axis with
+`uom_code` 9101), so only grads are covered.
+
+Tests: `tests/cs2cs_grad_units.rs` (8 cases, reference values with the reference data only, so
+the NTv2 grid `data/tests/ntf_r93.gsb` is not read). The unit test `epsg_layout_uses_proj_db` now
+expects `AngularLongLat` for `EPSG:4807`.
+
+Matrix `tools/compare-cs2cs.sh` (272 cases): identical 209 to 213, numeric gap 8 to 4, no row
+gets worse. The remaining `EPSG:4807` rows (`* * inf` to `EPSG:2154` and `EPSG:4171`) come from
+the grid selection, not the unit: see `docs/AUDIT-cs2cs-wide.md`, gap 6. `cli_yaml`: 3 passed
+before and after.
+
+Open after lot C1: `+init=epsg:4807` (`+init=epsg:4326 +to +init=epsg:4807` on `48.8582 2.2945`:
+PROJ `46d31'12.678"E 2d17'30.494"N`, port `48.8582000000 2.2945000000`). The `+init` path is
+PROJ-string based, with its own axis order and datum; it is outside this lot.

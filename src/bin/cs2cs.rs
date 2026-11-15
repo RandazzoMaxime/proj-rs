@@ -151,7 +151,11 @@ fn command() -> ExitCode {
     };
     trace_path(&built);
     let engine = built.engine;
-    let lat_first = engine.lat_first() && dst_side.layout == Layout::DegreeLongLat;
+    let lat_first = engine.lat_first() && dst_side.layout.is_geographic();
+    let dst_to_degrees = match dst_side.layout {
+        Layout::AngularLongLat { to_degrees } => to_degrees,
+        _ => 1.0,
+    };
     let _selection = (
         opts.promote_3d,
         opts.source_epoch,
@@ -179,6 +183,7 @@ fn command() -> ExitCode {
         degree_in: src_side.layout == Layout::DegreeLongLat,
         reverse_in: opts.reverse_in,
         lat_first,
+        dst_to_degrees,
     };
     if opts.files.is_empty() {
         return read_buf(io::stdin().lock(), &job, &mut stdout);
@@ -222,6 +227,8 @@ struct Job<'a> {
     reverse_in: bool,
     /// Geographic output whose first axis is latitude. DMS then prints N/S first.
     lat_first: bool,
+    /// Factor from the output unit to degrees: 1 unless the target is in grads.
+    dst_to_degrees: f64,
     /// `--s_epoch`, else `--t_epoch`. It replaces the input time, as PROJ's `set v_4` does.
     epoch: Option<f64>,
 }
@@ -285,7 +292,7 @@ fn emit_line(line: &str, slot: LineSlot, job: &Job<'_>, stdout: &mut impl Write)
     } else {
         let t = job.epoch.unwrap_or(parsed.t);
         match job.engine.apply(parsed.x, parsed.y, parsed.z, t) {
-            Ok((x, y, z)) => Drawn::Value(x, y, z),
+            Ok((x, y, z)) => Drawn::Value(x * job.dst_to_degrees, y * job.dst_to_degrees, z),
             Err(_) => Drawn::Failed(f64::INFINITY),
         }
     };
@@ -1783,11 +1790,22 @@ fn is_3d_crs(crs: &proj_rs::Crs) -> bool {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Layout {
     DegreeLongLat,
+    /// Geographic in another angular unit (grads). PROJ reads the input as plain numbers in that
+    /// unit and prints the result in degrees: `to_degrees` is the axis factor times 180/pi.
+    AngularLongLat {
+        to_degrees: f64,
+    },
     Projected,
     Other,
+}
+
+impl Layout {
+    fn is_geographic(self) -> bool {
+        matches!(self, Self::DegreeLongLat | Self::AngularLongLat { .. })
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1835,6 +1853,10 @@ impl Catalog {
             {
                 side.layout = Layout::Other;
             }
+            // `+init=` is a PROJ string, not the grad CRS: the plain layout it had stays.
+            if matches!(side.layout, Layout::AngularLongLat { .. }) {
+                side.layout = Layout::Other;
+            }
             return side;
         }
         if let Some(horizontal) = compound_notation(def) {
@@ -1877,10 +1899,13 @@ impl Catalog {
         let dynamic = datum_is_dynamic(db, auth, code);
         let lat_first = first_axis_north_or_south(db, auth, code);
         if kind.starts_with("geographic") {
-            let layout = if axis_is_degrees(db, auth, code).unwrap_or(true) {
-                Layout::DegreeLongLat
-            } else {
-                Layout::Other
+            let layout = match axis_to_radians(db, auth, code) {
+                Some(factor) if (factor - std::f64::consts::PI / 180.0).abs() >= 1e-10 => {
+                    Layout::AngularLongLat {
+                        to_degrees: factor * (180.0 / std::f64::consts::PI),
+                    }
+                }
+                _ => Layout::DegreeLongLat,
             };
             return Side {
                 layout,
@@ -2123,10 +2148,10 @@ fn query_type(db: &Connection, auth: &str, code: &str) -> Result<String, rusqlit
     )
 }
 
-fn axis_is_degrees(db: &Connection, auth: &str, code: &str) -> Option<bool> {
-    let factor: f64 = db
-        .query_row(
-            "SELECT u.conv_factor
+/// The factor from the unit of axis 1 of the geodetic CRS `auth:code` to radians.
+fn axis_to_radians(db: &Connection, auth: &str, code: &str) -> Option<f64> {
+    db.query_row(
+        "SELECT u.conv_factor
              FROM geodetic_crs g
              JOIN axis a
                ON a.coordinate_system_auth_name = g.coordinate_system_auth_name
@@ -2136,11 +2161,10 @@ fn axis_is_degrees(db: &Connection, auth: &str, code: &str) -> Option<bool> {
                ON u.auth_name = a.uom_auth_name
               AND u.code = a.uom_code
              WHERE g.auth_name = ?1 AND g.code = ?2",
-            (auth, code),
-            |row| row.get(0),
-        )
-        .ok()?;
-    Some((factor - std::f64::consts::PI / 180.0).abs() < 1e-10)
+        (auth, code),
+        |row| row.get(0),
+    )
+    .ok()
 }
 
 /// Whether axis 1 of the coordinate system of the CRS `auth:code` runs north or south, so the CRS
@@ -2410,7 +2434,7 @@ fn style_for(opts: &Options, layout: Layout) -> Style {
             xy: XyStyle::Number(fmt),
         };
     }
-    if layout == Layout::DegreeLongLat {
+    if layout.is_geographic() {
         return Style {
             xy: XyStyle::Dms {
                 fract: opts.dms_fract,
@@ -3023,7 +3047,10 @@ mod tests {
         let catalog = Catalog::open();
         assert_eq!(catalog.layout("EPSG:4326").layout, Layout::DegreeLongLat);
         assert_eq!(catalog.layout("EPSG:32631").layout, Layout::Projected);
-        assert_eq!(catalog.layout("EPSG:4807").layout, Layout::Other);
+        assert!(matches!(
+            catalog.layout("EPSG:4807").layout,
+            Layout::AngularLongLat { .. }
+        ));
         assert_eq!(catalog.layout("NAD27").layout, Layout::DegreeLongLat);
         assert!(catalog.layout("ITRF2014").dynamic);
         assert!(!catalog.layout("NAD27").dynamic);

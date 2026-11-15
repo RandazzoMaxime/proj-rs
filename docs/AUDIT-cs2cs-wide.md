@@ -7,15 +7,19 @@ Référence : `cs2cs` 9.9.0 compilé sans TIFF (`target/proj-reference`).
 
 | Mode | Cas | identique | écart ≤ 1e-6 | écart > 1e-6 | statut différent | format texte |
 |---|---|---|---|---|---|---|
-| CRS séparés par des blancs (défaut) | 272 | 209 | 48 | 8 | 7 | 0 |
-| un seul argument par CRS (`-1`) | 272 | 204 | 45 | 8 | 15 | 0 |
+| CRS séparés par des blancs (défaut) | 272 | 213 | 48 | 4 | 7 | 0 |
+| un seul argument par CRS (`-1`) | 272 | 208 | 45 | 4 | 15 | 0 |
+
+Avant le lot C1 (unités grades) : défaut 209 / 48 / 8 / 7 ; `-1` 204 / 45 / 8 / 15.
+Les 4 écarts numériques fermés sont les cas 4807 ci-dessous (écart 1).
 
 - 272 cas, 226 paires distinctes, 60 cas avec option (`--only-best`, `--3d`,
   `-I`, `--no-ballpark`, `--s_epoch`, `--t_epoch`).
 - L'écart toléré le plus grand vaut 2,8e-9 dans l'unité de sortie.
-- Les 15 lignes à écart > 1e-6 ou à statut différent, en mode par défaut, se
-  ramènent à 6 causes distinctes. Elles sont classées par gravité plus bas. Le
-  mode `-1` ajoute 8 cas (argument `+` multi-mots, cause 5 ci-dessous).
+- Les 11 lignes à écart > 1e-6 ou à statut différent, en mode par défaut, se
+  ramènent à 5 causes distinctes (2, 3-4, 6, 7). Elles sont classées par gravité
+  plus bas. Le mode `-1` ajoute 8 lignes à statut différent (argument `+`
+  multi-mots, cause 5 ci-dessous).
 - Le cas 4267 vers 4269 : identique au `cs2cs` de référence dans les 6 variantes
   mesurées. L'écart connu décrit dans `PORTING-cs2cs-grid-policy.md` ne se
   reproduit plus (voir plus bas).
@@ -60,7 +64,7 @@ Chaque point est donc dans l'emprise du CRS. La matrice couvre :
 | `--only-best` | 11 | identique, sauf 4807 vers 2154 (statut, cause 6) |
 | `--only-best=no` | 5 | identique |
 | `--3d` | 8 | identique, sauf 4807 vers 2154 (statut, cause 6) |
-| `-I` | 9 | identique, sauf 4807 vers 2154 (écart, cause 1) |
+| `-I` | 9 | identique (écart 1 fermé, lot C1) |
 | `--no-ballpark` | 6 | identique |
 | `--s_epoch`, `--t_epoch` | 21 | identique, sauf 3 cas (cause 7) |
 
@@ -71,31 +75,30 @@ Les commandes de reproduction utilisent `-k` : la même ligne de
 
 ### Écarts numériques silencieux (classe b, c)
 
-**1. NTF (Paris), EPSG:4807 : décalage de latitude de 5,43° (classe b)**
+**1. NTF (Paris), EPSG:4807 : unité grade (classe b) — fermé, lot C1**
+
+Cause : le port traitait un CRS géographique en grades comme un CRS sans
+degrés : sortie en grades, sans DMS. PROJ lit l'entrée en grades
+(`cs2cs.cpp:274-313` `instantiate_crs`, `informat = strtod` car
+`srcToRadians != pi/180`, `cs2cs.cpp:1014-1017`) et imprime tout résultat
+géographique en degrés (`cs2cs.cpp:211-244`, `destToRadians * RAD_TO_DEG`).
+Le port lit déjà l'entrée en grades (`EPSG:4807 EPSG:27572` du yaml) : seule la
+sortie manquait. Correction : `Layout::AngularLongLat` dans `src/bin/cs2cs.rs`.
 
 Cas : `EPSG:4326 → EPSG:4807`, `EPSG:4171 → EPSG:4807`,
-`EPSG:2154 → EPSG:4807`, `EPSG:4807 → EPSG:2154 [-I]`. Max |Δ| : 5,43 (latitude)
-et 0,758 (longitude), en degrés.
+`EPSG:2154 → EPSG:4807`, `EPSG:4807 → EPSG:2154 [-I]`. Avant : écart de 5,43°
+en latitude et 0,758° en longitude.
 
 ```sh
-tools/compare-cs2cs.sh --no-build -k 'EPSG:4326|EPSG:4807'
 printf '48.8582 2.2945 0\n' | target/proj-reference/build/bin/cs2cs -d 10 EPSG:4326 +to EPSG:4807
 printf '48.8582 2.2945 0\n' | target/release/cs2cs -d 10 EPSG:4326 +to EPSG:4807
 ```
 
 - Référence : `48.8582696327 -0.0420038433 0`.
-- Port : `54.2869662585 -0.0466709370 0`.
+- Port avant : `54.2869662585 -0.0466709370 0`. Port après : identique.
 
-Opération choisie : identique des deux côtés. `projinfo -s EPSG:4326 -t
-EPSG:4807` donne `Inverse of NTF (Paris) to WGS 84 (1)` (EPSG:8094 inversée),
-avec la même chaîne PROJ. Le pipeline lui-même donne les mêmes nombres avec
-`cct` des deux côtés (`48.8582696327 2.2952253234`). La même transformation,
-écrite en chaîne `+proj=longlat +ellps=clrk80ign +towgs84=-168,-60,320,0,0,0,0
-+pm=paris`, donne le résultat de la référence dans le port.
-
-Hypothèse (non vérifiée) : le port construit différemment le CRS cible
-`EPSG:4807` (base de données) et la chaîne `+proj` équivalente. L'écart
-n'apparaît qu'avec le code EPSG.
+Test : `tests/cs2cs_grad_units.rs`, 8 cas (entrée et sortie en grades, un
+deuxième CRS en grades `EPSG:4810`, DMS par défaut).
 
 **2. ITRF2020 (9988) vers WGS 84 (4978) : 0,33 à 0,42 m (classe c)**
 
@@ -187,11 +190,12 @@ guillemetée de PROJ et reste valable : la correction doit distinguer les deux
 formes. Les mêmes CRS passés en mots séparés (mode par défaut) donnent le
 résultat de la référence.
 
-**6. NTF (Paris), statut : le port renvoie `* * inf` (d)**
+**6. NTF (Paris) vers RGF93, statut : le port renvoie `* * inf` (d) — ouvert, cause réattribuée**
 
 Cas : `EPSG:4807 → EPSG:4171`, `EPSG:4807 → EPSG:2154`, et ses variantes
-`--only-best` et `--3d`. Sur le point 2 (Marseille), la référence donne une
-valeur, le port une erreur.
+`--only-best` et `--3d`. Le lot C1 supposait une cause d'unité. La mesure
+l'infirme : la ligne `* * inf` est la même avant et après la correction des
+grades.
 
 ```sh
 tools/compare-cs2cs.sh --no-build -k 'EPSG:4807|EPSG:2154'
@@ -199,13 +203,25 @@ printf '43.2999763919 3.0333132353\n' | target/proj-reference/build/bin/cs2cs -d
 printf '43.2999763919 3.0333132353\n' | target/release/cs2cs -d 10 EPSG:4807 +to EPSG:2154
 ```
 
-- Référence : `880453.0554161093 5764316.2342027659`.
+- Référence (`PROJ_DATA` du comparateur, avec `data/tests/ntf_r93.gsb`) :
+  `880453.0554161093 5764316.2342027659`.
 - Port : `* * inf`.
 
-Opération : `projinfo` donne `fr_ign_ntf_r93.tif` (absent des données, lu en
-repli) et `fr_ign_gr3df97a.tif` (absent). La référence sort une valeur de
-repli (approchée). Avec `--no-ballpark`, les deux côtés échouent de même.
-Hypothèse (non vérifiée) : le repli approché du port ne couvre pas ce point.
+Sans la grille `data/tests/ntf_r93.gsb` (`PROJ_DATA` = la seule référence), le
+port et la référence donnent les mêmes valeurs à 1e-10 près :
+`880407.3954572410 5764330.9733427446` (4807 vers 2154),
+`38.9698363107 2.7305003045` (2154 vers 4807), `38.9701211876 5.0666926700`
+(4807 vers 4171). Ce sont les valeurs de `tests/cs2cs_grad_units.rs`.
+
+Avec la grille, la référence ouvre `fr_ign_ntf_r93.tif` (absent), puis
+`ntf_r93.gsb` : la table `grid_alternatives` de `proj.db` relie les deux
+(`old_proj_grid_name`). Le port répond `* * inf` en mode par défaut, avec
+`--only-best` et avec `--3d`. Il lit `nadgrids=fr_ign_ntf_r93.tif` sans erreur
+(même valeur que la référence). La défaillance est donc dans la sélection ISO
+(`PROJ_RS_TRACE_PATH=1` : `path=iso`) ou dans le pipeline de l'opération
+retenue. Non vérifié. Prochaine étape : comparer l'opération retenue avec
+`projinfo -s EPSG:4807 -t EPSG:2154 -o PROJ` et la trace `PROJ_DEBUG=3`. La
+fiche de référence est `PORTING-cs2cs-grid-policy.md`.
 
 **7. Époques sur un CRS statique (d)**
 
@@ -261,8 +277,12 @@ matrice ne le met pas à l'épreuve.
 - Les messages d'erreur sur la sortie d'erreur (stderr) ne sont pas comparés.
   Ils diffèrent (par exemple `proj_create: crs not found` contre
   `no transformation`). Le comparateur ne classe que stdout et les codes retour.
-- La cause de l'écart 6 n'est pas identifiée dans le code du port. Les causes des écarts 3 et 4
-  sont mesurées (points 3 et 4), pas corrigées.
+- La cause de l'écart 6 est réattribuée à la grille (`ntf_r93.gsb`), pas à l'unité ; non corrigée.
+  Les causes des écarts 3 et 4 sont mesurées (points 3 et 4), pas corrigées.
+- `+init=epsg:4807` (hors matrice) : PROJ imprime en DMS, longitude d'abord, un
+  point qui n'est pas celui du port (`+init=epsg:4326 +to +init=epsg:4807` sur
+  `48.8582 2.2945` : PROJ `46d31'12.678"E 2d17'30.494"N`). Le port garde sa
+  disposition d'avant le lot C1. Voie `+init` : même famille que les écarts 3 et 4.
 - `projinfo` refuse la syntaxe `+init=` en mode non PROJ4 : les choix
   d'opération de ces paires ne sont pas lus par `projinfo`.
 - Le candidat de `EPSG:4326 → EPSG:4936` diffère (référence 2, port 1), sans
