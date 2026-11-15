@@ -947,6 +947,12 @@ pub(crate) trait Step: Send + Sync {
         1.0
     }
 
+    /// The frame and the unit-ellipsoid forward of a projection, the inputs of `pj_factors`.
+    /// [`None`] for a step without one: its factors differentiate the output in metres.
+    fn unit_projection(&self) -> Option<UnitProjection<'_>> {
+        None
+    }
+
     /// `true` when this step computes the third axis from its input, as PROJ's `fwd3d`
     /// and `inv3d` do (`sch`, `cart`). A 2D step passes the height through.
     fn computes_height(&self) -> bool {
@@ -1164,6 +1170,11 @@ impl Operation {
     /// Metres in one unit of this operation's forward output, see `Step::output_to_metre`.
     pub(crate) fn output_to_metre(&self) -> f64 {
         self.step.output_to_metre()
+    }
+
+    /// The projection and its unit-ellipsoid forward, see `Step::unit_projection`.
+    pub(crate) fn unit_projection(&self) -> Option<UnitProjection<'_>> {
+        self.step.unit_projection()
     }
 
     /// Whether the operation computes the third axis from its input, as PROJ's
@@ -1491,19 +1502,38 @@ fn auto_is_exact_only(es: f64, phi0: f64, k0: f64) -> bool {
 
 fn native_exact(frame: &Frame, tmerc: Tmerc) -> Box<dyn Step> {
     let inverse = tmerc.clone();
-    Box::new(NativeProjected::new(
-        frame,
-        move |lon, lat| tmerc.forward_rad(lon, lat),
-        move |xy| inverse.inverse(xy),
-    ))
+    let unit = tmerc.clone();
+    Box::new(
+        NativeProjected::new(
+            frame,
+            move |lon, lat| tmerc.forward_rad(lon, lat),
+            move |xy| inverse.inverse(xy),
+        )
+        .with_unit(UnitFn {
+            lam0: frame.lam0,
+            forward: move |lam: f64, phi: f64| -> Result<(f64, f64), TransformError> {
+                Ok(unit.fwd_unit(lam, phi)?)
+            },
+        }),
+    )
 }
 
 fn native_approx(frame: &Frame, approx: ApproxTmerc) -> Box<dyn Step> {
-    Box::new(NativeProjected::new(
-        frame,
-        move |lon, lat| approx.forward(lon, lat),
-        move |xy| approx.inverse(xy),
-    ))
+    let inverse = approx;
+    let unit = approx;
+    Box::new(
+        NativeProjected::new(
+            frame,
+            move |lon, lat| approx.forward(lon, lat),
+            move |xy| inverse.inverse(xy),
+        )
+        .with_unit(UnitFn {
+            lam0: frame.lam0,
+            forward: move |lam: f64, phi: f64| -> Result<(f64, f64), TransformError> {
+                Ok(unit.fwd_unit(lam, phi)?)
+            },
+        }),
+    )
 }
 
 fn native_auto(
@@ -1651,15 +1681,20 @@ fn build_utm(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateErro
         Hemisphere::South => 10_000_000.0,
     };
     let lam0 = lon0.to_radians();
+    let zone_frame = Frame {
+        lam0: (f64::from(zone.number()) - 1.0 + 0.5) * std::f64::consts::PI / 30.0
+            - std::f64::consts::PI,
+        ..frame.clone()
+    };
     let k0 = 0.9996;
     let exact =
         || Tmerc::utm(zone, hemisphere, frame.earth).map_err(|_| CreateError::IllegalValue("zone"));
     let approx = || approx_from_degrees(frame, lon0, 0.0, k0, 500_000.0, y0);
     match algo {
-        TmercAlgo::Evenden => Ok(native_approx(frame, approx()?)),
-        TmercAlgo::Exact => Ok(native_exact(frame, exact()?)),
+        TmercAlgo::Evenden => Ok(native_approx(&zone_frame, approx()?)),
+        TmercAlgo::Exact => Ok(native_exact(&zone_frame, exact()?)),
         TmercAlgo::Auto if auto_is_exact_only(frame.earth.es(), 0.0, k0) => {
-            Ok(native_exact(frame, exact()?))
+            Ok(native_exact(&zone_frame, exact()?))
         }
         TmercAlgo::Auto => Ok(native_auto(
             frame,
@@ -1687,11 +1722,20 @@ fn build_lcc(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateErro
     };
     let lcc = Lcc::try_new(frame.earth, cone).map_err(|_| CreateError::IllegalValue("lat_1"))?;
     let inverse = lcc.clone();
-    Ok(Box::new(NativeProjected::new(
-        frame,
-        move |lon, lat| lcc.forward(lon.to_degrees(), lat.to_degrees()),
-        move |xy| inverse.inverse(xy),
-    )))
+    let unit = lcc.clone();
+    Ok(Box::new(
+        NativeProjected::new(
+            frame,
+            move |lon, lat| lcc.forward(lon.to_degrees(), lat.to_degrees()),
+            move |xy| inverse.inverse(xy),
+        )
+        .with_unit(UnitFn {
+            lam0: frame.lam0,
+            forward: move |lam: f64, phi: f64| -> Result<(f64, f64), TransformError> {
+                Ok(unit.fwd_unit(lam, phi)?)
+            },
+        }),
+    ))
 }
 
 fn build_merc(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateError> {
@@ -1720,23 +1764,32 @@ fn build_merc(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateErr
             .map_err(|_| CreateError::IllegalValue("k_0"))?
     };
     let over = frame.over;
-    Ok(Box::new(NativeProjected::new(
-        frame,
-        move |lon, lat| {
-            if over {
-                merc.forward_rad_over(lon, lat)
-            } else {
-                merc.forward(lon.to_degrees(), lat.to_degrees())
-            }
-        },
-        move |xy| {
-            if over {
-                merc.inverse_over(xy)
-            } else {
-                merc.inverse(xy)
-            }
-        },
-    )))
+    let unit = merc;
+    Ok(Box::new(
+        NativeProjected::new(
+            frame,
+            move |lon, lat| {
+                if over {
+                    merc.forward_rad_over(lon, lat)
+                } else {
+                    merc.forward(lon.to_degrees(), lat.to_degrees())
+                }
+            },
+            move |xy| {
+                if over {
+                    merc.inverse_over(xy)
+                } else {
+                    merc.inverse(xy)
+                }
+            },
+        )
+        .with_unit(UnitFn {
+            lam0: frame.lam0,
+            forward: move |lam: f64, phi: f64| -> Result<(f64, f64), TransformError> {
+                Ok(unit.fwd_unit(lam, phi))
+            },
+        }),
+    ))
 }
 
 fn build_helmert(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateError> {
@@ -1772,6 +1825,43 @@ pub(crate) trait Kernel: Send + Sync {
     fn inverse(&self, x: f64, y: f64) -> Result<(f64, f64), TransformError>;
 }
 
+/// PROJ's `P->fwd` on the unit ellipsoid: the output is in units of the semi-major axis, with no
+/// false origin and no unit conversion. `lam` is relative to [`Self::lam0`].
+pub(crate) trait UnitForward: Send + Sync {
+    /// Central meridian, radians, that `pj_factors` removes before the differentiation.
+    fn lam0(&self) -> f64;
+
+    /// # Errors
+    ///
+    /// [`TransformError::OutsideDomain`] when the point has no image.
+    fn unit_forward(&self, lam: f64, phi: f64) -> Result<(f64, f64), TransformError>;
+}
+
+/// A projection as `pj_factors` sees it: its frame and its unit forward.
+pub(crate) struct UnitProjection<'a> {
+    pub(crate) frame: &'a Frame,
+    pub(crate) forward: &'a dyn UnitForward,
+}
+
+/// A native kernel as a [`UnitForward`]: its closure and its central meridian.
+pub(crate) struct UnitFn<F> {
+    pub(crate) lam0: f64,
+    pub(crate) forward: F,
+}
+
+impl<F> UnitForward for UnitFn<F>
+where
+    F: Fn(f64, f64) -> Result<(f64, f64), TransformError> + Send + Sync,
+{
+    fn lam0(&self) -> f64 {
+        self.lam0
+    }
+
+    fn unit_forward(&self, lam: f64, phi: f64) -> Result<(f64, f64), TransformError> {
+        (self.forward)(lam, phi)
+    }
+}
+
 struct Classic<K> {
     frame: Frame,
     kernel: K,
@@ -1783,7 +1873,24 @@ impl<K: Kernel> Classic<K> {
     }
 }
 
+impl<K: Kernel + 'static> UnitForward for Classic<K> {
+    fn lam0(&self) -> f64 {
+        self.frame.lam0
+    }
+
+    fn unit_forward(&self, lam: f64, phi: f64) -> Result<(f64, f64), TransformError> {
+        self.kernel.forward(lam, phi)
+    }
+}
+
 impl<K: Kernel + 'static> Step for Classic<K> {
+    fn unit_projection(&self) -> Option<UnitProjection<'_>> {
+        Some(UnitProjection {
+            frame: &self.frame,
+            forward: self,
+        })
+    }
+
     fn forward(&self, coord: Coord) -> Result<Coord, TransformError> {
         // PROJ returns NaN coordinates for a NaN input. It does not set errno.
         if coord.x.is_nan() || coord.y.is_nan() {
@@ -1941,6 +2048,7 @@ struct NativeProjected<F, I> {
     frame: Frame,
     forward_xy: F,
     inverse_xy: I,
+    unit: Option<Box<dyn UnitForward>>,
 }
 
 impl<F, I> NativeProjected<F, I>
@@ -1953,7 +2061,14 @@ where
             frame: frame.clone(),
             forward_xy,
             inverse_xy,
+            unit: None,
         }
+    }
+
+    /// Attach the unit-ellipsoid forward of this projection, see [`Step::unit_projection`].
+    fn with_unit(mut self, unit: impl UnitForward + 'static) -> Self {
+        self.unit = Some(Box::new(unit));
+        self
     }
 }
 
@@ -2002,6 +2117,13 @@ where
 
     fn output_to_metre(&self) -> f64 {
         self.frame.to_meter
+    }
+
+    fn unit_projection(&self) -> Option<UnitProjection<'_>> {
+        self.unit.as_deref().map(|forward| UnitProjection {
+            frame: &self.frame,
+            forward,
+        })
     }
 }
 

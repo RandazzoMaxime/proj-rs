@@ -45,6 +45,17 @@ Sources : PROJ 9.9.0 `src/apps/proj.cpp`, `geod.cpp`, `geod_set.cpp`, `cs2cs.cpp
    les espaces).
 6. **NTv1.** Entête en big-endian, degrés, enregistrements d'est en ouest ; même convention
    de longitude que NTv2 (`compensateNTConvention`).
+7. **Facteurs `proj -S` : dérivée du noyau unitaire.** `pj_factors` dérivait la sortie en
+   mètres de `forward`, puis la divisait par `a`. Résultat : oméga faux de 5e-7 rad à
+   `100 -80` (Mercator GRS80), et facteurs faux avec `+units=ft` (1,52 attendu, 4,99 donné à
+   `2 49`, car la CLI n'appliquait pas `to_meter`). Le port dérive maintenant le noyau
+   brut, `P->fwd` de `deriv.cpp`, via `UnitForward` : même pré-traitement (`lam0`, latitude
+   géocentrique, pôle), même ordre des différences, sans `to_meter` ni `a`. `Job::factors`
+   appelle `Operation::factors`. Le noyau de Mercator suit l'expression de `merc.cpp`
+   (`asinh(sin/cos) - e atanh(e sin)`), et le méridien central d'UTM celle de `build_utm`.
+   Mesure (`tests/cli_proj_factors.rs`, 8 cas écrits par la référence) : Mercator, LCC,
+   stéréographique et Robinson sont identiques à la référence sur 88 points pris un par un.
+   Le reste est dans « Écarts ouverts ».
 
 ## Écarts volontaires vers PROJ
 
@@ -69,7 +80,7 @@ Sources : PROJ 9.9.0 `src/apps/proj.cpp`, `geod.cpp`, `geod_set.cpp`, `cs2cs.cpp
 
 | Écart | Cause exacte |
 |---|---|
-| `proj -S` omega à la latitude -80 (`100 -80`, `+ellps=GRS80` Mercator) | PROJ dérive la projection unitaire (`fwd` sans `fwd_finalize`, `deriv.cpp`) ; ici la dérivée passe par les mètres de `forward`. Les points conformes donnent 0, comme PROJ ; à -80 l'écart est 5e-7 rad. |
+| `proj -S` oméga au bit près, exact Tmerc et UTM zone 31 : 2 points sur 88 (tmerc `-120 60`, `-60 -85`), 3 sur 88 (UTM) | PROJ affiche un bruit de 1e-6 là où le port affiche 0, ou l'inverse : écart d'un ulp dans la dérivée numérique. Cause exacte non identifiée. Les coefficients de `setup_exact` (`pj_auxlat_coeffs`, `Qn`, `Zb`) ne sont pas comparés octet à octet ; `pj_auxlat_convert` avec l'ordre de PROJ n'a rien changé (86 et 85 avant et après). |
 | `proj -b/-i/-o` : derniers bits | L'ordre des opérations de `tmerc`/`utm` inverse et de Mercator diffère de PROJ : écart d'un à deux ulps, non visible en texte. |
 | `proj -v`, `-V` | Non porté : le dump de moniteur (`pj_pr_list`, `vprocess`) est une sortie interne de PROJ. |
 

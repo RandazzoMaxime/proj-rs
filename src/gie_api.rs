@@ -2,9 +2,14 @@
 //! `proj_roundtrip`, `proj_trans_array`, `proj_xy_dist`, and the `proj_list_*`
 //! enumerations. Each follows PROJ 9.9.0 (`trans.cpp`, `dist.cpp`, `apps` lists).
 
-use crate::engine::{lpz_dist, xyz_dist, Coord, Operation, TransformError};
+use crate::angle::adjlon;
+use crate::engine::{
+    geocentric_to_geographic, lpz_dist, xyz_dist, Coord, Operation, TransformError, UnitProjection,
+};
 use crate::proj::{Direction, ProjError};
+use crate::projmath::aasin;
 use crate::{create_from_user_input, Crs, DatabaseContext};
+use std::f64::consts::FRAC_PI_2;
 use std::num::NonZeroUsize;
 
 /// The error of [`Operation::transform_array`], as `proj_trans_array` reports it.
@@ -354,20 +359,23 @@ const DEFAULT_STEP: f64 = 1e-5;
 const FACTOR_EPS: f64 = 1e-12;
 
 impl Operation {
-    /// `proj_factors` of a projection: the numerical derivatives of the forward
-    /// transform (`pj_deriv`, central differences of step `1e-5` rad) and the
-    /// scale factors of `pj_factors`. Input is longitude and latitude in radians.
+    /// `proj_factors` of a projection: the numerical derivatives of the forward transform
+    /// (`pj_deriv`, central differences of step `1e-5` rad) and the scale factors of
+    /// `pj_factors`. Input is longitude and latitude in radians.
     ///
-    /// The derivatives are of the output in metres: a forward output in another linear unit,
-    /// such as `+units=ft`, is multiplied by its `to_meter` first. They are then divided by
-    /// the semi-major axis, as PROJ's unit-sphere `P->fwd` is.
+    /// A projection with a unit-ellipsoid forward is differentiated as PROJ differentiates its
+    /// `P->fwd`: no unit conversion and no semi-major axis. Any other operation is
+    /// differentiated in metres, divided by the semi-major axis.
     ///
     /// # Errors
     ///
     /// [`TransformError::InvalidCoord`] when the latitude or longitude is out of
     /// range, and [`TransformError::OutsideDomain`] when a stencil point has no image.
     pub fn factors(&self, lon: f64, lat: f64) -> Result<Factors, TransformError> {
-        self.factors_in_metres(lon, lat, self.output_to_metre())
+        match self.unit_projection() {
+            Some(unit) => unit_factors(unit, lon, lat),
+            None => self.factors_in_metres(lon, lat, self.output_to_metre()),
+        }
     }
 
     /// [`Self::factors`] when one unit of the forward output is `to_metre` metres.
@@ -377,25 +385,10 @@ impl Operation {
         lat: f64,
         to_metre: f64,
     ) -> Result<Factors, TransformError> {
-        let half_pi = std::f64::consts::FRAC_PI_2;
-        if (lat.abs() - half_pi) > FACTOR_EPS || lon.abs() > 10.0 {
-            return Err(TransformError::InvalidCoord);
-        }
-        let h = DEFAULT_STEP;
-        let lat = if lat.abs() > half_pi - h {
-            if lat < 0.0 {
-                -(half_pi - h)
-            } else {
-                half_pi - h
-            }
-        } else {
-            lat
-        };
+        check_factor_range(lon, lat)?;
         let (a, es) = self.distance_ellipsoid();
+        let lat = inside_pole(lat, DEFAULT_STEP);
         let point = |l: f64, p: f64| -> Result<(f64, f64), TransformError> {
-            if p.abs() > half_pi {
-                return Err(TransformError::OutsideDomain);
-            }
             let out = self.forward(Coord {
                 x: l,
                 y: p,
@@ -404,51 +397,137 @@ impl Operation {
             })?;
             Ok((out.x * to_metre / a, out.y * to_metre / a))
         };
-        // The stencil of `pj_deriv`: (+,+), (+,-), (-,-), (-,+) in (lam, phi).
-        let (x1, y1) = point(lon + h, lat + h)?;
-        let (x2, y2) = point(lon + h, lat - h)?;
-        let (x3, y3) = point(lon - h, lat - h)?;
-        let (x4, y4) = point(lon - h, lat + h)?;
-        let four_h = 4.0 * h;
-        let x_l = (x1 + x2 - x3 - x4) / four_h;
-        let y_p = (y1 - y2 - y3 + y4) / four_h;
-        let x_p = (x1 - x2 - x3 + x4) / four_h;
-        let y_l = (y1 + y2 - y3 - y4) / four_h;
-
-        let cosphi = lat.cos();
-        let mut hs = x_p.hypot(y_p);
-        let mut k = x_l.hypot(y_l) / cosphi;
-        let r = if es == 0.0 {
-            1.0
-        } else {
-            let mut t = lat.sin();
-            t = 1.0 - es * t * t;
-            let n = t.sqrt();
-            hs *= t * n / (1.0 - es);
-            k *= n;
-            t * t / (1.0 - es)
-        };
-        let conv = -x_p.atan2(y_p);
-        let s = (y_p * x_l - x_p * y_l) * r / cosphi;
-        let thetap = (s / (hs * k)).clamp(-1.0, 1.0).asin();
-        let mut t = k * k + hs * hs;
-        let a_axis = (t + 2.0 * s).sqrt();
-        t -= 2.0 * s;
-        let t = if t > 0.0 { t.sqrt() } else { 0.0 };
-        let b = 0.5 * (a_axis - t);
-        let a_axis = 0.5 * (a_axis + t);
-        let omega = 2.0 * ((a_axis - b) / (a_axis + b)).clamp(-1.0, 1.0).asin();
-        Ok(Factors {
-            meridional_scale: hs,
-            parallel_scale: k,
-            areal_scale: s,
-            angular_distortion: omega,
-            meridian_parallel_angle: thetap,
-            meridian_convergence: conv,
-            tissot_semimajor: a_axis,
-            tissot_semiminor: b,
-        })
+        let [x_l, y_p, x_p, y_l] = pj_deriv(lon, lat, DEFAULT_STEP, point)?;
+        factors_from_derivatives(x_l, y_p, x_p, y_l, lat, es)
     }
+}
+
+/// `pj_factors` of `factors.cpp` for a projection with a unit-ellipsoid forward. The geocentric
+/// latitude is converted and the central meridian removed, then `pj_deriv` differentiates the
+/// unit forward itself. The factors need neither `to_meter` nor the semi-major axis.
+fn unit_factors(unit: UnitProjection<'_>, lon: f64, lat: f64) -> Result<Factors, TransformError> {
+    check_factor_range(lon, lat)?;
+    let frame = unit.frame;
+    let lat = if frame.geoc {
+        geocentric_to_geographic(lat, frame.earth.one_es())
+    } else {
+        lat
+    };
+    let lat = inside_pole(lat, DEFAULT_STEP);
+    let mut lam = lon - unit.forward.lam0();
+    if !frame.over {
+        lam = adjlon(lam);
+    }
+    let [x_l, y_p, x_p, y_l] = pj_deriv(lam, lat, DEFAULT_STEP, |l, p| {
+        unit.forward.unit_forward(l, p)
+    })?;
+    factors_from_derivatives(x_l, y_p, x_p, y_l, lat, frame.earth.es())
+}
+
+fn check_factor_range(lon: f64, lat: f64) -> Result<(), TransformError> {
+    if (lat.abs() - FRAC_PI_2) > FACTOR_EPS || lon.abs() > 10.0 {
+        return Err(TransformError::InvalidCoord);
+    }
+    Ok(())
+}
+
+/// `pj_factors` keeps a latitude beyond one step from the pole inside it, so the stencil exists.
+fn inside_pole(lat: f64, h: f64) -> f64 {
+    let limit = FRAC_PI_2 - h;
+    if lat.abs() <= limit {
+        lat
+    } else if lat < 0.0 {
+        -limit
+    } else {
+        limit
+    }
+}
+
+/// `pj_deriv` of `deriv.cpp`: central differences over the stencil (+,+), (+,-), (-,-), (-,+) in
+/// (lam, phi). The steps are taken in PROJ's order so that the rounding is PROJ's too. Returns
+/// `[x_lam, y_phi, x_phi, y_lam]`.
+fn pj_deriv(
+    lam: f64,
+    phi: f64,
+    h: f64,
+    mut forward: impl FnMut(f64, f64) -> Result<(f64, f64), TransformError>,
+) -> Result<[f64; 4], TransformError> {
+    let (lam, phi) = (lam + h, phi + h);
+    if phi.abs() > FRAC_PI_2 {
+        return Err(TransformError::OutsideDomain);
+    }
+    let step = 2.0 * h;
+    let (x, y) = forward(lam, phi)?;
+    let (mut x_l, mut y_p, mut x_p, mut y_l) = (x, y, x, y);
+    let phi = phi - step;
+    if phi.abs() > FRAC_PI_2 {
+        return Err(TransformError::OutsideDomain);
+    }
+    let (x, y) = forward(lam, phi)?;
+    x_l += x;
+    y_p -= y;
+    x_p -= x;
+    y_l += y;
+    let lam = lam - step;
+    let (x, y) = forward(lam, phi)?;
+    x_l -= x;
+    y_p -= y;
+    x_p -= x;
+    y_l -= y;
+    let phi = phi + step;
+    let (x, y) = forward(lam, phi)?;
+    x_l -= x;
+    y_p += y;
+    x_p += x;
+    y_l -= y;
+    let divisor = 2.0 * step;
+    Ok([x_l / divisor, y_p / divisor, x_p / divisor, y_l / divisor])
+}
+
+/// The scale factors of `pj_factors` from the derivatives of the forward transform, at a
+/// latitude already clamped inside the pole, on an ellipsoid of squared eccentricity `es`.
+fn factors_from_derivatives(
+    x_l: f64,
+    y_p: f64,
+    x_p: f64,
+    y_l: f64,
+    lat: f64,
+    es: f64,
+) -> Result<Factors, TransformError> {
+    let cosphi = lat.cos();
+    let mut hs = x_p.hypot(y_p);
+    let mut k = x_l.hypot(y_l) / cosphi;
+    let r = if es == 0.0 {
+        1.0
+    } else {
+        let mut t = lat.sin();
+        t = 1.0 - es * t * t;
+        let n = t.sqrt();
+        hs *= t * n / (1.0 - es);
+        k *= n;
+        t * t / (1.0 - es)
+    };
+    let conv = -x_p.atan2(y_p);
+    let s = (y_p * x_l - x_p * y_l) * r / cosphi;
+    let thetap = aasin(s / (hs * k)).map_err(|()| TransformError::OutsideDomain)?;
+    let mut t = k * k + hs * hs;
+    let a_axis = (t + 2.0 * s).sqrt();
+    t -= 2.0 * s;
+    let t = if t > 0.0 { t.sqrt() } else { 0.0 };
+    let b = 0.5 * (a_axis - t);
+    let a_axis = 0.5 * (a_axis + t);
+    let omega =
+        2.0 * aasin((a_axis - b) / (a_axis + b)).map_err(|()| TransformError::OutsideDomain)?;
+    Ok(Factors {
+        meridional_scale: hs,
+        parallel_scale: k,
+        areal_scale: s,
+        angular_distortion: omega,
+        meridian_parallel_angle: thetap,
+        meridian_convergence: conv,
+        tissot_semimajor: a_axis,
+        tissot_semiminor: b,
+    })
 }
 
 /// `proj_factors` of a single CRS, which [`crate::Proj::new`] keeps as its text: an `EPSG:`

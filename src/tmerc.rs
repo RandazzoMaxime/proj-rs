@@ -186,7 +186,7 @@ impl Tmerc {
         clippy::similar_names,
         reason = "Cn and Ce are the paired northing/easting terms in PROJ exact_e_fwd"
     )]
-    fn fwd_unit(&self, lam: f64, phi: f64) -> Result<(f64, f64), ProjectionError> {
+    pub(crate) fn fwd_unit(&self, lam: f64, phi: f64) -> Result<(f64, f64), ProjectionError> {
         let mut cn = gatg(&self.cbg, phi, (2.0 * phi).cos(), (2.0 * phi).sin());
         let sin_cn = cn.sin();
         let cos_cn = cn.cos();

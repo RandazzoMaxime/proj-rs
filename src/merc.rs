@@ -3,7 +3,7 @@
 //! Portage de `src/projections/merc.cpp` (PROJ 9.9). Voir `docs/PORTING-merc.md`.
 
 use crate::angle::adjlon;
-use crate::lcc::{phi2, tsfn};
+use crate::lcc::phi2;
 use crate::{Ellipsoid, Geographic, Projected, ProjectionError};
 
 /// Rayon de sphère du Web Mercator (EPSG:3857), le `a` de WGS 84.
@@ -198,10 +198,13 @@ impl Mercator {
         })
     }
 
-    fn fwd_unit(&self, lam: f64, phi: f64) -> (f64, f64) {
+    pub(crate) fn fwd_unit(&self, lam: f64, phi: f64) -> (f64, f64) {
         let y = match self.model {
             Model::Sphere => phi.tan().asinh(),
-            Model::Ellipsoid { e } => -tsfn(phi, phi.sin(), e).ln(),
+            Model::Ellipsoid { e } => {
+                let (sphi, cphi) = (phi.sin(), phi.cos());
+                (sphi / cphi).asinh() - e * (e * sphi).atanh()
+            }
         };
         (self.k0 * lam, self.k0 * y)
     }

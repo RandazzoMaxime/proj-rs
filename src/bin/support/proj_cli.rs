@@ -28,10 +28,6 @@ use super::dms::{
 };
 use crate::lists;
 
-/// Step of the numerical derivatives in `pj_factors`, radians.
-const DERIV_STEP: f64 = 1e-5;
-/// Tolerance of the latitude check in `pj_factors`, radians.
-const EPS: f64 = 1e-12;
 /// `MAX_LINE` of `proj.cpp`: `fgets` reads one byte less than this.
 const MAX_LINE: usize = 200;
 
@@ -432,100 +428,22 @@ impl Job {
 
     /// Scale factors in the order `-S` prints them: meridional, parallel,
     /// areal, angular distortion in degrees, and the two Tissot semi-axes.
-    /// This is `pj_factors` of PROJ's `factors.cpp`, at a longitude and
-    /// latitude in radians.
+    /// This is `Operation::factors`, which is `pj_factors` of PROJ's `factors.cpp`.
     fn factors(&self, lam: f64, phi: f64) -> Result<[f64; 6], ()> {
-        let (a, es) = self.operation.distance_ellipsoid();
-        let mut phi = phi;
-        if a == 0.0 || phi.abs() - FRAC_PI_2 > EPS || lam.abs() > 10.0 {
-            return Err(());
-        }
-        let h = DERIV_STEP;
-        if phi.abs() > FRAC_PI_2 - h {
-            phi = phi.signum() * (FRAC_PI_2 - h);
-        }
-        let [x_l, y_p, x_p, y_l] = self.derivatives(lam, phi, h).ok_or(())?;
-        let (x_l, y_p, x_p, y_l) = (x_l / a, y_p / a, x_p / a, y_l / a);
-        let cosphi = phi.cos();
-        let mut meridional = x_p.hypot(y_p);
-        let mut parallel = x_l.hypot(y_l) / cosphi;
-        let r = if es != 0.0 {
-            let t = 1.0 - es * phi.sin() * phi.sin();
-            let n = t.sqrt();
-            meridional *= t * n / (1.0 - es);
-            parallel *= n;
-            t * t / (1.0 - es)
-        } else {
-            1.0
-        };
-        let areal = (y_p * x_l - x_p * y_l) * r / cosphi;
-        let t = parallel * parallel + meridional * meridional;
-        let major = (t + 2.0 * areal).sqrt();
-        let t = t - 2.0 * areal;
-        let t = if t > 0.0 { t.sqrt() } else { 0.0 };
-        let minor = 0.5 * (major - t);
-        let major = 0.5 * (major + t);
-        let omega = 2.0 * aasin((major - minor) / (major + minor));
+        let f = self.operation.factors(lam, phi).map_err(|_| ())?;
         let factors = [
-            meridional,
-            parallel,
-            areal,
-            omega.to_degrees(),
-            major,
-            minor,
+            f.meridional_scale,
+            f.parallel_scale,
+            f.areal_scale,
+            f.angular_distortion.to_degrees(),
+            f.tissot_semimajor,
+            f.tissot_semiminor,
         ];
         if factors.iter().all(|value| value.is_finite()) {
             Ok(factors)
         } else {
             Err(())
         }
-    }
-
-    /// Central differences of the forward operation, `pj_deriv` of PROJ's
-    /// `deriv.cpp`. Returns `[x_lam, y_phi, x_phi, y_lam]`, in metres per radian.
-    fn derivatives(&self, lam: f64, phi: f64, h: f64) -> Option<[f64; 4]> {
-        let forward = |lam: f64, phi: f64| -> Option<(f64, f64)> {
-            let got = self
-                .operation
-                .forward(Xyzt {
-                    x: lam,
-                    y: phi,
-                    z: 0.0,
-                    t: 0.0,
-                })
-                .ok()?;
-            Some((got.x, got.y))
-        };
-        let (lam, phi) = (lam + h, phi + h);
-        if phi.abs() > FRAC_PI_2 {
-            return None;
-        }
-        let step = 2.0 * h;
-        let (x, y) = forward(lam, phi)?;
-        let (mut x_l, mut y_p, mut x_p, mut y_l) = (x, y, x, y);
-        let phi = phi - step;
-        if phi.abs() > FRAC_PI_2 {
-            return None;
-        }
-        let (x, y) = forward(lam, phi)?;
-        x_l += x;
-        y_p -= y;
-        x_p -= x;
-        y_l += y;
-        let lam = lam - step;
-        let (x, y) = forward(lam, phi)?;
-        x_l -= x;
-        y_p -= y;
-        x_p -= x;
-        y_l -= y;
-        let phi = phi + step;
-        let (x, y) = forward(lam, phi)?;
-        x_l -= x;
-        y_p += y;
-        x_p += x;
-        y_l -= y;
-        let divisor = 2.0 * step;
-        Some([x_l / divisor, y_p / divisor, x_p / divisor, y_l / divisor])
     }
 }
 
@@ -738,17 +656,4 @@ fn projected_definition(text: &str) -> Result<(String, bool), String> {
         .export_to_proj_string()
         .map_err(|error| error.to_string())?;
     Ok((definition, north_first))
-}
-
-/// `aasin` of PROJ: an argument beyond ±1 is clamped, without an error.
-fn aasin(value: f64) -> f64 {
-    if value.abs() >= 1.0 {
-        if value < 0.0 {
-            -FRAC_PI_2
-        } else {
-            FRAC_PI_2
-        }
-    } else {
-        value.asin()
-    }
 }

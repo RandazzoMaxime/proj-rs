@@ -375,7 +375,7 @@ impl Lcc {
         })
     }
 
-    fn fwd_unit(&self, lam: f64, phi: f64) -> Result<(f64, f64), ProjectionError> {
+    pub(crate) fn fwd_unit(&self, lam: f64, phi: f64) -> Result<(f64, f64), ProjectionError> {
         let half = std::f64::consts::FRAC_PI_2;
         let rho = if (phi.abs() - half).abs() < EPS10 {
             if phi * self.n <= 0.0 {

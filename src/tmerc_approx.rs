@@ -112,7 +112,7 @@ impl ApproxTmerc {
         })
     }
 
-    fn fwd_unit(&self, lam: f64, phi: f64) -> Result<(f64, f64), ProjectionError> {
+    pub(crate) fn fwd_unit(&self, lam: f64, phi: f64) -> Result<(f64, f64), ProjectionError> {
         if lam < -FRAC_PI_2 || lam > FRAC_PI_2 {
             return Err(ProjectionError::OutsideDomain);
         }
