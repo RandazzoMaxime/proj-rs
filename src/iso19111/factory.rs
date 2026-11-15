@@ -6380,6 +6380,50 @@ impl CoordinateOperationFactory {
         Ok(Some(res))
     }
 
+    /// `createOperationsGeodToGeod` for a geographic and a geocentric CRS of different datums
+    /// (coordinateoperationfactory.cpp:5366-5387): the geographic intermediate of the geocentric
+    /// CRS, then the full `createOperations` from it to the other CRS, registry and datum pivot
+    /// included. The reverse pair is the inverse. `None` for the other pairs.
+    fn geographic_geocentric_pivot(
+        &self,
+        source: &Crs,
+        target: &Crs,
+        rule: super::geodetic_ops::BallparkRule,
+        context: &CoordinateOperationContext,
+    ) -> Result<Option<Vec<CoordinateOperation>>, FactoryError> {
+        if rule.same_datum() {
+            return Ok(None);
+        }
+        let source_geocentric = matches!(source, Crs::Geodetic(GeodeticCRS::Geocentric(_)));
+        let target_geocentric = matches!(target, Crs::Geodetic(GeodeticCRS::Geocentric(_)));
+        let source_geographic = geographic_of(source).is_some();
+        let target_geographic = geographic_of(target).is_some();
+        if !((source_geocentric && target_geographic) || (source_geographic && target_geocentric)) {
+            return Ok(None);
+        }
+        if !source_geocentric {
+            let reverse = self
+                .geographic_geocentric_pivot(target, source, rule, context)?
+                .unwrap_or_default();
+            return Ok(Some(
+                reverse.iter().map(CoordinateOperation::inverse).collect(),
+            ));
+        }
+        let intermediate = super::geodetic_ops::geocentric_intermediate(source)?;
+        let first = CoordinateOperation::Transformation(
+            super::geodetic_ops::geographic_geocentric_conversion(source, &intermediate)?,
+        );
+        let mut found = Vec::new();
+        for second in self.create_candidates(&intermediate, target, context)? {
+            if let Some(operation) =
+                super::compound::compute_metadata(vec![first.clone(), second], context)
+            {
+                found.push(operation);
+            }
+        }
+        Ok(Some(found))
+    }
+
     /// `createOperationsGeodToGeod` with `forceBallpark` (coordinateoperationfactory.cpp:
     /// 5236-5523), for two geodetic CRS. Two geographic CRS: [`forced_ballpark_operations`]. A
     /// geographic and a geocentric CRS of the same datum: the flagged PROJ-based conversion. On
@@ -6950,6 +6994,10 @@ impl CoordinateOperationFactory {
                 found.extend(super::geodetic_ops::geographic_geocentric_ballpark(
                     source, target,
                 ));
+            } else if let Some(operations) =
+                self.geographic_geocentric_pivot(source, target, rule, context)?
+            {
+                found.extend(operations);
             } else {
                 // No registered operation: the same geodetic conversions as
                 // `createOperation`, including a same-datum geographic/geocentric pair.

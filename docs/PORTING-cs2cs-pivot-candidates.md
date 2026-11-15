@@ -1,9 +1,8 @@
 # Fiche d'état — candidats pivot de `cs2cs` (lot P4)
 
-Statut : familles A (sept cas), C et D (`EPSG:26898 → EPSG:26957`) fermées. Famille B ouverte.
-Mesure (`tools/compare-cs2cs.sh --no-build`, 285 cas) : `same 280 / tol 4 / num 1 / status 0`,
-avant `same 279 / tol 4 / num 2 / status 0`. Parité : 4165 identiques, 6 hors seuil (famille B),
-avant 4159 et 12.
+Statut : familles A (sept cas), B, C et D fermées. Mesure (`tools/compare-cs2cs.sh --no-build`,
+285 cas, deux modes) : `same 281 / tol 4 / num 0 / status 0`, avant `same 280 / tol 4 / num 1`.
+Parité : 4171 identiques, 64 dans le seuil, 0 hors seuil ; `tests/parity/known.tsv` est vide.
 
 Référence : PROJ 9.9.0, `src/iso19111/operation/coordinateoperationfactory.cpp` et
 `src/iso19111/factory.cpp`. Port : `src/iso19111/factory.rs` (`datum_pivot_operations`,
@@ -99,91 +98,59 @@ chacun, retirés de `known.tsv`), 0 écart nouveau.
 coordinateoperationfactory.cpp:1942-1953). Aucun cas mesuré ne change avec cette correction : elle
 n'est pas faite.
 
-## Famille B — candidats 3D chaînés absents du port (lot P4c)
+## Famille B — candidats 3D chaînés (fermée)
 
-Cas : `-d 12 EPSG:6310 +to EPSG:4919` (CGRS93 géographique 3D vers ITRF2000 géocentrique),
-6 points du corpus (`tests/parity/known.tsv`, `cs2cs-h3d-geog3d-geocent-0012`, 6 lignes).
-Le même écart touche la version 2D `EPSG:6311 → EPSG:4919`.
-
-### Mesures (PROJ 9.9.0 contre le port)
-
-| Commande | PROJ 9.9.0 | Port |
-|---|---|---|
-| `projinfo -s EPSG:6310 -t EPSG:4919 --summary` | 2 candidats | 1 candidat, ballpark |
-| `projinfo -s EPSG:6311 -t EPSG:4919 --summary` | 2 candidats | 1 candidat, ballpark |
-| `projinfo -s EPSG:6310 -t EPSG:7909 --summary` | ballpark | ballpark (identique) |
-| `projinfo -s EPSG:6311 -t EPSG:8997 --summary` | ballpark | ballpark (identique) |
-| `cs2cs -d 12 EPSG:6310 +to EPSG:4919`, point 1 | `4334345.947 2925378.236 3641936.627` | `4334343.810 2925381.381 3641936.645` (2,1 m en X, 3,1 m en Y) |
-
-Les deux candidats de PROJ (même étapes, la seule différence est la jambe CGRS93 → WGS 84) :
+Cas : `-d 12 EPSG:6310 +to EPSG:4919` (CGRS93 géographique 3D vers ITRF2000 géocentrique), et la
+version 2D `EPSG:6311 → EPSG:4919`. PROJ 9.9.0 donne deux candidats à 1 m :
 
 - `Null geographic offset from CGRS93 (geog3D) to CGRS93 (geog2D) + CGRS93 to WGS 84 (1) +
   Inverse of ITRF_2000_To_WGS_1984 + Null geographic offset from ITRF2000 to MONREF_1997_3D +
   axis order change (geographic3D horizontal) + Conversion from ITRF2000 (geographic) to ITRF2000`
-- la même chaîne avec `CGRS_1993_To_WGS_1984` à la place de `CGRS93 to WGS 84 (1)`.
+- la même chaîne avec `CGRS_1993_To_WGS_1984` (ESRI:108129) à la place de EPSG:7721.
 
-`CGRS93 to WGS 84 (1)` est EPSG:7721 et `CGRS_1993_To_WGS_1984` ESRI:108129, les deux de 6311 vers
-4326. `Inverse of ITRF_2000_To_WGS_1984` est ESRI:108280 (8997 vers 4326).
+Le port ne donnait que le ballpark (2,1 m en X, 3,1 m en Y).
 
-### Chemin PROJ (mesuré)
+### Causes et correction
 
-Trace de `createOperationsWithDatumPivot`, `findsOpsInRegistryWithIntermediate` et
-`createOperationsGeodToGeod` : copie tracée de `coordinateoperationfactory.cpp` compilée hors
-dépôt (`TRACE_CREATE_OPERATIONS`, `ENABLE_TRACING`), liée à `libproj` de la référence.
+1. `createOperationsGeodToGeod` (`coordinateoperationfactory.cpp:5366-5387`) : pour un CRS
+   géographique et un CRS géocentrique de datums différents, PROJ appelle `createOperations`
+   COMPLET entre le géographique intermédiaire du géocentrique (`ITRF2000 (geographic)`, sans
+   identifiant) et l'autre CRS, puis compose avec la conversion géographique/géocentrique.
+   Le port n'y prenait que les opérations géodésiques simples, donc le ballpark seul.
+   Correction : `CoordinateOperationFactory::geographic_geocentric_pivot`
+   (`src/iso19111/factory.rs`), branché là où le registre ne donne rien. Le CRS intermédiaire
+   sans identifiant suit alors la branche « source sans identifiant » de
+   `findsOpsInRegistryWithIntermediate` déjà portée (`intermediate_through_candidates`) : son
+   candidat `MONREF_1997_3D` (ESRI:104653, même datum EPSG:6656) ouvre les autorités
+   `PROJ,ESRI,EPSG` (`authority_to_authority_preference`), d'où l'opération ESRI:108280.
+   Avec deux identifiants EPSG (`EPSG:6311 → EPSG:8997`), ESRI est exclu : PROJ comme le port
+   n'y donnent que le ballpark.
+2. Nom de l'inverse d'un changement d'ordre des axes : PROJ recrée la conversion
+   (`Conversion::inverse`, `conversion.cpp:2732-2738`, `createAxisOrderReversal`), sans
+   « Inverse of ». Le port écrivait `Inverse of axis order change (geographic3D horizontal)`.
+   Correction : `Conversion::inverse_by_method` (`src/iso19111/buildop.rs`), méthodes 9843 et
+   9844.
 
-1. `createOperations(6310 → 4919)` : pivot de datum, puis recherche intermédiaire, sans résultat.
-2. `createOperationsGeodToGeod` (`coordinateoperationfactory.cpp:5366-5387`) : géographique et
-   géocentrique de datums différents. PROJ fait la branche inverse : `createOperations(I → 6310)`,
-   où `I` = « ITRF2000 (geographic) », géographique 3D du géocentrique 4919. Puis `applyInverse`.
-3. `createOperations(I → 6310)` donne les deux chaînes. Le port n'a que le ballpark à cette étape.
+La recherche par codes CRS ajoutée par la tentative 2 du lot P4c n'est pas nécessaire : retirée.
 
-### Ce que le port fait
+### Mesures
 
-- `src/iso19111/geodetic_ops.rs`, `geographic_geocentric_different_datum` : le second tronçon
-  passe par `geodetic_operations`, donc par le ballpark seul. PROJ appelle `createOperations`
-  complet (registre, pivot, intermédiaire) sur `I`.
-- `src/iso19111/factory.rs`, `datum_pivot_operations` : la paire `I → 6310` ne donne que le ballpark.
-  La recherche par codes (`crs_codes_intermediate_operations`) renvoie vide pour `I`, qui n'a pas
-  d'identifiant. Le port ne suit pas la branche « source sans identifiant » de
-  `findsOpsInRegistryWithIntermediate` (`coordinateoperationfactory.cpp:2093-2170`) sur ce chemin.
+- `projinfo -s EPSG:6310 -t EPSG:4919 --spatial-test intersects --summary` : texte identique à
+  PROJ 9.9.0 (même empreinte md5). `-o PROJ -q` identique aussi pour `6311 → 4919`,
+  `4919 → 6310`, `4919 → 6311`, `6310 → 4978`, `4258 → 4919`, `4937 → 4936`, `4326 → 4978`.
+- `cs2cs -d 12 EPSG:6310 +to EPSG:4919` : identique au bit sur les points testés.
+- `tests/geog3d_geocentric_pivot.rs` : liste des deux candidats et valeurs `cs2cs` des six points
+  du corpus (rouge avant, vert après).
 
-### Tentatives (annulées, sans gain)
+### Écarts trouvés en passant, antérieurs à ce correctif (ouverts)
 
-- Tentative 1 : `geographic_geocentric_pivot` dans `factory.rs` : pour une paire géographique /
-  géocentrique de datums différents, le second tronçon est `create_candidates(I, cible)`, complet,
-  comme `createOperationsGeodToGeod`. Résultat : toujours le ballpark seul. Le `create_candidates(I,
-  6310)` interne ne donne pas la chaîne.
-- Tentative 2 : `intermediate_through_candidates` (branche « source sans identifiant », existante
-  pour la voie `createBetweenGeodeticCRSWithDatumBasedIntermediates`) branchée aussi sur la recherche
-  par codes, avec une entrée `registry_intermediate_operations`. Résultat : identique. La branche
-  « source sans identifiant » tente les candidats du datum de `I` (7909 et MONREF_1997_3D,
-  ESRI:104653). Aucun ne mène à 6310 dans le port, et PROJ non plus à ce niveau.
-
-Après ces deux tentatives, le code est revenu à `HEAD`. Patch et tests sont hors dépôt
-(voir « Prochain pas »).
-
-### Ce qui reste à établir
-
-Le point précis de la chaîne n'est pas identifié. La trace PROJ montre les deux `filterAndSort`
-« 3 → 2 » (`TR/trace.log` lignes 3523 et 7050) dans le tronçon `createOperations(I → 6310)`, avec
-des `createOperations` de `MONREF_1997_3D (ESRI:104653) → ITRF2000 (EPSG:8997)` et
-`CGRS93 (EPSG:6311) → CGRS93 (EPSG:6310)` qui donnent une opération chacun. Ces appels ne sont pas
-encore reproduits dans le port.
-
-Hors de la famille A : aucune étendue de CRS n'intervient ici. Le candidat manque, il n'est pas
-retenu à tort.
-
-### Prochain pas
-
-1. Reproduire le `filterAndSort` 3 → 2 de la trace : quel appel produit les trois résultats avant
-   filtre, et lesquels.
-2. Tests rouges à reprendre : un test de liste (les deux candidats ci-dessus, dans cet ordre) et
-   un test de valeur (`cs2cs -d 12` sur les six points du corpus, tolérance 5e-4 m), attendus de
-   `projinfo` et de `cs2cs` 9.9.0. Les tests et le patch de la session ne sont pas dans le dépôt.
-3. Patch des deux tentatives (hors dépôt), à reprendre seulement si l'étape 1 le justifie.
-4. Trace : un script hors dépôt reconstruit `libproj` tracée à partir de
-   `target/proj-reference/src` (`TRACE_CREATE_OPERATIONS`, `ENABLE_TRACING`) ; lancer la référence
-   avec `LD_LIBRARY_PATH=<dossier de la lib tracée> PROJ_TRACE_FILE=<fichier>`.
+La liste des candidats (`projinfo --summary`) diffère de PROJ, avant comme après ce correctif
+(sortie du port identique avant et après), sur : `EPSG:4979 → EPSG:7789` (61 candidats contre
+62 ; PROJ ne passe pas par `Null geographic offset ... (geog3D) to ... (geog2D)` en tête),
+`EPSG:7789 → EPSG:4979` (60 contre 58), `EPSG:9000 → EPSG:4978` (60 contre 58),
+`EPSG:4269 → EPSG:4978` (53 contre 54), `EPSG:4167 → EPSG:4919` (même nombre, texte différent),
+`EPSG:4283 → EPSG:7789` (16 contre 11). Non mesuré : l'effet sur les valeurs `cs2cs`
+(le premier candidat peut être le même).
 
 ## Famille C — `--3d` ignoré à la sélection
 

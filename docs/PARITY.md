@@ -109,3 +109,13 @@ Corpus de graine `20261115` : 710 invocations, 4236 conversions.
 
 Les 194 clés du registre (187 valeurs, 6 formes, 1 statut) portent chacune une
 cause. Le port n'est pas corrigé dans ce lot : c'est la phase de correction.
+
+## État actuel
+
+Après les lots de correction (P1 à P4, voir `docs/PORTING-cs2cs-pivot-candidates.md`,
+`docs/PORTING-mod-ster.md`, `docs/PORTING-cli-rest.md`) : 4171 identiques (texte),
+64 dans le seuil, 1 erreur des deux côtés, 0 hors seuil, 0 statut, 0 forme. Le registre
+`known.tsv` ne contient plus aucun écart.
+
+Les 64 « dans le seuil » sont des derniers chiffres : le plus grand écart est sous 1e-9 m,
+six ordres de grandeur sous le seuil de 5e-4 m. Ils ne font pas échouer le test.

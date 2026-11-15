@@ -1,9 +1,3 @@
 # Écarts connus de la suite de parité (tests/parity.rs).
 # Colonnes : clé « id:ligne », cause courte, renvoi à une fiche.
 # Un écart listé ne fait pas échouer ; un écart nouveau ou disparu oui.
-cs2cs-h3d-geog3d-geocent-0012:1	EPSG:6310 vers ITRF2000 : écart de 2 m, opération 3D à comparer	à ouvrir
-cs2cs-h3d-geog3d-geocent-0012:2	EPSG:6310 vers ITRF2000 : écart de 2 m, opération 3D à comparer	à ouvrir
-cs2cs-h3d-geog3d-geocent-0012:3	EPSG:6310 vers ITRF2000 : écart de 2 m, opération 3D à comparer	à ouvrir
-cs2cs-h3d-geog3d-geocent-0012:4	EPSG:6310 vers ITRF2000 : écart de 2 m, opération 3D à comparer	à ouvrir
-cs2cs-h3d-geog3d-geocent-0012:5	EPSG:6310 vers ITRF2000 : écart de 2 m, opération 3D à comparer	à ouvrir
-cs2cs-h3d-geog3d-geocent-0012:6	EPSG:6310 vers ITRF2000 : écart de 2 m, opération 3D à comparer	à ouvrir
