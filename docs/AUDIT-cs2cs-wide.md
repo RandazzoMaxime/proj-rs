@@ -168,10 +168,10 @@ point 3 : la correction du point 3 devrait la couvrir aussi, à vérifier.
 
 ### Statuts différents (classe d)
 
-**5. Un seul argument pour un `+proj` multi-mots : le port refuse (d)**
+**5. Un seul argument pour un `+proj` multi-mots : le port refuse (d) — corrigé (lot C2, écart 5)**
 
 Cas : 8 lignes en mode `-1`. Les CRS `+proj=...` à plusieurs mots passés en
-un seul argument échouent en port (code 3) et réussissent en référence :
+un seul argument échouaient en port (code 3) et réussissent en référence :
 
 ```sh
 target/proj-reference/build/bin/cs2cs -d 10 "+proj=longlat +datum=WGS84" +to "+proj=utm +zone=31 +datum=WGS84" <<< "2.2945 48.8582"
@@ -181,14 +181,22 @@ target/release/cs2cs -d 10 "+proj=longlat +datum=WGS84" +to "+proj=utm +zone=31 
 - Référence : `448251.7952059543 5411932.6776697328 0`.
 - Port : `cannot initialize transformation`, `cause: unknown +proj=longlat +datum=WGS84`.
 
-Cause (lecture du code) : `src/bin/cs2cs.rs`, branche des arguments `+`
-(vers la ligne 1466). Un argument contenant un blanc est entouré de guillemets
-avant d'être passé à la définition. PROJ (`cs2cs.cpp`, lignes 690-700) joint
-seulement les arguments `+` par un blanc. Le cas `+nadgrids="dir with space"`
-(`tests/cli_yaml/test_cs2cs_datumfile.yaml`, ligne 18) utilise la forme
-guillemetée de PROJ et reste valable : la correction doit distinguer les deux
-formes. Les mêmes CRS passés en mots séparés (mode par défaut) donnent le
-résultat de la référence.
+Cause : `src/bin/cs2cs.rs`, branche des arguments `+`. Un argument contenant un
+blanc était entouré de guillemets avant d'être joint à la définition. PROJ
+(`cs2cs.cpp`, lignes 690-700) joint les arguments `+` par un blanc, sans les
+citer. Correction : le guillemetage est supprimé. Le cas
+`+nadgrids="dir with space/myconus"` (argument déjà cité) reste valable, car le
+guillemet fait partie de l'argument. Test : `tests/cli_yaml/test_cs2cs_argv.yaml`
+(6 cas, valeurs de la référence). Les mêmes CRS passés en mots séparés (mode par
+défaut) donnaient déjà le résultat de la référence.
+
+Mesure (`tools/compare-cs2cs.sh --no-build -1`) : avant 204 identiques, 45 à
+écart ≤ 1e-6, 8 à écart > 1e-6, 15 à statut différent ; après 209, 48, 8, 7. Le
+mode défaut ne change pas (209, 48, 8, 7).
+
+Écart restant lié au même cas : `+nadgrids=dir with space/myconus` en un
+argument sans guillemets. PROJ donne `*	* inf` (code 0), le port refuse
+`+with` (code 3). Cause distincte, hors lot : voir `PORTING-cli-rest.md`.
 
 **6. NTF (Paris) vers RGF93, statut : le port renvoie `* * inf` (d) — ouvert, cause réattribuée**
 

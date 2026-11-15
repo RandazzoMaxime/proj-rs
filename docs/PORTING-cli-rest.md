@@ -16,11 +16,11 @@ Sources : PROJ 9.9.0 `src/apps/proj.cpp`, `geod.cpp`, `geod_set.cpp`, `cs2cs.cpp
 | `src/projections/gridshift/ntv1.rs` | Lecteur NTv1 (`.dat`), port de `NTv1Grid::open` et `valueAt`. |
 | `src/projdb.rs` | `PROJ_AUX_DB` : bases auxiliaires attachées et lignes copiées dans les tables. |
 | `src/listing.rs` | Données publiques : `PROJECTIONS` (192), `ELLIPSOIDS` (46), `linear_units()` (proj.db). Générées depuis les sources de PROJ ; la table est la donnée, pas le générateur. |
-| `src/bin/cs2cs.rs` | `init_side_as_code` (IGNF seulement), `init_authority`, `geoid_without_height`, `raw_words`, prise en compte des guillemets d'argument. |
+| `src/bin/cs2cs.rs` | `init_side_as_code` (IGNF seulement), `init_authority`, `geoid_without_height`, `raw_words`, réunion des arguments `+` (`parse`). |
 | `src/bin/support/proj_cli.rs` | `-d -e -m -r -s -i -o -b -l`, contrôles `fwd_prepare` de `pj_fwd`. |
 | `src/bin/support/geod_cli.rs` | `-l`, `-le`, `-lu`, `+units=`. |
 | `src/bin/support/lists.rs` | Affichage des listes d'ellipsoïdes et d'unités, comme `proj.cpp` et `geod.cpp`. |
-| `tests/cli_yaml.rs` | `FILES` : +4 yaml (datumfile, ntv2, ignf, flaky) ; `projinfo_aux_script`. |
+| `tests/cli_yaml.rs` | `FILES` : +5 yaml (argv, datumfile, ntv2, ignf, flaky) ; `projinfo_aux_script`. |
 | `tests/cli_yaml/` | `test_cs2cs_*.yaml`, `test_projinfo_out.dist`. |
 | `data/tests/dir with space/myconus` | Copie de `conus`, comme la règle CMake de PROJ (`src/data/CMakeLists.txt`). |
 
@@ -40,9 +40,9 @@ Sources : PROJ 9.9.0 `src/apps/proj.cpp`, `geod.cpp`, `geod_set.cpp`, `cs2cs.cpp
    `--3d` le garde.
 5. **Guillemets dans les chaînes PROJ.** `pj_mkparam_ws` garde les espaces d'une valeur
    entre guillemets. L'analyseur coupait sur les espaces ; il découpe maintenant hors des
-   guillemets. `cs2cs` cite un argument contenant un espace avant de rejoindre la
-   définition, et ne passe pas une chaîne citée par la sélection ISO (son réimport coupe
-   les espaces).
+   guillemets. `cs2cs` joint les arguments `+` par un blanc, sans les citer (`cs2cs.cpp`,
+   690-700) : `"+proj=longlat +datum=WGS84"` en un argument vaut deux mots. Il ne passe pas
+   une chaîne citée par la sélection ISO (son réimport coupe les espaces).
 6. **NTv1.** Entête en big-endian, degrés, enregistrements d'est en ouest ; même convention
    de longitude que NTv2 (`compensateNTConvention`).
 7. **Facteurs `proj -S` : dérivée du noyau unitaire.** `pj_factors` dérivait la sortie en
@@ -82,6 +82,7 @@ Sources : PROJ 9.9.0 `src/apps/proj.cpp`, `geod.cpp`, `geod_set.cpp`, `cs2cs.cpp
 |---|---|
 | `proj -S` oméga au bit près, exact Tmerc et UTM zone 31 : 2 points sur 88 (tmerc `-120 60`, `-60 -85`), 3 sur 88 (UTM) | PROJ affiche un bruit de 1e-6 là où le port affiche 0, ou l'inverse : écart d'un ulp dans la dérivée numérique. Cause exacte non identifiée. Les coefficients de `setup_exact` (`pj_auxlat_coeffs`, `Qn`, `Zb`) ne sont pas comparés octet à octet ; `pj_auxlat_convert` avec l'ordre de PROJ n'a rien changé (86 et 85 avant et après). |
 | `proj -v`, `-V` | Non porté : le dump de moniteur (`pj_pr_list`, `vprocess`) est une sortie interne de PROJ. |
+| `cs2cs +nadgrids=dir with space/myconus` en un argument sans guillemets (`-111 44`) | PROJ lit `with` et `space/myconus` comme paramètres sans `+`, ils restent inutilisés ; `dir` n'est pas trouvé : `*	* inf`, code 0. Le port rejette `+with` (`check_keys`, `src/engine.rs`) : code 3. Même cause que `+foo=1` sur `+proj=utm` : PROJ ignore une clé inconnue sur ce chemin, le port la refuse. Corriger `check_keys` touche tout le moteur : lot à part, avec un test par projection. |
 
 ## Sortie binaire `-b`, `-i`, `-o` au bit près
 

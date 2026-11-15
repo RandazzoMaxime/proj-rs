@@ -1475,15 +1475,7 @@ fn parse(args: &[String]) -> Result<Options, AppError> {
             if !slot.is_empty() {
                 slot.push(' ');
             }
-            // One argument with white space (`+nadgrids=dir with space/myconus`) stays one word
-            // of the definition: the definition is split again, as PROJ's `pj_mkparam_ws` does.
-            if arg.contains(char::is_whitespace) && !arg.contains('"') {
-                slot.push('"');
-                slot.push_str(arg);
-                slot.push('"');
-            } else {
-                slot.push_str(arg);
-            }
+            slot.push_str(arg);
         } else if !have_to {
             opts.source = arg.to_owned();
         } else if opts.target.is_empty() {
