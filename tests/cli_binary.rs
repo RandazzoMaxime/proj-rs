@@ -445,9 +445,41 @@ fn assert_same_doubles(actual: &[u64], expected: &[u64], name: &str) {
     }
     assert_eq!(actual.len(), expected.len(), "{name}");
     for (index, (&left, &right)) in actual.iter().zip(expected).enumerate() {
-        let (left, right) = (f64::from_bits(left), f64::from_bits(right));
-        let same = (left.is_nan() && right.is_nan())
-            || (left - right).abs() <= 1e-12 * left.abs().max(right.abs());
-        assert!(same, "{name}, word {index}: {left} against {right}");
+        assert!(
+            close_doubles(left, right),
+            "{name}, word {index}: {} against {}",
+            f64::from_bits(left),
+            f64::from_bits(right)
+        );
     }
+}
+
+/// Two doubles, given by their bits, equal (infinities and NaN included) or within 1e-12 relative.
+fn close_doubles(left: u64, right: u64) -> bool {
+    let (left, right) = (f64::from_bits(left), f64::from_bits(right));
+    left == right
+        || (left.is_nan() && right.is_nan())
+        || (left.is_finite()
+            && right.is_finite()
+            && (left - right).abs() <= 1e-12 * left.abs().max(right.abs()))
+}
+
+/// The comparison used off glibc, checked on every platform.
+#[test]
+fn close_doubles_accepts_libm_rounding_and_refuses_format_errors() {
+    let bits = |value: f64| value.to_bits();
+    assert!(close_doubles(bits(f64::INFINITY), bits(f64::INFINITY)));
+    assert!(close_doubles(bits(f64::NAN), bits(f64::NAN)));
+    assert!(close_doubles(bits(0.0), bits(0.0)));
+    assert!(close_doubles(
+        bits(563_629.522_465_540_7),
+        bits(563_629.522_465_542_2)
+    ));
+    assert!(!close_doubles(bits(f64::INFINITY), bits(1.0)));
+    assert!(!close_doubles(bits(f64::NAN), bits(1.0)));
+    assert!(!close_doubles(
+        bits(563_629.522_465_540_7),
+        bits(563_629.522_465_540_7).swap_bytes()
+    ));
+    assert!(!close_doubles(bits(563_629.5), bits(563_629.6)));
 }
