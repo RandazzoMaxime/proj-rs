@@ -1,0 +1,197 @@
+# Écarts connus de la suite de parité (tests/parity.rs).
+# Colonnes : clé « id:ligne », cause courte, renvoi à une fiche.
+# Un écart listé ne fait pas échouer ; un écart nouveau ou disparu oui.
+cs2cs-h3d-geog3d-geocent-0012:1	EPSG:6310 vers ITRF2000 : écart de 2 m, opération 3D à comparer	à ouvrir
+cs2cs-h3d-geog3d-geocent-0012:2	EPSG:6310 vers ITRF2000 : écart de 2 m, opération 3D à comparer	à ouvrir
+cs2cs-h3d-geog3d-geocent-0012:3	EPSG:6310 vers ITRF2000 : écart de 2 m, opération 3D à comparer	à ouvrir
+cs2cs-h3d-geog3d-geocent-0012:4	EPSG:6310 vers ITRF2000 : écart de 2 m, opération 3D à comparer	à ouvrir
+cs2cs-h3d-geog3d-geocent-0012:5	EPSG:6310 vers ITRF2000 : écart de 2 m, opération 3D à comparer	à ouvrir
+cs2cs-h3d-geog3d-geocent-0012:6	EPSG:6310 vers ITRF2000 : écart de 2 m, opération 3D à comparer	à ouvrir
+cs2cs-inverse-0027:1	cs2cs -I EPSG:32352 vers EPSG:22525 : écart de 0,87 m, transformation à comparer	à ouvrir
+cs2cs-inverse-0027:2	cs2cs -I EPSG:32352 vers EPSG:22525 : écart de 0,87 m, transformation à comparer	à ouvrir
+cs2cs-inverse-0027:3	cs2cs -I EPSG:32352 vers EPSG:22525 : écart de 0,87 m, transformation à comparer	à ouvrir
+cs2cs-inverse-0027:4	cs2cs -I EPSG:32352 vers EPSG:22525 : écart de 0,87 m, transformation à comparer	à ouvrir
+cs2cs-inverse-0027:5	cs2cs -I EPSG:32352 vers EPSG:22525 : écart de 0,87 m, transformation à comparer	à ouvrir
+cs2cs-inverse-0027:6	cs2cs -I EPSG:32352 vers EPSG:22525 : écart de 0,87 m, transformation à comparer	à ouvrir
+cs2cs-option-3d-0006:1	cs2cs --3d EPSG:7680 vers EPSG:2657 : écart de 110 m, transformation 3D à comparer	à ouvrir
+cs2cs-option-3d-0006:2	cs2cs --3d EPSG:7680 vers EPSG:2657 : écart de 110 m, transformation 3D à comparer	à ouvrir
+cs2cs-option-3d-0006:3	cs2cs --3d EPSG:7680 vers EPSG:2657 : écart de 110 m, transformation 3D à comparer	à ouvrir
+cs2cs-option-3d-0006:4	cs2cs --3d EPSG:7680 vers EPSG:2657 : écart de 110 m, transformation 3D à comparer	à ouvrir
+cs2cs-option-3d-0006:5	cs2cs --3d EPSG:7680 vers EPSG:2657 : écart de 110 m, transformation 3D à comparer	à ouvrir
+cs2cs-option-3d-0006:6	cs2cs --3d EPSG:7680 vers EPSG:2657 : écart de 110 m, transformation 3D à comparer	à ouvrir
+cs2cs-option-3d-0008:1	cs2cs --3d EPSG:8698 vers EPSG:32427 : écart de 3 m, transformation 3D à comparer	à ouvrir
+cs2cs-option-3d-0008:2	cs2cs --3d EPSG:8698 vers EPSG:32427 : écart de 3 m, transformation 3D à comparer	à ouvrir
+cs2cs-option-3d-0008:3	cs2cs --3d EPSG:8698 vers EPSG:32427 : écart de 3 m, transformation 3D à comparer	à ouvrir
+cs2cs-option-3d-0008:4	cs2cs --3d EPSG:8698 vers EPSG:32427 : écart de 3 m, transformation 3D à comparer	à ouvrir
+cs2cs-option-3d-0008:5	cs2cs --3d EPSG:8698 vers EPSG:32427 : écart de 3 m, transformation 3D à comparer	à ouvrir
+cs2cs-option-3d-0008:6	cs2cs --3d EPSG:8698 vers EPSG:32427 : écart de 3 m, transformation 3D à comparer	à ouvrir
+cs2cs-proj-datum-diff-0007:1	cs2cs EPSG:32229 +to EPSG:5111 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+cs2cs-proj-datum-diff-0007:2	cs2cs EPSG:32229 +to EPSG:5111 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+cs2cs-proj-datum-diff-0007:3	cs2cs EPSG:32229 +to EPSG:5111 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+cs2cs-proj-datum-diff-0007:4	cs2cs EPSG:32229 +to EPSG:5111 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+cs2cs-proj-datum-diff-0007:5	cs2cs EPSG:32229 +to EPSG:5111 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+cs2cs-proj-datum-diff-0007:6	cs2cs EPSG:32229 +to EPSG:5111 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+cs2cs-proj-datum-diff-0009:1	cs2cs EPSG:3701 +to EPSG:32545 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+cs2cs-proj-datum-diff-0009:2	cs2cs EPSG:3701 +to EPSG:32545 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+cs2cs-proj-datum-diff-0009:3	cs2cs EPSG:3701 +to EPSG:32545 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+cs2cs-proj-datum-diff-0009:4	cs2cs EPSG:3701 +to EPSG:32545 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+cs2cs-proj-datum-diff-0009:5	cs2cs EPSG:3701 +to EPSG:32545 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+cs2cs-proj-datum-diff-0009:6	cs2cs EPSG:3701 +to EPSG:32545 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+cs2cs-proj-datum-diff-0011:1	cs2cs EPSG:26898 +to EPSG:26957 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+cs2cs-proj-datum-diff-0011:2	cs2cs EPSG:26898 +to EPSG:26957 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+cs2cs-proj-datum-diff-0011:3	cs2cs EPSG:26898 +to EPSG:26957 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+cs2cs-proj-datum-diff-0011:4	cs2cs EPSG:26898 +to EPSG:26957 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+cs2cs-proj-datum-diff-0011:5	cs2cs EPSG:26898 +to EPSG:26957 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+cs2cs-proj-datum-diff-0011:6	cs2cs EPSG:26898 +to EPSG:26957 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+cs2cs-proj-datum-diff-0024:1	cs2cs EPSG:21350 +to EPSG:32502 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+cs2cs-proj-datum-diff-0024:2	cs2cs EPSG:21350 +to EPSG:32502 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+cs2cs-proj-datum-diff-0024:3	cs2cs EPSG:21350 +to EPSG:32502 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+cs2cs-proj-datum-diff-0024:4	cs2cs EPSG:21350 +to EPSG:32502 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+cs2cs-proj-datum-diff-0024:5	cs2cs EPSG:21350 +to EPSG:32502 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+cs2cs-proj-datum-diff-0024:6	cs2cs EPSG:21350 +to EPSG:32502 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+cs2cs-proj-datum-diff-0034:1	cs2cs EPSG:32260 +to EPSG:5896 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+cs2cs-proj-datum-diff-0034:2	cs2cs EPSG:32260 +to EPSG:5896 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+cs2cs-proj-datum-diff-0034:3	cs2cs EPSG:32260 +to EPSG:5896 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+cs2cs-proj-datum-diff-0034:4	cs2cs EPSG:32260 +to EPSG:5896 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+cs2cs-proj-datum-diff-0034:5	cs2cs EPSG:32260 +to EPSG:5896 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+cs2cs-proj-datum-diff-0034:6	cs2cs EPSG:32260 +to EPSG:5896 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+cs2cs-proj-datum-diff-0038:1	cs2cs EPSG:32347 +to EPSG:32194 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+cs2cs-proj-datum-diff-0038:2	cs2cs EPSG:32347 +to EPSG:32194 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+cs2cs-proj-datum-diff-0038:3	cs2cs EPSG:32347 +to EPSG:32194 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+cs2cs-proj-datum-diff-0038:4	cs2cs EPSG:32347 +to EPSG:32194 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+cs2cs-proj-datum-diff-0038:5	cs2cs EPSG:32347 +to EPSG:32194 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+cs2cs-proj-datum-diff-0038:6	cs2cs EPSG:32347 +to EPSG:32194 : écart de position, opération ou grille à comparer à PROJ	à ouvrir
+proj-factors-0001:1	facteurs -S faux pour +proj=adams_hemi +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0001:2	facteurs -S faux pour +proj=adams_hemi +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0001:3	facteurs -S faux pour +proj=adams_hemi +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0001:4	facteurs -S faux pour +proj=adams_hemi +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0001:5	facteurs -S faux pour +proj=adams_hemi +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0001:6	facteurs -S faux pour +proj=adams_hemi +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0002:1	facteurs -S faux pour +proj=apian +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0002:2	facteurs -S faux pour +proj=apian +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0002:3	facteurs -S faux pour +proj=apian +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0002:4	facteurs -S faux pour +proj=apian +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0002:5	facteurs -S faux pour +proj=apian +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0002:6	facteurs -S faux pour +proj=apian +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0003:1	facteurs -S faux pour +proj=cart +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0003:2	facteurs -S faux pour +proj=cart +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0004:1	facteurs -S faux pour +proj=crast +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0004:2	facteurs -S faux pour +proj=crast +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0004:3	facteurs -S faux pour +proj=crast +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0004:4	facteurs -S faux pour +proj=crast +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0004:5	facteurs -S faux pour +proj=crast +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0004:6	facteurs -S faux pour +proj=crast +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0005:1	facteurs -S faux pour +proj=eck4 +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0005:2	facteurs -S faux pour +proj=eck4 +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0005:3	facteurs -S faux pour +proj=eck4 +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0005:4	facteurs -S faux pour +proj=eck4 +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0005:5	facteurs -S faux pour +proj=eck4 +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0005:6	facteurs -S faux pour +proj=eck4 +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0006:1	facteurs -S faux pour +proj=fouc +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0006:2	facteurs -S faux pour +proj=fouc +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0006:3	facteurs -S faux pour +proj=fouc +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0006:4	facteurs -S faux pour +proj=fouc +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0006:5	facteurs -S faux pour +proj=fouc +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0006:6	facteurs -S faux pour +proj=fouc +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0007:1	facteurs -S faux pour +proj=gnom +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0007:2	facteurs -S faux pour +proj=gnom +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0007:3	facteurs -S faux pour +proj=gnom +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0007:4	facteurs -S faux pour +proj=gnom +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0007:5	facteurs -S faux pour +proj=gnom +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0007:6	facteurs -S faux pour +proj=gnom +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0008:1	facteurs -S faux pour +proj=rhealpix +north_square=1 +south_square=2 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0008:2	facteurs -S faux pour +proj=rhealpix +north_square=1 +south_square=2 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0008:3	facteurs -S faux pour +proj=rhealpix +north_square=1 +south_square=2 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0008:4	facteurs -S faux pour +proj=rhealpix +north_square=1 +south_square=2 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0008:5	facteurs -S faux pour +proj=rhealpix +north_square=1 +south_square=2 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0008:6	facteurs -S faux pour +proj=rhealpix +north_square=1 +south_square=2 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0010:1	facteurs -S faux pour +proj=lagrng +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0010:2	facteurs -S faux pour +proj=lagrng +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0010:3	facteurs -S faux pour +proj=lagrng +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0010:4	facteurs -S faux pour +proj=lagrng +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0010:5	facteurs -S faux pour +proj=lagrng +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0010:6	facteurs -S faux pour +proj=lagrng +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0013:1	facteurs -S faux pour +proj=murd2 +lat_1=30 +lat_2=45 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0013:2	facteurs -S faux pour +proj=murd2 +lat_1=30 +lat_2=45 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0013:3	facteurs -S faux pour +proj=murd2 +lat_1=30 +lat_2=45 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0013:4	facteurs -S faux pour +proj=murd2 +lat_1=30 +lat_2=45 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0013:5	facteurs -S faux pour +proj=murd2 +lat_1=30 +lat_2=45 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0013:6	facteurs -S faux pour +proj=murd2 +lat_1=30 +lat_2=45 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0015:1	facteurs -S faux pour +proj=putp4p +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0015:2	facteurs -S faux pour +proj=putp4p +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0015:3	facteurs -S faux pour +proj=putp4p +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0015:4	facteurs -S faux pour +proj=putp4p +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0015:5	facteurs -S faux pour +proj=putp4p +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0015:6	facteurs -S faux pour +proj=putp4p +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0016:1	facteurs -S faux pour +proj=rpoly +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0016:2	facteurs -S faux pour +proj=rpoly +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0016:3	facteurs -S faux pour +proj=rpoly +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0016:4	facteurs -S faux pour +proj=rpoly +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0016:5	facteurs -S faux pour +proj=rpoly +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0016:6	facteurs -S faux pour +proj=rpoly +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0020:1	facteurs -S faux pour +proj=wag2 +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0020:2	facteurs -S faux pour +proj=wag2 +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0020:3	facteurs -S faux pour +proj=wag2 +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0020:4	facteurs -S faux pour +proj=wag2 +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0020:5	facteurs -S faux pour +proj=wag2 +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0020:6	facteurs -S faux pour +proj=wag2 +ellps=WGS84 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0021:1	facteurs -S faux pour +proj=wink2 +lat_1=40 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0021:2	facteurs -S faux pour +proj=wink2 +lat_1=40 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0021:3	facteurs -S faux pour +proj=wink2 +lat_1=40 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0021:4	facteurs -S faux pour +proj=wink2 +lat_1=40 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0021:5	facteurs -S faux pour +proj=wink2 +lat_1=40 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-factors-0021:6	facteurs -S faux pour +proj=wink2 +lat_1=40 : écart sur le 3e champ, de 0,1 % à 1 %	à ouvrir
+proj-fwd-0008:1	alsk : écart de position de quelques dizaines de mètres	à ouvrir
+proj-fwd-0008:2	alsk : écart de position de quelques dizaines de mètres	à ouvrir
+proj-fwd-0008:3	alsk : écart de position de quelques dizaines de mètres	à ouvrir
+proj-fwd-0008:4	alsk : écart de position de quelques dizaines de mètres	à ouvrir
+proj-fwd-0008:5	alsk : écart de position de quelques dizaines de mètres	à ouvrir
+proj-fwd-0008:6	alsk : écart de position de quelques dizaines de mètres	à ouvrir
+proj-fwd-0045:1	geocent (avant) : résultat faux, X proche de 0 contre plusieurs Mm	à ouvrir
+proj-fwd-0045:2	geocent (avant) : résultat faux, X proche de 0 contre plusieurs Mm	à ouvrir
+proj-fwd-0045:3	geocent (avant) : résultat faux, X proche de 0 contre plusieurs Mm	à ouvrir
+proj-fwd-0045:4	geocent (avant) : résultat faux, X proche de 0 contre plusieurs Mm	à ouvrir
+proj-fwd-0045:5	geocent (avant) : résultat faux, X proche de 0 contre plusieurs Mm	à ouvrir
+proj-fwd-0045:6	geocent (avant) : résultat faux, X proche de 0 contre plusieurs Mm	à ouvrir
+proj-fwd-0051:1	gs48 (avant) : écart de l'ordre de 10 Mm sur de grandes coordonnées	à ouvrir
+proj-fwd-0051:2	gs48 (avant) : écart de l'ordre de 10 Mm sur de grandes coordonnées	à ouvrir
+proj-fwd-0051:3	gs48 (avant) : écart de l'ordre de 10 Mm sur de grandes coordonnées	à ouvrir
+proj-fwd-0051:4	gs48 (avant) : écart de l'ordre de 10 Mm sur de grandes coordonnées	à ouvrir
+proj-fwd-0051:5	gs48 (avant) : écart de l'ordre de 10 Mm sur de grandes coordonnées	à ouvrir
+proj-fwd-0051:6	gs48 (avant) : écart de l'ordre de 10 Mm sur de grandes coordonnées	à ouvrir
+proj-fwd-0052:1	gs50 (avant) : écart relatif de 1e-5 sur de très grandes coordonnées	à ouvrir
+proj-fwd-0052:2	gs50 (avant) : écart relatif de 1e-5 sur de très grandes coordonnées	à ouvrir
+proj-fwd-0052:3	gs50 (avant) : écart relatif de 1e-5 sur de très grandes coordonnées	à ouvrir
+proj-fwd-0052:4	gs50 (avant) : écart relatif de 1e-5 sur de très grandes coordonnées	à ouvrir
+proj-fwd-0052:5	gs50 (avant) : écart relatif de 1e-5 sur de très grandes coordonnées	à ouvrir
+proj-fwd-0052:6	gs50 (avant) : écart relatif de 1e-5 sur de très grandes coordonnées	à ouvrir
+proj-fwd-0078:1	lee_os (avant) : écart de dizaines de km	à ouvrir
+proj-fwd-0078:2	lee_os (avant) : écart de dizaines de km	à ouvrir
+proj-fwd-0078:3	lee_os (avant) : écart de dizaines de km	à ouvrir
+proj-fwd-0078:4	lee_os (avant) : écart de dizaines de km	à ouvrir
+proj-fwd-0078:5	lee_os (avant) : écart de dizaines de km	à ouvrir
+proj-fwd-0078:6	lee_os (avant) : écart de dizaines de km	à ouvrir
+proj-fwd-0087:1	mil_os (avant) : écart de l'ordre du kilomètre	à ouvrir
+proj-fwd-0087:2	mil_os (avant) : écart de l'ordre du kilomètre	à ouvrir
+proj-fwd-0087:3	mil_os (avant) : écart de l'ordre du kilomètre	à ouvrir
+proj-fwd-0087:4	mil_os (avant) : écart de l'ordre du kilomètre	à ouvrir
+proj-fwd-0087:5	mil_os (avant) : écart de l'ordre du kilomètre	à ouvrir
+proj-fwd-0087:6	mil_os (avant) : écart de l'ordre du kilomètre	à ouvrir
+proj-fwd-0102:1	ob_tran avec o_proj=moll : erreur (code 3) là où PROJ calcule	à ouvrir
+proj-fwd-0102:2	ob_tran avec o_proj=moll : erreur (code 3) là où PROJ calcule	à ouvrir
+proj-fwd-0102:3	ob_tran avec o_proj=moll : erreur (code 3) là où PROJ calcule	à ouvrir
+proj-fwd-0102:4	ob_tran avec o_proj=moll : erreur (code 3) là où PROJ calcule	à ouvrir
+proj-fwd-0102:5	ob_tran avec o_proj=moll : erreur (code 3) là où PROJ calcule	à ouvrir
+proj-fwd-0102:6	ob_tran avec o_proj=moll : erreur (code 3) là où PROJ calcule	à ouvrir
+proj-fwd-0102:rc	ob_tran avec o_proj=moll : erreur (code 3) là où PROJ calcule	à ouvrir
+proj-inv-0035:1	geocent (inverse) : longitude fausse d'environ 158 degrés	à ouvrir
+proj-inv-0035:2	geocent (inverse) : longitude fausse d'environ 158 degrés	à ouvrir
+proj-inv-0035:3	geocent (inverse) : longitude fausse d'environ 158 degrés	à ouvrir
+proj-inv-0035:4	geocent (inverse) : longitude fausse d'environ 158 degrés	à ouvrir
+proj-inv-0035:5	geocent (inverse) : longitude fausse d'environ 158 degrés	à ouvrir
+proj-inv-0035:6	geocent (inverse) : longitude fausse d'environ 158 degrés	à ouvrir
+proj-inv-0040:1	gs48 (inverse) : écart de 0,19 degré sur la latitude	à ouvrir
+proj-inv-0040:3	gs48 (inverse) : écart de 0,19 degré sur la latitude	à ouvrir
+proj-inv-0040:4	gs48 (inverse) : écart de 0,19 degré sur la latitude	à ouvrir
+proj-inv-0040:5	gs48 (inverse) : écart de 0,19 degré sur la latitude	à ouvrir
+proj-inv-0040:6	gs48 (inverse) : écart de 0,19 degré sur la latitude	à ouvrir

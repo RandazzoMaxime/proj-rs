@@ -160,6 +160,7 @@ Offline, the 45 cases that need CDN grids are not run, so the offline count is
 PROJ's C++ unit tests are ported one `TEST()` at a time, and the ones not
 ported yet are listed by name in [`docs/UNPORTED-UNIT.md`](docs/UNPORTED-UNIT.md).
 The same goes for the CLI cases in [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md).
+About 4000 conversions across the CRS families, `proj`, and `cct` are compared with PROJ 9.9.0 in [`docs/PARITY.md`](docs/PARITY.md).
 
 | Suite | Ported and passing | Not yet | |
 |---|---:|---:|:-:|
