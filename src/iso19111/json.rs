@@ -1783,7 +1783,8 @@ pub(crate) fn proj_based_operation_of_text(
 ) -> Option<Result<CoordinateOperation, FactoryError>> {
     let text = text.trim();
     let bare = text.strip_prefix('+').unwrap_or(text);
-    let proj_string = bare.starts_with("proj=") || text.contains(" +proj=") || text.contains(" proj=");
+    let proj_string =
+        bare.starts_with("proj=") || text.contains(" +proj=") || text.contains(" proj=");
     if !proj_string || text.contains("type=crs") || text.contains("init=") {
         return None;
     }

@@ -119,7 +119,11 @@ fn vertical_grid(
         PARAMETER_VERTICAL_OFFSET_FILE,
         NAME_VERTICAL_OFFSET_FILE,
     ) {
-        Some(filename) => (PARAMETER_VERTICAL_OFFSET_FILE, NAME_VERTICAL_OFFSET_FILE, filename),
+        Some(filename) => (
+            PARAMETER_VERTICAL_OFFSET_FILE,
+            NAME_VERTICAL_OFFSET_FILE,
+            filename,
+        ),
         None => match file_value(
             transformation,
             PARAMETER_GEOID_MODEL_DIFFERENCE_FILE,

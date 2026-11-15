@@ -1902,8 +1902,12 @@ fn render(
                 .map(Some)
                 .map_err(|error| error.to_string()),
             Dialect::Sql => sql_text(object, db, options).map(Some),
-            Dialect::Wkt2_2015 => wkt(object, db, options, crate::WktConvention::Wkt2_2015).map(Some),
-            Dialect::Wkt2_2019 => wkt(object, db, options, crate::WktConvention::Wkt2_2019).map(Some),
+            Dialect::Wkt2_2015 => {
+                wkt(object, db, options, crate::WktConvention::Wkt2_2015).map(Some)
+            }
+            Dialect::Wkt2_2019 => {
+                wkt(object, db, options, crate::WktConvention::Wkt2_2019).map(Some)
+            }
             Dialect::Wkt1Gdal => wkt(object, db, options, crate::WktConvention::Wkt1Gdal)
                 .map(|text| Some(format!("{text}\n"))),
             Dialect::Wkt1Esri => wkt(object, db, options, crate::WktConvention::Wkt1Esri)

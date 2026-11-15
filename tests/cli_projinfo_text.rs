@@ -176,6 +176,11 @@ fn vertical_grid_operation_takes_the_proj_grid_name() {
         &[("PROJINFO_NO_GRID_CHECK", "YES")],
     );
     assert!(text.contains("ID[\"DERIVED_FROM(EPSG)\",7863]"), "{text}");
-    assert!(text.contains("PARAMETERFILE[\"Vertical offset file\",\"nz_linz_dublht1960-nzvd2016.tif\"]"), "{text}");
+    assert!(
+        text.contains(
+            "PARAMETERFILE[\"Vertical offset file\",\"nz_linz_dublht1960-nzvd2016.tif\"]"
+        ),
+        "{text}"
+    );
     assert!(!text.contains("VERSION[\"LINZ-NZ DUBL\"]"), "{text}");
 }
