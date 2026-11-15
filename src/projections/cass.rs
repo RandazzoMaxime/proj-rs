@@ -5,8 +5,8 @@
 
 #![allow(clippy::pedantic, reason = "formulae follow PROJ cass.cpp")]
 
-use crate::engine::{classic_step, CreateError, Frame, Kernel, Params, TransformError};
 use super::generic_inverse::generic_inverse_2d;
+use crate::engine::{classic_step, CreateError, Frame, Kernel, Params, TransformError};
 use crate::projmath::Meridian;
 
 const C1: f64 = 0.166_666_666_666_666_666_66;

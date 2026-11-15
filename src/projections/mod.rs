@@ -20,9 +20,9 @@ pub(crate) use conversions::{angular_proj_unit, linear_proj_unit};
 mod ellip;
 mod eqc;
 mod eqdc;
+mod generic_inverse;
 mod geos;
 mod gnom;
-mod generic_inverse;
 mod gridshift;
 pub use gridshift::public::{
     ExtentAndRes, GenericShiftGridSet, Grid, GridError, HorizontalShiftGridSet, Nodata,

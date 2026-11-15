@@ -9,8 +9,8 @@
     reason = "constants and branches are transcribed from the PROJ sources"
 )]
 
-use crate::engine::{classic_step, CreateError, Frame, Kernel, Params, TransformError};
 use super::generic_inverse::generic_inverse_2d;
+use crate::engine::{classic_step, CreateError, Frame, Kernel, Params, TransformError};
 use crate::projmath::{aasin, aatan2, Meridian};
 use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI};
 
@@ -34,7 +34,6 @@ fn clamp_asin(value: f64, tol: f64) -> Result<f64, TransformError> {
 fn step<K: Kernel + 'static>(frame: &Frame, kernel: K) -> Box<dyn crate::engine::Step> {
     classic_step(frame, kernel)
 }
-
 
 struct Sts {
     c_x: f64,
@@ -250,7 +249,9 @@ impl Kernel for Wink2 {
 
     fn inverse(&self, x: f64, y: f64) -> Result<(f64, f64), TransformError> {
         let cosphi1 = self.cosphi1;
-        generic_inverse_2d(x, y, x, y, 1e-10, |lam, phi| Ok(wink2_xy(cosphi1, lam, phi)))
+        generic_inverse_2d(x, y, x, y, 1e-10, |lam, phi| {
+            Ok(wink2_xy(cosphi1, lam, phi))
+        })
     }
 }
 

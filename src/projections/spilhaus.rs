@@ -9,9 +9,9 @@
     reason = "formulae follow PROJ spilhaus.cpp and adams.cpp"
 )]
 
+use super::generic_inverse::generic_inverse_2d;
 use crate::angle::adjlon;
 use crate::engine::{classic_step, CreateError, Frame, Kernel, Params, TransformError};
-use super::generic_inverse::generic_inverse_2d;
 use crate::projmath::{aacos, aasin, aatan2, msfn, sinhpsi2tanphi};
 use std::f64::consts::{FRAC_2_PI, FRAC_PI_2, PI};
 
@@ -197,7 +197,6 @@ fn adams_ws2_inverse(x: f64, y: f64) -> Result<(f64, f64), TransformError> {
     };
     generic_inverse_2d(x, y, lam, phi, ADAMS_INV_TOL, adams_ws2_forward)
 }
-
 
 const KEYS: &[&str] = &["azi", "rot"];
 
