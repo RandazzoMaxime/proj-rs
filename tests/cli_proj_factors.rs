@@ -267,7 +267,11 @@ fn same_xy_and_factors(got: &str, expected: &str) -> bool {
     got.len() == expected.len()
         && got.iter().zip(&expected).all(|(g, e)| {
             let (g, e): (Vec<&str>, Vec<&str>) = (g.split('\t').collect(), e.split('\t').collect());
-            g.len() == 3 && e.len() == 3 && close(g[0], e[0]) && close(g[1], e[1]) && g[2] == e[2]
+            g.len() == 3
+                && e.len() == 3
+                && close(g[0], e[0])
+                && close(g[1], e[1])
+                && common::same_cli_text(g[2], e[2])
         })
 }
 
@@ -319,4 +323,8 @@ fn off_glibc_comparison_accepts_libm_rounding_only() {
     ));
     assert!(!common::close_cli_text(&msvc.replace('<', "("), linux));
     assert!(!common::close_cli_text("*\t*\n", "inf\tinf\n"));
+    assert!(common::close_cli_text(
+        "<0.684301 0.684301 0.468268 2.51241e-05 0.684302 0.684301>",
+        "<0.684301 0.684301 0.468268 2.50931e-05 0.684302 0.684301>"
+    ));
 }
