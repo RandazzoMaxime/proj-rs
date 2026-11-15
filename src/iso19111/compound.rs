@@ -949,7 +949,7 @@ pub(super) fn compound_to_compound(
             for horizontal in
                 factory.registry_operations(&src_components[0], &dst_components[0], context)?
             {
-                res.push(horizontal_null_vertical(
+                res.extend(horizontal_null_vertical(
                     source,
                     target,
                     &horizontal,
@@ -1313,14 +1313,7 @@ fn horiz_vertical_horiz_checked(
     if context.disallows_empty_intersection() && joint_extent(&steps).is_none() {
         return None;
     }
-    Some(proj_based_horiz_vertical_horiz(
-        source,
-        target,
-        first,
-        vertical,
-        last,
-        interpolation,
-    ))
+    proj_based_horiz_vertical_horiz(source, target, first, vertical, last, interpolation)
 }
 
 /// `setCRSs` of the factory on a copy: the source and target of the operation, with its
@@ -1424,7 +1417,7 @@ fn horizontal_null_vertical(
     horizontal: &CoordinateOperation,
     vertical: &CoordinateOperation,
     interpolation: Crs,
-) -> CoordinateOperation {
+) -> Option<CoordinateOperation> {
     let steps = vec![horizontal.clone(), vertical.clone()];
     let mut operation = proj_based_operation(
         format!("{} + {}", horizontal.name(), vertical.name()),
@@ -1440,13 +1433,13 @@ fn horizontal_null_vertical(
             interpolation,
             inverted: false,
         },
-    );
+    )?;
     if let Some(Some(domain)) = super::derived::joint_extent(&steps) {
         if let CoordinateOperation::Concatenated(concatenated) = &mut operation {
             concatenated.identified.domains = vec![domain];
         }
     }
-    with_remarks(operation, &[horizontal, vertical])
+    Some(with_remarks(operation, &[horizontal, vertical]))
 }
 
 /// `createHorizVerticalPROJBased` (coordinateoperationfactory.cpp:2717-2793): a null horizontal
@@ -1466,7 +1459,7 @@ fn combine(
         // `horizTransformIsNoOp`: the name, extent and accuracy of the vertical operation, still
         // written by the `HorizVertical` exportable.
         let mut operation =
-            proj_based_horiz_vertical(source, target, horizontal, vertical, geog_dst);
+            proj_based_horiz_vertical(source, target, horizontal, vertical, geog_dst)?;
         if let CoordinateOperation::Concatenated(concatenated) = &mut operation {
             concatenated.identified.domains = super::factory::operation_extent(vertical)
                 .into_iter()
@@ -1480,7 +1473,7 @@ fn combine(
         None if context.disallows_empty_intersection() => return None,
         None => None,
     };
-    let mut operation = proj_based_horiz_vertical(source, target, horizontal, vertical, geog_dst);
+    let mut operation = proj_based_horiz_vertical(source, target, horizontal, vertical, geog_dst)?;
     if let CoordinateOperation::Concatenated(concatenated) = &mut operation {
         concatenated.identified.domains = domain.into_iter().collect();
     }
@@ -2463,7 +2456,7 @@ fn bound_compound_to_geog3d(
         };
         for first in &to_interpolation {
             for last in &from_interpolation {
-                found.push(proj_based_horiz_vertical_horiz(
+                found.extend(proj_based_horiz_vertical_horiz(
                     source,
                     target,
                     first,
@@ -2480,7 +2473,7 @@ fn bound_compound_to_geog3d(
             && (!has_interpolated || vertical_op.has_ballpark_transformation())
         {
             for horizontal_op in &horizontal_ops {
-                found.push(proj_based_horiz_vertical(
+                found.extend(proj_based_horiz_vertical(
                     source,
                     target,
                     horizontal_op,
@@ -2728,8 +2721,8 @@ fn proj_based_operation(
     steps: Vec<CoordinateOperation>,
     accuracy: Option<f64>,
     proj_based: ProjBased,
-) -> CoordinateOperation {
-    CoordinateOperation::Concatenated(ConcatenatedOperation {
+) -> Option<CoordinateOperation> {
+    let operation = ConcatenatedOperation {
         identified: Identified::named(name),
         steps: steps
             .into_iter()
@@ -2747,7 +2740,11 @@ fn proj_based_operation(
         target_epoch: None,
         proj_based: Some(Box::new(proj_based)),
         interpolation: None,
-    })
+    };
+    // `PROJBasedOperation::create` writes the PROJ string at once (projbasedoperation.cpp:
+    // 115-130): an operation it cannot write throws, and the factory drops the candidate.
+    operation.export_to_proj_string(ProjLines::Single).ok()?;
+    Some(CoordinateOperation::Concatenated(operation))
 }
 
 /// `getRemarks` (coordinateoperationfactory.cpp:2668-2713): the remarks of the operations that have
@@ -2806,7 +2803,7 @@ fn proj_based_horiz_vertical_horiz(
     vertical: &CoordinateOperation,
     last: &CoordinateOperation,
     interpolation: &Crs,
-) -> CoordinateOperation {
+) -> Option<CoordinateOperation> {
     let mut steps = Vec::new();
     if !is_null_offset(first) {
         steps.push(first.clone());
@@ -2861,14 +2858,14 @@ fn proj_based_horiz_vertical_horiz(
             interpolation: interpolation.clone(),
             inverted: false,
         },
-    );
+    )?;
     // A name joined from the steps is rebuilt from the inverted steps by the inverse.
     if let CoordinateOperation::Concatenated(concatenated) = &mut operation {
         concatenated.computed_name = !cancels;
         concatenated.identified.domains = domain.into_iter().collect();
         concatenated.identified.remarks = remarks;
     }
-    operation
+    Some(operation)
 }
 
 /// `createHorizVerticalPROJBased`.
@@ -2878,7 +2875,7 @@ fn proj_based_horiz_vertical(
     horizontal: &CoordinateOperation,
     vertical: &CoordinateOperation,
     geog_dst: &GeographicCRS,
-) -> CoordinateOperation {
+) -> Option<CoordinateOperation> {
     let (name, steps) = if is_null_offset(horizontal) {
         (vertical.name().to_owned(), vec![vertical.clone()])
     } else {
@@ -2889,7 +2886,7 @@ fn proj_based_horiz_vertical(
     };
     let accuracy = accuracy_sum(&steps.iter().collect::<Vec<_>>());
     let remarks_of: Vec<CoordinateOperation> = steps.clone();
-    with_remarks(
+    Some(with_remarks(
         proj_based_operation(
             name,
             source,
@@ -2904,7 +2901,7 @@ fn proj_based_horiz_vertical(
                 interpolation: Crs::Geographic(geog_dst.clone()),
                 inverted: false,
             },
-        ),
+        )?,
         &remarks_of.iter().collect::<Vec<_>>(),
-    )
+    ))
 }

@@ -40,3 +40,18 @@ fn geographic_to_geocentric_of_another_datum_reads_the_registry() {
         ]
     );
 }
+
+/// `projinfo -s EPSG:12216 -t EPSG:7912 --summary --spatial-test intersects` (PROJ 9.9.0): the geoid model `ETRS89-NLD [AGRS2010] to MSL-NLD depth (1)` uses the method
+/// `Geographic3D to Depth (gtx)`, which PROJ cannot write: `PROJBasedOperation::create` throws and
+/// its three candidates are dropped.
+#[test]
+fn a_vertical_grid_without_proj_string_drops_its_candidates() {
+    assert_eq!(
+        names("EPSG:12216", "EPSG:7912"),
+        [
+            "Ballpark geographic offset from ETRS89-NLD [AGRS2010] to ITRF2014 + Transformation from MSL-NLD depth to ITRF2014 (ballpark vertical transformation, without ellipsoid height to vertical height correction)",
+            "Conversion from ETRS89-NLD [AGRS2010] (geog2D) to ETRS89-NLD [AGRS2010] (geocentric) + ETRS89-NLD [AGRS2010] to ETRF2000 (1) + Inverse of ITRF2014 to ETRF2000 (1) + Conversion from ITRF2014 (geocentric) to ITRF2014 (geog3D) + Transformation from MSL-NLD depth to ITRF2014 (ballpark vertical transformation, without ellipsoid height to vertical height correction)",
+            "Conversion from ETRS89-NLD [AGRS2010] (geog2D) to ETRS89-NLD [AGRS2010] (geocentric) + Inverse of ITRF2020 to ETRS89-NLD [AGRS2010] (1) + Inverse of ITRF2014 to ITRF2020 (1) + Conversion from ITRF2014 (geocentric) to ITRF2014 (geog3D) + Transformation from MSL-NLD depth to ITRF2014 (ballpark vertical transformation, without ellipsoid height to vertical height correction)",
+        ]
+    );
+}
