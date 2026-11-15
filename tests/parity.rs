@@ -28,6 +28,8 @@ enum Kind {
     Factor,
     /// A whole line compared as text: the candidate list of `projinfo --summary`.
     Text,
+    /// A degrees-minutes-seconds field of `geod`, compared as text.
+    Dms,
 }
 
 impl Kind {
@@ -38,6 +40,7 @@ impl Kind {
             "t" => Kind::Time,
             "fac" => Kind::Factor,
             "text" => Kind::Text,
+            "dms" => Kind::Dms,
             other => panic!("genre de champ inconnu dans cases.jsonl : {other}"),
         }
     }
@@ -51,7 +54,7 @@ impl Kind {
             // Relative, but absolute near zero: an angular distortion of 0 against 1e-6 degree
             // is the finite-difference noise of `pj_deriv`, printed with six digits.
             Kind::Factor => diff <= TOLERANCE_FACTOR * expected.abs().max(actual.abs()).max(1.0),
-            Kind::Text => false,
+            Kind::Text | Kind::Dms => false,
         }
     }
 }
@@ -189,6 +192,19 @@ fn is_error(tokens: &[String]) -> bool {
         .any(|token| matches!(token.as_str(), "*" | "inf" | "-inf" | "nan" | "-nan"))
 }
 
+/// A `dms` field that differs, also on a line holding an error token (a NaN azimuth).
+fn dms_mismatch(want: &[String], got: &[String], kinds: &[Kind]) -> Option<String> {
+    if want.len() != got.len() {
+        return None;
+    }
+    for (index, (x, y)) in want.iter().zip(got).enumerate() {
+        if x != y && kinds.get(index) == Some(&Kind::Dms) {
+            return Some(format!("champ {} (dms) : «{x}» contre «{y}»", index + 1));
+        }
+    }
+    None
+}
+
 fn compare(expected: &str, actual: &str, kinds: &[Kind]) -> Outcome {
     if kinds == [Kind::Text] {
         return if expected == actual {
@@ -208,10 +224,12 @@ fn compare(expected: &str, actual: &str, kinds: &[Kind]) -> Outcome {
         return Outcome::Deviation(Class::Status, detail);
     }
     if want_error {
-        return if want == got {
-            Outcome::Identical
-        } else {
-            Outcome::BothError
+        if want == got {
+            return Outcome::Identical;
+        }
+        return match dms_mismatch(&want, &got, kinds) {
+            Some(detail) => Outcome::Deviation(Class::Value, detail),
+            None => Outcome::BothError,
         };
     }
     if want.len() != got.len() {
@@ -224,6 +242,10 @@ fn compare(expected: &str, actual: &str, kinds: &[Kind]) -> Outcome {
             continue;
         }
         exact = false;
+        if kinds.get(index) == Some(&Kind::Dms) {
+            let detail = format!("champ {} (dms) : «{x}» contre «{y}»", index + 1);
+            return Outcome::Deviation(Class::Value, detail);
+        }
         let (Ok(expected_value), Ok(actual_value)) = (x.parse::<f64>(), y.parse::<f64>()) else {
             let detail = format!("champ {} : «{x}» contre «{y}»", index + 1);
             return Outcome::Deviation(Class::Shape, detail);
@@ -275,6 +297,8 @@ fn binary(tool: &str) -> &'static str {
         "proj" => env!("CARGO_BIN_EXE_proj"),
         "cct" => env!("CARGO_BIN_EXE_cct"),
         "projinfo" => env!("CARGO_BIN_EXE_projinfo"),
+        "geod" => env!("CARGO_BIN_EXE_geod"),
+        "invgeod" => env!("CARGO_BIN_EXE_invgeod"),
         other => panic!("outil inconnu dans cases.jsonl : {other}"),
     }
 }
@@ -296,8 +320,11 @@ fn run(case: &Case, grids: Option<&str>) -> (i64, Vec<String>) {
         .spawn()
         .expect("lancer le binaire de la suite de parité");
     if let Some(mut stdin) = child.stdin.take() {
+        // record.py writes nothing for an empty input: sending a newline would add a blank line.
         let mut text = case.input.join("\n");
-        text.push('\n');
+        if !case.input.is_empty() {
+            text.push('\n');
+        }
         // A binary that exits before reading (an error case) closes the pipe: its exit code and
         // output are what get compared, so a broken pipe is not a failure here.
         match stdin.write_all(text.as_bytes()) {
@@ -480,6 +507,12 @@ fn parity_against_proj_9_9_0() {
 #[ignore = "corpus large : cargo test --test parity -- --ignored"]
 fn parity_wide_against_proj_9_9_0() {
     check_corpus("tests/parity/wide", None);
+}
+
+/// `geod` and `invgeod` on their own corpus (docs/PARITY.md, section geod).
+#[test]
+fn parity_geod_against_proj_9_9_0() {
+    check_corpus("tests/parity/geod", None);
 }
 
 /// The grid corpus (about 10 000 conversions, see docs/PARITY.md): its grid files are in

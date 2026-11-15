@@ -69,9 +69,16 @@ Seuils, par genre de champ (`kinds` dans `cases.jsonl`) :
   `pj_deriv` tombe autrement (`krovak`, `omerc`).
 - texte (`text`) : la ligne entière, à l'identique. Sert aux listes de candidats
   de `projinfo --summary` (famille `projinfo-candidates` du gros corpus).
+- DMS (`dms`) : le champ entier, à l'identique. Sert aux sorties de `geod` en
+  degrés, minutes, secondes ; un champ DMS qui diffère est un écart de valeur,
+  même sur une ligne qui porte aussi une erreur (`nan`).
 
 `cs2cs` écrit toujours trois valeurs (z = 0 sans hauteur), quatre avec le temps.
 Le corpus en tient compte.
+
+Une entrée vide (`input` = liste vide) n'envoie aucun octet, comme
+`record.py` : la référence ne lit alors rien. Une ligne vide est une entrée
+à part entière (`geod-blank`).
 
 ## Registre des écarts
 
@@ -220,3 +227,37 @@ l'ordre (fabrique d'opérations ou `proj_trans`) non isolée dans ce lot : écar
 inscrit dans `tests/parity/grids/known.tsv`.
 
 Seuil d'alerte : 0,01 % hors seuil, sous les 5 %.
+
+## Suite geod (`tests/parity/geod`)
+
+`geod` et `invgeod` ont leur corpus à part : le petit corpus reste figé. Test
+`parity_geod_against_proj_9_9_0` (non ignoré, quelques secondes).
+
+```sh
+python3 tools/parity/generate.py --geod 400 --out tests/parity/geod/cases.jsonl
+PROJ_REFERENCE_DIR=target/proj-reference tools/parity/record.sh \
+  --cases tests/parity/geod/cases.jsonl --out tests/parity/geod/expected.jsonl
+cargo test --test parity parity_geod_against_proj_9_9_0 -- --nocapture
+```
+
+Familles (`fam_geod`, graine par défaut) :
+
+| Famille | Outil | Entrée | Sortie comparée |
+|---|---|---|---|
+| `geod-inv` | `geod -I` | `lat1 lon1 lat2 lon2` | azimuts et distance |
+| `geod-fwd` | `geod` | `lat1 lon1 azimut distance` | point d'arrivée et azimut retour |
+| `invgeod-inv` | `invgeod` | comme `geod-inv` | comme `geod-inv` |
+| `geod-blank` | `geod -I` | lignes vides ou blanches mêlées | comme `geod-inv` |
+| `geod-line` | `geod` | `+lat_1 +lon_1 …` puis `+n_S`, `+del_S` ou `+n_A` | une ligne par point |
+| `geod-err` | `geod`, `invgeod` | options ou entrées fausses | code de sortie, sortie |
+
+Les points couvrent antipodes, quasi-antipodes, pôles, équateur, antiméridien,
+distances nulles, très longues distances. Les invocations tirent un ellipsoïde
+(WGS84, GRS80, clrk66, intl, bessel, sphère, `+R=`, `+a`/`+rf`, `+a`/`+b`), une
+unité `+sunits` (m, km, us-ft, mi) et un format (DMS par défaut, `-a`, `-p`,
+`-f`, `-F`, `-w`, `-W`). Genres : `dms` (texte exact), `deg` (5e-9 degré) et
+`m` (5e-4 m).
+
+Corpus généré le 2026-11-15 : 1511 invocations, 6514 entrées, 8290 conversions
+(entrées et lignes de sortie du mode ligne). Les références : `geod`, `invgeod`
+de PROJ 9.9.0. La fiche de port est `docs/PORTING-cli-geod.md`.
