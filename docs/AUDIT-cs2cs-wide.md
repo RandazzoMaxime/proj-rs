@@ -117,23 +117,51 @@ Le cas inverse `EPSG:4978 → EPSG:9988` a le même écart.
 
 ```sh
 tools/compare-cs2cs.sh --no-build -k '+init=epsg:27700|+init=epsg:4326'
+printf '530000 180000 0\n' | target/proj-reference/build/bin/cs2cs -d 10 +init=epsg:27700 +to +init=epsg:4326
+printf '530000 180000 0\n' | target/release/cs2cs -d 10 +init=epsg:27700 +to +init=epsg:4326
 ```
 
-Écart en degrés : 0,0016 en longitude, 0,0005 en latitude. La référence
-donne une quasi-identité, comme sa voie `EPSG:27700 → EPSG:4326`, qui est
-identique au port. Le port applique seulement dans la voie `+init` un
-décalage de l'ordre de 100 m (Helmert OSGB36). Hypothèse : l'expansion de
-`+init=epsg:27700` par le port ne reprend pas l'opération nulle de la
-référence. Non vérifié, `projinfo` refuse `+init=` en mode non PROJ4.
+- Référence : `-0.1283539405 51.5039908276 0`, identique à `EPSG:27700 → EPSG:4326`.
+- Port : `-0.1267476799 51.5034800370 0` (écart 0,0016° en longitude, 0,0005° en latitude).
 
-**4. `+init=epsg:4326` vers `+init=epsg:2154` : 1,05e-4 m (classe b/c)**
+Cause mesurée (lot C3). La référence ne passe pas `+init=epsg:27700` par une chaîne PROJ :
+`cs2cs` appelle `proj_create("+init=epsg:27700 +type=crs")` (`apps/cs2cs.cpp:833`), et la
+branche `init=epsg:` de `PROJStringParser` renvoie l'objet CRS de la base, avec son datum OSGB36
+et ses opérations EPSG (`src/iso19111/io.cpp:12514-12620`). Vérifié :
+
+- `cs2cs +init=epsg:27700 +type=crs` (référence) donne le résultat de `EPSG:27700`. Sa liste
+  d'opérations porte « + axis order change », ce qui est la forme objet.
+- Le port expanse `+init=epsg:27700` en `+proj=tmerc … +ellps=airy`, identique à l'export PROJ
+  de 27700 (sans `+towgs84` : l'unique candidat vers WGS 84 est une grille, `createBoundCRSToWGS84IfPossible`
+  n'en tire aucun). La paire devient alors une ballpark.
+- La référence donne `-0.1267476799 51.5034800370` pour cette même chaîne écrite en ligne :
+  le calcul du port est juste, c'est la route qui diffère.
+
+Pour corriger, il faut router le côté `+init=epsg:` par la sélection ISO, avec l'override
+d'ordre des axes de `io.cpp:12598-12612` (lon/lat, E/N). C'est ce qui a déjà cassé
+`test_cs2cs_various.yaml#59`, `#67`, `#68` (`docs/PORTING-cli-rest.md`, point 3). Une paire
+mixte (un côté `EPSG:`, un côté `+init=`) est refusée par le port aujourd'hui
+(`no transformation … the selection writes no pipeline`), la référence la traite.
+
+Non corrigé (lot C3, deux tentatives : l'hypothèse du `+towgs84` de l'export lié est réfutée, la
+route objet est confirmée).
+
+**4. `+init=epsg:4326` vers `+init=epsg:2154` : 1,04e-4 m en nord (classe b)**
 
 ```sh
 tools/compare-cs2cs.sh --no-build -k '+init=epsg:4326|+init=epsg:2154'
+printf '2.2945 48.8582 0\n' | target/proj-reference/build/bin/cs2cs -d 10 +init=epsg:4326 +to +init=epsg:2154
+printf '2.2945 48.8582 0\n' | target/release/cs2cs -d 10 +init=epsg:4326 +to +init=epsg:2154
 ```
 
-Écart maximal 1,05e-4 m en nord, 9,9e-6 m en est. Même cause probable que le
-point 3 (voie `+init`). Non vérifié.
+- Référence : `648237.1028543998 6862249.4434044389 0`, identique à `EPSG:4326 → EPSG:2154`.
+- Port : `648237.1028553281 6862249.4435083456 0` (écart 1,04e-4 m en nord, 9e-7 m en est).
+
+Mesuré (lot C3) : le même texte d'expansion du port, écrit en ligne après `+towgs84=0,0,0,0,0,0,0`,
+donne la valeur exacte de la référence. Le `+towgs84` nul n'est donc pas en cause. L'écart
+apparaît seulement quand la cible est `+init=epsg:2154`. La cause précise n'est pas localisée
+(`expand_init`, `src/engine.rs`, ou la lecture des paramètres injectés). Même route objet que le
+point 3 : la correction du point 3 devrait la couvrir aussi, à vérifier.
 
 ### Statuts différents (classe d)
 
@@ -233,7 +261,8 @@ matrice ne le met pas à l'épreuve.
 - Les messages d'erreur sur la sortie d'erreur (stderr) ne sont pas comparés.
   Ils diffèrent (par exemple `proj_create: crs not found` contre
   `no transformation`). Le comparateur ne classe que stdout et les codes retour.
-- La cause des écarts 3, 4 et 6 n'est pas identifiée dans le code du port.
+- La cause de l'écart 6 n'est pas identifiée dans le code du port. Les causes des écarts 3 et 4
+  sont mesurées (points 3 et 4), pas corrigées.
 - `projinfo` refuse la syntaxe `+init=` en mode non PROJ4 : les choix
   d'opération de ces paires ne sont pas lus par `projinfo`.
 - Le candidat de `EPSG:4326 → EPSG:4936` diffère (référence 2, port 1), sans

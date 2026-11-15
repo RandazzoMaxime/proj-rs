@@ -31,6 +31,16 @@ PROJ 9.9.0 reference: `test/cli/test_cs2cs_various.yaml`, "Test MGI datum gives 
   runner accepts it under its tolerance. An exact match needs the 7-parameter Helmert path checked
   against PROJ's `pj_datum_transform`.
 
+- Open (measured, not fixed): `+init=epsg:27700` (OSGB36) to WGS 84 is about 100 m off
+  (`cs2cs +init=epsg:27700 +to +init=epsg:4326`, ref `-0.1283539405 51.5039908276`, port
+  `-0.1267476799 51.5034800370`). The expansion matches PROJ's export of 27700 (no `+towgs84`: the
+  only candidate to WGS 84 is a grid), and PROJ's string route gives the same port value. PROJ does
+  not take the string here: `cs2cs` calls `proj_create("+init=epsg:27700 +type=crs")`, which returns
+  the database CRS object (`src/iso19111/io.cpp:12514-12620`, axis override at 12598-12612). The
+  fix is to route the `+init=epsg:` side through the ISO selection with that override, which
+  broke `test_cs2cs_various.yaml#59 #67 #68` before (see `PORTING-cli-rest.md`, point 3).
+  Mixed pairs (one `EPSG:`, one `+init=`) are refused by the port today.
+
 ## Ledger
 
 `test_cs2cs_various.yaml#59` now passes and leaves `docs/UNPORTED-CLI.md`.
