@@ -7,6 +7,8 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
+mod common;
+
 const INPUT: &str = "17.697206796547 -63.296817134000 186.223194172606\n\
                      -79.227095248346 20.060492464000 2801.461373206228\n\
                      17.692167501547 -63.270271875000 1413.126271679066\n";
@@ -37,5 +39,6 @@ fn point_outside_every_area_falls_back_to_the_first_candidate_even_broken() {
         .expect("write");
     let output = child.wait_with_output().expect("wait");
     assert!(output.status.success());
-    assert_eq!(String::from_utf8_lossy(&output.stdout), PROJ_OUTPUT);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(common::same_cli_text(&stdout, PROJ_OUTPUT), "{stdout}");
 }

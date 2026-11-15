@@ -5,6 +5,8 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
+mod common;
+
 struct Case<'a> {
     bin: &'static str,
     args: &'a [&'a str],
@@ -55,7 +57,11 @@ fn binary(name: &str) -> &'static str {
 fn check(case: &Case<'_>) {
     let (code, stdout, stderr) = run(binary(case.bin), case.args, case.input);
     assert_eq!(code, case.exit, "exit code, stderr:\n{stderr}");
-    assert_eq!(stdout, case.expected, "stdout, stderr:\n{stderr}");
+    assert!(
+        common::same_cli_text(&stdout, case.expected),
+        "stdout:\n{stdout}\nexpected:\n{}\nstderr:\n{stderr}",
+        case.expected
+    );
 }
 
 /// Relative tolerance of the scale factor `h`, `k` and `s` at a point where the derivatives of
@@ -100,7 +106,7 @@ fn check_factors_within_tolerance(case: &Case<'_>) {
                     "error {error} against {expected_error}\n{got}\n{want}"
                 );
             }
-            _ => assert_eq!(got, want),
+            _ => assert!(common::same_cli_text(got, want), "{got}\n{want}"),
         }
     }
 }

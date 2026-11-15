@@ -10,6 +10,8 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
+mod common;
+
 struct Case {
     name: &'static str,
     args: &'static [&'static str],
@@ -115,7 +117,7 @@ fn proj_geocent_and_cart_match_reference_output() {
             .expect("write input");
         let output = child.wait_with_output().expect("proj output");
         let stdout = String::from_utf8_lossy(&output.stdout);
-        if !output.status.success() || stdout != case.stdout {
+        if !output.status.success() || !common::same_cli_text(&stdout, case.stdout) {
             failures.push(format!(
                 "{}: status {:?}\n got:      {stdout:?}\n expected: {:?}",
                 case.name,

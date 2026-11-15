@@ -9,6 +9,8 @@ use std::ffi::OsStr;
 use std::io::Write;
 use std::process::{Command, ExitStatus, Stdio};
 
+mod common;
+
 struct Case {
     name: &'static str,
     args: &'static [&'static str],
@@ -240,7 +242,7 @@ fn proj_factors_match_reference_output() {
     let mut failures = Vec::new();
     for case in CASES {
         let (status, stdout) = run_proj(case.args, case.input);
-        if !status.success() || stdout != case.stdout {
+        if !status.success() || !common::same_cli_text(&stdout, case.stdout) {
             failures.push(format!(
                 "{}: status {:?}\n got:      {stdout:?}\n expected: {:?}",
                 case.name,
@@ -298,4 +300,23 @@ fn proj_factors_sphere_projections_match_reference_output() {
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// The comparison used off glibc accepts the MSVC output of `proj -S` (CI log of PR 217) and
+/// refuses a changed token or a real difference.
+#[test]
+fn off_glibc_comparison_accepts_libm_rounding_only() {
+    let linux = "552535.620906571625\t1135669.254347730894\t<0.528892 0.528892 0.279727 7.99022e-06 0.528892 0.528892>\n-1598415.287275458686\t2812926.457895270083\t<0.685653 0.685653 0.47012 2.67065e-05 0.685653 0.685653>\n";
+    let msvc = "552535.620906571625\t1135669.254347730894\t<0.528892 0.528892 0.279727 8.15166e-06 0.528892 0.528892>\n-1598415.287275458686\t2812926.457895271014\t<0.685653 0.685653 0.47012 2.67065e-05 0.685653 0.685653>\n";
+    assert!(common::close_cli_text(msvc, linux));
+    assert!(!common::close_cli_text(
+        &msvc.replace("0.279727", "0.279737"),
+        linux
+    ));
+    assert!(!common::close_cli_text(
+        &msvc.replace("552535.62", "552535.72"),
+        linux
+    ));
+    assert!(!common::close_cli_text(&msvc.replace('<', "("), linux));
+    assert!(!common::close_cli_text("*\t*\n", "inf\tinf\n"));
 }
