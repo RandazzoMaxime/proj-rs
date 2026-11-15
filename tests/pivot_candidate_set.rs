@@ -263,3 +263,22 @@ fn unexportable_candidates_are_not_merged_as_duplicates() {
         ]
     );
 }
+
+/// `projinfo -s EPSG:10874 -t EPSG:4908 --summary --spatial-test intersects` (PROJ 9.9.0): GR96
+/// is defined by the datum ensemble EPSG:1421. The datum pivot reads the CRS of that ensemble
+/// (`DatumEnsemble::asDatum` keeps its identifier), so it finds the WGS 84 legs through GR96.
+#[test]
+fn datum_pivot_reads_the_crs_of_a_datum_ensemble() {
+    let operations = candidates(
+        "EPSG:10874",
+        "EPSG:4908",
+        GridAvailabilityUse::UseForSorting,
+    );
+    assert_eq!(
+        names(&operations),
+        [
+            "ETRS89-NOR [EUREF89] to WGS 84 (1) + Inverse of GR96 to WGS 84 (1) + Conversion from GR96 (geog3D) to GR96 (geocentric)",
+            "Ballpark geographic offset from ETRS89-NOR [EUREF89] to GR96 (geographic) + Conversion from GR96 (geographic) to GR96",
+        ]
+    );
+}

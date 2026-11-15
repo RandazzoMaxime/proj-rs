@@ -9334,6 +9334,20 @@ fn promote_operation_to_3d(
 /// An ensemble CRS has no datum code of its own. The ensemble code is the datum code
 /// `geodetic_crs.datum_code` stores, such as EPSG:6326 for WGS 84.
 fn datum_identity(crs: &Crs, db: &DatabaseContext) -> Option<(String, String)> {
+    // `DatumEnsemble::asDatum` (datum.cpp:1943-1963) keeps the identifier of the ensemble: GR96
+    // is EPSG:1421, not the deprecated EPSG:6747 its datum name finds.
+    let ensemble = match crs {
+        Crs::Geographic(geographic) => geographic.datum_ensemble(),
+        Crs::Geodetic(geodetic) => geodetic.datum_ensemble(),
+        _ => None,
+    };
+    if let Some(identifier) = ensemble.and_then(|ensemble| ensemble.identified.identifiers.first())
+    {
+        return Some((
+            identifier.code_space().to_owned(),
+            identifier.code().to_owned(),
+        ));
+    }
     let frame = geodetic_frame(crs)?;
     if let Some(identifier) = frame.identifiers().first() {
         return Some((
