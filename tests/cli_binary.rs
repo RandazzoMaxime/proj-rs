@@ -431,6 +431,38 @@ fn proj_binary_output_matches_proj_bit_for_bit() {
             .chunks_exact(8)
             .map(|word| u64::from_ne_bytes(word.try_into().expect("8-byte word")))
             .collect();
-        assert_eq!(bits, case.expected, "{}", case.name);
+        assert_same_doubles(&bits, case.expected, case.name);
     }
+}
+
+/// The words are equal bit for bit where the expected values were recorded (Linux, glibc). On
+/// another libm the last bit of a transcendental may differ, so up to 4 ULP are accepted there,
+/// gtest's `EXPECT_DOUBLE_EQ`. A wrong word order or byte order is far beyond that.
+fn assert_same_doubles(actual: &[u64], expected: &[u64], name: &str) {
+    if cfg!(all(target_os = "linux", target_env = "gnu")) {
+        assert_eq!(actual, expected, "{name}");
+        return;
+    }
+    assert_eq!(actual.len(), expected.len(), "{name}");
+    for (index, (&left, &right)) in actual.iter().zip(expected).enumerate() {
+        assert!(
+            ulp_distance(left, right) <= 4,
+            "{name}, word {index}: {} against {}",
+            f64::from_bits(left),
+            f64::from_bits(right)
+        );
+    }
+}
+
+/// The ULP distance between two doubles given by their bits, on the ordered integer line.
+fn ulp_distance(left: u64, right: u64) -> u64 {
+    let ordered = |bits: u64| -> i128 {
+        let value = i128::from(bits & 0x7fff_ffff_ffff_ffff);
+        if bits >> 63 == 1 {
+            -value
+        } else {
+            value
+        }
+    };
+    u64::try_from((ordered(left) - ordered(right)).unsigned_abs()).unwrap_or(u64::MAX)
 }
