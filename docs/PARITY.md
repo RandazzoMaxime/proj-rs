@@ -154,11 +154,14 @@ soit 50 928 lignes comparées. Le test `parity_wide_against_proj_9_9_0` est igno
 
 Premier passage : 355 écarts. Corrigés depuis : la chaîne composé → géocentrique sans emprise
 ni précision, l'emprise des ballparks, l'inverse de Cassini, `proj -S` sur `s2`, `alsk`,
-`gs50`. État actuel : 50 219 identiques, 560 dans le seuil, aucun écart de valeur sur les
-conversions. Le registre `tests/parity/wide/known.tsv` garde 134 lignes, toutes de 38 listes
-`projinfo` : ensemble de candidats différent entre CRS composés, verticaux et géocentriques (111),
-texte d'un candidat (17), emprise « World » contre « World. » (6). Aucune ne change les
-coordonnées de `cs2cs` sur le corpus.
+`gs50`. Listes `projinfo` : 3 fermées dans le lot Q2 (identifiant des candidats horizontaux seuls,
+`%.15g` de la précision sommée), 35 restent ouvertes. État actuel : 50 223 identiques, 560 dans le
+seuil, aucun écart de valeur sur les conversions. Le registre `tests/parity/wide/known.tsv` garde
+131 lignes, toutes de 35 listes `projinfo` : ensemble de candidats différent entre CRS composés,
+verticaux et géocentriques (111), texte d'un candidat (14), emprise « World » contre « World. » (6).
+L'emprise EPSG:9602 ferme cinq de ces listes mais en rouvre une autre (`projinfo-candidates-0291`) :
+annulée, voir `docs/PORTING-concat-area-of-use.md` item 4. Aucune ne change les coordonnées de
+`cs2cs` sur le corpus.
 
 Repli de `proj_trans` reproduit tel quel : pour un point hors de toutes les emprises, PROJ prend
 le premier candidat sans grille, sans nouvel essai, même si sa chaîne PROJ n'a pas pu être
