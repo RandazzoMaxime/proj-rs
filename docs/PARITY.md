@@ -320,3 +320,32 @@ Le registre `known.tsv` ne contient plus que ces causes :
 Le test `parity_export_against_proj_9_9_0` est ignoré par défaut : environ 9 à 11 minutes en
 debug, au-delà du seuil de 30 secondes. Le registre le fait passer tel quel ; une régression
 sur une ligne fermée le fait échouer.
+
+## Corpus réseau (`tests/parity/network`)
+
+Les grilles viennent de `https://cdn.proj.org`, réseau ON. Référence : `target/proj-reference-net`
+(TIFF et curl). Chaque invocation tourne avec un dossier utilisateur vide, pour la référence et
+pour le port : aucun cache ne sert d'une invocation à l'autre. La référence lit `build/data`, le
+port lit `data/` (la `proj.db` du dépôt).
+
+Choix des paires (`tools/parity/families_network.py`) : une paire est retenue si la première
+opération de `projinfo` (réseau ON, sans grille manquante) n'utilise que des grilles dont
+`grid_alternatives` donne une URL CDN. Quatre familles par paire, huit points (quatre dans
+l'emprise de l'opération, quatre dans le monde) : `net-default`, `net-only-best` (`--only-best`),
+`net-only-best-no` (`--only-best=no`), `net-no-ballpark` (`--no-ballpark`, 271 paires : les
+autres n'ont pas de sortie exploitable).
+
+```sh
+RN=target/proj-reference-net
+PROJ_REFERENCE_DIR=$RN python3 tools/parity/generate.py --network 300 --points 8 --seed 20261118 --out tests/parity/network/cases.jsonl
+PROJ_REFERENCE_DIR=$RN tools/parity/record.sh --network --cases tests/parity/network/cases.jsonl --out tests/parity/network/expected.jsonl
+cargo test --test parity parity_network_against_proj_9_9_0 -- --ignored --nocapture
+```
+
+Le test sonde d'abord le CDN (`tests/net_cdn`) et échoue si la sonde échoue : pas de vert creux.
+`tests/parity/network/known.tsv` liste les écarts connus. Environ dix minutes par passage.
+
+Premier passage (graine `20261118`, 1171 invocations, 9368 conversions) : 9218 identiques,
+128 hors seuil, 22 statuts. Après le lot Q5 : 9272 identiques, 96 hors seuil, 0 statut ; les 96
+sont au registre (24 jeu de candidats, 72 `--only-best`). Fiche :
+`docs/PORTING-cs2cs-network-only-best.md`, section « Lot Q5 ».

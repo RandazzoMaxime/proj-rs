@@ -171,3 +171,74 @@ Réf et Port : première valeur de sortie, lat et lon en degrés (`inf` = `*	* i
 | NAD83-EGM96-2 `EPSG:4269 -> EPSG:4326+5773` | -45 170 0 | -45.000000 170.000000 | -45.000000 170.000000 | -45.000000 170.000000 | same | same | same | same |
 
 ON differs from OFF (reference, default): 25 / 60
+
+## Lot Q5 : corpus réseau élargi (`tests/parity/network`)
+
+Le banc de 30 paires ci-dessus reste une mesure ponctuelle. La parité réseau passe maintenant par
+le corpus de `docs/PARITY.md` (300 paires, 1171 invocations, 9368 conversions, mesuré le
+2026-11-15).
+
+| Passage | Identiques | Hors seuil | Statut | Au registre |
+|---|---|---|---|---|
+| 1, avant corrections | 9218 | 128 | 22 | 0 (test rouge) |
+| 2, après la correction des tuiles | 9272 | 96 | 0 | 96 |
+
+Hors seuil par famille, passage 1 → passage 2 : défaut 24 → 8 ; `--only-best=no` 24 → 8 ;
+`--only-best` 80 → 80 ; `--no-ballpark` 0 → 0. Statuts : défaut 3 → 0 ; `--only-best=no` 3 → 0 ;
+`--only-best` 8 → 0 ; `--no-ballpark` 8 → 0.
+
+### Corrigé : grilles deformation tuilées
+
+Le lecteur de `+proj=deformation` (`src/projections/models/grid.rs`, puis `grid_tiff.rs`) rejetait
+tout GeoTIFF tuilé. `ca_nrc_NAD83v70VG.tif` du CDN est tuilé, planar, Deflate, prédicteur 3, six
+échantillons : l'étape échouait (`illegal value for +grids`), les pipelines qui la passent
+donnaient `* * inf`. Après la correction, `EPSG:20037 → EPSG:9544` concorde sur tous ses points de
+grille (défaut et `--no-ballpark` sans écart au passage 2). Les blocs (bandes ou tuiles) partagent une seule disposition. Test :
+`src/projections/models/grid_tiff_tests.rs` (même grille en bandes et en tuiles, chaque
+échantillon comparé). Commit `dd19870`. 54 écarts résolus : 22 statuts, 32 valeurs.
+
+### Au registre (96 invocations)
+
+1. **Jeu de candidats (24 invocations, `EPSG:7885 → EPSG:9517` et `→ EPSG:7956`).** PROJ liste
+   `DERIVED_FROM(EPSG):10614` (SHGD2015 + SHVD2015) en tête. Le port liste « SHGD2015 to SHVD2015
+   height (1) » et une inverse ballpark, sans l'opération dérivée. Vérifié pour `→ EPSG:9517` avec
+   `projinfo` réseau OFF : l'écart ne vient pas du réseau. Ouvert, hors de ce lot.
+
+2. **`--only-best` (72 invocations, 16 paires, p. ex. `EPSG:8251 → EPSG:6658`,
+   `EPSG:20037 → EPSG:9715`, `EPSG:7911 → EPSG:6655`).** Les candidats sont les mêmes, dans le même
+   ordre, et `Using coordinate operation` est identique à PROJ pour `EPSG:8251 → EPSG:6658`. PROJ
+   applique l'étape `vgridshift` du premier candidat ; le port rend la hauteur inchangée.
+   Mesuré : `cct` sur le pipeline du premier candidat donne la valeur de PROJ, et `cs2cs` sans
+   option aussi. Avec `--only-best`, le pipeline retenu est celui du candidat ballpark sans grille
+   (`single_engine`). La branche de sélection exacte n'est pas identifiée : en instrumentant la
+   transformation des candidats, aucun appel n'apparaît sous `--only-best`. Ouvert.
+
+3. **`projinfo` réseau ON (hors corpus).** `projinfo -o PROJ` écrit « at least one grid missing »
+   pour une grille du CDN que la référence tient pour disponible. `grids_needed(DiscardIfMissing)`
+   côté port n'ouvre pas le CDN (`lookForGridInfo`, branche « ligne présente », non reproduite).
+   Le choix de candidat de `cs2cs` passe par `gridpath::available`, qui accepte le réseau : pas
+   touché par ce point. Ouvert.
+
+### Volume réseau (étape 3)
+
+Mesure sur le même corpus, `net-default` (300 paires). Le CDN est remplacé par un miroir local
+qui sert les plages (`Range`) et journalise chaque requête ; `PROJ_NETWORK_ENDPOINT` pointe dessus
+pour les deux binaires, cache vide par invocation.
+
+| | Requêtes | Octets | Forme des requêtes |
+|---|---|---|---|
+| PROJ 9.9.0 (`cs2cs`) | 1155 | 85,6 Mo | toutes en `Range` |
+| Port (`cs2cs`) | 416 | 1 503 Mo | toutes sans `Range` : fichier entier |
+
+Par paire : médiane du rapport 1,9 ; 145 paires sur 300 au-delà de 2× ; maximum 818×
+(`EPSG:20038 → EPSG:20037` : PROJ lit 16 Ko, le port 13,4 Mo, alors que la référence n'ouvre que le
+premier morceau). Les plus gros écarts : `EPSG:6364 → EPSG:8801` (148 Mo contre 1,9 Mo),
+`EPSG:4979 → EPSG:9518` (80,6 Mo contre 1,2 Mo), `EPSG:4314 → EPSG:4258` (74,9 Mo contre 0,4 Mo).
+Fichiers les plus téléchargés : `uk_os_OSGM15_GB.tif`, `es_ign_egm08-rednap.tif`,
+`ca_nrc_CGG2013an83.tif`, `fr_ign_RAF18.tif`.
+
+Cause : sans cache, le port prend le fichier entier à la création de chaque grille
+(`network::fetch_missing` → `network_cache::fetch_grid` → `http_get_validated`, et
+`open_remote_grid` sans callbacks, qui fait un `GET` complet). Le lot ne touche pas
+`gridshift/geotiff.rs` ni `tiles.rs` (lot parallèle). Ouvert : lecture par plages dans ces deux
+chemins.

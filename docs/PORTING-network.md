@@ -696,6 +696,14 @@ pour `hgridshift` et `gridshift` ; `xyzgridshift`).
 - `pj_find_file` avec `disable_network = false` : non porté. `find_local_file` ne regarde que le
   disque.
 
+## Lot Q5 : GeoTIFF tuilés et volume
+
+- Tuilés dans le lecteur des modèles (`+proj=deformation`) : corrigé, `src/projections/models/grid_tiff.rs`
+  (blocs = bandes ou tuiles). Le CDN `ca_nrc_NAD83v70VG.tif` est tuilé, planar, Deflate, prédicteur 3.
+  Tests : `grid_tiff_tests.rs`. Fiche : `docs/PORTING-cs2cs-network-only-best.md`, « Lot Q5 ».
+- Volume mesuré sur le corpus réseau : le port prend le fichier entier à chaque grille (416 requêtes
+  sans `Range`, 1,50 Go), PROJ lit des plages (1155 requêtes, 86 Mo). Non corrigé, lot de lecture paresseuse.
+
 ## Commandes
 
 ```
