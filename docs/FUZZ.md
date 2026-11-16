@@ -137,7 +137,8 @@ PARITY_RANDOM_DIR=$PWD/target/parity-random/20261119 PARITY_REPORT=/tmp/r.tsv \
 
 Le tirage évite les paramètres qu'une projection ne lit pas (liste de `proj -lP`) : PROJ les
 ignore, le port les refuse (écart « paramètre non lu » ci-dessous), et le différentiel doit
-chercher autre chose. `--named-datums` remet les datums nommés, qui exposent l'écart suivant.
+chercher autre chose. `--named-datums` remet les datums nommés (`+datum=NAD83`, `nzgd49`,
+`carthage`…) face à un ellipsoïde avec `+towgs84` ; l'écart qu'ils exposaient est fermé.
 
 ### Passage de référence
 
@@ -176,16 +177,39 @@ Non corrigés, parce qu'ils touchent un choix de conception ou une architecture 
    `cct +proj=pipeline +step +proj=sinu +ellps=sphere +lat_1=33.3 +k_0=0.99` : code 0 chez PROJ,
    code 1 ici. Seul `proj` (`create_projection_keeping_unknown`) suit PROJ. Le tirage aléatoire
    évite ces paramètres (liste de `proj -lP`).
-3. **Datum nommé contre ellipsoïde avec `+towgs84`** (`--named-datums`, graine 7, `--scale 1
-   --random 200`, 1 310 invocations, 9 522 conversions : 328 hors seuil et 143 statut, tous dans
-   59 invocations `random-cs2cs`, aucun dans `proj` ni `cct`). Exemple :
-   `cs2cs -d 9 +proj=longlat +datum=NAD83 +to +proj=longlat +ellps=aust_SA +towgs84=-105,-275,-140`
-   donne `10.002413662 20.000724771` chez PROJ et `* * inf` ici ; avec `+datum=WGS84` ou un
-   ellipsoïde nu à la place de `NAD83`, les deux concordent. Avec `+datum=carthage`, les valeurs
-   diffèrent de 2e-4 à 5e-3 degré. Les pairs d'ellipsoïdes et de `+towgs84` seuls concordent
-   sur les 30 775 conversions de la graine `20261119`.
-4. **`proj -V` sur `imoll`** : PROJ écrit « Final Earth figure: sphere », le port l'ellipsoïde
+3. **`proj -V` sur `imoll`** : PROJ écrit « Final Earth figure: sphere », le port l'ellipsoïde
    (`+proj=imoll +units=km +axis=neu`). Hors conversions.
 
-Rejouer les écarts 1 et 2 : `python3 tools/parity/fuzz_diff.py --seed 20261119`. L'écart 3 :
-`--seed 7 --scale 1 --random 200 --named-datums`.
+Rejouer les écarts 1 et 2 : `python3 tools/parity/fuzz_diff.py --seed 20261119`.
+
+### Datum nommé contre ellipsoïde et `+towgs84` (fermé)
+
+Graine 7, `--scale 1 --random 200 --named-datums` : 1 310 invocations, 9 522 conversions, tous les
+écarts dans 59 invocations `random-cs2cs` (aucun dans `proj` ni `cct`).
+
+| | Avant | Après |
+|---|---|---|
+| Identiques (texte) | 8 596 | 9 065 |
+| Dans le seuil | 452 | 454 |
+| Erreur des deux côtés | 3 | 3 |
+| Hors seuil | 328 | **0** |
+| Statut | 143 | **0** |
+
+`+datum=NAD83` donne l'EPSG:6269, `+datum=carthage` l'EPSG:6223, sans `+towgs84` (`io.cpp:11185-11226`) ;
+`+ellps=... +towgs84=...` est un `BoundCRS`. Deux causes, un commit chacune (test dans
+`tests/bound_crs_candidates.rs`, fiche `docs/PORTING-bound-datum-candidates.md`) :
+
+- `bound_ops.rs` chaînait les étapes à la main, sans domaine : la candidate qui passe par
+  `NAD83 to WGS 84 (24)` (Maryland) valait le monde entier et gagnait le choix par point partout
+  (`b07bd45`). PROJ appelle `ConcatenatedOperation::createComputeMetadata`
+  (`concatenatedoperation.cpp:674-756`), dont le domaine est l'intersection des étapes.
+- `select.rs` `lon_lat_base` ne lisait pas la base d'un CRS lié ; PROJ le fait
+  (`CRS::extractGeodeticCRSRaw`, `crs.cpp:270-273`). La sélection échouait, `cs2cs` retombait sur
+  une seule opération (la grille du Maryland : `* * inf` hors de son emprise) au lieu de la
+  candidate de repli par la zone (`57b2c77`).
+
+Graine `20261119`, `--scale 3 --random 600 --points 8 --world 0.15 --named-datums` (3 581
+invocations, 30 775 conversions, sha1 `c11271eee360dd077c869a26e0006055027c185f`) : 29 475
+identiques, 1 295 dans le seuil, 3 erreurs des deux côtés, **0 hors seuil**, 2 statut (écart 1,
+`random-cct-0393`), 0 forme. Sans `--named-datums`, le passage de référence ci-dessus est inchangé
+(29 464 · 1 306 · 3 · 0 · 2, sha1 `53df5dbf…`).
