@@ -318,10 +318,12 @@ impl Transformation {
     }
 
     /// Inverse transformation: swapped CRS, negated translations for the methods
-    /// PROJ inverts that way, and the name from `createPropertiesForInverse`.
+    /// PROJ inverts that way, and the name from `createPropertiesForInverse`, which
+    /// copies no version.
     #[must_use]
     pub fn inverse(&self) -> Self {
         let mut inverse = self.clone();
+        inverse.version = None;
         if self.has_translation_inverse() {
             // PROJ writes the inverse of these methods with negated values, not `+inv`.
             inverse.negate_values();
