@@ -121,3 +121,39 @@ pub(crate) fn use_fixture_search_path() {
     std::env::set_var("PROJ_DATA", fixture_search_path());
     std::env::set_var("PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY", "YES");
 }
+
+/// Whether a command's text output matches the text PROJ 9.9.0 printed on Linux (glibc): the
+/// same bytes there. With another libm the last digits of a number may differ, so off glibc
+/// the texts match when they have the same tokens, numbers within 1e-5 or 1e-12 relative
+/// (the libm rounding seen on MSVC, amplified by the numerical derivatives of `proj -S`).
+pub(crate) fn same_cli_text(got: &str, expected: &str) -> bool {
+    if got == expected {
+        return true;
+    }
+    if cfg!(all(target_os = "linux", target_env = "gnu")) {
+        return false;
+    }
+    close_cli_text(got, expected)
+}
+
+/// The comparison [`same_cli_text`] makes off glibc, on every platform.
+pub(crate) fn close_cli_text(got: &str, expected: &str) -> bool {
+    let tokens = |text: &str| -> Vec<String> {
+        text.split(|c: char| c.is_whitespace() || c == '<' || c == '>')
+            .filter(|token| !token.is_empty())
+            .map(str::to_owned)
+            .collect()
+    };
+    let (left, right) = (tokens(got), tokens(expected));
+    left.len() == right.len()
+        && got.lines().count() == expected.lines().count()
+        && left.iter().zip(&right).all(|(a, b)| {
+            a == b
+                || match (a.parse::<f64>(), b.parse::<f64>()) {
+                    (Ok(x), Ok(y)) if x.is_finite() && y.is_finite() => {
+                        (x - y).abs() <= 1e-5_f64.max(1e-12 * x.abs().max(y.abs()))
+                    }
+                    _ => false,
+                }
+        })
+}

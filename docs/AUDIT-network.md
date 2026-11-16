@@ -48,14 +48,19 @@ cache en fichiers dans le répertoire utilisateur (`grid_cache_enable`,
   `mkdir`), et le téléchargement (`open` en création, `write`, `close`, `unlink`, `rename`).
   Mesuré : `docs/PORTING-network.md`, section « API de fichiers ».
 
-Ce qui manque : lecture paresseuse des GeoTIFF compressés autrement qu'en Deflate (LZW,
-PackBits, JPEG, CCITT, ... : lus entiers, comme les grilles non-TIFF) et des prédicteurs
-autres que 1 à 3, rechargement au changement pour les autres étapes que `vgridshift`
-(`hgridshift`, `gridshift`, `xyzgridshift` : le changement est enregistré, la grille n'est pas
-rechargée), validation par `ETag` et `Last-Modified` du cache disque quand les callbacks servent
-les grilles (le cache en mémoire, par URL, est fait par le lot `shared-validators`),
+Ce qui manque : lecture paresseuse des GeoTIFF compressés en PackBits, JPEG, CCITT, ... (lus
+entiers, comme les grilles non-TIFF) et des prédicteurs autres que 1 à 3. Le LZW passe par morceaux
+sur le réseau ; en fichier local il reste refusé (lecture entière sans lecteur LZW). Rechargement au
+changement : `vgridshift`, `hgridshift` et `gridshift` rechargent comme PROJ (lot Q8, « Rechargement
+par étape » dans `docs/PORTING-network.md`) ; `xyzgridshift` recharge aussi, PROJ 9.9.0 plante sur ce
+cas (SIGSEGV mesuré) ; `deformation` et les lectures entières ne rechargent pas. Validation par
+`ETag` et `Last-Modified` du cache disque : faite sans callbacks (requête du premier morceau à
+l'expiration, lot Q8) ; avec les callbacks, le crate n'utilise pas `cache.db` (le cache en mémoire, par
+URL, est fait par le lot `shared-validators`),
 façade C des opérations
-(`proj_create_operations` et contexte de fabrique C : la fabrique Rust est utilisée à la place,
+(`proj_create_operations` et contexte de fabrique C : pas de handle C. Les `TEST` de `test_c_api.cpp`
+qui appellent `proj_create_operations` sont portés sur l'API Rust, voir
+`docs/PORTING-capi-operation-factory-core.md`. La fabrique Rust est utilisée à la place,
 par `ProjBuilder::create_operations` quand des callbacks sont enregistrés, voir
 `do_not_attempt_network_access_known_available_network_on` et `pyproj_issue_1192`).
 
@@ -307,14 +312,6 @@ Le cas local `tests/unit_network_local.rs::basic_network_is_off_by_default_and_m
 place, hors liste : il vérifie qu'un état « off » n'envoie aucune requête, ce que le CDN réel ne permet pas
 d'observer.
 
-## projsync (`src/apps/projsync.cpp`, `test/cli/test_projsync.sh`) : porté
-
-Ce qui est porté, les écarts et ce qui n'est pas testé sont dans la section
-« projsync » de `docs/PORTING-network.md`, avec le détail des cas du script. Résumé :
-le binaire `projsync` (`src/bin/projsync.rs`), la bibliothèque `src/projsync.rs` et
-`tests/unit_projsync.rs` (20 tests) existent ; les cas du script sont couverts, sauf la
-variable `PROJ_USER_WRITABLE_DIRECTORY` (non testée).
-
 ## Commandes
 
 ```
@@ -342,26 +339,57 @@ sont à jour pour ces cas ; ce qui suit détaille les cas de ce lot.
 | `networking.curl_vgridshift` | `tests/unit_network_grids.rs::curl_vgridshift` | porté contre le vrai CDN (`us_nga_egm08_25.tif`) : trois assertions C++ et la hauteur mesurée `-31.889799118042117`. |
 | `networking.curl_vgridshift_vertcon` | `tests/unit_network_grids.rs::curl_vgridshift_vertcon` | porté contre le vrai CDN (`us_noaa_vertcone.tif`) : trois assertions C++ et la hauteur mesurée `-0.15375280380249004`. |
 
-Non portés dans ce lot, hors de sa liste : `networking.basic` (partie réseau activé),
-`initial_check`, `network_endpoint_*`, `download_whole_files`, `file_api`,
-`do_not_attempt_network_access_known_available_network_on`, et les cas à callbacks
-(`simul_*`) : voir les lignes du tableau ci-dessus.
-
 ### projsync (`src/apps/projsync.cpp`, `test/cli/test_projsync.sh`)
 
-Porté : `src/bin/projsync.rs` (options de `projsync.cpp`, plus `--help` et `--version`),
-bibliothèque `src/projsync.rs` (analyseur JSON sans dépendance avec la limite de
-profondeur 128, index, sélection, téléchargement avec enregistrement dans `cache.db`).
-`tests/unit_projsync.rs` : 20 tests. Tous les cas du script sont là (liste, `--all`,
-`--source-id`, `--area-of-use`, `--file` avec deuxième passage « already downloaded »,
-`--bbox` dont les fenêtres de l'antiméridien, `--exclude-world-coverage`, `--verbose` avec
-versions retirées ou ajoutées) ; les sorties attendues sont celles du binaire de référence
-sur le même index ; le contenu du fichier téléchargé (`proj-rs test grid`) n'est pas comparé au binaire de référence. Écarts :
-téléchargement non conditionnel, `--system-directory` lié à `PROJ_DATA`/`PROJ_LIB` (PROJ
-prend aussi le répertoire relatif de la bibliothèque et `PROJ_DATA` compilé), index de test
-au lieu de `files.geojson` du CDN. Non testés dans `unit_projsync.rs` : `--spatial-test`,
-`-q`/`--quiet`, `--no-version-filtering`, `--system-directory`, `--user-writable-directory`
-(et `--user-directory`), la variable `PROJ_USER_WRITABLE_DIRECTORY` du script (le test passe
-`--target-dir`). Détail : `docs/PORTING-network.md`, section « projsync ».
+Porté : `src/bin/projsync.rs` (options de `projsync.cpp`, plus `--help`, `--version` et
+`--user-directory`), bibliothèque `src/projsync.rs` (analyseur JSON sans dépendance avec la
+limite de profondeur 128, index, sélection, téléchargement avec enregistrement dans `cache.db`).
+Fiche : `docs/PORTING-network-cache.md`, points 7 à 9.
+
+`tests/unit_projsync.rs` : 22 tests, tous passés le 2026-11-15 (`cargo test --test unit_projsync` :
+`test result: ok. 22 passed; 0 failed; 0 ignored`). Deux tests ont été ajoutés pour des
+invocations du script que la suite ne couvrait pas : `default_endpoint_is_the_cdn` (sans
+`--endpoint`) et `default_target_is_the_user_writable_directory` (sans `--target-dir`, avec
+`PROJ_USER_WRITABLE_DIRECTORY`).
+
+Table de couverture : chaque `$EXE ...` de `test/cli/test_projsync.sh` (212 lignes, 15 appels).
+
+| Ligne du script | Invocation | Test Rust | Statut |
+|---|---|---|---|
+| 35 (contrôles 44-51) | `--list-files --target-dir D` ; `cache.db` et `files.geojson` présents | `list_files_fetches_the_index_and_records_it` (liste exacte, 7 lignes) | porté |
+| 54 | `--all --dry-run` | `all_dry_run_lists_every_file` | porté |
+| 63 | `--source-id fr_ign --dry-run` | `source_id_selects_by_part_of_the_id` | porté |
+| 72 | `--source-id non_existing` (code 1, avertissement, valeurs connues) | `unknown_source_id_fails_and_lists_the_known_ones` (stderr exact) | porté |
+| 82 | `--area-of-use France --dry-run` | `area_of_use_selects_by_part_of_the_name` | porté |
+| 91 | `--area-of-use non_existing` (code 1) | `unknown_area_of_use_fails_and_lists_the_known_ones` (stderr exact) | porté |
+| 101 | `--file ntf_r93` (téléchargement) | `file_downloads_once_and_then_says_it_is_already_there`, premier passage | porté |
+| 114 | `--file ntf_r93` (second passage) | même test, « already downloaded » | porté |
+| 125 | `--file non_existing` (code 1) | `unknown_file_fails_and_lists_the_known_ones` (stderr exact) | porté |
+| 135 | `--bbox 2,49,3,50 --dry-run` | `bbox_selects_the_grids_that_overlap_it` | porté |
+| 145 | `--bbox 2,49,3,50 --exclude-world-coverage --dry-run` | `exclude_world_coverage_drops_the_world_grids` | porté |
+| 158, 168, 178 | `--bbox 170,-90,-170,90`, `170,-90,190,90`, `-190,-90,-170,90` | `bbox_across_the_antimeridian_finds_the_pacific_grids` (les trois fenêtres) | porté |
+| 198 | `--source-id au_ga --verbose --dry-run --local-geojson-file dummy.geojson` | `verbose_reports_the_files_left_out_by_version` | porté |
+| 54 à 206, après `PROJ_USER_WRITABLE_DIRECTORY` (l. 42) | sans `--target-dir` : la cible est le répertoire utilisateur | `default_target_is_the_user_writable_directory` (ajouté) | porté |
+| 54 à 206 | sans `--endpoint` : `https://cdn.proj.org` | `default_endpoint_is_the_cdn` (ajouté) | porté |
+
+Le script saute tout son contenu si `cdn.proj.org` ne répond pas (l. 22-27). Les tests Rust
+n'ont pas ce garde-fou : ils tournent sur serveur local et sur `tests/projsync/files.geojson`.
+
+Vérification contre le binaire de référence (PROJ 9.9.0 avec curl et TIFF,
+`target/proj-reference-net/build/bin/projsync`) : les 15 appels ont été joués, avec
+`--endpoint https://cdn.proj.org --local-geojson-file tests/projsync/files.geojson`, sur la
+référence et sur le port (`target/debug/projsync`). Sortie standard, sortie d'erreur et code de
+sortie sont identiques pour les 15. Le téléchargement réel (`--file ntf_r93`) a aussi été joué sur
+les deux : le CDN répond ici par `HTTPS_PROXY`, et les deux fichiers reçus sont identiques
+(93581 octets, `cmp`). Les deux cas par défaut (sans `--endpoint`, avec
+`PROJ_USER_WRITABLE_DIRECTORY`) donnent la même sortie sur les deux binaires. Les constantes
+attendues de `tests/unit_projsync.rs` (`LIST`, `ALL`, `UNKNOWN_*`, `VERBOSE_DUMMY`) sont les
+sorties de la référence, à l'endpoint près.
+
+Écarts, avec leur cause :
+- `--system-directory` prend le premier répertoire de `PROJ_DATA` ou `PROJ_LIB`, pas le répertoire
+  « share » compilé de PROJ (fiche cache, point 7) ;
+- index : `tests/projsync/files.geojson`, de même forme que le `files.geojson` du CDN, pas celui du
+  CDN (fiche cache, point 9). La comparaison porte sur cet index, pas sur l'index du CDN.
 
 Commande : `cargo test --test unit_projsync --test unit_network_cache --test unit_network_grids`

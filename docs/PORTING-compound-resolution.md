@@ -29,7 +29,7 @@ EPSG:4326+3855`. Two input changes were needed in `projinfo` only.
 | `applyInverse` of the dispatch for `geodSrc && compoundDst` | `compound::geog_to_compound` |
 | `createOperationsVertToGeogSynthetized` (ballpark branch only) | `vertical_ballpark` |
 | `createOperationsGeogToGeog`, same datum and prime meridian, the 2D to 3D pair | `null_offset` (name by `buildOpName`, `op_name`) |
-| `createHorizVerticalPROJBased` (null horizontal part) | `combine`, with `retarget` copying the vertical operation |
+| `createHorizVerticalPROJBased` (null horizontal part) | `combine`, a PROJ-based operation with no identifier (`proj_based_horiz_vertical`) |
 | `createHorizVerticalPROJBased` (other horizontal part) | `combine`, a `ConcatenatedOperation` named `A + B` |
 | `projinfo_lib.cpp` name promotion (`outputOperations`) | `promote_by_name`, `is_3d`, `promote` in `src/bin/projinfo.rs` |
 | `projinfo --3d` (`promoteTo3D`) | `Options::promote_3d` (the flag was parsed and ignored before) |
@@ -46,8 +46,10 @@ to a 3D geographic target (`compound_to_geog3d`):
    candidates unchanged, and so does this port.
 3. Each pair (vertical, horizontal) is one candidate. A null horizontal part
    gives the vertical operation alone, with the compound source and the target
-   and no identifier (`retarget`). The accuracy is written as a double, so
-   `1.0` becomes `1` (PROJ's `toString(accuracy)`).
+   and no identifier (`combine`). The accuracy is written as a double, so
+   `1.0` becomes `1` (PROJ's `toString(accuracy)`). A horizontal-only target
+   (`horizontal_only`) keeps the identifiers of the horizontal operation: PROJ
+   copies it with `shallowClone` and `setCRSs` (coordinateoperationfactory.cpp:6692-6694).
 
 A geographic source and a compound target (`geog_to_compound`) take the
 candidates of the compound-to-geographic direction and invert each

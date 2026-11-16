@@ -22,9 +22,9 @@ use crate::engine::Operation;
 use crate::engine::TransformError as StepError;
 use crate::gie_api::Factors;
 use crate::iso19111::{
-    Conversion, CoordinateOperation, CoordinateOperationContext, CoordinateOperationFactory, Crs,
-    DatabaseContext, FactoryError, GridAvailabilityUse, GridDescription, GridLookup, OpProps,
-    Pipeline, ProjLines, ProjStringLayout, RemoteGrids,
+    Ballpark, CandidateFilter, Conversion, CoordinateOperation, CoordinateOperationContext,
+    CoordinateOperationFactory, Crs, DatabaseContext, FactoryError, GridAvailabilityUse,
+    GridDescription, GridLookup, OpProps, Pipeline, ProjLines, ProjStringLayout, RemoteGrids,
 };
 use crate::proj_iso::{iso_pipeline, iso_pipeline_at, IsoPipeline};
 use crate::{CreateError, Xyzt};
@@ -505,18 +505,21 @@ impl Proj {
     /// `options` takes `FORCE_OVER=YES` ([`ForceOver::Yes`]), which keeps the longitudes
     /// outside ]-180, 180] in the projections of the pipeline. `FORCE_OVER=NO` and an
     /// empty list change nothing. Read the flag back with [`Self::force_over`].
+    /// `ACCURACY=` and `ALLOW_BALLPARK=` filter the candidates, as PROJ's do: a pair with no
+    /// candidate left is an error, where PROJ returns a null transform.
     ///
     /// # Errors
     ///
-    /// [`ProjCreateError`] when either object is already a transform, or `options`
-    /// holds an option other than `FORCE_OVER`, which this port does not build.
+    /// [`ProjCreateError`] when either object is already a transform, `options` holds an
+    /// option this port does not build (`AUTHORITY`, `ONLY_BEST`, a misspelt name) or a bad
+    /// value, or the filters keep no candidate.
     pub fn create_crs_to_crs_from_pj(
         &self,
         target_crs: &Self,
         area: Option<Area>,
         options: Option<Vec<&str>>,
     ) -> Result<Self, ProjCreateError> {
-        let over = crs_to_crs_force_over(options.as_deref())?;
+        let (over, filter) = crs_to_crs_options(options.as_deref())?;
         if !matches!(self.body, Body::Single) {
             return Err(ProjCreateError::ProjError(
                 "source is not a single CRS".to_owned(),
@@ -534,9 +537,13 @@ impl Proj {
             return Err(error);
         }
         let epoch = crate::proj_meta::epoch_to_apply(self, target_crs);
-        if let Some(pipeline) =
-            iso_pipeline_at(&self.definition, &target_crs.definition, epoch, over)
-        {
+        if let Some(pipeline) = iso_pipeline_at(
+            &self.definition,
+            &target_crs.definition,
+            epoch,
+            over,
+            filter,
+        ) {
             let mut transform = built(
                 Body::Iso(Box::new(pipeline)),
                 format!("{} -> {}", self.definition, target_crs.definition),
@@ -780,7 +787,7 @@ impl Proj {
                 RemoteGrids::Skip
             };
             operation
-                .grids_needed_with(&db, known, remote)
+                .grids_needed_with(&db, known, remote, &self.net.endpoint)
                 .map_err(|error| ProjError::GridsNeeded(error.to_string()))
         })
     }
@@ -1799,34 +1806,57 @@ fn built(body: Body, definition: String, area: Option<Area>) -> Proj {
     }
 }
 
-/// The options of `proj_create_crs_to_crs_from_pj` that this port builds, as its `ForceOver`.
+/// The options of `proj_create_crs_to_crs_from_pj` that this port builds: `FORCE_OVER`, as
+/// `crs_to_crs.cpp:532-534` reads it, and the candidate filters `ACCURACY` and `ALLOW_BALLPARK`
+/// (`crs_to_crs.cpp:509-520`, `:552`).
 ///
-/// Only `FORCE_OVER=` is read, as `crs_to_crs.cpp:532-534` reads it: a value equal to `yes`
-/// (any case) sets the flag, any other value leaves it off, and a later item does not clear it.
-/// An empty item is skipped. Any other item is refused with the error this port has always
-/// given for options: `AUTHORITY`, `ACCURACY`, `ALLOW_BALLPARK`, `ONLY_BEST` and a misspelt
-/// name alike.
-fn crs_to_crs_force_over(options: Option<&[&str]>) -> Result<ForceOver, ProjCreateError> {
-    const PREFIX: &str = "FORCE_OVER=";
+/// A value equal to `yes` (any case) sets `FORCE_OVER`, any other value leaves it off, and a
+/// later item does not clear it. `ACCURACY` is in metres, and a negative value is no filter.
+/// `ALLOW_BALLPARK` takes `yes` or `no`, any case. An empty item is skipped. `AUTHORITY`,
+/// `ONLY_BEST` and a misspelt name are refused.
+fn crs_to_crs_options(
+    options: Option<&[&str]>,
+) -> Result<(ForceOver, CandidateFilter), ProjCreateError> {
     let mut over = ForceOver::No;
+    let mut filter = CandidateFilter::NONE;
     for item in options
         .unwrap_or_default()
         .iter()
         .filter(|item| !item.is_empty())
     {
-        let is_force_over = item
-            .get(..PREFIX.len())
-            .is_some_and(|head| head.eq_ignore_ascii_case(PREFIX));
-        if !is_force_over {
+        if let Some(value) = option_value(item, "FORCE_OVER=") {
+            if value.eq_ignore_ascii_case("yes") {
+                over = ForceOver::Yes;
+            }
+        } else if let Some(value) = option_value(item, "ACCURACY=") {
+            let accuracy = value.trim().parse::<f64>().map_err(|_| {
+                ProjCreateError::ProjError(format!("invalid ACCURACY option: {value}"))
+            })?;
+            filter.accuracy = (accuracy >= 0.0).then_some(accuracy);
+        } else if let Some(value) = option_value(item, "ALLOW_BALLPARK=") {
+            filter.ballpark = if value.eq_ignore_ascii_case("yes") {
+                Ballpark::Allowed
+            } else if value.eq_ignore_ascii_case("no") {
+                Ballpark::Forbidden
+            } else {
+                return Err(ProjCreateError::ProjError(
+                    "Invalid value for ALLOW_BALLPARK option.".to_owned(),
+                ));
+            };
+        } else {
             return Err(ProjCreateError::ProjError(
                 "CRS-to-CRS options are not built".to_owned(),
             ));
         }
-        if item[PREFIX.len()..].eq_ignore_ascii_case("yes") {
-            over = ForceOver::Yes;
-        }
     }
-    Ok(over)
+    Ok((over, filter))
+}
+
+/// The value of an option `item` named `name` (with its `=`), matched without case.
+fn option_value<'a>(item: &'a str, name: &str) -> Option<&'a str> {
+    item.get(..name.len())
+        .filter(|head| head.eq_ignore_ascii_case(name))
+        .map(|_| &item[name.len()..])
 }
 
 fn is_epsg(definition: &str) -> bool {

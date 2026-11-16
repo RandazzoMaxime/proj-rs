@@ -17,12 +17,16 @@ use crate::proj::ForceOver;
 
 use crate::tmerc_approx::ApproxTmerc;
 use crate::{
-    Cone, Ellipsoid, EllipsoidError, Geographic, Hemisphere, Lcc, Mercator, Projected,
-    ProjectionError, Tmerc, UtmZone,
+    Ellipsoid, EllipsoidError, Geographic, Hemisphere, Lcc, Mercator, Projected, ProjectionError,
+    Tmerc, UtmZone,
 };
 use std::f64::consts::{FRAC_PI_2, PI};
 use std::fmt;
 use std::sync::Mutex;
+
+// The vector path of a `Classic` step over a slice.
+#[path = "projections/classic_batch.rs"]
+mod classic_batch;
 
 #[path = "projections/datum_ops.rs"]
 mod datum_ops;
@@ -150,18 +154,52 @@ impl From<ProjectionError> for TransformError {
     }
 }
 
-/// Parsed `+key=value` list. The first occurrence of a key wins, matching PROJ.
+/// Parsed `+key=value` list, kept as PROJ's `paralist`: every token in order, duplicates
+/// included. A lookup reads the first visible token of its key and marks it used, as
+/// `pj_param_exists` does. A hidden token is listed but never read.
 #[derive(Clone, Debug)]
 pub(crate) struct Params {
-    items: Vec<(String, Option<String>)>,
+    items: Vec<Item>,
 }
 
-/// The words of a PROJ string line: separated by white space, except inside a double-quoted
-/// span, whose spaces stay and whose quote characters are dropped (`pj_mkparam_ws`, so
-/// `+nadgrids="dir with space/myconus"` is one word).
-fn split_quoted(line: &str) -> Vec<String> {
+#[derive(Debug)]
+struct Item {
+    key: String,
+    value: Option<String>,
+    text: String,
+    visible: bool,
+    /// Atomic, not a `Cell`: a `Params` is kept inside a step, which must be `Sync`.
+    used: std::sync::atomic::AtomicBool,
+}
+
+impl Clone for Item {
+    fn clone(&self) -> Self {
+        Self {
+            key: self.key.clone(),
+            value: self.value.clone(),
+            text: self.text.clone(),
+            visible: self.visible,
+            used: std::sync::atomic::AtomicBool::new(self.is_used()),
+        }
+    }
+}
+
+/// One parameter of an [`Operation`], as `proj -v` lists it (`pj_pr_list`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ParamUse {
+    /// The parameter without its `+`: `ellps=GRS80`, `break_cs2cs_recursion`.
+    pub text: String,
+    /// Whether the operation read the parameter. An unread one is listed as not used.
+    pub used: bool,
+}
+
+/// The words of a PROJ string line, as (text as written, value): separated by white space,
+/// except inside a double-quoted span, whose spaces stay and whose quote characters are dropped
+/// from the value (`pj_mkparam_ws`, so `+nadgrids="dir with space/myconus"` is one word).
+fn split_quoted(line: &str) -> Vec<(String, String)> {
     let mut words = Vec::new();
     let mut word = String::new();
+    let mut raw = String::new();
     let mut in_quote = false;
     let mut started = false;
     for ch in line.chars() {
@@ -169,23 +207,45 @@ fn split_quoted(line: &str) -> Vec<String> {
             '"' => {
                 in_quote = !in_quote;
                 started = true;
+                raw.push(ch);
             }
             ch if ch.is_whitespace() && !in_quote => {
                 if started {
-                    words.push(std::mem::take(&mut word));
+                    words.push((std::mem::take(&mut raw), std::mem::take(&mut word)));
                     started = false;
                 }
             }
             ch => {
                 word.push(ch);
+                raw.push(ch);
                 started = true;
             }
         }
     }
     if started {
-        words.push(word);
+        words.push((raw, word));
     }
     words
+}
+
+impl Item {
+    fn new(key: &str, value: Option<String>, text: &str, visible: bool) -> Self {
+        Self {
+            key: key.to_owned(),
+            value,
+            text: text.to_owned(),
+            visible,
+            used: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    fn mark_used(&self) {
+        self.used.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn is_used(&self) -> bool {
+        self.used.load(std::sync::atomic::Ordering::Relaxed)
+    }
 }
 
 impl Params {
@@ -196,66 +256,135 @@ impl Params {
     /// [`CreateError::IllegalValue`] when a token is not `key` or `key=value`.
     pub(crate) fn parse(input: &str) -> Result<Self, CreateError> {
         let input = shrink_equals(input);
-        let mut items = Vec::new();
+        let mut items: Vec<Item> = Vec::new();
         for raw_line in input.lines() {
             let line = raw_line.split('#').next().unwrap_or("");
-            for word in split_quoted(line) {
+            for (raw, word) in split_quoted(line) {
                 let token = word.trim_start_matches('+');
                 if token.is_empty() {
                     continue;
                 }
+                let text = raw.trim_start_matches('+');
                 if let Some((key, value)) = token.split_once('=') {
                     if key.is_empty() {
                         return Err(CreateError::IllegalValue("parameter"));
                     }
-                    push_first(&mut items, key, Some(value.to_owned()));
+                    items.push(Item::new(key, Some(value.to_owned()), text, true));
                 } else if comma_continuation(&items, token) {
                     // `towgs84 = 1, 2, 3` survives as separate tokens after `=`.
-                    if let Some((_, Some(value))) = items.last_mut() {
-                        value.push_str(token);
+                    if let Some(item) = items.last_mut() {
+                        if let Some(value) = item.value.as_mut() {
+                            value.push_str(token);
+                            item.text.push_str(text);
+                        }
                     }
                 } else {
-                    push_first(&mut items, token, None);
+                    items.push(Item::new(token, None, text, true));
                 }
             }
         }
         Ok(Self { items })
     }
 
-    fn get(&self, key: &str) -> Option<&Option<String>> {
+    /// The first visible token of `key`, marked as read.
+    fn read(&self, key: &str) -> Option<&Item> {
+        let item = self.lookup(key)?;
+        item.mark_used();
+        Some(item)
+    }
+
+    /// The first visible token of `key`, without marking it.
+    fn lookup(&self, key: &str) -> Option<&Item> {
         self.items
             .iter()
-            .find(|(name, _)| name == key)
-            .map(|(_, value)| value)
+            .find(|item| item.visible && item.key == key)
+    }
+
+    /// Whether `key` is visible, without marking it: a check the code makes for itself, not a
+    /// read of the parameter.
+    fn contains(&self, key: &str) -> bool {
+        self.lookup(key).is_some()
+    }
+
+    fn first_visible(&self) -> impl Iterator<Item = &Item> {
+        self.items.iter().enumerate().filter_map(|(index, item)| {
+            let shadowed = self.items[..index]
+                .iter()
+                .any(|earlier| earlier.visible && earlier.key == item.key);
+            (item.visible && !shadowed).then_some(item)
+        })
     }
 
     /// Keys in first-seen order.
     pub(crate) fn entries(&self) -> impl Iterator<Item = (&str, Option<&str>)> {
-        self.items
-            .iter()
-            .map(|(key, value)| (key.as_str(), value.as_deref()))
+        self.first_visible()
+            .map(|item| (item.key.as_str(), item.value.as_deref()))
     }
 
-    fn insert_missing(&mut self, key: &str, value: Option<String>) {
-        if !self.flag(key) {
-            self.items.push((key.to_owned(), value));
+    fn pairs(&self) -> Vec<(String, Option<String>)> {
+        self.first_visible()
+            .map(|item| (item.key.clone(), item.value.clone()))
+            .collect()
+    }
+
+    /// Append a token to the list, at the end, as PROJ's expansions do. A hidden token is
+    /// listed but not read. Returns its position.
+    fn append(&mut self, text: &str, visible: bool) -> usize {
+        let (key, value) = match text.split_once('=') {
+            Some((key, value)) => (key, Some(value.to_owned())),
+            None => (text, None),
+        };
+        self.items.push(Item::new(key, value, text, visible));
+        self.items.len() - 1
+    }
+
+    /// Drop every token of `key`: the `init` that an expansion replaces.
+    fn remove(&mut self, key: &str) {
+        self.items.retain(|item| item.key != key);
+    }
+
+    /// Keep every token of `key` in the list, but out of the lookups: a projection reads no datum
+    /// shift, and PROJ's `pj_datum_set` has already read it.
+    fn hide(&mut self, key: &str) {
+        for item in &mut self.items {
+            if item.key == key {
+                item.visible = false;
+            }
         }
     }
 
-    fn remove(&mut self, key: &str) {
-        self.items.retain(|(name, _)| name != key);
+    /// The reads of `pj_datum_set` and `pj_init`, which happen with or without a datum name: the
+    /// first `nadgrids`, else the first `towgs84`, and the first `geoidgrids`.
+    fn read_datum_keys(&self) {
+        let first = |key: &str| self.items.iter().find(|item| item.key == key);
+        if let Some(item) = first("nadgrids").or_else(|| first("towgs84")) {
+            item.mark_used();
+        }
+        if let Some(item) = first("geoidgrids") {
+            item.mark_used();
+        }
     }
 
-    /// The key is present, with or without a value.
+    fn listing(&self) -> Vec<ParamUse> {
+        self.items
+            .iter()
+            .map(|item| ParamUse {
+                text: item.text.clone(),
+                used: item.is_used(),
+            })
+            .collect()
+    }
+
+    /// The key is present, with or without a value. A lookup, so it marks the token as read.
     #[must_use]
     pub(crate) fn flag(&self, key: &str) -> bool {
-        self.get(key).is_some()
+        self.read(key).is_some()
     }
 
     /// Raw text after `=`.
     #[must_use]
     pub(crate) fn text(&self, key: &str) -> Option<&str> {
-        self.get(key).and_then(|value| value.as_deref())
+        self.read(key).and_then(|item| item.value.as_deref())
     }
 
     /// Numeric parameter, underscores allowed.
@@ -323,12 +452,15 @@ impl Params {
     }
 
     fn keys(&self) -> impl Iterator<Item = &str> {
-        self.items.iter().map(|(key, _)| key.as_str())
+        self.first_visible().map(|item| item.key.as_str())
     }
 }
 
-fn comma_continuation(items: &[(String, Option<String>)], token: &str) -> bool {
-    let Some((_, Some(value))) = items.last() else {
+fn comma_continuation(items: &[Item], token: &str) -> bool {
+    let Some(Item {
+        value: Some(value), ..
+    }) = items.last()
+    else {
         return false;
     };
     if !value.ends_with(',') {
@@ -361,13 +493,6 @@ fn shrink_equals(input: &str) -> String {
     out
 }
 
-fn push_first(items: &mut Vec<(String, Option<String>)>, key: &str, value: Option<String>) {
-    if items.iter().any(|(name, _)| name == key) {
-        return;
-    }
-    items.push((key.to_owned(), value));
-}
-
 fn leak_key(key: &str) -> &'static str {
     match key {
         "lat_0" => "lat_0",
@@ -397,6 +522,11 @@ fn leak_key(key: &str) -> &'static str {
 pub(crate) struct Frame {
     /// Ellipsoid used by the kernel and by angular tolerances.
     pub earth: Ellipsoid,
+    /// `e²` that `pj_factors` reads (`P->es`): 0 when the setup forces a sphere.
+    pub factor_es: f64,
+    /// `1 - e²` that `pj_factors` reads (`P->one_es`). A setup that changes `P->es` alone, as
+    /// `alsk` and `gs50` do, leaves it at the value of the input ellipsoid.
+    pub factor_one_es: f64,
     /// Central meridian, radians.
     pub lam0: f64,
     /// Latitude of origin, radians.
@@ -454,6 +584,12 @@ impl Frame {
         };
         let from_greenwich = prime_meridian(params)?;
         let earth = spherify(params, earth, phi0)?;
+        let factor_es =
+            if crate::projections::forces_sphere_factors(params.text("proj").unwrap_or("")) {
+                0.0
+            } else {
+                earth.es()
+            };
         let lon_wrap = if params.flag("lon_wrap") {
             let center = params.radians("lon_wrap")?.unwrap_or(0.0);
             // init.cpp: `!(fabs(center) < 10 * 2 * pi)`, which is also false for NaN.
@@ -466,6 +602,8 @@ impl Frame {
         };
         Ok(Self {
             earth,
+            factor_es,
+            factor_one_es: earth.one_es(),
             lam0,
             phi0,
             x0: params.number("x_0")?.unwrap_or(0.0),
@@ -485,10 +623,16 @@ impl Frame {
 }
 
 fn earth_from_params(params: &Params) -> Result<Ellipsoid, CreateError> {
+    // `pj_ellipsoid` reads `R` before `ellps`, and does not read `ellps` when `R` is there.
+    let ellps = if params.flag("R") {
+        None
+    } else {
+        params.text("ellps")
+    };
     if let Some(name) = params.text("datum") {
         return datum_ellipsoid(name);
     }
-    let mut earth = if let Some(name) = params.text("ellps") {
+    let mut earth = if let Some(name) = ellps {
         named_ellipsoid(name)?
     } else if !has_size(params) {
         Ellipsoid::grs80()
@@ -712,43 +856,68 @@ fn prepare_params(params: &mut Params) -> Result<(), CreateError> {
     Ok(())
 }
 
+/// `init.cpp` appends the expansion of `+init=` to the list. A token the list already has
+/// stays listed, but hidden: the first one is the one that is read.
 fn expand_init(params: &mut Params) -> Result<(), CreateError> {
     let Some(spec) = params.text("init").map(str::to_owned) else {
         return Ok(());
     };
     let definition = crate::crs::init_definition(&spec)?;
     let extra = Params::parse(&definition)?;
-    for (key, value) in extra.items {
-        if key == "no_defs" {
-            continue;
-        }
-        params.insert_missing(&key, value);
+    for item in extra.items {
+        let visible = !params.contains(&item.key);
+        params.items.push(Item {
+            visible,
+            used: std::sync::atomic::AtomicBool::new(false),
+            ..item
+        });
     }
     params.remove("init");
     Ok(())
 }
 
+/// `pj_datum_set` appends the ellipsoid and the shift of `+datum=`, then reads the shift keys.
+/// The appended tokens are visible only where the list has no earlier one of their key.
 fn expand_datum(params: &mut Params) -> Result<(), CreateError> {
-    let Some(name) = params.text("datum").map(str::to_owned) else {
-        return Ok(());
-    };
-    let Some((ellps, shift)) = datum_record(&name) else {
-        return Err(CreateError::IllegalValue("datum"));
-    };
-    if !params.flag("ellps") && !params.flag("a") && !params.flag("R") {
-        params.insert_missing("ellps", Some(ellps.to_owned()));
-    }
-    match shift {
-        DatumShift::None => {}
-        DatumShift::Towgs84(text) if !params.flag("towgs84") && !params.flag("nadgrids") => {
-            params.insert_missing("towgs84", Some(text.to_owned()));
+    if let Some(name) = params.text("datum").map(str::to_owned) {
+        let Some((ellps, shift)) = datum_record(&name) else {
+            return Err(CreateError::IllegalValue("datum"));
+        };
+        let visible = !params.contains("ellps") && !params.contains("a") && !params.contains("R");
+        params.append(&format!("ellps={ellps}"), visible);
+        match shift {
+            // PROJ's table gives these datums `towgs84=0,0,0`: listed, and no shift applied.
+            DatumShift::None => {
+                params.append("towgs84=0,0,0", false);
+            }
+            DatumShift::Towgs84(text) => {
+                let visible = !params.contains("towgs84") && !params.contains("nadgrids");
+                params.append(&format!("towgs84={text}"), visible);
+            }
+            DatumShift::Nadgrids(text) => {
+                let visible = !params.contains("nadgrids") && !params.contains("towgs84");
+                params.append(&format!("nadgrids={text}"), visible);
+            }
         }
-        DatumShift::Nadgrids(text) if !params.flag("nadgrids") && !params.flag("towgs84") => {
-            params.insert_missing("nadgrids", Some(text.to_owned()));
-        }
-        DatumShift::Towgs84(_) | DatumShift::Nadgrids(_) => {}
     }
+    params.read_datum_keys();
     Ok(())
+}
+
+/// `append_default_ellipsoid_to_paralist`: without `no_defs`, a datum, an ellipsoid or a shape,
+/// `ellps=GRS80` is appended, listed but not visible. `pj_ellipsoid` reads it, unless `R` is
+/// there to overrule it.
+fn append_default_ellipsoid(params: &mut Params) {
+    let given = ["no_defs", "datum", "ellps", "a", "b", "rf", "f", "e", "es"]
+        .iter()
+        .any(|key| params.flag(key));
+    if given {
+        return;
+    }
+    let index = params.append("ellps=GRS80", false);
+    if !params.contains("R") {
+        params.items[index].mark_used();
+    }
 }
 
 fn named_ellipsoid(name: &str) -> Result<Ellipsoid, CreateError> {
@@ -947,6 +1116,12 @@ pub(crate) trait Step: Send + Sync {
         1.0
     }
 
+    /// The frame and the unit-ellipsoid forward of a projection, the inputs of `pj_factors`.
+    /// [`None`] for a step without one: its factors differentiate the output in metres.
+    fn unit_projection(&self) -> Option<UnitProjection<'_>> {
+        None
+    }
+
     /// `true` when this step computes the third axis from its input, as PROJ's `fwd3d`
     /// and `inv3d` do (`sch`, `cart`). A 2D step passes the height through.
     fn computes_height(&self) -> bool {
@@ -1032,6 +1207,15 @@ pub struct Operation {
     step: std::sync::Arc<dyn Step>,
     /// Shared, so that cloning an operation (one per candidate) copies a pointer, not the context.
     context: std::sync::Arc<Context>,
+    /// What `proj -v` lists; shared, like the context.
+    parameters: std::sync::Arc<[ParamUse]>,
+}
+
+/// Whether creation refuses a key that no projection reads. PROJ accepts such a key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UnknownKeys {
+    Refuse,
+    Keep,
 }
 
 impl fmt::Debug for Operation {
@@ -1051,7 +1235,12 @@ impl Operation {
     /// `urn:ogc:def:coordinateOperation:NKG::` is read from `proj.db`. A step
     /// that needs a grid is [`CreateError::Unsupported`], not a coordinate.
     pub fn create(definition: &str) -> Result<Self, CreateError> {
-        Self::create_with(definition, DatumMode::Shift, ForceOver::No)
+        Self::create_with(
+            definition,
+            DatumMode::Shift,
+            ForceOver::No,
+            UnknownKeys::Refuse,
+        )
     }
 
     /// [`Operation::create`] with the `over` flag of `FORCE_OVER`: every projection of the
@@ -1059,7 +1248,7 @@ impl Operation {
     /// object it builds while `ctx->forceOver` is set (`init.cpp:603-605`). A pipeline passes the
     /// flag to each step through its header, as its steps inherit the header's parameters.
     pub(crate) fn create_over(definition: &str, over: ForceOver) -> Result<Self, CreateError> {
-        Self::create_with(definition, DatumMode::Shift, over)
+        Self::create_with(definition, DatumMode::Shift, over, UnknownKeys::Refuse)
     }
 
     /// The projection of `definition` alone, as PROJ's `proj` applies it.
@@ -1073,13 +1262,41 @@ impl Operation {
     ///
     /// The same errors as [`Operation::create`].
     pub fn create_projection(definition: &str) -> Result<Self, CreateError> {
-        Self::create_with(definition, DatumMode::Projection, ForceOver::No)
+        Self::create_with(
+            definition,
+            DatumMode::Projection,
+            ForceOver::No,
+            UnknownKeys::Refuse,
+        )
+    }
+
+    /// [`Operation::create_projection`] that keeps a key no projection reads, as PROJ does: such a
+    /// key is listed by [`Operation::parameters`] as not used. `proj -v` and `proj -V` use it.
+    ///
+    /// # Errors
+    ///
+    /// The same errors as [`Operation::create`], except an unknown key.
+    pub fn create_projection_keeping_unknown(definition: &str) -> Result<Self, CreateError> {
+        Self::create_with(
+            definition,
+            DatumMode::Projection,
+            ForceOver::No,
+            UnknownKeys::Keep,
+        )
+    }
+
+    /// The parameters of the definition in PROJ's order, each with whether the operation read it.
+    /// Empty for a pipeline and for an NKG operation, which PROJ lists differently.
+    #[must_use]
+    pub fn parameters(&self) -> &[ParamUse] {
+        &self.parameters
     }
 
     fn create_with(
         definition: &str,
         datum: DatumMode,
         over: ForceOver,
+        unknown: UnknownKeys,
     ) -> Result<Self, CreateError> {
         // `+init=FILE:SECTION` names a dictionary line; it is replaced by that line first.
         let expanded = crate::crs::expand_dictionary_init(definition)?;
@@ -1088,9 +1305,12 @@ impl Operation {
             return Ok(Self {
                 step: std::sync::Arc::from(step),
                 context: std::sync::Arc::new(Context::new()),
+                parameters: std::sync::Arc::from(Vec::new()),
             });
         }
         let mut params = Params::parse(definition)?;
+        // `proj` adds this flag to the definition, and PROJ reads it: `proj -v` lists it as used.
+        let _ = params.flag("break_cs2cs_recursion");
         // `+init=epsg:CODE` expands to a proj string before the name is required.
         expand_init(&mut params)?;
         let name = params.text("proj").unwrap_or("").to_owned();
@@ -1103,17 +1323,19 @@ impl Operation {
         }
         if name == "pipeline" {
             return Ok(Self {
-                step: std::sync::Arc::from(build_pipeline(definition, over)?),
+                step: std::sync::Arc::from(build_pipeline(definition, over, unknown)?),
                 context: std::sync::Arc::new(Context::new()),
+                parameters: std::sync::Arc::from(Vec::new()),
             });
         }
         if over == ForceOver::Yes {
-            params.items.push(("over".to_owned(), None));
+            params.append("over", true);
         }
         prepare_params(&mut params)?;
+        append_default_ellipsoid(&mut params);
         if datum == DatumMode::Projection {
             for key in ["towgs84", "nadgrids", "geoidgrids"] {
-                params.remove(key);
+                params.hide(key);
             }
         }
         let name = params.text("proj").unwrap_or("").to_owned();
@@ -1121,10 +1343,11 @@ impl Operation {
             return Err(CreateError::MissingArgument("proj"));
         }
         let frame = Frame::from_params(&params)?;
-        let step = finish_step(&name, &params, &frame)?;
+        let step = finish_step(&name, &params, &frame, unknown)?;
         Ok(Self {
             step,
             context: std::sync::Arc::new(Context::new()),
+            parameters: std::sync::Arc::from(params.listing()),
         })
     }
 
@@ -1223,6 +1446,11 @@ impl Operation {
         self.step.output_to_metre()
     }
 
+    /// The projection and its unit-ellipsoid forward, see `Step::unit_projection`.
+    pub(crate) fn unit_projection(&self) -> Option<UnitProjection<'_>> {
+        self.step.unit_projection()
+    }
+
     /// Whether the operation computes the third axis from its input, as PROJ's
     /// `fwd3d` does. `+proj=sch` and `+proj=cart` do; a 2D projection passes the height on.
     #[must_use]
@@ -1275,9 +1503,16 @@ fn catalogue() -> &'static [Built] {
 
 type SharedStep = std::sync::Arc<dyn Step>;
 
-fn finish_step(name: &str, params: &Params, frame: &Frame) -> Result<SharedStep, CreateError> {
+fn finish_step(
+    name: &str,
+    params: &Params,
+    frame: &Frame,
+    unknown: UnknownKeys,
+) -> Result<SharedStep, CreateError> {
     let inner = build_step(name, params, frame)?;
-    check_keys(name, params)?;
+    if unknown == UnknownKeys::Refuse {
+        check_keys(name, params)?;
+    }
     if legacy::applies(name, params) {
         legacy::wrap(inner, params, frame)
     } else {
@@ -1406,7 +1641,7 @@ const CATALOGUE: &[Built] = &[
     Built {
         name: "geocent",
         keys: &[],
-        build: build_cart,
+        build: build_geocent,
     },
     Built {
         name: "longlat",
@@ -1546,25 +1781,18 @@ fn auto_is_exact_only(es: f64, phi0: f64, k0: f64) -> bool {
     es > 0.1 || phi0 != 0.0 || (k0 - 1.0).abs() > 0.01
 }
 
-fn native_exact(frame: &Frame, tmerc: Tmerc) -> Box<dyn Step> {
-    let inverse = tmerc.clone();
-    let batch = tmerc.clone();
-    Box::new(
-        NativeProjected::new(
-            frame,
-            move |lon, lat| tmerc.forward_rad(lon, lat),
-            move |xy| inverse.inverse(xy),
-        )
-        .with_batch(TmercBatch(batch)),
-    )
+/// Transverse Mercator exacte dans le cadre de `Classic` : méridien central et faux sont
+/// ceux du cadre, comme `fwd_prepare` et `fwd_finalize` de PROJ.
+fn classic_tmerc(frame: &Frame) -> Box<dyn Step> {
+    let kernel = Tmerc::from_radians(frame.earth, 0.0, frame.phi0, frame.k0, 0.0, 0.0);
+    let batch = TmercBatch(kernel.clone());
+    Box::new(Classic::new(frame.clone(), kernel).with_batch(batch))
 }
 
-fn native_approx(frame: &Frame, approx: ApproxTmerc) -> Box<dyn Step> {
-    Box::new(NativeProjected::new(
-        frame,
-        move |lon, lat| approx.forward(lon, lat),
-        move |xy| approx.inverse(xy),
-    ))
+/// Transverse Mercator approchée dans le cadre de `Classic`, comme `tmerc` avec `+approx`.
+fn classic_approx(frame: &Frame) -> Box<dyn Step> {
+    let kernel = ApproxTmerc::from_radians(frame.earth, 0.0, frame.phi0, frame.k0, 0.0, 0.0);
+    Box::new(Classic::new(frame.clone(), kernel))
 }
 
 fn native_auto(
@@ -1646,20 +1874,10 @@ fn build_tmerc(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateEr
         return Ok(sphere_tmerc_step(frame));
     }
     match algo {
-        TmercAlgo::Evenden => Ok(native_approx(
-            frame,
-            approx_from_degrees(
-                frame,
-                frame.lam0.to_degrees(),
-                frame.phi0.to_degrees(),
-                frame.k0,
-                frame.x0,
-                frame.y0,
-            )?,
-        )),
-        TmercAlgo::Exact => Ok(native_exact(frame, exact_from_frame(frame)?)),
+        TmercAlgo::Evenden => Ok(classic_approx(frame)),
+        TmercAlgo::Exact => Ok(classic_tmerc(frame)),
         TmercAlgo::Auto if auto_is_exact_only(frame.earth.es(), frame.phi0, frame.k0) => {
-            Ok(native_exact(frame, exact_from_frame(frame)?))
+            Ok(classic_tmerc(frame))
         }
         TmercAlgo::Auto => {
             let exact = exact_from_frame(frame)?;
@@ -1688,7 +1906,7 @@ fn build_etmerc(_params: &Params, frame: &Frame) -> Result<Box<dyn Step>, Create
     if frame.earth.es() == 0.0 {
         return Err(CreateError::IllegalValue("ellps"));
     }
-    Ok(native_exact(frame, exact_from_frame(frame)?))
+    Ok(classic_tmerc(frame))
 }
 
 fn build_utm(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateError> {
@@ -1711,16 +1929,22 @@ fn build_utm(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateErro
         Hemisphere::North => 0.0,
         Hemisphere::South => 10_000_000.0,
     };
-    let lam0 = lon0.to_radians();
+    let lam0 = crate::tmerc::utm_central_meridian(zone);
     let k0 = 0.9996;
     let exact =
         || Tmerc::utm(zone, hemisphere, frame.earth).map_err(|_| CreateError::IllegalValue("zone"));
     let approx = || approx_from_degrees(frame, lon0, 0.0, k0, 500_000.0, y0);
+    let mut utm_frame = frame.clone();
+    utm_frame.lam0 = lam0;
+    utm_frame.phi0 = 0.0;
+    utm_frame.k0 = k0;
+    utm_frame.x0 = 500_000.0;
+    utm_frame.y0 = y0;
     match algo {
-        TmercAlgo::Evenden => Ok(native_approx(frame, approx()?)),
-        TmercAlgo::Exact => Ok(native_exact(frame, exact()?)),
+        TmercAlgo::Evenden => Ok(classic_approx(&utm_frame)),
+        TmercAlgo::Exact => Ok(classic_tmerc(&utm_frame)),
         TmercAlgo::Auto if auto_is_exact_only(frame.earth.es(), 0.0, k0) => {
-            Ok(native_exact(frame, exact()?))
+            Ok(classic_tmerc(&utm_frame))
         }
         TmercAlgo::Auto => Ok(native_auto(
             frame,
@@ -1737,26 +1961,10 @@ fn build_utm(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateErro
 fn build_lcc(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateError> {
     let lat1 = params.radians("lat_1")?.unwrap_or(frame.phi0);
     let lat2 = params.radians("lat_2")?.unwrap_or(lat1);
-    let cone = Cone {
-        lon0_deg: frame.lam0.to_degrees(),
-        lat0_deg: frame.phi0.to_degrees(),
-        lat1_deg: lat1.to_degrees(),
-        lat2_deg: lat2.to_degrees(),
-        x0: frame.x0,
-        y0: frame.y0,
-        k0: frame.k0,
-    };
-    let lcc = Lcc::try_new(frame.earth, cone).map_err(|_| CreateError::IllegalValue("lat_1"))?;
-    let inverse = lcc.clone();
-    let batch = lcc.clone();
-    Ok(Box::new(
-        NativeProjected::new(
-            frame,
-            move |lon, lat| lcc.forward(lon.to_degrees(), lat.to_degrees()),
-            move |xy| inverse.inverse(xy),
-        )
-        .with_batch(LccBatch(batch)),
-    ))
+    let lcc = Lcc::from_radians(frame.earth, 0.0, frame.phi0, lat1, lat2, frame.k0)
+        .map_err(|_| CreateError::IllegalValue("lat_1"))?;
+    let batch = LccBatch(lcc.clone());
+    Ok(Box::new(Classic::new(frame.clone(), lcc).with_batch(batch)))
 }
 
 fn build_merc(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateError> {
@@ -1771,44 +1979,17 @@ fn build_merc(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateErr
             crate::projmath::msfn(lat_ts.sin(), lat_ts.cos(), frame.earth.es())
         };
     }
+    // Origine nulle : le méridien central et les faux viennent du cadre, comme dans PROJ.
     let merc = if frame.earth.es() == 0.0 {
-        Mercator::try_sphere(
-            frame.earth.a(),
-            frame.lam0.to_degrees(),
-            k0,
-            frame.x0,
-            frame.y0,
-        )
-        .map_err(|_| CreateError::IllegalValue("k_0"))?
+        Mercator::try_sphere(frame.earth.a(), 0.0, k0, 0.0, 0.0)
+            .map_err(|_| CreateError::IllegalValue("k_0"))?
     } else {
-        Mercator::try_ellipsoid(frame.earth, frame.lam0.to_degrees(), k0, frame.x0, frame.y0)
+        Mercator::try_ellipsoid(frame.earth, 0.0, k0, 0.0, 0.0)
             .map_err(|_| CreateError::IllegalValue("k_0"))?
     };
-    let over = frame.over;
-    let batch = merc;
-    let step = NativeProjected::new(
-        frame,
-        move |lon, lat| {
-            if over {
-                merc.forward_rad_over(lon, lat)
-            } else {
-                merc.forward(lon.to_degrees(), lat.to_degrees())
-            }
-        },
-        move |xy| {
-            if over {
-                merc.inverse_over(xy)
-            } else {
-                merc.inverse(xy)
-            }
-        },
-    );
-    // `+over` keeps the longitude unwrapped, which the vector kernel does not do.
-    Ok(Box::new(if over {
-        step
-    } else {
-        step.with_batch(MercBatch(batch))
-    }))
+    Ok(Box::new(
+        Classic::new(frame.clone(), merc).with_batch(MercBatch(merc)),
+    ))
 }
 
 fn build_helmert(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateError> {
@@ -1819,6 +2000,17 @@ fn build_cart(_params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateEr
     Ok(Box::new(CartStep {
         frame: frame.clone(),
     }))
+}
+
+/// `proj` adds `break_cs2cs_recursion`, and PROJ then builds no cartesian step for `geocent`:
+/// it stays the identity on the 2D interface. `cs2cs` and `cct` keep the 3D conversion.
+fn build_geocent(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateError> {
+    if params.flag("break_cs2cs_recursion") {
+        return Ok(Box::new(GeocentIdentity {
+            frame: frame.clone(),
+        }));
+    }
+    build_cart(params, frame)
 }
 
 fn build_longlat(_params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateError> {
@@ -1844,18 +2036,108 @@ pub(crate) trait Kernel: Send + Sync {
     fn inverse(&self, x: f64, y: f64) -> Result<(f64, f64), TransformError>;
 }
 
+/// PROJ's `P->fwd` on the unit ellipsoid: the output is in units of the semi-major axis, with no
+/// false origin and no unit conversion. `lam` is relative to [`Self::lam0`].
+pub(crate) trait UnitForward: Send + Sync {
+    /// Central meridian, radians, that `pj_factors` removes before the differentiation.
+    fn lam0(&self) -> f64;
+
+    /// # Errors
+    ///
+    /// [`TransformError::OutsideDomain`] when the point has no image.
+    fn unit_forward(&self, lam: f64, phi: f64) -> Result<(f64, f64), TransformError>;
+}
+
+/// A projection as `pj_factors` sees it: its frame and its unit forward.
+pub(crate) struct UnitProjection<'a> {
+    pub(crate) frame: &'a Frame,
+    pub(crate) forward: &'a dyn UnitForward,
+}
+
 struct Classic<K> {
     frame: Frame,
     kernel: K,
+    /// The vector path of the kernel, built with a zero origin as the kernel is.
+    batch: Option<Box<dyn ProjectedBatch>>,
 }
 
 impl<K: Kernel> Classic<K> {
     fn new(frame: Frame, kernel: K) -> Self {
-        Self { frame, kernel }
+        Self {
+            frame,
+            kernel,
+            batch: None,
+        }
+    }
+
+    /// Adds the vector path. With `+over` the scalar path keeps the longitude unwrapped, which
+    /// the vector kernels do not: no vector path then.
+    fn with_batch(mut self, batch: impl ProjectedBatch + 'static) -> Self {
+        if !self.frame.over {
+            self.batch = Some(Box::new(batch));
+        }
+        self
+    }
+}
+
+impl<K: Kernel + 'static> UnitForward for Classic<K> {
+    fn lam0(&self) -> f64 {
+        self.frame.lam0
+    }
+
+    fn unit_forward(&self, lam: f64, phi: f64) -> Result<(f64, f64), TransformError> {
+        self.kernel.forward(lam, phi)
+    }
+}
+
+impl Kernel for Mercator {
+    fn forward(&self, lam: f64, phi: f64) -> Result<(f64, f64), TransformError> {
+        Ok(self.fwd_unit(lam, phi))
+    }
+
+    fn inverse(&self, x: f64, y: f64) -> Result<(f64, f64), TransformError> {
+        self.inv_unit(x, y).map_err(Into::into)
+    }
+}
+
+impl Kernel for Lcc {
+    fn forward(&self, lam: f64, phi: f64) -> Result<(f64, f64), TransformError> {
+        self.fwd_unit(lam, phi).map_err(Into::into)
+    }
+
+    fn inverse(&self, x: f64, y: f64) -> Result<(f64, f64), TransformError> {
+        self.inv_unit(x, y).map_err(Into::into)
+    }
+}
+
+impl Kernel for ApproxTmerc {
+    fn forward(&self, lam: f64, phi: f64) -> Result<(f64, f64), TransformError> {
+        self.fwd_unit(lam, phi).map_err(Into::into)
+    }
+
+    fn inverse(&self, x: f64, y: f64) -> Result<(f64, f64), TransformError> {
+        Ok(self.inv_unit(x, y))
+    }
+}
+
+impl Kernel for Tmerc {
+    fn forward(&self, lam: f64, phi: f64) -> Result<(f64, f64), TransformError> {
+        self.fwd_unit(lam, phi).map_err(Into::into)
+    }
+
+    fn inverse(&self, x: f64, y: f64) -> Result<(f64, f64), TransformError> {
+        self.inv_unit(x, y).map_err(Into::into)
     }
 }
 
 impl<K: Kernel + 'static> Step for Classic<K> {
+    fn unit_projection(&self) -> Option<UnitProjection<'_>> {
+        Some(UnitProjection {
+            frame: &self.frame,
+            forward: self,
+        })
+    }
+
     fn forward(&self, coord: Coord) -> Result<Coord, TransformError> {
         // PROJ returns NaN coordinates for a NaN input. It does not set errno.
         if coord.x.is_nan() || coord.y.is_nan() {
@@ -1913,6 +2195,14 @@ impl<K: Kernel + 'static> Step for Classic<K> {
 
     fn distance_ellipsoid(&self) -> (f64, f64) {
         (self.frame.earth.a(), self.frame.earth.es())
+    }
+
+    fn forward_batch(&self, coords: &mut [Coord], failed: &mut [Option<TransformError>]) {
+        classic_batch::forward(self, coords, failed);
+    }
+
+    fn inverse_batch(&self, coords: &mut [Coord], failed: &mut [Option<TransformError>]) {
+        classic_batch::inverse(self, coords, failed);
     }
 
     fn output_to_metre(&self) -> f64 {
@@ -2012,8 +2302,9 @@ pub(crate) fn geocentric_to_geographic(phi: f64, one_es: f64) -> f64 {
 /// Points a vector kernel handles per call: the arrays that hold them live on the stack.
 const BATCH_CHUNK: usize = 256;
 
-/// The vector path of a projection (`crate::simd`), over the points of one chunk. Angles go in
-/// and out as `NativeProjected` handles them: radians in, degrees out.
+/// The vector path of a [`Classic`] kernel (`crate::simd`), over the points of one chunk, with a
+/// zero origin: radians relative to the central meridian in, metres without the false origin
+/// out; metres in, degrees relative to the central meridian out.
 trait ProjectedBatch: Send + Sync {
     /// Radians to metres, `NaN` for a point the projection refuses.
     fn forward(&self, lon_rad: &[f64], lat_rad: &[f64], east: &mut [f64], north: &mut [f64]);
@@ -2083,8 +2374,6 @@ struct NativeProjected<F, I> {
     frame: Frame,
     forward_xy: F,
     inverse_xy: I,
-    /// The vector path, for the projections that have one.
-    batch: Option<Box<dyn ProjectedBatch>>,
 }
 
 impl<F, I> NativeProjected<F, I>
@@ -2097,15 +2386,7 @@ where
             frame: frame.clone(),
             forward_xy,
             inverse_xy,
-            batch: None,
         }
-    }
-
-    /// Adds the vector path, which must give what the closures give, to the tolerance of
-    /// `docs/PORTING-simd.md`.
-    fn with_batch(mut self, batch: impl ProjectedBatch + 'static) -> Self {
-        self.batch = Some(Box::new(batch));
-        self
     }
 }
 
@@ -2154,120 +2435,6 @@ where
 
     fn output_to_metre(&self) -> f64 {
         self.frame.to_meter
-    }
-
-    /// The projection's vector kernel over chunks of [`BATCH_CHUNK`] points. A point the kernel
-    /// refuses (`NaN`) is run again through [`Self::forward`], so its error is the scalar one.
-    fn forward_batch(&self, coords: &mut [Coord], failed: &mut [Option<TransformError>]) {
-        assert_eq!(coords.len(), failed.len(), "one slot per point");
-        let Some(batch) = &self.batch else {
-            for (coord, failed) in coords.iter_mut().zip(failed) {
-                if failed.is_none() {
-                    match self.forward(*coord) {
-                        Ok(out) => *coord = out,
-                        Err(error) => *failed = Some(error),
-                    }
-                }
-            }
-            return;
-        };
-        for (coords, failed) in coords
-            .chunks_mut(BATCH_CHUNK)
-            .zip(failed.chunks_mut(BATCH_CHUNK))
-        {
-            let count = coords.len();
-            let (mut lon, mut lat) = ([0.0; BATCH_CHUNK], [0.0; BATCH_CHUNK]);
-            let (mut east, mut north) = ([0.0; BATCH_CHUNK], [0.0; BATCH_CHUNK]);
-            for (slot, (coord, failed)) in coords.iter().zip(failed.iter_mut()).enumerate() {
-                if failed.is_some() {
-                    continue;
-                }
-                // `fwd_prepare`: the latitude gate, then `pm=`. A failed gate is the error.
-                match latitude_gate(coord.y) {
-                    Ok(gated) => {
-                        lon[slot] = coord.x - self.frame.from_greenwich;
-                        lat[slot] = gated;
-                    }
-                    Err(error) => *failed = Some(error),
-                }
-            }
-            batch.forward(
-                &lon[..count],
-                &lat[..count],
-                &mut east[..count],
-                &mut north[..count],
-            );
-            for (slot, (coord, failed)) in coords.iter_mut().zip(failed.iter_mut()).enumerate() {
-                if failed.is_some() {
-                    continue;
-                }
-                if east[slot].is_finite() && north[slot].is_finite() {
-                    *coord = Coord {
-                        x: self.frame.fr_meter * east[slot],
-                        y: self.frame.fr_meter * north[slot],
-                        z: self.frame.vfr_meter * (coord.z + self.frame.z0),
-                        t: coord.t,
-                    };
-                } else {
-                    match self.forward(*coord) {
-                        Ok(out) => *coord = out,
-                        Err(error) => *failed = Some(error),
-                    }
-                }
-            }
-        }
-    }
-
-    /// The inverse counterpart of [`Self::forward_batch`].
-    fn inverse_batch(&self, coords: &mut [Coord], failed: &mut [Option<TransformError>]) {
-        assert_eq!(coords.len(), failed.len(), "one slot per point");
-        let Some(batch) = &self.batch else {
-            for (coord, failed) in coords.iter_mut().zip(failed) {
-                if failed.is_none() {
-                    match self.inverse(*coord) {
-                        Ok(out) => *coord = out,
-                        Err(error) => *failed = Some(error),
-                    }
-                }
-            }
-            return;
-        };
-        for (coords, failed) in coords
-            .chunks_mut(BATCH_CHUNK)
-            .zip(failed.chunks_mut(BATCH_CHUNK))
-        {
-            let count = coords.len();
-            let (mut east, mut north) = ([0.0; BATCH_CHUNK], [0.0; BATCH_CHUNK]);
-            let (mut lon, mut lat) = ([0.0; BATCH_CHUNK], [0.0; BATCH_CHUNK]);
-            for (slot, coord) in coords.iter().enumerate() {
-                east[slot] = self.frame.to_meter * coord.x;
-                north[slot] = self.frame.to_meter * coord.y;
-            }
-            batch.inverse(
-                &east[..count],
-                &north[..count],
-                &mut lon[..count],
-                &mut lat[..count],
-            );
-            for (slot, (coord, failed)) in coords.iter_mut().zip(failed.iter_mut()).enumerate() {
-                if failed.is_some() {
-                    continue;
-                }
-                if lon[slot].is_finite() && lat[slot].is_finite() {
-                    *coord = Coord {
-                        x: lon[slot].to_radians() + self.frame.from_greenwich,
-                        y: lat[slot].to_radians(),
-                        z: self.frame.vto_meter * coord.z - self.frame.z0,
-                        t: coord.t,
-                    };
-                } else {
-                    match self.inverse(*coord) {
-                        Ok(out) => *coord = out,
-                        Err(error) => *failed = Some(error),
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -2324,6 +2491,25 @@ impl Step for CartStep {
     /// Geocentric X, Y, Z is three-dimensional: its inverse returns the geodetic height.
     fn computes_height(&self) -> bool {
         true
+    }
+
+    fn unit_projection(&self) -> Option<UnitProjection<'_>> {
+        Some(UnitProjection {
+            frame: &self.frame,
+            forward: self,
+        })
+    }
+}
+
+impl UnitForward for CartStep {
+    fn lam0(&self) -> f64 {
+        self.frame.lam0
+    }
+
+    /// PROJ's `P->fwd` of `cart` is in metres: no `fr_meter`, no division by `a`.
+    fn unit_forward(&self, lam: f64, phi: f64) -> Result<(f64, f64), TransformError> {
+        let (x, y, _) = geodetic_to_cartesian(self.frame.earth, lam, phi, 0.0);
+        Ok((x, y))
     }
 }
 
@@ -2397,6 +2583,70 @@ fn geocentric_radius(a: f64, b_div_a: f64, cosphi: f64, sinphi: f64) -> f64 {
     let b2 = b_div_a * b_div_a;
     let b2sin2 = b2 * sin2;
     a * ((cos2 + b2 * b2sin2) / (cos2 + b2sin2)).sqrt()
+}
+
+/// PROJ's `geocent` as the `proj` app runs it: `P->fwd` is the identity on radians, and the
+/// output is scaled by the frame's units (`fwd_finalize`, `CARTESIAN`).
+struct GeocentIdentity {
+    frame: Frame,
+}
+
+impl UnitForward for GeocentIdentity {
+    fn lam0(&self) -> f64 {
+        self.frame.lam0
+    }
+
+    fn unit_forward(&self, lam: f64, phi: f64) -> Result<(f64, f64), TransformError> {
+        Ok((lam, phi))
+    }
+}
+
+impl Step for GeocentIdentity {
+    fn forward(&self, coord: Coord) -> Result<Coord, TransformError> {
+        let (lam, phi) = prepare_forward(&self.frame, coord.x, coord.y)?;
+        Ok(Coord {
+            x: self.frame.fr_meter * lam,
+            y: self.frame.fr_meter * phi,
+            z: self.frame.fr_meter * coord.z,
+            t: coord.t,
+        })
+    }
+
+    fn inverse(&self, coord: Coord) -> Result<Coord, TransformError> {
+        let mut phi = self.frame.to_meter * coord.y;
+        if self.frame.geoc {
+            phi = geographic_to_geocentric(phi, self.frame.earth.one_es());
+        }
+        let mut lam = self.frame.to_meter * coord.x + self.frame.from_greenwich + self.frame.lam0;
+        if !self.frame.over {
+            lam = adjlon(lam);
+        }
+        Ok(Coord {
+            x: lam,
+            y: phi,
+            z: self.frame.vto_meter * (self.frame.to_meter * coord.z) - self.frame.z0,
+            t: coord.t,
+        })
+    }
+
+    fn input_kind(&self) -> IoKind {
+        IoKind::Angular
+    }
+
+    fn output_kind(&self) -> IoKind {
+        IoKind::Cartesian
+    }
+
+    fn distance_ellipsoid(&self) -> (f64, f64) {
+        (self.frame.earth.a(), self.frame.earth.es())
+    }
+
+    fn unit_projection(&self) -> Option<UnitProjection<'_>> {
+        Some(UnitProjection {
+            frame: &self.frame,
+            forward: self,
+        })
+    }
 }
 
 struct LongLat {
@@ -2597,7 +2847,11 @@ impl Step for Pipeline {
     }
 }
 
-fn build_pipeline(definition: &str, over: ForceOver) -> Result<Pipeline, CreateError> {
+fn build_pipeline(
+    definition: &str,
+    over: ForceOver,
+    unknown: UnknownKeys,
+) -> Result<Pipeline, CreateError> {
     let parts = split_pipeline(definition);
     if parts.len() < 2 || !parts[0].contains("proj=pipeline") || step_precedes_pipeline(definition)
     {
@@ -2609,7 +2863,7 @@ fn build_pipeline(definition: &str, over: ForceOver) -> Result<Pipeline, CreateE
     let mut header_params = Params::parse(&parts[0])?;
     if over == ForceOver::Yes {
         // Each step inherits the header's parameters below, so every projection step gets `over`.
-        header_params.items.push(("over".to_owned(), None));
+        header_params.append("over", true);
     }
     let frame = Frame::from_params(&header_params).unwrap_or_else(|_| {
         Frame::from_params(&Params::parse("+proj=pipeline +ellps=GRS80").expect("GRS80 pipeline"))
@@ -2618,12 +2872,16 @@ fn build_pipeline(definition: &str, over: ForceOver) -> Result<Pipeline, CreateE
     let mut steps = Vec::new();
     for chunk in parts.iter().skip(1) {
         let mut step_params = Params::parse(chunk)?;
-        for (key, value) in &header_params.items {
+        for (key, value) in header_params.pairs() {
             if key == "proj" || key == "step" || key == "inv" {
                 continue;
             }
-            if !step_params.flag(key) {
-                step_params.items.push((key.clone(), value.clone()));
+            if !step_params.flag(&key) {
+                let text = match value {
+                    Some(value) => format!("{key}={value}"),
+                    None => key,
+                };
+                step_params.append(&text, true);
             }
         }
         prepare_params(&mut step_params)?;
@@ -2639,7 +2897,7 @@ fn build_pipeline(definition: &str, over: ForceOver) -> Result<Pipeline, CreateE
             return Err(CreateError::MissingArgument("proj"));
         }
         let step_frame = Frame::from_params(&step_params)?;
-        let step = finish_step(&name, &step_params, &step_frame)?;
+        let step = finish_step(&name, &step_params, &step_frame, unknown)?;
         steps.push(PipeStep {
             inverted,
             omit_fwd,
@@ -3017,54 +3275,58 @@ mod tests {
         }
     }
 
-    /// A projected step whose scalar closures answer `1, 2` (forward) and `3°, 4°` (inverse),
-    /// with the marked vector path.
-    fn marked_step() -> impl Step {
+    /// A kernel that answers `1, 2` in units of the semi-major axis forward, and `3°, 4°`
+    /// inverse, and refuses the meridian itself, so a refused point has an error.
+    struct MarkedKernel;
+
+    impl Kernel for MarkedKernel {
+        fn forward(&self, lam: f64, _: f64) -> Result<(f64, f64), TransformError> {
+            if lam == 0.0 {
+                Err(TransformError::OutsideDomain)
+            } else {
+                Ok((1.0, 2.0))
+            }
+        }
+
+        fn inverse(&self, _: f64, _: f64) -> Result<(f64, f64), TransformError> {
+            Ok((3.0_f64.to_radians(), 4.0_f64.to_radians()))
+        }
+    }
+
+    /// The `Classic` frame of `+proj=merc +ellps=GRS80`, around the marked kernel and the marked
+    /// vector path.
+    fn marked_step() -> Classic<MarkedKernel> {
         let frame = Frame::from_params(&Params::parse("+proj=merc +ellps=GRS80").expect("params"))
             .expect("frame");
-        NativeProjected::new(
-            &frame,
-            |lon, _| {
-                // The scalar path refuses the meridian itself, so a refused point has an error.
-                if lon == 0.0 {
-                    Err(ProjectionError::OutsideDomain)
-                } else {
-                    Ok(Projected {
-                        east: 1.0,
-                        north: 2.0,
-                    })
-                }
-            },
-            |_| {
-                Ok(Geographic {
-                    lon_deg: 3.0,
-                    lat_deg: 4.0,
-                })
-            },
-        )
-        .with_batch(MarkedBatch)
+        Classic::new(frame, MarkedKernel).with_batch(MarkedBatch)
+    }
+
+    /// What the scalar kernel gives through the frame: `1, 2` times the semi-major axis.
+    fn scalar_answer(step: &Classic<MarkedKernel>) -> (f64, f64) {
+        let a = step.frame.earth.a();
+        (a, 2.0 * a)
     }
 
     #[test]
-    fn a_native_step_with_a_vector_path_uses_it_for_a_slice() {
+    fn a_classic_step_with_a_vector_path_uses_it_for_a_slice() {
         let step = marked_step();
         let mut coords = [Coord::xy(0.5, 0.1), Coord::xy(0.7, 0.2)];
         let mut failed = [None, None];
         step.forward_batch(&mut coords, &mut failed);
         assert_eq!(failed, [None, None]);
-        // `7, 9` is the vector path's: the scalar closure gives `1, 2`.
+        // `7, 9` is the vector path's: the scalar kernel gives `a, 2a`.
         assert_eq!((coords[0].x, coords[0].y), (7.0, 9.0));
         assert_eq!((coords[1].x, coords[1].y), (7.0, 9.0));
         // One point at a time takes the scalar path.
         let one = step.forward(Coord::xy(0.5, 0.1)).expect("one point");
-        assert_eq!((one.x, one.y), (1.0, 2.0));
+        assert_eq!((one.x, one.y), scalar_answer(&step));
     }
 
     #[test]
     fn a_point_the_vector_path_refuses_gets_the_scalar_answer_or_its_error() {
         let step = marked_step();
-        // West of the meridian: the vector path writes NaN, the scalar closure answers 1, 2.
-        // On the meridian: NaN again, and the scalar closure refuses with its own error.
+        // West of the meridian: the vector path writes NaN, the scalar kernel answers `a, 2a`.
+        // On the meridian: NaN again, and the scalar kernel refuses with its own error.
         let mut coords = [
             Coord::xy(-0.5, 0.1),
             Coord::xy(0.0, 0.1),
@@ -3072,7 +3334,7 @@ mod tests {
         ];
         let mut failed = [None, None, None];
         step.forward_batch(&mut coords, &mut failed);
-        assert_eq!((coords[0].x, coords[0].y), (1.0, 2.0));
+        assert_eq!((coords[0].x, coords[0].y), scalar_answer(&step));
         assert_eq!(failed[0], None);
         assert_eq!(failed[1], Some(TransformError::OutsideDomain));
         assert_eq!((coords[2].x, coords[2].y), (7.0, 9.0));
@@ -3098,10 +3360,10 @@ mod tests {
     }
 
     #[test]
-    fn the_inverse_of_a_native_step_uses_the_vector_path_too() {
+    fn the_inverse_of_a_classic_step_uses_the_vector_path_too() {
         let step = marked_step();
         // `to_meter` is 1: east 5 reaches the vector path, east -5 is refused (`NaN`) and falls
-        // back to the scalar closure, which answers 3°, 4°.
+        // back to the scalar kernel, which answers 3°, 4°.
         let mut coords = [Coord::xy(5.0, 1.0), Coord::xy(-5.0, 1.0)];
         let mut failed = [None, None];
         step.inverse_batch(&mut coords, &mut failed);

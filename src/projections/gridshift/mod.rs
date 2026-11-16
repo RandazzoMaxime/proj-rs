@@ -20,7 +20,7 @@ use crate::angle::adjlon;
 use crate::engine::{
     cartesian_to_geodetic, Coord, CreateError, Frame, IoKind, Params, Step, TransformError,
 };
-use tiles::{with_tiles, with_tiles_watch, Samples};
+use tiles::{with_tiles_watch, Samples};
 
 const REL: f64 = 1e-5;
 const ARCSEC: f64 = (PI / 180.0) / 3600.0;
@@ -370,7 +370,7 @@ impl<S: Step> Step for Deferred<S> {
 }
 
 struct Horizontal {
-    sets: Vec<GridSet>,
+    sets: GridSets,
     t_epoch: f64,
     t_final: f64,
     a: f64,
@@ -378,7 +378,7 @@ struct Horizontal {
 }
 
 struct Vertical {
-    sets: VerticalGrids,
+    sets: GridSets,
     multiplier: f64,
     t_epoch: f64,
     t_final: f64,
@@ -386,19 +386,22 @@ struct Vertical {
     es: f64,
 }
 
-/// The grid sets of a vertical shift, which are loaded again when a grid file changes while it is
-/// open: PROJ's `VerticalShiftGridSet::reopen`. They are loaded at the first transform when they
-/// are not in force, in the network context the step was built in.
-struct VerticalGrids {
+/// The grid sets of a step, which are loaded again when a grid file changes while it is open:
+/// PROJ's `reopen` of `HorizontalShiftGridSet`, `GenericShiftGridSet` and `VerticalShiftGridSet`.
+/// They are loaded at the first transform when they are not in force, in the network context the
+/// step was built in.
+struct GridSets {
     grids: String,
+    open: fn(&str) -> Result<GridSet, Fail>,
     network: crate::network::GridContext,
     current: RwLock<Option<Arc<[GridSet]>>>,
 }
 
-impl VerticalGrids {
-    fn new(grids: &str, sets: Vec<GridSet>) -> Self {
+impl GridSets {
+    fn new(grids: &str, open: fn(&str) -> Result<GridSet, Fail>, sets: Vec<GridSet>) -> Self {
         Self {
             grids: grids.to_owned(),
+            open,
             network: crate::network::context(),
             current: RwLock::new(Some(sets.into())),
         }
@@ -432,13 +435,32 @@ impl VerticalGrids {
     }
 
     fn load(&self) -> Result<Vec<GridSet>, TransformError> {
-        crate::network::with_context(&self.network, || load_names(&self.grids, open_vertical))
+        crate::network::with_context(&self.network, || load_names(&self.grids, self.open))
             .map_err(|_| TransformError::NetworkUnavailable)
     }
 }
 
+/// Runs `body` on the grids in force. When a grid file changed while it was open, the grids are
+/// loaded again and the point is run again, as PROJ's `shouldRetry` does.
+fn with_reloads<T>(
+    grids: &GridSets,
+    body: impl Fn(&[GridSet]) -> Result<T, TransformError>,
+) -> Result<T, TransformError> {
+    for _ in 0..MAX_RELOADS {
+        let sets = grids.current()?;
+        let (answer, changed) = with_tiles_watch(|| body(&sets));
+        if !changed {
+            return answer;
+        }
+        // The sets in force are released before the reload, so that their files close first.
+        drop(sets);
+        grids.reload()?;
+    }
+    Err(TransformError::NetworkUnavailable)
+}
+
 struct Generic {
-    sets: Vec<GridSet>,
+    sets: GridSets,
     model: Model,
     a: f64,
     es: f64,
@@ -447,7 +469,7 @@ struct Generic {
 fn horizontal(params: &Params, frame: &Frame, grids: &str) -> Result<Horizontal, CreateError> {
     let sets = load_all(grids, open_horizontal)?;
     Ok(Horizontal {
-        sets,
+        sets: GridSets::new(grids, open_horizontal, sets),
         t_epoch: params.number("t_epoch")?.unwrap_or(0.0),
         t_final: parse_t_final(params)?,
         a: frame.earth.a(),
@@ -458,7 +480,7 @@ fn horizontal(params: &Params, frame: &Frame, grids: &str) -> Result<Horizontal,
 fn vertical(params: &Params, frame: &Frame, grids: &str) -> Result<Vertical, CreateError> {
     let sets = load_all(grids, open_vertical)?;
     Ok(Vertical {
-        sets: VerticalGrids::new(grids, sets),
+        sets: GridSets::new(grids, open_vertical, sets),
         multiplier: params.number("multiplier")?.unwrap_or(-1.0),
         t_epoch: params.number("t_epoch")?.unwrap_or(0.0),
         t_final: parse_t_final(params)?,
@@ -497,7 +519,7 @@ fn generic(params: &Params, frame: &Frame, grids: &str) -> Result<Generic, Creat
         }
     }
     Ok(Generic {
-        sets,
+        sets: GridSets::new(grids, open_generic, sets),
         model,
         a: frame.earth.a(),
         es: frame.earth.es(),
@@ -1841,14 +1863,14 @@ impl Step for Horizontal {
         if !in_window(self.t_final, self.t_epoch, coord.t) {
             return Ok(coord);
         }
-        with_tiles(|| self.apply(coord, Way::Forward))
+        with_reloads(&self.sets, |sets| self.apply(sets, coord, Way::Forward))
     }
 
     fn inverse(&self, coord: Coord) -> Result<Coord, TransformError> {
         if !in_window(self.t_final, self.t_epoch, coord.t) {
             return Ok(coord);
         }
-        with_tiles(|| self.apply(coord, Way::Inverse))
+        with_reloads(&self.sets, |sets| self.apply(sets, coord, Way::Inverse))
     }
 
     fn input_kind(&self) -> IoKind {
@@ -1865,16 +1887,16 @@ impl Step for Horizontal {
 }
 
 impl Horizontal {
-    fn apply(&self, coord: Coord, way: Way) -> Result<Coord, TransformError> {
+    fn apply(&self, sets: &[GridSet], coord: Coord, way: Way) -> Result<Coord, TransformError> {
         let inverse = matches!(way, Way::Inverse);
-        if !self.sets.is_empty() && self.sets.iter().all(|set| set.null) {
+        if !sets.is_empty() && sets.iter().all(|set| set.null) {
             return Ok(coord);
         }
         let coord = geographic_in(coord)?;
-        if self.sets.is_empty() {
+        if sets.is_empty() {
             return Ok(coord);
         }
-        let Some(located) = find_horizontal(&self.sets, coord.x, coord.y) else {
+        let Some(located) = find_horizontal(sets, coord.x, coord.y) else {
             return Err(TransformError::OutsideGrid);
         };
         let Located::At(set, mut id) = located else {
@@ -1901,8 +1923,7 @@ impl Horizontal {
                 None => {
                     let lon = guess_e + set.nodes[id].extent.west;
                     let lat = guess_n + set.nodes[id].extent.south;
-                    let Some(Located::At(next, next_id)) = find_horizontal(&self.sets, lon, lat)
-                    else {
+                    let Some(Located::At(next, next_id)) = find_horizontal(sets, lon, lat) else {
                         failed = true;
                         break;
                     };
@@ -1972,21 +1993,10 @@ impl Step for Vertical {
 const MAX_RELOADS: usize = 8;
 
 impl Vertical {
-    /// A point, with the grids in force. A tile read that finds its file changed while it was open
-    /// gives no answer: the grids are loaded again and the point is run again, as PROJ's
-    /// `grid_apply_internal` does with `shouldRetry`.
+    /// A point, with the grids in force, run again on the grids loaded again when a file changed
+    /// (see [`with_reloads`]).
     fn transform(&self, coord: Coord, way: Way) -> Result<Coord, TransformError> {
-        for _ in 0..MAX_RELOADS {
-            let sets = self.sets.current()?;
-            let (answer, changed) = with_tiles_watch(|| self.shift(&sets, coord, way));
-            if !changed {
-                return answer;
-            }
-            // The sets in force are released before the reload, so that their files close first.
-            drop(sets);
-            self.sets.reload()?;
-        }
-        Err(TransformError::NetworkUnavailable)
+        with_reloads(&self.sets, |sets| self.shift(sets, coord, way))
     }
 
     fn shift(&self, sets: &[GridSet], coord: Coord, way: Way) -> Result<Coord, TransformError> {
@@ -2021,7 +2031,7 @@ impl Vertical {
 
 impl Step for Generic {
     fn forward(&self, coord: Coord) -> Result<Coord, TransformError> {
-        let mut out = with_tiles(|| self.apply(coord, Way::Forward))?;
+        let mut out = with_reloads(&self.sets, |sets| self.apply(sets, coord, Way::Forward))?;
         out.x += self.model.offset_x;
         out.y += self.model.offset_y;
         Ok(out)
@@ -2030,7 +2040,7 @@ impl Step for Generic {
     fn inverse(&self, mut coord: Coord) -> Result<Coord, TransformError> {
         coord.x -= self.model.offset_x;
         coord.y -= self.model.offset_y;
-        with_tiles(|| self.apply(coord, Way::Inverse))
+        with_reloads(&self.sets, |sets| self.apply(sets, coord, Way::Inverse))
     }
 
     fn input_kind(&self) -> IoKind {
@@ -2051,7 +2061,7 @@ impl Step for Generic {
 }
 
 impl Generic {
-    fn apply(&self, coord: Coord, way: Way) -> Result<Coord, TransformError> {
+    fn apply(&self, sets: &[GridSet], coord: Coord, way: Way) -> Result<Coord, TransformError> {
         let coord = if self.model.space == Domain::Projected {
             if !coord.x.is_finite() || !coord.y.is_finite() || !coord.z.is_finite() {
                 return Err(TransformError::NonFinite);
@@ -2060,13 +2070,13 @@ impl Generic {
         } else {
             geographic_in(coord)?
         };
-        if self.sets.is_empty() || self.model.main.is_empty() {
+        if sets.is_empty() || self.model.main.is_empty() {
             return Err(TransformError::OutsideGrid);
         }
         let vertical_only = !(self.model.mix.geog3d || self.model.mix.horizontal);
         let mut kind = self.model.main.clone();
         let mut found_3d = false;
-        let located = match find_typed(&self.sets, &kind, coord.x, coord.y) {
+        let located = match find_typed(sets, &kind, coord.x, coord.y) {
             Some(hit) => {
                 if self.model.mix.geog3d {
                     found_3d = true;
@@ -2075,8 +2085,7 @@ impl Generic {
             }
             None if self.model.mix.geog3d && self.model.mix.horizontal => {
                 kind = "HORIZONTAL_OFFSET".to_owned();
-                find_typed(&self.sets, &kind, coord.x, coord.y)
-                    .ok_or(TransformError::OutsideGrid)?
+                find_typed(sets, &kind, coord.x, coord.y).ok_or(TransformError::OutsideGrid)?
             }
             None => return Err(TransformError::OutsideGrid),
         };
@@ -2085,17 +2094,18 @@ impl Generic {
         } else {
             Pass::Full
         };
-        let mut out = self.one(&kind, pass, coord, way, &located)?;
+        let mut out = self.one(sets, &kind, pass, coord, way, &located)?;
         if !found_3d && !self.model.aux.is_empty() {
-            let aux = find_typed(&self.sets, &self.model.aux, out.x, out.y)
+            let aux = find_typed(sets, &self.model.aux, out.x, out.y)
                 .ok_or(TransformError::OutsideGrid)?;
-            out = self.one(&self.model.aux, Pass::Vertical, out, way, &aux)?;
+            out = self.one(sets, &self.model.aux, Pass::Vertical, out, way, &aux)?;
         }
         Ok(out)
     }
 
     fn one(
         &self,
+        sets: &[GridSet],
         kind: &str,
         pass: Pass,
         coord: Coord,
@@ -2141,7 +2151,7 @@ impl Generic {
                 match g_interpolate(set, id, (guess_x, guess_y), &plan) {
                     None => {
                         let Some(Located::At(next, next_id)) =
-                            find_typed(&self.sets, kind, guess_x, guess_y)
+                            find_typed(sets, kind, guess_x, guess_y)
                         else {
                             break;
                         };
@@ -2229,7 +2239,7 @@ fn be_i32(bytes: &[u8], offset: usize) -> Result<i32, Fail> {
 }
 
 struct XyzShift {
-    sets: Vec<GridSet>,
+    sets: GridSets,
     /// `grid_ref=input_crs`. `output_crs` iterates on the forward path.
     grid_ref_is_input: bool,
     multiplier: f64,
@@ -2271,7 +2281,7 @@ fn xyz_shift(params: &Params, frame: &Frame, grids: &str) -> Result<XyzShift, Cr
         }
     }
     Ok(XyzShift {
-        sets,
+        sets: GridSets::new(grids, open_generic, sets),
         grid_ref_is_input,
         multiplier,
         earth: frame.earth,
@@ -2299,8 +2309,13 @@ fn translation_bands(node: &Node) -> (usize, usize, usize) {
     (x_band, y_band, z_band)
 }
 
-fn grid_delta(shift: &XyzShift, lam: f64, phi: f64) -> Result<(f64, f64, f64), TransformError> {
-    let Some(located) = find_horizontal(&shift.sets, lam, phi) else {
+fn grid_delta(
+    shift: &XyzShift,
+    sets: &[GridSet],
+    lam: f64,
+    phi: f64,
+) -> Result<(f64, f64, f64), TransformError> {
+    let Some(located) = find_horizontal(sets, lam, phi) else {
         return Err(TransformError::OutsideGrid);
     };
     let Located::At(set, id) = located else {
@@ -2316,20 +2331,30 @@ fn grid_delta(shift: &XyzShift, lam: f64, phi: f64) -> Result<(f64, f64, f64), T
     ))
 }
 
-fn direct_xyz(shift: &XyzShift, mut coord: Coord, factor: f64) -> Result<Coord, TransformError> {
+fn direct_xyz(
+    shift: &XyzShift,
+    sets: &[GridSet],
+    mut coord: Coord,
+    factor: f64,
+) -> Result<Coord, TransformError> {
     let (lam, phi, _) = cartesian_to_geodetic(shift.earth, coord.x, coord.y, coord.z);
-    let (dx, dy, dz) = grid_delta(shift, lam, phi)?;
+    let (dx, dy, dz) = grid_delta(shift, sets, lam, phi)?;
     coord.x += factor * dx;
     coord.y += factor * dy;
     coord.z += factor * dz;
     Ok(coord)
 }
 
-fn iterative_xyz(shift: &XyzShift, input: Coord, factor: f64) -> Result<Coord, TransformError> {
+fn iterative_xyz(
+    shift: &XyzShift,
+    sets: &[GridSet],
+    input: Coord,
+    factor: f64,
+) -> Result<Coord, TransformError> {
     let mut point = input;
     for _ in 0..10 {
         let (lam, phi, _) = cartesian_to_geodetic(shift.earth, point.x, point.y, point.z);
-        let (dx, dy, dz) = grid_delta(shift, lam, phi)?;
+        let (dx, dy, dz) = grid_delta(shift, sets, lam, phi)?;
         let dx = factor * dx;
         let dy = factor * dy;
         let dz = factor * dz;
@@ -2347,21 +2372,49 @@ fn iterative_xyz(shift: &XyzShift, input: Coord, factor: f64) -> Result<Coord, T
     Ok(point)
 }
 
-impl Step for XyzShift {
-    fn forward(&self, coord: Coord) -> Result<Coord, TransformError> {
-        if self.grid_ref_is_input {
-            with_tiles(|| direct_xyz(self, coord, 1.0))
+/// Whether an `xyzgridshift` point is iterated, or its shift read at the input.
+#[derive(Clone, Copy)]
+enum XyzIteration {
+    Direct,
+    Iterative,
+}
+
+impl XyzShift {
+    /// `grid_ref=input_crs` iterates the inverse, `output_crs` iterates the forward path.
+    fn iteration(&self, way: Way) -> XyzIteration {
+        let iterate = match way {
+            Way::Forward => !self.grid_ref_is_input,
+            Way::Inverse => self.grid_ref_is_input,
+        };
+        if iterate {
+            XyzIteration::Iterative
         } else {
-            with_tiles(|| iterative_xyz(self, coord, 1.0))
+            XyzIteration::Direct
         }
     }
 
+    /// Iterates on the input when `iterative`, computes the shift at the input otherwise. The
+    /// grids are run again when a file changed while it was open (see [`with_reloads`]).
+    fn transform(
+        &self,
+        coord: Coord,
+        factor: f64,
+        how: XyzIteration,
+    ) -> Result<Coord, TransformError> {
+        with_reloads(&self.sets, |sets| match how {
+            XyzIteration::Iterative => iterative_xyz(self, sets, coord, factor),
+            XyzIteration::Direct => direct_xyz(self, sets, coord, factor),
+        })
+    }
+}
+
+impl Step for XyzShift {
+    fn forward(&self, coord: Coord) -> Result<Coord, TransformError> {
+        self.transform(coord, 1.0, self.iteration(Way::Forward))
+    }
+
     fn inverse(&self, coord: Coord) -> Result<Coord, TransformError> {
-        if self.grid_ref_is_input {
-            with_tiles(|| iterative_xyz(self, coord, -1.0))
-        } else {
-            with_tiles(|| direct_xyz(self, coord, -1.0))
-        }
+        self.transform(coord, -1.0, self.iteration(Way::Inverse))
     }
 
     fn input_kind(&self) -> IoKind {

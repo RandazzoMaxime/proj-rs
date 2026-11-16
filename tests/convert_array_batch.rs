@@ -201,8 +201,9 @@ fn message(error: &ProjError) -> String {
 #[test]
 fn a_failing_point_gives_the_error_of_convert_and_leaves_the_slice_unchanged() {
     let proj = Proj::new_known_crs("EPSG:4326", "EPSG:2154", None).expect("pair");
-    // `convert` refuses these: latitude beyond the pole, and a coordinate that is not finite.
-    let bad = [(3.0, 91.0), (f64::NAN, 45.0), (3.0, f64::INFINITY)];
+    // `convert` refuses these: latitude beyond the pole, a longitude beyond ten radians, and a
+    // coordinate that is infinite. A NaN is not refused: PROJ answers NaN (see below).
+    let bad = [(3.0, 91.0), (1000.0, 45.0), (3.0, f64::INFINITY)];
     for (index, &point) in bad.iter().enumerate() {
         let want = message(&proj.convert(point).expect_err("convert refuses it"));
         // At the start, in the middle of a lane group, in a later chunk, and at the end.
@@ -220,10 +221,21 @@ fn a_failing_point_gives_the_error_of_convert_and_leaves_the_slice_unchanged() {
 }
 
 #[test]
+fn a_nan_point_gives_what_convert_gives() {
+    let proj = Proj::new_known_crs("EPSG:4326", "EPSG:2154", None).expect("pair");
+    let nan = (f64::NAN, 45.0);
+    let want = proj.convert(nan).expect("PROJ answers NaN for a NaN input");
+    let mut points = france(100);
+    points[37] = nan;
+    proj.convert_array(&mut points).expect("convert_array");
+    assert_eq!(bits(&points[37..38]), bits(&[want]));
+}
+
+#[test]
 fn the_first_failing_point_gives_the_error() {
     let proj = Proj::new_known_crs("EPSG:4326", "EPSG:2154", None).expect("pair");
     let first = (3.0, 91.0);
-    let second = (f64::NAN, 45.0);
+    let second = (3.0, f64::INFINITY);
     let want = message(&proj.convert(first).expect_err("refused"));
     assert_ne!(
         want,

@@ -14,7 +14,8 @@
 use crate::engine::{Coord, Operation, TransformError};
 use crate::iso19111::{
     facade_candidates, same_datum_noop, AlternativeError, Alternatives, Axis, BestPolicy,
-    CoordinateOperation, Crs, FacadeCandidates, FactoryError, GeodeticCRS, Item, UnitOfMeasure,
+    CandidateFilter, CoordinateOperation, Crs, FacadeCandidates, FactoryError, GeodeticCRS, Item,
+    UnitOfMeasure,
 };
 use crate::proj::{Direction, ForceOver, ProjError};
 
@@ -100,7 +101,7 @@ pub(crate) struct IsoPipeline {
 /// A compound CRS (a horizontal part and a vertical one) is read by its horizontal part:
 /// the axis order and the units come from there. Its vertical part is in the pipeline.
 pub(crate) fn iso_pipeline(from: &str, to: &str) -> Option<IsoPipeline> {
-    iso_pipeline_at(from, to, None, ForceOver::No)
+    iso_pipeline_at(from, to, None, ForceOver::No, CandidateFilter::NONE)
 }
 
 /// [`iso_pipeline`] with a coordinate epoch and the `over` flag of `FORCE_OVER`.
@@ -118,11 +119,13 @@ pub(crate) fn iso_pipeline_at(
     to: &str,
     epoch: Option<f64>,
     over: ForceOver,
+    filter: CandidateFilter,
 ) -> Option<IsoPipeline> {
-    let candidates = match facade_candidates(from, to) {
+    let candidates = match facade_candidates(from, to, filter) {
         Ok(candidates) => candidates,
         // Only an empty candidate list: a same-datum pair has no registered operation, and PROJ
-        // still builds its null geographic offset, which is the pipeline `def()` reports.
+        // still builds its null geographic offset, which is the pipeline `def()` reports. A list
+        // emptied by the filter is refused, as `proj_create_operations` gives no operation.
         Err(FactoryError::Format(message)) if message.starts_with("no operation from ") => {
             return null_offset_pipeline(from, to, epoch);
         }

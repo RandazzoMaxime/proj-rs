@@ -1742,15 +1742,23 @@ fn geographic_offset(
     let latitude = numeric(operation, 8601, ARC_SECOND);
     let longitude = numeric(operation, 8602, ARC_SECOND);
     let height = height_code.map(|code| si_value(operation, code));
-    let method = operation.method().name();
-    let not_geographic =
-        || FactoryError::Format(format!("Can apply {method} only to GeographicCRS"));
-    let source = source
-        .and_then(extract_geographic)
-        .ok_or_else(not_geographic)?;
-    let target = target
-        .and_then(extract_geographic)
-        .ok_or_else(not_geographic)?;
+    let refused = match code {
+        METHOD_GEOGRAPHIC3D_OFFSETS => "Can apply Geographic 3D offsets only to GeographicCRS",
+        METHOD_GEOGRAPHIC2D_WITH_HEIGHT_OFFSETS => {
+            "Can apply Geographic 2D with height offsets only to GeographicCRS / CompoundCRS"
+        }
+        _ => "Can apply Geographic 2D offsets only to GeographicCRS",
+    };
+    let not_geographic = || FactoryError::Format(refused.to_owned());
+    // `Geographic3D offsets` takes a geographic CRS or the base of a bound CRS, never a compound
+    // CRS (singleoperation.cpp:3973-4002); the other two methods also read a compound CRS.
+    let extract = if code == METHOD_GEOGRAPHIC3D_OFFSETS {
+        geographic_or_bound_base
+    } else {
+        extract_geographic
+    };
+    let source = source.and_then(extract).ok_or_else(not_geographic)?;
+    let target = target.and_then(extract).ok_or_else(not_geographic)?;
     formatter.start_inversion();
     angular_unit_and_axis_swap(source.coordinate_system().axes(), formatter)?;
     formatter.stop_inversion();
@@ -2494,6 +2502,16 @@ fn extract_geographic(crs: &Crs) -> Option<&GeographicCRS> {
                 other => geographic_of(other),
             }
         }
+        Crs::Bound(bound) => geographic_of(bound.source_crs()),
+        other => geographic_of(other),
+    }
+}
+
+/// A geographic CRS, or the base of a bound CRS when it is one: the `dynamic_cast` of
+/// `Geographic3D offsets`.
+fn geographic_or_bound_base(crs: &Crs) -> Option<&GeographicCRS> {
+    match crs {
+        Crs::Compound(_) => None,
         Crs::Bound(bound) => geographic_of(bound.source_crs()),
         other => geographic_of(other),
     }

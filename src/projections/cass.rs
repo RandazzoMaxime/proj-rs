@@ -1,11 +1,11 @@
 //! Cassini.
 //!
 //! Port of PROJ 9.9 `src/projections/cass.cpp`. The ellipsoidal inverse starts
-//! from the series and then runs the same finite-difference correction as
-//! `pj_generic_inverse_2d` (tolerance 1e-12).
+//! from the series and then runs `pj_generic_inverse_2d` (tolerance 1e-12).
 
 #![allow(clippy::pedantic, reason = "formulae follow PROJ cass.cpp")]
 
+use super::generic_inverse::generic_inverse_2d;
 use crate::engine::{classic_step, CreateError, Frame, Kernel, Params, TransformError};
 use crate::projmath::Meridian;
 
@@ -72,30 +72,12 @@ impl Kernel for Cass {
         let rho1 = nu1_square * (1.0 - self.es) * nu1;
         let d = x / nu1;
         let d2 = d * d;
-        let mut phi = phi1 - (nu1 * tanphi1 / rho1) * d2 * (0.5 - (1.0 + 3.0 * t1) * d2 * C3);
-        let mut lam = d * (1.0 + t1 * d2 * (-C4 + (1.0 + 3.0 * t1) * d2 * C5)) / phi1.cos();
-        for _ in 0..6 {
-            let (fx, fy) = self.forward_ellipsoid(lam, phi);
-            let dx = fx - x;
-            let dy = fy - y;
-            if dx.hypot(dy) < 1e-12 {
-                break;
-            }
-            const STEP: f64 = 1e-8;
-            let (fx_l, fy_l) = self.forward_ellipsoid(lam + STEP, phi);
-            let (fx_p, fy_p) = self.forward_ellipsoid(lam, phi + STEP);
-            let dxl = (fx_l - fx) / STEP;
-            let dyl = (fy_l - fy) / STEP;
-            let dxp = (fx_p - fx) / STEP;
-            let dyp = (fy_p - fy) / STEP;
-            let det = dxl * dyp - dxp * dyl;
-            if det == 0.0 {
-                break;
-            }
-            lam -= (dyp * dx - dxp * dy) / det;
-            phi -= (dxl * dy - dyl * dx) / det;
-        }
-        Ok((lam, phi))
+        let phi = phi1 - (nu1 * tanphi1 / rho1) * d2 * (0.5 - (1.0 + 3.0 * t1) * d2 * C3);
+        let lam = d * (1.0 + t1 * d2 * (-C4 + (1.0 + 3.0 * t1) * d2 * C5)) / phi1.cos();
+        // `pj_generic_inverse_2d` from the series start, tolerance 1e-12 (cass.cpp:75-81).
+        generic_inverse_2d(x, y, lam, phi, 1e-12, |lam, phi| {
+            Ok(self.forward_ellipsoid(lam, phi))
+        })
     }
 }
 

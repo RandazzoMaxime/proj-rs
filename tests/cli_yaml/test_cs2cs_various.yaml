@@ -1518,3 +1518,19 @@ tests:
   in: 16.248285304 -61.484212843 53.073
   out: |
     661991.318	1796999.201 93.846
+- comment: South oriented Transverse Mercator (EPSG:2046, method 9808) to geographic, plain EPSG route
+  args: -d 10 EPSG:2046 +to EPSG:4326
+  in: -1000000 -3000000 0
+  out: "26.7538956993\t25.0226371876 0.0000000000"
+- comment: Geographic to south oriented Transverse Mercator (EPSG:2046), plain EPSG route
+  args: -d 10 EPSG:4326 +to EPSG:2046
+  in: -26.0 25.0 0
+  out: "-1004332.6529796037\t2915515.7130541904 0.0000000000"
+- comment: South oriented Transverse Mercator (EPSG:22275, Cape / Lo15) to geographic
+  args: -d 10 EPSG:22275 +to EPSG:4326
+  in: -1000000 -3000000 0
+  out: "26.7560328517\t25.0225376168 0.0000000000"
+- comment: South oriented Transverse Mercator to another one (EPSG:2046 to EPSG:2055)
+  args: -d 10 EPSG:2046 +to EPSG:2055
+  in: -1000000 -3000000 0
+  out: "795045.0609819558\t-2985382.9597774362 0.0000000000"

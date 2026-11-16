@@ -1,4 +1,4 @@
-//! PROJ 9.9.0 `test/unit/test_c_api_990.cpp`, `proj_create_operations_with_pivot`: ED50 (EPSG:4230)
+//! PROJ 9.9.0 `test/unit/test_c_api.cpp`, `proj_create_operations_with_pivot`: ED50 (EPSG:4230)
 //! to ETRS89-FRA [RGF93 v1] (EPSG:4171) has no direct transformation. The default context pivots
 //! through ETRS89, a `NEVER` context does not, and a pivot list is honoured under `ALWAYS`.
 

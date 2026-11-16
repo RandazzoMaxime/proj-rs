@@ -30,7 +30,7 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
 | `networking.basic` (`test_network.cpp:121`, quatre états et une valeur) | `tests/unit_network_basic.rs` (1 cas, contre le vrai CDN) ; `tests/unit_network_local.rs` garde en plus le cas « off, aucune requête » |
 | `networking.curl_hgridshift`, `curl_vgridshift`, `curl_vgridshift_vertcon` (`test_network.cpp:1109`, `1144`, `1180`) | `tests/unit_network_grids.rs` (3 cas, contre le vrai CDN) |
 | sonde `initial_check` (`cdn_reachable`), partagée | `tests/net_cdn/mod.rs` (incluse par `#[path]` dans les deux cas) |
-| `src/apps/projsync.cpp`, `test/cli/test_projsync.sh` | `src/bin/projsync.rs` (options, affichage, codes de sortie), `src/projsync.rs` (index, sélection, téléchargement), `tests/unit_projsync.rs` (20 tests) ; écarts dans la section « projsync » |
+| `src/apps/projsync.cpp`, `test/cli/test_projsync.sh` | `src/bin/projsync.rs`, `src/projsync.rs` ; `tests/unit_projsync.rs` (22 cas, les 15 appels du script) ; cache et téléchargement : `docs/PORTING-network-cache.md` ; table de couverture : `docs/AUDIT-network.md`, section projsync |
 
 ## Décisions et écarts volontaires
 
@@ -83,9 +83,11 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
   rien d'autre : hors de la fenêtre, la lecture est la fin des données. La création ne lit que
   `open(url, 0, 16384)` et les en-têtes, y compris pour le GeoTIFF déflaté du CDN.
   Mesuré, hors ligne et sur le CDN, appels et valeurs égaux à `libproj` 9.9.0 (voir « GeoTIFF
-  compressé, mesures »). Limites : les autres compressions (LZW, PackBits, JPEG, CCITT) et les
-  prédicteurs autres que 1 à 3 restent lus entiers par `read_whole` ; le prédicteur 2 et l'ancien
-  Deflate sont acceptés et ne sont pas mesurés contre `libproj`. Un morceau de tuile partielle
+  compressé, mesures »). Limites : les autres compressions (PackBits, JPEG, CCITT) et les
+  prédicteurs autres que 1 à 3 restent lus entiers par `read_whole` (LZW : voir « GeoTIFF
+  compressé, mesures ») ; le prédicteur 2 et l'ancien
+  Deflate sont acceptés et ne sont pas mesurés contre `libproj`. JPEG et CCITT ne sont pas lus
+  (« GeoTIFF JPEG et CCITT »). Un morceau de tuile partielle
   d'un plan autre que le premier est rendu par `tiff` 0.10.3 avec ses lignes de remplissage : le
   décodage ne prend que les lignes de l'image (`read_decoded`), car `chunk_data_dimensions` lit
   le remplissage du bas à partir de l'index du morceau et non de sa ligne dans le plan. La
@@ -111,11 +113,13 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
   n'importe quel `RemoteFile` de cette URL est comparée à eux. Une réponse qui diffère, pour un
   fichier qui n'a pas encore vu le changement, vide les morceaux de cette URL
   (`ChunkCache::forget_chunks`), met les propriétés à celles de la réponse, et marque le fichier
-  `changed` (`network_chunks::RemoteFile::observe`). Le point en cours est arrêté à la lecture de
-  tuile qui le constate (`tiles::with_tiles_watch`), la grille en vigueur est lâchée (son fichier
-  se ferme), puis rechargée depuis `(url, 0, 16384)`, et le point est refait (`Vertical::transform`,
-  `VerticalGrids::reload`). Le cache de morceaux garde la tuile lue après le changement, donc le
-  second passage ne fait aucun appel.
+  `changed` (`network_chunks::RemoteFile::observe`). Les lectures de tuiles de la passe en cours se
+  terminent, comme PROJ finit l'interpolation avant `hasChanged` (`tiles::with_tiles_watch`). La
+  grille en vigueur est ensuite lâchée (son fichier se ferme), rechargée depuis `(url, 0, 16384)`
+  (`with_reloads`, `GridSets::reload`), et le point est refait. Le cache de morceaux garde la tuile
+  lue après le changement, donc le second passage ne fait aucun appel. Les trois en-têtes ne sont
+  demandés qu'avant le changement : après un appel sur un fichier qui l'a vu, PROJ ne les demande
+  plus (`m_hasChanged`, `networkfilemanager.cpp:1431`), et `observe` fait de même.
 
   Séquences mesurées avec `libproj` 9.9.0 (sonde C non versionnée, dans le scratchpad de la
   session ; fixture `egm96_15_uncompressed_truncated.tif`, tailles et en-têtes du test) :
@@ -430,11 +434,104 @@ Non mesuré contre `libproj` : GeoTIFF déflaté chunky (`PlanarConfiguration` 1
 Deflate (32946), tuiles de bord chunky. Ces cas passent par le même décodeur ; leurs valeurs et leurs
 appels ne sont pas établis avec `libproj`.
 
+LZW (`Compression` 5) et PackBits (`Compression` 32773) : décodés par `tiff_codec` (`lzw.rs`,
+`packbits.rs`, prédicteurs dans `predictor.rs`), en fichier local comme sur le réseau. Le crate `tiff`
+n'a pas son lecteur LZW dans ce build (feature `lzw` absente ; l'activer ajouterait `weezl`).
+
+Mesures contre `libproj` 9.9.0 lié à libtiff (`proj-reference-net`, `cct -d 17`, `vgridshift`) :
+- LZW prédicteur 3, little-endian : `data/tests/lzw_predictor3_planar.tif` (bandes) et
+  `lzw_predictor3_planar_tiled.tif` (tuiles de bord) ont les échantillons de
+  `planar_deflate_predictor3*.tif` à l'octet près ; mêmes valeurs que ce Deflate. Appels sur le
+  réseau : modèle du Deflate (`open(url, 32768, 16384)` pour le morceau de la bande 2), non mesurés.
+- LZW prédicteur 3, big-endian : `lzw_be_predictor3_planar.tif` et `..._tiled.tif`. libtiff donne les
+  valeurs du little-endian. Les plans du prédicteur sont les mêmes octets dans les deux ordres ; le
+  décodeur les range dans l'ordre du fichier (`undo_float`). Une première version, aux plans rangés
+  à l'envers, donnait 1e35 : écart attrapé par la mesure.
+- PackBits sans prédicteur : `packbits_planar_tiled.tif`, mêmes valeurs que le Deflate.
+- PackBits avec prédicteur 3 : `packbits_predictor3_planar_tiled.tif`. libtiff ignore le prédicteur
+  avec PackBits : une constante `0x3F` revient brute (`0.7470588`), là où LZW la traite. Mesure à
+  (21.3, 45.7) : 4.7599535295655623e-35 avec PackBits, 0.5760 pour le même échantillon prédit en LZW.
+  Cause probable : libtiff n'enregistre pas le prédicteur pour PackBits (non vérifié dans ses
+  sources). Le crate suit libtiff.
+- JPEG (`Compression` 7) et CCITT (2, 3, 4) : libtiff refuse le décodage (« Not a JPEG file »,
+  « Bits/sample must be 1 »). PROJ ouvre la grille et ses valeurs sont `inf`, sans erreur. Le
+  crate fait pareil (lot Q9, voir « GeoTIFF JPEG et CCITT »). Old JPEG (6) : PROJ refuse la
+  création (« could not find required grid(s) »), le crate aussi, avec un autre message.
+- Prédicteur 2 en big-endian (LZW) : non mesuré.
+
+Fixtures : `tools/make-lzw-grid.py` (`--tiled`, `--big-endian`, `--codec packbits`,
+`--predictor 1`). Test local : `tests/unit_grid_codecs.rs` ; réseau :
+`tests/unit_network_compressed_grid.rs` (`a_big_endian_lzw_*`, `a_packbits_grid_*`).
+
+## GeoTIFF JPEG et CCITT
+
+Fixtures : `data/tests/planar_deflate_predictor3_jpeg.tif` (`Compression` 7) et
+`..._ccitt.tif` (2). Ce sont les octets du Deflate planaire, avec le tag 259 changé
+(`tools/patch-compression-tag.py`) : libtiff ne décode rien, PROJ ouvre la grille quand même.
+
+Mesures contre `libproj` 9.9.0 lié à libtiff (`proj-reference-net`, `cct -d 17 +proj=vgridshift
++grids=<fichier> +multiplier=1`, entrée `lon lat 0`) :
+
+| `Compression` | `(20, 50)` | `(41.5, 37.2)` | `(21.5, 45.5)` | `(0, 0)` hors grille | code de sortie |
+|---|---|---|---|---|---|
+| 7 (JPEG) | `inf` | `inf` | `inf` | `TRANSFORMATION ERROR` | 0 |
+| 2 (CCITT RLE) | `inf` | `inf` | | `TRANSFORMATION ERROR` | 0 |
+| 3 (CCITT T4) | `inf` | `inf` | | `TRANSFORMATION ERROR` | 0 |
+| 4 (CCITT T6) | `inf` | `inf` | | `TRANSFORMATION ERROR` | 0 |
+| 6 (old JPEG) | creation refusée : `could not find required grid(s)` | | | | 1 |
+
+Sortie de libtiff (sur stderr) : « Not a JPEG file: starts with 0x78 0x9c » pour 7, « Bits/sample
+must be 1 for Group 3/4 encoding/decoding » pour 2. La valeur `inf` est celle de `z` ; la
+sortie ne porte aucune erreur de transformation.
+
+Le port (même commande) : création réussie pour 2 et 7, `inf` aux points dans la grille, comme
+PROJ. Hors grille, il imprime `*` et sort en 0 ; PROJ imprime `TRANSFORMATION ERROR` : écart de
+présentation déjà présent sur les grilles Deflate, non traité ici. Avant le lot : création
+refusée (`illegal value for +grids`, code 1) pour 2 et 7. Pour 6, le port refuse la création
+comme PROJ, mais avec un autre message (`illegal value for +grids`, code 1).
+
+Test : `tests/unit_grid_codecs.rs::a_jpeg_or_ccitt_grid_opens_and_its_values_are_infinite`
+(JPEG et CCITT 2). Les codes 3 et 4 sont mesurés, sans fixture ni test. Le chemin réseau
+(`Mode::Lazy`) n'appelle aucun morceau pour ces images, PROJ non mesuré sur ce point.
+
+### Inventaire des GeoTIFF du CDN
+
+Index `https://cdn.proj.org/files.geojson` : 393 fichiers `.tif` sur 32 pays (65 autres : README,
+JSON, grilles non-TIFF). En-tête lu (`Range: bytes=0-65535`) pour 384 fichiers ; les 9 dont l'IFD
+est au-delà (8 danois, 1 hongrois) lus entiers. Un seul LZW : `cz_cuzk_table_-y-x_3_v1710.tif`.
+
+| Compression | Prédicteur | Planaire | Disposition | Échantillons | Grilles | Pays |
+|---|---|---|---|---|---|---|
+| Deflate | 3 | planaire | tuiles | float32 ×1 | 93 | 21 |
+| Deflate | 3 | planaire | bandes | float32 ×2 | 91 | 9 |
+| Deflate | 3 | planaire | bandes | float32 ×1 | 78 | 13 |
+| Deflate | 3 | planaire | bandes | float32 ×3 | 28 | 4 |
+| Deflate | 3 | planaire | bandes | float32 ×4 | 25 | 8 |
+| Deflate | 3 | chunky | bandes | float32 ×2 | 11 | 1 |
+| Deflate | 3 | planaire | tuiles | float32 ×2 | 10 | 5 |
+| Deflate | 3 | planaire | tuiles | float32 ×4 | 10 | 6 |
+| Deflate | 2 | planaire | tuiles | int32 ×1 | 10 | 1 |
+| Deflate | 3 | chunky | tuiles | float32 ×1 | 8 | 2 |
+| Deflate | 3 | chunky | tuiles | float32 ×2 | 8 | 1 |
+| Deflate | 2 | chunky | bandes | float32 ×2 | 7 | 1 |
+| Deflate | 3 | chunky | tuiles | float32 ×3 | 6 | 1 |
+| Deflate | 3 | planaire | tuiles | float32 ×3 | 2 | 2 |
+| Deflate | 3 | chunky | bandes | float32 ×3 | 2 | 1 |
+| Deflate | 3 | planaire | bandes | float32 ×6 | 1 | 1 |
+| Deflate | 3 | planaire | tuiles | float32 ×6 | 1 | 1 |
+| Deflate | 1 | planaire | bandes | float32 ×3 | 1 | 1 |
+| **LZW** | 3 | chunky | bandes | float32 ×2 | 1 | 1 |
+
+Les sept grilles danoises Deflate, prédicteur 2, float32, chunky, en bandes
+(`dk_sdfi_{s34j,gs,gsb,kk,os,s34s,s45b}_2022.tif`, horizontales, `hgridshift`) sont lues par le crate
+`tiff`. Mesurées contre `libproj` 9.9.0 : écart nul à 12 décimales sur un à quatre points dans
+l'emprise de chacune (`proj-reference-net`, `cct -d 12`).
+
 ## projsync
 
 Source : `src/apps/projsync.cpp` (652 lignes), `test/cli/test_projsync.sh` (212 lignes). Port :
 `src/bin/projsync.rs` (options, affichage, codes de sortie), `src/projsync.rs` (index JSON, sélection,
-téléchargement avec enregistrement dans `cache.db`), `tests/unit_projsync.rs` (20 tests). Les tests
+téléchargement avec enregistrement dans `cache.db`), `tests/unit_projsync.rs` (22 tests). Les tests
 tournent sur un serveur local (`files.geojson` et une fixture de 17 octets `proj-rs test grid` à la place
 de `fr_ign_ntf_r93.tif`), avec l'index de test `tests/projsync/files.geojson`. Les sorties attendues sont
 celles du `projsync` 9.9.0 de référence sur le même index (`--local-geojson-file`), l'endpoint remplacé.
@@ -488,11 +585,51 @@ Le contenu du fichier n'est pas comparé au binaire de référence : c'est la fi
 
 Commandes : `cargo test --test unit_projsync`.
 
+## Rechargement par étape (lot Q8)
+
+Mesures : sonde C hors dépôt, contre `libproj` 9.9.0 de `target/proj-reference-net` (TIFF et curl),
+callbacks qui journalisent, la version B servie à partir de la deuxième ouverture (`Last-Modified`
+`some_date CHANGED!!!!`). Fichiers de 64 × 64 pixels de 0,5° : `hgridshift` (2 échantillons, latitude
+puis longitude, en secondes d'arc), `gridshift` (2 échantillons, `TYPE=HORIZONTAL_OFFSET`),
+`xyzgridshift` (3 échantillons, en mètres, en pipeline géocentrique). Source : `src/grids.cpp`,
+`src/transformations/{gridshift,xyzgridshift,deformation,tinshift}.cpp`.
+
+| Étape | PROJ 9.9.0 | Port |
+|---|---|---|
+| `vgridshift` | `read_vgrid_value` : `hasChanged` après les lectures, `VerticalShiftGridSet::reopen`, point refait (`grids.cpp:3684`) | `Vertical::transform` → `with_reloads` |
+| `hgridshift` | `pj_hgrid_apply_internal` (`grids.cpp:3429`, `3447`) et `pj_hgrid_value` (`3576`) : `reopen`, point refait (`shouldRetry`) | `Horizontal::forward`, `inverse` → `with_reloads` |
+| `gridshift` | `grid_apply_internal` (`transformations/gridshift.cpp:622`, `667`) : `GenericShiftGridSet::reopen`, `shouldRetry` | `Generic::forward`, `inverse` → `with_reloads` |
+| `xyzgridshift` | aucun `reopen` : `get_grid_values` se rappelle sans fin (`xyzgridshift.cpp:102-106`), SIGSEGV, code de sortie 139 (mesuré, pile `get_grid_values` répétée sous `gdb`) | `XyzShift::transform` → `with_reloads` : écart, voir plus bas |
+| `deformation`, chemin à trois échantillons | même code que `xyzgridshift` (`deformation.cpp:121-125`), non mesuré | non porté : les grilles de `deformation` sont lues entières |
+| `tinshift` (JSON) | le fichier est lu entier à la création (`tinshift.cpp:140`) : rien n'est ouvert ensuite | sans objet |
+
+Séquence mesurée, `hgridshift` et `gridshift` (identique à l'inverse) : création `open(url, 0, 16384)`,
+trois en-têtes, `read_range(32768, 16384)` (l'IFD), trois en-têtes, `close`. Transformation :
+`open(url, 16384, 16384)`, en-têtes `CHANGED`, `read_range(32768, 32768)` (la fin de la bande, sans
+en-tête), `close`, puis `open(url, 0, 16384)`, trois en-têtes `CHANGED`, et le point est refait sur la
+version B. L'opération créée avant le changement, dans le même builder, ne fait aucun appel : elle lit
+le morceau rechargé dans le cache partagé, et donne la valeur de la version B.
+
+Écarts restants :
+- Tailles de lecture : PROJ lit le reste de la bande dans la même passe (`read_range(32768, 32768)`) ;
+  le port ne lit que les morceaux que l'interpolation demande (lectures par morceaux de `geotiff.rs`).
+  Après le rechargement, le port relit l'IFD (`read_range(32768, 16384)`) que PROJ a déjà en cache.
+  Les tests vérifient l'ordre des appels de PROJ (ouverture du changement, fermeture, rechargement),
+  les valeurs, et l'absence d'appel de l'opération restée ancienne. Le journal exact n'est pas repris.
+- `xyzgridshift` : PROJ ne donne aucune valeur sur un fichier changé (SIGSEGV). Le port recharge comme
+  les autres étapes ; la valeur attendue est celle de PROJ pour la version B lue sans changement.
+
+Tests : `tests/unit_network_grid_change.rs` (huit cas : aller, inverse, deux opérations, sans changement,
+pour `hgridshift` et `gridshift` ; `xyzgridshift`).
+
 ## Ce qui reste ouvert
 
-- GeoTIFF compressés autres que Deflate (LZW, PackBits, JPEG, CCITT) et prédicteurs hors 1 à 3 : lus
-  entiers (`read_whole`), la séquence de PROJ n'est pas reproduite. Voir « GeoTIFF compressé, mesures »
-  pour ce qui est mesuré.
+- GeoTIFF compressés en prédicteurs hors 1 à 3 : lus entiers (`read_whole`), la séquence de PROJ
+  n'est pas reproduite. LZW et PackBits sont lus par morceaux sur le réseau et entiers en local ;
+  voir « GeoTIFF compressé, mesures ». JPEG et CCITT ne sont pas lus (lot Q9, « GeoTIFF JPEG et
+  CCITT ») : le crate ne fait aucun appel réseau pour eux, PROJ non mesuré sur ce point.
+- GeoTIFF JPEG ou CCITT de 8 bits : refusé à la création par le crate (`supported_sample` : entiers
+  de 16 ou 32 bits, flottants de 32 ou 64). PROJ non mesuré sur un tel fichier.
 
 - Lecture par morceaux pour les GeoTIFF compressés (deflate), à prédicteur ou planaires : ils
   sont lus entiers (`read_whole`), la séquence de PROJ n'est pas reproduite. Mesuré sur le vrai
@@ -502,14 +639,14 @@ Commandes : `cargo test --test unit_projsync`.
   morceaux avec la séquence de PROJ.
 - Lecture paresseuse hors `gridshift` : `read_resource` (modèles `deformation`, `tinshift`,
   `defmodel`, `nkg`) lit encore les grilles entières (`fetch_missing`, `fetch_with_callbacks`).
-- Rechargement au changement pour `hgridshift`, `gridshift` et `xyzgridshift` : seule
-  `vgridshift` recharge (`Vertical::transform`). Les autres enregistrent le changement de leur
-  fichier sans recharger leur grille. Pas de rechargement non plus pour les lectures entières
-  (`read_whole`).
-- Validation par `ETag` et `Last-Modified` du cache disque : avec les callbacks, le crate
-  n'utilise pas `cache.db`. PROJ le fait quand le cache est activé (mesuré : deux processus, TTL
-  valide, détection au calcul ; TTL dépassée, pas de détection). Le cache en mémoire, par URL, est
-  fait (lot `shared-validators`).
+- Rechargement : `deformation` (chemin à trois échantillons), les lectures entières (`read_whole`) et
+  `read_resource` (modèles `deformation`, `tinshift`, `defmodel`, `nkg`) ne rechargent pas. Voir
+  « Rechargement par étape ».
+- Validation par `ETag` et `Last-Modified` du cache disque : sans callbacks, faite à l'expiration par la
+  requête du premier morceau (fiche `PORTING-network-cache.md`, point 2). Avec les callbacks, le crate
+  n'utilise pas `cache.db` : PROJ le fait quand le cache est activé (mesuré : deux processus, TTL valide,
+  détection au calcul ; TTL dépassée, pas de détection). Le cache en mémoire, par URL, est fait (lot
+  `shared-validators`).
 - Propriétés par builder, pas par processus. PROJ garde les propriétés et les morceaux dans des
   statiques du processus : une création sur un autre contexte du même processus voit le changement
   (mesuré : détection au calcul). Le crate les garde par `ProjBuilder` : un second builder ne voit
@@ -530,8 +667,6 @@ Commandes : `cargo test --test unit_projsync`.
   répertoire utilisateur et le téléchargement (voir « API de fichiers »). Restent sur `std::fs` :
   `proj.ini`, le répertoire et l'effacement du cache de morceaux, `projsync`, la CLI gie. Ni façade C,
   ni vérification par `Range`.
-- `docs/UNPORTED-UNIT.md` liste encore `networking.file_api` : ce lot ne l'a pas retiré (consigne : ne
-  pas éditer le ledger). Le retrait suit avec `UPDATE_DOCS=1 cargo test --test docs_in_sync`.
 - Façade C des opérations (`proj_create_operations`, contexte de fabrique C) : absente. Le cas
   de `do_not_attempt_network_access_known_available_network_on` est couvert par
   `ProjBuilder::create_operations`, sans façade C.
@@ -555,13 +690,19 @@ Commandes : `cargo test --test unit_projsync`.
   `networking.do_not_attempt_network_access_known_available_network_on` : ce lot ne les a pas retirés
   (consigne : ne pas éditer le ledger). Le retrait suit avec `UPDATE_DOCS=1 cargo test --test
   docs_in_sync`.
-- `projsync` : porté, écarts et cas non testés dans la section « projsync ».
+- `projsync` : porté (lot cache). Fiche : `docs/PORTING-network-cache.md` ; couverture des 15 appels du
+  script : `docs/AUDIT-network.md`, section projsync.
 - `basic` : porté en entier (voir « networking.basic (porté) »). Rien ne reste ouvert pour ce cas.
 - `pj_find_file` avec `disable_network = false` : non porté. `find_local_file` ne regarde que le
   disque.
-- `docs/UNPORTED-UNIT.md` liste encore `networking.download_whole_files` et `networking.basic`. Ce lot ne
-  les a pas retirés (consigne : ne pas éditer le ledger) : le retrait suit avec `UPDATE_DOCS=1 cargo test
-  --test docs_in_sync`, par le mainteneur.
+
+## Lot Q5 : GeoTIFF tuilés et volume
+
+- Tuilés dans le lecteur des modèles (`+proj=deformation`) : corrigé, `src/projections/models/grid_tiff.rs`
+  (blocs = bandes ou tuiles). Le CDN `ca_nrc_NAD83v70VG.tif` est tuilé, planar, Deflate, prédicteur 3.
+  Tests : `grid_tiff_tests.rs`. Fiche : `docs/PORTING-cs2cs-network-only-best.md`, « Lot Q5 ».
+- Volume mesuré sur le corpus réseau : le port prend le fichier entier à chaque grille (416 requêtes
+  sans `Range`, 1,50 Go), PROJ lit des plages (1155 requêtes, 86 Mo). Non corrigé, lot de lecture paresseuse.
 
 ## Commandes
 

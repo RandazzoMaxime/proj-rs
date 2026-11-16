@@ -58,20 +58,39 @@ impl ApproxTmerc {
         if !k0.is_finite() || k0 <= 0.0 {
             return Err(ProjectionError::InvalidScale);
         }
-        let phi0 = lat0_deg.to_radians();
+        Ok(Self::from_radians(
+            ell,
+            lon0_deg.to_radians(),
+            lat0_deg.to_radians(),
+            k0,
+            x0,
+            y0,
+        ))
+    }
+
+    /// Même projection, origine en radians (`setup_approx` de PROJ). Le noyau de `engine`
+    /// reçoit l'origine à zéro et le cadre porte `lon_0`, `x_0` et `y_0`.
+    pub(crate) fn from_radians(
+        ell: Ellipsoid,
+        lam0: f64,
+        phi0: f64,
+        k0: f64,
+        x0: f64,
+        y0: f64,
+    ) -> Self {
         let meridian = Meridian::new(ell.n());
-        Ok(Self {
+        Self {
             a: ell.a(),
             ra: ell.ra(),
             k0,
-            lam0: lon0_deg.to_radians(),
+            lam0,
             x0,
             y0,
             es: ell.es(),
             esp: ell.e2s(),
             ml0: meridian.forward(phi0),
             meridian,
-        })
+        }
     }
 
     /// Absolute radians to metres.
@@ -112,7 +131,7 @@ impl ApproxTmerc {
         })
     }
 
-    fn fwd_unit(&self, lam: f64, phi: f64) -> Result<(f64, f64), ProjectionError> {
+    pub(crate) fn fwd_unit(&self, lam: f64, phi: f64) -> Result<(f64, f64), ProjectionError> {
         if lam < -FRAC_PI_2 || lam > FRAC_PI_2 {
             return Err(ProjectionError::OutsideDomain);
         }
@@ -142,7 +161,7 @@ impl ApproxTmerc {
         Ok((x, y))
     }
 
-    fn inv_unit(&self, x: f64, y: f64) -> (f64, f64) {
+    pub(crate) fn inv_unit(&self, x: f64, y: f64) -> (f64, f64) {
         let mut phi = self.meridian.inverse(self.ml0 + y / self.k0);
         if phi.abs() >= FRAC_PI_2 {
             return (0.0, if y < 0.0 { -FRAC_PI_2 } else { FRAC_PI_2 });

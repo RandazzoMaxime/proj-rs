@@ -1,4 +1,4 @@
-//! PROJ 9.9.0 `test/unit/test_c_api_990.cpp`, `proj_get_suggested_operation` for NAD83 (EPSG:4269)
+//! PROJ 9.9.0 `test/unit/test_c_api.cpp`, `proj_get_suggested_operation` for NAD83 (EPSG:4269)
 //! to NAD83(HARN) (EPSG:4152), partial intersection, grids ignored: the point (lat 40, lon -100)
 //! is suggested the CONUS transformation.
 

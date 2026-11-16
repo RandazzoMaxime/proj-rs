@@ -88,6 +88,9 @@ Several attempts failed for the same reasons. These rules come from them.
   useful work: the next attempt starts from it.
 - **Count failures exactly.** Read the totals of `cargo test --all-features`
   (passed, failed, ignored); do not trust a truncated or filtered output.
+- **Compare thousands of conversions.** `cargo test --test parity` checks
+  about 4000 conversions against PROJ 9.9.0 from a frozen corpus; see
+  [docs/PARITY.md](docs/PARITY.md).
 
 ## Technical bar
 

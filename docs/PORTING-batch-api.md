@@ -48,8 +48,8 @@ place, avec un emplacement `Option<TransformError>` par point :
 
 | couche | ce qu'elle fait d'une tranche |
 |---|---|
-| `Pipeline` | étape par étape sur toute la tranche, pour que `NativeProjected` voie tous les points ; point par point si le pipeline garde une pile (`push`, `pop`), dont l'état est par point |
-| `NativeProjected` | par blocs de 256 points : la porte de latitude et `pm=` en scalaire, le noyau vectoriel (`ProjectedBatch`), puis l'échelle de la façade ; un point que le noyau refuse (`NaN`) repasse par le scalaire |
+| `Pipeline` | étape par étape sur toute la tranche, pour que `Classic` voie tous les points ; point par point si le pipeline garde une pile (`push`, `pop`), dont l'état est par point |
+| `Classic` | par blocs de 256 points : `fwd_prepare` en scalaire (porte de latitude, `pm=`, `lon_0`, `adjlon`, latitude géocentrique), le noyau vectoriel à origine nulle (`ProjectedBatch`), puis `fwd_finalize` en scalaire (`a`, faux est et nord, unités) ; un point que le noyau refuse (`NaN`), ou une entrée `NaN`, repasse par le scalaire ; pas de vecteur sous `+over` (`projections/classic_batch.rs`) |
 | `IsoPipeline::map_batch` | une opération unique : la tranche d'un bloc, entre les deux échanges d'axes de la façade ; plusieurs candidats : un point à la fois (`proj_trans` choisit par point) |
 | `Proj::fill_array` | des blocs de 4096 points ; le premier point en échec du premier bloc en échec rend son erreur |
 
@@ -60,8 +60,13 @@ noyau `Classic` à part, sans vecteur : il gagne seulement l'ordre étape par é
 ### Un point refusé par le noyau repasse par le scalaire
 
 Le noyau écrit `NaN` pour un point qu'il refuse (hors domaine, non fini). Sa raison n'est pas dite :
-`NativeProjected` rappelle `forward` ou `inverse` pour ce point et prend son résultat. L'erreur d'un
+`Classic` rappelle `forward` ou `inverse` pour ce point et prend son résultat. L'erreur d'un
 point en échec est donc celle du chemin scalaire, au même texte (`tests/convert_array_batch.rs`).
+
+Depuis la fusion avec `main`, Transverse Mercator, Lambert et Mercator sont des étapes `Classic`
+(préparation et finalisation de PROJ autour d'un noyau à origine nulle) : le noyau vectoriel est
+construit à la même origine nulle, et seule la boucle du noyau change de chemin. Une entrée `NaN`
+donne `NaN` comme `convert`, sans erreur, comme PROJ (`a_nan_point_gives_what_convert_gives`).
 
 ## Ce qui change pour l'utilisateur
 

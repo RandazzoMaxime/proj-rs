@@ -241,10 +241,10 @@ fn io_predicates() {
     assert!((es - f * (2.0 - f)).abs() < 1e-15, "{es}");
 }
 
-/// `proj_trans` of NaN input: the C test asserts NaN output. A Rust operation
-/// returns an error for a non-finite input, so it returns no coordinate.
+/// `proj_trans` of NaN input: PROJ returns NaN coordinates in both directions (the C test
+/// asserts it, and `proj -b` on the reference gives `nan nan`).
 #[test]
-fn nan_input_gives_no_coordinate() {
+fn nan_input_gives_nan_coordinates() {
     let merc = Operation::create("+proj=merc +ellps=WGS84").expect("merc");
     let nan = Xyzt {
         x: f64::NAN,
@@ -252,8 +252,10 @@ fn nan_input_gives_no_coordinate() {
         z: f64::NAN,
         t: f64::NAN,
     };
-    assert!(merc.forward(nan).is_err());
-    assert!(merc.inverse(nan).is_err());
+    let forward = merc.forward(nan).expect("forward NaN");
+    assert!(forward.x.is_nan() && forward.y.is_nan());
+    let inverse = merc.inverse(nan).expect("inverse NaN");
+    assert!(inverse.x.is_nan() && inverse.y.is_nan());
 }
 
 /// `unitconvert_selftest`: time conversions through `t`.

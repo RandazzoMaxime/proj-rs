@@ -6,6 +6,7 @@
 mod batch;
 
 use crate::angle::adjlon;
+use crate::projmath::atanh;
 use crate::{Ellipsoid, Geographic, Projected, ProjectionError};
 
 pub(crate) const EPS10: f64 = 1e-10;
@@ -86,6 +87,29 @@ impl Lcc {
         {
             return Err(ProjectionError::NonFinite);
         }
+        let mut lcc = Self::from_radians(
+            ell,
+            lon0_deg.to_radians(),
+            lat0_deg.to_radians(),
+            lat1_deg.to_radians(),
+            lat2_deg.to_radians(),
+            k0,
+        )?;
+        lcc.x0 = x0;
+        lcc.y0 = y0;
+        Ok(lcc)
+    }
+
+    /// Même cône, angles en radians (`lcc` de PROJ). Faux est et faux nord sont nuls : le noyau
+    /// de `engine` les reçoit du cadre.
+    pub(crate) fn from_radians(
+        ell: Ellipsoid,
+        lam0: f64,
+        phi0: f64,
+        phi1: f64,
+        phi2: f64,
+        k0: f64,
+    ) -> Result<Self, ProjectionError> {
         if !k0.is_finite() || k0 == 0.0 {
             return Err(ProjectionError::InvalidScale);
         }
@@ -95,9 +119,6 @@ impl Lcc {
         if ell.es() > 0.999 {
             return Err(ProjectionError::DegenerateCone);
         }
-        let phi1 = lat1_deg.to_radians();
-        let phi2 = lat2_deg.to_radians();
-        let phi0 = lat0_deg.to_radians();
         let half = std::f64::consts::FRAC_PI_2;
         if (phi1 + phi2).abs() < EPS10 {
             return Err(ProjectionError::InvalidParallel);
@@ -142,10 +163,10 @@ impl Lcc {
             a: ell.a(),
             ra: ell.ra(),
             e: ell.e(),
-            lam0: lon0_deg.to_radians(),
+            lam0,
             k0,
-            x0,
-            y0,
+            x0: 0.0,
+            y0: 0.0,
             n,
             rho0,
             c,
@@ -256,7 +277,7 @@ impl Lcc {
         })
     }
 
-    fn fwd_unit(&self, lam: f64, phi: f64) -> Result<(f64, f64), ProjectionError> {
+    pub(crate) fn fwd_unit(&self, lam: f64, phi: f64) -> Result<(f64, f64), ProjectionError> {
         let half = std::f64::consts::FRAC_PI_2;
         let rho = if (phi.abs() - half).abs() < EPS10 {
             if phi * self.n <= 0.0 {
@@ -274,7 +295,7 @@ impl Lcc {
         ))
     }
 
-    fn inv_unit(&self, mut x: f64, mut y: f64) -> Result<(f64, f64), ProjectionError> {
+    pub(crate) fn inv_unit(&self, mut x: f64, mut y: f64) -> Result<(f64, f64), ProjectionError> {
         x /= self.k0;
         y /= self.k0;
         y = self.rho0 - y;
@@ -306,7 +327,7 @@ fn msfn(sin_phi: f64, cos_phi: f64, es: f64) -> f64 {
 
 pub(crate) fn tsfn(phi: f64, sin_phi: f64, e: f64) -> f64 {
     let cos_phi = phi.cos();
-    (e * (e * sin_phi).atanh()).exp()
+    (e * atanh(e * sin_phi)).exp()
         * if sin_phi > 0.0 {
             cos_phi / (1.0 + sin_phi)
         } else {
@@ -335,7 +356,7 @@ fn sinhpsi2tanphi(taup: f64, e: f64) -> f64 {
     let e2m = 1.0 - e * e;
     let stol = tol * 1.0_f64.max(taup.abs());
     let mut tau = if taup.abs() > 70.0 {
-        taup * (e * e.atanh()).exp()
+        taup * (e * atanh(e)).exp()
     } else {
         taup / e2m
     };
@@ -346,7 +367,7 @@ fn sinhpsi2tanphi(taup: f64, e: f64) -> f64 {
     while i > 0 {
         i -= 1;
         let tau1 = (1.0 + tau * tau).sqrt();
-        let sig = (e * (e * tau / tau1).atanh()).sinh();
+        let sig = (e * atanh(e * tau / tau1)).sinh();
         let taupa = (1.0 + sig * sig).sqrt() * tau - sig * tau1;
         let dtau = ((taup - taupa) * (1.0 + e2m * (tau * tau)))
             / (e2m * tau1 * (1.0 + taupa * taupa).sqrt());

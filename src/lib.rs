@@ -94,7 +94,7 @@ mod transform;
 pub use context::{Context, ContextBuilder, DatabaseSource};
 pub use engine::{
     lpz_dist, parse_gie_coord, xyz_dist, Coord as Xyzt, CreateError, CrsPipeline, Operation,
-    TransformError as StepError,
+    ParamUse, TransformError as StepError,
 };
 pub use gie_api::{
     list_ellps, list_operations, list_prime_meridians, xy_dist, BatchError, Factors,
@@ -128,11 +128,16 @@ pub mod wkt {
 /// Path taken by the batch conversions (`forward_batch` and `inverse_batch` of [`Tmerc`],
 /// [`Lcc`] and [`Mercator`]) on this host.
 ///
-/// `avx2` is the vector path. Off Linux with glibc it calls the C math library one lane at a
-/// time, not libmvec. `scalar` is the one-point loop.
+/// `avx2` is the vector path on x86-64 with AVX2 and FMA. Off Linux with glibc it calls the C
+/// math library one lane at a time, not libmvec. `portable` is the path elsewhere:
+/// [`Tmerc::forward_batch`] runs a 4-lane Rust loop, bit-identical to the scalar path; the
+/// other batch functions run the one-point loop (`docs/PORTING-batch-path.md`).
 #[must_use]
 pub fn batch_path() -> &'static str {
-    simd::batch_path()
+    match simd::batch_path() {
+        "avx2" => "avx2",
+        _ => "portable",
+    }
 }
 
 pub use coord::{Geographic, Projected};

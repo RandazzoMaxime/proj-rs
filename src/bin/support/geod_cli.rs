@@ -517,7 +517,11 @@ fn process(input: &[u8], options: &Options, calc: &mut Calc) -> Vec<u8> {
             out.extend_from_slice(&line);
             continue;
         }
-        let rest = parse_record(&line, options, calc);
+        let mut rest = parse_record(&line, options, calc);
+        // A blank line is read as whitespace up to its newline: geod.cpp backs up onto it.
+        if rest == line.len() {
+            rest -= 1;
+        }
         out.extend_from_slice(record_text(options, calc).as_bytes());
         out.extend_from_slice(&line[rest..]);
     }

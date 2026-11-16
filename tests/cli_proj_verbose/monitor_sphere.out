@@ -1,0 +1,20 @@
+#Transverse Mercator
+#	Cyl, Sph&Ell
+#	approx
+# +proj=tmerc +R=6371000 +break_cs2cs_recursion
+#--- following specified but NOT used
+# +ellps=GRS80
+#Final Earth figure: sphere
+#  Radius: 6371000.000
+Longitude: 2dE [ 2 ]
+Latitude:  49dN [ 49 ]
+Easting (x):   145896.74
+Northing (y):  5450473.55
+Meridian scale (h) : 1.00026222  ( 0.02622 % error )
+Parallel scale (k) : 1.00026222  ( 0.02622 % error )
+Areal scale (s):     1.00052451  ( 0.05245 % error )
+Angular distortion (w): 0.000
+Meridian/Parallel angle: 90.00000
+Convergence : 1d30'34.859" [ 1.50968305 ]
+Max-min (Tissot axis a-b) scale error: 1.00026 1.00026
+

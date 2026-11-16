@@ -1,0 +1,53 @@
+comment: >
+  `+init=epsg:CODE` is the database CRS with its axes forced, then pair selection
+  (PROJ io.cpp 12514-12640). Expected values are cs2cs 9.9.0 (`-d 10`) run on the reference.
+exe: cs2cs
+tests:
+- comment: "EPSG:27700 by +init, lon/lat degrees (ref cs2cs 9.9.0)"
+  args: +init=epsg:27700 +to +init=epsg:4326
+  in: 530000 180000 0
+  out: "-0.1283539405\t51.5039908276 0.0000000000"
+- comment: "EPSG:4326 by +init to EPSG:27700 by +init"
+  args: +init=epsg:4326 +to +init=epsg:27700
+  in: -0.1283539405 51.5039908276 0
+  out: "530000.0008794245\t179999.9995060905 0.0000000000"
+- comment: "EPSG:4326 by +init to EPSG:2154 by +init"
+  args: +init=epsg:4326 +to +init=epsg:2154
+  in: 2.2945 48.8582 0
+  out: "648237.1028543998\t6862249.4434044389 0.0000000000"
+- comment: "Mixed pair, EPSG: source and +init= target"
+  args: EPSG:27700 +to +init=epsg:4326
+  in: 530000 180000 0
+  out: "-0.1283539405\t51.5039908276 0.0000000000"
+- comment: "Mixed pair, +init= source and EPSG: target"
+  args: +init=epsg:4326 +to EPSG:2154
+  in: 2.2945 48.8582 0
+  out: "648237.1028543998\t6862249.4434044389 0.0000000000"
+- comment: Geographic 3D by +init keeps the height
+  args: +init=epsg:4979 +to +init=epsg:2154
+  in: 2.2945 48.8582 100
+  out: "648237.1028543998\t6862249.4434044389 100.0000000000"
+- comment: Geographic 3D by +init to 2D geographic keeps the height
+  args: +init=epsg:4979 +to +init=epsg:4326
+  in: 2.2945 48.8582 100
+  out: "2.2945000000\t48.8582000000 100.0000000000"
+- comment: Geographic 2D by +init to 3D geographic keeps the height
+  args: +init=epsg:4326 +to +init=epsg:4979
+  in: 2.2945 48.8582 100
+  out: "2.2945000000\t48.8582000000 100.0000000000"
+- comment: South oriented Transverse Mercator keeps its database axes
+  args: +init=epsg:2046 +to +init=epsg:4326
+  in: -1000000 -3000000 0
+  out: "25.0226371876\t26.7538956993 0.0000000000"
+- comment: South oriented Transverse Mercator, mixed pair
+  args: EPSG:2046 +to +init=epsg:4326
+  in: -1000000 -3000000 0
+  out: "25.0226371876\t26.7538956993 0.0000000000"
+- comment: Geographic by +init to south oriented Transverse Mercator
+  args: +init=epsg:4326 +to +init=epsg:2046
+  in: 15.5 -28 0
+  out: "-49181.2856045541\t3098542.4947477826 0.0000000000"
+- comment: Projected by +init with a towgs84 is read as a PROJ string, not the database CRS
+  args: +init=epsg:2154 +towgs84=1,2,3 +to +init=epsg:4326
+  in: 700000 6600000 0
+  out: "3.0000253369\t46.5000113767 0.0000000000"

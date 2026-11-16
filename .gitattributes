@@ -1,0 +1,2 @@
+# Expected outputs are compared to the bytes the binaries write: no CRLF conversion on Windows.
+*.out text eol=lf

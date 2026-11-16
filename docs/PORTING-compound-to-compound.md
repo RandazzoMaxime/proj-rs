@@ -21,7 +21,7 @@ of a vertical operation are not ported: the cases that need them stay open (see 
 | `createOperationsVertToVert`, different datums (`createChangeVerticalUnit`, `setHasBallparkTransformation`) | `compound::vertical_to_vertical`, called from `create_candidates` when the registry gives nothing |
 | `createOperationsVertToVert`, same datum (a conversion) | not ported: `vertical_to_vertical` returns `None` |
 | scale of the change of vertical unit, with the height/depth reversal | `compound::ballpark_scale`, shared with `vertical_ballpark` (vertical to geographic 3D) |
-| `createHorizVerticalPROJBased`, null horizontal part | `retarget` (already in `compound.rs`) |
+| `createHorizVerticalPROJBased`, null horizontal part | `combine` (PROJ-based, no identifier) |
 
 ## Behaviour
 
@@ -34,7 +34,7 @@ of a vertical operation are not ported: the cases that need them stay open (see 
 3. A candidate is kept only when its horizontal part is null: a conversion, or a
    transformation with no interpolation CRS, or one whose interpolation CRS is the
    geographic part. Each kept candidate is copied with the compound source and target
-   and no identifier (`retarget`).
+   and no identifier (`combine`).
 
 `vertical_to_vertical` for two vertical CRS of different datums: a transformation of
 method 1069 named `Transformation from <source> to <target> (ballpark vertical transformation)`,
@@ -68,7 +68,7 @@ A standalone vertical pair now lists its ballpark, as PROJ does
 
 - The ballpark vertical name is `Transformation from <source> to <target> (ballpark vertical transformation)`
   for two vertical CRS, and keeps the longer suffix for vertical to geographic 3D.
-- A retargeted candidate has no identifier, and its accuracy is written as a double.
+- A candidate of a null horizontal part has no identifier, and its accuracy is written as a double.
 
 ## Test mapping
 

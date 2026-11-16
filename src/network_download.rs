@@ -59,13 +59,15 @@ pub(crate) fn is_download_needed(
     {
         return Ok(false);
     }
-    let Some(fetched) = network::http_get_validated(&url) else {
+    let Some(probe) = network::http_probe(&url, "bytes=0-0") else {
         return Ok(false);
     };
-    let size = u64::try_from(fetched.body.len()).unwrap_or(u64::MAX);
+    let Some(size) = probe.size else {
+        return Ok(false);
+    };
     if size != record.size
-        || fetched.last_modified != record.last_modified
-        || fetched.etag != record.etag
+        || probe.last_modified != record.last_modified
+        || probe.etag != record.etag
     {
         return Ok(true);
     }

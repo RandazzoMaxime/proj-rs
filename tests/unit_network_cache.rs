@@ -18,6 +18,7 @@ use proj_rs::{GridCacheMode, GridCacheTtl, ProjBuilder};
 use rusqlite::Connection;
 
 #[path = "net_support/grids.rs"]
+#[expect(dead_code, reason = "this file serves the cache grid only")]
 mod grids;
 #[path = "net_support/mod.rs"]
 #[expect(dead_code, reason = "this file serves with spawn_with_headers only")]
@@ -231,6 +232,94 @@ fn cache_ttl() {
         )
         .expect("properties");
     assert_ne!(last_checked, 0);
+    assert_eq!(last_modified, "Wed, 21 Oct 2015 07:28:00 GMT");
+    assert_eq!(etag, "\"proj-rs-test\"");
+}
+
+/// An expired entry is checked as PROJ checks it when it opens the grid: one request for the first
+/// chunk (`Range: bytes=0-16383`, PROJ's `open(url, 0, 16384)`), then the size and the validators of
+/// the reply against the stored ones. Unchanged, the chunks are kept and only the time of the check
+/// moves: one request, no download. PROJ sends no conditional request (`If-None-Match`,
+/// `If-Modified-Since`).
+#[test]
+fn expired_entry_is_checked_with_its_first_chunk_and_kept_when_unchanged() {
+    let dir = TestDir::new("probe_kept");
+    let server = server();
+    let url = format!("{}/fr_ign_ntf_r93.tif", server.url());
+    builder(&dir.db())
+        .proj(&pipeline(&url))
+        .expect("first build");
+
+    let connection = Connection::open(dir.db()).expect("database opens");
+    connection
+        .execute_batch("UPDATE properties SET lastChecked = 0")
+        .expect("expire");
+    drop(connection);
+
+    let before = server.requests().len();
+    let mut expiring = builder(&dir.db());
+    expiring
+        .set_grid_cache_ttl(GridCacheTtl::Seconds(86_400))
+        .expect("one day");
+    let proj = expiring.proj(&pipeline(&url)).expect("build");
+    assert_test_point(&proj);
+    drop(proj);
+    assert_eq!(
+        server.requests().len(),
+        before + 1,
+        "the probe only: {:?}",
+        server.requests()
+    );
+
+    let (last_checked, last_modified, etag): (i64, String, String) = open_read_only(&dir.db())
+        .query_row(
+            "SELECT lastChecked, lastModified, etag FROM properties",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("properties");
+    assert_ne!(last_checked, 0, "the check time moved");
+    assert_eq!(last_modified, "Wed, 21 Oct 2015 07:28:00 GMT");
+    assert_eq!(etag, "\"proj-rs-test\"");
+}
+
+/// The first chunk finds other validators than the stored ones: the grid is downloaded again, after
+/// that request, and the stored validators become the server's.
+#[test]
+fn expired_entry_with_other_validators_is_downloaded_again() {
+    let dir = TestDir::new("probe_changed");
+    let server = server();
+    let url = format!("{}/fr_ign_ntf_r93.tif", server.url());
+    builder(&dir.db())
+        .proj(&pipeline(&url))
+        .expect("first build");
+
+    let connection = Connection::open(dir.db()).expect("database opens");
+    connection
+        .execute_batch("UPDATE properties SET lastChecked = 0, lastModified = 'foo', etag = 'bar'")
+        .expect("expire and change the stored validators");
+    drop(connection);
+
+    let before = server.requests().len();
+    let mut expiring = builder(&dir.db());
+    expiring
+        .set_grid_cache_ttl(GridCacheTtl::Seconds(86_400))
+        .expect("one day");
+    let proj = expiring.proj(&pipeline(&url)).expect("build");
+    assert_test_point(&proj);
+    drop(proj);
+    assert_eq!(
+        server.requests().len(),
+        before + 2,
+        "the probe, then the download: {:?}",
+        server.requests()
+    );
+
+    let (last_modified, etag): (String, String) = open_read_only(&dir.db())
+        .query_row("SELECT lastModified, etag FROM properties", [], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .expect("properties");
     assert_eq!(last_modified, "Wed, 21 Oct 2015 07:28:00 GMT");
     assert_eq!(etag, "\"proj-rs-test\"");
 }

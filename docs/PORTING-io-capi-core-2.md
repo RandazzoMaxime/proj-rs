@@ -51,6 +51,10 @@ removed from `docs/UNPORTED-UNIT.md`.
 
 ## 3. Open (44)
 
+Mise à jour du 2026-11-15 : les cas `CApi.*` de ce tableau ont désormais un test Rust vert.
+Voir la table d'inventaire de `docs/PORTING-capi-operation-factory-core.md`. Les lignes ci-dessous
+décrivent l'état à la date du lot ; elles ne sont plus à jour pour ces cas.
+
 One row per name still in the ledger.
 
 | name | reason |

@@ -72,9 +72,9 @@ impl Kernel for Aea {
                 if qs.abs() > 2.0 {
                     return Err(TransformError::OutsideDomain);
                 }
-                let sine = (qs / self.qp).clamp(-1.0, 1.0);
+                // Hors de [-1, 1] l'asin donne NaN, comme dans PROJ : pas de clamp.
                 authalic_lat_inverse(
-                    sine.asin(),
+                    (qs / self.qp).asin(),
                     self.third_n,
                     self.e,
                     self.es,

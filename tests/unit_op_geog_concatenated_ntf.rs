@@ -14,7 +14,7 @@ fn operation_geog_crs_to_geog_crs_context_concatenated_operation() {
     let epsg = AuthorityFactory::create(&db, "EPSG");
     let mut ctxt = CoordinateOperationContext::create(&db, "EPSG");
     ctxt.set_grid_availability_use(GridAvailabilityUse::IgnoreGridAvailability);
-    ctxt.set_intermediate_crs_use(IntermediateCrsUse::Allow);
+    ctxt.set_intermediate_crs_use(IntermediateCrsUse::Always);
     let source = epsg
         .create_coordinate_reference_system("4807")
         .expect("NTF(Paris)");
@@ -60,6 +60,37 @@ fn operation_geog_crs_to_geog_crs_context_concatenated_operation() {
         .grids_needed(&db, GridAvailabilityUse::UseForSorting)
         .expect("grids");
     assert_eq!(grids.len(), 1);
+}
+
+/// `IF_NO_DIRECT_TRANSFORMATION` (the default of `cs2cs`), same context: PROJ 9.9.0 keeps the
+/// ballpark candidate after the two grid ones, which `ALWAYS` drops (its no-grid candidate through
+/// WGS 84 removes it). Measured with `libproj` 9.9.0: `count=3`, third name below.
+#[test]
+fn operation_geog_crs_to_geog_crs_if_no_direct_keeps_the_ballpark() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let epsg = AuthorityFactory::create(&db, "EPSG");
+    let mut ctxt = CoordinateOperationContext::create(&db, "EPSG");
+    ctxt.set_grid_availability_use(GridAvailabilityUse::IgnoreGridAvailability);
+    ctxt.set_intermediate_crs_use(IntermediateCrsUse::Allow);
+    let source = epsg
+        .create_coordinate_reference_system("4807")
+        .expect("NTF(Paris)");
+    let target = epsg
+        .create_coordinate_reference_system("4171")
+        .expect("RGF93");
+    let list = CoordinateOperationFactory::create()
+        .create_operations(&source, &target, &ctxt)
+        .expect("operations");
+    assert_eq!(list.len(), 3);
+    assert_eq!(list[0].name(), "NTF (Paris) to ETRS89-FRA [RGF93 v1] (1)");
+    assert_eq!(list[1].name(), "NTF (Paris) to ETRS89-FRA [RGF93 v1] (2)");
+    assert_eq!(
+        list[2].name(),
+        "Transformation from NTF (Paris) to NTF (Paris) altered to use prime meridian of \
+         ETRS89-FRA [RGF93 v1] + Ballpark geographic offset from NTF (Paris) altered to use \
+         prime meridian of ETRS89-FRA [RGF93 v1] to ETRS89-FRA [RGF93 v1]"
+    );
+    assert!(list[2].has_ballpark_transformation());
 }
 
 fn plain(db: &DatabaseContext, operation: &CoordinateOperation) -> String {
