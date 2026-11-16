@@ -371,6 +371,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "proj-rs-capi"
+version = "0.1.0"
+
+[[package]]
+name = "proj-rs-georust"
+version = "0.1.0"
+dependencies = [
+ "approx",
+ "geo-types",
+ "proj-rs",
+]
+
+[[package]]
 name = "quick-error"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
