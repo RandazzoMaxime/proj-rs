@@ -1942,7 +1942,6 @@ fn export_engineering_datum(datum: &EngineeringDatum, formatter: &mut WktFormatt
     } else {
         formatter.add_raw("32767");
     }
-    formatter.format_ids(&datum.identified.identifiers);
     formatter.end_node();
 }
 
