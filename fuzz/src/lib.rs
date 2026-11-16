@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Once;
 
 use proj_rs::iso19111::{
-    create_from_user_input, create_object_from_user_input, DatabaseContext, JsonFormat,
-    JsonLines, WktConvention, WktFormatter,
+    create_from_user_input, create_object_from_user_input, DatabaseContext, JsonFormat, JsonLines,
+    WktConvention, WktFormatter,
 };
 use proj_rs::{bench_definition, Operation, Proj, Xyzt, PORTED};
 
@@ -35,7 +35,9 @@ fn init() {
         // those pass, and keep the hook for everything else.
         let libfuzzer_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
-            let in_tiff_crate = info.location().is_some_and(|at| at.file().contains("/tiff-"));
+            let in_tiff_crate = info
+                .location()
+                .is_some_and(|at| at.file().contains("/tiff-"));
             if !in_tiff_crate {
                 libfuzzer_hook(info);
             }
@@ -61,7 +63,10 @@ impl<'a> Reader<'a> {
     }
 
     fn byte(&mut self) -> u8 {
-        let (first, rest) = self.data.split_first().map_or((0, self.data), |(b, r)| (*b, r));
+        let (first, rest) = self
+            .data
+            .split_first()
+            .map_or((0, self.data), |(b, r)| (*b, r));
         self.data = rest;
         first
     }
@@ -320,7 +325,13 @@ macro_rules! exercise_set {
         for grid in $set.grids() {
             exercise_grid(&grid, 0);
         }
-        for (lon, lat) in [(0.0, 0.0), (0.1, 0.8), (-2.0, 0.5), (f64::NAN, 1.0), (1e300, 0.0)] {
+        for (lon, lat) in [
+            (0.0, 0.0),
+            (0.1, 0.8),
+            (-2.0, 0.5),
+            (f64::NAN, 1.0),
+            (1e300, 0.0),
+        ] {
             if let Some(grid) = $set.grid_at(lon, lat) {
                 exercise_grid(&grid, 3);
             }
@@ -378,7 +389,11 @@ pub fn model_files(data: &[u8]) {
     if selector % 2 == 0 {
         if let Ok(file) = proj_rs::tinshift::TinShiftFile::parse(&text) {
             let _ = (file.file_type(), file.format_version());
-            let _ = (file.input_crs(), file.output_crs(), file.fallback_strategy());
+            let _ = (
+                file.input_crs(),
+                file.output_crs(),
+                file.fallback_strategy(),
+            );
             let evaluator = proj_rs::tinshift::TinShiftEvaluator::new(file);
             for &(x, y, z) in &FIXED_POINTS {
                 let _ = evaluator.forward(x, y, z);
@@ -392,7 +407,12 @@ pub fn model_files(data: &[u8]) {
         }
     } else {
         if let Ok(model) = proj_rs::defmodel::MasterFile::parse(&text) {
-            let _ = (model.authority(), model.links(), model.extent(), model.time_extent());
+            let _ = (
+                model.authority(),
+                model.links(),
+                model.extent(),
+                model.time_extent(),
+            );
             for component in model.components() {
                 let _ = component.description();
                 let _ = component.time_function().evaluate_at(2020.5);

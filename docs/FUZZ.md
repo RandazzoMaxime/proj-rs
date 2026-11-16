@@ -56,9 +56,50 @@ ouvrent la base embarquée (`proj_string`, `user_input`, `transform`), 150 à 3 
 `grid_reader` et `model_files`. Chaque `DatabaseContext::create()` copie et analyse la base
 (10 ms sans sanitizer) ; la cible `user_input` n'en ouvre qu'une par exécution.
 
-### Résultats
+### Plantages trouvés (2026-11-16)
 
-Les plantages trouvés, leur cause et leur test sont dans la section « Plantages trouvés ».
+Cinq causes, une par commit, chacune avec son test dans `tests/fuzz_regressions.rs` ou en test
+unitaire :
+
+| Cible | Cause | Correction | Commit |
+|---|---|---|---|
+| `proj_string` | `Evaluator::forward` (defmodel) retire un tour de longitude à la fois : 1e300 ou l'infini ne changent jamais, boucle infinie | refuse une longitude de plus de 1e4 rad (PROJ la refuse à 10 rad dans `fwd_prepare`) | `5a944c8` |
+| `grid_reader` | `chunk_bytes` alloue la taille d'un bloc TIFF déclarée par le fichier avant de la lire : 3,5 Ko réclament 3 Go | lecture par `Read::take`, comparaison de la longueur ensuite | `9a7a89f` |
+| `grid_reader` | `tiff` 0.10.3 panique sur une balise `SampleFormat` vide (`sample_format[0]`) | les trois constructions de décodeur passent par `geotiff::contained` (`catch_unwind`) ; `tiff` 0.11.3 corrige mais exige Rust 1.85 (MSRV 1.83) | `c54ea0b` |
+| `proj_string` | `strip_urn_prefix` coupe le texte à 12 octets : un caractère multi-octet à cheval sur l'octet 12 panique | `str::get` | `5866b89` |
+| `grid_reader` | CTable2 : `largeur * hauteur * 8` déborde (2^31 - 1 chacune) | `checked_mul` | `c9ba504` |
+
+Le harnais laisse passer les paniques de la crate `tiff` (hook dans `fuzz/src/lib.rs`) : libFuzzer
+abandonne sur toute panique, même rattrapée.
+
+Non corrigé, trouvé en route :
+
+- **Recherche par nom lente.** Tout texte inconnu (`ZZZZZZZZZZZZ`, `+++++`) passe par la recherche
+  de nom dans la base (`objects_from_name_matched`) : 2,7 s en debug, contre 27 ms pour PROJ
+  9.9.0 (`cs2cs 'ZZZZZZZZZZZZ' +to EPSG:4326`). Ce n'est pas une boucle, mais elle fait tomber le
+  débit des cibles `proj_string`, `user_input` et `transform` à 5 exécutions par seconde, et a
+  fait déclarer un « timeout » à 10 s sous sanitizer. `run.sh` fixe donc `-timeout=60`.
+- **Même motif de découpe que `strip_urn_prefix`**, non atteint par le fuzz mais à corriger de la
+  même façon : `identify.rs:933`, `equiv.rs:412`, `wkt_import.rs:1000` (`texte[..prefixe.len()]`
+  après un test de longueur en octets). Dans `src/iso19111/`, laissé à l'autre chantier.
+
+### Durées et exécutions
+
+Chaque cible a tourné au moins 1 900 s (31 min 40 s) sur le code final, en parallèle sur quatre
+cœurs partagés, `-timeout=60 -rss_limit_mb=2048` :
+
+| Cible | Durée | Exécutions | Résultat |
+|---|---|---|---|
+| `proj_string` | 1 900 s | 97 598 | aucun plantage |
+| `user_input` | 1 900 s | 9 716 | aucun plantage |
+| `transform` | 1 900 s | 3 774 | aucun plantage |
+| `grid_reader` | 1 900 s | 129 599 | aucun plantage |
+| `model_files` | 1 900 s | 2 976 116 | aucun plantage |
+
+`user_input` et `model_files` ont tourné avant les correctifs CTable2 et lcc, qui ne les touchent
+pas ; les trois autres ont été relancées après. Les passages interrompus par un plantage (cinq
+minutes d'exploration, puis 31 minutes pour `proj_string`, `transform` et `grid_reader`) ne
+comptent pas dans ce tableau.
 
 ## Différentiel aléatoire : `tools/parity/fuzz_diff.py`
 
@@ -98,6 +139,53 @@ Le tirage évite les paramètres qu'une projection ne lit pas (liste de `proj -l
 ignore, le port les refuse (écart « paramètre non lu » ci-dessous), et le différentiel doit
 chercher autre chose. `--named-datums` remet les datums nommés, qui exposent l'écart suivant.
 
+### Passage de référence
+
+Graine `20261119`, `--scale 3 --random 600 --points 8 --world 0.15` : 3 581 invocations,
+30 775 conversions (`meta.json` : sha1 `53df5dbf9f95fe990c5c850649888402c047855e`).
+
+| Avant correction | Conversions |
+|---|---|
+| Identiques (texte) | 29 453 |
+| Dans le seuil | 1 305 |
+| Erreur des deux côtés | 3 |
+| Hors seuil | 12 |
+| Statut | 2 |
+
+Après les deux correctifs ci-dessous : 29 464 identiques, 1 306 dans le seuil, 3 erreurs des deux
+côtés, **0 hors seuil**, **2 statut**, 0 forme.
+
+Corrigés (un commit chacun, test dans `tests/fuzz_regressions.rs`) :
+
+- `proj` appliquait `+axis` : PROJ le lit, le liste comme utilisé et ne l'applique pas (`08ee8e2`,
+  graine 1, `random-proj-fwd-0002`).
+- `lcc` : sans `+lat_1`, PROJ prend 0 et non `lat_0` ; avec `+lat_1` seul et sans `+lat_0`,
+  l'origine est `lat_1` (`eed9b8f`, `random-cct-0313` et `0484` : 6 300 m et 1 585 km d'écart).
+
 ### Écarts consignés
 
-Sections remplies après les passages ci-dessous.
+Non corrigés, parce qu'ils touchent un choix de conception ou une architecture :
+
+1. **Pipeline : paires `étape` / `+inv étape` retirées par PROJ.** `pj_optimize_pipeline` supprime
+   deux étapes adjacentes inverses l'une de l'autre. `+proj=axisswap +order=2,1 +step +proj=cart
+   +ellps=GRS67 +step +inv +proj=cart +ellps=GRS67` rend donc `lat lon h t` pour un point dont la
+   « latitude » dépasse 90° ; le port exécute `cart` et refuse le point (`*`). Graine `20261119`,
+   `random-cct-0193` (2 lignes, statut). Le port n'optimise pas le pipeline.
+2. **Paramètre non lu.** PROJ ignore `+lat_1` sur `sinu` ; `Operation::create` le refuse
+   (`UnknownParameter`, `UnknownKeys::Refuse`, `engine.rs`), et `docs/PORTING-sphere-ops.md` le dit.
+   `cct +proj=pipeline +step +proj=sinu +ellps=sphere +lat_1=33.3 +k_0=0.99` : code 0 chez PROJ,
+   code 1 ici. Seul `proj` (`create_projection_keeping_unknown`) suit PROJ. Le tirage aléatoire
+   évite ces paramètres (liste de `proj -lP`).
+3. **Datum nommé contre ellipsoïde avec `+towgs84`** (`--named-datums`, graine 7, `--scale 1
+   --random 200`, 1 310 invocations, 9 522 conversions : 328 hors seuil et 143 statut, tous dans
+   59 invocations `random-cs2cs`, aucun dans `proj` ni `cct`). Exemple :
+   `cs2cs -d 9 +proj=longlat +datum=NAD83 +to +proj=longlat +ellps=aust_SA +towgs84=-105,-275,-140`
+   donne `10.002413662 20.000724771` chez PROJ et `* * inf` ici ; avec `+datum=WGS84` ou un
+   ellipsoïde nu à la place de `NAD83`, les deux concordent. Avec `+datum=carthage`, les valeurs
+   diffèrent de 2e-4 à 5e-3 degré. Les pairs d'ellipsoïdes et de `+towgs84` seuls concordent
+   sur les 30 775 conversions de la graine `20261119`.
+4. **`proj -V` sur `imoll`** : PROJ écrit « Final Earth figure: sphere », le port l'ellipsoïde
+   (`+proj=imoll +units=km +axis=neu`). Hors conversions.
+
+Rejouer les écarts 1 et 2 : `python3 tools/parity/fuzz_diff.py --seed 20261119`. L'écart 3 :
+`--seed 7 --scale 1 --random 200 --named-datums`.

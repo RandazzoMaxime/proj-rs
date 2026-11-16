@@ -29,7 +29,14 @@ fn defmodel_forward_returns_for_huge_longitude() {
     within_ten_seconds(|| {
         let op = Operation::create("+proj=defmodel +model=tests/simple_model_polar.json")
             .expect("the polar test model builds");
-        for x in [1e300, -1e300, f64::INFINITY, f64::NEG_INFINITY, 1e15, f64::MAX] {
+        for x in [
+            1e300,
+            -1e300,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            1e15,
+            f64::MAX,
+        ] {
             let coord = proj_rs::Xyzt {
                 x,
                 y: -1.55,
@@ -48,8 +55,11 @@ fn defmodel_forward_returns_for_huge_longitude() {
 fn geotiff_with_empty_sample_format_is_an_error() {
     common::use_fixture_search_path();
     let path = std::env::temp_dir().join(format!("proj-rs-fuzz-sample-{}.tif", std::process::id()));
-    std::fs::write(&path, include_bytes!("fuzz_regressions/geotiff_empty_sample_format.tif"))
-        .expect("write the fixture");
+    std::fs::write(
+        &path,
+        include_bytes!("fuzz_regressions/geotiff_empty_sample_format.tif"),
+    )
+    .expect("write the fixture");
     let name = path.display().to_string();
     let horizontal = proj_rs::grids::HorizontalShiftGridSet::open(&name);
     let vertical = proj_rs::grids::VerticalShiftGridSet::open(&name);
@@ -63,7 +73,12 @@ fn geotiff_with_empty_sample_format_is_an_error() {
 #[test]
 fn proj_string_with_multibyte_character_at_the_urn_prefix_length() {
     common::use_fixture_search_path();
-    for text in ["geoc-prok-\u{fffd}ch", "urn:ogc:def:é", "urn:ogc:de\u{fffd}f:x", "é"] {
+    for text in [
+        "geoc-prok-\u{fffd}ch",
+        "urn:ogc:def:é",
+        "urn:ogc:de\u{fffd}f:x",
+        "é",
+    ] {
         assert!(Operation::create(text).is_err(), "{text}");
         assert!(proj_rs::Proj::new(text).is_err(), "{text}");
     }
@@ -114,7 +129,10 @@ fn projection_alone_ignores_the_axis_order() {
     let swapped =
         Operation::create_projection("+proj=merc +ellps=WGS84 +axis=wnu").expect("merc wnu");
     let coord = proj_rs::Xyzt::xy(-0.29, 1.23);
-    let (a, b) = (plain.forward(coord).expect("a"), swapped.forward(coord).expect("b"));
+    let (a, b) = (
+        plain.forward(coord).expect("a"),
+        swapped.forward(coord).expect("b"),
+    );
     assert_eq!((a.x, a.y), (b.x, b.y));
     let (back_a, back_b) = (plain.inverse(a).expect("a"), swapped.inverse(b).expect("b"));
     assert_eq!((back_a.x, back_a.y), (back_b.x, back_b.y));

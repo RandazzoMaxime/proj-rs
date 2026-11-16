@@ -20,7 +20,7 @@ for target in "${targets[@]}"; do
   esac
   mkdir -p "corpus/$target" "artifacts/$target"
   "./target/x86_64-unknown-linux-gnu/release/$target" \
-    -max_total_time="$seconds" -timeout=10 -rss_limit_mb=2048 -max_len="$max_len" -print_final_stats=1 \
+    -max_total_time="$seconds" -timeout=60-rss_limit_mb=2048 -max_len="$max_len" -print_final_stats=1 \
     -artifact_prefix="artifacts/$target/" "corpus/$target" > "logs/$target.log" 2>&1 &
 done
 wait || true

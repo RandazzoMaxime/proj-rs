@@ -151,6 +151,9 @@ mod tests {
         let mut file = Cursor::new(vec![0_u8; 40]);
         assert!(chunk_bytes(&mut file, 8, usize::MAX / 2).is_err());
         assert!(chunk_bytes(&mut file, 8, 33).is_err());
-        assert_eq!(chunk_bytes(&mut file, 8, 32).map(|bytes| bytes.len()), Ok(32));
+        assert_eq!(
+            chunk_bytes(&mut file, 8, 32).map(|bytes| bytes.len()),
+            Ok(32)
+        );
     }
 }
