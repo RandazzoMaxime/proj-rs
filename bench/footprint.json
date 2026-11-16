@@ -1,0 +1,791 @@
+{
+ "date": "2026-11-16T22:16:13Z",
+ "commit": "253877d",
+ "dirty": false,
+ "machine": "cloud-4c-avx512",
+ "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+ "kernel": "6.18.44-fc-v470",
+ "versions": {
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
+  "cc": "cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+  "valgrind": "valgrind-3.22.0",
+  "libc": "ldd (Ubuntu GLIBC 2.39-0ubuntu8.9) 2.39",
+  "proj": "9.9.0"
+ },
+ "rule": "Everything `ldd` lists for the program or the library, except the C library and the unwinder (libc, libm, libdl, libpthread, librt, libutil, libgcc_s, the loader), counted the same way on both sides. Sizes are bytes on disk after `strip --strip-unneeded`.",
+ "size": {
+  "files": [
+   {
+    "name": "convert-proj",
+    "role": "C program",
+    "bytes": 17104,
+    "stripped_bytes": 14480
+   },
+   {
+    "name": "libproj.so.25.9.9.0",
+    "role": "libproj",
+    "bytes": 5898432,
+    "stripped_bytes": 4882128
+   },
+   {
+    "name": "proj.db",
+    "role": "proj.db",
+    "bytes": 10551296,
+    "stripped_bytes": 10551296
+   },
+   {
+    "name": "libsqlite3.so.0.8.6",
+    "role": "dependency",
+    "bytes": 1468440,
+    "stripped_bytes": 1468440
+   },
+   {
+    "name": "libstdc++.so.6.0.33",
+    "role": "dependency",
+    "bytes": 2592224,
+    "stripped_bytes": 2592224
+   },
+   {
+    "name": "convert-proj-full",
+    "role": "C program",
+    "bytes": 17104,
+    "stripped_bytes": 14480
+   },
+   {
+    "name": "libproj.so.25.9.9.0",
+    "role": "libproj",
+    "bytes": 5981960,
+    "stripped_bytes": 4947920
+   },
+   {
+    "name": "proj.db",
+    "role": "proj.db",
+    "bytes": 10551296,
+    "stripped_bytes": 10551296
+   },
+   {
+    "name": "libsqlite3.so.0.8.6",
+    "role": "dependency",
+    "bytes": 1468440,
+    "stripped_bytes": 1468440
+   },
+   {
+    "name": "libtiff.so.6.0.1",
+    "role": "dependency",
+    "bytes": 575656,
+    "stripped_bytes": 575656
+   },
+   {
+    "name": "libcurl.so.4.8.0",
+    "role": "dependency",
+    "bytes": 786336,
+    "stripped_bytes": 786336
+   },
+   {
+    "name": "libstdc++.so.6.0.33",
+    "role": "dependency",
+    "bytes": 2592224,
+    "stripped_bytes": 2592224
+   },
+   {
+    "name": "libwebp.so.7.1.8",
+    "role": "dependency",
+    "bytes": 494136,
+    "stripped_bytes": 494136
+   },
+   {
+    "name": "libzstd.so.1.5.5",
+    "role": "dependency",
+    "bytes": 755864,
+    "stripped_bytes": 755864
+   },
+   {
+    "name": "liblzma.so.5.4.5",
+    "role": "dependency",
+    "bytes": 202904,
+    "stripped_bytes": 202904
+   },
+   {
+    "name": "libLerc.so.4",
+    "role": "dependency",
+    "bytes": 546992,
+    "stripped_bytes": 546992
+   },
+   {
+    "name": "libjbig.so.0",
+    "role": "dependency",
+    "bytes": 66400,
+    "stripped_bytes": 66400
+   },
+   {
+    "name": "libjpeg.so.8.2.2",
+    "role": "dependency",
+    "bytes": 534592,
+    "stripped_bytes": 534592
+   },
+   {
+    "name": "libdeflate.so.0",
+    "role": "dependency",
+    "bytes": 75808,
+    "stripped_bytes": 75808
+   },
+   {
+    "name": "libz.so.1.3",
+    "role": "dependency",
+    "bytes": 113000,
+    "stripped_bytes": 113000
+   },
+   {
+    "name": "libnghttp2.so.14.26.0",
+    "role": "dependency",
+    "bytes": 170352,
+    "stripped_bytes": 170352
+   },
+   {
+    "name": "libidn2.so.0.4.0",
+    "role": "dependency",
+    "bytes": 133192,
+    "stripped_bytes": 133192
+   },
+   {
+    "name": "librtmp.so.1",
+    "role": "dependency",
+    "bytes": 121848,
+    "stripped_bytes": 121848
+   },
+   {
+    "name": "libssh.so.4.9.6",
+    "role": "dependency",
+    "bytes": 462360,
+    "stripped_bytes": 462360
+   },
+   {
+    "name": "libpsl.so.5.3.4",
+    "role": "dependency",
+    "bytes": 75768,
+    "stripped_bytes": 75768
+   },
+   {
+    "name": "libssl.so.3",
+    "role": "dependency",
+    "bytes": 696512,
+    "stripped_bytes": 696512
+   },
+   {
+    "name": "libcrypto.so.3",
+    "role": "dependency",
+    "bytes": 5309400,
+    "stripped_bytes": 5309400
+   },
+   {
+    "name": "libgssapi_krb5.so.2.2",
+    "role": "dependency",
+    "bytes": 338696,
+    "stripped_bytes": 338696
+   },
+   {
+    "name": "libldap.so.2.0.200",
+    "role": "dependency",
+    "bytes": 372400,
+    "stripped_bytes": 372400
+   },
+   {
+    "name": "liblber.so.2.0.200",
+    "role": "dependency",
+    "bytes": 59888,
+    "stripped_bytes": 59888
+   },
+   {
+    "name": "libbrotlidec.so.1.1.0",
+    "role": "dependency",
+    "bytes": 51512,
+    "stripped_bytes": 51512
+   },
+   {
+    "name": "libsharpyuv.so.0.0.1",
+    "role": "dependency",
+    "bytes": 22672,
+    "stripped_bytes": 22672
+   },
+   {
+    "name": "libunistring.so.5.0.0",
+    "role": "dependency",
+    "bytes": 1755312,
+    "stripped_bytes": 1755312
+   },
+   {
+    "name": "libgnutls.so.30.37.1",
+    "role": "dependency",
+    "bytes": 2065824,
+    "stripped_bytes": 2065824
+   },
+   {
+    "name": "libhogweed.so.6.8",
+    "role": "dependency",
+    "bytes": 288920,
+    "stripped_bytes": 288920
+   },
+   {
+    "name": "libnettle.so.8.8",
+    "role": "dependency",
+    "bytes": 342280,
+    "stripped_bytes": 342280
+   },
+   {
+    "name": "libgmp.so.10.5.0",
+    "role": "dependency",
+    "bytes": 534896,
+    "stripped_bytes": 534896
+   },
+   {
+    "name": "libkrb5.so.3.3",
+    "role": "dependency",
+    "bytes": 823488,
+    "stripped_bytes": 823488
+   },
+   {
+    "name": "libk5crypto.so.3.1",
+    "role": "dependency",
+    "bytes": 178648,
+    "stripped_bytes": 178648
+   },
+   {
+    "name": "libcom_err.so.2.1",
+    "role": "dependency",
+    "bytes": 18504,
+    "stripped_bytes": 18504
+   },
+   {
+    "name": "libkrb5support.so.0.1",
+    "role": "dependency",
+    "bytes": 47904,
+    "stripped_bytes": 47904
+   },
+   {
+    "name": "libsasl2.so.2.0.25",
+    "role": "dependency",
+    "bytes": 101200,
+    "stripped_bytes": 101200
+   },
+   {
+    "name": "libbrotlicommon.so.1.1.0",
+    "role": "dependency",
+    "bytes": 141640,
+    "stripped_bytes": 141640
+   },
+   {
+    "name": "libp11-kit.so.0.3.1",
+    "role": "dependency",
+    "bytes": 1714008,
+    "stripped_bytes": 1714008
+   },
+   {
+    "name": "libtasn1.so.6.6.3",
+    "role": "dependency",
+    "bytes": 88216,
+    "stripped_bytes": 88216
+   },
+   {
+    "name": "libkeyutils.so.1.10",
+    "role": "dependency",
+    "bytes": 22600,
+    "stripped_bytes": 22600
+   },
+   {
+    "name": "libresolv.so.2",
+    "role": "dependency",
+    "bytes": 64008,
+    "stripped_bytes": 64008
+   },
+   {
+    "name": "libffi.so.8.1.4",
+    "role": "dependency",
+    "bytes": 47672,
+    "stripped_bytes": 47672
+   },
+   {
+    "name": "convert-capi",
+    "role": "C program",
+    "bytes": 17104,
+    "stripped_bytes": 14480
+   },
+   {
+    "name": "libproj.so.25",
+    "role": "libproj of proj-rs",
+    "bytes": 20354320,
+    "stripped_bytes": 19301120
+   },
+   {
+    "name": "libssl.so.3",
+    "role": "dependency",
+    "bytes": 696512,
+    "stripped_bytes": 696512
+   },
+   {
+    "name": "libcrypto.so.3",
+    "role": "dependency",
+    "bytes": 5309400,
+    "stripped_bytes": 5309400
+   },
+   {
+    "name": "footprint-rs",
+    "role": "Rust program",
+    "bytes": 18756344,
+    "stripped_bytes": 17942040
+   },
+   {
+    "name": "empty-rs",
+    "role": "empty Rust program",
+    "bytes": 412928,
+    "stripped_bytes": 319680
+   },
+   {
+    "name": "libssl.so.3",
+    "role": "dependency",
+    "bytes": 696512,
+    "stripped_bytes": 696512
+   },
+   {
+    "name": "libcrypto.so.3",
+    "role": "dependency",
+    "bytes": 5309400,
+    "stripped_bytes": 5309400
+   }
+  ],
+  "installs": [
+   {
+    "id": "proj",
+    "label": "PROJ 9.9.0, the benchmark build",
+    "side": "proj",
+    "note": "libproj built with TIFF and curl off, as in the speed comparison",
+    "parts": {
+     "code": {
+      "items": [
+       "convert-proj",
+       "libproj.so.25.9.9.0"
+      ],
+      "bytes": 5915536,
+      "stripped_bytes": 4896608
+     },
+     "db": {
+      "items": [
+       "proj.db"
+      ],
+      "bytes": 10551296,
+      "stripped_bytes": 10551296
+     },
+     "libs": {
+      "items": [
+       "libsqlite3.so.0.8.6",
+       "libstdc++.so.6.0.33"
+      ],
+      "bytes": 4060664,
+      "stripped_bytes": 4060664
+     }
+    },
+    "bytes": 20527496,
+    "stripped_bytes": 19508568
+   },
+   {
+    "id": "proj_full",
+    "label": "PROJ 9.9.0 with TIFF and curl",
+    "side": "proj",
+    "note": "libproj built with TIFF and curl on, as distributions build it",
+    "parts": {
+     "code": {
+      "items": [
+       "convert-proj-full",
+       "libproj.so.25.9.9.0"
+      ],
+      "bytes": 5999064,
+      "stripped_bytes": 4962400
+     },
+     "db": {
+      "items": [
+       "proj.db"
+      ],
+      "bytes": 10551296,
+      "stripped_bytes": 10551296
+     },
+     "libs": {
+      "items": [
+       "libsqlite3.so.0.8.6",
+       "libtiff.so.6.0.1",
+       "libcurl.so.4.8.0",
+       "libstdc++.so.6.0.33",
+       "libwebp.so.7.1.8",
+       "libzstd.so.1.5.5",
+       "liblzma.so.5.4.5",
+       "libLerc.so.4",
+       "libjbig.so.0",
+       "libjpeg.so.8.2.2",
+       "libdeflate.so.0",
+       "libz.so.1.3",
+       "libnghttp2.so.14.26.0",
+       "libidn2.so.0.4.0",
+       "librtmp.so.1",
+       "libssh.so.4.9.6",
+       "libpsl.so.5.3.4",
+       "libssl.so.3",
+       "libcrypto.so.3",
+       "libgssapi_krb5.so.2.2",
+       "libldap.so.2.0.200",
+       "liblber.so.2.0.200",
+       "libbrotlidec.so.1.1.0",
+       "libsharpyuv.so.0.0.1",
+       "libunistring.so.5.0.0",
+       "libgnutls.so.30.37.1",
+       "libhogweed.so.6.8",
+       "libnettle.so.8.8",
+       "libgmp.so.10.5.0",
+       "libkrb5.so.3.3",
+       "libk5crypto.so.3.1",
+       "libcom_err.so.2.1",
+       "libkrb5support.so.0.1",
+       "libsasl2.so.2.0.25",
+       "libbrotlicommon.so.1.1.0",
+       "libp11-kit.so.0.3.1",
+       "libtasn1.so.6.6.3",
+       "libkeyutils.so.1.10",
+       "libresolv.so.2",
+       "libffi.so.8.1.4"
+      ],
+      "bytes": 24262072,
+      "stripped_bytes": 24262072
+     }
+    },
+    "bytes": 40812432,
+    "stripped_bytes": 39775768
+   },
+   {
+    "id": "capi",
+    "label": "proj-rs C library as libproj",
+    "side": "ours",
+    "note": "capi/tests/dist.sh --release; the same C program, proj.db inside the library",
+    "parts": {
+     "code": {
+      "items": [
+       "convert-capi",
+       "libproj.so (without proj.db)"
+      ],
+      "bytes": 9820128,
+      "stripped_bytes": 8764304
+     },
+     "db": {
+      "items": [
+       "proj.db, inside libproj"
+      ],
+      "bytes": 10551296,
+      "stripped_bytes": 10551296
+     },
+     "libs": {
+      "items": [
+       "libssl.so.3",
+       "libcrypto.so.3"
+      ],
+      "bytes": 6005912,
+      "stripped_bytes": 6005912
+     }
+    },
+    "bytes": 26377336,
+    "stripped_bytes": 25321512
+   },
+   {
+    "id": "ours",
+    "label": "proj-rs, Rust program",
+    "side": "ours",
+    "note": "proj-rs, static SQLite and proj.db inside the program",
+    "parts": {
+     "code": {
+      "items": [
+       "footprint-rs (without proj.db)"
+      ],
+      "bytes": 8205048,
+      "stripped_bytes": 7390744
+     },
+     "db": {
+      "items": [
+       "proj.db, inside the program"
+      ],
+      "bytes": 10551296,
+      "stripped_bytes": 10551296
+     },
+     "libs": {
+      "items": [
+       "libssl.so.3",
+       "libcrypto.so.3"
+      ],
+      "bytes": 6005912,
+      "stripped_bytes": 6005912
+     }
+    },
+    "bytes": 24762256,
+    "stripped_bytes": 23947952
+   }
+  ],
+  "embedded_db_bytes": 10551296,
+  "empty_rust_program": {
+   "name": "empty-rs",
+   "role": "empty Rust program",
+   "bytes": 412928,
+   "stripped_bytes": 319680
+  }
+ },
+ "memory": {
+  "runs": 5,
+  "points": 1000000,
+  "statistic": "median",
+  "scenarios": [
+   {
+    "id": "empty",
+    "label": "process start, nothing created",
+    "proj": {
+     "peak_rss_kb": 5776,
+     "runs_kb": [
+      5772,
+      5776,
+      5776,
+      5776,
+      5836
+     ],
+     "peak_heap_bytes": 139565
+    },
+    "proj_full": {
+     "peak_rss_kb": 12444,
+     "runs_kb": [
+      12392,
+      12440,
+      12444,
+      12468,
+      12476
+     ],
+     "peak_heap_bytes": 249456
+    },
+    "capi": {
+     "peak_rss_kb": 4328,
+     "runs_kb": [
+      4268,
+      4308,
+      4328,
+      4332,
+      4332
+     ],
+     "peak_heap_bytes": 4096
+    },
+    "ours": {
+     "peak_rss_kb": 4724,
+     "runs_kb": [
+      4668,
+      4716,
+      4724,
+      4732,
+      4848
+     ],
+     "peak_heap_bytes": 2601
+    },
+    "ok": 0,
+    "fail": 0
+   },
+   {
+    "id": "create",
+    "label": "create the 4326 \u2192 2154 transform",
+    "proj": {
+     "peak_rss_kb": 15096,
+     "runs_kb": [
+      15020,
+      15032,
+      15096,
+      15108,
+      15112
+     ],
+     "peak_heap_bytes": 5782346
+    },
+    "proj_full": {
+     "peak_rss_kb": 21684,
+     "runs_kb": [
+      21620,
+      21668,
+      21684,
+      21708,
+      21716
+     ],
+     "peak_heap_bytes": 5892297
+    },
+    "capi": {
+     "peak_rss_kb": 36152,
+     "runs_kb": [
+      36124,
+      36148,
+      36152,
+      36156,
+      36164
+     ],
+     "peak_heap_bytes": 14626739
+    },
+    "ours": {
+     "peak_rss_kb": 35172,
+     "runs_kb": [
+      35064,
+      35156,
+      35172,
+      35180,
+      35224
+     ],
+     "peak_heap_bytes": 14626301
+    },
+    "ok": 0,
+    "fail": 0
+   },
+   {
+    "id": "points",
+    "label": "create + 1,000,000 points, one at a time",
+    "proj": {
+     "peak_rss_kb": 15112,
+     "runs_kb": [
+      15100,
+      15104,
+      15112,
+      15112,
+      15116
+     ],
+     "peak_heap_bytes": 5782346
+    },
+    "proj_full": {
+     "peak_rss_kb": 21664,
+     "runs_kb": [
+      21604,
+      21648,
+      21664,
+      21712,
+      21712
+     ],
+     "peak_heap_bytes": 5892297
+    },
+    "capi": {
+     "peak_rss_kb": 36208,
+     "runs_kb": [
+      36148,
+      36152,
+      36208,
+      36208,
+      36224
+     ],
+     "peak_heap_bytes": 14626739
+    },
+    "ours": {
+     "peak_rss_kb": 35308,
+     "runs_kb": [
+      35236,
+      35248,
+      35308,
+      35308,
+      35344
+     ],
+     "peak_heap_bytes": 14626301
+    },
+    "ok": 1000000,
+    "fail": 0
+   },
+   {
+    "id": "array",
+    "label": "create + 1,000,000 points, one array",
+    "proj": {
+     "peak_rss_kb": 30552,
+     "runs_kb": [
+      30472,
+      30552,
+      30552,
+      30556,
+      30556
+     ],
+     "peak_heap_bytes": 21385754
+    },
+    "proj_full": {
+     "peak_rss_kb": 37300,
+     "runs_kb": [
+      37232,
+      37264,
+      37300,
+      37316,
+      37320
+     ],
+     "peak_heap_bytes": 21495705
+    },
+    "capi": {
+     "peak_rss_kb": 51596,
+     "runs_kb": [
+      51564,
+      51588,
+      51596,
+      51616,
+      51640
+     ],
+     "peak_heap_bytes": 16110939
+    },
+    "ours": {
+     "peak_rss_kb": 97676,
+     "runs_kb": [
+      97544,
+      97672,
+      97676,
+      97684,
+      97712
+     ],
+     "peak_heap_bytes": 64104142
+    },
+    "ok": 1000000,
+    "fail": 0
+   },
+   {
+    "id": "multi",
+    "label": "4267 \u2192 4326 (several candidates) + 1,000,000 points, one at a time",
+    "proj": {
+     "peak_rss_kb": 16724,
+     "runs_kb": [
+      16724,
+      16724,
+      16724,
+      16724,
+      16736
+     ],
+     "peak_heap_bytes": 7048266
+    },
+    "proj_full": {
+     "peak_rss_kb": 23384,
+     "runs_kb": [
+      23268,
+      23312,
+      23384,
+      23384,
+      23420
+     ],
+     "peak_heap_bytes": 7149633
+    },
+    "capi": {
+     "peak_rss_kb": 53636,
+     "runs_kb": [
+      53580,
+      53584,
+      53636,
+      53636,
+      53636
+     ],
+     "peak_heap_bytes": 30457995
+    },
+    "ours": {
+     "peak_rss_kb": 52496,
+     "runs_kb": [
+      52428,
+      52492,
+      52496,
+      52592,
+      52652
+     ],
+     "peak_heap_bytes": 30457656
+    },
+    "ok": 1000000,
+    "fail": 0
+   }
+  ]
+ }
+}

@@ -157,7 +157,8 @@ def render_memory(data, theme):
     palette = THEMES[theme]
     scenarios = data["memory"]["scenarios"]
     ticks = axis_ticks(max(max(s["proj"]["peak_rss_kb"], s["ours"]["peak_rss_kb"]) for s in scenarios) / 1024)
-    scale = (BAR_RIGHT - BAR_LEFT) / ticks[-1]
+    right = BAR_RIGHT - 60
+    scale = (right - BAR_LEFT) / ticks[-1]
     title = "Peak memory of the same conversions, proj-rs against PROJ 9.9.0"
     subtitle = (
         f"Peak resident memory of a process that runs one scenario, the median of {data['memory']['runs']} runs, "
@@ -181,7 +182,7 @@ def render_memory(data, theme):
             f'<text x="{f(tx)}" y="{f(bottom + 16)}" font-size="11.5" text-anchor="middle" class="d v">'
             f"{mib_ticks_text(tick) if tick else '0'}</text>"
         )
-    out.append(f'<text x="{BAR_RIGHT + 24}" y="{f(bottom + 16)}" font-size="11.5" class="d">MiB</text>')
+    out.append(f'<text x="{right + 24}" y="{f(bottom + 16)}" font-size="11.5" class="d">MiB</text>')
     for scenario, gy in groups:
         mid = gy + bar_h + bar_gap / 2
         first, second = SCENARIO_ROWS.get(scenario["id"], (scenario["label"], ""))
@@ -211,17 +212,27 @@ def render_memory(data, theme):
     return document(title, out, y - 4, palette)
 
 
+def named_bytes(data, install, prefixes):
+    sizes = {f["name"]: f["stripped_bytes"] for f in data["size"]["files"]}
+    names = [n for n in install["parts"]["libs"]["items"] if n.startswith(prefixes)]
+    return sum(sizes[n] for n in names) if names else None
+
+
 def size_table(data):
     lines = [
-        "| Install | Program and library | proj.db | Other shared libraries | Total, stripped | Total, as built |",
-        "|---|---:|---:|---:|---:|---:|",
+        "| Install | Program and library | proj.db | Other shared libraries | of which OpenSSL | "
+        "of which libcurl | Total, stripped | Total, as built |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for install in data["size"]["installs"]:
         first, second = ROWS[install["id"]]
         parts = install["parts"]
+        ssl = named_bytes(data, install, ("libssl", "libcrypto"))
+        curl = named_bytes(data, install, ("libcurl",))
         lines.append(
             f"| {first}, {second} | {mib(parts['code']['stripped_bytes'])} | {mib(parts['db']['stripped_bytes'])} "
-            f"| {mib(parts['libs']['stripped_bytes'])} | **{mib(install['stripped_bytes'])}** "
+            f"| {mib(parts['libs']['stripped_bytes'])} | {'none' if ssl is None else mib(ssl)} "
+            f"| {'none' if curl is None else mib(curl)} | **{mib(install['stripped_bytes'])}** "
             f"| {mib(install['bytes'])} |"
         )
     return "\n".join(lines)
@@ -277,7 +288,8 @@ def block(data):
         "</picture>",
         "",
         f"On disk, a Rust program with proj-rs is {mib(ours['stripped_bytes'])} with its libraries, "
-        f"`proj.db` included ({mib(db)} of it): "
+        f"`proj.db` included ({mib(db)} of it) and the OpenSSL libraries of its HTTPS grid download "
+        f"({mib(ours['parts']['libs']['stripped_bytes'])}, `native-tls` is not an optional dependency): "
         f"{smaller_than(ours['stripped_bytes'], proj['stripped_bytes'])} a C program with PROJ 9.9.0 built "
         f"as in the speed comparison ({mib(proj['stripped_bytes'])}), and "
         f"{smaller_than(ours['stripped_bytes'], full['stripped_bytes'])} one with a PROJ built with TIFF "
@@ -304,6 +316,11 @@ def block(data):
         f"`{data['commit']}`, `{data['machine']}`.",
         "",
         size_table(data),
+        "",
+        "OpenSSL is `libssl` plus `libcrypto`, already inside the third column. proj-rs links it for its "
+        "HTTPS grid download; PROJ pulls it only through libcurl, when built with curl, together with the "
+        "other libraries of curl (`libnghttp2`, `libssh`, `libgssapi_krb5`, `libldap`, `libgnutls` and more), "
+        "which count in the third column but not in the libcurl column.",
         "",
         "Shared libraries counted in the third column:",
         "",

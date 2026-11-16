@@ -378,9 +378,6 @@ build, with a clear error.
 </picture>
 <!-- bench-compare:end -->
 
-<!-- bench-footprint:start -->
-<!-- bench-footprint:end -->
-
 <!-- bench-how-fast:start -->
 These numbers are PROJ-RS v1's. The optimisation work (wider SIMD, GPU) comes in the versions after it.
 
@@ -431,6 +428,69 @@ Ten slowest operations of the catalogue (same line, a 128-point grid, no libproj
 
 </details>
 <!-- bench-how-fast:end -->
+
+<!-- bench-footprint:start -->
+**Size and memory.** The same conversion, EPSG:4326 to EPSG:2154, measured on the same machine (Linux x86-64, glibc), proj-rs against PROJ 9.9.0.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="bench/size-dark.svg">
+  <img src="bench/size-light.svg" alt="Stacked bar chart: size on disk of the install needed to convert EPSG:4326 to EPSG:2154, PROJ 9.9.0 and proj-rs" width="100%">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="bench/memory-dark.svg">
+  <img src="bench/memory-light.svg" alt="Bar chart: peak memory of five scenarios, proj-rs next to PROJ 9.9.0" width="100%">
+</picture>
+
+On disk, a Rust program with proj-rs is 22.8 MiB with its libraries, `proj.db` included (10.1 MiB of it) and the OpenSSL libraries of its HTTPS grid download (5.7 MiB, `native-tls` is not an optional dependency): 1.2× larger than a C program with PROJ 9.9.0 built as in the speed comparison (18.6 MiB), and 1.7× smaller than one with a PROJ built with TIFF and curl (37.9 MiB). The code of proj-rs alone, `proj.db` left out, is 7.0 MiB; an empty Rust program is 0.3 MiB.
+
+In memory, creating the transform peaks at 34.3 MiB for proj-rs and 14.7 MiB for PROJ (2.3× more memory). With a million points one at a time it is 34.5 MiB and 14.8 MiB; as one array, 95.4 MiB and 29.8 MiB, the array of points itself being 15.3 MiB; with several candidate operations (EPSG:4267 to 4326), 51.3 MiB and 16.3 MiB.
+
+<details>
+<summary><b>Size and memory, component by component</b></summary>
+
+<br>
+
+Size on disk, after `strip --strip-unneeded`. A program is counted with every shared library `ldd` lists for it, except the C library and the unwinder (libc, libm, libdl, libpthread, librt, libutil, libgcc_s), on both sides. Nov 16 22:16 UTC, commit `253877d`, `cloud-4c-avx512`.
+
+| Install | Program and library | proj.db | Other shared libraries | of which OpenSSL | of which libcurl | Total, stripped | Total, as built |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| PROJ 9.9.0, C program + libproj, TIFF and curl off | 4.7 MiB | 10.1 MiB | 3.9 MiB | none | none | **18.6 MiB** | 19.6 MiB |
+| PROJ 9.9.0, C program + libproj, TIFF and curl on | 4.7 MiB | 10.1 MiB | 23.1 MiB | 5.7 MiB | 0.7 MiB | **37.9 MiB** | 38.9 MiB |
+| proj-rs as libproj, same C program + libproj of capi/ | 8.4 MiB | 10.1 MiB | 5.7 MiB | 5.7 MiB | none | **24.1 MiB** | 25.2 MiB |
+| proj-rs, Rust program, proj.db inside | 7.0 MiB | 10.1 MiB | 5.7 MiB | 5.7 MiB | none | **22.8 MiB** | 23.6 MiB |
+
+OpenSSL is `libssl` plus `libcrypto`, already inside the third column. proj-rs links it for its HTTPS grid download; PROJ pulls it only through libcurl, when built with curl, together with the other libraries of curl (`libnghttp2`, `libssh`, `libgssapi_krb5`, `libldap`, `libgnutls` and more), which count in the third column but not in the libcurl column.
+
+Shared libraries counted in the third column:
+
+- PROJ 9.9.0, C program + libproj, TIFF and curl off: `libsqlite3.so.0.8.6`, `libstdc++.so.6.0.33`.
+- PROJ 9.9.0, C program + libproj, TIFF and curl on: `libsqlite3.so.0.8.6`, `libtiff.so.6.0.1`, `libcurl.so.4.8.0`, `libstdc++.so.6.0.33`, `libwebp.so.7.1.8`, `libzstd.so.1.5.5`, `liblzma.so.5.4.5`, `libLerc.so.4`, `libjbig.so.0`, `libjpeg.so.8.2.2`, `libdeflate.so.0`, `libz.so.1.3`, `libnghttp2.so.14.26.0`, `libidn2.so.0.4.0`, `librtmp.so.1`, `libssh.so.4.9.6`, `libpsl.so.5.3.4`, `libssl.so.3`, `libcrypto.so.3`, `libgssapi_krb5.so.2.2`, `libldap.so.2.0.200`, `liblber.so.2.0.200`, `libbrotlidec.so.1.1.0`, `libsharpyuv.so.0.0.1`, `libunistring.so.5.0.0`, `libgnutls.so.30.37.1`, `libhogweed.so.6.8`, `libnettle.so.8.8`, `libgmp.so.10.5.0`, `libkrb5.so.3.3`, `libk5crypto.so.3.1`, `libcom_err.so.2.1`, `libkrb5support.so.0.1`, `libsasl2.so.2.0.25`, `libbrotlicommon.so.1.1.0`, `libp11-kit.so.0.3.1`, `libtasn1.so.6.6.3`, `libkeyutils.so.1.10`, `libresolv.so.2`, `libffi.so.8.1.4`.
+- proj-rs as libproj, same C program + libproj of capi/: `libssl.so.3`, `libcrypto.so.3`.
+- proj-rs, Rust program, proj.db inside: `libssl.so.3`, `libcrypto.so.3`.
+
+The Rust program is 17.1 MiB stripped, of which 10.1 MiB is the embedded `proj.db`; the empty Rust program of the same toolchain is 0.3 MiB. The code of proj-rs thus adds 6.7 MiB, SQLite and the TIFF reader included.
+
+| Peak resident memory | PROJ 9.9.0 | PROJ 9.9.0, TIFF and curl | proj-rs C library | proj-rs (Rust) |
+|---|---:|---:|---:|---:|
+| process start, nothing created | 5.6 MiB | 12.2 MiB | 4.2 MiB | 4.6 MiB |
+| create the 4326 → 2154 transform | 14.7 MiB | 21.2 MiB | 35.3 MiB | 34.3 MiB |
+| create + 1,000,000 points, one at a time | 14.8 MiB | 21.2 MiB | 35.4 MiB | 34.5 MiB |
+| create + 1,000,000 points, one array | 29.8 MiB | 36.4 MiB | 50.4 MiB | 95.4 MiB |
+| 4267 → 4326 (several candidates) + 1,000,000 points, one at a time | 16.3 MiB | 22.8 MiB | 52.4 MiB | 51.3 MiB |
+
+| Peak heap (valgrind massif) | PROJ 9.9.0 | PROJ 9.9.0, TIFF and curl | proj-rs C library | proj-rs (Rust) |
+|---|---:|---:|---:|---:|
+| process start, nothing created | 0.1 MiB | 0.2 MiB | 0.0 MiB | 0.0 MiB |
+| create the 4326 → 2154 transform | 5.5 MiB | 5.6 MiB | 13.9 MiB | 13.9 MiB |
+| create + 1,000,000 points, one at a time | 5.5 MiB | 5.6 MiB | 13.9 MiB | 13.9 MiB |
+| create + 1,000,000 points, one array | 20.4 MiB | 20.5 MiB | 15.4 MiB | 61.1 MiB |
+| 4267 → 4326 (several candidates) + 1,000,000 points, one at a time | 6.7 MiB | 6.8 MiB | 29.0 MiB | 29.0 MiB |
+
+Median of 5 runs for the resident memory (`VmHWM`, read by the program itself); the heap is one massif run. Each process runs one scenario on the same 1,000,000 points, and its output is checked against PROJ's. Every process starts with its own loader and libraries, so the first row is the floor. What exactly is measured, and how to rerun it: [docs/BENCHMARK.md](docs/BENCHMARK.md).
+
+</details>
+<!-- bench-footprint:end -->
 
 ## Over time
 
