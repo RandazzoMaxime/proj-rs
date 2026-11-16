@@ -1883,6 +1883,13 @@ fn export_vertical_datum(datum: &VerticalReferenceFrame, formatter: &mut WktForm
             formatter.add_quoted(anchor);
             formatter.end_node();
         }
+        if formatter.keywords_2019 {
+            if let Some(epoch) = datum.identified.anchor_epoch {
+                formatter.start_node("ANCHOREPOCH", NodeId::Absent);
+                formatter.add_number(epoch);
+                formatter.end_node();
+            }
+        }
     } else if !formatter.esri {
         formatter.add_raw(&datum.wkt1_type);
         if let Some(grid) = formatter.vdatum_grid.clone() {

@@ -4,9 +4,9 @@
 //!
 //! An uncompressed chunk without predictor is read as its bytes: its `TileByteCounts` (or
 //! `StripByteCounts`) size, from its offset, so the ranges asked of the callbacks are PROJ's. A
-//! compressed chunk, or one with a predictor, is read the same way, and then decoded by the TIFF
-//! decoder, which undoes the compression and the predictor. Its bytes are read once: the decoder
-//! takes them from a window, and reads nothing else.
+//! compressed chunk, or one with a predictor, is read the same way, and then decoded: by the TIFF
+//! decoder for Deflate, by [`crate::projections::tiff_codec`] for LZW and PackBits. Its bytes are
+//! read once.
 //!
 //! A sample of a chunk that is not read yet gives `None`, and the chunk is noted. [`with_tiles`]
 //! then reads the noted chunks and runs the point again, so that the answer is the one a grid read
@@ -17,14 +17,18 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use tiff::decoder::Decoder;
 
-use super::geotiff::{self, ByteOrder};
+use super::geotiff;
 use crate::engine::TransformError;
 use crate::network_chunks::{RemoteFile, RemoteReader};
+use crate::projections::tiff_codec::predictor::{self, Predictor};
+use crate::projections::tiff_codec::{lzw, packbits, ByteOrder};
 
-/// The samples of one image: in memory, or in the remote file, by chunk.
+/// The samples of one image: in memory, in the remote file by chunk, or not read at all (JPEG and
+/// CCITT, see `is_undecoded`), where every value is `inf` as libproj 9.9.0 gives it.
 pub(super) enum Samples {
     Flat(Vec<f32>),
     Lazy(Arc<LazyIfd>),
+    Undecoded,
 }
 
 impl Samples {
@@ -49,7 +53,7 @@ impl Samples {
                 values.get(index).copied()
             }
             Self::Lazy(lazy) => {
-                let (chunk, inside) = lazy.locate(x, y, sample)?;
+                let (chunk, inside) = lazy.geo.locate(x, y, sample)?;
                 match lazy.tiles.get(chunk)?.get() {
                     Some(values) => values.get(inside).copied(),
                     None => {
@@ -58,6 +62,7 @@ impl Samples {
                     }
                 }
             }
+            Self::Undecoded => Some(f32::INFINITY),
         }
     }
 }
@@ -80,11 +85,20 @@ pub(super) enum Storage {
 }
 
 /// How a chunk is read: its bytes as they are, which is an uncompressed chunk without predictor,
-/// or its bytes decoded by the TIFF decoder, which undoes the compression and the predictor.
+/// its bytes decoded by the TIFF decoder, or its bytes decoded by [`decode_coded`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Reading {
     Raw,
     Decoded,
+    Coded(Coded),
+}
+
+/// A compression that the TIFF decoder of this build does not read: LZW, with its predictor, or
+/// PackBits. libtiff applies the predictor to LZW only, so PackBits chunks are read without one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Coded {
+    Lzw(Predictor),
+    PackBits,
 }
 
 /// The layout of one image of a TIFF, as its tags give it.
@@ -109,109 +123,86 @@ pub(super) struct ImageTiles {
     pub(super) places: Vec<(u64, u64)>,
 }
 
-/// One image of a remote TIFF, whose chunks are read on first need.
-pub(super) struct LazyIfd {
-    file: Arc<Mutex<RemoteFile>>,
-    /// The image width and height, which bound the chunks at the right and bottom edges.
-    width: usize,
-    height: usize,
-    tile_w: usize,
-    tile_h: usize,
+/// The cut of an image into chunks: how many chunks across and down, and how many samples each
+/// one holds.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Geometry {
+    pub(super) width: usize,
+    pub(super) height: usize,
+    /// The chunk size: a tile, or a strip of the image width.
+    pub(super) tile_w: usize,
+    pub(super) tile_h: usize,
     /// Chunks per row of a plane.
-    across: usize,
+    pub(super) across: usize,
     /// Chunks per plane: `across` times the chunk rows.
-    per_plane: usize,
-    layout: Layout,
-    spp: usize,
-    /// The number of samples of one chunk: `spp` when chunky, one when planar.
-    chunk_spp: usize,
-    storage: Storage,
-    reading: Reading,
-    ifd: usize,
-    bits: u32,
-    format: u32,
-    order: ByteOrder,
-    /// The number of samples of one whole tile: `tile_w * tile_h * chunk_spp`.
-    tile_len: usize,
-    places: Vec<(u64, u64)>,
-    /// The decoded samples of each chunk, once read. A chunk holds its rows `tile_w` pixels
-    /// apart, `chunk_spp` samples per pixel.
-    tiles: Vec<OnceLock<Box<[f32]>>>,
+    pub(super) per_plane: usize,
+    pub(super) layout: Layout,
+    pub(super) spp: usize,
+    /// The number of samples of one chunk pixel: `spp` when chunky, one when planar.
+    pub(super) chunk_spp: usize,
+    pub(super) storage: Storage,
 }
 
-impl LazyIfd {
-    pub(super) fn new(file: Arc<Mutex<RemoteFile>>, image: ImageTiles) -> Result<Self, ()> {
-        let width = usize::try_from(image.size.0).map_err(|_| ())?;
-        let height = usize::try_from(image.size.1).map_err(|_| ())?;
-        let tile_w = usize::try_from(image.tile.0).map_err(|_| ())?;
-        // A single strip may be `RowsPerStrip` = 2^32 - 1: the rows of the image are the strip.
-        let tile_h = usize::try_from(image.tile.1).map_err(|_| ())?;
-        let tile_h = match image.layout {
+impl Geometry {
+    /// The cut of an image of `size` pixels into chunks of `tile` pixels. A strip's height is
+    /// clamped to the image: a single strip may be `RowsPerStrip` = 2^32 - 1.
+    pub(super) fn new(
+        size: (u32, u32),
+        tile: (u32, u32),
+        layout: Layout,
+        spp: usize,
+        storage: Storage,
+    ) -> Result<Self, ()> {
+        let width = usize::try_from(size.0).map_err(|_| ())?;
+        let height = usize::try_from(size.1).map_err(|_| ())?;
+        let tile_w = usize::try_from(tile.0).map_err(|_| ())?;
+        let tile_h = usize::try_from(tile.1).map_err(|_| ())?;
+        let tile_h = match layout {
             Layout::Tiles => tile_h,
             Layout::Strips => tile_h.min(height),
         };
-        if width == 0 || height == 0 || tile_w == 0 || tile_h == 0 || image.spp == 0 {
+        if width == 0 || height == 0 || tile_w == 0 || tile_h == 0 || spp == 0 {
             return Err(());
         }
-        if image.layout == Layout::Strips && tile_w != width {
+        if layout == Layout::Strips && tile_w != width {
             return Err(());
         }
         let across = width.div_ceil(tile_w);
         let per_plane = across.checked_mul(height.div_ceil(tile_h)).ok_or(())?;
-        let (planes, chunk_spp) = match image.storage {
-            Storage::Chunky => (1, image.spp),
-            Storage::Separate => (image.spp, 1),
+        let chunk_spp = match storage {
+            Storage::Chunky => spp,
+            Storage::Separate => 1,
         };
-        let count = per_plane.checked_mul(planes).ok_or(())?;
-        if image.places.len() != count {
-            return Err(());
-        }
-        let tile_len = tile_w
+        tile_w
             .checked_mul(tile_h)
             .and_then(|pixels| pixels.checked_mul(chunk_spp))
             .ok_or(())?;
         Ok(Self {
-            file,
             width,
             height,
             tile_w,
             tile_h,
             across,
             per_plane,
-            layout: image.layout,
-            spp: image.spp,
+            layout,
+            spp,
             chunk_spp,
-            storage: image.storage,
-            reading: image.reading,
-            ifd: image.ifd,
-            bits: image.bits,
-            format: image.format,
-            order: image.order,
-            tile_len,
-            places: image.places,
-            tiles: (0..count).map(|_| OnceLock::new()).collect(),
+            storage,
         })
     }
 
-    /// Whether the file of this image changed while it was open (see `RemoteFile::has_changed`).
-    fn has_changed(&self) -> bool {
-        self.file
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .has_changed()
-    }
-
-    /// Closes the file of this image, if it is open. A chunk read after this opens it again.
-    pub(super) fn release(&self) {
-        self.file
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .release();
+    /// The number of chunks of the image, all planes together.
+    pub(super) fn chunk_count(&self) -> Result<usize, ()> {
+        let planes = match self.storage {
+            Storage::Chunky => 1,
+            Storage::Separate => self.spp,
+        };
+        self.per_plane.checked_mul(planes).ok_or(())
     }
 
     /// The chunk that holds sample `sample` of pixel `(x, y)`, and the position of the sample in
     /// that chunk.
-    fn locate(&self, x: usize, y: usize, sample: usize) -> Option<(usize, usize)> {
+    pub(super) fn locate(&self, x: usize, y: usize, sample: usize) -> Option<(usize, usize)> {
         if sample >= self.spp {
             return None;
         }
@@ -231,13 +222,13 @@ impl LazyIfd {
     }
 
     /// The chunk of `chunk` within its plane.
-    fn plane_tile(&self, chunk: usize) -> usize {
+    pub(super) fn plane_tile(&self, chunk: usize) -> usize {
         chunk % self.per_plane
     }
 
     /// The width and the height of the pixels of the chunk `tile` of a plane that are in the image:
     /// a whole tile, or less at the right and bottom edges. A strip is the image width.
-    fn data_dims(&self, tile: usize) -> (usize, usize) {
+    pub(super) fn data_dims(&self, tile: usize) -> (usize, usize) {
         let col = tile % self.across;
         let row = tile / self.across;
         let width = self
@@ -253,14 +244,111 @@ impl LazyIfd {
 
     /// The number of samples a raw read of the chunk holds: a whole tile, or for a strip the rows
     /// that the image has in it.
-    fn expected_len(&self, tile: usize) -> usize {
+    pub(super) fn expected_len(&self, tile: usize) -> usize {
         match self.layout {
-            Layout::Tiles => self.tile_len,
+            Layout::Tiles => self.tile_w * self.tile_h * self.chunk_spp,
             Layout::Strips => {
                 let (width, rows) = self.data_dims(tile);
                 width * rows * self.chunk_spp
             }
         }
+    }
+}
+
+/// What [`decode_coded`] needs of a chunk: its length in samples, and how its samples are laid out.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Chunk {
+    pub(super) len: usize,
+    /// The samples of one row of the chunk, as the file stores them: `tile_w * chunk_spp`.
+    pub(super) row_samples: usize,
+    pub(super) chunk_spp: usize,
+    pub(super) bits: u32,
+    pub(super) format: u32,
+    pub(super) order: ByteOrder,
+}
+
+/// The samples of a chunk stored with `coded`, as `f32`: its codes decoded, its predictor undone
+/// for LZW, and its samples read in the file's byte order.
+pub(super) fn decode_coded(bytes: &[u8], coded: Coded, chunk: Chunk) -> Result<Vec<f32>, ()> {
+    let sample_size = usize::try_from(chunk.bits / 8).map_err(|_| ())?;
+    let expected = chunk.len.checked_mul(sample_size).ok_or(())?;
+    let mut raw = match coded {
+        Coded::Lzw(_) => lzw::decode(bytes, expected)?,
+        Coded::PackBits => packbits::decode(bytes, expected)?,
+    };
+    if let Coded::Lzw(predictor) = coded {
+        let row_bytes = chunk.row_samples.checked_mul(sample_size).ok_or(())?;
+        predictor::undo_predictor(
+            &mut raw,
+            row_bytes,
+            chunk.chunk_spp,
+            chunk.bits,
+            predictor,
+            chunk.order,
+        )?;
+    }
+    let values = geotiff::raw_samples(&raw, chunk.format, chunk.bits, chunk.order)?;
+    if values.len() != chunk.len {
+        return Err(());
+    }
+    Ok(values)
+}
+
+/// One image of a remote TIFF, whose chunks are read on first need.
+pub(super) struct LazyIfd {
+    file: Arc<Mutex<RemoteFile>>,
+    geo: Geometry,
+    reading: Reading,
+    ifd: usize,
+    bits: u32,
+    format: u32,
+    order: ByteOrder,
+    places: Vec<(u64, u64)>,
+    /// The decoded samples of each chunk, once read. A chunk holds its rows `tile_w` pixels
+    /// apart, `chunk_spp` samples per pixel.
+    tiles: Vec<OnceLock<Box<[f32]>>>,
+}
+
+impl LazyIfd {
+    pub(super) fn new(file: Arc<Mutex<RemoteFile>>, image: ImageTiles) -> Result<Self, ()> {
+        let geo = Geometry::new(
+            image.size,
+            image.tile,
+            image.layout,
+            image.spp,
+            image.storage,
+        )?;
+        let count = geo.chunk_count()?;
+        if image.places.len() != count {
+            return Err(());
+        }
+        Ok(Self {
+            file,
+            geo,
+            reading: image.reading,
+            ifd: image.ifd,
+            bits: image.bits,
+            format: image.format,
+            order: image.order,
+            places: image.places,
+            tiles: (0..count).map(|_| OnceLock::new()).collect(),
+        })
+    }
+
+    /// Whether the file of this image changed while it was open (see `RemoteFile::has_changed`).
+    fn has_changed(&self) -> bool {
+        self.file
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .has_changed()
+    }
+
+    /// Closes the file of this image, if it is open. A chunk read after this opens it again.
+    pub(super) fn release(&self) {
+        self.file
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .release();
     }
 
     /// Reads `size` bytes at `offset` of the file: a chunk's bytes, one read of the file for the
@@ -288,22 +376,42 @@ impl LazyIfd {
         let values = match self.reading {
             Reading::Raw => self.read_raw(chunk)?,
             Reading::Decoded => self.read_decoded(chunk)?,
+            Reading::Coded(coded) => self.read_coded(chunk, coded)?,
         };
         // A concurrent load of the same chunk gives the same samples: either set is kept.
         let _ = cell.set(values.into_boxed_slice());
         Ok(())
     }
 
-    /// The samples of an uncompressed chunk, as they are in the file.
-    fn read_raw(&self, chunk: usize) -> Result<Vec<f32>, ()> {
+    /// The bytes of chunk `chunk` in the file, as one read.
+    fn chunk_bytes(&self, chunk: usize) -> Result<Vec<u8>, ()> {
         let (offset, count) = *self.places.get(chunk).ok_or(())?;
         let size = usize::try_from(count).map_err(|_| ())?;
-        let bytes = self.read_file(offset, size)?;
+        self.read_file(offset, size)
+    }
+
+    /// The samples of an uncompressed chunk, as they are in the file.
+    fn read_raw(&self, chunk: usize) -> Result<Vec<f32>, ()> {
+        let bytes = self.chunk_bytes(chunk)?;
         let values = geotiff::raw_samples(&bytes, self.format, self.bits, self.order)?;
-        if values.len() != self.expected_len(self.plane_tile(chunk)) {
+        if values.len() != self.geo.expected_len(self.geo.plane_tile(chunk)) {
             return Err(());
         }
         Ok(values)
+    }
+
+    /// The samples of a chunk stored with `coded`, decoded by [`decode_coded`].
+    fn read_coded(&self, index: usize, coded: Coded) -> Result<Vec<f32>, ()> {
+        let bytes = self.chunk_bytes(index)?;
+        let chunk = Chunk {
+            len: self.geo.expected_len(self.geo.plane_tile(index)),
+            row_samples: self.geo.tile_w * self.geo.chunk_spp,
+            chunk_spp: self.geo.chunk_spp,
+            bits: self.bits,
+            format: self.format,
+            order: self.order,
+        };
+        decode_coded(&bytes, coded, chunk)
     }
 
     /// The samples of a compressed chunk, or one with a predictor, decoded by the TIFF decoder. The
@@ -320,8 +428,8 @@ impl LazyIfd {
         let index = u32::try_from(chunk).map_err(|_| ())?;
         let decoded = decoder.read_chunk(index).map_err(|_| ())?;
         let values = geotiff::to_f32(decoded)?;
-        let (data_w, data_h) = self.data_dims(self.plane_tile(chunk));
-        let row_len = data_w.checked_mul(self.chunk_spp).ok_or(())?;
+        let (data_w, data_h) = self.geo.data_dims(self.geo.plane_tile(chunk));
+        let row_len = data_w.checked_mul(self.geo.chunk_spp).ok_or(())?;
         let rows_len = row_len.checked_mul(data_h).ok_or(())?;
         // The decoder's width is the image's: its padding is by column. Its height is not always
         // the image's: `tiff` 0.10.3 takes the bottom padding of a tile of a planar image from the
@@ -330,7 +438,7 @@ impl LazyIfd {
         if row_len == 0 || values.len() < rows_len || values.len() % row_len != 0 {
             return Err(());
         }
-        let stride = self.tile_w.checked_mul(self.chunk_spp).ok_or(())?;
+        let stride = self.geo.tile_w.checked_mul(self.geo.chunk_spp).ok_or(())?;
         let mut out = vec![0.0_f32; stride.checked_mul(data_h).ok_or(())?];
         for (row, source) in values.chunks_exact(row_len).take(data_h).enumerate() {
             let start = row.checked_mul(stride).ok_or(())?;
@@ -405,7 +513,9 @@ pub(super) fn with_tiles_watch<T>(
     answer
 }
 
-/// [`passes`], which stops at the first chunk read that finds its file changed.
+/// [`passes`], which reports a change once the chunks of the pass are read: PROJ finishes the
+/// reads of an interpolation before it checks `hasChanged`, and the later reads of the pass
+/// are in the cache for the reloaded grid.
 fn passes_watch<T>(
     body: &impl Fn() -> Result<T, TransformError>,
 ) -> (Result<T, TransformError>, bool) {
@@ -415,13 +525,15 @@ fn passes_watch<T>(
         if missing.is_empty() {
             return (answer, false);
         }
+        let mut changed = false;
         for (lazy, chunk) in missing {
             if lazy.load(chunk).is_err() {
                 return (Err(TransformError::NetworkUnavailable), false);
             }
-            if lazy.has_changed() {
-                return (Err(TransformError::NetworkUnavailable), true);
-            }
+            changed |= lazy.has_changed();
+        }
+        if changed {
+            return (Err(TransformError::NetworkUnavailable), true);
         }
     }
     (Err(TransformError::NetworkUnavailable), false)

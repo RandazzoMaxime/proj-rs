@@ -244,3 +244,226 @@ fn a_tiled_grid_reads_the_tile_of_each_point() {
     destroyed.push("close".to_owned());
     assert_eq!(journal.calls(), destroyed, "proj_destroy closes the handle");
 }
+
+const LZW_STRIPS_URL: &str = "https://foo/lzw_planar.tif";
+const LZW_TILES_URL: &str = "https://foo/lzw_planar_tiled.tif";
+const LZW_BE_STRIPS_URL: &str = "https://foo/lzw_be_planar.tif";
+const LZW_BE_TILES_URL: &str = "https://foo/lzw_be_planar_tiled.tif";
+const PACKBITS_TILES_URL: &str = "https://foo/packbits_predictor3_planar_tiled.tif";
+
+/// `lzw_predictor3_planar.tif` has the samples of `planar_deflate_predictor3.tif`, bit for bit
+/// (libtiff reads the two to the same floats, `tools/make-lzw-grid.py`). Its values are the
+/// libproj 9.9.0 values of the Deflate grid.
+#[test]
+fn an_lzw_grid_has_the_values_of_the_deflate_one() {
+    let journal = Arc::new(Journal::new(LZW_STRIPS_URL, "lzw_predictor3_planar.tif"));
+    let builder = builder_with(&journal);
+
+    let proj = builder
+        .proj(&format!(
+            "proj=vgridshift grids={LZW_STRIPS_URL} multiplier=1"
+        ))
+        .expect("the LZW grid is opened");
+
+    let (_, _, z) = proj
+        .convert_xyz(20.0 * DEG, 50.0 * DEG, 0.0)
+        .expect("(20, 50) is in the grid");
+    assert_eq!(z, 0.8661957234144211, "libproj 9.9.0 value at (20, 50)");
+    let (_, _, z) = proj
+        .convert_xyz(41.0 * DEG, 37.0 * DEG, 0.0)
+        .expect("(41, 37) is in the grid");
+    assert_eq!(z, 0.6664930284023288, "libproj 9.9.0 value at (41, 37)");
+}
+
+/// The LZW tiled grid has the samples of `planar_deflate_predictor3_tiled.tif`, partial tiles
+/// included: its values are the libproj 9.9.0 values of that grid.
+#[test]
+fn an_lzw_tiled_grid_has_the_values_of_the_deflate_one() {
+    let journal = Arc::new(Journal::new(
+        LZW_TILES_URL,
+        "lzw_predictor3_planar_tiled.tif",
+    ));
+    let builder = builder_with(&journal);
+
+    let proj = builder
+        .proj(&format!(
+            "proj=vgridshift grids={LZW_TILES_URL} multiplier=1"
+        ))
+        .expect("the LZW tiled grid is opened");
+
+    let (_, _, z) = proj
+        .convert_xyz(20.125 * DEG, 49.875 * DEG, 0.0)
+        .expect("(20.125, 49.875) is in the grid");
+    assert_eq!(
+        z, 0.859148681163788,
+        "libproj 9.9.0 value in the interior tile"
+    );
+    let (_, _, z) = proj
+        .convert_xyz(34.625 * DEG, 42.875 * DEG, 0.0)
+        .expect("(34.625, 42.875) is in the grid");
+    assert_eq!(
+        z, 0.880941569805145,
+        "libproj 9.9.0 value in the partial tile"
+    );
+}
+
+/// An LZW strip is read as a Deflate strip is: creation reads the first chunk, and a point reads
+/// the strip of its band. Band 2 (`vertical_offset`) is at file offset 34036, 13502 bytes, in the
+/// chunk at 32768. The calls follow the Deflate grid's model; PROJ's reference has no libtiff, so
+/// they are not PROJ's measured calls.
+#[test]
+fn an_lzw_grid_reads_the_strip_it_needs() {
+    let journal = Arc::new(Journal::new(LZW_STRIPS_URL, "lzw_predictor3_planar.tif"));
+    let builder = builder_with(&journal);
+
+    let proj = builder
+        .proj(&format!(
+            "proj=vgridshift grids={LZW_STRIPS_URL} multiplier=1"
+        ))
+        .expect("the LZW grid is opened");
+    assert_eq!(journal.calls(), creation_calls(LZW_STRIPS_URL), "creation");
+
+    proj.convert_xyz(20.0 * DEG, 50.0 * DEG, 0.0)
+        .expect("(20, 50) is in the grid");
+    let mut after_first_point = creation_calls(LZW_STRIPS_URL);
+    after_first_point.push(format!("open {LZW_STRIPS_URL} 32768 16384"));
+    after_first_point.extend(headers());
+    assert_eq!(
+        journal.calls(),
+        after_first_point,
+        "calls of the first point"
+    );
+
+    proj.convert_xyz(41.0 * DEG, 37.0 * DEG, 0.0)
+        .expect("(41, 37) is in the grid");
+    assert_eq!(
+        journal.calls(),
+        after_first_point,
+        "the second point reads nothing"
+    );
+
+    drop(proj);
+    let mut destroyed = after_first_point;
+    destroyed.push("close".to_owned());
+    assert_eq!(journal.calls(), destroyed, "proj_destroy closes the handle");
+}
+
+/// An LZW tile reads its own bytes: the interior tile of band 2 that holds pixel (40, 40) is tile
+/// 29, at offset 32834, 1304 bytes, in the chunk at 32768. The partial tile at the right edge of
+/// band 2 is tile 35, at 37359, in the same chunk: no call for it. Model as above.
+#[test]
+fn an_lzw_tiled_grid_reads_the_tile_it_needs() {
+    let journal = Arc::new(Journal::new(
+        LZW_TILES_URL,
+        "lzw_predictor3_planar_tiled.tif",
+    ));
+    let builder = builder_with(&journal);
+
+    let proj = builder
+        .proj(&format!(
+            "proj=vgridshift grids={LZW_TILES_URL} multiplier=1"
+        ))
+        .expect("the LZW tiled grid is opened");
+    assert_eq!(journal.calls(), creation_calls(LZW_TILES_URL), "creation");
+
+    proj.convert_xyz(20.125 * DEG, 49.875 * DEG, 0.0)
+        .expect("(20.125, 49.875) is in the grid");
+    let mut after_first_point = creation_calls(LZW_TILES_URL);
+    after_first_point.push(format!("open {LZW_TILES_URL} 32768 16384"));
+    after_first_point.extend(headers());
+    assert_eq!(
+        journal.calls(),
+        after_first_point,
+        "calls of the first point"
+    );
+
+    proj.convert_xyz(34.625 * DEG, 42.875 * DEG, 0.0)
+        .expect("(34.625, 42.875) is in the grid");
+    assert_eq!(
+        journal.calls(),
+        after_first_point,
+        "the second point reads nothing"
+    );
+}
+
+/// A big-endian LZW grid has the samples of the little-endian one: the same values, read chunk by
+/// chunk from the network. The values are the libproj 9.9.0 values of the Deflate grid.
+#[test]
+fn a_big_endian_lzw_grid_has_the_values_of_the_deflate_one() {
+    let journal = Arc::new(Journal::new(
+        LZW_BE_STRIPS_URL,
+        "lzw_be_predictor3_planar.tif",
+    ));
+    let builder = builder_with(&journal);
+
+    let proj = builder
+        .proj(&format!(
+            "proj=vgridshift grids={LZW_BE_STRIPS_URL} multiplier=1"
+        ))
+        .expect("the big-endian LZW grid is opened");
+
+    let (_, _, z) = proj
+        .convert_xyz(20.0 * DEG, 50.0 * DEG, 0.0)
+        .expect("(20, 50) is in the grid");
+    assert_eq!(z, 0.8661957234144211, "libproj 9.9.0 value at (20, 50)");
+    let (_, _, z) = proj
+        .convert_xyz(41.0 * DEG, 37.0 * DEG, 0.0)
+        .expect("(41, 37) is in the grid");
+    assert_eq!(z, 0.6664930284023288, "libproj 9.9.0 value at (41, 37)");
+}
+
+/// The big-endian tiled LZW grid, partial tiles included, read tile by tile from the network.
+#[test]
+fn a_big_endian_lzw_tiled_grid_has_the_values_of_the_deflate_one() {
+    let journal = Arc::new(Journal::new(
+        LZW_BE_TILES_URL,
+        "lzw_be_predictor3_planar_tiled.tif",
+    ));
+    let builder = builder_with(&journal);
+
+    let proj = builder
+        .proj(&format!(
+            "proj=vgridshift grids={LZW_BE_TILES_URL} multiplier=1"
+        ))
+        .expect("the big-endian tiled LZW grid is opened");
+
+    let (_, _, z) = proj
+        .convert_xyz(20.125 * DEG, 49.875 * DEG, 0.0)
+        .expect("(20.125, 49.875) is in the grid");
+    assert_eq!(
+        z, 0.859148681163788,
+        "libproj 9.9.0 value in the interior tile"
+    );
+    let (_, _, z) = proj
+        .convert_xyz(34.625 * DEG, 42.875 * DEG, 0.0)
+        .expect("(34.625, 42.875) is in the grid");
+    assert_eq!(
+        z, 0.880941569805145,
+        "libproj 9.9.0 value in the partial tile"
+    );
+}
+
+/// A PackBits grid with a predictor tag reads its samples without the predictor, as libtiff does:
+/// libproj 9.9.0 gives 4.76e-35 at (21.3, 45.7), where the predicted grid gives 0.5760.
+#[test]
+fn a_packbits_grid_ignores_its_predictor_over_the_network() {
+    let journal = Arc::new(Journal::new(
+        PACKBITS_TILES_URL,
+        "packbits_predictor3_planar_tiled.tif",
+    ));
+    let builder = builder_with(&journal);
+
+    let proj = builder
+        .proj(&format!(
+            "proj=vgridshift grids={PACKBITS_TILES_URL} multiplier=1"
+        ))
+        .expect("the PackBits grid is opened");
+
+    let (_, _, z) = proj
+        .convert_xyz(21.3 * DEG, 45.7 * DEG, 0.0)
+        .expect("(21.3, 45.7) is in the grid");
+    assert_eq!(
+        z, 4.759_953_529_565_562_3e-35,
+        "libproj 9.9.0 value at (21.3, 45.7)"
+    );
+}

@@ -15,6 +15,48 @@ pub(crate) fn geotiff(
     samples_per_pixel: u16,
     samples: &[f32],
 ) -> Vec<u8> {
+    tiff(
+        width,
+        height,
+        (west, north),
+        step,
+        samples_per_pixel,
+        samples,
+        None,
+    )
+}
+
+/// [`geotiff`] with a GDAL metadata tag (42112) holding `metadata`, the XML that `gridshift`
+/// reads its `TYPE` from.
+pub(crate) fn geotiff_gdal(
+    width: u32,
+    height: u32,
+    corner: (f64, f64),
+    step: f64,
+    samples_per_pixel: u16,
+    samples: &[f32],
+    metadata: &str,
+) -> Vec<u8> {
+    tiff(
+        width,
+        height,
+        corner,
+        step,
+        samples_per_pixel,
+        samples,
+        Some(metadata),
+    )
+}
+
+fn tiff(
+    width: u32,
+    height: u32,
+    (west, north): (f64, f64),
+    step: f64,
+    samples_per_pixel: u16,
+    samples: &[f32],
+    metadata: Option<&str>,
+) -> Vec<u8> {
     assert!((1..=3).contains(&samples_per_pixel), "1 to 3 samples");
     assert_eq!(
         samples.len(),
@@ -74,7 +116,6 @@ pub(crate) fn geotiff(
     }
     // BlackIsZero for every sample count: the reference reader refuses RGB for float32 grids.
     let photometric = 1;
-    let ifd_offset = u32::try_from(out.len()).expect("offset");
     let entries: [(u16, u16, u32, u32); 13] = [
         (256, 4, 1, width),
         (257, 4, 1, height),
@@ -91,9 +132,21 @@ pub(crate) fn geotiff(
         (33_922, 12, 6, tie_offset),
     ];
     let geokeys = (34_735_u16, 3_u16, 16_u32, keys_offset);
+    let mut entries = entries.to_vec();
+    if let Some(text) = metadata {
+        if out.len() % 2 == 1 {
+            out.push(0);
+        }
+        let meta_offset = u32::try_from(out.len()).expect("offset");
+        out.extend_from_slice(text.as_bytes());
+        out.push(0);
+        let meta_len = u32::try_from(text.len() + 1).expect("metadata");
+        entries.push((42_112, 2, meta_len, meta_offset));
+    }
+    let ifd_offset = u32::try_from(out.len()).expect("offset");
     let count = u16::try_from(entries.len() + 1).expect("entries");
     out.extend_from_slice(&count.to_le_bytes());
-    let mut all: Vec<(u16, u16, u32, u32)> = entries.to_vec();
+    let mut all: Vec<(u16, u16, u32, u32)> = entries;
     all.push((geokeys.0, geokeys.1, geokeys.2, geokeys.3));
     all.sort_by_key(|entry| entry.0);
     for (tag, kind, n, value) in all {

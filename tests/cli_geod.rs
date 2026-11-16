@@ -253,6 +253,14 @@ const CASES: &[Case] = &[
         status: 1,
     },
     Case {
+        name: "blank_line_keeps_its_newline",
+        program: "geod",
+        args: &["+ellps=GRS80"],
+        input: "40 -74 45 1000\n\n40 -74 45 1000\n",
+        stdout: "40d0'22.925\"N\t73d59'30.187\"W\t-134d59'40.836\"\n0dN\t0dE\t-180d\n40d0'22.925\"N\t73d59'30.187\"W\t-134d59'40.836\"\n",
+        status: 0,
+    },
+    Case {
         name: "error_unknown_ellipsoid",
         program: "geod",
         args: &["+ellps=NOPE"],

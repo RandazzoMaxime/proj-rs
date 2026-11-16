@@ -1,0 +1,7 @@
+#Transverse Mercator
+#	Cyl, Sph&Ell
+#	approx
+# +proj=tmerc +R=6371000 +break_cs2cs_recursion
+#--- following specified but NOT used
+# +ellps=GRS80
+145896.74	5450473.55

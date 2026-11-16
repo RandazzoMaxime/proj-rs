@@ -84,3 +84,103 @@ fn wkt1_block_ends_with_a_blank_line() {
     );
     assert!(!text.ends_with("\n\n\n"), "{text:?}");
 }
+
+/// `projinfo -o PROJJSON` writes any object, not only a CRS: an ellipsoid or an operation
+/// (PROJ 9.9.0 `outputObject`, `proj_as_projjson`).
+#[test]
+fn projjson_writes_ellipsoid_and_operation() {
+    let ellipsoid = projinfo_stdout(
+        &["-k", "ellipsoid", "EPSG:1024", "-o", "PROJJSON", "-q"],
+        &[("PROJINFO_NO_GRID_CHECK", "YES")],
+    );
+    assert_eq!(
+        ellipsoid,
+        "{\n  \"$schema\": \"https://proj.org/schemas/v0.7/projjson.schema.json\",\n  \"type\": \"Ellipsoid\",\n  \"name\": \"CGCS2000\",\n  \"semi_major_axis\": 6378137,\n  \"inverse_flattening\": 298.257222101,\n  \"id\": {\n    \"authority\": \"EPSG\",\n    \"code\": 1024\n  }\n}\n"
+    );
+    let operation = projinfo_stdout(
+        &["-k", "operation", "EPSG:11182", "-o", "PROJJSON", "-q"],
+        &[("PROJINFO_NO_GRID_CHECK", "YES")],
+    );
+    assert!(
+        operation.starts_with("{\n  \"$schema\": \"https://proj.org/schemas/v0.7/projjson.schema.json\",\n  \"type\": \"Transformation\",\n  \"name\": \"ETRS89-BIH [BH_ETRS89] to ETRF2000 (1)\",\n"),
+        "{operation}"
+    );
+}
+
+/// `--single-line` puts a WKT on one line, as PROJ 9.9.0 does; the multi-line default stays.
+#[test]
+fn single_line_flag_joins_wkt2_lines() {
+    let single = projinfo_stdout(
+        &["EPSG:4618", "-o", "WKT2:2019", "--single-line", "-q"],
+        &[("PROJINFO_NO_GRID_CHECK", "YES")],
+    );
+    assert_eq!(single.lines().count(), 1, "{single}");
+    assert!(single.starts_with("GEOGCRS[\"SAD69\","), "{single}");
+    let multi = projinfo_stdout(
+        &["EPSG:4618", "-o", "WKT2:2019", "-q"],
+        &[("PROJINFO_NO_GRID_CHECK", "YES")],
+    );
+    assert!(multi.lines().count() > 1, "{multi}");
+}
+
+/// A PROJ string without `+type=crs` is a PROJ-based operation, even with `+towgs84`, not a
+/// bound CRS (PROJ 9.9.0 `createFromPROJString`, the `unexpectedStructure` branch).
+#[test]
+fn proj_string_without_type_crs_is_a_proj_based_operation() {
+    let text = projinfo_stdout(
+        &[
+            "+proj=utm +zone=41 +ellps=intl +towgs84=-164,-17,-104,0,0,0,0 +units=m +no_defs",
+            "-o",
+            "WKT2:2019",
+            "-q",
+        ],
+        &[("PROJINFO_NO_GRID_CHECK", "YES")],
+    );
+    assert_eq!(
+        text,
+        "CONVERSION[\"PROJ-based coordinate operation\",\n    METHOD[\"PROJ-based operation method: +proj=utm +zone=41 +ellps=intl +towgs84=-164,-17,-104,0,0,0,0 +units=m +no_defs\"]]\n"
+    );
+}
+
+/// A conversion is left out of the WKT1 dialects (PROJ 9.9.0 `outputObject`, the
+/// `!Conversion` guard), so `-o WKT1_GDAL` prints nothing for it.
+#[test]
+fn conversion_is_left_out_of_wkt1() {
+    let text = projinfo_stdout(
+        &["-k", "operation", "EPSG:3856", "-o", "WKT1_GDAL", "-q"],
+        &[("PROJINFO_NO_GRID_CHECK", "YES")],
+    );
+    assert_eq!(text, "", "{text:?}");
+}
+
+/// The WKT2:2019 of a vertical datum keeps its anchor epoch, as `ANCHOREPOCH` after `ANCHOR`
+/// (PROJ 9.9.0 `VerticalReferenceFrame::_exportToWKT`).
+#[test]
+fn vertical_datum_writes_its_anchor_epoch() {
+    let text = projinfo_stdout(
+        &["EPSG:11329", "-o", "WKT2:2019", "-q"],
+        &[("PROJINFO_NO_GRID_CHECK", "YES")],
+    );
+    assert!(
+        text.contains("VDATUM[\"Japanese Geodetic Datum 2024 (vertical)\",\n            ANCHOREPOCH[2024.415]]"),
+        "{text}"
+    );
+}
+
+/// A vertical offset grid that PROJ reads under another name keeps its operation as a
+/// `DERIVED_FROM` identifier with no version (`createSimilarPropertiesOperation`).
+#[test]
+fn vertical_grid_operation_takes_the_proj_grid_name() {
+    let text = projinfo_stdout(
+        &["-k", "operation", "EPSG:7863", "-o", "WKT2:2019", "-q"],
+        &[("PROJINFO_NO_GRID_CHECK", "YES")],
+    );
+    assert!(text.contains("ID[\"DERIVED_FROM(EPSG)\",7863]"), "{text}");
+    assert!(
+        text.contains(
+            "PARAMETERFILE[\"Vertical offset file\",\"nz_linz_dublht1960-nzvd2016.tif\"]"
+        ),
+        "{text}"
+    );
+    assert!(!text.contains("VERSION[\"LINZ-NZ DUBL\"]"), "{text}");
+}

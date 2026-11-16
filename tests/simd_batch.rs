@@ -360,7 +360,7 @@ fn the_vector_path_is_taken_on_an_avx2_processor() {
     {
         "avx2"
     } else {
-        "scalar"
+        "portable"
     };
     assert_eq!(proj_rs::batch_path(), expected);
 }

@@ -1,0 +1,18 @@
+# Écarts propres à Windows (libm MSVC) : lus seulement hors glibc (tests/parity.rs).
+# Colonnes : clé « id:ligne », cause courte, renvoi à une fiche.
+# Un écart listé ne fait pas échouer ; un écart nouveau ou disparu oui.
+geod-inv-0020:2	libm MSVC : géodésique mal conditionnée (points antipodaux ou presque confondus)	docs/PARITY.md
+geod-inv-0069:1	libm MSVC : géodésique mal conditionnée (points antipodaux ou presque confondus)	docs/PARITY.md
+geod-inv-0114:1	libm MSVC : géodésique mal conditionnée (points antipodaux ou presque confondus)	docs/PARITY.md
+geod-inv-0120:5	libm MSVC : géodésique mal conditionnée (points antipodaux ou presque confondus)	docs/PARITY.md
+geod-inv-0199:3	libm MSVC : géodésique mal conditionnée (points antipodaux ou presque confondus)	docs/PARITY.md
+geod-inv-0233:2	libm MSVC : géodésique mal conditionnée (points antipodaux ou presque confondus)	docs/PARITY.md
+geod-inv-0266:4	libm MSVC : géodésique mal conditionnée (points antipodaux ou presque confondus)	docs/PARITY.md
+geod-inv-0303:2	libm MSVC : géodésique mal conditionnée (points antipodaux ou presque confondus)	docs/PARITY.md
+geod-inv-0338:1	libm MSVC : géodésique mal conditionnée (points antipodaux ou presque confondus)	docs/PARITY.md
+invgeod-inv-0002:4	libm MSVC : géodésique mal conditionnée (points antipodaux ou presque confondus)	docs/PARITY.md
+invgeod-inv-0045:3	libm MSVC : géodésique mal conditionnée (points antipodaux ou presque confondus)	docs/PARITY.md
+invgeod-inv-0116:3	libm MSVC : géodésique mal conditionnée (points antipodaux ou presque confondus)	docs/PARITY.md
+invgeod-inv-0166:4	libm MSVC : géodésique mal conditionnée (points antipodaux ou presque confondus)	docs/PARITY.md
+invgeod-inv-0216:5	libm MSVC : géodésique mal conditionnée (points antipodaux ou presque confondus)	docs/PARITY.md
+invgeod-inv-0264:1	libm MSVC : géodésique mal conditionnée (points antipodaux ou presque confondus)	docs/PARITY.md

@@ -11,6 +11,7 @@
     reason = "complex Horner steps and the coefficient tables follow mod_ster.cpp"
 )]
 
+use crate::ellipsoid::Ellipsoid;
 use crate::engine::{classic_step, CreateError, Frame, Kernel, Params, TransformError};
 use std::f64::consts::FRAC_PI_2;
 
@@ -30,6 +31,8 @@ struct ModSter {
     schio: f64,
     cchio: f64,
     e: f64,
+    /// Forced `a` over the input `a`. PROJ's inverse still divides by the input `1/a`.
+    inverse_scale: f64,
 }
 
 pub(crate) fn extra_keys(name: &str) -> Option<&'static [&'static str]> {
@@ -44,36 +47,34 @@ pub(crate) fn build(
     _params: &Params,
     frame: &Frame,
 ) -> Result<Option<Box<dyn crate::engine::Step>>, CreateError> {
-    let ellipsoid = frame.earth.es() != 0.0;
-    let (lam0_deg, phi0_deg, coeff, e): (f64, f64, &[Complex], f64) = match name {
-        "mil_os" => (20.0, 18.0, MIL_OS.as_slice(), 0.0),
-        "lee_os" => (-165.0, -10.0, LEE_OS.as_slice(), 0.0),
-        "gs48" => (-96.0, 39.0, GS48.as_slice(), 0.0),
-        "alsk" => (
-            -152.0,
-            64.0,
-            if ellipsoid {
-                ALSK_E.as_slice()
-            } else {
-                ALSK_S.as_slice()
-            },
-            if ellipsoid { ALASKA_ES.sqrt() } else { 0.0 },
-        ),
-        "gs50" => (
-            -120.0,
-            45.0,
-            if ellipsoid {
-                GS50_E.as_slice()
-            } else {
-                GS50_S.as_slice()
-            },
-            if ellipsoid { ALASKA_ES.sqrt() } else { 0.0 },
-        ),
+    let input_e = frame.earth.e();
+    let input_es = frame.earth.es();
+    let input_a = frame.earth.a();
+    let ellipsoid = input_es != 0.0;
+    // mod_ster.cpp sets `P->es` (and `P->a`) but keeps `P->e` from the input, and the kernel
+    // reads `P->e` on every path. So the eccentricity survives for the three projections that
+    // only zero `es`.
+    let (lam0_deg, phi0_deg, coeff, a, es): (f64, f64, &[Complex], f64, f64) = match name {
+        "mil_os" => (20.0, 18.0, MIL_OS.as_slice(), input_a, 0.0),
+        "lee_os" => (-165.0, -10.0, LEE_OS.as_slice(), input_a, 0.0),
+        "gs48" => (-96.0, 39.0, GS48.as_slice(), 6_370_997.0, 0.0),
+        "alsk" if ellipsoid => (-152.0, 64.0, ALSK_E.as_slice(), 6_378_206.4, ALASKA_ES),
+        "alsk" => (-152.0, 64.0, ALSK_S.as_slice(), 6_370_997.0, 0.0),
+        "gs50" if ellipsoid => (-120.0, 45.0, GS50_E.as_slice(), 6_378_206.4, ALASKA_ES),
+        "gs50" => (-120.0, 45.0, GS50_S.as_slice(), 6_370_997.0, 0.0),
         _ => return Ok(None),
     };
+    let e = if matches!(name, "mil_os" | "lee_os" | "gs48") {
+        input_e
+    } else {
+        es.sqrt()
+    };
     let phi0 = phi0_deg.to_radians();
-    let chio = conformal(phi0, e);
+    let chio = if es != 0.0 { conformal(phi0, e) } else { phi0 };
     let mut placed = frame.clone();
+    placed.earth = Ellipsoid::try_from_a_es(a, es).map_err(|_| CreateError::IllegalValue("a"))?;
+    // `pj_factors` reads the `P->es` set by the setup.
+    placed.factor_es = es;
     placed.lam0 = lam0_deg.to_radians();
     placed.phi0 = phi0;
     Ok(Some(classic_step(
@@ -84,6 +85,7 @@ pub(crate) fn build(
             schio: chio.sin(),
             cchio: chio.cos(),
             e,
+            inverse_scale: a / input_a,
         },
     )))
 }
@@ -109,6 +111,7 @@ impl Kernel for ModSter {
     }
 
     fn inverse(&self, x: f64, y: f64) -> Result<(f64, f64), TransformError> {
+        let (x, y) = (x * self.inverse_scale, y * self.inverse_scale);
         let mut point = Complex { re: x, im: y };
         let mut converged = false;
         for _ in 0..20 {

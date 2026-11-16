@@ -563,6 +563,22 @@ impl Conversion {
             return None;
         }
         let code: i32 = self.method.code().parse().ok()?;
+        // `createAxisOrderReversal` again (conversion.cpp:2732-2738): a fresh conversion, with
+        // its own name and identifier, not an `Inverse of` one.
+        if code == 9843 || code == 9844 {
+            let kind = if code == 9844 {
+                AxisOrderReversal::Geographic3d
+            } else {
+                AxisOrderReversal::TwoD
+            };
+            let inverse = Self::create_axis_order_reversal(kind).ok()?;
+            return Some(
+                match (self.target_crs().cloned(), self.source_crs().cloned()) {
+                    (Some(source), Some(target)) => inverse.with_endpoints(source, target),
+                    _ => inverse,
+                },
+            );
+        }
         let name = super::geodetic_ops::inverse_operation_name(
             self.name(),
             self.source_crs(),

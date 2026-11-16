@@ -1,0 +1,65 @@
+comment: >
+  --s_epoch and --t_epoch on a static CRS. PROJ creates a coordinate metadata
+  object on each side that has an epoch (proj_coordinate_metadata_create): a
+  static CRS is refused, unless its geodetic CRS has point motion operations.
+  WGS 84 counts as dynamic, so EPSG:4326 and EPSG:4978 accept an epoch; ETRS89
+  (EPSG:4258, EPSG:4936) does not. The expected values come from cs2cs 9.9.0.
+exe: cs2cs
+env:
+  PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY: YES
+tests:
+- comment: Source CRS static (ETRS89 geocentric), epoch given on the source
+  args: ["-d", "10", "--s_epoch", "2019", "EPSG:4936", "+to", "EPSG:7789"]
+  env:
+    PROJ_DISPLAY_PROGRAM_NAME: NO
+  in: "4200985 168325 4780236\n"
+  exitcode: 3
+  stderr: "\ncannot instantiate source coordinate system\ncause: Coordinate epoch should not be provided for a static CRS\nprogram abnormally terminated\n"
+- comment: Epochs on both sides, the source is accepted, the static target is refused
+  args: ["-d", "10", "--s_epoch", "2015", "--t_epoch", "2010", "EPSG:7789", "+to", "EPSG:4936"]
+  env:
+    PROJ_DISPLAY_PROGRAM_NAME: NO
+  in: "4200985 168325 4780236\n"
+  exitcode: 3
+  stderr: "\ncannot instantiate target coordinate system\ncause: Coordinate epoch should not be provided for a static CRS\nprogram abnormally terminated\n"
+- comment: Source dynamic, target static with an epoch
+  args: ["-d", "10", "--s_epoch", "2005", "--t_epoch", "2015", "EPSG:9988", "+to", "EPSG:4936"]
+  env:
+    PROJ_DISPLAY_PROGRAM_NAME: NO
+  in: "4200985 168325 4780236\n"
+  exitcode: 3
+  stderr: "\ncannot instantiate target coordinate system\ncause: Coordinate epoch should not be provided for a static CRS\nprogram abnormally terminated\n"
+- comment: WGS 84 accepts an epoch, ETRS89 target does not
+  args: ["-d", "10", "--t_epoch", "2020", "EPSG:4326", "+to", "EPSG:4936"]
+  env:
+    PROJ_DISPLAY_PROGRAM_NAME: NO
+  in: "48.8582 2.2945 0\n"
+  exitcode: 3
+  stderr: "\ncannot instantiate target coordinate system\ncause: Coordinate epoch should not be provided for a static CRS\nprogram abnormally terminated\n"
+- comment: ETRS89 geographic target does not accept an epoch
+  args: ["-d", "10", "--t_epoch", "2020", "EPSG:4326", "+to", "EPSG:4258"]
+  env:
+    PROJ_DISPLAY_PROGRAM_NAME: NO
+  in: "48.8582 2.2945 0\n"
+  exitcode: 3
+  stderr: "\ncannot instantiate target coordinate system\ncause: Coordinate epoch should not be provided for a static CRS\nprogram abnormally terminated\n"
+- comment: Target WGS 84 geocentric accepts an epoch
+  args: ["-d", "10", "--t_epoch", "2020", "EPSG:4978", "+to", "EPSG:4326"]
+  in: "4200985 168325 4780236\n"
+  out: "48.8582025219\t2.2944990092 49.6708672186\n"
+- comment: Source dynamic (ITRF2014 geocentric), epoch given
+  args: ["-d", "10", "--s_epoch", "2015", "EPSG:7789", "+to", "EPSG:4326"]
+  in: "4200985 168325 4780236\n"
+  out: "48.8582025219\t2.2944990092 49.6708672186\n"
+- comment: Source WGS 84 accepts an epoch, dynamic target without one gives a warning
+  args: ["-d", "10", "--s_epoch", "2020", "EPSG:4326", "+to", "EPSG:7789"]
+  in: "48.8582 2.2945 0\n"
+  out: "Input coordinates lack a coordinate epoch, whereas the destination CRS is dynamic. Results might be inaccurate.\n4200952.5546301799\t168323.7727419441 4780198.4091659375\n"
+- comment: Source WGS 84 geodetic 3D accepts an epoch, ETRS89 geocentric target static
+  args: ["-d", "10", "--s_epoch", "2020", "EPSG:4979", "+to", "EPSG:4936"]
+  in: "48.8582 2.2945 0\n"
+  out: "4200952.5546693532\t168323.7727435137 4780198.4090528600\n"
+- comment: WGS 84 with the same epoch on both sides
+  args: ["-d", "10", "--s_epoch", "2019", "EPSG:4326", "+to", "EPSG:4326"]
+  in: "48.8582 2.2945 0\n"
+  out: "48.8582000000\t2.2945000000 0.0000000000\n"

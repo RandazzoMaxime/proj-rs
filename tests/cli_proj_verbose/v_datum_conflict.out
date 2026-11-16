@@ -1,0 +1,8 @@
+#Universal Transverse Mercator (UTM)
+#	Cyl, Ell
+#	zone= south approx
+# +proj=utm +zone=31 +datum=WGS84 +ellps=GRS80 +break_cs2cs_recursion
+# +towgs84=0,0,0
+#--- following specified but NOT used
+# +ellps=WGS84
+426857.99	5427937.52

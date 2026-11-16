@@ -86,6 +86,21 @@ impl Drop for LocalServer {
     }
 }
 
+/// The first and last byte of a `Range: bytes=first-last` header of `head`, the last clipped to
+/// `len`. `None` when there is no such header, or when it does not start inside the file.
+fn requested_span(head: &str, len: usize) -> Option<(usize, usize)> {
+    let value = head.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.trim()
+            .eq_ignore_ascii_case("range")
+            .then(|| value.trim())
+    })?;
+    let (first, last) = value.strip_prefix("bytes=")?.split_once('-')?;
+    let first: usize = first.parse().ok()?;
+    let last: usize = last.parse().ok()?;
+    (first <= last && first < len).then(|| (first, last.min(len - 1)))
+}
+
 fn answer(
     mut stream: TcpStream,
     routes: &[Route],
@@ -100,15 +115,31 @@ fn answer(
     if let Ok(mut log) = requests.lock() {
         log.push(path.clone());
     }
-    let (status, body): (u16, &[u8]) = match routes.iter().find(|route| route.path == path) {
+    let route = routes.iter().find(|route| route.path == path);
+    let (status, body): (u16, &[u8]) = match route {
         Some(route) => (route.status, &route.body),
         None => (404, b""),
     };
-    let reason = if status == 200 { "OK" } else { "Not Found" };
+    let (status, body, content_range) = match (route, requested_span(&head, body.len())) {
+        (Some(route), Some((first, last))) if status == 200 => (
+            206,
+            &body[first..=last],
+            Some(format!("bytes {first}-{last}/{}", route.body.len())),
+        ),
+        _ => (status, body, None),
+    };
+    let reason = match status {
+        200 => "OK",
+        206 => "Partial Content",
+        _ => "Not Found",
+    };
     let mut header = format!(
         "HTTP/1.1 {status} {reason}\r\nContent-Length: {}\r\nConnection: close\r\n",
         body.len()
     );
+    if let Some(content_range) = content_range {
+        header.push_str(&format!("Content-Range: {content_range}\r\n"));
+    }
     for (name, value) in headers {
         header.push_str(&format!("{name}: {value}\r\n"));
     }

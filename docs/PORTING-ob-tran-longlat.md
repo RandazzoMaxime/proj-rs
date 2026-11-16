@@ -41,3 +41,29 @@ leave `docs/UNPORTED-CLI.md`.
   `agree_cs2cs::named_crs_pairs_match_cs2cs` (EPSG:4326 to EPSG:5070, about 0.16 m
   off). It also fails on the base commit without this change, so it is not caused
   by this lot. Open separately.
+
+# ob_tran avec o_proj=moll (lot P2)
+
+Référence PROJ 9.9.0 : `src/projections/ob_tran.cpp`. Cas de parité `proj-fwd-0102` :
+`+proj=ob_tran +o_proj=moll +o_lat_p=45 +o_lon_p=0` (sans `+ellps`, donc GRS80).
+
+## Cause
+
+Le binaire `proj` ajoute `+break_cs2cs_recursion` à la définition, après les paramètres
+de l'utilisateur. `ob_tran` reconstruit la définition de la cible (`moll`) à partir de
+ces paramètres. Une création stricte de la cible refusait cette clé inconnue : sortie
+en erreur, code 3, là où PROJ calcule. La clé ne sert qu'à la construction de PROJ
+(`create.cpp`, anti-récursion cs2cs) ; elle n'a pas sa place dans la cible.
+
+## Changement
+
+- `src/projections/ob_tran.rs` : `child_definition` ignore `break_cs2cs_recursion`.
+- Le chemin `longlat` / `latlon` ne passe pas par `child_definition` : il ne change pas.
+
+## Mesure
+
+- `cargo test --test unit_proj_ob_tran` : `1 passed; 0 failed`, six points avant et
+six points inverse, valeurs de `proj -f %.12f` et `proj -I` du binaire de référence.
+- Parité : `proj-fwd-0102` (sept entrées, dont le code de sortie) sort du registre.
+  Statut 1 → 0, forme 6 → 0 ; hors seuil 152, aucun écart nouveau.
+- `gie_run`, `gie_self_tests`, `cli_yaml`, `cli_binary` : verts.

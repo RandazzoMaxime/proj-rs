@@ -211,13 +211,17 @@ impl RemoteFile {
     }
 
     /// The headers after a call, asked in PROJ's order: `Content-Range`, then `Last-Modified` and
-    /// `ETag`. `Content-Range` gives the size of the file. A reply that gives a size is compared
+    /// `ETag`, and not at all once this file has seen the change (`m_hasChanged`). `Content-Range`
+    /// gives the size of the file. A reply that gives a size is compared
     /// with the properties of the URL in the shared cache, as PROJ compares each reply with the
     /// properties of its file (`NetworkFile::read`). Without properties for the URL, the reply
     /// sets them. A reply that differs means the file changed while it was open: the chunks of
     /// the URL are dropped, the properties become the reply's, and this file is marked changed
     /// (PROJ's `gNetworkFileProperties.insert` and `clearMemoryCache`, then `m_hasChanged`).
     fn observe(&mut self, handle: NetworkHandle) {
+        if self.changed {
+            return;
+        }
         let imp = self.callbacks.imp();
         let total = imp
             .header(handle, "Content-Range")

@@ -36,6 +36,7 @@ mod projstring;
 mod property;
 pub(crate) use projstring::PRIME_MERIDIANS;
 pub(crate) use select::RemoteGrids;
+pub(crate) use wkt::format_g;
 mod select;
 mod suggest;
 mod transform_export;
@@ -59,6 +60,7 @@ pub use factory::{
     SpatialCriterion, SupersededOperations, UnitInfo,
 };
 pub use insert::{insert_statements, suggests_code_for, CodeForm, ComponentCodes, InsertSession};
+pub(crate) use json::proj_based_operation_of_text;
 pub use json::{
     create_from_user_input, create_from_user_input_with_init_rules,
     create_from_user_input_with_optional_database, create_object_from_user_input, epsg_identity,
@@ -91,8 +93,9 @@ pub use property::{
 };
 pub use select::{
     area_of_interest_from_name, best_pipeline_logged, best_pipeline_logged_with_authority,
-    select_alternatives, select_alternatives_in_area, select_alternatives_with_authority,
-    PipelineLog, Selection,
+    select_alternatives, select_alternatives_for_crs, select_alternatives_in_area,
+    select_alternatives_in_area_with_rules, select_alternatives_with_authority, PipelineLog,
+    Selection, SelectionRequest,
 };
 pub use select::{
     best_pipeline, best_pipeline_filtered, best_pipeline_filtered_with_authority,

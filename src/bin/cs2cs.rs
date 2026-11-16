@@ -104,6 +104,10 @@ fn command() -> ExitCode {
     } else {
         promoted_by_name(&source, &target)
     };
+    if let Err(error) = check_epochs(&opts, &build_source, &build_target) {
+        report(&prog, error.code, &error.message, None);
+        return exit_code(error.code);
+    }
     // Without `--3d` a source with no height keeps none: PROJ applies the target's geoid model
     // only to a height it has (`cs2cs.cpp`, the 2D to 3D promotion).
     let build_target = if opts.promote_3d {
@@ -119,9 +123,17 @@ fn command() -> ExitCode {
             Ballpark::Forbidden
         },
     };
+    let promotion = if opts.promote_3d {
+        Promotion::To3d
+    } else {
+        Promotion::Off
+    };
     let built = match build_engine(
-        &build_source,
-        &build_target,
+        Pair {
+            source: &build_source,
+            target: &build_target,
+            promotion,
+        },
         area,
         opts.area_name.as_deref(),
         opts.only_best,
@@ -151,7 +163,11 @@ fn command() -> ExitCode {
     };
     trace_path(&built);
     let engine = built.engine;
-    let lat_first = engine.lat_first() && dst_side.layout == Layout::DegreeLongLat;
+    let lat_first = engine.lat_first() && dst_side.layout.is_geographic();
+    let dst_to_degrees = match dst_side.layout {
+        Layout::AngularLongLat { to_degrees } => to_degrees,
+        _ => 1.0,
+    };
     let _selection = (
         opts.promote_3d,
         opts.source_epoch,
@@ -179,6 +195,7 @@ fn command() -> ExitCode {
         degree_in: src_side.layout == Layout::DegreeLongLat,
         reverse_in: opts.reverse_in,
         lat_first,
+        dst_to_degrees,
     };
     if opts.files.is_empty() {
         return read_buf(io::stdin().lock(), &job, &mut stdout);
@@ -222,6 +239,8 @@ struct Job<'a> {
     reverse_in: bool,
     /// Geographic output whose first axis is latitude. DMS then prints N/S first.
     lat_first: bool,
+    /// Factor from the output unit to degrees: 1 unless the target is in grads.
+    dst_to_degrees: f64,
     /// `--s_epoch`, else `--t_epoch`. It replaces the input time, as PROJ's `set v_4` does.
     epoch: Option<f64>,
 }
@@ -285,7 +304,7 @@ fn emit_line(line: &str, slot: LineSlot, job: &Job<'_>, stdout: &mut impl Write)
     } else {
         let t = job.epoch.unwrap_or(parsed.t);
         match job.engine.apply(parsed.x, parsed.y, parsed.z, t) {
-            Ok((x, y, z)) => Drawn::Value(x, y, z),
+            Ok((x, y, z)) => Drawn::Value(x * job.dst_to_degrees, y * job.dst_to_degrees, z),
             Err(_) => Drawn::Failed(f64::INFINITY),
         }
     };
@@ -578,15 +597,33 @@ fn trace_path(built: &BuiltEngine) {
     }
 }
 
+/// The two sides as the user wrote them, and whether `--3d` promotes them before the pair is built.
+struct Pair<'a> {
+    source: &'a str,
+    target: &'a str,
+    promotion: Promotion,
+}
+
+/// `--3d` (`cs2cs.cpp`, `promoteTo3D`): both CRS are promoted to 3D before the pair is built.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Promotion {
+    Off,
+    To3d,
+}
+
 fn build_engine(
-    source: &str,
-    target: &str,
+    pair: Pair<'_>,
     area: Option<Area>,
     area_name: Option<&str>,
     only_best: Option<bool>,
     filter: CandidateFilter,
     authority: Option<&str>,
 ) -> Result<BuiltEngine, InitError> {
+    let Pair {
+        source,
+        target,
+        promotion,
+    } = pair;
     // `--authority` is `AUTHORITY=` of `proj_create_crs_to_crs`: no option is every authority.
     let authority = authority.unwrap_or("");
     let mut iso = IsoStatus::NotTried;
@@ -614,9 +651,10 @@ fn build_engine(
         (None, _) => None,
     };
     if iso_serves_pair(source, target) {
-        match proj_rs::iso19111::select_alternatives_in_area(
+        match iso_selection(
             &iso_source,
             &iso_target,
+            promotion,
             policy_of(only_best),
             filter,
             authority,
@@ -702,6 +740,48 @@ fn build_engine(
             iso,
         })
         .map_err(|error| InitError::Cause(error.to_string()))
+}
+
+/// The ISO selection of a pair. With `--3d` the pair is built from the CRS promoted to 3D, as
+/// `proj_create_crs_to_crs_from_pj` takes the objects `cs2cs.cpp` promotes; the texts stay the
+/// names the error messages give.
+fn iso_selection(
+    iso_source: &str,
+    iso_target: &str,
+    promotion: Promotion,
+    policy: BestPolicy,
+    filter: CandidateFilter,
+    authority: &str,
+    area: Option<proj_rs::ObjectDomain>,
+) -> Result<Selection, proj_rs::FactoryError> {
+    if promotion == Promotion::Off {
+        return proj_rs::iso19111::select_alternatives_in_area_with_rules(
+            iso_source,
+            iso_target,
+            policy,
+            filter,
+            authority,
+            area,
+            proj_rs::iso19111::InitRules::Proj4,
+        );
+    }
+    let db = proj_rs::DatabaseContext::create()?;
+    let rules = proj_rs::iso19111::InitRules::Proj4;
+    let source = proj_rs::iso19111::create_from_user_input_with_init_rules(iso_source, &db, rules)?;
+    let target = proj_rs::iso19111::create_from_user_input_with_init_rules(iso_target, &db, rules)?;
+    let request = proj_rs::iso19111::SelectionRequest {
+        policy,
+        filter,
+        authority,
+        area,
+    };
+    proj_rs::iso19111::select_alternatives_for_crs(
+        &db,
+        source.promote_to_3d(Some(&db)),
+        target.promote_to_3d(Some(&db)),
+        (iso_source, iso_target),
+        request,
+    )
 }
 
 /// The `ONLY_BEST` state of `proj_create_crs_to_crs` for `--only-best`, `--only-best=no`, or no
@@ -1468,15 +1548,7 @@ fn parse(args: &[String]) -> Result<Options, AppError> {
             if !slot.is_empty() {
                 slot.push(' ');
             }
-            // One argument with white space (`+nadgrids=dir with space/myconus`) stays one word
-            // of the definition: the definition is split again, as PROJ's `pj_mkparam_ws` does.
-            if arg.contains(char::is_whitespace) && !arg.contains('"') {
-                slot.push('"');
-                slot.push_str(arg);
-                slot.push('"');
-            } else {
-                slot.push_str(arg);
-            }
+            slot.push_str(arg);
         } else if !have_to {
             opts.source = arg.to_owned();
         } else if opts.target.is_empty() {
@@ -1697,6 +1769,35 @@ fn resolve_pair(
     Ok((source, target, src_side, dst_side))
 }
 
+/// `--s_epoch` and `--t_epoch` give a side a coordinate epoch: PROJ creates the coordinate
+/// metadata of that side (`proj_coordinate_metadata_create`), and a static CRS refuses it.
+/// WGS 84 counts as dynamic, so `EPSG:4326` takes an epoch.
+fn check_epochs(opts: &Options, source: &str, target: &str) -> Result<(), AppError> {
+    let sides = [
+        ("source", source, opts.source_epoch),
+        ("target", target, opts.target_epoch),
+    ];
+    for (side, definition, epoch) in sides {
+        let Some(epoch) = epoch else { continue };
+        epoch_on_side(definition, epoch).map_err(|cause| {
+            fail(
+                3,
+                format!("cannot instantiate {side} coordinate system\ncause: {cause}"),
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn epoch_on_side(definition: &str, epoch: f64) -> Result<(), String> {
+    let db = proj_rs::DatabaseContext::create().map_err(|error| error.to_string())?;
+    let crs = proj_rs::iso19111::create_from_user_input(definition, &db)
+        .map_err(|error| error.to_string())?;
+    proj_rs::iso19111::CoordinateMetadata::create(&crs, epoch, &db)
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
 /// The texts the engine is built from. PROJ's `cs2cs` promotes a CRS given by its name to the
 /// 3D CRS of the same name when the other CRS is 3D (`src/apps/cs2cs.cpp`, the `else` of
 /// `promoteTo3D`): `cs2cs "WGS 84" "WGS 84 + EGM96 height"` is built from EPSG:4979. The
@@ -1783,11 +1884,22 @@ fn is_3d_crs(crs: &proj_rs::Crs) -> bool {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Layout {
     DegreeLongLat,
+    /// Geographic in another angular unit (grads). PROJ reads the input as plain numbers in that
+    /// unit and prints the result in degrees: `to_degrees` is the axis factor times 180/pi.
+    AngularLongLat {
+        to_degrees: f64,
+    },
     Projected,
     Other,
+}
+
+impl Layout {
+    fn is_geographic(self) -> bool {
+        matches!(self, Self::DegreeLongLat | Self::AngularLongLat { .. })
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1835,6 +1947,10 @@ impl Catalog {
             {
                 side.layout = Layout::Other;
             }
+            // `+init=` is a PROJ string, not the grad CRS: the plain layout it had stays.
+            if matches!(side.layout, Layout::AngularLongLat { .. }) {
+                side.layout = Layout::Other;
+            }
             return side;
         }
         if let Some(horizontal) = compound_notation(def) {
@@ -1877,10 +1993,13 @@ impl Catalog {
         let dynamic = datum_is_dynamic(db, auth, code);
         let lat_first = first_axis_north_or_south(db, auth, code);
         if kind.starts_with("geographic") {
-            let layout = if axis_is_degrees(db, auth, code).unwrap_or(true) {
-                Layout::DegreeLongLat
-            } else {
-                Layout::Other
+            let layout = match axis_to_radians(db, auth, code) {
+                Some(factor) if (factor - std::f64::consts::PI / 180.0).abs() >= 1e-10 => {
+                    Layout::AngularLongLat {
+                        to_degrees: factor * (180.0 / std::f64::consts::PI),
+                    }
+                }
+                _ => Layout::DegreeLongLat,
             };
             return Side {
                 layout,
@@ -2123,10 +2242,10 @@ fn query_type(db: &Connection, auth: &str, code: &str) -> Result<String, rusqlit
     )
 }
 
-fn axis_is_degrees(db: &Connection, auth: &str, code: &str) -> Option<bool> {
-    let factor: f64 = db
-        .query_row(
-            "SELECT u.conv_factor
+/// The factor from the unit of axis 1 of the geodetic CRS `auth:code` to radians.
+fn axis_to_radians(db: &Connection, auth: &str, code: &str) -> Option<f64> {
+    db.query_row(
+        "SELECT u.conv_factor
              FROM geodetic_crs g
              JOIN axis a
                ON a.coordinate_system_auth_name = g.coordinate_system_auth_name
@@ -2136,11 +2255,10 @@ fn axis_is_degrees(db: &Connection, auth: &str, code: &str) -> Option<bool> {
                ON u.auth_name = a.uom_auth_name
               AND u.code = a.uom_code
              WHERE g.auth_name = ?1 AND g.code = ?2",
-            (auth, code),
-            |row| row.get(0),
-        )
-        .ok()?;
-    Some((factor - std::f64::consts::PI / 180.0).abs() < 1e-10)
+        (auth, code),
+        |row| row.get(0),
+    )
+    .ok()
 }
 
 /// Whether axis 1 of the coordinate system of the CRS `auth:code` runs north or south, so the CRS
@@ -2410,7 +2528,7 @@ fn style_for(opts: &Options, layout: Layout) -> Style {
             xy: XyStyle::Number(fmt),
         };
     }
-    if layout == Layout::DegreeLongLat {
+    if layout.is_geographic() {
         return Style {
             xy: XyStyle::Dms {
                 fract: opts.dms_fract,
@@ -3023,7 +3141,10 @@ mod tests {
         let catalog = Catalog::open();
         assert_eq!(catalog.layout("EPSG:4326").layout, Layout::DegreeLongLat);
         assert_eq!(catalog.layout("EPSG:32631").layout, Layout::Projected);
-        assert_eq!(catalog.layout("EPSG:4807").layout, Layout::Other);
+        assert!(matches!(
+            catalog.layout("EPSG:4807").layout,
+            Layout::AngularLongLat { .. }
+        ));
         assert_eq!(catalog.layout("NAD27").layout, Layout::DegreeLongLat);
         assert!(catalog.layout("ITRF2014").dynamic);
         assert!(!catalog.layout("NAD27").dynamic);

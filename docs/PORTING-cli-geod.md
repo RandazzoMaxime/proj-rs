@@ -20,7 +20,8 @@ Sources : PROJ 9.9.0 `src/apps/geod.cpp`, `geod_set.cpp`, `geod_interface.cpp`,
 | `src/crs.rs` | `+init=fichier:section` : lecture des sections `<n> ... <>` dans le chemin `PROJ_DATA` (`init_file_section`). |
 | `src/engine.rs` | `Operation::create_projection` (voir écart 1) ; `cartesian_to_geodetic` calcule comme `cart.cpp` (voir écart 3). |
 | `tests/cli_yaml.rs` | `FILES` : nad27, nad83, invproj ; `invproj` dans `run_case` ; `cs2cs_locale_script`. |
-| `tests/cli_geod.rs` | 30 cas `geod` / `invgeod` dont les sorties viennent du binaire de référence. |
+| `tests/cli_geod.rs` | 31 cas `geod` / `invgeod` dont les sorties viennent du binaire de référence. |
+| `tests/parity/geod/` | Corpus de parité : 1511 invocations (`geod`, `invgeod`), `parity_geod_against_proj_9_9_0`. |
 | `tests/cli_yaml/` | `test_invproj.yaml`, `test_proj_nad27.yaml`, `test_proj_nad83.yaml`, `test_cs2cs_locale_out.dist`. |
 | `data/tests/nad27`, `data/tests/nad83` | Fichiers `+init` copiés de `src/data/` de PROJ 9.9.0 (licence MIT de PROJ). |
 | `Cargo.toml` | Trois `[[bin]]` : `invproj`, `geod`, `invgeod`. Aucune dépendance ajoutée. |
@@ -49,10 +50,29 @@ Sources : PROJ 9.9.0 `src/apps/geod.cpp`, `geod_set.cpp`, `geod_interface.cpp`,
    et `<geod>`. Le port affiche `<geod>: message`. Le texte est sur stderr,
    que les tests ne comparent pas.
 
+## Écarts corrigés à la parité (corpus `tests/parity/geod`)
+
+Premier passage : 350 écarts sur 8290 conversions. Après correction : 0.
+
+- **Ligne vide.** `geod.cpp` recule d'un octet quand l'enregistrement a lu
+  toute la ligne : `dmstor` prend le saut de ligne pour un espace. Le port
+  perdait ce saut, et la sortie suivante se collait à la ligne vide. Mesure :
+  `blank_line_keeps_its_newline` (`cli_geod`, rouge puis vert) ; `geod-blank` :
+  348 écarts avant, 0 après.
+- **NaN dans `rtodms`.** C convertit NaN et les valeurs hors de `int` en
+  `INT_MIN` (`-2147483648`) pour les degrés et les minutes ; les secondes
+  s'impriment `nan` ou `-nan` selon le bit de signe. Mesure :
+  `rtodms_non_finite_follows_c_int_cast` (rouge puis vert). Sonde : `invgeod`
+  sur `3000000000 0 0 0` donne `-2147483648dN`. `geod-inv` : 2 écarts avant, 0
+  après.
+- **NaN dans `%f`.** `-f` et `-F` gardent le signe : `-nan`, comme glibc.
+  Mesure : `format_number_keeps_the_sign_of_nan`.
+
 ## Non porté
 
-- `geod -l`, `-le`, `-lu` et `+sunits` : les listes d'ellipsoïdes et d'unités
-  de PROJ n'ont pas d'équivalent public dans la crate (détail dans l'audit).
+- `geod -l`, `-le`, `-lu` : les listes d'ellipsoïdes et d'unités de PROJ n'ont
+  pas d'équivalent public dans la crate (détail dans l'audit). `+sunits` est
+  porté : le corpus de parité en couvre m, km, us-ft et mi.
 - Options de `proj.cpp` autres que `-E -I -S -f -t -w -W -h` (binaire, `-r`,
   `-s`, `-d`, `-e`, `-i`, `-l`, `-m`, `-o`, `-V`).
 - Facteurs : omega peut sortir à `0` là où PROJ sort `8.54059e-07` (arrondi
@@ -64,6 +84,7 @@ Sources : PROJ 9.9.0 `src/apps/geod.cpp`, `geod_set.cpp`, `geod_interface.cpp`,
 export CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0
 cargo test --test cli_yaml        # nad27, nad83, invproj, locale, + les autres yaml
 cargo test --test cli_geod        # geod / invgeod contre la sortie du binaire de référence
+cargo test --test parity parity_geod_against_proj_9_9_0   # 1511 invocations contre PROJ 9.9.0
 cargo +1.100.0 clippy --all-targets --all-features -- -D warnings
 ```
 

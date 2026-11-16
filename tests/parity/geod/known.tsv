@@ -1,0 +1,3 @@
+# Écarts connus de la suite de parité (tests/parity.rs).
+# Colonnes : clé « id:ligne », cause courte, renvoi à une fiche.
+# Un écart listé ne fait pas échouer ; un écart nouveau ou disparu oui.

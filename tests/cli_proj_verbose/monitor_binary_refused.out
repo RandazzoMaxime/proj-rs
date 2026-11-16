@@ -1,0 +1,8 @@
+#Mercator
+#	Cyl, Sph&Ell
+#	lat_ts=
+# +proj=merc +ellps=GRS80 +break_cs2cs_recursion
+#Final Earth figure: ellipsoid
+#  Major axis (a): 6378137.000
+#  1/flattening: 298.257222
+#  squared eccentricity: 0.006694380023

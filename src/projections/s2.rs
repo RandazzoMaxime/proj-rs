@@ -10,7 +10,9 @@
 )]
 
 use crate::angle::adjlon;
-use crate::engine::{Coord, CreateError, Frame, IoKind, Params, Step, TransformError};
+use crate::engine::{
+    Coord, CreateError, Frame, IoKind, Params, Step, TransformError, UnitForward, UnitProjection,
+};
 use std::f64::consts::{FRAC_1_PI, FRAC_PI_2, FRAC_PI_4, FRAC_PI_8};
 
 const EPS_LAT: f64 = 1e-12;
@@ -168,7 +170,32 @@ impl S2 {
     }
 }
 
+impl UnitForward for S2 {
+    fn lam0(&self) -> f64 {
+        self.frame.lam0
+    }
+
+    /// `s2_forward` (s2.cpp): the face coordinates, before `fwd_finalize`.
+    fn unit_forward(&self, lam: f64, phi: f64) -> Result<(f64, f64), TransformError> {
+        let lat = self.sphere_latitude(phi);
+        let (u, v) = xyz_to_face_uv(
+            self.face,
+            lat.cos() * lam.cos(),
+            lat.cos() * lam.sin(),
+            lat.sin(),
+        );
+        Ok((uv_to_st(u, self.uv), uv_to_st(v, self.uv)))
+    }
+}
+
 impl Step for S2 {
+    fn unit_projection(&self) -> Option<UnitProjection<'_>> {
+        Some(UnitProjection {
+            frame: &self.frame,
+            forward: self,
+        })
+    }
+
     fn forward(&self, coord: Coord) -> Result<Coord, TransformError> {
         if coord.x.is_nan() || coord.y.is_nan() {
             return Ok(Coord {

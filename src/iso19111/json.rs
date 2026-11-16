@@ -1362,7 +1362,12 @@ fn write_conversion_members(
     write_method(writer, &method);
     let parameters = conversion.parameters();
     let interpolation = interpolation_parameter(conversion);
-    if !parameters.is_empty() || interpolation.is_some() {
+    // A PROJ-based operation always writes its `parameters` (`PROJBasedOperation`).
+    let proj_based = conversion
+        .method()
+        .name()
+        .starts_with("PROJ-based operation method: ");
+    if !parameters.is_empty() || interpolation.is_some() || proj_based {
         writer.key("parameters");
         writer.start_array();
         for parameter in parameters {
@@ -1770,6 +1775,22 @@ pub fn create_from_user_input(text: &str, db: &DatabaseContext) -> Result<Crs, F
     create_from_user_input_with_init_rules(text, db, InitRules::Iso19111)
 }
 
+/// The PROJ-based operation that PROJ's `createFromUserInput` gives a PROJ string without
+/// `+type=crs` (`io.cpp`, `unexpectedStructure`), `None` for any other text. The CRS readers
+/// (`cs2cs`, the facade) keep building the CRS of such a string.
+pub(crate) fn proj_based_operation_of_text(
+    text: &str,
+) -> Option<Result<CoordinateOperation, FactoryError>> {
+    let text = text.trim();
+    let bare = text.strip_prefix('+').unwrap_or(text);
+    let proj_string =
+        bare.starts_with("proj=") || text.contains(" +proj=") || text.contains(" proj=");
+    if !proj_string || text.contains("type=crs") || text.contains("init=") {
+        return None;
+    }
+    Some(Conversion::create_proj_based(&OpProps::new(), text).map(CoordinateOperation::Conversion))
+}
+
 /// Whether PROJ's `createFromUserInput` sends `text` to the PROJ string parser
 /// (`io.cpp`, the `proj=`, `init=`, `title=` tests).
 fn is_proj_string_text(text: &str) -> bool {
@@ -2163,6 +2184,21 @@ fn user_object_of(object: AuthorityObject) -> Result<UserObject, FactoryError> {
             ))
         }
     })
+}
+
+impl AuthorityObject {
+    /// PROJJSON for this object in `format`, as `proj_as_projjson` writes any object.
+    ///
+    /// # Errors
+    ///
+    /// The object is an extent or a unit, or a part of it has no PROJJSON export here.
+    pub fn export_to_json_with(
+        &self,
+        db: &DatabaseContext,
+        format: &JsonFormat,
+    ) -> Result<String, FactoryError> {
+        user_object_of(self.clone())?.export_to_json(db, format)
+    }
 }
 
 /// The axis count of a geographic CRS. A geocentric CRS is not one.

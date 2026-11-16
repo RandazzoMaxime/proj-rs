@@ -1,0 +1,32 @@
+comment: >
+  Definitions passed as argv words. cs2cs joins the arguments that start with '+'
+  with a blank, as PROJ does, and reads the result as one definition: an argument
+  with several words is split again. The expected values come from cs2cs 9.9.0.
+exe: cs2cs
+env:
+  PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY: YES
+tests:
+- comment: One argument per definition, each with several words
+  args: ["-d", "10", "+proj=longlat +datum=WGS84", "+to", "+proj=utm +zone=31 +datum=WGS84"]
+  in: 2.2945 48.8582
+  out: "448251.7952059543\t5411932.6776697328 0.0000000000\n"
+- comment: Source as one argument, target as separate words
+  args: ["-d", "10", "+proj=longlat +datum=WGS84", "+to", "+proj=utm", "+zone=31", "+datum=WGS84"]
+  in: 2.2945 48.8582
+  out: "448251.7952059543\t5411932.6776697328 0.0000000000\n"
+- comment: Target as one argument, source as separate words
+  args: ["-d", "10", "+proj=longlat", "+datum=WGS84", "+to", "+proj=utm +zone=31 +datum=WGS84"]
+  in: 2.2945 48.8582
+  out: "448251.7952059543\t5411932.6776697328 0.0000000000\n"
+- comment: Both definitions split in two arguments each
+  args: ["-d", "10", "+proj=longlat", "+datum=WGS84", "+to", "+proj=utm +zone=31", "+datum=WGS84"]
+  in: 2.2945 48.8582
+  out: "448251.7952059543\t5411932.6776697328 0.0000000000\n"
+- comment: Source as one multi-word argument, target an EPSG code
+  args: ["-d", "10", "+proj=longlat +datum=WGS84", "+to", "EPSG:2154"]
+  in: 2.2945 48.8582
+  out: "648237.1028543998\t6862249.4434044389 0.0000000000\n"
+- comment: Quoted value inside one multi-word argument
+  args: ["-d", "10", "+proj=latlong +ellps=clrk66 +nadgrids=\"dir with space/myconus\"", "+to", "+proj=latlong", "+datum=NAD83"]
+  in: -111 44
+  out: "-111.0007745819\t43.9999237133 0.0000000000\n"

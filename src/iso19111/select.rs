@@ -28,8 +28,9 @@ use super::model::{
 };
 use super::suggest::{area_of_use, priority_operation};
 use super::{
-    create_from_user_input, AuthorityFactory, CoordinateOperationContext,
-    CoordinateOperationFactory, DatabaseContext, FactoryError, NameMatch, ProjLines,
+    create_from_user_input, create_from_user_input_with_init_rules, AuthorityFactory,
+    CoordinateOperationContext, CoordinateOperationFactory, DatabaseContext, FactoryError,
+    InitRules, NameMatch, ProjLines,
 };
 use crate::engine::{Coord, Operation};
 use crate::gridpath;
@@ -777,6 +778,22 @@ pub(crate) enum RemoteGrids {
     Open,
 }
 
+/// The CDN URL of a grid written under the context `endpoint`, as `lookForGridInfo` writes it.
+/// `endpoint` is kept when it is empty or the URL is not on the CDN.
+fn endpoint_url(endpoint: &str, url: &str) -> String {
+    const CDN: &str = "https://cdn.proj.org/";
+    match url.strip_prefix(CDN) {
+        Some(rest) if !endpoint.is_empty() => {
+            if endpoint.ends_with('/') {
+                format!("{endpoint}{rest}")
+            } else {
+                format!("{endpoint}/{rest}")
+            }
+        }
+        _ => url.to_owned(),
+    }
+}
+
 impl CoordinateOperation {
     /// `gridsNeeded`: each grid named by a file parameter of the operation or of its steps,
     /// sorted by name, without repeats (PROJ keeps them in a set of the names).
@@ -792,10 +809,26 @@ impl CoordinateOperation {
         db: &DatabaseContext,
         known: GridAvailabilityUse,
     ) -> Result<Vec<GridDescription>, FactoryError> {
-        self.grids_needed_with(db, known, RemoteGrids::Skip)
+        self.grids_needed_with(db, known, RemoteGrids::Skip, "")
     }
 
-    /// [`Self::grids_needed`], with `remote` deciding whether a grid on no row is opened.
+    /// [`Self::grids_needed`] with the grid download `endpoint` of the context: a database URL
+    /// that starts with `https://cdn.proj.org/` is written under `endpoint`
+    /// (`lookForGridInfo`, `factory.cpp:3511-3517`). An empty endpoint changes no URL.
+    ///
+    /// # Errors
+    ///
+    /// The database rejects a grid lookup.
+    pub fn grids_needed_at(
+        &self,
+        db: &DatabaseContext,
+        known: GridAvailabilityUse,
+        endpoint: &str,
+    ) -> Result<Vec<GridDescription>, FactoryError> {
+        self.grids_needed_with(db, known, RemoteGrids::Skip, endpoint)
+    }
+
+    /// [`Self::grids_needed_at`], with `remote` deciding whether a grid on no row is opened.
     ///
     /// # Errors
     ///
@@ -805,6 +838,7 @@ impl CoordinateOperation {
         db: &DatabaseContext,
         known: GridAvailabilityUse,
         remote: RemoteGrids,
+        endpoint: &str,
     ) -> Result<Vec<GridDescription>, FactoryError> {
         let mut names = Vec::new();
         collect_file_parameters(self, &mut names);
@@ -813,10 +847,11 @@ impl CoordinateOperation {
         names
             .into_iter()
             .map(|short_name| {
-                let info = match db.look_for_grid_info(&short_name, known)? {
+                let mut info = match db.look_for_grid_info(&short_name, known)? {
                     Some(info) => info,
                     None => unrecorded_grid(&short_name, remote),
                 };
+                info.url = endpoint_url(endpoint, &info.url);
                 Ok(GridDescription { short_name, info })
             })
             .collect()
@@ -1232,9 +1267,84 @@ pub fn select_alternatives_in_area(
     authority: &str,
     area: Option<ObjectDomain>,
 ) -> Result<Selection, FactoryError> {
+    select_alternatives_in_area_with_rules(
+        source,
+        target,
+        policy,
+        filter,
+        authority,
+        area,
+        InitRules::Iso19111,
+    )
+}
+
+/// [`select_alternatives_in_area`] with the `init=` rules of the sides: under
+/// [`InitRules::Proj4`] a `+init=epsg:CODE` side is the database CRS with its axes forced, as
+/// `cs2cs` reads it (`proj_create` under the PROJ 4 rules, `cs2cs.cpp:403-405`).
+///
+/// # Errors
+///
+/// As [`select_alternatives_in_area`].
+pub fn select_alternatives_in_area_with_rules(
+    source: &str,
+    target: &str,
+    policy: BestPolicy,
+    filter: CandidateFilter,
+    authority: &str,
+    area: Option<ObjectDomain>,
+    rules: InitRules,
+) -> Result<Selection, FactoryError> {
     let db = DatabaseContext::create()?;
-    let source_crs = create_from_user_input(source, &db)?;
-    let target_crs = create_from_user_input(target, &db)?;
+    let source_crs = create_from_user_input_with_init_rules(source, &db, rules)?;
+    let target_crs = create_from_user_input_with_init_rules(target, &db, rules)?;
+    select_alternatives_for_crs(
+        &db,
+        source_crs,
+        target_crs,
+        (source, target),
+        SelectionRequest {
+            policy,
+            filter,
+            authority,
+            area,
+        },
+    )
+}
+
+/// The options of `proj_create_crs_to_crs` that [`select_alternatives_for_crs`] takes.
+#[derive(Debug)]
+pub struct SelectionRequest<'a> {
+    /// The `ONLY_BEST` state.
+    pub policy: BestPolicy,
+    /// The accuracy, ballpark and grid filter of the candidates.
+    pub filter: CandidateFilter,
+    /// The `AUTHORITY=` option (`""` is every authority).
+    pub authority: &'a str,
+    /// The area of interest (`--bbox`, `--area`).
+    pub area: Option<ObjectDomain>,
+}
+
+/// [`select_alternatives_in_area_with_rules`] over CRS objects, as `proj_create_crs_to_crs_from_pj`
+/// takes them: `cs2cs --3d` builds the pair from the CRS promoted to 3D. `labels` are the texts of
+/// the sides, which the error messages name.
+///
+/// # Errors
+///
+/// As [`select_alternatives_in_area_with_rules`].
+pub fn select_alternatives_for_crs(
+    db: &DatabaseContext,
+    source_crs: Crs,
+    target_crs: Crs,
+    labels: (&str, &str),
+    request: SelectionRequest<'_>,
+) -> Result<Selection, FactoryError> {
+    let (source, target) = labels;
+    let SelectionRequest {
+        policy,
+        filter,
+        authority,
+        area,
+    } = request;
     let (Some(source_base), Some(target_base)) =
         (reference_base(&source_crs), reference_base(&target_crs))
     else {
@@ -1242,7 +1352,7 @@ pub fn select_alternatives_in_area(
             "{source} or {target} has no geodetic base to prepare its candidates"
         )));
     };
-    let mut context = CoordinateOperationContext::create(&db, authority);
+    let mut context = CoordinateOperationContext::create(db, authority);
     context.set_spatial_criterion(SpatialCriterion::PartialIntersection);
     context.set_area_of_interest(area);
     // `crs_to_crs.cpp:566-573`: the grid availability is KNOWN_AVAILABLE when ONLY_BEST warns, errs,
@@ -1273,7 +1383,7 @@ pub fn select_alternatives_in_area(
     };
     let ranked = rank(
         operations,
-        &db,
+        db,
         &source_crs,
         &target_crs,
         availability,
@@ -1288,10 +1398,10 @@ pub fn select_alternatives_in_area(
     // rerun the search with DISCARD (`mayNeedToReRunWithDiscardMissing`) and its grids are missing.
     let mut creation_warning = None;
     if let [(operation, characteristics)] = ranked.as_slice() {
-        let grids = proj_grids(operation, &db).unwrap_or_else(|_| grid_names(operation));
+        let grids = proj_grids(operation, db).unwrap_or_else(|_| grid_names(operation));
         let instantiable = characteristics.exportable && grids.iter().all(|grid| grid_serves(grid));
         if policy != BestPolicy::Warn || instantiable {
-            let best = single_operation(operation, characteristics, &db, &source_crs, &target_crs)?;
+            let best = single_operation(operation, characteristics, db, &source_crs, &target_crs)?;
             return Ok(Selection::Single(best));
         }
         // `crs_to_crs.cpp:648-651`: the single candidate is not instantiable, PROJ warns once at
@@ -1306,18 +1416,18 @@ pub fn select_alternatives_in_area(
             "no operation from {source} to {target}"
         )));
     }
-    let source_to_crs = geodetic_to_crs(&source_base, &source_crs, &db)?;
-    let target_to_crs = geodetic_to_crs(&target_base, &target_crs, &db)?;
+    let source_to_crs = geodetic_to_crs(&source_base, &source_crs, db)?;
+    let target_to_crs = geodetic_to_crs(&target_base, &target_crs, db)?;
     let geocentric = matches!(source_crs, Crs::Geodetic(GeodeticCRS::Geocentric(_)));
     let to_lon_lat = if geocentric {
-        Some(geocentric_to_lon_lat(&source_crs, &db)?)
+        Some(geocentric_to_lon_lat(&source_crs, db)?)
     } else {
         None
     };
     let (source_lon_lat, source_lat_lon) = degree_order(&source_crs);
     let (target_lon_lat, target_lat_lon) = degree_order(&target_crs);
     let preparer = Preparer {
-        db: &db,
+        db,
         source: &source_crs,
         target: &target_crs,
         source_to_crs: source_to_crs.as_ref(),
@@ -1352,7 +1462,7 @@ pub fn select_alternatives_in_area(
             .unwrap_or_default();
         let discarded = discard_missing(rank(
             discard_ops,
-            &db,
+            db,
             &source_crs,
             &target_crs,
             GridAvailabilityUse::UseForSorting,
@@ -1456,26 +1566,38 @@ pub fn area_of_interest_from_name(name: &str) -> Option<ObjectDomain> {
     }
 }
 
-/// [`FacadeCandidates`] of `source` to `target`.
+/// [`FacadeCandidates`] of `source` to `target`, over the candidates `filter` keeps.
 ///
 /// # Errors
 ///
 /// A CRS cannot be read, no candidate is registered (the message starts with `no operation
-/// from`), or no candidate can be prepared.
+/// from`), every registered candidate is filtered out (`every operation ... is filtered out`),
+/// or no candidate can be prepared.
 pub(crate) fn facade_candidates(
     source: &str,
     target: &str,
+    filter: CandidateFilter,
 ) -> Result<FacadeCandidates, FactoryError> {
     let db = DatabaseContext::create()?;
     let source_crs = create_from_user_input(source, &db)?;
     let target_crs = create_from_user_input(target, &db)?;
     let mut context = CoordinateOperationContext::create(&db, "");
     context.set_spatial_criterion(SpatialCriterion::PartialIntersection);
-    let operations = CoordinateOperationFactory::create().create_operations(
+    let registered = CoordinateOperationFactory::create().create_operations(
         &source_crs,
         &target_crs,
         &context,
     )?;
+    let registered_count = registered.len();
+    let operations: Vec<_> = registered
+        .into_iter()
+        .filter(|operation| filter.keeps(operation))
+        .collect();
+    if operations.is_empty() && registered_count > 0 {
+        return Err(FactoryError::Format(format!(
+            "every operation from {source} to {target} is filtered out"
+        )));
+    }
     let extents = sort_extents(&context, &source_crs, &target_crs);
     // The warning policy asks KNOWN_AVAILABLE: the sort does not look at the disk.
     let ranked = rank(
