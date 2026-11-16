@@ -36,3 +36,11 @@ fn to_meter_follows_towgs84() {
         "+proj=omerc +lat_0=4 +lonc=115 +alpha=53.3158204722222 +gamma=53.1301023611111 +k=0.99984 +x_0=590476.872743198 +y_0=442857.654557398 +ellps=evrstSS +towgs84=-679,669,-48,0,0,0,0 +to_meter=0.304799471538676 +no_defs +type=crs\n"
     );
 }
+
+#[test]
+fn spherical_base_has_no_r_a() {
+    assert_eq!(
+        projinfo(&["EPSG:3409", "-o", "PROJ"]),
+        "+proj=laea +lat_0=-90 +lon_0=0 +x_0=0 +y_0=0 +R=6371228 +units=m +no_defs +type=crs\n"
+    );
+}

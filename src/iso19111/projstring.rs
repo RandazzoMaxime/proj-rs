@@ -397,6 +397,17 @@ impl ProjectedCRS {
         if self.has_west_south_axes() {
             text = text.replacen("+axis=swu", "+czech", 1);
         }
+        if self
+            .base_crs()
+            .ellipsoid()
+            .is_some_and(Ellipsoid::is_sphere)
+        {
+            text = text
+                .split(' ')
+                .filter(|token| !matches!(*token, "+R_A" | "+f=0"))
+                .collect::<Vec<_>>()
+                .join(" ");
+        }
         text.push(' ');
         text.push_str(&crs_datum_clause(self.base_crs(), extras));
         if let Some(unit) = self.coordinate_system().axes().first().map(Axis::unit) {
