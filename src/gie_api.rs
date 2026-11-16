@@ -351,6 +351,14 @@ pub struct Factors {
     pub tissot_semimajor: f64,
     /// Tissot ellipse semi-minor axis.
     pub tissot_semiminor: f64,
+    /// Derivative of x with respect to the longitude.
+    pub dx_dlam: f64,
+    /// Derivative of x with respect to the latitude.
+    pub dx_dphi: f64,
+    /// Derivative of y with respect to the longitude.
+    pub dy_dlam: f64,
+    /// Derivative of y with respect to the latitude.
+    pub dy_dphi: f64,
 }
 
 /// `DEFAULT_H` of `factors.cpp`: the step of the numerical derivatives, in radians.
@@ -536,6 +544,10 @@ fn factors_from_derivatives(
         meridian_convergence: conv,
         tissot_semimajor: a_axis,
         tissot_semiminor: b,
+        dx_dlam: x_l,
+        dx_dphi: x_p,
+        dy_dlam: y_l,
+        dy_dphi: y_p,
     })
 }
 

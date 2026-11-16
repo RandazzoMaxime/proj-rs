@@ -559,6 +559,14 @@ impl IsoPipeline {
     }
 
     /// Number of candidates kept for `proj_trans` to choose from, 0 for a single operation.
+    /// Whether the source and the target write latitude or northing first.
+    pub(crate) fn axis_swaps(&self) -> (bool, bool) {
+        (
+            self.source.lead == Lead::LatOrNorthing,
+            self.target.lead == Lead::LatOrNorthing,
+        )
+    }
+
     pub(crate) fn alternative_count(&self) -> usize {
         match &self.route {
             Route::Alternatives(alternatives) => alternatives.len(),

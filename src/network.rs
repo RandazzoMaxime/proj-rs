@@ -548,6 +548,10 @@ impl GridContext {
         join_directories(&self.search_paths)
     }
 
+    pub(crate) fn replace_search_paths(&mut self, paths: Vec<PathBuf>) {
+        self.search_paths = paths;
+    }
+
     pub(crate) fn push_search_path(&mut self, path: PathBuf) {
         self.search_paths.push(path);
     }

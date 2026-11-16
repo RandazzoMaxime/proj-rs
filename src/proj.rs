@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 mod bounds;
 #[path = "proj_export.rs"]
 mod proj_export;
+mod raw;
 
 use bounds::Dims;
 
@@ -1468,6 +1469,31 @@ impl ProjBuilder {
 
     /// Add a grid search path, keeping paths already added.
     ///
+    /// Set the user-writable directory without creating it, as
+    /// `proj_context_set_user_writable_directory` with `create` off does.
+    #[doc(hidden)]
+    pub fn set_user_directory_path(&mut self, path: PathBuf) {
+        self.net.set_cache_dir(path);
+    }
+
+    /// Create the user-writable directory, as `proj_context_get_user_writable_directory`
+    /// does when asked to.
+    ///
+    /// # Errors
+    ///
+    /// [`ProjError::Path`] when the directory cannot be created.
+    #[doc(hidden)]
+    pub fn create_user_directory(&self) -> Result<(), ProjError> {
+        let path = self.net.cache_directory();
+        crate::network::create_directory_all(&self.net, &path).map_err(|_| ProjError::Path)
+    }
+
+    /// Replace the added search paths, as `proj_context_set_search_paths` does.
+    #[doc(hidden)]
+    pub fn replace_search_paths(&mut self, paths: Vec<PathBuf>) {
+        self.net.replace_search_paths(paths);
+    }
+
     /// The user-writable directory is searched first, then the data
     /// directories (`PROJ_DATA`, or the default `data/grids`). The added path
     /// is searched after them.
