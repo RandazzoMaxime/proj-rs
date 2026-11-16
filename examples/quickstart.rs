@@ -9,25 +9,35 @@
 //! cargo run --example quickstart
 //! ```
 
-use proj_rs::Proj;
+use proj_rs::{Context, Crs, Point, Transformer};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // The Eiffel Tower, in WGS 84 longitude and latitude (degrees).
-    let eiffel = (2.2945_f64, 48.8584_f64);
-
     // EPSG codes resolve from the embedded PROJ 9.9 database. No libproj.
-    let to_lambert93 = Proj::new_known_crs("EPSG:4326", "EPSG:2154", None)?;
-    let (east, north) = to_lambert93.convert(eiffel)?;
-    println!("Lambert-93 (EPSG:2154): {east:.3} E  {north:.3} N");
+    let ctx = Context::default();
+    let wgs84 = Crs::from_user_input(&ctx, "EPSG:4326")?;
+    let lambert93 = Crs::from_user_input(&ctx, "EPSG:2154")?;
 
-    // A plain PROJ string works too.
-    let to_utm = Proj::new("+proj=utm +zone=31 +ellps=WGS84")?;
-    let radians = (eiffel.0.to_radians(), eiffel.1.to_radians());
-    let (east, north) = to_utm.project(radians, false)?;
-    println!("UTM 31N (PROJ string):  {east:.3} E  {north:.3} N");
+    // The Eiffel Tower. Without `normalize_axis_order`, points are in the axis order of the
+    // CRS: EPSG:4326 is latitude, longitude.
+    let to_lambert93 = Transformer::builder(&wgs84, &lambert93).build()?;
+    let p = to_lambert93.forward(Point::new(48.8584, 2.2945))?;
+    println!("Lambert-93 (EPSG:2154): {:.3} E  {:.3} N", p.x, p.y);
 
-    // Anything this crate cannot do is an error at creation, never a wrong number.
-    let refused = Proj::new("+proj=not_a_real_projection");
+    // `normalize_axis_order` reads longitude, latitude, as a GIS does.
+    let gis = Transformer::builder(&wgs84, &lambert93)
+        .normalize_axis_order()
+        .build()?;
+    let p = gis.forward(Point::new(2.2945, 48.8584))?;
+    println!("Same, longitude first:  {:.3} E  {:.3} N", p.x, p.y);
+
+    // A PROJ string is a CRS too.
+    let utm31 = Crs::from_user_input(&ctx, "+proj=utm +zone=31 +ellps=WGS84 +type=crs")?;
+    let to_utm = Transformer::builder(&wgs84, &utm31).build()?;
+    let p = to_utm.forward(Point::new(48.8584, 2.2945))?;
+    println!("UTM 31N (PROJ string):  {:.3} E  {:.3} N", p.x, p.y);
+
+    // Anything this crate cannot do is an error, never a wrong number.
+    let refused = Crs::from_user_input(&ctx, "+proj=not_a_real_projection +type=crs");
     println!("Unknown projection:     {}", refused.is_err());
 
     Ok(())
