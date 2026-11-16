@@ -1,4 +1,4 @@
-# Fiche d'état — listes `projinfo --summary` du gros corpus (lots Q2b à Q2d)
+# Fiche d'état — listes `projinfo --summary` du gros corpus (lots Q2b à Q2e)
 
 Lot : cas A (candidats « ballpark vertical », composé → géographique) et B (jambe
 « axis order change (geographic3D horizontal) » absente dans les pivots) de
@@ -110,14 +110,54 @@ Au passage : `Geographic3D offsets` refuse un CRS composé (singleoperation.cpp:
 les messages exacts de PROJ ; une opération sans chaîne PROJ n'est donc plus fusionnée comme
 doublon par `removeDuplicateOps` (`0934`).
 
+## Lot Q2e — cinq causes trouvées par traçage, six listes fermées
+
+Même méthode que le lot Q2d : PROJ 9.9.0 recompilé avec `TRACE_CREATE_OPERATIONS`, port
+instrumenté dans une copie jetable. Chaque cause a son test de caractérisation (valeurs PROJ,
+rouge sur l'ancien code) dans `tests/compound_candidate_set.rs` ou `tests/pivot_candidate_set.rs`.
+
+1. **`0567` et `0057`, identifiants construits par nom.**
+   `createBetweenGeodeticCRSWithDatumBasedIntermediates` lit les identifiants des deux CRS par
+   `buildCRSIds` (coordinateoperationfactory.cpp:1775-1870), qui donne à un CRS sans identifiant
+   celui de son nom. Le port lisait les seuls identifiants : l'intermédiaire géographique 3D de
+   `createOperationsToGeod` (`ITRF89`, sans identifiant) ne trouvait rien et les quatre candidats
+   ETRF disparaissaient. Ce n'était ni l'emprise `World` de l'intermédiaire ni le contexte : le
+   CRS lu en WKT était identifié par `resolve_crs` au premier niveau, pas l'intermédiaire.
+   `0057` (`EPSG:7815 → EPSG:10747`, géocentrique vers composé) passe par le même intermédiaire :
+   sa liste, différente à `24a50b1`, devient identique avec cette seule correction.
+2. **`0737`, le pivot de datum accumule.** `createOperationsWithDatumPivot` ajoute
+   les résultats de chaque paire à une liste `res` et ne s'arrête que si un résultat n'est pas
+   fait de seules étapes `PROJ` (`hasResultSetOnlyResultsWithPROJStep`,
+   coordinateoperationfactory.cpp:3136-3163). Une jambe `WGS 84 to WGS 84 (G873)` est de
+   l'autorité `PROJ` : les paires IGNF suivantes ajoutent leurs candidats. Le port rendait la
+   première paire qui liait. Ce changement ferme `0737`.
+3. **`0494`, l'indicateur de temps d'un PROJ-based.** `PROJBasedOperation::create` fixe
+   `requiresPerCoordinateInputTime` d'après la chaîne PROJ écrite
+   (`PROJStringFormatter::requiresPerCoordinateInputTime`, io.cpp:10529) : `helmert` ou
+   `deformation` avec `+t_epoch`, `defmodel`, sauf si `+proj=set +v_4` vient avant. Les étapes
+   horizontales s'annulent dans le pipeline de `EPSG:10659 → EPSG:11078` (la grille verticale
+   reste seule) : PROJ n'écrit pas « time-dependent operation ». Le port interrogeait les étapes.
+4. **`0275`, `std::sort` n'est pas stable.** Les candidats par ITRF2020 existent en double avant
+   `removeUninterestingOps` (le pivot de datum, et l'inverse du chemin géocentrique → géographique
+   dont les deux conversions s'annulent). `FilterResults::sort` appelle `std::sort`
+   (coordinateoperationfactory.cpp:1552) : à égalité l'ordre est celui de l'introsort de libstdc++,
+   et `removeUninterestingOps` garde le premier. L'emprise gardée est donc « World » (étendue
+   synthétique de la dernière conversion), pas « World. » (celle de la base). `introsort.rs` porte
+   l'algorithme (boucle d'introsort, tri par insertion final, repli en tas), vérifié contre
+   `std::sort` sur 256 entrées aléatoires et adverses. Deux copies ne sont égales que si les deux
+   conversions annulées le sont : une conversion géographique ⇄ géocentrique tenue pour une
+   transformation basculait son drapeau `inverted`, alors que `Conversion::inverse` de PROJ rend
+   une conversion neuve pour la méthode 9602.
+5. **`0128`, l'autorité préférée des candidats.** `createGeodeticCRSFromDatum` reçoit l'autorité
+   du CRS demandé : avec un seul identifiant, de la même autorité qu'un identifiant du datum, seuls
+   les CRS de cette autorité sont candidats (factory.cpp:9990-10015). Le port lisait toutes les
+   autorités et pivotait par l'ESRI `GCS_MONREF_1997` pour une paire EPSG.
+
 ## Reste ouvert
 
-Grand corpus après le lot Q2d : 0 écart nouveau, 116 des 131 lignes du registre fermées. Restent
-15 lignes de 6 listes :
+Grand corpus après le lot Q2e : 0 écart nouveau, les 15 lignes restantes du registre fermées
+(6 listes). Le registre `tests/parity/wide/known.tsv` est vide.
 
-- `0567` : composé → géocentrique, 4 candidats ETRF perdus dans `bound_to_geod` ; le même calcul
-  avec l'intermédiaire lu en WKT les trouve (contexte ou CRS intermédiaire à comparer).
-- `0737` : le pivot de datum ne parcourt pas les paires de CRS IGNF dans l'ordre de PROJ.
-- `0057` : un candidat vertical par une autre variante (offset nul 2D/3D contre ballpark).
-- `0128` : chemin ESRI (`GCS_MONREF_1997`) au lieu de `axis order change + X (geographic)`.
-- `0275`, `0494` : « World. » au lieu de « World » sur une variante du chemin `X (geographic)`.
+Limite connue : `introsort.rs` reproduit `std::sort` de libstdc++ sur toutes les plates-formes, car
+les attendus viennent de PROJ compilé avec libstdc++ sous Linux. Un PROJ compilé avec libc++
+(macOS) ou MSVC ordonne autrement les égalités et peut garder l'autre copie.

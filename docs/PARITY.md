@@ -162,13 +162,11 @@ glibc : sous Linux le registre reste `known.tsv` seul, et ailleurs un écart nou
 Premier passage : 355 écarts. Corrigés depuis : la chaîne composé → géocentrique sans emprise
 ni précision, l'emprise des ballparks, l'inverse de Cassini, `proj -S` sur `s2`, `alsk`,
 `gs50`. Listes `projinfo` : 3 fermées dans le lot Q2 (identifiant des candidats horizontaux seuls,
-`%.15g` de la précision sommée), 29 dans le lot Q2d (six causes tracées dans PROJ, voir
-`docs/PORTING-projinfo-candidates.md`), 6 restent ouvertes. Aucun écart de valeur sur les
-conversions. Le registre `tests/parity/wide/known.tsv` garde 15 lignes de ces 6 listes : chemin
-composé → géocentrique qui perd des candidats (`0567`), ordre des paires IGNF du pivot de datum
-(`0737`), variante d'un candidat vertical (`0057`), chemin ESRI au lieu de `X (geographic)`
-(`0128`), emprise « World » contre « World. » sur le chemin `X (geographic)` (`0275`, `0494`).
-Aucune ne change les coordonnées de `cs2cs` sur le corpus.
+`%.15g` de la précision sommée), 29 dans le lot Q2d (six causes tracées dans PROJ) et les 6
+dernières dans le lot Q2e (cinq causes tracées dans PROJ, dont une ferme deux listes, voir
+`docs/PORTING-projinfo-candidates.md`). Aucun écart de valeur sur les conversions. Le registre
+`tests/parity/wide/known.tsv` est vide : le gros corpus n'a plus aucun écart connu, et tout écart
+nouveau échoue.
 
 Repli de `proj_trans` reproduit tel quel : pour un point hors de toutes les emprises, PROJ prend
 le premier candidat sans grille, sans nouvel essai, même si sa chaîne PROJ n'a pas pu être

@@ -127,3 +127,16 @@ fn a_proj_based_operation_takes_its_time_flag_from_its_pipeline() {
         .collect();
     assert_eq!(flags, [false; 6]);
 }
+
+/// `projinfo -s EPSG:7815 -t EPSG:10747 --summary --spatial-test intersects` (PROJ 9.9.0): the geocentric to compound pair of EPSG:4911 to EPSG:10157, through the intermediate of `createOperationsToGeod` (same cause): the null offsets of the 2D and 3D geographic CRS and the ballpark vertical step come in PROJ's order.
+#[test]
+fn geocentric_to_compound_of_a_ballpark_vertical_chain() {
+    assert_eq!(
+        names("EPSG:7815", "EPSG:10747"),
+        [
+            "Conversion from WGS 84 (Transit) (geocentric) to WGS 84 (Transit) (geog3D) + Inverse of WGS 84 to WGS 84 (Transit) + Inverse of Sint Eustatius to WGS 84 (1) + Sint Eustatius to Sint Eustatius height (1) + UTM zone 20N",
+            "Conversion from WGS 84 (Transit) (geocentric) to WGS 84 (Transit) (geog3D) + Inverse of Null geographic offset from WGS 84 (Transit) (geog2D) to WGS 84 (Transit) (geog3D) + Inverse of WGS 84 to WGS 84 (Transit) + Inverse of Sint Eustatius to WGS 84 (1) + Inverse of Null geographic offset from Sint Eustatius (geog3D) to Sint Eustatius (geog2D) + Sint Eustatius to Sint Eustatius height (1) + UTM zone 20N",
+            "Conversion from WGS 84 (Transit) (geocentric) to WGS 84 (Transit) (geog3D) + Inverse of Ballpark geographic offset from Sint Eustatius to WGS 84 (Transit) + Sint Eustatius to Sint Eustatius height (1) + UTM zone 20N",
+        ]
+    );
+}
