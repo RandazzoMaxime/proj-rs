@@ -7747,10 +7747,11 @@ fn datum_pivot_operations(
     if same_geodetic_datum_with_database(source, target, &context.db) {
         return Vec::new();
     }
-    let authority = AuthorityFactory::create(&context.db, context.authority.clone());
     let both_3d = axis_count(source) == 3 && axis_count(target) == 3;
-    let candidates_source = candidate_geodetic_crs(&authority, &source_datum);
-    let candidates_target = candidate_geodetic_crs(&authority, &target_datum);
+    let candidates_source =
+        candidate_geodetic_crs(&context.db, &context.authority, &source_datum, source);
+    let candidates_target =
+        candidate_geodetic_crs(&context.db, &context.authority, &target_datum, target);
     let factory = CoordinateOperationFactory::create();
     // `nIters = (isIGNF(sourceCRS) && isIGNF(targetCRS)) ? 1 : 3`
     // (coordinateoperationfactory.cpp:3425-3440): between two IGNF CRS PROJ does one single pass
@@ -8027,11 +8028,10 @@ fn intermediate_through_candidates(
         .strip_prefix("Promoted to 3D from ")
         .and_then(|rest| rest.split(':').next())
         .unwrap_or("");
-    let authority = AuthorityFactory::create(&context.db, context.authority.clone());
     let source_axes = axis_count(source);
     let mut inner = context.clone();
     inner.guards |= GUARD_DATUM_INTERMEDIATE;
-    for candidate in candidate_geodetic_crs(&authority, &datum) {
+    for candidate in candidate_geodetic_crs(&context.db, &context.authority, &datum, source) {
         let ids = candidate.identifiers();
         let same_authority = originating.is_empty()
             || (ids.len() == 1 && ids[0].code_space() == originating)
@@ -9616,9 +9616,21 @@ fn is_ignf(crs: &Crs) -> bool {
         .is_some_and(|identifier| identifier.code_space() == "IGNF")
 }
 
-/// Non-deprecated geodetic CRS of the datum, in the database order.
-fn candidate_geodetic_crs(authority: &AuthorityFactory, datum: &(String, String)) -> Vec<Crs> {
-    authority
+/// `findCandidateGeodCRSForDatum` (coordinateoperationfactory.cpp:2041-2051): the non-deprecated
+/// geodetic CRS of the datum, in the database order. A CRS with one identifier whose authority is
+/// the one of the datum's identifier restricts the search to that authority
+/// (`createGeodeticCRSFromDatum`, factory.cpp:9990-10015).
+fn candidate_geodetic_crs(
+    db: &DatabaseContext,
+    context_authority: &str,
+    datum: &(String, String),
+    crs: &Crs,
+) -> Vec<Crs> {
+    let authority = match crs.identifiers() {
+        [only] if only.code_space() == datum.0 => datum.0.as_str(),
+        _ => context_authority,
+    };
+    AuthorityFactory::create(db, authority)
         .create_geodetic_crs_from_datum(&datum.0, &datum.1, "")
         .unwrap_or_default()
         .into_iter()

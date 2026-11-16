@@ -331,3 +331,20 @@ fn equal_candidates_keep_the_copy_that_std_sort_puts_first() {
         ]
     );
 }
+
+/// `projinfo -s EPSG:20015 -t EPSG:4919 --summary --spatial-test intersects` (PROJ 9.9.0): a CRS with one identifier restricts the candidate CRS of its datum to that authority when the datum has an identifier of it (`createGeodeticCRSFromDatum` with `preferredAuthName`): the ESRI `GCS_MONREF_1997` is not a pivot of an EPSG pair.
+#[test]
+fn a_pivot_candidate_of_the_authority_of_the_crs_excludes_esri() {
+    let operations = candidates(
+        "EPSG:20015",
+        "EPSG:4919",
+        GridAvailabilityUse::UseForSorting,
+    );
+    assert_eq!(
+        names(&operations),
+        [
+            "Inverse of 6-degree Gauss-Kruger zone 15 + Pulkovo 1995 to WGS 84 (2) + Inverse of MONREF_1997_To_WGS_1984 + axis order change (geographic3D horizontal) + Conversion from ITRF2000 (geographic) to ITRF2000",
+            "Inverse of 6-degree Gauss-Kruger zone 15 + Ballpark geographic offset from Pulkovo 1995 to ITRF2000 (geographic) + Conversion from ITRF2000 (geographic) to ITRF2000",
+        ]
+    );
+}
