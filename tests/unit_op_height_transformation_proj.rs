@@ -1,7 +1,8 @@
 //! PROJ 9.9.0 `test/unit/test_operationfactory.cpp`, `transformation_height_to_PROJ_string`.
 
+use proj_rs::unstable::Crs;
 use proj_rs::{
-    create_from_user_input, CoordinateOperation, Crs, DatabaseContext, GeographicCRS,
+    create_from_user_input, CoordinateOperation, DatabaseContext, GeographicCRS,
     GridAvailabilityUse, OpProps, ProjLines, Transformation,
 };
 

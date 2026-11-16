@@ -1,8 +1,9 @@
 //! PROJ 9.9.0 `test/unit/test_operationfactory.cpp`: compound CRS with a bound projected CRS and
 //! a bound vertical CRS to WGS 84 3D.
 
+use proj_rs::unstable::Crs;
 use proj_rs::{
-    CartesianCS, Conversion, CoordinateOperation, CoordinateOperationFactory, Crs, DatabaseContext,
+    CartesianCS, Conversion, CoordinateOperation, CoordinateOperationFactory, DatabaseContext,
     GeodeticCRS, GeographicCRS, OpProps, ProjLines, ProjectedCRS, Transformation, UnitOfMeasure,
     VerticalCRS, VerticalCS, VerticalReferenceFrame, WktObject, WktParser,
 };

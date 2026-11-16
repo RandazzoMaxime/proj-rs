@@ -57,7 +57,7 @@ pub fn run(args: &[&str]) -> Report {
 /// # Panics
 ///
 /// Panics when the command thread cannot be spawned, or when the command panics.
-pub fn run_with_context(context: &crate::Context, args: &[&str]) -> Report {
+pub fn run_with_context(context: &crate::context::Context, args: &[&str]) -> Report {
     run_on(Some(context.clone()), args)
 }
 
@@ -88,7 +88,7 @@ pub type Callback<'a> = &'a mut dyn FnMut(LogLevel, &str);
 ///
 /// Panics when the command thread cannot be spawned, or when the command panics.
 pub fn run_with_callback(
-    context: Option<&crate::Context>,
+    context: Option<&crate::context::Context>,
     args: &[&str],
     callback: Option<Callback<'_>>,
 ) -> Status {
@@ -107,7 +107,7 @@ pub fn run_with_callback(
     report.status
 }
 
-fn run_on(context: Option<crate::Context>, args: &[&str]) -> Report {
+fn run_on(context: Option<crate::context::Context>, args: &[&str]) -> Report {
     let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
     let worker = std::thread::Builder::new()
         .stack_size(STACK_SIZE)
@@ -119,7 +119,7 @@ fn run_on(context: Option<crate::Context>, args: &[&str]) -> Report {
     }
 }
 
-fn command(args: &[String], context: Option<&crate::Context>) -> Report {
+fn command(args: &[String], context: Option<&crate::context::Context>) -> Report {
     let mut warnings = Vec::new();
     match execute(args, &mut warnings, context) {
         Ok(output) => Report {
@@ -153,7 +153,7 @@ enum Failure {
 fn execute(
     args: &[String],
     warnings: &mut Vec<String>,
-    context: Option<&crate::Context>,
+    context: Option<&crate::context::Context>,
 ) -> Result<String, Failure> {
     if args.len() >= 2 && args[0] == "completion" {
         return complete_shell(&args[2..], context)
@@ -225,7 +225,7 @@ fn execute(
 
 /// The database of a run: the one of `context`, or the default one when there is no context
 /// (`projinfo()` with a null context).
-fn database(context: Option<&crate::Context>) -> Result<crate::DatabaseContext, String> {
+fn database(context: Option<&crate::context::Context>) -> Result<crate::DatabaseContext, String> {
     match context {
         Some(context) => context.database(),
         None => crate::DatabaseContext::create(),
@@ -703,7 +703,10 @@ fn classify_dialect(text: &str) -> Result<Option<Dialect>, String> {
 
 /// Shell completion, as `suggestCompletion` in `projinfo_lib.cpp`. `args`
 /// are the words after `projinfo completion projinfo`.
-fn complete_shell(args: &[String], context: Option<&crate::Context>) -> Result<String, String> {
+fn complete_shell(
+    args: &[String],
+    context: Option<&crate::context::Context>,
+) -> Result<String, String> {
     const KNOWN_OPTIONS: &[&str] = &[
         "-o",
         "-k",
@@ -1130,7 +1133,7 @@ fn parse_bbox(text: &str) -> Result<crate::BoundingBox, String> {
 fn candidates(
     options: &Options,
     warnings: &mut Vec<String>,
-    context: Option<&crate::Context>,
+    context: Option<&crate::context::Context>,
 ) -> Result<String, String> {
     let db = database(context)?;
     let source_text = options.source.as_deref().unwrap_or("");
@@ -1289,8 +1292,8 @@ fn candidate_area(
 /// The candidate operations between two CRS for the area, spatial test and options given.
 fn candidate_operations(
     db: &crate::DatabaseContext,
-    source: &crate::Crs,
-    target: &crate::Crs,
+    source: &crate::iso19111::Crs,
+    target: &crate::iso19111::Crs,
     options: &Options,
     area: Option<&crate::ObjectDomain>,
     spatial_test: SpatialTest,
@@ -1357,7 +1360,7 @@ fn wkt_lines(options: &Options) -> crate::WktLines {
 /// The text `-q` prints for one object: its PROJ string, then its WKT2:2019, with no headers.
 fn operation_bodies(
     db: &crate::DatabaseContext,
-    source: &crate::Crs,
+    source: &crate::iso19111::Crs,
     operation: &crate::CoordinateOperation,
     options: &Options,
 ) -> String {
@@ -1382,7 +1385,7 @@ fn load_named(
     text: &str,
     options: &Options,
     warnings: &mut Vec<String>,
-) -> Result<crate::Crs, String> {
+) -> Result<crate::iso19111::Crs, String> {
     if let Some(crs) = read_wkt(db, text, options, warnings) {
         return crs;
     }
@@ -1398,7 +1401,7 @@ fn read_wkt(
     text: &str,
     options: &Options,
     warnings: &mut Vec<String>,
-) -> Option<Result<crate::Crs, String>> {
+) -> Option<Result<crate::iso19111::Crs, String>> {
     if crate::WktParser::guess_dialect(text) == crate::WktDialect::NotWkt {
         return None;
     }
@@ -1427,7 +1430,11 @@ fn read_wkt(
 
 /// The CRS as `buildObject` leaves it: promoted to 3D by `--3d`, then given
 /// the visualization axis order by `--normalize-axis-order`.
-fn build_crs(db: &crate::DatabaseContext, crs: crate::Crs, options: &Options) -> crate::Crs {
+fn build_crs(
+    db: &crate::DatabaseContext,
+    crs: crate::iso19111::Crs,
+    options: &Options,
+) -> crate::iso19111::Crs {
     let crs = if options.promote_3d {
         promote(db, &crs)
     } else {
@@ -1448,9 +1455,9 @@ fn promote_by_name(
     db: &crate::DatabaseContext,
     source_text: &str,
     target_text: &str,
-    source: crate::Crs,
-    target: crate::Crs,
-) -> (crate::Crs, crate::Crs) {
+    source: crate::iso19111::Crs,
+    target: crate::iso19111::Crs,
+) -> (crate::iso19111::Crs, crate::iso19111::Crs) {
     if is_3d(&target)
         && !is_3d(&source)
         && !source.identifiers().is_empty()
@@ -1474,21 +1481,23 @@ fn promote_by_name(
 }
 
 /// `is3DCRS` in `projinfo_lib.cpp`.
-fn is_3d(crs: &crate::Crs) -> bool {
+fn is_3d(crs: &crate::iso19111::Crs) -> bool {
     match crs {
-        crate::Crs::Compound(_) => true,
-        crate::Crs::Geographic(geographic)
-        | crate::Crs::Geodetic(crate::GeodeticCRS::Geographic(geographic)) => {
+        crate::iso19111::Crs::Compound(_) => true,
+        crate::iso19111::Crs::Geographic(geographic)
+        | crate::iso19111::Crs::Geodetic(crate::GeodeticCRS::Geographic(geographic)) => {
             geographic.coordinate_system().axes().len() == 3
         }
-        crate::Crs::Projected(projected) => projected.coordinate_system().axes().len() == 3,
+        crate::iso19111::Crs::Projected(projected) => {
+            projected.coordinate_system().axes().len() == 3
+        }
         _ => false,
     }
 }
 
 /// `CRS::promoteTo3D` with the database (projinfo_lib.cpp:543-550): every kind of CRS,
 /// a bound CRS included, promotes through the library.
-fn promote(db: &crate::DatabaseContext, crs: &crate::Crs) -> crate::Crs {
+fn promote(db: &crate::DatabaseContext, crs: &crate::iso19111::Crs) -> crate::iso19111::Crs {
     crs.promote_to_3d(Some(db))
 }
 
@@ -1555,7 +1564,7 @@ fn operation_heading(
 
 fn operation_proj(
     db: &crate::DatabaseContext,
-    source: &crate::Crs,
+    source: &crate::iso19111::Crs,
     operation: &crate::CoordinateOperation,
     lines: crate::ProjLines,
 ) -> Option<String> {
@@ -1567,7 +1576,10 @@ fn operation_proj(
     }
 }
 
-fn conversion_proj(source: &crate::Crs, conversion: &crate::Conversion) -> Option<String> {
+fn conversion_proj(
+    source: &crate::iso19111::Crs,
+    conversion: &crate::Conversion,
+) -> Option<String> {
     let mut raw = conversion.export_to_proj_string().ok()?;
     if !raw.contains("+ellps=") && !raw.contains("+datum=") {
         raw.push_str(&ellps_suffix(source));
@@ -1580,10 +1592,12 @@ fn conversion_proj(source: &crate::Crs, conversion: &crate::Conversion) -> Optio
     ))
 }
 
-fn ellps_suffix(crs: &crate::Crs) -> String {
+fn ellps_suffix(crs: &crate::iso19111::Crs) -> String {
     let name = match crs {
-        crate::Crs::Geographic(crs) => crs.ellipsoid().map(|ellipsoid| ellipsoid.name()),
-        crate::Crs::Projected(crs) => crs.base_crs().ellipsoid().map(|ellipsoid| ellipsoid.name()),
+        crate::iso19111::Crs::Geographic(crs) => crs.ellipsoid().map(|ellipsoid| ellipsoid.name()),
+        crate::iso19111::Crs::Projected(crs) => {
+            crs.base_crs().ellipsoid().map(|ellipsoid| ellipsoid.name())
+        }
         _ => None,
     };
     let Some(name) = name else {
@@ -1601,8 +1615,8 @@ fn ellps_suffix(crs: &crate::Crs) -> String {
     format!(" +ellps={token}")
 }
 
-fn north_then_east(crs: &crate::Crs) -> bool {
-    let crate::Crs::Geographic(geographic) = crs else {
+fn north_then_east(crs: &crate::iso19111::Crs) -> bool {
+    let crate::iso19111::Crs::Geographic(geographic) = crs else {
         return false;
     };
     let axes = geographic.coordinate_system().axes();
@@ -1626,7 +1640,7 @@ fn describe(
     options: &Options,
     text: &str,
     warnings: &mut Vec<String>,
-    context: Option<&crate::Context>,
+    context: Option<&crate::context::Context>,
 ) -> Result<String, String> {
     let db = database(context)?;
     let object = match build_object(&db, text, options.kind, options, warnings)? {
@@ -1841,7 +1855,7 @@ fn settle(
 
 fn geographic_axes(object: &crate::AuthorityObject) -> Option<usize> {
     match object {
-        crate::AuthorityObject::Crs(crate::Crs::Geographic(crs)) => {
+        crate::AuthorityObject::Crs(crate::iso19111::Crs::Geographic(crs)) => {
             Some(crs.coordinate_system().axes().len())
         }
         _ => None,

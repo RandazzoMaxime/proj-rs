@@ -6,9 +6,10 @@
 use proj_rs::iso19111::{
     create_from_user_input, create_from_user_input_with_init_rules, InitRules,
 };
+use proj_rs::unstable::Crs;
 use proj_rs::{
     AlternativeGridNames, AuthorityFactory, BoundCRS, CartesianCS, Conversion, CoordinateOperation,
-    CoordinateSystem, Crs, DatabaseContext, Datum, DeprecatedCodes, DerivedProjectedCRS, Direction,
+    CoordinateSystem, DatabaseContext, Datum, DeprecatedCodes, DerivedProjectedCRS, Direction,
     EllipsoidalHeightPolicy, FactoryError, GeodeticCRS, GeographicCRS, LinunitPolicy, ObjectDomain,
     ObjectType, OpProps, OperationParameter, OutputAxisRule, ParameterValue, PrimeMeridian, Proj,
     ProjectedCRS, Transformation, UnitOfMeasure, WktConvention, WktDialect, WktFormatter, WktLines,

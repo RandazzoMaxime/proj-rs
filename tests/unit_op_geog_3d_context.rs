@@ -1,9 +1,10 @@
 //! PROJ 9.9.0 `test/unit/test_operationfactory.cpp`: geographic 3D and geocentric CRS in the
 //! EPSG context.
 
+use proj_rs::unstable::Crs;
 use proj_rs::{
     AuthorityFactory, CoordinateOperation, CoordinateOperationContext, CoordinateOperationFactory,
-    Crs, DatabaseContext, GridAvailabilityUse, ProjLines, SpatialCriterion,
+    DatabaseContext, GridAvailabilityUse, ProjLines, SpatialCriterion,
 };
 
 fn epsg(db: &DatabaseContext, code: &str) -> Crs {

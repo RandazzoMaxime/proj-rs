@@ -10,8 +10,9 @@ use proj_rs::iso19111::{
     AuthorityFactory, CoordinateOperation, CoordinateOperationContext, CoordinateOperationFactory,
     FactoryError, JsonFormat, ProjLines, SpatialCriterion, UserObject,
 };
+use proj_rs::unstable::Crs;
 use proj_rs::{
-    CoordinateSystem, Crs, DatabaseContext, TemporalCsKind, UnitKind, WktConvention, WktFormatter,
+    CoordinateSystem, DatabaseContext, TemporalCsKind, UnitKind, WktConvention, WktFormatter,
     WktObject, WktParser,
 };
 

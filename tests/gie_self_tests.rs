@@ -6,9 +6,10 @@
 //! with its cause. The PROJ-string constants are generated from the C++ literals.
 
 use proj_rs::errno::PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE;
+use proj_rs::unstable::Context;
 use proj_rs::{
-    list_ellps, list_operations, list_prime_meridians, xy_dist, BatchError, Context, Direction,
-    ForceOver, Operation, Proj, ProjError, StepError, Xyzt,
+    list_ellps, list_operations, list_prime_meridians, xy_dist, BatchError, Direction, ForceOver,
+    Operation, Proj, ProjError, StepError, Xyzt,
 };
 use std::f64::consts::FRAC_PI_2;
 use std::num::NonZeroUsize;

@@ -60,6 +60,11 @@ doc = false
 
 [features]
 geo-types = ["dep:geo-types"]
+# Shows the internal modules (ISO 19111 model, engine, CLI back ends) in the
+# documentation under `proj_rs::unstable`. They are public either way, and
+# outside semver either way.
+unstable = []
+
 [lints]
 workspace = true
 

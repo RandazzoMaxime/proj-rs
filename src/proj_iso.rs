@@ -350,6 +350,15 @@ fn must_switch_for_visualization(crs: &Crs) -> bool {
     }
 }
 
+/// Whether `proj_normalize_for_visualization` swaps the two horizontal axes of `crs`: the CRS
+/// writes latitude, northing, or a polar axis pair first. The native façade swaps them at that
+/// end of the pipeline when the caller asks for the GIS order.
+pub(crate) fn swaps_for_visualization(crs: &Crs) -> bool {
+    horizontal_part(crs)
+        .filter(|part| is_horizontal(part))
+        .is_some_and(must_switch_for_visualization)
+}
+
 fn is_geographic(crs: &Crs) -> bool {
     matches!(
         crs,
