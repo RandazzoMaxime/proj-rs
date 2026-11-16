@@ -95,7 +95,10 @@ def main() -> int:
             "",
         ]
         count += 1
-    open(output, "w", encoding="utf-8").write("\n".join(out))
+    text = "\n".join(out)
+    used = [name for name in ("c_char", "c_int", "c_void") if name in text.split("use crate::util::guard;", 1)[1]]
+    text = text.replace("use std::ffi::{c_char, c_int, c_void};", "use std::ffi::{%s};" % ", ".join(used))
+    open(output, "w", encoding="utf-8").write(text)
     print(f"{count} functions", file=sys.stderr)
     return 0
 

@@ -464,7 +464,14 @@ pub extern "C" fn proj_crs_get_coordoperation(ctx: *mut PJ_CONTEXT, crs: *const 
             return std::ptr::null_mut();
         };
         let conversion = match found {
-            Crs::Projected(projected) => Some(projected.deriving_conversion().clone()),
+            Crs::Projected(projected) => {
+                Some(projected.deriving_conversion().clone().with_source_crs(
+                    match projected.base_crs() {
+                        GeodeticCRS::Geographic(geographic) => Crs::Geographic(geographic.clone()),
+                        other => Crs::Geodetic(other.clone()),
+                    },
+                ))
+            }
             Crs::DerivedProjected(derived_crs) => Some(derived_crs.deriving_conversion().clone()),
             Crs::Bound(bound) => {
                 return derived(

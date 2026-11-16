@@ -14,6 +14,7 @@ mod conversion_export;
 mod convmethod;
 mod coordinate_metadata;
 mod crs_ops;
+mod ctor;
 mod derived;
 mod equiv;
 mod esri_parammap;
@@ -52,6 +53,7 @@ pub use alternatives::{
 pub use buildop::{AxisOrderReversal, OpProps};
 pub use coordinate_metadata::{coordinate_metadata_from_urn, CoordinateMetadata};
 pub use crs_ops::{ParameterLinearUnit, Wgs84Dynamic};
+pub use ctor::{method_epsg_code, ParameterSpec};
 pub use equiv::{equivalent_name, equivalent_name_bigger_differences, Equivalence};
 pub use factory::{
     AlternativeGridNames, AuthorityFactory, AuthorityObject, BallparkUse, CelestialBodyInfo,
