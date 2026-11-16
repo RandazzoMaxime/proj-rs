@@ -54,6 +54,23 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
 - **Pas de nouvelle tentative sur erreur réseau.** Un candidat en erreur réseau arrête le
   point (`trans.cpp:284`) ; la boucle de nouvelles tentatives ne passe pas au candidat sans
   grille, qui donnerait une identité silencieuse.
+- **Client intégré par plages (`network_builtin`).** Sans callbacks de l'application, le réseau
+  passe par les mêmes fonctions que PROJ sans callbacks (son client curl) : un `GET` avec
+  `Range: bytes=a-b` par `open` et par `read_range`. Toute réponse sous `300` donne les premiers
+  octets de son corps, comme curl ; un serveur qui ignore la plage n'envoie pas de
+  `Content-Range`, et l'ouverture échoue (`NetworkFile::open` → `get_props_from_headers`). Les
+  réponses `429`, `500`, `502` à `504`, et `400` dont le corps contient `RequestTimeout`, sont
+  redemandées après une attente qui double à partir de 500 ms, plus jusqu'au quart au hasard,
+  tant qu'elle reste sous la minute (`GetNewRetryDelay`). Les erreurs de transport (connexion
+  coupée, délai) ne sont pas redemandées : le client du crate ne les distingue pas d'un refus.
+  Tests : `tests/network_grid.rs` (serveur à plages, serveur sans plages, `503` puis `206`).
+- **Morceaux dans `cache.db` (`network_chunks`, `network_cache`).** Comme `NetworkChunkCache` et
+  `NetworkFilePropertiesCache` : un morceau lu est écrit dans `cache.db` ; une lecture cherche la
+  mémoire, puis le disque, puis le réseau. Les propriétés (taille, `Last-Modified`, `ETag`) d'une
+  URL sont lues du disque tant que leur TTL court ; une réponse aux propriétés différentes
+  invalide les morceaux de l'URL sur le disque (`move_to_tail`, URL `invalidated`). Mesuré sur la
+  grille des tests du cache (`fr_ign_ntf_r93.tif`, IFD après la bande) : création = morceaux 0 et
+  9, tête de liste à 147456 ; validateurs changés = 3 requêtes, comme PROJ 9.9.0.
 - **Callbacks : lecture par morceaux, tuiles à la demande (`custom`).** La création ouvre le
   premier morceau, `open(url, 0, 16384)`, puis les en-têtes `Content-Range`, `Last-Modified`,
   `ETag`, puis `close` : c'est la séquence de PROJ à la création. Les morceaux lus sont gardés
@@ -69,8 +86,12 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
   `StripByteCounts` octets, la dernière bande ne donne que ses lignes, `RowsPerStrip` est
   plafonné à la hauteur (une bande unique peut valoir 2^32 - 1). `Content-Range` donne la taille
   du fichier même quand la réponse est plus courte : avant ce lot, une réponse courte fixait la
-  fin du fichier, ce qui aurait bloqué la lecture à 550 octets. Sans `Content-Range`, la règle
-  reste celle d'avant. Mesuré : une transformation après création demande `open(url, 950272,
+  fin du fichier, ce qui aurait bloqué la lecture à 550 octets. Sans `Content-Range` à la
+  première ouverture, le fichier n'est pas ouvert, comme `NetworkFile::open`. Une bande unique
+  non compressée et entrelacée est coupée en bandes d'environ 8 Kio, en lignes entières, comme
+  libtiff le fait pour PROJ (`ChopUpSingleUncompressedStrip`, `STRIP_SIZE_DEFAULT`) : un point
+  lit sa bande de 8 Kio, pas toute l'image (`tiles.rs`, `chop_single_strip`). Le découpage des
+  bandes de plus de 2 Gio (`TryChopUpUncompressedBigTiff`) n'est pas porté. Mesuré : une transformation après création demande `open(url, 950272,
   16384)` dans PROJ, le même bloc que le port.
 - **GeoTIFF compressé lu par morceaux (`lazy_layout`).** Un GeoTIFF à tuiles ou à bandes, à
   échantillons entrelacés ou planaires, est lu par morceaux si sa compression est aucune (1), le
@@ -97,11 +118,12 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
   demande `nBlocs * 16384` octets à partir du morceau, sans tronquer à la fin du fichier : un
   `read_range(344064, 131072)` pour une grille de 460261 octets (mesuré). `RemoteFile::fetch`
   tronquait à la taille du fichier (`read_range(344064, 116197)`) ; il ne tronque plus. Un
-  morceau qui commence après la fin n'est pas demandé, comme avant. Écart restant : PROJ
-  augmente le nombre de blocs demandés pour des lectures séquentielles (doublement, plafonné à
-  64 blocs) et s'arrête au premier bloc déjà en cache ; `fetch` demande la plage manquante
-  entière, de son premier au dernier morceau manquant (sans heuristique). Les mesures ci-dessous
-  n'ont pas de lecture séquentielle, donc pas de différence visible.
+  morceau qui commence après la fin n'est pas demandé, comme avant. L'heuristique de PROJ est
+  portée : une lecture qui commence où la précédente a fini double le nombre de blocs (tant
+  qu'il est sous 100), toute autre lecture repart d'un bloc ; la requête couvre au moins la plage
+  demandée, s'arrête au premier bloc déjà en cache et se plafonne à 64 blocs. Écart restant :
+  quand un bloc en cache coupe la plage demandée, PROJ lit bloc par bloc et le port lit la plage
+  d'un trait ; aucune mesure du corpus ne passe par ce cas.
 - **Nouvelle passe par point (`with_tiles`).** Un échantillon d'une tuile non lue donne `None`
   et la tuile est notée. Le point est recalculé une fois la tuile lue, si bien que
   l'interpolation ne voit jamais un échantillon absent. Une lecture en échec termine le point
@@ -210,9 +232,9 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
   `FileManager::open_resource_file` : `lookForGridInfo` prend alors l'URL, `fullFilename` est vidé,
   et `gridAvailable` vaut vrai (`factory.cpp`, branche sans ligne). Le port fait la même chose
   dans `unrecorded_grid` avec `RemoteGrids::Open`, uniquement dans `Proj::grids_needed`, sous le
-  contexte du builder. La sonde est `network::open_remote_grid` : avec callbacks, `read_at(0, 16384)`,
-  donc `open(url, 0, 16384)` puis `close`, comme PROJ ; sans callbacks, un `GET` du fichier entier
-  (le client HTTP du crate n'envoie pas de `Range`). Mesuré : sans octets servis, `proj_create`
+  contexte du builder. La sonde est `network::open_remote_grid` : `read_at(0, 16384)`, donc
+  `open(url, 0, 16384)` puis `close`, comme PROJ, avec les callbacks de l'application ou le
+  client intégré. Mesuré : sans octets servis, `proj_create`
   renvoie `NULL` (« could not find required grid(s) »), donc la création sert de preuve que la
   grille est ouverte. Les autres appelants (`factory.rs`, `compound.rs`, `projinfo.rs`,
   `is_proj_instantiable`) gardent `RemoteGrids::Skip` : la fabrique coupe le réseau
@@ -263,14 +285,12 @@ Audit détaillé : `docs/AUDIT-network.md`. Fiche du lot gie et réseau antérie
   `basic`, `download_whole_files` et `file_api`. Le défaut `https://cdn.proj.org` est confirmé contre
   `libproj` 9.9.0 (`proj_context_get_url_endpoint`). Détail : `docs/AUDIT-network.md`, ligne 1.
 
-- **Téléchargement en une requête, sans `Range`.** PROJ vérifie un fichier par une requête
-  d'un octet et le télécharge par `Range`, en morceaux de `PROJ_FULL_FILE_CHUNK_SIZE` (1 MiB par
-  défaut). Le client HTTP du crate n'envoie pas de `Range` : la vérification et le téléchargement
-  lisent le fichier entier en une requête, puis l'écrivent par morceaux de la même taille. Les
-  rappels de progression sont ceux de PROJ (un après chaque morceau, sauf le premier) et
-  l'enregistrement dans `cache.db` aussi. Ce qui change : le trafic (331904 octets au lieu d'un
-  octet pour la vérification). Avec des callbacks réseau enregistrés, le téléchargement lit par
-  morceaux comme PROJ (`RemoteFile::read_at`).
+- **Téléchargement par plages.** Comme PROJ, la vérification est un `open(url, 0, 1)` et le
+  téléchargement un `open` puis un `read_range` par morceau de `PROJ_FULL_FILE_CHUNK_SIZE`
+  (1 MiB par défaut), sur les fonctions réseau elles-mêmes (callbacks de l'application, sinon
+  client intégré), sans passer par le cache de morceaux. La taille vient du `Content-Range` de la
+  première réponse ; sans lui, le téléchargement échoue (`get_props_from_headers`). Les rappels
+  de progression sont ceux de PROJ (un après chaque morceau, sauf le premier).
 - **TTL.** `TtlSetting::Ignore` (`ignore_ttl_setting = TRUE`) n'envoie aucune requête : c'est le
   code de PROJ (`if (!ignore_ttl_setting)` dans `proj_is_download_needed`). Le commentaire de
   l'en-tête de PROJ dit le contraire ; le cas `download_whole_files` mesure le code.
@@ -631,22 +651,14 @@ pour `hgridshift` et `gridshift` ; `xyzgridshift`).
 - GeoTIFF JPEG ou CCITT de 8 bits : refusé à la création par le crate (`supported_sample` : entiers
   de 16 ou 32 bits, flottants de 32 ou 64). PROJ non mesuré sur un tel fichier.
 
-- Lecture par morceaux pour les GeoTIFF compressés (deflate), à prédicteur ou planaires : ils
-  sont lus entiers (`read_whole`), la séquence de PROJ n'est pas reproduite. Mesuré sur le vrai
-  GeoTIFF déflaté du CDN (`nz_linz_nzgd2000-c120100904-grid01.tif`, 460261 octets) : à la création,
-  le crate fait 28 `read_range` que PROJ ne fait pas (PROJ : `open` et en-têtes seulement). Les
-  valeurs renvoyées sont les mêmes. Non mesuré : un GeoTIFF en bandes compressé ou planaire, lu par
-  morceaux avec la séquence de PROJ.
-- Lecture paresseuse hors `gridshift` : `read_resource` (modèles `deformation`, `tinshift`,
-  `defmodel`, `nkg`) lit encore les grilles entières (`fetch_missing`, `fetch_with_callbacks`).
+- Lecture paresseuse hors `gridshift` : `+proj=deformation` (`+grids`) et `+proj=defmodel` lisent
+  leurs grilles par `GenericShiftGridSet`, comme PROJ. Restent lus entiers : `+xy_grids` et
+  `+z_grids` de `deformation` (PROJ : `pj_hgrid_init` et `pj_vgrid_init`, par tuile ; `proj.db`
+  n'écrit jamais ces clés, seules des chaînes écrites à la main les utilisent), et les fichiers
+  JSON (`tinshift`, maître de `defmodel`), que PROJ lit aussi en une fois.
 - Rechargement : `deformation` (chemin à trois échantillons), les lectures entières (`read_whole`) et
   `read_resource` (modèles `deformation`, `tinshift`, `defmodel`, `nkg`) ne rechargent pas. Voir
   « Rechargement par étape ».
-- Validation par `ETag` et `Last-Modified` du cache disque : sans callbacks, faite à l'expiration par la
-  requête du premier morceau (fiche `PORTING-network-cache.md`, point 2). Avec les callbacks, le crate
-  n'utilise pas `cache.db` : PROJ le fait quand le cache est activé (mesuré : deux processus, TTL valide,
-  détection au calcul ; TTL dépassée, pas de détection). Le cache en mémoire, par URL, est fait (lot
-  `shared-validators`).
 - Propriétés par builder, pas par processus. PROJ garde les propriétés et les morceaux dans des
   statiques du processus : une création sur un autre contexte du même processus voit le changement
   (mesuré : détection au calcul). Le crate les garde par `ProjBuilder` : un second builder ne voit
@@ -658,9 +670,6 @@ pour `hgridshift` et `gridshift` ; `xyzgridshift`).
   cache, remplace les propriétés sans les comparer ; le crate les compare. Il signale donc un
   changement là où PROJ n'en signale pas, et seulement si le morceau 0 manque alors que les
   propriétés sont là (éviction du cache, cas non atteint par les tests).
-- Taille sans `Content-Range` : la taille déduite d'une réponse courte n'est plus partagée entre
-  deux `RemoteFile` de la même URL (elle l'était avant ce lot). PROJ n'a pas ce cas : sans
-  `Content-Range`, la création échoue.
 - Cache SQLite : TTL, taille max, verrou, `proj_grid_cache_clear` ont des tests (`tests/unit_network_cache.rs`,
   cinq cas sur serveur local, voir l'audit) ; les écarts de la couche cache sont dans `docs/PORTING-network-cache.md`.
 - API de fichiers : routée pour la recherche, les lectures de grilles, modèles et dictionnaires, le

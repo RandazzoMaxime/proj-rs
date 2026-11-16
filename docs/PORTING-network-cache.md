@@ -35,22 +35,20 @@ réseau : `docs/PORTING-network.md`.
 
 ## Écarts
 
-1. **Fichier entier, pas de lecture par plages.** Un téléchargement écrit tous ses chunks,
-   du dernier au premier, pour que la tête de la liste LRU soit le chunk 0 : c'est ce que
-   `cache_basic` attend. Cause : la couche réseau lit le fichier complet
-   (`http_get_validated`), sans `Range`. Le lot « lecture par plages » devra écrire les
-   seuls chunks lus, comme PROJ. Les deux compteurs de `cache_saturation` (2 chunks, 2
-   lignes de liens) restent vrais, car la grille de test fait 9 chunks.
+1. **Lecture par plages (fermé).** Les morceaux lus sont écrits dans `cache.db` un par un, comme
+   `NetworkChunkCache::insert` ; une lecture prend la mémoire, puis le disque, puis le réseau.
+   Sur la grille de test (IFD après la bande), la création lit les morceaux 0 et 9 : la tête de la
+   liste LRU est à 147456, valeur mesurée avec PROJ 9.9.0 sur le même fichier (le C++ attend 0
+   sur la grille du CDN, dont l'IFD est en tête). Les compteurs de `cache_saturation` restent vrais.
 2. **Pas de requête conditionnelle, vérification par le premier morceau.** PROJ n'envoie aucune
    requête conditionnelle : `If-None-Match`, `If-Modified-Since`, `If-Match` et `If-Range` n'apparaissent
    pas dans ses sources (`grep`). Une entrée expirée est vérifiée par la requête du premier morceau,
    `open(url, 0, 16384)` (`NetworkFile::open`, `networkfilemanager.cpp:1306`). Sa réponse donne la taille
-   (`Content-Range`) et les validateurs : s'ils sont ceux du cache, les morceaux restent et seul
-   `lastChecked` bouge ; sinon les morceaux sont invalidés (`NetworkFilePropertiesCache::insert`,
-   `:1093`). Le port fait la même requête (`Range: bytes=0-16383`, `network::http_probe`) et garde le
-   cache si rien ne change (`network_cache::fetch_grid`). Sur un écart, il télécharge le fichier entier et
-   réécrit le cache : PROJ relirait les morceaux à la demande. Les `ETag` et `Last-Modified` sont stockés,
-   comme PROJ. Tests : `expired_entry_is_checked_with_its_first_chunk_and_kept_when_unchanged` et
+   (`Content-Range`) et les validateurs : s'ils sont ceux du cache, les morceaux restent ; sinon les
+   morceaux de l'URL sont invalidés sur le disque (`NetworkFilePropertiesCache::insert`, `:1093`) et
+   relus à la demande. Le port fait de même. Mesuré avec PROJ sur la grille de test : validateurs
+   inchangés, 1 requête ; changés, 3 requêtes (le premier morceau, le morceau 9 de l'IFD, celui du
+   point). Tests : `expired_entry_is_checked_with_its_first_chunk_and_kept_when_unchanged` et
    `expired_entry_with_other_validators_is_downloaded_again` (`tests/unit_network_cache.rs`, serveur local
    qui sert `Range`, `tests/net_support/mod.rs`).
 3. **`cache_lock`.** PROJ compte le temps en secondes entières (`time_t`, `>= 1`). Ici la

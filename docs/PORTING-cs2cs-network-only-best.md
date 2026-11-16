@@ -236,8 +236,40 @@ premier morceau). Les plus gros écarts : `EPSG:6364 → EPSG:8801` (148 Mo cont
 Fichiers les plus téléchargés : `uk_os_OSGM15_GB.tif`, `es_ign_egm08-rednap.tif`,
 `ca_nrc_CGG2013an83.tif`, `fr_ign_RAF18.tif`.
 
-Cause : sans cache, le port prend le fichier entier à la création de chaque grille
+Cause : sans cache, le port prenait le fichier entier à la création de chaque grille
 (`network::fetch_missing` → `network_cache::fetch_grid` → `http_get_validated`, et
-`open_remote_grid` sans callbacks, qui fait un `GET` complet). Le lot ne touche pas
-`gridshift/geotiff.rs` ni `tiles.rs` (lot parallèle). Ouvert : lecture par plages dans ces deux
-chemins.
+`open_remote_grid` sans callbacks, qui faisait un `GET` complet).
+
+**Fermé (lot « réseau comme PROJ », volet 2).** Mesure refaite sur le même corpus, même miroir :
+
+| | Requêtes | Octets | Paires aux requêtes identiques |
+|---|---|---|---|
+| PROJ 9.9.0 (`cs2cs`) | 1155 | 85 583 322 | — |
+| Port, avant le volet 2 | 416 | 1 503 262 468 | 0 |
+| Port, après le volet 2 | 1144 | 84 299 591 | 297 sur 300 |
+
+« Identiques » veut dire même nombre de requêtes et mêmes octets ; sur les paires vérifiées une à
+une, les plages demandées sont les mêmes, dans le même ordre. Ce qui a été porté, dans l'ordre où
+les écarts tombaient :
+
+1. Client intégré par plages (`network_builtin.rs`), à la place du `GET` entier : `open` et
+   `read_range` de PROJ, `Content-Range` obligatoire à l'ouverture, nouvelles tentatives de
+   `GetNewRetryDelay`.
+2. Morceaux dans `cache.db` et heuristique de `NetworkFile::read` (doublement, arrêt au premier
+   morceau en cache, mémoire puis disque, plafond de 64 morceaux, boucle par morceau).
+3. Bande unique non compressée coupée en bandes de 8 Kio, comme libtiff
+   (`ChopUpSingleUncompressedStrip`).
+4. `defer_grid_opening` de `pj_obj_create` pour chaque candidat d'une paire, réseau actif : aucune
+   grille ouverte à la création (`with_candidate_grids`).
+5. Un chargement différé garde son fichier ouvert de l'en-tête aux tuiles, comme le `NetworkFile`
+   unique de PROJ ; seule la création par `proj_create` le ferme (la PJ temporaire du parseur).
+6. `+proj=deformation` (`+grids`) et `+proj=defmodel` lisent leurs grilles par
+   `GenericShiftGridSet`, tuile par tuile, comme PROJ ; avant : fichier entier.
+7. La façade (`proj_known_crs`) demande `KNOWN_AVAILABLE` au moteur de requêtes, comme
+   `proj_create_crs_to_crs` : une opération dont la grille n'est ni connue de `proj.db` ni trouvée
+   est écartée (`Und_min1x1_egm2008…`, 404 sur le CDN).
+
+Les 3 paires restantes ne relèvent pas du réseau : `EPSG:7885 → EPSG:9517` et `→ EPSG:7956` (jeu de
+candidats SHGD2015, point 1 ci-dessus) et `EPSG:11056 → EPSG:9500` (trois candidats MGI absents du
+port : PROJ essaie la grille BESSEL au deuxième essai d'un point). Valeurs identiques dans les
+trois cas.
