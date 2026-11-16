@@ -234,7 +234,7 @@ fn main() {
 
     cases.extend(catalogue_cases());
     cases.extend(facade_cases());
-    let ratios = libproj_ratios(&[
+    let mut ratios = libproj_ratios(&[
         ("utm31_forward", "+proj=utm +zone=31 +ellps=WGS84", &utm_center),
         (
             "lambert93_forward",
@@ -247,6 +247,7 @@ fn main() {
             &world,
         ),
     ]);
+    ratios.extend(libproj_facade());
 
     let mut rows = String::new();
     for (name, ns) in &cases {
@@ -292,28 +293,40 @@ fn main() {
 /// shorter than [`N`] to keep the run short.
 const FACADE_N: usize = 200_000;
 
+/// A list of (x, y) points.
+type Vec2 = Vec<(f64, f64)>;
+
+/// The CRS pairs of the facade cases. Each name is a case of the history.
+type FacadePair = (&'static str, &'static str, &'static str);
+const FACADE_PAIRS: [FacadePair; 5] = [
+    ("facade_convert_4326_2154", "EPSG:4326", "EPSG:2154"),
+    ("facade_convert_4326_32631", "EPSG:4326", "EPSG:32631"),
+    ("facade_convert_4326_3857", "EPSG:4326", "EPSG:3857"),
+    ("facade_convert_2154_32631", "EPSG:2154", "EPSG:32631"),
+    ("facade_convert_4267_4326", "EPSG:4267", "EPSG:4326"),
+];
+
+/// The source points of [`FACADE_PAIRS`]: geographic degrees (lon, lat), and the same points in
+/// EPSG:2154 metres. 2154 reads metres, so its inputs come from the 4326 to 2154 pair. The
+/// libproj side reads these exact values.
+fn facade_inputs() -> (Vec2, Vec2) {
+    let (lon, lat) = grid(6, (-4.5, 8.0), (41.5, 51.0));
+    let geographic: Vec<(f64, f64)> = lon.into_iter().zip(lat).take(FACADE_N).collect();
+    let to_lambert = Proj::new_known_crs("EPSG:4326", "EPSG:2154", None).expect("4326 to 2154");
+    let lambert = geographic
+        .iter()
+        .map(|&p| to_lambert.convert(p).expect("inside France"))
+        .collect();
+    (geographic, lambert)
+}
+
 /// The facade (`Proj`): one point at a time with `convert`, and a slice with `convert_array`.
 /// The pairs are named CRS, so the path is the one a user of `new_known_crs` takes: axis order,
 /// the ISO 19111 selection, then the operation.
 fn facade_cases() -> Vec<(String, f64)> {
     let mut cases = Vec::new();
-    let (lon, lat) = grid(6, (-4.5, 8.0), (41.5, 51.0));
-    let geographic: Vec<(f64, f64)> = lon.into_iter().zip(lat).take(FACADE_N).collect();
-    let pairs: [(&str, &str, &str); 5] = [
-        ("facade_convert_4326_2154", "EPSG:4326", "EPSG:2154"),
-        ("facade_convert_4326_32631", "EPSG:4326", "EPSG:32631"),
-        ("facade_convert_4326_3857", "EPSG:4326", "EPSG:3857"),
-        ("facade_convert_2154_32631", "EPSG:2154", "EPSG:32631"),
-        ("facade_convert_4267_4326", "EPSG:4267", "EPSG:4326"),
-    ];
-    // The source points are geographic for the first four pairs, and for 4267 too. 2154 reads
-    // metres, so its inputs come from the 4326 to 2154 pair.
-    let to_lambert = Proj::new_known_crs("EPSG:4326", "EPSG:2154", None).expect("4326 to 2154");
-    let lambert: Vec<(f64, f64)> = geographic
-        .iter()
-        .map(|&p| to_lambert.convert(p).expect("inside France"))
-        .collect();
-    for (name, from, to) in pairs {
+    let (geographic, lambert) = facade_inputs();
+    for (name, from, to) in FACADE_PAIRS {
         let proj = Proj::new_known_crs(from, to, None).expect(name);
         let points = if from == "EPSG:2154" {
             &lambert
@@ -396,6 +409,33 @@ unsafe extern "C" {
     ) -> *mut std::ffi::c_void;
     fn proj_destroy(pj: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
     fn proj_trans(pj: *mut std::ffi::c_void, direction: i32, coord: PjCoord) -> PjCoord;
+    fn proj_log_level(ctx: *mut std::ffi::c_void, level: i32) -> i32;
+    fn proj_create_crs_to_crs(
+        ctx: *mut std::ffi::c_void,
+        source: *const std::ffi::c_char,
+        target: *const std::ffi::c_char,
+        area: *mut std::ffi::c_void,
+    ) -> *mut std::ffi::c_void;
+    fn proj_normalize_for_visualization(
+        ctx: *mut std::ffi::c_void,
+        obj: *const std::ffi::c_void,
+    ) -> *mut std::ffi::c_void;
+    fn proj_trans_generic(
+        pj: *mut std::ffi::c_void,
+        direction: i32,
+        x: *mut f64,
+        sx: usize,
+        nx: usize,
+        y: *mut f64,
+        sy: usize,
+        ny: usize,
+        z: *mut f64,
+        sz: usize,
+        nz: usize,
+        t: *mut f64,
+        st: usize,
+        nt: usize,
+    ) -> usize;
 }
 
 #[cfg(link_libproj)]
@@ -452,4 +492,136 @@ fn libproj_ratios_linked(grids: &[ProjGrid<'_>]) -> Vec<(String, f64)> {
     // SAFETY: `ctx` was created at the start of this function.
     unsafe { proj_context_destroy(ctx) };
     ratios
+}
+
+/// libproj's time for the same facade cases: `proj_create_crs_to_crs` and
+/// `proj_normalize_for_visualization` on the pair, then `proj_trans` one point at a time and
+/// `proj_trans_generic` on an interleaved buffer, over the points of [`facade_inputs`].
+fn libproj_facade() -> Vec<(String, f64)> {
+    #[cfg(not(link_libproj))]
+    {
+        Vec::new()
+    }
+    #[cfg(link_libproj)]
+    {
+        libproj_facade_linked()
+    }
+}
+
+#[cfg(link_libproj)]
+fn libproj_facade_linked() -> Vec<(String, f64)> {
+    use std::ffi::CString;
+    let (geographic, lambert) = facade_inputs();
+    // SAFETY: libproj creates one context. It is destroyed before return.
+    let ctx = unsafe { proj_context_create() };
+    assert!(!ctx.is_null(), "proj_context_create");
+    // SAFETY: `ctx` is live. Level 0 is PJ_LOG_NONE: libproj reports each missing grid of the
+    // NAD27 candidates on stderr, which says nothing about the timing.
+    unsafe { proj_log_level(ctx, 0) };
+    let mut times = Vec::new();
+    for (name, from, to) in FACADE_PAIRS {
+        let (source, target) = (
+            CString::new(from).expect("source"),
+            CString::new(to).expect("target"),
+        );
+        // SAFETY: both strings are nul-terminated and `ctx` is live. A null area is allowed.
+        let raw = unsafe {
+            proj_create_crs_to_crs(ctx, source.as_ptr(), target.as_ptr(), std::ptr::null_mut())
+        };
+        assert!(!raw.is_null(), "proj_create_crs_to_crs {from} {to}");
+        // SAFETY: `raw` is a live transform of `ctx`.
+        let pj = unsafe { proj_normalize_for_visualization(ctx, raw) };
+        assert!(
+            !pj.is_null(),
+            "proj_normalize_for_visualization {from} {to}"
+        );
+        // SAFETY: `raw` is not used again.
+        unsafe { proj_destroy(raw) };
+        let points = if from == "EPSG:2154" {
+            &lambert
+        } else {
+            &geographic
+        };
+        let coords: Vec<PjCoord> = points
+            .iter()
+            .map(|&(x, y)| PjCoord {
+                x,
+                y,
+                z: 0.0,
+                t: f64::INFINITY,
+            })
+            .collect();
+        let one_by_one = per_point(&coords, |coord| {
+            // SAFETY: `pj` is live and `coord` is a 32-byte `PJ_COORD`.
+            unsafe { proj_trans(pj, 1, coord) }.x
+        });
+        times.push((name.to_owned(), one_by_one));
+        let mut buffer = points.clone();
+        let array = time_stable(points.len(), || {
+            buffer.copy_from_slice(black_box(points));
+            let count = buffer.len();
+            let x = buffer.as_mut_ptr().cast::<f64>();
+            let y = x.wrapping_add(1);
+            // SAFETY: `buffer` holds `count` interleaved (x, y) pairs of 16 bytes, so `y` starts
+            // one `f64` after `x`. Null z and t with a zero count make libproj use 0 and no time.
+            let done = unsafe {
+                proj_trans_generic(
+                    pj,
+                    1,
+                    x,
+                    16,
+                    count,
+                    y,
+                    16,
+                    count,
+                    std::ptr::null_mut(),
+                    0,
+                    0,
+                    std::ptr::null_mut(),
+                    0,
+                    0,
+                )
+            };
+            black_box(done);
+        });
+        times.push((name.replace("convert", "convert_array"), array));
+        check_same_output(name, &buffer, points, (from, to));
+        // SAFETY: `pj` was created in this loop and is not used again.
+        unsafe { proj_destroy(pj) };
+    }
+    // SAFETY: `ctx` was created at the start of this function.
+    unsafe { proj_context_destroy(ctx) };
+    times
+}
+
+/// The two sides must do the same work: the facade's image of every point agrees with the
+/// libproj image in `libproj_out`, far below any measurement artefact.
+#[cfg(link_libproj)]
+#[expect(
+    clippy::print_stderr,
+    reason = "the agreement figures go to stderr, the JSON record owns stdout"
+)]
+fn check_same_output(
+    name: &str,
+    libproj_out: &[(f64, f64)],
+    points: &[(f64, f64)],
+    (from, to): (&str, &str),
+) {
+    let mut ours = points.to_vec();
+    Proj::new_known_crs(from, to, None)
+        .expect(name)
+        .convert_array(&mut ours)
+        .expect(name);
+    let worst = ours
+        .iter()
+        .zip(libproj_out)
+        .map(|(a, b)| (a.0 - b.0).abs().max((a.1 - b.1).abs()))
+        .fold(0.0_f64, f64::max);
+    eprintln!("{name}: largest coordinate difference with libproj {worst:.3e}");
+    let degrees = to == "EPSG:4326" || to == "EPSG:4267";
+    let tolerance = if degrees { 1e-6 } else { 1e-2 };
+    assert!(
+        worst <= tolerance,
+        "{name}: proj-rs and libproj disagree by {worst}, the two sides do not do the same work"
+    );
 }

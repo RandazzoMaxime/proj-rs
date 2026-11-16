@@ -4,3 +4,4 @@
 *.tmp
 /data/grids/
 .DS_Store
+__pycache__/
