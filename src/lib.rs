@@ -85,7 +85,6 @@ mod proj_meta;
 mod projdb;
 mod projections;
 mod projmath;
-#[cfg(target_arch = "x86_64")]
 mod simd;
 mod tmerc;
 mod tmerc_approx;
