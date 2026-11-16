@@ -85,8 +85,11 @@ mod vector {
         let rho = k(l.c) * (k(l.n) * ts.log()).exp();
         let lam_n = lam * k(l.n);
         let easting = k(l.k0) * (rho * lam_n.sin());
-        let northing = k(l.k0) * (k(l.rho0) - rho * lam_n.cos());
-        Some((k(l.a) * easting + k(l.x0), k(l.a) * northing + k(l.y0)))
+        let northing = k(l.k0) * (-rho).mul_add(lam_n.cos(), k(l.rho0));
+        Some((
+            k(l.a).mul_add(easting, k(l.x0)),
+            k(l.a).mul_add(northing, k(l.y0)),
+        ))
     }
 
     /// [`Lcc::inverse`] sur quatre points.

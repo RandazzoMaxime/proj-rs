@@ -67,11 +67,11 @@ pub(crate) fn phi2(tok: Avx2, ts: V4, e: f64) -> V4 {
         if !active.any() {
             break;
         }
-        let tau1 = (one + tau * tau).sqrt();
+        let tau1 = tau.mul_add(tau, one).sqrt();
         let sig = (k(e) * (k(e) * tau / tau1).atanh()).sinh();
-        let taupa = (one + sig * sig).sqrt() * tau - sig * tau1;
-        let dtau = ((taup - taupa) * (one + k(e2m) * (tau * tau)))
-            / (k(e2m) * tau1 * (one + taupa * taupa).sqrt());
+        let taupa = sig.mul_add(sig, one).sqrt().mul_add(tau, -(sig * tau1));
+        let dtau = ((taup - taupa) * k(e2m).mul_add(tau * tau, one))
+            / (k(e2m) * tau1 * taupa.mul_add(taupa, one).sqrt());
         tau = V4::select(active, tau + dtau, tau);
         // `!(|dtau| >= stol)` arrête la voie, une voie `NaN` comprise.
         active = active.and(dtau.abs().ge(stol));

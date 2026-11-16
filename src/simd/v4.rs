@@ -9,7 +9,7 @@
 
 use std::arch::x86_64::{
     __m256d, _mm256_add_pd, _mm256_and_pd, _mm256_andnot_pd, _mm256_blendv_pd, _mm256_cmp_pd,
-    _mm256_div_pd, _mm256_floor_pd, _mm256_loadu_pd, _mm256_max_pd, _mm256_min_pd,
+    _mm256_div_pd, _mm256_floor_pd, _mm256_fmadd_pd, _mm256_loadu_pd, _mm256_max_pd, _mm256_min_pd,
     _mm256_movemask_pd, _mm256_mul_pd, _mm256_set1_pd, _mm256_setzero_pd, _mm256_sqrt_pd,
     _mm256_storeu_pd, _mm256_sub_pd, _mm256_xor_pd, _CMP_EQ_OQ, _CMP_GE_OQ, _CMP_GT_OQ, _CMP_LE_OQ,
     _CMP_LT_OQ, _CMP_TRUE_UQ,
@@ -84,6 +84,17 @@ impl V4 {
     pub(crate) fn sqrt(self) -> Self {
         // SAFETY: `self` n'existe que si AVX2 est supporté.
         Self(unsafe { _mm256_sqrt_pd(self.0) })
+    }
+
+    /// `self * a + b` en une seule opération, arrondie une fois (FMA).
+    ///
+    /// Le résultat diffère de `self * a + b` en deux opérations par le seul arrondi du produit :
+    /// il est plus proche de la valeur exacte, mais pas égal au chemin scalaire, qui n'a pas
+    /// d'FMA (`f64::mul_add` y serait logiciel sans FMA matériel).
+    #[inline(always)]
+    pub(crate) fn mul_add(self, a: Self, b: Self) -> Self {
+        // SAFETY: `self` n'existe que si AVX2 et FMA sont supportés (`Avx2::detect`).
+        Self(unsafe { _mm256_fmadd_pd(self.0, a.0, b.0) })
     }
 
     /// Plus grand entier inférieur ou égal.
@@ -225,5 +236,43 @@ impl Mask {
     pub(crate) fn all(self) -> bool {
         // SAFETY: `self` n'existe que si AVX2 est supporté.
         unsafe { _mm256_movemask_pd(self.0) == 0b1111 }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `mul_add` est un vrai FMA : un seul arrondi, celui de `f64::mul_add`. Avec `x = 1 + 2^-30`,
+    /// `x * x - 1` vaut exactement `2^-29 + 2^-60`. Deux opérations arrondissent le produit à
+    /// `1 + 2^-29` et perdent `2^-60` ; l'FMA le garde.
+    #[test]
+    fn mul_add_rounds_once() {
+        let Some(tok) = Avx2::detect() else {
+            return;
+        };
+        let x = 1.0 + 2.0_f64.powi(-30);
+        let exact = 2.0_f64.powi(-29) + 2.0_f64.powi(-60);
+        let unfused = x * x - 1.0;
+        assert_ne!(unfused, exact, "the test value does tell the two apart");
+        assert_eq!(x.mul_add(x, -1.0), exact, "f64::mul_add is the reference");
+
+        let lanes = [x, 0.1, -3.7, 1e150];
+        let others = [x, 0.3, 2.25, 1e10];
+        let adds = [-1.0, 0.7, 1e-5, -1e160];
+        let mut got = [0.0; 4];
+        V4::load(tok, &lanes)
+            .mul_add(V4::load(tok, &others), V4::load(tok, &adds))
+            .store(&mut got);
+        for lane in 0..4 {
+            let want = lanes[lane].mul_add(others[lane], adds[lane]);
+            assert_eq!(
+                got[lane].to_bits(),
+                want.to_bits(),
+                "lane {lane}: {} vs {want}",
+                got[lane]
+            );
+        }
+        assert_eq!(got[0], exact);
     }
 }
