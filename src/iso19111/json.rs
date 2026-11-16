@@ -1855,6 +1855,21 @@ pub fn create_from_user_input_with_optional_database(
     }
 }
 
+/// PROJ's `createFromUserInput(text, dbContext, usePROJ4InitRules)` for any object it returns: a
+/// CRS, a datum, a prime meridian, an ellipsoid, a coordinate operation, a coordinate metadata.
+/// The C API (`proj_create`) reads its text this way.
+///
+/// # Errors
+///
+/// As [`create_from_user_input_with_optional_database`].
+pub fn create_user_object(
+    text: &str,
+    db: Option<&DatabaseContext>,
+    rules: InitRules,
+) -> Result<UserObject, FactoryError> {
+    read_user_object(text, db, rules)
+}
+
 /// The routing of PROJ's `createFromUserInput` (`io.cpp` 7711-8302) for every object it returns:
 /// the JSON, PROJ string, OGC URL, `AUTH:CODE`, URN, name and WKT forms. A name is searched
 /// before the WKT, except for a text with `[`, which PROJ reads as WKT first.

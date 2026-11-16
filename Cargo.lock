@@ -373,6 +373,9 @@ dependencies = [
 [[package]]
 name = "proj-rs-capi"
 version = "0.1.0"
+dependencies = [
+ "proj-rs",
+]
 
 [[package]]
 name = "proj-rs-georust"

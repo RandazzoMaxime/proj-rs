@@ -64,7 +64,8 @@ pub use insert::{insert_statements, suggests_code_for, CodeForm, ComponentCodes,
 pub(crate) use json::proj_based_operation_of_text;
 pub use json::{
     create_from_user_input, create_from_user_input_with_init_rules,
-    create_from_user_input_with_optional_database, create_object_from_user_input, epsg_identity,
+    create_from_user_input_with_optional_database, create_object_from_user_input,
+    create_user_object, epsg_identity,
     InitRules, JsonFormat, JsonLines, UserObject,
 };
 pub use json_read::{create_object_from_json, JsonObject};

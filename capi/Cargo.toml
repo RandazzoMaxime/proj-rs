@@ -5,18 +5,23 @@ edition = "2021"
 rust-version = "1.83"
 license = "MIT"
 publish = false
-description = "C API of proj-rs: the proj.h of PROJ 9.9.0 on the proj-rs engine (skeleton)."
+description = "C API of proj-rs: the proj.h of PROJ 9.9.0 on the proj-rs engine."
 readme = "README.md"
 repository = "https://github.com/RandazzoMaxime/proj-rs"
+build = "build.rs"
 
-# The artifacts are `libproj_rs_capi.so` / `.dylib` / `.dll` and `.a`. The lot that
-# implements the ABI renames them `libproj` at install time: a library named `proj`
-# in the workspace would collide with the georust facade.
+# The artifacts are `libproj_rs_capi.so` / `.dylib` / `.dll` and `.a`. `tests/dist.sh`
+# installs them as `libproj.so.25`, `libproj.so` and `libproj.a` (`docs/API-v1.md`):
+# a library named `proj` in the workspace would give `proj.pdb` twice on Windows (the
+# `proj` binary of the root package) and `proj` twice in `target/doc` (georust).
 [lib]
 name = "proj_rs_capi"
 path = "src/lib.rs"
-crate-type = ["cdylib", "staticlib"]
+crate-type = ["cdylib", "staticlib", "rlib"]
 doc = false
+
+[dependencies]
+proj-rs = { path = ".." }
 
 [lints]
 workspace = true
