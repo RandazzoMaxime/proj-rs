@@ -37,7 +37,7 @@ def ratio_text(ratio):
     if ratio >= 1.05:
         return f"{ratio:.1f}× faster"
     if ratio <= 1 / 1.05:
-        return f"{1 / ratio:.2f}× slower"
+        return f"{1 / ratio:.1f}× slower"
     return f"≈ same ({ratio:.2f}×)"
 
 

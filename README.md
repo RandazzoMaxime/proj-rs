@@ -381,22 +381,22 @@ build, with a clear error.
 <!-- bench-how-fast:start -->
 These numbers are PROJ-RS v1's. The optimisation work (wider SIMD, GPU) comes in the versions after it.
 
-On `cloud-4c-avx512`, a 4-vCPU cloud VM (Intel Xeon at 2.10 GHz with AVX-512; the batch kernels take the AVX2 path), the process pinned to one core, proj-rs is 1.6× faster than PROJ 9.9.0's `libproj` on average over the ten cases below (geometric mean of the ratios; the slowest case is about the same, 0.96×, the fastest 3.5× faster). One point at a time, proj-rs is 1.1× faster on average, from about the same, 0.96× to 1.5× faster. On a slice of points, it is 2.3× faster on average, from 1.1× faster to 3.5× faster. This is one machine: the ratios on another CPU, or on a build of libproj with other flags, will differ.
+On `cloud-4c-avx512`, a 4-vCPU cloud VM (Intel Xeon at 2.10 GHz with AVX-512; the batch kernels take the AVX2 path), the process pinned to one core, proj-rs is 1.5× faster than PROJ 9.9.0's `libproj` on average over the ten cases below (geometric mean of the ratios; the slowest case is 1.2× slower, the fastest 3.7× faster). One point at a time, proj-rs is about the same, 1.04× on average, from 1.2× slower to 1.3× faster. On a slice of points, it is 2.1× faster on average, from 1.1× faster to 3.7× faster. This is one machine: the ratios on another CPU, or on a build of libproj with other flags, will differ.
 
 | Conversion | Call | PROJ 9.9.0 | proj-rs |
 |---|---|---:|---:|
-| WGS 84 → RGF93 / Lambert-93 (EPSG:4326 → 2154) | `convert`, one point at a time | 103 ns | 96.8 ns (1.1× faster) |
-| WGS 84 → RGF93 / Lambert-93 (EPSG:4326 → 2154) | `convert_array`, 200,000 points | 111 ns | 42 ns (2.6× faster) |
-| WGS 84 → WGS 84 / UTM 31N (EPSG:4326 → 32631) | `convert`, one point at a time | 113 ns | 102 ns (1.1× faster) |
-| WGS 84 → WGS 84 / UTM 31N (EPSG:4326 → 32631) | `convert_array`, 200,000 points | 117 ns | 37.7 ns (3.1× faster) |
-| WGS 84 → Web Mercator (EPSG:4326 → 3857) | `convert`, one point at a time | 72.1 ns | 47.7 ns (1.5× faster) |
-| WGS 84 → Web Mercator (EPSG:4326 → 3857) | `convert_array`, 200,000 points | 77.8 ns | 40.3 ns (1.9× faster) |
-| RGF93 / Lambert-93 → WGS 84 / UTM 31N (EPSG:2154 → 32631) | `convert`, one point at a time | 378 ns | 392 ns (about the same, 0.96×) |
-| RGF93 / Lambert-93 → WGS 84 / UTM 31N (EPSG:2154 → 32631) | `convert_array`, 200,000 points | 403 ns | 114 ns (3.5× faster) |
-| NAD27 → WGS 84 (EPSG:4267 → 4326) | `convert`, one point at a time | 306 ns | 267 ns (1.1× faster) |
-| NAD27 → WGS 84 (EPSG:4267 → 4326) | `convert_array`, 200,000 points | 303 ns | 285 ns (1.1× faster) |
+| WGS 84 → RGF93 / Lambert-93 (EPSG:4326 → 2154) | `convert`, one point at a time | 106 ns | 82.3 ns (1.3× faster) |
+| WGS 84 → RGF93 / Lambert-93 (EPSG:4326 → 2154) | `convert_array`, 200,000 points | 100 ns | 39.8 ns (2.5× faster) |
+| WGS 84 → WGS 84 / UTM 31N (EPSG:4326 → 32631) | `convert`, one point at a time | 144 ns | 124 ns (1.2× faster) |
+| WGS 84 → WGS 84 / UTM 31N (EPSG:4326 → 32631) | `convert_array`, 200,000 points | 148 ns | 45.4 ns (3.3× faster) |
+| WGS 84 → Web Mercator (EPSG:4326 → 3857) | `convert`, one point at a time | 56.9 ns | 59.7 ns (about the same, 0.95×) |
+| WGS 84 → Web Mercator (EPSG:4326 → 3857) | `convert_array`, 200,000 points | 65.9 ns | 49.5 ns (1.3× faster) |
+| RGF93 / Lambert-93 → WGS 84 / UTM 31N (EPSG:2154 → 32631) | `convert`, one point at a time | 396 ns | 405 ns (about the same, 0.98×) |
+| RGF93 / Lambert-93 → WGS 84 / UTM 31N (EPSG:2154 → 32631) | `convert_array`, 200,000 points | 402 ns | 109 ns (3.7× faster) |
+| NAD27 → WGS 84 (EPSG:4267 → 4326) | `convert`, one point at a time | 297 ns | 344 ns (1.2× slower) |
+| NAD27 → WGS 84 (EPSG:4267 → 4326) | `convert_array`, 200,000 points | 307 ns | 282 ns (1.1× faster) |
 
-Nanoseconds per point; lower is faster. Line of Nov 16 15:51 UTC at commit `d9897c7`, the best of 5 runs for each case. Both sides convert the same points, and the bench stops if their outputs differ. What exactly is compared, and how to rerun it: [docs/BENCHMARK.md](docs/BENCHMARK.md).
+Nanoseconds per point; lower is faster. Line of Nov 16 16:17 UTC at commit `94f108e`, the best of 5 runs for each case. Both sides convert the same points, and the bench stops if their outputs differ. What exactly is compared, and how to rerun it: [docs/BENCHMARK.md](docs/BENCHMARK.md).
 
 <details>
 <summary><b>Bare projections against libproj, and the ten slowest operations</b></summary>
@@ -407,24 +407,24 @@ Bare projections, forward, from `+proj=` strings (no CRS lookup), one point at a
 
 | Projection | PROJ 9.9.0 | proj-rs |
 |---|---:|---:|
-| UTM 31 forward, `+proj=utm` | 110 ns | 109 ns (about the same, 1.01×) |
-| Lambert-93 forward, `+proj=lcc` | 88.6 ns | 76.3 ns (1.2× faster) |
-| Web Mercator forward, `+proj=merc` | 63.4 ns | 41.8 ns (1.5× faster) |
+| UTM 31 forward, `+proj=utm` | 129 ns | 110 ns (1.2× faster) |
+| Lambert-93 forward, `+proj=lcc` | 85 ns | 77.4 ns (1.1× faster) |
+| Web Mercator forward, `+proj=merc` | 51.4 ns | 53.1 ns (about the same, 0.97×) |
 
 Ten slowest operations of the catalogue (same line, a 128-point grid, no libproj column):
 
 | Operation | ns/point |
 |---|---:|
-| `gnom` | 642.6 |
-| `aeqd` | 618.6 |
-| `lsat` | 543.8 |
-| `misrsom` | 523.8 |
-| `dsea` | 426.2 |
-| `tsea` | 333.6 |
-| `isea` | 330.5 |
-| `ivea` | 329.1 |
+| `gnom` | 627.4 |
+| `aeqd` | 624.6 |
+| `lsat` | 529.6 |
+| `misrsom` | 508.6 |
+| `dsea` | 414.5 |
+| `tsea` | 323.2 |
+| `isea` | 321.7 |
+| `ivea` | 320.5 |
 | `calcofi` | 268.9 |
-| `spilhaus` | 265.8 |
+| `spilhaus` | 258.4 |
 
 </details>
 <!-- bench-how-fast:end -->
@@ -443,7 +443,7 @@ a line commits the charts with it.
   <img src="bench/trend-cloud-4c-avx512-light.svg" alt="Nanoseconds per point on cloud-4c-avx512, one line per case, logarithmic scale" width="100%">
 </picture>
 
-Time per point, cloud-4c-avx512: 6 runs from Nov 15 to Nov 16, the first to the latest: UTM forward 88.8 ns to 109 ns; Lambert-93 forward 62.3 ns to 76.3 ns; Web Mercator forward 45.8 ns to 41.8 ns; convert_array 4326→2154 130 ns to 42 ns; Helmert 9.31 ns to 11 ns.
+Time per point, cloud-4c-avx512: 7 runs from Nov 15 to Nov 16, the first to the latest: UTM forward 88.8 ns to 110 ns; Lambert-93 forward 62.3 ns to 77.4 ns; Web Mercator forward 45.8 ns to 53.1 ns; convert_array 4326→2154 130 ns to 39.8 ns; Helmert 9.31 ns to 11 ns.
 
 Not drawn until there are two runs on one machine: `RANDAZZOPROD`, `maxime-win11-nosimd`.
 <!-- bench-trend:end -->
