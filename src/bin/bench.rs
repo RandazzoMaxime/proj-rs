@@ -9,7 +9,7 @@
 
 use proj_rs::{
     bench_definition, Ellipsoid, Helmert, HelmertConvention, HelmertParams, Hemisphere, Lcc,
-    Mercator, Operation, Projected, Tmerc, UtmZone, Xyzt, PORTED,
+    Mercator, Operation, Proj, Projected, Tmerc, UtmZone, Xyzt, PORTED,
 };
 use std::fmt::Write as _;
 use std::hint::black_box;
@@ -182,6 +182,46 @@ fn main() {
         cases.push((name.to_owned(), ns));
     }
 
+    // Batch inverses and Mercator. The projected inputs come from the forward batch.
+    type Points = (Vec<f64>, Vec<f64>);
+    let project = |batch: Batch<'_>, points: &Points| -> Points {
+        let (mut x, mut y) = (vec![0.0; N], vec![0.0; N]);
+        batch(&points.0, &points.1, &mut x, &mut y);
+        (x, y)
+    };
+    let utm_xy = project(&|a, b, c, d| utm.forward_batch(a, b, c, d), &utm_center);
+    let l93_xy = project(&|a, b, c, d| l93.forward_batch(a, b, c, d), &france);
+    let web_xy = project(&|a, b, c, d| web.forward_batch(a, b, c, d), &world);
+    let more: [(&str, Batch<'_>, &Points); 4] = [
+        (
+            "utm31_inverse_batch",
+            &|a, b, c, d| utm.inverse_batch(a, b, c, d),
+            &utm_xy,
+        ),
+        (
+            "lambert93_inverse_batch",
+            &|a, b, c, d| l93.inverse_batch(a, b, c, d),
+            &l93_xy,
+        ),
+        (
+            "webmerc_batch",
+            &|a, b, c, d| web.forward_batch(a, b, c, d),
+            &world,
+        ),
+        (
+            "webmerc_inverse_batch",
+            &|a, b, c, d| web.inverse_batch(a, b, c, d),
+            &web_xy,
+        ),
+    ];
+    for (name, batch, (first, second)) in more {
+        let ns = time_stable(first.len(), || {
+            batch(black_box(first), black_box(second), &mut east, &mut north);
+        });
+        black_box((&east, &north));
+        cases.push((name.to_owned(), ns));
+    }
+
     // Lot 7: Helmert on geocentric coordinates around France.
     let xyz: Vec<(f64, f64, f64)> = zip(&france)
         .iter()
@@ -193,6 +233,7 @@ fn main() {
     ));
 
     cases.extend(catalogue_cases());
+    cases.extend(facade_cases());
     let ratios = libproj_ratios(&[
         ("utm31_forward", "+proj=utm +zone=31 +ellps=WGS84", &utm_center),
         (
@@ -245,6 +286,50 @@ fn main() {
         "{{\"impl\":\"proj-rs\",\"version\":\"{}\",\"simd_build\":{simd},\"batch_path\":\"{batch_path}\",\"passes\":{passes},\"n\":{N},\"libproj\":[{ratio_rows}],\"cases\":[{rows}]}}",
         proj_rs::VERSION
     );
+}
+
+/// Points a facade case converts. The facade is slower than a bare projection, so the grid is
+/// shorter than [`N`] to keep the run short.
+const FACADE_N: usize = 200_000;
+
+/// The facade (`Proj`): one point at a time with `convert`, and a slice with `convert_array`.
+/// The pairs are named CRS, so the path is the one a user of `new_known_crs` takes: axis order,
+/// the ISO 19111 selection, then the operation.
+fn facade_cases() -> Vec<(String, f64)> {
+    let mut cases = Vec::new();
+    let (lon, lat) = grid(6, (-4.5, 8.0), (41.5, 51.0));
+    let geographic: Vec<(f64, f64)> = lon.into_iter().zip(lat).take(FACADE_N).collect();
+    let pairs: [(&str, &str, &str); 5] = [
+        ("facade_convert_4326_2154", "EPSG:4326", "EPSG:2154"),
+        ("facade_convert_4326_32631", "EPSG:4326", "EPSG:32631"),
+        ("facade_convert_4326_3857", "EPSG:4326", "EPSG:3857"),
+        ("facade_convert_2154_32631", "EPSG:2154", "EPSG:32631"),
+        ("facade_convert_4267_4326", "EPSG:4267", "EPSG:4326"),
+    ];
+    // The source points are geographic for the first four pairs, and for 4267 too. 2154 reads
+    // metres, so its inputs come from the 4326 to 2154 pair.
+    let to_lambert = Proj::new_known_crs("EPSG:4326", "EPSG:2154", None).expect("4326 to 2154");
+    let lambert: Vec<(f64, f64)> = geographic
+        .iter()
+        .map(|&p| to_lambert.convert(p).expect("inside France"))
+        .collect();
+    for (name, from, to) in pairs {
+        let proj = Proj::new_known_crs(from, to, None).expect(name);
+        let points = if from == "EPSG:2154" {
+            &lambert
+        } else {
+            &geographic
+        };
+        let one_by_one = per_point(points, |p| proj.convert(p).map_or(0.0, |q| q.0));
+        cases.push((name.to_owned(), one_by_one));
+        let mut buffer = points.clone();
+        let array = time_stable(points.len(), || {
+            buffer.copy_from_slice(black_box(points));
+            black_box(proj.convert_array(&mut buffer).map(|done| done.len()).ok());
+        });
+        cases.push((name.replace("convert", "convert_array"), array));
+    }
+    cases
 }
 
 fn catalogue_cases() -> Vec<(String, f64)> {

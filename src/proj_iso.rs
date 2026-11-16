@@ -480,6 +480,47 @@ impl IsoPipeline {
         }
     }
 
+    /// A slice in `way` direction, facade order on both sides, in place. The contract of
+    /// [`crate::engine::Step::forward_batch`]: a point that fails keeps its slot in `failed`.
+    ///
+    /// A single operation takes the slice at once, so its vector steps see all the points. The
+    /// candidates of `proj_trans` are chosen per point, so they go one at a time.
+    pub(crate) fn map_batch(
+        &self,
+        coords: &mut [Coord],
+        way: Direction,
+        failed: &mut [Option<TransformError>],
+    ) {
+        match &self.route {
+            Route::Single(operation) => {
+                let (from, to) = match way {
+                    Direction::Forward => (self.source, self.target),
+                    Direction::Inverse => (self.target, self.source),
+                };
+                for coord in coords.iter_mut() {
+                    *coord = from.in_pipeline_order(*coord);
+                }
+                match way {
+                    Direction::Forward => operation.forward_batch(coords, failed),
+                    Direction::Inverse => operation.inverse_batch(coords, failed),
+                }
+                for coord in coords.iter_mut() {
+                    *coord = to.in_pipeline_order(*coord);
+                }
+            }
+            Route::Alternatives(_) => {
+                for (coord, failed) in coords.iter_mut().zip(failed) {
+                    if failed.is_none() {
+                        match self.map(*coord, way) {
+                            Ok(out) => *coord = out,
+                            Err(error) => *failed = Some(error),
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// `proj_trans` forward for one point, in the pipeline's own axis order.
     fn forward(&self, coord: Coord) -> Result<Coord, TransformError> {
         match &self.route {
