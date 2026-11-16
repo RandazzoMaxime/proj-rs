@@ -179,7 +179,9 @@ def render(machine, rows, theme):
 
     placed = spread([e[5] + 4 for e in ends], 15, top - 2, bottom + 8)
     for (position, label, value, date, current, ypx), label_y in zip(ends, placed):
-        out.append(f'<path d="M{RIGHT + 14} {f(ypx)}h10" class="l s{position}"/>')
+        out.append(
+            f'<path d="M{RIGHT + 10} {f(ypx)}L{RIGHT + 20} {f(label_y - 4)}h6" class="l s{position}"/>'
+        )
         note = "" if current else f" ({history.day_time(date)})"
         out.append(
             f'<text x="{RIGHT + 30}" y="{f(label_y)}" font-size="12">{escape(label)} '

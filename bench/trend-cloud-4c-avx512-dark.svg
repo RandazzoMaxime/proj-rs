@@ -60,15 +60,15 @@
 <circle cx="355.6" cy="300.4" r="3" class="m f4"/>
 <circle cx="448.8" cy="302.9" r="3" class="m f4"/>
 <circle cx="542" cy="300.8" r="4" class="m f4"/>
-<path d="M562 191.2h10" class="l s0"/>
+<path d="M558 191.2L568 191.2h6" class="l s0"/>
 <text x="578" y="195.2" font-size="12">UTM forward <tspan class="d v">109 ns</tspan></text>
-<path d="M562 208.4h10" class="l s1"/>
+<path d="M558 208.4L568 208.4h6" class="l s1"/>
 <text x="578" y="212.4" font-size="12">Lambert-93 forward <tspan class="d v">76.3 ns</tspan></text>
-<path d="M562 237.1h10" class="l s2"/>
+<path d="M558 237.1L568 251.9h6" class="l s2"/>
 <text x="578" y="255.9" font-size="12">Web Mercator forward <tspan class="d v">41.8 ns</tspan></text>
-<path d="M562 236.9h10" class="l s3"/>
+<path d="M558 236.9L568 236.9h6" class="l s3"/>
 <text x="578" y="240.9" font-size="12">convert_array 4326→2154 <tspan class="d v">42 ns</tspan></text>
-<path d="M562 300.8h10" class="l s4"/>
+<path d="M558 300.8L568 300.8h6" class="l s4"/>
 <text x="578" y="304.8" font-size="12">Helmert <tspan class="d v">11 ns</tspan></text>
 <text x="55" y="367" font-size="11.5" text-anchor="end" class="d v">3 ns</text>
 <text x="55" y="309.5" font-size="11.5" text-anchor="end" class="d v">10 ns</text>
