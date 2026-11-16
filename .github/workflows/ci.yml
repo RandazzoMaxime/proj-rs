@@ -62,6 +62,23 @@ jobs:
       # linked against the reference libproj (PROJ_RS_LIBPROJ_DIR) so that code builds.
       - run: cargo build --release --bin proj-rs-bench
 
+  # The C library: the C tests of PROJ 9.9.0, compiled against libproj of proj-rs and run
+  # (capi/tests/README.md). The reference tree gives the test sources and the data directory.
+  capi:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y cmake libsqlite3-dev libgtest-dev
+      - uses: actions/cache@v4
+        with:
+          path: target/proj-reference
+          key: proj-reference-9.9.0-${{ hashFiles('tools/build-reference.sh') }}
+      - run: tools/build-reference.sh
+      - run: capi/tests/run.sh --release
+        env:
+          PROJ_REFERENCE: ${{ github.workspace }}/target/proj-reference
+
   # The documentation has no warning, and the root page shows the stable surface only:
   # the internals are #[doc(hidden)] unless the `unstable` feature is on.
   doc:

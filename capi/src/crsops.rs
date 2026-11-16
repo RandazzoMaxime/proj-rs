@@ -222,6 +222,14 @@ pub extern "C" fn proj_crs_promote_to_3D(
 ) -> *mut PJ {
     guard(std::ptr::null_mut(), || {
         let context = context(ctx);
+        if let Some(Obj::User(UserObject::CoordinateMetadata(metadata))) =
+            pj(crs_2D).and_then(|object| object.obj.as_ref())
+        {
+            let promoted = metadata.promote_to_3d(context.database().as_ref());
+            let obj = Obj::User(UserObject::CoordinateMetadata(promoted));
+            let proj = obj.engine_proj(context);
+            return crate::pj::hand_over(Pj::with_obj(std::ptr::from_mut(context), obj, proj));
+        }
         let Some((object, found)) = crs_of(ctx, crs_2D, "proj_crs_promote_to_3D") else {
             return std::ptr::null_mut();
         };
@@ -458,6 +466,12 @@ pub extern "C" fn proj_crs_get_coordoperation(ctx: *mut PJ_CONTEXT, crs: *const 
         let conversion = match found {
             Crs::Projected(projected) => Some(projected.deriving_conversion().clone()),
             Crs::DerivedProjected(derived_crs) => Some(derived_crs.deriving_conversion().clone()),
+            Crs::Bound(bound) => {
+                return derived(
+                    object,
+                    Obj::User(UserObject::Operation(bound.transformation().clone())),
+                );
+            }
             _ => None,
         };
         match conversion {
@@ -475,5 +489,86 @@ pub extern "C" fn proj_crs_get_coordoperation(ctx: *mut PJ_CONTEXT, crs: *const 
                 std::ptr::null_mut()
             }
         }
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn proj_coordoperation_get_towgs84_values(
+    ctx: *mut PJ_CONTEXT,
+    coordoperation: *const PJ,
+    out_values: *mut f64,
+    value_count: c_int,
+    emit_error_if_incompatible: c_int,
+) -> c_int {
+    guard(0, || {
+        let context = context(ctx);
+        let Some(CoordinateOperation::Transformation(transformation)) = pj(coordoperation)
+            .and_then(|object| object.obj.as_ref())
+            .and_then(Obj::operation)
+        else {
+            if emit_error_if_incompatible != 0 {
+                context.fail(
+                    PROJ_ERR_OTHER_API_MISUSE as c_int,
+                    "proj_coordoperation_get_towgs84_values: not a Transformation",
+                );
+            }
+            return 0;
+        };
+        let metre = UnitOfMeasure::metre();
+        let arc_second =
+            UnitOfMeasure::new("arc-second", 4.848_136_811_095_36e-6, UnitKind::Angular);
+        let ppm = UnitOfMeasure::new("parts per million", 1e-6, UnitKind::Scale);
+        let names = [
+            "X-axis translation",
+            "Y-axis translation",
+            "Z-axis translation",
+            "X-axis rotation",
+            "Y-axis rotation",
+            "Z-axis rotation",
+            "Scale difference",
+        ];
+        let coordinate_frame = transformation.method().name().contains("Coordinate Frame");
+        let mut values = [0.0_f64; 7];
+        let mut found = 0;
+        for parameter in transformation.parameters() {
+            let Some(index) = names
+                .iter()
+                .position(|name| proj_rs::iso19111::equivalent_name(parameter.name(), name))
+            else {
+                continue;
+            };
+            let proj_rs::iso19111::ParameterValue::Measure(measure) = parameter.value() else {
+                continue;
+            };
+            let unit = match index {
+                0..=2 => &metre,
+                3..=5 => &arc_second,
+                _ => &ppm,
+            };
+            let value = measure.convert_to_unit(unit);
+            values[index] = if coordinate_frame && (3..=5).contains(&index) {
+                -value
+            } else {
+                value
+            };
+            found += 1;
+        }
+        if found == 0 {
+            if emit_error_if_incompatible != 0 {
+                context.fail(
+                    PROJ_ERR_OTHER_API_MISUSE as c_int,
+                    "proj_coordoperation_get_towgs84_values: not a Helmert transformation",
+                );
+            }
+            return 0;
+        }
+        let count = usize::try_from(value_count).unwrap_or(0);
+        if count != 3 && count != 7 {
+            return 0;
+        }
+        for (slot, value) in util::slice_mut(out_values, count).iter_mut().zip(values) {
+            *slot = value;
+        }
+        1
     })
 }

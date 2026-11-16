@@ -1,0 +1,26 @@
+CApi.proj_as_proj_string_approx_tmerc_option_yes  # engine: the PROJ string of a CRS has no +approx form (Crs::export_to_proj_string takes no tmerc option)
+CApi.proj_create_from_database  # engine: no PROJ string for the bare conversion EPSG:16031 ("a conversion step of a concatenated operation has no PROJ string"), so proj_pj_info has no id
+CApi.check_coord_op_obj_can_be_used_with_proj_trans  # not implemented: proj_create_conversion_utm, proj_create_projected_crs
+CApi.proj_create_projections  # not implemented: the proj_create_conversion_* family (47 functions)
+CApi.proj_create_engineering_crs  # not implemented: proj_create_engineering_crs
+CApi.proj_create_projected_crs  # not implemented: proj_create_conversion, proj_create_projected_crs
+CApi.proj_create_transformation  # not implemented: proj_create_transformation
+CApi.proj_create_compound_crs  # not implemented: proj_create_vertical_crs, proj_create_compound_crs
+CApi.proj_convert_conversion_to_other_method  # not implemented: proj_create_conversion_mercator_variant_a, proj_convert_conversion_to_other_method
+CApi.proj_query_geodetic_crs_from_datum  # not implemented: proj_query_geodetic_crs_from_datum
+CApi.proj_create_crs_to_crs_coordinate_metadata_in_src  # engine: Proj::new refuses the dynamic CRS ITRF2014 read by name, so the pair "ITRF2014@2025.0" to "GDA2020" is not built
+CApi.proj_create_crs_to_crs_coordinate_metadata_in_target  # engine: same as proj_create_crs_to_crs_coordinate_metadata_in_src
+CApi.proj_create_crs_to_crs_from_custom_compound_crs_with_NAD83_2011_and_geoidgrid_ref_against_WGS84_to_WGS84_G1762  # not implemented: proj_create_vertical_crs
+CApi.proj_create_crs_to_crs_from_custom_compound_crs_with_NAD83_2011_and_geoidgrid_ref_against_NAD83_2011_to_WGS84_G1762  # not implemented: proj_create_vertical_crs
+CApi.proj_create_vertical_crs_ex  # not implemented: proj_create_vertical_crs_ex
+CApi.proj_create_vertical_crs_ex_with_geog_crs  # not implemented: proj_create_vertical_crs_ex
+CApi.proj_create_vertical_crs_ex_implied_accuracy  # not implemented: proj_create_vertical_crs_ex, proj_create_compound_crs
+CApi.proj_create_derived_geographic_crs  # not implemented: proj_create_conversion_pole_rotation_grib_convention, proj_create_derived_geographic_crs
+CApi.proj_create_derived_geographic_crs_netcdf_cf  # not implemented: proj_create_conversion_pole_rotation_netcdf_cf_convention
+CApi.datum_ensemble  # not implemented: proj_create_geographic_crs_from_datum, proj_create_geocentric_crs_from_datum
+CApi.proj_trans_bounds_noop_geographic  # engine: EPSG:4284 to EPSG:4284 gives a candidate set, not the noop PROJ builds, so proj_trans_bounds does not return the box unchanged
+CApi.proj_coordoperation_requires_per_coordinate_input_time  # engine: a PROJ-string conversion answers false (Conversion::requires_per_coordinate_input_time), PROJ reads the string
+CApi.proj_create_linear_affine_parametric_conversion  # not implemented: proj_create_linear_affine_parametric_conversion
+CApi.proj_create_linear_3D_affine_parametric_conversion  # not implemented: proj_create_linear_3D_affine_parametric_conversion
+CApi.proj_create_derived_projected_crs  # not implemented: proj_create_linear_affine_parametric_conversion, proj_create_derived_projected_crs
+CApi.proj_crs_add_horizontal_derived_conversion  # not implemented: proj_create_linear_affine_parametric_conversion

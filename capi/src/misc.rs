@@ -331,3 +331,21 @@ pub extern "C" fn proj_string_list_destroy(list: PROJ_STRING_LIST) {
 pub extern "C" fn proj_string_destroy(str_: *mut c_char) {
     guard((), || util::take_string(str_));
 }
+
+/// The release notice of PROJ 9.9.0 (`release.cpp`).
+pub(crate) const RELEASE: &str = "Rel. 9.9.0, September 15th, 2026";
+
+/// `pj_release`, a `char const[]` of proj.h.
+#[unsafe(no_mangle)]
+pub static pj_release: [c_char; 33] = release_notice();
+
+const fn release_notice() -> [c_char; 33] {
+    let text = b"Rel. 9.9.0, September 15th, 2026\0";
+    let mut out = [0; 33];
+    let mut index = 0;
+    while index < text.len() {
+        out[index] = c_char::from_ne_bytes([text[index]]);
+        index += 1;
+    }
+    out
+}

@@ -46,7 +46,7 @@ pub extern "C" fn proj_info() -> PJ_INFO {
             return empty_info();
         };
         let mut strings = InfoStrings {
-            release: Some(util::c_string(&found.release)),
+            release: Some(util::c_string(crate::misc::RELEASE)),
             version: Some(util::c_string(&found.version)),
             searchpath: Some(util::c_string(&found.searchpath)),
             ..InfoStrings::default()

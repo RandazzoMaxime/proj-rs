@@ -329,6 +329,16 @@ pub extern "C" fn proj_create_crs_to_crs(
             );
             return std::ptr::null_mut();
         };
+        if source.contains('@') || target.contains('@') {
+            // A coordinate epoch: each side is an object of its own, as in PROJ.
+            let from = crate::pj::create(ctx, source, "proj_create_crs_to_crs");
+            let to = crate::pj::create(ctx, target, "proj_create_crs_to_crs");
+            let made =
+                proj_create_crs_to_crs_from_pj(ctx, from, to, area_pointer, std::ptr::null());
+            crate::pj::proj_destroy(from);
+            crate::pj::proj_destroy(to);
+            return made;
+        }
         match context
             .builder()
             .proj_known_crs(source, target, bbox_of(area_pointer))
@@ -410,7 +420,16 @@ pub extern "C" fn proj_normalize_for_visualization(
             .and_then(Proj::pair_axis_swaps)
             .is_none()
         {
-            return crate::iso::normalized_for_visualization(object).unwrap_or_else(|| {
+            let is_proj_string = object
+                .proj
+                .as_ref()
+                .is_some_and(|proj| proj.native_operation().is_some());
+            let normalized = if is_proj_string {
+                None
+            } else {
+                crate::iso::normalized_for_visualization(object)
+            };
+            return normalized.unwrap_or_else(|| {
                 context.fail(
                     PROJ_ERR_OTHER_API_MISUSE as c_int,
                     "proj_normalize_for_visualization: the object is not a CRS or a CRS pair",

@@ -77,20 +77,6 @@ pub extern "C" fn proj_list_prime_meridians() -> *const PJ_PRIME_MERIDIANS {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn proj_coordoperation_get_towgs84_values(
-    ctx: *mut PJ_CONTEXT,
-    _coordoperation: *const PJ,
-    _out_values: *mut f64,
-    _value_count: c_int,
-    _emit_error_if_incompatible: c_int,
-) -> c_int {
-    guard(0, || {
-        unsupported(ctx, "proj_coordoperation_get_towgs84_values");
-        0
-    })
-}
-
-#[unsafe(no_mangle)]
 pub extern "C" fn proj_create_cs(
     ctx: *mut PJ_CONTEXT,
     _type_: PJ_COORDINATE_SYSTEM_TYPE,
@@ -99,47 +85,6 @@ pub extern "C" fn proj_create_cs(
 ) -> *mut PJ {
     guard(std::ptr::null_mut(), || {
         unsupported(ctx, "proj_create_cs");
-        std::ptr::null_mut()
-    })
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn proj_create_cartesian_2D_cs(
-    ctx: *mut PJ_CONTEXT,
-    _type_: PJ_CARTESIAN_CS_2D_TYPE,
-    _unit_name: *const c_char,
-    _unit_conv_factor: f64,
-) -> *mut PJ {
-    guard(std::ptr::null_mut(), || {
-        unsupported(ctx, "proj_create_cartesian_2D_cs");
-        std::ptr::null_mut()
-    })
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn proj_create_ellipsoidal_2D_cs(
-    ctx: *mut PJ_CONTEXT,
-    _type_: PJ_ELLIPSOIDAL_CS_2D_TYPE,
-    _unit_name: *const c_char,
-    _unit_conv_factor: f64,
-) -> *mut PJ {
-    guard(std::ptr::null_mut(), || {
-        unsupported(ctx, "proj_create_ellipsoidal_2D_cs");
-        std::ptr::null_mut()
-    })
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn proj_create_ellipsoidal_3D_cs(
-    ctx: *mut PJ_CONTEXT,
-    _type_: PJ_ELLIPSOIDAL_CS_3D_TYPE,
-    _horizontal_angular_unit_name: *const c_char,
-    _horizontal_angular_unit_conv_factor: f64,
-    _vertical_linear_unit_name: *const c_char,
-    _vertical_linear_unit_conv_factor: f64,
-) -> *mut PJ {
-    guard(std::ptr::null_mut(), || {
-        unsupported(ctx, "proj_create_ellipsoidal_3D_cs");
         std::ptr::null_mut()
     })
 }
@@ -159,26 +104,6 @@ pub extern "C" fn proj_query_geodetic_crs_from_datum(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn proj_create_geographic_crs(
-    ctx: *mut PJ_CONTEXT,
-    _crs_name: *const c_char,
-    _datum_name: *const c_char,
-    _ellps_name: *const c_char,
-    _semi_major_metre: f64,
-    _inv_flattening: f64,
-    _prime_meridian_name: *const c_char,
-    _prime_meridian_offset: f64,
-    _pm_angular_units: *const c_char,
-    _pm_units_conv: f64,
-    _ellipsoidal_cs: *const PJ,
-) -> *mut PJ {
-    guard(std::ptr::null_mut(), || {
-        unsupported(ctx, "proj_create_geographic_crs");
-        std::ptr::null_mut()
-    })
-}
-
-#[unsafe(no_mangle)]
 pub extern "C" fn proj_create_geographic_crs_from_datum(
     ctx: *mut PJ_CONTEXT,
     _crs_name: *const c_char,
@@ -187,27 +112,6 @@ pub extern "C" fn proj_create_geographic_crs_from_datum(
 ) -> *mut PJ {
     guard(std::ptr::null_mut(), || {
         unsupported(ctx, "proj_create_geographic_crs_from_datum");
-        std::ptr::null_mut()
-    })
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn proj_create_geocentric_crs(
-    ctx: *mut PJ_CONTEXT,
-    _crs_name: *const c_char,
-    _datum_name: *const c_char,
-    _ellps_name: *const c_char,
-    _semi_major_metre: f64,
-    _inv_flattening: f64,
-    _prime_meridian_name: *const c_char,
-    _prime_meridian_offset: f64,
-    _angular_units: *const c_char,
-    _angular_units_conv: f64,
-    _linear_units: *const c_char,
-    _linear_units_conv: f64,
-) -> *mut PJ {
-    guard(std::ptr::null_mut(), || {
-        unsupported(ctx, "proj_create_geocentric_crs");
         std::ptr::null_mut()
     })
 }

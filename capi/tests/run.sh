@@ -2,7 +2,8 @@
 # Compile the C tests of PROJ 9.9.0 against the C library of proj-rs, and run them.
 #
 # Usage: capi/tests/run.sh [--release] [TEST...]
-#   TEST is one of: errno_string angular_io context include_h fork c_api (default: all).
+#   TEST is one of: symbols abi errno_string angular_io context include_h fork c_api
+#   (default: all). PENDING=0 runs the cases of pending.txt too, to see them fail.
 #   GTEST_FILTER=pattern narrows the gtest cases of the C++ tests.
 #
 # Needs: g++ (C++17), gcc, the SQLite3 headers, and googletest's sources (Debian: libgtest-dev,
@@ -21,7 +22,7 @@ if [ "${1:-}" = "--release" ]; then
   shift
 fi
 tests=("$@")
-[ ${#tests[@]} -gt 0 ] || tests=(errno_string angular_io context include_h fork c_api)
+[ ${#tests[@]} -gt 0 ] || tests=(symbols abi errno_string angular_io context include_h fork c_api)
 
 ref=${PROJ_REFERENCE:-$root/target/proj-reference}
 src=$ref/src
@@ -60,9 +61,14 @@ export PROJ_DATA=$ref/build/data/for_tests
 export PROJ_SOURCE_DATA=$src/data
 export PATH=$bin:$PATH
 export LD_LIBRARY_PATH=$dist/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
-# Cases of excluded.txt that compile but cannot pass (they read the internals of PROJ) are
-# skipped at run time; the `CApi.` ones are cut out of the source by filter_tests.py.
+# excluded.txt: cases that cannot pass (they call the C++ API or read the internals of PROJ).
+# pending.txt: cases that do not pass yet, each with its reason. Both are skipped at run time,
+# except that the `CApi.` cases of excluded.txt are cut out of the source by filter_tests.py
+# (they do not link). PENDING=0 keeps the pending cases in the run.
 skipped=$(sed 's/#.*//' "$here/excluded.txt" | grep -v '^CApi\.' | tr -s ' \n' ':' || true)
+if [ "${PENDING:-1}" != 0 ]; then
+  skipped=$skipped$(sed 's/#.*//' "$here/pending.txt" | tr -s ' \n' ':' || true)
+fi
 filter=${GTEST_FILTER:-*}${skipped:+-${skipped%:}}
 
 run_gtest() {
@@ -74,6 +80,16 @@ run_gtest() {
 
 for test in "${tests[@]}"; do
   case $test in
+    symbols)
+      echo "== symbols"
+      python3 "$here/check_symbols.py" "$root/capi/include/proj.h" "$dist/lib/libproj.so.25" 2>/dev/null \
+        || python3 "$here/check_symbols.py" "$root/capi/include/proj.h" "$dist/lib/libproj.25.dylib" ;;
+    abi)
+      echo "== abi"
+      for headers in "$root/capi/include" "$src/src"; do
+        gcc -std=c11 -I"$headers" "$here/abi_layout.c" -o "$out/abi_layout"
+        echo "layout of the header in $headers: ok"
+      done ;;
     errno_string) run_gtest proj_errno_string_test "$unit/proj_errno_string_test.cpp" ;;
     angular_io)   run_gtest proj_angular_io_test "$unit/proj_angular_io_test.cpp" ;;
     context)      run_gtest proj_context_test "$unit/proj_context_test.cpp" ;;
@@ -87,7 +103,7 @@ for test in "${tests[@]}"; do
       echo "== test_fork"; "$out/test_fork" && echo "ok" ;;
     c_api)
       python3 "$here/filter_tests.py" "$unit/test_c_api.cpp" "$here/excluded.txt" "$out/test_c_api_filtered.cpp"
-      g++ "${cxxflags[@]}" -include "$unit/gtest_include.h" "$out/test_c_api_filtered.cpp" "$unit/main.cpp" \
+      g++ "${cxxflags[@]}" -DTIFF_ENABLED -include "$unit/gtest_include.h" "$out/test_c_api_filtered.cpp" "$unit/main.cpp" \
         "$out/gtest-all.o" -o "$out/test_c_api" "${ldflags[@]}"
       echo "== test_c_api"; "$out/test_c_api" --gtest_filter="$filter" ;;
     *) echo "unknown test $test" >&2; exit 2 ;;

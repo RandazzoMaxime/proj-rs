@@ -124,9 +124,12 @@ pub extern "C" fn proj_context_set_database_path(
         }
         let previous_source = context.engine.database_source().clone();
         let previous_auxiliary = context.engine.auxiliary_database_paths().to_vec();
-        context
-            .engine
-            .set_database(database_source(util::text(dbPath)));
+        // `proj_context_get_database_path` names the proj.db of the search path, which stands
+        // for the embedded copy: giving that path back selects the embedded database again.
+        let requested = util::text(dbPath).filter(|path| {
+            proj_data_database(context).is_none_or(|advertised| advertised != PathBuf::from(path))
+        });
+        context.engine.set_database(database_source(requested));
         context.engine.set_auxiliary_database_paths(auxiliary);
         context.database = None;
         if context.database().is_some() {

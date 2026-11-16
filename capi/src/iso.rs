@@ -144,6 +144,12 @@ impl Obj {
             let database = ctx.database()?;
             return ctx.builder().proj_from_operation(operation, &database).ok();
         }
+        if let Self::User(UserObject::CoordinateMetadata(metadata)) = self {
+            let base = Self::User(UserObject::Crs(metadata.crs().clone())).engine_proj(ctx)?;
+            return base
+                .coordinate_metadata_create(metadata.coordinate_epoch()?)
+                .ok();
+        }
         let crs = self.crs()?;
         let database = ctx.database()?;
         let wkt = wkt_of_crs(crs, &database, WktConvention::Wkt2_2019)?;
@@ -691,6 +697,7 @@ pub extern "C" fn proj_as_proj_string(
         let from_pipeline = object
             .proj
             .as_ref()
+            .filter(|_| object.obj.as_ref().and_then(Obj::crs).is_none())
             .and_then(|proj| proj.as_proj_string(layout).ok());
         let text = match object.obj.as_ref() {
             _ if from_pipeline.is_some() => from_pipeline.ok_or_else(String::new),
