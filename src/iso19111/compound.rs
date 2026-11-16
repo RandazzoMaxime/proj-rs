@@ -15,10 +15,11 @@ use super::buildop::{concatenation_interpolation, interpolation_crs_of, OpProps}
 use super::derived::joint_extent;
 use super::equiv::{geodetic_frame, same_geodetic_datum, Equivalence};
 use super::factory::{
-    crs_extent, find_ops_in_registry_direct_to, geographic_of, point_motion_candidates,
-    sort_extents, world_extent, CoordinateOperationContext, CoordinateOperationFactory,
-    DatabaseContext, Epochs, GridAvailabilityUse, SortExtents, GUARD_ALTERNATIVE_GEOG,
-    GUARD_SKIP_HORIZONTAL, GUARD_VERTICAL_INTERMEDIATE, GUARD_VERTICAL_PIVOT,
+    crs_extent, ends_with_perfect_registry_result, find_ops_in_registry_direct_to, geographic_of,
+    point_motion_candidates, sort_extents, world_extent, CoordinateOperationContext,
+    CoordinateOperationFactory, DatabaseContext, Epochs, GridAvailabilityUse, SortExtents,
+    GUARD_ALTERNATIVE_GEOG, GUARD_SKIP_HORIZONTAL, GUARD_VERTICAL_INTERMEDIATE,
+    GUARD_VERTICAL_PIVOT,
 };
 use super::model::{
     Axis, BoundCRS, CompoundCRS, ConcatenatedOperation, ConcatenatedStep, Conversion,
@@ -461,7 +462,9 @@ fn vertical_to_geog_candidates(
         Some(first) => vec![first],
         None => factory.create_candidates(vertical, geographic, context)?,
     };
-    if !operations.iter().any(is_synthesized_ballpark) {
+    if !operations.iter().any(is_synthesized_ballpark)
+        && !ends_with_perfect_registry_result(&operations, vertical, geographic, context)
+    {
         if let Some(geog) = geographic_of(geographic) {
             operations.extend(vertical_ballpark(
                 vertical,

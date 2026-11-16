@@ -154,6 +154,18 @@ fn a_perfect_registry_operation_ends_the_search() {
     );
 }
 
+/// `projinfo -s EPSG:7885 -t EPSG:7956 --summary --spatial-test intersects` (PROJ 9.9.0): the
+/// vertical leg `SHVD2015 height` to `SHGD2015` is the registry operation EPSG:7891, perfect over
+/// the area, so `createOperationsFromDatabase` returns it before `createOperationsVertToGeog`
+/// would add the ballpark change of unit (coordinateoperationfactory.cpp:3748-3751, 6104-6108).
+#[test]
+fn a_perfect_vertical_registry_operation_gets_no_ballpark_sibling() {
+    assert_eq!(
+        names("EPSG:7885", "EPSG:7956"),
+        ["SHGD2015 to SHVD2015 height (1) + UTM zone 30S"]
+    );
+}
+
 /// `projinfo -s EPSG:11056 -t EPSG:9500 --summary --spatial-test intersects` (PROJ 9.9.0): the
 /// candidates through the interpolation CRS `MGI` are `PROJBasedOperation`s, one step each for
 /// `removeUninterestingOps` (coordinateoperationfactory.cpp:1608-1656); the port counted their

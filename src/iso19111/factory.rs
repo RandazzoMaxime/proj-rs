@@ -6242,6 +6242,7 @@ impl CoordinateOperationFactory {
         // already (`create_candidates`), so it is not added twice.
         if (matches!(source, Crs::Vertical(_)) || found.is_empty())
             && !found.iter().any(super::compound::is_synthesized_ballpark)
+            && !ends_with_perfect_registry_result(&found, &source, &target, context)
         {
             found.extend(super::compound::vertical_geog_synthesized(&source, &target));
         }
@@ -7594,6 +7595,23 @@ fn has_perfect_accuracy_result(
         .operations
         .iter()
         .any(|operation| get_accuracy(operation) == 0.0)
+}
+
+/// Whether `operations`, found for `source` and `target`, hold a perfect registry result: PROJ's
+/// `createOperationsFromDatabase` returned it alone, so no `createOperationsVertToGeog` followed.
+pub(super) fn ends_with_perfect_registry_result(
+    operations: &[CoordinateOperation],
+    source: &Crs,
+    target: &Crs,
+    context: &CoordinateOperationContext,
+) -> bool {
+    let (source_extent, target_extent) = crs_extents_of(context, source, target);
+    has_perfect_accuracy_result(
+        operations,
+        context,
+        source_extent.as_ref(),
+        target_extent.as_ref(),
+    )
 }
 
 /// Geographic or geocentric CRS, not spherical: the ones `createOperationsGeodToGeod` handles.
