@@ -1274,11 +1274,7 @@ fn export_esri_projected_3d(
     let Some(vertical) = esri_ellipsoidal_vertical(crs.base.datum(), formatter) else {
         return Ok(false);
     };
-    let mut flat = crs.clone();
-    flat.coordinate_system.axes.truncate(2);
-    if let GeodeticCRS::Geographic(base) = &mut flat.base {
-        *base = geographic_without_height(base);
-    }
+    let flat = crs.demote_to_2d(formatter.db.as_ref());
     export_projected(&flat, formatter)?;
     export_vertical(&vertical, formatter)?;
     Ok(true)
@@ -1942,7 +1938,6 @@ fn export_engineering_datum(datum: &EngineeringDatum, formatter: &mut WktFormatt
     } else {
         formatter.add_raw("32767");
     }
-    formatter.format_ids(&datum.identified.identifiers);
     formatter.end_node();
 }
 
@@ -2391,12 +2386,14 @@ fn export_conversion_wkt1(
             if omitted_zero_parameter(conversion, parameter) {
                 continue;
             }
-            let Some(mut name) = wkt1_parameter_name(mapped, parameter) else {
+            let name = if formatter.esri {
+                Some(parameter.name.clone())
+            } else {
+                wkt1_parameter_name(mapped, parameter)
+            };
+            let Some(name) = name else {
                 continue;
             };
-            if formatter.esri {
-                name = esri_wkt1_parameter_name(&name);
-            }
             formatter.start_node("PARAMETER", NodeId::Absent);
             formatter.add_quoted(&name);
             add_parameter_value(parameter, formatter)?;
@@ -2803,9 +2800,14 @@ fn export_transformation(
     transformation: &Transformation,
     formatter: &mut WktFormatter,
 ) -> Result<(), FactoryError> {
+    if transformation.is_point_motion() && !(formatter.wkt2 && formatter.keywords_2019) {
+        return Err(FactoryError::Format(
+            "Transformation can only be exported to WKT2:2019".to_owned(),
+        ));
+    }
     if !formatter.wkt2 {
         return Err(FactoryError::Format(
-            "a transformation can only be exported to WKT2".to_owned(),
+            "Transformation can only be exported to WKT2".to_owned(),
         ));
     }
     if let Some(approximate) = transformation.approximate_inverse() {
@@ -3101,11 +3103,11 @@ fn esri_projected_text(crs: &ProjectedCRS, formatter: &WktFormatter) -> Option<S
         return None;
     }
     let db = formatter.db.as_ref()?;
-    let identifier = crs
-        .identifiers()
-        .iter()
-        .find(|identifier| identifier.code_space() == "ESRI")?;
-    let text = db.text_definition("projected_crs", "ESRI", identifier.code())?;
+    let code = match crs.identifiers().first() {
+        Some(identifier) if identifier.code_space() == "ESRI" => identifier.code().to_owned(),
+        _ => db.single_esri_projected_code(&esri_registered_name(&crs.identified, formatter)?)?,
+    };
+    let text = db.text_definition("projected_crs", "ESRI", &code)?;
     if !text.starts_with("PROJCS") {
         return None;
     }
@@ -3117,18 +3119,25 @@ fn esri_projected_text(crs: &ProjectedCRS, formatter: &WktFormatter) -> Option<S
     let Some(Crs::Projected(parsed)) = object.crs().cloned() else {
         return None;
     };
-    if crs.is_equivalent_to(&parsed) {
-        Some(text)
-    } else {
-        None
-    }
+    crs.is_equivalent_to_with(&parsed, super::equiv::Equivalence::Equivalent)
+        .then_some(text)
+}
+
+/// `l_esri_name` of `ProjectedCRS::_exportToWKT` (crs.cpp:4397-4417): the single ESRI alias of the
+/// CRS, the ESRI alias of its name, or its own name when exactly one ESRI CRS bears it.
+fn esri_registered_name(identified: &Identified, formatter: &WktFormatter) -> Option<String> {
+    esri_alias(identified, "projected_crs", formatter).or_else(|| {
+        formatter
+            .db
+            .as_ref()?
+            .single_esri_projected_code(&identified.name)
+            .map(|_| identified.name.clone())
+    })
 }
 
 fn esri_projected_name(identified: &Identified, formatter: &WktFormatter) -> String {
-    if let Some(alias) = esri_alias(identified, "projected_crs", formatter) {
-        return alias;
-    }
-    morph_name_to_esri(&identified.name)
+    esri_registered_name(identified, formatter)
+        .unwrap_or_else(|| morph_name_to_esri(&identified.name))
 }
 
 fn esri_official_name(name: &str, table: &str, formatter: &WktFormatter) -> bool {
@@ -3157,8 +3166,19 @@ fn wkt1_datum_name(identified: &Identified, formatter: &WktFormatter) -> String 
         if identified.name == "World Geodetic System 1984" {
             return "D_WGS_1984".to_owned();
         }
-        if let Some(alias) = esri_alias(identified, "geodetic_datum", formatter) {
-            return alias;
+        if let Some(db) = formatter.db.as_ref() {
+            let alias_of = |name: &str| {
+                db.alias_from_official_name(name, "geodetic_datum", "ESRI")
+                    .ok()
+                    .filter(|alias| !alias.is_empty())
+            };
+            let without_qualifier = identified
+                .name
+                .find(" (")
+                .and_then(|position| alias_of(&identified.name[..position]));
+            if let Some(alias) = alias_of(&identified.name).or(without_qualifier) {
+                return alias;
+            }
         }
         if esri_official_name(&identified.name, "geodetic_datum", formatter) {
             return identified.name.clone();
@@ -3210,21 +3230,13 @@ fn esri_unit_name(name: &str, formatter: &WktFormatter) -> String {
     }
 }
 
+/// `getMapping(const OperationMethod *)` (parammappings.cpp:1882): the projection mappings only,
+/// the first one whose code or name matches.
 fn lookup_method(method: &OperationMethod) -> Option<&'static super::parammap::MethodMap> {
     let code = method.code.parse::<i32>().unwrap_or(0);
-    if code != 0 {
-        let named = super::parammap::PROJECTION_METHODS
-            .iter()
-            .chain(super::parammap::OTHER_METHODS)
-            .find(|mapped| mapped.epsg_code == code && names_match(mapped.wkt2_name, &method.name));
-        if named.is_some() {
-            return named;
-        }
-        if let Some(mapped) = super::parammap::method_by_code(code) {
-            return Some(mapped);
-        }
-    }
-    super::parammap::method_by_name(&method.name)
+    super::parammap::PROJECTION_METHODS.iter().find(|mapped| {
+        (code != 0 && mapped.epsg_code == code) || names_match(mapped.wkt2_name, &method.name)
+    })
 }
 
 fn names_match(left: &str, right: &str) -> bool {
@@ -3236,22 +3248,6 @@ fn canonical_name(name: &str) -> String {
         .filter(|ch| !matches!(ch, ' ' | '_' | '-' | '/' | '{' | '}'))
         .flat_map(|ch| ch.to_lowercase())
         .collect()
-}
-
-fn esri_wkt1_parameter_name(name: &str) -> String {
-    match name {
-        "latitude_of_origin" => "Latitude_Of_Origin",
-        "central_meridian" => "Central_Meridian",
-        "scale_factor" => "Scale_Factor",
-        "false_easting" => "False_Easting",
-        "false_northing" => "False_Northing",
-        "standard_parallel_1" => "Standard_Parallel_1",
-        "standard_parallel_2" => "Standard_Parallel_2",
-        "azimuth" => "Azimuth",
-        "rectified_grid_angle" => "Rectified_Grid_Angle",
-        _ => return name.to_owned(),
-    }
-    .to_owned()
 }
 
 fn wkt1_method_name(method: &OperationMethod) -> Result<String, FactoryError> {
@@ -3299,18 +3295,7 @@ fn wkt1_parameter_name(
             return param.wkt1_name.map(str::to_owned);
         }
     }
-    Some(match parameter.code.as_str() {
-        "8801" | "8811" | "8821" => "latitude_of_origin".to_owned(),
-        "8802" | "8812" | "8822" => "central_meridian".to_owned(),
-        "8805" | "8815" => "scale_factor".to_owned(),
-        "8806" | "8816" | "8826" => "false_easting".to_owned(),
-        "8807" | "8817" | "8827" => "false_northing".to_owned(),
-        "8823" => "standard_parallel_1".to_owned(),
-        "8824" => "standard_parallel_2".to_owned(),
-        "8813" => "azimuth".to_owned(),
-        "8814" => "rectified_grid_angle".to_owned(),
-        _ => parameter.name.clone(),
-    })
+    Some(parameter.name.clone())
 }
 
 fn parameter_number(conversion: &Conversion, code: &str) -> Result<f64, FactoryError> {

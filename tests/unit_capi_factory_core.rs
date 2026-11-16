@@ -5,9 +5,10 @@
 use proj_rs::iso19111::{
     create_crs_from_proj_string, Ellipsoid as IsoEllipsoid, JsonFormat, JsonLines,
 };
+use proj_rs::unstable::Crs;
 use proj_rs::{
     AlternativeGridNames, AuthorityFactory, AuthorityObject, BoundCRS, BoundingBox, CartesianCS,
-    CompoundCRS, ConcatenatedStep, Conversion, CoordinateOperation, CoordinateSystem, Crs, CrsInfo,
+    CompoundCRS, ConcatenatedStep, Conversion, CoordinateOperation, CoordinateSystem, CrsInfo,
     DatabaseContext, EllipsoidalCS, Equivalence, GeodeticCRS, GeodeticComponents, GeographicCRS,
     GridInfo, NameMatch, ObjectType, OpProps, OperationParameter, ParameterValue, ProjLines,
     ProjectedCRS, SupersededOperations, Transformation, UnitKind, UnitOfMeasure, VerticalCRS,
@@ -123,17 +124,22 @@ fn epsg_code(operation: &CoordinateOperation) -> Option<i32> {
         .and_then(|id| id.code().parse().ok())
 }
 
-fn crs_code(crs: Option<&proj_rs::Crs>) -> Option<i32> {
+fn crs_code(crs: Option<&proj_rs::unstable::Crs>) -> Option<i32> {
     let identifiers = match crs? {
-        proj_rs::Crs::Geographic(crs) => crs.identifiers(),
-        proj_rs::Crs::Geodetic(crs) => crs.identifiers(),
-        proj_rs::Crs::Projected(crs) => crs.identifiers(),
+        proj_rs::unstable::Crs::Geographic(crs) => crs.identifiers(),
+        proj_rs::unstable::Crs::Geodetic(crs) => crs.identifiers(),
+        proj_rs::unstable::Crs::Projected(crs) => crs.identifiers(),
         _ => return None,
     };
     identifiers.first()?.code().parse().ok()
 }
 
-fn endpoints(operation: &CoordinateOperation) -> (Option<&proj_rs::Crs>, Option<&proj_rs::Crs>) {
+fn endpoints(
+    operation: &CoordinateOperation,
+) -> (
+    Option<&proj_rs::unstable::Crs>,
+    Option<&proj_rs::unstable::Crs>,
+) {
     match operation {
         CoordinateOperation::Conversion(op) => (op.source_crs(), op.target_crs()),
         CoordinateOperation::Transformation(op) => (op.source_crs(), op.target_crs()),
@@ -243,9 +249,9 @@ fn factory_authority_factory_create_from_coordinate_reference_system_codes_anony
 fn authority_code(object: &AuthorityObject) -> Option<i32> {
     let ids = match object {
         AuthorityObject::Crs(crs) => match crs {
-            proj_rs::Crs::Geographic(crs) => crs.identifiers().to_vec(),
-            proj_rs::Crs::Geodetic(crs) => crs.identifiers().to_vec(),
-            proj_rs::Crs::Projected(crs) => crs.identifiers().to_vec(),
+            proj_rs::unstable::Crs::Geographic(crs) => crs.identifiers().to_vec(),
+            proj_rs::unstable::Crs::Geodetic(crs) => crs.identifiers().to_vec(),
+            proj_rs::unstable::Crs::Projected(crs) => crs.identifiers().to_vec(),
             _ => return None,
         },
         AuthorityObject::DatumEnsemble(ensemble) => ensemble.identifiers().to_vec(),

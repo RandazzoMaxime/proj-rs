@@ -425,9 +425,12 @@ fn single_towgs84_candidate(operations: Vec<CoordinateOperation>) -> Option<Tran
 /// A CRS whose datum is known: `datumNonNull()->nameStr() != "unknown"` of crs.cpp:662.
 fn has_known_datum(crs: &Crs) -> bool {
     match crs {
-        Crs::Geodetic(GeodeticCRS::Geocentric(geocentric)) => geocentric
-            .datum()
-            .is_some_and(|datum| datum.name() != "unknown"),
+        Crs::Geodetic(GeodeticCRS::Geocentric(geocentric)) => {
+            geocentric
+                .datum()
+                .is_some_and(|datum| datum.name() != "unknown")
+                || geocentric.ensemble.is_some()
+        }
         _ => extract_geographic(crs)
             .and_then(|geographic| geographic.datum())
             .is_some_and(|datum| datum.name() != "unknown"),

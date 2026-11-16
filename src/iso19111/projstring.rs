@@ -397,13 +397,22 @@ impl ProjectedCRS {
         if self.has_west_south_axes() {
             text = text.replacen("+axis=swu", "+czech", 1);
         }
+        if self
+            .base_crs()
+            .ellipsoid()
+            .is_some_and(Ellipsoid::is_sphere)
+        {
+            text = text
+                .split(' ')
+                .filter(|token| !matches!(*token, "+R_A" | "+f=0"))
+                .collect::<Vec<_>>()
+                .join(" ");
+        }
         text.push(' ');
         text.push_str(&crs_datum_clause(self.base_crs(), extras));
         if let Some(unit) = self.coordinate_system().axes().first().map(Axis::unit) {
-            if let Some(clause) = linear_unit_clause(unit) {
-                text.push(' ');
-                text.push_str(&clause);
-            }
+            text.push(' ');
+            text.push_str(&linear_unit_clause(unit));
         }
         if self.identified.over {
             text.push_str(" +over");
@@ -446,10 +455,8 @@ impl ProjectedCRS {
             format_g(conversion.numeric_si(8807), 15),
         );
         if let Some(axis) = self.coordinate_system().axes().first() {
-            if let Some(clause) = linear_unit_clause(axis.unit()) {
-                text.push(' ');
-                text.push_str(&clause);
-            }
+            text.push(' ');
+            text.push_str(&linear_unit_clause(axis.unit()));
         }
         text.push_str(" +nadgrids=@null +wktext +no_defs +type=crs");
         Some(text)
@@ -1382,11 +1389,30 @@ fn towgs84_clause(values: &[f64; 7]) -> String {
     format!("+towgs84={}", numbers.join(","))
 }
 
-fn linear_unit_clause(unit: &UnitOfMeasure) -> Option<String> {
-    linear_proj_unit(unit.conversion_to_si()).map(|id| format!("+units={id}"))
+fn linear_unit_clause(unit: &UnitOfMeasure) -> String {
+    match linear_proj_unit(unit.conversion_to_si()) {
+        Some(id) => format!("+units={id}"),
+        None => format!("+to_meter={}", format_g(unit.conversion_to_si(), 15)),
+    }
 }
 
 impl GeocentricCRS {
+    fn frame(&self) -> Option<&GeodeticReferenceFrame> {
+        self.datum
+            .as_ref()
+            .or_else(|| self.ensemble.as_ref().and_then(geodetic_member))
+    }
+
+    /// `ellipsoid()->_exportToPROJString` then `primeMeridian()->_exportToPROJString`.
+    fn ellipsoid_and_meridian_clauses(&self) -> Vec<String> {
+        let Some(frame) = self.frame() else {
+            return Vec::new();
+        };
+        let mut clauses = vec![ellipsoid_proj(frame.ellipsoid())];
+        clauses.extend(prime_meridian_proj(frame.prime_meridian()));
+        clauses
+    }
+
     /// `+proj=geocent` for a geocentric CRS bound to WGS 84 (`+towgs84`). The
     /// ellipsoid is written, not the datum name, as `BoundCRS` does.
     ///
@@ -1409,9 +1435,7 @@ impl GeocentricCRS {
             ));
         }
         let mut parts = vec!["+proj=geocent".to_owned()];
-        if let Some(datum) = self.datum() {
-            parts.push(ellipsoid_proj(datum.ellipsoid()));
-        }
+        parts.extend(self.ellipsoid_and_meridian_clauses());
         parts.push(towgs84_clause(values));
         parts.push("+units=m".to_owned());
         parts.push("+no_defs".to_owned());
@@ -1440,10 +1464,14 @@ impl GeocentricCRS {
             ));
         }
         let mut parts = vec!["+proj=geocent".to_owned()];
-        if let Some(token) = self.datum().and_then(datum_code_token) {
+        let token = self
+            .datum()
+            .and_then(datum_code_token)
+            .or_else(|| self.ensemble.as_ref().and_then(ensemble_code_token));
+        if let Some(token) = token {
             parts.push(format!("+datum={token}"));
-        } else if let Some(datum) = self.datum() {
-            parts.push(ellipsoid_proj(datum.ellipsoid()));
+        } else {
+            parts.extend(self.ellipsoid_and_meridian_clauses());
         }
         parts.push("+units=m".to_owned());
         parts.push("+no_defs".to_owned());

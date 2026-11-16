@@ -3,9 +3,10 @@
 //!
 //! Each function is one C++ `TEST()` name. Expected text is copied from PROJ 9.9.0.
 
+use proj_rs::unstable::Crs;
 use proj_rs::{
     create_crs_from_proj_string, AuthorityFactory, ConcatenatedOperation, CoordinateOperation,
-    CoordinateOperationFactory, Crs, DatabaseContext, GeographicCRS, OpProps, OperationParameter,
+    CoordinateOperationFactory, DatabaseContext, GeographicCRS, OpProps, OperationParameter,
     ParameterValue, ProjLines, Transformation, WktConvention, WktFormatter, WktLines, WktObject,
     WktParser,
 };

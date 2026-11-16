@@ -140,3 +140,48 @@ fn geocentric_to_compound_of_a_ballpark_vertical_chain() {
         ]
     );
 }
+
+/// `projinfo -s EPSG:7885 -t EPSG:9517 --summary --spatial-test intersects` (PROJ 9.9.0): the
+/// registry operation EPSG:10614 has an accuracy of 0 over the whole area, so
+/// `createOperationsFromDatabase` returns it alone (coordinateoperationfactory.cpp:4351). The port
+/// went on to the compound-to-geographic search and listed two other candidates, one of which
+/// removed it as a duplicate.
+#[test]
+fn a_perfect_registry_operation_ends_the_search() {
+    assert_eq!(
+        names("EPSG:7885", "EPSG:9517"),
+        ["SHGD2015 to SHGD2015 + SHVD2015 height (1)"]
+    );
+}
+
+/// `projinfo -s EPSG:7885 -t EPSG:7956 --summary --spatial-test intersects` (PROJ 9.9.0): the
+/// vertical leg `SHVD2015 height` to `SHGD2015` is the registry operation EPSG:7891, perfect over
+/// the area, so `createOperationsFromDatabase` returns it before `createOperationsVertToGeog`
+/// would add the ballpark change of unit (coordinateoperationfactory.cpp:3748-3751, 6104-6108).
+#[test]
+fn a_perfect_vertical_registry_operation_gets_no_ballpark_sibling() {
+    assert_eq!(
+        names("EPSG:7885", "EPSG:7956"),
+        ["SHGD2015 to SHVD2015 height (1) + UTM zone 30S"]
+    );
+}
+
+/// `projinfo -s EPSG:11056 -t EPSG:9500 --summary --spatial-test intersects` (PROJ 9.9.0): the
+/// candidates through the interpolation CRS `MGI` are `PROJBasedOperation`s, one step each for
+/// `removeUninterestingOps` (coordinateoperationfactory.cpp:1608-1656); the port counted their
+/// transformation steps and dropped four of the seven.
+#[test]
+fn proj_based_horizontal_vertical_candidates_count_as_one_step() {
+    assert_eq!(
+        names("EPSG:11056", "EPSG:9500"),
+        [
+            "ETRS89-AUT [2002] to EVRF2000 Austria height (1)",
+            "Inverse of Ballpark geographic offset from MGI to ETRS89-AUT [2002] + MGI to EVRF2000 Austria height (1) + Inverse of Ballpark geographic offset from ETRS89 to MGI",
+            "Inverse of Ballpark geographic offset from MGI to ETRS89-AUT [2002] + MGI to EVRF2000 Austria height (1) + MGI to ETRS89 (8)",
+            "Inverse of Ballpark geographic offset from MGI to ETRS89-AUT [2002] + MGI to EVRF2000 Austria height (1) + MGI to ETRS89 (1)",
+            "Inverse of Ballpark geographic offset from MGI to ETRS89-AUT [2002] + MGI to EVRF2000 Austria height (1) + MGI to ETRS89 (4)",
+            "Inverse of Transformation from EVRF2000 Austria height to ETRS89 (ballpark vertical transformation, without ellipsoid height to vertical height correction)",
+            "Inverse of Transformation from EVRF2000 Austria height to ETRS89-AUT [2002] (ballpark vertical transformation, without ellipsoid height to vertical height correction)",
+        ]
+    );
+}

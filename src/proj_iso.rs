@@ -121,6 +121,12 @@ pub(crate) fn iso_pipeline_at(
     over: ForceOver,
     filter: CandidateFilter,
 ) -> Option<IsoPipeline> {
+    // A CRS to itself is PROJ's null geographic offset (`+proj=noop`), not a list of candidates.
+    if from.trim() == to.trim() && filter.accuracy.is_none() {
+        if let Some(pipeline) = null_offset_pipeline(from, to, epoch) {
+            return Some(pipeline);
+        }
+    }
     let candidates = match facade_candidates(from, to, filter) {
         Ok(candidates) => candidates,
         // Only an empty candidate list: a same-datum pair has no registered operation, and PROJ
@@ -350,6 +356,15 @@ fn must_switch_for_visualization(crs: &Crs) -> bool {
     }
 }
 
+/// Whether `proj_normalize_for_visualization` swaps the two horizontal axes of `crs`: the CRS
+/// writes latitude, northing, or a polar axis pair first. The native façade swaps them at that
+/// end of the pipeline when the caller asks for the GIS order.
+pub(crate) fn swaps_for_visualization(crs: &Crs) -> bool {
+    horizontal_part(crs)
+        .filter(|part| is_horizontal(part))
+        .is_some_and(must_switch_for_visualization)
+}
+
 fn is_geographic(crs: &Crs) -> bool {
     matches!(
         crs,
@@ -550,6 +565,14 @@ impl IsoPipeline {
     }
 
     /// Number of candidates kept for `proj_trans` to choose from, 0 for a single operation.
+    /// Whether the source and the target write latitude or northing first.
+    pub(crate) fn axis_swaps(&self) -> (bool, bool) {
+        (
+            self.source.lead == Lead::LatOrNorthing,
+            self.target.lead == Lead::LatOrNorthing,
+        )
+    }
+
     pub(crate) fn alternative_count(&self) -> usize {
         match &self.route {
             Route::Alternatives(alternatives) => alternatives.len(),

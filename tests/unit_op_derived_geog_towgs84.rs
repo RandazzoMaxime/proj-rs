@@ -1,8 +1,9 @@
 //! PROJ 9.9.0 `test/unit/test_operationfactory.cpp`, fixture
 //! `derivedGeographicCRS_with_to_wgs84_to_geographicCRS`.
 
+use proj_rs::unstable::Crs;
 use proj_rs::{
-    create_crs_from_proj_string, create_from_user_input, CoordinateOperationFactory, Crs,
+    create_crs_from_proj_string, create_from_user_input, CoordinateOperationFactory,
     DatabaseContext, GeographicCRS, WktConvention, WktFormatter,
 };
 

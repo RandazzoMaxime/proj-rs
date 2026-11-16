@@ -3,7 +3,8 @@
 //! cylindrical, orthographic, Peirce quincuncial. Lot io-6. The PROJ strings and
 //! expected text are copied from PROJ 9.9.0, without change.
 
-use proj_rs::{create_crs_from_proj_string, Crs, WktConvention, WktFormatter, WktLines};
+use proj_rs::unstable::Crs;
+use proj_rs::{create_crs_from_proj_string, WktConvention, WktFormatter, WktLines};
 
 fn proj_crs(definition: &str) -> Crs {
     create_crs_from_proj_string(definition).expect("PROJ string")

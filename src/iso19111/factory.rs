@@ -945,6 +945,27 @@ impl DatabaseContext {
         rows.len() == 1 && rows[0][0].text() == "EPSG"
     }
 
+    /// The code of the one ESRI projected CRS that `name` designates, by its name or an alias
+    /// other than `EPSG_OLD`, ignoring case (`createObjectsFromName` on the ESRI authority,
+    /// exact match, factory.cpp:9563-9609). `None` for no CRS or for several.
+    pub(crate) fn single_esri_projected_code(&self, name: &str) -> Option<String> {
+        let rows = self
+            .query(
+                "SELECT code FROM projected_crs WHERE auth_name = 'ESRI' \
+                 AND name = ? COLLATE NOCASE \
+                 UNION SELECT ov.code FROM projected_crs ov \
+                 JOIN alias_name a ON ov.auth_name = a.auth_name AND ov.code = a.code \
+                 WHERE ov.auth_name = 'ESRI' AND a.source != 'EPSG_OLD' \
+                 AND a.table_name = 'projected_crs' AND a.alt_name = ? COLLATE NOCASE",
+                &[name.to_owned(), name.to_owned()],
+            )
+            .ok()?;
+        match rows.as_slice() {
+            [row] => Some(row[0].text()),
+            _ => None,
+        }
+    }
+
     /// True when `name` is the official name of exactly one ESRI object in `table`.
     ///
     /// WKT1 Esri then keeps that name, including a `_(Sphere)` suffix, instead of
@@ -5106,8 +5127,8 @@ impl AuthorityFactory {
 
     /// `createCoordinateOperation` with `usePROJAlternativeGridNames`: a transformation built
     /// with the official grid names is replaced by `substitutePROJAlternativeGridNames` when
-    /// that substitutes it (`proj_grid_substitution`). Otherwise it is built as the file rename
-    /// of [`AlternativeGridNames::Proj`] gives it, as before.
+    /// that substitutes it (`proj_grid_substitution`). Otherwise PROJ returns the transformation
+    /// as it is (`singleoperation.cpp` `return self`), with the official grid names.
     fn with_proj_grid_names(
         &self,
         grids: AlternativeGridNames,
@@ -5125,7 +5146,7 @@ impl AuthorityFactory {
             &self.db,
         )? {
             Some(replacement) => Ok(CoordinateOperation::Transformation(replacement)),
-            None => build(AlternativeGridNames::Proj),
+            None => Ok(official),
         }
     }
 
@@ -5453,7 +5474,7 @@ impl AuthorityFactory {
         if row[2].text() == "PROJ" && row[3].text() == "WKT" {
             return self.proj_method_operation(&row);
         }
-        let mut parameters = Vec::new();
+        let mut parameters = self.parameter_block(&row, 18, 9)?;
         if !row[12].empty() {
             parameters.push(self.grid_parameter(
                 &row[9].text(),
@@ -5463,7 +5484,6 @@ impl AuthorityFactory {
                 grids,
             )?);
         }
-        parameters.extend(self.parameter_block(&row, 18, 9)?);
         let interpolation = if row[13].empty() {
             None
         } else {
@@ -6222,6 +6242,7 @@ impl CoordinateOperationFactory {
         // already (`create_candidates`), so it is not added twice.
         if (matches!(source, Crs::Vertical(_)) || found.is_empty())
             && !found.iter().any(super::compound::is_synthesized_ballpark)
+            && !ends_with_perfect_registry_result(&found, &source, &target, context)
         {
             found.extend(super::compound::vertical_geog_synthesized(&source, &target));
         }
@@ -6415,7 +6436,7 @@ impl CoordinateOperationFactory {
             ));
         }
         let intermediate = super::geodetic_ops::geocentric_intermediate(source)?;
-        let first = CoordinateOperation::Transformation(
+        let first = CoordinateOperation::Conversion(
             super::geodetic_ops::geographic_geocentric_conversion(source, &intermediate)?,
         );
         let mut found = Vec::new();
@@ -6466,7 +6487,7 @@ impl CoordinateOperationFactory {
                 .collect());
         }
         let intermediate = super::geodetic_ops::geocentric_intermediate(source)?;
-        let first = CoordinateOperation::Transformation(
+        let first = CoordinateOperation::Conversion(
             super::geodetic_ops::geographic_geocentric_conversion(source, &intermediate)?,
         );
         let mut found = Vec::new();
@@ -6684,7 +6705,19 @@ impl CoordinateOperationFactory {
             let direct =
                 filter_and_sort(direct, context, &sort_extents(context, source, target)).operations;
             direct_empty = direct.is_empty();
+            // `hasPerfectAccuracyResult` of `createOperationsFromDatabase`
+            // (coordinateoperationfactory.cpp:4351): such a result ends the search.
+            let perfect = !direct_empty
+                && has_perfect_accuracy_result(
+                    &direct,
+                    context,
+                    source_extent.as_ref(),
+                    target_extent.as_ref(),
+                );
             found.extend(direct);
+            if perfect {
+                return Ok(found);
+            }
             let pivots_used = match context.intermediate_use {
                 IntermediateCrsUse::Never => false,
                 IntermediateCrsUse::Allow => direct_empty,
@@ -7240,14 +7273,17 @@ fn remove_duplicate_ops(
 }
 
 /// `getTransformationStepCount`: the steps of a concatenated operation that are not
-/// conversions, and 1 for any other operation.
+/// conversions, and 1 for any other operation: a `PROJBasedOperation` is a single operation in
+/// PROJ, whatever steps the port keeps in it.
 fn transformation_step_count(operation: &CoordinateOperation) -> usize {
     match operation {
-        CoordinateOperation::Concatenated(concatenated) => concatenated
-            .steps()
-            .iter()
-            .filter(|step| !matches!(step.operation, CoordinateOperation::Conversion(_)))
-            .count(),
+        CoordinateOperation::Concatenated(concatenated) if concatenated.proj_based.is_none() => {
+            concatenated
+                .steps()
+                .iter()
+                .filter(|step| !matches!(step.operation, CoordinateOperation::Conversion(_)))
+                .count()
+        }
         _ => 1,
     }
 }
@@ -7559,6 +7595,23 @@ fn has_perfect_accuracy_result(
         .operations
         .iter()
         .any(|operation| get_accuracy(operation) == 0.0)
+}
+
+/// Whether `operations`, found for `source` and `target`, hold a perfect registry result: PROJ's
+/// `createOperationsFromDatabase` returned it alone, so no `createOperationsVertToGeog` followed.
+pub(super) fn ends_with_perfect_registry_result(
+    operations: &[CoordinateOperation],
+    source: &Crs,
+    target: &Crs,
+    context: &CoordinateOperationContext,
+) -> bool {
+    let (source_extent, target_extent) = crs_extents_of(context, source, target);
+    has_perfect_accuracy_result(
+        operations,
+        context,
+        source_extent.as_ref(),
+        target_extent.as_ref(),
+    )
 }
 
 /// Geographic or geocentric CRS, not spherical: the ones `createOperationsGeodToGeod` handles.
@@ -9657,10 +9710,8 @@ fn pivot_leg(from: &Crs, to: &Crs) -> Option<Option<CoordinateOperation>> {
             }
         }
         (None, None) => Some(None),
-        (Some(_), None) => geographic_geocentric(from, to)
-            .map(|operation| Some(CoordinateOperation::Transformation(operation))),
-        (None, Some(_)) => geographic_geocentric(to, from)
-            .map(|operation| Some(CoordinateOperation::Transformation(operation.inverse()))),
+        (Some(_), None) | (None, Some(_)) => geographic_geocentric(from, to)
+            .map(|operation| Some(CoordinateOperation::Conversion(operation))),
     }
 }
 
@@ -9697,23 +9748,13 @@ fn crs_qualifier(crs: &Crs) -> &'static str {
     }
 }
 
-/// The geographic/geocentric conversion, EPSG:9602, as a transformation that keeps both CRS,
-/// so the PROJ string export can read the ellipsoid of each side. Its domain is the world, as
-/// `getExtent` gives any `Conversion` (`oputils.cpp`), not the extent of the geographic CRS: a
-/// concatenated operation through it takes the area of its other steps.
-fn geographic_geocentric(geographic: &Crs, geocentric: &Crs) -> Option<Transformation> {
-    let name = operation_crs_name("Conversion", geographic, geocentric);
-    let mut conversion = Transformation::create_from_code(
-        &OpProps::new().name(name),
-        geographic.clone(),
-        geocentric.clone(),
-        9602,
-        Vec::new(),
-        world_extent(),
-    )
-    .ok()?;
-    conversion.accuracy = Some(0.0);
-    Some(conversion)
+/// `Conversion::createGeographicGeocentric(source, target)` (conversion.cpp:2611): the EPSG:9602
+/// conversion with both CRS, named by `buildOpName`.
+fn geographic_geocentric(source: &Crs, target: &Crs) -> Option<Conversion> {
+    let name = operation_crs_name("Conversion", source, target);
+    Conversion::create_geographic_geocentric(&OpProps::new().name(name))
+        .ok()
+        .map(|conversion| conversion.with_endpoints(source.clone(), target.clone()))
 }
 
 /// The area of use of a concatenated operation of pivot legs: the intersection of the areas of
@@ -10472,7 +10513,7 @@ fn link_geographic_geocentric(steps: &mut Vec<ConcatenatedStep>, source: &Crs) {
             steps.insert(
                 index,
                 ConcatenatedStep {
-                    operation: CoordinateOperation::Transformation(bridge),
+                    operation: CoordinateOperation::Conversion(bridge),
                     reverse: false,
                 },
             );
@@ -10490,16 +10531,14 @@ fn owned_endpoints(step: &ConcatenatedStep) -> Option<(Crs, Crs)> {
 
 /// `createGeographicGeocentric` when the two CRS share a name and differ only
 /// by geographic versus geocentric. The conversion runs from `from` to `to`.
-fn geographic_geocentric_link(from: &Crs, to: &Crs) -> Option<Transformation> {
+fn geographic_geocentric_link(from: &Crs, to: &Crs) -> Option<Conversion> {
     if from.name() != to.name() {
         return None;
     }
     let from_geographic = geographic_of(from).is_some();
     let to_geographic = geographic_of(to).is_some();
-    if from_geographic && is_geocentric_crs(to) {
+    if (from_geographic && is_geocentric_crs(to)) || (is_geocentric_crs(from) && to_geographic) {
         geographic_geocentric(from, to)
-    } else if is_geocentric_crs(from) && to_geographic {
-        geographic_geocentric(to, from).map(|operation| operation.inverse())
     } else {
         None
     }
@@ -10866,7 +10905,7 @@ fn append_geographic_geocentric_tail(steps: &mut Vec<ConcatenatedStep>, target: 
     };
     if let Some(bridge) = geographic_geocentric_link(&end, target) {
         steps.push(ConcatenatedStep {
-            operation: CoordinateOperation::Transformation(bridge),
+            operation: CoordinateOperation::Conversion(bridge),
             reverse: false,
         });
     }

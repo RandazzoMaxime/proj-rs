@@ -5,7 +5,8 @@
 //! are longitude, latitude here, where the C++ test passes latitude, longitude.
 
 use proj_rs::iso19111::CoordinateMetadata;
-use proj_rs::{AuthorityFactory, Crs, DatabaseContext, GeodeticCRS, Proj};
+use proj_rs::unstable::Crs;
+use proj_rs::{AuthorityFactory, DatabaseContext, GeodeticCRS, Proj};
 
 fn near(got: f64, expect: f64, tol: f64) {
     assert!((got - expect).abs() <= tol, "{got} vs {expect} (tol {tol})");

@@ -1,10 +1,11 @@
 //! PROJ 9.9.0 `test/unit/test_operationfactory.cpp`: a NAD83(2011) compound CRS with a NAVD88
 //! height in metres, feet, or US feet, to NAD83(2011) 3D, in metres or feet.
 
+use proj_rs::unstable::Crs;
 use proj_rs::{
     create_from_user_input, AuthorityFactory, CoordinateOperation, CoordinateOperationContext,
-    CoordinateOperationFactory, Crs, DatabaseContext, GridAvailabilityUse, ProjLines,
-    SpatialCriterion, UnitOfMeasure,
+    CoordinateOperationFactory, DatabaseContext, GridAvailabilityUse, ProjLines, SpatialCriterion,
+    UnitOfMeasure,
 };
 
 struct Fixture {

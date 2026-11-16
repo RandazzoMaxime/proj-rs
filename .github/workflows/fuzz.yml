@@ -1,0 +1,35 @@
+name: Fuzz
+# Not on pull requests: a short robustness run every night, or on demand (docs/FUZZ.md).
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: Seconds per target
+        default: "300"
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        target: [proj_string, user_input, transform, grid_reader, model_files]
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: cargo install cargo-fuzz --locked
+      - run: python3 fuzz/seed.py
+      - run: cargo fuzz build ${{ matrix.target }}
+        working-directory: fuzz
+      - run: ./run.sh "${{ github.event.inputs.seconds || '240' }}" ${{ matrix.target }}
+        working-directory: fuzz
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-${{ matrix.target }}
+          path: |
+            fuzz/artifacts/${{ matrix.target }}
+            fuzz/logs/${{ matrix.target }}.log

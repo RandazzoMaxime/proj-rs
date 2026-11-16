@@ -1,10 +1,11 @@
 //! PROJ 9.9.0 `test/unit/test_operationfactory.cpp`, `towgs84_pm_3d`: a PROJ-string CRS with
 //! `+towgs84` and `+pm`, promoted to 3D, directly and after a WKT2 round trip.
 
+use proj_rs::unstable::Crs;
 use proj_rs::{
     create_crs_from_proj_string, AuthorityFactory, CoordinateOperationContext,
-    CoordinateOperationFactory, Crs, DatabaseContext, ProjLines, WktConvention, WktFormatter,
-    WktObject, WktParser,
+    CoordinateOperationFactory, DatabaseContext, ProjLines, WktConvention, WktFormatter, WktObject,
+    WktParser,
 };
 
 /// `TEST(operation, towgs84_pm_3d)`

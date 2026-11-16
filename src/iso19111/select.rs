@@ -1871,6 +1871,7 @@ fn lon_lat_base(crs: &Crs) -> Option<Crs> {
             .components()
             .iter()
             .find_map(|component| component.extract_geographic_crs())?,
+        Crs::Bound(bound) => return lon_lat_base(bound.source_crs()),
         Crs::Geodetic(_) => return None,
         _ => return None,
     };

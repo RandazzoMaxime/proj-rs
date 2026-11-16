@@ -37,13 +37,13 @@ jobs:
           C:\Miniconda\condabin\conda.bat install -y -c conda-forge proj=9.9.0
           echo "C:\Miniconda\Library\bin" >> $env:GITHUB_PATH
           echo "PROJ_RS_LIBPROJ_DIR=C:\Miniconda\Library\lib" >> $env:GITHUB_ENV
-      - run: cargo fmt --check
-      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       # Offline, as PROJ's ctest runs its suites. The differential check
       # against the reference cs2cs must run here, so a missing binary fails.
       # PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY is what PROJ's test setup sets:
       # no grid left in a user cache can change an offline result.
-      - run: cargo test --all-features
+      - run: cargo test --workspace --all-features
         env:
           PROJ_CS2CS_REQUIRED: "1"
           PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY: YES
@@ -54,10 +54,101 @@ jobs:
         with:
           path: ${{ runner.temp }}/proj
           key: proj-grids-${{ runner.os }}-9.9.0-v1
-      - run: cargo test --all-features --test gie_run
+      - run: cargo test -p proj-rs --all-features --test gie_run
         env:
           PROJ_NETWORK: ON
           PROJ_USER_WRITABLE_DIRECTORY: ${{ runner.temp }}/proj
       # The bench is not timed in CI (shared runners are noisy), only built, and
       # linked against the reference libproj (PROJ_RS_LIBPROJ_DIR) so that code builds.
       - run: cargo build --release --bin proj-rs-bench
+
+  # The C library: the C tests of PROJ 9.9.0, compiled against libproj of proj-rs and run
+  # (capi/tests/README.md). The reference tree gives the test sources and the data directory.
+  capi:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y cmake libsqlite3-dev libgtest-dev
+      - uses: actions/cache@v4
+        with:
+          path: target/proj-reference
+          key: proj-reference-9.9.0-${{ hashFiles('tools/build-reference.sh') }}
+      - run: tools/build-reference.sh
+      - run: capi/tests/run.sh --release
+        env:
+          PROJ_REFERENCE: ${{ github.workspace }}/target/proj-reference
+
+  # Windows: proj.dll and proj.lib (capi/tests/dist.ps1), then `include_proj_h_from_c.c` of PROJ
+  # compiled with MSVC against them and run. test_c_api needs googletest and a PROJ tree built
+  # with CMake: it stays on Linux.
+  capi-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ilammy/msvc-dev-cmd@v1
+      - run: capi\tests\dist.ps1 -Release
+      - name: include_proj_h_from_c against proj.lib
+        run: |
+          git clone --depth 1 --branch 9.9.0 https://github.com/OSGeo/PROJ.git $env:RUNNER_TEMP\PROJ
+          cl /nologo /W3 /I target\capi-dist\include $env:RUNNER_TEMP\PROJ\test\unit\include_proj_h_from_c.c /Fe:target\capi-dist\bin\include_h.exe /link target\capi-dist\lib\proj.lib
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          target\capi-dist\bin\include_h.exe
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+  # The documentation has no warning, and the root page shows the stable surface only:
+  # the internals are #[doc(hidden)] unless the `unstable` feature is on.
+  doc:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo doc --workspace --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+      - run: |
+          if grep -q 'iso19111\|struct.Operation.html\|struct.Tmerc.html' target/doc/proj_rs/index.html; then
+            echo "the root page of proj_rs shows an internal item" >&2
+            exit 1
+          fi
+      - run: cargo doc -p proj-rs --no-deps --features unstable
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  # `rust-version` is the minimum the crates build with. It was measured, not chosen:
+  # 1.82 fails (ExitCode equality in the cct and cs2cs binaries, libraries need 1.81),
+  # 1.83 builds. The job reads the declared version, so changing it moves the check.
+  msrv:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - id: declared
+        run: |
+          version=$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2)
+          for manifest in georust/Cargo.toml capi/Cargo.toml; do
+            other=$(grep -m1 '^rust-version' "$manifest" | cut -d'"' -f2)
+            if [ "$other" != "$version" ]; then
+              echo "$manifest declares rust-version $other, Cargo.toml declares $version" >&2
+              exit 1
+            fi
+          done
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.declared.outputs.version }}
+      - run: cargo check --workspace --lib --bins --all-features
+
+  # Breaking changes of the stable surface against the last published version.
+  # Disabled: no version of proj-rs or proj-rs-georust is on crates.io yet (`publish = false`).
+  # Enable it when the lot 3 of docs/API-v1.md publishes 1.0.0: delete the `if: false` line, and
+  # `cargo-semver-checks` then compares each crate with the latest release of the registry.
+  semver:
+    if: false
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          package: proj-rs, proj-rs-georust

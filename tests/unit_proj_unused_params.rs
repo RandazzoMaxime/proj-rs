@@ -4,7 +4,8 @@
 //! string as `EXTENSION_PROJ4`. The expected extension is the string as written,
 //! with `+type=crs` at the end.
 
-use proj_rs::{create_crs_from_proj_string, Crs, WktConvention, WktFormatter};
+use proj_rs::unstable::Crs;
+use proj_rs::{create_crs_from_proj_string, WktConvention, WktFormatter};
 
 fn proj_crs(definition: &str) -> Crs {
     create_crs_from_proj_string(definition).expect("PROJ string")

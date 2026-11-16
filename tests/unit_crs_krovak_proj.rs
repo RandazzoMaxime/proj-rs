@@ -1,8 +1,9 @@
 //! PROJ 9.9.0 `test/unit/test_crs.cpp`, the PROJ string of the Krovak projected CRS.
 
+use proj_rs::unstable::Crs;
 use proj_rs::{
-    create_crs_from_proj_string, AuthorityFactory, CoordinateOperationFactory, Crs,
-    DatabaseContext, ProjLines,
+    create_crs_from_proj_string, AuthorityFactory, CoordinateOperationFactory, DatabaseContext,
+    ProjLines,
 };
 
 /// `TEST(crs, projectedCRS_Krovak_EPSG_5221_as_PROJ_string)`

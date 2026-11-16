@@ -3,9 +3,10 @@
 //! Strings and numbers are copied from the C++ source without change.
 
 use proj_rs::iso19111::{create_object_from_json, Equivalence, JsonFormat, JsonObject};
+use proj_rs::unstable::Crs;
 use proj_rs::{
     create_crs_from_proj_string, create_from_user_input, Conversion, CoordinateOperationFactory,
-    Crs, DatabaseContext, GeodeticCRS, GeographicCRS, OpProps, ProjectedCRS, WktConvention,
+    DatabaseContext, GeodeticCRS, GeographicCRS, OpProps, ProjectedCRS, WktConvention,
     WktFormatter, WktLines, WktObject, WktParser,
 };
 

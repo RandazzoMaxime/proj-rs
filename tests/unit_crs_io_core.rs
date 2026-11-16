@@ -5,9 +5,10 @@
 //! comment. Expected text is copied from those files without change.
 
 use proj_rs::iso19111::{create_object_from_json, JsonFormat, JsonObject, ProjLines};
+use proj_rs::unstable::Crs;
 use proj_rs::{
-    AlternativeGridNames, AuthorityFactory, BoundCRS, CoordinateOperationFactory, Crs,
-    DatabaseContext, GeographicCRS,
+    AlternativeGridNames, AuthorityFactory, BoundCRS, CoordinateOperationFactory, DatabaseContext,
+    GeographicCRS,
 };
 
 /// `crs.boundCRS_nadcon_to_PROJ_string_usePROJAlternativeGridNames_false`
