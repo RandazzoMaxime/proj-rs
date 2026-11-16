@@ -33,12 +33,17 @@ fn main() {
     println!("cargo:rerun-if-env-changed=PROJ_RS_LIBPROJ_DIR");
     println!("cargo:rerun-if-env-changed=CONDA_PREFIX");
     if let Some(dir) = libproj_dir() {
-        println!("cargo:rustc-link-search=native={}", dir.display());
-        println!("cargo:rustc-link-lib=dylib=proj");
+        // The bench alone links libproj: a link-lib here would reach every crate linking
+        // proj-rs, and libproj in proj-rs-capi clashes with the libproj it builds.
         println!("cargo:rustc-cfg=link_libproj");
-        if std::env::var("CARGO_CFG_TARGET_FAMILY").is_ok_and(|family| family == "unix") {
-            // Every linked target, tests included: macOS strips the `DYLD_*` paths cargo sets.
-            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", dir.display());
+        let bench = "cargo:rustc-link-arg-bin=proj-rs-bench";
+        if std::env::var("CARGO_CFG_TARGET_ENV").is_ok_and(|env| env == "msvc") {
+            println!("{bench}=/LIBPATH:{}", dir.display());
+            println!("{bench}=proj.lib");
+        } else {
+            println!("{bench}=-L{}", dir.display());
+            println!("{bench}=-lproj");
+            println!("{bench}=-Wl,-rpath,{}", dir.display());
         }
     }
 }
