@@ -1397,6 +1397,22 @@ fn linear_unit_clause(unit: &UnitOfMeasure) -> String {
 }
 
 impl GeocentricCRS {
+    fn frame(&self) -> Option<&GeodeticReferenceFrame> {
+        self.datum
+            .as_ref()
+            .or_else(|| self.ensemble.as_ref().and_then(geodetic_member))
+    }
+
+    /// `ellipsoid()->_exportToPROJString` then `primeMeridian()->_exportToPROJString`.
+    fn ellipsoid_and_meridian_clauses(&self) -> Vec<String> {
+        let Some(frame) = self.frame() else {
+            return Vec::new();
+        };
+        let mut clauses = vec![ellipsoid_proj(frame.ellipsoid())];
+        clauses.extend(prime_meridian_proj(frame.prime_meridian()));
+        clauses
+    }
+
     /// `+proj=geocent` for a geocentric CRS bound to WGS 84 (`+towgs84`). The
     /// ellipsoid is written, not the datum name, as `BoundCRS` does.
     ///
@@ -1419,9 +1435,7 @@ impl GeocentricCRS {
             ));
         }
         let mut parts = vec!["+proj=geocent".to_owned()];
-        if let Some(datum) = self.datum() {
-            parts.push(ellipsoid_proj(datum.ellipsoid()));
-        }
+        parts.extend(self.ellipsoid_and_meridian_clauses());
         parts.push(towgs84_clause(values));
         parts.push("+units=m".to_owned());
         parts.push("+no_defs".to_owned());
@@ -1450,10 +1464,14 @@ impl GeocentricCRS {
             ));
         }
         let mut parts = vec!["+proj=geocent".to_owned()];
-        if let Some(token) = self.datum().and_then(datum_code_token) {
+        let token = self
+            .datum()
+            .and_then(datum_code_token)
+            .or_else(|| self.ensemble.as_ref().and_then(ensemble_code_token));
+        if let Some(token) = token {
             parts.push(format!("+datum={token}"));
-        } else if let Some(datum) = self.datum() {
-            parts.push(ellipsoid_proj(datum.ellipsoid()));
+        } else {
+            parts.extend(self.ellipsoid_and_meridian_clauses());
         }
         parts.push("+units=m".to_owned());
         parts.push("+no_defs".to_owned());

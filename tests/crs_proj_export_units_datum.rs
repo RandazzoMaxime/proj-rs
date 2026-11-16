@@ -44,3 +44,19 @@ fn spherical_base_has_no_r_a() {
         "+proj=laea +lat_0=-90 +lon_0=0 +x_0=0 +y_0=0 +R=6371228 +units=m +no_defs +type=crs\n"
     );
 }
+
+#[test]
+fn wgs84_geocentric_ensemble_is_datum_wgs84() {
+    assert_eq!(
+        projinfo(&["EPSG:4978", "-o", "PROJ"]),
+        "+proj=geocent +datum=WGS84 +units=m +no_defs +type=crs\n"
+    );
+}
+
+#[test]
+fn etrs89_geocentric_ensemble_is_its_ellipsoid() {
+    assert_eq!(
+        projinfo(&["EPSG:4936", "-o", "PROJ"]),
+        "+proj=geocent +ellps=GRS80 +units=m +no_defs +type=crs\n"
+    );
+}
