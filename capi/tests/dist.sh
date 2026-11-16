@@ -5,9 +5,7 @@
 #
 # Installs PREFIX/lib/libproj.so.25, libproj.so, libproj.a (libproj.25.dylib, libproj.dylib
 # and libproj.a on macOS) and PREFIX/include/{proj.h,proj_constants.h,proj_experimental.h,
-# proj_symbol_rename.h}. Windows needs `proj.dll` and `proj.lib`: build with
-# `cargo build -p proj-rs-capi`, then rename `proj_rs_capi.dll` to `proj.dll` and make
-# `proj.lib` from its exports with `lib /def`; this script does not do it.
+# proj_symbol_rename.h}. Windows (proj.dll, proj.lib): capi/tests/dist.ps1.
 set -euo pipefail
 
 profile=debug

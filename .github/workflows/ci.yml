@@ -79,6 +79,24 @@ jobs:
         env:
           PROJ_REFERENCE: ${{ github.workspace }}/target/proj-reference
 
+  # Windows: proj.dll and proj.lib (capi/tests/dist.ps1), then `include_proj_h_from_c.c` of PROJ
+  # compiled with MSVC against them and run. test_c_api needs googletest and a PROJ tree built
+  # with CMake: it stays on Linux.
+  capi-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ilammy/msvc-dev-cmd@v1
+      - run: capi\tests\dist.ps1 -Release
+      - name: include_proj_h_from_c against proj.lib
+        run: |
+          git clone --depth 1 --branch 9.9.0 https://github.com/OSGeo/PROJ.git $env:RUNNER_TEMP\PROJ
+          cl /nologo /W3 /I target\capi-dist\include $env:RUNNER_TEMP\PROJ\test\unit\include_proj_h_from_c.c /Fe:target\capi-dist\bin\include_h.exe /link target\capi-dist\lib\proj.lib
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          target\capi-dist\bin\include_h.exe
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
   # The documentation has no warning, and the root page shows the stable surface only:
   # the internals are #[doc(hidden)] unless the `unstable` feature is on.
   doc:

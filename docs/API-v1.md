@@ -1,9 +1,9 @@
 # API v1 : trois façades, une surface stable
 
 Statut : **lot 1 implémenté** (workspace, façade native, masquage des internes, crate georust,
-squelette du crate C, MSRV et semver-checks en CI). **Lot 2 en partie implémenté** : l'ABI de
-`proj.h` est complète (292 fonctions exportées, structures vérifiées), 196 fonctions font leur
-travail, 96 échouent comme PROJ échoue (liste dans « Écarts du lot 2 »). Le lot 3 (publication)
+squelette du crate C, MSRV et semver-checks en CI). **Lot 2 implémenté** : l'ABI de
+`proj.h` est complète (292 fonctions exportées et implémentées, structures vérifiées ; écarts dans
+« Écarts du lot 2 »). Le lot 3 (publication)
 reste à faire. Ce document fixe ce que la v1 promet, et ce qu'il ne promet pas. Les écarts entre le
 cahier des charges et le code sont dans « Écarts du lot 1 » et « Écarts du lot 2 », en fin de page.
 
@@ -175,9 +175,11 @@ Ce que le crate C fait autrement que ce document, ou pas encore, et pourquoi.
   l'espace de travail donnerait `proj.pdb` deux fois sous Windows (le binaire `proj` du crate
   racine) et `target/doc/proj` deux fois (georust). `capi/tests/dist.sh` installe
   `libproj.so.25` (soname fixé par `build.rs`), `libproj.so` et `libproj.a` sous Linux,
-  `libproj.25.dylib`, `libproj.dylib` et `libproj.a` sous macOS. **Windows n'est pas fait** :
-  `proj.dll` et `proj.lib` demandent de renommer la DLL et de refaire la bibliothèque d'import,
-  ce qui n'a pas pu être vérifié ici. Seul Linux est testé.
+  `libproj.25.dylib`, `libproj.dylib` et `libproj.a` sous macOS. **Windows** : `capi/tests/dist.ps1` copie
+  la DLL sous le nom `proj.dll` et refait `proj.lib` d'après sa table d'exports (`dumpbin`, `lib
+  /def`). Le job `capi-windows` de la CI le lance et compile `include_proj_h_from_c.c` avec MSVC
+  contre `proj.lib` ; il n'a pas été lancé depuis cette session Linux, et `test_c_api` (googletest,
+  arbre de PROJ compilé par CMake) reste sur Linux.
 - **En-têtes.** `capi/include/` contient `proj.h`, `proj_constants.h`, `proj_experimental.h` et
   `proj_symbol_rename.h` de PROJ 9.9.0, octet pour octet (`run.sh` compare `proj.h` à celui de
   l'arbre de référence). `proj_experimental.h` ne déclare plus rien : tout est dans `proj.h`.
@@ -187,48 +189,32 @@ Ce que le crate C fait autrement que ce document, ou pas encore, et pourquoi.
   l'en-tête). `capi/tests/abi_layout.c`, généré à partir de ces assertions, les redit en C : il
   compile contre `capi/include/proj.h` et contre l'en-tête de PROJ. Rust et C s'accordent donc
   sur les mêmes nombres. `PJ_COORD` fait 32 octets, `PJ_INFO` 56, `PJ_GRID_INFO` 360.
-- **Fonctions non implémentées : 96 sur 292.** Chacune est exportée (`unsupported.rs`, généré par
-  `capi/tools/gen_unsupported.py`), renvoie `NULL` ou 0 et pose `PROJ_ERR_OTHER` avec le message
-  « *nom* : not implemented in proj-rs » (`PROJ_RS_CAPI_TRACE_UNSUPPORTED=1` les imprime). La
-  liste exacte :
-  - réseau et fichiers (2) : `proj_context_set_fileapi`, `proj_context_set_network_callbacks`
-    (les traits `FileApi` et `NetworkCallbacks` du moteur existent, l'adaptation C n'est pas
-    écrite) ;
-  - listes statiques (5) : `proj_list_operations`, `proj_list_ellps`, `proj_list_units`,
-    `proj_list_angular_units`, `proj_list_prime_meridians` (il manque les descriptions de
-    `pj_list.h` et le pointeur de constructeur de `PJ_OPERATIONS`) ;
-  - constructeurs d'objets (18) : `proj_create_cs`, `proj_create_geographic_crs_from_datum`,
-    `proj_create_geocentric_crs_from_datum`, `proj_query_geodetic_crs_from_datum`,
-    `proj_create_derived_geographic_crs`, `proj_create_engineering_crs`,
-    `proj_create_vertical_crs`, `proj_create_vertical_crs_ex`, `proj_create_compound_crs`,
-    `proj_create_conversion`, `proj_create_linear_affine_parametric_conversion`,
-    `proj_create_linear_3D_affine_parametric_conversion`, `proj_create_transformation`,
-    `proj_convert_conversion_to_other_method`, `proj_create_projected_crs`,
-    `proj_create_derived_projected_crs`, `proj_crs_add_horizontal_derived_conversion`,
-    `proj_crs_create_bound_vertical_crs` ;
-  - les 71 `proj_create_conversion_*` (UTM, Mercator, Lambert, Albers, stéréographiques, Robinson,
-    Wagner, Eckert, pôle tournant...). Le moteur a les constructeurs (`Conversion::create_*`,
-    `buildop.rs`) : il reste à convertir les unités d'angle et de longueur de chaque appel C.
-  Les constructeurs sont le gros du reste : 20 des 26 cas en attente de `test_c_api.cpp` en
-  dépendent.
+- **Fonctions : 292 sur 292.** Les 71 `proj_create_conversion_*` convertissent les angles et les
+  longueurs vers le degré et le mètre du modèle (`conversion_support.rs`, généré par
+  `capi/tools/gen_conversions.py`), puis appellent `Conversion::create_*`. Les autres constructeurs
+  (`constructors.rs`) passent par `src/iso19111/ctor.rs`. Les cinq `proj_list_*` rendent les tables
+  de PROJ 9.9.0 (`lists_data.rs`, généré d'après les sources de référence) : `run.sh lists`
+  compare leur sortie à celle de libproj, 491 lignes identiques. `proj_context_set_fileapi` et
+  `proj_context_set_network_callbacks` adaptent les callbacks C aux traits `FileApi` et
+  `NetworkCallbacks` (`callbacks.rs`). Le champ `proj` de `PJ_LIST` (constructeur par projection)
+  n'a pas d'équivalent dans le moteur : il pointe une fonction qui renvoie `NULL`.
 - **Preuve.** `capi/tests/run.sh` compile et lance, contre la bibliothèque, `test_c_api.cpp`
   (152 `TEST`), `proj_context_test.cpp`, `proj_errno_string_test.cpp`,
   `proj_angular_io_test.cpp`, `include_proj_h_from_c.c` et `test_fork.c`, plus la vérification des
-  symboles et de l'ABI. Tout passe sauf ce qui est écrit dans `capi/tests/excluded.txt` (33 cas qui
-  ne peuvent pas passer : 32 appellent l'API C++ de PROJ, 1 lit `pj_ctx::ca_bundle_path`) et
-  `capi/tests/pending.txt` (26 cas qui ne passent pas encore, chacun avec sa raison : 20 par
-  constructeur absent, 6 par écart du moteur). Résultat : 94 cas de `test_c_api.cpp`
+  symboles, de l'ABI et des listes. Tout passe sauf ce qui est écrit dans `capi/tests/excluded.txt`
+  (33 cas qui ne peuvent pas passer : 32 appellent l'API C++ de PROJ, 1 lit
+  `pj_ctx::ca_bundle_path`). `capi/tests/pending.txt` est vide : 120 cas de `test_c_api.cpp`
   passent. `test_network`, `test_defmodel`, `test_tinshift` et les autres exécutables de
   `test/unit` utilisent l'API C++ et ne sont pas visés.
-- **Écarts du moteur vus par les tests (à traiter dans `src/iso19111/`).**
-  `proj_create_from_database` : le moteur n'écrit pas de chaîne PROJ pour la conversion nue
-  EPSG:16031, donc `proj_pj_info` n'a pas d'`id` (`CApi.proj_create_from_database`).
-  `proj_as_proj_string` d'un CRS ignore `USE_APPROX_TMERC` (`CApi.proj_as_proj_string_approx_tmerc_option_yes`).
-  Un CRS dynamique lu par son nom (`ITRF2014@2025.0`) n'entre pas dans `Proj::new`
-  (`CApi.proj_create_crs_to_crs_coordinate_metadata_in_src` et `_in_target`).
-  `EPSG:4284` vers `EPSG:4284` donne un ensemble de candidats, pas le `noop` de PROJ
-  (`CApi.proj_trans_bounds_noop_geographic`). Une conversion donnée par chaîne PROJ répond
-  « sans temps » même avec `+t_epoch` (`CApi.proj_coordoperation_requires_per_coordinate_input_time`).
+- **Écarts du moteur fermés par le lot 2** (un test de caractérisation chacun, dans
+  `tests/capi_engine_fixes.rs`) : le lecteur WKT de `Proj::new` accepte les mots nus de WKT2
+  (`ellipsoidal`, `north`), donc un CRS dynamique est un CRS ; `Proj::new` accepte un CRS que le
+  lecteur complet lit quand la traduction en chaîne PROJ ne le couvre pas (CRS composé avec CRS
+  vertical lié) ; un CRS apparié à lui-même donne le `noop` ; un CRS projeté s'écrit avec `+approx`
+  (`with_approx_tmerc`, `with_approx_utm`) ; une conversion PROJ avec `+t_epoch` demande le temps de
+  chaque point. Les accesseurs ajoutés au moteur sont additifs (`Proj::pair_axis_swaps`,
+  `trans_coord`, `trans_batch`, `ProjBuilder::replace_search_paths`...) et cachés derrière
+  `unstable`.
 - **Ordre des axes.** La façade `Proj` transforme toujours dans l'ordre longitude, latitude.
   `proj_create_crs_to_crs` rend l'ordre du CRS, comme PROJ : la couche C permute les deux premiers
   axes de chaque côté d'après `Proj::pair_axis_swaps`, jusqu'à `proj_normalize_for_visualization`.

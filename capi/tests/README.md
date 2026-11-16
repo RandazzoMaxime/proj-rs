@@ -23,12 +23,13 @@ difference). `dist.sh` installs the library under the names of libproj: `libproj
 |---|---|
 | `symbols` | every function and variable of `proj.h` (292 functions and `pj_release`) is exported, and nothing else named `proj_*` or `pj_*` |
 | `abi` | `abi_layout.c`, generated from `src/ffi.rs`, states in C the size, alignment and every field offset of the 27 structures of `proj.h` (210 assertions). It compiles against `capi/include/proj.h` and against the header of the PROJ tree. `src/ffi.rs` asserts the same numbers in Rust at compile time, so Rust and C agree on every structure |
+| `lists` | `lists.c` prints the five `proj_list_*` tables; the output is compared with the one of the reference libproj (491 identical lines) |
 | `errno_string` | `proj_errno_string_test.cpp`: 3 tests |
 | `angular_io` | `proj_angular_io_test.cpp`: 5 tests |
 | `context` | `proj_context_test.cpp`: 5 tests, 1 excluded |
 | `include_h` | `include_proj_h_from_c.c`: `proj.h` and `proj_experimental.h` compile as C |
 | `fork` | `test_fork.c`: contexts survive a `fork()` |
-| `c_api` | `test_c_api.cpp`: 152 `TEST`, 32 excluded, 26 pending, 94 pass |
+| `c_api` | `test_c_api.cpp`: 152 `TEST`, 32 excluded, 120 pass |
 
 ## Excluded: `excluded.txt`
 
@@ -44,18 +45,8 @@ A case is excluded when it cannot pass whatever the library does:
 
 ## Pending: `pending.txt`
 
-A case is pending when it does not pass yet. It is skipped at run time, with its reason on the
-same line: 26 cases, which come from two causes.
-
-- **Not implemented**: functions of `proj.h` that fail with `PROJ_ERR_OTHER` and the message
-  `... not implemented in proj-rs` (`PROJ_RS_CAPI_TRACE_UNSUPPORTED=1` prints each call).
-  The list is in `docs/API-v1.md` (§ Écarts du lot 2).
-- **Engine**: the function is implemented and the engine does not give what PROJ gives
-  (the PROJ string of EPSG:16031, `+approx` of a CRS, a dynamic CRS read by name, the noop of
-  EPSG:4284 to itself, the time of a PROJ-string conversion). These belong to `src/iso19111/`,
-  not to the C layer.
-
-`PENDING=0 capi/tests/run.sh` runs them anyway.
+Empty. A case that does not pass yet goes there, with its reason on the same line; it is skipped at
+run time, and `PENDING=0 capi/tests/run.sh` runs it anyway.
 
 ## Files
 
