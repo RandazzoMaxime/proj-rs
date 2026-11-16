@@ -308,9 +308,9 @@ As in PROJ, `EPSG:4326` on the command line reads latitude first. Use a
   `native-tls`), a fourth optional (`geo-types`), 37 crates in the default tree.
 
 The batch path (`forward_batch` and `inverse_batch` of `Tmerc`, `Lcc` and
-`Mercator`) uses AVX2 on every x86-64 CPU with AVX2 and FMA, detected at run time. On
-Linux glibc it calls libmvec. On Windows it uses the C runtime math library, one lane
-at a time. Off AVX2, `Tmerc::forward_batch` runs a portable 4-lane loop, bit-identical
+`Mercator`) uses AVX2 on every x86-64 CPU with AVX2 and FMA, detected at run time. It
+uses the crate's own vector math functions (no libmvec, no C library calls): the same code
+on Linux, Windows and macOS. Off AVX2, `Tmerc::forward_batch` runs a portable 4-lane loop, bit-identical
 to the scalar path and 25–34 % faster on x86-64; the other batch functions run the
 scalar loop. `Proj::convert_array` and `project_array` use the vector path for
 Transverse Mercator, Lambert conic and Mercator. The AVX2 path is not bit-identical
