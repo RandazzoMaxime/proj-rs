@@ -300,6 +300,27 @@ Two things `Proj` has beyond the georust surface, both from PROJ's C API:
 - `degree_input(direction)` and `degree_output(direction)` say whether the
   transform reads and writes degrees (`proj_degree_input`, `proj_degree_output`).
 
+### Use from C
+
+The `proj-rs-capi` crate (directory [`capi/`](capi)) is the `proj.h` of PROJ 9.9.0 on this
+engine: the same header, the same 292 function names and signatures, the same structures. A
+program written for libproj links against it without a change. 196 of the 292 functions are
+implemented (contexts, errors, log, creation and transformation, ISO 19111 objects, the
+operation factory, the database); the other 96 fail as PROJ fails, with a `NULL` or 0 result and
+`PROJ_ERR_OTHER` on the context, and never return a wrong value. The list is in
+[`docs/API-v1.md`](docs/API-v1.md).
+
+```bash
+capi/tests/dist.sh --release           # target/capi-dist/{lib,include}
+cc demo.c -Itarget/capi-dist/include -Ltarget/capi-dist/lib -lproj -Wl,-rpath,$PWD/target/capi-dist/lib
+```
+
+`dist.sh` installs `libproj.so.25`, `libproj.so` and `libproj.a` (`libproj.25.dylib` on macOS).
+`proj.dll` and `proj.lib` are not produced yet. The proof is the C tests of PROJ compiled
+against the library: `capi/tests/run.sh`, see [`capi/tests/README.md`](capi/tests/README.md).
+A pair of CRS made by `proj_create_crs_to_crs` transforms in the axis order of its CRS, as in
+PROJ: `EPSG:4326` is latitude, longitude until `proj_normalize_for_visualization`.
+
 ### On the command line
 
 `cs2cs`, `cct`, `proj` and `projinfo` are thin binaries over the library and

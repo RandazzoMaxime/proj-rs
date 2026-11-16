@@ -1,9 +1,11 @@
 # API v1 : trois façades, une surface stable
 
 Statut : **lot 1 implémenté** (workspace, façade native, masquage des internes, crate georust,
-squelette du crate C, MSRV et semver-checks en CI). Les lots 2 (ABI C) et 3 (publication) restent à
-faire. Ce document fixe ce que la v1 promet, et ce qu'elle ne promet pas. Les écarts entre le
-cahier des charges et le code sont dans « Écarts du lot 1 », en fin de page.
+squelette du crate C, MSRV et semver-checks en CI). **Lot 2 en partie implémenté** : l'ABI de
+`proj.h` est complète (292 fonctions exportées, structures vérifiées), 196 fonctions font leur
+travail, 96 échouent comme PROJ échoue (liste dans « Écarts du lot 2 »). Le lot 3 (publication)
+reste à faire. Ce document fixe ce que la v1 promet, et ce qu'il ne promet pas. Les écarts entre le
+cahier des charges et le code sont dans « Écarts du lot 1 » et « Écarts du lot 2 », en fin de page.
 
 ## Le problème
 
@@ -67,8 +69,9 @@ vérifiée contre celle de `proj` 0.31 par un test qui compile les exemples de l
 - Produit `libproj.so` / `libproj.dylib` / `proj.dll` et `libproj.a`, avec le `proj.h` de PROJ
   9.9.0 copié tel quel. Les noms et les signatures sont identiques ; la structure `PJ_COORD` et les
   constantes sont les mêmes.
-- Couverture : les 294 fonctions de `proj.h`. Une fonction que le port ne sait pas honorer renvoie
-  l'erreur de PROJ (`NULL` ou 0 et `proj_errno`), jamais un résultat faux.
+- Couverture : les fonctions de `proj.h` (292 fonctions et la variable `pj_release`). Une fonction
+  que le port ne sait pas honorer renvoie l'erreur de PROJ (`NULL` ou 0 et `proj_errno`), jamais
+  un résultat faux.
 - Preuve : les tests C de PROJ compilés contre notre bibliothèque. Ce sont `test_c_api.cpp` (152
   TEST, en ne gardant que ceux qui n'appellent que `proj.h`), `proj_context_test.cpp`,
   `proj_errno_string_test.cpp`, `proj_angular_io_test.cpp`, `include_proj_h_from_c.c` et
@@ -160,3 +163,86 @@ Ce que le code fait autrement que ce document, ou en plus, et pourquoi.
   n'est comparable avec `!=` que depuis 1.83. Les dépendances exigent au moins 1.81 (`half`).
 - **`cargo-semver-checks`** est dans la CI avec `if: false` : aucune version n'est publiée. Il
   s'active au lot 3, quand `1.0.0` existe sur crates.io.
+
+## Écarts du lot 2
+
+Ce que le crate C fait autrement que ce document, ou pas encore, et pourquoi.
+
+- **Nombre de fonctions : 292, pas 294.** `proj.h` déclare 292 fonctions et une variable
+  (`pj_release`, exportée). Les « 294 » du cahier des charges venaient d'un décompte par
+  `grep PROJ_DLL` qui compte aussi `__declspec` et `__attribute__`.
+- **Noms des artefacts.** Le crate garde le nom `proj_rs_capi` : une bibliothèque `proj` dans
+  l'espace de travail donnerait `proj.pdb` deux fois sous Windows (le binaire `proj` du crate
+  racine) et `target/doc/proj` deux fois (georust). `capi/tests/dist.sh` installe
+  `libproj.so.25` (soname fixé par `build.rs`), `libproj.so` et `libproj.a` sous Linux,
+  `libproj.25.dylib`, `libproj.dylib` et `libproj.a` sous macOS. **Windows n'est pas fait** :
+  `proj.dll` et `proj.lib` demandent de renommer la DLL et de refaire la bibliothèque d'import,
+  ce qui n'a pas pu être vérifié ici. Seul Linux est testé.
+- **En-têtes.** `capi/include/` contient `proj.h`, `proj_constants.h`, `proj_experimental.h` et
+  `proj_symbol_rename.h` de PROJ 9.9.0, octet pour octet (`run.sh` compare `proj.h` à celui de
+  l'arbre de référence). `proj_experimental.h` ne déclare plus rien : tout est dans `proj.h`.
+- **ABI des structures.** `capi/src/ffi.rs` est généré par bindgen à partir de `proj.h` (outil à
+  usage unique, non requis au build). Il porte, pour chacune des 27 structures, des assertions de
+  compilation sur la taille, l'alignement et le décalage de chaque champ (valeurs de clang sur
+  l'en-tête). `capi/tests/abi_layout.c`, généré à partir de ces assertions, les redit en C : il
+  compile contre `capi/include/proj.h` et contre l'en-tête de PROJ. Rust et C s'accordent donc
+  sur les mêmes nombres. `PJ_COORD` fait 32 octets, `PJ_INFO` 56, `PJ_GRID_INFO` 360.
+- **Fonctions non implémentées : 96 sur 292.** Chacune est exportée (`unsupported.rs`, généré par
+  `capi/tools/gen_unsupported.py`), renvoie `NULL` ou 0 et pose `PROJ_ERR_OTHER` avec le message
+  « *nom* : not implemented in proj-rs » (`PROJ_RS_CAPI_TRACE_UNSUPPORTED=1` les imprime). La
+  liste exacte :
+  - réseau et fichiers (2) : `proj_context_set_fileapi`, `proj_context_set_network_callbacks`
+    (les traits `FileApi` et `NetworkCallbacks` du moteur existent, l'adaptation C n'est pas
+    écrite) ;
+  - listes statiques (5) : `proj_list_operations`, `proj_list_ellps`, `proj_list_units`,
+    `proj_list_angular_units`, `proj_list_prime_meridians` (il manque les descriptions de
+    `pj_list.h` et le pointeur de constructeur de `PJ_OPERATIONS`) ;
+  - constructeurs d'objets (18) : `proj_create_cs`, `proj_create_geographic_crs_from_datum`,
+    `proj_create_geocentric_crs_from_datum`, `proj_query_geodetic_crs_from_datum`,
+    `proj_create_derived_geographic_crs`, `proj_create_engineering_crs`,
+    `proj_create_vertical_crs`, `proj_create_vertical_crs_ex`, `proj_create_compound_crs`,
+    `proj_create_conversion`, `proj_create_linear_affine_parametric_conversion`,
+    `proj_create_linear_3D_affine_parametric_conversion`, `proj_create_transformation`,
+    `proj_convert_conversion_to_other_method`, `proj_create_projected_crs`,
+    `proj_create_derived_projected_crs`, `proj_crs_add_horizontal_derived_conversion`,
+    `proj_crs_create_bound_vertical_crs` ;
+  - les 71 `proj_create_conversion_*` (UTM, Mercator, Lambert, Albers, stéréographiques, Robinson,
+    Wagner, Eckert, pôle tournant...). Le moteur a les constructeurs (`Conversion::create_*`,
+    `buildop.rs`) : il reste à convertir les unités d'angle et de longueur de chaque appel C.
+  Les constructeurs sont le gros du reste : 20 des 26 cas en attente de `test_c_api.cpp` en
+  dépendent.
+- **Preuve.** `capi/tests/run.sh` compile et lance, contre la bibliothèque, `test_c_api.cpp`
+  (152 `TEST`), `proj_context_test.cpp`, `proj_errno_string_test.cpp`,
+  `proj_angular_io_test.cpp`, `include_proj_h_from_c.c` et `test_fork.c`, plus la vérification des
+  symboles et de l'ABI. Tout passe sauf ce qui est écrit dans `capi/tests/excluded.txt` (33 cas qui
+  ne peuvent pas passer : 32 appellent l'API C++ de PROJ, 1 lit `pj_ctx::ca_bundle_path`) et
+  `capi/tests/pending.txt` (26 cas qui ne passent pas encore, chacun avec sa raison : 20 par
+  constructeur absent, 6 par écart du moteur). Résultat : 94 cas de `test_c_api.cpp`
+  passent. `test_network`, `test_defmodel`, `test_tinshift` et les autres exécutables de
+  `test/unit` utilisent l'API C++ et ne sont pas visés.
+- **Écarts du moteur vus par les tests (à traiter dans `src/iso19111/`).**
+  `proj_create_from_database` : le moteur n'écrit pas de chaîne PROJ pour la conversion nue
+  EPSG:16031, donc `proj_pj_info` n'a pas d'`id` (`CApi.proj_create_from_database`).
+  `proj_as_proj_string` d'un CRS ignore `USE_APPROX_TMERC` (`CApi.proj_as_proj_string_approx_tmerc_option_yes`).
+  Un CRS dynamique lu par son nom (`ITRF2014@2025.0`) n'entre pas dans `Proj::new`
+  (`CApi.proj_create_crs_to_crs_coordinate_metadata_in_src` et `_in_target`).
+  `EPSG:4284` vers `EPSG:4284` donne un ensemble de candidats, pas le `noop` de PROJ
+  (`CApi.proj_trans_bounds_noop_geographic`). Une conversion donnée par chaîne PROJ répond
+  « sans temps » même avec `+t_epoch` (`CApi.proj_coordoperation_requires_per_coordinate_input_time`).
+- **Ordre des axes.** La façade `Proj` transforme toujours dans l'ordre longitude, latitude.
+  `proj_create_crs_to_crs` rend l'ordre du CRS, comme PROJ : la couche C permute les deux premiers
+  axes de chaque côté d'après `Proj::pair_axis_swaps`, jusqu'à `proj_normalize_for_visualization`.
+  Les 35 tests `proj_trans_bounds*` passent ainsi, boîtes comprises.
+- **`proj_context_get_database_path`.** La base est celle du crate. La fonction rend le `proj.db`
+  de `PROJ_DATA` s'il existe (les tests le copient), sinon `NULL`. Redonner ce chemin à
+  `proj_context_set_database_path` sélectionne de nouveau la base embarquée.
+- **Fils d'exécution.** Les fonctions de `proj.h` reçoivent des pointeurs de
+  contexte et d'objet : comme PROJ, le crate ne protège pas un même contexte ou objet contre deux
+  fils. Chaque point d'entrée passe par `catch_unwind` : un panic donne l'échec de la fonction.
+- **Tests externes.** gtest vient de `libgtest-dev` (1.14), PROJ prend 1.15.2 : les tests n'en
+  dépendent pas. `TIFF_ENABLED` est défini, comme le fait CMake, ce qui ajoute deux blocs de
+  `test_c_api.cpp`.
+- **Changements dans le moteur** (tous cachés, hors semver) : `Proj::{is_transform,
+  native_operation, pair_axis_swaps, trans_coord, trans_batch}`, `ProjBuilder::{replace_search_paths,
+  set_user_directory_path, create_user_directory}`, `Factors` garde les quatre dérivées de
+  `PJ_FACTORS`, `iso19111::create_user_object` et `proj_based_operation_of_text` deviennent `pub`.
