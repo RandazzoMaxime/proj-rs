@@ -1,10 +1,14 @@
 //! Fonctions transcendantes sur quatre voies, en Rust, sans bibliothèque externe.
 //!
-//! Les algorithmes sont ceux de fdlibm (la libm de Sun, reprise par FreeBSD et musl), écrits contre
-//! l'API de [`V4`] : réduction d'argument de Cody et Waite, noyaux polynomiaux de Remez,
-//! sélections par masque à la place des branches. Ils tiennent le niveau de la libm scalaire, de
-//! 1 à 3 ULP selon la fonction (le banc de ce fichier en donne la mesure), donc la même
-//! précision au nanomètre sur une coordonnée que les versions de la bibliothèque C.
+//! Les algorithmes sont ceux de fdlibm (la libm de Sun, reprise par FreeBSD et musl) pour `sin`,
+//! `cos`, `exp` et la queue de `log` en double précision étendue, et ceux de Cephes (S. L. Moshier),
+//! tels que les reprend la bibliothèque vectorielle d'Agner Fog (Apache-2.0), pour `atan` et
+//! `log` : une fraction rationnelle, moins coûteuse qu'un polynôme de degré 22. Tous sont écrits
+//! contre l'API de [`V4`] : réduction d'argument de Cody et Waite, sélections par masque à la
+//! place des branches, polynômes évalués par le schéma d'Estrin (des chaînes de dépendances plus
+//! courtes que Horner). Ils tiennent le niveau de la libm scalaire, de 1 à 3 ULP selon la
+//! fonction (le banc de ce fichier en donne la mesure), donc la même précision au nanomètre sur
+//! une coordonnée que les versions de la bibliothèque C.
 //!
 //! Aucune dépendance : ni `libmvec` (glibc), ni l'assembleur en ligne, ni appel à la libm du
 //! système. Le code est le même sur Linux, Windows et macOS.
@@ -55,41 +59,45 @@ const C4: f64 = -2.755_731_435_139_066_330_35e-7;
 const C5: f64 = 2.087_572_321_298_174_827_90e-9;
 const C6: f64 = -1.135_964_755_778_819_482_65e-11;
 
-/// Coefficients de `log` (fdlibm `e_log.c`).
-const LG1: f64 = 6.666_666_666_666_735_130e-1;
-const LG2: f64 = 3.999_999_999_940_941_908e-1;
-const LG3: f64 = 2.857_142_874_366_239_149e-1;
-const LG4: f64 = 2.222_219_843_214_978_396e-1;
-const LG5: f64 = 1.818_357_216_161_805_012e-1;
-const LG6: f64 = 1.531_383_769_920_937_332e-1;
-const LG7: f64 = 1.479_819_860_511_658_591e-1;
+/// `atan(z) = z + z * z^2 * P(z^2) / Q(z^2)` pour `|z| <= 0.66` : la fraction rationnelle de
+/// Cephes (S. L. Moshier), telle que la reprend la bibliothèque vectorielle d'Agner Fog
+/// (Apache-2.0). `ATAN_P[i]` est le coefficient de `(z^2)^i` ; `Q` est unitaire de degré 5.
+const ATAN_P: [f64; 5] = [
+    -6.485_021_904_942_025_371_773e1,
+    -1.228_866_684_490_136_173_410e2,
+    -7.500_855_792_314_704_667_340e1,
+    -1.615_753_718_733_365_076_637e1,
+    -8.750_608_600_031_904_122_785e-1,
+];
+const ATAN_Q: [f64; 5] = [
+    1.945_506_571_482_613_964_425e2,
+    4.853_903_996_359_136_964_868e2,
+    4.328_810_604_912_902_668_951e2,
+    1.650_270_098_316_988_542_046e2,
+    2.485_846_490_142_306_297_962e1,
+];
+/// `sqrt(2) + 1 = tan(3 pi / 8)`, la limite haute de la plage intermédiaire de `atan`.
+const TAN_3PI_8: f64 = 2.414_213_562_373_095;
+/// Au-dessous, `atan` n'a pas de réduction.
+const ATAN_SMALL: f64 = 0.66;
 
-/// Coefficients de `atan` sur `[0, 7/16]` (fdlibm `s_atan.c`).
-const AT: [f64; 11] = [
-    3.333_333_333_333_293_180_27e-1,
-    -1.999_999_999_987_648_324_76e-1,
-    1.428_571_427_250_346_637_11e-1,
-    -1.111_111_040_546_235_578_80e-1,
-    9.090_887_133_436_506_561_96e-2,
-    -7.691_876_205_044_829_994_95e-2,
-    6.661_073_137_387_531_206_69e-2,
-    -5.833_570_133_790_573_486_45e-2,
-    4.976_877_994_615_932_360_17e-2,
-    -3.653_157_274_421_691_552_70e-2,
-    1.628_582_011_536_578_236_23e-2,
+/// `log(1 + f) = f - f^2/2 + f^3 * P(f) / Q(f)` pour `f` dans `[sqrt(1/2) - 1, sqrt(2) - 1]` :
+/// la fraction rationnelle de Cephes pour `log`. `LOG_P[i]` est le coefficient de `f^i` (degré 5) ;
+/// `Q` est unitaire de degré 5.
+const LOG_P: [f64; 6] = [
+    7.708_387_337_558_853_916_66,
+    1.793_686_785_078_198_163_13e1,
+    1.449_892_253_416_109_308_46e1,
+    4.705_791_198_788_817_258_54,
+    4.974_949_949_767_470_014_25e-1,
+    1.018_756_638_045_809_317_96e-4,
 ];
-/// `atan(0.5)`, `atan(1)`, `atan(1.5)`, `atan(inf)`, parties hautes et basses.
-const ATAN_HI: [f64; 4] = [
-    4.636_476_090_008_060_935_15e-1,
-    7.853_981_633_974_482_789_99e-1,
-    9.827_937_232_473_290_540_82e-1,
-    1.570_796_326_794_896_558_00,
-];
-const ATAN_LO: [f64; 4] = [
-    2.269_877_745_296_168_709_24e-17,
-    3.061_616_997_868_383_017_93e-17,
-    1.390_331_103_123_099_845_16e-17,
-    6.123_233_995_736_766_035_87e-17,
+const LOG_Q: [f64; 5] = [
+    2.312_516_201_267_653_405_83e1,
+    7.115_447_506_185_638_944_66e1,
+    8.298_752_669_127_766_032_11e1,
+    4.522_791_458_375_322_211_05e1,
+    1.128_735_871_891_674_505_90e1,
 ];
 
 /// `1/n!`, `n` de 2 à 13 : le noyau de `exp` sur `[-ln2/2, ln2/2]`.
@@ -208,12 +216,8 @@ fn patch2_lanes(first: V4, second: V4, result: V4, bad: Mask, function: fn(f64, 
 /// `exp(r)` pour `|r| <= ln 2 / 2` : `1 + r + r^2 * P(r)`, `P` le développement de Taylor.
 #[inline(always)]
 fn exp_reduced(r: V4) -> V4 {
-    let k = |value| r.splat_like(value);
-    let mut p = k(EXP_COEFFS[11]);
-    for coefficient in EXP_COEFFS[..11].iter().rev() {
-        p = p.mul_add(r, k(*coefficient));
-    }
-    (r * r).mul_add(p, r) + k(1.0)
+    let p = estrin12(r, &EXP_COEFFS);
+    (r * r).mul_add(p, r) + r.splat_like(1.0)
 }
 
 /// `(m, e)` avec `x = m * 2^e` et `m` dans `[sqrt(1/2), sqrt(2)[`, pour un `x` positif normal.
@@ -269,21 +273,70 @@ fn sinh_exponential(a: V4) -> V4 {
     k(0.5) * (e - k(1.0) / e)
 }
 
-/// `s1 + s2` de fdlibm : le facteur de `t` dans `atan(t) = t - t * (s1 + s2)`, `|t| <= 7/16`.
+/// `c[0] + c[1] x + ... + c[5] x^5` par le schéma d'Estrin : trois niveaux de FMA au lieu de
+/// cinq pour Horner, donc une chaîne de dépendances plus courte (les trois paires et les deux
+/// puissances de `x` se calculent en parallèle).
 #[inline(always)]
-fn atan_poly(t: V4) -> V4 {
-    let k = |value| t.splat_like(value);
-    let z = t * t;
-    let w = z * z;
-    let mut s1 = k(AT[10]);
-    for index in [8, 6, 4, 2, 0] {
-        s1 = w.mul_add(s1, k(AT[index]));
-    }
-    let mut s2 = k(AT[9]);
-    for index in [7, 5, 3, 1] {
-        s2 = w.mul_add(s2, k(AT[index]));
-    }
-    z.mul_add(s1, w * s2)
+fn estrin5(x: V4, c: &[f64; 6]) -> V4 {
+    let k = |value| x.splat_like(value);
+    let x2 = x * x;
+    let x4 = x2 * x2;
+    let low = x.mul_add(k(c[1]), k(c[0]));
+    let mid = x.mul_add(k(c[3]), k(c[2]));
+    let high = x.mul_add(k(c[5]), k(c[4]));
+    x4.mul_add(high, x2.mul_add(mid, low))
+}
+
+/// Comme [`estrin5`], pour le degré 5 d'un polynôme **unitaire** : `c[0] + ... + c[4] x^4 + x^5`.
+#[inline(always)]
+fn estrin5_monic(x: V4, c: &[f64; 5]) -> V4 {
+    let k = |value| x.splat_like(value);
+    let x2 = x * x;
+    let x4 = x2 * x2;
+    let low = x.mul_add(k(c[1]), k(c[0]));
+    let mid = x.mul_add(k(c[3]), k(c[2]));
+    // c[4] x^4 + x^5 = x^4 (c[4] + x)
+    let high = x + k(c[4]);
+    x4.mul_add(high, x2.mul_add(mid, low))
+}
+
+/// Comme [`estrin5`], pour le degré 4 : `c[0] + ... + c[4] x^4`.
+#[inline(always)]
+fn estrin4(x: V4, c: &[f64; 5]) -> V4 {
+    let k = |value| x.splat_like(value);
+    let x2 = x * x;
+    let low = x.mul_add(k(c[1]), k(c[0]));
+    let mid = x.mul_add(k(c[3]), k(c[2]));
+    x2.mul_add(x2.mul_add(k(c[4]), mid), low)
+}
+
+/// `c[0] + c[1] x + ... + c[11] x^11` par le schéma d'Estrin : quatre niveaux de FMA au lieu de
+/// onze pour Horner.
+#[inline(always)]
+fn estrin12(x: V4, c: &[f64; 12]) -> V4 {
+    let k = |value| x.splat_like(value);
+    let x2 = x * x;
+    let x4 = x2 * x2;
+    let x8 = x4 * x4;
+    let a0 = x.mul_add(k(c[1]), k(c[0]));
+    let a1 = x.mul_add(k(c[3]), k(c[2]));
+    let a2 = x.mul_add(k(c[5]), k(c[4]));
+    let a3 = x.mul_add(k(c[7]), k(c[6]));
+    let a4 = x.mul_add(k(c[9]), k(c[8]));
+    let a5 = x.mul_add(k(c[11]), k(c[10]));
+    let b0 = x2.mul_add(a1, a0);
+    let b1 = x2.mul_add(a3, a2);
+    let b2 = x2.mul_add(a5, a4);
+    x8.mul_add(b2, x4.mul_add(b1, b0))
+}
+
+/// `atan(z)` pour `|z| <= 0.66` : `z + z * z^2 * P(z^2) / Q(z^2)` (Cephes, voir [`ATAN_P`]).
+#[inline(always)]
+fn atan_rational(z: V4) -> V4 {
+    let zz = z * z;
+    let p = estrin4(zz, &ATAN_P);
+    let q = estrin5_monic(zz, &ATAN_Q);
+    (p / q).mul_add(z * zz, z)
 }
 
 impl V4 {
@@ -300,6 +353,9 @@ impl V4 {
     }
 
     /// Quatre logarithmes naturels.
+    ///
+    /// Fraction rationnelle de Cephes (voir [`LOG_P`]) sur la mantisse centrée en 1, avec `ln 2`
+    /// en deux morceaux de fdlibm.
     #[inline(always)]
     pub(crate) fn log(self) -> V4 {
         let k = |value| self.splat_like(value);
@@ -307,17 +363,14 @@ impl V4 {
         let x = V4::select(fast, self, k(1.0));
         let (m, e) = centered_mantissa(x);
         let f = m - k(1.0);
-        let s = f / (k(2.0) + f);
-        let z = s * s;
-        let w = z * z;
-        let t1 = w * w.mul_add(w.mul_add(k(LG6), k(LG4)), k(LG2));
-        let t2 = z * w.mul_add(w.mul_add(w.mul_add(k(LG7), k(LG5)), k(LG3)), k(LG1));
-        let r = t2 + t1;
-        let hfsq = k(0.5) * f * f;
-        let result = e.mul_add(
-            k(LN2_HI),
-            -((hfsq - s.mul_add(hfsq + r, e * k(LN2_LO))) - f),
-        );
+        let p = estrin5(f, &LOG_P);
+        let q = estrin5_monic(f, &LOG_Q);
+        let f2 = f * f;
+        let ratio = (f2 * f) * p / q;
+        // f - f^2/2 + ratio, avec `e * ln 2` en deux morceaux ajoutés aux deux extrémités.
+        let result = e.mul_add(k(LN2_LO), ratio);
+        let result = result + (-f2).mul_add(k(0.5), f);
+        let result = e.mul_add(k(LN2_HI), result);
         patch(self, result, fast.not(), f64::ln)
     }
 
@@ -334,10 +387,7 @@ impl V4 {
         let r = (-n).mul_add(k(PIO2_LO), r);
         let z = r * r;
         // fdlibm `__kernel_sin` : r + r^3 * (S1 + z * (S2 + z * (S3 + ...))).
-        let p = z.mul_add(k(S6), k(S5));
-        let p = z.mul_add(p, k(S4));
-        let p = z.mul_add(p, k(S3));
-        let p = z.mul_add(p, k(S2));
+        let p = estrin4(z, &[S2, S3, S4, S5, S6]);
         let sin_r = (z * r).mul_add(z.mul_add(p, k(S1)), r);
         // fdlibm `__kernel_cos` : 1 - z/2 + z^2 * (C1 + z * (C2 + ...)), avec la compensation
         // `(1 - w) - hz` qui rend les bits perdus par `1 - z/2`.
@@ -374,85 +424,72 @@ impl V4 {
     }
 
     /// Quatre arcs tangente.
+    ///
+    /// Cephes, comme la bibliothèque d'Agner Fog : trois plages, une fraction rationnelle
+    /// ([`ATAN_P`], [`ATAN_Q`]).
     #[inline(always)]
     pub(crate) fn atan(self) -> V4 {
         let k = |value| self.splat_like(value);
         let one = k(1.0);
-        let ax = self.abs();
-        let from_7_16 = ax.ge(k(7.0 / 16.0));
-        // Toutes les voies sous 7/16 : pas de réduction, ni de division. Un `NaN` ne passe pas
-        // `lt`, donc ce chemin ne le prend jamais.
-        if ax.lt(k(7.0 / 16.0)).all() {
-            return self - self * atan_poly(self);
+        let t = self.abs();
+        // Toutes les voies petites : pas de réduction, ni de division de plage. La fonction est
+        // impaire, le signe vient tout seul. Un `NaN` ne passe pas `lt` : il va au chemin général.
+        if t.lt(k(ATAN_SMALL)).all() {
+            return atan_rational(self);
         }
-        // Quatre plages de réduction, comme fdlibm : [7/16, 11/16[, [11/16, 19/16[,
-        // [19/16, 39/16[, [39/16, +inf]. Un `NaN` ne tombe dans aucune : il reste `NaN`.
-        let from_11_16 = ax.ge(k(11.0 / 16.0));
-        let from_19_16 = ax.ge(k(19.0 / 16.0));
-        let from_39_16 = ax.ge(k(39.0 / 16.0));
-        let num = V4::select(
-            from_39_16,
-            -one,
-            V4::select(
-                from_19_16,
-                ax - k(1.5),
-                V4::select(
-                    from_11_16,
-                    ax - one,
-                    V4::select(from_7_16, ax + ax - one, ax),
-                ),
-            ),
+        // Petit : z = t, intermédiaire (t <= tan 3pi/8) : z = (t - 1) / (t + 1) + pi/4,
+        // grand : z = -1 / t + pi/2.
+        let not_big = t.le(k(TAN_3PI_8));
+        let not_small = t.ge(k(ATAN_SMALL));
+        let num = V4::select(not_small, V4::select(not_big, t - one, -one), t);
+        let den = V4::select(not_small, V4::select(not_big, t + one, t), one);
+        let base = V4::select(
+            not_big,
+            k(std::f64::consts::FRAC_PI_4),
+            k(std::f64::consts::FRAC_PI_2),
         );
-        let den = V4::select(
-            from_39_16,
-            ax,
-            V4::select(
-                from_19_16,
-                k(1.5).mul_add(ax, one),
-                V4::select(
-                    from_11_16,
-                    ax + one,
-                    V4::select(from_7_16, k(2.0) + ax, one),
-                ),
-            ),
-        );
-        let t = num / den;
-        let correction = t * atan_poly(t);
-        let unreduced = t - correction;
-        let hi = V4::select(
-            from_39_16,
-            k(ATAN_HI[3]),
-            V4::select(
-                from_19_16,
-                k(ATAN_HI[2]),
-                V4::select(from_11_16, k(ATAN_HI[1]), k(ATAN_HI[0])),
-            ),
-        );
-        let lo = V4::select(
-            from_39_16,
-            k(ATAN_LO[3]),
-            V4::select(
-                from_19_16,
-                k(ATAN_LO[2]),
-                V4::select(from_11_16, k(ATAN_LO[1]), k(ATAN_LO[0])),
-            ),
-        );
-        let reduced = hi - ((correction - lo) - t);
-        V4::select(from_7_16, reduced, unreduced).copysign(self)
+        let base = V4::select(not_small, base, k(0.0));
+        // Le complément de `pi/4` ou `pi/2` en double précision, ajouté d'abord.
+        let low = V4::select(not_big, k(PIO2_MID * 0.5), k(PIO2_MID));
+        let low = V4::select(not_small, low, k(0.0));
+        ((atan_rational(num / den) + low) + base).copysign(self)
     }
 
     /// Quatre `self.atan2(x)`, `self` étant `y`, dans l'ordre de `f64::atan2`.
+    ///
+    /// On se ramène au premier octant (`t = min/max` dans `[0, 1]`) puis `atan(t)` par la fraction
+    /// de [`atan_rational`], et on remet l'octant et le quadrant par une base (`0`, `pi/2` ou `pi`)
+    /// et un signe.
     #[inline(always)]
     pub(crate) fn atan2(self, x: V4) -> V4 {
         let k = |value| self.splat_like(value);
         let fast = self.is_finite().and(x.is_finite());
         let ay = self.abs();
         let ax = x.abs();
+        let swap = ay.gt(ax);
+        let num = V4::select(swap, ax, ay);
+        let den = V4::select(swap, ay, ax);
+        // Les deux nuls donnent `0 / 0` : l'angle est 0 (puis `pi` si `x` est `-0`).
         let both_zero = ay.eq(k(0.0)).and(ax.eq(k(0.0)));
-        // `ay / 0` est l'infini : `atan(inf)` vaut `pi / 2`, le bon résultat pour `x = 0`.
-        let t = V4::select(both_zero, k(0.0), (ay / ax).atan());
-        let r = V4::select(x.sign_mask(), k(PI_HI) - (t - k(PI_LO)), t);
-        patch2(self, x, r.copysign(self), fast.not(), f64::atan2)
+        let t = V4::select(both_zero, k(0.0), num / den);
+        // t < 0.66 : z = t ; sinon z = (t - 1) / (t + 1), et `pi/4` s'ajoute.
+        let not_small = t.ge(k(ATAN_SMALL));
+        let z = V4::select(not_small, t - k(1.0), t) / V4::select(not_small, t + k(1.0), k(1.0));
+        let low = V4::select(not_small, k(PIO2_MID * 0.5), k(0.0));
+        let high = V4::select(not_small, k(std::f64::consts::FRAC_PI_4), k(0.0));
+        let angle = (atan_rational(z) + low) + high;
+        // octant (swap) et quadrant (x < 0) : base + signe * angle.
+        let x_negative = x.sign_mask();
+        let negated = -angle;
+        let signed = V4::select(
+            swap,
+            V4::select(x_negative, angle, negated),
+            V4::select(x_negative, negated, angle),
+        );
+        let base_high = V4::select(swap, k(PIO2_HI), V4::select(x_negative, k(PI_HI), k(0.0)));
+        let base_low = V4::select(swap, k(PIO2_MID), V4::select(x_negative, k(PI_LO), k(0.0)));
+        let result = (signed + base_low) + base_high;
+        patch2(self, x, result.copysign(self), fast.not(), f64::atan2)
     }
 
     /// Quatre `self.hypot(other)`.
