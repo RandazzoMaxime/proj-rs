@@ -61,6 +61,14 @@ impl Conversion {
             || export_body(self, source, target, formatter)?)
         {
             let (Some(source), Some(target)) = (source, target) else {
+                if source.is_none() && target.is_none() {
+                    let text = self.export_to_proj_string()?;
+                    formatter.ingest_proj_string(&text);
+                    if self.inverted {
+                        formatter.stop_inversion();
+                    }
+                    return Ok(());
+                }
                 if self.inverted {
                     formatter.stop_inversion();
                 }
