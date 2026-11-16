@@ -25,9 +25,8 @@ use super::factory::{
     geographic_of, CoordinateOperationContext, CoordinateOperationFactory, GUARD_SKIP_HORIZONTAL,
 };
 use super::model::{
-    Axis, BoundCRS, CompoundCRS, ConcatenatedOperation, ConcatenatedStep, Conversion,
-    CoordinateOperation, Crs, Ellipsoid, EllipsoidalCS, GeodeticCRS, GeodeticReferenceFrame,
-    GeographicCRS, Identified, UnitOfMeasure,
+    Axis, BoundCRS, CompoundCRS, ConcatenatedStep, Conversion, CoordinateOperation, Crs, Ellipsoid,
+    EllipsoidalCS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, UnitOfMeasure,
 };
 use super::niche::DerivedKind;
 use super::FactoryError;
@@ -416,17 +415,19 @@ fn bound_to_geog(
         {
             tried_hub_is_target = true;
             if matches!(base, Crs::Geographic(_) | Crs::Geodetic(_)) {
-                return Ok(vec![match intermediate {
-                    Some(first) => concatenate(vec![first, transformation.clone()]),
-                    None => transformation.clone(),
-                }]);
+                return Ok(match intermediate {
+                    Some(first) => concatenate(vec![first, transformation.clone()], context)
+                        .into_iter()
+                        .collect(),
+                    None => vec![transformation.clone()],
+                });
             }
             let mut found = Vec::new();
             for first in factory.create_candidates(base, base_geog, context)? {
                 let mut steps = vec![first];
                 steps.extend(intermediate.clone());
                 steps.push(transformation.clone());
-                found.push(concatenate(steps));
+                found.extend(concatenate(steps, context));
             }
             if !found.is_empty() {
                 return Ok(found);
@@ -442,7 +443,7 @@ fn bound_to_geog(
                         steps.extend(intermediate.clone());
                         steps.push(transformation.clone());
                         steps.push(last.clone());
-                        found.push(concatenate(steps));
+                        found.extend(concatenate(steps, context));
                     }
                 }
             }
@@ -456,9 +457,9 @@ fn bound_to_geog(
             let found: Vec<CoordinateOperation> = factory
                 .create_candidates(base, base_geog, context)?
                 .into_iter()
-                .map(|first| {
+                .filter_map(|first| {
                     let transf = clarke_66_transformation(transformation, base_geog, target);
-                    concatenate(vec![first, transf])
+                    concatenate(vec![first, transf], context)
                 })
                 .collect();
             if !found.is_empty() {
@@ -478,7 +479,7 @@ fn bound_to_geog(
                 return Ok(factory
                     .create_candidates(base, vertical_source, context)?
                     .into_iter()
-                    .map(|first| concatenate(vec![first, transformation.clone()]))
+                    .filter_map(|first| concatenate(vec![first, transformation.clone()], context))
                     .collect());
             }
             return Ok(vec![transformation.clone()]);
@@ -492,7 +493,7 @@ fn bound_to_geog(
         for first in &firsts {
             for last in &lasts {
                 if lasts.len() > 1 || !last.has_ballpark_transformation() {
-                    found.push(concatenate(vec![first.clone(), last.clone()]));
+                    found.extend(concatenate(vec![first.clone(), last.clone()], context));
                 }
             }
         }
@@ -507,14 +508,14 @@ fn bound_to_geog(
         // transformations of `createOperationsCompoundToGeog` stop at the hub, with a change of
         // vertical unit when the height axis of the hub is not the one of the target.
         if context.has_guard(GUARD_SKIP_HORIZONTAL) {
-            return skip_horizontal_transformation(firsts, hub, hub_geog, geog_dst);
+            return skip_horizontal_transformation(firsts, hub, hub_geog, geog_dst, context);
         }
         let lasts = factory.create_candidates(hub, target, context)?;
         let mut found = Vec::new();
         for first in &firsts {
             for last in &lasts {
                 if !last.has_ballpark_transformation() {
-                    found.push(concatenate(vec![first.clone(), last.clone()]));
+                    found.extend(concatenate(vec![first.clone(), last.clone()], context));
                 }
             }
         }
@@ -535,6 +536,7 @@ fn skip_horizontal_transformation(
     hub: &Crs,
     hub_geog: &GeographicCRS,
     geog_dst: &GeographicCRS,
+    context: &CoordinateOperationContext,
 ) -> Result<Vec<CoordinateOperation>, FactoryError> {
     if firsts.is_empty() {
         return Ok(firsts);
@@ -575,11 +577,11 @@ fn skip_horizontal_transformation(
     .with_endpoints(hub.clone(), hub_3d);
     Ok(firsts
         .into_iter()
-        .map(|first| {
-            concatenate(vec![
-                first,
-                CoordinateOperation::Conversion(conversion.clone()),
-            ])
+        .filter_map(|first| {
+            concatenate(
+                vec![first, CoordinateOperation::Conversion(conversion.clone())],
+                context,
+            )
         })
         .collect())
 }
@@ -726,43 +728,13 @@ fn set_step_endpoints(step: &mut ConcatenatedStep, source: &Crs, target: &Crs) {
     }
 }
 
-/// `ConcatenatedOperation::createComputeMetadata`: the steps, named by joining theirs.
-fn concatenate(operations: Vec<CoordinateOperation>) -> CoordinateOperation {
-    let name = operations
-        .iter()
-        .map(CoordinateOperation::name)
-        .collect::<Vec<_>>()
-        .join(" + ");
-    let source = operations
-        .first()
-        .and_then(operation_source)
-        .cloned()
-        .map(Box::new);
-    let target = operations
-        .last()
-        .and_then(operation_target)
-        .cloned()
-        .map(Box::new);
-    let interpolation = super::buildop::concatenation_interpolation(&operations).map(Box::new);
-    CoordinateOperation::Concatenated(ConcatenatedOperation {
-        identified: Identified::named(name),
-        steps: operations
-            .into_iter()
-            .map(|operation| ConcatenatedStep {
-                operation,
-                reverse: false,
-            })
-            .collect(),
-        source,
-        target,
-        accuracy: None,
-        version: None,
-        computed_name: true,
-        source_epoch: None,
-        target_epoch: None,
-        proj_based: None,
-        interpolation,
-    })
+/// `ConcatenatedOperation::createComputeMetadata`: `None` when the steps' extents do not meet and
+/// the context disallows that, which PROJ skips silently.
+fn concatenate(
+    operations: Vec<CoordinateOperation>,
+    context: &CoordinateOperationContext,
+) -> Option<CoordinateOperation> {
+    super::derived::concatenate(&operations, context)
 }
 
 /// The binding transformation, with the bound CRS endpoints when it carries none. A bound
