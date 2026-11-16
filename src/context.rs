@@ -62,7 +62,7 @@ fn update_default(change: impl FnOnce(&mut Settings)) {
 /// The database and user-input settings of one PROJ context.
 ///
 /// ```
-/// use proj_rs::{Context, DatabaseSource, InitRules};
+/// use proj_rs::unstable::{Context, DatabaseSource, InitRules};
 ///
 /// let context = Context::builder()
 ///     .sqlite_vfs_name(None)
