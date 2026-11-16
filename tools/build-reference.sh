@@ -14,9 +14,12 @@
 # `sqlite3` program is optional: without it, a Python shim creates proj.db.
 # TIFF and curl are off, so the reference reads the grids in their old formats
 # (.gsb, .gtx, ...) found in data/tests, not .tif grids, and never downloads.
+# PROJ_REF_TIFF_CURL=ON builds them in (needs libtiff and libcurl headers): bench/footprint.sh
+# uses it to size a libproj that reads .tif grids and downloads, as distributions build it.
 set -euo pipefail
 
 TAG=9.9.0
+TIFF_CURL=${PROJ_REF_TIFF_CURL:-OFF}
 DIR=${1:-target/proj-reference}
 mkdir -p "$DIR"
 DIR=$(cd "$DIR" && pwd)
@@ -45,7 +48,7 @@ EOF
 fi
 
 cmake -S "$DIR/src" -B "$DIR/build" -DCMAKE_BUILD_TYPE=Release \
-  -DBUILD_TESTING=OFF -DENABLE_TIFF=OFF -DENABLE_CURL=OFF -DBUILD_PROJSYNC=OFF \
+  -DBUILD_TESTING=OFF -DENABLE_TIFF="$TIFF_CURL" -DENABLE_CURL="$TIFF_CURL" -DBUILD_PROJSYNC=OFF \
   "${sqlite_args[@]}" > "$DIR/cmake.log"
 cmake --build "$DIR/build" --parallel "$(nproc 2>/dev/null || echo 4)" > "$DIR/build.log"
 
