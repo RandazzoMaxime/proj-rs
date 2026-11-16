@@ -3103,11 +3103,11 @@ fn esri_projected_text(crs: &ProjectedCRS, formatter: &WktFormatter) -> Option<S
         return None;
     }
     let db = formatter.db.as_ref()?;
-    let identifier = crs
-        .identifiers()
-        .iter()
-        .find(|identifier| identifier.code_space() == "ESRI")?;
-    let text = db.text_definition("projected_crs", "ESRI", identifier.code())?;
+    let code = match crs.identifiers().first() {
+        Some(identifier) if identifier.code_space() == "ESRI" => identifier.code().to_owned(),
+        _ => db.single_esri_projected_code(&esri_registered_name(&crs.identified, formatter)?)?,
+    };
+    let text = db.text_definition("projected_crs", "ESRI", &code)?;
     if !text.starts_with("PROJCS") {
         return None;
     }
@@ -3119,18 +3119,25 @@ fn esri_projected_text(crs: &ProjectedCRS, formatter: &WktFormatter) -> Option<S
     let Some(Crs::Projected(parsed)) = object.crs().cloned() else {
         return None;
     };
-    if crs.is_equivalent_to(&parsed) {
-        Some(text)
-    } else {
-        None
-    }
+    crs.is_equivalent_to_with(&parsed, super::equiv::Equivalence::Equivalent)
+        .then_some(text)
+}
+
+/// `l_esri_name` of `ProjectedCRS::_exportToWKT` (crs.cpp:4397-4417): the single ESRI alias of the
+/// CRS, the ESRI alias of its name, or its own name when exactly one ESRI CRS bears it.
+fn esri_registered_name(identified: &Identified, formatter: &WktFormatter) -> Option<String> {
+    esri_alias(identified, "projected_crs", formatter).or_else(|| {
+        formatter
+            .db
+            .as_ref()?
+            .single_esri_projected_code(&identified.name)
+            .map(|_| identified.name.clone())
+    })
 }
 
 fn esri_projected_name(identified: &Identified, formatter: &WktFormatter) -> String {
-    if let Some(alias) = esri_alias(identified, "projected_crs", formatter) {
-        return alias;
-    }
-    morph_name_to_esri(&identified.name)
+    esri_registered_name(identified, formatter)
+        .unwrap_or_else(|| morph_name_to_esri(&identified.name))
 }
 
 fn esri_official_name(name: &str, table: &str, formatter: &WktFormatter) -> bool {

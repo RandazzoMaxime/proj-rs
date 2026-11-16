@@ -945,6 +945,27 @@ impl DatabaseContext {
         rows.len() == 1 && rows[0][0].text() == "EPSG"
     }
 
+    /// The code of the one ESRI projected CRS that `name` designates, by its name or an alias
+    /// other than `EPSG_OLD`, ignoring case (`createObjectsFromName` on the ESRI authority,
+    /// exact match, factory.cpp:9563-9609). `None` for no CRS or for several.
+    pub(crate) fn single_esri_projected_code(&self, name: &str) -> Option<String> {
+        let rows = self
+            .query(
+                "SELECT code FROM projected_crs WHERE auth_name = 'ESRI' \
+                 AND name = ? COLLATE NOCASE \
+                 UNION SELECT ov.code FROM projected_crs ov \
+                 JOIN alias_name a ON ov.auth_name = a.auth_name AND ov.code = a.code \
+                 WHERE ov.auth_name = 'ESRI' AND a.source != 'EPSG_OLD' \
+                 AND a.table_name = 'projected_crs' AND a.alt_name = ? COLLATE NOCASE",
+                &[name.to_owned(), name.to_owned()],
+            )
+            .ok()?;
+        match rows.as_slice() {
+            [row] => Some(row[0].text()),
+            _ => None,
+        }
+    }
+
     /// True when `name` is the official name of exactly one ESRI object in `table`.
     ///
     /// WKT1 Esri then keeps that name, including a `_(Sphere)` suffix, instead of
