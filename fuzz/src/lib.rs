@@ -7,10 +7,11 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Once;
 
-use proj_rs::iso19111::ProjStringLayout;
-use proj_rs::{
-    bench_definition, Context, Operation, Proj, Xyzt, PORTED,
+use proj_rs::iso19111::{
+    create_from_user_input, create_object_from_user_input, DatabaseContext, JsonFormat,
+    JsonLines, WktConvention, WktFormatter,
 };
+use proj_rs::{bench_definition, Operation, Proj, Xyzt, PORTED};
 
 /// Longest text handed to a text parser: libFuzzer grows inputs, a megabyte of `+` proves nothing.
 const MAX_TEXT: usize = 8192;
@@ -133,6 +134,8 @@ fn exercise_operation(op: &Operation, extra: &[(f64, f64, f64)]) {
     let _ = op.factors(f64::NAN, 2.0);
 }
 
+/// Coordinates and metadata of a facade object. The exports are left out: each one opens the
+/// embedded database (10 ms), and `user_input` covers them.
 fn exercise_proj(proj: &Proj, extra: &[(f64, f64, f64)]) {
     for &(x, y, z) in FIXED_POINTS.iter().chain(extra) {
         let _ = proj.convert((x, y));
@@ -144,9 +147,6 @@ fn exercise_proj(proj: &Proj, extra: &[(f64, f64, f64)]) {
     let _ = proj.proj_info();
     let _ = proj.area_of_use();
     let _ = proj.factors(0.5, 0.8);
-    let _ = proj.as_proj_string(ProjStringLayout::Single);
-    let _ = proj.as_wkt(None, None);
-    let _ = proj.to_projjson(None, None, None);
 }
 
 /// Any text as a PROJ string: operation and facade creation, then coordinates through it.
@@ -162,20 +162,30 @@ pub fn proj_string(data: &[u8]) {
     let _ = Operation::create_projection(&text);
 }
 
-/// Any text as `createFromUserInput`: WKT, PROJJSON, PROJ string, `AUTH:code`, URN, name.
+/// Any text as `createFromUserInput`: WKT, PROJJSON, PROJ string, `AUTH:code`, URN, name,
+/// then every export of the CRS it gives.
 pub fn user_input(data: &[u8]) {
     init();
     let Some(text) = text_of(data) else { return };
-    let context = Context::new();
-    let _ = context.create_from_user_input(&text);
-    if let Ok(db) = context.database() {
-        let _ = proj_rs::iso19111::create_object_from_user_input(&text, &db);
+    let Ok(db) = DatabaseContext::create() else {
+        return;
+    };
+    if let Ok(crs) = create_from_user_input(&text, &db) {
+        for lines in [JsonLines::Multi, JsonLines::Single] {
+            let _ = crs.export_to_json_with(&db, &JsonFormat::with_lines(lines));
+        }
+        for convention in [
+            WktConvention::Wkt2_2019,
+            WktConvention::Wkt2_2015Simplified,
+            WktConvention::Wkt1Gdal,
+            WktConvention::Wkt1Esri,
+        ] {
+            let mut formatter = WktFormatter::create(convention).with_database(db.clone());
+            let _ = crs.export_to_wkt(&mut formatter);
+        }
+        let _ = crs.export_to_proj_string();
     }
-    if let Ok(proj) = Proj::new(&text) {
-        let _ = proj.as_wkt(None, None);
-        let _ = proj.to_projjson(None, None, None);
-        let _ = proj.as_proj_string(ProjStringLayout::Single);
-    }
+    let _ = create_object_from_user_input(&text, &db);
 }
 
 fn epsg_code(reader: &mut Reader<'_>) -> &'static str {
