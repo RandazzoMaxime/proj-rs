@@ -312,8 +312,10 @@ The batch path (`forward_batch` and `inverse_batch` of `Tmerc`, `Lcc` and
 Linux glibc it calls libmvec. On Windows it uses the C runtime math library, one lane
 at a time. Off AVX2, `Tmerc::forward_batch` runs a portable 4-lane loop, bit-identical
 to the scalar path and 25–34 % faster on x86-64; the other batch functions run the
-scalar loop. The AVX2 path is not bit-identical to the scalar path (at most 11 nm,
-[`docs/PORTING-simd.md`](docs/PORTING-simd.md), [`docs/PORTING-batch-path.md`](docs/PORTING-batch-path.md)).
+scalar loop. `Proj::convert_array` and `project_array` use the vector path for
+Transverse Mercator, Lambert conic and Mercator. The AVX2 path is not bit-identical
+to the scalar path (at most 11 nm, [`docs/PORTING-simd.md`](docs/PORTING-simd.md),
+[`docs/PORTING-batch-api.md`](docs/PORTING-batch-api.md), [`docs/PORTING-batch-path.md`](docs/PORTING-batch-path.md)).
 CI builds on Ubuntu 24.04 and Windows, and checks against the PROJ 9.9.0 binaries
 from conda-forge.
 

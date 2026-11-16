@@ -15,6 +15,9 @@ struct AxisSwap {
     axis: [usize; 4],
     sign: [f64; 4],
     count: usize,
+    /// `order=2,1`: swap the first two axes, change nothing else. The common case (every
+    /// latitude-first CRS has one), taken without the indexed loop. The swap is its own inverse.
+    plain_swap: bool,
 }
 
 pub(crate) fn extra_keys(name: &str) -> Option<&'static [&'static str]> {
@@ -106,7 +109,13 @@ pub(crate) fn build(
     if !legal {
         return Err(CreateError::IllegalValue("order"));
     }
-    Ok(Some(Box::new(AxisSwap { axis, sign, count })))
+    let plain_swap = count == 2 && axis[0] == 1 && axis[1] == 0 && sign[0] == 1.0 && sign[1] == 1.0;
+    Ok(Some(Box::new(AxisSwap {
+        axis,
+        sign,
+        count,
+        plain_swap,
+    })))
 }
 
 impl Step for AxisSwap {
@@ -132,7 +141,16 @@ impl Step for AxisSwap {
 }
 
 impl AxisSwap {
+    #[inline]
     fn permute(&self, coord: Coord, inverse: bool) -> Coord {
+        if self.plain_swap {
+            return Coord {
+                x: coord.y,
+                y: coord.x,
+                z: coord.z,
+                t: coord.t,
+            };
+        }
         let input = [coord.x, coord.y, coord.z, coord.t];
         let mut output = input;
         if inverse {

@@ -24,6 +24,10 @@ use std::f64::consts::{FRAC_PI_2, PI};
 use std::fmt;
 use std::sync::Mutex;
 
+// The vector path of a `Classic` step over a slice.
+#[path = "projections/classic_batch.rs"]
+mod classic_batch;
+
 #[path = "projections/datum_ops.rs"]
 mod datum_ops;
 
@@ -1156,6 +1160,45 @@ pub(crate) trait Step: Send + Sync {
         let _ = stack;
         self.inverse(coord)
     }
+
+    /// Forward on a slice, in place. A point whose `failed` slot is empty is transformed; one
+    /// the step refuses keeps its input and gets the error in `failed`. A point already failed is
+    /// left alone, so a later step never sees it and the error is the first step's, as it is
+    /// when the points go through one at a time.
+    ///
+    /// The default is that loop. A step with a vector path overrides it.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the two slices differ in length.
+    fn forward_batch(&self, coords: &mut [Coord], failed: &mut [Option<TransformError>]) {
+        assert_eq!(coords.len(), failed.len(), "one slot per point");
+        for (coord, failed) in coords.iter_mut().zip(failed) {
+            if failed.is_none() {
+                match self.forward(*coord) {
+                    Ok(out) => *coord = out,
+                    Err(error) => *failed = Some(error),
+                }
+            }
+        }
+    }
+
+    /// Inverse on a slice, in place. Same contract as [`Self::forward_batch`].
+    ///
+    /// # Panics
+    ///
+    /// Panics when the two slices differ in length.
+    fn inverse_batch(&self, coords: &mut [Coord], failed: &mut [Option<TransformError>]) {
+        assert_eq!(coords.len(), failed.len(), "one slot per point");
+        for (coord, failed) in coords.iter_mut().zip(failed) {
+            if failed.is_none() {
+                match self.inverse(*coord) {
+                    Ok(out) => *coord = out,
+                    Err(error) => *failed = Some(error),
+                }
+            }
+        }
+    }
 }
 
 /// A built operation.
@@ -1342,6 +1385,24 @@ impl Operation {
     /// [`TransformError`] from the underlying step.
     pub fn inverse(&self, coord: Coord) -> Result<Coord, TransformError> {
         self.step.inverse(coord)
+    }
+
+    /// Forward on a slice, see [`Step::forward_batch`].
+    pub(crate) fn forward_batch(
+        &self,
+        coords: &mut [Coord],
+        failed: &mut [Option<TransformError>],
+    ) {
+        self.step.forward_batch(coords, failed);
+    }
+
+    /// Inverse on a slice, see [`Step::forward_batch`].
+    pub(crate) fn inverse_batch(
+        &self,
+        coords: &mut [Coord],
+        failed: &mut [Option<TransformError>],
+    ) {
+        self.step.inverse_batch(coords, failed);
     }
 
     /// Whether this direction reads longitude and latitude.
@@ -1724,7 +1785,8 @@ fn auto_is_exact_only(es: f64, phi0: f64, k0: f64) -> bool {
 /// ceux du cadre, comme `fwd_prepare` et `fwd_finalize` de PROJ.
 fn classic_tmerc(frame: &Frame) -> Box<dyn Step> {
     let kernel = Tmerc::from_radians(frame.earth, 0.0, frame.phi0, frame.k0, 0.0, 0.0);
-    Box::new(Classic::new(frame.clone(), kernel))
+    let batch = TmercBatch(kernel.clone());
+    Box::new(Classic::new(frame.clone(), kernel).with_batch(batch))
 }
 
 /// Transverse Mercator approchée dans le cadre de `Classic`, comme `tmerc` avec `+approx`.
@@ -1901,7 +1963,8 @@ fn build_lcc(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateErro
     let lat2 = params.radians("lat_2")?.unwrap_or(lat1);
     let lcc = Lcc::from_radians(frame.earth, 0.0, frame.phi0, lat1, lat2, frame.k0)
         .map_err(|_| CreateError::IllegalValue("lat_1"))?;
-    Ok(Box::new(Classic::new(frame.clone(), lcc)))
+    let batch = LccBatch(lcc.clone());
+    Ok(Box::new(Classic::new(frame.clone(), lcc).with_batch(batch)))
 }
 
 fn build_merc(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateError> {
@@ -1924,7 +1987,9 @@ fn build_merc(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateErr
         Mercator::try_ellipsoid(frame.earth, 0.0, k0, 0.0, 0.0)
             .map_err(|_| CreateError::IllegalValue("k_0"))?
     };
-    Ok(Box::new(Classic::new(frame.clone(), merc)))
+    Ok(Box::new(
+        Classic::new(frame.clone(), merc).with_batch(MercBatch(merc)),
+    ))
 }
 
 fn build_helmert(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateError> {
@@ -1992,11 +2057,26 @@ pub(crate) struct UnitProjection<'a> {
 struct Classic<K> {
     frame: Frame,
     kernel: K,
+    /// The vector path of the kernel, built with a zero origin as the kernel is.
+    batch: Option<Box<dyn ProjectedBatch>>,
 }
 
 impl<K: Kernel> Classic<K> {
     fn new(frame: Frame, kernel: K) -> Self {
-        Self { frame, kernel }
+        Self {
+            frame,
+            kernel,
+            batch: None,
+        }
+    }
+
+    /// Adds the vector path. With `+over` the scalar path keeps the longitude unwrapped, which
+    /// the vector kernels do not: no vector path then.
+    fn with_batch(mut self, batch: impl ProjectedBatch + 'static) -> Self {
+        if !self.frame.over {
+            self.batch = Some(Box::new(batch));
+        }
+        self
     }
 }
 
@@ -2117,6 +2197,14 @@ impl<K: Kernel + 'static> Step for Classic<K> {
         (self.frame.earth.a(), self.frame.earth.es())
     }
 
+    fn forward_batch(&self, coords: &mut [Coord], failed: &mut [Option<TransformError>]) {
+        classic_batch::forward(self, coords, failed);
+    }
+
+    fn inverse_batch(&self, coords: &mut [Coord], failed: &mut [Option<TransformError>]) {
+        classic_batch::inverse(self, coords, failed);
+    }
+
     fn output_to_metre(&self) -> f64 {
         self.frame.to_meter
     }
@@ -2208,6 +2296,77 @@ pub(crate) fn geocentric_to_geographic(phi: f64, one_es: f64) -> f64 {
         phi
     } else {
         (phi.tan() / one_es).atan()
+    }
+}
+
+/// Points a vector kernel handles per call: the arrays that hold them live on the stack.
+const BATCH_CHUNK: usize = 256;
+
+/// The vector path of a [`Classic`] kernel (`crate::simd`), over the points of one chunk, with a
+/// zero origin: radians relative to the central meridian in, metres without the false origin
+/// out; metres in, degrees relative to the central meridian out.
+trait ProjectedBatch: Send + Sync {
+    /// Radians to metres, `NaN` for a point the projection refuses.
+    fn forward(&self, lon_rad: &[f64], lat_rad: &[f64], east: &mut [f64], north: &mut [f64]);
+
+    /// Metres to degrees, `NaN` for a point the projection refuses.
+    fn inverse(&self, east: &[f64], north: &[f64], lon_deg: &mut [f64], lat_deg: &mut [f64]);
+}
+
+/// Transverse Mercator, exact algorithm: radians in.
+struct TmercBatch(Tmerc);
+
+impl ProjectedBatch for TmercBatch {
+    fn forward(&self, lon_rad: &[f64], lat_rad: &[f64], east: &mut [f64], north: &mut [f64]) {
+        self.0.forward_rad_batch(lon_rad, lat_rad, east, north);
+    }
+
+    fn inverse(&self, east: &[f64], north: &[f64], lon_deg: &mut [f64], lat_deg: &mut [f64]) {
+        self.0.inverse_batch(east, north, lon_deg, lat_deg);
+    }
+}
+
+/// Radians to degrees for a projection whose batch takes degrees, as the scalar closure of
+/// `build_lcc` and `build_merc` does with `to_degrees`.
+fn to_degrees_chunk(radians: &[f64], degrees: &mut [f64; BATCH_CHUNK]) {
+    for (degree, radian) in degrees.iter_mut().zip(radians) {
+        *degree = radian.to_degrees();
+    }
+}
+
+/// Lambert conformal conic.
+struct LccBatch(Lcc);
+
+impl ProjectedBatch for LccBatch {
+    fn forward(&self, lon_rad: &[f64], lat_rad: &[f64], east: &mut [f64], north: &mut [f64]) {
+        let (mut lon_deg, mut lat_deg) = ([0.0; BATCH_CHUNK], [0.0; BATCH_CHUNK]);
+        to_degrees_chunk(lon_rad, &mut lon_deg);
+        to_degrees_chunk(lat_rad, &mut lat_deg);
+        let count = lon_rad.len();
+        self.0
+            .forward_batch(&lon_deg[..count], &lat_deg[..count], east, north);
+    }
+
+    fn inverse(&self, east: &[f64], north: &[f64], lon_deg: &mut [f64], lat_deg: &mut [f64]) {
+        self.0.inverse_batch(east, north, lon_deg, lat_deg);
+    }
+}
+
+/// Mercator, without `+over`.
+struct MercBatch(Mercator);
+
+impl ProjectedBatch for MercBatch {
+    fn forward(&self, lon_rad: &[f64], lat_rad: &[f64], east: &mut [f64], north: &mut [f64]) {
+        let (mut lon_deg, mut lat_deg) = ([0.0; BATCH_CHUNK], [0.0; BATCH_CHUNK]);
+        to_degrees_chunk(lon_rad, &mut lon_deg);
+        to_degrees_chunk(lat_rad, &mut lat_deg);
+        let count = lon_rad.len();
+        self.0
+            .forward_batch(&lon_deg[..count], &lat_deg[..count], east, north);
+    }
+
+    fn inverse(&self, east: &[f64], north: &[f64], lon_deg: &mut [f64], lat_deg: &mut [f64]) {
+        self.0.inverse_batch(east, north, lon_deg, lat_deg);
     }
 }
 
@@ -2613,6 +2772,57 @@ impl Step for Pipeline {
             };
         }
         Ok(coord)
+    }
+
+    /// Step by step over the whole slice, so a step with a vector path sees all the points at
+    /// once. A pipeline that keeps a coordinate stack (`push`, `pop`) sends the points through
+    /// one at a time: its state is per point.
+    fn forward_batch(&self, coords: &mut [Coord], failed: &mut [Option<TransformError>]) {
+        if self.uses_stack {
+            for (coord, failed) in coords.iter_mut().zip(failed) {
+                if failed.is_none() {
+                    match self.forward(*coord) {
+                        Ok(out) => *coord = out,
+                        Err(error) => *failed = Some(error),
+                    }
+                }
+            }
+            return;
+        }
+        for step in &self.steps {
+            if step.omit_fwd {
+                continue;
+            }
+            if step.inverted {
+                step.inner.inverse_batch(coords, failed);
+            } else {
+                step.inner.forward_batch(coords, failed);
+            }
+        }
+    }
+
+    fn inverse_batch(&self, coords: &mut [Coord], failed: &mut [Option<TransformError>]) {
+        if self.uses_stack {
+            for (coord, failed) in coords.iter_mut().zip(failed) {
+                if failed.is_none() {
+                    match self.inverse(*coord) {
+                        Ok(out) => *coord = out,
+                        Err(error) => *failed = Some(error),
+                    }
+                }
+            }
+            return;
+        }
+        for step in self.steps.iter().rev() {
+            if step.omit_inv {
+                continue;
+            }
+            if step.inverted {
+                step.inner.forward_batch(coords, failed);
+            } else {
+                step.inner.inverse_batch(coords, failed);
+            }
+        }
     }
 
     fn input_kind(&self) -> IoKind {
@@ -3033,6 +3243,167 @@ pub(crate) use crate::projmath::{
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A vector path that is not the projection's: `7, 9` for a point east of the meridian and
+    /// `NaN` (a refused point) for one on it or west of it. A value that cannot come from the scalar
+    /// closures below proves which path produced it.
+    struct MarkedBatch;
+
+    impl ProjectedBatch for MarkedBatch {
+        fn forward(&self, lon_rad: &[f64], _: &[f64], east: &mut [f64], north: &mut [f64]) {
+            for (slot, lon) in lon_rad.iter().enumerate() {
+                let (e, n) = if *lon <= 0.0 {
+                    (f64::NAN, f64::NAN)
+                } else {
+                    (7.0, 9.0)
+                };
+                east[slot] = e;
+                north[slot] = n;
+            }
+        }
+
+        fn inverse(&self, east: &[f64], _: &[f64], lon_deg: &mut [f64], lat_deg: &mut [f64]) {
+            for (slot, e) in east.iter().enumerate() {
+                let (lon, lat) = if *e < 0.0 {
+                    (f64::NAN, f64::NAN)
+                } else {
+                    (7.0, 9.0)
+                };
+                lon_deg[slot] = lon;
+                lat_deg[slot] = lat;
+            }
+        }
+    }
+
+    /// A kernel that answers `1, 2` in units of the semi-major axis forward, and `3°, 4°`
+    /// inverse, and refuses the meridian itself, so a refused point has an error.
+    struct MarkedKernel;
+
+    impl Kernel for MarkedKernel {
+        fn forward(&self, lam: f64, _: f64) -> Result<(f64, f64), TransformError> {
+            if lam == 0.0 {
+                Err(TransformError::OutsideDomain)
+            } else {
+                Ok((1.0, 2.0))
+            }
+        }
+
+        fn inverse(&self, _: f64, _: f64) -> Result<(f64, f64), TransformError> {
+            Ok((3.0_f64.to_radians(), 4.0_f64.to_radians()))
+        }
+    }
+
+    /// The `Classic` frame of `+proj=merc +ellps=GRS80`, around the marked kernel and the marked
+    /// vector path.
+    fn marked_step() -> Classic<MarkedKernel> {
+        let frame = Frame::from_params(&Params::parse("+proj=merc +ellps=GRS80").expect("params"))
+            .expect("frame");
+        Classic::new(frame, MarkedKernel).with_batch(MarkedBatch)
+    }
+
+    /// What the scalar kernel gives through the frame: `1, 2` times the semi-major axis.
+    fn scalar_answer(step: &Classic<MarkedKernel>) -> (f64, f64) {
+        let a = step.frame.earth.a();
+        (a, 2.0 * a)
+    }
+
+    #[test]
+    fn a_classic_step_with_a_vector_path_uses_it_for_a_slice() {
+        let step = marked_step();
+        let mut coords = [Coord::xy(0.5, 0.1), Coord::xy(0.7, 0.2)];
+        let mut failed = [None, None];
+        step.forward_batch(&mut coords, &mut failed);
+        assert_eq!(failed, [None, None]);
+        // `7, 9` is the vector path's: the scalar kernel gives `a, 2a`.
+        assert_eq!((coords[0].x, coords[0].y), (7.0, 9.0));
+        assert_eq!((coords[1].x, coords[1].y), (7.0, 9.0));
+        // One point at a time takes the scalar path.
+        let one = step.forward(Coord::xy(0.5, 0.1)).expect("one point");
+        assert_eq!((one.x, one.y), scalar_answer(&step));
+    }
+
+    #[test]
+    fn a_point_the_vector_path_refuses_gets_the_scalar_answer_or_its_error() {
+        let step = marked_step();
+        // West of the meridian: the vector path writes NaN, the scalar kernel answers `a, 2a`.
+        // On the meridian: NaN again, and the scalar kernel refuses with its own error.
+        let mut coords = [
+            Coord::xy(-0.5, 0.1),
+            Coord::xy(0.0, 0.1),
+            Coord::xy(0.5, 0.1),
+        ];
+        let mut failed = [None, None, None];
+        step.forward_batch(&mut coords, &mut failed);
+        assert_eq!((coords[0].x, coords[0].y), scalar_answer(&step));
+        assert_eq!(failed[0], None);
+        assert_eq!(failed[1], Some(TransformError::OutsideDomain));
+        assert_eq!((coords[2].x, coords[2].y), (7.0, 9.0));
+    }
+
+    #[test]
+    fn a_point_already_failed_is_not_transformed_again() {
+        let step = marked_step();
+        let mut coords = [Coord::xy(0.5, 0.1), Coord::xy(0.6, 0.1)];
+        let mut failed = [Some(TransformError::NonFinite), None];
+        step.forward_batch(&mut coords, &mut failed);
+        assert_eq!(
+            (coords[0].x, coords[0].y),
+            (0.5, 0.1),
+            "the failed point is untouched"
+        );
+        assert_eq!(
+            failed[0],
+            Some(TransformError::NonFinite),
+            "its error is kept"
+        );
+        assert_eq!((coords[1].x, coords[1].y), (7.0, 9.0));
+    }
+
+    #[test]
+    fn the_inverse_of_a_classic_step_uses_the_vector_path_too() {
+        let step = marked_step();
+        // `to_meter` is 1: east 5 reaches the vector path, east -5 is refused (`NaN`) and falls
+        // back to the scalar kernel, which answers 3°, 4°.
+        let mut coords = [Coord::xy(5.0, 1.0), Coord::xy(-5.0, 1.0)];
+        let mut failed = [None, None];
+        step.inverse_batch(&mut coords, &mut failed);
+        assert!((coords[0].x - 7.0_f64.to_radians()).abs() < 1e-15);
+        assert!((coords[0].y - 9.0_f64.to_radians()).abs() < 1e-15);
+        assert!((coords[1].x - 3.0_f64.to_radians()).abs() < 1e-15);
+        assert!((coords[1].y - 4.0_f64.to_radians()).abs() < 1e-15);
+        assert_eq!(failed, [None, None]);
+    }
+
+    #[test]
+    fn a_pipeline_runs_each_step_over_the_whole_slice() {
+        let op = Operation::create(
+            "+proj=pipeline +step +proj=unitconvert +xy_in=deg +xy_out=rad \
+             +step +proj=utm +zone=31 +ellps=WGS84",
+        )
+        .expect("pipeline");
+        let inputs = [
+            (2.0, 49.0),
+            (3.0, 45.0),
+            (91.0, 0.0),
+            (4.0, 91.0),
+            (5.0, 50.0),
+        ];
+        let mut coords: Vec<Coord> = inputs.iter().map(|&(x, y)| Coord::xy(x, y)).collect();
+        let mut failed = vec![None; coords.len()];
+        op.forward_batch(&mut coords, &mut failed);
+        for (index, &(x, y)) in inputs.iter().enumerate() {
+            match op.forward(Coord::xy(x, y)) {
+                Ok(want) => {
+                    assert_eq!(failed[index], None, "point {index}");
+                    assert!((coords[index].x - want.x).abs() < 1e-7, "point {index}");
+                    assert!((coords[index].y - want.y).abs() < 1e-7, "point {index}");
+                }
+                // A point that fails in the pipeline has the error of the first failing step.
+                Err(error) => assert_eq!(failed[index], Some(error), "point {index}"),
+            }
+        }
+        assert!(failed.iter().any(Option::is_some), "the bad points failed");
+    }
 
     #[test]
     fn aea_grs80_matches_the_first_builtins_point() {
