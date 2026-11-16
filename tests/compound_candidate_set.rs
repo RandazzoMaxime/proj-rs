@@ -140,3 +140,23 @@ fn geocentric_to_compound_of_a_ballpark_vertical_chain() {
         ]
     );
 }
+
+/// `projinfo -s EPSG:11056 -t EPSG:9500 --summary --spatial-test intersects` (PROJ 9.9.0): the
+/// candidates through the interpolation CRS `MGI` are `PROJBasedOperation`s, one step each for
+/// `removeUninterestingOps` (coordinateoperationfactory.cpp:1608-1656); the port counted their
+/// transformation steps and dropped four of the seven.
+#[test]
+fn proj_based_horizontal_vertical_candidates_count_as_one_step() {
+    assert_eq!(
+        names("EPSG:11056", "EPSG:9500"),
+        [
+            "ETRS89-AUT [2002] to EVRF2000 Austria height (1)",
+            "Inverse of Ballpark geographic offset from MGI to ETRS89-AUT [2002] + MGI to EVRF2000 Austria height (1) + Inverse of Ballpark geographic offset from ETRS89 to MGI",
+            "Inverse of Ballpark geographic offset from MGI to ETRS89-AUT [2002] + MGI to EVRF2000 Austria height (1) + MGI to ETRS89 (8)",
+            "Inverse of Ballpark geographic offset from MGI to ETRS89-AUT [2002] + MGI to EVRF2000 Austria height (1) + MGI to ETRS89 (1)",
+            "Inverse of Ballpark geographic offset from MGI to ETRS89-AUT [2002] + MGI to EVRF2000 Austria height (1) + MGI to ETRS89 (4)",
+            "Inverse of Transformation from EVRF2000 Austria height to ETRS89 (ballpark vertical transformation, without ellipsoid height to vertical height correction)",
+            "Inverse of Transformation from EVRF2000 Austria height to ETRS89-AUT [2002] (ballpark vertical transformation, without ellipsoid height to vertical height correction)",
+        ]
+    );
+}

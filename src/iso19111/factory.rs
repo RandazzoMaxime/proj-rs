@@ -7260,14 +7260,17 @@ fn remove_duplicate_ops(
 }
 
 /// `getTransformationStepCount`: the steps of a concatenated operation that are not
-/// conversions, and 1 for any other operation.
+/// conversions, and 1 for any other operation: a `PROJBasedOperation` is a single operation in
+/// PROJ, whatever steps the port keeps in it.
 fn transformation_step_count(operation: &CoordinateOperation) -> usize {
     match operation {
-        CoordinateOperation::Concatenated(concatenated) => concatenated
-            .steps()
-            .iter()
-            .filter(|step| !matches!(step.operation, CoordinateOperation::Conversion(_)))
-            .count(),
+        CoordinateOperation::Concatenated(concatenated) if concatenated.proj_based.is_none() => {
+            concatenated
+                .steps()
+                .iter()
+                .filter(|step| !matches!(step.operation, CoordinateOperation::Conversion(_)))
+                .count()
+        }
         _ => 1,
     }
 }
