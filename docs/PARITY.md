@@ -17,6 +17,7 @@ sont dans le dépôt.
 | `tests/parity/expected.jsonl` | Code de sortie et sortie standard de la référence, ligne à ligne. |
 | `tests/parity/known.tsv` | Écarts connus : clé `id:ligne`, cause courte, renvoi à une fiche. |
 | `tests/parity.rs` | Relance nos binaires `cs2cs`, `proj`, `cct` et compare. |
+| `tools/parity/fuzz_diff.py`, `families_random.py` | Différentiel aléatoire : tire N invocations d'une graine, enregistre la référence et lance `parity_random_against_proj_9_9_0` (comparateur et seuils de `tests/parity.rs`, sans registre). Voir `docs/FUZZ.md`. |
 | `tools/parity/fetch-grids.sh` | Recrée le dossier des grilles du corpus avec grilles (`tests/parity/grids/grids.txt`). |
 | `tests/parity/grids/` | Corpus avec grilles : `cases.jsonl`, `expected.jsonl`, `known.tsv`, `ops.tsv`, `grids.txt`. |
 

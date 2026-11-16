@@ -69,6 +69,25 @@ fn proj_string_with_multibyte_character_at_the_urn_prefix_length() {
     }
 }
 
+/// A CTable2 header of 2^31-1 by 2^31-1 nodes: `count * 8` overflowed in the size check.
+#[test]
+fn ctable2_with_huge_dimensions_is_an_error() {
+    common::use_fixture_search_path();
+    let mut bytes = vec![0_u8; 200];
+    bytes[..16].copy_from_slice(b"CTABLE V2.0     ");
+    bytes[96..104].copy_from_slice(&0.0_f64.to_le_bytes());
+    bytes[104..112].copy_from_slice(&0.0_f64.to_le_bytes());
+    bytes[112..120].copy_from_slice(&0.01_f64.to_le_bytes());
+    bytes[120..128].copy_from_slice(&0.01_f64.to_le_bytes());
+    bytes[128..132].copy_from_slice(&i32::MAX.to_le_bytes());
+    bytes[132..136].copy_from_slice(&i32::MAX.to_le_bytes());
+    let path = std::env::temp_dir().join(format!("proj-rs-fuzz-ct2-{}.ct2", std::process::id()));
+    std::fs::write(&path, &bytes).expect("write the fixture");
+    let result = proj_rs::grids::HorizontalShiftGridSet::open(&path.display().to_string());
+    let _ = std::fs::remove_file(&path);
+    assert!(result.is_err());
+}
+
 /// Found by `tools/parity/fuzz_diff.py --seed 1`: the `proj` application applied `+axis`, which
 /// PROJ's `pj_fwd` and `pj_inv` do not (the pipeline path, `Operation::create`, does).
 #[test]

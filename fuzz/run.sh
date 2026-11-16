@@ -20,11 +20,22 @@ for target in "${targets[@]}"; do
   esac
   mkdir -p "corpus/$target" "artifacts/$target"
   "./target/x86_64-unknown-linux-gnu/release/$target" \
-    -max_total_time="$seconds" -timeout=10 -rss_limit_mb=2048 -max_len="$max_len" \
+    -max_total_time="$seconds" -timeout=10 -rss_limit_mb=2048 -max_len="$max_len" -print_final_stats=1 \
     -artifact_prefix="artifacts/$target/" "corpus/$target" > "logs/$target.log" 2>&1 &
 done
 wait || true
 for target in "${targets[@]}"; do
   echo "== $target"
-  grep -E "^#[0-9]+\s+(DONE|REDUCE)|ERROR: |SUMMARY|Test unit written" "logs/$target.log" | tail -3
+  grep -E "^#[0-9]+\s+DONE|ERROR: |SUMMARY|Test unit written|stat::number_of_executed_units" \
+    "logs/$target.log" | tail -4
 done
+status=0
+for target in "${targets[@]}"; do
+  for kind in crash oom timeout leak; do
+    if compgen -G "artifacts/$target/$kind-*" > /dev/null; then
+      echo "plantage de $target : artifacts/$target/$kind-*" >&2
+      status=1
+    fi
+  done
+done
+exit "$status"
