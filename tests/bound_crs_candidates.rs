@@ -6,9 +6,10 @@
 mod common;
 
 use proj_rs::iso19111::{
-    create_from_user_input, CoordinateOperation, CoordinateOperationContext,
-    CoordinateOperationFactory, DatabaseContext,
+    create_from_user_input, select_alternatives, BestPolicy, CandidateFilter, CoordinateOperation,
+    CoordinateOperationContext, CoordinateOperationFactory, DatabaseContext, Selection,
 };
+use proj_rs::Xyzt;
 
 const INTL_BOUND: &str = "+proj=longlat +ellps=intl +towgs84=-192.2272,207.1305,-46.9829,-2.0011,-2.5186,-2.2355,1.2420 +type=crs";
 const NZGD49_BOUND: &str = "+proj=longlat +ellps=NWL9D +towgs84=94.8512,-118.1941,-205.9635,-2.6921,-1.4301,1.2408,-2.2088 +type=crs";
@@ -79,4 +80,65 @@ fn nzgd49_to_bound_target_keeps_the_area_of_the_registry_step() {
             Some("World"),
         ]
     );
+}
+
+fn forward(source: &str, target: &str, x: f64, y: f64) -> Xyzt {
+    common::use_fixture_search_path();
+    let selection = select_alternatives(source, target, BestPolicy::Discard, CandidateFilter::NONE)
+        .expect("selection");
+    let Selection::Several(alternatives) = selection else {
+        panic!("{source} to {target} has several candidates");
+    };
+    alternatives
+        .forward(Xyzt {
+            x,
+            y,
+            z: 0.0,
+            t: 0.0,
+        })
+        .expect("a candidate serves the point")
+}
+
+/// `cs2cs +proj=longlat +ellps=aust_SA +towgs84=-220.4747,182.1311,-62.8347 +to +proj=utm
+/// +zone=50 +datum=ire65` (PROJ 9.9.0, `PROJ_ONLY_BEST_DEFAULT=NO`) lists two candidates, TM65 to
+/// WGS 84 (2) limited to Ireland and the ballpark one. A point in Ireland takes the first, a point
+/// in Latvia the ballpark. The bound source has no geodetic base of its own, which the selection
+/// refused, and the facade then took one candidate for every point.
+#[test]
+fn bound_source_to_projected_target_picks_the_candidate_by_area() {
+    let source = "+proj=longlat +ellps=aust_SA +towgs84=-220.4747,182.1311,-62.8347";
+    let target = "+proj=utm +zone=50 +datum=ire65";
+    let ireland = forward(source, target, -8.0, 53.0);
+    assert!(
+        (ireland.x - -2_949_544.926_487_443).abs() < 5e-4,
+        "x {}",
+        ireland.x
+    );
+    assert!(
+        (ireland.y - 12_602_040.871_912_831).abs() < 5e-4,
+        "y {}",
+        ireland.y
+    );
+    let latvia = forward(source, target, 23.7, 56.9);
+    assert!(
+        (latvia.x - -3_406_700.849_216_791).abs() < 5e-4,
+        "x {}",
+        latvia.x
+    );
+    assert!(
+        (latvia.y - 10_236_032.000_499_101).abs() < 5e-4,
+        "y {}",
+        latvia.y
+    );
+}
+
+/// `cs2cs -d 10 +proj=longlat +ellps=intl +towgs84=-192.2272,... +to +proj=longlat +datum=NAD83` on
+/// `-44.19 -17.46` (Brazil), PROJ 9.9.0: outside the Maryland grid and every other area, the
+/// ballpark candidate gives the point. The port printed `* * inf`.
+#[test]
+fn bound_source_to_nad83_outside_every_area_takes_the_ballpark_candidate() {
+    let source = "+proj=longlat +ellps=intl +towgs84=-192.2272,207.1305,-46.9829,-2.0011,-2.5186,-2.2355,1.2420";
+    let coord = forward(source, "+proj=longlat +datum=NAD83", -44.19, -17.46);
+    assert!((coord.x - -44.190_456_384_0).abs() < 5e-9, "x {}", coord.x);
+    assert!((coord.y - -17.459_804_568_5).abs() < 5e-9, "y {}", coord.y);
 }
