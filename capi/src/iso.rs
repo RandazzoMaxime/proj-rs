@@ -17,6 +17,10 @@ use crate::util::{self, guard};
 
 /// An ISO 19111 object of the model: what `createFromUserInput` returns, or a part of one.
 #[derive(Clone, Debug)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "the model owns each CRS kind by value, and a coordinate system is small beside it"
+)]
 pub(crate) enum Obj {
     User(UserObject),
     Cs(CoordinateSystem),
@@ -136,6 +140,10 @@ impl Obj {
     /// The engine object that transforms for a CRS that `Proj::new` did not read from its
     /// text: the CRS written as WKT2 and read again.
     pub(crate) fn engine_proj(&self, ctx: &mut Ctx) -> Option<Proj> {
+        if let Some(operation) = self.operation() {
+            let database = ctx.database()?;
+            return ctx.builder().proj_from_operation(operation, &database).ok();
+        }
         let crs = self.crs()?;
         let database = ctx.database()?;
         let wkt = wkt_of_crs(crs, &database, WktConvention::Wkt2_2019)?;
@@ -211,7 +219,7 @@ pub extern "C" fn proj_get_name(obj: *const PJ) -> *const c_char {
     })
 }
 
-fn identifier_of<'a>(object: &'a Pj, index: c_int) -> Option<&'a Identifier> {
+fn identifier_of(object: &Pj, index: c_int) -> Option<&Identifier> {
     let list = object.obj.as_ref()?.identifiers();
     list.get(usize::try_from(index).ok()?)
 }
@@ -262,7 +270,7 @@ pub extern "C" fn proj_get_domain_count(obj: *const PJ) -> c_int {
     })
 }
 
-fn domain_of<'a>(object: &'a Pj, index: c_int) -> Option<&'a ObjectDomain> {
+fn domain_of(object: &Pj, index: c_int) -> Option<&ObjectDomain> {
     let list = object.obj.as_ref()?.domains();
     list.get(usize::try_from(index).ok()?)
 }
@@ -407,7 +415,10 @@ fn equivalent(
     let way = criterion_of(criterion);
     match (left, right) {
         (Obj::User(UserObject::Crs(a)), Obj::User(UserObject::Crs(b))) => {
-            a.is_equivalent_to_with(b, way)
+            match (way, context.database()) {
+                (Equivalence::Equivalent, Some(database)) => a.is_equivalent_to_db(b, &database),
+                _ => a.is_equivalent_to_with(b, way),
+            }
         }
         (Obj::User(UserObject::GeodeticDatum(a)), Obj::User(UserObject::GeodeticDatum(b))) => {
             a.is_equivalent_to_with(b, way)
@@ -415,10 +426,7 @@ fn equivalent(
         (Obj::User(UserObject::VerticalDatum(a)), Obj::User(UserObject::VerticalDatum(b))) => {
             a.is_equivalent_to_with(b, way)
         }
-        _ => {
-            let _ = context;
-            false
-        }
+        _ => false,
     }
 }
 
@@ -658,12 +666,34 @@ pub extern "C" fn proj_as_proj_string(
         };
         let _ = type_;
         let mut lines = ProjLines::Single;
+        let (mut multiline, mut indentation, mut max_line) = (false, 2_usize, 80_usize);
         for (key, value) in options_of(options) {
-            if key == "MULTILINE" && yes(value) {
-                lines = ProjLines::Multi;
+            match key.as_str() {
+                "MULTILINE" => {
+                    multiline = yes(value);
+                    if multiline {
+                        lines = ProjLines::Multi;
+                    }
+                }
+                "INDENTATION_WIDTH" => indentation = value.parse().unwrap_or(indentation),
+                "MAX_LINE_LENGTH" => max_line = value.parse().unwrap_or(max_line),
+                _ => {}
             }
         }
+        let layout = if multiline {
+            proj_rs::iso19111::ProjStringLayout::Multi {
+                indentation_width: indentation,
+                max_line_length: max_line,
+            }
+        } else {
+            proj_rs::iso19111::ProjStringLayout::Single
+        };
+        let from_pipeline = object
+            .proj
+            .as_ref()
+            .and_then(|proj| proj.as_proj_string(layout).ok());
         let text = match object.obj.as_ref() {
+            _ if from_pipeline.is_some() => from_pipeline.ok_or_else(String::new),
             Some(Obj::User(UserObject::Crs(crs))) => crs
                 .export_to_proj_string()
                 .map_err(|error| error.to_string()),
@@ -676,6 +706,15 @@ pub extern "C" fn proj_as_proj_string(
                         .map_err(|error| error.to_string())
                 }),
             _ => match object.proj.as_ref() {
+                Some(proj) if proj.pair_axis_swaps().is_some() => {
+                    let text = if object.normalized {
+                        proj.def()
+                    } else {
+                        proj.definition_in_authority_order()
+                    };
+                    text.map(|definition| with_plus(&definition))
+                        .map_err(|error| error.to_string())
+                }
                 Some(proj) => proj
                     .as_proj_string(proj_rs::iso19111::ProjStringLayout::Single)
                     .map_err(|error| error.to_string()),
@@ -700,4 +739,40 @@ pub(crate) fn derived(object: &Pj, obj: Obj) -> *mut PJ {
     let context = object.context();
     let proj = obj.engine_proj(context);
     hand_over(Pj::with_obj(object.ctx, obj, proj))
+}
+
+/// `proj_normalize_for_visualization` of a CRS or of an operation between two CRS: the object
+/// with its axes in the order longitude, latitude (easting, northing).
+pub(crate) fn normalized_for_visualization(object: &Pj) -> Option<*mut PJ> {
+    match object.obj.as_ref()? {
+        Obj::User(UserObject::Crs(crs)) => {
+            let normalized = crs.normalize_for_visualization();
+            Some(derived(object, Obj::User(UserObject::Crs(normalized))))
+        }
+        Obj::User(UserObject::Operation(operation)) => {
+            crate::inspect::operation_source(operation)?;
+            crate::inspect::operation_target(operation)?;
+            let normalized = operation.normalize_for_visualization()?;
+            Some(derived(
+                object,
+                Obj::User(UserObject::Operation(normalized)),
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// A PROJ string with a `+` before each word, as `proj_as_proj_string` writes it.
+fn with_plus(definition: &str) -> String {
+    definition
+        .split_whitespace()
+        .map(|word| {
+            if word.starts_with('+') {
+                word.to_owned()
+            } else {
+                format!("+{word}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }

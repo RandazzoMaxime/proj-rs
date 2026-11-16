@@ -47,13 +47,17 @@
 )]
 
 mod context;
+mod crsops;
 mod db;
+mod dblists;
 mod ffi;
 mod info;
 mod inspect;
 mod iso;
 mod list;
 mod misc;
+mod network;
+mod ops;
 mod pj;
 mod trans;
 mod unsupported;

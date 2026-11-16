@@ -1778,7 +1778,7 @@ pub fn create_from_user_input(text: &str, db: &DatabaseContext) -> Result<Crs, F
 /// The PROJ-based operation that PROJ's `createFromUserInput` gives a PROJ string without
 /// `+type=crs` (`io.cpp`, `unexpectedStructure`), `None` for any other text. The CRS readers
 /// (`cs2cs`, the facade) keep building the CRS of such a string.
-pub(crate) fn proj_based_operation_of_text(
+pub fn proj_based_operation_of_text(
     text: &str,
 ) -> Option<Result<CoordinateOperation, FactoryError>> {
     let text = text.trim();

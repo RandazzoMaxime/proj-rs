@@ -410,11 +410,13 @@ pub extern "C" fn proj_normalize_for_visualization(
             .and_then(Proj::pair_axis_swaps)
             .is_none()
         {
-            context.fail(
-                PROJ_ERR_OTHER_API_MISUSE as c_int,
-                "proj_normalize_for_visualization: the object is not a CRS-to-CRS transform",
-            );
-            return std::ptr::null_mut();
+            return crate::iso::normalized_for_visualization(object).unwrap_or_else(|| {
+                context.fail(
+                    PROJ_ERR_OTHER_API_MISUSE as c_int,
+                    "proj_normalize_for_visualization: the object is not a CRS or a CRS pair",
+                );
+                std::ptr::null_mut()
+            });
         }
         let mut copy = object.copy_in(std::ptr::from_mut(context));
         copy.normalized = true;

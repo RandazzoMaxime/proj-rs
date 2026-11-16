@@ -5,7 +5,7 @@ use std::ffi::{c_char, c_int};
 
 use proj_rs::iso19111::{
     CoordinateOperation, CoordinateSystem, Crs, DatumEnsemble, Ellipsoid, GeodeticCRS,
-    GeodeticReferenceFrame, PrimeMeridian, UnitOfMeasure, UserObject,
+    GeodeticReferenceFrame, PrimeMeridian, UnitKind, UnitOfMeasure, UserObject,
 };
 
 use crate::context::context;
@@ -42,7 +42,7 @@ fn source_of(object: &Pj) -> Option<Crs> {
     }
 }
 
-fn operation_source(operation: &CoordinateOperation) -> Option<Crs> {
+pub(crate) fn operation_source(operation: &CoordinateOperation) -> Option<Crs> {
     match operation {
         CoordinateOperation::Conversion(value) => value.source_crs().cloned(),
         CoordinateOperation::Transformation(value) => value.source_crs().cloned(),
@@ -50,7 +50,7 @@ fn operation_source(operation: &CoordinateOperation) -> Option<Crs> {
     }
 }
 
-fn operation_target(operation: &CoordinateOperation) -> Option<Crs> {
+pub(crate) fn operation_target(operation: &CoordinateOperation) -> Option<Crs> {
     match operation {
         CoordinateOperation::Conversion(value) => value.target_crs().cloned(),
         CoordinateOperation::Transformation(value) => value.target_crs().cloned(),
@@ -657,11 +657,22 @@ pub extern "C" fn proj_get_celestial_body_name(
             );
             return std::ptr::null();
         };
-        let name = object
-            .obj
-            .as_ref()
-            .and_then(ellipsoid_of)
-            .map(|ellipsoid| ellipsoid.celestial_body().to_owned());
+        let name = match object.obj.as_ref() {
+            Some(Obj::User(UserObject::Crs(crs))) => Some(
+                geodetic_parts(crs)
+                    .and_then(|_| object.obj.as_ref().and_then(ellipsoid_of))
+                    .map_or_else(|| "Earth".to_owned(), |e| e.celestial_body().to_owned()),
+            ),
+            Some(Obj::User(UserObject::VerticalDatum(_))) => Some("Earth".to_owned()),
+            Some(other) => ellipsoid_of(other).map(|e| e.celestial_body().to_owned()),
+            None => None,
+        };
+        if name.is_none() {
+            context.fail(
+                PROJ_ERR_OTHER_API_MISUSE as c_int,
+                "proj_get_celestial_body_name: Object is not a CRS, Datum or Ellipsoid",
+            );
+        }
         object.arena.put_opt(name.as_deref())
     })
 }
@@ -711,4 +722,16 @@ pub extern "C" fn proj_prime_meridian_get_parameters(
         util::put(out_unit_name, object.arena.put(&unit_name));
         1
     })
+}
+
+/// A unit category as the parameter and unit functions name it.
+pub(crate) fn category_name(kind: UnitKind) -> &'static str {
+    match kind {
+        UnitKind::Linear => "linear",
+        UnitKind::Angular => "angular",
+        UnitKind::Scale => "scale",
+        UnitKind::Time => "time",
+        UnitKind::Parametric => "parametric",
+        UnitKind::None | UnitKind::Unknown => "unknown",
+    }
 }

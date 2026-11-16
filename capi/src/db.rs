@@ -26,7 +26,7 @@ fn object_from_database(
     auth_name: &str,
     code: &str,
     category: PJ_CATEGORY,
-    projalt: bool,
+    names: AlternativeGridNames,
 ) -> Result<UserObject, String> {
     let database = context.database().ok_or("cannot open the database")?;
     let factory = AuthorityFactory::create(&database, auth_name);
@@ -51,18 +51,11 @@ fn object_from_database(
                 .create_coordinate_reference_system(code)
                 .map_err(error)?,
         ),
-        PJ_CATEGORY_COORDINATE_OPERATION => {
-            let names = if projalt {
-                AlternativeGridNames::Proj
-            } else {
-                AlternativeGridNames::Official
-            };
-            UserObject::Operation(
-                factory
-                    .create_coordinate_operation(code, names)
-                    .map_err(error)?,
-            )
-        }
+        PJ_CATEGORY_COORDINATE_OPERATION => UserObject::Operation(
+            factory
+                .create_coordinate_operation(code, names)
+                .map_err(error)?,
+        ),
         _ => return Err("unknown category".to_owned()),
     })
 }
@@ -86,13 +79,12 @@ pub extern "C" fn proj_create_from_database(
             );
             return std::ptr::null_mut();
         };
-        match object_from_database(
-            context,
-            authority,
-            code,
-            category,
-            usePROJAlternativeGridNames != 0,
-        ) {
+        let names = if usePROJAlternativeGridNames != 0 {
+            AlternativeGridNames::Proj
+        } else {
+            AlternativeGridNames::Official
+        };
+        match object_from_database(context, authority, code, category, names) {
             Ok(object) => {
                 let obj = Obj::User(object);
                 let proj = obj.engine_proj(context);
@@ -352,7 +344,7 @@ fn object_type_of(kind: PJ_TYPE) -> Option<ObjectType> {
         PJ_TYPE_PROJECTED_CRS => ObjectType::ProjectedCrs,
         PJ_TYPE_COMPOUND_CRS => ObjectType::CompoundCrs,
         PJ_TYPE_ENGINEERING_CRS => ObjectType::EngineeringCrs,
-        PJ_TYPE_DERIVED_PROJECTED_CRS => ObjectType::DerivedProjectedCrs,
+        PJ_TYPE_OTHER_CRS => ObjectType::Crs,
         PJ_TYPE_CONVERSION => ObjectType::Conversion,
         PJ_TYPE_TRANSFORMATION => ObjectType::Transformation,
         PJ_TYPE_CONCATENATED_OPERATION => ObjectType::ConcatenatedOperation,

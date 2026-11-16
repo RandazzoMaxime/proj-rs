@@ -58,13 +58,11 @@ fn operation_pj(context: &mut Ctx, operation: &CoordinateOperation, object: Obj)
     let Some(database) = context.database() else {
         return std::ptr::null_mut();
     };
-    match context.builder().proj_from_operation(operation, &database) {
-        Ok(proj) => hand_over(Pj::with_obj(pointer, object, Some(proj))),
-        Err(error) => {
-            context.fail(error.code(), &format!("proj_list_get: {error}"));
-            std::ptr::null_mut()
-        }
-    }
+    let proj = context
+        .builder()
+        .proj_from_operation(operation, &database)
+        .ok();
+    hand_over(Pj::with_obj(pointer, object, proj))
 }
 
 #[unsafe(no_mangle)]

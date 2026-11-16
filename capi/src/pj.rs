@@ -7,7 +7,7 @@
 
 use std::ffi::{c_char, c_int};
 
-use proj_rs::iso19111::create_user_object;
+use proj_rs::iso19111::{create_user_object, proj_based_operation_of_text, UserObject};
 use proj_rs::unstable::{Area, Proj, ProjCreateError};
 
 use crate::context::{context, Ctx};
@@ -101,7 +101,20 @@ pub(crate) fn create(ctx: *mut PJ_CONTEXT, definition: &str, who: &str) -> *mut 
     let pointer = std::ptr::from_mut(context);
     let database = context.database();
     let rules = context.init_rules;
-    let user = create_user_object(definition, database.as_ref(), rules);
+    let proj_string = looks_like_proj_string(definition);
+    if database.is_none() && !proj_string {
+        context.fail(
+            PROJ_ERR_OTHER as c_int,
+            &format!("{who}: cannot open the database"),
+        );
+        return std::ptr::null_mut();
+    }
+    let user = create_user_object(definition, database.as_ref(), rules).or_else(|error| {
+        match proj_based_operation_of_text(definition) {
+            Some(Ok(operation)) => Ok(UserObject::Operation(operation)),
+            _ => Err(error),
+        }
+    });
     let engine = context.builder().proj(definition);
     match (user, engine) {
         (Ok(object), engine) => {
@@ -233,4 +246,10 @@ pub extern "C" fn proj_area_set_name(area_pointer: *mut PJ_AREA, name: *const c_
 #[unsafe(no_mangle)]
 pub extern "C" fn proj_area_destroy(area_pointer: *mut PJ_AREA) {
     guard((), || util::release(area_pointer.cast::<AreaOfUse>()));
+}
+
+/// A PROJ string, which names an operation and needs no database to be read.
+fn looks_like_proj_string(text: &str) -> bool {
+    let bare = text.trim_start().trim_start_matches('+');
+    bare.starts_with("proj=") || bare.starts_with("init=") || bare.starts_with("title=")
 }
