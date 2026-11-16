@@ -71,11 +71,12 @@ mod vector {
         let mut h1 = k(p1[ORDER - 1]);
         let mut h = V4::zero(tok);
         for idx in (0..ORDER - 1).rev() {
-            h = -h2 + two * h1 + k(p1[idx]);
+            // `-h2 + two * h1 + p` : un produit fusionné et une soustraction.
+            h = two.mul_add(h1, k(p1[idx]) - h2);
             h2 = h1;
             h1 = h;
         }
-        b + h * sin_2b
+        h.mul_add(sin_2b, b)
     }
 
     /// `clenshaw_complex` : la série de Clenshaw complexe, coefficients `a`.
@@ -100,12 +101,12 @@ mod vector {
             let hi2 = hi1;
             hr1 = hr;
             hi1 = hi;
-            hr = -hr2 + r * hr1 - i * hi1 + k(a[idx]);
-            hi = -hi2 + i * hr1 + r * hi1;
+            hr = (-i).mul_add(hi1, r.mul_add(hr1, k(a[idx]) - hr2));
+            hi = r.mul_add(hi1, i.mul_add(hr1, -hi2));
         }
         r = sin_arg_r * cosh_arg_i;
         i = cos_arg_r * sinh_arg_i;
-        (r * hr - i * hi, r * hi + i * hr)
+        ((-i).mul_add(hi, r * hr), r.mul_add(hi, i * hr))
     }
 
     /// [`Tmerc::forward`] sur quatre points.
@@ -144,7 +145,7 @@ mod vector {
         let two_inv_sq = two_inv * inv_denom;
         let tmp_r = cos_cn_cos_ce * two_inv_sq;
         let sin_arg_r = sin_cn * tmp_r;
-        let cos_arg_r = cos_cn_cos_ce * tmp_r - k(1.0);
+        let cos_arg_r = cos_cn_cos_ce.mul_add(tmp_r, k(-1.0));
         let sinh_arg_i = tan_ce * two_inv;
         let cosh_arg_i = two_inv_sq - k(1.0);
 
@@ -154,8 +155,8 @@ mod vector {
         ce = ce + d_ce;
 
         let inside = ce.abs().le(k(CE_LIMIT));
-        let east = k(t.a) * (k(t.qn) * ce) + k(t.x0);
-        let north = k(t.a) * (k(t.qn) * cn + k(t.zb)) + k(t.y0);
+        let east = k(t.a).mul_add(k(t.qn) * ce, k(t.x0));
+        let north = k(t.a).mul_add(k(t.qn).mul_add(cn, k(t.zb)), k(t.y0));
         let nan = k(f64::NAN);
         Some((
             V4::select(inside, east, nan),
@@ -188,8 +189,8 @@ mod vector {
         let cos_arg_r = two_cn.cos();
         let exp_2_ce = (ce + ce).exp();
         let half_inv = k(0.5) / exp_2_ce;
-        let sinh_arg_i = k(0.5) * exp_2_ce - half_inv;
-        let cosh_arg_i = k(0.5) * exp_2_ce + half_inv;
+        let sinh_arg_i = k(0.5).mul_add(exp_2_ce, -half_inv);
+        let cosh_arg_i = k(0.5).mul_add(exp_2_ce, half_inv);
         let (d_cn, d_ce) =
             clenshaw_complex(tok, &t.utg, sin_arg_r, cos_arg_r, sinh_arg_i, cosh_arg_i);
         cn = cn + d_cn;
@@ -202,9 +203,9 @@ mod vector {
         let modulus = sinh_ce.hypot(cos_cn);
         cn = sin_cn.atan2(modulus);
 
-        let tmp = k(2.0) * modulus / (sinh_ce * sinh_ce + k(1.0));
+        let tmp = k(2.0) * modulus / sinh_ce.mul_add(sinh_ce, k(1.0));
         let sin_2_cn = sin_cn * tmp;
-        let cos_2_cn = tmp * modulus - k(1.0);
+        let cos_2_cn = tmp.mul_add(modulus, k(-1.0));
         let phi = gatg(tok, &t.cgb, cn, cos_2_cn, sin_2_cn);
 
         let lon = kernels::adjlon(tok, ce + k(t.lam0));
