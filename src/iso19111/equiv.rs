@@ -446,8 +446,18 @@ impl ProjectedCRS {
                 return proj_extensions_equivalent(left, right);
             }
         }
+        let implicit_base = |crs: &Self| matches!(crs.base_crs(), GeodeticCRS::Geographic(base) if base.implicit_cs);
+        // `ProjectedCRS::_isEquivalentTo` (crs.cpp:4687-4696): the axis order of a base CRS with
+        // an implicit coordinate system does not matter.
+        let base_criterion = if criterion == Equivalence::Equivalent
+            && (implicit_base(self) || implicit_base(other))
+        {
+            Equivalence::ExceptAxisOrder
+        } else {
+            criterion
+        };
         (criterion != Equivalence::Strict || same_name(self.name(), other.name()))
-            && geodetic_equivalent(self.base_crs(), other.base_crs(), criterion)
+            && geodetic_equivalent(self.base_crs(), other.base_crs(), base_criterion)
             && conversion_equivalent_for(
                 self.deriving_conversion(),
                 other.deriving_conversion(),
@@ -614,6 +624,9 @@ impl Crs {
             {
                 left.is_equivalent_to_with(right, criterion)
             }
+            (Self::Geodetic(left), Self::Geodetic(right)) if criterion != Equivalence::Strict => {
+                geodetic_equivalent(left, right, criterion)
+            }
             // Under a criterion other than `Strict`, the name of a compound CRS is not compared.
             (Self::Compound(left), Self::Compound(right)) if criterion != Equivalence::Strict => {
                 left.is_equivalent_to_with(right, criterion)
@@ -756,16 +769,11 @@ fn geodetic_equivalent(left: &GeodeticCRS, right: &GeodeticCRS, criterion: Equiv
         }
         (GeodeticCRS::Geocentric(left), GeodeticCRS::Geocentric(right)) => {
             (criterion != Equivalence::Strict || same_name(left.name(), right.name()))
-                && match (
-                    left.datum(),
-                    right.datum(),
-                    left.ensemble.as_ref(),
-                    right.ensemble.as_ref(),
-                ) {
-                    (Some(left), Some(right), _, _) => frame_equivalent_by(left, right, criterion),
-                    (None, None, Some(left), Some(right)) => ensemble_equivalent(left, right),
-                    _ => false,
-                }
+                && geodetic_anchor_equivalent(
+                    (left.datum(), left.ensemble.as_ref()),
+                    (right.datum(), right.ensemble.as_ref()),
+                    criterion,
+                )
                 && cs_axes_match_for(
                     left.coordinate_system().axes(),
                     right.coordinate_system().axes(),
@@ -775,22 +783,40 @@ fn geodetic_equivalent(left: &GeodeticCRS, right: &GeodeticCRS, criterion: Equiv
         (GeodeticCRS::Spherical(left), GeodeticCRS::Spherical(right)) => {
             (criterion != Equivalence::Strict
                 || same_name(&left.identified.name, &right.identified.name))
-                && match (
-                    left.datum.as_ref(),
-                    right.datum.as_ref(),
-                    left.ensemble.as_ref(),
-                    right.ensemble.as_ref(),
-                ) {
-                    (Some(left), Some(right), _, _) => frame_equivalent_by(left, right, criterion),
-                    (None, None, Some(left), Some(right)) => ensemble_equivalent(left, right),
-                    _ => false,
-                }
+                && geodetic_anchor_equivalent(
+                    (left.datum.as_ref(), left.ensemble.as_ref()),
+                    (right.datum.as_ref(), right.ensemble.as_ref()),
+                    criterion,
+                )
                 && cs_axes_match_for(
                     &left.coordinate_system.axes,
                     &right.coordinate_system.axes,
                     criterion,
                 )
         }
+        _ => false,
+    }
+}
+
+type Anchor<'a> = (
+    Option<&'a GeodeticReferenceFrame>,
+    Option<&'a DatumEnsemble>,
+);
+
+/// The datums of two non-geographic geodetic CRS. Outside the strict criterion an ensemble
+/// stands for the datum `asDatum` builds, as `geographic_anchor` compares it.
+fn geodetic_anchor_equivalent(left: Anchor<'_>, right: Anchor<'_>, criterion: Equivalence) -> bool {
+    if criterion != Equivalence::Strict {
+        return match (frame_of(left.0, left.1), frame_of(right.0, right.1)) {
+            (Some(left), Some(right)) => {
+                frame_equivalent_by(&left, &right, Equivalence::Equivalent)
+            }
+            _ => false,
+        };
+    }
+    match (left, right) {
+        ((Some(left), _), (Some(right), _)) => frame_equivalent_by(left, right, criterion),
+        ((None, Some(left)), (None, Some(right))) => ensemble_equivalent(left, right),
         _ => false,
     }
 }

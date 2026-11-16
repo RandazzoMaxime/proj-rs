@@ -1,0 +1,60 @@
+[package]
+name = "proj-rs-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Robustness fuzzing of proj-rs (cargo-fuzz). Outside the main workspace."
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+proj-rs = { path = ".." }
+
+[lib]
+name = "proj_rs_fuzz"
+path = "src/lib.rs"
+
+[profile.release]
+debug = false
+lto = "off"
+codegen-units = 16
+incremental = false
+
+[[bin]]
+name = "proj_string"
+path = "fuzz_targets/proj_string.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "user_input"
+path = "fuzz_targets/user_input.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "grid_reader"
+path = "fuzz_targets/grid_reader.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "model_files"
+path = "fuzz_targets/model_files.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "transform"
+path = "fuzz_targets/transform.rs"
+test = false
+doc = false
+bench = false
