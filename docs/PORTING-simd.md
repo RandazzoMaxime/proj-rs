@@ -126,10 +126,9 @@ chaîne de FMA dépendants passe de 11 à 4 pour `exp` et de 5 à 3 pour une fra
 `atan`, ce qui compte parce que le processeur recouvre les itérations indépendantes d'une boucle de
 lots mais pas les FMA d'une même chaîne. Les coefficients de fdlibm étaient recopiés de mémoire, ceux
 de Cephes depuis le code de la crate `wide` (Apache-2.0, MIT et Zlib, qui l'a de la bibliothèque
-d'Agner Fog) : c'est le banc de précision qui les valide. Cephes lui-même n'a pas de fichier de
-licence explicite (il est vendu tel quel avec SciPy et d'autres, sous leurs licences) ; ses
-coefficients sont des constantes numériques et la source immédiate est sous licence permissive,
-mais ce point est à confirmer pour une publication.
+d'Agner Fog) : c'est le banc de précision qui les valide. Cephes est redistribué sous
+licence BSD 3 clauses avec l'accord de son auteur, comme dans SciPy ; l'attribution est dans
+[`NOTICE.md`](../NOTICE.md).
 
 - **`sin_cos`** rend les deux d'une seule réduction. Les noyaux s'en servent là où ils calculaient
   un sinus et un cosinus du même angle (trois paires pour Transverse Mercator aller).
