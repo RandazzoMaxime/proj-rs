@@ -298,6 +298,26 @@ shift_grid_set!(
     Eps::Horizontal
 );
 
+impl GenericShiftGridSet {
+    /// The number of grids of the set, subgrids included: the ids [`Self::grid_id_at`] gives.
+    pub(crate) fn grid_count(&self) -> usize {
+        self.opened.grids.nodes.len()
+    }
+
+    /// The id of the grid [`Self::grid_at`] gives, `Some(None)` for the null grid.
+    pub(crate) fn grid_id_at(&self, lon: f64, lat: f64) -> Option<Option<usize>> {
+        self.grid_at(lon, lat).map(|grid| grid.node)
+    }
+
+    /// The grid of id `id`, as [`Self::grid_id_at`] gives it.
+    pub(crate) fn grid_by_id(&self, id: Option<usize>) -> Grid<'_> {
+        Grid {
+            set: &self.opened,
+            node: id,
+        }
+    }
+}
+
 /// One grid of a set, or a subgrid of one.
 ///
 /// Pixel coordinates count columns from the west edge and rows from the south

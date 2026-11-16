@@ -12,7 +12,9 @@
 )]
 
 mod defmodel;
+mod defmodel_grids;
 mod deformation;
+mod deformation_generic;
 mod grid;
 mod grid_tiff;
 mod horner;
