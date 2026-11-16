@@ -326,7 +326,7 @@ impl<S: Step> Deferred<S> {
             return Ok(step);
         }
         let step = crate::network::with_context(&self.network, || {
-            (self.make)(&self.params, &self.frame, &self.grids)
+            with_files_kept_open(|| (self.make)(&self.params, &self.frame, &self.grids))
         })
         .map_err(|_| TransformError::NetworkUnavailable)?;
         Ok(self.loaded.get_or_init(|| step))
@@ -560,15 +560,37 @@ fn f64_u64(value: u64) -> f64 {
     }
 }
 
+thread_local! {
+    /// Set while a deferred step loads its grids at its first transform.
+    static KEEP_OPEN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `body` with the files that [`load_all`] opens left open. PROJ loads a deferred grid at
+/// the first transform and reads its tiles through the same `NetworkFile`, so the reads after
+/// the header follow on from it (the doubling of `NetworkFile::read`).
+fn with_files_kept_open<T>(body: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            KEEP_OPEN.with(|flag| flag.set(self.0));
+        }
+    }
+    let _restore = Restore(KEEP_OPEN.with(|flag| flag.replace(true)));
+    body()
+}
+
 /// The grid sets of `text` at creation: their files are closed once read, as PROJ closes the file
-/// of a grid it has read at creation. A transform opens them again when it needs a tile.
+/// of the temporary step its PROJ-string parser builds. A transform opens them again when it needs
+/// a tile. Inside [`with_files_kept_open`] they stay open.
 fn load_all(
     text: &str,
     open: fn(&str) -> Result<GridSet, Fail>,
 ) -> Result<Vec<GridSet>, CreateError> {
     let sets = load_names(text, open)?;
-    for set in &sets {
-        set.release_remote();
+    if !KEEP_OPEN.with(std::cell::Cell::get) {
+        for set in &sets {
+            set.release_remote();
+        }
     }
     Ok(sets)
 }
