@@ -5106,8 +5106,8 @@ impl AuthorityFactory {
 
     /// `createCoordinateOperation` with `usePROJAlternativeGridNames`: a transformation built
     /// with the official grid names is replaced by `substitutePROJAlternativeGridNames` when
-    /// that substitutes it (`proj_grid_substitution`). Otherwise it is built as the file rename
-    /// of [`AlternativeGridNames::Proj`] gives it, as before.
+    /// that substitutes it (`proj_grid_substitution`). Otherwise PROJ returns the transformation
+    /// as it is (`singleoperation.cpp` `return self`), with the official grid names.
     fn with_proj_grid_names(
         &self,
         grids: AlternativeGridNames,
@@ -5125,7 +5125,7 @@ impl AuthorityFactory {
             &self.db,
         )? {
             Some(replacement) => Ok(CoordinateOperation::Transformation(replacement)),
-            None => build(AlternativeGridNames::Proj),
+            None => Ok(official),
         }
     }
 
