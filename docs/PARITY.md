@@ -310,22 +310,22 @@ Corrections, une par commit (lignes différentes fermées dans `known.tsv`) :
 | `ANCHOREPOCH` d'un VDATUM en WKT2:2019 | 163 |
 | Substitution de grille PROJ des méthodes à fichier de vitesse ou de déformation (1079, 1113, 1114, 1137, 1138, 1142, 1143, 1144, 1145) ; fichier de grille d'une `other_transformation` écrit après les paramètres numériques (`docs/PORTING-grid-substitution.md`) | 2 091 |
 | Inverse Helmert 7 ou 15 paramètres, matrice pleine comprise (`createApproximateInverseIfPossible`) : suffixe « (approx. inversion) », valeurs en unités PROJ, sans `VERSION` (`createPropertiesForInverse` n'en copie pas) | 377 |
+| Géographique/géocentrique en `Conversion` partout (`createGeographicGeocentric` : fin de `fixSteps`, liaisons, pivot, `createOperationsGeodToGeod`) ; `-k operation EPSG:9094` et `9095` | 633 |
+| Conversion de projection sans paire de CRS (`-k operation`) : l'étape de projection seule, sans ellipsoïde ni `+inv` | 97 |
+| `+to_meter` pour une unité linéaire sans nom PROJ ; `+R_A` retiré sur une base sphérique ; CRS géocentrique sur un ensemble de datums lu comme son datum (`datumNonNull`) | 13 |
+| Fichier de grille du registre gardé quand `substitutePROJAlternativeGridNames` ne couvre pas la méthode (EPSG:12219) | 3 |
+| Erreurs WKT d'une opération : message de `exportTransformationToWKT`, `PointMotionOperation` réservé au WKT2:2019 | 107 |
+| `LOCAL_DATUM` sans autorité (CRS d'ingénierie en WKT1) | 128 |
+| Noms WKT1 des paramètres : tables de projection seules, noms EPSG sinon et en dialecte ESRI | 113 |
+| WKT1_ESRI : alias de datum par nom seul, base 2D d'un CRS projeté 3D, définition ESRI enregistrée d'un CRS EPSG (équivalence à axes de base libres si le CS est implicite) | 8 |
 
-Après : MESURE_A_REMPLIR
-Le registre `known.tsv` ne contient plus que ces causes :
+Après : 8 935 invocations, 311 242 lignes comparées, 311 242 identiques ; 0 écart de forme,
+de valeur ou de statut. Le registre `known.tsv` est vide : aucune cause n'est restée impossible
+à porter.
 
-| Motif (libellé du registre) | Lignes |
-|---|---|
-| Pont géographique/géocentrique typé `Transformation` au lieu de `Conversion` (`factory.rs`, hors lot) ; 461 de ces lignes étaient comptées avec la substitution de grille : `-k operation EPSG:9094` et `9095` n'ont plus que ce pont d'écart | 633 |
-| `-k operation` sans CRS en PROJ : projection seule (`webmerc`, `laea`, `eqc`…) non exportée | 97 |
-| Autres écarts de texte d'opération (WKT ou JSON) | 110 |
-| Autres écarts de texte de CRS | 205 |
-| WKT1_ESRI : nom ou alias ESRI d'un CRS EPSG | 44 |
-| PROJ d'un CRS : `+to_meter`, `+towgs84`, `+R_A` | 13 |
-
-Le test `parity_export_against_proj_9_9_0` est ignoré par défaut : environ 9 à 11 minutes en
-debug, au-delà du seuil de 30 secondes. Le registre le fait passer tel quel ; une régression
-sur une ligne fermée le fait échouer.
+Le test `parity_export_against_proj_9_9_0` est ignoré par défaut : environ 6 minutes en debug
+sur quatre coeurs, au-delà du seuil de 30 secondes. Le registre est vide, donc tout écart, nouveau
+ou ancien, le fait échouer. La fiche du lot est `docs/PORTING-export-rest.md`.
 
 ## Corpus réseau (`tests/parity/network`)
 
