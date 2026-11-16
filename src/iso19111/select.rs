@@ -1583,6 +1583,9 @@ pub(crate) fn facade_candidates(
     let target_crs = create_from_user_input(target, &db)?;
     let mut context = CoordinateOperationContext::create(&db, "");
     context.set_spatial_criterion(SpatialCriterion::PartialIntersection);
+    // The warning policy of `proj_create_crs_to_crs` asks KNOWN_AVAILABLE (`crs_to_crs.cpp:570`):
+    // an operation whose grid is neither known to `proj.db` nor found is discarded by the query.
+    context.set_grid_availability_use(GridAvailabilityUse::KnownAvailable);
     let registered = CoordinateOperationFactory::create().create_operations(
         &source_crs,
         &target_crs,
@@ -2020,7 +2023,7 @@ impl Preparer<'_> {
                 items.push(Item {
                     name: characteristics.name.clone(),
                     operation: definition.as_deref().and_then(|text| {
-                        crate::network::with_deferred_grids(|| Operation::create(text)).ok()
+                        crate::network::with_candidate_grids(|| Operation::create(text)).ok()
                     }),
                     definition: definition.clone(),
                     instantiable,

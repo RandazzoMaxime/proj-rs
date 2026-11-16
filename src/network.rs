@@ -158,6 +158,13 @@ pub(crate) fn with_deferred_grids<T>(body: impl FnOnce() -> T) -> T {
     body()
 }
 
+/// Run `body` as PROJ creates a candidate of a CRS pair (`pj_obj_create`): a missing grid does
+/// not fail the candidate ([`with_deferred_grids`]), and, the network being on, a grid that can be
+/// downloaded is not opened before the first transform ([`with_grids_deferred_at_creation`]).
+pub(crate) fn with_candidate_grids<T>(body: impl FnOnce() -> T) -> T {
+    with_deferred_grids(|| with_grids_deferred_at_creation(body))
+}
+
 /// Whether a grid that is not on disk but can be downloaded is left for the first transform
 /// without any attempt at creation: PROJ's `defer_grid_opening`, which `pj_obj_create` sets when
 /// the network is on. Set by [`with_grids_deferred_at_creation`].

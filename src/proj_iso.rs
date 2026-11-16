@@ -156,7 +156,7 @@ pub(crate) fn iso_pipeline_at(
         // the flag keeps that, so a candidate with a missing grid stays a candidate.
         for item in &mut items {
             if let Some(definition) = &item.definition {
-                item.operation = crate::network::with_deferred_grids(|| {
+                item.operation = crate::network::with_candidate_grids(|| {
                     Operation::create_over(definition, over)
                 })
                 .ok();
