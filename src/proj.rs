@@ -453,7 +453,9 @@ impl Proj {
             return Ok(built(Body::Single, definition.to_owned(), None));
         }
         if crate::crs_text::is_crs_text(definition) {
-            crate::crs::check_well_known(definition)?;
+            if let Err(error) = crate::crs::check_well_known(definition) {
+                crate::crs::check_readable(definition).map_err(|_| error)?;
+            }
             return Ok(built(Body::Single, definition.to_owned(), None));
         }
         let op = Operation::create(definition).map_err(from_create)?;

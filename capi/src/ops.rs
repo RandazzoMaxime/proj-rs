@@ -450,13 +450,13 @@ pub extern "C" fn proj_coordoperation_requires_per_coordinate_input_time(
     ctx: *mut PJ_CONTEXT,
     coordoperation: *const PJ,
 ) -> c_int {
-    guard(-1, || {
+    guard(0, || {
         operation_of(
             ctx,
             coordoperation,
             "proj_coordoperation_requires_per_coordinate_input_time",
         )
-        .map_or(-1, |(_, operation)| {
+        .map_or(0, |(_, operation)| {
             c_int::from(operation.requires_per_coordinate_input_time())
         })
     })

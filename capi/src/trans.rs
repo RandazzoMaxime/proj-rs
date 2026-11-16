@@ -117,6 +117,7 @@ pub(crate) fn trans_one(object: &mut Pj, direction: PJ_DIRECTION, coord: PJ_COOR
     if values.iter().any(|value| value.is_nan()) {
         return coord_of([f64::NAN; 4]);
     }
+    object.transformed = true;
     let previous = std::mem::replace(&mut ctx.errno, 0);
     match object.transform(xyzt(coord), way) {
         Ok(done) => {
@@ -301,6 +302,7 @@ pub extern "C" fn proj_trans_get_last_used_operation(p: *mut PJ) -> *mut PJ {
                 copy.proj = Some(operation);
                 hand_over(copy)
             }
+            None if object.transformed => hand_over(object.copy_in(object.ctx)),
             None => std::ptr::null_mut(),
         }
     })

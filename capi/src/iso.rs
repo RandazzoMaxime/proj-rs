@@ -432,6 +432,16 @@ fn equivalent(
         (Obj::User(UserObject::VerticalDatum(a)), Obj::User(UserObject::VerticalDatum(b))) => {
             a.is_equivalent_to_with(b, way)
         }
+        (
+            Obj::User(UserObject::Operation(CoordinateOperation::Conversion(a))),
+            Obj::User(UserObject::Operation(CoordinateOperation::Conversion(b))),
+        ) => match a.source_crs() {
+            Some(Crs::Geographic(source)) => {
+                a.is_equivalent_to_with_source(b, &GeodeticCRS::Geographic(source.clone()), way)
+            }
+            Some(Crs::Geodetic(source)) => a.is_equivalent_to_with_source(b, source, way),
+            _ => a.is_equivalent_to_with(b, way),
+        },
         (Obj::User(UserObject::Operation(a)), Obj::User(UserObject::Operation(b))) => {
             a.is_equivalent_to_with(b, way)
         }
@@ -676,6 +686,7 @@ pub extern "C" fn proj_as_proj_string(
         let _ = type_;
         let mut lines = ProjLines::Single;
         let (mut multiline, mut indentation, mut max_line) = (false, 2_usize, 80_usize);
+        let mut approx_tmerc = false;
         for (key, value) in options_of(options) {
             match key.as_str() {
                 "MULTILINE" => {
@@ -686,6 +697,7 @@ pub extern "C" fn proj_as_proj_string(
                 }
                 "INDENTATION_WIDTH" => indentation = value.parse().unwrap_or(indentation),
                 "MAX_LINE_LENGTH" => max_line = value.parse().unwrap_or(max_line),
+                "USE_APPROX_TMERC" => approx_tmerc = yes(value),
                 _ => {}
             }
         }
@@ -704,9 +716,24 @@ pub extern "C" fn proj_as_proj_string(
             .and_then(|proj| proj.as_proj_string(layout).ok());
         let text = match object.obj.as_ref() {
             _ if from_pipeline.is_some() => from_pipeline.ok_or_else(String::new),
-            Some(Obj::User(UserObject::Crs(crs))) => crs
-                .export_to_proj_string()
-                .map_err(|error| error.to_string()),
+            Some(Obj::User(UserObject::Crs(crs))) => {
+                let exact = crs
+                    .export_to_proj_string()
+                    .map_err(|error| error.to_string());
+                match (&exact, crs, approx_tmerc) {
+                    (Ok(text), Crs::Projected(projected), true) => {
+                        let approx = if text.contains("+proj=utm") {
+                            projected.with_approx_utm()
+                        } else {
+                            projected.with_approx_tmerc()
+                        };
+                        approx
+                            .export_to_proj_string()
+                            .map_err(|error| error.to_string())
+                    }
+                    _ => exact,
+                }
+            }
             Some(Obj::User(UserObject::Operation(operation))) => context
                 .database()
                 .ok_or_else(|| "no database".to_owned())
@@ -785,4 +812,52 @@ fn with_plus(definition: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// What `proj_pj_info` says of an ISO operation: PROJ instantiates the operation from its PROJ
+/// string, names it after the ISO object, and gives the string without its `+`.
+pub(crate) struct OperationInfo {
+    pub(crate) id: Option<String>,
+    pub(crate) description: String,
+    pub(crate) definition: String,
+    pub(crate) has_inverse: bool,
+    pub(crate) accuracy: f64,
+}
+
+pub(crate) fn operation_info(object: &Pj) -> Option<OperationInfo> {
+    let operation = object.obj.as_ref().and_then(Obj::operation)?;
+    let proj = object.proj.as_ref()?;
+    if object.from_text {
+        return None;
+    }
+    let database = object.context().database()?;
+    let text = operation
+        .export_to_proj_string_with_database(&database, ProjLines::Single)
+        .ok()?;
+    let mut words: Vec<String> = text
+        .split_whitespace()
+        .map(|word| word.trim_start_matches('+').to_owned())
+        .collect();
+    let bare = operation.source_crs().is_none()
+        && !words.iter().any(|word| word == "proj=pipeline")
+        && !words
+            .iter()
+            .any(|word| word.starts_with("ellps=") || word.starts_with("datum="));
+    if bare {
+        words.push("ellps=GRS80".to_owned());
+    }
+    let id = words
+        .iter()
+        .find_map(|word| word.strip_prefix("proj="))
+        .map(str::to_owned);
+    Some(OperationInfo {
+        id,
+        description: operation.name().to_owned(),
+        definition: words.join(" "),
+        has_inverse: proj.proj_info().has_inverse,
+        accuracy: operation.accuracy().unwrap_or(match operation {
+            CoordinateOperation::Conversion(_) => 0.0,
+            _ => -1.0,
+        }),
+    })
 }

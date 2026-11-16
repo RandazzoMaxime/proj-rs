@@ -28,6 +28,10 @@ pub(crate) struct Pj {
     /// `proj_normalize_for_visualization` was applied: the pair transforms in the order
     /// longitude or easting first.
     pub(crate) normalized: bool,
+    /// A point went through `proj_trans`: `proj_trans_get_last_used_operation` has an answer.
+    pub(crate) transformed: bool,
+    /// The object was read from a text by `proj_create`: a PROJ string is answered by the engine.
+    pub(crate) from_text: bool,
     pub(crate) arena: Arena,
 }
 
@@ -44,6 +48,8 @@ impl Pj {
             proj: Some(proj),
             obj: None,
             normalized: false,
+            transformed: false,
+            from_text: false,
             arena: Arena::default(),
         }
     }
@@ -55,6 +61,8 @@ impl Pj {
             proj,
             obj: Some(obj),
             normalized: false,
+            transformed: false,
+            from_text: false,
             arena: Arena::default(),
         }
     }
@@ -76,6 +84,8 @@ impl Pj {
             proj: self.proj.clone(),
             obj: self.obj.clone(),
             normalized: self.normalized,
+            transformed: false,
+            from_text: false,
             arena: Arena::default(),
         }
     }
@@ -133,7 +143,9 @@ pub(crate) fn create(ctx: *mut PJ_CONTEXT, definition: &str, who: &str) -> *mut 
         (Ok(object), engine) => {
             let obj = Obj::User(object);
             let proj = engine.ok().or_else(|| obj.engine_proj(context));
-            hand_over(Pj::with_obj(pointer, obj, proj))
+            let mut made = Pj::with_obj(pointer, obj, proj);
+            made.from_text = true;
+            hand_over(made)
         }
         (Err(_), Ok(proj)) => hand_over(Pj::new(pointer, proj)),
         (Err(error), Err(create_error)) => {

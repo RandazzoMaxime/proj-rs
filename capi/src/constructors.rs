@@ -609,7 +609,13 @@ pub extern "C" fn proj_convert_conversion_to_other_method(
             }
         };
         match found.convert_to_other_method(code) {
-            Some(converted) => give_operation(ctx, CoordinateOperation::Conversion(converted)),
+            Some(converted) => {
+                let converted = match found.source_crs() {
+                    Some(source) => converted.with_source_crs(source.clone()),
+                    None => converted,
+                };
+                give_operation(ctx, CoordinateOperation::Conversion(converted))
+            }
             None => std::ptr::null_mut(),
         }
     })
@@ -685,12 +691,18 @@ fn affine(
     name: *const c_char,
     terms: &[(f64, *const c_char, f64, UnitKind)],
 ) -> *mut PJ {
+    let three_d = method.starts_with("3D");
     let values = terms
         .iter()
-        .map(|(value, unit_name, factor, kind)| {
+        .enumerate()
+        .map(|(index, (value, unit_name, factor, kind))| {
             let unit = util::text(*unit_name).map_or_else(
                 || match kind {
                     UnitKind::Linear => UnitOfMeasure::metre(),
+                    // PROJ gives the registered unity to the fourth term of a row, and to the whole C row.
+                    _ if three_d && (index % 4 == 3 || index >= 8) => {
+                        UnitOfMeasure::unity().with_identifier("EPSG", "9201")
+                    }
                     _ => UnitOfMeasure::unity(),
                 },
                 |text| UnitOfMeasure::new(text, *factor, *kind),

@@ -17,7 +17,7 @@ struct Tables {
     prime_meridians: Vec<PJ_PRIME_MERIDIANS>,
     // Kept so that the pointers of the tables stay valid.
     _strings: Vec<CString>,
-    _descriptions: Vec<Box<*const c_char>>,
+    _descriptions: Vec<*const c_char>,
 }
 
 // SAFETY: a `Tables` is built once, never changed, and only read through the pointers it holds,
@@ -44,16 +44,18 @@ fn build() -> Tables {
         strings.push(owned);
         pointer
     };
-    let mut descriptions: Vec<Box<*const c_char>> = Vec::new();
+    // One slot per projection, filled before any pointer into the array is taken: the array is
+    // never grown again, so its address holds.
+    let descriptions: Vec<*const c_char> = OPERATIONS
+        .iter()
+        .map(|(_, description)| keep(description))
+        .collect();
     let mut operations = Vec::with_capacity(OPERATIONS.len() + 1);
-    for (id, description) in OPERATIONS {
-        let slot = Box::new(keep(description));
-        let slot_pointer: *const *const c_char = &raw const *slot;
-        descriptions.push(slot);
+    for ((id, _), slot) in OPERATIONS.iter().zip(&descriptions) {
         operations.push(PJ_LIST {
             id: keep(id),
             proj: Some(no_constructor),
-            descr: slot_pointer,
+            descr: std::ptr::from_ref(slot),
         });
     }
     operations.push(PJ_LIST {

@@ -16,7 +16,19 @@ use crate::iso::Obj;
 use crate::pj::{hand_over, pj, Pj};
 use crate::util::{self, guard};
 
+/// PROJ writes a missing object as `crs not found: EPSG:1`, the model as `CRS not found (EPSG:1)`.
+fn proj_wording(message: &str) -> String {
+    match message
+        .strip_suffix(')')
+        .and_then(|head| head.split_once(" not found ("))
+    {
+        Some((kind, code)) => format!("{} not found: {code}", kind.to_lowercase()),
+        None => message.to_owned(),
+    }
+}
+
 fn fail(context: &mut Ctx, who: &str, message: &str) {
+    let message = &proj_wording(message);
     context.fail(PROJ_ERR_OTHER as c_int, &format!("{who}: {message}"));
 }
 

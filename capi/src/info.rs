@@ -102,6 +102,15 @@ pub extern "C" fn proj_pj_info(p: *mut PJ) -> PJ_PROJ_INFO {
         let Some(object) = pj(p) else {
             return empty_pj_info();
         };
+        if let Some(info) = crate::iso::operation_info(object) {
+            return PJ_PROJ_INFO {
+                id: object.arena.put_opt(info.id.as_deref()),
+                description: object.arena.put(&info.description),
+                definition: object.arena.put(&info.definition),
+                has_inverse: c_int::from(info.has_inverse),
+                accuracy: info.accuracy,
+            };
+        }
         let Some(proj) = object.proj.as_ref() else {
             return empty_pj_info();
         };

@@ -7,7 +7,7 @@ use super::buildop::OpProps;
 use super::model::{
     Axis, CartesianCS, Conversion, Crs, DatumEnsemble, EllipsoidalCS, GeocentricCRS, GeodeticCRS,
     GeodeticReferenceFrame, Identified, OperationMethod, OperationParameter, OrdinalCS, Parameter,
-    ParameterValue, Transformation, VerticalCS,
+    ParameterValue, ProjectedCRS, Transformation, VerticalCS,
 };
 use super::parammap;
 use super::FactoryError;
@@ -194,5 +194,27 @@ impl Conversion {
     pub fn with_source_crs(mut self, source: Crs) -> Self {
         self.source = Some(Box::new(source));
         self
+    }
+}
+
+impl ProjectedCRS {
+    /// This CRS written with `+approx` for its transverse Mercator conversion, as PROJ's
+    /// `PROJStringFormatter::setUseApproxTMerc` does. A CRS of another method is returned as
+    /// it is.
+    #[must_use]
+    pub fn with_approx_tmerc(&self) -> Self {
+        self.with_override("tmerc approx")
+    }
+
+    /// This CRS written with `+approx` for its UTM conversion.
+    #[must_use]
+    pub fn with_approx_utm(&self) -> Self {
+        self.with_override("utm approx")
+    }
+
+    fn with_override(&self, method: &str) -> Self {
+        let mut crs = self.clone();
+        crs.conversion.identified.proj_method_override = Some(method.to_owned());
+        crs
     }
 }

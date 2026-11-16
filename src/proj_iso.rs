@@ -121,6 +121,12 @@ pub(crate) fn iso_pipeline_at(
     over: ForceOver,
     filter: CandidateFilter,
 ) -> Option<IsoPipeline> {
+    // A CRS to itself is PROJ's null geographic offset (`+proj=noop`), not a list of candidates.
+    if from.trim() == to.trim() && filter.accuracy.is_none() {
+        if let Some(pipeline) = null_offset_pipeline(from, to, epoch) {
+            return Some(pipeline);
+        }
+    }
     let candidates = match facade_candidates(from, to, filter) {
         Ok(candidates) => candidates,
         // Only an empty candidate list: a same-datum pair has no registered operation, and PROJ
