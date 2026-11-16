@@ -345,9 +345,9 @@ As in PROJ, `EPSG:4326` on the command line reads latitude first. Use a
   `native-tls`), a fourth optional (`geo-types`), 37 crates in the default tree.
 
 The batch path (`forward_batch` and `inverse_batch` of `Tmerc`, `Lcc` and
-`Mercator`) uses AVX2 on every x86-64 CPU with AVX2 and FMA, detected at run time. On
-Linux glibc it calls libmvec. On Windows it uses the C runtime math library, one lane
-at a time. Off AVX2, `Tmerc::forward_batch` runs a portable 4-lane loop, bit-identical
+`Mercator`) uses AVX2 on every x86-64 CPU with AVX2 and FMA, detected at run time. It
+uses the crate's own vector math functions (no libmvec, no C library calls): the same code
+on Linux, Windows and macOS. Off AVX2, `Tmerc::forward_batch` runs a portable 4-lane loop, bit-identical
 to the scalar path and 25–34 % faster on x86-64; the other batch functions run the
 scalar loop. `Proj::convert_array` and `project_array` use the vector path for
 Transverse Mercator, Lambert conic and Mercator. The AVX2 path is not bit-identical
@@ -443,7 +443,7 @@ a line commits the charts with it.
   <img src="bench/trend-cloud-4c-avx512-light.svg" alt="Nanoseconds per point on cloud-4c-avx512, one line per case, logarithmic scale" width="100%">
 </picture>
 
-Time per point, cloud-4c-avx512: 7 runs from Nov 15 to Nov 16, the first to the latest: UTM forward 88.8 ns to 110 ns; Lambert-93 forward 62.3 ns to 77.4 ns; Web Mercator forward 45.8 ns to 53.1 ns; convert_array 4326→2154 130 ns to 39.8 ns; Helmert 9.31 ns to 11 ns.
+Time per point, cloud-4c-avx512: 8 runs from Nov 15 to Nov 16, the first to the latest: UTM forward 88.8 ns to 110 ns; Lambert-93 forward 62.3 ns to 77.4 ns; Web Mercator forward 45.8 ns to 53.1 ns; convert_array 4326→2154 130 ns to 39.8 ns; Helmert 9.31 ns to 11 ns.
 
 Not drawn until there are two runs on one machine: `RANDAZZOPROD`, `maxime-win11-nosimd`.
 <!-- bench-trend:end -->
