@@ -8,7 +8,7 @@ jobs:
   check:
     strategy:
       matrix:
-        # Linux runs the AVX2 + libmvec batch path; Windows checks the scalar build;
+        # Linux runs the AVX2 batch path (own vector math); Windows checks the scalar build;
         # macOS runs on Apple silicon (aarch64, the portable batch loop, Apple's libm).
         os: [ubuntu-24.04, windows-latest, macos-latest]
       fail-fast: false
