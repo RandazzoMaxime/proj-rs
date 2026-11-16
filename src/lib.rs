@@ -128,10 +128,10 @@ pub mod wkt {
 /// Path taken by the batch conversions (`forward_batch` and `inverse_batch` of [`Tmerc`],
 /// [`Lcc`] and [`Mercator`]) on this host.
 ///
-/// `avx2` is the vector path on x86-64 with AVX2 and FMA. Off Linux with glibc it calls the C
-/// math library one lane at a time, not libmvec. `portable` is the path elsewhere:
-/// [`Tmerc::forward_batch`] runs a 4-lane Rust loop, bit-identical to the scalar path; the
-/// other batch functions run the one-point loop (`docs/PORTING-batch-path.md`).
+/// `avx2` is the vector path on x86-64 with AVX2 and FMA, with this crate's own vector math
+/// functions (no libmvec, no C library calls) on every platform. `portable` is the path
+/// elsewhere: [`Tmerc::forward_batch`] runs a 4-lane Rust loop, bit-identical to the scalar path;
+/// the other batch functions run the one-point loop (`docs/PORTING-batch-path.md`).
 #[must_use]
 pub fn batch_path() -> &'static str {
     match simd::batch_path() {
