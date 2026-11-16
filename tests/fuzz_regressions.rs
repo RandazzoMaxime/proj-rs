@@ -41,3 +41,19 @@ fn defmodel_forward_returns_for_huge_longitude() {
         }
     });
 }
+
+/// A TIFF whose `SampleFormat` tag holds no value: `tiff` 0.10.3 indexed `sample_format[0]` and
+/// panicked while the grid was opened.
+#[test]
+fn geotiff_with_empty_sample_format_is_an_error() {
+    common::use_fixture_search_path();
+    let path = std::env::temp_dir().join(format!("proj-rs-fuzz-sample-{}.tif", std::process::id()));
+    std::fs::write(&path, include_bytes!("fuzz_regressions/geotiff_empty_sample_format.tif"))
+        .expect("write the fixture");
+    let name = path.display().to_string();
+    let horizontal = proj_rs::grids::HorizontalShiftGridSet::open(&name);
+    let vertical = proj_rs::grids::VerticalShiftGridSet::open(&name);
+    let _ = std::fs::remove_file(&path);
+    assert!(horizontal.is_err());
+    assert!(vertical.is_err());
+}
