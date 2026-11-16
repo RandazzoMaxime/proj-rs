@@ -369,68 +369,77 @@ from `https://cdn.proj.org`, the way PROJ does. Fetched grids are cached in the
 temporary directory under `proj/`. Without the grid the operation fails to
 build, with a clear error.
 
-## Performance
+## How fast
 
-`src/bin/bench.rs` times every ported operation in nanoseconds per point, on
-fixed grids. `bench/record.sh` appends one line per run to
-[`bench/history.jsonl`](bench/history.jsonl) with the commit and machine name,
-so each change can be measured against the last.
+<!-- bench-how-fast:start -->
+These numbers are PROJ-RS v1's. The optimisation work (wider SIMD, GPU) comes in the versions after it.
 
-To fill the `speedup` column, point the build at a libproj: set
-`PROJ_RS_LIBPROJ_DIR` to the directory that holds it, or activate a conda
-environment with `proj` installed (`CONDA_PREFIX`). Without one the bench still
-runs and leaves `speedup` empty.
+On `cloud-4c-avx512`, a 4-vCPU cloud VM (Intel Xeon at 2.10 GHz with AVX-512; the batch kernels take the AVX2 path), the process pinned to one core, proj-rs is 1.6× faster than PROJ 9.9.0's `libproj` on average over the ten cases below (geometric mean of the ratios; the slowest case is about the same, 0.96×, the fastest 3.5× faster). One point at a time, proj-rs is 1.1× faster on average, from about the same, 0.96× to 1.5× faster. On a slice of points, it is 2.3× faster on average, from 1.1× faster to 3.5× faster. This is one machine: the ratios on another CPU, or on a build of libproj with other flags, will differ.
 
-The two timing columns come from **different machines**, so compare them only
-with a column from the same machine. `speedup` is libproj's time divided by
-this port's time on the same run, so `1.5×` means this port is 1.5 times
-faster than libproj. The 2026-10-28 column was recorded when the suite had
-2,743 passing cases and has not been re-run since.
+| Conversion | Call | PROJ 9.9.0 | proj-rs |
+|---|---|---:|---:|
+| WGS 84 → RGF93 / Lambert-93 (EPSG:4326 → 2154) | `convert`, one point at a time | 103 ns | 96.8 ns (1.1× faster) |
+| WGS 84 → RGF93 / Lambert-93 (EPSG:4326 → 2154) | `convert_array`, 200,000 points | 111 ns | 42 ns (2.6× faster) |
+| WGS 84 → WGS 84 / UTM 31N (EPSG:4326 → 32631) | `convert`, one point at a time | 113 ns | 102 ns (1.1× faster) |
+| WGS 84 → WGS 84 / UTM 31N (EPSG:4326 → 32631) | `convert_array`, 200,000 points | 117 ns | 37.7 ns (3.1× faster) |
+| WGS 84 → Web Mercator (EPSG:4326 → 3857) | `convert`, one point at a time | 72.1 ns | 47.7 ns (1.5× faster) |
+| WGS 84 → Web Mercator (EPSG:4326 → 3857) | `convert_array`, 200,000 points | 77.8 ns | 40.3 ns (1.9× faster) |
+| RGF93 / Lambert-93 → WGS 84 / UTM 31N (EPSG:2154 → 32631) | `convert`, one point at a time | 378 ns | 392 ns (about the same, 0.96×) |
+| RGF93 / Lambert-93 → WGS 84 / UTM 31N (EPSG:2154 → 32631) | `convert_array`, 200,000 points | 403 ns | 114 ns (3.5× faster) |
+| NAD27 → WGS 84 (EPSG:4267 → 4326) | `convert`, one point at a time | 306 ns | 267 ns (1.1× faster) |
+| NAD27 → WGS 84 (EPSG:4267 → 4326) | `convert_array`, 200,000 points | 303 ns | 285 ns (1.1× faster) |
 
-| Case | 2026-10-27 scalar (ns) | 2026-10-28 AVX2 (ns) | libproj (ns) | speedup |
-|---|---:|---:|---:|---:|
-| UTM 31 forward | 81.5 | 82.2 | 113.4 | 1.4× |
-| UTM 31 inverse | 79.0 | 90.1 | | |
-| Lambert-93 forward | 50.3 | 54.7 | 91.3 | 1.7× |
-| Lambert-93 inverse | 138.5 | 163.3 | | |
-| Web Mercator forward | 19.3 | 41.5 | 67.7 | 1.6× |
-| Web Mercator inverse | 25.0 | 35.6 | | |
-| UTM batch, zone center | 80.0 | 50.2 | | |
-| UTM batch, zone edge | 75.0 | 44.3 | | |
-| Lambert-93 batch | 47.5 | 34.2 | | |
-| Helmert 7-parameter | 7.3 | 7.1 | | |
-
-Timings are nanoseconds (ns) per point, over one million points. `speedup` is
-libproj's ns divided by the AVX2 ns of the same run. The first column is
-`maxime-win11-nosimd` at `b405008`. The second is `RANDAZZOPROD`,
-`batch_path=avx2`, at dirty `16408a8`.
+Nanoseconds per point; lower is faster. Line of Nov 16 15:51 UTC at commit `d9897c7`, the best of 5 runs for each case. Both sides convert the same points, and the bench stops if their outputs differ. What exactly is compared, and how to rerun it: [docs/BENCHMARK.md](docs/BENCHMARK.md).
 
 <details>
-<summary><b>Ten slowest operations</b> (same run, 128-point catalogue grid)</summary>
+<summary><b>Bare projections against libproj, and the ten slowest operations</b></summary>
 
 <br>
 
+Bare projections, forward, from `+proj=` strings (no CRS lookup), one point at a time over a million points:
+
+| Projection | PROJ 9.9.0 | proj-rs |
+|---|---:|---:|
+| UTM 31 forward, `+proj=utm` | 110 ns | 109 ns (about the same, 1.01×) |
+| Lambert-93 forward, `+proj=lcc` | 88.6 ns | 76.3 ns (1.2× faster) |
+| Web Mercator forward, `+proj=merc` | 63.4 ns | 41.8 ns (1.5× faster) |
+
+Ten slowest operations of the catalogue (same line, a 128-point grid, no libproj column):
+
 | Operation | ns/point |
 |---|---:|
-| `gnom` | 396.9 |
-| `aeqd` | 394.5 |
-| `lsat` | 356.3 |
-| `misrsom` | 343.8 |
-| `dsea` | 248.4 |
-| `isea` | 194.5 |
-| `ivea` | 193.0 |
-| `calcofi` | 180.5 |
-| `tsea` | 176.6 |
-| `mod_krovak` | 157.0 |
+| `gnom` | 642.6 |
+| `aeqd` | 618.6 |
+| `lsat` | 543.8 |
+| `misrsom` | 523.8 |
+| `dsea` | 426.2 |
+| `tsea` | 333.6 |
+| `isea` | 330.5 |
+| `ivea` | 329.1 |
+| `calcofi` | 268.9 |
+| `spilhaus` | 265.8 |
 
 </details>
+<!-- bench-how-fast:end -->
 
-Record your own row, and compare only lines from the same machine, with the
-process pinned (`taskset -c 0`) for stable numbers:
+## Over time
 
-```bash
-BENCH_MACHINE=my-box bench/record.sh
-```
+How PROJ-RS's own numbers move from run to run, each machine on its own: a number
+compares with its own machine's only. They come from
+[`bench/history.jsonl`](bench/history.jsonl), one line per run with the commit and the
+machine name. `bench/record.sh` adds a line and draws these again, and a commit that adds
+a line commits the charts with it.
+
+<!-- bench-trend:start -->
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="bench/trend-cloud-4c-avx512-dark.svg">
+  <img src="bench/trend-cloud-4c-avx512-light.svg" alt="Nanoseconds per point on cloud-4c-avx512, one line per case, logarithmic scale" width="100%">
+</picture>
+
+Time per point, cloud-4c-avx512: 6 runs from Nov 15 to Nov 16, the first to the latest: UTM forward 88.8 ns to 109 ns; Lambert-93 forward 62.3 ns to 76.3 ns; Web Mercator forward 45.8 ns to 41.8 ns; convert_array 4326→2154 130 ns to 42 ns; Helmert 9.31 ns to 11 ns.
+
+Not drawn until there are two runs on one machine: `RANDAZZOPROD`, `maxime-win11-nosimd`.
+<!-- bench-trend:end -->
 
 ## Reproduce these numbers
 
@@ -451,7 +460,21 @@ UPDATE_DOCS=1 cargo test --test docs_in_sync --test progress_svg
 
 # The known gaps of the georust facade, each with its cause:
 cargo test --test georust_parity -- --ignored
+
+# The speed numbers and charts above. Build PROJ 9.9.0 once, then record a line on
+# your machine (a few minutes; the bench runs five times, pinned to one core):
+tools/build-reference.sh
+export PROJ_RS_LIBPROJ_DIR=$PWD/target/proj-reference/build/lib
+BENCH_MACHINE=my-box BENCH_ROUNDS=5 taskset -c 2 sh bench/record.sh
 ```
+
+`bench/record.sh` appends a line to [`bench/history.jsonl`](bench/history.jsonl),
+draws `bench/trend-<machine>-{light,dark}.svg`, and rewrites the "How fast" and
+"Over time" blocks of this README from the history
+(`tools/bench/how_fast.py`, `tools/bench/trend_svg.py`). Without
+`PROJ_RS_LIBPROJ_DIR` the bench still runs, but the line has no libproj column, and
+the "How fast" table stays on the newest line that has one. What each case compares is in
+[docs/BENCHMARK.md](docs/BENCHMARK.md).
 
 `tests/agree_cs2cs.rs` calls a PROJ `cs2cs` binary found on `PATH` as a
 differential check. It is a cross-check only: the numbers that decide a pass

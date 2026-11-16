@@ -38,7 +38,7 @@ def speedup_text(ratio):
         return f"{ratio:.1f}× faster"
     if ratio <= 1 / 1.05:
         return f"{1 / ratio:.1f}× slower"
-    return "about the same speed"
+    return f"about the same, {ratio:.2f}×"
 
 
 def than(ratio):

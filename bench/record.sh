@@ -8,7 +8,7 @@
 # PROJ_DATA      directory with proj.db and tests/ (default: data/)
 #
 # For the libproj columns, build with PROJ_RS_LIBPROJ_DIR set to a Release libproj 9.9.0,
-# and pin the process, for example `taskset -c 2 bench/record.sh`.
+# and pin the process, for example `taskset -c 2 sh bench/record.sh`.
 set -eu
 cd "$(dirname "$0")/.."
 export PROJ_DATA="${PROJ_DATA:-$PWD/data}"
