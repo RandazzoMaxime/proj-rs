@@ -378,6 +378,9 @@ build, with a clear error.
 </picture>
 <!-- bench-compare:end -->
 
+<!-- bench-footprint:start -->
+<!-- bench-footprint:end -->
+
 <!-- bench-how-fast:start -->
 These numbers are PROJ-RS v1's. The optimisation work (wider SIMD, GPU) comes in the versions after it.
 
