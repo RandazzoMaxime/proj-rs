@@ -34,7 +34,8 @@ fn main() {
         println!("cargo:rustc-link-lib=dylib=proj");
         println!("cargo:rustc-cfg=link_libproj");
         if std::env::var("CARGO_CFG_TARGET_FAMILY").is_ok_and(|family| family == "unix") {
-            println!("cargo:rustc-link-arg-bins=-Wl,-rpath,{}", dir.display());
+            // Every linked target, tests included: macOS strips the `DYLD_*` paths cargo sets.
+            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", dir.display());
         }
     }
 }
