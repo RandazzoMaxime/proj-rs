@@ -6704,7 +6704,19 @@ impl CoordinateOperationFactory {
             let direct =
                 filter_and_sort(direct, context, &sort_extents(context, source, target)).operations;
             direct_empty = direct.is_empty();
+            // `hasPerfectAccuracyResult` of `createOperationsFromDatabase`
+            // (coordinateoperationfactory.cpp:4351): such a result ends the search.
+            let perfect = !direct_empty
+                && has_perfect_accuracy_result(
+                    &direct,
+                    context,
+                    source_extent.as_ref(),
+                    target_extent.as_ref(),
+                );
             found.extend(direct);
+            if perfect {
+                return Ok(found);
+            }
             let pivots_used = match context.intermediate_use {
                 IntermediateCrsUse::Never => false,
                 IntermediateCrsUse::Allow => direct_empty,

@@ -141,6 +141,19 @@ fn geocentric_to_compound_of_a_ballpark_vertical_chain() {
     );
 }
 
+/// `projinfo -s EPSG:7885 -t EPSG:9517 --summary --spatial-test intersects` (PROJ 9.9.0): the
+/// registry operation EPSG:10614 has an accuracy of 0 over the whole area, so
+/// `createOperationsFromDatabase` returns it alone (coordinateoperationfactory.cpp:4351). The port
+/// went on to the compound-to-geographic search and listed two other candidates, one of which
+/// removed it as a duplicate.
+#[test]
+fn a_perfect_registry_operation_ends_the_search() {
+    assert_eq!(
+        names("EPSG:7885", "EPSG:9517"),
+        ["SHGD2015 to SHGD2015 + SHVD2015 height (1)"]
+    );
+}
+
 /// `projinfo -s EPSG:11056 -t EPSG:9500 --summary --spatial-test intersects` (PROJ 9.9.0): the
 /// candidates through the interpolation CRS `MGI` are `PROJBasedOperation`s, one step each for
 /// `removeUninterestingOps` (coordinateoperationfactory.cpp:1608-1656); the port counted their
