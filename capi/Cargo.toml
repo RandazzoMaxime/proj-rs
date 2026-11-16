@@ -1,0 +1,22 @@
+[package]
+name = "proj-rs-capi"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.83"
+license = "MIT"
+publish = false
+description = "C API of proj-rs: the proj.h of PROJ 9.9.0 on the proj-rs engine (skeleton)."
+readme = "README.md"
+repository = "https://github.com/RandazzoMaxime/proj-rs"
+
+# The artifacts are `libproj_rs_capi.so` / `.dylib` / `.dll` and `.a`. The lot that
+# implements the ABI renames them `libproj` at install time: a library named `proj`
+# in the workspace would collide with the georust facade.
+[lib]
+name = "proj_rs_capi"
+path = "src/lib.rs"
+crate-type = ["cdylib", "staticlib"]
+doc = false
+
+[lints]
+workspace = true

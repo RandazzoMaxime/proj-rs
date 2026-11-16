@@ -1,3 +1,7 @@
+[workspace]
+members = [".", "capi"]
+resolver = "2"
+
 [package]
 name = "proj-rs"
 version = "0.1.0"
@@ -12,41 +16,52 @@ repository = "https://github.com/RandazzoMaxime/proj-rs"
 [[bin]]
 name = "proj-rs-bench"
 path = "src/bin/bench.rs"
+doc = false
 
 [[bin]]
 name = "cct"
 path = "src/bin/cct.rs"
+doc = false
 
 [[bin]]
 name = "cs2cs"
 path = "src/bin/cs2cs.rs"
+doc = false
 
 [[bin]]
 name = "projinfo"
 path = "src/bin/projinfo.rs"
+doc = false
 
 [[bin]]
 name = "proj"
 path = "src/bin/proj.rs"
+doc = false
 
 [[bin]]
 name = "invproj"
 path = "src/bin/invproj.rs"
+doc = false
 
 [[bin]]
 name = "geod"
 path = "src/bin/geod.rs"
+doc = false
 
 [[bin]]
 name = "invgeod"
 path = "src/bin/invgeod.rs"
+doc = false
 
 [[bin]]
 name = "projsync"
 path = "src/bin/projsync.rs"
+doc = false
 
 [features]
 geo-types = ["dep:geo-types"]
+[lints]
+workspace = true
 
 [build-dependencies]
 cc = "1.1"
@@ -71,14 +86,14 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 
-[lints.rust]
+[workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "warn"
 missing_debug_implementations = "warn"
 missing_docs = "warn"
 unreachable_pub = "warn"
 rust_2018_idioms = { level = "warn", priority = -1 }
 
-[lints.clippy]
+[workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 # Group `allow(clippy::pedantic)` in source does not override a warn here on
 # this toolchain, and the transcribed PROJ coefficients are intentionally long.
