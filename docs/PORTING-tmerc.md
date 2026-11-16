@@ -38,10 +38,10 @@ pas dans la série.
 | Zone 0 / 61, latitude 91° | `rejects_bad_zone_and_latitude` |
 
 `tests/agree_cs2cs.rs` relance `cs2cs` sur la tour Eiffel. Le lot par paquets
-écrit `NaN` là où le scalaire renvoie `Err`, pour coller à `HUGE_VAL` sans
-arrêter le lot. Le chemin AVX2 remplace `hypot` par `sqrt` sur des arguments
-bornés par 1 ; `batch_matches_scalar_within_ten_nanometres` garde l'écart
-sous 10 nm.
+(`forward_batch`, `inverse_batch`, voir `docs/PORTING-simd.md`) écrit `NaN` là où le scalaire
+renvoie `Err`, pour coller à `HUGE_VAL` sans arrêter le lot. Il suit `fwd_unit` et `inv_unit`
+opération par opération, séries de Clenshaw comprises ; `tests/simd_batch.rs` garde l'écart avec
+le scalaire sous 1e-7 m et 1e-12°, et avec `cs2cs` sous 1e-6 m.
 
 ## Écarts volontaires
 

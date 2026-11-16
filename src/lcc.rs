@@ -3,11 +3,13 @@
 //! Portage de `src/projections/lcc.cpp` et de `pj_tsfn` / `pj_msfn` / `pj_phi2`
 //! (PROJ 9.9). Lambert-93 est ce cône sur GRS80. Voir `docs/PORTING-lcc.md`.
 
+mod batch;
+
 use crate::angle::adjlon;
 use crate::projmath::atanh;
 use crate::{Ellipsoid, Geographic, Projected, ProjectionError};
 
-const EPS10: f64 = 1e-10;
+pub(crate) const EPS10: f64 = 1e-10;
 
 /// Paramètres du cône, en degrés et en mètres. Un struct plutôt que huit
 /// arguments positionnels.
@@ -219,7 +221,11 @@ impl Lcc {
         })
     }
 
-    /// Convertit un lot. Un point refusé par [`Self::forward`] est écrit `NaN`.
+    /// Convertit un lot de degrés en mètres. Un point refusé par [`Self::forward`] est écrit
+    /// `NaN`.
+    ///
+    /// Avec AVX2, quatre points sont calculés à la fois ; l'écart avec [`Self::forward`] vient
+    /// des fonctions mathématiques vectorielles.
     ///
     /// # Panics
     ///
@@ -231,150 +237,25 @@ impl Lcc {
         east: &mut [f64],
         north: &mut [f64],
     ) {
-        let n = lon_deg.len();
-        assert_eq!(lat_deg.len(), n, "latitude length {} != {n}", lat_deg.len());
-        assert_eq!(east.len(), n, "easting length {} != {n}", east.len());
-        assert_eq!(north.len(), n, "northing length {} != {n}", north.len());
-        #[cfg(target_arch = "x86_64")]
-        if std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma") {
-            // SAFETY: AVX2 and FMA were just detected on this CPU.
-            unsafe { self.forward_batch_avx2(lon_deg, lat_deg, east, north) };
-            return;
-        }
-        for i in 0..n {
-            if let Ok(xy) = self.forward(lon_deg[i], lat_deg[i]) {
-                east[i] = xy.east;
-                north[i] = xy.north;
-            } else {
-                east[i] = f64::NAN;
-                north[i] = f64::NAN;
-            }
-        }
+        crate::simd::run(&batch::Forward(self), lon_deg, lat_deg, east, north);
     }
 
-    /// # Safety
+    /// Convertit un lot de mètres en degrés (longitude, latitude). Un point refusé par
+    /// [`Self::inverse`] est écrit `NaN`.
     ///
-    /// Le fil d'exécution doit supporter AVX2 et FMA.
-    #[cfg(target_arch = "x86_64")]
-    #[target_feature(enable = "avx2,fma")]
-    unsafe fn forward_batch_avx2(
-        &self,
-        lon_deg: &[f64],
-        lat_deg: &[f64],
-        east: &mut [f64],
-        north: &mut [f64],
-    ) {
-        let n = lon_deg.len();
-        let n4 = n & !3;
-        let mut i = 0;
-        while i < n4 {
-            // SAFETY: `i + 4 <= n` et AVX2/FMA sont requis par cette fonction.
-            unsafe { self.forward4(lon_deg, lat_deg, east, north, i) };
-            i += 4;
-        }
-        while i < n {
-            if let Ok(xy) = self.forward(lon_deg[i], lat_deg[i]) {
-                east[i] = xy.east;
-                north[i] = xy.north;
-            } else {
-                east[i] = f64::NAN;
-                north[i] = f64::NAN;
-            }
-            i += 1;
-        }
-    }
-
-    /// # Safety
+    /// Même contrat que [`Self::forward_batch`] pour l'écart avec [`Self::inverse`].
     ///
-    /// AVX2 et FMA requis. `i + 4` ne dépasse aucune des quatre tranches.
-    #[cfg(target_arch = "x86_64")]
-    #[target_feature(enable = "avx2,fma")]
-    unsafe fn forward4(
+    /// # Panics
+    ///
+    /// Panique si les quatre tranches n'ont pas la même longueur.
+    pub fn inverse_batch(
         &self,
-        lon_deg: &[f64],
-        lat_deg: &[f64],
-        east: &mut [f64],
-        north: &mut [f64],
-        i: usize,
+        east: &[f64],
+        north: &[f64],
+        lon_deg: &mut [f64],
+        lat_deg: &mut [f64],
     ) {
-        use crate::simd::{atanh4, cos4, exp4, load4, log4, sin4, store4};
-        use std::arch::x86_64::{
-            _mm256_add_pd, _mm256_blendv_pd, _mm256_cmp_pd, _mm256_div_pd, _mm256_mul_pd,
-            _mm256_set1_pd, _mm256_setzero_pd, _mm256_sub_pd, _CMP_GT_OQ,
-        };
-
-        #[expect(
-            clippy::multiple_unsafe_ops_per_block,
-            reason = "one Lambert formula; a block per intrinsic would hide it"
-        )]
-        // SAFETY: AVX2 kernel. Loads and stores stay inside `i..i+4`.
-        unsafe {
-            let deg = _mm256_set1_pd(std::f64::consts::PI / 180.0);
-            let lon_r = _mm256_mul_pd(load4(lon_deg, i), deg);
-            let lat_r = _mm256_mul_pd(load4(lat_deg, i), deg);
-            let mut lat_s = [0.0; 4];
-            let mut lon_s = [0.0; 4];
-            store4(&mut lat_s, 0, lat_r);
-            store4(&mut lon_s, 0, lon_r);
-            let half = std::f64::consts::FRAC_PI_2;
-            if lat_s
-                .iter()
-                .any(|p| !p.is_finite() || p.abs() > half + 1e-12 || (p.abs() - half).abs() < EPS10)
-            {
-                for k in 0..4 {
-                    if let Ok(xy) = self.forward(lon_deg[i + k], lat_deg[i + k]) {
-                        east[i + k] = xy.east;
-                        north[i + k] = xy.north;
-                    } else {
-                        east[i + k] = f64::NAN;
-                        north[i + k] = f64::NAN;
-                    }
-                }
-                return;
-            }
-            for lat in &mut lat_s {
-                *lat = (*lat).clamp(-half, half);
-            }
-            for lon in &mut lon_s {
-                *lon = adjlon(adjlon(*lon) - self.lam0);
-            }
-            let phi = load4(&lat_s, 0);
-            let lam = load4(&lon_s, 0);
-            let sin_phi = sin4(phi);
-            let cos_phi = cos4(phi);
-            let eccentricity = _mm256_set1_pd(self.e);
-            let exp_part = exp4(_mm256_mul_pd(
-                eccentricity,
-                atanh4(_mm256_mul_pd(eccentricity, sin_phi)),
-            ));
-            let one = _mm256_set1_pd(1.0);
-            let pos = _mm256_div_pd(cos_phi, _mm256_add_pd(one, sin_phi));
-            let neg = _mm256_div_pd(_mm256_sub_pd(one, sin_phi), cos_phi);
-            let mask = _mm256_cmp_pd(sin_phi, _mm256_setzero_pd(), _CMP_GT_OQ);
-            let ts = _mm256_mul_pd(exp_part, _mm256_blendv_pd(neg, pos, mask));
-            let rho = _mm256_mul_pd(
-                _mm256_set1_pd(self.c),
-                exp4(_mm256_mul_pd(_mm256_set1_pd(self.n), log4(ts))),
-            );
-            let lam_n = _mm256_mul_pd(lam, _mm256_set1_pd(self.n));
-            let k0 = _mm256_set1_pd(self.k0);
-            let easting = _mm256_mul_pd(k0, _mm256_mul_pd(rho, sin4(lam_n)));
-            let northing = _mm256_mul_pd(
-                k0,
-                _mm256_sub_pd(_mm256_set1_pd(self.rho0), _mm256_mul_pd(rho, cos4(lam_n))),
-            );
-            let semi_major = _mm256_set1_pd(self.a);
-            store4(
-                east,
-                i,
-                _mm256_add_pd(_mm256_mul_pd(semi_major, easting), _mm256_set1_pd(self.x0)),
-            );
-            store4(
-                north,
-                i,
-                _mm256_add_pd(_mm256_mul_pd(semi_major, northing), _mm256_set1_pd(self.y0)),
-            );
-        }
+        crate::simd::run(&batch::Inverse(self), east, north, lon_deg, lat_deg);
     }
 
     /// Mètres vers degrés.
