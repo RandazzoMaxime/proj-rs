@@ -41,6 +41,32 @@ def ratio_text(ratio):
     return f"≈ same ({ratio:.2f}×)"
 
 
+def legend(out, y, items):
+    """Swatches and names in one row at height `y`; `items` are (css class, name)."""
+    x = 16.0
+    for key, name in items:
+        out.append(f'<rect x="{f(x)}" y="{y - 6}" width="14" height="10" rx="2" class="{key}"/>')
+        out.append(f'<text x="{f(x + 20)}" y="{y + 3}" font-size="12.5">{escape(name)}</text>')
+        x += 20 + text_width(name, 12.5) + 24
+
+
+def document(title, out, bottom, palette, extra_css=""):
+    """The SVG text around the drawn elements `out`, `bottom` being where the last one ends."""
+    height = math.ceil(bottom)
+    css = (
+        f"text{{font-family:{FONT};fill:{palette['text']}}}.d{{fill:{palette['dim']}}}"
+        ".b{font-weight:600}.v{font-variant-numeric:tabular-nums}"
+        f".g{{stroke:{palette['grid']}}}.proj{{fill:{palette['proj']}}}.ours{{fill:{palette['ours']}}}"
+        f"{extra_css}"
+    )
+    head = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{WIDTH}" height="{height}" '
+        f'viewBox="0 0 {WIDTH} {height}" role="img" aria-label="{escape(title)}">\n'
+        f"<title>{escape(title)}</title>\n<style>{css}</style>\n"
+    )
+    return head + "\n".join(out) + "\n</svg>\n"
+
+
 def render(row, theme):
     palette = THEMES[theme]
     cases = how_fast.rows_of(row)
@@ -57,11 +83,7 @@ def render(row, theme):
     for line in wrap(subtitle, 112):
         out.append(f'<text x="16" y="{y}" font-size="13" class="d">{escape(line)}</text>')
         y += 19
-    x = 16.0
-    for key, name in (("proj", "PROJ 9.9.0 (libproj, C++)"), ("ours", "proj-rs (Rust)")):
-        out.append(f'<rect x="{f(x)}" y="{y - 6}" width="14" height="10" rx="2" class="{key}"/>')
-        out.append(f'<text x="{f(x + 20)}" y="{y + 3}" font-size="12.5">{escape(name)}</text>')
-        x += 20 + text_width(name, 12.5) + 24
+    legend(out, y, (("proj", "PROJ 9.9.0 (libproj, C++)"), ("ours", "proj-rs (Rust)")))
     top = y + 22
     y = top
     rows = []
@@ -105,18 +127,7 @@ def render(row, theme):
     for line in wrap(note, 125):
         out.append(f'<text x="16" y="{f(y)}" font-size="11.5" class="d">{escape(line)}</text>')
         y += 17
-    height = math.ceil(y - 4)
-    css = (
-        f"text{{font-family:{FONT};fill:{palette['text']}}}.d{{fill:{palette['dim']}}}"
-        ".b{font-weight:600}.v{font-variant-numeric:tabular-nums}"
-        f".g{{stroke:{palette['grid']}}}.proj{{fill:{palette['proj']}}}.ours{{fill:{palette['ours']}}}"
-    )
-    head = (
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{WIDTH}" height="{height}" '
-        f'viewBox="0 0 {WIDTH} {height}" role="img" aria-label="{escape(title)}">\n'
-        f"<title>{escape(title)}</title>\n<style>{css}</style>\n"
-    )
-    return head + "\n".join(out) + "\n</svg>\n"
+    return document(title, out, y - 4, palette)
 
 
 def main():
