@@ -56,13 +56,13 @@ scalaire.
 
 Un lot AVX2 s'écarte du scalaire de l'erreur des fonctions mathématiques vectorielles (quelques
 ULP), pas de la formule : chaque noyau suit sa version scalaire opération par opération. Mesuré
-sur 200 000 points par projection (`tests/simd_batch.rs`, sonde retirée après la mesure) :
+sur 200 000 points par projection (`tests/simd_batch.rs`, sonde retirée après la mesure), avec l'FMA de la section suivante :
 
 | projection | aller (m) | retour (degré) |
 |---|---:|---:|
-| UTM 31 / `tmerc` | 3,7e-9 | 2,8e-14 |
+| UTM 31 / `tmerc` | 4,7e-9 | 2,8e-14 |
 | Lambert-93 | 8,4e-9 | 4,3e-14 |
-| Lambert, cône sud | 1,1e-8 | 4,6e-14 |
+| Lambert, cône sud | 1,2e-8 | 4,6e-14 |
 | Web Mercator | 5,6e-9 | 1,4e-14 |
 | Mercator ellipsoïdal | 7,5e-9 | 2,8e-14 |
 
@@ -72,6 +72,26 @@ plus 4e-15 relatifs.
 
 Contre `cs2cs` 9.9.0 (2 003 points par projection, aller puis retour) : moins de 1e-6 m et
 1e-9°, la précision de l'impression de `cs2cs` (`-d 9` et `-d 11`).
+
+## FMA
+
+Le chemin AVX2 est compilé avec `fma` (`avx2,fma`) et `V4::mul_add` fait un `vfmadd` : un produit et
+une addition arrondis une seule fois. Les noyaux s'en servent là où une multiplication est suivie
+d'une addition : les séries de Clenshaw de Transverse Mercator (`gatg`, `clenshaw_complex`), la
+mise à l'échelle finale (`a * x + x0`) de chaque projection, le produit de `northing` de Lambert,
+et le Newton de `phi2` (`tau * tau + 1`, `sig * sig + 1`). `adjlon` n'en a pas : le produit n'est
+calculé que pour une longitude à ramener, et le gain serait nul.
+
+- Le chemin **scalaire** n'a pas d'FMA : `f64::mul_add` y serait logiciel sans FMA matériel. Un
+  lot ne vaut donc pas le scalaire au bit près, ce qu'il ne valait déjà pas (les fonctions
+  mathématiques vectorielles diffèrent aussi) ; il est un peu plus proche de la valeur exacte.
+- La précision mesurée contre le scalaire ne bouge pas : voir la table ci-dessus (UTM aller 3,7 →
+  4,7 nm, les autres écarts identiques à 1 % près), et `cs2cs` 9.9.0 reste d'accord à 1e-6 m.
+- **Gain mesuré** (`bench`, un cœur, quatre exécutions alternées de l'ancien et du nouveau binaire,
+  minimum de chacun) : UTM aller 27,3 → 24,7 ns (1,10×, les plages des quatre exécutions ne se
+  chevauchent pas) ; Lambert-93 retour 58,2 → 56,8 ; Lambert-93 aller, UTM retour, Web Mercator
+  aller et retour : de 1 à 2 %, au niveau du bruit. L'FMA ne compte que là où les séries de
+  Clenshaw dominent : l'essentiel du temps ailleurs est dans les appels `libmvec`.
 
 ## Mesures
 

@@ -85,8 +85,8 @@ mod vector {
         let valid = x.is_finite().and(y.is_finite());
         let nan = k(f64::NAN);
         Some((
-            V4::select(valid, k(m.a) * x + k(m.x0), nan),
-            V4::select(valid, k(m.a) * y + k(m.y0), nan),
+            V4::select(valid, k(m.a).mul_add(x, k(m.x0)), nan),
+            V4::select(valid, k(m.a).mul_add(y, k(m.y0)), nan),
         ))
     }
 
