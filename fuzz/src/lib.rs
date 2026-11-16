@@ -30,6 +30,16 @@ fn init() {
             env!("CARGO_MANIFEST_DIR"),
             "/../data/tests"
         );
+        // libFuzzer aborts in its panic hook, even for a panic the library catches. The grid
+        // reader contains the panics of the `tiff` crate on purpose (`geotiff::contained`): let
+        // those pass, and keep the hook for everything else.
+        let libfuzzer_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            let in_tiff_crate = info.location().is_some_and(|at| at.file().contains("/tiff-"));
+            if !in_tiff_crate {
+                libfuzzer_hook(info);
+            }
+        }));
         std::env::set_var("PROJ_DATA", data);
         std::env::set_var("PROJ_NETWORK", "OFF");
         std::env::set_var("PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY", "YES");
