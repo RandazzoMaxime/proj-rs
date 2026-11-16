@@ -69,6 +69,24 @@ fn proj_string_with_multibyte_character_at_the_urn_prefix_length() {
     }
 }
 
+/// Found by `fuzz_diff.py --seed 20261119`: without `+lat_1`, PROJ's `lcc` takes 0 (not
+/// `lat_0`), and with `+lat_1` alone and no `+lat_0` the origin latitude is `lat_1`. Values from
+/// PROJ 9.9.0 `cct` on WGS72.
+#[test]
+fn lcc_defaults_of_lat_1_and_lat_0_follow_proj() {
+    let at = |definition: &str, lon: f64, lat: f64| {
+        let op = Operation::create(&format!("+proj=lcc +ellps=WGS72 {definition}")).expect("lcc");
+        let out = op
+            .forward(proj_rs::Xyzt::xy(lon.to_radians(), lat.to_radians()))
+            .expect("forward");
+        (out.x, out.y)
+    };
+    let (x, y) = at("+lat_0=-2.2 +lat_2=-40.6", 10.0, 20.0);
+    assert!((x - 1_261_387.548_701).abs() < 1e-3 && (y - 2_609_023.785_546).abs() < 1e-3);
+    let (x, y) = at("+lat_1=30", 10.0, 20.0);
+    assert!((x - 1_060_664.030_917).abs() < 1e-3 && (y + 1_066_935.623_583).abs() < 1e-3);
+}
+
 /// A CTable2 header of 2^31-1 by 2^31-1 nodes: `count * 8` overflowed in the size check.
 #[test]
 fn ctable2_with_huge_dimensions_is_an_error() {

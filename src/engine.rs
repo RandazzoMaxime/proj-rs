@@ -1962,9 +1962,16 @@ fn build_utm(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateErro
 }
 
 fn build_lcc(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateError> {
-    let lat1 = params.radians("lat_1")?.unwrap_or(frame.phi0);
-    let lat2 = params.radians("lat_2")?.unwrap_or(lat1);
-    let lcc = Lcc::from_radians(frame.earth, 0.0, frame.phi0, lat1, lat2, frame.k0)
+    let lat1 = params.radians("lat_1")?.unwrap_or(0.0);
+    let lat2 = params.radians("lat_2")?;
+    // `lcc.cpp`: with no `lat_2` and no `lat_0`, the origin latitude is `lat_1`.
+    let phi0 = if lat2.is_none() && params.radians("lat_0")?.is_none() {
+        lat1
+    } else {
+        frame.phi0
+    };
+    let lat2 = lat2.unwrap_or(lat1);
+    let lcc = Lcc::from_radians(frame.earth, 0.0, phi0, lat1, lat2, frame.k0)
         .map_err(|_| CreateError::IllegalValue("lat_1"))?;
     let batch = LccBatch(lcc.clone());
     Ok(Box::new(Classic::new(frame.clone(), lcc).with_batch(batch)))
