@@ -2803,9 +2803,14 @@ fn export_transformation(
     transformation: &Transformation,
     formatter: &mut WktFormatter,
 ) -> Result<(), FactoryError> {
+    if transformation.is_point_motion() && !(formatter.wkt2 && formatter.keywords_2019) {
+        return Err(FactoryError::Format(
+            "Transformation can only be exported to WKT2:2019".to_owned(),
+        ));
+    }
     if !formatter.wkt2 {
         return Err(FactoryError::Format(
-            "a transformation can only be exported to WKT2".to_owned(),
+            "Transformation can only be exported to WKT2".to_owned(),
         ));
     }
     if let Some(approximate) = transformation.approximate_inverse() {
