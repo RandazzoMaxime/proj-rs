@@ -308,15 +308,13 @@ Corrections, une par commit (lignes différentes fermées dans `known.tsv`) :
 | Conversion absente des dialectes WKT1 ; branche « fichier de grille verticale » de la substitution (VERTCON, méthodes régulières) | 869 |
 | `ANCHOREPOCH` d'un VDATUM en WKT2:2019 | 163 |
 | Substitution de grille PROJ des méthodes à fichier de vitesse ou de déformation (1079, 1113, 1114, 1137, 1138, 1142, 1143, 1144, 1145) ; fichier de grille d'une `other_transformation` écrit après les paramètres numériques (`docs/PORTING-grid-substitution.md`) | 2 091 |
+| Inverse Helmert 7 ou 15 paramètres, matrice pleine comprise (`createApproximateInverseIfPossible`) : suffixe « (approx. inversion) », valeurs en unités PROJ, sans `VERSION` (`createPropertiesForInverse` n'en copie pas) | 377 |
 
-Après : 311 623 lignes comparées (le compte prend le plus long des deux côtés : avant, une sortie
-vide ne comptait aucune ligne de la nôtre), 1 479 différentes (0,5 %) : 478 « forme », 1 001
-« valeur » (une ligne décalée par un écart amont devient « valeur »). Identiques : 310 144.
+Après : MESURE_A_REMPLIR
 Le registre `known.tsv` ne contient plus que ces causes :
 
 | Motif (libellé du registre) | Lignes |
 |---|---|
-| Nom de l'inverse : suffixe « (approx. inversion) » absent | 377 |
 | Pont géographique/géocentrique typé `Transformation` au lieu de `Conversion` (`factory.rs`, hors lot) ; 461 de ces lignes étaient comptées avec la substitution de grille : `-k operation EPSG:9094` et `9095` n'ont plus que ce pont d'écart | 633 |
 | `-k operation` sans CRS en PROJ : projection seule (`webmerc`, `laea`, `eqc`…) non exportée | 97 |
 | Autres écarts de texte d'opération (WKT ou JSON) | 110 |
