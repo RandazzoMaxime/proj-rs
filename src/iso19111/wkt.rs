@@ -2390,12 +2390,14 @@ fn export_conversion_wkt1(
             if omitted_zero_parameter(conversion, parameter) {
                 continue;
             }
-            let Some(mut name) = wkt1_parameter_name(mapped, parameter) else {
+            let name = if formatter.esri {
+                Some(parameter.name.clone())
+            } else {
+                wkt1_parameter_name(mapped, parameter)
+            };
+            let Some(name) = name else {
                 continue;
             };
-            if formatter.esri {
-                name = esri_wkt1_parameter_name(&name);
-            }
             formatter.start_node("PARAMETER", NodeId::Absent);
             formatter.add_quoted(&name);
             add_parameter_value(parameter, formatter)?;
@@ -3214,21 +3216,13 @@ fn esri_unit_name(name: &str, formatter: &WktFormatter) -> String {
     }
 }
 
+/// `getMapping(const OperationMethod *)` (parammappings.cpp:1882): the projection mappings only,
+/// the first one whose code or name matches.
 fn lookup_method(method: &OperationMethod) -> Option<&'static super::parammap::MethodMap> {
     let code = method.code.parse::<i32>().unwrap_or(0);
-    if code != 0 {
-        let named = super::parammap::PROJECTION_METHODS
-            .iter()
-            .chain(super::parammap::OTHER_METHODS)
-            .find(|mapped| mapped.epsg_code == code && names_match(mapped.wkt2_name, &method.name));
-        if named.is_some() {
-            return named;
-        }
-        if let Some(mapped) = super::parammap::method_by_code(code) {
-            return Some(mapped);
-        }
-    }
-    super::parammap::method_by_name(&method.name)
+    super::parammap::PROJECTION_METHODS.iter().find(|mapped| {
+        (code != 0 && mapped.epsg_code == code) || names_match(mapped.wkt2_name, &method.name)
+    })
 }
 
 fn names_match(left: &str, right: &str) -> bool {
@@ -3240,22 +3234,6 @@ fn canonical_name(name: &str) -> String {
         .filter(|ch| !matches!(ch, ' ' | '_' | '-' | '/' | '{' | '}'))
         .flat_map(|ch| ch.to_lowercase())
         .collect()
-}
-
-fn esri_wkt1_parameter_name(name: &str) -> String {
-    match name {
-        "latitude_of_origin" => "Latitude_Of_Origin",
-        "central_meridian" => "Central_Meridian",
-        "scale_factor" => "Scale_Factor",
-        "false_easting" => "False_Easting",
-        "false_northing" => "False_Northing",
-        "standard_parallel_1" => "Standard_Parallel_1",
-        "standard_parallel_2" => "Standard_Parallel_2",
-        "azimuth" => "Azimuth",
-        "rectified_grid_angle" => "Rectified_Grid_Angle",
-        _ => return name.to_owned(),
-    }
-    .to_owned()
 }
 
 fn wkt1_method_name(method: &OperationMethod) -> Result<String, FactoryError> {
@@ -3303,18 +3281,7 @@ fn wkt1_parameter_name(
             return param.wkt1_name.map(str::to_owned);
         }
     }
-    Some(match parameter.code.as_str() {
-        "8801" | "8811" | "8821" => "latitude_of_origin".to_owned(),
-        "8802" | "8812" | "8822" => "central_meridian".to_owned(),
-        "8805" | "8815" => "scale_factor".to_owned(),
-        "8806" | "8816" | "8826" => "false_easting".to_owned(),
-        "8807" | "8817" | "8827" => "false_northing".to_owned(),
-        "8823" => "standard_parallel_1".to_owned(),
-        "8824" => "standard_parallel_2".to_owned(),
-        "8813" => "azimuth".to_owned(),
-        "8814" => "rectified_grid_angle".to_owned(),
-        _ => parameter.name.clone(),
-    })
+    Some(parameter.name.clone())
 }
 
 fn parameter_number(conversion: &Conversion, code: &str) -> Result<f64, FactoryError> {
