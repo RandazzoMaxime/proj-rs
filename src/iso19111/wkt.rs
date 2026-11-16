@@ -1274,11 +1274,7 @@ fn export_esri_projected_3d(
     let Some(vertical) = esri_ellipsoidal_vertical(crs.base.datum(), formatter) else {
         return Ok(false);
     };
-    let mut flat = crs.clone();
-    flat.coordinate_system.axes.truncate(2);
-    if let GeodeticCRS::Geographic(base) = &mut flat.base {
-        *base = geographic_without_height(base);
-    }
+    let flat = crs.demote_to_2d(formatter.db.as_ref());
     export_projected(&flat, formatter)?;
     export_vertical(&vertical, formatter)?;
     Ok(true)
