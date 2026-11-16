@@ -446,8 +446,18 @@ impl ProjectedCRS {
                 return proj_extensions_equivalent(left, right);
             }
         }
+        let implicit_base = |crs: &Self| matches!(crs.base_crs(), GeodeticCRS::Geographic(base) if base.implicit_cs);
+        // `ProjectedCRS::_isEquivalentTo` (crs.cpp:4687-4696): the axis order of a base CRS with
+        // an implicit coordinate system does not matter.
+        let base_criterion = if criterion == Equivalence::Equivalent
+            && (implicit_base(self) || implicit_base(other))
+        {
+            Equivalence::ExceptAxisOrder
+        } else {
+            criterion
+        };
         (criterion != Equivalence::Strict || same_name(self.name(), other.name()))
-            && geodetic_equivalent(self.base_crs(), other.base_crs(), criterion)
+            && geodetic_equivalent(self.base_crs(), other.base_crs(), base_criterion)
             && conversion_equivalent_for(
                 self.deriving_conversion(),
                 other.deriving_conversion(),
