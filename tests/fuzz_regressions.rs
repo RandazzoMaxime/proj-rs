@@ -68,3 +68,20 @@ fn proj_string_with_multibyte_character_at_the_urn_prefix_length() {
         assert!(proj_rs::Proj::new(text).is_err(), "{text}");
     }
 }
+
+/// Found by `tools/parity/fuzz_diff.py --seed 1`: the `proj` application applied `+axis`, which
+/// PROJ's `pj_fwd` and `pj_inv` do not (the pipeline path, `Operation::create`, does).
+#[test]
+fn projection_alone_ignores_the_axis_order() {
+    let plain = Operation::create_projection("+proj=merc +ellps=WGS84").expect("merc");
+    let swapped =
+        Operation::create_projection("+proj=merc +ellps=WGS84 +axis=wnu").expect("merc wnu");
+    let coord = proj_rs::Xyzt::xy(-0.29, 1.23);
+    let (a, b) = (plain.forward(coord).expect("a"), swapped.forward(coord).expect("b"));
+    assert_eq!((a.x, a.y), (b.x, b.y));
+    let (back_a, back_b) = (plain.inverse(a).expect("a"), swapped.inverse(b).expect("b"));
+    assert_eq!((back_a.x, back_a.y), (back_b.x, back_b.y));
+    let piped = Operation::create("+proj=merc +ellps=WGS84 +axis=wnu").expect("merc wnu");
+    let c = piped.forward(coord).expect("c");
+    assert_eq!((c.x, c.y), (-a.x, a.y));
+}

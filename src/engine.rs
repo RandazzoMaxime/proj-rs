@@ -1337,6 +1337,9 @@ impl Operation {
             for key in ["towgs84", "nadgrids", "geoidgrids"] {
                 params.hide(key);
             }
+            // `pj_fwd` and `pj_inv` swap no axes: `proj` reads `+axis`, lists it as used, ignores it.
+            let _ = params.flag("axis");
+            params.hide("axis");
         }
         let name = params.text("proj").unwrap_or("").to_owned();
         if name.is_empty() {
