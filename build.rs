@@ -24,6 +24,9 @@ fn main() {
         .include(&src_dir)
         .std("c11")
         .opt_level(2)
+        // No fused multiply-add: clang fuses `a * b + c` by default on aarch64, and the
+        // reference PROJ (x86-64) does not, so the geodesics would differ in the last bits.
+        .flag_if_supported("-ffp-contract=off")
         .warnings(false)
         .compile("geodesic");
 

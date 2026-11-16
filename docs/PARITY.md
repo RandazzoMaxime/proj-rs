@@ -155,9 +155,11 @@ soit 50 928 lignes comparées. Le test `parity_wide_against_proj_9_9_0` est igno
 Les attendus viennent de PROJ 9.9.0 sous Linux (glibc). Une autre libm arrondit autrement les
 fonctions transcendantes, et les points mal conditionnés (géodésiques entre points antipodaux
 ou presque confondus, coordonnées de 1e11 m) passent alors les seuils. Ces écarts sont nommés
-dans `known-<os>.tsv` du corpus (`known-windows.tsv` pour la libm MSVC), lu seulement hors
-glibc : sous Linux le registre reste `known.tsv` seul, et ailleurs un écart nouveau ou disparu
-échoue toujours.
+dans `known-<os>.tsv` du corpus (`known-windows.tsv` pour la libm MSVC, `known-macos.tsv`
+pour celle d'Apple), lu seulement hors glibc : sous Linux le registre reste `known.tsv` seul, et
+ailleurs un écart nouveau ou disparu échoue toujours. `geodesic.c` est compilé sans contraction
+(`-ffp-contract=off`) : clang fusionne sinon `a * b + c` en FMA sur aarch64, ce que ne fait pas le
+PROJ de référence (x86-64), et toutes les géodésiques mal conditionnées s'écartaient sur macOS.
 
 Premier passage : 355 écarts. Corrigés depuis : la chaîne composé → géocentrique sans emprise
 ni précision, l'emprise des ballparks, l'inverse de Cassini, `proj -S` sur `s2`, `alsk`,
