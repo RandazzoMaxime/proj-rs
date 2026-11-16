@@ -169,7 +169,9 @@ ni précision, l'emprise des ballparks, l'inverse de Cassini, `proj -S` sur `s2`
 dernières dans le lot Q2e (cinq causes tracées dans PROJ, dont une ferme deux listes, voir
 `docs/PORTING-projinfo-candidates.md`). Aucun écart de valeur sur les conversions. Le registre
 `tests/parity/wide/known.tsv` est vide : le gros corpus n'a plus aucun écart connu, et tout écart
-nouveau échoue.
+nouveau échoue. Le lot Q2f (trois causes tracées dans PROJ, voir
+`docs/PORTING-projinfo-candidates.md`) n'a ajouté aucune ligne : le gros corpus reste à zéro écart
+après lui (2026-11-16, 1319 s).
 
 Repli de `proj_trans` reproduit tel quel : pour un point hors de toutes les emprises, PROJ prend
 le premier candidat sans grille, sans nouvel essai, même si sa chaîne PROJ n'a pas pu être
@@ -321,7 +323,8 @@ Corrections, une par commit (lignes différentes fermées dans `known.tsv`) :
 
 Après : 8 935 invocations, 311 242 lignes comparées, 311 242 identiques ; 0 écart de forme,
 de valeur ou de statut. Le registre `known.tsv` est vide : aucune cause n'est restée impossible
-à porter.
+à porter. Le lot Q2f (listes de candidats, `docs/PORTING-projinfo-candidates.md`) laisse ce
+résultat inchangé.
 
 Le test `parity_export_against_proj_9_9_0` est ignoré par défaut : environ 6 minutes en debug
 sur quatre coeurs, au-delà du seuil de 30 secondes. Le registre est vide, donc tout écart, nouveau
@@ -353,5 +356,7 @@ Le test sonde d'abord le CDN (`tests/net_cdn`) et échoue si la sonde échoue : 
 
 Premier passage (graine `20261118`, 1171 invocations, 9368 conversions) : 9218 identiques,
 128 hors seuil, 22 statuts. Après le lot Q5 : 9272 identiques, 96 hors seuil, 0 statut ; les 96
-sont au registre (24 jeu de candidats, 72 `--only-best`). Fiche :
+sont au registre (24 jeu de candidats, 72 `--only-best`). Après le lot Q2f (listes SHGD2015,
+`docs/PORTING-projinfo-candidates.md`) : 9368 identiques, 0 hors seuil, 0 statut ; les 24 lignes
+du jeu de candidats sont retirées et `tests/parity/network/known.tsv` est vide. Fiche :
 `docs/PORTING-cs2cs-network-only-best.md`, section « Lot Q5 ».

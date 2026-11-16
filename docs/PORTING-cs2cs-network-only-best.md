@@ -202,7 +202,9 @@ grille (défaut et `--no-ballpark` sans écart au passage 2). Les blocs (bandes 
 1. **Jeu de candidats (24 invocations, `EPSG:7885 → EPSG:9517` et `→ EPSG:7956`).** PROJ liste
    `DERIVED_FROM(EPSG):10614` (SHGD2015 + SHVD2015) en tête. Le port liste « SHGD2015 to SHVD2015
    height (1) » et une inverse ballpark, sans l'opération dérivée. Vérifié pour `→ EPSG:9517` avec
-   `projinfo` réseau OFF : l'écart ne vient pas du réseau. Ouvert, hors de ce lot.
+   `projinfo` réseau OFF : l'écart ne vient pas du réseau. **Fermé au lot Q2f** (un résultat
+   parfait du registre termine la recherche, `docs/PORTING-projinfo-candidates.md`) : les 24 lignes
+   sont retirées du registre.
 
 2. **`--only-best` (72 invocations, 16 paires) : corrigé.** Cause : `lookForGridInfo`
    (factory.cpp:3398-3540) résout une grille connue de `proj.db` avec `open_resource_file`, qui
@@ -273,3 +275,8 @@ Les 3 paires restantes ne relèvent pas du réseau : `EPSG:7885 → EPSG:9517` e
 candidats SHGD2015, point 1 ci-dessus) et `EPSG:11056 → EPSG:9500` (trois candidats MGI absents du
 port : PROJ essaie la grille BESSEL au deuxième essai d'un point). Valeurs identiques dans les
 trois cas.
+
+**Fermé au lot Q2f.** Les trois paires font maintenant les mêmes requêtes que PROJ, mêmes plages,
+même ordre (miroir local, cache vide, `PROJ_DATA` commun) : `EPSG:11056 → EPSG:9500` 4 requêtes,
+68 495 octets des deux côtés ; `EPSG:7885 → EPSG:7956` 6 requêtes, 704 512 octets ; `EPSG:7885 →
+EPSG:9517` 7 requêtes, 901 120 octets. Causes et listes : `docs/PORTING-projinfo-candidates.md`.
