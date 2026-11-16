@@ -73,6 +73,7 @@ pub mod tinshift {
 mod file_api;
 pub use file_api::{ApiFile, FileAccess, FileApi};
 mod network;
+mod network_builtin;
 pub use network::{NetworkCallbacks, NetworkError, NetworkHandle, OpenReply};
 mod network_cache;
 mod network_chunks;

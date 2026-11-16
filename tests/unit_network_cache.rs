@@ -98,7 +98,7 @@ fn open_read_only(db: &Path) -> Connection {
         .expect("database opens")
 }
 
-/// `networking.cache_basic`: a first build stores the grid, its first chunk is at the head
+/// `networking.cache_basic`: a first build stores the grid, its last read chunk is at the head
 /// of the LRU list, and a second build makes no network request.
 #[test]
 fn cache_basic() {
@@ -106,11 +106,12 @@ fn cache_basic() {
     let server = server();
     let url = format!("{}/fr_ign_ntf_r93.tif", server.url());
 
+    // As the C++ case: the head of the LRU list is read after the creation alone. The creation reads
+    // the TIFF header (chunk 0), then the directory, which this fixture stores after its strip:
+    // chunk 9, at 147456, as PROJ 9.9.0 measured on this file.
     let proj = builder(&dir.db())
         .proj(&pipeline(&url))
         .expect("first build");
-    assert_test_point(&proj);
-    drop(proj);
     assert!(dir.db().is_file(), "the database exists after a download");
 
     let (head_url, head_offset): (String, i64) = open_read_only(&dir.db())
@@ -123,7 +124,10 @@ fn cache_basic() {
         )
         .expect("head chunk");
     assert_eq!(head_url, url);
-    assert_eq!(head_offset, 0);
+    assert_eq!(head_offset, 147_456);
+    // The point reads the chunks of its strip, which join the database too.
+    assert_test_point(&proj);
+    drop(proj);
 
     let before = server.requests().len();
     let again = builder(&dir.db())
@@ -246,9 +250,12 @@ fn expired_entry_is_checked_with_its_first_chunk_and_kept_when_unchanged() {
     let dir = TestDir::new("probe_kept");
     let server = server();
     let url = format!("{}/fr_ign_ntf_r93.tif", server.url());
-    builder(&dir.db())
+    // The first build reads the chunks of the point's strip, so they are in the database.
+    let first = builder(&dir.db())
         .proj(&pipeline(&url))
         .expect("first build");
+    assert_test_point(&first);
+    drop(first);
 
     let connection = Connection::open(dir.db()).expect("database opens");
     connection
@@ -290,9 +297,11 @@ fn expired_entry_with_other_validators_is_downloaded_again() {
     let dir = TestDir::new("probe_changed");
     let server = server();
     let url = format!("{}/fr_ign_ntf_r93.tif", server.url());
-    builder(&dir.db())
+    let first = builder(&dir.db())
         .proj(&pipeline(&url))
         .expect("first build");
+    assert_test_point(&first);
+    drop(first);
 
     let connection = Connection::open(dir.db()).expect("database opens");
     connection
@@ -310,8 +319,8 @@ fn expired_entry_with_other_validators_is_downloaded_again() {
     drop(proj);
     assert_eq!(
         server.requests().len(),
-        before + 2,
-        "the probe, then the download: {:?}",
+        before + 3,
+        "the probe, then chunk 9 (the directory) and the point's chunk, as PROJ 9.9.0: {:?}",
         server.requests()
     );
 
