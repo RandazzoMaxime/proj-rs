@@ -282,3 +282,69 @@ fn datum_pivot_reads_the_crs_of_a_datum_ensemble() {
         ]
     );
 }
+
+/// `projinfo -s EPSG:4970 -t EPSG:7659 --summary --spatial-test intersects` (PROJ 9.9.0): a result of the datum pivot whose steps are PROJ transformations (`WGS 84 to WGS 84 (G873)`) does not end the search (`hasResultSetOnlyResultsWithPROJStep`, coordinateoperationfactory.cpp:3136-3163): the IGNF pairs add theirs.
+#[test]
+fn the_pivot_keeps_going_after_results_with_a_proj_step() {
+    let operations = candidates("EPSG:4970", "EPSG:7659", GridAvailabilityUse::UseForSorting);
+    assert_eq!(
+        names(&operations),
+        [
+            "Conversion from RGR92 (geocentric) to RGR92 (geog3D) + RGR92 to WGS 84 (1) + WGS 84 to WGS 84 (G873)",
+            "Conversion from RGR92 to RGR92 (geographic) + RGR92 (RESEAU GEODESIQUE DE LA REUNION 1992) vers WGS 84 + WGS 84 to WGS 84 (G873)",
+        ]
+    );
+}
+
+/// `projinfo -s EPSG:8989 -t EPSG:4913 --summary --spatial-test intersects` (PROJ 9.9.0): the
+/// candidates through ITRF2020 are listed twice before `removeUninterestingOps`, once as the
+/// datum pivot builds them and once as the inverse of the geocentric to geographic search, whose
+/// two conversions cancel. `std::sort` is not stable: it puts the second copy first, and its area
+/// is `World` (the synthetic extent of the last conversion), not `World.` (the one of the
+/// registry).
+#[test]
+fn equal_candidates_keep_the_copy_that_std_sort_puts_first() {
+    let operations = candidates("EPSG:8989", "EPSG:4913", GridAvailabilityUse::UseForSorting);
+    let areas: Vec<Option<&str>> = operations
+        .iter()
+        .map(|operation| {
+            operation
+                .domains()
+                .first()
+                .and_then(|domain| domain.description())
+        })
+        .collect();
+    let europe = Some(
+        "Europe - onshore and offshore - ETRF extent - approximately 16\u{b0}W to 33\u{b0}E and 33\u{b0}N to 84\u{b0}N.",
+    );
+    assert_eq!(
+        areas,
+        [
+            Some("World."),
+            Some("World"),
+            Some("World."),
+            Some("World."),
+            Some("World."),
+            europe,
+            europe,
+            europe,
+        ]
+    );
+}
+
+/// `projinfo -s EPSG:20015 -t EPSG:4919 --summary --spatial-test intersects` (PROJ 9.9.0): a CRS with one identifier restricts the candidate CRS of its datum to that authority when the datum has an identifier of it (`createGeodeticCRSFromDatum` with `preferredAuthName`): the ESRI `GCS_MONREF_1997` is not a pivot of an EPSG pair.
+#[test]
+fn a_pivot_candidate_of_the_authority_of_the_crs_excludes_esri() {
+    let operations = candidates(
+        "EPSG:20015",
+        "EPSG:4919",
+        GridAvailabilityUse::UseForSorting,
+    );
+    assert_eq!(
+        names(&operations),
+        [
+            "Inverse of 6-degree Gauss-Kruger zone 15 + Pulkovo 1995 to WGS 84 (2) + Inverse of MONREF_1997_To_WGS_1984 + axis order change (geographic3D horizontal) + Conversion from ITRF2000 (geographic) to ITRF2000",
+            "Inverse of 6-degree Gauss-Kruger zone 15 + Ballpark geographic offset from Pulkovo 1995 to ITRF2000 (geographic) + Conversion from ITRF2000 (geographic) to ITRF2000",
+        ]
+    );
+}

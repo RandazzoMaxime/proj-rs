@@ -204,20 +204,19 @@ grille (défaut et `--no-ballpark` sans écart au passage 2). Les blocs (bandes 
    height (1) » et une inverse ballpark, sans l'opération dérivée. Vérifié pour `→ EPSG:9517` avec
    `projinfo` réseau OFF : l'écart ne vient pas du réseau. Ouvert, hors de ce lot.
 
-2. **`--only-best` (72 invocations, 16 paires, p. ex. `EPSG:8251 → EPSG:6658`,
-   `EPSG:20037 → EPSG:9715`, `EPSG:7911 → EPSG:6655`).** Les candidats sont les mêmes, dans le même
-   ordre, et `Using coordinate operation` est identique à PROJ pour `EPSG:8251 → EPSG:6658`. PROJ
-   applique l'étape `vgridshift` du premier candidat ; le port rend la hauteur inchangée.
-   Mesuré : `cct` sur le pipeline du premier candidat donne la valeur de PROJ, et `cs2cs` sans
-   option aussi. Avec `--only-best`, le pipeline retenu est celui du candidat ballpark sans grille
-   (`single_engine`). La branche de sélection exacte n'est pas identifiée : en instrumentant la
-   transformation des candidats, aucun appel n'apparaît sous `--only-best`. Ouvert.
+2. **`--only-best` (72 invocations, 16 paires) : corrigé.** Cause : `lookForGridInfo`
+   (factory.cpp:3398-3540) résout une grille connue de `proj.db` avec `open_resource_file`, qui
+   l'ouvre sur le réseau quand il est actif ; la grille est alors disponible. Le port ne regardait
+   que le disque (`grid_lookup`, et `grid_serves` du choix `--only-best`), jugeait le premier
+   candidat « grille manquante » et retombait sur le ballpark. Les deux ouvrent maintenant la grille
+   par `network::open_remote_grid`. Corpus réseau : 0 écart nouveau, les 72 lignes fermées. Test :
+   `tests/network_grid_available.rs` (serveur local). `projinfo` réseau ON n'écrit plus « at least
+   one grid missing » pour une telle grille.
 
-3. **`projinfo` réseau ON (hors corpus).** `projinfo -o PROJ` écrit « at least one grid missing »
-   pour une grille du CDN que la référence tient pour disponible. `grids_needed(DiscardIfMissing)`
-   côté port n'ouvre pas le CDN (`lookForGridInfo`, branche « ligne présente », non reproduite).
-   Le choix de candidat de `cs2cs` passe par `gridpath::available`, qui accepte le réseau : pas
-   touché par ce point. Ouvert.
+3. **`projinfo` réseau ON (hors corpus) : corrigé avec le point 2.** Même cause : la branche
+   « ligne présente » de `lookForGridInfo` ouvre maintenant la grille sur le réseau. Mesuré :
+   `projinfo -s EPSG:9288 -t EPSG:11036` réseau ON liste `INVERSE(EPSG):12219` comme la référence,
+   sans « at least one grid missing ».
 
 ### Volume réseau (étape 3)
 
@@ -237,8 +236,40 @@ premier morceau). Les plus gros écarts : `EPSG:6364 → EPSG:8801` (148 Mo cont
 Fichiers les plus téléchargés : `uk_os_OSGM15_GB.tif`, `es_ign_egm08-rednap.tif`,
 `ca_nrc_CGG2013an83.tif`, `fr_ign_RAF18.tif`.
 
-Cause : sans cache, le port prend le fichier entier à la création de chaque grille
+Cause : sans cache, le port prenait le fichier entier à la création de chaque grille
 (`network::fetch_missing` → `network_cache::fetch_grid` → `http_get_validated`, et
-`open_remote_grid` sans callbacks, qui fait un `GET` complet). Le lot ne touche pas
-`gridshift/geotiff.rs` ni `tiles.rs` (lot parallèle). Ouvert : lecture par plages dans ces deux
-chemins.
+`open_remote_grid` sans callbacks, qui faisait un `GET` complet).
+
+**Fermé (lot « réseau comme PROJ », volet 2).** Mesure refaite sur le même corpus, même miroir :
+
+| | Requêtes | Octets | Paires aux requêtes identiques |
+|---|---|---|---|
+| PROJ 9.9.0 (`cs2cs`) | 1155 | 85 583 322 | — |
+| Port, avant le volet 2 | 416 | 1 503 262 468 | 0 |
+| Port, après le volet 2 | 1144 | 84 299 591 | 297 sur 300 |
+
+« Identiques » veut dire même nombre de requêtes et mêmes octets ; sur les paires vérifiées une à
+une, les plages demandées sont les mêmes, dans le même ordre. Ce qui a été porté, dans l'ordre où
+les écarts tombaient :
+
+1. Client intégré par plages (`network_builtin.rs`), à la place du `GET` entier : `open` et
+   `read_range` de PROJ, `Content-Range` obligatoire à l'ouverture, nouvelles tentatives de
+   `GetNewRetryDelay`.
+2. Morceaux dans `cache.db` et heuristique de `NetworkFile::read` (doublement, arrêt au premier
+   morceau en cache, mémoire puis disque, plafond de 64 morceaux, boucle par morceau).
+3. Bande unique non compressée coupée en bandes de 8 Kio, comme libtiff
+   (`ChopUpSingleUncompressedStrip`).
+4. `defer_grid_opening` de `pj_obj_create` pour chaque candidat d'une paire, réseau actif : aucune
+   grille ouverte à la création (`with_candidate_grids`).
+5. Un chargement différé garde son fichier ouvert de l'en-tête aux tuiles, comme le `NetworkFile`
+   unique de PROJ ; seule la création par `proj_create` le ferme (la PJ temporaire du parseur).
+6. `+proj=deformation` (`+grids`) et `+proj=defmodel` lisent leurs grilles par
+   `GenericShiftGridSet`, tuile par tuile, comme PROJ ; avant : fichier entier.
+7. La façade (`proj_known_crs`) demande `KNOWN_AVAILABLE` au moteur de requêtes, comme
+   `proj_create_crs_to_crs` : une opération dont la grille n'est ni connue de `proj.db` ni trouvée
+   est écartée (`Und_min1x1_egm2008…`, 404 sur le CDN).
+
+Les 3 paires restantes ne relèvent pas du réseau : `EPSG:7885 → EPSG:9517` et `→ EPSG:7956` (jeu de
+candidats SHGD2015, point 1 ci-dessus) et `EPSG:11056 → EPSG:9500` (trois candidats MGI absents du
+port : PROJ essaie la grille BESSEL au deuxième essai d'un point). Valeurs identiques dans les
+trois cas.

@@ -8,8 +8,10 @@ jobs:
   check:
     strategy:
       matrix:
-        # Linux runs the AVX2 + libmvec batch path; Windows checks the scalar build.
-        os: [ubuntu-24.04, windows-latest]
+        # Linux runs the AVX2 + libmvec batch path; Windows checks the scalar build;
+        # macOS runs on Apple silicon (aarch64, the portable batch loop, Apple's libm).
+        os: [ubuntu-24.04, windows-latest, macos-latest]
+      fail-fast: false
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -17,14 +19,15 @@ jobs:
         with:
           components: clippy, rustfmt
       # The reference is PROJ 9.9.0 itself, the version every port is checked
-      # against. Ubuntu's apt ships 9.4, so the binaries come from conda-forge.
-      - if: runner.os == 'Linux'
+      # against. Ubuntu's apt ships 9.4, so the binaries come from conda-forge,
+      # on macOS too.
+      - if: runner.os != 'Windows'
         uses: mamba-org/setup-micromamba@v2
         with:
           environment-name: proj-ref
           create-args: proj=9.9.0 --channel conda-forge
           init-shell: bash
-      - if: runner.os == 'Linux'
+      - if: runner.os != 'Windows'
         shell: bash -el {0}
         run: |
           echo "$CONDA_PREFIX/bin" >> "$GITHUB_PATH"

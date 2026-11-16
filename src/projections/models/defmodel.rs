@@ -11,11 +11,11 @@ use std::collections::BTreeMap;
 use std::f64::consts::PI;
 use std::fmt;
 
-use super::grid::Grid as EngineGrid;
+use super::defmodel_grids::ShiftGridProvider;
 use super::json;
 use crate::engine::{Coord, CreateError, Frame, IoKind, Params, Step, TransformError};
 
-const DEG_TO_RAD: f64 = PI / 180.0;
+pub(super) const DEG_TO_RAD: f64 = PI / 180.0;
 
 /// Error of a deformation model.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1575,7 +1575,7 @@ pub(super) fn build(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, Cre
     }) {
         return Err(CreateError::IllegalValue("model"));
     }
-    let evaluator = Evaluator::new(master, &EngineProvider, frame.earth.a(), frame.earth.b())
+    let evaluator = Evaluator::new(master, &ShiftGridProvider, frame.earth.a(), frame.earth.b())
         .map_err(|_| CreateError::IllegalValue("model"))?;
     Ok(Box::new(Model {
         geographic: evaluator.geographic,
@@ -1585,156 +1585,9 @@ pub(super) fn build(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, Cre
     }))
 }
 
-/// Opens the grids with the crate's readers.
-struct EngineProvider;
-
-/// The one grid of a grid file, as the readers of the crate give it.
-struct EngineGridSet(EngineGrid);
-
-impl GridProvider for EngineProvider {
-    type Set = EngineGridSet;
-
-    fn open(&self, filename: &str) -> Option<EngineGridSet> {
-        let bytes = super::read_resource(filename).ok()?;
-        super::grid::open_named(filename, &bytes).map(EngineGridSet)
-    }
-
-    fn is_geographic_crs(&self, definition: &str) -> bool {
-        is_geographic(definition)
-    }
-}
-
-impl GridSet for EngineGridSet {
-    type Node = EngineGrid;
-
-    fn grid_at(&self, _x: f64, _y: f64) -> Option<&EngineGrid> {
-        Some(&self.0)
-    }
-}
-
-impl Grid for EngineGrid {
-    fn min_x(&self) -> f64 {
-        self.west
-    }
-
-    fn min_y(&self) -> f64 {
-        self.south
-    }
-
-    fn res_x(&self) -> f64 {
-        self.res_x
-    }
-
-    fn res_y(&self) -> f64 {
-        self.res_y
-    }
-
-    fn width(&self) -> usize {
-        self.width
-    }
-
-    fn height(&self) -> usize {
-        self.height
-    }
-
-    fn long_lat_offset(&self, ix: usize, iy: usize) -> Option<(f64, f64)> {
-        let (sample_x, sample_y) = band_pair(self)?;
-        let east = f64::from(self.value(ix, iy, sample_x)?) * DEG_TO_RAD;
-        let north = f64::from(self.value(ix, iy, sample_y)?) * DEG_TO_RAD;
-        Some((east, north))
-    }
-
-    fn long_lat_z_offset(&self, ix: usize, iy: usize) -> Option<(f64, f64, f64)> {
-        let (lam, phi) = self.long_lat_offset(ix, iy)?;
-        Some((lam, phi, self.z_offset(ix, iy)?))
-    }
-
-    fn easting_northing_offset(&self, ix: usize, iy: usize) -> Option<(f64, f64)> {
-        let (sample_x, sample_y) = band_pair(self)?;
-        Some((
-            f64::from(self.value(ix, iy, sample_x)?),
-            f64::from(self.value(ix, iy, sample_y)?),
-        ))
-    }
-
-    fn easting_northing_z_offset(&self, ix: usize, iy: usize) -> Option<(f64, f64, f64)> {
-        let (east, north) = self.easting_northing_offset(ix, iy)?;
-        Some((east, north, self.z_offset(ix, iy)?))
-    }
-
-    fn z_offset(&self, ix: usize, iy: usize) -> Option<f64> {
-        let sample = band_z(self)?;
-        Some(f64::from(self.value(ix, iy, sample)?))
-    }
-}
-
-/// The east and north bands of a grid file, found by their descriptions. A
-/// file without descriptions uses bands 0 and 1.
-fn band_pair(grid: &EngineGrid) -> Option<(usize, usize)> {
-    if grid.samples < 2 {
-        return None;
-    }
-    let mut x = 0usize;
-    let mut y = 1usize;
-    let mut found = false;
-    let mut any = false;
-    for sample in 0..grid.samples {
-        let desc = grid.description(sample);
-        if !desc.is_empty() {
-            any = true;
-        }
-        if desc == "east_offset" {
-            x = sample;
-            found = true;
-        } else if desc == "north_offset" {
-            y = sample;
-        }
-    }
-    let have_y = (0..grid.samples).any(|sample| grid.description(sample) == "north_offset");
-    if any && (!found || !have_y) {
-        return None;
-    }
-    let unit = grid.unit(x);
-    if !unit.is_empty() && unit != "degree" && unit != "metre" {
-        return None;
-    }
-    Some((x, y))
-}
-
-/// The vertical band of a grid file.
-fn band_z(grid: &EngineGrid) -> Option<usize> {
-    if grid.samples == 1 {
-        return Some(0);
-    }
-    if grid.samples < 3 && grid.description(0) != "vertical_offset" {
-        return None;
-    }
-    let mut sample_z = 2;
-    let mut any = false;
-    let mut found = false;
-    for sample in 0..grid.samples {
-        let desc = grid.description(sample);
-        if !desc.is_empty() {
-            any = true;
-        }
-        if desc == "vertical_offset" {
-            sample_z = sample;
-            found = true;
-        }
-    }
-    if any && !found {
-        return None;
-    }
-    let unit = grid.unit(sample_z);
-    if !unit.is_empty() && unit != "metre" {
-        return None;
-    }
-    Some(sample_z)
-}
-
 /// Whether the CRS `definition` is geographic: it is not a projected CRS of
 /// the database.
-fn is_geographic(definition: &str) -> bool {
+pub(super) fn is_geographic(definition: &str) -> bool {
     let Some((auth, code)) = definition.split_once(':') else {
         return true;
     };
@@ -1754,7 +1607,7 @@ struct Model {
     geographic: bool,
     a: f64,
     es: f64,
-    evaluator: Evaluator<EngineProvider>,
+    evaluator: Evaluator<ShiftGridProvider>,
 }
 
 impl Step for Model {

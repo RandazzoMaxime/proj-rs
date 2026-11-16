@@ -93,7 +93,16 @@ pub(crate) struct RemoteFile {
     /// Set once a reply differs from the properties of the URL: the chunks of the URL were
     /// dropped, and this file is not compared again (PROJ's `m_hasChanged`).
     changed: bool,
+    /// The chunk database (`cache.db`) of the context, when its cache is on.
+    disk: Option<crate::network_cache::Settings>,
+    /// Chunks the next request asks for, doubled on sequential reads (`m_nBlocksToDownload`).
+    blocks: u64,
+    /// Where the last request ended (`m_lastDownloadedOffset`).
+    last_downloaded: Option<u64>,
 }
+
+/// The most chunks one request asks for (`MAX_CHUNKS` of PROJ).
+const MAX_CHUNKS: u64 = 64;
 
 impl RemoteFile {
     pub(crate) fn new(url: &str, callbacks: Callbacks) -> Self {
@@ -104,12 +113,90 @@ impl RemoteFile {
             .properties
             .get(url)
             .map(|known| known.size);
-        Self {
+        let ctx = crate::network::context();
+        let disk = ctx.cache_enabled.then(|| ctx.cache_settings());
+        let mut file = Self {
             url: url.to_owned(),
             callbacks,
             handle: None,
             total,
             changed: false,
+            disk,
+            blocks: 1,
+            last_downloaded: None,
+        };
+        if file.total.is_none() {
+            file.properties_from_disk();
+        }
+        file
+    }
+
+    /// `NetworkFilePropertiesCache::tryGet`: the properties `cache.db` holds for the URL, when
+    /// they were checked less than the time-to-live ago, become the properties in memory.
+    fn properties_from_disk(&mut self) {
+        let Some(settings) = &self.disk else {
+            return;
+        };
+        let Some(cache) = crate::network_cache::DiskChunkCache::open(&settings.path) else {
+            return;
+        };
+        let Some(props) = cache.properties(&self.url) else {
+            return;
+        };
+        if crate::network_cache::is_expired(&props, settings.ttl_seconds) {
+            return;
+        }
+        self.total = Some(props.size);
+        self.cache().properties.insert(
+            self.url.clone(),
+            Validators {
+                size: props.size,
+                last_modified: props.last_modified,
+                etag: props.etag,
+            },
+        );
+    }
+
+    /// `NetworkChunkCache::get` past the memory: the chunks of `first..=last` that `cache.db`
+    /// holds join the memory cache. Only once the URL has properties in memory, from a fresh
+    /// entry of the database or from a reply, so a stale entry is checked before it is read.
+    fn load_from_disk(&self, first: u64, last: u64) {
+        let Some(settings) = &self.disk else {
+            return;
+        };
+        let missing: Vec<u64> = {
+            let cache = self.cache();
+            if !cache.properties.contains_key(&self.url) {
+                return;
+            }
+            (first..=last)
+                .filter(|&index| cache.get(&self.url, index).is_none())
+                .collect()
+        };
+        if missing.is_empty() {
+            return;
+        }
+        let Some(disk) = crate::network_cache::DiskChunkCache::open(&settings.path) else {
+            return;
+        };
+        for index in missing {
+            if let Some(chunk) = disk.chunk(&self.url, index) {
+                self.cache().store(&self.url, index, &chunk);
+            }
+        }
+    }
+
+    /// `NetworkChunkCache::insert` on the disk: each chunk read goes to `cache.db`.
+    fn store_on_disk(&self, first: u64, data: &[u8]) {
+        let Some(settings) = &self.disk else {
+            return;
+        };
+        let Some(disk) = crate::network_cache::DiskChunkCache::open(&settings.path) else {
+            return;
+        };
+        for (position, piece) in data.chunks(CHUNK_SIZE).enumerate() {
+            let index = first.saturating_add(u64::try_from(position).unwrap_or(u64::MAX));
+            let _stored = disk.insert_chunk(&self.url, index, piece, settings.max_bytes);
         }
     }
 
@@ -118,18 +205,6 @@ impl RemoteFile {
         self.total
     }
 
-    /// The `Last-Modified` and `ETag` the URL has now, empty when absent. A download stores them as
-    /// its properties (`get_props_from_headers`), once its first range is read.
-    pub(crate) fn validators(&self) -> (String, String) {
-        self.cache()
-            .properties
-            .get(&self.url)
-            .map(|known| (known.last_modified.clone(), known.etag.clone()))
-            .unwrap_or_default()
-    }
-
-    /// Whether a reply showed that the file changed while it was open. The chunks of the reply
-    /// that showed it are the new file's, the chunks read before are gone.
     pub(crate) fn has_changed(&self) -> bool {
         self.changed
     }
@@ -141,40 +216,44 @@ impl RemoteFile {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Up to `len` bytes from `offset`, fewer at the end of the file. The chunks the range
-    /// touches come from the cache when they are there; the missing ones are asked in one call,
-    /// rounded out to whole chunks.
+    /// Up to `len` bytes from `offset`, fewer at the end of the file, as PROJ's
+    /// `NetworkFile::read`: chunk after chunk, each from memory, then `cache.db`, else downloaded
+    /// with the chunks after it ([`Self::fetch`]); the next chunks then come from the cache.
     pub(crate) fn read_at(&mut self, offset: u64, len: usize) -> Result<Vec<u8>, NetworkError> {
         if len == 0 {
             return Ok(Vec::new());
         }
         self.cache().trim();
         let chunk = chunk_bytes();
-        let end = offset.saturating_add(u64::try_from(len).unwrap_or(u64::MAX));
-        let first = offset / chunk;
-        let last = (end - 1) / chunk;
-        // The chunks of the range as they are before the fetch: a fetch that finds the file
-        // changed empties the cache, and this read must still get its chunks.
-        let cached: Vec<Option<Vec<u8>>> = (first..=last)
-            .map(|index| self.cache().get(&self.url, index).map(<[u8]>::to_vec))
-            .collect();
-        let fetched = match self.missing_span(first, last) {
-            Some((low, high)) => Some((low, self.fetch(low, high)?)),
-            None => None,
-        };
-        Ok(self.assemble(offset, end, first, last, fetched.as_ref(), &cached))
-    }
-
-    /// The first and the last missing chunk of `first..=last`, when there is one.
-    fn missing_span(&self, first: u64, last: u64) -> Option<(u64, u64)> {
-        let cache = self.cache();
-        let is_missing = |index: u64| cache.get(&self.url, index).is_none();
-        let low = (first..=last).find(|&index| is_missing(index))?;
-        let high = (first..=last)
-            .rev()
-            .find(|&index| is_missing(index))
-            .unwrap_or(low);
-        Some((low, high))
+        let mut out = Vec::new();
+        let mut at = offset;
+        let mut left = u64::try_from(len).unwrap_or(u64::MAX);
+        while left > 0 {
+            let index = at / chunk;
+            self.load_from_disk(index, index);
+            let cached = self.cache().get(&self.url, index).map(<[u8]>::to_vec);
+            let region = match cached {
+                Some(piece) => piece,
+                None => self.fetch(index, (at + left - 1) / chunk)?,
+            };
+            let skip = at - index * chunk;
+            let available = len_u64(&region).saturating_sub(skip);
+            if available == 0 {
+                break;
+            }
+            let count = left.min(available);
+            let (Ok(from), Ok(until)) = (usize::try_from(skip), usize::try_from(skip + count))
+            else {
+                break;
+            };
+            out.extend_from_slice(&region[from..until]);
+            at += count;
+            left -= count;
+            if region.len() < CHUNK_SIZE && left != 0 {
+                break;
+            }
+        }
+        Ok(out)
     }
 
     /// Asks the callbacks for the chunks `low..=high`, stores them, and returns the bytes read.
@@ -184,6 +263,32 @@ impl RemoteFile {
     fn fetch(&mut self, low: u64, high: u64) -> Result<Vec<u8>, NetworkError> {
         let chunk = chunk_bytes();
         let start = low.saturating_mul(chunk);
+        // `NetworkFile::read`: a read that starts where the last one ended doubles the request
+        // (up to 100 chunks before the cap), any other read asks one chunk; the request covers
+        // the range asked for, stops before a chunk already cached, and is capped at 64 chunks;
+        // the caller's loop asks the rest.
+        if self.last_downloaded == Some(start) {
+            if self.blocks < 100 {
+                self.blocks *= 2;
+            }
+        } else {
+            self.blocks = 1;
+        }
+        let needed = high.saturating_sub(low).saturating_add(1);
+        self.blocks = self.blocks.max(needed);
+        // `gNetworkChunkCache.get` looks in memory, then in `cache.db`.
+        let cached_at = (1..self.blocks).find(|&step| {
+            let index = low.saturating_add(step);
+            self.load_from_disk(index, index);
+            self.cache().get(&self.url, index).is_some()
+        });
+        if let Some(step) = cached_at {
+            self.blocks = step;
+        }
+        if self.blocks > MAX_CHUNKS {
+            self.blocks = MAX_CHUNKS;
+        }
+        let high = low.saturating_add(self.blocks).saturating_sub(1);
         let stop = high.saturating_add(1).saturating_mul(chunk);
         if self.total.is_some_and(|total| start >= total) || stop <= start {
             return Ok(Vec::new());
@@ -200,13 +305,25 @@ impl RemoteFile {
                 (reply.handle, reply.data)
             }
         };
+        let first_open = self.total.is_none();
         self.observe(handle);
+        if first_open && self.total.is_none() {
+            // `NetworkFile::open`: a file whose first reply gives no `Content-Range` size is not
+            // opened, and its handle is closed.
+            self.release();
+            return Err(NetworkError::Open(format!(
+                "{}: no Content-Range in the reply",
+                self.url
+            )));
+        }
         if self.total.is_none() && data.len() < size {
             // No `Content-Range`, and the reply ends before the size asked for: the file ends
             // there. With `Content-Range`, the size is that one, whatever the reply holds.
             self.total = Some(start.saturating_add(u64::try_from(data.len()).unwrap_or(0)));
         }
+        self.last_downloaded = Some(start.saturating_add(len_u64(&data)));
         self.cache().store(&self.url, low, &data);
+        self.store_on_disk(low, &data);
         Ok(data)
     }
 
@@ -239,92 +356,52 @@ impl RemoteFile {
         };
         let shared = Arc::clone(&self.callbacks.chunks);
         let mut cache = shared.lock().unwrap_or_else(PoisonError::into_inner);
-        let differs = cache
-            .properties
-            .get(&self.url)
-            .is_some_and(|known| *known != now);
+        let known = cache.properties.get(&self.url).cloned();
+        let differs = known.as_ref().is_some_and(|known| *known != now);
         if !differs {
-            cache.properties.insert(self.url.clone(), now);
+            cache.properties.insert(self.url.clone(), now.clone());
         } else if !self.changed {
             self.changed = true;
             cache.forget_chunks(&self.url);
-            cache.properties.insert(self.url.clone(), now);
+            cache.properties.insert(self.url.clone(), now.clone());
+        }
+        drop(cache);
+        // `NetworkFilePropertiesCache::insert` writes the properties to `cache.db` too, which
+        // invalidates the chunks it holds for an older file.
+        if known.is_none() || differs {
+            self.properties_to_disk(&now);
         }
     }
 
-    /// The bytes of `offset..end`, from the chunks `first..=last`. The chunks of the call that
-    /// fetched them (`fetched`, from its first chunk) come first; the others are in `cached`, as
-    /// they were before the call. Stops at the end of the file.
-    fn assemble(
-        &self,
-        offset: u64,
-        end: u64,
-        first: u64,
-        last: u64,
-        fetched: Option<&(u64, Vec<u8>)>,
-        cached: &[Option<Vec<u8>>],
-    ) -> Vec<u8> {
-        let chunk = chunk_bytes();
-        let mut out = Vec::new();
-        for index in first..=last {
-            let piece: &[u8] = match fetched {
-                Some((low, data)) if index >= *low && (index - low) * chunk < len_u64(data) => {
-                    let from = usize::try_from((index - low) * chunk).unwrap_or(usize::MAX);
-                    &data[from..(from + CHUNK_SIZE).min(data.len())]
-                }
-                _ => match usize::try_from(index - first)
-                    .ok()
-                    .and_then(|position| cached.get(position))
-                    .and_then(Option::as_deref)
-                {
-                    Some(piece) => piece,
-                    None => break,
-                },
-            };
-            let chunk_start = index.saturating_mul(chunk);
-            let from = offset.saturating_sub(chunk_start).min(len_u64(piece));
-            let until = end.saturating_sub(chunk_start).min(len_u64(piece));
-            if until > from {
-                let (Ok(from), Ok(until)) = (usize::try_from(from), usize::try_from(until)) else {
-                    break;
-                };
-                out.extend_from_slice(&piece[from..until]);
-            }
-            if piece.len() < CHUNK_SIZE {
-                break;
-            }
-        }
-        out
+    fn properties_to_disk(&self, now: &Validators) {
+        let Some(settings) = &self.disk else {
+            return;
+        };
+        let Some(disk) = crate::network_cache::DiskChunkCache::open(&settings.path) else {
+            return;
+        };
+        let _stored = disk.insert_properties(
+            &self.url,
+            &crate::network_cache::FileProperties {
+                size: now.size,
+                last_checked: crate::network_cache::unix_now(),
+                last_modified: now.last_modified.clone(),
+                etag: now.etag.clone(),
+            },
+        );
     }
 
-    /// The whole file, read chunk by chunk, for the grids that are not tiled. Without a
-    /// `Content-Range` size, the first reply is the whole file. `None` when the file cannot be
-    /// read or is larger than `max`. The chunks already read are not asked again.
+    /// The whole file, for the grids and models read whole. The first chunk is read as the open
+    /// of PROJ reads it, then the file in one read, as PROJ's readers do (`seek` to the end,
+    /// `tell`, one `read`). `None` when the file cannot be read or is larger than `max`.
     pub(crate) fn read_whole(&mut self, max: u64) -> Option<Vec<u8>> {
-        let chunk = chunk_bytes();
-        let first = self.read_at(0, CHUNK_SIZE).ok()?;
-        let total = self
-            .total
-            .unwrap_or_else(|| u64::try_from(first.len()).unwrap_or(u64::MAX));
+        self.read_at(0, CHUNK_SIZE).ok()?;
+        let total = self.total?;
         if total > max {
             return None;
         }
-        let mut bytes = first;
-        while u64::try_from(bytes.len()).ok()? < total {
-            let offset = u64::try_from(bytes.len()).ok()?;
-            let wanted = usize::try_from((total - offset).min(chunk)).ok()?;
-            let part = self.read_at(offset, wanted).ok()?;
-            if part.is_empty() {
-                return None;
-            }
-            bytes.extend_from_slice(&part);
-        }
-        bytes.truncate(usize::try_from(total).ok()?);
-        if bytes.is_empty() {
-            None
-        } else {
-            Some(bytes)
-        }
+        let bytes = self.read_at(0, usize::try_from(total).ok()?).ok()?;
+        (!bytes.is_empty() && len_u64(&bytes) == total).then_some(bytes)
     }
 
     /// Closes the handle, if one is open. A later read opens the file again.
@@ -332,6 +409,9 @@ impl RemoteFile {
         if let Some(handle) = self.handle.take() {
             self.callbacks.imp().close(handle);
         }
+        // A later read is a new `NetworkFile` in PROJ: no sequential history.
+        self.blocks = 1;
+        self.last_downloaded = None;
     }
 }
 
@@ -444,7 +524,7 @@ impl Seek for RemoteReader {
 /// [`crate::network::decide_download`] gives a URL for, and callbacks are set. `None` otherwise,
 /// and the grid is read as before.
 pub(crate) fn callback_file(name: &str) -> Option<RemoteFile> {
-    let callbacks = crate::network::context().callbacks()?;
+    let callbacks = crate::network::context().reading_callbacks()?;
     let download = crate::network::decide_download(name)?;
     Some(RemoteFile::new(&download.url, callbacks))
 }

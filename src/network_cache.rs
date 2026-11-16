@@ -17,8 +17,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection, ErrorCode, OptionalExtension};
 
-use crate::network::Probe;
-
 /// `DOWNLOAD_CHUNK_SIZE` in PROJ: every chunk is this long, the last one of a file may be shorter.
 pub(crate) const CHUNK_SIZE: u64 = 16 * 1024;
 
@@ -264,16 +262,6 @@ impl DiskChunkCache {
         Ok(())
     }
 
-    /// Set the time of the last check of the chunks of `url` (`UPDATE properties ... lastChecked`),
-    /// as PROJ's `NetworkFilePropertiesCache::insert` does on every open.
-    pub(crate) fn set_last_checked(&self, url: &str, checked: i64) -> rusqlite::Result<()> {
-        self.conn.execute(
-            "UPDATE properties SET lastChecked = ?1 WHERE url = ?2",
-            params![checked, url],
-        )?;
-        Ok(())
-    }
-
     /// The chunk `index` of `url`, with its real length, and moved to the head of the LRU list.
     pub(crate) fn chunk(&self, url: &str, index: u64) -> Option<Vec<u8>> {
         let offset = i64::try_from(index.checked_mul(CHUNK_SIZE)?).ok()?;
@@ -295,50 +283,6 @@ impl DiskChunkCache {
         }
         let _moved = self.move_to_head(chunk_id);
         Some(data[..size].to_vec())
-    }
-
-    /// The whole file of `size` bytes from its chunks, or `None` when one is missing or short.
-    pub(crate) fn assemble(&self, url: &str, size: u64) -> Option<Vec<u8>> {
-        if size == 0 {
-            return None;
-        }
-        let capacity = usize::try_from(size).ok()?;
-        let mut out = Vec::with_capacity(capacity);
-        for index in 0..size.div_ceil(CHUNK_SIZE) {
-            let expected = (size - index * CHUNK_SIZE).min(CHUNK_SIZE);
-            let chunk = self.chunk(url, index)?;
-            if u64::try_from(chunk.len()).ok()? != expected {
-                return None;
-            }
-            out.extend_from_slice(&chunk);
-        }
-        Some(out)
-    }
-
-    /// Store a complete download of `url`: the old chunks of `url` are invalidated, the new ones
-    /// are inserted, and the properties are replaced.
-    pub(crate) fn store(
-        &self,
-        url: &str,
-        body: &[u8],
-        props: &FileProperties,
-        max_bytes: Option<u64>,
-    ) -> rusqlite::Result<()> {
-        self.conn.execute(
-            "UPDATE chunks SET url = ?1 WHERE url = ?2",
-            params![INVALIDATED, url],
-        )?;
-        // From the last chunk to the first, so the first one ends at the head of the LRU list:
-        // the head is what a reader touches last, as `cache_basic` expects.
-        for (index, chunk) in body.chunks(to_usize(CHUNK_SIZE)).enumerate().rev() {
-            self.store_chunk(
-                url,
-                u64::try_from(index).unwrap_or(u64::MAX),
-                chunk,
-                max_bytes,
-            )?;
-        }
-        self.set_properties(url, props)
     }
 
     /// Insert one chunk (`NetworkChunkCache::insert`): refresh it when it is in the cache, reuse
@@ -421,6 +365,91 @@ impl DiskChunkCache {
         self.move_to_head(chunk_id)
     }
 
+    /// Insert one chunk of `url` read by a ranged request (`NetworkChunkCache::insert`).
+    pub(crate) fn insert_chunk(
+        &self,
+        url: &str,
+        index: u64,
+        data: &[u8],
+        max_bytes: Option<u64>,
+    ) -> rusqlite::Result<()> {
+        self.store_chunk(url, index, data, max_bytes)
+    }
+
+    /// The properties of `url` after a reply (`NetworkFilePropertiesCache::insert`): when the
+    /// cache had other ones, the chunks of `url` are invalidated and moved to the tail of the LRU
+    /// list, to be reused first; then the properties are replaced.
+    pub(crate) fn insert_properties(
+        &self,
+        url: &str,
+        props: &FileProperties,
+    ) -> rusqlite::Result<()> {
+        if let Some(cached) = self.properties(url) {
+            let differs = cached.size != props.size
+                || cached.last_modified != props.last_modified
+                || cached.etag != props.etag;
+            if differs {
+                let mut statement = self.conn.prepare("SELECT id FROM chunks WHERE url = ?1")?;
+                let ids: Vec<i64> = statement
+                    .query_map(params![url], |row| row.get(0))?
+                    .collect::<rusqlite::Result<_>>()?;
+                for id in ids {
+                    self.move_to_tail(id)?;
+                }
+                self.conn.execute(
+                    "UPDATE chunks SET url = ?1, offset = -1, data_size = 0 WHERE url = ?2",
+                    params![INVALIDATED, url],
+                )?;
+            }
+        }
+        self.set_properties(url, props)
+    }
+
+    /// Move the link of `chunk_id` to the tail of the LRU list (`move_to_tail`).
+    fn move_to_tail(&self, chunk_id: i64) -> rusqlite::Result<()> {
+        let (link, prev, next): (i64, Option<i64>, Option<i64>) = self.conn.query_row(
+            "SELECT id, prev, next FROM linked_chunks WHERE chunk_id = ?1",
+            params![chunk_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        let (head, tail): (Option<i64>, Option<i64>) = self.conn.query_row(
+            "SELECT head, tail FROM linked_chunks_head_tail",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        if tail == Some(link) {
+            return Ok(());
+        }
+        if let Some(previous) = prev {
+            self.conn.execute(
+                "UPDATE linked_chunks SET next = ?1 WHERE id = ?2",
+                params![next, previous],
+            )?;
+        }
+        if let Some(following) = next {
+            self.conn.execute(
+                "UPDATE linked_chunks SET prev = ?1 WHERE id = ?2",
+                params![prev, following],
+            )?;
+        }
+        if let Some(old_tail) = tail {
+            self.conn.execute(
+                "UPDATE linked_chunks SET next = ?1 WHERE id = ?2",
+                params![link, old_tail],
+            )?;
+        }
+        self.conn.execute(
+            "UPDATE linked_chunks SET prev = ?1, next = NULL WHERE id = ?2",
+            params![tail, link],
+        )?;
+        let head = if head == Some(link) { next } else { head };
+        self.conn.execute(
+            "UPDATE linked_chunks_head_tail SET head = ?1, tail = ?2",
+            params![head, link],
+        )?;
+        Ok(())
+    }
+
     /// Move the link of `chunk_id` to the head of the LRU list (`move_to_head`).
     fn move_to_head(&self, chunk_id: i64) -> rusqlite::Result<()> {
         let (link, prev, next): (i64, Option<i64>, Option<i64>) = self.conn.query_row(
@@ -472,51 +501,6 @@ impl Drop for DiskChunkCache {
         // The exclusive lock ends with the commit. A failure rolls back when the connection closes.
         let _committed = self.conn.execute_batch("COMMIT");
     }
-}
-
-/// The grid of `url`, from the cache when its entry is fresh and complete. An expired entry is
-/// checked with `first_chunk`, the first chunk of the file as PROJ asks it (`open(url, 0, 16384)`):
-/// when its size and validators are the stored ones, the chunks are kept and only the check time
-/// moves. Otherwise the grid is `download`ed and stored (`NetworkChunkCache::get` and
-/// `NetworkFilePropertiesCache::tryGet`). No request is conditional.
-///
-/// When the cache cannot be opened, the download is returned and nothing is stored.
-pub(crate) fn fetch_grid(
-    settings: &Settings,
-    url: &str,
-    first_chunk: impl FnOnce() -> Option<Probe>,
-    download: impl FnOnce() -> Option<Fetched>,
-) -> Option<Vec<u8>> {
-    let Some(cache) = DiskChunkCache::open(&settings.path) else {
-        return download().map(|fetched| fetched.body);
-    };
-    let now = unix_now();
-    if let Some(props) = cache.properties(url) {
-        if !expired(&props, settings.ttl_seconds, now) {
-            if let Some(bytes) = cache.assemble(url, props.size) {
-                return Some(bytes);
-            }
-        } else if first_chunk().is_some_and(|reply| {
-            reply.size == Some(props.size)
-                && reply.last_modified == props.last_modified
-                && reply.etag == props.etag
-        }) {
-            let _checked = cache.set_last_checked(url, now);
-            if let Some(bytes) = cache.assemble(url, props.size) {
-                return Some(bytes);
-            }
-        }
-    }
-    let fetched = download()?;
-    let props = FileProperties {
-        size: u64::try_from(fetched.body.len()).unwrap_or(u64::MAX),
-        last_checked: now,
-        last_modified: fetched.last_modified.clone(),
-        etag: fetched.etag.clone(),
-    };
-    // A failed store still gives the grid: the download is good, only the cache is not updated.
-    let _stored = cache.store(url, &fetched.body, &props, settings.max_bytes);
-    Some(fetched.body)
 }
 
 /// Remove the database and its journal files (`proj_grid_cache_clear`).

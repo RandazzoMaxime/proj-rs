@@ -12,10 +12,10 @@ portée, le reste listé ; **écart** = pas de test, cause exacte donnée.
 Le port de la couche réseau est `src/network.rs` (`pub(crate)`) et la façade
 `src/proj.rs` (`ProjBuilder`). Ce qui existe : activation du réseau
 (`enable_network`, `PROJ_NETWORK`, `proj.ini`), `cdn_endpoint` et
-`PROJ_NETWORK_ENDPOINT` (lus à la construction du builder), téléchargement d'une
-grille entière par `GET` simple (`http_get`, redirections suivies, pas de `Range`),
-cache en fichiers dans le répertoire utilisateur (`grid_cache_enable`,
-`set_user_writable_directory`), `set_file_finder`, et, dans ce lot :
+`PROJ_NETWORK_ENDPOINT` (lus à la construction du builder), un client intégré qui lit
+par plages comme le client curl de PROJ (`network_builtin.rs` : `Range`, redirections,
+`Content-Range` exigé, nouvelles tentatives), les morceaux gardés dans `cache.db`
+(`grid_cache_enable`, `set_user_writable_directory`), `set_file_finder`, et, dans ce lot :
 
 - `NetworkCallbacks` (trait, `NetworkHandle`, `OpenReply`, `NetworkError`),
   enregistrable par `ProjBuilder::set_network_callbacks`. Une grille absente est
@@ -25,8 +25,9 @@ cache en fichiers dans le répertoire utilisateur (`grid_cache_enable`,
   PROJ : `open` puis `read_range` sur le même handle, gardé jusqu'à la destruction du
   `Proj`, et un cache de morceaux par contexte (`src/network_chunks.rs`,
   `src/projections/gridshift/tiles.rs`). La création ne lit que le premier morceau, comme
-  PROJ, y compris pour la grille déflatée du CDN. Les autres grilles sont lues entières, par
-  morceaux de 16384 octets jusqu'à la taille du `Content-Range` (`fetch_with_callbacks`).
+  PROJ, y compris pour la grille déflatée du CDN. Les autres grilles sont lues entières, en
+  une lecture, comme PROJ lit un fichier entier (`fetch_with_callbacks`, `read_whole`). Sans
+  callbacks de l'application, le client intégré prend leur place (voir plus haut).
 - Erreur typée au calcul : `ProjError::Network` (PROJ `PROJ_ERR_OTHER_NETWORK_ERROR`)
   quand la grille d'un candidat de paire de CRS est absente et que le réseau ne la
   donne pas. Le point s'arrête là, sans nouvelle tentative (`trans.cpp:284`).

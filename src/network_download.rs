@@ -5,15 +5,14 @@
 //! (size, `Last-Modified`, `ETag`, time of the last check) goes into the
 //! `downloaded_file_properties` table of `cache.db`. The record is what the check compares.
 //!
-//! Where this differs from PROJ, the reason is in `docs/PORTING-network.md`: the built-in client
-//! sends no `Range`, so the check and the download each read the whole file in one request.
+//! The check and the download go through the network functions, the application's or the built-in
+//! client, as PROJ's go through `ctx->networking`: ranged reads, no chunk cache.
 
 use std::io::Write;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::network::{self, GridContext};
-use crate::network_cache::{unix_now, DiskChunkCache, Fetched, FileProperties};
-use crate::network_chunks::RemoteFile;
+use crate::network_cache::{unix_now, DiskChunkCache, FileProperties};
 use crate::proj::{ProjError, TtlSetting};
 
 /// `FULL_FILE_CHUNK_SIZE` of PROJ: the piece a download is written in, and the step of its progress.
@@ -59,21 +58,31 @@ pub(crate) fn is_download_needed(
     {
         return Ok(false);
     }
-    let Some(probe) = network::http_probe(&url, "bytes=0-0") else {
+    let Some(probe) = probe_properties(ctx, &url) else {
         return Ok(false);
     };
-    let Some(size) = probe.size else {
-        return Ok(false);
-    };
-    if size != record.size
-        || probe.last_modified != record.last_modified
-        || probe.etag != record.etag
-    {
+    let (size, last_modified, etag) = probe;
+    if size != record.size || last_modified != record.last_modified || etag != record.etag {
         return Ok(true);
     }
     // The file is current: only the time of the check moves. PROJ answers `false` either way.
     let _checked = cache.set_download_last_checked(&url, unix_now());
     Ok(false)
+}
+
+/// The size and the validators of `url`, from a one-byte `open` (`open(url, 0, 1)` of PROJ's check).
+/// `None` when the open fails or its reply has no `Content-Range`.
+fn probe_properties(ctx: &GridContext, url: &str) -> Option<(u64, String, String)> {
+    let callbacks = ctx.reading_callbacks()?;
+    let imp = callbacks.imp();
+    let handle = imp.open(url, 0, 1).ok()?.handle;
+    let size = imp
+        .header(handle, "Content-Range")
+        .and_then(|value| network::content_range_total(&value));
+    let last_modified = imp.header(handle, "Last-Modified").unwrap_or_default();
+    let etag = imp.header(handle, "ETag").unwrap_or_default();
+    imp.close(handle);
+    Some((size?, last_modified, etag))
 }
 
 /// `proj_download_file`: downloads `name` into the user-writable directory, unless
@@ -122,8 +131,10 @@ pub(crate) fn download(
     store_record(ctx, &url, &record)
 }
 
-/// The record of a download: the file is written into `out` in pieces, through the callbacks when
-/// the application set some, else with one request of the built-in client.
+/// The record of a download, as `proj_download_file`: the file is written into `out` in pieces,
+/// one `open` then a `read_range` per piece, on the network functions themselves (the
+/// application's, else the built-in client), not through the chunk cache. The first reply gives
+/// the size (`Content-Range`) and the validators, or the download fails.
 fn write_download(
     ctx: &GridContext,
     url: &str,
@@ -131,45 +142,33 @@ fn write_download(
     report: &mut dyn FnMut(f64) -> bool,
 ) -> Result<FileProperties, ProjError> {
     let chunk = chunk_size();
+    let callbacks = ctx.reading_callbacks().ok_or(ProjError::Network)?;
+    let imp = callbacks.imp();
+    let opened = imp
+        .open(url, 0, usize_of(chunk))
+        .map_err(|_| ProjError::Network)?;
+    let handle = opened.handle;
     // PROJ takes the time of the download after the first reply, before the headers.
     let checked = unix_now();
-    match ctx.callbacks() {
-        Some(callbacks) => {
-            let mut remote = RemoteFile::new(url, callbacks);
-            let first = remote
-                .read_at(0, usize_of(chunk))
-                .map_err(|_| ProjError::Network)?;
-            let total = remote.size().ok_or(ProjError::Network)?;
-            let (last_modified, etag) = remote.validators();
-            copy_pieces(out, total, first, chunk, report, |offset, len| {
-                remote.read_at(offset, usize_of(len)).ok()
-            })?;
-            Ok(FileProperties {
-                size: total,
-                last_checked: checked,
-                last_modified,
-                etag,
-            })
-        }
-        None => {
-            let Fetched {
-                body,
-                last_modified,
-                etag,
-            } = network::http_get_validated(url).ok_or(ProjError::Network)?;
-            let total = u64::try_from(body.len()).unwrap_or(u64::MAX);
-            let first = slice(&body, 0, chunk.min(total)).ok_or(ProjError::Network)?;
-            copy_pieces(out, total, first, chunk, report, |offset, len| {
-                slice(&body, offset, len)
-            })?;
-            Ok(FileProperties {
-                size: total,
-                last_checked: checked,
-                last_modified,
-                etag,
-            })
-        }
-    }
+    let written = (|| {
+        let total = imp
+            .header(handle, "Content-Range")
+            .and_then(|value| network::content_range_total(&value))
+            .ok_or(ProjError::Network)?;
+        let last_modified = imp.header(handle, "Last-Modified").unwrap_or_default();
+        let etag = imp.header(handle, "ETag").unwrap_or_default();
+        copy_pieces(out, total, opened.data, chunk, report, |offset, len| {
+            imp.read_range(handle, offset, usize_of(len)).ok()
+        })?;
+        Ok(FileProperties {
+            size: total,
+            last_checked: checked,
+            last_modified,
+            etag,
+        })
+    })();
+    imp.close(handle);
+    written
 }
 
 /// Writes the `total` bytes of a file: `first` is its first piece, and `read(offset, len)` gives
@@ -212,13 +211,6 @@ fn fraction(written: u64, total: u64) -> f64 {
 fn write_piece(out: &mut dyn Write, bytes: &[u8]) -> Result<u64, ProjError> {
     out.write_all(bytes).map_err(|_| ProjError::Path)?;
     Ok(u64::try_from(bytes.len()).unwrap_or(u64::MAX))
-}
-
-/// The bytes `offset..offset + len` of `body`, when they are all there.
-fn slice(body: &[u8], offset: u64, len: u64) -> Option<Vec<u8>> {
-    let start = usize::try_from(offset).ok()?;
-    let end = start.checked_add(usize::try_from(len).ok()?)?;
-    body.get(start..end).map(<[u8]>::to_vec)
 }
 
 /// Stores the record of `url` in `cache.db`, replacing the one it had (PROJ's select, then update

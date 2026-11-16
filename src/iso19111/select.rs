@@ -21,6 +21,7 @@ use super::factory::{
     operation_extent, sort_extents, AlternativeGridNames, GridAvailabilityUse, GridDescription,
     GridInfo, SortExtents, SpatialCriterion,
 };
+use super::introsort::sorted_indices;
 use super::model::{
     Axis, BoundingBox, CoordinateOperation, Crs, EllipsoidalCS, GeodeticCRS,
     GeodeticReferenceFrame, GeographicCRS, ObjectDomain, Parameter, ParameterValue, PrimeMeridian,
@@ -1188,21 +1189,20 @@ pub(crate) fn sort_candidates(
         .collect()
 }
 
-/// Insertion sort on `precedes`. Each candidate is placed before the first
-/// element it precedes, so ties keep their registry order and the result never
-/// depends on a comparison that is not a total order.
+/// `std::sort(res.begin(), res.end(), SortFunction(map))`: the permutation of libstdc++ on
+/// `precedes`, whose ties come out in that algorithm's order, not in the registry order.
 fn sort(
     candidates: Vec<(CoordinateOperation, Characteristics)>,
 ) -> Vec<(CoordinateOperation, Characteristics)> {
-    let mut sorted: Vec<(CoordinateOperation, Characteristics)> = Vec::new();
-    for candidate in candidates {
-        let at = sorted
-            .iter()
-            .position(|other| precedes(&candidate.1, &other.1))
-            .unwrap_or(sorted.len());
-        sorted.insert(at, candidate);
-    }
-    sorted
+    let order = sorted_indices(candidates.len(), |left, right| {
+        precedes(&candidates[left].1, &candidates[right].1)
+    });
+    let mut slots: Vec<Option<(CoordinateOperation, Characteristics)>> =
+        candidates.into_iter().map(Some).collect();
+    order
+        .into_iter()
+        .filter_map(|index| slots[index].take())
+        .collect()
 }
 
 /// What `proj_create_crs_to_crs` makes of a pair under a [`BestPolicy`].
@@ -1583,6 +1583,9 @@ pub(crate) fn facade_candidates(
     let target_crs = create_from_user_input(target, &db)?;
     let mut context = CoordinateOperationContext::create(&db, "");
     context.set_spatial_criterion(SpatialCriterion::PartialIntersection);
+    // The warning policy of `proj_create_crs_to_crs` asks KNOWN_AVAILABLE (`crs_to_crs.cpp:570`):
+    // an operation whose grid is neither known to `proj.db` nor found is discarded by the query.
+    context.set_grid_availability_use(GridAvailabilityUse::KnownAvailable);
     let registered = CoordinateOperationFactory::create().create_operations(
         &source_crs,
         &target_crs,
@@ -1821,10 +1824,12 @@ fn single_operation(
     })
 }
 
-/// A grid a pipeline can be built without: on disk, or optional (`+geoidgrids=@name`), which PROJ
-/// skips when it is missing.
+/// A grid a pipeline can be built without: on disk, on the network when it is on, or optional
+/// (`+geoidgrids=@name`), which PROJ skips when it is missing.
 fn grid_serves(grid: &str) -> bool {
-    gridpath::available(grid) || grid.starts_with('@')
+    gridpath::available(grid)
+        || grid.starts_with('@')
+        || crate::network::open_remote_grid(grid).is_some()
 }
 
 /// `createOperations` with DISCARD: the candidates whose grids are on disk, in the same order.
@@ -2018,7 +2023,7 @@ impl Preparer<'_> {
                 items.push(Item {
                     name: characteristics.name.clone(),
                     operation: definition.as_deref().and_then(|text| {
-                        crate::network::with_deferred_grids(|| Operation::create(text)).ok()
+                        crate::network::with_candidate_grids(|| Operation::create(text)).ok()
                     }),
                     definition: definition.clone(),
                     instantiable,

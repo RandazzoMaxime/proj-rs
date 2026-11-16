@@ -1,30 +1,46 @@
-//! PROJ `test/unit/test_network.cpp`, against a local server.
+//! PROJ `test/unit/test_network.cpp`, against a local server that answers `Range` requests, as the
+//! CDN does. The built-in client reads a grid by ranges, as PROJ's curl client.
 //!
 //! Nothing in this file calls `https://cdn.proj.org`.
 
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::net::TcpListener;
+use std::path::{Path, PathBuf};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use proj_rs::ProjBuilder;
 
 mod common;
+#[path = "net_support/mod.rs"]
+#[expect(dead_code, reason = "this file serves with spawn only")]
+mod net_support;
+
+use net_support::{LocalServer, Route};
+
+const GRID: &str = "/proj_rs_missing_hgrid.tif";
+const NOCACHE: &str = "/proj_rs_missing_hgrid_nocache.tif";
+const BAD: &str = "/proj_rs_bad_grid.tif";
 
 #[test]
 fn missing_grid_is_fetched_only_when_the_network_is_on() {
     common::use_fixture_search_path();
     let fixture = std::fs::read(vendored_hgrid()).expect("fixture");
-    let server = Server::spawn(fixture.clone());
-    assert!(!server.url.contains("cdn.proj.org"), "{}", server.url);
+    let route = |path, body: &[u8]| Route {
+        path,
+        status: 200,
+        body: body.to_vec(),
+    };
+    let server = LocalServer::spawn(vec![
+        route(GRID, &fixture),
+        route(NOCACHE, &fixture),
+        route(BAD, b"not-a-grid"),
+    ]);
     let cache = TempDir::new("cache");
     let definition = "+proj=gridshift +grids=proj_rs_missing_hgrid.tif";
 
     let mut off = ProjBuilder::new();
-    off.set_url_endpoint(&server.url).expect("endpoint");
+    off.set_url_endpoint(server.url()).expect("endpoint");
     off.set_user_writable_directory(&cache.0).expect("cache");
     off.grid_cache_enable(true).expect("cache on");
     assert!(!off.network_enabled());
@@ -32,28 +48,19 @@ fn missing_grid_is_fetched_only_when_the_network_is_on() {
         off.proj(definition).is_err(),
         "network off keeps the missing-file error"
     );
-    assert_eq!(server.hits(), 0);
-    assert!(!cache.0.join("proj_rs_missing_hgrid.tif").is_file());
+    assert!(server.requests().is_empty());
 
-    let mut on = ProjBuilder::new();
-    on.enable_network(true).expect("enable");
-    assert_eq!(on.enable_network(true).expect("still on"), 1);
-    on.set_url_endpoint(&server.url).expect("endpoint");
-    on.set_user_writable_directory(&cache.0).expect("cache");
-    on.grid_cache_enable(true).expect("cache on");
+    let on = network_builder(server.url(), &cache.0);
     assert!(on.network_enabled());
     let fetched = on.proj(definition).expect("downloaded grid");
     assert!(fetched.network_enabled());
-    assert_eq!(fetched.get_url_endpoint().expect("endpoint"), server.url);
-    assert_eq!(server.hits(), 1);
-    assert_eq!(
-        server.paths(),
-        vec!["/proj_rs_missing_hgrid.tif".to_owned()]
-    );
+    assert_eq!(fetched.get_url_endpoint().expect("endpoint"), server.url());
+    // The grid is smaller than one 16 KiB chunk: one ranged request reads it all.
+    assert_eq!(server.requests(), vec![GRID.to_owned()]);
     // The grid is in the chunk database `cache.db`, not a file of the directory, as in PROJ 9.9.0.
     assert!(!cache.0.join("proj_rs_missing_hgrid.tif").is_file());
     let database = rusqlite::Connection::open(cache.0.join("cache.db")).expect("chunk database");
-    let url = format!("{}/proj_rs_missing_hgrid.tif", server.url);
+    let url = format!("{}{GRID}", server.url());
     let size: i64 = database
         .query_row(
             "SELECT fileSize FROM properties WHERE url = ?1",
@@ -72,36 +79,64 @@ fn missing_grid_is_fetched_only_when_the_network_is_on() {
     assert!((from_cache.0 - from_disk.0).abs() < 1e-12);
     assert!((from_cache.1 - from_disk.1).abs() < 1e-12);
 
-    let mut again = ProjBuilder::new();
-    again.enable_network(true).expect("enable");
-    again.set_url_endpoint(&server.url).expect("endpoint");
-    again.set_user_writable_directory(&cache.0).expect("cache");
-    again.grid_cache_enable(true).expect("cache on");
-    again.proj(definition).expect("cache hit");
-    assert_eq!(server.hits(), 1, "a cached file is not fetched again");
+    network_builder(server.url(), &cache.0)
+        .proj(definition)
+        .expect("cache hit");
+    assert_eq!(
+        server.requests().len(),
+        1,
+        "a cached grid is not fetched again"
+    );
 
-    let mut bad = ProjBuilder::new();
-    bad.enable_network(true).expect("enable");
-    bad.set_url_endpoint(&server.url).expect("endpoint");
-    bad.set_user_writable_directory(&cache.0).expect("cache");
     assert!(
-        bad.proj("+proj=gridshift +grids=proj_rs_bad_grid.tif")
+        network_builder(server.url(), &cache.0)
+            .proj("+proj=gridshift +grids=proj_rs_bad_grid.tif")
             .is_err(),
         "a download that is not a grid is not a coordinate"
     );
 
-    let mut uncached = ProjBuilder::new();
-    uncached.enable_network(true).expect("enable");
-    uncached.set_url_endpoint(&server.url).expect("endpoint");
-    uncached
-        .set_user_writable_directory(&cache.0)
-        .expect("cache");
+    let mut uncached = network_builder(server.url(), &cache.0);
     uncached.grid_cache_enable(false).expect("cache off");
     uncached
         .proj("+proj=gridshift +grids=proj_rs_missing_hgrid_nocache.tif")
         .expect("fetched without a cache file");
-    assert!(!cache.0.join("proj_rs_missing_hgrid_nocache.tif").is_file());
-    assert!(server.hits() > 1);
+    assert!(server.requests().iter().any(|path| path == NOCACHE));
+}
+
+/// A server that ignores `Range` sends no `Content-Range`: PROJ's open fails on that
+/// (`NetworkFile::get_props_from_headers`), and so does this one.
+#[test]
+fn server_without_ranges_is_not_read() {
+    let fixture = std::fs::read(vendored_hgrid()).expect("fixture");
+    let server = Scripted::spawn(vec![Reply::Whole(fixture)]);
+    let cache = TempDir::new("whole");
+    assert!(network_builder(&server.url, &cache.0)
+        .proj("+proj=gridshift +grids=proj_rs_whole.tif")
+        .is_err());
+    assert_eq!(server.finish(), 1);
+}
+
+/// A `503` is retried after a wait, as PROJ's curl client does (`GetNewRetryDelay`: 500 ms
+/// doubled, plus up to a quarter at random); a `404` is not.
+#[test]
+fn transient_error_is_retried() {
+    let fixture = std::fs::read(vendored_hgrid()).expect("fixture");
+    let server = Scripted::spawn(vec![Reply::Status(503), Reply::Ranged(fixture)]);
+    let cache = TempDir::new("retry");
+    let start = Instant::now();
+    network_builder(&server.url, &cache.0)
+        .proj("+proj=gridshift +grids=proj_rs_retry.tif")
+        .expect("read after the retry");
+    let waited = start.elapsed();
+    assert_eq!(server.finish(), 2);
+    assert!(waited >= Duration::from_millis(1000), "{waited:?}");
+
+    let server = Scripted::spawn(vec![Reply::Status(404)]);
+    let cache = TempDir::new("gone");
+    assert!(network_builder(&server.url, &cache.0)
+        .proj("+proj=gridshift +grids=proj_rs_gone.tif")
+        .is_err());
+    assert_eq!(server.finish(), 1);
 }
 
 #[test]
@@ -117,12 +152,108 @@ fn search_path_opens_a_grid_without_the_network() {
     builder.proj(&definition).expect("search path");
 }
 
+fn network_builder(url: &str, cache: &Path) -> ProjBuilder {
+    let mut builder = ProjBuilder::new();
+    assert_eq!(builder.enable_network(true).expect("enable"), 1);
+    builder.set_url_endpoint(url).expect("endpoint");
+    builder.set_user_writable_directory(cache).expect("cache");
+    builder.grid_cache_enable(true).expect("cache on");
+    builder
+}
+
 fn vendored_hgrid() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join("gie")
         .join("tests")
         .join("test_hgrid_with_subgrid.tif")
+}
+
+/// One reply of a [`Scripted`] server.
+enum Reply {
+    /// The status, with no body.
+    Status(u16),
+    /// `200` and the whole body, whatever range was asked.
+    Whole(Vec<u8>),
+    /// `206`, the asked range of the body and its `Content-Range`.
+    Ranged(Vec<u8>),
+}
+
+/// A server that sends its replies in order, one per connection, then stops.
+struct Scripted {
+    url: String,
+    handle: JoinHandle<usize>,
+}
+
+impl Scripted {
+    fn spawn(replies: Vec<Reply>) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        listener.set_nonblocking(true).expect("non-blocking");
+        let url = format!(
+            "http://127.0.0.1:{}",
+            listener.local_addr().expect("addr").port()
+        );
+        let handle = thread::spawn(move || {
+            let mut served = 0;
+            let deadline = Instant::now() + Duration::from_secs(20);
+            let mut replies = replies.into_iter();
+            while Instant::now() < deadline {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    thread::sleep(Duration::from_millis(5));
+                    continue;
+                };
+                let Some(reply) = replies.next() else {
+                    break;
+                };
+                let _ = stream.set_nonblocking(false);
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+                let mut buffer = [0_u8; 4096];
+                let read = stream.read(&mut buffer).unwrap_or(0);
+                let head = String::from_utf8_lossy(&buffer[..read]).into_owned();
+                served += 1;
+                let _ = stream.write_all(&answer(&reply, &head));
+                if replies.len() == 0 {
+                    break;
+                }
+            }
+            served
+        });
+        Self { url, handle }
+    }
+
+    /// The number of requests served.
+    fn finish(self) -> usize {
+        self.handle.join().expect("server thread")
+    }
+}
+
+fn answer(reply: &Reply, head: &str) -> Vec<u8> {
+    let (status, extra, body) = match reply {
+        Reply::Status(status) => (*status, String::new(), Vec::new()),
+        Reply::Whole(body) => (200, String::new(), body.clone()),
+        Reply::Ranged(body) => {
+            let (first, last) = range(head).expect("a range request");
+            let last = last.min(body.len() - 1);
+            let header = format!("Content-Range: bytes {first}-{last}/{}\r\n", body.len());
+            (206, header, body[first..=last].to_vec())
+        }
+    };
+    let mut out = format!(
+        "HTTP/1.1 {status} X\r\nContent-Length: {}\r\nConnection: close\r\n{extra}\r\n",
+        body.len()
+    )
+    .into_bytes();
+    out.extend(body);
+    out
+}
+
+fn range(head: &str) -> Option<(usize, usize)> {
+    let value = head.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.eq_ignore_ascii_case("range").then(|| value.trim())
+    })?;
+    let (first, last) = value.strip_prefix("bytes=")?.split_once('-')?;
+    Some((first.parse().ok()?, last.parse().ok()?))
 }
 
 struct TempDir(PathBuf);
@@ -145,107 +276,4 @@ impl Drop for TempDir {
     fn drop(&mut self) {
         let _removed = std::fs::remove_dir_all(&self.0);
     }
-}
-
-struct Server {
-    url: String,
-    hits: Arc<AtomicUsize>,
-    paths: Arc<Mutex<Vec<String>>>,
-    shutdown: Arc<AtomicBool>,
-    handle: Option<JoinHandle<()>>,
-}
-
-impl Server {
-    fn spawn(body: Vec<u8>) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-        let port = listener.local_addr().expect("addr").port();
-        let hits = Arc::new(AtomicUsize::new(0));
-        let paths = Arc::new(Mutex::new(Vec::new()));
-        let shutdown = Arc::new(AtomicBool::new(false));
-        let hits_thread = Arc::clone(&hits);
-        let paths_thread = Arc::clone(&paths);
-        let shutdown_thread = Arc::clone(&shutdown);
-        let handle = thread::spawn(move || {
-            serve(listener, body, hits_thread, paths_thread, shutdown_thread);
-        });
-        Self {
-            url: format!("http://127.0.0.1:{port}"),
-            hits,
-            paths,
-            shutdown,
-            handle: Some(handle),
-        }
-    }
-
-    fn hits(&self) -> usize {
-        self.hits.load(Ordering::SeqCst)
-    }
-
-    fn paths(&self) -> Vec<String> {
-        self.paths
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .clone()
-    }
-}
-
-impl Drop for Server {
-    fn drop(&mut self) {
-        self.shutdown.store(true, Ordering::SeqCst);
-        if let Ok(mut stream) = TcpStream::connect(self.url.trim_start_matches("http://")) {
-            let _ = stream.write_all(b"GET /shutdown HTTP/1.0\r\n\r\n");
-        }
-        if let Some(handle) = self.handle.take() {
-            let _joined = handle.join();
-        }
-    }
-}
-
-fn serve(
-    listener: TcpListener,
-    body: Vec<u8>,
-    hits: Arc<AtomicUsize>,
-    paths: Arc<Mutex<Vec<String>>>,
-    shutdown: Arc<AtomicBool>,
-) {
-    listener.set_nonblocking(false).expect("blocking listener");
-    while !shutdown.load(Ordering::SeqCst) {
-        let Ok(mut stream) = listener.accept().map(|(stream, _)| stream) else {
-            break;
-        };
-        let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
-        let mut buffer = [0_u8; 2048];
-        let read = stream.read(&mut buffer).unwrap_or(0);
-        let request = String::from_utf8_lossy(&buffer[..read]);
-        if shutdown.load(Ordering::SeqCst) {
-            break;
-        }
-        let path = request.split_whitespace().nth(1).unwrap_or("").to_owned();
-        if !request.starts_with("GET ") {
-            continue;
-        }
-        hits.fetch_add(1, Ordering::SeqCst);
-        if let Ok(mut guard) = paths.lock() {
-            guard.push(path.clone());
-        }
-        if path == "/proj_rs_bad_grid.tif" {
-            let payload = b"not-a-grid";
-            let _ = write_response(&mut stream, 200, payload);
-        } else if path.ends_with(".tif") {
-            let _ = write_response(&mut stream, 200, &body);
-        } else {
-            let _ = write_response(&mut stream, 404, b"");
-        }
-    }
-}
-
-fn write_response(stream: &mut TcpStream, status: u16, body: &[u8]) -> std::io::Result<()> {
-    let reason = if status == 200 { "OK" } else { "Not Found" };
-    let header = format!(
-        "HTTP/1.1 {status} {reason}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        body.len()
-    );
-    stream.write_all(header.as_bytes())?;
-    stream.write_all(body)?;
-    stream.flush()
 }

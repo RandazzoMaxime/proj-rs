@@ -24,6 +24,9 @@ fn main() {
         .include(&src_dir)
         .std("c11")
         .opt_level(2)
+        // No fused multiply-add: clang fuses `a * b + c` by default on aarch64, and the
+        // reference PROJ (x86-64) does not, so the geodesics would differ in the last bits.
+        .flag_if_supported("-ffp-contract=off")
         .warnings(false)
         .compile("geodesic");
 
@@ -34,7 +37,8 @@ fn main() {
         println!("cargo:rustc-link-lib=dylib=proj");
         println!("cargo:rustc-cfg=link_libproj");
         if std::env::var("CARGO_CFG_TARGET_FAMILY").is_ok_and(|family| family == "unix") {
-            println!("cargo:rustc-link-arg-bins=-Wl,-rpath,{}", dir.display());
+            // Every linked target, tests included: macOS strips the `DYLD_*` paths cargo sets.
+            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", dir.display());
         }
     }
 }

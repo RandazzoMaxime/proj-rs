@@ -21,6 +21,7 @@ mod factory;
 mod geodetic_ops;
 mod identify;
 mod insert;
+mod introsort;
 mod json;
 mod json_read;
 mod metadata;

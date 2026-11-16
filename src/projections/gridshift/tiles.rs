@@ -311,6 +311,7 @@ pub(super) struct LazyIfd {
 
 impl LazyIfd {
     pub(super) fn new(file: Arc<Mutex<RemoteFile>>, image: ImageTiles) -> Result<Self, ()> {
+        let image = chop_single_strip(image)?;
         let geo = Geometry::new(
             image.size,
             image.tile,
@@ -447,6 +448,52 @@ impl LazyIfd {
         }
         Ok(out)
     }
+}
+
+/// libtiff's size of a strip it cuts from a single uncompressed strip (`STRIP_SIZE_DEFAULT`).
+const STRIP_SIZE_DEFAULT: u64 = 8192;
+
+/// The strips libtiff reads of an image stored as one uncompressed chunky strip: it cuts the strip
+/// into strips of about 8 KiB, whole rows (`ChopUpSingleUncompressedStrip`, libtiff 4.7). PROJ reads
+/// a point's strip through libtiff, so the bytes asked of a remote file are the same.
+fn chop_single_strip(mut image: ImageTiles) -> Result<ImageTiles, ()> {
+    let &[(offset, count)] = image.places.as_slice() else {
+        return Ok(image);
+    };
+    let single = image.layout == Layout::Strips
+        && image.storage == Storage::Chunky
+        && matches!(image.reading, Reading::Raw);
+    if !single {
+        return Ok(image);
+    }
+    let row_bits = u64::from(image.size.0)
+        .checked_mul(u64::try_from(image.spp).map_err(|_| ())?)
+        .and_then(|samples| samples.checked_mul(u64::from(image.bits)))
+        .ok_or(())?;
+    let row_bytes = row_bits.div_ceil(8);
+    if row_bytes == 0 {
+        return Ok(image);
+    }
+    let rows = (STRIP_SIZE_DEFAULT / row_bytes).max(1);
+    let strip_bytes = rows * row_bytes;
+    let rows = u32::try_from(rows).map_err(|_| ())?;
+    if rows >= image.tile.1 {
+        return Ok(image);
+    }
+    let strips = image.size.1.div_ceil(rows);
+    let mut left = count;
+    let mut at = offset;
+    image.places = (0..strips)
+        .map(|_| {
+            let bytes = strip_bytes.min(left);
+            let place = (if bytes == 0 { 0 } else { at }, bytes);
+            at += bytes;
+            left -= bytes;
+            place
+        })
+        .collect();
+    image.tile.1 = rows;
+    Ok(image)
 }
 
 thread_local! {

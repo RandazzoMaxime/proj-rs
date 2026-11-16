@@ -4,17 +4,19 @@
 //! east, north, up. The ENU to geocentric rotation and the reverse iteration
 //! are `pj_deformation_get_grid_shift` and `pj_deformation_reverse_shift`.
 
+use super::deformation_generic;
 use super::grid::Grid;
 use crate::ellipsoid::Ellipsoid;
 use crate::engine::{
     cartesian_to_geodetic, Coord, CreateError, Frame, IoKind, Params, Step, TransformError,
 };
+use crate::projections::GenericShiftGridSet;
 
 const TOL: f64 = 1e-8;
 const REL: f64 = 1e-5;
 
 enum Grids {
-    Generic(Vec<Grid>),
+    Generic(Vec<GenericShiftGridSet>),
     Split {
         horizontal: Vec<Grid>,
         vertical: Vec<Grid>,
@@ -43,11 +45,13 @@ pub(super) fn build(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, Cre
         return Err(CreateError::MissingArgument("grids"));
     }
     let grids = if has_grids {
-        Grids::Generic(load_list(params.text("grids").unwrap_or(""), true)?)
+        Grids::Generic(deformation_generic::load(
+            params.text("grids").unwrap_or(""),
+        )?)
     } else {
         Grids::Split {
-            horizontal: load_list(params.text("xy_grids").unwrap_or(""), false)?,
-            vertical: load_list(params.text("z_grids").unwrap_or(""), false)?,
+            horizontal: load_list(params.text("xy_grids").unwrap_or(""))?,
+            vertical: load_list(params.text("z_grids").unwrap_or(""))?,
         }
     };
     let dt = params.number("dt")?;
@@ -66,7 +70,8 @@ pub(super) fn build(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, Cre
     }))
 }
 
-fn load_list(text: &str, generic: bool) -> Result<Vec<Grid>, CreateError> {
+/// The `xy_grids` or `z_grids` list, read whole.
+fn load_list(text: &str) -> Result<Vec<Grid>, CreateError> {
     let mut grids = Vec::new();
     if text.is_empty() {
         return Err(CreateError::MissingArgument("grids"));
@@ -87,9 +92,6 @@ fn load_list(text: &str, generic: bool) -> Result<Vec<Grid>, CreateError> {
                     // A bare name that is not one stays a missing-grid error.
                     return Err(CreateError::IllegalValue("grids"));
                 };
-                if generic && grid.samples < 3 {
-                    return Err(CreateError::IllegalValue("grids"));
-                }
                 grids.push(grid);
             }
             Err(CreateError::IllegalValue("file") | CreateError::Unsupported(_)) if optional => {}
@@ -152,7 +154,7 @@ impl Deformation {
     fn shift(&self, coord: Coord) -> Result<(f64, f64, f64), TransformError> {
         let (lam, phi, _) = cartesian_to_geodetic(self.earth, coord.x, coord.y, coord.z);
         let (east, north, up) = match &self.grids {
-            Grids::Generic(grids) => sample_generic(grids, lam, phi)?,
+            Grids::Generic(sets) => deformation_generic::sample(sets, lam, phi)?,
             Grids::Split {
                 horizontal,
                 vertical,
@@ -196,104 +198,6 @@ fn reverse(step: &Deformation, input: Coord, dt: f64) -> Result<(f64, f64, f64),
         }
     }
     Ok((x, y, input.z - dt * z0))
-}
-
-fn sample_generic(grids: &[Grid], lam: f64, phi: f64) -> Result<(f64, f64, f64), TransformError> {
-    let grid = grids
-        .iter()
-        .find(|grid| grid.contains(lam, phi, 0.0))
-        .ok_or(TransformError::OutsideGrid)?;
-    let (east_i, north_i, up_i) = velocity_bands(grid)?;
-    bilinear3(grid, lam, phi, east_i, north_i, up_i)
-}
-
-fn velocity_bands(grid: &Grid) -> Result<(usize, usize, usize), TransformError> {
-    let mut east = 0usize;
-    let mut north = 1usize;
-    let mut up = 2usize;
-    for sample in 0..grid.samples {
-        match grid.description(sample) {
-            "east_velocity" => east = sample,
-            "north_velocity" => north = sample,
-            "up_velocity" => up = sample,
-            _ => {}
-        }
-    }
-    let unit = grid.unit(east);
-    if !unit.is_empty() && unit != "millimetres per year" {
-        return Err(TransformError::OutsideDomain);
-    }
-    Ok((east, north, up))
-}
-
-fn bilinear3(
-    grid: &Grid,
-    lam: f64,
-    phi: f64,
-    i0: usize,
-    i1: usize,
-    i2: usize,
-) -> Result<(f64, f64, f64), TransformError> {
-    if !grid.geographic {
-        return Err(TransformError::OutsideDomain);
-    }
-    let mut grid_x = (lam - grid.west) / grid.res_x;
-    if lam < grid.west {
-        grid_x = (lam + 2.0 * std::f64::consts::PI - grid.west) / grid.res_x;
-    } else if lam > grid.east {
-        grid_x = (lam - 2.0 * std::f64::consts::PI - grid.west) / grid.res_x;
-    }
-    let grid_y = (phi - grid.south) / grid.res_y;
-    let ix = trunc_i32(grid_x);
-    let iy = trunc_i32(grid_y);
-    if ix < 0 || iy < 0 {
-        return Err(TransformError::OutsideGrid);
-    }
-    let ix = index(ix)?;
-    let iy = index(iy)?;
-    if ix >= grid.width || iy >= grid.height {
-        return Err(TransformError::OutsideGrid);
-    }
-    let ix2 = (ix + 1).min(grid.width - 1);
-    let iy2 = (iy + 1).min(grid.height - 1);
-    let sample = |x, y, sample| -> Result<f64, TransformError> {
-        grid.value(x, y, sample)
-            .map(f64::from)
-            .ok_or(TransformError::OutsideGrid)
-    };
-    let corners = [
-        (
-            sample(ix, iy, i0)?,
-            sample(ix, iy, i1)?,
-            sample(ix, iy, i2)?,
-        ),
-        (
-            sample(ix2, iy, i0)?,
-            sample(ix2, iy, i1)?,
-            sample(ix2, iy, i2)?,
-        ),
-        (
-            sample(ix, iy2, i0)?,
-            sample(ix, iy2, i1)?,
-            sample(ix, iy2, i2)?,
-        ),
-        (
-            sample(ix2, iy2, i0)?,
-            sample(ix2, iy2, i1)?,
-            sample(ix2, iy2, i2)?,
-        ),
-    ];
-    let frct_x = grid_x - dim(ix);
-    let frct_y = grid_y - dim(iy);
-    let m10 = frct_x * (1.0 - frct_y);
-    let m11 = frct_x * frct_y;
-    let m01 = (1.0 - frct_x) * frct_y;
-    let m00 = (1.0 - frct_x) * (1.0 - frct_y);
-    Ok((
-        m00 * corners[0].0 + m10 * corners[1].0 + m01 * corners[2].0 + m11 * corners[3].0,
-        m00 * corners[0].1 + m10 * corners[1].1 + m01 * corners[2].1 + m11 * corners[3].1,
-        m00 * corners[0].2 + m10 * corners[1].2 + m01 * corners[2].2 + m11 * corners[3].2,
-    ))
 }
 
 fn sample_horizontal(grids: &[Grid], lam: f64, phi: f64) -> Result<(f64, f64), TransformError> {
@@ -496,7 +400,7 @@ fn enu_to_geocentric(lam: f64, phi: f64, east: f64, north: f64, up: f64) -> (f64
     )
 }
 
-fn index(value: i32) -> Result<usize, TransformError> {
+pub(super) fn index(value: i32) -> Result<usize, TransformError> {
     usize::try_from(value).map_err(|_| TransformError::OutsideGrid)
 }
 
@@ -505,7 +409,7 @@ fn index(value: i32) -> Result<usize, TransformError> {
     clippy::as_conversions,
     reason = "grid indices are small; truncation toward zero matches PROJ's C cast"
 )]
-fn trunc_i32(value: f64) -> i32 {
+pub(super) fn trunc_i32(value: f64) -> i32 {
     value as i32
 }
 
@@ -514,7 +418,7 @@ fn trunc_i32(value: f64) -> i32 {
     clippy::as_conversions,
     reason = "a grid index fits in the f64 mantissa"
 )]
-fn dim(value: usize) -> f64 {
+pub(super) fn dim(value: usize) -> f64 {
     value as f64
 }
 

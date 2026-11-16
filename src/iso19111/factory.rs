@@ -1418,6 +1418,11 @@ impl DatabaseContext {
             if let Some(path) = crate::gridpath::resolve(name) {
                 available = true;
                 full_name = path.to_string_lossy().into_owned();
+            } else if let Some(remote) = crate::network::open_remote_grid(name) {
+                // `resolveFullFilename` opens the grid with `open_resource_file`, which reads it
+                // from the network when it is on (factory.cpp:3441-3450, 3520-3522).
+                available = true;
+                full_name = remote;
             }
         }
         Ok(GridLookup {
@@ -7742,10 +7747,11 @@ fn datum_pivot_operations(
     if same_geodetic_datum_with_database(source, target, &context.db) {
         return Vec::new();
     }
-    let authority = AuthorityFactory::create(&context.db, context.authority.clone());
     let both_3d = axis_count(source) == 3 && axis_count(target) == 3;
-    let candidates_source = candidate_geodetic_crs(&authority, &source_datum);
-    let candidates_target = candidate_geodetic_crs(&authority, &target_datum);
+    let candidates_source =
+        candidate_geodetic_crs(&context.db, &context.authority, &source_datum, source);
+    let candidates_target =
+        candidate_geodetic_crs(&context.db, &context.authority, &target_datum, target);
     let factory = CoordinateOperationFactory::create();
     // `nIters = (isIGNF(sourceCRS) && isIGNF(targetCRS)) ? 1 : 3`
     // (coordinateoperationfactory.cpp:3425-3440): between two IGNF CRS PROJ does one single pass
@@ -7762,6 +7768,10 @@ fn datum_pivot_operations(
     pairs.sort_by_key(|(left, right)| {
         u8::from(!(left.name() == source.name() && right.name() == target.name()))
     });
+    // `res` of `createOperationsWithDatumPivot`: the results of a pair whose steps are all PROJ
+    // transformations do not end the search (`hasResultSetOnlyResultsWithPROJStep`), the next
+    // pairs add theirs.
+    let mut res: Vec<CoordinateOperation> = Vec::new();
     for (left, right) in pairs {
         let (left_leg, right_leg) = if both_3d {
             (
@@ -7829,8 +7839,9 @@ fn datum_pivot_operations(
             source,
             target,
         );
-        if !linked.is_empty() {
-            return linked;
+        res.extend(linked);
+        if !res.is_empty() && !only_results_with_proj_step(&res) {
+            return res;
         }
     }
     // `createTransformations` without `useOnlyDirectRegistryOp` (iterations 1 and 2): the full
@@ -7838,7 +7849,7 @@ fn datum_pivot_operations(
     // runs for identified CRS too: PROJ's ETRF2005 to ETRF2014 result (the ITRF chains, not the
     // ETRS89 pivot of the intermediate search) comes from here (test_projinfo.yaml#88).
     if context.has_guard(GUARD_DATUM_PIVOT) {
-        return Vec::new();
+        return res;
     }
     let kind = |crs: &Crs| match geographic_of(crs) {
         Some(geographic) if geographic.coordinate_system().axes().len() == 3 => 1,
@@ -7906,9 +7917,9 @@ fn datum_pivot_operations(
                 if iteration != 0 && (iteration == 1) != (kind(left) == kind(right)) {
                     continue;
                 }
-                let linked = linked_pair(left, right);
-                if !linked.is_empty() {
-                    return linked;
+                res.extend(linked_pair(left, right));
+                if !res.is_empty() && !only_results_with_proj_step(&res) {
+                    return res;
                 }
             }
         }
@@ -7920,14 +7931,32 @@ fn datum_pivot_operations(
                 if same_source_name && right.name() == target.name() {
                     continue;
                 }
-                let linked = linked_pair(left, right);
-                if !linked.is_empty() {
-                    return linked;
+                res.extend(linked_pair(left, right));
+                if !res.is_empty() && !only_results_with_proj_step(&res) {
+                    return res;
                 }
             }
         }
     }
-    Vec::new()
+    res
+}
+
+/// `hasResultSetOnlyResultsWithPROJStep` (coordinateoperationfactory.cpp:3136-3163): every
+/// operation is a concatenation with a step identified in the `PROJ` code space.
+fn only_results_with_proj_step(operations: &[CoordinateOperation]) -> bool {
+    operations.iter().all(|operation| {
+        let CoordinateOperation::Concatenated(concatenated) = operation else {
+            return false;
+        };
+        concatenated.steps.iter().any(|step| {
+            step.operation.identifiers().first().is_some_and(|id| {
+                matches!(
+                    id.code_space(),
+                    "PROJ" | "INVERSE(PROJ)" | "DERIVED_FROM(PROJ)"
+                )
+            })
+        })
+    })
 }
 
 /// `createOperationsFromDatabase` (`coordinateoperationfactory.cpp:4359-4387`): a two-dimensional
@@ -7999,11 +8028,10 @@ fn intermediate_through_candidates(
         .strip_prefix("Promoted to 3D from ")
         .and_then(|rest| rest.split(':').next())
         .unwrap_or("");
-    let authority = AuthorityFactory::create(&context.db, context.authority.clone());
     let source_axes = axis_count(source);
     let mut inner = context.clone();
     inner.guards |= GUARD_DATUM_INTERMEDIATE;
-    for candidate in candidate_geodetic_crs(&authority, &datum) {
+    for candidate in candidate_geodetic_crs(&context.db, &context.authority, &datum, source) {
         let ids = candidate.identifiers();
         let same_authority = originating.is_empty()
             || (ids.len() == 1 && ids[0].code_space() == originating)
@@ -8063,8 +8091,16 @@ fn datum_based_intermediate_operations(
             );
         }
     }
-    let source_id = identity_of(source);
-    let target_id = identity_of(target);
+    // `buildCRSIds` (coordinateoperationfactory.cpp:1775-1870): the identifiers of the CRS, or
+    // the one a CRS without identifier has by name, as the intermediate of `createOperationsToGeod`.
+    let source_ids = registry_identity(source, context);
+    let target_ids = registry_identity(target, context);
+    let source_id = source_ids
+        .as_ref()
+        .map_or(identity_of(source), |id| (id.0.as_str(), id.1.as_str()));
+    let target_id = target_ids
+        .as_ref()
+        .map_or(identity_of(target), |id| (id.0.as_str(), id.1.as_str()));
     if source_id.0.is_empty() || target_id.0.is_empty() || source_id == target_id {
         return Ok(Vec::new());
     }
@@ -9580,9 +9616,21 @@ fn is_ignf(crs: &Crs) -> bool {
         .is_some_and(|identifier| identifier.code_space() == "IGNF")
 }
 
-/// Non-deprecated geodetic CRS of the datum, in the database order.
-fn candidate_geodetic_crs(authority: &AuthorityFactory, datum: &(String, String)) -> Vec<Crs> {
-    authority
+/// `findCandidateGeodCRSForDatum` (coordinateoperationfactory.cpp:2041-2051): the non-deprecated
+/// geodetic CRS of the datum, in the database order. A CRS with one identifier whose authority is
+/// the one of the datum's identifier restricts the search to that authority
+/// (`createGeodeticCRSFromDatum`, factory.cpp:9990-10015).
+fn candidate_geodetic_crs(
+    db: &DatabaseContext,
+    context_authority: &str,
+    datum: &(String, String),
+    crs: &Crs,
+) -> Vec<Crs> {
+    let authority = match crs.identifiers() {
+        [only] if only.code_space() == datum.0 => datum.0.as_str(),
+        _ => context_authority,
+    };
+    AuthorityFactory::create(db, authority)
         .create_geodetic_crs_from_datum(&datum.0, &datum.1, "")
         .unwrap_or_default()
         .into_iter()

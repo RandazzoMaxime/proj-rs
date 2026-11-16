@@ -158,6 +158,13 @@ pub(crate) fn with_deferred_grids<T>(body: impl FnOnce() -> T) -> T {
     body()
 }
 
+/// Run `body` as PROJ creates a candidate of a CRS pair (`pj_obj_create`): a missing grid does
+/// not fail the candidate ([`with_deferred_grids`]), and, the network being on, a grid that can be
+/// downloaded is not opened before the first transform ([`with_grids_deferred_at_creation`]).
+pub(crate) fn with_candidate_grids<T>(body: impl FnOnce() -> T) -> T {
+    with_deferred_grids(|| with_grids_deferred_at_creation(body))
+}
+
 /// Whether a grid that is not on disk but can be downloaded is left for the first transform
 /// without any attempt at creation: PROJ's `defer_grid_opening`, which `pj_obj_create` sets when
 /// the network is on. Set by [`with_grids_deferred_at_creation`].
@@ -222,6 +229,9 @@ pub(crate) struct GridContext {
     file_finder: Option<FileFinder>,
     callbacks: Option<Callbacks>,
     file_api: Option<FileApiHandle>,
+    /// The built-in network functions of this context and its clones, with their chunks in
+    /// memory: a new builder starts empty, as PROJ after `proj_cleanup`.
+    builtin: Arc<OnceLock<Callbacks>>,
 }
 
 /// The application's file operations of a context, shared with its clones.
@@ -271,24 +281,11 @@ pub(crate) fn decide_download(name: &str) -> Option<Download> {
     Some(Download { url })
 }
 
-/// Download the grid [`decide_download`] selected. With the cache on, the grid is read from
-/// the chunk database when its entry is fresh, else downloaded and stored there
-/// ([`crate::network_cache::fetch_grid`]).
+/// Download the grid [`decide_download`] selected, read chunk by chunk through the network
+/// functions: the chunks come from memory, then `cache.db`, then the network, as PROJ reads them.
 pub(crate) fn fetch_missing(name: &str) -> Option<Vec<u8>> {
     let download = decide_download(name)?;
-    let ctx = context();
-    if let Some(callbacks) = &ctx.callbacks {
-        return fetch_with_callbacks(callbacks, &download.url);
-    }
-    if !ctx.cache_enabled {
-        return http_get(&download.url);
-    }
-    crate::network_cache::fetch_grid(
-        &ctx.cache_settings(),
-        &download.url,
-        || http_probe(&download.url, "bytes=0-16383"),
-        || http_get_validated(&download.url),
-    )
+    fetch_with_callbacks(&context().reading_callbacks()?, &download.url)
 }
 
 /// The URL of a grid that is not on disk and has no `proj.db` row, when the network can open it.
@@ -300,15 +297,11 @@ pub(crate) fn fetch_missing(name: &str) -> Option<Vec<u8>> {
 /// no `Range`. `None` when the network is off, the name is not a grid to fetch, or the open fails.
 pub(crate) fn open_remote_grid(name: &str) -> Option<String> {
     let download = decide_download(name)?;
-    match context().callbacks() {
-        Some(callbacks) => {
-            let mut file = crate::network_chunks::RemoteFile::new(&download.url, callbacks);
-            let opened = file.read_at(0, crate::network_chunks::CHUNK_SIZE).is_ok();
-            file.release();
-            opened.then_some(download.url)
-        }
-        None => http_get(&download.url).map(|_| download.url),
-    }
+    let callbacks = context().reading_callbacks()?;
+    let mut file = crate::network_chunks::RemoteFile::new(&download.url, callbacks);
+    let opened = file.read_at(0, crate::network_chunks::CHUNK_SIZE).is_ok();
+    file.release();
+    opened.then_some(download.url)
 }
 
 /// The whole file at `url`, read through the application's callbacks in 16384-byte chunks
@@ -504,6 +497,7 @@ impl GridContext {
             file_finder: None,
             callbacks: None,
             file_api: None,
+            builtin: Arc::new(OnceLock::new()),
         };
         let env_network = nonempty_env("PROJ_NETWORK");
         let env_endpoint = nonempty_env("PROJ_NETWORK_ENDPOINT");
@@ -593,9 +587,16 @@ impl GridContext {
         self.callbacks = Some(callbacks);
     }
 
-    /// The callbacks of this context, shared with its clones, when the application set some.
-    pub(crate) fn callbacks(&self) -> Option<Callbacks> {
-        self.callbacks.clone()
+    /// The network functions a remote file is read with: the application's, else, with the
+    /// network on, the built-in ones (PROJ's curl client when no callback is set).
+    pub(crate) fn reading_callbacks(&self) -> Option<Callbacks> {
+        self.callbacks.clone().or_else(|| {
+            self.enabled.then(|| {
+                self.builtin
+                    .get_or_init(crate::network_builtin::builtin_callbacks)
+                    .clone()
+            })
+        })
     }
 
     pub(crate) fn set_file_api(&mut self, api: Arc<dyn FileApi>) {
@@ -798,10 +799,6 @@ pub(crate) fn cache_file_name(name: &str) -> Option<String> {
     }
 }
 
-fn http_get(url: &str) -> Option<Vec<u8>> {
-    http_get_validated(url).map(|fetched| fetched.body)
-}
-
 /// A `GET` that follows the redirects, with the `Last-Modified` and `ETag` of the reply.
 pub(crate) fn http_get_validated(url: &str) -> Option<crate::network_cache::Fetched> {
     let reply = http_fetch(url, None)?;
@@ -816,30 +813,9 @@ pub(crate) fn http_get_validated(url: &str) -> Option<crate::network_cache::Fetc
     })
 }
 
-/// What PROJ reads from its one-byte request for a file (`proj_is_download_needed`, which calls
-/// `get_props_from_headers`): the total size from `Content-Range`, and the validators, empty when
-/// absent. A reply without `Content-Range` has no size.
-pub(crate) struct Probe {
-    pub(crate) size: Option<u64>,
-    pub(crate) last_modified: String,
-    pub(crate) etag: String,
-}
-
-/// The headers of the reply to `url` asked with `Range: range`, as PROJ asks a file's first
-/// chunk (`bytes=0-16383`) or first byte (`bytes=0-0`). `None` when the request fails.
-pub(crate) fn http_probe(url: &str, range: &str) -> Option<Probe> {
-    let reply = http_fetch(url, Some(range))?;
-    let validator = |name| header_value(&reply.headers, name).unwrap_or("").to_owned();
-    Some(Probe {
-        size: header_value(&reply.headers, "content-range").and_then(content_range_total),
-        last_modified: validator("last-modified"),
-        etag: validator("etag"),
-    })
-}
-
 /// The last reply of `url` that is not a redirect, the redirects followed (at most four), with
 /// `range` as the `Range` header when given. Sets `LAST_NOT_FOUND` for a 404 or a 410.
-fn http_fetch(url: &str, range: Option<&str>) -> Option<HttpReply> {
+pub(crate) fn http_fetch(url: &str, range: Option<&str>) -> Option<HttpReply> {
     LAST_NOT_FOUND.with(|flag| flag.set(false));
     let mut url = url.to_owned();
     for _ in 0..4 {
@@ -928,10 +904,10 @@ fn resolve_location(current: &HttpTarget, location: &str) -> Option<String> {
     ))
 }
 
-struct HttpReply {
-    status: u16,
-    headers: Vec<(String, String)>,
-    body: Vec<u8>,
+pub(crate) struct HttpReply {
+    pub(crate) status: u16,
+    pub(crate) headers: Vec<(String, String)>,
+    pub(crate) body: Vec<u8>,
 }
 
 fn http_exchange(target: &HttpTarget, range: Option<&str>) -> Option<HttpReply> {
@@ -1100,7 +1076,7 @@ fn decode_chunks(mut bytes: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
-fn header_value<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
+pub(crate) fn header_value<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
     headers
         .iter()
         .find(|(key, _)| key == name)
@@ -1386,10 +1362,10 @@ mod callback_tests {
         }
     }
 
-    /// The whole file comes back in 16384-byte ranges after the first one, and the handle is
-    /// closed once.
+    /// The whole file comes back in one open of 16384 bytes and one doubled range, and the handle
+    /// is closed once.
     #[test]
-    fn whole_file_is_read_in_16384_byte_ranges() {
+    fn whole_file_is_read_by_ranges() {
         let body: Vec<u8> = (0..40_000_u32)
             .map(|value| u8::try_from(value % 251).unwrap_or(0))
             .collect();
@@ -1401,15 +1377,19 @@ mod callback_tests {
         });
         let imp: Arc<dyn NetworkCallbacks> = Arc::<Served>::clone(&served);
         let callbacks = Callbacks::new(imp);
-        let bytes = fetch_with_callbacks(&callbacks, "https://foo/my.tif").expect("fetched");
+        // The chunks go to `cache.db` of the user directory, as in PROJ: a URL of this run only
+        // is read from the network, not from an earlier run's chunks.
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_nanos());
+        let url = format!("https://foo/{}-{nanos}/my.tif", std::process::id());
+        let bytes = fetch_with_callbacks(&callbacks, &url).expect("fetched");
         assert_eq!(bytes, body);
         assert_eq!(*served.opens.lock().expect("lock"), vec![(0, 16384)]);
-        // The last range is a whole chunk, past the end of the file, as PROJ's `NetworkFile::read`
-        // asks it (`networkfilemanager.cpp:1349`): the callbacks answer with the 7232 bytes left.
-        assert_eq!(
-            *served.reads.lock().expect("lock"),
-            vec![(16384, 16384), (32768, 16384)]
-        );
+        // The read starts where the open ended, so PROJ's `NetworkFile::read` doubles it
+        // (`networkfilemanager.cpp:1363`): two chunks, past the end of the file, answered with
+        // the 23616 bytes left.
+        assert_eq!(*served.reads.lock().expect("lock"), vec![(16384, 32768)]);
         assert_eq!(*served.closes.lock().expect("lock"), 1);
     }
 

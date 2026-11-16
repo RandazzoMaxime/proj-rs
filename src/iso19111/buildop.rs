@@ -325,7 +325,7 @@ impl Transformation {
         if self.has_translation_inverse() {
             // PROJ writes the inverse of these methods with negated values, not `+inv`.
             inverse.negate_values();
-        } else if !self.point_motion {
+        } else if !self.point_motion && self.method.code() != "9602" {
             inverse.inverted = !self.inverted;
         }
         std::mem::swap(&mut inverse.source, &mut inverse.target);
@@ -878,12 +878,38 @@ impl CoordinateOperation {
         match self {
             Self::Conversion(_) => false,
             Self::Transformation(operation) => operation.requires_per_coordinate_input_time(),
+            Self::Concatenated(operation) if operation.proj_based.is_some() => operation
+                .export_to_proj_string(super::pipeline::ProjLines::Single)
+                .is_ok_and(|text| pipeline_requires_input_time(&text)),
             Self::Concatenated(operation) => operation
                 .steps
                 .iter()
                 .any(|step| step.operation.requires_per_coordinate_input_time()),
         }
     }
+}
+
+/// `PROJStringFormatter::requiresPerCoordinateInputTime` (io.cpp:10529-10553), which sets the flag
+/// of a PROJ-based operation (projbasedoperation.cpp:104-187) from its pipeline: a Helmert or a
+/// deformation with `+t_epoch`, or a `defmodel`, unless a `+proj=set +v_4` step comes first.
+fn pipeline_requires_input_time(text: &str) -> bool {
+    for step in text.split(" +step ") {
+        let words: Vec<&str> = step.split_whitespace().collect();
+        let has = |word: &str| words.iter().any(|candidate| candidate.starts_with(word));
+        let inverted = words.contains(&"+inv");
+        if words.contains(&"+proj=set") && !inverted {
+            if has("+v_4=") {
+                return false;
+            }
+        } else if words.contains(&"+proj=helmert") || words.contains(&"+proj=deformation") {
+            if has("+t_epoch=") {
+                return true;
+            }
+        } else if words.contains(&"+proj=defmodel") {
+            return true;
+        }
+    }
+    false
 }
 
 /// The operation a concatenated step runs: the operation itself, or its inverse for a
