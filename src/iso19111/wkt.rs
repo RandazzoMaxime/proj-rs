@@ -3163,8 +3163,19 @@ fn wkt1_datum_name(identified: &Identified, formatter: &WktFormatter) -> String 
         if identified.name == "World Geodetic System 1984" {
             return "D_WGS_1984".to_owned();
         }
-        if let Some(alias) = esri_alias(identified, "geodetic_datum", formatter) {
-            return alias;
+        if let Some(db) = formatter.db.as_ref() {
+            let alias_of = |name: &str| {
+                db.alias_from_official_name(name, "geodetic_datum", "ESRI")
+                    .ok()
+                    .filter(|alias| !alias.is_empty())
+            };
+            let without_qualifier = identified
+                .name
+                .find(" (")
+                .and_then(|position| alias_of(&identified.name[..position]));
+            if let Some(alias) = alias_of(&identified.name).or(without_qualifier) {
+                return alias;
+            }
         }
         if esri_official_name(&identified.name, "geodetic_datum", formatter) {
             return identified.name.clone();
