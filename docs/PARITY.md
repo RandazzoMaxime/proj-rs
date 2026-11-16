@@ -307,17 +307,17 @@ Corrections, une par commit (lignes différentes fermées dans `known.tsv`) :
 | Chaîne PROJ sans `+type=crs` = opération PROJ-based, même avec `+towgs84` (côté `projinfo` seul, les lecteurs CRS de `cs2cs` gardent leur CRS) ; chaîne exportée telle quelle ; `parameters` toujours écrit | 3 775 |
 | Conversion absente des dialectes WKT1 ; branche « fichier de grille verticale » de la substitution (VERTCON, méthodes régulières) | 869 |
 | `ANCHOREPOCH` d'un VDATUM en WKT2:2019 | 163 |
+| Substitution de grille PROJ des méthodes à fichier de vitesse ou de déformation (1079, 1113, 1114, 1137, 1138, 1142, 1143, 1144, 1145) ; fichier de grille d'une `other_transformation` écrit après les paramètres numériques (`docs/PORTING-grid-substitution.md`) | 2 091 |
 
-Après : 311 641 lignes comparées (le compte prend le plus long des deux côtés : avant, une sortie
-vide ne comptait aucune ligne de la nôtre), 3 570 différentes (1,1 %) : 496 « forme », 3 074
-« valeur » (une ligne décalée par un écart amont devient « valeur »). Identiques : 308 071.
+Après : 311 623 lignes comparées (le compte prend le plus long des deux côtés : avant, une sortie
+vide ne comptait aucune ligne de la nôtre), 1 479 différentes (0,5 %) : 478 « forme », 1 001
+« valeur » (une ligne décalée par un écart amont devient « valeur »). Identiques : 310 144.
 Le registre `known.tsv` ne contient plus que ces causes :
 
 | Motif (libellé du registre) | Lignes |
 |---|---|
-| Substitution de grille PROJ non portée : `VERSION` gardé, `DERIVED_FROM` absent (grilles de vitesse NEU, déformation NZ, GTG, grilles de type `Geographic3D to Depth`) | 2 552 |
 | Nom de l'inverse : suffixe « (approx. inversion) » absent | 377 |
-| Pont géographique/géocentrique typé `Transformation` au lieu de `Conversion` (`factory.rs`, hors lot) | 172 |
+| Pont géographique/géocentrique typé `Transformation` au lieu de `Conversion` (`factory.rs`, hors lot) ; 461 de ces lignes étaient comptées avec la substitution de grille : `-k operation EPSG:9094` et `9095` n'ont plus que ce pont d'écart | 633 |
 | `-k operation` sans CRS en PROJ : projection seule (`webmerc`, `laea`, `eqc`…) non exportée | 97 |
 | Autres écarts de texte d'opération (WKT ou JSON) | 110 |
 | Autres écarts de texte de CRS | 205 |
