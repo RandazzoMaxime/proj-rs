@@ -2,8 +2,9 @@
 //!
 //! Each function is one `TEST()` name. WKT and PROJ strings are the expected text.
 
+use proj_rs::unstable::Crs;
 use proj_rs::{
-    Conversion, Crs, Equivalence, GeographicCRS, OpProps, OperationMethod, OperationParameter,
+    Conversion, Equivalence, GeographicCRS, OpProps, OperationMethod, OperationParameter,
     OperationParameterValue, ParameterValue, Transformation, WktConvention, WktFormatter,
     WktParser,
 };

@@ -1,8 +1,9 @@
 //! PROJ 9.9.0 `test/unit/test_operationfactory.cpp`: a compound CRS and WGS 84 3D, both ways.
 
+use proj_rs::unstable::Crs;
 use proj_rs::{
     AuthorityFactory, CoordinateOperation, CoordinateOperationContext, CoordinateOperationFactory,
-    Crs, DatabaseContext, GridAvailabilityUse, SpatialCriterion,
+    DatabaseContext, GridAvailabilityUse, SpatialCriterion,
 };
 
 fn operations(db: &DatabaseContext, source: &Crs, target: &Crs) -> Vec<CoordinateOperation> {

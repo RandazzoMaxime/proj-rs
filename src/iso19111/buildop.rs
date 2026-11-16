@@ -318,10 +318,12 @@ impl Transformation {
     }
 
     /// Inverse transformation: swapped CRS, negated translations for the methods
-    /// PROJ inverts that way, and the name from `createPropertiesForInverse`.
+    /// PROJ inverts that way, and the name from `createPropertiesForInverse`, which
+    /// copies no version.
     #[must_use]
     pub fn inverse(&self) -> Self {
         let mut inverse = self.clone();
+        inverse.version = None;
         if self.has_translation_inverse() {
             // PROJ writes the inverse of these methods with negated values, not `+inv`.
             inverse.negate_values();
@@ -603,6 +605,7 @@ impl Conversion {
             }
             1104 => Self::create_change_vertical_unit_no_conv_factor(&props).ok()?,
             1068 => Self::create_height_depth_reversal(&props).ok()?,
+            9602 => Self::create_geographic_geocentric(&props).ok()?,
             _ => return None,
         };
         inverse.identified.domains = self.identified.domains.clone();
@@ -876,7 +879,23 @@ impl CoordinateOperation {
     #[must_use]
     pub fn requires_per_coordinate_input_time(&self) -> bool {
         match self {
-            Self::Conversion(_) => false,
+            Self::Conversion(operation) => operation
+                .method()
+                .name()
+                .strip_prefix("PROJ-based operation method: ")
+                .is_some_and(|text| {
+                    let plus: Vec<String> = text
+                        .split_whitespace()
+                        .map(|word| {
+                            if word.starts_with('+') {
+                                word.to_owned()
+                            } else {
+                                format!("+{word}")
+                            }
+                        })
+                        .collect();
+                    pipeline_requires_input_time(&plus.join(" "))
+                }),
             Self::Transformation(operation) => operation.requires_per_coordinate_input_time(),
             Self::Concatenated(operation) if operation.proj_based.is_some() => operation
                 .export_to_proj_string(super::pipeline::ProjLines::Single)

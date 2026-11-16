@@ -4,12 +4,12 @@
 
 use std::collections::BTreeSet;
 
+use proj_rs::unstable::Crs;
 use proj_rs::{
     insert_statements, AlternativeGridNames, AuthorityFactory, AuthorityObject, Axis, CartesianCS,
     ComponentCodes, CoordinateOperation, CoordinateOperationContext, CoordinateOperationFactory,
-    Crs, DatabaseContext, DeprecatedCodes, EllipsoidalCS, Equivalence, Measure, Meridian,
-    ObjectType, SpatialCriterion, UnitKind, UnitOfMeasure, WktConvention, WktFormatter, WktObject,
-    WktParser,
+    DatabaseContext, DeprecatedCodes, EllipsoidalCS, Equivalence, Measure, Meridian, ObjectType,
+    SpatialCriterion, UnitKind, UnitOfMeasure, WktConvention, WktFormatter, WktObject, WktParser,
 };
 
 fn parse(wkt: &str) -> WktObject {

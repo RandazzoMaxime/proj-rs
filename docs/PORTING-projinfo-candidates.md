@@ -153,10 +153,73 @@ rouge sur l'ancien code) dans `tests/compound_candidate_set.rs` ou `tests/pivot_
    les CRS de cette autorité sont candidats (factory.cpp:9990-10015). Le port lisait toutes les
    autorités et pivotait par l'ESRI `GCS_MONREF_1997` pour une paire EPSG.
 
+## Lot Q2f — SHGD2015 et MGI, trois causes, trois listes fermées
+
+Deux paires dont les valeurs calculées étaient déjà identiques et dont les listes de candidats
+différaient : `EPSG:7885 → EPSG:9517` et `→ EPSG:7956` (24 lignes du registre réseau), et
+`EPSG:11056 → EPSG:9500`. Méthode des lots précédents : libproj 9.9.0 compilé avec
+`TRACE_CREATE_OPERATIONS` (seul `coordinateoperationfactory.cpp` recompilé, relié à la
+bibliothèque de la référence par `LD_LIBRARY_PATH`), arbre d'appels comparé à des sondes
+temporaires dans le port. Chaque cause a son test de caractérisation (valeurs de `projinfo`
+9.9.0, rouge sur l'ancien code) dans `tests/compound_candidate_set.rs`.
+
+1. **MGI : un candidat PROJ-based compte pour une étape.** `removeUninterestingOps`
+   (coordinateoperationfactory.cpp:1608-1656) retire une opération de précision égale ou pire, de
+   même emprise, qui a plus d'étapes de transformation que la précédente.
+   `getTransformationStepCount` (1195) ne compte les étapes que d'une `ConcatenatedOperation`.
+   Les candidats « horizontal + vertical + horizontal » de `createOperationsCompoundToGeog` sont
+   des `PROJBasedOperation`, donc des `SingleOperation` (`createPROJBased`, 2633-2645) : une étape.
+   Le port les garde sous forme concaténée marquée `proj_based` et en comptait trois, si bien que
+   `Inverse of Ballpark … MGI to ETRS89-AUT [2002] + MGI to EVRF2000 Austria height (1) + {Inverse
+   of Ballpark … ETRS89 to MGI | MGI to ETRS89 (8) | MGI to ETRS89 (1)}` tombait derrière le
+   candidat vertical `EPSG:11503` de même emprise « Austria. ». Seul `(4)` survivait : son emprise,
+   « Austria - Styria. », diffère. Le candidat par `MGI to ETRS89-AUT [2002] (8)` (le pivot par `ETRS89-AUT [2002]`)
+   n'est pas dans la liste de PROJ non plus ; après la correction, les deux listes concordent.
+2. **SHGD2015 : un résultat parfait du registre termine la recherche.**
+   `createOperationsFromDatabase` rend `true` dès que `findOpsInRegistryDirect` donne une
+   opération de précision 0 qui contient la zone (`hasPerfectAccuracyResult`, 3562-3573, appelée
+   en 4351) ; `createOperations` rend alors ce résultat et n'exécute aucune autre branche
+   (3652-3655). `EPSG:10614` (« SHGD2015 to SHGD2015 + SHVD2015 height (1) », précision 0,
+   substituée par `us_nga_egm08_25.tif`, donc `DERIVED_FROM(EPSG)`, `singleoperation.cpp:2321`)
+   est ce résultat. Le port poursuivait par la branche composé → géographique, dont le candidat
+   `EPSG:7891` a la même chaîne PROJ et la même emprise : `removeDuplicateOps` gardait celui-ci et
+   retirait l'opération du registre.
+3. **SHGD2015, `→ EPSG:7956` : pas de ballpark vertical après un résultat parfait.**
+   `createOperationsVertToGeogSynthetized` n'est appelée que par `createOperationsVertToGeog`
+   (3748-3751, 6068-6108), c'est-à-dire quand `createOperationsFromDatabase` a rendu `false`. La
+   jambe verticale `SHVD2015 height → SHGD2015` est `EPSG:7891` (précision 0) : PROJ n'y ajoute
+   pas le changement d'unité ballpark. Le port l'ajoutait à deux endroits
+   (`vertical_to_geog_candidates` pour la partie verticale d'un composé, fin de
+   `create_operations`) ; les deux testent maintenant le résultat parfait.
+
+Listes (`projinfo -s S -t T --spatial-test intersects --grid-check known_available --summary`) :
+
+| Paire | PROJ 9.9.0 | Port avant | Port après |
+|---|---|---|---|
+| `EPSG:7885 → EPSG:9517` | 1 : `DERIVED_FROM(EPSG):10614` | 2 : `SHGD2015 to SHVD2015 height (1)` (sans identifiant), inverse ballpark vertical | identique à PROJ (sortie identique, lignes comprises) |
+| `EPSG:7885 → EPSG:7956` | 1 : `SHGD2015 to SHVD2015 height (1) + UTM zone 30S` | 2 : la même et `Inverse of Transformation from SHVD2015 height to SHGD2015 (ballpark …) + UTM zone 30S` | identique |
+| `EPSG:11056 → EPSG:9500` | 7 | 4 (manquent `Inverse of Ballpark … ETRS89 to MGI`, `MGI to ETRS89 (8)`, `(1)`) | identique, même ordre |
+
+Volume réseau (méthode de `PORTING-cs2cs-network-only-best.md`, § « Volume réseau » : miroir local
+du CDN qui journalise chaque requête, `PROJ_NETWORK_ENDPOINT`, cache utilisateur vide, les deux
+binaires sur le même `PROJ_DATA`, sur 8 points par paire) :
+
+| Paire | PROJ 9.9.0 | Port avant | Port après |
+|---|---|---|---|
+| `net-default-0277` (`EPSG:11056 → EPSG:9500`) | 4 requêtes, 68 495 octets | 2 requêtes, 29 948 octets (manquent les deux plages de `at_bev_GEOID_BESSEL_Oesterreich.tif`, `bytes=0-16383` et `16384-49151`) | identique : mêmes plages, même ordre |
+| `net-default-0274` (`→ EPSG:7956`) | 6 requêtes, 704 512 octets | 2 requêtes, 180 224 octets | identique |
+| `net-default-0275` (`→ EPSG:9517`) | 7 requêtes, 901 120 octets | 2 requêtes, 180 224 octets | identique |
+
+Avant, la liste du port n'avait pas le candidat qui lit la grille BESSEL ; PROJ l'essaie au deuxième
+point. Pour SHGD2015, le port ne demandait pas 4 (`→ EPSG:7956`) et 5 (`→ EPSG:9517`) plages de
+`us_nga_egm08_25.tif` que PROJ demande.
+
 ## Reste ouvert
 
 Grand corpus après le lot Q2e : 0 écart nouveau, les 15 lignes restantes du registre fermées
-(6 listes). Le registre `tests/parity/wide/known.tsv` est vide.
+(6 listes). Le registre `tests/parity/wide/known.tsv` est vide. Après le lot Q2f : toujours 0 écart
+sur le grand corpus, sur les exports (registre vide), sur le corpus avec grilles (10 276
+identiques) et sur le corpus réseau (9 368 identiques, registre vide).
 
 Limite connue : `introsort.rs` reproduit `std::sort` de libstdc++ sur toutes les plates-formes, car
 les attendus viennent de PROJ compilé avec libstdc++ sous Linux. Un PROJ compilé avec libc++

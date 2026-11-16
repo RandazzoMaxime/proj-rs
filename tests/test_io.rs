@@ -2,8 +2,9 @@
 //!
 //! Each function is one `TEST()` name. Expected text is copied from that test.
 
+use proj_rs::unstable::Crs;
 use proj_rs::{
-    create_crs_from_proj_string, Crs, DatabaseContext, GeographicCRS, UnitOfMeasure, WktConvention,
+    create_crs_from_proj_string, DatabaseContext, GeographicCRS, UnitOfMeasure, WktConvention,
     WktDialect, WktFormatter, WktLines, WktNode, WktObject, WktParser,
 };
 
@@ -659,7 +660,7 @@ ID[\"EPSG\",9001]]]]";
     assert_eq!(wkt2_2015(&crs), wkt);
 }
 
-fn wkt2_2015(crs: &proj_rs::Crs) -> String {
+fn wkt2_2015(crs: &proj_rs::unstable::Crs) -> String {
     crs.export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2015))
         .expect("export")
 }
@@ -1017,12 +1018,12 @@ fn wkt_parse_invalid_vert_cs() {
     refused("VERT_CS[\"x\",VERT_DATUM[\"y\",2005]]");
 }
 
-fn wkt2_of(crs: &proj_rs::Crs) -> String {
+fn wkt2_of(crs: &proj_rs::unstable::Crs) -> String {
     crs.export_to_wkt(&mut WktFormatter::create(WktConvention::Wkt2_2015))
         .expect("wkt")
 }
 
-fn wkt2_without_ids(crs: &proj_rs::Crs) -> String {
+fn wkt2_without_ids(crs: &proj_rs::unstable::Crs) -> String {
     let mut formatter = WktFormatter::create(WktConvention::Wkt2_2015);
     formatter.hide_identifiers().expect("hide identifiers");
     crs.export_to_wkt(&mut formatter).expect("wkt")
@@ -1030,10 +1031,10 @@ fn wkt2_without_ids(crs: &proj_rs::Crs) -> String {
 
 #[test]
 fn wkt_parse_invalid_coordinateoperation() {
-    let src = wkt2_without_ids(&proj_rs::Crs::Geographic(
+    let src = wkt2_without_ids(&proj_rs::unstable::Crs::Geographic(
         proj_rs::GeographicCRS::epsg_4326(),
     ));
-    let dst = wkt2_without_ids(&proj_rs::Crs::Geographic(
+    let dst = wkt2_without_ids(&proj_rs::unstable::Crs::Geographic(
         proj_rs::GeographicCRS::epsg_4807(),
     ));
     let tail = "METHOD[\"operationMethodName\"],PARAMETERFILE[\"paramName\",\"foo.bin\"]]";
@@ -1064,10 +1065,10 @@ fn wkt_parse_invalid_coordinateoperation() {
 fn wkt_parse_invalid_concatenatedoperation() {
     refused("CONCATENATEDOPERATION[\"name\"]");
 
-    let src = wkt2_of(&proj_rs::Crs::Geographic(
+    let src = wkt2_of(&proj_rs::unstable::Crs::Geographic(
         proj_rs::GeographicCRS::epsg_4326(),
     ));
-    let dst = wkt2_of(&proj_rs::Crs::Geographic(
+    let dst = wkt2_of(&proj_rs::unstable::Crs::Geographic(
         proj_rs::GeographicCRS::epsg_4807(),
     ));
     let step = format!(
@@ -1101,8 +1102,8 @@ fn wkt_parse_invalid_boundcrs() {
         proj_rs::Conversion::create_utm_north(&proj_rs::OpProps::new(), 31).expect("utm"),
         proj_rs::CartesianCS::create_easting_northing(UnitOfMeasure::metre()),
     );
-    let proj = wkt2_of(&proj_rs::Crs::Projected(projcrs));
-    let geog = wkt2_of(&proj_rs::Crs::Geographic(
+    let proj = wkt2_of(&proj_rs::unstable::Crs::Projected(projcrs));
+    let geog = wkt2_of(&proj_rs::unstable::Crs::Geographic(
         proj_rs::GeographicCRS::epsg_4326(),
     ));
     let transf = "ABRIDGEDTRANSFORMATION[\"foo\",METHOD[\"bar\"],PARAMETER[\"foo\",1.0]]]";

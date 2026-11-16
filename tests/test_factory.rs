@@ -2,10 +2,11 @@
 //!
 //! Each function is one `TEST()` name. Values are the ones the C++ test asserts.
 
+use proj_rs::unstable::Crs;
 use proj_rs::{
-    AlternativeGridNames, AuthorityFactory, AuthorityObject, CoordinateOperation, Crs,
-    DatabaseContext, Equivalence, FactoryError, GeographicCRS, NameMatch, NameSpelling, ObjectType,
-    ProjLines, UnitKind,
+    AlternativeGridNames, AuthorityFactory, AuthorityObject, CoordinateOperation, DatabaseContext,
+    Equivalence, FactoryError, GeographicCRS, NameMatch, NameSpelling, ObjectType, ProjLines,
+    UnitKind,
 };
 
 fn epsg() -> AuthorityFactory {
@@ -665,12 +666,16 @@ fn factory_authority_factory_create_compound_crs() {
     );
     let components = crs.components();
     assert_eq!(components.len(), 2);
-    assert!(components[0].is_equivalent_to(&proj_rs::Crs::Projected(
-        factory.create_projected_crs("3857").expect("3857")
-    )));
-    assert!(components[1].is_equivalent_to(&proj_rs::Crs::Vertical(
-        factory.create_vertical_crs("3855").expect("3855")
-    )));
+    assert!(
+        components[0].is_equivalent_to(&proj_rs::unstable::Crs::Projected(
+            factory.create_projected_crs("3857").expect("3857")
+        ))
+    );
+    assert!(
+        components[1].is_equivalent_to(&proj_rs::unstable::Crs::Vertical(
+            factory.create_vertical_crs("3855").expect("3855")
+        ))
+    );
     assert!(crs.domains()[0].is_equivalent_to(&factory.create_extent("1262").expect("1262")));
 }
 
@@ -686,37 +691,37 @@ fn factory_authority_factory_create_coordinate_reference_system() {
         factory
             .create_coordinate_reference_system("4326")
             .expect("4326"),
-        proj_rs::Crs::Geographic(_)
+        proj_rs::unstable::Crs::Geographic(_)
     ));
     assert!(matches!(
         factory
             .create_coordinate_reference_system("4979")
             .expect("4979"),
-        proj_rs::Crs::Geographic(_)
+        proj_rs::unstable::Crs::Geographic(_)
     ));
     assert!(matches!(
         factory
             .create_coordinate_reference_system("4978")
             .expect("4978"),
-        proj_rs::Crs::Geodetic(_)
+        proj_rs::unstable::Crs::Geodetic(_)
     ));
     assert!(matches!(
         factory
             .create_coordinate_reference_system("32631")
             .expect("32631"),
-        proj_rs::Crs::Projected(_)
+        proj_rs::unstable::Crs::Projected(_)
     ));
     assert!(matches!(
         factory
             .create_coordinate_reference_system("3855")
             .expect("3855"),
-        proj_rs::Crs::Vertical(_)
+        proj_rs::unstable::Crs::Vertical(_)
     ));
     assert!(matches!(
         factory
             .create_coordinate_reference_system("6871")
             .expect("6871"),
-        proj_rs::Crs::Compound(_)
+        proj_rs::unstable::Crs::Compound(_)
     ));
 }
 

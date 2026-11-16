@@ -1,0 +1,37 @@
+[package]
+name = "proj-rs-georust"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.83"
+license = "MIT"
+publish = false
+description = "Drop-in replacement for the georust `proj` 0.31 crate, on the proj-rs engine."
+readme = "README.md"
+repository = "https://github.com/RandazzoMaxime/proj-rs"
+
+# The library is named `proj`, so `use proj::Proj;` keeps working after
+# `proj = { package = "proj-rs-georust", version = "1" }`.
+[lib]
+name = "proj"
+path = "src/lib.rs"
+
+[features]
+default = ["geo-types"]
+geo-types = ["proj-rs/geo-types"]
+# `proj` 0.31 feature names. The network client and the grid reader are always
+# built in, and no libproj is linked, so these only keep the `features = [..]`
+# list of an existing manifest valid.
+network = []
+tiff = []
+bundled_proj = []
+pkg_config = []
+
+[dependencies]
+proj-rs = { path = "..", version = "0.1.0" }
+
+[dev-dependencies]
+approx = "0.5"
+geo-types = { version = "0.7.16", features = ["approx"] }
+
+[lints]
+workspace = true

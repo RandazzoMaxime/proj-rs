@@ -2,8 +2,9 @@
 //! `proj_crs_alter_cs_angular_unit`, `proj_crs_alter_parameters_linear_unit`, and
 //! `proj_crs_alter_geodetic_crs`, on the WGS 84 / UTM zone 31N and EPSG:4326 fixtures.
 
+use proj_rs::unstable::Crs;
 use proj_rs::{
-    create_from_user_input, Axis, Conversion, Crs, DatabaseContext, Equivalence, GeodeticCRS,
+    create_from_user_input, Axis, Conversion, DatabaseContext, Equivalence, GeodeticCRS,
     GeographicCRS, OpProps, ParameterLinearUnit, ProjectedCRS, UnitKind, UnitOfMeasure,
     WktConvention, WktFormatter, WktLines,
 };

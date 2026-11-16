@@ -5,8 +5,9 @@
 //! The WKT inputs are PROJ's, byte for byte, including the line breaks of the
 //! tests that compare an export to the input.
 
+use proj_rs::unstable::Crs;
 use proj_rs::{
-    create_crs_from_proj_string, Crs, DatabaseContext, GeodeticCRS, GeographicCRS, LinunitPolicy,
+    create_crs_from_proj_string, DatabaseContext, GeodeticCRS, GeographicCRS, LinunitPolicy,
     Parameter, ParameterValue, ProjectedCRS, UnitOfMeasure, WktConvention, WktDialect,
     WktFormatter, WktParser, WktStrictness,
 };

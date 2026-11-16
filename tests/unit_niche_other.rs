@@ -4,14 +4,15 @@
 //! Each function is one `TEST()` name. Expected text and numbers are copied from PROJ
 //! 9.9.0. The cases that stay open are listed in `docs/PORTING-niche-other.md`.
 
+use proj_rs::unstable::Crs;
 use proj_rs::{
     create_from_user_input, AlternativeGridNames, AuthorityFactory, Axis, CartesianCS, Conversion,
-    CoordinateOperation, CoordinateOperationFactory, CoordinateSystem, Crs, DatabaseContext,
-    DerivedCRS, DerivedProjectedCRS, EllipsoidalCS, EngineeringCRS, EngineeringDatum, Equivalence,
-    GeodeticCRS, GeographicCRS, OpProps, ParameterValue, ParametricCRS, ParametricCS, ProjLines,
-    ProjectedCRS, TemporalCRS, TemporalCS, TemporalDatum, TemporalKind, UnitKind, UnitOfMeasure,
-    VerticalCRS, VerticalCS, VerticalReferenceFrame, WktConvention, WktFormatter, WktObject,
-    WktParser, CALENDAR_PROLEPTIC_GREGORIAN,
+    CoordinateOperation, CoordinateOperationFactory, CoordinateSystem, DatabaseContext, DerivedCRS,
+    DerivedProjectedCRS, EllipsoidalCS, EngineeringCRS, EngineeringDatum, Equivalence, GeodeticCRS,
+    GeographicCRS, OpProps, ParameterValue, ParametricCRS, ParametricCS, ProjLines, ProjectedCRS,
+    TemporalCRS, TemporalCS, TemporalDatum, TemporalKind, UnitKind, UnitOfMeasure, VerticalCRS,
+    VerticalCS, VerticalReferenceFrame, WktConvention, WktFormatter, WktObject, WktParser,
+    CALENDAR_PROLEPTIC_GREGORIAN,
 };
 
 fn database() -> DatabaseContext {

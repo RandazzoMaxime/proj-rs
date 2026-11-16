@@ -1,10 +1,10 @@
 //! PROJ 9.9.0 `test/unit/test_operationfactory.cpp`: compound CRS to a geographic 3D CRS in the
 //! EPSG context.
 
+use proj_rs::unstable::Crs;
 use proj_rs::{
     create_from_user_input, AuthorityFactory, CoordinateOperation, CoordinateOperationContext,
-    CoordinateOperationFactory, Crs, DatabaseContext, GridAvailabilityUse, ProjLines,
-    SpatialCriterion,
+    CoordinateOperationFactory, DatabaseContext, GridAvailabilityUse, ProjLines, SpatialCriterion,
 };
 
 fn context(db: &DatabaseContext) -> CoordinateOperationContext {

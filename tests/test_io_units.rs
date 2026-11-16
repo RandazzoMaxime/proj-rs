@@ -5,8 +5,9 @@
 //!
 //! Each function is one `TEST()` name. Expected text is copied from that test.
 
+use proj_rs::unstable::Crs;
 use proj_rs::{
-    create_crs_from_proj_string, create_from_user_input, Crs, DatabaseContext, Equivalence,
+    create_crs_from_proj_string, create_from_user_input, DatabaseContext, Equivalence,
     WktConvention, WktFormatter, WktLines,
 };
 

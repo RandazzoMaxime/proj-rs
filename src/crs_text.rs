@@ -610,6 +610,13 @@ impl<'a> WktParser<'a> {
         }
         let keyword = self.text[start..self.index].to_owned();
         self.skip();
+        // A bare word of WKT2 (`ellipsoidal`, `north`, `metre`) is a node with no body.
+        if matches!(self.peek(), Some(',' | ']')) {
+            return Ok(Node {
+                keyword,
+                values: Vec::new(),
+            });
+        }
         if self.bump() != Some('[') {
             return Err(format!("WKT keyword {keyword} has no body"));
         }

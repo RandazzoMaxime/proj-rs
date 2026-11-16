@@ -1,7 +1,8 @@
 //! PROJ 9.9.0 `test/unit/test_crs.cpp`, a geodetic CRS with several identifiers.
 
+use proj_rs::unstable::Crs;
 use proj_rs::{
-    CartesianCS, CoordinateSystem, Crs, GeodeticCRS, GeodeticReferenceFrame, UnitOfMeasure,
+    CartesianCS, CoordinateSystem, GeodeticCRS, GeodeticReferenceFrame, UnitOfMeasure,
     WktConvention, WktFormatter,
 };
 

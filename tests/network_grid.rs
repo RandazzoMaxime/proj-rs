@@ -139,6 +139,21 @@ fn transient_error_is_retried() {
     assert_eq!(server.finish(), 1);
 }
 
+/// A connection reset is retried after the same wait as a `503`, as PROJ's curl client does for
+/// « Connection reset by peer » (`GetNewRetryDelay`).
+#[test]
+fn reset_connection_is_retried() {
+    let fixture = std::fs::read(vendored_hgrid()).expect("fixture");
+    let server = Scripted::spawn(vec![Reply::Reset, Reply::Ranged(fixture)]);
+    let cache = TempDir::new("reset");
+    let start = Instant::now();
+    network_builder(&server.url, &cache.0)
+        .proj("+proj=gridshift +grids=proj_rs_reset.tif")
+        .expect("read after the reset");
+    assert_eq!(server.finish(), 2);
+    assert!(start.elapsed() >= Duration::from_millis(1000));
+}
+
 #[test]
 fn search_path_opens_a_grid_without_the_network() {
     let source = vendored_hgrid();
@@ -177,6 +192,8 @@ enum Reply {
     Whole(Vec<u8>),
     /// `206`, the asked range of the body and its `Content-Range`.
     Ranged(Vec<u8>),
+    /// No reply: the connection is closed with the request unread, so the client sees a reset.
+    Reset,
 }
 
 /// A server that sends its replies in order, one per connection, then stops.
@@ -206,6 +223,13 @@ impl Scripted {
                     break;
                 };
                 let _ = stream.set_nonblocking(false);
+                if matches!(reply, Reply::Reset) {
+                    // Closing a socket with received bytes unread sends a reset, not a FIN.
+                    thread::sleep(Duration::from_millis(200));
+                    served += 1;
+                    drop(stream);
+                    continue;
+                }
                 let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
                 let mut buffer = [0_u8; 4096];
                 let read = stream.read(&mut buffer).unwrap_or(0);
@@ -230,6 +254,7 @@ impl Scripted {
 fn answer(reply: &Reply, head: &str) -> Vec<u8> {
     let (status, extra, body) = match reply {
         Reply::Status(status) => (*status, String::new(), Vec::new()),
+        Reply::Reset => return Vec::new(),
         Reply::Whole(body) => (200, String::new(), body.clone()),
         Reply::Ranged(body) => {
             let (first, last) = range(head).expect("a range request");

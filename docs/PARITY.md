@@ -17,6 +17,7 @@ sont dans le dépôt.
 | `tests/parity/expected.jsonl` | Code de sortie et sortie standard de la référence, ligne à ligne. |
 | `tests/parity/known.tsv` | Écarts connus : clé `id:ligne`, cause courte, renvoi à une fiche. |
 | `tests/parity.rs` | Relance nos binaires `cs2cs`, `proj`, `cct` et compare. |
+| `tools/parity/fuzz_diff.py`, `families_random.py` | Différentiel aléatoire : tire N invocations d'une graine, enregistre la référence et lance `parity_random_against_proj_9_9_0` (comparateur et seuils de `tests/parity.rs`, sans registre). Voir `docs/FUZZ.md`. |
 | `tools/parity/fetch-grids.sh` | Recrée le dossier des grilles du corpus avec grilles (`tests/parity/grids/grids.txt`). |
 | `tests/parity/grids/` | Corpus avec grilles : `cases.jsonl`, `expected.jsonl`, `known.tsv`, `ops.tsv`, `grids.txt`. |
 
@@ -168,7 +169,9 @@ ni précision, l'emprise des ballparks, l'inverse de Cassini, `proj -S` sur `s2`
 dernières dans le lot Q2e (cinq causes tracées dans PROJ, dont une ferme deux listes, voir
 `docs/PORTING-projinfo-candidates.md`). Aucun écart de valeur sur les conversions. Le registre
 `tests/parity/wide/known.tsv` est vide : le gros corpus n'a plus aucun écart connu, et tout écart
-nouveau échoue.
+nouveau échoue. Le lot Q2f (trois causes tracées dans PROJ, voir
+`docs/PORTING-projinfo-candidates.md`) n'a ajouté aucune ligne : le gros corpus reste à zéro écart
+après lui (2026-11-16, 1319 s).
 
 Repli de `proj_trans` reproduit tel quel : pour un point hors de toutes les emprises, PROJ prend
 le premier candidat sans grille, sans nouvel essai, même si sa chaîne PROJ n'a pas pu être
@@ -307,26 +310,25 @@ Corrections, une par commit (lignes différentes fermées dans `known.tsv`) :
 | Chaîne PROJ sans `+type=crs` = opération PROJ-based, même avec `+towgs84` (côté `projinfo` seul, les lecteurs CRS de `cs2cs` gardent leur CRS) ; chaîne exportée telle quelle ; `parameters` toujours écrit | 3 775 |
 | Conversion absente des dialectes WKT1 ; branche « fichier de grille verticale » de la substitution (VERTCON, méthodes régulières) | 869 |
 | `ANCHOREPOCH` d'un VDATUM en WKT2:2019 | 163 |
+| Substitution de grille PROJ des méthodes à fichier de vitesse ou de déformation (1079, 1113, 1114, 1137, 1138, 1142, 1143, 1144, 1145) ; fichier de grille d'une `other_transformation` écrit après les paramètres numériques (`docs/PORTING-grid-substitution.md`) | 2 091 |
+| Inverse Helmert 7 ou 15 paramètres, matrice pleine comprise (`createApproximateInverseIfPossible`) : suffixe « (approx. inversion) », valeurs en unités PROJ, sans `VERSION` (`createPropertiesForInverse` n'en copie pas) | 377 |
+| Géographique/géocentrique en `Conversion` partout (`createGeographicGeocentric` : fin de `fixSteps`, liaisons, pivot, `createOperationsGeodToGeod`) ; `-k operation EPSG:9094` et `9095` | 633 |
+| Conversion de projection sans paire de CRS (`-k operation`) : l'étape de projection seule, sans ellipsoïde ni `+inv` | 97 |
+| `+to_meter` pour une unité linéaire sans nom PROJ ; `+R_A` retiré sur une base sphérique ; CRS géocentrique sur un ensemble de datums lu comme son datum (`datumNonNull`) | 13 |
+| Fichier de grille du registre gardé quand `substitutePROJAlternativeGridNames` ne couvre pas la méthode (EPSG:12219) | 3 |
+| Erreurs WKT d'une opération : message de `exportTransformationToWKT`, `PointMotionOperation` réservé au WKT2:2019 | 107 |
+| `LOCAL_DATUM` sans autorité (CRS d'ingénierie en WKT1) | 128 |
+| Noms WKT1 des paramètres : tables de projection seules, noms EPSG sinon et en dialecte ESRI | 113 |
+| WKT1_ESRI : alias de datum par nom seul, base 2D d'un CRS projeté 3D, définition ESRI enregistrée d'un CRS EPSG (équivalence à axes de base libres si le CS est implicite) | 8 |
 
-Après : 311 641 lignes comparées (le compte prend le plus long des deux côtés : avant, une sortie
-vide ne comptait aucune ligne de la nôtre), 3 570 différentes (1,1 %) : 496 « forme », 3 074
-« valeur » (une ligne décalée par un écart amont devient « valeur »). Identiques : 308 071.
-Le registre `known.tsv` ne contient plus que ces causes :
+Après : 8 935 invocations, 311 242 lignes comparées, 311 242 identiques ; 0 écart de forme,
+de valeur ou de statut. Le registre `known.tsv` est vide : aucune cause n'est restée impossible
+à porter. Le lot Q2f (listes de candidats, `docs/PORTING-projinfo-candidates.md`) laisse ce
+résultat inchangé.
 
-| Motif (libellé du registre) | Lignes |
-|---|---|
-| Substitution de grille PROJ non portée : `VERSION` gardé, `DERIVED_FROM` absent (grilles de vitesse NEU, déformation NZ, GTG, grilles de type `Geographic3D to Depth`) | 2 552 |
-| Nom de l'inverse : suffixe « (approx. inversion) » absent | 377 |
-| Pont géographique/géocentrique typé `Transformation` au lieu de `Conversion` (`factory.rs`, hors lot) | 172 |
-| `-k operation` sans CRS en PROJ : projection seule (`webmerc`, `laea`, `eqc`…) non exportée | 97 |
-| Autres écarts de texte d'opération (WKT ou JSON) | 110 |
-| Autres écarts de texte de CRS | 205 |
-| WKT1_ESRI : nom ou alias ESRI d'un CRS EPSG | 44 |
-| PROJ d'un CRS : `+to_meter`, `+towgs84`, `+R_A` | 13 |
-
-Le test `parity_export_against_proj_9_9_0` est ignoré par défaut : environ 9 à 11 minutes en
-debug, au-delà du seuil de 30 secondes. Le registre le fait passer tel quel ; une régression
-sur une ligne fermée le fait échouer.
+Le test `parity_export_against_proj_9_9_0` est ignoré par défaut : environ 6 minutes en debug
+sur quatre coeurs, au-delà du seuil de 30 secondes. Le registre est vide, donc tout écart, nouveau
+ou ancien, le fait échouer. La fiche du lot est `docs/PORTING-export-rest.md`.
 
 ## Corpus réseau (`tests/parity/network`)
 
@@ -354,5 +356,7 @@ Le test sonde d'abord le CDN (`tests/net_cdn`) et échoue si la sonde échoue : 
 
 Premier passage (graine `20261118`, 1171 invocations, 9368 conversions) : 9218 identiques,
 128 hors seuil, 22 statuts. Après le lot Q5 : 9272 identiques, 96 hors seuil, 0 statut ; les 96
-sont au registre (24 jeu de candidats, 72 `--only-best`). Fiche :
+sont au registre (24 jeu de candidats, 72 `--only-best`). Après le lot Q2f (listes SHGD2015,
+`docs/PORTING-projinfo-candidates.md`) : 9368 identiques, 0 hors seuil, 0 statut ; les 24 lignes
+du jeu de candidats sont retirées et `tests/parity/network/known.tsv` est vide. Fiche :
 `docs/PORTING-cs2cs-network-only-best.md`, section « Lot Q5 ».

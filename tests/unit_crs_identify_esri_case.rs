@@ -1,7 +1,8 @@
 //! PROJ 9.9.0 `test/unit/test_crs_990.cpp`, `projectedCRS_identify_wrong_auth_name_case`: a
 //! projected CRS whose authority is written `Esri` is identified as `ESRI:54034`.
 
-use proj_rs::{AuthorityFactory, Crs, DatabaseContext, WktObject, WktParser, WktStrictness};
+use proj_rs::unstable::Crs;
+use proj_rs::{AuthorityFactory, DatabaseContext, WktObject, WktParser, WktStrictness};
 
 /// `TEST(crs, projectedCRS_identify_wrong_auth_name_case)`
 #[test]

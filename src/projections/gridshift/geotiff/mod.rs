@@ -50,7 +50,18 @@ pub(super) fn is_tiff(bytes: &[u8]) -> bool {
             || (bytes[3] == 0x2B && bytes[2] == 0))
 }
 
+/// Runs a read of TIFF bytes and turns a panic of the `tiff` crate into the error of a bad file.
+/// `tiff` 0.10.3 indexes a tag it has not checked (`image.rs`: `sample_format[0]` on a
+/// `SampleFormat` tag with no value); 0.11 checks it, and needs Rust 1.85.
+pub(super) fn contained<T>(read: impl FnOnce() -> Result<T, ()>) -> Result<T, ()> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(read)).unwrap_or(Err(()))
+}
+
 pub(super) fn load(bytes: &[u8]) -> Result<Vec<RawIfd>, ()> {
+    contained(|| load_images(bytes))
+}
+
+fn load_images(bytes: &[u8]) -> Result<Vec<RawIfd>, ()> {
     let order = if bytes.starts_with(b"MM") {
         ByteOrder::Big
     } else {
@@ -86,6 +97,10 @@ pub(super) fn load(bytes: &[u8]) -> Result<Vec<RawIfd>, ()> {
 /// them is needed. `Ok(None)` when an image is one this does not read by tile: the caller then
 /// reads the whole file and calls [`load`]. `Err` when the file is not a TIFF it can read.
 pub(super) fn load_remote(file: &Arc<Mutex<RemoteFile>>) -> Result<Option<Vec<RawIfd>>, ()> {
+    contained(|| load_remote_images(file))
+}
+
+fn load_remote_images(file: &Arc<Mutex<RemoteFile>>) -> Result<Option<Vec<RawIfd>>, ()> {
     // The byte order is the first two bytes of the file, which the decoder reads too.
     let head = file
         .lock()

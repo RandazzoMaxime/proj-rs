@@ -2,9 +2,10 @@
 //!
 //! Each function is one `TEST()` name. WKT text is the expected string from that test.
 
+use proj_rs::unstable::Crs;
 use proj_rs::{
     create_crs_from_proj_string, create_from_user_input, AuthorityFactory, Axis, CartesianCS,
-    Conversion, CoordinateOperationFactory, CoordinateSystem, Crs, DatabaseContext, Datum,
+    Conversion, CoordinateOperationFactory, CoordinateSystem, DatabaseContext, Datum,
     DatumEnsemble, DerivedProjectedCRS, EllipsoidalCS, EllipsoidalHeightPolicy, Equivalence,
     GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, LinunitPolicy, OpProps, OutputAxisRule,
     PrimeMeridian, ProjLines, ProjectedCRS, UnitKind, UnitOfMeasure, VerticalReferenceFrame,

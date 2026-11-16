@@ -90,7 +90,7 @@ fn derived_to(
 /// `ConcatenatedOperation::createComputeMetadata`: the steps of a concatenated operation
 /// are flattened in, and the extent is the intersection of the steps'. `None` when the
 /// extents do not meet and the context disallows that, which PROJ skips silently.
-fn concatenate(
+pub(super) fn concatenate(
     operations: &[CoordinateOperation],
     context: &CoordinateOperationContext,
 ) -> Option<CoordinateOperation> {

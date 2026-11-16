@@ -1,9 +1,10 @@
 //! PROJ 9.9.0 `test/unit/test_operationfactory.cpp`: a compound CRS read from WKT gives the
 //! operations of the registered compound CRS it is equivalent to.
 
+use proj_rs::unstable::Crs;
 use proj_rs::{
     create_from_user_input, AuthorityFactory, CoordinateOperation, CoordinateOperationContext,
-    CoordinateOperationFactory, Crs, DatabaseContext, Equivalence, GridAvailabilityUse,
+    CoordinateOperationFactory, DatabaseContext, Equivalence, GridAvailabilityUse,
     SpatialCriterion, WktConvention, WktFormatter, WktObject, WktParser,
 };
 

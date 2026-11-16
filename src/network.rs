@@ -128,6 +128,33 @@ thread_local! {
     static DEFER_AT_CREATION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static INVERSE_PROBE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static LAST_NOT_FOUND: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static LAST_TRANSIENT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether the last HTTP fetch of this thread failed on a connection reset or a timeout, the
+/// transport errors PROJ's curl client tries again (`GetNewRetryDelay`).
+pub(crate) fn last_fetch_transient() -> bool {
+    LAST_TRANSIENT.with(std::cell::Cell::get)
+}
+
+/// `result` as an option, noting a transport error that a later attempt may not meet.
+fn io_step<T>(result: std::io::Result<T>) -> Option<T> {
+    result
+        .map_err(|error| {
+            use std::io::ErrorKind;
+            let transient = matches!(
+                error.kind(),
+                ErrorKind::ConnectionReset
+                    | ErrorKind::ConnectionAborted
+                    | ErrorKind::BrokenPipe
+                    | ErrorKind::TimedOut
+                    | ErrorKind::WouldBlock
+            );
+            if transient {
+                LAST_TRANSIENT.with(|flag| flag.set(true));
+            }
+        })
+        .ok()
 }
 
 /// Whether the last HTTP fetch of this thread was answered `404` or `410`: the file is not on
@@ -548,6 +575,10 @@ impl GridContext {
         join_directories(&self.search_paths)
     }
 
+    pub(crate) fn replace_search_paths(&mut self, paths: Vec<PathBuf>) {
+        self.search_paths = paths;
+    }
+
     pub(crate) fn push_search_path(&mut self, path: PathBuf) {
         self.search_paths.push(path);
     }
@@ -817,6 +848,7 @@ pub(crate) fn http_get_validated(url: &str) -> Option<crate::network_cache::Fetc
 /// `range` as the `Range` header when given. Sets `LAST_NOT_FOUND` for a 404 or a 410.
 pub(crate) fn http_fetch(url: &str, range: Option<&str>) -> Option<HttpReply> {
     LAST_NOT_FOUND.with(|flag| flag.set(false));
+    LAST_TRANSIENT.with(|flag| flag.set(false));
     let mut url = url.to_owned();
     for _ in 0..4 {
         let target = parse_http_url(&url)?;
@@ -929,7 +961,7 @@ fn connect(target: &HttpTarget) -> Option<TcpStream> {
         Some((host, port)) => (host.as_str(), *port),
         None => (target.host.as_str(), target.port),
     };
-    let stream = TcpStream::connect((host, port)).ok()?;
+    let stream = io_step(TcpStream::connect((host, port)))?;
     stream
         .set_read_timeout(Some(Duration::from_secs(30)))
         .ok()?;
@@ -982,11 +1014,11 @@ fn open_tunnel(mut stream: TcpStream, target: &HttpTarget) -> Option<TcpStream> 
         host = target.host,
         port = target.port
     );
-    stream.write_all(request.as_bytes()).ok()?;
+    io_step(stream.write_all(request.as_bytes()))?;
     let mut head = Vec::new();
     let mut byte = [0_u8; 1];
     while !head.ends_with(b"\r\n\r\n") {
-        if head.len() > 16_384 || stream.read(&mut byte).ok()? == 0 {
+        if head.len() > 16_384 || io_step(stream.read(&mut byte))? == 0 {
             return None;
         }
         head.push(byte[0]);
@@ -1010,12 +1042,13 @@ fn read_http(
         "GET {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: proj-rs\r\n{range}Connection: close\r\n\r\n",
         path = target.path
     );
-    stream.write_all(request.as_bytes()).ok()?;
+    io_step(stream.write_all(request.as_bytes()))?;
     let mut raw = Vec::new();
-    stream
-        .take(MAX_GRID_BYTES.saturating_add(65_536))
-        .read_to_end(&mut raw)
-        .ok()?;
+    io_step(
+        stream
+            .take(MAX_GRID_BYTES.saturating_add(65_536))
+            .read_to_end(&mut raw),
+    )?;
     let reply = split_http(&raw)?;
     if u64::try_from(reply.body.len()).ok()? > MAX_GRID_BYTES {
         return None;

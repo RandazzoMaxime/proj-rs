@@ -10,9 +10,10 @@ mod common;
 
 use common::tmp_db::TmpDb;
 use proj_rs::iso19111::{coordinate_metadata_from_urn, Equivalence};
+use proj_rs::unstable::Crs;
 use proj_rs::{
     AlternativeGridNames, AuthorityFactory, CoordinateOperationContext, CoordinateOperationFactory,
-    Crs, GeodeticCRS, ProjLines, SpatialCriterion, SupersededOperations,
+    GeodeticCRS, ProjLines, SpatialCriterion, SupersededOperations,
 };
 
 /// An `other_transformation` row `code` of the authority `auth`, from the CRS `source` to the

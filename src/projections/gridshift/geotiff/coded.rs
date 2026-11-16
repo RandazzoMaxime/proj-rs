@@ -119,8 +119,17 @@ pub(super) fn decode_coded_samples<R: Read + Seek>(
 /// `size` bytes at `offset` of the file: one read, as a chunk is read by the lazy reader.
 fn chunk_bytes<R: Read + Seek>(reader: &mut R, offset: u64, size: usize) -> Result<Vec<u8>, ()> {
     reader.seek(SeekFrom::Start(offset)).map_err(|_| ())?;
-    let mut bytes = vec![0_u8; size];
-    reader.read_exact(&mut bytes).map_err(|_| ())?;
+    // `size` is a byte count the file declares: allocating it first lets a 40-byte file ask for
+    // gigabytes. Read what the file holds, then compare.
+    let mut bytes = Vec::new();
+    reader
+        .by_ref()
+        .take(u64::try_from(size).map_err(|_| ())?)
+        .read_to_end(&mut bytes)
+        .map_err(|_| ())?;
+    if bytes.len() != size {
+        return Err(());
+    }
     Ok(bytes)
 }
 
@@ -129,4 +138,22 @@ pub(super) fn codec_tags<R: Read + Seek>(decoder: &mut Decoder<R>) -> Result<(u3
     let compression = optional_u32(decoder, Tag::Compression)?.unwrap_or(1);
     let predictor = optional_u32(decoder, Tag::Predictor)?.unwrap_or(1);
     Ok((compression, predictor))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use super::chunk_bytes;
+
+    #[test]
+    fn a_declared_size_past_the_file_is_an_error_not_an_allocation() {
+        let mut file = Cursor::new(vec![0_u8; 40]);
+        assert!(chunk_bytes(&mut file, 8, usize::MAX / 2).is_err());
+        assert!(chunk_bytes(&mut file, 8, 33).is_err());
+        assert_eq!(
+            chunk_bytes(&mut file, 8, 32).map(|bytes| bytes.len()),
+            Ok(32)
+        );
+    }
 }

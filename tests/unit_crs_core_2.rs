@@ -2,10 +2,11 @@
 //!
 //! Each function is one `TEST()` name. Expected text is copied from that test.
 
+use proj_rs::unstable::Crs;
 use proj_rs::{
     create_crs_from_proj_string, parametric_unit, AlternativeGridNames, AuthorityFactory, Axis,
     BoundCRS, CartesianCS, CompoundCRS, Conversion, CoordinateOperation,
-    CoordinateOperationFactory, CoordinateSystem, Crs, DatabaseContext, Datum, DatumEnsemble,
+    CoordinateOperationFactory, CoordinateSystem, DatabaseContext, Datum, DatumEnsemble,
     DerivedCRS, DerivedKind, DerivedProjectedCRS, EllipsoidalCS, Equivalence, GeodeticCRS,
     GeodeticReferenceFrame, GeographicCRS, OpProps, ParameterLinearUnit, ParameterValue,
     ParametricCRS, ParametricCS, ParametricDatum, ProjectedCRS, Transformation, UnitKind,

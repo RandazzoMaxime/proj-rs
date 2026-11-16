@@ -1835,7 +1835,7 @@ fn promoted_by_name(source: &str, target: &str) -> (String, String) {
 }
 
 /// `promoteTo3D` of `crs`, as `authority:code` when the promoted CRS has an identifier.
-fn promoted_text(crs: &proj_rs::Crs, db: &proj_rs::DatabaseContext) -> Option<String> {
+fn promoted_text(crs: &proj_rs::unstable::Crs, db: &proj_rs::DatabaseContext) -> Option<String> {
     let promoted = crs.promote_to_3d(Some(db));
     let identifier = promoted.identifiers().first()?;
     Some(format!("{}:{}", identifier.code_space(), identifier.code()))
@@ -1873,13 +1873,21 @@ fn geoid_without_height(source: &str, target: &str) -> String {
 
 /// `is3DCRS` in `src/apps/cs2cs.cpp` (lines 361-376): a compound CRS, or a geographic,
 /// geodetic (geocentric included), projected or derived projected CRS with three axes.
-fn is_3d_crs(crs: &proj_rs::Crs) -> bool {
+fn is_3d_crs(crs: &proj_rs::unstable::Crs) -> bool {
     match crs {
-        proj_rs::Crs::Compound(_) => true,
-        proj_rs::Crs::Geographic(geographic) => geographic.coordinate_system().axes().len() == 3,
-        proj_rs::Crs::Geodetic(geodetic) => geodetic.coordinate_system().axes().len() == 3,
-        proj_rs::Crs::Projected(projected) => projected.coordinate_system().axes().len() == 3,
-        proj_rs::Crs::DerivedProjected(derived) => derived.coordinate_system().axes().len() == 3,
+        proj_rs::unstable::Crs::Compound(_) => true,
+        proj_rs::unstable::Crs::Geographic(geographic) => {
+            geographic.coordinate_system().axes().len() == 3
+        }
+        proj_rs::unstable::Crs::Geodetic(geodetic) => {
+            geodetic.coordinate_system().axes().len() == 3
+        }
+        proj_rs::unstable::Crs::Projected(projected) => {
+            projected.coordinate_system().axes().len() == 3
+        }
+        proj_rs::unstable::Crs::DerivedProjected(derived) => {
+            derived.coordinate_system().axes().len() == 3
+        }
         _ => false,
     }
 }

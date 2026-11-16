@@ -18,10 +18,11 @@ is the **same observable behavior as PROJ 9.9** on every ported operation,
 checked against PROJ's own test suite, behind an API that uses `Result` and
 enums instead of error codes and `NaN` sentinels.
 
-It targets Rust projects that use the [`proj`](https://github.com/georust/proj)
-crate: same API, one line changed in `Cargo.toml`, no libproj to build or
-install. That claim is checked by georust's own unit tests and is **not complete
-yet**: see [Status at a glance](#status-at-a-glance).
+It has three facades over one engine: a small native Rust API at the crate root, a
+drop-in for the [`proj`](https://github.com/georust/proj) crate (one line changed in
+`Cargo.toml`, no libproj to build or install), and a C API. The georust claim is checked
+by georust's own unit tests and documentation examples and is **not complete yet**: see
+[Status at a glance](#status-at-a-glance) and [Stability](#stability).
 
 - **Checked against PROJ itself.** The numeric oracle is the PROJ 9.9.0
   `test/gie` suite, vendored unchanged under [`tests/gie/`](tests/gie). The
@@ -230,38 +231,30 @@ PROJ-RS is not on crates.io yet. Use it from git:
 proj-rs = { git = "https://github.com/RandazzoMaxime/proj-rs" }
 ```
 
-Already using the `proj` crate? Swap it without touching your Rust code. Check
-the [parity status](#how-the-port-is-done) first: one pair still fails to create where
-PROJ creates it (`EPSG:4326+5773` to `EPSG:4326+5782`), see the georust gaps list:
-
-```toml
-proj = { package = "proj-rs", git = "https://github.com/RandazzoMaxime/proj-rs" }
-```
-
 ### As a library
 
 ```rust
-use proj_rs::Proj;
+use proj_rs::{Context, Crs, Point, Transformer};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // The Eiffel Tower, in WGS 84 longitude and latitude (degrees).
-    let eiffel = (2.2945_f64, 48.8584_f64);
-
     // EPSG codes resolve from the embedded PROJ 9.9 database. No libproj.
-    let to_lambert93 = Proj::new_known_crs("EPSG:4326", "EPSG:2154", None)?;
-    let (east, north) = to_lambert93.convert(eiffel)?;
-    println!("Lambert-93 (EPSG:2154): {east:.3} E  {north:.3} N");
+    let ctx = Context::default();
+    let wgs84 = Crs::from_user_input(&ctx, "EPSG:4326")?;
+    let lambert93 = Crs::from_user_input(&ctx, "EPSG:2154")?;
 
-    // A plain PROJ string works too.
-    let to_utm = Proj::new("+proj=utm +zone=31 +ellps=WGS84")?;
-    let radians = (eiffel.0.to_radians(), eiffel.1.to_radians());
-    let (east, north) = to_utm.project(radians, false)?;
-    println!("UTM 31N (PROJ string):  {east:.3} E  {north:.3} N");
+    // The Eiffel Tower. Points are in the axis order of the CRS, as in PROJ:
+    // EPSG:4326 is latitude, longitude.
+    let to_lambert93 = Transformer::builder(&wgs84, &lambert93).build()?;
+    let p = to_lambert93.forward(Point::new(48.8584, 2.2945))?;
+    println!("Lambert-93 (EPSG:2154): {:.3} E  {:.3} N", p.x, p.y);
 
-    // Anything this crate does not build is an error at creation.
-    let refused = Proj::new("+proj=not_a_real_projection");
-    println!("Unknown projection:     {}", refused.is_err());
+    // `normalize_axis_order` reads longitude, latitude, as a GIS does.
+    let gis = Transformer::builder(&wgs84, &lambert93).normalize_axis_order().build()?;
+    let p = gis.forward(Point::new(2.2945, 48.8584))?;
 
+    // A slice goes through the batch path (vector code where the host has it).
+    let mut points = [Point::new(48.8584, 2.2945), Point::new(45.764, 4.8357)];
+    to_lambert93.forward_slice(&mut points)?;
     Ok(())
 }
 ```
@@ -269,11 +262,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```text
 $ cargo run --example quickstart
 Lambert-93 (EPSG:2154): 648237.302 E  6862271.682 N
+Same, longitude first:  648237.302 E  6862271.682 N
 UTM 31N (PROJ string):  448252.001 E  5411954.910 N
 Unknown projection:     true
 ```
 
-This is [`examples/quickstart.rs`](examples/quickstart.rs).
+This is [`examples/quickstart.rs`](examples/quickstart.rs). The native API is `Context`,
+`Crs`, `Transformer`, `Point`, `Backend` and `Error`; `Transformer::operations()` lists
+the candidate operations as `projinfo` does, and `Crs` writes WKT, PROJJSON and PROJ
+strings. Anything this crate cannot do is an error, never a wrong number.
+
+### Drop-in for georust
+
+Already using the `proj` crate? Swap it without touching your Rust code. The
+`proj-rs-georust` crate has the library name `proj` and the names and signatures of `proj`
+0.31 (`Proj`, `ProjBuilder`, `Coord`, `Transform`, `Area`, the errors, the `wkt` module and
+the `geo-types` feature):
+
+```toml
+proj = { package = "proj-rs-georust", git = "https://github.com/RandazzoMaxime/proj-rs" }
+```
+
+The examples of the `proj` 0.31 documentation compile and run as tests of that crate
+([`georust/tests/proj_031_docs.rs`](georust/tests/proj_031_docs.rs)), on top of
+[`tests/georust_parity.rs`](tests/georust_parity.rs) (see the [parity
+status](#how-the-port-is-done): one pair still fails to create where PROJ creates it,
+`EPSG:4326+5773` to `EPSG:4326+5782`, see the georust gaps list). The `network`, `tiff`,
+`bundled_proj` and `pkg_config` features of `proj` exist and change nothing: the network
+client and the grid reader are always built in. See
+[`georust/examples/quickstart.rs`](georust/examples/quickstart.rs).
 
 Two things `Proj` has beyond the georust surface, both from PROJ's C API:
 
@@ -282,6 +299,26 @@ Two things `Proj` has beyond the georust surface, both from PROJ's C API:
   model. `convert_xyz` is the same at `t = 0`, as `proj_trans_generic` does.
 - `degree_input(direction)` and `degree_output(direction)` say whether the
   transform reads and writes degrees (`proj_degree_input`, `proj_degree_output`).
+
+### Use from C
+
+The `proj-rs-capi` crate (directory [`capi/`](capi)) is the `proj.h` of PROJ 9.9.0 on this
+engine: the same header, the same 292 function names and signatures, the same structures. A
+program written for libproj links against it without a change. All 292 functions are
+implemented (contexts, errors, log, creation and transformation, ISO 19111 objects, constructors,
+the operation factory, the database, the static lists, file and network callbacks). The details
+that differ from PROJ are in [`docs/API-v1.md`](docs/API-v1.md).
+
+```bash
+capi/tests/dist.sh --release           # target/capi-dist/{lib,include}
+cc demo.c -Itarget/capi-dist/include -Ltarget/capi-dist/lib -lproj -Wl,-rpath,$PWD/target/capi-dist/lib
+```
+
+`dist.sh` installs `libproj.so.25`, `libproj.so` and `libproj.a` (`libproj.25.dylib` on macOS).
+On Windows, `capi/tests/dist.ps1` makes `proj.dll` and `proj.lib`. The proof is the C tests of PROJ compiled
+against the library: `capi/tests/run.sh`, see [`capi/tests/README.md`](capi/tests/README.md).
+A pair of CRS made by `proj_create_crs_to_crs` transforms in the axis order of its CRS, as in
+PROJ: `EPSG:4326` is latitude, longitude until `proj_normalize_for_visualization`.
 
 ### On the command line
 
@@ -428,12 +465,34 @@ are the vendored PROJ 9.9.0 `.gie` expectations. The check is skipped when no
 | [`src/projections/`](src/projections) | One module per PROJ operation family: projections, conversions, datum operations, grid and deformation models |
 | [`src/engine.rs`](src/engine.rs) | The PROJ string parser, `Operation::create`, and the pipeline engine |
 | [`src/iso19111/`](src/iso19111) | CRS model, WKT, authority factory, operation factory |
-| [`src/proj.rs`](src/proj.rs) | The georust `proj`-compatible facade |
+| [`src/api/`](src/api) | The native facade of the crate root: `Context`, `Crs`, `Transformer`, `Point` |
+| [`src/proj.rs`](src/proj.rs) | The engine side of the georust `proj` facade, published by [`georust/`](georust) |
+| [`georust/`](georust), [`capi/`](capi) | The `proj-rs-georust` drop-in for `proj` 0.31, and the skeleton of the C API |
 | [`src/projdb.rs`](src/projdb.rs), [`data/proj.db`](data) | The embedded PROJ 9.9 database |
 | [`src/network.rs`](src/network.rs), [`src/gridpath.rs`](src/gridpath.rs) | Grid lookup and on-demand download |
 | [`src/bin/`](src/bin) | `cct`, `cs2cs`, `proj`, `projinfo`, and the bench |
 | [`tests/gie/`](tests/gie) | The PROJ 9.9.0 `gie` suite, vendored unchanged |
 | [`docs/PORTING-*.md`](docs) | One sheet per ported module: function map, deliberate deviations, commands run |
+
+## Stability
+
+The v1 promise is the **native facade**: the items on the first page of the `proj_rs`
+documentation (`Context`, `Crs`, `Transformer`, `Point`, `Backend`, `Error` and the small
+types they take), the `proj-rs-georust` crate, and the C API once it exists
+([docs/API-v1.md](docs/API-v1.md)). `Backend` and `Error` are `#[non_exhaustive]`, so the
+SIMD and GPU backends and new error causes are not breaking changes.
+
+Everything else the crate root used to export is public for the binaries and the tests of
+this repository, hidden from the documentation, and **outside semver**: the ISO 19111
+model, the engine (`Operation`, `Xyzt`, `CrsPipeline`), the named projections, `gie`,
+`projinfo`, `projsync` and the rest. The `unstable` feature shows them in the
+documentation under `proj_rs::unstable`, for whoever accepts that they change.
+
+The minimum supported Rust version is **1.83**, declared as `rust-version` and checked by
+the `msrv` job of the CI. It was measured: 1.82 fails on `ExitCode` equality in the
+`cct` and `cs2cs` binaries, and the dependencies need at least 1.81. A change of the
+minimum is a minor version. `cargo-semver-checks` runs in the CI against the last
+published version once there is one.
 
 ## Roadmap
 

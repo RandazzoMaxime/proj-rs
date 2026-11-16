@@ -3,7 +3,8 @@
 //! The WKT2 text parsed here carries SCOPE, AREA, BBOX, VERTICALEXTENT,
 //! TIMEEXTENT, ID and REMARK. The expected export is copied from the C++ test.
 
-use proj_rs::{Crs, GeodeticCRS, WktConvention, WktFormatter, WktParser};
+use proj_rs::unstable::Crs;
+use proj_rs::{GeodeticCRS, WktConvention, WktFormatter, WktParser};
 
 const IN_WKT: &str = "GEODETICCRS[\"JGD2000\",\
 DATUM[\"Japanese Geodetic Datum 2000\",\

@@ -419,6 +419,10 @@ impl LazyIfd {
     /// decoder reads the chunk's bytes from a window read once here, and nothing else. The rows of
     /// the chunk are stored `tile_w` pixels apart, as the raw samples are.
     fn read_decoded(&self, chunk: usize) -> Result<Vec<f32>, ()> {
+        geotiff::contained(|| self.decode_chunk(chunk))
+    }
+
+    fn decode_chunk(&self, chunk: usize) -> Result<Vec<f32>, ()> {
         let (offset, count) = *self.places.get(chunk).ok_or(())?;
         let size = usize::try_from(count).map_err(|_| ())?;
         let mut decoder =

@@ -3,9 +3,10 @@
 //! Each function is one `TEST()` name, in snake case. Expected text is copied from
 //! PROJ 9.9.0 unchanged. Multi-line WKT is built with `concat!` and `\n`.
 
+use proj_rs::unstable::Crs;
 use proj_rs::{
     AlternativeGridNames, AuthorityFactory, AxisOrderReversal, BoundCRS, Conversion,
-    CoordinateOperation, CoordinateOperationFactory, Crs, DatabaseContext, EllipsoidalCS,
+    CoordinateOperation, CoordinateOperationFactory, DatabaseContext, EllipsoidalCS,
     GeodeticReferenceFrame, GeographicCRS, OpProps, ProjLines, Transformation, UnitKind,
     UnitOfMeasure, VerticalCRS, VerticalCS, VerticalReferenceFrame, WktConvention, WktFormatter,
     WktParser,

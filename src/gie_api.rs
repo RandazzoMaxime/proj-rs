@@ -6,9 +6,9 @@ use crate::angle::adjlon;
 use crate::engine::{
     geocentric_to_geographic, lpz_dist, xyz_dist, Coord, Operation, TransformError, UnitProjection,
 };
+use crate::iso19111::{create_from_user_input, Crs, DatabaseContext};
 use crate::proj::{Direction, ProjError};
 use crate::projmath::aasin;
-use crate::{create_from_user_input, Crs, DatabaseContext};
 use std::f64::consts::FRAC_PI_2;
 use std::num::NonZeroUsize;
 
@@ -351,6 +351,14 @@ pub struct Factors {
     pub tissot_semimajor: f64,
     /// Tissot ellipse semi-minor axis.
     pub tissot_semiminor: f64,
+    /// Derivative of x with respect to the longitude.
+    pub dx_dlam: f64,
+    /// Derivative of x with respect to the latitude.
+    pub dx_dphi: f64,
+    /// Derivative of y with respect to the longitude.
+    pub dy_dlam: f64,
+    /// Derivative of y with respect to the latitude.
+    pub dy_dphi: f64,
 }
 
 /// `DEFAULT_H` of `factors.cpp`: the step of the numerical derivatives, in radians.
@@ -536,6 +544,10 @@ fn factors_from_derivatives(
         meridian_convergence: conv,
         tissot_semimajor: a_axis,
         tissot_semiminor: b,
+        dx_dlam: x_l,
+        dx_dphi: x_p,
+        dy_dlam: y_l,
+        dy_dphi: y_p,
     })
 }
 

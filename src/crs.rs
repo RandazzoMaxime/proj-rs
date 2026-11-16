@@ -48,6 +48,18 @@ pub(crate) fn check_well_known(text: &str) -> Result<(), ProjCreateError> {
     check_proj(&definition)
 }
 
+/// Accepts a CRS text that the full reader of ISO 19111 reads, though the PROJ-string translation
+/// of [`check_well_known`] does not cover it (a compound CRS with a bound vertical CRS, say).
+/// Such a CRS is only used to pick operations, which read the text again.
+pub(crate) fn check_readable(text: &str) -> Result<(), ProjCreateError> {
+    match user_crs(text)? {
+        crate::iso19111::Crs::Compound(_) | crate::iso19111::Crs::Bound(_) => Ok(()),
+        _ => Err(ProjCreateError::ProjError(format!(
+            "{text} is not a CRS the PROJ-string translation covers"
+        ))),
+    }
+}
+
 /// Checks a derived projected CRS given as WKT: its pipeline must build, see
 /// [`derived_projected_pipeline`].
 fn check_derived_projected(text: &str) -> Result<(), ProjCreateError> {
