@@ -77,7 +77,10 @@ mod vector {
         let lam = kernels::adjlon(tok, kernels::adjlon(tok, lon_r) - k(m.lam0));
         let y = match m.model {
             Model::Sphere => phi.tan().asinh(),
-            Model::Ellipsoid { e } => -kernels::tsfn(tok, phi.sin(), phi.cos(), e).log(),
+            Model::Ellipsoid { e } => {
+                let (sin_phi, cos_phi) = phi.sin_cos();
+                -kernels::tsfn(tok, sin_phi, cos_phi, e).log()
+            }
         };
         let x = k(m.k0) * lam;
         let y = k(m.k0) * y;

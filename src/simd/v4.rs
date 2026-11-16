@@ -8,11 +8,14 @@
 //! mais ne sont plus en ligne.
 
 use std::arch::x86_64::{
-    __m256d, _mm256_add_pd, _mm256_and_pd, _mm256_andnot_pd, _mm256_blendv_pd, _mm256_cmp_pd,
-    _mm256_div_pd, _mm256_floor_pd, _mm256_fmadd_pd, _mm256_loadu_pd, _mm256_max_pd, _mm256_min_pd,
-    _mm256_movemask_pd, _mm256_mul_pd, _mm256_set1_pd, _mm256_setzero_pd, _mm256_sqrt_pd,
-    _mm256_storeu_pd, _mm256_sub_pd, _mm256_xor_pd, _CMP_EQ_OQ, _CMP_GE_OQ, _CMP_GT_OQ, _CMP_LE_OQ,
-    _CMP_LT_OQ, _CMP_TRUE_UQ,
+    __m256d, _mm256_add_epi64, _mm256_add_pd, _mm256_and_pd, _mm256_and_si256, _mm256_andnot_pd,
+    _mm256_blendv_pd, _mm256_castpd_si256, _mm256_castsi256_pd, _mm256_cmp_pd, _mm256_div_pd,
+    _mm256_floor_pd, _mm256_fmadd_pd, _mm256_loadu_pd, _mm256_max_pd, _mm256_min_pd,
+    _mm256_movemask_pd, _mm256_mul_pd, _mm256_or_pd, _mm256_or_si256, _mm256_round_pd,
+    _mm256_set1_epi64x, _mm256_set1_pd, _mm256_setzero_pd, _mm256_slli_epi64, _mm256_sqrt_pd,
+    _mm256_srli_epi64, _mm256_storeu_pd, _mm256_sub_epi64, _mm256_sub_pd, _mm256_xor_pd,
+    _CMP_EQ_OQ, _CMP_GE_OQ, _CMP_GT_OQ, _CMP_LE_OQ, _CMP_LT_OQ, _CMP_TRUE_UQ, _MM_FROUND_NO_EXC,
+    _MM_FROUND_TO_NEAREST_INT,
 };
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
@@ -68,6 +71,139 @@ impl V4 {
         // SAFETY: `self` n'existe que si AVX2 est supporté ; `lanes` désigne quatre `f64`
         // inscriptibles, et `storeu` n'exige pas d'alignement.
         unsafe { _mm256_storeu_pd(lanes.as_mut_ptr(), self.0) };
+    }
+
+    /// Quatre fois `value`, sans [`Avx2`] : `self` en est la preuve.
+    #[inline(always)]
+    pub(super) fn splat_like(self, value: f64) -> Self {
+        // SAFETY: `self` n'existe que si AVX2 est supporté.
+        Self(unsafe { _mm256_set1_pd(value) })
+    }
+
+    /// Un registre de ces quatre valeurs, sans [`Avx2`] : `self` en est la preuve.
+    #[inline(always)]
+    pub(super) fn reload(self, lanes: &[f64; 4]) -> Self {
+        // SAFETY: `self` n'existe que si AVX2 est supporté ; `lanes` désigne quatre `f64`.
+        Self(unsafe { _mm256_loadu_pd(lanes.as_ptr()) })
+    }
+
+    /// Les quatre voies, pour un calcul voie par voie.
+    #[inline(always)]
+    pub(crate) fn to_array(self) -> [f64; 4] {
+        let mut lanes = [0.0; 4];
+        self.store(&mut lanes);
+        lanes
+    }
+
+    /// L'entier le plus proche, au pair en cas d'égalité (`vroundpd`).
+    #[inline(always)]
+    pub(crate) fn round(self) -> Self {
+        // SAFETY: `self` n'existe que si AVX2 est supporté.
+        Self(unsafe {
+            _mm256_round_pd::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(self.0)
+        })
+    }
+
+    /// La grandeur de `self` avec le signe de `sign` (un zéro négatif compris).
+    #[inline(always)]
+    pub(crate) fn copysign(self, sign: Self) -> Self {
+        // SAFETY: `self` n'existe que si AVX2 est supporté.
+        let sign_bit = unsafe { _mm256_set1_pd(-0.0) };
+        // SAFETY: idem.
+        let magnitude = unsafe { _mm256_andnot_pd(sign_bit, self.0) };
+        // SAFETY: idem.
+        let sign_only = unsafe { _mm256_and_pd(sign_bit, sign.0) };
+        // SAFETY: idem. Les deux moitiés n'ont aucun bit en commun : un OU les réunit.
+        Self(unsafe { _mm256_or_pd(magnitude, sign_only) })
+    }
+
+    /// Les voies dont le bit de signe est à un : négatifs, zéro négatif, `NaN` de signe négatif.
+    #[inline(always)]
+    pub(crate) fn sign_mask(self) -> Mask {
+        // `blendv` et `movemask` ne lisent que le bit de signe : le registre est son propre masque.
+        Mask(self.0)
+    }
+
+    /// `self * 2^k` pour des `k` entiers, `|k| <= 2000`, en deux multiplications pour que la
+    /// puissance de deux reste représentable.
+    #[inline(always)]
+    pub(super) fn scale_pow2(self, k: Self) -> Self {
+        let half = (k * self.splat_like(0.5)).round();
+        self * half.pow2() * (k - half).pow2()
+    }
+
+    /// `2^k` pour un `k` entier de `[-1022, 1023]`, par l'exposant : `(k + 1023) << 52`.
+    #[inline(always)]
+    fn pow2(self) -> Self {
+        let bits = self.integer_bits();
+        // SAFETY: `self` n'existe que si AVX2 est supporté.
+        let bias = unsafe { _mm256_set1_epi64x(1023) };
+        // SAFETY: idem.
+        let biased = unsafe { _mm256_add_epi64(bits, bias) };
+        // SAFETY: idem.
+        let shifted = unsafe { _mm256_slli_epi64::<52>(biased) };
+        // SAFETY: idem.
+        Self(unsafe { _mm256_castsi256_pd(shifted) })
+    }
+
+    /// La valeur entière de `self`, supposée entière et de valeur absolue inférieure à `2^51`,
+    /// en entier 64 bits : `self + 1.5 * 2^52` a `self` dans ses bits de mantisse.
+    #[inline(always)]
+    fn integer_bits(self) -> std::arch::x86_64::__m256i {
+        let shifter = self.splat_like(6_755_399_441_055_744.0);
+        let sum = self + shifter;
+        // SAFETY: `self` n'existe que si AVX2 est supporté.
+        let sum_bits = unsafe { _mm256_castpd_si256(sum.0) };
+        // SAFETY: idem.
+        let shifter_bits = unsafe { _mm256_castpd_si256(shifter.0) };
+        // SAFETY: idem.
+        unsafe { _mm256_sub_epi64(sum_bits, shifter_bits) }
+    }
+
+    /// Le masque des voies dont l'entier (`self` est entier, `|self| < 2^51`) a à un le bit
+    /// `63 - SHIFT` : `SHIFT = 63` pour le bit 0, `SHIFT = 62` pour le bit 1.
+    #[inline(always)]
+    pub(super) fn integer_bit_mask<const SHIFT: i32>(self) -> Mask {
+        let bits = self.integer_bits();
+        // SAFETY: `self` n'existe que si AVX2 est supporté. Le bit visé monte en position de
+        // signe, la seule que `blendv` et `movemask` lisent.
+        let moved = unsafe { _mm256_slli_epi64::<SHIFT>(bits) };
+        // SAFETY: idem.
+        Mask(unsafe { _mm256_castsi256_pd(moved) })
+    }
+
+    /// Mantisse et exposant d'un `f64` positif normal : `self = m * 2^e` avec `m` dans `[1, 2[`.
+    /// `e` est rendu en `f64`. Pour une valeur nulle, négative, sous-normale, infinie ou `NaN`,
+    /// le résultat n'a pas de sens : l'appelant écarte ces voies.
+    #[inline(always)]
+    pub(super) fn split_exponent(self) -> (Self, Self) {
+        // SAFETY: `self` n'existe que si AVX2 est supporté.
+        let bits = unsafe { _mm256_castpd_si256(self.0) };
+        // SAFETY: idem.
+        let exponent_field = unsafe { _mm256_srli_epi64::<52>(bits) };
+        // SAFETY: idem.
+        let mantissa_mask = unsafe { _mm256_set1_epi64x(0x000F_FFFF_FFFF_FFFF) };
+        // SAFETY: idem.
+        let mantissa = unsafe { _mm256_and_si256(bits, mantissa_mask) };
+        // SAFETY: idem.
+        let one_bits = unsafe { _mm256_set1_epi64x(0x3FF0_0000_0000_0000) };
+        // SAFETY: idem.
+        let normalized = unsafe { _mm256_or_si256(mantissa, one_bits) };
+        // SAFETY: idem.
+        let mantissa_value = Self(unsafe { _mm256_castsi256_pd(normalized) });
+        // e = field - 1023, reconverti en f64 par la même astuce de `1.5 * 2^52`.
+        // SAFETY: idem.
+        let bias = unsafe { _mm256_set1_epi64x(1023) };
+        // SAFETY: idem.
+        let exponent = unsafe { _mm256_sub_epi64(exponent_field, bias) };
+        let shifter = self.splat_like(6_755_399_441_055_744.0);
+        // SAFETY: idem.
+        let shifter_bits = unsafe { _mm256_castpd_si256(shifter.0) };
+        // SAFETY: idem.
+        let summed = unsafe { _mm256_add_epi64(shifter_bits, exponent) };
+        // SAFETY: idem.
+        let exponent_value = Self(unsafe { _mm256_castsi256_pd(summed) }) - shifter;
+        (mantissa_value, exponent_value)
     }
 
     /// Valeur absolue.
@@ -213,6 +349,13 @@ impl Mask {
         Self(unsafe { _mm256_and_pd(self.0, other.0) })
     }
 
+    /// Voies vraies d'au moins un des deux masques.
+    #[inline(always)]
+    pub(crate) fn or(self, other: Self) -> Self {
+        // SAFETY: `self` n'existe que si AVX2 est supporté.
+        Self(unsafe { _mm256_or_pd(self.0, other.0) })
+    }
+
     /// Les voies que le masque ne retient pas.
     #[inline(always)]
     pub(crate) fn not(self) -> Self {
@@ -222,6 +365,14 @@ impl Mask {
         let ones = unsafe { _mm256_cmp_pd::<_CMP_TRUE_UQ>(zero, zero) };
         // SAFETY: idem.
         Self(unsafe { _mm256_xor_pd(self.0, ones) })
+    }
+
+    /// Un bit par voie, le bit 0 pour la première : les voies vraies.
+    #[inline(always)]
+    pub(crate) fn bits(self) -> u32 {
+        // SAFETY: `self` n'existe que si AVX2 est supporté.
+        let bits = unsafe { _mm256_movemask_pd(self.0) };
+        u32::try_from(bits).unwrap_or(0)
     }
 
     /// Au moins une voie est vraie.

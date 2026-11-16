@@ -156,11 +156,10 @@ mod vector {
         let lam = kernels::adjlon(tok, kernels::adjlon(tok, lon_r) - k(t.lam0));
 
         let two_phi = phi + phi;
-        let mut cn = gatg(tok, &t.cbg, phi, two_phi.cos(), two_phi.sin());
-        let sin_cn = cn.sin();
-        let cos_cn = cn.cos();
-        let sin_ce = lam.sin();
-        let cos_ce = lam.cos();
+        let (sin_2phi, cos_2phi) = two_phi.sin_cos();
+        let mut cn = gatg(tok, &t.cbg, phi, cos_2phi, sin_2phi);
+        let (sin_cn, cos_cn) = cn.sin_cos();
+        let (sin_ce, cos_ce) = lam.sin_cos();
         let cos_cn_cos_ce = cos_cn * cos_ce;
         cn = sin_cn.atan2(cos_cn_cos_ce);
 
@@ -212,8 +211,7 @@ mod vector {
             return None;
         }
         let two_cn = cn + cn;
-        let sin_arg_r = two_cn.sin();
-        let cos_arg_r = two_cn.cos();
+        let (sin_arg_r, cos_arg_r) = two_cn.sin_cos();
         let exp_2_ce = (ce + ce).exp();
         let half_inv = k(0.5) / exp_2_ce;
         let sinh_arg_i = k(0.5).mul_add(exp_2_ce, -half_inv);
@@ -223,8 +221,7 @@ mod vector {
         cn = cn + d_cn;
         ce = ce + d_ce;
 
-        let sin_cn = cn.sin();
-        let cos_cn = cn.cos();
+        let (sin_cn, cos_cn) = cn.sin_cos();
         let sinh_ce = ce.sinh();
         ce = sinh_ce.atan2(cos_cn);
         let modulus = sinh_ce.hypot(cos_cn);

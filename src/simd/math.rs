@@ -1,192 +1,1172 @@
-//! Fonctions transcendantes sur quatre voies.
+//! Fonctions transcendantes sur quatre voies, en Rust, sans bibliothèque externe.
 //!
-//! Sous Linux avec glibc, un appel `libmvec` calcule les quatre voies à la fois (précision de
-//! quelques ULP, comme les versions scalaires de la glibc). Ailleurs, la fonction de la
-//! bibliothèque C est appelée une voie à la fois : le reste du noyau reste vectoriel.
+//! Les algorithmes sont ceux de fdlibm (la libm de Sun, reprise par FreeBSD et musl), écrits contre
+//! l'API de [`V4`] : réduction d'argument de Cody et Waite, noyaux polynomiaux de Remez,
+//! sélections par masque à la place des branches. Ils tiennent le niveau de la libm scalaire, de
+//! 1 à 3 ULP selon la fonction (le banc de ce fichier en donne la mesure), donc la même
+//! précision au nanomètre sur une coordonnée que les versions de la bibliothèque C.
+//!
+//! Aucune dépendance : ni `libmvec` (glibc), ni l'assembleur en ligne, ni appel à la libm du
+//! système. Le code est le même sur Linux, Windows et macOS.
+//!
+//! Une voie hors du domaine rapide d'une fonction (valeur non finie, argument très grand, très
+//! petit ou hors de l'ensemble de définition) est recalculée par la fonction de la bibliothèque
+//! standard : le résultat aux cas limites est celui du scalaire, `NaN` et infinis compris. Ces
+//! voies sont rares et passent par une fonction froide.
 
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
-use std::arch::x86_64::__m256d;
+use super::{Mask, V4};
 
-use super::V4;
+/// `ln 2`, partie haute : 32 bits significatifs, donc `k * LN2_HI` est exact pour `|k| < 2^21`.
+const LN2_HI: f64 = 6.931_471_803_691_238_164_90e-1;
+/// `ln 2`, partie basse : `ln 2 - LN2_HI`.
+const LN2_LO: f64 = 1.908_214_929_270_587_700_02e-10;
+/// `1 / ln 2`.
+const INV_LN2: f64 = 1.442_695_040_888_963_387_00;
+/// `sqrt(2)`.
+const SQRT_2: f64 = 1.414_213_562_373_095_1;
 
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
-mod libmvec {
-    #[link(name = "mvec")]
-    extern "C" {
-        pub(super) fn _ZGVdN4v_sin();
-        pub(super) fn _ZGVdN4v_cos();
-        pub(super) fn _ZGVdN4v_tan();
-        pub(super) fn _ZGVdN4v_exp();
-        pub(super) fn _ZGVdN4v_log();
-        pub(super) fn _ZGVdN4v_atanh();
-        pub(super) fn _ZGVdN4v_asinh();
-        pub(super) fn _ZGVdN4v_sinh();
-        pub(super) fn _ZGVdN4v_atan();
-        pub(super) fn _ZGVdN4vv_atan2();
-        pub(super) fn _ZGVdN4vv_hypot();
-        pub(super) fn _ZGVdN4vv_pow();
-    }
-}
+/// `pi`, partie haute et basse (`pi - PI_HI`).
+const PI_HI: f64 = 3.141_592_653_589_793_116_0;
+const PI_LO: f64 = 1.224_646_799_147_353_177_2e-16;
 
-/// Une fonction à un argument. `asm!` sur des registres `ymm` exige la fonctionnalité `avx` de
-/// la fonction qui le contient : `call` est donc une fonction `target_feature` à part, que la
-/// méthode appelle sous la preuve [`super::Avx2`] que porte `self`.
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
-macro_rules! unary {
-    ($name:ident, $symbol:ident, $std:path, $doc:literal) => {
-        impl V4 {
-            #[doc = $doc]
-            #[inline(always)]
-            pub(crate) fn $name(self) -> V4 {
-                /// # Safety
-                ///
-                /// Le processeur doit supporter AVX2 et FMA.
-                #[target_feature(enable = "avx2,fma")]
-                unsafe fn call(x: __m256d) -> __m256d {
-                    let result: __m256d;
-                    // SAFETY: symbole libmvec AVX2 : un vecteur de quatre `f64` en ymm0,
-                    // résultat en ymm0. Les ymm listés sont les registres que l'appel peut
-                    // écraser, avec le reste de l'ABI SysV.
-                    unsafe {
-                        core::arch::asm!(
-                            "call {f}",
-                            f = sym libmvec::$symbol,
-                            in("ymm0") x,
-                            lateout("ymm0") result,
-                            out("ymm1") _, out("ymm2") _, out("ymm3") _, out("ymm4") _,
-                            out("ymm5") _, out("ymm6") _, out("ymm7") _, out("ymm8") _,
-                            out("ymm9") _, out("ymm10") _, out("ymm11") _, out("ymm12") _,
-                            out("ymm13") _, out("ymm14") _, out("ymm15") _,
-                            clobber_abi("sysv64"),
-                        );
-                    }
-                    result
-                }
-                // SAFETY: `self` n'existe que si AVX2 et FMA sont supportés.
-                V4(unsafe { call(self.0) })
-            }
-        }
-    };
-}
+/// `pi / 2` en trois morceaux : la réduction `x - n * pi/2` garde alors la précision relative du
+/// reste même près d'un multiple de `pi / 2`.
+const PIO2_HI: f64 = 1.570_796_326_794_896_558_0;
+const PIO2_MID: f64 = 6.123_233_995_736_766_035_9e-17;
+const PIO2_LO: f64 = -1.497_384_904_859_169_8e-33;
+/// `2 / pi`.
+const TWO_OVER_PI: f64 = 6.366_197_723_675_813_824_3e-1;
+/// Au-delà, la réduction par trois morceaux perd de la précision : la voie passe par la libm.
+const REDUCTION_LIMIT: f64 = 1_048_576.0;
 
-/// Une fonction à deux arguments, même découpage que `unary!`.
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
-macro_rules! binary {
-    ($name:ident, $symbol:ident, $std:path, $doc:literal) => {
-        impl V4 {
-            #[doc = $doc]
-            #[inline(always)]
-            pub(crate) fn $name(self, other: V4) -> V4 {
-                /// # Safety
-                ///
-                /// Le processeur doit supporter AVX2 et FMA.
-                #[target_feature(enable = "avx2,fma")]
-                unsafe fn call(first: __m256d, second: __m256d) -> __m256d {
-                    let result: __m256d;
-                    // SAFETY: symbole libmvec AVX2 à deux arguments : le premier en ymm0, le
-                    // second en ymm1, résultat en ymm0.
-                    unsafe {
-                        core::arch::asm!(
-                            "call {f}",
-                            f = sym libmvec::$symbol,
-                            in("ymm0") first,
-                            inout("ymm1") second => _,
-                            lateout("ymm0") result,
-                            out("ymm2") _, out("ymm3") _, out("ymm4") _, out("ymm5") _,
-                            out("ymm6") _, out("ymm7") _, out("ymm8") _, out("ymm9") _,
-                            out("ymm10") _, out("ymm11") _, out("ymm12") _, out("ymm13") _,
-                            out("ymm14") _, out("ymm15") _,
-                            clobber_abi("sysv64"),
-                        );
-                    }
-                    result
-                }
-                // SAFETY: `self` n'existe que si AVX2 et FMA sont supportés.
-                V4(unsafe { call(self.0, other.0) })
-            }
-        }
-    };
-}
+/// Coefficients du noyau de `sin` sur `[-pi/4, pi/4]` (fdlibm `__kernel_sin`).
+const S1: f64 = -1.666_666_666_666_663_243_48e-1;
+const S2: f64 = 8.333_333_333_322_489_461_24e-3;
+const S3: f64 = -1.984_126_982_985_794_931_34e-4;
+const S4: f64 = 2.755_731_370_707_006_767_89e-6;
+const S5: f64 = -2.505_076_025_340_686_341_95e-8;
+const S6: f64 = 1.589_690_995_211_550_102_21e-10;
 
-#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
-macro_rules! unary {
-    ($name:ident, $symbol:ident, $std:path, $doc:literal) => {
-        impl V4 {
-            #[doc = $doc]
-            #[inline(always)]
-            pub(crate) fn $name(self) -> V4 {
-                lane_wise(self, self, |lane, _| $std(lane))
-            }
-        }
-    };
-}
+/// Coefficients du noyau de `cos` (fdlibm `__kernel_cos`).
+const C1: f64 = 4.166_666_666_666_660_190_37e-2;
+const C2: f64 = -1.388_888_888_887_410_957_49e-3;
+const C3: f64 = 2.480_158_728_947_672_941_78e-5;
+const C4: f64 = -2.755_731_435_139_066_330_35e-7;
+const C5: f64 = 2.087_572_321_298_174_827_90e-9;
+const C6: f64 = -1.135_964_755_778_819_482_65e-11;
 
-#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
-macro_rules! binary {
-    ($name:ident, $symbol:ident, $std:path, $doc:literal) => {
-        impl V4 {
-            #[doc = $doc]
-            #[inline(always)]
-            pub(crate) fn $name(self, other: V4) -> V4 {
-                lane_wise(self, other, |lane, second| $std(lane, second))
-            }
-        }
-    };
-}
+/// Coefficients de `log` (fdlibm `e_log.c`).
+const LG1: f64 = 6.666_666_666_666_735_130e-1;
+const LG2: f64 = 3.999_999_999_940_941_908e-1;
+const LG3: f64 = 2.857_142_874_366_239_149e-1;
+const LG4: f64 = 2.222_219_843_214_978_396e-1;
+const LG5: f64 = 1.818_357_216_161_805_012e-1;
+const LG6: f64 = 1.531_383_769_920_937_332e-1;
+const LG7: f64 = 1.479_819_860_511_658_591e-1;
 
-/// Applique `function` à chaque voie de `first`, avec la voie correspondante de `second`.
-#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+/// Coefficients de `atan` sur `[0, 7/16]` (fdlibm `s_atan.c`).
+const AT: [f64; 11] = [
+    3.333_333_333_333_293_180_27e-1,
+    -1.999_999_999_987_648_324_76e-1,
+    1.428_571_427_250_346_637_11e-1,
+    -1.111_111_040_546_235_578_80e-1,
+    9.090_887_133_436_506_561_96e-2,
+    -7.691_876_205_044_829_994_95e-2,
+    6.661_073_137_387_531_206_69e-2,
+    -5.833_570_133_790_573_486_45e-2,
+    4.976_877_994_615_932_360_17e-2,
+    -3.653_157_274_421_691_552_70e-2,
+    1.628_582_011_536_578_236_23e-2,
+];
+/// `atan(0.5)`, `atan(1)`, `atan(1.5)`, `atan(inf)`, parties hautes et basses.
+const ATAN_HI: [f64; 4] = [
+    4.636_476_090_008_060_935_15e-1,
+    7.853_981_633_974_482_789_99e-1,
+    9.827_937_232_473_290_540_82e-1,
+    1.570_796_326_794_896_558_00,
+];
+const ATAN_LO: [f64; 4] = [
+    2.269_877_745_296_168_709_24e-17,
+    3.061_616_997_868_383_017_93e-17,
+    1.390_331_103_123_099_845_16e-17,
+    6.123_233_995_736_766_035_87e-17,
+];
+
+/// `1/n!`, `n` de 2 à 13 : le noyau de `exp` sur `[-ln2/2, ln2/2]`.
+const EXP_COEFFS: [f64; 12] = [
+    1.0 / 2.0,
+    1.0 / 6.0,
+    1.0 / 24.0,
+    1.0 / 120.0,
+    1.0 / 720.0,
+    1.0 / 5_040.0,
+    1.0 / 40_320.0,
+    1.0 / 362_880.0,
+    1.0 / 3_628_800.0,
+    1.0 / 39_916_800.0,
+    1.0 / 479_001_600.0,
+    1.0 / 6_227_020_800.0,
+];
+
+/// `1/(2k+1)!`, `k` de 1 à 8 : le noyau de `sinh` pour un petit argument.
+const SINH_COEFFS: [f64; 8] = [
+    1.0 / 6.0,
+    1.0 / 120.0,
+    1.0 / 5_040.0,
+    1.0 / 362_880.0,
+    1.0 / 39_916_800.0,
+    1.0 / 6_227_020_800.0,
+    1.0 / 1_307_674_368_000.0,
+    1.0 / 355_687_428_096_000.0,
+];
+
+/// `asinh(x) = x * (1 + z * P(z))`, `z = x^2` : les coefficients de `P` (`(-1)^k C(2k,k) / (4^k (2k+1))`
+/// pour `k` de 1 à 11), pour `|x| < 0.15`.
+const ASINH_SERIES: [f64; 11] = [
+    -0.16666666666666666,
+    0.075,
+    -0.044642857142857144,
+    0.030381944444444444,
+    -0.022372159090909092,
+    0.017352764423076924,
+    -0.01396484375,
+    0.011551800896139705,
+    -0.009761609529194078,
+    0.008390335809616815,
+    -0.0073125258735988454,
+];
+
+/// Au-dessous de cette valeur absolue, `atanh` et `asinh` s'évaluent par leur série entière.
+const SERIES_LIMIT: f64 = 0.15;
+
+/// `1/(2k+3)`, `k` de 0 à 11 : la queue de la série de `log` en double précision étendue, et celle
+/// de `atanh(x) = x * (1 + z * Q(z))` pour `|x| < 0.15`.
+const ATANH_TAIL: [f64; 12] = [
+    1.0 / 3.0,
+    1.0 / 5.0,
+    1.0 / 7.0,
+    1.0 / 9.0,
+    1.0 / 11.0,
+    1.0 / 13.0,
+    1.0 / 15.0,
+    1.0 / 17.0,
+    1.0 / 19.0,
+    1.0 / 21.0,
+    1.0 / 23.0,
+    1.0 / 25.0,
+];
+
+/// Remplace les voies `bad` de `result` par `function(input)`, voie par voie.
 #[inline(always)]
-fn lane_wise(first: V4, second: V4, function: impl Fn(f64, f64) -> f64) -> V4 {
-    use std::arch::x86_64::{_mm256_loadu_pd, _mm256_storeu_pd};
-
-    let mut lanes = [0.0; 4];
-    let mut others = [0.0; 4];
-    // SAFETY: `first` n'existe que si AVX2 est supporté ; `lanes` désigne quatre `f64`.
-    unsafe { _mm256_storeu_pd(lanes.as_mut_ptr(), first.0) };
-    // SAFETY: idem pour `second`.
-    unsafe { _mm256_storeu_pd(others.as_mut_ptr(), second.0) };
-    for (lane, other) in lanes.iter_mut().zip(others) {
-        *lane = function(*lane, other);
+fn patch(input: V4, result: V4, bad: Mask, function: fn(f64) -> f64) -> V4 {
+    if bad.any() {
+        patch_lanes(input, result, bad, function)
+    } else {
+        result
     }
-    // SAFETY: `first` n'existe que si AVX2 est supporté ; `lanes` désigne quatre `f64`.
-    V4(unsafe { _mm256_loadu_pd(lanes.as_ptr()) })
 }
 
-unary!(sin, _ZGVdN4v_sin, f64::sin, "Quatre sinus.");
-unary!(cos, _ZGVdN4v_cos, f64::cos, "Quatre cosinus.");
-unary!(tan, _ZGVdN4v_tan, f64::tan, "Quatre tangentes.");
-unary!(exp, _ZGVdN4v_exp, f64::exp, "Quatre exponentielles.");
-unary!(log, _ZGVdN4v_log, f64::ln, "Quatre logarithmes naturels.");
-unary!(
-    atanh,
-    _ZGVdN4v_atanh,
-    f64::atanh,
-    "Quatre arguments tangente hyperbolique."
-);
-unary!(
-    asinh,
-    _ZGVdN4v_asinh,
-    f64::asinh,
-    "Quatre arguments sinus hyperbolique."
-);
-unary!(
-    sinh,
-    _ZGVdN4v_sinh,
-    f64::sinh,
-    "Quatre sinus hyperboliques."
-);
-unary!(atan, _ZGVdN4v_atan, f64::atan, "Quatre arcs tangente.");
-binary!(
-    atan2,
-    _ZGVdN4vv_atan2,
-    f64::atan2,
-    "Quatre `self.atan2(other)`, même ordre que `f64::atan2`."
-);
-binary!(
-    hypot,
-    _ZGVdN4vv_hypot,
-    f64::hypot,
-    "Quatre `self.hypot(other)`."
-);
-binary!(powf, _ZGVdN4vv_pow, f64::powf, "Quatre `self.powf(other)`.");
+#[cold]
+#[inline(never)]
+fn patch_lanes(input: V4, result: V4, bad: Mask, function: fn(f64) -> f64) -> V4 {
+    let bits = bad.bits();
+    let inputs = input.to_array();
+    let mut out = result.to_array();
+    for (lane, value) in out.iter_mut().enumerate() {
+        if (bits >> lane) & 1 == 1 {
+            *value = function(inputs[lane]);
+        }
+    }
+    result.reload(&out)
+}
+
+/// Comme [`patch`], pour une fonction à deux arguments.
+#[inline(always)]
+fn patch2(first: V4, second: V4, result: V4, bad: Mask, function: fn(f64, f64) -> f64) -> V4 {
+    if bad.any() {
+        patch2_lanes(first, second, result, bad, function)
+    } else {
+        result
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn patch2_lanes(first: V4, second: V4, result: V4, bad: Mask, function: fn(f64, f64) -> f64) -> V4 {
+    let bits = bad.bits();
+    let firsts = first.to_array();
+    let seconds = second.to_array();
+    let mut out = result.to_array();
+    for (lane, value) in out.iter_mut().enumerate() {
+        if (bits >> lane) & 1 == 1 {
+            *value = function(firsts[lane], seconds[lane]);
+        }
+    }
+    result.reload(&out)
+}
+
+/// `exp(r)` pour `|r| <= ln 2 / 2` : `1 + r + r^2 * P(r)`, `P` le développement de Taylor.
+#[inline(always)]
+fn exp_reduced(r: V4) -> V4 {
+    let k = |value| r.splat_like(value);
+    let mut p = k(EXP_COEFFS[11]);
+    for coefficient in EXP_COEFFS[..11].iter().rev() {
+        p = p.mul_add(r, k(*coefficient));
+    }
+    (r * r).mul_add(p, r) + k(1.0)
+}
+
+/// `(m, e)` avec `x = m * 2^e` et `m` dans `[sqrt(1/2), sqrt(2)[`, pour un `x` positif normal.
+#[inline(always)]
+fn centered_mantissa(x: V4) -> (V4, V4) {
+    let k = |value| x.splat_like(value);
+    let (m, e) = x.split_exponent();
+    let high = m.gt(k(SQRT_2));
+    (
+        V4::select(high, m * k(0.5), m),
+        V4::select(high, e + k(1.0), e),
+    )
+}
+
+/// `x` est un positif normal fini : le domaine rapide de `log`.
+#[inline(always)]
+fn positive_normal(x: V4) -> Mask {
+    let k = |value| x.splat_like(value);
+    x.ge(k(f64::MIN_POSITIVE)).and(x.le(k(f64::MAX)))
+}
+
+/// `log(1 + u)` à partir de `arg = 1 + u` (arrondi) et de `log(arg)` : la correction de
+/// Goldberg `log(arg) * u / (arg - 1)` rend la précision relative pour un petit `u`.
+#[inline(always)]
+fn log1p_from(u: V4, arg: V4, log_arg: V4) -> V4 {
+    let one = u.splat_like(1.0);
+    let unchanged = arg.eq(one);
+    V4::select(unchanged, u, log_arg * (u / (arg - one)))
+}
+
+/// `sinh(a)` pour un petit `a` : `a * (1 + a^2/3! + a^4/5! + ...)`, sans la soustraction de
+/// l'exponentielle qui perdrait des bits.
+///
+/// Ce sont des fonctions et non des fermetures : une fermeture n'hérite pas du `target_feature` de
+/// la fonction qui l'appelle, et n'est pas toujours insérée en ligne : ses intrinsèques deviendraient
+/// des appels (voir `v4.rs`).
+#[inline(always)]
+fn sinh_series(a: V4) -> V4 {
+    let k = |value| a.splat_like(value);
+    let z = a * a;
+    let mut p = k(SINH_COEFFS[7]);
+    for coefficient in SINH_COEFFS[..7].iter().rev() {
+        p = z.mul_add(p, k(*coefficient));
+    }
+    (a * z).mul_add(p, a)
+}
+
+/// `sinh(a) = (e^a - e^-a) / 2`, pour un `a` qui n'est pas petit.
+#[inline(always)]
+fn sinh_exponential(a: V4) -> V4 {
+    let k = |value| a.splat_like(value);
+    let e = a.exp();
+    k(0.5) * (e - k(1.0) / e)
+}
+
+/// `s1 + s2` de fdlibm : le facteur de `t` dans `atan(t) = t - t * (s1 + s2)`, `|t| <= 7/16`.
+#[inline(always)]
+fn atan_poly(t: V4) -> V4 {
+    let k = |value| t.splat_like(value);
+    let z = t * t;
+    let w = z * z;
+    let mut s1 = k(AT[10]);
+    for index in [8, 6, 4, 2, 0] {
+        s1 = w.mul_add(s1, k(AT[index]));
+    }
+    let mut s2 = k(AT[9]);
+    for index in [7, 5, 3, 1] {
+        s2 = w.mul_add(s2, k(AT[index]));
+    }
+    z.mul_add(s1, w * s2)
+}
+
+impl V4 {
+    /// Quatre exponentielles.
+    #[inline(always)]
+    pub(crate) fn exp(self) -> V4 {
+        let k = |value| self.splat_like(value);
+        let fast = self.abs().le(k(700.0));
+        let x = V4::select(fast, self, k(0.0));
+        let n = (x * k(INV_LN2)).round();
+        let r = (-n).mul_add(k(LN2_HI), x);
+        let r = (-n).mul_add(k(LN2_LO), r);
+        patch(self, exp_reduced(r).scale_pow2(n), fast.not(), f64::exp)
+    }
+
+    /// Quatre logarithmes naturels.
+    #[inline(always)]
+    pub(crate) fn log(self) -> V4 {
+        let k = |value| self.splat_like(value);
+        let fast = positive_normal(self);
+        let x = V4::select(fast, self, k(1.0));
+        let (m, e) = centered_mantissa(x);
+        let f = m - k(1.0);
+        let s = f / (k(2.0) + f);
+        let z = s * s;
+        let w = z * z;
+        let t1 = w * w.mul_add(w.mul_add(k(LG6), k(LG4)), k(LG2));
+        let t2 = z * w.mul_add(w.mul_add(w.mul_add(k(LG7), k(LG5)), k(LG3)), k(LG1));
+        let r = t2 + t1;
+        let hfsq = k(0.5) * f * f;
+        let result = e.mul_add(
+            k(LN2_HI),
+            -((hfsq - s.mul_add(hfsq + r, e * k(LN2_LO))) - f),
+        );
+        patch(self, result, fast.not(), f64::ln)
+    }
+
+    /// Sinus et cosinus de la même valeur : une seule réduction d'argument.
+    #[inline(always)]
+    pub(crate) fn sin_cos(self) -> (V4, V4) {
+        let k = |value| self.splat_like(value);
+        let fast = self.abs().lt(k(REDUCTION_LIMIT));
+        let x = V4::select(fast, self, k(0.0));
+        // `n` est l'entier le plus proche de `x * 2/pi` ; `r = x - n * pi/2`, `|r| <= pi/4`.
+        let n = (x * k(TWO_OVER_PI)).round();
+        let r = (-n).mul_add(k(PIO2_HI), x);
+        let r = (-n).mul_add(k(PIO2_MID), r);
+        let r = (-n).mul_add(k(PIO2_LO), r);
+        let z = r * r;
+        // fdlibm `__kernel_sin` : r + r^3 * (S1 + z * (S2 + z * (S3 + ...))).
+        let p = z.mul_add(k(S6), k(S5));
+        let p = z.mul_add(p, k(S4));
+        let p = z.mul_add(p, k(S3));
+        let p = z.mul_add(p, k(S2));
+        let sin_r = (z * r).mul_add(z.mul_add(p, k(S1)), r);
+        // fdlibm `__kernel_cos` : 1 - z/2 + z^2 * (C1 + z * (C2 + ...)), avec la compensation
+        // `(1 - w) - hz` qui rend les bits perdus par `1 - z/2`.
+        let w2 = z * z;
+        let q1 = z.mul_add(z.mul_add(k(C3), k(C2)), k(C1));
+        let q2 = z.mul_add(z.mul_add(k(C6), k(C5)), k(C4));
+        let poly = (z * q1).mul_add(k(1.0), w2 * w2 * q2);
+        let hz = k(0.5) * z;
+        let w = k(1.0) - hz;
+        let cos_r = w + (((k(1.0) - w) - hz) + z * poly);
+        // Le quadrant `n mod 4` choisit et signe : sin = [s, c, -s, -c], cos = [c, -s, -c, s].
+        let odd = n.integer_bit_mask::<63>();
+        let negative_sin = n.integer_bit_mask::<62>();
+        let negative_cos = (n + k(1.0)).integer_bit_mask::<62>();
+        let sin = V4::select(odd, cos_r, sin_r);
+        let sin = V4::select(negative_sin, -sin, sin);
+        let cos = V4::select(odd, sin_r, cos_r);
+        let cos = V4::select(negative_cos, -cos, cos);
+        // Un petit argument garde son signe : `sin(-0) = -0`.
+        let tiny = x.abs().lt(k(7.450_580_596_923_828e-9));
+        let sin = V4::select(tiny, x, sin);
+        let bad = fast.not();
+        (
+            patch(self, sin, bad, f64::sin),
+            patch(self, cos, bad, f64::cos),
+        )
+    }
+
+    /// Quatre tangentes.
+    #[inline(always)]
+    pub(crate) fn tan(self) -> V4 {
+        let (sin, cos) = self.sin_cos();
+        sin / cos
+    }
+
+    /// Quatre arcs tangente.
+    #[inline(always)]
+    pub(crate) fn atan(self) -> V4 {
+        let k = |value| self.splat_like(value);
+        let one = k(1.0);
+        let ax = self.abs();
+        let from_7_16 = ax.ge(k(7.0 / 16.0));
+        // Toutes les voies sous 7/16 : pas de réduction, ni de division. Un `NaN` ne passe pas
+        // `lt`, donc ce chemin ne le prend jamais.
+        if ax.lt(k(7.0 / 16.0)).all() {
+            return self - self * atan_poly(self);
+        }
+        // Quatre plages de réduction, comme fdlibm : [7/16, 11/16[, [11/16, 19/16[,
+        // [19/16, 39/16[, [39/16, +inf]. Un `NaN` ne tombe dans aucune : il reste `NaN`.
+        let from_11_16 = ax.ge(k(11.0 / 16.0));
+        let from_19_16 = ax.ge(k(19.0 / 16.0));
+        let from_39_16 = ax.ge(k(39.0 / 16.0));
+        let num = V4::select(
+            from_39_16,
+            -one,
+            V4::select(
+                from_19_16,
+                ax - k(1.5),
+                V4::select(
+                    from_11_16,
+                    ax - one,
+                    V4::select(from_7_16, ax + ax - one, ax),
+                ),
+            ),
+        );
+        let den = V4::select(
+            from_39_16,
+            ax,
+            V4::select(
+                from_19_16,
+                k(1.5).mul_add(ax, one),
+                V4::select(
+                    from_11_16,
+                    ax + one,
+                    V4::select(from_7_16, k(2.0) + ax, one),
+                ),
+            ),
+        );
+        let t = num / den;
+        let correction = t * atan_poly(t);
+        let unreduced = t - correction;
+        let hi = V4::select(
+            from_39_16,
+            k(ATAN_HI[3]),
+            V4::select(
+                from_19_16,
+                k(ATAN_HI[2]),
+                V4::select(from_11_16, k(ATAN_HI[1]), k(ATAN_HI[0])),
+            ),
+        );
+        let lo = V4::select(
+            from_39_16,
+            k(ATAN_LO[3]),
+            V4::select(
+                from_19_16,
+                k(ATAN_LO[2]),
+                V4::select(from_11_16, k(ATAN_LO[1]), k(ATAN_LO[0])),
+            ),
+        );
+        let reduced = hi - ((correction - lo) - t);
+        V4::select(from_7_16, reduced, unreduced).copysign(self)
+    }
+
+    /// Quatre `self.atan2(x)`, `self` étant `y`, dans l'ordre de `f64::atan2`.
+    #[inline(always)]
+    pub(crate) fn atan2(self, x: V4) -> V4 {
+        let k = |value| self.splat_like(value);
+        let fast = self.is_finite().and(x.is_finite());
+        let ay = self.abs();
+        let ax = x.abs();
+        let both_zero = ay.eq(k(0.0)).and(ax.eq(k(0.0)));
+        // `ay / 0` est l'infini : `atan(inf)` vaut `pi / 2`, le bon résultat pour `x = 0`.
+        let t = V4::select(both_zero, k(0.0), (ay / ax).atan());
+        let r = V4::select(x.sign_mask(), k(PI_HI) - (t - k(PI_LO)), t);
+        patch2(self, x, r.copysign(self), fast.not(), f64::atan2)
+    }
+
+    /// Quatre `self.hypot(other)`.
+    #[inline(always)]
+    pub(crate) fn hypot(self, other: V4) -> V4 {
+        let k = |value| self.splat_like(value);
+        let a = self.abs();
+        let b = other.abs();
+        let big = a.max(b);
+        let fast = a
+            .is_finite()
+            .and(b.is_finite())
+            .and(big.lt(k(1e150)))
+            .and(big.gt(k(1e-150)).or(big.eq(k(0.0))));
+        let small = a.min(b);
+        patch2(
+            self,
+            other,
+            big.mul_add(big, small * small).sqrt(),
+            fast.not(),
+            f64::hypot,
+        )
+    }
+
+    /// Quatre arguments sinus hyperbolique.
+    #[inline(always)]
+    pub(crate) fn asinh(self) -> V4 {
+        let k = |value| self.splat_like(value);
+        let one = k(1.0);
+        // Tous les arguments petits : la série entière, impaire, sans logarithme.
+        if self.abs().lt(k(SERIES_LIMIT)).all() {
+            let z = self * self;
+            let mut p = k(ASINH_SERIES[10]);
+            for coefficient in ASINH_SERIES[..10].iter().rev() {
+                p = z.mul_add(p, k(*coefficient));
+            }
+            return (self * z).mul_add(p, self);
+        }
+        let ax = self.abs();
+        let fast = ax.lt(k(1e150));
+        let a = V4::select(fast, ax, one);
+        // `a < 2` : log1p(a + t / (1 + sqrt(1 + t))), `t = a^2` ; sinon log(2a + 1/(sqrt(a^2+1) + a)).
+        let small = a.lt(k(2.0));
+        let t = a * a;
+        let u = a + t / (one + t.add_one().sqrt());
+        let wide = k(2.0) * a + one / (t.add_one().sqrt() + a);
+        let arg = V4::select(small, one + u, wide);
+        let log = arg.log();
+        let value = V4::select(small, log1p_from(u, arg, log), log);
+        // Un très petit argument est sa propre image.
+        let tiny = a.lt(k(3.725_290_298_461_914e-9));
+        let value = V4::select(tiny, a, value);
+        patch(self, value.copysign(self), fast.not(), f64::asinh)
+    }
+
+    /// Quatre arguments tangente hyperbolique.
+    #[inline(always)]
+    pub(crate) fn atanh(self) -> V4 {
+        let k = |value| self.splat_like(value);
+        let one = k(1.0);
+        // Tous les arguments petits : la série entière, impaire, sans logarithme ni division.
+        if self.abs().lt(k(SERIES_LIMIT)).all() {
+            let z = self * self;
+            let mut q = k(ATANH_TAIL[11]);
+            for coefficient in ATANH_TAIL[..11].iter().rev() {
+                q = z.mul_add(q, k(*coefficient));
+            }
+            return (self * z).mul_add(q, self);
+        }
+        let ax = self.abs();
+        let fast = ax.lt(one);
+        let a = V4::select(fast, ax, k(0.5));
+        let u = (a + a) / (one - a);
+        let arg = one + u;
+        let value = k(0.5) * log1p_from(u, arg, arg.log());
+        let tiny = a.lt(k(3.725_290_298_461_914e-9));
+        let value = V4::select(tiny, a, value);
+        patch(self, value.copysign(self), fast.not(), f64::atanh)
+    }
+
+    /// Quatre sinus hyperboliques.
+    #[inline(always)]
+    pub(crate) fn sinh(self) -> V4 {
+        let k = |value| self.splat_like(value);
+        let ax = self.abs();
+        let fast = ax.lt(k(700.0));
+        let a = V4::select(fast, ax, k(1.0));
+        let small = a.lt(k(0.5));
+        // On ne calcule que ce qu'une voie demande : la série si toutes sont petites, l'exponentielle
+        // si aucune ne l'est, les deux sinon.
+        let value = if small.all() {
+            sinh_series(a)
+        } else if !small.any() {
+            sinh_exponential(a)
+        } else {
+            V4::select(small, sinh_series(a), sinh_exponential(a))
+        };
+        patch(self, value.copysign(self), fast.not(), f64::sinh)
+    }
+
+    /// Quatre `self.powf(y)`, pour `self > 0`. Le logarithme est calculé en double précision
+    /// étendue (deux `f64`), puis l'exponentielle de `y * log(self)` : l'erreur de `log` ne
+    /// grossit pas avec `|y * log(self)|`.
+    #[inline(always)]
+    pub(crate) fn powf(self, y: V4) -> V4 {
+        let k = |value| self.splat_like(value);
+        let positive = positive_normal(self);
+        let x = V4::select(positive, self, k(1.0));
+        let (log_hi, log_lo) = log_dd(x);
+        let z_hi = y * log_hi;
+        let z_lo = y.mul_add(log_hi, -z_hi) + y * log_lo;
+        let fast = positive.and(y.is_finite()).and(z_hi.abs().le(k(700.0)));
+        let z_hi = V4::select(fast, z_hi, k(0.0));
+        let n = (z_hi * k(INV_LN2)).round();
+        let r = (-n).mul_add(k(LN2_HI), z_hi);
+        let r = (-n).mul_add(k(LN2_LO), r) + V4::select(fast, z_lo, k(0.0));
+        patch2(self, y, exp_reduced(r).scale_pow2(n), fast.not(), f64::powf)
+    }
+
+    /// `self + 1`.
+    #[inline(always)]
+    fn add_one(self) -> V4 {
+        self + self.splat_like(1.0)
+    }
+}
+
+/// `log(x)` en deux `f64` (`hi + lo`, erreur de l'ordre de `2^-65` relatif), `x` positif normal.
+#[inline(always)]
+fn log_dd(x: V4) -> (V4, V4) {
+    let k = |value| x.splat_like(value);
+    let (m, e) = centered_mantissa(x);
+    // log(m) = 2 atanh(s), s = f / (2 + f) = s0 + s_lo : `2 + f` n'est pas exact, son défaut
+    // `d_lo` corrige le quotient.
+    let f = m - k(1.0);
+    let d_hi = k(2.0) + f;
+    let d_lo = f - (d_hi - k(2.0));
+    let s0 = f / d_hi;
+    let residual = (-s0).mul_add(d_hi, f) - s0 * d_lo;
+    let s_lo = residual / d_hi;
+    let z = s0 * s0;
+    let mut q = k(ATANH_TAIL[11]);
+    for coefficient in ATANH_TAIL[..11].iter().rev() {
+        q = z.mul_add(q, k(*coefficient));
+    }
+    let tail = (k(2.0) * s0 * z) * q;
+    // somme exacte (TwoSum) de `e * LN2_HI` et `2 * s0`, puis des termes bas.
+    let high_part = e * k(LN2_HI);
+    let double_s = s0 + s0;
+    let sum = high_part + double_s;
+    let virtual_part = sum - high_part;
+    let error = (high_part - (sum - virtual_part)) + (double_s - virtual_part);
+    let low = error + (s_lo + s_lo + tail) + e * k(LN2_LO);
+    let hi = sum + low;
+    let lo = low - (hi - sum);
+    (hi, lo)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::simd::Avx2;
+
+    /// Groupes de quatre points par cas. Un build de débogage n'insère aucun intrinsèque en ligne :
+    /// il est plus de cent fois plus lent, d'où moins de tirages (la CI lance les tests ainsi).
+    const SAMPLES: usize = if cfg!(debug_assertions) {
+        3_000
+    } else {
+        250_000
+    };
+
+    /// Une fonction vectorielle à un argument, sa référence scalaire.
+    type UnaryCase = (&'static str, fn(V4) -> V4, fn(f64) -> f64);
+    /// Idem pour deux arguments.
+    type BinaryCase = (&'static str, fn(V4, V4) -> V4, fn(f64, f64) -> f64);
+
+    /// La distance en ULP de deux `f64` : le nombre de valeurs représentables entre eux.
+    fn ulps(a: f64, b: f64) -> u64 {
+        if a.is_nan() && b.is_nan() {
+            return 0;
+        }
+        if a.is_nan() || b.is_nan() {
+            return u64::MAX;
+        }
+        if a == b {
+            return 0;
+        }
+        let key = |x: f64| {
+            let bits = i64::from_ne_bytes(x.to_bits().to_ne_bytes());
+            if bits < 0 {
+                i64::MIN.wrapping_sub(bits)
+            } else {
+                bits
+            }
+        };
+        key(a).wrapping_sub(key(b)).unsigned_abs()
+    }
+
+    /// Un générateur congruentiel : des tirages déterministes dans `[0, 1[`.
+    struct Rng(u64);
+
+    impl Rng {
+        fn unit(&mut self) -> f64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            // Les 52 bits de poids fort remplissent la mantisse d'un nombre de `[1, 2[`.
+            f64::from_bits(0x3FF0_0000_0000_0000 | (self.0 >> 12)) - 1.0
+        }
+
+        /// Uniforme dans `[low, high]`.
+        fn uniform(&mut self, low: f64, high: f64) -> f64 {
+            low + self.unit() * (high - low)
+        }
+
+        /// Log-uniforme sur les grandeurs `[low, high]`, positives.
+        fn magnitude(&mut self, low: f64, high: f64) -> f64 {
+            (low.ln() + self.unit() * (high.ln() - low.ln())).exp()
+        }
+
+        /// Comme `magnitude`, de signe aléatoire.
+        fn signed_magnitude(&mut self, low: f64, high: f64) -> f64 {
+            let value = self.magnitude(low, high);
+            if self.unit() < 0.5 {
+                -value
+            } else {
+                value
+            }
+        }
+    }
+
+    /// Évalue `vector` sur quatre voies et rend la pire erreur contre `reference`, avec l'entrée.
+    fn worst1(
+        tok: Avx2,
+        mut sample: impl FnMut() -> f64,
+        vector: impl Fn(V4) -> V4,
+        reference: impl Fn(f64) -> f64,
+    ) -> (u64, f64) {
+        let mut worst = (0, 0.0);
+        for _ in 0..SAMPLES {
+            let xs = [sample(), sample(), sample(), sample()];
+            let mut out = [0.0; 4];
+            vector(V4::load(tok, &xs)).store(&mut out);
+            for lane in 0..4 {
+                let want = reference(xs[lane]);
+                let gap = ulps(out[lane], want);
+                if gap > worst.0 {
+                    worst = (gap, xs[lane]);
+                }
+            }
+        }
+        worst
+    }
+
+    fn worst2(
+        tok: Avx2,
+        mut sample: impl FnMut() -> (f64, f64),
+        vector: impl Fn(V4, V4) -> V4,
+        reference: impl Fn(f64, f64) -> f64,
+    ) -> (u64, f64, f64) {
+        let mut worst = (0, 0.0, 0.0);
+        for _ in 0..SAMPLES {
+            let points = [sample(), sample(), sample(), sample()];
+            let xs = [points[0].0, points[1].0, points[2].0, points[3].0];
+            let ys = [points[0].1, points[1].1, points[2].1, points[3].1];
+            let mut out = [0.0; 4];
+            vector(V4::load(tok, &xs), V4::load(tok, &ys)).store(&mut out);
+            for lane in 0..4 {
+                let want = reference(xs[lane], ys[lane]);
+                let gap = ulps(out[lane], want);
+                if gap > worst.0 {
+                    worst = (gap, xs[lane], ys[lane]);
+                }
+            }
+        }
+        worst
+    }
+
+    /// `f64::atanh` calcule `0.5 * ln_1p(2x / (1 - x))`, qui perd presque tous ses chiffres pour `x`
+    /// proche de -1 (`1 + u` vaut alors 3e-6). La fonction est impaire : la référence travaille sur `|x|`.
+    fn atanh_reference(x: f64) -> f64 {
+        x.abs().atanh().copysign(x)
+    }
+
+    macro_rules! unary_case {
+        ($tok:expr, $name:literal, $domain:literal, $sample:expr, $vector:expr, $reference:expr, $limit:expr) => {{
+            let (gap, at) = worst1($tok, $sample, $vector, $reference);
+            eprintln!("ULP {:6} {:28} max {gap} ULP at {at:e}", $name, $domain);
+            assert!(
+                gap <= $limit,
+                "{} on {}: {gap} ULP at {at:e}",
+                $name,
+                $domain
+            );
+        }};
+    }
+
+    macro_rules! binary_case {
+        ($tok:expr, $name:literal, $domain:literal, $sample:expr, $vector:expr, $reference:expr, $limit:expr) => {{
+            let (gap, x, y) = worst2($tok, $sample, $vector, $reference);
+            eprintln!(
+                "ULP {:6} {:28} max {gap} ULP at ({x:e}, {y:e})",
+                $name, $domain
+            );
+            assert!(
+                gap <= $limit,
+                "{} on {}: {gap} ULP at ({x:e}, {y:e})",
+                $name,
+                $domain
+            );
+        }};
+    }
+
+    /// L'erreur mesurée contre la libm de la bibliothèque standard, sur de larges domaines : 1 ULP
+    /// pour `sin`, `cos`, `exp`, `log`, `atan`, `atan2`, `hypot` et `powf`, 2 pour `asinh`,
+    /// `atanh` et `sinh`, 3 pour `tan` (quotient de deux fonctions à 1 ULP). Les bornes ci-dessous
+    /// sont ces mesures plus un. `libmvec` annonce jusqu'à 4 ULP.
+    #[test]
+    fn accuracy_matches_the_libm() {
+        let Some(tok) = Avx2::detect() else {
+            return;
+        };
+        let mut rng = Rng(1);
+        let pi = std::f64::consts::PI;
+        unary_case!(
+            tok,
+            "sin",
+            "[-100, 100]",
+            || rng.uniform(-100.0, 100.0),
+            |v| v.sin_cos().0,
+            f64::sin,
+            2
+        );
+        unary_case!(
+            tok,
+            "sin",
+            "[-1e5, 1e5]",
+            || rng.uniform(-1e5, 1e5),
+            |v| v.sin_cos().0,
+            f64::sin,
+            2
+        );
+        unary_case!(
+            tok,
+            "sin",
+            "|x| in [1e-9, 1]",
+            || rng.signed_magnitude(1e-9, 1.0),
+            |v| v.sin_cos().0,
+            f64::sin,
+            2
+        );
+        unary_case!(
+            tok,
+            "cos",
+            "[-100, 100]",
+            || rng.uniform(-100.0, 100.0),
+            |v| v.sin_cos().1,
+            f64::cos,
+            2
+        );
+        unary_case!(
+            tok,
+            "cos",
+            "[-1e5, 1e5]",
+            || rng.uniform(-1e5, 1e5),
+            |v| v.sin_cos().1,
+            f64::cos,
+            2
+        );
+        unary_case!(
+            tok,
+            "sin",
+            "near k * pi/2",
+            || {
+                let n = (rng.unit() * 2000.0).floor() - 1000.0;
+                n * pi / 2.0 + rng.signed_magnitude(1e-12, 1e-2)
+            },
+            |v| v.sin_cos().0,
+            f64::sin,
+            2
+        );
+        unary_case!(
+            tok,
+            "tan",
+            "[-1.5, 1.5]",
+            || rng.uniform(-1.5, 1.5),
+            V4::tan,
+            f64::tan,
+            4
+        );
+        unary_case!(
+            tok,
+            "exp",
+            "[-700, 700]",
+            || rng.uniform(-700.0, 700.0),
+            V4::exp,
+            f64::exp,
+            2
+        );
+        unary_case!(
+            tok,
+            "exp",
+            "[-2, 2]",
+            || rng.uniform(-2.0, 2.0),
+            V4::exp,
+            f64::exp,
+            2
+        );
+        unary_case!(
+            tok,
+            "log",
+            "x in [1e-300, 1e300]",
+            || rng.magnitude(1e-300, 1e300),
+            V4::log,
+            f64::ln,
+            2
+        );
+        unary_case!(
+            tok,
+            "log",
+            "[0.5, 2]",
+            || rng.uniform(0.5, 2.0),
+            V4::log,
+            f64::ln,
+            2
+        );
+        unary_case!(
+            tok,
+            "log",
+            "[0.999, 1.001]",
+            || rng.uniform(0.999, 1.001),
+            V4::log,
+            f64::ln,
+            2
+        );
+        unary_case!(
+            tok,
+            "atan",
+            "[-1000, 1000]",
+            || rng.uniform(-1000.0, 1000.0),
+            V4::atan,
+            f64::atan,
+            2
+        );
+        unary_case!(
+            tok,
+            "atan",
+            "|x| in [1e-10, 1e10]",
+            || rng.signed_magnitude(1e-10, 1e10),
+            V4::atan,
+            f64::atan,
+            2
+        );
+        unary_case!(
+            tok,
+            "asinh",
+            "[-10, 10]",
+            || rng.uniform(-10.0, 10.0),
+            V4::asinh,
+            f64::asinh,
+            3
+        );
+        unary_case!(
+            tok,
+            "asinh",
+            "[-0.14, 0.14] (series)",
+            || rng.uniform(-0.14, 0.14),
+            V4::asinh,
+            f64::asinh,
+            3
+        );
+        unary_case!(
+            tok,
+            "atan",
+            "[-0.4, 0.4] (no reduction)",
+            || rng.uniform(-0.4, 0.4),
+            V4::atan,
+            f64::atan,
+            2
+        );
+        unary_case!(
+            tok,
+            "sinh",
+            "[-0.45, 0.45] (series)",
+            || rng.uniform(-0.45, 0.45),
+            V4::sinh,
+            f64::sinh,
+            3
+        );
+        unary_case!(
+            tok,
+            "sinh",
+            "[0.6, 20] (exponential)",
+            || rng.uniform(0.6, 20.0),
+            V4::sinh,
+            f64::sinh,
+            3
+        );
+        unary_case!(
+            tok,
+            "asinh",
+            "|x| in [1e-10, 1e10]",
+            || rng.signed_magnitude(1e-10, 1e10),
+            V4::asinh,
+            f64::asinh,
+            3
+        );
+        unary_case!(
+            tok,
+            "atanh",
+            "(-1, 1)",
+            || rng.uniform(-0.999_999, 0.999_999),
+            V4::atanh,
+            atanh_reference,
+            3
+        );
+        unary_case!(
+            tok,
+            "atanh",
+            "|x| in [1e-10, 0.1]",
+            || rng.signed_magnitude(1e-10, 0.1),
+            V4::atanh,
+            atanh_reference,
+            3
+        );
+        unary_case!(
+            tok,
+            "sinh",
+            "[-10, 10]",
+            || rng.uniform(-10.0, 10.0),
+            V4::sinh,
+            f64::sinh,
+            3
+        );
+        unary_case!(
+            tok,
+            "sinh",
+            "|x| in [1e-10, 1]",
+            || rng.signed_magnitude(1e-10, 1.0),
+            V4::sinh,
+            f64::sinh,
+            3
+        );
+        unary_case!(
+            tok,
+            "sinh",
+            "[-700, 700]",
+            || rng.uniform(-700.0, 700.0),
+            V4::sinh,
+            f64::sinh,
+            3
+        );
+        binary_case!(
+            tok,
+            "atan2",
+            "[-10, 10]^2",
+            || (rng.uniform(-10.0, 10.0), rng.uniform(-10.0, 10.0)),
+            |a, b| a.atan2(b),
+            f64::atan2,
+            2
+        );
+        binary_case!(
+            tok,
+            "atan2",
+            "wide magnitudes",
+            || (
+                rng.signed_magnitude(1e-100, 1e100),
+                rng.signed_magnitude(1e-100, 1e100)
+            ),
+            |a, b| a.atan2(b),
+            f64::atan2,
+            2
+        );
+        binary_case!(
+            tok,
+            "hypot",
+            "wide magnitudes",
+            || (rng.magnitude(1e-100, 1e100), rng.magnitude(1e-100, 1e100)),
+            |a, b| a.hypot(b),
+            f64::hypot,
+            2
+        );
+        binary_case!(
+            tok,
+            "powf",
+            "x [0.01, 100], y [-5, 5]",
+            || (rng.uniform(0.01, 100.0), rng.uniform(-5.0, 5.0)),
+            |a, b| a.powf(b),
+            f64::powf,
+            2
+        );
+        binary_case!(
+            tok,
+            "powf",
+            "x [0.5, 2], y [-30, 30]",
+            || (rng.uniform(0.5, 2.0), rng.uniform(-30.0, 30.0)),
+            |a, b| a.powf(b),
+            f64::powf,
+            2
+        );
+    }
+
+    /// Les valeurs spéciales donnent ce que donne la libm : `NaN`, infinis, zéros signés,
+    /// négatifs, sous-normaux, dépassements, arguments très grands.
+    #[test]
+    fn special_values_match_the_libm() {
+        let Some(tok) = Avx2::detect() else {
+            return;
+        };
+        let specials = [
+            0.0,
+            -0.0,
+            1.0,
+            -1.0,
+            0.5,
+            -0.5,
+            2.0,
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::MIN_POSITIVE,
+            5e-324,
+            -5e-324,
+            f64::MAX,
+            f64::MIN,
+            1e-300,
+            1e300,
+            709.0,
+            710.0,
+            -745.0,
+            -746.0,
+            1e6,
+            1e15,
+            std::f64::consts::PI,
+            std::f64::consts::FRAC_PI_2,
+        ];
+        let functions: [UnaryCase; 9] = [
+            ("sin", |v| v.sin_cos().0, f64::sin),
+            ("cos", |v| v.sin_cos().1, f64::cos),
+            ("tan", V4::tan, f64::tan),
+            ("exp", V4::exp, f64::exp),
+            ("log", V4::log, f64::ln),
+            ("atan", V4::atan, f64::atan),
+            ("asinh", V4::asinh, f64::asinh),
+            ("atanh", V4::atanh, f64::atanh),
+            ("sinh", V4::sinh, f64::sinh),
+        ];
+        for (name, vector, reference) in functions {
+            for chunk in specials.chunks(4) {
+                let mut xs = [1.0; 4];
+                xs[..chunk.len()].copy_from_slice(chunk);
+                let mut out = [0.0; 4];
+                vector(V4::load(tok, &xs)).store(&mut out);
+                for lane in 0..chunk.len() {
+                    let want = reference(xs[lane]);
+                    let gap = ulps(out[lane], want);
+                    // `atanh` de `std` est faux près de -1 (voir `atanh_reference`) : on compare
+                    // la version symétrique.
+                    let want = if name == "atanh" {
+                        atanh_reference(xs[lane])
+                    } else {
+                        want
+                    };
+                    let gap = if name == "atanh" {
+                        ulps(out[lane], want)
+                    } else {
+                        gap
+                    };
+                    assert!(
+                        gap <= 4,
+                        "{name}({:e}) = {:e}, libm {want:e} ({gap} ULP)",
+                        xs[lane],
+                        out[lane]
+                    );
+                }
+            }
+        }
+        // Les deux arguments : atan2, hypot, powf.
+        let pairs: [BinaryCase; 3] = [
+            ("atan2", |a, b| a.atan2(b), f64::atan2),
+            ("hypot", |a, b| a.hypot(b), f64::hypot),
+            ("powf", |a, b| a.powf(b), f64::powf),
+        ];
+        for (name, vector, reference) in pairs {
+            for first in specials.chunks(4) {
+                for second in specials.chunks(4) {
+                    let mut xs = [1.0; 4];
+                    let mut ys = [1.0; 4];
+                    xs[..first.len()].copy_from_slice(first);
+                    ys[..second.len()].copy_from_slice(second);
+                    // Chaque voie de `xs` rencontre chaque rotation de `ys`.
+                    for shift in 0..4 {
+                        let rotated = [
+                            ys[shift % 4],
+                            ys[(shift + 1) % 4],
+                            ys[(shift + 2) % 4],
+                            ys[(shift + 3) % 4],
+                        ];
+                        let mut out = [0.0; 4];
+                        vector(V4::load(tok, &xs), V4::load(tok, &rotated)).store(&mut out);
+                        for lane in 0..4 {
+                            let want = reference(xs[lane], rotated[lane]);
+                            let gap = ulps(out[lane], want);
+                            assert!(
+                                gap <= 4,
+                                "{name}({:e}, {:e}) = {:e}, libm {want:e} ({gap} ULP)",
+                                xs[lane],
+                                rotated[lane],
+                                out[lane]
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
