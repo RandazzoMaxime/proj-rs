@@ -37,3 +37,4 @@ echo "$line" >> bench/history.jsonl
 echo "$line"
 python3 tools/bench/trend_svg.py
 python3 tools/bench/how_fast.py
+python3 tools/bench/compare_svg.py

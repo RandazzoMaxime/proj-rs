@@ -371,6 +371,13 @@ build, with a clear error.
 
 ## How fast
 
+<!-- bench-compare:start -->
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="bench/compare-dark.svg">
+  <img src="bench/compare-light.svg" alt="Bar chart: nanoseconds per point, proj-rs next to PROJ 9.9.0, ten conversions, on cloud-4c-avx512" width="100%">
+</picture>
+<!-- bench-compare:end -->
+
 <!-- bench-how-fast:start -->
 These numbers are PROJ-RS v1's. The optimisation work (wider SIMD, GPU) comes in the versions after it.
 
