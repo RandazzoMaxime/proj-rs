@@ -57,3 +57,14 @@ fn geotiff_with_empty_sample_format_is_an_error() {
     assert!(horizontal.is_err());
     assert!(vertical.is_err());
 }
+
+/// `strip_urn_prefix` cut the text at the prefix length: a multi-byte character straddling it
+/// ("geoc-prok-" then U+FFFD) is not a char boundary, and the slice panicked.
+#[test]
+fn proj_string_with_multibyte_character_at_the_urn_prefix_length() {
+    common::use_fixture_search_path();
+    for text in ["geoc-prok-\u{fffd}ch", "urn:ogc:def:é", "urn:ogc:de\u{fffd}f:x", "é"] {
+        assert!(Operation::create(text).is_err(), "{text}");
+        assert!(proj_rs::Proj::new(text).is_err(), "{text}");
+    }
+}
