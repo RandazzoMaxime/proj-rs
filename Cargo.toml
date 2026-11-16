@@ -1,5 +1,6 @@
 [workspace]
 members = [".", "georust", "capi"]
+exclude = ["fuzz"]
 resolver = "2"
 
 [package]
