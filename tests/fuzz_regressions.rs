@@ -1,0 +1,43 @@
+//! Reproductions of the crashes `fuzz/` found (docs/FUZZ.md). Each test names its cause, and
+//! returns instead of panicking, hanging or exhausting memory.
+
+mod common;
+
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
+
+use proj_rs::Operation;
+
+/// Run `work` on a thread and fail when it does not return in ten seconds: a loop that cannot end
+/// would otherwise stall the whole suite.
+fn within_ten_seconds<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = sender.send(work());
+    });
+    receiver
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the call did not return in ten seconds")
+}
+
+/// `Evaluator::forward` wrapped a longitude into the model's range one turn at a time: a
+/// longitude of 1e300 radians, or infinity, never reached it.
+#[test]
+fn defmodel_forward_returns_for_huge_longitude() {
+    common::use_fixture_search_path();
+    within_ten_seconds(|| {
+        let op = Operation::create("+proj=defmodel +model=tests/simple_model_polar.json")
+            .expect("the polar test model builds");
+        for x in [1e300, -1e300, f64::INFINITY, f64::NEG_INFINITY, 1e15, f64::MAX] {
+            let coord = proj_rs::Xyzt {
+                x,
+                y: -1.55,
+                z: 0.0,
+                t: 2020.0,
+            };
+            assert!(op.forward(coord).is_err(), "forward of {x}");
+            assert!(op.inverse(coord).is_err(), "inverse of {x}");
+        }
+    });
+}
