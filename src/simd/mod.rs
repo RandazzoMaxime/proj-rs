@@ -78,8 +78,8 @@ fn scalar<K: Lanes>(kernel: &K, in_a: &[f64], in_b: &[f64], out_a: &mut [f64], o
 
 /// Chemin pris par les calculs par lots sur cette machine : `avx2` ou `scalar`.
 ///
-/// Sous Windows et macOS, `avx2` appelle les fonctions mathématiques de la bibliothèque C une
-/// voie à la fois, pas `libmvec` de glibc.
+/// Le chemin `avx2` est le même sur toutes les plateformes x86-64 : les fonctions mathématiques
+/// sont celles de [`V4`] (`math.rs`), pas celles de la bibliothèque C.
 #[must_use]
 pub(crate) fn batch_path() -> &'static str {
     #[cfg(target_arch = "x86_64")]

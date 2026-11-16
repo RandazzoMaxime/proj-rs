@@ -10,7 +10,7 @@ référence des valeurs reste PROJ : `tests/simd_batch.rs` compare chaque lot à
 src/simd/
   mod.rs      Lanes (le contrat d'un noyau), run (le driver), batch_path
   v4.rs       Avx2 (preuve de support), V4 (quatre f64), Mask
-  math.rs     sin cos tan exp log atanh asinh sinh atan atan2 hypot powf sur V4
+  math.rs     sin_cos tan exp log atanh asinh sinh atan atan2 hypot powf sur V4, en Rust
   kernels.rs  briques partagées : adjlon, tsfn, phi2, latitude_in_domain
   drive.rs    le seul code compilé avec avx2,fma : la boucle par groupes de quatre
 src/tmerc/batch.rs   Transverse Mercator : forward, inverse
@@ -33,13 +33,18 @@ appeler `simd::run` depuis `forward_batch` / `inverse_batch`.
   dans une fonction `target_feature(enable = "avx2,fma")`. C'est `drive::groups`, la seule du
   module. Les méthodes de `V4` et les noyaux sont `#[inline(always)]`. Hors de cette fonction
   le code reste correct, mais les intrinsèques ne sont plus en ligne.
-- Les appels `libmvec` passent par `asm!` sur des registres `ymm`, qui exige la fonctionnalité
-  `avx` de la fonction englobante : chacun est une petite fonction `target_feature` interne à sa
-  méthode (`math.rs`).
+- Il n'y a ni `asm!` ni appel à la bibliothèque C : les fonctions mathématiques de `math.rs` sont du
+  Rust écrit contre l'API sûre de `V4`.
+- **Une fermeture n'est pas insérée en ligne comme le reste.** Elle n'hérite pas du
+  `target_feature` de la fonction qui l'appelle, et LLVM ne l'insère pas toujours : ses
+  intrinsèques deviennent alors des appels. Un `sinh` écrit avec deux fermetures coûtait 290 ns
+  par appel de quatre voies au lieu de 9,5. Le code de `math.rs` et des noyaux utilise donc des
+  fonctions `#[inline(always)]` de module, jamais une fermeture qui calcule avec des `V4` (la
+  petite fermeture `k` qui diffuse une constante est insérée sans problème).
 
 Le `unsafe` de la crate pour le calcul vectoriel est dans `src/simd/` et nulle part ailleurs.
-Avant ce lot, chaque projection portait ses intrinsèques et sa détection (`simd.rs`,
-`tmerc.rs` et `lcc.rs`).
+Avant le lot du module, chaque projection portait ses intrinsèques et sa détection (`simd.rs`,
+`tmerc.rs` et `lcc.rs`) ; avant le lot des fonctions mathématiques, `libmvec` passait par `asm!`.
 
 ### Le driver et le repli
 
@@ -56,15 +61,20 @@ scalaire.
 
 Un lot AVX2 s'écarte du scalaire de l'erreur des fonctions mathématiques vectorielles (quelques
 ULP), pas de la formule : chaque noyau suit sa version scalaire opération par opération. Mesuré
-sur 200 000 points par projection (`tests/simd_batch.rs`, sonde retirée après la mesure), avec l'FMA de la section suivante :
+sur 200 000 points par projection (`tests/simd_batch.rs`, sonde retirée après la mesure), avec l'FMA
+et les fonctions mathématiques de `math.rs` :
 
-| projection | aller (m) | retour (degré) |
-|---|---:|---:|
-| UTM 31 / `tmerc` | 4,7e-9 | 2,8e-14 |
-| Lambert-93 | 8,4e-9 | 4,3e-14 |
-| Lambert, cône sud | 1,2e-8 | 4,6e-14 |
-| Web Mercator | 5,6e-9 | 1,4e-14 |
-| Mercator ellipsoïdal | 7,5e-9 | 2,8e-14 |
+| projection | aller (m) | retour (degré) | aller avec `libmvec` (m) |
+|---|---:|---:|---:|
+| UTM 31 | 2,8e-9 | 2,8e-14 | 4,7e-9 |
+| `tmerc` | 3,3e-9 | 2,8e-14 | 3,7e-9 |
+| Lambert-93 | 3,7e-9 | 4,3e-14 | 8,4e-9 |
+| Lambert, cône sud | 6,1e-9 | 4,6e-14 | 1,2e-8 |
+| Web Mercator | 3,7e-9 | 1,4e-14 | 5,6e-9 |
+| Mercator ellipsoïdal | 4,7e-9 | 2,1e-14 | 7,5e-9 |
+
+Les écarts à l'aller sont plus petits qu'avec `libmvec` (dernière colonne) : les fonctions de
+`math.rs` sont à 1 à 3 ULP de la libm, `libmvec` jusqu'à 4.
 
 Les bornes des tests sont 1e-7 m et 1e-12° (marge de dix à vingt). Près du pôle opposé à un
 cône, les coordonnées dépassent 1e10 m, où un ULP dépasse la borne absolue : le test admet en
@@ -91,7 +101,78 @@ calculé que pour une longitude à ramener, et le gain serait nul.
   minimum de chacun) : UTM aller 27,3 → 24,7 ns (1,10×, les plages des quatre exécutions ne se
   chevauchent pas) ; Lambert-93 retour 58,2 → 56,8 ; Lambert-93 aller, UTM retour, Web Mercator
   aller et retour : de 1 à 2 %, au niveau du bruit. L'FMA ne compte que là où les séries de
-  Clenshaw dominent : l'essentiel du temps ailleurs est dans les appels `libmvec`.
+  Clenshaw dominent : l'essentiel du temps ailleurs était dans les appels `libmvec` (mesuré avant
+  le lot des fonctions mathématiques).
+
+## Fonctions mathématiques (`math.rs`)
+
+`sin_cos`, `tan`, `exp`, `log`, `atan`, `atan2`, `hypot`, `asinh`, `atanh`, `sinh` et `powf` sont
+écrites en Rust contre `V4`, sans `libmvec`, sans `asm!` et sans dépendance : le même code sert
+Linux, Windows et macOS. Les algorithmes sont ceux de fdlibm (la libm de Sun, reprise par FreeBSD et
+musl) : réduction d'argument de Cody et Waite en trois morceaux de `pi/2` (précision relative du
+reste près d'un multiple de `pi/2`), noyaux polynomiaux de Remez de `__kernel_sin` et
+`__kernel_cos`, quatre plages de réduction pour `atan`, `log` par `log(1+f)` avec `s = f/(2+f)`,
+sélections par masque à la place des branches. Les coefficients sont ceux de fdlibm, recopiés de
+mémoire : c'est le banc de précision qui les valide.
+
+- **`sin_cos`** rend les deux d'une seule réduction. Les noyaux s'en servent là où ils calculaient
+  un sinus et un cosinus du même angle (trois paires pour Transverse Mercator aller).
+- **`powf`** calcule `log(x)` en double précision étendue (deux `f64`, erreur relative de l'ordre de
+  `2^-65`) puis l'exponentielle de `y * log(x)` : l'erreur ne grossit pas avec `|y * log(x)|`.
+  Un `exp(y * log(x))` en `f64` ferait de l'ordre de 5 ULP pour un exposant de l'ordre de 2.
+- **`asinh`, `atanh`, `sinh` et `atan` ont un chemin rapide** quand toutes les voies sont petites :
+  la série entière pour `|x| < 0.15` (`asinh`, `atanh`), `< 0.5` (`sinh`), pas de réduction de plage
+  pour `|x| < 7/16` (`atan`). Les arguments des noyaux le sont presque toujours (`e * sin(phi)`
+  vaut au plus 0,08). Si une voie ne l'est pas, les quatre passent par le chemin général : le
+  résultat ne dépend que de la précision, pas du chemin.
+- **Hors du domaine rapide**, une voie est recalculée par la fonction de la bibliothèque standard
+  (`NaN`, infinis, `exp` au-delà de 700, `log` d'un nul, d'un négatif ou d'un sous-normal, `sin` au-delà
+  de `2^20`, `powf` d'une base négative…) : le résultat aux cas limites est celui du scalaire.
+
+Précision mesurée contre la libm de `std` (`accuracy_matches_the_libm`, 250 000 groupes de
+quatre par cas en release, de larges domaines : `sin` et `cos` sur `[-1e5, 1e5]` et près des
+multiples de `pi/2`, `exp` sur `[-700, 700]`, `log` sur `[1e-300, 1e300]`, `atan`, `hypot` et
+`atan2` sur dix à deux cents décades) :
+
+| fonction | erreur max (ULP) |
+|---|---:|
+| `sin`, `cos`, `exp`, `log`, `atan`, `atan2`, `hypot`, `powf` | 1 |
+| `asinh`, `atanh`, `sinh` | 2 |
+| `tan` (quotient de deux fonctions à 1 ULP) | 3 |
+
+Les bornes des tests sont ces mesures plus un ; `libmvec` annonce jusqu'à 4 ULP. Un second test,
+`special_values_match_the_libm`, compare `NaN`, infinis, zéros signés, négatifs, sous-normaux et
+dépassements à la libm, pour les fonctions à un argument et toutes les paires de `atan2`, `hypot` et
+`powf`. La référence de `atanh` est symétrisée : `f64::atanh` de `std` vaut `0.5 * ln_1p(2x / (1 - x))`
+et perd presque tous ses chiffres pour `x` proche de -1 (31 000 ULP mesurés), alors que ces
+fonctions travaillent sur `|x|`.
+
+### Vitesse
+
+Un cœur épinglé, quatre exécutions alternées des trois binaires, minimum de chacun, ns par point.
+« Voie par voie » est l'ancien repli de Windows et macOS (la libm appelée une voie à la fois, forcé
+ici sur Linux : ce n'est donc pas la CRT de Microsoft) ; « `libmvec` » est le chemin de Linux avant
+ce lot.
+
+| cas | voie par voie | `libmvec` | `math.rs` | `math.rs` / voie par voie | `libmvec` / `math.rs` |
+|---|---:|---:|---:|---:|---:|
+| UTM 31 aller | 60,2 | 24,9 | 20,6 | 2,9× | 1,21× |
+| Lambert-93 aller | 41,9 | 19,3 | 23,9 | 1,8× | 0,81× |
+| UTM 31 retour | 71,0 | 21,8 | 26,0 | 2,7× | 0,84× |
+| Lambert-93 retour | 97,3 | 56,9 | 52,7 | 1,8× | 1,08× |
+| Web Mercator aller | 33,7 | 11,0 | 12,4 | 2,7× | 0,88× |
+| Web Mercator retour | 30,7 | 6,2 | 11,6 | 2,6× | 0,53× |
+
+- **Windows et macOS x86-64 :** 1,8 à 2,9× plus vite que le repli voie par voie. Je n'ai pas mesuré
+  la CRT de Microsoft ni macOS : le chiffre est celui d'un repli forcé sur Linux.
+- **Linux, face à `libmvec` :** à peu près neutre. Plus rapide sur UTM aller (1,21×) et Lambert-93
+  retour (1,08×), plus lent sur Lambert-93 aller (0,81×), UTM retour (0,84×), Web Mercator aller
+  (0,88×) et surtout Web Mercator retour (0,53×, de 6,2 à 11,6 ns : `sinh` puis `atan` sur des
+  arguments qui ne sont pas petits, donc sans chemin rapide). Le but de ce lot est la portabilité et
+  la précision, pas la vitesse sur Linux ; le coût est de 0 à 5 ns par point selon la projection.
+- **Par fonction** (un appel de quatre voies, un cœur) : `sin_cos` 9 ns, `exp` 6,6, `log` 6,8, `atan`
+  12 (3 sur le chemin rapide), `atan2` 15, `atanh` 13 (3 en série), `sinh` 9,5 (3 en série),
+  `hypot` 3, `powf` 23.
 
 ## Mesures
 
@@ -123,11 +204,9 @@ vecteur, d'où 37,6 → 27,4.
   `Operation::forward` et les points un à un restent scalaires.
 - Les autres projections (aea, eqc, stere, …) et Helmert n'ont pas de noyau vectoriel. Helmert
   fait 9 ns par point en scalaire.
-- Hors Linux avec glibc, les fonctions mathématiques sont celles de la bibliothèque C, une voie
-  à la fois : seule l'arithmétique reste vectorielle. `batch_path()` rend `avx2` dans ce cas
-  aussi. Ce chemin a été vérifié une fois en forçant le repli sur Linux (compilation, clippy et
-  `tests/simd_batch.rs`, `cs2cs` compris) ; la CI Windows le compile et le teste à chaque PR, mais
-  aucune mesure de vitesse n'a été faite sur Windows.
-- Hors x86-64 : boucle scalaire. Pas de NEON.
-- `libmvec` : `asinh`, `sinh`, `atan`, `tan`, `hypot` et `pow` demandent glibc 2.35 (Ubuntu
-  22.04), comme `atanh` avant ce lot.
+- Hors x86-64 : boucle scalaire. Pas de NEON (les fonctions de `math.rs` seraient la base d'une
+  implémentation NEON de `V4`).
+- Pas de mesure de vitesse sur Windows ni macOS : seulement le repli forcé sur Linux, voir plus haut.
+  La CI compile et teste le chemin sur Windows à chaque PR.
+- Il n'y a plus de dépendance à glibc (ni `libmvec`, ni la version 2.35 qu'exigeaient `asinh`, `sinh`,
+  `atan`, `tan`, `hypot` et `pow`) : l'édition de liens n'a plus besoin de `-lmvec`.

@@ -79,13 +79,13 @@ mod vector {
         let phi = lat_r.max(k(-FRAC_PI_2)).min(k(FRAC_PI_2));
         let lam = kernels::adjlon(tok, kernels::adjlon(tok, lon_r) - k(l.lam0));
 
-        let sin_phi = phi.sin();
-        let cos_phi = phi.cos();
+        let (sin_phi, cos_phi) = phi.sin_cos();
         let ts = kernels::tsfn(tok, sin_phi, cos_phi, l.e);
         let rho = k(l.c) * (k(l.n) * ts.log()).exp();
         let lam_n = lam * k(l.n);
-        let easting = k(l.k0) * (rho * lam_n.sin());
-        let northing = k(l.k0) * (-rho).mul_add(lam_n.cos(), k(l.rho0));
+        let (sin_lam_n, cos_lam_n) = lam_n.sin_cos();
+        let easting = k(l.k0) * (rho * sin_lam_n);
+        let northing = k(l.k0) * (-rho).mul_add(cos_lam_n, k(l.rho0));
         Some((
             k(l.a).mul_add(easting, k(l.x0)),
             k(l.a).mul_add(northing, k(l.y0)),
