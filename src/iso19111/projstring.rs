@@ -400,10 +400,8 @@ impl ProjectedCRS {
         text.push(' ');
         text.push_str(&crs_datum_clause(self.base_crs(), extras));
         if let Some(unit) = self.coordinate_system().axes().first().map(Axis::unit) {
-            if let Some(clause) = linear_unit_clause(unit) {
-                text.push(' ');
-                text.push_str(&clause);
-            }
+            text.push(' ');
+            text.push_str(&linear_unit_clause(unit));
         }
         if self.identified.over {
             text.push_str(" +over");
@@ -446,10 +444,8 @@ impl ProjectedCRS {
             format_g(conversion.numeric_si(8807), 15),
         );
         if let Some(axis) = self.coordinate_system().axes().first() {
-            if let Some(clause) = linear_unit_clause(axis.unit()) {
-                text.push(' ');
-                text.push_str(&clause);
-            }
+            text.push(' ');
+            text.push_str(&linear_unit_clause(axis.unit()));
         }
         text.push_str(" +nadgrids=@null +wktext +no_defs +type=crs");
         Some(text)
@@ -1382,8 +1378,11 @@ fn towgs84_clause(values: &[f64; 7]) -> String {
     format!("+towgs84={}", numbers.join(","))
 }
 
-fn linear_unit_clause(unit: &UnitOfMeasure) -> Option<String> {
-    linear_proj_unit(unit.conversion_to_si()).map(|id| format!("+units={id}"))
+fn linear_unit_clause(unit: &UnitOfMeasure) -> String {
+    match linear_proj_unit(unit.conversion_to_si()) {
+        Some(id) => format!("+units={id}"),
+        None => format!("+to_meter={}", format_g(unit.conversion_to_si(), 15)),
+    }
 }
 
 impl GeocentricCRS {
