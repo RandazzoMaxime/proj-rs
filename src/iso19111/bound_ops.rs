@@ -121,7 +121,7 @@ pub(super) fn bound_of_spherical_planetocentric(
     set_endpoints(&mut transformation, &intermediate, &transformation_target);
     let intermediate_bound =
         Crs::Bound(BoundCRS::create(intermediate.clone(), hub, transformation));
-    let mut first = CoordinateOperation::Transformation(
+    let mut first = CoordinateOperation::Conversion(
         super::geodetic_ops::geographic_geocentric_conversion(base, &intermediate)?,
     );
     set_endpoints(&mut first, source, &intermediate_bound);

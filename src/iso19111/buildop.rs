@@ -605,6 +605,7 @@ impl Conversion {
             }
             1104 => Self::create_change_vertical_unit_no_conv_factor(&props).ok()?,
             1068 => Self::create_height_depth_reversal(&props).ok()?,
+            9602 => Self::create_geographic_geocentric(&props).ok()?,
             _ => return None,
         };
         inverse.identified.domains = self.identified.domains.clone();

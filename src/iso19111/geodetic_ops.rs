@@ -242,7 +242,7 @@ pub(super) fn geodetic_operations(
         (true, false, _, true) | (false, true, true, _) => {
             if same_datum || rule == BallparkRule::Forced && same_geodetic_datum(source, target) {
                 let operation = geographic_geocentric_conversion(source, target)?;
-                return Ok(vec![CoordinateOperation::Transformation(operation)]);
+                return Ok(vec![CoordinateOperation::Conversion(operation)]);
             }
             geographic_geocentric_different_datum(source, target, rule)
         }
@@ -253,23 +253,19 @@ pub(super) fn geodetic_operations(
     }
 }
 
-/// `Conversion::createGeographicGeocentric(source, target)`, as a transformation that keeps both
-/// CRS so that the PROJ string reads the ellipsoid of the geographic side.
+/// `Conversion::createGeographicGeocentric(source, target)` (conversion.cpp:2611).
 pub(super) fn geographic_geocentric_conversion(
     source: &Crs,
     target: &Crs,
-) -> Result<Transformation, FactoryError> {
-    let mut operation = Transformation::create_from_code(
-        &OpProps::new().name(build_op_name("Conversion", source, target)),
-        source.clone(),
-        target.clone(),
-        9602,
-        Vec::new(),
-        world_extent(),
-    )?;
-    operation.identified.domains.clear();
-    operation.accuracy = Some(0.0);
-    Ok(operation)
+) -> Result<Conversion, FactoryError> {
+    Ok(
+        Conversion::create_geographic_geocentric(&OpProps::new().name(build_op_name(
+            "Conversion",
+            source,
+            target,
+        )))?
+        .with_endpoints(source.clone(), target.clone()),
+    )
 }
 
 /// `isSphericalPlanetocentric`: a spherical CRS whose two axes are the planetocentric latitude
@@ -308,7 +304,7 @@ pub(super) fn spherical_planetocentric_operations(
         return Ok(Vec::new());
     };
     if super::factory::geographic_of(target).is_some() && same_geodetic_datum(source, target) {
-        return Ok(vec![CoordinateOperation::Transformation(
+        return Ok(vec![CoordinateOperation::Conversion(
             geographic_geocentric_conversion(source, target)?,
         )]);
     }
@@ -318,10 +314,8 @@ pub(super) fn spherical_planetocentric_operations(
         spherical.ensemble.clone(),
         EllipsoidalCS::create_latitude_longitude(UnitOfMeasure::degree()),
     )?);
-    let first = CoordinateOperation::Transformation(geographic_geocentric_conversion(
-        source,
-        &intermediate,
-    )?);
+    let first =
+        CoordinateOperation::Conversion(geographic_geocentric_conversion(source, &intermediate)?);
     let seconds = match target {
         Crs::Projected(projected)
             if source.is_equivalent_to(&Crs::Geodetic(projected.base_crs().clone())) =>
@@ -378,9 +372,15 @@ pub(super) fn forced_geographic_geocentric(
     source: &Crs,
     target: &Crs,
 ) -> Result<CoordinateOperation, FactoryError> {
-    let mut operation = geographic_geocentric_conversion(source, target)?;
-    operation.identified.name = transformation_name(source.name(), target.name());
-    operation.identified.domains = vec![world_extent()];
+    let mut operation = Transformation::create_from_code(
+        &OpProps::new().name(transformation_name(source.name(), target.name())),
+        source.clone(),
+        target.clone(),
+        9602,
+        Vec::new(),
+        world_extent(),
+    )?;
+    operation.accuracy = Some(0.0);
     operation.ballpark = true;
     Ok(CoordinateOperation::Transformation(operation))
 }
@@ -395,10 +395,8 @@ fn geographic_geocentric_different_datum(
         return Ok(reverse.iter().map(CoordinateOperation::inverse).collect());
     }
     let intermediate = geocentric_intermediate(source)?;
-    let first = CoordinateOperation::Transformation(geographic_geocentric_conversion(
-        source,
-        &intermediate,
-    )?);
+    let first =
+        CoordinateOperation::Conversion(geographic_geocentric_conversion(source, &intermediate)?);
     let mut found = Vec::new();
     for second in geodetic_operations(&intermediate, target, rule)? {
         found.push(CoordinateOperation::Concatenated(pivot_concatenation(

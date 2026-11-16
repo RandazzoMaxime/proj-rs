@@ -121,6 +121,10 @@ fn export_body(
             vertical_offset_and_slope(conversion.parameters(), source, target, formatter)?;
             Ok(true)
         }
+        "9602" => {
+            super::transform_export::geographic_geocentric(source, target, formatter)?;
+            Ok(true)
+        }
         "1069" => {
             let factor = conversion
                 .parameters()

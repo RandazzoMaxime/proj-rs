@@ -6414,7 +6414,7 @@ impl CoordinateOperationFactory {
             ));
         }
         let intermediate = super::geodetic_ops::geocentric_intermediate(source)?;
-        let first = CoordinateOperation::Transformation(
+        let first = CoordinateOperation::Conversion(
             super::geodetic_ops::geographic_geocentric_conversion(source, &intermediate)?,
         );
         let mut found = Vec::new();
@@ -6465,7 +6465,7 @@ impl CoordinateOperationFactory {
                 .collect());
         }
         let intermediate = super::geodetic_ops::geocentric_intermediate(source)?;
-        let first = CoordinateOperation::Transformation(
+        let first = CoordinateOperation::Conversion(
             super::geodetic_ops::geographic_geocentric_conversion(source, &intermediate)?,
         );
         let mut found = Vec::new();
@@ -9656,10 +9656,8 @@ fn pivot_leg(from: &Crs, to: &Crs) -> Option<Option<CoordinateOperation>> {
             }
         }
         (None, None) => Some(None),
-        (Some(_), None) => geographic_geocentric(from, to)
-            .map(|operation| Some(CoordinateOperation::Transformation(operation))),
-        (None, Some(_)) => geographic_geocentric(to, from)
-            .map(|operation| Some(CoordinateOperation::Transformation(operation.inverse()))),
+        (Some(_), None) | (None, Some(_)) => geographic_geocentric(from, to)
+            .map(|operation| Some(CoordinateOperation::Conversion(operation))),
     }
 }
 
@@ -9696,23 +9694,13 @@ fn crs_qualifier(crs: &Crs) -> &'static str {
     }
 }
 
-/// The geographic/geocentric conversion, EPSG:9602, as a transformation that keeps both CRS,
-/// so the PROJ string export can read the ellipsoid of each side. Its domain is the world, as
-/// `getExtent` gives any `Conversion` (`oputils.cpp`), not the extent of the geographic CRS: a
-/// concatenated operation through it takes the area of its other steps.
-fn geographic_geocentric(geographic: &Crs, geocentric: &Crs) -> Option<Transformation> {
-    let name = operation_crs_name("Conversion", geographic, geocentric);
-    let mut conversion = Transformation::create_from_code(
-        &OpProps::new().name(name),
-        geographic.clone(),
-        geocentric.clone(),
-        9602,
-        Vec::new(),
-        world_extent(),
-    )
-    .ok()?;
-    conversion.accuracy = Some(0.0);
-    Some(conversion)
+/// `Conversion::createGeographicGeocentric(source, target)` (conversion.cpp:2611): the EPSG:9602
+/// conversion with both CRS, named by `buildOpName`.
+fn geographic_geocentric(source: &Crs, target: &Crs) -> Option<Conversion> {
+    let name = operation_crs_name("Conversion", source, target);
+    Conversion::create_geographic_geocentric(&OpProps::new().name(name))
+        .ok()
+        .map(|conversion| conversion.with_endpoints(source.clone(), target.clone()))
 }
 
 /// The area of use of a concatenated operation of pivot legs: the intersection of the areas of
@@ -10471,7 +10459,7 @@ fn link_geographic_geocentric(steps: &mut Vec<ConcatenatedStep>, source: &Crs) {
             steps.insert(
                 index,
                 ConcatenatedStep {
-                    operation: CoordinateOperation::Transformation(bridge),
+                    operation: CoordinateOperation::Conversion(bridge),
                     reverse: false,
                 },
             );
@@ -10489,16 +10477,14 @@ fn owned_endpoints(step: &ConcatenatedStep) -> Option<(Crs, Crs)> {
 
 /// `createGeographicGeocentric` when the two CRS share a name and differ only
 /// by geographic versus geocentric. The conversion runs from `from` to `to`.
-fn geographic_geocentric_link(from: &Crs, to: &Crs) -> Option<Transformation> {
+fn geographic_geocentric_link(from: &Crs, to: &Crs) -> Option<Conversion> {
     if from.name() != to.name() {
         return None;
     }
     let from_geographic = geographic_of(from).is_some();
     let to_geographic = geographic_of(to).is_some();
-    if from_geographic && is_geocentric_crs(to) {
+    if (from_geographic && is_geocentric_crs(to)) || (is_geocentric_crs(from) && to_geographic) {
         geographic_geocentric(from, to)
-    } else if is_geocentric_crs(from) && to_geographic {
-        geographic_geocentric(to, from).map(|operation| operation.inverse())
     } else {
         None
     }
@@ -10865,7 +10851,7 @@ fn append_geographic_geocentric_tail(steps: &mut Vec<ConcatenatedStep>, target: 
     };
     if let Some(bridge) = geographic_geocentric_link(&end, target) {
         steps.push(ConcatenatedStep {
-            operation: CoordinateOperation::Transformation(bridge),
+            operation: CoordinateOperation::Conversion(bridge),
             reverse: false,
         });
     }

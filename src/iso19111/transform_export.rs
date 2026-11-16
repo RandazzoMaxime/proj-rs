@@ -1568,7 +1568,7 @@ fn unit_text(unit: &UnitOfMeasure) -> String {
     proj_unit_name(unit).map_or_else(|| proj_number(unit.conversion_to_si()), str::to_owned)
 }
 
-fn geographic_geocentric(
+pub(super) fn geographic_geocentric(
     source: Option<&Crs>,
     target: Option<&Crs>,
     formatter: &mut PipelineFormatter,
