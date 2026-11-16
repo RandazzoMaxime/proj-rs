@@ -432,6 +432,9 @@ fn equivalent(
         (Obj::User(UserObject::VerticalDatum(a)), Obj::User(UserObject::VerticalDatum(b))) => {
             a.is_equivalent_to_with(b, way)
         }
+        (Obj::User(UserObject::Operation(a)), Obj::User(UserObject::Operation(b))) => {
+            a.is_equivalent_to_with(b, way)
+        }
         _ => false,
     }
 }

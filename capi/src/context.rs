@@ -388,18 +388,6 @@ pub(crate) fn database_source(path: Option<&str>) -> DatabaseSource {
 // ---------------------------------------------------------------------------
 // Errors (`ctx.cpp`, `strerrno.cpp`).
 
-/// The failure of a function this port does not implement: PROJ's failure value is returned
-/// by the caller, and the context says which function it was.
-pub(crate) fn unsupported(ctx: *mut PJ_CONTEXT, name: &str) {
-    if std::env::var_os("PROJ_RS_CAPI_TRACE_UNSUPPORTED").is_some() {
-        let _ignored = writeln!(std::io::stderr(), "unsupported: {name}");
-    }
-    context(ctx).fail(
-        PROJ_ERR_OTHER as c_int,
-        &format!("{name}: not implemented in proj-rs"),
-    );
-}
-
 #[unsafe(no_mangle)]
 pub extern "C" fn proj_context_errno(ctx: *mut PJ_CONTEXT) -> c_int {
     guard(0, || context(ctx).errno)

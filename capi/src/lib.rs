@@ -46,6 +46,7 @@
     reason = "the names are those of proj.h"
 )]
 
+mod callbacks;
 mod constructors;
 mod context;
 mod conversion_support;
@@ -59,12 +60,13 @@ mod info;
 mod inspect;
 mod iso;
 mod list;
+mod lists;
+mod lists_data;
 mod misc;
 mod network;
 mod ops;
 mod pj;
 mod trans;
-mod unsupported;
 mod util;
 
 pub use ffi::*;
