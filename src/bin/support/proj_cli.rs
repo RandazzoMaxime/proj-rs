@@ -20,7 +20,8 @@ use std::f64::consts::FRAC_PI_2;
 use std::io::{self, Read, Write};
 use std::process::ExitCode;
 
-use proj_rs::{create_from_user_input, Crs, DatabaseContext, Operation, Xyzt};
+use proj_rs::unstable::Crs;
+use proj_rs::{create_from_user_input, DatabaseContext, Operation, Xyzt};
 
 use super::dms::{
     c_strtod, direction_of, dmstor, format_number, program_name, rtodms, Direction, Dms, Width,

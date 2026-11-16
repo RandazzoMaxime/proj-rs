@@ -49,6 +49,7 @@ cmake -S "$DIR/src" -B "$DIR/build" -DCMAKE_BUILD_TYPE=Release \
   "${sqlite_args[@]}" > "$DIR/cmake.log"
 cmake --build "$DIR/build" --parallel "$(nproc 2>/dev/null || echo 4)" > "$DIR/build.log"
 
-"$DIR/build/bin/projinfo" 2>&1 | head -n 1
+# projinfo without an argument prints its version line and exits 1.
+{ "$DIR/build/bin/projinfo" 2>&1 || true; } | head -n 1
 echo "reference binaries: $DIR/build/bin"
 echo "PROJ_DATA=$DIR/build/data:$PWD/data/tests PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY=YES"

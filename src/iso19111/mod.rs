@@ -14,6 +14,7 @@ mod conversion_export;
 mod convmethod;
 mod coordinate_metadata;
 mod crs_ops;
+mod ctor;
 mod derived;
 mod equiv;
 mod esri_parammap;
@@ -52,6 +53,7 @@ pub use alternatives::{
 pub use buildop::{AxisOrderReversal, OpProps};
 pub use coordinate_metadata::{coordinate_metadata_from_urn, CoordinateMetadata};
 pub use crs_ops::{ParameterLinearUnit, Wgs84Dynamic};
+pub use ctor::{method_epsg_code, ParameterSpec};
 pub use equiv::{equivalent_name, equivalent_name_bigger_differences, Equivalence};
 pub use factory::{
     AlternativeGridNames, AuthorityFactory, AuthorityObject, BallparkUse, CelestialBodyInfo,
@@ -61,11 +63,11 @@ pub use factory::{
     SpatialCriterion, SupersededOperations, UnitInfo,
 };
 pub use insert::{insert_statements, suggests_code_for, CodeForm, ComponentCodes, InsertSession};
-pub(crate) use json::proj_based_operation_of_text;
+pub use json::proj_based_operation_of_text;
 pub use json::{
     create_from_user_input, create_from_user_input_with_init_rules,
-    create_from_user_input_with_optional_database, create_object_from_user_input, epsg_identity,
-    InitRules, JsonFormat, JsonLines, UserObject,
+    create_from_user_input_with_optional_database, create_object_from_user_input,
+    create_user_object, epsg_identity, InitRules, JsonFormat, JsonLines, UserObject,
 };
 pub use json_read::{create_object_from_json, JsonObject};
 pub use metadata::{Citation, DataEpoch, Extent};

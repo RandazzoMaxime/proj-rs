@@ -1,9 +1,10 @@
 //! PROJ 9.9.0 `test/unit/test_operationfactory.cpp`: compound CRS read from WKT1 with a
 //! `PROJ4_GRIDS` vertical datum, in the EPSG context.
 
+use proj_rs::unstable::Crs;
 use proj_rs::{
-    CoordinateOperationContext, CoordinateOperationFactory, Crs, DatabaseContext,
-    GridAvailabilityUse, ProjLines, SpatialCriterion, WktObject, WktParser,
+    CoordinateOperationContext, CoordinateOperationFactory, DatabaseContext, GridAvailabilityUse,
+    ProjLines, SpatialCriterion, WktObject, WktParser,
 };
 
 const SOURCE: &str = r####"COMPD_CS["NAD83 / Alabama West + NAVD88 height - Geoid12B (Meters)",

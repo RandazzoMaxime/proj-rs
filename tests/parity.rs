@@ -616,6 +616,25 @@ fn parity_network_against_proj_9_9_0() {
     check_corpus("tests/parity/network", Source::Network);
 }
 
+/// A corpus drawn at random from a seed by `tools/parity/fuzz_diff.py` (docs/FUZZ.md):
+/// PARITY_RANDOM_DIR holds its `cases.jsonl` and `expected.jsonl`. It has no `known.tsv` unless
+/// the tool's operator wrote one, so every deviation fails and goes to PARITY_REPORT.
+#[test]
+#[ignore = "corpus aléatoire : PARITY_RANDOM_DIR=... cargo test --test parity -- --ignored"]
+fn parity_random_against_proj_9_9_0() {
+    let dir = std::env::var("PARITY_RANDOM_DIR").unwrap_or_else(|_| {
+        panic!(
+            "PARITY_RANDOM_DIR absent : lancer tools/parity/fuzz_diff.py --seed N, qui l'écrit \
+             et lance ce test"
+        )
+    });
+    assert!(
+        Path::new(&dir).is_absolute(),
+        "PARITY_RANDOM_DIR doit être un chemin absolu : {dir}"
+    );
+    check_corpus(&dir, Source::Local);
+}
+
 fn check_corpus(dir: &str, source: Source<'_>) {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(dir);
     let cases = load_cases(&root.join("cases.jsonl"));

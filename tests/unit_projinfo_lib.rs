@@ -12,7 +12,7 @@
 //! `EPSG:25832` and `EPSG:25833`, on one context through `run_with_context`.
 
 use proj_rs::projinfo::{run, run_with_callback, run_with_context, LogLevel, Status};
-use proj_rs::Context;
+use proj_rs::unstable::Context;
 
 const SIMPLE_ARGS: [&str; 3] = ["EPSG:25832", "-o", "WKT1_GDAL"];
 const ERROR_ARGS: [&str; 1] = ["doesnotwork"];

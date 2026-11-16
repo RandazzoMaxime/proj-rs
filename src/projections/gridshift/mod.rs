@@ -1043,7 +1043,8 @@ impl GridSet {
             .and_then(|w| usize::try_from(height).ok().and_then(|h| w.checked_mul(h)))
             .ok_or(Fail::Invalid)?;
         let data = bytes.get(160..).ok_or(Fail::Invalid)?;
-        if data.len() < count * 8 {
+        let needed = count.checked_mul(8).ok_or(Fail::Invalid)?;
+        if data.len() < needed {
             return Err(Fail::Invalid);
         }
         // First float is longitude, second is latitude. Already radians.

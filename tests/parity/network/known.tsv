@@ -1,27 +1,3 @@
 # Écarts connus de la suite de parité (tests/parity.rs).
 # Colonnes : clé « id:ligne », cause courte, renvoi à une fiche.
 # Un écart listé ne fait pas échouer ; un écart nouveau ou disparu oui.
-net-default-0274:5	jeu de candidats : PROJ liste DERIVED_FROM(EPSG):10614 (SHGD2015 + SHVD2015), le port ne le produit pas ; écart déjà présent réseau OFF	PORTING-cs2cs-network-only-best.md
-net-default-0274:6	jeu de candidats : PROJ liste DERIVED_FROM(EPSG):10614 (SHGD2015 + SHVD2015), le port ne le produit pas ; écart déjà présent réseau OFF	PORTING-cs2cs-network-only-best.md
-net-default-0274:7	jeu de candidats : PROJ liste DERIVED_FROM(EPSG):10614 (SHGD2015 + SHVD2015), le port ne le produit pas ; écart déjà présent réseau OFF	PORTING-cs2cs-network-only-best.md
-net-default-0274:8	jeu de candidats : PROJ liste DERIVED_FROM(EPSG):10614 (SHGD2015 + SHVD2015), le port ne le produit pas ; écart déjà présent réseau OFF	PORTING-cs2cs-network-only-best.md
-net-default-0275:5	jeu de candidats : PROJ liste DERIVED_FROM(EPSG):10614 (SHGD2015 + SHVD2015), le port ne le produit pas ; écart déjà présent réseau OFF	PORTING-cs2cs-network-only-best.md
-net-default-0275:6	jeu de candidats : PROJ liste DERIVED_FROM(EPSG):10614 (SHGD2015 + SHVD2015), le port ne le produit pas ; écart déjà présent réseau OFF	PORTING-cs2cs-network-only-best.md
-net-default-0275:7	jeu de candidats : PROJ liste DERIVED_FROM(EPSG):10614 (SHGD2015 + SHVD2015), le port ne le produit pas ; écart déjà présent réseau OFF	PORTING-cs2cs-network-only-best.md
-net-default-0275:8	jeu de candidats : PROJ liste DERIVED_FROM(EPSG):10614 (SHGD2015 + SHVD2015), le port ne le produit pas ; écart déjà présent réseau OFF	PORTING-cs2cs-network-only-best.md
-net-only-best-0274:5	jeu de candidats : PROJ liste DERIVED_FROM(EPSG):10614 (SHGD2015 + SHVD2015), le port ne le produit pas ; écart déjà présent réseau OFF	PORTING-cs2cs-network-only-best.md
-net-only-best-0274:6	jeu de candidats : PROJ liste DERIVED_FROM(EPSG):10614 (SHGD2015 + SHVD2015), le port ne le produit pas ; écart déjà présent réseau OFF	PORTING-cs2cs-network-only-best.md
-net-only-best-0274:7	jeu de candidats : PROJ liste DERIVED_FROM(EPSG):10614 (SHGD2015 + SHVD2015), le port ne le produit pas ; écart déjà présent réseau OFF	PORTING-cs2cs-network-only-best.md
-net-only-best-0274:8	jeu de candidats : PROJ liste DERIVED_FROM(EPSG):10614 (SHGD2015 + SHVD2015), le port ne le produit pas ; écart déjà présent réseau OFF	PORTING-cs2cs-network-only-best.md
-net-only-best-0275:5	jeu de candidats : PROJ liste DERIVED_FROM(EPSG):10614 (SHGD2015 + SHVD2015), le port ne le produit pas ; écart déjà présent réseau OFF	PORTING-cs2cs-network-only-best.md
-net-only-best-0275:6	jeu de candidats : PROJ liste DERIVED_FROM(EPSG):10614 (SHGD2015 + SHVD2015), le port ne le produit pas ; écart déjà présent réseau OFF	PORTING-cs2cs-network-only-best.md
-net-only-best-0275:7	jeu de candidats : PROJ liste DERIVED_FROM(EPSG):10614 (SHGD2015 + SHVD2015), le port ne le produit pas ; écart déjà présent réseau OFF	PORTING-cs2cs-network-only-best.md
-net-only-best-0275:8	jeu de candidats : PROJ liste DERIVED_FROM(EPSG):10614 (SHGD2015 + SHVD2015), le port ne le produit pas ; écart déjà présent réseau OFF	PORTING-cs2cs-network-only-best.md
-net-only-best-no-0274:5	jeu de candidats : PROJ liste DERIVED_FROM(EPSG):10614 (SHGD2015 + SHVD2015), le port ne le produit pas ; écart déjà présent réseau OFF	PORTING-cs2cs-network-only-best.md
-net-only-best-no-0274:6	jeu de candidats : PROJ liste DERIVED_FROM(EPSG):10614 (SHGD2015 + SHVD2015), le port ne le produit pas ; écart déjà présent réseau OFF	PORTING-cs2cs-network-only-best.md
-net-only-best-no-0274:7	jeu de candidats : PROJ liste DERIVED_FROM(EPSG):10614 (SHGD2015 + SHVD2015), le port ne le produit pas ; écart déjà présent réseau OFF	PORTING-cs2cs-network-only-best.md
-net-only-best-no-0274:8	jeu de candidats : PROJ liste DERIVED_FROM(EPSG):10614 (SHGD2015 + SHVD2015), le port ne le produit pas ; écart déjà présent réseau OFF	PORTING-cs2cs-network-only-best.md
-net-only-best-no-0275:5	jeu de candidats : PROJ liste DERIVED_FROM(EPSG):10614 (SHGD2015 + SHVD2015), le port ne le produit pas ; écart déjà présent réseau OFF	PORTING-cs2cs-network-only-best.md
-net-only-best-no-0275:6	jeu de candidats : PROJ liste DERIVED_FROM(EPSG):10614 (SHGD2015 + SHVD2015), le port ne le produit pas ; écart déjà présent réseau OFF	PORTING-cs2cs-network-only-best.md
-net-only-best-no-0275:7	jeu de candidats : PROJ liste DERIVED_FROM(EPSG):10614 (SHGD2015 + SHVD2015), le port ne le produit pas ; écart déjà présent réseau OFF	PORTING-cs2cs-network-only-best.md
-net-only-best-no-0275:8	jeu de candidats : PROJ liste DERIVED_FROM(EPSG):10614 (SHGD2015 + SHVD2015), le port ne le produit pas ; écart déjà présent réseau OFF	PORTING-cs2cs-network-only-best.md

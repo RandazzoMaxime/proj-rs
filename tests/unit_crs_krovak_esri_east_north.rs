@@ -1,7 +1,8 @@
 //! PROJ 9.9.0 `test/unit/test_crs_990.cpp`, `projectedCRS_from_WKT1_ESRI_as_WKT1_ESRI_s_jtsk03_krovak_east_north`
 //! (EPSG:8353): an ESRI WKT1 Krovak CRS, read and written back in WKT2 and in ESRI WKT1.
 
-use proj_rs::{Crs, DatabaseContext, WktConvention, WktFormatter, WktObject, WktParser};
+use proj_rs::unstable::Crs;
+use proj_rs::{DatabaseContext, WktConvention, WktFormatter, WktObject, WktParser};
 
 /// `TEST(crs, projectedCRS_from_WKT1_ESRI_as_WKT1_ESRI_s_jtsk03_krovak_east_north)`
 #[test]

@@ -8,9 +8,10 @@
 mod common;
 
 use common::tmp_db::TmpDb;
+use proj_rs::unstable::Crs;
 use proj_rs::{
     AuthorityFactory, AuthorityObject, CoordinateOperation, CoordinateOperationContext,
-    CoordinateOperationFactory, Crs, Datum, IntermediateCrsUse, SupersededOperations,
+    CoordinateOperationFactory, Datum, IntermediateCrsUse, SupersededOperations,
 };
 
 /// `AuthorityFactory_test_inversion_first_and_last_steps_of_concat_op`, the rows after `populateWithFakeEPSG`.

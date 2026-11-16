@@ -10,8 +10,11 @@
 //! Ported: the horizontal grid methods that PROJ writes as `HORIZONTAL_SHIFT_GTIFF` or
 //! `GENERAL_SHIFT_GTIFF` (NTv1, NTv2, NADCON and NADCON5 file pairs), in both directions, the
 //! geoid file of a `Geographic3D to GravityRelatedHeight` method, the VERTCON and regular vertical
-//! grid files, the grid of the geocentric translation method 1087, and the velocity grid of a
-//! point motion operation (`PointMotionOperation::substitutePROJAlternativeGridNames`).
+//! grid files, the grid of the geocentric translation method 1087, the velocity grid methods 1113
+//! and 1114, the `gridTransformations` table (New Zealand deformation model 1079, TIN methods
+//! 1137, 1138 and 1145), the velocity grids next to other parameters (methods 1142, 1143 and
+//! 1144), and the velocity grid of a point motion operation
+//! (`PointMotionOperation::substitutePROJAlternativeGridNames`).
 //!
 //! Not ported: the `NTv1`, `NTv2` and `CTable2` grid formats (no `proj.db` row has them). For
 //! those the caller keeps the file rename it already made.
@@ -71,6 +74,23 @@ const METHOD_POINT_MOTION_GEOCEN_DOMAIN_NEU_VELOCITY_GRID_GRAVSOFT: i32 = 1139;
 /// `EPSG_CODE_PARAMETER_POINT_MOTION_VELOCITY_GRID_FILE` and its name.
 const PARAMETER_POINT_MOTION_VELOCITY_GRID_FILE: i32 = 1050;
 const NAME_POINT_MOTION_VELOCITY_GRID_FILE: &str = "Point motion velocity grid file";
+/// `EPSG_CODE_METHOD_GEOGRAPHIC3D_OFFSET_BY_VELOCITY_GRID_NTV2_VEL`,
+/// `EPSG_CODE_METHOD_VERTICAL_OFFSET_USING_NEU_VELOCITY_GRID_NTV2_VEL` and
+/// `EPSG_CODE_METHOD_NEW_ZEALAND_DEFORMATION_MODEL`.
+const METHOD_GEOGRAPHIC3D_OFFSET_BY_VELOCITY_GRID_NTV2_VEL: i32 = 1114;
+const METHOD_VERTICAL_OFFSET_USING_NEU_VELOCITY_GRID_NTV2_VEL: i32 = 1113;
+const METHOD_NEW_ZEALAND_DEFORMATION_MODEL: i32 = 1079;
+/// The three `..._BY_TIN_INTERPOLATION_JSON` methods and the `TIN offset file` parameter.
+const METHOD_VERTICAL_OFFSET_BY_TIN_INTERPOLATION_JSON: i32 = 1137;
+const METHOD_CARTESIAN_GRID_OFFSETS_BY_TIN_INTERPOLATION_JSON: i32 = 1138;
+const METHOD_GEOGRAPHIC2D_OFFSETS_BY_TIN_INTERPOLATION_JSON: i32 = 1145;
+const PARAMETER_TIN_OFFSET_FILE: i32 = 1064;
+const NAME_TIN_OFFSET_FILE: &str = "TIN offset file";
+/// The methods with a geocentric translation or a velocity grid file next to other parameters.
+const METHOD_GEOCENTRIC_TRANSLATIONS_BY_GRID_GTG_AND_GEOCENTRIC_TRANSLATIONS_NEU_VELOCITIES_GTG:
+    i32 = 1142;
+const METHOD_POSITION_VECTOR_GEOCENTRIC_AND_GEOCENTRIC_TRANSLATIONS_NEU_VELOCITIES_GTG: i32 = 1143;
+const METHOD_GEOCENTRIC_TRANSLATIONS_USING_NEU_VELOCITY_GRID_GTG: i32 = 1144;
 /// `EPSG_CODE_PARAMETER_POINT_MOTION_VELOCITY_NORTH_GRID_FILE` and its name.
 const PARAMETER_POINT_MOTION_VELOCITY_NORTH_GRID_FILE: i32 = 1072;
 const NAME_POINT_MOTION_VELOCITY_NORTH_GRID_FILE: &str = "Point motion velocity north grid file";
@@ -99,7 +119,137 @@ pub(crate) fn substitute_proj_alternative_grid_names(
     if let Some(replacement) = vertical_grid(transformation, db)? {
         return Ok(Some(replacement));
     }
-    geocentric_grid(transformation, db)
+    if let Some(replacement) = geocentric_grid(transformation, db)? {
+        return Ok(Some(replacement));
+    }
+    if let Some(replacement) = single_file_grid(transformation, db)? {
+        return Ok(Some(replacement));
+    }
+    velocity_grids(transformation, db)
+}
+
+/// The branches of `substitutePROJAlternativeGridNames` that replace the whole parameter list by
+/// the one file parameter: the velocity grid of the `Geographic3D Offset by velocity grid` and
+/// `Vertical Offset using NEU velocity grid` methods (`singleoperation.cpp:2639-2711`), and the
+/// `gridTransformations` table (`singleoperation.cpp:2772-2851`: New Zealand deformation model and
+/// the TIN interpolation methods).
+fn single_file_grid(
+    transformation: &Transformation,
+    db: &DatabaseContext,
+) -> Result<Option<Transformation>, FactoryError> {
+    let (code, name) = match epsg_method_code(transformation) {
+        METHOD_GEOGRAPHIC3D_OFFSET_BY_VELOCITY_GRID_NTV2_VEL
+        | METHOD_VERTICAL_OFFSET_USING_NEU_VELOCITY_GRID_NTV2_VEL
+        | METHOD_NEW_ZEALAND_DEFORMATION_MODEL => (
+            PARAMETER_POINT_MOTION_VELOCITY_GRID_FILE,
+            NAME_POINT_MOTION_VELOCITY_GRID_FILE,
+        ),
+        METHOD_VERTICAL_OFFSET_BY_TIN_INTERPOLATION_JSON
+        | METHOD_CARTESIAN_GRID_OFFSETS_BY_TIN_INTERPOLATION_JSON
+        | METHOD_GEOGRAPHIC2D_OFFSETS_BY_TIN_INTERPOLATION_JSON => {
+            (PARAMETER_TIN_OFFSET_FILE, NAME_TIN_OFFSET_FILE)
+        }
+        _ => return Ok(None),
+    };
+    let Some(filename) = file_value(transformation, code, name) else {
+        return Ok(None);
+    };
+    let Some((proj_filename, _format, inverse)) = db.proj_grid_alternative_format(&filename)?
+    else {
+        return Ok(None);
+    };
+    if inverse || filename == proj_filename {
+        return Ok(None);
+    }
+    Ok(Some(similar_operation(
+        transformation,
+        similar_method(transformation),
+        vec![epsg_parameter(code, name, &proj_filename)],
+        transformation.source_crs().cloned(),
+        transformation.target_crs().cloned(),
+    )))
+}
+
+/// The methods that carry a velocity grid next to other parameters
+/// (`singleoperation.cpp:2853-2990`): the velocity grid file of 1143 and 1144, and the geocentric
+/// translation file and the velocity grid file of 1142, are replaced where they stand and every
+/// other parameter is kept. For 1142 both files need a PROJ alternative.
+fn velocity_grids(
+    transformation: &Transformation,
+    db: &DatabaseContext,
+) -> Result<Option<Transformation>, FactoryError> {
+    let velocity_file = (
+        PARAMETER_POINT_MOTION_VELOCITY_GRID_FILE,
+        NAME_POINT_MOTION_VELOCITY_GRID_FILE,
+    );
+    let files = match epsg_method_code(transformation) {
+        METHOD_POSITION_VECTOR_GEOCENTRIC_AND_GEOCENTRIC_TRANSLATIONS_NEU_VELOCITIES_GTG
+        | METHOD_GEOCENTRIC_TRANSLATIONS_USING_NEU_VELOCITY_GRID_GTG => vec![velocity_file],
+        METHOD_GEOCENTRIC_TRANSLATIONS_BY_GRID_GTG_AND_GEOCENTRIC_TRANSLATIONS_NEU_VELOCITIES_GTG =>
+        {
+            vec![
+                (
+                    PARAMETER_GEOCENTRIC_TRANSLATION_FILE,
+                    NAME_GEOCENTRIC_TRANSLATION_FILE,
+                ),
+                velocity_file,
+            ]
+        }
+        _ => return Ok(None),
+    };
+    let mut replaced = Vec::new();
+    for (code, name) in files {
+        let Some(filename) = file_value(transformation, code, name) else {
+            return Ok(None);
+        };
+        let Some((proj_filename, _format, inverse)) = db.proj_grid_alternative_format(&filename)?
+        else {
+            return Ok(None);
+        };
+        if inverse {
+            return Ok(None);
+        }
+        replaced.push((code, filename, proj_filename));
+    }
+    if replaced
+        .iter()
+        .all(|(_, filename, proj_filename)| filename == proj_filename)
+    {
+        return Ok(None);
+    }
+    let parameters = transformation
+        .parameters
+        .iter()
+        .map(|parameter| {
+            let replacement = replaced.iter().find(|(code, _, _)| {
+                parameter.code_space == "EPSG" && parameter.code == code.to_string()
+            });
+            match replacement {
+                Some((_, _, proj_filename)) => Parameter {
+                    value: ParameterValue::filename(proj_filename),
+                    ..parameter.clone()
+                },
+                None => parameter.clone(),
+            }
+        })
+        .collect();
+    Ok(Some(similar_operation(
+        transformation,
+        similar_method(transformation),
+        parameters,
+        transformation.source_crs().cloned(),
+        transformation.target_crs().cloned(),
+    )))
+}
+
+/// `createSimilarPropertiesMethod`: the name and the identifier of the method, nothing else.
+fn similar_method(transformation: &Transformation) -> OperationMethod {
+    let method = transformation.method();
+    OperationMethod::named_code(
+        method.name().to_owned(),
+        method.code_space().to_owned(),
+        method.code().to_owned(),
+    )
 }
 
 /// The VERTCON and regular vertical grid branch of `substitutePROJAlternativeGridNames`

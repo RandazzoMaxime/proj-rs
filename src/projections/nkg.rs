@@ -137,14 +137,9 @@ fn urn_code(definition: &str) -> Option<String> {
 
 fn strip_urn_prefix(text: &str) -> Option<&str> {
     const PREFIX: &str = "urn:ogc:def:";
-    if text.len() < PREFIX.len() {
-        return None;
-    }
-    if text[..PREFIX.len()].eq_ignore_ascii_case(PREFIX) {
-        Some(&text[PREFIX.len()..])
-    } else {
-        None
-    }
+    let head = text.get(..PREFIX.len())?;
+    head.eq_ignore_ascii_case(PREFIX)
+        .then(|| &text[PREFIX.len()..])
 }
 
 fn is_proj_nkg(definition: &str) -> bool {

@@ -3,8 +3,9 @@
 //! Each function is one `TEST()` name. Expected text is copied from that test.
 //! The WKT inputs are PROJ's, byte for byte.
 
+use proj_rs::unstable::Crs;
 use proj_rs::{
-    Crs, DatabaseContext, GeodeticCRS, GeographicCRS, Parameter, ParameterValue, ProjectedCRS,
+    DatabaseContext, GeodeticCRS, GeographicCRS, Parameter, ParameterValue, ProjectedCRS,
     UnitOfMeasure, WktConvention, WktFormatter, WktParser, WktStrictness,
 };
 

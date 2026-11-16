@@ -1778,7 +1778,7 @@ pub fn create_from_user_input(text: &str, db: &DatabaseContext) -> Result<Crs, F
 /// The PROJ-based operation that PROJ's `createFromUserInput` gives a PROJ string without
 /// `+type=crs` (`io.cpp`, `unexpectedStructure`), `None` for any other text. The CRS readers
 /// (`cs2cs`, the facade) keep building the CRS of such a string.
-pub(crate) fn proj_based_operation_of_text(
+pub fn proj_based_operation_of_text(
     text: &str,
 ) -> Option<Result<CoordinateOperation, FactoryError>> {
     let text = text.trim();
@@ -1853,6 +1853,21 @@ pub fn create_from_user_input_with_optional_database(
             "{text}: not a coordinate reference system"
         ))),
     }
+}
+
+/// PROJ's `createFromUserInput(text, dbContext, usePROJ4InitRules)` for any object it returns: a
+/// CRS, a datum, a prime meridian, an ellipsoid, a coordinate operation, a coordinate metadata.
+/// The C API (`proj_create`) reads its text this way.
+///
+/// # Errors
+///
+/// As [`create_from_user_input_with_optional_database`].
+pub fn create_user_object(
+    text: &str,
+    db: Option<&DatabaseContext>,
+    rules: InitRules,
+) -> Result<UserObject, FactoryError> {
+    read_user_object(text, db, rules)
 }
 
 /// The routing of PROJ's `createFromUserInput` (`io.cpp` 7711-8302) for every object it returns:

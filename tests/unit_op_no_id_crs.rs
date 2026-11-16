@@ -1,9 +1,10 @@
 //! PROJ 9.9.0 `test/unit/test_operationfactory.cpp`: CRS read from WKT without an identifier give
 //! the operations of the registered CRS they are equivalent to.
 
+use proj_rs::unstable::Crs;
 use proj_rs::{
     AuthorityFactory, CoordinateOperation, CoordinateOperationContext, CoordinateOperationFactory,
-    Crs, DatabaseContext, SpatialCriterion, WktObject, WktParser,
+    DatabaseContext, SpatialCriterion, WktObject, WktParser,
 };
 
 fn parse(wkt: &str) -> Crs {

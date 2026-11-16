@@ -1568,7 +1568,7 @@ fn unit_text(unit: &UnitOfMeasure) -> String {
     proj_unit_name(unit).map_or_else(|| proj_number(unit.conversion_to_si()), str::to_owned)
 }
 
-fn geographic_geocentric(
+pub(super) fn geographic_geocentric(
     source: Option<&Crs>,
     target: Option<&Crs>,
     formatter: &mut PipelineFormatter,
@@ -2118,34 +2118,72 @@ struct HelmertKind {
 
 impl Transformation {
     /// `createApproximateInverseIfPossible`: an inverted seven or fifteen parameter Helmert
-    /// transformation written as the forward method with every value but the reference epoch
-    /// negated. The name says `approx. inversion` unless every rotation, scale and rate is zero.
+    /// transformation (full matrix included) written as the forward method with every value but
+    /// the reference epoch negated, in PROJ's units and without `VERSION`. The name says
+    /// `approx. inversion` unless every rotation, scale and their rates are zero.
     pub(super) fn approximate_inverse(&self) -> Option<Self> {
         if !self.inverted {
             return None;
         }
         let kind = helmert_kind(self)?;
-        if kind.full_matrix || kind.params == HelmertParams::Three {
+        if kind.params == HelmertParams::Three {
             return None;
         }
         let mut approximate = self.clone();
         approximate.inverted = false;
+        approximate.version = None;
         let mut exact = true;
         for parameter in &mut approximate.parameters {
-            if parameter.name == "Parameter reference epoch" {
+            let code = parameter.code.parse::<i32>().unwrap_or(0);
+            let Some((to_si, unit)) = approximate_unit(code) else {
                 continue;
-            }
-            if let ParameterValue::Measure(measure) = &mut parameter.value {
-                let is_translation = measure.unit.kind == UnitKind::Linear;
-                measure.value = 0.0 - measure.value;
-                exact &= is_translation || measure.value == 0.0;
-            }
+            };
+            let value = 0.0 - numeric(self, code, to_si);
+            exact &= !matches!(code, 8608..=8611 | 1043..=1046) || value == 0.0;
+            parameter.value = ParameterValue::Measure(Measure::new(value, unit));
         }
         if !exact {
             approximate.identified.name.push_str(" (approx. inversion)");
         }
         Some(approximate)
     }
+}
+
+/// The factor and unit PROJ gives each Helmert parameter when it rebuilds the transformation
+/// (`createSevenParamsTransform`, `createFifteenParamsTransform`). `None` for the reference epoch.
+fn approximate_unit(code: i32) -> Option<(f64, UnitOfMeasure)> {
+    Some(match code {
+        8605..=8607 => (1.0, UnitOfMeasure::metre()),
+        8608..=8610 => (
+            ARC_SECOND,
+            UnitOfMeasure::new("arc-second", ARC_SECOND, UnitKind::Angular),
+        ),
+        8611 => (
+            PARTS_PER_MILLION,
+            UnitOfMeasure::new("parts per million", PARTS_PER_MILLION, UnitKind::Scale),
+        ),
+        1040..=1042 => (
+            METRE_PER_YEAR,
+            UnitOfMeasure::new("metres per year", METRE_PER_YEAR, UnitKind::Linear),
+        ),
+        1043..=1045 => (
+            ARC_SECOND_PER_YEAR,
+            UnitOfMeasure::new(
+                "arc-seconds per year",
+                ARC_SECOND_PER_YEAR,
+                UnitKind::Angular,
+            ),
+        ),
+        1046 => (
+            PARTS_PER_MILLION_PER_YEAR,
+            UnitOfMeasure::new(
+                "parts per million per year",
+                PARTS_PER_MILLION_PER_YEAR,
+                UnitKind::Scale,
+            ),
+        ),
+        _ => return None,
+    })
 }
 
 /// The convention and domain of a Molodensky-Badekas method.

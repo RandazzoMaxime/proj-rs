@@ -1,8 +1,9 @@
 //! PROJ 9.9.0 `test/unit/test_io.cpp`, derived geographic CRS read from an ESRI PROJCS
 //! that carries the PROJ4 extension.
 
+use proj_rs::unstable::Crs;
 use proj_rs::{
-    create_crs_from_proj_string, CoordinateOperationFactory, Crs, DatabaseContext, Equivalence,
+    create_crs_from_proj_string, CoordinateOperationFactory, DatabaseContext, Equivalence,
     ProjLines, WktParser, WktStrictness,
 };
 

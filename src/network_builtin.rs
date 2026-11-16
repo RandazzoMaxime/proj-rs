@@ -34,11 +34,12 @@ impl BuiltinHttp {
         let range = format!("bytes={offset}-{last}");
         let mut delay = MIN_RETRY_DELAY_MS;
         let mut reply = loop {
-            let reply = http_fetch(url, Some(&range))?;
-            if reply.status < 300 {
-                break reply;
-            }
-            delay = retry_delay(&reply, delay)?;
+            delay = match http_fetch(url, Some(&range)) {
+                Some(reply) if reply.status < 300 => break reply,
+                Some(reply) if transient_reply(&reply) => next_delay(delay)?,
+                None if crate::network::last_fetch_transient() => next_delay(delay)?,
+                _ => return None,
+            };
             std::thread::sleep(Duration::from_secs_f64(delay / 1000.0));
         };
         reply.body.truncate(size_to_read);
@@ -97,15 +98,15 @@ impl NetworkCallbacks for BuiltinHttp {
 const MIN_RETRY_DELAY_MS: f64 = 500.0;
 const MAX_RETRY_DELAY_MS: f64 = 60_000.0;
 
-/// The next wait before asking again after the failed reply `reply`, as PROJ's `GetNewRetryDelay`:
-/// twice the last wait plus up to a quarter of it at random, for a reply that a retry may cure.
-/// `None` to give up: another failure, or a wait of a minute or more.
-fn retry_delay(reply: &HttpReply, last: f64) -> Option<f64> {
-    let transient = matches!(reply.status, 429 | 500 | 502..=504)
-        || (reply.status == 400 && String::from_utf8_lossy(&reply.body).contains("RequestTimeout"));
-    if !transient {
-        return None;
-    }
+/// A failed reply that a retry may cure, as PROJ's `GetNewRetryDelay` reads it.
+fn transient_reply(reply: &HttpReply) -> bool {
+    matches!(reply.status, 429 | 500 | 502..=504)
+        || (reply.status == 400 && String::from_utf8_lossy(&reply.body).contains("RequestTimeout"))
+}
+
+/// The next wait of `GetNewRetryDelay`: twice the last one plus up to a quarter of it at random.
+/// `None` to give up, at a wait of a minute or more.
+fn next_delay(last: f64) -> Option<f64> {
     let jitter = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.subsec_nanos());

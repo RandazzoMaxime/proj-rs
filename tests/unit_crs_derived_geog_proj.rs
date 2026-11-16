@@ -1,6 +1,7 @@
 //! PROJ 9.9.0 `test/unit/test_crs.cpp`, derived geographic CRS exported to a PROJ string.
 
-use proj_rs::{CoordinateOperationFactory, Crs, DatabaseContext, ProjLines, WktParser};
+use proj_rs::unstable::Crs;
+use proj_rs::{CoordinateOperationFactory, DatabaseContext, ProjLines, WktParser};
 
 fn parse_derived(wkt: &str) -> Crs {
     let obj = WktParser::new().create_from_wkt(wkt).expect("wkt");

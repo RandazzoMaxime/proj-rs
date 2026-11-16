@@ -15,6 +15,9 @@ use super::defmodel_grids::ShiftGridProvider;
 use super::json;
 use crate::engine::{Coord, CreateError, Frame, IoKind, Params, Step, TransformError};
 
+/// Longest longitude, in radians, that [`Evaluator`] wraps one turn at a time.
+const MAX_WRAPPED_LONGITUDE: f64 = 1e4;
+
 pub(super) const DEG_TO_RAD: f64 = PI / 180.0;
 
 /// Error of a deformation model.
@@ -1257,6 +1260,11 @@ impl<P: GridProvider> Evaluator<P> {
         let (mut x, mut y) = (x_in, y_in);
         let model_bounds = self.model.extent.normalized(self.geographic);
         if self.geographic {
+            // `1e300 - 2π == 1e300` and `inf - 2π == inf`: past this bound the loops never end.
+            // PROJ's `fwd_prepare` already refuses |lam| > 10 radians before this code runs.
+            if !(x.abs() <= MAX_WRAPPED_LONGITUDE) {
+                return None;
+            }
             while x < model_bounds.minx - eps {
                 x += 2.0 * PI;
             }

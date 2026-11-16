@@ -9,8 +9,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
+use proj_rs::unstable::Context;
 use proj_rs::{
-    suggests_code_for, AuthorityFactory, AuthorityObject, CodeForm, ComponentCodes, Context,
+    suggests_code_for, AuthorityFactory, AuthorityObject, CodeForm, ComponentCodes,
     DatabaseContext, DatabaseSource, FactoryError, InitRules, InsertSession, WktParser,
 };
 

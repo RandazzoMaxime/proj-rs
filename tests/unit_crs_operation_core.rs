@@ -4,11 +4,12 @@
 //! Each function is one `TEST()` name, in C++ spelling. Expected text is copied from
 //! PROJ 9.9.0 unchanged. Multi-line WKT is built with `concat!` and `\n`.
 
+use proj_rs::unstable::Crs;
 use proj_rs::{
     create_crs_from_proj_string, AuthorityFactory, CartesianCS, ConcatenatedOperation, Conversion,
-    CoordinateOperation, CoordinateOperationFactory, Crs, DatabaseContext, Equivalence,
-    GeodeticCRS, GeographicCRS, OpProps, OperationMethod, OperationParameter, ParameterValue,
-    ProjLines, ProjectedCRS, Transformation, UnitOfMeasure, WktConvention, WktFormatter, WktParser,
+    CoordinateOperation, CoordinateOperationFactory, DatabaseContext, Equivalence, GeodeticCRS,
+    GeographicCRS, OpProps, OperationMethod, OperationParameter, ParameterValue, ProjLines,
+    ProjectedCRS, Transformation, UnitOfMeasure, WktConvention, WktFormatter, WktParser,
     WktStrictness,
 };
 
