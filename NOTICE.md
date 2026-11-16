@@ -88,3 +88,15 @@ follows GeographicLib, as shipped in PROJ.
 [`proj`](https://github.com/georust/proj) crate 0.31.0 (`src/proj.rs` and
 `src/geo_types.rs`) against this crate's facade. Inputs and expected values are
 georust's, copyright the GeoRust contributors, MIT OR Apache-2.0.
+
+## Vector math (Cephes)
+
+`src/simd/math.rs` evaluates `atan`, `atan2` and `log` with the rational
+approximations of the Cephes Mathematical Library by Stephen L. Moshier
+(copyright 1984-2000). The coefficients were taken from the
+[`wide`](https://crates.io/crates/wide) crate (Apache-2.0, MIT or Zlib), which
+has them from Agner Fog's vector class library (Apache-2.0). Cephes is
+redistributed under the BSD 3-clause licence with its author's permission, as
+in SciPy (`scipy/special/cephes`). The other functions of that file follow
+fdlibm, copyright (c) 1993 Sun Microsystems, whose notice permits use, copy,
+modification and distribution provided the notice is kept.

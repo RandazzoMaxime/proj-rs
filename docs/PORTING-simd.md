@@ -108,12 +108,27 @@ calculé que pour une longitude à ramener, et le gain serait nul.
 
 `sin_cos`, `tan`, `exp`, `log`, `atan`, `atan2`, `hypot`, `asinh`, `atanh`, `sinh` et `powf` sont
 écrites en Rust contre `V4`, sans `libmvec`, sans `asm!` et sans dépendance : le même code sert
-Linux, Windows et macOS. Les algorithmes sont ceux de fdlibm (la libm de Sun, reprise par FreeBSD et
-musl) : réduction d'argument de Cody et Waite en trois morceaux de `pi/2` (précision relative du
-reste près d'un multiple de `pi/2`), noyaux polynomiaux de Remez de `__kernel_sin` et
-`__kernel_cos`, quatre plages de réduction pour `atan`, `log` par `log(1+f)` avec `s = f/(2+f)`,
-sélections par masque à la place des branches. Les coefficients sont ceux de fdlibm, recopiés de
-mémoire : c'est le banc de précision qui les valide.
+Linux, Windows et macOS. Les algorithmes viennent de deux sources :
+
+- **fdlibm** (la libm de Sun, reprise par FreeBSD et musl) : réduction d'argument de Cody et Waite
+  en trois morceaux de `pi/2` (précision relative du reste près d'un multiple de `pi/2`), noyaux
+  polynomiaux de `__kernel_sin` et `__kernel_cos`, `exp`, la queue de `log` en double précision
+  étendue de `powf`.
+- **Cephes** (S. L. Moshier), tel que le reprend la bibliothèque vectorielle d'Agner Fog (licence
+  Apache-2.0) : `atan` (trois plages, fraction rationnelle de degré (4, 5) en `z^2`), `log`
+  (fraction rationnelle de degré (5, 5) sur la mantisse centrée en 1) et `atan2` (réduction au
+  premier octant, puis la même fraction). Une fraction rationnelle coûte moins qu'un polynôme de
+  degré 22 pour la même précision.
+
+Les polynômes sont évalués par le **schéma d'Estrin** (`estrin4`, `estrin5`, `estrin12`) et non par
+Horner : des paires `c0 + c1 x` calculées en parallèle puis combinées par `x^2`, `x^4`, `x^8`. La
+chaîne de FMA dépendants passe de 11 à 4 pour `exp` et de 5 à 3 pour une fraction de `log` ou de
+`atan`, ce qui compte parce que le processeur recouvre les itérations indépendantes d'une boucle de
+lots mais pas les FMA d'une même chaîne. Les coefficients de fdlibm étaient recopiés de mémoire, ceux
+de Cephes depuis le code de la crate `wide` (Apache-2.0, MIT et Zlib, qui l'a de la bibliothèque
+d'Agner Fog) : c'est le banc de précision qui les valide. Cephes est redistribué sous
+licence BSD 3 clauses avec l'accord de son auteur, comme dans SciPy ; l'attribution est dans
+[`NOTICE.md`](../NOTICE.md).
 
 - **`sin_cos`** rend les deux d'une seule réduction. Les noyaux s'en servent là où ils calculaient
   un sinus et un cosinus du même angle (trois paires pour Transverse Mercator aller).
@@ -136,8 +151,9 @@ multiples de `pi/2`, `exp` sur `[-700, 700]`, `log` sur `[1e-300, 1e300]`, `atan
 
 | fonction | erreur max (ULP) |
 |---|---:|
-| `sin`, `cos`, `exp`, `log`, `atan`, `atan2`, `hypot`, `powf` | 1 |
-| `asinh`, `atanh`, `sinh` | 2 |
+| `sin`, `cos`, `exp`, `log`, `atan`, `hypot`, `powf` | 1 |
+| `sinh`, `atan2` | 2 |
+| `asinh`, `atanh` | 3 |
 | `tan` (quotient de deux fonctions à 1 ULP) | 3 |
 
 Les bornes des tests sont ces mesures plus un ; `libmvec` annonce jusqu'à 4 ULP. Un second test,
@@ -149,30 +165,37 @@ fonctions travaillent sur `|x|`.
 
 ### Vitesse
 
-Un cœur épinglé, quatre exécutions alternées des trois binaires, minimum de chacun, ns par point.
+Un cœur épinglé, quatre exécutions alternées des binaires, minimum de chacun, ns par point.
 « Voie par voie » est l'ancien repli de Windows et macOS (la libm appelée une voie à la fois, forcé
 ici sur Linux : ce n'est donc pas la CRT de Microsoft) ; « `libmvec` » est le chemin de Linux avant
-ce lot.
+le lot des fonctions mathématiques ; « fdlibm » est la première version de `math.rs` (`atan` à
+polynôme de degré 22, `log` de fdlibm, Horner) ; « maintenant » ajoute Cephes et Estrin. La
+colonne « voie par voie » vient de la mesure du lot précédent (même machine, même jour, autre
+session) : les rapports qui l'utilisent sont approximatifs. Les trois autres colonnes viennent de
+la même série de mesures alternées.
 
-| cas | voie par voie | `libmvec` | `math.rs` | `math.rs` / voie par voie | `libmvec` / `math.rs` |
-|---|---:|---:|---:|---:|---:|
-| UTM 31 aller | 60,2 | 24,9 | 20,6 | 2,9× | 1,21× |
-| Lambert-93 aller | 41,9 | 19,3 | 23,9 | 1,8× | 0,81× |
-| UTM 31 retour | 71,0 | 21,8 | 26,0 | 2,7× | 0,84× |
-| Lambert-93 retour | 97,3 | 56,9 | 52,7 | 1,8× | 1,08× |
-| Web Mercator aller | 33,7 | 11,0 | 12,4 | 2,7× | 0,88× |
-| Web Mercator retour | 30,7 | 6,2 | 11,6 | 2,6× | 0,53× |
+| cas | voie par voie | `libmvec` | fdlibm | maintenant | maintenant / voie par voie | `libmvec` / maintenant |
+|---|---:|---:|---:|---:|---:|---:|
+| UTM 31 aller | 60,2 | 24,5 | 20,5 | 18,8 | 3,2× | 1,30× |
+| Lambert-93 aller | 41,9 | 19,3 | 23,9 | 19,1 | 2,2× | 1,01× |
+| UTM 31 retour | 71,0 | 21,1 | 25,7 | 24,7 | 2,9× | 0,85× |
+| Lambert-93 retour | 97,3 | 56,6 | 52,6 | 47,9 | 2,0× | 1,18× |
+| Web Mercator aller | 33,7 | 11,0 | 12,6 | 12,0 | 2,8× | 0,91× |
+| Web Mercator retour | 30,7 | 6,0 | 11,5 | 8,8 | 3,5× | 0,68× |
 
-- **Windows et macOS x86-64 :** 1,8 à 2,9× plus vite que le repli voie par voie. Je n'ai pas mesuré
+- **Windows et macOS x86-64 :** 2,0 à 3,5× plus vite que le repli voie par voie. Je n'ai pas mesuré
   la CRT de Microsoft ni macOS : le chiffre est celui d'un repli forcé sur Linux.
-- **Linux, face à `libmvec` :** à peu près neutre. Plus rapide sur UTM aller (1,21×) et Lambert-93
-  retour (1,08×), plus lent sur Lambert-93 aller (0,81×), UTM retour (0,84×), Web Mercator aller
-  (0,88×) et surtout Web Mercator retour (0,53×, de 6,2 à 11,6 ns : `sinh` puis `atan` sur des
-  arguments qui ne sont pas petits, donc sans chemin rapide). Le but de ce lot est la portabilité et
-  la précision, pas la vitesse sur Linux ; le coût est de 0 à 5 ns par point selon la projection.
-- **Par fonction** (un appel de quatre voies, un cœur) : `sin_cos` 9 ns, `exp` 6,6, `log` 6,8, `atan`
-  12 (3 sur le chemin rapide), `atan2` 15, `atanh` 13 (3 en série), `sinh` 9,5 (3 en série),
-  `hypot` 3, `powf` 23.
+- **Linux, face à `libmvec` :** devant sur UTM aller (1,30×) et Lambert-93 retour (1,18×), à égalité
+  sur Lambert-93 aller, derrière sur UTM retour (0,85×), Web Mercator aller (0,91×) et Web Mercator
+  retour (0,68× : `sinh` puis `atan` sur des arguments qui ne sont pas petits, donc sans chemin
+  rapide). Le but de ces lots est la portabilité et la précision ; le coût sur Linux est de 0 à 3 ns
+  par point selon la projection.
+- **Par fonction** (un appel de quatre voies, un cœur, avant → maintenant) : `atan` 12,1 → 7,0 (2,5
+  sur le chemin rapide), `atan2` 14,7 → 10,7, `log` 6,8 → 6,1, `exp` 6,6 → 5,7, `powf` 22,9 → 20,3,
+  `sinh` 18,6 → 10,3 sur des arguments mélangés (3 en série), `atanh` 13,5 → 12,5 (3 en série),
+  `sin_cos` 9,0, `hypot` 3,1. La crate `wide` (mesurée à part, `target-cpu=native`) fait `atan` en 4,7,
+  `ln` en 4,1 et `atan2` en 8,3, avec un autre banc : je n'ai pas isolé la cause de l'écart restant
+  (les chemins hors domaine rapide et les sélections de `V4` sont des pistes, non mesurées).
 
 ## Mesures
 
