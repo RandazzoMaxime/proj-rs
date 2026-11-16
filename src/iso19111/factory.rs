@@ -5453,7 +5453,7 @@ impl AuthorityFactory {
         if row[2].text() == "PROJ" && row[3].text() == "WKT" {
             return self.proj_method_operation(&row);
         }
-        let mut parameters = Vec::new();
+        let mut parameters = self.parameter_block(&row, 18, 9)?;
         if !row[12].empty() {
             parameters.push(self.grid_parameter(
                 &row[9].text(),
@@ -5463,7 +5463,6 @@ impl AuthorityFactory {
                 grids,
             )?);
         }
-        parameters.extend(self.parameter_block(&row, 18, 9)?);
         let interpolation = if row[13].empty() {
             None
         } else {
