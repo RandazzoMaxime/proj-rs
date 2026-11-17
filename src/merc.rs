@@ -204,6 +204,39 @@ impl Mercator {
         crate::simd::run(&batch::Inverse(self), east, north, lon_deg, lat_deg);
     }
 
+    /// Radians absolus vers mètres, quatre points à la fois. Un point refusé par
+    /// [`Self::forward_rad`] est écrit `NaN`. Même contrat que [`Self::forward_batch`].
+    ///
+    /// # Panics
+    ///
+    /// Panique si les quatre tranches n'ont pas la même longueur.
+    pub(crate) fn forward_rad_batch(
+        &self,
+        lon_rad: &[f64],
+        lat_rad: &[f64],
+        east: &mut [f64],
+        north: &mut [f64],
+    ) {
+        crate::simd::run(&batch::ForwardRad(self), lon_rad, lat_rad, east, north);
+    }
+
+    /// Unités du rayon vers radians, quatre points à la fois, sans ramener la longitude : la
+    /// réciproque de [`Self::fwd_unit`] pour une étape qui fait le reste elle-même (`webmerc`).
+    /// Un point refusé par [`Self::inv_unit`] est écrit `NaN`.
+    ///
+    /// # Panics
+    ///
+    /// Panique si les quatre tranches n'ont pas la même longueur.
+    pub(crate) fn inverse_unit_batch(
+        &self,
+        x: &[f64],
+        y: &[f64],
+        lam: &mut [f64],
+        phi: &mut [f64],
+    ) {
+        crate::simd::run(&batch::InverseUnit(self), x, y, lam, phi);
+    }
+
     /// Mètres vers degrés.
     ///
     /// # Errors

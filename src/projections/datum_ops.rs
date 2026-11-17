@@ -80,7 +80,10 @@ pub(crate) fn build(
         "helmert" => Ok(Some(helmert(params, frame)?)),
         "molobadekas" => Ok(Some(molobadekas(params, frame)?)),
         "molodensky" => Ok(Some(molodensky(params, frame)?)),
-        "webmerc" => Ok(Some(classic_step(frame, WebMerc))),
+        "webmerc" => Ok(Some(crate::projections::webmerc_batch::wrap(
+            frame,
+            classic_step(frame, WebMerc),
+        )?)),
         _ => Ok(None),
     }
 }
