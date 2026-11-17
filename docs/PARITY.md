@@ -7,6 +7,31 @@ performance. Elle doit rester précise : la suite dit tout écart de sortie.
 La suite ne dépend plus d'un PROJ installé. Le corpus et la sortie de référence
 sont dans le dépôt.
 
+## Tolérance de parité
+
+Décision de l'opérateur : le port ne rend plus les bits de PROJ, il rend ses nombres à 0,001 mm
+près. La règle, écrite une fois dans `tests/common/tolerance.rs` et appliquée par tous les tests
+qui comparent à PROJ :
+
+| Grandeur | Tolérance |
+|---|---|
+| coordonnée linéaire (m) | max(1e-6 m, 1e-13 × \|valeur de référence\|) |
+| coordonnée angulaire | 1e-11 degré, soit 1e-13 rad (même distance au sol) |
+| facteur de `proj -S` ou `proj_factors` (échelle, convergence, distorsion, aire) | 1e-7 relatif ; plancher absolu de 1e-5 quand les deux valeurs sont sous 1e-4 |
+| sortie texte | les nombres sont relus et comparés par la règle ci-dessus ; un dernier chiffre imprimé qui bascule d'une unité (`…4` contre `…5`) est un arrondi, pas un écart |
+| sortie binaire (`proj -b`) | les doubles sont relus : mètres à l'aller, radians au retour |
+
+Le plancher des facteurs tient aux différences finies de pas 1e-5 rad de `factors.cpp` : elles
+amplifient un écart d'un ULP, au point que PROJ sort une distorsion de 0 à l'équateur là où le port
+sort 1,2e-6. Près d'une projection conforme (UTM), l'angle méridien-parallèle et les axes de l'ellipse de Tissot sortent d'une différence qui amplifie ce bruit jusqu'à 2,3e-8 relatif sur UTM 31, d'où le 1e-7 : aucun test ne les compare en doubles, et `proj -S` les imprime sur six chiffres. Le terme relatif linéaire existe parce qu'au-delà de 1e7 m un ULP dépasse 1e-6 m (1,2e-4 m à 7e11 m). Exemple : `cs2cs-inverse-0105:4` (`cs2cs -I EPSG:27200 +to EPSG:32150`), NZMG hors domaine, 7e11 m : l'inverse Lcc rend une latitude à 1 ULP de la libm et le polynôme de degré 9 de NZMG l'amplifie environ 5e6 fois, soit 4e-3 m, 5,7e-15 relatif. Deux NaN, ou deux infinis de même signe, s'accordent ; une valeur finie ne s'accorde
+jamais avec une valeur non finie. `tests/tolerance_rule.rs` prouve que la règle n'est pas vide :
+un écart de 1e-5 m, de 1e-9 degré ou de 1e-6 relatif sur un facteur la fait échouer.
+
+Cette règle remplace l'exigence « au bit près » de `tests/cli_binary.rs`, `tests/cli_proj_factors.rs`
+et `tests/common` (`same_cli_text`). Les seuils plus larges de la suite de parité ci-dessous
+(0,5 mm, 5e-9 degré) restent ceux de la suite ; le seuil `m` y reçoit le même terme relatif de 1e-13. Le chemin portable de `Tmerc::forward_batch` reste
+bit à bit celui de `Tmerc::forward` : c'est une égalité interne, pas une parité avec PROJ.
+
 ## Fichiers
 
 | Fichier | Rôle |

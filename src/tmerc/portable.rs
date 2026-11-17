@@ -3,6 +3,7 @@
 
 use super::{clenshaw_complex, Tmerc, CE_LIMIT};
 use crate::angle::adjlon;
+use crate::fmath;
 use crate::projmath::auxlat_convert;
 
 impl Tmerc {
@@ -52,9 +53,9 @@ impl Tmerc {
             for k in 0..4 {
                 ccc[k] = cos_cn[k] * cos_ce[k];
                 cn[k] = sin_cn[k].atan2(ccc[k]);
-                inv[k] = 1.0 / sin_cn[k].hypot(ccc[k]);
+                inv[k] = 1.0 / fmath::hypot(sin_cn[k], ccc[k]);
                 tan_ce[k] = sin_ce[k] * cos_cn[k] * inv[k];
-                ce[k] = tan_ce[k].asinh();
+                ce[k] = fmath::asinh(tan_ce[k]);
             }
             let mut sa = [0.0; 4];
             let mut ca = [0.0; 4];

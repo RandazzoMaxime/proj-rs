@@ -151,19 +151,19 @@ Sources : PROJ 9.9.0 `src/apps/proj.cpp`, `geod.cpp`, `geod_set.cpp`, `cs2cs.cpp
 | `mbtfpp +ellps=WGS84` (forward, `-f %.12f`, `tests/cli_proj_factors/sphere.tsv`) | y diffère de 4,7e-10 m sur 1 point sur 3 ; les facteurs sont identiques. Ordre des opérations de la forward, cause non identifiée. La mesure tolère 1e-6 m sur x et y. |
 | `aeqd +ellps=WGS84` (forward, `-f %.12f`) | x diffère de 4,6e-10 m sur 1 point sur 3 ; les facteurs sont identiques. Projection ellipsoïdale, hors liste sphérique : écart de forward non traité ici. Retirée des témoins de `cli_proj_factors`. |
 
-## Sortie binaire `-b`, `-i`, `-o` au bit près
+## Sortie binaire `-b`, `-i`, `-o`
 
 Mesure : `proj -b` et `proj -I -b` contre le binaire de référence, sur une grille de 101 × 51
 points par projection, dans les deux sens, pour 11 projections (Mercator ellipsoïdal et sphérique,
 `tmerc`, `utm` zone 31 nord et sud, `tmerc +approx`, `lcc`, `aea`, `laea`, `eqc`, `stere`) :
-0 octet différent. Avant : jusqu'à 22528 ulps (`utm` inverse), 1024 (`tmerc` inverse), 195 (`lcc`), 21 (Mercator).
+0 octet différent à l'époque de la mesure, avant `fmath` (voir `docs/PORTING-simd.md`). Avant : jusqu'à 22528 ulps (`utm` inverse), 1024 (`tmerc` inverse), 195 (`lcc`), 21 (Mercator).
 Les grands nombres d'ulps tombent près de zéro, où un ulp est très petit.
-`tests/cli_binary.rs` fige les octets de 16 cas.
+`tests/cli_binary.rs` fige 16 cas et relit leurs doubles à la tolérance de `docs/PARITY.md` (1e-6 m, 1e-13 rad) : `fmath` s'écarte d'un ou deux ULP de la libm.
 
 Causes corrigées :
 
 - `atanh` : `f64::atanh` de Rust diffère de la libm sur environ 34 % des entrées. `projmath::atanh`
-  appelle la libm C, comme PROJ.
+  appelle la libm C, comme PROJ, sauf sous 0,1 où `fmath::atanh_small` (série) la remplace.
 - Aller-retour degrés / radians supprimé : Mercator, `tmerc`, `utm`, `tmerc +approx` et `lcc`
   passent par le cadre `Classic` (`fwd_prepare`, `fwd_finalize`).
 - Aplatissement troisième `n = tan²(asin(e) / 2)` comme `pj_ell_set`, et non `f / (2 − f)`.

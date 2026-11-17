@@ -6,6 +6,7 @@
 mod batch;
 
 use crate::angle::adjlon;
+use crate::fmath;
 use crate::projmath::atanh;
 use crate::{Ellipsoid, Geographic, Projected, ProjectionError};
 
@@ -299,7 +300,7 @@ impl Lcc {
         x /= self.k0;
         y /= self.k0;
         y = self.rho0 - y;
-        let mut rho = x.hypot(y);
+        let mut rho = fmath::hypot(x, y);
         if rho == 0.0 {
             let phi = if self.n > 0.0 {
                 std::f64::consts::FRAC_PI_2
@@ -367,7 +368,7 @@ fn sinhpsi2tanphi(taup: f64, e: f64) -> f64 {
     while i > 0 {
         i -= 1;
         let tau1 = (1.0 + tau * tau).sqrt();
-        let sig = (e * atanh(e * tau / tau1)).sinh();
+        let sig = fmath::sinh(e * atanh(e * tau / tau1));
         let taupa = (1.0 + sig * sig).sqrt() * tau - sig * tau1;
         let dtau = ((taup - taupa) * (1.0 + e2m * (tau * tau)))
             / (e2m * tau1 * (1.0 + taupa * taupa).sqrt());
