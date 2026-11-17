@@ -438,6 +438,10 @@ Ten slowest operations of the catalogue (same line, a 128-point grid, no libproj
 </details>
 <!-- bench-how-fast:end -->
 
+<!-- bench-footprint:start -->
+
+<!-- bench-footprint:end -->
+
 ## Over time
 
 How PROJ-RS's own numbers move from run to run, each machine on its own: a number

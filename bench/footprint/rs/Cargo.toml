@@ -1,0 +1,31 @@
+[package]
+name = "proj-rs-footprint"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Programs that bench/footprint.sh measures: size and memory of proj-rs against libproj."
+
+# Its own workspace: the crate stays out of the root workspace, so `cargo build`, clippy and the
+# CI never compile it. Same release profile as the root.
+[workspace]
+
+[[bin]]
+name = "footprint-rs"
+path = "src/main.rs"
+
+[[bin]]
+name = "empty-rs"
+path = "src/bin/empty.rs"
+
+[features]
+# The HTTPS grid download of proj-rs, as PROJ built with libcurl: bench/footprint.sh sizes the
+# program with it, next to the default one.
+network = ["proj-rs/network"]
+
+[dependencies]
+proj-rs = { path = "../../.." }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

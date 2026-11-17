@@ -83,3 +83,80 @@ The script appends a line to `bench/history.jsonl`, draws
 `bench/trend-<machine>-{light,dark}.svg` and rewrites the "How fast" and "Over
 time" blocks of the README (`tools/bench/how_fast.py`, `tools/bench/trend_svg.py`).
 Compare only lines with the same `machine`.
+
+## Size and memory
+
+`bench/footprint.sh` measures what the same conversion, `EPSG:4326` to `EPSG:2154`, costs on
+disk and in memory with proj-rs and with PROJ 9.9.0. It writes
+[`bench/footprint.json`](../bench/footprint.json), draws `bench/{size,memory}-{light,dark}.svg`
+and rewrites the `bench-footprint` block of the README (`tools/bench/footprint_measure.py`,
+`tools/bench/footprint_svg.py`). The README shows only numbers from that file. Linux x86-64
+only. It is not called by `bench/record.sh`: it builds PROJ a second time, the Rust programs and
+the C library, which takes minutes, and its numbers do not move with the speed work.
+
+The programs are in `bench/footprint/`: `rs/` (a crate of its own, out of the workspace, so the
+normal build and the CI never compile it) and `c/convert.c`. They take one mode each:
+
+| Mode | Work |
+|---|---|
+| `convert` | create the transform, convert one point (the program whose size is measured) |
+| `empty` | start and exit |
+| `create` | create the `EPSG:4326` to `EPSG:2154` transform |
+| `points` | create, then 1,000,000 points one at a time (`convert` / `proj_trans`) |
+| `array` | create, then 1,000,000 points in one array (`convert_array` / `proj_trans_generic`) |
+| `multi` | `EPSG:4267` to `EPSG:4326` (several candidate operations), then 1,000,000 points one at a time |
+
+The points are those of the speed bench (same generator, same box), made on the fly for
+`points` and `multi` on both sides. The C program is `proj_create_crs_to_crs` plus
+`proj_normalize_for_visualization`, as in the speed bench, with logging off. Each run prints
+`ok= fail= sum=` and the script stops if the sums of PROJ and proj-rs differ by more than 1e-6
+relative: both sides did the same work.
+
+### Size
+
+Five installs, in bytes on disk after `strip --strip-unneeded`:
+
+1. the C program with PROJ 9.9.0 built as in the speed comparison (`tools/build-reference.sh`:
+   TIFF and curl off);
+2. the C program with PROJ 9.9.0 built with TIFF and curl (`PROJ_REF_TIFF_CURL=ON`), the way
+   distributions build it: it reads `.tif` grids and downloads them, which proj-rs also does;
+3. the same C program linked to the `libproj` of `capi/` (`capi/tests/dist.sh --release`);
+4. the Rust program with proj-rs and its default features (no TLS library, no HTTPS download);
+5. the same Rust program with the `network` feature (HTTPS grid download, TLS from the system:
+   OpenSSL on Linux), the counterpart of the PROJ with curl.
+
+**Counting rule for the dependencies.** A program counts with every shared library that `ldd`
+lists for it, transitively, except the C library and the unwinder that any Linux system has:
+`libc`, `libm`, `libdl`, `libpthread`, `librt`, `libutil`, `libgcc_s` and the loader. The rule
+is the same on both sides. A library counts with its real file, not the symlink. `proj.db` counts
+in full: as a file for PROJ, and as the bytes inside the binary for proj-rs (`include_bytes!`;
+the script checks that the bytes are there unchanged). The Rust programs have SQLite built in
+(`rusqlite` `bundled`); on the PROJ side `libsqlite3` is a dependency and counts. The libraries
+come from this machine's distribution, so their sizes depend on it.
+
+Not measured: the conda-forge `proj` 9.9.0 package with its dependencies, as the CI installs
+it. The measurement runs without micromamba or network access to conda-forge. Its closest
+stand-in is the second install, a PROJ with TIFF and curl on the system's own libraries.
+
+### Memory
+
+Peak resident memory (`VmHWM`, read by each program from `/proc/self/status` just before it
+exits), the median of 5 runs, one scenario per process. An external `getrusage` is not used:
+on Linux a child that execs keeps its parent's peak as a floor. It includes the loader, the
+mapped libraries and, for `array`, the 15.3 MiB buffer of points that both sides allocate.
+The heap is the peak `mem_heap_B` of one `valgrind --tool=massif` run, when valgrind is
+installed. `PROJ_DATA` points at the PROJ install for the C programs; proj-rs reads its built-in
+database. PROJ's numbers are those of the benchmark build (the first install above); the other
+builds are in the README table.
+
+### Rerun
+
+```bash
+BENCH_MACHINE=my-box sh bench/footprint.sh
+```
+
+Needs cmake, a C and C++ compiler, the libtiff, libcurl and SQLite development headers, `strip`,
+`ldd`, and valgrind for the heap column. `PROJ_REF` (default `target/proj-reference`) is the
+directory of `tools/build-reference.sh`, built when missing; the other builds go in
+`target/footprint` (`FOOTPRINT_OUT`), with `FOOTPRINT_JOBS` jobs (default 2). Compare only files
+with the same `machine`.
