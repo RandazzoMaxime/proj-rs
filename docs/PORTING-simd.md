@@ -293,7 +293,8 @@ vecteur, d'où 37,6 → 27,4.
 ## Ce qui n'est pas couvert
 
 - `Proj::convert_array` et `project_array` utilisent ces lots pour Transverse Mercator exact,
-  Lambert conique conforme et Mercator sans `+over` (`docs/PORTING-batch-api.md`). `Proj::convert`,
+  Lambert conique conforme, Mercator sans `+over` et Web Mercator (`docs/PORTING-batch-api.md`).
+  `Proj::convert`,
   `Operation::forward` et les points un à un restent scalaires.
 - Les autres projections (aea, eqc, stere, …) et Helmert n'ont pas de noyau vectoriel. Helmert
   fait 9 ns par point en scalaire.

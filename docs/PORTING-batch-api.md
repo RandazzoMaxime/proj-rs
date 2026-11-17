@@ -54,8 +54,11 @@ place, avec un emplacement `Option<TransformError>` par point :
 | `Proj::fill_array` | des blocs de 4096 points ; le premier point en échec du premier bloc en échec rend son erreur |
 
 Les projections qui ont un noyau vectoriel : Transverse Mercator exact (donc `+proj=utm` et
-`+proj=tmerc` par défaut), Lambert conique conforme, Mercator sans `+over`. `+proj=webmerc` est un
-noyau `Classic` à part, sans vecteur : il gagne seulement l'ordre étape par étape.
+`+proj=tmerc` par défaut), Lambert conique conforme, Mercator sans `+over`, et `+proj=webmerc`
+(le noyau sphérique de Mercator, à rayon `a`, `k0 = 1`). `webmerc` n'est pas un `Classic` avec
+lot : `Classic::with_batch` reste privé à `engine`, donc `WebMercStep` (`projections/webmerc_batch.rs`)
+enveloppe l'étape scalaire et ne remplace que `forward_batch` et `inverse_batch`. Sous `+over`, pas
+de vecteur, comme `Classic`.
 
 ### Un point refusé par le noyau repasse par le scalaire
 
@@ -104,6 +107,12 @@ commités : ligne `dirty` de `bench/history.jsonl`). « Latence » est après le
 l'autre ; sur cette machine partagée, un même appel est monté à deux fois son temps pendant
 plusieurs secondes : les comparaisons ci-dessus alternent les variantes ou prennent le minimum.
 
+Web Mercator (`webmerc`, `WebMercStep`), même machine, `convert_array` sur 1 000 000 points, minimum
+de 15 passes, `taskset -c 3` : 4326 vers 3857 de 59 à 63 ns/pt avant, 27 ns après ; 3857 vers 4326
+de 44 ns avant, 19 ns après. Instructions par point (callgrind, différence entre 100 000 et
+300 000 points) : 412 et 399 avant, 272 et 213 après. Écart maximal entre le lot et le point par
+point sur 300 000 points : 4,7e-9 m (4326 vers 3857) et 1,4e-14° (3857 vers 4326).
+
 ## Ce qui n'est pas fait
 
 - **`EPSG:4267` vers `EPSG:4326` (NAD27 vers WGS 84)** a plusieurs candidats : `proj_trans` choisit
@@ -111,8 +120,8 @@ plusieurs secondes : les comparaisons ci-dessus alternent les variantes ou prenn
   Le gain mesuré (351 → 284 ns) vient des deux corrections de latence seulement.
 - `Operation` n'expose pas `forward_batch` publiquement : le lot sert `Proj::convert_array`
   et `project_array`. L'exposer demande de fixer le type de l'erreur par point.
-- Pas de noyau vectoriel pour `webmerc`, les projections coniques autres que Lambert, `stere`,
-  Helmert (9 ns par point) et les grilles.
+- Pas de noyau vectoriel pour les projections coniques autres que Lambert, `stere`, Helmert
+  (9 ns par point) et les grilles.
 - Le chemin de lot pour la sélection de `cs2cs` (`Selection::Several`, `Alternatives::forward`)
   n'existe pas.
 - La fusion des étapes triviales (`axisswap`, `unitconvert`) à la construction du pipeline : la
