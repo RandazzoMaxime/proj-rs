@@ -11,7 +11,8 @@
 
 use crate::angle::adjlon;
 use crate::engine::{
-    proj_number, Coord, CreateError, Frame, IoKind, Params, PipelineStack, Step, TransformError,
+    proj_number, Affine, Coord, CreateError, Frame, IoKind, Params, PipelineStack, Step,
+    TransformError,
 };
 
 const DEG_TO_RAD: f64 = 0.017_453_292_519_943_296;
@@ -457,6 +458,24 @@ impl Step for UnitConvert {
             }
         }
         Ok(coord)
+    }
+
+    /// The time units and the longitude wrap of an inverse that ends in radians are not affine;
+    /// a height finalized by `+z_0` or a vertical unit is not either.
+    fn affine(&self, inverse: bool) -> Option<Affine> {
+        if self.t_in.is_some() || self.t_out.is_some() {
+            return None;
+        }
+        if inverse {
+            if self.left == Horizontal::Radians {
+                return None;
+            }
+            return Some(Affine::scale(1.0 / self.xy_factor, 1.0 / self.z_factor));
+        }
+        if self.right == Horizontal::Radians && (self.vfr_meter != 1.0 || self.z0 != 0.0) {
+            return None;
+        }
+        Some(Affine::scale(self.xy_factor, self.z_factor))
     }
 
     fn input_kind(&self) -> IoKind {
