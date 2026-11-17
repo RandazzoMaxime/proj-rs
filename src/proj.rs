@@ -1450,18 +1450,21 @@ impl ProjBuilder {
     /// Enable or disable network grid download.
     ///
     /// This overrides `proj.ini` and `PROJ_NETWORK` for objects built from
-    /// this builder. `1` means access is on, `0` means it is off.
+    /// this builder. The result is `1` when network access is possible and on, `0` otherwise.
+    /// Without the `network` feature it is possible only once
+    /// [`Self::set_network_callbacks`] has been called, as in a PROJ built without libcurl;
+    /// [`Self::network_enabled`] still reports the setting.
     ///
     /// # Errors
     ///
-    /// Never. The HTTP client is part of this build.
+    /// Never.
     #[expect(
         clippy::fn_params_excessive_bools,
         reason = "georust proj 0.31 enable_network takes a bool"
     )]
     pub fn enable_network(&mut self, enable: bool) -> Result<u8, ProjError> {
         self.net.enabled = enable;
-        Ok(u8::from(enable))
+        Ok(u8::from(enable && self.net.network_possible()))
     }
 
     /// Whether network access is on for objects built from this builder.

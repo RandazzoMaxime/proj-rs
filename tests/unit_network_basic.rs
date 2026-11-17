@@ -18,6 +18,7 @@
 //! `ProjBuilder`s, one per state, and sets `PROJ_NETWORK` the way `putenv` does (an empty value is
 //! absent). The case is the only test of this binary, so the environment is not shared with another
 //! test. The user-writable directory is a temporary folder, not the user's home.
+#![cfg(feature = "network")]
 
 use std::env;
 use std::fs;

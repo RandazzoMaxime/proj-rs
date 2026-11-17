@@ -117,10 +117,13 @@ pub mod tinshift {
 }
 mod file_api;
 mod network;
+#[cfg(feature = "network")]
 mod network_builtin;
 mod network_cache;
 mod network_chunks;
 mod network_download;
+#[cfg(feature = "network")]
+mod network_http;
 mod ported;
 mod proj;
 mod proj_info;
