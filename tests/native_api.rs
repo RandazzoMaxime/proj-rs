@@ -270,17 +270,48 @@ fn the_empty_slice_is_fine() {
 }
 
 #[test]
-fn a_failing_point_leaves_the_slice_unchanged() {
+fn a_failing_point_leaves_its_block_and_the_next_ones_unchanged() {
     let t = transformer("EPSG:4326", "EPSG:3857");
-    let mut points = [
-        Point::new(48.0, 2.0),
-        Point::new(91.0, 0.0),
-        Point::new(10.0, 10.0),
-    ];
-    let before = points;
-    let error = t.forward_slice(&mut points).expect_err("pole");
-    assert_eq!(points, before);
-    assert_eq!(error, t.forward(Point::new(91.0, 0.0)).expect_err("pole"));
+    let pole = Point::new(91.0, 0.0);
+    let expected_error = t.forward(pole).expect_err("pole");
+    let point = |index: usize| {
+        #[expect(
+            clippy::cast_precision_loss,
+            clippy::as_conversions,
+            reason = "a small index"
+        )]
+        let step = index as f64;
+        Point::new(40.0 + step * 1e-3, 2.0 + step * 1e-3)
+    };
+    for position in [0, 1, 4_095, 4_096, 8_500] {
+        let mut points: Vec<Point> = (0..9_000).map(point).collect();
+        points[position] = pole;
+        let before = points.clone();
+        let error = t.forward_slice(&mut points).expect_err("pole");
+        assert_eq!(error, expected_error, "error at {position}");
+        // Whole blocks of 4096 before the failing point are converted; the rest is the input.
+        let done = position / 4_096 * 4_096;
+        for (index, (after, input)) in points.iter().zip(&before).enumerate() {
+            if index < done {
+                assert_eq!(*after, t.forward(*input).expect("forward"), "point {index}");
+            } else {
+                assert_eq!(after, input, "point {index} at {position}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_point_that_is_not_finite_leaves_the_whole_slice_unchanged() {
+    let t = transformer("EPSG:4326", "EPSG:3857");
+    let mut points: Vec<Point> = (0..5_000).map(|_| Point::new(48.0, 2.0)).collect();
+    points[4_500] = Point::new(f64::NAN, 2.0);
+    let before = points.clone();
+    assert_eq!(
+        t.forward_slice(&mut points).expect_err("nan"),
+        Error::InvalidCoordinate
+    );
+    assert_eq!(points[..4_500], before[..4_500]);
 }
 
 #[test]

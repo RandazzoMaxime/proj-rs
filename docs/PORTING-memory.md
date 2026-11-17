@@ -9,12 +9,12 @@ chiffre, aucune erreur, aucun ordre de candidats ne bouge.
 `bench/footprint.sh` et les programmes de `bench/footprint/` (le même programme en Rust et en C
 contre libproj). Linux x86-64, médiane de 5 passes, pic `VmHWM`, un processus par scénario.
 
-| scénario | PROJ 9.9.0 | avant | après #228 | après la VFS | après le partage |
+| scénario | PROJ 9.9.0 | avant | après #228 | après la VFS | après le partage et la conversion sur place |
 |---|---:|---:|---:|---:|---:|
 | démarrage | 5,6 MiB | 4,6 | 4,8 | 4,7 | 4,7 |
 | création `4326 → 2154` | 14,7 | 34,3 | 18,6 | 13,9 | **13,8** |
 | création + 1 M points un par un | 14,8 | 34,5 | 18,6 | 13,9 | **13,6** |
-| création + 1 M points en un tableau | 29,8 | 95,4 | 49,3 | 44,2 | 44,2 |
+| création + 1 M points en un tableau | 29,8 | 95,4 | 49,3 | 44,2 | **29,3** |
 | `4267 → 4326` (80 candidats) + 1 M points | 16,3 | 51,3 | 33,9 | 28,0 | **14,5** |
 
 Les colonnes « avant » et « après #228 » sont celles du lot précédent. La dernière a été mesurée
@@ -35,7 +35,8 @@ massif (tas), `smaps` (pages de fichier) et dhat sur chaque scénario.
    ouvre plusieurs, imbriqués.
 2. **Un tableau converti = 3 copies.** `convert_array` construisait un `Vec<Xyzt>` de toute la
    tranche (32 octets par point, soit 31 MiB pour 1 M de points), puis un `Vec<C>` des résultats
-   (15 MiB), pour garantir qu'une erreur laisse la tranche intacte.
+   (15 MiB), pour garantir qu'une erreur laisse la tranche intacte. Décision de l'opérateur :
+   cette garantie est abandonnée.
 3. **Les candidats.** Pour `4267 → 4326`, 80 opérations vivent à la fois. Trois étapes en gardaient
    une copie à côté de l'original : le filtre (`filter_and_sort`), `hasPerfectAccuracyResult`
    (qui clonait toute la liste) et `removeUninterestingOps`, plus la concaténation registre et pivot.
@@ -53,10 +54,38 @@ massif (tas), `smaps` (pages de fichier) et dhat sur chaque scénario.
   `projdb::with_db` passe par la même connexion. Un fil n'attend jamais un autre fil.
   Avec `PROJ_AUX_DB`, les lignes auxiliaires sont copiées dans la base principale : chaque contexte
   garde sa copie, comme avant.
-- `convert_array` travaille par blocs de 4096 points (un seul bloc de `Xyzt` vivant) et ne garde
-  que les résultats, dans leur type : 31 MiB de moins pour 1 M de points. L'ordre des erreurs est
-  celui d'avant : conversion de l'entrée, puis erreur de transformation du premier point en échec,
-  puis rétrécissement vers le type de la tranche.
+- `convert_array`, `project_array` et `Transformer::forward_slice` / `inverse_slice` convertissent
+  **sur place**, par blocs de 4096 points : un seul bloc de `Xyzt` (128 Kio) vit, et le résultat de
+  chaque bloc est réécrit dans la tranche de l'appelant. Aucune copie de la taille des données :
+  31 MiB de moins que l'état de départ, 15 MiB de moins que le lot précédent, pour 1 M de points.
+  C'est ce que fait `proj_trans_array`. Les valeurs ne changent pas d'un bit (`tests/convert_array_golden.rs`,
+  empreintes prises avant le changement : 5 paires, les deux sens, `f32`, UTM, les deux backends,
+  80 candidats), et l'ordre des erreurs est celui d'avant : coordonnée d'entrée illisible, puis
+  erreur de transformation du premier point en échec, puis rétrécissement vers le type de la tranche.
+
+### Contrat d'erreur des tranches
+
+| cas | état de la tranche | erreur rendue |
+|---|---|---|
+| tranche vide, ou objet qui n'est pas une transformation | intacte | `Ok` / `NotATransform` |
+| coordonnée d'entrée refusée (`Transformer` : non finie ; `Proj` : illisible comme `f64`) | **intacte** : on vérifie toute la tranche d'abord, sans rien écrire | l'erreur de l'entrée |
+| un point sans image | blocs **avant** le premier bloc fautif : convertis ; ce bloc et les suivants : leur entrée | l'erreur de `convert` pour le premier point en échec |
+| valeur qui ne tient pas dans le type de la tranche | ce point garde son entrée ; les autres sont convertis | l'erreur de rétrécissement, après tous les blocs et après toute erreur de transformation |
+
+Un bloc fautif n'est pas écrit : on n'y marque pas les points en échec. Le premier point en échec
+et tous les suivants gardent donc leur entrée, et l'appelant ne peut pas lire la tranche comme un
+résultat après un `Err`. La taille du bloc (4096) n'est pas promise.
+
+Ce que fait PROJ : `proj_trans_array` traite **tous** les points, met `HUGE_VAL` aux quatre
+composantes d'un point en échec et rend le code d'erreur commun, ou `PROJ_ERR_COORD_TRANSFM` si les
+codes diffèrent. La capi (`capi/src/trans.rs`) et `Operation::transform_array` (`src/gie_api.rs`)
+font déjà cela, en place ; ils n'ont pas changé. La façade s'arrête au bloc fautif au lieu de
+continuer : une tranche qui échoue tôt ne télécharge pas de grille et ne choisit pas de candidat
+pour chacun des points suivants, et `HUGE_VAL` ne serait pas représentable dans tout type de
+coordonnée. Le crate georust `proj` 0.31 ne documente aucun contrat de la tranche après une erreur
+(sa mise en œuvre copie la tranche en `PJ_COORD`, la remplit seulement si `proj_trans_array` réussit) :
+la façade ne promet donc rien de moins que lui sur le papier.
+
 - `filter_and_sort` déplace les candidats retenus au lieu de les cloner (un indice par candidat,
   un clone seulement pour un candidat retenu deux fois) ; `has_perfect_accuracy_result` compte sur
   les indices sans toucher la liste ; `removeUninterestingOps` marque puis déplace ; la liste `res` du
@@ -213,16 +242,13 @@ de cet ordre.
 
 ## Ce qui reste, chiffres à l'appui
 
-Un scénario reste au-dessus de PROJ. Ce qui l'empêche :
+Aucun scénario mesuré ne reste au-dessus de PROJ. Ce qui pèse encore :
 
 - **Le tas de `create`.** Environ 4 MiB : le schéma de `proj.db` analysé par SQLite (2,4 MiB par
   connexion), le cache de pages (0,5 MiB) et le modèle ISO 19111 d'une paire de CRS.
-- **Le contrat de `convert_array`.** « En cas d'erreur la tranche est laissée intacte » est
-  testé (`tests/convert_array_batch.rs`, `tests/native_api.rs`). Il impose de garder les résultats
-  (ou les originaux) jusqu'au dernier point : une tranche de 1 M de points coûte 15 MiB de plus que
-  le tampon de l'appelant. PROJ convertit sur place et laisse la tranche en partie convertie. Plancher
-  de ce contrat : démarrage + création + 2 fois le tampon, soit 13,9 + 30,6 = 44 MiB.
-  Une variante sur place (tranche en partie convertie en cas d'erreur) tomberait à 29 MiB, au niveau
-  de PROJ (29,8).
+- **Le contrat de `convert_array` n'est plus un plancher.** La garantie « tranche intacte en cas
+  d'erreur » est abandonnée (décision de l'opérateur) : le scénario « création + 1 M points en
+  tableau » passe de 44,7 à 29,3 MiB (PROJ : 29,8), médiane de 5, `sum` identique
+  (`7182541317022.373047`). Il ne reste que le tampon de l'appelant et le bloc de 128 Kio.
 - **Les 80 candidats de `4267 → 4326`.** Réglé : voir « Les candidats partagent leurs CRS ». Il
   reste 1,2 MiB de tas Rust au pic, plus 3,0 MiB de SQLite.

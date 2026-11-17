@@ -959,10 +959,18 @@ impl Proj {
     /// [`Self::convert`] to about 1e-8 m (the error of the vector math functions), and are the
     /// same bits for a transform with no vector kernel.
     ///
+    /// The points are converted in blocks, straight into the slice: no copy of the slice is made,
+    /// as `proj_trans_array` converts in place.
+    ///
     /// # Errors
     ///
     /// [`ProjError`] when any point fails: the error [`Self::convert`] gives for the first
-    /// failing point. The slice is left unchanged.
+    /// failing point. A coordinate that cannot be read as an `f64` is refused first, with
+    /// the slice untouched. After a transform error the slice is **partly converted**: the blocks
+    /// before the first one that holds a failing point (4096 points each, a detail that may
+    /// change) are converted, and that block and the ones after it keep their input. Do not use
+    /// the slice after an `Err`. A converted value that does not fit the type of the slice
+    /// (`f32`) leaves its point unchanged and gives an error once every block has run.
     pub fn convert_array<'a, C, F>(&self, points: &'a mut [C]) -> Result<&'a mut [C], ProjError>
     where
         C: Coord<F>,
@@ -975,7 +983,8 @@ impl Proj {
     ///
     /// # Errors
     ///
-    /// [`ProjError`] when any point fails. The slice is left unchanged.
+    /// [`ProjError`] when any point fails; the slice is then partly converted, as for
+    /// [`Self::convert_array`].
     #[expect(
         clippy::fn_params_excessive_bools,
         reason = "georust proj 0.31 project_array takes inverse as a bool"
@@ -1148,52 +1157,47 @@ impl Proj {
             point.x().into_f64()?;
             point.y().into_f64()?;
         }
-        // The transform runs a chunk at a time: a failing point ends the call at the end of its
-        // chunk, not after the whole slice, so a slice that fails early does not go on to
-        // download grids or choose candidates for every later point. Only one chunk of `Xyzt`
-        // is alive at once; the results wait in `converted` until the whole slice has succeeded.
-        let mut chunk = Vec::with_capacity(FILL_CHUNK.min(points.len()));
-        let mut failed = Vec::with_capacity(chunk.capacity());
-        let mut converted: Vec<C> = Vec::with_capacity(points.len());
+        // One block of `Xyzt` is alive at a time and the results go straight back into the
+        // slice. A block with a failing point is not written back and ends the call, so a slice
+        // that fails early does not go on to download grids or choose candidates for every
+        // later point.
+        let mut block = Vec::with_capacity(FILL_CHUNK.min(points.len()));
+        let mut failed = Vec::with_capacity(block.capacity());
         let mut narrowing = None;
-        for source in points.chunks(FILL_CHUNK) {
-            chunk.clear();
-            for point in source {
-                chunk.push(Xyzt::xy(point.x().into_f64()?, point.y().into_f64()?));
+        for window in points.chunks_mut(FILL_CHUNK) {
+            block.clear();
+            for point in &*window {
+                block.push(Xyzt::xy(point.x().into_f64()?, point.y().into_f64()?));
             }
             failed.clear();
-            failed.resize(chunk.len(), None);
+            failed.resize(block.len(), None);
             match &self.body {
                 Body::Native(op) => match way {
-                    Direction::Forward => op.forward_batch(&mut chunk, &mut failed),
-                    Direction::Inverse => op.inverse_batch(&mut chunk, &mut failed),
+                    Direction::Forward => op.forward_batch(&mut block, &mut failed),
+                    Direction::Inverse => op.inverse_batch(&mut block, &mut failed),
                 },
-                Body::Iso(pipeline) => pipeline.map_batch(&mut chunk, way, &mut failed),
+                Body::Iso(pipeline) => pipeline.map_batch(&mut block, way, &mut failed),
                 Body::Single => {}
             }
-            // The first failing point of the chunk, as the points one at a time would report it.
+            // The first failing point of the block, as the points one at a time would report it.
             if let Some(error) = failed.drain(..).flatten().next() {
                 return Err(Self::facade_error(error, Report::Conversion));
             }
-            // A value that does not fit the type of the slice is reported once every point
-            // has been transformed, after any transform error.
-            for coord in &chunk {
-                if narrowing.is_some() {
-                    break;
-                }
+            // A value that does not fit the type of the slice leaves its point as it was and is
+            // reported once every block has been transformed, after any transform error.
+            for (point, coord) in window.iter_mut().zip(&block) {
                 match (F::from_f64(coord.x), F::from_f64(coord.y)) {
-                    (Ok(x), Ok(y)) => converted.push(C::from_xy(x, y)),
-                    (Err(error), _) | (_, Err(error)) => narrowing = Some(error),
+                    (Ok(x), Ok(y)) => *point = C::from_xy(x, y),
+                    (Err(error), _) | (_, Err(error)) => {
+                        narrowing.get_or_insert(error);
+                    }
                 }
             }
         }
-        if let Some(error) = narrowing {
-            return Err(error);
+        match narrowing {
+            Some(error) => Err(error),
+            None => Ok(points),
         }
-        for (point, value) in points.iter_mut().zip(converted) {
-            *point = value;
-        }
-        Ok(points)
     }
 
     #[inline]
