@@ -163,8 +163,12 @@ fn parse(args: &[String]) -> Result<Options, String> {
     Ok(options)
 }
 
-fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().collect();
+pub(crate) fn main() -> ExitCode {
+    run_with(std::env::args().collect())
+}
+
+/// Runs the command with `args` as the process arguments, the program name first.
+pub(crate) fn run_with(args: Vec<String>) -> ExitCode {
     let program = args
         .first()
         .and_then(|argv0| std::path::Path::new(argv0).file_name())

@@ -11,8 +11,13 @@ use std::process::ExitCode;
 
 use proj_rs::projinfo::{run, Status};
 
-fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+pub(crate) fn main() -> ExitCode {
+    run_with(std::env::args().collect())
+}
+
+/// Runs the command with `argv` as the process arguments, the program name first.
+pub(crate) fn run_with(argv: Vec<String>) -> ExitCode {
+    let args: Vec<String> = argv.into_iter().skip(1).collect();
     let arguments: Vec<&str> = args.iter().map(String::as_str).collect();
     let report = run(&arguments);
     for warning in &report.warnings {

@@ -274,7 +274,7 @@ PROJ's own, and a case counts only when it passes.
 | Embedded `proj.db` and EPSG resolution | ✅ | Built from the PROJ 9.9.0 SQL, embedded in the binary and read in place by `rusqlite`, with no copy into memory |
 | ISO 19111 model, WKT and PROJJSON | 🟡 | CRS model, authority factory, CRS identification against `proj.db`, WKT1 and WKT2 import and export, PROJJSON. See [`docs/CRS-API.md`](docs/CRS-API.md) |
 | georust `proj` facade | 🟡 | `Proj`, `ProjBuilder`, `Coord`, `Transform`, `Area`, errors and the `geo-types` feature exist. <!--gen:georust_pass-->25<!--/gen--> of <!--gen:georust_total-->25<!--/gen--> of georust `proj` 0.31's own unit tests pass against it ([`tests/georust_parity.rs`](tests/georust_parity.rs)); the rest are listed there as gaps |
-| Command-line tools | 🟡 | `cct`, `cs2cs`, `proj`, `invproj`, `geod`, `invgeod`, `gie`, `projinfo` and `projsync` over the library; <!--gen:cli_matched-->825<!--/gen--> of <!--gen:cli_total-->825<!--/gen--> PROJ CLI cases match |
+| Command-line tools | 🟡 | `cct`, `cs2cs`, `proj`, `invproj`, `geod`, `invgeod`, `gie`, `projinfo` and `projsync` over the library, in one executable, `proj-rs`; <!--gen:cli_matched-->825<!--/gen--> of <!--gen:cli_total-->825<!--/gen--> PROJ CLI cases match |
 | SIMD batch path | ✅ | AVX2 + FMA on x86-64 for `Tmerc`, `Lcc` and `Mercator`, Web Mercator included. Off AVX2, `Tmerc` runs a portable 4-lane loop (bit-identical, 25–34 % faster on x86-64); `Lcc` and `Mercator` run the scalar loop |
 
 ✅ done and verified &nbsp;·&nbsp; 🟡 working, with known gaps listed below
@@ -504,13 +504,24 @@ PROJ: `EPSG:4326` is latitude, longitude until `proj_normalize_for_visualization
 
 ### On the command line
 
-`cs2cs`, `cct`, `proj` and `projinfo` are thin binaries over the library and
-follow the PROJ originals:
+All the tools are in one executable, `proj-rs`: `cs2cs`, `cct`, `proj`, `invproj`, `geod`,
+`invgeod`, `gie`, `projinfo`, and `projsync` with the `network` feature. They are thin over the
+library and follow the PROJ originals. `proj-rs` runs the tool it is named after, or the one in its
+first argument:
 
 ```text
-$ echo "2.2945 48.8584" | cargo run -q --bin cs2cs -- -d 3 +proj=longlat +datum=WGS84 +to EPSG:2154
+$ echo "2.2945 48.8584" | proj-rs cs2cs -d 3 +proj=longlat +datum=WGS84 +to EPSG:2154
 648237.302	6862271.682 0.000
+$ ln -s proj-rs cs2cs            # the same, under the name of the PROJ tool
+$ echo "2.2945 48.8584" | ./cs2cs -d 3 +proj=longlat +datum=WGS84 +to EPSG:2154
 ```
+
+Each tool carries the whole `proj.db` (10 MiB), so eight separate programs would cost 138 MiB on
+disk; the one executable costs 18 MiB. `tools/dist-cli.sh [--release] [PREFIX]` builds it and
+installs `bin/proj-rs` with a link for each tool name; on Windows `tools\dist-cli.ps1` makes hard
+links, or small `.cmd` launchers where hard links are not possible
+([`docs/PORTING-multicall.md`](docs/PORTING-multicall.md)). `cargo build` also builds each tool as
+a separate binary of its own, which is what the tests run; they behave the same.
 
 As in PROJ, `EPSG:4326` on the command line reads latitude first. Use a
 `+proj=longlat` string, as above, for longitude first.
@@ -597,7 +608,7 @@ are the vendored PROJ 9.9.0 `.gie` expectations. The check is skipped when no
 | [`georust/`](georust), [`capi/`](capi) | The `proj-rs-georust` drop-in for `proj` 0.31, and the skeleton of the C API |
 | [`src/projdb.rs`](src/projdb.rs), [`data/proj.db`](data) | The embedded PROJ 9.9 database |
 | [`src/network.rs`](src/network.rs), [`src/gridpath.rs`](src/gridpath.rs) | Grid lookup and on-demand download |
-| [`src/bin/`](src/bin) | `cct`, `cs2cs`, `proj`, `projinfo`, and the bench |
+| [`src/bin/`](src/bin) | `proj-rs` (all the tools in one executable), the same tools as separate binaries, and the bench |
 | [`tests/gie/`](tests/gie) | The PROJ 9.9.0 `gie` suite, vendored unchanged |
 | [`docs/PORTING-*.md`](docs) | One sheet per ported module: function map, deliberate deviations, commands run |
 

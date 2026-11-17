@@ -20,6 +20,13 @@ path = "src/bin/bench.rs"
 doc = false
 
 [[bin]]
+name = "proj-rs"
+path = "src/bin/proj-rs.rs"
+doc = false
+# The tools it runs have their unit tests in their own binaries.
+test = false
+
+[[bin]]
 name = "cct"
 path = "src/bin/cct.rs"
 doc = false

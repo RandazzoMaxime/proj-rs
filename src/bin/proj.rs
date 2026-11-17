@@ -11,5 +11,5 @@ mod proj_cli;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    proj_cli::run()
+    proj_cli::run(std::env::args().collect())
 }

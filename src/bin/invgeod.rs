@@ -11,5 +11,5 @@ mod lists;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    geod_cli::run()
+    geod_cli::run(std::env::args().collect())
 }
