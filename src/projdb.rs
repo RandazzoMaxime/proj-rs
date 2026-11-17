@@ -38,9 +38,15 @@ fn open_embedded() -> Result<Mutex<Connection>, String> {
         .map_err(|error| error.to_string())
 }
 
-/// The embedded bytes as a read-only in-memory image. The connection reads the pages of the
-/// binary in place: `mmap_size` keeps SQLite from copying each page it reads into its cache.
+/// The embedded bytes as a read-only image. On Linux the connection reads them from the
+/// executable file with `pread` (`projdb_exe`), so the pages stay out of the resident set. Else
+/// it reads the pages of the binary in place: `mmap_size` keeps SQLite from copying each page it
+/// reads into its cache.
 fn read_only_image() -> Result<Connection, rusqlite::Error> {
+    #[cfg(target_os = "linux")]
+    if let Some(connection) = crate::projdb_exe::open(PROJ_DB) {
+        return Ok(connection);
+    }
     let mut connection = Connection::open_in_memory()?;
     connection.deserialize_bytes(rusqlite::MAIN_DB, PROJ_DB)?;
     connection.pragma_update(None, "mmap_size", MMAP_SIZE)?;

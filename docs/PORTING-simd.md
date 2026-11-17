@@ -197,6 +197,76 @@ la même série de mesures alternées.
   `ln` en 4,1 et `atan2` en 8,3, avec un autre banc : je n'ai pas isolé la cause de l'écart restant
   (les chemins hors domaine rapide et les sélections de `V4` sont des pistes, non mesurées).
 
+## Fonctions scalaires : retenues et rejetées
+
+`Proj::convert` et `Operation::forward` calculent un point à la fois. Callgrind sur
+`Proj::new_known_crs("EPSG:2154", "EPSG:32631")` : 2042 instructions par point, dont les deux tiers
+dans la libm de glibc (`atan2` 210, `sincos` 300, `pow` 100, `hypot`, `sinh`, `atanh`, `asinh`,
+`atan`). `src/fmath.rs` remplace une partie de ces appels par des séries de `math.rs` en une voie,
+Rust pur, sans FMA (`f64::mul_add` est logiciel sans FMA matériel), donc valables sur toutes les
+cibles. Elles ne rendent plus les bits de glibc : la parité avec PROJ est la tolérance de
+`docs/PARITY.md` (1e-6 m, 1e-11 degré, facteurs à 1e-7 relatif).
+
+Latence d'un appel, `fmath` contre glibc :
+
+| fonction | `fmath` / glibc (ns) | verdict |
+|---|---:|---|
+| `hypot` (`sqrt(max² + min²)`) | 13,5 / 23,9 | **retenue**, gagne 44 % |
+| `asinh` (série, `|x| < 0,1`) | 13,0 / 32,0 | **retenue**, gagne 60 % |
+| `sinh` (série, `|x| < 0,1`) | 10,6 / 26,0 | **retenue**, gagne 60 % |
+| `atanh` (série, `|x| < 0,1` ; `e sin(phi)` ≤ 0,082) | 12,3 / 24,5 | **retenue**, gagne 50 % |
+| `atan2` (Cephes) | 24 à 30 / 33 à 34 | rejetée : 10 à 27 %, aucun gain sur le point entier (246,6 contre 245,2 ns) |
+| `sin_cos` (fdlibm) | 18,7 à 23,2 / 21,6 à 22,6 | rejetée : plus lent en débit (15 à 17,5 contre 8 à 9,8 ns), glibc a des noyaux FMA |
+| `atan` (Cephes) | 21,6 à 22,3 / 20,8 à 24,0 | rejetée : aucun gain |
+
+Hors de leur domaine (`|x| >= 0,1`, valeur non finie, dépassement), `hypot`, `sinh` et `asinh`
+retombent sur la fonction de la bibliothèque standard, et `atanh` sur la libm C : le résultat aux
+cas limites est celui de la libm. `hypot` est utilisée par `Tmerc` (forward et inverse) et `Lcc`
+(inverse), `asinh` par le forward de `Tmerc`, `sinh` par l'inverse de `Tmerc` et de `Lcc` et par
+`projmath::sinhpsi2tanphi`, `atanh` partout où `projmath::atanh` est appelée (`Lcc`, Mercator
+ellipsoïdal, `tsfn`). Le repli portable de `Tmerc::forward_batch` appelle les mêmes fonctions : il
+reste bit à bit celui de `Tmerc::forward`. Le `asinh` de Mercator et de Web Mercator reste celui de
+la libm.
+
+Un cœur épinglé (`taskset -c 2`), minimum de 14 passes alternées de 300 000 points ; instructions
+par point en différence de deux runs callgrind (100 000 et 300 000 points) :
+
+| cas | instr. avant | instr. après | ns avant | ns après |
+|---|---:|---:|---:|---:|
+| 2154 vers 32631 | 2042 | 1694 | 334,0 | 246,0 |
+| 4326 vers 2154 | 893 | 852 | 127,1 | 112,9 |
+| 4326 vers 32631 | 1148 | 1073 | 123,7 | 117,4 |
+| 4326 vers 3857 | 558 | 558 | 88,5 | 88,9 |
+
+4326 vers 3857 n'est pas touché (Web Mercator sphérique : ni `atanh` ni `hypot`). Les ns sont indicatifs (machine
+partagée) ; une mesure antérieure sur un poste plus calme donnait 326 → 264, 100 → 90 et 142 → 121 ns.
+Les points 4326 sont écrits (longitude, latitude) comme le veut `new_known_crs`.
+
+Écart contre l'ancien code (la libm), 100 000 points par cas sur la France :
+
+| cas | écart max |
+|---|---:|
+| 2154 vers 32631 | 5,6e-9 m |
+| 4326 vers 2154 | 1,9e-9 m |
+| 4326 vers 32631 | 9,3e-10 m |
+| 32631 vers 2154 | 3,7e-9 m |
+| 2154 vers 4326 | 4,3e-14 degré |
+| 32631 vers 4326 | 1,4e-14 degré |
+| 4326 vers 3857, 3857 vers 4326 | 0 |
+
+Facteurs (`Proj::factors`, 3 000 points par CRS) : `h`, `k`, `s`, convergence et dérivées à 1,1e-11
+relatif au plus ; distorsion angulaire à 3,7e-8 degré absolu au plus. L'angle méridien-parallèle `theta'` et les
+axes de l'ellipse de Tissot (`proj -S` imprime ces derniers) montent à 2,3e-8 relatif sur UTM 31 (la règle des facteurs est donc 1e-7) :
+près d'une projection conforme, `a` et `b` sortent d'une différence qui amplifie le bruit des
+différences finies, d'où le 1e-7 de la règle.
+
+Le terme relatif linéaire de la règle (1e-13) vient de `cs2cs-inverse-0105:4` de la suite de parité : UTM/LCC (EPSG:32150) vers NZMG (EPSG:27200) sur un point hors domaine, 7e11 m. L'inverse Lcc de `fmath` rend une latitude à 1 ULP de la libm (7e-15 degré) ; le polynôme de degré 9 de NZMG l'amplifie environ 5e6 fois : 4e-3 m, 5,7e-15 relatif, au-dessus des 5e-4 m absolus de la suite.
+
+Le reste de la piste « calculs redondants » ne donne rien : LLVM fusionne déjà `sin` et `cos` d'un
+même argument en `sincos`, et regrouper `sin(phi)` et `cos(phi)` de `Lcc::fwd_unit` laisse 844
+instructions par point. `pow` (100 instructions, une fois par point dans `Lcc::inv_unit`) est déjà
+rapide.
+
 ## Mesures
 
 `bench/record.sh`, un cœur épinglé (`taskset -c 2`), machine `cloud-4c-avx512` (le chemin

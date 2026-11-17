@@ -65,6 +65,7 @@ mod engine;
 #[doc(hidden)]
 pub mod errno;
 mod error;
+mod fmath;
 #[cfg(feature = "geo-types")]
 mod geo_impl;
 #[doc(hidden)]
@@ -129,6 +130,8 @@ mod proj_info;
 mod proj_iso;
 mod proj_meta;
 mod projdb;
+#[cfg(target_os = "linux")]
+mod projdb_exe;
 mod projections;
 mod projmath;
 mod simd;

@@ -19,6 +19,7 @@
 //! voies sont rares et passent par une fonction froide.
 
 use super::{Mask, V4};
+use crate::fmath::{ASINH_SERIES, ATANH_TAIL, SINH_COEFFS};
 
 /// `ln 2`, partie haute : 32 bits significatifs, donc `k * LN2_HI` est exact pour `|k| < 2^21`.
 const LN2_HI: f64 = 6.931_471_803_691_238_164_90e-1;
@@ -116,53 +117,8 @@ const EXP_COEFFS: [f64; 12] = [
     1.0 / 6_227_020_800.0,
 ];
 
-/// `1/(2k+1)!`, `k` de 1 à 8 : le noyau de `sinh` pour un petit argument.
-const SINH_COEFFS: [f64; 8] = [
-    1.0 / 6.0,
-    1.0 / 120.0,
-    1.0 / 5_040.0,
-    1.0 / 362_880.0,
-    1.0 / 39_916_800.0,
-    1.0 / 6_227_020_800.0,
-    1.0 / 1_307_674_368_000.0,
-    1.0 / 355_687_428_096_000.0,
-];
-
-/// `asinh(x) = x * (1 + z * P(z))`, `z = x^2` : les coefficients de `P` (`(-1)^k C(2k,k) / (4^k (2k+1))`
-/// pour `k` de 1 à 11), pour `|x| < 0.15`.
-const ASINH_SERIES: [f64; 11] = [
-    -0.16666666666666666,
-    0.075,
-    -0.044642857142857144,
-    0.030381944444444444,
-    -0.022372159090909092,
-    0.017352764423076924,
-    -0.01396484375,
-    0.011551800896139705,
-    -0.009761609529194078,
-    0.008390335809616815,
-    -0.0073125258735988454,
-];
-
 /// Au-dessous de cette valeur absolue, `atanh` et `asinh` s'évaluent par leur série entière.
 const SERIES_LIMIT: f64 = 0.15;
-
-/// `1/(2k+3)`, `k` de 0 à 11 : la queue de la série de `log` en double précision étendue, et celle
-/// de `atanh(x) = x * (1 + z * Q(z))` pour `|x| < 0.15`.
-const ATANH_TAIL: [f64; 12] = [
-    1.0 / 3.0,
-    1.0 / 5.0,
-    1.0 / 7.0,
-    1.0 / 9.0,
-    1.0 / 11.0,
-    1.0 / 13.0,
-    1.0 / 15.0,
-    1.0 / 17.0,
-    1.0 / 19.0,
-    1.0 / 21.0,
-    1.0 / 23.0,
-    1.0 / 25.0,
-];
 
 /// Remplace les voies `bad` de `result` par `function(input)`, voie par voie.
 #[inline(always)]

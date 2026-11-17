@@ -52,7 +52,7 @@ impl Kind {
     fn within(self, expected: f64, actual: f64) -> bool {
         let diff = (expected - actual).abs();
         match self {
-            Kind::Metre => diff <= TOLERANCE_METRE,
+            Kind::Metre => common::tolerance::linear_within(diff, expected, TOLERANCE_METRE),
             Kind::Degree => diff <= TOLERANCE_DEGREE,
             Kind::Time => diff <= TOLERANCE_TIME,
             // Relative, but absolute near zero: an angular distortion of 0 against 1e-6 degree

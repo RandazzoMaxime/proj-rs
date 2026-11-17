@@ -239,7 +239,7 @@ impl Mercator {
         })
     }
 
-    /// Même ordre d'opérations que PROJ : la sortie doit rester au bit près.
+    /// Même ordre d'opérations que PROJ.
     pub(crate) fn fwd_unit(&self, lam: f64, phi: f64) -> (f64, f64) {
         let y = match self.model {
             Model::Sphere => phi.tan().asinh(),
