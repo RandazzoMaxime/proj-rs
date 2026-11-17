@@ -9,6 +9,7 @@
 mod batch;
 
 use crate::angle::adjlon;
+use crate::fmath;
 use crate::projmath::{
     auxlat_coeffs, auxlat_convert, auxlat_convert_sincos, rectifying_radius, AuxLat,
 };
@@ -227,9 +228,9 @@ impl Tmerc {
         let cos_cn_cos_ce = cos_cn * cos_ce;
         cn = sin_cn.atan2(cos_cn_cos_ce);
 
-        let inv_denom = 1.0 / sin_cn.hypot(cos_cn_cos_ce);
+        let inv_denom = 1.0 / fmath::hypot(sin_cn, cos_cn_cos_ce);
         let tan_ce = sin_ce * cos_cn * inv_denom;
-        let mut ce = tan_ce.asinh();
+        let mut ce = fmath::asinh(tan_ce);
 
         let two_inv = 2.0 * inv_denom;
         let two_inv_sq = two_inv * inv_denom;
@@ -273,10 +274,10 @@ impl Tmerc {
 
         let sin_cn = cn.sin();
         let cos_cn = cn.cos();
-        let sinh_ce = ce.sinh();
+        let sinh_ce = fmath::sinh(ce);
         ce = sinh_ce.atan2(cos_cn);
-        let modulus = sinh_ce.hypot(cos_cn);
-        let rr = sin_cn.hypot(modulus);
+        let modulus = fmath::hypot(sinh_ce, cos_cn);
+        let rr = fmath::hypot(sin_cn, modulus);
         let cn_geo = sin_cn.atan2(modulus);
         let phi = auxlat_convert_sincos(cn_geo, sin_cn / rr, modulus / rr, &self.cgb);
         Ok((ce, phi))

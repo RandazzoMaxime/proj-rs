@@ -65,6 +65,7 @@ mod engine;
 #[doc(hidden)]
 pub mod errno;
 mod error;
+mod fmath;
 #[cfg(feature = "geo-types")]
 mod geo_impl;
 #[doc(hidden)]
