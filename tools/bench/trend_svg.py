@@ -90,8 +90,8 @@ def series_for(rows):
     return out
 
 
-def title_of(machine):
-    return f"Time per point, {machine}"
+def title_of():
+    return "Time per point"
 
 
 def subtitle_of():
@@ -114,7 +114,7 @@ def render(machine, rows, theme):
 
     y = 26
     out = []
-    title = title_of(machine)
+    title = title_of()
     out.append(f'<text x="16" y="{y}" font-size="17" class="b">{escape(title)}</text>')
     y += 19
     for line in subtitle:
@@ -210,7 +210,7 @@ def render(machine, rows, theme):
     )
     y += 24
     note = (
-        f"Only the runs on {machine} are drawn: a number compares with its own machine's, "
+        "Only the runs of one machine are drawn: a number compares with its own machine's, "
         "and a run on another machine starts a history of its own."
     )
     for line in wrap(note, 125):
@@ -262,19 +262,19 @@ def readme_block(drawn, skipped):
                 moves.append(f"{label} {history.ns_text(end[1])} (one run)")
             else:
                 moves.append(f"{label} {history.ns_text(start[1])} to {history.ns_text(end[1])}")
-        alt = f"Nanoseconds per point on {machine}, one line per case, logarithmic scale"
+        alt = "Nanoseconds per point, one line per case, logarithmic scale"
         parts.append(
             "<picture>\n"
             f'  <source media="(prefers-color-scheme: dark)" srcset="bench/trend-{name}-dark.svg">\n'
             f'  <img src="bench/trend-{name}-light.svg" alt="{escape(alt)}" width="100%">\n'
             "</picture>\n\n"
-            f"Time per point, {machine}: {len(rows)} runs from {span}, the first to the latest: "
+            f"Time per point: {len(rows)} runs from {span}, the first to the latest: "
             + "; ".join(moves)
             + "."
         )
     if skipped:
         parts.append(
-            "Not drawn until there are two runs on one machine: " + ", ".join(f"`{m}`" for m in skipped) + "."
+            f"Not drawn until there are two runs on one machine: {len(skipped)} other machine(s) with one run."
         )
     return "\n\n".join(parts)
 

@@ -383,14 +383,14 @@ build, with a clear error.
 <!-- bench-compare:start -->
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="bench/compare-dark.svg">
-  <img src="bench/compare-light.svg" alt="Bar chart: nanoseconds per point, proj-rs next to PROJ 9.9.0, ten conversions, on cloud-4c-avx512" width="100%">
+  <img src="bench/compare-light.svg" alt="Bar chart: nanoseconds per point, proj-rs next to PROJ 9.9.0, ten conversions" width="100%">
 </picture>
 <!-- bench-compare:end -->
 
 <!-- bench-how-fast:start -->
 These numbers are PROJ-RS v1's. The optimisation work (wider SIMD, GPU) comes in the versions after it.
 
-On `cloud-4c-avx512`, a 4-vCPU cloud VM (Intel Xeon at 2.10 GHz with AVX-512; the batch kernels take the AVX2 path), the process pinned to one core, proj-rs is 1.7× faster than PROJ 9.9.0's `libproj` on average over the ten cases below (geometric mean of the ratios; the slowest case is 1.3× slower, the fastest 4.9× faster). One point at a time, proj-rs is 1.1× faster on average, from 1.3× slower to 1.5× faster. On a slice of points, it is 2.6× faster on average, from 1.2× slower to 4.9× faster. This is one machine: the ratios on another CPU, or on a build of libproj with other flags, will differ.
+On a 4-vCPU cloud VM (Intel Xeon at 2.10 GHz), the process pinned to one core, proj-rs is 1.7× faster than PROJ 9.9.0's `libproj` on average over the ten cases below (geometric mean of the ratios; the slowest case is 1.3× slower, the fastest 4.9× faster). One point at a time, proj-rs is 1.1× faster on average, from 1.3× slower to 1.5× faster. On a slice of points, it is 2.6× faster on average, from 1.2× slower to 4.9× faster. This is one machine: the ratios on another CPU, or on a build of libproj with other flags, will differ. The batch kernels take the AVX2 path, which every x86-64 CPU has since 2013 (Intel) and 2015 (AMD); AVX-512 is not used.
 
 | Conversion | Call | PROJ 9.9.0 | proj-rs |
 |---|---|---:|---:|
@@ -449,12 +449,12 @@ a line commits the charts with it.
 <!-- bench-trend:start -->
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="bench/trend-cloud-4c-avx512-dark.svg">
-  <img src="bench/trend-cloud-4c-avx512-light.svg" alt="Nanoseconds per point on cloud-4c-avx512, one line per case, logarithmic scale" width="100%">
+  <img src="bench/trend-cloud-4c-avx512-light.svg" alt="Nanoseconds per point, one line per case, logarithmic scale" width="100%">
 </picture>
 
-Time per point, cloud-4c-avx512: 10 runs from Nov 15 to Nov 16, the first to the latest: UTM forward 88.8 ns to 105 ns; Lambert-93 forward 62.3 ns to 60.4 ns; Web Mercator forward 45.8 ns to 53.1 ns; convert_array 4326→2154 130 ns to 33.6 ns; Helmert 9.31 ns to 11.2 ns.
+Time per point: 10 runs from Nov 15 to Nov 16, the first to the latest: UTM forward 88.8 ns to 105 ns; Lambert-93 forward 62.3 ns to 60.4 ns; Web Mercator forward 45.8 ns to 53.1 ns; convert_array 4326→2154 130 ns to 33.6 ns; Helmert 9.31 ns to 11.2 ns.
 
-Not drawn until there are two runs on one machine: `RANDAZZOPROD`, `maxime-win11-nosimd`.
+Not drawn until there are two runs on one machine: 2 other machine(s) with one run.
 <!-- bench-trend:end -->
 
 ## Reproduce these numbers

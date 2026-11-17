@@ -46,7 +46,7 @@ def render(row, theme):
     cases = how_fast.rows_of(row)
     ticks = axis_ticks(max(max(c[2], c[3]) for c in cases))
     scale = (BAR_RIGHT - BAR_LEFT) / ticks[-1]
-    title = f"proj-rs against PROJ 9.9.0, {row['machine']}"
+    title = "proj-rs against PROJ 9.9.0"
     out = [f'<text x="16" y="26" font-size="17" class="b">{escape(title)}</text>']
     subtitle = (
         "Nanoseconds per point for the same points through both libraries, the best of "
@@ -124,7 +124,7 @@ def main():
     for theme in THEMES:
         path = history.ROOT / "bench" / f"compare-{theme}.svg"
         path.write_text(render(row, theme), encoding="utf-8")
-    alt = f"Bar chart: nanoseconds per point, proj-rs next to PROJ 9.9.0, ten conversions, on {row['machine']}"
+    alt = f"Bar chart: nanoseconds per point, proj-rs next to PROJ 9.9.0, ten conversions"
     history.write_block(
         "bench-compare",
         "<picture>\n"
