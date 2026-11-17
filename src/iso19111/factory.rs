@@ -6920,7 +6920,10 @@ impl CoordinateOperationFactory {
             // the registry result, the datum pivot and the CRS codes; the intermediate search runs
             // when `res` is empty, or when its operations are replaced, too small for the area of
             // interest, all time-dependent between static CRS, or ensemble null operations.
-            let res: Vec<CoordinateOperation> = found.iter().chain(pivot.iter()).cloned().collect();
+            // `res` takes the operations of `found` and `pivot`, in that order, and goes back
+            // into `found` below: a copy of every candidate would double the peak.
+            let mut res = std::mem::take(&mut found);
+            res.append(&mut pivot);
             let intermediate_tried = !context.has_guard(GUARD_DATUM_PIVOT)
                 && !context.has_guard(GUARD_DATUM_INTERMEDIATE)
                 && context.intermediate_use != IntermediateCrsUse::Never
@@ -6954,6 +6957,7 @@ impl CoordinateOperationFactory {
                     }
                 }
             }
+            found = res;
             found.extend(pivot);
         }
         // The point motion block of `createOperationsCompoundToCompound` (coordinateoperationfactory.
@@ -7279,7 +7283,7 @@ fn remove_synthetic_null_transforms(
 /// `removeUninterestingOps`: for a given area, an operation with similar or worse accuracy and
 /// more transformation steps than the one kept before it adds nothing.
 fn remove_uninteresting_ops(operations: Vec<CoordinateOperation>) -> Vec<CoordinateOperation> {
-    let mut kept = Vec::with_capacity(operations.len());
+    let mut keep = Vec::with_capacity(operations.len());
     let mut last: Option<(&CoordinateOperation, Option<ObjectDomain>, f64, usize)> = None;
     for operation in &operations {
         let accuracy = get_accuracy(operation);
@@ -7291,6 +7295,7 @@ fn remove_uninteresting_ops(operations: Vec<CoordinateOperation>) -> Vec<Coordin
         };
         if let Some((last_operation, last_extent, last_accuracy, last_steps)) = &last {
             if last_operation.is_equivalent_to(operation) {
+                keep.push(false);
                 continue;
             }
             let same_extent = match (&extent, last_extent) {
@@ -7305,13 +7310,19 @@ fn remove_uninteresting_ops(operations: Vec<CoordinateOperation>) -> Vec<Coordin
                 && same_extent
                 && steps > *last_steps
             {
+                keep.push(false);
                 continue;
             }
         }
-        kept.push(operation.clone());
+        keep.push(true);
         last = Some((operation, extent, accuracy, steps));
     }
-    kept
+    drop(last);
+    operations
+        .into_iter()
+        .zip(keep)
+        .filter_map(|(operation, keep)| keep.then_some(operation))
+        .collect()
 }
 
 /// `removeDuplicateOps`: an operation whose PROJ string and extent equal those of an earlier one
@@ -7549,6 +7560,38 @@ fn filter_and_sort(
     context: &CoordinateOperationContext,
     extents: &SortExtents,
 ) -> Filtered {
+    let (kept, contains_area_without_grid) = filtered_indices(&operations, context, extents);
+    // An operation kept once is moved, not cloned: a clone of each candidate next to the
+    // original doubles the peak.
+    let mut uses = vec![0_usize; operations.len()];
+    for &index in &kept {
+        uses[index] += 1;
+    }
+    let mut slots: Vec<Option<CoordinateOperation>> = operations.into_iter().map(Some).collect();
+    let mut result = Vec::with_capacity(kept.len());
+    for index in kept {
+        uses[index] -= 1;
+        let operation = if uses[index] == 0 {
+            slots[index].take()
+        } else {
+            slots[index].clone()
+        };
+        result.extend(operation);
+    }
+    Filtered {
+        operations: result,
+        contains_area_without_grid,
+    }
+}
+
+/// The indices into `operations` that [`filter_and_sort`] keeps, in its order (an index
+/// repeats when the fallback keeps an operation the first pass kept), and its
+/// `contains_area_without_grid`.
+fn filtered_indices(
+    operations: &[CoordinateOperation],
+    context: &CoordinateOperationContext,
+    extents: &SortExtents,
+) -> (Vec<usize>, bool) {
     let area = extents.area.as_ref();
     let (extent1, extent2) = (extents.source.as_ref(), extents.target.as_ref());
     let described = context.area_of_interest.as_ref().and_then(|area| {
@@ -7560,7 +7603,7 @@ fn filter_and_sort(
             })
             .then_some(text)
     });
-    let mut result = Vec::new();
+    let mut kept: Vec<usize> = Vec::new();
     let mut only_ballpark = true;
     let mut non_ballpark_with_extent = false;
     let mut non_ballpark_without_extent = false;
@@ -7568,7 +7611,7 @@ fn filter_and_sort(
     let no_grid = |operation: &CoordinateOperation| {
         !operation.has_ballpark_transformation() && super::select::grid_names(operation).is_empty()
     };
-    for operation in &operations {
+    for (index, operation) in operations.iter().enumerate() {
         if !accuracy_allowed(operation, context.desired_accuracy) {
             continue;
         }
@@ -7626,26 +7669,24 @@ fn filter_and_sort(
             }
         }
         only_ballpark &= ballpark;
-        result.push(operation.clone());
+        kept.push(index);
     }
-    if (result.is_empty() && !non_ballpark_with_extent)
+    if (kept.is_empty() && !non_ballpark_with_extent)
         || (only_ballpark && non_ballpark_without_extent)
     {
-        result.extend(
+        kept.extend(
             operations
                 .iter()
-                .filter(|operation| accuracy_allowed(operation, context.desired_accuracy))
-                .filter(|operation| {
+                .enumerate()
+                .filter(|(_, operation)| accuracy_allowed(operation, context.desired_accuracy))
+                .filter(|(_, operation)| {
                     context.ballpark == BallparkUse::Allow
                         || !operation.has_ballpark_transformation()
                 })
-                .cloned(),
+                .map(|(index, _)| index),
         );
     }
-    Filtered {
-        operations: result,
-        contains_area_without_grid,
-    }
+    (kept, contains_area_without_grid)
 }
 
 /// `hasPerfectAccuracyResult`: an operation of `operations` that the strict containment
@@ -7659,10 +7700,10 @@ fn has_perfect_accuracy_result(
     let mut strict = context.clone();
     strict.spatial_criterion = SpatialCriterion::StrictContainment;
     let extents = SortExtents::new(&strict, extent1.cloned(), extent2.cloned());
-    filter_and_sort(operations.to_vec(), &strict, &extents)
-        .operations
-        .iter()
-        .any(|operation| get_accuracy(operation) == 0.0)
+    filtered_indices(operations, &strict, &extents)
+        .0
+        .into_iter()
+        .any(|index| get_accuracy(&operations[index]) == 0.0)
 }
 
 /// Whether `operations`, found for `source` and `target`, hold a perfect registry result: PROJ's
