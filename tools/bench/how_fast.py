@@ -78,14 +78,25 @@ def rows_of(row):
 
 
 def spread_text(ratios):
+    low, high = min(ratios), max(ratios)
+    if low >= 1.05:
+        return f"{speedup_text(geomean(ratios))} on average, from {low:.1f}× to {high:.1f}×"
     return (
-        f"{speedup_text(geomean(ratios))} on average, from {speedup_text(min(ratios))} "
-        f"to {speedup_text(max(ratios))}"
+        f"{speedup_text(geomean(ratios))} on average, from {speedup_text(low)} "
+        f"to {speedup_text(high)}"
     )
+
+
+def extremes_text(ratios):
+    low, high = min(ratios), max(ratios)
+    if low >= 1.05:
+        return f"faster in every case, from {low:.1f}× to {high:.1f}×"
+    return f"the slowest case is {speedup_text(low)}, the fastest {speedup_text(high)}"
 
 
 def body(row):
     cases = rows_of(row)
+    ratios = [c[4] for c in cases]
     single = [c[4] for c in cases if "one point" in c[1]]
     array = [c[4] for c in cases if "array" in c[1] or "200,000" in c[1]]
     note = MACHINE_NOTES.get(row["machine"], "")
@@ -96,8 +107,7 @@ def body(row):
         "versions after it.",
         "",
         f"On {where}, proj-rs is {than(geomean([c[4] for c in cases]))} PROJ 9.9.0's `libproj` on "
-        f"average over the ten cases below (geometric mean of the ratios; the slowest case is "
-        f"{speedup_text(min(c[4] for c in cases))}, the fastest {speedup_text(max(c[4] for c in cases))}). "
+        f"average over the ten cases below (geometric mean of the ratios; {extremes_text(ratios)}). "
         f"One point at a time, proj-rs is {spread_text(single)}. On a slice of points, it is "
         f"{spread_text(array)}. "
         "This is one machine: the ratios on another CPU, or on a build of libproj with other "
@@ -116,6 +126,8 @@ def body(row):
         "",
         f"Nanoseconds per point; lower is faster. Line of {when} UTC at commit `{row['commit']}`{best}. "
         "Both sides convert the same points, and the bench stops if their outputs differ. "
+        "With no grid, NAD27 → WGS 84 is PROJ's ballpark offset on both sides, a change of units and "
+        "axis order with no datum shift, which proj-rs applies as one step. "
         "What exactly is compared, and how to rerun it: [docs/BENCHMARK.md](docs/BENCHMARK.md).",
         "",
         "<details>",
