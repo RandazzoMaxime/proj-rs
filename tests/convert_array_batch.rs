@@ -5,7 +5,8 @@
 //! - the values agree to the tolerance of the vector kernels (`docs/PORTING-simd.md`), and with
 //!   the PROJ 9.9.0 `cs2cs`, which is the reference;
 //! - a failing point gives the error `convert` gives for it, the first failing point's when
-//!   several fail, and the slice is left unchanged.
+//!   several fail. The slice is then partly converted: whole blocks of 4096 points before the
+//!   first failing one are converted, and the rest keeps its input (`docs/PORTING-memory.md`).
 
 use proj_rs::{Proj, ProjError};
 use std::io::Write;
@@ -199,15 +200,15 @@ fn message(error: &ProjError) -> String {
 }
 
 #[test]
-fn a_failing_point_gives_the_error_of_convert_and_leaves_the_slice_unchanged() {
+fn a_failing_point_gives_the_error_of_convert_and_converts_whole_blocks_before_it() {
     let proj = Proj::new_known_crs("EPSG:4326", "EPSG:2154", None).expect("pair");
     // `convert` refuses these: latitude beyond the pole, a longitude beyond ten radians, and a
     // coordinate that is infinite. A NaN is not refused: PROJ answers NaN (see below).
     let bad = [(3.0, 91.0), (1000.0, 45.0), (3.0, f64::INFINITY)];
     for (index, &point) in bad.iter().enumerate() {
         let want = message(&proj.convert(point).expect_err("convert refuses it"));
-        // At the start, in the middle of a lane group, in a later chunk, and at the end.
-        for position in [0, 5, 4_099, 9_999] {
+        // At the start, in the middle of a lane group, in a later block, and at the end.
+        for position in [0, 5, 4_095, 4_096, 4_099, 9_999] {
             let mut points = france(10_000);
             points[position] = point;
             let before = bits(&points);
@@ -215,7 +216,20 @@ fn a_failing_point_gives_the_error_of_convert_and_leaves_the_slice_unchanged() {
                 .convert_array(&mut points)
                 .expect_err("batch refuses it");
             assert_eq!(message(&error), want, "bad point {index} at {position}");
-            assert_eq!(bits(&points), before, "the slice is unchanged");
+            let after = bits(&points);
+            // The blocks before the failing one are converted, as `convert` converts them.
+            let done = position / 4_096 * 4_096;
+            let mut original = france(10_000);
+            original.truncate(done);
+            let converted = one_by_one(&proj, &original);
+            let gap = worst(&points[..done], &converted);
+            assert!(gap < METRES, "converted blocks: gap {gap:e}");
+            // The failing block and the ones after it keep their input.
+            assert_eq!(
+                after[done..],
+                before[done..],
+                "bad point {index} at {position}"
+            );
         }
     }
 }

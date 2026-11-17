@@ -138,8 +138,13 @@ Ce que le code fait autrement que ce document, ou en plus, et pourquoi.
 - **Coordonnées non finies refusées.** `x`, `y` ou `z` infini ou `NaN` donne `Error::InvalidCoordinate`
   au lieu d'un `NaN` en sortie. `t = +inf` veut dire « sans date » et passe au moteur comme 0, ce que
   fait déjà la façade georust.
-- **`forward_slice` laisse la tranche intacte en cas d'erreur** et rend l'erreur du premier point
-  en échec, sans son indice.
+- **`forward_slice` convertit sur place et ne garantit plus la tranche en cas d'erreur** (décision
+  de l'opérateur, comme `proj_trans_array`) : elle rend l'erreur du premier point en échec, sans son
+  indice. Un point non fini est refusé avant tout, tranche intacte. Après une erreur de
+  transformation, les blocs de points avant le premier bloc fautif sont convertis, ce bloc et les
+  suivants gardent leur entrée : ne pas lire la tranche après un `Err`. Même contrat pour
+  `Proj::convert_array` et `Proj::project_array` (façade georust, dont `proj` 0.31 ne documente
+  rien là-dessus). Détail : `docs/PORTING-memory.md`.
 - **`area_of_interest`, `only_best` et `allow_ballpark` agissent sur la sélection** (celle de
   `cs2cs`, `select_alternatives_for_crs`). Limite connue : avec `OnlyBest::No`, la sélection lit
   l'environnement (`PROJ_NETWORK`) pour savoir si le réseau est ouvert, pas le `Context`.
