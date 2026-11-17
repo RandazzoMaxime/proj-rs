@@ -56,12 +56,6 @@ fn check(case: &Case<'_>) {
     );
 }
 
-/// Relative tolerance of the scale factor `h`, `k` and `s` at a point where the derivatives of
-/// `pj_factors` are taken at the origin or at a pole. The values differ from PROJ 9.9.0 in the
-/// last digits, from the order of the finite differences (`Operation::factors`), not from the
-/// coordinates: `docs/PORTING-cli-rest.md`, « Écarts ouverts ».
-const FACTOR_TOLERANCE: f64 = 1e-9;
-
 /// The `h`, `k` or `s` of a factor line, and its error in per cent, when `line` is one.
 fn factor_values(line: &str) -> Option<(f64, f64)> {
     let label = [
@@ -77,8 +71,9 @@ fn factor_values(line: &str) -> Option<(f64, f64)> {
     Some((value, error))
 }
 
-/// `check`, except that the factor lines may differ by [`FACTOR_TOLERANCE`]. Every other line must
-/// match exactly.
+/// `check`, except that the factor lines (`h`, `k`, `s`, at the origin or a pole, where the
+/// finite differences of `pj_factors` move the last digits: `docs/PORTING-cli-rest.md`, « Écarts
+/// ouverts ») are compared by the factor rule. Every other line goes through `same_cli_text`.
 fn check_factors_within_tolerance(case: &Case<'_>) {
     let (code, stdout, stderr) = run(binary(case.bin), case.args, case.input);
     assert_eq!(code, case.exit, "exit code, stderr:\n{stderr}");
@@ -88,9 +83,8 @@ fn check_factors_within_tolerance(case: &Case<'_>) {
     for (got, want) in got.iter().zip(&want) {
         match (factor_values(got), factor_values(want)) {
             (Some((value, error)), Some((expected, expected_error))) => {
-                let relative = (value - expected).abs() / expected.abs().max(f64::MIN_POSITIVE);
                 assert!(
-                    relative <= FACTOR_TOLERANCE,
+                    common::tolerance::close(common::tolerance::Quantity::Factor, value, expected),
                     "factor {value} against {expected}\n{got}\n{want}"
                 );
                 assert!(

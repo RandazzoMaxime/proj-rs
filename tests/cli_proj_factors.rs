@@ -2,8 +2,8 @@
 //!
 //! The expected text of each case was written by the reference binary
 //! (`build/bin/proj`, `PROJ_DATA` of the reference build), run on the same
-//! arguments and input. The comparison is exact, byte for byte: the omega
-//! column is the last digit that a numerical derivative can move.
+//! arguments and input. The numbers are read back and compared by the rule of
+//! `common::tolerance` (`docs/PARITY.md`), not as text.
 
 use std::ffi::OsStr;
 use std::io::Write;
@@ -259,8 +259,7 @@ fn proj_factors_match_reference_output() {
 /// Points are `lon lat` joined by `;`; the expected lines are joined by the two characters `\n`.
 const SPHERE_CASES: &str = include_str!("cli_proj_factors/sphere.tsv");
 
-/// The factor column is compared as text. The x and y columns may differ by forward rounding
-/// (`mbtfpp`: 5e-10 m, see `docs/PORTING-cli-rest.md`), so they are compared within 1e-6 m.
+/// The x and y columns are compared in metres, the factor column by the factor rule.
 fn same_xy_and_factors(got: &str, expected: &str) -> bool {
     let (got, expected): (Vec<&str>, Vec<&str>) =
         (got.lines().collect(), expected.lines().collect());
@@ -277,7 +276,7 @@ fn same_xy_and_factors(got: &str, expected: &str) -> bool {
 
 fn close(a: &str, b: &str) -> bool {
     match (a.parse::<f64>(), b.parse::<f64>()) {
-        (Ok(a), Ok(b)) => (a - b).abs() <= 1e-6,
+        (Ok(a), Ok(b)) => common::tolerance::close(common::tolerance::Quantity::Metres, a, b),
         _ => false,
     }
 }
@@ -306,24 +305,24 @@ fn proj_factors_sphere_projections_match_reference_output() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-/// The comparison used off glibc accepts the MSVC output of `proj -S` (CI log of PR 217) and
-/// refuses a changed token or a real difference.
+/// The rule accepts the rounding of `proj -S` (the MSVC output of CI log of PR 217, whose omega
+/// moves by finite differences) and refuses a changed token or a real difference.
 #[test]
-fn off_glibc_comparison_accepts_libm_rounding_only() {
+fn comparison_accepts_libm_rounding_only() {
     let linux = "552535.620906571625\t1135669.254347730894\t<0.528892 0.528892 0.279727 7.99022e-06 0.528892 0.528892>\n-1598415.287275458686\t2812926.457895270083\t<0.685653 0.685653 0.47012 2.67065e-05 0.685653 0.685653>\n";
     let msvc = "552535.620906571625\t1135669.254347730894\t<0.528892 0.528892 0.279727 8.15166e-06 0.528892 0.528892>\n-1598415.287275458686\t2812926.457895271014\t<0.685653 0.685653 0.47012 2.67065e-05 0.685653 0.685653>\n";
-    assert!(common::close_cli_text(msvc, linux));
-    assert!(!common::close_cli_text(
+    assert!(common::same_cli_text(msvc, linux));
+    assert!(!common::same_cli_text(
         &msvc.replace("0.279727", "0.279737"),
         linux
     ));
-    assert!(!common::close_cli_text(
+    assert!(!common::same_cli_text(
         &msvc.replace("552535.62", "552535.72"),
         linux
     ));
-    assert!(!common::close_cli_text(&msvc.replace('<', "("), linux));
-    assert!(!common::close_cli_text("*\t*\n", "inf\tinf\n"));
-    assert!(common::close_cli_text(
+    assert!(!common::same_cli_text(&msvc.replace('<', "("), linux));
+    assert!(!common::same_cli_text("*\t*\n", "inf\tinf\n"));
+    assert!(common::same_cli_text(
         "<0.684301 0.684301 0.468268 2.51241e-05 0.684302 0.684301>",
         "<0.684301 0.684301 0.468268 2.50931e-05 0.684302 0.684301>"
     ));
