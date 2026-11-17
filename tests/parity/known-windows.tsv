@@ -1,4 +1,3 @@
 # Écarts propres à Windows (libm MSVC) : lus seulement hors glibc (tests/parity.rs).
 # Colonnes : clé « id:ligne », cause courte, renvoi à une fiche.
 # Un écart listé ne fait pas échouer ; un écart nouveau ou disparu oui.
-proj-fwd-0008:3	libm MSVC : coordonnée de 4e11 m, écart relatif 3e-15	docs/PARITY.md

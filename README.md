@@ -162,6 +162,7 @@ PROJ's C++ unit tests are ported one `TEST()` at a time, and the ones not
 ported yet are listed by name in [`docs/UNPORTED-UNIT.md`](docs/UNPORTED-UNIT.md).
 The same goes for the CLI cases in [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md).
 About 4000 conversions across the CRS families, `proj`, and `cct` are compared with PROJ 9.9.0 in [`docs/PARITY.md`](docs/PARITY.md).
+The results are the same as PROJ 9.9.0 to 1 µm on linear coordinates and 1e-11 degree on angles, not bit for bit (the rule is in that file).
 
 | Suite | Ported and passing | Not yet | |
 |---|---:|---:|:-:|

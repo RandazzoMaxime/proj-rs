@@ -16,10 +16,15 @@ unsafe extern "C" {
 }
 
 /// `atanh` de la libm C, comme PROJ : le `f64::atanh` de Rust diffère d'un ulp sur un tiers des entrées.
+///
+/// Sous `0.1` (`e * sin(phi)` vaut au plus 0,082), la série de `fmath` : jusqu'à 2 ULP de la libm,
+/// pour la moitié du temps. `docs/PORTING-simd.md`, section « Fonctions scalaires ».
 #[must_use]
 pub(crate) fn atanh(x: f64) -> f64 {
-    // SAFETY: `atanh` de la libm C ne prend qu'un `f64` et ne lit ni n'écrit de mémoire.
-    unsafe { libm_atanh(x) }
+    crate::fmath::atanh_small(x).unwrap_or_else(|| {
+        // SAFETY: `atanh` de la libm C ne prend qu'un `f64` et ne lit ni n'écrit de mémoire.
+        unsafe { libm_atanh(x) }
+    })
 }
 
 const ONE_TOL: f64 = 1.000_000_000_000_01;
@@ -144,7 +149,7 @@ pub(crate) fn sinhpsi2tanphi(taup: f64, e: f64) -> Result<f64, ()> {
             return Err(());
         }
         let tau1 = (1.0 + tau * tau).sqrt();
-        let sig = (e * atanh(e * tau / tau1)).sinh();
+        let sig = crate::fmath::sinh(e * atanh(e * tau / tau1));
         let taupa = (1.0 + sig * sig).sqrt() * tau - sig * tau1;
         let dtau = ((taup - taupa) * (1.0 + e2m * (tau * tau)))
             / (e2m * tau1 * (1.0 + taupa * taupa).sqrt());
