@@ -240,6 +240,90 @@ la main reste une copie profonde. Mesuré sur `4267 → 4326`, ces copies pèsen
 partager (`Arc<DatumEnsemble>`, `Arc<Identified>`) toucherait chaque écriture du modèle pour un gain
 de cet ordre.
 
+## Les requêtes SQL restent compilées
+
+Décision de l'opérateur : garder les requêtes compilées. `DatabaseContext::query` appelait
+`prepare` à chaque requête, et SQLite recompilait le même texte des centaines de fois par création.
+
+### Ce qui a changé
+
+- `DatabaseContext::query` et `towgs84_methods` passent par `prepare_cached` (rusqlite), comme
+  les trois requêtes répétées de `network.rs` (`old_grid_filename`, `proj_grid_filename`,
+  `direct_url`) qui lisent la même connexion par `projdb::with_db`. Les requêtes bâties à la volée
+  (nom de table, clauses ajoutées selon l'autorité) ne portent que des fragments en nombre fini et
+  des listes de `?` de longueur variable (pivots, autorités : une entrée par longueur, que l'ordre
+  d'ancienneté évince) ; une seule inlinait une valeur : la date de publication du critère `criterionOnIntermediateCRS`
+  (`createFromCRSCodesWithIntermediates`), une entrée de cache par date. Elle est maintenant un
+  paramètre lié (`?`), comme les autres valeurs. Aucune requête n'est exclue du cache.
+- La capacité du cache passe de 16 (défaut de rusqlite) à 64 (`projdb::STATEMENT_CACHE`) sur la
+  connexion partagée, sur celle d'un contexte qui écrit et sur celles de `from_connection`.
+- Chaque connexion a son cache. Une écriture (`execute_sql`, session d'insertion) prend une copie
+  propre au contexte (voir plus haut) : ses requêtes se compilent sur cette copie, la connexion
+  partagée garde les siennes et ne voit pas l'écriture. SQLite recompile seul une requête dont le
+  schéma a changé (`SQLITE_SCHEMA`) ; `tests/statement_cache.rs` lit après une écriture de lignes,
+  après un `ALTER TABLE`, entre deux contextes et autour d'une recherche.
+- Le cache d'un contexte est vidé à la sortie de la recherche la plus externe
+  (`create_operations_between_epochs`, `FlushStatements`) : un contexte que l'appelant garde ne
+  tient aucune requête compilée au repos (mesuré, `mallinfo2` après une recherche
+  `4267 → 4326` sur un contexte gardé : 4 014 384 octets avant, 4 011 760 après). La connexion
+  partagée se ferme déjà avec le dernier contexte du fil, et le cache avec elle.
+
+### Mesures
+
+Requêtes (`callgrind`, appels de `sqlite3Prepare`) et instructions, binaire `--release` :
+
+| scénario | compilations avant | après | instructions avant | après |
+|---|---:|---:|---:|---:|
+| création `4326 → 2154` | 644 | **23** | 250 M | **118 M** |
+| création `4267 → 4326` | 2 699 | **46** | 904 M | **641 M** |
+| 30 paires de CRS (`many`) | 46 935 | **1 003** | 18,3 G | **8,6 G** |
+
+`4267 → 4326` compte 29 textes distincts passés à `query` (2 141 appels), plus 556 appels de
+`network.rs` et 1 de `towgs84_methods` ; 21 textes distincts pour `4326 → 2154` (642 appels). Sur
+30 paires, 72 textes distincts. Le chiffre de 15 604 compilations de l'opérateur est celui d'avant
+le partage des CRS des candidats : ce lot part de 2 699 pour cette paire.
+
+Temps de création, par processus (démarrage de 2,5 ms compris ; médiane de passes alternées
+base / nouveau) :
+
+| paire | passes | avant | après |
+|---|---:|---:|---:|
+| `4326 → 2154` | 200 | 42,0 ms | **21,7** |
+| `2154 → 32631` | 200 | 45,5 | **22,8** |
+| `4267 → 4326` | 100 | 121,8 | **79,2** |
+
+Pic `VmHWM`, médiane de 5 passes (un processus par scénario), médiane de 5 séries ; PROJ 9.9.0 :
+
+| scénario | PROJ | avant | après |
+|---|---:|---:|---:|
+| démarrage | 5,6 MiB | 4,6 | 4,6 |
+| création `4326 → 2154` | 14,7 | 13,7 | **13,8** |
+| création + 1 M points un par un | 14,8 | 13,8 | **13,9** |
+| création + 1 M points en tableau | 29,8 | 29,1 | **29,1** |
+| `4267 → 4326` + 1 M points | 16,3 | 14,6 | **14,7** |
+
+Les requêtes compilées coûtent de 0,1 à 0,2 MiB de pic (massif, tas Rust et SQLite : +157 Ko pour
+`4326 → 2154`, +257 Ko pour `4267 → 4326`), dans le bruit d'une série à l'autre (±0,2 MiB). Aucun
+scénario ne repasse au-dessus de PROJ.
+
+Capacité du cache (`callgrind`, `PROJ_STMT_CACHE` temporaire) :
+
+| capacité | compilations `4326 → 2154` | `4267 → 4326` | 30 paires | instructions, 30 paires |
+|---:|---:|---:|---:|---:|
+| 0 (rien en cache) | 644 | 2 699 | 46 935 | 18,3 G |
+| 8 | 168 | 198 | 6 019 | 10,0 G |
+| 16 | 23 | 61 | 1 339 | 8,70 G |
+| 32 | 23 | 46 | 1 021 | 8,60 G |
+| **64 (livré)** | 23 | 46 | 1 003 | 8,59 G |
+
+Le pic `VmHWM` ne distingue pas ces capacités (14,0 à 14,2 MiB pour la création, 14,7 à 14,9 pour
+`4267 → 4326`, bruit de ±0,2 MiB). 16 suffit presque ; 64 laisse de la place à une recherche qui
+utilise plus de textes distincts, sans coût mesurable : le cache est vidé à la fin de la recherche.
+
+Banc (`proj-rs-bench`, sans libproj, 5 passes alternées, cas `facade_convert*`) : la meilleure
+passe de chaque cas bouge de -4,8 % à +0,9 %, médiane des écarts -0,6 %. Ces cas n'appellent pas
+la base.
+
 ## Ce qui reste, chiffres à l'appui
 
 Aucun scénario mesuré ne reste au-dessus de PROJ. Ce qui pèse encore :
