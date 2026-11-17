@@ -11,8 +11,14 @@ use crate::simd::Lanes;
 /// `forward` en lot : degrés vers mètres.
 pub(super) struct Forward<'a>(pub(super) &'a Mercator);
 
+/// `forward` en lot : radians absolus vers mètres.
+pub(super) struct ForwardRad<'a>(pub(super) &'a Mercator);
+
 /// `inverse` en lot : mètres vers degrés.
 pub(super) struct Inverse<'a>(pub(super) &'a Mercator);
+
+/// `inv_unit` en lot : unités du rayon vers radians, sans ramener la longitude.
+pub(super) struct InverseUnit<'a>(pub(super) &'a Mercator);
 
 impl Lanes for Forward<'_> {
     fn point(&self, lon_deg: f64, lat_deg: f64) -> (f64, f64) {
@@ -30,6 +36,25 @@ impl Lanes for Forward<'_> {
         lat_deg: crate::simd::V4,
     ) -> Option<(crate::simd::V4, crate::simd::V4)> {
         vector::forward(self.0, tok, lon_deg, lat_deg)
+    }
+}
+
+impl Lanes for ForwardRad<'_> {
+    fn point(&self, lon_rad: f64, lat_rad: f64) -> (f64, f64) {
+        self.0
+            .forward_rad(lon_rad, lat_rad)
+            .map_or((f64::NAN, f64::NAN), |xy| (xy.east, xy.north))
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[inline(always)]
+    fn lanes(
+        &self,
+        tok: crate::simd::Avx2,
+        lon_rad: crate::simd::V4,
+        lat_rad: crate::simd::V4,
+    ) -> Option<(crate::simd::V4, crate::simd::V4)> {
+        vector::forward_rad(self.0, tok, lon_rad, lat_rad)
     }
 }
 
@@ -52,6 +77,23 @@ impl Lanes for Inverse<'_> {
     }
 }
 
+impl Lanes for InverseUnit<'_> {
+    fn point(&self, x: f64, y: f64) -> (f64, f64) {
+        self.0.inv_unit(x, y).unwrap_or((f64::NAN, f64::NAN))
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[inline(always)]
+    fn lanes(
+        &self,
+        tok: crate::simd::Avx2,
+        x: crate::simd::V4,
+        y: crate::simd::V4,
+    ) -> Option<(crate::simd::V4, crate::simd::V4)> {
+        vector::inverse_unit(self.0, tok, x, y)
+    }
+}
+
 #[cfg(target_arch = "x86_64")]
 mod vector {
     use std::f64::consts::FRAC_PI_2;
@@ -65,8 +107,13 @@ mod vector {
     #[inline(always)]
     pub(super) fn forward(m: &Mercator, tok: Avx2, lon_deg: V4, lat_deg: V4) -> Option<(V4, V4)> {
         let k = |value| V4::splat(tok, value);
-        let lon_r = lon_deg * k(DEG_TO_RAD);
-        let lat_r = lat_deg * k(DEG_TO_RAD);
+        forward_rad(m, tok, lon_deg * k(DEG_TO_RAD), lat_deg * k(DEG_TO_RAD))
+    }
+
+    /// [`Mercator::forward_rad`] sur quatre points.
+    #[inline(always)]
+    pub(super) fn forward_rad(m: &Mercator, tok: Avx2, lon_r: V4, lat_r: V4) -> Option<(V4, V4)> {
+        let k = |value| V4::splat(tok, value);
         if !kernels::latitude_in_domain(tok, lat_r)
             .and(lon_r.is_finite())
             .all()
@@ -97,8 +144,16 @@ mod vector {
     #[inline(always)]
     pub(super) fn inverse(m: &Mercator, tok: Avx2, east: V4, north: V4) -> Option<(V4, V4)> {
         let k = |value| V4::splat(tok, value);
-        let x = (east - k(m.x0)) / k(m.a);
-        let y = (north - k(m.y0)) / k(m.a);
+        let (x, y) = ((east - k(m.x0)) / k(m.a), (north - k(m.y0)) / k(m.a));
+        let (lam, phi) = inverse_unit(m, tok, x, y)?;
+        let lon = kernels::adjlon(tok, lam + k(m.lam0));
+        Some((lon * k(RAD_TO_DEG), phi * k(RAD_TO_DEG)))
+    }
+
+    /// [`Mercator::inv_unit`] sur quatre points : lam et phi en radians, lam non ramenée.
+    #[inline(always)]
+    pub(super) fn inverse_unit(m: &Mercator, tok: Avx2, x: V4, y: V4) -> Option<(V4, V4)> {
+        let k = |value| V4::splat(tok, value);
         if !x.is_finite().and(y.is_finite()).all() {
             return None;
         }
@@ -108,7 +163,6 @@ mod vector {
             Model::Sphere => scaled.sinh().atan(),
             Model::Ellipsoid { e } => kernels::phi2(tok, (-scaled).exp(), e),
         };
-        let lon = kernels::adjlon(tok, lam + k(m.lam0));
-        Some((lon * k(RAD_TO_DEG), phi * k(RAD_TO_DEG)))
+        Some((lam, phi))
     }
 }

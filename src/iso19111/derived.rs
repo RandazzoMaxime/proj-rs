@@ -13,6 +13,7 @@ use super::factory::{
 };
 use super::model::{ConcatenatedStep, Conversion, CoordinateOperation, Crs, ObjectDomain};
 use super::FactoryError;
+use std::sync::Arc;
 
 /// Candidates when `source` or `target` is a derived CRS, or `None` when neither is.
 /// A derived source has precedence, as in PROJ.
@@ -125,8 +126,8 @@ pub(super) fn concatenate(
         .and_then(CoordinateOperation::target_crs)
         .cloned();
     let mut concatenated = pivot_concatenation(steps);
-    concatenated.source = source.map(Box::new);
-    concatenated.target = target.map(Box::new);
+    concatenated.source = source.map(Arc::new);
+    concatenated.target = target.map(Arc::new);
     if let Some(domain) = extent {
         concatenated.identified.domains = vec![domain];
     }

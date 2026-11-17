@@ -109,7 +109,7 @@ is a **failure**, and tolerances are never loosened.
 
 > **6,856 of 6,856 cases pass (100%).**
 > 6,811 run offline, and all pass. The other 45 cases read grids from
-> `https://cdn.proj.org`, so they run with `PROJ_NETWORK=ON`. PROJ's
+> `https://cdn.proj.org`, so they run with `PROJ_NETWORK=ON` and the `network` feature. PROJ's
 > `test/CMakeLists.txt` splits its suite the same way.
 
 <details>
@@ -289,8 +289,8 @@ The examples of the `proj` 0.31 documentation compile and run as tests of that c
 [`tests/georust_parity.rs`](tests/georust_parity.rs) (see the [parity
 status](#how-the-port-is-done): one pair still fails to create where PROJ creates it,
 `EPSG:4326+5773` to `EPSG:4326+5782`, see the georust gaps list). The `network`, `tiff`,
-`bundled_proj` and `pkg_config` features of `proj` exist and change nothing: the network
-client and the grid reader are always built in. See
+`bundled_proj` and `pkg_config` features of `proj` exist and change nothing: the grid
+reader is always built in. `network` turns on the HTTP(S) client, as in `proj`. See
 [`georust/examples/quickstart.rs`](georust/examples/quickstart.rs).
 
 Two things `Proj` has beyond the georust surface, both from PROJ's C API:
@@ -340,10 +340,13 @@ As in PROJ, `EPSG:4326` on the command line reads latitude first. Use a
 - **A C compiler.** `cargo build` compiles two small vendored C libraries:
   SQLite (through `rusqlite`) and Charles Karney's geodesic code. There is no
   libproj, no CMake, and no system SQLite.
-- **OpenSSL development files on Linux.** They are needed only for the on-demand
-  grid download (`native-tls`). Windows and macOS use the system TLS.
-- **Dependencies stay small.** Three direct ones (`rusqlite`, `tiff`,
-  `native-tls`), a fourth optional (`geo-types`), 37 crates in the default tree.
+- **No TLS library by default.** The on-demand grid download is the `network` Cargo
+  feature, off by default, as PROJ downloads only when built with libcurl. With
+  `features = ["network"]` the build uses the system TLS (`native-tls`): OpenSSL
+  development files on Linux, SChannel on Windows, Security.framework on macOS. Without it
+  nothing TLS is compiled or linked.
+- **Dependencies stay small.** Two direct ones (`rusqlite`, `tiff`), two optional
+  (`geo-types`, and `native-tls` behind `network`).
 
 The batch path (`forward_batch` and `inverse_batch` of `Tmerc`, `Lcc` and
 `Mercator`) uses AVX2 on every x86-64 CPU with AVX2 and FMA, detected at run time. It
@@ -365,8 +368,13 @@ PROJ copies into its test directory), and that is all the offline suite needs.
 Other grids are looked up in `data/grids/` (git-ignored), then
 `tests/gie/tests/`, `data/tests/` and `tests/gie/`.
 
-Downloading is **off by default**. Set `PROJ_NETWORK=ON` to fetch a missing grid
-from `https://cdn.proj.org`, the way PROJ does. Fetched grids are cached in the
+Downloading is **off by default**, and **built in only with the `network` feature**
+(`proj-rs = { git = "...", features = ["network"] }`; `proj-rs-capi` and `proj-rs-georust`
+have the same feature). Then set `PROJ_NETWORK=ON` to fetch a missing grid
+from `https://cdn.proj.org`, the way PROJ does. Without the feature, as with a PROJ built
+without libcurl, `PROJ_NETWORK=ON` and `enable_network(true)` fetch nothing and a missing grid is
+an error, unless the application gives its own client with `set_network_callbacks`
+([`docs/PORTING-network-feature.md`](docs/PORTING-network-feature.md)). Fetched grids are cached in the
 temporary directory under `proj/`. Without the grid the operation fails to
 build, with a clear error.
 
@@ -375,14 +383,14 @@ build, with a clear error.
 <!-- bench-compare:start -->
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="bench/compare-dark.svg">
-  <img src="bench/compare-light.svg" alt="Bar chart: nanoseconds per point, proj-rs next to PROJ 9.9.0, ten conversions, on cloud-4c-avx512" width="100%">
+  <img src="bench/compare-light.svg" alt="Bar chart: nanoseconds per point, proj-rs next to PROJ 9.9.0, ten conversions" width="100%">
 </picture>
 <!-- bench-compare:end -->
 
 <!-- bench-how-fast:start -->
 These numbers are PROJ-RS v1's. The optimisation work (wider SIMD, GPU) comes in the versions after it.
 
-On `cloud-4c-avx512`, a 4-vCPU cloud VM (Intel Xeon at 2.10 GHz with AVX-512; the batch kernels take the AVX2 path), the process pinned to one core, proj-rs is 1.7× faster than PROJ 9.9.0's `libproj` on average over the ten cases below (geometric mean of the ratios; the slowest case is 1.3× slower, the fastest 4.9× faster). One point at a time, proj-rs is 1.1× faster on average, from 1.3× slower to 1.5× faster. On a slice of points, it is 2.6× faster on average, from 1.2× slower to 4.9× faster. This is one machine: the ratios on another CPU, or on a build of libproj with other flags, will differ.
+On a 4-vCPU cloud VM (Intel Xeon at 2.10 GHz), the process pinned to one core, proj-rs is 1.7× faster than PROJ 9.9.0's `libproj` on average over the ten cases below (geometric mean of the ratios; the slowest case is 1.3× slower, the fastest 4.9× faster). One point at a time, proj-rs is 1.1× faster on average, from 1.3× slower to 1.5× faster. On a slice of points, it is 2.6× faster on average, from 1.2× slower to 4.9× faster. This is one machine: the ratios on another CPU, or on a build of libproj with other flags, will differ. The batch kernels take the AVX2 path, which every x86-64 CPU has since 2013 (Intel) and 2015 (AMD); AVX-512 is not used.
 
 | Conversion | Call | PROJ 9.9.0 | proj-rs |
 |---|---|---:|---:|
@@ -441,12 +449,12 @@ a line commits the charts with it.
 <!-- bench-trend:start -->
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="bench/trend-cloud-4c-avx512-dark.svg">
-  <img src="bench/trend-cloud-4c-avx512-light.svg" alt="Nanoseconds per point on cloud-4c-avx512, one line per case, logarithmic scale" width="100%">
+  <img src="bench/trend-cloud-4c-avx512-light.svg" alt="Nanoseconds per point, one line per case, logarithmic scale" width="100%">
 </picture>
 
-Time per point, cloud-4c-avx512: 10 runs from Nov 15 to Nov 16, the first to the latest: UTM forward 88.8 ns to 105 ns; Lambert-93 forward 62.3 ns to 60.4 ns; Web Mercator forward 45.8 ns to 53.1 ns; convert_array 4326→2154 130 ns to 33.6 ns; Helmert 9.31 ns to 11.2 ns.
+Time per point: 10 runs from Nov 15 to Nov 16, the first to the latest: UTM forward 88.8 ns to 105 ns; Lambert-93 forward 62.3 ns to 60.4 ns; Web Mercator forward 45.8 ns to 53.1 ns; convert_array 4326→2154 130 ns to 33.6 ns; Helmert 9.31 ns to 11.2 ns.
 
-Not drawn until there are two runs on one machine: `RANDAZZOPROD`, `maxime-win11-nosimd`.
+Not drawn until there are two runs on one machine: 2 other machine(s) with one run.
 <!-- bench-trend:end -->
 
 ## Reproduce these numbers

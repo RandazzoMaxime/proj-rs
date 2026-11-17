@@ -6,6 +6,7 @@
 //! (the reference build, `--local-geojson-file`, `--endpoint https://cdn.proj.org`, data
 //! version 1.25). Here the endpoint is the local server, which is the only text that differs.
 //! The exit code and the messages on stderr are compared as well.
+#![cfg(feature = "network")]
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};

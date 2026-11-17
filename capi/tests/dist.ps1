@@ -15,6 +15,7 @@ if ($Prefix -eq "") { $Prefix = Join-Path $root "target\capi-dist" }
 $profileDir = if ($Release) { "release" } else { "debug" }
 $cargoArgs = @("build", "-p", "proj-rs-capi")
 if ($Release) { $cargoArgs += "--release" }
+if ($env:PROJ_RS_CAPI_FEATURES) { $cargoArgs += @("--features", $env:PROJ_RS_CAPI_FEATURES) }
 
 Push-Location $root
 try {

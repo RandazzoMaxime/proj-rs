@@ -30,6 +30,7 @@ use super::parammap::{method_by_code, method_by_name};
 use super::projstring::{create_crs_from_proj_string, create_crs_from_proj_string_with_database};
 use super::wkt_import::WktParser;
 use crate::crs_text::{self, Object, Value};
+use std::sync::Arc;
 
 const SCHEMA: &str = "https://proj.org/schemas/v0.7/projjson.schema.json";
 
@@ -4187,7 +4188,7 @@ fn id_parts(object: &Object, db: &DatabaseContext) -> Result<(String, String), F
 fn take_json_interpolation(
     parameters: &mut Vec<Parameter>,
     db: &DatabaseContext,
-) -> Option<Box<Crs>> {
+) -> Option<Arc<Crs>> {
     let index = parameters.iter().position(|parameter| {
         let named = matches!(
             parameter.name(),
@@ -4203,7 +4204,7 @@ fn take_json_interpolation(
         .create_geographic_crs(&code.to_string())
         .ok()?;
     parameters.remove(index);
-    Some(Box::new(Crs::Geographic(crs)))
+    Some(Arc::new(Crs::Geographic(crs)))
 }
 
 fn read_cs_object(object: &Object) -> Result<CoordinateSystem, FactoryError> {

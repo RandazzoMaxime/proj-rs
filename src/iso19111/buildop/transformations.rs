@@ -8,6 +8,7 @@
 //! degrees for the offset angles, arc-seconds and parts per million for Helmert.
 
 use std::f64::consts::PI;
+use std::sync::Arc;
 
 use super::OpProps;
 use crate::iso19111::model::{
@@ -520,8 +521,8 @@ impl Transformation {
                 code: "8666".to_owned(),
                 value: ParameterValue::filename(filename),
             }],
-            source: Some(Box::new(source)),
-            target: Some(Box::new(target)),
+            source: Some(Arc::new(source)),
+            target: Some(Arc::new(target)),
             interpolation: None,
             accuracy,
             accuracy_text: None,

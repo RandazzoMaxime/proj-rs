@@ -9,19 +9,20 @@ chiffre, aucune erreur, aucun ordre de candidats ne bouge.
 `bench/footprint.sh` et les programmes de `bench/footprint/` (le même programme en Rust et en C
 contre libproj). Linux x86-64, médiane de 5 passes, pic `VmHWM`, un processus par scénario.
 
-| scénario | PROJ 9.9.0 | avant | après #228 | après ce lot |
-|---|---:|---:|---:|---:|
-| démarrage | 5,6 MiB | 4,6 | 4,8 | 4,7 |
-| création `4326 → 2154` | 14,7 | 34,3 | 18,6 | **13,9** |
-| création + 1 M points un par un | 14,8 | 34,5 | 18,6 | **13,9** |
-| création + 1 M points en un tableau | 29,8 | 95,4 | 49,3 | **29,3** |
-| `4267 → 4326` (80 candidats) + 1 M points | 16,3 | 51,3 | 33,9 | 28,0 |
+| scénario | PROJ 9.9.0 | avant | après #228 | après la VFS | après le partage et la conversion sur place |
+|---|---:|---:|---:|---:|---:|
+| démarrage | 5,6 MiB | 4,6 | 4,8 | 4,7 | 4,7 |
+| création `4326 → 2154` | 14,7 | 34,3 | 18,6 | 13,9 | **13,8** |
+| création + 1 M points un par un | 14,8 | 34,5 | 18,6 | 13,9 | **13,6** |
+| création + 1 M points en un tableau | 29,8 | 95,4 | 49,3 | 44,2 | **29,3** |
+| `4267 → 4326` (80 candidats) + 1 M points | 16,3 | 51,3 | 33,9 | 28,0 | **14,5** |
 
 Les colonnes « avant » et « après #228 » sont celles du lot précédent. La dernière a été mesurée
 avec le même programme, sur la même machine, juste après une remesure de l'état de départ
-(4,7 / 18,4 / 18,6 / 48,9 / 33,6). Sous Linux, la création d'une paire de CRS passe sous PROJ. Les
-deux scénarios à un million de points en tableau et à 80 candidats restent au-dessus : leurs
-causes sont en fin de page.
+(4,7 / 18,4 / 18,6 / 48,9 / 33,6). La colonne « après la VFS » est l'état de départ du lot de
+partage (`claude/memory-vfs`), remesuré ; la dernière est ce lot. Sous Linux, la création d'une paire
+de CRS et le scénario à 80 candidats passent sous PROJ. Le scénario à un million de points en
+tableau reste au-dessus : sa cause est en fin de page.
 
 ## Où allaient les octets
 
@@ -158,17 +159,180 @@ paie aussi. `4267 → 4326` (80 candidats) ne bouge pas dans le bruit (301 à 31
 le pire écart est +2,0 % (`facade_convert_4326_3857`, 59,5 → 60,7 ns/point), la médiane des écarts
 +0,2 %.
 
+## Les candidats partagent leurs CRS
+
+Décision de l'opérateur : « fais partager les systèmes aux candidats ». PROJ partage ses objets par
+`std::shared_ptr` (`CRSNNPtr`, `CoordinateOperationNNPtr`) ; ici chaque opération possédait ses CRS.
+
+### Où était le tas (`4267 → 4326`, massif, pic de 16,7 MB)
+
+Au pic, 80 opérations vivent à la fois. Classement des octets vivants par cause :
+
+| cause | MiB | part |
+|---|---:|---:|
+| copies de CRS et d'opérations (`Clone`) : source, cible et interpolation de chaque candidat, de chaque étape d'une concaténation, de chaque variante « grille » | 6,7 | 42 % |
+| CRS relus dans `proj.db` : `create_coordinate_reference_system` rappelé pour chaque opération et chaque étape (identifiants, domaines, membres d'ensemble de chaque datum) | 3,6 | 22 % |
+| SQLite (schéma de la connexion 2,5 MiB, cache de pages 0,5) | 3,0 | 19 % |
+| le reste (les opérations elles-mêmes : paramètres, identifiants, domaines) | 2,6 | 16 % |
+
+Le même CRS (par exemple EPSG:4267 avec son ensemble de datums) existait donc en plusieurs centaines
+d'exemplaires. `4326 → 2154` n'a que deux CRS et une poignée d'opérations : 3,7 MB de tas, dont
+3,0 de SQLite ; rien à partager.
+
+### Ce qui est partagé
+
+- `source`, `target` et `interpolation` d'une `Conversion`, d'une `Transformation` et d'une
+  `ConcatenatedOperation`, ainsi que la source et la cible d'un `BoundCRS`, passent de
+  `Box<Crs>` à `Arc<Crs>` (`model.rs`). Cloner une opération copie quatre pointeurs au lieu de
+  deux CRS entiers. Une écriture passe par `Arc::make_mut` (copie à l'écriture).
+- `AuthorityFactory::create_shared_crs` : un CRS lu dans la base est construit une fois par
+  contexte (`Connections::crs_cache`, 64 entrées, clé `(autorité, code)`) et rendu en `Arc`. Les
+  opérations de la base (transformations, grilles, concaténations, interpolation) l'utilisent.
+  Le cache est vidé à toute écriture (`lock_for_write`) : `execute_sql` et une session d'insertion
+  ne voient jamais un CRS d'avant. `create_coordinate_reference_system` reste sans cache.
+- `shared.rs` : une recherche (`create_operations_between_epochs`) enregistre ses deux `Arc<Crs>` ;
+  `set_endpoints`, `with_endpoints`, `with_endpoints_of` et `set_crss_update_inverse` acceptent
+  `impl Share` et retrouvent l'`Arc` quand on leur donne la `&Crs` qu'il porte (même adresse, donc
+  même objet), au lieu d'en copier un. Une `&Crs` inconnue du registre est copiée, comme avant. Le
+  registre est local au fil, retiré à la sortie de la recherche, et ne change aucune signature des
+  121 fonctions qui passent un `&Crs`.
+- Les variantes « grille alternative » de `proj_grid_substitution` gardent les `Arc` de l'opération
+  d'origine au lieu de cloner source et cible. `resolve_crs` (le CRS que la recherche remplace par
+  celui du registre) rend un `Arc` pris dans le cache : une recherche imbriquée retrouve le même
+  objet que la recherche qui l'a lancée. Les opérations de repli (décalage géographique approximatif,
+  rotation de méridien, conversion d'unité verticale) reçoivent la `&Crs` de la recherche.
+
+Un candidat n'a plus de CRS à lui : pour `4267 → 4326`, toutes les opérations pointent vers le même
+objet source et le même objet cible (`tests/shared_crs.rs`).
+
+### Mesures
+
+Tas (massif, binaire `--release`) et pic `VmHWM` (médiane de 5) :
+
+| scénario | tas avant | tas après | `VmHWM` avant | `VmHWM` après | PROJ |
+|---|---:|---:|---:|---:|---:|
+| création `4267 → 4326` seule | 16,7 MB | **4,4** | 28,0 MiB | **14,5** | |
+| `4267 → 4326` + 1 M points un par un | | | 28,0 | **14,5** | 16,3 |
+| création `4326 → 2154` | 3,7 MB | 3,6 | 13,9 | 13,8 | 14,7 |
+
+Temps, par processus (médiane de passes alternées) : création `4326 → 2154` 44,3 → 40,3 ms (200
+passes ; une première série donnait 47,0 → 47,0) ; création `4267 → 4326` 307 → 113 ms (60 passes) : les copies de CRS et leurs lectures dans la base ne se font plus.
+Banc (`proj-rs-bench`, 5 passes alternées, cas `facade_convert*`, sans libproj) : la meilleure passe
+de chaque cas bouge de -5,4 % à +2,8 % (bruit ; le pire est `facade_convert_array_4326_3857`, dont la
+médiane a trois passes à 71 à 85 ns pendant que d'autres agents chargeaient la machine), la
+médiane des écarts de la meilleure passe est -1,0 %. Ces cas n'appellent pas le code modifié.
+
+### Interface
+
+Aucun changement d'API publique ni de type `unstable` : les champs sont `pub(crate)`, les accesseurs
+(`source_crs`, `target_crs`, `interpolation_crs`) rendent toujours `Option<&Crs>`. Les bornes de
+threads ne bougent pas : `Crs`, `CoordinateOperation`, `DatabaseContext` et `Context` restent
+`Send + Sync`, `Transformer` et `Proj` restent `Send` (`tests/shared_crs.rs`). Les sorties (WKT,
+PROJJSON, chaînes PROJ, listes `projinfo`) et les coordonnées sont celles d'avant (suites de
+parité et de tests ci-dessous).
+
+### Écarts à l'objet de PROJ
+
+PROJ partage tout par pointeur, y compris les sous-objets d'un CRS (datum, ellipsoïde, ensemble,
+système de coordonnées). Ici le CRS entier est partagé, mais un `Crs` cloné (`Crs::clone`) copie
+encore ses sous-objets : un CRS reconstruit (promotion en 3D, changement d'unité) ou un `Crs` cloné à
+la main reste une copie profonde. Mesuré sur `4267 → 4326`, ces copies pèsent 0,3 MiB au pic ; les
+partager (`Arc<DatumEnsemble>`, `Arc<Identified>`) toucherait chaque écriture du modèle pour un gain
+de cet ordre.
+
+## Les requêtes SQL restent compilées
+
+Décision de l'opérateur : garder les requêtes compilées. `DatabaseContext::query` appelait
+`prepare` à chaque requête, et SQLite recompilait le même texte des centaines de fois par création.
+
+### Ce qui a changé
+
+- `DatabaseContext::query` et `towgs84_methods` passent par `prepare_cached` (rusqlite), comme
+  les trois requêtes répétées de `network.rs` (`old_grid_filename`, `proj_grid_filename`,
+  `direct_url`) qui lisent la même connexion par `projdb::with_db`. Les requêtes bâties à la volée
+  (nom de table, clauses ajoutées selon l'autorité) ne portent que des fragments en nombre fini et
+  des listes de `?` de longueur variable (pivots, autorités : une entrée par longueur, que l'ordre
+  d'ancienneté évince) ; une seule inlinait une valeur : la date de publication du critère `criterionOnIntermediateCRS`
+  (`createFromCRSCodesWithIntermediates`), une entrée de cache par date. Elle est maintenant un
+  paramètre lié (`?`), comme les autres valeurs. Aucune requête n'est exclue du cache.
+- La capacité du cache passe de 16 (défaut de rusqlite) à 64 (`projdb::STATEMENT_CACHE`) sur la
+  connexion partagée, sur celle d'un contexte qui écrit et sur celles de `from_connection`.
+- Chaque connexion a son cache. Une écriture (`execute_sql`, session d'insertion) prend une copie
+  propre au contexte (voir plus haut) : ses requêtes se compilent sur cette copie, la connexion
+  partagée garde les siennes et ne voit pas l'écriture. SQLite recompile seul une requête dont le
+  schéma a changé (`SQLITE_SCHEMA`) ; `tests/statement_cache.rs` lit après une écriture de lignes,
+  après un `ALTER TABLE`, entre deux contextes et autour d'une recherche.
+- Le cache d'un contexte est vidé à la sortie de la recherche la plus externe
+  (`create_operations_between_epochs`, `FlushStatements`) : un contexte que l'appelant garde ne
+  tient aucune requête compilée au repos (mesuré, `mallinfo2` après une recherche
+  `4267 → 4326` sur un contexte gardé : 4 014 384 octets avant, 4 011 760 après). La connexion
+  partagée se ferme déjà avec le dernier contexte du fil, et le cache avec elle.
+
+### Mesures
+
+Requêtes (`callgrind`, appels de `sqlite3Prepare`) et instructions, binaire `--release` :
+
+| scénario | compilations avant | après | instructions avant | après |
+|---|---:|---:|---:|---:|
+| création `4326 → 2154` | 644 | **23** | 250 M | **118 M** |
+| création `4267 → 4326` | 2 699 | **46** | 904 M | **641 M** |
+| 30 paires de CRS (`many`) | 46 935 | **1 003** | 18,3 G | **8,6 G** |
+
+`4267 → 4326` compte 29 textes distincts passés à `query` (2 141 appels), plus 556 appels de
+`network.rs` et 1 de `towgs84_methods` ; 21 textes distincts pour `4326 → 2154` (642 appels). Sur
+30 paires, 72 textes distincts. Le chiffre de 15 604 compilations de l'opérateur est celui d'avant
+le partage des CRS des candidats : ce lot part de 2 699 pour cette paire.
+
+Temps de création, par processus (démarrage de 2,5 ms compris ; médiane de passes alternées
+base / nouveau) :
+
+| paire | passes | avant | après |
+|---|---:|---:|---:|
+| `4326 → 2154` | 200 | 42,0 ms | **21,7** |
+| `2154 → 32631` | 200 | 45,5 | **22,8** |
+| `4267 → 4326` | 100 | 121,8 | **79,2** |
+
+Pic `VmHWM`, médiane de 5 passes (un processus par scénario), médiane de 5 séries ; PROJ 9.9.0 :
+
+| scénario | PROJ | avant | après |
+|---|---:|---:|---:|
+| démarrage | 5,6 MiB | 4,6 | 4,6 |
+| création `4326 → 2154` | 14,7 | 13,7 | **13,8** |
+| création + 1 M points un par un | 14,8 | 13,8 | **13,9** |
+| création + 1 M points en tableau | 29,8 | 29,1 | **29,1** |
+| `4267 → 4326` + 1 M points | 16,3 | 14,6 | **14,7** |
+
+Les requêtes compilées coûtent de 0,1 à 0,2 MiB de pic (massif, tas Rust et SQLite : +157 Ko pour
+`4326 → 2154`, +257 Ko pour `4267 → 4326`), dans le bruit d'une série à l'autre (±0,2 MiB). Aucun
+scénario ne repasse au-dessus de PROJ.
+
+Capacité du cache (`callgrind`, `PROJ_STMT_CACHE` temporaire) :
+
+| capacité | compilations `4326 → 2154` | `4267 → 4326` | 30 paires | instructions, 30 paires |
+|---:|---:|---:|---:|---:|
+| 0 (rien en cache) | 644 | 2 699 | 46 935 | 18,3 G |
+| 8 | 168 | 198 | 6 019 | 10,0 G |
+| 16 | 23 | 61 | 1 339 | 8,70 G |
+| 32 | 23 | 46 | 1 021 | 8,60 G |
+| **64 (livré)** | 23 | 46 | 1 003 | 8,59 G |
+
+Le pic `VmHWM` ne distingue pas ces capacités (14,0 à 14,2 MiB pour la création, 14,7 à 14,9 pour
+`4267 → 4326`, bruit de ±0,2 MiB). 16 suffit presque ; 64 laisse de la place à une recherche qui
+utilise plus de textes distincts, sans coût mesurable : le cache est vidé à la fin de la recherche.
+
+Banc (`proj-rs-bench`, sans libproj, 5 passes alternées, cas `facade_convert*`) : la meilleure
+passe de chaque cas bouge de -4,8 % à +0,9 %, médiane des écarts -0,6 %. Ces cas n'appellent pas
+la base.
+
 ## Ce qui reste, chiffres à l'appui
 
-Un scénario reste au-dessus de PROJ (80 candidats). Ce qui l'empêche, et ce qui ne l'empêche plus :
+Aucun scénario mesuré ne reste au-dessus de PROJ. Ce qui pèse encore :
 
-- **Le tas de `create`.** Environ 5 MiB : le schéma de `proj.db` analysé par SQLite (2,4 MiB par
+- **Le tas de `create`.** Environ 4 MiB : le schéma de `proj.db` analysé par SQLite (2,4 MiB par
   connexion), le cache de pages (0,5 MiB) et le modèle ISO 19111 d'une paire de CRS.
 - **Le contrat de `convert_array` n'est plus un plancher.** La garantie « tranche intacte en cas
   d'erreur » est abandonnée (décision de l'opérateur) : le scénario « création + 1 M points en
-  tableau » passe de 44,7 à 29,3 MiB (PROJ : 29,8), mesuré sur ce poste avec les binaires avant et
-  après, médiane de 5, `sum` identique (`7182541317022.373047`). Il ne reste que le tampon de
-  l'appelant et le bloc de 128 Kio.
-- **Les 80 candidats de `4267 → 4326`.** Chaque candidat porte ses CRS source et cible (`Box<Crs>`),
-  avec les identifiants, les domaines et les membres d'ensemble de chaque datum : 12 MiB de tas au
-  pic. Les partager (`Arc`) touche tout le modèle ISO 19111 ; ce n'est pas fait.
+  tableau » passe de 44,7 à 29,3 MiB (PROJ : 29,8), médiane de 5, `sum` identique
+  (`7182541317022.373047`). Il ne reste que le tampon de l'appelant et le bloc de 128 Kio.
+- **Les 80 candidats de `4267 → 4326`.** Réglé : voir « Les candidats partagent leurs CRS ». Il
+  reste 1,2 MiB de tas Rust au pic, plus 3,0 MiB de SQLite.

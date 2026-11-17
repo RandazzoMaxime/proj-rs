@@ -6,6 +6,7 @@
 //!
 //! The reference value is `cs2cs` 9.9.0 with `PROJ_NETWORK=ON` and `PROJ_DATA` set to the database
 //! directory only (no local `ntf_r93.gsb`). It needs the CDN, as `tests/net_cdn`.
+#![cfg(feature = "network")]
 
 use std::env;
 

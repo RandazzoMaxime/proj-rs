@@ -9,6 +9,8 @@
 //! conversion in `createOperationsVertToGeogSynthetized`, and the NAD83(CSRS)v7 hack of
 //! `createOperationsCompoundToCompound`.
 
+use std::sync::Arc;
+
 use super::bound::{extract_geographic, HORIZONTAL_SHIFT_GTIFF};
 use super::bound_ops::{operation_source, operation_target};
 use super::buildop::{concatenation_interpolation, interpolation_crs_of, OpProps};
@@ -28,6 +30,7 @@ use super::model::{
     VerticalCS,
 };
 use super::pipeline::ProjLines;
+use super::shared::Share;
 use super::FactoryError;
 
 const NULL_GEOGRAPHIC_OFFSET: &str = "Null geographic offset";
@@ -1125,15 +1128,15 @@ pub(super) fn compute_metadata(
         .first()
         .and_then(operation_source)
         .cloned()
-        .map(Box::new);
+        .map(Arc::new);
     let target = steps
         .last()
         .and_then(operation_target)
         .cloned()
-        .map(Box::new);
+        .map(Arc::new);
     let mut identified = Identified::named(name);
     identified.domains = extent.into_iter().collect();
-    let interpolation = concatenation_interpolation(&steps).map(Box::new);
+    let interpolation = concatenation_interpolation(&steps).map(Arc::new);
     Some(CoordinateOperation::Concatenated(ConcatenatedOperation {
         identified,
         steps: steps
@@ -1328,26 +1331,31 @@ fn horiz_vertical_horiz_checked(
 /// unit and axis steps a step writes follow the CRS the concatenation was given.
 fn with_endpoints(
     mut operation: CoordinateOperation,
-    source: &Crs,
-    target: &Crs,
+    source: impl Share,
+    target: impl Share,
 ) -> CoordinateOperation {
     set_crss_update_inverse(&mut operation, source, target);
     operation
 }
 
-fn set_crss_update_inverse(operation: &mut CoordinateOperation, source: &Crs, target: &Crs) {
+fn set_crss_update_inverse(
+    operation: &mut CoordinateOperation,
+    source: impl Share,
+    target: impl Share,
+) {
+    let (source, target) = (source.share(), target.share());
     match operation {
         CoordinateOperation::Conversion(conversion) => {
-            conversion.source = Some(Box::new(source.clone()));
-            conversion.target = Some(Box::new(target.clone()));
+            conversion.source = Some(source);
+            conversion.target = Some(target);
         }
         CoordinateOperation::Transformation(transformation) => {
-            transformation.source = Some(Box::new(source.clone()));
-            transformation.target = Some(Box::new(target.clone()));
+            transformation.source = Some(source);
+            transformation.target = Some(target);
         }
         CoordinateOperation::Concatenated(concatenated) => {
-            concatenated.source = Some(Box::new(source.clone()));
-            concatenated.target = Some(Box::new(target.clone()));
+            concatenated.source = Some(Arc::clone(&source));
+            concatenated.target = Some(Arc::clone(&target));
             if let Some(first) = concatenated.steps.first_mut() {
                 update_step_end(first, EndOfStep::Source, source);
             }
@@ -1369,25 +1377,25 @@ enum EndOfStep {
 /// `last->setCRSsUpdateInverse(lastSource, targetCRSIn)`: one end of the step is replaced, the
 /// other one is kept, and nothing changes when the step has no other end. A step that runs
 /// reversed stores its operation the other way round.
-fn update_step_end(step: &mut ConcatenatedStep, end: EndOfStep, crs: &Crs) {
-    let stored_source = operation_source(&step.operation).cloned();
-    let stored_target = operation_target(&step.operation).cloned();
+fn update_step_end(step: &mut ConcatenatedStep, end: EndOfStep, crs: Arc<Crs>) {
+    let stored_source = step.operation.source_shared().cloned();
+    let stored_target = step.operation.target_shared().cloned();
     let (running_source, running_target) = if step.reverse {
         (stored_target, stored_source)
     } else {
         (stored_source, stored_target)
     };
     let (new_source, new_target) = match end {
-        EndOfStep::Source => (Some(crs.clone()), running_target),
-        EndOfStep::Target => (running_source, Some(crs.clone())),
+        EndOfStep::Source => (Some(crs), running_target),
+        EndOfStep::Target => (running_source, Some(crs)),
     };
     let (Some(new_source), Some(new_target)) = (new_source, new_target) else {
         return;
     };
     if step.reverse {
-        set_crss_update_inverse(&mut step.operation, &new_target, &new_source);
+        set_crss_update_inverse(&mut step.operation, new_target, new_source);
     } else {
-        set_crss_update_inverse(&mut step.operation, &new_source, &new_target);
+        set_crss_update_inverse(&mut step.operation, new_source, new_target);
     }
 }
 
@@ -1563,7 +1571,7 @@ fn vertical_ballpark(
     Transformation::create_from_code(
         &OpProps::new().name(name),
         vertical.clone(),
-        target.clone(),
+        target,
         1069,
         vec![ParameterValue::scale(scale)],
         domain,
@@ -1766,8 +1774,8 @@ fn concatenate_vertical_steps(
     geog: &GeographicCRS,
 ) -> ConcatenatedOperation {
     let mut concatenated = super::factory::pivot_concatenation(steps);
-    concatenated.source = Some(Box::new(vertical.clone()));
-    concatenated.target = Some(Box::new(Crs::Geographic(geog.clone())));
+    concatenated.source = Some(Arc::new(vertical.clone()));
+    concatenated.target = Some(Arc::new(Crs::Geographic(geog.clone())));
     concatenated
 }
 
@@ -2199,8 +2207,8 @@ fn proj_geoid_operation(
             code: "8666".to_owned(),
             value: ParameterValue::filename(grid),
         }],
-        source: Some(Box::new(Crs::Vertical(vertical.clone()))),
-        target: Some(Box::new(Crs::Geographic(interpolation))),
+        source: Some(Arc::new(Crs::Vertical(vertical.clone()))),
+        target: Some(Arc::new(Crs::Geographic(interpolation))),
         interpolation: None,
         accuracy,
         accuracy_text: accuracy.map(|value| format!("{value}")),
@@ -2237,8 +2245,8 @@ pub(super) fn vertical_to_vertical(source: &Crs, target: &Crs) -> Option<Coordin
                 source.name(),
                 target.name()
             )),
-            source.clone(),
-            target.clone(),
+            source,
+            target,
             1069,
             vec![ParameterValue::scale(scale)],
             domain,
@@ -2266,9 +2274,7 @@ pub(super) fn vertical_to_vertical(source: &Crs, target: &Crs) -> Option<Coordin
     } else {
         Conversion::create_height_depth_reversal(&props)
     };
-    let mut conversion = conversion
-        .ok()?
-        .with_endpoints(source.clone(), target.clone());
+    let mut conversion = conversion.ok()?.with_endpoints(source, target);
     conversion.identified.domains = vec![domain];
     Some(CoordinateOperation::Conversion(conversion))
 }
@@ -2337,8 +2343,8 @@ pub(crate) fn null_offset(source: &Crs, target: &Crs) -> Option<CoordinateOperat
     let name = op_name(NULL_GEOGRAPHIC_OFFSET, source, target);
     let mut operation = Transformation::create_from_code(
         &OpProps::new().name(name),
-        source.clone(),
-        target.clone(),
+        source,
+        target,
         code,
         values,
         domain,
@@ -2658,8 +2664,8 @@ pub(super) fn geographic_height_change(source: &Crs, target: &Crs) -> Option<Coo
     let name = format!("Transformation from {} to {}", source.name(), target.name());
     Transformation::create_from_code(
         &OpProps::new().name(name),
-        source.clone(),
-        target.clone(),
+        source,
+        target,
         1069,
         vec![ParameterValue::scale(src_factor / dst_factor)],
         world_extent(),
@@ -2736,8 +2742,8 @@ fn proj_based_operation(
                 reverse: false,
             })
             .collect(),
-        source: Some(Box::new(source.clone())),
-        target: Some(Box::new(target.clone())),
+        source: Some(Arc::new(source.clone())),
+        target: Some(Arc::new(target.clone())),
         accuracy,
         version: None,
         computed_name: false,

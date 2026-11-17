@@ -2,6 +2,8 @@
 //!
 //! The method and parameter names are the PROJ 9.9 maps in [`super::parammap`].
 
+use std::sync::Arc;
+
 use super::equiv::Equivalence;
 use super::factory::geographic_of;
 use super::model::{
@@ -11,6 +13,7 @@ use super::model::{
 };
 use super::parammap::{self, MethodMap, ParamMap};
 use super::pipeline::{proj_number, TmercExport};
+use super::shared::Share;
 
 mod projections;
 mod transformations;
@@ -208,6 +211,33 @@ impl Transformation {
         values: Vec<ParameterValue>,
         accuracy: Option<f64>,
     ) -> Result<Self, FactoryError> {
+        Self::create_shared(
+            props,
+            Arc::new(source),
+            Arc::new(target),
+            interpolation.map(Arc::new),
+            method_name,
+            parameters,
+            values,
+            accuracy,
+        )
+    }
+
+    /// [`Self::create`] with CRS that other operations share.
+    ///
+    /// # Errors
+    ///
+    /// The parameter list and the value list have different lengths.
+    pub(crate) fn create_shared(
+        props: &OpProps,
+        source: Arc<Crs>,
+        target: Arc<Crs>,
+        interpolation: Option<Arc<Crs>>,
+        method_name: &str,
+        parameters: Vec<OperationParameter>,
+        values: Vec<ParameterValue>,
+        accuracy: Option<f64>,
+    ) -> Result<Self, FactoryError> {
         if parameters.len() != values.len() {
             return Err(FactoryError::Invalid(
                 "Inconsistent number of parameters and parameter values".to_owned(),
@@ -237,9 +267,9 @@ impl Transformation {
             identified: identified_from(props, ""),
             method: OperationMethod::create(method_name, parameters),
             parameters: stored,
-            source: Some(Box::new(source)),
-            target: Some(Box::new(target)),
-            interpolation: interpolation.map(Box::new),
+            source: Some(source),
+            target: Some(target),
+            interpolation,
             accuracy,
             accuracy_text: None,
             version: None,
@@ -287,8 +317,8 @@ impl Transformation {
     /// The method is not in the PROJ method maps, or `values` does not match its parameters.
     pub(crate) fn create_from_code(
         props: &OpProps,
-        source: Crs,
-        target: Crs,
+        source: impl Share,
+        target: impl Share,
         code: i32,
         values: Vec<ParameterValue>,
         domain: ObjectDomain,
@@ -303,8 +333,8 @@ impl Transformation {
             identified,
             method,
             parameters,
-            source: Some(Box::new(source)),
-            target: Some(Box::new(target)),
+            source: Some(source.share()),
+            target: Some(target.share()),
             interpolation: None,
             accuracy: None,
             accuracy_text: None,
@@ -673,10 +703,10 @@ pub(crate) fn concatenation_interpolation(steps: &[CoordinateOperation]) -> Opti
 }
 
 /// [`concatenation_interpolation`] of the operations of concatenated steps.
-pub(crate) fn concatenation_interpolation_of_steps(steps: &[ConcatenatedStep]) -> Option<Box<Crs>> {
+pub(crate) fn concatenation_interpolation_of_steps(steps: &[ConcatenatedStep]) -> Option<Arc<Crs>> {
     let operations: Vec<CoordinateOperation> =
         steps.iter().map(|step| step.operation.clone()).collect();
-    concatenation_interpolation(&operations).map(Box::new)
+    concatenation_interpolation(&operations).map(Arc::new)
 }
 
 impl ConcatenatedOperation {
@@ -713,8 +743,8 @@ impl ConcatenatedOperation {
         }
         let source = steps.first().and_then(CoordinateOperation::source_crs);
         let target = steps.last().and_then(CoordinateOperation::target_crs);
-        let (source, target) = (source.cloned().map(Box::new), target.cloned().map(Box::new));
-        let interpolation = concatenation_interpolation(&steps).map(Box::new);
+        let (source, target) = (source.cloned().map(Arc::new), target.cloned().map(Arc::new));
+        let interpolation = concatenation_interpolation(&steps).map(Arc::new);
         let computed_name = props.name.as_deref().is_none_or(str::is_empty);
         let joined = steps
             .iter()
@@ -820,6 +850,24 @@ impl CoordinateOperation {
             Self::Conversion(operation) => operation.target_crs(),
             Self::Transformation(operation) => operation.target_crs(),
             Self::Concatenated(operation) => operation.target_crs(),
+        }
+    }
+
+    /// The source CRS as the operation shares it.
+    pub(crate) fn source_shared(&self) -> Option<&Arc<Crs>> {
+        match self {
+            Self::Conversion(operation) => operation.source.as_ref(),
+            Self::Transformation(operation) => operation.source.as_ref(),
+            Self::Concatenated(operation) => operation.source.as_ref(),
+        }
+    }
+
+    /// The target CRS as the operation shares it.
+    pub(crate) fn target_shared(&self) -> Option<&Arc<Crs>> {
+        match self {
+            Self::Conversion(operation) => operation.target.as_ref(),
+            Self::Transformation(operation) => operation.target.as_ref(),
+            Self::Concatenated(operation) => operation.target.as_ref(),
         }
     }
 
@@ -1245,9 +1293,9 @@ impl super::model::Conversion {
 
     /// This conversion with its CRS pair set: `source` to `target` in the forward direction.
     #[must_use]
-    pub(crate) fn with_endpoints(mut self, source: Crs, target: Crs) -> Self {
-        self.source = Some(Box::new(source));
-        self.target = Some(Box::new(target));
+    pub(crate) fn with_endpoints(mut self, source: impl Share, target: impl Share) -> Self {
+        self.source = Some(source.share());
+        self.target = Some(target.share());
         self
     }
 

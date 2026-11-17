@@ -18,10 +18,10 @@ path = "src/lib.rs"
 [features]
 default = ["geo-types"]
 geo-types = ["proj-rs/geo-types"]
-# `proj` 0.31 feature names. The network client and the grid reader are always
-# built in, and no libproj is linked, so these only keep the `features = [..]`
-# list of an existing manifest valid.
-network = []
+# `proj` 0.31 feature names. `network` turns on the HTTP(S) client of proj-rs (off by
+# default, as in `proj`). The grid reader is always built in and no libproj is linked,
+# so the others only keep the `features = [..]` list of an existing manifest valid.
+network = ["proj-rs/network"]
 tiff = []
 bundled_proj = []
 pkg_config = []

@@ -17,6 +17,7 @@
 //!
 //! The user-writable directory is a temporary folder, not the user's home, and the grid cache is
 //! off, so nothing is written next to the test.
+#![cfg(feature = "network")]
 
 use std::env;
 use std::fs;

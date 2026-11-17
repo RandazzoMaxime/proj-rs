@@ -1,6 +1,8 @@
 //! The bits `convert_array`, `project_array` and `forward_slice` produce, fixed before the
 //! conversion went in place (`docs/PORTING-memory.md`). Moving the results straight into the
 //! slice must not change a bit, on any pair, direction, element type or backend.
+//! A new batch kernel changes the digests of its pairs on purpose: EPSG:3857 since webmerc took
+//! the Mercator kernel (within the tolerance of `docs/PARITY.md`).
 
 // The digests are glibc's on x86-64: another libm, or another batch path, gives other bits.
 #![cfg(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64"))]
@@ -133,8 +135,8 @@ const GOLDEN: &[(&str, u64)] = &[
     ("inverse EPSG:4326 EPSG:2154", 0xca230f8a43e2b98a),
     ("convert EPSG:4326 EPSG:32631", 0xbbb1a711a1e210dc),
     ("inverse EPSG:4326 EPSG:32631", 0x93a48215125ccef0),
-    ("convert EPSG:4326 EPSG:3857", 0xa2b720cebc1a118a),
-    ("inverse EPSG:4326 EPSG:3857", 0xb521ea30aa15682f),
+    ("convert EPSG:4326 EPSG:3857", 0xe08b38c6ffc7fb1b),
+    ("inverse EPSG:4326 EPSG:3857", 0x355d3c1dc912838f),
     ("convert EPSG:4326 EPSG:3035", 0xf7e2edc8d238100f),
     ("inverse EPSG:4326 EPSG:3035", 0x12531ae399462e84),
     ("convert EPSG:4267 EPSG:4326", 0xd2b331a2dea7f399),

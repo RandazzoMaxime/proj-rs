@@ -1,6 +1,7 @@
 //! ISO 19111 object graph the unit tests construct and export.
 
 use std::fmt;
+use std::sync::Arc;
 
 use super::equiv::Equivalence;
 use super::factory::DatabaseContext;
@@ -2628,12 +2629,12 @@ pub struct Conversion {
     pub(crate) identified: Identified,
     pub(crate) method: OperationMethod,
     pub(crate) parameters: Vec<Parameter>,
-    pub(crate) source: Option<Box<Crs>>,
-    pub(crate) target: Option<Box<Crs>>,
+    pub(crate) source: Option<Arc<Crs>>,
+    pub(crate) target: Option<Arc<Crs>>,
     pub(crate) version: Option<String>,
     pub(crate) inverted: bool,
     /// Interpolation CRS, from the EPSG `EPSG code for Interpolation CRS` parameter.
-    pub(crate) interpolation: Option<Box<Crs>>,
+    pub(crate) interpolation: Option<Arc<Crs>>,
 }
 
 impl Conversion {
@@ -2692,9 +2693,9 @@ pub struct Transformation {
     pub(crate) identified: Identified,
     pub(crate) method: OperationMethod,
     pub(crate) parameters: Vec<Parameter>,
-    pub(crate) source: Option<Box<Crs>>,
-    pub(crate) target: Option<Box<Crs>>,
-    pub(crate) interpolation: Option<Box<Crs>>,
+    pub(crate) source: Option<Arc<Crs>>,
+    pub(crate) target: Option<Arc<Crs>>,
+    pub(crate) interpolation: Option<Arc<Crs>>,
     pub(crate) accuracy: Option<f64>,
     /// The accuracy as the database wrote it, such as `1.0`.
     pub(crate) accuracy_text: Option<String>,
@@ -2810,8 +2811,8 @@ impl ConcatenatedStep {
 pub struct ConcatenatedOperation {
     pub(crate) identified: Identified,
     pub(crate) steps: Vec<ConcatenatedStep>,
-    pub(crate) source: Option<Box<Crs>>,
-    pub(crate) target: Option<Box<Crs>>,
+    pub(crate) source: Option<Arc<Crs>>,
+    pub(crate) target: Option<Arc<Crs>>,
     pub(crate) accuracy: Option<f64>,
     pub(crate) version: Option<String>,
     /// The name is the steps' names joined by ` + `, as `createComputeMetadata` sets it.
@@ -2825,7 +2826,7 @@ pub struct ConcatenatedOperation {
     pub(crate) target_epoch: Option<f64>,
     /// The interpolation CRS the steps share, as `ConcatenatedOperation::create` sets it
     /// (`CoordinateOperation::interpolationCRS`, concatenatedoperation.cpp:177-256).
-    pub(crate) interpolation: Option<Box<Crs>>,
+    pub(crate) interpolation: Option<Arc<Crs>>,
 }
 
 /// Which `MyPROJStringExportableHorizVertical*` of `coordinateoperationfactory.cpp` writes a
@@ -3694,7 +3695,7 @@ pub struct GeoidModel {
     pub(crate) name: String,
     pub(crate) identifiers: Vec<Identifier>,
     /// PROJJSON `interpolation_crs`: the CRS the model interpolates in.
-    pub(crate) interpolation_crs: Option<Box<Crs>>,
+    pub(crate) interpolation_crs: Option<Arc<Crs>>,
     /// Accuracy of the model in metres, the `ACCURACY=` of PROJ's `GEOID_MODEL` transformation.
     /// Set, it is the accuracy of the geoid operation (`getProjGeoidTransformation`).
     pub(crate) accuracy: Option<f64>,
@@ -3724,7 +3725,7 @@ impl GeoidModel {
     /// Set the geographic CRS the model interpolates in.
     #[must_use]
     pub fn with_interpolation_crs(mut self, crs: GeographicCRS) -> Self {
-        self.interpolation_crs = Some(Box::new(Crs::Geographic(crs)));
+        self.interpolation_crs = Some(Arc::new(Crs::Geographic(crs)));
         self
     }
 
@@ -4097,7 +4098,7 @@ impl CompoundCRS {
                     if let Crs::Geographic(geographic) = bound.source_crs() {
                         if geographic.coordinate_system.axes.len() == 2 {
                             let mut promoted = bound.clone();
-                            promoted.source = Box::new(Crs::Geographic(
+                            promoted.source = Arc::new(Crs::Geographic(
                                 ellipsoidal_height_geographic(geographic, vertical),
                             ));
                             return Ok(Crs::Bound(promoted));
@@ -4192,7 +4193,7 @@ fn set_non_conformant_wkt1(crs: &mut Crs) {
     match crs {
         Crs::Geographic(geographic) => geographic.identified.allow_non_conformant_wkt1 = true,
         Crs::Projected(projected) => projected.identified.allow_non_conformant_wkt1 = true,
-        Crs::Bound(bound) => set_non_conformant_wkt1(&mut bound.source),
+        Crs::Bound(bound) => set_non_conformant_wkt1(Arc::make_mut(&mut bound.source)),
         _ => {}
     }
 }
@@ -4201,8 +4202,8 @@ fn set_non_conformant_wkt1(crs: &mut Crs) {
 #[derive(Clone, Debug)]
 pub struct BoundCRS {
     pub(crate) identified: Identified,
-    pub(crate) source: Box<Crs>,
-    pub(crate) target: Box<Crs>,
+    pub(crate) source: Arc<Crs>,
+    pub(crate) target: Arc<Crs>,
     pub(crate) transformation: CoordinateOperation,
 }
 
@@ -4213,8 +4214,8 @@ impl BoundCRS {
         let name = source.name().to_owned();
         Self {
             identified: Identified::named(name),
-            source: Box::new(source),
-            target: Box::new(target),
+            source: Arc::new(source),
+            target: Arc::new(target),
             transformation,
         }
     }
@@ -4529,7 +4530,7 @@ impl Crs {
                 )?))
             }
             Self::Bound(bound) => {
-                let source = bound.source.add_horizontal_derived_conversion(
+                let source = Arc::unwrap_or_clone(bound.source).add_horizontal_derived_conversion(
                     name,
                     conversion,
                     coordinate_system,
@@ -4540,7 +4541,7 @@ impl Crs {
                 identified.remarks = bound.identified.remarks;
                 Ok(Self::Bound(BoundCRS {
                     identified,
-                    source: Box::new(source),
+                    source: Arc::new(source),
                     target: bound.target,
                     transformation: bound.transformation,
                 }))

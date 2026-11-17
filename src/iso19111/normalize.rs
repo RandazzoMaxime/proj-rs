@@ -11,6 +11,7 @@ use super::model::{
     CoordinateSystem, Crs, GeodeticCRS, GeographicCRS, Identified, Identifier, OperationMethod,
 };
 use super::parammap;
+use std::sync::Arc;
 
 /// `NORMALIZED_AXIS_ORDER_SUFFIX_STR`.
 const NORMALIZED_SUFFIX: &str = " (with axis order normalized for visualization)";
@@ -98,12 +99,12 @@ fn concatenated_of(
             .map(|step| step.operation.clone())
             .collect::<Vec<_>>(),
     )
-    .map(Box::new);
+    .map(Arc::new);
     ConcatenatedOperation {
         identified,
         steps,
-        source: Some(Box::new(source)),
-        target: Some(Box::new(target)),
+        source: Some(Arc::new(source)),
+        target: Some(Arc::new(target)),
         accuracy,
         version: None,
         // Only selects how the accuracy text is spelled, see `accuracy_text`.
@@ -148,8 +149,8 @@ fn reversal_step(source: Crs, target: Crs) -> Option<ConcatenatedStep> {
             parameters: Vec::new(),
         },
         parameters: Vec::new(),
-        source: Some(Box::new(source)),
-        target: Some(Box::new(target)),
+        source: Some(Arc::new(source)),
+        target: Some(Arc::new(target)),
         version: None,
         inverted: false,
         interpolation: None,

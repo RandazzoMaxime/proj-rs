@@ -15,6 +15,7 @@ use super::model::{
 };
 use super::niche::DerivedCRS;
 use crate::crs_text::{self, Object, Value};
+use std::sync::Arc;
 
 type Read<T> = Result<T, FactoryError>;
 
@@ -752,7 +753,7 @@ impl Reader<'_> {
         let identified = self.properties(object, false)?;
         let interpolation_crs = if contains(object, "interpolation_crs") {
             let crs = get_object(object, "interpolation_crs")?;
-            Some(Box::new(self.build_crs(&Value::Object(crs.clone()))?))
+            Some(Arc::new(self.build_crs(&Value::Object(crs.clone()))?))
         } else {
             None
         };
@@ -806,16 +807,16 @@ impl Reader<'_> {
     fn build_transformation(&mut self, object: &Object, motion: Motion) -> Read<Transformation> {
         let point_motion = motion == Motion::Point;
         let source =
-            Box::new(self.build_crs(&Value::Object(get_object(object, "source_crs")?.clone()))?);
+            Arc::new(self.build_crs(&Value::Object(get_object(object, "source_crs")?.clone()))?);
         let target = if point_motion {
             None
         } else {
-            Some(Box::new(self.build_crs(&Value::Object(
+            Some(Arc::new(self.build_crs(&Value::Object(
                 get_object(object, "target_crs")?.clone(),
             ))?))
         };
         let interpolation = if !point_motion && contains(object, "interpolation_crs") {
-            Some(Box::new(self.build_crs(&Value::Object(
+            Some(Arc::new(self.build_crs(&Value::Object(
                 get_object(object, "interpolation_crs")?.clone(),
             ))?))
         } else {
@@ -862,9 +863,9 @@ impl Reader<'_> {
     /// on the JSON this importer is asked to round-trip.
     fn build_concatenated(&mut self, object: &Object) -> Read<ConcatenatedOperation> {
         let source =
-            Box::new(self.build_crs(&Value::Object(get_object(object, "source_crs")?.clone()))?);
+            Arc::new(self.build_crs(&Value::Object(get_object(object, "source_crs")?.clone()))?);
         let target =
-            Box::new(self.build_crs(&Value::Object(get_object(object, "target_crs")?.clone()))?);
+            Arc::new(self.build_crs(&Value::Object(get_object(object, "target_crs")?.clone()))?);
         let mut steps = Vec::new();
         for step in get_array(object, "steps")? {
             let Value::Object(step) = step else {
@@ -941,7 +942,7 @@ impl Reader<'_> {
         }
         let operation_source = if contains(transformation, "source_crs") {
             let object = get_object(transformation, "source_crs")?;
-            Some(Box::new(self.build_crs(&Value::Object(object.clone()))?))
+            Some(Arc::new(self.build_crs(&Value::Object(object.clone()))?))
         } else {
             None
         };

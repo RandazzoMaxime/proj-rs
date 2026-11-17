@@ -54,21 +54,24 @@ const PAIRS: &[(&str, &str, f64)] = &[
     ("EPSG:4326", "EPSG:3035", METRES),
     ("EPSG:2154", "EPSG:4326", DEGREES),
     ("EPSG:2154", "EPSG:32631", METRES),
+    ("EPSG:3857", "EPSG:4326", DEGREES),
     ("EPSG:4267", "EPSG:4326", DEGREES),
 ];
 
-/// The input of a pair: geographic degrees, or Lambert-93 metres for a source in 2154.
+/// The input of a pair: geographic degrees, or metres for a projected source (Lambert-93 for
+/// 2154, Web Mercator for 3857).
 fn input(from: &str, count: usize) -> Vec<(f64, f64)> {
     let geographic = france(count);
-    if from == "EPSG:2154" {
-        let to_l93 = Proj::new_known_crs("EPSG:4326", "EPSG:2154", None).expect("4326 to 2154");
-        geographic
-            .iter()
-            .map(|&p| to_l93.convert(p).expect("inside France"))
-            .collect()
-    } else {
-        geographic
-    }
+    let to = match from {
+        "EPSG:2154" => "EPSG:2154",
+        "EPSG:3857" => "EPSG:3857",
+        _ => return geographic,
+    };
+    let to_metres = Proj::new_known_crs("EPSG:4326", to, None).expect("4326 to the source");
+    geographic
+        .iter()
+        .map(|&p| to_metres.convert(p).expect("inside France"))
+        .collect()
 }
 
 fn one_by_one(proj: &Proj, points: &[(f64, f64)]) -> Vec<(f64, f64)> {
