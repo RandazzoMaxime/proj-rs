@@ -31,7 +31,11 @@ by georust's own unit tests and documentation examples and is **not complete yet
 - **Fails closed.** An unknown `+proj`, an unknown method, or a missing grid is
   an error when you build the operation. It is never a coordinate.
 - **Self-contained.** PROJ 9.9's `proj.db` is embedded, so EPSG codes resolve
-  without a PROJ install, a `PROJ_DATA` directory, or a system SQLite.
+  without a PROJ install, a `PROJ_DATA` directory, or a system SQLite. No TLS
+  library is built unless you turn on the `network` feature.
+- **Fast, and lighter in memory.** Faster than `libproj` on the ten conversions
+  measured, and under its peak memory in the five scenarios measured, on Linux
+  x86-64. The numbers, the figures and the method are in [How fast](#how-fast).
 - **Strict by default.** Clippy runs with `-D warnings`, `unwrap()` is banned
   outside tests, every `unsafe` block needs a `// SAFETY:` comment, and a
   ratchet fails the test run if the PROJ pass count ever drops.
@@ -49,6 +53,183 @@ panel is what is left: PROJ's C++ unit tests, which cover the ISO 19111 model,
 WKT and the operation factory, and the command-line cases. The chart is drawn
 from the same ledgers as the tables below by `tests/progress_svg.rs`, so it
 cannot say more than the tests do.
+
+## How fast
+
+Speed, size on disk and peak memory of the same conversions, proj-rs against PROJ 9.9.0 on Linux x86-64. Every number comes from a measurement file, [`bench/history.jsonl`](bench/history.jsonl) for the speed and [`bench/footprint.json`](bench/footprint.json) for the size and the memory, and the pictures and tables are drawn from them.
+
+What the speed rests on: the batch path above, a pipeline that folds its axis-swap and unit steps into one
+([`docs/PORTING-affine-plan.md`](docs/PORTING-affine-plan.md)), and, for the memory, a `proj.db` that is read from the
+executable instead of being copied ([`docs/PORTING-memory.md`](docs/PORTING-memory.md)).
+
+<!-- bench-compare:start -->
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="bench/compare-dark.svg">
+  <img src="bench/compare-light.svg" alt="Bar chart: nanoseconds per point, proj-rs next to PROJ 9.9.0, ten conversions" width="100%">
+</picture>
+<!-- bench-compare:end -->
+
+<!-- bench-how-fast:start -->
+These numbers are PROJ-RS v1's. The optimisation work (wider SIMD, GPU) comes in the versions after it.
+
+On a 4-vCPU cloud VM (Intel Xeon at 2.10 GHz), the process pinned to one core, proj-rs is 2.8× faster than PROJ 9.9.0's `libproj` on average over the ten cases below (geometric mean of the ratios; faster in every case, from 1.1× to 6.9×). One point at a time, proj-rs is 1.9× faster on average, from 1.1× to 6.9×. On a slice of points, it is 4.2× faster on average, from 3.0× to 6.8×. This is one machine: the ratios on another CPU, or on a build of libproj with other flags, will differ. The batch kernels take the AVX2 path, which every x86-64 CPU has since 2013 (Intel) and 2015 (AMD); AVX-512 is not used.
+
+| Conversion | Call | PROJ 9.9.0 | proj-rs |
+|---|---|---:|---:|
+| WGS 84 → RGF93 / Lambert-93 (EPSG:4326 → 2154) | `convert`, one point at a time | 108 ns | 61.4 ns (1.8× faster) |
+| WGS 84 → RGF93 / Lambert-93 (EPSG:4326 → 2154) | `convert_array`, 200,000 points | 100 ns | 33.5 ns (3.0× faster) |
+| WGS 84 → WGS 84 / UTM 31N (EPSG:4326 → 32631) | `convert`, one point at a time | 144 ns | 109 ns (1.3× faster) |
+| WGS 84 → WGS 84 / UTM 31N (EPSG:4326 → 32631) | `convert_array`, 200,000 points | 150 ns | 26.4 ns (5.7× faster) |
+| WGS 84 → Web Mercator (EPSG:4326 → 3857) | `convert`, one point at a time | 73.6 ns | 53.8 ns (1.4× faster) |
+| WGS 84 → Web Mercator (EPSG:4326 → 3857) | `convert_array`, 200,000 points | 81.6 ns | 24.7 ns (3.3× faster) |
+| RGF93 / Lambert-93 → WGS 84 / UTM 31N (EPSG:2154 → 32631) | `convert`, one point at a time | 357 ns | 326 ns (1.1× faster) |
+| RGF93 / Lambert-93 → WGS 84 / UTM 31N (EPSG:2154 → 32631) | `convert_array`, 200,000 points | 323 ns | 90 ns (3.6× faster) |
+| NAD27 → WGS 84 (EPSG:4267 → 4326) | `convert`, one point at a time | 306 ns | 44.2 ns (6.9× faster) |
+| NAD27 → WGS 84 (EPSG:4267 → 4326) | `convert_array`, 200,000 points | 309 ns | 45.4 ns (6.8× faster) |
+
+Nanoseconds per point; lower is faster. Line of Nov 17 17:47 UTC at commit `ad8d680`, the best of 5 runs for each case. Both sides convert the same points, and the bench stops if their outputs differ. With no grid, NAD27 → WGS 84 is PROJ's ballpark offset on both sides, a change of units and axis order with no datum shift, which proj-rs applies as one step. What exactly is compared, and how to rerun it: [docs/BENCHMARK.md](docs/BENCHMARK.md).
+
+<details>
+<summary><b>Bare projections against libproj, and the ten slowest operations</b></summary>
+
+<br>
+
+Bare projections, forward, from `+proj=` strings (no CRS lookup), one point at a time over a million points:
+
+| Projection | PROJ 9.9.0 | proj-rs |
+|---|---:|---:|
+| UTM 31 forward, `+proj=utm` | 127 ns | 98.3 ns (1.3× faster) |
+| Lambert-93 forward, `+proj=lcc` | 87.7 ns | 64.7 ns (1.4× faster) |
+| Web Mercator forward, `+proj=merc` | 53.5 ns | 56 ns (about the same, 0.96×) |
+
+Ten slowest operations of the catalogue (same line, a 128-point grid, no libproj column):
+
+| Operation | ns/point |
+|---|---:|
+| `gnom` | 521.7 |
+| `aeqd` | 505.4 |
+| `lsat` | 450.3 |
+| `misrsom` | 411.6 |
+| `dsea` | 342.4 |
+| `isea` | 272.9 |
+| `ivea` | 260.0 |
+| `tsea` | 250.6 |
+| `spilhaus` | 209.1 |
+| `mod_krovak` | 190.0 |
+
+</details>
+<!-- bench-how-fast:end -->
+
+### Size and memory
+
+<!-- bench-footprint:start -->
+The same conversion, EPSG:4326 to EPSG:2154, measured on the same machine (Linux x86-64, glibc), proj-rs against PROJ 9.9.0.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="bench/size-dark.svg">
+  <img src="bench/size-light.svg" alt="Stacked bar chart: size on disk of the install needed to convert EPSG:4326 to EPSG:2154, PROJ 9.9.0 and proj-rs" width="100%">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="bench/memory-dark.svg">
+  <img src="bench/memory-light.svg" alt="Bar chart: peak memory of five scenarios, proj-rs next to PROJ 9.9.0" width="100%">
+</picture>
+
+On disk, a Rust program with proj-rs is 17.1 MiB with `proj.db` included (10.1 MiB of it) and no library other than the C library: 1.1× smaller than a C program with PROJ 9.9.0 built as in the speed comparison (18.6 MiB), and 2.2× smaller than one with a PROJ built with TIFF and curl (37.9 MiB). With the `network` feature (the HTTPS grid download, TLS from the system) the program is 22.9 MiB, of which 5.7 MiB is OpenSSL: 1.7× smaller than the PROJ with curl. The code of proj-rs alone, `proj.db` left out, is 7.0 MiB; an empty Rust program is 0.3 MiB.
+
+In memory, creating the transform peaks at 12.1 MiB for proj-rs and 14.8 MiB for PROJ (1.2× less memory). With a million points one at a time it is 12.2 MiB and 14.7 MiB; as one array, 27.3 MiB and 29.9 MiB, the array of points itself being 15.3 MiB; with several candidate operations (EPSG:4267 to 4326), 13.0 MiB and 16.4 MiB.
+
+<details>
+<summary><b>Size and memory, component by component</b></summary>
+
+<br>
+
+Size on disk, after `strip --strip-unneeded`. A program is counted with every shared library `ldd` lists for it, except the C library and the unwinder (libc, libm, libdl, libpthread, librt, libutil, libgcc_s), on both sides. Nov 17 17:59 UTC, commit `ad8d680`.
+
+| Install | Program and library | proj.db | Other shared libraries | of which OpenSSL | of which libcurl | Total, stripped | Total, as built |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| PROJ 9.9.0, C program + libproj, TIFF and curl off | 4.7 MiB | 10.1 MiB | 3.9 MiB | none | none | **18.6 MiB** | 19.6 MiB |
+| PROJ 9.9.0, C program + libproj, TIFF and curl on | 4.7 MiB | 10.1 MiB | 23.1 MiB | 5.7 MiB | 0.7 MiB | **37.9 MiB** | 38.9 MiB |
+| proj-rs as libproj, same C program + libproj of capi/ | 8.3 MiB | 10.1 MiB | 0.0 MiB | none | none | **18.4 MiB** | 19.4 MiB |
+| proj-rs, Rust program, proj.db inside | 7.0 MiB | 10.1 MiB | 0.0 MiB | none | none | **17.1 MiB** | 17.9 MiB |
+| proj-rs, feature network, Rust program, HTTPS grid download | 7.1 MiB | 10.1 MiB | 5.7 MiB | 5.7 MiB | none | **22.9 MiB** | 23.7 MiB |
+
+OpenSSL is `libssl` plus `libcrypto`, already inside the third column. proj-rs links it only with the `network` feature, for its HTTPS grid download, and takes it from the system (`native-tls`); PROJ pulls it through libcurl, when built with curl, together with the other libraries of curl (`libnghttp2`, `libssh`, `libgssapi_krb5`, `libldap`, `libgnutls` and more), which count in the third column but not in the libcurl column.
+
+Shared libraries counted in the third column:
+
+- PROJ 9.9.0, C program + libproj, TIFF and curl off: `libsqlite3.so.0.8.6`, `libstdc++.so.6.0.33`.
+- PROJ 9.9.0, C program + libproj, TIFF and curl on: `libsqlite3.so.0.8.6`, `libtiff.so.6.0.1`, `libcurl.so.4.8.0`, `libstdc++.so.6.0.33`, `libwebp.so.7.1.8`, `libzstd.so.1.5.5`, `liblzma.so.5.4.5`, `libLerc.so.4`, `libjbig.so.0`, `libjpeg.so.8.2.2`, `libdeflate.so.0`, `libz.so.1.3`, `libnghttp2.so.14.26.0`, `libidn2.so.0.4.0`, `librtmp.so.1`, `libssh.so.4.9.6`, `libpsl.so.5.3.4`, `libssl.so.3`, `libcrypto.so.3`, `libgssapi_krb5.so.2.2`, `libldap.so.2.0.200`, `liblber.so.2.0.200`, `libbrotlidec.so.1.1.0`, `libsharpyuv.so.0.0.1`, `libunistring.so.5.0.0`, `libgnutls.so.30.37.1`, `libhogweed.so.6.8`, `libnettle.so.8.8`, `libgmp.so.10.5.0`, `libkrb5.so.3.3`, `libk5crypto.so.3.1`, `libcom_err.so.2.1`, `libkrb5support.so.0.1`, `libsasl2.so.2.0.25`, `libbrotlicommon.so.1.1.0`, `libp11-kit.so.0.3.1`, `libtasn1.so.6.6.3`, `libkeyutils.so.1.10`, `libresolv.so.2`, `libffi.so.8.1.4`.
+- proj-rs as libproj, same C program + libproj of capi/: none.
+- proj-rs, Rust program, proj.db inside: none.
+- proj-rs, feature network, Rust program, HTTPS grid download: `libssl.so.3`, `libcrypto.so.3`.
+
+The Rust program is 17.1 MiB stripped, of which 10.1 MiB is the embedded `proj.db`; the empty Rust program of the same toolchain is 0.3 MiB. The code of proj-rs thus adds 6.7 MiB, SQLite and the TIFF reader included.
+
+| Peak resident memory | PROJ 9.9.0 | PROJ 9.9.0, TIFF and curl | proj-rs C library | proj-rs (Rust) |
+|---|---:|---:|---:|---:|
+| process start, nothing created | 5.7 MiB | 12.1 MiB | 2.5 MiB | 3.0 MiB |
+| create the 4326 → 2154 transform | 14.8 MiB | 21.2 MiB | 13.0 MiB | 12.1 MiB |
+| create + 1,000,000 points, one at a time | 14.7 MiB | 21.2 MiB | 13.0 MiB | 12.2 MiB |
+| create + 1,000,000 points, one array | 29.9 MiB | 36.4 MiB | 28.1 MiB | 27.3 MiB |
+| 4267 → 4326 (several candidates) + 1,000,000 points, one at a time | 16.4 MiB | 22.8 MiB | 13.9 MiB | 13.0 MiB |
+
+| Peak heap (valgrind massif) | PROJ 9.9.0 | PROJ 9.9.0, TIFF and curl | proj-rs C library | proj-rs (Rust) |
+|---|---:|---:|---:|---:|
+| process start, nothing created | 0.1 MiB | 0.2 MiB | 0.0 MiB | 0.0 MiB |
+| create the 4326 → 2154 transform | 5.5 MiB | 5.6 MiB | 3.6 MiB | 3.6 MiB |
+| create + 1,000,000 points, one at a time | 5.5 MiB | 5.6 MiB | 3.6 MiB | 3.6 MiB |
+| create + 1,000,000 points, one array | 20.4 MiB | 20.5 MiB | 15.4 MiB | 15.5 MiB |
+| 4267 → 4326 (several candidates) + 1,000,000 points, one at a time | 6.7 MiB | 6.8 MiB | 4.2 MiB | 4.2 MiB |
+
+Median of 5 runs for the resident memory (`VmHWM`, read by the program itself); the heap is one massif run. Each process runs one scenario on the same 1,000,000 points, and its output is checked against PROJ's. Every process starts with its own loader and libraries, so the first row is the floor. What exactly is measured, and how to rerun it: [docs/BENCHMARK.md](docs/BENCHMARK.md).
+
+</details>
+<!-- bench-footprint:end -->
+
+### Over time
+
+How PROJ-RS's own numbers move from run to run, each machine on its own: a number
+compares with its own machine's only. They come from
+[`bench/history.jsonl`](bench/history.jsonl), one line per run with the commit and the
+machine name. `bench/record.sh` adds a line and draws these again, and a commit that adds
+a line commits the charts with it.
+
+<!-- bench-trend:start -->
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="bench/trend-cloud-4c-avx512-dark.svg">
+  <img src="bench/trend-cloud-4c-avx512-light.svg" alt="Nanoseconds per point, one line per case, logarithmic scale" width="100%">
+</picture>
+
+Time per point: 11 runs from Nov 15 to Nov 17, the first to the latest: UTM forward 88.8 ns to 98.3 ns; Lambert-93 forward 62.3 ns to 64.7 ns; Web Mercator forward 45.8 ns to 56 ns; convert_array 4326→2154 130 ns to 33.5 ns; Helmert 9.31 ns to 11 ns.
+
+Not drawn until there are two runs on one machine: 2 other machine(s) with one run.
+<!-- bench-trend:end -->
+
+### Reproduce the benchmarks
+
+```bash
+# Speed. Build PROJ 9.9.0 once, then record a line on your machine (a few minutes;
+# the bench runs five times, pinned to one core):
+tools/build-reference.sh
+export PROJ_RS_LIBPROJ_DIR=$PWD/target/proj-reference/build/lib
+BENCH_MACHINE=my-box BENCH_ROUNDS=5 taskset -c 2 sh bench/record.sh
+
+# Size and memory (Linux x86-64; builds a second PROJ with TIFF and curl, the Rust programs
+# and the C library, a few minutes):
+BENCH_MACHINE=my-box taskset -c 0,1 sh bench/footprint.sh
+```
+
+`bench/record.sh` appends a line to [`bench/history.jsonl`](bench/history.jsonl),
+draws `bench/trend-<machine>-{light,dark}.svg` and `bench/compare-{light,dark}.svg`, and rewrites the
+"How fast" and "Over time" blocks of this README from the history
+(`tools/bench/how_fast.py`, `tools/bench/trend_svg.py`, `tools/bench/compare_svg.py`). Without
+`PROJ_RS_LIBPROJ_DIR` the bench still runs, but the line has no libproj column, and
+the "How fast" table stays on the newest line that has one. `bench/footprint.sh` writes
+[`bench/footprint.json`](bench/footprint.json), draws `bench/{size,memory}-{light,dark}.svg` and rewrites
+the "Size and memory" block (`tools/bench/footprint_measure.py`, `tools/bench/footprint_svg.py`).
+What each case compares, and how the size and the memory are counted, is in
+[docs/BENCHMARK.md](docs/BENCHMARK.md).
 
 ## How the port is done
 
@@ -90,11 +271,11 @@ PROJ's own, and a case counts only when it passes.
 | Projections and conversions | ✅ | **189 operations** build and run; `builtins.gie` passes **2,597 / 2,597** |
 | Pipelines, `cart`, Helmert, Molodensky, `unitconvert`, `affine`, `axisswap` | ✅ | `+proj=pipeline` with `+step` and `+inv`, exercised across PROJ's suite (`more_builtins`, `4D-API_cs2cs-style`, `axisswap`, `unitconvert`) |
 | Grid shifts, `tinshift`, deformation models | ✅ | All `gie` files green. The PROJ 9.9.0 test grids live in [`data/tests/`](data/tests). CDN grids are fetched with `PROJ_NETWORK=ON`, as in PROJ's own tests |
-| Embedded `proj.db` and EPSG resolution | ✅ | Built from the PROJ 9.9.0 SQL, opened in memory with `rusqlite` |
+| Embedded `proj.db` and EPSG resolution | ✅ | Built from the PROJ 9.9.0 SQL, embedded in the binary and read in place by `rusqlite`, with no copy into memory |
 | ISO 19111 model, WKT and PROJJSON | 🟡 | CRS model, authority factory, CRS identification against `proj.db`, WKT1 and WKT2 import and export, PROJJSON. See [`docs/CRS-API.md`](docs/CRS-API.md) |
 | georust `proj` facade | 🟡 | `Proj`, `ProjBuilder`, `Coord`, `Transform`, `Area`, errors and the `geo-types` feature exist. <!--gen:georust_pass-->25<!--/gen--> of <!--gen:georust_total-->25<!--/gen--> of georust `proj` 0.31's own unit tests pass against it ([`tests/georust_parity.rs`](tests/georust_parity.rs)); the rest are listed there as gaps |
 | Command-line tools | 🟡 | `cct`, `cs2cs`, `proj`, `invproj`, `geod`, `invgeod`, `gie`, `projinfo` and `projsync` over the library; <!--gen:cli_matched-->825<!--/gen--> of <!--gen:cli_total-->825<!--/gen--> PROJ CLI cases match |
-| SIMD batch path | ✅ | AVX2 + FMA on x86-64. Off AVX2, `Tmerc` runs a portable 4-lane loop (bit-identical, 25–34 % faster on x86-64); `Lcc` runs the scalar loop |
+| SIMD batch path | ✅ | AVX2 + FMA on x86-64 for `Tmerc`, `Lcc` and `Mercator`, Web Mercator included. Off AVX2, `Tmerc` runs a portable 4-lane loop (bit-identical, 25–34 % faster on x86-64); `Lcc` and `Mercator` run the scalar loop |
 
 ✅ done and verified &nbsp;·&nbsp; 🟡 working, with known gaps listed below
 
@@ -354,7 +535,7 @@ uses the crate's own vector math functions (no libmvec, no C library calls): the
 on Linux, Windows and macOS. Off AVX2, `Tmerc::forward_batch` runs a portable 4-lane loop, bit-identical
 to the scalar path and 25–34 % faster on x86-64; the other batch functions run the
 scalar loop. `Proj::convert_array` and `project_array` use the vector path for
-Transverse Mercator, Lambert conic and Mercator. The AVX2 path is not bit-identical
+Transverse Mercator, Lambert conic and Mercator, Web Mercator included. The AVX2 path is not bit-identical
 to the scalar path (at most 11 nm, [`docs/PORTING-simd.md`](docs/PORTING-simd.md),
 [`docs/PORTING-batch-api.md`](docs/PORTING-batch-api.md), [`docs/PORTING-batch-path.md`](docs/PORTING-batch-path.md)).
 CI builds on Ubuntu 24.04 and Windows, and checks against the PROJ 9.9.0 binaries
@@ -378,151 +559,7 @@ an error, unless the application gives its own client with `set_network_callback
 temporary directory under `proj/`. Without the grid the operation fails to
 build, with a clear error.
 
-## How fast
-
-<!-- bench-compare:start -->
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="bench/compare-dark.svg">
-  <img src="bench/compare-light.svg" alt="Bar chart: nanoseconds per point, proj-rs next to PROJ 9.9.0, ten conversions" width="100%">
-</picture>
-<!-- bench-compare:end -->
-
-<!-- bench-how-fast:start -->
-These numbers are PROJ-RS v1's. The optimisation work (wider SIMD, GPU) comes in the versions after it.
-
-On a 4-vCPU cloud VM (Intel Xeon at 2.10 GHz), the process pinned to one core, proj-rs is 2.8× faster than PROJ 9.9.0's `libproj` on average over the ten cases below (geometric mean of the ratios; faster in every case, from 1.1× to 6.9×). One point at a time, proj-rs is 1.9× faster on average, from 1.1× to 6.9×. On a slice of points, it is 4.2× faster on average, from 3.0× to 6.8×. This is one machine: the ratios on another CPU, or on a build of libproj with other flags, will differ. The batch kernels take the AVX2 path, which every x86-64 CPU has since 2013 (Intel) and 2015 (AMD); AVX-512 is not used.
-
-| Conversion | Call | PROJ 9.9.0 | proj-rs |
-|---|---|---:|---:|
-| WGS 84 → RGF93 / Lambert-93 (EPSG:4326 → 2154) | `convert`, one point at a time | 108 ns | 61.4 ns (1.8× faster) |
-| WGS 84 → RGF93 / Lambert-93 (EPSG:4326 → 2154) | `convert_array`, 200,000 points | 100 ns | 33.5 ns (3.0× faster) |
-| WGS 84 → WGS 84 / UTM 31N (EPSG:4326 → 32631) | `convert`, one point at a time | 144 ns | 109 ns (1.3× faster) |
-| WGS 84 → WGS 84 / UTM 31N (EPSG:4326 → 32631) | `convert_array`, 200,000 points | 150 ns | 26.4 ns (5.7× faster) |
-| WGS 84 → Web Mercator (EPSG:4326 → 3857) | `convert`, one point at a time | 73.6 ns | 53.8 ns (1.4× faster) |
-| WGS 84 → Web Mercator (EPSG:4326 → 3857) | `convert_array`, 200,000 points | 81.6 ns | 24.7 ns (3.3× faster) |
-| RGF93 / Lambert-93 → WGS 84 / UTM 31N (EPSG:2154 → 32631) | `convert`, one point at a time | 357 ns | 326 ns (1.1× faster) |
-| RGF93 / Lambert-93 → WGS 84 / UTM 31N (EPSG:2154 → 32631) | `convert_array`, 200,000 points | 323 ns | 90 ns (3.6× faster) |
-| NAD27 → WGS 84 (EPSG:4267 → 4326) | `convert`, one point at a time | 306 ns | 44.2 ns (6.9× faster) |
-| NAD27 → WGS 84 (EPSG:4267 → 4326) | `convert_array`, 200,000 points | 309 ns | 45.4 ns (6.8× faster) |
-
-Nanoseconds per point; lower is faster. Line of Nov 17 17:47 UTC at commit `ad8d680`, the best of 5 runs for each case. Both sides convert the same points, and the bench stops if their outputs differ. With no grid, NAD27 → WGS 84 is PROJ's ballpark offset on both sides, a change of units and axis order with no datum shift, which proj-rs applies as one step. What exactly is compared, and how to rerun it: [docs/BENCHMARK.md](docs/BENCHMARK.md).
-
-<details>
-<summary><b>Bare projections against libproj, and the ten slowest operations</b></summary>
-
-<br>
-
-Bare projections, forward, from `+proj=` strings (no CRS lookup), one point at a time over a million points:
-
-| Projection | PROJ 9.9.0 | proj-rs |
-|---|---:|---:|
-| UTM 31 forward, `+proj=utm` | 127 ns | 98.3 ns (1.3× faster) |
-| Lambert-93 forward, `+proj=lcc` | 87.7 ns | 64.7 ns (1.4× faster) |
-| Web Mercator forward, `+proj=merc` | 53.5 ns | 56 ns (about the same, 0.96×) |
-
-Ten slowest operations of the catalogue (same line, a 128-point grid, no libproj column):
-
-| Operation | ns/point |
-|---|---:|
-| `gnom` | 521.7 |
-| `aeqd` | 505.4 |
-| `lsat` | 450.3 |
-| `misrsom` | 411.6 |
-| `dsea` | 342.4 |
-| `isea` | 272.9 |
-| `ivea` | 260.0 |
-| `tsea` | 250.6 |
-| `spilhaus` | 209.1 |
-| `mod_krovak` | 190.0 |
-
-</details>
-<!-- bench-how-fast:end -->
-
-<!-- bench-footprint:start -->
-The same conversion, EPSG:4326 to EPSG:2154, measured on the same machine (Linux x86-64, glibc), proj-rs against PROJ 9.9.0.
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="bench/size-dark.svg">
-  <img src="bench/size-light.svg" alt="Stacked bar chart: size on disk of the install needed to convert EPSG:4326 to EPSG:2154, PROJ 9.9.0 and proj-rs" width="100%">
-</picture>
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="bench/memory-dark.svg">
-  <img src="bench/memory-light.svg" alt="Bar chart: peak memory of five scenarios, proj-rs next to PROJ 9.9.0" width="100%">
-</picture>
-
-On disk, a Rust program with proj-rs is 17.1 MiB with `proj.db` included (10.1 MiB of it) and no library other than the C library: 1.1× smaller than a C program with PROJ 9.9.0 built as in the speed comparison (18.6 MiB), and 2.2× smaller than one with a PROJ built with TIFF and curl (37.9 MiB). With the `network` feature (the HTTPS grid download, TLS from the system) the program is 22.9 MiB, of which 5.7 MiB is OpenSSL: 1.7× smaller than the PROJ with curl. The code of proj-rs alone, `proj.db` left out, is 7.0 MiB; an empty Rust program is 0.3 MiB.
-
-In memory, creating the transform peaks at 12.1 MiB for proj-rs and 14.8 MiB for PROJ (1.2× less memory). With a million points one at a time it is 12.2 MiB and 14.7 MiB; as one array, 27.3 MiB and 29.9 MiB, the array of points itself being 15.3 MiB; with several candidate operations (EPSG:4267 to 4326), 13.0 MiB and 16.4 MiB.
-
-<details>
-<summary><b>Size and memory, component by component</b></summary>
-
-<br>
-
-Size on disk, after `strip --strip-unneeded`. A program is counted with every shared library `ldd` lists for it, except the C library and the unwinder (libc, libm, libdl, libpthread, librt, libutil, libgcc_s), on both sides. Nov 17 17:59 UTC, commit `ad8d680`.
-
-| Install | Program and library | proj.db | Other shared libraries | of which OpenSSL | of which libcurl | Total, stripped | Total, as built |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| PROJ 9.9.0, C program + libproj, TIFF and curl off | 4.7 MiB | 10.1 MiB | 3.9 MiB | none | none | **18.6 MiB** | 19.6 MiB |
-| PROJ 9.9.0, C program + libproj, TIFF and curl on | 4.7 MiB | 10.1 MiB | 23.1 MiB | 5.7 MiB | 0.7 MiB | **37.9 MiB** | 38.9 MiB |
-| proj-rs as libproj, same C program + libproj of capi/ | 8.3 MiB | 10.1 MiB | 0.0 MiB | none | none | **18.4 MiB** | 19.4 MiB |
-| proj-rs, Rust program, proj.db inside | 7.0 MiB | 10.1 MiB | 0.0 MiB | none | none | **17.1 MiB** | 17.9 MiB |
-| proj-rs, feature network, Rust program, HTTPS grid download | 7.1 MiB | 10.1 MiB | 5.7 MiB | 5.7 MiB | none | **22.9 MiB** | 23.7 MiB |
-
-OpenSSL is `libssl` plus `libcrypto`, already inside the third column. proj-rs links it only with the `network` feature, for its HTTPS grid download, and takes it from the system (`native-tls`); PROJ pulls it through libcurl, when built with curl, together with the other libraries of curl (`libnghttp2`, `libssh`, `libgssapi_krb5`, `libldap`, `libgnutls` and more), which count in the third column but not in the libcurl column.
-
-Shared libraries counted in the third column:
-
-- PROJ 9.9.0, C program + libproj, TIFF and curl off: `libsqlite3.so.0.8.6`, `libstdc++.so.6.0.33`.
-- PROJ 9.9.0, C program + libproj, TIFF and curl on: `libsqlite3.so.0.8.6`, `libtiff.so.6.0.1`, `libcurl.so.4.8.0`, `libstdc++.so.6.0.33`, `libwebp.so.7.1.8`, `libzstd.so.1.5.5`, `liblzma.so.5.4.5`, `libLerc.so.4`, `libjbig.so.0`, `libjpeg.so.8.2.2`, `libdeflate.so.0`, `libz.so.1.3`, `libnghttp2.so.14.26.0`, `libidn2.so.0.4.0`, `librtmp.so.1`, `libssh.so.4.9.6`, `libpsl.so.5.3.4`, `libssl.so.3`, `libcrypto.so.3`, `libgssapi_krb5.so.2.2`, `libldap.so.2.0.200`, `liblber.so.2.0.200`, `libbrotlidec.so.1.1.0`, `libsharpyuv.so.0.0.1`, `libunistring.so.5.0.0`, `libgnutls.so.30.37.1`, `libhogweed.so.6.8`, `libnettle.so.8.8`, `libgmp.so.10.5.0`, `libkrb5.so.3.3`, `libk5crypto.so.3.1`, `libcom_err.so.2.1`, `libkrb5support.so.0.1`, `libsasl2.so.2.0.25`, `libbrotlicommon.so.1.1.0`, `libp11-kit.so.0.3.1`, `libtasn1.so.6.6.3`, `libkeyutils.so.1.10`, `libresolv.so.2`, `libffi.so.8.1.4`.
-- proj-rs as libproj, same C program + libproj of capi/: none.
-- proj-rs, Rust program, proj.db inside: none.
-- proj-rs, feature network, Rust program, HTTPS grid download: `libssl.so.3`, `libcrypto.so.3`.
-
-The Rust program is 17.1 MiB stripped, of which 10.1 MiB is the embedded `proj.db`; the empty Rust program of the same toolchain is 0.3 MiB. The code of proj-rs thus adds 6.7 MiB, SQLite and the TIFF reader included.
-
-| Peak resident memory | PROJ 9.9.0 | PROJ 9.9.0, TIFF and curl | proj-rs C library | proj-rs (Rust) |
-|---|---:|---:|---:|---:|
-| process start, nothing created | 5.7 MiB | 12.1 MiB | 2.5 MiB | 3.0 MiB |
-| create the 4326 → 2154 transform | 14.8 MiB | 21.2 MiB | 13.0 MiB | 12.1 MiB |
-| create + 1,000,000 points, one at a time | 14.7 MiB | 21.2 MiB | 13.0 MiB | 12.2 MiB |
-| create + 1,000,000 points, one array | 29.9 MiB | 36.4 MiB | 28.1 MiB | 27.3 MiB |
-| 4267 → 4326 (several candidates) + 1,000,000 points, one at a time | 16.4 MiB | 22.8 MiB | 13.9 MiB | 13.0 MiB |
-
-| Peak heap (valgrind massif) | PROJ 9.9.0 | PROJ 9.9.0, TIFF and curl | proj-rs C library | proj-rs (Rust) |
-|---|---:|---:|---:|---:|
-| process start, nothing created | 0.1 MiB | 0.2 MiB | 0.0 MiB | 0.0 MiB |
-| create the 4326 → 2154 transform | 5.5 MiB | 5.6 MiB | 3.6 MiB | 3.6 MiB |
-| create + 1,000,000 points, one at a time | 5.5 MiB | 5.6 MiB | 3.6 MiB | 3.6 MiB |
-| create + 1,000,000 points, one array | 20.4 MiB | 20.5 MiB | 15.4 MiB | 15.5 MiB |
-| 4267 → 4326 (several candidates) + 1,000,000 points, one at a time | 6.7 MiB | 6.8 MiB | 4.2 MiB | 4.2 MiB |
-
-Median of 5 runs for the resident memory (`VmHWM`, read by the program itself); the heap is one massif run. Each process runs one scenario on the same 1,000,000 points, and its output is checked against PROJ's. Every process starts with its own loader and libraries, so the first row is the floor. What exactly is measured, and how to rerun it: [docs/BENCHMARK.md](docs/BENCHMARK.md).
-
-</details>
-<!-- bench-footprint:end -->
-
-## Over time
-
-How PROJ-RS's own numbers move from run to run, each machine on its own: a number
-compares with its own machine's only. They come from
-[`bench/history.jsonl`](bench/history.jsonl), one line per run with the commit and the
-machine name. `bench/record.sh` adds a line and draws these again, and a commit that adds
-a line commits the charts with it.
-
-<!-- bench-trend:start -->
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="bench/trend-cloud-4c-avx512-dark.svg">
-  <img src="bench/trend-cloud-4c-avx512-light.svg" alt="Nanoseconds per point, one line per case, logarithmic scale" width="100%">
-</picture>
-
-Time per point: 11 runs from Nov 15 to Nov 17, the first to the latest: UTM forward 88.8 ns to 98.3 ns; Lambert-93 forward 62.3 ns to 64.7 ns; Web Mercator forward 45.8 ns to 56 ns; convert_array 4326→2154 130 ns to 33.5 ns; Helmert 9.31 ns to 11 ns.
-
-Not drawn until there are two runs on one machine: 2 other machine(s) with one run.
-<!-- bench-trend:end -->
-
-## Reproduce these numbers
+## Reproduce the test numbers
 
 ```bash
 cargo fmt --check
@@ -541,21 +578,7 @@ UPDATE_DOCS=1 cargo test --test docs_in_sync --test progress_svg
 
 # The known gaps of the georust facade, each with its cause:
 cargo test --test georust_parity -- --ignored
-
-# The speed numbers and charts above. Build PROJ 9.9.0 once, then record a line on
-# your machine (a few minutes; the bench runs five times, pinned to one core):
-tools/build-reference.sh
-export PROJ_RS_LIBPROJ_DIR=$PWD/target/proj-reference/build/lib
-BENCH_MACHINE=my-box BENCH_ROUNDS=5 taskset -c 2 sh bench/record.sh
 ```
-
-`bench/record.sh` appends a line to [`bench/history.jsonl`](bench/history.jsonl),
-draws `bench/trend-<machine>-{light,dark}.svg`, and rewrites the "How fast" and
-"Over time" blocks of this README from the history
-(`tools/bench/how_fast.py`, `tools/bench/trend_svg.py`). Without
-`PROJ_RS_LIBPROJ_DIR` the bench still runs, but the line has no libproj column, and
-the "How fast" table stays on the newest line that has one. What each case compares is in
-[docs/BENCHMARK.md](docs/BENCHMARK.md).
 
 `tests/agree_cs2cs.rs` calls a PROJ `cs2cs` binary found on `PATH` as a
 differential check. It is a cross-check only: the numbers that decide a pass
