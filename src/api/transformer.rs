@@ -485,8 +485,14 @@ impl Transformer {
     /// Transform a slice in place, source CRS to target CRS.
     ///
     /// The slice goes through the batch path of the [`Backend`], which can differ from
-    /// [`Self::forward`] by 11 nm at most. On an error the slice is left unchanged, and the
-    /// error is the one of the first failing point.
+    /// [`Self::forward`] by 11 nm at most. It is converted in blocks, straight into the slice,
+    /// without a copy of it, as PROJ's `proj_trans_array` does.
+    ///
+    /// The error is the one of the first failing point. A point that is not finite is refused
+    /// first, with the slice untouched. After a transform error the slice is **partly
+    /// converted**: the blocks before the first one that holds a failing point (4096 points
+    /// each, a detail that may change) are converted, and that block and the ones after it keep
+    /// their input. Do not use the slice after an `Err`.
     ///
     /// # Errors
     ///
@@ -637,15 +643,23 @@ impl Transformer {
 
     fn run_slice(&self, points: &mut [Point], way: Direction) -> Result<(), Error> {
         let (from, to) = self.swaps(way);
-        let mut coords = points
-            .iter()
-            .map(|point| to_coord(*point, from))
-            .collect::<Result<Vec<Coord>, Error>>()?;
-        crate::network::with_context(&self.context.net, || self.map_slice(&mut coords, way))?;
-        for (point, coord) in points.iter_mut().zip(coords) {
-            *point = from_coord(coord, point.t, to);
+        for point in &*points {
+            to_coord(*point, from)?;
         }
-        Ok(())
+        let mut block: Vec<Coord> = Vec::with_capacity(SLICE_CHUNK.min(points.len()));
+        crate::network::with_context(&self.context.net, || {
+            for window in points.chunks_mut(SLICE_CHUNK) {
+                block.clear();
+                for point in &*window {
+                    block.push(to_coord(*point, from)?);
+                }
+                self.map_slice(&mut block, way)?;
+                for (point, coord) in window.iter_mut().zip(&block) {
+                    *point = from_coord(*coord, point.t, to);
+                }
+            }
+            Ok(())
+        })
     }
 
     fn map(&self, coord: Coord, way: Direction) -> Result<Coord, Error> {
@@ -661,24 +675,20 @@ impl Transformer {
     fn map_slice(&self, coords: &mut [Coord], way: Direction) -> Result<(), Error> {
         match (&self.route, self.backend) {
             (Route::Single(operation, _), Backend::Auto) => {
-                for chunk in coords.chunks_mut(SLICE_CHUNK) {
-                    let mut failed: Vec<Option<StepError>> = vec![None; chunk.len()];
-                    match way {
-                        Direction::Forward => operation.forward_batch(chunk, &mut failed),
-                        Direction::Inverse => operation.inverse_batch(chunk, &mut failed),
-                    }
-                    if let Some(error) = failed.into_iter().flatten().next() {
-                        return Err(error.into());
-                    }
+                let mut failed: Vec<Option<StepError>> = vec![None; coords.len()];
+                match way {
+                    Direction::Forward => operation.forward_batch(coords, &mut failed),
+                    Direction::Inverse => operation.inverse_batch(coords, &mut failed),
                 }
-                Ok(())
+                match failed.into_iter().flatten().next() {
+                    Some(error) => Err(error.into()),
+                    None => Ok(()),
+                }
             }
             _ => {
-                let mapped = coords
-                    .iter()
-                    .map(|coord| self.map(*coord, way))
-                    .collect::<Result<Vec<_>, _>>()?;
-                coords.copy_from_slice(&mapped);
+                for coord in coords {
+                    *coord = self.map(*coord, way)?;
+                }
                 Ok(())
             }
         }

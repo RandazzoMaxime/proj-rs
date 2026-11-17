@@ -2344,7 +2344,7 @@ fn safe_ident(name: &str) -> bool {
 #[cfg(test)]
 mod epsg_pipeline_tests {
     use super::epsg_pipeline;
-    use crate::engine::{Coord, CreateError, Operation};
+    use crate::engine::{Coord, Operation};
 
     fn forward(source: &str, target: &str, coord: Coord) -> (String, Coord) {
         let (definition, _) = epsg_pipeline(source, target).unwrap_or_else(|error| {
@@ -2420,8 +2420,14 @@ mod epsg_pipeline_tests {
     }
 
     #[test]
-    fn nad_grid_is_not_a_coordinate() {
-        let error = epsg_pipeline("EPSG:4267", "EPSG:4269").expect_err("nad");
-        assert!(matches!(error, CreateError::Unsupported("grid")), "{error}");
+    fn nad_grid_step_reads_its_grid() {
+        // Other tests of this binary put the fixtures, which hold `conus`, on PROJ_DATA in any
+        // order: the test puts them there itself, or its result depends on the order.
+        crate::gridpath::use_fixture_search_path();
+        let (pipeline, _) = epsg_pipeline("EPSG:4267", "EPSG:4269").expect("conus is a fixture");
+        assert!(
+            pipeline.contains("+proj=hgridshift +grids=us_noaa_conus.tif"),
+            "{pipeline}"
+        );
     }
 }
