@@ -21,6 +21,12 @@ fn a_write_stays_in_the_context_that_made_it_and_its_clones() {
             .is_err(),
         "a clone shares the writes of its context"
     );
+    assert!(
+        writer
+            .execute_sql("CREATE TABLE written_by_one_context(x INTEGER)")
+            .is_err(),
+        "the context still sees its own write"
+    );
     for other in [before, db()] {
         other
             .execute_sql("CREATE TABLE written_by_one_context(x INTEGER)")
