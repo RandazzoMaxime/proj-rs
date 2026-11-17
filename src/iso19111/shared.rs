@@ -33,6 +33,13 @@ impl Drop for Scope {
     }
 }
 
+impl Scope {
+    /// Whether no other search of this thread is registered: the scope of the outermost call.
+    pub(crate) fn is_outermost(&self) -> bool {
+        self.registered_before == 0
+    }
+}
+
 /// A CRS an operation stores as its source, target or interpolation CRS.
 pub(crate) trait Share {
     fn share(self) -> Arc<Crs>;

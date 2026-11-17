@@ -397,6 +397,16 @@ struct Connections {
     crs_cache: Mutex<CrsCache>,
 }
 
+/// Drops the compiled statements of a context when the outermost search ends, so a context kept
+/// by the caller does not hold them while idle.
+struct FlushStatements<'a>(&'a DatabaseContext);
+
+impl Drop for FlushStatements<'_> {
+    fn drop(&mut self) {
+        self.0.flush_statements();
+    }
+}
+
 /// Most CRS one context keeps: a pair of CRS and the pivots of a search fit well within it.
 const CRS_CACHE_CAPACITY: usize = 64;
 
@@ -561,6 +571,7 @@ impl DatabaseContext {
     }
 
     fn from_connection(conn: Connection, attachment: Attachment) -> Self {
+        projdb::keep_statements(&conn);
         Self {
             conn: Arc::new(Connections {
                 own: Mutex::new(Some(conn)),
@@ -687,9 +698,29 @@ impl DatabaseContext {
         if own.is_none() {
             let copy =
                 projdb::open_connection().map_err(|error| FactoryError::Sql(error.to_string()))?;
+            projdb::keep_statements(&copy);
             *own = Some(copy);
         }
         Ok(Access::Own(own))
+    }
+
+    /// Finalize the statements compiled for this context's queries. A connection that another
+    /// holder of this thread is using is left alone.
+    fn flush_statements(&self) {
+        let own = self
+            .conn
+            .own
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        match (&*own, &self.conn.shared) {
+            (Some(connection), _) => connection.flush_prepared_statement_cache(),
+            (None, Some(shared)) => {
+                if let Ok(connection) = shared.try_lock() {
+                    connection.flush_prepared_statement_cache();
+                }
+            }
+            (None, None) => {}
+        }
     }
 
     fn lock(&self) -> Access<'_> {
@@ -727,7 +758,7 @@ impl DatabaseContext {
     ) -> Result<Vec<Vec<Cell>>, FactoryError> {
         let guard = self.lock();
         let mut statement = guard
-            .prepare(sql)
+            .prepare_cached(sql)
             .map_err(|error| FactoryError::Sql(error.to_string()))?;
         let mut rows = statement
             .query(rusqlite::params_from_iter(params.iter()))
@@ -1207,7 +1238,7 @@ impl DatabaseContext {
     fn towgs84_methods(&self, params: &[f64; 7]) -> Result<Vec<String>, FactoryError> {
         let guard = self.lock();
         let mut statement = guard
-            .prepare(
+            .prepare_cached(
                 "SELECT DISTINCT CAST(method_code AS TEXT) \
                  FROM helmert_transformation_table WHERE \
                  abs(tx - ?) <= 1e-8 * abs(tx) AND \
@@ -6323,6 +6354,9 @@ impl CoordinateOperationFactory {
         let (source, source_extent, _) = resolve_crs(&source, context);
         let (target, target_extent, _) = resolve_crs(&target, context);
         let _shared = super::shared::enter([&source, &target]);
+        let _flush = _shared
+            .is_outermost()
+            .then(|| FlushStatements(context.database()));
         // PROJ builds its private context once, with the extents of the two CRS of the outermost
         // call, and every sub-call filters on them (coordinateoperationfactory.cpp:8082-8094,
         // `Private::Context(sourceCRSExtent, targetCRSExtent, context)`). An extent that is
@@ -8703,22 +8737,28 @@ fn crs_codes_intermediate_operations(
     };
     // `criterionOnIntermediateCRS`: the intermediate CRS is geographic, and its datum is not older
     // than the pair's. `role` is the column of `v1` that holds the intermediate CRS.
-    let criterion = |role: &str| -> String {
+    let criterion = |role: &str| -> (String, Option<String>) {
         if !geographic_intermediates {
-            return String::new();
+            return (String::new(), None);
         }
         match &min_date {
-            Some(date) => format!(
-                "AND EXISTS(SELECT 1 FROM geodetic_crs x JOIN geodetic_datum y \
-                 ON y.auth_name = x.datum_auth_name AND y.code = x.datum_code \
-                 WHERE x.auth_name = v1.{role}_crs_auth_name AND x.code = v1.{role}_crs_code \
-                 AND x.type IN ('geographic 2D', 'geographic 3D') AND \
-                 (y.publication_date IS NULL OR y.publication_date >= '{date}')) "
+            Some(date) => (
+                format!(
+                    "AND EXISTS(SELECT 1 FROM geodetic_crs x JOIN geodetic_datum y \
+                     ON y.auth_name = x.datum_auth_name AND y.code = x.datum_code \
+                     WHERE x.auth_name = v1.{role}_crs_auth_name AND x.code = v1.{role}_crs_code \
+                     AND x.type IN ('geographic 2D', 'geographic 3D') AND \
+                     (y.publication_date IS NULL OR y.publication_date >= ?)) "
+                ),
+                Some(date.clone()),
             ),
-            None => format!(
-                "AND EXISTS(SELECT 1 FROM geodetic_crs x WHERE \
-                 x.auth_name = v1.{role}_crs_auth_name AND x.code = v1.{role}_crs_code \
-                 AND x.type IN ('geographic 2D', 'geographic 3D')) "
+            None => (
+                format!(
+                    "AND EXISTS(SELECT 1 FROM geodetic_crs x WHERE \
+                     x.auth_name = v1.{role}_crs_auth_name AND x.code = v1.{role}_crs_code \
+                     AND x.type IN ('geographic 2D', 'geographic 3D')) "
+                ),
+                None,
             ),
         }
     };
@@ -8801,7 +8841,9 @@ fn crs_codes_intermediate_operations(
             target_id.1.clone(),
         ];
         sql.push_str("AND v1.deprecated = 0 AND v2.deprecated = 0 ");
-        sql.push_str(&criterion(role));
+        let (clause, date) = criterion(role);
+        sql.push_str(&clause);
+        params.extend(date);
         if !allowed.is_empty() {
             let marks = vec!["?"; allowed.len()].join(",");
             sql.push_str(&format!(

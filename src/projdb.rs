@@ -34,6 +34,7 @@ impl std::error::Error for DbFail {}
 fn open_embedded() -> Result<Mutex<Connection>, String> {
     read_only_image()
         .and_then(with_aux)
+        .inspect(keep_statements)
         .map(Mutex::new)
         .map_err(|error| error.to_string())
 }
@@ -54,6 +55,16 @@ fn read_only_image() -> Result<Connection, rusqlite::Error> {
 }
 
 const MMAP_SIZE: i64 = 1 << 30;
+
+/// Compiled statements a connection keeps for its queries. A search repeats them (`EPSG:4267 ->
+/// EPSG:4326`: 2 699 compilations for 30 distinct statements); 30 pairs of CRS use 72 in all.
+/// 16 already holds most of a search, 64 leaves room for a search that uses more.
+pub(crate) const STATEMENT_CACHE: usize = 64;
+
+/// Let `connection` keep [`STATEMENT_CACHE`] compiled statements for `prepare_cached`.
+pub(crate) fn keep_statements(connection: &Connection) {
+    connection.set_prepared_statement_cache_capacity(STATEMENT_CACHE);
+}
 
 /// `connection` with the auxiliary databases of `PROJ_AUX_DB` attached: the paths are separated
 /// by `;` on Windows and by `:` elsewhere, as `DatabaseContext::create` reads them.
@@ -156,6 +167,7 @@ pub(crate) fn shared_read_only() -> Result<Option<Arc<Mutex<Connection>>>, DbFai
             return Ok(Some(open));
         }
         let image = read_only_image().map_err(|error| DbFail::Open(error.to_string()))?;
+        keep_statements(&image);
         let open = Arc::new(Mutex::new(image));
         *reader.borrow_mut() = Arc::downgrade(&open);
         Ok(Some(open))

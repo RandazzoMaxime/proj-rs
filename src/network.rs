@@ -367,12 +367,12 @@ pub(crate) fn proj_grid_filename(name: &str) -> Option<String> {
         return None;
     }
     crate::projdb::with_db(|connection| {
-        connection.query_row(
-            "SELECT proj_grid_name FROM grid_alternatives \
-             WHERE old_proj_grid_name = ?1 AND proj_grid_name <> ''",
-            [name],
-            |row| row.get(0),
-        )
+        connection
+            .prepare_cached(
+                "SELECT proj_grid_name FROM grid_alternatives \
+                 WHERE old_proj_grid_name = ?1 AND proj_grid_name <> ''",
+            )?
+            .query_row([name], |row| row.get(0))
     })
     .ok()
 }
@@ -388,11 +388,11 @@ pub(crate) fn old_grid_filename(name: &str) -> Option<String> {
         return None;
     }
     let old = crate::projdb::with_db(|connection| {
-        connection.query_row(
-            "SELECT old_proj_grid_name FROM grid_alternatives WHERE proj_grid_name = ?1",
-            [name],
-            |row| row.get::<_, Option<String>>(0),
-        )
+        connection
+            .prepare_cached(
+                "SELECT old_proj_grid_name FROM grid_alternatives WHERE proj_grid_name = ?1",
+            )?
+            .query_row([name], |row| row.get::<_, Option<String>>(0))
     })
     .ok()
     .flatten();
@@ -747,12 +747,12 @@ fn remote_url_in(ctx: &GridContext, name: &str) -> Option<String> {
 
 fn direct_url(name: &str) -> Option<String> {
     let (url, direct): (Option<String>, Option<i64>) = crate::projdb::with_db(|connection| {
-        connection.query_row(
-            "SELECT url, direct_download FROM grid_alternatives \
-             WHERE proj_grid_name = ?1 OR old_proj_grid_name = ?1 LIMIT 1",
-            [name],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
+        connection
+            .prepare_cached(
+                "SELECT url, direct_download FROM grid_alternatives \
+                 WHERE proj_grid_name = ?1 OR old_proj_grid_name = ?1 LIMIT 1",
+            )?
+            .query_row([name], |row| Ok((row.get(0)?, row.get(1)?)))
     })
     .ok()?;
     if direct == Some(1) {
