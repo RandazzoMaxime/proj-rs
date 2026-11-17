@@ -39,6 +39,18 @@ jobs:
           echo "PROJ_RS_LIBPROJ_DIR=C:\Miniconda\Library\lib" >> $env:GITHUB_ENV
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      # The default build has no TLS library (feature `network`, as PROJ without libcurl):
+      # it must compile warning-free, keep out `native-tls`, and behave as such.
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - shell: bash
+        run: |
+          if cargo tree -e normal --workspace | grep -E 'native-tls|openssl'; then
+            echo "a TLS crate is in the default tree" >&2
+            exit 1
+          fi
+      - run: cargo test -p proj-rs --test network_feature_off
+        env:
+          PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY: YES
       # Offline, as PROJ's ctest runs its suites. The differential check
       # against the reference cs2cs must run here, so a missing binary fails.
       # PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY is what PROJ's test setup sets:

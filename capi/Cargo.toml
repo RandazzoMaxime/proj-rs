@@ -20,6 +20,10 @@ path = "src/lib.rs"
 crate-type = ["cdylib", "staticlib", "rlib"]
 doc = false
 
+[features]
+# Grid download over HTTP(S), as PROJ built with libcurl. Off by default: no TLS library is linked.
+network = ["proj-rs/network"]
+
 [dependencies]
 proj-rs = { path = ".." }
 

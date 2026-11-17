@@ -8,6 +8,7 @@
 //! fell back to a ballpark without the grid (72 invocations of the network corpus).
 //!
 //! The grid is served by a local server set as the endpoint: nothing reaches `cdn.proj.org`.
+#![cfg(feature = "network")]
 
 use std::env;
 use std::fs;

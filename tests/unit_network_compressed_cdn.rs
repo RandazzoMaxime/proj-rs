@@ -12,6 +12,7 @@
 //!
 //! The case is guarded by the `initial_check` probe (`tests/net_cdn`): when the CDN does not answer
 //! `206`, the case returns, as PROJ's `if (!networkAccessOK) return;` does.
+#![cfg(feature = "network")]
 
 use std::env;
 use std::fs;

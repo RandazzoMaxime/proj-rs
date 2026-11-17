@@ -8,10 +8,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::network::{
-    header_value, http_fetch, Callbacks, HttpReply, NetworkCallbacks, NetworkError, NetworkHandle,
-    OpenReply,
-};
+use crate::network::{Callbacks, NetworkCallbacks, NetworkError, NetworkHandle, OpenReply};
+use crate::network_http::{header_value, http_fetch, last_fetch_transient, HttpReply};
 
 /// The headers of a reply, as (name, value).
 type Headers = Vec<(String, String)>;
@@ -37,7 +35,7 @@ impl BuiltinHttp {
             delay = match http_fetch(url, Some(&range)) {
                 Some(reply) if reply.status < 300 => break reply,
                 Some(reply) if transient_reply(&reply) => next_delay(delay)?,
-                None if crate::network::last_fetch_transient() => next_delay(delay)?,
+                None if last_fetch_transient() => next_delay(delay)?,
                 _ => return None,
             };
             std::thread::sleep(Duration::from_secs_f64(delay / 1000.0));
