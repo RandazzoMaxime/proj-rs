@@ -11,8 +11,7 @@ import history
 
 MACHINE_NOTES = {
     "cloud-4c-avx512": (
-        "a 4-vCPU cloud VM (Intel Xeon at 2.10 GHz with AVX-512; the batch kernels take the AVX2 "
-        "path), the process pinned to one core"
+        "a 4-vCPU cloud VM (Intel Xeon at 2.10 GHz), the process pinned to one core"
     ),
 }
 
@@ -91,7 +90,7 @@ def body(row):
     array = [c[4] for c in cases if "array" in c[1] or "200,000" in c[1]]
     note = MACHINE_NOTES.get(row["machine"], "")
     rounds = row["result"].get("rounds", 1)
-    where = f"`{row['machine']}`" + (f", {note}" if note else "")
+    where = note or "the bench machine"
     lines = [
         "These numbers are PROJ-RS v1's. The optimisation work (wider SIMD, GPU) comes in the "
         "versions after it.",
@@ -102,7 +101,9 @@ def body(row):
         f"One point at a time, proj-rs is {spread_text(single)}. On a slice of points, it is "
         f"{spread_text(array)}. "
         "This is one machine: the ratios on another CPU, or on a build of libproj with other "
-        "flags, will differ.",
+        "flags, will differ."
+        " The batch kernels take the AVX2 path, which every x86-64 CPU has since 2013 (Intel) "
+        "and 2015 (AMD); AVX-512 is not used.",
         "",
         "| Conversion | Call | PROJ 9.9.0 | proj-rs |",
         "|---|---|---:|---:|",
