@@ -40,7 +40,10 @@ Details that make the two sides do the same work:
   stderr. On the recorded run it is below 1e-8.
 - No grid and no network on either side. For `EPSG:4267` to `EPSG:4326` the NAD27
   grid-based candidates are unavailable, so both fall back to the same
-  grid-free operation, and the outputs are identical.
+  grid-free operation, PROJ's "Ballpark geographic offset from NAD27 to WGS 84"
+  (`projinfo -s EPSG:4267 -t EPSG:4326` lists it alone): units and axis order, no datum
+  shift. The outputs are identical. proj-rs folds the steps that only permute or scale the
+  axes into one (`docs/PORTING-affine-plan.md`); this pair shows the largest ratio.
 - Both read the same `proj.db`: `PROJ_DATA` points to the repository's `data/`
   (that is PROJ 9.9's database) for the PROJ-RS side and for libproj.
 - libproj is a Release build of PROJ 9.9.0 (`tools/build-reference.sh`, linked
@@ -66,6 +69,10 @@ each case and for each side, the smallest value of the five
 (`tools/bench/min_of_runs.py`). The ratio in the history line is PROJ-RS's time
 over libproj's, so a ratio below 1 means PROJ-RS is faster. The README quotes
 libproj's time over PROJ-RS's, so that "2× faster" reads as 2.
+
+The machine is a shared VM and is not quiet: libproj's own time for one case moves from one
+line to the next (`EPSG:4326` to `EPSG:2154`, one point at a time: 87 to 108 ns over the four
+lines that have it). Read the ratio of one line, not the nanoseconds of two lines.
 
 The README average is a geometric mean of the ten ratios. The README also gives
 the slowest and the fastest case, and the mean of the one-point and the slice

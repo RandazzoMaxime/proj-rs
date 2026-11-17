@@ -279,7 +279,7 @@ def block(data):
             + f": {smaller_than(net['stripped_bytes'], full['stripped_bytes'])} the PROJ with curl. "
         )
     lines = [
-        "**Size and memory.** The same conversion, EPSG:4326 to EPSG:2154, measured on the same machine "
+        "The same conversion, EPSG:4326 to EPSG:2154, measured on the same machine "
         "(Linux x86-64, glibc), proj-rs against PROJ 9.9.0.",
         "",
         "<picture>",
