@@ -111,7 +111,11 @@ fn network_and_grid_methods_follow_the_builder() {
         builder.get_url_endpoint().expect("default endpoint"),
         "https://cdn.proj.org"
     );
-    assert_eq!(builder.enable_network(true).expect("on"), 1);
+    // Without the `network` feature PROJ's answer is 0 until callbacks are set.
+    assert_eq!(
+        builder.enable_network(true).expect("on"),
+        u8::from(cfg!(feature = "network"))
+    );
     assert!(builder.network_enabled());
     assert_eq!(builder.enable_network(false).expect("off"), 0);
     assert!(!builder.network_enabled());

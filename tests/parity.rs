@@ -6,6 +6,7 @@
 //! Les écarts connus sont dans `tests/parity/known.tsv`.
 
 mod common;
+#[cfg(feature = "network")]
 #[path = "net_cdn/mod.rs"]
 mod net_cdn;
 
@@ -94,6 +95,10 @@ enum Source<'a> {
     /// The fixtures plus a grid directory (docs/PARITY.md, grid corpus), network off.
     Grids(&'a str),
     /// The grid files of cdn.proj.org, network on, a new empty user directory per invocation.
+    #[cfg_attr(
+        not(feature = "network"),
+        expect(dead_code, reason = "only the network corpus builds it")
+    )]
     Network,
 }
 
@@ -605,8 +610,9 @@ fn parity_grids_against_proj_9_9_0() {
 /// The CDN corpus (docs/PARITY.md, section réseau): every pair uses a grid of cdn.proj.org, the
 /// network is on and each invocation starts from an empty user directory. The CDN probe comes
 /// first: without it the corpus would compare nothing, so the test fails instead of passing.
+#[cfg(feature = "network")]
 #[test]
-#[ignore = "réseau : cargo test --test parity -- --ignored"]
+#[ignore = "réseau : cargo test --features network --test parity -- --ignored"]
 fn parity_network_against_proj_9_9_0() {
     assert!(
         net_cdn::cdn_reachable(),

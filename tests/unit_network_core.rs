@@ -15,18 +15,23 @@ use std::f64::consts::PI;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+#[cfg(feature = "network")]
 use std::fs;
 use std::net::TcpListener;
 
+#[cfg(feature = "network")]
 #[path = "net_cdn/mod.rs"]
 mod net_cdn;
+#[cfg(feature = "network")]
 use net_cdn::cdn_reachable;
 
 use proj_rs::{
-    create_from_user_input, CoordinateOperation, CoordinateOperationContext,
-    CoordinateOperationFactory, DatabaseContext, GridAvailabilityUse, NetworkCallbacks,
-    NetworkError, NetworkHandle, OpenReply, ProjBuilder, ProjError, ProjLines, SpatialCriterion,
+    create_from_user_input, CoordinateOperation, CoordinateOperationContext, DatabaseContext,
+    GridAvailabilityUse, NetworkCallbacks, NetworkError, NetworkHandle, OpenReply, ProjBuilder,
+    ProjError, SpatialCriterion,
 };
+#[cfg(feature = "network")]
+use proj_rs::{CoordinateOperationFactory, ProjLines};
 
 /// A `http://` address that nothing listens on: the port of a listener that is then dropped.
 /// PROJ's test uses `http://0.0.0.0` for the same case.
@@ -1005,6 +1010,7 @@ fn endpoint_api_not_reachable_vgridshift() {
     );
 }
 
+#[cfg(feature = "network")]
 /// The operations of `networking.pyproj_issue_1192` (EPSG:4326 to EPSG:2964), in the order of
 /// `proj_list_get`. Measured on PROJ 9.9.0 (`libproj`, TIFF and curl build) with a C probe.
 const ISSUE_1192_NAMES: [&str; 10] = [
@@ -1020,15 +1026,18 @@ const ISSUE_1192_NAMES: [&str; 10] = [
     "Ballpark geographic offset from WGS 84 to NAD27 + Alaska Albers",
 ];
 
+#[cfg(feature = "network")]
 /// `proj_coordoperation_is_instantiable` with the network off, PROJ 9.9.0: operations 00 and 02
 /// name grids that are not on disk.
 const ISSUE_1192_INSTANTIABLE_NETWORK_OFF: [bool; 10] =
     [false, true, false, true, true, true, true, true, true, true];
 
+#[cfg(feature = "network")]
 /// The same with the network on, PROJ 9.9.0: every operation is instantiable, the grids that the
 /// database knows counting as available.
 const ISSUE_1192_INSTANTIABLE_NETWORK_ON: [bool; 10] = [true; 10];
 
+#[cfg(feature = "network")]
 /// `networking.pyproj_issue_1192`: the factory context of the C++ test (grid availability
 /// IGNORED, spatial criterion PARTIAL_INTERSECTION, all authorities), run once with the network
 /// on and once off.
@@ -1139,6 +1148,7 @@ fn pyproj_issue_1192() {
     }
 }
 
+#[cfg(feature = "network")]
 /// `proj_list_get` for one operation of the list: a PJ whose `proj_pj_info` id is `pipeline` when
 /// the operation is instantiable, else an error (PROJ gives a PJ with a null id).
 fn assert_instantiation(

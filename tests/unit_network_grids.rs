@@ -20,6 +20,7 @@
 //! The C++ cases call `proj_assign_context` on the transform and destroy the context; the port
 //! has no such call (see `docs/PORTING-network.md`). The grid cache is off, as in the C++ cases,
 //! and the user-writable directory is a temporary folder, not the user's home.
+#![cfg(feature = "network")]
 
 use std::fs;
 use std::path::{Path, PathBuf};

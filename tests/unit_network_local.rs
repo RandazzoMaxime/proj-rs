@@ -6,6 +6,7 @@
 //! `proj_grid_cache_clear`), the
 //! file API (`file_api`), and the lazy grid errors of
 //! `network_endpoint_api_and_not_reachable_*`.
+#![cfg(feature = "network")]
 
 use proj_rs::ProjBuilder;
 

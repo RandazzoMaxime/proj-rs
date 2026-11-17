@@ -121,6 +121,11 @@ Ce que le code fait autrement que ce document, ou en plus, et pourquoi.
   `ContextBuilder`, `iso19111::Crs`) sont sous `proj_rs::unstable`. Les 49 fichiers de test et les
   deux fichiers de `src/bin` qui les importaient de la racine ont changé d'import, et rien d'autre.
   Les autres chemins (`proj_rs::Proj`, `proj_rs::Operation`…) sont inchangés, cachés.
+- **Le client HTTP(S) est la feature `network`** (`proj-rs`, `proj-rs-capi`, `proj-rs-georust`),
+  désactivée par défaut : sans elle aucune bibliothèque TLS n'est compilée, et l'API reste la même.
+  Comme un PROJ sans libcurl, `enable_network(true)` pose le drapeau (`network_enabled()` rend
+  `true`, `Network::Enabled`) mais rend `Ok(0)` tant qu'aucun `NetworkCallbacks` n'est posé, et une
+  grille distante est absente. `docs/PORTING-network-feature.md`.
 - **`Context::default()` ignore `PROJ_NETWORK`, `PROJ_NETWORK_ENDPOINT` et `proj.ini`**, comme le
   veut « désactivés par défaut ». `Context::from_environment()` les lit comme PROJ. Le contexte
   porte le réseau, le point d'accès, les chemins de recherche, le répertoire utilisateur et le

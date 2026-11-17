@@ -348,7 +348,7 @@ autres n'ont pas de sortie exploitable).
 RN=target/proj-reference-net
 PROJ_REFERENCE_DIR=$RN python3 tools/parity/generate.py --network 300 --points 8 --seed 20261118 --out tests/parity/network/cases.jsonl
 PROJ_REFERENCE_DIR=$RN tools/parity/record.sh --network --cases tests/parity/network/cases.jsonl --out tests/parity/network/expected.jsonl
-cargo test --test parity parity_network_against_proj_9_9_0 -- --ignored --nocapture
+cargo test --features network --test parity parity_network_against_proj_9_9_0 -- --ignored --nocapture
 ```
 
 Le test sonde d'abord le CDN (`tests/net_cdn`) et échoue si la sonde échoue : pas de vert creux.

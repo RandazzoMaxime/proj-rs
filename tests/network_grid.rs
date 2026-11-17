@@ -2,6 +2,7 @@
 //! CDN does. The built-in client reads a grid by ranges, as PROJ's curl client.
 //!
 //! Nothing in this file calls `https://cdn.proj.org`.
+#![cfg(feature = "network")]
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
