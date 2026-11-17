@@ -30,6 +30,7 @@ use super::model::{
 use super::parammap::{MethodMap, OTHER_METHODS, PROJECTION_METHODS};
 use super::pipeline::ProjLines;
 use super::projstring::look_for_proj_well_known_ellps;
+use super::shared::Share;
 use super::wkt::format_g;
 use crate::projdb;
 
@@ -392,7 +393,15 @@ pub struct DatabaseContext {
 struct Connections {
     own: Mutex<Option<Connection>>,
     shared: Option<Arc<Mutex<Connection>>>,
+    /// CRS built for operations, shared by every candidate that names them. Dropped on a write.
+    crs_cache: Mutex<CrsCache>,
 }
+
+/// Most CRS one context keeps: a pair of CRS and the pivots of a search fit well within it.
+const CRS_CACHE_CAPACITY: usize = 64;
+
+/// `(authority, code)` of a CRS built by [`AuthorityFactory::create_shared_crs`].
+type CrsCache = Vec<((String, String), Arc<Crs>)>;
 
 /// A locked connection: the shared one, or the one a context owns.
 enum Access<'a> {
@@ -465,6 +474,7 @@ impl DatabaseContext {
             conn: Arc::new(Connections {
                 own: Mutex::new(None),
                 shared: Some(shared),
+                crs_cache: Mutex::default(),
             }),
             attachment: Attachment::Direct,
             insert_session: Arc::new(AtomicBool::new(false)),
@@ -555,6 +565,7 @@ impl DatabaseContext {
             conn: Arc::new(Connections {
                 own: Mutex::new(Some(conn)),
                 shared: None,
+                crs_cache: Mutex::default(),
             }),
             attachment,
             insert_session: Arc::new(AtomicBool::new(false)),
@@ -663,6 +674,11 @@ impl DatabaseContext {
     /// The connection for a statement that writes: a context that reads through the shared
     /// connection takes its own writable copy first, so the write stays in this context.
     fn lock_for_write(&self) -> Result<Access<'_>, FactoryError> {
+        self.conn
+            .crs_cache
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .clear();
         let mut own = self
             .conn
             .own
@@ -4155,6 +4171,33 @@ impl AuthorityFactory {
         Ok(crs)
     }
 
+    /// [`Self::create_coordinate_reference_system`], built once per context and shared: the
+    /// operations of one search point to the same CRS instead of one copy each.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::create_coordinate_reference_system`].
+    pub(crate) fn create_shared_crs(&self, code: &str) -> Result<Arc<Crs>, FactoryError> {
+        let key = (self.authority.clone(), code.to_owned());
+        let cache = &self.db.conn.crs_cache;
+        let hit = cache
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .iter()
+            .find(|(known, _)| *known == key)
+            .map(|(_, crs)| Arc::clone(crs));
+        if let Some(crs) = hit {
+            return Ok(crs);
+        }
+        let crs = Arc::new(self.create_coordinate_reference_system(code)?);
+        let mut cache = cache.lock().unwrap_or_else(|poison| poison.into_inner());
+        if cache.len() >= CRS_CACHE_CAPACITY {
+            cache.remove(0);
+        }
+        cache.push((key, Arc::clone(&crs)));
+        Ok(crs)
+    }
+
     /// CRS of whatever type `crs_view` records.
     ///
     /// # Errors
@@ -4455,8 +4498,8 @@ impl AuthorityFactory {
         {
             return None;
         }
-        conversion.source = Some(Box::new(Crs::Geodetic(base.clone())));
-        conversion.target = Some(Box::new(Crs::Projected(projected)));
+        conversion.source = Some(Arc::new(Crs::Geodetic(base.clone())));
+        conversion.target = Some(Arc::new(Crs::Projected(projected)));
         Some(conversion)
     }
 
@@ -5489,10 +5532,10 @@ impl AuthorityFactory {
         let interpolation = if row[18].empty() {
             None
         } else {
-            Some(Box::new(
+            Some(
                 self.child(&row[18].text())
-                    .create_coordinate_reference_system(&row[19].text())?,
-            ))
+                    .create_shared_crs(&row[19].text())?,
+            )
         };
         self.finish_transformation(
             code,
@@ -5555,10 +5598,10 @@ impl AuthorityFactory {
         let interpolation = if row[13].empty() {
             None
         } else {
-            Some(Box::new(
+            Some(
                 self.child(&row[13].text())
-                    .create_coordinate_reference_system(&row[14].text())?,
-            ))
+                    .create_shared_crs(&row[14].text())?,
+            )
         };
         let transformation = self.finish_transformation(
             code,
@@ -5668,10 +5711,10 @@ impl AuthorityFactory {
         }
         let source = self
             .child(&row[2].text())
-            .create_coordinate_reference_system(&row[3].text())?;
+            .create_shared_crs(&row[3].text())?;
         let target = self
             .child(&row[4].text())
-            .create_coordinate_reference_system(&row[5].text())?;
+            .create_shared_crs(&row[5].text())?;
         let accuracy = accuracy_of(&row[6]);
         if explicit_direction == 0 {
             fix_unspecified_step_directions(&mut steps, &source, &target);
@@ -5693,8 +5736,8 @@ impl AuthorityFactory {
                 "concatenated_operation",
             )?,
             steps,
-            source: Some(Box::new(source)),
-            target: Some(Box::new(target)),
+            source: Some(source),
+            target: Some(target),
             accuracy,
             version: optional_text(&row[7].text()),
             computed_name: false,
@@ -5722,24 +5765,18 @@ impl AuthorityFactory {
         version: &str,
         deprecated: &Cell,
         parameters: Vec<Parameter>,
-        interpolation: Option<Box<Crs>>,
+        interpolation: Option<Arc<Crs>>,
         motion: PointMotion,
     ) -> Result<Transformation, FactoryError> {
         let source = if source_auth.is_empty() {
             None
         } else {
-            Some(Box::new(
-                self.child(source_auth)
-                    .create_coordinate_reference_system(source_code)?,
-            ))
+            Some(self.child(source_auth).create_shared_crs(source_code)?)
         };
         let target = if target_auth.is_empty() {
             None
         } else {
-            Some(Box::new(
-                self.child(target_auth)
-                    .create_coordinate_reference_system(target_code)?,
-            ))
+            Some(self.child(target_auth).create_shared_crs(target_code)?)
         };
         let identified = self.properties(code, name, deprecated, description, table)?;
         Ok(Transformation {
@@ -6285,6 +6322,7 @@ impl CoordinateOperationFactory {
         check_same_celestial_body(&source, &target)?;
         let (source, source_extent, _) = resolve_crs(&source, context);
         let (target, target_extent, _) = resolve_crs(&target, context);
+        let _shared = super::shared::enter([&source, &target]);
         // PROJ builds its private context once, with the extents of the two CRS of the outermost
         // call, and every sub-call filters on them (coordinateoperationfactory.cpp:8082-8094,
         // `Private::Context(sourceCRSExtent, targetCRSExtent, context)`). An extent that is
@@ -6308,7 +6346,7 @@ impl CoordinateOperationFactory {
         // search instead, which returns what it finds without that change (`geogSrc && vertDst`,
         // :4259-4276): the change comes only when it finds nothing. The geoid route has added it
         // already (`create_candidates`), so it is not added twice.
-        if (matches!(source, Crs::Vertical(_)) || found.is_empty())
+        if (matches!(*source, Crs::Vertical(_)) || found.is_empty())
             && !found.iter().any(super::compound::is_synthesized_ballpark)
             && !ends_with_perfect_registry_result(&found, &source, &target, context)
         {
@@ -6740,7 +6778,7 @@ impl CoordinateOperationFactory {
                     projected
                         .deriving_conversion()
                         .clone()
-                        .with_endpoints(source.clone(), target.clone()),
+                        .with_endpoints(source, target),
                 ));
             }
         }
@@ -6814,7 +6852,7 @@ impl CoordinateOperationFactory {
                     if let (Some(left), Some(right)) = (first.first(), second.first()) {
                         let interpolation =
                             concatenation_interpolation(&[left.clone(), right.clone()])
-                                .map(Box::new);
+                                .map(Arc::new);
                         found.push(CoordinateOperation::Concatenated(ConcatenatedOperation {
                             identified: Identified::named(format!(
                                 "{} + {}",
@@ -7132,8 +7170,8 @@ impl CoordinateOperationFactory {
                         source.name(),
                         target.name()
                     )),
-                    source.clone(),
-                    target.clone(),
+                    source,
+                    target,
                     9656,
                     vec![ParameterValue::length(0.0); 2],
                     world_extent(),
@@ -7783,8 +7821,8 @@ pub(super) fn forced_ballpark_operations(source: &Crs, target: &Crs) -> Vec<Coor
     };
     Transformation::create_from_code(
         &OpProps::new().name(name),
-        source.clone(),
-        target.clone(),
+        source,
+        target,
         code,
         values,
         domain,
@@ -9037,8 +9075,8 @@ fn concatenate_steps(
     let source = steps.first().and_then(|step| step.source_crs().cloned());
     let target = steps.last().and_then(|step| step.target_crs().cloned());
     let mut concatenated = pivot_concatenation(steps);
-    concatenated.source = source.map(Box::new);
-    concatenated.target = target.map(Box::new);
+    concatenated.source = source.map(Arc::new);
+    concatenated.target = target.map(Arc::new);
     Some(CoordinateOperation::Concatenated(concatenated))
 }
 
@@ -9243,7 +9281,7 @@ fn interpolation_of(operation: &CoordinateOperation) -> Option<&Crs> {
 
 /// `CoordinateOperation::setInterpolationCRS`: stores `crs` as the interpolation CRS.
 fn set_interpolation_of(operation: &mut CoordinateOperation, crs: Crs) {
-    let crs = Some(Box::new(crs));
+    let crs = Some(Arc::new(crs));
     match operation {
         CoordinateOperation::Conversion(conversion) => conversion.interpolation = crs,
         CoordinateOperation::Transformation(transformation) => transformation.interpolation = crs,
@@ -9298,21 +9336,22 @@ fn with_identified(crs: GeodeticCRS, identified: Identified) -> GeodeticCRS {
 /// `setCRSs` on a copy: the source and target of the operation, as stored.
 fn with_endpoints_of(
     mut operation: CoordinateOperation,
-    source: &Crs,
-    target: &Crs,
+    source: impl Share,
+    target: impl Share,
 ) -> CoordinateOperation {
+    let (source, target) = (source.share(), target.share());
     match &mut operation {
         CoordinateOperation::Conversion(conversion) => {
-            conversion.source = Some(Box::new(source.clone()));
-            conversion.target = Some(Box::new(target.clone()));
+            conversion.source = Some(source);
+            conversion.target = Some(target);
         }
         CoordinateOperation::Transformation(transformation) => {
-            transformation.source = Some(Box::new(source.clone()));
-            transformation.target = Some(Box::new(target.clone()));
+            transformation.source = Some(source);
+            transformation.target = Some(target);
         }
         CoordinateOperation::Concatenated(concatenated) => {
-            concatenated.source = Some(Box::new(source.clone()));
-            concatenated.target = Some(Box::new(target.clone()));
+            concatenated.source = Some(source);
+            concatenated.target = Some(target);
         }
     }
     operation
@@ -9515,9 +9554,9 @@ fn promote_operation_to_3d(
     operation: CoordinateOperation,
     db: &DatabaseContext,
 ) -> CoordinateOperation {
-    let promote = |crs: &Option<Box<Crs>>| -> Option<Box<Crs>> {
+    let promote = |crs: &Option<Arc<Crs>>| -> Option<Arc<Crs>> {
         crs.as_deref()
-            .map(|crs| Box::new(promote_crs_to_3d(crs, db)))
+            .map(|crs| Arc::new(promote_crs_to_3d(crs, db)))
     };
     match operation {
         CoordinateOperation::Transformation(mut transformation) => {
@@ -9606,10 +9645,10 @@ fn datum_identity(crs: &Crs, db: &DatabaseContext) -> Option<(String, String)> {
 fn resolve_crs(
     crs: &Crs,
     context: &CoordinateOperationContext,
-) -> (Crs, Option<ObjectDomain>, bool) {
+) -> (Arc<Crs>, Option<ObjectDomain>, bool) {
     let mut extent = crs_extent(crs);
     if context.registry != RegistryUse::Database {
-        return (crs.clone(), extent, false);
+        return (crs.share(), extent, false);
     }
     let original_has_extent = extent.is_some();
     let approximate = extent.is_none() || matches!(crs, Crs::Compound(_));
@@ -9623,7 +9662,7 @@ fn resolve_crs(
         }
         Crs::Projected(_) => ObjectType::ProjectedCrs,
         Crs::Compound(_) => ObjectType::CompoundCrs,
-        _ => return (crs.clone(), extent, false),
+        _ => return (crs.share(), extent, false),
     };
     let axis_directions = |crs: &Crs| -> Vec<String> {
         geographic_of(crs)
@@ -9651,7 +9690,7 @@ fn resolve_crs(
     );
     if let Some(id) = crs.identifiers().first() {
         let factory = AuthorityFactory::create(&context.db, id.code_space());
-        if let Ok(resolved) = factory.create_coordinate_reference_system(id.code()) {
+        if let Ok(resolved) = factory.create_shared_crs(id.code()) {
             let mut changed = false;
             if approximate {
                 if let Some(registered) = crs_extent(&resolved) {
@@ -9662,9 +9701,9 @@ fn resolve_crs(
             if equivalent(&resolved, crs) && !has_geoid {
                 return (resolved, extent, true);
             }
-            return (crs.clone(), extent, changed);
+            return (crs.share(), extent, changed);
         }
-        return (crs.clone(), extent, false);
+        return (crs.share(), extent, false);
     }
     let name = crs.name();
     if name != "unknown" && name != "unnamed" {
@@ -9685,10 +9724,10 @@ fn resolve_crs(
                     }
                 }
                 if equivalent(found, crs) && !has_geoid {
-                    return (found.clone(), extent, true);
+                    return (Arc::new(found.clone()), extent, true);
                 }
                 if !matches!(crs, Crs::Compound(_)) {
-                    return (crs.clone(), extent, changed);
+                    return (crs.share(), extent, changed);
                 }
             }
         }
@@ -9707,10 +9746,10 @@ fn resolve_crs(
                 };
             }
             let changed = resolved != extent;
-            return (crs.clone(), resolved, changed);
+            return (crs.share(), resolved, changed);
         }
     }
-    (crs.clone(), extent, false)
+    (crs.share(), extent, false)
 }
 
 /// `buildCRSIds`: the identifier of the CRS, or when it has none the identifier of the one
@@ -9863,7 +9902,7 @@ fn geographic_geocentric(source: &Crs, target: &Crs) -> Option<Conversion> {
     let name = operation_crs_name("Conversion", source, target);
     Conversion::create_geographic_geocentric(&OpProps::new().name(name))
         .ok()
-        .map(|conversion| conversion.with_endpoints(source.clone(), target.clone()))
+        .map(|conversion| conversion.with_endpoints(source, target))
 }
 
 /// The area of use of a concatenated operation of pivot legs: the intersection of the areas of
@@ -9952,7 +9991,7 @@ pub(super) fn pivot_concatenation(steps: Vec<CoordinateOperation>) -> Concatenat
         .flatten()
         .into_iter()
         .collect();
-    let interpolation = concatenation_interpolation(&steps).map(Box::new);
+    let interpolation = concatenation_interpolation(&steps).map(Arc::new);
     ConcatenatedOperation {
         identified,
         steps: steps
@@ -10742,8 +10781,8 @@ fn set_effective_endpoints(step: &mut ConcatenatedStep, source: Crs, target: Crs
 
 fn set_conversion_endpoints(step: &mut ConcatenatedStep, source: Crs, target: Crs) {
     if let CoordinateOperation::Conversion(conversion) = &mut step.operation {
-        conversion.source = Some(Box::new(source));
-        conversion.target = Some(Box::new(target));
+        conversion.source = Some(Arc::new(source));
+        conversion.target = Some(Arc::new(target));
     }
 }
 

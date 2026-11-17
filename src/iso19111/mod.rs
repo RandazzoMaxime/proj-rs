@@ -41,6 +41,7 @@ pub(crate) use projstring::PRIME_MERIDIANS;
 pub(crate) use select::RemoteGrids;
 pub(crate) use wkt::format_g;
 mod select;
+mod shared;
 mod suggest;
 mod transform_export;
 mod wkt;

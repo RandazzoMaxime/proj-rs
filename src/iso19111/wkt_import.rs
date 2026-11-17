@@ -11,6 +11,7 @@ use super::equiv::Equivalence;
 use super::niche::{ParametricCS, ParametricDatum, TemporalCS, TemporalCsKind, TemporalDatum};
 use super::normalize::reversed;
 use super::wkt1_syntax::wkt1_syntax_error;
+use std::sync::Arc;
 
 mod niche;
 use super::factory::{AuthorityFactory, DatabaseContext, NameMatch};
@@ -1955,8 +1956,8 @@ impl WktParser {
                 parameters: Vec::new(),
             },
             parameters,
-            source: Some(Box::new(transformation_source)),
-            target: Some(Box::new(target.clone())),
+            source: Some(Arc::new(transformation_source)),
+            target: Some(Arc::new(target.clone())),
             interpolation: None,
             accuracy: None,
             accuracy_text: None,
@@ -2593,8 +2594,8 @@ impl WktParser {
                 code: "8666".to_owned(),
                 value: ParameterValue::filename(grids),
             }],
-            source: Some(Box::new(source)),
-            target: Some(Box::new(target.clone())),
+            source: Some(Arc::new(source)),
+            target: Some(Arc::new(target.clone())),
             interpolation: None,
             accuracy: None,
             accuracy_text: None,
@@ -2922,7 +2923,7 @@ impl WktParser {
             target: None,
             version: props.version,
             inverted: false,
-            interpolation: interpolation.map(Box::new),
+            interpolation: interpolation.map(Arc::new),
         };
         Ok(if inverse {
             conversion.inverse()
@@ -3522,12 +3523,12 @@ impl WktParser {
         // from `createBoundCRSSourceTransformationCRS(base, target)`, so from a Greenwich copy of
         // the base geographic CRS when its prime meridian is not Greenwich's.
         if transformation.source.is_none() {
-            transformation.source = Some(Box::new(super::bound_import::transformation_source_of(
+            transformation.source = Some(Arc::new(super::bound_import::transformation_source_of(
                 &source,
             )));
         }
         if transformation.target.is_none() {
-            transformation.target = Some(Box::new(target.clone()));
+            transformation.target = Some(Arc::new(target.clone()));
         }
         // A `Geographic3D to GravityRelatedHeight` transformation of a vertical CRS bound to a
         // geographic CRS goes the other way round: the method becomes
@@ -3634,23 +3635,23 @@ impl WktParser {
             .unwrap_or_default();
         assign_parameter_codes(&method_code, &mut parameters);
         let source = if node.child(&["SOURCECRS"]).is_some() {
-            Some(Box::new(self.wrapped_crs(node, "SOURCECRS")?))
+            Some(Arc::new(self.wrapped_crs(node, "SOURCECRS")?))
         } else {
             None
         };
         let target = if node.child(&["TARGETCRS"]).is_some() {
-            Some(Box::new(self.wrapped_crs(node, "TARGETCRS")?))
+            Some(Arc::new(self.wrapped_crs(node, "TARGETCRS")?))
         } else {
             None
         };
         let mut interpolation = if node.child(&["INTERPOLATIONCRS"]).is_some() {
-            Some(Box::new(self.wrapped_crs(node, "INTERPOLATIONCRS")?))
+            Some(Arc::new(self.wrapped_crs(node, "INTERPOLATIONCRS")?))
         } else {
             None
         };
         if interpolation.is_none() {
             if let Some(crs) = self.take_interpolation_crs(&mut parameters) {
-                interpolation = Some(Box::new(crs));
+                interpolation = Some(Arc::new(crs));
             }
         }
         let accuracy = node
@@ -3728,12 +3729,12 @@ impl WktParser {
             return Err(invalid("a concatenated operation needs at least two steps"));
         }
         let source = if node.child(&["SOURCECRS"]).is_some() {
-            Some(Box::new(self.wrapped_crs(node, "SOURCECRS")?))
+            Some(Arc::new(self.wrapped_crs(node, "SOURCECRS")?))
         } else {
             None
         };
         let target = if node.child(&["TARGETCRS"]).is_some() {
-            Some(Box::new(self.wrapped_crs(node, "TARGETCRS")?))
+            Some(Arc::new(self.wrapped_crs(node, "TARGETCRS")?))
         } else {
             None
         };
@@ -4093,8 +4094,8 @@ fn derived_base(crs: &Crs) -> Option<Crs> {
 /// `setCRSsUpdateInverse`: the CRS pair is the one the operation exposes, whatever its
 /// direction.
 fn set_step_crss(conversion: &mut Conversion, source: Crs, target: Crs) {
-    conversion.source = Some(Box::new(source));
-    conversion.target = Some(Box::new(target));
+    conversion.source = Some(Arc::new(source));
+    conversion.target = Some(Arc::new(target));
 }
 
 fn reference_surface(ellipsoid: Option<&Ellipsoid>) -> super::esri_parammap::ReferenceSurface {
@@ -4253,7 +4254,7 @@ fn add_height_axis(crs: &mut Crs, axis: Axis, new_name: &str) {
                 projected.coordinate_system.axes.push(axis);
             }
         }
-        Crs::Bound(bound) => add_height_axis(&mut bound.source, axis, new_name),
+        Crs::Bound(bound) => add_height_axis(Arc::make_mut(&mut bound.source), axis, new_name),
         _ => {}
     }
 }
@@ -4262,7 +4263,7 @@ fn set_nonconformant(crs: &mut Crs) {
     match crs {
         Crs::Geographic(geographic) => geographic.identified.allow_non_conformant_wkt1 = true,
         Crs::Projected(projected) => projected.identified.allow_non_conformant_wkt1 = true,
-        Crs::Bound(bound) => set_nonconformant(&mut bound.source),
+        Crs::Bound(bound) => set_nonconformant(Arc::make_mut(&mut bound.source)),
         _ => {}
     }
 }
@@ -4275,7 +4276,7 @@ fn attach_compound(crs: &mut Crs, compound: CompoundCRS) {
         Crs::Projected(projected) => {
             projected.identified.original_compound = Some(Box::new(compound));
         }
-        Crs::Bound(bound) => attach_compound(&mut bound.source, compound),
+        Crs::Bound(bound) => attach_compound(Arc::make_mut(&mut bound.source), compound),
         _ => {}
     }
 }
@@ -5186,7 +5187,7 @@ trait BoundEdit {
 
 impl BoundEdit for BoundCRS {
     fn source_crs_mut(&mut self) -> &mut Crs {
-        &mut self.source
+        Arc::make_mut(&mut self.source)
     }
 
     fn identified_mut(&mut self) -> &mut Identified {

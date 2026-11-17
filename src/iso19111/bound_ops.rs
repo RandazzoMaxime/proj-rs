@@ -14,6 +14,8 @@
 //! Not ported: the Clarke 1866 to NAD83 special case and the vertical blocks of
 //! `createOperationsBoundToBound` (same vertical datum, same hub for vertical bases).
 
+use std::sync::Arc;
+
 use super::bound::extract_geographic;
 use super::buildop::OpProps;
 use super::compound::compute_metadata;
@@ -29,6 +31,7 @@ use super::model::{
     EllipsoidalCS, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, UnitOfMeasure,
 };
 use super::niche::DerivedKind;
+use super::shared::Share;
 use super::FactoryError;
 
 /// Candidates for a pair where one side is a bound CRS. `None` for any other pair.
@@ -660,7 +663,11 @@ fn crs_equivalent(left: &Crs, right: &Crs) -> bool {
 }
 
 /// `CoordinateOperation::setCRSs`: the source and target the operation stores.
-pub(super) fn set_endpoints(operation: &mut CoordinateOperation, source: &Crs, target: &Crs) {
+pub(super) fn set_endpoints(
+    operation: &mut CoordinateOperation,
+    source: impl Share,
+    target: impl Share,
+) {
     let (stored_source, stored_target) = match operation {
         CoordinateOperation::Conversion(conversion) => {
             (&mut conversion.source, &mut conversion.target)
@@ -672,8 +679,8 @@ pub(super) fn set_endpoints(operation: &mut CoordinateOperation, source: &Crs, t
             (&mut concatenated.source, &mut concatenated.target)
         }
     };
-    *stored_source = Some(Box::new(source.clone()));
-    *stored_target = Some(Box::new(target.clone()));
+    *stored_source = Some(source.share());
+    *stored_target = Some(target.share());
 }
 
 /// `CoordinateOperation::setCRSsUpdateInverse` (singleoperation.cpp:240-272): the endpoints of
@@ -682,45 +689,46 @@ pub(super) fn set_endpoints(operation: &mut CoordinateOperation, source: &Crs, t
 /// inverse is computed from the operation when needed.
 pub(super) fn set_endpoints_update_inverse(
     operation: &mut CoordinateOperation,
-    source: &Crs,
-    target: &Crs,
+    source: impl Share,
+    target: impl Share,
 ) {
-    set_endpoints(operation, source, target);
+    let (source, target) = (source.share(), target.share());
+    set_endpoints(operation, &source, &target);
     if let CoordinateOperation::Concatenated(concatenated) = operation {
         if let Some(first) = concatenated.steps.first_mut() {
             if let Some(first_target) = step_target(first).cloned() {
-                set_step_endpoints(first, source, &first_target);
+                set_step_endpoints(first, &source, first_target);
             }
         }
         if let Some(last) = concatenated.steps.last_mut() {
             if let Some(last_source) = step_source(last).cloned() {
-                set_step_endpoints(last, &last_source, target);
+                set_step_endpoints(last, last_source, &target);
             }
         }
     }
 }
 
 /// The source of a step in the direction the concatenation runs it.
-fn step_source(step: &ConcatenatedStep) -> Option<&Crs> {
+fn step_source(step: &ConcatenatedStep) -> Option<&Arc<Crs>> {
     if step.reverse {
-        operation_target(&step.operation)
+        step.operation.target_shared()
     } else {
-        operation_source(&step.operation)
+        step.operation.source_shared()
     }
 }
 
 /// The target of a step in the direction the concatenation runs it.
-fn step_target(step: &ConcatenatedStep) -> Option<&Crs> {
+fn step_target(step: &ConcatenatedStep) -> Option<&Arc<Crs>> {
     if step.reverse {
-        operation_source(&step.operation)
+        step.operation.source_shared()
     } else {
-        operation_target(&step.operation)
+        step.operation.target_shared()
     }
 }
 
 /// [`set_endpoints_update_inverse`] on a step: a reversed step stores the forward operation, so
 /// its stored ends are the swapped ones.
-fn set_step_endpoints(step: &mut ConcatenatedStep, source: &Crs, target: &Crs) {
+fn set_step_endpoints(step: &mut ConcatenatedStep, source: impl Share, target: impl Share) {
     if step.reverse {
         set_endpoints_update_inverse(&mut step.operation, target, source);
     } else {
@@ -750,10 +758,10 @@ fn with_endpoints(bound: &BoundCRS) -> CoordinateOperation {
         if transformation.source.is_none()
             || matches!(transformation.source.as_deref(), Some(Crs::Projected(_)))
         {
-            transformation.source = Some(Box::new(source));
+            transformation.source = Some(Arc::new(source));
         }
         if transformation.target.is_none() {
-            transformation.target = Some(Box::new(bound.target_crs().clone()));
+            transformation.target = Some(Arc::new(bound.target_crs().clone()));
         }
     }
     operation

@@ -11,6 +11,7 @@ use super::model::{
 };
 use super::parammap;
 use super::FactoryError;
+use std::sync::Arc;
 
 impl GeodeticCRS {
     /// A geocentric CRS named `name` on a datum or a datum ensemble.
@@ -192,7 +193,7 @@ impl Conversion {
     /// hands a deriving conversion back with the base CRS it was made from.
     #[must_use]
     pub fn with_source_crs(mut self, source: Crs) -> Self {
-        self.source = Some(Box::new(source));
+        self.source = Some(Arc::new(source));
         self
     }
 }

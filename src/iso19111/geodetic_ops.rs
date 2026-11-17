@@ -15,6 +15,7 @@ use super::model::{
     Axis, Conversion, CoordinateOperation, Crs, EllipsoidalCS, GeodeticCRS, GeodeticReferenceFrame,
     GeographicCRS, Measure, ObjectDomain, ParameterValue, Transformation, UnitOfMeasure,
 };
+use super::shared::Share;
 use super::{FactoryError, OpProps};
 
 const NULL_GEOGRAPHIC_OFFSET: &str = "Null geographic offset";
@@ -264,7 +265,7 @@ pub(super) fn geographic_geocentric_conversion(
             source,
             target,
         )))?
-        .with_endpoints(source.clone(), target.clone()),
+        .with_endpoints(source, target),
     )
 }
 
@@ -374,8 +375,8 @@ pub(super) fn forced_geographic_geocentric(
 ) -> Result<CoordinateOperation, FactoryError> {
     let mut operation = Transformation::create_from_code(
         &OpProps::new().name(transformation_name(source.name(), target.name())),
-        source.clone(),
-        target.clone(),
+        source,
+        target,
         9602,
         Vec::new(),
         world_extent(),
@@ -425,8 +426,8 @@ fn geocentric_translation(
             source.name(),
             target.name()
         )),
-        source.clone(),
-        target.clone(),
+        source,
+        target,
         METHOD_GEOCENTRIC_TRANSLATIONS,
         vec![ParameterValue::length(0.0); 3],
         world_extent(),
@@ -528,7 +529,7 @@ pub(super) fn axis_order_change(
     };
     Ok(CoordinateOperation::Conversion(
         Conversion::from_code(&OpProps::new().name(name), code, Vec::new())?
-            .with_endpoints(source.clone(), target.clone()),
+            .with_endpoints(source, target),
     ))
 }
 
@@ -560,7 +561,7 @@ pub(super) fn geographic_to_geographic(
                 &OpProps::new().name(name),
                 source_height / target_height,
             )?
-            .with_endpoints(source.clone(), target.clone());
+            .with_endpoints(source, target);
             return Ok(vec![CoordinateOperation::Conversion(conversion)]);
         }
         return Ok(vec![CoordinateOperation::Transformation(
@@ -652,8 +653,8 @@ fn longitude_rotation(
 ) -> Result<Transformation, FactoryError> {
     Transformation::create_from_code(
         &OpProps::new().name(name),
-        source.clone(),
-        target.clone(),
+        source,
+        target,
         METHOD_LONGITUDE_ROTATION,
         vec![ParameterValue::Measure(offset.clone())],
         world_extent(),
@@ -694,8 +695,8 @@ fn geographic_offset(
     };
     let mut operation = Transformation::create_from_code(
         &OpProps::new().name(build_op_name(prefix, source, target)),
-        source.clone(),
-        target.clone(),
+        source,
+        target,
         code,
         values,
         domain,
@@ -708,10 +709,10 @@ fn geographic_offset(
 
 /// `createGeodToGeodPROJBased`: the target CRS exported after the inverse of the source CRS.
 fn geodetic_proj_based(source: &Crs, target: &Crs) -> Result<Transformation, FactoryError> {
-    let mut operation = Transformation::create(
+    let mut operation = Transformation::create_shared(
         &OpProps::new().name(transformation_name(source.name(), target.name())),
-        source.clone(),
-        target.clone(),
+        source.share(),
+        target.share(),
         None,
         super::transform_export::PROJ_BASED_METHOD,
         Vec::new(),
