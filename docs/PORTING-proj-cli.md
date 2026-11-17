@@ -30,7 +30,7 @@ options de `proj` (voir « Hors périmètre »).
 | `EPSG:27571 -S` : pm de Paris, facteurs 0,999877 | `tests/cli_yaml`, `test_proj.yaml#3` |
 | `EPSG:5972 -S` : premier sous-CRS projeté d'un composé | `tests/cli_yaml`, `test_proj.yaml#4` |
 | `EPSG:32620 -S` (non-régression) | `tests/cli_yaml`, `test_proj.yaml#2` |
-| `proj -S` Mercator, tmerc, LCC, stéréographique, Robinson, `+units=ft` : valeurs au bit près | `tests/cli_proj_factors.rs` |
+| `proj -S` Mercator, tmerc, LCC, stéréographique, Robinson, `+units=ft` : valeurs à la tolérance de `docs/PARITY.md` | `tests/cli_proj_factors.rs` |
 | `%g` de C : six chiffres, zéros retirés, exposant à deux chiffres | `format_g_matches_c_printf` |
 | zéros de fin retirés, entiers conservés | `trim_zeros_keeps_integers` |
 

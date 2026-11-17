@@ -62,6 +62,8 @@ points testés (Tour Eiffel, (3 ; 48), (0,2 ; 43,5), (5,8 ; 49,9)), à neuf déc
 | (b) repli portable | 0 | 0 | — |
 | (c) AVX2 | 15 545 / 20 000 ; 29 ulps max ; 2,8 nm max | 15 543 / 20 000 ; 33 ulps ; 3,7 nm | 11 344 / 20 000 ; 32 ulps ; 7,5 nm |
 
+Depuis `fmath` (`docs/PORTING-simd.md`), la boucle scalaire elle-même n'est plus bit à bit avec PROJ (au plus 7,5e-9 m) ; le repli portable reste bit à bit avec elle, car il appelle les mêmes fonctions de `fmath`.
+
 Le chemin AVX2 n'est donc pas bit à bit avec PROJ ni avec la boucle scalaire. Son écart reste
 sous 10 nm, la borne du test `batch_matches_scalar_within_ten_nanometres`.
 
