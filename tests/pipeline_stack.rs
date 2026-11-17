@@ -216,6 +216,14 @@ fn golden_section(name: &str) -> Vec<&'static str> {
 
 #[test]
 fn the_stack_of_a_pipeline_gives_the_same_points_and_errors() {
+    // The transcripts hold the bits of glibc's libm on x86-64; MSVC and Apple give others.
+    if !cfg!(all(
+        target_os = "linux",
+        target_env = "gnu",
+        target_arch = "x86_64"
+    )) {
+        return;
+    }
     let all = scenarios();
     if let Ok(file) = std::env::var("PIPELINE_STACK_CAPTURE") {
         let mut text = String::new();
