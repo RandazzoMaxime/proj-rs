@@ -5,6 +5,9 @@ use proj_rs::{
     BBox, Backend, Ballpark, Cache, Context, Crs, CrsKind, Error, Network, OnlyBest, Point,
     Transformer, WktVersion,
 };
+#[path = "common/tolerance.rs"]
+mod tolerance;
+
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -293,7 +296,13 @@ fn a_failing_point_leaves_its_block_and_the_next_ones_unchanged() {
         let done = position / 4_096 * 4_096;
         for (index, (after, input)) in points.iter().zip(&before).enumerate() {
             if index < done {
-                assert_eq!(*after, t.forward(*input).expect("forward"), "point {index}");
+                // The batch kernels may differ from one point at a time by the parity tolerance.
+                let one = t.forward(*input).expect("forward");
+                assert!(
+                    tolerance::close(tolerance::Quantity::Metres, after.x, one.x)
+                        && tolerance::close(tolerance::Quantity::Metres, after.y, one.y),
+                    "point {index}: {after:?} against {one:?}"
+                );
             } else {
                 assert_eq!(after, input, "point {index} at {position}");
             }
