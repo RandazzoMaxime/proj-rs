@@ -380,10 +380,35 @@ fn create_temp_views(conn: &Connection, databases: usize) -> Result<(), FactoryE
 /// does: major must be 1 and minor must be at least 7.
 #[derive(Clone)]
 pub struct DatabaseContext {
-    conn: Arc<Mutex<Connection>>,
+    conn: Arc<Connections>,
     attachment: Attachment,
     /// Set while an insert session is open on this database; shared by clones.
     insert_session: Arc<AtomicBool>,
+}
+
+/// The connection of a [`DatabaseContext`]. A context of [`DatabaseContext::create`] reads
+/// through the read-only connection `shared` with the other contexts of its thread, and owns a
+/// writable copy of the database from its first write on.
+struct Connections {
+    own: Mutex<Option<Connection>>,
+    shared: Option<Arc<Mutex<Connection>>>,
+}
+
+/// A locked connection: the shared one, or the one a context owns.
+enum Access<'a> {
+    Shared(std::sync::MutexGuard<'a, Connection>),
+    Own(std::sync::MutexGuard<'a, Option<Connection>>),
+}
+
+impl std::ops::Deref for Access<'_> {
+    type Target = Connection;
+
+    fn deref(&self) -> &Connection {
+        match self {
+            Self::Shared(guard) => guard,
+            Self::Own(guard) => guard.as_ref().expect("owned connection"),
+        }
+    }
 }
 
 /// How the tables of a [`DatabaseContext`] are reached.
@@ -425,10 +450,25 @@ impl DatabaseContext {
     /// The bytes cannot be deserialized, or the layout version is not the one
     /// this factory reads.
     pub fn create() -> Result<Self, FactoryError> {
-        let conn =
-            projdb::open_connection().map_err(|error| FactoryError::Sql(error.to_string()))?;
-        check_main_layout(&conn, "", "proj.db")?;
-        Ok(Self::from_connection(conn, Attachment::Direct))
+        let sql_error = |error: projdb::DbFail| FactoryError::Sql(error.to_string());
+        let Some(shared) = projdb::shared_read_only().map_err(sql_error)? else {
+            let conn = projdb::open_connection().map_err(sql_error)?;
+            check_main_layout(&conn, "", "proj.db")?;
+            return Ok(Self::from_connection(conn, Attachment::Direct));
+        };
+        check_main_layout(
+            &shared.lock().unwrap_or_else(|poison| poison.into_inner()),
+            "",
+            "proj.db",
+        )?;
+        Ok(Self {
+            conn: Arc::new(Connections {
+                own: Mutex::new(None),
+                shared: Some(shared),
+            }),
+            attachment: Attachment::Direct,
+            insert_session: Arc::new(AtomicBool::new(false)),
+        })
     }
 
     /// Open the `proj.db` file at `path`, read-only, with the layout check of
@@ -512,7 +552,10 @@ impl DatabaseContext {
 
     fn from_connection(conn: Connection, attachment: Attachment) -> Self {
         Self {
-            conn: Arc::new(Mutex::new(conn)),
+            conn: Arc::new(Connections {
+                own: Mutex::new(Some(conn)),
+                shared: None,
+            }),
             attachment,
             insert_session: Arc::new(AtomicBool::new(false)),
         }
@@ -577,7 +620,7 @@ impl DatabaseContext {
     ///
     /// The SQL fails, for example when a trigger rejects a row.
     pub fn execute_sql(&self, sql: &str) -> Result<(), FactoryError> {
-        self.lock()
+        self.lock_for_write()?
             .execute_batch(sql)
             .map_err(|error| FactoryError::Sql(error.to_string()))
     }
@@ -612,15 +655,40 @@ impl DatabaseContext {
 
     /// Run `sql` as a batch, such as an `INSERT` or a savepoint command.
     pub(super) fn execute_batch(&self, sql: &str) -> Result<(), FactoryError> {
-        self.lock()
+        self.lock_for_write()?
             .execute_batch(sql)
             .map_err(|error| FactoryError::Sql(format!("Cannot execute {sql}: {error}")))
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, Connection> {
-        self.conn
+    /// The connection for a statement that writes: a context that reads through the shared
+    /// connection takes its own writable copy first, so the write stays in this context.
+    fn lock_for_write(&self) -> Result<Access<'_>, FactoryError> {
+        let mut own = self
+            .conn
+            .own
             .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
+            .unwrap_or_else(|poison| poison.into_inner());
+        if own.is_none() {
+            let copy =
+                projdb::open_connection().map_err(|error| FactoryError::Sql(error.to_string()))?;
+            *own = Some(copy);
+        }
+        Ok(Access::Own(own))
+    }
+
+    fn lock(&self) -> Access<'_> {
+        let own = self
+            .conn
+            .own
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        match &self.conn.shared {
+            Some(shared) if own.is_none() => {
+                drop(own);
+                Access::Shared(shared.lock().unwrap_or_else(|poison| poison.into_inner()))
+            }
+            _ => Access::Own(own),
+        }
     }
 
     /// The rows of `sql` as text, with `params` bound in order.
