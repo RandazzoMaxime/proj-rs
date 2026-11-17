@@ -3,6 +3,8 @@
 #
 # Usage: capi/tests/dist.sh [--release] [PREFIX]       (default prefix: target/capi-dist)
 #
+# PROJ_RS_CAPI_FEATURES="network" adds the HTTP(S) client (off by default, as PROJ without libcurl).
+#
 # Installs PREFIX/lib/libproj.so.25, libproj.so, libproj.a (libproj.25.dylib, libproj.dylib
 # and libproj.a on macOS) and PREFIX/include/{proj.h,proj_constants.h,proj_experimental.h,
 # proj_symbol_rename.h}. Windows (proj.dll, proj.lib): capi/tests/dist.ps1.
@@ -20,7 +22,7 @@ prefix=${1:-$root/target/capi-dist}
 mkdir -p "$prefix/lib" "$prefix/include"
 
 cd "$root"
-cargo build -p proj-rs-capi ${cargo_args[@]+"${cargo_args[@]}"}
+cargo build -p proj-rs-capi ${PROJ_RS_CAPI_FEATURES:+--features "$PROJ_RS_CAPI_FEATURES"} ${cargo_args[@]+"${cargo_args[@]}"}
 target=${CARGO_TARGET_DIR:-$root/target}/$profile
 
 case "$(uname -s)" in

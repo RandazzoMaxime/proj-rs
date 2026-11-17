@@ -10,6 +10,7 @@ use super::model::{
     VerticalCRS,
 };
 use super::niche::{DerivedCRS, DerivedKind};
+use std::sync::Arc;
 
 /// How [`Conversion::alter_parameters_linear_unit`] applies a linear unit.
 ///
@@ -291,7 +292,7 @@ impl Crs {
             }
             Self::Bound(crs) => {
                 let mut bound = crs.clone();
-                bound.source = Box::new(crs.source.alter_cs_linear_unit(unit));
+                bound.source = Arc::new(crs.source.alter_cs_linear_unit(unit));
                 Self::Bound(bound)
             }
             _ => self.clone(),
@@ -484,7 +485,7 @@ pub(super) fn promote_bound_hub_to_3d(crs: &mut Crs, db: Option<&DatabaseContext
     if !operation_has_towgs84(&bound.transformation) {
         return;
     }
-    *bound.target = bound.target.promote_to_3d(db);
+    bound.target = Arc::new(bound.target.promote_to_3d(db));
     bound.transformation = promote_operation(&bound.transformation, db);
 }
 
@@ -498,7 +499,7 @@ fn promote_bound(crs: &BoundCRS, db: Option<&DatabaseContext>) -> Crs {
         ))
     } else {
         let mut bound = crs.clone();
-        bound.source = Box::new(source);
+        bound.source = Arc::new(source);
         Crs::Bound(bound)
     }
 }
@@ -513,7 +514,7 @@ fn demote_bound(crs: &BoundCRS, db: Option<&DatabaseContext>) -> Crs {
         ))
     } else {
         let mut bound = crs.clone();
-        bound.source = Box::new(source);
+        bound.source = Arc::new(source);
         Crs::Bound(bound)
     }
 }
@@ -536,10 +537,10 @@ fn promote_operation(
     };
     let mut transformation = transformation.clone();
     if let Some(source) = transformation.source.take() {
-        transformation.source = Some(Box::new(source.promote_to_3d(db)));
+        transformation.source = Some(Arc::new(source.promote_to_3d(db)));
     }
     if let Some(target) = transformation.target.take() {
-        transformation.target = Some(Box::new(target.promote_to_3d(db)));
+        transformation.target = Some(Arc::new(target.promote_to_3d(db)));
     }
     CoordinateOperation::Transformation(transformation)
 }
@@ -553,10 +554,10 @@ fn demote_operation(
     };
     let mut transformation = transformation.clone();
     if let Some(source) = transformation.source.take() {
-        transformation.source = Some(Box::new(source.demote_to_2d(db)));
+        transformation.source = Some(Arc::new(source.demote_to_2d(db)));
     }
     if let Some(target) = transformation.target.take() {
-        transformation.target = Some(Box::new(target.demote_to_2d(db)));
+        transformation.target = Some(Arc::new(target.demote_to_2d(db)));
     }
     CoordinateOperation::Transformation(transformation)
 }

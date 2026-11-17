@@ -17,6 +17,7 @@
 //! The C++ case sets `PROJ_FULL_FILE_CHUNK_SIZE` to 30000 and the user-writable directory to a
 //! directory that does not exist yet, so that PROJ creates it through the API. The port does the
 //! same with an absolute directory in the system temporary directory.
+#![cfg(feature = "network")]
 
 #[path = "net_cdn/mod.rs"]
 mod net_cdn;

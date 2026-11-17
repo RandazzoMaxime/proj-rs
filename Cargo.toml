@@ -58,9 +58,14 @@ doc = false
 name = "projsync"
 path = "src/bin/projsync.rs"
 doc = false
+required-features = ["network"]
 
 [features]
 geo-types = ["dep:geo-types"]
+# Grid download over HTTP(S), as PROJ built with `ENABLE_CURL`. Off by default: without it no
+# TLS library is compiled or linked, and a context with the network on can only use the
+# callbacks of `set_network_callbacks`. See `docs/PORTING-network-feature.md`.
+network = ["dep:native-tls"]
 # Shows the internal modules (ISO 19111 model, engine, CLI back ends) in the
 # documentation under `proj_rs::unstable`. They are public either way, and
 # outside semver either way.
@@ -79,9 +84,9 @@ geo-types = { version = "0.7.16", optional = true }
 rusqlite = { version = "0.37.0", features = ["bundled", "serialize", "backup"] }
 # GeoTIFF grids. `deflate` only: the test grids are uncompressed, deflate, or deflate+predictor.
 tiff = { version = "0.10.3", default-features = false, features = ["deflate"] }
-# HTTPS grid download. 0.2.14 is rust-version 1.80 and uses SChannel on Windows.
+# HTTPS grid download (feature `network`). 0.2.14 is rust-version 1.80 and uses SChannel on Windows.
 # A small HTTP/1.1 client sits on top so the tree does not pull ureq's ICU stack.
-native-tls = "0.2.14"
+native-tls = { version = "0.2.14", optional = true }
 
 [dev-dependencies]
 # YAML CLI cases. 0.9.34 is already in the offline registry.

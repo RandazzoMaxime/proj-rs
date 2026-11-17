@@ -9,6 +9,7 @@
 //! The database layout is read with `rusqlite` directly, as the C++ cases read it with
 //! `sqlite3`. The two cases that change the environment (`PROJ_GRID_CACHE_MAX_SIZE_BYTES`,
 //! `PROJ_LOCK_MAX_ITERS`) hold `ENV_LOCK`.
+#![cfg(feature = "network")]
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;

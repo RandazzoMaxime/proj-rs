@@ -24,7 +24,7 @@
 //!
 //! The `geo-types` feature, on by default, implements [`Coord`] and [`Transform`] for the
 //! `geo-types` geometries. The `network`, `tiff`, `bundled_proj` and `pkg_config` features of
-//! `proj` exist and change nothing: the network client and the grid reader are always built in.
+//! `proj` exist; `network` enables the HTTP(S) client of proj-rs, the others change nothing.
 
 pub use proj_rs::unstable::{
     Area, Coord, Info, Proj, ProjBuilder, ProjCreateError, ProjError, ProjInfo, Transform,

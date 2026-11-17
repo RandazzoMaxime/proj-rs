@@ -25,6 +25,7 @@ use super::model::{
     Crs, FactoryError, Identified, Identifier, OperationMethod, Parameter, ParameterValue,
     Transformation,
 };
+use std::sync::Arc;
 
 /// `EPSG_CODE_METHOD_NTV1`, `EPSG_CODE_METHOD_NTV2` (`proj_constants.h`).
 const METHOD_NTV1: i32 = 9614;
@@ -165,8 +166,8 @@ fn single_file_grid(
         transformation,
         similar_method(transformation),
         vec![epsg_parameter(code, name, &proj_filename)],
-        transformation.source_crs().cloned(),
-        transformation.target_crs().cloned(),
+        transformation.source.clone(),
+        transformation.target.clone(),
     )))
 }
 
@@ -237,8 +238,8 @@ fn velocity_grids(
         transformation,
         similar_method(transformation),
         parameters,
-        transformation.source_crs().cloned(),
-        transformation.target_crs().cloned(),
+        transformation.source.clone(),
+        transformation.target.clone(),
     )))
 }
 
@@ -304,8 +305,8 @@ fn vertical_grid(
         transformation,
         method,
         vec![epsg_parameter(code, name, &proj_filename)],
-        transformation.source_crs().cloned(),
-        transformation.target_crs().cloned(),
+        transformation.source.clone(),
+        transformation.target.clone(),
     )))
 }
 
@@ -355,8 +356,8 @@ fn point_motion_grid(
         transformation,
         method,
         vec![epsg_parameter(code, name, &proj_filename)],
-        transformation.source_crs().cloned(),
-        transformation.target_crs().cloned(),
+        transformation.source.clone(),
+        transformation.target.clone(),
     );
     replacement.point_motion = true;
     Ok(Some(replacement))
@@ -402,8 +403,8 @@ fn geocentric_grid(
             NAME_GEOCENTRIC_TRANSLATION_FILE,
             &proj_filename,
         )],
-        transformation.source_crs().cloned(),
-        transformation.target_crs().cloned(),
+        transformation.source.clone(),
+        transformation.target.clone(),
     )))
 }
 
@@ -511,8 +512,8 @@ fn gtiff_horizontal(
         transformation,
         method,
         vec![parameter],
-        transformation.source_crs().cloned(),
-        transformation.target_crs().cloned(),
+        transformation.source.clone(),
+        transformation.target.clone(),
     )
 }
 
@@ -554,8 +555,8 @@ fn geoid_model(
             NAME_GEOID_CORRECTION_FILENAME,
             &proj_filename,
         )],
-        transformation.source_crs().cloned(),
-        transformation.target_crs().cloned(),
+        transformation.source.clone(),
+        transformation.target.clone(),
     )))
 }
 
@@ -566,8 +567,8 @@ fn similar_operation(
     transformation: &Transformation,
     method: OperationMethod,
     parameters: Vec<Parameter>,
-    source: Option<Crs>,
-    target: Option<Crs>,
+    source: Option<Arc<Crs>>,
+    target: Option<Arc<Crs>>,
 ) -> Transformation {
     let mut identified = Identified::named(transformation.name());
     identified.identifiers = transformation
@@ -587,8 +588,8 @@ fn similar_operation(
         identified,
         method,
         parameters,
-        source: source.map(Box::new),
-        target: target.map(Box::new),
+        source,
+        target,
         interpolation: transformation.interpolation.clone(),
         accuracy: transformation.accuracy,
         accuracy_text: transformation.accuracy_text.clone(),

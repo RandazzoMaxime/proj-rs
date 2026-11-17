@@ -13,6 +13,7 @@
 //! Where the port differs from the C++ case, the reason is in `docs/PORTING-network.md`: the
 //! context is a `ProjBuilder` (the C++ case toggles the default context and a second one), and
 //! the `ctx` argument of the progress callback is the `&ProjBuilder` that downloads.
+#![cfg(feature = "network")]
 
 use std::fs::{self, File};
 use std::path::Path;

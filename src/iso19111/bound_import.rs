@@ -13,6 +13,7 @@ use super::model::{
 use super::niche::DerivedKind;
 use super::projstring::{geographic_axis, meridian_of, token};
 use super::wkt_import::helmert_parameters;
+use std::sync::Arc;
 
 type Tokens<'a> = &'a [(String, String)];
 
@@ -248,8 +249,8 @@ fn bind_towgs84_derived_geographic(
         identified: Identified::named(format!("Transformation from {} to WGS84", crs.name())),
         method: epsg_method(name, code),
         parameters: helmert_parameters(values),
-        source: Some(Box::new(crs.clone())),
-        target: Some(Box::new(target.clone())),
+        source: Some(Arc::new(crs.clone())),
+        target: Some(Arc::new(target.clone())),
         ..plain_transformation()
     };
     Ok(Crs::Bound(BoundCRS::create(
@@ -302,8 +303,8 @@ pub(crate) fn bind_towgs84(crs: Crs, values: &[f64]) -> Result<Crs, FactoryError
         identified: Identified::named(format!("Transformation from {} to WGS84", source.name())),
         method: epsg_method(name, code),
         parameters: helmert_parameters(values),
-        source: Some(Box::new(source)),
-        target: Some(Box::new(target.clone())),
+        source: Some(Arc::new(source)),
+        target: Some(Arc::new(target.clone())),
         ..plain_transformation()
     };
     Ok(Crs::Bound(BoundCRS::create(
@@ -327,8 +328,8 @@ pub(super) fn bind_nadgrids(crs: Crs, filename: &str) -> Crs {
             code: "8656".to_owned(),
             value: ParameterValue::filename(filename),
         }],
-        source: Some(Box::new(source)),
-        target: Some(Box::new(target.clone())),
+        source: Some(Arc::new(source)),
+        target: Some(Arc::new(target.clone())),
         ..plain_transformation()
     };
     Crs::Bound(BoundCRS::create(
@@ -449,8 +450,8 @@ fn bind_geoid(
             code: "8666".to_owned(),
             value: ParameterValue::filename(filename),
         }],
-        source: Some(Box::new(metre)),
-        target: Some(Box::new(hub.clone())),
+        source: Some(Arc::new(metre)),
+        target: Some(Arc::new(hub.clone())),
         ..plain_transformation()
     };
     Ok(Crs::Bound(BoundCRS::create(

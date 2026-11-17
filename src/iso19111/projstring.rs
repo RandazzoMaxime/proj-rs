@@ -531,8 +531,7 @@ pub(crate) fn operation_from_proj_extensions(
         source.name(),
         target.name()
     ));
-    let operation = Conversion::create_proj_based(&props, &text)?
-        .with_endpoints(source.clone(), target.clone());
+    let operation = Conversion::create_proj_based(&props, &text)?.with_endpoints(source, target);
     Ok(Some(CoordinateOperation::Conversion(operation)))
 }
 
