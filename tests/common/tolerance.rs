@@ -1,9 +1,10 @@
 //! The one rule for comparing PROJ 9.9.0's numbers, in doubles, text or `proj -b` bytes.
 //! The rule is written in `docs/PARITY.md`, « Tolérance de parité » ; no test keeps its own copy.
 //!
-//! - metres: 1e-6 m;
+//! - metres: 1e-6 m, or 1e-13 of the reference value when that is larger (past 1e7 m one ULP
+//!   exceeds 1e-6 m: `cs2cs-inverse-0105:4` is 7e11 m, 5.7e-15 relative);
 //! - degrees: 1e-11 degree, radians: 1e-13 rad (the same distance on the ground);
-//! - scale factors of `proj -S`: 1e-9 relative, 1e-5 absolute when both values are under 1e-4
+//! - scale factors of `proj -S`: 1e-7 relative, 1e-5 absolute when both values are under 1e-4
 //!   (finite differences of step 1e-5 rad in `factors.cpp` amplify a one-ULP gap);
 //! - text: the numbers are read back and compared by the rule above. A last printed digit that
 //!   flips, one unit apart, is rounding of the same value, not a gap.
@@ -16,7 +17,8 @@
 pub(crate) const METRES: f64 = 1e-6;
 pub(crate) const DEGREES: f64 = 1e-11;
 pub(crate) const RADIANS: f64 = 1e-13;
-pub(crate) const FACTOR_RELATIVE: f64 = 1e-9;
+pub(crate) const LINEAR_RELATIVE: f64 = 1e-13;
+pub(crate) const FACTOR_RELATIVE: f64 = 1e-7;
 pub(crate) const FACTOR_FLOOR: f64 = 1e-5;
 pub(crate) const FACTOR_NEAR_ZERO: f64 = 1e-4;
 
@@ -26,6 +28,11 @@ pub(crate) enum Quantity {
     Degrees,
     Radians,
     Factor,
+}
+
+/// A linear gap within `absolute`, or within [`LINEAR_RELATIVE`] of the reference value.
+pub(crate) fn linear_within(gap: f64, reference: f64, absolute: f64) -> bool {
+    gap <= absolute.max(LINEAR_RELATIVE * reference.abs())
 }
 
 /// Whether `got` and `expected` agree for `quantity`. Equal values, equal infinities and two NaN
@@ -39,7 +46,7 @@ pub(crate) fn close(quantity: Quantity, got: f64, expected: f64) -> bool {
     }
     let gap = (got - expected).abs();
     match quantity {
-        Quantity::Metres => gap <= METRES,
+        Quantity::Metres => linear_within(gap, expected, METRES),
         Quantity::Degrees => gap <= DEGREES,
         Quantity::Radians => gap <= RADIANS,
         Quantity::Factor => {

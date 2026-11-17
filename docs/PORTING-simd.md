@@ -205,7 +205,7 @@ dans la libm de glibc (`atan2` 210, `sincos` 300, `pow` 100, `hypot`, `sinh`, `a
 `atan`). `src/fmath.rs` remplace une partie de ces appels par des séries de `math.rs` en une voie,
 Rust pur, sans FMA (`f64::mul_add` est logiciel sans FMA matériel), donc valables sur toutes les
 cibles. Elles ne rendent plus les bits de glibc : la parité avec PROJ est la tolérance de
-`docs/PARITY.md` (1e-6 m, 1e-11 degré, facteurs à 1e-9 relatif).
+`docs/PARITY.md` (1e-6 m, 1e-11 degré, facteurs à 1e-7 relatif).
 
 Latence d'un appel, `fmath` contre glibc :
 
@@ -256,9 +256,11 @@ Les points 4326 sont écrits (longitude, latitude) comme le veut `new_known_crs`
 
 Facteurs (`Proj::factors`, 3 000 points par CRS) : `h`, `k`, `s`, convergence et dérivées à 1,1e-11
 relatif au plus ; distorsion angulaire à 3,7e-8 degré absolu au plus. L'angle méridien-parallèle `theta'` et les
-axes de l'ellipse de Tissot (`proj -S` imprime ces derniers) montent à 2,3e-8 relatif sur UTM 31 :
+axes de l'ellipse de Tissot (`proj -S` imprime ces derniers) montent à 2,3e-8 relatif sur UTM 31 (la règle des facteurs est donc 1e-7) :
 près d'une projection conforme, `a` et `b` sortent d'une différence qui amplifie le bruit des
-différences finies, donc au-dessus des 1e-9 de la règle ; aucun test ne les compare en doubles.
+différences finies, d'où le 1e-7 de la règle.
+
+Le terme relatif linéaire de la règle (1e-13) vient de `cs2cs-inverse-0105:4` de la suite de parité : UTM/LCC (EPSG:32150) vers NZMG (EPSG:27200) sur un point hors domaine, 7e11 m. L'inverse Lcc de `fmath` rend une latitude à 1 ULP de la libm (7e-15 degré) ; le polynôme de degré 9 de NZMG l'amplifie environ 5e6 fois : 4e-3 m, 5,7e-15 relatif, au-dessus des 5e-4 m absolus de la suite.
 
 Le reste de la piste « calculs redondants » ne donne rien : LLVM fusionne déjà `sin` et `cos` d'un
 même argument en `sincos`, et regrouper `sin(phi)` et `cos(phi)` de `Lcc::fwd_unit` laisse 844

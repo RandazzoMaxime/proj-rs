@@ -1,5 +1,5 @@
 //! The parity tolerance of `docs/PARITY.md` is not empty: it accepts what it must and refuses a
-//! gap of 1e-5 m, 1e-9 degree, 1e-12 rad or 1e-6 relative on a scale factor.
+//! gap of 1e-5 m (at 1000 m), 1e-9 degree, 1e-12 rad or 1e-6 relative on a scale factor.
 
 mod common;
 use common::tolerance::{close, close_bits, same_text, Quantity};
@@ -14,6 +14,13 @@ fn metres_accept_a_micrometre_and_refuse_ten() {
     assert!(close(Quantity::Metres, 1000.0, 1000.0 + 5e-7));
     assert!(!close(Quantity::Metres, 1000.0, 1000.0 + 1e-5));
     assert!(!close(Quantity::Metres, -1000.0, -1000.0 - 1e-5));
+    // 7e11 m: one ULP is 1.2e-4 m, so the relative term of 1e-13 (0.07 m) applies.
+    assert!(close(
+        Quantity::Metres,
+        707_359_193_171.702_5,
+        707_359_193_171.706_5
+    ));
+    assert!(!close(Quantity::Metres, 1e9, 1e9 + 1e-3));
 }
 
 #[test]
@@ -26,7 +33,7 @@ fn angles_accept_the_ground_equivalent_and_refuse_more() {
 
 #[test]
 fn factors_are_relative_with_a_floor_near_zero() {
-    assert!(close(Quantity::Factor, 1.000_000_000, 1.0 + 5e-10));
+    assert!(close(Quantity::Factor, 1.0, 1.0 + 5e-8));
     assert!(!close(Quantity::Factor, 1.0, 1.0 + 1e-6));
     assert!(close(Quantity::Factor, 0.0, 1.2e-6));
     assert!(!close(Quantity::Factor, 0.0, 2e-5));
