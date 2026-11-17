@@ -155,6 +155,21 @@ fn reset_connection_is_retried() {
     assert!(start.elapsed() >= Duration::from_millis(1000));
 }
 
+/// A reply with no byte, or cut short, is retried like a reset: `CURLE_GOT_NOTHING` and
+/// `CURLE_PARTIAL_FILE` are in `GetNewRetryDelay`. The CDN tunnel does both under load.
+#[test]
+fn empty_and_cut_short_replies_are_retried() {
+    for (label, first) in [("empty", Reply::Empty), ("cut", Reply::CutShort)] {
+        let fixture = std::fs::read(vendored_hgrid()).expect("fixture");
+        let server = Scripted::spawn(vec![first, Reply::Ranged(fixture)]);
+        let cache = TempDir::new(label);
+        network_builder(&server.url, &cache.0)
+            .proj(&format!("+proj=gridshift +grids=proj_rs_{label}.tif"))
+            .unwrap_or_else(|error| panic!("{label}: no read after the retry: {error:?}"));
+        assert_eq!(server.finish(), 2, "{label}");
+    }
+}
+
 #[test]
 fn search_path_opens_a_grid_without_the_network() {
     let source = vendored_hgrid();
@@ -195,6 +210,10 @@ enum Reply {
     Ranged(Vec<u8>),
     /// No reply: the connection is closed with the request unread, so the client sees a reset.
     Reset,
+    /// The request is read, then the connection is closed with no byte sent.
+    Empty,
+    /// `206` with a `Content-Length` that the connection does not deliver.
+    CutShort,
 }
 
 /// A server that sends its replies in order, one per connection, then stops.
@@ -255,7 +274,11 @@ impl Scripted {
 fn answer(reply: &Reply, head: &str) -> Vec<u8> {
     let (status, extra, body) = match reply {
         Reply::Status(status) => (*status, String::new(), Vec::new()),
-        Reply::Reset => return Vec::new(),
+        Reply::Reset | Reply::Empty => return Vec::new(),
+        Reply::CutShort => {
+            return b"HTTP/1.1 206 X\r\nContent-Length: 1000\r\nConnection: close\r\n\r\nabc"
+                .to_vec()
+        }
         Reply::Whole(body) => (200, String::new(), body.clone()),
         Reply::Ranged(body) => {
             let (first, last) = range(head).expect("a range request");

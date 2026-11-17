@@ -13,10 +13,16 @@ thread_local! {
     static LAST_TRANSIENT: Cell<bool> = const { Cell::new(false) };
 }
 
-/// Whether the last HTTP fetch of this thread failed on a connection reset or a timeout, the
-/// transport errors PROJ's curl client tries again (`GetNewRetryDelay`).
+/// Whether the last HTTP fetch of this thread failed on a connection reset, a timeout, an empty
+/// or cut-short reply, a failed TLS handshake or a refused tunnel, the transport errors PROJ's
+/// curl client tries again (`GetNewRetryDelay`: `CURLE_RECV_ERROR`, `CURLE_GOT_NOTHING`,
+/// `CURLE_PARTIAL_FILE`, `CURLE_SSL_CONNECT_ERROR`, ...).
 pub(crate) fn last_fetch_transient() -> bool {
     LAST_TRANSIENT.with(std::cell::Cell::get)
+}
+
+fn note_transient() {
+    LAST_TRANSIENT.with(|flag| flag.set(true));
 }
 
 /// `result` as an option, noting a transport error that a later attempt may not meet.
@@ -31,9 +37,10 @@ fn io_step<T>(result: std::io::Result<T>) -> Option<T> {
                     | ErrorKind::BrokenPipe
                     | ErrorKind::TimedOut
                     | ErrorKind::WouldBlock
+                    | ErrorKind::UnexpectedEof
             );
             if transient {
-                LAST_TRANSIENT.with(|flag| flag.set(true));
+                note_transient();
             }
         })
         .ok()
@@ -155,7 +162,14 @@ fn http_exchange(target: &HttpTarget, range: Option<&str>) -> Option<HttpReply> 
     let stream = connect(target)?;
     if target.https {
         let connector = native_tls::TlsConnector::new().ok()?;
-        let tls = connector.connect(&target.host, stream).ok()?;
+        let tls = connector
+            .connect(&target.host, stream)
+            .map_err(|error| {
+                if !error.to_string().contains("certificate") {
+                    note_transient();
+                }
+            })
+            .ok()?;
         read_http(tls, target, range)
     } else {
         read_http(stream, target, range)
@@ -227,13 +241,21 @@ fn open_tunnel(mut stream: TcpStream, target: &HttpTarget) -> Option<TcpStream> 
     let mut head = Vec::new();
     let mut byte = [0_u8; 1];
     while !head.ends_with(b"\r\n\r\n") {
-        if head.len() > 16_384 || io_step(stream.read(&mut byte))? == 0 {
+        if head.len() > 16_384 {
+            return None;
+        }
+        if io_step(stream.read(&mut byte))? == 0 {
+            note_transient();
             return None;
         }
         head.push(byte[0]);
     }
     let status_line = std::str::from_utf8(&head).ok()?.lines().next()?;
-    (status_line.split_whitespace().nth(1)? == "200").then_some(stream)
+    let status = status_line.split_whitespace().nth(1)?;
+    if matches!(status, "429" | "500" | "502" | "503" | "504") {
+        note_transient();
+    }
+    (status == "200").then_some(stream)
 }
 
 fn read_http(
@@ -258,7 +280,10 @@ fn read_http(
             .take(MAX_GRID_BYTES.saturating_add(65_536))
             .read_to_end(&mut raw),
     )?;
-    let reply = split_http(&raw)?;
+    let reply = split_http(&raw).or_else(|| {
+        note_transient();
+        None
+    })?;
     if u64::try_from(reply.body.len()).ok()? > MAX_GRID_BYTES {
         return None;
     }
