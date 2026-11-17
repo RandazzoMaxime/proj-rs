@@ -11,7 +11,9 @@
 //! per-point choice. The three policies are the states of `ONLY_BEST` in
 //! `proj_create_crs_to_crs_from_pj` (`crs_to_crs.cpp:521-531`).
 
-use std::cell::Cell;
+use std::cell::{Cell, OnceCell};
+
+use super::alternatives_index::BoxIndex;
 
 use crate::engine::{Coord, Operation, TransformError};
 use crate::proj::Direction;
@@ -174,6 +176,8 @@ impl Clone for Alternatives {
             current: Cell::new(self.current.get()),
             last_failure: Cell::new(self.last_failure.get()),
             creation: self.creation.clone(),
+            forward_index: self.forward_index.clone(),
+            inverse_index: self.inverse_index.clone(),
         }
     }
 }
@@ -204,6 +208,9 @@ pub struct Alternatives {
     last_failure: Cell<Option<&'static str>>,
     /// The lines `proj_create_crs_to_crs` logs when it creates the pair (`crs_to_crs.cpp:650`).
     creation: Vec<LogLine>,
+    /// Grids over the source boxes and over the target boxes, built at the first point.
+    forward_index: OnceCell<Option<Box<BoxIndex>>>,
+    inverse_index: OnceCell<Option<Box<BoxIndex>>>,
 }
 
 /// The state a `proj_trans` leaves between two points: `P->iCurCoordOp`, the pending warning and
@@ -217,7 +224,7 @@ pub(crate) struct PointState {
 
 /// Whether the candidates that are not instantiable may be chosen (`skipNonInstantiable`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Instantiability {
+pub(super) enum Instantiability {
     /// Every candidate may be chosen.
     Any,
     /// A candidate whose grids are missing is passed over.
@@ -239,7 +246,7 @@ fn inside(bounds: &Bounds, x: f64, y: f64) -> bool {
 }
 
 /// `normalizeLongitude` of `trans.cpp:53-64`.
-fn normalize_longitude(mut x: f64) -> f64 {
+pub(super) fn normalize_longitude(mut x: f64) -> f64 {
     if x > 180.0 {
         x -= 360.0;
         if x > 180.0 {
@@ -274,6 +281,8 @@ impl Alternatives {
             current: Cell::new(None),
             last_failure: Cell::new(None),
             creation: Vec::new(),
+            forward_index: OnceCell::new(),
+            inverse_index: OnceCell::new(),
         }
     }
 
@@ -411,6 +420,49 @@ impl Alternatives {
             && normalize_longitude(y) <= bounds.max_y
     }
 
+    /// The candidates that may cover `point`, in index order, or `None` to scan them all. The
+    /// grid is left out under a geocentric reading (a world box covers every point) and for a
+    /// short list.
+    fn nearby(&self, point: Option<(f64, f64)>, way: Direction) -> Option<&[usize]> {
+        const MIN_CANDIDATES: usize = 6;
+        let (x, y) = point?;
+        if matches!(self.axes(way), SourceAxes::Geocentric(_)) {
+            return None;
+        }
+        let cell = match way {
+            Direction::Forward => &self.forward_index,
+            Direction::Inverse => &self.inverse_index,
+        };
+        let index = cell
+            .get_or_init(|| {
+                (self.items.len() >= MIN_CANDIDATES).then(|| {
+                    let boxes: Vec<_> = self
+                        .items
+                        .iter()
+                        .map(|item| match way {
+                            Direction::Forward => (
+                                item.bounds,
+                                DegreeOrder {
+                                    lon_lat: item.lon_lat_degree,
+                                    lat_lon: item.lat_lon_degree,
+                                },
+                            ),
+                            Direction::Inverse => (
+                                item.target_bounds,
+                                DegreeOrder {
+                                    lon_lat: item.target_lon_lat_degree,
+                                    lat_lon: item.target_lat_lon_degree,
+                                },
+                            ),
+                        })
+                        .collect();
+                    Box::new(BoxIndex::build(&boxes))
+                })
+            })
+            .as_ref()?;
+        index.candidates(x, y)
+    }
+
     /// `pj_get_suggested_operation` (`trans.cpp:47-176`) for one direction: the index of the
     /// candidate that serves `point`, skipping `excluded`, or `None`.
     fn suggest(
@@ -420,10 +472,38 @@ impl Alternatives {
         instantiability: Instantiability,
         way: Direction,
     ) -> Option<usize> {
+        match self.nearby(point, way) {
+            Some(list) => self.pick(list.iter().copied(), point, excluded, instantiability, way),
+            None => self.pick(0..self.items.len(), point, excluded, instantiability, way),
+        }
+    }
+
+    /// The reference scan of [`Self::suggest`] over every candidate, the oracle of the grid.
+    #[cfg(test)]
+    pub(super) fn suggest_full(
+        &self,
+        point: Option<(f64, f64)>,
+        excluded: &[Option<usize>; 2],
+        instantiability: Instantiability,
+        way: Direction,
+    ) -> Option<usize> {
+        self.pick(0..self.items.len(), point, excluded, instantiability, way)
+    }
+
+    /// The greedy choice among `candidates`, which are in increasing index order.
+    fn pick(
+        &self,
+        candidates: impl Iterator<Item = usize>,
+        point: Option<(f64, f64)>,
+        excluded: &[Option<usize>; 2],
+        instantiability: Instantiability,
+        way: Direction,
+    ) -> Option<usize> {
         let axes = self.axes(way);
         let mut best: Option<usize> = None;
         let mut best_accuracy = f64::MAX;
-        for (index, item) in self.items.iter().enumerate() {
+        for index in candidates {
+            let item = &self.items[index];
             if excluded.contains(&Some(index)) {
                 continue;
             }
@@ -616,3 +696,6 @@ fn apply(operation: &Operation, coord: Coord, way: Direction) -> Result<Coord, T
         Direction::Inverse => operation.inverse(coord),
     }
 }
+
+#[cfg(test)]
+mod equivalence_tests;

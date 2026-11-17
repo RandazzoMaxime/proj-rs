@@ -4,6 +4,7 @@
 //! `WktFormatter`). See `docs/CRS-API.md`.
 
 mod alternatives;
+mod alternatives_index;
 mod bound;
 mod bound_export;
 mod bound_import;
