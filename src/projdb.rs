@@ -1,9 +1,9 @@
 //! Embedded PROJ 9.9.0 `proj.db`, opened once from the crate bytes.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::fmt;
 use std::path::Path;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::Duration;
 
 use rusqlite::backup::Backup;
@@ -38,12 +38,16 @@ fn open_embedded() -> Result<Mutex<Connection>, String> {
         .map_err(|error| error.to_string())
 }
 
-/// The embedded bytes as a read-only in-memory image.
+/// The embedded bytes as a read-only in-memory image. The connection reads the pages of the
+/// binary in place: `mmap_size` keeps SQLite from copying each page it reads into its cache.
 fn read_only_image() -> Result<Connection, rusqlite::Error> {
     let mut connection = Connection::open_in_memory()?;
     connection.deserialize_bytes(rusqlite::MAIN_DB, PROJ_DB)?;
+    connection.pragma_update(None, "mmap_size", MMAP_SIZE)?;
     Ok(connection)
 }
+
+const MMAP_SIZE: i64 = 1 << 30;
 
 /// `connection` with the auxiliary databases of `PROJ_AUX_DB` attached: the paths are separated
 /// by `;` on Windows and by `:` elsewhere, as `DatabaseContext::create` reads them.
@@ -128,6 +132,39 @@ fn open_memory() -> Result<Connection, rusqlite::Error> {
     copy_into(&read_only_image()?, Connection::open_in_memory()?).and_then(with_aux)
 }
 
+thread_local! {
+    static READER: RefCell<Weak<Mutex<Connection>>> = const { RefCell::new(Weak::new()) };
+}
+
+/// A read-only connection to the embedded `proj.db` that reads the bytes of the binary in
+/// place, shared by every caller of this thread while one of them holds it: the schema of
+/// `proj.db` costs about 2.4 MiB of SQLite heap for each connection. The last holder to drop
+/// closes it. `None` when `PROJ_AUX_DB` is set: the auxiliary rows go into the main database,
+/// so each caller needs [`open_connection`].
+pub(crate) fn shared_read_only() -> Result<Option<Arc<Mutex<Connection>>>, DbFail> {
+    if std::env::var_os("PROJ_AUX_DB").is_some() {
+        return Ok(None);
+    }
+    READER.with(|reader| {
+        if let Some(open) = reader.borrow().upgrade() {
+            return Ok(Some(open));
+        }
+        let image = read_only_image().map_err(|error| DbFail::Open(error.to_string()))?;
+        let open = Arc::new(Mutex::new(image));
+        *reader.borrow_mut() = Arc::downgrade(&open);
+        Ok(Some(open))
+    })
+}
+
+/// A connection of its own for a nested read: the image of the binary, or the copy that holds
+/// the auxiliary rows.
+fn open_lazy_or_copy() -> Result<Connection, DbFail> {
+    if std::env::var_os("PROJ_AUX_DB").is_some() {
+        return open_connection();
+    }
+    read_only_image().map_err(|error| DbFail::Open(error.to_string()))
+}
+
 /// The bytes of the embedded `proj.db`.
 pub(crate) fn embedded_bytes() -> &'static [u8] {
     PROJ_DB
@@ -179,12 +216,16 @@ pub(crate) fn with_db<T>(
     body: impl FnOnce(&Connection) -> Result<T, rusqlite::Error>,
 ) -> Result<T, DbFail> {
     if HELD.with(Cell::get) {
-        let connection = open_connection()?;
+        let connection = open_lazy_or_copy()?;
         return body(&connection).map_err(DbFail::Sql);
     }
-    let guard = match slot() {
-        Ok(mutex) => mutex.lock().unwrap_or_else(|poison| poison.into_inner()),
-        Err(message) => return Err(DbFail::Open(message.clone())),
+    let shared = shared_read_only()?;
+    let guard = match &shared {
+        Some(open) => open.lock().unwrap_or_else(|poison| poison.into_inner()),
+        None => match slot() {
+            Ok(mutex) => mutex.lock().unwrap_or_else(|poison| poison.into_inner()),
+            Err(message) => return Err(DbFail::Open(message.clone())),
+        },
     };
     let _held = Held::set();
     body(&guard).map_err(DbFail::Sql)
