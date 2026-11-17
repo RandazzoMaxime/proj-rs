@@ -9,7 +9,7 @@
     reason = "axis indexing and the duplicate check follow axisswap.cpp"
 )]
 
-use crate::engine::{Coord, CreateError, Frame, IoKind, Params, Step, TransformError};
+use crate::engine::{Affine, Coord, CreateError, Frame, IoKind, Params, Step, TransformError};
 
 struct AxisSwap {
     axis: [usize; 4],
@@ -125,6 +125,21 @@ impl Step for AxisSwap {
 
     fn inverse(&self, coord: Coord) -> Result<Coord, TransformError> {
         Ok(self.permute(coord, true))
+    }
+
+    fn affine(&self, inverse: bool) -> Option<Affine> {
+        let mut src = [0, 1, 2, 3];
+        let mut mul = [1.0; 4];
+        for slot in 0..self.count {
+            let (to, from) = if inverse {
+                (self.axis[slot], slot)
+            } else {
+                (slot, self.axis[slot])
+            };
+            src[to] = from;
+            mul[to] = self.sign[slot];
+        }
+        Some(Affine::new(src, mul))
     }
 
     fn input_kind(&self) -> IoKind {

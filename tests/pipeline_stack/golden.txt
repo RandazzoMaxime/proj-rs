@@ -1,0 +1,168 @@
+== balanced forward
+ok 40ec73b0fc99f451 4143b866433f19b3 4059400000000000 409f420000000000
+err The conversion failed with the following error: point is outside the projection domain
+ok 40fc3130d551b7bd 414499bceb232d6f 4059800000000000 409f440000000000
+err The conversion failed with the following error: point is outside the projection domain
+err The conversion failed with the following error: point is outside the projection domain
+ok 4104f0aed46d8270 414578ffcd37803b 4059c00000000000 409f460000000000
+ok 410ba2e2834400db 414656182a3c27cd 405a000000000000 409f480000000000
+== balanced inverse
+ok 3f90ea213c38a97c 3fd48c5cc1a335a9
+err The projection failed with the following error: point is outside the projection domain
+ok bfa236d7b884461d 3fdf8b787685c218
+err The projection failed with the following error: point is outside the projection domain
+ok 3fb9dd9515fbff58 bfe5d4db9cf956c9
+== nested forward
+ok 40ec73b0fc99f451 4143b866433f19b3 4059400000000000 409f420000000000
+err The conversion failed with the following error: point is outside the projection domain
+ok 40fc3130d551b7bd 414499bceb232d6f 4059800000000000 409f440000000000
+err The conversion failed with the following error: point is outside the projection domain
+err The conversion failed with the following error: point is outside the projection domain
+ok 4104f0aed46d8270 414578ffcd37803b 4059c00000000000 409f460000000000
+ok 410ba2e2834400db 414656182a3c27cd 405a000000000000 409f480000000000
+== nested inverse
+ok 3f90ea213c38a97c 3fd48c5cc1a335a9
+err The projection failed with the following error: point is outside the projection domain
+ok bfa236d7b884461d 3fdf8b787685c218
+err The projection failed with the following error: point is outside the projection domain
+ok 3fb9dd9515fbff58 bfe5d4db9cf956c9
+== last in first out forward
+ok 40ec73b0fc99f451 4143b866433f19b3 4059400000000000 4014000000000000
+err The conversion failed with the following error: point is outside the projection domain
+ok 40fc3130d551b7bd 414499bceb232d6f 4059800000000000 4014000000000000
+err The conversion failed with the following error: point is outside the projection domain
+err The conversion failed with the following error: point is outside the projection domain
+ok 4104f0aed46d8270 414578ffcd37803b 4059c00000000000 4014000000000000
+ok 410ba2e2834400db 414656182a3c27cd 405a000000000000 4014000000000000
+== last in first out inverse
+ok 3f90ea213c38a97c 3fd48c5cc1a335a9
+err The projection failed with the following error: point is outside the projection domain
+ok bfa236d7b884461d 3fdf8b787685c218
+err The projection failed with the following error: point is outside the projection domain
+ok 3fb9dd9515fbff58 bfe5d4db9cf956c9
+== inverted steps forward
+ok 40ec73b0fc99f451 4143b866433f19b3 4059400000000000 409f420000000000
+err The conversion failed with the following error: point is outside the projection domain
+ok 40fc3130d551b7bd 414499bceb232d6f 4059800000000000 409f440000000000
+err The conversion failed with the following error: point is outside the projection domain
+err The conversion failed with the following error: point is outside the projection domain
+ok 4104f0aed46d8270 414578ffcd37803b 4059c00000000000 409f460000000000
+ok 410ba2e2834400db 414656182a3c27cd 405a000000000000 409f480000000000
+== inverted steps inverse
+ok 3f90ea213c38a97c 3fd48c5cc1a335a9
+err The projection failed with the following error: point is outside the projection domain
+ok bfa236d7b884461d 3fdf8b787685c218
+err The projection failed with the following error: point is outside the projection domain
+ok 3fb9dd9515fbff58 bfe5d4db9cf956c9
+== inverted pipeline forward
+ok 3e1aef80dc2b8dcc 3e71cbabe5d6b367 4059400000000000 409f420000000000
+ok 3e9a4de3d7028929 3e60f2bc17d8aad9 401c000000000000 4020000000000000
+ok 3e2aef80dc2b8dce 3e72a49bb3d4bbf2 4059800000000000 409f440000000000
+ok be9a4de3d702892e 3e696c1a23c50046 4051800000000000 4054000000000000
+ok 3e9a4de3d7028935 3e70f2bc17d8aadb 4085e00000000000 4089000000000000
+ok 3e3433a0a520aa5b 3e737d8b81d2c47e 4059c00000000000 409f460000000000
+ok 3e3aef80dc2b8dd1 3e74567b4fd0cd08 405a000000000000 409f480000000000
+== inverted pipeline inverse
+ok 40ec73b0fc99f451 4143b866433f19b3
+err The projection failed with the following error: point is outside the projection domain
+ok 40fc3130d551b7bd 414499bceb232d6f
+err The projection failed with the following error: point is outside the projection domain
+err The projection failed with the following error: point is outside the projection domain
+ok 4104f0aed46d8270 414578ffcd37803b
+ok 410ba2e2834400db 414656182a3c27cd
+== one axis popped by two steps forward
+ok 3f847ae147ae147b 3fdae147ae147ae2 4059400000000000 409f420000000000
+err The conversion failed with the following error: point is outside the projection domain
+ok 3f947ae147ae147b 3fdc28f5c28f5c29 4059800000000000 409f440000000000
+err The conversion failed with the following error: point is outside the projection domain
+err The conversion failed with the following error: point is outside the projection domain
+ok 3f9eb851eb851eb8 3fdd70a3d70a3d71 4059c00000000000 409f460000000000
+ok 3fa47ae147ae147b 3fdeb851eb851eb9 405a000000000000 409f480000000000
+== pop before push forward
+ok 3f847ae147ae147b 3fdae147ae147ae2 c059400000000000 409f420000000000
+ok 4004000000000000 3fc999999999999a 4059400000000000 4020000000000000
+ok 3f947ae147ae147b 3fdc28f5c28f5c29 c059400000000000 409f440000000000
+ok c004000000000000 3fd3333333333333 4059400000000000 4054000000000000
+ok 4004000000000000 3fd999999999999a c059400000000000 4089000000000000
+ok 3f9eb851eb851eb8 3fdd70a3d70a3d71 4059400000000000 409f460000000000
+ok 3fa47ae147ae147b 3fdeb851eb851eb9 c059400000000000 409f480000000000
+== pop before push inverse
+ok 3f847ae147ae147b 3fdae147ae147ae2
+ok 4004000000000000 3fc999999999999a
+ok 3f947ae147ae147b 3fdc28f5c28f5c29
+ok c004000000000000 3fd3333333333333
+ok 4004000000000000 3fd999999999999a
+ok 3f9eb851eb851eb8 3fdd70a3d70a3d71
+ok 3fa47ae147ae147b 3fdeb851eb851eb9
+== a failing point leaves its push forward
+ok 40ec73b0fc99f451 4143b866433f19b3 4059400000000000 409f420000000000
+err The conversion failed with the following error: point is outside the projection domain
+ok 40fc3130d551b7bd 414499bceb232d6f 4059400000000000 409f440000000000
+err The conversion failed with the following error: point is outside the projection domain
+err The conversion failed with the following error: point is outside the projection domain
+ok 4104f0aed46d8270 414578ffcd37803b 4059400000000000 409f460000000000
+ok 410ba2e2834400db 414656182a3c27cd 4059400000000000 409f480000000000
+== push only forward
+ok 40ec73b0fc99f451 4143b866433f19b3 4059400000000000 409f420000000000
+err The conversion failed with the following error: point is outside the projection domain
+ok 40fc3130d551b7bd 414499bceb232d6f 4059800000000000 409f440000000000
+err The conversion failed with the following error: point is outside the projection domain
+err The conversion failed with the following error: point is outside the projection domain
+ok 4104f0aed46d8270 414578ffcd37803b 4059c00000000000 409f460000000000
+ok 410ba2e2834400db 414656182a3c27cd 405a000000000000 409f480000000000
+== push only inverse
+ok 3f90ea213c38a97c 3fd48c5cc1a335a9
+err The projection failed with the following error: point is outside the projection domain
+ok bfa236d7b884461d 3fdf8b787685c218
+err The projection failed with the following error: point is outside the projection domain
+ok 3fb9dd9515fbff58 bfe5d4db9cf956c9
+== balanced forward only, forward
+ok 40ec73b0fc99f451 4143b866433f19b3 4059400000000000 409f420000000000
+err The conversion failed with the following error: point is outside the projection domain
+ok 40fc3130d551b7bd 414499bceb232d6f 4059800000000000 409f440000000000
+err The conversion failed with the following error: point is outside the projection domain
+err The conversion failed with the following error: point is outside the projection domain
+ok 4104f0aed46d8270 414578ffcd37803b 4059c00000000000 409f460000000000
+ok 410ba2e2834400db 414656182a3c27cd 405a000000000000 409f480000000000
+== balanced forward only, inverse
+ok 3f90ea213c38a97c 3fd48c5cc1a335a9
+err The projection failed with the following error: point is outside the projection domain
+ok bfa236d7b884461d 3fdf8b787685c218
+err The projection failed with the following error: point is outside the projection domain
+ok 3fb9dd9515fbff58 bfe5d4db9cf956c9
+== balanced forward only, forward again
+ok 40ec73b0fc99f451 4143b866433f19b3 4059400000000000 409f420000000000
+err The conversion failed with the following error: point is outside the projection domain
+ok 40fc3130d551b7bd 414499bceb232d6f 4059800000000000 409f440000000000
+err The conversion failed with the following error: point is outside the projection domain
+err The conversion failed with the following error: point is outside the projection domain
+ok 4104f0aed46d8270 414578ffcd37803b 4059c00000000000 409f460000000000
+ok 410ba2e2834400db 414656182a3c27cd 405a000000000000 409f480000000000
+== six deep forward
+ok 40ec73b0fc99f451 4143b866433f19b3 4059400000000000 409f420000000000
+err The conversion failed with the following error: point is outside the projection domain
+ok 40fc3130d551b7bd 414499bceb232d6f 4059800000000000 409f440000000000
+err The conversion failed with the following error: point is outside the projection domain
+err The conversion failed with the following error: point is outside the projection domain
+ok 4104f0aed46d8270 414578ffcd37803b 4059c00000000000 409f460000000000
+ok 410ba2e2834400db 414656182a3c27cd 405a000000000000 409f480000000000
+== EPSG:4326 to EPSG:28992
+ok 415836a35df31637 c14bbd70032694a0
+ok 4165d718b51569f1 411baa22d38d5f18
+ok 41583d775baabd6d c14b96d2e28d8639
+err The conversion failed with the following error: coordinate is not finite
+err The conversion failed with the following error: Invalid coordinate
+ok 41584442801426b9 c14b703449979ffc
+== EPSG:4326 to EPSG:27700
+ok 415cbdc9ecaf8968 c1514515ea130e18
+err The conversion failed with the following error: point is outside the projection domain
+ok 415ccdaeac474a15 c151307638cebd17
+err The conversion failed with the following error: point is outside the projection domain
+err The conversion failed with the following error: point is outside the projection domain
+ok 415cdd8bd2980e17 c1511bbfe63e6f00
+== EPSG:28992 to EPSG:4326
+ok 40158c7f13962266 404a13dcaf9b6ed0
+ok c065d658c005da5a c04a362b2f17de30
+ok 40159b767501abb3 404a15032bfbd8e7
+ok 40618a26a8bf7594 c04a36081c857877
+ok 4015aa6f619b8fdd 404a1629990c2381

@@ -31,6 +31,11 @@ mod classic_batch;
 #[path = "projections/datum_ops.rs"]
 mod datum_ops;
 
+// The execution plan of a pipeline: affine steps folded into one.
+#[path = "projections/plan.rs"]
+mod plan;
+pub(crate) use plan::Affine;
+
 // NKG URNs are database coordinate operations, not `+proj` names.
 #[path = "projections/nkg.rs"]
 mod nkg;
@@ -1131,6 +1136,14 @@ pub(crate) trait Step: Send + Sync {
     /// `true` when this step reads the pipeline coordinate stack.
     fn needs_pipeline_stack(&self) -> bool {
         false
+    }
+
+    /// This step, forward or `inverse`, as a signed scaled permutation of the four axes, when it
+    /// is exactly that and nothing else: it never fails, reads no parameter of the point, and
+    /// does not wrap or clamp. A pipeline folds runs of such steps into one. [`None`] otherwise.
+    fn affine(&self, inverse: bool) -> Option<Affine> {
+        let _ = inverse;
+        None
     }
 
     /// Forward while a pipeline holds the coordinate stack.
@@ -2712,7 +2725,11 @@ struct PipeStep {
 }
 
 struct Pipeline {
+    /// The steps as the definition lists them: the units of the pipeline come from these.
     steps: Vec<PipeStep>,
+    /// What runs, forward and inverse (`plan`): the steps with their affine runs folded.
+    forward_plan: Vec<plan::Exec>,
+    inverse_plan: Vec<plan::Exec>,
     stack: Mutex<PipelineStack>,
     uses_stack: bool,
     a: f64,
@@ -2728,60 +2745,18 @@ impl Pipeline {
 }
 
 impl Step for Pipeline {
-    fn forward(&self, mut coord: Coord) -> Result<Coord, TransformError> {
+    fn forward(&self, coord: Coord) -> Result<Coord, TransformError> {
         if !self.uses_stack {
-            for step in &self.steps {
-                if step.omit_fwd {
-                    continue;
-                }
-                coord = if step.inverted {
-                    step.inner.inverse(coord)?
-                } else {
-                    step.inner.forward(coord)?
-                };
-            }
-            return Ok(coord);
+            return plan::run(&self.forward_plan, coord);
         }
-        let mut stack = self.lock_stack();
-        for step in &self.steps {
-            if step.omit_fwd {
-                continue;
-            }
-            coord = if step.inverted {
-                step.inner.inverse_in_pipeline(coord, &mut stack)?
-            } else {
-                step.inner.forward_in_pipeline(coord, &mut stack)?
-            };
-        }
-        Ok(coord)
+        plan::run_in_pipeline(&self.forward_plan, coord, &mut self.lock_stack())
     }
 
-    fn inverse(&self, mut coord: Coord) -> Result<Coord, TransformError> {
+    fn inverse(&self, coord: Coord) -> Result<Coord, TransformError> {
         if !self.uses_stack {
-            for step in self.steps.iter().rev() {
-                if step.omit_inv {
-                    continue;
-                }
-                coord = if step.inverted {
-                    step.inner.forward(coord)?
-                } else {
-                    step.inner.inverse(coord)?
-                };
-            }
-            return Ok(coord);
+            return plan::run(&self.inverse_plan, coord);
         }
-        let mut stack = self.lock_stack();
-        for step in self.steps.iter().rev() {
-            if step.omit_inv {
-                continue;
-            }
-            coord = if step.inverted {
-                step.inner.forward_in_pipeline(coord, &mut stack)?
-            } else {
-                step.inner.inverse_in_pipeline(coord, &mut stack)?
-            };
-        }
-        Ok(coord)
+        plan::run_in_pipeline(&self.inverse_plan, coord, &mut self.lock_stack())
     }
 
     /// Step by step over the whole slice, so a step with a vector path sees all the points at
@@ -2799,16 +2774,7 @@ impl Step for Pipeline {
             }
             return;
         }
-        for step in &self.steps {
-            if step.omit_fwd {
-                continue;
-            }
-            if step.inverted {
-                step.inner.inverse_batch(coords, failed);
-            } else {
-                step.inner.forward_batch(coords, failed);
-            }
-        }
+        plan::run_batch(&self.forward_plan, coords, failed);
     }
 
     fn inverse_batch(&self, coords: &mut [Coord], failed: &mut [Option<TransformError>]) {
@@ -2823,16 +2789,7 @@ impl Step for Pipeline {
             }
             return;
         }
-        for step in self.steps.iter().rev() {
-            if step.omit_inv {
-                continue;
-            }
-            if step.inverted {
-                step.inner.forward_batch(coords, failed);
-            } else {
-                step.inner.inverse_batch(coords, failed);
-            }
-        }
+        plan::run_batch(&self.inverse_plan, coords, failed);
     }
 
     fn input_kind(&self) -> IoKind {
@@ -2938,6 +2895,8 @@ fn build_pipeline(
         }
     }
     Ok(Pipeline {
+        forward_plan: plan::plan(&steps, false),
+        inverse_plan: plan::plan(&steps, true),
         steps,
         stack: Mutex::new(PipelineStack::new()),
         uses_stack,
