@@ -54,6 +54,8 @@ def fill(template, data, shown):
         return f'data-slot="{name}"{hidden}'
 
     html = re.sub(r'data-slot="([a-zA-Z0-9]+)"(?: hidden)?', slot, html)
+    if template == "grouped-hbars":
+        data = data | row_sizes(len(shown))
     missing = set()
 
     def value(match):
@@ -67,6 +69,17 @@ def fill(template, data, shown):
     if missing:
         raise SystemExit(f"cards.py: {template} has no value for {sorted(missing)}")
     return html
+
+
+def row_sizes(count):
+    """Bar, value and name sizes (px) for `count` rows, so that few rows fill the 1080 px card."""
+    per_row = 640 / count
+    bar = min(80.0, per_row * 0.24)
+    return {
+        "barH": f"{bar:.0f}",
+        "valSize": f"{min(52.0, bar * 0.6 + 14):.0f}",
+        "nameSize": f"{min(40.0, 16 + per_row * 0.06):.0f}",
+    }
 
 
 def blank_rows(data, first, prefix, keys):
@@ -92,14 +105,15 @@ def speed_card(row, call, title, subtitle):
         high = max(theirs, ours)
         data |= {
             f"r{n}Name": f"{SHORT[source]} → {SHORT[target]}",
-            f"r{n}Caption": f"EPSG:{source} → {target} · PROJ {how_fast.ns(theirs)}",
+            f"r{n}Caption": f"EPSG:{source} → {target}",
             f"r{n}NewW": width(ours, high),
             f"r{n}RivalW": width(theirs, high),
             f"r{n}NewVal": how_fast.ns(ours),
-            f"r{n}RivalVal": f"PROJ {how_fast.ns(theirs)}",
-            f"r{n}Speedup": f"{times(ratio)} faster",
+            f"r{n}RivalVal": how_fast.ns(theirs),
+            f"r{n}Speedup": times(ratio),
+            f"r{n}SpeedWord": "faster",
         }
-    blank_rows(data, len(cases) + 1, "r", ("Name", "Caption", "NewW", "RivalW", "NewVal", "RivalVal", "Speedup"))
+    blank_rows(data, len(cases) + 1, "r", ("Name", "Caption", "NewW", "RivalW", "NewVal", "RivalVal", "Speedup", "SpeedWord"))
     return fill("grouped-hbars", data, {f"r{n}" for n in range(1, len(cases) + 1)})
 
 
@@ -164,14 +178,15 @@ def memory_card(fp):
         high = max(ours, theirs)
         data |= {
             f"r{n}Name": names[key][0],
-            f"r{n}Caption": f"{names[key][1]} · PROJ {theirs:.1f} MiB",
+            f"r{n}Caption": names[key][1],
             f"r{n}NewW": width(ours, high),
             f"r{n}RivalW": width(theirs, high),
             f"r{n}NewVal": f"{ours:.1f} MiB",
-            f"r{n}RivalVal": f"PROJ {theirs:.1f} MiB",
-            f"r{n}Speedup": f"{times(theirs / ours)} less",
+            f"r{n}RivalVal": f"{theirs:.1f} MiB",
+            f"r{n}Speedup": times(theirs / ours),
+            f"r{n}SpeedWord": "less",
         }
-    blank_rows(data, len(rss) + 1, "r", ("Name", "Caption", "NewW", "RivalW", "NewVal", "RivalVal", "Speedup"))
+    blank_rows(data, len(rss) + 1, "r", ("Name", "Caption", "NewW", "RivalW", "NewVal", "RivalVal", "Speedup", "SpeedWord"))
     return fill("grouped-hbars", data, {f"r{n}" for n in range(1, len(rss) + 1)})
 
 
@@ -202,14 +217,15 @@ def billion_card(line):
         high = max(ours, theirs)
         data |= {
             f"r{n}Name": name,
-            f"r{n}Caption": f"{caption} {seconds(theirs)}",
+            f"r{n}Caption": caption,
             f"r{n}NewW": width(ours, high),
             f"r{n}RivalW": width(theirs, high),
             f"r{n}NewVal": seconds(ours),
-            f"r{n}RivalVal": f"PROJ {seconds(theirs)}",
-            f"r{n}Speedup": f"{times(theirs / ours)} faster",
+            f"r{n}RivalVal": seconds(theirs),
+            f"r{n}Speedup": times(theirs / ours),
+            f"r{n}SpeedWord": "faster",
         }
-    blank_rows(data, len(calls) + 1, "r", ("Name", "Caption", "NewW", "RivalW", "NewVal", "RivalVal", "Speedup"))
+    blank_rows(data, len(calls) + 1, "r", ("Name", "Caption", "NewW", "RivalW", "NewVal", "RivalVal", "Speedup", "SpeedWord"))
     return fill("grouped-hbars", data, {f"r{n}" for n in range(1, len(calls) + 1)})
 
 
