@@ -31,10 +31,18 @@ mod classic_batch;
 #[path = "projections/datum_ops.rs"]
 mod datum_ops;
 
+#[cfg(test)]
+#[path = "projections/batch_check.rs"]
+pub(crate) mod batch_check;
+
+// `cart` over a slice, four points at a time.
+#[path = "projections/cart_batch.rs"]
+mod cart_batch;
+
 // The execution plan of a pipeline: affine steps folded into one.
 #[path = "projections/plan.rs"]
 mod plan;
-pub(crate) use plan::Affine;
+pub(crate) use plan::{Affine, StackOp};
 
 // NKG URNs are database coordinate operations, not `+proj` names.
 #[path = "projections/nkg.rs"]
@@ -1142,6 +1150,13 @@ pub(crate) trait Step: Send + Sync {
     /// is exactly that and nothing else: it never fails, reads no parameter of the point, and
     /// does not wrap or clamp. A pipeline folds runs of such steps into one. [`None`] otherwise.
     fn affine(&self, inverse: bool) -> Option<Affine> {
+        let _ = inverse;
+        None
+    }
+
+    /// This step, forward or `inverse`, as a push or pop of the pipeline stack and nothing else.
+    /// A pipeline that keeps a stack runs such a step over a slice at once. [`None`] otherwise.
+    fn stack_op(&self, inverse: bool) -> Option<StackOp> {
         let _ = inverse;
         None
     }
@@ -2516,6 +2531,14 @@ impl Step for CartStep {
         true
     }
 
+    fn forward_batch(&self, coords: &mut [Coord], failed: &mut [Option<TransformError>]) {
+        cart_batch::forward(self, coords, failed);
+    }
+
+    fn inverse_batch(&self, coords: &mut [Coord], failed: &mut [Option<TransformError>]) {
+        cart_batch::inverse(self, coords, failed);
+    }
+
     fn unit_projection(&self) -> Option<UnitProjection<'_>> {
         Some(UnitProjection {
             frame: &self.frame,
@@ -2732,6 +2755,9 @@ struct Pipeline {
     inverse_plan: Vec<plan::Exec>,
     stack: Mutex<PipelineStack>,
     uses_stack: bool,
+    /// A slice can go through each direction at once: see `plan::stack_balanced`.
+    batch_stack_forward: bool,
+    batch_stack_inverse: bool,
     a: f64,
     es: f64,
 }
@@ -2760,10 +2786,11 @@ impl Step for Pipeline {
     }
 
     /// Step by step over the whole slice, so a step with a vector path sees all the points at
-    /// once. A pipeline that keeps a coordinate stack (`push`, `pop`) sends the points through
-    /// one at a time: its state is per point.
+    /// once. A `push` or `pop` runs over the slice too (`plan::BatchStack`). A pipeline whose
+    /// stack is read by another kind of step, or whose pushes and pops do not pair up (the stack
+    /// then carries values from one point to the next), sends the points through one at a time.
     fn forward_batch(&self, coords: &mut [Coord], failed: &mut [Option<TransformError>]) {
-        if self.uses_stack {
+        if self.uses_stack && !self.batch_stack_forward {
             for (coord, failed) in coords.iter_mut().zip(failed) {
                 if failed.is_none() {
                     match self.forward(*coord) {
@@ -2778,7 +2805,7 @@ impl Step for Pipeline {
     }
 
     fn inverse_batch(&self, coords: &mut [Coord], failed: &mut [Option<TransformError>]) {
-        if self.uses_stack {
+        if self.uses_stack && !self.batch_stack_inverse {
             for (coord, failed) in coords.iter_mut().zip(failed) {
                 if failed.is_none() {
                     match self.inverse(*coord) {
@@ -2894,9 +2921,13 @@ fn build_pipeline(
             return Err(CreateError::IllegalValue("pipeline"));
         }
     }
+    let forward_plan = plan::plan(&steps, false);
+    let inverse_plan = plan::plan(&steps, true);
     Ok(Pipeline {
-        forward_plan: plan::plan(&steps, false),
-        inverse_plan: plan::plan(&steps, true),
+        batch_stack_forward: plan::stack_balanced(&forward_plan),
+        batch_stack_inverse: plan::stack_balanced(&inverse_plan),
+        forward_plan,
+        inverse_plan,
         steps,
         stack: Mutex::new(PipelineStack::new()),
         uses_stack,

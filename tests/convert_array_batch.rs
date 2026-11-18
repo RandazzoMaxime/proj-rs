@@ -190,6 +190,123 @@ fn a_pipeline_that_keeps_a_stack_agrees_with_convert() {
     assert!(worst(&got, &want) < METRES);
 }
 
+/// Datum shifts: `cart`, `helmert` and `push`/`pop` run over the slice (`docs/PORTING-batch-datum.md`).
+/// Each pair is one operation, forward and back, over a box inside its area of use.
+#[test]
+fn datum_shifts_agree_with_convert_both_ways() {
+    type Box2 = ((f64, f64), (f64, f64));
+    let pairs: [(&str, Box2); 5] = [
+        ("EPSG:2100", ((20.0, 28.0), (35.0, 41.0))),
+        ("EPSG:28992", ((3.4, 7.2), (50.8, 53.5))),
+        ("EPSG:2056", ((6.0, 10.4), (45.8, 47.8))),
+        ("EPSG:2169", ((5.8, 6.5), (49.4, 50.2))),
+        ("EPSG:5514", ((12.1, 18.8), (48.6, 51.1))),
+    ];
+    for (target, (lon, lat)) in pairs {
+        let forward = Proj::new_known_crs("EPSG:4326", target, None).expect(target);
+        let points = sample(9_001, lon, lat);
+        let want = one_by_one(&forward, &points);
+        let mut got = points;
+        forward.convert_array(&mut got).expect("forward");
+        let gap = worst(&got, &want);
+        assert!(gap < METRES, "4326 to {target}: gap {gap:e}");
+
+        let back = Proj::new_known_crs(target, "EPSG:4326", None).expect(target);
+        let want_back = one_by_one(&back, &want);
+        let mut got_back = want;
+        back.convert_array(&mut got_back).expect("inverse");
+        let gap = worst(&got_back, &want_back);
+        assert!(gap < DEGREES, "{target} to 4326: gap {gap:e}");
+    }
+}
+
+/// A pop that finds no push leaves the coordinate, and a pipeline with several pushes gives each
+/// pop the value of its own push, for every point of the slice.
+#[test]
+fn push_and_pop_over_a_slice_agree_with_convert() {
+    for definition in [
+        "+proj=pipeline +step +proj=pop +v_1 +step +proj=push +v_1 +step +proj=utm +zone=31 \
+         +ellps=WGS84",
+        "+proj=pipeline +step +proj=push +v_1 +step +proj=push +v_2 +step +proj=utm +zone=31 \
+         +ellps=WGS84 +step +proj=pop +v_2 +step +proj=pop +v_1",
+        "+proj=pipeline +step +proj=push +v_1 +v_2 +step +proj=utm +zone=31 +ellps=WGS84 \
+         +step +inv +proj=utm +zone=31 +ellps=WGS84 +step +proj=pop +v_2 +v_1",
+    ] {
+        let proj = Proj::new(definition).expect(definition);
+        let radians: Vec<(f64, f64)> = france(1_001)
+            .into_iter()
+            .map(|(lon, lat)| (lon.to_radians(), lat.to_radians()))
+            .collect();
+        let want = one_by_one(&proj, &radians);
+        let mut got = radians;
+        proj.convert_array(&mut got).expect("convert_array");
+        assert!(worst(&got, &want) < METRES, "{definition}");
+    }
+}
+
+/// A point refused between a `push` and its `pop` is the failing point of the slice, and does
+/// not shift the values the other points get back.
+#[test]
+fn a_failing_point_between_push_and_pop_gives_its_error_and_spares_the_others() {
+    let proj = Proj::new(
+        "+proj=pipeline +step +proj=push +v_1 +step +proj=utm +zone=31 +ellps=WGS84 \
+         +step +proj=pop +v_1",
+    )
+    .expect("pipeline");
+    let mut points: Vec<(f64, f64)> = france(300)
+        .into_iter()
+        .map(|(lon, lat)| (lon.to_radians(), lat.to_radians()))
+        .collect();
+    let refused = (0.05, 2.0);
+    points[7] = refused;
+    let want = message(&proj.convert(refused).expect_err("refused"));
+    let mut got = points.clone();
+    let error = proj.convert_array(&mut got).expect_err("refused");
+    assert_eq!(message(&error), want);
+    let mut clean = points;
+    clean.remove(7);
+    let again = one_by_one(&proj, &clean);
+    let mut batch = clean;
+    proj.convert_array(&mut batch)
+        .expect("without the refused point");
+    assert!(worst(&batch, &again) < METRES);
+}
+
+/// `+towgs84` on a classic projection: `cart`, `helmert` and `cart` around it, over the slice,
+/// and the axis order of `+axis` after it.
+#[test]
+fn towgs84_on_a_projection_agrees_with_convert_both_ways() {
+    for (definition, lon, lat) in [
+        (
+            "+proj=utm +zone=34 +ellps=GRS80 +towgs84=199.87,-74.79,-246.62",
+            (20.0, 28.0),
+            (35.0, 41.0),
+        ),
+        (
+            "+proj=utm +zone=31 +ellps=intl +towgs84=-106.8686,52.2978,-103.7239,0.3366,-0.457,1.8422,-1.2747 +axis=neu",
+            (0.0, 6.0),
+            (46.0, 51.0),
+        ),
+    ] {
+        let proj = Proj::new(definition).expect(definition);
+        let radians: Vec<(f64, f64)> = sample(2_001, lon, lat)
+            .into_iter()
+            .map(|(lon, lat)| (lon.to_radians(), lat.to_radians()))
+            .collect();
+        let want = one_by_one(&proj, &radians);
+        let mut got = radians;
+        proj.convert_array(&mut got).expect("forward");
+        assert!(worst(&got, &want) < METRES, "{definition}");
+        let want_back: Vec<(f64, f64)> = want
+            .iter()
+            .map(|&p| proj.project(p, true).expect("inverse"))
+            .collect();
+        let mut got_back = want;
+        proj.project_array(&mut got_back, true).expect("inverse");
+        assert!(worst(&got_back, &want_back) < 1e-12, "{definition}: back");
+    }
+}
+
 /// The bits of every value: a `NaN` input compares equal to itself.
 fn bits(points: &[(f64, f64)]) -> Vec<(u64, u64)> {
     points
