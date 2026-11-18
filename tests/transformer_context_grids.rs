@@ -175,3 +175,56 @@ fn a_ballpark_conversion_says_so() {
     let info = t.last_used_operation().expect("an operation");
     assert!(!info.is_ballpark(), "{:?}", info.name());
 }
+
+#[test]
+fn a_vertical_target_alone_with_one_operation_is_built() {
+    // PROJ 9.9.0 (`cs2cs EPSG:4979 EPSG:3855`, no grid anywhere) keeps the one operation that is
+    // left, the ballpark vertical one, and gives `9 42 0` for `9 42 0`. The candidates of a pair
+    // are prepared only when there are several, so a vertical CRS with no geodetic base is no
+    // reason to refuse the pair.
+    let empty = scratch("vertical-only");
+    let ctx = Context::builder()
+        .search_path(&empty)
+        .network(Network::Disabled)
+        .build();
+    let source = Crs::from_user_input(&ctx, "EPSG:4979").expect("source");
+    for target in ["EPSG:3855", "EPSG:5773"] {
+        let target = Crs::from_user_input(&ctx, target).expect("target");
+        let t = Transformer::builder(&source, &target)
+            .normalize_axis_order()
+            .build()
+            .expect("a single operation is built");
+        let p = t.forward(Point::xyz(9.0, 42.0, 0.0)).expect("a conversion");
+        // The ballpark vertical operation leaves the height alone. A vertical CRS has no
+        // horizontal axes to normalize, so the order of the two others is not asserted.
+        assert_eq!(p.z, 0.0);
+        let mut horizontal = [p.x, p.y];
+        horizontal.sort_by(f64::total_cmp);
+        assert_eq!(horizontal, [9.0, 42.0]);
+        assert!(t.last_used_operation().expect("an operation").is_ballpark());
+    }
+}
+
+#[test]
+fn a_vertical_target_alone_gives_the_value_of_the_compound_one() {
+    // With the grid, `EPSG:4979` to `EPSG:5773` is the same conversion as to `EPSG:4326+5773`.
+    let grids = with_egm96_grid("vertical-with-grid");
+    let ctx = Context::builder()
+        .search_path(&grids)
+        .network(Network::Disabled)
+        .build();
+    let source = Crs::from_user_input(&ctx, "EPSG:4979").expect("source");
+    let at = |target: &str| {
+        let target = Crs::from_user_input(&ctx, target).expect("target");
+        Transformer::builder(&source, &target)
+            .normalize_axis_order()
+            .build()
+            .expect("the pair builds")
+            .forward(Point::xyz(INSIDE.0, INSIDE.1, 0.0))
+            .expect("a point of the grid")
+            .z
+    };
+    let alone = at("EPSG:5773");
+    assert_eq!(alone, at("EPSG:4326+5773"));
+    assert_ne!(alone, 0.0, "the grid was used");
+}

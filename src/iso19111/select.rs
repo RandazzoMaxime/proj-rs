@@ -1355,13 +1355,6 @@ pub fn select_alternatives_for_crs(
         authority,
         area,
     } = request;
-    let (Some(source_base), Some(target_base)) =
-        (reference_base(&source_crs), reference_base(&target_crs))
-    else {
-        return Err(FactoryError::Format(format!(
-            "{source} or {target} has no geodetic base to prepare its candidates"
-        )));
-    };
     let mut context = CoordinateOperationContext::create(db, authority);
     context.set_spatial_criterion(SpatialCriterion::PartialIntersection);
     context.set_area_of_interest(area);
@@ -1426,8 +1419,11 @@ pub fn select_alternatives_for_crs(
             "no operation from {source} to {target}"
         )));
     }
-    let source_to_crs = geodetic_to_crs(&source_base, &source_crs, db)?;
-    let target_to_crs = geodetic_to_crs(&target_base, &target_crs, db)?;
+    // The bases are looked for here and not before the single-operation return above: PROJ
+    // prepares the candidates (`create_operation_to_geog_crs`) only after it, so a pair with one
+    // operation and a CRS with no geodetic base (a vertical CRS alone) is returned as it is.
+    let source_to_crs = base_to_crs(&source_crs, db)?;
+    let target_to_crs = base_to_crs(&target_crs, db)?;
     let geocentric = matches!(source_crs, Crs::Geodetic(GeodeticCRS::Geocentric(_)));
     let to_lon_lat = if geocentric {
         Some(geocentric_to_lon_lat(&source_crs, db)?)
@@ -1674,15 +1670,8 @@ pub(crate) fn facade_candidates(
             });
         }
     }
-    let (Some(source_base), Some(target_base)) =
-        (reference_base(&source_part), reference_base(&target_part))
-    else {
-        return Err(FactoryError::Format(format!(
-            "{source} or {target} has no geodetic base to prepare its candidates"
-        )));
-    };
-    let source_to_crs = geodetic_to_crs(&source_base, &source_part, &db)?;
-    let target_to_crs = geodetic_to_crs(&target_base, &target_part, &db)?;
+    let source_to_crs = base_to_crs(&source_part, &db)?;
+    let target_to_crs = base_to_crs(&target_part, &db)?;
     let (source_lon_lat, source_lat_lon) = degree_order(&source_part);
     let (target_lon_lat, target_lat_lon) = degree_order(&target_part);
     let preparer = Preparer {
@@ -1913,6 +1902,26 @@ fn lon_lat_base(crs: &Crs) -> Option<Crs> {
     )
     .ok()
     .map(Crs::Geographic)
+}
+
+/// [`geodetic_to_crs`] of the geodetic base of `crs`, or none for a vertical CRS alone, which has
+/// no horizontal coordinates to box: its candidates are not reprojected, as the ones of a
+/// geocentric CRS. `proj_create_crs_to_crs` prepares `EPSG:4979` to `EPSG:3855` this way and
+/// rereads the list without the operations whose grids are missing, the ballpark one included.
+///
+/// # Errors
+///
+/// A CRS other than a vertical one has no geodetic base, or the operation cannot be created.
+fn base_to_crs(crs: &Crs, db: &DatabaseContext) -> Result<Option<Operation>, FactoryError> {
+    if matches!(crs, Crs::Vertical(_)) {
+        return Ok(None);
+    }
+    let Some(base) = reference_base(crs) else {
+        return Err(FactoryError::Format(
+            "a CRS has no geodetic base to prepare its candidates".to_owned(),
+        ));
+    };
+    geodetic_to_crs(&base, crs, db)
 }
 
 /// The operation from the geodetic base of `crs` to `crs`, used to box the area of use of a
