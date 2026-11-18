@@ -74,6 +74,11 @@ Deux précisions sur la lecture du texte de PROJ :
   Le test borne l'azimut par `1e-11 + 5e-7 / distance` degré (`azimuth_tolerance`) : 5e-9 pour une
   ligne de 100 m, la règle de parité seule au-delà de quelques centaines de kilomètres. Windows a
   montré 1,5e-10 degré sur une ligne de 102 m ;
+- l'azimut d'une ligne presque antipodale est mal conditionné quelle que soit sa longueur (les cas
+  difficiles de Karney) : 7e-10 degré mesuré sous Windows et 1,4e-9 sous macOS contre le texte de
+  glibc, pour un cas de 19 989 km sur Bessel. Au-delà de 98,5 % de `π b` le test accepte 1e-7
+  degré sur l'azimut ; la distance, elle, reste à 1e-6 m. Le test rapporte tous ses écarts d'un
+  coup ;
 - l'outil lit les degrés, les tient en radians et les rend en degrés : le dernier bit bouge, et une
   ligne de quelques mètres le transforme en 5e-10 degré d'azimut. Le test refait ce voyage.
 

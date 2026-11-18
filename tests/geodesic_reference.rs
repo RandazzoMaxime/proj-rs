@@ -45,8 +45,13 @@ fn as_geod_reads(degrees: f64) -> f64 {
 /// `atan2`, a few `1e-9` m of position at the scale of the Earth, and a short line turns that
 /// into an angle: `4e-9 m / distance`, in degrees, doubled. For a line of 100 m this is 5e-9
 /// degree, for a line of 1 000 km 5e-16 and the parity rule alone applies.
-fn azimuth_tolerance(distance: f64) -> f64 {
-    DEGREES + 5e-7 / distance.max(1.0)
+fn azimuth_tolerance(distance: f64, a: f64, f: f64) -> f64 {
+    // Near the antipode the azimuth is ill-conditioned whatever the length: Karney's hard cases,
+    // 7e-10 degree measured on Windows and 1.4e-9 on macOS against the glibc text. The distance
+    // stays exact to the parity rule.
+    let near_antipodal = distance > 0.985 * std::f64::consts::PI * a * (1.0 - f);
+    let antipodal = if near_antipodal { 1e-7 } else { 0.0 };
+    DEGREES + 5e-7 / distance.max(1.0) + antipodal
 }
 
 fn numbers(line: &str) -> (&str, Vec<f64>) {
@@ -58,6 +63,7 @@ fn numbers(line: &str) -> (&str, Vec<f64>) {
 #[test]
 fn inverse_matches_proj() {
     let mut worst: f64 = 0.0;
+    let mut failures = Vec::new();
     for line in include_str!("geodesic/inverse.txt").lines() {
         let (name, v) = numbers(line);
         let (a, f) = ellipsoid(name);
@@ -65,24 +71,32 @@ fn inverse_matches_proj() {
         let got = Geod::new(a, f).inverse(lat1, lon1, lat2, lon2);
         let (azimuth1, azimuth2, distance) = (v[4], v[5], v[6]);
         // A distance of 20 000 km is printed to the millimetre.
-        assert!(
-            (got.distance - distance).abs() <= METRES,
-            "{line}: distance {} gap {:e}",
-            got.distance,
-            got.distance - distance
-        );
+        if (got.distance - distance).abs() > METRES {
+            failures.push(format!(
+                "{line}: distance {} gap {:e}",
+                got.distance,
+                got.distance - distance
+            ));
+        }
         for (got, want, what) in [
             (got.azimuth1, azimuth1, "azi1"),
             (got.azimuth2 + 180.0, azimuth2, "azi2"),
         ] {
-            assert!(
-                angle_gap(got, want) <= azimuth_tolerance(distance),
-                "{line}: {what} {got} against {want}"
-            );
-            worst = worst.max(angle_gap(got, want));
+            let gap = angle_gap(got, want);
+            if gap > azimuth_tolerance(distance, a, f) {
+                failures.push(format!("{line}: {what} {got} against {want}, gap {gap:e}"));
+            }
+            worst = worst.max(gap);
         }
     }
     eprintln!("inverse: largest azimuth gap {worst:e}");
+    // Every failure at once: a platform whose math library differs shows all its cases in one run.
+    assert!(
+        failures.is_empty(),
+        "{} failures:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
 }
 
 #[test]
