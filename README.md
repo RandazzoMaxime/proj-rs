@@ -543,11 +543,30 @@ from conda-forge.
 
 ### Grids
 
-Grids are not stored in git, with two exceptions. [`data/tests/`](data/tests)
-holds the test grids of PROJ 9.9.0 (`data/tests` in the PROJ source tree, which
-PROJ copies into its test directory), and that is all the offline suite needs.
-Other grids are looked up in `data/grids/` (git-ignored), then
-`tests/gie/tests/`, `data/tests/` and `tests/gie/`.
+`proj.db` is inside the binary: EPSG codes and the operation catalogue need no file. A
+**grid** (`.tif`, `.gsb`, `.gtx`...) is a file the program looks for, the way PROJ does
+(`pj_open_lib_internal`, [`docs/PORTING-data-dirs.md`](docs/PORTING-data-dirs.md)). Put your
+grids in one of these places:
+
+| Where | Used when |
+|---|---|
+| The **user directory**: `$XDG_DATA_HOME/proj` or `~/.local/share/proj` (Linux), `~/Library/Application Support/proj` (macOS), `%LOCALAPPDATA%\proj` (Windows) | Always searched first. `PROJ_USER_WRITABLE_DIRECTORY` replaces it. Downloaded grids and `cache.db` go there too. |
+| A directory named by **`PROJ_DATA`** (a list separated by `:`, `;` on Windows; `PROJ_LIB` is the old name) | After the user directory. When it is set, the places below are not searched. |
+| **`share/proj` next to the executable's folder**: for `/opt/tools/bin/cs2cs`, `/opt/tools/share/proj` | `PROJ_DATA` is not set, and the folder exists. |
+| The working directory | Last, when nothing above applied. |
+
+`projinfo --searchpaths` prints the directories of the current run. A path given to
+`Proj::set_search_paths` (or `proj_context_set_search_paths` in the C API) replaces all of the
+above, as in PROJ. A distributor who installs the grids in a fixed place builds with
+`PROJ_RS_DATA_DIR=/usr/share/proj`, which is searched after `share/proj`, as the data directory
+PROJ compiles in. Nothing of the build machine is ever baked in otherwise.
+
+For contributors: grids are not stored in git, with one exception. [`data/tests/`](data/tests)
+holds the test grids of PROJ 9.9.0 (`data/tests` in the PROJ source tree), and that is all the
+offline suite needs. The tests put it on `PROJ_DATA` themselves, as PROJ's own test runs do
+(`tests/common/mod.rs`, `PROJ_DATA=<repo>/data:<repo>/data/tests`) and set
+`PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY=YES` so that no grid left in a user directory changes a
+result. The repository's `data/grids/` is not searched any more.
 
 Downloading is **off by default**, and **built in only with the `network` feature**
 (`proj-rs = { git = "...", features = ["network"] }`; `proj-rs-capi` and `proj-rs-georust`
@@ -555,9 +574,9 @@ have the same feature). Then set `PROJ_NETWORK=ON` to fetch a missing grid
 from `https://cdn.proj.org`, the way PROJ does. Without the feature, as with a PROJ built
 without libcurl, `PROJ_NETWORK=ON` and `enable_network(true)` fetch nothing and a missing grid is
 an error, unless the application gives its own client with `set_network_callbacks`
-([`docs/PORTING-network-feature.md`](docs/PORTING-network-feature.md)). Fetched grids are cached in the
-temporary directory under `proj/`. Without the grid the operation fails to
-build, with a clear error.
+([`docs/PORTING-network-feature.md`](docs/PORTING-network-feature.md)). Fetched grids and the
+`cache.db` chunk database are kept in the user directory, where PROJ puts them. Without the grid
+the operation fails to build, with a clear error.
 
 ## Reproduce the test numbers
 

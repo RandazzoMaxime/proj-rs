@@ -1,5 +1,8 @@
 # Porting notes: grid search follows PROJ's search path
 
+> The deviations listed below and the default `data/grids` directory were removed afterwards:
+> see `docs/PORTING-data-dirs.md`.
+
 Reference: PROJ 9.9.0 (tag `9.9.0` of `OSGeo/PROJ`, shallow clone kept outside the repo).
 
 PROJ sources:
