@@ -6,6 +6,12 @@ rest is outside semver.
 
 ## Unreleased
 
+- `Transformer` finds the grids of its context's search path when one candidate operation is left
+  (for instance `EPSG:4979` to `EPSG:4326+5773` with `Ballpark::Forbidden`): the operation was
+  created outside the context and failed with `illegal value for +grids`.
+- `Ballpark::Forbidden` no longer lets a ballpark operation through when the grid is missing: the
+  `DiscardIfMissing` rerun re-added the operations the filter had dropped. The build now fails, as
+  PROJ's `--no-ballpark` does.
 - Minimum supported Rust version back to 1.83, the measured floor (it was declared 1.100 in
   1.0.0 because the code used newer standard-library methods; `src/compat.rs` now holds their
   equivalents). The release is still built with 1.100. A project on Rust 1.83 to 1.99 compiles
