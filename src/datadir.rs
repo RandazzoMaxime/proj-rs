@@ -208,11 +208,34 @@ pub(crate) struct Lookup {
     pub(crate) relative_share: Option<PathBuf>,
     /// The compiled data directory.
     pub(crate) compiled: Option<PathBuf>,
+    /// A hermetic lookup: the working directory is not tried after the others. It is the last
+    /// place of `pj_open_lib_internal`, and the machine's.
+    pub(crate) hermetic: bool,
 }
 
 impl Lookup {
+    /// The lookup of a hermetic context: the search path, else the user-writable directory the
+    /// builder set. Nothing else of the machine is read: no `HOME` for `~/`, no `PROJ_DATA` or
+    /// `PROJ_LIB`, no directory of the module, no compiled directory and no working directory.
+    /// A name that is a path (`/x`, `./x`) is still opened, as the caller wrote it.
+    pub(crate) fn hermetic(ctx: &GridContext) -> Self {
+        Self {
+            home: None,
+            finder: ctx.finder().cloned(),
+            search_paths: ctx.added_search_paths().to_vec(),
+            user_dir: ctx.writable_directory(),
+            proj_data: None,
+            relative_share: None,
+            compiled: None,
+            hermetic: true,
+        }
+    }
+
     /// The lookup of a context under the process environment.
     pub(crate) fn of(ctx: &GridContext) -> Self {
+        if ctx.is_hermetic() {
+            return Self::hermetic(ctx);
+        }
         let user_dir = (ctx.has_explicit_user_directory() || !skip_user_directory())
             .then(|| ctx.cache_directory());
         let proj_data = proj_data_env();
@@ -232,6 +255,7 @@ impl Lookup {
             proj_data,
             relative_share,
             compiled,
+            hermetic: false,
         }
     }
 
@@ -280,6 +304,9 @@ impl Lookup {
             .and_then(|dir| hit(join(dir.as_os_str(), name)))
         {
             return Some(found);
+        }
+        if self.hermetic {
+            return None;
         }
         hit(PathBuf::from(name))
     }
@@ -681,6 +708,45 @@ mod tests {
             Some("tilde")
         );
         assert_eq!(Lookup::default().find("~/g.tif", &is_file), None);
+        let _gone = fs::remove_dir_all(&root);
+    }
+
+    /// A hermetic lookup reads its search path, else the directory its builder set. The working
+    /// directory is never tried (`Cargo.toml` is there), and `~/` is not read under `HOME`.
+    #[test]
+    fn hermetic_lookup_reads_only_the_search_path_or_the_explicit_directory() {
+        let root = scratch("hermetic");
+        let explicit = root.join("explicit");
+        put(&explicit, "g.tif", "explicit");
+        put(&root.join("home"), "g.tif", "home");
+        let context = GridContext::hermetic(Vec::new(), Some(explicit.clone()));
+        let lookup = Lookup::of(&context);
+        assert!(lookup.hermetic);
+        assert_eq!(
+            content(lookup.find("g.tif", &is_file)).as_deref(),
+            Some("explicit")
+        );
+        assert_eq!(lookup.find("Cargo.toml", &is_file), None);
+        assert_eq!(lookup.find("~/g.tif", &is_file), None);
+        assert_eq!(lookup.searchpath(), explicit.display().to_string());
+
+        let bare = GridContext::hermetic(Vec::new(), None);
+        assert_eq!(Lookup::of(&bare).find("g.tif", &is_file), None);
+        assert_eq!(Lookup::of(&bare).searchpath(), "");
+
+        // The search path replaces the explicit directory, as PROJ's search paths replace the
+        // other places of `pj_open_lib_internal`.
+        let added = root.join("added");
+        put(&added, "g.tif", "added");
+        let searched = GridContext::hermetic(vec![added.clone()], Some(explicit));
+        assert_eq!(
+            content(Lookup::of(&searched).find("g.tif", &is_file)).as_deref(),
+            Some("added")
+        );
+        assert_eq!(
+            Lookup::of(&searched).searchpath(),
+            added.display().to_string()
+        );
         let _gone = fs::remove_dir_all(&root);
     }
 }

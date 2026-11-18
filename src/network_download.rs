@@ -43,7 +43,12 @@ pub(crate) fn is_download_needed(
     let Some(file_name) = network::cache_file_name(&url) else {
         return Ok(false);
     };
-    let local = ctx.cache_directory().join(file_name);
+    // A hermetic context with no directory has no file to find: the download is needed, and it
+    // fails for want of a directory.
+    let Some(directory) = ctx.writable_directory() else {
+        return Ok(true);
+    };
+    let local = directory.join(file_name);
     if !network::is_file_with(ctx.file_api().as_deref(), &local) {
         return Ok(true);
     }
@@ -107,7 +112,7 @@ pub(crate) fn download(
     }
     let url = network::build_url(ctx, name);
     let file_name = network::cache_file_name(&url).ok_or(ProjError::Network)?;
-    let directory = ctx.cache_directory();
+    let directory = ctx.writable_directory().ok_or(ProjError::Path)?;
     network::create_directory_all(ctx, &directory).map_err(|_| ProjError::Path)?;
     let local = directory.join(&file_name);
     let count = TEMPORARY_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -225,10 +230,7 @@ fn store_record(ctx: &GridContext, url: &str, record: &FileProperties) -> Result
 /// The record database, when the grid cache is on (PROJ's `DiskChunkCache::open`). Its directory is
 /// made through the file API of `ctx`, as PROJ makes the user-writable directory.
 fn open_cache(ctx: &GridContext) -> Option<DiskChunkCache> {
-    if !ctx.cache_enabled {
-        return None;
-    }
-    let path = ctx.cache_settings().path;
+    let path = ctx.chunk_cache()?.path;
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())

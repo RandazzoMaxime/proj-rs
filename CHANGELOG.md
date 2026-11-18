@@ -6,6 +6,19 @@ rest is outside semver.
 
 ## Unreleased
 
+- `Context::builder().hermetic()` builds a context that reads nothing from the machine: not
+  `PROJ_NETWORK`, `PROJ_NETWORK_ENDPOINT` nor `PROJ_ONLY_BEST_DEFAULT`, no `proj.ini` wherever PROJ
+  would look, no `HOME` for `~/` names, no working directory for a bare grid name. Its sources are
+  its search path, its user directory and its own settings; the embedded `proj.db` is still used.
+  Downloads and the chunk cache go only to the user directory the builder set. Open points:
+  `PROJ_AUX_DB` and `PROJ_IGNORE_CELESTIAL_BODY` are still read by the database layer. See
+  [docs/PORTING-context-hermetic.md](docs/PORTING-context-hermetic.md).
+- A non-hermetic `Context` reads `proj.ini` from its search path and its user directory, as PROJ
+  does once the search path is set, and not only from the default places.
+- An unset `ONLY_BEST` (`OnlyBest::Default`) takes the context's default, as
+  `proj_create_crs_to_crs` does: `PROJ_ONLY_BEST_DEFAULT=YES` (or `only_best_default = on` in
+  `proj.ini`) makes a missing grid fail the transformer, as `cs2cs` 9.9.0 does. It was always the
+  warning default.
 - `Transformer` accepts a vertical CRS alone as source or target (`EPSG:4979` to `EPSG:3855` or
   `EPSG:5773`), as `proj_create_crs_to_crs` does: it refused the pair with `has no geodetic base to
   prepare its candidates`. Such a CRS has no horizontal coordinates, so its candidates are not

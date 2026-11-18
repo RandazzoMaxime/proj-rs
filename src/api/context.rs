@@ -80,14 +80,14 @@ impl Context {
     /// ```
     #[must_use]
     pub fn builder() -> ContextBuilder {
-        let mut net = GridContext::load();
-        net.enabled = false;
-        net.cache_enabled = false;
         ContextBuilder {
-            context: Self {
-                legacy: crate::context::Context::new(),
-                net,
-            },
+            legacy: crate::context::Context::new(),
+            hermetic: false,
+            network: false,
+            endpoint: None,
+            search_paths: Vec::new(),
+            user_directory: None,
+            cache: false,
         }
     }
 
@@ -156,7 +156,8 @@ impl Context {
     ///
     /// Unless set, it is PROJ's user-writable directory: `$XDG_DATA_HOME/proj` or
     /// `$HOME/.local/share/proj` on Linux, `$HOME/Library/Application Support/proj` on macOS,
-    /// `%LOCALAPPDATA%\proj` on Windows, or `PROJ_USER_WRITABLE_DIRECTORY`.
+    /// `%LOCALAPPDATA%\proj` on Windows, or `PROJ_USER_WRITABLE_DIRECTORY`. A hermetic context
+    /// that was given none has no such directory: the path is empty.
     ///
     /// ```
     /// use proj_rs::Context;
@@ -178,7 +179,7 @@ impl Context {
     /// ```
     #[must_use]
     pub fn cache(&self) -> Cache {
-        if self.net.cache_enabled {
+        if self.net.chunk_cache().is_some() {
             Cache::Enabled
         } else {
             Cache::Disabled
@@ -187,6 +188,10 @@ impl Context {
 }
 
 /// Builds a [`Context`]. Made by [`Context::builder`].
+///
+/// The settings given are the builder's own. A builder that is not hermetic takes the rest from
+/// the environment and `proj.ini`, read when [`ContextBuilder::build`] runs; a hermetic one takes
+/// nothing from them (see [`ContextBuilder::hermetic`]).
 ///
 /// ```
 /// use proj_rs::{Cache, Context, Network};
@@ -199,7 +204,13 @@ impl Context {
 /// ```
 #[derive(Clone, Debug)]
 pub struct ContextBuilder {
-    context: Context,
+    legacy: crate::context::Context,
+    hermetic: bool,
+    network: bool,
+    endpoint: Option<String>,
+    search_paths: Vec<PathBuf>,
+    user_directory: Option<PathBuf>,
+    cache: bool,
 }
 
 impl ContextBuilder {
@@ -213,7 +224,7 @@ impl ContextBuilder {
     /// ```
     #[must_use]
     pub fn network(mut self, network: Network) -> Self {
-        self.context.net.enabled = network == Network::Enabled;
+        self.network = network == Network::Enabled;
         self
     }
 
@@ -227,7 +238,7 @@ impl ContextBuilder {
     /// ```
     #[must_use]
     pub fn endpoint(mut self, endpoint: impl Into<String>) -> Self {
-        self.context.net.endpoint = endpoint.into();
+        self.endpoint = Some(endpoint.into());
         self
     }
 
@@ -242,9 +253,7 @@ impl ContextBuilder {
     /// ```
     #[must_use]
     pub fn search_path(mut self, path: impl AsRef<Path>) -> Self {
-        self.context
-            .net
-            .push_search_path(path.as_ref().to_path_buf());
+        self.search_paths.push(path.as_ref().to_path_buf());
         self
     }
 
@@ -258,7 +267,7 @@ impl ContextBuilder {
     /// ```
     #[must_use]
     pub fn user_directory(mut self, path: impl AsRef<Path>) -> Self {
-        self.context.net.set_cache_dir(path.as_ref().to_path_buf());
+        self.user_directory = Some(path.as_ref().to_path_buf());
         self
     }
 
@@ -272,7 +281,36 @@ impl ContextBuilder {
     /// ```
     #[must_use]
     pub fn cache(mut self, cache: Cache) -> Self {
-        self.context.net.cache_enabled = cache == Cache::Enabled;
+        self.cache = cache == Cache::Enabled;
+        self
+    }
+
+    /// A hermetic context: the grid and `proj.ini` lookups read nothing from the machine. They
+    /// do not read `PROJ_NETWORK`, `PROJ_NETWORK_ENDPOINT` or `PROJ_ONLY_BEST_DEFAULT`, and they
+    /// do not look for `proj.ini` in the search path, in `PROJ_DATA` or `PROJ_LIB`, in the
+    /// user-writable directory or in the directory of the executable. They do not look in the
+    /// user's home (`~/`) nor in the working directory. Their sources are the search path, the
+    /// user directory and the settings of this builder, whatever their order here. Without them
+    /// PROJ's defaults apply: no network, no cache, the endpoint `https://cdn.proj.org`, and
+    /// `ONLY_BEST` unset.
+    ///
+    /// The embedded `proj.db` is the crate's own data, and it is used. Grids are found in the
+    /// search path, or in the user directory the builder set. A grid is downloaded only with
+    /// [`Network::Enabled`] and a user directory, and the cache is kept only there too. The
+    /// database layer still reads `PROJ_AUX_DB` and `PROJ_IGNORE_CELESTIAL_BODY` for every
+    /// context: this is the open point listed in `docs/PORTING-context-hermetic.md`.
+    ///
+    /// ```
+    /// use proj_rs::{Cache, Context, Network};
+    ///
+    /// let ctx = Context::builder().hermetic().build();
+    /// assert_eq!(ctx.network(), Network::Disabled);
+    /// assert_eq!(ctx.cache(), Cache::Disabled);
+    /// assert_eq!(ctx.endpoint(), "https://cdn.proj.org");
+    /// ```
+    #[must_use]
+    pub fn hermetic(mut self) -> Self {
+        self.hermetic = true;
         self
     }
 
@@ -285,7 +323,20 @@ impl ContextBuilder {
     /// ```
     #[must_use]
     pub fn build(self) -> Context {
-        self.context
+        let mut net = if self.hermetic {
+            GridContext::hermetic(self.search_paths, self.user_directory)
+        } else {
+            GridContext::load_with(self.search_paths, self.user_directory)
+        };
+        net.enabled = self.network;
+        net.cache_enabled = self.cache;
+        if let Some(endpoint) = self.endpoint {
+            net.endpoint = endpoint;
+        }
+        Context {
+            legacy: self.legacy,
+            net,
+        }
     }
 }
 

@@ -271,6 +271,8 @@ pub(crate) struct GridContext {
     /// The built-in network functions of this context and its clones, with their chunks in
     /// memory: a new builder starts empty, as PROJ after `proj_cleanup`.
     builtin: Arc<OnceLock<Callbacks>>,
+    /// A hermetic context reads nothing from the machine: see [`GridContext::hermetic`].
+    hermetic: bool,
 }
 
 /// The application's file operations of a context, shared with its clones.
@@ -422,6 +424,15 @@ fn default_context() -> GridContext {
     DEFAULT.get_or_init(GridContext::load).clone()
 }
 
+/// The context of the enclosing [`with_context`], else the environment read again, as
+/// [`GridContext::load`]. A selection that runs under a context reads its settings here, so that
+/// a hermetic context does not take the variables of the process.
+pub(crate) fn active_or_environment() -> GridContext {
+    ACTIVE
+        .with(|slot| slot.borrow().clone())
+        .unwrap_or_else(GridContext::load)
+}
+
 pub(crate) fn with_context<T>(ctx: &GridContext, body: impl FnOnce() -> T) -> T {
     struct Restore(Option<GridContext>);
     impl Drop for Restore {
@@ -436,23 +447,37 @@ pub(crate) fn with_context<T>(ctx: &GridContext, body: impl FnOnce() -> T) -> T 
 }
 
 impl GridContext {
-    pub(crate) fn load() -> Self {
-        let mut ctx = Self {
+    /// PROJ's defaults with no `proj.ini` and no variable, and the settings given.
+    fn defaults(search_paths: Vec<PathBuf>, cache_dir: Option<PathBuf>) -> Self {
+        Self {
             enabled: false,
-            endpoint: String::new(),
+            endpoint: CDN_ENDPOINT.to_owned(),
             cache_enabled: true,
             only_best_default: None,
             cache_path: None,
             cache_max_bytes: Some(DEFAULT_CACHE_MAX_BYTES),
             cache_ttl_seconds: DEFAULT_CACHE_TTL_SECONDS,
-            cache_dir: None,
-            search_paths: Vec::new(),
+            cache_dir,
+            search_paths,
             ca_bundle: None,
             file_finder: None,
             callbacks: None,
             file_api: None,
             builtin: Arc::new(OnceLock::new()),
-        };
+            hermetic: false,
+        }
+    }
+
+    /// The process default: the environment and `proj.ini`, read as `pj_load_ini` reads them.
+    pub(crate) fn load() -> Self {
+        Self::load_with(Vec::new(), None)
+    }
+
+    /// [`GridContext::load`] for a context with a search path and a user-writable directory set:
+    /// `proj.ini` is looked for in them. PROJ loads the file on first need (`pj_load_ini`), so
+    /// the paths it sees are those set by then, as `proj_context_set_search_paths` sets them.
+    pub(crate) fn load_with(search_paths: Vec<PathBuf>, cache_dir: Option<PathBuf>) -> Self {
+        let mut ctx = Self::defaults(search_paths, cache_dir);
         let env_network = nonempty_env("PROJ_NETWORK");
         let env_endpoint = nonempty_env("PROJ_NETWORK_ENDPOINT");
         let env_only_best = std::env::var_os("PROJ_ONLY_BEST_DEFAULT");
@@ -480,6 +505,22 @@ impl GridContext {
         ctx
     }
 
+    /// The context of a hermetic builder: PROJ's defaults, with nothing read from the machine. No
+    /// variable is read, no `proj.ini` is looked for, and the lookups see only the search path
+    /// and the user-writable directory the builder set (see [`crate::datadir::Lookup::of`]).
+    /// Downloads and the chunk cache need that directory: without one, neither is possible.
+    pub(crate) fn hermetic(search_paths: Vec<PathBuf>, cache_dir: Option<PathBuf>) -> Self {
+        Self {
+            hermetic: true,
+            ..Self::defaults(search_paths, cache_dir)
+        }
+    }
+
+    /// Whether this context reads nothing from the machine.
+    pub(crate) fn is_hermetic(&self) -> bool {
+        self.hermetic
+    }
+
     /// A directory was set with `set_user_writable_directory`.
     pub(crate) fn has_explicit_user_directory(&self) -> bool {
         self.cache_dir.is_some()
@@ -490,11 +531,42 @@ impl GridContext {
         self.file_finder.as_ref()
     }
 
-    /// The user-writable directory: the one set on the context, else PROJ's default.
+    /// The directory downloads and the chunk database are written to: the one set on the
+    /// context, else PROJ's user-writable directory. A hermetic context has only the one set, so
+    /// it has none when the builder set none.
+    pub(crate) fn writable_directory(&self) -> Option<PathBuf> {
+        match &self.cache_dir {
+            Some(dir) => Some(dir.clone()),
+            None if self.hermetic => None,
+            None => Some(crate::datadir::user_directory()),
+        }
+    }
+
+    /// The user-writable directory: the one set on the context, else PROJ's default. Empty for a
+    /// hermetic context that was given none, which is never joined to a file name (see
+    /// [`GridContext::writable_directory`]).
     pub(crate) fn cache_directory(&self) -> PathBuf {
-        self.cache_dir
-            .clone()
-            .unwrap_or_else(crate::datadir::user_directory)
+        self.writable_directory().unwrap_or_default()
+    }
+
+    /// The chunk database this context reads and writes, when the grid cache is on: the path set
+    /// on the builder, else `cache.db` in the writable directory. `None` when the cache is off, or
+    /// when it has no file: a hermetic context with no directory keeps no cache.
+    pub(crate) fn chunk_cache(&self) -> Option<crate::network_cache::Settings> {
+        if !self.cache_enabled {
+            return None;
+        }
+        let path = match &self.cache_path {
+            Some(path) => path.clone(),
+            None => self
+                .writable_directory()?
+                .join(crate::network_cache::DEFAULT_FILE_NAME),
+        };
+        Some(crate::network_cache::Settings {
+            path,
+            max_bytes: self.cache_max_bytes,
+            ttl_seconds: self.cache_ttl_seconds,
+        })
     }
 
     /// The chunk database this context reads and writes: the path set on the builder, else
