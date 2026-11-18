@@ -1,6 +1,6 @@
 //! Le driver par groupes de quatre, compilé avec AVX2 et FMA.
 
-use super::{scalar, Avx2, Lanes, V4};
+use super::{scalar, scalar3, Avx2, Lanes, Lanes3, V4};
 
 /// Parcourt les tranches par groupes de quatre.
 ///
@@ -51,4 +51,55 @@ unsafe fn groups<K: Lanes>(
         }
     }
     scalar(kernel, a_tail, b_tail, oa_tail, ob_tail);
+}
+
+/// [`run_avx2`] pour un noyau à trois entrées et trois sorties.
+pub(super) fn run3_avx2<K: Lanes3>(
+    tok: Avx2,
+    kernel: &K,
+    input: [&[f64]; 3],
+    output: [&mut [f64]; 3],
+) {
+    // SAFETY: `tok` n'existe que si le processeur supporte AVX2 et FMA.
+    unsafe { groups3(tok, kernel, input, output) };
+}
+
+/// # Safety
+///
+/// Le processeur doit supporter AVX2 et FMA. `tok` en est la preuve.
+#[target_feature(enable = "avx2,fma")]
+unsafe fn groups3<K: Lanes3>(tok: Avx2, kernel: &K, input: [&[f64]; 3], output: [&mut [f64]; 3]) {
+    let head = input[0].len() & !3;
+    let [ia, ib, ic] = input;
+    let [oa, ob, oc] = output;
+    let ((ia4, ia_tail), (ib4, ib_tail), (ic4, ic_tail)) =
+        (ia.split_at(head), ib.split_at(head), ic.split_at(head));
+    let ((oa4, oa_tail), (ob4, ob_tail), (oc4, oc_tail)) = (
+        oa.split_at_mut(head),
+        ob.split_at_mut(head),
+        oc.split_at_mut(head),
+    );
+    let (ia4, _) = ia4.as_chunks::<4>();
+    let (ib4, _) = ib4.as_chunks::<4>();
+    let (ic4, _) = ic4.as_chunks::<4>();
+    let (oa4, _) = oa4.as_chunks_mut::<4>();
+    let (ob4, _) = ob4.as_chunks_mut::<4>();
+    let (oc4, _) = oc4.as_chunks_mut::<4>();
+    for (((((a, b), c), oa), ob), oc) in ia4.iter().zip(ib4).zip(ic4).zip(oa4).zip(ob4).zip(oc4) {
+        let loaded = (V4::load(tok, a), V4::load(tok, b), V4::load(tok, c));
+        if let Some((x, y, z)) = kernel.lanes(tok, loaded.0, loaded.1, loaded.2) {
+            x.store(oa);
+            y.store(ob);
+            z.store(oc);
+        } else {
+            for lane in 0..4 {
+                (oa[lane], ob[lane], oc[lane]) = kernel.point(a[lane], b[lane], c[lane]);
+            }
+        }
+    }
+    scalar3(
+        kernel,
+        [ia_tail, ib_tail, ic_tail],
+        [oa_tail, ob_tail, oc_tail],
+    );
 }

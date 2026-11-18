@@ -7,8 +7,12 @@
     reason = "formulae follow PROJ sterea.cpp and gauss.cpp"
 )]
 
-use crate::engine::{classic_step, CreateError, Frame, Kernel, Params, TransformError};
+use crate::engine::{classic_step_batch, CreateError, Frame, Kernel, Params, TransformError};
 use std::f64::consts::{FRAC_PI_2, FRAC_PI_4};
+
+// The vector path of `sterea`, four points at a time.
+#[path = "sterea_batch.rs"]
+mod sterea_batch;
 
 const DEL_TOL: f64 = 1e-14;
 
@@ -80,6 +84,7 @@ impl Gauss {
     }
 }
 
+#[derive(Clone, Copy)]
 struct Sterea {
     gauss: Gauss,
     sinc0: f64,
@@ -140,14 +145,16 @@ pub(crate) fn build(
         return Ok(None);
     }
     let (gauss, chi, radius) = gauss_ini(frame.earth.e(), frame.phi0)?;
-    Ok(Some(classic_step(
+    let kernel = Sterea {
+        gauss,
+        sinc0: chi.sin(),
+        cosc0: chi.cos(),
+        r2: 2.0 * radius,
+        k0: frame.k0,
+    };
+    Ok(Some(classic_step_batch(
         frame,
-        Sterea {
-            gauss,
-            sinc0: chi.sin(),
-            cosc0: chi.cos(),
-            r2: 2.0 * radius,
-            k0: frame.k0,
-        },
+        kernel,
+        crate::projections::unit_batch::UnitBatch(kernel, frame.earth),
     )))
 }

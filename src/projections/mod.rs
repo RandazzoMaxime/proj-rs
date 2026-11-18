@@ -77,6 +77,7 @@ mod tiff_codec;
 mod tmerczoned;
 mod topocentric;
 mod tpeqd;
+pub(crate) mod unit_batch;
 pub(crate) mod webmerc_batch;
 
 use crate::engine::{CreateError, Frame, Params};

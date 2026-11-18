@@ -16,6 +16,10 @@ use crate::engine::{
 };
 use std::f64::consts::{FRAC_PI_2, PI};
 
+// `helmert` and `molobadekas` over a slice when nothing depends on the epoch.
+#[path = "helmert_batch.rs"]
+mod helmert_batch;
+
 /// Arcseconds to radians. PROJ `ARCSEC_TO_RAD` (`DEG_TO_RAD / 3600`).
 const ARCSEC_TO_RAD: f64 = PI / (180.0 * 3600.0);
 
@@ -237,6 +241,8 @@ struct EpochShift {
     dtz: f64,
     t_epoch: f64,
     law: Law,
+    /// The constants of the vector path, when the transformation has no rate.
+    fixed: Option<helmert_batch::Fixed>,
 }
 
 #[derive(Clone, Copy)]
@@ -344,17 +350,13 @@ fn helmert(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateError>
             pz: 0.0,
         }
     };
-    Ok(Box::new(EpochShift {
-        frame: frame.clone(),
-        tx,
-        ty,
-        tz,
-        dtx,
-        dty,
-        dtz,
+    Ok(Box::new(EpochShift::new(
+        frame.clone(),
+        [tx, ty, tz],
+        [dtx, dty, dtz],
         t_epoch,
         law,
-    }))
+    )))
 }
 
 fn molobadekas(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateError> {
@@ -372,16 +374,16 @@ fn molobadekas(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateEr
         _ => AngleLaw::Linear,
     };
     // The reference point is folded into the translation, as in helmert.cpp.
-    Ok(Box::new(EpochShift {
-        frame: frame.clone(),
-        tx: optional_number(params, "x")? + px,
-        ty: optional_number(params, "y")? + py,
-        tz: optional_number(params, "z")? + pz,
-        dtx: 0.0,
-        dty: 0.0,
-        dtz: 0.0,
-        t_epoch: 0.0,
-        law: Law::Spatial {
+    Ok(Box::new(EpochShift::new(
+        frame.clone(),
+        [
+            optional_number(params, "x")? + px,
+            optional_number(params, "y")? + py,
+            optional_number(params, "z")? + pz,
+        ],
+        [0.0; 3],
+        0.0,
+        Law::Spatial {
             angles,
             convention,
             ppm: scale,
@@ -396,7 +398,7 @@ fn molobadekas(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateEr
             py,
             pz,
         },
-    }))
+    )))
 }
 
 /// `require_towgs84_position` is false for Molodensky-Badekas, which never reads `towgs84`.
@@ -420,6 +422,23 @@ fn convention_of(params: &Params, helmert_towgs84: bool) -> Result<Convention, C
 }
 
 impl EpochShift {
+    fn new(frame: Frame, translation: [f64; 3], rate: [f64; 3], t_epoch: f64, law: Law) -> Self {
+        let mut shift = Self {
+            frame,
+            tx: translation[0],
+            ty: translation[1],
+            tz: translation[2],
+            dtx: rate[0],
+            dty: rate[1],
+            dtz: rate[2],
+            t_epoch,
+            law,
+            fixed: None,
+        };
+        shift.fixed = helmert_batch::Fixed::new(&shift);
+        shift
+    }
+
     fn observed_dt(&self, t: f64) -> f64 {
         // `helmert_forward_4d`: a non-finite time (PROJ `HUGE_VAL`) means the epoch.
         let observed = if t.is_finite() { t } else { self.t_epoch };
@@ -529,6 +548,40 @@ impl Step for EpochShift {
 
     fn inverse(&self, coord: Coord) -> Result<Coord, TransformError> {
         Ok(self.apply(coord, Sense::Inverse))
+    }
+
+    fn forward_batch(&self, coords: &mut [Coord], failed: &mut [Option<TransformError>]) {
+        assert_eq!(coords.len(), failed.len(), "one slot per point");
+        match self.fixed {
+            Some(fixed) => {
+                let frame = &self.frame;
+                helmert_batch::run(fixed, true, frame.to_meter, frame.fr_meter, coords, failed);
+            }
+            None => {
+                for (coord, failed) in coords.iter_mut().zip(failed) {
+                    if failed.is_none() {
+                        *coord = self.apply(*coord, Sense::Forward);
+                    }
+                }
+            }
+        }
+    }
+
+    fn inverse_batch(&self, coords: &mut [Coord], failed: &mut [Option<TransformError>]) {
+        assert_eq!(coords.len(), failed.len(), "one slot per point");
+        match self.fixed {
+            Some(fixed) => {
+                let frame = &self.frame;
+                helmert_batch::run(fixed, false, frame.to_meter, frame.fr_meter, coords, failed);
+            }
+            None => {
+                for (coord, failed) in coords.iter_mut().zip(failed) {
+                    if failed.is_none() {
+                        *coord = self.apply(*coord, Sense::Inverse);
+                    }
+                }
+            }
+        }
     }
 
     fn input_kind(&self) -> IoKind {

@@ -78,3 +78,39 @@ pub(crate) fn phi2(tok: Avx2, ts: V4, e: f64) -> V4 {
     }
     tau.atan()
 }
+
+/// `asin` d'un argument de `[-1, 1]` : `atan2(x, sqrt((1 - x)(1 + x)))`. L'erreur croît comme
+/// `1 / sqrt(1 - x²)` : l'appelant garde `|x|` sous [`ASIN_LIMIT`] et renvoie le groupe au
+/// scalaire au-delà.
+#[inline(always)]
+pub(crate) fn asin(tok: Avx2, x: V4) -> V4 {
+    let one = V4::splat(tok, 1.0);
+    x.atan2(((one - x) * (one + x)).sqrt())
+}
+
+/// Au-delà de cette valeur absolue, [`asin`] amplifie l'erreur d'entrée de plus de quatre fois
+/// (`1 / sqrt(1 - 0,97²)`), et la longitude qui en dépend, de `1 / cos φ` en plus, sort du 1e-11°
+/// du dépôt à 86° de latitude (mesuré sur `somerc`). La zone d'usage reste bien en deçà.
+pub(crate) const ASIN_LIMIT: f64 = 0.97;
+
+/// Voies dont l'argument de [`asin`] est fini et sous [`ASIN_LIMIT`] en valeur absolue.
+#[inline(always)]
+pub(crate) fn asin_in_domain(tok: Avx2, x: V4) -> Mask {
+    x.abs().le(V4::splat(tok, ASIN_LIMIT))
+}
+
+/// `auxlat_convert_sincos` de `crate::projmath` : `zeta` plus la série de Clenshaw des
+/// coefficients `f`, avec le sinus et le cosinus de `zeta` déjà calculés.
+#[inline(always)]
+pub(crate) fn auxlat_convert(tok: Avx2, zeta: V4, sin_zeta: V4, cos_zeta: V4, f: &[f64]) -> V4 {
+    let k = |value| V4::splat(tok, value);
+    let x = k(2.0) * (cos_zeta - sin_zeta) * (cos_zeta + sin_zeta);
+    let mut u0 = V4::zero(tok);
+    let mut u1 = V4::zero(tok);
+    for coefficient in f.iter().rev() {
+        let next = x.mul_add(u0, k(*coefficient) - u1);
+        u1 = u0;
+        u0 = next;
+    }
+    zeta + k(2.0) * sin_zeta * cos_zeta * u0
+}

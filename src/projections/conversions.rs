@@ -11,7 +11,7 @@
 
 use crate::angle::adjlon;
 use crate::engine::{
-    proj_number, Affine, Coord, CreateError, Frame, IoKind, Params, PipelineStack, Step,
+    proj_number, Affine, Coord, CreateError, Frame, IoKind, Params, PipelineStack, StackOp, Step,
     TransformError,
 };
 
@@ -654,6 +654,16 @@ impl Step for PushPop {
 
     fn needs_pipeline_stack(&self) -> bool {
         self.axes.iter().any(|selected| *selected)
+    }
+
+    fn stack_op(&self, inverse: bool) -> Option<StackOp> {
+        let direction = if inverse {
+            Direction::Inverse
+        } else {
+            Direction::Forward
+        };
+        let push = matches!(PushPop::act(self.role, direction), StackAct::Push);
+        Some(StackOp::new(self.axes, push))
     }
 
     fn forward_in_pipeline(

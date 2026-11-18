@@ -83,6 +83,11 @@ injecté dans le repli fait échouer le test (vérifié).
 - **Limite.** Toutes les mesures sont faites sur x86-64 Linux, avec glibc. Le gain sur
   aarch64 n'est pas mesuré. Il dépend du libm et du cœur.
 
+## Suite
+
+Lot 7 : le chemin par lots sert aussi `cart`, `helmert`, `push`/`pop` (`docs/PORTING-batch-datum.md`)
+et `sterea`, `somerc`, `laea` (`docs/PORTING-batch-oblique.md`).
+
 ## Ce qu'il faudrait pour aarch64
 
 - libmvec AdvSIMD : `_ZGVnN2v_sin` (et `cos`, `log`, `exp`, `atanh`, `atan2` en `vv`) sous

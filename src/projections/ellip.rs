@@ -8,7 +8,9 @@
     reason = "constants and branches are transcribed from the PROJ sources"
 )]
 
-use crate::engine::{classic_step, CreateError, Frame, Kernel, Params, TransformError};
+use crate::engine::{
+    classic_step, classic_step_batch, CreateError, Frame, Kernel, Params, TransformError,
+};
 use crate::projmath::{phi2, tsfn};
 use std::f64::consts::{FRAC_PI_2, FRAC_PI_4};
 
@@ -16,6 +18,11 @@ fn asin_or(value: f64) -> Result<f64, TransformError> {
     crate::projmath::aasin(value).map_err(|()| TransformError::OutsideDomain)
 }
 
+// The vector path of `somerc`, four points at a time.
+#[path = "somerc_batch.rs"]
+mod somerc_batch;
+
+#[derive(Clone, Copy)]
 struct Somerc {
     k: f64,
     c: f64,
@@ -139,18 +146,20 @@ pub(crate) fn build(
                 - c * ((FRAC_PI_4 + 0.5 * phi0).tan().ln()
                     - hlf_e * ((1.0 + sp) / (1.0 - sp)).ln());
             let kr = frame.k0 * earth.one_es().sqrt() / (1.0 - sp * sp);
-            classic_step(
+            let kernel = Somerc {
+                k,
+                c,
+                hlf_e,
+                kr,
+                cosp0: phip0.cos(),
+                sinp0,
+                e,
+                rone_es,
+            };
+            classic_step_batch(
                 frame,
-                Somerc {
-                    k,
-                    c,
-                    hlf_e,
-                    kr,
-                    cosp0: phip0.cos(),
-                    sinp0,
-                    e,
-                    rone_es,
-                },
+                kernel,
+                crate::projections::unit_batch::UnitBatch(kernel, earth),
             )
         }
         "gstmerc" => {

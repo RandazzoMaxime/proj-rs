@@ -12,7 +12,8 @@
 //!   `phi2`).
 //! - [`Lanes`] et [`run`] sont le driver : il découpe les tranches par quatre, rappelle le
 //!   chemin scalaire pour la queue et pour tout groupe qu'une voie sort du domaine rapide, et
-//!   n'entre dans le code `target_feature` qu'une fois par appel.
+//!   n'entre dans le code `target_feature` qu'une fois par appel. [`Lanes3`] et [`run3`] sont le
+//!   même driver pour trois entrées et trois sorties (géocentrique, Helmert).
 //!
 //! Hors x86-64, ou sans AVX2, [`run`] boucle sur le chemin scalaire : les résultats sont alors
 //! ceux de la crate, sans écart.
@@ -38,6 +39,49 @@ pub(crate) trait Lanes {
     /// (valeur non finie, pôle, hors domaine) : le groupe passe alors par [`Self::point`].
     #[cfg(target_arch = "x86_64")]
     fn lanes(&self, tok: Avx2, a: V4, b: V4) -> Option<(V4, V4)>;
+}
+
+/// Un noyau par lots à trois entrées et trois sorties (géocentrique, Helmert).
+pub(crate) trait Lanes3 {
+    /// Un point par le chemin scalaire.
+    fn point(&self, a: f64, b: f64, c: f64) -> (f64, f64, f64);
+
+    /// Quatre points. `None` quand une voie sort du domaine que le noyau vectoriel traite : le
+    /// groupe passe alors par [`Self::point`].
+    #[cfg(target_arch = "x86_64")]
+    fn lanes(&self, tok: Avx2, a: V4, b: V4, c: V4) -> Option<(V4, V4, V4)>;
+}
+
+/// Applique `kernel` aux trois tranches d'entrée, qui ont la longueur des trois de sortie.
+///
+/// # Panics
+///
+/// Panique si les six tranches n'ont pas la même longueur.
+pub(crate) fn run3<K: Lanes3>(kernel: &K, input: [&[f64]; 3], output: [&mut [f64]; 3]) {
+    let n = input[0].len();
+    assert!(
+        input.iter().all(|lane| lane.len() == n) && output.iter().all(|lane| lane.len() == n),
+        "the six slices must have {n} values"
+    );
+    #[cfg(target_arch = "x86_64")]
+    if let Some(tok) = Avx2::detect() {
+        drive::run3_avx2(tok, kernel, input, output);
+        return;
+    }
+    scalar3(kernel, input, output);
+}
+
+/// Le chemin sans vecteur : un point après l'autre.
+fn scalar3<K: Lanes3>(kernel: &K, input: [&[f64]; 3], output: [&mut [f64]; 3]) {
+    let [oa, ob, oc] = output;
+    for (slot, ((oa, ob), oc)) in oa
+        .iter_mut()
+        .zip(ob.iter_mut())
+        .zip(oc.iter_mut())
+        .enumerate()
+    {
+        (*oa, *ob, *oc) = kernel.point(input[0][slot], input[1][slot], input[2][slot]);
+    }
 }
 
 /// Applique `kernel` aux quatre tranches, qui ont la même longueur.

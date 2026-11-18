@@ -242,7 +242,81 @@ impl Legacy {
     }
 }
 
+/// The default of `Step::forward_batch`, for a step that holds the pipeline stack.
+fn one_by_one(
+    coords: &mut [Coord],
+    failed: &mut [Option<TransformError>],
+    step: impl Fn(Coord) -> Result<Coord, TransformError>,
+) {
+    for (coord, failed) in coords.iter_mut().zip(failed) {
+        if failed.is_none() {
+            match step(*coord) {
+                Ok(out) => *coord = out,
+                Err(error) => *failed = Some(error),
+            }
+        }
+    }
+}
+
+impl Legacy {
+    /// `datum_forward` and the vertical grid over a slice, step by step.
+    fn before_inner_batch(&self, coords: &mut [Coord], failed: &mut [Option<TransformError>]) {
+        if let Some(horizontal) = &self.horizontal {
+            horizontal.inverse_batch(coords, failed);
+        } else if let Some(datum) = &self.datum {
+            datum.wgs84.forward_batch(coords, failed);
+            if let Some(helmert) = &datum.helmert {
+                helmert.inverse_batch(coords, failed);
+            }
+            datum.local.inverse_batch(coords, failed);
+        }
+        if let Some(vertical) = &self.vertical {
+            vertical.forward_batch(coords, failed);
+        }
+    }
+
+    /// The vertical grid and `datum_inverse` over a slice, step by step.
+    fn after_inner_batch(&self, coords: &mut [Coord], failed: &mut [Option<TransformError>]) {
+        if let Some(vertical) = &self.vertical {
+            vertical.inverse_batch(coords, failed);
+        }
+        if let Some(horizontal) = &self.horizontal {
+            horizontal.forward_batch(coords, failed);
+        } else if let Some(datum) = &self.datum {
+            datum.local.forward_batch(coords, failed);
+            if let Some(helmert) = &datum.helmert {
+                helmert.forward_batch(coords, failed);
+            }
+            datum.wgs84.inverse_batch(coords, failed);
+        }
+    }
+}
+
 impl Step for Legacy {
+    fn forward_batch(&self, coords: &mut [Coord], failed: &mut [Option<TransformError>]) {
+        assert_eq!(coords.len(), failed.len(), "one slot per point");
+        if self.inner.needs_pipeline_stack() {
+            return one_by_one(coords, failed, |coord| self.forward(coord));
+        }
+        self.before_inner_batch(coords, failed);
+        self.inner.forward_batch(coords, failed);
+        if let Some(axis) = &self.axis {
+            axis.forward_batch(coords, failed);
+        }
+    }
+
+    fn inverse_batch(&self, coords: &mut [Coord], failed: &mut [Option<TransformError>]) {
+        assert_eq!(coords.len(), failed.len(), "one slot per point");
+        if self.inner.needs_pipeline_stack() {
+            return one_by_one(coords, failed, |coord| self.inverse(coord));
+        }
+        if let Some(axis) = &self.axis {
+            axis.inverse_batch(coords, failed);
+        }
+        self.inner.inverse_batch(coords, failed);
+        self.after_inner_batch(coords, failed);
+    }
+
     fn forward(&self, coord: Coord) -> Result<Coord, TransformError> {
         let coord = self.inner.forward(self.before_inner(coord)?)?;
         if let Some(axis) = &self.axis {

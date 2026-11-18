@@ -161,6 +161,98 @@ pub(super) fn run_in_pipeline(
     Ok(coord)
 }
 
+/// A push or pop of the pipeline stack: the axes it moves, and which way.
+#[derive(Clone, Copy)]
+pub(crate) struct StackOp {
+    axes: [bool; 4],
+    push: bool,
+}
+
+impl StackOp {
+    pub(crate) fn new(axes: [bool; 4], push: bool) -> Self {
+        Self { axes, push }
+    }
+}
+
+/// The stack of a pipeline over a slice: one entry per point, so a push saves the whole slice
+/// and the matching pop gives each point its own value back. A point that has failed keeps its
+/// coordinate, and its slot stays so that the others line up.
+#[derive(Default)]
+struct BatchStack {
+    axes: [Vec<f64>; 4],
+}
+
+impl BatchStack {
+    fn apply(&mut self, op: StackOp, coords: &mut [Coord], failed: &[Option<TransformError>]) {
+        let count = coords.len();
+        for (index, saved) in self.axes.iter_mut().enumerate() {
+            if !op.axes[index] {
+                continue;
+            }
+            if op.push {
+                saved.extend(coords.iter().map(|coord| axis_of(coord, index)));
+            } else if saved.len() >= count {
+                let from = saved.len() - count;
+                for ((coord, failed), value) in
+                    coords.iter_mut().zip(failed).zip(saved.drain(from..))
+                {
+                    if failed.is_none() {
+                        set_axis(coord, index, value);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn axis_of(coord: &Coord, index: usize) -> f64 {
+    match index {
+        0 => coord.x,
+        1 => coord.y,
+        2 => coord.z,
+        _ => coord.t,
+    }
+}
+
+fn set_axis(coord: &mut Coord, index: usize, value: f64) {
+    match index {
+        0 => coord.x = value,
+        1 => coord.y = value,
+        2 => coord.z = value,
+        _ => coord.t = value,
+    }
+}
+
+/// Whether a slice can go through `plan` at once: every step that reads the stack is a push or a
+/// pop, and on each axis the pops never outnumber the pushes before them and the two end equal.
+/// An unbalanced pipeline keeps values from one point to the next, and only the order of the
+/// points one at a time gives that.
+pub(super) fn stack_balanced(plan: &[Exec]) -> bool {
+    let mut depth = [0_i64; 4];
+    for exec in plan {
+        let (step, inverse) = match exec {
+            Exec::Forward(step) => (step, false),
+            Exec::Inverse(step) => (step, true),
+            Exec::Affine(_) => continue,
+        };
+        if !step.needs_pipeline_stack() {
+            continue;
+        }
+        let Some(op) = step.stack_op(inverse) else {
+            return false;
+        };
+        for (axis, selected) in op.axes.iter().enumerate() {
+            if *selected {
+                depth[axis] += if op.push { 1 } else { -1 };
+                if depth[axis] < 0 {
+                    return false;
+                }
+            }
+        }
+    }
+    depth == [0; 4]
+}
+
 /// The slice through the plan, one step at a time over every point. A point that has failed
 /// keeps its input.
 pub(super) fn run_batch(
@@ -168,7 +260,17 @@ pub(super) fn run_batch(
     coords: &mut [Coord],
     failed: &mut [Option<TransformError>],
 ) {
+    let mut stack = BatchStack::default();
     for exec in plan {
+        let (step, inverse) = match exec {
+            Exec::Forward(step) => (Some(step), false),
+            Exec::Inverse(step) => (Some(step), true),
+            Exec::Affine(_) => (None, false),
+        };
+        if let Some(op) = step.and_then(|step| step.stack_op(inverse)) {
+            stack.apply(op, coords, failed);
+            continue;
+        }
         match exec {
             Exec::Forward(step) => step.forward_batch(coords, failed),
             Exec::Inverse(step) => step.inverse_batch(coords, failed),
