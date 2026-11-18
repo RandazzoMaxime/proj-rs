@@ -1,0 +1,222 @@
+#!/usr/bin/env python3
+"""Draw the README bench cards (bench/cards/*.html and *.png) from the measurement files.
+
+Speed comes from the same history line as the "How fast" table (how_fast.pick), size and memory
+from bench/footprint.json, so a card shows no number the tables do not. The templates in
+tools/bench/cards/ come from the benchmark-diagram skill; the PNG is a 1920×1080 Chrome headless
+screenshot (`CHROME_PATH`, or a Chrome found on the usual paths). Standard library only.
+"""
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from html import escape
+from pathlib import Path
+
+import history
+import how_fast
+
+TEMPLATES = Path(__file__).resolve().parent / "cards"
+OUT = history.ROOT / "bench" / "cards"
+FOOTPRINT = history.ROOT / "bench" / "footprint.json"
+MIB = 1024 * 1024
+SHORT = {"4326": "WGS 84", "2154": "Lambert-93", "32631": "UTM 31N", "3857": "Web Mercator", "4267": "NAD27"}
+CHROMES = [
+    "/usr/bin/google-chrome",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+]
+
+
+def width(value, high):
+    return f"{max(value / high * 100, 2):.0f}%"
+
+
+def times(ratio):
+    return f"{ratio:.1f}×"
+
+
+def fill(template, data, shown):
+    """Fill `{{key}}`, and show exactly the `data-slot` names in `shown`."""
+    html = (TEMPLATES / f"{template}.html").read_text(encoding="utf-8")
+    css = (TEMPLATES / "tokens.css").read_text(encoding="utf-8")
+    html = re.sub(r'<link rel="stylesheet" href="tokens.css">', lambda _: f"<style>\n{css}\n</style>", html)
+
+    def slot(match):
+        name = match.group(1)
+        hidden = "" if name in shown or not re.fullmatch(r"(r|s|st)\d", name) else " hidden"
+        return f'data-slot="{name}"{hidden}'
+
+    html = re.sub(r'data-slot="([a-zA-Z0-9]+)"(?: hidden)?', slot, html)
+    missing = set()
+
+    def value(match):
+        key = match.group(1)
+        if key not in data:
+            missing.add(key)
+            return ""
+        return escape(str(data[key]))
+
+    html = re.sub(r"\{\{([a-zA-Z0-9_]+)\}\}", value, html)
+    if missing:
+        raise SystemExit(f"cards.py: {template} has no value for {sorted(missing)}")
+    return html
+
+
+def blank_rows(data, first, prefix, keys):
+    for n in range(first, 9):
+        for key in keys:
+            data[f"{prefix}{n}{key}"] = "0%" if key.endswith("W") else ""
+
+
+def speed_card(row, call, title, subtitle):
+    cases = [c for c in how_fast.rows_of(row) if c[1].startswith(f"`{call}`")]
+    data = {
+        "eyebrow": "PROJ-RS 1.0 · AGAINST PROJ 9.9.0",
+        "title": title,
+        "accentWord": f"{times(how_fast.geomean([c[4] for c in cases]))} faster",
+        "subtitle": subtitle,
+        "legendNew": "proj-rs",
+        "legendRival": "PROJ 9.9.0",
+        "footerLeft": f"ns per point · best of {row['result'].get('rounds', 1)} runs · one core of a 4-vCPU Xeon",
+        "footerRight": f"bench/history.jsonl · {history.day(row['date'])} · commit {row['commit']}",
+    }
+    for n, (pair, _, theirs, ours, ratio) in enumerate(cases, 1):
+        source, target = pair.split("_")
+        high = max(theirs, ours)
+        data |= {
+            f"r{n}Name": f"{SHORT[source]} → {SHORT[target]}",
+            f"r{n}Caption": f"EPSG:{source} → {target} · PROJ {how_fast.ns(theirs)}",
+            f"r{n}NewW": width(ours, high),
+            f"r{n}RivalW": width(theirs, high),
+            f"r{n}NewVal": how_fast.ns(ours),
+            f"r{n}RivalVal": f"PROJ {how_fast.ns(theirs)}",
+            f"r{n}Speedup": f"{times(ratio)} faster",
+        }
+    blank_rows(data, len(cases) + 1, "r", ("Name", "Caption", "NewW", "RivalW", "NewVal", "RivalVal", "Speedup"))
+    return fill("grouped-hbars", data, {f"r{n}" for n in range(1, len(cases) + 1)})
+
+
+def size_card(fp):
+    installs = {i["id"]: i["stripped_bytes"] / MIB for i in fp["size"]["installs"]}
+    ours, proj, full = installs["ours"], installs["proj"], installs["proj_full"]
+    data = {
+        "eyebrow": "PROJ-RS 1.0 · SIZE ON DISK",
+        "title": f"{ours:.1f}",
+        "accentWord": "MiB",
+        "titleRest": "",
+        "subtitle": "",
+        "hero": f"{ours:.1f}",
+        "heroUnit": "MiB",
+        "heroSentence": "for a program that converts EPSG:4326 to 2154, proj.db included.",
+        "heroDetail": (
+            f"No library to install beside the C library. PROJ 9.9.0 needs {proj:.1f} MiB built "
+            f"minimal, {full:.1f} MiB with TIFF and curl. With the network feature, proj-rs is "
+            f"{installs['ours_network']:.1f} MiB."
+        ),
+        "s1Label": "PROJ 9.9.0, TIFF and curl",
+        "s1Value": f"{full:.1f} MiB",
+        "s1Width": width(full, full),
+        "s1Class": "rival",
+        "s2Label": "PROJ 9.9.0, minimal",
+        "s2Value": f"{proj:.1f} MiB",
+        "s2Width": width(proj, full),
+        "s2Class": "rival",
+        "s3Label": "proj-rs",
+        "s3Value": f"{ours:.1f} MiB",
+        "s3Width": width(ours, full),
+        "s3Class": "accent",
+        "footerLeft": "Bars are to scale · lower is better · stripped, shared libraries counted",
+        "footerRight": f"bench/footprint.json · {history.day(fp['date'])} · commit {fp['commit']}",
+    }
+    return fill("hero-vs-bars", data, {"s1", "s2", "s3"})
+
+
+def memory_card(fp):
+    scenarios = fp["memory"]["scenarios"]
+    names = {
+        "empty": ("Process start", "nothing created"),
+        "create": ("Create a transform", "EPSG:4326 → 2154"),
+        "points": ("1,000,000 points", "one at a time"),
+        "array": ("1,000,000 points", "one array of 15.3 MiB"),
+        "multi": ("Several candidates", "EPSG:4267 → 4326, 1,000,000 points"),
+    }
+    rss = [(s["id"], s["ours"]["peak_rss_kb"] / 1024, s["proj"]["peak_rss_kb"] / 1024) for s in scenarios]
+    rss = [r for r in rss if r[0] in names]
+    create = next(r for r in rss if r[0] == "create")
+    data = {
+        "eyebrow": "PROJ-RS 1.0 · PEAK MEMORY",
+        "title": "Less memory, in",
+        "accentWord": "every scenario",
+        "subtitle": f"peak resident memory (VmHWM), lower is better · creating a transform: {times(create[2] / create[1])} less",
+        "legendNew": "proj-rs",
+        "legendRival": "PROJ 9.9.0",
+        "footerLeft": f"MiB · median of {fp['memory']['runs']} runs · output checked against PROJ",
+        "footerRight": f"bench/footprint.json · {history.day(fp['date'])} · commit {fp['commit']}",
+    }
+    for n, (key, ours, theirs) in enumerate(rss, 1):
+        high = max(ours, theirs)
+        data |= {
+            f"r{n}Name": names[key][0],
+            f"r{n}Caption": f"{names[key][1]} · PROJ {theirs:.1f} MiB",
+            f"r{n}NewW": width(ours, high),
+            f"r{n}RivalW": width(theirs, high),
+            f"r{n}NewVal": f"{ours:.1f} MiB",
+            f"r{n}RivalVal": f"PROJ {theirs:.1f} MiB",
+            f"r{n}Speedup": f"{times(theirs / ours)} less",
+        }
+    blank_rows(data, len(rss) + 1, "r", ("Name", "Caption", "NewW", "RivalW", "NewVal", "RivalVal", "Speedup"))
+    return fill("grouped-hbars", data, {f"r{n}" for n in range(1, len(rss) + 1)})
+
+
+def chrome():
+    found = os.environ.get("CHROME_PATH") or next((c for c in CHROMES if Path(c).exists()), None)
+    return found or shutil.which("google-chrome") or shutil.which("chromium")
+
+
+def render(browser, html, png):
+    with tempfile.TemporaryDirectory() as tmp:
+        page = Path(tmp) / "card.html"
+        page.write_text(html.replace("<html", '<html class="export"', 1), encoding="utf-8")
+        subprocess.run(
+            [browser, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--force-device-scale-factor=1",
+             "--window-size=1920,1080", f"--screenshot={png}", page.as_uri()],
+            check=True, capture_output=True,
+        )
+
+
+def main():
+    row = how_fast.pick(history.load())
+    fp = json.loads(FOOTPRINT.read_text(encoding="utf-8"))
+    cards = {
+        "speed-array": speed_card(row, "convert_array", "A slice of points,",
+                                  "convert_array on 200,000 points · nanoseconds per point, shorter is faster"),
+        "speed-point": speed_card(row, "convert", "One point at a time,",
+                                  "convert, one call per point · nanoseconds per point, shorter is faster"),
+        "size": size_card(fp),
+        "memory": memory_card(fp),
+    }
+    OUT.mkdir(parents=True, exist_ok=True)
+    browser = chrome()
+    for name, html in cards.items():
+        (OUT / f"{name}.html").write_text(html, encoding="utf-8")
+        if browser:
+            render(browser, html, OUT / f"{name}.png")
+    history.write_block(
+        "bench-compare",
+        '<img src="bench/cards/speed-array.png" alt="Nanoseconds per point of convert_array, proj-rs next to '
+        'PROJ 9.9.0, five conversions" width="100%">\n\n'
+        '<img src="bench/cards/speed-point.png" alt="Nanoseconds per point of convert, one point at a time, '
+        'proj-rs next to PROJ 9.9.0, five conversions" width="100%">',
+    )
+    if not browser:
+        sys.exit("cards.py: no Chrome found (set CHROME_PATH); the HTML cards are written, the PNGs are stale")
+
+
+if __name__ == "__main__":
+    main()

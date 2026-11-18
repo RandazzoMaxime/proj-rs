@@ -1,23 +1,16 @@
 #!/usr/bin/env python3
-"""Draw bench/{size,memory}-{light,dark}.svg from bench/footprint.json and rewrite the README block.
+"""Rewrite the README "Size and memory" block from bench/footprint.json.
 
 The block between `<!-- bench-footprint:start -->` and `<!-- bench-footprint:end -->` holds the two
-pictures, a summary and the tables, all built from the file, so the README shows no number that
-bench/footprint.sh did not measure. Themes, font and helpers come from compare_svg.py.
-Standard library only.
+cards drawn by cards.py, a summary and the tables, all built from the file, so the README shows no
+number that bench/footprint.sh did not measure. Standard library only.
 """
 import json
-from html import escape
-from textwrap import wrap
 
 import history
-from compare_svg import BAR_LEFT, BAR_RIGHT, GROUP_GAP, LABEL_RIGHT, THEMES, WIDTH, axis_ticks, document, legend
-from trend_svg import f
 
 FOOTPRINT = history.ROOT / "bench" / "footprint.json"
 MIB = 1024 * 1024
-TONES = ".code{fill-opacity:1}.db{fill-opacity:.58}.libs{fill-opacity:.3}"
-SIZE_H, SIZE_GAP = 20, 22
 
 ROWS = {
     "proj": ("PROJ 9.9.0", "C program + libproj, TIFF and curl off"),
@@ -25,13 +18,6 @@ ROWS = {
     "capi": ("proj-rs as libproj", "same C program + libproj of capi/"),
     "ours": ("proj-rs", "Rust program, proj.db inside"),
     "ours_network": ("proj-rs, feature network", "Rust program, HTTPS grid download"),
-}
-SCENARIO_ROWS = {
-    "empty": ("Start, nothing created", ""),
-    "create": ("Create 4326 → 2154", ""),
-    "points": ("Create + 1,000,000 points", "one at a time"),
-    "array": ("Create + 1,000,000 points", "one array"),
-    "multi": ("4267 → 4326, several candidates", "1,000,000 points, one at a time"),
 }
 VARIANT_NAMES = {
     "proj": "PROJ 9.9.0",
@@ -43,10 +29,6 @@ VARIANT_NAMES = {
 
 def mib(value):
     return f"{value / MIB:.1f} MiB"
-
-
-def mib_ticks_text(tick):
-    return f"{tick:g}"
 
 
 def load():
@@ -70,143 +52,6 @@ def smaller_than(ours, theirs):
     if ratio <= 1 / 1.05:
         return f"{1 / ratio:.1f}× larger than"
     return "about the size of"
-
-
-def heading(out, title, subtitle):
-    out.append(f'<text x="16" y="26" font-size="17" class="b">{escape(title)}</text>')
-    y = 45
-    for line in wrap(subtitle, 112):
-        out.append(f'<text x="16" y="{y}" font-size="13" class="d">{escape(line)}</text>')
-        y += 19
-    return y
-
-
-def footnote(out, y, data, what):
-    note = (
-        f"{what} Measured by bench/footprint.sh ({history.day_time(data['date'])} UTC, commit {data['commit']}), "
-        "one machine, Linux x86-64: other systems, compilers or libc builds give other numbers."
-    )
-    for line in wrap(note, 125):
-        out.append(f'<text x="16" y="{f(y)}" font-size="11.5" class="d">{escape(line)}</text>')
-        y += 17
-    return y
-
-
-def render_size(data, theme):
-    palette = THEMES[theme]
-    installs = {i["id"]: i for i in data["size"]["installs"]}
-    order = [key for key in ROWS if key in installs]
-    scale_ticks = axis_ticks(max(installs[k]["stripped_bytes"] for k in order) / MIB)
-    scale = (BAR_RIGHT - BAR_LEFT) / scale_ticks[-1]
-    title = "Size on disk to convert EPSG:4326 to EPSG:2154"
-    subtitle = (
-        "Everything a program needs on disk to make this conversion: the program, the library, "
-        "proj.db and the shared libraries they load (all but libc and libgcc_s), stripped. Shorter is smaller."
-    )
-    out = []
-    y = heading(out, title, subtitle)
-    items = (("proj code", "program and library"), ("proj db", "proj.db"), ("proj libs", "other shared libraries"))
-    legend(out, y, items)
-    top = y + 22
-    y = top
-    spans = []
-    for key in order:
-        spans.append((key, y))
-        y += SIZE_H + SIZE_GAP
-    bottom = y - SIZE_GAP + 6
-    for tick in scale_ticks:
-        tx = BAR_LEFT + tick * scale
-        out.append(f'<line x1="{f(tx)}" y1="{top - 6}" x2="{f(tx)}" y2="{f(bottom)}" class="g"/>')
-        out.append(
-            f'<text x="{f(tx)}" y="{f(bottom + 16)}" font-size="11.5" text-anchor="middle" class="d v">'
-            f"{mib_ticks_text(tick) if tick else '0'}</text>"
-        )
-    out.append(
-        f'<text x="{BAR_RIGHT + 24}" y="{f(bottom + 16)}" font-size="11.5" class="d">MiB</text>'
-    )
-    for key, by in spans:
-        install = installs[key]
-        side = install["side"]
-        first, second = ROWS[key]
-        out.append(f'<text x="{LABEL_RIGHT}" y="{f(by + 9)}" font-size="12" text-anchor="end">{escape(first)}</text>')
-        out.append(
-            f'<text x="{LABEL_RIGHT}" y="{f(by + 22)}" font-size="11" text-anchor="end" class="d">{escape(second)}</text>'
-        )
-        x = BAR_LEFT
-        for part in ("code", "db", "libs"):
-            width = install["parts"][part]["stripped_bytes"] / MIB * scale
-            if width <= 0:
-                continue
-            out.append(
-                f'<rect x="{f(x)}" y="{f(by)}" width="{f(max(width - 1.5, 0.5))}" height="{SIZE_H}" '
-                f'class="{side} {part}"/>'
-            )
-            x += width
-        out.append(
-            f'<text x="{f(x + 6)}" y="{f(by + SIZE_H - 6)}" font-size="12" class="v b">'
-            f"{escape(mib(install['stripped_bytes']))}</text>"
-        )
-    y = footnote(out, bottom + 40, data, "Bytes on disk after strip.")
-    return document(title, out, y - 4, palette, TONES)
-
-
-def render_memory(data, theme):
-    palette = THEMES[theme]
-    scenarios = data["memory"]["scenarios"]
-    ticks = axis_ticks(max(max(s["proj"]["peak_rss_kb"], s["ours"]["peak_rss_kb"]) for s in scenarios) / 1024)
-    right = BAR_RIGHT - 60
-    scale = (right - BAR_LEFT) / ticks[-1]
-    title = "Peak memory of the same conversions, proj-rs against PROJ 9.9.0"
-    subtitle = (
-        f"Peak resident memory of a process that runs one scenario, the median of {data['memory']['runs']} runs, "
-        "the same points on both sides. Shorter is smaller."
-    )
-    out = []
-    y = heading(out, title, subtitle)
-    legend(out, y, (("proj", "PROJ 9.9.0 (libproj, C++)"), ("ours", "proj-rs (Rust)")))
-    top = y + 22
-    y = top
-    groups = []
-    bar_h, bar_gap = 11, 3
-    for scenario in scenarios:
-        groups.append((scenario, y))
-        y += 2 * bar_h + bar_gap + GROUP_GAP
-    bottom = y - GROUP_GAP + 6
-    for tick in ticks:
-        tx = BAR_LEFT + tick * scale
-        out.append(f'<line x1="{f(tx)}" y1="{top - 6}" x2="{f(tx)}" y2="{f(bottom)}" class="g"/>')
-        out.append(
-            f'<text x="{f(tx)}" y="{f(bottom + 16)}" font-size="11.5" text-anchor="middle" class="d v">'
-            f"{mib_ticks_text(tick) if tick else '0'}</text>"
-        )
-    out.append(f'<text x="{right + 24}" y="{f(bottom + 16)}" font-size="11.5" class="d">MiB</text>')
-    for scenario, gy in groups:
-        mid = gy + bar_h + bar_gap / 2
-        first, second = SCENARIO_ROWS.get(scenario["id"], (scenario["label"], ""))
-        out.append(f'<text x="{LABEL_RIGHT}" y="{f(mid - 2)}" font-size="12" text-anchor="end">{escape(first)}</text>')
-        if second:
-            out.append(
-                f'<text x="{LABEL_RIGHT}" y="{f(mid + 12)}" font-size="11.5" text-anchor="end" class="d">'
-                f"{escape(second)}</text>"
-            )
-        for key, by in (("proj", gy), ("ours", gy + bar_h + bar_gap)):
-            value = scenario[key]["peak_rss_kb"] / 1024
-            width = max(value * scale, 1)
-            out.append(f'<rect x="{BAR_LEFT}" y="{f(by)}" width="{f(width)}" height="{bar_h}" rx="2" class="{key}"/>')
-            out.append(
-                f'<text x="{f(BAR_LEFT + width + 5)}" y="{f(by + bar_h - 1.5)}" font-size="11" class="d v">'
-                f"{value:.1f} MiB</text>"
-            )
-        text = relative(scenario["ours"]["peak_rss_kb"], scenario["proj"]["peak_rss_kb"], "memory")
-        out.append(
-            f'<text x="{WIDTH - 16}" y="{f(mid + 4)}" font-size="12" text-anchor="end" class="d v">{escape(text)}</text>'
-        )
-    y = footnote(
-        out, bottom + 40, data,
-        f"VmHWM of the process: the loader, the mapped libraries and the {data['memory']['points'] * 16 / MIB:.1f} MiB "
-        "buffer of the array scenario count.",
-    )
-    return document(title, out, y - 4, palette)
 
 
 def named_bytes(data, install, prefixes):
@@ -282,17 +127,11 @@ def block(data):
         "The same conversion, EPSG:4326 to EPSG:2154, measured on the same machine "
         "(Linux x86-64, glibc), proj-rs against PROJ 9.9.0.",
         "",
-        "<picture>",
-        '  <source media="(prefers-color-scheme: dark)" srcset="bench/size-dark.svg">',
-        '  <img src="bench/size-light.svg" alt="Stacked bar chart: size on disk of the install needed '
-        'to convert EPSG:4326 to EPSG:2154, PROJ 9.9.0 and proj-rs" width="100%">',
-        "</picture>",
+        '<img src="bench/cards/size.png" alt="Size on disk of a program that converts EPSG:4326 to 2154: '
+        'proj-rs next to PROJ 9.9.0, minimal and with TIFF and curl" width="100%">',
         "",
-        "<picture>",
-        '  <source media="(prefers-color-scheme: dark)" srcset="bench/memory-dark.svg">',
-        '  <img src="bench/memory-light.svg" alt="Bar chart: peak memory of five scenarios, proj-rs next to '
+        '<img src="bench/cards/memory.png" alt="Peak resident memory of five scenarios, proj-rs next to '
         'PROJ 9.9.0" width="100%">',
-        "</picture>",
         "",
         f"On disk, a Rust program with proj-rs is {mib(ours['stripped_bytes'])} with `proj.db` included "
         f"({mib(db)} of it) and no library other than the C library: "
@@ -356,11 +195,7 @@ def block(data):
 
 
 def main():
-    data = load()
-    for theme in THEMES:
-        (history.ROOT / "bench" / f"size-{theme}.svg").write_text(render_size(data, theme), encoding="utf-8")
-        (history.ROOT / "bench" / f"memory-{theme}.svg").write_text(render_memory(data, theme), encoding="utf-8")
-    history.write_block("bench-footprint", block(data))
+    history.write_block("bench-footprint", block(load()))
 
 
 if __name__ == "__main__":

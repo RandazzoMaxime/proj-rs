@@ -63,10 +63,9 @@ What the speed rests on: the batch path above, a pipeline that folds its axis-sw
 executable instead of being copied ([`docs/PORTING-memory.md`](docs/PORTING-memory.md)).
 
 <!-- bench-compare:start -->
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="bench/compare-dark.svg">
-  <img src="bench/compare-light.svg" alt="Bar chart: nanoseconds per point, proj-rs next to PROJ 9.9.0, ten conversions" width="100%">
-</picture>
+<img src="bench/cards/speed-array.png" alt="Nanoseconds per point of convert_array, proj-rs next to PROJ 9.9.0, five conversions" width="100%">
+
+<img src="bench/cards/speed-point.png" alt="Nanoseconds per point of convert, one point at a time, proj-rs next to PROJ 9.9.0, five conversions" width="100%">
 <!-- bench-compare:end -->
 
 <!-- bench-how-fast:start -->
@@ -125,15 +124,9 @@ Ten slowest operations of the catalogue (same line, a 128-point grid, no libproj
 <!-- bench-footprint:start -->
 The same conversion, EPSG:4326 to EPSG:2154, measured on the same machine (Linux x86-64, glibc), proj-rs against PROJ 9.9.0.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="bench/size-dark.svg">
-  <img src="bench/size-light.svg" alt="Stacked bar chart: size on disk of the install needed to convert EPSG:4326 to EPSG:2154, PROJ 9.9.0 and proj-rs" width="100%">
-</picture>
+<img src="bench/cards/size.png" alt="Size on disk of a program that converts EPSG:4326 to 2154: proj-rs next to PROJ 9.9.0, minimal and with TIFF and curl" width="100%">
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="bench/memory-dark.svg">
-  <img src="bench/memory-light.svg" alt="Bar chart: peak memory of five scenarios, proj-rs next to PROJ 9.9.0" width="100%">
-</picture>
+<img src="bench/cards/memory.png" alt="Peak resident memory of five scenarios, proj-rs next to PROJ 9.9.0" width="100%">
 
 On disk, a Rust program with proj-rs is 17.1 MiB with `proj.db` included (10.1 MiB of it) and no library other than the C library: 1.1× smaller than a C program with PROJ 9.9.0 built as in the speed comparison (18.6 MiB), and 2.2× smaller than one with a PROJ built with TIFF and curl (37.9 MiB). With the `network` feature (the HTTPS grid download, TLS from the system) the program is 22.9 MiB, of which 5.7 MiB is OpenSSL: 1.7× smaller than the PROJ with curl. The code of proj-rs alone, `proj.db` left out, is 7.0 MiB; an empty Rust program is 0.3 MiB.
 
@@ -221,13 +214,15 @@ BENCH_MACHINE=my-box taskset -c 0,1 sh bench/footprint.sh
 ```
 
 `bench/record.sh` appends a line to [`bench/history.jsonl`](bench/history.jsonl),
-draws `bench/trend-<machine>-{light,dark}.svg` and `bench/compare-{light,dark}.svg`, and rewrites the
+draws `bench/trend-<machine>-{light,dark}.svg` and the cards of `bench/cards/`, and rewrites the
 "How fast" and "Over time" blocks of this README from the history
-(`tools/bench/how_fast.py`, `tools/bench/trend_svg.py`, `tools/bench/compare_svg.py`). Without
+(`tools/bench/how_fast.py`, `tools/bench/trend_svg.py`, `tools/bench/cards.py`). Without
 `PROJ_RS_LIBPROJ_DIR` the bench still runs, but the line has no libproj column, and
 the "How fast" table stays on the newest line that has one. `bench/footprint.sh` writes
-[`bench/footprint.json`](bench/footprint.json), draws `bench/{size,memory}-{light,dark}.svg` and rewrites
-the "Size and memory" block (`tools/bench/footprint_measure.py`, `tools/bench/footprint_svg.py`).
+[`bench/footprint.json`](bench/footprint.json), rewrites the "Size and memory" block and draws its two
+cards (`tools/bench/footprint_measure.py`, `tools/bench/footprint_block.py`, `tools/bench/cards.py`).
+The cards are a Chrome headless screenshot of the HTML next to them (`CHROME_PATH` if Chrome is not
+on the usual paths); the templates are in `tools/bench/cards/`.
 What each case compares, and how the size and the memory are counted, is in
 [docs/BENCHMARK.md](docs/BENCHMARK.md).
 

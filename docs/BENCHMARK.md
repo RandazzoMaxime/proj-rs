@@ -95,9 +95,9 @@ Compare only lines with the same `machine`.
 
 `bench/footprint.sh` measures what the same conversion, `EPSG:4326` to `EPSG:2154`, costs on
 disk and in memory with proj-rs and with PROJ 9.9.0. It writes
-[`bench/footprint.json`](../bench/footprint.json), draws `bench/{size,memory}-{light,dark}.svg`
-and rewrites the `bench-footprint` block of the README (`tools/bench/footprint_measure.py`,
-`tools/bench/footprint_svg.py`). The README shows only numbers from that file. Linux x86-64
+[`bench/footprint.json`](../bench/footprint.json), rewrites the `bench-footprint` block of the
+README and draws the cards `bench/cards/{size,memory}.png` (`tools/bench/footprint_measure.py`,
+`tools/bench/footprint_block.py`, `tools/bench/cards.py`). The README shows only numbers from that file. Linux x86-64
 only. It is not called by `bench/record.sh`: it builds PROJ a second time, the Rust programs and
 the C library, which takes minutes, and its numbers do not move with the speed work.
 

@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>One point at a time, 1.9× faster</title>
+  <style>
+/* Default palette — keep hex in sync with scripts/derive-palette.mjs */
+:root {
+  --bg: #0b0f0e;
+  --elev: #121816;
+  --ink: #f3ead8;
+  --muted: #8a938e;
+  --accent: #00d87a;
+  --accent-hi: #7af0b8;
+  --prev: #5a5a5a;
+  --rival: #f07818;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+#card {
+  position: relative;
+  width: 100%;
+  min-height: 100vh;
+  padding: clamp(20px, 4.2vw, 64px) clamp(20px, 5vw, 80px);
+  background:
+    radial-gradient(80% 70% at 92% -10%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 58%),
+    var(--bg);
+  color: var(--ink);
+  display: flex;
+  flex-direction: column;
+  overflow: visible;
+}
+
+html.export,
+html.export body {
+  width: 1920px;
+  height: 1080px;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+html.export #card {
+  width: 1920px;
+  height: 1080px;
+  min-height: 1080px;
+  padding: 64px 80px 48px;
+  overflow: hidden;
+}
+
+.eyebrow {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 16px;
+}
+
+.title {
+  font-size: clamp(32px, 5vw, 72px);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 0.95;
+  margin: 0 0 16px;
+}
+
+.title .accent { color: var(--accent); }
+
+.subtitle {
+  font-size: clamp(14px, 1.4vw, 22px);
+  color: var(--muted);
+  line-height: 1.4;
+  margin: 0 0 36px;
+  max-width: 48ch;
+}
+
+.footer {
+  margin-top: auto;
+  padding-top: 28px;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--muted);
+  border-top: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 22px;
+  align-items: center;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.legend i {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  margin-right: 8px;
+  vertical-align: -1px;
+}
+
+.legend .sw-accent { background: linear-gradient(180deg, var(--accent-hi), var(--accent)); }
+.legend .sw-prev { background: var(--prev); }
+.legend .sw-rival { background: var(--rival); }
+
+.bar {
+  display: block;
+  height: 28px;
+  border-radius: 6px;
+  min-width: 8px;
+  max-width: 100%;
+}
+
+.bar.accent {
+  background: linear-gradient(90deg, var(--accent), var(--accent-hi));
+  box-shadow: 0 0 22px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.bar.prev { background: var(--prev); }
+.bar.rival { background: var(--rival); }
+
+.bar.striped {
+  background: repeating-linear-gradient(
+    -45deg,
+    color-mix(in srgb, var(--ink) 20%, transparent) 0 7px,
+    color-mix(in srgb, var(--ink) 8%, transparent) 7px 14px
+  );
+}
+
+[hidden] { display: none !important; }
+
+@media (max-width: 639px) {
+  html:not(.export) #card { min-height: 100dvh; }
+  html:not(.export) .title { font-size: 32px; }
+  html:not(.export) .footer { font-size: 11px; flex-direction: column; gap: 6px; }
+}
+
+@media (min-width: 640px) and (max-width: 1023px) {
+  html:not(.export) .title { font-size: 44px; }
+}
+
+</style>
+  <style>
+    /* grouped-hbars fields:
+       eyebrow title accentWord subtitle legendNew legendRival
+       rows 1–8, per-case scale (longest series in the row = 100%):
+         rNName rNCaption rNNewW rNRivalW
+         rNNewVal rNRivalVal rNSpeedup
+       Hide unused [data-slot]. Hide rival bars if no rival. */
+    .head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 24px;
+      flex-wrap: wrap;
+    }
+    .rows {
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      flex: 1;
+      min-height: 0;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: minmax(120px, 26%) 1fr auto;
+      gap: 8px 20px;
+      align-items: center;
+      padding-bottom: 16px;
+      border-bottom: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
+    }
+    .row:last-child { border-bottom: 0; padding-bottom: 0; }
+    .name { font-size: clamp(14px, 1.25vw, 20px); font-weight: 650; letter-spacing: -0.02em; }
+    .caption { font-size: 12px; color: var(--muted); margin-top: 3px; }
+    .stack { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+    .stack .bar { height: 14px; }
+    .stack .bar.accent { height: 18px; }
+    .meta {
+      text-align: right;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+    .peak {
+      font-size: clamp(16px, 1.5vw, 24px);
+      font-weight: 750;
+    }
+    .speedup {
+      display: block;
+      margin-top: 2px;
+      color: var(--accent);
+      font-weight: 750;
+      font-size: clamp(14px, 1.3vw, 20px);
+    }
+    .subvals { display: none; }
+
+    @media (max-width: 639px) {
+      html:not(.export) .row { grid-template-columns: 1fr; }
+      html:not(.export) .stack { grid-column: auto; }
+      html:not(.export) .meta { text-align: left; white-space: normal; }
+      html:not(.export) .speedup { display: inline; margin-left: 8px; }
+      html:not(.export) .subvals { display: block; font-size: 11px; color: var(--muted); margin-top: 4px; }
+    }
+    html.export .row { grid-template-columns: 340px 1fr 220px; }
+    html.export .stack .bar { height: 16px; }
+    html.export .stack .bar.accent { height: 20px; }
+  </style>
+</head>
+<body>
+  <article id="card">
+    <div class="head">
+      <div>
+        <p class="eyebrow">PROJ-RS 1.0 · AGAINST PROJ 9.9.0</p>
+        <h1 class="title">One point at a time, <span class="accent">1.9× faster</span></h1>
+        <p class="subtitle">convert, one call per point · nanoseconds per point, shorter is faster</p>
+      </div>
+      <div class="legend">
+        <span><i class="sw-accent"></i>proj-rs</span>
+        <span data-slot="legendRival"><i class="sw-rival"></i>PROJ 9.9.0</span>
+      </div>
+    </div>
+
+    <div class="rows">
+      <div class="row" data-slot="r1">
+        <div>
+          <div class="name">WGS 84 → Lambert-93</div>
+          <div class="caption">EPSG:4326 → 2154 · PROJ 108 ns</div>
+        </div>
+        <div class="stack">
+          <span class="bar accent" style="width: 57%"></span>
+          <span class="bar rival" style="width: 100%" data-slot="rival"></span>
+        </div>
+        <div class="meta">
+          <div class="peak">61.4 ns</div>
+          <span class="speedup">1.8× faster</span>
+          <div class="subvals">PROJ 108 ns</div>
+        </div>
+      </div>
+      <div class="row" data-slot="r2">
+        <div>
+          <div class="name">WGS 84 → UTM 31N</div>
+          <div class="caption">EPSG:4326 → 32631 · PROJ 144 ns</div>
+        </div>
+        <div class="stack">
+          <span class="bar accent" style="width: 75%"></span>
+          <span class="bar rival" style="width: 100%" data-slot="rival"></span>
+        </div>
+        <div class="meta">
+          <div class="peak">109 ns</div>
+          <span class="speedup">1.3× faster</span>
+          <div class="subvals">PROJ 144 ns</div>
+        </div>
+      </div>
+      <div class="row" data-slot="r3">
+        <div>
+          <div class="name">WGS 84 → Web Mercator</div>
+          <div class="caption">EPSG:4326 → 3857 · PROJ 73.6 ns</div>
+        </div>
+        <div class="stack">
+          <span class="bar accent" style="width: 73%"></span>
+          <span class="bar rival" style="width: 100%" data-slot="rival"></span>
+        </div>
+        <div class="meta">
+          <div class="peak">53.8 ns</div>
+          <span class="speedup">1.4× faster</span>
+          <div class="subvals">PROJ 73.6 ns</div>
+        </div>
+      </div>
+      <div class="row" data-slot="r4">
+        <div>
+          <div class="name">Lambert-93 → UTM 31N</div>
+          <div class="caption">EPSG:2154 → 32631 · PROJ 357 ns</div>
+        </div>
+        <div class="stack">
+          <span class="bar accent" style="width: 91%"></span>
+          <span class="bar rival" style="width: 100%" data-slot="rival"></span>
+        </div>
+        <div class="meta">
+          <div class="peak">326 ns</div>
+          <span class="speedup">1.1× faster</span>
+          <div class="subvals">PROJ 357 ns</div>
+        </div>
+      </div>
+      <div class="row" data-slot="r5">
+        <div>
+          <div class="name">NAD27 → WGS 84</div>
+          <div class="caption">EPSG:4267 → 4326 · PROJ 306 ns</div>
+        </div>
+        <div class="stack">
+          <span class="bar accent" style="width: 14%"></span>
+          <span class="bar rival" style="width: 100%" data-slot="rival"></span>
+        </div>
+        <div class="meta">
+          <div class="peak">44.2 ns</div>
+          <span class="speedup">6.9× faster</span>
+          <div class="subvals">PROJ 306 ns</div>
+        </div>
+      </div>
+      <div class="row" data-slot="r6" hidden>
+        <div>
+          <div class="name"></div>
+          <div class="caption"></div>
+        </div>
+        <div class="stack">
+          <span class="bar accent" style="width: 0%"></span>
+          <span class="bar rival" style="width: 0%" data-slot="rival"></span>
+        </div>
+        <div class="meta">
+          <div class="peak"></div>
+          <span class="speedup"></span>
+          <div class="subvals"></div>
+        </div>
+      </div>
+      <div class="row" data-slot="r7" hidden>
+        <div>
+          <div class="name"></div>
+          <div class="caption"></div>
+        </div>
+        <div class="stack">
+          <span class="bar accent" style="width: 0%"></span>
+          <span class="bar rival" style="width: 0%" data-slot="rival"></span>
+        </div>
+        <div class="meta">
+          <div class="peak"></div>
+          <span class="speedup"></span>
+          <div class="subvals"></div>
+        </div>
+      </div>
+      <div class="row" data-slot="r8" hidden>
+        <div>
+          <div class="name"></div>
+          <div class="caption"></div>
+        </div>
+        <div class="stack">
+          <span class="bar accent" style="width: 0%"></span>
+          <span class="bar rival" style="width: 0%" data-slot="rival"></span>
+        </div>
+        <div class="meta">
+          <div class="peak"></div>
+          <span class="speedup"></span>
+          <div class="subvals"></div>
+        </div>
+      </div>
+    </div>
+
+    <footer class="footer">
+      <span>ns per point · best of 5 runs · one core of a 4-vCPU Xeon</span>
+      <span>bench/history.jsonl · Nov 17 · commit ad8d680</span>
+    </footer>
+  </article>
+</body>
+</html>

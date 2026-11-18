@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{title}} {{accentWord}}</title>
+  <link rel="stylesheet" href="tokens.css">
+  <style>
+    /* grouped-hbars fields:
+       eyebrow title accentWord subtitle legendNew legendRival
+       rows 1–8, per-case scale (longest series in the row = 100%):
+         rNName rNCaption rNNewW rNRivalW
+         rNNewVal rNRivalVal rNSpeedup
+       Hide unused [data-slot]. Hide rival bars if no rival. */
+    .head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 24px;
+      flex-wrap: wrap;
+    }
+    .rows {
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      flex: 1;
+      min-height: 0;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: minmax(120px, 26%) 1fr auto;
+      gap: 8px 20px;
+      align-items: center;
+      padding-bottom: 16px;
+      border-bottom: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
+    }
+    .row:last-child { border-bottom: 0; padding-bottom: 0; }
+    .name { font-size: clamp(14px, 1.25vw, 20px); font-weight: 650; letter-spacing: -0.02em; }
+    .caption { font-size: 12px; color: var(--muted); margin-top: 3px; }
+    .stack { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+    .stack .bar { height: 14px; }
+    .stack .bar.accent { height: 18px; }
+    .meta {
+      text-align: right;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+    .peak {
+      font-size: clamp(16px, 1.5vw, 24px);
+      font-weight: 750;
+    }
+    .speedup {
+      display: block;
+      margin-top: 2px;
+      color: var(--accent);
+      font-weight: 750;
+      font-size: clamp(14px, 1.3vw, 20px);
+    }
+    .subvals { display: none; }
+
+    @media (max-width: 639px) {
+      html:not(.export) .row { grid-template-columns: 1fr; }
+      html:not(.export) .stack { grid-column: auto; }
+      html:not(.export) .meta { text-align: left; white-space: normal; }
+      html:not(.export) .speedup { display: inline; margin-left: 8px; }
+      html:not(.export) .subvals { display: block; font-size: 11px; color: var(--muted); margin-top: 4px; }
+    }
+    html.export .row { grid-template-columns: 340px 1fr 220px; }
+    html.export .stack .bar { height: 16px; }
+    html.export .stack .bar.accent { height: 20px; }
+  </style>
+</head>
+<body>
+  <article id="card">
+    <div class="head">
+      <div>
+        <p class="eyebrow">{{eyebrow}}</p>
+        <h1 class="title">{{title}} <span class="accent">{{accentWord}}</span></h1>
+        <p class="subtitle">{{subtitle}}</p>
+      </div>
+      <div class="legend">
+        <span><i class="sw-accent"></i>{{legendNew}}</span>
+        <span data-slot="legendRival"><i class="sw-rival"></i>{{legendRival}}</span>
+      </div>
+    </div>
+
+    <div class="rows">
+      <div class="row" data-slot="r1">
+        <div>
+          <div class="name">{{r1Name}}</div>
+          <div class="caption">{{r1Caption}}</div>
+        </div>
+        <div class="stack">
+          <span class="bar accent" style="width: {{r1NewW}}"></span>
+          <span class="bar rival" style="width: {{r1RivalW}}" data-slot="rival"></span>
+        </div>
+        <div class="meta">
+          <div class="peak">{{r1NewVal}}</div>
+          <span class="speedup">{{r1Speedup}}</span>
+          <div class="subvals">{{r1RivalVal}}</div>
+        </div>
+      </div>
+      <div class="row" data-slot="r2">
+        <div>
+          <div class="name">{{r2Name}}</div>
+          <div class="caption">{{r2Caption}}</div>
+        </div>
+        <div class="stack">
+          <span class="bar accent" style="width: {{r2NewW}}"></span>
+          <span class="bar rival" style="width: {{r2RivalW}}" data-slot="rival"></span>
+        </div>
+        <div class="meta">
+          <div class="peak">{{r2NewVal}}</div>
+          <span class="speedup">{{r2Speedup}}</span>
+          <div class="subvals">{{r2RivalVal}}</div>
+        </div>
+      </div>
+      <div class="row" data-slot="r3">
+        <div>
+          <div class="name">{{r3Name}}</div>
+          <div class="caption">{{r3Caption}}</div>
+        </div>
+        <div class="stack">
+          <span class="bar accent" style="width: {{r3NewW}}"></span>
+          <span class="bar rival" style="width: {{r3RivalW}}" data-slot="rival"></span>
+        </div>
+        <div class="meta">
+          <div class="peak">{{r3NewVal}}</div>
+          <span class="speedup">{{r3Speedup}}</span>
+          <div class="subvals">{{r3RivalVal}}</div>
+        </div>
+      </div>
+      <div class="row" data-slot="r4">
+        <div>
+          <div class="name">{{r4Name}}</div>
+          <div class="caption">{{r4Caption}}</div>
+        </div>
+        <div class="stack">
+          <span class="bar accent" style="width: {{r4NewW}}"></span>
+          <span class="bar rival" style="width: {{r4RivalW}}" data-slot="rival"></span>
+        </div>
+        <div class="meta">
+          <div class="peak">{{r4NewVal}}</div>
+          <span class="speedup">{{r4Speedup}}</span>
+          <div class="subvals">{{r4RivalVal}}</div>
+        </div>
+      </div>
+      <div class="row" data-slot="r5">
+        <div>
+          <div class="name">{{r5Name}}</div>
+          <div class="caption">{{r5Caption}}</div>
+        </div>
+        <div class="stack">
+          <span class="bar accent" style="width: {{r5NewW}}"></span>
+          <span class="bar rival" style="width: {{r5RivalW}}" data-slot="rival"></span>
+        </div>
+        <div class="meta">
+          <div class="peak">{{r5NewVal}}</div>
+          <span class="speedup">{{r5Speedup}}</span>
+          <div class="subvals">{{r5RivalVal}}</div>
+        </div>
+      </div>
+      <div class="row" data-slot="r6">
+        <div>
+          <div class="name">{{r6Name}}</div>
+          <div class="caption">{{r6Caption}}</div>
+        </div>
+        <div class="stack">
+          <span class="bar accent" style="width: {{r6NewW}}"></span>
+          <span class="bar rival" style="width: {{r6RivalW}}" data-slot="rival"></span>
+        </div>
+        <div class="meta">
+          <div class="peak">{{r6NewVal}}</div>
+          <span class="speedup">{{r6Speedup}}</span>
+          <div class="subvals">{{r6RivalVal}}</div>
+        </div>
+      </div>
+      <div class="row" data-slot="r7" hidden>
+        <div>
+          <div class="name">{{r7Name}}</div>
+          <div class="caption">{{r7Caption}}</div>
+        </div>
+        <div class="stack">
+          <span class="bar accent" style="width: {{r7NewW}}"></span>
+          <span class="bar rival" style="width: {{r7RivalW}}" data-slot="rival"></span>
+        </div>
+        <div class="meta">
+          <div class="peak">{{r7NewVal}}</div>
+          <span class="speedup">{{r7Speedup}}</span>
+          <div class="subvals">{{r7RivalVal}}</div>
+        </div>
+      </div>
+      <div class="row" data-slot="r8" hidden>
+        <div>
+          <div class="name">{{r8Name}}</div>
+          <div class="caption">{{r8Caption}}</div>
+        </div>
+        <div class="stack">
+          <span class="bar accent" style="width: {{r8NewW}}"></span>
+          <span class="bar rival" style="width: {{r8RivalW}}" data-slot="rival"></span>
+        </div>
+        <div class="meta">
+          <div class="peak">{{r8NewVal}}</div>
+          <span class="speedup">{{r8Speedup}}</span>
+          <div class="subvals">{{r8RivalVal}}</div>
+        </div>
+      </div>
+    </div>
+
+    <footer class="footer">
+      <span>{{footerLeft}}</span>
+      <span>{{footerRight}}</span>
+    </footer>
+  </article>
+</body>
+</html>

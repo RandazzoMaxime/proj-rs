@@ -53,4 +53,5 @@ python3 tools/bench/footprint_measure.py \
   --rs-bin "$out/cargo/release/footprint-rs" --rs-network-bin "$out/cargo-network/release/footprint-rs" \
   --rs-empty "$out/cargo/release/empty-rs" \
   --machine "${BENCH_MACHINE:-$(hostname)}" --out bench/footprint.json
-python3 tools/bench/footprint_svg.py
+python3 tools/bench/footprint_block.py
+python3 tools/bench/cards.py

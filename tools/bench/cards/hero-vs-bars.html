@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{title}} {{accentWord}}</title>
+  <link rel="stylesheet" href="tokens.css">
+  <style>
+    /* hero-vs-bars fields:
+       eyebrow title accentWord titleRest subtitle
+       hero heroUnit heroSentence heroDetail
+       series 1–3: sNLabel sNValue sNWidth sNClass (accent|prev|rival|striped)
+       footerLeft footerRight
+       Hide unused [data-slot] with hidden. */
+    .hero-row {
+      display: flex;
+      align-items: center;
+      gap: clamp(20px, 4vw, 56px);
+      flex: 1;
+      min-height: 0;
+    }
+    .hero-num {
+      font-size: clamp(72px, 14vw, 220px);
+      font-weight: 800;
+      letter-spacing: -0.06em;
+      line-height: 0.8;
+      flex: 0 0 auto;
+      color: var(--ink);
+    }
+    .hero-num .unit { color: var(--accent); }
+    .hero-copy { flex: 1; min-width: 0; }
+    .hero-sentence {
+      font-size: clamp(20px, 2.4vw, 36px);
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      line-height: 1.15;
+      margin: 0 0 10px;
+    }
+    .hero-sentence .accent { color: var(--accent); }
+    .hero-detail {
+      font-size: clamp(13px, 1.15vw, 18px);
+      color: var(--muted);
+      margin: 0 0 28px;
+      line-height: 1.45;
+    }
+    .series { display: flex; flex-direction: column; gap: 14px; }
+    .series-row { display: grid; grid-template-columns: minmax(72px, 18%) 1fr auto; gap: 12px 16px; align-items: center; }
+    .series-label { font-size: 15px; color: var(--muted); }
+    .series-label .kicker { display: block; font-size: 11px; opacity: 0.8; }
+    .series-value {
+      font-size: 20px;
+      font-weight: 650;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .series-row.is-accent .series-value { color: var(--accent); }
+    .track { height: 28px; }
+
+    @media (max-width: 639px) {
+      html:not(.export) .hero-row { flex-direction: column; align-items: flex-start; }
+      html:not(.export) .hero-num { font-size: 80px; }
+      html:not(.export) .series-row { grid-template-columns: 1fr; }
+      html:not(.export) .series-label { grid-column: auto; }
+      html:not(.export) .series-value { justify-self: start; }
+    }
+    html.export .hero-row { flex-direction: row; align-items: center; }
+    html.export .hero-num { font-size: 220px; }
+    html.export .series-row { grid-template-columns: 180px 1fr auto; }
+  </style>
+</head>
+<body>
+  <article id="card">
+    <p class="eyebrow">{{eyebrow}}</p>
+    <div class="hero-row">
+      <div class="hero-num">{{hero}}<span class="unit">{{heroUnit}}</span></div>
+      <div class="hero-copy">
+        <p class="hero-sentence">{{heroSentence}}</p>
+        <p class="hero-detail">{{heroDetail}}</p>
+        <div class="series">
+          <div class="series-row" data-slot="s1">
+            <div class="series-label">{{s1Label}}</div>
+            <div class="track"><span class="bar {{s1Class}}" style="width: {{s1Width}}"></span></div>
+            <div class="series-value">{{s1Value}}</div>
+          </div>
+          <div class="series-row" data-slot="s2">
+            <div class="series-label">{{s2Label}}</div>
+            <div class="track"><span class="bar {{s2Class}}" style="width: {{s2Width}}"></span></div>
+            <div class="series-value">{{s2Value}}</div>
+          </div>
+          <div class="series-row is-accent" data-slot="s3">
+            <div class="series-label">{{s3Label}}</div>
+            <div class="track"><span class="bar {{s3Class}}" style="width: {{s3Width}}"></span></div>
+            <div class="series-value">{{s3Value}}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <footer class="footer">
+      <span>{{footerLeft}}</span>
+      <span>{{footerRight}}</span>
+    </footer>
+  </article>
+</body>
+</html>
