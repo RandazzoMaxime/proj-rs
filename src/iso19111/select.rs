@@ -1457,9 +1457,15 @@ pub fn select_alternatives_for_crs(
         // list, as PROJ's `if (op_list)`.
         let mut discard_context = context.clone();
         discard_context.set_grid_availability_use(GridAvailabilityUse::DiscardIfMissing);
-        let discard_ops = CoordinateOperationFactory::create()
+        // The rerun keeps the filter of the first search: PROJ sets `ALLOW_BALLPARK` and the
+        // accuracy on the factory context of the second `proj_create_operations` too
+        // (`crs_to_crs.cpp:690-705`), so a forbidden ballpark does not come back through it.
+        let discard_ops: Vec<CoordinateOperation> = CoordinateOperationFactory::create()
             .create_operations(&source_crs, &target_crs, &discard_context)
-            .unwrap_or_default();
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|operation| filter.keeps(operation))
+            .collect();
         let discarded = discard_missing(rank(
             discard_ops,
             db,
@@ -1704,9 +1710,13 @@ pub(crate) fn facade_candidates(
     {
         let mut discard_context = context.clone();
         discard_context.set_grid_availability_use(GridAvailabilityUse::DiscardIfMissing);
-        let discard_ops = CoordinateOperationFactory::create()
+        // The filter of the first search applies to the rerun, as in PROJ (`crs_to_crs.cpp:690-705`).
+        let discard_ops: Vec<CoordinateOperation> = CoordinateOperationFactory::create()
             .create_operations(&source_crs, &target_crs, &discard_context)
-            .unwrap_or_default();
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|operation| filter.keeps(operation))
+            .collect();
         let discarded = rank(
             discard_ops,
             &db,

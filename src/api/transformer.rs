@@ -390,8 +390,12 @@ impl<'a> TransformerBuilder<'a> {
         match selection {
             Selection::Several(alternatives) => Ok(Route::Several(Box::new(alternatives))),
             Selection::Single(BestOperation::Pipeline { definition, .. }) => {
-                let operation = Operation::create(&definition)
-                    .map_err(|error| Error::NoOperation(error.to_string()))?;
+                // Under the context of the source, as the selection above: its search path and
+                // callbacks find the grids of the operation. Created outside, it looks only in
+                // the directories of the machine (`illegal value for +grids`).
+                let operation =
+                    crate::network::with_context(&context.net, || Operation::create(&definition))
+                        .map_err(|error| Error::NoOperation(error.to_string()))?;
                 Ok(Route::Single(operation, definition))
             }
             Selection::Single(BestOperation::MissingGrid { message }) => {
