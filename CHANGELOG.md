@@ -6,6 +6,10 @@ rest is outside semver.
 
 ## Unreleased
 
+- `Transformer::last_used_operation()` names the single operation of a transformer (name,
+  accuracy, ballpark flag) instead of returning it without a name, and `is_ballpark()` is true
+  when a ballpark operation was the one chosen among several: it was always false. An application
+  can refuse an approximate conversion by reading it after the conversion.
 - `Transformer` finds the grids of its context's search path when one candidate operation is left
   (for instance `EPSG:4979` to `EPSG:4326+5773` with `Ballpark::Forbidden`): the operation was
   created outside the context and failed with `illegal value for +grids`.
