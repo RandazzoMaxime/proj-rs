@@ -474,8 +474,8 @@ impl GridContext {
     }
 
     /// [`GridContext::load`] for a context with a search path and a user-writable directory set:
-    /// `proj.ini` is looked for in them, as PROJ reads it after `proj_context_set_search_paths`
-    /// and before any other lookup of the context.
+    /// `proj.ini` is looked for in them. PROJ loads the file on first need (`pj_load_ini`), so
+    /// the paths it sees are those set by then, as `proj_context_set_search_paths` sets them.
     pub(crate) fn load_with(search_paths: Vec<PathBuf>, cache_dir: Option<PathBuf>) -> Self {
         let mut ctx = Self::defaults(search_paths, cache_dir);
         let env_network = nonempty_env("PROJ_NETWORK");
