@@ -1146,6 +1146,15 @@ pub(crate) trait Step: Send + Sync {
         None
     }
 
+    /// This step as GPU operations, appended to `program`. `false` when it has none: a step with
+    /// a grid, a datum shift, a projection the GPU does not cover. The caller then drops the
+    /// program and the transform runs on the CPU.
+    #[cfg(feature = "gpu")]
+    fn lower_gpu(&self, way: crate::proj::Direction, program: &mut crate::gpu::GpuProgram) -> bool {
+        let _ = (way, program);
+        false
+    }
+
     /// Forward while a pipeline holds the coordinate stack.
     ///
     /// # Errors
@@ -1401,6 +1410,16 @@ impl Operation {
     /// [`TransformError`] from the underlying step.
     pub fn inverse(&self, coord: Coord) -> Result<Coord, TransformError> {
         self.step.inverse(coord)
+    }
+
+    /// This operation as GPU operations, see [`Step::lower_gpu`].
+    #[cfg(feature = "gpu")]
+    pub(crate) fn lower_gpu(
+        &self,
+        way: crate::proj::Direction,
+        program: &mut crate::gpu::GpuProgram,
+    ) -> bool {
+        self.step.lower_gpu(way, program)
     }
 
     /// Forward on a slice, see [`Step::forward_batch`].
@@ -2057,6 +2076,13 @@ pub(crate) trait Kernel: Send + Sync {
     ///
     /// [`TransformError::OutsideDomain`] or [`TransformError::NoInverse`].
     fn inverse(&self, x: f64, y: f64) -> Result<(f64, f64), TransformError>;
+
+    /// The kernel as a GPU operation, `None` when the GPU has none for it.
+    #[cfg(feature = "gpu")]
+    fn gpu_kernel(&self, way: crate::proj::Direction) -> Option<crate::gpu::GpuOp> {
+        let _ = way;
+        None
+    }
 }
 
 /// PROJ's `P->fwd` on the unit ellipsoid: the output is in units of the semi-major axis, with no
@@ -2114,6 +2140,11 @@ impl<K: Kernel + 'static> UnitForward for Classic<K> {
 }
 
 impl Kernel for Mercator {
+    #[cfg(feature = "gpu")]
+    fn gpu_kernel(&self, way: crate::proj::Direction) -> Option<crate::gpu::GpuOp> {
+        self.gpu_op(way)
+    }
+
     fn forward(&self, lam: f64, phi: f64) -> Result<(f64, f64), TransformError> {
         Ok(self.fwd_unit(lam, phi))
     }
@@ -2124,6 +2155,11 @@ impl Kernel for Mercator {
 }
 
 impl Kernel for Lcc {
+    #[cfg(feature = "gpu")]
+    fn gpu_kernel(&self, way: crate::proj::Direction) -> Option<crate::gpu::GpuOp> {
+        Some(self.gpu_op(way))
+    }
+
     fn forward(&self, lam: f64, phi: f64) -> Result<(f64, f64), TransformError> {
         self.fwd_unit(lam, phi).map_err(Into::into)
     }
@@ -2144,6 +2180,11 @@ impl Kernel for ApproxTmerc {
 }
 
 impl Kernel for Tmerc {
+    #[cfg(feature = "gpu")]
+    fn gpu_kernel(&self, way: crate::proj::Direction) -> Option<crate::gpu::GpuOp> {
+        Some(self.gpu_op(way))
+    }
+
     fn forward(&self, lam: f64, phi: f64) -> Result<(f64, f64), TransformError> {
         self.fwd_unit(lam, phi).map_err(Into::into)
     }
@@ -2218,6 +2259,42 @@ impl<K: Kernel + 'static> Step for Classic<K> {
 
     fn distance_ellipsoid(&self) -> (f64, f64) {
         (self.frame.earth.a(), self.frame.earth.es())
+    }
+
+    /// The frame of `fwd_prepare` and `fwd_finalize` around the kernel. Not with `+over`, a
+    /// geocentric latitude, nor a vertical origin the array API cannot see: those run on the CPU.
+    #[cfg(feature = "gpu")]
+    fn lower_gpu(&self, way: crate::proj::Direction, program: &mut crate::gpu::GpuProgram) -> bool {
+        use crate::gpu::{GpuOp, Opcode};
+        use crate::proj::Direction;
+        let frame = &self.frame;
+        if frame.over || frame.geoc {
+            return false;
+        }
+        let Some(kernel) = self.kernel.gpu_kernel(way) else {
+            return false;
+        };
+        let offset = frame.from_greenwich + frame.lam0;
+        if way == Direction::Inverse {
+            program.push(GpuOp::new(
+                Opcode::PrepInv,
+                vec![frame.to_meter, frame.x0, frame.y0, frame.earth.ra()],
+            ));
+            program.push(kernel);
+            program.push(GpuOp::new(Opcode::FinishInv, vec![offset]));
+        } else {
+            program.push(GpuOp::new(Opcode::PrepFwd, vec![offset]));
+            program.push(kernel);
+            program.push(GpuOp::new(
+                Opcode::FinishFwd,
+                vec![
+                    frame.fr_meter * frame.earth.a(),
+                    frame.fr_meter * frame.x0,
+                    frame.fr_meter * frame.y0,
+                ],
+            ));
+        }
+        true
     }
 
     fn forward_batch(&self, coords: &mut [Coord], failed: &mut [Option<TransformError>]) {
@@ -2745,6 +2822,20 @@ impl Pipeline {
 }
 
 impl Step for Pipeline {
+    /// The plan, when no step reads the coordinate stack: that state is per point.
+    #[cfg(feature = "gpu")]
+    fn lower_gpu(&self, way: crate::proj::Direction, program: &mut crate::gpu::GpuProgram) -> bool {
+        if self.uses_stack {
+            return false;
+        }
+        let plan = if way == crate::proj::Direction::Inverse {
+            &self.inverse_plan
+        } else {
+            &self.forward_plan
+        };
+        plan::lower_gpu(plan, program)
+    }
+
     fn forward(&self, coord: Coord) -> Result<Coord, TransformError> {
         if !self.uses_stack {
             return plan::run(&self.forward_plan, coord);

@@ -251,6 +251,8 @@ fn main() {
 
     cases.extend(catalogue_cases());
     cases.extend(facade_cases());
+    #[cfg(feature = "gpu")]
+    cases.extend(gpu_cases());
     let mut ratios = libproj_ratios(&[
         ("utm31_forward", "+proj=utm +zone=31 +ellps=WGS84", &utm_center),
         (
@@ -358,6 +360,54 @@ fn facade_cases() -> Vec<(String, f64)> {
             black_box(proj.convert_array(&mut buffer).map(|done| done.len()).ok());
         });
         cases.push((name.replace("convert", "convert_array"), array));
+    }
+    cases
+}
+
+/// `convert_array_gpu` on the facade pairs the GPU covers: nanoseconds per point end to end, the
+/// conversion to and from the device format, the upload, the dispatch and the read-back included.
+/// Only when a GPU adapter is there; the adapter and its precision go to stderr, the history line
+/// does not carry them. `min_points` is 0 so every size reaches the device.
+#[cfg(feature = "gpu")]
+#[expect(
+    clippy::print_stderr,
+    reason = "the adapter goes to stderr, the JSON record owns stdout"
+)]
+fn gpu_cases() -> Vec<(String, f64)> {
+    use proj_rs::gpu::{GpuContext, GpuOptions};
+    let gpu = match GpuContext::with_options(GpuOptions::default().with_min_points(0)) {
+        Ok(gpu) => gpu,
+        Err(error) => {
+            eprintln!("gpu cases skipped: {error}");
+            return Vec::new();
+        }
+    };
+    eprintln!("gpu cases on {gpu:?}");
+    let (geographic, lambert) = facade_inputs();
+    let mut cases = Vec::new();
+    for (name, from, to) in FACADE_PAIRS {
+        let proj = Proj::new_known_crs(from, to, None).expect(name);
+        let points = if from == "EPSG:2154" {
+            &lambert
+        } else {
+            &geographic
+        };
+        let mut buffer = points.clone();
+        let covered = proj
+            .convert_array_gpu(&mut buffer, &gpu)
+            .is_ok_and(|(_, report)| report.cpu_points == 0);
+        if !covered {
+            continue;
+        }
+        let ns = time_stable(points.len(), || {
+            buffer.copy_from_slice(black_box(points));
+            black_box(
+                proj.convert_array_gpu(&mut buffer, &gpu)
+                    .map(|(done, _)| done.len())
+                    .ok(),
+            );
+        });
+        cases.push((name.replace("facade_convert", "gpu_convert_array"), ns));
     }
     cases
 }

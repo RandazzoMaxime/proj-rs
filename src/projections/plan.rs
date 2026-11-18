@@ -60,6 +60,20 @@ impl Affine {
         Self::new(src, mul)
     }
 
+    /// The two horizontal axes as a GPU operation, when they stay the horizontal axes: the
+    /// array API carries no height or time, so the other two rows do not matter.
+    #[cfg(feature = "gpu")]
+    pub(crate) fn lower_gpu(&self, program: &mut crate::gpu::GpuProgram) -> bool {
+        use crate::gpu::{GpuOp, Swap};
+        let swap = match [self.src[0], self.src[1]] {
+            [0, 1] => Swap::No,
+            [1, 0] => Swap::Yes,
+            _ => return false,
+        };
+        program.push(GpuOp::affine(swap, self.mul[0], self.mul[1]));
+        true
+    }
+
     #[inline]
     pub(crate) fn apply(&self, coord: Coord) -> Coord {
         let [mx, my, mz, mt] = self.mul;
@@ -129,6 +143,17 @@ fn flush(out: &mut Vec<Exec>, pending: Option<Affine>) {
     if let Some(affine) = pending.filter(|affine| *affine != Affine::IDENTITY) {
         out.push(Exec::Affine(affine));
     }
+}
+
+/// The plan as GPU operations. `false` as soon as a step has none.
+#[cfg(feature = "gpu")]
+pub(super) fn lower_gpu(plan: &[Exec], program: &mut crate::gpu::GpuProgram) -> bool {
+    use crate::proj::Direction;
+    plan.iter().all(|exec| match exec {
+        Exec::Forward(step) => step.lower_gpu(Direction::Forward, program),
+        Exec::Inverse(step) => step.lower_gpu(Direction::Inverse, program),
+        Exec::Affine(affine) => affine.lower_gpu(program),
+    })
 }
 
 /// The point through the plan, with no stack.

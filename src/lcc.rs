@@ -278,6 +278,18 @@ impl Lcc {
         })
     }
 
+    /// The GPU operation of this kernel: `e`, `n`, `c`, `rho0`, `k0`.
+    #[cfg(feature = "gpu")]
+    pub(crate) fn gpu_op(&self, way: crate::proj::Direction) -> crate::gpu::GpuOp {
+        use crate::gpu::{GpuOp, Opcode};
+        let code = if way == crate::proj::Direction::Inverse {
+            Opcode::LccInv
+        } else {
+            Opcode::LccFwd
+        };
+        GpuOp::new(code, vec![self.e, self.n, self.c, self.rho0, self.k0])
+    }
+
     pub(crate) fn fwd_unit(&self, lam: f64, phi: f64) -> Result<(f64, f64), ProjectionError> {
         let half = std::f64::consts::FRAC_PI_2;
         let rho = if (phi.abs() - half).abs() < EPS10 {

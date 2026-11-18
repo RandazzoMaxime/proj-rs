@@ -215,6 +215,24 @@ impl Tmerc {
         })
     }
 
+    /// The GPU operation of this kernel: `qn`, `zb` and the four Fourier tables, in the order
+    /// the interpreter reads them (conformal from geographic, geographic from conformal,
+    /// rectifying from conformal, conformal from rectifying).
+    #[cfg(feature = "gpu")]
+    pub(crate) fn gpu_op(&self, way: crate::proj::Direction) -> crate::gpu::GpuOp {
+        use crate::gpu::{GpuOp, Opcode};
+        let mut constants = vec![self.qn, self.zb];
+        for table in [&self.cbg, &self.cgb, &self.gtu, &self.utg] {
+            constants.extend_from_slice(table);
+        }
+        let code = if way == crate::proj::Direction::Inverse {
+            Opcode::TmercInv
+        } else {
+            Opcode::TmercFwd
+        };
+        GpuOp::new(code, constants)
+    }
+
     #[expect(
         clippy::similar_names,
         reason = "Cn and Ce are the paired northing/easting terms in PROJ exact_e_fwd"
