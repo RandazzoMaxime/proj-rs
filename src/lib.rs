@@ -75,6 +75,8 @@ mod geodesic;
 #[doc(hidden)]
 pub mod gie;
 mod gie_api;
+#[cfg(feature = "gpu")]
+pub mod gpu;
 mod gridpath;
 mod helmert;
 #[doc(hidden)]

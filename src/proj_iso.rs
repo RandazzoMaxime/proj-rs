@@ -536,6 +536,34 @@ impl IsoPipeline {
         }
     }
 
+    /// The GPU program of a single operation with the axis swap of each side, as
+    /// [`Self::map_batch`] applies them. `false` for a transform that picks its operation per
+    /// point, and for one with a step the GPU has no kernel for.
+    #[cfg(feature = "gpu")]
+    pub(crate) fn lower_gpu(&self, way: Direction, program: &mut crate::gpu::GpuProgram) -> bool {
+        use crate::gpu::{GpuOp, Swap};
+        let Route::Single(operation) = &self.route else {
+            return false;
+        };
+        let (from, to) = match way {
+            Direction::Forward => (self.source, self.target),
+            Direction::Inverse => (self.target, self.source),
+        };
+        let swap = |side: Side| {
+            (side.lead == Lead::LatOrNorthing).then(|| GpuOp::affine(Swap::Yes, 1.0, 1.0))
+        };
+        if let Some(op) = swap(from) {
+            program.push(op);
+        }
+        if !operation.lower_gpu(way, program) {
+            return false;
+        }
+        if let Some(op) = swap(to) {
+            program.push(op);
+        }
+        true
+    }
+
     /// `proj_trans` forward for one point, in the pipeline's own axis order.
     fn forward(&self, coord: Coord) -> Result<Coord, TransformError> {
         match &self.route {

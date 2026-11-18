@@ -192,6 +192,12 @@ impl Step for WebMercStep {
         self.scalar.inverse_in_pipeline(coord, stack)
     }
 
+    /// The scalar step carries the frame and the kernel: the GPU lowers that one.
+    #[cfg(feature = "gpu")]
+    fn lower_gpu(&self, way: crate::proj::Direction, program: &mut crate::gpu::GpuProgram) -> bool {
+        self.scalar.lower_gpu(way, program)
+    }
+
     fn forward_batch(&self, coords: &mut [Coord], failed: &mut [Option<TransformError>]) {
         assert_eq!(coords.len(), failed.len(), "one slot per point");
         for (coords, failed) in coords.chunks_mut(CHUNK).zip(failed.chunks_mut(CHUNK)) {

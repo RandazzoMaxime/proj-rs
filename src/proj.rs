@@ -1138,7 +1138,7 @@ impl Proj {
         }
     }
 
-    fn fill_array<'a, C, F>(
+    pub(crate) fn fill_array<'a, C, F>(
         &self,
         points: &'a mut [C],
         way: Direction,
@@ -1198,6 +1198,19 @@ impl Proj {
             Some(error) => Err(error),
             None => Ok(points),
         }
+    }
+
+    /// The program the GPU runs for this transform in `way`, or `None` when a step has no GPU
+    /// kernel or the transform picks its operation per point.
+    #[cfg(feature = "gpu")]
+    pub(crate) fn gpu_program(&self, way: Direction) -> Option<crate::gpu::GpuProgram> {
+        let mut program = crate::gpu::GpuProgram::default();
+        let lowered = match &self.body {
+            Body::Native(operation) => operation.lower_gpu(way, &mut program),
+            Body::Iso(pipeline) => pipeline.lower_gpu(way, &mut program),
+            Body::Single => false,
+        };
+        lowered.then_some(program)
     }
 
     #[inline]

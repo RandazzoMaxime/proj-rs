@@ -272,6 +272,22 @@ impl Mercator {
         })
     }
 
+    /// The GPU operation of the spherical kernel, `None` for the ellipsoidal one: its inverse
+    /// is an iteration the GPU does not run.
+    #[cfg(feature = "gpu")]
+    pub(crate) fn gpu_op(&self, way: crate::proj::Direction) -> Option<crate::gpu::GpuOp> {
+        use crate::gpu::{GpuOp, Opcode};
+        if !matches!(self.model, Model::Sphere) {
+            return None;
+        }
+        let code = if way == crate::proj::Direction::Inverse {
+            Opcode::MercInv
+        } else {
+            Opcode::MercFwd
+        };
+        Some(GpuOp::new(code, vec![self.k0]))
+    }
+
     /// Même ordre d'opérations que PROJ.
     pub(crate) fn fwd_unit(&self, lam: f64, phi: f64) -> (f64, f64) {
         let y = match self.model {

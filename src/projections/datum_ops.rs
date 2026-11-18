@@ -803,6 +803,17 @@ impl Step for Molodensky {
 struct WebMerc;
 
 impl Kernel for WebMerc {
+    #[cfg(feature = "gpu")]
+    fn gpu_kernel(&self, way: crate::proj::Direction) -> Option<crate::gpu::GpuOp> {
+        use crate::gpu::{GpuOp, Opcode};
+        let code = if way == crate::proj::Direction::Inverse {
+            Opcode::MercInv
+        } else {
+            Opcode::MercFwd
+        };
+        Some(GpuOp::new(code, vec![1.0]))
+    }
+
     fn forward(&self, lam: f64, phi: f64) -> Result<(f64, f64), TransformError> {
         let y = phi.tan().asinh();
         if !lam.is_finite() || !y.is_finite() {
