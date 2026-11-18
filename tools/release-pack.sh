@@ -32,9 +32,11 @@ lib_dir=proj-rs-$version-$target_name-libproj
 
 # `libproj.a` needs the system libraries Rust's std uses: rustc prints them for the staticlib.
 # The crate is rebuilt with the same profile; only its own code is compiled again.
-static_libs=$(cd "$root" && cargo rustc --release -p proj-rs-capi --lib --crate-type staticlib -- --print native-static-libs 2>&1 \
+# `--color never`: with CARGO_TERM_COLOR=always (CI) the line ends in an escape code, `-lc\e[0m`.
+static_libs=$(cd "$root" && cargo --color never rustc --release -p proj-rs-capi --lib --crate-type staticlib -- --print native-static-libs 2>&1 \
   | sed -n 's/^.*native-static-libs: //p' | tail -1)
 [ -n "$static_libs" ] || { echo "rustc printed no native-static-libs" >&2; exit 1; }
+case $static_libs in *"$(printf '\033')"*) echo "native-static-libs has an escape code: $static_libs" >&2; exit 1 ;; esac
 
 case "$(uname -s)" in
   Darwin)
