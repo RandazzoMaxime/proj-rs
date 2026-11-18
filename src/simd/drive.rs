@@ -36,20 +36,11 @@ unsafe fn groups<K: Lanes>(
     let (b4, b_tail) = in_b.split_at(head);
     let (oa4, oa_tail) = out_a.split_at_mut(head);
     let (ob4, ob_tail) = out_b.split_at_mut(head);
-    for (((a, b), oa), ob) in a4
-        .chunks_exact(4)
-        .zip(b4.chunks_exact(4))
-        .zip(oa4.chunks_exact_mut(4))
-        .zip(ob4.chunks_exact_mut(4))
-    {
-        let (Some(a), Some(b), Some(oa), Some(ob)) = (
-            a.first_chunk::<4>(),
-            b.first_chunk::<4>(),
-            oa.first_chunk_mut::<4>(),
-            ob.first_chunk_mut::<4>(),
-        ) else {
-            continue;
-        };
+    let (a4, _) = a4.as_chunks::<4>();
+    let (b4, _) = b4.as_chunks::<4>();
+    let (oa4, _) = oa4.as_chunks_mut::<4>();
+    let (ob4, _) = ob4.as_chunks_mut::<4>();
+    for (((a, b), oa), ob) in a4.iter().zip(b4).zip(oa4).zip(ob4) {
         if let Some((x, y)) = kernel.lanes(tok, V4::load(tok, a), V4::load(tok, b)) {
             x.store(oa);
             y.store(ob);

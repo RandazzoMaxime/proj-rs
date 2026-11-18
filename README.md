@@ -7,7 +7,7 @@
 
 <p align="center">
   <a href="https://github.com/OSGeo/PROJ"><img alt="PROJ 9.9.0" src="https://img.shields.io/badge/PROJ-9.9.0-2b7bb9"></a>
-  <a href="https://www.rust-lang.org"><img alt="Rust 1.83+" src="https://img.shields.io/badge/rust-1.83%2B-orange"></a>
+  <a href="https://www.rust-lang.org"><img alt="Rust 1.100+" src="https://img.shields.io/badge/rust-1.100%2B-orange"></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green"></a>
   <img alt="Status: pre-1.0" src="https://img.shields.io/badge/status-pre--1.0-yellow">
 </p>
@@ -528,7 +528,7 @@ As in PROJ, `EPSG:4326` on the command line reads latitude first. Use a
 
 ## Requirements and platforms
 
-- **Rust 1.83 or newer.**
+- **Rust 1.100 or newer.**
 - **A C compiler.** `cargo build` compiles two small vendored C libraries:
   SQLite (through `rusqlite`) and Charles Karney's geodesic code. There is no
   libproj, no CMake, and no system SQLite.
@@ -645,11 +645,11 @@ model, the engine (`Operation`, `Xyzt`, `CrsPipeline`), the named projections, `
 `projinfo`, `projsync` and the rest. The `unstable` feature shows them in the
 documentation under `proj_rs::unstable`, for whoever accepts that they change.
 
-The minimum supported Rust version is **1.83**, declared as `rust-version` and checked by
-the `msrv` job of the CI. It was measured: 1.82 fails on `ExitCode` equality in the
-`cct` and `cs2cs` binaries, and the dependencies need at least 1.81. A change of the
-minimum is a minor version. `cargo-semver-checks` runs in the CI against the last
-published version once there is one.
+The minimum supported Rust version is **1.100**, declared as `rust-version` and checked by
+the `msrv` job of the CI. It is the toolchain the 1.0.0 release is built and tested with; it
+is not a measured floor (1.83 was the floor measured before 1.0.0, and the code now uses
+`f64::next_up`, stable since 1.86). A change of the minimum is a minor version.
+`cargo-semver-checks` runs in the CI against the last published version once there is one.
 
 ## Roadmap
 

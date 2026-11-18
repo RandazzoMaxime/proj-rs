@@ -356,19 +356,19 @@ impl BoundingBox {
         let (mut west, mut east) = (west, east);
         if west == east {
             if west > -180.0 {
-                west = next_down(west);
+                west = west.next_down();
             }
             if east < 180.0 {
-                east = next_up(east);
+                east = east.next_up();
             }
         }
         let (mut south, mut north) = (south, north);
         if south == north {
             if south > -90.0 {
-                south = next_down(south);
+                south = south.next_down();
             }
             if north < 90.0 {
-                north = next_up(north);
+                north = north.next_up();
             }
         }
         Ok(Self::new(west, south, east, north))
@@ -541,26 +541,6 @@ impl BoundingBox {
         }
         self.intersection(other)
     }
-}
-
-/// `std::nextafter(x, +inf)`, without `f64::next_up` (stable only from Rust 1.86, and the MSRV is 1.83).
-fn next_up(x: f64) -> f64 {
-    if x.is_nan() || x == f64::INFINITY {
-        return x;
-    }
-    if x == 0.0 {
-        return f64::from_bits(1);
-    }
-    if x > 0.0 {
-        f64::from_bits(x.to_bits() + 1)
-    } else {
-        f64::from_bits(x.to_bits() - 1)
-    }
-}
-
-/// `std::nextafter(x, -inf)`.
-fn next_down(x: f64) -> f64 {
-    -next_up(-x)
 }
 
 fn same_optional(left: Option<f64>, right: Option<f64>) -> bool {
@@ -4577,5 +4557,77 @@ pub(crate) fn ensemble_name_as_datum(name: &str) -> Option<&'static str> {
         }
         "Greenland Reference 1996 ensemble" => Some("Greenland 1996"),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod next_after_tests {
+    fn legacy_next_up(x: f64) -> f64 {
+        if x.is_nan() || x == f64::INFINITY {
+            return x;
+        }
+        if x == 0.0 {
+            return f64::from_bits(1);
+        }
+        if x > 0.0 {
+            f64::from_bits(x.to_bits() + 1)
+        } else {
+            f64::from_bits(x.to_bits() - 1)
+        }
+    }
+
+    fn legacy_next_down(x: f64) -> f64 {
+        -legacy_next_up(-x)
+    }
+
+    fn same(left: f64, right: f64) -> bool {
+        (left.is_nan() && right.is_nan()) || left.to_bits() == right.to_bits()
+    }
+
+    #[test]
+    fn std_next_up_and_down_match_the_removed_helpers() {
+        let tiny = f64::from_bits(1);
+        let mut values = vec![
+            0.0,
+            -0.0,
+            tiny,
+            -tiny,
+            f64::from_bits(2),
+            f64::from_bits(0x000f_ffff_ffff_ffff),
+            f64::MIN_POSITIVE,
+            -f64::MIN_POSITIVE,
+            1.0,
+            -1.0,
+            -180.0,
+            180.0,
+            -90.0,
+            90.0,
+            f64::EPSILON,
+            f64::MAX,
+            f64::MIN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+            -f64::NAN,
+        ];
+        let mut bits: u64 = 0x9e37_79b9_7f4a_7c15;
+        for _ in 0..20_000 {
+            bits ^= bits << 13;
+            bits ^= bits >> 7;
+            bits ^= bits << 17;
+            values.push(f64::from_bits(bits));
+        }
+        for value in values {
+            assert!(
+                same(value.next_up(), legacy_next_up(value)),
+                "next_up differs at {value:e} ({:#x})",
+                value.to_bits()
+            );
+            assert!(
+                same(value.next_down(), legacy_next_down(value)),
+                "next_down differs at {value:e} ({:#x})",
+                value.to_bits()
+            );
+        }
     }
 }

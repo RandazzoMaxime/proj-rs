@@ -168,9 +168,11 @@ Ce que le code fait autrement que ce document, ou en plus, et pourquoi.
   retouches, toutes dans les exemples du README (que `proj` ne teste pas) : la coquille `epsiolon`,
   qui ne compile pas, et quatre `assert_relative_eq!` à la précision machine contre des valeurs de
   libproj 9.6, que le port (PROJ 9.9) manque de 3e-9 m ; ils prennent `epsilon = 1e-6`.
-- **MSRV mesurée : 1.83.** `cargo +1.83.0 check --workspace --lib --bins --all-features` passe.
-  Avec 1.82.0 (`--ignore-rust-version`), les binaires `cct` et `cs2cs` échouent : `ExitCode`
-  n'est comparable avec `!=` que depuis 1.83. Les dépendances exigent au moins 1.81 (`half`).
+- **MSRV : 1.100.** Décision de la v1.0.0 : la version déclarée est celle de la chaîne qui
+  construit et teste la release, pas un plancher mesuré. Avant 1.0.0, le plancher mesuré était
+  1.83 : `cargo +1.83.0 check --workspace --lib --bins --all-features` passait, et avec 1.82.0
+  (`--ignore-rust-version`) les binaires `cct` et `cs2cs` échouaient (`ExitCode` n'est comparable
+  avec `!=` que depuis 1.83 ; les dépendances exigeaient au moins 1.81, `half`).
 - **`cargo-semver-checks`** est dans la CI avec `if: false` : aucune version n'est publiée. Il
   s'active au lot 3, quand `1.0.0` existe sur crates.io.
 

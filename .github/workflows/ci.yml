@@ -128,9 +128,9 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
 
-  # `rust-version` is the minimum the crates build with. It was measured, not chosen:
-  # 1.82 fails (ExitCode equality in the cct and cs2cs binaries, libraries need 1.81),
-  # 1.83 builds. The job reads the declared version, so changing it moves the check.
+  # `rust-version` is the toolchain the crates are checked with: 1.100, the one of the 1.0.0
+  # release, chosen rather than measured (1.83 was the measured floor before 1.0.0). The job
+  # reads the declared version, so changing it moves the check.
   msrv:
     runs-on: ubuntu-24.04
     steps:
@@ -145,6 +145,7 @@ jobs:
               exit 1
             fi
           done
+          case "$version" in *.*.*) ;; *) version="$version.0" ;; esac
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@master
         with:

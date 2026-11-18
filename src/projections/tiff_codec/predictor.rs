@@ -26,7 +26,7 @@ pub(crate) fn undo_predictor(
     if predictor == Predictor::Plain {
         return Ok(());
     }
-    if row_bytes == 0 || out.len() % row_bytes != 0 || stride == 0 {
+    if row_bytes == 0 || !out.len().is_multiple_of(row_bytes) || stride == 0 {
         return Err(());
     }
     let size = usize::try_from(bits / 8).map_err(|_| ())?;
@@ -48,7 +48,7 @@ pub(crate) fn undo_predictor(
 }
 
 fn undo_horizontal(row: &mut [u8], stride: usize, size: usize, order: ByteOrder) -> Result<(), ()> {
-    if !matches!(size, 2 | 4) || row.len() % size != 0 {
+    if !matches!(size, 2 | 4) || !row.len().is_multiple_of(size) {
         return Err(());
     }
     let mask = if size == 4 {
@@ -70,7 +70,7 @@ fn undo_horizontal(row: &mut [u8], stride: usize, size: usize, order: ByteOrder)
 /// the byte planes, most significant first, gathered into samples of the file's byte order. The
 /// planes are the same bytes in either order; only the gather differs.
 fn undo_float(row: &mut [u8], stride: usize, size: usize, order: ByteOrder) -> Result<(), ()> {
-    if size == 0 || row.len() % size != 0 {
+    if size == 0 || !row.len().is_multiple_of(size) {
         return Err(());
     }
     for index in stride..row.len() {
