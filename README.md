@@ -208,6 +208,9 @@ tools/build-reference.sh
 export PROJ_RS_LIBPROJ_DIR=$PWD/target/proj-reference/build/lib
 BENCH_MACHINE=my-box BENCH_ROUNDS=5 taskset -c 2 sh bench/record.sh
 
+# A billion points, EPSG:4326 to 2154, both sides (a few minutes):
+taskset -c 2 sh bench/billion.sh
+
 # Size and memory (Linux x86-64; builds a second PROJ with TIFF and curl, the Rust programs
 # and the C library, a few minutes):
 BENCH_MACHINE=my-box taskset -c 0,1 sh bench/footprint.sh
@@ -221,6 +224,7 @@ draws `bench/trend-<machine>-{light,dark}.svg` and the cards of `bench/cards/`, 
 the "How fast" table stays on the newest line that has one. `bench/footprint.sh` writes
 [`bench/footprint.json`](bench/footprint.json), rewrites the "Size and memory" block and draws its two
 cards (`tools/bench/footprint_measure.py`, `tools/bench/footprint_block.py`, `tools/bench/cards.py`).
+`bench/billion.sh` writes [`bench/billion.json`](bench/billion.json) and draws its card.
 The cards are a Chrome headless screenshot of the HTML next to them (`CHROME_PATH` if Chrome is not
 on the usual paths); the templates are in `tools/bench/cards/`.
 What each case compares, and how the size and the memory are counted, is in

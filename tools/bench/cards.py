@@ -22,6 +22,7 @@ import how_fast
 TEMPLATES = Path(__file__).resolve().parent / "cards"
 OUT = history.ROOT / "bench" / "cards"
 FOOTPRINT = history.ROOT / "bench" / "footprint.json"
+BILLION = history.ROOT / "bench" / "billion.json"
 MIB = 1024 * 1024
 SHORT = {"4326": "WGS 84", "2154": "Lambert-93", "32631": "UTM 31N", "3857": "Web Mercator", "4267": "NAD27"}
 CHROMES = [
@@ -174,6 +175,44 @@ def memory_card(fp):
     return fill("grouped-hbars", data, {f"r{n}" for n in range(1, len(rss) + 1)})
 
 
+def seconds(value):
+    return f"{value:.1f} s" if value < 100 else f"{value:.0f} s"
+
+
+def billion_card(line):
+    run = line["result"]
+    calls = [
+        ("One point at a time", "convert · PROJ proj_trans", run["convert_s"], run["libproj_convert_s"]),
+        ("A slice per pass", "convert_array · PROJ proj_trans_generic", run["convert_array_s"],
+         run["libproj_convert_array_s"]),
+    ]
+    best = min(run["convert_s"], run["convert_array_s"])
+    data = {
+        "eyebrow": "PROJ-RS 1.0 · ONE BILLION POINTS",
+        "title": "A billion points in",
+        "accentWord": seconds(best),
+        "subtitle": f"{run['pair']}, {run['points'] // run['chunk']:,} passes of {run['chunk']:,} points "
+                    "· seconds for the whole billion, shorter is faster",
+        "legendNew": "proj-rs",
+        "legendRival": "PROJ 9.9.0",
+        "footerLeft": "seconds · one run · one core of a 4-vCPU Xeon · output checked against PROJ",
+        "footerRight": f"bench/billion.json · {history.day(line['date'])} · commit {line['commit']}",
+    }
+    for n, (name, caption, ours, theirs) in enumerate(calls, 1):
+        high = max(ours, theirs)
+        data |= {
+            f"r{n}Name": name,
+            f"r{n}Caption": f"{caption} {seconds(theirs)}",
+            f"r{n}NewW": width(ours, high),
+            f"r{n}RivalW": width(theirs, high),
+            f"r{n}NewVal": seconds(ours),
+            f"r{n}RivalVal": f"PROJ {seconds(theirs)}",
+            f"r{n}Speedup": f"{times(theirs / ours)} faster",
+        }
+    blank_rows(data, len(calls) + 1, "r", ("Name", "Caption", "NewW", "RivalW", "NewVal", "RivalVal", "Speedup"))
+    return fill("grouped-hbars", data, {f"r{n}" for n in range(1, len(calls) + 1)})
+
+
 def chrome():
     found = os.environ.get("CHROME_PATH") or next((c for c in CHROMES if Path(c).exists()), None)
     return found or shutil.which("google-chrome") or shutil.which("chromium")
@@ -201,6 +240,8 @@ def main():
         "size": size_card(fp),
         "memory": memory_card(fp),
     }
+    if BILLION.exists():
+        cards["billion"] = billion_card(json.loads(BILLION.read_text(encoding="utf-8")))
     OUT.mkdir(parents=True, exist_ok=True)
     browser = chrome()
     for name, html in cards.items():
@@ -209,7 +250,9 @@ def main():
             render(browser, html, OUT / f"{name}.png")
     history.write_block(
         "bench-compare",
-        '<img src="bench/cards/speed-array.png" alt="Nanoseconds per point of convert_array, proj-rs next to '
+        ('<img src="bench/cards/billion.png" alt="Seconds to convert a billion points, EPSG:4326 to '
+           '2154, proj-rs next to PROJ 9.9.0" width="100%">\n\n' if "billion" in cards else "")
+        + '<img src="bench/cards/speed-array.png" alt="Nanoseconds per point of convert_array, proj-rs next to '
         'PROJ 9.9.0, five conversions" width="100%">\n\n'
         '<img src="bench/cards/speed-point.png" alt="Nanoseconds per point of convert, one point at a time, '
         'proj-rs next to PROJ 9.9.0, five conversions" width="100%">',

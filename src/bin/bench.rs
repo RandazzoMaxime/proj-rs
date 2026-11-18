@@ -5,6 +5,8 @@
 //! (`taskset -c 0`) before comparing runs. `bench/record.sh` appends the line
 //! to `bench/history.jsonl` with the commit and the machine.
 //!
+//! `--billion` times a billion points instead (`bench/billion.sh`).
+//!
 //! A new lot adds its cases. Never rename a case: the history is keyed by name.
 
 use proj_rs::{
@@ -14,6 +16,9 @@ use proj_rs::{
 use std::fmt::Write as _;
 use std::hint::black_box;
 use std::time::Instant;
+
+#[path = "support/bench_billion.rs"]
+mod billion;
 
 const GIE_PASSES: &str = include_str!("../../tests/gie/passing.txt");
 /// Catalogue transforms use a short grid. The historical cases stay at [`N`].
@@ -107,6 +112,18 @@ fn scalar_pair(
     reason = "the benchmark's product is this JSON record on stdout"
 )]
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--billion") {
+        let (ours_point, ours_array) = billion::proj_rs();
+        let libproj = billion::libproj().map_or_else(String::new, |(point, array)| {
+            format!(",\"libproj_convert_s\":{point:.3},\"libproj_convert_array_s\":{array:.3}")
+        });
+        println!(
+            "{{\"points\":{},\"chunk\":{},\"pair\":\"EPSG:4326 to EPSG:2154\",\"convert_s\":{ours_point:.3},\"convert_array_s\":{ours_array:.3}{libproj}}}",
+            billion::TOTAL,
+            billion::CHUNK
+        );
+        return;
+    }
     let zone = UtmZone::try_new(31).expect("zone 31");
     let utm = Tmerc::utm(zone, Hemisphere::North, Ellipsoid::wgs84()).expect("utm");
     let l93 = Lcc::lambert93();

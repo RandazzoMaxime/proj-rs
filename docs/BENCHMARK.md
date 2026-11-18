@@ -93,6 +93,15 @@ Compare only lines with the same `machine`.
 
 ## Size and memory
 
+`bench/billion.sh` runs `proj-rs-bench --billion`: the wall-clock time to convert
+1,000,000,000 points from `EPSG:4326` to `EPSG:2154`, one point at a time (`convert` against
+`proj_trans`) and as slices (`convert_array` against `proj_trans_generic`). A billion points are
+16 GB, so they go through one buffer of 1,000,000 points, refilled before each of the 1,000 passes
+from the facade grid shifted east by a micro-degree per pass; the refill is in the time on both
+sides. The first pass of libproj is checked against proj-rs. It writes
+[`bench/billion.json`](../bench/billion.json); `tools/bench/cards.py` draws its card. One run:
+at this length the noise of a pass averages out.
+
 `bench/footprint.sh` measures what the same conversion, `EPSG:4326` to `EPSG:2154`, costs on
 disk and in memory with proj-rs and with PROJ 9.9.0. It writes
 [`bench/footprint.json`](../bench/footprint.json), rewrites the `bench-footprint` block of the
