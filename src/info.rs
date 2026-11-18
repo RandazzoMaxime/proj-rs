@@ -13,13 +13,23 @@ use crate::proj::{port_info, Info};
 
 /// `proj_info()`: the version of the library and its default search path.
 ///
-/// The search path is the directories added to the default context, or else the
-/// data directories, which are `PROJ_DATA` (or the legacy `PROJ_LIB`) and the
-/// default data directory. Each one is separated by `:`, or `;` on Windows. PROJ's
-/// user-writable directory is not in the list.
+/// The search path is the one PROJ builds (`pj_get_default_searchpaths`), unless paths were
+/// added to the default context, which then are the whole list: the user-writable directory
+/// (not with `PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY`), then `PROJ_DATA` (or the legacy
+/// `PROJ_LIB`) as it is written, or else the `../share/proj` directory of the executable when
+/// it exists and the directory compiled in (`PROJ_RS_DATA_DIR`) when there is one. Each one is
+/// separated by `:`, or `;` on Windows.
 #[must_use]
 pub fn library_info() -> Info {
     port_info(&crate::network::default_searchpath())
+}
+
+/// Name the file the library is loaded from, for the `../share/proj` directory of the search
+/// path (`pj_get_relative_share_proj`). A library that is not linked into the executable, as
+/// the C API is, calls it before its first lookup; without it the module is the executable.
+#[doc(hidden)]
+pub fn set_module_path(path: &str) {
+    crate::datadir::set_module_path(path);
 }
 
 /// A point of a grid, in radians for a geographic grid. `PJ_LP` in PROJ.

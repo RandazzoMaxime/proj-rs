@@ -58,6 +58,7 @@ mod context;
 mod coord;
 mod crs;
 mod crs_text;
+mod datadir;
 #[doc(hidden)]
 pub mod dms;
 mod ellipsoid;

@@ -136,8 +136,9 @@ impl Context {
         &self.net.endpoint
     }
 
-    /// The search paths added to the context, in order. The data directories of the
-    /// environment (`PROJ_DATA`) are searched before them.
+    /// The search paths added to the context, in order. Once there is one, only they are
+    /// searched, as in PROJ: not the user directory, `PROJ_DATA` or the directories of the
+    /// executable.
     ///
     /// ```
     /// use proj_rs::Context;
@@ -150,7 +151,12 @@ impl Context {
         self.net.added_search_paths()
     }
 
-    /// The directory downloaded grids and the cache database are written to.
+    /// The directory downloaded grids and the cache database are written to, and the first
+    /// one a grid is looked for in.
+    ///
+    /// Unless set, it is PROJ's user-writable directory: `$XDG_DATA_HOME/proj` or
+    /// `$HOME/.local/share/proj` on Linux, `$HOME/Library/Application Support/proj` on macOS,
+    /// `%LOCALAPPDATA%\proj` on Windows, or `PROJ_USER_WRITABLE_DIRECTORY`.
     ///
     /// ```
     /// use proj_rs::Context;
@@ -225,7 +231,8 @@ impl ContextBuilder {
         self
     }
 
-    /// Add a grid search path, after the ones already given.
+    /// Add a grid search path, after the ones already given. The paths given replace the
+    /// default search path (`PROJ_DATA` and the others), as `proj_context_set_search_paths`.
     ///
     /// ```
     /// use proj_rs::Context;

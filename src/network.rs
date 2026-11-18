@@ -6,7 +6,7 @@
 //! file is fetched only when [`decide_download`] says so.
 
 use std::cell::RefCell;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use std::fmt;
 use std::io::{self, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -399,101 +399,16 @@ pub(crate) fn old_grid_filename(name: &str) -> Option<String> {
     old.filter(|old| !old.is_empty())
 }
 
-pub(crate) fn search_paths() -> Vec<PathBuf> {
-    context().search_paths
-}
-
-/// The default search path as `proj_info` reports it: the directories added to the
-/// default context, or else the data directories when none were added.
+/// The default search path as `proj_info` reports it (`pj_get_default_searchpaths`): the
+/// directories added to the default context, or else the user-writable directory, `PROJ_DATA`
+/// and the directories of the module (see [`crate::datadir::Lookup::searchpath`]).
 pub(crate) fn default_searchpath() -> String {
-    let added = search_paths();
-    if added.is_empty() {
-        join_directories(&data_directories())
-    } else {
-        join_directories(&added)
-    }
+    crate::datadir::Lookup::of(&context()).searchpath()
 }
 
-/// Directories joined by the search path separator of the platform: `;` on
-/// Windows, `:` elsewhere. A directory that is not UTF-8 is left out.
-fn join_directories(directories: &[PathBuf]) -> String {
-    let separator = if cfg!(windows) { ";" } else { ":" };
-    directories
-        .iter()
-        .filter_map(|path| path.to_str())
-        .collect::<Vec<_>>()
-        .join(separator)
-}
-
-/// The data directories, read from the environment on each lookup as PROJ does.
-///
-/// `PROJ_DATA`, else the legacy `PROJ_LIB`, replaces the default data
-/// directory, which is PROJ's compile-time share directory
-/// (`pj_get_default_searchpaths`). An empty value counts as unset.
-pub(crate) fn data_directories() -> Vec<PathBuf> {
-    match proj_data_env() {
-        Some(value) => split_directories(&value),
-        None => vec![default_data_directory()],
-    }
-}
-
-fn proj_data_env() -> Option<OsString> {
-    data_path_value(std::env::var_os("PROJ_DATA"), std::env::var_os("PROJ_LIB"))
-}
-
-/// `PROJ_DATA` if it is set, else `PROJ_LIB`, when the value is not empty.
-/// An empty `PROJ_DATA` hides `PROJ_LIB`, as in `getProjDataEnvVar`.
-fn data_path_value(proj_data: Option<OsString>, proj_lib: Option<OsString>) -> Option<OsString> {
-    proj_data.or(proj_lib).filter(|value| !value.is_empty())
-}
-
-/// The default data directory: `data/grids`, which holds the grids a user
-/// places in the tree (git-ignored).
-fn default_data_directory() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("data")
-        .join("grids")
-}
-
-/// Split a search path the way PROJ does: `:` on Unix, `;` on Windows. `;` and
-/// `|` are accepted everywhere. Empty entries are dropped.
-fn split_directories(value: &OsStr) -> Vec<PathBuf> {
-    let text = value.to_string_lossy();
-    let separators: &[char] = if cfg!(windows) {
-        &[';', '|']
-    } else {
-        &[':', ';', '|']
-    };
-    text.split(separators)
-        .filter(|directory| !directory.is_empty())
-        .map(PathBuf::from)
-        .collect()
-}
-
-/// A dictionary or other file looked up by name: the caller's file finder first,
-/// then the search directories (`pj_open_lib`).
+/// A dictionary or other file looked up by name (`pj_open_lib`): see [`crate::gridpath::resolve`].
 pub(crate) fn find_file(name: &str) -> Option<PathBuf> {
-    let ctx = context();
-    if let Some(finder) = &ctx.file_finder {
-        if let Some(path) = (finder.0)(name) {
-            return Some(path);
-        }
-    }
     crate::gridpath::resolve(name)
-}
-
-pub(crate) fn cache_dir_if_enabled() -> Option<PathBuf> {
-    let ctx = context();
-    // The skip covers the default directory only. A directory set on the
-    // builder is read, as PROJ does for an explicit context.
-    let skip_default = ctx.cache_dir.is_none()
-        && nonempty_env("PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY")
-            .is_some_and(|value| truthy(&value));
-    if ctx.cache_enabled && !skip_default {
-        Some(ctx.cache_directory())
-    } else {
-        None
-    }
 }
 
 pub(crate) fn context() -> GridContext {
@@ -542,7 +457,7 @@ impl GridContext {
         let env_endpoint = nonempty_env("PROJ_NETWORK_ENDPOINT");
         let env_only_best = std::env::var_os("PROJ_ONLY_BEST_DEFAULT");
         ctx.only_best_default = only_best_from_env(env_only_best.as_deref());
-        if let Some(text) = read_proj_ini() {
+        if let Some(text) = read_proj_ini(&ctx) {
             apply_ini(
                 &text,
                 &mut ctx,
@@ -565,8 +480,21 @@ impl GridContext {
         ctx
     }
 
+    /// A directory was set with `set_user_writable_directory`.
+    pub(crate) fn has_explicit_user_directory(&self) -> bool {
+        self.cache_dir.is_some()
+    }
+
+    /// The application's file finder, if it set one.
+    pub(crate) fn finder(&self) -> Option<&FileFinder> {
+        self.file_finder.as_ref()
+    }
+
+    /// The user-writable directory: the one set on the context, else PROJ's default.
     pub(crate) fn cache_directory(&self) -> PathBuf {
-        self.cache_dir.clone().unwrap_or_else(default_user_dir)
+        self.cache_dir
+            .clone()
+            .unwrap_or_else(crate::datadir::user_directory)
     }
 
     /// The chunk database this context reads and writes: the path set on the builder, else
@@ -583,8 +511,9 @@ impl GridContext {
         }
     }
 
+    /// `proj_info().searchpath` of this context: see [`crate::datadir::Lookup::searchpath`].
     pub(crate) fn searchpath(&self) -> String {
-        join_directories(&self.search_paths)
+        crate::datadir::Lookup::of(self).searchpath()
     }
 
     pub(crate) fn replace_search_paths(&mut self, paths: Vec<PathBuf>) {
@@ -845,30 +774,12 @@ pub(crate) fn cache_file_name(name: &str) -> Option<String> {
     }
 }
 
-fn default_user_dir() -> PathBuf {
-    if let Some(dir) = nonempty_env("PROJ_USER_WRITABLE_DIRECTORY") {
-        return PathBuf::from(dir);
-    }
-    if let Some(local) = nonempty_env("LOCALAPPDATA") {
-        return PathBuf::from(local).join("proj");
-    }
-    std::env::temp_dir().join("proj")
-}
-
-fn read_proj_ini() -> Option<String> {
-    let mut dirs = proj_data_env()
-        .map(|value| split_directories(&value))
-        .unwrap_or_default();
-    dirs.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("data"));
-    for dir in dirs {
-        let path = dir.join("proj.ini");
-        if let Ok(text) = std::fs::read_to_string(&path) {
-            if text.len() <= 100 * 1024 {
-                return Some(text);
-            }
-        }
-    }
-    None
+/// `proj.ini` as `pj_load_ini` finds it: the file `pj_open_lib_internal` gives for that name,
+/// when it is not larger than 100 KiB.
+fn read_proj_ini(ctx: &GridContext) -> Option<String> {
+    let path = crate::datadir::Lookup::of(ctx).find("proj.ini", &|path| path.is_file())?;
+    let text = std::fs::read_to_string(path).ok()?;
+    (text.len() <= 100 * 1024).then_some(text)
 }
 
 struct IniSkip {
@@ -930,11 +841,10 @@ pub(crate) fn nonempty_env(key: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_ini, data_path_value, decide_download, only_best_from_env, remote_url_in,
-        split_directories, with_context, GridContext, IniSkip,
+        apply_ini, decide_download, only_best_from_env, remote_url_in, with_context, GridContext,
+        IniSkip,
     };
-    use std::ffi::{OsStr, OsString};
-    use std::path::PathBuf;
+    use std::ffi::OsStr;
 
     #[test]
     fn only_best_env_follows_pj_load_ini() {
@@ -998,35 +908,6 @@ mod tests {
         };
         apply_ini("only_best_default=on\n", &mut ctx, &skip);
         assert_eq!(ctx.only_best_default, None);
-    }
-
-    #[test]
-    fn proj_data_replaces_proj_lib_and_empty_hides_it() {
-        let data = || Some(OsString::from("/data"));
-        let lib = || Some(OsString::from("/lib"));
-        assert_eq!(data_path_value(data(), lib()), data());
-        assert_eq!(data_path_value(None, lib()), lib());
-        assert_eq!(data_path_value(Some(OsString::new()), lib()), None);
-        assert_eq!(data_path_value(None, None), None);
-    }
-
-    #[cfg(not(windows))]
-    #[test]
-    fn search_path_is_split_on_colon_and_drops_empty_entries() {
-        assert_eq!(
-            split_directories(&OsString::from("a:b;c|::d:")),
-            ["a", "b", "c", "d"].map(PathBuf::from).to_vec()
-        );
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn search_path_keeps_drive_letters_on_windows() {
-        // `:` is part of a drive letter on Windows: only `;` and `|` split.
-        assert_eq!(
-            split_directories(&OsString::from(r"C:\a;D:\b|;")),
-            [r"C:\a", r"D:\b"].map(PathBuf::from).to_vec()
-        );
     }
 
     #[test]
