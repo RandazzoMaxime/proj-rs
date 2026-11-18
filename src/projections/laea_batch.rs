@@ -5,12 +5,13 @@
 //! de quatre qu'une voie sort du domaine passe par le scalaire : une valeur non finie, un
 //! dénominateur sous `EPS10`, un argument d'`asin` près de ±1, le centre (`rho < EPS10`).
 
-use super::{Laea, Mode, EPS10};
+use super::Laea;
 use crate::projections::unit_batch::UnitLanes;
 
 #[cfg(target_arch = "x86_64")]
 mod vector {
-    use super::{Laea, Mode, UnitLanes, EPS10};
+    use super::super::{Mode, EPS10};
+    use super::{Laea, UnitLanes};
     use crate::simd::kernels;
     use crate::simd::{Avx2, V4};
 

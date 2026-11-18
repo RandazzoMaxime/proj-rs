@@ -44,7 +44,15 @@ struct Laea {
     es: f64,
     one_es: f64,
     /// The authalic series, geographic to authalic and back (`ellips` and `n < SERIES_N`).
+    #[cfg_attr(
+        not(target_arch = "x86_64"),
+        expect(dead_code, reason = "read by the AVX2 kernel only")
+    )]
     fwd_coeffs: [f64; 6],
+    #[cfg_attr(
+        not(target_arch = "x86_64"),
+        expect(dead_code, reason = "read by the AVX2 kernel only")
+    )]
     inv_coeffs: [f64; 6],
 }
 
