@@ -86,12 +86,7 @@ fn parse(args: &[String]) -> Result<Options, ExitCode> {
         match arg.as_str() {
             "--endpoint" => options.endpoint = Some(value().ok_or_else(usage_error)?),
             "--user-writable-directory" | "--user-directory" => {}
-            "--system-directory" => {
-                options.target_dir = Some(system_directory().ok_or_else(|| {
-                    warn("--system-directory: no PROJ_DATA or PROJ_LIB directory is set");
-                    ExitCode::from(1)
-                })?);
-            }
+            "--system-directory" => options.target_dir = proj_rs::system_data_directory(),
             "--target-dir" => {
                 options.target_dir = Some(PathBuf::from(value().ok_or_else(usage_error)?));
             }
@@ -185,14 +180,6 @@ fn parse_bbox(text: &str) -> Result<Bbox, ExitCode> {
 }
 
 /// The first directory of `PROJ_DATA`, else of `PROJ_LIB`.
-fn system_directory() -> Option<PathBuf> {
-    ["PROJ_DATA", "PROJ_LIB"]
-        .iter()
-        .filter_map(std::env::var_os)
-        .find(|value| !value.is_empty())
-        .and_then(|value| std::env::split_paths(&value).find(|path| !path.as_os_str().is_empty()))
-}
-
 fn trim_trailing_slash(text: &str) -> &str {
     text.strip_suffix('/').unwrap_or(text)
 }

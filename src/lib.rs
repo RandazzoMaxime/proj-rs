@@ -166,6 +166,16 @@ pub fn embedded_proj_db() -> Result<rusqlite::Connection, String> {
     projdb::read_only_connection().map_err(|error| error.to_string())
 }
 
+/// `projsync --system-directory`: `pj_get_relative_share_proj`, else the compiled data directory
+/// (`projsync.cpp` 147-153). `None` when neither exists: `projsync` then uses the user directory.
+#[doc(hidden)]
+#[must_use]
+pub fn system_data_directory() -> Option<std::path::PathBuf> {
+    datadir::relative_share_proj()
+        .map(std::path::Path::to_path_buf)
+        .or_else(|| datadir::compiled_data_dir().map(std::path::PathBuf::from))
+}
+
 #[doc(hidden)]
 pub mod wkt {
     //! WKT export types from georust `proj` 0.31.

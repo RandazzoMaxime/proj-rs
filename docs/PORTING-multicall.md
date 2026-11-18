@@ -108,10 +108,11 @@ minimum 0,706 s contre 0,631 s ; un point EPSG:4267 vers 4326 (candidats, base S
 
 Les binaires ne lisent plus `data/proj.db` par le chemin de la machine de build
 (`env!("CARGO_MANIFEST_DIR")` dans `cct` pour `operation_from_name` et dans `cs2cs` pour
-`Catalog::open`) : ils passent par `proj_rs::embedded_proj_db`, la base embarquée. Restent à
-traiter par la branche `claude/proj-data-dirs` (`src/datadir.rs`, non fusionnée) : le
-`--system-directory` de `projsync` (PROJ prend `../share/proj` relatif au module), et les
-`CARGO_MANIFEST_DIR` de `src/gridpath.rs` et `src/network.rs`.
+`Catalog::open`) : ils passent par `proj_rs::embedded_proj_db`, la base embarquée. Le
+`--system-directory` de `projsync` suit PROJ (`projsync.cpp` 147-153) par
+`proj_rs::system_data_directory` : `../share/proj` du module, sinon le dossier compilé
+(`PROJ_RS_DATA_DIR`), sinon le dossier utilisateur (`projsync.cpp` 238-246). La recherche des
+grilles suit `src/datadir.rs` (`docs/PORTING-data-dirs.md`).
 `std::env::current_exe` donne, avec le multi-appel, le chemin de `proj-rs` : un lien
 symbolique est résolu vers sa cible (Linux ; sous macOS non vérifié ici), un lien physique ou
 un lanceur `.cmd` de Windows reste dans `bin/`. Les scripts `dist-cli.*` posent tous les noms à
