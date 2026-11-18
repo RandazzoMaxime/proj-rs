@@ -8,8 +8,9 @@
 //! <karney@alum.mit.edu>, licensed under the MIT/X11 License; see
 //! <https://geographiclib.sourceforge.io/> and `NOTICE.md`.
 //!
-//! The area (`S12`) and the polygon functions are not ported: nothing here asks for them. The
-//! results are the same bits as the C library's on the same C math library (`docs/PORTING-geodesic.md`).
+//! All of `geodesic.c` is ported: the direct and inverse problems with every output, the area
+//! `S12`, the lines, and the polygon functions. The results are the same bits as the C library's on
+//! the same C math library (`docs/PORTING-geodesic.md`).
 //!
 //! The ellipsoid is `a` and the flattening `f`; angles are degrees, lengths are in the unit of
 //! `a`. The ellipsoid of `gnom` and `aeqd` is the unit sphere scaled by the flattening only
@@ -32,27 +33,38 @@ const N_SERIES: usize = 6;
 /// Length of the coefficient arrays: index 0 is unused by the sine series.
 const NC: usize = N_SERIES + 1;
 const NC3X: usize = (N_SERIES * (N_SERIES - 1)) / 2;
+const NC4X: usize = (N_SERIES * (N_SERIES + 1)) / 2;
 
 const CAP_C1: u32 = 1 << 0;
 const CAP_C1P: u32 = 1 << 1;
 const CAP_C2: u32 = 1 << 2;
 const CAP_C3: u32 = 1 << 3;
+const CAP_C4: u32 = 1 << 4;
 const OUT_ALL: u32 = 0x7F80;
 
 // The `geod_mask` of `geodesic.h`: a high bit says what is computed, the low ones which series
 // it needs.
-pub(crate) const GEOD_LATITUDE: u32 = 1 << 7;
-pub(crate) const GEOD_LONGITUDE: u32 = (1 << 8) | CAP_C3;
-pub(crate) const GEOD_AZIMUTH: u32 = 1 << 9;
-pub(crate) const GEOD_DISTANCE: u32 = (1 << 10) | CAP_C1;
-pub(crate) const GEOD_DISTANCE_IN: u32 = (1 << 11) | CAP_C1 | CAP_C1P;
-pub(crate) const GEOD_REDUCEDLENGTH: u32 = (1 << 12) | CAP_C1 | CAP_C2;
-pub(crate) const GEOD_GEODESICSCALE: u32 = (1 << 13) | CAP_C1 | CAP_C2;
+/// The latitude of the second point.
+pub const GEOD_LATITUDE: u32 = 1 << 7;
+/// The longitude of the second point.
+pub const GEOD_LONGITUDE: u32 = (1 << 8) | CAP_C3;
+/// The azimuth at the second point.
+pub const GEOD_AZIMUTH: u32 = 1 << 9;
+/// The distance between the points.
+pub const GEOD_DISTANCE: u32 = (1 << 10) | CAP_C1;
+/// The line can be positioned by a distance.
+pub const GEOD_DISTANCE_IN: u32 = (1 << 11) | CAP_C1 | CAP_C1P;
+/// The reduced length `m12`.
+pub const GEOD_REDUCEDLENGTH: u32 = (1 << 12) | CAP_C1 | CAP_C2;
+/// The geodesic scales `M12` and `M21`.
+pub const GEOD_GEODESICSCALE: u32 = (1 << 13) | CAP_C1 | CAP_C2;
+/// The area `S12` between the geodesic, the equator and the meridians.
+pub const GEOD_AREA: u32 = (1 << 14) | CAP_C4;
 
-/// `GEOD_LONG_UNROLL` of `geod_flags`.
-const GEOD_LONG_UNROLL: u32 = 1 << 15;
+/// `GEOD_LONG_UNROLL` of `geod_flags`: the longitude is not reduced to a turn.
+pub const GEOD_LONG_UNROLL: u32 = 1 << 15;
 /// `GEOD_ARCMODE`.
-const GEOD_ARCMODE: u32 = 1 << 0;
+pub const GEOD_ARCMODE: u32 = 1 << 0;
 
 fn tiny() -> f64 {
     f64::MIN_POSITIVE.sqrt()
@@ -262,23 +274,78 @@ fn sin_series(sinx: f64, cosx: f64, c: &[f64], n: usize) -> f64 {
     2.0 * sinx * cosx * y0
 }
 
+/// `SinCosSeries(FALSE, ..)`: `sum(c[i] * cos((2 i + 1) x), i, 0, n - 1)` by Clenshaw summation.
+fn cos_series(sinx: f64, cosx: f64, c: &[f64], n: usize) -> f64 {
+    let mut index = n;
+    let ar = 2.0 * (cosx - sinx) * (cosx + sinx);
+    let mut y0 = if n & 1 == 1 {
+        index -= 1;
+        c[index]
+    } else {
+        0.0
+    };
+    let mut y1 = 0.0;
+    for _ in 0..n / 2 {
+        index -= 1;
+        y1 = ar * y0 - y1 + c[index];
+        index -= 1;
+        y0 = ar * y1 - y0 + c[index];
+    }
+    cosx * (y0 - y1)
+}
+
+/// IEEE `remainder(x, y)` for `y > 0`: `x - y n` with `n` the integer nearest `x / y`, a tie going
+/// to the even one. Exact, as [`remainder_turn`] is: `fmod` by `2 y` is exact and the correction
+/// subtracts operands within a factor of two of each other.
+fn remainder_by(x: f64, y: f64) -> f64 {
+    let r2 = x % (2.0 * y);
+    let a = r2.abs();
+    let correction = if a <= y / 2.0 {
+        0.0
+    } else if a < y {
+        y
+    } else if a - y < y / 2.0 {
+        y
+    } else {
+        2.0 * y
+    };
+    let r = r2 - correction.copysign(r2);
+    if r == 0.0 {
+        0.0_f64.copysign(x)
+    } else {
+        r
+    }
+}
+
 /// The ellipsoid and the series that depend only on it.
-pub(crate) struct Geodesic {
+#[derive(Clone, Debug)]
+pub struct Geodesic {
     a: f64,
     f: f64,
     f1: f64,
     ep2: f64,
     n: f64,
     b: f64,
+    e2: f64,
+    /// The authalic radius squared.
+    c2: f64,
     etol2: f64,
     a3x: [f64; N_SERIES],
     c3x: [f64; NC3X],
+    c4x: [f64; NC4X],
 }
 
 /// A geodesic line: what depends on the start point and the azimuth.
-pub(crate) struct GeodesicLine {
+#[derive(Clone, Debug)]
+pub struct GeodesicLine {
+    lat1: f64,
     lon1: f64,
+    azi1: f64,
+    salp1: f64,
+    calp1: f64,
+    a: f64,
     b: f64,
+    c2: f64,
     f: f64,
     f1: f64,
     salp0: f64,
@@ -301,20 +368,37 @@ pub(crate) struct GeodesicLine {
     c1pa: [f64; NC],
     c2a: [f64; NC],
     c3a: [f64; N_SERIES],
+    a4: f64,
+    b41: f64,
+    c4a: [f64; N_SERIES],
+    a13: f64,
+    s13: f64,
     caps: u32,
 }
 
 /// What `genposition` computed, for the outputs it was asked for and the line allows.
-pub(crate) struct Position {
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Position {
     /// The outputs actually computed (high bits of `GEOD_*`).
-    pub(crate) computed: u32,
-    pub(crate) lat2: f64,
-    pub(crate) lon2: f64,
-    pub(crate) azi2: f64,
-    pub(crate) s12: f64,
-    pub(crate) m12: f64,
-    pub(crate) big_m12: f64,
-    pub(crate) big_m21: f64,
+    pub computed: u32,
+    /// The latitude of the point, in degrees.
+    pub lat2: f64,
+    /// The longitude of the point, in degrees.
+    pub lon2: f64,
+    /// The azimuth at the point, in degrees.
+    pub azi2: f64,
+    /// The distance from the start, in the unit of `a`.
+    pub s12: f64,
+    /// The reduced length.
+    pub m12: f64,
+    /// The geodesic scale of the point relative to the start.
+    pub big_m12: f64,
+    /// The geodesic scale of the start relative to the point.
+    pub big_m21: f64,
+    /// The area `S12` between the line, the equator and the meridians (`GEOD_AREA`).
+    pub big_s12: f64,
+    /// The arc length in degrees: the one given with `GEOD_ARCMODE`, else the one found.
+    pub a12: f64,
 }
 
 /// The unit vectors and lengths of an inverse solution, in the frame of the points as given.
@@ -326,11 +410,15 @@ struct Inverse {
     s12: f64,
     m12: f64,
     big_m12: f64,
+    big_m21: f64,
+    big_s12: f64,
+    a12: f64,
 }
 
 impl Geodesic {
-    /// `geod_init(&g, a, f)`.
-    pub(crate) fn new(a: f64, f: f64) -> Self {
+    /// `geod_init(&g, a, f)`: the ellipsoid of semi-major axis `a` and flattening `f`.
+    #[must_use]
+    pub fn new(a: f64, f: f64) -> Self {
         let f1 = 1.0 - f;
         let e2 = f * (2.0 - f);
         let ep2 = e2 / sq(f1);
@@ -339,6 +427,19 @@ impl Geodesic {
         // The sig12 threshold for "really short" (see `geodesic.c`).
         let etol2 =
             0.1 * tol2() / (0.001_f64.max(f.abs()) * 1.0_f64.min(1.0 - f / 2.0) / 2.0).sqrt();
+        // The authalic radius squared.
+        let c2 = (sq(a)
+            + sq(b)
+                * if e2 == 0.0 {
+                    1.0
+                } else {
+                    (if e2 > 0.0 {
+                        e2.sqrt().atanh()
+                    } else {
+                        (-e2).sqrt().atan()
+                    }) / e2.abs().sqrt()
+                })
+            / 2.0;
         let mut g = Self {
             a,
             f,
@@ -346,12 +447,16 @@ impl Geodesic {
             ep2,
             n,
             b,
+            e2,
+            c2,
             etol2,
             a3x: [0.0; N_SERIES],
             c3x: [0.0; NC3X],
+            c4x: [0.0; NC4X],
         };
         g.a3_coefficients();
         g.c3_coefficients();
+        g.c4_coefficients();
         g
     }
 
@@ -418,6 +523,57 @@ impl Geodesic {
                 k += 1;
                 o += m + 2;
             }
+        }
+    }
+
+    /// The coefficients `C4[l]` of the Fourier expansion of the area integral.
+    fn c4_coefficients(&mut self) {
+        const COEFF: [f64; 77] = [
+            // C4[0], eps^5, order 0
+            97.0, 15015.0, // eps^4, order 1
+            1088.0, 156.0, 45045.0, // eps^3, order 2
+            -224.0, -4784.0, 1573.0, 45045.0, // eps^2, order 3
+            -10656.0, 14144.0, -4576.0, -858.0, 45045.0, // eps^1, order 4
+            64.0, 624.0, -4576.0, 6864.0, -3003.0, 15015.0, // eps^0, order 5
+            100.0, 208.0, 572.0, 3432.0, -12012.0, 30030.0, 45045.0, // C4[1], eps^5, order 0
+            1.0, 9009.0, // eps^4, order 1
+            -2944.0, 468.0, 135_135.0, // eps^3, order 2
+            5792.0, 1040.0, -1287.0, 135_135.0, // eps^2, order 3
+            5952.0, -11648.0, 9152.0, -2574.0, 135_135.0, // eps^1, order 4
+            -64.0, -624.0, 4576.0, -6864.0, 3003.0, 135_135.0, // C4[2], eps^5, order 0
+            8.0, 10725.0, // eps^4, order 1
+            1856.0, -936.0, 225_225.0, // eps^3, order 2
+            -8448.0, 4992.0, -1144.0, 225_225.0, // eps^2, order 3
+            -1440.0, 4160.0, -4576.0, 1716.0, 225_225.0, // C4[3], eps^5, order 0
+            -136.0, 63063.0, // eps^4, order 1
+            1024.0, -208.0, 105_105.0, // eps^3, order 2
+            3584.0, -3328.0, 1144.0, 315_315.0, // C4[4], eps^5, order 0
+            -128.0, 135_135.0, // eps^4, order 1
+            -2560.0, 832.0, 405_405.0, // C4[5], eps^5, order 0
+            128.0, 99099.0,
+        ];
+        let mut o = 0;
+        let mut k = 0;
+        for l in 0..N_SERIES {
+            for j in (l..N_SERIES).rev() {
+                let m = N_SERIES - j - 1;
+                let degree = i32::try_from(m).expect("order of a polynomial");
+                self.c4x[k] = polyvalx(degree, &COEFF[o..], self.n) / COEFF[o + m + 1];
+                k += 1;
+                o += m + 2;
+            }
+        }
+    }
+
+    /// `C4f`: the coefficients `c[0]` to `c[nC4 - 1]` of the area series.
+    fn c4f(&self, eps: f64, c: &mut [f64]) {
+        let mut mult = 1.0;
+        let mut o = 0;
+        for l in 0..N_SERIES {
+            let m = N_SERIES - l - 1;
+            c[l] = mult * polyvalx(i32::try_from(m).expect("order"), &self.c4x[o..], eps);
+            o += m + 1;
+            mult *= eps;
         }
     }
 
@@ -645,6 +801,7 @@ struct Lambda {
     p1: Sig,
     p2: Sig,
     eps: f64,
+    domg12: f64,
     dlam12: f64,
 }
 
@@ -881,6 +1038,7 @@ impl Geodesic {
             p1,
             p2,
             eps,
+            domg12,
             dlam12,
         }
     }
@@ -896,6 +1054,10 @@ impl Geodesic {
         let (mut calp1, mut salp1, mut calp2, mut salp2) = (0.0, 0.0, 0.0, 0.0);
         let mut ca = [0.0; NC];
         let outmask = want & OUT_ALL;
+        let mut a12 = 0.0;
+        // somg12 == 2 marks that it needs to be calculated.
+        let mut omg12 = 0.0;
+        let (mut somg12, mut comg12) = (2.0, 0.0);
         let scale = outmask & GEOD_GEODESICSCALE != 0;
 
         let (mut lon12, mut lon12s) = ang_diff(lon1, lon2);
@@ -954,7 +1116,7 @@ impl Geodesic {
             salp2 = 0.0;
             let (ssig1, csig1) = (sbet1, calp1 * cbet1);
             let (ssig2, csig2) = (sbet2, calp2 * cbet2);
-            let sig12 = (0.0_f64.max(csig1 * ssig2 - ssig1 * csig2) + 0.0)
+            let mut sig12 = (0.0_f64.max(csig1 * ssig2 - ssig1 * csig2) + 0.0)
                 .atan2(csig1 * csig2 + ssig1 * ssig2);
             let l = self.lengths(
                 self.n,
@@ -981,11 +1143,13 @@ impl Geodesic {
             }
             if sig12 < tol2() || m12x >= 0.0 {
                 if sig12 < 3.0 * tiny() || (sig12 < TOL0 && (s12x < 0.0 || m12x < 0.0)) {
+                    sig12 = 0.0;
                     m12x = 0.0;
                     s12x = 0.0;
                 }
                 m12x *= self.b;
                 s12x *= self.b;
+                a12 = sig12 / DEGREE;
             } else {
                 meridian = false;
             }
@@ -999,11 +1163,13 @@ impl Geodesic {
             salp2 = 1.0;
             s12x = self.a * lam12;
             let sig12 = lam12 / self.f1;
+            omg12 = sig12;
             m12x = self.b * sig12.sin();
             if scale {
                 big_m12 = sig12.cos();
                 big_m21 = big_m12;
             }
+            a12 = lon12 / self.f1;
         } else if !meridian {
             let start = self.inverse_start(
                 sbet1, cbet1, dn1, sbet2, cbet2, dn2, lam12, slam12, clam12, &mut ca,
@@ -1022,6 +1188,8 @@ impl Geodesic {
                     big_m12 = (sig12 / dnm).cos();
                     big_m21 = big_m12;
                 }
+                a12 = sig12 / DEGREE;
+                omg12 = lam12 / (self.f1 * dnm);
             } else {
                 // Newton's method on lambda12(alp1) - lam12 = 0, with a bracketing range.
                 let mut numit = 0_u32;
@@ -1100,6 +1268,14 @@ impl Geodesic {
                 }
                 m12x *= self.b;
                 s12x *= self.b;
+                a12 = lam.sig12 / DEGREE;
+                if outmask & GEOD_AREA != 0 {
+                    // omg12 = lam12 - domg12.
+                    let sdomg12 = lam.domg12.sin();
+                    let cdomg12 = lam.domg12.cos();
+                    somg12 = slam12 * cdomg12 - clam12 * sdomg12;
+                    comg12 = clam12 * cdomg12 + slam12 * sdomg12;
+                }
             }
         }
 
@@ -1108,6 +1284,62 @@ impl Geodesic {
         }
         if outmask & GEOD_REDUCEDLENGTH != 0 {
             m12 = 0.0 + m12x;
+        }
+
+        let mut big_s12 = 0.0;
+        if outmask & GEOD_AREA != 0 {
+            // From Lambda12: sin(alp1) cos(bet1) = sin(alp0).
+            let salp0 = salp1 * cbet1;
+            let calp0 = calp1.hypot(salp1 * sbet1);
+            if calp0 != 0.0 && salp0 != 0.0 {
+                // From Lambda12: tan(bet) = tan(sig) cos(alp).
+                let (mut ssig1, mut csig1) = (sbet1, calp1 * cbet1);
+                let (mut ssig2, mut csig2) = (sbet2, calp2 * cbet2);
+                let k2 = sq(calp0) * self.ep2;
+                let eps = k2 / (2.0 * (1.0 + (1.0 + k2).sqrt()) + k2);
+                // The multiplier is a^2 e^2 cos(alpha0) sin(alpha0).
+                let a4 = sq(self.a) * calp0 * salp0 * self.e2;
+                norm2(&mut ssig1, &mut csig1);
+                norm2(&mut ssig2, &mut csig2);
+                self.c4f(eps, &mut ca);
+                let b41 = cos_series(ssig1, csig1, &ca, N_SERIES);
+                let b42 = cos_series(ssig2, csig2, &ca, N_SERIES);
+                big_s12 = a4 * (b42 - b41);
+            }
+            // On the equator sig1 and sig2 are indeterminate: no series term.
+
+            if !meridian && somg12 == 2.0 {
+                somg12 = omg12.sin();
+                comg12 = omg12.cos();
+            }
+
+            let alp12 = if !meridian
+                // omg12 < 3/4 pi: the longitude difference is not too big.
+                && comg12 > -0.7071
+                && sbet2 - sbet1 < 1.75
+            {
+                // tan(Gamma/2) = tan(omg12/2) (tan(bet1/2) + tan(bet2/2)) / (1 + tan(bet1/2)
+                // tan(bet2/2)), with tan(x/2) = sin(x) / (1 + cos(x)).
+                let domg12 = 1.0 + comg12;
+                let dbet1 = 1.0 + cbet1;
+                let dbet2 = 1.0 + cbet2;
+                2.0 * (somg12 * (sbet1 * dbet2 + sbet2 * dbet1))
+                    .atan2(domg12 * (sbet1 * sbet2 + dbet1 * dbet2))
+            } else {
+                // alp12 = alp2 - alp1, used in atan2 so no need to normalize.
+                let mut salp12 = salp2 * calp1 - calp2 * salp1;
+                let mut calp12 = calp2 * calp1 + salp2 * salp1;
+                // With alp1 = +/-180 and alp2 = 0 the sign attached to 0 must give alp12 = -180.
+                if salp12 == 0.0 && calp12 < 0.0 {
+                    salp12 = tiny() * calp1;
+                    calp12 = -1.0;
+                }
+                salp12.atan2(calp12)
+            };
+            big_s12 += self.c2 * alp12;
+            big_s12 *= swapp * lonsign * latsign;
+            // Convert -0 to 0.
+            big_s12 += 0.0;
         }
 
         // Back to the azimuths of the points as given: undo the swap and the signs.
@@ -1131,6 +1363,9 @@ impl Geodesic {
             s12,
             m12,
             big_m12,
+            big_m21,
+            big_s12,
+            a12,
         }
     }
 }
@@ -1146,12 +1381,20 @@ fn nothing_computed() -> Position {
         m12: 0.0,
         big_m12: 0.0,
         big_m21: 0.0,
+        big_s12: 0.0,
+        a12: f64::NAN,
     }
 }
 
 impl GeodesicLine {
     /// `geod_lineinit_int`: the line from `(lat1, lon1)` with the azimuth `(salp1, calp1)`.
-    fn start(g: &Geodesic, lat1: f64, lon1: f64, salp1: f64, calp1: f64, caps: u32) -> Self {
+    fn start(
+        g: &Geodesic,
+        lat1: f64,
+        lon1: f64,
+        (azi1, salp1, calp1): (f64, f64, f64),
+        caps: u32,
+    ) -> Self {
         let caps = (if caps != 0 {
             caps
         } else {
@@ -1179,8 +1422,14 @@ impl GeodesicLine {
         let k2 = sq(calp0) * g.ep2;
         let eps = k2 / (2.0 * (1.0 + (1.0 + k2).sqrt()) + k2);
         let mut line = Self {
+            lat1,
             lon1,
+            azi1,
+            salp1,
+            calp1,
+            a: g.a,
             b: g.b,
+            c2: g.c2,
             f: g.f,
             f1: g.f1,
             salp0,
@@ -1203,6 +1452,11 @@ impl GeodesicLine {
             c1pa: [0.0; NC],
             c2a: [0.0; NC],
             c3a: [0.0; N_SERIES],
+            a4: 0.0,
+            b41: 0.0,
+            c4a: [0.0; N_SERIES],
+            a13: f64::NAN,
+            s13: f64::NAN,
             caps,
         };
         if caps & CAP_C1 != 0 {
@@ -1227,6 +1481,12 @@ impl GeodesicLine {
             line.a3c = -line.f * line.salp0 * g.a3f(eps);
             line.b31 = sin_series(line.ssig1, line.csig1, &line.c3a, N_SERIES - 1);
         }
+        if caps & CAP_C4 != 0 {
+            g.c4f(eps, &mut line.c4a);
+            // The multiplier is a^2 e^2 cos(alpha0) sin(alpha0).
+            line.a4 = sq(line.a) * line.calp0 * line.salp0 * g.e2;
+            line.b41 = cos_series(line.ssig1, line.csig1, &line.c4a, N_SERIES);
+        }
         line
     }
 
@@ -1234,7 +1494,7 @@ impl GeodesicLine {
     pub(crate) fn new(g: &Geodesic, lat1: f64, lon1: f64, azi1: f64, caps: u32) -> Self {
         let azi1 = ang_normalize(azi1);
         let (salp1, calp1) = sincosdx(ang_round(azi1));
-        Self::start(g, lat1, lon1, salp1, calp1, caps)
+        Self::start(g, lat1, lon1, (azi1, salp1, calp1), caps)
     }
 
     /// `geod_genposition`: the point `s12_a12` along the line (a distance, or an arc in degrees
@@ -1242,6 +1502,7 @@ impl GeodesicLine {
     pub(crate) fn genposition(&self, flags: u32, s12_a12: f64, want: u32) -> Position {
         let mut out = nothing_computed();
         let outmask = want & self.caps & OUT_ALL;
+        out.a12 = f64::NAN;
         let arc = flags & GEOD_ARCMODE != 0;
         if !(arc || self.caps & (GEOD_DISTANCE_IN & OUT_ALL) != 0) {
             return out;
@@ -1282,6 +1543,7 @@ impl GeodesicLine {
             csig12 = cs;
         }
 
+        out.a12 = if arc { s12_a12 } else { sig12 / DEGREE };
         let ssig2 = self.ssig1 * csig12 + self.csig1 * ssig12;
         let mut csig2 = self.csig1 * csig12 - self.ssig1 * ssig12;
         let dn2 = (1.0 + self.k2 * sq(ssig2)).sqrt();
@@ -1349,6 +1611,27 @@ impl GeodesicLine {
                 out.big_m12 = csig12 + (t * ssig2 - csig2 * j12) * self.ssig1 / self.dn1;
                 out.big_m21 = csig12 - (t * self.ssig1 - self.csig1 * j12) * ssig2 / dn2;
             }
+        }
+        if outmask & GEOD_AREA != 0 {
+            let b42 = cos_series(ssig2, csig2, &self.c4a, N_SERIES);
+            let (salp12, calp12);
+            if self.calp0 == 0.0 || self.salp0 == 0.0 {
+                // alp12 = alp2 - alp1, used in atan2 so no need to normalize.
+                salp12 = salp2 * self.calp1 - calp2 * self.salp1;
+                calp12 = calp2 * self.calp1 + salp2 * self.salp1;
+            } else {
+                // tan(alp2 - alp1) = calp0 salp0 (csig1 - csig2) / (salp0^2 + calp0^2 csig1 csig2),
+                // with csig1 - csig2 written so that it does not cancel.
+                salp12 = self.calp0
+                    * self.salp0
+                    * (if csig12 <= 0.0 {
+                        self.csig1 * (1.0 - csig12) + ssig12 * self.ssig1
+                    } else {
+                        ssig12 * (self.csig1 * ssig12 / (1.0 + csig12) + self.ssig1)
+                    });
+                calp12 = sq(self.salp0) + sq(self.calp0) * self.csig1 * csig2;
+            }
+            out.big_s12 = self.c2 * salp12.atan2(calp12) + self.a4 * (b42 - self.b41);
         }
         out.computed = outmask;
         out
@@ -1451,6 +1734,651 @@ impl GeodesicLine {
             position.m12,
             position.big_m12,
         )
+    }
+}
+
+/// What `geod_geninverse` computed: the outputs asked for, the others stay zero.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct InverseSolution {
+    /// The arc length in degrees, on the auxiliary sphere.
+    pub a12: f64,
+    /// The distance between the points, in the unit of `a`.
+    pub s12: f64,
+    /// The azimuth at point 1, in degrees.
+    pub azi1: f64,
+    /// The azimuth at point 2, in degrees.
+    pub azi2: f64,
+    /// The reduced length.
+    pub m12: f64,
+    /// The geodesic scale of point 2 relative to point 1.
+    pub big_m12: f64,
+    /// The geodesic scale of point 1 relative to point 2.
+    pub big_m21: f64,
+    /// The area between the geodesic and the equator, in the unit of `a` squared.
+    pub big_s12: f64,
+}
+
+impl Geodesic {
+    /// The WGS 84 ellipsoid, `a = 6378137` and `f = 1 / 298.257223563`.
+    #[must_use]
+    pub fn wgs84() -> Self {
+        Self::new(6_378_137.0, 1.0 / 298.257_223_563)
+    }
+
+    /// The semi-major axis.
+    #[must_use]
+    pub fn equatorial_radius(&self) -> f64 {
+        self.a
+    }
+
+    /// The flattening.
+    #[must_use]
+    pub fn flattening(&self) -> f64 {
+        self.f
+    }
+
+    /// The area of the whole ellipsoid, `4 pi c2`, in the unit of `a` squared.
+    #[must_use]
+    pub fn ellipsoid_area(&self) -> f64 {
+        4.0 * PI * self.c2
+    }
+
+    /// `geod_geninverse`: the inverse problem with the outputs in `want` (a union of `GEOD_*`).
+    #[must_use]
+    pub fn gen_inverse(
+        &self,
+        lat1: f64,
+        lon1: f64,
+        lat2: f64,
+        lon2: f64,
+        want: u32,
+    ) -> InverseSolution {
+        let solution = self.inverse_solution(lat1, lon1, lat2, lon2, want);
+        InverseSolution {
+            a12: solution.a12,
+            s12: solution.s12,
+            azi1: atan2dx(solution.salp1, solution.calp1),
+            azi2: atan2dx(solution.salp2, solution.calp2),
+            m12: solution.m12,
+            big_m12: solution.big_m12,
+            big_m21: solution.big_m21,
+            big_s12: solution.big_s12,
+        }
+    }
+
+    /// `geod_gendirect`: the direct problem. `flags` is `GEOD_ARCMODE` and `GEOD_LONG_UNROLL`;
+    /// `s12_a12` is the distance, or the arc in degrees with `GEOD_ARCMODE`.
+    #[must_use]
+    pub fn gen_direct(
+        &self,
+        lat1: f64,
+        lon1: f64,
+        azi1: f64,
+        flags: u32,
+        s12_a12: f64,
+        want: u32,
+    ) -> Position {
+        // The distance capability is supplied when the problem is given as a distance.
+        let caps = want
+            | if flags & GEOD_ARCMODE != 0 {
+                0
+            } else {
+                GEOD_DISTANCE_IN
+            };
+        GeodesicLine::new(self, lat1, lon1, azi1, caps).genposition(flags, s12_a12, want)
+    }
+
+    /// `geod_inverseline`: the line through two points, with its arc and distance to point 2 set.
+    #[must_use]
+    pub fn inverse_line(
+        &self,
+        lat1: f64,
+        lon1: f64,
+        lat2: f64,
+        lon2: f64,
+        caps: u32,
+    ) -> GeodesicLine {
+        let solution = self.inverse_solution(lat1, lon1, lat2, lon2, 0);
+        let azi1 = atan2dx(solution.salp1, solution.calp1);
+        let mut caps = if caps != 0 {
+            caps
+        } else {
+            GEOD_DISTANCE_IN | GEOD_LONGITUDE
+        };
+        // So that the arc can be converted to a distance.
+        if caps & (OUT_ALL & GEOD_DISTANCE_IN) != 0 {
+            caps |= GEOD_DISTANCE;
+        }
+        let mut line = GeodesicLine::start(
+            self,
+            lat1,
+            lon1,
+            (azi1, solution.salp1, solution.calp1),
+            caps,
+        );
+        line.set_arc(solution.a12);
+        line
+    }
+
+    /// `geod_gendirectline`: the line from a point and an azimuth, with its end set by a distance
+    /// or, with `GEOD_ARCMODE` in `flags`, an arc in degrees.
+    #[must_use]
+    pub fn gen_direct_line(
+        &self,
+        lat1: f64,
+        lon1: f64,
+        azi1: f64,
+        flags: u32,
+        s12_a12: f64,
+        caps: u32,
+    ) -> GeodesicLine {
+        let mut line = GeodesicLine::new(self, lat1, lon1, azi1, caps);
+        line.gen_set_distance(flags, s12_a12);
+        line
+    }
+
+    /// `geod_directline`: [`Geodesic::gen_direct_line`] with a distance.
+    #[must_use]
+    pub fn direct_line(
+        &self,
+        lat1: f64,
+        lon1: f64,
+        azi1: f64,
+        s12: f64,
+        caps: u32,
+    ) -> GeodesicLine {
+        self.gen_direct_line(lat1, lon1, azi1, 0, s12, caps)
+    }
+
+    /// `geod_polygonarea`: the area and the perimeter of the polygon through `points`, given as
+    /// `(latitude, longitude)` in degrees, the area counter-clockwise positive in `(-A/2, A/2]`.
+    #[must_use]
+    pub fn polygon_area(&self, points: &[(f64, f64)]) -> (f64, f64) {
+        let mut polygon = Polygon::new(PolygonKind::Polygon);
+        for &(lat, lon) in points {
+            polygon.add_point(self, lat, lon);
+        }
+        let totals = polygon.compute(self, Orientation::CounterClockwise, AreaRange::Signed);
+        (totals.area.unwrap_or(0.0), totals.perimeter)
+    }
+}
+
+impl GeodesicLine {
+    /// `geod_lineinit_int` for a line the caller built: the start point and azimuth.
+    #[must_use]
+    pub fn from_start(g: &Geodesic, lat1: f64, lon1: f64, azi1: f64, caps: u32) -> Self {
+        Self::new(g, lat1, lon1, azi1, caps)
+    }
+
+    /// `geod_setdistance`: the distance to point 3 and its arc.
+    pub fn set_distance(&mut self, s13: f64) {
+        self.s13 = s13;
+        self.a13 = self.genposition(0, s13, 0).a12;
+    }
+
+    fn set_arc(&mut self, a13: f64) {
+        self.a13 = a13;
+        self.s13 = f64::NAN;
+        let position = self.genposition(GEOD_ARCMODE, a13, GEOD_DISTANCE);
+        if position.computed & GEOD_DISTANCE != 0 {
+            self.s13 = position.s12;
+        }
+    }
+
+    /// `geod_gensetdistance`: the end of the line as a distance or, with `GEOD_ARCMODE`, an arc.
+    pub fn gen_set_distance(&mut self, flags: u32, s13_a13: f64) {
+        if flags & GEOD_ARCMODE != 0 {
+            self.set_arc(s13_a13);
+        } else {
+            self.set_distance(s13_a13);
+        }
+    }
+
+    /// The latitude of the start point, in degrees.
+    #[must_use]
+    pub fn latitude(&self) -> f64 {
+        self.lat1
+    }
+
+    /// The longitude of the start point, in degrees.
+    #[must_use]
+    pub fn longitude(&self) -> f64 {
+        self.lon1
+    }
+
+    /// The azimuth at the start point, in degrees.
+    #[must_use]
+    pub fn azimuth(&self) -> f64 {
+        self.azi1
+    }
+
+    /// The distance to the set end of the line (`NaN` when none is set).
+    #[must_use]
+    pub fn distance(&self) -> f64 {
+        self.s13
+    }
+
+    /// The arc in degrees to the set end of the line (`NaN` when none is set).
+    #[must_use]
+    pub fn arc(&self) -> f64 {
+        self.a13
+    }
+
+    /// The capabilities of the line.
+    #[must_use]
+    pub fn capabilities(&self) -> u32 {
+        self.caps
+    }
+
+    /// `geod_genposition` as a public call.
+    #[must_use]
+    pub fn gen_position(&self, flags: u32, s12_a12: f64, want: u32) -> Position {
+        self.genposition(flags, s12_a12, want)
+    }
+}
+
+/// Whether a [`Polygon`] is closed (and has an area) or an open polyline (a perimeter only).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PolygonKind {
+    /// A closed polygon: the area and the perimeter.
+    Polygon,
+    /// A polyline: the length only.
+    Polyline,
+}
+
+/// The orientation that gives a positive area.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Orientation {
+    /// Counter-clockwise is positive, `reverse = FALSE` in C.
+    CounterClockwise,
+    /// Clockwise is positive, `reverse = TRUE` in C.
+    Clockwise,
+}
+
+/// The range the area is put in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AreaRange {
+    /// `(-A/2, A/2]` where `A` is the area of the ellipsoid, `sign = TRUE` in C.
+    Signed,
+    /// `[0, A)`, `sign = FALSE` in C.
+    Unsigned,
+}
+
+/// What [`Polygon::compute`], [`Polygon::test_point`] and [`Polygon::test_edge`] return.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PolygonTotals {
+    /// The number of points of the polygon, the one tested included.
+    pub num: u32,
+    /// The area, in the unit of `a` squared; none for a polyline.
+    pub area: Option<f64>,
+    /// The perimeter, or the length of the polyline.
+    pub perimeter: f64,
+}
+
+/// `struct geod_polygon`: the points of a polygon or polyline, added one at a time.
+#[derive(Clone, Debug)]
+pub struct Polygon {
+    polyline: bool,
+    lat0: f64,
+    lon0: f64,
+    lat: f64,
+    lon: f64,
+    perimeter: [f64; 2],
+    area: [f64; 2],
+    num: u32,
+    crossings: i32,
+}
+
+/// `accadd`: add `y` to an accumulator.
+fn acc_add(s: &mut [f64; 2], y: f64) {
+    let (z, u) = sumx(y, s[1]);
+    let (s0, s1) = sumx(z, s[0]);
+    s[0] = s0;
+    s[1] = s1;
+    if s[0] == 0.0 {
+        s[0] = u;
+    } else {
+        s[1] += u;
+    }
+}
+
+/// `accsum`: the accumulator plus `y`, without changing it.
+fn acc_sum(s: &[f64; 2], y: f64) -> f64 {
+    let mut t = *s;
+    acc_add(&mut t, y);
+    t[0]
+}
+
+/// `accrem`: reduce to `[-y/2, y/2]`.
+fn acc_rem(s: &mut [f64; 2], y: f64) {
+    s[0] = remainder_by(s[0], y);
+    acc_add(s, 0.0);
+}
+
+/// `transit`: 1 or -1 when the edge crosses the prime meridian eastward or westward, else 0.
+fn transit(lon1: f64, lon2: f64) -> i32 {
+    // The longitude difference the way the inverse problem computes it.
+    let lon12 = ang_diff(lon1, lon2).0;
+    let lon1 = ang_normalize(lon1);
+    let lon2 = ang_normalize(lon2);
+    if lon12 > 0.0 && ((lon1 < 0.0 && lon2 >= 0.0) || (lon1 > 0.0 && lon2 == 0.0)) {
+        1
+    } else if lon12 < 0.0 && lon1 >= 0.0 && lon2 < 0.0 {
+        -1
+    } else {
+        0
+    }
+}
+
+/// `transitdirect`: the parity of `floor(lon2 / 360) - floor(lon1 / 360)`, computed exactly.
+fn transit_direct(lon1: f64, lon2: f64) -> i32 {
+    let lon1 = remainder_by(lon1, 2.0 * TD);
+    let lon2 = remainder_by(lon2, 2.0 * TD);
+    i32::from(!(lon2 >= 0.0 && lon2 < TD)) - i32::from(!(lon1 >= 0.0 && lon1 < TD))
+}
+
+/// `areareduceA`: the area of a closed polygon, from its accumulator.
+fn area_reduce_acc(
+    area: &mut [f64; 2],
+    area0: f64,
+    crossings: i32,
+    orientation: Orientation,
+    range: AreaRange,
+) -> f64 {
+    acc_rem(area, area0);
+    if crossings & 1 != 0 {
+        acc_add(area, (if area[0] < 0.0 { 1.0 } else { -1.0 }) * area0 / 2.0);
+    }
+    // The area is in the clockwise sense; counter-clockwise is the default convention.
+    if orientation == Orientation::CounterClockwise {
+        area[0] = -area[0];
+        area[1] = -area[1];
+    }
+    match range {
+        AreaRange::Signed => {
+            if area[0] > area0 / 2.0 {
+                acc_add(area, -area0);
+            } else if area[0] <= -area0 / 2.0 {
+                acc_add(area, area0);
+            }
+        }
+        AreaRange::Unsigned => {
+            if area[0] >= area0 {
+                acc_add(area, -area0);
+            } else if area[0] < 0.0 {
+                acc_add(area, area0);
+            }
+        }
+    }
+    0.0 + area[0]
+}
+
+/// `areareduceB`: the same for a plain sum, as the `test_*` calls have.
+fn area_reduce(
+    area: f64,
+    area0: f64,
+    crossings: i32,
+    orientation: Orientation,
+    range: AreaRange,
+) -> f64 {
+    let mut area = remainder_by(area, area0);
+    if crossings & 1 != 0 {
+        area += (if area < 0.0 { 1.0 } else { -1.0 }) * area0 / 2.0;
+    }
+    if orientation == Orientation::CounterClockwise {
+        area *= -1.0;
+    }
+    match range {
+        AreaRange::Signed => {
+            if area > area0 / 2.0 {
+                area -= area0;
+            } else if area <= -area0 / 2.0 {
+                area += area0;
+            }
+        }
+        AreaRange::Unsigned => {
+            if area >= area0 {
+                area -= area0;
+            } else if area < 0.0 {
+                area += area0;
+            }
+        }
+    }
+    0.0 + area
+}
+
+impl Polygon {
+    /// `geod_polygon_init`.
+    #[must_use]
+    pub fn new(kind: PolygonKind) -> Self {
+        Self {
+            polyline: kind == PolygonKind::Polyline,
+            lat0: f64::NAN,
+            lon0: f64::NAN,
+            lat: f64::NAN,
+            lon: f64::NAN,
+            perimeter: [0.0; 2],
+            area: [0.0; 2],
+            num: 0,
+            crossings: 0,
+        }
+    }
+
+    /// `geod_polygon_clear`: back to no point.
+    pub fn clear(&mut self) {
+        let kind = if self.polyline {
+            PolygonKind::Polyline
+        } else {
+            PolygonKind::Polygon
+        };
+        *self = Self::new(kind);
+    }
+
+    /// `geod_polygon_addpoint`: the next vertex, in degrees.
+    pub fn add_point(&mut self, g: &Geodesic, lat: f64, lon: f64) {
+        if self.num == 0 {
+            self.lat0 = lat;
+            self.lat = lat;
+            self.lon0 = lon;
+            self.lon = lon;
+        } else {
+            let want = GEOD_DISTANCE | if self.polyline { 0 } else { GEOD_AREA };
+            let edge = g.gen_inverse(self.lat, self.lon, lat, lon, want);
+            acc_add(&mut self.perimeter, edge.s12);
+            if !self.polyline {
+                acc_add(&mut self.area, edge.big_s12);
+                self.crossings += transit(self.lon, lon);
+            }
+            self.lat = lat;
+            self.lon = lon;
+        }
+        self.num += 1;
+    }
+
+    /// `geod_polygon_addedge`: the next vertex given by an azimuth and a distance from the last
+    /// one. Nothing happens before the first point.
+    pub fn add_edge(&mut self, g: &Geodesic, azi: f64, s: f64) {
+        if self.num == 0 {
+            return;
+        }
+        let want = GEOD_LATITUDE | GEOD_LONGITUDE | if self.polyline { 0 } else { GEOD_AREA };
+        let end = g.gen_direct(self.lat, self.lon, azi, GEOD_LONG_UNROLL, s, want);
+        acc_add(&mut self.perimeter, s);
+        if !self.polyline {
+            acc_add(&mut self.area, end.big_s12);
+            self.crossings += transit_direct(self.lon, end.lon2);
+        }
+        self.lat = end.lat2;
+        self.lon = end.lon2;
+        self.num += 1;
+    }
+
+    /// `geod_polygon_compute`: the area and perimeter of the polygon closed on its first point.
+    #[must_use]
+    pub fn compute(
+        &self,
+        g: &Geodesic,
+        orientation: Orientation,
+        range: AreaRange,
+    ) -> PolygonTotals {
+        if self.num < 2 {
+            return PolygonTotals {
+                num: self.num,
+                area: (!self.polyline).then_some(0.0),
+                perimeter: 0.0,
+            };
+        }
+        if self.polyline {
+            return PolygonTotals {
+                num: self.num,
+                area: None,
+                perimeter: self.perimeter[0],
+            };
+        }
+        let closing = g.gen_inverse(
+            self.lat,
+            self.lon,
+            self.lat0,
+            self.lon0,
+            GEOD_DISTANCE | GEOD_AREA,
+        );
+        let perimeter = acc_sum(&self.perimeter, closing.s12);
+        let mut total = self.area;
+        acc_add(&mut total, closing.big_s12);
+        let area = area_reduce_acc(
+            &mut total,
+            g.ellipsoid_area(),
+            self.crossings + transit(self.lon, self.lon0),
+            orientation,
+            range,
+        );
+        PolygonTotals {
+            num: self.num,
+            area: Some(area),
+            perimeter,
+        }
+    }
+
+    /// `geod_polygon_testpoint`: what [`Polygon::compute`] gives if the point were added.
+    #[must_use]
+    pub fn test_point(
+        &self,
+        g: &Geodesic,
+        lat: f64,
+        lon: f64,
+        orientation: Orientation,
+        range: AreaRange,
+    ) -> PolygonTotals {
+        let num = self.num + 1;
+        if num == 1 {
+            return PolygonTotals {
+                num,
+                area: (!self.polyline).then_some(0.0),
+                perimeter: 0.0,
+            };
+        }
+        let mut perimeter = self.perimeter[0];
+        let mut tempsum = if self.polyline { 0.0 } else { self.area[0] };
+        let mut crossings = self.crossings;
+        for i in 0..(if self.polyline { 1 } else { 2 }) {
+            let (from_lat, from_lon) = if i == 0 {
+                (self.lat, self.lon)
+            } else {
+                (lat, lon)
+            };
+            let (to_lat, to_lon) = if i != 0 {
+                (self.lat0, self.lon0)
+            } else {
+                (lat, lon)
+            };
+            let want = GEOD_DISTANCE | if self.polyline { 0 } else { GEOD_AREA };
+            let edge = g.gen_inverse(from_lat, from_lon, to_lat, to_lon, want);
+            perimeter += edge.s12;
+            if !self.polyline {
+                tempsum += edge.big_s12;
+                crossings += transit(from_lon, to_lon);
+            }
+        }
+        if self.polyline {
+            return PolygonTotals {
+                num,
+                area: None,
+                perimeter,
+            };
+        }
+        PolygonTotals {
+            num,
+            area: Some(area_reduce(
+                tempsum,
+                g.ellipsoid_area(),
+                crossings,
+                orientation,
+                range,
+            )),
+            perimeter,
+        }
+    }
+
+    /// `geod_polygon_testedge`: what [`Polygon::compute`] gives if the edge were added. With no
+    /// starting point the result is `NaN` and `num` is 0.
+    #[must_use]
+    pub fn test_edge(
+        &self,
+        g: &Geodesic,
+        azi: f64,
+        s: f64,
+        orientation: Orientation,
+        range: AreaRange,
+    ) -> PolygonTotals {
+        let num = self.num + 1;
+        if num == 1 {
+            return PolygonTotals {
+                num: 0,
+                area: (!self.polyline).then_some(f64::NAN),
+                perimeter: f64::NAN,
+            };
+        }
+        let mut perimeter = self.perimeter[0] + s;
+        if self.polyline {
+            return PolygonTotals {
+                num,
+                area: None,
+                perimeter,
+            };
+        }
+        let mut tempsum = self.area[0];
+        let mut crossings = self.crossings;
+        let end = g.gen_direct(
+            self.lat,
+            self.lon,
+            azi,
+            GEOD_LONG_UNROLL,
+            s,
+            GEOD_LATITUDE | GEOD_LONGITUDE | GEOD_AREA,
+        );
+        tempsum += end.big_s12;
+        crossings += transit_direct(self.lon, end.lon2);
+        let closing = g.gen_inverse(
+            end.lat2,
+            end.lon2,
+            self.lat0,
+            self.lon0,
+            GEOD_DISTANCE | GEOD_AREA,
+        );
+        perimeter += closing.s12;
+        tempsum += closing.big_s12;
+        crossings += transit(end.lon2, self.lon0);
+        PolygonTotals {
+            num,
+            area: Some(area_reduce(
+                tempsum,
+                g.ellipsoid_area(),
+                crossings,
+                orientation,
+                range,
+            )),
+            perimeter,
+        }
     }
 }
 

@@ -72,7 +72,7 @@ mod fmath;
 mod geo_impl;
 #[doc(hidden)]
 pub mod geod;
-mod geodesic;
+pub mod geodesic;
 #[doc(hidden)]
 pub mod gie;
 mod gie_api;

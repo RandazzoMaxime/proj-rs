@@ -21,11 +21,37 @@ La géodésique sert aux outils `geod` et `invgeod` (`src/geod.rs`) et aux proje
 | `A1m1f`, `A2m1f`, `C1f`, `C1pf`, `C2f`, `A3f`, `C3f` | les fonctions du même nom, `fourier` pour les trois `C` |
 | `sumx`, `AngNormalize`, `AngDiff`, `AngRound`, `LatFix`, `sincosdx`, `sincosde`, `atan2dx` | les fonctions du même nom |
 
-**Non porté**, parce que rien ne l'appelle : l'aire `S12` (`C4coeff`, `C4f`, la série cosinus de
-`SinCosSeries`, les parties `GEOD_AREA` de `lineinit`, `genposition` et `geninverse`), les fonctions
-de polygone (`geod_polygon_*`, `geod_polygonarea`), `geod_inverseline`, `geod_directline`. Le
-rayon authalique `c2` qui ne sert qu'à l'aire n'est pas calculé non plus. Un appelant qui veut l'aire
-la portera avec les tables de `C4coeff`.
+Le reste de `geodesic.c` est porté lui aussi, appelé par PROJ ou non : l'aire `S12`
+(`C4coeff`, `C4f`, la série cosinus de `SinCosSeries`, les parties `GEOD_AREA` de `lineinit`,
+`genposition` et `geninverse`, le rayon authalique `c2`), les fonctions de polygone, et les lignes
+construites par `geod_inverseline`, `geod_directline` et `geod_gendirectline`.
+
+| C (`geodesic.c`) | Rust (`proj_rs::geodesic`) |
+|---|---|
+| `geod_geninverse` | `Geodesic::gen_inverse` (toutes les sorties : `a12`, `s12`, azimuts, `m12`, `M12`, `M21`, `S12`) |
+| `geod_gendirect` | `Geodesic::gen_direct` (`GEOD_ARCMODE`, `GEOD_LONG_UNROLL`) |
+| `geod_inverseline` | `Geodesic::inverse_line` |
+| `geod_directline`, `geod_gendirectline` | `Geodesic::direct_line`, `gen_direct_line` |
+| `geod_setdistance`, `geod_gensetdistance` | `GeodesicLine::set_distance`, `gen_set_distance` |
+| `geod_genposition` | `GeodesicLine::gen_position` |
+| `geod_polygon_init`, `_clear`, `_addpoint`, `_addedge` | `Polygon::new`, `clear`, `add_point`, `add_edge` |
+| `geod_polygon_compute`, `_testpoint`, `_testedge` | `Polygon::compute`, `test_point`, `test_edge` |
+| `geod_polygonarea` | `Geodesic::polygon_area` (et `Geodesic::wgs84()`) |
+| `accini`, `acccopy`, `accadd`, `accsum`, `accneg`, `accrem` | `acc_add`, `acc_sum`, `acc_rem` (privées) |
+| `transit`, `transitdirect`, `areareduceA`, `areareduceB` | `transit`, `transit_direct`, `area_reduce_acc`, `area_reduce` |
+
+Les paramètres `bool` du C (`polylinep`, `reverse`, `sign`) sont des enums : `PolygonKind`,
+`Orientation`, `AreaRange`. Les masques `GEOD_*` et les drapeaux `GEOD_ARCMODE` et
+`GEOD_LONG_UNROLL` gardent leurs valeurs du C. Le module est public mais hors de la surface stable de
+`docs/API-v1.md` tant que le mainteneur ne l'y a pas mise.
+
+`remainder(x, y)` (`accrem`, `areareduceB`, `transitdirect`) pour un `y` quelconque est `remainder_by` :
+un `fmod` par `2 y` est exact, et la correction soustrait des opérandes à un facteur deux l'un de
+l'autre.
+
+**Un seul écart de bits possible** : `c2` utilise `f64::atanh` de Rust, qui n'est pas celui de la
+libm du C. Il peut différer d'un ulp, d'où un écart relatif de l'ordre de 1e-16 sur l'aire. Les tests
+l'acceptent (voir plus bas).
 
 ## Les mêmes bits que le C
 
@@ -95,10 +121,25 @@ le choix de `sincos` sont ceux du compilateur. `tests/parity/geod/known-macos.ts
 systèmes. **Je n'ai pas mesuré ces deux systèmes** ; la CI dit si l'ensemble change (un écart
 nouveau ou disparu y échoue), et ces fichiers se corrigent alors d'après son journal.
 
+## Le corpus complet
+
+`tests/geodesic/full.txt` (1 981 lignes, `tools/gen-geodesic-full.c`) est calculé par le
+`geodesic.c` de PROJ 9.9.0 lui-même, compilé avec `-O0 -ffp-contract=off` : 1 386 problèmes inverses
+(grille de cas limites sur trois ellipsoïdes dont un allongé, tirages aléatoires sur sept, lignes
+courtes et quasi antipodales), 448 problèmes directs (distance, arc, longitude non repliée), 70
+lignes `inverseline` positionnées au quart, à la moitié et aux trois quarts, 77 polygones (tous les
+couples `reverse` et `sign`, `testpoint`, `testedge`, `addedge`, polyligne, `polygonarea`, autour du
+pôle et de l'antiméridien). `tests/geodesic_full.rs` compare toutes les sorties. Sous Linux le port
+passe avec des tolérances mille fois plus serrées que celles du test ; elles sont larges pour
+macOS et Windows (voir l'écart de plateforme).
+
 ## Commandes
 
 ```bash
 tools/build-reference.sh && tools/gen-geodesic-fixtures.py target/proj-reference/build/bin
-cargo test --test geodesic_reference
+cc -O0 -ffp-contract=off -I target/proj-reference/src/src tools/gen-geodesic-full.c \
+   target/proj-reference/src/src/geodesic.c -lm -o /tmp/gen-geodesic-full
+/tmp/gen-geodesic-full > tests/geodesic/full.txt
+cargo test --test geodesic_reference --test geodesic_full
 cargo test --workspace --all-features
 ```
