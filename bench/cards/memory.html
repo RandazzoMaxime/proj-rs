@@ -157,12 +157,14 @@ html.export #card {
 
 </style>
   <style>
-    /* grouped-hbars fields:
-       eyebrow title accentWord subtitle legendNew legendRival
+    /* grouped-hbars, two series, the value at the end of each bar (proj-rs fork of the
+       benchmark-diagram template). Fields:
+       eyebrow title accentWord subtitle legendNew legendRival barH valSize nameSize footerLeft footerRight
        rows 1–8, per-case scale (longest series in the row = 100%):
-         rNName rNCaption rNNewW rNRivalW
-         rNNewVal rNRivalVal rNSpeedup
-       Hide unused [data-slot]. Hide rival bars if no rival. */
+         rNName rNCaption rNNewW rNRivalW rNNewVal rNRivalVal rNSpeedup rNSpeedWord
+       barH, valSize, nameSize (px) grow when there are few rows, so the rows fill the card.
+       Hide unused [data-slot]. */
+    #card { --bar-h: 31px; --val: 32px; --name: 24px; }
     .head {
       display: flex;
       justify-content: space-between;
@@ -170,55 +172,54 @@ html.export #card {
       gap: 24px;
       flex-wrap: wrap;
     }
+    .subtitle { margin-bottom: 20px; }
     .rows {
       display: flex;
       flex-direction: column;
-      gap: 18px;
       flex: 1;
       min-height: 0;
     }
     .row {
+      flex: 1;
       display: grid;
-      grid-template-columns: minmax(120px, 26%) 1fr auto;
-      gap: 8px 20px;
+      grid-template-columns: minmax(120px, 24%) 1fr auto;
+      gap: 8px 28px;
       align-items: center;
-      padding-bottom: 16px;
       border-bottom: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
     }
-    .row:last-child { border-bottom: 0; padding-bottom: 0; }
-    .name { font-size: clamp(14px, 1.25vw, 20px); font-weight: 650; letter-spacing: -0.02em; }
-    .caption { font-size: 12px; color: var(--muted); margin-top: 3px; }
-    .stack { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
-    .stack .bar { height: 14px; }
-    .stack .bar.accent { height: 18px; }
-    .meta {
-      text-align: right;
+    .row:last-child { border-bottom: 0; }
+    .name { font-size: var(--name); font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; }
+    .caption { font-size: calc(var(--name) * 0.6); color: var(--muted); margin-top: 6px; }
+    .stack { display: flex; flex-direction: column; gap: calc(var(--bar-h) * 0.3); min-width: 0; }
+    .lane {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding-right: calc(var(--val) * 5.2);
+    }
+    .lane .bar { flex: none; height: var(--bar-h); border-radius: calc(var(--bar-h) * 0.22); }
+    .val {
+      flex: none;
+      font-size: var(--val);
+      font-weight: 750;
       white-space: nowrap;
       font-variant-numeric: tabular-nums;
     }
-    .peak {
-      font-size: clamp(16px, 1.5vw, 24px);
-      font-weight: 750;
+    .lane.rival .val { color: var(--muted); font-weight: 600; }
+    .speed { text-align: right; white-space: nowrap; }
+    .speed b {
+      font-size: calc(var(--val) * 1.9);
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      font-variant-numeric: tabular-nums;
     }
-    .speedup {
-      display: block;
-      margin-top: 2px;
-      color: var(--accent);
-      font-weight: 750;
-      font-size: clamp(14px, 1.3vw, 20px);
-    }
-    .subvals { display: none; }
+    .speed span { font-size: calc(var(--val) * 0.75); color: var(--muted); margin-left: 8px; }
 
     @media (max-width: 639px) {
-      html:not(.export) .row { grid-template-columns: 1fr; }
-      html:not(.export) .stack { grid-column: auto; }
-      html:not(.export) .meta { text-align: left; white-space: normal; }
-      html:not(.export) .speedup { display: inline; margin-left: 8px; }
-      html:not(.export) .subvals { display: block; font-size: 11px; color: var(--muted); margin-top: 4px; }
+      html:not(.export) #card { --bar-h: 14px; --val: 14px; --name: 16px; }
+      html:not(.export) .row { grid-template-columns: 1fr; padding: 12px 0; }
+      html:not(.export) .speed { text-align: left; }
     }
-    html.export .row { grid-template-columns: 340px 1fr 220px; }
-    html.export .stack .bar { height: 16px; }
-    html.export .stack .bar.accent { height: 20px; }
   </style>
 </head>
 <body>
@@ -231,7 +232,7 @@ html.export #card {
       </div>
       <div class="legend">
         <span><i class="sw-accent"></i>proj-rs</span>
-        <span data-slot="legendRival"><i class="sw-rival"></i>PROJ 9.9.0</span>
+        <span><i class="sw-rival"></i>PROJ 9.9.0</span>
       </div>
     </div>
 
@@ -239,77 +240,57 @@ html.export #card {
       <div class="row" data-slot="r1">
         <div>
           <div class="name">Process start</div>
-          <div class="caption">nothing created · PROJ 5.7 MiB</div>
+          <div class="caption">nothing created</div>
         </div>
         <div class="stack">
-          <span class="bar accent" style="width: 53%"></span>
-          <span class="bar rival" style="width: 100%" data-slot="rival"></span>
+          <div class="lane"><span class="bar accent" style="width: 53%"></span><span class="val">3.0 MiB</span></div>
+          <div class="lane rival"><span class="bar rival" style="width: 100%"></span><span class="val">5.7 MiB</span></div>
         </div>
-        <div class="meta">
-          <div class="peak">3.0 MiB</div>
-          <span class="speedup">1.9× less</span>
-          <div class="subvals">PROJ 5.7 MiB</div>
-        </div>
+        <div class="speed"><b>1.9×</b><span>less</span></div>
       </div>
       <div class="row" data-slot="r2">
         <div>
           <div class="name">Create a transform</div>
-          <div class="caption">EPSG:4326 → 2154 · PROJ 14.8 MiB</div>
+          <div class="caption">EPSG:4326 → 2154</div>
         </div>
         <div class="stack">
-          <span class="bar accent" style="width: 82%"></span>
-          <span class="bar rival" style="width: 100%" data-slot="rival"></span>
+          <div class="lane"><span class="bar accent" style="width: 82%"></span><span class="val">12.1 MiB</span></div>
+          <div class="lane rival"><span class="bar rival" style="width: 100%"></span><span class="val">14.8 MiB</span></div>
         </div>
-        <div class="meta">
-          <div class="peak">12.1 MiB</div>
-          <span class="speedup">1.2× less</span>
-          <div class="subvals">PROJ 14.8 MiB</div>
-        </div>
+        <div class="speed"><b>1.2×</b><span>less</span></div>
       </div>
       <div class="row" data-slot="r3">
         <div>
           <div class="name">1,000,000 points</div>
-          <div class="caption">one at a time · PROJ 14.7 MiB</div>
+          <div class="caption">one at a time</div>
         </div>
         <div class="stack">
-          <span class="bar accent" style="width: 83%"></span>
-          <span class="bar rival" style="width: 100%" data-slot="rival"></span>
+          <div class="lane"><span class="bar accent" style="width: 83%"></span><span class="val">12.2 MiB</span></div>
+          <div class="lane rival"><span class="bar rival" style="width: 100%"></span><span class="val">14.7 MiB</span></div>
         </div>
-        <div class="meta">
-          <div class="peak">12.2 MiB</div>
-          <span class="speedup">1.2× less</span>
-          <div class="subvals">PROJ 14.7 MiB</div>
-        </div>
+        <div class="speed"><b>1.2×</b><span>less</span></div>
       </div>
       <div class="row" data-slot="r4">
         <div>
           <div class="name">1,000,000 points</div>
-          <div class="caption">one array of 15.3 MiB · PROJ 29.9 MiB</div>
+          <div class="caption">one array of 15.3 MiB</div>
         </div>
         <div class="stack">
-          <span class="bar accent" style="width: 91%"></span>
-          <span class="bar rival" style="width: 100%" data-slot="rival"></span>
+          <div class="lane"><span class="bar accent" style="width: 91%"></span><span class="val">27.3 MiB</span></div>
+          <div class="lane rival"><span class="bar rival" style="width: 100%"></span><span class="val">29.9 MiB</span></div>
         </div>
-        <div class="meta">
-          <div class="peak">27.3 MiB</div>
-          <span class="speedup">1.1× less</span>
-          <div class="subvals">PROJ 29.9 MiB</div>
-        </div>
+        <div class="speed"><b>1.1×</b><span>less</span></div>
       </div>
       <div class="row" data-slot="r5">
         <div>
           <div class="name">Several candidates</div>
-          <div class="caption">EPSG:4267 → 4326, 1,000,000 points · PROJ 16.4 MiB</div>
+          <div class="caption">EPSG:4267 → 4326, 1,000,000 points</div>
         </div>
         <div class="stack">
-          <span class="bar accent" style="width: 79%"></span>
-          <span class="bar rival" style="width: 100%" data-slot="rival"></span>
+          <div class="lane"><span class="bar accent" style="width: 79%"></span><span class="val">13.0 MiB</span></div>
+          <div class="lane rival"><span class="bar rival" style="width: 100%"></span><span class="val">16.4 MiB</span></div>
         </div>
-        <div class="meta">
-          <div class="peak">13.0 MiB</div>
-          <span class="speedup">1.3× less</span>
-          <div class="subvals">PROJ 16.4 MiB</div>
-        </div>
+        <div class="speed"><b>1.3×</b><span>less</span></div>
       </div>
       <div class="row" data-slot="r6" hidden>
         <div>
@@ -317,14 +298,10 @@ html.export #card {
           <div class="caption"></div>
         </div>
         <div class="stack">
-          <span class="bar accent" style="width: 0%"></span>
-          <span class="bar rival" style="width: 0%" data-slot="rival"></span>
+          <div class="lane"><span class="bar accent" style="width: 0%"></span><span class="val"></span></div>
+          <div class="lane rival"><span class="bar rival" style="width: 0%"></span><span class="val"></span></div>
         </div>
-        <div class="meta">
-          <div class="peak"></div>
-          <span class="speedup"></span>
-          <div class="subvals"></div>
-        </div>
+        <div class="speed"><b></b><span></span></div>
       </div>
       <div class="row" data-slot="r7" hidden>
         <div>
@@ -332,14 +309,10 @@ html.export #card {
           <div class="caption"></div>
         </div>
         <div class="stack">
-          <span class="bar accent" style="width: 0%"></span>
-          <span class="bar rival" style="width: 0%" data-slot="rival"></span>
+          <div class="lane"><span class="bar accent" style="width: 0%"></span><span class="val"></span></div>
+          <div class="lane rival"><span class="bar rival" style="width: 0%"></span><span class="val"></span></div>
         </div>
-        <div class="meta">
-          <div class="peak"></div>
-          <span class="speedup"></span>
-          <div class="subvals"></div>
-        </div>
+        <div class="speed"><b></b><span></span></div>
       </div>
       <div class="row" data-slot="r8" hidden>
         <div>
@@ -347,14 +320,10 @@ html.export #card {
           <div class="caption"></div>
         </div>
         <div class="stack">
-          <span class="bar accent" style="width: 0%"></span>
-          <span class="bar rival" style="width: 0%" data-slot="rival"></span>
+          <div class="lane"><span class="bar accent" style="width: 0%"></span><span class="val"></span></div>
+          <div class="lane rival"><span class="bar rival" style="width: 0%"></span><span class="val"></span></div>
         </div>
-        <div class="meta">
-          <div class="peak"></div>
-          <span class="speedup"></span>
-          <div class="subvals"></div>
-        </div>
+        <div class="speed"><b></b><span></span></div>
       </div>
     </div>
 

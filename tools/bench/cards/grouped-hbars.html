@@ -6,12 +6,14 @@
   <title>{{title}} {{accentWord}}</title>
   <link rel="stylesheet" href="tokens.css">
   <style>
-    /* grouped-hbars fields:
-       eyebrow title accentWord subtitle legendNew legendRival
+    /* grouped-hbars, two series, the value at the end of each bar (proj-rs fork of the
+       benchmark-diagram template). Fields:
+       eyebrow title accentWord subtitle legendNew legendRival barH valSize nameSize footerLeft footerRight
        rows 1–8, per-case scale (longest series in the row = 100%):
-         rNName rNCaption rNNewW rNRivalW
-         rNNewVal rNRivalVal rNSpeedup
-       Hide unused [data-slot]. Hide rival bars if no rival. */
+         rNName rNCaption rNNewW rNRivalW rNNewVal rNRivalVal rNSpeedup rNSpeedWord
+       barH, valSize, nameSize (px) grow when there are few rows, so the rows fill the card.
+       Hide unused [data-slot]. */
+    #card { --bar-h: {{barH}}px; --val: {{valSize}}px; --name: {{nameSize}}px; }
     .head {
       display: flex;
       justify-content: space-between;
@@ -19,55 +21,54 @@
       gap: 24px;
       flex-wrap: wrap;
     }
+    .subtitle { margin-bottom: 20px; }
     .rows {
       display: flex;
       flex-direction: column;
-      gap: 18px;
       flex: 1;
       min-height: 0;
     }
     .row {
+      flex: 1;
       display: grid;
-      grid-template-columns: minmax(120px, 26%) 1fr auto;
-      gap: 8px 20px;
+      grid-template-columns: minmax(120px, 24%) 1fr auto;
+      gap: 8px 28px;
       align-items: center;
-      padding-bottom: 16px;
       border-bottom: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
     }
-    .row:last-child { border-bottom: 0; padding-bottom: 0; }
-    .name { font-size: clamp(14px, 1.25vw, 20px); font-weight: 650; letter-spacing: -0.02em; }
-    .caption { font-size: 12px; color: var(--muted); margin-top: 3px; }
-    .stack { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
-    .stack .bar { height: 14px; }
-    .stack .bar.accent { height: 18px; }
-    .meta {
-      text-align: right;
+    .row:last-child { border-bottom: 0; }
+    .name { font-size: var(--name); font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; }
+    .caption { font-size: calc(var(--name) * 0.6); color: var(--muted); margin-top: 6px; }
+    .stack { display: flex; flex-direction: column; gap: calc(var(--bar-h) * 0.3); min-width: 0; }
+    .lane {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding-right: calc(var(--val) * 5.2);
+    }
+    .lane .bar { flex: none; height: var(--bar-h); border-radius: calc(var(--bar-h) * 0.22); }
+    .val {
+      flex: none;
+      font-size: var(--val);
+      font-weight: 750;
       white-space: nowrap;
       font-variant-numeric: tabular-nums;
     }
-    .peak {
-      font-size: clamp(16px, 1.5vw, 24px);
-      font-weight: 750;
+    .lane.rival .val { color: var(--muted); font-weight: 600; }
+    .speed { text-align: right; white-space: nowrap; }
+    .speed b {
+      font-size: calc(var(--val) * 1.9);
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      font-variant-numeric: tabular-nums;
     }
-    .speedup {
-      display: block;
-      margin-top: 2px;
-      color: var(--accent);
-      font-weight: 750;
-      font-size: clamp(14px, 1.3vw, 20px);
-    }
-    .subvals { display: none; }
+    .speed span { font-size: calc(var(--val) * 0.75); color: var(--muted); margin-left: 8px; }
 
     @media (max-width: 639px) {
-      html:not(.export) .row { grid-template-columns: 1fr; }
-      html:not(.export) .stack { grid-column: auto; }
-      html:not(.export) .meta { text-align: left; white-space: normal; }
-      html:not(.export) .speedup { display: inline; margin-left: 8px; }
-      html:not(.export) .subvals { display: block; font-size: 11px; color: var(--muted); margin-top: 4px; }
+      html:not(.export) #card { --bar-h: 14px; --val: 14px; --name: 16px; }
+      html:not(.export) .row { grid-template-columns: 1fr; padding: 12px 0; }
+      html:not(.export) .speed { text-align: left; }
     }
-    html.export .row { grid-template-columns: 340px 1fr 220px; }
-    html.export .stack .bar { height: 16px; }
-    html.export .stack .bar.accent { height: 20px; }
   </style>
 </head>
 <body>
@@ -80,7 +81,7 @@
       </div>
       <div class="legend">
         <span><i class="sw-accent"></i>{{legendNew}}</span>
-        <span data-slot="legendRival"><i class="sw-rival"></i>{{legendRival}}</span>
+        <span><i class="sw-rival"></i>{{legendRival}}</span>
       </div>
     </div>
 
@@ -91,14 +92,10 @@
           <div class="caption">{{r1Caption}}</div>
         </div>
         <div class="stack">
-          <span class="bar accent" style="width: {{r1NewW}}"></span>
-          <span class="bar rival" style="width: {{r1RivalW}}" data-slot="rival"></span>
+          <div class="lane"><span class="bar accent" style="width: {{r1NewW}}"></span><span class="val">{{r1NewVal}}</span></div>
+          <div class="lane rival"><span class="bar rival" style="width: {{r1RivalW}}"></span><span class="val">{{r1RivalVal}}</span></div>
         </div>
-        <div class="meta">
-          <div class="peak">{{r1NewVal}}</div>
-          <span class="speedup">{{r1Speedup}}</span>
-          <div class="subvals">{{r1RivalVal}}</div>
-        </div>
+        <div class="speed"><b>{{r1Speedup}}</b><span>{{r1SpeedWord}}</span></div>
       </div>
       <div class="row" data-slot="r2">
         <div>
@@ -106,14 +103,10 @@
           <div class="caption">{{r2Caption}}</div>
         </div>
         <div class="stack">
-          <span class="bar accent" style="width: {{r2NewW}}"></span>
-          <span class="bar rival" style="width: {{r2RivalW}}" data-slot="rival"></span>
+          <div class="lane"><span class="bar accent" style="width: {{r2NewW}}"></span><span class="val">{{r2NewVal}}</span></div>
+          <div class="lane rival"><span class="bar rival" style="width: {{r2RivalW}}"></span><span class="val">{{r2RivalVal}}</span></div>
         </div>
-        <div class="meta">
-          <div class="peak">{{r2NewVal}}</div>
-          <span class="speedup">{{r2Speedup}}</span>
-          <div class="subvals">{{r2RivalVal}}</div>
-        </div>
+        <div class="speed"><b>{{r2Speedup}}</b><span>{{r2SpeedWord}}</span></div>
       </div>
       <div class="row" data-slot="r3">
         <div>
@@ -121,14 +114,10 @@
           <div class="caption">{{r3Caption}}</div>
         </div>
         <div class="stack">
-          <span class="bar accent" style="width: {{r3NewW}}"></span>
-          <span class="bar rival" style="width: {{r3RivalW}}" data-slot="rival"></span>
+          <div class="lane"><span class="bar accent" style="width: {{r3NewW}}"></span><span class="val">{{r3NewVal}}</span></div>
+          <div class="lane rival"><span class="bar rival" style="width: {{r3RivalW}}"></span><span class="val">{{r3RivalVal}}</span></div>
         </div>
-        <div class="meta">
-          <div class="peak">{{r3NewVal}}</div>
-          <span class="speedup">{{r3Speedup}}</span>
-          <div class="subvals">{{r3RivalVal}}</div>
-        </div>
+        <div class="speed"><b>{{r3Speedup}}</b><span>{{r3SpeedWord}}</span></div>
       </div>
       <div class="row" data-slot="r4">
         <div>
@@ -136,14 +125,10 @@
           <div class="caption">{{r4Caption}}</div>
         </div>
         <div class="stack">
-          <span class="bar accent" style="width: {{r4NewW}}"></span>
-          <span class="bar rival" style="width: {{r4RivalW}}" data-slot="rival"></span>
+          <div class="lane"><span class="bar accent" style="width: {{r4NewW}}"></span><span class="val">{{r4NewVal}}</span></div>
+          <div class="lane rival"><span class="bar rival" style="width: {{r4RivalW}}"></span><span class="val">{{r4RivalVal}}</span></div>
         </div>
-        <div class="meta">
-          <div class="peak">{{r4NewVal}}</div>
-          <span class="speedup">{{r4Speedup}}</span>
-          <div class="subvals">{{r4RivalVal}}</div>
-        </div>
+        <div class="speed"><b>{{r4Speedup}}</b><span>{{r4SpeedWord}}</span></div>
       </div>
       <div class="row" data-slot="r5">
         <div>
@@ -151,14 +136,10 @@
           <div class="caption">{{r5Caption}}</div>
         </div>
         <div class="stack">
-          <span class="bar accent" style="width: {{r5NewW}}"></span>
-          <span class="bar rival" style="width: {{r5RivalW}}" data-slot="rival"></span>
+          <div class="lane"><span class="bar accent" style="width: {{r5NewW}}"></span><span class="val">{{r5NewVal}}</span></div>
+          <div class="lane rival"><span class="bar rival" style="width: {{r5RivalW}}"></span><span class="val">{{r5RivalVal}}</span></div>
         </div>
-        <div class="meta">
-          <div class="peak">{{r5NewVal}}</div>
-          <span class="speedup">{{r5Speedup}}</span>
-          <div class="subvals">{{r5RivalVal}}</div>
-        </div>
+        <div class="speed"><b>{{r5Speedup}}</b><span>{{r5SpeedWord}}</span></div>
       </div>
       <div class="row" data-slot="r6">
         <div>
@@ -166,44 +147,32 @@
           <div class="caption">{{r6Caption}}</div>
         </div>
         <div class="stack">
-          <span class="bar accent" style="width: {{r6NewW}}"></span>
-          <span class="bar rival" style="width: {{r6RivalW}}" data-slot="rival"></span>
+          <div class="lane"><span class="bar accent" style="width: {{r6NewW}}"></span><span class="val">{{r6NewVal}}</span></div>
+          <div class="lane rival"><span class="bar rival" style="width: {{r6RivalW}}"></span><span class="val">{{r6RivalVal}}</span></div>
         </div>
-        <div class="meta">
-          <div class="peak">{{r6NewVal}}</div>
-          <span class="speedup">{{r6Speedup}}</span>
-          <div class="subvals">{{r6RivalVal}}</div>
-        </div>
+        <div class="speed"><b>{{r6Speedup}}</b><span>{{r6SpeedWord}}</span></div>
       </div>
-      <div class="row" data-slot="r7" hidden>
+      <div class="row" data-slot="r7">
         <div>
           <div class="name">{{r7Name}}</div>
           <div class="caption">{{r7Caption}}</div>
         </div>
         <div class="stack">
-          <span class="bar accent" style="width: {{r7NewW}}"></span>
-          <span class="bar rival" style="width: {{r7RivalW}}" data-slot="rival"></span>
+          <div class="lane"><span class="bar accent" style="width: {{r7NewW}}"></span><span class="val">{{r7NewVal}}</span></div>
+          <div class="lane rival"><span class="bar rival" style="width: {{r7RivalW}}"></span><span class="val">{{r7RivalVal}}</span></div>
         </div>
-        <div class="meta">
-          <div class="peak">{{r7NewVal}}</div>
-          <span class="speedup">{{r7Speedup}}</span>
-          <div class="subvals">{{r7RivalVal}}</div>
-        </div>
+        <div class="speed"><b>{{r7Speedup}}</b><span>{{r7SpeedWord}}</span></div>
       </div>
-      <div class="row" data-slot="r8" hidden>
+      <div class="row" data-slot="r8">
         <div>
           <div class="name">{{r8Name}}</div>
           <div class="caption">{{r8Caption}}</div>
         </div>
         <div class="stack">
-          <span class="bar accent" style="width: {{r8NewW}}"></span>
-          <span class="bar rival" style="width: {{r8RivalW}}" data-slot="rival"></span>
+          <div class="lane"><span class="bar accent" style="width: {{r8NewW}}"></span><span class="val">{{r8NewVal}}</span></div>
+          <div class="lane rival"><span class="bar rival" style="width: {{r8RivalW}}"></span><span class="val">{{r8RivalVal}}</span></div>
         </div>
-        <div class="meta">
-          <div class="peak">{{r8NewVal}}</div>
-          <span class="speedup">{{r8Speedup}}</span>
-          <div class="subvals">{{r8RivalVal}}</div>
-        </div>
+        <div class="speed"><b>{{r8Speedup}}</b><span>{{r8SpeedWord}}</span></div>
       </div>
     </div>
 
