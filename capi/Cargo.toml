@@ -1,6 +1,6 @@
 [package]
 name = "proj-rs-capi"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 rust-version = "1.100"
 license = "MIT"
@@ -25,7 +25,7 @@ doc = false
 network = ["proj-rs/network"]
 
 [dependencies]
-proj-rs = { path = ".." }
+proj-rs = { path = "..", version = "1.0.0" }
 
 [lints]
 workspace = true
