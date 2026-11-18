@@ -499,6 +499,52 @@ impl<'a> Session<'a> {
         Ok(Block::Done)
     }
 
+    /// Seconds for `repeats` dispatches of the program over `block`, which is uploaded once: the
+    /// compute alone, with no transfer back. For the benchmark, not for conversion.
+    pub(crate) fn time_dispatches(
+        &mut self,
+        block: &[[f64; 2]],
+        repeats: u32,
+    ) -> Result<f64, String> {
+        if block.len() > self.capacity {
+            return Err("block larger than the session".to_owned());
+        }
+        if self.precision == Precision::DoubleFloat {
+            self.scratch.clear();
+            self.scratch.extend(block.iter().map(|&[a, b]| {
+                let (a, b) = (shader::split(a), shader::split(b));
+                [a.0, a.1, b.0, b.1]
+            }));
+        }
+        let input: &[u8] = match self.precision {
+            Precision::Float64 => bytemuck::cast_slice(block),
+            Precision::DoubleFloat => bytemuck::cast_slice(&self.scratch),
+        };
+        let points = u32::try_from(block.len()).map_err(|e| e.to_string())?;
+        self.queue.write_buffer(&self.input, 0, input);
+        let header = [points, u32::MAX, self.instructions, 0];
+        self.queue
+            .write_buffer(&self.count, 0, bytemuck::cast_slice(&header));
+        self.queue
+            .write_buffer(&self.status, 0, bytemuck::cast_slice(&[0u32; 4]));
+        let groups = points.div_ceil(u32::try_from(GROUP).map_err(|e| e.to_string())?);
+        let start = std::time::Instant::now();
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.set_pipeline(self.pipeline);
+            pass.set_bind_group(0, &self.bind, &[]);
+            for _ in 0..repeats {
+                pass.dispatch_workgroups(groups, 1, 1);
+            }
+        }
+        self.queue.submit([encoder.finish()]);
+        self.device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .map_err(|error| error.to_string())?;
+        Ok(start.elapsed().as_secs_f64())
+    }
+
     /// Upload `input` (16 bytes per point), run the program on `points` points, and read the
     /// output back with the status word appended: the first `16 * points` bytes are the
     /// output, the last 4 are the failure flag.

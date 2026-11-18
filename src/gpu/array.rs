@@ -64,6 +64,28 @@ impl Proj {
         self.convert_array_gpu_in(points, Direction::Forward, gpu)
     }
 
+    /// Seconds per dispatch of this transform over the first `chunk_points` of `points`, the data
+    /// uploaded once and nothing read back: the compute alone, for the benchmark. Also the number
+    /// of points of one dispatch. `None` when the transform has no GPU program or the device
+    /// refuses it.
+    #[doc(hidden)]
+    pub fn gpu_dispatch_seconds(
+        &self,
+        points: &[(f64, f64)],
+        direction: Direction,
+        gpu: &GpuContext,
+        repeats: u32,
+    ) -> Option<(usize, f64)> {
+        let program = self.gpu_program(direction)?;
+        let count = points.len().min(gpu.chunk_points());
+        let block: Vec<[f64; 2]> = points[..count].iter().map(|&(x, y)| [x, y]).collect();
+        let mut session = gpu.session(&program.encode(), count).ok()?;
+        // One dispatch to warm the pipeline, then the measure.
+        session.time_dispatches(&block, 1).ok()?;
+        let seconds = session.time_dispatches(&block, repeats).ok()?;
+        Some((count, seconds / f64::from(repeats)))
+    }
+
     /// [`Self::convert_array_gpu`] in `direction`.
     ///
     /// # Errors

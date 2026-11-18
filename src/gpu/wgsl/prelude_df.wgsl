@@ -79,8 +79,19 @@ fn scale2(a: R, k: i32) -> R {
     }
     return r;
 }
-fn red_pio2(x: R, kf: f32) -> R { return sb(x, ml(k_pio2(), c(kf))); }
-fn red_ln2(x: R, kf: f32) -> R { return sb(x, ml(k_ln2(), c(kf))); }
+// k is a small integer, so each product with a 24-bit part is exact.
+fn red_pio2(x: R, kf: f32) -> R {
+    let k = c(kf);
+    var r = sb(x, ml(k_pio2_a(), k));
+    r = sb(r, ml(k_pio2_b(), k));
+    return sb(r, ml(k_pio2_c(), k));
+}
+fn red_ln2(x: R, kf: f32) -> R {
+    let k = c(kf);
+    var r = sb(x, ml(k_ln2_a(), k));
+    r = sb(r, ml(k_ln2_b(), k));
+    return sb(r, ml(k_ln2_c(), k));
+}
 fn ld(i: u32) -> R { let v = P[i]; return DF(v.x, v.y); }
 fn absr(a: R) -> R { if (a.hi < 0.0) { return ng(a); } return a; }
 fn floorr(x: R) -> R {

@@ -83,13 +83,20 @@ l'éviter. Deux parades :
 
 Le produit exact passe par Veltkamp-Dekker : WGSL ne garantit pas que `fma` soit fusionnée.
 
+**Ce que le double-float ne tient pas : Mercator près du pôle.** Une latitude en double-float est
+connue à 48 bits, soit 5e-15 rad, et Mercator multiplie cela par `R / cos φ` : 4e-7 m à 85°, bien
+plus au-delà. Mesuré : 0,94 µm au pire à 85°, tout juste sous la règle de parité. Au-delà de 85,1° le
+noyau Mercator du double-float lève le drapeau et le CPU répond ; en `f64` seul le pôle lui-même
+est écarté. La réduction d'argument de `sin` et `cos` soustrait `π/2` en trois morceaux `f32` (72
+bits) pour que cette constante n'ajoute pas sa propre erreur à celle de l'entrée.
+
 ## Points que le GPU ne tranche pas
 
 Le noyau lève un drapeau par bloc (un `atomicOr` sur un mot) ; le bloc entier repasse alors par le
 chemin CPU, qui décide. Ce sont : une valeur non finie ou NaN, une latitude au-delà du pôle (le CPU
 écrête ou refuse selon `EPS_LAT`), une longitude à plus de 10 radians, un point hors du domaine du
-noyau (`ce` de Transverse Mercator au-delà de `CE_LIMIT`, pôle de Lambert, `|φ|` à 1e-9 du pôle en
-Mercator), `rho` nul au Lambert inverse, un `tau` de Newton à plus de `2/√ε`. La liste est
+noyau (`ce` de Transverse Mercator au-delà de `CE_LIMIT`, pôle de Lambert, `|φ|` au-delà de 85,1°
+en Mercator double-float et à 1e-9 du pôle en Mercator `f64`), `rho` nul au Lambert inverse, un `tau` de Newton à plus de `2/√ε`. La liste est
 volontairement plus large que celle du CPU : un faux positif coûte un bloc au CPU, un faux négatif
 serait un résultat faux.
 
@@ -100,22 +107,36 @@ tient pas dans le type de la tranche (`f32`) est signalée à la fin.
 ## Mesures
 
 Elles viennent de lavapipe (rendu logiciel de Mesa, `f64` natif disponible), la seule chose
-disponible ici. **Aucune mesure de vitesse sur un vrai GPU n'a été faite** : `proj-rs-bench --features
-gpu` ajoute les cas `gpu_convert_array_*` (de bout en bout : conversion, envoi, calcul, lecture), et
-n'en produit aucun sans adaptateur.
+disponible ici. **Aucune mesure de vitesse sur un vrai GPU n'a été faite.**
 
 Écart contre PROJ 9.9.0 (`cs2cs`, 5 points par paire) : au plus 9,5e-8 m en double-float et 3,7e-9 m
-en `f64` ; 4e-13 degré au plus au retour. Écart contre le chemin CPU sur 5 000 à 20 000 points par
-paire (monde entier en Web Mercator, zone entière en UTM, France entière en Lambert, l'hémisphère sud,
-un cône `n < 0`, une sphère) :
+en `f64` ; 4e-13 degré au plus au retour. Écart contre le chemin CPU sur 200 000 points par conversion
+(monde entier en Web Mercator, zone entière en UTM, France entière en Lambert) :
 
 | | double-float | `f64` |
 |---|---:|---:|
-| aller, mètres, au plus | 1,7e-7 | 9,3e-9 |
-| retour, degrés, au plus | 1,6e-12 | 5,8e-14 |
+| aller, mètres, au plus | 9,4e-7 (Mercator à 85°), 1,5e-7 pour les autres | 4,7e-9 |
+| retour, degrés, au plus | 2,0e-12 | 6,8e-14 |
 
 La règle de parité du dépôt (1 µm, 1e-11 degré, `docs/PARITY.md`) tient dans les deux cas, sans
-tolérance propre au GPU.
+tolérance propre au GPU. Le double-float de Mercator n'a presque pas de marge à 85°.
+
+## Le banc
+
+`cargo run --release --features gpu --bin proj-rs-gpu-bench` (`--quick`, `--big` jusqu'à 16 millions
+de points, `--sizes a,b,c`) écrit du Markdown sur stdout. Pour chacune des six conversions (Web
+Mercator, UTM 31N, Lambert-93, dans les deux sens) et chaque précision que le périphérique offre :
+
+- l'écart au chemin CPU sur 200 000 points, avec le verdict contre la règle de parité ;
+- le calcul seul (données déjà sur le périphérique, `Proj::gpu_dispatch_seconds`, caché), en ns par
+  point et en Mpts/s ;
+- l'appel entier (`convert_array_gpu` : conversion au format du périphérique, envoi, calcul,
+  lecture), en ns par point, et le rapport au CPU **sur un cœur** et **sur tous les cœurs**
+  (`project_array`, un `Proj` par thread créé avant l'horloge) : au-dessus de 1 le GPU gagne.
+
+Un adaptateur logiciel (llvmpipe, WARP, SwiftShader) est signalé en tête : ses temps ne disent rien
+d'un GPU. Le banc `proj-rs-bench --features gpu` garde ses quatre cas `gpu_convert_array_*` pour
+l'historique (`bench/history.jsonl`) ; le banc GPU, lui, produit un rapport, pas une ligne d'historique.
 
 ## Mémoire
 
@@ -152,6 +173,7 @@ Côté hôte, par bloc : le bloc lui-même (`Vec<[f64; 2]>`), la copie de lectur
 | `native_proj_strings_in_radians` | `Proj::new` : `utm`, `tmerc`, deux `lcc` (`n` de chaque signe, sphère), `webmerc`, `merc` sphérique |
 | `a_transform_without_a_kernel_runs_on_the_cpu`, `projections_without_a_kernel_are_unsupported` | le repli, et son résultat identique au CPU bit à bit |
 | `a_small_call_stays_on_the_cpu` | le seuil |
+| `mercator_near_the_pole_stays_within_the_rule` | Mercator au-delà de 85° : le double-float passe au CPU, le `f64` reste sur le GPU, la règle tient |
 | `a_block_with_a_point_the_gpu_does_not_decide_goes_to_the_cpu`, `an_error_is_the_cpu_error`, `a_longitude_wraps_as_on_the_cpu` | les points hors décision et les erreurs |
 | `single_precision_slices` | une tranche `f32` |
 | `src/gpu/array.rs::tests`, `src/gpu/program.rs::tests` | ce que chaque transformation devient, sans périphérique |
@@ -162,5 +184,6 @@ Côté hôte, par bloc : le bloc lui-même (`Vec<[f64; 2]>`), la copie de lectur
 cargo test --features gpu --test gpu_parity        # un adaptateur, ou lavapipe
 VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json cargo test --features gpu --test gpu_parity
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo run --release --features gpu --bin proj-rs-bench    # cas gpu_convert_array_*
+cargo run --release --features gpu --bin proj-rs-bench        # cas gpu_convert_array_*
+cargo run --release --features gpu --bin proj-rs-gpu-bench    # le banc GPU, en Markdown
 ```

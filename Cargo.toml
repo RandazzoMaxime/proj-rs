@@ -19,6 +19,13 @@ name = "proj-rs-bench"
 path = "src/bin/bench.rs"
 doc = false
 
+# GPU benchmark: precision, compute alone, end to end, against the CPU on one core and on all.
+[[bin]]
+name = "proj-rs-gpu-bench"
+path = "src/bin/gpu_bench.rs"
+doc = false
+required-features = ["gpu"]
+
 [[bin]]
 name = "proj-rs"
 path = "src/bin/proj-rs.rs"

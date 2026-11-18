@@ -226,6 +226,32 @@ fn web_mercator_over_the_world() {
 }
 
 #[test]
+fn mercator_near_the_pole_stays_within_the_rule() {
+    // Double-float cannot hold 1 micrometre there (the projection multiplies its 48-bit input by
+    // R / cos(lat)): the GPU hands those blocks to the CPU. `f64` keeps them.
+    let proj = proj("EPSG:4326", "EPSG:3857");
+    let points = scatter(4000, (-180.0, 180.0, 85.0, 89.5), 41);
+    let cpu = on_cpu(&proj, &points, Direction::Forward);
+    for gpu in contexts() {
+        let mut out = points.clone();
+        let (_, report) = proj.convert_array_gpu(&mut out, &gpu).expect("pole");
+        if gpu.precision() == Precision::DoubleFloat {
+            assert!(report.cpu_points > 0, "{report:?}");
+        } else {
+            assert_eq!(report.cpu_points, 0, "{report:?}");
+        }
+        for (index, (got, want)) in out.iter().zip(&cpu).enumerate() {
+            let gap = (got.0 - want.0).abs().max((got.1 - want.1).abs());
+            assert!(
+                gap <= METRES,
+                "point {index} {:?}: gap {gap:e} {report:?}",
+                points[index]
+            );
+        }
+    }
+}
+
+#[test]
 fn utm_over_its_zone() {
     round_trip_pair("EPSG:4326", "EPSG:32631", (0.0, 6.0, -80.0, 84.0));
 }
