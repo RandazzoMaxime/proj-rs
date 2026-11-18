@@ -4,6 +4,12 @@ Versions follow [semver](https://semver.org). The stable surface is the one of
 [docs/API-v1.md](docs/API-v1.md): the native facade, `proj-rs-georust` and the C API. The
 rest is outside semver.
 
+## Unreleased
+
+- `Proj::convert_iter` converts the points of an iterator in blocks, through the vector path of
+  `convert_array`: about twice as fast as `convert` one point at a time. The items are those of
+  `convert`, errors included. See [docs/PORTING-convert-iter.md](docs/PORTING-convert-iter.md).
+
 ## 1.0.0
 
 The first release. PROJ 9.9.0, ported to Rust.

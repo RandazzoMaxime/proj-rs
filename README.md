@@ -551,7 +551,7 @@ The batch path (`forward_batch` and `inverse_batch` of `Tmerc`, `Lcc` and
 uses the crate's own vector math functions (no libmvec, no C library calls): the same code
 on Linux, Windows and macOS. Off AVX2, `Tmerc::forward_batch` runs a portable 4-lane loop, bit-identical
 to the scalar path and 25–34 % faster on x86-64; the other batch functions run the
-scalar loop. `Proj::convert_array` and `project_array` use the vector path for
+scalar loop. `Proj::convert_iter` gives an iterator the same path, one block of 1024 points at a time. `Proj::convert_array` and `project_array` use the vector path for
 Transverse Mercator, Lambert conic and Mercator, Web Mercator included. The AVX2 path is not bit-identical
 to the scalar path (at most 11 nm, [`docs/PORTING-simd.md`](docs/PORTING-simd.md),
 [`docs/PORTING-batch-api.md`](docs/PORTING-batch-api.md), [`docs/PORTING-batch-path.md`](docs/PORTING-batch-path.md)).

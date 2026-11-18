@@ -13,6 +13,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 mod bounds;
+mod convert_iter;
 #[path = "proj_export.rs"]
 mod proj_export;
 mod raw;
@@ -977,6 +978,39 @@ impl Proj {
         F: CoordinateType,
     {
         self.fill_array(points, Direction::Forward)
+    }
+
+    /// Convert the points of an iterator, one block at a time, through the vector path of
+    /// [`Self::convert_array`].
+    ///
+    /// The items are those of `points.map(|p| self.convert(p))`, in the same order. An error
+    /// is the item of the point that failed, and the iterator goes on after it. A value agrees
+    /// with [`Self::convert`] to the tolerance of [`Self::convert_array`], and an error is the
+    /// one `convert` gives. The speed is that of a slice, about half of [`Self::convert`] one
+    /// point at a time (`docs/PORTING-convert-iter.md`). The iterator takes at most 1024 points
+    /// ahead of the items it has yielded, so an endless source is fine.
+    ///
+    /// ```
+    /// use proj_rs::Proj;
+    ///
+    /// let proj = Proj::new_known_crs("EPSG:4326", "EPSG:2154", None)?;
+    /// let lambert: Vec<(f64, f64)> = proj
+    ///     .convert_iter([(2.35, 48.85), (4.84, 45.76)])
+    ///     .collect::<Result<_, _>>()?;
+    /// assert_eq!(lambert.len(), 2);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn convert_iter<'a, I, C, F>(
+        &'a self,
+        points: I,
+    ) -> impl Iterator<Item = Result<C, ProjError>> + 'a
+    where
+        I: IntoIterator<Item = C>,
+        I::IntoIter: 'a,
+        C: Coord<F> + 'a,
+        F: CoordinateType + 'a,
+    {
+        convert_iter::convert_iter(self, points)
     }
 
     /// Project a slice in place. Same contract as [`Self::convert_array`].
