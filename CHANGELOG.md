@@ -6,6 +6,12 @@ rest is outside semver.
 
 ## Unreleased
 
+- `Transformer` finds the grids of its context's search path when one candidate operation is left
+  (for instance `EPSG:4979` to `EPSG:4326+5773` with `Ballpark::Forbidden`): the operation was
+  created outside the context and failed with `illegal value for +grids`.
+- `Ballpark::Forbidden` no longer lets a ballpark operation through when the grid is missing: the
+  `DiscardIfMissing` rerun re-added the operations the filter had dropped. The build now fails, as
+  PROJ's `--no-ballpark` does.
 - `Proj::convert_array` and `Proj::convert_iter` convert fewer than 8 points one at a time instead
   of through the vector path, which costs more than it saves there: a lone point cost two to five
   times as much as `convert`, and now costs the same. From 8 points the vector path wins. The result
