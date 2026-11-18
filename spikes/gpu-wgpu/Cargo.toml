@@ -1,0 +1,17 @@
+# Spike, hors du workspace du crate principal : pas de dépendance wgpu dans proj-rs.
+[package]
+name = "proj-rs-gpu-spike"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+proj-rs = { path = "../.." }
+wgpu = { version = "30", default-features = false, features = ["wgsl", "vulkan", "metal", "dx12"] }
+pollster = "0.4"
+bytemuck = "1"
+
+[profile.release]
+opt-level = 3
