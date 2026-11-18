@@ -6,6 +6,11 @@ rest is outside semver.
 
 ## Unreleased
 
+- `Proj::convert_array` and `Proj::convert_iter` convert fewer than 8 points one at a time instead
+  of through the vector path, which costs more than it saves there: a lone point cost two to five
+  times as much as `convert`, and now costs the same. From 8 points the vector path wins. The result
+  is `convert`'s, bit for bit under 8. See
+  [docs/PORTING-convert-iter.md](docs/PORTING-convert-iter.md).
 - `Proj::convert_iter` converts the points of an iterator in blocks, through the vector path of
   `convert_array`: about twice as fast as `convert` one point at a time. The items are those of
   `convert`, errors included. See [docs/PORTING-convert-iter.md](docs/PORTING-convert-iter.md).
