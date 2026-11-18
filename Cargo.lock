@@ -722,6 +722,7 @@ dependencies = [
  "bytemuck",
  "cc",
  "geo-types",
+ "naga",
  "native-tls",
  "pollster",
  "rusqlite",

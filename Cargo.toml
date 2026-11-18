@@ -88,7 +88,7 @@ unstable = []
 # steps all have a GPU kernel on the GPU, in `f64` where the device has it and in double-float
 # (two `f32`) elsewhere, and every other one on the CPU. Off by default: no `wgpu` in the
 # default tree. See `docs/PORTING-gpu.md`.
-gpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck"]
+gpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck", "dep:naga"]
 
 [lints]
 workspace = true
@@ -111,6 +111,8 @@ native-tls = { version = "0.2.14", optional = true }
 wgpu = { version = "30", optional = true, default-features = false, features = ["wgsl", "vulkan", "metal", "dx12"] }
 pollster = { version = "0.4", optional = true }
 bytemuck = { version = "1", optional = true }
+# Metal: the WGSL is translated to MSL here, to switch the compiler to safe math (see `src/gpu/metal.rs`).
+naga = { version = "30", optional = true, default-features = false, features = ["wgsl-in", "msl-out"] }
 
 [dev-dependencies]
 # YAML CLI cases. 0.9.34 is already in the offline registry.

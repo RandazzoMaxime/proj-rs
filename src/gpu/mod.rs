@@ -27,6 +27,7 @@
 
 mod array;
 mod device;
+mod metal;
 mod program;
 mod shader;
 

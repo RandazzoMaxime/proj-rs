@@ -179,13 +179,20 @@ impl GpuContext {
             return Err(GpuError::Float64Unavailable);
         }
         let want_f64 = has_f64 && options.precision != Some(Precision::DoubleFloat);
+        // Metal compiles WGSL with fast-math, which wrecks the double-float: take the MSL route.
+        let passthrough = adapter.get_info().backend == wgpu::Backend::Metal
+            && adapter.features().contains(wgpu::Features::PASSTHROUGH_SHADERS);
+        let mut required_features = if want_f64 {
+            wgpu::Features::SHADER_F64
+        } else {
+            wgpu::Features::empty()
+        };
+        if passthrough {
+            required_features |= wgpu::Features::PASSTHROUGH_SHADERS;
+        }
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("proj-rs"),
-            required_features: if want_f64 {
-                wgpu::Features::SHADER_F64
-            } else {
-                wgpu::Features::empty()
-            },
+            required_features,
             ..Default::default()
         }))
         .map_err(|error| GpuError::Device(error.to_string()))?;
@@ -209,7 +216,7 @@ impl GpuContext {
             if options.precision.is_some_and(|asked| asked != precision) {
                 continue;
             }
-            match build(&device, &queue, precision) {
+            match build(&device, &queue, precision, passthrough) {
                 Ok(pipeline) => {
                     return Ok(Self {
                         device,
@@ -274,25 +281,47 @@ fn build(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     precision: Precision,
+    passthrough: bool,
 ) -> Result<wgpu::ComputePipeline, String> {
     let source = shader::source(precision);
     let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("proj-rs interpreter"),
-        source: wgpu::ShaderSource::Wgsl(source.into()),
-    });
+    let (module, layout, names) = if passthrough {
+        let (msl, names) = super::metal::msl(&source)?;
+        let entries = [(names[0].as_str(), super::metal::GROUP_SIZE), (names[1].as_str(), 1)];
+        let module = unsafe {
+            device.create_shader_module_passthrough(wgpu::ShaderModuleDescriptorPassthrough {
+                label: Some("proj-rs interpreter (msl)"),
+                entry_points: entries
+                    .iter()
+                    .map(|&(name, x)| wgpu::PassthroughShaderEntryPoint {
+                        name: name.into(),
+                        workgroup_size: (x, 1, 1),
+                    })
+                    .collect(),
+                msl: Some(msl.into()),
+                ..Default::default()
+            })
+        };
+        (module, Some(super::metal::layout(device)), names)
+    } else {
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("proj-rs interpreter"),
+            source: wgpu::ShaderSource::Wgsl(source.into()),
+        });
+        (module, None, ["main".to_owned(), "canary".to_owned()])
+    };
     let make = |entry: &str| {
         device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some(entry),
-            layout: None,
+            layout: layout.as_ref(),
             module: &module,
             entry_point: Some(entry),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
             cache: None,
         })
     };
-    let pipeline = make("main");
-    let canary = (precision == Precision::DoubleFloat).then(|| make("canary"));
+    let pipeline = make(&names[0]);
+    let canary = (precision == Precision::DoubleFloat).then(|| make(&names[1]));
     if let Some(error) = pollster::block_on(scope.pop()) {
         return Err(error.to_string());
     }
