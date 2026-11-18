@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>17.1 MiB</title>
+  <style>
+/* Default palette — keep hex in sync with scripts/derive-palette.mjs */
+:root {
+  --bg: #0b0f0e;
+  --elev: #121816;
+  --ink: #f3ead8;
+  --muted: #8a938e;
+  --accent: #00d87a;
+  --accent-hi: #7af0b8;
+  --prev: #5a5a5a;
+  --rival: #f07818;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+#card {
+  position: relative;
+  width: 100%;
+  min-height: 100vh;
+  padding: clamp(20px, 4.2vw, 64px) clamp(20px, 5vw, 80px);
+  background:
+    radial-gradient(80% 70% at 92% -10%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 58%),
+    var(--bg);
+  color: var(--ink);
+  display: flex;
+  flex-direction: column;
+  overflow: visible;
+}
+
+html.export,
+html.export body {
+  width: 1920px;
+  height: 1080px;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+html.export #card {
+  width: 1920px;
+  height: 1080px;
+  min-height: 1080px;
+  padding: 64px 80px 48px;
+  overflow: hidden;
+}
+
+.eyebrow {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 16px;
+}
+
+.title {
+  font-size: clamp(32px, 5vw, 72px);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 0.95;
+  margin: 0 0 16px;
+}
+
+.title .accent { color: var(--accent); }
+
+.subtitle {
+  font-size: clamp(14px, 1.4vw, 22px);
+  color: var(--muted);
+  line-height: 1.4;
+  margin: 0 0 36px;
+  max-width: 48ch;
+}
+
+.footer {
+  margin-top: auto;
+  padding-top: 28px;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--muted);
+  border-top: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 22px;
+  align-items: center;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.legend i {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  margin-right: 8px;
+  vertical-align: -1px;
+}
+
+.legend .sw-accent { background: linear-gradient(180deg, var(--accent-hi), var(--accent)); }
+.legend .sw-prev { background: var(--prev); }
+.legend .sw-rival { background: var(--rival); }
+
+.bar {
+  display: block;
+  height: 28px;
+  border-radius: 6px;
+  min-width: 8px;
+  max-width: 100%;
+}
+
+.bar.accent {
+  background: linear-gradient(90deg, var(--accent), var(--accent-hi));
+  box-shadow: 0 0 22px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.bar.prev { background: var(--prev); }
+.bar.rival { background: var(--rival); }
+
+.bar.striped {
+  background: repeating-linear-gradient(
+    -45deg,
+    color-mix(in srgb, var(--ink) 20%, transparent) 0 7px,
+    color-mix(in srgb, var(--ink) 8%, transparent) 7px 14px
+  );
+}
+
+[hidden] { display: none !important; }
+
+@media (max-width: 639px) {
+  html:not(.export) #card { min-height: 100dvh; }
+  html:not(.export) .title { font-size: 32px; }
+  html:not(.export) .footer { font-size: 11px; flex-direction: column; gap: 6px; }
+}
+
+@media (min-width: 640px) and (max-width: 1023px) {
+  html:not(.export) .title { font-size: 44px; }
+}
+
+</style>
+  <style>
+    /* hero-vs-bars fields:
+       eyebrow title accentWord titleRest subtitle
+       hero heroUnit heroSentence heroDetail
+       series 1–3: sNLabel sNValue sNWidth sNClass (accent|prev|rival|striped)
+       footerLeft footerRight
+       Hide unused [data-slot] with hidden. */
+    .hero-row {
+      display: flex;
+      align-items: center;
+      gap: clamp(20px, 4vw, 56px);
+      flex: 1;
+      min-height: 0;
+    }
+    .hero-num {
+      font-size: clamp(72px, 14vw, 220px);
+      font-weight: 800;
+      letter-spacing: -0.06em;
+      line-height: 0.8;
+      flex: 0 0 auto;
+      color: var(--ink);
+    }
+    .hero-num .unit { color: var(--accent); }
+    .hero-copy { flex: 1; min-width: 0; }
+    .hero-sentence {
+      font-size: clamp(20px, 2.4vw, 36px);
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      line-height: 1.15;
+      margin: 0 0 10px;
+    }
+    .hero-sentence .accent { color: var(--accent); }
+    .hero-detail {
+      font-size: clamp(13px, 1.15vw, 18px);
+      color: var(--muted);
+      margin: 0 0 28px;
+      line-height: 1.45;
+    }
+    .series { display: flex; flex-direction: column; gap: 14px; }
+    .series-row { display: grid; grid-template-columns: minmax(72px, 18%) 1fr auto; gap: 12px 16px; align-items: center; }
+    .series-label { font-size: 15px; color: var(--muted); }
+    .series-label .kicker { display: block; font-size: 11px; opacity: 0.8; }
+    .series-value {
+      font-size: 20px;
+      font-weight: 650;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .series-row.is-accent .series-value { color: var(--accent); }
+    .track { height: 28px; }
+
+    @media (max-width: 639px) {
+      html:not(.export) .hero-row { flex-direction: column; align-items: flex-start; }
+      html:not(.export) .hero-num { font-size: 80px; }
+      html:not(.export) .series-row { grid-template-columns: 1fr; }
+      html:not(.export) .series-label { grid-column: auto; }
+      html:not(.export) .series-value { justify-self: start; }
+    }
+    html.export .hero-row { flex-direction: row; align-items: center; }
+    html.export .hero-num { font-size: 220px; }
+    html.export .series-row { grid-template-columns: 180px 1fr auto; }
+  </style>
+</head>
+<body>
+  <article id="card">
+    <p class="eyebrow">PROJ-RS 1.0 · SIZE ON DISK</p>
+    <div class="hero-row">
+      <div class="hero-num">17.1<span class="unit">MiB</span></div>
+      <div class="hero-copy">
+        <p class="hero-sentence">for a program that converts EPSG:4326 to 2154, proj.db included.</p>
+        <p class="hero-detail">No library to install beside the C library. PROJ 9.9.0 needs 18.6 MiB built minimal, 37.9 MiB with TIFF and curl. With the network feature, proj-rs is 22.9 MiB.</p>
+        <div class="series">
+          <div class="series-row" data-slot="s1">
+            <div class="series-label">PROJ 9.9.0, TIFF and curl</div>
+            <div class="track"><span class="bar rival" style="width: 100%"></span></div>
+            <div class="series-value">37.9 MiB</div>
+          </div>
+          <div class="series-row" data-slot="s2">
+            <div class="series-label">PROJ 9.9.0, minimal</div>
+            <div class="track"><span class="bar rival" style="width: 49%"></span></div>
+            <div class="series-value">18.6 MiB</div>
+          </div>
+          <div class="series-row is-accent" data-slot="s3">
+            <div class="series-label">proj-rs</div>
+            <div class="track"><span class="bar accent" style="width: 45%"></span></div>
+            <div class="series-value">17.1 MiB</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <footer class="footer">
+      <span>Bars are to scale · lower is better · stripped, shared libraries counted</span>
+      <span>bench/footprint.json · Nov 17 · commit ad8d680</span>
+    </footer>
+  </article>
+</body>
+</html>
