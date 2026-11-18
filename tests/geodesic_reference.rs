@@ -40,6 +40,15 @@ fn as_geod_reads(degrees: f64) -> f64 {
     (degrees * DEG_TO_RAD) / DEG_TO_RAD
 }
 
+/// The tolerance on an azimuth of a line of `distance` metres. The references come from PROJ on
+/// glibc; another C math library (Windows, macOS) differs in the last bit of `sin`, `cos`,
+/// `atan2`, a few `1e-9` m of position at the scale of the Earth, and a short line turns that
+/// into an angle: `4e-9 m / distance`, in degrees, doubled. For a line of 100 m this is 5e-9
+/// degree, for a line of 1 000 km 5e-16 and the parity rule alone applies.
+fn azimuth_tolerance(distance: f64) -> f64 {
+    DEGREES + 5e-7 / distance.max(1.0)
+}
+
 fn numbers(line: &str) -> (&str, Vec<f64>) {
     let mut words = line.split_whitespace();
     let name = words.next().expect("an ellipsoid name");
@@ -67,7 +76,7 @@ fn inverse_matches_proj() {
             (got.azimuth2 + 180.0, azimuth2, "azi2"),
         ] {
             assert!(
-                angle_gap(got, want) <= DEGREES,
+                angle_gap(got, want) <= azimuth_tolerance(distance),
                 "{line}: {what} {got} against {want}"
             );
             worst = worst.max(angle_gap(got, want));

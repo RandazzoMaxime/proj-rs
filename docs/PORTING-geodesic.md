@@ -69,6 +69,11 @@ Deux précisions sur la lecture du texte de PROJ :
 
 - `geod` imprime l'**azimut retour** au second point, la direction du premier vu de là ; la
   bibliothèque donne l'azimut d'arrivée, à un demi-tour. Le test ajoute 180° ;
+- les références viennent de PROJ sous glibc : la libm de Windows ou de macOS diffère d'un bit sur
+  `sin`, `cos`, `atan2`, de l'ordre de `4e-9` m de position, et une ligne courte l'amplifie en angle.
+  Le test borne l'azimut par `1e-11 + 5e-7 / distance` degré (`azimuth_tolerance`) : 5e-9 pour une
+  ligne de 100 m, la règle de parité seule au-delà de quelques centaines de kilomètres. Windows a
+  montré 1,5e-10 degré sur une ligne de 102 m ;
 - l'outil lit les degrés, les tient en radians et les rend en degrés : le dernier bit bouge, et une
   ligne de quelques mètres le transforme en 5e-10 degré d'azimut. Le test refait ce voyage.
 
