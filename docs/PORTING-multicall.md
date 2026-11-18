@@ -50,11 +50,74 @@ destination. Non testé ici : aucune machine Windows, seulement `cargo check` de
 
 ## Taille
 
-Linux x86-64, `release`, `strip --strip-unneeded`, même toolchain des deux côtés :
+Linux x86-64, `release`, `strip --strip-unneeded`, même toolchain (stable 1.100) partout. Les huit
+binaires séparés : 144 445 920 octets (137,8 Mio). `proj-rs` seul, profil `release` : 19 257 752.
+Où va le reste : `.rodata` 10,89 Mo (dont `proj.db` 10,55 Mo), `.text` 7,16 Mo (`proj_rs` 4,5 Mo
+en 3 200 fonctions, la plus grosse 37 Ko ; SQLite 1,3 Mo ; `std` 0,7 Mo ; `tiff` 0,1 Mo),
+`.eh_frame` 0,50 Mo, `.rela.dyn` 0,27 Mo, `.gcc_except_table` 0,18 Mo. `cargo bloat` ne montre
+aucune fonction ni aucune monomorphisation dupliquée qu'un correctif simple retirerait.
 
-| | Huit binaires séparés | `proj-rs` + liens |
+| Étape (cumulée), `proj-rs` | Octets | Écart |
 |---|---:|---:|
-| Octets | 144 445 920 (137,8 Mio) | 19 257 752 (18,4 Mio) |
+| `release` (LTO thin, unwind), SQLite par défaut | 19 257 752 | |
+| + `panic = "abort"` | 18 686 232 | -571 520 |
+| + `lto = "fat"` | 18 579 096 | -107 136 |
+| + SQLite allégée (`.cargo/config.toml`) | 17 978 968 | -600 128 |
+| `strip = true` : taille de sortie, sans repasser par `strip` | 17 979 008 (contre 20 221 392) | -2 242 384 |
+
+Total : 144,4 Mo en huit binaires, 18,0 Mo en un (-87,6 %) ; `proj-rs` lui-même, -6,6 %.
+
+**Profil `release-cli`** (`Cargo.toml`) : `release` plus `panic = "abort"`, `lto = "fat"`,
+`strip = true`. Les scripts `tools/dist-cli.*` l'utilisent avec `--release`. Le profil `release`,
+la bibliothèque et `proj-rs-capi` gardent `unwind` : le garde `catch_unwind` de `capi/src/util.rs`
+en dépend (`capi/tests/run.sh --release` reste vert). Les tests tournent en profil `test`, que
+`panic` n'affecte pas. LTO fat n'a pas coûté de temps de build mesurable (2 min 32 contre 2 min 36,
+build complet à froid).
+
+**Ce que `abort` coûte : un second garde.** `src/projections/gridshift/geotiff/mod.rs`
+(`contained`) rattrape par `catch_unwind` un panic de la crate `tiff` 0.10.3 (tag
+`SampleFormat` sans valeur) et le rend comme un fichier de grille invalide. Sous `abort` le
+panic tue le programme (code 134) au lieu de donner l'erreur de grille. Cela ne touche que les
+outils lancés sur un fichier `.tif` malformé. Pour le retirer : supprimer la ligne `panic` de
+`[profile.release-cli]`, +572 512 octets (18 551 520 octets mesurés, avec `lto` et SQLite).
+
+**SQLite allégée.** `.cargo/config.toml` pose `LIBSQLITE3_FLAGS` (lu par `libsqlite3-sys`
+0.35, qui l'ajoute après ses défauts) : sans FTS3/FTS5, R-tree, dbstat, soundex, métadonnées de
+colonnes, extensions chargeables ; avec `OMIT_DEPRECATED`, `OMIT_SHARED_CACHE`,
+`OMIT_PROGRESS_CALLBACK`. `proj.db` n'a ni table virtuelle ni JSON ; ses 38 triggers, ses vues et
+`sqlite_stat1` restent servis. Tous les builds du dépôt la prennent (suite de tests comprise,
+et la bibliothèque C) ; une crate qui dépend de proj-rs ne lit pas ce fichier et garde la SQLite
+par défaut. Un second jeu a été mesuré et refusé : `OMIT_AUTHORIZATION`, `TRACE`, `INCRBLOB`,
+`COMPLETE`, `TCL_VARIABLE`, `GET_TABLE`, `JSON`, `UTF16` ne gagnent que 75 520 octets de plus
+(17 903 448) et fermeraient les bases auxiliaires en UTF-16.
+
+**Rejeté sans mesure** : `-C relocation-model=static` (retirerait `.rela.dyn`, 0,27 Mo, mais
+supprime l'ASLR) ; `opt-level` (la vitesse est l'argument du projet).
+
+## Vitesse
+
+La VM est partagée : `proj-rs-bench` varie de plus de 20 % d'un cas à l'autre entre deux
+passes identiques, même au minimum de 12 passes alternées (`taskset -c 3 nice -n -10`), donc le
+seuil de 3 % ne se lit pas sur un cas. Médiane des 214 cas contre le binaire de `main` :
+`release` avec la SQLite allégée +0,1 %, `release-cli` +0,1 % ; sur les 10 cas `facade_convert*`,
+médiane +4,8 % et -1,1 % avec un pire cas à +22 % et +20 % : non concluant à ce niveau de
+bruit. La mesure de bout en bout des programmes est moins bruitée (10 et 40 passes alternées, temps
+CPU, `proj-rs cs2cs` de `main` contre `release-cli`) : 1 000 000 points EPSG:4326 vers 2154,
+minimum 0,706 s contre 0,631 s ; un point EPSG:4267 vers 4326 (candidats, base SQL), minimum
+0,049 s contre 0,047 s. Aucune régression visible, pas de preuve à 3 % non plus.
+
+## Dossiers de données
+
+Les binaires ne lisent plus `data/proj.db` par le chemin de la machine de build
+(`env!("CARGO_MANIFEST_DIR")` dans `cct` pour `operation_from_name` et dans `cs2cs` pour
+`Catalog::open`) : ils passent par `proj_rs::embedded_proj_db`, la base embarquée. Restent à
+traiter par la branche `claude/proj-data-dirs` (`src/datadir.rs`, non fusionnée) : le
+`--system-directory` de `projsync` (PROJ prend `../share/proj` relatif au module), et les
+`CARGO_MANIFEST_DIR` de `src/gridpath.rs` et `src/network.rs`.
+`std::env::current_exe` donne, avec le multi-appel, le chemin de `proj-rs` : un lien
+symbolique est résolu vers sa cible (Linux ; sous macOS non vérifié ici), un lien physique ou
+un lanceur `.cmd` de Windows reste dans `bin/`. Les scripts `dist-cli.*` posent tous les noms à
+côté de `proj-rs`, donc `<prefix>/bin/../share/proj` reste `<prefix>/share/proj`.
 
 ## Vérifié à l'identique
 

@@ -4,18 +4,22 @@
 #
 # Usage: tools/dist-cli.sh [--release] [PREFIX]        (default prefix: target/cli-dist)
 #
+# --release builds with the `release-cli` profile of Cargo.toml: the `release` profile plus
+# `panic = "abort"`, fat LTO and stripped symbols, 1.3 MB less. The library and the C library
+# (capi/tests/dist.sh) keep the `release` profile and its unwinding.
+#
 # PROJ_RS_CLI_FEATURES="network" adds `projsync` and the HTTPS grid download (off by default).
 #
-# Each tool is a 18 MB program with proj.db inside (10 MB of it); the eight of them cost 144 MB.
-# The one executable costs 19 MB and runs the tool whose name it is started under. The links are
+# Each tool is an 18 MB program with proj.db inside (10.5 MB of it); the eight of them cost 144 MB.
+# The one executable costs 18 MB and runs the tool whose name it is started under. The links are
 # relative, so the prefix can move. Windows: tools/dist-cli.ps1.
 set -euo pipefail
 
 profile=debug
 cargo_args=()
 if [ "${1:-}" = "--release" ]; then
-  profile=release
-  cargo_args=(--release)
+  profile=release-cli
+  cargo_args=(--profile release-cli)
   shift
 fi
 root=$(cd "$(dirname "$0")/.." && pwd)

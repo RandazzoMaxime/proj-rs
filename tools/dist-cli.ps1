@@ -6,13 +6,16 @@
 #
 # $env:PROJ_RS_CLI_FEATURES = "network" adds `projsync` and the HTTPS grid download.
 #
+# -Release builds with the `release-cli` profile of Cargo.toml: the `release` profile plus
+# `panic = "abort"`, fat LTO and stripped symbols.
+#
 # Where hard links are not possible (a file system other than NTFS, or a prefix on another volume
 # than the build), or with -Launchers, each name is a small `name.cmd` that runs
 # `proj-rs.exe name %*`. A launcher is not an executable: a program that starts `cs2cs` without a
 # shell (CreateProcess, `subprocess.run(["cs2cs"])`) does not find it, Ctrl+C asks "Terminate
 # batch job?", and cmd expands `%VAR%` and `^` in the arguments. Prefer the hard links. Copying the
-# folder with Explorer or Copy-Item makes a full copy of each link: copy with robocopy or
-# `Copy-Item` on `proj-rs.exe` alone and run this script again at the destination.
+# folder with Explorer makes a full copy of each link: copy `proj-rs.exe` alone and run this
+# script again at the destination.
 param(
     [switch]$Release,
     [string]$Prefix = "",
@@ -21,9 +24,9 @@ param(
 $ErrorActionPreference = "Stop"
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 if ($Prefix -eq "") { $Prefix = Join-Path $root "target\cli-dist" }
-$profileDir = if ($Release) { "release" } else { "debug" }
+$profileDir = if ($Release) { "release-cli" } else { "debug" }
 $cargoArgs = @("build", "--bin", "proj-rs")
-if ($Release) { $cargoArgs += "--release" }
+if ($Release) { $cargoArgs += @("--profile", "release-cli") }
 if ($env:PROJ_RS_CLI_FEATURES) { $cargoArgs += @("--features", $env:PROJ_RS_CLI_FEATURES) }
 
 Push-Location $root
