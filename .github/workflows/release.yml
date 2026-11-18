@@ -19,7 +19,14 @@ on:
       - tools/release-smoke.*
       - tools/release/**
       - capi/tests/dist.*
+  # A manual run on main with `tag` set publishes too: the release job creates the tag on the
+  # commit built. For a session that cannot push tags; GITHUB_TOKEN tags start no workflow.
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to create and publish, v<version> of the manifests (empty: build only)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -42,6 +49,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - id: check
+        env:
+          DISPATCH_TAG: ${{ github.event.inputs.tag }}
         run: |
           version=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
           for manifest in georust/Cargo.toml capi/Cargo.toml; do
@@ -59,6 +68,16 @@ jobs:
           if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
             echo "tag $GITHUB_REF_NAME, but the manifests are at version $version" >&2
             exit 1
+          fi
+          if [ -n "$DISPATCH_TAG" ]; then
+            if [ "$DISPATCH_TAG" != "v$version" ]; then
+              echo "tag input $DISPATCH_TAG, but the manifests are at version $version" >&2
+              exit 1
+            fi
+            if [ "$GITHUB_REF" != refs/heads/main ]; then
+              echo "a release is published from main only, not $GITHUB_REF" >&2
+              exit 1
+            fi
           fi
           if [ ! -s "docs/release-notes/v$version.md" ]; then
             echo "docs/release-notes/v$version.md is missing or empty" >&2
@@ -157,9 +176,11 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # Only on a tag, and the only job that can write to the repository.
+  # Only on a tag, or a manual run on main with `tag`; the only job that can write to the repository.
   release:
-    if: github.event_name == 'push' && github.ref_type == 'tag'
+    if: >-
+      (github.event_name == 'push' && github.ref_type == 'tag') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '' && github.ref == 'refs/heads/main')
     needs: [prepare, checksums]
     runs-on: ubuntu-22.04
     permissions:
@@ -179,12 +200,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.prepare.outputs.version }}
+          DISPATCH_TAG: ${{ github.event.inputs.tag }}
         run: |
           (cd dist && sha256sum --check SHA256SUMS)
           prerelease=()
           case "$VERSION" in *-*) prerelease=(--prerelease) ;; esac
-          gh release create "$GITHUB_REF_NAME" dist/* \
-            --verify-tag \
+          if [ -n "$DISPATCH_TAG" ]; then
+            tag=("$DISPATCH_TAG" --target "$GITHUB_SHA")
+          else
+            tag=("$GITHUB_REF_NAME" --verify-tag)
+          fi
+          gh release create "${tag[@]}" dist/* \
             --title "proj-rs v$VERSION" \
             --notes-file "docs/release-notes/v$VERSION.md" \
             "${prerelease[@]}"
