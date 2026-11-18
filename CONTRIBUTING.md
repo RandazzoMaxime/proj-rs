@@ -110,3 +110,13 @@ The maintainer looks, in this order, at: the behavior against PROJ, the
 deviations stated in the `docs/PORTING-<module>.md` sheet, the API, then the
 style. A PR that mixes two lots or widens its scope without saying so goes
 back to its author.
+
+## Releases
+
+The maintainer pushes a tag `v<version>` (the version of the three manifests). The workflow
+`.github/workflows/release.yml` builds the archives of the four platforms (the command-line tools,
+and the C library), unpacks and tests them, writes `SHA256SUMS`, and creates the GitHub release with
+the notes of `docs/release-notes/v<version>.md`. A pull request that touches the packaging
+(`tools/dist-cli.*`, `tools/release*`, `capi/tests/dist.*`, the workflow) runs the same build and
+tests and publishes nothing: the archives are artifacts of the run. Publishing the crates to
+crates.io is a separate step: [docs/PUBLISHING.md](docs/PUBLISHING.md).

@@ -3,8 +3,9 @@
 Statut : **lot 1 implémenté** (workspace, façade native, masquage des internes, crate georust,
 squelette du crate C, MSRV et semver-checks en CI). **Lot 2 implémenté** : l'ABI de
 `proj.h` est complète (292 fonctions exportées et implémentées, structures vérifiées ; écarts dans
-« Écarts du lot 2 »). Le lot 3 (publication)
-reste à faire. Ce document fixe ce que la v1 promet, et ce qu'il ne promet pas. Les écarts entre le
+« Écarts du lot 2 »). **Lot 3 préparé** : versions `1.0.0`, `publish` ouvert pour `proj-rs` et
+`proj-rs-georust`, MSRV 1.100, archives de la release GitHub (`.github/workflows/release.yml`) ; la
+publication sur crates.io reste à faire (`docs/PUBLISHING.md`). Ce document fixe ce que la v1 promet, et ce qu'il ne promet pas. Les écarts entre le
 cahier des charges et le code sont dans « Écarts du lot 1 » et « Écarts du lot 2 », en fin de page.
 
 ## Le problème

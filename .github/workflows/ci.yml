@@ -153,9 +153,9 @@ jobs:
       - run: cargo check --workspace --lib --bins --all-features
 
   # Breaking changes of the stable surface against the last published version.
-  # Disabled: no version of proj-rs or proj-rs-georust is on crates.io yet (`publish = false`).
-  # Enable it when the lot 3 of docs/API-v1.md publishes 1.0.0: delete the `if: false` line, and
-  # `cargo-semver-checks` then compares each crate with the latest release of the registry.
+  # Disabled: 1.0.0 of proj-rs and proj-rs-georust is ready to publish (docs/PUBLISHING.md) but is
+  # not on crates.io yet, so there is nothing to compare with. Once it is, delete the `if: false`
+  # line: `cargo-semver-checks` then compares each crate with the latest release of the registry.
   semver:
     if: false
     runs-on: ubuntu-24.04
