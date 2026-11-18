@@ -56,6 +56,14 @@ t.forward_slice(&mut points)?;                      // lot : SIMD quand il exist
 - Garantie : le résultat est celui de PROJ 9.9.0, à la tolérance de `docs/PARITY.md`. Le chemin
   par lots peut différer du scalaire de 11 nm au plus (`docs/PORTING-simd.md`).
 
+### Façade georust et `Proj` : `convert_iter`
+
+- `Proj::convert_iter(points)` : un itérateur d'items `Result<C, ProjError>`, pour un itérateur de
+  points sans tranche à écrire. Les items sont ceux de `points.map(|p| proj.convert(p))` : une
+  valeur concorde avec `convert` à la tolérance de `convert_array`, une erreur est la même, et
+  l'itérateur continue après une erreur. Il prend au plus 1024 points d'avance. Environ deux fois plus
+  rapide que `convert` un point à la fois. Détail : `docs/PORTING-convert-iter.md`.
+
 ### georust (`proj-rs-georust`)
 
 Ré-exporte la façade qui existe aujourd'hui (`src/proj.rs` : `Proj`, `ProjBuilder`, `Coord`,
