@@ -25,10 +25,8 @@ pub(crate) fn next_down(x: f64) -> f64 {
 
 /// Whether `n` is a multiple of `of` (`usize::is_multiple_of`, Rust 1.91). `of` is not zero at any
 /// call: the standard method answers `n == 0` for a zero, this one would panic.
-#[expect(
-    clippy::manual_is_multiple_of,
-    reason = "the standard method is newer than the minimum Rust version"
-)]
+// Clippy suggests the standard method only above the minimum Rust version, which this crate
+// does not declare: no lint to expect.
 pub(crate) fn is_multiple_of(n: usize, of: usize) -> bool {
     n % of == 0
 }
@@ -36,10 +34,6 @@ pub(crate) fn is_multiple_of(n: usize, of: usize) -> bool {
 /// The groups of four of a slice whose length is a multiple of four (`<[f64]>::as_chunks`,
 /// Rust 1.88).
 #[cfg(target_arch = "x86_64")]
-#[expect(
-    clippy::chunks_exact_to_as_chunks,
-    reason = "`as_chunks` is newer than the minimum Rust version"
-)]
 pub(crate) fn quads(slice: &[f64]) -> impl Iterator<Item = &[f64; 4]> {
     slice
         .chunks_exact(4)
@@ -48,10 +42,6 @@ pub(crate) fn quads(slice: &[f64]) -> impl Iterator<Item = &[f64; 4]> {
 
 /// [`quads`] for a mutable slice (`<[f64]>::as_chunks_mut`).
 #[cfg(target_arch = "x86_64")]
-#[expect(
-    clippy::chunks_exact_to_as_chunks,
-    reason = "`as_chunks_mut` is newer than the minimum Rust version"
-)]
 pub(crate) fn quads_mut(slice: &mut [f64]) -> impl Iterator<Item = &mut [f64; 4]> {
     slice
         .chunks_exact_mut(4)

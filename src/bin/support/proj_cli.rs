@@ -98,10 +98,6 @@ pub(crate) fn run(argv: Vec<String>) -> ExitCode {
     if options.binary.input {
         // `process`: each record is two native doubles, `PJ_UV`; no tag, no echo.
         // `chunks_exact`, not `as_chunks` (Rust 1.88): the tools build with the minimum version.
-        #[expect(
-            clippy::chunks_exact_to_as_chunks,
-            reason = "`as_chunks` is newer than the minimum Rust version"
-        )]
         for record_bytes in input.chunks_exact(16) {
             let u = f64::from_ne_bytes(to_array(&record_bytes[..8]));
             let v = f64::from_ne_bytes(to_array(&record_bytes[8..]));
