@@ -49,6 +49,54 @@ Autres mesures, du même programme :
 - **Copie de sécurité** d'un bloc (sans elle, pour mesurer seulement) : 49 à 52 ns sans, 47 à 58 avec.
   Le coût est dans le bruit.
 
+## Les petites entrées : un seuil de 8 points
+
+Le chemin par blocs a un coût fixe par appel : environ 90 ns pour `convert_array`, environ 160 ns
+pour `convert_iter` (les blocs, la préparation des noyaux, les allocations). Sur un ou deux points
+c'est plus que le calcul. Mesure alternée, un cœur, ns par point, rapport « point par point sur la
+méthode » (au-dessus de 1, la méthode gagne). Avant, sur main :
+
+| points | 4326→3857 `array` / `iter` | 4326→32631 | 4326→2154 |
+|---:|---|---|---|
+| 1 | 0,31× / 0,20× | 0,48× / 0,36× | 0,31× / 0,23× |
+| 4 | 0,90× / 0,62× | 1,72× / 1,22× | 1,02× / 0,76× |
+| 8 | 1,41× / 1,00× | 2,43× / 1,78× | 1,49× / 1,14× |
+| 16 | 1,78× / 1,28× | 2,73× / 2,10× | 1,87× / 1,45× |
+| 1024 | 2,18× / 1,71× | 3,27× / 2,73× | 2,25× / 1,90× |
+
+Le gain commence entre 4 et 8 points et plafonne vers 32 à 64. `SMALL_BATCH` vaut donc 8 :
+
+- **`convert_array`** sous 8 points convertit point par point, sans allouer (`Proj::fill_small`). Le
+  contrat est celui d'un bloc unique : l'erreur est celle du premier point fautif, rien n'est écrit,
+  une valeur qui ne tient pas dans le type de la tranche laisse son point et se signale à la fin. La
+  valeur est celle de `convert` **au bit près**, plus la tolérance du SIMD.
+- **`convert_iter`** lit les 8 premiers points dans un tableau en ligne. Si l'entrée s'arrête avant,
+  chaque item est `convert` de son point, sans bloc ni allocation. Sinon il forme le bloc, qui croît
+  au lieu d'être réservé à 1024 d'avance (16 Kio de moins pour une entrée de 20 points). La propriété
+  « au plus 1024 points d'avance » est gardée.
+
+Après, même mesure :
+
+| points | 4326→3857 `array` / `iter` | 4326→32631 | 4326→2154 |
+|---:|---|---|---|
+| 1 | 0,90× / 0,89× | 0,97× / 0,97× | 0,91× / 0,89× |
+| 4 | 0,98× / 0,96× | 0,99× / 1,00× | 0,98× / 0,96× |
+| 7 | 1,00× / 0,95× | 1,01× / 0,98× | 0,98× / 0,95× |
+| 8 | 1,40× / 1,02× | 2,42× / 1,70× | 1,50× / 1,15× |
+| 16 | 1,81× / 1,20× | 2,79× / 1,95× | 1,89× / 1,39× |
+| 1024 | 2,16× / 1,70× | 3,25× / 2,71× | 2,07× / 1,66× |
+
+Sous 8 points la méthode coûte le point par point, à 15 % près au pire (un appel par point, le bruit
+de la mesure et un tableau de 8 valeurs à remplir) ; à 8 points elle gagne, sans falaise. Les
+mesures du seuil lui-même : sur 4326→2154, 8 points donnent ×1,5 pour `array` ; 4 points ×1,0.
+
+`convert(p)` appelé dans la boucle de l'appelant ne peut pas en profiter : la bibliothèque ne voit
+qu'un point à la fois. Pour y gagner, l'appelant passe par `convert_array` ou `convert_iter`.
+
+Tests : `tests/small_batch.rs` (valeur au bit près sous 8, tolérance du SIMD à partir de 8, première
+erreur et tranche intacte pour toutes les positions du point fautif, tranches `f32`, entrées de 0 à
+20 points pour l'itérateur, itérateur qui continue après une erreur, source lue sans excès).
+
 ## Profil du point par point (callgrind, instructions par point)
 
 Run à 1 point retiré, pour ne compter que le point :

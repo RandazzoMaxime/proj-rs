@@ -432,6 +432,12 @@ pub struct Proj {
 /// Points a slice conversion hands to the transform at a time.
 const FILL_CHUNK: usize = 4096;
 
+/// Fewer points than this go through the transform one at a time. The vector path costs about
+/// 90 ns a call (the blocks, the kernels' setup) and a vector kernel has little to amortise it
+/// on: measured, a slice of 4 to 8 points is where it starts to beat the scalar loop, and below
+/// it a lone point costs two to five times as much (`docs/PORTING-convert-iter.md`).
+pub(crate) const SMALL_BATCH: usize = 8;
+
 impl Proj {
     /// Build a transform from a PROJ string, one CRS from an `EPSG:` code, or
     /// a minimal WKT or PROJJSON geographic or projected CRS.
@@ -1191,6 +1197,9 @@ impl Proj {
             point.x().into_f64()?;
             point.y().into_f64()?;
         }
+        if points.len() < SMALL_BATCH {
+            return self.fill_small(points, way);
+        }
         // One block of `Xyzt` is alive at a time and the results go straight back into the
         // slice. A block with a failing point is not written back and ends the call, so a slice
         // that fails early does not go on to download grids or choose candidates for every
@@ -1225,6 +1234,47 @@ impl Proj {
                     (Err(error), _) | (_, Err(error)) => {
                         narrowing.get_or_insert(error);
                     }
+                }
+            }
+        }
+        match narrowing {
+            Some(error) => Err(error),
+            None => Ok(points),
+        }
+    }
+
+    /// A slice under [`SMALL_BATCH`] points, one point at a time and no allocation. The contract
+    /// is the one of the single block of [`Self::fill_array`]: the first failing point gives the
+    /// error and nothing is written, a value that does not fit the slice type leaves its point
+    /// as it was and is reported at the end.
+    fn fill_small<'a, C, F>(
+        &self,
+        points: &'a mut [C],
+        way: Direction,
+    ) -> Result<&'a mut [C], ProjError>
+    where
+        C: Coord<F>,
+        F: CoordinateType,
+    {
+        let mut done = [Xyzt::xy(0.0, 0.0); SMALL_BATCH];
+        for (slot, point) in done.iter_mut().zip(&*points) {
+            let coord = Xyzt::xy(point.x().into_f64()?, point.y().into_f64()?);
+            *slot = match &self.body {
+                Body::Native(op) => match way {
+                    Direction::Forward => op.forward(coord),
+                    Direction::Inverse => op.inverse(coord),
+                },
+                Body::Iso(pipeline) => pipeline.map(coord, way),
+                Body::Single => return Err(ProjError::NotATransform),
+            }
+            .map_err(|error| Self::facade_error(error, Report::Conversion))?;
+        }
+        let mut narrowing = None;
+        for (point, coord) in points.iter_mut().zip(&done) {
+            match (F::from_f64(coord.x), F::from_f64(coord.y)) {
+                (Ok(x), Ok(y)) => *point = C::from_xy(x, y),
+                (Err(error), _) | (_, Err(error)) => {
+                    narrowing.get_or_insert(error);
                 }
             }
         }
