@@ -327,6 +327,10 @@ fn a_transform_without_a_kernel_runs_on_the_cpu() {
         assert_eq!(report.gpu_points, 0);
         assert_eq!(report.cpu_points, points.len());
         assert_eq!(report.fallback, Some(Fallback::Unsupported));
+        assert_eq!(
+            report.warning().as_deref(),
+            Some("CONVERSION NOT SUPPORTED ON GPU, FALLBACK ON CPU")
+        );
         assert_eq!(out, cpu, "the CPU path gives the CPU answer bit for bit");
     }
 }

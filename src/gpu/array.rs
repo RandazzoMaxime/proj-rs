@@ -23,6 +23,17 @@ pub enum Fallback {
     Device(String),
 }
 
+impl std::fmt::Display for Fallback {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TooFewPoints => f.write_str("too few points for the GPU, fallback on CPU"),
+            Self::Unsupported => f.write_str("CONVERSION NOT SUPPORTED ON GPU, FALLBACK ON CPU"),
+            Self::Flagged => f.write_str("point the GPU cannot decide, block fell back on CPU"),
+            Self::Device(why) => write!(f, "GPU device failed ({why}), fallback on CPU"),
+        }
+    }
+}
+
 /// What [`Proj::convert_array_gpu`] did.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct GpuReport {
@@ -32,6 +43,15 @@ pub struct GpuReport {
     pub cpu_points: usize,
     /// Why the CPU converted any, when it did.
     pub fallback: Option<Fallback>,
+}
+
+impl GpuReport {
+    /// The line to show the user when the CPU converted any point: the library does not print,
+    /// the caller does (`if let Some(w) = report.warning() { eprintln!("warning: {w}") }`).
+    #[must_use]
+    pub fn warning(&self) -> Option<String> {
+        self.fallback.as_ref().map(ToString::to_string)
+    }
 }
 
 impl Proj {

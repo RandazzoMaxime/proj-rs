@@ -180,14 +180,21 @@ impl GpuContext {
         }
         let want_f64 = has_f64 && options.precision != Some(Precision::DoubleFloat);
         // Metal compiles WGSL with fast-math, which wrecks the double-float: take the MSL route.
-        let passthrough = adapter.get_info().backend == wgpu::Backend::Metal
-            && adapter.features().contains(wgpu::Features::PASSTHROUGH_SHADERS);
+        let route = if adapter.get_info().backend == wgpu::Backend::Metal
+            && adapter
+                .features()
+                .contains(wgpu::Features::PASSTHROUGH_SHADERS)
+        {
+            Route::Msl
+        } else {
+            Route::Wgsl
+        };
         let mut required_features = if want_f64 {
             wgpu::Features::SHADER_F64
         } else {
             wgpu::Features::empty()
         };
-        if passthrough {
+        if route == Route::Msl {
             required_features |= wgpu::Features::PASSTHROUGH_SHADERS;
         }
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
@@ -216,7 +223,7 @@ impl GpuContext {
             if options.precision.is_some_and(|asked| asked != precision) {
                 continue;
             }
-            match build(&device, &queue, precision, passthrough) {
+            match build(&device, &queue, precision, route) {
                 Ok(pipeline) => {
                     return Ok(Self {
                         device,
@@ -275,19 +282,31 @@ impl GpuContext {
     }
 }
 
+/// How the shader reaches the driver: WGSL through wgpu, or MSL passthrough (Metal).
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Route {
+    Wgsl,
+    Msl,
+}
+
 /// The interpreter pipeline of `precision`. Double-float must first prove it still does exact
 /// arithmetic on this driver.
 fn build(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     precision: Precision,
-    passthrough: bool,
+    route: Route,
 ) -> Result<wgpu::ComputePipeline, String> {
     let source = shader::source(precision);
     let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-    let (module, layout, names) = if passthrough {
+    let (module, layout, names) = if route == Route::Msl {
         let (msl, names) = super::metal::msl(&source)?;
-        let entries = [(names[0].as_str(), super::metal::GROUP_SIZE), (names[1].as_str(), 1)];
+        let entries = [
+            (names[0].as_str(), super::metal::GROUP_SIZE),
+            (names[1].as_str(), 1),
+        ];
+        // SAFETY: the MSL comes from naga for this very shader, and the entry points and
+        // workgroup sizes match it; wgpu has no way to check the MSL itself.
         let module = unsafe {
             device.create_shader_module_passthrough(wgpu::ShaderModuleDescriptorPassthrough {
                 label: Some("proj-rs interpreter (msl)"),

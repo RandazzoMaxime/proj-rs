@@ -31,24 +31,38 @@ pub(super) fn msl(wgsl: &str) -> Result<(String, [String; 2]), String> {
     .map_err(|e| e.to_string())?;
     // wgpu numbers the Metal buffer slots of a compute pipeline in binding order.
     let mut resources = BTreeMap::new();
-    for (binding, &(_, read_only)) in (0u32..).zip(&BINDINGS) {
+    for (slot, &(_, read_only)) in (0u8..).zip(&BINDINGS) {
         resources.insert(
-            naga::ResourceBinding { group: 0, binding },
-            msl::BindTarget { buffer: Some(binding as u8), mutable: !read_only, ..Default::default() },
+            naga::ResourceBinding {
+                group: 0,
+                binding: u32::from(slot),
+            },
+            msl::BindTarget {
+                buffer: Some(slot),
+                mutable: !read_only,
+                ..Default::default()
+            },
         );
     }
     let mut options = msl::Options::default();
     for entry in ["main", "canary"] {
         options.per_entry_point_map.insert(
             entry.to_owned(),
-            msl::EntryPointResources { resources: resources.clone(), ..Default::default() },
+            msl::EntryPointResources {
+                resources: resources.clone(),
+                ..Default::default()
+            },
         );
     }
     let (source, translation) =
         msl::write_string(&module, &info, &options, &msl::PipelineOptions::default())
             .map_err(|e| e.to_string())?;
     let mut names = [String::new(), String::new()];
-    for (point, name) in module.entry_points.iter().zip(&translation.entry_point_names) {
+    for (point, name) in module
+        .entry_points
+        .iter()
+        .zip(&translation.entry_point_names)
+    {
         let slot = if point.name == "main" { 0 } else { 1 };
         names[slot] = name.clone().map_err(|e| e.to_string())?;
     }
@@ -62,7 +76,11 @@ pub(super) fn layout(device: &wgpu::Device) -> wgpu::PipelineLayout {
         .map(|(binding, &(ty, _))| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer { ty, has_dynamic_offset: false, min_binding_size: None },
+            ty: wgpu::BindingType::Buffer {
+                ty,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
             count: None,
         })
         .collect();
