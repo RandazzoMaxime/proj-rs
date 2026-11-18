@@ -22,7 +22,10 @@ const SLICE_CHUNK: usize = 4096;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum OnlyBest {
     /// `ONLY_BEST` unset: the best operation is tried first, and a point it fails on is
-    /// retried with the next candidate.
+    /// retried with the next candidate. The context's default applies instead:
+    /// `PROJ_ONLY_BEST_DEFAULT`, else `only_best_default` of `proj.ini`, read by a non-hermetic
+    /// context. `YES`, `ON` or `TRUE` make it [`OnlyBest::Yes`], any other non-empty value
+    /// [`OnlyBest::No`]. With neither, it is PROJ's warning.
     #[default]
     Default,
     /// `ONLY_BEST=YES`: the best operation is the only one. If it needs a grid that is
@@ -348,7 +351,14 @@ impl<'a> TransformerBuilder<'a> {
     /// ```
     pub fn build(self) -> Result<Transformer, Error> {
         let policy = match self.only_best {
-            OnlyBest::Default => BestPolicy::Warn,
+            // An unset option takes the default of the context of the source, as PROJ's
+            // `proj_create_crs_to_crs` takes `errorIfBestTransformationNotAvailableDefault`
+            // (`crs_to_crs.cpp`, `pj_load_ini`): `PROJ_ONLY_BEST_DEFAULT` or `only_best_default`.
+            OnlyBest::Default => match self.source.context.net.only_best_default {
+                None => BestPolicy::Warn,
+                Some(true) => BestPolicy::Error,
+                Some(false) => BestPolicy::Discard,
+            },
             OnlyBest::Yes => BestPolicy::Error,
             OnlyBest::No => BestPolicy::Discard,
         };
