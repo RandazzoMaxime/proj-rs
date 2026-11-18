@@ -20,6 +20,13 @@ path = "src/bin/bench.rs"
 doc = false
 
 [[bin]]
+name = "proj-rs"
+path = "src/bin/proj-rs.rs"
+doc = false
+# The tools it runs have their unit tests in their own binaries.
+test = false
+
+[[bin]]
 name = "cct"
 path = "src/bin/cct.rs"
 doc = false
@@ -96,6 +103,14 @@ serde_yaml = "=0.9.34"
 opt-level = 3
 lto = "thin"
 codegen-units = 1
+
+# The command-line tools (tools/dist-cli.sh): `panic = "abort"` drops the unwind tables and
+# landing pads. Only these binaries take it; the library and `proj-rs-capi` stay on the
+# `release` profile and keep unwinding (`catch_unwind` at the C boundary needs it).
+[profile.release-cli]
+inherits = "release"
+lto = "fat"
+strip = true
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "warn"

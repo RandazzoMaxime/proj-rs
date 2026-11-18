@@ -25,8 +25,13 @@ const RELEASE: &str = "Rel. 9.9.0, September 15th, 2026";
 const DEFAULT_ANGLE_DECIMALS: usize = 10;
 const DEFAULT_DISTANCE_DECIMALS: usize = 4;
 
-fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+pub(crate) fn main() -> ExitCode {
+    run_with(std::env::args().collect())
+}
+
+/// Runs the command with `argv` as the process arguments, the program name first.
+pub(crate) fn run_with(argv: Vec<String>) -> ExitCode {
+    let args: Vec<String> = argv.into_iter().skip(1).collect();
     let options = match Options::parse(&args) {
         Ok(options) => options,
         Err(message) => {
@@ -385,8 +390,7 @@ fn operation_from_database(auth: &str, code: &str) -> Result<Operation, String> 
 }
 
 fn operation_from_name(name: &str) -> Result<Operation, String> {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("data/proj.db");
-    let connection = rusqlite::Connection::open(path).map_err(|error| error.to_string())?;
+    let connection = proj_rs::embedded_proj_db()?;
     let code: i64 = connection
         .query_row(
             "SELECT code FROM coordinate_operation_view \

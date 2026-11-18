@@ -62,8 +62,13 @@ fn usage_error() -> ExitCode {
     ExitCode::from(1)
 }
 
-fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+pub(crate) fn main() -> ExitCode {
+    run_with(std::env::args().collect())
+}
+
+/// Runs the command with `argv` as the process arguments, the program name first.
+pub(crate) fn run_with(argv: Vec<String>) -> ExitCode {
+    let args: Vec<String> = argv.into_iter().skip(1).collect();
     let options = match parse(&args) {
         Ok(options) => options,
         Err(code) => return code,
@@ -81,12 +86,7 @@ fn parse(args: &[String]) -> Result<Options, ExitCode> {
         match arg.as_str() {
             "--endpoint" => options.endpoint = Some(value().ok_or_else(usage_error)?),
             "--user-writable-directory" | "--user-directory" => {}
-            "--system-directory" => {
-                options.target_dir = Some(system_directory().ok_or_else(|| {
-                    warn("--system-directory: no PROJ_DATA or PROJ_LIB directory is set");
-                    ExitCode::from(1)
-                })?);
-            }
+            "--system-directory" => options.target_dir = proj_rs::system_data_directory(),
             "--target-dir" => {
                 options.target_dir = Some(PathBuf::from(value().ok_or_else(usage_error)?));
             }
@@ -180,14 +180,6 @@ fn parse_bbox(text: &str) -> Result<Bbox, ExitCode> {
 }
 
 /// The first directory of `PROJ_DATA`, else of `PROJ_LIB`.
-fn system_directory() -> Option<PathBuf> {
-    ["PROJ_DATA", "PROJ_LIB"]
-        .iter()
-        .filter_map(std::env::var_os)
-        .find(|value| !value.is_empty())
-        .and_then(|value| std::env::split_paths(&value).find(|path| !path.as_os_str().is_empty()))
-}
-
 fn trim_trailing_slash(text: &str) -> &str {
     text.strip_suffix('/').unwrap_or(text)
 }

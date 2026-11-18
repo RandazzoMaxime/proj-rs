@@ -25,11 +25,12 @@ pub(crate) enum Direction {
 }
 
 /// The name the program was started with: the last part of `argv[0]`.
-pub(crate) fn program_name() -> String {
-    let argv0 = std::env::args().next().unwrap_or_default();
-    std::path::Path::new(&argv0)
-        .file_name()
-        .map_or_else(|| argv0.clone(), |name| name.to_string_lossy().into_owned())
+pub(crate) fn program_name(argv: &[String]) -> String {
+    let argv0 = argv.first().map_or("", String::as_str);
+    std::path::Path::new(argv0).file_name().map_or_else(
+        || argv0.to_owned(),
+        |name| name.to_string_lossy().into_owned(),
+    )
 }
 
 /// PROJ's rule: a program whose name starts with `inv` runs in inverse mode.

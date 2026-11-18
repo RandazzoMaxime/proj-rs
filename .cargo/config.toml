@@ -1,0 +1,8 @@
+# Builds of this repository only. A crate that depends on proj-rs does not read this file.
+[env]
+# rusqlite's bundled SQLite, without what proj-rs never uses: full-text search, R-tree, the dbstat
+# and soundex extras, column metadata, loadable extensions, and the deprecated, shared-cache and
+# progress-callback interfaces. proj.db and the other databases proj-rs opens use none of them.
+# The first flags undo the defaults of libsqlite3-sys 0.35 (build.rs); the rest are added.
+# 600 KB less in every program, library included. See docs/PORTING-multicall.md.
+LIBSQLITE3_FLAGS = "-USQLITE_ENABLE_FTS3 -USQLITE_ENABLE_FTS3_PARENTHESIS -USQLITE_ENABLE_FTS5 -USQLITE_ENABLE_RTREE -USQLITE_ENABLE_DBSTAT_VTAB -USQLITE_SOUNDEX -USQLITE_ENABLE_COLUMN_METADATA -USQLITE_ENABLE_LOAD_EXTENSION -DSQLITE_OMIT_LOAD_EXTENSION -DSQLITE_OMIT_DEPRECATED -DSQLITE_OMIT_SHARED_CACHE -DSQLITE_OMIT_PROGRESS_CALLBACK"

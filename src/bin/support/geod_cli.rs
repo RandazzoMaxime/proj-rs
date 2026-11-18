@@ -49,10 +49,10 @@ const ELLIPSOID_KEYS: &[&str] = &[
 ];
 
 /// Entry point of `geod` and `invgeod`: the program name decides the direction.
-pub(crate) fn run() -> ExitCode {
-    let program = program_name();
+pub(crate) fn run(argv: Vec<String>) -> ExitCode {
+    let program = program_name(&argv);
     let direction = direction_of(&program);
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let args: Vec<String> = argv.into_iter().skip(1).collect();
     if args.is_empty() {
         let _ = writeln!(
             io::stderr(),

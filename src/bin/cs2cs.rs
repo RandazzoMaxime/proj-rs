@@ -34,10 +34,15 @@ const RELEASE: &str = "Rel. 9.9.0, September 15th, 2026";
 /// (`test_cs2cs_various.yaml#125`, `EPSG:26915` to `EPSG:26715`).
 const STACK_SIZE: usize = 64 * 1024 * 1024;
 
-fn main() -> ExitCode {
+pub(crate) fn main() -> ExitCode {
+    run_with(std::env::args().collect())
+}
+
+/// Runs the command with `argv` as the process arguments, the program name first.
+pub(crate) fn run_with(argv: Vec<String>) -> ExitCode {
     let worker = std::thread::Builder::new()
         .stack_size(STACK_SIZE)
-        .spawn(command)
+        .spawn(move || command(argv))
         .expect("spawn the cs2cs thread");
     match worker.join() {
         Ok(code) => code,
@@ -45,11 +50,11 @@ fn main() -> ExitCode {
     }
 }
 
-fn command() -> ExitCode {
+fn command(argv: Vec<String>) -> ExitCode {
     // Reads `PROJ_DEBUG` first, as PROJ's context does: an invalid value is reported before anything.
     proj_debug_level();
-    let prog = program_name();
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let prog = program_name(&argv);
+    let args: Vec<String> = argv.into_iter().skip(1).collect();
     if args.is_empty() {
         eprintln!("{}", usage(&prog));
         return ExitCode::SUCCESS;
@@ -58,7 +63,7 @@ fn command() -> ExitCode {
         eprintln!("{}", usage(&prog));
         return ExitCode::SUCCESS;
     }
-    let mut opts = match parse(&args) {
+    let mut opts = match parse(&prog, &args) {
         Ok(opts) => opts,
         Err(error) => {
             if error.plain {
@@ -1337,11 +1342,9 @@ fn parse_point(line: &str, text: AxisText, order: AxisOrder) -> Parsed {
     }
 }
 
-fn program_name() -> String {
-    let exe = std::env::args()
-        .next()
-        .unwrap_or_else(|| "cs2cs".to_owned());
-    std::path::Path::new(&exe)
+fn program_name(argv: &[String]) -> String {
+    let exe = argv.first().map_or("cs2cs", String::as_str);
+    std::path::Path::new(exe)
         .file_stem()
         .and_then(|stem| stem.to_str())
         .unwrap_or("cs2cs")
@@ -1439,9 +1442,9 @@ struct Options {
     files: Vec<String>,
 }
 
-fn parse(args: &[String]) -> Result<Options, AppError> {
+fn parse(prog: &str, args: &[String]) -> Result<Options, AppError> {
     let mut opts = Options {
-        inverse: program_name().starts_with("inv"),
+        inverse: prog.starts_with("inv"),
         echo: false,
         reverse_in: false,
         reverse_out: false,
@@ -1934,9 +1937,8 @@ struct Catalog {
 
 impl Catalog {
     fn open() -> Self {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("data/proj.db");
         Self {
-            db: Connection::open(path).ok(),
+            db: proj_rs::embedded_proj_db().ok(),
         }
     }
 
@@ -3103,17 +3105,20 @@ mod tests {
             "+proj=utm".to_owned(),
             "+zone=31".to_owned(),
         ];
-        let opts = parse(&args).expect("parse");
+        let opts = parse("cs2cs", &args).expect("parse");
         assert_eq!(opts.source, "+proj=latlong +ellps=WGS84");
         assert_eq!(opts.target, "+proj=utm +zone=31");
         let fmt = opts.number_fmt.expect("fmt");
         assert_eq!(format_number(&fmt, 1.2), "1.20000000");
-        let three = parse(&[
-            "-d".to_owned(),
-            "3".to_owned(),
-            "EPSG:4326".to_owned(),
-            "EPSG:32631".to_owned(),
-        ])
+        let three = parse(
+            "cs2cs",
+            &[
+                "-d".to_owned(),
+                "3".to_owned(),
+                "EPSG:4326".to_owned(),
+                "EPSG:32631".to_owned(),
+            ],
+        )
         .expect("parse 3");
         let fmt = three.number_fmt.expect("fmt 3");
         assert_eq!(format_number(&fmt, 1.2), "1.200");
@@ -3122,7 +3127,7 @@ mod tests {
     #[test]
     fn bad_w_is_rejected() {
         for arg in ["-W", "-W9", "-W10", "-w"] {
-            let error = parse(&[arg.to_owned()]).expect_err(arg);
+            let error = parse("cs2cs", &[arg.to_owned()]).expect_err(arg);
             assert_eq!(error.code, 1, "{arg}");
             assert!(
                 error
@@ -3132,12 +3137,15 @@ mod tests {
                 error.message
             );
         }
-        let opts = parse(&[
-            "-W8".to_owned(),
-            "+proj=latlong".to_owned(),
-            "+to".to_owned(),
-            "+proj=latlong".to_owned(),
-        ])
+        let opts = parse(
+            "cs2cs",
+            &[
+                "-W8".to_owned(),
+                "+proj=latlong".to_owned(),
+                "+to".to_owned(),
+                "+proj=latlong".to_owned(),
+            ],
+        )
         .expect("W8");
         assert!(opts.dms_wide);
         assert_eq!(opts.dms_fract, 8);

@@ -36,10 +36,10 @@ mod monitor;
 const MAX_LINE: usize = 200;
 
 /// Entry point of `proj` and `invproj`: the program name decides the direction.
-pub(crate) fn run() -> ExitCode {
-    let program = program_name();
+pub(crate) fn run(argv: Vec<String>) -> ExitCode {
+    let program = program_name(&argv);
     let direction = direction_of(&program);
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let args: Vec<String> = argv.into_iter().skip(1).collect();
     if args.is_empty() || args.iter().any(|arg| arg == "-h" || arg == "--help") {
         let _ = writeln!(
             io::stderr(),
