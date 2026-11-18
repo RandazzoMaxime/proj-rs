@@ -5,14 +5,24 @@ resolver = "2"
 
 [package]
 name = "proj-rs"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
-rust-version = "1.83"
+rust-version = "1.100"
 license = "MIT"
-publish = false
 description = "Rust port of PROJ 9.9: projections, pipelines, and an embedded proj.db."
 readme = "README.md"
 repository = "https://github.com/RandazzoMaxime/proj-rs"
+# Under the 10 MiB limit of crates.io. The parity corpus (24 MB, written by PROJ 9.9.0) and the
+# repository tooling stay in git: the test suite runs from a checkout, not from the packaged
+# crate. `tests/gie/passing.txt` stays because `proj-rs-bench` includes it.
+exclude = [
+    "/CLAUDE.md",
+    "/.github",
+    "/.grok",
+    "/bench",
+    "/tools",
+    "/tests/parity",
+]
 
 [[bin]]
 name = "proj-rs-bench"
@@ -86,7 +96,6 @@ cc = "1.1"
 
 [dependencies]
 geo-types = { version = "0.7.16", optional = true }
-# 0.37 is edition 2021 and does not declare a rust-version above 1.83.
 # `serialize` opens the embedded proj.db with `deserialize_bytes`.
 rusqlite = { version = "0.37.0", features = ["bundled", "serialize", "backup"] }
 # GeoTIFF grids. `deflate` only: the test grids are uncompressed, deflate, or deflate+predictor.
@@ -104,9 +113,9 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 
-# The command-line tools (tools/dist-cli.sh): `panic = "abort"` drops the unwind tables and
-# landing pads. Only these binaries take it; the library and `proj-rs-capi` stay on the
-# `release` profile and keep unwinding (`catch_unwind` at the C boundary needs it).
+# The command-line tools (tools/dist-cli.sh): fat LTO and stripped symbols. Unwinding stays:
+# `geotiff::contained` catches a panic of the `tiff` crate (docs/PORTING-multicall.md). The
+# library and `proj-rs-capi` stay on the `release` profile.
 [profile.release-cli]
 inherits = "release"
 lto = "fat"

@@ -7,9 +7,9 @@
 
 <p align="center">
   <a href="https://github.com/OSGeo/PROJ"><img alt="PROJ 9.9.0" src="https://img.shields.io/badge/PROJ-9.9.0-2b7bb9"></a>
-  <a href="https://www.rust-lang.org"><img alt="Rust 1.83+" src="https://img.shields.io/badge/rust-1.83%2B-orange"></a>
+  <a href="https://www.rust-lang.org"><img alt="Rust 1.100+" src="https://img.shields.io/badge/rust-1.100%2B-orange"></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green"></a>
-  <img alt="Status: pre-1.0" src="https://img.shields.io/badge/status-pre--1.0-yellow">
+  <img alt="Version 1.0.0" src="https://img.shields.io/badge/version-1.0.0-green">
 </p>
 
 PROJ-RS is a Rust port of [PROJ](https://github.com/OSGeo/PROJ), the
@@ -407,12 +407,17 @@ the ledger committed in the repository; a fresh Linux checkout without grids mat
 
 ## Quick start
 
-PROJ-RS is not on crates.io yet. Use it from git:
+PROJ-RS is not on crates.io yet ([`docs/PUBLISHING.md`](docs/PUBLISHING.md)). Use it from git:
 
 ```toml
 [dependencies]
-proj-rs = { git = "https://github.com/RandazzoMaxime/proj-rs" }
+proj-rs = { git = "https://github.com/RandazzoMaxime/proj-rs", tag = "v1.0.0" }
 ```
+
+To use the tools or the C library without Rust, each [release](https://github.com/RandazzoMaxime/proj-rs/releases)
+has two archives per platform (Linux x86-64, macOS arm64 and x86-64, Windows x86-64): the
+command-line tools, and the C library under the names of libproj 9.9.0 with its headers. They are
+built with the default features (no network), and listed in `SHA256SUMS`.
 
 ### As a library
 
@@ -529,7 +534,7 @@ As in PROJ, `EPSG:4326` on the command line reads latitude first. Use a
 
 ## Requirements and platforms
 
-- **Rust 1.83 or newer.**
+- **Rust 1.100 or newer.**
 - **A C compiler.** `cargo build` compiles two small vendored C libraries:
   SQLite (through `rusqlite`) and Charles Karney's geodesic code. There is no
   libproj, no CMake, and no system SQLite.
@@ -625,7 +630,7 @@ are the vendored PROJ 9.9.0 `.gie` expectations. The check is skipped when no
 | [`src/iso19111/`](src/iso19111) | CRS model, WKT, authority factory, operation factory |
 | [`src/api/`](src/api) | The native facade of the crate root: `Context`, `Crs`, `Transformer`, `Point` |
 | [`src/proj.rs`](src/proj.rs) | The engine side of the georust `proj` facade, published by [`georust/`](georust) |
-| [`georust/`](georust), [`capi/`](capi) | The `proj-rs-georust` drop-in for `proj` 0.31, and the skeleton of the C API |
+| [`georust/`](georust), [`capi/`](capi) | The `proj-rs-georust` drop-in for `proj` 0.31, and the C API (`proj-rs-capi`) |
 | [`src/projdb.rs`](src/projdb.rs), [`data/proj.db`](data) | The embedded PROJ 9.9 database |
 | [`src/network.rs`](src/network.rs), [`src/gridpath.rs`](src/gridpath.rs) | Grid lookup and on-demand download |
 | [`src/bin/`](src/bin) | `proj-rs` (all the tools in one executable), the same tools as separate binaries, and the bench |
@@ -636,7 +641,7 @@ are the vendored PROJ 9.9.0 `.gie` expectations. The check is skipped when no
 
 The v1 promise is the **native facade**: the items on the first page of the `proj_rs`
 documentation (`Context`, `Crs`, `Transformer`, `Point`, `Backend`, `Error` and the small
-types they take), the `proj-rs-georust` crate, and the C API once it exists
+types they take), the `proj-rs-georust` crate, and the C API
 ([docs/API-v1.md](docs/API-v1.md)). `Backend` and `Error` are `#[non_exhaustive]`, so the
 SIMD and GPU backends and new error causes are not breaking changes.
 
@@ -646,11 +651,11 @@ model, the engine (`Operation`, `Xyzt`, `CrsPipeline`), the named projections, `
 `projinfo`, `projsync` and the rest. The `unstable` feature shows them in the
 documentation under `proj_rs::unstable`, for whoever accepts that they change.
 
-The minimum supported Rust version is **1.83**, declared as `rust-version` and checked by
-the `msrv` job of the CI. It was measured: 1.82 fails on `ExitCode` equality in the
-`cct` and `cs2cs` binaries, and the dependencies need at least 1.81. A change of the
-minimum is a minor version. `cargo-semver-checks` runs in the CI against the last
-published version once there is one.
+The minimum supported Rust version is **1.100**, declared as `rust-version` and checked by
+the `msrv` job of the CI. It is the toolchain the 1.0.0 release is built and tested with; it
+is not a measured floor (1.83 was the floor measured before 1.0.0, and the code now uses
+`f64::next_up`, stable since 1.86). A change of the minimum is a minor version.
+`cargo-semver-checks` runs in the CI against the last published version once there is one.
 
 ## Roadmap
 
