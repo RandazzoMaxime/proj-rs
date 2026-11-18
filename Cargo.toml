@@ -91,9 +91,6 @@ unstable = []
 [lints]
 workspace = true
 
-[build-dependencies]
-cc = "1.1"
-
 [dependencies]
 geo-types = { version = "0.7.16", optional = true }
 # `serialize` opens the embedded proj.db with `deserialize_bytes`.

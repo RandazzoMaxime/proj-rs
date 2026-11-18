@@ -362,7 +362,6 @@ dependencies = [
 name = "proj-rs"
 version = "1.0.0"
 dependencies = [
- "cc",
  "geo-types",
  "native-tls",
  "rusqlite",

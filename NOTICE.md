@@ -76,11 +76,19 @@ Engsager.
 
 ## Geodesics
 
-`src/geodesic/` is Charles Karney's C geodesic library, the same one PROJ 9.9
-calls. Copyright (c) Charles Karney, MIT/X11 license; see the header of
-[`src/geodesic/geodesic.c`](src/geodesic/geodesic.c) and
-<https://geographiclib.sourceforge.io/>. The inverse of the conformal latitude
-follows GeographicLib, as shipped in PROJ.
+`src/geodesic.rs` is a port to Rust of Charles Karney's C geodesic library, the
+same one PROJ 9.9 calls (`geodesic.c`, `geodesic.h`). The Rust code follows the C
+function by function and keeps the order of its operations. Copyright (c)
+Charles Karney (2012-2025), MIT/X11 license; see the header of
+[`src/geodesic.rs`](src/geodesic.rs) and <https://geographiclib.sourceforge.io/>.
+The coefficient tables and the algorithm are Karney's; the license of the original
+file is:
+
+> Copyright (c) Charles Karney (2012-2025) <karney@alum.mit.edu> and licensed
+> under the MIT/X11 License. For more information, see
+> https://geographiclib.sourceforge.io/
+
+The inverse of the conformal latitude follows GeographicLib, as shipped in PROJ.
 
 ## georust `proj` tests
 

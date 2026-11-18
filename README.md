@@ -535,9 +535,9 @@ As in PROJ, `EPSG:4326` on the command line reads latitude first. Use a
 ## Requirements and platforms
 
 - **Rust 1.100 or newer.**
-- **A C compiler.** `cargo build` compiles two small vendored C libraries:
-  SQLite (through `rusqlite`) and Charles Karney's geodesic code. There is no
-  libproj, no CMake, and no system SQLite.
+- **A C compiler.** `cargo build` compiles one small vendored C library: SQLite (through
+  `rusqlite`). The geodesics (Charles Karney's algorithms) are Rust. There is no libproj, no
+  CMake, and no system SQLite.
 - **No TLS library by default.** The on-demand grid download is the `network` Cargo
   feature, off by default, as PROJ downloads only when built with libcurl. With
   `features = ["network"]` the build uses the system TLS (`native-tls`): OpenSSL
