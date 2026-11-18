@@ -6,6 +6,11 @@ rest is outside semver.
 
 ## Unreleased
 
+- `Transformer` accepts a vertical CRS alone as source or target (`EPSG:4979` to `EPSG:3855` or
+  `EPSG:5773`), as `proj_create_crs_to_crs` does: it refused the pair with `has no geodetic base to
+  prepare its candidates`. Such a CRS has no horizontal coordinates, so its candidates are not
+  reprojected, as for a geocentric CRS. With the grid the value is the one of `EPSG:4326+5773`;
+  without it the ballpark operation is kept, as `cs2cs` 9.9.0 does.
 - All of Karney's geodesic library is Rust, called by PROJ or not: the area `S12`, the polygons
   (`geod_polygon_*`, `geod_polygonarea`), `geod_inverseline`, `geod_directline`. The public
   `proj_rs::geodesic` module has `Geodesic::wgs84()`, `Geodesic::polygon_area(&[(lat, lon)])`
