@@ -6,6 +6,11 @@ rest is outside semver.
 
 ## Unreleased
 
+- All of Karney's geodesic library is Rust, called by PROJ or not: the area `S12`, the polygons
+  (`geod_polygon_*`, `geod_polygonarea`), `geod_inverseline`, `geod_directline`. The public
+  `proj_rs::geodesic` module has `Geodesic::wgs84()`, `Geodesic::polygon_area(&[(lat, lon)])`
+  returning the area and the perimeter, and `Polygon` for the incremental calls. Checked against the
+  C library on 1 981 cases. See [docs/PORTING-geodesic.md](docs/PORTING-geodesic.md).
 - `Transformer::last_used_operation()` names the single operation of a transformer (name,
   accuracy, ballpark flag) instead of returning it without a name, and `is_ballpark()` is true
   when a ballpark operation was the one chosen among several: it was always false. An application
