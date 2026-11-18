@@ -10,7 +10,7 @@ Sources : PROJ 9.9.0 `src/apps/geod.cpp`, `geod_set.cpp`, `geod_interface.cpp`,
 | Fichier | Rôle |
 |---|---|
 | `src/geod.rs` | API publique `Geod`, `Line`, `Inverse` : Karney en degrés, mètres (`geod_init`, `geod_inverse`, `geod_lineinit` sans capacité, `geod_position`). |
-| `src/geodesic.rs` | Ajouts `Geodesic::new`, `inverse_full`, `GeodesicLine::plain`, `position_azimuth`, autour du C déjà compilé. |
+| `src/geodesic.rs` | La géodésique de Karney, en Rust depuis `docs/PORTING-geodesic.md` (c'était un habillage du C) : `Geodesic::new`, `inverse_full`, `GeodesicLine::plain`, `position_azimuth`. |
 | `src/bin/geod.rs`, `src/bin/invgeod.rs` | Points d'entrée (`geod_cli::run`). |
 | `src/bin/invproj.rs` | Point d'entrée (`proj_cli::run`). |
 | `src/bin/proj.rs` | Réécrit en point d'entrée sur `proj_cli` (il gère `invproj` par le nom du programme, comme PROJ). |

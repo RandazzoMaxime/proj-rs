@@ -183,9 +183,11 @@ fonctions transcendantes, et les points mal conditionnés (géodésiques entre p
 ou presque confondus, coordonnées de 1e11 m) passent alors les seuils. Ces écarts sont nommés
 dans `known-<os>.tsv` du corpus (`known-windows.tsv` pour la libm MSVC, `known-macos.tsv`
 pour celle d'Apple), lu seulement hors glibc : sous Linux le registre reste `known.tsv` seul, et
-ailleurs un écart nouveau ou disparu échoue toujours. `geodesic.c` est compilé sans contraction
-(`-ffp-contract=off`) : clang fusionne sinon `a * b + c` en FMA sur aarch64, ce que ne fait pas le
-PROJ de référence (x86-64), et toutes les géodésiques mal conditionnées s'écartaient sur macOS.
+ailleurs un écart nouveau ou disparu échoue toujours. La géodésique était compilée en C sans
+contraction (`-ffp-contract=off`) : clang fusionne sinon `a * b + c` en FMA sur aarch64, ce que ne
+fait pas le PROJ de référence (x86-64), et toutes les géodésiques mal conditionnées s'écartaient sur
+macOS. Elle est maintenant en Rust (`docs/PORTING-geodesic.md`), et rustc ne fusionne jamais une
+multiplication et une addition de lui-même : la même propriété sans réglage.
 
 Premier passage : 355 écarts. Corrigés depuis : la chaîne composé → géocentrique sans emprise
 ni précision, l'emprise des ballparks, l'inverse de Cassini, `proj -S` sur `s2`, `alsk`,

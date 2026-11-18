@@ -6,6 +6,10 @@ rest is outside semver.
 
 ## Unreleased
 
+- The geodesics (`geod`, `invgeod`, the `aeqd` and `gnom` projections) are Rust: Charles Karney's C
+  library is ported, and no longer compiled. `cargo build` needs a C compiler for SQLite only. The
+  results are the same bits as the C code's on the same math library. See
+  [docs/PORTING-geodesic.md](docs/PORTING-geodesic.md).
 - `Proj::convert_array` and `Proj::convert_iter` convert fewer than 8 points one at a time instead
   of through the vector path, which costs more than it saves there: a lone point cost two to five
   times as much as `convert`, and now costs the same. From 8 points the vector path wins. The result
