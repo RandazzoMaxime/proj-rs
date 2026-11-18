@@ -128,9 +128,9 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
 
-  # `rust-version` is the minimum the crates build with. It was measured, not chosen:
-  # 1.82 fails (ExitCode equality in the cct and cs2cs binaries, libraries need 1.81),
-  # 1.83 builds. The job reads the declared version, so changing it moves the check.
+  # `rust-version` is the toolchain the crates are checked with: 1.100, the one of the 1.0.0
+  # release, chosen rather than measured (1.83 was the measured floor before 1.0.0). The job
+  # reads the declared version, so changing it moves the check.
   msrv:
     runs-on: ubuntu-24.04
     steps:
@@ -145,6 +145,7 @@ jobs:
               exit 1
             fi
           done
+          case "$version" in *.*.*) ;; *) version="$version.0" ;; esac
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -152,9 +153,9 @@ jobs:
       - run: cargo check --workspace --lib --bins --all-features
 
   # Breaking changes of the stable surface against the last published version.
-  # Disabled: no version of proj-rs or proj-rs-georust is on crates.io yet (`publish = false`).
-  # Enable it when the lot 3 of docs/API-v1.md publishes 1.0.0: delete the `if: false` line, and
-  # `cargo-semver-checks` then compares each crate with the latest release of the registry.
+  # Disabled: 1.0.0 of proj-rs and proj-rs-georust is ready to publish (docs/PUBLISHING.md) but is
+  # not on crates.io yet, so there is nothing to compare with. Once it is, delete the `if: false`
+  # line: `cargo-semver-checks` then compares each crate with the latest release of the registry.
   semver:
     if: false
     runs-on: ubuntu-24.04

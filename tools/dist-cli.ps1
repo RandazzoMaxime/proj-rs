@@ -6,8 +6,8 @@
 #
 # $env:PROJ_RS_CLI_FEATURES = "network" adds `projsync` and the HTTPS grid download.
 #
-# -Release builds with the `release-cli` profile of Cargo.toml: the `release` profile plus
-# `panic = "abort"`, fat LTO and stripped symbols.
+# -Release builds with the `release-cli` profile of Cargo.toml: the `release` profile plus fat
+# LTO and stripped symbols.
 #
 # Where hard links are not possible (a file system other than NTFS, or a prefix on another volume
 # than the build), or with -Launchers, each name is a small `name.cmd` that runs

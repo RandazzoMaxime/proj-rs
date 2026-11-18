@@ -52,7 +52,7 @@ pub(super) fn is_tiff(bytes: &[u8]) -> bool {
 
 /// Runs a read of TIFF bytes and turns a panic of the `tiff` crate into the error of a bad file.
 /// `tiff` 0.10.3 indexes a tag it has not checked (`image.rs`: `sample_format[0]` on a
-/// `SampleFormat` tag with no value); 0.11 checks it, and needs Rust 1.85.
+/// `SampleFormat` tag with no value); 0.11 checks it.
 pub(super) fn contained<T>(read: impl FnOnce() -> Result<T, ()>) -> Result<T, ()> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(read)).unwrap_or(Err(()))
 }

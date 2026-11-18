@@ -431,8 +431,10 @@ fn proj_binary_output_matches_proj_within_tolerance() {
         }
         args.extend_from_slice(case.args);
         let bits: Vec<u64> = run_proj(&args, &input)
-            .chunks_exact(8)
-            .map(|word| u64::from_ne_bytes(word.try_into().expect("8-byte word")))
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|word| u64::from_ne_bytes(*word))
             .collect();
         let quantity = if case.inverse {
             Quantity::Radians

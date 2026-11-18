@@ -65,7 +65,7 @@ unitaire :
 |---|---|---|---|
 | `proj_string` | `Evaluator::forward` (defmodel) retire un tour de longitude à la fois : 1e300 ou l'infini ne changent jamais, boucle infinie | refuse une longitude de plus de 1e4 rad (PROJ la refuse à 10 rad dans `fwd_prepare`) | `5a944c8` |
 | `grid_reader` | `chunk_bytes` alloue la taille d'un bloc TIFF déclarée par le fichier avant de la lire : 3,5 Ko réclament 3 Go | lecture par `Read::take`, comparaison de la longueur ensuite | `9a7a89f` |
-| `grid_reader` | `tiff` 0.10.3 panique sur une balise `SampleFormat` vide (`sample_format[0]`) | les trois constructions de décodeur passent par `geotiff::contained` (`catch_unwind`) ; `tiff` 0.11.3 corrige mais exige Rust 1.85 (MSRV 1.83) | `c54ea0b` |
+| `grid_reader` | `tiff` 0.10.3 panique sur une balise `SampleFormat` vide (`sample_format[0]`) | les trois constructions de décodeur passent par `geotiff::contained` (`catch_unwind`) ; `tiff` 0.11.3 corrige et exige Rust 1.85 (la MSRV 1.100 le permet : mise à jour possible) | `c54ea0b` |
 | `proj_string` | `strip_urn_prefix` coupe le texte à 12 octets : un caractère multi-octet à cheval sur l'octet 12 panique | `str::get` | `5866b89` |
 | `grid_reader` | CTable2 : `largeur * hauteur * 8` déborde (2^31 - 1 chacune) | `checked_mul` | `c9ba504` |
 

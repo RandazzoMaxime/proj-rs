@@ -1,0 +1,190 @@
+name: Release
+
+# A tag `v<version>` builds the archives of the four platforms, checks them, and publishes the GitHub
+# release. A pull request that touches the packaging, and a manual run, do the same build and the
+# same checks and stop there: the archives are artifacts of the run, nothing is published.
+#
+# Per platform, two archives (tools/release-pack.sh, tools/release-pack.ps1):
+#   proj-rs-<version>-<platform>-cli       bin/proj-rs and one name per tool (links; launchers on Windows)
+#   proj-rs-<version>-<platform>-libproj   the C library under the names of libproj 9.9.0, and include/*.h
+# plus SHA256SUMS. The default features are built: no network, no TLS library.
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - tools/dist-cli.*
+      - tools/release-pack.*
+      - tools/release-smoke.*
+      - tools/release/**
+      - capi/tests/dist.*
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # The toolchain of the release: the `rust-version` of the manifests, checked by `prepare`.
+  RUST_VERSION: "1.100.0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The tag, the manifests and the release notes agree before anything is built.
+  prepare:
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        run: |
+          version=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          for manifest in georust/Cargo.toml capi/Cargo.toml; do
+            other=$(grep -m1 '^version = ' "$manifest" | cut -d'"' -f2)
+            if [ "$other" != "$version" ]; then
+              echo "$manifest is at version $other, Cargo.toml at $version" >&2
+              exit 1
+            fi
+          done
+          declared=$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2)
+          if [ "$declared.0" != "$RUST_VERSION" ]; then
+            echo "rust-version is $declared, the release toolchain is $RUST_VERSION" >&2
+            exit 1
+          fi
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "tag $GITHUB_REF_NAME, but the manifests are at version $version" >&2
+            exit 1
+          fi
+          if [ ! -s "docs/release-notes/v$version.md" ]; then
+            echo "docs/release-notes/v$version.md is missing or empty" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Ubuntu 22.04 for its glibc 2.35: the binaries run on every newer distribution.
+          - platform: linux-x86_64
+            os: ubuntu-22.04
+          - platform: macos-arm64
+            os: macos-latest
+          # macos-13 is gone; macos-15-intel is an Intel image, so the x86_64 archives are built
+          # and tested natively. GitHub keeps no Intel image after macOS 26 (see the list in
+          # github.com/actions/runner-images): when this label goes, build them on macos-latest
+          # with `--target x86_64-apple-darwin` and test them under Rosetta.
+          - platform: macos-x86_64
+            os: macos-15-intel
+          - platform: windows-x86_64
+            os: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build and pack
+        if: runner.os != 'Windows'
+        run: tools/release-pack.sh "${{ matrix.platform }}" dist
+      - name: Build and pack
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: tools\release-pack.ps1 -Target "${{ matrix.platform }}" -Out dist
+
+      - name: Test the archives, unpacked
+        if: runner.os != 'Windows'
+        run: tools/release-smoke.sh dist/*-cli.tar.gz dist/*-libproj.tar.gz
+      - name: Test the archives, unpacked
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: tools\release-smoke.ps1 -Cli (Get-Item dist\*-cli.zip).FullName -Libproj (Get-Item dist\*-libproj.zip).FullName
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: archives-${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  checksums:
+    needs: [prepare, build]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: archives-*
+          merge-multiple: true
+          path: dist
+      - name: SHA256SUMS
+        working-directory: dist
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          expected="
+          proj-rs-$VERSION-linux-x86_64-cli.tar.gz
+          proj-rs-$VERSION-linux-x86_64-libproj.tar.gz
+          proj-rs-$VERSION-macos-arm64-cli.tar.gz
+          proj-rs-$VERSION-macos-arm64-libproj.tar.gz
+          proj-rs-$VERSION-macos-x86_64-cli.tar.gz
+          proj-rs-$VERSION-macos-x86_64-libproj.tar.gz
+          proj-rs-$VERSION-windows-x86_64-cli.zip
+          proj-rs-$VERSION-windows-x86_64-libproj.zip"
+          expected=$(echo "$expected" | sed '/^$/d; s/^ *//' | sort)
+          found=$(ls | sort)
+          if [ "$expected" != "$found" ]; then
+            printf 'expected:\n%s\nfound:\n%s\n' "$expected" "$found" >&2
+            exit 1
+          fi
+          sha256sum $found > SHA256SUMS
+          sha256sum --check SHA256SUMS
+          ls -l
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SHA256SUMS
+          path: dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+
+  # Only on a tag, and the only job that can write to the repository.
+  release:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: [prepare, checksums]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: archives-*
+          merge-multiple: true
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: SHA256SUMS
+          path: dist
+      - name: Check the checksums once more, then publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          (cd dist && sha256sum --check SHA256SUMS)
+          prerelease=()
+          case "$VERSION" in *-*) prerelease=(--prerelease) ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --verify-tag \
+            --title "proj-rs v$VERSION" \
+            --notes-file "docs/release-notes/v$VERSION.md" \
+            "${prerelease[@]}"
