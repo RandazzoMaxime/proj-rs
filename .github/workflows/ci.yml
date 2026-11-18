@@ -128,9 +128,10 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
 
-  # `rust-version` is the toolchain the crates are checked with: 1.100, the one of the 1.0.0
-  # release, chosen rather than measured (1.83 was the measured floor before 1.0.0). The job
-  # reads the declared version, so changing it moves the check.
+  # `rust-version` is the minimum the crates build with: 1.83, measured, lower than the toolchain
+  # of the release (1.100). The job installs the declared version, so changing it moves the
+  # check. A newer standard-library method in the code fails it: `src/compat.rs` has the
+  # equivalents.
   msrv:
     runs-on: ubuntu-24.04
     steps:

@@ -36,7 +36,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  # The toolchain of the release: the `rust-version` of the manifests, checked by `prepare`.
+  # The toolchain of the release. Newer than the `rust-version` of the manifests (the minimum the
+  # crates build with, checked by the `msrv` job of the CI), and `prepare` checks it is not older.
   RUST_VERSION: "1.100.0"
   CARGO_TERM_COLOR: always
 
@@ -61,8 +62,9 @@ jobs:
             fi
           done
           declared=$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2)
-          if [ "$declared.0" != "$RUST_VERSION" ]; then
-            echo "rust-version is $declared, the release toolchain is $RUST_VERSION" >&2
+          oldest=$(printf '%s\n%s\n' "$declared.0" "$RUST_VERSION" | sort -V | head -n 1)
+          if [ "$oldest" != "$declared.0" ]; then
+            echo "rust-version is $declared, newer than the release toolchain $RUST_VERSION" >&2
             exit 1
           fi
           if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
