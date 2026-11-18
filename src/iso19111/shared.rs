@@ -33,11 +33,9 @@ impl Drop for Scope {
     }
 }
 
-impl Scope {
-    /// Whether no other search of this thread is registered: the scope of the outermost call.
-    pub(crate) fn is_outermost(&self) -> bool {
-        self.registered_before == 0
-    }
+/// Whether a search of this thread has registered its CRS and not yet left.
+pub(crate) fn is_registered() -> bool {
+    REGISTERED.with(|registered| !registered.borrow().is_empty())
 }
 
 /// A CRS an operation stores as its source, target or interpolation CRS.
