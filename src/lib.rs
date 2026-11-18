@@ -54,6 +54,7 @@
 
 mod angle;
 mod api;
+mod compat;
 mod context;
 mod coord;
 mod crs;

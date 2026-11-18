@@ -2,7 +2,7 @@
 name = "proj-rs-georust"
 version = "1.0.0"
 edition = "2021"
-rust-version = "1.100"
+rust-version = "1.83"
 license = "MIT"
 description = "Drop-in replacement for the georust `proj` 0.31 crate, on the proj-rs engine."
 readme = "README.md"

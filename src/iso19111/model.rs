@@ -356,19 +356,19 @@ impl BoundingBox {
         let (mut west, mut east) = (west, east);
         if west == east {
             if west > -180.0 {
-                west = west.next_down();
+                west = crate::compat::next_down(west);
             }
             if east < 180.0 {
-                east = east.next_up();
+                east = crate::compat::next_up(east);
             }
         }
         let (mut south, mut north) = (south, north);
         if south == north {
             if south > -90.0 {
-                south = south.next_down();
+                south = crate::compat::next_down(south);
             }
             if north < 90.0 {
-                north = north.next_up();
+                north = crate::compat::next_up(north);
             }
         }
         Ok(Self::new(west, south, east, north))

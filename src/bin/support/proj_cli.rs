@@ -97,7 +97,8 @@ pub(crate) fn run(argv: Vec<String>) -> ExitCode {
     let mut error_seen = false;
     if options.binary.input {
         // `process`: each record is two native doubles, `PJ_UV`; no tag, no echo.
-        for record_bytes in input.as_chunks::<16>().0 {
+        // `chunks_exact`, not `as_chunks` (Rust 1.88): the tools build with the minimum version.
+        for record_bytes in input.chunks_exact(16) {
             let u = f64::from_ne_bytes(to_array(&record_bytes[..8]));
             let v = f64::from_ne_bytes(to_array(&record_bytes[8..]));
             let measure = measure(u, v, &options, &job, &mut error_seen);
