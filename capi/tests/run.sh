@@ -2,7 +2,7 @@
 # Compile the C tests of PROJ 9.9.0 against the C library of proj-rs, and run them.
 #
 # Usage: capi/tests/run.sh [--release] [TEST...]
-#   TEST is one of: symbols abi lists errno_string angular_io context include_h fork c_api
+#   TEST is one of: symbols abi lists errno_string angular_io context include_h fork datadir c_api
 #   (default: all). PENDING=0 runs the cases of pending.txt too, to see them fail.
 #   GTEST_FILTER=pattern narrows the gtest cases of the C++ tests.
 #
@@ -22,7 +22,7 @@ if [ "${1:-}" = "--release" ]; then
   shift
 fi
 tests=("$@")
-[ ${#tests[@]} -gt 0 ] || tests=(symbols abi lists errno_string angular_io context include_h fork c_api)
+[ ${#tests[@]} -gt 0 ] || tests=(symbols abi lists errno_string angular_io context include_h fork datadir c_api)
 
 ref=${PROJ_REFERENCE:-$root/target/proj-reference}
 src=$ref/src
@@ -111,6 +111,52 @@ for test in "${tests[@]}"; do
       [ "$(uname -s)" != Darwin ] || pthreads=   # CMake defines it off Apple only
       gcc -std=c99 $pthreads -I"$root/capi/include" "$unit/test_fork.c" -o "$out/test_fork" "${ldflags[@]}"
       echo "== test_fork"; "$out/test_fork" && echo "ok" ;;
+    datadir)
+      echo "== datadir"
+      gcc -std=c99 -I"$root/capi/include" "$here/datadir.c" -o "$out/datadir_ours" "${ldflags[@]}"
+      gcc -std=c99 -I"$src/src" "$here/datadir.c" -o "$out/datadir_ref" -L"$ref/build/lib" -lproj \
+        -Wl,-rpath,"$ref/build/lib"
+      scratch=$(mktemp -d)
+      mkdir -p "$scratch/home" "$scratch/prefix/lib" "$scratch/prefix/share/proj" "$scratch/elsewhere"
+      # One run of the program, given a path to set, under an empty environment plus the variables.
+      # The reference is run without LD_LIBRARY_PATH, which would give it our library.
+      probe() { local program=$1 path=$2; shift 2; (cd "$scratch/elsewhere" && env -i "$@" "$program" "$path"); }
+      compare_env() {
+        local with_list=$1; shift
+        local theirs ours
+        theirs=$(probe "$out/datadir_ref" /tmp/added "$@") || exit 1
+        ours=$(probe "$out/datadir_ours" /tmp/added LD_LIBRARY_PATH="$dist/lib" "$@") || exit 1
+        [ "$(echo "$theirs" | sed -n 1p)" = "$(echo "$ours" | sed -n 1p)" ] \
+          || { echo "user directory differs for $*: $theirs / $ours" >&2; exit 1; }
+        [ "$(echo "$theirs" | sed -n 3p)" = "$(echo "$ours" | sed -n 3p)" ] \
+          || { echo "search path with paths differs for $*: $theirs / $ours" >&2; exit 1; }
+        if [ "$with_list" = list ]; then
+          [ "$(echo "$theirs" | sed -n 2p)" = "$(echo "$ours" | sed -n 2p)" ] \
+            || { echo "search path differs for $*: $theirs / $ours" >&2; exit 1; }
+        fi
+      }
+      h=$scratch/home
+      compare_env first HOME="$h"
+      compare_env list HOME="$h" PROJ_DATA=/d1
+      compare_env list HOME="$h" PROJ_DATA=/d1:/d2
+      compare_env list HOME="$h" PROJ_LIB=/old
+      compare_env list HOME="$h" PROJ_DATA=/d1 PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY=YES
+      compare_env first HOME="$h" XDG_DATA_HOME=/xdg
+      compare_env first HOME="$h" XDG_DATA_HOME=
+      compare_env first HOME="$h" PROJ_USER_WRITABLE_DIRECTORY=/chosen
+      compare_env first HOME=/no/such/home
+      compare_env first
+      echo "user directory and search path identical to libproj in 10 environments"
+      # The library finds ../share/proj of its own file, not of the executable.
+      cp "$dist"/lib/* "$scratch/prefix/lib/"
+      gcc -std=c99 -I"$root/capi/include" "$here/datadir.c" -o "$scratch/elsewhere/datadir_installed" \
+        -L"$scratch/prefix/lib" -lproj -Wl,-rpath,"$scratch/prefix/lib"
+      listed=$(env -i HOME="$h" "$scratch/elsewhere/datadir_installed" | sed -n 2p)
+      case $listed in
+        *:"$scratch/prefix/share/proj") echo "share/proj of the library found: $listed" ;;
+        *) echo "share/proj of the library not listed: $listed" >&2; exit 1 ;;
+      esac
+      rm -rf "$scratch" ;;
     c_api)
       python3 "$here/filter_tests.py" "$unit/test_c_api.cpp" "$here/excluded.txt" "$out/test_c_api_filtered.cpp"
       g++ "${cxxflags[@]}" -DTIFF_ENABLED -include "$unit/gtest_include.h" "$out/test_c_api_filtered.cpp" "$unit/main.cpp" \

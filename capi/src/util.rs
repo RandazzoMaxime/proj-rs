@@ -9,6 +9,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 
 /// Runs `body`; a panic becomes `fallback`, so that it never crosses the C boundary.
 pub(crate) fn guard<T>(fallback: T, body: impl FnOnce() -> T) -> T {
+    crate::module::register();
     catch_unwind(AssertUnwindSafe(body)).unwrap_or(fallback)
 }
 
