@@ -49,6 +49,24 @@ struct Outcome {
     stderr: String,
 }
 
+/// On Windows a tool prints the name it was started under, as PROJ does (`basename(argv[0])`):
+/// `proj.exe` for the stand-alone binary, `proj` for `proj-rs proj`, `CS2CS` for a copy named
+/// `CS2CS.EXE`. The comparison drops that case and that extension; other platforms compare as is.
+fn same_name(outcome: Outcome, tool: &str) -> Outcome {
+    if !cfg!(windows) {
+        return outcome;
+    }
+    let fold = |text: String| {
+        text.to_ascii_lowercase()
+            .replace(&format!("{tool}.exe"), tool)
+    };
+    Outcome {
+        status: outcome.status,
+        stdout: fold(outcome.stdout),
+        stderr: fold(outcome.stderr),
+    }
+}
+
 fn run(program: &Path, args: &[&str], input: &str) -> Outcome {
     let mut child = Command::new(program)
         .args(args)
@@ -225,11 +243,17 @@ const CASES: &[Case] = &[
 #[test]
 fn every_tool_behaves_the_same_in_the_three_ways_to_start_it() {
     for case in CASES {
-        let alone = run(Path::new(standalone(case.tool)), case.args, case.input);
+        let alone = same_name(
+            run(Path::new(standalone(case.tool)), case.args, case.input),
+            case.tool,
+        );
         let mut named = vec![case.tool];
         named.extend_from_slice(case.args);
-        let by_argument = run(Path::new(MULTICALL), &named, case.input);
-        let by_name = run(&named_like(case.tool), case.args, case.input);
+        let by_argument = same_name(run(Path::new(MULTICALL), &named, case.input), case.tool);
+        let by_name = same_name(
+            run(&named_like(case.tool), case.args, case.input),
+            case.tool,
+        );
         let label = format!("{} {:?}", case.tool, case.args);
         assert_eq!(
             by_argument, alone,
@@ -305,6 +329,9 @@ fn windows_names_ignore_case_and_extension() {
     std::fs::create_dir_all(&dir).expect("scratch directory");
     let upper = dir.join("CS2CS.EXE");
     std::fs::copy(MULTICALL, &upper).expect("copy proj-rs");
-    let alone = run(Path::new(standalone("cs2cs")), &["--version"], "");
-    assert_eq!(run(&upper, &["--version"], ""), alone);
+    let alone = same_name(
+        run(Path::new(standalone("cs2cs")), &["--version"], ""),
+        "cs2cs",
+    );
+    assert_eq!(same_name(run(&upper, &["--version"], ""), "cs2cs"), alone);
 }
