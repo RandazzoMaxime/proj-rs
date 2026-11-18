@@ -3,6 +3,9 @@
 //! `lib_info().searchpath` is `proj_info().searchpath`. The environment is the process's, set
 //! here, so every case takes the lock.
 
+#[path = "common/canonical.rs"]
+mod canonical;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, MutexGuard};
@@ -36,7 +39,7 @@ fn scratch(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("proj-rs-dirs-api-{tag}-{}", std::process::id()));
     let _gone = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("scratch");
-    std::fs::canonicalize(&dir).expect("canonical")
+    canonical::canonical(&dir)
 }
 
 fn expected_default(home: &Path) -> PathBuf {

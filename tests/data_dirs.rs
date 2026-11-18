@@ -7,6 +7,9 @@
 //! when the operation succeeds, and "not found" when it fails: a place that holds a file that is
 //! not a grid is the one the lookup chose when the operation fails.
 
+#[path = "common/canonical.rs"]
+mod canonical;
+
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -36,7 +39,7 @@ impl Sandbox {
         let root = std::env::temp_dir().join(format!("proj-rs-dirs-{tag}-{}", std::process::id()));
         let _gone = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).expect("sandbox");
-        let root = fs::canonicalize(&root).expect("canonical sandbox");
+        let root = canonical::canonical(&root);
         for dir in ["home", "work", "prefix/bin", "local"] {
             fs::create_dir_all(root.join(dir)).expect("sandbox directory");
         }

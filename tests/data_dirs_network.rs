@@ -1,7 +1,11 @@
 //! The grid cache of the `network` feature goes where PROJ puts it: `cache.db` in the user
 //! directory, `proj_context_get_user_writable_directory` of PROJ, and not in the temporary
 //! directory. The server is local.
+
 #![cfg(feature = "network")]
+
+#[path = "common/canonical.rs"]
+mod canonical;
 
 use std::path::PathBuf;
 
@@ -20,7 +24,7 @@ fn chunk_database_and_downloads_are_kept_in_the_user_directory() {
     let home = std::env::temp_dir().join(format!("proj-rs-dirs-net-{}", std::process::id()));
     let _gone = std::fs::remove_dir_all(&home);
     std::fs::create_dir_all(&home).expect("home");
-    let home = std::fs::canonicalize(&home).expect("canonical");
+    let home = canonical::canonical(&home);
     for variable in [
         "PROJ_DATA",
         "PROJ_LIB",
