@@ -638,6 +638,6 @@ fn grid_present(name: &str, config: &Config) -> bool {
 pub fn config_from_env() -> Config {
     Config {
         network: crate::network::context().enabled,
-        grid_dirs: crate::network::data_directories(),
+        grid_dirs: crate::datadir::Lookup::of(&crate::network::context()).directories(),
     }
 }

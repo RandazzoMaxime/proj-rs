@@ -176,17 +176,11 @@ pub extern "C" fn proj_context_get_database_path(ctx: *mut PJ_CONTEXT) -> *const
     })
 }
 
-/// `proj.db` in the search path, which names the database a PROJ context opens by default.
-/// This port embeds its own copy and reads the file only when it is named.
+/// `proj.db` as PROJ's search finds it (`pj_open_lib_internal`: the paths of the context, or the
+/// user directory, `PROJ_DATA` and `../share/proj`), which names the database a PROJ context
+/// opens by default. This port embeds its own copy and reads the file only when it is named.
 fn proj_data_database(context: &Ctx) -> Option<PathBuf> {
-    let mut directories: Vec<PathBuf> = context.search_paths.clone();
-    if let Some(variable) = std::env::var_os("PROJ_DATA").or_else(|| std::env::var_os("PROJ_LIB")) {
-        directories.extend(std::env::split_paths(&variable));
-    }
-    directories
-        .into_iter()
-        .map(|directory| directory.join("proj.db"))
-        .find(|candidate| candidate.is_file())
+    context.builder.find_local_file("proj.db")
 }
 
 #[unsafe(no_mangle)]

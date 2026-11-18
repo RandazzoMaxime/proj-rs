@@ -1496,8 +1496,6 @@ impl ProjBuilder {
         Ok(())
     }
 
-    /// Add a grid search path, keeping paths already added.
-    ///
     /// Set the user-writable directory without creating it, as
     /// `proj_context_set_user_writable_directory` with `create` off does.
     #[doc(hidden)]
@@ -1523,9 +1521,13 @@ impl ProjBuilder {
         self.net.replace_search_paths(paths);
     }
 
-    /// The user-writable directory is searched first, then the data
-    /// directories (`PROJ_DATA`, or the default `data/grids`). The added path
-    /// is searched after them.
+    /// Add a grid search path, keeping paths already added.
+    ///
+    /// As in PROJ, the paths added are the whole search path: while there is one, the
+    /// user-writable directory, `PROJ_DATA` and the directories of the executable are not
+    /// searched ([`crate::datadir`] of this crate follows `pj_open_lib_internal`). PROJ's
+    /// `proj_context_set_search_paths` replaces the list, which
+    /// [`Self::replace_search_paths`] does.
     ///
     /// # Errors
     ///
