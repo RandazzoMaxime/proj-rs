@@ -101,7 +101,7 @@ pub fn only_best_default() -> OnlyBest {
 }
 
 /// What `cs2cs` does with the best operation of a pair.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum BestOperation {
     /// A PROJ pipeline, and whether its first output axis is latitude or northing.
     Pipeline {
@@ -109,6 +109,12 @@ pub enum BestOperation {
         definition: String,
         /// Whether the first output axis is latitude or northing.
         lat_or_northing_first: bool,
+        /// The name of the operation, as the registry gives it.
+        name: String,
+        /// The stated accuracy in metres, when the registry gives one.
+        accuracy: Option<f64>,
+        /// Whether the operation is a ballpark transformation.
+        ballpark: bool,
     },
     /// `ONLY_BEST=YES` kept an operation whose grids are missing. PROJ fails each
     /// transformation with this message, as `pj_warn_about_missing_grid`.
@@ -214,6 +220,7 @@ pub fn best_pipeline(source: &str, target: &str) -> Result<(String, bool), Facto
         BestOperation::Pipeline {
             definition,
             lat_or_northing_first,
+            ..
         } => Ok((definition, lat_or_northing_first)),
         BestOperation::MissingGrid { message } | BestOperation::Refused { message } => {
             Err(FactoryError::Format(message))
@@ -421,6 +428,9 @@ fn best_operation_filtered(
         best: BestOperation::Pipeline {
             definition,
             lat_or_northing_first: lat_first,
+            name: characteristics.name.clone(),
+            accuracy: (characteristics.accuracy >= 0.0).then_some(characteristics.accuracy),
+            ballpark: characteristics.approx,
         },
         log,
     })
@@ -1494,6 +1504,9 @@ pub fn select_alternatives_for_crs(
                 Some(definition) => BestOperation::Pipeline {
                     definition: definition.clone(),
                     lat_or_northing_first: lat_or_northing_first(&target_crs),
+                    name: item.name.clone(),
+                    accuracy: (item.accuracy >= 0.0).then_some(item.accuracy),
+                    ballpark: item.approximate,
                 },
                 None => {
                     return Err(FactoryError::Format(
@@ -1831,6 +1844,9 @@ fn single_operation(
     Ok(BestOperation::Pipeline {
         definition: export(operation, source, target, db)?,
         lat_or_northing_first: lat_or_northing_first(target),
+        name: characteristics.name.clone(),
+        accuracy: (characteristics.accuracy >= 0.0).then_some(characteristics.accuracy),
+        ballpark: characteristics.approx,
     })
 }
 

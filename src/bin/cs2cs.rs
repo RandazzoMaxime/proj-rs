@@ -807,6 +807,7 @@ fn single_engine(best: BestOperation, only_best: Option<bool>) -> Result<Engine,
         BestOperation::Pipeline {
             definition,
             lat_or_northing_first,
+            ..
         } => {
             let operation = Operation::create(&definition)
                 .map_err(|error| InitError::Cause(error.to_string()))?;
@@ -875,6 +876,7 @@ fn select_pipeline(
         BestOperation::Pipeline {
             definition,
             lat_or_northing_first,
+            ..
         } => {
             let operation = Operation::create(&definition)
                 .map_err(|error| InitError::Cause(error.to_string()))?;
@@ -944,6 +946,7 @@ fn select_pipeline_filtered(
         BestOperation::Pipeline {
             definition,
             lat_or_northing_first,
+            ..
         } => {
             let operation = Operation::create(&definition)
                 .map_err(|error| InitError::Cause(error.to_string()))?;

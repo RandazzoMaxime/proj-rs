@@ -70,8 +70,7 @@ pub struct OperationInfo {
 }
 
 impl OperationInfo {
-    /// The name of the operation, `NAD27 to NAD83 (1)` style. `None` for the single
-    /// operation a transformer was built with, which the selection returns as a PROJ string.
+    /// The name of the operation, `NAD27 to NAD83 (1)` style.
     ///
     /// ```
     /// # use proj_rs::{Context, Crs, Transformer};
@@ -139,11 +138,20 @@ impl OperationInfo {
 #[derive(Clone, Debug)]
 enum Route {
     /// One operation: PROJ returns it without alternatives.
-    Single(Operation, String),
+    Single(Operation, SingleInfo),
     /// Several candidates, chosen point by point as `proj_trans` does.
     Several(Box<Alternatives>),
     /// A single operation whose grids are missing: each point fails with the reason.
     Unavailable(String),
+}
+
+/// What the selection knows of the single operation of a transformer.
+#[derive(Clone, Debug)]
+struct SingleInfo {
+    definition: String,
+    name: String,
+    accuracy: Option<f64>,
+    ballpark: bool,
 }
 
 /// Whether the first two axes of a point are swapped at one end of the pipeline.
@@ -389,14 +397,28 @@ impl<'a> TransformerBuilder<'a> {
         .map_err(|error| Error::NoOperation(error.to_string()))?;
         match selection {
             Selection::Several(alternatives) => Ok(Route::Several(Box::new(alternatives))),
-            Selection::Single(BestOperation::Pipeline { definition, .. }) => {
+            Selection::Single(BestOperation::Pipeline {
+                definition,
+                name,
+                accuracy,
+                ballpark,
+                ..
+            }) => {
                 // Under the context of the source, as the selection above: its search path and
                 // callbacks find the grids of the operation. Created outside, it looks only in
                 // the directories of the machine (`illegal value for +grids`).
                 let operation =
                     crate::network::with_context(&context.net, || Operation::create(&definition))
                         .map_err(|error| Error::NoOperation(error.to_string()))?;
-                Ok(Route::Single(operation, definition))
+                Ok(Route::Single(
+                    operation,
+                    SingleInfo {
+                        definition,
+                        name,
+                        accuracy,
+                        ballpark,
+                    },
+                ))
             }
             Selection::Single(BestOperation::MissingGrid { message }) => {
                 if policy == BestPolicy::Error {
@@ -593,7 +615,9 @@ impl Transformer {
 
     /// The operation the last point went through. With several candidates it is the one that
     /// point chose, `None` before the first point. With a single operation it is that
-    /// operation, which the selection returns as a PROJ string without a name.
+    /// operation, with its name, its accuracy and whether it is a ballpark transformation, as
+    /// before any point. [`OperationInfo::is_ballpark`] is what tells a conversion that used a
+    /// grid from one that did not.
     ///
     /// ```
     /// use proj_rs::{Context, Crs, Point, Transformer};
@@ -615,14 +639,14 @@ impl Transformer {
                     name: Some(item.name.clone()),
                     accuracy: (item.accuracy >= 0.0).then_some(item.accuracy),
                     proj_string: item.definition.clone(),
-                    ballpark: false,
+                    ballpark: item.approximate,
                 })
             }
-            Route::Single(_, definition) => Some(OperationInfo {
-                name: None,
-                accuracy: None,
-                proj_string: Some(definition.clone()),
-                ballpark: false,
+            Route::Single(_, info) => Some(OperationInfo {
+                name: Some(info.name.clone()),
+                accuracy: info.accuracy,
+                proj_string: Some(info.definition.clone()),
+                ballpark: info.ballpark,
             }),
             Route::Unavailable(_) => None,
         }
