@@ -65,21 +65,19 @@ aucune fonction ni aucune monomorphisation dupliquée qu'un correctif simple ret
 | + SQLite allégée (`.cargo/config.toml`) | 17 978 968 | -600 128 |
 | `strip = true` : taille de sortie, sans repasser par `strip` | 17 979 008 (contre 20 221 392) | -2 242 384 |
 
-Total : 144,4 Mo en huit binaires, 18,0 Mo en un (-87,6 %) ; `proj-rs` lui-même, -6,6 %.
+Total : 144,4 Mo en huit binaires, 18,6 Mo en un (-87,2 %) sans `panic = "abort"` (voir plus bas) ; 18,0 Mo avec.
 
-**Profil `release-cli`** (`Cargo.toml`) : `release` plus `panic = "abort"`, `lto = "fat"`,
-`strip = true`. Les scripts `tools/dist-cli.*` l'utilisent avec `--release`. Le profil `release`,
-la bibliothèque et `proj-rs-capi` gardent `unwind` : le garde `catch_unwind` de `capi/src/util.rs`
-en dépend (`capi/tests/run.sh --release` reste vert). Les tests tournent en profil `test`, que
-`panic` n'affecte pas. LTO fat n'a pas coûté de temps de build mesurable (2 min 32 contre 2 min 36,
-build complet à froid).
+**Profil `release-cli`** (`Cargo.toml`) : `release` plus `lto = "fat"` et `strip = true`. Les
+scripts `tools/dist-cli.*` l'utilisent avec `--release`. LTO fat n'a pas coûté de temps de build
+mesurable (2 min 32 contre 2 min 36, build complet à froid).
 
-**Ce que `abort` coûte : un second garde.** `src/projections/gridshift/geotiff/mod.rs`
-(`contained`) rattrape par `catch_unwind` un panic de la crate `tiff` 0.10.3 (tag
-`SampleFormat` sans valeur) et le rend comme un fichier de grille invalide. Sous `abort` le
-panic tue le programme (code 134) au lieu de donner l'erreur de grille. Cela ne touche que les
-outils lancés sur un fichier `.tif` malformé. Pour le retirer : supprimer la ligne `panic` de
-`[profile.release-cli]`, +572 512 octets (18 551 520 octets mesurés, avec `lto` et SQLite).
+**`panic = "abort"` n'est pas retenu** (décision du coordinateur, opérateur absent), malgré ses
+-571 520 octets. `src/projections/gridshift/geotiff/mod.rs` (`contained`) rattrape par
+`catch_unwind` un panic de la crate `tiff` 0.10.3 (tag `SampleFormat` sans valeur) et le rend comme
+un fichier de grille invalide : sous `abort`, un `.tif` malformé tuerait l'outil (code 134) au lieu
+de donner l'erreur, contre la règle « fail closed ». À reconsidérer quand `tiff` 0.11, qui vérifie
+ce tag, sera adopté (il exige Rust 1.85). La capi garde de toute façon `unwind` : son garde
+`catch_unwind` (`capi/src/util.rs`) en dépend. Taille mesurée sans `abort` : 18 551 520 octets.
 
 **SQLite allégée.** `.cargo/config.toml` pose `LIBSQLITE3_FLAGS` (lu par `libsqlite3-sys`
 0.35, qui l'ajoute après ses défauts) : sans FTS3/FTS5, R-tree, dbstat, soundex, métadonnées de

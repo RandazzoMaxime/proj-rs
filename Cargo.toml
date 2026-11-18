@@ -109,7 +109,6 @@ codegen-units = 1
 # `release` profile and keep unwinding (`catch_unwind` at the C boundary needs it).
 [profile.release-cli]
 inherits = "release"
-panic = "abort"
 lto = "fat"
 strip = true
 

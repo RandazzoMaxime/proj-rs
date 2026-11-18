@@ -517,7 +517,7 @@ $ echo "2.2945 48.8584" | ./cs2cs -d 3 +proj=longlat +datum=WGS84 +to EPSG:2154
 ```
 
 Each tool carries the whole `proj.db` (10 MiB), so eight separate programs would cost 138 MiB on
-disk; the one executable costs 17.1 MiB (`--release` builds it with `panic = "abort"`, fat LTO and a leaner SQLite: [`docs/PORTING-multicall.md`](docs/PORTING-multicall.md)). `tools/dist-cli.sh [--release] [PREFIX]` builds it and
+disk; the one executable costs 17.7 MiB (`--release` builds it with fat LTO, stripped, and a leaner SQLite: [`docs/PORTING-multicall.md`](docs/PORTING-multicall.md)). `tools/dist-cli.sh [--release] [PREFIX]` builds it and
 installs `bin/proj-rs` with a link for each tool name; on Windows `tools\dist-cli.ps1` makes hard
 links, or small `.cmd` launchers where hard links are not possible
 ([`docs/PORTING-multicall.md`](docs/PORTING-multicall.md)). `cargo build` also builds each tool as
