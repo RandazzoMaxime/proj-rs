@@ -40,7 +40,9 @@ t.forward_slice(&mut points)?;                      // lot : SIMD quand il exist
 ```
 
 - `Context` : réseau, endpoint, chemins de recherche, répertoire utilisateur, cache. Clonable,
-  `Send + Sync`.
+  `Send + Sync`. `Context::builder().hermetic()` ne lit rien de la machine (variables, `proj.ini`,
+  répertoire utilisateur, `HOME`, répertoire courant) : voir
+  [docs/PORTING-context-hermetic.md](PORTING-context-hermetic.md).
 - `Crs` : `from_user_input` (code, WKT, PROJJSON, chaîne PROJ), `to_wkt(WktVersion)`,
   `to_projjson()`, `to_proj_string()`, `name()`, `kind()`, `area_of_use()`.
 - `Transformer` : `builder(&src, &dst)` puis `area_of_interest`, `only_best`, `allow_ballpark`,
