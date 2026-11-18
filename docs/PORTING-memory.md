@@ -186,10 +186,12 @@ d'exemplaires. `4326 → 2154` n'a que deux CRS et une poignée d'opérations : 
   `Box<Crs>` à `Arc<Crs>` (`model.rs`). Cloner une opération copie quatre pointeurs au lieu de
   deux CRS entiers. Une écriture passe par `Arc::make_mut` (copie à l'écriture).
 - `AuthorityFactory::create_shared_crs` : un CRS lu dans la base est construit une fois par
-  contexte (`Connections::crs_cache`, 64 entrées, clé `(autorité, code)`) et rendu en `Arc`. Les
-  opérations de la base (transformations, grilles, concaténations, interpolation) l'utilisent.
-  Le cache est vidé à toute écriture (`lock_for_write`) : `execute_sql` et une session d'insertion
-  ne voient jamais un CRS d'avant. `create_coordinate_reference_system` reste sans cache.
+  recherche et par contexte (`SearchCache`, 64 entrées, clé `(autorité, code)`) et rendu en `Arc`.
+  Les opérations de la base (transformations, grilles, concaténations, interpolation) l'utilisent.
+  Le cache est vidé à toute écriture : `execute_sql` et une session d'insertion ne voient jamais un
+  CRS d'avant. Il est vidé aussi à la fin de la dernière recherche du contexte (lot suivant :
+  `docs/PORTING-creation-cache.md`, qui y range aussi les lignes des requêtes).
+  `create_coordinate_reference_system` reste sans cache.
 - `shared.rs` : une recherche (`create_operations_between_epochs`) enregistre ses deux `Arc<Crs>` ;
   `set_endpoints`, `with_endpoints`, `with_endpoints_of` et `set_crss_update_inverse` acceptent
   `impl Share` et retrouvent l'`Arc` quand on leur donne la `&Crs` qu'il porte (même adresse, donc

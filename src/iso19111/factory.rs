@@ -30,6 +30,7 @@ use super::model::{
 use super::parammap::{MethodMap, OTHER_METHODS, PROJECTION_METHODS};
 use super::pipeline::ProjLines;
 use super::projstring::look_for_proj_well_known_ellps;
+use super::search_cache::SearchCache;
 use super::shared::Share;
 use super::wkt::format_g;
 use crate::projdb;
@@ -393,25 +394,48 @@ pub struct DatabaseContext {
 struct Connections {
     own: Mutex<Option<Connection>>,
     shared: Option<Arc<Mutex<Connection>>>,
-    /// CRS built for operations, shared by every candidate that names them. Dropped on a write.
-    crs_cache: Mutex<CrsCache>,
+    /// What the running searches read: CRS shared by every candidate that names them, and the
+    /// rows of the queries. Empty between searches and after a write.
+    search: SearchCache,
 }
 
-/// Drops the compiled statements of a context when the outermost search ends, so a context kept
-/// by the caller does not hold them while idle.
-struct FlushStatements<'a>(&'a DatabaseContext);
+/// A search running on a context. Its end drops the compiled statements of the outermost
+/// search, and the rows and CRS of the last search, so a context kept by the caller holds
+/// nothing while idle.
+struct SearchScope<'a> {
+    db: &'a DatabaseContext,
+    outermost: bool,
+}
 
-impl Drop for FlushStatements<'_> {
-    fn drop(&mut self) {
-        self.0.flush_statements();
+impl<'a> SearchScope<'a> {
+    /// Call before `shared::enter` of the search: the outermost one finds nothing registered.
+    fn begin(db: &'a DatabaseContext) -> Self {
+        db.conn.search.begin();
+        Self {
+            db,
+            outermost: !super::shared::is_registered(),
+        }
+    }
+
+    /// A call that builds several operations outside a search: its CRS and rows are kept until
+    /// it returns, and the compiled statements stay.
+    fn lookups(db: &'a DatabaseContext) -> Self {
+        db.conn.search.begin();
+        Self {
+            db,
+            outermost: false,
+        }
     }
 }
 
-/// Most CRS one context keeps: a pair of CRS and the pivots of a search fit well within it.
-const CRS_CACHE_CAPACITY: usize = 64;
-
-/// `(authority, code)` of a CRS built by [`AuthorityFactory::create_shared_crs`].
-type CrsCache = Vec<((String, String), Arc<Crs>)>;
+impl Drop for SearchScope<'_> {
+    fn drop(&mut self) {
+        self.db.conn.search.end();
+        if self.outermost {
+            self.db.flush_statements();
+        }
+    }
+}
 
 /// A locked connection: the shared one, or the one a context owns.
 enum Access<'a> {
@@ -484,7 +508,7 @@ impl DatabaseContext {
             conn: Arc::new(Connections {
                 own: Mutex::new(None),
                 shared: Some(shared),
-                crs_cache: Mutex::default(),
+                search: SearchCache::default(),
             }),
             attachment: Attachment::Direct,
             insert_session: Arc::new(AtomicBool::new(false)),
@@ -576,7 +600,7 @@ impl DatabaseContext {
             conn: Arc::new(Connections {
                 own: Mutex::new(Some(conn)),
                 shared: None,
-                crs_cache: Mutex::default(),
+                search: SearchCache::default(),
             }),
             attachment,
             insert_session: Arc::new(AtomicBool::new(false)),
@@ -642,9 +666,16 @@ impl DatabaseContext {
     ///
     /// The SQL fails, for example when a trigger rejects a row.
     pub fn execute_sql(&self, sql: &str) -> Result<(), FactoryError> {
-        self.lock_for_write()?
-            .execute_batch(sql)
+        self.write_batch(sql)?
             .map_err(|error| FactoryError::Sql(error.to_string()))
+    }
+
+    /// `sql` on the writable copy of this context. The rows and CRS of a search are dropped
+    /// before and after it, so neither side of the write is read from the cache.
+    fn write_batch(&self, sql: &str) -> Result<Result<(), rusqlite::Error>, FactoryError> {
+        let result = self.lock_for_write()?.execute_batch(sql);
+        self.conn.search.clear();
+        Ok(result)
     }
 
     /// The database of a context whose main file is `path` (or the embedded
@@ -677,19 +708,14 @@ impl DatabaseContext {
 
     /// Run `sql` as a batch, such as an `INSERT` or a savepoint command.
     pub(super) fn execute_batch(&self, sql: &str) -> Result<(), FactoryError> {
-        self.lock_for_write()?
-            .execute_batch(sql)
+        self.write_batch(sql)?
             .map_err(|error| FactoryError::Sql(format!("Cannot execute {sql}: {error}")))
     }
 
     /// The connection for a statement that writes: a context that reads through the shared
     /// connection takes its own writable copy first, so the write stays in this context.
     fn lock_for_write(&self) -> Result<Access<'_>, FactoryError> {
-        self.conn
-            .crs_cache
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .clear();
+        self.conn.search.clear();
         let mut own = self
             .conn
             .own
@@ -721,6 +747,11 @@ impl DatabaseContext {
             }
             (None, None) => {}
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn search_cache(&self) -> &SearchCache {
+        &self.conn.search
     }
 
     fn lock(&self) -> Access<'_> {
@@ -756,6 +787,10 @@ impl DatabaseContext {
         sql: &str,
         params: &[String],
     ) -> Result<Vec<Vec<Cell>>, FactoryError> {
+        if let Some(rows) = self.conn.search.rows(sql, params) {
+            return Ok(rows);
+        }
+        let ticket = self.conn.search.ticket();
         let guard = self.lock();
         let mut statement = guard
             .prepare_cached(sql)
@@ -775,6 +810,10 @@ impl DatabaseContext {
             }
             out.push(cells);
         }
+        drop(rows);
+        drop(statement);
+        drop(guard);
+        self.conn.search.store_rows(ticket, sql, params, &out);
         Ok(out)
     }
 
@@ -4210,22 +4249,13 @@ impl AuthorityFactory {
     /// As [`Self::create_coordinate_reference_system`].
     pub(crate) fn create_shared_crs(&self, code: &str) -> Result<Arc<Crs>, FactoryError> {
         let key = (self.authority.clone(), code.to_owned());
-        let cache = &self.db.conn.crs_cache;
-        let hit = cache
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .iter()
-            .find(|(known, _)| *known == key)
-            .map(|(_, crs)| Arc::clone(crs));
-        if let Some(crs) = hit {
+        let cache = &self.db.conn.search;
+        if let Some(crs) = cache.crs(&key) {
             return Ok(crs);
         }
+        let ticket = cache.ticket();
         let crs = Arc::new(self.create_coordinate_reference_system(code)?);
-        let mut cache = cache.lock().unwrap_or_else(|poison| poison.into_inner());
-        if cache.len() >= CRS_CACHE_CAPACITY {
-            cache.remove(0);
-        }
-        cache.push((key, Arc::clone(&crs)));
+        cache.store_crs(ticket, key, &crs);
         Ok(crs)
     }
 
@@ -4318,6 +4348,7 @@ impl AuthorityFactory {
         code: &str,
         grids: AlternativeGridNames,
     ) -> Result<CoordinateOperation, FactoryError> {
+        let _lookups = SearchScope::lookups(&self.db);
         self.create_coordinate_operation_typed(code, ConcatenatedSteps::Allow, grids, "")
     }
 
@@ -4355,6 +4386,7 @@ impl AuthorityFactory {
         target: (&str, &str),
         superseded: SupersededOperations,
     ) -> Result<Vec<CoordinateOperation>, FactoryError> {
+        let _lookups = SearchScope::lookups(&self.db);
         if let Some(conversion) = self.projected_deriving_conversion(source, target) {
             return Ok(vec![CoordinateOperation::Conversion(conversion)]);
         }
@@ -4390,6 +4422,7 @@ impl AuthorityFactory {
         if source == target {
             return Ok(Vec::new());
         }
+        let _lookups = SearchScope::lookups(&self.db);
         let source_crs = AuthorityFactory::create(&self.db, source.0)
             .create_coordinate_reference_system(source.1)?;
         let target_crs = AuthorityFactory::create(&self.db, target.0)
@@ -6351,12 +6384,10 @@ impl CoordinateOperationFactory {
         let source = canonical_or_self(source);
         let target = canonical_or_self(target);
         check_same_celestial_body(&source, &target)?;
+        let _search = SearchScope::begin(context.database());
         let (source, source_extent, _) = resolve_crs(&source, context);
         let (target, target_extent, _) = resolve_crs(&target, context);
         let _shared = super::shared::enter([&source, &target]);
-        let _flush = _shared
-            .is_outermost()
-            .then(|| FlushStatements(context.database()));
         // PROJ builds its private context once, with the extents of the two CRS of the outermost
         // call, and every sub-call filters on them (coordinateoperationfactory.cpp:8082-8094,
         // `Private::Context(sourceCRSExtent, targetCRSExtent, context)`). An extent that is
