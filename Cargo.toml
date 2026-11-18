@@ -113,9 +113,9 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 
-# The command-line tools (tools/dist-cli.sh): `panic = "abort"` drops the unwind tables and
-# landing pads. Only these binaries take it; the library and `proj-rs-capi` stay on the
-# `release` profile and keep unwinding (`catch_unwind` at the C boundary needs it).
+# The command-line tools (tools/dist-cli.sh): fat LTO and stripped symbols. Unwinding stays:
+# `geotiff::contained` catches a panic of the `tiff` crate (docs/PORTING-multicall.md). The
+# library and `proj-rs-capi` stay on the `release` profile.
 [profile.release-cli]
 inherits = "release"
 lto = "fat"

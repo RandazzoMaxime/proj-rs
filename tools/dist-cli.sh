@@ -4,9 +4,8 @@
 #
 # Usage: tools/dist-cli.sh [--release] [PREFIX]        (default prefix: target/cli-dist)
 #
-# --release builds with the `release-cli` profile of Cargo.toml: the `release` profile plus
-# `panic = "abort"`, fat LTO and stripped symbols, 1.3 MB less. The library and the C library
-# (capi/tests/dist.sh) keep the `release` profile and its unwinding.
+# --release builds with the `release-cli` profile of Cargo.toml: the `release` profile plus fat
+# LTO and stripped symbols. The C library (capi/tests/dist.sh) keeps the `release` profile.
 #
 # PROJ_RS_CLI_FEATURES="network" adds `projsync` and the HTTPS grid download (off by default).
 #
