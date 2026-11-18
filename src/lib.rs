@@ -154,6 +154,17 @@ pub mod grids {
     };
 }
 
+/// A read-only connection to the `proj.db` embedded in the program, for the command-line tools of
+/// this repository, which query it with SQL. The path of the build machine is not used.
+///
+/// # Errors
+///
+/// The message of the SQLite failure when the embedded bytes cannot be opened.
+#[doc(hidden)]
+pub fn embedded_proj_db() -> Result<rusqlite::Connection, String> {
+    projdb::read_only_connection().map_err(|error| error.to_string())
+}
+
 #[doc(hidden)]
 pub mod wkt {
     //! WKT export types from georust `proj` 0.31.

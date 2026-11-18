@@ -183,6 +183,11 @@ fn open_lazy_or_copy() -> Result<Connection, DbFail> {
     read_only_image().map_err(|error| DbFail::Open(error.to_string()))
 }
 
+/// A read-only connection of its own to the embedded `proj.db`, with no auxiliary database.
+pub(crate) fn read_only_connection() -> Result<Connection, DbFail> {
+    read_only_image().map_err(|error| DbFail::Open(error.to_string()))
+}
+
 /// The bytes of the embedded `proj.db`.
 pub(crate) fn embedded_bytes() -> &'static [u8] {
     PROJ_DB

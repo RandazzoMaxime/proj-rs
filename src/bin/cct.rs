@@ -390,8 +390,7 @@ fn operation_from_database(auth: &str, code: &str) -> Result<Operation, String> 
 }
 
 fn operation_from_name(name: &str) -> Result<Operation, String> {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("data/proj.db");
-    let connection = rusqlite::Connection::open(path).map_err(|error| error.to_string())?;
+    let connection = proj_rs::embedded_proj_db()?;
     let code: i64 = connection
         .query_row(
             "SELECT code FROM coordinate_operation_view \

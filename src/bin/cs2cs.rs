@@ -1937,9 +1937,8 @@ struct Catalog {
 
 impl Catalog {
     fn open() -> Self {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("data/proj.db");
         Self {
-            db: Connection::open(path).ok(),
+            db: proj_rs::embedded_proj_db().ok(),
         }
     }
 
