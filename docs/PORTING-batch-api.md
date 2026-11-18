@@ -48,13 +48,15 @@ place, avec un emplacement `Option<TransformError>` par point :
 
 | couche | ce qu'elle fait d'une tranche |
 |---|---|
-| `Pipeline` | étape par étape sur toute la tranche, pour que `Classic` voie tous les points ; point par point si le pipeline garde une pile (`push`, `pop`), dont l'état est par point |
+| `Pipeline` | étape par étape sur toute la tranche, pour que `Classic` voie tous les points ; `push` et `pop` aussi (`BatchStack`) quand leurs paires s'apparient, sinon point par point (`docs/PORTING-batch-datum.md`) |
 | `Classic` | par blocs de 256 points : `fwd_prepare` en scalaire (porte de latitude, `pm=`, `lon_0`, `adjlon`, latitude géocentrique), le noyau vectoriel à origine nulle (`ProjectedBatch`), puis `fwd_finalize` en scalaire (`a`, faux est et nord, unités) ; un point que le noyau refuse (`NaN`), ou une entrée `NaN`, repasse par le scalaire ; pas de vecteur sous `+over` (`projections/classic_batch.rs`) |
 | `IsoPipeline::map_batch` | une opération unique : la tranche d'un bloc, entre les deux échanges d'axes de la façade ; plusieurs candidats : un point à la fois (`proj_trans` choisit par point) |
 | `Proj::fill_array` | des blocs de 4096 points ; le premier point en échec du premier bloc en échec rend son erreur |
 
 Les projections qui ont un noyau vectoriel : Transverse Mercator exact (donc `+proj=utm` et
-`+proj=tmerc` par défaut), Lambert conique conforme, Mercator sans `+over`, et `+proj=webmerc`
+`+proj=tmerc` par défaut), Lambert conique conforme, Mercator sans `+over`, `+proj=sterea`,
+`+proj=somerc`, `+proj=laea` ellipsoïdal oblique ou équatorial (lot 7,
+`docs/PORTING-batch-oblique.md`), et `+proj=webmerc`
 (le noyau sphérique de Mercator, à rayon `a`, `k0 = 1`). `webmerc` n'est pas un `Classic` avec
 lot : `Classic::with_batch` reste privé à `engine`, donc `WebMercStep` (`projections/webmerc_batch.rs`)
 enveloppe l'étape scalaire et ne remplace que `forward_batch` et `inverse_batch`. Sous `+over`, pas
@@ -120,8 +122,8 @@ point sur 300 000 points : 4,7e-9 m (4326 vers 3857) et 1,4e-14° (3857 vers 432
   Le gain mesuré (351 → 284 ns) vient des deux corrections de latence seulement.
 - `Operation` n'expose pas `forward_batch` publiquement : le lot sert `Proj::convert_array`
   et `project_array`. L'exposer demande de fixer le type de l'erreur par point.
-- Pas de noyau vectoriel pour les projections coniques autres que Lambert, `stere`, Helmert
-  (9 ns par point) et les grilles.
+- Pas de noyau vectoriel pour les projections coniques autres que Lambert, `stere` et les grilles.
+  `cart`, `helmert` et `push`/`pop` en ont un depuis le lot 7 (`docs/PORTING-batch-datum.md`).
 - Le chemin de lot pour la sélection de `cs2cs` (`Selection::Several`, `Alternatives::forward`)
   n'existe pas.
 - La fusion des étapes triviales (`axisswap`, `unitconvert`) à la construction du pipeline : la

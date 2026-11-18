@@ -2343,7 +2343,7 @@ const BATCH_CHUNK: usize = 256;
 /// The vector path of a [`Classic`] kernel (`crate::simd`), over the points of one chunk, with a
 /// zero origin: radians relative to the central meridian in, metres without the false origin
 /// out; metres in, degrees relative to the central meridian out.
-trait ProjectedBatch: Send + Sync {
+pub(crate) trait ProjectedBatch: Send + Sync {
     /// Radians to metres, `NaN` for a point the projection refuses.
     fn forward(&self, lon_rad: &[f64], lat_rad: &[f64], east: &mut [f64], north: &mut [f64]);
 
@@ -3233,6 +3233,15 @@ pub fn parse_gie_coord(text: &str) -> Option<(Coord, usize)> {
 /// Build a classic step from a kernel. Projection modules use this.
 pub(crate) fn classic_step<K: Kernel + 'static>(frame: &Frame, kernel: K) -> Box<dyn Step> {
     Box::new(Classic::new(frame.clone(), kernel))
+}
+
+/// [`classic_step`] with a vector path (`ProjectedBatch`, zero origin).
+pub(crate) fn classic_step_batch<K: Kernel + 'static>(
+    frame: &Frame,
+    kernel: K,
+    batch: impl ProjectedBatch + 'static,
+) -> Box<dyn Step> {
+    Box::new(Classic::new(frame.clone(), kernel).with_batch(batch))
 }
 
 /// Shared authalic helpers re-exported for projection modules.

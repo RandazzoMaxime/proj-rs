@@ -12,7 +12,8 @@
 //!   `phi2`).
 //! - [`Lanes`] et [`run`] sont le driver : il découpe les tranches par quatre, rappelle le
 //!   chemin scalaire pour la queue et pour tout groupe qu'une voie sort du domaine rapide, et
-//!   n'entre dans le code `target_feature` qu'une fois par appel.
+//!   n'entre dans le code `target_feature` qu'une fois par appel. [`Lanes3`] et [`run3`] sont le
+//!   même driver pour trois entrées et trois sorties (géocentrique, Helmert).
 //!
 //! Hors x86-64, ou sans AVX2, [`run`] boucle sur le chemin scalaire : les résultats sont alors
 //! ceux de la crate, sans écart.

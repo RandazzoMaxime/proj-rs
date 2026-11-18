@@ -4,11 +4,20 @@
 
 #![allow(clippy::pedantic, reason = "formulae follow PROJ laea.cpp")]
 
-use crate::engine::{classic_step, CreateError, Frame, Kernel, Params, TransformError};
-use crate::projmath::{authalic_forward, authalic_inverse, authalic_q};
+use crate::engine::{
+    classic_step, classic_step_batch, CreateError, Frame, Kernel, Params, TransformError,
+};
+use crate::projmath::{authalic_forward, authalic_inverse, authalic_q, auxlat_coeffs, AuxLat};
 use std::f64::consts::{FRAC_PI_2, FRAC_PI_4};
 
+// The vector path of the oblique and equatorial ellipsoidal modes, four points at a time.
+#[path = "laea_batch.rs"]
+mod laea_batch;
+
 const EPS10: f64 = 1e-10;
+
+/// `SERIES_N` of `projmath`: below it the authalic latitude is the Fourier series.
+const SERIES_N: f64 = 0.01;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -18,6 +27,7 @@ enum Mode {
     Oblique,
 }
 
+#[derive(Clone, Copy)]
 struct Laea {
     mode: Mode,
     sinb1: f64,
@@ -33,6 +43,9 @@ struct Laea {
     e: f64,
     es: f64,
     one_es: f64,
+    /// The authalic series, geographic to authalic and back (`ellips` and `n < SERIES_N`).
+    fwd_coeffs: [f64; 6],
+    inv_coeffs: [f64; 6],
 }
 
 impl Kernel for Laea {
@@ -313,23 +326,37 @@ pub(crate) fn build(
         };
         (sinb1, cosb1, 0.0, 0.0, 0.0, 0.0, 0.0)
     };
-    Ok(Some(classic_step(
-        frame,
-        Laea {
-            mode,
-            sinb1,
-            cosb1,
-            xmf,
-            ymf,
-            qp,
-            dd,
-            rq,
-            phi0: frame.phi0,
-            ellips,
-            n: frame.earth.n(),
-            e: frame.earth.e(),
-            es: frame.earth.es(),
-            one_es: frame.earth.one_es(),
-        },
-    )))
+    let n = frame.earth.n();
+    let series = ellips && n.abs() < SERIES_N && matches!(mode, Mode::Oblique | Mode::Equator);
+    let coefficients = |from, to| auxlat_coeffs(n, from, to).filter(|_| series);
+    let (forward_series, inverse_series) = (
+        coefficients(AuxLat::Geographic, AuxLat::Authalic),
+        coefficients(AuxLat::Authalic, AuxLat::Geographic),
+    );
+    let kernel = Laea {
+        mode,
+        sinb1,
+        cosb1,
+        xmf,
+        ymf,
+        qp,
+        dd,
+        rq,
+        phi0: frame.phi0,
+        ellips,
+        n,
+        e: frame.earth.e(),
+        es: frame.earth.es(),
+        one_es: frame.earth.one_es(),
+        fwd_coeffs: forward_series.unwrap_or([0.0; 6]),
+        inv_coeffs: inverse_series.unwrap_or([0.0; 6]),
+    };
+    if forward_series.is_some() && inverse_series.is_some() {
+        return Ok(Some(classic_step_batch(
+            frame,
+            kernel,
+            crate::projections::unit_batch::UnitBatch(kernel, frame.earth),
+        )));
+    }
+    Ok(Some(classic_step(frame, kernel)))
 }
