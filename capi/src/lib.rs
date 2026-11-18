@@ -63,6 +63,7 @@ mod list;
 mod lists;
 mod lists_data;
 mod misc;
+mod module;
 mod network;
 mod ops;
 mod pj;

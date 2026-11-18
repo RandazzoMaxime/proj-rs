@@ -1,16 +1,16 @@
-//! Directories a grid or model file name is resolved against.
+//! Resolving a grid, model or dictionary name to a file, in PROJ's order.
 //!
-//! After a file that exists relative to the working directory, the directories
-//! are searched in PROJ's order (`pj_open_lib_internal`, `src/filemanager.cpp`):
-//! the user-writable directory first, unless `PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY`
-//! is set, then the data directories of [`crate::network::data_directories`]
-//! (`PROJ_DATA`, or the default `data/grids`), then the paths added with
-//! `set_search_paths`. Test fixtures are not searched unless a test puts them
-//! on `PROJ_DATA`. A name may be a path or a bare filename. A missing file is
-//! not a coordinate. When the network is on, [`read`] fetches a missing bare
-//! name into the cache first.
+//! The order is that of `pj_open_lib_internal` (`src/filemanager.cpp`), in
+//! [`crate::datadir::Lookup::find`]: the paths set on the context, or else the user-writable
+//! directory (unless `PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY` is set), then `PROJ_DATA` or else
+//! `../share/proj` of the module and the compiled directory, and the working directory last.
+//! Test fixtures are not searched unless a test puts them on `PROJ_DATA`. A name may be a path
+//! or a bare filename. A missing file is not a coordinate. When the network is on, [`read`]
+//! fetches a missing bare name into the cache first.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+
+use crate::datadir::{is_rel_or_absolute_filename, is_tilde_slash, Lookup};
 
 /// Put the vendored fixtures on `PROJ_DATA` for this process, as PROJ's test
 /// runs do (`proj_test_set_properties`, `cmake/ProjTest.cmake`). The vendored
@@ -30,25 +30,21 @@ pub(crate) fn use_fixture_search_path() {
     std::env::set_var("PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY", "YES");
 }
 
-/// The directories a name is looked up in, in order.
-fn search_directories() -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-    if let Some(cache) = crate::network::cache_dir_if_enabled() {
-        dirs.push(cache);
-    }
-    dirs.extend(crate::network::data_directories());
-    dirs.extend(crate::network::search_paths());
-    dirs
-}
-
 /// First existing file for `name`, including a `grid_alternatives` rename.
 ///
 /// As PROJ 9.9.0 `FileManager::open_resource_file` (`src/filemanager.cpp`,
 /// 1786-1857): a name without `.tif` falls back to its PROJ name
 /// (`getProjGridName`), a name with `.tif` to its old name
-/// (`getOldProjGridName`). Paths and URLs have no fallback.
+/// (`getOldProjGridName`). Paths, URLs and `proj.db` have no fallback.
 pub(crate) fn resolve(name: &str) -> Option<PathBuf> {
     locate(name).or_else(|| {
+        if is_tilde_slash(name)
+            || is_rel_or_absolute_filename(name)
+            || crate::network::is_http(name)
+            || name == "proj.db"
+        {
+            return None;
+        }
         let alternate = if name.contains(".tif") {
             crate::network::old_grid_filename(name)?
         } else {
@@ -77,29 +73,13 @@ pub(crate) fn available(name: &str) -> bool {
 
 fn locate(name: &str) -> Option<PathBuf> {
     let name = strip_cdn(name).unwrap_or(name);
-    if name.starts_with("http://") || name.starts_with("https://") {
+    if crate::network::is_http(name) {
         return None;
     }
-    let api = crate::network::file_api();
+    let ctx = crate::network::context();
+    let api = ctx.file_api();
     let api = api.as_deref();
-    let given = Path::new(name);
-    if !name.is_empty() && crate::network::is_file_with(api, given) {
-        return Some(given.to_path_buf());
-    }
-    let file_name = given.file_name()?;
-    for directory in search_directories() {
-        let nested = directory.join(name);
-        if crate::network::is_file_with(api, &nested) {
-            return Some(nested);
-        }
-        if file_name != given.as_os_str() {
-            let bare = directory.join(file_name);
-            if crate::network::is_file_with(api, &bare) {
-                return Some(bare);
-            }
-        }
-    }
-    None
+    Lookup::of(&ctx).find(name, &|path| crate::network::is_file_with(api, path))
 }
 
 /// `https://cdn.proj.org/<file>` is the file of that name on the search path.
