@@ -63,6 +63,8 @@ What the speed rests on: the batch path above, a pipeline that folds its axis-sw
 executable instead of being copied ([`docs/PORTING-memory.md`](docs/PORTING-memory.md)).
 
 <!-- bench-compare:start -->
+<img src="bench/cards/billion.png" alt="Seconds to convert a billion points, EPSG:4326 to 2154, proj-rs next to PROJ 9.9.0" width="100%">
+
 <img src="bench/cards/speed-array.png" alt="Nanoseconds per point of convert_array, proj-rs next to PROJ 9.9.0, five conversions" width="100%">
 
 <img src="bench/cards/speed-point.png" alt="Nanoseconds per point of convert, one point at a time, proj-rs next to PROJ 9.9.0, five conversions" width="100%">
