@@ -6,6 +6,10 @@ rest is outside semver.
 
 ## Unreleased
 
+- Minimum supported Rust version back to 1.83, the measured floor (it was declared 1.100 in
+  1.0.0 because the code used newer standard-library methods; `src/compat.rs` now holds their
+  equivalents). The release is still built with 1.100. A project on Rust 1.83 to 1.99 compiles
+  the crate without `--ignore-rust-version`.
 - `Proj::convert_iter` converts the points of an iterator in blocks, through the vector path of
   `convert_array`: about twice as fast as `convert` one point at a time. The items are those of
   `convert`, errors included. See [docs/PORTING-convert-iter.md](docs/PORTING-convert-iter.md).
