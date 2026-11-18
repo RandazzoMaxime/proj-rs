@@ -124,7 +124,7 @@ fn hermetic_ignores_the_network_settings_of_the_environment_and_proj_ini() {
     assert_eq!(hermetic.network(), Network::Disabled);
     assert_eq!(hermetic.endpoint(), PROJ_ENDPOINT);
     assert_eq!(hermetic.cache(), Cache::Disabled);
-    assert_eq!(hermetic.search_paths(), [trap.clone()]);
+    assert_eq!(hermetic.search_paths(), std::slice::from_ref(&trap));
 
     // The default of PROJ without a `proj.ini`: the same endpoint, and `ONLY_BEST` unset.
     let bare = Context::builder().hermetic().build();
@@ -184,7 +184,7 @@ fn search_path_and_hermetic_give_the_same_context_in_either_order() {
     for context in [&first, &second] {
         assert_eq!(context.network(), Network::Disabled);
         assert_eq!(context.endpoint(), PROJ_ENDPOINT);
-        assert_eq!(context.search_paths(), [empty.clone()]);
+        assert_eq!(context.search_paths(), std::slice::from_ref(&empty));
         assert_eq!(context.cache(), Cache::Disabled);
     }
     let point_first = nad27_to_wgs84(&first, OnlyBest::Default)

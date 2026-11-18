@@ -1365,7 +1365,7 @@ pub fn select_alternatives_for_crs(
     // disk (DISCARD). A filter on a list built without it keeps only the operations with no grid at
     // all under DISCARD, and loses the pivots PROJ lists (NAD27 to NAD83 through WGS 84); under
     // KNOWN_AVAILABLE it keeps `Inverse of WGS 84 to EGM2008 height (2)` and tries it first.
-    let network_enabled = crate::network::GridContext::load().enabled;
+    let network_enabled = crate::network::active_or_environment().enabled;
     context.set_grid_availability_use(match policy {
         BestPolicy::Discard if !network_enabled => GridAvailabilityUse::DiscardIfMissing,
         BestPolicy::Discard | BestPolicy::Warn | BestPolicy::Error => {

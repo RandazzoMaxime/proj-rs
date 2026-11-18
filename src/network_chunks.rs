@@ -114,7 +114,7 @@ impl RemoteFile {
             .get(url)
             .map(|known| known.size);
         let ctx = crate::network::context();
-        let disk = ctx.cache_enabled.then(|| ctx.cache_settings());
+        let disk = ctx.chunk_cache();
         let mut file = Self {
             url: url.to_owned(),
             callbacks,
