@@ -112,7 +112,7 @@ pub(in crate::projections::gridshift) fn raw_samples(
     order: ByteOrder,
 ) -> Result<Vec<f32>, ()> {
     let size = usize::try_from(bits / 8).map_err(|_| ())?;
-    if size == 0 || !bytes.len().is_multiple_of(size) {
+    if size == 0 || !crate::compat::is_multiple_of(bytes.len(), size) {
         return Err(());
     }
     let mut out = Vec::with_capacity(bytes.len() / size);

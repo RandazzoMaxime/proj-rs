@@ -36,11 +36,11 @@ unsafe fn groups<K: Lanes>(
     let (b4, b_tail) = in_b.split_at(head);
     let (oa4, oa_tail) = out_a.split_at_mut(head);
     let (ob4, ob_tail) = out_b.split_at_mut(head);
-    let (a4, _) = a4.as_chunks::<4>();
-    let (b4, _) = b4.as_chunks::<4>();
-    let (oa4, _) = oa4.as_chunks_mut::<4>();
-    let (ob4, _) = ob4.as_chunks_mut::<4>();
-    for (((a, b), oa), ob) in a4.iter().zip(b4).zip(oa4).zip(ob4) {
+    let a4 = crate::compat::quads(a4);
+    let b4 = crate::compat::quads(b4);
+    let oa4 = crate::compat::quads_mut(oa4);
+    let ob4 = crate::compat::quads_mut(ob4);
+    for (((a, b), oa), ob) in a4.zip(b4).zip(oa4).zip(ob4) {
         if let Some((x, y)) = kernel.lanes(tok, V4::load(tok, a), V4::load(tok, b)) {
             x.store(oa);
             y.store(ob);
@@ -79,13 +79,13 @@ unsafe fn groups3<K: Lanes3>(tok: Avx2, kernel: &K, input: [&[f64]; 3], output: 
         ob.split_at_mut(head),
         oc.split_at_mut(head),
     );
-    let (ia4, _) = ia4.as_chunks::<4>();
-    let (ib4, _) = ib4.as_chunks::<4>();
-    let (ic4, _) = ic4.as_chunks::<4>();
-    let (oa4, _) = oa4.as_chunks_mut::<4>();
-    let (ob4, _) = ob4.as_chunks_mut::<4>();
-    let (oc4, _) = oc4.as_chunks_mut::<4>();
-    for (((((a, b), c), oa), ob), oc) in ia4.iter().zip(ib4).zip(ic4).zip(oa4).zip(ob4).zip(oc4) {
+    let ia4 = crate::compat::quads(ia4);
+    let ib4 = crate::compat::quads(ib4);
+    let ic4 = crate::compat::quads(ic4);
+    let oa4 = crate::compat::quads_mut(oa4);
+    let ob4 = crate::compat::quads_mut(ob4);
+    let oc4 = crate::compat::quads_mut(oc4);
+    for (((((a, b), c), oa), ob), oc) in ia4.zip(ib4).zip(ic4).zip(oa4).zip(ob4).zip(oc4) {
         let loaded = (V4::load(tok, a), V4::load(tok, b), V4::load(tok, c));
         if let Some((x, y, z)) = kernel.lanes(tok, loaded.0, loaded.1, loaded.2) {
             x.store(oa);

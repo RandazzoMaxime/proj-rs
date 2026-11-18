@@ -4,7 +4,7 @@ Statut : **lot 1 implémenté** (workspace, façade native, masquage des interne
 squelette du crate C, MSRV et semver-checks en CI). **Lot 2 implémenté** : l'ABI de
 `proj.h` est complète (292 fonctions exportées et implémentées, structures vérifiées ; écarts dans
 « Écarts du lot 2 »). **Lot 3 préparé** : versions `1.0.0`, `publish` ouvert pour `proj-rs` et
-`proj-rs-georust`, MSRV 1.100, archives de la release GitHub (`.github/workflows/release.yml`) ; la
+`proj-rs-georust`, MSRV 1.83 (release construite en 1.100), archives de la release GitHub (`.github/workflows/release.yml`) ; la
 publication sur crates.io reste à faire (`docs/PUBLISHING.md`). Ce document fixe ce que la v1 promet, et ce qu'il ne promet pas. Les écarts entre le
 cahier des charges et le code sont dans « Écarts du lot 1 » et « Écarts du lot 2 », en fin de page.
 
@@ -177,11 +177,16 @@ Ce que le code fait autrement que ce document, ou en plus, et pourquoi.
   retouches, toutes dans les exemples du README (que `proj` ne teste pas) : la coquille `epsiolon`,
   qui ne compile pas, et quatre `assert_relative_eq!` à la précision machine contre des valeurs de
   libproj 9.6, que le port (PROJ 9.9) manque de 3e-9 m ; ils prennent `epsilon = 1e-6`.
-- **MSRV : 1.100.** Décision de la v1.0.0 : la version déclarée est celle de la chaîne qui
-  construit et teste la release, pas un plancher mesuré. Avant 1.0.0, le plancher mesuré était
-  1.83 : `cargo +1.83.0 check --workspace --lib --bins --all-features` passait, et avec 1.82.0
-  (`--ignore-rust-version`) les binaires `cct` et `cs2cs` échouaient (`ExitCode` n'est comparable
-  avec `!=` que depuis 1.83 ; les dépendances exigeaient au moins 1.81, `half`).
+- **MSRV : 1.83**, le plancher mesuré, plus bas que la chaîne de la release (1.100). La v1.0.0
+  avait déclaré 1.100 parce que le code utilisait des méthodes plus récentes (`f64::next_up`,
+  1.86 ; `slice::as_chunks`, 1.88 ; `is_multiple_of`, 1.91) : elles sont remplacées par des
+  équivalents (`src/compat.rs`) et le plancher est revenu à 1.83.
+  `cargo +1.83.0 check --workspace --lib --bins --all-features` passe ; avec 1.82.0
+  (`--ignore-rust-version`) les binaires `cct` et `cs2cs` échouent (`ExitCode` n'est comparable
+  avec `!=` que depuis 1.83 ; les dépendances exigent au moins 1.81, `half`). Le job `msrv` de la
+  CI installe la version déclarée : il garde le plancher. La release se construit avec 1.100
+  (`RUST_VERSION` de `release.yml`), qui doit seulement ne pas être plus ancienne que la version
+  déclarée.
 - **`cargo-semver-checks`** est dans la CI avec `if: false` : aucune version n'est publiée. Il
   s'active au lot 3, quand `1.0.0` existe sur crates.io.
 

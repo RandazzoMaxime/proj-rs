@@ -1,34 +1,10 @@
-//! Compile Karney's geodesic library, the same C PROJ 9.9 calls.
-//!
-//! The `cc` crate picks the C compiler that matches the Rust target: `cl` on
-//! Windows MSVC, `gcc` or `clang` on Linux. The bench links libproj only when
-//! it finds one: in `PROJ_RS_LIBPROJ_DIR`, else in the active conda
+//! The bench links libproj only when it finds one: in `PROJ_RS_LIBPROJ_DIR`, else in the active conda
 //! environment (`CONDA_PREFIX`). Without one, the `ratio` column stays empty.
 
 use std::path::PathBuf;
 
 fn main() {
-    let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("manifest dir"));
-    let src_dir = manifest.join("src").join("geodesic");
-    let c_file = src_dir.join("geodesic.c");
-    println!("cargo:rerun-if-changed={}", c_file.display());
-    println!(
-        "cargo:rerun-if-changed={}",
-        src_dir.join("geodesic.h").display()
-    );
-
     println!("cargo:rustc-check-cfg=cfg(link_libproj)");
-
-    cc::Build::new()
-        .file(&c_file)
-        .include(&src_dir)
-        .std("c11")
-        .opt_level(2)
-        // No fused multiply-add: clang fuses `a * b + c` by default on aarch64, and the
-        // reference PROJ (x86-64) does not, so the geodesics would differ in the last bits.
-        .flag_if_supported("-ffp-contract=off")
-        .warnings(false)
-        .compile("geodesic");
 
     println!("cargo:rerun-if-env-changed=PROJ_RS_LIBPROJ_DIR");
     println!("cargo:rerun-if-env-changed=CONDA_PREFIX");

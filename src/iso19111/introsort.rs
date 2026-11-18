@@ -151,7 +151,7 @@ impl<F: Fn(usize, usize) -> bool> Sorter<'_, F> {
             self.order[first + hole] = self.order[first + child];
             hole = child;
         }
-        if len.is_multiple_of(2) && child == (len - 2) / 2 {
+        if crate::compat::is_multiple_of(len, 2) && child == (len - 2) / 2 {
             child = 2 * (child + 1);
             self.order[first + hole] = self.order[first + child - 1];
             hole = child - 1;
