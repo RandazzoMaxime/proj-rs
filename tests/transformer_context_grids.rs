@@ -121,3 +121,57 @@ fn ballpark_allowed_with_the_grid_chooses_the_grid_operation() {
         "the best candidate has the grid: {names:?}"
     );
 }
+
+/// A point inside the extract of the grid in the test file, and one far outside it.
+const INSIDE: (f64, f64) = (5.0, 53.0);
+const OUTSIDE: (f64, f64) = (-179.0, -89.0);
+
+fn transformer(search_path: &Path, ballpark: Ballpark) -> Transformer {
+    let ctx = Context::builder()
+        .search_path(search_path)
+        .network(Network::Disabled)
+        .build();
+    let source = Crs::from_user_input(&ctx, "EPSG:4979").expect("source");
+    let target = Crs::from_user_input(&ctx, "EPSG:4326+5773").expect("target");
+    Transformer::builder(&source, &target)
+        .normalize_axis_order()
+        .allow_ballpark(ballpark)
+        .build()
+        .expect("the pair builds")
+}
+
+#[test]
+fn the_single_operation_is_named_and_not_a_ballpark() {
+    // `Forbidden` with the grid leaves one operation: the application refuses a ballpark
+    // conversion by reading what the last point went through.
+    let grids = with_egm96_grid("single-named");
+    let t = transformer(&grids, Ballpark::Forbidden);
+    let info = t
+        .last_used_operation()
+        .expect("the single operation is known at once");
+    assert_eq!(info.name(), Some("WGS 84 to EGM96 height (1)"));
+    assert!(!info.is_ballpark());
+    t.forward(Point::xyz(INSIDE.0, INSIDE.1, 0.0))
+        .expect("a point of the grid");
+    let info = t.last_used_operation().expect("after a conversion");
+    assert_eq!(info.name(), Some("WGS 84 to EGM96 height (1)"));
+    assert!(!info.is_ballpark());
+    assert!(info
+        .proj_string()
+        .is_some_and(|text| text.contains("vgridshift")));
+}
+
+#[test]
+fn a_ballpark_conversion_says_so() {
+    // `Allowed`: a point outside the grid goes through the ballpark operation, a point inside it
+    // through the grid.
+    let grids = with_egm96_grid("ballpark-says-so");
+    let t = transformer(&grids, Ballpark::Allowed);
+    t.forward(Point::xyz(OUTSIDE.0, OUTSIDE.1, 0.0))
+        .expect("a point outside the grid");
+    assert!(t.last_used_operation().expect("an operation").is_ballpark());
+    t.forward(Point::xyz(INSIDE.0, INSIDE.1, 0.0))
+        .expect("a point of the grid");
+    let info = t.last_used_operation().expect("an operation");
+    assert!(!info.is_ballpark(), "{:?}", info.name());
+}
