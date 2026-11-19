@@ -17,7 +17,7 @@ const POINTS: usize = 10_000;
 /// `PROJ_DATA=data`), latitude then longitude in, easting then northing out.
 const CS2CS_UTM31: [((f64, f64), (f64, f64)); 2] = [
     ((48.85, 2.35), (452_314.891_233_666, 5_410_984.887_604_439)),
-    ((45.76, 4.84), (643_089.580_627_053, 5_069_028.739_955_270)),
+    ((45.76, 4.84), (643_089.580_627_053, 5_069_028.739_955_27)),
 ];
 
 /// `cs2cs` 9.9.0 (`-f %.9f EPSG:4267 EPSG:4269`), latitude then longitude in and out.
@@ -34,7 +34,8 @@ fn points(count: usize, seed: u64, lat: (f64, f64), lon: (f64, f64)) -> Vec<Poin
         state = state
             .wrapping_mul(6_364_136_223_846_793_005)
             .wrapping_add(1_442_695_040_888_963_407);
-        (state >> 11) as f64 / (1_u64 << 53) as f64
+        // The mantissa of 1.0 plus 52 random bits, minus 1: a uniform value in [0, 1).
+        f64::from_bits(0x3FF0_0000_0000_0000 | (state >> 12)) - 1.0
     };
     (0..count)
         .map(|_| {
@@ -47,6 +48,9 @@ fn points(count: usize, seed: u64, lat: (f64, f64), lon: (f64, f64)) -> Vec<Poin
 
 /// The bits of a result, so that two results compare exactly, error text included.
 type Key = Result<[u64; 4], String>;
+
+/// The results of one thread: per point, and per slice (`Err` when the slice call fails).
+type ThreadResults = (Vec<Key>, Result<Vec<Key>, String>);
 
 fn key(result: &Result<Point, Error>) -> Key {
     match result {
@@ -85,7 +89,7 @@ fn check_shared_pair(source: &str, target: &str, input: &[Point]) {
     let shared = transformer(source, target);
     let shared_ref = &shared;
 
-    let results: Vec<(Vec<Key>, Result<Vec<Key>, String>)> = thread::scope(|scope| {
+    let results: Vec<ThreadResults> = thread::scope(|scope| {
         let handles: Vec<_> = (0..THREADS)
             .map(|_| {
                 scope.spawn(move || {
