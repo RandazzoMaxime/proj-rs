@@ -93,7 +93,7 @@ pub(crate) fn hypot(x: f64, y: f64) -> f64 {
 }
 
 /// `atanh(x)` par sa série entière pour `|x| < 0.1` (neuf termes) ; `None` au-delà : l'appelant
-/// choisit la fonction de repli (la libm C, comme PROJ).
+/// choisit la fonction de repli (`atanh_libm`, la `atanh` de glibc, comme PROJ).
 #[inline]
 pub(crate) fn atanh_small(x: f64) -> Option<f64> {
     if x.abs() < SCALAR_SERIES_LIMIT {
@@ -102,6 +102,43 @@ pub(crate) fn atanh_small(x: f64) -> Option<f64> {
     } else {
         None
     }
+}
+
+/// `atanh(x)` de la libm de glibc, au bit près, sans appel C : la formule de `__ieee754_atanh`
+/// (`sysdeps/ieee754/dbl-64/e_atanh.c`, glibc 2.39), dont le seul appel, `log1p`, est celui de la
+/// bibliothèque standard (`f64::ln_1p`, la `log1p` de la libm de la plateforme). `f64::atanh`
+/// n'est pas cette formule : `0.5 * ln_1p(2x / (1 - x))` pour tout `x`, un ULP de glibc sur un tiers
+/// des entrées. Preuve contre la vraie libm : `matches_the_c_libm_bit_for_bit` ci-dessous.
+/// Hors de glibc (macOS, Windows), le résultat est celui de cette formule avec la `log1p` de la
+/// plateforme, et non plus la `atanh` de sa libm : `docs/PORTING-simd.md`, « Fonctions scalaires ».
+#[must_use]
+pub(crate) fn atanh_libm(x: f64) -> f64 {
+    /// `2^-28` : sous ce seuil, glibc rend `x` (le terme suivant de la série est sous l'ULP).
+    const TINY: f64 = 3.725_290_298_461_914e-9;
+    let xa = x.abs();
+    let t = if xa < 0.5 {
+        if xa < TINY {
+            return x;
+        }
+        let t = xa + xa;
+        0.5 * (t + t * xa / (1.0 - xa)).ln_1p()
+    } else if xa < 1.0 {
+        0.5 * ((xa + xa) / (1.0 - xa)).ln_1p()
+    } else if xa > 1.0 {
+        // Le NaN de glibc, calculé comme elle : son bit de signe est celui du processeur.
+        #[expect(
+            clippy::eq_op,
+            reason = "`(x - x) / (x - x)` de glibc : un NaN calculé"
+        )]
+        {
+            let zero = x - x;
+            return zero / zero;
+        }
+    } else {
+        // `|x| = 1` : l'infini du signe de `x` ; un NaN se propage.
+        return x / 0.0;
+    };
+    t.copysign(x)
 }
 
 /// `asinh(x)` par sa série entière pour `|x| < 0.1` (neuf termes) ; au-delà, la libm.
@@ -129,11 +166,6 @@ pub(crate) fn sinh(x: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    unsafe extern "C" {
-        #[link_name = "atanh"]
-        fn libm_atanh(x: f64) -> f64;
-    }
 
     const SAMPLES: usize = if cfg!(debug_assertions) {
         200_000
@@ -280,11 +312,138 @@ mod tests {
             2,
             || rng.uniform(-0.0999, 0.0999),
             |x| atanh_small(x).expect("inside the series domain"),
-            |x| {
-                // SAFETY: `atanh` de la libm C ne prend qu'un `f64` et ne lit ni n'écrit de mémoire.
-                unsafe { libm_atanh(x) }
-            },
+            atanh_libm,
         );
+    }
+
+    /// Entrées de la preuve de `atanh_libm` : les cas limites, puis des millions de valeurs sur
+    /// chaque branche de glibc (sous `2^-28`, sous `0.5`, sous `1`, au-delà), près de chaque seuil
+    /// ULP par ULP, et des motifs de bits quelconques (NaN, infinis, sous-normaux compris).
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    fn atanh_inputs() -> Vec<f64> {
+        let mut inputs = vec![
+            0.0,
+            -0.0,
+            0.5,
+            -0.5,
+            1.0,
+            -1.0,
+            f64::NAN,
+            -f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::MIN_POSITIVE,
+            -f64::MIN_POSITIVE,
+            5e-324,
+            -5e-324,
+            f64::MAX,
+            f64::MIN,
+            0.1,
+            -0.1,
+            2f64.powi(-28),
+            -(2f64.powi(-28)),
+        ];
+        for edge in [2f64.powi(-28), 0.1, 0.5, 1.0] {
+            for sign in [1.0, -1.0] {
+                let bits = edge.to_bits();
+                for k in 0..20_000_u64 {
+                    inputs.push(sign * f64::from_bits(bits - k));
+                    inputs.push(sign * f64::from_bits(bits + k));
+                }
+            }
+        }
+        let n = SAMPLES;
+        let mut rng = Rng(21);
+        for _ in 0..n {
+            inputs.push(rng.uniform(-1.0, 1.0));
+        }
+        for _ in 0..n {
+            inputs.push(rng.signed_magnitude(1e-12, 1.0));
+        }
+        for _ in 0..n / 4 {
+            inputs.push(rng.signed_magnitude(1e-320, 1e-8));
+        }
+        for _ in 0..n / 4 {
+            // `1 - u` pour `u` de 1e-16 à 1e-1 : la branche `(2x) / (1 - x)` près du pôle.
+            let u = rng.signed_magnitude(1e-16, 1e-1).abs();
+            let sign = if rng.unit() < 0.5 { -1.0 } else { 1.0 };
+            inputs.push(sign * (1.0 - u));
+        }
+        for _ in 0..n / 4 {
+            // Un motif de 64 bits quelconque : toutes les classes de valeurs, NaN compris.
+            rng.unit();
+            inputs.push(f64::from_bits(rng.0));
+        }
+        inputs
+    }
+
+    /// `atanh_libm` vaut la `atanh` de la libm C au bit près, NaN compris, sur glibc.
+    /// La référence est la vraie libm, appelée par un petit programme C compilé ici (le dépôt
+    /// n'a pas de `unsafe` pour l'appeler en FFI) : le compilateur C de la machine (`CC`, sinon
+    /// `cc`) est requis.
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    #[test]
+    fn matches_the_c_libm_bit_for_bit() {
+        use std::io::{Read, Write};
+        use std::process::{Command, Stdio};
+
+        let dir = std::env::temp_dir().join(format!("proj-rs-atanh-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temporary directory");
+        let source = dir.join("atanh.c");
+        let program = dir.join("atanh");
+        std::fs::write(
+            &source,
+            "#include <math.h>\n#include <stdio.h>\nint main(void) { double x[4096], y[4096]; \
+             size_t n; while ((n = fread(x, sizeof x[0], 4096, stdin)) > 0) { \
+             for (size_t i = 0; i < n; i++) y[i] = atanh(x[i]); \
+             fwrite(y, sizeof y[0], n, stdout); } return 0; }\n",
+        )
+        .expect("write the C program");
+        let cc = std::env::var("CC").unwrap_or_else(|_| "cc".to_owned());
+        let status = Command::new(&cc)
+            .args(["-O0", "-fno-builtin", "-o"])
+            .arg(&program)
+            .arg(&source)
+            .arg("-lm")
+            .status()
+            .unwrap_or_else(|e| panic!("a C compiler (`{cc}`) is needed for this proof: {e}"));
+        assert!(status.success(), "{cc} failed");
+
+        let inputs = atanh_inputs();
+        let mut child = Command::new(&program)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("run the C program");
+        let mut stdin = child.stdin.take().expect("stdin");
+        let bytes: Vec<u8> = inputs.iter().flat_map(|x| x.to_ne_bytes()).collect();
+        let writer = std::thread::spawn(move || stdin.write_all(&bytes).expect("write"));
+        let mut out = Vec::new();
+        child
+            .stdout
+            .take()
+            .expect("stdout")
+            .read_to_end(&mut out)
+            .expect("read");
+        writer.join().expect("writer");
+        assert!(child.wait().expect("wait").success());
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(out.len(), inputs.len() * 8);
+        let mut checked = 0_usize;
+        for (x, chunk) in inputs.iter().zip(out.chunks_exact(8)) {
+            let c = f64::from_ne_bytes(chunk.try_into().expect("eight bytes"));
+            let rust = atanh_libm(*x);
+            assert!(
+                rust.to_bits() == c.to_bits(),
+                "atanh({x:e} = {:#018x}): {rust:e} ({:#018x}), libm {c:e} ({:#018x})",
+                x.to_bits(),
+                rust.to_bits(),
+                c.to_bits()
+            );
+            checked += 1;
+        }
+        eprintln!("atanh_libm = libm atanh on {checked} inputs");
     }
 
     #[test]

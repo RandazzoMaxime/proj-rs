@@ -1,7 +1,7 @@
 //! Calcul par lots sur quatre `f64` à la fois (AVX2).
 //!
-//! Le module est la seule frontière du `unsafe` de la crate pour le calcul vectoriel. Les
-//! projections n'écrivent que leur formule, en quatre voies, contre l'API sûre de [`V4`] ;
+//! Le module n'a pas de `unsafe` : les intrinsèques et le passage dans le code compilé avec AVX2
+//! passent par `pulp`, qui le porte (`docs/PORTING-simd.md`). Les projections n'écrivent que leur formule, en quatre voies, contre l'API sûre de [`V4`] ;
 //! elles ne touchent ni intrinsèque ni détection du processeur.
 //!
 //! - [`Avx2`] prouve que le processeur sait AVX2 et FMA. On n'en obtient un que par

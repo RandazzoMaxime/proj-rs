@@ -1,12 +1,12 @@
-//! Le driver par groupes de quatre, compilé avec AVX2 et FMA.
+//! Le driver par groupes de quatre, compilé avec AVX2 et FMA (par `pulp`, sans `unsafe` ici).
 
 use super::{scalar, scalar3, Avx2, Lanes, Lanes3, V4};
 
 /// Parcourt les tranches par groupes de quatre.
 ///
-/// La fonction est la seule où le compilateur reçoit `avx2,fma` : le noyau [`Lanes::lanes`] y
-/// est inséré (`#[inline(always)]`), donc ses intrinsèques deviennent des instructions en
-/// ligne.
+/// [`Avx2::vectorize`] est le seul point où le compilateur reçoit `avx2,fma` : la boucle
+/// [`groups`] et le noyau [`Lanes::lanes`] y sont insérés (`#[inline(always)]`), donc leurs
+/// intrinsèques deviennent des instructions en ligne.
 pub(super) fn run_avx2<K: Lanes>(
     tok: Avx2,
     kernel: &K,
@@ -15,15 +15,42 @@ pub(super) fn run_avx2<K: Lanes>(
     out_a: &mut [f64],
     out_b: &mut [f64],
 ) {
-    // SAFETY: `tok` n'existe que si le processeur supporte AVX2 et FMA.
-    unsafe { groups(tok, kernel, in_a, in_b, out_a, out_b) };
+    let mut out = (out_a, out_b);
+    tok.vectorize(Groups {
+        tok,
+        kernel,
+        in_a,
+        in_b,
+        out: &mut out,
+    });
 }
 
-/// # Safety
+/// Les arguments de [`groups`], pour [`Avx2::vectorize`]. Une fermeture n'y serait pas insérée
+/// en ligne (elle n'hérite pas des extensions de la fonction qui l'appelle) : ses intrinsèques
+/// deviendraient des appels, trente fois plus lents. Une méthode `#[inline(always)]` l'est.
 ///
-/// Le processeur doit supporter AVX2 et FMA. `tok` en est la preuve.
-#[target_feature(enable = "avx2,fma")]
-unsafe fn groups<K: Lanes>(
+/// Les sorties passent par une seule référence : la structure tient alors en huit mots, et
+/// `pulp` la passe en registres.
+struct Groups<'a, 'o, K> {
+    tok: Avx2,
+    kernel: &'a K,
+    in_a: &'a [f64],
+    in_b: &'a [f64],
+    out: &'a mut (&'o mut [f64], &'o mut [f64]),
+}
+
+impl<K: Lanes> pulp::NullaryFnOnce for Groups<'_, '_, K> {
+    type Output = ();
+
+    #[inline(always)]
+    fn call(self) {
+        let (out_a, out_b) = self.out;
+        groups(self.tok, self.kernel, self.in_a, self.in_b, out_a, out_b);
+    }
+}
+
+#[inline(always)]
+fn groups<K: Lanes>(
     tok: Avx2,
     kernel: &K,
     in_a: &[f64],
@@ -60,15 +87,41 @@ pub(super) fn run3_avx2<K: Lanes3>(
     input: [&[f64]; 3],
     output: [&mut [f64]; 3],
 ) {
-    // SAFETY: `tok` n'existe que si le processeur supporte AVX2 et FMA.
-    unsafe { groups3(tok, kernel, input, output) };
+    let mut output = output;
+    tok.vectorize(Groups3 {
+        tok,
+        kernel,
+        input: &input,
+        output: &mut output,
+    });
 }
 
-/// # Safety
-///
-/// Le processeur doit supporter AVX2 et FMA. `tok` en est la preuve.
-#[target_feature(enable = "avx2,fma")]
-unsafe fn groups3<K: Lanes3>(tok: Avx2, kernel: &K, input: [&[f64]; 3], output: [&mut [f64]; 3]) {
+/// Les arguments de [`groups3`], pour [`Avx2::vectorize`] (voir [`Groups`]) : trois mots, passés
+/// en registres.
+struct Groups3<'a, 'o, K> {
+    tok: Avx2,
+    kernel: &'a K,
+    input: &'a [&'o [f64]; 3],
+    output: &'a mut [&'o mut [f64]; 3],
+}
+
+impl<K: Lanes3> pulp::NullaryFnOnce for Groups3<'_, '_, K> {
+    type Output = ();
+
+    #[inline(always)]
+    fn call(self) {
+        let [oa, ob, oc] = self.output;
+        groups3(
+            self.tok,
+            self.kernel,
+            *self.input,
+            [&mut **oa, &mut **ob, &mut **oc],
+        );
+    }
+}
+
+#[inline(always)]
+fn groups3<K: Lanes3>(tok: Avx2, kernel: &K, input: [&[f64]; 3], output: [&mut [f64]; 3]) {
     let head = input[0].len() & !3;
     let [ia, ib, ic] = input;
     let [oa, ob, oc] = output;

@@ -60,87 +60,20 @@ pub(crate) fn proj_rs() -> (f64, f64) {
 }
 
 /// libproj seconds for (`proj_trans`, `proj_trans_generic`), with the transform the facade
-/// bench builds, and the first pass checked against proj-rs.
+/// bench builds, and the first pass checked against proj-rs. The passes run in
+/// `libproj_timer.c`, from the same source points and with the same refill.
 #[cfg(link_libproj)]
 pub(crate) fn libproj() -> Option<(f64, f64)> {
-    use super::{
-        check_same_output, proj_context_create, proj_context_destroy, proj_create_crs_to_crs,
-        proj_destroy, proj_log_level, proj_normalize_for_visualization, proj_trans,
-        proj_trans_generic, PjCoord,
-    };
-    use std::ffi::CString;
+    use super::{check_same_output, libproj_timer::Timer};
     let points = source();
-    let (from, to) = (
-        CString::new("EPSG:4326").ok()?,
-        CString::new("EPSG:2154").ok()?,
-    );
-    // SAFETY: libproj creates one context. It is destroyed before return.
-    let ctx = unsafe { proj_context_create() };
-    assert!(!ctx.is_null(), "proj_context_create");
-    // SAFETY: `ctx` is live. Level 0 is PJ_LOG_NONE.
-    unsafe { proj_log_level(ctx, 0) };
-    // SAFETY: both strings are nul-terminated and `ctx` is live. A null area is allowed.
-    let raw =
-        unsafe { proj_create_crs_to_crs(ctx, from.as_ptr(), to.as_ptr(), std::ptr::null_mut()) };
-    assert!(!raw.is_null(), "proj_create_crs_to_crs");
-    // SAFETY: `raw` is a live transform of `ctx`.
-    let pj = unsafe { proj_normalize_for_visualization(ctx, raw) };
-    assert!(!pj.is_null(), "proj_normalize_for_visualization");
-    // SAFETY: `raw` is not used again.
-    unsafe { proj_destroy(raw) };
-    let one_by_one = seconds(&points, |buffer| {
-        for point in buffer.iter_mut() {
-            let coord = PjCoord {
-                x: point.0,
-                y: point.1,
-                z: 0.0,
-                t: f64::INFINITY,
-            };
-            // SAFETY: `pj` is live and `coord` is a 32-byte `PJ_COORD`.
-            let out = unsafe { proj_trans(pj, 1, black_box(coord)) };
-            *point = (out.x, out.y);
-        }
-    });
-    let mut first = Vec::new();
-    let array = seconds(&points, |buffer| {
-        let count = buffer.len();
-        let x = buffer.as_mut_ptr().cast::<f64>();
-        let y = x.wrapping_add(1);
-        // SAFETY: `buffer` holds `count` interleaved (x, y) pairs of 16 bytes, so `y` starts
-        // one `f64` after `x`. Null z and t with a zero count make libproj use 0 and no time.
-        let done = unsafe {
-            proj_trans_generic(
-                pj,
-                1,
-                x,
-                16,
-                count,
-                y,
-                16,
-                count,
-                std::ptr::null_mut(),
-                0,
-                0,
-                std::ptr::null_mut(),
-                0,
-                0,
-            )
-        };
-        black_box(done);
-        if first.is_empty() {
-            first = buffer.to_vec();
-        }
-    });
+    let mut timer = Timer::start();
+    let (one_by_one, array, first) = timer.billion("EPSG:4326", "EPSG:2154", TOTAL, &points);
     check_same_output(
         "billion_4326_2154",
         &first,
         &points,
         ("EPSG:4326", "EPSG:2154"),
     );
-    // SAFETY: `pj` was created above and is not used again.
-    unsafe { proj_destroy(pj) };
-    // SAFETY: `ctx` was created above and is not used again.
-    unsafe { proj_context_destroy(ctx) };
     Some((one_by_one, array))
 }
 

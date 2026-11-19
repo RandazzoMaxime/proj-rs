@@ -53,7 +53,7 @@ test `search_paths_are_those_of_projinfo_of_proj` runs both `projinfo` on the sa
 | 1 | `PROJ_USER_WRITABLE_DIRECTORY` if not empty ("for testing purposes") | same |
 | 2 Windows | `SHGetKnownFolderPath(FOLDERID_LocalAppData)`, else `%LOCALAPPDATA%`, else `%TEMP%`, else `c:/users` | `%LOCALAPPDATA%`, else `%TEMP%`, else `c:/users` (see deviations) |
 | 2 other | `$XDG_DATA_HOME` **when set, even empty** (an empty one gives `/proj`) | same |
-|   | else `$HOME` when `access(home, W_OK) == 0`: macOS `$HOME/Library/Application Support`, else `$HOME/.local/share` | same, `access` called through `extern "C"` |
+|   | else `$HOME` when `access(home, W_OK) == 0`: macOS `$HOME/Library/Application Support`, else `$HOME/.local/share` | same, `access` called through `rustix::fs::access` (safe API, same system call) |
 |   | else `/tmp` | same |
 | 3 | `+ "/proj"` (a forward slash on Windows too: `C:\Users\u\AppData\Local/proj`) | same string |
 
@@ -148,3 +148,20 @@ The tests are unaffected: they put the fixtures on `PROJ_DATA` themselves
   same `projinfo`, creation only on request.
 - `tests/data_dirs_network.rs` (feature `network`): `cache.db` is `<user directory>/cache.db`
   and is written there.
+
+## `access(2)` without `unsafe`
+
+`home_is_writable` declared `access` in an `extern "C"` block (two `unsafe`). It now calls
+`rustix::fs::access(path, Access::WRITE_OK)`: the same system call, behind a safe API, so the
+kernel still decides with the real user and group, root, ACLs and read-only mounts, as PROJ's
+`access(home, W_OK)`. `strace` of `projinfo --searchpaths` with `HOME=/tmp` shows
+`access("/tmp", W_OK) = 0` for PROJ 9.9.0 and for this port. `std` has no such call: the mode bits
+of `metadata` (`readonly()`) disagree for root and miss ACLs and read-only mounts, so it is not used.
+`tests/data_dirs.rs` (`search_paths_are_those_of_projinfo_of_proj`) compares the user directory
+with PROJ's `projinfo` for a home without write permission (mode 0555, writable for root), a home
+that is a file, and a home on a read-only mount (when the machine has one). No deviation remains.
+
+`rustix` 1.1.5 was already in `Cargo.lock` (through `tempfile`); it is MIT / Apache-2.0,
+rust-version 1.63, maintained by the Bytecode Alliance. With `default-features = false` and
+`fs`, `std`, it adds `linux-raw-sys` and `bitflags` (already in the tree) on Linux. Windows keeps
+the read-only flag, as before.

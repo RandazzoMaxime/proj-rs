@@ -25,14 +25,18 @@ appeler `simd::run` depuis `forward_batch` / `inverse_batch`.
 
 ### Le modèle de sûreté
 
-- `Avx2` ne s'obtient que par `Avx2::detect`, qui interroge le processeur (AVX2 et FMA).
-- Un `V4` ou un `Mask` n'existe qu'à partir d'un `Avx2`. Leurs méthodes appellent donc des
-  intrinsèques que le processeur supporte : l'API est sûre, et chaque bloc `unsafe` de `v4.rs`
-  cite cette preuve.
+- `Avx2` ne s'obtient que par `Avx2::detect`, qui interroge le processeur : c'est le jeton
+  `pulp::x86::V3` (`V3::try_new`, `is_x86_feature_detected!` : AVX, AVX2, FMA, BMI1, BMI2, LZCNT,
+  POPCNT et les SSE, le niveau x86-64-v3, qu'ont tous les processeurs AVX2 et FMA).
+- Un `V4` ou un `Mask` garde ce jeton (de taille nulle) : il n'existe qu'à partir d'un `Avx2`.
+  Ses méthodes appellent les intrinsèques par les méthodes sûres du jeton (`simd.avx._mm256_add_pd`,
+  `simd.fma._mm256_fmadd_pd`, …) ; le chargement et l'écriture sont des `bytemuck::cast` entre
+  `[f64; 4]` et `__m256d`. Le dépôt n'a aucun `unsafe` ici : c'est `pulp` qui le porte.
 - Le débit dépend d'une autre condition, qui n'est pas de sûreté : le code doit être inséré
-  dans une fonction `target_feature(enable = "avx2,fma")`. C'est `drive::groups`, la seule du
-  module. Les méthodes de `V4` et les noyaux sont `#[inline(always)]`. Hors de cette fonction
-  le code reste correct, mais les intrinsèques ne sont plus en ligne.
+  dans une fonction compilée avec ces extensions. C'est `V3::vectorize`, appelé par
+  `drive::run_avx2` et `run3_avx2` avec une structure (`Groups`, `Groups3`) dont la méthode
+  `call` est `#[inline(always)]`. Les méthodes de `V4` et les noyaux sont `#[inline(always)]`.
+  Hors de cette fonction le code reste correct, mais les intrinsèques ne sont plus en ligne.
 - Il n'y a ni `asm!` ni appel à la bibliothèque C : les fonctions mathématiques de `math.rs` sont du
   Rust écrit contre l'API sûre de `V4`.
 - **Une fermeture n'est pas insérée en ligne comme le reste.** Elle n'hérite pas du
@@ -40,9 +44,12 @@ appeler `simd::run` depuis `forward_batch` / `inverse_batch`.
   intrinsèques deviennent alors des appels. Un `sinh` écrit avec deux fermetures coûtait 290 ns
   par appel de quatre voies au lieu de 9,5. Le code de `math.rs` et des noyaux utilise donc des
   fonctions `#[inline(always)]` de module, jamais une fermeture qui calcule avec des `V4` (la
-  petite fermeture `k` qui diffuse une constante est insérée sans problème).
+  petite fermeture `k` qui diffuse une constante est insérée sans problème). Le même piège vaut
+  pour `vectorize` : une fermeture `|| groups(...)` donnait un lot trente fois plus lent
+  (Lambert-93 aller 19 → 494 ns par point) ; une structure qui implémente `NullaryFnOnce` ne l'est
+  pas.
 
-Le `unsafe` de la crate pour le calcul vectoriel est dans `src/simd/` et nulle part ailleurs.
+Le calcul vectoriel n'a plus de `unsafe` (voir « Sans `unsafe` : `pulp` » plus bas).
 Avant le lot du module, chaque projection portait ses intrinsèques et sa détection (`simd.rs`,
 `tmerc.rs` et `lcc.rs`) ; avant le lot des fonctions mathématiques, `libmvec` passait par `asm!`.
 
@@ -220,8 +227,8 @@ Latence d'un appel, `fmath` contre glibc :
 | `atan` (Cephes) | 21,6 à 22,3 / 20,8 à 24,0 | rejetée : aucun gain |
 
 Hors de leur domaine (`|x| >= 0,1`, valeur non finie, dépassement), `hypot`, `sinh` et `asinh`
-retombent sur la fonction de la bibliothèque standard, et `atanh` sur la libm C : le résultat aux
-cas limites est celui de la libm. `hypot` est utilisée par `Tmerc` (forward et inverse) et `Lcc`
+retombent sur la fonction de la bibliothèque standard, et `atanh` sur `fmath::atanh_libm` (la `atanh`
+de glibc, voir plus bas) : le résultat aux cas limites est celui de la libm. `hypot` est utilisée par `Tmerc` (forward et inverse) et `Lcc`
 (inverse), `asinh` par le forward de `Tmerc`, `sinh` par l'inverse de `Tmerc` et de `Lcc` et par
 `projmath::sinhpsi2tanphi`, `atanh` partout où `projmath::atanh` est appelée (`Lcc`, Mercator
 ellipsoïdal, `tsfn`). Le repli portable de `Tmerc::forward_batch` appelle les mêmes fonctions : il
@@ -266,6 +273,75 @@ Le reste de la piste « calculs redondants » ne donne rien : LLVM fusionne déj
 même argument en `sincos`, et regrouper `sin(phi)` et `cos(phi)` de `Lcc::fwd_unit` laisse 844
 instructions par point. `pow` (100 instructions, une fois par point dans `Lcc::inv_unit`) est déjà
 rapide.
+
+### `atanh` hors de la série : la formule de glibc, sans appel C
+
+`projmath::atanh` appelait la `atanh` de la libm C par un `extern "C"` (deux `unsafe`, et deux de
+plus dans les tests de `fmath`). Elle appelle maintenant `fmath::atanh_libm`, la formule de
+`__ieee754_atanh` de glibc (`sysdeps/ieee754/dbl-64/e_atanh.c`) : `x` sous `2^-28`,
+`0.5 * log1p(t + t * |x| / (1 - |x|))` avec `t = 2|x|` sous 0,5, `0.5 * log1p(2|x| / (1 - |x|))`
+sous 1, l'infini à ±1, NaN au-delà, puis le signe de `x`. Son seul appel, `log1p`, est
+`f64::ln_1p`, c'est-à-dire la `log1p` de la libm de la plateforme : rien n'est recopié de la libm
+elle-même. `f64::atanh` n'est pas cette formule (`0.5 * ln_1p(2x / (1 - x))` pour tout `x`) et
+diffère d'un ULP sur environ un tiers des entrées sous 0,5.
+
+- **Bits (glibc 2.39, x86-64)** : `fmath::tests::matches_the_c_libm_bit_for_bit` compare
+  `atanh_libm` à la vraie `atanh` de la libm, appelée par un programme C compilé pendant le test
+  (`cc -O0 -fno-builtin … -lm`), au bit près, NaN compris : 14 070 020 entrées en `--release`
+  (1,5 million en debug), sans un seul écart. Les entrées : les cas limites (zéros signés, ±0,5,
+  ±1, NaN des deux signes, infinis, sous-normaux, `f64::MAX`), 20 000 ULP de chaque côté de
+  `2^-28`, 0,1, 0,5 et 1 (des deux signes), 5 millions de valeurs uniformes dans [-1, 1], 5 millions
+  en échelle logarithmique de 1e-12 à 1, 1,25 million de 1e-320 à 1e-8, 1,25 million de `1 - u`
+  (`u` de 1e-16 à 0,1) et 1,25 million de motifs de 64 bits quelconques. Le test échoue bien quand
+  on remplace la branche sous 0,5 par celle sous 1 (premier écart à `x = 0,0999…`, un ULP).
+- **Vitesse** : `projmath::atanh` sur un million de valeurs de [0,1, 0,99] (le domaine hors série),
+  `taskset -c 2`, meilleure de 30 passes, deux séries alternées : 12,07 et 11,79 ns par appel avant
+  (libm), 11,44 et 11,21 après. Le chemin chaud (`|x| < 0,1`, la série) ne change pas.
+- **Écart volontaire hors de glibc.** Sous macOS et Windows, l'ancien code appelait la `atanh` de
+  la libm de la plateforme (celle qu'utilise PROJ sur cette plateforme). Il n'y a pas d'appel sûr à
+  cette fonction : le résultat est maintenant la formule de glibc avec la `log1p` de la plateforme,
+  qui peut s'écarter d'un ULP de la `atanh` de Apple ou de Microsoft. La parité avec PROJ est la
+  tolérance de `docs/PARITY.md` (1e-6 m, 1e-11 degré), que `fmath` admet déjà : ses séries
+  s'écartent de 1 à 2 ULP de la libm. La preuve au bit près ne tourne que sur glibc.
+
+## Sans `unsafe` : `pulp`
+
+`v4.rs` (53 `unsafe`) et `drive.rs` (4) appelaient les intrinsèques de `std::arch` et la fonction
+`target_feature` du driver dans des blocs `unsafe`. Sous Rust 1.83, le plancher du dépôt, les
+intrinsèques sont des `unsafe fn`, et l'appel d'une fonction `target_feature` depuis du code sans
+ces extensions l'est toujours. Les deux passent maintenant par `pulp` 0.22.3 (MIT, de l'auteur de
+`faer`, maintenu ; compile sous 1.83) : ses jetons ont une méthode sûre par intrinsèque, et
+`V3::vectorize` exécute une fonction compilée avec les extensions du jeton.
+
+- **Les mêmes instructions, les mêmes bits.** Chaque méthode de `V4` appelle la même intrinsèque
+  qu'avant, dans le même ordre, avec l'FMA là où elle y était. `tests/simd_bits.rs`, écrit et figé
+  avant le changement, prend l'empreinte des sorties de 28 cas : `forward_batch` et
+  `inverse_batch` d'UTM 31, de Lambert-93 et de Web Mercator sur 40 003 points dont un sur 97 envoie
+  son groupe au chemin scalaire (NaN, infini, pôle, hors domaine), et `convert_array` puis
+  `project_array` de 11 paires (Lambert, Transverse Mercator, Mercator, Web Mercator, Lambert
+  azimutal, stéréographique oblique, Mercator oblique suisse, Helmert par les géocentriques). Les 28
+  empreintes, et celles de `tests/convert_array_golden.rs`, sont identiques avant et après.
+- **Instructions.** Callgrind sur la boucle de Lambert-93 aller (400 000 points) : 118,0
+  instructions par point avant, 118,5 après (+0,4 %, deux instructions par groupe de quatre : le
+  passage des arguments et l'allocation des registres ; le corps de la boucle est le même).
+- **Le passage des arguments compte.** Une première version passait à `vectorize` une structure de
+  neuf mots (le noyau et quatre tranches), que `pulp` passe par pointeur : Lambert-93 aller était
+  3,3 % plus lent (26,04 → 26,86 ns, minimum de 40 passes, 8 séries alternées, banc direct sur un
+  million de points). Les sorties passent maintenant par une seule référence : la structure tient en
+  huit mots et passe en registres (26,04 → 26,04 à 26,22 ; UTM 31 aller 25,7 → 25,3).
+- **Vitesse** (`proj-rs-bench`, `taskset -c 2`, l'ancien et le nouveau binaire alternés, 6 séries
+  chacun ; minimum, puis médiane) : `utm31_batch_center` -0,4 % / -0,8 %, `utm31_batch_edge`
+  -1,3 % / -1,0 %, `lambert93_batch` +0,1 % / -0,1 %, `utm31_inverse_batch` -2,1 % / -5,4 %,
+  `lambert93_inverse_batch` -1,2 % / -3,0 %, `webmerc_batch` +1,3 % / -1,6 %,
+  `webmerc_inverse_batch` -1,1 % / -1,2 %, `facade_convert_array_*` de -1,1 % à -0,5 % sur le
+  minimum. Sur les 214 cas du banc, la médiane des écarts du minimum est 0,0 % (de -2,5 % à +3,3 %,
+  le bruit de la machine ; les cas qui n'appellent pas le chemin AVX2 bougent d'autant).
+- **Détection.** `V3::try_new` demande aussi BMI1, BMI2, LZCNT et POPCNT, en plus d'AVX2 et FMA :
+  tous les processeurs AVX2 et FMA connus les ont (Intel depuis Haswell, AMD depuis Excavator). Un
+  processeur virtuel qui masquerait BMI mais exposerait AVX2 prendrait le chemin scalaire.
+- **Dépendances ajoutées** (x86-64 seulement) : `pulp`, `bytemuck`, `num-complex` (et
+  `num-traits`), `paste`, `reborrow`, `raw-cpuid`, `libm`, `cfg-if`, `pulp-wasm-simd-flag` ;
+  licences MIT, Apache-2.0 ou Zlib.
 
 ## Mesures
 

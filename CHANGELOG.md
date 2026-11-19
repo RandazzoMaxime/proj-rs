@@ -6,6 +6,25 @@ rest is outside semver.
 
 ## Unreleased
 
+- The AVX2 batch path has no `unsafe` left (57 gone from `src/simd/`): the intrinsics and the
+  dispatch into code compiled with `avx2,fma` go through the safe API of `pulp` 0.22 (MIT, builds
+  with Rust 1.83). Same instructions, same bits (`tests/simd_bits.rs`, 28 digests fixed before the
+  change), and the batch cases of `proj-rs-bench` within -2.1 % to +1.3 % of the old code on their
+  minimum: see [docs/PORTING-simd.md](docs/PORTING-simd.md).
+- `proj-rs-bench` no longer calls libproj in-process (25 `unsafe` gone): `build.rs` compiles
+  `src/bin/support/libproj_timer.c` against the libproj it finds, and the bench sends it the same
+  points and reads back the same timings and images. Cases, names and history are unchanged; the
+  libproj times agree with the old bench within the noise: see
+  [docs/BENCHMARK.md](docs/BENCHMARK.md).
+- No `unsafe` for the writability of `$HOME`: `access(2)` goes through `rustix::fs::access`, the
+  same system call behind a safe API (Unix). The user directory is compared with PROJ's
+  `projinfo` for a home without write permission, a home that is a file and a read-only mount:
+  see [docs/PORTING-data-dirs.md](docs/PORTING-data-dirs.md).
+- No `unsafe` left outside `capi/` for `atanh`: `projmath::atanh` no longer calls the C libm through
+  `extern "C"`. Beyond the series domain it uses glibc's `__ieee754_atanh` formula over
+  `f64::ln_1p`, bit for bit equal to glibc's `atanh` on 14 million inputs (edge cases included), and
+  slightly faster (11.3 against 11.9 ns per call). On macOS and Windows it is no longer the
+  platform's own `atanh`, within one ULP: see [docs/PORTING-simd.md](docs/PORTING-simd.md).
 - `Transformer` is `Send + Sync`: several threads convert through one `&Transformer`, without a
   clone per thread. On the tested pairs and points, the results are bit for bit those of one thread.
   The state shared between points (the operation of the last point, and the pending warning of a

@@ -97,21 +97,12 @@ pub(crate) fn user_directory() -> PathBuf {
     )
 }
 
-/// `access(path, W_OK) == 0`.
+/// `access(path, W_OK) == 0`, as `filemanager.cpp`: the kernel decides with the real user and
+/// group, root, ACLs and read-only mounts included. `rustix` makes the same system call
+/// (`faccessat(AT_FDCWD, path, W_OK, 0)`) behind a safe API. A path with a NUL byte is refused.
 #[cfg(unix)]
 fn home_is_writable(path: &Path) -> bool {
-    use std::ffi::{c_char, c_int, CString};
-    use std::os::unix::ffi::OsStrExt;
-
-    unsafe extern "C" {
-        fn access(path: *const c_char, mode: c_int) -> c_int;
-    }
-    const W_OK: c_int = 2;
-    let Ok(text) = CString::new(path.as_os_str().as_bytes()) else {
-        return false;
-    };
-    // SAFETY: `text` is a NUL-terminated string that outlives the call, which only reads it.
-    unsafe { access(text.as_ptr(), W_OK) == 0 }
+    rustix::fs::access(path, rustix::fs::Access::WRITE_OK).is_ok()
 }
 
 #[cfg(not(unix))]

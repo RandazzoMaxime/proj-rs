@@ -10,21 +10,14 @@
 
 use std::f64::consts::FRAC_PI_2;
 
-unsafe extern "C" {
-    #[link_name = "atanh"]
-    fn libm_atanh(x: f64) -> f64;
-}
-
-/// `atanh` de la libm C, comme PROJ : le `f64::atanh` de Rust diffère d'un ulp sur un tiers des entrées.
+/// `atanh` de la libm de glibc, comme PROJ (`fmath::atanh_libm`, au bit près, sans appel C) : le
+/// `f64::atanh` de Rust diffère d'un ulp sur un tiers des entrées.
 ///
 /// Sous `0.1` (`e * sin(phi)` vaut au plus 0,082), la série de `fmath` : jusqu'à 2 ULP de la libm,
 /// pour la moitié du temps. `docs/PORTING-simd.md`, section « Fonctions scalaires ».
 #[must_use]
 pub(crate) fn atanh(x: f64) -> f64 {
-    crate::fmath::atanh_small(x).unwrap_or_else(|| {
-        // SAFETY: `atanh` de la libm C ne prend qu'un `f64` et ne lit ni n'écrit de mémoire.
-        unsafe { libm_atanh(x) }
-    })
+    crate::fmath::atanh_small(x).unwrap_or_else(|| crate::fmath::atanh_libm(x))
 }
 
 const ONE_TOL: f64 = 1.000_000_000_000_01;
