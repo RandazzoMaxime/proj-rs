@@ -25,8 +25,9 @@
 //! method or a missing grid is an error at creation, never a wrong coordinate.
 //!
 //! This page is the **stable surface** of the crate: [`Context`], [`Crs`], [`Transformer`]
-//! with its [`TransformerBuilder`], [`Point`], [`Backend`] and [`Error`], and the small types
-//! they take. Everything else is public for the binaries and the tests of this repository,
+//! with its [`TransformerBuilder`], [`Point`], [`Backend`] and [`Error`], the catalogue of the
+//! database ([`CrsCatalog`], [`CrsFilter`], [`CrsEntry`]), its [`DatabaseMetadata`], the PROJ
+//! version ([`proj_version`]), and the small types they take. Everything else is public for the binaries and the tests of this repository,
 //! hidden from the documentation, and outside semver. The `unstable` feature shows it under
 //! [`unstable`].
 //!
@@ -142,8 +143,9 @@ mod tmerc_approx;
 mod transform;
 
 pub use api::{
-    BBox, Backend, Ballpark, Cache, Context, ContextBuilder, Crs, CrsKind, Error, Network,
-    OnlyBest, OperationInfo, Point, Transformer, TransformerBuilder, WktVersion,
+    proj_version, BBox, Backend, Ballpark, Cache, CatalogKind, Context, ContextBuilder, Crs,
+    CrsCatalog, CrsEntry, CrsFilter, CrsKind, DatabaseMetadata, DeprecatedCrs, Error, Network,
+    OnlyBest, OperationInfo, Point, ProjVersion, Transformer, TransformerBuilder, WktVersion,
 };
 
 /// Read access to PROJ shift grids (`grids.hpp`): horizontal, vertical and
