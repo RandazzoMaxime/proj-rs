@@ -45,6 +45,8 @@ pub enum Error {
     Network,
     /// No candidate operation covers the point.
     NoOperationForPoint,
+    /// The database of the context cannot be opened or queried.
+    Database(String),
 }
 
 impl Error {
@@ -63,7 +65,7 @@ impl Error {
                 errno::PROJ_ERR_COORD_TRANSFM_NO_OPERATION
             }
             Self::MissingGrid(_) => errno::PROJ_ERR_INVALID_OP_FILE_NOT_FOUND_OR_INVALID,
-            Self::Export(_) => errno::PROJ_ERR_OTHER,
+            Self::Export(_) | Self::Database(_) => errno::PROJ_ERR_OTHER,
             Self::OutsideDomain => errno::PROJ_ERR_COORD_TRANSFM_OUTSIDE_PROJECTION_DOMAIN,
             Self::OutsideGrid => errno::PROJ_ERR_COORD_TRANSFM_OUTSIDE_GRID,
             Self::MissingTime => errno::PROJ_ERR_COORD_TRANSFM_MISSING_TIME,
@@ -89,6 +91,7 @@ impl fmt::Display for Error {
             Self::InvalidCoordinate => f.write_str("coordinate is invalid"),
             Self::Network => f.write_str("a grid could not be downloaded"),
             Self::NoOperationForPoint => f.write_str("no operation covers the point"),
+            Self::Database(text) => write!(f, "cannot read the database: {text}"),
         }
     }
 }

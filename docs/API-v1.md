@@ -58,6 +58,70 @@ t.forward_slice(&mut points)?;                      // lot : SIMD quand il exist
 - Garantie : le résultat est celui de PROJ 9.9.0, à la tolérance de `docs/PARITY.md`. Le chemin
   par lots peut différer du scalaire de 11 nm au plus (`docs/PORTING-simd.md`).
 
+#### Catalogue, métadonnées et version
+
+Ce qu'une application lisait dans `proj_rs::unstable` (`AuthorityFactory`, `CrsInfo`,
+`DatabaseContext`, `version`, `GridCacheMode`) a son équivalent stable. Rien n'est retiré du module
+`unstable`.
+
+```rust
+let ctx = proj_rs::Context::default();
+let filter = proj_rs::CrsFilter::new()
+    .kinds([proj_rs::CatalogKind::Geographic2D, proj_rs::CatalogKind::Projected])
+    .authority("EPSG");                             // deprecated CRS: excluded by default
+for entry in ctx.crs_catalog().list(&filter)? {
+    println!("{}:{} {} {:?}", entry.authority, entry.code, entry.name, entry.area_name);
+}
+let meta = ctx.database_metadata()?;                // layout (1, 7), EPSG v13.102, PROJ 9.9.0...
+let version = proj_rs::proj_version();              // 9.9.0
+```
+
+- `Context::crs_catalog()` rend un `CrsCatalog` ; `CrsCatalog::list(&CrsFilter)` rend
+  `Result<Vec<CrsEntry>, Error>`. La liste est la requête de `projinfo --list-crs`
+  (`getCRSInfoList`), filtrée ; elle est triée par autorité puis par code, comme PROJ.
+- `CrsFilter` est un builder. Par défaut : toutes les catégories, toutes les autorités, les CRS
+  dépréciés exclus. `kinds(...)` remplace l'ensemble (un ensemble vide garde tout), `deprecated(...)`
+  et `authority(...)` restreignent (un nom d'autorité vide garde tout).
+- `CatalogKind` (`#[non_exhaustive]`) : `Geographic2D`, `Geographic3D`, `Geocentric`, `Projected`,
+  `DerivedProjected`, `Vertical`, `Compound`, `Engineering`, `Other`. Le nom suit le type de la base
+  (`geographic 2D`, `projected`...). Ce n'est pas `CrsKind` : celui-ci décrit un `Crs` lu et range la
+  2D et la 3D sous `Geographic` ; le changer casserait `Crs::kind()`.
+- `DeprecatedCrs` : `Exclude` (défaut) et `Include`, une enum et non un `bool`.
+- `CrsEntry` (`#[non_exhaustive]`) : `authority`, `code`, `name`, `kind`, `deprecated`,
+  `area_name: Option<String>`, `area_of_use: Option<BBox>`. **Une entrée par zone d'usage** : un CRS
+  qui a deux zones apparaît deux fois, comme dans `projinfo` (17 CRS de l'EPSG, par exemple
+  `EPSG:22213`). Une liste par code unique aurait dû choisir une zone et perdre l'autre ; l'appelant
+  dédoublonne par `(authority, code)` s'il le veut.
+- `area_name` est le nom de la zone de la liste, pas celui de `Crs::area_name()`. Pour `EPSG:4326`,
+  la liste rend « World: Afghanistan; Albania; ... Zimbabwe. » (description de l'étendue 2830 de la
+  base, comme `getCRSInfoList`), alors que `Crs::area_name()` et l'export WKT rendent « World. » :
+  PROJ remplace l'étendue 2830 par la 1262 pour un objet (`factory.cpp`, lecteur des usages). Les
+  deux valeurs sont celles de PROJ, chacune à son endroit.
+- `Context::database_metadata()` rend `DatabaseMetadata` (`#[non_exhaustive]`) :
+  `layout_version: Option<(u32, u32)>` (`DATABASE.LAYOUT.VERSION.MAJOR` puis `.MINOR`),
+  `epsg_version` (`EPSG.VERSION`), `proj_version` (`PROJ.VERSION`) et `proj_data_version`
+  (`PROJ_DATA.VERSION`). Un champ est `None` si sa clé manque ; une valeur de format non numérique
+  donne `None`. Ce sont des `Option` parce qu'une base écrite par un autre outil peut ne pas les porter.
+- `proj_version()` rend `ProjVersion` (`#[non_exhaustive]`, champs `major`, `minor`, `patch`,
+  `Display` en `9.9.0`, ordonné champ par champ). Il ne lit pas `unstable::version`.
+- Erreur : `Error::Database(String)`, de code `PROJ_ERR_OTHER`, quand la base ne s'ouvre pas ou
+  qu'une requête échoue.
+- `GridCacheMode` n'a pas de nouveau type : la façade a déjà `Cache` (`Disabled`, `Enabled`), réglé
+  par `ContextBuilder::cache(...)` et lu par `Context::cache()`. Le chemin du cache, sa taille
+  maximale et son TTL (`set_grid_cache_path`, `set_grid_cache_max_size_mb`, `set_grid_cache_ttl`)
+  n'ont pas d'équivalent stable : ils restent dans `unstable` en attendant un besoin mesuré.
+
+Limites : le catalogue lit la base embarquée du contexte (la façade n'expose pas de base
+auxiliaire) ; il ne liste ni les CRS liés (`bound`) ni les CRS temporels, que `getCRSInfoList` ne
+donne pas non plus ; il n'y a ni recherche par nom ni filtre par zone. Pour un CRS trouvé,
+`Crs::from_user_input` avec `AUTORITE:CODE` le lit.
+
+Preuve : `tests/stable_catalog.rs` (15 tests) compare les comptes par catégorie, les codes des CRS
+projetés (fixture `tests/stable_catalog/projinfo_projected_codes.txt`, sortie de `projinfo` 9.9.0),
+la catégorie, le nom et la zone de quelques CRS, les deux zones de `EPSG:22213`, les versions de la
+table `metadata` de `proj.db` 9.9.0 et `cs2cs --version`. Les doctests de chaque type sont dans
+leurs sources.
+
 ### Façade georust et `Proj` : `convert_iter`
 
 - `Proj::convert_iter(points)` : un itérateur d'items `Result<C, ProjError>`, pour un itérateur de
