@@ -163,7 +163,8 @@ Les grands nombres d'ulps tombent près de zéro, où un ulp est très petit.
 Causes corrigées :
 
 - `atanh` : `f64::atanh` de Rust diffère de la libm sur environ 34 % des entrées. `projmath::atanh`
-  appelle la libm C, comme PROJ, sauf sous 0,1 où `fmath::atanh_small` (série) la remplace.
+  rend la `atanh` de glibc (`fmath::atanh_libm`, au bit près, sans appel C), comme PROJ, sauf sous
+  0,1 où `fmath::atanh_small` (série) la remplace.
 - Aller-retour degrés / radians supprimé : Mercator, `tmerc`, `utm`, `tmerc +approx` et `lcc`
   passent par le cadre `Classic` (`fwd_prepare`, `fwd_finalize`).
 - Aplatissement troisième `n = tan²(asin(e) / 2)` comme `pj_ell_set`, et non `f / (2 − f)`.

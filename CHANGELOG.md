@@ -6,6 +6,11 @@ rest is outside semver.
 
 ## Unreleased
 
+- No `unsafe` left outside `capi/` for `atanh`: `projmath::atanh` no longer calls the C libm through
+  `extern "C"`. Beyond the series domain it uses glibc's `__ieee754_atanh` formula over
+  `f64::ln_1p`, bit for bit equal to glibc's `atanh` on 14 million inputs (edge cases included), and
+  slightly faster (11.3 against 11.9 ns per call). On macOS and Windows it is no longer the
+  platform's own `atanh`, within one ULP: see [docs/PORTING-simd.md](docs/PORTING-simd.md).
 - `Transformer` is `Send + Sync`: several threads convert through one `&Transformer`, without a
   clone per thread. On the tested pairs and points, the results are bit for bit those of one thread.
   The state shared between points (the operation of the last point, and the pending warning of a

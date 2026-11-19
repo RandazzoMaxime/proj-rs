@@ -2,8 +2,6 @@
 src/bin/bench.rs 16
 src/bin/support/bench_billion.rs 9
 src/datadir.rs 2
-src/fmath.rs 2
 src/projdb_exe.rs 48
-src/projmath.rs 2
 src/simd/drive.rs 4
 src/simd/v4.rs 53

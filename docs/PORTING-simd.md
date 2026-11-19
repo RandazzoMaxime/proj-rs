@@ -220,8 +220,8 @@ Latence d'un appel, `fmath` contre glibc :
 | `atan` (Cephes) | 21,6 à 22,3 / 20,8 à 24,0 | rejetée : aucun gain |
 
 Hors de leur domaine (`|x| >= 0,1`, valeur non finie, dépassement), `hypot`, `sinh` et `asinh`
-retombent sur la fonction de la bibliothèque standard, et `atanh` sur la libm C : le résultat aux
-cas limites est celui de la libm. `hypot` est utilisée par `Tmerc` (forward et inverse) et `Lcc`
+retombent sur la fonction de la bibliothèque standard, et `atanh` sur `fmath::atanh_libm` (la `atanh`
+de glibc, voir plus bas) : le résultat aux cas limites est celui de la libm. `hypot` est utilisée par `Tmerc` (forward et inverse) et `Lcc`
 (inverse), `asinh` par le forward de `Tmerc`, `sinh` par l'inverse de `Tmerc` et de `Lcc` et par
 `projmath::sinhpsi2tanphi`, `atanh` partout où `projmath::atanh` est appelée (`Lcc`, Mercator
 ellipsoïdal, `tsfn`). Le repli portable de `Tmerc::forward_batch` appelle les mêmes fonctions : il
@@ -266,6 +266,36 @@ Le reste de la piste « calculs redondants » ne donne rien : LLVM fusionne déj
 même argument en `sincos`, et regrouper `sin(phi)` et `cos(phi)` de `Lcc::fwd_unit` laisse 844
 instructions par point. `pow` (100 instructions, une fois par point dans `Lcc::inv_unit`) est déjà
 rapide.
+
+### `atanh` hors de la série : la formule de glibc, sans appel C
+
+`projmath::atanh` appelait la `atanh` de la libm C par un `extern "C"` (deux `unsafe`, et deux de
+plus dans les tests de `fmath`). Elle appelle maintenant `fmath::atanh_libm`, la formule de
+`__ieee754_atanh` de glibc (`sysdeps/ieee754/dbl-64/e_atanh.c`) : `x` sous `2^-28`,
+`0.5 * log1p(t + t * |x| / (1 - |x|))` avec `t = 2|x|` sous 0,5, `0.5 * log1p(2|x| / (1 - |x|))`
+sous 1, l'infini à ±1, NaN au-delà, puis le signe de `x`. Son seul appel, `log1p`, est
+`f64::ln_1p`, c'est-à-dire la `log1p` de la libm de la plateforme : rien n'est recopié de la libm
+elle-même. `f64::atanh` n'est pas cette formule (`0.5 * ln_1p(2x / (1 - x))` pour tout `x`) et
+diffère d'un ULP sur environ un tiers des entrées sous 0,5.
+
+- **Bits (glibc 2.39, x86-64)** : `fmath::tests::matches_the_c_libm_bit_for_bit` compare
+  `atanh_libm` à la vraie `atanh` de la libm, appelée par un programme C compilé pendant le test
+  (`cc -O0 -fno-builtin … -lm`), au bit près, NaN compris : 14 070 020 entrées en `--release`
+  (1,5 million en debug), sans un seul écart. Les entrées : les cas limites (zéros signés, ±0,5,
+  ±1, NaN des deux signes, infinis, sous-normaux, `f64::MAX`), 20 000 ULP de chaque côté de
+  `2^-28`, 0,1, 0,5 et 1 (des deux signes), 5 millions de valeurs uniformes dans [-1, 1], 5 millions
+  en échelle logarithmique de 1e-12 à 1, 1,25 million de 1e-320 à 1e-8, 1,25 million de `1 - u`
+  (`u` de 1e-16 à 0,1) et 1,25 million de motifs de 64 bits quelconques. Le test échoue bien quand
+  on remplace la branche sous 0,5 par celle sous 1 (premier écart à `x = 0,0999…`, un ULP).
+- **Vitesse** : `projmath::atanh` sur un million de valeurs de [0,1, 0,99] (le domaine hors série),
+  `taskset -c 2`, meilleure de 30 passes, deux séries alternées : 12,07 et 11,79 ns par appel avant
+  (libm), 11,44 et 11,21 après. Le chemin chaud (`|x| < 0,1`, la série) ne change pas.
+- **Écart volontaire hors de glibc.** Sous macOS et Windows, l'ancien code appelait la `atanh` de
+  la libm de la plateforme (celle qu'utilise PROJ sur cette plateforme). Il n'y a pas d'appel sûr à
+  cette fonction : le résultat est maintenant la formule de glibc avec la `log1p` de la plateforme,
+  qui peut s'écarter d'un ULP de la `atanh` de Apple ou de Microsoft. La parité avec PROJ est la
+  tolérance de `docs/PARITY.md` (1e-6 m, 1e-11 degré), que `fmath` admet déjà : ses séries
+  s'écartent de 1 à 2 ULP de la libm. La preuve au bit près ne tourne que sur glibc.
 
 ## Mesures
 
