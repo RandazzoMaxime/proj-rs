@@ -319,6 +319,7 @@ mod tests {
     /// Entrées de la preuve de `atanh_libm` : les cas limites, puis des millions de valeurs sur
     /// chaque branche de glibc (sous `2^-28`, sous `0.5`, sous `1`, au-delà), près de chaque seuil
     /// ULP par ULP, et des motifs de bits quelconques (NaN, infinis, sous-normaux compris).
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
     fn atanh_inputs() -> Vec<f64> {
         let mut inputs = vec![
             0.0,
