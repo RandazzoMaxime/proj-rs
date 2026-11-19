@@ -6,6 +6,17 @@ rest is outside semver.
 
 ## Unreleased
 
+- Stable catalogue, database metadata and PROJ version on the native façade, so that an application
+  no longer needs `proj_rs::unstable` for them. `Context::crs_catalog()` returns a `CrsCatalog`;
+  `CrsCatalog::list(&CrsFilter)` lists the CRS of the database by `CatalogKind` (geographic 2D and
+  3D, geocentric, projected, derived projected, vertical, compound, engineering), by authority, and
+  with the deprecated ones only on `DeprecatedCrs::Include` (excluded by default). Each `CrsEntry`
+  is one CRS and one of its areas of use, as `projinfo --list-crs` prints it: 17 EPSG CRS have two.
+  `Context::database_metadata()` gives the layout version, `EPSG.VERSION`, `PROJ.VERSION` and
+  `PROJ_DATA.VERSION` of `proj.db`; `proj_version()` gives the PROJ version ported (9.9.0). A
+  database that cannot be read is `Error::Database`. The grid cache keeps `Cache`, already stable.
+  The `unstable` module is unchanged. See [docs/API-v1.md](docs/API-v1.md) and
+  `tests/stable_catalog.rs`.
 - `Context::builder().hermetic()` builds a context that reads nothing from the machine: not
   `PROJ_NETWORK`, `PROJ_NETWORK_ENDPOINT` nor `PROJ_ONLY_BEST_DEFAULT`, no `proj.ini` wherever PROJ
   would look, no `HOME` for `~/` names, no working directory for a bare grid name. Its sources are
