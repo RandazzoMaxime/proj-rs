@@ -17,6 +17,7 @@ use std::sync::{Mutex, OnceLock, PoisonError};
 use super::alternatives_index::BoxIndex;
 
 use crate::engine::{Coord, Operation, TransformError};
+use crate::network::GridContext;
 use crate::proj::Direction;
 
 /// Severity of one PROJ log line: `PJ_LOG_ERROR` or `PJ_LOG_DEBUG` (`proj.h:373-381`). A line
@@ -135,9 +136,10 @@ pub(crate) struct Item {
     pub(crate) name: String,
     /// The PROJ string of the operation, or `None` when it has none.
     pub(crate) definition: Option<String>,
-    /// The pipeline built from `definition`. `None` when the operation is not instantiable as a
-    /// pipeline (`proj_list_get` fails).
-    pub(crate) operation: Option<Operation>,
+    /// The pipeline built from `definition`, built at its first use by [`Item::pipeline`]. `None`
+    /// when the operation is not instantiable as a pipeline (`proj_list_get` fails). A candidate
+    /// that no point reaches is never built, so its grids are not read.
+    pub(crate) operation: OnceLock<Option<Operation>>,
     /// `proj_coordoperation_is_instantiable`: a PROJ string, and every grid on disk.
     pub(crate) instantiable: bool,
     /// `gridsNeeded(...).empty()`: the operation names no grid at all.
@@ -165,10 +167,32 @@ pub(crate) struct Item {
     pub(crate) approximate: bool,
 }
 
+impl Item {
+    /// The pipeline of this candidate, built from `definition` at the first call. The build runs
+    /// under `grids` when the selection gave its grid context (the one it built the candidate
+    /// under), and under the context active at the call otherwise.
+    pub(crate) fn pipeline(&self, grids: Option<&GridContext>) -> Option<&Operation> {
+        self.operation
+            .get_or_init(|| {
+                self.definition.as_deref().and_then(|text| {
+                    let create =
+                        || crate::network::with_candidate_grids(|| Operation::create(text));
+                    match grids {
+                        Some(grids) => crate::network::with_context(grids, create),
+                        None => create(),
+                    }
+                    .ok()
+                })
+            })
+            .as_ref()
+    }
+}
+
 impl Clone for Alternatives {
     fn clone(&self) -> Self {
         Self {
             items: self.items.clone(),
+            grids: self.grids.clone(),
             policy: self.policy,
             source_axes: self.source_axes.clone(),
             target_axes: self.target_axes.clone(),
@@ -196,6 +220,11 @@ impl std::fmt::Debug for Alternatives {
 /// The candidates of a pair, in PROJ's order, with the state `proj_trans` keeps between points.
 pub struct Alternatives {
     items: Vec<Item>,
+    /// The grid context of the selection, under which the candidates are built at their first use.
+    /// `None` for the facade, which builds them all at once under the context active then. Boxed:
+    /// the selection's `Selection::Several` holds this struct inline, and its size is what
+    /// `large_enum_variant` compares with `Selection::Single`.
+    grids: Option<Box<GridContext>>,
     policy: BestPolicy,
     source_axes: SourceAxes,
     /// How the target point is read for the inverse box test (`pjDstGeocentricToLonLat`).
@@ -273,6 +302,7 @@ impl Alternatives {
     /// were built under.
     pub(crate) fn new(
         items: Vec<Item>,
+        grids: Option<GridContext>,
         policy: BestPolicy,
         source_axes: SourceAxes,
         target_axes: SourceAxes,
@@ -280,6 +310,7 @@ impl Alternatives {
     ) -> Self {
         Self {
             items,
+            grids: grids.map(Box::new),
             policy,
             source_axes,
             target_axes,
@@ -660,7 +691,7 @@ impl Alternatives {
                 )));
                 self.current.store(best, Ordering::Relaxed);
             }
-            if let Some(operation) = &item.operation {
+            if let Some(operation) = item.pipeline(self.grids.as_deref()) {
                 match apply(operation, coord, way) {
                     Ok(result) => return Ok(result),
                     Err(TransformError::NetworkUnavailable) => {
@@ -714,7 +745,7 @@ impl Alternatives {
             )));
             self.current.store(index, Ordering::Relaxed);
         }
-        let Some(operation) = &item.operation else {
+        let Some(operation) = item.pipeline(self.grids.as_deref()) else {
             return Err(AlternativeError::NoOperation);
         };
         apply(operation, coord, way).map_err(|_| AlternativeError::NoOperation)

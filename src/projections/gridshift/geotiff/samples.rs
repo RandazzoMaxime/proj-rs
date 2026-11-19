@@ -83,21 +83,40 @@ pub(super) fn place(
     if separate && plane >= spp {
         return Err(());
     }
+    if copy_w == 0 || spp == 0 {
+        return Ok(());
+    }
+    // One row of the chunk at a time: its `copy_w` pixels are consecutive in the chunk, and each
+    // is `spp` samples apart in `dest`. A row that runs past either end is an error, as the
+    // sample of it that is out of range would be.
     for row in 0..copy_h {
-        for col in 0..copy_w {
-            let src = (row * data_w + col).checked_mul(chunk_spp).ok_or(())?;
-            let dst = ((y0 + row) * width + (x0 + col))
-                .checked_mul(spp)
+        let src = (row * data_w).checked_mul(chunk_spp).ok_or(())?;
+        let dst = ((y0 + row) * width + x0).checked_mul(spp).ok_or(())?;
+        if separate {
+            let from = src
+                .checked_add(copy_w)
+                .and_then(|end| chunk.get(src..end))
                 .ok_or(())?;
-            if separate {
-                let sample = chunk.get(src).copied().ok_or(())?;
-                *dest.get_mut(dst + plane).ok_or(())? = sample;
-            } else {
-                for band in 0..spp {
-                    let sample = chunk.get(src + band).copied().ok_or(())?;
-                    *dest.get_mut(dst + band).ok_or(())? = sample;
-                }
+            let first = dst.checked_add(plane).ok_or(())?;
+            let last = (copy_w - 1)
+                .checked_mul(spp)
+                .and_then(|offset| first.checked_add(offset))
+                .ok_or(())?;
+            let to = dest.get_mut(first..=last).ok_or(())?;
+            for (slot, sample) in to.iter_mut().step_by(spp).zip(from) {
+                *slot = *sample;
             }
+        } else {
+            let len = copy_w.checked_mul(spp).ok_or(())?;
+            let from = src
+                .checked_add(len)
+                .and_then(|end| chunk.get(src..end))
+                .ok_or(())?;
+            let to = dst
+                .checked_add(len)
+                .and_then(|end| dest.get_mut(dst..end))
+                .ok_or(())?;
+            to.copy_from_slice(from);
         }
     }
     Ok(())
@@ -208,8 +227,60 @@ pub(super) fn f32_from_f64(value: f64) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::raw_samples;
+    use super::{place, raw_samples};
+    use crate::projections::gridshift::tiles::Storage;
     use crate::projections::tiff_codec::ByteOrder;
+
+    /// A chunky chunk of two samples per pixel lands in the pixels it covers, at the offset of
+    /// its origin: a 2 x 2 window of a 3-pixel-wide image at (1, 1), from a chunk 2 pixels wide.
+    #[test]
+    fn place_copies_a_chunky_window_at_its_origin() {
+        let chunk: Vec<f32> = (1..=8_u8).map(f32::from).collect();
+        let mut dest = vec![0.0_f32; 3 * 3 * 2];
+        place(&mut dest, 3, 2, Storage::Chunky, 0, 1, 1, 2, 2, 2, &chunk).expect("placed");
+        // Pixels (1,1), (2,1), (1,2), (2,2) are 4, 5, 7, 8; their samples start at twice that.
+        let mut expected = vec![0.0_f32; 18];
+        expected[8..12].copy_from_slice(&[1.0, 2.0, 3.0, 4.0]);
+        expected[14..18].copy_from_slice(&[5.0, 6.0, 7.0, 8.0]);
+        assert_eq!(dest, expected);
+    }
+
+    /// A separate plane lands in its own sample of each pixel, and leaves the others alone.
+    #[test]
+    fn place_writes_one_plane_of_a_separate_image() {
+        let chunk = [10.0_f32, 20.0, 30.0, 40.0];
+        let mut dest = vec![0.0_f32; 3 * 3 * 2];
+        place(&mut dest, 3, 2, Storage::Separate, 1, 0, 0, 2, 2, 2, &chunk).expect("placed");
+        // Pixels (0,0), (1,0), (0,1), (1,1) are 0, 1, 3, 4: their second sample is 1, 3, 7, 9.
+        let mut expected = vec![0.0_f32; 18];
+        expected[1] = 10.0;
+        expected[3] = 20.0;
+        expected[7] = 30.0;
+        expected[9] = 40.0;
+        assert_eq!(dest, expected);
+    }
+
+    /// A chunk too short for its window, or a destination too small for it, is an error, and an
+    /// empty window is nothing to copy.
+    #[test]
+    fn place_refuses_a_window_that_runs_out_and_copies_nothing_for_an_empty_one() {
+        let short = [0.0_f32; 3];
+        let mut dest = vec![0.0_f32; 18];
+        assert_eq!(
+            place(&mut dest, 3, 2, Storage::Chunky, 0, 0, 0, 2, 2, 2, &short),
+            Err(())
+        );
+        let chunk = [0.0_f32; 8];
+        let mut small = vec![0.0_f32; 4];
+        assert_eq!(
+            place(&mut small, 3, 2, Storage::Chunky, 0, 1, 1, 2, 2, 2, &chunk),
+            Err(())
+        );
+        assert_eq!(
+            place(&mut small, 3, 2, Storage::Chunky, 0, 0, 0, 2, 0, 2, &short),
+            Ok(())
+        );
+    }
 
     /// The samples of a tile are read in the file's byte order, whatever the sample type: a
     /// `u16` of `0x0102` is 258 in a big-endian file and 513 in a little-endian one.
