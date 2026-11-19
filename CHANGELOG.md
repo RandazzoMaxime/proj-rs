@@ -6,6 +6,11 @@ rest is outside semver.
 
 ## Unreleased
 
+- The AVX2 batch path has no `unsafe` left (57 gone from `src/simd/`): the intrinsics and the
+  dispatch into code compiled with `avx2,fma` go through the safe API of `pulp` 0.22 (MIT, builds
+  with Rust 1.83). Same instructions, same bits (`tests/simd_bits.rs`, 28 digests fixed before the
+  change), and the batch cases of `proj-rs-bench` within -2.1 % to +1.3 % of the old code on their
+  minimum: see [docs/PORTING-simd.md](docs/PORTING-simd.md).
 - `proj-rs-bench` no longer calls libproj in-process (25 `unsafe` gone): `build.rs` compiles
   `src/bin/support/libproj_timer.c` against the libproj it finds, and the bench sends it the same
   points and reads back the same timings and images. Cases, names and history are unchanged; the

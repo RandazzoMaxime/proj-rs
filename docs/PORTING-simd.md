@@ -25,14 +25,18 @@ appeler `simd::run` depuis `forward_batch` / `inverse_batch`.
 
 ### Le modèle de sûreté
 
-- `Avx2` ne s'obtient que par `Avx2::detect`, qui interroge le processeur (AVX2 et FMA).
-- Un `V4` ou un `Mask` n'existe qu'à partir d'un `Avx2`. Leurs méthodes appellent donc des
-  intrinsèques que le processeur supporte : l'API est sûre, et chaque bloc `unsafe` de `v4.rs`
-  cite cette preuve.
+- `Avx2` ne s'obtient que par `Avx2::detect`, qui interroge le processeur : c'est le jeton
+  `pulp::x86::V3` (`V3::try_new`, `is_x86_feature_detected!` : AVX, AVX2, FMA, BMI1, BMI2, LZCNT,
+  POPCNT et les SSE, le niveau x86-64-v3, qu'ont tous les processeurs AVX2 et FMA).
+- Un `V4` ou un `Mask` garde ce jeton (de taille nulle) : il n'existe qu'à partir d'un `Avx2`.
+  Ses méthodes appellent les intrinsèques par les méthodes sûres du jeton (`simd.avx._mm256_add_pd`,
+  `simd.fma._mm256_fmadd_pd`, …) ; le chargement et l'écriture sont des `bytemuck::cast` entre
+  `[f64; 4]` et `__m256d`. Le dépôt n'a aucun `unsafe` ici : c'est `pulp` qui le porte.
 - Le débit dépend d'une autre condition, qui n'est pas de sûreté : le code doit être inséré
-  dans une fonction `target_feature(enable = "avx2,fma")`. C'est `drive::groups`, la seule du
-  module. Les méthodes de `V4` et les noyaux sont `#[inline(always)]`. Hors de cette fonction
-  le code reste correct, mais les intrinsèques ne sont plus en ligne.
+  dans une fonction compilée avec ces extensions. C'est `V3::vectorize`, appelé par
+  `drive::run_avx2` et `run3_avx2` avec une structure (`Groups`, `Groups3`) dont la méthode
+  `call` est `#[inline(always)]`. Les méthodes de `V4` et les noyaux sont `#[inline(always)]`.
+  Hors de cette fonction le code reste correct, mais les intrinsèques ne sont plus en ligne.
 - Il n'y a ni `asm!` ni appel à la bibliothèque C : les fonctions mathématiques de `math.rs` sont du
   Rust écrit contre l'API sûre de `V4`.
 - **Une fermeture n'est pas insérée en ligne comme le reste.** Elle n'hérite pas du
@@ -40,9 +44,12 @@ appeler `simd::run` depuis `forward_batch` / `inverse_batch`.
   intrinsèques deviennent alors des appels. Un `sinh` écrit avec deux fermetures coûtait 290 ns
   par appel de quatre voies au lieu de 9,5. Le code de `math.rs` et des noyaux utilise donc des
   fonctions `#[inline(always)]` de module, jamais une fermeture qui calcule avec des `V4` (la
-  petite fermeture `k` qui diffuse une constante est insérée sans problème).
+  petite fermeture `k` qui diffuse une constante est insérée sans problème). Le même piège vaut
+  pour `vectorize` : une fermeture `|| groups(...)` donnait un lot trente fois plus lent
+  (Lambert-93 aller 19 → 494 ns par point) ; une structure qui implémente `NullaryFnOnce` ne l'est
+  pas.
 
-Le `unsafe` de la crate pour le calcul vectoriel est dans `src/simd/` et nulle part ailleurs.
+Le calcul vectoriel n'a plus de `unsafe` (voir « Sans `unsafe` : `pulp` » plus bas).
 Avant le lot du module, chaque projection portait ses intrinsèques et sa détection (`simd.rs`,
 `tmerc.rs` et `lcc.rs`) ; avant le lot des fonctions mathématiques, `libmvec` passait par `asm!`.
 
@@ -296,6 +303,45 @@ diffère d'un ULP sur environ un tiers des entrées sous 0,5.
   qui peut s'écarter d'un ULP de la `atanh` de Apple ou de Microsoft. La parité avec PROJ est la
   tolérance de `docs/PARITY.md` (1e-6 m, 1e-11 degré), que `fmath` admet déjà : ses séries
   s'écartent de 1 à 2 ULP de la libm. La preuve au bit près ne tourne que sur glibc.
+
+## Sans `unsafe` : `pulp`
+
+`v4.rs` (53 `unsafe`) et `drive.rs` (4) appelaient les intrinsèques de `std::arch` et la fonction
+`target_feature` du driver dans des blocs `unsafe`. Sous Rust 1.83, le plancher du dépôt, les
+intrinsèques sont des `unsafe fn`, et l'appel d'une fonction `target_feature` depuis du code sans
+ces extensions l'est toujours. Les deux passent maintenant par `pulp` 0.22.3 (MIT, de l'auteur de
+`faer`, maintenu ; compile sous 1.83) : ses jetons ont une méthode sûre par intrinsèque, et
+`V3::vectorize` exécute une fonction compilée avec les extensions du jeton.
+
+- **Les mêmes instructions, les mêmes bits.** Chaque méthode de `V4` appelle la même intrinsèque
+  qu'avant, dans le même ordre, avec l'FMA là où elle y était. `tests/simd_bits.rs`, écrit et figé
+  avant le changement, prend l'empreinte des sorties de 28 cas : `forward_batch` et
+  `inverse_batch` d'UTM 31, de Lambert-93 et de Web Mercator sur 40 003 points dont un sur 97 envoie
+  son groupe au chemin scalaire (NaN, infini, pôle, hors domaine), et `convert_array` puis
+  `project_array` de 11 paires (Lambert, Transverse Mercator, Mercator, Web Mercator, Lambert
+  azimutal, stéréographique oblique, Mercator oblique suisse, Helmert par les géocentriques). Les 28
+  empreintes, et celles de `tests/convert_array_golden.rs`, sont identiques avant et après.
+- **Instructions.** Callgrind sur la boucle de Lambert-93 aller (400 000 points) : 118,0
+  instructions par point avant, 118,5 après (+0,4 %, deux instructions par groupe de quatre : le
+  passage des arguments et l'allocation des registres ; le corps de la boucle est le même).
+- **Le passage des arguments compte.** Une première version passait à `vectorize` une structure de
+  neuf mots (le noyau et quatre tranches), que `pulp` passe par pointeur : Lambert-93 aller était
+  3,3 % plus lent (26,04 → 26,86 ns, minimum de 40 passes, 8 séries alternées, banc direct sur un
+  million de points). Les sorties passent maintenant par une seule référence : la structure tient en
+  huit mots et passe en registres (26,04 → 26,04 à 26,22 ; UTM 31 aller 25,7 → 25,3).
+- **Vitesse** (`proj-rs-bench`, `taskset -c 2`, l'ancien et le nouveau binaire alternés, 6 séries
+  chacun ; minimum, puis médiane) : `utm31_batch_center` -0,4 % / -0,8 %, `utm31_batch_edge`
+  -1,3 % / -1,0 %, `lambert93_batch` +0,1 % / -0,1 %, `utm31_inverse_batch` -2,1 % / -5,4 %,
+  `lambert93_inverse_batch` -1,2 % / -3,0 %, `webmerc_batch` +1,3 % / -1,6 %,
+  `webmerc_inverse_batch` -1,1 % / -1,2 %, `facade_convert_array_*` de -1,1 % à -0,5 % sur le
+  minimum. Sur les 214 cas du banc, la médiane des écarts du minimum est 0,0 % (de -2,5 % à +3,3 %,
+  le bruit de la machine ; les cas qui n'appellent pas le chemin AVX2 bougent d'autant).
+- **Détection.** `V3::try_new` demande aussi BMI1, BMI2, LZCNT et POPCNT, en plus d'AVX2 et FMA :
+  tous les processeurs AVX2 et FMA connus les ont (Intel depuis Haswell, AMD depuis Excavator). Un
+  processeur virtuel qui masquerait BMI mais exposerait AVX2 prendrait le chemin scalaire.
+- **Dépendances ajoutées** (x86-64 seulement) : `pulp`, `bytemuck`, `num-complex` (et
+  `num-traits`), `paste`, `reborrow`, `raw-cpuid`, `libm`, `cfg-if`, `pulp-wasm-simd-flag` ;
+  licences MIT, Apache-2.0 ou Zlib.
 
 ## Mesures
 

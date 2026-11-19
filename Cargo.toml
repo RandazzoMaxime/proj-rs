@@ -101,6 +101,11 @@ tiff = { version = "0.10.3", default-features = false, features = ["deflate"] }
 # A small HTTP/1.1 client sits on top so the tree does not pull ureq's ICU stack.
 native-tls = { version = "0.2.14", optional = true }
 
+# The AVX2 batch path (`src/simd/`): safe wrappers of the intrinsics behind a CPU-detected token,
+# and the dispatch into code compiled with `avx2,fma`. MIT; builds with Rust 1.83.
+[target.'cfg(target_arch = "x86_64")'.dependencies]
+pulp = { version = "0.22.3", default-features = false, features = ["std", "x86-v3"] }
+
 # `access(2)` for the writability of `$HOME` (`datadir.rs`), the call of PROJ, through a safe API.
 # Already in the tree (`tempfile`); rust-version 1.63, MIT / Apache-2.0.
 [target.'cfg(unix)'.dependencies]
