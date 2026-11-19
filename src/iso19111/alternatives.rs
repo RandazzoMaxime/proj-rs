@@ -619,7 +619,7 @@ impl Alternatives {
     /// `proj_trans` for one point in one direction, `trans.cpp:233-346`. The log lines are
     /// appended to `log` as [`Self::forward_logged`] describes.
     // Not inlined: with the lock and the atomics in its body, `Transformer::map` inlined it, and
-    // the single-operation path of the transformer slowed by a few per cent (measured in
+    // `forward_slice` of a single operation slowed by 1 to 3 % on the median (measured in
     // `docs/PORTING-transformer-sync.md`). A call costs nothing next to a point of a candidate.
     #[inline(never)]
     fn transform(

@@ -86,59 +86,57 @@ code testé seul.
 
 ## Performance
 
-Méthode. Mesure temporaire (exemple non commité) : un `Transformer` par paire, 10 000 points à
-seed fixe (`lat 35..70, lon -10..20` pour la paire simple ; `lat 25..49, lon -125..-66` pour
-EPSG:4267 vers EPSG:4269). Par mesure, 21 passes ; on donne la médiane et le minimum.
-- `forward` : un appel par point, temps total / 10 000.
-- `forward_slice` : un slice de 10 000 points par passe, copie préparée hors chronométrage.
-- `clone` : 1 000 clones par passe, temps / 1 000.
-- Machine : 4 vCPU, profil `release`, `taskset -c 2`, trois binaires construits une fois chacun :
-  référence (`git stash` des deux fichiers source), changement sans `inline(never)`, changement
-  retenu (avec `inline(never)`). Trois séries alternées.
+Méthode. Exemple temporaire, non commité : un `Transformer` par paire, 10 000 points à seed fixe
+(lat 35..70, lon -10..20 pour la paire simple ; lat 25..49, lon -125..-66 pour EPSG:4267 vers
+EPSG:4269). Par passe : `forward`, un appel par point, temps total / 10 000 ; `forward_slice`, un
+slice de 10 000 points, copie préparée hors chronométrage, temps / 10 000 ; `clone`, 1 000 clones,
+temps / 1 000. 21 passes par mesure ; on donne la médiane et le minimum des passes.
+- Référence : `origin/main` (91f92e7) exporté par `git archive` dans un répertoire temporaire (pas de
+  worktree). Changement : la branche, même exemple, même profil `release` (LTO thin, une unité de
+  génération). Deux répertoires cibles distincts, sinon cargo réutilise le binaire du premier.
+- Machine : 4 vCPU, `taskset -c 2`, séries alternées référence et changement, une paire par série.
+  Le bruit est réel : sur une même série, la médiane d'une passe varie de plusieurs dizaines de
+  pourcents d'une série à l'autre ; les minimums sont plus stables. Les écarts ci-dessous sont
+  donc les médianes et les minimums de 16 séries (32 binaires exécutés).
 
-Résultats (ns, médiane / minimum des 21 passes, trois séries alternées ; valeurs brutes dans le
-scratchpad, `bench_ab4.txt`) :
+Résultats, en ns (référence, changement, écart), configuration livrée (`#[inline(never)]` gardé) :
 
-| mesure | référence | sans `inline(never)` | retenu |
-|---|---|---|---|
-| `forward` simple, médiane | 207,1 / 179,8 / 191,4 | 186,2 / 176,6 / 186,0 | 176,5 / 176,8 / 176,6 |
-| `forward` simple, minimum | 199,5 / 174,7 / 188,9 | 183,8 / 174,8 / 183,8 | 174,7 / 173,7 / 174,7 |
-| `forward` plusieurs, médiane | 303,6 / 303,5 / 312,1 | 316,5 / 303,9 / 319,7 | 310,2 / 303,1 / 318,2 |
-| `forward` plusieurs, minimum | 301,1 / 301,1 / 309,5 | 314,5 / 301,5 / 315,3 | 301,0 / 294,3 / 309,7 |
-| `forward_slice` simple, par point, médiane | 48,6 / 34,2 / 33,7 | 33,1 / 33,7 / 33,5 | 34,3 / 34,0 / 34,7 |
-| `forward_slice` plusieurs, par point, médiane | 246,1 / 245,1 / 247,1 | 250,7 / 247,9 / 244,4 | 245,7 / 245,6 / 255,5 |
-| `clone` simple, médiane (ns) | 15 066 / 15 006 / 14 803 | 14 835 / 14 859 / 14 819 | 14 752 / 15 588 / 14 998 |
-| `clone` plusieurs, médiane (ns) | 7 046 / 6 505 / 6 448 | 6 586 / 6 784 / 6 830 | 6 654 / 6 696 / 6 832 |
+| mesure | médiane réf. | médiane chg. | écart médiane | minimum réf. | minimum chg. | écart minimum |
+|---|---|---|---|---|---|---|
+| `forward` simple | 286,7 | 281,7 | −1,7 % | 262,8 | 262,6 | −0,1 % |
+| `forward_slice`, par point, simple | 49,0 | 49,2 | +0,2 % | 46,8 | 46,8 | +0,1 % |
+| `clone` simple | 25 972 | 26 028 | +0,2 % | 23 377 | 23 428 | +0,2 % |
+| `forward` plusieurs | 507,9 | 505,9 | −0,4 % | 455,8 | 451,6 | −0,9 % |
+| `forward_slice`, par point, plusieurs | 399,9 | 399,4 | −0,1 % | 362,2 | 366,7 | +1,2 % |
+| `clone` plusieurs | 11 416 | 11 878 | +4,0 % | 10 200 | 10 495 | +2,9 % |
 
-Lecture. Le bruit de cette machine est de l'ordre de 3 à 5 % d'une série à l'autre, avec une
-bimodalité sur le chemin simple (environ 176 ns ou 186 ns selon la passe). Sans `inline(never)`, le
-chemin simple tombe sur la branche lente dans deux séries sur trois, alors qu'il n'utilise pas
-`Alternatives` : c'est un effet de placement du code, causé par la taille du corps de `transform`
-(verrou et atomiques), qui change les choix d'inlining de `Transformer::map`. Avec `inline(never)`,
-le chemin simple retrouve la médiane de la branche rapide, et les minimums sont égaux à la référence
-(174 ns). Le coût d'un appel supplémentaire est négligeable devant un point qui tente un candidat
-(environ 300 ns).
+Lecture.
+- Les chemins par point (`forward` et `forward_slice`, simple et plusieurs candidats) restent sous
+  le seuil de 2 % sur la médiane et sur le minimum. Le plus grand écart est −1,7 % (médiane de
+  `forward` simple, dans le sens plus rapide) ; le plus grand écart lent est +1,2 % (minimum de
+  `forward_slice` plusieurs).
+- `#[inline(never)]` sur `Alternatives::transform` est justifié par une mesure. Sans lui,
+  `forward_slice` du chemin simple, qui n'utilise pas `Alternatives`, est plus lent de 3,0 % sur la
+  médiane et de 1,1 % sur le minimum (24 séries contre la référence). Avec lui, l'écart est de
+  +0,2 % et +0,1 % (tableau ci-dessus).
+- `clone` d'un transformeur à plusieurs candidats est plus lent : +4,0 % sur la médiane, +2,9 % sur le
+  minimum. C'est au-dessus de 2 %, mais ce n'est pas un chemin par point (un clone coûte 10 à 26 µs).
+  La cause n'a pas été isolée ; le verrou de `last_failure` copié par `clone` est une piste, non
+  vérifiée. Le clone d'un transformeur simple reste à +0,2 %.
 
-Sur le chemin plusieurs candidats, la médiane retenue est à +1,3 % de la référence (moyenne des trois
-séries : 310,5 contre 306,4 ns) et le minimum est égal ou inférieur. C'est sous le seuil de 2 % fixé
-pour un chemin chaud, mais dans le bruit de la mesure : les écarts ne sont pas significatifs pris
-isolément.
-
-Le `clone` est mesuré à environ 15 µs (simple) et 6,7 µs (plusieurs), pas 40 µs comme indiqué dans le
-cahier des charges de ce lot. Le chiffre de 40 µs ne vient pas de cette configuration (contexte par
-défaut, mêmes paires) ; il n'a pas été reproduit.
-
-Le bench existant (`proj-rs-bench`, `bench/record.sh`) ne mesure pas `Transformer` (il passe par la
-façade `Proj`). Il n'a pas été lancé : `record.sh` réécrit `README.md`, `ROADMAP.md` et les graphiques,
-et ajoute une ligne à `bench/history.jsonl`. Ce lot ne le fait pas.
+Le bench existant (`proj-rs-bench`, `bench/record.sh`) ne mesure pas `Transformer` (0 occurrence dans
+`src/bin/bench.rs`, il passe par la façade `Proj`). Il n'a pas été lancé : `record.sh` réécrit
+`README.md`, `ROADMAP.md` et les graphiques, et ajoute une ligne à `bench/history.jsonl`. Ce lot ne le fait pas.
 
 ## Commandes lancées
 
 ```text
 PROJ_DATA=$PWD/data cargo +1.100.0 test --test transformer_sync          # rouge avant, vert après
-cargo +1.100.0 build --release --example <mesure temporaire>            # référence, puis changement
-taskset -c 2 <binaire>                                                  # trois séries alternées
-target/proj-reference/build/bin/cs2cs -f %.9f EPSG:4326 EPSG:32631      # valeurs de référence
+git archive origin/main | tar -x -C <dir-ref>                            # référence, sans worktree
+CARGO_TARGET_DIR=<cible-ref>  cargo +1.100.0 build --release --example <mesure>   # référence
+CARGO_TARGET_DIR=<cible-new>  cargo +1.100.0 build --release --example <mesure>   # changement
+taskset -c 2 <binaire>                                                   # séries alternées
+target/proj-reference/build/bin/cs2cs -f %.9f EPSG:4326 EPSG:32631       # valeurs de référence
 ```
 
 ## Ce qui n'est pas vérifié

@@ -631,9 +631,9 @@ impl Transformer {
 
     /// The operation the last point went through. With several candidates it is the one that
     /// point chose, `None` before the first point. Under several threads it is the operation of
-    /// the point that wrote last, which can be a candidate that a point in flight tried first. With a single operation it is that
-    /// operation, with its name, its accuracy and whether it is a ballpark transformation, as
-    /// before any point. [`OperationInfo::is_ballpark`] is what tells a conversion that used a
+    /// the point that wrote last, which can be a candidate that a point in flight tried first.
+    /// With a single operation it is that operation, with its name, its accuracy and whether it
+    /// is a ballpark transformation, as before any point. [`OperationInfo::is_ballpark`] is what tells a conversion that used a
     /// grid from one that did not.
     ///
     /// ```
