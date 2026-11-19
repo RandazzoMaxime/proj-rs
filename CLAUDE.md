@@ -50,11 +50,30 @@ UPDATE_DOCS=1 cargo test --test docs_in_sync
 cargo test --test docs_in_sync
 ```
 
+## RÈGLE BLOQUANTE : aucun `unsafe`
+
+**Le dépôt n'a aucun `unsafe`. Ne jamais en écrire un nouveau, sous aucun prétexte** : pas de
+bloc `unsafe`, pas de `unsafe fn`, `unsafe impl`, `unsafe extern`, `#[unsafe(no_mangle)]`, pas de
+`#[allow(unsafe_code)]`, pas de crate tierce ajoutée pour contourner la règle. Elle vaut pour le
+code, les tests, les benchs et les outils, et aussi pour les agents (sous-agents compris) :
+leur donner cette règle dans leur consigne.
+
+- Un besoin qui semble exiger `unsafe` (intrinsèques, FFI, mémoire non initialisée, `Sync` sur un
+  type à états internes) se résout autrement : API sûre de la bibliothèque standard, structure
+  de données sûre (atomiques, `Mutex`, `OnceLock`), ou on le dit dans la PR et on ne le fait pas.
+  Ne jamais ajouter `unsafe impl Send/Sync`.
+- Le `unsafe` qui existait quand la règle a été posée est une dette, listée par fichier dans
+  `tools/unsafe-debt.txt`. `cargo test --test no_unsafe` échoue (CI rouge, PR non fusionnable)
+  si un fichier a un `unsafe` de plus que sa ligne, ou s'il n'est pas dans la liste. La dette ne
+  fait que baisser : quand on retire un `unsafe`, on baisse la ligne
+  (`UPDATE_UNSAFE_DEBT=1 cargo test --test no_unsafe`) dans la même PR, et le diff de la liste ne
+  doit jamais montrer un nombre qui monte.
+- Retirer de la dette est bienvenu, un lot par sujet.
+
 ## Conventions de code
 
 - Pas de `unwrap()` hors tests. `expect()` est autorisé.
 - Pas de paramètre `bool` dans une signature publique : utiliser une enum.
-- Pas de `unsafe` sans commentaire `// SAFETY:`, sauf besoin mesuré ou FFI.
 - Les lints sont dans `Cargo.toml` (`[lints]`) et `clippy.toml`. Ne pas les
   désactiver avec `#[allow]` sans raison écrite.
 - Pas de `print_stdout` ni `print_stderr` hors binaires CLI.

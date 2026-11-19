@@ -100,7 +100,11 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-features
 ```
 
-No `unsafe` without a `// SAFETY:` comment and without a measured need or FFI.
+**No `unsafe`, at all.** The repository has none and a new one is never accepted: no `unsafe`
+block, function, impl or extern, no `#[allow(unsafe_code)]`, in code, tests, benchmarks or tools.
+The `unsafe` that predates the rule is listed per file in `tools/unsafe-debt.txt` and only goes
+down: `cargo test --test no_unsafe` fails when a file gains one or is missing from the list, and
+`UPDATE_UNSAFE_DEBT=1 cargo test --test no_unsafe` lowers the list when a PR removes some.
 No boolean parameter in a public signature. No `unwrap()` outside tests. The
 lints are BeautifulRust's (`clippy.toml` and `[lints]` in `Cargo.toml`).
 
