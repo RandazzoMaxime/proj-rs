@@ -11,6 +11,8 @@
 //! A pair that the selection cannot write (no operation, a missing grid, a CRS that
 //! is neither geographic nor projected) returns `None`, and the creation fails.
 
+use std::sync::OnceLock;
+
 use crate::engine::{Coord, Operation, TransformError};
 use crate::iso19111::{
     facade_candidates, same_datum_noop, AlternativeError, Alternatives, Axis, BestPolicy,
@@ -148,12 +150,19 @@ pub(crate) fn iso_pipeline_at(
     } = candidates;
     let source_horizontal = horizontal_part(&source).filter(|crs| is_horizontal(crs))?;
     let target_horizontal = horizontal_part(&target).filter(|crs| is_horizontal(crs))?;
+    // The facade builds every candidate now, under the context active here, as it always did:
+    // the selection builds them at their first use (`select.rs`), and `last_used_operation` reads
+    // `item.operation` of a facade candidate directly. The epoch and `FORCE_OVER` branches below
+    // replace the pipelines they rebuild.
+    for item in &items {
+        let _ = item.pipeline(None);
+    }
     let (reported, reported_name) = reported_candidate(&items).unzip();
     if let Some(year) = epoch {
         for item in &mut items {
             if let Some(definition) = &item.definition {
                 let text = with_epoch_steps(definition, year);
-                item.operation = Operation::create_over(&text, over).ok();
+                item.operation = OnceLock::from(Operation::create_over(&text, over).ok());
                 item.definition = Some(text);
             }
         }
@@ -162,10 +171,12 @@ pub(crate) fn iso_pipeline_at(
         // the flag keeps that, so a candidate with a missing grid stays a candidate.
         for item in &mut items {
             if let Some(definition) = &item.definition {
-                item.operation = crate::network::with_candidate_grids(|| {
-                    Operation::create_over(definition, over)
-                })
-                .ok();
+                item.operation = OnceLock::from(
+                    crate::network::with_candidate_grids(|| {
+                        Operation::create_over(definition, over)
+                    })
+                    .ok(),
+                );
             }
         }
     }
@@ -179,10 +190,11 @@ pub(crate) fn iso_pipeline_at(
             if !item.instantiable {
                 return None;
             }
-            Route::Single(item.operation?)
+            Route::Single(item.pipeline(None).cloned()?)
         }
         _ => Route::Alternatives(Box::new(Alternatives::new(
             items,
+            None,
             BestPolicy::Warn,
             source_axes,
             target_axes,

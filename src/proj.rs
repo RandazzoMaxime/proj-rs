@@ -2078,7 +2078,7 @@ impl Proj {
             Body::Iso(pipeline) => match pipeline.current_item() {
                 Some(item) => {
                     let definition = item.definition.clone()?;
-                    let op = item.operation.clone()?;
+                    let op = item.operation.get()?.clone()?;
                     let mut proj = built(Body::Native(op), definition.clone(), None);
                     proj.pipeline = Some(Pipeline::parse(&definition));
                     proj.candidate_name = Some(item.name.clone());

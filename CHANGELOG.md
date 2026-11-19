@@ -6,6 +6,13 @@ rest is outside semver.
 
 ## Unreleased
 
+- `Transformer` builds its candidates at their first use. A pair with several candidates on grids
+  no longer reads every grid at `build()`: `EPSG:6364` to `EPSG:8801` with the parity grids builds
+  in 0.55 s instead of 11.8 s in a dev build (the first transform then reads the grids it uses,
+  3.4 s), and the peak memory of the build drops from 140 MB to 22 MB. On the eight points checked,
+  the results are bit for bit those of the previous build, and the parity grids are unchanged. The
+  release bench's median over its 214 cases is unchanged; one batch case moves by +3.9 % with no
+  change to its code (see [docs/PORTING-transformer-build.md](docs/PORTING-transformer-build.md)).
 - The AVX2 batch path has no `unsafe` left (57 gone from `src/simd/`): the intrinsics and the
   dispatch into code compiled with `avx2,fma` go through the safe API of `pulp` 0.22 (MIT, builds
   with Rust 1.83). Same instructions, same bits (`tests/simd_bits.rs`, 28 digests fixed before the

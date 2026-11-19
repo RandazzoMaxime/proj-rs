@@ -13,6 +13,8 @@
 //! one of those is either sorted differently or reported as an error, and the
 //! caller keeps its previous path.
 
+use std::sync::OnceLock;
+
 use super::alternatives::{
     Alternatives, BestPolicy, Bounds, DegreeOrder, FirstAxis, Item, LogLine, SourceAxes,
     WARN_SUFFIX,
@@ -1365,9 +1367,9 @@ pub fn select_alternatives_for_crs(
     // disk (DISCARD). A filter on a list built without it keeps only the operations with no grid at
     // all under DISCARD, and loses the pivots PROJ lists (NAD27 to NAD83 through WGS 84); under
     // KNOWN_AVAILABLE it keeps `Inverse of WGS 84 to EGM2008 height (2)` and tries it first.
-    let network_enabled = crate::network::active_or_environment().enabled;
+    let grids = crate::network::active_or_environment();
     context.set_grid_availability_use(match policy {
-        BestPolicy::Discard if !network_enabled => GridAvailabilityUse::DiscardIfMissing,
+        BestPolicy::Discard if !grids.enabled => GridAvailabilityUse::DiscardIfMissing,
         BestPolicy::Discard | BestPolicy::Warn | BestPolicy::Error => {
             GridAvailabilityUse::KnownAvailable
         }
@@ -1523,8 +1525,14 @@ pub fn select_alternatives_for_crs(
                 FirstAxis::Other
             };
             // cs2cs inverts by swapping its CRS (`-I`), so the target's box is never read.
-            let alternatives =
-                Alternatives::new(prepared, policy, source_axes, SourceAxes::Plain, first_axis);
+            let alternatives = Alternatives::new(
+                prepared,
+                Some(grids),
+                policy,
+                source_axes,
+                SourceAxes::Plain,
+                first_axis,
+            );
             Ok(Selection::Several(match creation_warning {
                 Some(line) => alternatives.warned_at_creation(line),
                 None => alternatives,
@@ -2058,9 +2066,7 @@ impl Preparer<'_> {
                 let e = piece_east.to_radians();
                 items.push(Item {
                     name: characteristics.name.clone(),
-                    operation: definition.as_deref().and_then(|text| {
-                        crate::network::with_candidate_grids(|| Operation::create(text)).ok()
-                    }),
+                    operation: OnceLock::new(),
                     definition: definition.clone(),
                     instantiable,
                     grid_free: grid_names(operation).is_empty(),
