@@ -52,23 +52,29 @@ cargo test --test docs_in_sync
 
 ## RÈGLE BLOQUANTE : aucun `unsafe`
 
-**Le dépôt n'a aucun `unsafe`. Ne jamais en écrire un nouveau, sous aucun prétexte** : pas de
-bloc `unsafe`, pas de `unsafe fn`, `unsafe impl`, `unsafe extern`, `#[unsafe(no_mangle)]`, pas de
-`#[allow(unsafe_code)]`, pas de crate tierce ajoutée pour contourner la règle. Elle vaut pour le
-code, les tests, les benchs et les outils, et aussi pour les agents (sous-agents compris) :
-leur donner cette règle dans leur consigne.
+**Le dépôt n'a aucun `unsafe`, sauf `capi/` (l'API C).** Ne jamais en écrire un nouveau, sous
+aucun prétexte, hors de `capi/` : pas de bloc `unsafe`, pas de `unsafe fn`, `unsafe impl`,
+`unsafe extern`, `#[unsafe(no_mangle)]`, pas de `#[allow(unsafe_code)]`. Elle vaut pour le code,
+les tests, les benchs et les outils, et aussi pour les agents (sous-agents compris) : leur donner
+cette règle dans leur consigne.
 
+- **Seule exception : `capi/`.** Une bibliothèque C ne s'écrit pas sans `unsafe` (`extern "C"`,
+  pointeurs bruts, `#[unsafe(no_mangle)]`). Chaque bloc y garde son commentaire `// SAFETY:` (lints
+  `undocumented_unsafe_blocks`). Rien d'autre n'en hérite : `capi/` ne sert pas de prétexte pour
+  mettre un `unsafe` ailleurs, et la crate principale ne dépend pas de ses `unsafe`.
 - Un besoin qui semble exiger `unsafe` (intrinsèques, FFI, mémoire non initialisée, `Sync` sur un
-  type à états internes) se résout autrement : API sûre de la bibliothèque standard, structure
-  de données sûre (atomiques, `Mutex`, `OnceLock`), ou on le dit dans la PR et on ne le fait pas.
-  Ne jamais ajouter `unsafe impl Send/Sync`.
-- Le `unsafe` qui existait quand la règle a été posée est une dette, listée par fichier dans
-  `tools/unsafe-debt.txt`. `cargo test --test no_unsafe` échoue (CI rouge, PR non fusionnable)
-  si un fichier a un `unsafe` de plus que sa ligne, ou s'il n'est pas dans la liste. La dette ne
-  fait que baisser : quand on retire un `unsafe`, on baisse la ligne
+  type à états internes) se résout autrement, **sans rien perdre** (ni fonctionnalité, ni
+  vitesse mesurée, ni mémoire) : API sûre de la bibliothèque standard, structure de données sûre
+  (atomiques, `Mutex`, `OnceLock`), ou crate tierce dont l'API est sûre. Une crate tierce se
+  justifie dans la PR (licence compatible, MSRV 1.83, maintenance, chiffres avant/après), c'est la
+  sienne qui porte alors le `unsafe`, pas le dépôt. Ne jamais ajouter `unsafe impl Send/Sync`.
+- Le `unsafe` qui existait hors de `capi/` quand la règle a été posée est une dette, listée par
+  fichier dans `tools/unsafe-debt.txt`. `cargo test --test no_unsafe` échoue (CI rouge, PR non
+  fusionnable) si un fichier a un `unsafe` de plus que sa ligne, ou s'il n'est pas dans la liste. La
+  dette ne fait que baisser : quand on retire un `unsafe`, on baisse la ligne
   (`UPDATE_UNSAFE_DEBT=1 cargo test --test no_unsafe`) dans la même PR, et le diff de la liste ne
-  doit jamais montrer un nombre qui monte.
-- Retirer de la dette est bienvenu, un lot par sujet.
+  doit jamais montrer un nombre qui monte. Retirer de la dette est bienvenu, un sujet à la fois, avec
+  les preuves de non-régression (tests de parité, benchs `proj-rs-bench` avant/après).
 
 ## Conventions de code
 
