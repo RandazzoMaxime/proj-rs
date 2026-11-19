@@ -365,6 +365,7 @@ dependencies = [
  "geo-types",
  "native-tls",
  "rusqlite",
+ "rustix",
  "serde_yaml",
  "tiff",
 ]

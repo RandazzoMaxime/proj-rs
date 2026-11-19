@@ -6,6 +6,10 @@ rest is outside semver.
 
 ## Unreleased
 
+- No `unsafe` for the writability of `$HOME`: `access(2)` goes through `rustix::fs::access`, the
+  same system call behind a safe API (Unix). The user directory is compared with PROJ's
+  `projinfo` for a home without write permission, a home that is a file and a read-only mount:
+  see [docs/PORTING-data-dirs.md](docs/PORTING-data-dirs.md).
 - No `unsafe` left outside `capi/` for `atanh`: `projmath::atanh` no longer calls the C libm through
   `extern "C"`. Beyond the series domain it uses glibc's `__ieee754_atanh` formula over
   `f64::ln_1p`, bit for bit equal to glibc's `atanh` on 14 million inputs (edge cases included), and

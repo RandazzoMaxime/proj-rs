@@ -101,6 +101,11 @@ tiff = { version = "0.10.3", default-features = false, features = ["deflate"] }
 # A small HTTP/1.1 client sits on top so the tree does not pull ureq's ICU stack.
 native-tls = { version = "0.2.14", optional = true }
 
+# `access(2)` for the writability of `$HOME` (`datadir.rs`), the call of PROJ, through a safe API.
+# Already in the tree (`tempfile`); rust-version 1.63, MIT / Apache-2.0.
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1.5", default-features = false, features = ["fs", "std"] }
+
 [dev-dependencies]
 # YAML CLI cases. 0.9.34 is already in the offline registry.
 serde_yaml = "=0.9.34"

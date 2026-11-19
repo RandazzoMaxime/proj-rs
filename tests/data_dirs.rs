@@ -456,5 +456,40 @@ fn search_paths_are_those_of_projinfo_of_proj() {
         compare(&sandbox, &reference, Compared::UserDirectory, &|command| {
             command.env("HOME", "/");
         });
+        // `access(home, W_OK)` decides, not the mode bits alone: a home without write permission
+        // (writable all the same for root), a home that is a file, and a home on a file system
+        // mounted read-only, which `access` refuses even to root.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let locked = sandbox.work().join("locked-home");
+            fs::create_dir_all(&locked).expect("locked home");
+            fs::set_permissions(&locked, fs::Permissions::from_mode(0o555)).expect("chmod");
+            compare(&sandbox, &reference, Compared::UserDirectory, &|command| {
+                command.env("HOME", &locked);
+            });
+            fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).expect("chmod");
+            let file = sandbox.work().join("home-file");
+            fs::write(&file, "").expect("home file");
+            compare(&sandbox, &reference, Compared::UserDirectory, &|command| {
+                command.env("HOME", &file);
+            });
+        }
+        if let Some(mount) = read_only_mount() {
+            compare(&sandbox, &reference, Compared::UserDirectory, &|command| {
+                command.env("HOME", &mount);
+            });
+        }
     }
+}
+
+/// A directory of a file system mounted read-only, if this machine has one (Linux).
+fn read_only_mount() -> Option<PathBuf> {
+    let mounts = fs::read_to_string("/proc/mounts").ok()?;
+    mounts.lines().find_map(|line| {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        let (dir, options) = (fields.get(1)?, fields.get(3)?);
+        (options.split(',').any(|o| o == "ro") && Path::new(dir).is_dir())
+            .then(|| PathBuf::from(dir))
+    })
 }
