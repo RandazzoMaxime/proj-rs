@@ -3,7 +3,7 @@
 //! Port of `NTv2GridSet::open` and `NTv2Grid::valueAt` in PROJ `src/grids.cpp`.
 //! Records run south to north and east to west. Longitude shifts are positive west.
 
-use super::{Domain, Extent};
+use super::{offset_of, Domain, Extent, ReadAt};
 
 #[derive(Clone, Copy)]
 enum Order {
@@ -30,27 +30,37 @@ pub(super) fn is_ntv2(bytes: &[u8]) -> bool {
     bytes.len() >= 48 + 7 && bytes.starts_with(b"NUM_OREC") && &bytes[48..55] == b"GS_TYPE"
 }
 
-pub(super) fn load(bytes: &[u8]) -> Result<Vec<NtvGrid>, ()> {
-    if bytes.len() < HEADER || &bytes[56..63] != b"SECONDS" {
+/// The grids of the file, read a header and a row at a time.
+pub(super) fn load(file: &mut impl ReadAt) -> Result<Vec<NtvGrid>, ()> {
+    let size = file.size();
+    if size < offset_of(HEADER)? {
         return Err(());
     }
-    let order = if bytes[8] == 11 {
+    let mut overview = [0_u8; HEADER];
+    file.read_at(0, &mut overview)?;
+    if &overview[56..63] != b"SECONDS" {
+        return Err(());
+    }
+    let order = if overview[8] == 11 {
         Order::Little
     } else {
         Order::Big
     };
-    let count = read_u32(&bytes[40..44], order);
+    let count = read_u32(&overview[40..44], order);
     if count == 0 || count > 10_000 {
         return Err(());
     }
-    let mut cursor = HEADER;
+    let mut cursor = offset_of(HEADER)?;
     let mut grids = Vec::new();
+    let mut row_bytes = Vec::new();
     for _ in 0..count {
-        if bytes.len() < cursor + HEADER {
+        let header_end = cursor.checked_add(offset_of(HEADER)?).ok_or(())?;
+        if size < header_end {
             return Err(());
         }
-        let header = &bytes[cursor..cursor + HEADER];
-        cursor += HEADER;
+        let mut header = [0_u8; HEADER];
+        file.read_at(cursor, &mut header)?;
+        cursor = header_end;
         if &header[0..8] != b"SUB_NAME" {
             return Err(());
         }
@@ -74,29 +84,30 @@ pub(super) fn load(bytes: &[u8]) -> Result<Vec<NtvGrid>, ()> {
         if columns_u == 0 || gs_count / columns_u != rows_u {
             return Err(());
         }
-        let bytes_len = usize::try_from(gs_count)
-            .map_err(|_| ())?
-            .checked_mul(16)
-            .ok_or(())?;
-        if bytes.len() < cursor + bytes_len {
+        let bytes_len = u64::from(gs_count).checked_mul(16).ok_or(())?;
+        let data_end = cursor.checked_add(bytes_len).ok_or(())?;
+        if size < data_end {
             return Err(());
         }
-        let data = &bytes[cursor..cursor + bytes_len];
-        cursor += bytes_len;
         let cols_us = usize::try_from(columns).map_err(|_| ())?;
         let rows_us = usize::try_from(rows).map_err(|_| ())?;
         let mut samples = vec![0.0_f32; rows_us * cols_us * 2];
+        // `gs_count` holds every record of the rows: a row is `cols_us` records of 16 bytes.
+        row_bytes.resize(cols_us * RECORD, 0);
         for row in 0..rows_us {
+            let at = cursor + offset_of(row * cols_us * RECORD)?;
+            file.read_at(at, &mut row_bytes)?;
             for col in 0..cols_us {
-                let record = (row * cols_us + col) * 4;
-                let lat = read_f32_at(data, record, order)?;
-                let lon = read_f32_at(data, record + 1, order)?;
+                let record = col * 4;
+                let lat = read_f32_at(&row_bytes, record, order)?;
+                let lon = read_f32_at(&row_bytes, record + 1, order)?;
                 let dest_col = cols_us - 1 - col;
                 let dest = (row * cols_us + dest_col) * 2;
                 samples[dest] = seconds_to_rad(lat);
                 samples[dest + 1] = -seconds_to_rad(lon);
             }
         }
+        cursor = data_end;
         grids.push(NtvGrid {
             width: columns,
             height: rows,

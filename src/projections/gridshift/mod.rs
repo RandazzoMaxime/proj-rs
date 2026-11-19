@@ -14,7 +14,7 @@ mod tiles;
 
 use std::collections::BTreeMap;
 use std::f64::consts::{PI, TAU};
-use std::io::{Cursor, Read, Seek};
+use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use crate::angle::adjlon;
@@ -636,16 +636,16 @@ fn open_horizontal(name: &str) -> Result<GridSet, Fail> {
     if name == "null" {
         return Ok(GridSet::null_grid());
     }
-    let file = match read_grid(name)? {
+    let mut file = match read_grid(name)? {
         Source::Tiles(ifds) => return GridSet::from_tiff_horizontal(ifds),
         Source::File(file) => file,
     };
     if ntv2::is_ntv2(&file.head) {
-        let grids = ntv2::load(&file.whole()?).map_err(|()| Fail::Invalid)?;
+        let grids = ntv2::load(&mut file).map_err(|()| Fail::Invalid)?;
         return Ok(GridSet::from_ntv2(grids));
     }
     if ntv1::is_ntv1(&file.head) {
-        let grid = ntv1::load(&file.whole()?).map_err(|()| Fail::Invalid)?;
+        let grid = ntv1::load(&mut file).map_err(|()| Fail::Invalid)?;
         return Ok(GridSet::from_ntv2(vec![grid]));
     }
     if geotiff::is_tiff(&file.head) {
@@ -653,7 +653,7 @@ fn open_horizontal(name: &str) -> Result<GridSet, Fail> {
         return GridSet::from_tiff_horizontal(ifds);
     }
     if is_ctable2(&file.head) {
-        return GridSet::from_ctable2(&file.whole()?);
+        return GridSet::from_ctable2(file);
     }
     Err(Fail::Invalid)
 }
@@ -677,7 +677,7 @@ fn open_vertical(name: &str) -> Result<GridSet, Fail> {
     // `VerticalShiftGridSet::open` (`grids.cpp`, 1631) tests the file it opened, so a
     // `grid_alternatives` fallback such as `us_nga_egm96_15.tif` -> `egm96_15.gtx` is GTX.
     if gtx_name(&opened_name(name)) {
-        return GridSet::from_gtx(&file.whole()?);
+        return GridSet::from_gtx(file);
     }
     Err(Fail::Invalid)
 }
@@ -724,12 +724,62 @@ enum Source {
 const HEAD: u64 = 160;
 const HEAD_LEN: usize = 160;
 
-/// A grid file open for reading, with its first bytes. A GeoTIFF is decoded from the file as it is
-/// read, a chunk at a time: its bytes are never held whole next to its samples.
+/// A grid file open for reading, with its first bytes. Every format is decoded from the file as it
+/// is read, a piece at a time: its bytes are never held whole next to its samples.
 struct GridFile {
     data: GridData,
     /// The first [`HEAD`] bytes, or the whole file when it is shorter.
     head: Vec<u8>,
+    /// Where the next read of a file starts.
+    pos: u64,
+}
+
+/// The bytes of a grid file at given offsets, for the readers that decode it as they go.
+pub(super) trait ReadAt {
+    /// The size of the file, in bytes.
+    fn size(&self) -> u64;
+
+    /// Fills `buf` with the bytes of the file from `offset`. `Err` when they run past its end or
+    /// the read fails.
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<(), ()>;
+}
+
+/// `len` as a file offset.
+pub(super) fn offset_of(len: usize) -> Result<u64, ()> {
+    u64::try_from(len).map_err(|_| ())
+}
+
+impl ReadAt for GridFile {
+    fn size(&self) -> u64 {
+        match &self.data {
+            GridData::File(_, size) => *size,
+            GridData::Bytes(bytes) => offset_of(bytes.len()).unwrap_or(u64::MAX),
+        }
+    }
+
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<(), ()> {
+        let end = offset.checked_add(offset_of(buf.len())?).ok_or(())?;
+        if end > self.size() {
+            return Err(());
+        }
+        match &mut self.data {
+            GridData::File(reader, _) => {
+                if self.pos != offset {
+                    reader.seek(SeekFrom::Start(offset)).map_err(|_| ())?;
+                }
+                // The position is unknown after a failed read: the next read seeks.
+                self.pos = u64::MAX;
+                reader.read_exact(buf).map_err(|_| ())?;
+                self.pos = end;
+            }
+            GridData::Bytes(bytes) => {
+                let start = usize::try_from(offset).map_err(|_| ())?;
+                let stop = usize::try_from(end).map_err(|_| ())?;
+                buf.copy_from_slice(bytes.get(start..stop).ok_or(())?);
+            }
+        }
+        Ok(())
+    }
 }
 
 impl GridFile {
@@ -750,20 +800,42 @@ impl GridFile {
                 .unwrap_or_default()
                 .to_vec(),
         };
-        Ok(Self { data, head })
+        let pos = offset_of(head.len()).map_err(|()| Fail::Missing)?;
+        Ok(Self { data, head, pos })
     }
 
-    /// The whole file.
-    fn whole(self) -> Result<Vec<u8>, Fail> {
-        match self.data {
-            GridData::File(mut reader, size) => {
-                let mut bytes = Vec::with_capacity(usize::try_from(size).unwrap_or(0));
-                bytes.extend_from_slice(&self.head);
-                reader.read_to_end(&mut bytes).map_err(|_| Fail::Missing)?;
-                Ok(bytes)
-            }
-            GridData::Bytes(bytes) => Ok(bytes),
+    /// Runs `each` on the `len` bytes of the file from `offset`, in pieces of whole `record`s.
+    /// `Err` when they run past the end of the file or a read fails.
+    fn records(
+        &mut self,
+        offset: u64,
+        len: usize,
+        record: usize,
+        mut each: impl FnMut(&[u8]) -> Result<(), Fail>,
+    ) -> Result<(), Fail> {
+        /// The bytes read at once from a file.
+        const PIECE: usize = 64 * 1024;
+        let end = offset
+            .checked_add(offset_of(len).map_err(|()| Fail::Invalid)?)
+            .ok_or(Fail::Invalid)?;
+        if end > self.size() || record == 0 {
+            return Err(Fail::Invalid);
         }
+        if let GridData::Bytes(bytes) = &self.data {
+            let start = usize::try_from(offset).map_err(|_| Fail::Invalid)?;
+            return each(bytes.get(start..start + len).ok_or(Fail::Invalid)?);
+        }
+        let step = (PIECE / record).max(1) * record;
+        let mut buf = vec![0_u8; step.min(len)];
+        let mut done = 0;
+        while done < len {
+            let piece = buf.get_mut(..step.min(len - done)).ok_or(Fail::Invalid)?;
+            let at = offset + offset_of(done).map_err(|()| Fail::Invalid)?;
+            self.read_at(at, piece).map_err(|()| Fail::Missing)?;
+            each(piece)?;
+            done += piece.len();
+        }
+        Ok(())
     }
 
     /// The images of the TIFF, their samples decoded as the file is read.
@@ -1013,7 +1085,8 @@ impl GridSet {
         Ok(set)
     }
 
-    fn from_gtx(bytes: &[u8]) -> Result<Self, Fail> {
+    fn from_gtx(mut file: GridFile) -> Result<Self, Fail> {
+        let bytes = file.head.as_slice();
         if bytes.len() < 40 {
             return Err(Fail::Invalid);
         }
@@ -1038,16 +1111,26 @@ impl GridSet {
         let width_us = usize::try_from(columns).map_err(|_| Fail::Invalid)?;
         let height_us = usize::try_from(rows).map_err(|_| Fail::Invalid)?;
         let count = width_us.checked_mul(height_us).ok_or(Fail::Invalid)?;
-        let data = bytes.get(40..40 + count * 4).ok_or(Fail::Invalid)?;
-        let mut samples = Vec::with_capacity(count);
-        for index in 0..count {
-            let mut value = be_f32(data, index * 4)?;
-            // Official GTX nodata. Stored as NaN so bilinear skips the corner.
-            if (f64::from(value) + 88.8888).abs() < 1e-3 {
-                value = f32::NAN;
-            }
-            samples.push(value);
+        let data_len = count.checked_mul(4).ok_or(Fail::Invalid)?;
+        let data_end = offset_of(data_len)
+            .ok()
+            .and_then(|len| len.checked_add(40))
+            .ok_or(Fail::Invalid)?;
+        if data_end > file.size() {
+            return Err(Fail::Invalid);
         }
+        let mut samples = Vec::with_capacity(count);
+        file.records(40, data_len, 4, |data| {
+            for index in 0..data.len() / 4 {
+                let mut value = be_f32(data, index * 4)?;
+                // Official GTX nodata. Stored as NaN so bilinear skips the corner.
+                if (f64::from(value) + 88.8888).abs() < 1e-3 {
+                    value = f32::NAN;
+                }
+                samples.push(value);
+            }
+            Ok(())
+        })?;
         let deg = PI / 180.0;
         let west = xorigin * deg;
         let south = yorigin * deg;
@@ -1085,7 +1168,8 @@ impl GridSet {
         Ok(set)
     }
 
-    fn from_ctable2(bytes: &[u8]) -> Result<Self, Fail> {
+    fn from_ctable2(mut file: GridFile) -> Result<Self, Fail> {
+        let bytes = file.head.as_slice();
         if bytes.len() < 160 || &bytes[..10] != b"CTABLE V2." {
             return Err(Fail::Invalid);
         }
@@ -1108,17 +1192,23 @@ impl GridSet {
             .ok()
             .and_then(|w| usize::try_from(height).ok().and_then(|h| w.checked_mul(h)))
             .ok_or(Fail::Invalid)?;
-        let data = bytes.get(160..).ok_or(Fail::Invalid)?;
         let needed = count.checked_mul(8).ok_or(Fail::Invalid)?;
-        if data.len() < needed {
+        let data_end = offset_of(needed)
+            .ok()
+            .and_then(|len| len.checked_add(160))
+            .ok_or(Fail::Invalid)?;
+        if data_end > file.size() {
             return Err(Fail::Invalid);
         }
         // First float is longitude, second is latitude. Already radians.
         let mut samples = Vec::with_capacity(count * 2);
-        for index in 0..count {
-            samples.push(le_f32(data, index * 8)?);
-            samples.push(le_f32(data, index * 8 + 4)?);
-        }
+        file.records(160, needed, 8, |data| {
+            for index in 0..data.len() / 8 {
+                samples.push(le_f32(data, index * 8)?);
+                samples.push(le_f32(data, index * 8 + 4)?);
+            }
+            Ok(())
+        })?;
         // PROJ sets north from `(height - 1) * resX`, not `resY`.
         let east = west + res_x * (f64::from(width) - 1.0);
         let north = south + res_x * (f64::from(height) - 1.0);
@@ -2521,7 +2611,82 @@ impl Step for XyzShift {
 
 #[cfg(test)]
 mod tests {
+    use super::{ntv1, ntv2, Fail, GridData, GridFile, GridSet, Samples};
     use crate::engine::{Coord, Operation};
+
+    fn fixture(name: &str) -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("data/tests")
+            .join(name)
+    }
+
+    /// The file `name` of the fixtures, read in pieces from disk, or held whole and cut to its
+    /// first `keep` bytes.
+    fn grid_file(name: &str, keep: Option<usize>) -> GridFile {
+        let data = match keep {
+            None => {
+                let (file, size) = crate::network::open_file(&fixture(name)).expect("fixture");
+                GridData::File(file, size)
+            }
+            Some(len) => {
+                let mut bytes = std::fs::read(fixture(name)).expect("fixture");
+                bytes.truncate(len);
+                GridData::Bytes(bytes)
+            }
+        };
+        GridFile::new(data).ok().expect("head")
+    }
+
+    fn file_size(name: &str) -> usize {
+        usize::try_from(std::fs::metadata(fixture(name)).expect("fixture").len()).expect("size")
+    }
+
+    /// The samples of every grid of `set`, as bits, so that NaN compares.
+    fn bits(set: &GridSet) -> Vec<Vec<u32>> {
+        set.nodes
+            .iter()
+            .map(|node| match &node.samples {
+                Samples::Flat(values) => values.iter().map(|v| v.to_bits()).collect(),
+                _ => panic!("a local grid is decoded whole"),
+            })
+            .collect()
+    }
+
+    fn open(format: &str, file: GridFile) -> Result<GridSet, Fail> {
+        let mut file = file;
+        match format {
+            "gtx" => GridSet::from_gtx(file),
+            "ctable2" => GridSet::from_ctable2(file),
+            "ntv2" => ntv2::load(&mut file)
+                .map(GridSet::from_ntv2)
+                .map_err(|()| Fail::Invalid),
+            _ => ntv1::load(&mut file)
+                .map(|grid| GridSet::from_ntv2(vec![grid]))
+                .map_err(|()| Fail::Invalid),
+        }
+    }
+
+    /// A grid read from its file a piece at a time has the samples of the same grid read whole,
+    /// and a file cut short is refused, as when it was read whole.
+    #[test]
+    fn grids_read_in_pieces_match_the_whole_file_and_refuse_a_short_one() {
+        for (name, format) in [
+            ("egm96_15.gtx", "gtx"),
+            ("egm96_15_downsampled.gtx", "gtx"),
+            ("conus", "ctable2"),
+            ("ntv2_0.gsb", "ntv2"),
+            ("ntf_r93.gsb", "ntv2"),
+            ("ntv1_can.dat", "ntv1"),
+        ] {
+            let size = file_size(name);
+            let read = open(format, grid_file(name, None)).ok().expect(name);
+            let whole = open(format, grid_file(name, Some(size))).ok().expect(name);
+            assert_eq!(bits(&read), bits(&whole), "{name}");
+            assert!(!bits(&read).concat().is_empty(), "{name}");
+            let short = open(format, grid_file(name, Some(size / 2)));
+            assert!(matches!(short, Err(Fail::Invalid)), "{name} cut short");
+        }
+    }
 
     /// `us_nga_egm96_15.tif` is not on disk, so it opens `egm96_15.gtx` (`grid_alternatives`),
     /// a GTX file. The GTX reader is chosen from the opened file name (`grids.cpp:1631`).

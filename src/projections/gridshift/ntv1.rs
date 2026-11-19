@@ -7,7 +7,7 @@
 //! share one grid set.
 
 use super::ntv2::NtvGrid;
-use super::{Domain, Extent};
+use super::{offset_of, Domain, Extent, ReadAt};
 
 const HEADER: usize = 192;
 const RECORD: usize = 16;
@@ -22,9 +22,15 @@ pub(super) fn is_ntv1(bytes: &[u8]) -> bool {
         && &bytes[144..160] == b"TO      NAD83   "
 }
 
-/// The one grid of an NTv1 file.
-pub(super) fn load(bytes: &[u8]) -> Result<NtvGrid, ()> {
-    if bytes.len() < HEADER || read_i32(&bytes[8..12]) != 12 {
+/// The one grid of an NTv1 file, read a row at a time.
+pub(super) fn load(file: &mut impl ReadAt) -> Result<NtvGrid, ()> {
+    let size = file.size();
+    if size < offset_of(HEADER)? {
+        return Err(());
+    }
+    let mut bytes = [0_u8; HEADER];
+    file.read_at(0, &mut bytes)?;
+    if read_i32(&bytes[8..12]) != 12 {
         return Err(());
     }
     let south = read_f64(&bytes[24..32]) * DEG_TO_RAD;
@@ -39,17 +45,22 @@ pub(super) fn load(bytes: &[u8]) -> Result<NtvGrid, ()> {
     let cols = usize::try_from(columns).map_err(|_| ())?;
     let rows_us = usize::try_from(rows).map_err(|_| ())?;
     let records = cols.checked_mul(rows_us).ok_or(())?;
-    if bytes.len() < HEADER + records * RECORD {
+    let data_len = records.checked_mul(RECORD).ok_or(())?;
+    let data_end = offset_of(data_len)?
+        .checked_add(offset_of(HEADER)?)
+        .ok_or(())?;
+    if size < data_end {
         return Err(());
     }
-    let data = &bytes[HEADER..HEADER + records * RECORD];
     let mut samples = vec![0.0_f32; records * 2];
+    let mut row_bytes = vec![0_u8; cols * RECORD];
     for row in 0..rows_us {
+        file.read_at(offset_of(HEADER + row * cols * RECORD)?, &mut row_bytes)?;
         for col in 0..cols {
             // NTv1 is organized from east to west (`NTv1Grid::valueAt`).
-            let record = (row * cols + (cols - 1 - col)) * RECORD;
-            let lat = read_f64(&data[record..record + 8]);
-            let lon = read_f64(&data[record + 8..record + 16]);
+            let record = (cols - 1 - col) * RECORD;
+            let lat = read_f64(&row_bytes[record..record + 8]);
+            let lon = read_f64(&row_bytes[record + 8..record + 16]);
             let dest = (row * cols + col) * 2;
             samples[dest] = f32_from_f64(lat * ARCSEC_TO_RAD);
             // West longitude positive: the compensated convention of `valueAt`.
