@@ -190,7 +190,13 @@ enum AxisOrder {
 /// The operation is the one `cs2cs` picks: the best candidate of the registry, or, when
 /// several cover different areas, the one that covers the point.
 ///
-/// A transformer is `Send` but not `Sync`: it keeps the candidate the last point used.
+/// A transformer is `Send + Sync`: several threads convert through one `&Transformer`. It keeps
+/// two things from the points it converted, shared by the threads: the operation the last point
+/// used (see [`Self::last_used_operation`]) and whether the warning of a failing candidate, under
+/// [`OnlyBest`], is still pending. A single thread sees the results of a single thread. Several
+/// threads do not order their points: a point that runs while another thread is failing its
+/// first candidate may take the choice of the points before it, and `last_used_operation` may
+/// report a candidate that a point in flight tried before the one it settled on.
 ///
 /// ```
 /// use proj_rs::{Context, Crs, Point, Transformer};
@@ -624,7 +630,8 @@ impl Transformer {
     }
 
     /// The operation the last point went through. With several candidates it is the one that
-    /// point chose, `None` before the first point. With a single operation it is that
+    /// point chose, `None` before the first point. Under several threads it is the operation of
+    /// the point that wrote last, which can be a candidate that a point in flight tried first. With a single operation it is that
     /// operation, with its name, its accuracy and whether it is a ballpark transformation, as
     /// before any point. [`OperationInfo::is_ballpark`] is what tells a conversion that used a
     /// grid from one that did not.
@@ -778,8 +785,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn transformer_is_send() {
-        fn is_send<T: Send>() {}
-        is_send::<Transformer>();
+    fn transformer_is_send_and_sync() {
+        fn is_send_sync<T: Send + Sync>() {}
+        is_send_sync::<Transformer>();
     }
 }
