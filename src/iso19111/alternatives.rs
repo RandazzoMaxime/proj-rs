@@ -11,7 +11,8 @@
 //! per-point choice. The three policies are the states of `ONLY_BEST` in
 //! `proj_create_crs_to_crs_from_pj` (`crs_to_crs.cpp:521-531`).
 
-use std::cell::{Cell, OnceCell};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Mutex, OnceLock, PoisonError};
 
 use super::alternatives_index::BoxIndex;
 
@@ -172,9 +173,9 @@ impl Clone for Alternatives {
             source_axes: self.source_axes.clone(),
             target_axes: self.target_axes.clone(),
             first_axis: self.first_axis,
-            warn: Cell::new(self.warn.get()),
-            current: Cell::new(self.current.get()),
-            last_failure: Cell::new(self.last_failure.get()),
+            warn: AtomicBool::new(self.warn.load(Ordering::Relaxed)),
+            current: AtomicUsize::new(self.current.load(Ordering::Relaxed)),
+            last_failure: Mutex::new(self.last_failure_value()),
             creation: self.creation.clone(),
             forward_index: self.forward_index.clone(),
             inverse_index: self.inverse_index.clone(),
@@ -201,17 +202,23 @@ pub struct Alternatives {
     target_axes: SourceAxes,
     first_axis: FirstAxis,
     /// `P->warnIfBestTransformationNotAvailable`: cleared by the first failure under `Warn`.
-    warn: Cell<bool>,
-    /// `P->iCurCoordOp`: the candidate the last point used, `None` before the first point.
-    current: Cell<Option<usize>>,
+    /// Shared by the threads that convert through this pair: see [`Self::transform`].
+    warn: AtomicBool,
+    /// `P->iCurCoordOp`: the candidate the last point used, [`NO_CURRENT`] before the first point.
+    /// Written by every point, so the value is the one of the last writer.
+    current: AtomicUsize,
     /// The errno text of the last failed candidate, logged by the next retry (`trans.cpp:257-261`).
-    last_failure: Cell<Option<&'static str>>,
+    /// Only written on a failing candidate, so a lock here costs nothing on the success path.
+    last_failure: Mutex<Option<&'static str>>,
     /// The lines `proj_create_crs_to_crs` logs when it creates the pair (`crs_to_crs.cpp:650`).
     creation: Vec<LogLine>,
     /// Grids over the source boxes and over the target boxes, built at the first point.
-    forward_index: OnceCell<Option<Box<BoxIndex>>>,
-    inverse_index: OnceCell<Option<Box<BoxIndex>>>,
+    forward_index: OnceLock<Option<Box<BoxIndex>>>,
+    inverse_index: OnceLock<Option<Box<BoxIndex>>>,
 }
+
+/// The value of [`Alternatives::current`] before the first point.
+const NO_CURRENT: usize = usize::MAX;
 
 /// The state a `proj_trans` leaves between two points: `P->iCurCoordOp`, the pending warning and
 /// the last failure. See [`Alternatives::save_state`].
@@ -277,35 +284,55 @@ impl Alternatives {
             source_axes,
             target_axes,
             first_axis,
-            warn: Cell::new(policy == BestPolicy::Warn),
-            current: Cell::new(None),
-            last_failure: Cell::new(None),
+            warn: AtomicBool::new(policy == BestPolicy::Warn),
+            current: AtomicUsize::new(NO_CURRENT),
+            last_failure: Mutex::new(None),
             creation: Vec::new(),
-            forward_index: OnceCell::new(),
-            inverse_index: OnceCell::new(),
+            forward_index: OnceLock::new(),
+            inverse_index: OnceLock::new(),
         }
     }
 
     /// The candidate the last point used, `P->iCurCoordOp` (`info.cpp` 170-171). `None` before
     /// the first point, and after a point that found no candidate.
     pub(crate) fn current_item(&self) -> Option<&Item> {
-        self.current.get().and_then(|best| self.items.get(best))
+        self.current_index().and_then(|best| self.items.get(best))
+    }
+
+    /// The index of the candidate the last point used, `None` before the first point.
+    fn current_index(&self) -> Option<usize> {
+        let index = self.current.load(Ordering::Relaxed);
+        (index != NO_CURRENT).then_some(index)
+    }
+
+    /// The errno text of the last failed candidate, not taken.
+    fn last_failure_value(&self) -> Option<&'static str> {
+        *self.lock_last_failure()
+    }
+
+    /// The lock on `last_failure`. A poisoned lock is read anyway: the value is a `&'static str`,
+    /// and no panic can leave it half-written.
+    fn lock_last_failure(&self) -> std::sync::MutexGuard<'_, Option<&'static str>> {
+        self.last_failure
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     /// The state the points leave behind: the candidate, the warning flag and the last failure.
     pub(crate) fn save_state(&self) -> PointState {
         PointState {
-            current: self.current.get(),
-            warn: self.warn.get(),
-            last_failure: self.last_failure.get(),
+            current: self.current_index(),
+            warn: self.warn.load(Ordering::Relaxed),
+            last_failure: self.last_failure_value(),
         }
     }
 
     /// Puts back a state of [`Self::save_state`], after a probe that is not a `proj_trans`.
     pub(crate) fn restore_state(&self, state: PointState) {
-        self.current.set(state.current);
-        self.warn.set(state.warn);
-        self.last_failure.set(state.last_failure);
+        self.current
+            .store(state.current.unwrap_or(NO_CURRENT), Ordering::Relaxed);
+        self.warn.store(state.warn, Ordering::Relaxed);
+        *self.lock_last_failure() = state.last_failure;
     }
 
     /// `PJCoordOperation::operator==` over the lists (`proj_internal.h` 424-433): the same
@@ -329,7 +356,7 @@ impl Alternatives {
     /// candidates that are not instantiable from the first point on (`trans.cpp:237-239`).
     pub(crate) fn warned_at_creation(mut self, line: LogLine) -> Self {
         self.creation.push(line);
-        self.warn.set(false);
+        *self.warn.get_mut() = false;
         self
     }
 
@@ -591,6 +618,10 @@ impl Alternatives {
 
     /// `proj_trans` for one point in one direction, `trans.cpp:233-346`. The log lines are
     /// appended to `log` as [`Self::forward_logged`] describes.
+    // Not inlined: with the lock and the atomics in its body, `Transformer::map` inlined it, and
+    // `forward_slice` of a single operation slowed by 1 to 3 % on the median (measured in
+    // `docs/PORTING-transformer-sync.md`). A call costs nothing next to a point of a candidate.
+    #[inline(never)]
     fn transform(
         &self,
         coord: Coord,
@@ -600,11 +631,12 @@ impl Alternatives {
         let point = self.box_point(coord, way);
         // `skipNonInstantiable` of `proj_trans`: the creation flag, cleared while the warning is
         // still pending and under the other policies.
-        let mut instantiability = if self.policy == BestPolicy::Warn && !self.warn.get() {
-            Instantiability::InstantiableOnly
-        } else {
-            Instantiability::Any
-        };
+        let mut instantiability =
+            if self.policy == BestPolicy::Warn && !self.warn.load(Ordering::Relaxed) {
+                Instantiability::InstantiableOnly
+            } else {
+                Instantiability::Any
+            };
         let mut excluded: [Option<usize>; 2] = [None, None];
         for retry in 0..=2 {
             let Some(best) = self.suggest(point, &excluded, instantiability, way) else {
@@ -612,7 +644,8 @@ impl Alternatives {
             };
             if retry > 0 {
                 // `proj_context_errno_string(oldErrno)` is logged at debug level, then the retry.
-                if let Some(text) = self.last_failure.take() {
+                let failure = self.lock_last_failure().take();
+                if let Some(text) = failure {
                     log.push(LogLine::debug(text));
                 }
                 log.push(LogLine::debug(
@@ -620,12 +653,12 @@ impl Alternatives {
                 ));
             }
             let item = &self.items[best];
-            if self.current.get() != Some(best) {
+            if self.current_index() != Some(best) {
                 log.push(LogLine::debug(format!(
                     "Using coordinate operation {}",
                     item.name
                 )));
-                self.current.set(Some(best));
+                self.current.store(best, Ordering::Relaxed);
             }
             if let Some(operation) = &item.operation {
                 match apply(operation, coord, way) {
@@ -637,8 +670,7 @@ impl Alternatives {
                 }
             }
             // A candidate whose grids are missing has no pipeline to run.
-            self.last_failure
-                .set((!item.instantiable).then_some(NO_INVERSE_OPERATION));
+            *self.lock_last_failure() = (!item.instantiable).then_some(NO_INVERSE_OPERATION);
             match self.policy {
                 BestPolicy::Error => {
                     // The error text is the caller's to write: it is the failure of the point.
@@ -647,13 +679,13 @@ impl Alternatives {
                 BestPolicy::Warn => {
                     // `pj_warn_about_missing_grid` logs at debug level, once per instance. The
                     // first failure makes later retries skip the candidates that are not
-                    // instantiable.
-                    if self.warn.get() {
+                    // instantiable. `swap` takes the warning: of the threads that fail at once,
+                    // only one logs it.
+                    if self.warn.swap(false, Ordering::Relaxed) {
                         log.push(LogLine::debug(format!(
                             "{}{WARN_SUFFIX}",
                             item.grid_message
                         )));
-                        self.warn.set(false);
                     }
                     instantiability = Instantiability::InstantiableOnly;
                 }
@@ -675,12 +707,12 @@ impl Alternatives {
         else {
             return Err(AlternativeError::NoOperation);
         };
-        if self.current.get() != Some(index) {
+        if self.current_index() != Some(index) {
             log.push(LogLine::debug(format!(
                 "Using coordinate operation {} as a fallback due to lack of more appropriate operations",
                 item.name
             )));
-            self.current.set(Some(index));
+            self.current.store(index, Ordering::Relaxed);
         }
         let Some(operation) = &item.operation else {
             return Err(AlternativeError::NoOperation);

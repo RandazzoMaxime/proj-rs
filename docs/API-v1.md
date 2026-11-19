@@ -48,6 +48,10 @@ t.forward_slice(&mut points)?;                      // lot : SIMD quand il exist
 - `Transformer` : `builder(&src, &dst)` puis `area_of_interest`, `only_best`, `allow_ballpark`,
   `normalize_axis_order`, `backend`, `build()`. Méthodes `forward`, `inverse`, `forward_slice`,
   `inverse_slice`, `operations()` (les candidats, comme `projinfo`), `last_used_operation()`.
+- **`Transformer` est `Send + Sync`** : plusieurs threads convertissent à travers un même
+  `&Transformer`, sans copie par thread. C'est un engagement semver : retirer `Sync` casserait les
+  appelants qui le partagent. Les états partagés entre threads sont dans « Écarts du lot 1 » ;
+  mesures et méthode dans [docs/PORTING-transformer-sync.md](PORTING-transformer-sync.md).
 - **Ordre des axes = celui de l'autorité**, comme PROJ (EPSG:4326 est latitude, longitude).
   `normalize_axis_order()` donne l'ordre SIG, comme `proj_normalize_for_visualization`.
 - `Point { x, y, z, t }` : `f64`, `z` et `t` à 0 et `+inf` par défaut, comme `PJ_COORD`.
@@ -209,9 +213,13 @@ Ce que le code fait autrement que ce document, ou en plus, et pourquoi.
 - **`last_used_operation()` rend un `OperationInfo`**, pas un transformateur. Avec plusieurs
   candidats, c'est celui du dernier point ; avec une seule opération, c'est elle, sans nom : la
   sélection la rend sous forme de chaîne PROJ.
-- **`Transformer` est `Send` mais pas `Sync`** : l'ensemble de candidats garde le candidat du
-  dernier point dans une `Cell`, comme `P->iCurCoordOp`. `Context`, `Crs` et `Point` sont
-  `Send + Sync`.
+- **`Transformer` est `Send + Sync`** (depuis le lot « transformer-sync », avant il était `Send`
+  seulement). L'ensemble de candidats garde deux états entre les points, comme `P->iCurCoordOp` et
+  l'avertissement `warnIfBestTransformationNotAvailable` de PROJ ; ils sont atomiques, partagés par
+  les threads. Un thread seul voit les résultats d'un thread seul. Plusieurs threads n'ordonnent pas
+  leurs points : un point qui tourne pendant qu'un autre voit échouer son premier candidat peut
+  prendre le choix des points d'avant, et `last_used_operation()` peut montrer un candidat qu'un
+  point en cours a tenté avant celui qu'il garde. `Context`, `Crs` et `Point` sont `Send + Sync`.
 - **`Backend::Auto` ne vectorise que les transformateurs à une seule opération.** Un ensemble de
   candidats choisit l'opération point par point (`proj_trans`), donc `forward_slice` y passe un
   point à la fois. Le résultat est celui de `forward`.

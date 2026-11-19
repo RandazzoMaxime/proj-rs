@@ -6,6 +6,15 @@ rest is outside semver.
 
 ## Unreleased
 
+- `Transformer` is `Send + Sync`: several threads convert through one `&Transformer`, without a
+  clone per thread. On the tested pairs and points, the results are bit for bit those of one thread.
+  The state shared between points (the operation of the last point, and the pending warning of a
+  failing candidate under the default `OnlyBest`) is atomic. Under several threads the order of the
+  points is not defined: the documentation of `Transformer` and
+  [docs/PORTING-transformer-sync.md](docs/PORTING-transformer-sync.md) say what that changes. Measured
+  on one machine over 16 alternating series, `forward` and `forward_slice` stay within 1.7 % of the
+  reference, on the median and the minimum. `clone` of a transformer with several candidates is about
+  3 % slower on the minimum (4 % on the median); it is not a per-point path.
 - Stable catalogue, database metadata and PROJ version on the native façade, so that an application
   no longer needs `proj_rs::unstable` for them. `Context::crs_catalog()` returns a `CrsCatalog`;
   `CrsCatalog::list(&CrsFilter)` lists the CRS of the database by `CatalogKind` (geographic 2D and
