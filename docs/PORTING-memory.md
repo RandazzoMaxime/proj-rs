@@ -338,3 +338,34 @@ Aucun scénario mesuré ne reste au-dessus de PROJ. Ce qui pèse encore :
   (`7182541317022.373047`). Il ne reste que le tampon de l'appelant et le bloc de 128 Kio.
 - **Les 80 candidats de `4267 → 4326`.** Réglé : voir « Les candidats partagent leurs CRS ». Il
   reste 1,2 MiB de tas Rust au pic, plus 3,0 MiB de SQLite.
+
+## La VFS et la règle « aucun `unsafe` » : elle reste, chiffres à l'appui
+
+`src/projdb_exe.rs` garde ses 48 `unsafe` (`tools/unsafe-debt.txt`). Aucune alternative examinée ne
+garde à la fois la mémoire, la plateforme minimale (rust-version 1.83) et une API sûre.
+
+- **Lire les octets en place** (`deserialize_bytes`, le repli actuel) n'a pas de `unsafe` dans le
+  dépôt, mais touche les pages mappées du binaire. Pic `ru_maxrss` de `cs2cs` (une conversion d'un
+  point, binaire `--release`, 5 passes, KiB) : `4326 → 2154` 15 368 à 15 636 avec la VFS,
+  19 860 à 20 228 en place (+4,4 MiB) ; `4267 → 4326` 16 348 à 16 604 avec la VFS, 21 424 à
+  22 160 en place (+5,2 MiB). Refusé : hausse de RSS.
+- **Copier la base** (`deserialize_read_exact`, `Backup`, fichier ou `memfd` à part) : 10 MiB de
+  tas ou de mémoire partagée par processus, ou un fichier à écrire (option b plus haut). Refusé.
+- **`sqlite-plugin` 0.11** (orbitinghail, MIT / Apache-2.0, maintenu) : la seule crate trouvée dont
+  l'enregistrement (`register_static`) et le trait `Vfs` sont sûrs et qui lie le SQLite de
+  `libsqlite3-sys`. Elle est en édition 2024, `rust-version = 1.85` (toutes ses versions, de 0.1 à
+  0.11) : `cargo +1.83.0 check` échoue (« feature `edition2024` is required »). Refusée tant que le
+  plancher du dépôt est 1.83.
+- **`sqlite-vfs` 0.2.0** (dernière version en 2022) : API sûre, mais l'état du VFS est rendu en
+  `&mut` à chaque appel depuis un pointeur partagé (`vfs_state`), et `open` incrémente un compteur
+  sans synchronisation : deux fils qui ouvrent une connexion en même temps (ce que fait le dépôt,
+  une connexion par fil) font une course de données. Son `xRead` rend `SQLITE_IOERR_SHORT_READ`
+  sans remplir de zéros la fin du tampon, ce que SQLite exige, et les fichiers temporaires ne
+  peuvent pas retomber sur la VFS par défaut. Refusée : le défaut de sûreté serait déplacé, pas
+  retiré.
+- **`rsqlite-vfs` 0.2** (MIT, rust-version 1.81) : son enregistrement (`register_vfs`) et l'accès
+  au fichier (`SQLiteVfsFile::handle`) sont des `unsafe fn`. Refusée : le `unsafe` resterait dans
+  le dépôt.
+
+La piste ouverte : passer à `sqlite-plugin` le jour où le plancher monte à 1.85, avec les mêmes
+mesures (pic de RSS ci-dessus, `tests/shared_database.rs`, les tests de `projdb_exe`).
