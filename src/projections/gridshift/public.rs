@@ -193,10 +193,10 @@ fn format_of(kind: Kind, request: &str) -> &'static str {
     if request == "null" {
         return "null";
     }
-    // The bytes are read a second time here: the open functions own the
-    // parsing, and a sniff of the magic numbers would duplicate it.
+    // The file is opened a second time here, and only its first bytes are read: the open
+    // functions own the parsing.
     let bytes = match read_grid(request) {
-        Ok(Source::Bytes(bytes)) => bytes,
+        Ok(Source::File(file)) => file.head,
         // Only a TIFF is read by tile, and every kind of grid reads TIFF.
         Ok(Source::Tiles(_)) => return "gtiff",
         Err(_) => return "",

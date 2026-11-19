@@ -681,6 +681,27 @@ pub(crate) fn read_file(path: &Path) -> io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
+/// A file read a piece at a time.
+pub(crate) trait ReadSeek: io::Read + Seek {}
+
+impl<T: io::Read + Seek> ReadSeek for T {}
+
+/// The file at `path`, open for reading behind a buffer, and its size. Through the file API of the
+/// current context when it has one, with the calls of [`read_file`] before the first read: `seek`
+/// to the end for the size, `seek` back to the start. A grid is decoded from it as it is read, so
+/// that its bytes are never held whole next to its samples.
+pub(crate) fn open_file(path: &Path) -> io::Result<(Box<dyn ReadSeek>, u64)> {
+    let Some(api) = file_api() else {
+        let file = std::fs::File::open(path)?;
+        let size = file.metadata()?.len();
+        return Ok((Box::new(io::BufReader::new(file)), size));
+    };
+    let mut file = api.open(path, FileAccess::ReadOnly)?;
+    let size = file.seek(SeekFrom::End(0))?;
+    file.seek(SeekFrom::Start(0))?;
+    Ok((Box::new(io::BufReader::new(file)), size))
+}
+
 /// `create_dir_all` of `path`, through the file API of `ctx` when it has one. The missing
 /// directories are made from the top, each with `mkdir`, as PROJ's `CreateDirectoryRecursively`.
 pub(crate) fn create_directory_all(ctx: &GridContext, path: &Path) -> io::Result<()> {

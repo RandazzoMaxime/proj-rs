@@ -5,7 +5,7 @@
 //! directory (unless `PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY` is set), then `PROJ_DATA` or else
 //! `../share/proj` of the module and the compiled directory, and the working directory last.
 //! Test fixtures are not searched unless a test puts them on `PROJ_DATA`. A name may be a path
-//! or a bare filename. A missing file is not a coordinate. When the network is on, [`read`]
+//! or a bare filename. A missing file is not a coordinate. When the network is on, [`open`]
 //! fetches a missing bare name into the cache first.
 
 use std::path::PathBuf;
@@ -58,12 +58,19 @@ pub(crate) fn resolve(name: &str) -> Option<PathBuf> {
     })
 }
 
-/// Bytes of a grid, from disk or from [`crate::network::decide_download`].
-pub(crate) fn read(name: &str) -> Option<Vec<u8>> {
+/// A grid as [`open`] gives it: a file open for reading with its size, or the bytes of a download.
+pub(crate) enum GridData {
+    File(Box<dyn crate::network::ReadSeek>, u64),
+    Bytes(Vec<u8>),
+}
+
+/// A grid from disk, or from [`crate::network::decide_download`].
+pub(crate) fn open(name: &str) -> Option<GridData> {
     if let Some(path) = resolve(name) {
-        return crate::network::read_file(&path).ok();
+        let (file, size) = crate::network::open_file(&path).ok()?;
+        return Some(GridData::File(file, size));
     }
-    crate::network::fetch_missing(name)
+    crate::network::fetch_missing(name).map(GridData::Bytes)
 }
 
 /// The file is on disk, or the network would fetch it.

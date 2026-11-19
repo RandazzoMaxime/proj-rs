@@ -14,12 +14,15 @@ mod tiles;
 
 use std::collections::BTreeMap;
 use std::f64::consts::{PI, TAU};
+use std::io::{Cursor, Read, Seek};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use crate::angle::adjlon;
 use crate::engine::{
     cartesian_to_geodetic, Coord, CreateError, Frame, IoKind, Params, Step, TransformError,
 };
+use crate::gridpath::GridData;
+use crate::projections::tiff_codec::ByteOrder;
 use tiles::{with_tiles_watch, Samples};
 
 const REL: f64 = 1e-5;
@@ -633,24 +636,24 @@ fn open_horizontal(name: &str) -> Result<GridSet, Fail> {
     if name == "null" {
         return Ok(GridSet::null_grid());
     }
-    let bytes = match read_grid(name)? {
+    let file = match read_grid(name)? {
         Source::Tiles(ifds) => return GridSet::from_tiff_horizontal(ifds),
-        Source::Bytes(bytes) => bytes,
+        Source::File(file) => file,
     };
-    if ntv2::is_ntv2(&bytes) {
-        let grids = ntv2::load(&bytes).map_err(|()| Fail::Invalid)?;
+    if ntv2::is_ntv2(&file.head) {
+        let grids = ntv2::load(&file.whole()?).map_err(|()| Fail::Invalid)?;
         return Ok(GridSet::from_ntv2(grids));
     }
-    if ntv1::is_ntv1(&bytes) {
-        let grid = ntv1::load(&bytes).map_err(|()| Fail::Invalid)?;
+    if ntv1::is_ntv1(&file.head) {
+        let grid = ntv1::load(&file.whole()?).map_err(|()| Fail::Invalid)?;
         return Ok(GridSet::from_ntv2(vec![grid]));
     }
-    if geotiff::is_tiff(&bytes) {
-        let ifds = geotiff::load(&bytes).map_err(|()| Fail::Invalid)?;
+    if geotiff::is_tiff(&file.head) {
+        let ifds = file.tiff()?;
         return GridSet::from_tiff_horizontal(ifds);
     }
-    if is_ctable2(&bytes) {
-        return GridSet::from_ctable2(&bytes);
+    if is_ctable2(&file.head) {
+        return GridSet::from_ctable2(&file.whole()?);
     }
     Err(Fail::Invalid)
 }
@@ -663,18 +666,18 @@ fn open_vertical(name: &str) -> Result<GridSet, Fail> {
     if name == "null" {
         return Ok(GridSet::null_grid());
     }
-    let bytes = match read_grid(name)? {
+    let file = match read_grid(name)? {
         Source::Tiles(ifds) => return GridSet::from_tiff_vertical(ifds),
-        Source::Bytes(bytes) => bytes,
+        Source::File(file) => file,
     };
-    if geotiff::is_tiff(&bytes) {
-        let ifds = geotiff::load(&bytes).map_err(|()| Fail::Invalid)?;
+    if geotiff::is_tiff(&file.head) {
+        let ifds = file.tiff()?;
         return GridSet::from_tiff_vertical(ifds);
     }
     // `VerticalShiftGridSet::open` (`grids.cpp`, 1631) tests the file it opened, so a
     // `grid_alternatives` fallback such as `us_nga_egm96_15.tif` -> `egm96_15.gtx` is GTX.
     if gtx_name(&opened_name(name)) {
-        return GridSet::from_gtx(&bytes);
+        return GridSet::from_gtx(&file.whole()?);
     }
     Err(Fail::Invalid)
 }
@@ -699,22 +702,86 @@ fn open_generic(name: &str) -> Result<GridSet, Fail> {
     if name == "null" {
         return Ok(GridSet::null_grid());
     }
-    let bytes = match read_grid(name)? {
+    let file = match read_grid(name)? {
         Source::Tiles(ifds) => return GridSet::from_tiff_generic(ifds),
-        Source::Bytes(bytes) => bytes,
+        Source::File(file) => file,
     };
-    if geotiff::is_tiff(&bytes) {
-        let ifds = geotiff::load(&bytes).map_err(|()| Fail::Invalid)?;
+    if geotiff::is_tiff(&file.head) {
+        let ifds = file.tiff()?;
         return GridSet::from_tiff_generic(ifds);
     }
     Err(Fail::Invalid)
 }
 
-/// A grid as it is read: its bytes, or the images of a TIFF served by the callbacks, read tile
+/// A grid as it is read: its file, or the images of a TIFF served by the callbacks, read tile
 /// by tile when they are needed.
 enum Source {
-    Bytes(Vec<u8>),
+    File(GridFile),
     Tiles(Vec<geotiff::RawIfd>),
+}
+
+/// The bytes a format is told by: the longest test (`ntv1::is_ntv1`) reads 160.
+const HEAD: u64 = 160;
+const HEAD_LEN: usize = 160;
+
+/// A grid file open for reading, with its first bytes. A GeoTIFF is decoded from the file as it is
+/// read, a chunk at a time: its bytes are never held whole next to its samples.
+struct GridFile {
+    data: GridData,
+    /// The first [`HEAD`] bytes, or the whole file when it is shorter.
+    head: Vec<u8>,
+}
+
+impl GridFile {
+    /// The grid `data`, its first bytes read. A failed read is a missing grid, as a file that
+    /// could not be read whole was.
+    fn new(mut data: GridData) -> Result<Self, Fail> {
+        let head = match &mut data {
+            GridData::File(reader, _) => {
+                let mut head = Vec::new();
+                reader
+                    .take(HEAD)
+                    .read_to_end(&mut head)
+                    .map_err(|_| Fail::Missing)?;
+                head
+            }
+            GridData::Bytes(bytes) => bytes
+                .get(..bytes.len().min(HEAD_LEN))
+                .unwrap_or_default()
+                .to_vec(),
+        };
+        Ok(Self { data, head })
+    }
+
+    /// The whole file.
+    fn whole(self) -> Result<Vec<u8>, Fail> {
+        match self.data {
+            GridData::File(mut reader, size) => {
+                let mut bytes = Vec::with_capacity(usize::try_from(size).unwrap_or(0));
+                bytes.extend_from_slice(&self.head);
+                reader.read_to_end(&mut bytes).map_err(|_| Fail::Missing)?;
+                Ok(bytes)
+            }
+            GridData::Bytes(bytes) => Ok(bytes),
+        }
+    }
+
+    /// The images of the TIFF, their samples decoded as the file is read.
+    fn tiff(self) -> Result<Vec<geotiff::RawIfd>, Fail> {
+        let order = if self.head.starts_with(b"MM") {
+            ByteOrder::Big
+        } else {
+            ByteOrder::Little
+        };
+        let loaded = match self.data {
+            GridData::File(mut reader, _) => {
+                reader.rewind().map_err(|_| Fail::Missing)?;
+                geotiff::load_from(reader, order)
+            }
+            GridData::Bytes(bytes) => geotiff::load_from(Cursor::new(bytes.as_slice()), order),
+        };
+        loaded.map_err(|()| Fail::Invalid)
+    }
 }
 
 /// The grid `name`. A grid the callbacks serve is opened with its first chunk: when that is a
@@ -723,9 +790,8 @@ enum Source {
 /// read whole, as before.
 fn read_grid(name: &str) -> Result<Source, Fail> {
     let Some(file) = crate::network_chunks::callback_file(name) else {
-        return crate::gridpath::read(name)
-            .map(Source::Bytes)
-            .ok_or(Fail::Missing);
+        let data = crate::gridpath::open(name).ok_or(Fail::Missing)?;
+        return GridFile::new(data).map(Source::File);
     };
     let file = Arc::new(Mutex::new(file));
     let head = lock_file(&file)
@@ -739,7 +805,7 @@ fn read_grid(name: &str) -> Result<Source, Fail> {
     let bytes = lock_file(&file)
         .read_whole(crate::network::MAX_GRID_BYTES)
         .ok_or(Fail::Missing)?;
-    Ok(Source::Bytes(bytes))
+    GridFile::new(GridData::Bytes(bytes)).map(Source::File)
 }
 
 fn lock_file(

@@ -15,7 +15,7 @@ mod tags;
 pub(super) use samples::{raw_samples, to_f32};
 
 use std::collections::BTreeMap;
-use std::io::Cursor;
+use std::io::{Read, Seek};
 use std::sync::{Arc, Mutex};
 
 use tiff::decoder::Decoder;
@@ -57,17 +57,14 @@ pub(super) fn contained<T>(read: impl FnOnce() -> Result<T, ()>) -> Result<T, ()
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(read)).unwrap_or(Err(()))
 }
 
-pub(super) fn load(bytes: &[u8]) -> Result<Vec<RawIfd>, ()> {
-    contained(|| load_images(bytes))
+/// The images of the TIFF read from `reader`, whose first bytes say the byte `order`, their samples
+/// decoded now. The decoder reads the file a chunk at a time.
+pub(super) fn load_from<R: Read + Seek>(reader: R, order: ByteOrder) -> Result<Vec<RawIfd>, ()> {
+    contained(|| load_images(reader, order))
 }
 
-fn load_images(bytes: &[u8]) -> Result<Vec<RawIfd>, ()> {
-    let order = if bytes.starts_with(b"MM") {
-        ByteOrder::Big
-    } else {
-        ByteOrder::Little
-    };
-    let mut decoder = Decoder::new(Cursor::new(bytes)).map_err(|_| ())?;
+fn load_images<R: Read + Seek>(reader: R, order: ByteOrder) -> Result<Vec<RawIfd>, ()> {
+    let mut decoder = Decoder::new(reader).map_err(|_| ())?;
     let mut out = Vec::new();
     loop {
         match read_ifd(&mut decoder, Mode::Eager { order }) {
@@ -95,7 +92,7 @@ fn load_images(bytes: &[u8]) -> Result<Vec<RawIfd>, ()> {
 
 /// The images of a TIFF read through `file`, with their tiles left in the file until a sample of
 /// them is needed. `Ok(None)` when an image is one this does not read by tile: the caller then
-/// reads the whole file and calls [`load`]. `Err` when the file is not a TIFF it can read.
+/// reads the whole file and calls [`load_from`]. `Err` when the file is not a TIFF it can read.
 pub(super) fn load_remote(file: &Arc<Mutex<RemoteFile>>) -> Result<Option<Vec<RawIfd>>, ()> {
     contained(|| load_remote_images(file))
 }
