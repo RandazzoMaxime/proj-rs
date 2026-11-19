@@ -104,6 +104,9 @@ fn command(argv: Vec<String>) -> ExitCode {
             return exit_code(error.code);
         }
     };
+    // The catalog's connection to `proj.db` (2.4 MiB of SQLite schema) closes before the
+    // transformation opens its own.
+    drop(catalog);
     let (build_source, build_target) = if opts.promote_3d {
         (source.clone(), target.clone())
     } else {
