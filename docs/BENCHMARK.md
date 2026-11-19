@@ -1,7 +1,9 @@
 # Benchmark: what is compared with libproj
 
 `src/bin/bench.rs` (the `proj-rs-bench` binary) times PROJ-RS and PROJ 9.9.0's
-`libproj` in the same process, on the same points, one after the other. The
+`libproj` on the same points, one after the other. libproj is timed by a small C program,
+`src/bin/support/libproj_timer.c`, that `build.rs` compiles against it: the bench sends it the
+points and reads back the times and the images (see "The libproj side without `unsafe`"). The
 numbers in the README come from one line of
 [`bench/history.jsonl`](../bench/history.jsonl).
 
@@ -46,7 +48,7 @@ Details that make the two sides do the same work:
   axes into one (`docs/PORTING-affine-plan.md`); this pair shows the largest ratio.
 - Both read the same `proj.db`: `PROJ_DATA` points to the repository's `data/`
   (that is PROJ 9.9's database) for the PROJ-RS side and for libproj.
-- libproj is a Release build of PROJ 9.9.0 (`tools/build-reference.sh`, linked
+- libproj is a Release build of PROJ 9.9.0 (`tools/build-reference.sh`, found
   with `PROJ_RS_LIBPROJ_DIR`). Its logging is switched off during the timing.
 
 `proj_trans_generic` calls `proj_trans` for each point. It has no vector kernel,
@@ -176,3 +178,29 @@ Needs cmake, a C and C++ compiler, the libtiff, libcurl and SQLite development h
 directory of `tools/build-reference.sh`, built when missing; the other builds go in
 `target/footprint` (`FOOTPRINT_OUT`), with `FOOTPRINT_JOBS` jobs (default 2). Compare only files
 with the same `machine`.
+
+## The libproj side without `unsafe`
+
+The repository has no `unsafe` outside `capi/` (CLAUDE.md). The bench called libproj through
+`extern "C"` (25 `unsafe` in `bench.rs` and `bench_billion.rs`); it now runs
+`src/bin/support/libproj_timer.c`, which `build.rs` compiles with the target's C compiler (the
+`cc` crate, already a build dependency of `libsqlite3-sys`) and links to the libproj it finds. If
+that compiler fails, `build.rs` prints a warning and the bench has no libproj column, as without
+a libproj. The bench binary no longer links libproj.
+
+- **Same points.** The bench computes the points as before and sends them as raw `f64`
+  (the radians of the bare projections, the facade points, the billion source); the timer
+  builds the same `PJ_COORD` (`t = 0` for a definition, `+inf` for a CRS pair) before the timing.
+- **Same timing.** `time_stable` is transcribed: median of 3 trials, each one untimed run then
+  the median of 11 timed runs (`CLOCK_MONOTONIC`, `QueryPerformanceCounter` on Windows);
+  the slice case copies the points into the buffer inside the timing, as before. The billion
+  case runs the same refill and the same passes, and its first slice is still checked.
+- **Same check.** The images of the slice come back and `check_same_output` compares them with
+  proj-rs; the differences printed are those of the old bench (3.725e-9 for 4326 to 2154, …).
+- **Measured** (`taskset -c 2`, the old binary and the new one alternated, 4 runs each, libproj
+  ns per point): the minimum of each case moves from -2.3 % to +2.3 %, the median from -2.9 %
+  to +2.2 %, with both signs: the noise of this machine (the proj-rs cases, whose code did not
+  change, move by as much). A first version that built each `PJ_COORD` inside the timed loop
+  was 3 to 5 % slower on the fastest per-point cases (Web Mercator); the coordinates are now
+  built before the timing, like the `Vec<PjCoord>` of the old bench. `--billion`: libproj
+  93.76 s / 95.80 s before, 93.25 s / 95.92 s after (point by point / slice).

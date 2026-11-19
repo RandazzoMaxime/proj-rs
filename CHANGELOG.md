@@ -6,6 +6,11 @@ rest is outside semver.
 
 ## Unreleased
 
+- `proj-rs-bench` no longer calls libproj in-process (25 `unsafe` gone): `build.rs` compiles
+  `src/bin/support/libproj_timer.c` against the libproj it finds, and the bench sends it the same
+  points and reads back the same timings and images. Cases, names and history are unchanged; the
+  libproj times agree with the old bench within the noise: see
+  [docs/BENCHMARK.md](docs/BENCHMARK.md).
 - No `unsafe` for the writability of `$HOME`: `access(2)` goes through `rustix::fs::access`, the
   same system call behind a safe API (Unix). The user directory is compared with PROJ's
   `projinfo` for a home without write permission, a home that is a file and a read-only mount:

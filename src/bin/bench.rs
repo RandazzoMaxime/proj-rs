@@ -19,6 +19,9 @@ use std::time::Instant;
 
 #[path = "support/bench_billion.rs"]
 mod billion;
+#[cfg(link_libproj)]
+#[path = "support/libproj_timer.rs"]
+mod libproj_timer;
 
 const GIE_PASSES: &str = include_str!("../../tests/gie/passing.txt");
 /// Catalogue transforms use a short grid. The historical cases stay at [`N`].
@@ -404,110 +407,26 @@ fn libproj_ratios(grids: &[ProjGrid<'_>]) -> Vec<(String, f64)> {
     }
 }
 
-/// `PJ_COORD` as four `f64`. `proj_trans` reads `x` and `y` for a classic projection.
-#[cfg(link_libproj)]
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct PjCoord {
-    x: f64,
-    y: f64,
-    z: f64,
-    t: f64,
-}
-
-#[cfg(link_libproj)]
-#[link(name = "proj")]
-unsafe extern "C" {
-    fn proj_context_create() -> *mut std::ffi::c_void;
-    fn proj_context_destroy(ctx: *mut std::ffi::c_void);
-    fn proj_create(
-        ctx: *mut std::ffi::c_void,
-        definition: *const std::ffi::c_char,
-    ) -> *mut std::ffi::c_void;
-    fn proj_destroy(pj: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
-    fn proj_trans(pj: *mut std::ffi::c_void, direction: i32, coord: PjCoord) -> PjCoord;
-    fn proj_log_level(ctx: *mut std::ffi::c_void, level: i32) -> i32;
-    fn proj_create_crs_to_crs(
-        ctx: *mut std::ffi::c_void,
-        source: *const std::ffi::c_char,
-        target: *const std::ffi::c_char,
-        area: *mut std::ffi::c_void,
-    ) -> *mut std::ffi::c_void;
-    fn proj_normalize_for_visualization(
-        ctx: *mut std::ffi::c_void,
-        obj: *const std::ffi::c_void,
-    ) -> *mut std::ffi::c_void;
-    fn proj_trans_generic(
-        pj: *mut std::ffi::c_void,
-        direction: i32,
-        x: *mut f64,
-        sx: usize,
-        nx: usize,
-        y: *mut f64,
-        sy: usize,
-        ny: usize,
-        z: *mut f64,
-        sz: usize,
-        nz: usize,
-        t: *mut f64,
-        st: usize,
-        nt: usize,
-    ) -> usize;
-}
-
+/// libproj's time for the scalar cases: `proj_create` on the definition, then `proj_trans` one
+/// point at a time over the same grid in radians, in `libproj_timer.c`.
 #[cfg(link_libproj)]
 fn libproj_ratios_linked(grids: &[ProjGrid<'_>]) -> Vec<(String, f64)> {
-    use std::ffi::CString;
-    // SAFETY: libproj creates one context. It is destroyed before return.
-    let ctx = unsafe { proj_context_create() };
-    assert!(!ctx.is_null(), "proj_context_create");
+    let mut timer = libproj_timer::Timer::start();
     let mut ratios = Vec::new();
     for (name, definition, (lon, lat)) in grids {
-        let text = CString::new(*definition).expect("definition");
-        // SAFETY: `text` is a nul-terminated definition. `ctx` is the context above.
-        let pj = unsafe { proj_create(ctx, text.as_ptr()) };
-        assert!(!pj.is_null(), "proj_create {definition}");
-        if *name == "utm31_forward" {
-            // SAFETY: `pj` is the UTM zone 31 projection just created.
-            let out = unsafe {
-                proj_trans(
-                    pj,
-                    1,
-                    PjCoord {
-                        x: 3.0_f64.to_radians(),
-                        y: 0.0,
-                        z: 0.0,
-                        t: 0.0,
-                    },
-                )
-            };
-            assert!(
-                (out.x - 500_000.0).abs() < 1.0,
-                "libproj UTM easting {}, ABI or definition is wrong",
-                out.x
-            );
-        }
-        let points: Vec<PjCoord> = lon
+        let points: Vec<(f64, f64)> = lon
             .iter()
             .zip(lat)
-            .map(|(&lon_deg, &lat_deg)| PjCoord {
-                x: lon_deg.to_radians(),
-                y: lat_deg.to_radians(),
-                z: 0.0,
-                t: 0.0,
-            })
+            .map(|(&lon_deg, &lat_deg)| (lon_deg.to_radians(), lat_deg.to_radians()))
             .collect();
-        let ns = per_point(&points, |coord| {
-            // SAFETY: `pj` is live and `coord` is a 32-byte `PJ_COORD`.
-            let out = unsafe { proj_trans(pj, 1, coord) };
-            out.x
-        });
-        // SAFETY: `pj` was created in this loop and is not used again.
-        unsafe { proj_destroy(pj) };
+        let check = if *name == "utm31_forward" {
+            libproj_timer::UtmCheck::Check
+        } else {
+            libproj_timer::UtmCheck::Skip
+        };
+        let ns = timer.pipeline(definition, check, &points);
         ratios.push(((*name).to_owned(), ns));
     }
-    // SAFETY: `ctx` was created at the start of this function.
-    unsafe { proj_context_destroy(ctx) };
     ratios
 }
 
@@ -527,87 +446,20 @@ fn libproj_facade() -> Vec<(String, f64)> {
 
 #[cfg(link_libproj)]
 fn libproj_facade_linked() -> Vec<(String, f64)> {
-    use std::ffi::CString;
     let (geographic, lambert) = facade_inputs();
-    // SAFETY: libproj creates one context. It is destroyed before return.
-    let ctx = unsafe { proj_context_create() };
-    assert!(!ctx.is_null(), "proj_context_create");
-    // SAFETY: `ctx` is live. Level 0 is PJ_LOG_NONE: libproj reports each missing grid of the
-    // NAD27 candidates on stderr, which says nothing about the timing.
-    unsafe { proj_log_level(ctx, 0) };
+    let mut timer = libproj_timer::Timer::start();
     let mut times = Vec::new();
     for (name, from, to) in FACADE_PAIRS {
-        let (source, target) = (
-            CString::new(from).expect("source"),
-            CString::new(to).expect("target"),
-        );
-        // SAFETY: both strings are nul-terminated and `ctx` is live. A null area is allowed.
-        let raw = unsafe {
-            proj_create_crs_to_crs(ctx, source.as_ptr(), target.as_ptr(), std::ptr::null_mut())
-        };
-        assert!(!raw.is_null(), "proj_create_crs_to_crs {from} {to}");
-        // SAFETY: `raw` is a live transform of `ctx`.
-        let pj = unsafe { proj_normalize_for_visualization(ctx, raw) };
-        assert!(
-            !pj.is_null(),
-            "proj_normalize_for_visualization {from} {to}"
-        );
-        // SAFETY: `raw` is not used again.
-        unsafe { proj_destroy(raw) };
         let points = if from == "EPSG:2154" {
             &lambert
         } else {
             &geographic
         };
-        let coords: Vec<PjCoord> = points
-            .iter()
-            .map(|&(x, y)| PjCoord {
-                x,
-                y,
-                z: 0.0,
-                t: f64::INFINITY,
-            })
-            .collect();
-        let one_by_one = per_point(&coords, |coord| {
-            // SAFETY: `pj` is live and `coord` is a 32-byte `PJ_COORD`.
-            unsafe { proj_trans(pj, 1, coord) }.x
-        });
+        let (one_by_one, array, images) = timer.facade(from, to, points);
         times.push((name.to_owned(), one_by_one));
-        let mut buffer = points.clone();
-        let array = time_stable(points.len(), || {
-            buffer.copy_from_slice(black_box(points));
-            let count = buffer.len();
-            let x = buffer.as_mut_ptr().cast::<f64>();
-            let y = x.wrapping_add(1);
-            // SAFETY: `buffer` holds `count` interleaved (x, y) pairs of 16 bytes, so `y` starts
-            // one `f64` after `x`. Null z and t with a zero count make libproj use 0 and no time.
-            let done = unsafe {
-                proj_trans_generic(
-                    pj,
-                    1,
-                    x,
-                    16,
-                    count,
-                    y,
-                    16,
-                    count,
-                    std::ptr::null_mut(),
-                    0,
-                    0,
-                    std::ptr::null_mut(),
-                    0,
-                    0,
-                )
-            };
-            black_box(done);
-        });
         times.push((name.replace("convert", "convert_array"), array));
-        check_same_output(name, &buffer, points, (from, to));
-        // SAFETY: `pj` was created in this loop and is not used again.
-        unsafe { proj_destroy(pj) };
+        check_same_output(name, &images, points, (from, to));
     }
-    // SAFETY: `ctx` was created at the start of this function.
-    unsafe { proj_context_destroy(ctx) };
     times
 }
 
