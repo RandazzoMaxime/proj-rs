@@ -65,7 +65,7 @@ Un lot par version de PROJ, dans cet ordre :
 2. **Trier les tests en échec.** Un échec n'est pas forcément un bug de proj-rs : un test qui fige
    une sortie de PROJ 9.9.0 (une liste de candidats, un texte de `projinfo`) change légitimement
    quand l'EPSG change. Comparer avec la sortie de la nouvelle version, que
-   `target/proj-reference-<tag>/build/bin` contient après `tools/proj-db/update.sh <tag>`. Une
+   `~/.cache/proj-rs/proj-reference-<tag>/build/bin` contient après `tools/proj-db/update.sh <tag>`. Une
    valeur attendue se reprend de PROJ, jamais du code testé (`CLAUDE.md`).
 3. **Lire le NEWS de PROJ.** Un correctif de calcul ou de sélection se porte dans un lot à part,
    avec ses tests d'abord.
@@ -87,12 +87,16 @@ Un lot par version de PROJ, dans cet ordre :
 
 ```bash
 tools/proj-db/update.sh 9.10.0                 # compile PROJ 9.10.0, remplace data/proj.db
-cat target/proj-reference-9.10.0/proj-db-diff.md
-PATH=$PWD/target/proj-reference-9.10.0/build/bin:$PATH PROJ_CS2CS_REQUIRED=1 \
-  PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY=YES cargo test --workspace --all-features --no-fail-fast \
-  2>&1 | tee tests.log
-tools/proj-db/report.sh 9.10.0 9.9.0 target/proj-reference-9.10.0 0 tests.log
+REF=~/.cache/proj-rs/proj-reference-9.10.0     # hors du dépôt : voir plus bas
+cat $REF/proj-db-diff.md
+PATH=$REF/build/bin:$PATH PROJ_CS2CS_REQUIRED=1 PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY=YES \
+  cargo test --workspace --all-features --no-fail-fast 2>&1 | tee tests.log
+tools/proj-db/report.sh 9.10.0 9.9.0 $REF 0 tests.log
 ```
+
+La référence se compile hors du dépôt : les tests qui comparent à `cs2cs` ignorent les dossiers de
+`PATH` situés dans le dépôt, où cargo met le `cs2cs` de proj-rs lui-même. Une référence compilée
+dans `target/` ne serait donc pas vue, et ces tests échoueraient (« no PROJ cs2cs is on PATH »).
 
 Compiler PROJ demande cmake, un compilateur C++17 et les en-têtes de SQLite (`build-reference.sh`).
 `tools/proj-db/diff.py <ancienne> <nouvelle>` compare deux bases quelconques ; il sort avec le code

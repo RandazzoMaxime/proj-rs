@@ -4,7 +4,10 @@
 # it with the one in the repository. The reference binaries of the release (cs2cs, projinfo, ...)
 # are built with it, for the tests to compare against.
 #
-# Usage: tools/proj-db/update.sh <tag> [DIR]     (default DIR: target/proj-reference-<tag>)
+# Usage: tools/proj-db/update.sh <tag> [DIR]
+#   default DIR: ${XDG_CACHE_HOME:-~/.cache}/proj-rs/proj-reference-<tag>, outside the repository:
+#   the tests that compare with cs2cs skip the PATH entries under the repository (where cargo puts
+#   proj-rs's own cs2cs), so a reference built inside it would not be compared against.
 #
 # Writes data/proj.db and DIR/proj-db-diff.md (the difference, as Markdown). A database with the
 # same content is not copied: the file would differ in bytes only. Exit status:
@@ -17,7 +20,7 @@ set -euo pipefail
 
 tag=${1:?usage: tools/proj-db/update.sh <tag> [DIR]}
 root=$(cd "$(dirname "$0")/../.." && pwd)
-dir=${2:-$root/target/proj-reference-$tag}
+dir=${2:-${XDG_CACHE_HOME:-$HOME/.cache}/proj-rs/proj-reference-$tag}
 meta() { python3 -I "$root/tools/proj-db/meta.py" "$1" "$2"; }
 
 PROJ_REF_TAG=$tag "$root/tools/build-reference.sh" "$dir"
