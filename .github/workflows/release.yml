@@ -98,6 +98,14 @@ jobs:
           # Ubuntu 22.04 for its glibc 2.35: the binaries run on every newer distribution.
           - platform: linux-x86_64
             os: ubuntu-22.04
+          # GitHub's Arm image, on the same Ubuntu 22.04: glibc 2.35 as on x86_64.
+          - platform: linux-aarch64
+            os: ubuntu-22.04-arm
+          # One static executable for any Linux (Alpine, old glibc): the tools only. A libproj.so
+          # built against musl does not load in a program linked to glibc, so there is no C library.
+          - platform: linux-x86_64-musl
+            os: ubuntu-22.04
+            rust_target: x86_64-unknown-linux-musl
           - platform: macos-arm64
             os: macos-latest
           # macos-13 is gone; macos-15-intel is an Intel image, so the x86_64 archives are built
@@ -113,8 +121,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_VERSION }}
+          targets: ${{ matrix.rust_target }}
       - if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
+      # musl-gcc compiles the bundled SQLite for the musl target.
+      - if: matrix.rust_target == 'x86_64-unknown-linux-musl'
+        run: |
+          sudo apt-get update && sudo apt-get install -y musl-tools
+          echo "PROJ_RS_TARGET=${{ matrix.rust_target }}" >> "$GITHUB_ENV"
+          echo "CC_x86_64_unknown_linux_musl=musl-gcc" >> "$GITHUB_ENV"
 
       - name: Build and pack
         if: runner.os != 'Windows'
@@ -126,7 +141,10 @@ jobs:
 
       - name: Test the archives, unpacked
         if: runner.os != 'Windows'
-        run: tools/release-smoke.sh dist/*-cli.tar.gz dist/*-libproj.tar.gz
+        run: |
+          lib=-
+          if ls dist/*-libproj.tar.gz > /dev/null 2>&1; then lib=$(echo dist/*-libproj.tar.gz); fi
+          tools/release-smoke.sh dist/*-cli.tar.gz "$lib"
       - name: Test the archives, unpacked
         if: runner.os == 'Windows'
         shell: pwsh
@@ -156,6 +174,9 @@ jobs:
           expected="
           proj-rs-$VERSION-linux-x86_64-cli.tar.gz
           proj-rs-$VERSION-linux-x86_64-libproj.tar.gz
+          proj-rs-$VERSION-linux-aarch64-cli.tar.gz
+          proj-rs-$VERSION-linux-aarch64-libproj.tar.gz
+          proj-rs-$VERSION-linux-x86_64-musl-cli.tar.gz
           proj-rs-$VERSION-macos-arm64-cli.tar.gz
           proj-rs-$VERSION-macos-arm64-libproj.tar.gz
           proj-rs-$VERSION-macos-x86_64-cli.tar.gz
