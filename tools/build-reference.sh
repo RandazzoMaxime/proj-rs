@@ -4,6 +4,7 @@
 # only the cases written in tests/cli_yaml/*.yaml.
 #
 # Usage: tools/build-reference.sh [DIR]      (default: target/proj-reference)
+# PROJ_REF_TAG=<tag> builds another release (tools/proj-db/update.sh uses it); default 9.9.0.
 #
 # Then, from the repository root:
 #   DIR=target/proj-reference
@@ -18,7 +19,7 @@
 # uses it to size a libproj that reads .tif grids and downloads, as distributions build it.
 set -euo pipefail
 
-TAG=9.9.0
+TAG=${PROJ_REF_TAG:-9.9.0}
 TIFF_CURL=${PROJ_REF_TIFF_CURL:-OFF}
 DIR=${1:-target/proj-reference}
 mkdir -p "$DIR"
