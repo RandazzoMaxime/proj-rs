@@ -14,14 +14,26 @@ Contents
 
   bin\proj.dll
   lib\proj.lib, proj.def          (import library, made from the exports of proj.dll)
+  lib\pkgconfig\proj.pc           for pkg-config, as PROJ installs it
+  lib\cmake\proj\proj-config.cmake, proj-config-version.cmake
+                                  for CMake's find_package(PROJ), target PROJ::proj
   include\proj.h, proj_constants.h, proj_experimental.h, proj_symbol_rename.h
                                   (the headers of PROJ 9.9.0, byte for byte)
 
-There is no CMake package file: pass the paths to your compiler, or write them in your own
-build.
+pkg-config and CMake report the version of PROJ whose proj.h the library implements, 9.9.0.
+Both files follow the folder they are in: the archive works wherever it is unpacked.
 
 Use
 ---
+
+With CMake, in the CMakeLists.txt of the project:
+
+  find_package(PROJ 9 CONFIG REQUIRED)
+  target_link_libraries(my_program PRIVATE PROJ::proj)
+
+and on the command line: cmake -DCMAKE_PREFIX_PATH=<this folder> ...
+
+By hand:
 
   cl /I include demo.c /link lib\proj.lib
   set PATH=%CD%\bin;%PATH%

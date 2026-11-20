@@ -1,0 +1,29 @@
+# CMake package of the proj-rs C library: `find_package(PROJ)` gives the target PROJ::proj, as the
+# package PROJ @PROJ_VERSION@ installs (cmake/project-config.cmake.in). Relocatable: the paths
+# follow this file. SQLite is inside the library, so there is no find_dependency(SQLite3).
+#
+# Sets PROJ_FOUND, PROJ_INCLUDE_DIRS, PROJ_LIBRARIES (PROJ::proj), PROJ_LIBRARY_DIRS and
+# PROJ_BINARY_DIRS; PROJ_VERSION comes from proj-config-version.cmake.
+
+get_filename_component(_PROJ_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
+set(PROJ_INCLUDE_DIRS "${_PROJ_ROOT}/include")
+set(PROJ_LIBRARY_DIRS "${_PROJ_ROOT}/lib")
+set(PROJ_BINARY_DIRS "${_PROJ_ROOT}/bin")
+set(PROJ_LIBRARIES PROJ::proj)
+
+if(NOT TARGET PROJ::proj)
+  add_library(PROJ::proj SHARED IMPORTED)
+  set_target_properties(PROJ::proj PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES "${_PROJ_ROOT}/include"
+    IMPORTED_CONFIGURATIONS RELEASE
+    IMPORTED_LOCATION_RELEASE "${_PROJ_ROOT}/@IMPORTED_LOCATION@"
+    IMPORTED_LOCATION "${_PROJ_ROOT}/@IMPORTED_LOCATION@"
+    @IMPORTED_KEY@ "@IMPORTED_VALUE@"
+  )
+  # A Debug or other build of the consumer uses the release library.
+  set_property(TARGET PROJ::proj PROPERTY MAP_IMPORTED_CONFIG_DEBUG RELEASE)
+  set_property(TARGET PROJ::proj PROPERTY MAP_IMPORTED_CONFIG_RELWITHDEBINFO RELEASE)
+  set_property(TARGET PROJ::proj PROPERTY MAP_IMPORTED_CONFIG_MINSIZEREL RELEASE)
+endif()
+
+unset(_PROJ_ROOT)
