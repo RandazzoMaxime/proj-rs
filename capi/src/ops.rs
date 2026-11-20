@@ -237,11 +237,14 @@ pub extern "C" fn proj_operation_factory_context_set_allowed_intermediate_crs(
         let mut pairs = Vec::new();
         if !list_of_auth_name_codes.is_null() {
             let mut index = 0;
-            while let Some(authority) = util::get(list_of_auth_name_codes.wrapping_add(index)) {
-                let (Some(authority), Some(code)) = (
-                    util::text(authority),
-                    util::get(list_of_auth_name_codes.wrapping_add(index + 1)).and_then(util::text),
-                ) else {
+            // The NULL that ends the list is read before the slot after it: reading the code of
+            // a NULL authority went past the end of the array (found by pyproj, a segfault).
+            while let Some(authority) =
+                util::get(list_of_auth_name_codes.wrapping_add(index)).and_then(util::text)
+            {
+                let Some(code) =
+                    util::get(list_of_auth_name_codes.wrapping_add(index + 1)).and_then(util::text)
+                else {
                     break;
                 };
                 pairs.push((authority.to_owned(), code.to_owned()));
