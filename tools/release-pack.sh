@@ -4,7 +4,12 @@
 #
 # Usage: tools/release-pack.sh <target> [OUTDIR]      (default OUTDIR: target/release-archives)
 #
-#   <target>  the platform name of the archives: linux-x86_64, macos-arm64, macos-x86_64.
+#   <target>  the platform name of the archives: linux-x86_64, linux-aarch64, linux-x86_64-musl,
+#             macos-arm64, macos-x86_64.
+#
+# PROJ_RS_TARGET=<rust target> builds for that Rust target (tools/dist-cli.sh). A musl target
+# makes the archive of the tools only: one static executable for any Linux. The C library is not
+# packed for musl: a libproj.so built against musl does not load in a program linked to glibc.
 #
 # Makes, with <version> read from Cargo.toml:
 #   OUTDIR/proj-rs-<version>-<target>-cli.tar.gz       bin/proj-rs and one link per tool name
@@ -27,7 +32,24 @@ trap 'rm -rf "$work"' EXIT
 cli_dir=proj-rs-$version-$target_name-cli
 lib_dir=proj-rs-$version-$target_name-libproj
 
+musl=no
+case ${PROJ_RS_TARGET:-} in *-musl*) musl=yes ;; esac
+
 "$root/tools/dist-cli.sh" --release "$work/cli-prefix"
+if [ "$musl" = yes ]; then
+  mkdir -p "$work/$cli_dir"
+  cp -a "$work/cli-prefix/bin" "$work/$cli_dir/bin"
+  mkdir -p "$work/$cli_dir/data/licenses"
+  cp "$root/LICENSE" "$root/NOTICE.md" "$work/$cli_dir/"
+  cp "$root/data/COPYING" "$work/$cli_dir/data/"
+  cp "$root"/data/licenses/* "$work/$cli_dir/data/licenses/"
+  sed -e "s|@VERSION@|$version|g" -e "s|@TARGET@|$target_name|g" \
+      -e 's|@USERDIR@|$XDG_DATA_HOME/proj or ~/.local/share/proj|g' \
+      "$root/tools/release/README-cli-unix.txt" > "$work/$cli_dir/README.txt"
+  COPYFILE_DISABLE=1 tar -C "$work" --owner=0 --group=0 --numeric-owner -cf - "$cli_dir" | gzip -9n > "$out/$cli_dir.tar.gz"
+  ls -l "$out/$cli_dir.tar.gz"
+  exit 0
+fi
 "$root/capi/tests/dist.sh" --release "$work/lib-prefix"
 
 # `libproj.a` needs the system libraries Rust's std uses: rustc prints them for the staticlib.
