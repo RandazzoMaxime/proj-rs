@@ -2471,26 +2471,23 @@ enum Shape {
 /// `->identify()` on a two-axis or flattened ellipsoid. A match in `proj_ellps`
 /// takes its name and values. Otherwise the ellipsoid stays `unknown` on the
 /// body `guess_body` names.
+/// `Ellipsoid::identify` (`datum.cpp`): the ellipsoid of the given axes, named after the PROJ
+/// ellipsoid they match. Only the name is taken from the table: the values stay as written.
 fn identified_ellipsoid(major: f64, shape: Shape) -> Ellipsoid {
     let entry = match shape {
         Shape::Flattened(inverse) => well_known_ellps_entry(major, Some(inverse), None),
         Shape::TwoAxis(minor) => well_known_ellps_entry(major, None, Some(minor)),
     };
-    let mut ellipsoid = match (entry, shape) {
-        (Some((_, name, table_major, second, true)), _) => {
-            Ellipsoid::create_flattened_sphere(*name, *table_major, *second)
-        }
-        (Some((_, name, table_major, second, false)), _) => {
-            Ellipsoid::create_two_axis(*name, *table_major, *second)
-        }
-        (None, Shape::Flattened(inverse)) => {
-            Ellipsoid::create_flattened_sphere("unknown", major, inverse)
-        }
-        (None, Shape::TwoAxis(minor)) => Ellipsoid::create_two_axis("unknown", major, minor),
+    let name = match entry.map(|(_, name, ..)| *name) {
+        Some(name) if name.starts_with("GRS 1980") => "GRS 1980",
+        Some(name) => name,
+        None => "unknown",
     };
-    if entry.is_none() {
-        ellipsoid.body = guess_body(major);
-    }
+    let mut ellipsoid = match shape {
+        Shape::Flattened(inverse) => Ellipsoid::create_flattened_sphere(name, major, inverse),
+        Shape::TwoAxis(minor) => Ellipsoid::create_two_axis(name, major, minor),
+    };
+    ellipsoid.body = guess_body(major);
     ellipsoid
 }
 
