@@ -30,6 +30,7 @@ difference). `dist.sh` installs the library under the names of libproj: `libproj
 | `include_h` | `include_proj_h_from_c.c`: `proj.h` and `proj_experimental.h` compile as C |
 | `fork` | `test_fork.c`: contexts survive a `fork()` |
 | `datadir` | `datadir.c`: `proj_context_get_user_writable_directory` and `proj_info().searchpath` are those of the reference libproj under ten environments (home, `XDG_DATA_HOME`, `PROJ_DATA`, `PROJ_LIB`, skip, `PROJ_USER_WRITABLE_DIRECTORY`, `proj_context_set_search_paths`), and the library installed in `<prefix>/lib` lists `<prefix>/share/proj` |
+| `embedded_db` | `embedded_db.c`: with a search path or `PROJ_DATA` that holds no `proj.db`, `EPSG:32631` is still created from the built-in `proj.db`, where the reference libproj fails. A deliberate deviation, see `docs/PORTING-database-open.md` |
 | `c_api` | `test_c_api.cpp`: 152 `TEST`, 32 excluded, 120 pass |
 
 ## Excluded: `excluded.txt`
