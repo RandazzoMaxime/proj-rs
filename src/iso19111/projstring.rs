@@ -682,10 +682,18 @@ pub(crate) fn projection_steps(source: &Crs, target: &Crs) -> Result<Vec<String>
             ));
         }
     }
-    let mut projection = projected.deriving_conversion().export_to_proj_string()?;
-    append_ellipsoid(&mut projection, base);
-    append_meridian(&mut projection, base);
-    steps.push(projection);
+    if projected
+        .deriving_conversion()
+        .is_popular_visualisation_mercator()
+    {
+        // The WGS 84 ellipsoid of the step stands for the base's sphere (conversion.cpp:4119).
+        steps.push("+proj=webmerc +ellps=WGS84".to_owned());
+    } else {
+        let mut projection = projected.deriving_conversion().export_to_proj_string()?;
+        append_ellipsoid(&mut projection, base);
+        append_meridian(&mut projection, base);
+        steps.push(projection);
+    }
     if let Some(step) = projected_unit_step(projected) {
         steps.push(step);
     }
