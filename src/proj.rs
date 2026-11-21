@@ -1594,6 +1594,13 @@ impl ProjBuilder {
         Ok(())
     }
 
+    /// The `init=` rules a pair built by this builder reads its CRS with, as
+    /// `proj_context_use_proj4_init_rules` sets them on a context.
+    #[doc(hidden)]
+    pub fn set_init_rules(&mut self, rules: crate::iso19111::InitRules) {
+        self.net.init_rules = Some(rules);
+    }
+
     /// Set the user-writable directory without creating it, as
     /// `proj_context_set_user_writable_directory` with `create` off does.
     #[doc(hidden)]
