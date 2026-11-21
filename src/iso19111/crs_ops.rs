@@ -317,6 +317,49 @@ impl Crs {
         }
     }
 
+    /// `CRS::promoteTo3D(newName, dbContext, verticalAxisIfNotAlreadyPresent)` for a geographic,
+    /// projected or bound CRS: `name` (this CRS's own when empty) and the height axis `axis`.
+    /// A geographic 3D CRS found in the database keeps its own name.
+    #[must_use]
+    pub(crate) fn promote_to_3d_as(
+        &self,
+        name: &str,
+        db: Option<&DatabaseContext>,
+        axis: &Axis,
+    ) -> Self {
+        let mut promoted = match self {
+            Self::Geographic(crs) | Self::Geodetic(GeodeticCRS::Geographic(crs)) => {
+                Self::Geographic(crs.promote_to_3d_with_axis(db, Some(axis)))
+            }
+            Self::Projected(crs) if crs.coordinate_system().axes().len() == 2 => {
+                let mut projected = crs.promote_to_3d(db);
+                projected.coordinate_system.axes[2] = axis.clone();
+                Self::Projected(projected)
+            }
+            Self::Bound(crs) => {
+                let source = crs.source.promote_to_3d_as(name, db, axis);
+                return if operation_has_towgs84(&crs.transformation) {
+                    Self::Bound(BoundCRS::create(
+                        source,
+                        crs.target.promote_to_3d(db),
+                        promote_operation(&crs.transformation, db),
+                    ))
+                } else {
+                    Self::Bound(BoundCRS::create(
+                        source,
+                        crs.target.as_ref().clone(),
+                        crs.transformation.clone(),
+                    ))
+                };
+            }
+            _ => return self.clone(),
+        };
+        if !name.is_empty() && promoted.identifiers().is_empty() {
+            promoted.identified_mut().name = name.to_owned();
+        }
+        promoted
+    }
+
     /// `CRS::demoteTo2D`. A compound CRS returns its first component.
     #[must_use]
     pub fn demote_to_2d(&self, db: Option<&DatabaseContext>) -> Self {
@@ -474,19 +517,6 @@ fn demote_derived_geographic(crs: &DerivedCRS, db: Option<&DatabaseContext>) -> 
         conversion: crs.conversion.clone(),
         coordinate_system: CoordinateSystem::Ellipsoidal(coordinate_system),
     })
-}
-
-/// The hub and the TOWGS84 transformation of a bound CRS whose base has just been promoted to
-/// 3D, as `BoundCRS::promoteTo3D` does (crs.cpp:1479-1487). The other bound CRS keep their hub.
-pub(super) fn promote_bound_hub_to_3d(crs: &mut Crs, db: Option<&DatabaseContext>) {
-    let Crs::Bound(bound) = crs else {
-        return;
-    };
-    if !operation_has_towgs84(&bound.transformation) {
-        return;
-    }
-    bound.target = Arc::new(bound.target.promote_to_3d(db));
-    bound.transformation = promote_operation(&bound.transformation, db);
 }
 
 fn promote_bound(crs: &BoundCRS, db: Option<&DatabaseContext>) -> Crs {

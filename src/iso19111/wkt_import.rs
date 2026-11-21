@@ -2876,6 +2876,8 @@ impl WktParser {
             implicit_cs: ci_eq(node.value(), "PROJCS") && node.count_named("AXIS") == 0,
         };
         let mut bound = bound;
+        // `BoundCRS::create(projCRS, ...)` takes the projected name, not the GEOGCS one.
+        bound.identified_mut().name = projected.identified.name.clone();
         *bound.source_crs_mut() = Crs::Projected(projected);
         Ok(WktObject::Crs(Crs::Bound(bound)))
     }
@@ -4189,6 +4191,16 @@ fn lax_compd_cs(
                 axis.direction(),
                 axis.unit().clone(),
             );
+            if projected_of(&first).is_some_and(|projected| {
+                projected.coordinate_system().axes().len() == 2
+                    && projected
+                        .coordinate_system()
+                        .axes()
+                        .iter()
+                        .any(|horizontal| horizontal.unit().name() != axis.unit().name())
+            }) {
+                return Err(invalid("All axis of a CartesianCS must have the same unit"));
+            }
             let original_first = if let Crs::Bound(bound) = &first {
                 bound.source_crs().clone()
             } else {
@@ -4198,9 +4210,7 @@ fn lax_compd_cs(
                 identified: Identified::named(name),
                 components: vec![original_first, second],
             };
-            let mut promoted = first;
-            add_height_axis(&mut promoted, height, &new_name);
-            super::crs_ops::promote_bound_hub_to_3d(&mut promoted, db);
+            let mut promoted = first.promote_to_3d_as(&new_name, db, &height);
             attach_compound(&mut promoted, compound);
             return Ok(Some(promoted));
         }
@@ -4218,6 +4228,14 @@ fn horizontal_geographic(crs: &Crs) -> Option<GeographicCRS> {
             _ => None,
         },
         Crs::Bound(bound) => horizontal_geographic(bound.source_crs()),
+        _ => None,
+    }
+}
+
+fn projected_of(crs: &Crs) -> Option<&ProjectedCRS> {
+    match crs {
+        Crs::Projected(projected) => Some(projected),
+        Crs::Bound(bound) => projected_of(bound.source_crs()),
         _ => None,
     }
 }
