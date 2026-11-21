@@ -1876,7 +1876,7 @@ fn crs_from_proj_string(
         return Ok(vertical);
     }
     let proj = token(&tokens, "proj");
-    let mut crs = if matches!(proj, "longlat" | "lonlat" | "latlong") {
+    let mut crs = if matches!(proj, "longlat" | "lonlat" | "latlong" | "latlon") {
         geographic_from_proj_string(&tokens)?
     } else if proj == "geocent" {
         proj_crs::geocentric_from_proj_string(&tokens)?
