@@ -2,7 +2,7 @@
 # Compile the C tests of PROJ 9.9.0 against the C library of proj-rs, and run them.
 #
 # Usage: capi/tests/run.sh [--release] [TEST...]
-#   TEST is one of: symbols abi lists errno_string angular_io context include_h fork datadir c_api
+#   TEST is one of: symbols abi lists horizontal_datum errno_string angular_io context include_h fork datadir c_api
 #   (default: all). PENDING=0 runs the cases of pending.txt too, to see them fail.
 #   GTEST_FILTER=pattern narrows the gtest cases of the C++ tests.
 #
@@ -22,7 +22,7 @@ if [ "${1:-}" = "--release" ]; then
   shift
 fi
 tests=("$@")
-[ ${#tests[@]} -gt 0 ] || tests=(symbols abi lists errno_string angular_io context include_h fork datadir c_api)
+[ ${#tests[@]} -gt 0 ] || tests=(symbols abi lists horizontal_datum errno_string angular_io context include_h fork datadir c_api)
 
 ref=${PROJ_REFERENCE:-$root/target/proj-reference}
 src=$ref/src
@@ -100,6 +100,18 @@ for test in "${tests[@]}"; do
       diff "$out/lists_ref.txt" "$out/lists_ours.txt" | head -5
       cmp -s "$out/lists_ref.txt" "$out/lists_ours.txt" || { echo "lists differ from PROJ" >&2; exit 1; }
       echo "$(wc -l < "$out/lists_ours.txt") list entries identical to PROJ" ;;
+    horizontal_datum)
+      echo "== horizontal_datum"
+      gcc -std=c99 -I"$root/capi/include" "$here/horizontal_datum.c" -o "$out/hdatum_ours" "${ldflags[@]}"
+      gcc -std=c99 -I"$src/src" "$here/horizontal_datum.c" -o "$out/hdatum_ref" -L"$ref/build/lib" -lproj \
+        -Wl,-rpath,"$ref/build/lib"
+      # LD_LIBRARY_PATH names our library for the C suite; it wins over the RUNPATH of the binary.
+      LD_LIBRARY_PATH="$ref/build/lib" "$out/hdatum_ref" > "$out/hdatum_ref.txt"
+      "$out/hdatum_ours" > "$out/hdatum_ours.txt"
+      diff "$out/hdatum_ref.txt" "$out/hdatum_ours.txt" | head -12
+      cmp -s "$out/hdatum_ref.txt" "$out/hdatum_ours.txt" \
+        || { echo "the horizontal datum of a CRS differs from PROJ" >&2; exit 1; }
+      echo "$(wc -l < "$out/hdatum_ours.txt") horizontal datums read as PROJ reads them" ;;
     errno_string) run_gtest proj_errno_string_test "$unit/proj_errno_string_test.cpp" ;;
     angular_io)   run_gtest proj_angular_io_test "$unit/proj_angular_io_test.cpp" ;;
     context)      run_gtest proj_context_test "$unit/proj_context_test.cpp" ;;
