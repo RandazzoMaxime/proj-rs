@@ -1881,11 +1881,7 @@ fn read_user_object(
 ) -> Result<UserObject, FactoryError> {
     let text = text.trim();
     if text.starts_with('{') {
-        let db = require_database(db)?;
-        return match import_json(text, db) {
-            Ok(crs) => Ok(UserObject::Crs(crs)),
-            Err(error) => json_object(text, db).map_err(|_| error),
-        };
+        return import_json_object(text, require_database(db)?);
     }
     if let Some(crs) = crs_from_ogc_auto(text)? {
         return Ok(UserObject::Crs(crs));
@@ -1951,36 +1947,6 @@ fn wkt_object(object: WktObject) -> Result<UserObject, FactoryError> {
         }
         WktObject::Identifier(_) | WktObject::Unknown => {
             return Err(FactoryError::Invalid("WKT is not a CRS".to_owned()))
-        }
-    })
-}
-
-/// A PROJJSON object that is not a CRS: the datums [`import_user_object`] reads, then the
-/// ellipsoids, prime meridians, datum ensembles and operations of [`create_object_from_json`].
-fn json_object(text: &str, db: &DatabaseContext) -> Result<UserObject, FactoryError> {
-    if let Ok(object) = import_user_object(text, db) {
-        return Ok(object);
-    }
-    Ok(match create_object_from_json(text, Some(db))? {
-        JsonObject::Crs(crs) => UserObject::Crs(crs),
-        JsonObject::Ellipsoid(ellipsoid) => UserObject::Ellipsoid(ellipsoid),
-        JsonObject::PrimeMeridian(meridian) => UserObject::PrimeMeridian(meridian),
-        JsonObject::GeodeticReferenceFrame(frame) => UserObject::GeodeticDatum(frame),
-        JsonObject::VerticalReferenceFrame(frame) => UserObject::VerticalDatum(frame),
-        JsonObject::DatumEnsemble(ensemble) => UserObject::Ensemble(ensemble),
-        JsonObject::Conversion(conversion) => {
-            UserObject::Operation(CoordinateOperation::Conversion(conversion))
-        }
-        JsonObject::Transformation(transformation) => {
-            UserObject::Operation(CoordinateOperation::Transformation(transformation))
-        }
-        JsonObject::Concatenated(concatenated) => {
-            UserObject::Operation(CoordinateOperation::Concatenated(concatenated))
-        }
-        JsonObject::Axis(_) => {
-            return Err(FactoryError::Invalid(
-                "an axis is not an object of createFromUserInput".to_owned(),
-            ))
         }
     })
 }
@@ -2696,20 +2662,32 @@ fn authority_crs(
     }
 }
 
-fn import_json(text: &str, db: &DatabaseContext) -> Result<Crs, FactoryError> {
-    // Strict PROJJSON first. A datum at the root is not a CRS. A projected CRS that
-    // omits `type` on its datum and `coordinate_system` fails both importers and is
-    // still a CRS through the lenient reader.
-    if let Ok(JsonObject::Crs(crs)) = create_object_from_json(text, Some(db)) {
-        return Ok(crs);
-    }
-    match import_user_object(text, db) {
-        Ok(UserObject::Crs(crs)) => Ok(crs),
-        Ok(_) => Err(FactoryError::Invalid(
-            "PROJJSON object is not a CRS".to_owned(),
-        )),
-        Err(error) => lenient_projected_json(text, db).map_err(|_| error),
-    }
+/// Any PROJJSON object `createFromUserInput` returns (`JSONParser::create`): the strict reader's
+/// objects first, then the parametric, engineering and temporal datums and the coordinate metadata
+/// of `import_user_object`, then the lenient projected CRS.
+fn import_json_object(text: &str, db: &DatabaseContext) -> Result<UserObject, FactoryError> {
+    let object = match create_object_from_json(text, Some(db)) {
+        Ok(JsonObject::Ellipsoid(ellipsoid)) => UserObject::Ellipsoid(ellipsoid),
+        Ok(JsonObject::PrimeMeridian(meridian)) => UserObject::PrimeMeridian(meridian),
+        Ok(JsonObject::GeodeticReferenceFrame(datum)) => UserObject::GeodeticDatum(datum),
+        Ok(JsonObject::VerticalReferenceFrame(datum)) => UserObject::VerticalDatum(datum),
+        Ok(JsonObject::DatumEnsemble(ensemble)) => UserObject::Ensemble(ensemble),
+        Ok(JsonObject::Conversion(conversion)) => {
+            UserObject::Operation(CoordinateOperation::Conversion(conversion))
+        }
+        Ok(JsonObject::Transformation(transformation)) => {
+            UserObject::Operation(CoordinateOperation::Transformation(transformation))
+        }
+        Ok(JsonObject::Concatenated(concatenated)) => {
+            UserObject::Operation(CoordinateOperation::Concatenated(concatenated))
+        }
+        Ok(JsonObject::Crs(crs)) => UserObject::Crs(crs),
+        Ok(JsonObject::Axis(_)) | Err(_) => match import_user_object(text, db) {
+            Ok(object) => object,
+            Err(error) => UserObject::Crs(lenient_projected_json(text, db).map_err(|_| error)?),
+        },
+    };
+    Ok(object)
 }
 
 /// Projected PROJJSON with omitted names, units, and coordinate systems.
