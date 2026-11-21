@@ -32,7 +32,19 @@ pub(crate) struct Pj {
     pub(crate) transformed: bool,
     /// The object was read from a text by `proj_create`: a PROJ string is answered by the engine.
     pub(crate) from_text: bool,
+    /// How PROJ reads the text `proj_create` was given.
+    pub(crate) read_as: ReadAs,
     pub(crate) arena: Arena,
+}
+
+/// How PROJ reads an object made from a text.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReadAs {
+    /// The object `createFromUserInput` gives.
+    Object,
+    /// A PROJ string without `+type=crs`: an operation for PROJ, even where this port also
+    /// builds a CRS for it.
+    ProjOperation,
 }
 
 impl std::fmt::Debug for Pj {
@@ -50,6 +62,7 @@ impl Pj {
             normalized: false,
             transformed: false,
             from_text: false,
+            read_as: ReadAs::Object,
             arena: Arena::default(),
         }
     }
@@ -63,6 +76,7 @@ impl Pj {
             normalized: false,
             transformed: false,
             from_text: false,
+            read_as: ReadAs::Object,
             arena: Arena::default(),
         }
     }
@@ -86,6 +100,7 @@ impl Pj {
             normalized: self.normalized,
             transformed: false,
             from_text: false,
+            read_as: self.read_as,
             arena: Arena::default(),
         }
     }
@@ -145,6 +160,9 @@ pub(crate) fn create(ctx: *mut PJ_CONTEXT, definition: &str, who: &str) -> *mut 
             let proj = engine.ok().or_else(|| obj.engine_proj(context));
             let mut made = Pj::with_obj(pointer, obj, proj);
             made.from_text = true;
+            if proj_string && !names_type_crs(definition) {
+                made.read_as = ReadAs::ProjOperation;
+            }
             hand_over(made)
         }
         (Err(_), Ok(proj)) => hand_over(Pj::new(pointer, proj)),
@@ -274,6 +292,14 @@ pub extern "C" fn proj_area_destroy(area_pointer: *mut PJ_AREA) {
 }
 
 /// A PROJ string, which names an operation and needs no database to be read.
+/// `+type=crs` among the words of a PROJ string.
+fn names_type_crs(text: &str) -> bool {
+    text.split_whitespace().any(|word| {
+        word.trim_start_matches('+')
+            .eq_ignore_ascii_case("type=crs")
+    })
+}
+
 fn looks_like_proj_string(text: &str) -> bool {
     let bare = text.trim_start().trim_start_matches('+');
     bare.starts_with("proj=") || bare.starts_with("init=") || bare.starts_with("title=")
