@@ -1914,7 +1914,10 @@ fn read_user_object(
             }
         }
     }
+    // `createFromUserInput` reads a WKT with `setStrict(false)` (io.cpp:7789-7792): a grammar
+    // error or a recoverable issue is a warning, not a failure.
     let mut parser = WktParser::new();
+    parser.set_strictness(super::wkt::WktStrictness::Lenient);
     if let Some(db) = db {
         parser.attach_database(db.clone());
     }
