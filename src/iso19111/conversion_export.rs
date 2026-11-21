@@ -276,10 +276,10 @@ fn export_proj_based(
     };
     let (source, target) = (horizontal_component(source), horizontal_component(target));
     let projected = |crs: &Crs| matches!(crs, Crs::Projected(_) | Crs::DerivedProjected(_));
-    if !projected(&source) {
-        // `PROJBasedOperation::_exportToPROJString`: from a CRS that is not projected (the
-        // `EXTENSION_PROJ4` operation of a `+lon_wrap` geographic CRS), the string is the export.
-        // A derived projected CRS's PROJ-based conversion always starts from a projected base.
+    if !(projected(&source) && projected(&target)) {
+        // `PROJBasedOperation::_exportToPROJString`: unless both ends are projected (the
+        // PROJ-based conversion of a derived projected CRS), the string is the export, as for
+        // the `EXTENSION_PROJ4` operation of a `+lon_wrap` geographic or `+approx` UTM CRS.
         formatter.ingest_proj_string(text);
         return Ok(true);
     }
