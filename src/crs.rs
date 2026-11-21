@@ -1034,46 +1034,31 @@ fn init_file_section(file: &str, section: &str) -> Result<String, CreateError> {
     init_section_from_text(&String::from_utf8_lossy(&text), section)
 }
 
-/// The words of the `<SECTION>` entry of an init dictionary: it runs from `<SECTION>` to the
-/// closing `<>`, may span several lines, and skips `#` comment lines (`pj_init_ctx`).
+/// The section `<section>` of an init file, as PROJ's `get_init_string` (`src/init.cpp`) reads it:
+/// from its header line to the first `<` after the header, which starts the next section (`<>`
+/// included), or to the end of the file. Each line loses its `#` comment (`pj_chomp`).
 fn init_section_from_text(text: &str, section: &str) -> Result<String, CreateError> {
     let header = format!("<{section}>");
-    let mut inside = false;
-    let mut parts: Vec<&str> = Vec::new();
-    for line in text.lines() {
-        let line = line.trim();
-        if !inside {
-            if let Some(rest) = line.strip_prefix(header.as_str()) {
-                inside = true;
-                push_init_words(rest, &mut parts);
-            }
-        } else if !line.starts_with('#') {
-            push_init_words(line, &mut parts);
+    let mut lines = text.lines().map(chomp_init_line);
+    let first = lines
+        .find_map(|line| line.strip_prefix(header.as_str()))
+        .ok_or(CreateError::IllegalValue("init"))?;
+    let mut body = first.to_owned();
+    for line in lines {
+        if body.contains('<') {
+            break;
         }
-        if parts.last() == Some(&"<>") {
-            parts.pop();
-            return Ok(parts.join(" "));
-        }
+        body.push(' ');
+        body.push_str(line);
     }
-    // A section may end at the end of the file instead of at `<>` (`pj_init_ctx` reads to the
-    // end of the stream), as the `proj_context_test.cpp` dictionary does.
-    if !inside {
-        return Err(CreateError::IllegalValue("init"));
-    }
-    if parts.last() == Some(&"<>") {
-        parts.pop();
-    }
-    Ok(parts.join(" "))
+    let body = body.split('<').next().unwrap_or_default();
+    Ok(body.split_whitespace().collect::<Vec<_>>().join(" "))
 }
 
-/// Words of one init-file line, with the `<>` end marker kept as a word.
-fn push_init_words<'a>(line: &'a str, parts: &mut Vec<&'a str>) {
-    for word in line.split_whitespace() {
-        if parts.last() == Some(&"<>") {
-            return;
-        }
-        parts.push(word);
-    }
+/// `pj_chomp`: the line without its `#` comment and its surrounding blanks and `;`.
+fn chomp_init_line(line: &str) -> &str {
+    let line = line.split('#').next().unwrap_or_default();
+    line.trim_matches(|ch: char| ch.is_whitespace() || ch == ';')
 }
 
 pub(crate) fn epsg_pipeline(source: &str, target: &str) -> Result<(String, bool), CreateError> {
