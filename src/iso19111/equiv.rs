@@ -717,7 +717,8 @@ fn geographic_equivalent(
     if criterion == Equivalence::Strict && !same_name(left.name(), right.name()) {
         return false;
     }
-    if geographic_anchor(left, right, criterion)
+    if extensions_compatible(&left.identified, &right.identified)
+        && geographic_anchor(left, right, criterion)
         && cs_axes_match_for(
             left.coordinate_system().axes(),
             right.coordinate_system().axes(),
@@ -726,7 +727,9 @@ fn geographic_equivalent(
     {
         return true;
     }
-    if criterion != Equivalence::ExceptAxisOrder {
+    // `GeographicCRS::_isEquivalentTo` (crs.cpp:3264-3290) retries with `left` rebuilt on swapped
+    // axes, which drops its PROJ4 extension: only an extension of `right` still counts.
+    if criterion != Equivalence::ExceptAxisOrder || right.identified.extension_proj4.is_some() {
         return false;
     }
     let mut swapped: Vec<Axis> = right.coordinate_system().axes().to_vec();
@@ -762,6 +765,22 @@ fn geographic_anchor(left: &GeographicCRS, right: &GeographicCRS, criterion: Equ
     }
 }
 
+/// `SingleCRS::baseIsEquivalentTo` (crs.cpp:1700-1724): a CRS with a PROJ4 extension and one
+/// without are not equivalent. Two extensions are not compared: PROJ returns true for them.
+fn extensions_compatible(left: &Identified, right: &Identified) -> bool {
+    left.extension_proj4.is_some() == right.extension_proj4.is_some()
+}
+
+/// [`extensions_compatible`] for two geodetic CRS, as the database path compares them too.
+pub(crate) fn geodetic_extensions_compatible(left: &GeodeticCRS, right: &GeodeticCRS) -> bool {
+    let identified = |crs: &GeodeticCRS| match crs {
+        GeodeticCRS::Geographic(crs) => crs.identified.extension_proj4.is_some(),
+        GeodeticCRS::Geocentric(crs) => crs.identified.extension_proj4.is_some(),
+        GeodeticCRS::Spherical(crs) => crs.identified.extension_proj4.is_some(),
+    };
+    identified(left) == identified(right)
+}
+
 fn geodetic_equivalent(left: &GeodeticCRS, right: &GeodeticCRS, criterion: Equivalence) -> bool {
     match (left, right) {
         (GeodeticCRS::Geographic(left), GeodeticCRS::Geographic(right)) => {
@@ -769,6 +788,7 @@ fn geodetic_equivalent(left: &GeodeticCRS, right: &GeodeticCRS, criterion: Equiv
         }
         (GeodeticCRS::Geocentric(left), GeodeticCRS::Geocentric(right)) => {
             (criterion != Equivalence::Strict || same_name(left.name(), right.name()))
+                && extensions_compatible(&left.identified, &right.identified)
                 && geodetic_anchor_equivalent(
                     (left.datum(), left.ensemble.as_ref()),
                     (right.datum(), right.ensemble.as_ref()),
@@ -783,6 +803,7 @@ fn geodetic_equivalent(left: &GeodeticCRS, right: &GeodeticCRS, criterion: Equiv
         (GeodeticCRS::Spherical(left), GeodeticCRS::Spherical(right)) => {
             (criterion != Equivalence::Strict
                 || same_name(&left.identified.name, &right.identified.name))
+                && extensions_compatible(&left.identified, &right.identified)
                 && geodetic_anchor_equivalent(
                     (left.datum.as_ref(), left.ensemble.as_ref()),
                     (right.datum.as_ref(), right.ensemble.as_ref()),
@@ -1670,6 +1691,23 @@ pub(crate) fn identify_axes_match(
         ),
         _ => false,
     }
+}
+
+/// The axes of `this` swapped (latitude and longitude) line up with those of `candidate`, which
+/// has no PROJ4 extension, as the retry of `GeographicCRS::_isEquivalentTo` compares them.
+pub(crate) fn identify_axes_swapped(this: &GeodeticCRS, candidate: &GeodeticCRS) -> bool {
+    let (GeodeticCRS::Geographic(left), GeodeticCRS::Geographic(right)) = (this, candidate) else {
+        return false;
+    };
+    if right.identified.extension_proj4.is_some() {
+        return false;
+    }
+    let mut swapped: Vec<Axis> = left.coordinate_system().axes().to_vec();
+    if !(2..=3).contains(&swapped.len()) {
+        return false;
+    }
+    swapped.swap(0, 1);
+    directions_and_units(&swapped, right.coordinate_system().axes())
 }
 
 /// Ellipsoid size matches. Names are not compared.
