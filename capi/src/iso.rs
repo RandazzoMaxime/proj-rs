@@ -4,7 +4,7 @@
 use std::ffi::{c_char, c_int};
 
 use proj_rs::iso19111::{
-    CoordinateOperation, CoordinateSystem, Crs, DatabaseContext, EllipsoidalHeightPolicy,
+    CoordinateOperation, CoordinateSystem, Crs, DatabaseContext, Datum, EllipsoidalHeightPolicy,
     Equivalence, GeodeticCRS, Identifier, JsonFormat, JsonLines, LinunitPolicy, ObjectDomain,
     OutputAxisRule, ProjLines, UserObject, WktConvention, WktFormatter, WktLines, WktStrictness,
 };
@@ -218,9 +218,10 @@ pub extern "C" fn proj_get_name(obj: *const PJ) -> *const c_char {
         let Some(object) = pj(obj) else {
             return std::ptr::null();
         };
-        match object.obj.as_ref().map(Obj::name) {
-            Some(name) => object.arena.put(&name),
-            None => std::ptr::null(),
+        match object.obj.as_ref() {
+            // A coordinate system has no name: `IdentifiedObject::name()` holds no description.
+            Some(Obj::Cs(_)) | None => std::ptr::null(),
+            Some(inner) => object.arena.put(&inner.name()),
         }
     })
 }
@@ -579,7 +580,23 @@ fn wkt_text(
         Obj::User(UserObject::Crs(crs)) => crs.export_to_wkt(&mut formatter),
         Obj::User(UserObject::Operation(operation)) => operation.export_to_wkt(&mut formatter),
         Obj::User(UserObject::GeodeticDatum(datum)) => datum.export_to_wkt(&mut formatter),
-        _ => return Err("this object has no WKT form in this port".to_owned()),
+        Obj::User(UserObject::VerticalDatum(datum)) => {
+            Datum::Vertical(datum.clone()).export_to_wkt(&mut formatter)
+        }
+        Obj::User(UserObject::EngineeringDatum(datum)) => {
+            Datum::Engineering(datum.clone()).export_to_wkt(&mut formatter)
+        }
+        Obj::User(UserObject::ParametricDatum(datum)) => datum.export_to_wkt(&mut formatter),
+        Obj::User(UserObject::TemporalDatum(datum)) => datum.export_to_wkt(&mut formatter),
+        Obj::User(UserObject::Ensemble(ensemble)) => ensemble.export_to_wkt(&mut formatter),
+        Obj::User(UserObject::Ellipsoid(ellipsoid)) => ellipsoid.export_to_wkt(&mut formatter),
+        Obj::User(UserObject::PrimeMeridian(meridian)) => {
+            Ok(meridian.export_to_wkt(&mut formatter))
+        }
+        Obj::User(UserObject::CoordinateMetadata(metadata)) => {
+            metadata.export_to_wkt(&mut formatter)
+        }
+        Obj::Cs(cs) => Ok(cs.export_to_wkt(&mut formatter)),
     };
     written.map_err(|error| error.to_string())
 }
@@ -631,8 +648,7 @@ pub extern "C" fn proj_as_projjson(
             );
             return std::ptr::null();
         };
-        let (Some(Obj::User(user)), Some(database)) = (object.obj.as_ref(), context.database())
-        else {
+        let (Some(inner), Some(database)) = (object.obj.as_ref(), context.database()) else {
             return std::ptr::null();
         };
         let mut format = JsonFormat::with_lines(JsonLines::Multi);
@@ -654,7 +670,11 @@ pub extern "C" fn proj_as_projjson(
                 _ => {}
             }
         }
-        match user.export_to_json(&database, &format) {
+        let written = match inner {
+            Obj::User(user) => user.export_to_json(&database, &format),
+            Obj::Cs(cs) => cs.export_to_json_with(&database, &format),
+        };
+        match written {
             Ok(text) => object.arena.put(&text),
             Err(error) => {
                 context.fail(
