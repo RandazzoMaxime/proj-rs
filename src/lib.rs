@@ -234,7 +234,8 @@ pub mod unstable {
     pub use crate::ported::{bench_definition, PORTED};
     pub use crate::proj::{
         Area, Coord, CoordinateType, Direction, DownloadProgress, ForceOver, GridCacheMode,
-        GridCacheTtl, Info, Proj, ProjBuilder, ProjCreateError, ProjError, ProjInfo, TtlSetting,
+        GridCacheTtl, Info, PairError, Proj, ProjBuilder, ProjCreateError, ProjError, ProjInfo,
+        TtlSetting,
     };
     pub use crate::transform::{Transform, TransformError};
     pub use crate::{

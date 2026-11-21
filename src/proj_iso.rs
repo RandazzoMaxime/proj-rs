@@ -15,11 +15,10 @@ use std::sync::OnceLock;
 
 use crate::engine::{Coord, Operation, TransformError};
 use crate::iso19111::{
-    facade_candidates, same_datum_noop, AlternativeError, Alternatives, Axis, BestPolicy,
-    CandidateFilter, CoordinateOperation, Crs, FacadeCandidates, FactoryError, GeodeticCRS, Item,
-    UnitOfMeasure,
+    facade_candidates, same_datum_noop, AlternativeError, Alternatives, Axis, CoordinateOperation,
+    Crs, FacadeCandidates, FacadeRequest, FactoryError, GeodeticCRS, Item, LogLine, UnitOfMeasure,
 };
-use crate::proj::{Direction, ForceOver, ProjError};
+use crate::proj::{Direction, ForceOver, PairError, ProjError};
 
 /// The text `proj_pj_info` gives for a set of candidates that no point has picked yet
 /// (`info.cpp:190-191`).
@@ -103,7 +102,13 @@ pub(crate) struct IsoPipeline {
 /// A compound CRS (a horizontal part and a vertical one) is read by its horizontal part:
 /// the axis order and the units come from there. Its vertical part is in the pipeline.
 pub(crate) fn iso_pipeline(from: &str, to: &str) -> Option<IsoPipeline> {
-    iso_pipeline_at(from, to, None, ForceOver::No, CandidateFilter::NONE)
+    iso_pipeline_at(
+        from,
+        to,
+        None,
+        ForceOver::No,
+        &FacadeRequest::default_options(),
+    )
 }
 
 /// [`iso_pipeline`] with a coordinate epoch and the `over` flag of `FORCE_OVER`.
@@ -121,15 +126,15 @@ pub(crate) fn iso_pipeline_at(
     to: &str,
     epoch: Option<f64>,
     over: ForceOver,
-    filter: CandidateFilter,
+    request: &FacadeRequest,
 ) -> Option<IsoPipeline> {
     // A CRS to itself is PROJ's null geographic offset (`+proj=noop`), not a list of candidates.
-    if from.trim() == to.trim() && filter.accuracy.is_none() {
+    if from.trim() == to.trim() && request.filter.accuracy.is_none() {
         if let Some(pipeline) = null_offset_pipeline(from, to, epoch) {
             return Some(pipeline);
         }
     }
-    let candidates = match facade_candidates(from, to, filter) {
+    let candidates = match facade_candidates(from, to, request) {
         Ok(candidates) => candidates,
         // Only an empty candidate list: a same-datum pair has no registered operation, and PROJ
         // still builds its null geographic offset, which is the pipeline `def()` reports. A list
@@ -195,7 +200,7 @@ pub(crate) fn iso_pipeline_at(
         _ => Route::Alternatives(Box::new(Alternatives::new(
             items,
             None,
-            BestPolicy::Warn,
+            request.policy,
             source_axes,
             target_axes,
             first_axis,
@@ -494,6 +499,38 @@ impl IsoPipeline {
 
     /// One point in `way` direction, facade order on both sides. The third axis passes
     /// through the pipeline, as `z` does in its geocentric steps.
+    /// [`Self::map`] with the lines `proj_trans` logs. A candidate that fails under `ONLY_BEST=YES`
+    /// is PROJ's `PROJ_ERR_COORD_TRANSFM_NO_OPERATION` (`trans.cpp:285-291`).
+    pub(crate) fn map_logged(
+        &self,
+        coord: Coord,
+        way: Direction,
+        log: &mut Vec<LogLine>,
+    ) -> Result<Coord, PairError> {
+        let Route::Alternatives(alternatives) = &self.route else {
+            return self.map(coord, way).map_err(PairError::Step);
+        };
+        let (input, output) = match way {
+            Direction::Forward => (&self.source, &self.target),
+            Direction::Inverse => (&self.target, &self.source),
+        };
+        let given = input.in_pipeline_order(coord);
+        let done = match way {
+            Direction::Forward => alternatives.forward_logged(given, log),
+            Direction::Inverse => alternatives.inverse_logged(given, log),
+        };
+        done.map(|out| output.in_pipeline_order(out))
+            .map_err(|error| match error {
+                // `pj_warn_about_missing_grid` logs it at error level under `ONLY_BEST=YES`.
+                AlternativeError::MissingGrid(message) => {
+                    log.push(LogLine::error(message));
+                    PairError::NoOperation
+                }
+                AlternativeError::NoOperation => PairError::Step(TransformError::OutsideDomain),
+                AlternativeError::Network => PairError::Step(TransformError::NetworkUnavailable),
+            })
+    }
+
     pub(crate) fn map(&self, coord: Coord, way: Direction) -> Result<Coord, TransformError> {
         match way {
             Direction::Forward => {
