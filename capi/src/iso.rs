@@ -219,9 +219,11 @@ pub extern "C" fn proj_get_name(obj: *const PJ) -> *const c_char {
             return std::ptr::null();
         };
         match object.obj.as_ref() {
-            // A coordinate system has no name: `IdentifiedObject::name()` holds no description.
-            Some(Obj::Cs(_)) | None => std::ptr::null(),
-            Some(inner) => object.arena.put(&inner.name()),
+            // Neither is an IdentifiedObject: PROJ gives them no name.
+            Some(Obj::Cs(_) | Obj::User(UserObject::CoordinateMetadata(_))) | None => {
+                std::ptr::null()
+            }
+            Some(obj) => object.arena.put(&obj.name()),
         }
     })
 }
@@ -446,6 +448,16 @@ fn equivalent(
         (Obj::User(UserObject::Operation(a)), Obj::User(UserObject::Operation(b))) => {
             a.is_equivalent_to_with(b, way)
         }
+        (Obj::User(UserObject::Ellipsoid(a)), Obj::User(UserObject::Ellipsoid(b))) => {
+            a.is_equivalent_to_with(b, way)
+        }
+        (Obj::User(UserObject::PrimeMeridian(a)), Obj::User(UserObject::PrimeMeridian(b))) => {
+            a.is_equivalent_to_with(b, way)
+        }
+        (Obj::User(UserObject::Ensemble(a)), Obj::User(UserObject::Ensemble(b))) => {
+            a.is_equivalent_to(b)
+        }
+        (Obj::Cs(a), Obj::Cs(b)) => a.is_equivalent_to(b),
         _ => false,
     }
 }
@@ -648,7 +660,7 @@ pub extern "C" fn proj_as_projjson(
             );
             return std::ptr::null();
         };
-        let (Some(inner), Some(database)) = (object.obj.as_ref(), context.database()) else {
+        let (Some(obj), Some(database)) = (object.obj.as_ref(), context.database()) else {
             return std::ptr::null();
         };
         let mut format = JsonFormat::with_lines(JsonLines::Multi);
@@ -670,11 +682,11 @@ pub extern "C" fn proj_as_projjson(
                 _ => {}
             }
         }
-        let written = match inner {
+        let exported = match obj {
             Obj::User(user) => user.export_to_json(&database, &format),
-            Obj::Cs(cs) => cs.export_to_json_with(&database, &format),
+            Obj::Cs(system) => system.export_to_json_with(&database, &format),
         };
-        match written {
+        match exported {
             Ok(text) => object.arena.put(&text),
             Err(error) => {
                 context.fail(

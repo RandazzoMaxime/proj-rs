@@ -8,7 +8,8 @@
 use std::ffi::{c_char, c_int};
 
 use proj_rs::iso19111::{
-    create_user_object, proj_based_operation_of_text, CoordinateMetadata, UserObject,
+    coordinate_system_from_json, create_user_object, proj_based_operation_of_text,
+    CoordinateMetadata, UserObject,
 };
 use proj_rs::unstable::{Area, Proj, ProjCreateError};
 
@@ -120,6 +121,11 @@ pub(crate) fn create(ctx: *mut PJ_CONTEXT, definition: &str, who: &str) -> *mut 
             &format!("{who}: cannot open the database"),
         );
         return std::ptr::null_mut();
+    }
+    if definition.trim_start().starts_with('{') {
+        if let Ok(system) = coordinate_system_from_json(definition) {
+            return hand_over(Pj::with_obj(pointer, Obj::Cs(system), None));
+        }
     }
     let user = create_user_object(definition, database.as_ref(), rules)
         .or_else(|error| match proj_based_operation_of_text(definition) {

@@ -72,7 +72,7 @@ pub use json::{
     create_from_user_input_with_optional_database, create_object_from_user_input,
     create_user_object, epsg_identity, InitRules, JsonFormat, JsonLines, UserObject,
 };
-pub use json_read::{create_object_from_json, JsonObject};
+pub use json_read::{coordinate_system_from_json, create_object_from_json, JsonObject};
 pub use metadata::{Citation, DataEpoch, Extent};
 pub use model::{
     Axis, BoundCRS, BoundingBox, CartesianCS, CompoundCRS, ConcatenatedOperation, ConcatenatedStep,
