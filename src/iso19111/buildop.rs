@@ -554,6 +554,13 @@ impl Conversion {
         inverse
     }
 
+    /// The deprecated conversion `EPSG:19847` and any other named "Popular Visualisation
+    /// Mercator", which PROJ writes `+proj=webmerc` whatever its method (conversion.cpp:4111).
+    pub(crate) fn is_popular_visualisation_mercator(&self) -> bool {
+        self.name()
+            .eq_ignore_ascii_case("Popular Visualisation Mercator")
+    }
+
     /// The PROJ string of the vertical conversions that need no CRS pair: a height/depth
     /// reversal (1068, `axisswap +order=1,2,-3`) and a change of vertical unit (1069, the
     /// `unitconvert` of `exportToPROJStringChangeVerticalUnit`, singleoperation.cpp:3564).
@@ -1404,6 +1411,14 @@ impl super::model::Conversion {
         }
         if let Some(text) = self.vertical_unit_proj_string() {
             return Ok(text);
+        }
+        if self.is_popular_visualisation_mercator() {
+            // `conversion.cpp:4111-4124`: the WGS 84 ellipsoid only with a source CRS.
+            return Ok(if self.source_crs().is_some() {
+                "+proj=webmerc +ellps=WGS84".to_owned()
+            } else {
+                "+proj=webmerc".to_owned()
+            });
         }
         if let Some(text) = self.proj_ob_tran_string() {
             return Ok(text);
