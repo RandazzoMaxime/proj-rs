@@ -121,23 +121,24 @@ pub(crate) fn create(ctx: *mut PJ_CONTEXT, definition: &str, who: &str) -> *mut 
         );
         return std::ptr::null_mut();
     }
-    let user = create_user_object(definition, database.as_ref(), rules)
-        .or_else(|error| match proj_based_operation_of_text(definition) {
-            Some(Ok(operation)) => Ok(UserObject::Operation(operation)),
-            _ => Err(error),
-        })
-        .or_else(|error| match (&database, epoch_suffix(definition)) {
-            // A name followed by `@epoch`, which the model reads for codes only.
-            (Some(database), Some((name, epoch))) => {
-                match create_user_object(name, Some(database), rules) {
-                    Ok(UserObject::Crs(crs)) => CoordinateMetadata::create(&crs, epoch, database)
-                        .map(UserObject::CoordinateMetadata)
-                        .map_err(|_| error),
-                    _ => Err(error),
-                }
+    // A PROJ string without `+type=crs` is a PROJ-based coordinate operation, not a CRS: PROJ's
+    // createFromUserInput gives one (pyproj's `Proj` relies on its type).
+    let user = match proj_based_operation_of_text(definition) {
+        Some(Ok(operation)) => Ok(UserObject::Operation(operation)),
+        _ => create_user_object(definition, database.as_ref(), rules),
+    }
+    .or_else(|error| match (&database, epoch_suffix(definition)) {
+        // A name followed by `@epoch`, which the model reads for codes only.
+        (Some(database), Some((name, epoch))) => {
+            match create_user_object(name, Some(database), rules) {
+                Ok(UserObject::Crs(crs)) => CoordinateMetadata::create(&crs, epoch, database)
+                    .map(UserObject::CoordinateMetadata)
+                    .map_err(|_| error),
+                _ => Err(error),
             }
-            _ => Err(error),
-        });
+        }
+        _ => Err(error),
+    });
     let engine = context.builder().proj(definition);
     match (user, engine) {
         (Ok(object), engine) => {
