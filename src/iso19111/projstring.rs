@@ -517,7 +517,7 @@ pub(crate) fn operation_from_proj_extensions(
     source: &Crs,
     target: &Crs,
 ) -> Result<Option<CoordinateOperation>, FactoryError> {
-    if proj_extension(source).is_none() && proj_extension(target).is_none() {
+    if !has_proj_extension(source, target) {
         return Ok(None);
     }
     let mut formatter = super::pipeline::PipelineFormatter::default();
@@ -593,6 +593,12 @@ fn base_of(crs: &Crs) -> &Crs {
 }
 
 /// The PROJ string extension of the CRS, or of the base of a bound CRS.
+/// Whether `source` or `target` (or the base of a bound CRS) carries a PROJ string extension,
+/// which sends `createOperations` to `createOperationsFromProj4Ext` before any other step.
+pub(crate) fn has_proj_extension(source: &Crs, target: &Crs) -> bool {
+    proj_extension(source).is_some() || proj_extension(target).is_some()
+}
+
 fn proj_extension(crs: &Crs) -> Option<&str> {
     let identified = match base_of(crs) {
         Crs::Geographic(crs) => &crs.identified,

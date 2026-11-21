@@ -6383,7 +6383,11 @@ impl CoordinateOperationFactory {
         // `createOperations` starts from the canonical bound CRS of an input that has one.
         let source = canonical_or_self(source);
         let target = canonical_or_self(target);
-        check_same_celestial_body(&source, &target)?;
+        // The celestial body check is in `createOperationsGeodToGeod`, which a CRS with a PROJ
+        // string extension never reaches (coordinateoperationfactory.cpp:3621-3631).
+        if !super::projstring::has_proj_extension(&source, &target) {
+            check_same_celestial_body(&source, &target)?;
+        }
         let _search = SearchScope::begin(context.database());
         let (source, source_extent, _) = resolve_crs(&source, context);
         let (target, target_extent, _) = resolve_crs(&target, context);
