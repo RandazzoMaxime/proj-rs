@@ -1553,12 +1553,6 @@ impl DatabaseContext {
             &[name.to_owned(), name.to_owned()],
         )?;
         let Some(row) = rows.first() else {
-            // An official grid name is looked up under the PROJ name that replaces it.
-            if let Some((alternative, _)) = self.proj_grid_alternative(name)? {
-                if alternative != name {
-                    return self.grid_lookup(&alternative, known);
-                }
-            }
             return Ok(GridLookup {
                 in_database: false,
                 info: unlisted_grid(name),
