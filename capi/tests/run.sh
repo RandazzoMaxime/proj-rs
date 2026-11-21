@@ -106,7 +106,8 @@ for test in "${tests[@]}"; do
       gcc -std=c99 -I"$src/src" "$here/projjson_objects.c" -o "$out/projjson_ref" -L"$ref/build/lib" -lproj \
         -Wl,-rpath,"$ref/build/lib"
       "$out/projjson_ours" > "$out/projjson_ours.txt"
-      "$out/projjson_ref" > "$out/projjson_ref.txt"
+      # LD_LIBRARY_PATH names our library for the C suite; it wins over the RUNPATH of the binary.
+      LD_LIBRARY_PATH="$ref/build/lib" "$out/projjson_ref" > "$out/projjson_ref.txt"
       diff "$out/projjson_ref.txt" "$out/projjson_ours.txt" | head -12
       cmp -s "$out/projjson_ref.txt" "$out/projjson_ours.txt" \
         || { echo "proj_create of a PROJJSON object differs from PROJ" >&2; exit 1; }
