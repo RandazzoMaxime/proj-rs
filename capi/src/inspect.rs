@@ -196,14 +196,9 @@ pub extern "C" fn proj_crs_get_horizontal_datum(ctx: *mut PJ_CONTEXT, crs: *cons
         if let Some(datum) = datum {
             return derived(object, Obj::User(UserObject::GeodeticDatum(datum)));
         }
-        if let Some(Some(frame)) = ensemble
-            .and_then(|ensemble| ensemble.as_datum())
-            .map(|datum| match datum {
-                proj_rs::unstable::Datum::Geodetic(frame) => Some(frame),
-                _ => None,
-            })
-        {
-            return derived(object, Obj::User(UserObject::GeodeticDatum(frame)));
+        // PROJ returns the ensemble itself (`proj_crs_get_horizontal_datum`, `c_api.cpp`).
+        if let Some(ensemble) = ensemble {
+            return derived(object, Obj::User(UserObject::Ensemble(ensemble)));
         }
         context.fail(
             PROJ_ERR_OTHER as c_int,
@@ -598,7 +593,12 @@ pub extern "C" fn proj_get_ellipsoid(ctx: *mut PJ_CONTEXT, obj: *const PJ) -> *m
             );
             return std::ptr::null_mut();
         };
-        match object.obj.as_ref().and_then(ellipsoid_of) {
+        // PROJ reads a CRS or a geodetic reference frame, not an ensemble (`c_api.cpp`).
+        let found = match object.obj.as_ref() {
+            Some(Obj::User(UserObject::Ensemble(_))) | None => None,
+            Some(other) => ellipsoid_of(other),
+        };
+        match found {
             Some(ellipsoid) => derived(object, Obj::User(UserObject::Ellipsoid(ellipsoid))),
             None => std::ptr::null_mut(),
         }
