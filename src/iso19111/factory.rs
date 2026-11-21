@@ -6894,58 +6894,17 @@ impl CoordinateOperationFactory {
                 IntermediateCrsUse::Allow => direct_empty,
                 IntermediateCrsUse::Always => true,
             };
-            if pivots_used {
-                for (pivot_auth, pivot_code) in &context.intermediates {
-                    let first = operations_between(
-                        &context.db,
-                        &context.authority,
-                        (source_id.0.as_str(), source_id.1.as_str()),
-                        (pivot_auth, pivot_code),
-                        boxes,
-                        RegistrySearch::Both,
-                        context.alternative_grid_names(),
-                    )?;
-                    let second = operations_between(
-                        &context.db,
-                        &context.authority,
-                        (pivot_auth, pivot_code),
-                        (target_id.0.as_str(), target_id.1.as_str()),
-                        boxes,
-                        RegistrySearch::Both,
-                        context.alternative_grid_names(),
-                    )?;
-                    if let (Some(left), Some(right)) = (first.first(), second.first()) {
-                        let interpolation =
-                            concatenation_interpolation(&[left.clone(), right.clone()])
-                                .map(Arc::new);
-                        found.push(CoordinateOperation::Concatenated(ConcatenatedOperation {
-                            identified: Identified::named(format!(
-                                "{} + {}",
-                                left.name(),
-                                right.name()
-                            )),
-                            steps: vec![
-                                ConcatenatedStep {
-                                    operation: left.clone(),
-                                    reverse: false,
-                                },
-                                ConcatenatedStep {
-                                    operation: right.clone(),
-                                    reverse: false,
-                                },
-                            ],
-                            source: None,
-                            target: None,
-                            accuracy: None,
-                            version: None,
-                            computed_name: true,
-                            source_epoch: None,
-                            target_epoch: None,
-                            proj_based: None,
-                            interpolation,
-                        }));
-                    }
-                }
+            // `findsOpsInRegistryWithIntermediate(..., false)` with the listed intermediate CRS
+            // (coordinateoperationfactory.cpp:2254-2283, 4449-4457): every registered pair through
+            // one of them, filtered as the direct result is.
+            if pivots_used && !context.intermediates.is_empty() {
+                let codes = crs_codes_intermediate_operations(
+                    source,
+                    target,
+                    context,
+                    PivotScope::Operations,
+                )?;
+                found.extend(filter_only(codes, source, target, context));
             }
         }
         // `createOperations` (coordinateoperationfactory.cpp:3652-3656, 3694-3701): with a derived
@@ -8731,8 +8690,15 @@ fn crs_codes_intermediate_operations(
     let source_key = (source_id.0.as_str(), source_id.1.as_str());
     let target_key = (target_id.0.as_str(), target_id.1.as_str());
     let operations = matches!(scope, PivotScope::Operations);
+    // The operations search goes through the intermediate CRS of the context, any registered
+    // CRS when it lists none.
+    let listed: Vec<(&str, &str)> = context
+        .intermediates
+        .iter()
+        .map(|(auth, code)| (auth.as_str(), code.as_str()))
+        .collect();
     let pivots: &[(&str, &str)] = match scope {
-        PivotScope::Operations => &[],
+        PivotScope::Operations => &listed,
         PivotScope::Listed(list) => list,
     };
     let allowed = if operations {
