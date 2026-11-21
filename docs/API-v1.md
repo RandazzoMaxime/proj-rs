@@ -148,7 +148,9 @@ vérifiée contre celle de `proj` 0.31 par un test qui compile les exemples de l
 - Produit `libproj.so` / `libproj.dylib` / `proj.dll` et `libproj.a`, avec le `proj.h` de PROJ
   9.9.0 copié tel quel. Les noms et les signatures sont identiques ; la structure `PJ_COORD` et les
   constantes sont les mêmes.
-- Couverture : les fonctions de `proj.h` (292 fonctions et la variable `pj_release`). Une fonction
+- Couverture : les fonctions de `proj.h` (292 fonctions et la variable `pj_release`), et l'API
+  géodésique de PROJ, `geodesic.h` (21 fonctions `geod_*`, structures à la disposition de PROJ,
+  vérifiées par `geodtest.c` de PROJ). Une fonction
   que le port ne sait pas honorer renvoie l'erreur de PROJ (`NULL` ou 0 et `proj_errno`), jamais
   un résultat faux.
 - Preuve : les tests C de PROJ compilés contre notre bibliothèque. Ce sont `test_c_api.cpp` (152
