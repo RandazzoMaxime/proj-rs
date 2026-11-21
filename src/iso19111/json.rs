@@ -1937,6 +1937,55 @@ fn has_proj_step(text: &str) -> bool {
         .any(|word| word.strip_prefix('+').unwrap_or(word).starts_with("proj="))
 }
 
+/// The `title=` of a PROJ string, unquoted, and the string without it.
+fn split_title(text: &str) -> (Option<String>, String) {
+    let Some(start) = text.find("title=") else {
+        return (None, text.to_owned());
+    };
+    let value_start = start + "title=".len();
+    let rest = &text[value_start..];
+    let length = if let Some(quoted) = rest.strip_prefix('"') {
+        quoted.find('"').map_or(rest.len(), |end| end + 2)
+    } else {
+        rest.find(" +").unwrap_or(rest.len())
+    };
+    let title = rest[..length].trim().trim_matches('"').to_owned();
+    let word_start = if text[..start].ends_with('+') {
+        start - 1
+    } else {
+        start
+    };
+    let remaining = format!("{} {}", &text[..word_start], &rest[length..]);
+    (Some(title), remaining)
+}
+
+/// `+init=AUTH:CODE` with other parameters (`io.cpp`, PROJ4 rules): the parameters as written, then
+/// the PROJ string of the CRS, read again. A key given twice takes its first value, so the
+/// written parameters win (`+init=epsg:32631 +units=cm` is in centimetres).
+fn crs_from_init_with_parameters(
+    text: &str,
+    title: Option<&str>,
+    crs: &Crs,
+    db: &DatabaseContext,
+) -> Result<Crs, FactoryError> {
+    // A leading `+title=` runs to the next ` +`, quoted or not, for the PROJ string reader.
+    let mut expanded = title.map_or_else(String::new, |title| format!("+title={title}"));
+    for word in text.split_whitespace() {
+        let word = word.strip_prefix('+').unwrap_or(word);
+        if word.starts_with("init=") || word.starts_with("title=") {
+            continue;
+        }
+        if !expanded.is_empty() {
+            expanded.push(' ');
+        }
+        expanded.push('+');
+        expanded.push_str(word);
+    }
+    expanded.push(' ');
+    expanded.push_str(&crs.export_to_proj_string()?);
+    create_crs_from_proj_string_with_database(&expanded, db)
+}
+
 /// A PROJ string whose only step is `init=AUTH:CODE`, read as PROJ's `createFromPROJString` does
 /// for the `+init=xxxx:yyyy` case (`io.cpp`, lines 12514-12640). Under the PROJ 4 rules the CRS of
 /// the code is rebuilt with longitude and latitude in degrees (easting and northing for a
@@ -1947,15 +1996,15 @@ fn crs_from_init_text(
     db: Option<&DatabaseContext>,
     rules: InitRules,
 ) -> Result<Crs, FactoryError> {
-    let mut title: Option<String> = None;
+    // `+title=several words` runs to the next ` +` (`PROJStringSyntaxParser`).
+    let (title, rest) = split_title(text);
+    let text = rest.as_str();
     let mut init: Option<&str> = None;
     let mut over = false;
     let mut significant = false;
     for word in text.split_whitespace() {
         let word = word.strip_prefix('+').unwrap_or(word);
-        if let Some(value) = word.strip_prefix("title=") {
-            title = Some(value.trim_matches('"').to_owned());
-        } else if let Some(name) = word.strip_prefix("init=") {
+        if let Some(name) = word.strip_prefix("init=") {
             init = Some(name);
         } else if word == "over" {
             over = true;
@@ -1978,12 +2027,10 @@ fn crs_from_init_text(
             "init=epsg:/init=IGNF: syntax not supported in non-PROJ4 emulation mode".to_owned(),
         ));
     }
-    if significant {
-        return Err(FactoryError::Unsupported(format!(
-            "init={name} with parameters beside over, no_defs, wktext and type=crs is not expanded"
-        )));
-    }
     let crs = create_from_user_input(&format!("{authority}:{code}"), require_database(db)?)?;
+    if significant {
+        return crs_from_init_with_parameters(text, title.as_deref(), &crs, require_database(db)?);
+    }
     match crs {
         Crs::Geographic(geographic) => {
             let cs = match geographic.coordinate_system().axes() {
