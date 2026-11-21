@@ -28,7 +28,7 @@ use super::niche::{
 };
 use super::parammap::{method_by_code, method_by_name};
 use super::projstring::{create_crs_from_proj_string, create_crs_from_proj_string_with_database};
-use super::wkt_import::WktParser;
+use super::wkt_import::{WktObject, WktParser};
 use crate::crs_text::{self, Object, Value};
 use std::sync::Arc;
 
@@ -1881,7 +1881,11 @@ fn read_user_object(
 ) -> Result<UserObject, FactoryError> {
     let text = text.trim();
     if text.starts_with('{') {
-        return import_json(text, require_database(db)?).map(UserObject::Crs);
+        let db = require_database(db)?;
+        return match import_json(text, db) {
+            Ok(crs) => Ok(UserObject::Crs(crs)),
+            Err(error) => json_object(text, db).map_err(|_| error),
+        };
     }
     if let Some(crs) = crs_from_ogc_auto(text)? {
         return Ok(UserObject::Crs(crs));
@@ -1905,6 +1909,9 @@ fn read_user_object(
         if let Some(crs) = crs_from_authority_code(text, db)? {
             return Ok(UserObject::Crs(crs));
         }
+        if let Some(object) = object_from_urn(text, db)? {
+            return Ok(object);
+        }
         if let Some(crs) = crs_from_urn(text, db)? {
             return Ok(UserObject::Crs(crs));
         }
@@ -1918,12 +1925,64 @@ fn read_user_object(
     if let Some(db) = db {
         parser.attach_database(db.clone());
     }
-    parser
-        .create_from_wkt(text)?
-        .crs()
-        .cloned()
-        .map(UserObject::Crs)
-        .ok_or_else(|| FactoryError::Invalid("WKT is not a CRS".to_owned()))
+    wkt_object(parser.create_from_wkt(text)?)
+}
+
+/// The [`UserObject`] of a WKT node: any object `createFromUserInput` returns, not only a CRS.
+fn wkt_object(object: WktObject) -> Result<UserObject, FactoryError> {
+    Ok(match object {
+        WktObject::Crs(crs) => UserObject::Crs(crs),
+        WktObject::Ellipsoid(ellipsoid) => UserObject::Ellipsoid(ellipsoid),
+        WktObject::GeodeticDatum(frame) => UserObject::GeodeticDatum(frame),
+        WktObject::VerticalDatum(frame) => UserObject::VerticalDatum(frame),
+        WktObject::EngineeringDatum(datum) => UserObject::EngineeringDatum(datum),
+        WktObject::ParametricDatum(datum) => UserObject::ParametricDatum(datum),
+        WktObject::TemporalDatum(datum) => UserObject::TemporalDatum(datum),
+        WktObject::Ensemble(ensemble) => UserObject::Ensemble(ensemble),
+        WktObject::CoordinateMetadata(metadata) => UserObject::CoordinateMetadata(metadata),
+        WktObject::Conversion(conversion) => {
+            UserObject::Operation(CoordinateOperation::Conversion(conversion))
+        }
+        WktObject::Transformation(transformation) => {
+            UserObject::Operation(CoordinateOperation::Transformation(transformation))
+        }
+        WktObject::Concatenated(concatenated) => {
+            UserObject::Operation(CoordinateOperation::Concatenated(concatenated))
+        }
+        WktObject::Identifier(_) | WktObject::Unknown => {
+            return Err(FactoryError::Invalid("WKT is not a CRS".to_owned()))
+        }
+    })
+}
+
+/// A PROJJSON object that is not a CRS: the datums [`import_user_object`] reads, then the
+/// ellipsoids, prime meridians, datum ensembles and operations of [`create_object_from_json`].
+fn json_object(text: &str, db: &DatabaseContext) -> Result<UserObject, FactoryError> {
+    if let Ok(object) = import_user_object(text, db) {
+        return Ok(object);
+    }
+    Ok(match create_object_from_json(text, Some(db))? {
+        JsonObject::Crs(crs) => UserObject::Crs(crs),
+        JsonObject::Ellipsoid(ellipsoid) => UserObject::Ellipsoid(ellipsoid),
+        JsonObject::PrimeMeridian(meridian) => UserObject::PrimeMeridian(meridian),
+        JsonObject::GeodeticReferenceFrame(frame) => UserObject::GeodeticDatum(frame),
+        JsonObject::VerticalReferenceFrame(frame) => UserObject::VerticalDatum(frame),
+        JsonObject::DatumEnsemble(ensemble) => UserObject::Ensemble(ensemble),
+        JsonObject::Conversion(conversion) => {
+            UserObject::Operation(CoordinateOperation::Conversion(conversion))
+        }
+        JsonObject::Transformation(transformation) => {
+            UserObject::Operation(CoordinateOperation::Transformation(transformation))
+        }
+        JsonObject::Concatenated(concatenated) => {
+            UserObject::Operation(CoordinateOperation::Concatenated(concatenated))
+        }
+        JsonObject::Axis(_) => {
+            return Err(FactoryError::Invalid(
+                "an axis is not an object of createFromUserInput".to_owned(),
+            ))
+        }
+    })
 }
 
 /// The database a text needs, or PROJ's `no database context specified`.
