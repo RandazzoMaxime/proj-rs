@@ -7,11 +7,11 @@
 use super::factory::{AuthorityFactory, DatabaseContext};
 use super::model::{
     Axis, BoundCRS, CompoundCRS, ConcatenatedOperation, ConcatenatedStep, Conversion,
-    CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble, Ellipsoid, EllipsoidalCS,
-    FactoryError, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS, GeoidModel, Identified,
-    Identifier, Measure, Meridian, ObjectDomain, Parameter, ParameterValue, PrimeMeridian,
-    ProjectedCRS, SphericalCS, TemporalExtent, Transformation, UnitKind, UnitOfMeasure,
-    VerticalCRS, VerticalCS, VerticalExtent, VerticalReferenceFrame,
+    CoordinateOperation, CoordinateSystem, Crs, Datum, DatumEnsemble, DerivedProjectedCRS,
+    Ellipsoid, EllipsoidalCS, FactoryError, GeodeticCRS, GeodeticReferenceFrame, GeographicCRS,
+    GeoidModel, Identified, Identifier, Measure, Meridian, ObjectDomain, Parameter, ParameterValue,
+    PrimeMeridian, ProjectedCRS, SphericalCS, TemporalExtent, Transformation, UnitKind,
+    UnitOfMeasure, VerticalCRS, VerticalCS, VerticalExtent, VerticalReferenceFrame,
 };
 use super::niche::DerivedCRS;
 use crate::crs_text::{self, Object, Value};
@@ -240,6 +240,9 @@ impl Reader<'_> {
             "DerivedGeographicCRS" => {
                 JsonObject::Crs(Crs::Derived(self.build_derived_crs(object)?))
             }
+            "DerivedProjectedCRS" => JsonObject::Crs(Crs::DerivedProjected(
+                self.build_derived_projected_crs(object)?,
+            )),
             "VerticalCRS" => JsonObject::Crs(Crs::Vertical(self.build_vertical_crs(object)?)),
             "CompoundCRS" => JsonObject::Crs(Crs::Compound(self.build_compound_crs(object)?)),
             "BoundCRS" => JsonObject::Crs(Crs::Bound(self.build_bound_crs(object)?)),
@@ -678,6 +681,27 @@ impl Reader<'_> {
         let identified = self.properties(object, false)?;
         let mut crs =
             DerivedCRS::create(identified.name.clone(), base, conversion, coordinate_system)?;
+        crs.identified = identified;
+        Ok(crs)
+    }
+
+    /// `JSONParser::buildDerivedCRS` for a `DerivedProjectedCRS`: a projected base, a deriving
+    /// conversion and a coordinate system (io.cpp).
+    fn build_derived_projected_crs(&mut self, object: &Object) -> Read<DerivedProjectedCRS> {
+        let base_object = get_object(object, "base_crs")?;
+        if get_string(base_object, "type")? != "ProjectedCRS" {
+            return invalid("base_crs of a DerivedProjectedCRS is not a ProjectedCRS");
+        }
+        let base = self.build_projected_crs(base_object)?;
+        let coordinate_system = self.build_cs(get_object(object, "coordinate_system")?)?;
+        let conversion = self.build_conversion(get_object(object, "conversion")?)?;
+        let identified = self.properties(object, false)?;
+        let mut crs = DerivedProjectedCRS::create(
+            identified.name.clone(),
+            base,
+            conversion,
+            coordinate_system,
+        );
         crs.identified = identified;
         Ok(crs)
     }
