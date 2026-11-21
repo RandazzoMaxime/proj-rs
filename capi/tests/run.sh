@@ -106,7 +106,9 @@ for test in "${tests[@]}"; do
       gcc -std=c99 -I"$root/capi/include" "$here/intermediate_crs.c" -o "$out/intermediate_ours" "${ldflags[@]}"
       gcc -std=c99 -I"$src/src" "$here/intermediate_crs.c" -o "$out/intermediate_ref" -L"$ref/build/lib" -lproj \
         -Wl,-rpath,"$ref/build/lib"
-      PROJ_DATA="$ref/build/data" "$out/intermediate_ref" > "$out/intermediate_ref.txt"
+      # LD_LIBRARY_PATH names our library for the C suite; it wins over the RUNPATH of the binary.
+      LD_LIBRARY_PATH="$ref/build/lib" PROJ_DATA="$ref/build/data" "$out/intermediate_ref" \
+        > "$out/intermediate_ref.txt"
       "$out/intermediate_ours" > "$out/intermediate_ours.txt"
       diff "$out/intermediate_ref.txt" "$out/intermediate_ours.txt" | head -8
       cmp -s "$out/intermediate_ref.txt" "$out/intermediate_ours.txt" \
