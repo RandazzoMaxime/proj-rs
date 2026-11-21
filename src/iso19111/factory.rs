@@ -1368,11 +1368,12 @@ impl DatabaseContext {
             }
         }
         // Realizations share the ensemble name as an alias. Prefer the ensemble
-        // (`European Terrestrial Reference System 1989 ensemble`) and return the
-        // name `datum()` synthesizes, not an arbitrary member such as EPSG:1132.
+        // (`European Terrestrial Reference System 1989 ensemble`), seen as a datum: the name
+        // `datum()` synthesizes and the ensemble's code (EPSG:6258), not a member such as
+        // EPSG:1132 (`createObjectsFromName` of `identifyFromName`, io.cpp).
         let ensemble_key = format!("{key}ensemble");
         let ensemble = self.query(
-            "SELECT name FROM geodetic_datum \
+            "SELECT name, auth_name, code FROM geodetic_datum \
              WHERE REPLACE(REPLACE(LOWER(name), '_', ''), ' ', '') = ? \
              ORDER BY deprecated LIMIT 1",
             std::slice::from_ref(&ensemble_key),
@@ -1381,7 +1382,7 @@ impl DatabaseContext {
             if let Some(row) = rows.first() {
                 let name = row[0].text();
                 if let Some(stripped) = name.strip_suffix(" ensemble") {
-                    return Some((stripped.to_owned(), String::new(), String::new()));
+                    return Some((stripped.to_owned(), row[1].text(), row[2].text()));
                 }
             }
         }
