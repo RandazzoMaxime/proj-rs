@@ -7,8 +7,10 @@ use proj_rs::unstable::{Direction, Proj, ProjError, StepError, Xyzt};
 
 use crate::context::{context, Ctx};
 use crate::ffi::*;
+use crate::iso::Obj;
 use crate::pj::{area, creation_failure, hand_over, pj, Pj};
 use crate::util::{self, guard};
+use proj_rs::iso19111::UserObject;
 
 /// The four components of a `PJ_COORD`.
 pub(crate) fn components(coord: PJ_COORD) -> [f64; 4] {
@@ -315,6 +317,21 @@ fn bbox_of(area_pointer: *const PJ_AREA) -> Option<proj_rs::unstable::Area> {
     area(area_pointer).and_then(|found| found.bbox)
 }
 
+/// The object of a CRS pair. With one candidate left, PROJ returns that operation itself, with
+/// its ISO object (`crs_to_crs.cpp:622-647`, `:775-780`): its type, name, WKT and PROJJSON are
+/// the operation's. A set of candidates has no ISO object.
+fn pair_object(context: &mut Ctx, proj: Proj) -> Pj {
+    let pointer = std::ptr::from_mut(context);
+    match proj.single_operation().cloned() {
+        Some(operation) => Pj::with_obj(
+            pointer,
+            Obj::User(UserObject::Operation(operation)),
+            Some(proj),
+        ),
+        None => Pj::new(pointer, proj),
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn proj_create_crs_to_crs(
     ctx: *mut PJ_CONTEXT,
@@ -345,7 +362,7 @@ pub extern "C" fn proj_create_crs_to_crs(
             .builder()
             .proj_known_crs(source, target, bbox_of(area_pointer))
         {
-            Ok(proj) => hand_over(Pj::new(std::ptr::from_mut(context), proj)),
+            Ok(proj) => hand_over(pair_object(context, proj)),
             Err(error) => {
                 creation_failure(context, "proj_create_crs_to_crs", &error);
                 std::ptr::null_mut()
@@ -397,7 +414,7 @@ pub extern "C" fn proj_create_crs_to_crs_from_pj(
             bbox_of(area_pointer),
             options,
         ) {
-            Ok(proj) => hand_over(Pj::new(std::ptr::from_mut(context), proj)),
+            Ok(proj) => hand_over(pair_object(context, proj)),
             Err(error) => {
                 creation_failure(context, "proj_create_crs_to_crs_from_pj", &error);
                 std::ptr::null_mut()
@@ -441,6 +458,11 @@ pub extern "C" fn proj_normalize_for_visualization(
         }
         let mut copy = object.copy_in(std::ptr::from_mut(context));
         copy.normalized = true;
+        if let Some(Obj::User(UserObject::Operation(operation))) = copy.obj.take() {
+            copy.obj = operation
+                .normalize_for_visualization()
+                .map(|normalized| Obj::User(UserObject::Operation(normalized)));
+        }
         hand_over(copy)
     })
 }

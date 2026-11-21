@@ -38,6 +38,17 @@ impl Proj {
         }
     }
 
+    /// The ISO operation of a CRS pair that has a single candidate, which PROJ returns as the
+    /// pair itself. `None` for a set of candidates and for any other object.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn single_operation(&self) -> Option<&crate::iso19111::CoordinateOperation> {
+        match &self.body {
+            Body::Iso(pipeline) => pipeline.single_operation(),
+            _ => None,
+        }
+    }
+
     /// One coordinate through the operation, with its step error. A CRS is not a transform:
     /// the caller checks [`Self::is_transform`] first.
     ///
