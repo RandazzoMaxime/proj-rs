@@ -96,7 +96,8 @@ for test in "${tests[@]}"; do
       gcc -std=c99 -I"$src/src" "$here/lists.c" -o "$out/lists_ref" -L"$ref/build/lib" -lproj \
         -Wl,-rpath,"$ref/build/lib"
       "$out/lists_ours" > "$out/lists_ours.txt"
-      "$out/lists_ref" > "$out/lists_ref.txt"
+      # LD_LIBRARY_PATH names our library for the C suite; it wins over the RUNPATH of the binary.
+      LD_LIBRARY_PATH="$ref/build/lib" "$out/lists_ref" > "$out/lists_ref.txt"
       diff "$out/lists_ref.txt" "$out/lists_ours.txt" | head -5
       cmp -s "$out/lists_ref.txt" "$out/lists_ours.txt" || { echo "lists differ from PROJ" >&2; exit 1; }
       echo "$(wc -l < "$out/lists_ours.txt") list entries identical to PROJ" ;;
