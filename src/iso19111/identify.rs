@@ -10,7 +10,8 @@ use super::bound::hub_is_wgs84;
 use super::buildop::UtmHemisphere;
 use super::equiv::{
     directions_and_units, ellipsoid_parameters_match, equivalent_name_bigger_differences,
-    identify_axes_match, meridian_equivalent, same_epoch, Equivalence, IdentifyAxisOrder,
+    identify_axes_match, identify_axes_swapped, meridian_equivalent, same_epoch, Equivalence,
+    IdentifyAxisOrder,
 };
 use super::factory::{
     same_unit, AuthorityFactory, CoordinateOperationContext, CoordinateOperationFactory,
@@ -831,12 +832,18 @@ fn db_equivalent(
     order: IdentifyAxisOrder,
     db: &DatabaseContext,
 ) -> bool {
-    match (owning_frame(crs), owning_frame(candidate)) {
-        (Some(left), Some(right)) => {
-            frames_match(&left, &right, db) && identify_axes_match(crs, candidate, order)
-        }
-        _ => false,
+    let (Some(left), Some(right)) = (owning_frame(crs), owning_frame(candidate)) else {
+        return false;
+    };
+    if !frames_match(&left, &right, db) {
+        return false;
     }
+    if super::equiv::geodetic_extensions_compatible(crs, candidate) {
+        return identify_axes_match(crs, candidate, order);
+    }
+    // `GeographicCRS::_isEquivalentTo` (crs.cpp:3264-3290): the retry on swapped axes rebuilds
+    // `crs` without its PROJ4 extension, so only that retry can match.
+    order == IdentifyAxisOrder::Implicit && identify_axes_swapped(crs, candidate)
 }
 
 fn frames_match(
