@@ -108,7 +108,7 @@ pub use select::{
     best_pipeline_with, best_pipeline_with_authority, only_best_default, Ballpark, BestOperation,
     CandidateFilter, OnlyBest,
 };
-pub(crate) use select::{facade_candidates, same_datum_noop, FacadeCandidates};
+pub(crate) use select::{facade_candidates, same_datum_noop, FacadeCandidates, FacadeRequest};
 pub use wkt::{
     EllipsoidalHeightPolicy, LinunitPolicy, OutputAxisRule, WktConvention, WktFormatter, WktLines,
     WktStrictness,
