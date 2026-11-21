@@ -4,8 +4,8 @@
 use std::ffi::{c_char, c_int};
 
 use proj_rs::iso19111::{
-    CoordinateOperation, CoordinateSystem, Crs, DatumEnsemble, Ellipsoid, GeodeticCRS,
-    GeodeticReferenceFrame, PrimeMeridian, UnitKind, UnitOfMeasure, UserObject,
+    CoordinateOperation, CoordinateSystem, Crs, DatumEnsemble, DerivedKind, Ellipsoid, GeodeticCRS,
+    GeodeticReferenceFrame, PrimeMeridian, TemporalCsKind, UnitKind, UnitOfMeasure, UserObject,
 };
 
 use crate::context::context;
@@ -34,6 +34,7 @@ fn source_of(object: &Pj) -> Option<Crs> {
             Crs::Bound(bound) => Some(bound.source_crs().clone()),
             Crs::Projected(projected) => Some(base_of_projected(projected.base_crs())),
             Crs::DerivedProjected(derived) => Some(Crs::Projected(derived.base_crs().clone())),
+            Crs::Derived(derived) => Some(derived.base_crs().clone()),
             _ => None,
         },
         Obj::User(UserObject::Operation(operation)) => operation_source(operation),
@@ -115,6 +116,15 @@ pub extern "C" fn proj_get_target_crs(ctx: *mut PJ_CONTEXT, obj: *const PJ) -> *
 fn geodetic_of(crs: &Crs) -> Option<Crs> {
     match crs {
         Crs::Geographic(_) | Crs::Geodetic(_) => Some(crs.clone()),
+        // A DerivedGeographicCRS or DerivedGeodeticCRS is a GeodeticCRS (`extractGeodeticCRS`).
+        Crs::Derived(derived)
+            if matches!(
+                derived.kind(),
+                DerivedKind::Geographic | DerivedKind::Geodetic
+            ) =>
+        {
+            Some(crs.clone())
+        }
         Crs::Projected(projected) => Some(base_of_projected(projected.base_crs())),
         Crs::DerivedProjected(derived) => Some(base_of_projected(derived.base_crs().base_crs())),
         Crs::Bound(bound) => geodetic_of(bound.source_crs()),
@@ -125,6 +135,10 @@ fn geodetic_of(crs: &Crs) -> Option<Crs> {
 
 /// The datum and the datum ensemble of the horizontal part of a CRS.
 fn geodetic_parts(crs: &Crs) -> Option<(Option<GeodeticReferenceFrame>, Option<DatumEnsemble>)> {
+    if let Crs::Derived(derived) = crs {
+        // A derived CRS shares the datum of its base.
+        return geodetic_parts(derived.base_crs());
+    }
     let geodetic = geodetic_of(crs)?;
     match geodetic {
         Crs::Geographic(value) => Some((value.datum().cloned(), value.datum_ensemble().cloned())),
@@ -143,6 +157,15 @@ fn datum_objects(crs: &Crs) -> Option<(Option<UserObject>, Option<DatumEnsemble>
             Some(UserObject::EngineeringDatum(engineering.datum().clone())),
             None,
         )),
+        Crs::Temporal(temporal) => Some((
+            Some(UserObject::TemporalDatum(temporal.datum().clone())),
+            None,
+        )),
+        Crs::Parametric(parametric) => Some((
+            Some(UserObject::ParametricDatum(parametric.datum().clone())),
+            None,
+        )),
+        Crs::Derived(derived) => datum_objects(derived.base_crs()),
         Crs::Compound(_) | Crs::Bound(_) => None,
         other => {
             let (datum, ensemble) = geodetic_parts(other)?;
@@ -427,6 +450,9 @@ fn cs_of(crs: &Crs) -> Option<CoordinateSystem> {
         Crs::Vertical(value) => CoordinateSystem::Vertical(value.coordinate_system().clone()),
         Crs::Engineering(value) => value.coordinate_system().clone(),
         Crs::DerivedProjected(value) => value.coordinate_system().clone(),
+        Crs::Derived(value) => value.coordinate_system().clone(),
+        Crs::Temporal(value) => CoordinateSystem::Temporal(value.coordinate_system().clone()),
+        Crs::Parametric(value) => CoordinateSystem::Parametric(value.coordinate_system().clone()),
         Crs::Bound(bound) => return cs_of(bound.source_crs()),
         _ => return None,
     })
@@ -479,7 +505,12 @@ pub extern "C" fn proj_cs_get_type(
             CoordinateSystem::Vertical(_) => PJ_CS_TYPE_VERTICAL,
             CoordinateSystem::Spherical(_) => PJ_CS_TYPE_SPHERICAL,
             CoordinateSystem::Ordinal(_) => PJ_CS_TYPE_ORDINAL,
-            _ => PJ_CS_TYPE_UNKNOWN,
+            CoordinateSystem::Parametric(_) => PJ_CS_TYPE_PARAMETRIC,
+            CoordinateSystem::Temporal(temporal) => match temporal.kind() {
+                TemporalCsKind::DateTime => PJ_CS_TYPE_DATETIMETEMPORAL,
+                TemporalCsKind::Count => PJ_CS_TYPE_TEMPORALCOUNT,
+                TemporalCsKind::Measure => PJ_CS_TYPE_TEMPORALMEASURE,
+            },
         }
     })
 }

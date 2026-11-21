@@ -4,9 +4,10 @@
 use std::ffi::{c_char, c_int};
 
 use proj_rs::iso19111::{
-    CoordinateOperation, CoordinateSystem, Crs, DatabaseContext, EllipsoidalHeightPolicy,
-    Equivalence, GeodeticCRS, Identifier, JsonFormat, JsonLines, LinunitPolicy, ObjectDomain,
-    OutputAxisRule, ProjLines, UserObject, WktConvention, WktFormatter, WktLines, WktStrictness,
+    CoordinateOperation, CoordinateSystem, Crs, DatabaseContext, DerivedKind,
+    EllipsoidalHeightPolicy, Equivalence, GeodeticCRS, Identifier, JsonFormat, JsonLines,
+    LinunitPolicy, ObjectDomain, OutputAxisRule, ProjLines, UserObject, WktConvention,
+    WktFormatter, WktLines, WktStrictness,
 };
 use proj_rs::unstable::Proj;
 
@@ -177,7 +178,20 @@ fn crs_type(crs: &Crs) -> PJ_TYPE {
         Crs::Engineering(_) => PJ_TYPE_ENGINEERING_CRS,
         Crs::DerivedProjected(_) => PJ_TYPE_DERIVED_PROJECTED_CRS,
         Crs::Temporal(_) => PJ_TYPE_TEMPORAL_CRS,
-        Crs::Parametric(_) | Crs::Derived(_) => PJ_TYPE_OTHER_CRS,
+        // `proj_get_type` tests the C++ classes: a DerivedGeographicCRS is a GeographicCRS, a
+        // DerivedVerticalCRS a VerticalCRS, and so on (c_api.cpp:1281-1319).
+        Crs::Derived(derived) => match derived.kind() {
+            DerivedKind::Geographic => geographic_type(derived.coordinate_system().axes().len()),
+            DerivedKind::Geodetic => match derived.coordinate_system() {
+                CoordinateSystem::Cartesian(_) => PJ_TYPE_GEOCENTRIC_CRS,
+                _ => PJ_TYPE_GEODETIC_CRS,
+            },
+            DerivedKind::Vertical => PJ_TYPE_VERTICAL_CRS,
+            DerivedKind::Engineering => PJ_TYPE_ENGINEERING_CRS,
+            DerivedKind::Temporal => PJ_TYPE_TEMPORAL_CRS,
+            DerivedKind::Parametric => PJ_TYPE_OTHER_CRS,
+        },
+        Crs::Parametric(_) => PJ_TYPE_OTHER_CRS,
     }
 }
 

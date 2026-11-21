@@ -2,7 +2,8 @@
 # Compile the C tests of PROJ 9.9.0 against the C library of proj-rs, and run them.
 #
 # Usage: capi/tests/run.sh [--release] [TEST...]
-#   TEST is one of: symbols abi lists errno_string angular_io context include_h fork datadir c_api
+#   TEST is one of: symbols abi lists errno_string angular_io context include_h fork datadir
+#   derived_temporal c_api
 #   (default: all). PENDING=0 runs the cases of pending.txt too, to see them fail.
 #   GTEST_FILTER=pattern narrows the gtest cases of the C++ tests.
 #
@@ -22,7 +23,8 @@ if [ "${1:-}" = "--release" ]; then
   shift
 fi
 tests=("$@")
-[ ${#tests[@]} -gt 0 ] || tests=(symbols abi lists errno_string angular_io context include_h fork datadir c_api)
+[ ${#tests[@]} -gt 0 ] || tests=(symbols abi lists errno_string angular_io context include_h fork datadir
+                                  derived_temporal c_api)
 
 ref=${PROJ_REFERENCE:-$root/target/proj-reference}
 src=$ref/src
@@ -157,6 +159,18 @@ for test in "${tests[@]}"; do
         *) echo "share/proj of the library not listed: $listed" >&2; exit 1 ;;
       esac
       rm -rf "$scratch" ;;
+    derived_temporal)
+      # A derived geographic CRS and a temporal CRS: their type and the parts the accessors reach.
+      echo "== derived_temporal"
+      gcc -std=c99 -I"$root/capi/include" "$here/derived_temporal.c" -o "$out/derived_ours" "${ldflags[@]}"
+      gcc -std=c99 -I"$src/src" "$here/derived_temporal.c" -o "$out/derived_ref" -L"$ref/build/lib" \
+        -lproj -Wl,-rpath,"$ref/build/lib"
+      files=("$here/data/derived_geographic_rotated_pole.json" "$here/data/derived_geographic.wkt"
+             "$here/data/temporal_crs.json")
+      ours=$("$out/derived_ours" "${files[@]}" 2>/dev/null)
+      theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/derived_ref" "${files[@]}" 2>/dev/null)
+      [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }
+      echo "derived and temporal CRS identical to libproj for ${#files[@]} definitions" ;;
     c_api)
       python3 "$here/filter_tests.py" "$unit/test_c_api.cpp" "$here/excluded.txt" "$out/test_c_api_filtered.cpp"
       g++ "${cxxflags[@]}" -DTIFF_ENABLED -include "$unit/gtest_include.h" "$out/test_c_api_filtered.cpp" "$unit/main.cpp" \

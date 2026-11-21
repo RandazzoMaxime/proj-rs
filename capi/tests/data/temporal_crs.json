@@ -1,0 +1,1 @@
+{"$schema":"https://proj.org/schemas/v0.7/projjson.schema.json","type":"TemporalCRS","name":"Time","datum":{"name":"Gregorian calendar","calendar":"proleptic Gregorian","time_origin":"0000-01-01"},"coordinate_system":{"subtype":"TemporalDateTime","axis":[{"name":"Time (T)","abbreviation":"T","direction":"future"}]}}

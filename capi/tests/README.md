@@ -30,6 +30,7 @@ difference). `dist.sh` installs the library under the names of libproj: `libproj
 | `include_h` | `include_proj_h_from_c.c`: `proj.h` and `proj_experimental.h` compile as C |
 | `fork` | `test_fork.c`: contexts survive a `fork()` |
 | `datadir` | `datadir.c`: `proj_context_get_user_writable_directory` and `proj_info().searchpath` are those of the reference libproj under ten environments (home, `XDG_DATA_HOME`, `PROJ_DATA`, `PROJ_LIB`, skip, `PROJ_USER_WRITABLE_DIRECTORY`, `proj_context_set_search_paths`), and the library installed in `<prefix>/lib` lists `<prefix>/share/proj` |
+| `derived_temporal` | `derived_temporal.c` with `data/`: a derived geographic CRS (rotated pole, PROJJSON and WKT) and a temporal CRS (PROJJSON): `proj_get_type`, the coordinate system and its axes, the ellipsoid, the datum, the geodetic CRS, the base and the deriving conversion, identical to the reference libproj for 3 definitions |
 | `c_api` | `test_c_api.cpp`: 152 `TEST`, 32 excluded, 120 pass |
 
 ## Excluded: `excluded.txt`
