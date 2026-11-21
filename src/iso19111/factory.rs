@@ -1662,7 +1662,7 @@ impl DatabaseContext {
     fn geodetic_reference_frame(&self, parts: &GeodeticComponents<'_>) -> GeodeticReferenceFrame {
         let angular = angular_unit(parts.angular_unit_name, parts.angular_unit_to_radian);
         let ellipsoid_name = parts.ellipsoid_name.unwrap_or("unnamed");
-        let ellipsoid = if parts.inverse_flattening == 0.0 {
+        let mut ellipsoid = if parts.inverse_flattening == 0.0 {
             Ellipsoid::create_two_axis(
                 ellipsoid_name,
                 parts.semi_major_metre,
@@ -1675,9 +1675,14 @@ impl DatabaseContext {
                 parts.inverse_flattening,
             )
         };
+        ellipsoid.body = super::projstring::guess_body_in(parts.semi_major_metre, Some(self));
+        // An unnamed meridian at 0 is Greenwich on the Earth only (`createGeodeticReferenceFrame`).
         let meridian_name = match parts.prime_meridian_name {
             Some(name) => name.to_owned(),
-            None if parts.prime_meridian_offset == 0.0 => "Greenwich".to_owned(),
+            None if parts.prime_meridian_offset == 0.0 && ellipsoid.body == "Earth" => {
+                "Greenwich".to_owned()
+            }
+            None if parts.prime_meridian_offset == 0.0 => "Reference meridian".to_owned(),
             None => "unnamed".to_owned(),
         };
         GeodeticReferenceFrame::create(
