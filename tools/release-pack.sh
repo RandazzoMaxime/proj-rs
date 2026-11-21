@@ -10,7 +10,8 @@
 #   OUTDIR/proj-rs-<version>-<target>-cli.tar.gz       bin/proj-rs and one link per tool name
 #   OUTDIR/proj-rs-<version>-<target>-libproj.tar.gz   lib/libproj.so.25 (or .25.dylib), libproj.so
 #                                                      (or .dylib), libproj.a, include/*.h,
-#                                                      lib/pkgconfig/proj.pc, lib/cmake/proj/*.cmake
+#                                                      lib/pkgconfig/proj.pc, lib/cmake/proj/*.cmake,
+#                                                      share/proj/proj.db
 # Each holds LICENSE, NOTICE.md (with the licence texts it points to) and a README.txt.
 #
 # Run tools/release-smoke.sh on the archives afterwards.
@@ -100,6 +101,10 @@ mkdir -p "$work/$lib_dir/lib/pkgconfig" "$work/$lib_dir/lib/cmake/proj"
 fill "$root/tools/release/proj.pc.in" "$work/$lib_dir/lib/pkgconfig/proj.pc"
 fill "$root/tools/release/cmake/proj-config.cmake.in" "$work/$lib_dir/lib/cmake/proj/proj-config.cmake"
 fill "$root/tools/release/cmake/proj-config-version.cmake.in" "$work/$lib_dir/lib/cmake/proj/proj-config-version.cmake"
+# The database is inside the library; the copy is for programs that look for the file before they
+# call PROJ, as pyproj does (docs/CLIENTS-pyproj.md). It is the same proj.db, byte for byte.
+mkdir -p "$work/$lib_dir/share/proj"
+cp "$root/data/proj.db" "$work/$lib_dir/share/proj/proj.db"
 licences "$work/$lib_dir"
 fill "$root/tools/release/README-libproj-unix.txt" "$work/$lib_dir/README.txt"
 pack "$lib_dir" "$out/$lib_dir.tar.gz"
