@@ -31,6 +31,7 @@ difference). `dist.sh` installs the library under the names of libproj: `libproj
 | `fork` | `test_fork.c`: contexts survive a `fork()` |
 | `datadir` | `datadir.c`: `proj_context_get_user_writable_directory` and `proj_info().searchpath` are those of the reference libproj under ten environments (home, `XDG_DATA_HOME`, `PROJ_DATA`, `PROJ_LIB`, skip, `PROJ_USER_WRITABLE_DIRECTORY`, `proj_context_set_search_paths`), and the library installed in `<prefix>/lib` lists `<prefix>/share/proj` |
 | `last_used_operation` | `last_used_operation.c`: `proj_trans_get_last_used_operation` is NULL before the first point and gives the operation used after it, for 2 single-operation pairs and a PROJ string pipeline, as the reference libproj |
+| `crs_to_crs_describe` | `crs_to_crs_describe.c`: the object of `proj_create_crs_to_crs` is the operation itself when one candidate is left, as in PROJ: type, name, accuracy, WKT, PROJJSON and `proj_pj_info`, raw and normalized, identical to the reference libproj for 7 pairs (6 single operations, 1 set of candidates) |
 | `c_api` | `test_c_api.cpp`: 152 `TEST`, 32 excluded, 120 pass |
 
 ## Excluded: `excluded.txt`
