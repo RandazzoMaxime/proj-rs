@@ -1280,7 +1280,10 @@ impl super::model::Conversion {
         if criterion == Equivalence::Strict {
             return self.is_equivalent_to(other);
         }
-        if !self.method.is_equivalent_to_with(&other.method, criterion) {
+        if !self
+            .exposed_method()
+            .is_equivalent_to_with(&other.exposed_method(), criterion)
+        {
             return false;
         }
         if values_equivalent(&self.parameters, &other.parameters, criterion) {
@@ -1289,6 +1292,16 @@ impl super::model::Conversion {
         self.method.code == "9802"
             && other.method.code == "9802"
             && lcc2sp_parallels_swapped(self, other)
+    }
+
+    /// The method as PROJ exposes it: `InverseConversion::method` is the `Inverse of` method, so an
+    /// inverted conversion meets one read back from its PROJJSON or WKT.
+    fn exposed_method(&self) -> OperationMethod {
+        if self.inverted {
+            self.method.inverse_of()
+        } else {
+            self.method.clone()
+        }
     }
 
     /// This conversion with its CRS pair set: `source` to `target` in the forward direction.
