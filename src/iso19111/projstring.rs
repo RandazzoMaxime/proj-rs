@@ -2342,6 +2342,13 @@ pub(super) fn datum_from_proj(
     ))
 }
 
+/// `getAngularValue` (`io.cpp`): degrees, written as a number or in DMS (`44d4'n`, `90dw`), read by
+/// `dmstor`, which must read the whole text.
+fn angular_value(text: &str) -> Option<f64> {
+    let (radians, read) = crate::dms::dmstor_with_end(text.as_bytes());
+    (radians.is_finite() && read == text.len()).then(|| radians.to_degrees())
+}
+
 fn parse_proj_number(text: &str, message: &str) -> Result<f64, FactoryError> {
     text.parse::<f64>()
         .map_err(|_| FactoryError::Invalid(message.to_owned()))
@@ -2916,9 +2923,16 @@ pub(super) fn projected_from_proj_string(tokens: &[(String, String)]) -> Result<
     for param in method.params {
         let key = param.proj_name.unwrap_or("");
         let value = match param_token(tokens, key) {
-            Some(text) => text
-                .parse::<f64>()
-                .map_err(|_| FactoryError::Invalid(format!("+{key} is not a number: {text}")))?,
+            Some(text) => {
+                let read = if param.unit == UnitKind::Angular {
+                    angular_value(text)
+                } else {
+                    text.parse::<f64>().ok()
+                };
+                read.ok_or_else(|| {
+                    FactoryError::Invalid(format!("+{key} is not a number: {text}"))
+                })?
+            }
             None => parameter_default(proj, param, tokens),
         };
         let value = match param.unit {
