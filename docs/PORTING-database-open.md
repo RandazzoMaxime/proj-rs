@@ -66,6 +66,16 @@ counterpart: there is no `PJ_CONTEXT` in the Rust API.
 - **No triggers** are copied to the temp layer, as in PROJ's `attachExtraDatabases`.
 - **Thread safety.** The Rust connection is behind the same `Mutex` as `create()`. PROJ
   uses `SQLiteHandleCache`; that cache is not ported.
+- **The built-in `proj.db` is always there (deliberate).** PROJ looks for `proj.db` on the
+  search path (`proj_context_set_search_paths`, then `PROJ_DATA`) and fails when none is
+  found: `proj_create(ctx, "EPSG:32631")` returns `NULL` with `Cannot find proj.db`. Here the
+  database is the one built into the library unless `proj_context_set_database_path` names a
+  file, so the same call succeeds. This is the point of shipping `proj.db` inside the library:
+  a missing or misconfigured data directory does not break the CRS catalogue. GDAL's
+  `test_SetPROJSearchPath`, `test_Set_PROJ_DATA_config_option` and
+  `test_Set_PROJ_DATA_config_option_sub_proccess_config_option_ko` expect the failure and do
+  not pass for that reason. `capi/tests/run.sh embedded_db` checks both behaviours against
+  libproj 9.9.0, so a change on either side is seen.
 
 ## Tests (`tests/unit_database_open.rs`, 15 tests)
 
