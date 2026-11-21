@@ -535,26 +535,28 @@ pub(crate) fn operation_from_proj_extensions(
     Ok(Some(CoordinateOperation::Conversion(operation)))
 }
 
-/// One end of [`operation_from_proj_extensions`]. A plain geographic CRS writes no step of
-/// its own: only its angular unit conversion and axis order, as PROJ does.
+/// One end of [`operation_from_proj_extensions`]: the CRS export of the legacy CRS-to-CRS context,
+/// then a geographic CRS's angular unit conversion and axis order (`createOperationsFromProj4Ext`).
+/// A geographic `longlat` step with only `ellps` is dropped later, as an internal no-op.
 fn write_proj_extension_end(
     crs: &Crs,
     formatter: &mut super::pipeline::PipelineFormatter,
 ) -> Result<(), FactoryError> {
     if let Some(text) = proj_extension(crs) {
         formatter.ingest_proj_string(text);
-    } else if !matches!(
-        crs,
-        Crs::Geographic(_) | Crs::Geodetic(GeodeticCRS::Geographic(_))
-    ) {
-        // The CRS-level tokens belong to the top-level export, not to a step.
+    } else {
+        // The CRS-level tokens belong to the top-level export, not to a step. A geocentric CRS
+        // keeps `+units=m`, which `addGeocentricUnitConversionIntoPROJString` writes in a CRS export.
         let text = crs.export_with(&ProjExtras {
             legacy_crs_to_crs: true,
             ..ProjExtras::default()
         })?;
+        let geocentric = matches!(base_of(crs), Crs::Geodetic(GeodeticCRS::Geocentric(_)));
         let body = text
             .split_whitespace()
-            .filter(|token| !matches!(*token, "+type=crs" | "+units=m" | "+no_defs"))
+            .filter(|token| {
+                !matches!(*token, "+type=crs" | "+no_defs") && (geocentric || *token != "+units=m")
+            })
             .collect::<Vec<_>>()
             .join(" ");
         formatter.ingest_proj_string(&body);
@@ -1493,10 +1495,15 @@ fn geographic_proj(crs: &GeographicCRS, extras: &ProjExtras<'_>) -> String {
         return text;
     }
     let mut parts = vec!["+proj=longlat".to_owned()];
+    // `GeographicCRS::_exportToPROJString` in the legacy CRS-to-CRS context writes the WGS 84
+    // frame as its ellipsoid, so that the step is the no-op `longlat ellps=WGS84` (crs.cpp).
+    let legacy_wgs84 =
+        extras.legacy_crs_to_crs && !extras.has_shift() && datum_token(crs) == Some("WGS84");
     match extras
         .datum_token_of(datum_token(crs))
         .filter(|_| !extras.has_shift())
     {
+        _ if legacy_wgs84 => parts.push("+ellps=WGS84".to_owned()),
         Some(token) => parts.push(format!("+datum={token}")),
         None => {
             if let Some(ellipsoid) = ellipsoid_of(crs) {
