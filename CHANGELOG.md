@@ -6,6 +6,9 @@ rest is outside semver.
 
 ## Unreleased
 
+- The C library exports the geodesic API of PROJ: `geodesic.h` and its 21 `geod_*` functions
+  (direct and inverse problems, lines, polygons), with the structures in the layout of PROJ 9.9.0.
+  PROJ's `geodtest.c` passes against it. pyproj needs it to compile (`docs/CLIENTS-pyproj.md`).
 - `Transformer` builds its candidates at their first use. A pair with several candidates on grids
   no longer reads every grid at `build()`: `EPSG:6364` to `EPSG:8801` with the parity grids builds
   in 0.55 s instead of 11.8 s in a dev build (the first transform then reads the grids it uses,

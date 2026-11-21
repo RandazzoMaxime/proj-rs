@@ -111,7 +111,7 @@ for file in README.txt LICENSE NOTICE.md data/COPYING lib/$real lib/libproj.a in
 done
 check "README.txt has no placeholder left" "0" "$(grep -c '@[A-Z]*@' "$lib/README.txt")"
 check "lib/$link is a link to $real" "$real" "$(readlink "$lib/lib/$link" || echo none)"
-for header in proj.h proj_constants.h proj_experimental.h proj_symbol_rename.h; do
+for header in proj.h proj_constants.h proj_experimental.h proj_symbol_rename.h geodesic.h; do
   check "include/$header is the header of the repository" "$(cksum < "$root/capi/include/$header")" "$(cksum < "$lib/include/$header")"
 done
 if [ "$(uname -s)" = Darwin ]; then

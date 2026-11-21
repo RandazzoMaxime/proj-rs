@@ -494,7 +494,9 @@ The `proj-rs-capi` crate (directory [`capi/`](capi)) is the `proj.h` of PROJ 9.9
 engine: the same header, the same 292 function names and signatures, the same structures. A
 program written for libproj links against it without a change. All 292 functions are
 implemented (contexts, errors, log, creation and transformation, ISO 19111 objects, constructors,
-the operation factory, the database, the static lists, file and network callbacks). The details
+the operation factory, the database, the static lists, file and network callbacks). The geodesic API
+of PROJ is there too: `geodesic.h` and its 21 `geod_*` functions, checked by PROJ's own
+`geodtest.c`. The details
 that differ from PROJ are in [`docs/API-v1.md`](docs/API-v1.md).
 
 ```bash

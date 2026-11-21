@@ -96,7 +96,7 @@ foreach ($file in "README.txt", "LICENSE", "NOTICE.md", "data\COPYING", "bin\pro
     $path = Join-Path $libDir $file
     Require "file $file" ((Test-Path $path) -and (Get-Item $path).Length -gt 0)
 }
-foreach ($header in "proj.h", "proj_constants.h", "proj_experimental.h", "proj_symbol_rename.h") {
+foreach ($header in "proj.h", "proj_constants.h", "proj_experimental.h", "proj_symbol_rename.h", "geodesic.h") {
     Check "include\$header is the header of the repository" (Get-FileHash (Join-Path $root "capi\include\$header")).Hash (Get-FileHash (Join-Path $libDir "include\$header")).Hash
 }
 
