@@ -196,6 +196,14 @@ impl Conversion {
         self.source = Some(Arc::new(source));
         self
     }
+
+    /// This conversion with `target` as its target CRS, the derived CRS PROJ's
+    /// `DerivedCRS::derivingConversion` sets next to the base.
+    #[must_use]
+    pub fn with_target_crs(mut self, target: Crs) -> Self {
+        self.target = Some(Arc::new(target));
+        self
+    }
 }
 
 impl ProjectedCRS {

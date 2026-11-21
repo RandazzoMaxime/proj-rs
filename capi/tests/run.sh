@@ -2,7 +2,8 @@
 # Compile the C tests of PROJ 9.9.0 against the C library of proj-rs, and run them.
 #
 # Usage: capi/tests/run.sh [--release] [TEST...]
-#   TEST is one of: symbols abi lists errno_string angular_io context include_h fork datadir c_api
+#   TEST is one of: symbols abi lists errno_string angular_io context include_h fork datadir
+#   deriving_conversion c_api
 #   (default: all). PENDING=0 runs the cases of pending.txt too, to see them fail.
 #   GTEST_FILTER=pattern narrows the gtest cases of the C++ tests.
 #
@@ -22,7 +23,8 @@ if [ "${1:-}" = "--release" ]; then
   shift
 fi
 tests=("$@")
-[ ${#tests[@]} -gt 0 ] || tests=(symbols abi lists errno_string angular_io context include_h fork datadir c_api)
+[ ${#tests[@]} -gt 0 ] || tests=(symbols abi lists errno_string angular_io context include_h fork datadir
+                                  deriving_conversion c_api)
 
 ref=${PROJ_REFERENCE:-$root/target/proj-reference}
 src=$ref/src
@@ -157,6 +159,17 @@ for test in "${tests[@]}"; do
         *) echo "share/proj of the library not listed: $listed" >&2; exit 1 ;;
       esac
       rm -rf "$scratch" ;;
+    deriving_conversion)
+      # The deriving conversion of a projected CRS: its source, its target and its PROJ string.
+      echo "== deriving_conversion"
+      gcc -std=c99 -I"$root/capi/include" "$here/deriving_conversion.c" -o "$out/deriving_ours" "${ldflags[@]}"
+      gcc -std=c99 -I"$src/src" "$here/deriving_conversion.c" -o "$out/deriving_ref" -L"$ref/build/lib" \
+        -lproj -Wl,-rpath,"$ref/build/lib"
+      definitions=(EPSG:26915 EPSG:2154 EPSG:3857 EPSG:4326 "$(cat "$here/data/derived_projected.wkt")")
+      ours=$(PROJ_DATA="$ref/build/data" "$out/deriving_ours" "${definitions[@]}" 2>/dev/null)
+      theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/deriving_ref" "${definitions[@]}" 2>/dev/null)
+      [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }
+      echo "deriving conversions identical to libproj for ${#definitions[@]} CRS" ;;
     c_api)
       python3 "$here/filter_tests.py" "$unit/test_c_api.cpp" "$here/excluded.txt" "$out/test_c_api_filtered.cpp"
       g++ "${cxxflags[@]}" -DTIFF_ENABLED -include "$unit/gtest_include.h" "$out/test_c_api_filtered.cpp" "$unit/main.cpp" \
