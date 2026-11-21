@@ -169,7 +169,7 @@ for test in "${tests[@]}"; do
       cases=(-o EPSG:4326 EPSG:2154 -o EPSG:4326 EPSG:32631 -o EPSG:4326 EPSG:3857 -o EPSG:4258 EPSG:4326
              -o EPSG:2154 EPSG:4326 -o EPSG:4326 EPSG:4978
              -d "+proj=longlat +type=crs" -d EPSG:4326 -d EPSG:2154
-             -d "+proj=pipeline +step +proj=axisswap +order=2,1")
+             -d "+proj=pipeline +step +proj=axisswap +order=2,1" -d "+proj=utm +zone=31 +ellps=WGS84")
       ours=$("$out/normalize_ours" "${cases[@]}" 2>/dev/null)
       theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/normalize_ref" "${cases[@]}" 2>/dev/null)
       [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }

@@ -8,7 +8,7 @@ use proj_rs::unstable::{Direction, Proj, ProjError, StepError, Xyzt};
 use crate::context::{context, Ctx};
 use crate::ffi::*;
 use crate::iso::Obj;
-use crate::pj::{area, creation_failure, hand_over, pj, Pj};
+use crate::pj::{area, creation_failure, hand_over, pj, Pj, ReadAs};
 use crate::util::{self, guard};
 
 /// The four components of a `PJ_COORD`.
@@ -412,16 +412,20 @@ pub extern "C" fn proj_create_crs_to_crs_from_pj(
 /// operation without a CRS pair, a PROJ string among them, and any other object give NULL and a
 /// log line, without setting `proj_errno`.
 fn normalize_single(context: &mut Ctx, object: &Pj) -> *mut PJ {
-    if let Some(normalized) = crate::iso::normalized_for_visualization(object) {
-        return normalized;
+    if object.read_as == ReadAs::Object {
+        if let Some(normalized) = crate::iso::normalized_for_visualization(object) {
+            return normalized;
+        }
     }
-    let is_operation = matches!(
-        object.obj.as_ref(),
-        Some(Obj::User(proj_rs::iso19111::UserObject::Operation(_)))
-    ) || object
-        .proj
-        .as_ref()
-        .is_some_and(|proj| proj.native_operation().is_some());
+    let is_operation = object.read_as == ReadAs::ProjOperation
+        || matches!(
+            object.obj.as_ref(),
+            Some(Obj::User(proj_rs::iso19111::UserObject::Operation(_)))
+        )
+        || object
+            .proj
+            .as_ref()
+            .is_some_and(|proj| proj.native_operation().is_some());
     if is_operation {
         context.log(
             PJ_LOG_DEBUG as c_int,
