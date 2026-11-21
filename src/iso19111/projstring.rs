@@ -211,6 +211,17 @@ impl GeographicCRS {
 }
 
 impl ProjectedCRS {
+    /// The PROJ string of the deriving conversion, with the `tmerc approx` or `utm approx` method
+    /// override of a `+approx` CRS (`Conversion::_exportToPROJString`, `projMethodOverride`).
+    fn conversion_proj_string(&self) -> Result<String, FactoryError> {
+        match self.conversion.identified.proj_method_override.as_deref() {
+            Some("tmerc approx" | "utm approx") => self
+                .deriving_conversion()
+                .export_to_proj_string_approx_tmerc(),
+            _ => self.deriving_conversion().export_to_proj_string(),
+        }
+    }
+
     /// `normalizeForVisualization` for a projected CRS whose axes are not east-then-north.
     #[must_use]
     pub fn normalize_for_visualization(&self) -> Self {
@@ -388,12 +399,7 @@ impl ProjectedCRS {
             }
             return Ok(format!("{text} +type=crs"));
         }
-        let mut text = match self.conversion.identified.proj_method_override.as_deref() {
-            Some("tmerc approx" | "utm approx") => self
-                .deriving_conversion()
-                .export_to_proj_string_approx_tmerc()?,
-            _ => self.deriving_conversion().export_to_proj_string()?,
-        };
+        let mut text = self.conversion_proj_string()?;
         if self.has_west_south_axes() {
             text = text.replacen("+axis=swu", "+czech", 1);
         }
@@ -684,7 +690,7 @@ pub(crate) fn projection_steps(source: &Crs, target: &Crs) -> Result<Vec<String>
             ));
         }
     }
-    let mut projection = projected.deriving_conversion().export_to_proj_string()?;
+    let mut projection = projected.conversion_proj_string()?;
     append_ellipsoid(&mut projection, base);
     append_meridian(&mut projection, base);
     steps.push(projection);
@@ -715,7 +721,7 @@ fn spherical_source_projection(
     }
     let mut steps = inverted_spherical_steps(spherical)?;
     // The spherical source is written inverted as well (see `inverted_spherical_steps`).
-    let mut projection = projected.deriving_conversion().export_to_proj_string()?;
+    let mut projection = projected.conversion_proj_string()?;
     if let Some(ellipsoid) = base.ellipsoid() {
         projection.push(' ');
         projection.push_str(&ellipsoid_proj(ellipsoid));
@@ -1983,6 +1989,8 @@ fn recognized(proj: &str, kind: ProjKind, key: &str, tokens: &[(String, String)]
     match key {
         "wktext" => return false,
         "geoid_crs" => return param_token(tokens, "geoidgrids").is_some(),
+        // `pj` reads `+approx` for `tmerc` and `utm`, not for `etmerc`.
+        "approx" if matches!(proj, "tmerc" | "utm") => return true,
         _ => {}
     }
     if crate::engine::GLOBAL_KEYS.contains(&key) {
@@ -2125,7 +2133,9 @@ fn selector_keys(proj: &str, tokens: &[(String, String)]) -> Vec<&'static str> {
                 vec!["lat_0", "k"]
             }
         }
-        "utm" => vec!["approx", "zone", "south"],
+        // `createUTM` reads no `+approx` (io.cpp:12189-12193): it stays unused, so the CRS keeps
+        // its string as `EXTENSION_PROJ4`.
+        "utm" => vec!["zone", "south"],
         "ortho" => vec!["k", "alpha"],
         "cea" => vec!["k", "lat_ts"],
         _ => Vec::new(),
@@ -2831,6 +2841,7 @@ pub(super) fn projected_from_proj_string(tokens: &[(String, String)]) -> Result<
     };
     let datum = proj_crs::grid_datum(datum, tokens);
     let pseudo = proj_crs::pseudo_mercator(tokens);
+    let written_tmerc = token(tokens, "proj") == "tmerc";
     let (proj, spelled) = method_spelling(token(tokens, "proj"), tokens, datum.ellipsoid());
     let proj = proj.as_str();
     let tokens = spelled.as_slice();
@@ -2949,7 +2960,8 @@ pub(super) fn projected_from_proj_string(tokens: &[(String, String)]) -> Result<
     let mut conversion =
         Conversion::create_with_method(method.wkt2_name, method_space, &method_code, parameters);
     conversion.identified = Identified::named("unknown");
-    if tokens.iter().any(|(key, _)| key == "approx") && matches!(proj, "tmerc" | "utm") {
+    // io.cpp:12307-12311 tests the written name: `etmerc` (mapped to `tmerc`) drops `+approx`.
+    if tokens.iter().any(|(key, _)| key == "approx") && written_tmerc {
         conversion.identified.proj_method_override = Some(format!("{proj} approx"));
     }
     let base = GeographicCRS {
