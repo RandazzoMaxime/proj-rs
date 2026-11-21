@@ -328,6 +328,17 @@ impl Params {
         })
     }
 
+    /// Mark as read each token whose text is one of `texts`, as `ob_tran` takes the reads of the
+    /// object it rotates (ob_tran.cpp:210-222).
+    pub(crate) fn mark_read_texts<'a>(&self, texts: impl IntoIterator<Item = &'a str>) {
+        let texts: Vec<&str> = texts.into_iter().collect();
+        for item in &self.items {
+            if texts.contains(&item.text.as_str()) {
+                item.mark_used();
+            }
+        }
+    }
+
     /// Keys in first-seen order.
     pub(crate) fn entries(&self) -> impl Iterator<Item = (&str, Option<&str>)> {
         self.first_visible()
@@ -1298,6 +1309,17 @@ impl Operation {
         )
     }
 
+    /// [`Operation::create`] that keeps a key no step reads, listed by [`Operation::parameters`] as
+    /// not used: the `pj_create_internal` call of `createFromPROJString` (io.cpp:12799-12803).
+    pub(crate) fn create_keeping_unknown(definition: &str) -> Result<Self, CreateError> {
+        Self::create_with(
+            definition,
+            DatumMode::Shift,
+            ForceOver::No,
+            UnknownKeys::Keep,
+        )
+    }
+
     /// [`Operation::create_projection`] that keeps a key no projection reads, as PROJ does: such a
     /// key is listed by [`Operation::parameters`] as not used. `proj -v` and `proj -V` use it.
     ///
@@ -1361,12 +1383,13 @@ impl Operation {
         }
         prepare_params(&mut params)?;
         append_default_ellipsoid(&mut params);
+        // `pj_init` reads `+axis` for every object it builds (init.cpp).
+        let _ = params.flag("axis");
         if datum == DatumMode::Projection {
             for key in ["towgs84", "nadgrids", "geoidgrids"] {
                 params.hide(key);
             }
-            // `pj_fwd` and `pj_inv` swap no axes: `proj` reads `+axis`, lists it as used, ignores it.
-            let _ = params.flag("axis");
+            // `pj_fwd` and `pj_inv` swap no axes: `proj` lists `+axis` as used and ignores it.
             params.hide("axis");
         }
         let name = params.text("proj").unwrap_or("").to_owned();

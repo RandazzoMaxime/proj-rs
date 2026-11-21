@@ -69,6 +69,13 @@ pub(crate) fn build(
         (Some(child), true)
     } else {
         let child = Operation::create(&child_definition(target, params))?;
+        params.mark_read_texts(
+            child
+                .parameters()
+                .iter()
+                .filter(|parameter| parameter.used)
+                .map(|parameter| parameter.text.as_str()),
+        );
         let cartesian = child_is_cartesian(target);
         (Some(child), !cartesian)
     };
