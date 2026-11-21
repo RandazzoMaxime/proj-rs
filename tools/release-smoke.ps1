@@ -96,6 +96,8 @@ foreach ($file in "README.txt", "LICENSE", "NOTICE.md", "data\COPYING", "bin\pro
     $path = Join-Path $libDir $file
     Require "file $file" ((Test-Path $path) -and (Get-Item $path).Length -gt 0)
 }
+$sharedDb = Join-Path $libDir "share\proj\proj.db"
+Check "share\proj\proj.db is the database of the repository" (Get-FileHash (Join-Path $root "data\proj.db")).Hash $(if (Test-Path $sharedDb) { (Get-FileHash $sharedDb).Hash } else { "missing" })
 foreach ($header in "proj.h", "proj_constants.h", "proj_experimental.h", "proj_symbol_rename.h") {
     Check "include\$header is the header of the repository" (Get-FileHash (Join-Path $root "capi\include\$header")).Hash (Get-FileHash (Join-Path $libDir "include\$header")).Hash
 }

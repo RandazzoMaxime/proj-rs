@@ -5,7 +5,7 @@
 # Makes, with <version> read from Cargo.toml:
 #   proj-rs-<version>-<Target>-cli.zip      bin\proj-rs.exe, one .cmd launcher per tool, link-tools.ps1
 #   proj-rs-<version>-<Target>-libproj.zip  bin\proj.dll, lib\proj.lib, include\*.h,
-#                                           lib\pkgconfig\proj.pc, lib\cmake\proj\*.cmake
+#                                           lib\pkgconfig\proj.pc, lib\cmake\proj\*.cmake, share\proj\proj.db
 # Each holds LICENSE, NOTICE.md (with the licence texts it points to) and a README.txt.
 #
 # The archive carries launchers, not hard links: a zip stores each link as a full copy (8 times
@@ -77,6 +77,9 @@ try {
         New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
         Set-Content -Path $dest -Value $text -Encoding ascii -NoNewline
     }
+    # The database is inside the DLL; the copy is for programs that look for the file, as pyproj does.
+    New-Item -ItemType Directory -Force -Path (Join-Path $lib "share\proj") | Out-Null
+    Copy-Item (Join-Path $root "data\proj.db") (Join-Path $lib "share\proj\proj.db")
     Fill (Join-Path $root "tools\release\proj.pc.in") (Join-Path $lib "lib\pkgconfig\proj.pc")
     Fill (Join-Path $root "tools\release\cmake\proj-config.cmake.in") (Join-Path $lib "lib\cmake\proj\proj-config.cmake")
     Fill (Join-Path $root "tools\release\cmake\proj-config-version.cmake.in") (Join-Path $lib "lib\cmake\proj\proj-config-version.cmake")

@@ -110,6 +110,8 @@ for file in README.txt LICENSE NOTICE.md data/COPYING lib/$real lib/libproj.a li
   require "file $file" test -s "$lib/$file"
 done
 check "README.txt has no placeholder left" "0" "$(grep -c '@[A-Z]*@' "$lib/README.txt")"
+check "share/proj/proj.db is the database of the repository" "$(cksum < "$root/data/proj.db")" \
+  "$(cksum < "$lib/share/proj/proj.db" 2>/dev/null || echo missing)"
 check "proj.pc and the CMake files have no placeholder left" "0" \
   "$(cat "$lib/lib/pkgconfig/proj.pc" "$lib"/lib/cmake/proj/*.cmake | grep -c '@[A-Z_]*@')"
 check "lib/$link is a link to $real" "$real" "$(readlink "$lib/lib/$link" || echo none)"
