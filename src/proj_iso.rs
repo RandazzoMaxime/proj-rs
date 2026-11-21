@@ -313,9 +313,11 @@ fn format_year(year: f64) -> String {
 fn horizontal_part(crs: &Crs) -> Option<&Crs> {
     match crs {
         Crs::Compound(compound) => match compound.components() {
-            [horizontal, _vertical] => Some(horizontal),
+            [horizontal, _vertical] => horizontal_part(horizontal),
             _ => None,
         },
+        // A BoundCRS (`+towgs84=`) has the axes of its base CRS.
+        Crs::Bound(bound) => horizontal_part(bound.source_crs()),
         other => Some(other),
     }
 }
