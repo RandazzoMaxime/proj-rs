@@ -140,13 +140,31 @@ impl Crs {
     ///
     /// The CRS name is not required to match. Axis comparison is direction and
     /// unit. A geodetic datum name may match an alias, including an Esri `D_`
-    /// prefix.
+    /// prefix. A projected CRS compares its base that way; a bound CRS its source and hub.
     #[must_use]
     pub fn is_equivalent_to_db(&self, other: &Self, db: &DatabaseContext) -> bool {
-        let (Some(left), Some(right)) = (as_geodetic(self), as_geodetic(other)) else {
-            return false;
+        let either = |left: &Self, right: &Self| {
+            left.is_equivalent_to_with(right, Equivalence::Equivalent)
+                || left.is_equivalent_to_db(right, db)
         };
-        db_equivalent(&left, &right, IdentifyAxisOrder::Exact, db)
+        match (self, other) {
+            (Self::Projected(left), Self::Projected(right)) => {
+                left.is_equivalent_to_with_database(right, Equivalence::Equivalent, db)
+            }
+            (Self::Bound(left), Self::Bound(right)) => {
+                either(left.source_crs(), right.source_crs())
+                    && either(left.target_crs(), right.target_crs())
+                    && left
+                        .transformation()
+                        .is_equivalent_to_with(right.transformation(), Equivalence::Equivalent)
+            }
+            _ => {
+                let (Some(left), Some(right)) = (as_geodetic(self), as_geodetic(other)) else {
+                    return false;
+                };
+                db_equivalent(&left, &right, IdentifyAxisOrder::Exact, db)
+            }
+        }
     }
 }
 
