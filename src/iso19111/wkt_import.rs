@@ -1752,13 +1752,6 @@ impl WktParser {
         {
             return Err(invalid("missing CS"));
         }
-        // A base geodetic CRS with an authority id and no CS takes the database
-        // coordinate system. EPSG:4978 is geocentric, not geographic.
-        if cs_node.is_none() {
-            if let Some(geocentric) = self.geocentric_from_identifier(&props) {
-                return Ok(WktObject::Crs(Crs::Geodetic(geocentric)));
-            }
-        }
         if node.child(&["PRIMEM", "PRIMEMERIDIAN"]).is_none()
             && (ci_eq(keyword, "GEOGCS") || ci_eq(keyword, "GEOCCS"))
         {
@@ -3418,19 +3411,6 @@ impl WktParser {
             }
         }
         Ok(parameters)
-    }
-
-    /// Database geocentric CRS for an id on a CS-less base geodetic CRS.
-    fn geocentric_from_identifier(&self, props: &Props) -> Option<GeodeticCRS> {
-        let db = self.db.as_ref()?;
-        let id = props
-            .identifiers
-            .iter()
-            .find(|identifier| identifier.code_space().eq_ignore_ascii_case("EPSG"))?;
-        let crs = AuthorityFactory::create(db, id.code_space())
-            .create_geodetic_crs(id.code())
-            .ok()?;
-        matches!(crs, GeodeticCRS::Geocentric(_)).then_some(crs)
     }
 
     /// Drop `PARAMETER["EPSG code for Interpolation CRS", code]` and resolve it.
