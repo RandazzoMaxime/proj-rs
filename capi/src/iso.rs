@@ -218,9 +218,12 @@ pub extern "C" fn proj_get_name(obj: *const PJ) -> *const c_char {
         let Some(object) = pj(obj) else {
             return std::ptr::null();
         };
-        match object.obj.as_ref().map(Obj::name) {
-            Some(name) => object.arena.put(&name),
-            None => std::ptr::null(),
+        match object.obj.as_ref() {
+            // Neither is an IdentifiedObject: PROJ gives them no name.
+            Some(Obj::Cs(_) | Obj::User(UserObject::CoordinateMetadata(_))) | None => {
+                std::ptr::null()
+            }
+            Some(obj) => object.arena.put(&obj.name()),
         }
     })
 }
