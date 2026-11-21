@@ -16,26 +16,28 @@ Sources, PROJ 9.9.0 (`src/`, téléchargées depuis `raw.githubusercontent.com/O
 
 ## Ce que fait PROJ
 
-Le brief disait que `pj_get_def` écrit la liste des paramètres puis les ajouts de
-`pj_datum_set`. Je n'ai pas trouvé le corps de `pj_get_def` dans les fichiers 9.9.0 récupérés
-(`init.cpp`, `datum_set.cpp`, `internal.cpp`, `param.cpp`, `list.cpp`, `iso19111/c_api.cpp`).
-La règle a donc été établie par mesure. `pyproj` lit `proj_pj_info(P).definition` (propriété
-`definition` de `pyproj/_transformer.pyx`). Il embarque PROJ 9.8.1, faute de binaire 9.9.0 ici.
+`proj_pj_info(P).definition` est `pj_get_def` (`src/pr_list.cpp`) : les paramètres de
+`P->params` marqués `used`, dans l'ordre, sans leur `+`. La liste contient les ajouts de
+`pj_datum_set` (ellipsoïde puis `towgs84=` ou `nadgrids=` du premier `datum=`) et l'`ellps=GRS80`
+de `append_default_ellipsoid_to_paralist`. Un paramètre que l'opération ne lit pas n'y figure
+pas : une clé répétée (seule la première est lue), `wktext`, une clé que la projection ignore.
 
-La définition n'est pas la liste d'entrée réécrite. `+proj=longlat` donne
-`proj=longlat datum=WGS84 no_defs ellps=WGS84 towgs84=0,0,0`, et
-`+proj=tmerc … +ellps=GRS80 +units=m +no_defs` donne `proj=utm zone=32 ellps=GRS80 units=m no_defs`.
-La chaîne est lue comme CRS, écrite en PROJ, puis initialisée comme `pj_init` :
+Mesure de référence : `proj_pj_info(proj_create(ctx, entrée)).definition` de la libproj C de
+PROJ 9.9.0 (`tools/build-reference.sh`), l'appel que fait le `Proj::new` de la crate georust.
+`+proj=longlat` donne `proj=longlat ellps=GRS80`, et `+proj=tmerc … +units=m +no_defs` reste
+`proj=tmerc …`.
 
-1. lecture de la chaîne comme CRS (`create_from_user_input`) ;
-2. écriture en chaîne PROJ (`Crs::export_to_proj_string`), avec un marqueur `+type=crs` ;
-3. `pj_init` : suppression du `+` et du marqueur `type=crs`, qui n'est pas un paramètre PROJ
-   (libproj ne l'affiche pas) ;
-4. `pj_datum_set` : pour le premier `datum=`, ajout de `ellps=` puis de la définition du datum,
-   en fin de liste.
+La crate lit la même liste : `Operation::parameters` marque chaque paramètre lu, comme
+`proj -v` l'affiche déjà (« following specified but NOT used »).
 
-L'étape 4 est celle du brief. Les étapes 1 à 3 manquaient au brief, et sans elles
-`+proj=longlat` et `+proj=tmerc` donnent un autre texte que libproj.
+### Correction de novembre 2026
+
+La première version de ce port mesurait à travers pyproj 3.8.0. Son `Proj` lit d'abord la
+chaîne comme CRS (`+type=crs`), l'écrit en PROJ, puis crée l'opération : la définition rendue
+était celle de ce CRS réécrit (`proj=longlat datum=WGS84 no_defs ellps=WGS84 towgs84=0,0,0` pour
+`+proj=longlat`). Ce n'est pas ce que rend libproj à un appelant C. Sept des quatorze chaînes de
+`tests/facade_info.rs` différaient de la libproj 9.9.0 ; elles suivent maintenant la mesure C.
+`tests/gie_info_functions.rs` (`proj_info` de `gie_self_tests.cpp`) attendait déjà la liste brute.
 
 ## Ce qui a changé
 
@@ -57,15 +59,13 @@ publique ajoutée ou modifiée.
 - **Aire d'usage.** `usage 0` du CRS (`domains().first()`), comme `proj_get_area_of_use`. Je n'ai
   pas pris `crs_extent`, qui intersecte les composantes d'un CRS composé. libproj ne fait pas cela.
 - **Pas de boîte.** `None` au lieu de `-1000`.
-- **`ellps=GRS80` par défaut non codé.** L'export écrit toujours un ellipsoïde, un datum ou une
-  sphère. La règle de `pj_init` ne s'applique donc jamais à cette entrée.
 - **`GRS80` comme datum.** La crate le lit, PROJ le refuse. `def()` le refuse aussi, mais
   `Proj::new` l'accepte encore (écart existant, non traité ici).
 - **`proj_info` d'une chaîne PROJ.** `id` vaut le `proj=` de la définition, `description` vaut
   `PROJ-based coordinate operation`, `definition` vaut `def()`. Les autres façades (CRS, paire
   `new_known_crs`) gardent l'ancien `proj_info`.
 
-## Résultats contre libproj (pyproj, PROJ 9.8.1)
+## Résultats de la première version (mesure pyproj, PROJ 9.8.1, remplacée)
 
 Trente-huit chaînes (`+proj=longlat`, UTM, Lambert, Mercator, tous les datums de la table, des
 `+towgs84=`, `+pm=`, `+R=`, `+a=`/`+b=`, un pipeline et `+init=`) :
@@ -113,3 +113,8 @@ supprimé avant le commit.
 Le ROADMAP garde, dans le texte de la ligne 2, la phrase « Still open : … the `Debug` and
 `def()` text ». Elle n'est plus vraie ; elle reste à réécrire par le mainteneur, le brief
 interdisant d'éditer la prose de ce fichier.
+
+## Écart restant (novembre 2026)
+
+- **Clé inconnue de la projection.** `Proj::new("+proj=merc +zone=3")` refuse `+zone`, PROJ
+  l'accepte et ne la liste pas. Non traité ici.
