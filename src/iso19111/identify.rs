@@ -18,7 +18,7 @@ use super::factory::{
 };
 use super::model::{
     Axis, BoundCRS, CartesianCS, CompoundCRS, ConcatenatedStep, CoordinateOperation,
-    CoordinateSystem, Crs, Datum, DatumEnsemble, DerivedProjectedCRS, GeodeticCRS,
+    CoordinateSystem, Crs, Datum, DatumEnsemble, DerivedProjectedCRS, EllipsoidalCS, GeodeticCRS,
     GeodeticReferenceFrame, GeographicCRS, Identified, Identifier, ObjectDomain, ProjectedCRS,
     VerticalCRS,
 };
@@ -1528,11 +1528,16 @@ fn sort_projected_hits(this_name: &str, hits: &mut [(ProjectedCRS, i32)]) {
 /// longitude/latitude base in latitude/longitude order (crs.cpp:4866). Two dimensions only.
 fn latitude_longitude_base(crs: &GeographicCRS) -> Option<GeographicCRS> {
     let axes = crs.coordinate_system().axes();
-    if axes.len() >= 2 && axes[0].direction() == "east" && axes[1].direction() == "north" {
-        let mut swapped = crs.clone();
-        swapped.coordinate_system.axes.swap(0, 1);
-        swapped.coordinate_system.axes.truncate(2);
-        return Some(swapped);
+    if axes.len() == 2 && axes[0].direction() == "east" && axes[1].direction() == "north" {
+        // A new CRS of the name, datum and latitude-longitude axes only: no identifier and no
+        // implicit axes, which would let `OGC:CRS84` match (crs.cpp:4876-4885).
+        return Some(GeographicCRS {
+            identified: Identified::named(crs.name().to_owned()),
+            datum: crs.datum.clone(),
+            ensemble: crs.ensemble.clone(),
+            coordinate_system: EllipsoidalCS::create_latitude_longitude(axes[0].unit().clone()),
+            implicit_cs: false,
+        });
     }
     None
 }
