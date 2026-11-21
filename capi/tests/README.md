@@ -30,6 +30,7 @@ difference). `dist.sh` installs the library under the names of libproj: `libproj
 | `include_h` | `include_proj_h_from_c.c`: `proj.h` and `proj_experimental.h` compile as C |
 | `fork` | `test_fork.c`: contexts survive a `fork()` |
 | `datadir` | `datadir.c`: `proj_context_get_user_writable_directory` and `proj_info().searchpath` are those of the reference libproj under ten environments (home, `XDG_DATA_HOME`, `PROJ_DATA`, `PROJ_LIB`, skip, `PROJ_USER_WRITABLE_DIRECTORY`, `proj_context_set_search_paths`), and the library installed in `<prefix>/lib` lists `<prefix>/share/proj` |
+| `latin1_input` | `latin1_input.c`: a WKT handed over in Latin-1, as QGIS does (`QString::toLatin1`), with a degree sign that is not UTF-8: `proj_create_from_wkt`, `proj_create` and `proj_context_guess_wkt_dialect` give what the reference libproj gives for 2 WKT |
 | `c_api` | `test_c_api.cpp`: 152 `TEST`, 32 excluded, 120 pass |
 
 ## Excluded: `excluded.txt`

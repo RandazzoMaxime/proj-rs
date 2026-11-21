@@ -158,9 +158,11 @@ pub(crate) fn create(ctx: *mut PJ_CONTEXT, definition: &str, who: &str) -> *mut 
 
 #[unsafe(no_mangle)]
 pub extern "C" fn proj_create(ctx: *mut PJ_CONTEXT, definition: *const c_char) -> *mut PJ {
-    guard(std::ptr::null_mut(), || match util::text(definition) {
-        Some(text) => create(ctx, text, "proj_create"),
-        None => std::ptr::null_mut(),
+    guard(std::ptr::null_mut(), || {
+        match util::definition_text(definition) {
+            Some(text) => create(ctx, &text, "proj_create"),
+            None => std::ptr::null_mut(),
+        }
     })
 }
 
