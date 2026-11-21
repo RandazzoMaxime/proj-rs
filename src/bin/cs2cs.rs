@@ -127,6 +127,7 @@ fn command(argv: Vec<String>) -> ExitCode {
         } else {
             Ballpark::Forbidden
         },
+        area_of_interest: None,
     };
     let promotion = if opts.promote_3d {
         Promotion::To3d

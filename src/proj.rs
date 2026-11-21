@@ -28,7 +28,7 @@ use crate::iso19111::{
     CoordinateOperationFactory, Crs, DatabaseContext, FactoryError, GridAvailabilityUse,
     GridDescription, GridLookup, OpProps, Pipeline, ProjLines, ProjStringLayout, RemoteGrids,
 };
-use crate::proj_iso::{iso_pipeline, iso_pipeline_at, IsoPipeline};
+use crate::proj_iso::{iso_pipeline_at, IsoPipeline};
 use crate::{CreateError, Xyzt};
 
 /// Numeric type accepted by [`Coord`].
@@ -496,7 +496,11 @@ impl Proj {
         reject_nul(to)?;
         // The ISO 19111 selection, as `cs2cs` takes it. A pair the selection does not write is
         // refused: libproj's creation has no other path for it.
-        if let Some(pipeline) = iso_pipeline(from, to) {
+        let filter = CandidateFilter {
+            area_of_interest: area_of_interest(area.as_ref()),
+            ..CandidateFilter::NONE
+        };
+        if let Some(pipeline) = iso_pipeline_at(from, to, None, ForceOver::No, filter) {
             return Ok(built(
                 Body::Iso(Box::new(pipeline)),
                 format!("{from} -> {to}"),
@@ -529,7 +533,8 @@ impl Proj {
         area: Option<Area>,
         options: Option<Vec<&str>>,
     ) -> Result<Self, ProjCreateError> {
-        let (over, filter) = crs_to_crs_options(options.as_deref())?;
+        let (over, mut filter) = crs_to_crs_options(options.as_deref())?;
+        filter.area_of_interest = area_of_interest(area.as_ref());
         if !matches!(self.body, Body::Single) {
             return Err(ProjCreateError::ProjError(
                 "source is not a single CRS".to_owned(),
@@ -1955,6 +1960,13 @@ fn built(body: Body, definition: String, area: Option<Area>) -> Proj {
 /// later item does not clear it. `ACCURACY` is in metres, and a negative value is no filter.
 /// `ALLOW_BALLPARK` takes `yes` or `no`, any case. An empty item is skipped. `AUTHORITY`,
 /// `ONLY_BEST` and a misspelt name are refused.
+/// The area of interest of a `PJ_AREA` whose box is set, as `proj_create_crs_to_crs` hands it to
+/// the operation factory (`crs_to_crs.cpp:557-561`). A box the factory cannot hold is no filter.
+fn area_of_interest(area: Option<&Area>) -> Option<crate::iso19111::BoundingBox> {
+    let area = area?;
+    crate::iso19111::BoundingBox::create(area.west, area.south, area.east, area.north).ok()
+}
+
 fn crs_to_crs_options(
     options: Option<&[&str]>,
 ) -> Result<(ForceOver, CandidateFilter), ProjCreateError> {

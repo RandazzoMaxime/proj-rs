@@ -98,15 +98,11 @@ pub(crate) struct IsoPipeline {
     epoch: Option<f64>,
 }
 
-/// The ISO pipeline from `from` to `to`, or `None` when the selection fails.
+/// The ISO pipeline from `from` to `to`, with a coordinate epoch and the `over` flag of
+/// `FORCE_OVER`, or `None` when the selection fails.
 ///
 /// A compound CRS (a horizontal part and a vertical one) is read by its horizontal part:
 /// the axis order and the units come from there. Its vertical part is in the pipeline.
-pub(crate) fn iso_pipeline(from: &str, to: &str) -> Option<IsoPipeline> {
-    iso_pipeline_at(from, to, None, ForceOver::No, CandidateFilter::NONE)
-}
-
-/// [`iso_pipeline`] with a coordinate epoch and the `over` flag of `FORCE_OVER`.
 ///
 /// PROJ inserts `+proj=set +v_4=<epoch>` at both ends of the pipeline
 /// (`proj_coordoperation_create_proj_crs_to_crs` when `coordinateEpoch` is set).

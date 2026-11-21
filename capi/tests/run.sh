@@ -2,7 +2,8 @@
 # Compile the C tests of PROJ 9.9.0 against the C library of proj-rs, and run them.
 #
 # Usage: capi/tests/run.sh [--release] [TEST...]
-#   TEST is one of: symbols abi lists errno_string angular_io context include_h fork datadir c_api
+#   TEST is one of: symbols abi lists errno_string angular_io context include_h fork datadir
+#   crs_to_crs_area c_api
 #   (default: all). PENDING=0 runs the cases of pending.txt too, to see them fail.
 #   GTEST_FILTER=pattern narrows the gtest cases of the C++ tests.
 #
@@ -22,7 +23,8 @@ if [ "${1:-}" = "--release" ]; then
   shift
 fi
 tests=("$@")
-[ ${#tests[@]} -gt 0 ] || tests=(symbols abi lists errno_string angular_io context include_h fork datadir c_api)
+[ ${#tests[@]} -gt 0 ] || tests=(symbols abi lists errno_string angular_io context include_h fork datadir
+                                  crs_to_crs_area c_api)
 
 ref=${PROJ_REFERENCE:-$root/target/proj-reference}
 src=$ref/src
@@ -157,6 +159,16 @@ for test in "${tests[@]}"; do
         *) echo "share/proj of the library not listed: $listed" >&2; exit 1 ;;
       esac
       rm -rf "$scratch" ;;
+    crs_to_crs_area)
+      # The area of interest of proj_create_crs_to_crs_from_pj filters the candidates.
+      echo "== crs_to_crs_area"
+      gcc -std=c99 -I"$root/capi/include" "$here/crs_to_crs_area.c" -o "$out/crs_to_crs_area_ours" "${ldflags[@]}"
+      gcc -std=c99 -I"$src/src" "$here/crs_to_crs_area.c" -o "$out/crs_to_crs_area_ref" -L"$ref/build/lib" \
+        -lproj -Wl,-rpath,"$ref/build/lib"
+      ours=$(PROJ_DATA="$ref/build/data" "$out/crs_to_crs_area_ours" 2>/dev/null)
+      theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/crs_to_crs_area_ref" 2>/dev/null)
+      [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }
+      echo "crs_to_crs with an area of interest identical to libproj for 5 pairs" ;;
     c_api)
       python3 "$here/filter_tests.py" "$unit/test_c_api.cpp" "$here/excluded.txt" "$out/test_c_api_filtered.cpp"
       g++ "${cxxflags[@]}" -DTIFF_ENABLED -include "$unit/gtest_include.h" "$out/test_c_api_filtered.cpp" "$unit/main.cpp" \
