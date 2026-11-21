@@ -9,7 +9,7 @@ use super::esri_parammap::{
 };
 use super::factory::{AuthorityFactory, AuthorityObject, DatabaseContext, NameMatch, ObjectType};
 use super::niche::{ParametricDatum, TemporalDatum};
-use super::wkt_import::WktParser;
+use super::wkt_import::{WktNode, WktParser};
 
 mod niche;
 /// Whether the node being opened carries an authority identifier.
@@ -363,6 +363,20 @@ impl WktFormatter {
         let next_id = if self.esri { false } else { next_id };
         self.output_id.push(next_id);
         self.stack_has_id.push(has_id || parent_has_id);
+    }
+
+    /// `WKTFormatter::ingestWKTNode`: a parsed WKT tree written again, with this formatter's line
+    /// breaks and indentation.
+    fn ingest_node(&mut self, node: &WktNode) {
+        self.start_node(node.value(), NodeId::Absent);
+        for child in node.children() {
+            if child.children().is_empty() {
+                self.add_raw(&child.to_wkt());
+            } else {
+                self.ingest_node(child);
+            }
+        }
+        self.end_node();
     }
 
     fn end_node(&mut self) {
@@ -915,7 +929,8 @@ fn export_spherical(
 
 fn export_projected(crs: &ProjectedCRS, formatter: &mut WktFormatter) -> Result<(), FactoryError> {
     if let Some(text) = esri_projected_text(crs, formatter) {
-        formatter.result.push_str(&text);
+        let node = WktNode::create_from(&text)?;
+        formatter.ingest_node(&node);
         return Ok(());
     }
     let axes = &crs.coordinate_system.axes;
