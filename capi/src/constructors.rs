@@ -90,11 +90,9 @@ fn unit_kind_of(kind: PJ_UNIT_TYPE) -> UnitKind {
     }
 }
 
+/// `setSingleOperationElements` (`c_api.cpp`): a missing name is "unnamed".
 fn props(name: *const c_char, authority: *const c_char, code: *const c_char) -> OpProps {
-    let mut built = OpProps::new();
-    if let Some(name) = util::text(name) {
-        built = built.name(name);
-    }
+    let mut built = OpProps::new().name(util::text(name).unwrap_or("unnamed"));
     if let (Some(authority), Some(code)) = (util::text(authority), util::text(code)) {
         built = built.identifier(authority, code);
     }
@@ -106,11 +104,17 @@ fn specs_of(count: c_int, params: *const PJ_PARAM_DESCRIPTION) -> Vec<ParameterS
     util::slice(params, usize::try_from(count).unwrap_or(0))
         .iter()
         .map(|param| {
-            let unit = util::text(param.unit_name).map_or_else(UnitOfMeasure::unity, |name| {
-                UnitOfMeasure::new(name, param.unit_conv_factor, unit_kind_of(param.unit_type))
-            });
+            let unit = match param.unit_type {
+                PJ_UT_ANGULAR => angular_unit(param.unit_name, param.unit_conv_factor),
+                PJ_UT_LINEAR => linear_unit(param.unit_name, param.unit_conv_factor),
+                other => UnitOfMeasure::new(
+                    util::text(param.unit_name).unwrap_or("unnamed"),
+                    param.unit_conv_factor,
+                    unit_kind_of(other),
+                ),
+            };
             ParameterSpec {
-                name: optional(param.name),
+                name: util::text(param.name).unwrap_or("unnamed").to_owned(),
                 code_space: optional(param.auth_name),
                 code: optional(param.code),
                 value: ParameterValue::measure(param.value, unit),
@@ -132,10 +136,9 @@ pub extern "C" fn proj_create_conversion(
     params: *const PJ_PARAM_DESCRIPTION,
 ) -> *mut PJ {
     guard(std::ptr::null_mut(), || {
-        let Some(method) = util::text(method_name) else {
-            misuse(ctx, "proj_create_conversion", "missing method name");
-            return std::ptr::null_mut();
-        };
+        // PROJ names a missing method "unnamed" (`setSingleOperationElements`); GDAL's
+        // `SetProjCS` builds such a placeholder conversion.
+        let method = util::text(method_name).unwrap_or("unnamed");
         let made = Conversion::create_identified(
             &props(name, auth_name, code),
             method,
@@ -170,18 +173,15 @@ pub extern "C" fn proj_create_transformation(
     accuracy: f64,
 ) -> *mut PJ {
     guard(std::ptr::null_mut(), || {
-        let (Some(source), Some(target), Some(method)) = (
-            crs_arg(source_crs),
-            crs_arg(target_crs),
-            util::text(method_name),
-        ) else {
+        let (Some(source), Some(target)) = (crs_arg(source_crs), crs_arg(target_crs)) else {
             misuse(
                 ctx,
                 "proj_create_transformation",
-                "missing source CRS, target CRS or method",
+                "missing source CRS or target CRS",
             );
             return std::ptr::null_mut();
         };
+        let method = util::text(method_name).unwrap_or("unnamed");
         let made = Transformation::create_identified(
             &props(name, auth_name, code),
             source.clone(),
@@ -365,6 +365,16 @@ fn linear_unit(name: *const c_char, factor: f64) -> UnitOfMeasure {
     util::text(name).map_or_else(UnitOfMeasure::metre, |name| {
         UnitOfMeasure::new(name, factor, UnitKind::Linear)
     })
+}
+
+/// `createAngularUnit` (`c_api.cpp`): degree when unnamed, and the named degree and grad.
+fn angular_unit(name: *const c_char, factor: f64) -> UnitOfMeasure {
+    match util::text(name) {
+        None => UnitOfMeasure::degree(),
+        Some(name) if name.eq_ignore_ascii_case("degree") => UnitOfMeasure::degree(),
+        Some(name) if name.eq_ignore_ascii_case("grad") => UnitOfMeasure::grad(),
+        Some(name) => UnitOfMeasure::new(name, factor, UnitKind::Angular),
+    }
 }
 
 #[unsafe(no_mangle)]
