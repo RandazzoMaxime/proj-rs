@@ -128,7 +128,7 @@ pub fn coordinate_metadata_from_urn(
 }
 
 /// Whether the geodetic CRS of `crs` has a point motion operation in `db`.
-fn has_point_motion(crs: &Crs, db: &DatabaseContext) -> Result<bool, FactoryError> {
+pub(crate) fn has_point_motion(crs: &Crs, db: &DatabaseContext) -> Result<bool, FactoryError> {
     let Some(geodetic) = extract_geodetic(crs) else {
         return Ok(false);
     };

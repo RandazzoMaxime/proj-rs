@@ -439,6 +439,11 @@ const FILL_CHUNK: usize = 4096;
 pub(crate) const SMALL_BATCH: usize = 8;
 
 impl Proj {
+    /// The text this object was built from.
+    pub(crate) fn definition(&self) -> &str {
+        &self.definition
+    }
+
     /// Build a transform from a PROJ string, one CRS from an `EPSG:` code, or
     /// a minimal WKT or PROJJSON geographic or projected CRS.
     ///
