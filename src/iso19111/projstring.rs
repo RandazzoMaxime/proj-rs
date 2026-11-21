@@ -2210,16 +2210,83 @@ fn geographic_from_proj_string(tokens: &[(String, String)]) -> Result<Crs, Facto
     }))
 }
 
+/// The key and value of each word, cut as PROJ's `PROJStringSyntaxParser` does (`io.cpp`).
 fn proj_tokens(definition: &str) -> Vec<(String, String)> {
-    definition
-        .split('+')
-        .map(str::trim)
-        .filter(|raw| !raw.is_empty())
-        .map(|raw| {
-            let (key, value) = raw.split_once('=').unwrap_or((raw, ""));
-            (key.trim().to_owned(), value.trim().to_owned())
+    split_quoted_words(&shrink(&quote_title(definition.trim())))
+        .into_iter()
+        .map(|word| match word.split_once('=') {
+            Some((key, value)) => (key.to_owned(), value.to_owned()),
+            None => (word, String::new()),
         })
         .collect()
+}
+
+/// `+title=several words +foo=bar`: PROJ quotes the title up to the first ` +` (`io.cpp`).
+fn quote_title(definition: &str) -> String {
+    let Some(rest) = definition.strip_prefix("+title=") else {
+        return definition.to_owned();
+    };
+    match (rest.find(' '), rest.find(" +")) {
+        (Some(space), Some(plus)) if !rest.starts_with('"') && space < plus => {
+            format!(
+                "+title=\"{}\"{}",
+                rest[..plus].replace('"', "\"\""),
+                &rest[plus..]
+            )
+        }
+        _ => definition.to_owned(),
+    }
+}
+
+/// PROJ's `pj_shrink` (`internal.cpp`): a `+` starting a word is dropped, blanks and `;`
+/// collapse to one space, and the blanks around `=` and `,` vanish. Quoted values stay whole.
+fn shrink(text: &str) -> String {
+    let mut collapsed = String::with_capacity(text.len());
+    let mut blank = false;
+    let mut quoted = false;
+    let mut chars = text.chars().peekable();
+    while let Some(mut ch) = chars.next() {
+        if quoted {
+            if ch == '"' && chars.peek() == Some(&'"') {
+                collapsed.push(ch);
+                chars.next();
+            } else if ch == '"' {
+                quoted = false;
+            }
+            collapsed.push(ch);
+            continue;
+        }
+        if ch == '+' && (collapsed.is_empty() || blank) {
+            ch = ' ';
+        }
+        if ch == '"' && collapsed.ends_with('=') {
+            quoted = true;
+            blank = false;
+            collapsed.push(ch);
+        } else if ch.is_whitespace() || ch == ';' {
+            if !blank && !collapsed.is_empty() {
+                collapsed.push(' ');
+            }
+            blank = true;
+        } else {
+            blank = false;
+            collapsed.push(ch);
+        }
+    }
+    let mut out = String::with_capacity(collapsed.len());
+    for ch in collapsed.chars() {
+        if out.is_empty() {
+            out.push(ch);
+        } else if ch == '=' || ch == ',' {
+            if out.ends_with(' ') {
+                out.pop();
+            }
+            out.push(ch);
+        } else if !(ch == ' ' && (out.ends_with('=') || out.ends_with(','))) {
+            out.push(ch);
+        }
+    }
+    out.trim_end().to_owned()
 }
 
 pub(super) fn token<'a>(tokens: &'a [(String, String)], key: &str) -> &'a str {
