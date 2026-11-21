@@ -1862,6 +1862,7 @@ fn crs_from_proj_string(
     db: Option<&DatabaseContext>,
 ) -> Result<Crs, FactoryError> {
     let tokens = proj_tokens(definition);
+    let tokens = keys_read_by_proj(definition, tokens);
     // A Krovak pipeline is a projected CRS (`+axis=swu`), not the generic pipeline CRS.
     if definition.split_whitespace().any(|word| {
         let word = word.strip_prefix('+').unwrap_or(word);
@@ -1892,6 +1893,51 @@ fn crs_from_proj_string(
         attach_proj_extension(&mut crs, proj, &tokens);
     }
     bound_import::bind_if_needed(&tokens, crs, db)
+}
+
+/// `createFromPROJString` (io.cpp:12811-12852): once the PROJ operation of a one-step string is
+/// built, a key it does not read is dropped and a repeated key keeps its first value. `krovak`
+/// `alpha` and a `geoid_crs` beside `geoidgrids` stay. `proj`, `type` and `title` stay too: PROJ
+/// has already taken them out of the step. An operation that cannot be built keeps every key.
+fn keys_read_by_proj(definition: &str, tokens: Vec<(String, String)>) -> Vec<(String, String)> {
+    if tokens.iter().any(|(key, _)| key == "step") {
+        return tokens;
+    }
+    let Ok(operation) = crate::engine::Operation::create_keeping_unknown(definition) else {
+        return tokens;
+    };
+    let read: Vec<&str> = operation
+        .parameters()
+        .iter()
+        .filter(|parameter| parameter.used)
+        .map(|parameter| {
+            parameter
+                .text
+                .split_once('=')
+                .map_or(parameter.text.as_str(), |(key, _)| key)
+        })
+        .collect();
+    if read.is_empty() {
+        return tokens;
+    }
+    let proj = token(&tokens, "proj").to_owned();
+    let has_geoidgrids = param_token(&tokens, "geoidgrids").is_some();
+    let mut seen: Vec<String> = Vec::new();
+    tokens
+        .into_iter()
+        .filter(|(key, _)| {
+            if matches!(key.as_str(), "proj" | "type" | "title") {
+                return true;
+            }
+            if seen.contains(key) {
+                return false;
+            }
+            seen.push(key.clone());
+            read.contains(&key.as_str())
+                || (matches!(proj.as_str(), "krovak" | "mod_krovak") && key == "alpha")
+                || (key == "geoid_crs" && has_geoidgrids)
+        })
+        .collect()
 }
 
 /// The `EXTENSION_PROJ4` rule of `buildGeodeticCRS`, `buildGeocentricCRS`, and
