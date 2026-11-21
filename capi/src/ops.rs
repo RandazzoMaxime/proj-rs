@@ -10,7 +10,7 @@ use proj_rs::iso19111::{
 };
 use proj_rs::unstable::Proj;
 
-use crate::context::context;
+use crate::context::{context, Ctx};
 use crate::ffi::*;
 use crate::iso::{derived, Obj};
 use crate::list::{list, object_list};
@@ -409,6 +409,16 @@ fn operation_of<'a>(
     Some((object, reference))
 }
 
+/// `considerKnownGridsAsAvailable` of `isPROJInstantiable` and `gridsNeeded` in the C API: a
+/// grid the database knows counts as available when the network is on (c_api.cpp:7552, 7925).
+fn known_grids(context: &Ctx) -> GridAvailabilityUse {
+    if context.builder.network_enabled() {
+        GridAvailabilityUse::KnownAvailable
+    } else {
+        GridAvailabilityUse::UseForSorting
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn proj_coordoperation_is_instantiable(
     ctx: *mut PJ_CONTEXT,
@@ -424,7 +434,7 @@ pub extern "C" fn proj_coordoperation_is_instantiable(
         let Some(database) = context.database() else {
             return 0;
         };
-        c_int::from(operation.is_proj_instantiable(&database, GridAvailabilityUse::UseForSorting))
+        c_int::from(operation.is_proj_instantiable(&database, known_grids(context)))
     })
 }
 
@@ -739,7 +749,7 @@ pub extern "C" fn proj_coordoperation_get_grid_used_count(
             return 0;
         };
         operation
-            .grids_needed(&database, GridAvailabilityUse::UseForSorting)
+            .grids_needed(&database, known_grids(context))
             .map_or(0, |grids| c_int::try_from(grids.len()).unwrap_or(0))
     })
 }
@@ -768,8 +778,7 @@ pub extern "C" fn proj_coordoperation_get_grid_used(
             return 0;
         };
         let endpoint = context.builder.get_url_endpoint().unwrap_or_default();
-        let Ok(grids) =
-            operation.grids_needed_at(&database, GridAvailabilityUse::UseForSorting, &endpoint)
+        let Ok(grids) = operation.grids_needed_at(&database, known_grids(context), &endpoint)
         else {
             return 0;
         };
