@@ -330,7 +330,7 @@ fn resolve_operation(definition: &str) -> Result<Operation, String> {
         definition.to_owned()
     };
     let trimmed = text.trim();
-    if trimmed.contains("+proj=") || trimmed.contains("proj=") {
+    if trimmed.contains("proj=") || trimmed.contains("init=") {
         return Operation::create(trimmed).map_err(|error| error.to_string());
     }
     if looks_like_crs(trimmed) {
