@@ -10,6 +10,10 @@ int main(int argc, char **argv) {
                    *c = o ? proj_get_id_code(o, 0) : NULL;
         printf("%.50s\n  %s type=%d name=%s id=%s:%s\n", argv[i], o ? "ok" : "null",
                o ? (int)proj_get_type(o) : -1, n ? n : "-", a ? a : "-", c ? c : "-");
+        if (o && proj_get_type(o) >= PJ_TYPE_CONVERSION && proj_get_type(o) <= PJ_TYPE_OTHER_COORDINATE_OPERATION) {
+            PJ_PROJ_INFO info = proj_pj_info(o);
+            printf("  info: %s | %g\n", info.description ? info.description : "-", info.accuracy);
+        }
         proj_destroy(o);
     }
     return 0;

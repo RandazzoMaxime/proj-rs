@@ -5,8 +5,10 @@ use std::sync::Mutex;
 
 use crate::context::context;
 use crate::ffi::*;
+use crate::iso::Obj;
 use crate::pj::pj;
 use crate::util::{self, guard};
+use proj_rs::iso19111::CoordinateOperation;
 
 /// The strings `proj_info` points to, kept until the next call (`info.cpp` keeps them in a
 /// static, under a lock).
@@ -114,7 +116,23 @@ pub extern "C" fn proj_pj_info(p: *mut PJ) -> PJ_PROJ_INFO {
         let Some(proj) = object.proj.as_ref() else {
             return empty_pj_info();
         };
-        let found = proj.proj_info();
+        let mut found = proj.proj_info();
+        if let Some(operation) = object.obj.as_ref().and_then(Obj::operation) {
+            // `info.cpp:200-231`: the name of the ISO object, and the accuracy of an operation
+            // (0 for a conversion). A PROJ-based operation is not a Conversion in PROJ.
+            found.description = Some(operation.name().to_owned());
+            found.accuracy = match operation {
+                CoordinateOperation::Conversion(conversion)
+                    if !conversion
+                        .method()
+                        .name()
+                        .starts_with("PROJ-based operation method") =>
+                {
+                    0.0
+                }
+                other => other.accuracy().unwrap_or(-1.0),
+            };
+        }
         PJ_PROJ_INFO {
             id: object.arena.put_opt(found.id.as_deref()),
             description: object.arena.put_opt(found.description.as_deref()),
