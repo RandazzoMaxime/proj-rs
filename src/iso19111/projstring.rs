@@ -5,6 +5,7 @@
 
 use super::bound_export::{export_bound, export_compound};
 use super::bound_import;
+use super::esri_parammap;
 use super::factory::DatabaseContext;
 use super::model::{
     Axis, BoundCRS, CartesianCS, Conversion, CoordinateOperation, CoordinateSystem, Crs, Datum,
@@ -2628,39 +2629,34 @@ fn aux_selects(method: &MethodMap, tokens: &[(String, String)]) -> bool {
     }
 }
 
-/// The standard parallel `phi` with `cos(phi) / sqrt(1 - e^2 sin^2(phi)) = k0`,
-/// found by bisection on `[0, pi/2]`, where the scale falls as `phi` rises.
-fn standard_parallel_of_scale(k0: f64, ellipsoid: &Ellipsoid) -> f64 {
-    let inverse_flattening = ellipsoid.inverse_flattening();
-    let flattening = if inverse_flattening != 0.0 {
-        1.0 / inverse_flattening
-    } else {
-        0.0
-    };
-    let squared_e = flattening * (2.0 - flattening);
-    let (mut low, mut high) = (0.0_f64, std::f64::consts::FRAC_PI_2);
-    for _ in 0..100 {
-        let mid = 0.5 * (low + high);
-        let scale = mid.cos() / (1.0 - squared_e * mid.sin().powi(2)).sqrt();
-        if scale > k0 {
-            low = mid;
-        } else {
-            high = mid;
-        }
+/// The standard parallel of `+proj=cea` given by its scale `k`, in degrees: PROJ's closed form
+/// `acos(k sqrt((1 - es) / (1 - k^2 es)))` (io.cpp, `cea` and `lat_ts`), with `es` the squared
+/// eccentricity of the ellipsoid, even under `+R_A`.
+fn standard_parallel_of_scale(k_text: &str, ellipsoid: &Ellipsoid) -> Result<f64, FactoryError> {
+    let k: f64 = k_text
+        .parse()
+        .map_err(|_| FactoryError::Invalid("invalid value for k/k_0".to_owned()))?;
+    if !(0.0..=1.0).contains(&k) {
+        return Err(FactoryError::Invalid("k/k_0 should be in [0,1]".to_owned()));
     }
-    0.5 * (low + high)
+    let es = esri_parammap::squared_eccentricity(ellipsoid);
+    if es < 0.0 || es == 1.0 {
+        return Err(FactoryError::Invalid("Invalid flattening".to_owned()));
+    }
+    Ok((k * ((1.0 - es) / (1.0 - k * k * es)).sqrt())
+        .acos()
+        .to_degrees())
 }
 
 /// The projection name and keys PROJ rewrites before it picks a method.
 /// `+proj=somerc` is Hotine oblique Mercator variant B with azimuth and
 /// rectified-grid angle 90, centred on `+lon_0`. On `+proj=cea` without `+lat_ts`, a `+k_0` is the
-/// scale factor of the standard parallel: `cos(lat_ts)` on a sphere
-/// (`+R_A`), else the ellipsoidal form of `standard_parallel_of_scale`.
+/// scale factor of the standard parallel (`standard_parallel_of_scale`).
 fn method_spelling(
     proj: &str,
     tokens: &[(String, String)],
     ellipsoid: &Ellipsoid,
-) -> (String, Vec<(String, String)>) {
+) -> Result<(String, Vec<(String, String)>), FactoryError> {
     let mut tokens = tokens.to_vec();
     let mut proj = proj.to_owned();
     if proj == "etmerc" {
@@ -2681,18 +2677,13 @@ fn method_spelling(
         }
     }
     if proj == "cea" && param_token(&tokens, "lat_ts").is_none() {
-        let k0 = param_token(&tokens, "k").and_then(|text| text.parse::<f64>().ok());
-        if let Some(k0) = k0 {
-            let lat_ts = if param_token(&tokens, "R_A").is_some() {
-                k0.acos()
-            } else {
-                standard_parallel_of_scale(k0, ellipsoid)
-            };
+        if let Some(k_text) = param_token(&tokens, "k") {
+            let lat_ts = standard_parallel_of_scale(k_text, ellipsoid)?;
             tokens.retain(|(key, _)| !is_scale_key(key));
-            tokens.push(("lat_ts".to_owned(), lat_ts.to_degrees().to_string()));
+            tokens.push(("lat_ts".to_owned(), lat_ts.to_string()));
         }
     }
-    (proj, tokens)
+    Ok((proj, tokens))
 }
 
 /// The EPSG method that `buildProjectedCRS` forces when the PROJ name alone
@@ -2824,7 +2815,7 @@ pub(super) fn projected_from_proj_string(tokens: &[(String, String)]) -> Result<
     };
     let datum = proj_crs::grid_datum(datum, tokens);
     let pseudo = proj_crs::pseudo_mercator(tokens);
-    let (proj, spelled) = method_spelling(token(tokens, "proj"), tokens, datum.ellipsoid());
+    let (proj, spelled) = method_spelling(token(tokens, "proj"), tokens, datum.ellipsoid())?;
     let proj = proj.as_str();
     let tokens = spelled.as_slice();
     // PROJ refuses a polar `stere` that gives both `+lat_ts` and a scale other
