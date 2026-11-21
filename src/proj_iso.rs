@@ -390,6 +390,15 @@ impl IsoPipeline {
         &self.chosen
     }
 
+    /// The operation PROJ returns for this pair when one candidate is left
+    /// (`crs_to_crs.cpp:622-647`, `:775-780`). `None` for a set of candidates.
+    pub(crate) fn single_operation(&self) -> Option<&CoordinateOperation> {
+        match &self.route {
+            Route::Single(_) => Some(&self.chosen),
+            Route::Alternatives(_) => None,
+        }
+    }
+
     /// `proj_get_name` of this pair: the operation's name for one operation. A set of candidates
     /// is PROJ's dummy `P`, which has no ISO object, so it has no name.
     pub(crate) fn operation_name(&self) -> Option<String> {
