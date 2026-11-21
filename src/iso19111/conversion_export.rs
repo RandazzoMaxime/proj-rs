@@ -108,6 +108,14 @@ fn export_body(
     formatter: &mut PipelineFormatter,
 ) -> Result<bool, FactoryError> {
     match conversion.method().code() {
+        "9621" => {
+            super::transform_export::similarity_steps(
+                conversion.method().name(),
+                conversion.parameters(),
+                formatter,
+            );
+            Ok(true)
+        }
         "1068" => {
             formatter.add_step("axisswap");
             formatter.add_param("order", "1,2,-3");

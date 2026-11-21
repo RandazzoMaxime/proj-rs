@@ -1888,6 +1888,11 @@ fn lon_lat_base(crs: &Crs) -> Option<Crs> {
             GeodeticCRS::Geographic(geographic) => geographic.clone(),
             _ => return None,
         },
+        // `extractGeodeticCRS` of a derived projected CRS: the base of its projected base.
+        Crs::DerivedProjected(derived) => match derived.base_crs().base_crs() {
+            GeodeticCRS::Geographic(geographic) => geographic.clone(),
+            _ => return None,
+        },
         // `proj_crs_get_geodetic_crs` of a compound CRS: the geodetic CRS of its first component
         // that has one, the horizontal part (`crs_to_crs.cpp:189`).
         Crs::Compound(compound) => compound
