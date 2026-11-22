@@ -1,0 +1,185 @@
+name: PROJ upstream
+
+# Watches PROJ's releases, so the embedded database does not grow old. Every Monday, when PROJ has
+# tagged a release newer than the one data/proj.db comes from:
+#   1. rebuild the database from that release (tools/proj-db/update.sh, which builds PROJ from its
+#      tag with TIFF and curl, as distributions build it);
+#   2. run the test suite against the release's own binaries (cs2cs, projinfo on PATH);
+#   3. push the new database to the branch auto/proj-db-<tag>;
+#   4. open an issue labelled proj-upstream with the difference, the test result and the steps
+#      left to a person (tools/proj-db/report.sh, docs/PROJ-UPSTREAM.md). If a step breaks, the
+#      issue says so and links the run.
+# A release already reported by an issue is not tried again by the schedule. A manual run with a
+# tag tries that tag; on a tag that is not newer it is a dry run (no push, no issue). A pull
+# request that touches this pipeline runs it on the release already embedded, as a dry run.
+on:
+  schedule:
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "PROJ tag to try, for example 9.10.0 (empty: the latest release)"
+        required: false
+        default: ""
+  pull_request:
+    paths:
+      - .github/workflows/proj-upstream.yml
+      - tools/proj-db/**
+      - tools/build-reference.sh
+
+permissions:
+  contents: read
+
+concurrency:
+  group: proj-upstream-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: read
+    outputs:
+      tag: ${{ steps.find.outputs.tag }}
+      current: ${{ steps.find.outputs.current }}
+      run: ${{ steps.find.outputs.run }}
+      publish: ${{ steps.find.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          current=$(python3 -I tools/proj-db/meta.py data/proj.db PROJ.VERSION)
+          # Final releases only: 9.10.0, not 9.10.0RC1.
+          latest=$(git ls-remote --tags --refs https://github.com/OSGeo/PROJ.git \
+            | sed -n 's|.*refs/tags/||p' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          tag=${INPUT_TAG:-$latest}
+          if [ "$EVENT" = pull_request ]; then
+            tag=$current
+          fi
+          if ! [[ $tag =~ ^[0-9]+\.[0-9]+\.[0-9]+(RC[0-9]+)?$ ]]; then
+            echo "not a PROJ tag: '$tag'" >&2
+            exit 1
+          fi
+          newer=false
+          if [ "$tag" != "$current" ] && [ "$(printf '%s\n%s\n' "$current" "$tag" | sort -V | tail -1)" = "$tag" ]; then
+            newer=true
+          fi
+          run=false
+          publish=false
+          if [ "$newer" = true ]; then
+            reported=$(gh api "repos/$GITHUB_REPOSITORY/issues?state=all&labels=proj-upstream&per_page=100" \
+              --jq ".[] | select(.title | startswith(\"PROJ $tag \")) | .number" | head -1)
+            if [ -n "$reported" ] && [ "$EVENT" = schedule ]; then
+              echo "PROJ $tag is already reported in #$reported"
+            else
+              run=true
+              publish=true
+            fi
+          elif [ "$EVENT" != schedule ]; then
+            run=true
+          fi
+          echo "current=$current latest=$latest tag=$tag newer=$newer run=$run publish=$publish"
+          {
+            echo "tag=$tag"
+            echo "current=$current"
+            echo "run=$run"
+            echo "publish=$publish"
+          } >> "$GITHUB_OUTPUT"
+
+  update:
+    needs: detect
+    if: needs.detect.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      contents: write
+      issues: write
+    env:
+      TAG: ${{ needs.detect.outputs.tag }}
+      CURRENT: ${{ needs.detect.outputs.current }}
+      PUBLISH: ${{ needs.detect.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+      # The reference goes outside the repository: the differential tests skip the PATH entries
+      # under it, where cargo puts proj-rs's own cs2cs, so a reference in target/ is not seen.
+      - run: echo "REF=$RUNNER_TEMP/proj-reference-upstream" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y cmake g++ sqlite3 libsqlite3-dev libtiff-dev libcurl4-openssl-dev
+
+      - name: Regenerate data/proj.db from PROJ ${{ env.TAG }}
+        id: regen
+        run: |
+          set +e
+          PROJ_REF_TIFF_CURL=ON tools/proj-db/update.sh "$TAG" "$REF" 2>&1 | tee "$RUNNER_TEMP/update.log"
+          status=${PIPESTATUS[0]}
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          echo "update.sh exited with $status"
+
+      # Offline, as the CI runs it, but against the binaries of the new release: the differential
+      # tests (agree_cs2cs, the parity corpora, the CLI cases) compare with PROJ ${{ env.TAG }}.
+      - name: Test suite against PROJ ${{ env.TAG }}
+        id: tests
+        if: steps.regen.outputs.status == '0'
+        env:
+          PROJ_CS2CS_REQUIRED: "1"
+          PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY: "YES"
+        run: |
+          export PATH="$REF/build/bin:$PATH"
+          export PROJ_RS_LIBPROJ_DIR="$REF/build/lib"
+          set +e
+          cargo test --workspace --all-features --no-fail-fast 2>&1 | tee "$RUNNER_TEMP/tests.log"
+          echo "status=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Push the database to auto/proj-db-${{ env.TAG }}
+        id: push
+        if: env.PUBLISH == 'true' && steps.regen.outputs.status == '0'
+        run: |
+          if git diff --quiet -- data/proj.db; then
+            echo "data/proj.db did not change: nothing to push"
+            exit 0
+          fi
+          branch="auto/proj-db-$TAG"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add data/proj.db
+          git commit -m "proj.db : base de PROJ $TAG" -m "Régénérée par tools/proj-db/update.sh $TAG (workflow proj-upstream)."
+          git push --force origin "$branch"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+
+      - name: Report
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPDATE_STATUS: ${{ steps.regen.outputs.status }}
+          TESTS_STATUS: ${{ steps.tests.outputs.status }}
+          BRANCH: ${{ steps.push.outputs.branch }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          tests_log="$RUNNER_TEMP/tests.log"
+          [ -s "$tests_log" ] || tests_log=-
+          tools/proj-db/report.sh "$TAG" "$CURRENT" "$REF" "${UPDATE_STATUS:-1}" "$tests_log" "$BRANCH" \
+            > "$RUNNER_TEMP/report.md"
+          cat "$RUNNER_TEMP/report.md" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$PUBLISH" != true ]; then
+            echo "dry run: no issue"
+            exit 0
+          fi
+          if [ "$JOB_STATUS" != success ]; then
+            state="la régénération automatique a échoué"
+          elif [ "${UPDATE_STATUS:-1}" = 3 ]; then
+            state="bloqué, le schéma de la base change"
+          elif [ "${TESTS_STATUS:-1}" = 0 ]; then
+            state="base régénérée, tous les tests passent"
+          else
+            state="base régénérée, des tests échouent"
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/labels" -f name=proj-upstream -f color=0e8a16 \
+            -f description="Nouvelle version de PROJ" > /dev/null 2>&1 || true
+          gh api "repos/$GITHUB_REPOSITORY/issues" -f title="PROJ $TAG : $state" \
+            -F body=@"$RUNNER_TEMP/report.md" -f "labels[]=proj-upstream" --jq .html_url
