@@ -8,7 +8,8 @@ use proj_rs::unstable::{Direction, PairError, Proj, ProjError, StepError, Xyzt};
 
 use crate::context::{context, Ctx};
 use crate::ffi::*;
-use crate::pj::{area, creation_failure, hand_over, pj, Pj};
+use crate::iso::Obj;
+use crate::pj::{area, creation_failure, hand_over, pj, Pj, ReadAs};
 use crate::util::{self, guard};
 
 /// The four components of a `PJ_COORD`.
@@ -430,6 +431,40 @@ pub extern "C" fn proj_create_crs_to_crs_from_pj(
     })
 }
 
+/// `proj_normalize_for_visualization` of an object that is not a pair (`c_api.cpp:9293-9321`): a
+/// CRS, or a coordinate operation between two CRS, such as one of `proj_create_operations`. An
+/// operation without a CRS pair, a PROJ string among them, and any other object give NULL and a
+/// log line, without setting `proj_errno`.
+fn normalize_single(context: &mut Ctx, object: &Pj) -> *mut PJ {
+    if object.read_as == ReadAs::Object {
+        if let Some(normalized) = crate::iso::normalized_for_visualization(object) {
+            return normalized;
+        }
+    }
+    let is_operation = object.read_as == ReadAs::ProjOperation
+        || matches!(
+            object.obj.as_ref(),
+            Some(Obj::User(proj_rs::iso19111::UserObject::Operation(_)))
+        )
+        || object
+            .proj
+            .as_ref()
+            .is_some_and(|proj| proj.native_operation().is_some());
+    if is_operation {
+        context.log(
+            PJ_LOG_DEBUG as c_int,
+            "proj_normalize_for_visualization: Cannot retrieve source or target CRS",
+        );
+    } else {
+        context.log(
+            PJ_LOG_ERROR as c_int,
+            "proj_normalize_for_visualization: Object is not a CoordinateOperation created with \
+             proj_create_crs_to_crs",
+        );
+    }
+    std::ptr::null_mut()
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn proj_normalize_for_visualization(
     ctx: *mut PJ_CONTEXT,
@@ -446,22 +481,7 @@ pub extern "C" fn proj_normalize_for_visualization(
             .and_then(Proj::pair_axis_swaps)
             .is_none()
         {
-            let is_proj_string = object
-                .proj
-                .as_ref()
-                .is_some_and(|proj| proj.native_operation().is_some());
-            let normalized = if is_proj_string {
-                None
-            } else {
-                crate::iso::normalized_for_visualization(object)
-            };
-            return normalized.unwrap_or_else(|| {
-                context.fail(
-                    PROJ_ERR_OTHER_API_MISUSE as c_int,
-                    "proj_normalize_for_visualization: the object is not a CRS or a CRS pair",
-                );
-                std::ptr::null_mut()
-            });
+            return normalize_single(context, object);
         }
         let mut copy = object.copy_in(std::ptr::from_mut(context));
         copy.normalized = true;
