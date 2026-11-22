@@ -1489,7 +1489,8 @@ impl GeocentricCRS {
         let token = self
             .datum()
             .and_then(datum_code_token)
-            .or_else(|| self.ensemble.as_ref().and_then(ensemble_code_token));
+            .or_else(|| self.ensemble.as_ref().and_then(ensemble_code_token))
+            .or_else(|| self.ensemble.as_ref().and_then(ensemble_as_datum_token));
         if let Some(token) = token {
             parts.push(format!("+datum={token}"));
         } else {
@@ -1577,6 +1578,17 @@ fn datum_token(crs: &GeographicCRS) -> Option<&'static str> {
     crs.datum()
         .and_then(datum_code_token)
         .or_else(|| crs.datum_ensemble().and_then(ensemble_code_token))
+        .or_else(|| crs.datum_ensemble().and_then(ensemble_as_datum_token))
+}
+
+/// An ensemble without an EPSG code goes through `DatumEnsemble::asDatum` (crs.cpp:2544,
+/// `datumNonNull`): `World Geodetic System 1984 ensemble` is then the WGS 84 datum by name and
+/// ellipsoid, as a WKT2 written by PROJ reads back.
+fn ensemble_as_datum_token(ensemble: &DatumEnsemble) -> Option<&'static str> {
+    match ensemble.as_datum()? {
+        super::model::Datum::Geodetic(frame) => datum_code_token(&frame),
+        _ => None,
+    }
 }
 
 fn datum_code_token(datum: &GeodeticReferenceFrame) -> Option<&'static str> {

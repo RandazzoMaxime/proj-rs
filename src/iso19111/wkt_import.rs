@@ -3158,7 +3158,9 @@ impl WktParser {
                 "Polar Stereographic (variant A)".to_owned(),
                 "9810".to_owned(),
             )
-        } else if ci_eq(&method_name, "Krovak") && axes_are_east_north(node) {
+        } else if ci_eq(&method_name, "Krovak") && !axes_are(node, "SOUTH", "WEST") {
+            // `getMappingFromWKT1` finds Krovak (North Orientated) first; only two axes south
+            // then west make it Krovak (io.cpp:4380-4390).
             ("Krovak (North Orientated)".to_owned(), "1041".to_owned())
         } else if polar_ambiguous {
             (String::new(), String::new())
@@ -4939,17 +4941,18 @@ fn greenwich_degree_geographic(geographic: &GeographicCRS) -> bool {
 }
 
 /// Krovak with east then north axes is the North Orientated variant, EPSG:1041.
-fn axes_are_east_north(node: &WktNode) -> bool {
+fn axes_are(node: &WktNode, first: &str, second: &str) -> bool {
     let axes = node.children_named("AXIS");
     let direction = |index: usize| {
         axes.get(index)
             .and_then(|axis| axis.children.get(1))
             .map(|token| token.value.as_str())
     };
-    matches!(
-        (direction(0), direction(1)),
-        (Some(first), Some(second)) if ci_eq(first, "EAST") && ci_eq(second, "NORTH")
-    )
+    axes.len() == 2
+        && matches!(
+            (direction(0), direction(1)),
+            (Some(one), Some(two)) if ci_eq(one, first) && ci_eq(two, second)
+        )
 }
 
 /// A WKT1 Transverse Mercator that is a UTM zone takes the UTM conversion and its

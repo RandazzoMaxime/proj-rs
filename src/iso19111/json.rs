@@ -1541,7 +1541,14 @@ fn write_parameter(writer: &mut Writer, parameter: &Parameter, parent: Chain) {
             if matches!(unit.name(), "metre" | "degree" | "unity") {
                 writer.string(unit.name());
             } else {
-                let unit_place = Place::inside(parent, has_id, Allow::Plain);
+                // The unit is a child of the parameter: an id on the parameter hides its own
+                // (`ObjectContext`, io.cpp:13102-13113).
+                let chain = if has_id == Ident::Has {
+                    Chain::Has
+                } else {
+                    parent
+                };
+                let unit_place = Place::inside(chain, code_ident(unit.code_space()), Allow::Plain);
                 write_unit_object(writer, unit, unit_place);
             }
         }

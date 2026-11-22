@@ -1,6 +1,6 @@
 /* "export": the WKT2:2019 and WKT1 GDAL of every CRS and coordinate operation of the EPSG
  * database, one per line. "check": proj_create_from_wkt of each line of stdin, with its warnings
- * and grammar errors. */
+ * and grammar errors. "proj": the PROJ string proj_create makes of each line of stdin. */
 #include <stdio.h>
 #include <string.h>
 #include <proj.h>
@@ -31,6 +31,15 @@ int main(int argc, char **argv) {
   proj_log_level(ctx, PJ_LOG_NONE);
   if (argc > 1 && strcmp(argv[1], "export") == 0) {
     export_wkt(ctx);
+  } else if (argc > 1 && strcmp(argv[1], "proj") == 0) {
+    static char line[1 << 17];
+    while (fgets(line, sizeof line, stdin)) {
+      line[strcspn(line, "\n")] = 0;
+      PJ *object = proj_create(ctx, line);
+      const char *text = object ? proj_as_proj_string(ctx, object, PJ_PROJ_5, NULL) : NULL;
+      printf("%.60s -> %s\n", line, text ? text : "(none)");
+      proj_destroy(object);
+    }
   } else {
     static char line[1 << 17];
     const char *options[] = {"STRICT=NO", NULL};

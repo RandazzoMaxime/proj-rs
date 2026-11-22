@@ -63,10 +63,11 @@ pub(super) fn spherical_method_code(proj: &str, inverse_flattening: f64) -> Opti
     }
 }
 
-/// The coordinate system of a projected CRS built from a PROJ string. `laea`
-/// centred on a pole has its easting and northing pointing south at the north
-/// pole and north at the south pole, as PROJ writes it. Other CRSs are
-/// easting, northing in `unit`.
+/// The coordinate system of a projected CRS built from a PROJ string. A `stere`
+/// or `laea` centred on a pole has polar axes: easting and northing pointing
+/// south along 90°E and 180° at the north pole, north along 90°E and 0° at the
+/// south pole (io.cpp:12101-12140, 11448-11495). Other CRSs are easting,
+/// northing in `unit`.
 ///
 /// # Errors
 ///
@@ -76,22 +77,54 @@ pub(super) fn projected_cs(
     tokens: &[(String, String)],
     unit: UnitOfMeasure,
 ) -> Result<CartesianCS, FactoryError> {
-    if let Some(cs) = axis_cartesian_cs(proj, tokens, &unit)? {
+    let pole = polar_axes(proj, tokens);
+    if let Some(cs) = axis_cartesian_cs(proj, tokens, &unit, pole)? {
         return Ok(cs);
     }
-    let lat_0 = token(tokens, "lat_0").parse::<f64>().ok();
-    let direction = match (proj, lat_0) {
-        ("laea", Some(lat)) if (lat - 90.0).abs() < 1e-10 => "south",
-        ("laea", Some(lat)) if (lat + 90.0).abs() < 1e-10 => "north",
-        _ => "",
-    };
-    if direction.is_empty() {
-        return Ok(CartesianCS::create_easting_northing(unit));
+    Ok(match pole {
+        Some(Pole::North) => CartesianCS::create_north_pole_easting_south_northing_south(unit),
+        Some(Pole::South) => CartesianCS::create_south_pole_easting_north_northing_north(unit),
+        None => CartesianCS::create_easting_northing(unit),
+    })
+}
+
+/// The pole a `stere` or `laea` is centred on, for `AxisType::NORTH_POLE` and `SOUTH_POLE`.
+#[derive(Clone, Copy)]
+enum Pole {
+    North,
+    South,
+}
+
+fn polar_axes(proj: &str, tokens: &[(String, String)]) -> Option<Pole> {
+    if !matches!(proj, "stere" | "laea") {
+        return None;
     }
-    CartesianCS::create(vec![
-        Axis::new("Easting", "E", direction, unit.clone()),
-        Axis::new("Northing", "N", direction, unit),
-    ])
+    let lat_0 = token(tokens, "lat_0").parse::<f64>().ok()?;
+    if (lat_0.abs() - 90.0).abs() >= 1e-10 {
+        return None;
+    }
+    Some(if lat_0 > 0.0 {
+        Pole::North
+    } else {
+        Pole::South
+    })
+}
+
+/// The easting and northing of `processAxisSwap`: polar ones carry their meridian.
+fn east_north(pole: Option<Pole>, unit: &UnitOfMeasure) -> (Axis, Axis) {
+    let polar = match pole {
+        Some(Pole::North) => {
+            CartesianCS::create_north_pole_easting_south_northing_south(unit.clone())
+        }
+        Some(Pole::South) => {
+            CartesianCS::create_south_pole_easting_north_northing_north(unit.clone())
+        }
+        None => CartesianCS::create_easting_northing(unit.clone()),
+    };
+    let mut axes = polar.axes.into_iter();
+    let east = axes.next().expect("two axes");
+    let north = axes.next().expect("two axes");
+    (east, north)
 }
 
 /// A parameter value PROJ supplies when the string does not give it. `peirce_q`
@@ -127,6 +160,7 @@ fn axis_cartesian_cs(
     proj: &str,
     tokens: &[(String, String)],
     unit: &UnitOfMeasure,
+    pole: Option<Pole>,
 ) -> Result<Option<CartesianCS>, FactoryError> {
     let axis = token(tokens, "axis");
     let czech =
@@ -138,9 +172,10 @@ fn axis_cartesian_cs(
     } else {
         return Ok(None);
     };
+    let (east, north) = east_north(pole, unit);
     let named = |letter: char| match letter {
-        'e' => Ok(Axis::new("Easting", "E", "east", unit.clone())),
-        'n' => Ok(Axis::new("Northing", "N", "north", unit.clone())),
+        'e' => Ok(east.clone()),
+        'n' => Ok(north.clone()),
         'w' => Ok(Axis::new("Westing", "", "west", unit.clone())),
         's' => Ok(Axis::new("Southing", "", "south", unit.clone())),
         other => Err(FactoryError::Invalid(format!(
