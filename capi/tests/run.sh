@@ -6,7 +6,7 @@
 #   fork datadir geodesic proj_string_type projjson_objects horizontal_datum string_lifetime
 #   unnamed_operation embedded_db pj_info_order normalize_operation latin1_input
 #   crs_to_crs_describe create_any_object export_objects derived_temporal last_used_operation
-#   deriving_conversion single_crs_cs c_api
+#   deriving_conversion single_crs_cs grid_used c_api
 #   (default: all). PENDING=0 runs the cases of pending.txt too, to see them fail.
 #   GTEST_FILTER=pattern narrows the gtest cases of the C++ tests.
 #
@@ -32,7 +32,7 @@ tests=("$@")
                                   unnamed_operation embedded_db pj_info_order normalize_operation
                                   latin1_input crs_to_crs_describe create_any_object
                                   export_objects derived_temporal last_used_operation
-                                  deriving_conversion single_crs_cs c_api)
+                                  deriving_conversion single_crs_cs grid_used c_api)
 
 ref=${PROJ_REFERENCE:-$root/target/proj-reference}
 src=$ref/src
@@ -394,6 +394,17 @@ for test in "${tests[@]}"; do
       theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/single_cs_ref" "${definitions[@]}" 2>/dev/null)
       [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }
       echo "coordinate systems identical to libproj for ${#definitions[@]} CRS" ;;
+    grid_used)
+      # The grids of database operations, with and without the PROJ alternative grid names.
+      echo "== grid_used"
+      gcc -std=c99 -I"$root/capi/include" "$here/grid_used.c" -o "$out/grid_used_ours" "${ldflags[@]}"
+      gcc -std=c99 -I"$src/src" "$here/grid_used.c" -o "$out/grid_used_ref" -L"$ref/build/lib" \
+        -lproj -Wl,-rpath,"$ref/build/lib"
+      codes=(1312 1313 15851 1671 9409)
+      ours=$("$out/grid_used_ours" "${codes[@]}" 2>/dev/null)
+      theirs=$(env -u LD_LIBRARY_PATH "$out/grid_used_ref" "${codes[@]}" 2>/dev/null)
+      [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }
+      echo "grids identical to libproj for ${#codes[@]} operations" ;;
     c_api)
       python3 "$here/filter_tests.py" "$unit/test_c_api.cpp" "$here/excluded.txt" "$out/test_c_api_filtered.cpp"
       g++ "${cxxflags[@]}" -DTIFF_ENABLED -include "$unit/gtest_include.h" "$out/test_c_api_filtered.cpp" "$unit/main.cpp" \
