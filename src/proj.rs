@@ -510,7 +510,8 @@ impl Proj {
 
     /// Build the transform from `self` to `target_crs`.
     ///
-    /// Both objects must be single CRS values, such as `Proj::new("EPSG:4326")`.
+    /// Both objects must be single CRS values, such as `Proj::new("EPSG:4326")`, or PROJ strings
+    /// with `+type=crs`, which PROJ reads as CRS.
     ///
     /// `options` takes `FORCE_OVER=YES` ([`ForceOver::Yes`]), which keeps the longitudes
     /// outside ]-180, 180] in the projections of the pipeline. `FORCE_OVER=NO` and an
@@ -530,12 +531,12 @@ impl Proj {
         options: Option<Vec<&str>>,
     ) -> Result<Self, ProjCreateError> {
         let (over, filter) = crs_to_crs_options(options.as_deref())?;
-        if !matches!(self.body, Body::Single) {
+        if !self.is_single_crs() {
             return Err(ProjCreateError::ProjError(
                 "source is not a single CRS".to_owned(),
             ));
         }
-        if !matches!(target_crs.body, Body::Single) {
+        if !target_crs.is_single_crs() {
             return Err(ProjCreateError::ProjError(
                 "target is not a single CRS".to_owned(),
             ));
@@ -566,6 +567,19 @@ impl Proj {
             "no transformation from {} to {}: the selection writes no pipeline for it",
             self.definition, target_crs.definition
         )))
+    }
+
+    /// A single CRS: one named CRS, or a PROJ string with `+type=crs`, which PROJ's `proj_create`
+    /// reads as a CRS. [`Self::new`] keeps that string as an operation too, so it still transforms.
+    fn is_single_crs(&self) -> bool {
+        match self.body {
+            Body::Single => true,
+            Body::Native(_) => self
+                .definition
+                .split_whitespace()
+                .any(|word| word.strip_prefix('+').unwrap_or(word) == "type=crs"),
+            Body::Iso(_) => false,
+        }
     }
 
     /// The `over` flag of this object, PROJ's `P->over`: [`ForceOver::Yes`] when it was built
