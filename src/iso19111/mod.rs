@@ -14,6 +14,7 @@ mod compound;
 mod conversion_export;
 mod convmethod;
 mod coordinate_metadata;
+mod param_codes;
 pub(crate) use coordinate_metadata::has_point_motion;
 mod crs_ops;
 mod ctor;

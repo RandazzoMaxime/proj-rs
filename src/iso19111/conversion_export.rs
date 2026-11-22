@@ -145,7 +145,7 @@ fn export_body(
             let factor = conversion
                 .parameters()
                 .iter()
-                .find(|parameter| parameter.code() == "1051")
+                .find(|parameter| parameter.epsg_code() == 1051)
                 .and_then(|parameter| match parameter.value() {
                     ParameterValue::Measure(measure) => Some(measure.si_value()),
                     _ => None,
