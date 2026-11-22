@@ -2442,7 +2442,7 @@ fn crs_from_urn_part(
 ) -> Result<Crs, FactoryError> {
     if kind != "crs" {
         return Err(FactoryError::Format(format!(
-            "object type {kind} is not read as a CRS"
+            "unhandled object type: {kind}"
         )));
     }
     let error =

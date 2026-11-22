@@ -1910,7 +1910,8 @@ fn crs_from_proj_string(
     let proj = token(&tokens, "proj");
     let mut crs = if matches!(proj, "longlat" | "lonlat" | "latlong" | "latlon") {
         geographic_from_proj_string(&tokens)?
-    } else if proj == "geocent" {
+    } else if matches!(proj, "geocent" | "cart") {
+        // `isGeocentricStep` (io.cpp:11015).
         proj_crs::geocentric_from_proj_string(&tokens)?
     } else if proj == "pipeline" {
         match krovak_from_pipeline(&tokens)? {

@@ -482,15 +482,16 @@ for test in "${tests[@]}"; do
       gcc -std=c99 -I"$root/capi/include" "$here/errno_parity.c" -o "$out/errno_parity_ours" "${ldflags[@]}"
       gcc -std=c99 -I"$src/src" "$here/errno_parity.c" -o "$out/errno_parity_ref" -L"$ref/build/lib" \
         -lproj -Wl,-rpath,"$ref/build/lib"
-      # errno_parity.deviations: operations whose pipeline step PROJ names in its log line
-      # (docs/PORTING-creation-refusal.md); their log line is left out, the rest is compared.
-      unlog() { sed -E "$(sed 's|.*|/\\[&\\]/s/ log=.*//|' "$here/errno_parity.deviations")"; }
+      # errno_parity.deviations: definitions whose log line is PROJ's own text (a pipeline step it
+      # names, its WKT and JSON parsers; docs/PORTING-creation-refusal.md); the rest is compared.
+      unlog() { awk -v list="$here/errno_parity.deviations" 'BEGIN { while ((getline l < list) > 0) dev[++n] = "[" l "]" }
+        { for (i = 1; i <= n; i++) if (index($0, dev[i])) sub(/ log=.*/, ""); print }'; }
       ours=$(PROJ_DATA="$ref/build/data" "$out/errno_parity_ours" "$here/errno_parity.txt" 2>/dev/null | unlog)
       theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/errno_parity_ref" \
         "$here/errno_parity.txt" 2>/dev/null | unlog)
       [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }
       echo "errno identical to libproj for $(grep -c '^[^#]' "$here/errno_parity.txt") definitions, fresh and" \
-        "after a refusal, $(grep -c . "$here/errno_parity.deviations") log lines left out" ;;
+        "after a refusal, the log line of $(grep -c . "$here/errno_parity.deviations") left out" ;;
     crs_proj_strings)
       # proj_create of the PROJ strings libproj exports for every EPSG, ESRI and IGNF CRS, with and
       # without +type=crs, after a refusal: object, type and errno.

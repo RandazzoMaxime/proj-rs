@@ -83,6 +83,15 @@ TOWGS84Parameters`, 4096).
 string, and `capi/tests/crs_proj_strings.c` the PROJ strings libproj exports for every EPSG,
 ESRI and IGNF CRS (9,692 strings with and without `+type=crs`).
 
-One deviation is left: for an operation whose pipeline step fails (`EPSG::1312`, `EPSG::15958`),
-PROJ logs `pipeline: Pipeline: Bad step definition: proj=hgridshift (File not found or
-invalid)`; proj-rs sets the same code without that line (`capi/tests/errno_parity.deviations`).
+`+proj=cart +type=crs` is a geocentric CRS, as `isGeocentricStep` reads it (`io.cpp:11015`);
+proj-rs read a projected CRS. A URN of an object that is not a CRS is `unhandled object type:
+<type>` (`io.cpp:7685`).
+
+The log line is left out for seven definitions (`capi/tests/errno_parity.deviations`); their
+code is compared:
+
+- an operation whose pipeline step fails (`EPSG::1312`, `EPSG::15958`): PROJ logs
+  `pipeline: Pipeline: Bad step definition: proj=hgridshift (File not found or invalid)`,
+  proj-rs sets the same code without that line;
+- a WKT or a PROJJSON text that does not parse: the line is the message of PROJ's WKT parser or
+  of its JSON library, and proj-rs's own parsers word it differently.

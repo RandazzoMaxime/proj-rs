@@ -271,15 +271,20 @@ fn user_input_failure(error: &FactoryError, input: Input) -> (c_int, String) {
 /// `createFromPROJString` (io.cpp:12554) without the PROJ 4 `init=` rules.
 const INIT_SYNTAX_REFUSAL: &str = "init=epsg:/init=IGNF: syntax not supported";
 
-/// A PROJ string of one `init=` step, which PROJ reads before it instantiates anything
-/// (io.cpp:12513-12515).
+/// A PROJ string of one `init=epsg:` or `init=IGNF:` step, which PROJ reads before it
+/// instantiates anything (io.cpp:12513-12527). An init file is instantiated as usual.
 fn is_init_step(text: &str) -> bool {
     let words = || {
         text.split_whitespace()
             .map(|word| word.trim_start_matches('+'))
     };
-    words().any(|word| word.starts_with("init="))
-        && !words().any(|word| word.starts_with("proj=") || word == "inv")
+    let code_init = |word: &str| {
+        word.strip_prefix("init=").is_some_and(|name| {
+            let lower = name.to_ascii_lowercase();
+            lower.starts_with("epsg:") || lower.starts_with("ignf:")
+        })
+    };
+    words().any(code_init) && !words().any(|word| word.starts_with("proj=") || word == "inv")
 }
 
 #[unsafe(no_mangle)]
