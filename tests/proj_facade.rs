@@ -215,10 +215,18 @@ fn wkt_and_projjson_build_a_geographic_or_projected_crs() {
     assert!(metres(xy.0, 500_000.0), "{}", xy.0);
 
     assert!(Proj::new(r#"{"type":"CompoundCRS"}"#).is_err());
-    assert!(Proj::new(
-        r#"PROJCS["nope",GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]],PROJECTION["Not_A_Method"],UNIT["metre",1]]"#
+    // PROJ 9.9.0's proj_create reads a CRS whose method it does not know; its transform yields
+    // `inf` and errno 4098 at the first point. Here the transform is refused when it is built.
+    let unknown_method = Proj::new(
+        r#"PROJCS["nope",GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]],PROJECTION["Not_A_Method"],UNIT["metre",1]]"#,
     )
-    .is_err());
+    .expect("a CRS PROJ reads");
+    assert!(source
+        .create_crs_to_crs_from_pj(&unknown_method, None, None)
+        .and_then(|pair| pair
+            .convert((3.0_f64, 0.0_f64))
+            .map_err(|error| proj_rs::ProjCreateError::ProjError(error.to_string())))
+        .is_err());
     let wkt_4326 = Proj::new("EPSG:4326")
         .expect("4326")
         .as_wkt(None, None)
