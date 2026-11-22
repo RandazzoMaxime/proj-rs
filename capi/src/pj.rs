@@ -181,7 +181,9 @@ pub(crate) fn create(ctx: *mut PJ_CONTEXT, definition: &str, who: &str) -> *mut 
     }
     // A PROJ string without `+type=crs` is a PROJ-based coordinate operation, not a CRS: PROJ's
     // createFromUserInput gives one (pyproj's `Proj` relies on its type).
-    let user = match proj_based_operation_of_text(definition) {
+    let proj_based = proj_based_operation_of_text(definition);
+    let read_as_operation = matches!(proj_based, Some(Ok(_)));
+    let user = match proj_based {
         Some(Ok(operation)) => Ok(UserObject::Operation(operation)),
         _ => create_user_object(definition, database.as_ref(), rules),
     }
@@ -207,7 +209,7 @@ pub(crate) fn create(ctx: *mut PJ_CONTEXT, definition: &str, who: &str) -> *mut 
             let proj = engine.ok().or_else(|| obj.engine_proj(context));
             let mut made = Pj::with_obj(pointer, obj, proj);
             made.from_text = true;
-            if proj_string && !names_type_crs(definition) {
+            if proj_string && (read_as_operation || !names_type_crs(definition)) {
                 made.read_as = ReadAs::ProjOperation;
             }
             hand_over(made)
