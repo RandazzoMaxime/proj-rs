@@ -541,7 +541,18 @@ for test in "${tests[@]}"; do
       env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/wkt_warnings_ref" check \
         < "$out/wkt_malformed.txt" > "$out/wkt_malformed.ref" 2>/dev/null
       python3 "$here/grammar_errors.py" "$out/wkt_malformed.txt" "$out/wkt_malformed.ref" \
-        "$out/wkt_malformed.ours" ;;
+        "$out/wkt_malformed.ours"
+      # Names with multi-byte characters, where the 40-byte context of a grammar error can cut one:
+      # the bytes must be libproj's in the list of errors (lax) and in the failure of STRICT=YES.
+      for mode in check strict; do
+        PROJ_DATA="$ref/build/data" "$out/wkt_warnings_ours" $mode < "$here/wkt_utf8.txt" \
+          > "$out/wkt_utf8.$mode.ours" 2>/dev/null
+        env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/wkt_warnings_ref" $mode \
+          < "$here/wkt_utf8.txt" > "$out/wkt_utf8.$mode.ref" 2>/dev/null
+        echo "multi-byte names, $mode:"
+        python3 "$here/grammar_errors.py" "$here/wkt_utf8.txt" "$out/wkt_utf8.$mode.ref" \
+          "$out/wkt_utf8.$mode.ours"
+      done ;;
     wkt_round_trip)
       # proj_create then proj_as_proj_string of the WKT2:2019 and WKT1 GDAL libproj writes for every
       # EPSG CRS (datum ensembles, polar axes, Krovak) and coordinate operation (grid parameters

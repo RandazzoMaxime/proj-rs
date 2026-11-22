@@ -603,6 +603,8 @@ pub struct WktParser {
     grammar_errors: Vec<String>,
     /// [`Self::grammar_errors`] as the bytes PROJ writes them.
     grammar_error_bytes: Vec<Vec<u8>>,
+    /// The bytes of the grammar error that made a strict parse fail.
+    failure_bytes: Option<Vec<u8>>,
     towgs84: Vec<f64>,
     grids: String,
     /// `PROJ4_GRIDS` of the vertical datum currently being built.
@@ -632,6 +634,7 @@ impl WktParser {
             warnings: Vec::new(),
             grammar_errors: Vec::new(),
             grammar_error_bytes: Vec::new(),
+            failure_bytes: None,
             towgs84: Vec::new(),
             grids: String::new(),
             vertical_grids: String::new(),
@@ -679,6 +682,14 @@ impl WktParser {
         &self.grammar_error_bytes
     }
 
+    /// The grammar error that made the last strict [`Self::create_from_wkt`] fail, as PROJ's
+    /// bytes: the text of the `FactoryError` shows a UTF-8 sequence cut by the context window
+    /// as U+FFFD. `None` when the parse succeeded or failed for another reason.
+    #[must_use]
+    pub fn failure_bytes(&self) -> Option<&[u8]> {
+        self.failure_bytes.as_deref()
+    }
+
     /// `PROJ4_GRIDS` value captured from a datum `EXTENSION` node.
     #[must_use]
     pub fn datum_grids(&self) -> &str {
@@ -700,6 +711,7 @@ impl WktParser {
         self.warnings.clear();
         self.grammar_errors.clear();
         self.grammar_error_bytes.clear();
+        self.failure_bytes = None;
         self.towgs84.clear();
         self.grids.clear();
         self.vertical_grids.clear();
@@ -812,6 +824,7 @@ impl WktParser {
     fn grammar_bytes(&mut self, message: Vec<u8>) -> Result<(), FactoryError> {
         let text = String::from_utf8_lossy(&message).into_owned();
         if self.strict {
+            self.failure_bytes = Some(message);
             Err(invalid(text))
         } else {
             self.grammar_errors.push(text);
