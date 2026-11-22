@@ -39,6 +39,13 @@ fn a_latitude_of_origin_beyond_the_pole_is_refused() {
 }
 
 #[test]
+fn a_projection_check_of_lat_0_keeps_its_own_text() {
+    // `+proj=omerc +R=1 +alpha=0 +lat_0=90`: omerc refuses `|lat_0| = 90`, not `pj_init`.
+    let text = refusal("+proj=omerc +R=1 +alpha=0 +lat_0=90 +type=crs");
+    assert!(!text.contains("|lat_0| should be <= 90°"), "{text}");
+}
+
+#[test]
 fn a_valid_scale_factor_is_kept() {
     let db = DatabaseContext::create().expect("proj.db");
     for text in [

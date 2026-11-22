@@ -1950,7 +1950,7 @@ pub fn proj_string_refusal(definition: &str) -> Option<(i32, String)> {
     } else {
         token(&tokens, "proj")
     };
-    let (code, detail) = match (frame_reason(&error), &error) {
+    let (code, detail) = match (frame_reason(&error, &tokens), &error) {
         (Some(reason), _) => (
             crate::errno::PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE,
             reason.to_owned(),
@@ -1976,13 +1976,24 @@ pub fn proj_string_refusal(definition: &str) -> Option<(i32, String)> {
     Some((code, format!("Error {code} ({label}): {name}: {detail}")))
 }
 
-/// PROJ's words for the common parameters `pj_init` refuses (init.cpp:653-678).
-fn frame_reason(error: &crate::engine::CreateError) -> Option<&'static str> {
+/// PROJ's words for the common parameters `pj_init` refuses (init.cpp:653-678). A projection has
+/// its own `lat_0` and `k_0` checks (omerc, krovak, labrd): the common text is PROJ's only when
+/// the value itself is what `pj_init` refuses.
+fn frame_reason(
+    error: &crate::engine::CreateError,
+    tokens: &[(String, String)],
+) -> Option<&'static str> {
+    let lat_0 = param_token(tokens, "lat_0").map(|text| crate::dms::dmstor(text.as_bytes()));
+    let k_0 = param_token(tokens, "k_0")
+        .or_else(|| param_token(tokens, "k"))
+        .map(|text| text.trim().parse::<f64>().unwrap_or(0.0));
     match error {
-        crate::engine::CreateError::IllegalValue("lat_0") => {
+        crate::engine::CreateError::IllegalValue("lat_0")
+            if lat_0.is_some_and(|phi| !(phi.abs() <= std::f64::consts::FRAC_PI_2)) =>
+        {
             Some("Invalid value for lat_0: |lat_0| should be <= 90°")
         }
-        crate::engine::CreateError::IllegalValue("k_0") => {
+        crate::engine::CreateError::IllegalValue("k_0") if k_0.is_some_and(|k| !(k > 0.0)) => {
             Some("Invalid value for k/k_0: it should be > 0")
         }
         _ => None,
@@ -1997,7 +2008,7 @@ fn frame_refusal(definition: &str, tokens: &[(String, String)]) -> Option<String
         return None;
     }
     let error = crate::engine::Operation::create_keeping_unknown(definition).err()?;
-    let reason = frame_reason(&error)?;
+    let reason = frame_reason(&error, tokens)?;
     Some(format!(
         "Error 1027 (Invalid value for an argument): {}: {reason}",
         token(tokens, "proj")
