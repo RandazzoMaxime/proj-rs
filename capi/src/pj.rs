@@ -137,10 +137,19 @@ pub(crate) fn create(ctx: *mut PJ_CONTEXT, definition: &str, who: &str) -> *mut 
         );
         return std::ptr::null_mut();
     }
-    // `pj_init` refuses the common parameters before any object is made, and its code stays on
-    // the context (`proj_create` keeps a code already set).
+    let engine = context.builder().proj(definition);
+    // PROJ instantiates a PROJ string before it makes the object (io.cpp:12799): an operation
+    // the engine cannot build in this context, or a CRS whose common parameters `pj_init`
+    // refuses, gives no object, and the code of `pj_init` stays on the context.
     if proj_string {
-        if let Some((code, text)) = proj_string_refusal(definition) {
+        let refusal = if names_type_crs(definition) {
+            proj_string_refusal(definition)
+        } else {
+            engine.as_ref().err().map(|error| {
+                proj_string_refusal(definition).unwrap_or_else(|| (error.code(), error.to_string()))
+            })
+        };
+        if let Some((code, text)) = refusal {
             context.fail(code, &format!("{who}: {text}"));
             return std::ptr::null_mut();
         }
@@ -168,7 +177,6 @@ pub(crate) fn create(ctx: *mut PJ_CONTEXT, definition: &str, who: &str) -> *mut 
         }
         _ => Err(error),
     });
-    let engine = context.builder().proj(definition);
     match (user, engine) {
         (Ok(object), engine) => {
             let obj = Obj::User(object);

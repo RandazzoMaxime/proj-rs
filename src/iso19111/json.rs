@@ -1790,8 +1790,11 @@ pub fn proj_based_operation_of_text(
     if !proj_string || text.contains("type=crs") || text.contains("init=") {
         return None;
     }
-    if let Some((_, refusal)) = super::projstring::proj_string_refusal(text) {
-        return Some(Err(FactoryError::Invalid(refusal)));
+    // A missing grid is left to the caller: this reading has no context to search for it.
+    if let Some((code, refusal)) = super::projstring::proj_string_refusal(text) {
+        if code != crate::errno::PROJ_ERR_INVALID_OP_FILE_NOT_FOUND_OR_INVALID {
+            return Some(Err(FactoryError::Invalid(refusal)));
+        }
     }
     Some(Conversion::create_proj_based(&OpProps::new(), text).map(CoordinateOperation::Conversion))
 }

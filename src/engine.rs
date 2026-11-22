@@ -106,6 +106,8 @@ pub enum CreateError {
     MissingArgument(&'static str),
     /// The operation needs a grid, a datum shift, or another deferred piece.
     Unsupported(&'static str),
+    /// A pipeline step runs inverted and has no inverse (`pipeline.cpp:539-546`): its name.
+    NoInverse(String),
 }
 
 impl fmt::Display for CreateError {
@@ -116,6 +118,9 @@ impl fmt::Display for CreateError {
             Self::IllegalValue(name) => write!(f, "illegal value for +{name}"),
             Self::MissingArgument(name) => write!(f, "missing +{name}"),
             Self::Unsupported(what) => write!(f, "{what} is not built"),
+            Self::NoInverse(name) => {
+                write!(f, "Pipeline: Inverse operation for {name} is not available")
+            }
         }
     }
 }
@@ -2972,6 +2977,17 @@ fn build_pipeline(
     }
     if steps.is_empty() {
         return Err(CreateError::IllegalValue("pipeline"));
+    }
+    // `pipeline.cpp:533-555`: a step run inverted needs an inverse ("Inverse operation for %s is
+    // not available"). The probe reads no grid.
+    for step in &steps {
+        if step.omit_fwd || !step.inverted || step.inner.needs_pipeline_stack() {
+            continue;
+        }
+        let probe = crate::network::with_inverse_probe(|| step.inner.inverse(Coord::xy(0.0, 0.0)));
+        if matches!(probe, Err(TransformError::NoInverse)) {
+            return Err(CreateError::NoInverse(step.name.clone()));
+        }
     }
     let uses_stack = steps.iter().any(|step| step.inner.needs_pipeline_stack());
     for pair in steps.windows(2) {
