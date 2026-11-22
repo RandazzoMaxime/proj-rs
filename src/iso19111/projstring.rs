@@ -3097,17 +3097,20 @@ pub(super) fn projected_from_proj_string(tokens: &[(String, String)]) -> Result<
     let (proj, spelled) = method_spelling(token(tokens, "proj"), tokens, datum.ellipsoid())?;
     let proj = proj.as_str();
     let tokens = spelled.as_slice();
-    // PROJ refuses a polar `stere` that gives both `+lat_ts` and a scale other
-    // than 1: the two describe the same parameter.
+    // PROJ refuses a polar `stere` whose `+lat_ts` is not the pole and whose scale is not 1: the
+    // two describe the same parameter (io.cpp:12111-12118). `lat_ts` at the pole is variant A.
     let lat_0 = param_token(tokens, "lat_0").and_then(|text| text.parse::<f64>().ok());
+    let lat_ts = param_token(tokens, "lat_ts").and_then(|text| text.parse::<f64>().ok());
     let scale = param_token(tokens, "k").and_then(|text| text.parse::<f64>().ok());
     if proj == "stere"
         && lat_0.is_some_and(|lat| (lat.abs() - 90.0).abs() < 1e-10)
-        && param_token(tokens, "lat_ts").is_some()
+        && lat_ts
+            .zip(lat_0)
+            .is_some_and(|(ts, lat)| (ts - lat).abs() > 1e-10)
         && scale.is_some_and(|k| (k - 1.0).abs() > 1e-10)
     {
-        return Err(FactoryError::Invalid(
-            "+lat_ts and +k are both given for a polar stereographic".to_owned(),
+        return Err(FactoryError::Format(
+            "lat_ts != lat_0 and k != 1 not supported for Polar Stereographic".to_owned(),
         ));
     }
     let methods: Vec<&MethodMap> = PROJECTION_METHODS

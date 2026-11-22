@@ -2107,6 +2107,37 @@ fn io_projparse_merc_stere_polar_k_and_lat_ts() {
     );
 }
 
+// A polar `stere` with `+lat_ts` at the pole and a scale is variant A (io.cpp:12111-12126), the
+// PROJ string libgeotiff writes for EPSG:5482. Values from projinfo 9.9.0.
+#[test]
+fn io_projparse_stere_polar_lat_ts_at_pole_and_k() {
+    let crs = proj_crs("+proj=stere +lat_0=-90 +lat_ts=-90 +k=0.994 +type=crs");
+    let wkt = export_wkt2(&crs, WktLines::Single);
+    assert!(
+        wkt.contains("METHOD[\"Polar Stereographic (variant A)\",ID[\"EPSG\",9810]]"),
+        "{wkt}"
+    );
+    assert!(
+        wkt.contains("PARAMETER[\"Scale factor at natural origin\",0.994,"),
+        "{wkt}"
+    );
+    assert_eq!(
+        proj_string(&crs),
+        "+proj=stere +lat_0=-90 +lon_0=0 +k=0.994 +x_0=0 +y_0=0 +datum=WGS84 \
+         +units=m +no_defs +type=crs"
+    );
+}
+
+#[test]
+fn io_projparse_stere_polar_lat_ts_off_pole_and_k_refused() {
+    let error = create_crs_from_proj_string("+proj=stere +lat_0=-90 +lat_ts=-71 +k=0.99 +type=crs")
+        .expect_err("PROJ refuses it");
+    assert_eq!(
+        error.to_string(),
+        "lat_ts != lat_0 and k != 1 not supported for Polar Stereographic"
+    );
+}
+
 // Lot io-5: `io.projparse_*` PROJ strings whose projection was not imported,
 // or was imported under the wrong method name. PROJ 9.9.0 test/unit/test_io.cpp.
 
