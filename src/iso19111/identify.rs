@@ -159,12 +159,22 @@ impl Crs {
                         .transformation()
                         .is_equivalent_to_with(right.transformation(), Equivalence::Equivalent)
             }
-            _ => {
-                let (Some(left), Some(right)) = (as_geodetic(self), as_geodetic(other)) else {
-                    return false;
-                };
-                db_equivalent(&left, &right, IdentifyAxisOrder::Exact, db)
+            (Self::Compound(left), Self::Compound(right)) => {
+                left.components().len() == right.components().len()
+                    && left
+                        .components()
+                        .iter()
+                        .zip(right.components())
+                        .all(|(left, right)| either(left, right))
             }
+            _ => match (as_geodetic(self), as_geodetic(other)) {
+                (Some(left), Some(right)) => {
+                    db_equivalent(&left, &right, IdentifyAxisOrder::Exact, db)
+                }
+                // A vertical, temporal or other CRS: the database adds nothing to the comparison
+                // `_isEquivalentTo` makes (a vertical CRS is equivalent to itself, `EPSG:5703`).
+                _ => self.is_equivalent_to_with(other, Equivalence::Equivalent),
+            },
         }
     }
 }
