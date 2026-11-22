@@ -647,6 +647,15 @@ impl Alternatives {
         self.transform(coord, Direction::Inverse, &mut Vec::new())
     }
 
+    /// [`Self::inverse`] with the lines PROJ logs, as [`Self::forward_logged`] gives them.
+    pub(crate) fn inverse_logged(
+        &self,
+        coord: Coord,
+        log: &mut Vec<LogLine>,
+    ) -> Result<Coord, AlternativeError> {
+        self.transform(coord, Direction::Inverse, log)
+    }
+
     /// `proj_trans` for one point in one direction, `trans.cpp:233-346`. The log lines are
     /// appended to `log` as [`Self::forward_logged`] describes.
     // Not inlined: with the lock and the atomics in its body, `Transformer::map` inlined it, and

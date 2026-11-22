@@ -3,7 +3,8 @@
 
 use std::ffi::{c_char, c_int};
 
-use proj_rs::unstable::{Direction, Proj, ProjError, StepError, Xyzt};
+use proj_rs::unstable::iso19111::{LogLevel, LogLine};
+use proj_rs::unstable::{Direction, PairError, Proj, ProjError, StepError, Xyzt};
 
 use crate::context::{context, Ctx};
 use crate::ffi::*;
@@ -74,12 +75,21 @@ impl Pj {
         }
     }
 
-    /// One coordinate in `direction`, in the axis order the caller uses.
-    pub(crate) fn transform(&self, coord: Xyzt, direction: Direction) -> Result<Xyzt, StepError> {
+    /// One coordinate in `direction`, in the axis order the caller uses, with the lines
+    /// `proj_trans` logs and the `ONLY_BEST=YES` failure.
+    pub(crate) fn transform_logged(
+        &self,
+        coord: Xyzt,
+        direction: Direction,
+        log: &mut Vec<LogLine>,
+    ) -> Result<Xyzt, PairError> {
         let (swap_in, swap_out) = self.swaps(direction);
         let given = if swap_in { swapped(coord) } else { coord };
-        let proj = self.proj.as_ref().ok_or(StepError::NoInverse)?;
-        let done = proj.trans_coord(given, direction)?;
+        let proj = self
+            .proj
+            .as_ref()
+            .ok_or(PairError::Step(StepError::NoInverse))?;
+        let done = proj.trans_coord_logged(given, direction, log)?;
         Ok(if swap_out { swapped(done) } else { done })
     }
 
@@ -119,13 +129,27 @@ pub(crate) fn trans_one(object: &mut Pj, direction: PJ_DIRECTION, coord: PJ_COOR
     }
     object.transformed = true;
     let previous = std::mem::replace(&mut ctx.errno, 0);
-    match object.transform(xyzt(coord), way) {
+    let mut log = Vec::new();
+    let result = object.transform_logged(xyzt(coord), way, &mut log);
+    let ctx = object.context();
+    for line in &log {
+        let level = match line.level {
+            LogLevel::Error => PJ_LOG_ERROR,
+            LogLevel::Debug => PJ_LOG_DEBUG,
+        };
+        ctx.log(level as c_int, &line.text);
+    }
+    match result {
         Ok(done) => {
             ctx.errno = previous;
             coord_from(done)
         }
-        Err(error) => {
+        Err(PairError::Step(error)) => {
             ctx.errno = step_errno(error);
+            coord_error()
+        }
+        Err(PairError::NoOperation) => {
+            ctx.errno = PROJ_ERR_COORD_TRANSFM_NO_OPERATION as c_int;
             coord_error()
         }
     }

@@ -5,7 +5,18 @@
 
 use super::{Body, Direction, Proj};
 use crate::engine::{Operation, TransformError as StepError};
+use crate::iso19111::LogLine;
 use crate::Xyzt;
+
+/// Why one coordinate of a CRS pair failed, with the codes PROJ reports.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PairError {
+    /// The step error of the operation that ran.
+    Step(StepError),
+    /// `ONLY_BEST=YES` and the best operation cannot run: `PROJ_ERR_COORD_TRANSFM_NO_OPERATION`.
+    NoOperation,
+}
 
 impl Proj {
     /// Whether this object transforms coordinates: an operation, not a single CRS.
@@ -55,6 +66,25 @@ impl Proj {
             Body::Iso(pipeline) => pipeline.map(coord, direction),
         };
         mapped
+    }
+
+    /// [`Self::trans_coord`] with the lines `proj_trans` logs appended to `log`, for the C API to
+    /// write through the logger of the context.
+    ///
+    /// # Errors
+    ///
+    /// The [`PairError`] of the coordinate.
+    #[doc(hidden)]
+    pub fn trans_coord_logged(
+        &self,
+        coord: Xyzt,
+        direction: Direction,
+        log: &mut Vec<LogLine>,
+    ) -> Result<Xyzt, PairError> {
+        match &self.body {
+            Body::Iso(pipeline) => pipeline.map_logged(coord, direction, log),
+            _ => self.trans_coord(coord, direction).map_err(PairError::Step),
+        }
     }
 
     /// Several coordinates through the operation. A failed point keeps its error in `failed`.
