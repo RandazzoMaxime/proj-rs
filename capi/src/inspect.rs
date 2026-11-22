@@ -448,7 +448,6 @@ fn cs_of(crs: &Crs) -> Option<CoordinateSystem> {
         Crs::Derived(value) => value.coordinate_system().clone(),
         Crs::Temporal(value) => CoordinateSystem::Temporal(value.coordinate_system().clone()),
         Crs::Parametric(value) => CoordinateSystem::Parametric(value.coordinate_system().clone()),
-        Crs::Bound(bound) => return cs_of(bound.source_crs()),
         _ => return None,
     })
 }
@@ -459,6 +458,13 @@ pub extern "C" fn proj_crs_get_coordinate_system(ctx: *mut PJ_CONTEXT, crs: *con
         let Some((object, found)) = crs_arg(ctx, crs, "proj_crs_get_coordinate_system") else {
             return std::ptr::null_mut();
         };
+        if matches!(found, Crs::Bound(_) | Crs::Compound(_)) {
+            context(ctx).log(
+                PJ_LOG_ERROR as c_int,
+                "proj_crs_get_coordinate_system: Object is not a SingleCRS",
+            );
+            return std::ptr::null_mut();
+        }
         match cs_of(found) {
             Some(system) => derived(object, Obj::Cs(system)),
             None => std::ptr::null_mut(),

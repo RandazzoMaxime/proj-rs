@@ -41,6 +41,7 @@ difference). `dist.sh` installs the library under the names of libproj: `libproj
 | `last_used_operation` | `last_used_operation.c`: `proj_trans_get_last_used_operation` is NULL before the first point and gives the operation used after it, for 2 single-operation pairs and a PROJ string pipeline, as the reference libproj |
 | `crs_to_crs_describe` | `crs_to_crs_describe.c`: the object of `proj_create_crs_to_crs` is the operation itself when one candidate is left, as in PROJ: type, name, accuracy, WKT, PROJJSON and `proj_pj_info`, raw and normalized, identical to the reference libproj for 7 pairs (6 single operations, 1 set of candidates) |
 | `deriving_conversion` | `deriving_conversion.c`: the conversion `proj_crs_get_coordoperation` returns for 3 projected CRS, a geographic CRS and a derived projected CRS (`data/derived_projected.wkt`): its source, its target, whether it is instantiable and its PROJ string, identical to the reference libproj |
+| `single_crs_cs` | `single_crs_cs.c`: `proj_crs_get_coordinate_system` of geographic, projected, vertical, compound and bound CRS, with the error it logs, identical to the reference libproj (a bound or compound CRS has none) |
 | `c_api` | `test_c_api.cpp`: 152 `TEST`, 32 excluded, 120 pass |
 
 ## Excluded: `excluded.txt`
