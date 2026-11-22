@@ -6,7 +6,7 @@
 #   fork datadir geodesic proj_string_type projjson_objects horizontal_datum string_lifetime
 #   unnamed_operation embedded_db pj_info_order normalize_operation latin1_input
 #   crs_to_crs_describe create_any_object export_objects derived_temporal last_used_operation
-#   deriving_conversion c_api
+#   deriving_conversion single_crs_cs c_api
 #   (default: all). PENDING=0 runs the cases of pending.txt too, to see them fail.
 #   GTEST_FILTER=pattern narrows the gtest cases of the C++ tests.
 #
@@ -32,7 +32,7 @@ tests=("$@")
                                   unnamed_operation embedded_db pj_info_order normalize_operation
                                   latin1_input crs_to_crs_describe create_any_object
                                   export_objects derived_temporal last_used_operation
-                                  deriving_conversion c_api)
+                                  deriving_conversion single_crs_cs c_api)
 
 ref=${PROJ_REFERENCE:-$root/target/proj-reference}
 src=$ref/src
@@ -381,6 +381,19 @@ for test in "${tests[@]}"; do
       theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/deriving_ref" "${definitions[@]}" 2>/dev/null)
       [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }
       echo "deriving conversions identical to libproj for ${#definitions[@]} CRS" ;;
+    single_crs_cs)
+      # proj_crs_get_coordinate_system: a SingleCRS has one, a bound or compound CRS has none.
+      echo "== single_crs_cs"
+      gcc -std=c99 -I"$root/capi/include" "$here/single_crs_cs.c" -o "$out/single_cs_ours" "${ldflags[@]}"
+      gcc -std=c99 -I"$src/src" "$here/single_crs_cs.c" -o "$out/single_cs_ref" -L"$ref/build/lib" \
+        -lproj -Wl,-rpath,"$ref/build/lib"
+      definitions=(EPSG:4326 EPSG:2154 EPSG:5703 EPSG:5972
+                   "+proj=longlat +ellps=GRS80 +towgs84=1,2,3 +type=crs"
+                   "+proj=merc +a=6378137 +b=6378137 +nadgrids=@null +units=m +no_defs +type=crs")
+      ours=$(PROJ_DATA="$ref/build/data" "$out/single_cs_ours" "${definitions[@]}" 2>/dev/null)
+      theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/single_cs_ref" "${definitions[@]}" 2>/dev/null)
+      [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }
+      echo "coordinate systems identical to libproj for ${#definitions[@]} CRS" ;;
     c_api)
       python3 "$here/filter_tests.py" "$unit/test_c_api.cpp" "$here/excluded.txt" "$out/test_c_api_filtered.cpp"
       g++ "${cxxflags[@]}" -DTIFF_ENABLED -include "$unit/gtest_include.h" "$out/test_c_api_filtered.cpp" "$unit/main.cpp" \
