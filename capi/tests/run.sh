@@ -5,7 +5,7 @@
 #   TEST is one of: symbols abi lists intermediate_crs errno_string angular_io context include_h
 #   fork datadir geodesic proj_string_type projjson_objects horizontal_datum string_lifetime
 #   unnamed_operation embedded_db pj_info_order normalize_operation latin1_input
-#   crs_to_crs_describe c_api
+#   crs_to_crs_describe create_any_object c_api
 #   (default: all). PENDING=0 runs the cases of pending.txt too, to see them fail.
 #   GTEST_FILTER=pattern narrows the gtest cases of the C++ tests.
 #
@@ -29,7 +29,7 @@ tests=("$@")
                                   context include_h fork datadir geodesic proj_string_type
                                   projjson_objects horizontal_datum string_lifetime
                                   unnamed_operation embedded_db pj_info_order normalize_operation
-                                  latin1_input crs_to_crs_describe c_api)
+                                  latin1_input crs_to_crs_describe create_any_object c_api)
 
 ref=${PROJ_REFERENCE:-$root/target/proj-reference}
 src=$ref/src
@@ -315,6 +315,25 @@ for test in "${tests[@]}"; do
       theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/describe_ref" "${pairs[@]}" 2>/dev/null)
       [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }
       echo "descriptions identical to libproj for $(( ${#pairs[@]} / 2 )) pairs, raw and normalized" ;;
+    create_any_object)
+      # proj_create of operations, datums, ellipsoids and meridians given by URN, WKT or PROJJSON.
+      echo "== create_any_object"
+      gcc -std=c99 -I"$root/capi/include" "$here/create_any_object.c" -o "$out/any_ours" "${ldflags[@]}"
+      gcc -std=c99 -I"$src/src" "$here/create_any_object.c" -o "$out/any_ref" -L"$ref/build/lib" \
+        -lproj -Wl,-rpath,"$ref/build/lib"
+      objects=(urn:ogc:def:coordinateOperation:EPSG::1671 urn:ogc:def:coordinateOperation:EPSG::16031
+               urn:ogc:def:datum:EPSG::6326 urn:ogc:def:ellipsoid:EPSG::7030 urn:ogc:def:meridian:EPSG::8903
+               urn:ogc:def:ensemble:EPSG::6326 'ENGINEERINGDATUM["Engineering datum"]'
+               'PDATUM["Mean Sea Level",ANCHOR["1013.25 hPa"]]'
+               'TDATUM["Gregorian calendar",CALENDAR["proleptic Gregorian"],TIMEORIGIN[0000-01-01]]'
+               'ELLIPSOID["GRS 1980",6378137,298.257222101,LENGTHUNIT["metre",1]]'
+               'CONVERSION["UTM zone 31N",METHOD["Transverse Mercator",ID["EPSG",9807]],PARAMETER["Latitude of natural origin",0,ANGLEUNIT["degree",0.0174532925199433],ID["EPSG",8801]],PARAMETER["Longitude of natural origin",3,ANGLEUNIT["degree",0.0174532925199433],ID["EPSG",8802]],PARAMETER["Scale factor at natural origin",0.9996,SCALEUNIT["unity",1],ID["EPSG",8805]],PARAMETER["False easting",500000,LENGTHUNIT["metre",1],ID["EPSG",8806]],PARAMETER["False northing",0,LENGTHUNIT["metre",1],ID["EPSG",8807]],ID["EPSG",16031]]'
+               '{"type":"Ellipsoid","name":"WGS 84","semi_major_axis":6378137,"inverse_flattening":298.257223563,"id":{"authority":"EPSG","code":7030}}'
+               '{"type":"PrimeMeridian","name":"Paris","longitude":{"value":2.5969213,"unit":"grad"}}')
+      ours=$("$out/any_ours" "${objects[@]}" 2>/dev/null)
+      theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/any_ref" "${objects[@]}" 2>/dev/null)
+      [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }
+      echo "objects identical to libproj for ${#objects[@]} texts" ;;
     c_api)
       python3 "$here/filter_tests.py" "$unit/test_c_api.cpp" "$here/excluded.txt" "$out/test_c_api_filtered.cpp"
       g++ "${cxxflags[@]}" -DTIFF_ENABLED -include "$unit/gtest_include.h" "$out/test_c_api_filtered.cpp" "$unit/main.cpp" \
