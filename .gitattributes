@@ -1,2 +1,6 @@
 # Expected outputs are compared to the bytes the binaries write: no CRLF conversion on Windows.
 *.out text eol=lf
+# Fixtures compared byte for byte with the output of PROJ: no CRLF conversion on Windows.
+tests/data/wkt1_expected_parameters/* text eol=lf
+tests/data/utf8_cut/* -text
+capi/tests/wkt_utf8.txt -text
