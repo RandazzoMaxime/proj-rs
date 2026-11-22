@@ -1902,40 +1902,43 @@ impl WktParser {
         let had_axis = node.count_named("AXIS") > 0 || node.child(&["CS"]).is_some();
         let wkt_axes = crs.coordinate_system().axes();
         let db_axes = db_crs.coordinate_system().axes();
-        let units_differ = match (wkt_axes.first(), db_axes.first()) {
-            (Some(left), Some(right)) => !units_close(left.unit(), right.unit()),
-            _ => false,
-        };
-        let axes_differ = wkt_axes.len() != db_axes.len()
-            || wkt_axes
-                .iter()
-                .zip(db_axes)
-                .any(|(left, right)| left.direction() != right.direction());
-        let incompatible = (had_unit && units_differ) || (had_axis && axes_differ);
-        if incompatible && matches!(self.id_conflict, IdConflict::Unset) {
-            self.warnings.push(
-                "Coordinate system of GeographicCRS in the WKT definition is different from the one of the authority. Unsetting the identifier to avoid confusion"
-                    .to_owned(),
-            );
-            crs.identified.identifiers.clear();
+        let unset = matches!(self.id_conflict, IdConflict::Unset);
+        let cs_differs = wkt_axes.len() != db_axes.len()
+            || wkt_axes.iter().zip(db_axes).any(|(left, right)| {
+                left.direction() != right.direction() || !units_close(left.unit(), right.unit())
+            });
+        if had_axis && cs_differs {
+            if unset {
+                self.warn_unset_geographic_id(crs);
+            }
             return;
         }
-        // No axis, and no unit of its own or the authority's unit: PROJ keeps the
-        // authority coordinate system, so a degree axis carries `EPSG:9122`, and
-        // a base CRS of a PROJCS is latitude first (`wkt1_projected`).
-        if !had_axis && (!had_unit || !units_differ) {
-            crs.coordinate_system = db_crs.coordinate_system().clone();
-        } else if had_axis && !incompatible {
-            // Axes equivalent to the authority's: PROJ takes the authority coordinate system, its
-            // axis names included, with the angular unit of the WKT (`alterAngularUnit`).
-            let mut system = db_crs.coordinate_system().clone();
-            if let (true, Some(unit)) = (had_unit, wkt_axes.first().map(|axis| axis.unit.clone())) {
-                for axis in system.axes.iter_mut().take(2) {
-                    axis.unit = unit.clone();
-                }
+        // PROJ keeps the authority coordinate system, axis names and order included, with the
+        // angular unit of the WKT when it has a UNIT (`alterAngularUnit`, io.cpp:3355-3380): a
+        // base CRS of a PROJCS is latitude first (`wkt1_projected`).
+        let mut system = db_crs.coordinate_system().clone();
+        if let (true, Some(unit)) = (had_unit, wkt_axes.first().map(|axis| axis.unit.clone())) {
+            for axis in system.axes.iter_mut().take(2) {
+                axis.unit = unit.clone();
             }
-            crs.coordinate_system = system;
+            let altered = system
+                .axes
+                .iter()
+                .zip(db_axes)
+                .any(|(left, right)| !units_close(left.unit(), right.unit()));
+            if unset && altered {
+                self.warn_unset_geographic_id(crs);
+            }
         }
+        crs.coordinate_system = system;
+    }
+
+    fn warn_unset_geographic_id(&mut self, crs: &mut GeographicCRS) {
+        self.warnings.push(
+            "Coordinate system of GeographicCRS in the WKT definition is different from the one of the authority. Unsetting the identifier to avoid confusion"
+                .to_owned(),
+        );
+        crs.identified.identifiers.clear();
     }
 
     fn bind_towgs84(&mut self, source: Crs) -> Result<WktObject, FactoryError> {
