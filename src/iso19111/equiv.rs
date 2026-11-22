@@ -631,6 +631,18 @@ impl Crs {
             (Self::Compound(left), Self::Compound(right)) if criterion != Equivalence::Strict => {
                 left.is_equivalent_to_with(right, criterion)
             }
+            // `BoundCRS::_isEquivalentTo` (crs.cpp): the names are compared for `Strict` only, and
+            // the transformation takes `getStandardCriterion` (`ExceptAxisOrder` is `Equivalent`).
+            (Self::Bound(left), Self::Bound(right)) if criterion != Equivalence::Strict => {
+                left.source_crs()
+                    .is_equivalent_to_with(right.source_crs(), criterion)
+                    && left
+                        .target_crs()
+                        .is_equivalent_to_with(right.target_crs(), criterion)
+                    && left
+                        .transformation()
+                        .is_equivalent_to_with(right.transformation(), Equivalence::Equivalent)
+            }
             _ => self.is_equivalent_to(other),
         }
     }
