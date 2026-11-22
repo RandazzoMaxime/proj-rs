@@ -225,10 +225,10 @@ pub extern "C" fn proj_context_guess_wkt_dialect(
 ) -> PJ_GUESSED_WKT_DIALECT {
     guard(PJ_GUESSED_NOT_WKT, || {
         let _ = context(ctx);
-        let Some(text) = util::text(wkt) else {
+        let Some(text) = util::definition_text(wkt) else {
             return PJ_GUESSED_NOT_WKT;
         };
-        match WktParser::guess_dialect(text) {
+        match WktParser::guess_dialect(&text) {
             WktDialect::Wkt1Gdal => PJ_GUESSED_WKT1_GDAL,
             WktDialect::Wkt1Esri => PJ_GUESSED_WKT1_ESRI,
             WktDialect::Wkt2_2015 => PJ_GUESSED_WKT2_2015,
@@ -276,7 +276,7 @@ pub extern "C" fn proj_create_from_wkt(
         let context = context(ctx);
         util::put(out_warnings, std::ptr::null_mut());
         util::put(out_grammar_errors, std::ptr::null_mut());
-        let Some(text) = util::text(wkt) else {
+        let Some(text) = util::definition_text(wkt) else {
             return std::ptr::null_mut();
         };
         let mut parser = WktParser::new();
@@ -307,7 +307,7 @@ pub extern "C" fn proj_create_from_wkt(
                 }
             }
         }
-        let parsed = parser.create_from_wkt(text);
+        let parsed = parser.create_from_wkt(&text);
         if !parser.warnings().is_empty() {
             util::put(out_warnings, util::string_list(parser.warnings()));
         }

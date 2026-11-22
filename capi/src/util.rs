@@ -4,6 +4,7 @@
 //! `NULL` where the header allows it, and that a string is NUL-terminated. The helpers here
 //! turn such a pointer into a reference once, so that the functions above them are safe code.
 
+use std::borrow::Cow;
 use std::ffi::{c_char, CStr, CString};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
@@ -21,6 +22,17 @@ pub(crate) fn text<'a>(pointer: *const c_char) -> Option<&'a str> {
     // SAFETY: the pointer is not null, and the C contract makes it a NUL-terminated string
     // that outlives the call.
     unsafe { CStr::from_ptr(pointer) }.to_str().ok()
+}
+
+/// The text of a definition PROJ parses byte by byte (a WKT, a PROJ string): UTF-8 when the bytes
+/// are UTF-8, else each byte read as Latin-1, the encoding QGIS hands over (`QString::toLatin1`).
+/// `None` for `NULL`.
+pub(crate) fn definition_text<'a>(pointer: *const c_char) -> Option<Cow<'a, str>> {
+    let raw = bytes(pointer)?;
+    Some(match std::str::from_utf8(raw) {
+        Ok(text) => Cow::Borrowed(text),
+        Err(_) => Cow::Owned(raw.iter().map(|&byte| char::from(byte)).collect()),
+    })
 }
 
 /// The bytes of a C string, `None` for `NULL`.

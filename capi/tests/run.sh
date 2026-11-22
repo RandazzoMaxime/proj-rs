@@ -4,7 +4,7 @@
 # Usage: capi/tests/run.sh [--release] [TEST...]
 #   TEST is one of: symbols abi lists intermediate_crs errno_string angular_io context include_h
 #   fork datadir geodesic proj_string_type projjson_objects horizontal_datum string_lifetime
-#   unnamed_operation embedded_db pj_info_order normalize_operation c_api
+#   unnamed_operation embedded_db pj_info_order normalize_operation latin1_input c_api
 #   (default: all). PENDING=0 runs the cases of pending.txt too, to see them fail.
 #   GTEST_FILTER=pattern narrows the gtest cases of the C++ tests.
 #
@@ -28,7 +28,7 @@ tests=("$@")
                                   context include_h fork datadir geodesic proj_string_type
                                   projjson_objects horizontal_datum string_lifetime
                                   unnamed_operation embedded_db pj_info_order normalize_operation
-                                  c_api)
+                                  latin1_input c_api)
 
 ref=${PROJ_REFERENCE:-$root/target/proj-reference}
 src=$ref/src
@@ -292,6 +292,16 @@ for test in "${tests[@]}"; do
       theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/normalize_ref" "${cases[@]}" 2>/dev/null)
       [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }
       echo "normalized objects identical to libproj for ${#cases[@]} arguments" ;;
+    latin1_input)
+      # A WKT handed over in Latin-1 (QString::toLatin1 in QGIS): a degree sign is not UTF-8.
+      echo "== latin1_input"
+      gcc -std=c99 -I"$root/capi/include" "$here/latin1_input.c" -o "$out/latin1_ours" "${ldflags[@]}"
+      gcc -std=c99 -I"$src/src" "$here/latin1_input.c" -o "$out/latin1_ref" -L"$ref/build/lib" \
+        -lproj -Wl,-rpath,"$ref/build/lib"
+      ours=$("$out/latin1_ours" 2>/dev/null)
+      theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/latin1_ref" 2>/dev/null)
+      [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }
+      echo "Latin-1 WKT read as libproj reads it" ;;
     c_api)
       python3 "$here/filter_tests.py" "$unit/test_c_api.cpp" "$here/excluded.txt" "$out/test_c_api_filtered.cpp"
       g++ "${cxxflags[@]}" -DTIFF_ENABLED -include "$unit/gtest_include.h" "$out/test_c_api_filtered.cpp" "$unit/main.cpp" \
