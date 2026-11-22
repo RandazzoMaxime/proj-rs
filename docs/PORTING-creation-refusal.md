@@ -51,3 +51,47 @@ these degenerate cones to fail exactly as PROJ's, for no use.
 Two files that are not JSON (`+proj=defmodel +model=proj.ini`, `+proj=tinshift +file=proj.ini`)
 are refused with PROJ's code and `invalid model:`, but the rest of PROJ's line is the message
 of its JSON library (`[json.exception.parse_error.101] ...`), which proj-rs does not reproduce.
+
+## The error code on the context
+
+`proj_create` leaves `proj_context_errno` where PROJ leaves it. PROJ applies these rules, read
+from `iso19111/c_api.cpp` (`proj_create`, `proj_log_error`, `pj_obj_create`) and `init.cpp`:
+
+- An instantiation that succeeds clears the code: `pj_init` calls `proj_errno_reset`
+  (`init.cpp:792`). That is any PROJ string, a CRS with `+type=crs` included, an operation
+  from the database, and `proj_create_crs_to_crs`. A CRS from the database or a WKT is not
+  instantiated and keeps the code.
+- An instantiation that fails sets its code, over the previous one.
+- After the instantiation, a refusal of `createFromUserInput` sets a code only when none is
+  left (`proj_log_error`): PROJ_ERR_OTHER (4096) for a code missing from the database
+  (`crs not found: EPSG:1671`), PROJ_ERR_INVALID_OP_WRONG_SYNTAX (1025) for a text that does
+  not parse (WKT, PROJJSON, `name@epoch`, unknown name).
+- `init=epsg:` and `init=IGNF:` are refused without the PROJ 4 rules (1025), before any
+  instantiation.
+- An operation from the database whose PROJ string `pj_init` refuses (a missing grid) is still
+  returned, with the code of that refusal (1029). `proj_trans` on it sets
+  PROJ_ERR_OTHER_NO_INVERSE_OP (4098) without a log line, and `proj_pj_info` gives its name, its
+  accuracy and an empty definition, as for a CRS.
+
+A CRS PROJ string is instantiated without `type=crs`, `nadgrids` and `geoidgrids`:
+`createFromPROJString` adds `+disable_grid_presence_check`, so a missing grid of a CRS is not
+an error. `+towgs84` takes up to seven terms and fills the others with 0, as `pj_datum_set`
+does; the CRS model still refuses a count other than 3 or 7 (`Invalid number of elements in
+TOWGS84Parameters`, 4096).
+
+`capi/tests/errno_parity.c` compares 72 definitions on a fresh context and after a refused PROJ
+string, and `capi/tests/crs_proj_strings.c` the PROJ strings libproj exports for every EPSG,
+ESRI and IGNF CRS (9,692 strings with and without `+type=crs`).
+
+`+proj=cart +type=crs` is a geocentric CRS, as `isGeocentricStep` reads it (`io.cpp:11015`);
+proj-rs read a projected CRS. A URN of an object that is not a CRS is `unhandled object type:
+<type>` (`io.cpp:7685`).
+
+The log line is left out for seven definitions (`capi/tests/errno_parity.deviations`); their
+code is compared:
+
+- an operation whose pipeline step fails (`EPSG::1312`, `EPSG::15958`): PROJ logs
+  `pipeline: Pipeline: Bad step definition: proj=hgridshift (File not found or invalid)`,
+  proj-rs sets the same code without that line;
+- a WKT or a PROJJSON text that does not parse: the line is the message of PROJ's WKT parser or
+  of its JSON library, and proj-rs's own parsers word it differently.

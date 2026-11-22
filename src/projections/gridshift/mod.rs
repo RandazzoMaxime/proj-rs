@@ -630,12 +630,14 @@ fn load_names(
 /// `could not find required grid(s).`: what the grid steps log when a grid of `+grids` cannot be
 /// opened or read (gridshift.cpp:939-944, hgridshift.cpp, vgridshift.cpp, xyzgridshift.cpp).
 pub(crate) fn grid_not_found() -> CreateError {
-    CreateError::file("could not find required grid(s).")
+    CreateError::file(GRID_NOT_FOUND)
 }
+
+pub(crate) const GRID_NOT_FOUND: &str = "could not find required grid(s).";
 
 /// Whether `error` is [`grid_not_found`].
 pub(crate) fn is_grid_not_found(error: &CreateError) -> bool {
-    matches!(error, CreateError::Rejected { text, .. } if text == "could not find required grid(s).")
+    matches!(error, CreateError::Rejected { text, .. } if text == GRID_NOT_FOUND)
 }
 
 fn as_create(fail: Fail) -> CreateError {

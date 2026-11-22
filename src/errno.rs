@@ -98,12 +98,16 @@ impl ProjCreateError {
     /// The PROJ code closest to this error.
     ///
     /// The crate's own mapping: an unknown or unparsable definition is
-    /// `PROJ_ERR_INVALID_OP_WRONG_SYNTAX`, anything else is
+    /// `PROJ_ERR_INVALID_OP_WRONG_SYNTAX`, a missing grid
+    /// `PROJ_ERR_INVALID_OP_FILE_NOT_FOUND_OR_INVALID`, anything else
     /// `PROJ_ERR_INVALID_OP`.
     #[must_use]
     pub fn code(&self) -> i32 {
         match self {
             Self::ArgumentNulError(_) => PROJ_ERR_INVALID_OP_WRONG_SYNTAX,
+            Self::ProjError(message) if message.ends_with(crate::projections::GRID_NOT_FOUND) => {
+                PROJ_ERR_INVALID_OP_FILE_NOT_FOUND_OR_INVALID
+            }
             _ => PROJ_ERR_INVALID_OP,
         }
     }

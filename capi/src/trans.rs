@@ -118,6 +118,17 @@ pub(crate) fn trans_one(object: &mut Pj, direction: PJ_DIRECTION, coord: PJ_COOR
         return coord;
     };
     let ctx = object.context();
+    if !object.is_transform()
+        && object
+            .obj
+            .as_ref()
+            .is_some_and(|obj| obj.operation().is_some())
+    {
+        // An operation PROJ could not instantiate has no `fwd`: `pj_fwd4d` sets
+        // PROJ_ERR_OTHER_NO_INVERSE_OP without a log line (fwd.cpp:290-293).
+        ctx.errno = PROJ_ERR_OTHER_NO_INVERSE_OP as c_int;
+        return coord_error();
+    }
     if !object.is_transform() {
         ctx.fail(
             PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE as c_int,

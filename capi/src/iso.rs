@@ -158,7 +158,15 @@ impl Obj {
     pub(crate) fn engine_proj(&self, ctx: &mut Ctx) -> Option<Proj> {
         if let Some(operation) = self.operation() {
             let database = ctx.database()?;
-            return ctx.builder().proj_from_operation(operation, &database).ok();
+            // `pj_obj_create` keeps the object when `pj_create_internal` fails (a missing grid),
+            // with the code of that failure on the context (iso19111/c_api.cpp:228-256).
+            return match ctx.builder().proj_from_operation(operation, &database) {
+                Ok(proj) => Some(proj),
+                Err(error) => {
+                    ctx.errno = error.code();
+                    None
+                }
+            };
         }
         if let Self::User(UserObject::CoordinateMetadata(metadata)) = self {
             let base = Self::User(UserObject::Crs(metadata.crs().clone())).engine_proj(ctx)?;

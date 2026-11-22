@@ -1,0 +1,7 @@
+urn:ogc:def:coordinateOperation:EPSG::1312
+urn:ogc:def:coordinateOperation:EPSG::15958
+GEOGCS[
+PROJCRS["x"]
+{"type": "GeographicCRS"}
+{"type": "Nope"}
+{bad json

@@ -17,6 +17,7 @@ mod chamb;
 mod col_urban;
 mod conversions;
 pub(crate) use conversions::{angular_proj_unit, linear_proj_unit};
+pub(crate) use gridshift::GRID_NOT_FOUND;
 mod ellip;
 mod eqc;
 mod eqdc;

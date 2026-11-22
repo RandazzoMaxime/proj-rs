@@ -1910,7 +1910,8 @@ fn crs_from_proj_string(
     let proj = token(&tokens, "proj");
     let mut crs = if matches!(proj, "longlat" | "lonlat" | "latlong" | "latlon") {
         geographic_from_proj_string(&tokens)?
-    } else if proj == "geocent" {
+    } else if matches!(proj, "geocent" | "cart") {
+        // `isGeocentricStep` (io.cpp:11015).
         proj_crs::geocentric_from_proj_string(&tokens)?
     } else if proj == "pipeline" {
         match krovak_from_pipeline(&tokens)? {
@@ -1953,6 +1954,12 @@ pub fn proj_string_refusal(definition: &str) -> Option<(i32, String)> {
     match &error {
         crate::engine::CreateError::Syntax(text) => {
             return Some((crate::errno::PROJ_ERR_INVALID_OP_WRONG_SYNTAX, text.clone()));
+        }
+        // `pj_init` logs a missing projection without a step name (init.cpp:537).
+        crate::engine::CreateError::UnknownProj(_) if name != "pipeline" => {
+            let code = crate::errno::PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE;
+            let label = crate::errno::error_string(code).unwrap_or_default();
+            return Some((code, format!("Error {code} ({label}): Unknown projection")));
         }
         crate::engine::CreateError::NoShape => {
             let code = crate::errno::PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE;

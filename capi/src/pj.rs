@@ -9,7 +9,7 @@ use std::ffi::{c_char, c_int};
 
 use proj_rs::iso19111::{
     coordinate_system_from_json, create_user_object, proj_based_operation_of_text,
-    proj_string_refusal, CoordinateMetadata, UserObject, UNRECOGNIZED_USER_INPUT,
+    proj_string_refusal, CoordinateMetadata, FactoryError, UserObject, UNRECOGNIZED_USER_INPUT,
 };
 use proj_rs::unstable::{Area, Proj, ProjCreateError};
 
@@ -82,9 +82,16 @@ impl Pj {
         }
     }
 
-    /// Whether the object is a coordinate operation the engine can run.
+    /// Whether the object is a coordinate operation the engine can run. An ISO object that is
+    /// not an operation, a CRS read from a PROJ string included, does not transform
+    /// (trans.cpp:227).
     pub(crate) fn is_transform(&self) -> bool {
-        self.proj.as_ref().is_some_and(Proj::is_transform)
+        let iso_non_operation = self.read_as == ReadAs::Object
+            && self
+                .obj
+                .as_ref()
+                .is_some_and(|obj| obj.operation().is_none());
+        !iso_non_operation && self.proj.as_ref().is_some_and(Proj::is_transform)
     }
 
     /// The context of this object.
@@ -114,6 +121,16 @@ pub(crate) fn pj<'a>(pointer: *const PJ) -> Option<&'a mut Pj> {
 
 /// Gives `object` to C.
 pub(crate) fn hand_over(object: Pj) -> *mut PJ {
+    // `pj_obj_create` instantiates an operation with `pj_init`, which clears the errno of the
+    // context (init.cpp:792); a CRS is not instantiated and keeps it.
+    let instantiated = object.proj.is_some()
+        && object
+            .obj
+            .as_ref()
+            .is_none_or(|obj| obj.operation().is_some());
+    if instantiated {
+        object.context().errno = 0;
+    }
     util::leak(object).cast::<PJ>()
 }
 
@@ -137,13 +154,15 @@ pub(crate) fn create(ctx: *mut PJ_CONTEXT, definition: &str, who: &str) -> *mut 
         );
         return std::ptr::null_mut();
     }
+    let init_step = proj_string && is_init_step(definition);
     let engine = context.builder().proj(definition);
     // PROJ instantiates a PROJ string before it makes the object (io.cpp:12799): an operation
-    // the engine cannot build in this context, or a CRS whose common parameters `pj_init`
-    // refuses, gives no object, and the code of `pj_init` stays on the context.
-    if proj_string {
+    // or a CRS the engine cannot build in this context gives no object, and the code of
+    // `pj_init` stays on the context. A success clears it. `init=epsg:` is read before.
+    if proj_string && !init_step {
         let refusal = if names_type_crs(definition) {
             proj_string_refusal(definition)
+                .or_else(|| proj_string_refusal(&crs_instantiation(definition)))
         } else {
             engine.as_ref().err().map(|error| {
                 proj_string_refusal(definition).unwrap_or_else(|| (error.code(), error.to_string()))
@@ -153,6 +172,7 @@ pub(crate) fn create(ctx: *mut PJ_CONTEXT, definition: &str, who: &str) -> *mut 
             context.fail(code, &format!("{who}: {text}"));
             return std::ptr::null_mut();
         }
+        context.errno = 0;
     }
     if definition.trim_start().starts_with('{') {
         if let Ok(system) = coordinate_system_from_json(definition) {
@@ -171,7 +191,11 @@ pub(crate) fn create(ctx: *mut PJ_CONTEXT, definition: &str, who: &str) -> *mut 
             match create_user_object(name, Some(database), rules) {
                 Ok(UserObject::Crs(crs)) => CoordinateMetadata::create(&crs, epoch, database)
                     .map(UserObject::CoordinateMetadata)
-                    .map_err(|_| error),
+                    .map_err(|cause| {
+                        FactoryError::Format(format!(
+                            "CoordinateMetadata::create() failed with: {cause}"
+                        ))
+                    }),
                 _ => Err(error),
             }
         }
@@ -188,19 +212,79 @@ pub(crate) fn create(ctx: *mut PJ_CONTEXT, definition: &str, who: &str) -> *mut 
             }
             hand_over(made)
         }
-        (Err(_), Ok(proj)) => hand_over(Pj::new(pointer, proj)),
-        (Err(error), Err(create_error)) => {
-            // `proj_create` sets PROJ_ERR_INVALID_OP_WRONG_SYNTAX for a ParsingException that left
-            // no code (iso19111/c_api.cpp:proj_create).
-            let code = if error.to_string() == UNRECOGNIZED_USER_INPUT {
-                PROJ_ERR_INVALID_OP_WRONG_SYNTAX as c_int
+        // A PROJ-based operation the model cannot read; a CRS refused by the model stays refused.
+        (Err(_), Ok(proj)) if !init_step && !names_type_crs(definition) => {
+            hand_over(Pj::new(pointer, proj))
+        }
+        (Err(error), _) => {
+            let input = if proj_string {
+                Input::ProjString
             } else {
-                create_error.code()
+                Input::Other
             };
-            context.fail(code, &format!("{who}: {error}"));
+            let (code, text) = user_input_failure(&error, input);
+            context.fail_unless_set(code, &format!("{who}: {text}"));
             std::ptr::null_mut()
         }
     }
+}
+
+/// What `proj_create` was given: `createFromPROJString` reads a PROJ string.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Input {
+    ProjString,
+    Other,
+}
+
+/// The code and the text `proj_create` logs for an object `createFromUserInput` refuses
+/// (iso19111/c_api.cpp:proj_create): `NoSuchAuthorityCodeException` gives PROJ_ERR_OTHER and
+/// `<what>: AUTH:CODE`, a `ParsingException` PROJ_ERR_INVALID_OP_WRONG_SYNTAX. Past the
+/// instantiation, a PROJ string the model refuses is PROJ_ERR_OTHER.
+fn user_input_failure(error: &FactoryError, input: Input) -> (c_int, String) {
+    let parsing = match error {
+        FactoryError::NotFound {
+            object,
+            authority,
+            code,
+        } => {
+            let text = format!(
+                "{} not found: {authority}:{code}",
+                object.to_ascii_lowercase()
+            );
+            return (PROJ_ERR_OTHER as c_int, text);
+        }
+        FactoryError::Format(text) => {
+            input == Input::Other
+                || text == UNRECOGNIZED_USER_INPUT
+                || text.starts_with(INIT_SYNTAX_REFUSAL)
+        }
+        _ => input == Input::Other,
+    };
+    let code = if parsing {
+        PROJ_ERR_INVALID_OP_WRONG_SYNTAX
+    } else {
+        PROJ_ERR_OTHER
+    };
+    (code as c_int, error.to_string())
+}
+
+/// `createFromPROJString` (io.cpp:12554) without the PROJ 4 `init=` rules.
+const INIT_SYNTAX_REFUSAL: &str = "init=epsg:/init=IGNF: syntax not supported";
+
+/// A PROJ string of one `init=epsg:` or `init=IGNF:` step, which PROJ reads before it
+/// instantiates anything (io.cpp:12513-12527). An init file is instantiated as usual.
+fn is_init_step(text: &str) -> bool {
+    let words = || {
+        text.split_whitespace()
+            .map(|word| word.trim_start_matches('+'))
+    };
+    let code_init = |word: &str| {
+        word.strip_prefix("init=").is_some_and(|name| {
+            let lower = name.to_ascii_lowercase();
+            lower.starts_with("epsg:") || lower.starts_with("ignf:")
+        })
+    };
+    words().any(code_init) && !words().any(|word| word.starts_with("proj=") || word == "inv")
 }
 
 #[unsafe(no_mangle)]
@@ -329,6 +413,20 @@ fn names_type_crs(text: &str) -> bool {
         word.trim_start_matches('+')
             .eq_ignore_ascii_case("type=crs")
     })
+}
+
+/// The PROJ string `pj_init` instantiates for a CRS: without `type=crs`, and with
+/// `+disable_grid_presence_check` (io.cpp:12799), so `nadgrids` and `geoidgrids` are not opened.
+fn crs_instantiation(text: &str) -> String {
+    text.split_whitespace()
+        .filter(|word| {
+            let bare = word.trim_start_matches('+');
+            !bare.eq_ignore_ascii_case("type=crs")
+                && !bare.starts_with("nadgrids=")
+                && !bare.starts_with("geoidgrids=")
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn looks_like_proj_string(text: &str) -> bool {

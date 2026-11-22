@@ -163,7 +163,7 @@ fn switch(params: &Params, key: &str) -> Result<Option<Switch>, CreateError> {
     }
 }
 
-fn towgs84_values(text: &str) -> Result<[f64; 7], CreateError> {
+pub(crate) fn towgs84_values(text: &str) -> Result<[f64; 7], CreateError> {
     let mut values = [0.0; 7];
     if text.is_empty() {
         return Ok(values);
