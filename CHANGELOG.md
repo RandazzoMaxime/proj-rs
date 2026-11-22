@@ -4,7 +4,29 @@ Versions follow [semver](https://semver.org). The stable surface is the one of
 [docs/API-v1.md](docs/API-v1.md): the native facade, `proj-rs-georust` and the C API. The
 rest is outside semver.
 
-## Unreleased
+## 1.1.0
+
+- The C library is tried against real clients, with their own test suites run once on libproj
+  9.9.0 and once on proj-rs: pyproj 3.8.0 (`tools/clients/pyproj.sh`,
+  [docs/CLIENTS-pyproj.md](docs/CLIENTS-pyproj.md)), and QGIS 3.34.4 and GDAL 3.13.3. Every pyproj
+  test that passes on libproj passes; QGIS gives the same result test by test; GDAL's `osr` tests
+  too, except three that point `PROJ_DATA` or the search path at another `proj.db`, which proj-rs
+  embeds (a deliberate difference: [docs/PORTING-database-open.md](docs/PORTING-database-open.md)).
+- About seventy fixes of the C API get there, each compared with libproj 9.9.0 by
+  `capi/tests/run.sh` (33 comparisons): `proj_create` reads any object (URN, WKT and PROJJSON of
+  operations, datums, ensembles, ellipsoids, coordinate systems) and every object exports to WKT
+  and PROJJSON; a PROJ string without `+type=crs` is an operation; PROJ strings are cut and read as
+  PROJ reads them (`pj_shrink` words, DMS angles, `+init=file:section`, `+init=AUTH:CODE` with other
+  parameters, `+proj=latlon`, known ellipsoids, unread keys dropped); `proj_create_crs_to_crs`
+  builds `ONLY_BEST`, `AUTHORITY`, the area of interest, two coordinate epochs and the `init=` rules
+  of the context, and returns the single operation of a pair itself; `proj_pj_info` gives
+  `pj_get_def`'s definition, in the authority axis order until normalized; `proj_trans` logs the
+  `<step>: Invalid latitude` line of a refused point and keeps the error of PROJ's fallback; a
+  PROJ-based operation has type 24; derived and temporal CRS, coordinate systems, grids and
+  network availability answer as PROJ's do; WKT1 GDAL and ESRI details, CRS equivalence and
+  `identify` follow PROJ.
+- `set_allowed_intermediate_crs` no longer reads past the end of its array (it crashed pyproj).
+- The C library archives carry `share/proj/proj.db`, for clients that look for the file (pyproj).
 
 - The C library archives carry `lib/pkgconfig/proj.pc` and `lib/cmake/proj/proj-config.cmake`,
   as PROJ installs them: `pkg-config proj` and CMake's `find_package(PROJ 9 CONFIG)` (target
