@@ -4,7 +4,8 @@
 #
 # Makes, with <version> read from Cargo.toml:
 #   proj-rs-<version>-<Target>-cli.zip      bin\proj-rs.exe, one .cmd launcher per tool, link-tools.ps1
-#   proj-rs-<version>-<Target>-libproj.zip  bin\proj.dll, lib\proj.lib, include\*.h
+#   proj-rs-<version>-<Target>-libproj.zip  bin\proj.dll, lib\proj.lib, include\*.h,
+#                                           lib\pkgconfig\proj.pc, lib\cmake\proj\*.cmake
 # Each holds LICENSE, NOTICE.md (with the licence texts it points to) and a README.txt.
 #
 # The archive carries launchers, not hard links: a zip stores each link as a full copy (8 times
@@ -59,6 +60,26 @@ try {
     $lib = Join-Path $work $libName
     New-Item -ItemType Directory -Force -Path $lib | Out-Null
     Copy-Item (Join-Path $work "lib-prefix\bin"), (Join-Path $work "lib-prefix\lib"), (Join-Path $work "lib-prefix\include") $lib -Recurse
+    # pkg-config and CMake find the library as they find PROJ: lib\pkgconfig\proj.pc, lib\cmake\proj.
+    $header = Get-Content -Raw (Join-Path $root "capi\include\proj.h")
+    $part = { param($name) [regex]::Match($header, "#define PROJ_VERSION_$name (\d+)").Groups[1].Value }
+    $major = & $part "MAJOR"; $minor = & $part "MINOR"; $patch = & $part "PATCH"
+    if (-not $major -or -not $minor -or -not $patch) { throw "no PROJ_VERSION_* in proj.h" }
+    $values = @{
+        "@VERSION@" = $version; "@PROJ_VERSION@" = "$major.$minor.$patch"
+        "@PROJ_VERSION_MAJOR@" = $major; "@PROJ_VERSION_MINOR@" = $minor; "@PROJ_VERSION_PATCH@" = $patch
+        "@STATICLIBS@" = ""; "@IMPORTED_LOCATION@" = "bin/proj.dll"
+        "@IMPORTED_KEY@" = "IMPORTED_IMPLIB_RELEASE"; "@IMPORTED_VALUE@" = '${_PROJ_ROOT}/lib/proj.lib'
+    }
+    function Fill([string]$template, [string]$dest) {
+        $text = Get-Content -Raw -Path $template
+        foreach ($key in $values.Keys) { $text = $text.Replace($key, $values[$key]) }
+        New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
+        Set-Content -Path $dest -Value $text -Encoding ascii -NoNewline
+    }
+    Fill (Join-Path $root "tools\release\proj.pc.in") (Join-Path $lib "lib\pkgconfig\proj.pc")
+    Fill (Join-Path $root "tools\release\cmake\proj-config.cmake.in") (Join-Path $lib "lib\cmake\proj\proj-config.cmake")
+    Fill (Join-Path $root "tools\release\cmake\proj-config-version.cmake.in") (Join-Path $lib "lib\cmake\proj\proj-config-version.cmake")
     Add-Licences $lib
     Add-Readme (Join-Path $root "tools\release\README-libproj-windows.txt") (Join-Path $lib "README.txt")
     Pack $libName

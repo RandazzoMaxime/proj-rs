@@ -1,0 +1,16 @@
+# pkg-config file of the proj-rs C library, the one PROJ @PROJ_VERSION@ installs (proj.pc.in), made
+# relocatable: the paths follow this file, wherever the archive is unpacked.
+prefix=${pcfiledir}/../..
+libdir=${prefix}/lib
+includedir=${prefix}/include
+datarootdir=${prefix}/share
+datadir=${datarootdir}/proj
+
+Name: PROJ
+Description: Coordinate transformation software library (proj-rs @VERSION@)
+Requires:
+Version: @PROJ_VERSION@
+Libs: -L${libdir} -lproj
+Libs.private: @STATICLIBS@
+Requires.private:
+Cflags: -I${includedir}

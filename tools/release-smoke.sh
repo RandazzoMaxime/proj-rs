@@ -106,10 +106,12 @@ case "$(uname -s)" in
   Darwin) real=libproj.25.dylib; link=libproj.dylib ;;
   *) real=libproj.so.25; link=libproj.so ;;
 esac
-for file in README.txt LICENSE NOTICE.md data/COPYING lib/$real lib/libproj.a include/proj.h include/proj_constants.h include/proj_experimental.h include/proj_symbol_rename.h; do
+for file in README.txt LICENSE NOTICE.md data/COPYING lib/$real lib/libproj.a lib/pkgconfig/proj.pc lib/cmake/proj/proj-config.cmake lib/cmake/proj/proj-config-version.cmake include/proj.h include/proj_constants.h include/proj_experimental.h include/proj_symbol_rename.h; do
   require "file $file" test -s "$lib/$file"
 done
 check "README.txt has no placeholder left" "0" "$(grep -c '@[A-Z]*@' "$lib/README.txt")"
+check "proj.pc and the CMake files have no placeholder left" "0" \
+  "$(cat "$lib/lib/pkgconfig/proj.pc" "$lib"/lib/cmake/proj/*.cmake | grep -c '@[A-Z_]*@')"
 check "lib/$link is a link to $real" "$real" "$(readlink "$lib/lib/$link" || echo none)"
 for header in proj.h proj_constants.h proj_experimental.h proj_symbol_rename.h; do
   check "include/$header is the header of the repository" "$(cksum < "$root/capi/include/$header")" "$(cksum < "$lib/include/$header")"
@@ -139,6 +141,44 @@ check "README names the libraries of libproj.a" "ok" "$([ -n "$static_libs" ] &&
 cc -I "$lib/include" "$root/tools/release/smoke.c" "$lib/lib/libproj.a" $static_libs -o "$work/c/smoke-static" 2> "$work/c/static.log" \
   || { cat "$work/c/static.log"; failures=$((failures + 1)); }
 check "C program linked to libproj.a" "$expected_c" "$("$work/c/smoke-static" 2>&1)"
+
+# pkg-config and CMake find the library as they find PROJ 9.9.0, from a copy of the archive moved
+# elsewhere: the files must follow the folder, not the place the archive was packed.
+cp -a "$lib" "$work/moved-lib"
+moved=$work/moved-lib
+if command -v pkg-config > /dev/null; then
+  export PKG_CONFIG_PATH=$moved/lib/pkgconfig
+  check "pkg-config --modversion proj" "9.9.0" "$(pkg-config --modversion proj)"
+  check "pkg-config --atleast-version 9.9 proj" "ok" "$(pkg-config --atleast-version 9.9 proj && echo ok)"
+  # shellcheck disable=SC2046
+  cc "$root/tools/release/smoke.c" $(pkg-config --cflags --libs proj) -Wl,-rpath,"$moved/lib" \
+    -o "$work/c/smoke-pkgconfig" 2> "$work/c/pkgconfig.log" || { cat "$work/c/pkgconfig.log"; failures=$((failures + 1)); }
+  check "C program built with pkg-config" "$expected_c" "$("$work/c/smoke-pkgconfig" 2>&1)"
+  check "pkg-config --static names the libraries of libproj.a" "ok" \
+    "$(pkg-config --static --libs proj | grep -q -- "$(echo "$static_libs" | awk '{print $NF}')" && echo ok)"
+  unset PKG_CONFIG_PATH
+else
+  echo "FAIL pkg-config is not installed: the proj.pc check cannot run"
+  failures=$((failures + 1))
+fi
+if command -v cmake > /dev/null; then
+  cmake -S "$root/tools/release/cmake-smoke" -B "$work/cmake" -DCMAKE_PREFIX_PATH="$moved" \
+    -DCMAKE_BUILD_TYPE=Release > "$work/cmake.log" 2>&1 \
+    && cmake --build "$work/cmake" >> "$work/cmake.log" 2>&1 \
+    || { cat "$work/cmake.log"; failures=$((failures + 1)); }
+  check "find_package(PROJ 9.9 CONFIG) reports the version" "-- PROJ_VERSION=9.9.0" \
+    "$(grep -- '-- PROJ_VERSION=' "$work/cmake.log" | head -1)"
+  check "C program built with CMake, PROJ::proj" "$expected_c" "$("$work/cmake/smoke" 2>&1)"
+  # A request for another major version is refused, as PROJ's package refuses it.
+  mkdir -p "$work/cmake-v8"
+  printf 'cmake_minimum_required(VERSION 3.16)\nproject(v8 C)\nfind_package(PROJ 8 CONFIG QUIET)\nmessage(STATUS "found=${PROJ_FOUND}")\n' \
+    > "$work/cmake-v8/CMakeLists.txt"
+  check "find_package(PROJ 8) is refused" "-- found=0" \
+    "$(cmake -S "$work/cmake-v8" -B "$work/cmake-v8/b" -DCMAKE_PREFIX_PATH="$moved" 2>&1 | grep -- '-- found=' | head -1)"
+else
+  echo "FAIL cmake is not installed: the CMake package check cannot run"
+  failures=$((failures + 1))
+fi
 
 if [ "$failures" -ne 0 ]; then
   echo "$failures check(s) failed" >&2

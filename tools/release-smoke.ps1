@@ -92,7 +92,7 @@ foreach ($tool in $tools) {
 Run-Cases "hard link .exe:" { param($name) @{ Exe = (Join-Path $bin "$name.exe"); Prefix = @() } }
 
 Write-Output "== C library: $(Split-Path $libDir -Leaf)"
-foreach ($file in "README.txt", "LICENSE", "NOTICE.md", "data\COPYING", "bin\proj.dll", "lib\proj.lib", "include\proj.h", "include\proj_constants.h", "include\proj_experimental.h", "include\proj_symbol_rename.h") {
+foreach ($file in "README.txt", "LICENSE", "NOTICE.md", "data\COPYING", "bin\proj.dll", "lib\proj.lib", "lib\pkgconfig\proj.pc", "lib\cmake\proj\proj-config.cmake", "lib\cmake\proj\proj-config-version.cmake", "include\proj.h", "include\proj_constants.h", "include\proj_experimental.h", "include\proj_symbol_rename.h") {
     $path = Join-Path $libDir $file
     Require "file $file" ((Test-Path $path) -and (Get-Item $path).Length -gt 0)
 }
@@ -109,6 +109,21 @@ try {
     $env:PATH = (Join-Path $libDir "bin") + ";" + $env:PATH
     $expectedC = "version 9.9.0`nlambert93 648237.302 6862271.682`ninverse 48.858400 2.294500`nutm31 426857.988 5427937.523"
     Check "C program linked to proj.lib, run with proj.dll" $expectedC (& .\smoke.exe)
+
+    # CMake finds the library as it finds PROJ 9.9.0, from a copy of the archive moved elsewhere.
+    $moved = Join-Path $work "moved-lib"
+    Copy-Item $libDir $moved -Recurse
+    $env:PATH = (Join-Path $moved "bin") + ";" + $env:PATH
+    $cmakeDir = Join-Path $work "cmake"
+    $log = & cmake -S (Join-Path $root "tools\release\cmake-smoke") -B $cmakeDir "-DCMAKE_PREFIX_PATH=$moved" 2>&1
+    Check "cmake configure status" "0" "$LASTEXITCODE"
+    Check "find_package(PROJ 9.9 CONFIG) reports the version" "-- PROJ_VERSION=9.9.0" (($log | Select-String -SimpleMatch "-- PROJ_VERSION=" | Select-Object -First 1).Line)
+    & cmake --build $cmakeDir --config Release | Out-Null
+    Check "cmake build status" "0" "$LASTEXITCODE"
+    Check "C program built with CMake, PROJ::proj" $expectedC (& (Join-Path $cmakeDir "Release\smoke.exe"))
+    $pc = Get-Content -Raw (Join-Path $moved "lib\pkgconfig\proj.pc")
+    Check "proj.pc names version 9.9.0" "True" "$($pc -match '(?m)^Version: 9\.9\.0\s*$')"
+    Check "proj.pc and the CMake files have no placeholder left" "0" "$((Get-Content (Join-Path $moved 'lib\pkgconfig\proj.pc'), (Join-Path $moved 'lib\cmake\proj\*.cmake') | Select-String -Pattern '@[A-Z_]*@').Count)"
 } finally {
     Pop-Location
 }

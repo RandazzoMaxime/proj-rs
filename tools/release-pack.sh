@@ -9,7 +9,8 @@
 # Makes, with <version> read from Cargo.toml:
 #   OUTDIR/proj-rs-<version>-<target>-cli.tar.gz       bin/proj-rs and one link per tool name
 #   OUTDIR/proj-rs-<version>-<target>-libproj.tar.gz   lib/libproj.so.25 (or .25.dylib), libproj.so
-#                                                      (or .dylib), libproj.a, include/*.h
+#                                                      (or .dylib), libproj.a, include/*.h,
+#                                                      lib/pkgconfig/proj.pc, lib/cmake/proj/*.cmake
 # Each holds LICENSE, NOTICE.md (with the licence texts it points to) and a README.txt.
 #
 # Run tools/release-smoke.sh on the archives afterwards.
@@ -19,6 +20,11 @@ target_name=${1:?usage: tools/release-pack.sh <target> [OUTDIR]}
 root=$(cd "$(dirname "$0")/.." && pwd)
 out=${2:-$root/target/release-archives}
 version=$(grep -m1 '^version = ' "$root/Cargo.toml" | cut -d'"' -f2)
+# The PROJ version whose proj.h the library implements: what pkg-config and CMake report.
+proj_part() { sed -n "s/^#define PROJ_VERSION_$1 \([0-9]*\)$/\1/p" "$root/capi/include/proj.h"; }
+proj_major=$(proj_part MAJOR) proj_minor=$(proj_part MINOR) proj_patch=$(proj_part PATCH)
+proj_version=$proj_major.$proj_minor.$proj_patch
+[ -n "$proj_major" ] && [ -n "$proj_minor" ] && [ -n "$proj_patch" ] || { echo "no PROJ_VERSION_* in proj.h" >&2; exit 1; }
 mkdir -p "$out"
 out=$(cd "$out" && pwd)
 work=$(mktemp -d)
@@ -42,12 +48,16 @@ case "$(uname -s)" in
   Darwin)
     lib_files="libproj.25.dylib, libproj.dylib (a link), libproj.a"
     soname=libproj.25.dylib
+    imported_key=IMPORTED_SONAME_RELEASE
+    imported_value=@rpath/libproj.25.dylib
     ldconfig=""
     userdir='~/Library/Application Support/proj'
     ;;
   *)
     lib_files="libproj.so.25, libproj.so (a link), libproj.a"
     soname=libproj.so.25
+    imported_key=IMPORTED_SONAME_RELEASE
+    imported_value=libproj.so.25
     ldconfig=" \\&\\& ldconfig"  # `&` is a match in a sed replacement
     userdir='$XDG_DATA_HOME/proj or ~/.local/share/proj'
     ;;
@@ -64,7 +74,10 @@ fill() { # fill <template> <destination>
   sed -e "s|@VERSION@|$version|g" -e "s|@TARGET@|$target_name|g" \
       -e "s|@LIBFILES@|$lib_files|g" -e "s|@SONAME@|$soname|g" \
       -e "s|@LDCONFIG@|$ldconfig|g" -e "s|@USERDIR@|$userdir|g" \
-      -e "s|@STATICLIBS@|$static_libs|g" "$1" > "$2"
+      -e "s|@STATICLIBS@|$static_libs|g" -e "s|@PROJ_VERSION@|$proj_version|g" \
+      -e "s|@PROJ_VERSION_MAJOR@|$proj_major|g" -e "s|@PROJ_VERSION_MINOR@|$proj_minor|g" \
+      -e "s|@PROJ_VERSION_PATCH@|$proj_patch|g" -e "s|@IMPORTED_LOCATION@|lib/$soname|g" \
+      -e "s|@IMPORTED_KEY@|$imported_key|g" -e "s|@IMPORTED_VALUE@|$imported_value|g" "$1" > "$2"
 }
 
 pack() { # pack <directory name> <archive>
@@ -82,6 +95,11 @@ pack "$cli_dir" "$out/$cli_dir.tar.gz"
 
 mkdir -p "$work/$lib_dir"
 cp -a "$work/lib-prefix/lib" "$work/lib-prefix/include" "$work/$lib_dir/"
+# pkg-config and CMake find the library as they find PROJ: lib/pkgconfig/proj.pc, lib/cmake/proj.
+mkdir -p "$work/$lib_dir/lib/pkgconfig" "$work/$lib_dir/lib/cmake/proj"
+fill "$root/tools/release/proj.pc.in" "$work/$lib_dir/lib/pkgconfig/proj.pc"
+fill "$root/tools/release/cmake/proj-config.cmake.in" "$work/$lib_dir/lib/cmake/proj/proj-config.cmake"
+fill "$root/tools/release/cmake/proj-config-version.cmake.in" "$work/$lib_dir/lib/cmake/proj/proj-config-version.cmake"
 licences "$work/$lib_dir"
 fill "$root/tools/release/README-libproj-unix.txt" "$work/$lib_dir/README.txt"
 pack "$lib_dir" "$out/$lib_dir.tar.gz"
