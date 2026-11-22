@@ -720,10 +720,11 @@ impl Proj {
 
     /// Definition of this object, as libproj reports it.
     ///
-    /// For a PROJ string this is the CRS the string reads as, written back as
-    /// `proj=… key=value …` with the datum's ellipsoid and `towgs84=` or
-    /// `nadgrids=` appended. `+proj=longlat +datum=WGS84 +no_defs` gives
-    /// `proj=longlat datum=WGS84 no_defs ellps=WGS84 towgs84=0,0,0`.
+    /// For a PROJ string this is `pj_get_def`: the parameters the operation read, without
+    /// their `+`, with the datum's ellipsoid and `towgs84=` or `nadgrids=` appended, and
+    /// `ellps=GRS80` when the string names no shape. `+proj=longlat +datum=WGS84 +no_defs` gives
+    /// `proj=longlat datum=WGS84 no_defs ellps=WGS84 towgs84=0,0,0`, `+proj=longlat` gives
+    /// `proj=longlat ellps=GRS80`.
     /// A one-step pipeline is that step. `+proj=cart` stays `cart`. `+init=` is
     /// the expanded operation. A single CRS has no operation definition: PROJ's
     /// `proj_pj_info` leaves it null. A pair is the normalized pipeline when one
@@ -740,7 +741,9 @@ impl Proj {
             return Err(ProjError::Definition);
         }
         match &self.body {
-            Body::Native(_) => crate::proj_info::operation_definition(&self.definition),
+            Body::Native(op) => {
+                crate::proj_info::operation_definition(&self.definition, op.parameters())
+            }
             Body::Single => Err(ProjError::Definition),
             Body::Iso(pipeline) => pipeline.reported_definition(),
         }
