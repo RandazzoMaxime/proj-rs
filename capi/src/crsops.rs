@@ -473,6 +473,7 @@ pub extern "C" fn proj_crs_get_coordoperation(ctx: *mut PJ_CONTEXT, crs: *const 
                 ))
             }
             Crs::DerivedProjected(derived_crs) => Some(derived_crs.deriving_conversion().clone()),
+            Crs::Derived(derived_crs) => Some(derived_crs.deriving_conversion().clone()),
             Crs::Bound(bound) => {
                 return derived(
                     object,
