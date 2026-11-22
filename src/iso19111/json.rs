@@ -1790,6 +1790,9 @@ pub fn proj_based_operation_of_text(
     if !proj_string || text.contains("type=crs") || text.contains("init=") {
         return None;
     }
+    if let Some((_, refusal)) = super::projstring::proj_string_refusal(text) {
+        return Some(Err(FactoryError::Invalid(refusal)));
+    }
     Some(Conversion::create_proj_based(&OpProps::new(), text).map(CoordinateOperation::Conversion))
 }
 
