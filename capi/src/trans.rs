@@ -333,8 +333,8 @@ pub extern "C" fn proj_create_crs_to_crs(
         };
         if source.contains('@') || target.contains('@') {
             // A coordinate epoch: each side is an object of its own, as in PROJ.
-            let from = crate::pj::create(ctx, source, "proj_create_crs_to_crs");
-            let to = crate::pj::create(ctx, target, "proj_create_crs_to_crs");
+            let from = crate::pj::create(ctx, &with_type_crs(source), "proj_create_crs_to_crs");
+            let to = crate::pj::create(ctx, &with_type_crs(target), "proj_create_crs_to_crs");
             let made =
                 proj_create_crs_to_crs_from_pj(ctx, from, to, area_pointer, std::ptr::null());
             crate::pj::proj_destroy(from);
@@ -668,4 +668,17 @@ pub extern "C" fn proj_coord(x: f64, y: f64, z: f64, t: f64) -> PJ_COORD {
 /// The opposite direction of a direction flag, for the round trips of `dist.rs`.
 pub(crate) fn reverse(direction: PJ_DIRECTION) -> PJ_DIRECTION {
     opposite(direction)
+}
+
+/// PROJ's `pj_add_type_crs_if_needed`: a PROJ string given as a CRS gets `+type=crs`, so that
+/// `proj_create` reads a CRS and not a PROJ-based operation.
+fn with_type_crs(text: &str) -> String {
+    let proj_string = ["proj=", "+proj=", "+init=", "+title="]
+        .iter()
+        .any(|prefix| text.starts_with(prefix));
+    if proj_string && !text.contains("type=crs") {
+        format!("{text} +type=crs")
+    } else {
+        text.to_owned()
+    }
 }
