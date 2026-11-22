@@ -1589,6 +1589,26 @@ pub fn area_of_interest_from_name(name: &str) -> Option<ObjectDomain> {
     }
 }
 
+/// How `proj_create_crs_to_crs` chooses among the candidates of the facade: the `ACCURACY` and
+/// `ALLOW_BALLPARK` filters, the `ONLY_BEST` policy and the `AUTHORITY` option.
+#[derive(Clone, Debug)]
+pub(crate) struct FacadeRequest {
+    pub(crate) filter: CandidateFilter,
+    pub(crate) policy: BestPolicy,
+    pub(crate) authority: String,
+}
+
+impl FacadeRequest {
+    /// No option: every candidate, the default warning policy, any authority.
+    pub(crate) fn default_options() -> Self {
+        Self {
+            filter: CandidateFilter::NONE,
+            policy: BestPolicy::Warn,
+            authority: String::new(),
+        }
+    }
+}
+
 /// [`FacadeCandidates`] of `source` to `target`, over the candidates `filter` keeps.
 ///
 /// # Errors
@@ -1599,16 +1619,25 @@ pub fn area_of_interest_from_name(name: &str) -> Option<ObjectDomain> {
 pub(crate) fn facade_candidates(
     source: &str,
     target: &str,
-    filter: CandidateFilter,
+    request: &FacadeRequest,
 ) -> Result<FacadeCandidates, FactoryError> {
+    let FacadeRequest {
+        filter,
+        policy,
+        ref authority,
+    } = *request;
     let db = DatabaseContext::create()?;
     let source_crs = create_from_user_input(source, &db)?;
     let target_crs = create_from_user_input(target, &db)?;
-    let mut context = CoordinateOperationContext::create(&db, "");
+    let mut context = CoordinateOperationContext::create(&db, authority);
     context.set_spatial_criterion(SpatialCriterion::PartialIntersection);
-    // The warning policy of `proj_create_crs_to_crs` asks KNOWN_AVAILABLE (`crs_to_crs.cpp:570`):
-    // an operation whose grid is neither known to `proj.db` nor found is discarded by the query.
-    context.set_grid_availability_use(GridAvailabilityUse::KnownAvailable);
+    // `crs_to_crs.cpp:566-573`: KNOWN_AVAILABLE, unless ONLY_BEST=NO without the network, which
+    // asks DISCARD_OPERATION_IF_MISSING_GRID (as `select_alternatives_for_crs`).
+    let grids = crate::network::active_or_environment();
+    context.set_grid_availability_use(match policy {
+        BestPolicy::Discard if !grids.enabled => GridAvailabilityUse::DiscardIfMissing,
+        _ => GridAvailabilityUse::KnownAvailable,
+    });
     let registered = CoordinateOperationFactory::create().create_operations(
         &source_crs,
         &target_crs,
@@ -1625,15 +1654,23 @@ pub(crate) fn facade_candidates(
         )));
     }
     let extents = sort_extents(&context, &source_crs, &target_crs);
-    // The warning policy asks KNOWN_AVAILABLE: the sort does not look at the disk.
+    // KNOWN_AVAILABLE does not look at the disk; ONLY_BEST=NO sorts on it and drops what misses.
+    let availability = match policy {
+        BestPolicy::Discard => GridAvailabilityUse::UseForSorting,
+        BestPolicy::Warn | BestPolicy::Error => GridAvailabilityUse::KnownAvailable,
+    };
     let ranked = rank(
         operations,
         &db,
         &source_crs,
         &target_crs,
-        GridAvailabilityUse::KnownAvailable,
+        availability,
         &extents,
     );
+    let ranked = match policy {
+        BestPolicy::Discard => discard_missing(ranked),
+        BestPolicy::Warn | BestPolicy::Error => ranked,
+    };
     if ranked.is_empty() {
         return Err(FactoryError::Format(format!(
             "no operation from {source} to {target}"
@@ -1648,7 +1685,10 @@ pub(crate) fn facade_candidates(
         // Instantiable means the grids are on disk, as `proj_coordoperation_is_instantiable`
         // reads them. The KNOWN_AVAILABLE sort does not look, so `grids_available` is no test here.
         let grids = proj_grids(operation, &db).unwrap_or_else(|_| grid_names(operation));
-        if characteristics.exportable && grids.iter().all(|grid| gridpath::available(grid)) {
+        // Only the default policy may rerun the search, so only it needs the grids here.
+        if characteristics.exportable
+            && (policy != BestPolicy::Warn || grids.iter().all(|grid| gridpath::available(grid)))
+        {
             let preparer = Preparer {
                 db: &db,
                 source: &source_crs,
@@ -1713,10 +1753,11 @@ pub(crate) fn facade_candidates(
     // `crs_to_crs.cpp:668-735`: no candidate both instantiable and free of a ballpark step. The
     // search runs again with DISCARD_OPERATION_IF_MISSING_GRID, and the candidates of the first
     // list that are not ballpark steps come first, then the rerun's. A rerun that finds nothing
-    // leaves the first list as it is.
-    if !prepared
-        .iter()
-        .any(|(_, item)| !item.approximate && item.instantiable)
+    // leaves the first list as it is. ONLY_BEST=NO has discarded them already.
+    if policy != BestPolicy::Discard
+        && !prepared
+            .iter()
+            .any(|(_, item)| !item.approximate && item.instantiable)
     {
         let mut discard_context = context.clone();
         discard_context.set_grid_availability_use(GridAvailabilityUse::DiscardIfMissing);

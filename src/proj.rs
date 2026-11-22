@@ -17,6 +17,7 @@ mod convert_iter;
 #[path = "proj_export.rs"]
 mod proj_export;
 mod raw;
+pub use raw::PairError;
 
 use bounds::Dims;
 
@@ -28,6 +29,7 @@ use crate::iso19111::{
     CoordinateOperationFactory, Crs, DatabaseContext, FactoryError, GridAvailabilityUse,
     GridDescription, GridLookup, OpProps, Pipeline, ProjLines, ProjStringLayout, RemoteGrids,
 };
+use crate::iso19111::{BestPolicy, FacadeRequest};
 use crate::proj_iso::{iso_pipeline, iso_pipeline_at, IsoPipeline};
 use crate::{CreateError, Xyzt};
 
@@ -517,20 +519,22 @@ impl Proj {
     /// outside ]-180, 180] in the projections of the pipeline. `FORCE_OVER=NO` and an
     /// empty list change nothing. Read the flag back with [`Self::force_over`].
     /// `ACCURACY=` and `ALLOW_BALLPARK=` filter the candidates, as PROJ's do: a pair with no
-    /// candidate left is an error, where PROJ returns a null transform.
+    /// candidate left is an error, where PROJ returns a null transform. `AUTHORITY=` limits the
+    /// operations to one authority. `ONLY_BEST=YES` fails a point when the best operation cannot
+    /// run (a missing grid), and `ONLY_BEST=NO` drops such operations; without it, the default
+    /// of the context applies (`PROJ_ONLY_BEST_DEFAULT`, `only_best_default` of `proj.ini`).
     ///
     /// # Errors
     ///
     /// [`ProjCreateError`] when either object is already a transform, `options` holds an
-    /// option this port does not build (`AUTHORITY`, `ONLY_BEST`, a misspelt name) or a bad
-    /// value, or the filters keep no candidate.
+    /// unknown option (`Unknown option :...`) or a bad value, or the filters keep no candidate.
     pub fn create_crs_to_crs_from_pj(
         &self,
         target_crs: &Self,
         area: Option<Area>,
         options: Option<Vec<&str>>,
     ) -> Result<Self, ProjCreateError> {
-        let (over, filter) = crs_to_crs_options(options.as_deref())?;
+        let (over, request) = crs_to_crs_options(options.as_deref())?;
         if !self.is_single_crs() {
             return Err(ProjCreateError::ProjError(
                 "source is not a single CRS".to_owned(),
@@ -553,7 +557,7 @@ impl Proj {
             &target_crs.definition,
             epoch,
             over,
-            filter,
+            &request,
         ) {
             let mut transform = built(
                 Body::Iso(Box::new(pipeline)),
@@ -1974,9 +1978,17 @@ fn built(body: Body, definition: String, area: Option<Area>) -> Proj {
 /// `ONLY_BEST` and a misspelt name are refused.
 fn crs_to_crs_options(
     options: Option<&[&str]>,
-) -> Result<(ForceOver, CandidateFilter), ProjCreateError> {
+) -> Result<(ForceOver, FacadeRequest), ProjCreateError> {
     let mut over = ForceOver::No;
     let mut filter = CandidateFilter::NONE;
+    // An unset `ONLY_BEST` takes the default of the context (`PROJ_ONLY_BEST_DEFAULT`, else
+    // `only_best_default` of `proj.ini`), as `proj_create_crs_to_crs` does (`crs_to_crs.cpp`).
+    let mut policy = match crate::network::active_or_environment().only_best_default {
+        None => BestPolicy::Warn,
+        Some(true) => BestPolicy::Error,
+        Some(false) => BestPolicy::Discard,
+    };
+    let mut authority = String::new();
     for item in options
         .unwrap_or_default()
         .iter()
@@ -2001,13 +2013,32 @@ fn crs_to_crs_options(
                     "Invalid value for ALLOW_BALLPARK option.".to_owned(),
                 ));
             };
+        } else if let Some(value) = option_value(item, "ONLY_BEST=") {
+            policy = if value.eq_ignore_ascii_case("yes") {
+                BestPolicy::Error
+            } else if value.eq_ignore_ascii_case("no") {
+                BestPolicy::Discard
+            } else {
+                return Err(ProjCreateError::ProjError(
+                    "Invalid value for ONLY_BEST option.".to_owned(),
+                ));
+            };
+        } else if let Some(value) = option_value(item, "AUTHORITY=") {
+            value.clone_into(&mut authority);
         } else {
-            return Err(ProjCreateError::ProjError(
-                "CRS-to-CRS options are not built".to_owned(),
-            ));
+            return Err(ProjCreateError::ProjError(format!(
+                "Unknown option :{item}"
+            )));
         }
     }
-    Ok((over, filter))
+    Ok((
+        over,
+        FacadeRequest {
+            filter,
+            policy,
+            authority,
+        },
+    ))
 }
 
 /// The value of an option `item` named `name` (with its `=`), matched without case.
