@@ -4,7 +4,8 @@
 # and as `proj-rs <tool>`, compile and run a C program against the library. Windows:
 # tools/release-smoke.ps1.
 #
-# Usage: tools/release-smoke.sh <cli.tar.gz> <libproj.tar.gz>
+# Usage: tools/release-smoke.sh <cli.tar.gz> <libproj.tar.gz | ->
+#   "-" in place of the C library: a platform with the tools only (linux-x86_64-musl).
 #
 # The expected values are the output of PROJ 9.9.0 itself (cs2cs, proj, invproj, cct, geod,
 # invgeod, projinfo built from the tag by tools/build-reference.sh). Exit status: 0 if every
@@ -18,7 +19,7 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 mkdir "$work/cli" "$work/lib" "$work/home"
 tar -xzf "$1" -C "$work/cli" || exit 1
-tar -xzf "$2" -C "$work/lib" || exit 1
+if [ "$2" != - ]; then tar -xzf "$2" -C "$work/lib" || exit 1; fi
 cli=$(echo "$work/cli"/*)
 lib=$(echo "$work/lib"/*)
 
@@ -97,8 +98,23 @@ check "proj-rs links no TLS library" "0" "$(echo "$linked" | grep -ciE 'ssl|cryp
 
 # The oldest glibc the build runs on: ubuntu-22.04 builds, glibc 2.35.
 glibc_max() { objdump -T "$1" | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -V | tail -1; }
-if [ "$(uname -s)" = Linux ]; then
+# A static executable (musl) has no program interpreter and needs no C library at all.
+static=no
+if [ "$(uname -s)" = Linux ] && ! readelf -l "$cli/bin/proj-rs" | grep -q 'INTERP'; then
+  static=yes
+  check "proj-rs is a static executable" "0" "$(readelf -d "$cli/bin/proj-rs" 2>/dev/null | grep -c NEEDED)"
+fi
+if [ "$(uname -s)" = Linux ] && [ "$static" = no ]; then
   check "proj-rs needs glibc <= 2.35" "ok" "$([ "$(printf '%s\n2.35\n' "$(glibc_max "$cli/bin/proj-rs")" | sort -V | tail -1)" = 2.35 ] && echo ok || glibc_max "$cli/bin/proj-rs")"
+fi
+
+if [ "$2" = - ]; then
+  if [ "$failures" -ne 0 ]; then
+    echo "$failures check(s) failed" >&2
+    exit 1
+  fi
+  echo "all checks passed (tools only: no C library for this platform)"
+  exit 0
 fi
 
 echo "== C library: $(basename "$lib")"
