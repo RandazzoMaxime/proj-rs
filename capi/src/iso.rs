@@ -890,7 +890,9 @@ pub(crate) struct OperationInfo {
 pub(crate) fn operation_info(object: &Pj) -> Option<OperationInfo> {
     let operation = object.obj.as_ref().and_then(Obj::operation)?;
     let proj = object.proj.as_ref()?;
-    if object.from_text {
+    // A CRS pair reports the pipeline of its candidate as `pj_get_def` reads it back (default
+    // ellipsoid included), in the authority order until normalized: `proj_pj_info` builds it.
+    if object.from_text || proj.pair_axis_swaps().is_some() {
         return None;
     }
     let database = object.context().database()?;
