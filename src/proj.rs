@@ -1952,6 +1952,13 @@ fn built(body: Body, definition: String, area: Option<Area>) -> Proj {
     }
 }
 
+/// The area of interest of a `PJ_AREA` whose box is set, as `proj_create_crs_to_crs` hands it to
+/// the operation factory (`crs_to_crs.cpp:557-561`). A box the factory cannot hold is no filter.
+fn area_of_interest(area: Option<&Area>) -> Option<crate::iso19111::BoundingBox> {
+    let area = area?;
+    crate::iso19111::BoundingBox::create(area.west, area.south, area.east, area.north).ok()
+}
+
 /// The options of `proj_create_crs_to_crs_from_pj` that this port builds: `FORCE_OVER`, as
 /// `crs_to_crs.cpp:532-534` reads it, and the candidate filters `ACCURACY` and `ALLOW_BALLPARK`
 /// (`crs_to_crs.cpp:509-520`, `:552`).
@@ -1960,13 +1967,6 @@ fn built(body: Body, definition: String, area: Option<Area>) -> Proj {
 /// later item does not clear it. `ACCURACY` is in metres, and a negative value is no filter.
 /// `ALLOW_BALLPARK` takes `yes` or `no`, any case. An empty item is skipped. `AUTHORITY`,
 /// `ONLY_BEST` and a misspelt name are refused.
-/// The area of interest of a `PJ_AREA` whose box is set, as `proj_create_crs_to_crs` hands it to
-/// the operation factory (`crs_to_crs.cpp:557-561`). A box the factory cannot hold is no filter.
-fn area_of_interest(area: Option<&Area>) -> Option<crate::iso19111::BoundingBox> {
-    let area = area?;
-    crate::iso19111::BoundingBox::create(area.west, area.south, area.east, area.north).ok()
-}
-
 fn crs_to_crs_options(
     options: Option<&[&str]>,
 ) -> Result<(ForceOver, CandidateFilter), ProjCreateError> {
