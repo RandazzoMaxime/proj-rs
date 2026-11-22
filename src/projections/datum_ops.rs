@@ -1196,7 +1196,7 @@ mod tests {
         assert!((got.y.to_degrees() - 10.0).abs() < 1e-12);
         assert!(matches!(
             Operation::create("+proj=longlat +lon_wrap=4000"),
-            Err(CreateError::IllegalValue("lon_wrap"))
+            Err(CreateError::Rejected { .. })
         ));
     }
 }

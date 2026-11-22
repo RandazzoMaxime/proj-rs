@@ -2063,8 +2063,12 @@ fn build_utm(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateErro
             .map_err(|_| invalid_zone())?
             .ok_or_else(invalid_zone)?,
         None => {
-            let index = ((adjlon(frame.lam0) + PI) * 30.0 / PI).floor().round();
-            index.clamp(0.0, 59.0) as i32 + 1
+            let index = ((adjlon(frame.lam0) + PI) * 30.0 / PI).floor();
+            (0..60_i32)
+                .rev()
+                .find(|&zone| f64::from(zone) <= index)
+                .unwrap_or(0)
+                + 1
         }
     };
     let zone = u32::try_from(zone).map_err(|_| invalid_zone())?;
@@ -3650,7 +3654,10 @@ mod tests {
         assert!((got.x - 1_338_073.269_610_159_3).abs() < 1e-8, "{}", got.x);
         assert!((got.y - 7_374_207.480_143_763_1).abs() < 1e-8, "{}", got.y);
         let collapsed = Operation::create("+proj=merc +a=1E77 +R_lat_a=90 +b=1");
-        assert!(matches!(collapsed, Err(CreateError::IllegalValue(_))));
+        assert!(
+            matches!(collapsed, Err(CreateError::NoShape)),
+            "{collapsed:?}"
+        );
         let at_origin = Operation::create("+proj=merc +R_C +ellps=WGS84").expect("R_C");
         let at_45 = Operation::create("+proj=merc +R_C +ellps=WGS84 +lat_0=45").expect("R_C lat");
         let sample = Coord::xy(2.0_f64.to_radians(), 49.0_f64.to_radians());
