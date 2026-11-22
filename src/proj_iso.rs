@@ -16,7 +16,8 @@ use std::sync::OnceLock;
 use crate::engine::{Coord, Operation, TransformError};
 use crate::iso19111::{
     facade_candidates, same_datum_noop, AlternativeError, Alternatives, Axis, CoordinateOperation,
-    Crs, FacadeCandidates, FacadeRequest, FactoryError, GeodeticCRS, Item, LogLine, UnitOfMeasure,
+    CoordinateSystem, Crs, FacadeCandidates, FacadeRequest, FactoryError, GeodeticCRS, Item, LogLine,
+    UnitOfMeasure,
 };
 use crate::proj::{Direction, ForceOver, PairError, ProjError};
 
@@ -354,7 +355,9 @@ fn is_horizontal(crs: &Crs) -> bool {
     is_geographic(crs)
         || matches!(
             crs,
-            Crs::Projected(_) | Crs::Geodetic(GeodeticCRS::Geocentric(_))
+            Crs::Projected(_)
+                | Crs::DerivedProjected(_)
+                | Crs::Geodetic(GeodeticCRS::Geocentric(_))
         )
 }
 
@@ -371,6 +374,10 @@ fn must_switch_for_visualization(crs: &Crs) -> bool {
             geographic.coordinate_system().axes()
         }
         Crs::Projected(projected) => projected.coordinate_system().axes(),
+        Crs::DerivedProjected(derived) => match derived.coordinate_system() {
+            CoordinateSystem::Cartesian(cartesian) => cartesian.axes(),
+            _ => return false,
+        },
         _ => return false,
     };
     let [first, second, ..] = axes else {

@@ -1366,15 +1366,23 @@ fn epsg_method_code(operation: &Transformation) -> i32 {
 /// The measure of the parameter with EPSG code `code`, as PROJ's
 /// `parameterValueMeasure(code)`. Absent or not a measure gives `None`.
 fn measure_by_code(operation: &Transformation, code: i32) -> Option<&Measure> {
-    if let Some(measure) = measure_in(operation.parameters(), code) {
+    measure_of_method(operation.method().name(), operation.parameters(), code)
+}
+
+/// [`measure_by_code`] over the parameters of a conversion or a transformation of `method_name`.
+fn measure_of_method<'a>(
+    method_name: &str,
+    parameters: &'a [Parameter],
+    code: i32,
+) -> Option<&'a Measure> {
+    if let Some(measure) = measure_in(parameters, code) {
         return Some(measure);
     }
     // `OperationParameter::getEPSGCode`: a parameter without an EPSG identifier takes the
     // code of its name, within the method the name gives.
-    let method = super::parammap::method_by_name(operation.method().name())?;
+    let method = super::parammap::method_by_name(method_name)?;
     let known = method.params.iter().find(|known| known.epsg_code == code)?;
-    operation
-        .parameters()
+    parameters
         .iter()
         .find(|parameter| {
             parameter.code().is_empty() && names_match(parameter.name(), known.wkt2_name)
@@ -1466,10 +1474,24 @@ fn similarity(
     operation: &Transformation,
     formatter: &mut PipelineFormatter,
 ) -> Result<(), FactoryError> {
-    let xt0 = raw_value(operation, 8621);
-    let yt0 = raw_value(operation, 8622);
-    let scale = raw_value(operation, 1061);
-    let angle = numeric(operation, 8614, 1.0);
+    similarity_steps(operation.method().name(), operation.parameters(), formatter);
+    Ok(())
+}
+
+/// The affine step of the similarity transformation (EPSG:9621), a conversion's or a
+/// transformation's: the offsets in the unit of the grid, which this method takes as it is
+/// (`applySourceCRSModifiers` is false for it, conversion.cpp:3779-3790).
+pub(super) fn similarity_steps(
+    method_name: &str,
+    parameters: &[Parameter],
+    formatter: &mut PipelineFormatter,
+) {
+    let raw = |code| measure_of_method(method_name, parameters, code).map_or(0.0, Measure::value);
+    let si = |code| measure_of_method(method_name, parameters, code).map_or(0.0, Measure::si_value);
+    let xt0 = raw(8621);
+    let yt0 = raw(8622);
+    let scale = raw(1061);
+    let angle = si(8614);
     formatter.add_step("affine");
     formatter.add_number("xoff", xt0);
     formatter.add_number("s11", scale * angle.cos());
@@ -1477,7 +1499,6 @@ fn similarity(
     formatter.add_number("yoff", yt0);
     formatter.add_number("s21", -scale * angle.sin());
     formatter.add_number("s22", scale * angle.cos());
-    Ok(())
 }
 
 /// EPSG guidance note 7-2, section 2.4.3.3. EPSG orders these operations from the map grid
