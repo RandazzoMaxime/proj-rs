@@ -64,9 +64,13 @@ transformation dépendante du temps.
   création, comme pour les autres approchées (`tests/proj_facade.rs`). PROJ rend la
   hauteur inchangée par défaut. Le message est celui de l'ancien chemin
   (`unknown CRS`), trompeur pour un nom connu.
-- **Époque : refus systématique.** PROJ n'applique l'époque que là où la transformation
-  dépend du temps. Ici, toute transformation dont une extrémité porte une époque est
-  refusée à la création, sans chercher si elle dépend du temps. Pas d'époque ignorée.
+- **Époque.** Une seule extrémité datée : l'époque est posée par des étapes `proj=set`,
+  comme PROJ. Deux époques : `createOperations` n'ajoute un changement d'époque que par une
+  opération de mouvement de point du CRS. Sans une telle opération, la pipeline commence par
+  `proj=set v_4=<époque source>` et finit par `proj=set v_4=<époque cible>`, comme l'export de
+  PROJ (ITRF2014 2010 vers ITRF2008 2020). Entre deux CRS géographiques d'un même datum, le
+  décalage nul reste `proj=noop` sans étape `set`, comme PROJ. Avec une opération de
+  mouvement de point, la création reste refusée : ce changement d'époque n'est pas construit.
 - **Objet de métadonnées sans CRS seul.** `coordinate_metadata_create` sur une
   transformation renvoie `MetadataObjectCreation`. Libproj le refuse aussi.
 - **Métadonnées : pas de conversion.** L'objet d'un CRS est un CRS : `convert` et
