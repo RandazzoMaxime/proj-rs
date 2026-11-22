@@ -39,10 +39,12 @@ static void show(PJ_CONTEXT *ctx, const char *source, const char *target) {
         keyword(wkt, "METHOD[\"", wkt_method, sizeof wkt_method);
         keyword(json, "\"type\": \"", json_type, sizeof json_type);
         PJ *step = proj_concatoperation_get_step(ctx, op, 0);
-        printf("  op%d type=%d steps=%d step0=%s params=%d grids=%d\n", i, proj_get_type(op),
+        printf("  op%d type=%d steps=%d step0=%s params=%d grids=%d accuracy=%.17g\n", i,
+               proj_get_type(op),
                proj_concatoperation_get_step_count(ctx, op), step ? "yes" : "null",
                proj_coordoperation_get_param_count(ctx, op),
-               proj_coordoperation_get_grid_used_count(ctx, op));
+               proj_coordoperation_get_grid_used_count(ctx, op),
+               proj_coordoperation_get_accuracy(ctx, op));
         printf("    method=%s\n    wkt=%s method=%s\n    json=%s\n", method ? method : "null",
                wkt_keyword, wkt_method, json_type);
         proj_destroy(step);
@@ -59,6 +61,7 @@ int main(void) {
     proj_log_level(ctx, PJ_LOG_NONE);
     show(ctx, "EPSG:4326+3855", "EPSG:4979");
     show(ctx, "EPSG:4326+5773", "EPSG:4979");
+    show(ctx, "EPSG:4269+5703", "EPSG:4979");
     show(ctx, "EPSG:4326", "EPSG:2154");
     proj_context_destroy(ctx);
     return 0;
