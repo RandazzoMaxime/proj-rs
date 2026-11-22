@@ -1398,21 +1398,14 @@ impl WktParser {
         if (semi_major - EARTH_RADIUS).abs() < BODY_RELATIVE * EARTH_RADIUS {
             return "Earth".to_owned();
         }
-        if let Some(db) = &self.db {
-            if !name.is_empty() {
-                for (body, axis) in db.ellipsoid_bodies_named(name) {
-                    if (semi_major - axis).abs() < BODY_RELATIVE * semi_major.abs().max(1.0) {
-                        return body;
-                    }
+        if let (Some(db), false) = (&self.db, name.is_empty()) {
+            for (body, axis) in db.ellipsoid_bodies_named(name) {
+                if (semi_major - axis).abs() < BODY_RELATIVE * semi_major.abs().max(1.0) {
+                    return body;
                 }
             }
-            if let Ok(body) = AuthorityFactory::create(db, "")
-                .identify_body_from_semi_major_axis(semi_major, BODY_RELATIVE)
-            {
-                return body;
-            }
         }
-        "Non-Earth body".to_owned()
+        super::projstring::guess_body_in(semi_major, self.db.as_ref())
     }
 
     fn build_prime_meridian(
