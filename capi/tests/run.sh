@@ -4,7 +4,7 @@
 # Usage: capi/tests/run.sh [--release] [TEST...]
 #   TEST is one of: symbols abi lists intermediate_crs errno_string angular_io context include_h
 #   fork datadir geodesic proj_string_type projjson_objects horizontal_datum string_lifetime
-#   unnamed_operation embedded_db c_api
+#   unnamed_operation embedded_db pj_info_order c_api
 #   (default: all). PENDING=0 runs the cases of pending.txt too, to see them fail.
 #   GTEST_FILTER=pattern narrows the gtest cases of the C++ tests.
 #
@@ -27,7 +27,7 @@ tests=("$@")
 [ ${#tests[@]} -gt 0 ] || tests=(symbols abi lists intermediate_crs errno_string angular_io
                                   context include_h fork datadir geodesic proj_string_type
                                   projjson_objects horizontal_datum string_lifetime
-                                  unnamed_operation embedded_db c_api)
+                                  unnamed_operation embedded_db pj_info_order c_api)
 
 ref=${PROJ_REFERENCE:-$root/target/proj-reference}
 src=$ref/src
@@ -264,6 +264,18 @@ for test in "${tests[@]}"; do
       expect fail env -u LD_LIBRARY_PATH PROJ_DATA="$empty" "$out/embedded_db_ref"
       rm -rf "$empty"
       echo "built-in proj.db read where libproj finds none (search path, PROJ_DATA)" ;;
+    pj_info_order)
+      # proj_pj_info of a CRS pair: the authority axis order (axisswap steps) until normalized.
+      echo "== pj_info_order"
+      gcc -std=c99 -I"$root/capi/include" "$here/pj_info_order.c" -o "$out/pj_info_order_ours" "${ldflags[@]}"
+      gcc -std=c99 -I"$src/src" "$here/pj_info_order.c" -o "$out/pj_info_order_ref" -L"$ref/build/lib" \
+        -lproj -Wl,-rpath,"$ref/build/lib"
+      pairs=(EPSG:4326 EPSG:32631 EPSG:2154 EPSG:4326 EPSG:4258 EPSG:3035 EPSG:4326 EPSG:4978
+             EPSG:32631 EPSG:32632 EPSG:4326 EPSG:4258 EPSG:3857 EPSG:4326)
+      ours=$("$out/pj_info_order_ours" "${pairs[@]}" 2>/dev/null)
+      theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/pj_info_order_ref" "${pairs[@]}" 2>/dev/null)
+      [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }
+      echo "definitions identical to libproj for $(( ${#pairs[@]} / 2 )) pairs, raw and normalized" ;;
     c_api)
       python3 "$here/filter_tests.py" "$unit/test_c_api.cpp" "$here/excluded.txt" "$out/test_c_api_filtered.cpp"
       g++ "${cxxflags[@]}" -DTIFF_ENABLED -include "$unit/gtest_include.h" "$out/test_c_api_filtered.cpp" "$unit/main.cpp" \

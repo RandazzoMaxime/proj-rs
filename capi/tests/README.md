@@ -31,6 +31,7 @@ difference). `dist.sh` installs the library under the names of libproj: `libproj
 | `fork` | `test_fork.c`: contexts survive a `fork()` |
 | `datadir` | `datadir.c`: `proj_context_get_user_writable_directory` and `proj_info().searchpath` are those of the reference libproj under ten environments (home, `XDG_DATA_HOME`, `PROJ_DATA`, `PROJ_LIB`, skip, `PROJ_USER_WRITABLE_DIRECTORY`, `proj_context_set_search_paths`), and the library installed in `<prefix>/lib` lists `<prefix>/share/proj` |
 | `embedded_db` | `embedded_db.c`: with a search path or `PROJ_DATA` that holds no `proj.db`, `EPSG:32631` is still created from the built-in `proj.db`, where the reference libproj fails. A deliberate deviation, see `docs/PORTING-database-open.md` |
+| `pj_info_order` | `pj_info_order.c`: `proj_pj_info().definition` of `proj_create_crs_to_crs` keeps the `axisswap` steps of a lat-first CRS until `proj_normalize_for_visualization`, as the reference libproj reports it, for 7 pairs |
 | `c_api` | `test_c_api.cpp`: 152 `TEST`, 32 excluded, 120 pass |
 
 ## Excluded: `excluded.txt`
