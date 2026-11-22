@@ -943,7 +943,7 @@ impl WktParser {
         if ci_eq(name, "COORDINATEOPERATION") {
             for keyword in ["SOURCECRS", "TARGETCRS"] {
                 if node.child(&[keyword]).is_none() {
-                    return Err(invalid(format!("missing {keyword}")));
+                    return Err(invalid(format!("missing {keyword} node")));
                 }
             }
             return Ok(WktObject::Transformation(self.build_transformation(node)?));
@@ -1743,7 +1743,7 @@ impl WktParser {
             && !ci_eq(keyword, "BASEGEODCRS")
             && !ci_eq(keyword, "BASEGEOGCRS")
         {
-            return Err(invalid("missing CS"));
+            return Err(invalid("missing CS node"));
         }
         if node.child(&["PRIMEM", "PRIMEMERIDIAN"]).is_none()
             && (ci_eq(keyword, "GEOGCS") || ci_eq(keyword, "GEOCCS"))
@@ -2625,10 +2625,21 @@ impl WktParser {
     }
 
     fn build_projected(&mut self, node: &WktNode) -> Result<WktObject, FactoryError> {
+        // The order of PROJ's checks (io.cpp:4575-4597): the conversion, the base CRS, then the
+        // coordinate system, which PROJCS and BASEPROJCRS may leave out.
+        if node.child(&["CONVERSION", "PROJECTION"]).is_none() {
+            return Err(invalid("missing CONVERSION node"));
+        }
         let base_node = node
             .child(&["BASEGEOGCRS", "BASEGEODCRS", "GEOGCS"])
-            .ok_or_else(|| invalid("missing base geodetic CRS"))?;
+            .ok_or_else(|| invalid("Missing BASEGEODCRS / BASEGEOGCRS / GEOGCS node"))?;
         let mut props = self.build_properties(node)?;
+        if node.child(&["CS"]).is_none()
+            && !ci_eq(&node.value, "PROJCS")
+            && !ci_eq(&node.value, "BASEPROJCRS")
+        {
+            return Err(invalid("missing CS node"));
+        }
         if let Some(crs) = derived_geographic_from_extension(&props.extension_proj4) {
             return Ok(WktObject::Crs(crs));
         }
@@ -2738,7 +2749,7 @@ impl WktParser {
                 reference_surface(base.ellipsoid()),
             )?)
         } else {
-            return Err(invalid("missing CONVERSION"));
+            return Err(invalid("missing CONVERSION node"));
         };
         if node.child(&["CS"]).is_none() && node.children_named("AXIS").is_empty() {
             let unit = coordinate_system
@@ -2888,7 +2899,7 @@ impl WktParser {
         angular: UnitOfMeasure,
     ) -> Result<Conversion, FactoryError> {
         let Some(method_node) = node.child(&["METHOD", "PROJECTION"]) else {
-            return Err(invalid("missing METHOD"));
+            return Err(invalid("missing METHOD node"));
         };
         if method_node.children.is_empty() {
             return Err(invalid("not enough children in METHOD node"));
@@ -3477,7 +3488,7 @@ impl WktParser {
         self.compound_geographic_name = saved_name;
         self.compound_geographic = saved_geographic;
         if components.len() < 2 {
-            return Err(invalid("a compound CRS needs at least two components"));
+            return Err(invalid("compound CRS should have at least 2 components"));
         }
         if ci_eq(&node.value, "COMPD_CS") {
             if let Some(promoted) =
@@ -3555,7 +3566,7 @@ impl WktParser {
     fn wrapped_crs(&mut self, node: &WktNode, keyword: &str) -> Result<Crs, FactoryError> {
         let wrapper = node
             .child(&[keyword])
-            .ok_or_else(|| invalid(format!("missing {keyword}")))?;
+            .ok_or_else(|| invalid(format!("missing {keyword} node")))?;
         let inner = wrapper
             .children
             .iter()
@@ -3585,7 +3596,7 @@ impl WktParser {
         } else {
             let cs_node = node.child(&["CS"]);
             if cs_node.is_none() && !ci_eq(&node.value, "BASEENGCRS") {
-                return Err(invalid("missing CS"));
+                return Err(invalid("missing CS node"));
             }
             self.build_cs(cs_node, node, UnitOfMeasure::degree())?
         };
@@ -3599,7 +3610,7 @@ impl WktParser {
     fn build_transformation(&mut self, node: &WktNode) -> Result<Transformation, FactoryError> {
         let props = self.build_properties(node)?;
         let Some(method) = node.child(&["METHOD"]) else {
-            return Err(invalid("missing METHOD"));
+            return Err(invalid("missing METHOD node"));
         };
         let method_props = self.build_properties(method)?;
         // An abridged transformation states rotations in arc-seconds, as the EPSG methods do.

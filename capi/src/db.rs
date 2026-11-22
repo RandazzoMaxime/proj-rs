@@ -324,11 +324,21 @@ pub extern "C" fn proj_create_from_wkt(
                 }
             }
         }
-        let parsed = parser.create_from_wkt(&text);
+        let parsed = match parser.create_from_wkt(&text) {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                // A WKT that does not parse gives its message as the only grammar error, or as a
+                // log line when the caller asks for none (iso19111/c_api.cpp:761-772).
+                if out_grammar_errors.is_null() {
+                    fail(context, "proj_create_from_wkt", &error.to_string());
+                } else {
+                    util::put(out_grammar_errors, util::string_list(&[error.to_string()]));
+                }
+                return std::ptr::null_mut();
+            }
+        };
         let mut warnings = parser.warnings().to_vec();
-        if let Ok(object) = &parsed {
-            warnings.extend(parameter_warnings(object));
-        }
+        warnings.extend(parameter_warnings(&parsed));
         if !warnings.is_empty() {
             util::put(out_warnings, util::string_list(&warnings));
         }
@@ -338,7 +348,7 @@ pub extern "C" fn proj_create_from_wkt(
                 util::string_list(parser.grammar_errors()),
             );
         }
-        match parsed.ok().and_then(user_object_of) {
+        match user_object_of(parsed) {
             Some(object) => {
                 let obj = Obj::User(object);
                 let proj = obj.engine_proj(context);
