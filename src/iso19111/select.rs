@@ -1627,8 +1627,13 @@ pub(crate) fn facade_candidates(
         ref authority,
     } = *request;
     let db = DatabaseContext::create()?;
-    let source_crs = create_from_user_input(source, &db)?;
-    let target_crs = create_from_user_input(target, &db)?;
+    // The sides are read again under the `init=` rules of the context that made them: under the
+    // PROJ 4 rules (pyproj), `+init=epsg:CODE` is the database CRS, refused by the ISO rules.
+    let rules = crate::network::active_or_environment()
+        .init_rules
+        .unwrap_or_else(crate::context::Context::default_init_rules);
+    let source_crs = create_from_user_input_with_init_rules(source, &db, rules)?;
+    let target_crs = create_from_user_input_with_init_rules(target, &db, rules)?;
     let mut context = CoordinateOperationContext::create(&db, authority);
     context.set_spatial_criterion(SpatialCriterion::PartialIntersection);
     // `crs_to_crs.cpp:566-573`: KNOWN_AVAILABLE, unless ONLY_BEST=NO without the network, which

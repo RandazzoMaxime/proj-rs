@@ -289,6 +289,7 @@ pub extern "C" fn proj_context_use_proj4_init_rules(ctx: *mut PJ_CONTEXT, enable
         let ctx = context(ctx);
         ctx.init_rules = rules;
         ctx.engine.set_init_rules(rules);
+        ctx.builder.set_init_rules(rules);
         if ctx_is_default(ctx) {
             EngineContext::set_default_init_rules(rules);
         }

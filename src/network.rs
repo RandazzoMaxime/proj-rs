@@ -255,6 +255,9 @@ pub(crate) struct GridContext {
     /// `Some(true)` is `ONLY_BEST=YES`, `Some(false)` is `ONLY_BEST=NO`, and `None` is no
     /// setting: `crs_to_crs` then keeps PROJ's warning default.
     pub(crate) only_best_default: Option<bool>,
+    /// The `init=` rules a pair reads its CRS texts with. `None` is the process default
+    /// ([`crate::context::Context::default_init_rules`]).
+    pub(crate) init_rules: Option<crate::iso19111::InitRules>,
     /// The grid chunk database, `proj_grid_cache_set_filename`. `None` is `cache.db` in the
     /// user-writable directory.
     pub(crate) cache_path: Option<PathBuf>,
@@ -454,6 +457,7 @@ impl GridContext {
             endpoint: CDN_ENDPOINT.to_owned(),
             cache_enabled: true,
             only_best_default: None,
+            init_rules: None,
             cache_path: None,
             cache_max_bytes: Some(DEFAULT_CACHE_MAX_BYTES),
             cache_ttl_seconds: DEFAULT_CACHE_TTL_SECONDS,
