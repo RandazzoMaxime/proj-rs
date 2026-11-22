@@ -960,7 +960,9 @@ fn alias_from_name(this_name: &str, other_name: &str, db: &DatabaseContext) -> b
 }
 
 fn has_d_prefix(name: &str) -> bool {
-    name.len() >= 2 && name[..2].eq_ignore_ascii_case("D_")
+    name.as_bytes()
+        .get(..2)
+        .is_some_and(|head| head.eq_ignore_ascii_case(b"D_"))
 }
 
 fn starts_unknown_based(name: &str) -> bool {

@@ -1018,7 +1018,7 @@ impl WktParser {
             if let Some(name) = parent.children.first().map(strip_quotes) {
                 let prefix = "UTM zone ";
                 if name.len() > prefix.len()
-                    && name[..prefix.len()].eq_ignore_ascii_case(prefix)
+                    && name.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes())
                     && name.contains('S')
                 {
                     let digits: String = name[prefix.len()..]
@@ -5167,13 +5167,13 @@ fn las_geoid_name(name: &str, compound_geographic: Option<&str>) -> Option<Strin
         }
     }
     if name.len() >= 5
-        && name[..5].eq_ignore_ascii_case("Geoid")
+        && name.as_bytes()[..5].eq_ignore_ascii_case(b"Geoid")
         && compound_geographic.is_some_and(|geographic| geographic.starts_with("NAD83"))
     {
         let compact: String = name.chars().filter(|ch| *ch != ' ').collect();
         let bytes = compact.as_bytes();
         if compact.len() >= 9
-            && compact[..7].eq_ignore_ascii_case("Geoid20")
+            && bytes[..7].eq_ignore_ascii_case(b"Geoid20")
             && bytes[7].is_ascii_digit()
             && bytes[8].is_ascii_digit()
         {
