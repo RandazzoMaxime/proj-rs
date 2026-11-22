@@ -9,7 +9,7 @@
   <a href="https://github.com/OSGeo/PROJ"><img alt="PROJ 9.9.0" src="https://img.shields.io/badge/PROJ-9.9.0-2b7bb9"></a>
   <a href="https://www.rust-lang.org"><img alt="Rust 1.83+" src="https://img.shields.io/badge/rust-1.83%2B-orange"></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green"></a>
-  <img alt="Version 1.1.0" src="https://img.shields.io/badge/version-1.1.0-green">
+  <img alt="Version 1.2.0" src="https://img.shields.io/badge/version-1.2.0-green">
 </p>
 
 PROJ-RS is a Rust port of [PROJ](https://github.com/OSGeo/PROJ), the
@@ -411,7 +411,7 @@ PROJ-RS is not on crates.io yet ([`docs/PUBLISHING.md`](docs/PUBLISHING.md)). Us
 
 ```toml
 [dependencies]
-proj-rs = { git = "https://github.com/RandazzoMaxime/proj-rs", tag = "v1.1.0" }
+proj-rs = { git = "https://github.com/RandazzoMaxime/proj-rs", tag = "v1.2.0" }
 ```
 
 To use the tools or the C library without Rust, each [release](https://github.com/RandazzoMaxime/proj-rs/releases)
