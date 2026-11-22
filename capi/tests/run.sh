@@ -5,7 +5,8 @@
 #   TEST is one of: symbols abi lists intermediate_crs errno_string angular_io context include_h
 #   fork datadir geodesic proj_string_type projjson_objects horizontal_datum string_lifetime
 #   unnamed_operation embedded_db pj_info_order normalize_operation latin1_input
-#   crs_to_crs_describe create_any_object export_objects derived_temporal c_api
+#   crs_to_crs_describe create_any_object export_objects derived_temporal last_used_operation
+#   c_api
 #   (default: all). PENDING=0 runs the cases of pending.txt too, to see them fail.
 #   GTEST_FILTER=pattern narrows the gtest cases of the C++ tests.
 #
@@ -30,7 +31,7 @@ tests=("$@")
                                   projjson_objects horizontal_datum string_lifetime
                                   unnamed_operation embedded_db pj_info_order normalize_operation
                                   latin1_input crs_to_crs_describe create_any_object
-                                  export_objects derived_temporal c_api)
+                                  export_objects derived_temporal last_used_operation c_api)
 
 ref=${PROJ_REFERENCE:-$root/target/proj-reference}
 src=$ref/src
@@ -304,6 +305,17 @@ for test in "${tests[@]}"; do
       theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/latin1_ref" 2>/dev/null)
       [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }
       echo "Latin-1 WKT read as libproj reads it" ;;
+    last_used_operation)
+      # proj_trans_get_last_used_operation is NULL until the first point, then the operation used.
+      echo "== last_used_operation"
+      gcc -std=c99 -I"$root/capi/include" "$here/last_used_operation.c" -o "$out/last_ours" "${ldflags[@]}"
+      gcc -std=c99 -I"$src/src" "$here/last_used_operation.c" -o "$out/last_ref" -L"$ref/build/lib" \
+        -lproj -Wl,-rpath,"$ref/build/lib"
+      cases=(EPSG:4326 EPSG:3857 EPSG:4326 EPSG:2154 -p "+proj=pipeline +step +proj=axisswap +order=2,1")
+      ours=$("$out/last_ours" "${cases[@]}" 2>/dev/null)
+      theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/last_ref" "${cases[@]}" 2>/dev/null)
+      [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }
+      echo "last used operation identical to libproj for 3 objects, before and after a point" ;;
     crs_to_crs_describe)
       # The object of proj_create_crs_to_crs: the operation itself when one candidate is left.
       echo "== crs_to_crs_describe"
