@@ -406,6 +406,15 @@ pub extern "C" fn proj_create_crs_to_crs(
         {
             Ok(proj) => hand_over(pair_object(context, proj)),
             Err(error) => {
+                // PROJ makes each CRS with `proj_create` first (crs_to_crs.cpp:339-350): a CRS
+                // it cannot make leaves the line and the code of `proj_create`.
+                for side in [source, target] {
+                    let made = crate::pj::create(ctx, &with_type_crs(side), "proj_create");
+                    if made.is_null() {
+                        return std::ptr::null_mut();
+                    }
+                    crate::pj::proj_destroy(made);
+                }
                 creation_failure(context, "proj_create_crs_to_crs", &error);
                 std::ptr::null_mut()
             }
