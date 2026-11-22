@@ -4,7 +4,7 @@
 # Usage: capi/tests/run.sh [--release] [TEST...]
 #   TEST is one of: symbols abi lists intermediate_crs errno_string angular_io context include_h
 #   fork datadir geodesic proj_string_type projjson_objects horizontal_datum string_lifetime
-#   unnamed_operation c_api
+#   unnamed_operation embedded_db c_api
 #   (default: all). PENDING=0 runs the cases of pending.txt too, to see them fail.
 #   GTEST_FILTER=pattern narrows the gtest cases of the C++ tests.
 #
@@ -27,7 +27,7 @@ tests=("$@")
 [ ${#tests[@]} -gt 0 ] || tests=(symbols abi lists intermediate_crs errno_string angular_io
                                   context include_h fork datadir geodesic proj_string_type
                                   projjson_objects horizontal_datum string_lifetime
-                                  unnamed_operation c_api)
+                                  unnamed_operation embedded_db c_api)
 
 ref=${PROJ_REFERENCE:-$root/target/proj-reference}
 src=$ref/src
@@ -245,6 +245,25 @@ for test in "${tests[@]}"; do
         *) echo "share/proj of the library not listed: $listed" >&2; exit 1 ;;
       esac
       rm -rf "$scratch" ;;
+    embedded_db)
+      # Deliberate deviation (docs/PORTING-database-open.md): proj.db is the built-in one, so a
+      # search path or PROJ_DATA without proj.db does not make EPSG codes fail, as in libproj.
+      echo "== embedded_db"
+      gcc -std=c99 -I"$root/capi/include" "$here/embedded_db.c" -o "$out/embedded_db_ours" "${ldflags[@]}"
+      gcc -std=c99 -I"$src/src" "$here/embedded_db.c" -o "$out/embedded_db_ref" -L"$ref/build/lib" -lproj \
+        -Wl,-rpath,"$ref/build/lib"
+      expect() {
+        local want=$1 got; shift
+        got=$("$@" 2>/dev/null) || exit 1
+        [ "$got" = "$want" ] || { echo "embedded_db: $* printed $got, expected $want" >&2; exit 1; }
+      }
+      empty=$(mktemp -d)
+      expect ok "$out/embedded_db_ours" "$empty"
+      expect ok env PROJ_DATA="$empty" "$out/embedded_db_ours"
+      expect fail env -u LD_LIBRARY_PATH "$out/embedded_db_ref" "$empty"
+      expect fail env -u LD_LIBRARY_PATH PROJ_DATA="$empty" "$out/embedded_db_ref"
+      rm -rf "$empty"
+      echo "built-in proj.db read where libproj finds none (search path, PROJ_DATA)" ;;
     c_api)
       python3 "$here/filter_tests.py" "$unit/test_c_api.cpp" "$here/excluded.txt" "$out/test_c_api_filtered.cpp"
       g++ "${cxxflags[@]}" -DTIFF_ENABLED -include "$unit/gtest_include.h" "$out/test_c_api_filtered.cpp" "$unit/main.cpp" \
