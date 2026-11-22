@@ -227,9 +227,12 @@ pub extern "C" fn proj_get_name(obj: *const PJ) -> *const c_char {
         let Some(object) = pj(obj) else {
             return std::ptr::null();
         };
-        match object.obj.as_ref().map(Obj::name) {
-            Some(name) => object.arena.put(&name),
-            None => std::ptr::null(),
+        match object.obj.as_ref() {
+            // Neither is an IdentifiedObject: PROJ gives them no name.
+            Some(Obj::Cs(_) | Obj::User(UserObject::CoordinateMetadata(_))) | None => {
+                std::ptr::null()
+            }
+            Some(obj) => object.arena.put(&obj.name()),
         }
     })
 }
@@ -454,6 +457,16 @@ fn equivalent(
         (Obj::User(UserObject::Operation(a)), Obj::User(UserObject::Operation(b))) => {
             a.is_equivalent_to_with(b, way)
         }
+        (Obj::User(UserObject::Ellipsoid(a)), Obj::User(UserObject::Ellipsoid(b))) => {
+            a.is_equivalent_to_with(b, way)
+        }
+        (Obj::User(UserObject::PrimeMeridian(a)), Obj::User(UserObject::PrimeMeridian(b))) => {
+            a.is_equivalent_to_with(b, way)
+        }
+        (Obj::User(UserObject::Ensemble(a)), Obj::User(UserObject::Ensemble(b))) => {
+            a.is_equivalent_to(b)
+        }
+        (Obj::Cs(a), Obj::Cs(b)) => a.is_equivalent_to(b),
         _ => false,
     }
 }
@@ -640,8 +653,7 @@ pub extern "C" fn proj_as_projjson(
             );
             return std::ptr::null();
         };
-        let (Some(Obj::User(user)), Some(database)) = (object.obj.as_ref(), context.database())
-        else {
+        let (Some(obj), Some(database)) = (object.obj.as_ref(), context.database()) else {
             return std::ptr::null();
         };
         let mut format = JsonFormat::with_lines(JsonLines::Multi);
@@ -663,7 +675,11 @@ pub extern "C" fn proj_as_projjson(
                 _ => {}
             }
         }
-        match user.export_to_json(&database, &format) {
+        let exported = match obj {
+            Obj::User(user) => user.export_to_json(&database, &format),
+            Obj::Cs(system) => system.export_to_json_with(&database, &format),
+        };
+        match exported {
             Ok(text) => object.arena.put(&text),
             Err(error) => {
                 context.fail(

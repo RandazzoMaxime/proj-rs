@@ -78,6 +78,28 @@ pub fn create_object_from_json(text: &str, db: Option<&DatabaseContext>) -> Read
     reader.create(&value)
 }
 
+/// The coordinate system of a PROJJSON `CoordinateSystem` object, as `JSONParser::create` reads
+/// it. [`create_object_from_json`] does not return one: [`JsonObject`] has no such variant.
+///
+/// # Errors
+///
+/// The text is not JSON, its `type` is not `CoordinateSystem`, or a member is missing or wrong.
+pub fn coordinate_system_from_json(text: &str) -> Read<CoordinateSystem> {
+    let value = crs_text::parse_json(text)
+        .map_err(|error| FactoryError::Invalid(format!("PROJJSON: {error}")))?;
+    let Value::Object(object) = &value else {
+        return invalid("JSON object expected");
+    };
+    if get_string(object, "type")? != "CoordinateSystem" {
+        return invalid("PROJJSON object is not a coordinate system");
+    }
+    let reader = Reader {
+        db: None,
+        deformation_model: None,
+    };
+    reader.build_cs(object)
+}
+
 /// The CRS that a PROJJSON member `value` holds, read by the strict reader. `None` when the value
 /// is not a CRS this reader builds, so the caller can try its lenient reader.
 pub(super) fn read_crs_value(value: &Value, db: &DatabaseContext) -> Option<Crs> {
