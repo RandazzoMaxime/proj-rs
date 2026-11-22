@@ -95,3 +95,25 @@ code is compared:
   proj-rs sets the same code without that line;
 - a WKT or a PROJJSON text that does not parse: the line is the message of PROJ's WKT parser or
   of its JSON library, and proj-rs's own parsers word it differently.
+
+## WKT before PROJ strings, and the warnings of `proj_create_from_wkt`
+
+`createFromUserInput` reads a text that opens with a WKT keyword and `[` as WKT before it looks
+for `proj=` or `init=` (`io.cpp:7780-7797`). A WKT whose method is `PROJ-based operation method:
++proj=pipeline ...` contains ` +proj=`, and proj-rs took it for a PROJ string, in `proj_create`
+and in `create_user_object`. Both now ask `iso19111::opens_as_wkt` first (PDAL's
+`CopcWriterTest.srsWkt2`, `docs/CLIENTS-pdal.md`).
+
+`proj_create_from_wkt` adds to the warnings of the parser the `validateParameters` notes of the
+deriving conversion of a derived CRS (a projected CRS included), or of a single operation
+(`iso19111/c_api.cpp:739-758`). GDAL caches a CRS only when this list is empty, so a missing
+`Unknown method ...` changed the way GDAL then exported it. `validate_parameters` now looks a
+method up as `findMapping` does (projection methods by code then by equivalent name, then the
+other methods), compares names with `isEquivalentName`, does not report the missing `Latitude of
+natural origin` of an Equidistant Cylindrical method (`singleoperation.cpp:1880-1887`), and does
+not know the `US .gtx` method, which is not one of PROJ's mappings.
+
+`capi/tests/wkt_warnings.c` compares the warnings for the WKT2:2019 and WKT1 GDAL of every EPSG
+CRS and coordinate operation. The grammar errors are left out: for about 2,350 of these texts
+libproj reports one that proj-rs does not, mostly `unhandled keyword: PROJECTION` for the WKT1 of
+a conversion alone. That gap predates these warnings and is open.

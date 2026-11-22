@@ -1198,7 +1198,7 @@ fn validate_method_parameters(method: &OperationMethod, parameters: &[Parameter]
     };
     let mut messages = Vec::new();
     if mapped.wkt2_name != method.name() {
-        if names_match(mapped.wkt2_name, method.name()) {
+        if super::equiv::equivalent_name_bigger_differences(mapped.wkt2_name, method.name()) {
             messages.push(format!(
                 "Method name {} is equivalent to official {} but not strictly equal",
                 method.name(),
@@ -1227,10 +1227,14 @@ fn validate_method_parameters(method: &OperationMethod, parameters: &[Parameter]
                 || have.name.eq_ignore_ascii_case(param.wkt2_name)
         });
         let Some(index) = found else {
-            messages.push(format!(
-                "Cannot find expected parameter {}",
-                param.wkt2_name
-            ));
+            // An extension of EPSG used by GDAL and PROJ (singleoperation.cpp:1880-1887).
+            let equidistant = matches!(method_code, 1028 | 1029);
+            if !(equidistant && param.epsg_code == 8801) {
+                messages.push(format!(
+                    "Cannot find expected parameter {}",
+                    param.wkt2_name
+                ));
+            }
             continue;
         };
         matched[index] = true;
@@ -3179,18 +3183,32 @@ fn lcc2sp_parallels_swapped(
 }
 
 fn find_for_validate(method: &OperationMethod) -> Option<&'static MethodMap> {
+    // `findMapping` (singleoperation.cpp:1797-1829): the projection methods by code then by
+    // equivalent name, then the other methods the same way. The `US .gtx` entry is not one of
+    // PROJ's mappings, so PROJ reports its method as unknown.
     let code = method.code.parse::<i32>().unwrap_or(0);
-    if code != 0 {
-        if let Some(mapped) = parammap::PROJECTION_METHODS
-            .iter()
-            .chain(parammap::OTHER_METHODS)
-            .find(|mapped| mapped.epsg_code == code)
-        {
-            return Some(mapped);
-        }
-    }
-    parammap::method_by_name(&method.name)
+    let find = |table: &'static [MethodMap]| {
+        let known = || {
+            table
+                .iter()
+                .filter(|mapped| mapped.epsg_code != US_GTX_METHOD)
+        };
+        let by_code = if code != 0 {
+            known().find(|mapped| mapped.epsg_code == code)
+        } else {
+            None
+        };
+        by_code.or_else(|| {
+            known().find(|mapped| {
+                super::equiv::equivalent_name_bigger_differences(mapped.wkt2_name, &method.name)
+            })
+        })
+    };
+    find(parammap::PROJECTION_METHODS).or_else(|| find(parammap::OTHER_METHODS))
 }
+
+/// `Geographic3D to GravityRelatedHeight (US .gtx)`, kept in the maps for the operation factory.
+const US_GTX_METHOD: i32 = 9665;
 
 fn lookup_method(method: &OperationMethod) -> Option<&'static MethodMap> {
     let code = method.code.parse::<i32>().unwrap_or(0);

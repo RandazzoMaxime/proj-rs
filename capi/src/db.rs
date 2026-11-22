@@ -8,7 +8,7 @@ use proj_rs::iso19111::{
     AlternativeGridNames, AuthorityFactory, CoordinateOperation, DeprecatedCodes, NameMatch,
     ObjectType, UserObject, WktDialect, WktObject, WktParser, WktStrictness,
 };
-use proj_rs::unstable::Datum;
+use proj_rs::unstable::{Crs, Datum};
 
 use crate::context::{context, database_source, Ctx};
 use crate::ffi::*;
@@ -265,6 +265,22 @@ fn user_object_of(parsed: WktObject) -> Option<UserObject> {
     })
 }
 
+/// `validateParameters` of the deriving conversion of a derived CRS (a projected CRS included),
+/// or of a single operation, which `proj_create_from_wkt` adds to the warnings of the parser
+/// (iso19111/c_api.cpp:739-758).
+fn parameter_warnings(object: &WktObject) -> Vec<String> {
+    match object {
+        WktObject::Crs(Crs::Projected(crs)) => crs.deriving_conversion().validate_parameters(),
+        WktObject::Crs(Crs::DerivedProjected(crs)) => {
+            crs.deriving_conversion().validate_parameters()
+        }
+        WktObject::Crs(Crs::Derived(crs)) => crs.deriving_conversion().validate_parameters(),
+        WktObject::Conversion(conversion) => conversion.validate_parameters(),
+        WktObject::Transformation(transformation) => transformation.validate_parameters(),
+        _ => Vec::new(),
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn proj_create_from_wkt(
     ctx: *mut PJ_CONTEXT,
@@ -309,8 +325,12 @@ pub extern "C" fn proj_create_from_wkt(
             }
         }
         let parsed = parser.create_from_wkt(&text);
-        if !parser.warnings().is_empty() {
-            util::put(out_warnings, util::string_list(parser.warnings()));
+        let mut warnings = parser.warnings().to_vec();
+        if let Ok(object) = &parsed {
+            warnings.extend(parameter_warnings(object));
+        }
+        if !warnings.is_empty() {
+            util::put(out_warnings, util::string_list(&warnings));
         }
         if !parser.grammar_errors().is_empty() {
             util::put(
