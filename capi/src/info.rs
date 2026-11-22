@@ -115,10 +115,19 @@ pub extern "C" fn proj_pj_info(p: *mut PJ) -> PJ_PROJ_INFO {
             return empty_pj_info();
         };
         let found = proj.proj_info();
+        // A CRS pair transforms in the authority's axis order until it is normalized for
+        // visualization, and `pj_get_def` reports that pipeline, swaps included.
+        let definition = match (proj.pair_axis_swaps(), object.normalized) {
+            (Some(_), false) => proj
+                .definition_in_authority_order()
+                .ok()
+                .or(found.definition.clone()),
+            _ => found.definition.clone(),
+        };
         PJ_PROJ_INFO {
             id: object.arena.put_opt(found.id.as_deref()),
             description: object.arena.put_opt(found.description.as_deref()),
-            definition: object.arena.put_opt(found.definition.as_deref()),
+            definition: object.arena.put_opt(definition.as_deref()),
             has_inverse: c_int::from(found.has_inverse),
             accuracy: found.accuracy,
         }
