@@ -3,7 +3,7 @@
 
 use std::ffi::{c_char, c_int};
 
-use proj_rs::iso19111::{AuthorityFactory, AuthorityObject, CoordinateOperation, UserObject};
+use proj_rs::iso19111::{AuthorityFactory, AuthorityObject, UserObject};
 use proj_rs::unstable::Datum;
 
 use crate::context::{context, Ctx};
@@ -16,11 +16,17 @@ use crate::util::{self, guard};
 #[derive(Debug)]
 pub(crate) struct ObjList {
     pub(crate) objects: Vec<Obj>,
+    /// Shared with the items: in PROJ a string read from an item lives as long as the list.
+    arena: util::Arena,
 }
 
 /// Gives a list of objects to C.
 pub(crate) fn object_list(_context: &mut Ctx, objects: Vec<Obj>) -> *mut PJ_OBJ_LIST {
-    util::leak(ObjList { objects }).cast::<PJ_OBJ_LIST>()
+    util::leak(ObjList {
+        objects,
+        arena: util::Arena::default(),
+    })
+    .cast::<PJ_OBJ_LIST>()
 }
 
 pub(crate) fn list<'a>(pointer: *const PJ_OBJ_LIST) -> Option<&'a ObjList> {
@@ -44,25 +50,23 @@ pub(crate) fn from_authority(object: AuthorityObject) -> Option<Obj> {
 }
 
 /// The `PJ` of an object of a list: an operation is instantiated, as `proj_list_get` does.
-pub(crate) fn object_pj(context: &mut Ctx, object: &Obj) -> *mut PJ {
+pub(crate) fn object_pj(context: &mut Ctx, object: &Obj, arena: &util::Arena) -> *mut PJ {
     let pointer = std::ptr::from_mut(context);
-    if let Obj::User(UserObject::Operation(operation)) = object {
-        return operation_pj(context, operation, object.clone());
-    }
-    let proj = object.engine_proj(context);
-    hand_over(Pj::with_obj(pointer, object.clone(), proj))
-}
-
-fn operation_pj(context: &mut Ctx, operation: &CoordinateOperation, object: Obj) -> *mut PJ {
-    let pointer = std::ptr::from_mut(context);
-    let Some(database) = context.database() else {
-        return std::ptr::null_mut();
+    let proj = match object {
+        Obj::User(UserObject::Operation(operation)) => {
+            let Some(database) = context.database() else {
+                return std::ptr::null_mut();
+            };
+            context
+                .builder()
+                .proj_from_operation(operation, &database)
+                .ok()
+        }
+        _ => object.engine_proj(context),
     };
-    let proj = context
-        .builder()
-        .proj_from_operation(operation, &database)
-        .ok();
-    hand_over(Pj::with_obj(pointer, object, proj))
+    let mut made = Pj::with_obj(pointer, object.clone(), proj);
+    made.arena = arena.clone();
+    hand_over(made)
 }
 
 #[unsafe(no_mangle)]
@@ -89,7 +93,7 @@ pub extern "C" fn proj_list_get(
             .ok()
             .and_then(|at| found.objects.get(at))
         {
-            Some(object) => object_pj(context, object),
+            Some(object) => object_pj(context, object, &found.arena),
             None => std::ptr::null_mut(),
         }
     })

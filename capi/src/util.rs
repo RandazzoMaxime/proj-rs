@@ -101,23 +101,30 @@ pub(crate) fn release<T>(pointer: *mut T) {
     drop(unsafe { Box::from_raw(pointer) });
 }
 
-/// Strings handed to C as `const char *`. A string stays valid until its owner is destroyed.
-#[derive(Debug, Default)]
+/// Strings handed to C as `const char *`. A string stays valid until the last object sharing the
+/// arena is destroyed: an object derived from another shares its parent's, as PROJ keeps a
+/// sub-object's strings alive with its parent (GDAL reads a code after destroying the sub-CRS).
+/// Each distinct string is kept once, so asking again does not grow the arena.
+#[derive(Debug, Default, Clone)]
 pub(crate) struct Arena {
-    strings: Vec<CString>,
+    strings: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, CString>>>,
 }
 
 impl Arena {
     /// Keeps `value` and returns a pointer to its C form.
-    pub(crate) fn put(&mut self, value: &str) -> *const c_char {
-        let owned = c_string(value);
-        let pointer = owned.as_ptr();
-        self.strings.push(owned);
-        pointer
+    pub(crate) fn put(&self, value: &str) -> *const c_char {
+        let mut strings = self
+            .strings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        strings
+            .entry(value.to_owned())
+            .or_insert_with(|| c_string(value))
+            .as_ptr()
     }
 
     /// Like [`Arena::put`], `NULL` for `None`.
-    pub(crate) fn put_opt(&mut self, value: Option<&str>) -> *const c_char {
+    pub(crate) fn put_opt(&self, value: Option<&str>) -> *const c_char {
         value.map_or(std::ptr::null(), |text| self.put(text))
     }
 }
