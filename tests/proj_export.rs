@@ -5,7 +5,10 @@
 //! and `test/unit/test_io.cpp` (`json_import.projected_crs`). A failing test is a gap or a
 //! regression in this crate, never a reason to edit one of these texts.
 
-use proj_rs::iso19111::{create_from_user_input, DatabaseContext, JsonFormat};
+use proj_rs::iso19111::{
+    create_from_user_input, create_from_user_input_with_optional_database, DatabaseContext,
+    InitRules, JsonFormat,
+};
 use proj_rs::wkt::{WktOptions, WktVersion};
 use proj_rs::Proj;
 
@@ -700,14 +703,38 @@ const BOUND_WKT: &str = r#"BOUNDCRS[
         PARAMETERFILE["Latitude and longitude difference file","@foo",
             ID["EPSG",8656]]]]"#;
 
+/// `TEST(json_import, bound_crs)` reads the CRS without a database, so the target keeps the axis
+/// names of the text.
 #[test]
 fn projjson_of_bound_crs_is_proj_unit_test_text() {
+    let db = DatabaseContext::create().expect("proj.db");
+    let crs = create_from_user_input_with_optional_database(BOUND_WKT, None, InitRules::Iso19111)
+        .expect("bound");
+    let json = crs
+        .export_to_json_with(&db, &JsonFormat::default().with_schema("foo"))
+        .expect("projjson");
+    assert_eq!(json, PROJJSON_BOUND_TEST);
+}
+
+/// With a database, `buildGeodeticCRS` takes the coordinate system of EPSG:4326 for the target,
+/// whose axes are equivalent: `projinfo -o PROJJSON` of PROJ 9.9.0 names them "Geodetic latitude"
+/// (Lat) and "Geodetic longitude" (Lon).
+#[test]
+fn projjson_of_bound_crs_read_with_a_database_names_the_authority_axes() {
     let db = DatabaseContext::create().expect("proj.db");
     let crs = create_from_user_input(BOUND_WKT, &db).expect("bound");
     let json = crs
         .export_to_json_with(&db, &JsonFormat::default().with_schema("foo"))
         .expect("projjson");
-    assert_eq!(json, PROJJSON_BOUND_TEST);
+    let target = &json[json.find("\"target_crs\"").expect("target")..];
+    assert!(
+        target.contains("\"name\": \"Geodetic latitude\",\n          \"abbreviation\": \"Lat\""),
+        "{target}"
+    );
+    assert!(
+        target.contains("\"name\": \"Geodetic longitude\",\n          \"abbreviation\": \"Lon\""),
+        "{target}"
+    );
 }
 
 const PROJECTED_WKT: &str = r#"PROJCRS["WGS 84 / UTM zone 31N",

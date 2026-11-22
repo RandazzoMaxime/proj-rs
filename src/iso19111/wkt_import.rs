@@ -1925,6 +1925,16 @@ impl WktParser {
         // a base CRS of a PROJCS is latitude first (`wkt1_projected`).
         if !had_axis && (!had_unit || !units_differ) {
             crs.coordinate_system = db_crs.coordinate_system().clone();
+        } else if had_axis && !incompatible {
+            // Axes equivalent to the authority's: PROJ takes the authority coordinate system, its
+            // axis names included, with the angular unit of the WKT (`alterAngularUnit`).
+            let mut system = db_crs.coordinate_system().clone();
+            if let (true, Some(unit)) = (had_unit, wkt_axes.first().map(|axis| axis.unit.clone())) {
+                for axis in system.axes.iter_mut().take(2) {
+                    axis.unit = unit.clone();
+                }
+            }
+            crs.coordinate_system = system;
         }
     }
 
