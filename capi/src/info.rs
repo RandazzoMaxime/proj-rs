@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use crate::context::context;
 use crate::ffi::*;
 use crate::iso::Obj;
-use crate::pj::pj;
+use crate::pj::{pj, ReadAs};
 use crate::util::{self, guard};
 use proj_rs::iso19111::CoordinateOperation;
 
@@ -113,25 +113,29 @@ pub extern "C" fn proj_pj_info(p: *mut PJ) -> PJ_PROJ_INFO {
                 accuracy: info.accuracy,
             };
         }
+        if let Some(obj) = object
+            .obj
+            .as_ref()
+            .filter(|_| object.read_as == ReadAs::Object)
+        {
+            if obj.operation().is_none() || object.proj.is_none() {
+                // `pj_obj_create` gives a CRS, or an operation `pj_init` refused, a `pj_new`
+                // object: its name, an empty definition (info.cpp:200-241).
+                return PJ_PROJ_INFO {
+                    description: object.arena.put(&obj.name()),
+                    definition: object.arena.put(""),
+                    accuracy: obj.operation().map_or(-1.0, accuracy),
+                    ..empty_pj_info()
+                };
+            }
+        }
         let Some(proj) = object.proj.as_ref() else {
             return empty_pj_info();
         };
         let mut found = proj.proj_info();
         if let Some(operation) = object.obj.as_ref().and_then(Obj::operation) {
-            // `info.cpp:200-231`: the name of the ISO object, and the accuracy of an operation
-            // (0 for a conversion). A PROJ-based operation is not a Conversion in PROJ.
             found.description = Some(operation.name().to_owned());
-            found.accuracy = match operation {
-                CoordinateOperation::Conversion(conversion)
-                    if !conversion
-                        .method()
-                        .name()
-                        .starts_with("PROJ-based operation method") =>
-                {
-                    0.0
-                }
-                other => other.accuracy().unwrap_or(-1.0),
-            };
+            found.accuracy = accuracy(operation);
         }
         // A CRS pair transforms in the authority's axis order until it is normalized for
         // visualization, and `pj_get_def` reports that pipeline, swaps included.
@@ -150,6 +154,22 @@ pub extern "C" fn proj_pj_info(p: *mut PJ) -> PJ_PROJ_INFO {
             accuracy: found.accuracy,
         }
     })
+}
+
+/// `info.cpp:200-231`: the accuracy of an operation, 0 for a conversion. A PROJ-based operation
+/// is not a Conversion in PROJ.
+fn accuracy(operation: &CoordinateOperation) -> f64 {
+    match operation {
+        CoordinateOperation::Conversion(conversion)
+            if !conversion
+                .method()
+                .name()
+                .starts_with("PROJ-based operation method") =>
+        {
+            0.0
+        }
+        other => other.accuracy().unwrap_or(-1.0),
+    }
 }
 
 /// Copies `text` into a fixed C array, cut to fit, always NUL-terminated.

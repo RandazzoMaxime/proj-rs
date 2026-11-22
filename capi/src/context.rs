@@ -122,6 +122,15 @@ impl Ctx {
         self.log(PJ_LOG_ERROR as c_int, message);
     }
 
+    /// `proj_log_error` of `iso19111/c_api.cpp`: logs `message`, and sets `code` only when no
+    /// code is left from deeper down (or from an earlier call).
+    pub(crate) fn fail_unless_set(&mut self, code: c_int, message: &str) {
+        if self.errno == 0 {
+            self.errno = code;
+        }
+        self.log(PJ_LOG_ERROR as c_int, message);
+    }
+
     /// Sends `message` to the logger when `level` is active (`pj_log_active`).
     pub(crate) fn log(&self, level: c_int, message: &str) {
         let mut debug = self.debug_level;

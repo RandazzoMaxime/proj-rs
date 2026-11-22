@@ -7,7 +7,7 @@
 #   unnamed_operation embedded_db pj_info_order normalize_operation latin1_input
 #   crs_to_crs_describe create_any_object export_objects derived_temporal last_used_operation
 #   deriving_conversion single_crs_cs grid_used network_grids crs_to_crs_area step_error_log
-#   proj_based_operation proj_string_refusal invalid_operations c_api
+#   proj_based_operation proj_string_refusal invalid_operations errno_parity crs_proj_strings c_api
 #   (default: all). PENDING=0 runs the cases of pending.txt too, to see them fail.
 #   GTEST_FILTER=pattern narrows the gtest cases of the C++ tests.
 #
@@ -35,7 +35,8 @@ tests=("$@")
                                   export_objects derived_temporal last_used_operation
                                   deriving_conversion single_crs_cs grid_used network_grids
                                   crs_to_crs_area step_error_log proj_based_operation
-                                  proj_string_refusal invalid_operations c_api)
+                                  proj_string_refusal invalid_operations errno_parity
+                                  crs_proj_strings c_api)
 
 ref=${PROJ_REFERENCE:-$root/target/proj-reference}
 src=$ref/src
@@ -474,6 +475,38 @@ for test in "${tests[@]}"; do
       [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }
       echo "proj_create identical to libproj for $(echo "$ours" | wc -l) invalid operations," \
         "$(grep -c . "$here/invalid_operations.deviations") deliberate deviations" ;;
+    errno_parity)
+      # proj_create's errno as PROJ leaves it: the code of a refusal, kept when one is already set
+      # outside a PROJ string, and cleared by an instantiated operation; then proj_trans, proj_pj_info.
+      echo "== errno_parity"
+      gcc -std=c99 -I"$root/capi/include" "$here/errno_parity.c" -o "$out/errno_parity_ours" "${ldflags[@]}"
+      gcc -std=c99 -I"$src/src" "$here/errno_parity.c" -o "$out/errno_parity_ref" -L"$ref/build/lib" \
+        -lproj -Wl,-rpath,"$ref/build/lib"
+      # errno_parity.deviations: operations whose pipeline step PROJ names in its log line
+      # (docs/PORTING-creation-refusal.md); their log line is left out, the rest is compared.
+      unlog() { sed -E "$(sed 's|.*|/\\[&\\]/s/ log=.*//|' "$here/errno_parity.deviations")"; }
+      ours=$(PROJ_DATA="$ref/build/data" "$out/errno_parity_ours" "$here/errno_parity.txt" 2>/dev/null | unlog)
+      theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/errno_parity_ref" \
+        "$here/errno_parity.txt" 2>/dev/null | unlog)
+      [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }
+      echo "errno identical to libproj for $(grep -c '^[^#]' "$here/errno_parity.txt") definitions, fresh and" \
+        "after a refusal, $(grep -c . "$here/errno_parity.deviations") log lines left out" ;;
+    crs_proj_strings)
+      # proj_create of the PROJ strings libproj exports for every EPSG, ESRI and IGNF CRS, with and
+      # without +type=crs, after a refusal: object, type and errno.
+      echo "== crs_proj_strings"
+      gcc -std=c99 -I"$root/capi/include" "$here/crs_proj_strings.c" -o "$out/crs_proj_strings_ours" "${ldflags[@]}"
+      gcc -std=c99 -I"$src/src" "$here/crs_proj_strings.c" -o "$out/crs_proj_strings_ref" -L"$ref/build/lib" \
+        -lproj -Wl,-rpath,"$ref/build/lib"
+      env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/crs_proj_strings_ref" export 2>/dev/null \
+        | sort -u > "$out/crs_proj_strings.crs"
+      { cat "$out/crs_proj_strings.crs"; sed 's/ *+type=crs//' "$out/crs_proj_strings.crs"; } \
+        > "$out/crs_proj_strings.txt"
+      ours=$(PROJ_DATA="$ref/build/data" "$out/crs_proj_strings_ours" < "$out/crs_proj_strings.txt" 2>/dev/null)
+      theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/crs_proj_strings_ref" \
+        < "$out/crs_proj_strings.txt" 2>/dev/null)
+      [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") | head -40 >&2; exit 1; }
+      echo "proj_create identical to libproj for $(wc -l < "$out/crs_proj_strings.txt") CRS PROJ strings" ;;
     c_api)
       python3 "$here/filter_tests.py" "$unit/test_c_api.cpp" "$here/excluded.txt" "$out/test_c_api_filtered.cpp"
       g++ "${cxxflags[@]}" -DTIFF_ENABLED -include "$unit/gtest_include.h" "$out/test_c_api_filtered.cpp" "$unit/main.cpp" \

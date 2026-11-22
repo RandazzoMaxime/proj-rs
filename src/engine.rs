@@ -2155,7 +2155,9 @@ fn build_merc(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateErr
     let mut k0 = frame.k0;
     if let Some(lat_ts) = params.radians("lat_ts")? {
         if lat_ts.abs() >= FRAC_PI_2 {
-            return Err(CreateError::IllegalValue("lat_ts"));
+            return Err(CreateError::illegal(
+                "Invalid value for lat_ts: |lat_ts| should be <= 90°",
+            ));
         }
         k0 = if frame.earth.es() == 0.0 {
             lat_ts.cos()

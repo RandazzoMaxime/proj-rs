@@ -127,7 +127,7 @@ fn open(definition: &str) -> Result<SharedStep, CreateError> {
 }
 
 fn datum_cart(params: &Params, frame: &Frame) -> Result<Option<DatumCart>, CreateError> {
-    let packed = towgs84(params.text("towgs84").unwrap_or(""))?;
+    let packed = super::datum_ops::towgs84_values(params.text("towgs84").unwrap_or(""))?;
     let zero = packed.iter().all(|value| *value == 0.0);
     if zero && wgs84_earth(frame.earth) {
         return Ok(None);
@@ -169,32 +169,6 @@ fn number(value: f64) -> String {
 
 fn wgs84_earth(earth: Ellipsoid) -> bool {
     (earth.a() - 6_378_137.0).abs() < 1e-8 && (earth.es() - 0.006_694_379_990_141_3).abs() < 1e-15
-}
-
-fn towgs84(text: &str) -> Result<[f64; 7], CreateError> {
-    let mut out = [0.0; 7];
-    let mut count = 0usize;
-    if text.is_empty() {
-        return Err(CreateError::IllegalValue("towgs84"));
-    }
-    for piece in text.split(',') {
-        if count == 7 {
-            return Err(CreateError::IllegalValue("towgs84"));
-        }
-        let value = piece
-            .trim()
-            .parse::<f64>()
-            .map_err(|_| CreateError::IllegalValue("towgs84"))?;
-        if !value.is_finite() {
-            return Err(CreateError::IllegalValue("towgs84"));
-        }
-        out[count] = value;
-        count += 1;
-    }
-    if count != 3 && count != 7 {
-        return Err(CreateError::IllegalValue("towgs84"));
-    }
-    Ok(out)
 }
 
 impl Legacy {

@@ -1954,6 +1954,12 @@ pub fn proj_string_refusal(definition: &str) -> Option<(i32, String)> {
         crate::engine::CreateError::Syntax(text) => {
             return Some((crate::errno::PROJ_ERR_INVALID_OP_WRONG_SYNTAX, text.clone()));
         }
+        // `pj_init` logs a missing projection without a step name (init.cpp:537).
+        crate::engine::CreateError::UnknownProj(_) if name != "pipeline" => {
+            let code = crate::errno::PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE;
+            let label = crate::errno::error_string(code).unwrap_or_default();
+            return Some((code, format!("Error {code} ({label}): Unknown projection")));
+        }
         crate::engine::CreateError::NoShape => {
             let code = crate::errno::PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE;
             return Some((code, with_code(code, "pj_init_ctx", &error.to_string())));

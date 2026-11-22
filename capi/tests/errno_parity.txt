@@ -1,0 +1,72 @@
+EPSG:1671
+EPSG:9999999
+EPSG:
+EPSG
+urn:ogc:def:crs:EPSG::1671
+urn:ogc:def:crs:EPSG::9999999
+urn:ogc:def:coordinateOperation:EPSG::9999999
+urn:bad
+foo
+WGS 84
+WGS 84 / UTM zone 31N
+NotACrs / Nope
+GEOGCS[
+GEOGCS["x",DATUM["d",SPHEROID["s",6378137,298]],PRIMEM["G",0],UNIT["degree",0.0174]]
+PROJCRS["x"]
+{"type": "GeographicCRS"}
+{"type": "Nope"}
+{bad json
++init=epsg:4326
++init=epsg:4326 +type=crs
++proj=utm +zone=31 +ellps=WGS84 +type=crs
++proj=longlat +type=crs
++proj=longlat +ellps=WGS84 +type=crs
++proj=utm +zone=99 +ellps=WGS84 +type=crs
++proj=hgridshift +grids=nonexistent.gsb +type=crs
+urn:ogc:def:coordinateOperation:EPSG::1312
+urn:ogc:def:coordinateOperation:EPSG::15958
+EPSG:4326+5773
+EPSG:4326+9999999
+IAU_2015:30100
+ESRI:102100
+IGNF:LAMB93
+OGC:CRS84
+EPSG:2154@2020
++proj=longlat +ellps=WGS84 +type=crs +towgs84=1,2
++proj=longlat +ellps=WGS84 +nadgrids=missing.gsb +type=crs
++proj=utm +zone=31 +ellps=GRS80 +nadgrids=missing.gsb +type=crs
++proj=longlat +ellps=WGS84 +geoidgrids=missing.gtx +type=crs
++proj=longlat +ellps=WGS84 +nadgrids=@null +type=crs
++proj=vgridshift +grids=missing.gtx +type=crs
++proj=longlat +ellps=WGS84 +towgs84=1,2
++proj=longlat +ellps=WGS84 +towgs84=1,2 +type=crs
++proj=utm +zone=31 +ellps=WGS84 +foo=bar +type=crs
++proj=merc +lat_ts=95 +type=crs
++proj=tmerc +k=-1 +type=crs
++proj=cart +type=crs
++proj=longlat +a=-1 +type=crs
++proj=geocent +ellps=WGS84 +type=crs
++proj=lcc +lat_1=10 +lat_2=-10 +type=crs
++proj=etmerc +lat_0=95 +type=crs
++proj=sterea +lat_0=90 +type=crs
++proj=omerc +lat_0=45 +alpha=0 +type=crs
++proj=geos +h=0 +type=crs
++proj=ortho +ellps=WGS84 +type=crs
++proj=longlat +pm=bogus +type=crs
++proj=longlat +units=furlong +type=crs
++proj=utm +zone=31 +units=bogus +type=crs
++proj=longlat +ellps=bogus +type=crs
++proj=longlat +type=crs +axis=neu
++proj=longlat +type=crs +axis=zzz
++proj=bogus +type=crs
++proj=utm +zone=31 +ellps=WGS84
++proj=longlat +ellps=WGS84
++proj=merc +lat_ts=95
++proj=bogus
++proj=pipeline +step +proj=axisswap +order=2,1
++proj=hgridshift +grids=nonexistent.gsb
+urn:ogc:def:coordinateOperation:EPSG::1671
+urn:ogc:def:coordinateOperation:EPSG::16031
+urn:ogc:def:conversion:EPSG::16031
+EPSG:2154
+EPSG:32631
