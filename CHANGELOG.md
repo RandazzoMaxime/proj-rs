@@ -9,6 +9,8 @@ rest is outside semver.
 - The C library archives carry `lib/pkgconfig/proj.pc` and `lib/cmake/proj/proj-config.cmake`,
   as PROJ installs them: `pkg-config proj` and CMake's `find_package(PROJ 9 CONFIG)` (target
   `PROJ::proj`) find the library and report version 9.9.0. Both are relocatable.
+- Two more release platforms: `linux-aarch64` (the tools and the C library, glibc 2.35) and
+  `linux-x86_64-musl` (the tools only, one static executable for any Linux).
 - `Transformer` builds its candidates at their first use. A pair with several candidates on grids
   no longer reads every grid at `build()`: `EPSG:6364` to `EPSG:8801` with the parity grids builds
   in 0.55 s instead of 11.8 s in a dev build (the first transform then reads the grids it uses,

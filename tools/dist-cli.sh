@@ -8,6 +8,8 @@
 # LTO and stripped symbols. The C library (capi/tests/dist.sh) keeps the `release` profile.
 #
 # PROJ_RS_CLI_FEATURES="network" adds `projsync` and the HTTPS grid download (off by default).
+# PROJ_RS_TARGET=<rust target> builds for that target (x86_64-unknown-linux-musl: one static
+# executable that runs on any Linux); the executable must still run on the build machine.
 #
 # Each tool is an 18 MB program with proj.db inside (10.5 MB of it); the eight of them cost 144 MB.
 # The one executable costs 18 MB and runs the tool whose name it is started under. The links are
@@ -25,8 +27,9 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 prefix=${1:-$root/target/cli-dist}
 
 cd "$root"
-cargo build --bin proj-rs ${PROJ_RS_CLI_FEATURES:+--features "$PROJ_RS_CLI_FEATURES"} ${cargo_args[@]+"${cargo_args[@]}"}
-target=${CARGO_TARGET_DIR:-$root/target}/$profile
+cargo build --bin proj-rs ${PROJ_RS_CLI_FEATURES:+--features "$PROJ_RS_CLI_FEATURES"} \
+  ${PROJ_RS_TARGET:+--target "$PROJ_RS_TARGET"} ${cargo_args[@]+"${cargo_args[@]}"}
+target=${CARGO_TARGET_DIR:-$root/target}/${PROJ_RS_TARGET:+$PROJ_RS_TARGET/}$profile
 
 mkdir -p "$prefix/bin"
 cp "$target/proj-rs" "$prefix/bin/proj-rs"
