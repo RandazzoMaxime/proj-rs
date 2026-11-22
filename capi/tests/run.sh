@@ -448,7 +448,7 @@ for test in "${tests[@]}"; do
       ours=$(PROJ_DATA="$ref/build/data" "$out/proj_based_ours" 2>/dev/null)
       theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/proj_based_ref" 2>/dev/null)
       [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }
-      echo "PROJ-based operations identical to libproj for 3 pairs" ;;
+      echo "PROJ-based operations identical to libproj for 4 pairs" ;;
     proj_string_refusal)
       # proj_create refuses the common parameters pj_init rejects, with its error code and line.
       echo "== proj_string_refusal"
