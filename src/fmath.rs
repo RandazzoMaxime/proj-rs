@@ -128,7 +128,7 @@ pub(crate) fn atanh_libm(x: f64) -> f64 {
         // Le NaN de glibc, calculé comme elle : son bit de signe est celui du processeur.
         #[expect(
             clippy::eq_op,
-            reason = "`(x - x) / (x - x)` de glibc : un NaN calculé"
+            reason = "`(x - x) / (x - x)` as in glibc: a computed NaN"
         )]
         {
             let zero = x - x;
