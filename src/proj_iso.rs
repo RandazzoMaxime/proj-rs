@@ -93,8 +93,9 @@ pub(crate) struct IsoPipeline {
     /// The name of the candidate `reported` comes from: the description `proj_pj_info` gives
     /// before a point (`info.cpp:168-196`). `None` for a single operation, which has its own.
     reported_name: Option<String>,
-    /// Coordinate epoch inserted as `proj=set` steps, when one side of the pair carries one.
-    epoch: Option<f64>,
+    /// Coordinate epochs inserted as `proj=set` steps: the first and the last, the same year when
+    /// one side of the pair carries one, the source's and the target's when both do.
+    epoch: Option<(f64, f64)>,
 }
 
 /// The ISO pipeline from `from` to `to`, or `None` when the selection fails.
@@ -124,7 +125,7 @@ pub(crate) fn iso_pipeline(from: &str, to: &str) -> Option<IsoPipeline> {
 pub(crate) fn iso_pipeline_at(
     from: &str,
     to: &str,
-    epoch: Option<f64>,
+    epoch: Option<(f64, f64)>,
     over: ForceOver,
     request: &FacadeRequest,
 ) -> Option<IsoPipeline> {
@@ -163,10 +164,10 @@ pub(crate) fn iso_pipeline_at(
         let _ = item.pipeline(None);
     }
     let (reported, reported_name) = reported_candidate(&items).unzip();
-    if let Some(year) = epoch {
+    if let Some(years) = epoch {
         for item in &mut items {
             if let Some(definition) = &item.definition {
-                let text = with_epoch_steps(definition, year);
+                let text = with_epoch_steps(definition, years);
                 item.operation = OnceLock::from(Operation::create_over(&text, over).ok());
                 item.definition = Some(text);
             }
@@ -237,13 +238,21 @@ fn reported_candidate(items: &[Item]) -> Option<(String, String)> {
 }
 
 /// The pipeline of a same-datum pair: PROJ's null geographic offset.
-fn null_offset_pipeline(from: &str, to: &str, epoch: Option<f64>) -> Option<IsoPipeline> {
+fn null_offset_pipeline(from: &str, to: &str, epoch: Option<(f64, f64)>) -> Option<IsoPipeline> {
     let choice = same_datum_noop(from, to).ok()?;
     let (source, target) = (choice.source, choice.target);
     let source_horizontal = horizontal_part(&source).filter(|crs| is_horizontal(crs))?;
     let target_horizontal = horizontal_part(&target).filter(|crs| is_horizontal(crs))?;
+    // The null geographic offset of two geographic CRS is a conversion: its PROJ string carries
+    // no epoch, and PROJ reports `proj=noop` whatever the epochs (measured on C PROJ 9.9.0).
+    let epoch = epoch.filter(|_| {
+        !matches!(
+            source_horizontal,
+            Crs::Geographic(_) | Crs::Geodetic(GeodeticCRS::Geographic(_))
+        )
+    });
     let definition = match epoch {
-        Some(year) => with_epoch_steps(&choice.definition, year),
+        Some(years) => with_epoch_steps(&choice.definition, years),
         None => choice.definition.clone(),
     };
     let operation = Operation::create(&definition).ok()?;
@@ -258,9 +267,10 @@ fn null_offset_pipeline(from: &str, to: &str, epoch: Option<f64>) -> Option<IsoP
     })
 }
 
-/// `proj=set v_4=<year>` as the first and last step. A bare operation is wrapped in a pipeline.
-fn with_epoch_steps(definition: &str, year: f64) -> String {
-    let year = format_year(year);
+/// `proj=set v_4=<first>` as the first step and `proj=set v_4=<last>` as the last one. A bare
+/// operation is wrapped in a pipeline.
+fn with_epoch_steps(definition: &str, (first, last): (f64, f64)) -> String {
+    let (year, last) = (format_year(first), format_year(last));
     let plus = definition
         .split_whitespace()
         .any(|token| token.starts_with('+'));
@@ -281,7 +291,13 @@ fn with_epoch_steps(definition: &str, year: f64) -> String {
         format!("v_4={year}"),
     ];
     let mut out = Vec::new();
-    if tokens.first().map(String::as_str) == Some("proj=pipeline") {
+    if tokens.first().map(String::as_str) == Some("proj=noop") {
+        // PROJ's formatter drops a `noop` step between other steps.
+        out.push(mark("proj=pipeline"));
+        for token in &set {
+            out.push(mark(token));
+        }
+    } else if tokens.first().map(String::as_str) == Some("proj=pipeline") {
         out.push(mark("proj=pipeline"));
         for token in &set {
             out.push(mark(token));
@@ -299,7 +315,12 @@ fn with_epoch_steps(definition: &str, year: f64) -> String {
             out.push(mark(token));
         }
     }
-    for token in &set {
+    let closing = [
+        "step".to_owned(),
+        "proj=set".to_owned(),
+        format!("v_4={last}"),
+    ];
+    for token in &closing {
         out.push(mark(token));
     }
     out.join(" ")
@@ -494,7 +515,7 @@ impl IsoPipeline {
         let finished = crate::proj_info::parameters_of_operation(&ordered)
             .map_err(|_| ProjError::Definition)?;
         Ok(match self.epoch {
-            Some(year) => with_epoch_steps(&finished, year),
+            Some(years) => with_epoch_steps(&finished, years),
             None => finished,
         })
     }

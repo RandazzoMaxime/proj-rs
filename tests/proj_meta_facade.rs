@@ -110,7 +110,9 @@ fn an_epoch_moves_itrf2014_to_itrf2008() {
 }
 
 #[test]
-fn two_epochs_are_refused() {
+fn two_epochs_run_at_the_source_epoch() {
+    // C PROJ 9.9.0 `proj_create_crs_to_crs_from_pj` of two coordinate metadata objects:
+    // `proj=set v_4=2010` first, `proj=set v_4=2020` last, so the helmert runs at 2010.
     let source = Proj::new("EPSG:7789")
         .expect("source")
         .coordinate_metadata_create(2010.0)
@@ -119,11 +121,29 @@ fn two_epochs_are_refused() {
         .expect("target")
         .coordinate_metadata_create(2020.0)
         .expect("target epoch");
-    assert!(source
+    let facade = source
         .create_crs_to_crs_from_pj(&target, None, None)
-        .is_err());
-    let builder = ProjBuilder::new().proj_create_crs_to_crs_from_pj(&source, &target, None, None);
-    assert!(builder.is_err());
+        .expect("two epochs");
+    let builder = ProjBuilder::new()
+        .proj_create_crs_to_crs_from_pj(&source, &target, None, None)
+        .expect("two epochs through the builder");
+    for transform in [facade, builder] {
+        let (x, y, z) = transform
+            .convert_xyz(4_027_893.0, 307_045.0, 4_919_474.0)
+            .expect("2010 to 2020");
+        near(x, 4_027_893.001_519_442);
+        near(y, 307_045.001_893_859_1);
+        near(z, 4_919_474.002_301_61);
+        let definition = transform.def().expect("definition");
+        assert!(
+            definition.starts_with("proj=pipeline step proj=set v_4=2010"),
+            "{definition}"
+        );
+        assert!(
+            definition.ends_with("step proj=set v_4=2020"),
+            "{definition}"
+        );
+    }
 }
 
 #[test]
