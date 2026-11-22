@@ -34,6 +34,7 @@ difference). `dist.sh` installs the library under the names of libproj: `libproj
 | `pj_info_order` | `pj_info_order.c`: `proj_pj_info().definition` of `proj_create_crs_to_crs` keeps the `axisswap` steps of a lat-first CRS until `proj_normalize_for_visualization`, as the reference libproj reports it, for 7 pairs |
 | `normalize_operation` | `normalize_operation.c`: `proj_normalize_for_visualization` of the operations `proj_create_operations` lists (the path QGIS takes for every transform), of CRS (one written as a PROJ string), and of PROJ strings without `+type=crs` (operations), which give NULL without `proj_errno`: identical to the reference libproj for 6 pairs and 5 objects |
 | `latin1_input` | `latin1_input.c`: a WKT handed over in Latin-1, as QGIS does (`QString::toLatin1`), with a degree sign that is not UTF-8: `proj_create_from_wkt`, `proj_create` and `proj_context_guess_wkt_dialect` give what the reference libproj gives for 2 WKT |
+| `crs_to_crs_describe` | `crs_to_crs_describe.c`: the object of `proj_create_crs_to_crs` is the operation itself when one candidate is left, as in PROJ: type, name, accuracy, WKT, PROJJSON and `proj_pj_info`, raw and normalized, identical to the reference libproj for 7 pairs (6 single operations, 1 set of candidates) |
 | `c_api` | `test_c_api.cpp`: 152 `TEST`, 32 excluded, 120 pass |
 
 ## Excluded: `excluded.txt`
