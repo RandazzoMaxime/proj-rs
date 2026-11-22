@@ -2155,7 +2155,7 @@ fn extension_tokens(
 
 /// `CRS::setProperties` for a single-step string whose CRS does not read every key.
 fn attach_proj_extension(crs: &mut Crs, proj: &str, tokens: &[(String, String)]) {
-    let kept = extension_tokens(ProjKind::of(crs, proj), proj, tokens);
+    let kept = proj_first(extension_tokens(ProjKind::of(crs, proj), proj, tokens));
     let identified = match crs {
         Crs::Projected(projected) => &mut projected.identified,
         Crs::Geographic(geographic) => &mut geographic.identified,
@@ -3504,11 +3504,22 @@ fn cleaned_proj_string(tokens: &[(String, String)]) -> String {
     parts.join(" ")
 }
 
+/// `PROJStringSyntaxParser` takes `proj=` out as the step name, so the string it writes back starts
+/// with it, the other parameters following in their order: `+lon_0=10 +proj=longlat` is
+/// `+proj=longlat +lon_0=10`.
+fn proj_first(mut tokens: Vec<(String, String)>) -> Vec<(String, String)> {
+    if let Some(position) = tokens.iter().position(|(key, _)| key == "proj") {
+        let proj = tokens.remove(position);
+        tokens.insert(0, proj);
+    }
+    tokens
+}
+
 /// The `ob_tran` step without the datum clause. `projection_steps` appends `+ellps`.
 /// `proj` stays: the step is `+proj=ob_tran`, not a bare parameter list.
 fn operation_body(tokens: &[(String, String)]) -> String {
     let mut parts = Vec::new();
-    for (key, value) in tokens {
+    for (key, value) in &proj_first(tokens.to_vec()) {
         if key != "proj" && (PROJ_BASED_SKIP.contains(&key.as_str()) || key == "pm") {
             continue;
         }
