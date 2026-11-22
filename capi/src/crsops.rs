@@ -464,15 +464,23 @@ pub extern "C" fn proj_crs_get_coordoperation(ctx: *mut PJ_CONTEXT, crs: *const 
             return std::ptr::null_mut();
         };
         let conversion = match found {
-            Crs::Projected(projected) => {
-                Some(projected.deriving_conversion().clone().with_source_crs(
-                    match projected.base_crs() {
+            Crs::Projected(projected) => Some(
+                projected
+                    .deriving_conversion()
+                    .clone()
+                    .with_source_crs(match projected.base_crs() {
                         GeodeticCRS::Geographic(geographic) => Crs::Geographic(geographic.clone()),
                         other => Crs::Geodetic(other.clone()),
-                    },
-                ))
-            }
-            Crs::DerivedProjected(derived_crs) => Some(derived_crs.deriving_conversion().clone()),
+                    })
+                    .with_target_crs(found.clone()),
+            ),
+            Crs::DerivedProjected(derived_crs) => Some(
+                derived_crs
+                    .deriving_conversion()
+                    .clone()
+                    .with_source_crs(Crs::Projected(derived_crs.base_crs().clone()))
+                    .with_target_crs(found.clone()),
+            ),
             Crs::Derived(derived_crs) => Some(derived_crs.deriving_conversion().clone()),
             Crs::Bound(bound) => {
                 return derived(
@@ -492,7 +500,7 @@ pub extern "C" fn proj_crs_get_coordoperation(ctx: *mut PJ_CONTEXT, crs: *const 
             None => {
                 context.fail(
                     PROJ_ERR_OTHER_API_MISUSE as c_int,
-                    "proj_crs_get_coordoperation: Object is not a DerivedCRS or BoundCRSs",
+                    "proj_crs_get_coordoperation: Object is not a DerivedCRS or BoundCRS",
                 );
                 std::ptr::null_mut()
             }

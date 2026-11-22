@@ -40,6 +40,7 @@ difference). `dist.sh` installs the library under the names of libproj: `libproj
 | `derived_temporal` | `derived_temporal.c` with `data/`: a derived geographic CRS (rotated pole, PROJJSON and WKT) and a temporal CRS (PROJJSON): `proj_get_type`, the coordinate system and its axes, the ellipsoid, the datum, the geodetic CRS, the base and the deriving conversion, identical to the reference libproj for 3 definitions |
 | `last_used_operation` | `last_used_operation.c`: `proj_trans_get_last_used_operation` is NULL before the first point and gives the operation used after it, for 2 single-operation pairs and a PROJ string pipeline, as the reference libproj |
 | `crs_to_crs_describe` | `crs_to_crs_describe.c`: the object of `proj_create_crs_to_crs` is the operation itself when one candidate is left, as in PROJ: type, name, accuracy, WKT, PROJJSON and `proj_pj_info`, raw and normalized, identical to the reference libproj for 7 pairs (6 single operations, 1 set of candidates) |
+| `deriving_conversion` | `deriving_conversion.c`: the conversion `proj_crs_get_coordoperation` returns for 3 projected CRS, a geographic CRS and a derived projected CRS (`data/derived_projected.wkt`): its source, its target, whether it is instantiable and its PROJ string, identical to the reference libproj |
 | `c_api` | `test_c_api.cpp`: 152 `TEST`, 32 excluded, 120 pass |
 
 ## Excluded: `excluded.txt`
