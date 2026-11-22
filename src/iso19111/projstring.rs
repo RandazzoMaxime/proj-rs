@@ -1890,6 +1890,9 @@ fn crs_from_proj_string(
     db: Option<&DatabaseContext>,
 ) -> Result<Crs, FactoryError> {
     let tokens = proj_tokens(definition);
+    if let Some(refusal) = frame_refusal(definition, &tokens) {
+        return Err(FactoryError::Invalid(refusal));
+    }
     let tokens = keys_read_by_proj(definition, tokens);
     // A Krovak pipeline is a projected CRS (`+axis=swu`), not the generic pipeline CRS.
     if definition.split_whitespace().any(|word| {
@@ -1921,6 +1924,46 @@ fn crs_from_proj_string(
         attach_proj_extension(&mut crs, proj, &tokens);
     }
     bound_import::bind_if_needed(&tokens, crs, db)
+}
+
+/// The refusal of `createFromPROJString` (io.cpp:12799-12895) when `pj_init` rejects the common
+/// parameters of a one-step string: `|lat_0|` beyond 90° or a scale factor not above 0
+/// (init.cpp:653-678), in PROJ's words.
+/// The refusal of a PROJ string by `createFromUserInput`, CRS or operation, as PROJ reports it:
+/// the error code `pj_init` leaves on the context and the text `proj_create` logs after its
+/// name. `None` when the common parameters are accepted.
+#[must_use]
+pub fn proj_string_refusal(definition: &str) -> Option<(i32, String)> {
+    let tokens = proj_tokens(definition);
+    frame_refusal(definition, &tokens)
+        .map(|text| (crate::errno::PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE, text))
+}
+
+fn frame_refusal(definition: &str, tokens: &[(String, String)]) -> Option<String> {
+    if tokens.iter().any(|(key, _)| key == "step") {
+        return None;
+    }
+    // A projection has its own `lat_0` and `k_0` checks (omerc, krovak, labrd): the common text
+    // is PROJ's only when the value itself is what `pj_init` refuses.
+    let lat_0 = param_token(tokens, "lat_0").map(|text| crate::dms::dmstor(text.as_bytes()));
+    let k_0 = param_token(tokens, "k_0")
+        .or_else(|| param_token(tokens, "k"))
+        .map(|text| text.trim().parse::<f64>().unwrap_or(0.0));
+    let reason = match crate::engine::Operation::create_keeping_unknown(definition) {
+        Err(crate::engine::CreateError::IllegalValue("lat_0"))
+            if lat_0.is_some_and(|phi| !(phi.abs() <= std::f64::consts::FRAC_PI_2)) =>
+        {
+            "Invalid value for lat_0: |lat_0| should be <= 90°"
+        }
+        Err(crate::engine::CreateError::IllegalValue("k_0")) if k_0.is_some_and(|k| !(k > 0.0)) => {
+            "Invalid value for k/k_0: it should be > 0"
+        }
+        _ => return None,
+    };
+    Some(format!(
+        "Error 1027 (Invalid value for an argument): {}: {reason}",
+        token(tokens, "proj")
+    ))
 }
 
 /// `createFromPROJString` (io.cpp:12811-12852): once the PROJ operation of a one-step string is

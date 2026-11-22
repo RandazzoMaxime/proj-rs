@@ -9,7 +9,7 @@ use std::ffi::{c_char, c_int};
 
 use proj_rs::iso19111::{
     coordinate_system_from_json, create_user_object, proj_based_operation_of_text,
-    CoordinateMetadata, UserObject,
+    proj_string_refusal, CoordinateMetadata, UserObject,
 };
 use proj_rs::unstable::{Area, Proj, ProjCreateError};
 
@@ -136,6 +136,14 @@ pub(crate) fn create(ctx: *mut PJ_CONTEXT, definition: &str, who: &str) -> *mut 
             &format!("{who}: cannot open the database"),
         );
         return std::ptr::null_mut();
+    }
+    // `pj_init` refuses the common parameters before any object is made, and its code stays on
+    // the context (`proj_create` keeps a code already set).
+    if proj_string {
+        if let Some((code, text)) = proj_string_refusal(definition) {
+            context.fail(code, &format!("{who}: {text}"));
+            return std::ptr::null_mut();
+        }
     }
     if definition.trim_start().starts_with('{') {
         if let Ok(system) = coordinate_system_from_json(definition) {

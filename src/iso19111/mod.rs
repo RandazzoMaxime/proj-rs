@@ -93,7 +93,9 @@ pub use niche::{
 pub(crate) use normalize::normalize_for_visualization;
 pub(crate) use pipeline::Pipeline;
 pub use pipeline::{ProjLines, ProjStringLayout, TmercExport};
-pub use projstring::{create_crs_from_proj_string, create_crs_from_proj_string_with_database};
+pub use projstring::{
+    create_crs_from_proj_string, create_crs_from_proj_string_with_database, proj_string_refusal,
+};
 pub use property::{
     InvalidValueTypeError, PropertyMap, PropertyValue, ALIAS_KEY, DEPRECATED_KEY, IDENTIFIERS_KEY,
     NAME_KEY, REMARKS_KEY,
