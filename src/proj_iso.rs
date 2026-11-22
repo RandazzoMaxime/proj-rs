@@ -17,7 +17,7 @@ use crate::engine::{Coord, Operation, TransformError};
 use crate::iso19111::{
     facade_candidates, same_datum_noop, AlternativeError, Alternatives, Axis, BestPolicy,
     CandidateFilter, CoordinateOperation, Crs, FacadeCandidates, FactoryError, GeodeticCRS, Item,
-    UnitOfMeasure,
+    LogLine, UnitOfMeasure,
 };
 use crate::proj::{Direction, ForceOver, ProjError};
 
@@ -495,16 +495,22 @@ impl IsoPipeline {
     /// One point in `way` direction, facade order on both sides. The third axis passes
     /// through the pipeline, as `z` does in its geocentric steps.
     pub(crate) fn map(&self, coord: Coord, way: Direction) -> Result<Coord, TransformError> {
-        match way {
-            Direction::Forward => {
-                let out = self.forward(self.source.in_pipeline_order(coord))?;
-                Ok(self.target.in_pipeline_order(out))
-            }
-            Direction::Inverse => {
-                let out = self.inverse(self.target.in_pipeline_order(coord))?;
-                Ok(self.source.in_pipeline_order(out))
-            }
-        }
+        self.map_logged(coord, way, &mut Vec::new())
+    }
+
+    /// [`Self::map`] with the lines PROJ logs while the point runs appended to `log`.
+    pub(crate) fn map_logged(
+        &self,
+        coord: Coord,
+        way: Direction,
+        log: &mut Vec<LogLine>,
+    ) -> Result<Coord, TransformError> {
+        let (from, to) = match way {
+            Direction::Forward => (self.source, self.target),
+            Direction::Inverse => (self.target, self.source),
+        };
+        let out = self.run(from.in_pipeline_order(coord), way, log)?;
+        Ok(to.in_pipeline_order(out))
     }
 
     /// A slice in `way` direction, facade order on both sides, in place. The contract of
@@ -548,31 +554,36 @@ impl IsoPipeline {
         }
     }
 
-    /// `proj_trans` forward for one point, in the pipeline's own axis order.
-    fn forward(&self, coord: Coord) -> Result<Coord, TransformError> {
+    /// `proj_trans` for one point in `way`, in the pipeline's own axis order. The lines PROJ logs
+    /// while it runs are appended to `log` (`Alternatives::forward_logged`), with the error line
+    /// of a refused point (`Operation::failure_message`).
+    fn run(
+        &self,
+        coord: Coord,
+        way: Direction,
+        log: &mut Vec<LogLine>,
+    ) -> Result<Coord, TransformError> {
         match &self.route {
-            Route::Single(operation) => operation.forward(coord),
-            Route::Alternatives(alternatives) => {
-                alternatives.forward(coord).map_err(|error| match error {
+            Route::Single(operation) => {
+                let done = match way {
+                    Direction::Forward => operation.forward(coord),
+                    Direction::Inverse => operation.inverse(coord),
+                };
+                if done.is_err() {
+                    if let Some(text) = operation.failure_message(coord, way) {
+                        log.push(LogLine::error(text));
+                    }
+                }
+                done
+            }
+            Route::Alternatives(alternatives) => alternatives
+                .transform_logged(coord, way, log)
+                .map_err(|error| match error {
                     AlternativeError::MissingGrid(_) => TransformError::OutsideGrid,
                     AlternativeError::NoOperation => TransformError::OutsideDomain,
                     AlternativeError::Network => TransformError::NetworkUnavailable,
-                })
-            }
-        }
-    }
-
-    /// `proj_trans` inverse for one point, in the pipeline's own axis order.
-    fn inverse(&self, coord: Coord) -> Result<Coord, TransformError> {
-        match &self.route {
-            Route::Single(operation) => operation.inverse(coord),
-            Route::Alternatives(alternatives) => {
-                alternatives.inverse(coord).map_err(|error| match error {
-                    AlternativeError::MissingGrid(_) => TransformError::OutsideGrid,
-                    AlternativeError::NoOperation => TransformError::OutsideDomain,
-                    AlternativeError::Network => TransformError::NetworkUnavailable,
-                })
-            }
+                    AlternativeError::Fallback(error) => error,
+                }),
         }
     }
 
@@ -610,7 +621,7 @@ impl IsoPipeline {
             Route::Alternatives(alternatives) => Some(alternatives.save_state()),
             Route::Single(_) => None,
         };
-        let probe = self.inverse(Coord::xy(0.0, 0.0));
+        let probe = self.run(Coord::xy(0.0, 0.0), Direction::Inverse, &mut Vec::new());
         if let (Route::Alternatives(alternatives), Some(saved)) = (&self.route, saved) {
             alternatives.restore_state(saved);
         }

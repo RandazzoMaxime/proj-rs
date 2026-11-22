@@ -3,6 +3,7 @@
 
 use std::ffi::{c_char, c_int};
 
+use proj_rs::iso19111::{LogLevel, LogLine};
 use proj_rs::unstable::{Direction, Proj, ProjError, StepError, Xyzt};
 
 use crate::context::{context, Ctx};
@@ -75,11 +76,17 @@ impl Pj {
     }
 
     /// One coordinate in `direction`, in the axis order the caller uses.
-    pub(crate) fn transform(&self, coord: Xyzt, direction: Direction) -> Result<Xyzt, StepError> {
+    /// The lines PROJ logs while the point runs are appended to `log`.
+    pub(crate) fn transform_logged(
+        &self,
+        coord: Xyzt,
+        direction: Direction,
+        log: &mut Vec<LogLine>,
+    ) -> Result<Xyzt, StepError> {
         let (swap_in, swap_out) = self.swaps(direction);
         let given = if swap_in { swapped(coord) } else { coord };
         let proj = self.proj.as_ref().ok_or(StepError::NoInverse)?;
-        let done = proj.trans_coord(given, direction)?;
+        let done = proj.trans_coord_logged(given, direction, log)?;
         Ok(if swap_out { swapped(done) } else { done })
     }
 
@@ -119,7 +126,19 @@ pub(crate) fn trans_one(object: &mut Pj, direction: PJ_DIRECTION, coord: PJ_COOR
     }
     object.transformed = true;
     let previous = std::mem::replace(&mut ctx.errno, 0);
-    match object.transform(xyzt(coord), way) {
+    let mut log = Vec::new();
+    let done = object.transform_logged(xyzt(coord), way, &mut log);
+    // The lines `proj_trans` logs while the point runs: the candidate lines at debug level, and
+    // the `fwd_prepare` line of a step that refuses the point (`fwd.cpp:54`).
+    let ctx = object.context();
+    for line in &log {
+        let level = match line.level {
+            LogLevel::Error => PJ_LOG_ERROR,
+            LogLevel::Debug => PJ_LOG_DEBUG,
+        };
+        ctx.log(level as c_int, &line.text);
+    }
+    match done {
         Ok(done) => {
             ctx.errno = previous;
             coord_from(done)

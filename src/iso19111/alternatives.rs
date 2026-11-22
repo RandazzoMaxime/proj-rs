@@ -94,6 +94,9 @@ pub enum AlternativeError {
     /// the point at once with `PROJ_ERR_OTHER_NETWORK_ERROR` (`trans.cpp:284`): no other
     /// candidate is tried.
     Network,
+    /// The grid-free candidate PROJ falls back on refused the point too: its error stays on the
+    /// context (`trans.cpp:323-338`).
+    Fallback(TransformError),
 }
 
 /// How the point is compared with the area of use of the candidates.
@@ -647,6 +650,20 @@ impl Alternatives {
         self.transform(coord, Direction::Inverse, &mut Vec::new())
     }
 
+    /// [`Self::forward_logged`] in the direction `way`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::forward`].
+    pub(crate) fn transform_logged(
+        &self,
+        coord: Coord,
+        way: Direction,
+        log: &mut Vec<LogLine>,
+    ) -> Result<Coord, AlternativeError> {
+        self.transform(coord, way, log)
+    }
+
     /// `proj_trans` for one point in one direction, `trans.cpp:233-346`. The log lines are
     /// appended to `log` as [`Self::forward_logged`] describes.
     // Not inlined: with the lock and the atomics in its body, `Transformer::map` inlined it, and
@@ -697,7 +714,7 @@ impl Alternatives {
                     Err(TransformError::NetworkUnavailable) => {
                         return Err(AlternativeError::Network);
                     }
-                    Err(_) => {}
+                    Err(_) => log_failure(operation, coord, way, log),
                 }
             }
             // A candidate whose grids are missing has no pipeline to run.
@@ -748,7 +765,23 @@ impl Alternatives {
         let Some(operation) = item.pipeline(self.grids.as_deref()) else {
             return Err(AlternativeError::NoOperation);
         };
-        apply(operation, coord, way).map_err(|_| AlternativeError::NoOperation)
+        apply(operation, coord, way).map_err(|error| {
+            log_failure(operation, coord, way, log);
+            // PROJ's steps treat `HUGE_VAL` and NaN with their own sentinels, which are not ported:
+            // a point that is not finite keeps the error it had (NaN gives 2050 in PROJ too).
+            if error == TransformError::NonFinite {
+                AlternativeError::NoOperation
+            } else {
+                AlternativeError::Fallback(error)
+            }
+        })
+    }
+}
+
+/// The error line `pj_fwd4d` logs while a candidate refuses `coord` (`fwd_prepare`), if any.
+fn log_failure(operation: &Operation, coord: Coord, way: Direction, log: &mut Vec<LogLine>) {
+    if let Some(text) = operation.failure_message(coord, way) {
+        log.push(LogLine::error(text));
     }
 }
 

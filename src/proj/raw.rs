@@ -5,6 +5,7 @@
 
 use super::{Body, Direction, Proj};
 use crate::engine::{Operation, TransformError as StepError};
+use crate::iso19111::LogLine;
 use crate::Xyzt;
 
 impl Proj {
@@ -46,15 +47,39 @@ impl Proj {
     /// The [`StepError`] of the step that failed.
     #[doc(hidden)]
     pub fn trans_coord(&self, coord: Xyzt, direction: Direction) -> Result<Xyzt, StepError> {
-        let mapped = match &self.body {
-            Body::Single => return Err(StepError::NoInverse),
-            Body::Native(operation) => match direction {
-                Direction::Forward => operation.forward(coord),
-                Direction::Inverse => operation.inverse(coord),
-            },
-            Body::Iso(pipeline) => pipeline.map(coord, direction),
-        };
-        mapped
+        self.trans_coord_logged(coord, direction, &mut Vec::new())
+    }
+
+    /// [`Self::trans_coord`] with the lines PROJ logs while the point runs appended to `log`:
+    /// the candidate lines of a CRS pair at debug level, and the error line of a step that
+    /// refuses the point (`<step>: Invalid latitude`).
+    ///
+    /// # Errors
+    ///
+    /// The [`StepError`] of the step that failed.
+    #[doc(hidden)]
+    pub fn trans_coord_logged(
+        &self,
+        coord: Xyzt,
+        direction: Direction,
+        log: &mut Vec<LogLine>,
+    ) -> Result<Xyzt, StepError> {
+        match &self.body {
+            Body::Single => Err(StepError::NoInverse),
+            Body::Native(operation) => {
+                let done = match direction {
+                    Direction::Forward => operation.forward(coord),
+                    Direction::Inverse => operation.inverse(coord),
+                };
+                if done.is_err() {
+                    if let Some(text) = operation.failure_message(coord, direction) {
+                        log.push(LogLine::error(text));
+                    }
+                }
+                done
+            }
+            Body::Iso(pipeline) => pipeline.map_logged(coord, direction, log),
+        }
     }
 
     /// Several coordinates through the operation. A failed point keeps its error in `failed`.
