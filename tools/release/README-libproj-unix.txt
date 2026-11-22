@@ -10,6 +10,7 @@ Contents
 
   lib/@LIBFILES@
   lib/pkgconfig/proj.pc           for pkg-config, as PROJ installs it
+  share/proj/proj.db              the database, also inside the library (see below)
   lib/cmake/proj/proj-config.cmake, proj-config-version.cmake
                                   for CMake's find_package(PROJ), target PROJ::proj
   include/proj.h, proj_constants.h, proj_experimental.h, proj_symbol_rename.h
@@ -53,6 +54,14 @@ Calls that differ from PROJ, if any, are listed in docs/API-v1.md of the source 
 (https://github.com/RandazzoMaxime/proj-rs). A pair of CRS made by proj_create_crs_to_crs
 transforms in the axis order of its CRS, as in PROJ: EPSG:4326 is latitude, longitude until
 proj_normalize_for_visualization.
+
+The database
+------------
+
+The PROJ database is inside the library: EPSG codes and the operation catalogue need no file.
+share/proj/proj.db is the same database, byte for byte, for programs that check that the file
+exists before they call PROJ, as pyproj does: point PROJ_DATA at that folder for them
+(PROJ_DATA=$PWD/share/proj). The library itself does not need it.
 
 Grids
 -----
