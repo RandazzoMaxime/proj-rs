@@ -544,19 +544,19 @@ for test in "${tests[@]}"; do
         "$out/wkt_malformed.ours" ;;
     wkt_round_trip)
       # proj_create then proj_as_proj_string of the WKT2:2019 and WKT1 GDAL libproj writes for every
-      # EPSG CRS (datum ensembles, polar axes, Krovak). Operations are left out: proj-rs does not
-      # write some of them as a PROJ string yet (docs/PORTING-polar-axes.md).
+      # EPSG CRS (datum ensembles, polar axes, Krovak) and coordinate operation (grid parameters
+      # without an identifier, docs/PORTING-polar-axes.md).
       echo "== wkt_round_trip"
       gcc -std=c99 -I"$root/capi/include" "$here/wkt_warnings.c" -o "$out/wkt_warnings_ours" "${ldflags[@]}"
       gcc -std=c99 -I"$src/src" "$here/wkt_warnings.c" -o "$out/wkt_warnings_ref" -L"$ref/build/lib" \
         -lproj -Wl,-rpath,"$ref/build/lib"
       env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/wkt_warnings_ref" export 2>/dev/null \
-        | grep -v '^COORDINATEOPERATION\|^CONVERSION\|^PROJECTION' | sort -u > "$out/wkt_round_trip.txt"
+        | sort -u > "$out/wkt_round_trip.txt"
       ours=$(PROJ_DATA="$ref/build/data" "$out/wkt_warnings_ours" proj < "$out/wkt_round_trip.txt" 2>/dev/null)
       theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/wkt_warnings_ref" proj \
         < "$out/wkt_round_trip.txt" 2>/dev/null)
       [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") | head -40 >&2; exit 1; }
-      echo "PROJ strings of $(wc -l < "$out/wkt_round_trip.txt") EPSG CRS WKT identical to libproj" ;;
+      echo "PROJ strings of $(wc -l < "$out/wkt_round_trip.txt") EPSG CRS and operation WKT identical to libproj" ;;
     c_api)
       python3 "$here/filter_tests.py" "$unit/test_c_api.cpp" "$here/excluded.txt" "$out/test_c_api_filtered.cpp"
       g++ "${cxxflags[@]}" -DTIFF_ENABLED -include "$unit/gtest_include.h" "$out/test_c_api_filtered.cpp" "$unit/main.cpp" \

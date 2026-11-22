@@ -41,5 +41,18 @@ conversion has no id, as for a CRS read from a PROJ string with `+units=km`.
 - The 55 polar PROJ strings that libproj exports for the EPSG, ESRI and IGNF CRS give the WKT2 and
   PROJJSON of `projinfo` 9.9.0, and so does their round trip through WKT2.
 - `capi/tests/run.sh wkt_round_trip`: the PROJ string of the WKT2:2019 and WKT1 GDAL of every EPSG
-  CRS, read back, is libproj's. Coordinate operations are left out: for 541 of them, mostly
-  vertical grid offsets (`.asc`, `.gtx` with a multiplier), proj-rs writes no PROJ string yet.
+  CRS, read back, is libproj's. The coordinate operations are in the corpus too, see below.
+
+## Grid parameters without an identifier
+
+PROJ writes no `ID` on the parameters of an operation that has one, so the WKT of a grid
+operation reads `PARAMETERFILE["Vertical offset file","es_2019z.asc"]`, without the code 8732.
+`SingleOperation::parameterValue(code)` still finds it: it compares `getEPSGCode()` of each
+parameter, and `OperationParameter::getEPSGCode` takes the code of the name in
+`gParamNameCodes` when the parameter has no EPSG identifier (`singleoperation.cpp:1210-1233`).
+proj-rs looked the parameters up by their identifier only, so the 541 grid operations of EPSG
+read back from WKT (vertical grids, velocity grids, deformation models) wrote no PROJ string.
+`Parameter::epsg_code` (`param_codes.rs`, the 90 entries of `gParamNameCodes` of PROJ 9.9.0)
+now serves the lookups of the PROJ string export. `capi/tests/run.sh wkt_round_trip` compares
+every EPSG coordinate operation as well, and `tests/wkt_operation_proj.rs` keeps one case per
+method family.

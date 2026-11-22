@@ -587,7 +587,7 @@ const INVERSE_OF_PREFIX: &str = "Inverse of ";
 
 fn file_by_code(operation: &Transformation, code: i32) -> Option<String> {
     operation.parameters().iter().find_map(|parameter| {
-        if parameter.code() != code.to_string() {
+        if parameter.epsg_code() != code {
             return None;
         }
         match parameter.value() {
@@ -788,7 +788,7 @@ fn height_to_geog3d_grid_shift(
         return Ok(false);
     }
     let file = operation.parameters().iter().find_map(|parameter| {
-        let is_file = parameter.code() == PARAMETER_GEOID_CORRECTION_FILENAME.to_string()
+        let is_file = parameter.epsg_code() == PARAMETER_GEOID_CORRECTION_FILENAME
             || parameter.name() == "Geoid (height correction) model file";
         match parameter.value() {
             ParameterValue::Filename(name) if is_file => Some(name.clone()),
@@ -1405,7 +1405,7 @@ fn measure_of_method<'a>(
 /// The measure of the parameter `code` in a list of parameters of a conversion or a transformation.
 fn measure_in(parameters: &[Parameter], code: i32) -> Option<&Measure> {
     parameters.iter().find_map(|parameter| {
-        if parameter.code() == code.to_string() {
+        if parameter.epsg_code() == code {
             match parameter.value() {
                 ParameterValue::Measure(measure) => Some(measure),
                 _ => None,
@@ -1742,7 +1742,7 @@ fn parameter_si(conversion: &super::model::Conversion, code: i32) -> f64 {
         .parameters()
         .iter()
         .find_map(|parameter| {
-            if parameter.code() != code.to_string() {
+            if parameter.epsg_code() != code {
                 return None;
             }
             match parameter.value() {

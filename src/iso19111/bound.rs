@@ -104,7 +104,7 @@ pub(super) fn is_gravity_related_height(transformation: &Transformation) -> bool
 
 pub(super) fn geoid_file_parameter(transformation: &Transformation) -> Option<&str> {
     transformation.parameters().iter().find_map(|parameter| {
-        let is_file = parameter.code() == GEOID_CORRECTION_FILENAME.to_string()
+        let is_file = parameter.epsg_code() == GEOID_CORRECTION_FILENAME
             || parameter.name() == GEOID_CORRECTION_FILENAME_NAME;
         match parameter.value() {
             ParameterValue::Filename(name) if is_file => Some(name.as_str()),
@@ -115,7 +115,7 @@ pub(super) fn geoid_file_parameter(transformation: &Transformation) -> Option<&s
 
 /// The index, in the seven `+towgs84` values, of a Helmert parameter.
 fn towgs84_slot(parameter: &Parameter) -> Option<usize> {
-    match parameter.code().parse::<i32>().ok()? {
+    match parameter.epsg_code() {
         8605 => Some(0),
         8606 => Some(1),
         8607 => Some(2),
@@ -200,7 +200,7 @@ impl Transformation {
             self.parameters()
                 .iter()
                 .find_map(|parameter| match parameter.value() {
-                    ParameterValue::Filename(name) if parameter.code() == code => {
+                    ParameterValue::Filename(name) if parameter.epsg_code().to_string() == code => {
                         Some(name.as_str())
                     }
                     _ => None,
