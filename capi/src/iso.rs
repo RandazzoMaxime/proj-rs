@@ -800,7 +800,9 @@ pub extern "C" fn proj_as_proj_string(
 pub(crate) fn derived(object: &Pj, obj: Obj) -> *mut PJ {
     let context = object.context();
     let proj = obj.engine_proj(context);
-    hand_over(Pj::with_obj(object.ctx, obj, proj))
+    let mut made = Pj::with_obj(object.ctx, obj, proj);
+    made.arena = object.arena.clone();
+    hand_over(made)
 }
 
 /// `proj_normalize_for_visualization` of a CRS or of an operation between two CRS: the object

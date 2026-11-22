@@ -3,7 +3,7 @@
 #
 # Usage: capi/tests/run.sh [--release] [TEST...]
 #   TEST is one of: symbols abi lists intermediate_crs errno_string angular_io context include_h
-#   fork datadir geodesic proj_string_type projjson_objects horizontal_datum c_api
+#   fork datadir geodesic proj_string_type projjson_objects horizontal_datum string_lifetime c_api
 #   (default: all). PENDING=0 runs the cases of pending.txt too, to see them fail.
 #   GTEST_FILTER=pattern narrows the gtest cases of the C++ tests.
 #
@@ -25,7 +25,7 @@ fi
 tests=("$@")
 [ ${#tests[@]} -gt 0 ] || tests=(symbols abi lists intermediate_crs errno_string angular_io
                                   context include_h fork datadir geodesic proj_string_type
-                                  projjson_objects horizontal_datum c_api)
+                                  projjson_objects horizontal_datum string_lifetime c_api)
 
 ref=${PROJ_REFERENCE:-$root/target/proj-reference}
 src=$ref/src
@@ -162,6 +162,18 @@ for test in "${tests[@]}"; do
       cmp -s "$out/hdatum_ref.txt" "$out/hdatum_ours.txt" \
         || { echo "the horizontal datum of a CRS differs from PROJ" >&2; exit 1; }
       echo "$(wc -l < "$out/hdatum_ours.txt") horizontal datums read as PROJ reads them" ;;
+    string_lifetime)
+      echo "== string_lifetime"
+      gcc -std=c99 -I"$root/capi/include" "$here/string_lifetime.c" -o "$out/lifetime_ours" "${ldflags[@]}"
+      gcc -std=c99 -I"$src/src" "$here/string_lifetime.c" -o "$out/lifetime_ref" -L"$ref/build/lib" -lproj \
+        -Wl,-rpath,"$ref/build/lib"
+      # LD_LIBRARY_PATH names our library for the C suite; it wins over the RUNPATH of the binary.
+      LD_LIBRARY_PATH="$ref/build/lib" "$out/lifetime_ref" > "$out/lifetime_ref.txt"
+      "$out/lifetime_ours" > "$out/lifetime_ours.txt"
+      diff "$out/lifetime_ref.txt" "$out/lifetime_ours.txt" | head -12
+      cmp -s "$out/lifetime_ref.txt" "$out/lifetime_ours.txt" \
+        || { echo "a string outlives its object differently from PROJ" >&2; exit 1; }
+      echo "$(wc -l < "$out/lifetime_ours.txt") strings kept alive as PROJ keeps them" ;;
     errno_string) run_gtest proj_errno_string_test "$unit/proj_errno_string_test.cpp" ;;
     angular_io)   run_gtest proj_angular_io_test "$unit/proj_angular_io_test.cpp" ;;
     context)      run_gtest proj_context_test "$unit/proj_context_test.cpp" ;;
