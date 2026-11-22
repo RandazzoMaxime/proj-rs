@@ -28,7 +28,7 @@ use super::niche::{
 };
 use super::parammap::{method_by_code, method_by_name};
 use super::projstring::{create_crs_from_proj_string, create_crs_from_proj_string_with_database};
-use super::wkt_import::WktParser;
+use super::wkt_import::{WktObject, WktParser};
 use crate::crs_text::{self, Object, Value};
 use std::sync::Arc;
 
@@ -1924,12 +1924,34 @@ fn read_user_object(
     if let Some(db) = db {
         parser.attach_database(db.clone());
     }
-    parser
-        .create_from_wkt(text)?
-        .crs()
-        .cloned()
-        .map(UserObject::Crs)
-        .ok_or_else(|| FactoryError::Invalid("WKT is not a CRS".to_owned()))
+    wkt_object(parser.create_from_wkt(text)?)
+}
+
+/// The [`UserObject`] of a WKT node: any object `createFromUserInput` returns, not only a CRS.
+fn wkt_object(object: WktObject) -> Result<UserObject, FactoryError> {
+    Ok(match object {
+        WktObject::Crs(crs) => UserObject::Crs(crs),
+        WktObject::Ellipsoid(ellipsoid) => UserObject::Ellipsoid(ellipsoid),
+        WktObject::GeodeticDatum(frame) => UserObject::GeodeticDatum(frame),
+        WktObject::VerticalDatum(frame) => UserObject::VerticalDatum(frame),
+        WktObject::EngineeringDatum(datum) => UserObject::EngineeringDatum(datum),
+        WktObject::ParametricDatum(datum) => UserObject::ParametricDatum(datum),
+        WktObject::TemporalDatum(datum) => UserObject::TemporalDatum(datum),
+        WktObject::Ensemble(ensemble) => UserObject::Ensemble(ensemble),
+        WktObject::CoordinateMetadata(metadata) => UserObject::CoordinateMetadata(metadata),
+        WktObject::Conversion(conversion) => {
+            UserObject::Operation(CoordinateOperation::Conversion(conversion))
+        }
+        WktObject::Transformation(transformation) => {
+            UserObject::Operation(CoordinateOperation::Transformation(transformation))
+        }
+        WktObject::Concatenated(concatenated) => {
+            UserObject::Operation(CoordinateOperation::Concatenated(concatenated))
+        }
+        WktObject::Identifier(_) | WktObject::Unknown => {
+            return Err(FactoryError::Invalid("WKT is not a CRS".to_owned()))
+        }
+    })
 }
 
 /// The database a text needs, or PROJ's `no database context specified`.
