@@ -3885,6 +3885,18 @@ fn is_geographic_name(name: &str) -> bool {
     matches!(name, "longlat" | "lonlat" | "latlong" | "latlon")
 }
 
+const UNSUPPORTED_PIPELINE_CRS: &str = "unsupported +proj=pipeline for a CRS";
+
+/// Whether `createFromPROJString` reads a `+proj=pipeline` string as a PROJ-based operation,
+/// even with `+type=crs`: its steps have none of the CRS shapes (io.cpp:12924-12974).
+pub(crate) fn pipeline_reads_as_operation(definition: &str) -> bool {
+    let tokens = keys_read_by_proj(definition, proj_tokens(definition));
+    if !matches!(krovak_from_pipeline(&tokens), Ok(None)) {
+        return false;
+    }
+    matches!(pipeline_crs(definition), Err(FactoryError::Invalid(text)) if text == UNSUPPORTED_PIPELINE_CRS)
+}
+
 /// `PROJStringParser::createFromPROJString` for `+proj=pipeline`.
 ///
 /// A recognized shape is a geographic, projected, or geocentric CRS. Anything
@@ -3892,12 +3904,10 @@ fn is_geographic_name(name: &str) -> bool {
 /// asked for a CRS.
 fn pipeline_crs(definition: &str) -> Result<Crs, FactoryError> {
     let parsed = parse_pipeline(definition)
-        .ok_or_else(|| FactoryError::Invalid("unsupported +proj=pipeline for a CRS".to_owned()))?;
+        .ok_or_else(|| FactoryError::Invalid(UNSUPPORTED_PIPELINE_CRS.to_owned()))?;
     let steps = parsed.steps;
     if steps.is_empty() {
-        return Err(FactoryError::Invalid(
-            "unsupported +proj=pipeline for a CRS".to_owned(),
-        ));
+        return Err(FactoryError::Invalid(UNSUPPORTED_PIPELINE_CRS.to_owned()));
     }
     let geocentric = !steps[0].inverted
         && matches!(steps[0].name.as_str(), "cart" | "geocent")
@@ -3943,9 +3953,7 @@ fn pipeline_crs(definition: &str) -> Result<Crs, FactoryError> {
         unexpected = true;
     }
     if unexpected {
-        return Err(FactoryError::Invalid(
-            "unsupported +proj=pipeline for a CRS".to_owned(),
-        ));
+        return Err(FactoryError::Invalid(UNSUPPORTED_PIPELINE_CRS.to_owned()));
     }
     let i_geog = geog.first().copied();
     let i_unit = units.first().copied();
@@ -3977,9 +3985,7 @@ fn pipeline_crs(definition: &str) -> Result<Crs, FactoryError> {
             );
         }
     }
-    Err(FactoryError::Invalid(
-        "unsupported +proj=pipeline for a CRS".to_owned(),
-    ))
+    Err(FactoryError::Invalid(UNSUPPORTED_PIPELINE_CRS.to_owned()))
 }
 
 struct PipelineProj {
