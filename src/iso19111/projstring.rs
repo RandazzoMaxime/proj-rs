@@ -2512,11 +2512,21 @@ fn frame_from_ellipsoid(
 /// `Ellipsoid::guessBodyName` without a database: Earth when `a` is close to
 /// the mean Earth radius, otherwise a non-Earth body.
 pub(super) fn guess_body(semi_major: f64) -> String {
+    guess_body_in(semi_major, None)
+}
+
+/// `Ellipsoid::guessBodyName`: Earth when `a` is close to the mean Earth radius, else the
+/// celestial body of the database whose radius matches, else a non-Earth body.
+pub(super) fn guess_body_in(semi_major: f64, db: Option<&DatabaseContext>) -> String {
     if (semi_major - EARTH_RADIUS).abs() < BODY_RELATIVE * EARTH_RADIUS {
-        "Earth".to_owned()
-    } else {
-        "Non-Earth body".to_owned()
+        return "Earth".to_owned();
     }
+    db.and_then(|db| {
+        super::factory::AuthorityFactory::create(db, "")
+            .identify_body_from_semi_major_axis(semi_major, BODY_RELATIVE)
+            .ok()
+    })
+    .unwrap_or_else(|| "Non-Earth body".to_owned())
 }
 
 /// A sphere of radius `radius`, on the body `guess_body` names.
