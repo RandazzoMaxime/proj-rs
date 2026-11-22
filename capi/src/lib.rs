@@ -56,6 +56,7 @@ mod crsops;
 mod db;
 mod dblists;
 mod ffi;
+mod geodesic;
 mod info;
 mod inspect;
 mod iso;
