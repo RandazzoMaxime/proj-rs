@@ -4257,7 +4257,7 @@ impl Crs {
         }
     }
 
-    fn identified_mut(&mut self) -> &mut Identified {
+    pub(crate) fn identified_mut(&mut self) -> &mut Identified {
         match self {
             Self::Geographic(crs) => &mut crs.identified,
             Self::Geodetic(GeodeticCRS::Geographic(crs)) => &mut crs.identified,
