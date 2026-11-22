@@ -1,20 +1,18 @@
 //! What libproj reports for a [`Proj`]: its definition, its `id`, and the area of
 //! use of a CRS.
 //!
-//! libproj's definition of an object built from a PROJ string is not the input
-//! read back. The string is read as a CRS (`proj_create` goes through the ISO 19111
-//! model), that CRS is written as a PROJ string, and that string is initialised as
-//! `pj_init` does: the parameters lose their `+`, and `pj_datum_set` appends the
-//! ellipsoid and the `towgs84=` or `nadgrids=` of a `+datum=` it names. So
-//! `+proj=longlat` reads back as `proj=longlat datum=WGS84 no_defs ellps=WGS84
-//! towgs84=0,0,0`, and `+proj=tmerc` on the UTM parameters as `proj=utm`. The
-//! functions here follow that path with this crate's reader and writer.
+//! libproj's definition of an object built from a PROJ string is `pj_get_def`: the parameters
+//! the operation read, in order, after `pj_datum_set` appended the ellipsoid and the
+//! `towgs84=` or `nadgrids=` of a `+datum=`, and `pj_init` appended `ellps=GRS80` to a string
+//! that names no shape. A parameter the operation did not read, a repeated key or `wktext`,
+//! is not listed. So `+proj=longlat` reads back as `proj=longlat ellps=GRS80`.
 //!
 //! The area of use is usage 0 of the CRS, as `proj_get_area_of_use` reads it.
 
 use std::fmt;
 
 use crate::ellipsoid::PJ_ELLPS;
+use crate::engine::ParamUse;
 use crate::iso19111::{create_from_user_input, DatabaseContext};
 use crate::proj::{Area, Proj, ProjError};
 
@@ -59,34 +57,39 @@ const PROJ_DATUMS: &[(&str, &str, &str)] = &[
     ),
 ];
 
-/// The definition libproj reports for a PROJ string, see the module documentation.
-///
-/// A string `proj_create` reads as a CRS follows that path. A pipeline, `+proj=cart`, or
-/// `+init=` does not: `proj_pj_info` flattens a one-step pipeline, leaves `cart` as `cart`,
-/// and this crate expands `+init=` the way [`crate::crs::init_definition`] does before
-/// reporting the expanded parameter list. `+init=` is rejected by PROJ 9 outside PROJ4
-/// emulation; the reported text is `proj_pj_info` of the expanded operation.
+/// The definition libproj reports for a PROJ string, see the module documentation: the
+/// parameters `parameters` marks as read. A pipeline and an NKG operation, which keep no
+/// listing, follow `proj_pj_info`: one step is the step, several stay a pipeline. `+init=` is
+/// rejected by PROJ 9 outside PROJ4 emulation; the reported text is `proj_pj_info` of the
+/// expanded operation.
 ///
 /// # Errors
 ///
 /// [`ProjError::Definition`] when the string names a datum PROJ does not name, or the
 /// expanded `+init=` section is not a CRS this crate builds.
-pub(crate) fn operation_definition(text: &str) -> Result<String, ProjError> {
+pub(crate) fn operation_definition(
+    text: &str,
+    parameters: &[ParamUse],
+) -> Result<String, ProjError> {
     if let Some(spec) = lone_init(text) {
         let expanded = crate::crs::init_definition(&spec).map_err(|_| ProjError::Definition)?;
         return raw_parameters(&expanded);
     }
-    match proj_kind(text).as_deref() {
-        Some("pipeline") => pipeline_definition(text),
-        Some("cart") => raw_parameters(text),
-        _ => match export_crs(text) {
-            Ok(exported) => init_definition(&exported),
-            // Not a CRS, such as the projection `+proj=utm`: PROJ reports the parameters
-            // `pj_get_def` gives it, with `pj_shrink`'s `;` separators gone. A datum the
-            // parameters name still fails in `raw_tokens`.
-            Err(_) => raw_parameters(&text.replace(';', " ")),
-        },
+    if parameters.is_empty() {
+        // A pipeline and an NKG operation keep no parameter listing.
+        return parameters_of_operation(&text.replace(';', " "));
     }
+    let used: Vec<String> = parameters
+        .iter()
+        .filter(|parameter| parameter.used)
+        .map(|parameter| parameter.text.clone())
+        .collect();
+    if let Some(name) = used.iter().find_map(|item| item.strip_prefix("datum=")) {
+        if !PROJ_DATUMS.iter().any(|(id, ..)| *id == name) {
+            return Err(ProjError::Definition);
+        }
+    }
+    Ok(used.join(" "))
 }
 
 /// `+init=section` when the string is that section and, optionally, `no_defs`.
@@ -255,45 +258,6 @@ pub(crate) fn crs_area_of_use(text: &str) -> Result<(Option<Area>, Option<String
         _ => None,
     };
     Ok((area, usage.description().map(str::to_owned)))
-}
-
-/// The PROJ string of the CRS that `text` reads as.
-fn export_crs(text: &str) -> Result<String, ProjError> {
-    let db = DatabaseContext::create().map_err(|_| ProjError::Definition)?;
-    let crs = create_from_user_input(text, &db).map_err(|_| ProjError::Definition)?;
-    crs.export_to_proj_string()
-        .map_err(|_| ProjError::Definition)
-}
-
-/// `pj_init` on an exported string: the parameters without their `+`, then the
-/// additions `pj_datum_set` makes for the first `datum=`.
-///
-/// The export ends a CRS with a `type=crs` marker that is not a PROJ parameter;
-/// libproj does not report it, so it is dropped. The default ellipsoid of
-/// `pj_init` (`GRS80` when a string names none) is not added: the export always
-/// writes an ellipsoid, a datum, or a sphere.
-fn init_definition(exported: &str) -> Result<String, ProjError> {
-    let mut items: Vec<String> = exported
-        .split_whitespace()
-        .map(|token| token.strip_prefix('+').unwrap_or(token).to_owned())
-        .filter(|item| item != "type=crs" && item != "wktext")
-        .collect();
-    let datum = items
-        .iter()
-        .find_map(|item| item.strip_prefix("datum="))
-        .map(str::to_owned);
-    if let Some(name) = datum {
-        let (_, parameters, ellipsoid) = PROJ_DATUMS
-            .iter()
-            .find(|(id, ..)| *id == name)
-            .ok_or(ProjError::Definition)?;
-        if !PJ_ELLPS.iter().any(|(id, ..)| id == ellipsoid) {
-            return Err(ProjError::Definition);
-        }
-        items.push(format!("ellps={ellipsoid}"));
-        items.push((*parameters).to_owned());
-    }
-    Ok(items.join(" "))
 }
 
 impl fmt::Debug for Proj {
