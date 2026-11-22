@@ -68,19 +68,19 @@ impl Proj {
     /// The [`StepError`] of the step that failed.
     #[doc(hidden)]
     pub fn trans_coord(&self, coord: Xyzt, direction: Direction) -> Result<Xyzt, StepError> {
-        let mapped = match &self.body {
-            Body::Single => return Err(StepError::NoInverse),
+        match &self.body {
+            Body::Single => Err(StepError::NoInverse),
             Body::Native(operation) => match direction {
                 Direction::Forward => operation.forward(coord),
                 Direction::Inverse => operation.inverse(coord),
             },
             Body::Iso(pipeline) => pipeline.map(coord, direction),
-        };
-        mapped
+        }
     }
 
     /// [`Self::trans_coord`] with the lines `proj_trans` logs appended to `log`, for the C API to
-    /// write through the logger of the context.
+    /// write through the logger of the context: the candidate lines of a CRS pair at debug
+    /// level, and the error line of a step that refuses the point (`<step>: Invalid latitude`).
     ///
     /// # Errors
     ///
@@ -94,7 +94,16 @@ impl Proj {
     ) -> Result<Xyzt, PairError> {
         match &self.body {
             Body::Iso(pipeline) => pipeline.map_logged(coord, direction, log),
-            _ => self.trans_coord(coord, direction).map_err(PairError::Step),
+            Body::Native(operation) => {
+                let done = self.trans_coord(coord, direction);
+                if done.is_err() {
+                    if let Some(text) = operation.failure_message(coord, direction) {
+                        log.push(LogLine::error(text));
+                    }
+                }
+                done.map_err(PairError::Step)
+            }
+            Body::Single => self.trans_coord(coord, direction).map_err(PairError::Step),
         }
     }
 

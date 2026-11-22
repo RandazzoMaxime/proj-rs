@@ -158,7 +158,7 @@ ok 415cbdc9ecaf8968 c1514515ea130e18
 err The conversion failed with the following error: point is outside the projection domain
 ok 415ccdaeac474a15 c151307638cebd17
 err The conversion failed with the following error: point is outside the projection domain
-err The conversion failed with the following error: point is outside the projection domain
+err The conversion failed with the following error: Invalid coordinate
 ok 415cdd8bd2980e17 c1511bbfe63e6f00
 == EPSG:28992 to EPSG:4326
 ok 40158c7f13962266 404a13dcaf9b6ed0
