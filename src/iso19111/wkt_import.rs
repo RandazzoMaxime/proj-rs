@@ -3101,18 +3101,7 @@ impl WktParser {
                 .filter(|parameter| ci_eq(parameter.name(), "scale_factor"))
                 .all(is_one_measure);
         if polar_variant_b {
-            parameters.retain(|parameter| !ci_eq(parameter.name(), "scale_factor"));
-            for parameter in &mut parameters {
-                if ci_eq(&parameter.name, "latitude_of_origin") {
-                    parameter.name = "Latitude of standard parallel".to_owned();
-                    parameter.code = "8832".to_owned();
-                    parameter.code_space = "EPSG".to_owned();
-                } else if ci_eq(&parameter.name, "central_meridian") {
-                    parameter.name = "Longitude of origin".to_owned();
-                    parameter.code = "8833".to_owned();
-                    parameter.code_space = "EPSG".to_owned();
-                }
-            }
+            parameters = polar_stereographic_parameters(&parameters, PolarVariant::B);
         }
         // ESRI writes a south orientated transverse Mercator as a regular one
         // with a scale factor of -1 (PROJ `io.cpp`, ESRI dialect).
@@ -3177,6 +3166,9 @@ impl WktParser {
         let polar_variant_a = ci_eq(&method_name, "Polar_Stereographic")
             && !polar_variant_b
             && latitude_near_pole(&parameters);
+        if polar_variant_a {
+            parameters = polar_stereographic_parameters(&parameters, PolarVariant::A);
+        }
         let polar_ambiguous =
             ci_eq(&method_name, "Polar_Stereographic") && !polar_variant_b && !polar_variant_a;
         let (mut mapped_name, mut code) = if polar_variant_b {
@@ -4798,6 +4790,69 @@ fn non_zero_measure(parameter: &Parameter) -> bool {
 
 fn is_one_measure(parameter: &Parameter) -> bool {
     matches!(&parameter.value, ParameterValue::Measure(measure) if measure.value == 1.0)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PolarVariant {
+    A,
+    B,
+}
+
+/// `Conversion::createPolarStereographicVariantA` or `B` as `buildProjectionStandard` calls it
+/// (io.cpp:4253-4300): the parameters of the variant, in its order, read from the WKT1 names
+/// `latitude_of_origin`, `central_meridian`, `scale_factor`, `false_easting` and
+/// `false_northing`. A parameter the WKT lacks is 0 without a unit, and any other is dropped.
+fn polar_stereographic_parameters(
+    parameters: &[Parameter],
+    variant: PolarVariant,
+) -> Vec<Parameter> {
+    let read = |name: &str| {
+        parameters
+            .iter()
+            .find_map(|parameter| match &parameter.value {
+                ParameterValue::Measure(measure) if ci_eq(parameter.name(), name) => {
+                    Some(measure.clone())
+                }
+                _ => None,
+            })
+    };
+    let or_none = |measure: Option<Measure>| {
+        measure.unwrap_or(Measure {
+            value: 0.0,
+            unit: UnitOfMeasure::none(),
+        })
+    };
+    let made = |name: &str, code: &str, measure: Measure| Parameter {
+        name: name.to_owned(),
+        code_space: "EPSG".to_owned(),
+        code: code.to_owned(),
+        value: ParameterValue::Measure(measure),
+    };
+    let latitude = or_none(read("latitude_of_origin"));
+    let meridian = or_none(read("central_meridian"));
+    let easting = or_none(read("false_easting"));
+    let northing = or_none(read("false_northing"));
+    match variant {
+        PolarVariant::B => vec![
+            made("Latitude of standard parallel", "8832", latitude),
+            made("Longitude of origin", "8833", meridian),
+            made("False easting", "8806", easting),
+            made("False northing", "8807", northing),
+        ],
+        PolarVariant::A => {
+            let scale = read("scale_factor").unwrap_or(Measure {
+                value: 1.0,
+                unit: UnitOfMeasure::unity(),
+            });
+            vec![
+                made("Latitude of natural origin", "8801", latitude),
+                made("Longitude of natural origin", "8802", meridian),
+                made("Scale factor at natural origin", "8805", scale),
+                made("False easting", "8806", easting),
+                made("False northing", "8807", northing),
+            ]
+        }
+    }
 }
 
 /// `| |latitude_of_origin| - 90° | < 1e-10`, the polar stereographic variant A test.

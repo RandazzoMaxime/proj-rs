@@ -52,7 +52,9 @@ fn ours(wkt: &str) -> String {
         .map(|warning| format!("warning: {warning}"))
         .collect();
     lines.push(format!("conversion: {}", conversion_node(&wkt2)));
-    lines.join("\n") + "\n"
+    let mut text = lines.join("\n");
+    text.push('\n');
+    text
 }
 
 #[test]
