@@ -240,9 +240,6 @@ fn export_proj_method(
     Ok(true)
 }
 
-/// `PROJ-based operation method: ` and the PROJ string after it.
-const PROJ_BASED_PREFIX: &str = "PROJ-based operation method: ";
-
 /// The CRS a conversion stands for: a compound CRS stands for its first component (`horiz` of
 /// `Conversion::_exportToPROJString`, conversion.cpp:3886-3900 and 4420-4428), and a bound first
 /// component for its base (`boundCRS->baseCRS()`, conversion.cpp:3896-3900).
@@ -268,7 +265,7 @@ fn export_proj_based(
     target: Option<&Crs>,
     formatter: &mut PipelineFormatter,
 ) -> Result<bool, FactoryError> {
-    let Some(text) = conversion.method().name().strip_prefix(PROJ_BASED_PREFIX) else {
+    let Some(text) = conversion.method().proj_based_text() else {
         return Ok(false);
     };
     let (Some(source), Some(target)) = (source, target) else {

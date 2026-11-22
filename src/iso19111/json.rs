@@ -1364,10 +1364,7 @@ fn write_conversion_members(
     let parameters = conversion.parameters();
     let interpolation = interpolation_parameter(conversion);
     // A PROJ-based operation always writes its `parameters` (`PROJBasedOperation`).
-    let proj_based = conversion
-        .method()
-        .name()
-        .starts_with("PROJ-based operation method: ");
+    let proj_based = conversion.method().proj_based_text().is_some();
     if !parameters.is_empty() || interpolation.is_some() || proj_based {
         writer.key("parameters");
         writer.start_array();
@@ -1404,6 +1401,10 @@ fn write_operation(
             write_transformation(writer, transformation, db, place)
         }
         CoordinateOperation::Concatenated(concatenated) => {
+            // `PROJBasedOperation` is a single operation in PROJJSON: one transformation.
+            if let Some(transformation) = concatenated.proj_based_transformation()? {
+                return write_transformation(writer, &transformation, db, place);
+            }
             write_concatenated(writer, concatenated, db, place)
         }
     }

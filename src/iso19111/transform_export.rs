@@ -199,22 +199,31 @@ impl CoordinateOperation {
 }
 
 impl ConcatenatedOperation {
+    /// Whether this is the PROJ-based operation of `createPROJBased` (a compound CRS to a
+    /// geographic 3D CRS written as one pipeline): PROJ holds it as a `PROJBasedOperation`, not
+    /// as a concatenated operation, and it has a CRS pair.
+    #[must_use]
+    pub fn is_proj_based(&self) -> bool {
+        self.proj_based.is_some() && self.source.is_some() && self.target.is_some()
+    }
+
     /// The PROJ-based operation of `createPROJBased` as PROJ holds it: a transformation between
-    /// the CRS pair whose method is `PROJ-based operation method: ` and its PROJ string. `None`
-    /// for any other concatenated operation.
+    /// the CRS pair whose method is `PROJ-based operation method (approximate): ` and its PROJ
+    /// string (`PROJBasedOperation::create` from an exportable object, projbasedoperation.cpp:
+    /// 114-150). `None` for any other concatenated operation.
     ///
     /// # Errors
     ///
     /// The steps cannot be written as a PROJ string.
-    pub(crate) fn proj_based_transformation(&self) -> Result<Option<Transformation>, FactoryError> {
-        if self.proj_based.is_none() || self.source.is_none() || self.target.is_none() {
+    pub fn proj_based_transformation(&self) -> Result<Option<Transformation>, FactoryError> {
+        if !self.is_proj_based() {
             return Ok(None);
         }
         let text = self.export_to_proj_string(ProjLines::Single)?;
         Ok(Some(Transformation {
             identified: self.identified.clone(),
             method: super::model::OperationMethod::create(
-                format!("PROJ-based operation method: {text}"),
+                format!("PROJ-based operation method (approximate): {text}"),
                 Vec::new(),
             ),
             parameters: Vec::new(),
@@ -316,7 +325,7 @@ fn export_forward(
 ) -> Result<(), FactoryError> {
     let code = epsg_method_code(operation);
     let method_name = operation.method().name();
-    if let Some(text) = method_name.strip_prefix("PROJ-based operation method: ") {
+    if let Some(text) = operation.method().proj_based_text() {
         formatter.ingest_proj_string(text);
         return Ok(());
     }

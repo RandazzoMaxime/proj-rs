@@ -519,7 +519,9 @@ pub extern "C" fn proj_concatoperation_get_step_count(
 ) -> c_int {
     guard(0, || {
         match operation_of(ctx, concatoperation, "proj_concatoperation_get_step_count") {
-            Some((_, CoordinateOperation::Concatenated(concatenated))) => {
+            Some((_, CoordinateOperation::Concatenated(concatenated)))
+                if !concatenated.is_proj_based() =>
+            {
                 c_int::try_from(concatenated.steps().len()).unwrap_or(0)
             }
             _ => 0,
@@ -539,6 +541,9 @@ pub extern "C" fn proj_concatoperation_get_step(
         else {
             return std::ptr::null_mut();
         };
+        if concatenated.is_proj_based() {
+            return std::ptr::null_mut();
+        }
         match usize::try_from(i_step)
             .ok()
             .and_then(|at| concatenated.steps().get(at))
@@ -579,7 +584,16 @@ pub extern "C" fn proj_coordoperation_get_method_info(
         else {
             return 0;
         };
-        let Some((method, _)) = method_and_parameters(operation) else {
+        // A PROJ-based operation is read through the transformation PROJ holds for it.
+        let exposed = match operation {
+            CoordinateOperation::Concatenated(concatenated) => concatenated
+                .proj_based_transformation()
+                .ok()
+                .flatten()
+                .map(CoordinateOperation::Transformation),
+            _ => None,
+        };
+        let Some((method, _)) = method_and_parameters(exposed.as_ref().unwrap_or(operation)) else {
             return 0;
         };
         let (name, space, code) = (

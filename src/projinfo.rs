@@ -2074,11 +2074,7 @@ fn proj_based_text(operation: &crate::CoordinateOperation) -> Option<String> {
     if conversion.source_crs().is_some() || conversion.target_crs().is_some() {
         return None;
     }
-    conversion
-        .method()
-        .name()
-        .strip_prefix("PROJ-based operation method: ")
-        .map(str::to_owned)
+    conversion.method().proj_based_text().map(str::to_owned)
 }
 
 fn wkt(

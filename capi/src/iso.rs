@@ -130,6 +130,12 @@ impl Obj {
                 UserObject::Operation(operation) => match operation {
                     CoordinateOperation::Conversion(_) => PJ_TYPE_CONVERSION,
                     CoordinateOperation::Transformation(_) => PJ_TYPE_TRANSFORMATION,
+                    // `PROJBasedOperation` is neither a transformation nor a concatenation.
+                    CoordinateOperation::Concatenated(concatenated)
+                        if concatenated.is_proj_based() =>
+                    {
+                        PJ_TYPE_OTHER_COORDINATE_OPERATION
+                    }
                     CoordinateOperation::Concatenated(_) => PJ_TYPE_CONCATENATED_OPERATION,
                 },
                 UserObject::CoordinateMetadata(_) => PJ_TYPE_COORDINATE_METADATA,
