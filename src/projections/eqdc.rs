@@ -58,13 +58,19 @@ pub(crate) fn build(
     let phi1 = params.radians("lat_1")?.unwrap_or(0.0);
     let phi2 = params.radians("lat_2")?.unwrap_or(0.0);
     if phi1.abs() > FRAC_PI_2 {
-        return Err(CreateError::IllegalValue("lat_1"));
+        return Err(CreateError::illegal(
+            "Invalid value for lat_1: |lat_1| should be <= 90°",
+        ));
     }
     if phi2.abs() > FRAC_PI_2 {
-        return Err(CreateError::IllegalValue("lat_2"));
+        return Err(CreateError::illegal(
+            "Invalid value for lat_2: |lat_2| should be <= 90°",
+        ));
     }
     if (phi1 + phi2).abs() < EPS10 {
-        return Err(CreateError::IllegalValue("lat_1"));
+        return Err(CreateError::illegal(
+            "Invalid value for lat_1 and lat_2: |lat_1 + lat_2| should be > 0",
+        ));
     }
     let secant = (phi1 - phi2).abs() >= EPS10;
     let mut n = phi1.sin();
@@ -77,12 +83,12 @@ pub(crate) fn build(
         if secant {
             let m2 = proj_msfn(phi2.sin(), phi2.cos(), frame.earth.es());
             let ml2 = meridian.forward(phi2);
-            if ml1 == ml2 || (m1 - m2) == 0.0 {
-                return Err(CreateError::IllegalValue("lat_1"));
+            if ml1 == ml2 {
+                return Err(CreateError::illegal("Eccentricity too close to 1"));
             }
             n = (m1 - m2) / (ml2 - ml1);
             if n == 0.0 {
-                return Err(CreateError::IllegalValue("lat_1"));
+                return Err(CreateError::illegal("Invalid value for eccentricity"));
             }
         }
         let c = ml1 + m1 / n;
@@ -93,7 +99,9 @@ pub(crate) fn build(
             n = (cosphi - phi2.cos()) / (phi2 - phi1);
         }
         if n == 0.0 {
-            return Err(CreateError::IllegalValue("lat_1"));
+            return Err(CreateError::illegal(
+                "Invalid value for lat_1 and lat_2: lat_1 + lat_2 should be > 0",
+            ));
         }
         let c = phi1 + cosphi / n;
         (c, c - frame.phi0, None)

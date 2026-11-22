@@ -1,2 +1,4 @@
 +proj=lcc +lat_1=2D32 +lat_2=0 +a=6378137 +b=0.2 ->
 +proj=tpeqd   +a=6400000    +lat_1=90 +lat_2=90 +lon_1=0 +lon_2=1 ->
++proj=defmodel +model=proj.ini ->
++proj=tinshift +file=proj.ini ->

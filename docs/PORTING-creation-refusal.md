@@ -15,10 +15,30 @@ does ("Inverse operation for %s is not available").
 `capi/tests/invalid_operations.c` runs `proj_create` on the 196 operations of PROJ's `gie`
 suite that expect a failure, against the reference libproj.
 
+## Codes and texts
+
+A refusal carries PROJ's error code and the line `proj_create` logs:
+`Error <code> (<text of the code>): <step>: <message>`, as `createFromPROJString` writes it
+(`io.cpp:12879-12886`). The engine's `CreateError::Rejected` holds the code and the message of
+the check that refused, in PROJ's words: the common parameters of `pj_init` (shape, units,
+`lon_wrap`, `axis`, `pm`), the pipeline, the grid steps, `deformation`, `tinshift`, `defmodel`,
+`axisswap`, `topocentric`, `helmert`, `molodensky` and the projections whose checks the `gie`
+suite reaches. `CreateError::NoShape` is `pj_init_ctx: Must specify ellipsoid or sphere`, the
+last line `pj_ell_set` leaves; `CreateError::Syntax` is a refusal of the PROJ string parser,
+logged without a code. A text that is no WKT and names no object is `unrecognized format /
+unknown name`, error 1025.
+
+`+proj=utm` without `+zone` takes the zone of `lon_0`, as `PJ_PROJECTION(utm)` does; it was
+refused.
+
+`capi/tests/invalid_operations.c` compares the result, the code and the last error line.
+
 ## Deliberate deviations
 
+Four of the 196 operations differ (`capi/tests/invalid_operations.deviations`).
+
 Two degenerate operations are refused at creation by proj-rs, where PROJ makes the object and
-fails at the first point (`capi/tests/invalid_operations.deviations`):
+fails at the first point:
 
 - `+proj=lcc +lat_1=2D32 +lat_2=0 +a=6378137 +b=0.2`: an eccentricity of almost 1. proj-rs
   refuses `es > 0.999` and a cone whose constants are not finite (`src/lcc.rs`).
@@ -28,7 +48,6 @@ fails at the first point (`capi/tests/invalid_operations.deviations`):
 Both fail either way: making the object, then failing every point, would need the transform of
 these degenerate cones to fail exactly as PROJ's, for no use.
 
-## Not in this lot
-
-The error codes and texts are not all PROJ's yet: the refusal carries the code of the error
-family (`proj_string_refusal`) and the engine's own message, except for `k`/`k_0` and `lat_0`.
+Two files that are not JSON (`+proj=defmodel +model=proj.ini`, `+proj=tinshift +file=proj.ini`)
+are refused with PROJ's code and `invalid model:`, but the rest of PROJ's line is the message
+of its JSON library (`[json.exception.parse_error.101] ...`), which proj-rs does not reproduce.

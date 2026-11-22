@@ -138,7 +138,7 @@ fn optional_number(params: &Params, key: &str) -> Result<f64, CreateError> {
 
 fn required_number(params: &Params, key: &str) -> Result<f64, CreateError> {
     if !params.flag(key) {
-        return Err(CreateError::MissingArgument(key_name(key)));
+        return Err(CreateError::missing(format!("missing {key}")));
     }
     optional_number(params, key)
 }
@@ -263,7 +263,9 @@ struct SpatialNow {
 
 fn helmert(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateError> {
     if matches!(switch(params, "transpose")?, Some(Switch::On)) {
-        return Err(CreateError::IllegalValue("transpose"));
+        return Err(CreateError::illegal(
+            "helmert: 'transpose' argument is no longer valid. Use convention=position_vector/coordinate_frame",
+        ));
     }
     let mut tx = optional_number(params, "x")?;
     let mut ty = optional_number(params, "y")?;
@@ -404,21 +406,30 @@ fn molobadekas(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateEr
 /// `require_towgs84_position` is false for Molodensky-Badekas, which never reads `towgs84`.
 fn convention_of(params: &Params, helmert_towgs84: bool) -> Result<Convention, CreateError> {
     let convention = match params.text("convention") {
-        None if params.flag("convention") => {
-            return Err(CreateError::IllegalValue("convention"));
+        None if params.flag("convention") => return Err(invalid_convention()),
+        None => {
+            return Err(CreateError::missing(
+                "helmert: missing 'convention' argument",
+            ))
         }
-        None => return Err(CreateError::MissingArgument("convention")),
         Some("position_vector") => Convention::PositionVector,
         Some("coordinate_frame") => Convention::CoordinateFrame,
-        Some(_) => return Err(CreateError::IllegalValue("convention")),
+        Some(_) => return Err(invalid_convention()),
     };
     if helmert_towgs84
         && params.flag("towgs84")
         && matches!(convention, Convention::CoordinateFrame)
     {
-        return Err(CreateError::IllegalValue("towgs84"));
+        return Err(CreateError::illegal(
+            "helmert: towgs84 should only be used with convention=position_vector",
+        ));
     }
     Ok(convention)
+}
+
+/// `helmert.cpp` `read_convention`: a `convention` that is not one of the two.
+fn invalid_convention() -> CreateError {
+    CreateError::illegal("helmert: invalid value for 'convention' argument")
 }
 
 impl EpochShift {
@@ -947,15 +958,16 @@ mod tests {
     fn molodensky_and_molobadekas_reject_missing_arguments() {
         assert!(matches!(
             Operation::create("proj=molodensky a=6378160 rf=298.25"),
-            Err(CreateError::MissingArgument("dx"))
+            Err(CreateError::Rejected { ref text, .. }) if text == "missing dx"
         ));
         assert!(matches!(
             Operation::create("proj=molodensky a=6378160 rf=298.25 dx=0"),
-            Err(CreateError::MissingArgument(_))
+            Err(CreateError::Rejected { ref text, .. }) if text == "missing dy"
         ));
         assert!(matches!(
             Operation::create("proj=molobadekas"),
-            Err(CreateError::MissingArgument("convention"))
+            Err(CreateError::Rejected { ref text, .. })
+                if text == "helmert: missing 'convention' argument"
         ));
     }
 
@@ -1120,26 +1132,29 @@ mod tests {
 
     #[test]
     fn helmert_errors_match_gie() {
-        assert!(matches!(
-            Operation::create("proj=helmert rx=1"),
-            Err(CreateError::MissingArgument("convention"))
-        ));
-        assert!(matches!(
-            Operation::create("proj=helmert rx=1 convention=foo"),
-            Err(CreateError::IllegalValue("convention"))
-        ));
-        assert!(matches!(
-            Operation::create("proj=helmert rx=1 convention=1"),
-            Err(CreateError::IllegalValue("convention"))
-        ));
-        assert!(matches!(
-            Operation::create("proj=helmert towgs84=1,2,3,4,5,6,7 convention=coordinate_frame"),
-            Err(CreateError::IllegalValue("towgs84"))
-        ));
-        assert!(matches!(
-            Operation::create("proj=helmert transpose"),
-            Err(CreateError::IllegalValue("transpose"))
-        ));
+        // The texts of `helmert.cpp`, which writes its name in them.
+        let refusal = |definition: &str| match Operation::create(definition) {
+            Err(CreateError::Rejected { text, .. }) => text,
+            other => panic!("{definition}: {:?}", other.err()),
+        };
+        assert_eq!(
+            refusal("proj=helmert rx=1"),
+            "helmert: missing 'convention' argument"
+        );
+        for definition in [
+            "proj=helmert rx=1 convention=foo",
+            "proj=helmert rx=1 convention=1",
+        ] {
+            assert_eq!(
+                refusal(definition),
+                "helmert: invalid value for 'convention' argument"
+            );
+        }
+        assert_eq!(
+            refusal("proj=helmert towgs84=1,2,3,4,5,6,7 convention=coordinate_frame"),
+            "helmert: towgs84 should only be used with convention=position_vector"
+        );
+        assert!(refusal("proj=helmert transpose").starts_with("helmert: 'transpose' argument"));
         let oblique = Operation::create("+proj=ob_tran +o_proj=helmert +o_lat_p=0").expect("ob");
         assert_eq!(
             oblique.inverse(Coord::xy(0.0, 0.0)).expect_err("no inv"),

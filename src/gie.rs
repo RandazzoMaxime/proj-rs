@@ -192,7 +192,13 @@ fn dispatch(
                     state.operation = None;
                     state.readiness = Readiness::Unsupported;
                 }
-                Err(CreateError::IllegalValue(_) | CreateError::MissingArgument(_)) => {
+                Err(
+                    CreateError::IllegalValue(_)
+                    | CreateError::MissingArgument(_)
+                    | CreateError::Rejected { .. }
+                    | CreateError::NoShape
+                    | CreateError::Syntax(_),
+                ) => {
                     state.operation = None;
                     state.readiness = Readiness::Rejected;
                 }
@@ -267,7 +273,13 @@ fn open_crs(state: &mut OpState) {
             state.operation = None;
             state.readiness = Readiness::Unsupported;
         }
-        Err(CreateError::IllegalValue(_) | CreateError::MissingArgument(_)) => {
+        Err(
+            CreateError::IllegalValue(_)
+            | CreateError::MissingArgument(_)
+            | CreateError::Rejected { .. }
+            | CreateError::NoShape
+            | CreateError::Syntax(_),
+        ) => {
             state.operation = None;
             state.readiness = Readiness::Rejected;
         }

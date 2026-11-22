@@ -45,7 +45,9 @@ pub(crate) fn build(
         return Ok(None);
     }
     if frame.phi0 == 0.0 {
-        return Err(CreateError::IllegalValue("lat_0"));
+        return Err(CreateError::illegal(
+            "Invalid value for lat_0: lat_0 should be different from 0",
+        ));
     }
     let azi = params.radians("azi")?.unwrap_or(0.0);
     let es = frame.earth.es();

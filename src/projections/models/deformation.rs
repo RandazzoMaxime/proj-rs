@@ -35,32 +35,46 @@ pub(super) fn keys() -> &'static [&'static str] {
 }
 
 pub(super) fn build(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateError> {
-    if params.flag("t_obs") {
-        return Err(CreateError::MissingArgument("dt"));
-    }
+    // `PJ_TRANSFORMATION(deformation)` (deformation.cpp:356-420): the checks and texts in PROJ's
+    // order, the grids before `t_obs`.
     let has_grids = params.flag("grids");
     let has_xy = params.flag("xy_grids");
     let has_z = params.flag("z_grids");
     if !has_grids && !(has_xy && has_z) {
-        return Err(CreateError::MissingArgument("grids"));
+        return Err(CreateError::missing(
+            "Either +grids or (+xy_grids and +z_grids) should be specified.",
+        ));
     }
     let grids = if has_grids {
-        Grids::Generic(deformation_generic::load(
-            params.text("grids").unwrap_or(""),
-        )?)
+        Grids::Generic(
+            deformation_generic::load(params.text("grids").unwrap_or(""))
+                .map_err(|_| CreateError::file("could not find required grid(s).)"))?,
+        )
     } else {
         Grids::Split {
-            horizontal: load_list(params.text("xy_grids").unwrap_or(""))?,
-            vertical: load_list(params.text("z_grids").unwrap_or(""))?,
+            horizontal: load_list(params.text("xy_grids").unwrap_or(""))
+                .map_err(|_| CreateError::file("could not find requested xy_grid(s)."))?,
+            vertical: load_list(params.text("z_grids").unwrap_or(""))
+                .map_err(|_| CreateError::file("could not find requested z_grid(s)."))?,
         }
     };
+    if params.flag("t_obs") {
+        return Err(CreateError::missing(
+            "+t_obs parameter is deprecated. Use +dt instead.",
+        ));
+    }
     let dt = params.number("dt")?;
     let t_epoch = params.number("t_epoch")?;
     if dt.is_none() && t_epoch.is_none() {
-        return Err(CreateError::MissingArgument("dt"));
+        return Err(CreateError::missing(
+            "either +dt or +t_epoch needs to be set.",
+        ));
     }
     if dt.is_some() && t_epoch.is_some() {
-        return Err(CreateError::IllegalValue("dt"));
+        return Err(CreateError::rejected(
+            crate::errno::PROJ_ERR_INVALID_OP_MUTUALLY_EXCLUSIVE_ARGS,
+            "+dt or +t_epoch are mutually exclusive.",
+        ));
     }
     Ok(Box::new(Deformation {
         grids,

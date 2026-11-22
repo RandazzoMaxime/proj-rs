@@ -9,7 +9,7 @@ use std::ffi::{c_char, c_int};
 
 use proj_rs::iso19111::{
     coordinate_system_from_json, create_user_object, proj_based_operation_of_text,
-    proj_string_refusal, CoordinateMetadata, UserObject,
+    proj_string_refusal, CoordinateMetadata, UserObject, UNRECOGNIZED_USER_INPUT,
 };
 use proj_rs::unstable::{Area, Proj, ProjCreateError};
 
@@ -190,7 +190,13 @@ pub(crate) fn create(ctx: *mut PJ_CONTEXT, definition: &str, who: &str) -> *mut 
         }
         (Err(_), Ok(proj)) => hand_over(Pj::new(pointer, proj)),
         (Err(error), Err(create_error)) => {
-            let code = create_error.code();
+            // `proj_create` sets PROJ_ERR_INVALID_OP_WRONG_SYNTAX for a ParsingException that left
+            // no code (iso19111/c_api.cpp:proj_create).
+            let code = if error.to_string() == UNRECOGNIZED_USER_INPUT {
+                PROJ_ERR_INVALID_OP_WRONG_SYNTAX as c_int
+            } else {
+                create_error.code()
+            };
             context.fail(code, &format!("{who}: {error}"));
             std::ptr::null_mut()
         }
@@ -327,7 +333,14 @@ fn names_type_crs(text: &str) -> bool {
 
 fn looks_like_proj_string(text: &str) -> bool {
     let bare = text.trim_start().trim_start_matches('+');
-    bare.starts_with("proj=") || bare.starts_with("init=") || bare.starts_with("title=")
+    // `createFromUserInput` (io.cpp): a `proj=` or `init=` word anywhere makes a PROJ string,
+    // `step proj=merc` included.
+    bare.starts_with("proj=")
+        || bare.starts_with("init=")
+        || bare.starts_with("title=")
+        || [" +proj=", " proj=", " +init=", " init="]
+            .iter()
+            .any(|needle| text.contains(needle))
 }
 
 /// `name@epoch`: the text before the last `@`, and the decimal year after it.

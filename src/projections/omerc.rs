@@ -157,19 +157,29 @@ pub(crate) fn build(
         let phi1 = params.radians("lat_1")?.unwrap_or(0.0);
         let phi2 = params.radians("lat_2")?.unwrap_or(0.0);
         if phi1.abs() > FRAC_PI_2 - TOL {
-            return Err(CreateError::IllegalValue("lat_1"));
+            return Err(CreateError::illegal(
+                "Invalid value for lat_1: |lat_1| should be < 90°",
+            ));
         }
         if phi2.abs() > FRAC_PI_2 - TOL {
-            return Err(CreateError::IllegalValue("lat_2"));
+            return Err(CreateError::illegal(
+                "Invalid value for lat_2: |lat_2| should be < 90°",
+            ));
         }
         if (phi1 - phi2).abs() <= TOL {
-            return Err(CreateError::IllegalValue("lat_1"));
+            return Err(CreateError::illegal(
+                "Invalid value for lat_1/lat_2: lat_1 should be different from lat_2",
+            ));
         }
         if phi1.abs() <= TOL {
-            return Err(CreateError::IllegalValue("lat_1"));
+            return Err(CreateError::illegal(
+                "Invalid value for lat_1: lat_1 should be different from 0",
+            ));
         }
         if (frame.phi0.abs() - FRAC_PI_2).abs() <= TOL {
-            return Err(CreateError::IllegalValue("lat_0"));
+            return Err(CreateError::illegal(
+                "Invalid value for lat_0: |lat_0| should be < 90°",
+            ));
         }
         (
             params.radians("lon_1")?.unwrap_or(0.0),
@@ -216,13 +226,21 @@ pub(crate) fn build(
         let alpha_for_offset = if has_alpha {
             alpha_c
         } else {
-            asin_arg(d * gamma0.sin(), "gamma")?
+            // omerc.cpp:109-119: the bound in the text is `std::to_string`, six decimals.
+            aasin(d * gamma0.sin()).map_err(|()| {
+                CreateError::illegal(format!(
+                    "Invalid value for gamma: given lat_0 value, |gamma| should be <= {:.6}°",
+                    (1.0 / d).asin().to_degrees()
+                ))
+            })?
         };
         if has_alpha && !has_gamma {
             gamma = alpha_c;
         }
         if (frame.phi0.abs() - FRAC_PI_2).abs() <= TOL {
-            return Err(CreateError::IllegalValue("lat_0"));
+            return Err(CreateError::illegal(
+                "Invalid value for lat_0: |lat_0| should be < 90°",
+            ));
         }
         let lam0 = lamc - asin_arg(0.5 * (f_term - 1.0 / f_term) * gamma0.tan(), "lonc")? / b_coef;
         (gamma0, alpha_for_offset, lam0)
@@ -232,7 +250,7 @@ pub(crate) fn build(
         f_term = e_coef / h;
         let p = (l - h) / (l + h);
         if p == 0.0 {
-            return Err(CreateError::IllegalValue("lat_1"));
+            return Err(CreateError::illegal("Invalid value for eccentricity"));
         }
         let mut j = e_coef * e_coef;
         j = (j - l * h) / (j + l * h);
@@ -247,7 +265,7 @@ pub(crate) fn build(
         );
         let denom = f_term - 1.0 / f_term;
         if denom == 0.0 {
-            return Err(CreateError::IllegalValue("lat_1"));
+            return Err(CreateError::illegal("Invalid value for eccentricity"));
         }
         let gamma0 = (2.0 * (b_coef * adjlon(lam1 - lam0)).sin() / denom).atan();
         let gamma_rot = asin_arg(d * gamma0.sin(), "lat_1")?;

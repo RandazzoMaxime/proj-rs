@@ -129,7 +129,7 @@ fn finish(
 ) -> Result<Box<dyn crate::engine::Step>, CreateError> {
     let pn1 = height / frame.earth.a();
     if pn1 <= 0.0 || pn1 > 1e10 {
-        return Err(CreateError::IllegalValue("h"));
+        return Err(CreateError::illegal("Invalid value for h"));
     }
     let mode = if (frame.phi0.abs() - FRAC_PI_2).abs() < EPS10 {
         if frame.phi0 < 0.0 {

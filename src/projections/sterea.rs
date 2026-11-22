@@ -37,13 +37,13 @@ fn gauss_ini(e: f64, phi0: f64) -> Result<(Gauss, f64, f64), CreateError> {
     let rc = (1.0 - es).sqrt() / (1.0 - es * sphi * sphi);
     let c = (1.0 + es * cphi2 * cphi2 / (1.0 - es)).sqrt();
     if c == 0.0 {
-        return Err(CreateError::IllegalValue("lat_0"));
+        return Err(gauss_failure());
     }
     let chi = (sphi / c).asin();
     let ratexp = 0.5 * c * e;
     let srat_val = srat(e * sphi, ratexp);
     if srat_val == 0.0 {
-        return Err(CreateError::IllegalValue("lat_0"));
+        return Err(gauss_failure());
     }
     let k = if 0.5 * phi0 + FRAC_PI_4 < 1e-10 {
         1.0 / srat_val
@@ -157,4 +157,9 @@ pub(crate) fn build(
         kernel,
         crate::projections::unit_batch::UnitBatch(kernel, frame.earth),
     )))
+}
+
+/// `pj_gauss_ini` failed: `PJ_PROJECTION(sterea)` returns `PROJ_ERR_OTHER` and logs nothing.
+fn gauss_failure() -> CreateError {
+    CreateError::rejected(crate::errno::PROJ_ERR_OTHER, "")
 }
