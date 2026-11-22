@@ -460,13 +460,13 @@ for test in "${tests[@]}"; do
       [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }
       echo "proj_create refusals identical to libproj for 9 PROJ strings" ;;
     invalid_operations)
-      # proj_create gives NULL for the operations PROJ's gie suite expects to fail.
+      # proj_create refuses the operations PROJ's gie suite expects to fail, with PROJ's code and line.
       echo "== invalid_operations"
       gcc -std=c99 -I"$root/capi/include" "$here/invalid_operations.c" -o "$out/invalid_operations_ours" "${ldflags[@]}"
       gcc -std=c99 -I"$src/src" "$here/invalid_operations.c" -o "$out/invalid_operations_ref" -L"$ref/build/lib" \
         -lproj -Wl,-rpath,"$ref/build/lib"
-      # invalid_operations.deviations: degenerate operations proj-rs refuses at creation, where PROJ
-      # makes the object and fails the first point (docs/PORTING-creation-refusal.md).
+      # invalid_operations.deviations: two degenerate operations proj-rs refuses at creation, and two
+      # JSON files whose refusal quotes PROJ's JSON library (docs/PORTING-creation-refusal.md).
       ours=$(PROJ_DATA="$ref/build/data" "$out/invalid_operations_ours" "$here/invalid_operations.txt" \
         2>/dev/null | grep -v -F -f "$here/invalid_operations.deviations")
       theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/invalid_operations_ref" \

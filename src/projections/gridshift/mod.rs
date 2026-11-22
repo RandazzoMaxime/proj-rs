@@ -270,8 +270,9 @@ fn deferred<S: Step + 'static>(
     if !defer_now {
         match make(params, frame, grids) {
             Ok(step) => return Ok(Some(Box::new(step))),
-            Err(CreateError::IllegalValue("grids"))
-                if crate::network::grids_may_be_deferred()
+            Err(error)
+                if is_grid_not_found(&error)
+                    && crate::network::grids_may_be_deferred()
                     && missing_downloadable(grids)
                     && !crate::network::last_fetch_not_found() => {}
             Err(error) => return Err(error),
@@ -495,7 +496,11 @@ fn generic(params: &Params, frame: &Frame, grids: &str) -> Result<Generic, Creat
         None => Interp::FromGrid,
         Some("bilinear") => Interp::Bilinear,
         Some("biquadratic") => Interp::Biquadratic,
-        Some(_) => return Err(CreateError::IllegalValue("interpolation")),
+        Some(_) => {
+            return Err(CreateError::illegal(
+                "Unsupported value for +interpolation.",
+            ))
+        }
     };
     let mut model = classify(&sets)?;
     model.interpolation = interpolation;
@@ -529,7 +534,7 @@ fn generic(params: &Params, frame: &Frame, grids: &str) -> Result<Generic, Creat
 fn required_grids(params: &Params) -> Result<&str, CreateError> {
     params
         .text("grids")
-        .ok_or(CreateError::MissingArgument("grids"))
+        .ok_or_else(|| CreateError::missing("+grids parameter missing."))
 }
 
 fn parse_t_final(params: &Params) -> Result<f64, CreateError> {
@@ -604,13 +609,13 @@ fn load_names(
     let mut sets = Vec::new();
     for raw in text.split(',') {
         if raw.is_empty() {
-            return Err(CreateError::IllegalValue("grids"));
+            return Err(grid_not_found());
         }
         let (optional, name) = raw
             .strip_prefix('@')
             .map_or((false, raw), |rest| (true, rest));
         if name.is_empty() {
-            return Err(CreateError::IllegalValue("grids"));
+            return Err(grid_not_found());
         }
         match open(name) {
             Ok(set) => sets.push(set),
@@ -622,10 +627,21 @@ fn load_names(
     Ok(sets)
 }
 
+/// `could not find required grid(s).`: what the grid steps log when a grid of `+grids` cannot be
+/// opened or read (gridshift.cpp:939-944, hgridshift.cpp, vgridshift.cpp, xyzgridshift.cpp).
+pub(crate) fn grid_not_found() -> CreateError {
+    CreateError::file("could not find required grid(s).")
+}
+
+/// Whether `error` is [`grid_not_found`].
+pub(crate) fn is_grid_not_found(error: &CreateError) -> bool {
+    matches!(error, CreateError::Rejected { text, .. } if text == "could not find required grid(s).")
+}
+
 fn as_create(fail: Fail) -> CreateError {
     match fail {
-        Fail::Missing => CreateError::IllegalValue("grids"),
-        Fail::Invalid => CreateError::IllegalValue("grids"),
+        Fail::Missing => grid_not_found(),
+        Fail::Invalid => grid_not_found(),
     }
 }
 
@@ -1314,8 +1330,12 @@ fn classify(sets: &[GridSet]) -> Result<Model, CreateError> {
                 "ELLIPSOIDAL_HEIGHT_OFFSET" => has_ellip = true,
                 "VERTICAL_OFFSET_VERTICAL_TO_VERTICAL" => has_v2v = true,
                 "VERTICAL_OFFSET_GEOGRAPHIC_TO_VERTICAL" => has_g2v = true,
-                "" => return Err(CreateError::IllegalValue("grids")),
-                _ => return Err(CreateError::IllegalValue("grids")),
+                "" => return Err(CreateError::file("Missing TYPE metadata item in grid(s).")),
+                _ => {
+                    return Err(CreateError::file(
+                        "Unhandled value for TYPE metadata item in grid(s).",
+                    ))
+                }
             }
             if offset_x.is_empty() {
                 offset_x = set.meta_of(root, 0, "constant_offset");
@@ -1327,11 +1347,13 @@ fn classify(sets: &[GridSet]) -> Result<Model, CreateError> {
         }
     }
     if (!offset_x.is_empty() || !offset_y.is_empty()) && count > 1 {
-        return Err(CreateError::IllegalValue("grids"));
+        return Err(CreateError::file(
+            "Shift offset found in one grid. Only one grid with shift offset is supported at a time.",
+        ));
     }
     let verticals = i32::from(has_ellip) + i32::from(has_v2v) + i32::from(has_g2v);
     if verticals > 1 {
-        return Err(CreateError::IllegalValue("grids"));
+        return Err(CreateError::file("Unsupported mix of grid types."));
     }
     let (main, _main_is_geog3d) = if has_3d {
         ("GEOGRAPHIC_3D_OFFSET", true)
@@ -1387,7 +1409,7 @@ fn parse_offset(text: &str) -> Result<f64, CreateError> {
         return Ok(0.0);
     }
     text.parse::<f64>()
-        .map_err(|_| CreateError::IllegalValue("grids"))
+        .map_err(|_| CreateError::file("Invalid offset value"))
 }
 
 fn find_horizontal(sets: &[GridSet], x: f64, y: f64) -> Option<Located<'_>> {
@@ -2274,7 +2296,7 @@ struct XyzShift {
 fn xyz_shift(params: &Params, frame: &Frame, grids: &str) -> Result<XyzShift, CreateError> {
     let sets = load_all(grids, open_generic)?;
     if sets.is_empty() {
-        return Err(CreateError::IllegalValue("grids"));
+        return Err(grid_not_found());
     }
     let grid_ref_is_input = match params.text("grid_ref") {
         None => true,

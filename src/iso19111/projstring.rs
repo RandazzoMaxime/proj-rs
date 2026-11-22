@@ -1950,11 +1950,22 @@ pub fn proj_string_refusal(definition: &str) -> Option<(i32, String)> {
     } else {
         token(&tokens, "proj")
     };
+    match &error {
+        crate::engine::CreateError::Syntax(text) => {
+            return Some((crate::errno::PROJ_ERR_INVALID_OP_WRONG_SYNTAX, text.clone()));
+        }
+        crate::engine::CreateError::NoShape => {
+            let code = crate::errno::PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE;
+            return Some((code, with_code(code, "pj_init_ctx", &error.to_string())));
+        }
+        _ => {}
+    }
     let (code, detail) = match (frame_reason(&error, &tokens), &error) {
         (Some(reason), _) => (
             crate::errno::PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE,
             reason.to_owned(),
         ),
+        (None, crate::engine::CreateError::Rejected { code, text }) => (*code, text.clone()),
         (None, crate::engine::CreateError::MissingArgument(_)) => (
             crate::errno::PROJ_ERR_INVALID_OP_MISSING_ARG,
             error.to_string(),
@@ -1972,8 +1983,18 @@ pub fn proj_string_refusal(definition: &str) -> Option<(i32, String)> {
             error.to_string(),
         ),
     };
+    Some((code, with_code(code, name, &detail)))
+}
+
+/// `Error <code> (<text of the code>): <step>: <message>`, as `createFromPROJString` and `pj_init`
+/// write a refusal (io.cpp:12879-12886). An empty message leaves the code alone.
+fn with_code(code: i32, name: &str, detail: &str) -> String {
     let label = crate::errno::error_string(code).unwrap_or_default();
-    Some((code, format!("Error {code} ({label}): {name}: {detail}")))
+    if detail.is_empty() {
+        format!("Error {code} ({label})")
+    } else {
+        format!("Error {code} ({label}): {name}: {detail}")
+    }
 }
 
 /// PROJ's words for the common parameters `pj_init` refuses (init.cpp:653-678). A projection has

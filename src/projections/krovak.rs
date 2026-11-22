@@ -212,7 +212,9 @@ pub(crate) fn build(
     let g = ((1.0 + e * phi0.sin()) / (1.0 - e * phi0.sin())).powf(alpha * e / 2.0);
     let tan_half = (phi0 / 2.0 + FRAC_PI_4).tan();
     if tan_half == 0.0 {
-        return Err(CreateError::IllegalValue("lat_0"));
+        return Err(CreateError::illegal(
+            "Invalid value for lat_0: lat_0 + PI/4 should be different from 0",
+        ));
     }
     let k = (u0 / 2.0 + FRAC_PI_4).tan() / tan_half.powf(alpha) * g;
     let n0 = (1.0 - BESSEL_ES).sqrt() / (1.0 - BESSEL_ES * phi0.sin().powi(2));

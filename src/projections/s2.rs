@@ -273,13 +273,16 @@ pub(crate) fn build(
     if name != "s2" {
         return Ok(None);
     }
-    let uv = match params.text("UVtoST") {
-        None | Some("quadratic") => Uv::Quadratic,
-        Some("linear") => Uv::Linear,
-        Some("tangent") => Uv::Tangent,
-        Some("none") => Uv::None,
-        Some(_) => return Err(CreateError::IllegalValue("UVtoST")),
-    };
+    let uv =
+        match params.text("UVtoST") {
+            None | Some("quadratic") => Uv::Quadratic,
+            Some("linear") => Uv::Linear,
+            Some("tangent") => Uv::Tangent,
+            Some("none") => Uv::None,
+            Some(_) => return Err(CreateError::illegal(
+                "Invalid value for s2 parameter: should be linear, quadratic, tangent, or none.",
+            )),
+        };
     Ok(Some(Box::new(S2 {
         face: face_from_origin(frame.phi0, frame.lam0),
         frame: frame.clone(),

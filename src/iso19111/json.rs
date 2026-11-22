@@ -1878,6 +1878,9 @@ pub fn create_user_object(
     read_user_object(text, db, rules)
 }
 
+/// PROJ's refusal of a user input it cannot read (`createFromUserInput`, io.cpp:8300).
+pub const UNRECOGNIZED_USER_INPUT: &str = "unrecognized format / unknown name";
+
 /// The routing of PROJ's `createFromUserInput` (`io.cpp` 7711-8302) for every object it returns:
 /// the JSON, PROJ string, OGC URL, `AUTH:CODE`, URN, name and WKT forms. A name is searched
 /// before the WKT, except for a text with `[`, which PROJ reads as WKT first.
@@ -1922,6 +1925,8 @@ fn read_user_object(
             if let Some(object) = object_from_name(text, db)? {
                 return Ok(object);
             }
+            // io.cpp:8300: a text that is no WKT and names nothing.
+            return Err(FactoryError::Format(UNRECOGNIZED_USER_INPUT.to_owned()));
         }
     }
     // `createFromUserInput` reads a WKT with `setStrict(false)` (io.cpp:7789-7792): a grammar

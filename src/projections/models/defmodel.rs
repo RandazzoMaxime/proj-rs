@@ -1562,18 +1562,19 @@ pub(super) fn keys() -> &'static [&'static str] {
 
 /// The `+proj=defmodel` operation.
 pub(super) fn build(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateError> {
-    let Some(file) = params.text("model") else {
-        return Err(CreateError::MissingArgument("model"));
+    // `PJ_TRANSFORMATION(defmodel)` (defmodel.cpp:400-436): PROJ's texts.
+    let Some(file) = params.text("model").filter(|file| !file.is_empty()) else {
+        return Err(CreateError::missing("+model= should be specified."));
     };
-    if file.is_empty() {
-        return Err(CreateError::MissingArgument("model"));
-    }
-    let bytes = super::read_resource(file)?;
+    let bytes =
+        super::read_resource(file).map_err(|_| CreateError::file(format!("Cannot open {file}")))?;
     if bytes.len() > 10 * 1024 * 1024 {
-        return Err(CreateError::IllegalValue("model"));
+        return Err(CreateError::file(format!("File {file} too large")));
     }
-    let text = std::str::from_utf8(&bytes).map_err(|_| CreateError::IllegalValue("model"))?;
-    let master = MasterFile::parse(text).map_err(|_| CreateError::IllegalValue("model"))?;
+    let text = std::str::from_utf8(&bytes)
+        .map_err(|_| CreateError::file(format!("Cannot read {file}")))?;
+    let master = MasterFile::parse(text)
+        .map_err(|_| CreateError::file("invalid model: not a deformation model master file"))?;
     if master.file_type != "deformation_model_master_file" || master.format_version != "1.0" {
         return Err(CreateError::IllegalValue("model"));
     }

@@ -52,10 +52,17 @@ pub(crate) fn build(
         return Ok(None);
     }
     let Some(target) = params.text("o_proj") else {
-        return Err(CreateError::MissingArgument("o_proj"));
+        if params.flag("o_proj") {
+            return Err(CreateError::missing(
+                "Failed to find projection to be rotated",
+            ));
+        }
+        return Err(CreateError::missing("Missing parameter: o_proj"));
     };
     if target.is_empty() || target == "ob_tran" {
-        return Err(CreateError::MissingArgument("o_proj"));
+        return Err(CreateError::missing(
+            "Failed to find projection to be rotated",
+        ));
     }
     let (lamp, pole) = pole(params)?;
     let transverse = pole.abs() <= TOL;

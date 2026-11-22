@@ -50,22 +50,28 @@ pub(super) fn keys() -> &'static [&'static str] {
 }
 
 pub(super) fn build(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateError> {
-    let Some(file) = params.text("file") else {
-        return Err(CreateError::MissingArgument("file"));
+    // `PJ_TRANSFORMATION(tinshift)` (tinshift.cpp:96-180): PROJ's texts.
+    let Some(file) = params.text("file").filter(|file| !file.is_empty()) else {
+        return Err(CreateError::missing("+file= should be specified."));
     };
-    if file.is_empty() {
-        return Err(CreateError::MissingArgument("file"));
-    }
     let tin = if has_suffix(file, ".gpkg") {
-        let bytes = super::read_resource(file)?;
+        let bytes = super::read_resource(file).map_err(|_| {
+            if file.starts_with("http://") || file.starts_with("https://") {
+                CreateError::file(format!("invalid file: Open of {file} failed"))
+            } else {
+                CreateError::file("non existing file")
+            }
+        })?;
         load_gpkg(&bytes)?
     } else {
-        let bytes = super::read_resource(file)?;
+        let bytes = super::read_resource(file)
+            .map_err(|_| CreateError::file(format!("Cannot open {file}")))?;
         if bytes.len() > 100 * 1024 * 1024 {
-            return Err(CreateError::IllegalValue("file"));
+            return Err(CreateError::file(format!("File {file} too large")));
         }
-        let text = std::str::from_utf8(&bytes).map_err(|_| CreateError::IllegalValue("file"))?;
-        parse_json(text).ok_or(CreateError::IllegalValue("file"))?
+        let text = std::str::from_utf8(&bytes)
+            .map_err(|_| CreateError::file(format!("Cannot read {file}")))?;
+        parse_json(text).ok_or_else(|| CreateError::file("invalid model: not a TIN shift file"))?
     };
     Ok(Box::new(TinShift {
         tin,

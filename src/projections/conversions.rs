@@ -246,12 +246,13 @@ fn resolve_unit(text: &str, key: &'static str) -> Result<Resolved, CreateError> 
             horizontal: unit.horizontal,
         });
     }
+    let unknown = || CreateError::illegal(format!("unknown {key} unit"));
     let Some(factor) = proj_number(text) else {
-        return Err(CreateError::IllegalValue(key));
+        return Err(unknown());
     };
     // `1/f == 0` is how unitconvert.cpp rejects an infinite scale (`1e400`).
     if factor == 0.0 || 1.0 / factor == 0.0 {
-        return Err(CreateError::IllegalValue(key));
+        return Err(unknown());
     }
     Ok(Resolved {
         factor,
@@ -276,7 +277,10 @@ fn same_family(
 ) -> Result<(), CreateError> {
     if let (Some(left), Some(right)) = (left, right) {
         if left != right {
-            return Err(CreateError::IllegalValue(key));
+            let prefix = key.trim_end_matches("_in");
+            return Err(CreateError::illegal(format!(
+                "inconsistent unit type between {prefix}_in and {prefix}_out"
+            )));
         }
     }
     Ok(())
@@ -321,15 +325,14 @@ impl TimeUnit {
 }
 
 fn parse_time(params: &Params, key: &'static str) -> Result<Option<TimeUnit>, CreateError> {
+    let unknown = || CreateError::illegal(format!("unknown {key} unit"));
     let Some(text) = params.text(key) else {
         if params.flag(key) {
-            return Err(CreateError::IllegalValue(key));
+            return Err(unknown());
         }
         return Ok(None);
     };
-    TimeUnit::parse(text)
-        .map(Some)
-        .ok_or(CreateError::IllegalValue(key))
+    TimeUnit::parse(text).map(Some).ok_or_else(unknown)
 }
 
 struct UnitConvert {
@@ -919,7 +922,7 @@ mod tests {
             assert!(
                 matches!(
                     Operation::create(definition),
-                    Err(CreateError::IllegalValue(_))
+                    Err(CreateError::Rejected { .. })
                 ),
                 "{definition}"
             );

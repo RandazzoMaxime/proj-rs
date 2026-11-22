@@ -108,6 +108,48 @@ pub enum CreateError {
     Unsupported(&'static str),
     /// A pipeline step runs inverted and has no inverse (`pipeline.cpp:539-546`): its name.
     NoInverse(String),
+    /// Refused as PROJ refuses it: the error code `pj_init` or the operation's setup leaves on
+    /// the context, and the line it logs after the step's name.
+    Rejected {
+        /// The `PROJ_ERR_*` code.
+        code: i32,
+        /// The line PROJ logs after the step's name.
+        text: String,
+    },
+    /// No ellipsoid or sphere can be made of the shape parameters (`pj_ell_set`): PROJ logs
+    /// `pj_init_ctx: Must specify ellipsoid or sphere`.
+    NoShape,
+    /// The PROJ string parser refuses the text before any step is built
+    /// (`PROJStringSyntaxParser`): PROJ's message alone, `PROJ_ERR_INVALID_OP_WRONG_SYNTAX`.
+    Syntax(String),
+}
+
+impl CreateError {
+    /// A refusal with PROJ's code and text.
+    pub(crate) fn rejected(code: i32, text: impl Into<String>) -> Self {
+        Self::Rejected {
+            code,
+            text: text.into(),
+        }
+    }
+
+    /// `PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE` with PROJ's text.
+    pub(crate) fn illegal(text: impl Into<String>) -> Self {
+        Self::rejected(crate::errno::PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE, text)
+    }
+
+    /// `PROJ_ERR_INVALID_OP_MISSING_ARG` with PROJ's text.
+    pub(crate) fn missing(text: impl Into<String>) -> Self {
+        Self::rejected(crate::errno::PROJ_ERR_INVALID_OP_MISSING_ARG, text)
+    }
+
+    /// `PROJ_ERR_INVALID_OP_FILE_NOT_FOUND_OR_INVALID` with PROJ's text.
+    pub(crate) fn file(text: impl Into<String>) -> Self {
+        Self::rejected(
+            crate::errno::PROJ_ERR_INVALID_OP_FILE_NOT_FOUND_OR_INVALID,
+            text,
+        )
+    }
 }
 
 impl fmt::Display for CreateError {
@@ -121,6 +163,8 @@ impl fmt::Display for CreateError {
             Self::NoInverse(name) => {
                 write!(f, "Pipeline: Inverse operation for {name} is not available")
             }
+            Self::Rejected { text, .. } | Self::Syntax(text) => f.write_str(text),
+            Self::NoShape => f.write_str("Must specify ellipsoid or sphere"),
         }
     }
 }
@@ -627,7 +671,7 @@ impl Frame {
             let center = params.radians("lon_wrap")?.unwrap_or(0.0);
             // init.cpp: `!(fabs(center) < 10 * 2 * pi)`, which is also false for NaN.
             if !(center.abs() < 20.0 * PI) {
-                return Err(CreateError::IllegalValue("lon_wrap"));
+                return Err(CreateError::illegal("Invalid value for lon_wrap"));
             }
             Some(center)
         } else {
@@ -684,7 +728,7 @@ fn earth_from_params(params: &Params) -> Result<Ellipsoid, CreateError> {
         earth = Ellipsoid::try_from_a_es(earth.a(), es).map_err(ell_err)?;
     }
     if earth.a() <= 0.0 {
-        return Err(CreateError::IllegalValue("a"));
+        return Err(CreateError::NoShape);
     }
     Ok(earth)
 }
@@ -714,26 +758,26 @@ fn has_shape(params: &Params) -> bool {
 fn shape_es(params: &Params, previous_es: f64, previous_a: f64) -> Result<f64, CreateError> {
     if let Some(rf) = params.number("rf")? {
         if rf <= 0.0 {
-            return Err(CreateError::IllegalValue("rf"));
+            return Err(CreateError::NoShape);
         }
         let f = 1.0 / rf;
         return Ok(f * (2.0 - f));
     }
     if let Some(f) = params.number("f")? {
         if !shape_in_range(f) {
-            return Err(CreateError::IllegalValue("f"));
+            return Err(CreateError::NoShape);
         }
         return Ok(f * (2.0 - f));
     }
     if let Some(es) = params.number("es")? {
         if !shape_in_range(es) {
-            return Err(CreateError::IllegalValue("es"));
+            return Err(CreateError::NoShape);
         }
         return Ok(es);
     }
     if let Some(e) = params.number("e")? {
         if !shape_in_range(e) {
-            return Err(CreateError::IllegalValue("e"));
+            return Err(CreateError::NoShape);
         }
         return Ok(e * e);
     }
@@ -741,7 +785,7 @@ fn shape_es(params: &Params, previous_es: f64, previous_a: f64) -> Result<f64, C
     if let Some(b) = params.number("b")? {
         let a = params.number("a")?.unwrap_or(previous);
         if b <= 0.0 || a <= 0.0 {
-            return Err(CreateError::IllegalValue("b"));
+            return Err(CreateError::NoShape);
         }
         if b == a {
             return Ok(0.0);
@@ -756,7 +800,7 @@ fn ell_err(error: EllipsoidError) -> CreateError {
     match error {
         EllipsoidError::NonFiniteParameter
         | EllipsoidError::NonPositiveSemiMajorAxis
-        | EllipsoidError::InvalidFlattening => CreateError::IllegalValue("ellps"),
+        | EllipsoidError::InvalidFlattening => CreateError::NoShape,
     }
 }
 
@@ -955,7 +999,7 @@ fn append_default_ellipsoid(params: &mut Params) {
 
 fn named_ellipsoid(name: &str) -> Result<Ellipsoid, CreateError> {
     let Some((_, _, first, second, rf)) = PJ_ELLPS.iter().find(|(id, ..)| *id == name) else {
-        return Err(CreateError::IllegalValue("ellps"));
+        return Err(CreateError::NoShape);
     };
     let built = if *rf {
         let f = 1.0 / second;
@@ -998,31 +1042,35 @@ fn linear_unit(params: &Params, units_key: &str, meter_key: &str) -> Result<f64,
             .iter()
             .find(|(id, _)| *id == name)
             .map(|(_, factor)| *factor)
-            .ok_or(CreateError::IllegalValue("units"))?
+            .ok_or_else(|| CreateError::illegal(format!("Invalid value for {units_key}")))?
     } else if let Some(raw) = params.text(meter_key) {
-        parse_ratio(raw).ok_or(CreateError::IllegalValue("to_meter"))?
+        meter_ratio(raw, meter_key)?
     } else {
         1.0
     };
-    if text <= 0.0 {
-        return Err(CreateError::IllegalValue("to_meter"));
+    if !(text > 0.0) {
+        return Err(CreateError::illegal(format!(
+            "Invalid value for {meter_key}"
+        )));
     }
     Ok(text)
 }
 
-fn parse_ratio(text: &str) -> Option<f64> {
+/// `to_meter` or `vto_meter` as `pj_init` reads it (init.cpp:694-711): `pj_strtod`, then a
+/// denominator after `/`, which must not be 0. A text that is not a number reads as 0.
+fn meter_ratio(text: &str, key: &str) -> Result<f64, CreateError> {
     let (num, den) = text.split_once('/').unwrap_or((text, ""));
-    let value = proj_number(num)?;
-    if den.is_empty() {
-        Some(value)
-    } else {
-        let denom = proj_number(den)?;
+    let value = proj_number(num).unwrap_or(0.0);
+    if text.contains('/') {
+        let denom = proj_number(den).unwrap_or(0.0);
         if denom == 0.0 {
-            None
-        } else {
-            Some(value / denom)
+            return Err(CreateError::illegal(format!(
+                "Invalid value for {key} donominator"
+            )));
         }
+        return Ok(value / denom);
     }
+    Ok(value)
 }
 
 fn prime_meridian(params: &Params) -> Result<f64, CreateError> {
@@ -1052,7 +1100,7 @@ fn prime_meridian(params: &Params) -> Result<f64, CreateError> {
         .unwrap_or(name);
     parse_dms_degrees(text)
         .map(|deg| deg.to_radians())
-        .ok_or(CreateError::IllegalValue("pm"))
+        .ok_or_else(|| CreateError::illegal("Invalid value for pm"))
 }
 
 /// What a step reads or writes. Pipelines refuse to join different kinds.
@@ -1990,20 +2038,41 @@ fn build_tmerc(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateEr
 
 fn build_etmerc(_params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateError> {
     if frame.earth.es() == 0.0 {
-        return Err(CreateError::IllegalValue("ellps"));
+        return Err(CreateError::illegal(
+            "Invalid value for eccentricity: it should not be zero",
+        ));
     }
     Ok(classic_tmerc(frame))
 }
 
 fn build_utm(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateError> {
     if frame.earth.es() == 0.0 {
-        return Err(CreateError::IllegalValue("ellps"));
+        return Err(CreateError::illegal(
+            "Invalid value for eccentricity: it should not be zero",
+        ));
     }
-    let zone = params
-        .integer("zone")?
-        .ok_or(CreateError::MissingArgument("zone"))?;
-    let zone = u32::try_from(zone).map_err(|_| CreateError::IllegalValue("zone"))?;
-    let zone = UtmZone::try_new(zone).map_err(|_| CreateError::IllegalValue("zone"))?;
+    if !(-1000.0..=1000.0).contains(&frame.lam0) {
+        return Err(CreateError::illegal("Invalid value for lon_0"));
+    }
+    let invalid_zone = || CreateError::illegal("Invalid value for zone");
+    // `PJ_PROJECTION(utm)` (tmerc.cpp:644-661): without `+zone`, the zone of the nearest central
+    // meridian to `lon_0`.
+    let zone = match params.text("zone") {
+        Some(_) => params
+            .integer("zone")
+            .map_err(|_| invalid_zone())?
+            .ok_or_else(invalid_zone)?,
+        None => {
+            let index = ((adjlon(frame.lam0) + PI) * 30.0 / PI).floor();
+            (0..60_i32)
+                .rev()
+                .find(|&zone| f64::from(zone) <= index)
+                .unwrap_or(0)
+                + 1
+        }
+    };
+    let zone = u32::try_from(zone).map_err(|_| invalid_zone())?;
+    let zone = UtmZone::try_new(zone).map_err(|_| invalid_zone())?;
     let hemisphere = if params.flag("south") {
         Hemisphere::South
     } else {
@@ -2054,8 +2123,30 @@ fn build_lcc(params: &Params, frame: &Frame) -> Result<Box<dyn Step>, CreateErro
         frame.phi0
     };
     let lat2 = lat2.unwrap_or(lat1);
-    let lcc = Lcc::from_radians(frame.earth, 0.0, phi0, lat1, lat2, frame.k0)
-        .map_err(|_| CreateError::IllegalValue("lat_1"))?;
+    // `PJ_PROJECTION(lcc)` (lcc.cpp:97-160): the checks and texts in PROJ's order.
+    const EPS10: f64 = 1e-10;
+    if (lat1 + lat2).abs() < EPS10 {
+        return Err(CreateError::illegal(
+            "Invalid value for lat_1 and lat_2: |lat_1 + lat_2| should be > 0",
+        ));
+    }
+    if lat1.cos().abs() < EPS10 || lat1.abs() >= FRAC_PI_2 {
+        return Err(CreateError::illegal(
+            "Invalid value for lat_1: |lat_1| should be < 90°",
+        ));
+    }
+    if lat2.cos().abs() < EPS10 || lat2.abs() >= FRAC_PI_2 {
+        return Err(CreateError::illegal(
+            "Invalid value for lat_2: |lat_2| should be < 90°",
+        ));
+    }
+    let lcc = Lcc::from_radians(frame.earth, 0.0, phi0, lat1, lat2, frame.k0).map_err(|_| {
+        if frame.earth.es() == 0.0 {
+            CreateError::illegal("Invalid value for lat_1 and lat_2: |lat_1 + lat_2| should be > 0")
+        } else {
+            CreateError::illegal("Invalid value for eccentricity")
+        }
+    })?;
     let batch = LccBatch(lcc.clone());
     Ok(Box::new(Classic::new(frame.clone(), lcc).with_batch(batch)))
 }
@@ -2912,12 +3003,38 @@ fn build_pipeline(
     unknown: UnknownKeys,
 ) -> Result<Pipeline, CreateError> {
     let parts = split_pipeline(definition);
-    if parts.len() < 2 || !parts[0].contains("proj=pipeline") || step_precedes_pipeline(definition)
-    {
-        return Err(CreateError::IllegalValue("pipeline"));
+    if !parts[0].contains("proj=pipeline") || step_precedes_pipeline(definition) {
+        return Err(CreateError::Syntax(
+            "+step found outside pipeline".to_owned(),
+        ));
     }
-    if parts[0].matches("proj=").count() > 1 {
-        return Err(CreateError::IllegalValue("pipeline"));
+    if parts.len() < 2 {
+        return Err(CreateError::rejected(
+            crate::errno::PROJ_ERR_INVALID_OP_WRONG_SYNTAX,
+            "",
+        ));
+    }
+    // `pipeline.cpp:439-452`: the header may not name an operation.
+    let header_words: Vec<&str> = parts[0]
+        .split_whitespace()
+        .map(|word| word.trim_start_matches('+'))
+        .collect();
+    if header_words
+        .iter()
+        .filter(|word| word.starts_with("proj="))
+        .count()
+        > 1
+    {
+        return Err(CreateError::rejected(
+            crate::errno::PROJ_ERR_INVALID_OP_WRONG_SYNTAX,
+            "Pipeline: proj= operator before first step not allowed",
+        ));
+    }
+    if header_words.iter().any(|word| word.starts_with("o_proj=")) {
+        return Err(CreateError::rejected(
+            crate::errno::PROJ_ERR_INVALID_OP_WRONG_SYNTAX,
+            "Pipeline: o_proj= operator before first step not allowed",
+        ));
     }
     let mut header_params = Params::parse(&parts[0])?;
     if over == ForceOver::Yes {
@@ -2950,7 +3067,9 @@ fn build_pipeline(
         let omit_inv = step_params.flag("omit_inv");
         let name = step_params.text("proj").unwrap_or("").to_owned();
         if name == "pipeline" {
-            return Err(CreateError::IllegalValue("pipeline"));
+            return Err(CreateError::Syntax(
+                "nested pipeline not supported".to_owned(),
+            ));
         }
         if name.is_empty() {
             return Err(CreateError::MissingArgument("proj"));
@@ -2976,7 +3095,10 @@ fn build_pipeline(
         }
     }
     if steps.is_empty() {
-        return Err(CreateError::IllegalValue("pipeline"));
+        return Err(CreateError::rejected(
+            crate::errno::PROJ_ERR_INVALID_OP_WRONG_SYNTAX,
+            "",
+        ));
     }
     // `pipeline.cpp:533-555`: a step run inverted needs an inverse ("Inverse operation for %s is
     // not available"). The probe reads no grid.
@@ -2990,12 +3112,19 @@ fn build_pipeline(
         }
     }
     let uses_stack = steps.iter().any(|step| step.inner.needs_pipeline_stack());
-    for pair in steps.windows(2) {
+    for (index, pair) in steps.windows(2).enumerate() {
         if !kinds_compatible(
             kind_out(pair[0].inverted, pair[0].inner.as_ref()),
             kind_in(pair[1].inverted, pair[1].inner.as_ref()),
         ) {
-            return Err(CreateError::IllegalValue("pipeline"));
+            return Err(CreateError::rejected(
+                crate::errno::PROJ_ERR_INVALID_OP_WRONG_SYNTAX,
+                format!(
+                    "Pipeline: Mismatched units between step {} and {}",
+                    index + 1,
+                    index + 2
+                ),
+            ));
         }
     }
     let forward_plan = plan::plan(&steps, false);
@@ -3525,7 +3654,10 @@ mod tests {
         assert!((got.x - 1_338_073.269_610_159_3).abs() < 1e-8, "{}", got.x);
         assert!((got.y - 7_374_207.480_143_763_1).abs() < 1e-8, "{}", got.y);
         let collapsed = Operation::create("+proj=merc +a=1E77 +R_lat_a=90 +b=1");
-        assert!(matches!(collapsed, Err(CreateError::IllegalValue(_))));
+        assert!(
+            matches!(collapsed, Err(CreateError::NoShape)),
+            "{collapsed:?}"
+        );
         let at_origin = Operation::create("+proj=merc +R_C +ellps=WGS84").expect("R_C");
         let at_45 = Operation::create("+proj=merc +R_C +ellps=WGS84 +lat_0=45").expect("R_C lat");
         let sample = Coord::xy(2.0_f64.to_radians(), 49.0_f64.to_radians());

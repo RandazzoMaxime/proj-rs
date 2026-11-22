@@ -105,11 +105,15 @@ pub(crate) fn build(
         None => false,
         Some("x") => true,
         Some("y") => false,
-        Some(_) => return Err(CreateError::IllegalValue("sweep")),
+        Some(_) => {
+            return Err(CreateError::illegal(
+                "Invalid value for sweep: it should be equal to x or y.",
+            ))
+        }
     };
     let radius_g_1 = params.number("h")?.unwrap_or(0.0) / frame.earth.a();
     if radius_g_1 <= 0.0 || radius_g_1 > 1e10 {
-        return Err(CreateError::IllegalValue("h"));
+        return Err(CreateError::illegal("Invalid value for h."));
     }
     let ellips = frame.earth.es() != 0.0;
     let one_es = frame.earth.one_es();

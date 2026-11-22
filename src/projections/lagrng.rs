@@ -73,14 +73,18 @@ pub(crate) fn build(
     }
     let w = params.number("W")?.unwrap_or(2.0);
     if w <= 0.0 {
-        return Err(CreateError::IllegalValue("W"));
+        return Err(CreateError::illegal(
+            "Invalid value for W: it should be > 0",
+        ));
     }
     let hw = 0.5 * w;
     let rw = 1.0 / w;
     let hrw = 0.5 * rw;
     let sin_phi1 = params.radians("lat_1")?.unwrap_or(0.0).sin();
     if (sin_phi1.abs() - 1.0).abs() < TOL {
-        return Err(CreateError::IllegalValue("lat_1"));
+        return Err(CreateError::illegal(
+            "Invalid value for lat_1: |lat_1| should be < 90°",
+        ));
     }
     let a1 = ((1.0 - sin_phi1) / (1.0 + sin_phi1)).powf(hrw);
     Ok(Some(classic_step(

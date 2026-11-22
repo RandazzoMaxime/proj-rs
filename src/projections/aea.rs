@@ -119,13 +119,19 @@ pub(crate) fn build(
         (phi1, phi2)
     };
     if phi1.abs() > FRAC_PI_2 {
-        return Err(CreateError::IllegalValue("lat_1"));
+        return Err(CreateError::illegal(
+            "Invalid value for lat_1: |lat_1| should be <= 90°",
+        ));
     }
     if phi2.abs() > FRAC_PI_2 {
-        return Err(CreateError::IllegalValue("lat_2"));
+        return Err(CreateError::illegal(
+            "Invalid value for lat_2: |lat_2| should be <= 90°",
+        ));
     }
     if (phi1 + phi2).abs() < EPS10 {
-        return Err(CreateError::IllegalValue("lat_1"));
+        return Err(CreateError::illegal(
+            "Invalid value for lat_1 and lat_2: |lat_1 + lat_2| should be > 0",
+        ));
     }
     let earth = &frame.earth;
     let mut cone_n = phi1.sin();
@@ -146,7 +152,7 @@ pub(crate) fn build(
             }
             cone_n = (m1 * m1 - m2 * m2) / (ml2 - ml1);
             if cone_n == 0.0 {
-                return Err(CreateError::IllegalValue("lat_1"));
+                return Err(CreateError::illegal("Invalid value for eccentricity"));
             }
         }
         let ec =

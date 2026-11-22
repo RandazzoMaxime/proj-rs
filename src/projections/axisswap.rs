@@ -36,36 +36,51 @@ pub(crate) fn build(
     if name != "axisswap" {
         return Ok(None);
     }
+    // `PJ_CONVERSION(axisswap)` (axisswap.cpp) and the `axis` check of `pj_init` (init.cpp:628-643):
+    // PROJ's texts and codes.
     let has_order = params.flag("order");
     let has_axis = params.flag("axis");
     if has_order == has_axis {
-        return Err(CreateError::IllegalValue("order"));
+        return Err(CreateError::rejected(
+            crate::errno::PROJ_ERR_INVALID_OP_MUTUALLY_EXCLUSIVE_ARGS,
+            "must provide EITHER 'order' OR 'axis' parameter.",
+        ));
     }
+    let bad_order = || CreateError::illegal("axisswap: bad axis order");
     let mut axis = [4, 5, 6, 7];
     let mut sign = [1.0, 1.0, 1.0, 1.0];
     let count = if has_order {
         let order = params.text("order").unwrap_or("");
-        if order.is_empty()
-            || !order
-                .bytes()
-                .all(|byte| matches!(byte, b'1'..=b'4' | b',' | b'-'))
-        {
-            return Err(CreateError::IllegalValue("order"));
+        if let Some(byte) = order.bytes().find(|byte| !b"1234-,".contains(byte)) {
+            return Err(CreateError::illegal(format!(
+                "unknown axis '{}'",
+                char::from(byte)
+            )));
+        }
+        // `while (*s != '\0' && n < 4)`: a fifth axis is not read, and a trailing comma ends the
+        // list.
+        let mut pieces: Vec<&str> = order.split(',').collect();
+        if order.is_empty() || order.ends_with(',') {
+            pieces.pop();
         }
         let mut count = 0usize;
-        for piece in order.split(',') {
-            if count == 4 || piece.is_empty() {
-                return Err(CreateError::IllegalValue("order"));
+        for piece in pieces {
+            if count == 4 {
+                break;
             }
-            let number: i32 = piece
-                .parse()
-                .map_err(|_| CreateError::IllegalValue("order"))?;
+            // `atoi`: a piece that is not a number reads as 0, axis -1.
+            let number: i32 = piece.parse().unwrap_or(0);
             let index = match number.unsigned_abs() {
                 1 => 0,
                 2 => 1,
                 3 => 2,
                 4 => 3,
-                _ => return Err(CreateError::IllegalValue("order")),
+                other => {
+                    return Err(CreateError::illegal(format!(
+                        "invalid axis '{}'",
+                        i64::from(other) - 1
+                    )))
+                }
             };
             axis[count] = index;
             sign[count] = if number > 0 { 1.0 } else { -1.0 };
@@ -76,7 +91,7 @@ pub(crate) fn build(
         let letters = params.text("axis").unwrap_or("");
         let chars: Vec<char> = letters.chars().collect();
         if chars.len() != 3 {
-            return Err(CreateError::IllegalValue("axis"));
+            return Err(CreateError::illegal("Invalid value for axis"));
         }
         for (slot, letter) in chars.iter().enumerate() {
             let (index, flipped) = match letter {
@@ -86,7 +101,7 @@ pub(crate) fn build(
                 's' => (1, true),
                 'u' => (2, false),
                 'd' => (2, true),
-                _ => return Err(CreateError::IllegalValue("axis")),
+                _ => return Err(CreateError::illegal("Invalid value for axis")),
             };
             axis[slot] = index;
             sign[slot] = if flipped { -1.0 } else { 1.0 };
@@ -96,7 +111,7 @@ pub(crate) fn build(
     for left in 0..4 {
         for right in 0..4 {
             if left != right && axis[left] == axis[right] {
-                return Err(CreateError::IllegalValue("order"));
+                return Err(CreateError::illegal("axisswap: duplicate axes specified"));
             }
         }
     }
@@ -107,7 +122,7 @@ pub(crate) fn build(
         _ => false,
     };
     if !legal {
-        return Err(CreateError::IllegalValue("order"));
+        return Err(bad_order());
     }
     let plain_swap = count == 2 && axis[0] == 1 && axis[1] == 0 && sign[0] == 1.0 && sign[1] == 1.0;
     Ok(Some(Box::new(AxisSwap {

@@ -295,7 +295,9 @@ fn origin_stere(params: &Params, frame: &Frame) -> Result<Origin, CreateError> {
 
 fn origin_ups(params: &Params, frame: &Frame) -> Result<Origin, CreateError> {
     if frame.earth.es() == 0.0 {
-        return Err(CreateError::IllegalValue("ellps"));
+        return Err(CreateError::illegal(
+            "Invalid value for es: only ellipsoidal formulation supported",
+        ));
     }
     let phi0 = if params.flag("south") {
         -FRAC_PI_2

@@ -552,18 +552,22 @@ pub(crate) fn build(
         "nicol" => step(frame, Nicol),
         "urm5" => {
             if !params.flag("n") {
-                return Err(CreateError::MissingArgument("n"));
+                return Err(CreateError::missing("Missing parameter n."));
             }
             let n = params.number("n")?.unwrap_or(0.0);
             if n <= 0.0 || n > 1.0 {
-                return Err(CreateError::IllegalValue("n"));
+                return Err(CreateError::illegal(
+                    "Invalid value for n: it should be in ]0,1] range.",
+                ));
             }
             let q3 = params.number("q")?.unwrap_or(0.0) / 3.0;
             let alpha = params.radians("alpha")?.unwrap_or(0.0);
             let t = n * alpha.sin();
             let denom = (1.0 - t * t).sqrt();
             if denom == 0.0 {
-                return Err(CreateError::IllegalValue("alpha"));
+                return Err(CreateError::illegal(
+                    "Invalid value for n / alpha: n * sin(|alpha|) should be < 1.",
+                ));
             }
             let m = alpha.cos() / denom;
             step(

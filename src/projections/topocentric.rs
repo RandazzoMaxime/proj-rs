@@ -46,16 +46,19 @@ pub(crate) fn build(
     let has_lat = params.flag("lat_0");
     let has_h = params.flag("h_0");
     if !has_x && !has_lon {
-        return Err(CreateError::MissingArgument("X_0"));
+        return Err(CreateError::missing("missing X_0 or lon_0"));
     }
     if (has_x || has_y || has_z) && (has_lon || has_lat || has_h) {
-        return Err(CreateError::IllegalValue("X_0"));
+        return Err(CreateError::rejected(
+            crate::errno::PROJ_ERR_INVALID_OP_MUTUALLY_EXCLUSIVE_ARGS,
+            "(X_0,Y_0,Z_0) and (lon_0,lat_0,h_0) are mutually exclusive",
+        ));
     }
     if has_x && (!has_y || !has_z) {
-        return Err(CreateError::MissingArgument("Z_0"));
+        return Err(CreateError::missing("missing Y_0 and/or Z_0"));
     }
     if has_lon && !has_lat {
-        return Err(CreateError::MissingArgument("lat_0"));
+        return Err(CreateError::missing("missing lat_0"));
     }
     let (x0, y0, z0, lam, phi) = if has_x {
         let x0 = params.number("X_0")?.unwrap_or(0.0);
