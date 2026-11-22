@@ -45,14 +45,16 @@ int main(int argc, char **argv) {
     proj_context_destroy(ctx);
   }
   fclose(cases);
-  const char *targets[] = {"EPSG:2154", "EPSG:3857", "EPSG:4258"};
-  for (int i = 0; i < 3; i++) {
+  const char *targets[] = {"EPSG:2154", "EPSG:3857", "EPSG:4258", "NONE:0"};
+  for (int i = 0; i < 4; i++) {
     PJ_CONTEXT *ctx = proj_context_create();
-    proj_log_level(ctx, PJ_LOG_NONE);
+    proj_log_func(ctx, NULL, keep_last);
+    proj_log_level(ctx, PJ_LOG_ERROR);
     proj_destroy(proj_create(ctx, "+proj=bogus"));
+    last[0] = 0;
     PJ *pair = proj_create_crs_to_crs(ctx, "EPSG:4326", targets[i], NULL);
-    printf("crs_to_crs EPSG:4326 %s after a refusal -> %s errno=%d\n", targets[i],
-           pair ? "obj" : "NULL", proj_context_errno(ctx));
+    printf("crs_to_crs EPSG:4326 %s after a refusal -> %s errno=%d log=%s\n", targets[i],
+           pair ? "obj" : "NULL", proj_context_errno(ctx), last);
     proj_destroy(pair);
     proj_context_destroy(ctx);
   }
