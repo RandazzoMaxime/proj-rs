@@ -2390,6 +2390,20 @@ pub struct OperationMethod {
 }
 
 impl OperationMethod {
+    /// The PROJ string of a PROJ-based method: the text after `PROJ-based operation method: `
+    /// (`PROJBasedOperation::create` from a string) or after `PROJ-based operation method
+    /// (approximate): ` (from an exportable object, `projbasedoperation.cpp:136`). `None` for any
+    /// other method.
+    #[must_use]
+    pub fn proj_based_text(&self) -> Option<&str> {
+        self.name
+            .strip_prefix("PROJ-based operation method: ")
+            .or_else(|| {
+                self.name
+                    .strip_prefix("PROJ-based operation method (approximate): ")
+            })
+    }
+
     /// Method name, for example `Transverse Mercator`.
     #[must_use]
     pub fn name(&self) -> &str {

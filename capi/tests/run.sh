@@ -6,7 +6,8 @@
 #   fork datadir geodesic proj_string_type projjson_objects horizontal_datum string_lifetime
 #   unnamed_operation embedded_db pj_info_order normalize_operation latin1_input
 #   crs_to_crs_describe create_any_object export_objects derived_temporal last_used_operation
-#   deriving_conversion single_crs_cs grid_used network_grids crs_to_crs_area step_error_log c_api
+#   deriving_conversion single_crs_cs grid_used network_grids crs_to_crs_area step_error_log
+#   proj_based_operation c_api
 #   (default: all). PENDING=0 runs the cases of pending.txt too, to see them fail.
 #   GTEST_FILTER=pattern narrows the gtest cases of the C++ tests.
 #
@@ -33,7 +34,7 @@ tests=("$@")
                                   latin1_input crs_to_crs_describe create_any_object
                                   export_objects derived_temporal last_used_operation
                                   deriving_conversion single_crs_cs grid_used network_grids
-                                  crs_to_crs_area step_error_log c_api)
+                                  crs_to_crs_area step_error_log proj_based_operation c_api)
 
 ref=${PROJ_REFERENCE:-$root/target/proj-reference}
 src=$ref/src
@@ -437,6 +438,16 @@ for test in "${tests[@]}"; do
       theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/step_error_log_ref" 2>/dev/null)
       [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }
       echo "error log lines of proj_trans identical to libproj for 18 points" ;;
+    proj_based_operation)
+      # An operation PROJ only writes as a PROJ string is a PROJBasedOperation, type 24.
+      echo "== proj_based_operation"
+      gcc -std=c99 -I"$root/capi/include" "$here/proj_based_operation.c" -o "$out/proj_based_ours" "${ldflags[@]}"
+      gcc -std=c99 -I"$src/src" "$here/proj_based_operation.c" -o "$out/proj_based_ref" -L"$ref/build/lib" \
+        -lproj -Wl,-rpath,"$ref/build/lib"
+      ours=$(PROJ_DATA="$ref/build/data" "$out/proj_based_ours" 2>/dev/null)
+      theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/proj_based_ref" 2>/dev/null)
+      [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }
+      echo "PROJ-based operations identical to libproj for 3 pairs" ;;
     c_api)
       python3 "$here/filter_tests.py" "$unit/test_c_api.cpp" "$here/excluded.txt" "$out/test_c_api_filtered.cpp"
       g++ "${cxxflags[@]}" -DTIFF_ENABLED -include "$unit/gtest_include.h" "$out/test_c_api_filtered.cpp" "$unit/main.cpp" \
