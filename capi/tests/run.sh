@@ -5,7 +5,7 @@
 #   TEST is one of: symbols abi lists intermediate_crs errno_string angular_io context include_h
 #   fork datadir geodesic proj_string_type projjson_objects horizontal_datum string_lifetime
 #   unnamed_operation embedded_db pj_info_order normalize_operation latin1_input
-#   crs_to_crs_describe create_any_object c_api
+#   crs_to_crs_describe create_any_object export_objects c_api
 #   (default: all). PENDING=0 runs the cases of pending.txt too, to see them fail.
 #   GTEST_FILTER=pattern narrows the gtest cases of the C++ tests.
 #
@@ -29,7 +29,8 @@ tests=("$@")
                                   context include_h fork datadir geodesic proj_string_type
                                   projjson_objects horizontal_datum string_lifetime
                                   unnamed_operation embedded_db pj_info_order normalize_operation
-                                  latin1_input crs_to_crs_describe create_any_object c_api)
+                                  latin1_input crs_to_crs_describe create_any_object
+                                  export_objects c_api)
 
 ref=${PROJ_REFERENCE:-$root/target/proj-reference}
 src=$ref/src
@@ -334,6 +335,16 @@ for test in "${tests[@]}"; do
       theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/any_ref" "${objects[@]}" 2>/dev/null)
       [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }
       echo "objects identical to libproj for ${#objects[@]} texts" ;;
+    export_objects)
+      # WKT2, WKT1 and PROJJSON of ellipsoids, prime meridians, datums, ensembles and CS.
+      echo "== export_objects"
+      gcc -std=c99 -I"$root/capi/include" "$here/export_objects.c" -o "$out/export_ours" "${ldflags[@]}"
+      gcc -std=c99 -I"$src/src" "$here/export_objects.c" -o "$out/export_ref" -L"$ref/build/lib" \
+        -lproj -Wl,-rpath,"$ref/build/lib"
+      ours=$("$out/export_ours" 2>/dev/null)
+      theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/export_ref" 2>/dev/null)
+      [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }
+      echo "exports identical to libproj for 13 objects" ;;
     c_api)
       python3 "$here/filter_tests.py" "$unit/test_c_api.cpp" "$here/excluded.txt" "$out/test_c_api_filtered.cpp"
       g++ "${cxxflags[@]}" -DTIFF_ENABLED -include "$unit/gtest_include.h" "$out/test_c_api_filtered.cpp" "$unit/main.cpp" \
