@@ -130,21 +130,44 @@ pub(crate) fn parameters_of_operation(text: &str) -> Result<String, ProjError> {
     }
 }
 
-/// `proj_pj_info` of a pipeline: one step is the step itself, several steps stay a pipeline.
+/// `proj_pj_info` of a pipeline: one plain step is the step itself, anything else stays a
+/// pipeline as written, `type=crs` included.
 ///
-/// `pj_datum_set` runs only outside a pipeline, so a flattened step gets the datum
-/// append and the default ellipsoid, and a multi-step pipeline does not.
+/// The PROJ string formatter keeps the pipeline for an inverted step, an `omit_inv` or
+/// `omit_fwd` step, or a global parameter (io.cpp:10045-10050). `pj_datum_set` runs only
+/// outside a pipeline, so a flattened step gets the datum append and the default ellipsoid.
 fn pipeline_definition(text: &str) -> Result<String, ProjError> {
-    let tokens = bare_tokens(text);
+    let tokens: Vec<String> = text
+        .split_whitespace()
+        .map(|token| token.strip_prefix('+').unwrap_or(token).to_owned())
+        .collect();
     if tokens.first().map(String::as_str) != Some("proj=pipeline") {
         return Err(ProjError::Definition);
     }
+    let has_global = tokens
+        .iter()
+        .skip(1)
+        .take_while(|token| *token != "step")
+        .next()
+        .is_some();
     let steps = split_steps(&tokens);
     match steps.as_slice() {
-        [only] => raw_tokens(only.clone()),
+        [only] if !has_global && !keeps_pipeline(only) => raw_tokens(
+            only.iter()
+                .filter(|item| *item != "type=crs")
+                .cloned()
+                .collect(),
+        ),
         [] => Err(ProjError::Definition),
         _ => Ok(tokens.join(" ")),
     }
+}
+
+fn keeps_pipeline(step: &[String]) -> bool {
+    step.iter().any(|item| {
+        let key = item.split('=').next().unwrap_or(item);
+        matches!(key, "inv" | "omit_inv" | "omit_fwd")
+    })
 }
 
 /// Tokens of each `step`, in order. The leading `proj=pipeline` is not a step.

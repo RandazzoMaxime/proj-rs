@@ -1787,7 +1787,12 @@ pub fn proj_based_operation_of_text(
     let bare = text.strip_prefix('+').unwrap_or(text);
     let proj_string =
         bare.starts_with("proj=") || text.contains(" +proj=") || text.contains(" proj=");
-    if !proj_string || text.contains("type=crs") || text.contains("init=") {
+    let operation_despite_type =
+        || text.contains("proj=pipeline") && super::projstring::pipeline_reads_as_operation(text);
+    if !proj_string
+        || text.contains("init=")
+        || text.contains("type=crs") && !operation_despite_type()
+    {
         return None;
     }
     // A missing grid is left to the caller: this reading has no context to search for it.

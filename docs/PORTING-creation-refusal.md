@@ -117,3 +117,19 @@ not know the `US .gtx` method, which is not one of PROJ's mappings.
 WKT1 GDAL of every EPSG CRS and coordinate operation, and the grammar errors of a malformed corpus
 made from them. The WKT1 and WKT2 grammar checks that `createFromWKT` runs once the object is
 built are in `docs/PORTING-wkt-grammar.md`.
+
+## A `+proj=pipeline` string with `+type=crs`
+
+`createFromPROJString` reads a pipeline with `+type=crs` as a CRS only when its steps have one
+of the CRS shapes: a geographic step with at most one `unitconvert` and one `axisswap`, or a
+projection step that is not inverted, after at most one geographic step. Any other pipeline is a
+PROJ-based operation, `+type=crs` or not (`io.cpp:12924-12974`). proj-rs refused it with
+`unsupported +proj=pipeline for a CRS`. GRASS 8.5 builds such a string in `r.latlong`
+(`+proj=pipeline +step +inv +proj=lcc ... +type=crs`). `proj_based_operation_of_text` now reads
+it as an operation when `projstring::pipeline_reads_as_operation` says so.
+
+`proj_pj_info` gives the definition the PROJ string formatter writes. It keeps a one-step
+pipeline as a pipeline when the step is inverted, has `omit_inv` or `omit_fwd`, or when the
+pipeline has a global parameter (`io.cpp:10045-10050`). `type=crs` then stays in the text.
+proj-rs flattened every one-step pipeline. `tests/pipeline_type_crs.rs` holds the cases, with
+the values of PROJ 9.9.0.
