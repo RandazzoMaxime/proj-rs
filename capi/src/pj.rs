@@ -8,7 +8,7 @@
 use std::ffi::{c_char, c_int};
 
 use proj_rs::iso19111::{
-    coordinate_system_from_json, create_user_object, proj_based_operation_of_text,
+    coordinate_system_from_json, create_user_object, opens_as_wkt, proj_based_operation_of_text,
     proj_string_refusal, CoordinateMetadata, FactoryError, UserObject, UNRECOGNIZED_USER_INPUT,
 };
 use proj_rs::unstable::{Area, Proj, ProjCreateError};
@@ -430,6 +430,11 @@ fn crs_instantiation(text: &str) -> String {
 }
 
 fn looks_like_proj_string(text: &str) -> bool {
+    // `createFromUserInput` reads WKT first (io.cpp:7780-7797): a WKT whose method is
+    // `PROJ-based operation method: +proj=...` is not a PROJ string.
+    if opens_as_wkt(text) {
+        return false;
+    }
     let bare = text.trim_start().trim_start_matches('+');
     // `createFromUserInput` (io.cpp): a `proj=` or `init=` word anywhere makes a PROJ string,
     // `step proj=merc` included.

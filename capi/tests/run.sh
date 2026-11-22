@@ -7,7 +7,8 @@
 #   unnamed_operation embedded_db pj_info_order normalize_operation latin1_input
 #   crs_to_crs_describe create_any_object export_objects derived_temporal last_used_operation
 #   deriving_conversion single_crs_cs grid_used network_grids crs_to_crs_area step_error_log
-#   proj_based_operation proj_string_refusal invalid_operations errno_parity crs_proj_strings c_api
+#   proj_based_operation proj_string_refusal invalid_operations errno_parity crs_proj_strings
+#   wkt_warnings c_api
 #   (default: all). PENDING=0 runs the cases of pending.txt too, to see them fail.
 #   GTEST_FILTER=pattern narrows the gtest cases of the C++ tests.
 #
@@ -36,7 +37,7 @@ tests=("$@")
                                   deriving_conversion single_crs_cs grid_used network_grids
                                   crs_to_crs_area step_error_log proj_based_operation
                                   proj_string_refusal invalid_operations errno_parity
-                                  crs_proj_strings c_api)
+                                  crs_proj_strings wkt_warnings c_api)
 
 ref=${PROJ_REFERENCE:-$root/target/proj-reference}
 src=$ref/src
@@ -508,6 +509,22 @@ for test in "${tests[@]}"; do
         < "$out/crs_proj_strings.txt" 2>/dev/null)
       [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") | head -40 >&2; exit 1; }
       echo "proj_create identical to libproj for $(wc -l < "$out/crs_proj_strings.txt") CRS PROJ strings" ;;
+    wkt_warnings)
+      # proj_create_from_wkt of the WKT2:2019 and WKT1 GDAL libproj writes for every EPSG CRS and
+      # coordinate operation: object and warnings (validateParameters included). The grammar errors
+      # are left out: libproj reports some that proj-rs does not (docs/PORTING-creation-refusal.md).
+      echo "== wkt_warnings"
+      gcc -std=c99 -I"$root/capi/include" "$here/wkt_warnings.c" -o "$out/wkt_warnings_ours" "${ldflags[@]}"
+      gcc -std=c99 -I"$src/src" "$here/wkt_warnings.c" -o "$out/wkt_warnings_ref" -L"$ref/build/lib" \
+        -lproj -Wl,-rpath,"$ref/build/lib"
+      env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/wkt_warnings_ref" export 2>/dev/null \
+        | sort -u > "$out/wkt_warnings.txt"
+      ours=$(PROJ_DATA="$ref/build/data" "$out/wkt_warnings_ours" check < "$out/wkt_warnings.txt" 2>/dev/null \
+        | grep -v '^  error: ')
+      theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/wkt_warnings_ref" check \
+        < "$out/wkt_warnings.txt" 2>/dev/null | grep -v '^  error: ')
+      [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") | head -40 >&2; exit 1; }
+      echo "proj_create_from_wkt warnings identical to libproj for $(wc -l < "$out/wkt_warnings.txt") WKT" ;;
     c_api)
       python3 "$here/filter_tests.py" "$unit/test_c_api.cpp" "$here/excluded.txt" "$out/test_c_api_filtered.cpp"
       g++ "${cxxflags[@]}" -DTIFF_ENABLED -include "$unit/gtest_include.h" "$out/test_c_api_filtered.cpp" "$unit/main.cpp" \

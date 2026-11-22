@@ -409,6 +409,34 @@ fn operation_create_geographic_geocentric() {
     assert!(conv.validate_parameters().is_empty());
 }
 
+// Messages from proj_create_from_wkt of PROJ 9.9.0 on the WKT2 of the EPSG database
+// (capi/tests/wkt_warnings.c): `findMapping` looks a method up by code then by equivalent name,
+// projection methods first, and `US .gtx` is not one of its mappings.
+#[test]
+fn operation_validate_parameters_lookup_like_proj() {
+    let geocen = Conversion::create_with_method(
+        "Time-dependent Coordinate Frame rotation (geocen)",
+        "EPSG",
+        "1056",
+        Vec::new(),
+    );
+    assert_eq!(
+        geocen.validate_parameters()[0],
+        "Method name Time-dependent Coordinate Frame rotation (geocen) is equivalent to official \
+         Time-dependent Coordinate Frame rotation  geocen) but not strictly equal"
+    );
+    let gtx = Conversion::create_with_method(
+        "Geographic3D to GravityRelatedHeight (gtx)",
+        "EPSG",
+        "9665",
+        Vec::new(),
+    );
+    assert_eq!(
+        gtx.validate_parameters(),
+        vec!["Unknown method Geographic3D to GravityRelatedHeight (gtx)".to_owned()]
+    );
+}
+
 #[test]
 fn operation_validate_parameters() {
     let unknown = Conversion::create_with_method("unknown", "", "", Vec::new());

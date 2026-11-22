@@ -1896,6 +1896,11 @@ fn read_user_object(
     if let Some(crs) = crs_from_ogc_auto(text)? {
         return Ok(UserObject::Crs(crs));
     }
+    // WKT is read before PROJ strings (io.cpp:7780-7797): a `PROJ-based operation method:
+    // +proj=...` inside a WKT does not make it a PROJ string.
+    if opens_as_wkt(text) {
+        return wkt_user_object(text, db);
+    }
     if is_proj_string_text(text) && text.contains("init=") && !has_proj_step(text) {
         return crs_from_init_text(text, db, rules).map(UserObject::Crs);
     }
@@ -1929,8 +1934,23 @@ fn read_user_object(
             return Err(FactoryError::Format(UNRECOGNIZED_USER_INPUT.to_owned()));
         }
     }
-    // `createFromUserInput` reads a WKT with `setStrict(false)` (io.cpp:7789-7792): a grammar
-    // error or a recoverable issue is a warning, not a failure.
+    wkt_user_object(text, db)
+}
+
+/// Whether `text` opens with a WKT keyword and `[` (spaces allowed between them), as
+/// `createFromUserInput` tests it before anything else but JSON (io.cpp:7780-7797).
+#[must_use]
+pub fn opens_as_wkt(text: &str) -> bool {
+    let keyword = text
+        .bytes()
+        .take_while(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+        .count();
+    keyword > 0 && text[keyword..].trim_start().starts_with('[')
+}
+
+/// `createFromUserInput` reads a WKT with `setStrict(false)` (io.cpp:7789-7792): a grammar error
+/// or a recoverable issue is a warning, not a failure.
+fn wkt_user_object(text: &str, db: Option<&DatabaseContext>) -> Result<UserObject, FactoryError> {
     let mut parser = WktParser::new();
     parser.set_strictness(super::wkt::WktStrictness::Lenient);
     if let Some(db) = db {
