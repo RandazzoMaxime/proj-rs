@@ -7533,7 +7533,11 @@ pub(crate) fn operation_extent(operation: &CoordinateOperation) -> Option<Object
         return Some(world_extent());
     }
     if let Some(domain) = operation.domains().first() {
-        return Some(domain.clone());
+        // `getExtent` is the extent of the domain, without its scope.
+        return Some(ObjectDomain {
+            scope: None,
+            ..domain.clone()
+        });
     }
     let CoordinateOperation::Concatenated(concatenated) = operation else {
         return None;
