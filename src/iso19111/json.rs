@@ -1905,6 +1905,9 @@ fn read_user_object(
         if let Some(crs) = crs_from_authority_code(text, db)? {
             return Ok(UserObject::Crs(crs));
         }
+        if let Some(object) = object_from_urn(text, db)? {
+            return Ok(object);
+        }
         if let Some(crs) = crs_from_urn(text, db)? {
             return Ok(UserObject::Crs(crs));
         }
@@ -3390,8 +3393,8 @@ impl UserObject {
 /// ellipsoid, a coordinate operation, or a CRS with a coordinate epoch.
 ///
 /// JSON whose `type` is a datum returns that datum. The URN forms `urn:ogc:def:datum:`,
-/// `ensemble:`, `meridian:`, `ellipsoid:` and `coordinateOperation:` (one, or a `coordinateOperation,`
-/// list that concatenates them) return that object. `AUTH:CODE@epoch` returns a coordinate
+/// `ensemble:`, `meridian:`, `ellipsoid:`, `coordinateMetadata:` and `coordinateOperation:` (one,
+/// or a `coordinateOperation,` list that concatenates them) return that object. `AUTH:CODE@epoch` returns a coordinate
 /// metadata. Every other accepted text is a CRS, the same objects [`create_from_user_input`]
 /// builds.
 ///
@@ -3405,9 +3408,6 @@ pub fn create_object_from_user_input(
     let text = text.trim();
     if text.starts_with('{') {
         return import_user_object(text, db);
-    }
-    if let Some(object) = object_from_urn(text, db)? {
-        return Ok(object);
     }
     if let Some(metadata) = coordinate_metadata_from_text(text, db)? {
         return Ok(UserObject::CoordinateMetadata(metadata));
@@ -3433,7 +3433,12 @@ fn object_from_urn(text: &str, db: &DatabaseContext) -> Result<Option<UserObject
     let kind = tokens[3];
     if !matches!(
         kind,
-        "datum" | "ensemble" | "meridian" | "ellipsoid" | "coordinateOperation"
+        "datum"
+            | "ensemble"
+            | "meridian"
+            | "ellipsoid"
+            | "coordinateOperation"
+            | "coordinateMetadata"
     ) {
         return Ok(None);
     }
@@ -3470,8 +3475,8 @@ fn read_urn_object<T>(
     }
 }
 
-/// The object of kind `kind` (`datum`, `ensemble`, `meridian`, `ellipsoid`, `coordinateOperation`)
-/// with `code` in `factory`.
+/// The object of kind `kind` (`datum`, `ensemble`, `meridian`, `ellipsoid`, `coordinateMetadata`,
+/// `coordinateOperation`) with `code` in `factory`.
 fn typed_object(
     factory: &AuthorityFactory,
     kind: &str,
@@ -3486,6 +3491,9 @@ fn typed_object(
         "ensemble" => UserObject::Ensemble(factory.create_datum_ensemble(code)?),
         "meridian" => UserObject::PrimeMeridian(factory.create_prime_meridian(code)?),
         "ellipsoid" => UserObject::Ellipsoid(factory.create_ellipsoid(code)?),
+        "coordinateMetadata" => {
+            UserObject::CoordinateMetadata(factory.create_coordinate_metadata(code)?)
+        }
         _ => UserObject::Operation(
             factory.create_coordinate_operation(code, AlternativeGridNames::Proj)?,
         ),
