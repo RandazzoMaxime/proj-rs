@@ -1943,11 +1943,19 @@ fn frame_refusal(definition: &str, tokens: &[(String, String)]) -> Option<String
     if tokens.iter().any(|(key, _)| key == "step") {
         return None;
     }
+    // A projection has its own `lat_0` and `k_0` checks (omerc, krovak, labrd): the common text
+    // is PROJ's only when the value itself is what `pj_init` refuses.
+    let lat_0 = param_token(tokens, "lat_0").map(|text| crate::dms::dmstor(text.as_bytes()));
+    let k_0 = param_token(tokens, "k_0")
+        .or_else(|| param_token(tokens, "k"))
+        .map(|text| text.trim().parse::<f64>().unwrap_or(0.0));
     let reason = match crate::engine::Operation::create_keeping_unknown(definition) {
-        Err(crate::engine::CreateError::IllegalValue("lat_0")) => {
+        Err(crate::engine::CreateError::IllegalValue("lat_0"))
+            if lat_0.is_some_and(|phi| !(phi.abs() <= std::f64::consts::FRAC_PI_2)) =>
+        {
             "Invalid value for lat_0: |lat_0| should be <= 90°"
         }
-        Err(crate::engine::CreateError::IllegalValue("k_0")) => {
+        Err(crate::engine::CreateError::IllegalValue("k_0")) if k_0.is_some_and(|k| !(k > 0.0)) => {
             "Invalid value for k/k_0: it should be > 0"
         }
         _ => return None,
