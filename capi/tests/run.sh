@@ -8,7 +8,7 @@
 #   crs_to_crs_describe create_any_object export_objects derived_temporal last_used_operation
 #   deriving_conversion single_crs_cs grid_used network_grids crs_to_crs_area step_error_log
 #   proj_based_operation proj_string_refusal invalid_operations errno_parity crs_proj_strings
-#   wkt_warnings c_api
+#   wkt_warnings wkt_round_trip c_api
 #   (default: all). PENDING=0 runs the cases of pending.txt too, to see them fail.
 #   GTEST_FILTER=pattern narrows the gtest cases of the C++ tests.
 #
@@ -37,7 +37,8 @@ tests=("$@")
                                   deriving_conversion single_crs_cs grid_used network_grids
                                   crs_to_crs_area step_error_log proj_based_operation
                                   proj_string_refusal invalid_operations errno_parity
-                                  crs_proj_strings wkt_warnings c_api)
+                                  crs_proj_strings wkt_warnings wkt_round_trip
+                                  c_api)
 
 ref=${PROJ_REFERENCE:-$root/target/proj-reference}
 src=$ref/src
@@ -525,6 +526,21 @@ for test in "${tests[@]}"; do
         < "$out/wkt_warnings.txt" 2>/dev/null | grep -v '^  error: ')
       [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") | head -40 >&2; exit 1; }
       echo "proj_create_from_wkt warnings identical to libproj for $(wc -l < "$out/wkt_warnings.txt") WKT" ;;
+    wkt_round_trip)
+      # proj_create then proj_as_proj_string of the WKT2:2019 and WKT1 GDAL libproj writes for every
+      # EPSG CRS (datum ensembles, polar axes, Krovak). Operations are left out: proj-rs does not
+      # write some of them as a PROJ string yet (docs/PORTING-polar-axes.md).
+      echo "== wkt_round_trip"
+      gcc -std=c99 -I"$root/capi/include" "$here/wkt_warnings.c" -o "$out/wkt_warnings_ours" "${ldflags[@]}"
+      gcc -std=c99 -I"$src/src" "$here/wkt_warnings.c" -o "$out/wkt_warnings_ref" -L"$ref/build/lib" \
+        -lproj -Wl,-rpath,"$ref/build/lib"
+      env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/wkt_warnings_ref" export 2>/dev/null \
+        | grep -v '^COORDINATEOPERATION\|^CONVERSION\|^PROJECTION' | sort -u > "$out/wkt_round_trip.txt"
+      ours=$(PROJ_DATA="$ref/build/data" "$out/wkt_warnings_ours" proj < "$out/wkt_round_trip.txt" 2>/dev/null)
+      theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/wkt_warnings_ref" proj \
+        < "$out/wkt_round_trip.txt" 2>/dev/null)
+      [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") | head -40 >&2; exit 1; }
+      echo "PROJ strings of $(wc -l < "$out/wkt_round_trip.txt") EPSG CRS WKT identical to libproj" ;;
     c_api)
       python3 "$here/filter_tests.py" "$unit/test_c_api.cpp" "$here/excluded.txt" "$out/test_c_api_filtered.cpp"
       g++ "${cxxflags[@]}" -DTIFF_ENABLED -include "$unit/gtest_include.h" "$out/test_c_api_filtered.cpp" "$unit/main.cpp" \
