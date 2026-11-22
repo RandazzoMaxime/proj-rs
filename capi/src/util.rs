@@ -144,8 +144,19 @@ impl Arena {
 /// A `NULL`-terminated array of C strings allocated for the caller, freed by
 /// `proj_string_list_destroy`.
 pub(crate) fn string_list(items: &[String]) -> *mut *mut c_char {
-    let mut pointers: Vec<*mut c_char> =
-        items.iter().map(|item| c_string(item).into_raw()).collect();
+    let bytes: Vec<&[u8]> = items.iter().map(|item| item.as_bytes()).collect();
+    byte_string_list(&bytes)
+}
+
+/// [`string_list`] of byte strings, which need not be UTF-8. A NUL byte is dropped.
+pub(crate) fn byte_string_list<T: AsRef<[u8]>>(items: &[T]) -> *mut *mut c_char {
+    let mut pointers: Vec<*mut c_char> = items
+        .iter()
+        .map(|item| {
+            let bytes: Vec<u8> = item.as_ref().iter().copied().filter(|&b| b != 0).collect();
+            CString::new(bytes).unwrap_or_default().into_raw()
+        })
+        .collect();
     pointers.push(std::ptr::null_mut());
     let boxed = pointers.into_boxed_slice();
     Box::into_raw(boxed).cast::<*mut c_char>()

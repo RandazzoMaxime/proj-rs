@@ -39,7 +39,7 @@ The ledger `docs/UNPORTED-CLI.md` lists 32 projinfo rows (34 before). Nothing re
 
 | Area | PROJ | Port |
 |---|---|---|
-| WKT1 syntax check | `pj_wkt1_parse`, bison tables | `src/iso19111/wkt1_syntax.rs` (lexer, `yyparse`, `yysyntax_error`, `pj_wkt_error`); `src/iso19111/wkt1_syntax/tables.rs` extracted from `wkt1_generated_parser.c` by a script (not committed) |
+| WKT1 and WKT2 grammar checks | `pj_wkt1_parse`, `pj_wkt2_parse`, bison tables | `src/iso19111/wkt_grammar/` (`docs/PORTING-wkt-grammar.md`) |
 | Grammar check in `createFromWKT` | io.cpp:8506-8520 | `WktParser::create_from_wkt` (`src/iso19111/wkt_import.rs:636`): after `build_from_wkt`, strict fails, lax records in `grammar_errors()` |
 | Parser warnings | `WKTParser::warningList()` | no validation notes (`warnings()` holds the recoverable ones only) |
 | Lax WKT in projinfo | projinfo_lib.cpp:389-406 | `read_wkt` (`src/bin/projinfo.rs:1216`), used by `load_named` and `build_object` |
@@ -56,7 +56,7 @@ The ledger `docs/UNPORTED-CLI.md` lists 32 projinfo rows (34 before). Nothing re
 ## Deliberate differences and notes
 
 - `WktParser::set_strictness` takes the `WktStrictness` enum of the WKT1 export (`Strict`, `Lenient`), and the lax parse passes `Lenient`. The name is a conflation, kept because the API is public.
-- WKT2 grammar errors (`pj_wkt2_parse`, `wkt2_grammar.y`) are not ported. A WKT2 text gets no `Grammar error:` line.
+- WKT2 grammar errors (`pj_wkt2_parse`) are ported since: see `docs/PORTING-wkt-grammar.md`.
 - The AXIS branch (`wkt_import.rs`, `build_axis`) still warns `missing UNIT in AXIS node`. PROJ throws `buildCS: missing UNIT` for an AXIS with no unit and no fallback (io.cpp:2758-2762). No oracle case here shows it, so it is not changed.
 - Two unit fixtures in `tests/test_io.rs` (polar stereographic, 5 cases) ended their parameter list with a comma, which PROJ's grammar rejects. PROJ's own text (test_io.cpp) has one comma. The expected strings are unchanged.
 - The yaml harness compares combined output by content lines, which trims trailing newlines. The output newlines are therefore checked by `tests/cli_projinfo_text.rs` instead.
@@ -123,7 +123,6 @@ Rows 36 and 37 are one pair, run with the grid check off and on. Only the `, at 
 | #33 candidate order | sorting of equal candidates | engine (`select.rs`) |
 | #34 candidate count (20 against 19) | an extra candidate | engine |
 | #38 candidate set, NKG grid flag | the candidate `EPSG:10894` is missing, and `NKG:ITRF2014_TO_DK` does not report its missing grid | engine and `grids_needed` |
-| WKT2 grammar errors | `pj_wkt2_parse` is not ported | `wkt2_grammar.y`, a second table set |
 | AXIS without UNIT | warning text and behaviour differ (io.cpp:2758-2762) | `wkt_import.rs`, `build_axis` |
 
 ## Commands

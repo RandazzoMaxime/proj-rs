@@ -10,7 +10,7 @@ use super::coordinate_metadata::CoordinateMetadata;
 use super::equiv::Equivalence;
 use super::niche::{ParametricCS, ParametricDatum, TemporalCS, TemporalCsKind, TemporalDatum};
 use super::normalize::reversed;
-use super::wkt1_syntax::wkt1_syntax_error;
+use super::wkt_grammar::{wkt1_parse, wkt2_parse};
 use std::sync::Arc;
 
 mod niche;
@@ -601,6 +601,8 @@ pub struct WktParser {
     maybe_esri: bool,
     warnings: Vec<String>,
     grammar_errors: Vec<String>,
+    /// [`Self::grammar_errors`] as the bytes PROJ writes them.
+    grammar_error_bytes: Vec<Vec<u8>>,
     towgs84: Vec<f64>,
     grids: String,
     /// `PROJ4_GRIDS` of the vertical datum currently being built.
@@ -629,6 +631,7 @@ impl WktParser {
             maybe_esri: false,
             warnings: Vec::new(),
             grammar_errors: Vec::new(),
+            grammar_error_bytes: Vec::new(),
             towgs84: Vec::new(),
             grids: String::new(),
             vertical_grids: String::new(),
@@ -669,6 +672,13 @@ impl WktParser {
         &self.grammar_errors
     }
 
+    /// [`Self::grammar_errors`] as PROJ's bytes: the context window of a WKT grammar error may
+    /// cut a UTF-8 sequence, which [`Self::grammar_errors`] shows as U+FFFD.
+    #[must_use]
+    pub fn grammar_error_bytes(&self) -> &[Vec<u8>] {
+        &self.grammar_error_bytes
+    }
+
     /// `PROJ4_GRIDS` value captured from a datum `EXTENSION` node.
     #[must_use]
     pub fn datum_grids(&self) -> &str {
@@ -689,6 +699,7 @@ impl WktParser {
     pub fn create_from_wkt(&mut self, wkt: &str) -> Result<WktObject, FactoryError> {
         self.warnings.clear();
         self.grammar_errors.clear();
+        self.grammar_error_bytes.clear();
         self.towgs84.clear();
         self.grids.clear();
         self.vertical_grids.clear();
@@ -702,12 +713,15 @@ impl WktParser {
             self.maybe_esri = false;
         }
         let object = self.build_from_wkt(wkt)?;
-        // createFromWKT (io.cpp:8506-8520): once built, a WKT1 text is checked against the
-        // WKT1 grammar (`pj_wkt1_parse`). Strict mode fails, lax mode records the message.
-        if matches!(dialect, WktDialect::Wkt1Gdal | WktDialect::Wkt1Esri) {
-            if let Some(message) = wkt1_syntax_error(wkt) {
-                self.grammar(message)?;
-            }
+        // createFromWKT (io.cpp:8508-8522): once built, the text is checked against the
+        // grammar of its dialect. Strict mode fails, lax mode records the message.
+        let grammar_error = match dialect {
+            WktDialect::Wkt1Gdal | WktDialect::Wkt1Esri => wkt1_parse(wkt),
+            WktDialect::Wkt2_2015 | WktDialect::Wkt2_2019 => wkt2_parse(wkt),
+            WktDialect::NotWkt => None,
+        };
+        if let Some(message) = grammar_error {
+            self.grammar_bytes(message)?;
         }
         Ok(object)
     }
@@ -791,11 +805,17 @@ impl WktParser {
     }
 
     fn grammar(&mut self, message: impl Into<String>) -> Result<(), FactoryError> {
-        let message = message.into();
+        self.grammar_bytes(message.into().into_bytes())
+    }
+
+    /// `emitGrammarError` (io.cpp:1544-1550).
+    fn grammar_bytes(&mut self, message: Vec<u8>) -> Result<(), FactoryError> {
+        let text = String::from_utf8_lossy(&message).into_owned();
         if self.strict {
-            Err(invalid(message))
+            Err(invalid(text))
         } else {
-            self.grammar_errors.push(message);
+            self.grammar_errors.push(text);
+            self.grammar_error_bytes.push(message);
             Ok(())
         }
     }
@@ -943,7 +963,7 @@ impl WktParser {
         if ci_eq(name, "COORDINATEOPERATION") {
             for keyword in ["SOURCECRS", "TARGETCRS"] {
                 if node.child(&[keyword]).is_none() {
-                    return Err(invalid(format!("missing {keyword}")));
+                    return Err(invalid(format!("missing {keyword} node")));
                 }
             }
             return Ok(WktObject::Transformation(self.build_transformation(node)?));
@@ -1743,7 +1763,7 @@ impl WktParser {
             && !ci_eq(keyword, "BASEGEODCRS")
             && !ci_eq(keyword, "BASEGEOGCRS")
         {
-            return Err(invalid("missing CS"));
+            return Err(invalid("missing CS node"));
         }
         if node.child(&["PRIMEM", "PRIMEMERIDIAN"]).is_none()
             && (ci_eq(keyword, "GEOGCS") || ci_eq(keyword, "GEOCCS"))
@@ -2625,10 +2645,21 @@ impl WktParser {
     }
 
     fn build_projected(&mut self, node: &WktNode) -> Result<WktObject, FactoryError> {
+        // The order of PROJ's checks (io.cpp:4575-4597): the conversion, the base CRS, then the
+        // coordinate system, which PROJCS and BASEPROJCRS may leave out.
+        if node.child(&["CONVERSION", "PROJECTION"]).is_none() {
+            return Err(invalid("missing CONVERSION node"));
+        }
         let base_node = node
             .child(&["BASEGEOGCRS", "BASEGEODCRS", "GEOGCS"])
-            .ok_or_else(|| invalid("missing base geodetic CRS"))?;
+            .ok_or_else(|| invalid("Missing BASEGEODCRS / BASEGEOGCRS / GEOGCS node"))?;
         let mut props = self.build_properties(node)?;
+        if node.child(&["CS"]).is_none()
+            && !ci_eq(&node.value, "PROJCS")
+            && !ci_eq(&node.value, "BASEPROJCRS")
+        {
+            return Err(invalid("missing CS node"));
+        }
         if let Some(crs) = derived_geographic_from_extension(&props.extension_proj4) {
             return Ok(WktObject::Crs(crs));
         }
@@ -2738,7 +2769,7 @@ impl WktParser {
                 reference_surface(base.ellipsoid()),
             )?)
         } else {
-            return Err(invalid("missing CONVERSION"));
+            return Err(invalid("missing CONVERSION node"));
         };
         if node.child(&["CS"]).is_none() && node.children_named("AXIS").is_empty() {
             let unit = coordinate_system
@@ -2888,7 +2919,7 @@ impl WktParser {
         angular: UnitOfMeasure,
     ) -> Result<Conversion, FactoryError> {
         let Some(method_node) = node.child(&["METHOD", "PROJECTION"]) else {
-            return Err(invalid("missing METHOD"));
+            return Err(invalid("missing METHOD node"));
         };
         if method_node.children.is_empty() {
             return Err(invalid("not enough children in METHOD node"));
@@ -3479,7 +3510,7 @@ impl WktParser {
         self.compound_geographic_name = saved_name;
         self.compound_geographic = saved_geographic;
         if components.len() < 2 {
-            return Err(invalid("a compound CRS needs at least two components"));
+            return Err(invalid("compound CRS should have at least 2 components"));
         }
         if ci_eq(&node.value, "COMPD_CS") {
             if let Some(promoted) =
@@ -3557,7 +3588,7 @@ impl WktParser {
     fn wrapped_crs(&mut self, node: &WktNode, keyword: &str) -> Result<Crs, FactoryError> {
         let wrapper = node
             .child(&[keyword])
-            .ok_or_else(|| invalid(format!("missing {keyword}")))?;
+            .ok_or_else(|| invalid(format!("missing {keyword} node")))?;
         let inner = wrapper
             .children
             .iter()
@@ -3587,7 +3618,7 @@ impl WktParser {
         } else {
             let cs_node = node.child(&["CS"]);
             if cs_node.is_none() && !ci_eq(&node.value, "BASEENGCRS") {
-                return Err(invalid("missing CS"));
+                return Err(invalid("missing CS node"));
             }
             self.build_cs(cs_node, node, UnitOfMeasure::degree())?
         };
@@ -3601,7 +3632,7 @@ impl WktParser {
     fn build_transformation(&mut self, node: &WktNode) -> Result<Transformation, FactoryError> {
         let props = self.build_properties(node)?;
         let Some(method) = node.child(&["METHOD"]) else {
-            return Err(invalid("missing METHOD"));
+            return Err(invalid("missing METHOD node"));
         };
         let method_props = self.build_properties(method)?;
         // An abridged transformation states rotations in arc-seconds, as the EPSG methods do.

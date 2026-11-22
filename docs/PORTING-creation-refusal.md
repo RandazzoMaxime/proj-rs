@@ -113,10 +113,10 @@ other methods), compares names with `isEquivalentName`, does not report the miss
 natural origin` of an Equidistant Cylindrical method (`singleoperation.cpp:1880-1887`), and does
 not know the `US .gtx` method, which is not one of PROJ's mappings.
 
-`capi/tests/wkt_warnings.c` compares the warnings for the WKT2:2019 and WKT1 GDAL of every EPSG
-CRS and coordinate operation. The grammar errors are left out: for about 2,350 of these texts
-libproj reports one that proj-rs does not, mostly `unhandled keyword: PROJECTION` for the WKT1 of
-a conversion alone. That gap predates these warnings and is open.
+`capi/tests/wkt_warnings.c` compares the warnings and the grammar errors for the WKT2:2019 and
+WKT1 GDAL of every EPSG CRS and coordinate operation, and the grammar errors of a malformed corpus
+made from them. The WKT1 and WKT2 grammar checks that `createFromWKT` runs once the object is
+built are in `docs/PORTING-wkt-grammar.md`.
 
 ## A `+proj=pipeline` string with `+type=crs`
 

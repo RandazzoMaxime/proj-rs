@@ -316,6 +316,12 @@ impl WktParser {
             node,
             UnitOfMeasure::new("", 1.0, UnitKind::None),
         )?;
+        // io.cpp:5668-5672: a 3D CS promotes a 2D base.
+        let base = if cs.axes().len() == 3 && base.coordinate_system.axes.len() == 2 {
+            base.promote_to_3d(self.db.as_ref())
+        } else {
+            base
+        };
         let props = self.build_properties(node)?;
         Ok(WktObject::Crs(Crs::DerivedProjected(DerivedProjectedCRS {
             identified: props.identified(),

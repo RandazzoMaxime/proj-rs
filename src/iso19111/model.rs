@@ -3980,7 +3980,7 @@ impl CompoundCRS {
     pub fn create(name: impl Into<String>, components: Vec<Crs>) -> Result<Self, FactoryError> {
         if components.len() < 2 {
             return Err(FactoryError::Invalid(
-                "a compound CRS needs at least two components".to_owned(),
+                "compound CRS should have at least 2 components".to_owned(),
             ));
         }
         let horizontal = components.iter().filter(|crs| crs.is_horizontal()).count();
