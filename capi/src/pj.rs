@@ -146,8 +146,7 @@ pub(crate) fn create(ctx: *mut PJ_CONTEXT, definition: &str, who: &str) -> *mut 
             proj_string_refusal(definition)
         } else {
             engine.as_ref().err().map(|error| {
-                proj_string_refusal(definition)
-                    .unwrap_or_else(|| (error.code(), error.to_string()))
+                proj_string_refusal(definition).unwrap_or_else(|| (error.code(), error.to_string()))
             })
         };
         if let Some((code, text)) = refusal {

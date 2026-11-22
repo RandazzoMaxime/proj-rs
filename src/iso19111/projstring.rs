@@ -1937,7 +1937,10 @@ fn crs_from_proj_string(
 #[must_use]
 pub fn proj_string_refusal(definition: &str) -> Option<(i32, String)> {
     let tokens = proj_tokens(definition);
-    if tokens.iter().any(|(key, value)| key == "type" && value == "crs") {
+    if tokens
+        .iter()
+        .any(|(key, value)| key == "type" && value == "crs")
+    {
         return frame_refusal(definition, &tokens)
             .map(|text| (crate::errno::PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE, text));
     }
@@ -1948,14 +1951,26 @@ pub fn proj_string_refusal(definition: &str) -> Option<(i32, String)> {
         token(&tokens, "proj")
     };
     let (code, detail) = match (frame_reason(&error), &error) {
-        (Some(reason), _) => (crate::errno::PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE, reason.to_owned()),
-        (None, crate::engine::CreateError::MissingArgument(_)) => {
-            (crate::errno::PROJ_ERR_INVALID_OP_MISSING_ARG, error.to_string())
-        }
-        (None, crate::engine::CreateError::Unsupported("grid")) => {
-            (crate::errno::PROJ_ERR_INVALID_OP_FILE_NOT_FOUND_OR_INVALID, error.to_string())
-        }
-        (None, _) => (crate::errno::PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE, error.to_string()),
+        (Some(reason), _) => (
+            crate::errno::PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE,
+            reason.to_owned(),
+        ),
+        (None, crate::engine::CreateError::MissingArgument(_)) => (
+            crate::errno::PROJ_ERR_INVALID_OP_MISSING_ARG,
+            error.to_string(),
+        ),
+        (None, crate::engine::CreateError::NoInverse(_)) => (
+            crate::errno::PROJ_ERR_OTHER_NO_INVERSE_OP,
+            error.to_string(),
+        ),
+        (None, crate::engine::CreateError::Unsupported("grid")) => (
+            crate::errno::PROJ_ERR_INVALID_OP_FILE_NOT_FOUND_OR_INVALID,
+            error.to_string(),
+        ),
+        (None, _) => (
+            crate::errno::PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE,
+            error.to_string(),
+        ),
     };
     let label = crate::errno::error_string(code).unwrap_or_default();
     Some((code, format!("Error {code} ({label}): {name}: {detail}")))

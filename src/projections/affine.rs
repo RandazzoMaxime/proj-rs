@@ -538,21 +538,12 @@ mod tests {
             .expect("inv");
         assert!(near(got.x, 0.5) && near(got.y, 2.0) && near(got.z, 3.0));
 
+        // PROJ refuses the pipeline at creation: the inverted step has no inverse
+        // (pipeline.cpp:539-546, more_builtins.gie `expect failure errno no_inverse_op`).
         let singular = Operation::create(
             "proj=pipeline step proj=affine s11=1 s12=1 s13=1 s22=0 s33=0 omit_inv inv",
-        )
-        .expect("creation still succeeds");
-        assert_eq!(
-            singular
-                .forward(Coord {
-                    x: 1.0,
-                    y: 2.0,
-                    z: 3.0,
-                    t: 0.0,
-                })
-                .expect_err("forward needs the missing inverse"),
-            TransformError::NoInverse
         );
+        assert!(matches!(singular, Err(CreateError::NoInverse(ref name)) if name == "affine"));
         let runnable = Operation::create(
             "proj=pipeline step proj=affine s11=1 s12=1 s13=1 s22=0 s33=0 omit_fwd inv",
         )

@@ -54,6 +54,8 @@ enum Readiness {
     Ready,
     Unsupported,
     Rejected,
+    /// Refused because a step runs inverted without an inverse: PROJ's `no_inverse_op`.
+    RejectedNoInverse,
 }
 
 #[expect(
@@ -194,6 +196,10 @@ fn dispatch(
                     state.operation = None;
                     state.readiness = Readiness::Rejected;
                 }
+                Err(CreateError::NoInverse(_)) => {
+                    state.operation = None;
+                    state.readiness = Readiness::RejectedNoInverse;
+                }
             }
         }
         "direction" => {
@@ -265,6 +271,10 @@ fn open_crs(state: &mut OpState) {
             state.operation = None;
             state.readiness = Readiness::Rejected;
         }
+        Err(CreateError::NoInverse(_)) => {
+            state.operation = None;
+            state.readiness = Readiness::RejectedNoInverse;
+        }
     }
 }
 
@@ -311,6 +321,7 @@ fn score_expect(args: &str, state: &OpState, counts: &mut Counts, notes: &mut Ve
         let wanted = errno.split_whitespace().nth(1);
         let got = match state.readiness {
             Readiness::Rejected => Some("invalid_op"),
+            Readiness::RejectedNoInverse => Some("no_inverse_op"),
             Readiness::Ready => transform(state).err().map(errno_name),
             Readiness::Unsupported => None,
         };
