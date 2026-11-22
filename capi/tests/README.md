@@ -48,6 +48,7 @@ difference). `dist.sh` installs the library under the names of libproj: `libproj
 | `step_error_log` | `step_error_log.c`: the lines `proj_trans` logs at error level when `fwd_prepare` refuses a point (`<step>: Invalid latitude`, `Invalid longitude`), for 4 operations and pipelines and 2 CRS pairs with candidates, with the coordinates and the error codes; identical to the reference libproj |
 | `proj_based_operation` | `proj_based_operation.c`: the operations of `proj_create_operations` that PROJ only writes as a PROJ string (compound CRS with a geoid model to a geographic 3D CRS) have the type, step count, method, WKT keyword and PROJJSON type of the reference libproj |
 | `proj_string_refusal` | `proj_string_refusal.c`: `proj_create` refuses a PROJ string (CRS or operation) whose `lat_0` is beyond a pole or whose scale factor is not above 0, with the error code and the logged line of the reference libproj |
+| `invalid_operations` | `invalid_operations.c` on `invalid_operations.txt`: `proj_create` gives NULL, as the reference libproj does, for the 194 of the 196 operations PROJ's gie suite expects to fail that are not in `invalid_operations.deviations` (two degenerate operations proj-rs refuses at creation, see `docs/PORTING-creation-refusal.md`) |
 | `c_api` | `test_c_api.cpp`: 152 `TEST`, 32 excluded, 120 pass |
 
 ## Excluded: `excluded.txt`

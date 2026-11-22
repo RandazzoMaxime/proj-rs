@@ -1,0 +1,198 @@
+# Operations PROJ 9.9.0's gie suite expects to fail (tests/gie/*.gie, 'expect failure'), one per
+# line. capi/tests/invalid_operations.c reads them with proj_create.
++proj=geos +lon_0=0.00 +lat_0=0.00 +a=6378169.00 +b=6356583.80 +h=35785831.0
++proj=pipeline +step +proj=merc +step +proj=merc
++proj=pipeline +step +proj=latlong +step +proj=merc +step +proj=helmert +x=200 +y=100
++proj=pipeline +proj=merc +step +inv +proj=merc
++proj=pipeline +o_proj=merc +step +proj=ob_tran
++proj=pipeline +step +proj=pipeline +step +proj=merc
++proj=longlat +a=1 +b=1 +vto_meter=1/0
+this is a bogus CRS meant to trigger a syntax error in proj_create()
++proj=adams_hemi +R=6370997
++proj=adams_ws1 +R=6370997
++proj=adams_ws2 +R=6370997
++proj=adams_ws2 +ellps=WGS84
+proj=axisswap order=1,2,3,4 axis=enu
+proj=axisswap
+proj=axisswap order=1,2,1,4
+proj=axisswap order=2,3
+proj=axisswap order=2,3,4
+proj=axisswap order=1,2,3,5
++proj=aea +ellps=GRS80 +lat_1=900
++proj=aea +ellps=GRS80 +lat_2=900
++proj=aea   +R=6400000    +lat_1=1 +lat_2=-1
++proj=aea +a=9999999 +b=.9 +lat_2=1
++proj=aeqd +R=1 +lat_0=0
++proj=aeqd +R=1 +lat_0=90
++proj=aeqd +R=1 +lat_0=-90
++proj=airy +R=1 +lat_0=90
++proj=airy +R=1 +lat_0=-90
++proj=airy +R=1 +lon_0=45 +lat_0=45
++proj=airy +R=1 +no_cut
++proj=aitoff   +R=6400000
++proj=airocean   +ellps=GRS80
++proj=airocean   +orient=horizontal  +ellps=GRS80
++proj=eck4   +a=6400000
++proj=eqdc +a=9999999 +b=.9 +lat_2=1
++proj=eqdc   +R=6400000    +lat_1=1 +lat_2=-1
++proj=eqdc   +R=6400000    +lat_1=91
++proj=eqdc   +R=6400000    +lat_2=91
++proj=eqdc   +R=1 +lat_1=1e-9
++proj=eqdc +lat_1=1 +ellps=GRS80 +b=.1
++proj=geos +R=1 +h=0
++proj=geos +R=1 +h=1e11
++proj=gnom +R=1
++proj=gnom +a=1 +rf=200
++proj=gnom +R=1 +lat_0=90
++proj=gnom +a=1 +rf=200 +lat_0=90
++proj=gnom +R=1 +lat_0=-90
++proj=gnom +a=1 +rf=200 +lat_0=-90
++proj=gnom +R=1 +lat_0=45
++proj=gnom +a=1 +rf=200 +lat_0=45
++proj=hammer   +a=6400000 +W=1
++proj=krovak +lat_0=-90
++proj=labrd   +ellps=GRS80 +lat_0=0
++proj=laea +ellps=GRS80
++proj=laea +R=6400000
++proj=laea +R=1 +lat_0=45
++proj=laea +R=1 +lat_0=-90
++proj=laea +ellps=GRS80 +lat_0=-90
++proj=laea +R=1 +lat_0=90
++proj=laea +ellps=GRS80 +lat_0=90
++proj=laea +ellps=GRS80 +lat_0=91
++proj=lagrng +R=1 +W=-1
++proj=lagrng +R=1 +lat_1=90.00001
++proj=lagrng +R=1 +W=0.5
++proj=lcc +a=9999999 +b=.9 +lat_2=1
++proj=lcc +lat_1=2D32 +lat_2=0 +a=6378137 +b=0.2
++proj=lcc +ellps=GRS80 +lat_1=0 +lat_2=90
++proj=lcc +ellps=GRS80 +lat_1=90 +lat_2=0
++proj=lcc +ellps=GRS80 +lat_1=90 +lat_2=90
++proj=lcc +ellps=sphere +lat_1=0 +lat_2=90
++proj=lcc +ellps=sphere +lat_1=90 +lat_2=0
++proj=lcc +ellps=sphere +lat_1=91
++proj=lcc +ellps=sphere +lat_2=91
++proj=lsat +path=1 +lsat=5 +ellps=sphere
++proj=nsper +R=1 +h=3 +lat_0=90
++proj=nsper +R=1 +h=3 +lat_0=-90
++proj=nsper +R=1 +h=0
++proj=nsper +R=1 +h=1e11
++proj=ob_tran +R=6400000 +o_proj +o_proj=ob_tran
++proj=omerc   +R=1 +lat_0=1 +lat_1=2 +no_rot
++proj=omerc   +R=1  +alpha=0 +lat_0=90
++proj=omerc    +lat_1=0.8 +a=6400000 +b=.4
++proj=omerc    +lat_1=91
++proj=omerc    +lat_2=91
++proj=omerc    +lat_0=10 +R=6400000 +gamma=80.0000001
++proj=omerc    +lat_0=10 +a=6400000 +rf=300 +gamma=80.1
++proj=ortho +R=1 +lat_0=0 +lon_0=0
++proj=ortho +R=1 +lat_0=40 +lon_0=0
++proj=ortho +R=1 +lat_0=90 +lon_0=0
++proj=ortho +R=1 +lat_0=-90 +lon_0=0
++proj=ortho +ellps=WGS84 +lat_0=30
++proj=ortho +ellps=WGS84
++proj=ortho +ellps=WGS84 +lat_0=90
++proj=ortho +ellps=WGS84 +lat_0=-90
++proj=robin   +a=6400000
++proj=s2   +ellps=WGS84 +lat_0=0 +lon_0=0 +UVtoST=invalid
++proj=sterea   +R=6400000
++proj=sterea   +a=9999 +b=.9 +lat_0=73
++proj=tmerc   +R=1
++proj=tobmerc +ellps=sphere
++proj=tpeqd   +a=6400000    +lat_1=90 +lat_2=90 +lon_1=0 +lon_2=1
++proj=ups   +a=6400000
++proj=urm5   +a=6400000    +n=1 +alpha=90
++proj=utm   +a=6400000 +zone=30
++proj=utm +zone=11ooops +ellps=WGS84
++proj=vandg   +R=1
++proj=topocentric +ellps=WGS84
++proj=topocentric +ellps=WGS84 +X_0=0 +Y_0=0
++proj=topocentric +ellps=WGS84 +lon_0=0
++proj=topocentric +ellps=WGS84 +X_0=0 +lon_0=0
++proj=defmodel
++proj=defmodel +model=i_do_not_exist
++proj=defmodel +model=proj.ini
++proj=defmodel +model=tests/simple_model_degree_horizontal.json
++proj=deformation +xy_grids=alaska +z_grids=egm96_15.gtx +ellps=GRS80 +dt=16.0
++proj=deformation +xy_grids=alaska +z_grids=egm96_15.gtx +t_epoch=2016.0 +ellps=GRS80
+proj=deformation xy_grids=alaska +dt=1.0 ellps=GRS80
+proj=deformation z_grids=egm96_15.gtx +dt=1.0 ellps=GRS80
+proj=deformation xy_grids=nonexisting z_grids=egm96_15.gtx +dt=1.0 ellps=GRS80
+proj=deformation xy_grids=alaska z_grids=nonexisting +dt=1.0 ellps=GRS80
+proj=deformation xy_grids=alaska z_grids=nonexisting ellps=GRS80
+proj=merc ellps=GRS80000000000
+proj=merc +a=-1
+proj=merc +a=1 +es=-1
+proj=merc +R=0
++proj=merc +R_a +a=2 +f=2
+cobra
+proj=merc a=1E77 R_lat_a=90 b=1
+proj=utm zone=32   ellps=GRS80 rf=0
+proj=utm zone=32   ellps=GRS80 e=-0.5
+proj=utm zone=32   ellps=GRS80 e=1
+proj=utm zone=32   ellps=GRS80 es=1
+proj=utm zone=32   a=1 es=1.1
+proj=utm zone=32   ellps=GRS80 b=0
+proj=utm zone=32   ellps=GRS80 f=1
++proj=vgridshift +grids=tests/test_vgrid_invalid_channel_type.tif +multiplier=1
++proj=vgridshift +grids=tests/test_vgrid_unsupported_byte.tif +multiplier=1
++proj=vgridshift +grids=tests/us_noaa_geoid06_ak_subset_at_antimeridian.tif +multiplier=1
++proj=hgridshift +grids=tests/test_vgrid.tif
++proj=gridshift +grids=tests/test_hgrid_with_subgrid.tif
++proj=gridshift +grids=tests/us_noaa_geoid06_ak_subset_at_antimeridian.tif
++proj=gridshift +grids=tests/us_noaa_nadcon5_nad83_2007_nad83_2011_conus_extract.tif +interpolation=invalid
++proj=gridshift
++proj=gridshift +grids=tests/test_vgrid_unsupported_byte.tif
++proj=gridshift +grids=tests/i_do_not_exist.tif
++proj=guyou +R=6370997
+proj=molodensky a=6378160 rf=298.25
+proj=molodensky a=6378160 rf=298.25 dx=0
+proj=pipeline       step proj=urm5 n=0.5 inv
+proj=pipeline   inv step proj=urm5 n=0.5
+proj=pipeline   step proj=pipeline   step proj=merc
+step proj=pipeline step proj=merc
+proj=pipeline
+proj=vgridshift
+proj=vgridshift grids=nonexistinggrid.gtx
+proj=hgridshift grids=@nonexistinggrid.gsb,anothernonexistinggrid.gsb
+proj=hgridshift
+proj=helmert rx=1
+proj=helmert rx=1 convention=foo
+proj=helmert rx=1 convention=1
+proj=helmert towgs84=1,2,3,4,5,6,7 convention=coordinate_frame
+proj=helmert transpose
++proj=ob_tran +o_proj=helmert +o_lat_p=0
+proj=molobadekas
+proj=utm  ellps=GRS80  zone=32  to_meter=0
+proj=utm  ellps=GRS80  zone=32  to_meter=1/0
++proj=affine +s11=0 +s22=0 +s23=0
++proj=affine +tscale=0
++proj=aeqd +R=1 +lat_0=91
+proj=pipeline step proj=affine s11=1 s12=1 s13=1 s22=0 s33=0 omit_fwd
+proj=pipeline step proj=affine s11=1 s12=1 s13=1 s22=0 s33=0 omit_inv inv
++proj=peirce_q +R=6370997 +shape=square
++proj=peirce_q +R=6370997 +shape=diamond
++proj=peirce_q +R=6370997 +shape=horizontal
++proj=peirce_q +R=6370997 +shape=horizontal +scrollx=0.75
++proj=peirce_q +R=6370997 +shape=vertical
++proj=peirce_q +R=6370997 +shape=vertical +scrolly=-0.25
++proj=peirce_q +R=6370997 +shape=nhemisphere
++proj=peirce_q +R=6370997 +shape=shemisphere
++proj=tinshift
++proj=tinshift +file=i_do_not_exist
++proj=tinshift +file=proj.ini
++proj=tinshift +file=tests/tinshift_crs_implicit.json
++proj=tinshift +file=i_do_not_exist.gpkg
++proj=tinshift +file=tests/tinshift_empty_file.gpkg
++proj=tinshift +file=tests/tinshift_crs_implicit.gpkg
++proj=tinshift +file=https://cdn.proj.org/i_do_not_exist.gpkg
+proj=unitconvert xy_in=m xy_out=rad
+proj=unitconvert z_in=rad z_out=m
+proj=unitconvert xy_in=0
+proj=unitconvert xy_out=0
+proj=unitconvert xy_in=1e400
+proj=unitconvert xy_out=1e400
+proj=unitconvert z_in=0
+proj=unitconvert z_out=0
+proj=unitconvert z_in=1e400
+proj=unitconvert z_out=1e400

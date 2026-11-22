@@ -2973,6 +2973,17 @@ fn build_pipeline(
     if steps.is_empty() {
         return Err(CreateError::IllegalValue("pipeline"));
     }
+    // `pipeline.cpp:533-555`: a step run inverted needs an inverse ("Inverse operation for %s is
+    // not available"). The probe reads no grid.
+    for step in &steps {
+        if step.omit_fwd || !step.inverted || step.inner.needs_pipeline_stack() {
+            continue;
+        }
+        let probe = crate::network::with_inverse_probe(|| step.inner.inverse(Coord::xy(0.0, 0.0)));
+        if matches!(probe, Err(TransformError::NoInverse)) {
+            return Err(CreateError::IllegalValue("inv"));
+        }
+    }
     let uses_stack = steps.iter().any(|step| step.inner.needs_pipeline_stack());
     for pair in steps.windows(2) {
         if !kinds_compatible(

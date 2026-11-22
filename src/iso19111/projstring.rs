@@ -1929,29 +1929,60 @@ fn crs_from_proj_string(
 /// The refusal of `createFromPROJString` (io.cpp:12799-12895) when `pj_init` rejects the common
 /// parameters of a one-step string: `|lat_0|` beyond 90° or a scale factor not above 0
 /// (init.cpp:653-678), in PROJ's words.
-/// The refusal of a PROJ string by `createFromUserInput`, CRS or operation, as PROJ reports it:
-/// the error code `pj_init` leaves on the context and the text `proj_create` logs after its
-/// name. `None` when the common parameters are accepted.
+/// The refusal of a PROJ string by `createFromUserInput`, as PROJ reports it: the error code
+/// `pj_init` leaves on the context and the text `proj_create` logs after its name. A CRS string
+/// (`+type=crs`) is refused for its common parameters (`frame_refusal`); an operation string for
+/// any reason the engine cannot build it, as PROJ instantiates it (io.cpp:12799). `None` when the
+/// string is accepted.
 #[must_use]
 pub fn proj_string_refusal(definition: &str) -> Option<(i32, String)> {
     let tokens = proj_tokens(definition);
-    frame_refusal(definition, &tokens)
-        .map(|text| (crate::errno::PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE, text))
+    if tokens.iter().any(|(key, value)| key == "type" && value == "crs") {
+        return frame_refusal(definition, &tokens)
+            .map(|text| (crate::errno::PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE, text));
+    }
+    let error = crate::engine::Operation::create_keeping_unknown(definition).err()?;
+    let name = if tokens.iter().any(|(key, _)| key == "step") {
+        "pipeline"
+    } else {
+        token(&tokens, "proj")
+    };
+    let (code, detail) = match (frame_reason(&error), &error) {
+        (Some(reason), _) => (crate::errno::PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE, reason.to_owned()),
+        (None, crate::engine::CreateError::MissingArgument(_)) => {
+            (crate::errno::PROJ_ERR_INVALID_OP_MISSING_ARG, error.to_string())
+        }
+        (None, crate::engine::CreateError::Unsupported("grid")) => {
+            (crate::errno::PROJ_ERR_INVALID_OP_FILE_NOT_FOUND_OR_INVALID, error.to_string())
+        }
+        (None, _) => (crate::errno::PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE, error.to_string()),
+    };
+    let label = crate::errno::error_string(code).unwrap_or_default();
+    Some((code, format!("Error {code} ({label}): {name}: {detail}")))
 }
 
+/// PROJ's words for the common parameters `pj_init` refuses (init.cpp:653-678).
+fn frame_reason(error: &crate::engine::CreateError) -> Option<&'static str> {
+    match error {
+        crate::engine::CreateError::IllegalValue("lat_0") => {
+            Some("Invalid value for lat_0: |lat_0| should be <= 90°")
+        }
+        crate::engine::CreateError::IllegalValue("k_0") => {
+            Some("Invalid value for k/k_0: it should be > 0")
+        }
+        _ => None,
+    }
+}
+
+/// The refusal of `createFromPROJString` (io.cpp:12799-12895) when `pj_init` rejects the common
+/// parameters of a one-step CRS string: `|lat_0|` beyond 90° or a scale factor not above 0
+/// (init.cpp:653-678), in PROJ's words.
 fn frame_refusal(definition: &str, tokens: &[(String, String)]) -> Option<String> {
     if tokens.iter().any(|(key, _)| key == "step") {
         return None;
     }
-    let reason = match crate::engine::Operation::create_keeping_unknown(definition) {
-        Err(crate::engine::CreateError::IllegalValue("lat_0")) => {
-            "Invalid value for lat_0: |lat_0| should be <= 90°"
-        }
-        Err(crate::engine::CreateError::IllegalValue("k_0")) => {
-            "Invalid value for k/k_0: it should be > 0"
-        }
-        _ => return None,
-    };
+    let error = crate::engine::Operation::create_keeping_unknown(definition).err()?;
+    let reason = frame_reason(&error)?;
     Some(format!(
         "Error 1027 (Invalid value for an argument): {}: {reason}",
         token(tokens, "proj")

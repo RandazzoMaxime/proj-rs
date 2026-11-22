@@ -7,7 +7,7 @@
 #   unnamed_operation embedded_db pj_info_order normalize_operation latin1_input
 #   crs_to_crs_describe create_any_object export_objects derived_temporal last_used_operation
 #   deriving_conversion single_crs_cs grid_used network_grids crs_to_crs_area step_error_log
-#   proj_based_operation proj_string_refusal c_api
+#   proj_based_operation proj_string_refusal invalid_operations c_api
 #   (default: all). PENDING=0 runs the cases of pending.txt too, to see them fail.
 #   GTEST_FILTER=pattern narrows the gtest cases of the C++ tests.
 #
@@ -35,7 +35,7 @@ tests=("$@")
                                   export_objects derived_temporal last_used_operation
                                   deriving_conversion single_crs_cs grid_used network_grids
                                   crs_to_crs_area step_error_log proj_based_operation
-                                  proj_string_refusal c_api)
+                                  proj_string_refusal invalid_operations c_api)
 
 ref=${PROJ_REFERENCE:-$root/target/proj-reference}
 src=$ref/src
@@ -459,6 +459,21 @@ for test in "${tests[@]}"; do
       theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/proj_string_refusal_ref" 2>/dev/null)
       [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }
       echo "proj_create refusals identical to libproj for 9 PROJ strings" ;;
+    invalid_operations)
+      # proj_create gives NULL for the operations PROJ's gie suite expects to fail.
+      echo "== invalid_operations"
+      gcc -std=c99 -I"$root/capi/include" "$here/invalid_operations.c" -o "$out/invalid_operations_ours" "${ldflags[@]}"
+      gcc -std=c99 -I"$src/src" "$here/invalid_operations.c" -o "$out/invalid_operations_ref" -L"$ref/build/lib" \
+        -lproj -Wl,-rpath,"$ref/build/lib"
+      # invalid_operations.deviations: degenerate operations proj-rs refuses at creation, where PROJ
+      # makes the object and fails the first point (docs/PORTING-creation-refusal.md).
+      ours=$(PROJ_DATA="$ref/build/data" "$out/invalid_operations_ours" "$here/invalid_operations.txt" \
+        2>/dev/null | grep -v -F -f "$here/invalid_operations.deviations")
+      theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/invalid_operations_ref" \
+        "$here/invalid_operations.txt" 2>/dev/null | grep -v -F -f "$here/invalid_operations.deviations")
+      [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }
+      echo "proj_create identical to libproj for $(echo "$ours" | wc -l) invalid operations," \
+        "$(grep -c . "$here/invalid_operations.deviations") deliberate deviations" ;;
     c_api)
       python3 "$here/filter_tests.py" "$unit/test_c_api.cpp" "$here/excluded.txt" "$out/test_c_api_filtered.cpp"
       g++ "${cxxflags[@]}" -DTIFF_ENABLED -include "$unit/gtest_include.h" "$out/test_c_api_filtered.cpp" "$unit/main.cpp" \
