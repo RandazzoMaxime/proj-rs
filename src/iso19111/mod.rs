@@ -47,7 +47,7 @@ mod shared;
 mod suggest;
 mod transform_export;
 mod wkt;
-mod wkt1_syntax;
+mod wkt_grammar;
 mod wkt_import;
 
 pub(crate) use alternatives::Item;

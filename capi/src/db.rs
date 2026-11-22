@@ -342,10 +342,10 @@ pub extern "C" fn proj_create_from_wkt(
         if !warnings.is_empty() {
             util::put(out_warnings, util::string_list(&warnings));
         }
-        if !parser.grammar_errors().is_empty() {
+        if !parser.grammar_error_bytes().is_empty() {
             util::put(
                 out_grammar_errors,
-                util::string_list(parser.grammar_errors()),
+                util::byte_string_list(parser.grammar_error_bytes()),
             );
         }
         match user_object_of(parsed) {

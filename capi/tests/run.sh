@@ -511,20 +511,36 @@ for test in "${tests[@]}"; do
       echo "proj_create identical to libproj for $(wc -l < "$out/crs_proj_strings.txt") CRS PROJ strings" ;;
     wkt_warnings)
       # proj_create_from_wkt of the WKT2:2019 and WKT1 GDAL libproj writes for every EPSG CRS and
-      # coordinate operation: object and warnings (validateParameters included). The grammar errors
-      # are left out: libproj reports some that proj-rs does not (docs/PORTING-creation-refusal.md).
+      # coordinate operation: object, warnings (validateParameters included) and grammar errors.
+      # Then a malformed corpus made from every 211th of those WKT: a `,`, `]`, `[`, `FOO`, `1`,
+      # `"x"`, ` 5`, `(` or `"` inserted after each `[`, `]` and `,`. Its grammar errors
+      # (pj_wkt1_parse, pj_wkt2_parse) must be those of libproj wherever the object and the other
+      # messages agree (grammar_errors.py; docs/PORTING-wkt-grammar.md).
       echo "== wkt_warnings"
       gcc -std=c99 -I"$root/capi/include" "$here/wkt_warnings.c" -o "$out/wkt_warnings_ours" "${ldflags[@]}"
       gcc -std=c99 -I"$src/src" "$here/wkt_warnings.c" -o "$out/wkt_warnings_ref" -L"$ref/build/lib" \
         -lproj -Wl,-rpath,"$ref/build/lib"
       env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/wkt_warnings_ref" export 2>/dev/null \
         | sort -u > "$out/wkt_warnings.txt"
-      ours=$(PROJ_DATA="$ref/build/data" "$out/wkt_warnings_ours" check < "$out/wkt_warnings.txt" 2>/dev/null \
-        | grep -v '^  error: ')
+      ours=$(PROJ_DATA="$ref/build/data" "$out/wkt_warnings_ours" check < "$out/wkt_warnings.txt" 2>/dev/null)
       theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/wkt_warnings_ref" check \
-        < "$out/wkt_warnings.txt" 2>/dev/null | grep -v '^  error: ')
+        < "$out/wkt_warnings.txt" 2>/dev/null)
       [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") | head -40 >&2; exit 1; }
-      echo "proj_create_from_wkt warnings identical to libproj for $(wc -l < "$out/wkt_warnings.txt") WKT" ;;
+      echo "proj_create_from_wkt warnings and grammar errors identical to libproj for $(wc -l < "$out/wkt_warnings.txt") WKT"
+      LC_ALL=C awk 'BEGIN { n = split(",|]|[|FOO|1|\"x\"| 5|(|\"", ins, "|") }
+        NR % 211 == 1 && length($0) < 1500 {
+          for (i = 1; i <= length($0); i++) {
+            c = substr($0, i, 1)
+            if (c == "[" || c == "]" || c == ",")
+              for (k = 1; k <= n; k++) print substr($0, 1, i) ins[k] substr($0, i + 1)
+          }
+        }' "$out/wkt_warnings.txt" > "$out/wkt_malformed.txt"
+      PROJ_DATA="$ref/build/data" "$out/wkt_warnings_ours" check < "$out/wkt_malformed.txt" \
+        > "$out/wkt_malformed.ours" 2>/dev/null
+      env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/wkt_warnings_ref" check \
+        < "$out/wkt_malformed.txt" > "$out/wkt_malformed.ref" 2>/dev/null
+      python3 "$here/grammar_errors.py" "$out/wkt_malformed.txt" "$out/wkt_malformed.ref" \
+        "$out/wkt_malformed.ours" ;;
     c_api)
       python3 "$here/filter_tests.py" "$unit/test_c_api.cpp" "$here/excluded.txt" "$out/test_c_api_filtered.cpp"
       g++ "${cxxflags[@]}" -DTIFF_ENABLED -include "$unit/gtest_include.h" "$out/test_c_api_filtered.cpp" "$unit/main.cpp" \

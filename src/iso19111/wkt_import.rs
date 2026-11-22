@@ -10,7 +10,7 @@ use super::coordinate_metadata::CoordinateMetadata;
 use super::equiv::Equivalence;
 use super::niche::{ParametricCS, ParametricDatum, TemporalCS, TemporalCsKind, TemporalDatum};
 use super::normalize::reversed;
-use super::wkt1_syntax::wkt1_syntax_error;
+use super::wkt_grammar::{wkt1_parse, wkt2_parse};
 use std::sync::Arc;
 
 mod niche;
@@ -601,6 +601,8 @@ pub struct WktParser {
     maybe_esri: bool,
     warnings: Vec<String>,
     grammar_errors: Vec<String>,
+    /// [`Self::grammar_errors`] as the bytes PROJ writes them.
+    grammar_error_bytes: Vec<Vec<u8>>,
     towgs84: Vec<f64>,
     grids: String,
     /// `PROJ4_GRIDS` of the vertical datum currently being built.
@@ -629,6 +631,7 @@ impl WktParser {
             maybe_esri: false,
             warnings: Vec::new(),
             grammar_errors: Vec::new(),
+            grammar_error_bytes: Vec::new(),
             towgs84: Vec::new(),
             grids: String::new(),
             vertical_grids: String::new(),
@@ -669,6 +672,13 @@ impl WktParser {
         &self.grammar_errors
     }
 
+    /// [`Self::grammar_errors`] as PROJ's bytes: the context window of a WKT grammar error may
+    /// cut a UTF-8 sequence, which [`Self::grammar_errors`] shows as U+FFFD.
+    #[must_use]
+    pub fn grammar_error_bytes(&self) -> &[Vec<u8>] {
+        &self.grammar_error_bytes
+    }
+
     /// `PROJ4_GRIDS` value captured from a datum `EXTENSION` node.
     #[must_use]
     pub fn datum_grids(&self) -> &str {
@@ -689,6 +699,7 @@ impl WktParser {
     pub fn create_from_wkt(&mut self, wkt: &str) -> Result<WktObject, FactoryError> {
         self.warnings.clear();
         self.grammar_errors.clear();
+        self.grammar_error_bytes.clear();
         self.towgs84.clear();
         self.grids.clear();
         self.vertical_grids.clear();
@@ -702,12 +713,15 @@ impl WktParser {
             self.maybe_esri = false;
         }
         let object = self.build_from_wkt(wkt)?;
-        // createFromWKT (io.cpp:8506-8520): once built, a WKT1 text is checked against the
-        // WKT1 grammar (`pj_wkt1_parse`). Strict mode fails, lax mode records the message.
-        if matches!(dialect, WktDialect::Wkt1Gdal | WktDialect::Wkt1Esri) {
-            if let Some(message) = wkt1_syntax_error(wkt) {
-                self.grammar(message)?;
-            }
+        // createFromWKT (io.cpp:8508-8522): once built, the text is checked against the
+        // grammar of its dialect. Strict mode fails, lax mode records the message.
+        let grammar_error = match dialect {
+            WktDialect::Wkt1Gdal | WktDialect::Wkt1Esri => wkt1_parse(wkt),
+            WktDialect::Wkt2_2015 | WktDialect::Wkt2_2019 => wkt2_parse(wkt),
+            WktDialect::NotWkt => None,
+        };
+        if let Some(message) = grammar_error {
+            self.grammar_bytes(message)?;
         }
         Ok(object)
     }
@@ -791,11 +805,17 @@ impl WktParser {
     }
 
     fn grammar(&mut self, message: impl Into<String>) -> Result<(), FactoryError> {
-        let message = message.into();
+        self.grammar_bytes(message.into().into_bytes())
+    }
+
+    /// `emitGrammarError` (io.cpp:1544-1550).
+    fn grammar_bytes(&mut self, message: Vec<u8>) -> Result<(), FactoryError> {
+        let text = String::from_utf8_lossy(&message).into_owned();
         if self.strict {
-            Err(invalid(message))
+            Err(invalid(text))
         } else {
-            self.grammar_errors.push(message);
+            self.grammar_errors.push(text);
+            self.grammar_error_bytes.push(message);
             Ok(())
         }
     }
