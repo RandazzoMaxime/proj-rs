@@ -1,0 +1,218 @@
+{
+  "$schema": "https://proj.org/schemas/v0.7/projjson.schema.json",
+  "type": "DerivedProjectedCRS",
+  "name": "Ground for NAD83(2011) / Idaho West (ftUS)",
+  "base_crs": {
+    "type": "ProjectedCRS",
+    "name": "NAD83(2011) / Idaho West (ftUS)",
+    "base_crs": {
+      "type": "GeographicCRS",
+      "name": "NAD83(2011)",
+      "datum": {
+        "type": "GeodeticReferenceFrame",
+        "name": "NAD83 (National Spatial Reference System 2011)",
+        "ellipsoid": {
+          "name": "GRS 1980",
+          "semi_major_axis": 6378137,
+          "inverse_flattening": 298.257222101
+        }
+      },
+      "coordinate_system": {
+        "subtype": "ellipsoidal",
+        "axis": [
+          {
+            "name": "Geodetic latitude",
+            "abbreviation": "Lat",
+            "direction": "north",
+            "unit": "degree"
+          },
+          {
+            "name": "Geodetic longitude",
+            "abbreviation": "Lon",
+            "direction": "east",
+            "unit": "degree"
+          }
+        ]
+      },
+      "id": {
+        "authority": "EPSG",
+        "code": 6318
+      }
+    },
+    "conversion": {
+      "name": "SPCS83 Idaho West zone (US Survey feet)",
+      "method": {
+        "name": "Transverse Mercator",
+        "id": {
+          "authority": "EPSG",
+          "code": 9807
+        }
+      },
+      "parameters": [
+        {
+          "name": "Latitude of natural origin",
+          "value": 41.6666666666667,
+          "unit": "degree",
+          "id": {
+            "authority": "EPSG",
+            "code": 8801
+          }
+        },
+        {
+          "name": "Longitude of natural origin",
+          "value": -115.75,
+          "unit": "degree",
+          "id": {
+            "authority": "EPSG",
+            "code": 8802
+          }
+        },
+        {
+          "name": "Scale factor at natural origin",
+          "value": 0.999933333,
+          "unit": "unity",
+          "id": {
+            "authority": "EPSG",
+            "code": 8805
+          }
+        },
+        {
+          "name": "False easting",
+          "value": 2624666.667,
+          "unit": {
+            "type": "LinearUnit",
+            "name": "US survey foot",
+            "conversion_factor": 0.304800609601219
+          },
+          "id": {
+            "authority": "EPSG",
+            "code": 8806
+          }
+        },
+        {
+          "name": "False northing",
+          "value": 0,
+          "unit": {
+            "type": "LinearUnit",
+            "name": "US survey foot",
+            "conversion_factor": 0.304800609601219
+          },
+          "id": {
+            "authority": "EPSG",
+            "code": 8807
+          }
+        }
+      ]
+    },
+    "coordinate_system": {
+      "subtype": "Cartesian",
+      "axis": [
+        {
+          "name": "Easting",
+          "abbreviation": "X",
+          "direction": "east",
+          "unit": {
+            "type": "LinearUnit",
+            "name": "US survey foot",
+            "conversion_factor": 0.304800609601219
+          }
+        },
+        {
+          "name": "Northing",
+          "abbreviation": "Y",
+          "direction": "north",
+          "unit": {
+            "type": "LinearUnit",
+            "name": "US survey foot",
+            "conversion_factor": 0.304800609601219
+          }
+        }
+      ]
+    },
+    "id": {
+      "authority": "EPSG",
+      "code": 6453
+    }
+  },
+  "conversion": {
+    "name": "Grid to ground",
+    "method": {
+      "name": "Similarity transformation",
+      "id": {
+        "authority": "EPSG",
+        "code": 9621
+      }
+    },
+    "parameters": [
+      {
+        "name": "Ordinate 1 of evaluation point in target CRS",
+        "value": 1000,
+        "unit": {
+          "type": "LinearUnit",
+          "name": "US survey foot",
+          "conversion_factor": 0.304800609601219
+        },
+        "id": {
+          "authority": "EPSG",
+          "code": 8621
+        }
+      },
+      {
+        "name": "Ordinate 2 of evaluation point in target CRS",
+        "value": 0,
+        "unit": {
+          "type": "LinearUnit",
+          "name": "US survey foot",
+          "conversion_factor": 0.304800609601219
+        },
+        "id": {
+          "authority": "EPSG",
+          "code": 8622
+        }
+      },
+      {
+        "name": "Scale factor for source CRS axes",
+        "value": 1,
+        "unit": "unity",
+        "id": {
+          "authority": "EPSG",
+          "code": 1061
+        }
+      },
+      {
+        "name": "Rotation angle of source CRS axes",
+        "value": 0,
+        "unit": "degree",
+        "id": {
+          "authority": "EPSG",
+          "code": 8614
+        }
+      }
+    ]
+  },
+  "coordinate_system": {
+    "subtype": "Cartesian",
+    "axis": [
+      {
+        "name": "Easting",
+        "abbreviation": "X",
+        "direction": "east",
+        "unit": {
+          "type": "LinearUnit",
+          "name": "US survey foot",
+          "conversion_factor": 0.304800609601219
+        }
+      },
+      {
+        "name": "Northing",
+        "abbreviation": "Y",
+        "direction": "north",
+        "unit": {
+          "type": "LinearUnit",
+          "name": "US survey foot",
+          "conversion_factor": 0.304800609601219
+        }
+      }
+    ]
+  }
+}
