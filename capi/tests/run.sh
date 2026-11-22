@@ -447,7 +447,7 @@ for test in "${tests[@]}"; do
       ours=$(PROJ_DATA="$ref/build/data" "$out/proj_based_ours" 2>/dev/null)
       theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/proj_based_ref" 2>/dev/null)
       [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }
-      echo "PROJ-based operations identical to libproj for 3 pairs" ;;
+      echo "PROJ-based operations identical to libproj for 4 pairs" ;;
     c_api)
       python3 "$here/filter_tests.py" "$unit/test_c_api.cpp" "$here/excluded.txt" "$out/test_c_api_filtered.cpp"
       g++ "${cxxflags[@]}" -DTIFF_ENABLED -include "$unit/gtest_include.h" "$out/test_c_api_filtered.cpp" "$unit/main.cpp" \

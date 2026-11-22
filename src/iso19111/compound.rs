@@ -2744,7 +2744,9 @@ fn proj_based_operation(
             .collect(),
         source: Some(Arc::new(source.clone())),
         target: Some(Arc::new(target.clone())),
-        accuracy,
+        // `createPROJBased` stores `toString(getAccuracy(ops))` (coordinateoperationfactory.cpp:
+        // 2780-2784), so the sort and `proj_coordoperation_get_accuracy` read the rounded value.
+        accuracy: accuracy.map(stored_accuracy),
         version: None,
         computed_name: false,
         source_epoch: None,
