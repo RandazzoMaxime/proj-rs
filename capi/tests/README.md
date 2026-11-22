@@ -44,6 +44,7 @@ difference). `dist.sh` installs the library under the names of libproj: `libproj
 | `single_crs_cs` | `single_crs_cs.c`: `proj_crs_get_coordinate_system` of geographic, projected, vertical, compound and bound CRS, with the error it logs, identical to the reference libproj (a bound or compound CRS has none) |
 | `grid_used` | `grid_used.c`: `proj_coordoperation_get_grid_used` of 5 database operations, with and without the PROJ alternative grid names: an official grid name (`NTv1_0.gsb`) keeps an empty URL, as `lookForGridInfo` finds a grid by its PROJ or old PROJ name only; identical to the reference libproj |
 | `network_grids` | `network_grids.c`: `proj_coordoperation_is_instantiable` and the availability of each grid of the operations of 2 pairs, network off then on: with the network on, a grid the database knows is available, identical to the reference libproj |
+| `crs_to_crs_area` | `crs_to_crs_area.c`: the description of `proj_create_crs_to_crs_from_pj` for 3 pairs with and without an area of interest, which keeps the operations whose extent meets the box; identical to the reference libproj |
 | `c_api` | `test_c_api.cpp`: 152 `TEST`, 32 excluded, 120 pass |
 
 ## Excluded: `excluded.txt`

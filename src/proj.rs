@@ -30,7 +30,7 @@ use crate::iso19111::{
     GridDescription, GridLookup, OpProps, Pipeline, ProjLines, ProjStringLayout, RemoteGrids,
 };
 use crate::iso19111::{BestPolicy, FacadeRequest};
-use crate::proj_iso::{iso_pipeline, iso_pipeline_at, IsoPipeline};
+use crate::proj_iso::{iso_pipeline_at, IsoPipeline};
 use crate::{CreateError, Xyzt};
 
 /// Numeric type accepted by [`Coord`].
@@ -503,7 +503,15 @@ impl Proj {
         reject_nul(to)?;
         // The ISO 19111 selection, as `cs2cs` takes it. A pair the selection does not write is
         // refused: libproj's creation has no other path for it.
-        if let Some(pipeline) = iso_pipeline(from, to) {
+        let filter = CandidateFilter {
+            area_of_interest: area_of_interest(area.as_ref()),
+            ..CandidateFilter::NONE
+        };
+        let request = FacadeRequest {
+            filter,
+            ..FacadeRequest::default_options()
+        };
+        if let Some(pipeline) = iso_pipeline_at(from, to, None, ForceOver::No, &request) {
             return Ok(built(
                 Body::Iso(Box::new(pipeline)),
                 format!("{from} -> {to}"),
@@ -539,7 +547,8 @@ impl Proj {
         area: Option<Area>,
         options: Option<Vec<&str>>,
     ) -> Result<Self, ProjCreateError> {
-        let (over, request) = crs_to_crs_options(options.as_deref())?;
+        let (over, mut request) = crs_to_crs_options(options.as_deref())?;
+        request.filter.area_of_interest = area_of_interest(area.as_ref());
         if !self.is_single_crs() {
             return Err(ProjCreateError::ProjError(
                 "source is not a single CRS".to_owned(),
@@ -1978,6 +1987,13 @@ fn built(body: Body, definition: String, area: Option<Area>) -> Proj {
         pipeline: None,
         candidate_name: None,
     }
+}
+
+/// The area of interest of a `PJ_AREA` whose box is set, as `proj_create_crs_to_crs` hands it to
+/// the operation factory (`crs_to_crs.cpp:557-561`). A box the factory cannot hold is no filter.
+fn area_of_interest(area: Option<&Area>) -> Option<crate::iso19111::BoundingBox> {
+    let area = area?;
+    crate::iso19111::BoundingBox::create(area.west, area.south, area.east, area.north).ok()
 }
 
 /// The options of `proj_create_crs_to_crs_from_pj` that this port builds: `FORCE_OVER`, as

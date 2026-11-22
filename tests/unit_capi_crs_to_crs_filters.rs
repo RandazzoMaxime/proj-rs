@@ -33,6 +33,7 @@ fn capi_proj_create_crs_to_crs_from_pj_accuracy_filter() {
     let filter = CandidateFilter {
         accuracy: Some(0.05),
         ballpark: Ballpark::Allowed,
+        area_of_interest: None,
     };
     assert!(
         best_pipeline_filtered("EPSG:4326", "EPSG:4258", OnlyBest::Off, filter).is_err(),
@@ -59,6 +60,7 @@ fn capi_proj_create_crs_to_crs_from_pj_ballpark_filter() {
     let filter = CandidateFilter {
         accuracy: None,
         ballpark: Ballpark::Forbidden,
+        area_of_interest: None,
     };
     assert!(
         best_pipeline_filtered("EPSG:4267", "EPSG:4258", OnlyBest::Off, filter).is_err(),

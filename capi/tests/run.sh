@@ -6,7 +6,7 @@
 #   fork datadir geodesic proj_string_type projjson_objects horizontal_datum string_lifetime
 #   unnamed_operation embedded_db pj_info_order normalize_operation latin1_input
 #   crs_to_crs_describe create_any_object export_objects derived_temporal last_used_operation
-#   deriving_conversion single_crs_cs grid_used network_grids c_api
+#   deriving_conversion single_crs_cs grid_used network_grids crs_to_crs_area c_api
 #   (default: all). PENDING=0 runs the cases of pending.txt too, to see them fail.
 #   GTEST_FILTER=pattern narrows the gtest cases of the C++ tests.
 #
@@ -32,7 +32,8 @@ tests=("$@")
                                   unnamed_operation embedded_db pj_info_order normalize_operation
                                   latin1_input crs_to_crs_describe create_any_object
                                   export_objects derived_temporal last_used_operation
-                                  deriving_conversion single_crs_cs grid_used network_grids c_api)
+                                  deriving_conversion single_crs_cs grid_used network_grids
+                                  crs_to_crs_area c_api)
 
 ref=${PROJ_REFERENCE:-$root/target/proj-reference}
 src=$ref/src
@@ -416,6 +417,16 @@ for test in "${tests[@]}"; do
       theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/network_grids_ref" "${pairs[@]}" 2>/dev/null)
       [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }
       echo "grid availability identical to libproj for $((${#pairs[@]} / 2)) pairs, network off and on" ;;
+    crs_to_crs_area)
+      # The area of interest of proj_create_crs_to_crs_from_pj filters the candidates.
+      echo "== crs_to_crs_area"
+      gcc -std=c99 -I"$root/capi/include" "$here/crs_to_crs_area.c" -o "$out/crs_to_crs_area_ours" "${ldflags[@]}"
+      gcc -std=c99 -I"$src/src" "$here/crs_to_crs_area.c" -o "$out/crs_to_crs_area_ref" -L"$ref/build/lib" \
+        -lproj -Wl,-rpath,"$ref/build/lib"
+      ours=$(PROJ_DATA="$ref/build/data" "$out/crs_to_crs_area_ours" 2>/dev/null)
+      theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/crs_to_crs_area_ref" 2>/dev/null)
+      [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }
+      echo "crs_to_crs with an area of interest identical to libproj for 5 pairs" ;;
     c_api)
       python3 "$here/filter_tests.py" "$unit/test_c_api.cpp" "$here/excluded.txt" "$out/test_c_api_filtered.cpp"
       g++ "${cxxflags[@]}" -DTIFF_ENABLED -include "$unit/gtest_include.h" "$out/test_c_api_filtered.cpp" "$unit/main.cpp" \
