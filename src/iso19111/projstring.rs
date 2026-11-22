@@ -3625,31 +3625,68 @@ struct ParsedPipeline {
     global_type_crs: bool,
 }
 
-/// The words of a PROJ string, as `pj_trim_argv` splits them: blanks (newlines included) separate
-/// words, except inside double quotes, whose characters are kept and the quotes dropped.
+/// The words of a PROJ string, as `pj_trim_argc` and `pj_trim_argv` split them (internal.cpp):
+/// blanks separate words, except inside a value opened by `="`, where `""` is a quote. A word
+/// `key="value"` loses its quotes (`unquote_string`); any other `"` is an ordinary character,
+/// such as the seconds of `45d30'30"N`.
 fn split_quoted_words(text: &str) -> Vec<String> {
     let mut words = Vec::new();
     let mut current = String::new();
-    let mut in_word = false;
-    let mut in_quote = false;
-    for ch in text.chars() {
-        if ch == '"' {
-            in_quote = !in_quote;
-            in_word = true;
-        } else if ch.is_whitespace() && !in_quote {
-            if in_word {
-                words.push(std::mem::take(&mut current));
-                in_word = false;
+    let mut in_string = false;
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if in_string {
+            current.push(ch);
+            if ch == '"' {
+                if chars.peek() == Some(&'"') {
+                    current.push('"');
+                    chars.next();
+                } else {
+                    in_string = false;
+                }
+            }
+        } else if ch == '=' && chars.peek() == Some(&'"') {
+            current.push('=');
+            current.push('"');
+            chars.next();
+            in_string = true;
+        } else if ch.is_whitespace() {
+            if !current.is_empty() {
+                words.push(unquote_word(std::mem::take(&mut current)));
             }
         } else {
             current.push(ch);
-            in_word = true;
         }
     }
-    if in_word {
-        words.push(current);
+    if !current.is_empty() {
+        words.push(unquote_word(current));
     }
     words
+}
+
+/// `unquote_string` (internal.cpp): `key="a ""b"""` is `key=a "b"`; a value whose quote is not
+/// closed at the end of the word keeps its text.
+fn unquote_word(word: String) -> String {
+    let Some(equal) = word.find("=\"") else {
+        return word;
+    };
+    if equal == 0 || !word.ends_with('"') {
+        return word;
+    }
+    let mut out = String::with_capacity(word.len());
+    out.push_str(&word[..=equal]);
+    let mut chars = word[equal + 2..].chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '"' {
+            if chars.peek() == Some(&'"') {
+                chars.next();
+            } else {
+                break;
+            }
+        }
+        out.push(ch);
+    }
+    out
 }
 
 /// `+proj=pipeline` steps, keeping a leading `+type=crs`.
