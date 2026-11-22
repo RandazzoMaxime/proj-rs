@@ -128,6 +128,15 @@ impl Obj {
                 UserObject::PrimeMeridian(_) => PJ_TYPE_PRIME_MERIDIAN,
                 UserObject::Ellipsoid(_) => PJ_TYPE_ELLIPSOID,
                 UserObject::Operation(operation) => match operation {
+                    // PROJ's PROJBasedOperation is neither a conversion nor a transformation.
+                    CoordinateOperation::Conversion(conversion)
+                        if conversion
+                            .method()
+                            .name()
+                            .starts_with("PROJ-based operation method: ") =>
+                    {
+                        PJ_TYPE_OTHER_COORDINATE_OPERATION
+                    }
                     CoordinateOperation::Conversion(_) => PJ_TYPE_CONVERSION,
                     CoordinateOperation::Transformation(_) => PJ_TYPE_TRANSFORMATION,
                     CoordinateOperation::Concatenated(_) => PJ_TYPE_CONCATENATED_OPERATION,
