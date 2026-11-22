@@ -1096,7 +1096,28 @@ impl DatabaseContext {
         ) else {
             return false;
         };
-        rows.len() == 1 && rows[0][0].text() == "EPSG"
+        if !rows.is_empty() {
+            return rows.len() == 1 && rows[0][0].text() == "EPSG";
+        }
+        // `createObjectsFromName` also reads the aliases other than EPSG_OLD. An ensemble found
+        // that way is named as its datum (`ensembleNameToNonEnsembleName`), which must match.
+        let Ok(rows) = self.query(
+            "SELECT DISTINCT d.auth_name, d.name FROM alias_name a JOIN geodetic_datum d \
+             ON a.auth_name = d.auth_name AND a.code = d.code \
+             WHERE a.table_name = 'geodetic_datum' AND a.source != 'EPSG_OLD' \
+             AND a.alt_name = ? COLLATE NOCASE",
+            &[name.to_owned()],
+        ) else {
+            return false;
+        };
+        match rows.as_slice() {
+            [row] if row[0].text() == "EPSG" => {
+                let found = row[1].text();
+                let datum_name = super::model::ensemble_name_as_datum(&found).unwrap_or(&found);
+                super::equiv::equivalent_name_bigger_differences(name, datum_name)
+            }
+            _ => false,
+        }
     }
 
     /// The code of the one ESRI projected CRS that `name` designates, by its name or an alias
