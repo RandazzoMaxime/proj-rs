@@ -1092,9 +1092,8 @@ fn neutral_parameter(parameter: &Parameter) -> bool {
 
 fn measures_equivalent(left: &Measure, right: &Measure, criterion: Equivalence) -> bool {
     if criterion == Equivalence::Strict {
-        return left.value() == right.value()
-            && left.unit().name() == right.unit().name()
-            && left.unit().conversion_to_si() == right.unit().conversion_to_si();
+        // `Measure::operator==`: the value and the unit name, not its factor (common.cpp:305, 423).
+        return left.value() == right.value() && left.unit().name() == right.unit().name();
     }
     let left_si = left.si_value();
     let right_si = right.si_value();
