@@ -16,8 +16,8 @@ use std::sync::OnceLock;
 use crate::engine::{Coord, Operation, TransformError};
 use crate::iso19111::{
     facade_candidates, same_datum_noop, AlternativeError, Alternatives, Axis, CoordinateOperation,
-    CoordinateSystem, Crs, FacadeCandidates, FacadeRequest, FactoryError, GeodeticCRS, Item, LogLine,
-    UnitOfMeasure,
+    CoordinateSystem, Crs, FacadeCandidates, FacadeRequest, FactoryError, GeodeticCRS, Item,
+    LogLine, UnitOfMeasure,
 };
 use crate::proj::{Direction, ForceOver, PairError, ProjError};
 
@@ -528,49 +528,28 @@ impl IsoPipeline {
 
     /// One point in `way` direction, facade order on both sides. The third axis passes
     /// through the pipeline, as `z` does in its geocentric steps.
-    /// [`Self::map`] with the lines `proj_trans` logs. A candidate that fails under `ONLY_BEST=YES`
-    /// is PROJ's `PROJ_ERR_COORD_TRANSFM_NO_OPERATION` (`trans.cpp:285-291`).
+    pub(crate) fn map(&self, coord: Coord, way: Direction) -> Result<Coord, TransformError> {
+        self.map_logged(coord, way, &mut Vec::new())
+            .map_err(|error| match error {
+                PairError::Step(error) => error,
+                PairError::NoOperation => TransformError::OutsideGrid,
+            })
+    }
+
+    /// [`Self::map`] with the lines `proj_trans` logs appended to `log`. A candidate that fails
+    /// under `ONLY_BEST=YES` is PROJ's `PROJ_ERR_COORD_TRANSFM_NO_OPERATION` (`trans.cpp:285-291`).
     pub(crate) fn map_logged(
         &self,
         coord: Coord,
         way: Direction,
         log: &mut Vec<LogLine>,
     ) -> Result<Coord, PairError> {
-        let Route::Alternatives(alternatives) = &self.route else {
-            return self.map(coord, way).map_err(PairError::Step);
+        let (from, to) = match way {
+            Direction::Forward => (self.source, self.target),
+            Direction::Inverse => (self.target, self.source),
         };
-        let (input, output) = match way {
-            Direction::Forward => (&self.source, &self.target),
-            Direction::Inverse => (&self.target, &self.source),
-        };
-        let given = input.in_pipeline_order(coord);
-        let done = match way {
-            Direction::Forward => alternatives.forward_logged(given, log),
-            Direction::Inverse => alternatives.inverse_logged(given, log),
-        };
-        done.map(|out| output.in_pipeline_order(out))
-            .map_err(|error| match error {
-                // `pj_warn_about_missing_grid` logs it at error level under `ONLY_BEST=YES`.
-                AlternativeError::MissingGrid(message) => {
-                    log.push(LogLine::error(message));
-                    PairError::NoOperation
-                }
-                AlternativeError::NoOperation => PairError::Step(TransformError::OutsideDomain),
-                AlternativeError::Network => PairError::Step(TransformError::NetworkUnavailable),
-            })
-    }
-
-    pub(crate) fn map(&self, coord: Coord, way: Direction) -> Result<Coord, TransformError> {
-        match way {
-            Direction::Forward => {
-                let out = self.forward(self.source.in_pipeline_order(coord))?;
-                Ok(self.target.in_pipeline_order(out))
-            }
-            Direction::Inverse => {
-                let out = self.inverse(self.target.in_pipeline_order(coord))?;
-                Ok(self.source.in_pipeline_order(out))
-            }
-        }
+        let out = self.run(from.in_pipeline_order(coord), way, log)?;
+        Ok(to.in_pipeline_order(out))
     }
 
     /// A slice in `way` direction, facade order on both sides, in place. The contract of
@@ -614,31 +593,42 @@ impl IsoPipeline {
         }
     }
 
-    /// `proj_trans` forward for one point, in the pipeline's own axis order.
-    fn forward(&self, coord: Coord) -> Result<Coord, TransformError> {
+    /// `proj_trans` for one point in `way`, in the pipeline's own axis order. The lines PROJ logs
+    /// while it runs are appended to `log` (`Alternatives::forward_logged`), with the error line
+    /// of a refused point (`Operation::failure_message`).
+    fn run(
+        &self,
+        coord: Coord,
+        way: Direction,
+        log: &mut Vec<LogLine>,
+    ) -> Result<Coord, PairError> {
         match &self.route {
-            Route::Single(operation) => operation.forward(coord),
-            Route::Alternatives(alternatives) => {
-                alternatives.forward(coord).map_err(|error| match error {
-                    AlternativeError::MissingGrid(_) => TransformError::OutsideGrid,
-                    AlternativeError::NoOperation => TransformError::OutsideDomain,
-                    AlternativeError::Network => TransformError::NetworkUnavailable,
-                })
+            Route::Single(operation) => {
+                let done = match way {
+                    Direction::Forward => operation.forward(coord),
+                    Direction::Inverse => operation.inverse(coord),
+                };
+                if done.is_err() {
+                    if let Some(text) = operation.failure_message(coord, way) {
+                        log.push(LogLine::error(text));
+                    }
+                }
+                done.map_err(PairError::Step)
             }
-        }
-    }
-
-    /// `proj_trans` inverse for one point, in the pipeline's own axis order.
-    fn inverse(&self, coord: Coord) -> Result<Coord, TransformError> {
-        match &self.route {
-            Route::Single(operation) => operation.inverse(coord),
-            Route::Alternatives(alternatives) => {
-                alternatives.inverse(coord).map_err(|error| match error {
-                    AlternativeError::MissingGrid(_) => TransformError::OutsideGrid,
-                    AlternativeError::NoOperation => TransformError::OutsideDomain,
-                    AlternativeError::Network => TransformError::NetworkUnavailable,
-                })
-            }
+            Route::Alternatives(alternatives) => alternatives
+                .transform_logged(coord, way, log)
+                .map_err(|error| match error {
+                    // `pj_warn_about_missing_grid` logs it at error level under `ONLY_BEST=YES`.
+                    AlternativeError::MissingGrid(message) => {
+                        log.push(LogLine::error(message));
+                        PairError::NoOperation
+                    }
+                    AlternativeError::NoOperation => PairError::Step(TransformError::OutsideDomain),
+                    AlternativeError::Network => {
+                        PairError::Step(TransformError::NetworkUnavailable)
+                    }
+                    AlternativeError::Fallback(error) => PairError::Step(error),
+                }),
         }
     }
 
@@ -676,11 +666,11 @@ impl IsoPipeline {
             Route::Alternatives(alternatives) => Some(alternatives.save_state()),
             Route::Single(_) => None,
         };
-        let probe = self.inverse(Coord::xy(0.0, 0.0));
+        let probe = self.run(Coord::xy(0.0, 0.0), Direction::Inverse, &mut Vec::new());
         if let (Route::Alternatives(alternatives), Some(saved)) = (&self.route, saved) {
             alternatives.restore_state(saved);
         }
-        !matches!(probe, Err(TransformError::NoInverse))
+        !matches!(probe, Err(PairError::Step(TransformError::NoInverse)))
     }
 }
 

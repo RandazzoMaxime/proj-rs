@@ -13,7 +13,7 @@
 use crate::angle::adjlon;
 use crate::context::Context;
 use crate::ellipsoid::PJ_ELLPS;
-use crate::proj::ForceOver;
+use crate::proj::{Direction, ForceOver};
 
 use crate::tmerc_approx::ApproxTmerc;
 use crate::{
@@ -42,6 +42,10 @@ mod cart_batch;
 // The execution plan of a pipeline: affine steps folded into one.
 #[path = "projections/plan.rs"]
 mod plan;
+
+// The line PROJ logs when `fwd_prepare` refuses a point.
+#[path = "projections/failure_log.rs"]
+mod failure_log;
 pub(crate) use plan::{Affine, StackOp};
 
 // NKG URNs are database coordinate operations, not `+proj` names.
@@ -1124,6 +1128,12 @@ pub(crate) trait Step: Send + Sync {
         self.output_kind() == IoKind::Degrees
     }
 
+    /// For a pipeline, the line PROJ logs when it refuses `coord` ([`Operation::failure_message`]),
+    /// inside `Some`. `None` for any other step.
+    fn pipeline_failure(&self, _coord: Coord, _inverse_chain: bool) -> Option<Option<String>> {
+        None
+    }
+
     /// Unit of the forward input.
     fn input_kind(&self) -> IoKind;
 
@@ -1244,6 +1254,8 @@ pub(crate) trait Step: Send + Sync {
 #[derive(Clone)]
 pub struct Operation {
     step: std::sync::Arc<dyn Step>,
+    /// The `+proj=` name of the definition, PROJ's `short_name`.
+    name: std::sync::Arc<str>,
     /// Shared, so that cloning an operation (one per candidate) copies a pointer, not the context.
     context: std::sync::Arc<Context>,
     /// What `proj -v` lists; shared, like the context.
@@ -1354,6 +1366,7 @@ impl Operation {
         if let Some(step) = nkg::from_definition(definition)? {
             return Ok(Self {
                 step: std::sync::Arc::from(step),
+                name: std::sync::Arc::from("pipeline"),
                 context: std::sync::Arc::new(Context::new()),
                 parameters: std::sync::Arc::from(Vec::new()),
             });
@@ -1374,6 +1387,7 @@ impl Operation {
         if name == "pipeline" {
             return Ok(Self {
                 step: std::sync::Arc::from(build_pipeline(definition, over, unknown)?),
+                name: std::sync::Arc::from("pipeline"),
                 context: std::sync::Arc::new(Context::new()),
                 parameters: std::sync::Arc::from(Vec::new()),
             });
@@ -1400,6 +1414,7 @@ impl Operation {
         let step = finish_step(&name, &params, &frame, unknown)?;
         Ok(Self {
             step,
+            name: std::sync::Arc::from(name.as_str()),
             context: std::sync::Arc::new(Context::new()),
             parameters: std::sync::Arc::from(params.listing()),
         })
@@ -1439,6 +1454,18 @@ impl Operation {
     /// [`TransformError`] from the underlying step.
     pub fn inverse(&self, coord: Coord) -> Result<Coord, TransformError> {
         self.step.inverse(coord)
+    }
+
+    /// The line PROJ logs at error level when [`Self::forward`] (or [`Self::inverse`] with
+    /// [`Direction::Inverse`]) refuses `coord`: `<step>: Invalid latitude` when `fwd_prepare` of a
+    /// step refuses it. `None` when PROJ logs nothing for that failure.
+    pub(crate) fn failure_message(&self, coord: Coord, way: Direction) -> Option<String> {
+        let inverse_chain = way == Direction::Inverse;
+        match self.step.pipeline_failure(coord, inverse_chain) {
+            Some(line) => line,
+            None if inverse_chain => None,
+            None => failure_log::operation_failure(&self.name, self.step.as_ref(), coord),
+        }
     }
 
     /// Forward on a slice, see [`Step::forward_batch`].
@@ -2764,6 +2791,8 @@ impl Step for LongLat {
 }
 
 struct PipeStep {
+    /// The `+proj=` name: PROJ's `short_name`, which prefixes the lines the step logs.
+    name: String,
     inverted: bool,
     omit_fwd: bool,
     omit_inv: bool,
@@ -2794,6 +2823,14 @@ impl Pipeline {
 }
 
 impl Step for Pipeline {
+    fn pipeline_failure(&self, coord: Coord, inverse_chain: bool) -> Option<Option<String>> {
+        Some(failure_log::pipeline_failure(
+            &self.steps,
+            coord,
+            inverse_chain,
+        ))
+    }
+
     fn forward(&self, coord: Coord) -> Result<Coord, TransformError> {
         if !self.uses_stack {
             return plan::run(&self.forward_plan, coord);
@@ -2916,6 +2953,7 @@ fn build_pipeline(
         let step_frame = Frame::from_params(&step_params)?;
         let step = finish_step(&name, &step_params, &step_frame, unknown)?;
         steps.push(PipeStep {
+            name: name.clone(),
             inverted,
             omit_fwd,
             omit_inv,

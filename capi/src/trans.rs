@@ -133,6 +133,8 @@ pub(crate) fn trans_one(object: &mut Pj, direction: PJ_DIRECTION, coord: PJ_COOR
     let previous = std::mem::replace(&mut ctx.errno, 0);
     let mut log = Vec::new();
     let result = object.transform_logged(xyzt(coord), way, &mut log);
+    // The lines `proj_trans` logs while the point runs: the candidate lines at debug level, and
+    // the `fwd_prepare` line of a step that refuses the point (`fwd.cpp:54`).
     let ctx = object.context();
     for line in &log {
         let level = match line.level {

@@ -117,6 +117,7 @@ impl From<AlternativeError> for Error {
             AlternativeError::MissingGrid(text) => Self::MissingGrid(text),
             AlternativeError::NoOperation => Self::NoOperationForPoint,
             AlternativeError::Network => Self::Network,
+            AlternativeError::Fallback(error) => Self::from(error),
         }
     }
 }
