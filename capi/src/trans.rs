@@ -322,6 +322,11 @@ pub extern "C" fn proj_trans_get_last_used_operation(p: *mut PJ) -> *mut PJ {
         let Some(object) = pj(p) else {
             return std::ptr::null_mut();
         };
+        // `iCurCoordOp` stays -1 until `proj_trans` sets it (trans.cpp:348, :371): no operation
+        // has been used before the first point, whatever the object holds.
+        if !object.transformed {
+            return std::ptr::null_mut();
+        }
         match object.proj.as_ref().and_then(Proj::last_used_operation) {
             Some(operation) => {
                 let mut copy = object.copy_in(object.ctx);
