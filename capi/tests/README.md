@@ -46,6 +46,7 @@ difference). `dist.sh` installs the library under the names of libproj: `libproj
 | `network_grids` | `network_grids.c`: `proj_coordoperation_is_instantiable` and the availability of each grid of the operations of 2 pairs, network off then on: with the network on, a grid the database knows is available, identical to the reference libproj |
 | `crs_to_crs_area` | `crs_to_crs_area.c`: the description of `proj_create_crs_to_crs_from_pj` for 3 pairs with and without an area of interest, which keeps the operations whose extent meets the box; identical to the reference libproj |
 | `step_error_log` | `step_error_log.c`: the lines `proj_trans` logs at error level when `fwd_prepare` refuses a point (`<step>: Invalid latitude`, `Invalid longitude`), for 4 operations and pipelines and 2 CRS pairs with candidates, with the coordinates and the error codes; identical to the reference libproj |
+| `proj_based_operation` | `proj_based_operation.c`: the operations of `proj_create_operations` that PROJ only writes as a PROJ string (compound CRS with a geoid model to a geographic 3D CRS) have the type, step count, method, WKT keyword and PROJJSON type of the reference libproj |
 | `c_api` | `test_c_api.cpp`: 152 `TEST`, 32 excluded, 120 pass |
 
 ## Excluded: `excluded.txt`

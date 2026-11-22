@@ -934,11 +934,8 @@ impl CoordinateOperation {
     #[must_use]
     pub fn requires_per_coordinate_input_time(&self) -> bool {
         match self {
-            Self::Conversion(operation) => operation
-                .method()
-                .name()
-                .strip_prefix("PROJ-based operation method: ")
-                .is_some_and(|text| {
+            Self::Conversion(operation) => {
+                operation.method().proj_based_text().is_some_and(|text| {
                     let plus: Vec<String> = text
                         .split_whitespace()
                         .map(|word| {
@@ -950,7 +947,8 @@ impl CoordinateOperation {
                         })
                         .collect();
                     pipeline_requires_input_time(&plus.join(" "))
-                }),
+                })
+            }
             Self::Transformation(operation) => operation.requires_per_coordinate_input_time(),
             Self::Concatenated(operation) if operation.proj_based.is_some() => operation
                 .export_to_proj_string(super::pipeline::ProjLines::Single)
@@ -1391,11 +1389,7 @@ impl super::model::Conversion {
     }
 
     fn export_to_proj_inner(&self, approx_tmerc: TmercExport) -> Result<String, FactoryError> {
-        if let Some(text) = self
-            .method
-            .name()
-            .strip_prefix("PROJ-based operation method: ")
-        {
+        if let Some(text) = self.method.proj_based_text() {
             let direction = if self.inverted {
                 ProjBasedDirection::Inverse
             } else {

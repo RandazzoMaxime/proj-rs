@@ -901,7 +901,7 @@ fn proj_method_text(transformation: &super::model::Transformation) -> Option<&st
     if method.code_space() == "PROJ" && method.code() == "PROJString" {
         return Some(method.name());
     }
-    method.name().strip_prefix("PROJ-based operation method: ")
+    method.proj_based_text()
 }
 
 fn collect_file_parameters(operation: &CoordinateOperation, names: &mut Vec<String>) {
@@ -919,11 +919,7 @@ fn collect_file_parameters(operation: &CoordinateOperation, names: &mut Vec<Stri
         CoordinateOperation::Conversion(conversion) => {
             // A PROJ-based operation keeps its PROJ string in the method name, and its grids are
             // the `grids` and `file` values of that string (`PROJBasedOperation::gridsNeeded`).
-            if let Some(text) = conversion
-                .method
-                .name()
-                .strip_prefix(PROJ_BASED_METHOD_PREFIX)
-            {
+            if let Some(text) = conversion.method.proj_based_text() {
                 names.extend(proj_based_grid_names(text));
                 return;
             }
@@ -946,9 +942,6 @@ fn collect_file_parameters(operation: &CoordinateOperation, names: &mut Vec<Stri
         }
     }
 }
-
-/// The prefix of the method name of a PROJ-based operation, followed by its PROJ string.
-const PROJ_BASED_METHOD_PREFIX: &str = "PROJ-based operation method: ";
 
 /// `PROJStringFormatter::getUsedGridNames` (io.cpp 10512-10525): the comma-separated values of
 /// the `grids` and `file` parameters of every step, as written. A name is listed once.
