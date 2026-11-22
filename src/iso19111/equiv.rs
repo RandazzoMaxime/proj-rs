@@ -458,11 +458,7 @@ impl ProjectedCRS {
         };
         (criterion != Equivalence::Strict || same_name(self.name(), other.name()))
             && geodetic_equivalent(self.base_crs(), other.base_crs(), base_criterion)
-            && conversion_equivalent_for(
-                self.deriving_conversion(),
-                other.deriving_conversion(),
-                criterion,
-            )
+            && projected_conversion_equivalent(self, other, criterion)
             && cs_axes_match_for(
                 self.coordinate_system().axes(),
                 other.coordinate_system().axes(),
@@ -551,11 +547,7 @@ impl ProjectedCRS {
             return false;
         };
         left.is_equivalent_to_with_database(right, criterion, db)
-            && conversion_equivalent_for(
-                self.deriving_conversion(),
-                other.deriving_conversion(),
-                criterion,
-            )
+            && projected_conversion_equivalent(self, other, criterion)
             && cs_axes_match_for(
                 self.coordinate_system().axes(),
                 other.coordinate_system().axes(),
@@ -1222,6 +1214,22 @@ fn axis_equivalent(left: &Axis, right: &Axis) -> bool {
 
 fn meridian_value(axis: &Axis) -> Option<f64> {
     axis.meridian().map(|meridian| meridian.longitude().value())
+}
+
+/// `DerivedCRS::_isEquivalentTo` (crs.cpp): outside `Strict`, the deriving conversion is compared
+/// with the standard criterion on the base CRS, so that Mercator variant A and B, or LCC 1SP and
+/// 2SP, meet through `convertToOtherMethod`.
+fn projected_conversion_equivalent(
+    left: &ProjectedCRS,
+    right: &ProjectedCRS,
+    criterion: Equivalence,
+) -> bool {
+    let (own, other) = (left.deriving_conversion(), right.deriving_conversion());
+    if criterion == Equivalence::Strict {
+        return conversion_equivalent_for(own, other, criterion);
+    }
+    conversion_equivalent_for(own, other, Equivalence::Equivalent)
+        || own.is_equivalent_to_with_source(other, left.base_crs(), Equivalence::Equivalent)
 }
 
 fn conversion_equivalent(left: &Conversion, right: &Conversion) -> bool {
