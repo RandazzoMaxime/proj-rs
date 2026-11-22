@@ -1574,6 +1574,34 @@ impl super::model::CartesianCS {
     }
 }
 
+impl CoordinateSystem {
+    /// Write this coordinate system, of any kind, into `formatter` and return the WKT. WKT1 has
+    /// no standalone coordinate system node, so the result is empty there.
+    #[must_use]
+    pub fn export_to_wkt(&self, formatter: &mut WktFormatter) -> String {
+        let previous = formatter.output_axis;
+        formatter.output_axis = OutputAxisRule::Yes;
+        if formatter.wkt2 {
+            export_cs(self, formatter);
+        }
+        formatter.output_axis = previous;
+        std::mem::take(&mut formatter.result)
+    }
+}
+
+impl PrimeMeridian {
+    /// Write this prime meridian into `formatter` and return the WKT. On its own, Greenwich is
+    /// written too, where a CRS omits it.
+    #[must_use]
+    pub fn export_to_wkt(&self, formatter: &mut WktFormatter) -> String {
+        let previous = formatter.omit_greenwich;
+        formatter.omit_greenwich = false;
+        export_prime_meridian(self, formatter);
+        formatter.omit_greenwich = previous;
+        std::mem::take(&mut formatter.result)
+    }
+}
+
 impl GeodeticReferenceFrame {
     /// Write this datum. A non-Greenwich prime meridian follows the datum node.
     ///

@@ -4,7 +4,7 @@
 use std::ffi::{c_char, c_int};
 
 use proj_rs::iso19111::{
-    CoordinateOperation, CoordinateSystem, Crs, DatabaseContext, EllipsoidalHeightPolicy,
+    CoordinateOperation, CoordinateSystem, Crs, DatabaseContext, Datum, EllipsoidalHeightPolicy,
     Equivalence, GeodeticCRS, Identifier, JsonFormat, JsonLines, LinunitPolicy, ObjectDomain,
     OutputAxisRule, ProjLines, UserObject, WktConvention, WktFormatter, WktLines, WktStrictness,
 };
@@ -601,7 +601,23 @@ fn wkt_text(
         Obj::User(UserObject::Crs(crs)) => crs.export_to_wkt(&mut formatter),
         Obj::User(UserObject::Operation(operation)) => operation.export_to_wkt(&mut formatter),
         Obj::User(UserObject::GeodeticDatum(datum)) => datum.export_to_wkt(&mut formatter),
-        _ => return Err("this object has no WKT form in this port".to_owned()),
+        Obj::User(UserObject::VerticalDatum(datum)) => {
+            Datum::Vertical(datum.clone()).export_to_wkt(&mut formatter)
+        }
+        Obj::User(UserObject::EngineeringDatum(datum)) => {
+            Datum::Engineering(datum.clone()).export_to_wkt(&mut formatter)
+        }
+        Obj::User(UserObject::ParametricDatum(datum)) => datum.export_to_wkt(&mut formatter),
+        Obj::User(UserObject::TemporalDatum(datum)) => datum.export_to_wkt(&mut formatter),
+        Obj::User(UserObject::Ensemble(ensemble)) => ensemble.export_to_wkt(&mut formatter),
+        Obj::User(UserObject::Ellipsoid(ellipsoid)) => ellipsoid.export_to_wkt(&mut formatter),
+        Obj::User(UserObject::PrimeMeridian(meridian)) => {
+            Ok(meridian.export_to_wkt(&mut formatter))
+        }
+        Obj::User(UserObject::CoordinateMetadata(metadata)) => {
+            metadata.export_to_wkt(&mut formatter)
+        }
+        Obj::Cs(cs) => Ok(cs.export_to_wkt(&mut formatter)),
     };
     written.map_err(|error| error.to_string())
 }

@@ -248,6 +248,7 @@ fn user_object_of(parsed: WktObject) -> Option<UserObject> {
         WktObject::VerticalDatum(value) => UserObject::VerticalDatum(value),
         WktObject::EngineeringDatum(value) => UserObject::EngineeringDatum(value),
         WktObject::TemporalDatum(value) => UserObject::TemporalDatum(value),
+        WktObject::ParametricDatum(value) => UserObject::ParametricDatum(value),
         WktObject::Ensemble(value) => UserObject::Ensemble(value),
         WktObject::Crs(value) => UserObject::Crs(value),
         WktObject::CoordinateMetadata(value) => UserObject::CoordinateMetadata(value),
