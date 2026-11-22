@@ -397,6 +397,7 @@ impl<'a> TransformerBuilder<'a> {
                     Ballpark::Allowed => crate::iso19111::Ballpark::Allowed,
                     Ballpark::Forbidden => crate::iso19111::Ballpark::Forbidden,
                 },
+                area_of_interest: None,
             },
             authority: "",
             area: self.area.map(domain_of).transpose()?,

@@ -148,6 +148,9 @@ pub struct CandidateFilter {
     pub accuracy: Option<f64>,
     /// Whether ballpark transformations are candidates.
     pub ballpark: Ballpark,
+    /// The area of interest of the `PJ_AREA`, when its box is set: the factory keeps the
+    /// operations whose extent meets it (`crs_to_crs.cpp:557-561`).
+    pub area_of_interest: Option<BoundingBox>,
 }
 
 impl CandidateFilter {
@@ -155,6 +158,7 @@ impl CandidateFilter {
     pub const NONE: Self = Self {
         accuracy: None,
         ballpark: Ballpark::Allowed,
+        area_of_interest: None,
     };
 
     /// Whether a candidate passes the filter. PROJ drops an operation of unknown accuracy
@@ -1635,6 +1639,9 @@ pub(crate) fn facade_candidates(
     let source_crs = create_from_user_input_with_init_rules(source, &db, rules)?;
     let target_crs = create_from_user_input_with_init_rules(target, &db, rules)?;
     let mut context = CoordinateOperationContext::create(&db, authority);
+    if let Some(bbox) = filter.area_of_interest {
+        context.set_area_of_interest(Some(ObjectDomain::from_bounding_box(bbox)));
+    }
     context.set_spatial_criterion(SpatialCriterion::PartialIntersection);
     // `crs_to_crs.cpp:566-573`: KNOWN_AVAILABLE, unless ONLY_BEST=NO without the network, which
     // asks DISCARD_OPERATION_IF_MISSING_GRID (as `select_alternatives_for_crs`).

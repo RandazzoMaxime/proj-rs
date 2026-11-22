@@ -9,6 +9,7 @@ fn accuracy_zero_keeps_the_unfiltered_choice() {
     let zero = CandidateFilter {
         accuracy: Some(0.0),
         ballpark: proj_rs::iso19111::Ballpark::Allowed,
+        area_of_interest: None,
     };
     let filtered =
         best_pipeline_filtered("EPSG:4326", "EPSG:5070", OnlyBest::Off, zero).expect("best");
