@@ -18,6 +18,11 @@
 
 use std::f64::consts::PI;
 
+// The C layout of `geodesic.h`, for the C library.
+#[doc(hidden)]
+#[path = "geodesic_c.rs"]
+pub mod c;
+
 const QD: f64 = 90.0;
 const HD: f64 = 180.0;
 const TD: f64 = 360.0;

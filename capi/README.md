@@ -2,8 +2,9 @@
 
 The `proj.h` of PROJ 9.9.0 on the proj-rs engine. `include/` holds the headers of PROJ, byte for
 byte; the library exports the 292 functions of `proj.h` and `pj_release` with their names,
-signatures and structures. All 292 are implemented. `docs/API-v1.md` § C and « Écarts du lot 2 » say
-what differs from PROJ.
+signatures and structures. All 292 are implemented. It also exports the geodesic API of PROJ,
+`geodesic.h` and its 21 `geod_*` functions, over the Rust port of `geodesic.c`
+(`capi/src/geodesic.rs`). `docs/API-v1.md` § C and « Écarts du lot 2 » say what differs from PROJ.
 
 ```bash
 capi/tests/dist.sh --release     # target/capi-dist/{lib,include}: libproj.so.25, libproj.so, libproj.a

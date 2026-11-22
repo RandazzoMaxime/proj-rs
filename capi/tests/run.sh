@@ -2,8 +2,8 @@
 # Compile the C tests of PROJ 9.9.0 against the C library of proj-rs, and run them.
 #
 # Usage: capi/tests/run.sh [--release] [TEST...]
-#   TEST is one of: symbols abi lists intermediate_crs errno_string angular_io context include_h fork
-#   datadir c_api
+#   TEST is one of: symbols abi lists intermediate_crs errno_string angular_io context include_h
+#   fork datadir geodesic c_api
 #   (default: all). PENDING=0 runs the cases of pending.txt too, to see them fail.
 #   GTEST_FILTER=pattern narrows the gtest cases of the C++ tests.
 #
@@ -23,7 +23,8 @@ if [ "${1:-}" = "--release" ]; then
   shift
 fi
 tests=("$@")
-[ ${#tests[@]} -gt 0 ] || tests=(symbols abi lists intermediate_crs errno_string angular_io context include_h fork datadir c_api)
+[ ${#tests[@]} -gt 0 ] || tests=(symbols abi lists intermediate_crs errno_string angular_io
+                                  context include_h fork datadir geodesic c_api)
 
 ref=${PROJ_REFERENCE:-$root/target/proj-reference}
 src=$ref/src
@@ -114,6 +115,15 @@ for test in "${tests[@]}"; do
       cmp -s "$out/intermediate_ref.txt" "$out/intermediate_ours.txt" \
         || { echo "operations through allowed intermediate CRS differ from PROJ" >&2; exit 1; }
       cat "$out/intermediate_ours.txt" ;;
+    geodesic)
+      # geodesic.h, the header of PROJ 9.9.0: the layout of its structures, and geodtest.c, the C
+      # tests of geodesic.c that PROJ runs, against the geod_* functions of proj-rs.
+      echo "== geodesic"
+      cmp -s "$root/capi/include/geodesic.h" "$src/src/geodesic.h" \
+        || { echo "capi/include/geodesic.h is not the geodesic.h of the reference" >&2; exit 1; }
+      gcc -std=c99 -I"$root/capi/include" -c "$here/geodesic_layout.c" -o "$out/geodesic_layout.o"
+      gcc -std=c99 -I"$root/capi/include" "$src/src/tests/geodtest.c" -o "$out/geodtest" "${ldflags[@]}" -lm
+      "$out/geodtest" && echo "geodtest.c of PROJ: no failure" ;;
     errno_string) run_gtest proj_errno_string_test "$unit/proj_errno_string_test.cpp" ;;
     angular_io)   run_gtest proj_angular_io_test "$unit/proj_angular_io_test.cpp" ;;
     context)      run_gtest proj_context_test "$unit/proj_context_test.cpp" ;;
