@@ -35,7 +35,9 @@ fn run_array(proj: &Proj, n: usize) -> f64 {
         })
         .collect();
     proj.convert_array(&mut pts).expect("array");
-    pts.iter().map(|p| p.0 + p.1).sum()
+    let sum = pts.iter().map(|p| p.0 + p.1).sum();
+    rss_report("array");
+    sum
 }
 
 #[inline(never)]
