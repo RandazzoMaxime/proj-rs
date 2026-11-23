@@ -187,6 +187,7 @@ pub(crate) fn projected_points(op: &Operation, points: &[Coord], far: f64) -> Ve
     images
 }
 
-#[cfg(test)]
+// Windows: the set-up of the projections calls its own libm, which gives other constants.
+#[cfg(all(test, not(windows)))]
 #[path = "kernel_bits_tests.rs"]
 mod kernel_bits;

@@ -1,0 +1,10 @@
+# Écarts propres à Linux ARM (glibc aarch64) : lus seulement sur cette cible (tests/parity.rs).
+# Colonnes : clé « id:ligne », cause courte, renvoi à une fiche.
+# Un écart listé ne fait pas échouer ; un écart nouveau ou disparu oui.
+geod-inv-0020:2	libm aarch64 : inverse géodésique quasi antipodale mal conditionnée	-
+geod-inv-0069:1	libm aarch64 : inverse géodésique quasi antipodale mal conditionnée	-
+geod-inv-0114:1	libm aarch64 : inverse géodésique quasi antipodale mal conditionnée	-
+geod-inv-0199:3	libm aarch64 : inverse géodésique quasi antipodale mal conditionnée	-
+geod-inv-0164:2	libm aarch64 : inverse géodésique quasi antipodale mal conditionnée	-
+geod-inv-0313:3	libm aarch64 : inverse géodésique quasi antipodale mal conditionnée	-
+geod-inv-0316:1	libm aarch64 : inverse géodésique quasi antipodale mal conditionnée	-
