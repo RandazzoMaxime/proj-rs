@@ -1,0 +1,7 @@
+cargo:rustc-check-cfg=cfg(link_libproj)
+cargo:rustc-check-cfg=cfg(simd_lanes)
+cargo:rustc-cfg=simd_lanes
+cargo:rerun-if-changed=build.rs
+cargo:rerun-if-env-changed=PROJ_RS_LIBPROJ_DIR
+cargo:rerun-if-env-changed=CONDA_PREFIX
+cargo:rerun-if-changed=src/bin/support/libproj_timer.c
