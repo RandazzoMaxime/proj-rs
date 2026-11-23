@@ -9,7 +9,7 @@
 #   the tests that compare with cs2cs skip the PATH entries under the repository (where cargo puts
 #   proj-rs's own cs2cs), so a reference built inside it would not be compared against.
 #
-# Writes data/proj.db, data/proj-triggers.sql and DIR/proj-db-diff.md (the difference, as Markdown). A database with the
+# Writes data/proj.db, data/proj-triggers.sql, data/proj.pages and DIR/proj-db-diff.md (the difference, as Markdown). A database with the
 # same content is not copied: the file would differ in bytes only. Exit status:
 #   0  data/proj.db replaced, or already the same
 #   3  the major layout version of the database changed: proj-rs reads the old layout, so the
@@ -49,4 +49,5 @@ if [ "$old_major" != "$new_major" ]; then
   exit 3
 fi
 python3 -I "$root/tools/proj-db/split_triggers.py" "$new" "$root/data"
-echo "data/proj.db and data/proj-triggers.sql are the database of PROJ $tag"
+python3 -I "$root/tools/proj-db/pack_pages.py" "$root/data/proj.db" "$root/data/proj.pages"
+echo "data/proj.db, data/proj-triggers.sql and data/proj.pages are the database of PROJ $tag"

@@ -425,3 +425,32 @@ Selon la compilation (même mesure, création seule) :
 - **Fonctionnalité `network`** : 10,7 Mo au pic, et 1,2 Mo de pages de fichier dès le démarrage,
   car `libssl` et `libcrypto` sont liées dynamiquement et chargées même sans téléchargement. Elle est
   désactivée par défaut, donc le cas courant n'en paie rien.
+
+## Pages compressées dans l'exécutable
+
+La base embarquée pèse 10,35 Mo, soit 60 % du binaire. `data/proj.pages` la stocke page par page en
+zlib (`tools/proj-db/pack_pages.py` : 2,68 Mo, ratio 3,9). La VFS (`src/projdb_exe.rs`) décompresse
+la page touchée par chaque lecture dans un tampon de pile : SQLite garde ses propres pages en cache,
+rien n'est gardé en tas ici.
+
+- Sur Linux, les flux compressés sont lus par `pread` dans le fichier de l'exécutable, comme les
+  octets bruts l'étaient : un flux lu à travers le mappage compterait dans le `RssFile`. Ailleurs, ou
+  si le fichier ne se vérifie pas, ils sont lus sur place.
+- Le chemin qui recopie toute la base (`create_with_auxiliary` sans chemin) la décompresse en
+  mémoire : rare, et transitoire.
+
+Mesures (même machine, minimum de 3 passes ; la référence est la version `-Os` non compressée) :
+
+| | référence (`-Os`) | pages compressées |
+|---|---:|---:|
+| binaire (texte) | 16,8 Mo | 9,2 Mo (-7,6 Mo) |
+| pic de création | 8,4 Mo | 8,9 Mo (+0,5 Mo) |
+| création, processus entier | 10,7 ms | 19,6 ms (+9 ms, une fois par processus) |
+| lot 1 M de points | 105 ns | 101 ns (dans le bruit, mesures alternées) |
+| point par point | 412 ns | 415 ns (dans le bruit, mesures alternées) |
+
+Le coût est au démarrage seulement : les conversions ne lisent jamais la base. Les tests de la
+bibliothèque (240, dont un test qui compare chaque page décompressée aux octets de `proj.db`), la
+parité, `shared_database`, `unit_database_open`, `unit_capi_database_path`, `test_factory`,
+`convert_array_golden` et `convert_iter` passent, et `no_unsafe` reste vert.
+`tools/proj-db/update.sh` régénère les trois fichiers.

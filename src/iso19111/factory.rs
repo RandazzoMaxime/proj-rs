@@ -573,8 +573,7 @@ impl DatabaseContext {
             None => {
                 conn.execute_batch(&format!("ATTACH DATABASE ':memory:' AS {MAIN_SCHEMA}"))
                     .map_err(db_error)?;
-                conn.deserialize_bytes(MAIN_SCHEMA, projdb::embedded_bytes())
-                    .map_err(db_error)?;
+                projdb::deserialize_embedded(&mut conn, MAIN_SCHEMA).map_err(db_error)?;
                 "proj.db".to_owned()
             }
         };

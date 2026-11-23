@@ -8,7 +8,9 @@ rest is outside semver.
 
 - Memory: the read-only `proj.db` embedded in proj-rs has no triggers (`data/proj-triggers.sql` holds
   them and writable copies replay them). Creating a transform peaks at about 2.5 MiB less, and starts
-  faster. See [docs/PORTING-memory.md](docs/PORTING-memory.md).
+  faster. The embedded database is stored compressed, page by page (`data/proj.pages`): the binary
+  is 7.6 MB smaller, creation takes about 9 ms more once per process, the conversions do not change.
+  See [docs/PORTING-memory.md](docs/PORTING-memory.md).
 
 ## 1.2.5
 

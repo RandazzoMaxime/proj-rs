@@ -9,7 +9,7 @@ use std::time::Duration;
 use rusqlite::backup::Backup;
 use rusqlite::{Connection, OpenFlags};
 
-const PROJ_DB: &[u8] = include_bytes!("../data/proj.db");
+const PROJ_PAGES: &[u8] = include_bytes!("../data/proj.pages");
 /// The 38 triggers of `proj.db`, left out of the image: SQLite parses them at every load of the
 /// schema, about 2.7 MiB of heap for a read. A writable copy replays them (`tools/proj-db`).
 const PROJ_TRIGGERS: &str = include_str!("../data/proj-triggers.sql");
@@ -42,19 +42,27 @@ fn open_embedded() -> Result<Mutex<Connection>, String> {
         .map_err(|error| error.to_string())
 }
 
-/// The embedded bytes as a read-only image. On Linux the connection reads them from the
-/// executable file with `pread` (`projdb_exe`), so the pages stay out of the resident set. Else
-/// it reads the pages of the binary in place: `mmap_size` keeps SQLite from copying each page it
-/// reads into its cache.
+/// The embedded database as a read-only connection. Its pages are decompressed as they are read
+/// (`projdb_exe`). When that VFS is not available, the whole image is decompressed in memory.
 fn read_only_image() -> Result<Connection, rusqlite::Error> {
-    #[cfg(target_os = "linux")]
-    if let Some(connection) = crate::projdb_exe::open(PROJ_DB) {
+    if let Some(connection) = crate::projdb_exe::open(PROJ_PAGES) {
         return Ok(connection);
     }
     let mut connection = Connection::open_in_memory()?;
-    connection.deserialize_bytes(rusqlite::MAIN_DB, PROJ_DB)?;
+    deserialize_embedded(&mut connection, rusqlite::MAIN_DB)?;
     connection.pragma_update(None, "mmap_size", MMAP_SIZE)?;
     Ok(connection)
+}
+
+/// Copy the whole embedded database, read-only, into `schema` of `connection`: the one path that
+/// needs the image in memory (`DatabaseContext::create_with_auxiliary` without a path).
+pub(crate) fn deserialize_embedded(
+    connection: &mut Connection,
+    schema: impl rusqlite::Name,
+) -> Result<(), rusqlite::Error> {
+    let image = crate::projdb_exe::decode_all(PROJ_PAGES).ok_or(rusqlite::Error::InvalidQuery)?;
+    let size = image.len();
+    connection.deserialize_read_exact(schema, std::io::Cursor::new(&image[..]), size, true)
 }
 
 const MMAP_SIZE: i64 = 1 << 30;
@@ -190,11 +198,6 @@ fn open_lazy_or_copy() -> Result<Connection, DbFail> {
 /// A read-only connection of its own to the embedded `proj.db`, with no auxiliary database.
 pub(crate) fn read_only_connection() -> Result<Connection, DbFail> {
     read_only_image().map_err(|error| DbFail::Open(error.to_string()))
-}
-
-/// The bytes of the embedded `proj.db`.
-pub(crate) fn embedded_bytes() -> &'static [u8] {
-    PROJ_DB
 }
 
 /// A private, writable connection to the embedded `proj.db`.

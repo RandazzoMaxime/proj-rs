@@ -1,63 +1,110 @@
-//! Reads the embedded `proj.db` from the executable file with `pread`, through a SQLite VFS.
+//! Reads the embedded `proj.db` through a SQLite VFS, one page at a time.
 //!
-//! The 10 MiB database sits in the read-only data of the binary. Reading it through the
-//! mapping makes every page that a query touches resident in this process, and the kernel
-//! maps 16 pages around each fault. PROJ reads its `proj.db` with `read`, so those pages stay
-//! in the page cache of the kernel and never count in the resident set of the process. This
-//! VFS does the same: SQLite asks for a page, `pread` copies it from the file of the binary,
-//! and the mapping is never touched. Linux only: the position of the bytes in the file comes
-//! from `/proc/self/maps`. When anything does not check out, [`open`] returns `None` and the
-//! caller reads the bytes in place.
+//! The database is stored in `data/proj.pages`: every 4 KiB page compressed on its own with zlib
+//! (`tools/proj-db/pack_pages.py`), so the binary carries about a quarter of the 10 MiB file. A
+//! read decompresses the pages it touches into a stack buffer; SQLite's own page cache keeps the
+//! ones it reuses. Creation pays the decompression once per process (about 10 ms); the conversions
+//! do not read the database at all.
+//!
+//! On Linux the compressed streams are read with `pread` from the executable file, as the
+//! uncompressed bytes were before: a page read through the mapping would count in the resident set
+//! of the process. Elsewhere, or when the file cannot be checked, they are read in place.
 
 use std::ffi::{c_char, c_int, c_void, CStr};
+#[cfg(target_os = "linux")]
 use std::fs::File;
+#[cfg(target_os = "linux")]
 use std::io::Read;
+#[cfg(target_os = "linux")]
 use std::os::unix::fs::{FileExt, MetadataExt};
 use std::ptr;
 use std::sync::OnceLock;
 
+use miniz_oxide::inflate::decompress_slice_iter_to_slice;
 use rusqlite::ffi;
 use rusqlite::{Connection, OpenFlags};
 
 const VFS_NAME: &CStr = c"proj-rs-exe";
 const FILE_NAME: &CStr = c"proj-rs-embedded";
+const MAGIC: &[u8; 4] = b"PRJP";
+const HEADER: usize = 20;
 
-/// The executable and where the embedded bytes start in it.
-struct Source {
-    file: File,
-    offset: u64,
-    len: u64,
+/// The largest zlib stream of a page: a 4 KiB page does not compress to more than this.
+const MAX_STREAM: usize = 8192;
+
+/// The compressed pages of the embedded database, parsed from the header of `proj.pages`. The
+/// streams come from the executable file when `file` is set, else from `bytes`.
+struct Pages {
+    bytes: &'static [u8],
+    #[cfg(target_os = "linux")]
+    file: Option<(File, u64)>,
+    page: usize,
+    len: usize,
+    data: usize,
 }
 
-static SOURCE: OnceLock<Option<Source>> = OnceLock::new();
-static REGISTERED: OnceLock<bool> = OnceLock::new();
-
-/// A connection that reads `bytes` from the executable file, or `None` when the bytes do not
-/// map to a file we can read back identically.
-pub(crate) fn open(bytes: &'static [u8]) -> Option<Connection> {
-    let source = SOURCE.get_or_init(|| locate(bytes)).as_ref()?;
-    if source.len != u64::try_from(bytes.len()).ok()? || !*REGISTERED.get_or_init(register) {
-        return None;
+impl Pages {
+    fn parse(bytes: &'static [u8]) -> Option<Self> {
+        let header = bytes.get(..HEADER)?;
+        if &header[..4] != MAGIC {
+            return None;
+        }
+        let page = usize::try_from(u32::from_le_bytes(header[4..8].try_into().ok()?)).ok()?;
+        let count = usize::try_from(u32::from_le_bytes(header[8..12].try_into().ok()?)).ok()?;
+        let len = usize::try_from(u64::from_le_bytes(header[12..20].try_into().ok()?)).ok()?;
+        let data = HEADER + 4 * (count + 1);
+        if page == 0 || count * page < len || bytes.len() < data {
+            return None;
+        }
+        Some(Self {
+            bytes,
+            #[cfg(target_os = "linux")]
+            file: locate(bytes),
+            page,
+            len,
+            data,
+        })
     }
-    let flags = OpenFlags::SQLITE_OPEN_READ_ONLY
-        | OpenFlags::SQLITE_OPEN_URI
-        | OpenFlags::SQLITE_OPEN_NO_MUTEX;
-    let uri = "file:proj-rs-embedded?immutable=1";
-    let connection = Connection::open_with_flags_and_vfs(uri, flags, "proj-rs-exe").ok()?;
-    connection
-        .pragma_update(None, "cache_size", -CACHE_KIB)
-        .ok()?;
-    Some(connection)
+
+    /// Decompress page `index` into `out`, which holds exactly the bytes of that page.
+    fn decode(&self, index: usize, out: &mut [u8]) -> bool {
+        let mut scratch = [0u8; MAX_STREAM];
+        let Some(stream) = self.stream(index, &mut scratch) else {
+            return false;
+        };
+        decompress_slice_iter_to_slice(out, std::iter::once(stream), true, false)
+            .is_ok_and(|written| written == out.len())
+    }
+
+    /// The zlib stream of page `index`: read from the executable file when there is one.
+    fn stream<'a>(&'a self, index: usize, scratch: &'a mut [u8]) -> Option<&'a [u8]> {
+        let at = |i: usize| -> Option<usize> {
+            let start = HEADER + 4 * i;
+            let raw = self.bytes.get(start..start + 4)?;
+            usize::try_from(u32::from_le_bytes(raw.try_into().ok()?)).ok()
+        };
+        let (from, to) = (self.data + at(index)?, self.data + at(index + 1)?);
+        #[cfg(target_os = "linux")]
+        if let Some((file, base)) = &self.file {
+            let buffer = scratch.get_mut(..to.checked_sub(from)?)?;
+            file.read_exact_at(buffer, base + u64::try_from(from).ok()?)
+                .ok()?;
+            return Some(&*buffer);
+        }
+        let _ = scratch;
+        self.bytes.get(from..to)
+    }
+
+    /// Length of page `index`: the page size, but less for the last one.
+    fn page_len(&self, index: usize) -> usize {
+        self.len.saturating_sub(index * self.page).min(self.page)
+    }
 }
 
-/// Page cache of one connection, in KiB. The default is 2000. A creation reads about 2 MiB of
-/// pages once, so a smaller cache costs few extra `pread` and saves heap: with 500, the peak of
-/// `Proj::new_known_crs("EPSG:4326", "EPSG:2154")` is 1.4 MiB lower than with 2000.
-const CACHE_KIB: i64 = 500;
-
+#[cfg(target_os = "linux")]
 /// The file mapped under `bytes`, and the offset of `bytes[0]` in it. The first and last page
 /// are read back and compared, so a binary replaced on disk is not trusted.
-fn locate(bytes: &'static [u8]) -> Option<Source> {
+fn locate(bytes: &'static [u8]) -> Option<(File, u64)> {
     #[expect(
         clippy::as_conversions,
         reason = "the address of a static, compared to /proc/self/maps"
@@ -105,7 +152,45 @@ fn locate(bytes: &'static [u8]) -> Option<Source> {
     let tail = len - u64::try_from(page).ok()?;
     let last = file.read_exact_at(&mut buffer, offset + tail).is_ok()
         && buffer == bytes[bytes.len() - page..];
-    (first && last).then_some(Source { file, offset, len })
+    (first && last).then_some((file, offset))
+}
+
+static SOURCE: OnceLock<Option<Pages>> = OnceLock::new();
+static REGISTERED: OnceLock<bool> = OnceLock::new();
+
+/// A connection to the embedded database, or `None` when the VFS cannot be registered.
+pub(crate) fn open(pages: &'static [u8]) -> Option<Connection> {
+    SOURCE.get_or_init(|| Pages::parse(pages)).as_ref()?;
+    if !*REGISTERED.get_or_init(register) {
+        return None;
+    }
+    let flags = OpenFlags::SQLITE_OPEN_READ_ONLY
+        | OpenFlags::SQLITE_OPEN_URI
+        | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+    let uri = "file:proj-rs-embedded?immutable=1";
+    let connection = Connection::open_with_flags_and_vfs(uri, flags, "proj-rs-exe").ok()?;
+    connection
+        .pragma_update(None, "cache_size", -CACHE_KIB)
+        .ok()?;
+    Some(connection)
+}
+
+/// Page cache of one connection, in KiB. The default is 2000. A creation reads about 2 MiB of
+/// pages once, so a smaller cache costs few extra decompressions and saves heap: with 500, the
+/// peak of `Proj::new_known_crs("EPSG:4326", "EPSG:2154")` is 1.4 MiB lower than with 2000.
+const CACHE_KIB: i64 = 500;
+
+/// The whole database in memory, decompressed: for the one path that copies it
+/// (`DatabaseContext::create_with_auxiliary` without a path), and for when the VFS is unavailable.
+pub(crate) fn decode_all(pages: &'static [u8]) -> Option<Vec<u8>> {
+    let parsed = Pages::parse(pages)?;
+    let mut image = vec![0u8; parsed.len];
+    for (index, out) in image.chunks_mut(parsed.page).enumerate() {
+        if !parsed.decode(index, out) {
+            return None;
+        }
+    }
+    Some(image)
 }
 
 fn register() -> bool {
@@ -317,22 +402,32 @@ unsafe extern "C" fn io_read(
     amount: c_int,
     offset: i64,
 ) -> c_int {
-    let (Some(Some(source)), Ok(amount), Ok(offset)) =
-        (SOURCE.get(), usize::try_from(amount), u64::try_from(offset))
-    else {
+    let (Some(Some(source)), Ok(amount), Ok(offset)) = (
+        SOURCE.get(),
+        usize::try_from(amount),
+        usize::try_from(offset),
+    ) else {
         return ffi::SQLITE_IOERR_READ;
     };
     // SAFETY: SQLite gives a buffer of `amount` writable bytes.
     let buffer = unsafe { std::slice::from_raw_parts_mut(buffer.cast::<u8>(), amount) };
-    let available = usize::try_from(source.len.saturating_sub(offset)).unwrap_or(usize::MAX);
+    let available = source.len.saturating_sub(offset);
     let count = amount.min(available);
     let (head, tail) = buffer.split_at_mut(count);
-    if source
-        .file
-        .read_exact_at(head, source.offset + offset)
-        .is_err()
-    {
-        return ffi::SQLITE_IOERR_READ;
+    let mut scratch = [0u8; 4096];
+    let mut done = 0;
+    while done < count {
+        let at = offset + done;
+        let index = at / source.page;
+        let inside = at % source.page;
+        let page_len = source.page_len(index);
+        let page = &mut scratch[..page_len];
+        if !source.decode(index, page) {
+            return ffi::SQLITE_IOERR_READ;
+        }
+        let take = (page_len - inside).min(count - done);
+        head[done..done + take].copy_from_slice(&page[inside..inside + take]);
+        done += take;
     }
     if tail.is_empty() {
         return ffi::SQLITE_OK;
@@ -396,6 +491,9 @@ unsafe extern "C" fn io_characteristics(_file: *mut ffi::sqlite3_file) -> c_int 
 mod tests {
     use super::*;
 
+    const WHOLE: &[u8] = include_bytes!("../data/proj.db");
+    const PAGES: &[u8] = include_bytes!("../data/proj.pages");
+
     fn count(connection: &Connection) -> i64 {
         connection
             .query_row("SELECT count(*) FROM geodetic_crs, crs_view", [], |row| {
@@ -405,34 +503,39 @@ mod tests {
     }
 
     #[test]
-    fn reads_the_same_rows_as_the_bytes_in_place() {
-        let bytes = crate::projdb::embedded_bytes();
-        let from_file = open(bytes).expect("the test binary maps proj.db from its own file");
-        let mut in_place = Connection::open_in_memory().expect("memory");
-        in_place
-            .deserialize_bytes(rusqlite::MAIN_DB, bytes)
+    fn every_page_decodes_to_the_bytes_of_the_database() {
+        assert_eq!(decode_all(PAGES).expect("decode"), WHOLE);
+    }
+
+    #[test]
+    fn reads_the_same_rows_as_the_whole_database() {
+        let from_pages = open(PAGES).expect("the VFS opens the pages");
+        let mut in_memory = Connection::open_in_memory().expect("memory");
+        in_memory
+            .deserialize_bytes(rusqlite::MAIN_DB, WHOLE)
             .expect("deserialize");
-        assert_eq!(count(&from_file), count(&in_place));
-        let size: i64 = from_file
+        assert_eq!(count(&from_pages), count(&in_memory));
+        let size: i64 = from_pages
             .query_row("PRAGMA page_count", [], |row| row.get(0))
             .expect("page_count");
-        let page: i64 = from_file
+        let page: i64 = from_pages
             .query_row("PRAGMA page_size", [], |row| row.get(0))
             .expect("page_size");
-        assert_eq!(usize::try_from(size * page).expect("size"), bytes.len());
+        assert_eq!(usize::try_from(size * page).expect("size"), WHOLE.len());
     }
 
     #[test]
     fn refuses_writes() {
-        let from_file = open(crate::projdb::embedded_bytes()).expect("open");
-        assert!(from_file.execute_batch("CREATE TABLE written (a)").is_err());
+        let from_pages = open(PAGES).expect("open");
+        assert!(from_pages
+            .execute_batch("CREATE TABLE written (a)")
+            .is_err());
     }
 
     #[test]
     fn threads_read_through_one_file() {
-        let bytes = crate::projdb::embedded_bytes();
         let threads: Vec<_> = (0..4)
-            .map(|_| std::thread::spawn(move || count(&open(bytes).expect("open"))))
+            .map(|_| std::thread::spawn(|| count(&open(PAGES).expect("open"))))
             .collect();
         let counts: Vec<i64> = threads
             .into_iter()
