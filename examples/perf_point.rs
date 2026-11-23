@@ -105,7 +105,10 @@ fn threads_mode(n: usize) {
 }
 
 fn main() {
-    if let Some(n) = std::env::args().nth(1).and_then(|a| a.strip_prefix("threads=").map(str::to_owned)) {
+    if let Some(n) = std::env::args()
+        .nth(1)
+        .and_then(|a| a.strip_prefix("threads=").map(str::to_owned))
+    {
         threads_mode(n.parse().expect("n"));
         return;
     }
