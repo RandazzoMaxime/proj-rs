@@ -193,15 +193,17 @@ pub mod wkt {
 /// Path taken by the batch conversions (`forward_batch` and `inverse_batch` of [`Tmerc`],
 /// [`Lcc`] and [`Mercator`]) on this host.
 ///
-/// `avx2` is the vector path on x86-64 with AVX2 and FMA, with this crate's own vector math
-/// functions (no libmvec, no C library calls) on every platform. `portable` is the path
-/// elsewhere: [`Tmerc::forward_batch`] runs a 4-lane Rust loop, bit-identical to the scalar path;
-/// the other batch functions run the one-point loop (`docs/PORTING-batch-path.md`).
+/// `avx2` is the vector path on x86-64 with AVX2 and FMA, and `neon` the one on aarch64, with this
+/// crate's own vector math functions (no libmvec, no Accelerate, no C library calls) on every
+/// platform. The two give the same bits. `portable` is the path elsewhere:
+/// [`Tmerc::forward_batch`] runs a 4-lane Rust loop, bit-identical to the scalar path; the other
+/// batch functions run the one-point loop (`docs/PORTING-batch-path.md`).
 #[doc(hidden)]
 #[must_use]
 pub fn batch_path() -> &'static str {
     match simd::batch_path() {
         "avx2" => "avx2",
+        "neon" => "neon",
         _ => "portable",
     }
 }

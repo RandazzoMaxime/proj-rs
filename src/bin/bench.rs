@@ -175,7 +175,7 @@ fn main() {
         &|p| web.inverse(p).ok().map(|g| g.lat_deg),
     );
 
-    // Lots 4, 5: batch paths (AVX2 where the CPU has it, otherwise see `batch_path`).
+    // Lots 4, 5: batch paths (AVX2 on x86-64, NEON on aarch64, otherwise see `batch_path`).
     let (mut east, mut north) = (vec![0.0; N], vec![0.0; N]);
     let batches: [(&str, Batch<'_>, _); 3] = [
         (
@@ -279,7 +279,7 @@ fn main() {
         .expect("String write");
     }
     let batch_path = proj_rs::batch_path();
-    let simd = batch_path == "avx2";
+    let simd = batch_path != "portable";
     // `passing.txt` holds one line per mode (`offline N`, `network N`); the history keeps the
     // network count, as `bench/record.sh` does.
     let passes = GIE_PASSES

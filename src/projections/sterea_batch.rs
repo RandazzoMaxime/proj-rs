@@ -6,25 +6,25 @@
 use super::Sterea;
 use crate::projections::unit_batch::UnitLanes;
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(simd_lanes)]
 mod vector {
     use std::f64::consts::{FRAC_PI_2, FRAC_PI_4};
 
     use super::{Sterea, UnitLanes};
     use crate::projections::sterea::DEL_TOL;
     use crate::simd::kernels;
-    use crate::simd::{Avx2, V4};
+    use crate::simd::{Token, V4};
 
     /// `srat` de `sterea.rs`.
     #[inline(always)]
-    fn srat(tok: Avx2, esinp: V4, ratexp: f64) -> V4 {
+    fn srat(tok: Token, esinp: V4, ratexp: f64) -> V4 {
         let one = V4::splat(tok, 1.0);
         ((one - esinp) / (one + esinp)).powf(V4::splat(tok, ratexp))
     }
 
     impl UnitLanes for Sterea {
         #[inline(always)]
-        fn forward_lanes(&self, tok: Avx2, lam: V4, phi: V4) -> Option<(V4, V4)> {
+        fn forward_lanes(&self, tok: Token, lam: V4, phi: V4) -> Option<(V4, V4)> {
             let k = |value| V4::splat(tok, value);
             let g = &self.gauss;
             if !kernels::latitude_in_domain(tok, phi)
@@ -54,7 +54,7 @@ mod vector {
         }
 
         #[inline(always)]
-        fn inverse_lanes(&self, tok: Avx2, x: V4, y: V4) -> Option<(V4, V4)> {
+        fn inverse_lanes(&self, tok: Token, x: V4, y: V4) -> Option<(V4, V4)> {
             let k = |value| V4::splat(tok, value);
             let g = &self.gauss;
             let (x, y) = (x / k(self.k0), y / k(self.k0));
@@ -89,7 +89,7 @@ mod vector {
     }
 }
 
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(not(simd_lanes))]
 impl UnitLanes for Sterea {}
 
 #[cfg(test)]

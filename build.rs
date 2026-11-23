@@ -10,7 +10,16 @@ const TIMER_SOURCE: &str = "src/bin/support/libproj_timer.c";
 
 fn main() {
     println!("cargo:rustc-check-cfg=cfg(link_libproj)");
+    // The targets with a batch path in lanes of four (`src/simd/`): AVX2 on x86-64, NEON on aarch64.
+    println!("cargo:rustc-check-cfg=cfg(simd_lanes)");
+    if matches!(
+        std::env::var("CARGO_CFG_TARGET_ARCH").as_deref(),
+        Ok("x86_64" | "aarch64")
+    ) {
+        println!("cargo:rustc-cfg=simd_lanes");
+    }
 
+    println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=PROJ_RS_LIBPROJ_DIR");
     println!("cargo:rerun-if-env-changed=CONDA_PREFIX");
     println!("cargo:rerun-if-changed={TIMER_SOURCE}");

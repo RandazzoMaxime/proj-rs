@@ -365,6 +365,13 @@ fn the_vector_path_is_taken_on_an_avx2_processor() {
     assert_eq!(proj_rs::batch_path(), expected);
 }
 
+/// Sur aarch64, NEON est toujours là : le lot prend le chemin vectoriel, comme AVX2 sur x86-64.
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn the_vector_path_is_taken_on_an_aarch64_processor() {
+    assert_eq!(proj_rs::batch_path(), "neon");
+}
+
 #[test]
 #[should_panic(expected = "length")]
 fn lengths_must_match() {

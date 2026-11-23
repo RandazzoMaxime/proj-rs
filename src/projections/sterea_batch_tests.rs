@@ -1,7 +1,8 @@
 //! `sterea` over a slice against `sterea` point by point (`docs/PORTING-batch-oblique.md`).
 
 use crate::engine::batch_check::{
-    assert_agrees, assert_vector_taken, geographic_points, projected_points, Way, METRES, RADIANS,
+    assert_agrees, assert_vector_taken, geographic_points, projected_points, Tolerance, Way,
+    METRES, RADIANS,
 };
 use crate::engine::Operation;
 
@@ -23,6 +24,13 @@ const BOXES: [((f64, f64), (f64, f64)); 3] = [
     ((140.0, 160.0), (-45.0, -25.0)),
 ];
 
+/// Thousands of kilometres out the problem is ill-conditioned: the `sin`/`atan` of the platform C
+/// library move the scalar result by about 1e-11 of its size (measured on Apple silicon).
+const WORLD_METRES: Tolerance = Tolerance {
+    floor: 1e-6,
+    relative: 2e-11,
+};
+
 #[test]
 fn both_directions_agree_with_one_by_one() {
     for definition in DEFINITIONS {
@@ -30,7 +38,12 @@ fn both_directions_agree_with_one_by_one() {
         let mut differing = 0;
         for (seed, (lon, lat)) in (1..).zip(BOXES) {
             let geographic = geographic_points(3_001, lon, lat, seed);
-            differing += assert_agrees(&op, &geographic, Way::Forward, [METRES; 3]);
+            let metres = if lon.1 - lon.0 > 100.0 {
+                WORLD_METRES
+            } else {
+                METRES
+            };
+            differing += assert_agrees(&op, &geographic, Way::Forward, [metres; 3]);
             let projected = projected_points(&op, &geographic, 5e6);
             differing += assert_agrees(&op, &projected, Way::Inverse, [RADIANS; 3]);
         }

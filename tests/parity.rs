@@ -691,6 +691,8 @@ fn check_corpus(dir: &str, source: Source<'_>) {
         known.extend(read_known(
             &root.join(format!("known-{}.tsv", std::env::consts::OS)),
         ));
+    } else if cfg!(target_arch = "aarch64") {
+        known.extend(read_known(&root.join("known-linux-aarch64.tsv")));
     }
     let observed: BTreeSet<String> = deviations.iter().map(|d| d.key.clone()).collect();
     if let Ok(path) = std::env::var("PARITY_REPORT") {

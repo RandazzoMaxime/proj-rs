@@ -2,7 +2,7 @@
 //!
 //! Mêmes séries que `simd/math.rs` (qui en importe les coefficients : une seule source), sans FMA :
 //! `f64::mul_add` est logiciel sans FMA matériel, et le code doit tourner à l'identique sur toutes
-//! les cibles. Les fonctions ne peuvent pas être partagées, car `V4` est une API à jeton `Avx2`.
+//! les cibles. Les fonctions ne peuvent pas être partagées, car `V4` est une API à jeton `Token`.
 //!
 //! Une valeur hors du domaine rapide (non finie, grande, hors série) revient à la fonction de la
 //! bibliothèque standard : le résultat aux cas limites est celui de la libm. Précision et vitesse

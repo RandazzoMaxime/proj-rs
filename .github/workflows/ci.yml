@@ -9,8 +9,9 @@ jobs:
     strategy:
       matrix:
         # Linux runs the AVX2 batch path (own vector math); Windows checks the scalar build;
-        # macOS runs on Apple silicon (aarch64, the portable batch loop, Apple's libm).
-        os: [ubuntu-24.04, windows-latest, macos-latest]
+        # macOS runs on Apple silicon and Linux ARM on aarch64, both on the NEON batch path (the
+        # same vector math, so the same bits as AVX2), with the libm of Apple and of glibc.
+        os: [ubuntu-24.04, ubuntu-24.04-arm, windows-latest, macos-latest]
       fail-fast: false
     runs-on: ${{ matrix.os }}
     steps:

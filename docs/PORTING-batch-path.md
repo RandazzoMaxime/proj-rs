@@ -9,7 +9,7 @@ La documentation disait : AVX2 sur x86-64 Linux glibc et Windows, boucle scalair
 C'est inexact. `batch_path()` prend AVX2 sur tout x86-64 qui a `avx2` et `fma`. Seules les
 transcendantes changent : libmvec sous Linux glibc, sinon le CRT voie par voie (`map1`).
 La boucle scalaire tourne donc sur les autres architectures : aarch64 (Mac Apple Silicon,
-Linux ARM).
+Linux ARM). Cela a changé avec le lot NEON, voir la section « aarch64 » plus bas.
 
 ## Mesure
 
@@ -80,28 +80,36 @@ injecté dans le repli fait échouer le test (vérifié).
 - **Lcc (Lambert-93) : boucle scalaire conservée.** Gain de −4 % à +1 %, sous le seuil.
   La variante testée (quatre voies en tableaux, transcendantes scalaires) n'est pas livrée.
   Dans les deux chemins, `tsfn` (`atanh`, `exp`, `powf`) reste un appel par point.
-- **Limite.** Toutes les mesures sont faites sur x86-64 Linux, avec glibc. Le gain sur
-  aarch64 n'est pas mesuré. Il dépend du libm et du cœur.
+- **Limite.** Toutes les mesures sont faites sur x86-64 Linux, avec glibc. Le repli portable ne
+  sert plus sur aarch64, qui a NEON.
 
 ## Suite
 
 Lot 7 : le chemin par lots sert aussi `cart`, `helmert`, `push`/`pop` (`docs/PORTING-batch-datum.md`)
 et `sterea`, `somerc`, `laea` (`docs/PORTING-batch-oblique.md`).
 
-## Ce qu'il faudrait pour aarch64
+## aarch64
 
-- libmvec AdvSIMD : `_ZGVnN2v_sin` (et `cos`, `log`, `exp`, `atanh`, `atan2` en `vv`) sous
-  glibc ≥ 2.38. Chemin NEON à deux voies, à mesurer contre le repli portable.
-- Accelerate `vvsin` (et voisins) sous macOS, pour les Mac Apple Silicon des runners de l'équipe.
-- Non testable ici : pas de qemu ni de linker croisé. La compilation seule est vérifiée.
+Fait depuis : aarch64 a son chemin vectoriel, NEON, et `batch_path()` y rend `neon`
+(`docs/PORTING-simd.md`, section « NEON »). Le plan d'ici était d'appeler `libmvec` AdvSIMD sous
+glibc 2.38 ou plus (`_ZGVnN2v_sin` et voisines) et Accelerate (`vvsin`) sous macOS. Ce n'est pas
+ce qui a été fait : les fonctions de `math.rs`, en Rust contre `V4`, servent aussi NEON. Même code
+sur les deux architectures, mêmes bits, aucune dépendance à la libm de la plateforme.
+
+Le repli portable de ce document sert donc hors AVX2 et hors NEON : une autre architecture, ou un
+x86-64 sans AVX2 ni FMA.
 
 ## Commandes
 
 ```sh
-# Compilation aarch64 (ne linke pas). La compilation C croisée de sqlite3 et de geodesic
-# exige des en-têtes aarch64 absents de cette machine : voir la note ci-dessous.
+# Compilation et tests sur aarch64, depuis une machine x86-64 : le compilateur croisé et la glibc
+# aarch64 (paquets Debian gcc-aarch64-linux-gnu et libc6-dev-arm64-cross), qemu-user pour exécuter.
 rustup target add aarch64-unknown-linux-gnu
-cargo check --target aarch64-unknown-linux-gnu --lib
+export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc
+export "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUNNER=qemu-aarch64 -L /usr/aarch64-linux-gnu"
+cargo test --target aarch64-unknown-linux-gnu --lib -- simd::
+cargo test --target aarch64-unknown-linux-gnu --test simd_batch
 
 # Tests du repli et du chemin par lots
 cargo test --lib tmerc::batch
@@ -111,10 +119,9 @@ cargo test --test cli_binary --test cli_proj_factors --test georust_parity
 cargo test --lib
 ```
 
-Note : sur cette machine, `cargo check` aarch64 compile les unités C du dépôt (sqlite3
-bundled et geodesic) avec clang, en remplaçant ces deux unités par des objets vides. Le
-check ne linke pas, donc seule la vérification de types Rust est visée. Les en-têtes
-OpenSSL sont pris dans un dossier local. Ce contournement n'est pas dans le dépôt.
+Un dossier de compilation par copie du dépôt : `build.rs` pose la porte `simd_lanes`, et deux
+copies qui partagent un dossier `target` se réutilisent l'une à l'autre une sortie de script de
+build périmée.
 
 La boucle de mesure (a), (b), (c) était un test `#[ignore]` jetable. Elle n'est pas
 commitée. Le protocole est décrit plus haut : un test `--release` avec `taskset`, 1e6 points,

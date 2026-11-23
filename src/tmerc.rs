@@ -308,7 +308,7 @@ impl Tmerc {
         );
         assert_eq!(east.len(), n, "easting length {0} != {n}", east.len());
         assert_eq!(north.len(), n, "northing length {0} != {n}", north.len());
-        if crate::simd::batch_path() == "avx2" {
+        if crate::simd::has_lanes() {
             crate::simd::run(&batch::Forward(self), lon_deg, lat_deg, east, north);
             return;
         }

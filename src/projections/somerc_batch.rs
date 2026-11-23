@@ -5,17 +5,17 @@
 use super::Somerc;
 use crate::projections::unit_batch::UnitLanes;
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(simd_lanes)]
 mod vector {
     use std::f64::consts::{FRAC_PI_2, FRAC_PI_4};
 
     use super::{Somerc, UnitLanes};
     use crate::simd::kernels;
-    use crate::simd::{Avx2, V4};
+    use crate::simd::{Token, V4};
 
     /// `ln(tan(π/4 + φ/2))`, la latitude isométrique.
     #[inline(always)]
-    fn isometric(tok: Avx2, phi: V4) -> V4 {
+    fn isometric(tok: Token, phi: V4) -> V4 {
         (V4::splat(tok, FRAC_PI_4) + V4::splat(tok, 0.5) * phi)
             .tan()
             .log()
@@ -23,14 +23,14 @@ mod vector {
 
     /// `ln((1 + sp) / (1 - sp))`.
     #[inline(always)]
-    fn log_ratio(tok: Avx2, sp: V4) -> V4 {
+    fn log_ratio(tok: Token, sp: V4) -> V4 {
         let one = V4::splat(tok, 1.0);
         ((one + sp) / (one - sp)).log()
     }
 
     impl UnitLanes for Somerc {
         #[inline(always)]
-        fn forward_lanes(&self, tok: Avx2, lam: V4, phi: V4) -> Option<(V4, V4)> {
+        fn forward_lanes(&self, tok: Token, lam: V4, phi: V4) -> Option<(V4, V4)> {
             let k = |value| V4::splat(tok, value);
             if !kernels::latitude_in_domain(tok, phi)
                 .and(lam.is_finite())
@@ -62,7 +62,7 @@ mod vector {
         }
 
         #[inline(always)]
-        fn inverse_lanes(&self, tok: Avx2, x: V4, y: V4) -> Option<(V4, V4)> {
+        fn inverse_lanes(&self, tok: Token, x: V4, y: V4) -> Option<(V4, V4)> {
             let k = |value| V4::splat(tok, value);
             let phipp = k(2.0) * ((y / k(self.kr)).exp().atan() - k(FRAC_PI_4));
             let lampp = x / k(self.kr);
@@ -101,7 +101,7 @@ mod vector {
     }
 }
 
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(not(simd_lanes))]
 impl UnitLanes for Somerc {}
 
 #[cfg(test)]

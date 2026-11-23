@@ -11,19 +11,19 @@ use crate::simd::{run, Lanes};
 pub(crate) trait UnitLanes: Kernel + Copy + 'static {
     /// [`Kernel::forward`] sur quatre points : radians relatifs au méridien central vers unités
     /// du demi-grand axe. `None` si une voie sort du domaine que le noyau vectoriel traite.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(simd_lanes)]
     fn forward_lanes(
         &self,
-        tok: crate::simd::Avx2,
+        tok: crate::simd::Token,
         lam: crate::simd::V4,
         phi: crate::simd::V4,
     ) -> Option<(crate::simd::V4, crate::simd::V4)>;
 
     /// [`Kernel::inverse`] sur quatre points : unités du demi-grand axe vers radians.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(simd_lanes)]
     fn inverse_lanes(
         &self,
-        tok: crate::simd::Avx2,
+        tok: crate::simd::Token,
         x: crate::simd::V4,
         y: crate::simd::V4,
     ) -> Option<(crate::simd::V4, crate::simd::V4)>;
@@ -55,11 +55,11 @@ impl<K: UnitLanes> Lanes for Forward<K> {
             })
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(simd_lanes)]
     #[inline(always)]
     fn lanes(
         &self,
-        tok: crate::simd::Avx2,
+        tok: crate::simd::Token,
         lam: crate::simd::V4,
         phi: crate::simd::V4,
     ) -> Option<(crate::simd::V4, crate::simd::V4)> {
@@ -79,11 +79,11 @@ impl<K: UnitLanes> Lanes for Inverse<K> {
             })
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(simd_lanes)]
     #[inline(always)]
     fn lanes(
         &self,
-        tok: crate::simd::Avx2,
+        tok: crate::simd::Token,
         east: crate::simd::V4,
         north: crate::simd::V4,
     ) -> Option<(crate::simd::V4, crate::simd::V4)> {

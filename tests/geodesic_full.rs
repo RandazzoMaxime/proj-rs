@@ -60,9 +60,10 @@ impl Scale {
         self.a * 2e-12
     }
 
-    /// Areas: the square of a length.
+    /// Areas: the square of a length, with room for the near-antipodal lines, where the libm of
+    /// Linux ARM moves the area by 2.6e-12 of a^2 (measured).
     fn area(&self) -> f64 {
-        self.a * self.a * 2e-12
+        self.a * self.a * 6e-12
     }
 
     /// An azimuth of a line `distance` long moves by `precision / distance`.
