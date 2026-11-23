@@ -13,10 +13,6 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: ubuntu-24.04
-            machine: gha-ubuntu-24.04-x86_64
-          - os: ubuntu-24.04-arm
-            machine: gha-ubuntu-24.04-arm64
           - os: macos-latest
             machine: gha-macos-arm64-m1
       fail-fast: false

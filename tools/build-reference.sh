@@ -50,7 +50,7 @@ fi
 
 cmake -S "$DIR/src" -B "$DIR/build" -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_TESTING=OFF -DENABLE_TIFF="$TIFF_CURL" -DENABLE_CURL="$TIFF_CURL" -DBUILD_PROJSYNC=OFF \
-  "${sqlite_args[@]}" > "$DIR/cmake.log"
+  ${sqlite_args[@]+"${sqlite_args[@]}"} > "$DIR/cmake.log"
 cmake --build "$DIR/build" --parallel "$(nproc 2>/dev/null || echo 4)" > "$DIR/build.log"
 
 # projinfo without an argument prints its version line and exits 1.
