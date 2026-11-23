@@ -167,7 +167,7 @@ pub(crate) fn open(pages: &'static [u8]) -> Option<Connection> {
     let flags = OpenFlags::SQLITE_OPEN_READ_ONLY
         | OpenFlags::SQLITE_OPEN_URI
         | OpenFlags::SQLITE_OPEN_NO_MUTEX;
-    let uri = "file:proj-rs-embedded?immutable=1";
+    let uri = "file:proj-rs-embedded?immutable=1&cache=shared";
     let connection = Connection::open_with_flags_and_vfs(uri, flags, "proj-rs-exe").ok()?;
     connection
         .pragma_update(None, "cache_size", -CACHE_KIB)
