@@ -46,3 +46,22 @@ jobs:
         with:
           name: line-${{ matrix.machine }}
           path: line.jsonl
+
+  billion:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y cmake libsqlite3-dev
+      - run: tools/build-reference.sh
+      - name: A billion points
+        env:
+          PROJ_RS_LIBPROJ_DIR: ${{ github.workspace }}/target/proj-reference/build/lib
+          BENCH_MACHINE: gha-ubuntu-24.04-x86_64
+        run: |
+          taskset -c 2 sh bench/billion.sh | tee billion.out
+          cat bench/billion.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: billion
+          path: bench/billion.json
