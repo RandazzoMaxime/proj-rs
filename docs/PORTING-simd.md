@@ -386,12 +386,16 @@ puis par la CI sur Apple silicon et sur Linux ARM :
 
 - `bits_are_the_same_on_every_architecture` (`math.rs`) : une empreinte par fonction (`sin_cos`,
   `tan`, `exp`, `log`, `atan`, `asinh`, `atanh`, `sinh`, `atan2`, `hypot`, `powf`), mesurée sur le
-  chemin AVX2. Ce sont celles de NEON.
+  chemin AVX2. Ce sont celles de NEON. Les entrées sont construites sans `ln` ni `exp` : avec la
+  libm de macOS elles différaient, et l'empreinte aussi (trouvé sur Apple silicon).
 - `kernels_keep_their_bits_on_every_architecture` (`kernel_bits_tests.rs`) : l'aller et le retour de
-  `laea` (oblique et équatorial), `somerc`, `sterea` (ellipsoïde et sphère), `cart` (géodésique et
+  `laea` équatorial, `somerc`, `sterea` (ellipsoïde et sphère), `cart` (géodésique et
   géocentrique) et `helmert` (deux conventions), sur 4 000 points chacun, tous dans le domaine : un
   groupe qui sortirait du domaine passerait par le scalaire, donc par la libm de la plateforme.
-  Mêmes bits que sur AVX2.
+  Mêmes bits que sur AVX2. `laea` oblique n'y est pas : sa mise en place appelle le `sin` et
+  l'`atan` de la libm, qui donnent d'autres constantes sur Apple silicon (l'empreinte différait).
+  Par la même cause, le test sterea du monde entier tolère 2e-11 en relatif, à des milliers de
+  kilomètres, contre le scalaire.
 - `assert_vector_taken` : sur NEON aussi, au moins une valeur de chaque noyau diffère du scalaire
   au dernier bit, ce qui prouve que le chemin vectoriel a tourné. Et les tolérances de
   `docs/PARITY.md` tiennent.

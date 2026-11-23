@@ -3,7 +3,8 @@
 //! AVX2 and NEON round the same way (IEEE 754, fused multiply-add), and the kernels only combine
 //! the operations of `V4`: one digest per kernel, measured on the AVX2 path, must be the NEON one.
 //! The points lie well inside the domain and their number is a multiple of four, so that no group
-//! goes to the scalar path, which calls the C library of the platform.
+//! goes to the scalar path, which calls the C library of the platform. Oblique `laea` is left out:
+//! its set-up uses the `sin`/`atan` of that library, and Apple silicon gave other constants.
 
 use super::{geographic_points, Way};
 use crate::engine::{Coord, Operation};
@@ -34,13 +35,7 @@ fn batch(op: &Operation, points: &[Coord], way: Way) -> Vec<Coord> {
 /// A name, a definition, and the box of its points in degrees.
 type Case = (&'static str, &'static str, (f64, f64), (f64, f64));
 
-const CASES: [Case; 9] = [
-    (
-        "laea oblique",
-        "+proj=laea +lat_0=52 +lon_0=10 +x_0=4321000 +y_0=3210000 +ellps=GRS80",
-        (5.0, 15.0),
-        (45.0, 58.0),
-    ),
+const CASES: [Case; 8] = [
     (
         "laea equatorial",
         "+proj=laea +lat_0=0 +lon_0=20 +ellps=WGS84",
@@ -96,8 +91,7 @@ const CASES: [Case; 9] = [
 ];
 
 /// The digests of the forward and of the inverse batch of each case, measured on the AVX2 path.
-const EXPECTED: [(u64, u64); 9] = [
-    (0x4691_ddb6_04ee_52ba, 0x6374_13ad_7213_af92),
+const EXPECTED: [(u64, u64); 8] = [
     (0xf53b_1763_ed35_0af9, 0xf1aa_08d3_43aa_8524),
     (0x6879_caf3_8323_dcf0, 0x82d0_1771_44a6_5444),
     (0xecb4_72dd_3573_0605, 0x26bf_2b77_9a08_4d33),
@@ -115,7 +109,7 @@ fn kernels_keep_their_bits_on_every_architecture() {
     }
     let cartesian = Operation::create("+proj=cart +ellps=GRS80").expect("cart");
     let mut measured = Vec::new();
-    for (seed, (name, definition, lon, lat)) in (1..).zip(CASES) {
+    for (seed, (name, definition, lon, lat)) in (2..).zip(CASES) {
         let op = Operation::create(definition).expect(name);
         let mut geographic = geographic_points(4_000, lon, lat, seed);
         geographic.truncate(4_000);

@@ -613,14 +613,14 @@ mod tests {
         ("sin_cos", 0x02b0_8766_5a1e_071d),
         ("tan", 0x3d2f_dfdf_5b15_4adb),
         ("exp", 0x1dcd_07ae_2705_0d54),
-        ("log", 0xeb51_5c0d_74a1_2c9b),
-        ("atan", 0x5207_8e70_fcde_7638),
-        ("asinh", 0x3f72_d7e5_1dff_32c5),
-        ("atanh", 0xdb31_3e16_6d72_b878),
-        ("sinh", 0xd023_bf56_7a65_824e),
-        ("atan2", 0x7611_8188_8367_dd00),
-        ("hypot", 0x5e04_1e70_54b6_b551),
-        ("powf", 0x0835_3fc3_31dc_70d1),
+        ("log", 0xcdd6_cf4b_2dba_8137),
+        ("atan", 0xe0e9_29c6_588f_0222),
+        ("asinh", 0x784f_2242_921b_9759),
+        ("atanh", 0x1c22_4788_06a9_a46a),
+        ("sinh", 0xbdfc_d5b3_d82b_3055),
+        ("atan2", 0x784e_f90a_7b18_b113),
+        ("hypot", 0xed2b_2688_fdbf_bc9e),
+        ("powf", 0xaaa7_af11_441d_4f04),
     ];
 
     /// Groupes de quatre points par cas. Un build de débogage n'insère aucun intrinsèque en ligne :
@@ -678,7 +678,13 @@ mod tests {
 
         /// Log-uniforme sur les grandeurs `[low, high]`, positives.
         fn magnitude(&mut self, low: f64, high: f64) -> f64 {
-            (low.ln() + self.unit() * (high.ln() - low.ln())).exp()
+            // Built from the bits: `ln` and `exp` of the platform would change the inputs.
+            let exponent = |v: f64| (v.to_bits() >> 52) as i64 - 1023;
+            let (lo, hi) = (exponent(low), exponent(high));
+            let e = lo + (self.unit() * (hi - lo + 1) as f64) as i64;
+            let mantissa = (self.unit() * 4_503_599_627_370_496.0) as u64;
+            let value = f64::from_bits((((e + 1023) as u64) << 52) | mantissa);
+            value.clamp(low, high)
         }
 
         /// Comme `magnitude`, de signe aléatoire.

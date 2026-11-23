@@ -10,7 +10,7 @@ rest is outside semver.
   with AVX2: `batch_path()` gives `neon`. `V4` has a second realisation on two `float64x2_t`
   registers with the same API, built on the safe wrappers of `pulp`, so the vector math functions,
   the kernels and the formulas of the projections are the same code on both architectures and give
-  the same bits (digests measured on AVX2 for the 11 functions of `math.rs` and for `laea`, `somerc`,
+  the same bits (digests measured on AVX2 for the 11 functions of `math.rs` and for equatorial `laea`, `somerc`,
   `sterea`, `cart` and `helmert`, forward and inverse, are the NEON ones). There is no `libmvec` and
   no Accelerate. The CI runs the whole suite on Linux ARM as well as on Apple silicon. See
   [docs/PORTING-simd.md](docs/PORTING-simd.md).
