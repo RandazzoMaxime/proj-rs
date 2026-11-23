@@ -52,7 +52,41 @@ fn run_four(proj: &Proj, n: usize) -> f64 {
     sum
 }
 
+fn rss_report(tag: &str) {
+    let s = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+    let get = |k: &str| s.lines().find(|l| l.starts_with(k)).unwrap_or("").split_whitespace().nth(1).unwrap_or("0").to_string();
+    let roll = std::fs::read_to_string("/proc/self/smaps_rollup").unwrap_or_default();
+    let roll_get = |k: &str| roll.lines().find(|l| l.starts_with(k)).unwrap_or("").split_whitespace().nth(1).unwrap_or("0").to_string();
+    println!("{tag:>10}  VmHWM {:>6} kB  RssAnon {:>6} kB  RssFile {:>6} kB  (rollup anon {} file {})", get("VmHWM"), get("RssAnon"), get("RssFile"), roll_get("Anonymous"), roll_get("Private_Clean"));
+}
+
 fn main() {
+    if std::env::args().nth(3).as_deref() == Some("mem") {
+        rss_report("start");
+        let args: Vec<String> = std::env::args().collect();
+        let pair = args.get(1).unwrap();
+        let (from, to) = pair.split_once('|').unwrap();
+        let proj = Proj::new_known_crs(from, to, None).expect("pair");
+        rss_report("created");
+        let sm = std::fs::read_to_string("/proc/self/smaps").unwrap_or_default();
+        let mut name = String::new();
+        let mut rows = Vec::new();
+        for line in sm.lines() {
+            if line.chars().next().map_or(false, |c| c.is_ascii_hexdigit()) && line.contains('-') && line.split_whitespace().count() >= 5 {
+                name = line.split_whitespace().last().unwrap_or("").to_string();
+                if line.split_whitespace().count() == 5 { name = "[anon]".into(); }
+            } else if line.starts_with("Rss:") {
+                let kb: u64 = line.split_whitespace().nth(1).unwrap().parse().unwrap();
+                if kb >= 100 { rows.push((kb, name.clone())); }
+            }
+        }
+        rows.sort_by(|a, b| b.0.cmp(&a.0));
+        for (kb, n) in rows.iter().take(12) { println!("   {kb:>6} kB  {n}"); }
+        let (x, y) = proj.convert((2.35f64, 48.85f64)).expect("c");
+        rss_report("convert");
+        println!("{x} {y}");
+        return;
+    }
     let args: Vec<String> = std::env::args().collect();
     let pair = args.get(1).map(String::as_str).unwrap_or("EPSG:2154|EPSG:32631");
     let (from, to) = pair.split_once('|').unwrap();
