@@ -187,7 +187,8 @@ pub(crate) fn projected_points(op: &Operation, points: &[Coord], far: f64) -> Ve
     images
 }
 
-// Windows: the set-up of the projections calls its own libm, which gives other constants.
-#[cfg(all(test, not(windows)))]
+// The set-up of the projections calls the libm of the platform: macOS and Windows give other
+// constants than the glibc ones of the digests.
+#[cfg(all(test, target_os = "linux", target_env = "gnu"))]
 #[path = "kernel_bits_tests.rs"]
 mod kernel_bits;

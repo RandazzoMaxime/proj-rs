@@ -392,7 +392,10 @@ puis par la CI sur Apple silicon et sur Linux ARM :
   `laea` équatorial, `somerc`, `sterea` (ellipsoïde et sphère), `cart` (géodésique et
   géocentrique) et `helmert` (deux conventions), sur 4 000 points chacun, tous dans le domaine : un
   groupe qui sortirait du domaine passerait par le scalaire, donc par la libm de la plateforme.
-  Mêmes bits que sur AVX2. `laea` oblique n'y est pas : sa mise en place appelle le `sin` et
+  Mêmes bits que sur AVX2, sur glibc seulement (Linux x86-64 et Linux ARM) : la mise en place des
+  projections appelle la libm de la plateforme, et macOS comme Windows donnent d'autres constantes
+  (`sterea` l'a montré). Sur Apple silicon, la preuve est celle des 11 fonctions de `math.rs`, qui
+  n'appellent aucune libm. `laea` oblique n'y est pas : sa mise en place appelle le `sin` et
   l'`atan` de la libm, qui donnent d'autres constantes sur Apple silicon (l'empreinte différait).
   Par la même cause, le test sterea du monde entier tolère 2e-11 en relatif, à des milliers de
   kilomètres, contre le scalaire.
