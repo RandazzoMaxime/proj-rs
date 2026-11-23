@@ -21,8 +21,11 @@ const STACK_SIZE: usize = 64 * 1024 * 1024;
 pub struct Report {
     /// The text of the INFO channel, which the binary prints on stdout. Empty when there is none.
     pub output: String,
-    /// The WARN lines, in the order they were written.
+    /// The WARN lines, in the order they were written. A WKT grammar error can cut a multi-byte
+    /// character, which this text shows as U+FFFD: [`Self::warning_bytes`] has the exact bytes.
     pub warnings: Vec<String>,
+    /// [`Self::warnings`] as the bytes PROJ writes, which the binary prints on stderr.
+    pub warning_bytes: Vec<Vec<u8>>,
     /// The ERR lines, in the order they were written. A usage error ends with the usage text.
     pub errors: Vec<String>,
     /// Whether the command completed.
@@ -120,26 +123,50 @@ fn run_on(context: Option<crate::context::Context>, args: &[&str]) -> Report {
 }
 
 fn command(args: &[String], context: Option<&crate::context::Context>) -> Report {
-    let mut warnings = Vec::new();
-    match execute(args, &mut warnings, context) {
+    let mut collected = Warnings::default();
+    let result = execute(args, &mut collected, context);
+    let warning_bytes = collected.0;
+    let warnings: Vec<String> = warning_bytes
+        .iter()
+        .map(|line| String::from_utf8_lossy(line).into_owned())
+        .collect();
+    match result {
         Ok(output) => Report {
             output,
             warnings,
+            warning_bytes,
             errors: Vec::new(),
             status: Status::Success,
         },
         Err(Failure::Usage(message)) => Report {
             output: String::new(),
             warnings,
+            warning_bytes,
             errors: vec![message, usage().to_owned()],
             status: Status::Failure,
         },
         Err(Failure::Plain(message)) => Report {
             output: String::new(),
             warnings,
+            warning_bytes,
             errors: vec![message],
             status: Status::Failure,
         },
+    }
+}
+
+/// The WARN lines as they occur, in bytes: the context of a WKT grammar error can end in a cut
+/// UTF-8 sequence, and PROJ writes those bytes as they are.
+#[derive(Default)]
+struct Warnings(Vec<Vec<u8>>);
+
+impl Warnings {
+    fn push(&mut self, line: String) {
+        self.0.push(line.into_bytes());
+    }
+
+    fn push_bytes(&mut self, line: Vec<u8>) {
+        self.0.push(line);
     }
 }
 
@@ -152,7 +179,7 @@ enum Failure {
 /// order before the output or the error.
 fn execute(
     args: &[String],
-    warnings: &mut Vec<String>,
+    warnings: &mut Warnings,
     context: Option<&crate::context::Context>,
 ) -> Result<String, Failure> {
     if args.len() >= 2 && args[0] == "completion" {
@@ -1132,7 +1159,7 @@ fn parse_bbox(text: &str) -> Result<crate::BoundingBox, String> {
 
 fn candidates(
     options: &Options,
-    warnings: &mut Vec<String>,
+    warnings: &mut Warnings,
     context: Option<&crate::context::Context>,
 ) -> Result<String, String> {
     let db = database(context)?;
@@ -1384,7 +1411,7 @@ fn load_named(
     db: &crate::DatabaseContext,
     text: &str,
     options: &Options,
-    warnings: &mut Vec<String>,
+    warnings: &mut Warnings,
 ) -> Result<crate::iso19111::Crs, String> {
     if let Some(crs) = read_wkt(db, text, options, warnings) {
         return crs;
@@ -1400,7 +1427,7 @@ fn read_wkt(
     db: &crate::DatabaseContext,
     text: &str,
     options: &Options,
-    warnings: &mut Vec<String>,
+    warnings: &mut Warnings,
 ) -> Option<Result<crate::iso19111::Crs, String>> {
     if crate::WktParser::guess_dialect(text) == crate::WktDialect::NotWkt {
         return None;
@@ -1416,8 +1443,10 @@ fn read_wkt(
         for warning in parser.warnings() {
             warnings.push(format!("Warning: {warning}"));
         }
-        for error in parser.grammar_errors() {
-            warnings.push(format!("Grammar error: {error}"));
+        for error in parser.grammar_error_bytes() {
+            let mut line = b"Grammar error: ".to_vec();
+            line.extend_from_slice(error);
+            warnings.push_bytes(line);
         }
     }
     Some(
@@ -1639,7 +1668,7 @@ fn operation_wkt(
 fn describe(
     options: &Options,
     text: &str,
-    warnings: &mut Vec<String>,
+    warnings: &mut Warnings,
     context: Option<&crate::context::Context>,
 ) -> Result<String, String> {
     let db = database(context)?;
@@ -1659,7 +1688,7 @@ fn build_object(
     text: &str,
     kind: Option<ObjectKind>,
     options: &Options,
-    warnings: &mut Vec<String>,
+    warnings: &mut Warnings,
 ) -> Result<crate::AuthorityObject, String> {
     if matches!(kind, None | Some(ObjectKind::Crs)) {
         if let Some(crs) = read_wkt(db, text, options, warnings) {
@@ -1900,7 +1929,7 @@ fn render(
     object: &crate::AuthorityObject,
     db: &crate::DatabaseContext,
     options: &Options,
-    warnings: &mut Vec<String>,
+    warnings: &mut Warnings,
 ) -> Result<String, String> {
     let mut blocks = Vec::new();
     if !options.quiet && object.is_deprecated() {
@@ -2121,7 +2150,7 @@ mod tests {
         let text = describe(
             &Options::parse(&["EPSG:4326".to_owned()]).expect("options"),
             "EPSG:4326",
-            &mut Vec::new(),
+            &mut Warnings::default(),
             None,
         )
         .expect("describe");

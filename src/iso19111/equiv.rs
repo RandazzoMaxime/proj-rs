@@ -409,7 +409,9 @@ fn alias_names_equivalent(
 
 /// ASCII case-insensitive `starts_with`, as `ci_starts_with`.
 fn starts_with_ci(text: &str, prefix: &str) -> bool {
-    text.len() >= prefix.len() && text[..prefix.len()].eq_ignore_ascii_case(prefix)
+    text.as_bytes()
+        .get(..prefix.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(prefix.as_bytes()))
 }
 
 impl GeodeticCRS {

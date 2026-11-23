@@ -118,8 +118,14 @@ impl Ctx {
 
     /// Records `code` as the last error of this context, and logs `message` at error level.
     pub(crate) fn fail(&mut self, code: c_int, message: &str) {
+        self.fail_bytes(code, message.as_bytes());
+    }
+
+    /// [`Self::fail`] with a message that need not be UTF-8: a WKT grammar error can cut a
+    /// multi-byte character, and PROJ logs those bytes as they are.
+    pub(crate) fn fail_bytes(&mut self, code: c_int, message: &[u8]) {
         self.errno = code;
-        self.log(PJ_LOG_ERROR as c_int, message);
+        self.log_bytes(PJ_LOG_ERROR as c_int, message);
     }
 
     /// `proj_log_error` of `iso19111/c_api.cpp`: logs `message`, and sets `code` only when no
@@ -133,6 +139,11 @@ impl Ctx {
 
     /// Sends `message` to the logger when `level` is active (`pj_log_active`).
     pub(crate) fn log(&self, level: c_int, message: &str) {
+        self.log_bytes(level, message.as_bytes());
+    }
+
+    /// [`Self::log`] of bytes, which need not be UTF-8.
+    pub(crate) fn log_bytes(&self, level: c_int, message: &[u8]) {
         let mut debug = self.debug_level;
         if debug < 0 && self.errno == 0 {
             return;
@@ -144,7 +155,7 @@ impl Ctx {
             return;
         }
         if let Some(logger) = self.logger {
-            let line = util::c_string(message);
+            let line = util::c_bytes(message);
             // SAFETY: the logger is the function the application registered with
             // `proj_log_func`, called with its own data pointer and a valid C string.
             unsafe { logger(self.logger_data, level, line.as_ptr()) };

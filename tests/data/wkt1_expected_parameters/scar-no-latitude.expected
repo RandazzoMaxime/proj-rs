@@ -1,0 +1,2 @@
+warning: Unknown method Polar_Stereographic
+conversion: CONVERSION["unknown",METHOD["Polar_Stereographic"],PARAMETER["false_easting",0,LENGTHUNIT["metre",1]],PARAMETER["false_northing",0,LENGTHUNIT["metre",1]]]

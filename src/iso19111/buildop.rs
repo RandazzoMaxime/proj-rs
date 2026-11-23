@@ -1175,6 +1175,14 @@ fn is_metre(unit: &super::model::UnitOfMeasure) -> bool {
     unit.kind() == UnitKind::Linear && (unit.conversion_to_si() - 1.0).abs() < 1e-10
 }
 
+/// `_isEquivalentTo(UnitOfMeasure::DEGREE, EQUIVALENT)`: an angle unit of one degree, whatever its name.
+fn is_degree(unit: &super::model::UnitOfMeasure) -> bool {
+    unit.kind() == UnitKind::Angular
+        && (unit.conversion_to_si() - super::model::UnitOfMeasure::degree().conversion_to_si())
+            .abs()
+            < 1e-10
+}
+
 fn are_equivalent_parameters(left: &str, right: &str) -> bool {
     let (left, right) = (canonical(left), canonical(right));
     left != right
@@ -1761,17 +1769,18 @@ impl super::model::Conversion {
         if !is_tmerc {
             return None;
         }
-        let latitude = self.numeric_degrees(8801);
-        if (latitude - 0.0).abs() >= 1e-10 {
+        // `Conversion::isUTM` reads each of the four parameters, and a missing one is not UTM.
+        let latitude = self.measure_of_code(8801)?;
+        if latitude.value().abs() >= 1e-10 {
             return None;
         }
         let longitude = self
             .measure_of_code(8802)
-            .or_else(|| self.measure_of_code(8833))
-            .map_or(0.0, |measure| {
-                measure.convert_to(&super::model::UnitOfMeasure::degree())
-            });
-        let zone = (longitude + 183.0) / 6.0;
+            .or_else(|| self.measure_of_code(8833))?;
+        if !is_degree(longitude.unit()) {
+            return None;
+        }
+        let zone = (longitude.value() + 183.0) / 6.0;
         if !(0.9..60.1).contains(&zone) || (zone - zone.round()).abs() >= 1e-10 {
             return None;
         }

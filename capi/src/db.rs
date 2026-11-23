@@ -329,10 +329,23 @@ pub extern "C" fn proj_create_from_wkt(
             Err(error) => {
                 // A WKT that does not parse gives its message as the only grammar error, or as a
                 // log line when the caller asks for none (iso19111/c_api.cpp:761-772).
+                let text = error.to_string();
+                // A strict grammar error keeps the bytes PROJ writes, which may end in a cut
+                // multi-byte character.
+                let bytes = parser
+                    .failure_bytes()
+                    .filter(|bytes| String::from_utf8_lossy(bytes) == text)
+                    .map_or_else(|| text.clone().into_bytes(), <[u8]>::to_vec);
                 if out_grammar_errors.is_null() {
-                    fail(context, "proj_create_from_wkt", &error.to_string());
+                    if bytes == text.as_bytes() {
+                        fail(context, "proj_create_from_wkt", &text);
+                    } else {
+                        let mut line = b"proj_create_from_wkt: ".to_vec();
+                        line.extend_from_slice(&bytes);
+                        context.fail_bytes(PROJ_ERR_OTHER as c_int, &line);
+                    }
                 } else {
-                    util::put(out_grammar_errors, util::string_list(&[error.to_string()]));
+                    util::put(out_grammar_errors, util::byte_string_list(&[bytes]));
                 }
                 return std::ptr::null_mut();
             }

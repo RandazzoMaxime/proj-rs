@@ -286,31 +286,11 @@ macro_rules! compare {
     };
 }
 
-compare!(
-    eq,
-    _CMP_EQ_OQ,
-    "`self == other`, faux si une voie est `NaN`."
-);
-compare!(
-    lt,
-    _CMP_LT_OQ,
-    "`self < other`, faux si une voie est `NaN`."
-);
-compare!(
-    le,
-    _CMP_LE_OQ,
-    "`self <= other`, faux si une voie est `NaN`."
-);
-compare!(
-    gt,
-    _CMP_GT_OQ,
-    "`self > other`, faux si une voie est `NaN`."
-);
-compare!(
-    ge,
-    _CMP_GE_OQ,
-    "`self >= other`, faux si une voie est `NaN`."
-);
+compare!(eq, _CMP_EQ_OQ, "`self == other`, false if a lane is `NaN`.");
+compare!(lt, _CMP_LT_OQ, "`self < other`, false if a lane is `NaN`.");
+compare!(le, _CMP_LE_OQ, "`self <= other`, false if a lane is `NaN`.");
+compare!(gt, _CMP_GT_OQ, "`self > other`, false if a lane is `NaN`.");
+compare!(ge, _CMP_GE_OQ, "`self >= other`, false if a lane is `NaN`.");
 
 macro_rules! arithmetic {
     ($trait:ident, $method:ident, $intrinsic:ident) => {

@@ -603,6 +603,8 @@ pub struct WktParser {
     grammar_errors: Vec<String>,
     /// [`Self::grammar_errors`] as the bytes PROJ writes them.
     grammar_error_bytes: Vec<Vec<u8>>,
+    /// The bytes of the grammar error that made a strict parse fail.
+    failure_bytes: Option<Vec<u8>>,
     towgs84: Vec<f64>,
     grids: String,
     /// `PROJ4_GRIDS` of the vertical datum currently being built.
@@ -632,6 +634,7 @@ impl WktParser {
             warnings: Vec::new(),
             grammar_errors: Vec::new(),
             grammar_error_bytes: Vec::new(),
+            failure_bytes: None,
             towgs84: Vec::new(),
             grids: String::new(),
             vertical_grids: String::new(),
@@ -679,6 +682,14 @@ impl WktParser {
         &self.grammar_error_bytes
     }
 
+    /// The grammar error that made the last strict [`Self::create_from_wkt`] fail, as PROJ's
+    /// bytes: the text of the `FactoryError` shows a UTF-8 sequence cut by the context window
+    /// as U+FFFD. `None` when the parse succeeded or failed for another reason.
+    #[must_use]
+    pub fn failure_bytes(&self) -> Option<&[u8]> {
+        self.failure_bytes.as_deref()
+    }
+
     /// `PROJ4_GRIDS` value captured from a datum `EXTENSION` node.
     #[must_use]
     pub fn datum_grids(&self) -> &str {
@@ -700,6 +711,7 @@ impl WktParser {
         self.warnings.clear();
         self.grammar_errors.clear();
         self.grammar_error_bytes.clear();
+        self.failure_bytes = None;
         self.towgs84.clear();
         self.grids.clear();
         self.vertical_grids.clear();
@@ -812,6 +824,7 @@ impl WktParser {
     fn grammar_bytes(&mut self, message: Vec<u8>) -> Result<(), FactoryError> {
         let text = String::from_utf8_lossy(&message).into_owned();
         if self.strict {
+            self.failure_bytes = Some(message);
             Err(invalid(text))
         } else {
             self.grammar_errors.push(text);
@@ -1018,7 +1031,7 @@ impl WktParser {
             if let Some(name) = parent.children.first().map(strip_quotes) {
                 let prefix = "UTM zone ";
                 if name.len() > prefix.len()
-                    && name[..prefix.len()].eq_ignore_ascii_case(prefix)
+                    && name.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes())
                     && name.contains('S')
                 {
                     let digits: String = name[prefix.len()..]
@@ -3101,18 +3114,7 @@ impl WktParser {
                 .filter(|parameter| ci_eq(parameter.name(), "scale_factor"))
                 .all(is_one_measure);
         if polar_variant_b {
-            parameters.retain(|parameter| !ci_eq(parameter.name(), "scale_factor"));
-            for parameter in &mut parameters {
-                if ci_eq(&parameter.name, "latitude_of_origin") {
-                    parameter.name = "Latitude of standard parallel".to_owned();
-                    parameter.code = "8832".to_owned();
-                    parameter.code_space = "EPSG".to_owned();
-                } else if ci_eq(&parameter.name, "central_meridian") {
-                    parameter.name = "Longitude of origin".to_owned();
-                    parameter.code = "8833".to_owned();
-                    parameter.code_space = "EPSG".to_owned();
-                }
-            }
+            parameters = polar_stereographic_parameters(&parameters, PolarVariant::B);
         }
         // ESRI writes a south orientated transverse Mercator as a regular one
         // with a scale factor of -1 (PROJ `io.cpp`, ESRI dialect).
@@ -3177,6 +3179,9 @@ impl WktParser {
         let polar_variant_a = ci_eq(&method_name, "Polar_Stereographic")
             && !polar_variant_b
             && latitude_near_pole(&parameters);
+        if polar_variant_a {
+            parameters = polar_stereographic_parameters(&parameters, PolarVariant::A);
+        }
         let polar_ambiguous =
             ci_eq(&method_name, "Polar_Stereographic") && !polar_variant_b && !polar_variant_a;
         let (mut mapped_name, mut code) = if polar_variant_b {
@@ -4800,6 +4805,69 @@ fn is_one_measure(parameter: &Parameter) -> bool {
     matches!(&parameter.value, ParameterValue::Measure(measure) if measure.value == 1.0)
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PolarVariant {
+    A,
+    B,
+}
+
+/// `Conversion::createPolarStereographicVariantA` or `B` as `buildProjectionStandard` calls it
+/// (io.cpp:4253-4300): the parameters of the variant, in its order, read from the WKT1 names
+/// `latitude_of_origin`, `central_meridian`, `scale_factor`, `false_easting` and
+/// `false_northing`. A parameter the WKT lacks is 0 without a unit, and any other is dropped.
+fn polar_stereographic_parameters(
+    parameters: &[Parameter],
+    variant: PolarVariant,
+) -> Vec<Parameter> {
+    let read = |name: &str| {
+        parameters
+            .iter()
+            .find_map(|parameter| match &parameter.value {
+                ParameterValue::Measure(measure) if ci_eq(parameter.name(), name) => {
+                    Some(measure.clone())
+                }
+                _ => None,
+            })
+    };
+    let or_none = |measure: Option<Measure>| {
+        measure.unwrap_or(Measure {
+            value: 0.0,
+            unit: UnitOfMeasure::none(),
+        })
+    };
+    let made = |name: &str, code: &str, measure: Measure| Parameter {
+        name: name.to_owned(),
+        code_space: "EPSG".to_owned(),
+        code: code.to_owned(),
+        value: ParameterValue::Measure(measure),
+    };
+    let latitude = or_none(read("latitude_of_origin"));
+    let meridian = or_none(read("central_meridian"));
+    let easting = or_none(read("false_easting"));
+    let northing = or_none(read("false_northing"));
+    match variant {
+        PolarVariant::B => vec![
+            made("Latitude of standard parallel", "8832", latitude),
+            made("Longitude of origin", "8833", meridian),
+            made("False easting", "8806", easting),
+            made("False northing", "8807", northing),
+        ],
+        PolarVariant::A => {
+            let scale = read("scale_factor").unwrap_or(Measure {
+                value: 1.0,
+                unit: UnitOfMeasure::unity(),
+            });
+            vec![
+                made("Latitude of natural origin", "8801", latitude),
+                made("Longitude of natural origin", "8802", meridian),
+                made("Scale factor at natural origin", "8805", scale),
+                made("False easting", "8806", easting),
+                made("False northing", "8807", northing),
+            ]
+        }
+    }
+}
+
 /// `| |latitude_of_origin| - 90° | < 1e-10`, the polar stereographic variant A test.
 fn latitude_near_pole(parameters: &[Parameter]) -> bool {
     let Some(parameter) = parameters
@@ -5112,13 +5180,13 @@ fn las_geoid_name(name: &str, compound_geographic: Option<&str>) -> Option<Strin
         }
     }
     if name.len() >= 5
-        && name[..5].eq_ignore_ascii_case("Geoid")
+        && name.as_bytes()[..5].eq_ignore_ascii_case(b"Geoid")
         && compound_geographic.is_some_and(|geographic| geographic.starts_with("NAD83"))
     {
         let compact: String = name.chars().filter(|ch| *ch != ' ').collect();
         let bytes = compact.as_bytes();
         if compact.len() >= 9
-            && compact[..7].eq_ignore_ascii_case("Geoid20")
+            && bytes[..7].eq_ignore_ascii_case(b"Geoid20")
             && bytes[7].is_ascii_digit()
             && bytes[8].is_ascii_digit()
         {

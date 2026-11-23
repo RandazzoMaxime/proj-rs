@@ -7,6 +7,7 @@
     reason = "the projinfo binary writes its report to stdout and stderr"
 )]
 
+use std::io::Write;
 use std::process::ExitCode;
 
 use proj_rs::projinfo::{run, Status};
@@ -20,8 +21,12 @@ pub(crate) fn run_with(argv: Vec<String>) -> ExitCode {
     let args: Vec<String> = argv.into_iter().skip(1).collect();
     let arguments: Vec<&str> = args.iter().map(String::as_str).collect();
     let report = run(&arguments);
-    for warning in &report.warnings {
-        eprintln!("{warning}");
+    {
+        let mut stderr = std::io::stderr().lock();
+        for warning in &report.warning_bytes {
+            let _ = stderr.write_all(warning);
+            let _ = stderr.write_all(b"\n");
+        }
     }
     if !report.output.is_empty() {
         println!("{}", report.output);
