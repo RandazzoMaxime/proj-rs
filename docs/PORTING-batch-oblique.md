@@ -82,5 +82,6 @@ aller) fait échouer le test (vérifié, puis annulé).
 ## Limites
 
 - Les couples à plusieurs candidats ne passent pas par ces noyaux (voir plus haut).
-- Hors AVX2, `UnitBatch` rejoue `Kernel::forward` et `Kernel::inverse` : mêmes bits que le
-  scalaire, sans gain. Le build aarch64 n'est pas vérifié ici.
+- Hors AVX2 et NEON, `UnitBatch` rejoue `Kernel::forward` et `Kernel::inverse` : mêmes bits que
+  le scalaire, sans gain. Sur aarch64, les noyaux de `laea`, `somerc` et `sterea` tournent avec
+  NEON et donnent les mêmes bits que sur AVX2 (`docs/PORTING-simd.md`).

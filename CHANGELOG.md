@@ -4,6 +4,17 @@ Versions follow [semver](https://semver.org). The stable surface is the one of
 [docs/API-v1.md](docs/API-v1.md): the native facade, `proj-rs-georust` and the C API. The
 rest is outside semver.
 
+## Unreleased
+
+- aarch64 (Apple silicon, Linux ARM) has a batch path in lanes of four with NEON, as x86-64 has
+  with AVX2: `batch_path()` gives `neon`. `V4` has a second realisation on two `float64x2_t`
+  registers with the same API, built on the safe wrappers of `pulp`, so the vector math functions,
+  the kernels and the formulas of the projections are the same code on both architectures and give
+  the same bits (digests measured on AVX2 for the 11 functions of `math.rs` and for `laea`, `somerc`,
+  `sterea`, `cart` and `helmert`, forward and inverse, are the NEON ones). There is no `libmvec` and
+  no Accelerate. The CI runs the whole suite on Linux ARM as well as on Apple silicon. See
+  [docs/PORTING-simd.md](docs/PORTING-simd.md).
+
 ## 1.2.0
 
 - Six more real clients run their own test suites once on libproj 9.9.0 and once on proj-rs, the

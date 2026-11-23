@@ -1,4 +1,4 @@
-# Calcul par lots en AVX2 (`src/simd/`)
+# Calcul par lots en AVX2 et en NEON (`src/simd/`)
 
 PROJ 9.9.0 n'a pas de chemin vectoriel : `pj_fwd` et `pj_inv` convertissent un point à la fois
 (`proj_trans_generic` boucle). Ce module est donc un ajout de la crate, pas un portage. La
@@ -9,10 +9,11 @@ référence des valeurs reste PROJ : `tests/simd_batch.rs` compare chaque lot à
 ```
 src/simd/
   mod.rs      Lanes (le contrat d'un noyau), run (le driver), batch_path
-  v4.rs       Avx2 (preuve de support), V4 (quatre f64), Mask
+  v4.rs       x86-64 : Avx2 (preuve de support), V4 (quatre f64), Mask
+  neon.rs     aarch64 : Neon (preuve de support), V4 (deux registres de deux f64), Mask
   math.rs     sin_cos tan exp log atanh asinh sinh atan atan2 hypot powf sur V4, en Rust
   kernels.rs  briques partagées : adjlon, tsfn, phi2, latitude_in_domain
-  drive.rs    le seul code compilé avec avx2,fma : la boucle par groupes de quatre
+  drive.rs    la boucle par groupes de quatre (sur x86-64, le seul code compilé avec avx2,fma)
 src/tmerc/batch.rs   Transverse Mercator : forward, inverse
 src/lcc/batch.rs     Lambert conique conforme : forward, inverse
 src/merc/batch.rs    Mercator, sphère et ellipsoïde : forward, inverse
@@ -343,6 +344,70 @@ ces extensions l'est toujours. Les deux passent maintenant par `pulp` 0.22.3 (MI
   `num-traits`), `paste`, `reborrow`, `raw-cpuid`, `libm`, `cfg-if`, `pulp-wasm-simd-flag` ;
   licences MIT, Apache-2.0 ou Zlib.
 
+## NEON (aarch64)
+
+Sur aarch64 le lot tourne par groupes de quatre, comme avec AVX2. `V4` a deux réalisations, que
+`mod.rs` choisit par l'architecture : `v4.rs`, un registre `__m256d`, et `neon.rs`, deux
+`float64x2_t` (les voies 0 et 1, puis 2 et 3). Elles ont la même API : le driver, `kernels.rs`,
+`math.rs` et les formules des projections sont les mêmes pour les deux. Le jeton de preuve
+s'appelle `Token` ; c'est `Avx2` sur x86-64 et `Neon` sur aarch64. La porte `cfg` du code par lots
+est `simd_lanes`, que `build.rs` pose pour ces deux architectures.
+
+Les intrinsèques passent par `pulp`, comme pour AVX2 (`pulp::aarch64::Neon`) : `neon.rs` n'a pas de
+`unsafe`. NEON fait partie du socle des cibles aarch64, donc il n'y a pas de fonction
+`target_feature` à entrer : `Neon::vectorize` appelle la fonction, et le code est en ligne là où
+il est appelé.
+
+**Les mêmes bits qu'AVX2.** AVX2 et NEON arrondissent de la même façon : IEEE 754 pour
+l'addition, le produit, le quotient et la racine, et un FMA fusionné (`vfmadd` d'un côté, `fmla` de
+l'autre) pour `mul_add`. `math.rs` ne compose les fonctions que par l'API de `V4`, dans le même
+ordre : le résultat d'une fonction est donc le même sur les deux architectures. Trois opérations
+ont des instructions qui diffèrent, et `neon.rs` les rend identiques :
+
+- `max` et `min` : `maxpd` rend la seconde opérande sur un `NaN` ou une égalité (donc `0.0` contre
+  `-0.0` rend la seconde), `fmax` rend le `NaN`. Ici : une comparaison, puis `select`.
+- Les masques. AVX2 lit le bit de signe de chaque voie (`blendv`, `movemask`), et `sign_mask` rend
+  la valeur elle-même comme masque. NEON veut des voies toutes à un ou toutes à zéro. Un `Mask`
+  NEON est toujours une voie entière, ce qui satisfait tous les usages de l'autre.
+- La valeur entière d'un `f64` entier. AVX2 n'a pas de conversion `f64` vers entier 64 bits et
+  passe par l'astuce de `1,5 * 2^52`. NEON convertit directement (`fcvtzs`) : sur un entier exact,
+  c'est le même résultat.
+
+**Fonctions mathématiques propres, pas `libmvec` ni Accelerate.** Le plan de
+`docs/PORTING-batch-path.md` était d'appeler `libmvec` AdvSIMD sous Linux et Accelerate sous macOS.
+Ce n'est pas ce qui est fait : le même code sert les deux architectures, sans glibc 2.38, sans
+dépendance à macOS, avec une erreur connue (1 à 3 ULP de la libm, `libmvec` jusqu'à 4) et les mêmes
+bits partout.
+
+### Vérification
+
+Faite sous `qemu-aarch64` (compilation croisée vers `aarch64-unknown-linux-gnu`, glibc aarch64),
+puis par la CI sur Apple silicon et sur Linux ARM :
+
+- `bits_are_the_same_on_every_architecture` (`math.rs`) : une empreinte par fonction (`sin_cos`,
+  `tan`, `exp`, `log`, `atan`, `asinh`, `atanh`, `sinh`, `atan2`, `hypot`, `powf`), mesurée sur le
+  chemin AVX2. Ce sont celles de NEON.
+- `kernels_keep_their_bits_on_every_architecture` (`kernel_bits_tests.rs`) : l'aller et le retour de
+  `laea` (oblique et équatorial), `somerc`, `sterea` (ellipsoïde et sphère), `cart` (géodésique et
+  géocentrique) et `helmert` (deux conventions), sur 4 000 points chacun, tous dans le domaine : un
+  groupe qui sortirait du domaine passerait par le scalaire, donc par la libm de la plateforme.
+  Mêmes bits que sur AVX2.
+- `assert_vector_taken` : sur NEON aussi, au moins une valeur de chaque noyau diffère du scalaire
+  au dernier bit, ce qui prouve que le chemin vectoriel a tourné. Et les tolérances de
+  `docs/PARITY.md` tiennent.
+- `the_vector_path_is_taken_on_an_aarch64_processor` : `batch_path()` rend `neon`. Ce test a été
+  écrit d'abord, et échouait.
+- Les tests de précision de `math.rs` contre la libm (1 à 3 ULP) passent aussi sur NEON.
+- Les 28 empreintes de `tests/simd_bits.rs` et celles de `tests/convert_array_golden.rs` sont celles
+  de la libm glibc de x86-64 pour les groupes de repli : ces tests restent réservés à x86-64. Sur
+  NEON, 27 des 28 empreintes de `simd_bits` sont les mêmes, et la dernière (le retour
+  `EPSG:4326` vers `EPSG:3035`) diffère, par du code scalaire qui appelle la libm : le noyau
+  vectoriel de `laea` n'est pas appelé dans ce couple.
+
+Ce qui reste connu : `fmath::tests::matches_the_c_libm_bit_for_bit` échoue sous `qemu` sur Linux
+aarch64, avec et sans le chemin NEON. Il compare l'`atanh` de `fmath` à celui de la libm de la
+cible.
+
 ## Mesures
 
 `bench/record.sh`, un cœur épinglé (`taskset -c 2`), machine `cloud-4c-avx512` (le chemin
@@ -374,8 +439,9 @@ vecteur, d'où 37,6 → 27,4.
   `Operation::forward` et les points un à un restent scalaires.
 - Les autres projections (aea, eqc, stere, …) et Helmert n'ont pas de noyau vectoriel. Helmert
   fait 9 ns par point en scalaire.
-- Hors x86-64 : boucle scalaire. Pas de NEON (les fonctions de `math.rs` seraient la base d'une
-  implémentation NEON de `V4`).
+- Hors x86-64 et aarch64 : boucle scalaire (`Tmerc` aller a un repli portable). Les fonctions de
+  `math.rs` ne sont écrites que pour `V4` : une autre architecture demande une troisième
+  réalisation de `V4`.
 - Pas de mesure de vitesse sur Windows ni macOS : seulement le repli forcé sur Linux, voir plus haut.
   La CI compile et teste le chemin sur Windows à chaque PR.
 - Il n'y a plus de dépendance à glibc (ni `libmvec`, ni la version 2.35 qu'exigeaient `asinh`, `sinh`,

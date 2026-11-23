@@ -121,7 +121,6 @@ Tests (tolérance de `tests/common/tolerance.rs`, mètres 1e-6 ou 1e-13 relatif,
 - Un `helmert` à taux (`dx`, `drx`, `ds`) garde la boucle scalaire : sa matrice dépend de l'époque
   de chaque point. Une version qui la refait seulement quand l'époque change est possible, non
   mesurée.
-- Hors AVX2 (aarch64, x86-64 sans FMA), `cart` et `helmert` rejouent la fonction scalaire point
-  par point : seul le gain de la pile reste. Aucun noyau NEON. Le build aarch64 n'est pas
-  vérifié ici (pas de cible installée) : les `cfg(target_arch = "x86_64")` suivent ceux de
-  `tmerc/batch.rs`.
+- Hors AVX2 et NEON (une autre architecture, x86-64 sans FMA), `cart` et `helmert` rejouent la
+  fonction scalaire point par point : seul le gain de la pile reste. Sur aarch64, les mêmes noyaux
+  tournent avec NEON, et donnent les mêmes bits que sur AVX2 (`docs/PORTING-simd.md`).
