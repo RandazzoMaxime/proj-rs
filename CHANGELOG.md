@@ -4,6 +4,45 @@ Versions follow [semver](https://semver.org). The stable surface is the one of
 [docs/API-v1.md](docs/API-v1.md): the native facade, `proj-rs-georust` and the C API. The
 rest is outside semver.
 
+## 1.2.0
+
+- Six more real clients run their own test suites once on libproj 9.9.0 and once on proj-rs, the
+  scripts in `tools/clients/` and the results in `docs/CLIENTS-<name>.md`: SpatiaLite 5.1.0
+  (104 of 108 tests on both sides, 0 logs that differ), georust/proj 0.31.0 (26 of 26 tests and 24
+  of 24 examples on the C library; 24 of 26 on the facade, the two others explained),
+  libgeotiff 1.7.4 (0 lines of `listgeo` and `geotifcp` that differ), PDAL 2.10.2 (140 of 142,
+  the same two tests that read remote files fail on both), PostGIS 3.6.4 (247 of 247) and GRASS
+  8.5.0 (the same result for each of 818 tests). With pyproj, QGIS and GDAL of 1.1.0 that makes
+  nine.
+- `proj_create` and `proj_create_from_wkt` follow PROJ more closely:
+  - an operation or a CRS that `pj_init` refuses (`k <= 0`, `|lat_0| > 90`) is refused at creation,
+    with PROJ's error code and text, and `proj_errno` is PROJ's (`capi/tests/run.sh`
+    `errno_parity`);
+  - a WKT that contains ` +proj=` is read as WKT, not as a PROJ string (PDAL);
+  - `proj_create_from_wkt` adds the `validateParameters` warnings of PROJ, so GDAL caches the same
+    CRS;
+  - a `+proj=pipeline ... +type=crs` string that has no CRS shape is a PROJ-based operation, and
+    `proj_pj_info` keeps an inverted one-step pipeline as a pipeline (GRASS);
+  - a polar `stere` with `lat_ts` at the pole and `k != 1` is read as variant A (libgeotiff);
+  - `proj_create_crs_to_crs` re-creates a side that fails with `proj_create` (SpatiaLite).
+- The grammar errors of a WKT are PROJ's, byte for byte. The bison grammars of PROJ's WKT1 and WKT2
+  parsers are ported (`tools/wkt-grammar/extract.py` writes the tables from the generated parsers
+  of PROJ 9.9.0). On 21,342 WKT of the EPSG database and 64,703 malformed ones, there is no
+  difference in the grammar errors. A grammar error that cuts a multi-byte character keeps PROJ's
+  bytes in the list of errors, the log and the strict-mode failure (`WktParser::failure_bytes`,
+  `projinfo::Report::warning_bytes`).
+- CRS are read back as PROJ reads them: the axes of a polar `stere` or `laea` (`NORTH_POLE`,
+  `SOUTH_POLE`), a CRS on the WGS 84 ensemble (`+datum=WGS84`), the orientation of a WKT1 Krovak,
+  and the unit of a parameter in PROJJSON. The PROJ string of the WKT of all 13,719 EPSG CRS is
+  libproj's.
+- The 541 EPSG operations with a grid, read back from their WKT, export to a PROJ string: PROJ
+  finds a parameter without an identifier by its name (`OperationParameter::getEPSGCode`), and so
+  does `Parameter::epsg_code`. The 21,342 WKT of CRS and operations round-trip identically.
+- A WKT1 projection that lacks a parameter is built as PROJ builds it: `UTM zone N` only with the
+  four UTM parameters, and a polar stereographic with every parameter of its variant.
+- Fixed: `projinfo` and the identification of a CRS panicked on a name with a multi-byte character
+  (`Référence éé`), where a name was sliced at a byte index inside a character.
+
 ## 1.1.0
 
 - The C library is tried against real clients, with their own test suites run once on libproj
