@@ -1,4 +1,12 @@
+<p align="center">
+  <img src="assets/banner-terminal.svg" alt="$ cargo add proj-rs: PROJ 9.9, ported to Rust, with real conversions scrolling by" width="100%">
+</p>
+
 <h1 align="center">PROJ-RS</h1>
+
+<p align="center">
+  <img src="assets/banner-globe.svg" alt="Same numbers. Faster, lighter. A globe with its graticule and a pulsing point at 48.8566°N 2.3522°E" width="100%">
+</p>
 
 <p align="center">
   <b>PROJ 9.9, ported to Rust.</b><br>
