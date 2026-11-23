@@ -397,3 +397,31 @@ coût n'est pas mesuré ici. Les tests de la bibliothèque (239), `shared_databa
 `unit_database_open`, `unit_capi_database_path`, `test_factory`, `parity`, `convert_array_golden`
 et `convert_iter` passent. Le footprint de `bench/footprint.json` n'est pas refait : il attend une
 mesure sur la CI.
+
+## Taille du code touché
+
+Le pic de création est aussi fait des pages de code du binaire : environ 4,5 Mo résidents (SQLite et
+libproj, surtout au chargement du schéma). Mesures (`perf_point … mem`, minimum de 3 passes ; le
+chemin par lots est le minimum de 3 passes d'un million de points) :
+
+| variante | binaire (texte) | pic de création | pages de code | lot 1 M |
+|---|---:|---:|---:|---:|
+| état précédent | 17,4 Mo | 9,55 Mo | 7,45 Mo | 92 ns |
+| LTO fat | 17,4 Mo | 9,69 Mo | 7,57 Mo | 94 ns |
+| `opt-level = "s"` (tout le crate) | 15,6 Mo | 8,35 Mo | 6,31 Mo | 104 ns |
+| SQLite sans les options inutiles, sans `-Os` | 17,5 Mo | 9,76 Mo | 7,42 Mo | 93 ns |
+| **SQLite en `-Os` (livré)** | **16,8 Mo** | **8,9 Mo** | **6,9 Mo** | **97 ns** |
+
+Le livré est `CFLAGS = "-Os"` dans `.cargo/config.toml` : SQLite sert à la création et aux
+requêtes, jamais dans les boucles de points. Le gain est d'environ 0,6 Mo sur le pic, pour un coût
+non mesurable sur le chemin par lots. Optimiser tout le crate pour la taille gagne 0,5 Mo de plus,
+mais ralentit le chemin par lots d'environ 12 % : refusé.
+
+Selon la compilation (même mesure, création seule) :
+
+- **Bibliothèque Rust, par défaut** : 8,9 Mo au pic.
+- **API C** (`libproj`, programme C de `bench/footprint/c/convert.c`) : 10,0 Mo au pic, soit environ
+  1,1 Mo de plus : la couche C et le contexte de libproj.
+- **Fonctionnalité `network`** : 10,7 Mo au pic, et 1,2 Mo de pages de fichier dès le démarrage,
+  car `libssl` et `libcrypto` sont liées dynamiquement et chargées même sans téléchargement. Elle est
+  désactivée par défaut, donc le cas courant n'en paie rien.
