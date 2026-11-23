@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>A billion points in 29.7 s</title>
+  <title>A billion points in 39.0 s</title>
   <style>
 /* Default palette — keep hex in sync with scripts/derive-palette.mjs */
 :root {
@@ -226,8 +226,8 @@ html.export #card {
   <article id="card">
     <div class="head">
       <div>
-        <p class="eyebrow">PROJ-RS 1.0 · ONE BILLION POINTS</p>
-        <h1 class="title">A billion points in <span class="accent">29.7 s</span></h1>
+        <p class="eyebrow">PROJ-RS · ONE BILLION POINTS</p>
+        <h1 class="title">A billion points in <span class="accent">39.0 s</span></h1>
         <p class="subtitle">EPSG:4326 to EPSG:2154, 1,000 passes of 1,000,000 points · seconds for the whole billion, shorter is faster</p>
       </div>
       <div class="legend">
@@ -243,10 +243,10 @@ html.export #card {
           <div class="caption">convert · PROJ proj_trans</div>
         </div>
         <div class="stack">
-          <div class="lane"><span class="bar accent" style="width: 69%"></span><span class="val">65.8 s</span></div>
-          <div class="lane rival"><span class="bar rival" style="width: 100%"></span><span class="val">94.9 s</span></div>
+          <div class="lane"><span class="bar accent" style="width: 69%"></span><span class="val">81.6 s</span></div>
+          <div class="lane rival"><span class="bar rival" style="width: 100%"></span><span class="val">118 s</span></div>
         </div>
-        <div class="speed"><b>1.4×</b><span>faster</span></div>
+        <div class="speed"><b>1.5×</b><span>faster</span></div>
       </div>
       <div class="row" data-slot="r2">
         <div>
@@ -254,10 +254,10 @@ html.export #card {
           <div class="caption">convert_array · PROJ proj_trans_generic</div>
         </div>
         <div class="stack">
-          <div class="lane"><span class="bar accent" style="width: 31%"></span><span class="val">29.7 s</span></div>
-          <div class="lane rival"><span class="bar rival" style="width: 100%"></span><span class="val">97.0 s</span></div>
+          <div class="lane"><span class="bar accent" style="width: 32%"></span><span class="val">39.0 s</span></div>
+          <div class="lane rival"><span class="bar rival" style="width: 100%"></span><span class="val">121 s</span></div>
         </div>
-        <div class="speed"><b>3.3×</b><span>faster</span></div>
+        <div class="speed"><b>3.1×</b><span>faster</span></div>
       </div>
       <div class="row" data-slot="r3" hidden>
         <div>
@@ -328,8 +328,8 @@ html.export #card {
     </div>
 
     <footer class="footer">
-      <span>seconds · one run · one core of a 4-vCPU Xeon · output checked against PROJ</span>
-      <span>bench/billion.json · Nov 18 · commit edbd1e3</span>
+      <span>seconds · one run · one core of a 4-vCPU CI runner · output checked against PROJ</span>
+      <span>bench/billion.json · Nov 23 · commit 4c609c6</span>
     </footer>
   </article>
 </body>

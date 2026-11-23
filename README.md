@@ -56,7 +56,7 @@ cannot say more than the tests do.
 
 ## How fast
 
-Speed, size on disk and peak memory of the same conversions, proj-rs against PROJ 9.9.0 on Linux x86-64. Every number comes from a measurement file, [`bench/history.jsonl`](bench/history.jsonl) for the speed and [`bench/footprint.json`](bench/footprint.json) for the size and the memory, and the pictures and tables are drawn from them.
+Speed, size on disk and peak memory of the same conversions, proj-rs against PROJ 9.9.0 on Linux x86-64, with the speed also on ARM (Apple M1, Linux ARM). The speed is measured by the CI; the size and the memory on a 4-vCPU cloud VM. Every number comes from a measurement file, [`bench/history.jsonl`](bench/history.jsonl) for the speed and [`bench/footprint.json`](bench/footprint.json) for the size and the memory, and the pictures and tables are drawn from them.
 
 What the speed rests on: the batch path above, a pipeline that folds its axis-swap and unit steps into one
 ([`docs/PORTING-affine-plan.md`](docs/PORTING-affine-plan.md)), and, for the memory, a `proj.db` that is read from the
@@ -71,24 +71,24 @@ executable instead of being copied ([`docs/PORTING-memory.md`](docs/PORTING-memo
 <!-- bench-compare:end -->
 
 <!-- bench-how-fast:start -->
-These numbers are PROJ-RS v1's. The optimisation work (wider SIMD, GPU) comes in the versions after it.
+These numbers are proj-rs 1.2.5's, measured by the CI.
 
-On a 4-vCPU cloud VM (Intel Xeon at 2.10 GHz), the process pinned to one core, proj-rs is 2.8× faster than PROJ 9.9.0's `libproj` on average over the ten cases below (geometric mean of the ratios; faster in every case, from 1.1× to 6.9×). One point at a time, proj-rs is 1.9× faster on average, from 1.1× to 6.9×. On a slice of points, it is 4.2× faster on average, from 3.0× to 6.8×. This is one machine: the ratios on another CPU, or on a build of libproj with other flags, will differ. The batch kernels take the AVX2 path, which every x86-64 CPU has since 2013 (Intel) and 2015 (AMD); AVX-512 is not used.
+On a GitHub Actions runner (Linux x86-64, 4 vCPU), the process pinned to one core, proj-rs is 2.9× faster than PROJ 9.9.0's `libproj` on average over the ten cases below (geometric mean of the ratios; faster in every case, from 1.2× to 5.6×). One point at a time, proj-rs is 1.6× faster on average, from 1.2× to 5.0×. On a slice of points, it is 5.0× faster on average, from 4.6× to 5.6×. This is one machine: the ratios on another CPU, or on a build of libproj with other flags, will differ. The batch kernels take the AVX2 path, which every x86-64 CPU has since 2013 (Intel) and 2015 (AMD); AVX-512 is not used.
 
 | Conversion | Call | PROJ 9.9.0 | proj-rs |
 |---|---|---:|---:|
-| WGS 84 → RGF93 / Lambert-93 (EPSG:4326 → 2154) | `convert`, one point at a time | 108 ns | 61.4 ns (1.8× faster) |
-| WGS 84 → RGF93 / Lambert-93 (EPSG:4326 → 2154) | `convert_array`, 200,000 points | 100 ns | 33.5 ns (3.0× faster) |
-| WGS 84 → WGS 84 / UTM 31N (EPSG:4326 → 32631) | `convert`, one point at a time | 144 ns | 109 ns (1.3× faster) |
-| WGS 84 → WGS 84 / UTM 31N (EPSG:4326 → 32631) | `convert_array`, 200,000 points | 150 ns | 26.4 ns (5.7× faster) |
-| WGS 84 → Web Mercator (EPSG:4326 → 3857) | `convert`, one point at a time | 73.6 ns | 53.8 ns (1.4× faster) |
-| WGS 84 → Web Mercator (EPSG:4326 → 3857) | `convert_array`, 200,000 points | 81.6 ns | 24.7 ns (3.3× faster) |
-| RGF93 / Lambert-93 → WGS 84 / UTM 31N (EPSG:2154 → 32631) | `convert`, one point at a time | 357 ns | 326 ns (1.1× faster) |
-| RGF93 / Lambert-93 → WGS 84 / UTM 31N (EPSG:2154 → 32631) | `convert_array`, 200,000 points | 323 ns | 90 ns (3.6× faster) |
-| NAD27 → WGS 84 (EPSG:4267 → 4326) | `convert`, one point at a time | 306 ns | 44.2 ns (6.9× faster) |
-| NAD27 → WGS 84 (EPSG:4267 → 4326) | `convert_array`, 200,000 points | 309 ns | 45.4 ns (6.8× faster) |
+| WGS 84 → RGF93 / Lambert-93 (EPSG:4326 → 2154) | `convert`, one point at a time | 141 ns | 104 ns (1.4× faster) |
+| WGS 84 → RGF93 / Lambert-93 (EPSG:4326 → 2154) | `convert_array`, 200,000 points | 149 ns | 32.6 ns (4.6× faster) |
+| WGS 84 → WGS 84 / UTM 31N (EPSG:4326 → 32631) | `convert`, one point at a time | 173 ns | 150 ns (1.2× faster) |
+| WGS 84 → WGS 84 / UTM 31N (EPSG:4326 → 32631) | `convert_array`, 200,000 points | 179 ns | 31.6 ns (5.6× faster) |
+| WGS 84 → Web Mercator (EPSG:4326 → 3857) | `convert`, one point at a time | 108 ns | 90.7 ns (1.2× faster) |
+| WGS 84 → Web Mercator (EPSG:4326 → 3857) | `convert_array`, 200,000 points | 115 ns | 22.3 ns (5.2× faster) |
+| RGF93 / Lambert-93 → WGS 84 / UTM 31N (EPSG:2154 → 32631) | `convert`, one point at a time | 464 ns | 358 ns (1.3× faster) |
+| RGF93 / Lambert-93 → WGS 84 / UTM 31N (EPSG:2154 → 32631) | `convert_array`, 200,000 points | 469 ns | 91.8 ns (5.1× faster) |
+| NAD27 → WGS 84 (EPSG:4267 → 4326) | `convert`, one point at a time | 318 ns | 63.9 ns (5.0× faster) |
+| NAD27 → WGS 84 (EPSG:4267 → 4326) | `convert_array`, 200,000 points | 319 ns | 68.8 ns (4.6× faster) |
 
-Nanoseconds per point; lower is faster. Line of Nov 17 17:47 UTC at commit `ad8d680`, the best of 5 runs for each case. Both sides convert the same points, and the bench stops if their outputs differ. With no grid, NAD27 → WGS 84 is PROJ's ballpark offset on both sides, a change of units and axis order with no datum shift, which proj-rs applies as one step. What exactly is compared, and how to rerun it: [docs/BENCHMARK.md](docs/BENCHMARK.md).
+Nanoseconds per point; lower is faster. Line of Nov 23 07:43 UTC at commit `4c609c6`, the best of 5 runs for each case. Both sides convert the same points, and the bench stops if their outputs differ. With no grid, NAD27 → WGS 84 is PROJ's ballpark offset on both sides, a change of units and axis order with no datum shift, which proj-rs applies as one step. What exactly is compared, and how to rerun it: [docs/BENCHMARK.md](docs/BENCHMARK.md).
 
 <details>
 <summary><b>Bare projections against libproj, and the ten slowest operations</b></summary>
@@ -99,26 +99,47 @@ Bare projections, forward, from `+proj=` strings (no CRS lookup), one point at a
 
 | Projection | PROJ 9.9.0 | proj-rs |
 |---|---:|---:|
-| UTM 31 forward, `+proj=utm` | 127 ns | 98.3 ns (1.3× faster) |
-| Lambert-93 forward, `+proj=lcc` | 87.7 ns | 64.7 ns (1.4× faster) |
-| Web Mercator forward, `+proj=merc` | 53.5 ns | 56 ns (about the same, 0.96×) |
+| UTM 31 forward, `+proj=utm` | 158 ns | 112 ns (1.4× faster) |
+| Lambert-93 forward, `+proj=lcc` | 128 ns | 80.9 ns (1.6× faster) |
+| Web Mercator forward, `+proj=merc` | 98 ns | 64.7 ns (1.5× faster) |
 
 Ten slowest operations of the catalogue (same line, a 128-point grid, no libproj column):
 
 | Operation | ns/point |
 |---|---:|
-| `gnom` | 521.7 |
-| `aeqd` | 505.4 |
-| `lsat` | 450.3 |
-| `misrsom` | 411.6 |
-| `dsea` | 342.4 |
-| `isea` | 272.9 |
-| `ivea` | 260.0 |
-| `tsea` | 250.6 |
-| `spilhaus` | 209.1 |
-| `mod_krovak` | 190.0 |
+| `gnom` | 661.5 |
+| `aeqd` | 658.0 |
+| `lsat` | 593.9 |
+| `misrsom` | 575.4 |
+| `dsea` | 509.1 |
+| `ivea` | 417.4 |
+| `isea` | 417.4 |
+| `tsea` | 394.2 |
+| `chamb` | 320.3 |
+| `spilhaus` | 314.3 |
 
 </details>
+
+### On ARM
+
+The same ten cases on Apple M1 and Neoverse N2, two GitHub Actions runners (a virtual Apple M1 on macOS, not pinned; a Neoverse N2 on Linux, pinned to one core). The batch kernels take the NEON path; the ratio is PROJ 9.9.0's time over proj-rs's.
+
+| Conversion | Call | PROJ 9.9.0, Apple M1 | proj-rs, Apple M1 | PROJ 9.9.0, Neoverse N2 | proj-rs, Neoverse N2 |
+|---|---|---:|---:|---:|---:|
+| WGS 84 → RGF93 / Lambert-93 (EPSG:4326 → 2154) | `convert` | 114 ns | 68 ns (1.7× faster) | 108 ns | 81 ns (1.3× faster) |
+| WGS 84 → RGF93 / Lambert-93 (EPSG:4326 → 2154) | `convert_array` | 114 ns | 33.5 ns (3.4× faster) | 109 ns | 51.8 ns (2.1× faster) |
+| WGS 84 → WGS 84 / UTM 31N (EPSG:4326 → 32631) | `convert` | 122 ns | 96.3 ns (1.3× faster) | 140 ns | 119 ns (1.2× faster) |
+| WGS 84 → WGS 84 / UTM 31N (EPSG:4326 → 32631) | `convert_array` | 132 ns | 33.1 ns (4.0× faster) | 142 ns | 55 ns (2.6× faster) |
+| WGS 84 → Web Mercator (EPSG:4326 → 3857) | `convert` | 67.4 ns | 66.7 ns (about the same, 1.01×) | 84.2 ns | 74 ns (1.1× faster) |
+| WGS 84 → Web Mercator (EPSG:4326 → 3857) | `convert_array` | 66.9 ns | 21.6 ns (3.1× faster) | 84.6 ns | 37.4 ns (2.3× faster) |
+| RGF93 / Lambert-93 → WGS 84 / UTM 31N (EPSG:2154 → 32631) | `convert` | 330 ns | 303 ns (1.1× faster) | 376 ns | 291 ns (1.3× faster) |
+| RGF93 / Lambert-93 → WGS 84 / UTM 31N (EPSG:2154 → 32631) | `convert_array` | 340 ns | 92.5 ns (3.7× faster) | 378 ns | 136 ns (2.8× faster) |
+| NAD27 → WGS 84 (EPSG:4267 → 4326) | `convert` | 228 ns | 31.9 ns (7.1× faster) | 243 ns | 45.6 ns (5.3× faster) |
+| NAD27 → WGS 84 (EPSG:4267 → 4326) | `convert_array` | 223 ns | 34.2 ns (6.5× faster) | 246 ns | 50.1 ns (4.9× faster) |
+
+On Apple M1, proj-rs is 2.6× faster than PROJ 9.9.0 on average over the ten cases (the slowest case is about the same, 1.01×, the fastest 7.1× faster); line of Nov 23 07:59 UTC at commit `4c609c6`, the best of 5 runs.
+
+On Neoverse N2, proj-rs is 2.1× faster than PROJ 9.9.0 on average over the ten cases (faster in every case, from 1.1× to 5.3×); line of Nov 23 07:41 UTC at commit `4c609c6`, the best of 5 runs.
 <!-- bench-how-fast:end -->
 
 ### Size and memory
@@ -198,7 +219,7 @@ a line commits the charts with it.
 
 Time per point: 11 runs from Nov 15 to Nov 17, the first to the latest: UTM forward 88.8 ns to 98.3 ns; Lambert-93 forward 62.3 ns to 64.7 ns; Web Mercator forward 45.8 ns to 56 ns; convert_array 4326→2154 130 ns to 33.5 ns; Helmert 9.31 ns to 11 ns.
 
-Not drawn until there are two runs on one machine: 2 other machine(s) with one run.
+Not drawn until there are two runs on one machine: 5 other machine(s) with one run.
 <!-- bench-trend:end -->
 
 ### Reproduce the benchmarks

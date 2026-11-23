@@ -195,13 +195,14 @@ def arm_section(rows):
             found.append((name, row))
     if not found:
         return []
-    names = " and ".join(f"{name} ({MACHINE_NOTES[row['machine']]})" for name, row in found)
+    names = " and ".join(name for name, _ in found)
     head = "| Conversion | Call |" + "".join(f" PROJ 9.9.0, {n} | proj-rs, {n} |" for n, _ in found)
     out = [
         "",
         "### On ARM",
         "",
-        f"The same ten cases on {names}. The batch kernels take the NEON path; "
+        f"The same ten cases on {names}, two GitHub Actions runners (a virtual Apple M1 on macOS, not "
+        "pinned; a Neoverse N2 on Linux, pinned to one core). The batch kernels take the NEON path; "
         "the ratio is PROJ 9.9.0's time over proj-rs's.",
         "",
         head,

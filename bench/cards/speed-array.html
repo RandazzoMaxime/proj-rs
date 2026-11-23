@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>A slice of points, 4.2× faster</title>
+  <title>A slice of points, 5.0× faster</title>
   <style>
 /* Default palette — keep hex in sync with scripts/derive-palette.mjs */
 :root {
@@ -226,8 +226,8 @@ html.export #card {
   <article id="card">
     <div class="head">
       <div>
-        <p class="eyebrow">PROJ-RS 1.0 · AGAINST PROJ 9.9.0</p>
-        <h1 class="title">A slice of points, <span class="accent">4.2× faster</span></h1>
+        <p class="eyebrow">PROJ-RS 1.2.5 · AGAINST PROJ 9.9.0</p>
+        <h1 class="title">A slice of points, <span class="accent">5.0× faster</span></h1>
         <p class="subtitle">convert_array on 200,000 points · nanoseconds per point, shorter is faster</p>
       </div>
       <div class="legend">
@@ -243,10 +243,10 @@ html.export #card {
           <div class="caption">EPSG:4326 → 2154</div>
         </div>
         <div class="stack">
-          <div class="lane"><span class="bar accent" style="width: 33%"></span><span class="val">33.5 ns</span></div>
-          <div class="lane rival"><span class="bar rival" style="width: 100%"></span><span class="val">100 ns</span></div>
+          <div class="lane"><span class="bar accent" style="width: 22%"></span><span class="val">32.6 ns</span></div>
+          <div class="lane rival"><span class="bar rival" style="width: 100%"></span><span class="val">149 ns</span></div>
         </div>
-        <div class="speed"><b>3.0×</b><span>faster</span></div>
+        <div class="speed"><b>4.6×</b><span>faster</span></div>
       </div>
       <div class="row" data-slot="r2">
         <div>
@@ -254,10 +254,10 @@ html.export #card {
           <div class="caption">EPSG:4326 → 32631</div>
         </div>
         <div class="stack">
-          <div class="lane"><span class="bar accent" style="width: 18%"></span><span class="val">26.4 ns</span></div>
-          <div class="lane rival"><span class="bar rival" style="width: 100%"></span><span class="val">150 ns</span></div>
+          <div class="lane"><span class="bar accent" style="width: 18%"></span><span class="val">31.6 ns</span></div>
+          <div class="lane rival"><span class="bar rival" style="width: 100%"></span><span class="val">179 ns</span></div>
         </div>
-        <div class="speed"><b>5.7×</b><span>faster</span></div>
+        <div class="speed"><b>5.6×</b><span>faster</span></div>
       </div>
       <div class="row" data-slot="r3">
         <div>
@@ -265,10 +265,10 @@ html.export #card {
           <div class="caption">EPSG:4326 → 3857</div>
         </div>
         <div class="stack">
-          <div class="lane"><span class="bar accent" style="width: 30%"></span><span class="val">24.7 ns</span></div>
-          <div class="lane rival"><span class="bar rival" style="width: 100%"></span><span class="val">81.6 ns</span></div>
+          <div class="lane"><span class="bar accent" style="width: 19%"></span><span class="val">22.3 ns</span></div>
+          <div class="lane rival"><span class="bar rival" style="width: 100%"></span><span class="val">115 ns</span></div>
         </div>
-        <div class="speed"><b>3.3×</b><span>faster</span></div>
+        <div class="speed"><b>5.2×</b><span>faster</span></div>
       </div>
       <div class="row" data-slot="r4">
         <div>
@@ -276,10 +276,10 @@ html.export #card {
           <div class="caption">EPSG:2154 → 32631</div>
         </div>
         <div class="stack">
-          <div class="lane"><span class="bar accent" style="width: 28%"></span><span class="val">90 ns</span></div>
-          <div class="lane rival"><span class="bar rival" style="width: 100%"></span><span class="val">323 ns</span></div>
+          <div class="lane"><span class="bar accent" style="width: 20%"></span><span class="val">91.8 ns</span></div>
+          <div class="lane rival"><span class="bar rival" style="width: 100%"></span><span class="val">469 ns</span></div>
         </div>
-        <div class="speed"><b>3.6×</b><span>faster</span></div>
+        <div class="speed"><b>5.1×</b><span>faster</span></div>
       </div>
       <div class="row" data-slot="r5">
         <div>
@@ -287,10 +287,10 @@ html.export #card {
           <div class="caption">EPSG:4267 → 4326</div>
         </div>
         <div class="stack">
-          <div class="lane"><span class="bar accent" style="width: 15%"></span><span class="val">45.4 ns</span></div>
-          <div class="lane rival"><span class="bar rival" style="width: 100%"></span><span class="val">309 ns</span></div>
+          <div class="lane"><span class="bar accent" style="width: 22%"></span><span class="val">68.8 ns</span></div>
+          <div class="lane rival"><span class="bar rival" style="width: 100%"></span><span class="val">319 ns</span></div>
         </div>
-        <div class="speed"><b>6.8×</b><span>faster</span></div>
+        <div class="speed"><b>4.6×</b><span>faster</span></div>
       </div>
       <div class="row" data-slot="r6" hidden>
         <div>
@@ -328,8 +328,8 @@ html.export #card {
     </div>
 
     <footer class="footer">
-      <span>ns per point · best of 5 runs · one core of a 4-vCPU Xeon</span>
-      <span>bench/history.jsonl · Nov 17 · commit ad8d680</span>
+      <span>ns per point · best of 5 runs · one core of a 4-vCPU CI runner</span>
+      <span>bench/history.jsonl · Nov 23 · commit 4c609c6</span>
     </footer>
   </article>
 </body>
