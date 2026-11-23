@@ -83,7 +83,30 @@ fn rss_report(tag: &str) {
     );
 }
 
+fn threads_mode(n: usize) {
+    let handles: Vec<_> = (0..n)
+        .map(|_| {
+            std::thread::spawn(|| {
+                let proj = Proj::new_known_crs("EPSG:4326", "EPSG:2154", None).expect("pair");
+                let (x, _) = proj.convert((2.35f64, 48.85f64)).expect("convert");
+                std::thread::sleep(std::time::Duration::from_millis(300));
+                x
+            })
+        })
+        .collect();
+    let mut sum = 0.0;
+    for h in handles {
+        sum += h.join().expect("thread");
+    }
+    rss_report(&format!("threads={n}"));
+    println!("{sum}");
+}
+
 fn main() {
+    if let Some(n) = std::env::args().nth(1).and_then(|a| a.strip_prefix("threads=").map(str::to_owned)) {
+        threads_mode(n.parse().expect("n"));
+        return;
+    }
     if std::env::args().nth(3).as_deref() == Some("mem") {
         rss_report("start");
         let args: Vec<String> = std::env::args().collect();
