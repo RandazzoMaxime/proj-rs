@@ -6,6 +6,10 @@ rest is outside semver.
 
 ## Unreleased
 
+- Memory: the read-only `proj.db` embedded in proj-rs has no triggers (`data/proj-triggers.sql` holds
+  them and writable copies replay them). Creating a transform peaks at about 2.5 MiB less, and starts
+  faster. See [docs/PORTING-memory.md](docs/PORTING-memory.md).
+
 ## 1.2.5
 
 - aarch64 (Apple silicon, Linux ARM) has a batch path in lanes of four with NEON, as x86-64 has

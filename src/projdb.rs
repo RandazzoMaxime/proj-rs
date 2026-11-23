@@ -10,6 +10,9 @@ use rusqlite::backup::Backup;
 use rusqlite::{Connection, OpenFlags};
 
 const PROJ_DB: &[u8] = include_bytes!("../data/proj.db");
+/// The 38 triggers of `proj.db`, left out of the image: SQLite parses them at every load of the
+/// schema, about 2.7 MiB of heap for a read. A writable copy replays them (`tools/proj-db`).
+const PROJ_TRIGGERS: &str = include_str!("../data/proj-triggers.sql");
 
 /// Opening the embedded database failed, or a query did.
 #[derive(Debug)]
@@ -141,6 +144,7 @@ fn attach_aux(connection: &Connection) -> Result<(), rusqlite::Error> {
 /// insert session writes to it and rolls the writes back.
 fn copy_into(source: &Connection, mut target: Connection) -> Result<Connection, rusqlite::Error> {
     Backup::new(source, &mut target)?.run_to_completion(i32::MAX, Duration::ZERO, None)?;
+    target.execute_batch(PROJ_TRIGGERS)?;
     Ok(target)
 }
 
@@ -271,5 +275,30 @@ impl Held {
 impl Drop for Held {
     fn drop(&mut self) {
         HELD.with(|held| held.set(false));
+    }
+}
+
+#[cfg(test)]
+mod trigger_tests {
+    use super::*;
+
+    fn triggers(connection: &Connection) -> i64 {
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count")
+    }
+
+    #[test]
+    fn the_read_image_has_no_triggers_and_a_writable_copy_has_them_all() {
+        let image = read_only_image().expect("image");
+        assert_eq!(triggers(&image), 0);
+        let copy = open_memory().expect("copy");
+        let written =
+            i64::try_from(PROJ_TRIGGERS.matches("CREATE TRIGGER").count()).expect("count");
+        assert_eq!(triggers(&copy), written);
     }
 }

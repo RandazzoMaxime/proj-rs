@@ -369,3 +369,31 @@ garde à la fois la mémoire, la plateforme minimale (rust-version 1.83) et une 
 
 La piste ouverte : passer à `sqlite-plugin` le jour où le plancher monte à 1.85, avec les mêmes
 mesures (pic de RSS ci-dessus, `tests/shared_database.rs`, les tests de `projdb_exe`).
+
+## Les triggers hors de l'image en lecture
+
+Le pic de tas de la création (`4326 → 2154`, massif) est de 3,7 MiB, dont 2,6 MiB sont des structures
+de schéma SQLite : `proj.db` contient 38 triggers (193 Kio de SQL, un seul fait 128 Kio). SQLite
+analyse chaque trigger au premier chargement du schéma. Un trigger ne sert qu'aux insertions et aux
+mises à jour (contrôles des lignes) ; une lecture ne le déclenche jamais.
+
+- `data/proj.db` est désormais sans triggers ; `data/proj-triggers.sql` les garde, dans l'ordre
+  d'origine. `tools/proj-db/split_triggers.py` fait les deux fichiers, `--restore` refait la base
+  complète (le schéma rejoué est identique à celui de PROJ : 107 objets sur 107).
+- `projdb::copy_into` rejoue les triggers sur chaque copie modifiable (`execute_sql`, session
+  d'insertion). L'image en lecture seule n'en a aucun. Un test unitaire vérifie les deux cas.
+- `tools/proj-db/update.sh` compare la base complète (rejouée) et écrit les deux fichiers.
+
+Mesure (`perf_point … mem`, une passe, la même machine) :
+
+| | avant | après |
+|---|---:|---:|
+| pic `VmHWM` après création | 12 136 kB | 9 604 kB (-2,5 MiB) |
+| mémoire anonyme (tas) | 4 824 kB | 2 120 kB |
+| temps de création (processus, 5 passes) | 16 ms | 11 ms |
+
+La création d'une copie modifiable garde le même coût qu'avant, plus le rejeu des 38 triggers ; ce
+coût n'est pas mesuré ici. Les tests de la bibliothèque (239), `shared_database`,
+`unit_database_open`, `unit_capi_database_path`, `test_factory`, `parity`, `convert_array_golden`
+et `convert_iter` passent. Le footprint de `bench/footprint.json` n'est pas refait : il attend une
+mesure sur la CI.

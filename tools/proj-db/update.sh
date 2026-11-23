@@ -9,7 +9,7 @@
 #   the tests that compare with cs2cs skip the PATH entries under the repository (where cargo puts
 #   proj-rs's own cs2cs), so a reference built inside it would not be compared against.
 #
-# Writes data/proj.db and DIR/proj-db-diff.md (the difference, as Markdown). A database with the
+# Writes data/proj.db, data/proj-triggers.sql and DIR/proj-db-diff.md (the difference, as Markdown). A database with the
 # same content is not copied: the file would differ in bytes only. Exit status:
 #   0  data/proj.db replaced, or already the same
 #   3  the major layout version of the database changed: proj-rs reads the old layout, so the
@@ -30,8 +30,11 @@ old=$root/data/proj.db
 
 echo "PROJ.VERSION: $(meta "$old" PROJ.VERSION) -> $(meta "$new" PROJ.VERSION)"
 echo "EPSG.VERSION: $(meta "$old" EPSG.VERSION) -> $(meta "$new" EPSG.VERSION)"
+# data/proj.db has no triggers (tools/proj-db/split_triggers.py): compare the whole database.
+current=$dir/proj-db-current.db
+python3 -I "$root/tools/proj-db/split_triggers.py" --restore "$root/data" "$current"
 same=0
-python3 -I "$root/tools/proj-db/diff.py" "$old" "$new" > "$dir/proj-db-diff.md" || same=$?
+python3 -I "$root/tools/proj-db/diff.py" "$current" "$new" > "$dir/proj-db-diff.md" || same=$?
 echo "difference: $dir/proj-db-diff.md"
 if [ "$same" -eq 0 ]; then
   echo "data/proj.db already holds the database of PROJ $tag: nothing to replace"
@@ -45,5 +48,5 @@ if [ "$old_major" != "$new_major" ]; then
   echo "DATABASE.LAYOUT.VERSION.MAJOR $old_major -> $new_major: data/proj.db is not replaced" >&2
   exit 3
 fi
-cp "$new" "$old"
-echo "data/proj.db is the database of PROJ $tag"
+python3 -I "$root/tools/proj-db/split_triggers.py" "$new" "$root/data"
+echo "data/proj.db and data/proj-triggers.sql are the database of PROJ $tag"
