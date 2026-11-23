@@ -1,15 +1,15 @@
 {
- "date": "2026-11-17T17:59:12Z",
- "commit": "ad8d680",
+ "date": "2026-11-23T09:18:35Z",
+ "commit": "a2ff2c7",
  "dirty": false,
- "machine": "cloud-4c-avx512",
- "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
- "kernel": "6.18.44-fc-v553",
+ "machine": "gha-ubuntu-24.04-x86_64",
+ "cpu": "Intel(R) Xeon(R) 6975P-C",
+ "kernel": "7.0.0-1014-aws",
  "versions": {
-  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
+  "rustc": "rustc 1.100.0 (0ef1bc386 2026-11-09)",
   "cc": "cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
   "valgrind": "valgrind-3.22.0",
-  "libc": "ldd (Ubuntu GLIBC 2.39-0ubuntu8.9) 2.39",
+  "libc": "ldd (Ubuntu GLIBC 2.39-0ubuntu8.12) 2.39",
   "proj": "9.9.0"
  },
  "rule": "Everything `ldd` lists for the program or the library, except the C library and the unwinder (libc, libm, libdl, libpthread, librt, libutil, libgcc_s, the loader), counted the same way on both sides. Sizes are bytes on disk after `strip --strip-unneeded`.",
@@ -312,26 +312,26 @@
    {
     "name": "libproj.so.25",
     "role": "libproj of proj-rs",
-    "bytes": 20318344,
-    "stripped_bytes": 19291392
+    "bytes": 20085136,
+    "stripped_bytes": 19051944
    },
    {
     "name": "footprint-rs",
     "role": "Rust program",
-    "bytes": 18754856,
-    "stripped_bytes": 17941144
+    "bytes": 18424024,
+    "stripped_bytes": 17615800
    },
    {
     "name": "empty-rs",
     "role": "empty Rust program",
-    "bytes": 412928,
-    "stripped_bytes": 319680
+    "bytes": 413160,
+    "stripped_bytes": 319992
    },
    {
     "name": "footprint-rs",
     "role": "Rust program",
-    "bytes": 18872464,
-    "stripped_bytes": 18035128
+    "bytes": 18541944,
+    "stripped_bytes": 17709944
    },
    {
     "name": "libssl.so.3",
@@ -462,8 +462,8 @@
        "convert-capi",
        "libproj.so (without proj.db)"
       ],
-      "bytes": 9784152,
-      "stripped_bytes": 8754576
+      "bytes": 9550944,
+      "stripped_bytes": 8515128
      },
      "db": {
       "items": [
@@ -478,8 +478,8 @@
       "stripped_bytes": 0
      }
     },
-    "bytes": 20335448,
-    "stripped_bytes": 19305872
+    "bytes": 20102240,
+    "stripped_bytes": 19066424
    },
    {
     "id": "ours",
@@ -491,8 +491,8 @@
       "items": [
        "footprint-rs (without proj.db)"
       ],
-      "bytes": 8203560,
-      "stripped_bytes": 7389848
+      "bytes": 7872728,
+      "stripped_bytes": 7064504
      },
      "db": {
       "items": [
@@ -507,8 +507,8 @@
       "stripped_bytes": 0
      }
     },
-    "bytes": 18754856,
-    "stripped_bytes": 17941144
+    "bytes": 18424024,
+    "stripped_bytes": 17615800
    },
    {
     "id": "ours_network",
@@ -520,8 +520,8 @@
       "items": [
        "footprint-rs (without proj.db)"
       ],
-      "bytes": 8321168,
-      "stripped_bytes": 7483832
+      "bytes": 7990648,
+      "stripped_bytes": 7158648
      },
      "db": {
       "items": [
@@ -539,16 +539,16 @@
       "stripped_bytes": 6005912
      }
     },
-    "bytes": 24878376,
-    "stripped_bytes": 24041040
+    "bytes": 24547856,
+    "stripped_bytes": 23715856
    }
   ],
   "embedded_db_bytes": 10551296,
   "empty_rust_program": {
    "name": "empty-rs",
    "role": "empty Rust program",
-   "bytes": 412928,
-   "stripped_bytes": 319680
+   "bytes": 413160,
+   "stripped_bytes": 319992
   }
  },
  "memory": {
@@ -560,46 +560,46 @@
     "id": "empty",
     "label": "process start, nothing created",
     "proj": {
-     "peak_rss_kb": 5788,
+     "peak_rss_kb": 5980,
      "runs_kb": [
-      5752,
-      5780,
-      5788,
-      5788,
-      5792
+      5960,
+      5980,
+      5980,
+      6020,
+      6020
      ],
      "peak_heap_bytes": 139565
     },
     "proj_full": {
-     "peak_rss_kb": 12432,
+     "peak_rss_kb": 12564,
      "runs_kb": [
-      12412,
-      12428,
-      12432,
-      12460,
-      12480
+      12380,
+      12488,
+      12564,
+      12612,
+      12688
      ],
      "peak_heap_bytes": 249456
     },
     "capi": {
-     "peak_rss_kb": 2568,
+     "peak_rss_kb": 2628,
      "runs_kb": [
-      2524,
-      2556,
-      2568,
-      2572,
-      2572
+      2624,
+      2628,
+      2628,
+      2628,
+      2628
      ],
      "peak_heap_bytes": 4096
     },
     "ours": {
-     "peak_rss_kb": 3072,
+     "peak_rss_kb": 3064,
      "runs_kb": [
-      2936,
-      2964,
-      3072,
-      3076,
-      3088
+      3044,
+      3052,
+      3064,
+      3064,
+      3096
      ],
      "peak_heap_bytes": 2601
     },
@@ -610,48 +610,48 @@
     "id": "create",
     "label": "create the 4326 \u2192 2154 transform",
     "proj": {
-     "peak_rss_kb": 15136,
+     "peak_rss_kb": 15300,
      "runs_kb": [
-      15080,
-      15132,
-      15136,
-      15140,
-      15168
+      15272,
+      15296,
+      15300,
+      15352,
+      15356
      ],
-     "peak_heap_bytes": 5782346
+     "peak_heap_bytes": 5782484
     },
     "proj_full": {
-     "peak_rss_kb": 21720,
+     "peak_rss_kb": 21728,
      "runs_kb": [
-      21664,
-      21676,
-      21720,
-      21740,
-      21744
+      21668,
+      21728,
+      21728,
+      21760,
+      21944
      ],
-     "peak_heap_bytes": 5892369
+     "peak_heap_bytes": 5892421
     },
     "capi": {
-     "peak_rss_kb": 13356,
+     "peak_rss_kb": 13260,
      "runs_kb": [
-      13316,
-      13356,
-      13356,
-      13360,
-      13360
+      13220,
+      13240,
+      13260,
+      13300,
+      13304
      ],
-     "peak_heap_bytes": 3726710
+     "peak_heap_bytes": 3726589
     },
     "ours": {
-     "peak_rss_kb": 12388,
+     "peak_rss_kb": 12168,
      "runs_kb": [
-      12268,
-      12356,
-      12388,
-      12472,
-      12516
+      12084,
+      12088,
+      12168,
+      12232,
+      12232
      ],
-     "peak_heap_bytes": 3726597
+     "peak_heap_bytes": 3733254
     },
     "ok": 0,
     "fail": 0
@@ -660,48 +660,48 @@
     "id": "points",
     "label": "create + 1,000,000 points, one at a time",
     "proj": {
-     "peak_rss_kb": 15100,
+     "peak_rss_kb": 15356,
      "runs_kb": [
-      15048,
-      15052,
-      15100,
-      15136,
-      15136
+      15288,
+      15356,
+      15356,
+      15356,
+      15368
      ],
-     "peak_heap_bytes": 5782346
+     "peak_heap_bytes": 5782484
     },
     "proj_full": {
-     "peak_rss_kb": 21756,
+     "peak_rss_kb": 21904,
      "runs_kb": [
-      21612,
-      21724,
-      21756,
-      21764,
-      21764
+      21812,
+      21900,
+      21904,
+      21904,
+      21932
      ],
-     "peak_heap_bytes": 5892369
+     "peak_heap_bytes": 5892421
     },
     "capi": {
-     "peak_rss_kb": 13356,
+     "peak_rss_kb": 13368,
      "runs_kb": [
-      13300,
-      13352,
-      13356,
+      13292,
+      13304,
       13368,
-      13384
+      13368,
+      13368
      ],
-     "peak_heap_bytes": 3726710
+     "peak_heap_bytes": 3726589
     },
     "ours": {
-     "peak_rss_kb": 12476,
+     "peak_rss_kb": 12284,
      "runs_kb": [
-      12436,
-      12464,
-      12476,
-      12484,
-      12484
+      12232,
+      12272,
+      12284,
+      12312,
+      12360
      ],
-     "peak_heap_bytes": 3726597
+     "peak_heap_bytes": 3733254
     },
     "ok": 1000000,
     "fail": 0
@@ -710,48 +710,48 @@
     "id": "array",
     "label": "create + 1,000,000 points, one array",
     "proj": {
-     "peak_rss_kb": 30584,
+     "peak_rss_kb": 30792,
      "runs_kb": [
-      30580,
-      30584,
-      30584,
-      30600,
-      30664
+      30740,
+      30788,
+      30792,
+      30792,
+      30796
      ],
-     "peak_heap_bytes": 21385754
+     "peak_heap_bytes": 21385892
     },
     "proj_full": {
-     "peak_rss_kb": 37280,
+     "peak_rss_kb": 37212,
      "runs_kb": [
-      37172,
-      37240,
-      37280,
-      37296,
-      37316
+      37164,
+      37188,
+      37212,
+      37260,
+      37396
      ],
-     "peak_heap_bytes": 21495777
+     "peak_heap_bytes": 21495829
     },
     "capi": {
-     "peak_rss_kb": 28732,
+     "peak_rss_kb": 28820,
      "runs_kb": [
-      28672,
-      28676,
-      28732,
-      28732,
-      28732
+      28696,
+      28804,
+      28820,
+      28824,
+      28884
      ],
-     "peak_heap_bytes": 16136699
+     "peak_heap_bytes": 16239067
     },
     "ours": {
-     "peak_rss_kb": 27920,
+     "peak_rss_kb": 27780,
      "runs_kb": [
-      27912,
-      27920,
-      27920,
-      27960,
-      28144
+      27660,
+      27756,
+      27780,
+      27784,
+      27832
      ],
-     "peak_heap_bytes": 16265070
+     "peak_heap_bytes": 16265054
     },
     "ok": 1000000,
     "fail": 0
@@ -760,48 +760,48 @@
     "id": "multi",
     "label": "4267 \u2192 4326 (several candidates) + 1,000,000 points, one at a time",
     "proj": {
-     "peak_rss_kb": 16748,
+     "peak_rss_kb": 16956,
      "runs_kb": [
-      16696,
-      16712,
-      16748,
-      16752,
-      16752
+      16836,
+      16848,
+      16956,
+      16964,
+      16972
      ],
-     "peak_heap_bytes": 7048266
+     "peak_heap_bytes": 7048404
     },
     "proj_full": {
-     "peak_rss_kb": 23384,
+     "peak_rss_kb": 23484,
      "runs_kb": [
-      23296,
-      23328,
-      23384,
-      23392,
-      23404
+      23428,
+      23428,
+      23484,
+      23628,
+      23648
      ],
-     "peak_heap_bytes": 7149705
+     "peak_heap_bytes": 7149757
     },
     "capi": {
-     "peak_rss_kb": 14244,
+     "peak_rss_kb": 14532,
      "runs_kb": [
-      14232,
-      14244,
-      14244,
-      14304,
-      14308
+      14416,
+      14448,
+      14532,
+      14540,
+      14564
      ],
-     "peak_heap_bytes": 4434512
+     "peak_heap_bytes": 4498928
     },
     "ours": {
-     "peak_rss_kb": 13272,
+     "peak_rss_kb": 13408,
      "runs_kb": [
-      13200,
-      13256,
-      13272,
-      13280,
-      13324
+      13320,
+      13408,
+      13408,
+      13412,
+      13428
      ],
-     "peak_heap_bytes": 4434173
+     "peak_heap_bytes": 4498447
     },
     "ok": 1000000,
     "fail": 0
