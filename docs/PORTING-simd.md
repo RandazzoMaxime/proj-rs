@@ -438,6 +438,27 @@ Le noyau Transverse Mercator aller ne calculait avant que les sinus et cosinus e
 séries de Clenshaw, `asinh` et `adjlon` restaient voie par voie. Elles sont maintenant en
 vecteur, d'où 37,6 → 27,4.
 
+### Sur aarch64
+
+Mesuré sur les machines de la CI, `main` (chemin portable) puis la branche NEON, tour à tour sur la
+même machine, 7 passages, le plus petit temps, en nanosecondes par point : un Apple M1 (virtuel,
+`macos-latest`) et un Neoverse N2 (`ubuntu-24.04-arm`, partie CPU `0xd49`). Une machine partagée :
+l'écart d'un passage à l'autre peut atteindre quelques pour cent, et les cas que NEON ne touche pas
+(`utm31_forward` à la pièce, `op_gridshift`) bougent d'autant.
+
+| cas | M1 portable | M1 NEON | gain | N2 portable | N2 NEON | gain |
+|---|---:|---:|---:|---:|---:|---:|
+| UTM 31 aller (lot) | 44,5 | 26,9 | 1,7× | 71,5 | 45,6 | 1,6× |
+| Lambert-93 aller (lot) | 58,5 | 28,2 | 2,1× | 65,7 | 41,6 | 1,6× |
+| UTM 31 retour (lot) | 97,6 | 32,3 | 3,0× | 104,1 | 53,1 | 2,0× |
+| Lambert-93 retour (lot) | 144,4 | 60,5 | 2,4× | 165,0 | 79,5 | 2,1× |
+| Web Mercator aller (lot) | 35,3 | 14,9 | 2,4× | 49,1 | 27,5 | 1,8× |
+| Web Mercator retour (lot) | 42,6 | 10,5 | 4,1× | 41,8 | 20,4 | 2,1× |
+| `convert_array` 4326 → 2154 | 64,9 | 36,4 | 1,8× | 76,0 | 51,7 | 1,5× |
+| `convert_array` 2154 → 32631 | 241,7 | 95,4 | 2,5× | 275,3 | 135,6 | 2,0× |
+
+Les appels point par point (`forward`, `inverse`) ne changent pas : 1,00×.
+
 ## Ce qui n'est pas couvert
 
 - `Proj::convert_array` et `project_array` utilisent ces lots pour Transverse Mercator exact,
