@@ -1,0 +1,52 @@
+name: Bench record
+
+# Temporary: runs bench/record.sh (libproj 9.9.0 built from source, 5 rounds, smallest time of
+# each case) on the three CI machines and prints the history line of each. It runs only when this
+# file changes. Removed once the lines are in bench/history.jsonl.
+on:
+  pull_request:
+    paths:
+      - .github/workflows/bench-record.yml
+
+jobs:
+  record:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            machine: gha-ubuntu-24.04-x86_64
+          - os: ubuntu-24.04-arm
+            machine: gha-ubuntu-24.04-arm64
+          - os: macos-latest
+            machine: gha-macos-arm64-m1
+      fail-fast: false
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build tools (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y cmake libsqlite3-dev
+      - name: Build tools (macOS)
+        if: runner.os == 'macOS'
+        run: brew install cmake sqlite
+      - name: libproj 9.9.0
+        run: tools/build-reference.sh
+      - name: Machine
+        run: |
+          uname -m; (sysctl -n machdep.cpu.brand_string 2>/dev/null || grep -m1 -i "model name\|cpu part" /proc/cpuinfo || true); nproc 2>/dev/null || sysctl -n hw.ncpu
+      - name: Record
+        env:
+          PROJ_RS_LIBPROJ_DIR: ${{ github.workspace }}/target/proj-reference/build/lib
+          BENCH_MACHINE: ${{ matrix.machine }}
+          BENCH_ROUNDS: 5
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then pin="taskset -c 2"; else pin=""; fi
+          $pin sh bench/record.sh | tee record.out
+          tail -n 1 bench/history.jsonl > line.jsonl
+      - name: The line
+        run: cat line.jsonl
+      - uses: actions/upload-artifact@v4
+        with:
+          name: line-${{ matrix.machine }}
+          path: line.jsonl
