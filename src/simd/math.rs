@@ -613,9 +613,9 @@ mod tests {
         ("sin_cos", 0x02b0_8766_5a1e_071d),
         ("tan", 0x3d2f_dfdf_5b15_4adb),
         ("exp", 0x1dcd_07ae_2705_0d54),
-        ("log", 0xcdd6_cf4b_2dba_8137),
-        ("atan", 0xe0e9_29c6_588f_0222),
-        ("asinh", 0x784f_2242_921b_9759),
+        ("log", 0xd6d7_b5af_3b35_2a67),
+        ("atan", 0x271c_2bfb_a837_dc1e),
+        ("asinh", 0x282c_f4ce_4aa6_21e8),
         ("atanh", 0x1c22_4788_06a9_a46a),
         ("sinh", 0xbdfc_d5b3_d82b_3055),
         ("atan2", 0x784e_f90a_7b18_b113),
@@ -679,11 +679,11 @@ mod tests {
         /// Log-uniforme sur les grandeurs `[low, high]`, positives.
         fn magnitude(&mut self, low: f64, high: f64) -> f64 {
             // Built from the bits: `ln` and `exp` of the platform would change the inputs.
-            let exponent = |v: f64| (v.to_bits() >> 52) as i64 - 1023;
-            let (lo, hi) = (exponent(low), exponent(high));
-            let e = lo + (self.unit() * (hi - lo + 1) as f64) as i64;
-            let mantissa = (self.unit() * 4_503_599_627_370_496.0) as u64;
-            let value = f64::from_bits((((e + 1023) as u64) << 52) | mantissa);
+            let (lo, hi) = (low.to_bits() >> 52, high.to_bits() >> 52);
+            self.unit();
+            let exponent = lo + (self.0 >> 32) % (hi - lo + 1);
+            self.unit();
+            let value = f64::from_bits((exponent << 52) | (self.0 >> 12));
             value.clamp(low, high)
         }
 
