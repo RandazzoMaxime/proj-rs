@@ -1,6 +1,6 @@
 /* "export": the WKT2:2019 and WKT1 GDAL of every CRS and coordinate operation of the EPSG
  * database, one per line. "check": proj_create_from_wkt of each line of stdin, with its warnings
- * and grammar errors. "proj": the PROJ string proj_create makes of each line of stdin. */
+ * and grammar errors; "strict" is "check" with STRICT=YES. "proj": the PROJ string proj_create makes of each line of stdin. */
 #include <stdio.h>
 #include <string.h>
 #include <proj.h>
@@ -42,7 +42,7 @@ int main(int argc, char **argv) {
     }
   } else {
     static char line[1 << 17];
-    const char *options[] = {"STRICT=NO", NULL};
+    const char *options[] = {argc > 1 && strcmp(argv[1], "strict") == 0 ? "STRICT=YES" : "STRICT=NO", NULL};
     while (fgets(line, sizeof line, stdin)) {
       line[strcspn(line, "\n")] = 0;
       PROJ_STRING_LIST warnings = NULL, errors = NULL;

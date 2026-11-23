@@ -133,3 +133,14 @@ pipeline as a pipeline when the step is inverted, has `omit_inv` or `omit_fwd`, 
 pipeline has a global parameter (`io.cpp:10045-10050`). `type=crs` then stays in the text.
 proj-rs flattened every one-step pipeline. `tests/pipeline_type_crs.rs` holds the cases, with
 the values of PROJ 9.9.0.
+
+## A WKT1 projection that lacks a parameter
+
+`Conversion::isUTM` (conversion.cpp:4499-4570) wants the latitude of origin, the longitude, the
+scale factor, the false easting and the false northing all present, and `identify()` only renames
+the conversion `UTM zone N`. proj-rs read a missing latitude as 0 and replaced the conversion by
+the stock UTM one, so `validateParameters` never reported the missing parameter. A WKT1
+`Polar_Stereographic` is variant A or B with every parameter of the variant, a missing one being
+0 without a unit (io.cpp:4253-4300), and a parameter the WKT adds is dropped. `utm_zone` and
+`polar_stereographic_parameters` do the same. `tests/wkt1_expected_parameters.rs` has ten cases
+with the output of PROJ 9.9.0; the 24 warnings that differed on the PDAL corpus are gone.

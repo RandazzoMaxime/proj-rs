@@ -1,0 +1,3 @@
+Parsing error : syntax error, unexpected $undefined, expecting string. Error occurred around:
+GEOGCRS[FOO"Équateur éééé ééé",DATUM["R�
+        ^

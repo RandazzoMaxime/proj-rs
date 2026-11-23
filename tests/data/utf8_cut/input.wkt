@@ -1,0 +1,1 @@
+GEOGCRS[FOO"Équateur éééé ééé",DATUM["Référence éé éé éé",ELLIPSOID["Géoïde éé",6378137,298.257223563,LENGTHUNIT["metre",1]]],PRIMEM["Greenwich",0],CS[ellipsoidal,2],AXIS["latitude",north],AXIS["longitude",east],ANGLEUNIT["degree",0.0174532925199433]]

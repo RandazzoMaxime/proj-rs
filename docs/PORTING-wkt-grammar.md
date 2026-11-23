@@ -65,10 +65,18 @@ cut at line breaks, a newline, spaces up to that position, and `^`.
 ## Bytes, not characters
 
 The 40-byte window of `pj_wkt_error` can start or end inside a UTF-8 sequence, and PROJ keeps the
-cut bytes. `WktParser::grammar_error_bytes()` holds the messages as these bytes, and the C API
-returns them (`proj_create_from_wkt`, `out_grammar_errors`). `grammar_errors()` is the `String`
-form, where an incomplete sequence reads U+FFFD. Two paths only have the `String` form: the
-strict-mode error (a `FactoryError` message) and the `Grammar error:` lines of `projinfo`.
+cut bytes. Every place that PROJ writes such a message writes those bytes:
+
+| Where | proj-rs |
+|---|---|
+| `out_grammar_errors` of `proj_create_from_wkt`, lax | `WktParser::grammar_error_bytes()`, listed by the C API |
+| the same, `STRICT=YES` | `WktParser::failure_bytes()`, listed by the C API |
+| the log line when no list is asked | the same bytes, through `Ctx::fail_bytes` |
+| the `Grammar error:` lines of `projinfo` | `Report::warning_bytes`, which the binary writes to stderr |
+
+`grammar_errors()`, the `FactoryError` text and `Report::warnings` are the `String` forms, where
+an incomplete sequence reads U+FFFD. The callback of `run_with_callback` receives that `String`
+form too, as its type is `&str`.
 
 ## What the check found
 
@@ -86,8 +94,12 @@ promotes a 2D base of a 3D `DERIVEDPROJCRS` as `buildDerivedProjectedCRS` does
   sequence, strict mode. Expected texts from the reference libproj (`proj_create_from_wkt`
   through `capi/tests/wkt_warnings.c`, and `projinfo` for multi-line texts).
 - `tests/test_wkt1_syntax.rs`: the WKT1 cases of `projinfo`.
+- `tests/wkt_grammar_bytes.rs`: a strict failure and the `projinfo` line that cut a character,
+  with the bytes of PROJ 9.9.0 (`tests/data/utf8_cut`).
 - `capi/tests/run.sh wkt_warnings`: the EPSG export, warnings and grammar errors identical to
   libproj; then about 69,000 malformed texts generated from it, whose grammar errors must match
-  libproj wherever the object and the other messages match (`capi/tests/grammar_errors.py`).
+  libproj wherever the object and the other messages match (`capi/tests/grammar_errors.py`);
+  then the 19 texts of `capi/tests/wkt_utf8.txt`, with accented names and seven whose context
+  cuts a character, in lax and in strict mode (`wkt_warnings strict`).
   Texts where the builder already differs (a different refusal message, a missing or extra
   warning on malformed input) are counted apart: they are builder gaps, not grammar ones.

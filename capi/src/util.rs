@@ -46,7 +46,19 @@ pub(crate) fn bytes<'a>(pointer: *const c_char) -> Option<&'a [u8]> {
 
 /// A C string with its interior NULs removed, which C could not read past anyway.
 pub(crate) fn c_string(value: &str) -> CString {
-    CString::new(value.replace('\0', "")).unwrap_or_default()
+    c_bytes(value.as_bytes())
+}
+
+/// [`c_string`] of bytes, which need not be UTF-8.
+pub(crate) fn c_bytes(value: &[u8]) -> CString {
+    CString::new(
+        value
+            .iter()
+            .copied()
+            .filter(|&b| b != 0)
+            .collect::<Vec<u8>>(),
+    )
+    .unwrap_or_default()
 }
 
 /// The `count` elements at `pointer`, empty for `NULL` or a zero count.
