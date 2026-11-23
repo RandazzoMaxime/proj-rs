@@ -1,1 +1,1 @@
-{"date":"2026-11-18T02:04:30Z","commit":"edbd1e3","machine":"cloud-4c-avx512","result":{"points":1000000000,"chunk":1000000,"pair":"EPSG:4326 to EPSG:2154","convert_s":65.825,"convert_array_s":29.707,"libproj_convert_s":94.872,"libproj_convert_array_s":96.960}}
+{"date":"2026-11-23T08:00:04Z","commit":"4c609c6","machine":"gha-ubuntu-24.04-x86_64","result":{"points":1000000000,"chunk":1000000,"pair":"EPSG:4326 to EPSG:2154","convert_s":81.576,"convert_array_s":38.993,"libproj_convert_s":118.349,"libproj_convert_array_s":120.753}}

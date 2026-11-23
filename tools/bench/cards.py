@@ -91,13 +91,13 @@ def blank_rows(data, first, prefix, keys):
 def speed_card(row, call, title, subtitle):
     cases = [c for c in how_fast.rows_of(row) if c[1].startswith(f"`{call}`")]
     data = {
-        "eyebrow": "PROJ-RS 1.0 · AGAINST PROJ 9.9.0",
+        "eyebrow": f"PROJ-RS {row['result'].get('version', '1')} · AGAINST PROJ 9.9.0",
         "title": title,
         "accentWord": f"{times(how_fast.geomean([c[4] for c in cases]))} faster",
         "subtitle": subtitle,
         "legendNew": "proj-rs",
         "legendRival": "PROJ 9.9.0",
-        "footerLeft": f"ns per point · best of {row['result'].get('rounds', 1)} runs · one core of a 4-vCPU Xeon",
+        "footerLeft": f"ns per point · best of {row['result'].get('rounds', 1)} runs · one core of a 4-vCPU CI runner",
         "footerRight": f"bench/history.jsonl · {history.day(row['date'])} · commit {row['commit']}",
     }
     for n, (pair, _, theirs, ours, ratio) in enumerate(cases, 1):
@@ -203,14 +203,14 @@ def billion_card(line):
     ]
     best = min(run["convert_s"], run["convert_array_s"])
     data = {
-        "eyebrow": "PROJ-RS 1.0 · ONE BILLION POINTS",
+        "eyebrow": "PROJ-RS · ONE BILLION POINTS",
         "title": "A billion points in",
         "accentWord": seconds(best),
         "subtitle": f"{run['pair']}, {run['points'] // run['chunk']:,} passes of {run['chunk']:,} points "
                     "· seconds for the whole billion, shorter is faster",
         "legendNew": "proj-rs",
         "legendRival": "PROJ 9.9.0",
-        "footerLeft": "seconds · one run · one core of a 4-vCPU Xeon · output checked against PROJ",
+        "footerLeft": "seconds · one run · one core of a 4-vCPU CI runner · output checked against PROJ",
         "footerRight": f"bench/billion.json · {history.day(line['date'])} · commit {line['commit']}",
     }
     for n, (name, caption, ours, theirs) in enumerate(calls, 1):
