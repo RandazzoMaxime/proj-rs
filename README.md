@@ -5,7 +5,7 @@
 <h1 align="center">PROJ-RS</h1>
 
 <p align="center">
-  <img src="assets/banner-globe.svg" alt="Same numbers. No libproj. A globe with its graticule and a pulsing point at 48.8566°N 2.3522°E" width="100%">
+  <img src="assets/banner-globe.svg" alt="Same numbers. Faster, lighter. A globe with its graticule and a pulsing point at 48.8566°N 2.3522°E" width="100%">
 </p>
 
 <p align="center">

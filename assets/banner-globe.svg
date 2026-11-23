@@ -29,7 +29,7 @@
 
 <text x="64" y="104" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="16" letter-spacing="3" fill="#1fe08f">PROJ 9.9.0 · PURE RUST</text>
 <text x="62" y="182" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="66" font-weight="800" fill="#e6fff4" letter-spacing="-1.5">Same numbers.</text>
-<text x="62" y="248" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="66" font-weight="800" fill="#1fe08f" letter-spacing="-1.5">No libproj.</text>
+<text x="62" y="248" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="66" font-weight="800" fill="#1fe08f" letter-spacing="-1.5">Faster, lighter.</text>
 <ellipse cx="1010" cy="310" rx="104.96" ry="9" fill="#000" opacity=".45" filter="url(#soft)"/>
 <circle cx="1000" cy="160" r="152" fill="url(#atmo)"/>
 <circle cx="1000" cy="160" r="128" fill="url(#ball)"/>
