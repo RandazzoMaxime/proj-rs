@@ -151,24 +151,24 @@ The same conversion, EPSG:4326 to EPSG:2154, measured on the same machine (Linux
 
 <img src="bench/cards/memory.png" alt="Peak resident memory of five scenarios, proj-rs next to PROJ 9.9.0" width="100%">
 
-On disk, a Rust program with proj-rs is 17.1 MiB with `proj.db` included (10.1 MiB of it) and no library other than the C library: 1.1× smaller than a C program with PROJ 9.9.0 built as in the speed comparison (18.6 MiB), and 2.2× smaller than one with a PROJ built with TIFF and curl (37.9 MiB). With the `network` feature (the HTTPS grid download, TLS from the system) the program is 22.9 MiB, of which 5.7 MiB is OpenSSL: 1.7× smaller than the PROJ with curl. The code of proj-rs alone, `proj.db` left out, is 7.0 MiB; an empty Rust program is 0.3 MiB.
+On disk, a Rust program with proj-rs is 16.8 MiB with `proj.db` included (10.1 MiB of it) and no library other than the C library: 1.1× smaller than a C program with PROJ 9.9.0 built as in the speed comparison (18.6 MiB), and 2.3× smaller than one with a PROJ built with TIFF and curl (37.9 MiB). With the `network` feature (the HTTPS grid download, TLS from the system) the program is 22.6 MiB, of which 5.7 MiB is OpenSSL: 1.7× smaller than the PROJ with curl. The code of proj-rs alone, `proj.db` left out, is 6.7 MiB; an empty Rust program is 0.3 MiB.
 
-In memory, creating the transform peaks at 12.1 MiB for proj-rs and 14.8 MiB for PROJ (1.2× less memory). With a million points one at a time it is 12.2 MiB and 14.7 MiB; as one array, 27.3 MiB and 29.9 MiB, the array of points itself being 15.3 MiB; with several candidate operations (EPSG:4267 to 4326), 13.0 MiB and 16.4 MiB.
+In memory, creating the transform peaks at 11.9 MiB for proj-rs and 14.9 MiB for PROJ (1.3× less memory). With a million points one at a time it is 12.0 MiB and 15.0 MiB; as one array, 27.1 MiB and 30.1 MiB, the array of points itself being 15.3 MiB; with several candidate operations (EPSG:4267 to 4326), 13.1 MiB and 16.6 MiB.
 
 <details>
 <summary><b>Size and memory, component by component</b></summary>
 
 <br>
 
-Size on disk, after `strip --strip-unneeded`. A program is counted with every shared library `ldd` lists for it, except the C library and the unwinder (libc, libm, libdl, libpthread, librt, libutil, libgcc_s), on both sides. Nov 17 17:59 UTC, commit `ad8d680`.
+Size on disk, after `strip --strip-unneeded`. A program is counted with every shared library `ldd` lists for it, except the C library and the unwinder (libc, libm, libdl, libpthread, librt, libutil, libgcc_s), on both sides. Nov 23 09:18 UTC, commit `a2ff2c7`.
 
 | Install | Program and library | proj.db | Other shared libraries | of which OpenSSL | of which libcurl | Total, stripped | Total, as built |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | PROJ 9.9.0, C program + libproj, TIFF and curl off | 4.7 MiB | 10.1 MiB | 3.9 MiB | none | none | **18.6 MiB** | 19.6 MiB |
 | PROJ 9.9.0, C program + libproj, TIFF and curl on | 4.7 MiB | 10.1 MiB | 23.1 MiB | 5.7 MiB | 0.7 MiB | **37.9 MiB** | 38.9 MiB |
-| proj-rs as libproj, same C program + libproj of capi/ | 8.3 MiB | 10.1 MiB | 0.0 MiB | none | none | **18.4 MiB** | 19.4 MiB |
-| proj-rs, Rust program, proj.db inside | 7.0 MiB | 10.1 MiB | 0.0 MiB | none | none | **17.1 MiB** | 17.9 MiB |
-| proj-rs, feature network, Rust program, HTTPS grid download | 7.1 MiB | 10.1 MiB | 5.7 MiB | 5.7 MiB | none | **22.9 MiB** | 23.7 MiB |
+| proj-rs as libproj, same C program + libproj of capi/ | 8.1 MiB | 10.1 MiB | 0.0 MiB | none | none | **18.2 MiB** | 19.2 MiB |
+| proj-rs, Rust program, proj.db inside | 6.7 MiB | 10.1 MiB | 0.0 MiB | none | none | **16.8 MiB** | 17.6 MiB |
+| proj-rs, feature network, Rust program, HTTPS grid download | 6.8 MiB | 10.1 MiB | 5.7 MiB | 5.7 MiB | none | **22.6 MiB** | 23.4 MiB |
 
 OpenSSL is `libssl` plus `libcrypto`, already inside the third column. proj-rs links it only with the `network` feature, for its HTTPS grid download, and takes it from the system (`native-tls`); PROJ pulls it through libcurl, when built with curl, together with the other libraries of curl (`libnghttp2`, `libssh`, `libgssapi_krb5`, `libldap`, `libgnutls` and more), which count in the third column but not in the libcurl column.
 
@@ -180,23 +180,23 @@ Shared libraries counted in the third column:
 - proj-rs, Rust program, proj.db inside: none.
 - proj-rs, feature network, Rust program, HTTPS grid download: `libssl.so.3`, `libcrypto.so.3`.
 
-The Rust program is 17.1 MiB stripped, of which 10.1 MiB is the embedded `proj.db`; the empty Rust program of the same toolchain is 0.3 MiB. The code of proj-rs thus adds 6.7 MiB, SQLite and the TIFF reader included.
+The Rust program is 16.8 MiB stripped, of which 10.1 MiB is the embedded `proj.db`; the empty Rust program of the same toolchain is 0.3 MiB. The code of proj-rs thus adds 6.4 MiB, SQLite and the TIFF reader included.
 
 | Peak resident memory | PROJ 9.9.0 | PROJ 9.9.0, TIFF and curl | proj-rs C library | proj-rs (Rust) |
 |---|---:|---:|---:|---:|
-| process start, nothing created | 5.7 MiB | 12.1 MiB | 2.5 MiB | 3.0 MiB |
-| create the 4326 → 2154 transform | 14.8 MiB | 21.2 MiB | 13.0 MiB | 12.1 MiB |
-| create + 1,000,000 points, one at a time | 14.7 MiB | 21.2 MiB | 13.0 MiB | 12.2 MiB |
-| create + 1,000,000 points, one array | 29.9 MiB | 36.4 MiB | 28.1 MiB | 27.3 MiB |
-| 4267 → 4326 (several candidates) + 1,000,000 points, one at a time | 16.4 MiB | 22.8 MiB | 13.9 MiB | 13.0 MiB |
+| process start, nothing created | 5.8 MiB | 12.3 MiB | 2.6 MiB | 3.0 MiB |
+| create the 4326 → 2154 transform | 14.9 MiB | 21.2 MiB | 12.9 MiB | 11.9 MiB |
+| create + 1,000,000 points, one at a time | 15.0 MiB | 21.4 MiB | 13.1 MiB | 12.0 MiB |
+| create + 1,000,000 points, one array | 30.1 MiB | 36.3 MiB | 28.1 MiB | 27.1 MiB |
+| 4267 → 4326 (several candidates) + 1,000,000 points, one at a time | 16.6 MiB | 22.9 MiB | 14.2 MiB | 13.1 MiB |
 
 | Peak heap (valgrind massif) | PROJ 9.9.0 | PROJ 9.9.0, TIFF and curl | proj-rs C library | proj-rs (Rust) |
 |---|---:|---:|---:|---:|
 | process start, nothing created | 0.1 MiB | 0.2 MiB | 0.0 MiB | 0.0 MiB |
 | create the 4326 → 2154 transform | 5.5 MiB | 5.6 MiB | 3.6 MiB | 3.6 MiB |
 | create + 1,000,000 points, one at a time | 5.5 MiB | 5.6 MiB | 3.6 MiB | 3.6 MiB |
-| create + 1,000,000 points, one array | 20.4 MiB | 20.5 MiB | 15.4 MiB | 15.5 MiB |
-| 4267 → 4326 (several candidates) + 1,000,000 points, one at a time | 6.7 MiB | 6.8 MiB | 4.2 MiB | 4.2 MiB |
+| create + 1,000,000 points, one array | 20.4 MiB | 20.5 MiB | 15.5 MiB | 15.5 MiB |
+| 4267 → 4326 (several candidates) + 1,000,000 points, one at a time | 6.7 MiB | 6.8 MiB | 4.3 MiB | 4.3 MiB |
 
 Median of 5 runs for the resident memory (`VmHWM`, read by the program itself); the heap is one massif run. Each process runs one scenario on the same 1,000,000 points, and its output is checked against PROJ's. Every process starts with its own loader and libraries, so the first row is the floor. What exactly is measured, and how to rerun it: [docs/BENCHMARK.md](docs/BENCHMARK.md).
 
