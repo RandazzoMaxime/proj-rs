@@ -6,6 +6,8 @@ rest is outside semver.
 
 ## Unreleased
 
+## 1.2.5
+
 - aarch64 (Apple silicon, Linux ARM) has a batch path in lanes of four with NEON, as x86-64 has
   with AVX2: `batch_path()` gives `neon`. `V4` has a second realisation on two `float64x2_t`
   registers with the same API, built on the safe wrappers of `pulp`, so the vector math functions,
@@ -13,8 +15,7 @@ rest is outside semver.
   the same bits (digests measured on AVX2 for the 11 functions of `math.rs`, checked on Apple
   silicon and Linux ARM, and for equatorial `laea`, `somerc`, `sterea`, `cart` and `helmert`,
   forward and inverse, checked on Linux ARM). Batches run 1.5 to 4 times faster than the portable
-  path on an Apple M1 and a Neoverse N2. There is no `libmvec` and
-  no Accelerate. The CI runs the whole suite on Linux ARM as well as on Apple silicon. See
+  path on an Apple M1 and a Neoverse N2. There is no `libmvec` and no Accelerate. The CI runs the whole suite on Linux ARM as well as on Apple silicon. See
   [docs/PORTING-simd.md](docs/PORTING-simd.md).
 
 ## 1.2.0
