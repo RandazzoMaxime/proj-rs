@@ -9,10 +9,29 @@ import math
 
 import history
 
+PRIMARY = "gha-ubuntu-24.04-x86_64"
+ARM_MACHINES = [
+    ("gha-macos-arm64-m1", "Apple M1"),
+    ("gha-ubuntu-24.04-arm64", "Neoverse N2"),
+]
+
 MACHINE_NOTES = {
     "cloud-4c-avx512": (
         "a 4-vCPU cloud VM (Intel Xeon at 2.10 GHz), the process pinned to one core"
     ),
+    PRIMARY: "a GitHub Actions runner (Linux x86-64, 4 vCPU), the process pinned to one core",
+    "gha-ubuntu-24.04-arm64": (
+        "a GitHub Actions runner (Linux ARM, Neoverse N2, 4 vCPU), the process pinned to one core"
+    ),
+    "gha-macos-arm64-m1": "a GitHub Actions runner (macOS, Apple M1, virtual), not pinned",
+}
+
+PATH_NOTES = {
+    "avx2": (
+        "The batch kernels take the AVX2 path, which every x86-64 CPU has since 2013 (Intel) "
+        "and 2015 (AMD); AVX-512 is not used."
+    ),
+    "neon": "The batch kernels take the NEON path, which every aarch64 CPU has.",
 }
 
 CRS_NAMES = {
@@ -53,9 +72,17 @@ def geomean(values):
     return math.exp(sum(math.log(v) for v in values) / len(values))
 
 
-def pick(rows):
+def complete(row):
+    return all(f"facade_convert_{p}" in row["libproj_ns"] for p in PAIRS)
+
+
+def pick(rows, machine=PRIMARY):
+    """The newest line of `machine` with libproj times, else the newest of any machine."""
     for row in reversed(rows):
-        if all(f"facade_convert_{p}" in row["libproj_ns"] for p in PAIRS):
+        if row["machine"] == machine and complete(row):
+            return row
+    for row in reversed(rows):
+        if complete(row):
             return row
     raise SystemExit("how_fast.py: no line of the history has libproj times for the facade cases")
 
@@ -102,18 +129,17 @@ def body(row):
     note = MACHINE_NOTES.get(row["machine"], "")
     rounds = row["result"].get("rounds", 1)
     where = note or "the bench machine"
+    version = row["result"].get("version", "1")
+    path = PATH_NOTES.get(row["result"].get("batch_path", ""), "")
     lines = [
-        "These numbers are PROJ-RS v1's. The optimisation work (wider SIMD, GPU) comes in the "
-        "versions after it.",
+        f"These numbers are proj-rs {version}'s, measured by the CI.",
         "",
         f"On {where}, proj-rs is {than(geomean([c[4] for c in cases]))} PROJ 9.9.0's `libproj` on "
         f"average over the ten cases below (geometric mean of the ratios; {extremes_text(ratios)}). "
         f"One point at a time, proj-rs is {spread_text(single)}. On a slice of points, it is "
         f"{spread_text(array)}. "
         "This is one machine: the ratios on another CPU, or on a build of libproj with other "
-        "flags, will differ."
-        " The batch kernels take the AVX2 path, which every x86-64 CPU has since 2013 (Intel) "
-        "and 2015 (AMD); AVX-512 is not used.",
+        "flags, will differ. " + path,
         "",
         "| Conversion | Call | PROJ 9.9.0 | proj-rs |",
         "|---|---|---:|---:|",
@@ -156,7 +182,50 @@ def body(row):
     ]
     lines += [f"| `{name}` | {value:.1f} |" for name, value in slowest]
     lines += ["", "</details>"]
+    lines += arm_section(history.load())
     return "\n".join(lines)
+
+
+def arm_section(rows):
+    """A table of the same conversions on the ARM machines of the history, if it has any."""
+    found = []
+    for machine, name in ARM_MACHINES:
+        row = pick([r for r in rows if r["machine"] == machine], machine)
+        if row["machine"] == machine:
+            found.append((name, row))
+    if not found:
+        return []
+    names = " and ".join(f"{name} ({MACHINE_NOTES[row['machine']]})" for name, row in found)
+    head = "| Conversion | Call |" + "".join(f" PROJ 9.9.0, {n} | proj-rs, {n} |" for n, _ in found)
+    out = [
+        "",
+        "### On ARM",
+        "",
+        f"The same ten cases on {names}. The batch kernels take the NEON path; "
+        "the ratio is PROJ 9.9.0's time over proj-rs's.",
+        "",
+        head,
+        "|---|---|" + "---:|---:|" * len(found),
+    ]
+    for pair in PAIRS:
+        for case, calls in (
+            (f"facade_convert_{pair}", "`convert`"),
+            (f"facade_convert_array_{pair}", "`convert_array`"),
+        ):
+            cells = ""
+            for _, row in found:
+                theirs, ours = row["libproj_ns"][case], row["ns"][case]
+                cells += f" {ns(theirs)} | {ns(ours)} ({speedup_text(theirs / ours)}) |"
+            out.append(f"| {label(pair)} | {calls} |{cells}")
+    out += [""]
+    for name, row in found:
+        ratios = [c[4] for c in rows_of(row)]
+        out.append(
+            f"On {name}, proj-rs is {than(geomean(ratios))} PROJ 9.9.0 on average over the ten cases "
+            f"({extremes_text(ratios)}); line of {history.day_time(row['date'])} UTC at commit "
+            f"`{row['commit']}`, the best of {row['result'].get('rounds', 1)} runs.\n"
+        )
+    return out
 
 
 def main():
