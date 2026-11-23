@@ -55,7 +55,7 @@ massif (tas), `smaps` (pages de fichier) et dhat sur chaque scénario.
   Avec `PROJ_AUX_DB`, les lignes auxiliaires sont copiées dans la base principale : chaque contexte
   garde sa copie, comme avant.
 - `convert_array`, `project_array` et `Transformer::forward_slice` / `inverse_slice` convertissent
-  **sur place**, par blocs de 4096 points : un seul bloc de `Xyzt` (128 Kio) vit, et le résultat de
+  **sur place**, par blocs de 1024 points : un seul bloc de `Xyzt` (32 Kio) vit, et le résultat de
   chaque bloc est réécrit dans la tranche de l'appelant. Aucune copie de la taille des données :
   31 MiB de moins que l'état de départ, 15 MiB de moins que le lot précédent, pour 1 M de points.
   C'est ce que fait `proj_trans_array`. Les valeurs ne changent pas d'un bit (`tests/convert_array_golden.rs`,
@@ -74,7 +74,7 @@ massif (tas), `smaps` (pages de fichier) et dhat sur chaque scénario.
 
 Un bloc fautif n'est pas écrit : on n'y marque pas les points en échec. Le premier point en échec
 et tous les suivants gardent donc leur entrée, et l'appelant ne peut pas lire la tranche comme un
-résultat après un `Err`. La taille du bloc (4096) n'est pas promise.
+résultat après un `Err`. La taille du bloc (1024 points, 32 Kio de `Xyzt`) n'est pas promise.
 
 Ce que fait PROJ : `proj_trans_array` traite **tous** les points, met `HUGE_VAL` aux quatre
 composantes d'un point en échec et rend le code d'erreur commun, ou `PROJ_ERR_COORD_TRANSFM` si les

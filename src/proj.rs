@@ -432,7 +432,7 @@ pub struct Proj {
 }
 
 /// Points a slice conversion hands to the transform at a time.
-const FILL_CHUNK: usize = 4096;
+const FILL_CHUNK: usize = 1024;
 
 /// Fewer points than this go through the transform one at a time. The vector path costs about
 /// 90 ns a call (the blocks, the kernels' setup) and a vector kernel has little to amortise it
