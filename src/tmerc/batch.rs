@@ -25,11 +25,11 @@ impl Lanes for Forward<'_> {
             .map_or((f64::NAN, f64::NAN), |xy| (xy.east, xy.north))
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(simd_lanes)]
     #[inline(always)]
     fn lanes(
         &self,
-        tok: crate::simd::Avx2,
+        tok: crate::simd::Token,
         lon_deg: crate::simd::V4,
         lat_deg: crate::simd::V4,
     ) -> Option<(crate::simd::V4, crate::simd::V4)> {
@@ -44,11 +44,11 @@ impl Lanes for ForwardRad<'_> {
             .map_or((f64::NAN, f64::NAN), |xy| (xy.east, xy.north))
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(simd_lanes)]
     #[inline(always)]
     fn lanes(
         &self,
-        tok: crate::simd::Avx2,
+        tok: crate::simd::Token,
         lon_rad: crate::simd::V4,
         lat_rad: crate::simd::V4,
     ) -> Option<(crate::simd::V4, crate::simd::V4)> {
@@ -63,11 +63,11 @@ impl Lanes for Inverse<'_> {
             .map_or((f64::NAN, f64::NAN), |geo| (geo.lon_deg, geo.lat_deg))
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(simd_lanes)]
     #[inline(always)]
     fn lanes(
         &self,
-        tok: crate::simd::Avx2,
+        tok: crate::simd::Token,
         east: crate::simd::V4,
         north: crate::simd::V4,
     ) -> Option<(crate::simd::V4, crate::simd::V4)> {
@@ -75,18 +75,18 @@ impl Lanes for Inverse<'_> {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(simd_lanes)]
 mod vector {
     use std::f64::consts::FRAC_PI_2;
 
     use super::Tmerc;
     use crate::simd::kernels::{self, DEG_TO_RAD, RAD_TO_DEG};
-    use crate::simd::{Avx2, V4};
+    use crate::simd::{Token, V4};
     use crate::tmerc::{CE_LIMIT, ORDER};
 
     /// `gatg` : la série de Clenshaw réelle, coefficients `p1`.
     #[inline(always)]
-    fn gatg(tok: Avx2, p1: &[f64; ORDER], b: V4, cos_2b: V4, sin_2b: V4) -> V4 {
+    fn gatg(tok: Token, p1: &[f64; ORDER], b: V4, cos_2b: V4, sin_2b: V4) -> V4 {
         let k = |value| V4::splat(tok, value);
         let two = k(2.0) * cos_2b;
         let mut h2 = V4::zero(tok);
@@ -104,7 +104,7 @@ mod vector {
     /// `clenshaw_complex` : la série de Clenshaw complexe, coefficients `a`.
     #[inline(always)]
     fn clenshaw_complex(
-        tok: Avx2,
+        tok: Token,
         a: &[f64; ORDER],
         sin_arg_r: V4,
         cos_arg_r: V4,
@@ -133,7 +133,7 @@ mod vector {
 
     /// [`Tmerc::forward`] sur quatre points.
     #[inline(always)]
-    pub(super) fn forward(t: &Tmerc, tok: Avx2, lon_deg: V4, lat_deg: V4) -> Option<(V4, V4)> {
+    pub(super) fn forward(t: &Tmerc, tok: Token, lon_deg: V4, lat_deg: V4) -> Option<(V4, V4)> {
         let k = |value| V4::splat(tok, value);
         forward_rad(t, tok, lon_deg * k(DEG_TO_RAD), lat_deg * k(DEG_TO_RAD))
     }
@@ -144,7 +144,7 @@ mod vector {
         clippy::similar_names,
         reason = "Cn and Ce are the paired terms of PROJ exact_e_fwd"
     )]
-    pub(super) fn forward_rad(t: &Tmerc, tok: Avx2, lon_r: V4, lat_r: V4) -> Option<(V4, V4)> {
+    pub(super) fn forward_rad(t: &Tmerc, tok: Token, lon_r: V4, lat_r: V4) -> Option<(V4, V4)> {
         let k = |value| V4::splat(tok, value);
         if !kernels::latitude_in_domain(tok, lat_r)
             .and(lon_r.is_finite())
@@ -196,7 +196,7 @@ mod vector {
         clippy::similar_names,
         reason = "Cn and Ce are the paired terms in PROJ exact_e_inv"
     )]
-    pub(super) fn inverse(t: &Tmerc, tok: Avx2, east: V4, north: V4) -> Option<(V4, V4)> {
+    pub(super) fn inverse(t: &Tmerc, tok: Token, east: V4, north: V4) -> Option<(V4, V4)> {
         let k = |value| V4::splat(tok, value);
         let x = (east - k(t.x0)) * k(t.ra);
         let y = (north - k(t.y0)) * k(t.ra);

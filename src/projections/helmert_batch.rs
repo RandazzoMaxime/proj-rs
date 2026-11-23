@@ -96,11 +96,11 @@ impl Lanes3 for Forward {
         self.0.forward(x, y, z)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(simd_lanes)]
     #[inline(always)]
     fn lanes(
         &self,
-        tok: crate::simd::Avx2,
+        tok: crate::simd::Token,
         x: crate::simd::V4,
         y: crate::simd::V4,
         z: crate::simd::V4,
@@ -125,11 +125,11 @@ impl Lanes3 for Inverse {
         self.0.inverse(x, y, z)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(simd_lanes)]
     #[inline(always)]
     fn lanes(
         &self,
-        tok: crate::simd::Avx2,
+        tok: crate::simd::Token,
         x: crate::simd::V4,
         y: crate::simd::V4,
         z: crate::simd::V4,

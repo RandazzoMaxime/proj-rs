@@ -21,11 +21,11 @@ impl Lanes for Forward<'_> {
             .map_or((f64::NAN, f64::NAN), |xy| (xy.east, xy.north))
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(simd_lanes)]
     #[inline(always)]
     fn lanes(
         &self,
-        tok: crate::simd::Avx2,
+        tok: crate::simd::Token,
         lon_deg: crate::simd::V4,
         lat_deg: crate::simd::V4,
     ) -> Option<(crate::simd::V4, crate::simd::V4)> {
@@ -40,11 +40,11 @@ impl Lanes for Inverse<'_> {
             .map_or((f64::NAN, f64::NAN), |geo| (geo.lon_deg, geo.lat_deg))
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(simd_lanes)]
     #[inline(always)]
     fn lanes(
         &self,
-        tok: crate::simd::Avx2,
+        tok: crate::simd::Token,
         east: crate::simd::V4,
         north: crate::simd::V4,
     ) -> Option<(crate::simd::V4, crate::simd::V4)> {
@@ -52,18 +52,18 @@ impl Lanes for Inverse<'_> {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(simd_lanes)]
 mod vector {
     use std::f64::consts::FRAC_PI_2;
 
     use super::Lcc;
     use crate::lcc::EPS10;
     use crate::simd::kernels::{self, DEG_TO_RAD, RAD_TO_DEG};
-    use crate::simd::{Avx2, V4};
+    use crate::simd::{Token, V4};
 
     /// [`Lcc::forward`] sur quatre points.
     #[inline(always)]
-    pub(super) fn forward(l: &Lcc, tok: Avx2, lon_deg: V4, lat_deg: V4) -> Option<(V4, V4)> {
+    pub(super) fn forward(l: &Lcc, tok: Token, lon_deg: V4, lat_deg: V4) -> Option<(V4, V4)> {
         let k = |value| V4::splat(tok, value);
         let lon_r = lon_deg * k(DEG_TO_RAD);
         let lat_r = lat_deg * k(DEG_TO_RAD);
@@ -94,7 +94,7 @@ mod vector {
 
     /// [`Lcc::inverse`] sur quatre points.
     #[inline(always)]
-    pub(super) fn inverse(l: &Lcc, tok: Avx2, east: V4, north: V4) -> Option<(V4, V4)> {
+    pub(super) fn inverse(l: &Lcc, tok: Token, east: V4, north: V4) -> Option<(V4, V4)> {
         let k = |value| V4::splat(tok, value);
         let mut x = (east - k(l.x0)) * k(l.ra) / k(l.k0);
         let mut y = k(l.rho0) - (north - k(l.y0)) * k(l.ra) / k(l.k0);

@@ -22,11 +22,11 @@ impl Lanes3 for Forward {
         geodetic_to_cartesian(self.0, lam, phi, height)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(simd_lanes)]
     #[inline(always)]
     fn lanes(
         &self,
-        tok: crate::simd::Avx2,
+        tok: crate::simd::Token,
         lam: crate::simd::V4,
         phi: crate::simd::V4,
         height: crate::simd::V4,
@@ -40,11 +40,11 @@ impl Lanes3 for Inverse {
         cartesian_to_geodetic(self.0, x, y, z)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(simd_lanes)]
     #[inline(always)]
     fn lanes(
         &self,
-        tok: crate::simd::Avx2,
+        tok: crate::simd::Token,
         x: crate::simd::V4,
         y: crate::simd::V4,
         z: crate::simd::V4,
@@ -150,16 +150,16 @@ pub(super) fn inverse(
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(simd_lanes)]
 mod vector {
     use crate::ellipsoid::Ellipsoid;
-    use crate::simd::{Avx2, V4};
+    use crate::simd::{Token, V4};
 
     /// [`super::geodetic_to_cartesian`] sur quatre points.
     #[inline(always)]
     pub(super) fn forward(
         earth: Ellipsoid,
-        tok: Avx2,
+        tok: Token,
         lam: V4,
         phi: V4,
         height: V4,
@@ -189,7 +189,7 @@ mod vector {
     #[inline(always)]
     pub(super) fn inverse(
         earth: Ellipsoid,
-        tok: Avx2,
+        tok: Token,
         x: V4,
         y: V4,
         z: V4,

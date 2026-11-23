@@ -386,7 +386,7 @@ mod tests {
 
     /// Under `+over` there is no vector path: nothing differs from the one-by-one values.
     fn assert_vector_taken(definition: &str, differing: usize) {
-        if crate::simd::batch_path() == "avx2" && !definition.contains("+over") {
+        if crate::simd::has_lanes() && !definition.contains("+over") {
             assert!(
                 differing > 0,
                 "{definition}: no value differs bit for bit, the vector path was not taken"

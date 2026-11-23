@@ -606,7 +606,22 @@ fn log_dd(x: V4) -> (V4, V4) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::simd::Avx2;
+    use crate::simd::Token;
+
+    /// Les empreintes mesurées sur le chemin AVX2 (voir `bits_are_the_same_on_every_architecture`).
+    const EXPECTED: [(&str, u64); 11] = [
+        ("sin_cos", 0x02b0_8766_5a1e_071d),
+        ("tan", 0x3d2f_dfdf_5b15_4adb),
+        ("exp", 0x1dcd_07ae_2705_0d54),
+        ("log", 0xeb51_5c0d_74a1_2c9b),
+        ("atan", 0x5207_8e70_fcde_7638),
+        ("asinh", 0x3f72_d7e5_1dff_32c5),
+        ("atanh", 0xdb31_3e16_6d72_b878),
+        ("sinh", 0xd023_bf56_7a65_824e),
+        ("atan2", 0x7611_8188_8367_dd00),
+        ("hypot", 0x5e04_1e70_54b6_b551),
+        ("powf", 0x0835_3fc3_31dc_70d1),
+    ];
 
     /// Groupes de quatre points par cas. Un build de débogage n'insère aucun intrinsèque en ligne :
     /// il est plus de cent fois plus lent, d'où moins de tirages (la CI lance les tests ainsi).
@@ -679,7 +694,7 @@ mod tests {
 
     /// Évalue `vector` sur quatre voies et rend la pire erreur contre `reference`, avec l'entrée.
     fn worst1(
-        tok: Avx2,
+        tok: Token,
         mut sample: impl FnMut() -> f64,
         vector: impl Fn(V4) -> V4,
         reference: impl Fn(f64) -> f64,
@@ -701,7 +716,7 @@ mod tests {
     }
 
     fn worst2(
-        tok: Avx2,
+        tok: Token,
         mut sample: impl FnMut() -> (f64, f64),
         vector: impl Fn(V4, V4) -> V4,
         reference: impl Fn(f64, f64) -> f64,
@@ -759,13 +774,119 @@ mod tests {
         }};
     }
 
+    /// FNV-1a sur les bits de toutes les valeurs.
+    fn digest(values: &[f64]) -> u64 {
+        values.iter().fold(0xcbf2_9ce4_8422_2325, |hash, value| {
+            value.to_bits().to_le_bytes().iter().fold(hash, |h, byte| {
+                (h ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3)
+            })
+        })
+    }
+
+    /// Les bits de chaque fonction vectorielle, sur des entrées finies : les mêmes sur toutes les
+    /// architectures. AVX2 et NEON arrondissent de la même façon (IEEE 754, FMA fusionné) et
+    /// `math.rs` ne compose que cette API : ces empreintes, mesurées sur le chemin AVX2, doivent
+    /// être celles du chemin NEON. Aucune libm n'y entre.
+    #[test]
+    fn bits_are_the_same_on_every_architecture() {
+        let Some(tok) = Token::detect() else {
+            return;
+        };
+        let mut rng = Rng(7);
+        let pi = std::f64::consts::PI;
+        let groups = 4_000;
+        let mut one = |domain: &dyn Fn(&mut Rng) -> f64, f: &dyn Fn(V4) -> V4| {
+            let mut out = Vec::new();
+            for _ in 0..groups {
+                let xs = [
+                    domain(&mut rng),
+                    domain(&mut rng),
+                    domain(&mut rng),
+                    domain(&mut rng),
+                ];
+                out.extend(f(V4::load(tok, &xs)).to_array());
+            }
+            digest(&out)
+        };
+        let sin_cos = one(&|r| r.uniform(-1e5, 1e5), &|v| {
+            let (s, c) = v.sin_cos();
+            s + c * V4::splat(tok, 1e-3)
+        });
+        let results = [
+            ("sin_cos", sin_cos),
+            (
+                "tan",
+                one(&|r| r.uniform(-pi / 2.0 + 1e-3, pi / 2.0 - 1e-3), &|v| {
+                    v.tan()
+                }),
+            ),
+            ("exp", one(&|r| r.uniform(-700.0, 700.0), &|v| v.exp())),
+            ("log", one(&|r| r.magnitude(1e-300, 1e300), &|v| v.log())),
+            (
+                "atan",
+                one(&|r| r.signed_magnitude(1e-9, 1e9), &|v| v.atan()),
+            ),
+            (
+                "asinh",
+                one(&|r| r.signed_magnitude(1e-9, 1e9), &|v| v.asinh()),
+            ),
+            (
+                "atanh",
+                one(&|r| r.uniform(-0.999_999, 0.999_999), &|v| v.atanh()),
+            ),
+            ("sinh", one(&|r| r.uniform(-700.0, 700.0), &|v| v.sinh())),
+        ];
+        let mut pairs = Vec::new();
+        for (name, domain, f) in [("atan2", 1e6, 0_u8), ("hypot", 1e150, 1), ("powf", 50.0, 2)] {
+            let mut out = Vec::new();
+            for _ in 0..groups {
+                let draw = |r: &mut Rng| {
+                    if f == 2 {
+                        r.uniform(0.01, domain)
+                    } else {
+                        r.uniform(-domain, domain)
+                    }
+                };
+                let xs = [
+                    draw(&mut rng),
+                    draw(&mut rng),
+                    draw(&mut rng),
+                    draw(&mut rng),
+                ];
+                let ys = [
+                    rng.uniform(-3.0, 3.0),
+                    rng.uniform(-3.0, 3.0),
+                    rng.uniform(-3.0, 3.0),
+                    rng.uniform(-3.0, 3.0),
+                ];
+                let (x, y) = (V4::load(tok, &xs), V4::load(tok, &ys));
+                let r = match f {
+                    0 => y.atan2(x),
+                    1 => x.hypot(y * V4::splat(tok, 1e140)),
+                    _ => x.powf(y),
+                };
+                out.extend(r.to_array());
+            }
+            pairs.push((name, digest(&out)));
+        }
+        let all: Vec<_> = results.iter().chain(pairs.iter()).collect();
+        for (name, got) in &all {
+            eprintln!("DIGEST {name} {got:#018x}");
+        }
+        let expected: [(&str, u64); 11] = EXPECTED;
+        for ((name, got), (want_name, want)) in all.iter().zip(expected.iter()) {
+            assert_eq!(name, want_name);
+            assert_eq!(*got, *want, "{name}");
+        }
+    }
+
     /// L'erreur mesurée contre la libm de la bibliothèque standard, sur de larges domaines : 1 ULP
     /// pour `sin`, `cos`, `exp`, `log`, `atan`, `atan2`, `hypot` et `powf`, 2 pour `asinh`,
     /// `atanh` et `sinh`, 3 pour `tan` (quotient de deux fonctions à 1 ULP). Les bornes ci-dessous
     /// sont ces mesures plus un. `libmvec` annonce jusqu'à 4 ULP.
     #[test]
     fn accuracy_matches_the_libm() {
-        let Some(tok) = Avx2::detect() else {
+        let Some(tok) = Token::detect() else {
             return;
         };
         let mut rng = Rng(1);
@@ -1052,7 +1173,7 @@ mod tests {
     /// négatifs, sous-normaux, dépassements, arguments très grands.
     #[test]
     fn special_values_match_the_libm() {
-        let Some(tok) = Avx2::detect() else {
+        let Some(tok) = Token::detect() else {
             return;
         };
         let specials = [

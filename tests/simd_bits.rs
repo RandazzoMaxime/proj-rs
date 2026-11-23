@@ -5,11 +5,7 @@
 
 // The digests are those of the AVX2 path with glibc on x86-64: the scalar path, or another libm
 // for the fallbacks, gives other bits.
-#![cfg(all(
-    target_os = "linux",
-    target_env = "gnu",
-    any(target_arch = "x86_64", target_arch = "aarch64")
-))]
+#![cfg(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64"))]
 
 use proj_rs::{Ellipsoid, Hemisphere, Lcc, Mercator, Proj, Tmerc, UtmZone};
 

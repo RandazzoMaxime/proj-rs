@@ -110,9 +110,9 @@ pub(crate) fn assert_agrees(
     differing
 }
 
-/// With AVX2, some values must differ from the one-by-one ones at the last bit.
+/// With a vector path, some values must differ from the one-by-one ones at the last bit.
 pub(crate) fn assert_vector_taken(label: &str, differing: usize) {
-    if crate::simd::batch_path() == "avx2" {
+    if crate::simd::has_lanes() {
         assert!(
             differing > 0,
             "{label}: no value differs bit for bit, the vector path was not taken"
@@ -186,3 +186,7 @@ pub(crate) fn projected_points(op: &Operation, points: &[Coord], far: f64) -> Ve
     ]);
     images
 }
+
+#[cfg(test)]
+#[path = "kernel_bits_tests.rs"]
+mod kernel_bits;

@@ -1,11 +1,14 @@
-//! Calcul par lots sur quatre `f64` à la fois (AVX2).
+//! Calcul par lots sur quatre `f64` à la fois : AVX2 sur x86-64, NEON sur aarch64.
 //!
 //! Le module n'a pas de `unsafe` : les intrinsèques et le passage dans le code compilé avec AVX2
 //! passent par `pulp`, qui le porte (`docs/PORTING-simd.md`). Les projections n'écrivent que leur formule, en quatre voies, contre l'API sûre de [`V4`] ;
-//! elles ne touchent ni intrinsèque ni détection du processeur.
+//! elles ne touchent ni intrinsèque ni détection du processeur. [`V4`] a deux réalisations, une
+//! par architecture, qui ont la même API et rendent les mêmes bits : `v4.rs` (un registre AVX2)
+//! et `neon.rs` (deux registres NEON).
 //!
-//! - [`Avx2`] prouve que le processeur sait AVX2 et FMA. On n'en obtient un que par
-//!   [`Avx2::detect`]. Tout le reste, [`V4`] compris, s'appuie sur cette preuve.
+//! - [`Token`] prouve que le processeur sait le jeu d'instructions du chemin vectoriel (AVX2 et
+//!   FMA, ou NEON). On n'en obtient un que par [`Token::detect`]. Tout le reste, [`V4`] compris,
+//!   s'appuie sur cette preuve.
 //! - [`V4`] est quatre `f64` : opérateurs, comparaisons par masque, `select`, et les fonctions
 //!   transcendantes (`sin`, `exp`, `atan2`, …) de `math.rs`.
 //! - [`kernels`] regroupe les briques que plusieurs projections partagent (`adjlon`, `tsfn`,
@@ -15,20 +18,24 @@
 //!   n'entre dans le code `target_feature` qu'une fois par appel. [`Lanes3`] et [`run3`] sont le
 //!   même driver pour trois entrées et trois sorties (géocentrique, Helmert).
 //!
-//! Hors x86-64, ou sans AVX2, [`run`] boucle sur le chemin scalaire : les résultats sont alors
-//! ceux de la crate, sans écart.
+//! Sur une autre architecture, ou sans AVX2, [`run`] boucle sur le chemin scalaire : les résultats
+//! sont alors ceux de la crate, sans écart.
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(simd_lanes)]
 mod drive;
-#[cfg(target_arch = "x86_64")]
+#[cfg(simd_lanes)]
 pub(crate) mod kernels;
-#[cfg(target_arch = "x86_64")]
+#[cfg(simd_lanes)]
 mod math;
+#[cfg(target_arch = "aarch64")]
+mod neon;
 #[cfg(target_arch = "x86_64")]
 mod v4;
 
+#[cfg(target_arch = "aarch64")]
+pub(crate) use neon::{Mask, Neon as Token, V4};
 #[cfg(target_arch = "x86_64")]
-pub(crate) use v4::{Avx2, Mask, V4};
+pub(crate) use v4::{Avx2 as Token, Mask, V4};
 
 /// Un noyau par lots à deux entrées et deux sorties.
 pub(crate) trait Lanes {
@@ -37,8 +44,8 @@ pub(crate) trait Lanes {
 
     /// Quatre points. `None` quand une voie sort du domaine que le noyau vectoriel traite
     /// (valeur non finie, pôle, hors domaine) : le groupe passe alors par [`Self::point`].
-    #[cfg(target_arch = "x86_64")]
-    fn lanes(&self, tok: Avx2, a: V4, b: V4) -> Option<(V4, V4)>;
+    #[cfg(simd_lanes)]
+    fn lanes(&self, tok: Token, a: V4, b: V4) -> Option<(V4, V4)>;
 }
 
 /// Un noyau par lots à trois entrées et trois sorties (géocentrique, Helmert).
@@ -48,8 +55,8 @@ pub(crate) trait Lanes3 {
 
     /// Quatre points. `None` quand une voie sort du domaine que le noyau vectoriel traite : le
     /// groupe passe alors par [`Self::point`].
-    #[cfg(target_arch = "x86_64")]
-    fn lanes(&self, tok: Avx2, a: V4, b: V4, c: V4) -> Option<(V4, V4, V4)>;
+    #[cfg(simd_lanes)]
+    fn lanes(&self, tok: Token, a: V4, b: V4, c: V4) -> Option<(V4, V4, V4)>;
 }
 
 /// Applique `kernel` aux trois tranches d'entrée, qui ont la longueur des trois de sortie.
@@ -63,8 +70,8 @@ pub(crate) fn run3<K: Lanes3>(kernel: &K, input: [&[f64]; 3], output: [&mut [f64
         input.iter().all(|lane| lane.len() == n) && output.iter().all(|lane| lane.len() == n),
         "the six slices must have {n} values"
     );
-    #[cfg(target_arch = "x86_64")]
-    if let Some(tok) = Avx2::detect() {
+    #[cfg(simd_lanes)]
+    if let Some(tok) = Token::detect() {
         drive::run3_avx2(tok, kernel, input, output);
         return;
     }
@@ -105,8 +112,8 @@ pub(crate) fn run<K: Lanes>(
         "second output length {} != {n}",
         out_b.len()
     );
-    #[cfg(target_arch = "x86_64")]
-    if let Some(tok) = Avx2::detect() {
+    #[cfg(simd_lanes)]
+    if let Some(tok) = Token::detect() {
         drive::run_avx2(tok, kernel, in_a, in_b, out_a, out_b);
         return;
     }
@@ -122,13 +129,23 @@ fn scalar<K: Lanes>(kernel: &K, in_a: &[f64], in_b: &[f64], out_a: &mut [f64], o
 
 /// Chemin pris par les calculs par lots sur cette machine : `avx2` ou `scalar`.
 ///
-/// Le chemin `avx2` est le même sur toutes les plateformes x86-64 : les fonctions mathématiques
-/// sont celles de [`V4`] (`math.rs`), pas celles de la bibliothèque C.
+/// Le chemin vectoriel est le même sur toutes les plateformes d'une architecture : les fonctions
+/// mathématiques sont celles de [`V4`] (`math.rs`), pas celles de la bibliothèque C. `avx2` sur
+/// x86-64, `neon` sur aarch64, `scalar` sinon.
 #[must_use]
 pub(crate) fn batch_path() -> &'static str {
-    #[cfg(target_arch = "x86_64")]
-    if Avx2::detect().is_some() {
+    #[cfg(simd_lanes)]
+    if Token::detect().is_some() {
+        #[cfg(target_arch = "x86_64")]
         return "avx2";
+        #[cfg(target_arch = "aarch64")]
+        return "neon";
     }
     "scalar"
+}
+
+/// Le chemin vectoriel est pris sur cet hôte.
+#[must_use]
+pub(crate) fn has_lanes() -> bool {
+    batch_path() != "scalar"
 }

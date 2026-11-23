@@ -27,11 +27,11 @@ impl Lanes for Forward<'_> {
             .map_or((f64::NAN, f64::NAN), |xy| (xy.east, xy.north))
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(simd_lanes)]
     #[inline(always)]
     fn lanes(
         &self,
-        tok: crate::simd::Avx2,
+        tok: crate::simd::Token,
         lon_deg: crate::simd::V4,
         lat_deg: crate::simd::V4,
     ) -> Option<(crate::simd::V4, crate::simd::V4)> {
@@ -46,11 +46,11 @@ impl Lanes for ForwardRad<'_> {
             .map_or((f64::NAN, f64::NAN), |xy| (xy.east, xy.north))
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(simd_lanes)]
     #[inline(always)]
     fn lanes(
         &self,
-        tok: crate::simd::Avx2,
+        tok: crate::simd::Token,
         lon_rad: crate::simd::V4,
         lat_rad: crate::simd::V4,
     ) -> Option<(crate::simd::V4, crate::simd::V4)> {
@@ -65,11 +65,11 @@ impl Lanes for Inverse<'_> {
             .map_or((f64::NAN, f64::NAN), |geo| (geo.lon_deg, geo.lat_deg))
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(simd_lanes)]
     #[inline(always)]
     fn lanes(
         &self,
-        tok: crate::simd::Avx2,
+        tok: crate::simd::Token,
         east: crate::simd::V4,
         north: crate::simd::V4,
     ) -> Option<(crate::simd::V4, crate::simd::V4)> {
@@ -82,11 +82,11 @@ impl Lanes for InverseUnit<'_> {
         self.0.inv_unit(x, y).unwrap_or((f64::NAN, f64::NAN))
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(simd_lanes)]
     #[inline(always)]
     fn lanes(
         &self,
-        tok: crate::simd::Avx2,
+        tok: crate::simd::Token,
         x: crate::simd::V4,
         y: crate::simd::V4,
     ) -> Option<(crate::simd::V4, crate::simd::V4)> {
@@ -94,25 +94,25 @@ impl Lanes for InverseUnit<'_> {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(simd_lanes)]
 mod vector {
     use std::f64::consts::FRAC_PI_2;
 
     use super::Mercator;
     use crate::merc::Model;
     use crate::simd::kernels::{self, DEG_TO_RAD, RAD_TO_DEG};
-    use crate::simd::{Avx2, V4};
+    use crate::simd::{Token, V4};
 
     /// [`Mercator::forward`] sur quatre points.
     #[inline(always)]
-    pub(super) fn forward(m: &Mercator, tok: Avx2, lon_deg: V4, lat_deg: V4) -> Option<(V4, V4)> {
+    pub(super) fn forward(m: &Mercator, tok: Token, lon_deg: V4, lat_deg: V4) -> Option<(V4, V4)> {
         let k = |value| V4::splat(tok, value);
         forward_rad(m, tok, lon_deg * k(DEG_TO_RAD), lat_deg * k(DEG_TO_RAD))
     }
 
     /// [`Mercator::forward_rad`] sur quatre points.
     #[inline(always)]
-    pub(super) fn forward_rad(m: &Mercator, tok: Avx2, lon_r: V4, lat_r: V4) -> Option<(V4, V4)> {
+    pub(super) fn forward_rad(m: &Mercator, tok: Token, lon_r: V4, lat_r: V4) -> Option<(V4, V4)> {
         let k = |value| V4::splat(tok, value);
         if !kernels::latitude_in_domain(tok, lat_r)
             .and(lon_r.is_finite())
@@ -142,7 +142,7 @@ mod vector {
 
     /// [`Mercator::inverse`] sur quatre points.
     #[inline(always)]
-    pub(super) fn inverse(m: &Mercator, tok: Avx2, east: V4, north: V4) -> Option<(V4, V4)> {
+    pub(super) fn inverse(m: &Mercator, tok: Token, east: V4, north: V4) -> Option<(V4, V4)> {
         let k = |value| V4::splat(tok, value);
         let (x, y) = ((east - k(m.x0)) / k(m.a), (north - k(m.y0)) / k(m.a));
         let (lam, phi) = inverse_unit(m, tok, x, y)?;
@@ -152,7 +152,7 @@ mod vector {
 
     /// [`Mercator::inv_unit`] sur quatre points : lam et phi en radians, lam non ramenée.
     #[inline(always)]
-    pub(super) fn inverse_unit(m: &Mercator, tok: Avx2, x: V4, y: V4) -> Option<(V4, V4)> {
+    pub(super) fn inverse_unit(m: &Mercator, tok: Token, x: V4, y: V4) -> Option<(V4, V4)> {
         let k = |value| V4::splat(tok, value);
         if !x.is_finite().and(y.is_finite()).all() {
             return None;

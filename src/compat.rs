@@ -33,7 +33,7 @@ pub(crate) fn is_multiple_of(n: usize, of: usize) -> bool {
 
 /// The groups of four of a slice whose length is a multiple of four (`<[f64]>::as_chunks`,
 /// Rust 1.88).
-#[cfg(target_arch = "x86_64")]
+#[cfg(simd_lanes)]
 pub(crate) fn quads(slice: &[f64]) -> impl Iterator<Item = &[f64; 4]> {
     slice
         .chunks_exact(4)
@@ -41,7 +41,7 @@ pub(crate) fn quads(slice: &[f64]) -> impl Iterator<Item = &[f64; 4]> {
 }
 
 /// [`quads`] for a mutable slice (`<[f64]>::as_chunks_mut`).
-#[cfg(target_arch = "x86_64")]
+#[cfg(simd_lanes)]
 pub(crate) fn quads_mut(slice: &mut [f64]) -> impl Iterator<Item = &mut [f64; 4]> {
     slice
         .chunks_exact_mut(4)
@@ -75,7 +75,7 @@ mod tests {
         assert!(!is_multiple_of(13, 4));
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(simd_lanes)]
     #[test]
     fn quads_group_by_four() {
         let data = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
