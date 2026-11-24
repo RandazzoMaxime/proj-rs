@@ -175,7 +175,7 @@ fn main() {
         &|p| web.inverse(p).ok().map(|g| g.lat_deg),
     );
 
-    // Lots 4, 5: batch paths (AVX2 on x86-64, NEON on aarch64, otherwise see `batch_path`).
+    // Lots 4, 5: batch paths (AVX-512 or AVX2 on x86-64, NEON on aarch64, see `batch_path`).
     let (mut east, mut north) = (vec![0.0; N], vec![0.0; N]);
     let batches: [(&str, Batch<'_>, _); 3] = [
         (

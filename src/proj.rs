@@ -997,7 +997,8 @@ impl Proj {
     ///
     /// The slice goes through the transform at once, so a projection with a vector kernel
     /// (Transverse Mercator and UTM, Lambert conformal conic, Mercator, see
-    /// [`batch_path`](crate::batch_path)) converts four points at a time. Its values agree with
+    /// [`batch_path`](crate::batch_path)) converts several points at a time (four on AVX2 and
+    /// NEON, eight on AVX-512). Its values agree with
     /// [`Self::convert`] to about 1e-8 m (the error of the vector math functions), and are the
     /// same bits for a transform with no vector kernel.
     ///

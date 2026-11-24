@@ -1,32 +1,32 @@
 //! Le chemin par lots d'un noyau `Classic` écrit en unités du demi-grand axe (`sterea`,
-//! `somerc`, `laea`) : le noyau ne donne que sa formule en quatre voies ; la mise à l'échelle
-//! (`a`, `1/a`) et les degrés sont ici, comme `Classic` les fait. Un groupe de quatre qu'une voie
+//! `somerc`, `laea`) : le noyau ne donne que sa formule en `N` voies ; la mise à l'échelle
+//! (`a`, `1/a`) et les degrés sont ici, comme `Classic` les fait. Un groupe de `N` qu'une voie
 //! sort du domaine du noyau passe par [`Kernel`] : ses points valent ceux du chemin scalaire.
 
 use crate::ellipsoid::Ellipsoid;
 use crate::engine::{Kernel, ProjectedBatch};
-use crate::simd::{run, Lanes};
+use crate::simd::{run, Lanes, Vector};
 
-/// Un noyau `Classic` avec sa formule en quatre voies.
+/// Un noyau `Classic` avec sa formule en `N` voies.
 pub(crate) trait UnitLanes: Kernel + Copy + 'static {
-    /// [`Kernel::forward`] sur quatre points : radians relatifs au méridien central vers unités
+    /// [`Kernel::forward`] sur `N` points : radians relatifs au méridien central vers unités
     /// du demi-grand axe. `None` si une voie sort du domaine que le noyau vectoriel traite.
     #[cfg(simd_lanes)]
-    fn forward_lanes(
+    fn forward_lanes<V: Vector<N>, const N: usize>(
         &self,
-        tok: crate::simd::Token,
-        lam: crate::simd::V4,
-        phi: crate::simd::V4,
-    ) -> Option<(crate::simd::V4, crate::simd::V4)>;
+        tok: V::Token,
+        lam: V,
+        phi: V,
+    ) -> Option<(V, V)>;
 
-    /// [`Kernel::inverse`] sur quatre points : unités du demi-grand axe vers radians.
+    /// [`Kernel::inverse`] sur `N` points : unités du demi-grand axe vers radians.
     #[cfg(simd_lanes)]
-    fn inverse_lanes(
+    fn inverse_lanes<V: Vector<N>, const N: usize>(
         &self,
-        tok: crate::simd::Token,
-        x: crate::simd::V4,
-        y: crate::simd::V4,
-    ) -> Option<(crate::simd::V4, crate::simd::V4)>;
+        tok: V::Token,
+        x: V,
+        y: V,
+    ) -> Option<(V, V)>;
 }
 
 /// Le chemin par lots de `K` sur son ellipsoïde.
@@ -57,13 +57,8 @@ impl<K: UnitLanes> Lanes for Forward<K> {
 
     #[cfg(simd_lanes)]
     #[inline(always)]
-    fn lanes(
-        &self,
-        tok: crate::simd::Token,
-        lam: crate::simd::V4,
-        phi: crate::simd::V4,
-    ) -> Option<(crate::simd::V4, crate::simd::V4)> {
-        let a = crate::simd::V4::splat(tok, self.1.a());
+    fn lanes<V: Vector<N>, const N: usize>(&self, tok: V::Token, lam: V, phi: V) -> Option<(V, V)> {
+        let a = V::splat(tok, self.1.a());
         let (x, y) = self.0.forward_lanes(tok, lam, phi)?;
         Some((a * x, a * y))
     }
@@ -81,15 +76,15 @@ impl<K: UnitLanes> Lanes for Inverse<K> {
 
     #[cfg(simd_lanes)]
     #[inline(always)]
-    fn lanes(
+    fn lanes<V: Vector<N>, const N: usize>(
         &self,
-        tok: crate::simd::Token,
-        east: crate::simd::V4,
-        north: crate::simd::V4,
-    ) -> Option<(crate::simd::V4, crate::simd::V4)> {
+        tok: V::Token,
+        east: V,
+        north: V,
+    ) -> Option<(V, V)> {
         use crate::simd::kernels::RAD_TO_DEG;
-        let ra = crate::simd::V4::splat(tok, self.1.ra());
-        let to_degrees = crate::simd::V4::splat(tok, RAD_TO_DEG);
+        let ra = V::splat(tok, self.1.ra());
+        let to_degrees = V::splat(tok, RAD_TO_DEG);
         let (lam, phi) = self.0.inverse_lanes(tok, east * ra, north * ra)?;
         Some((lam * to_degrees, phi * to_degrees))
     }
