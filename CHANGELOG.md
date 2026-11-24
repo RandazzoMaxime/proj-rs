@@ -6,6 +6,13 @@ rest is outside semver.
 
 ## Unreleased
 
+- GMT 6.5.0 runs as a tenth real client (`tools/clients/gmt.sh`, `docs/CLIENTS-gmt.md`): its 1180
+  test scripts run once with the libproj of PROJ 9.9.0 and once with proj-rs. GMT reaches libproj
+  through GDAL alone (`-J+proj=...` becomes an `OGRCreateCoordinateTransformation`, GeoTIFF SRS,
+  raster extents); the two passes give the same verdict for each test and 0 file that differs out
+  of the 3894 written, the ~1000 PostScript compared rendered at the RMS limit of GMT's own
+  harness.
+
 ## 1.2.5
 
 - aarch64 (Apple silicon, Linux ARM) has a batch path in lanes of four with NEON, as x86-64 has
