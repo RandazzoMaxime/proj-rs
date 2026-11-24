@@ -515,11 +515,7 @@ impl Proj {
             ..FacadeRequest::default_options()
         };
         if let Some(pipeline) = iso_pipeline_cached(from, to, area, &request) {
-            return Ok(built(
-                Body::Iso(pipeline),
-                format!("{from} -> {to}"),
-                area,
-            ));
+            return Ok(built(Body::Iso(pipeline), format!("{from} -> {to}"), area));
         }
         Err(ProjCreateError::ProjError(format!(
             "no transformation from {from} to {to}: the selection writes no pipeline for it"

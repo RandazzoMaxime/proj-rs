@@ -133,9 +133,7 @@ pub(crate) fn iso_pipeline_cached(
         {
             let entry = cache.remove(position);
             cache.push(entry);
-            return cache
-                .last()
-                .map(|(_, _, _, pipeline)| Arc::clone(pipeline));
+            return cache.last().map(|(_, _, _, pipeline)| Arc::clone(pipeline));
         }
     }
     let pipeline = Arc::new(iso_pipeline_at(from, to, None, ForceOver::No, request)?);
