@@ -11,7 +11,7 @@
 //! A pair that the selection cannot write (no operation, a missing grid, a CRS that
 //! is neither geographic nor projected) returns `None`, and the creation fails.
 
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use crate::engine::{Coord, Operation, TransformError};
 use crate::iso19111::{
@@ -19,7 +19,7 @@ use crate::iso19111::{
     CoordinateSystem, Crs, FacadeCandidates, FacadeRequest, FactoryError, GeodeticCRS, Item,
     LogLine, UnitOfMeasure,
 };
-use crate::proj::{Direction, ForceOver, PairError, ProjError};
+use crate::proj::{Area, Direction, ForceOver, PairError, ProjError};
 
 /// The text `proj_pj_info` gives for a set of candidates that no point has picked yet
 /// (`info.cpp:190-191`).
@@ -97,6 +97,54 @@ pub(crate) struct IsoPipeline {
     /// Coordinate epochs inserted as `proj=set` steps: the first and the last, the same year when
     /// one side of the pair carries one, the source's and the target's when both do.
     epoch: Option<(f64, f64)>,
+}
+
+/// How many `(from, to, area)` pipelines this process keeps built. The ISO objects of one pair
+/// (its candidates with their PROJ strings, the two CRS values) weigh about 16 MiB and cost
+/// ~10 ms of `proj.db` queries to build, so a server that builds one `Proj` per request for a
+/// handful of pairs pays that once per pair, not once per `Proj`.
+const ISO_CACHE_CAP: usize = 32;
+
+type IsoCache = Vec<(String, String, Option<Area>, Arc<IsoPipeline>)>;
+
+fn iso_cache() -> &'static Mutex<IsoCache> {
+    static CACHE: OnceLock<Mutex<IsoCache>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// [`iso_pipeline_at`] through a bounded LRU of the pairs already built, at the default epoch
+/// and without `FORCE_OVER`, as [`crate::Proj::new_known_crs`] takes them. The first build of a
+/// pair is kept: later calls with the same `(from, to, area)` clone its `Arc` instead of
+/// re-reading `proj.db` and re-parsing the candidates.
+///
+/// The pipeline is shared, so the per-point state of its candidates (`current`, the pending
+/// warning) is shared too, as PROJ shares it between the threads of one `PJ`.
+pub(crate) fn iso_pipeline_cached(
+    from: &str,
+    to: &str,
+    area: Option<Area>,
+    request: &FacadeRequest,
+) -> Option<Arc<IsoPipeline>> {
+    {
+        let mut cache = iso_cache().lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(position) = cache
+            .iter()
+            .position(|(f, t, a, _)| f == from && t == to && *a == area)
+        {
+            let entry = cache.remove(position);
+            cache.push(entry);
+            return cache
+                .last()
+                .map(|(_, _, _, pipeline)| Arc::clone(pipeline));
+        }
+    }
+    let pipeline = Arc::new(iso_pipeline_at(from, to, None, ForceOver::No, request)?);
+    let mut cache = iso_cache().lock().unwrap_or_else(PoisonError::into_inner);
+    if cache.len() >= ISO_CACHE_CAP {
+        cache.remove(0);
+    }
+    cache.push((from.to_owned(), to.to_owned(), area, Arc::clone(&pipeline)));
+    Some(pipeline)
 }
 
 /// The ISO pipeline from `from` to `to`, with a coordinate epoch and the `over` flag of
