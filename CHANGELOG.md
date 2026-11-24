@@ -6,6 +6,15 @@ rest is outside semver.
 
 ## Unreleased
 
+- `Proj::new_known_crs` keeps the ISO 19111 pipeline of a pair in a process-wide LRU of 32
+  pairs and shares it through `Arc`: rebuilding the same `(from, to, area)` cost about 16 MiB
+  live and ~10 ms of `proj.db` queries per call, so a server that builds one `Proj` per request
+  for a handful of pairs now pays that once per pair (~0.2 us and one copy per pair on a
+  repeat). Results are unchanged (bit-identical digests on every benched case). The per-point
+  candidate choice of a multi-candidate pair no longer round-trips through libm `floor` for the
+  grid cell and normalizes each longitude or latitude once instead of twice; same choice, same
+  bits.
+
 ## 1.2.5
 
 - aarch64 (Apple silicon, Linux ARM) has a batch path in lanes of four with NEON, as x86-64 has

@@ -37,8 +37,19 @@ fn is_empty(bounds: &Bounds) -> bool {
     reason = "clamped to the cell range just before"
 )]
 fn cell(value: f64, origin: f64, scale: f64, count: f64) -> usize {
-    // A monotone clamp: an infinite bound lands in the edge cell.
-    ((value - origin) * scale).floor().clamp(0.0, count - 1.0) as usize
+    // A monotone clamp: an infinite bound lands in the edge cell. Same result as
+    // `((value - origin) * scale).floor().clamp(0.0, count - 1.0) as usize`, without the
+    // libm `floor`: on `0 < t < count - 1` the truncation of `t as usize` is its floor, and
+    // outside, one of the two comparisons takes the clamped edge (`NaN as usize` is 0, as
+    // the `floor` of `NaN` clamped to 0 is).
+    let t = (value - origin) * scale;
+    if t < 1.0 {
+        0
+    } else if t > count - 1.0 {
+        (count - 1.0) as usize
+    } else {
+        t as usize
+    }
 }
 
 fn scale(min: f64, max: f64, count: f64) -> f64 {

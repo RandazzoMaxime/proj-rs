@@ -11,6 +11,7 @@ use std::error::Error;
 use std::ffi::NulError;
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 mod bounds;
 mod convert_iter;
@@ -30,7 +31,7 @@ use crate::iso19111::{
     GridDescription, GridLookup, OpProps, Pipeline, ProjLines, ProjStringLayout, RemoteGrids,
 };
 use crate::iso19111::{BestPolicy, FacadeRequest};
-use crate::proj_iso::{iso_pipeline_at, IsoPipeline};
+use crate::proj_iso::{iso_pipeline_at, iso_pipeline_cached, IsoPipeline};
 use crate::{CreateError, Xyzt};
 
 /// Numeric type accepted by [`Coord`].
@@ -388,8 +389,10 @@ enum Body {
     /// [`Proj::new`] of a PROJ operation. Angular axes are radians.
     Native(Operation),
     /// [`Proj::new_known_crs`] of a pair the ISO 19111 selection writes as a pipeline. The
-    /// facade boundary is applied around it, see [`crate::proj_iso`].
-    Iso(Box<IsoPipeline>),
+    /// facade boundary is applied around it, see [`crate::proj_iso`]. Shared through an `Arc`
+    /// with the other `Proj` of the same pair: the cache of
+    /// [`crate::proj_iso::iso_pipeline_cached`] holds it.
+    Iso(Arc<IsoPipeline>),
     /// [`Proj::new`] of one named CRS. Not itself a transform.
     Single,
 }
@@ -511,12 +514,8 @@ impl Proj {
             filter,
             ..FacadeRequest::default_options()
         };
-        if let Some(pipeline) = iso_pipeline_at(from, to, None, ForceOver::No, &request) {
-            return Ok(built(
-                Body::Iso(Box::new(pipeline)),
-                format!("{from} -> {to}"),
-                area,
-            ));
+        if let Some(pipeline) = iso_pipeline_cached(from, to, area, &request) {
+            return Ok(built(Body::Iso(pipeline), format!("{from} -> {to}"), area));
         }
         Err(ProjCreateError::ProjError(format!(
             "no transformation from {from} to {to}: the selection writes no pipeline for it"
@@ -574,7 +573,7 @@ impl Proj {
             &request,
         ) {
             let mut transform = built(
-                Body::Iso(Box::new(pipeline)),
+                Body::Iso(Arc::new(pipeline)),
                 format!("{} -> {}", self.definition, target_crs.definition),
                 area,
             );
