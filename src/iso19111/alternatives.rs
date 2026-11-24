@@ -466,19 +466,19 @@ impl Alternatives {
         if inside(bounds, x, y) {
             return true;
         }
-        if order.lon_lat
-            && y >= bounds.min_y
-            && y <= bounds.max_y
-            && normalize_longitude(x) >= bounds.min_x
-            && normalize_longitude(x) <= bounds.max_x
-        {
-            return true;
+        // `normalize_longitude` is pure: computing it once per axis gives the same result as
+        // computing it in each comparison.
+        if order.lon_lat && y >= bounds.min_y && y <= bounds.max_y {
+            let x = normalize_longitude(x);
+            if x >= bounds.min_x && x <= bounds.max_x {
+                return true;
+            }
         }
-        order.lat_lon
-            && x >= bounds.min_x
-            && x <= bounds.max_x
-            && normalize_longitude(y) >= bounds.min_y
-            && normalize_longitude(y) <= bounds.max_y
+        if order.lat_lon && x >= bounds.min_x && x <= bounds.max_x {
+            let y = normalize_longitude(y);
+            return y >= bounds.min_y && y <= bounds.max_y;
+        }
+        false
     }
 
     /// The candidates that may cover `point`, in index order, or `None` to scan them all. The
