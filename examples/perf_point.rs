@@ -1,3 +1,14 @@
+//! Timing and memory driver for the conversions of one CRS pair (Linux: reads `/proc/self`).
+//! Usage: `perf_point 'FROM|TO' <points> [mem]` or `perf_point threads=<n>`; see `docs/PORTING-memory.md`.
+#![allow(
+    clippy::print_stdout,
+    reason = "a measurement driver prints its result for the reader"
+)]
+#![allow(
+    clippy::as_conversions,
+    reason = "point counts and durations become f64 only to print a rate"
+)]
+
 use proj_rs::Proj;
 use std::time::Instant;
 
@@ -43,11 +54,10 @@ fn run_array(proj: &Proj, n: usize) -> f64 {
 #[inline(never)]
 fn run_four(proj: &Proj, n: usize) -> f64 {
     let mut sum = 0.0f64;
-    let mut buf = [(0.0f64, 0.0f64); 4];
     for i in 0..n {
         let f = i as f64 / n as f64;
         let p = (700_000.0 + f * 100_000.0, 6_600_000.0 + f * 50_000.0);
-        buf = [p; 4];
+        let mut buf = [p; 4];
         proj.convert_array(&mut buf).expect("array");
         sum += buf[0].0 + buf[0].1;
     }
@@ -115,15 +125,15 @@ fn main() {
     if std::env::args().nth(3).as_deref() == Some("mem") {
         rss_report("start");
         let args: Vec<String> = std::env::args().collect();
-        let pair = args.get(1).unwrap();
-        let (from, to) = pair.split_once('|').unwrap();
+        let pair = args.get(1).expect("a CRS pair as `FROM|TO`");
+        let (from, to) = pair.split_once('|').expect("a CRS pair as `FROM|TO`");
         let proj = Proj::new_known_crs(from, to, None).expect("pair");
         rss_report("created");
         let sm = std::fs::read_to_string("/proc/self/smaps").unwrap_or_default();
         let mut name = String::new();
         let mut rows = Vec::new();
         for line in sm.lines() {
-            if line.chars().next().map_or(false, |c| c.is_ascii_hexdigit())
+            if line.chars().next().is_some_and(|c| c.is_ascii_hexdigit())
                 && line.contains('-')
                 && line.split_whitespace().count() >= 5
             {
@@ -132,13 +142,17 @@ fn main() {
                     name = "[anon]".into();
                 }
             } else if line.starts_with("Rss:") {
-                let kb: u64 = line.split_whitespace().nth(1).unwrap().parse().unwrap();
+                let kb: u64 = line
+                    .split_whitespace()
+                    .nth(1)
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0);
                 if kb >= 100 {
                     rows.push((kb, name.clone()));
                 }
             }
         }
-        rows.sort_by(|a, b| b.0.cmp(&a.0));
+        rows.sort_by_key(|a| std::cmp::Reverse(a.0));
         for (kb, n) in rows.iter().take(12) {
             println!("   {kb:>6} kB  {n}");
         }
@@ -152,14 +166,14 @@ fn main() {
         .get(1)
         .map(String::as_str)
         .unwrap_or("EPSG:2154|EPSG:32631");
-    let (from, to) = pair.split_once('|').unwrap();
+    let (from, to) = pair.split_once('|').expect("a CRS pair as `FROM|TO`");
     let proj = Proj::new_known_crs(from, to, None).expect("pair");
     let n: usize = args
         .get(2)
         .and_then(|s| s.parse().ok())
         .unwrap_or(2_000_000);
     let mode = args.get(3).map(String::as_str).unwrap_or("all");
-    let mut run = |name: &str, f: &dyn Fn() -> f64| {
+    let run = |name: &str, f: &dyn Fn() -> f64| {
         f();
         let t = Instant::now();
         let s = f();
