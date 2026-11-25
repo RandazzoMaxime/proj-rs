@@ -30,9 +30,7 @@ rest is outside semver.
   (`tools/clients/r.sh`, `docs/CLIENTS-r.md`): the 25 test scripts of sf and terra's tinytest
   suite run once with the libproj of PROJ 9.9.0 and once with proj-rs, the dependencies pinned
   by a dated CRAN snapshot, and the script fails when the two passes differ. The 25 outputs of
-  sf are identical and terra passes its 981 results on both sides; the passes still differ by
-  the count of `Cannot open` lines in terra's log (95 against 154), since PROJ caches the
-  answers of `lookForGridInfo` per context and proj-rs does not (`docs/CLIENTS-r.md`). Their paths through libproj found these gaps, each now compared with the reference libproj by
+  sf are identical and terra passes its 981 results on both sides (`docs/CLIENTS-r.md`). Their paths through libproj found these gaps, each now compared with the reference libproj by
   `capi/tests/run.sh network_listing missing_input`, `tests/network_listing.rs` and a unit test
   of `src/crs.rs`:
   - the sort of `proj_create_operations` (`PROJ_GRID_AVAILABILITY_USED_FOR_SORTING`) took a CDN
