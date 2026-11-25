@@ -29,7 +29,8 @@ enums instead of error codes and `NaN` sentinels.
 It has three facades over one engine: a small native Rust API at the crate root, a
 drop-in for the [`proj`](https://github.com/georust/proj) crate (one line changed in
 `Cargo.toml`, no libproj to build or install), and a C API. The georust claim is checked
-by georust's own unit tests and documentation examples and is **not complete yet**: see
+by georust's own unit tests and documentation examples, and the C API by the test suites of
+software written for libproj: see [Tried as libproj in real software](#tried-as-libproj-in-real-software),
 [Status at a glance](#status-at-a-glance) and [Stability](#stability).
 
 - **Checked against PROJ itself.** The numeric oracle is the PROJ 9.9.0
@@ -47,6 +48,27 @@ by georust's own unit tests and documentation examples and is **not complete yet
 - **Strict by default.** Clippy runs with `-D warnings`, `unwrap()` is banned
   outside tests, every `unsafe` block needs a `// SAFETY:` comment, and a
   ratchet fails the test run if the PROJ pass count ever drops.
+
+## Tried as libproj in real software
+
+Our ledgers say proj-rs gives PROJ's answers; they do not say a real program written for libproj
+runs on it. So the C library of [`capi/`](capi) was put in place of PROJ 9.9.0's `libproj` (same
+soname, loaded by `LD_LIBRARY_PATH`) under the test suites of software of the field, each suite run
+twice, once with each library, offline and with the same data directory
+([`tools/clients/`](tools/clients)). Each line links to its sheet, with the method, the dates and
+the differences found.
+
+| Software | What ran | Verdict |
+|---|---|---|
+| [GRASS GIS 8.5.0](docs/CLIENTS-grass.md) | its `pytest` suite (`g.proj`, `r.proj`, `v.proj`, `r.latlong`, `m.proj` with our `cs2cs`) | 744 of 818 pass with both libraries, and each of the 818 tests has the same result; the 65 common failures come from the test environment. One difference at the first run (`r.latlong`, a pipeline with `+type=crs`), fixed |
+| [PostGIS 3.6.4](docs/CLIENTS-postgis.md) | `make check-regress`, PostgreSQL 16.15 server running on our library (raster left out) | 247 of 247 regression tests pass with both: 247 outputs identical to the expected text. No difference found |
+| [PDAL 2.10.2](docs/CLIENTS-pdal.md) | its whole `ctest` suite, PDAL and the system GDAL 3.8.4 both going through our library | 140 of 142 pass with both; the two others read remote files and fail offline with both. One difference at the first run (a WKT2 `DERIVEDPROJCRS`, read as a PROJ string, and a missing warning), fixed |
+| [pyproj 3.8.0](docs/CLIENTS-pyproj.md) | its test suite, offline, built against each library | Not a drop-in yet at the run of 2026-11-20: 985 tests pass with PROJ and 431 with proj-rs; of those that pass with PROJ, 276 fail with proj-rs and 278 do not run (a module that does not load). The sheet lists the causes in order; the first, `geodesic.h` not exported, is exported today ([Use from C](#use-from-c)). The run is to be redone |
+| [SpatiaLite 5.1.0](docs/CLIENTS-spatialite.md) | `make check` | 104 of 108 pass with both, and 0 of the 108 test logs differ; the 4 failures are the same on both sides. One difference at the first run (the error line of an unknown CRS), fixed |
+| [libgeotiff 1.7.4](docs/CLIENTS-libgeotiff.md) | `testlistgeo` and `testgeotifcp` on its 48 GeoTIFF files | 48 files listed and 46 with their corners on both sides, 0 differing lines. One difference at the first run (a polar stereographic with `lat_ts` at the pole and `k`), fixed |
+| [georust/proj 0.31.0](docs/CLIENTS-georust.md) | its unit tests and documentation examples, linked to our `libproj`, then written on the [facade](#drop-in-for-georust) | Linked: 26 of 26 tests and 24 of 24 examples, the same results as with PROJ. Facade: 24 of 26 tests (1 ignored, it builds a private struct; 1 deliberate deviation) and 24 of 24 examples |
+
+QGIS and GDAL's own test suites have not been run yet.
 
 ## Progress
 
@@ -81,22 +103,9 @@ executable instead of being copied ([`docs/PORTING-memory.md`](docs/PORTING-memo
 <!-- bench-how-fast:start -->
 These numbers are proj-rs 1.2.5's, measured by the CI.
 
-On a GitHub Actions runner (Linux x86-64, 4 vCPU), the process pinned to one core, proj-rs is 2.9× faster than PROJ 9.9.0's `libproj` on average over the ten cases below (geometric mean of the ratios; faster in every case, from 1.2× to 5.6×). One point at a time, proj-rs is 1.6× faster on average, from 1.2× to 5.0×. On a slice of points, it is 5.0× faster on average, from 4.6× to 5.6×. This is one machine: the ratios on another CPU, or on a build of libproj with other flags, will differ. The batch kernels take the AVX2 path, which every x86-64 CPU has since 2013 (Intel) and 2015 (AMD); AVX-512 is not used.
+On a GitHub Actions runner (Linux x86-64, 4 vCPU), the process pinned to one core, proj-rs is 2.9× faster than PROJ 9.9.0's `libproj` on average over the ten cases of the cards above (geometric mean of the ratios; faster in every case, from 1.2× to 5.6×). One point at a time, proj-rs is 1.6× faster on average, from 1.2× to 5.0×. On a slice of points, it is 5.0× faster on average, from 4.6× to 5.6×. This is one machine: the ratios on another CPU, or on a build of libproj with other flags, will differ. The batch kernels take the AVX2 path, which every x86-64 CPU has since 2013 (Intel) and 2015 (AMD). An AVX-512 path, behind the opt-in `avx512` Cargo feature (PR #356), is not in these numbers.
 
-| Conversion | Call | PROJ 9.9.0 | proj-rs |
-|---|---|---:|---:|
-| WGS 84 → RGF93 / Lambert-93 (EPSG:4326 → 2154) | `convert`, one point at a time | 141 ns | 104 ns (1.4× faster) |
-| WGS 84 → RGF93 / Lambert-93 (EPSG:4326 → 2154) | `convert_array`, 200,000 points | 149 ns | 32.6 ns (4.6× faster) |
-| WGS 84 → WGS 84 / UTM 31N (EPSG:4326 → 32631) | `convert`, one point at a time | 173 ns | 150 ns (1.2× faster) |
-| WGS 84 → WGS 84 / UTM 31N (EPSG:4326 → 32631) | `convert_array`, 200,000 points | 179 ns | 31.6 ns (5.6× faster) |
-| WGS 84 → Web Mercator (EPSG:4326 → 3857) | `convert`, one point at a time | 108 ns | 90.7 ns (1.2× faster) |
-| WGS 84 → Web Mercator (EPSG:4326 → 3857) | `convert_array`, 200,000 points | 115 ns | 22.3 ns (5.2× faster) |
-| RGF93 / Lambert-93 → WGS 84 / UTM 31N (EPSG:2154 → 32631) | `convert`, one point at a time | 464 ns | 358 ns (1.3× faster) |
-| RGF93 / Lambert-93 → WGS 84 / UTM 31N (EPSG:2154 → 32631) | `convert_array`, 200,000 points | 469 ns | 91.8 ns (5.1× faster) |
-| NAD27 → WGS 84 (EPSG:4267 → 4326) | `convert`, one point at a time | 318 ns | 63.9 ns (5.0× faster) |
-| NAD27 → WGS 84 (EPSG:4267 → 4326) | `convert_array`, 200,000 points | 319 ns | 68.8 ns (4.6× faster) |
-
-Nanoseconds per point; lower is faster. Line of Nov 23 07:43 UTC at commit `4c609c6`, the best of 5 runs for each case. Both sides convert the same points, and the bench stops if their outputs differ. With no grid, NAD27 → WGS 84 is PROJ's ballpark offset on both sides, a change of units and axis order with no datum shift, which proj-rs applies as one step. What exactly is compared, and how to rerun it: [docs/BENCHMARK.md](docs/BENCHMARK.md).
+The two cards above show the ten cases, case by case. Line of Nov 23 07:43 UTC at commit `4c609c6`, the best of 5 runs for each case. Both sides convert the same points, and the bench stops if their outputs differ. With no grid, NAD27 → WGS 84 is PROJ's ballpark offset on both sides, a change of units and axis order with no datum shift, which proj-rs applies as one step. What exactly is compared, and how to rerun it: [docs/BENCHMARK.md](docs/BENCHMARK.md).
 
 <details>
 <summary><b>Bare projections against libproj, and the ten slowest operations</b></summary>
@@ -153,30 +162,30 @@ On Neoverse N2, proj-rs is 2.1× faster than PROJ 9.9.0 on average over the ten 
 ### Size and memory
 
 <!-- bench-footprint:start -->
-The same conversion, EPSG:4326 to EPSG:2154, measured on the same machine (Linux x86-64, glibc), proj-rs against PROJ 9.9.0.
+The same conversion, EPSG:4326 to EPSG:2154, measured on one machine (Linux x86-64, glibc, Intel(R) Xeon(R) Processor @ 2.10GHz), proj-rs against PROJ 9.9.0.
 
 <img src="bench/cards/size.png" alt="Size on disk of a program that converts EPSG:4326 to 2154: proj-rs next to PROJ 9.9.0, minimal and with TIFF and curl" width="100%">
 
 <img src="bench/cards/memory.png" alt="Peak resident memory of five scenarios, proj-rs next to PROJ 9.9.0" width="100%">
 
-On disk, a Rust program with proj-rs is 16.8 MiB with `proj.db` included (10.1 MiB of it) and no library other than the C library: 1.1× smaller than a C program with PROJ 9.9.0 built as in the speed comparison (18.6 MiB), and 2.3× smaller than one with a PROJ built with TIFF and curl (37.9 MiB). With the `network` feature (the HTTPS grid download, TLS from the system) the program is 22.6 MiB, of which 5.7 MiB is OpenSSL: 1.7× smaller than the PROJ with curl. The code of proj-rs alone, `proj.db` left out, is 6.7 MiB; an empty Rust program is 0.3 MiB.
+On disk, a Rust program with proj-rs is 2.1× smaller than a C program with PROJ 9.9.0 built as in the speed comparison, and 4.3× smaller than one with a PROJ built with TIFF and curl, with `proj.db` compressed page by page (2.6 MiB, `data/proj.pages`) inside and no library other than the C library. With the `network` feature (the HTTPS grid download, TLS from the system), 5.7 MiB of OpenSSL included, it is still 2.6× smaller than the PROJ with curl. The code of proj-rs alone is 6.4 MiB; an empty Rust program is 0.3 MiB.
 
-In memory, creating the transform peaks at 11.9 MiB for proj-rs and 14.9 MiB for PROJ (1.3× less memory). With a million points one at a time it is 12.0 MiB and 15.0 MiB; as one array, 27.1 MiB and 30.1 MiB, the array of points itself being 15.3 MiB; with several candidate operations (EPSG:4267 to 4326), 13.1 MiB and 16.6 MiB.
+In memory, proj-rs peaks lower than PROJ 9.9.0 in every one of the 5 scenarios of the card, from 1.2× to 1.9× less; creating the transform takes 1.7× less memory.
 
 <details>
 <summary><b>Size and memory, component by component</b></summary>
 
 <br>
 
-Size on disk, after `strip --strip-unneeded`. A program is counted with every shared library `ldd` lists for it, except the C library and the unwinder (libc, libm, libdl, libpthread, librt, libutil, libgcc_s), on both sides. Nov 23 09:18 UTC, commit `a2ff2c7`.
+Size on disk, after `strip --strip-unneeded`. A program is counted with every shared library `ldd` lists for it, except the C library and the unwinder (libc, libm, libdl, libpthread, librt, libutil, libgcc_s), on both sides. Nov 25 09:46 UTC, commit `c053b8d`.
 
 | Install | Program and library | proj.db | Other shared libraries | of which OpenSSL | of which libcurl | Total, stripped | Total, as built |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | PROJ 9.9.0, C program + libproj, TIFF and curl off | 4.7 MiB | 10.1 MiB | 3.9 MiB | none | none | **18.6 MiB** | 19.6 MiB |
 | PROJ 9.9.0, C program + libproj, TIFF and curl on | 4.7 MiB | 10.1 MiB | 23.1 MiB | 5.7 MiB | 0.7 MiB | **37.9 MiB** | 38.9 MiB |
-| proj-rs as libproj, same C program + libproj of capi/ | 8.1 MiB | 10.1 MiB | 0.0 MiB | none | none | **18.2 MiB** | 19.2 MiB |
-| proj-rs, Rust program, proj.db inside | 6.7 MiB | 10.1 MiB | 0.0 MiB | none | none | **16.8 MiB** | 17.6 MiB |
-| proj-rs, feature network, Rust program, HTTPS grid download | 6.8 MiB | 10.1 MiB | 5.7 MiB | 5.7 MiB | none | **22.6 MiB** | 23.4 MiB |
+| proj-rs as libproj, same C program + libproj of capi/ | 7.7 MiB | 2.6 MiB | 0.0 MiB | none | none | **10.3 MiB** | 11.3 MiB |
+| proj-rs, Rust program, proj.db inside | 6.4 MiB | 2.6 MiB | 0.0 MiB | none | none | **8.9 MiB** | 9.7 MiB |
+| proj-rs, feature network, Rust program, HTTPS grid download | 6.4 MiB | 2.6 MiB | 5.7 MiB | 5.7 MiB | none | **14.7 MiB** | 15.5 MiB |
 
 OpenSSL is `libssl` plus `libcrypto`, already inside the third column. proj-rs links it only with the `network` feature, for its HTTPS grid download, and takes it from the system (`native-tls`); PROJ pulls it through libcurl, when built with curl, together with the other libraries of curl (`libnghttp2`, `libssh`, `libgssapi_krb5`, `libldap`, `libgnutls` and more), which count in the third column but not in the libcurl column.
 
@@ -188,47 +197,28 @@ Shared libraries counted in the third column:
 - proj-rs, Rust program, proj.db inside: none.
 - proj-rs, feature network, Rust program, HTTPS grid download: `libssl.so.3`, `libcrypto.so.3`.
 
-The Rust program is 16.8 MiB stripped, of which 10.1 MiB is the embedded `proj.db`; the empty Rust program of the same toolchain is 0.3 MiB. The code of proj-rs thus adds 6.4 MiB, SQLite and the TIFF reader included.
+The Rust program is 8.9 MiB stripped, of which 2.6 MiB is the embedded `proj.db`; the empty Rust program of the same toolchain is 0.3 MiB. The code of proj-rs thus adds 6.0 MiB, SQLite and the TIFF reader included.
 
 | Peak resident memory | PROJ 9.9.0 | PROJ 9.9.0, TIFF and curl | proj-rs C library | proj-rs (Rust) |
 |---|---:|---:|---:|---:|
-| process start, nothing created | 5.8 MiB | 12.3 MiB | 2.6 MiB | 3.0 MiB |
-| create the 4326 → 2154 transform | 14.9 MiB | 21.2 MiB | 12.9 MiB | 11.9 MiB |
-| create + 1,000,000 points, one at a time | 15.0 MiB | 21.4 MiB | 13.1 MiB | 12.0 MiB |
-| create + 1,000,000 points, one array | 30.1 MiB | 36.3 MiB | 28.1 MiB | 27.1 MiB |
-| 4267 → 4326 (several candidates) + 1,000,000 points, one at a time | 16.6 MiB | 22.9 MiB | 14.2 MiB | 13.1 MiB |
+| process start, nothing created | 5.8 MiB | 11.9 MiB | 2.5 MiB | 3.0 MiB |
+| create the 4326 → 2154 transform | 14.9 MiB | 21.0 MiB | 9.8 MiB | 9.0 MiB |
+| create + 1,000,000 points, one at a time | 14.9 MiB | 21.0 MiB | 9.9 MiB | 9.1 MiB |
+| create + 1,000,000 points, one array | 30.0 MiB | 36.2 MiB | 24.9 MiB | 24.3 MiB |
+| 4267 → 4326 (several candidates) + 1,000,000 points, one at a time | 16.4 MiB | 22.6 MiB | 10.7 MiB | 9.9 MiB |
 
 | Peak heap (valgrind massif) | PROJ 9.9.0 | PROJ 9.9.0, TIFF and curl | proj-rs C library | proj-rs (Rust) |
 |---|---:|---:|---:|---:|
 | process start, nothing created | 0.1 MiB | 0.2 MiB | 0.0 MiB | 0.0 MiB |
-| create the 4326 → 2154 transform | 5.5 MiB | 5.6 MiB | 3.6 MiB | 3.6 MiB |
-| create + 1,000,000 points, one at a time | 5.5 MiB | 5.6 MiB | 3.6 MiB | 3.6 MiB |
-| create + 1,000,000 points, one array | 20.4 MiB | 20.5 MiB | 15.5 MiB | 15.5 MiB |
-| 4267 → 4326 (several candidates) + 1,000,000 points, one at a time | 6.7 MiB | 6.8 MiB | 4.3 MiB | 4.3 MiB |
+| create the 4326 → 2154 transform | 5.5 MiB | 5.6 MiB | 1.2 MiB | 1.2 MiB |
+| create + 1,000,000 points, one at a time | 5.5 MiB | 5.6 MiB | 1.2 MiB | 1.2 MiB |
+| create + 1,000,000 points, one array | 20.4 MiB | 20.5 MiB | 15.5 MiB | 15.4 MiB |
+| 4267 → 4326 (several candidates) + 1,000,000 points, one at a time | 6.7 MiB | 6.8 MiB | 2.0 MiB | 2.0 MiB |
 
 Median of 5 runs for the resident memory (`VmHWM`, read by the program itself); the heap is one massif run. Each process runs one scenario on the same 1,000,000 points, and its output is checked against PROJ's. Every process starts with its own loader and libraries, so the first row is the floor. What exactly is measured, and how to rerun it: [docs/BENCHMARK.md](docs/BENCHMARK.md).
 
 </details>
 <!-- bench-footprint:end -->
-
-### Over time
-
-How PROJ-RS's own numbers move from run to run, each machine on its own: a number
-compares with its own machine's only. They come from
-[`bench/history.jsonl`](bench/history.jsonl), one line per run with the commit and the
-machine name. `bench/record.sh` adds a line and draws these again, and a commit that adds
-a line commits the charts with it.
-
-<!-- bench-trend:start -->
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="bench/trend-cloud-4c-avx512-dark.svg">
-  <img src="bench/trend-cloud-4c-avx512-light.svg" alt="Nanoseconds per point, one line per case, logarithmic scale" width="100%">
-</picture>
-
-Time per point: 11 runs from Nov 15 to Nov 17, the first to the latest: UTM forward 88.8 ns to 98.3 ns; Lambert-93 forward 62.3 ns to 64.7 ns; Web Mercator forward 45.8 ns to 56 ns; convert_array 4326→2154 130 ns to 33.5 ns; Helmert 9.31 ns to 11 ns.
-
-Not drawn until there are two runs on one machine: 5 other machine(s) with one run.
-<!-- bench-trend:end -->
 
 ### Reproduce the benchmarks
 
@@ -248,11 +238,10 @@ BENCH_MACHINE=my-box taskset -c 0,1 sh bench/footprint.sh
 ```
 
 `bench/record.sh` appends a line to [`bench/history.jsonl`](bench/history.jsonl),
-draws `bench/trend-<machine>-{light,dark}.svg` and the cards of `bench/cards/`, and rewrites the
-"How fast" and "Over time" blocks of this README from the history
-(`tools/bench/how_fast.py`, `tools/bench/trend_svg.py`, `tools/bench/cards.py`). Without
+draws the cards of `bench/cards/`, and rewrites the "How fast" block of this README from the
+history (`tools/bench/how_fast.py`, `tools/bench/cards.py`). Without
 `PROJ_RS_LIBPROJ_DIR` the bench still runs, but the line has no libproj column, and
-the "How fast" table stays on the newest line that has one. `bench/footprint.sh` writes
+the "How fast" block stays on the newest line that has one. `bench/footprint.sh` writes
 [`bench/footprint.json`](bench/footprint.json), rewrites the "Size and memory" block and draws its two
 cards (`tools/bench/footprint_measure.py`, `tools/bench/footprint_block.py`, `tools/bench/cards.py`).
 `bench/billion.sh` writes [`bench/billion.json`](bench/billion.json) and draws its card.
@@ -261,7 +250,7 @@ on the usual paths); the templates are in `tools/bench/cards/`.
 What each case compares, and how the size and the memory are counted, is in
 [docs/BENCHMARK.md](docs/BENCHMARK.md).
 
-## How the port is done
+## How the port was done
 
 PROJ-RS is not checked against tests written for it. It is checked against
 PROJ's own, and a case counts only when it passes.
@@ -288,8 +277,8 @@ PROJ's own, and a case counts only when it passes.
    purpose). See [`docs/UNIT-TRIAGE.md`](docs/UNIT-TRIAGE.md).
 6. **Parity with the crate it replaces.** The unit tests of georust `proj` 0.31
    run against the facade ([`tests/georust_parity.rs`](tests/georust_parity.rs)):
-   <!--gen:georust_pass-->25<!--/gen--> of <!--gen:georust_total-->25<!--/gen--> pass today. The others are marked
-   `#[ignore = "gap: ..."]` with their cause, so a gap is a finding on the page and not
+   <!--gen:georust_pass-->25<!--/gen--> of <!--gen:georust_total-->25<!--/gen--> pass today. A test that fails is marked
+   `#[ignore = "gap: ..."]` with its cause, so a gap is a finding on the page and not
    a surprise later. CI also compares the facade with the reference `cs2cs` on named CRS pairs.
 7. **Fail closed.** An unknown `+proj`, an unsupported method or a missing grid
    is an error when the operation is built, never a coordinate.
@@ -301,13 +290,13 @@ PROJ's own, and a case counts only when it passes.
 | Projections and conversions | ✅ | **189 operations** build and run; `builtins.gie` passes **2,597 / 2,597** |
 | Pipelines, `cart`, Helmert, Molodensky, `unitconvert`, `affine`, `axisswap` | ✅ | `+proj=pipeline` with `+step` and `+inv`, exercised across PROJ's suite (`more_builtins`, `4D-API_cs2cs-style`, `axisswap`, `unitconvert`) |
 | Grid shifts, `tinshift`, deformation models | ✅ | All `gie` files green. The PROJ 9.9.0 test grids live in [`data/tests/`](data/tests). CDN grids are fetched with `PROJ_NETWORK=ON`, as in PROJ's own tests |
-| Embedded `proj.db` and EPSG resolution | ✅ | Built from the PROJ 9.9.0 SQL, embedded in the binary and read in place by `rusqlite`, with no copy into memory |
-| ISO 19111 model, WKT and PROJJSON | 🟡 | CRS model, authority factory, CRS identification against `proj.db`, WKT1 and WKT2 import and export, PROJJSON. See [`docs/CRS-API.md`](docs/CRS-API.md) |
-| georust `proj` facade | 🟡 | `Proj`, `ProjBuilder`, `Coord`, `Transform`, `Area`, errors and the `geo-types` feature exist. <!--gen:georust_pass-->25<!--/gen--> of <!--gen:georust_total-->25<!--/gen--> of georust `proj` 0.31's own unit tests pass against it ([`tests/georust_parity.rs`](tests/georust_parity.rs)); the rest are listed there as gaps |
-| Command-line tools | 🟡 | `cct`, `cs2cs`, `proj`, `invproj`, `geod`, `invgeod`, `gie`, `projinfo` and `projsync` over the library, in one executable, `proj-rs`; <!--gen:cli_matched-->825<!--/gen--> of <!--gen:cli_total-->825<!--/gen--> PROJ CLI cases match |
-| SIMD batch path | ✅ | AVX2 + FMA on x86-64 for `Tmerc`, `Lcc` and `Mercator`, Web Mercator included. Off AVX2, `Tmerc` runs a portable 4-lane loop (bit-identical, 25–34 % faster on x86-64); `Lcc` and `Mercator` run the scalar loop |
+| Embedded `proj.db` and EPSG resolution | ✅ | Built from the PROJ 9.9.0 SQL and embedded in the binary, compressed page by page; `rusqlite` reads it through a read-only VFS that decompresses each page it reads, with no copy of the database in memory ([`docs/PORTING-memory.md`](docs/PORTING-memory.md)) |
+| ISO 19111 model, WKT and PROJJSON | ✅ | CRS model, authority factory, operation factory, CRS identification against `proj.db`, WKT1 and WKT2 import and export, PROJJSON. All <!--gen:unit_ported-->1507<!--/gen--> PROJ C++ unit tests are ported and pass, <!--gen:unit_open-->0<!--/gen--> open, among them `test_crs.cpp`, `test_io.cpp`, `test_operation.cpp`, `test_factory.cpp` and `test_operationfactory.cpp`. See [`docs/CRS-API.md`](docs/CRS-API.md) |
+| georust `proj` facade | ✅ | `Proj`, `ProjBuilder`, `Coord`, `Transform`, `Area`, errors and the `geo-types` feature. <!--gen:georust_pass-->25<!--/gen--> of <!--gen:georust_total-->25<!--/gen--> of the parity tests pass, none ignored ([`tests/georust_parity.rs`](tests/georust_parity.rs)); georust `proj` 0.31's own tests and examples, written on the facade: 24 of 26 and 24 of 24, the two others explained ([`docs/CLIENTS-georust.md`](docs/CLIENTS-georust.md)) |
+| Command-line tools | ✅ | `cct`, `cs2cs`, `proj`, `invproj`, `geod`, `invgeod`, `gie`, `projinfo` and `projsync` over the library, in one executable, `proj-rs`; <!--gen:cli_matched-->825<!--/gen--> of <!--gen:cli_total-->825<!--/gen--> PROJ CLI cases match, none open in [`docs/UNPORTED-CLI.md`](docs/UNPORTED-CLI.md) |
+| SIMD batch path | ✅ | AVX2 + FMA on x86-64 and NEON on aarch64 for `Tmerc`, `Lcc` and `Mercator`, Web Mercator included. Off AVX2 and NEON, `Tmerc` runs a portable 4-lane loop (bit-identical, 25–34 % faster on x86-64); `Lcc` and `Mercator` run the scalar loop. An AVX-512 path, behind the opt-in `avx512` Cargo feature, is in review (PR #356) |
 
-✅ done and verified &nbsp;·&nbsp; 🟡 working, with known gaps listed below
+✅ done and verified
 
 ## Conformance with PROJ
 
@@ -419,12 +408,8 @@ The results are the same as PROJ 9.9.0 to 1 µm on linear coordinates and 1e-11 
 | `test_tmerczoned.cpp` | <!--gen:test_tmerczoned_ported-->8<!--/gen--> | <!--gen:test_tmerczoned_open-->0<!--/gen--> |
 | `test_util.cpp` | <!--gen:test_util_ported-->2<!--/gen--> | <!--gen:test_util_open-->0<!--/gen--> |
 
-All 24 PROJ unit files are counted. What is open sits in a few places, each with
-its cause in the `docs/AUDIT-*.md` sheets: the network tests that need lazy range
-reads and a file API (`test_network.cpp`), the `gie` self-tests that need `proj_factors`
-on CRS objects and `FORCE_OVER` (`gie_self_tests.cpp`), the `projinfo` library tests
-(`test_projinfo_lib.cpp`, not audited yet) and two `test_common.cpp` cases with no
-Rust input.
+All 24 PROJ unit files are counted, and none has an open test. What each file
+needed, and the causes of the cases closed last, are in the `docs/AUDIT-*.md` sheets.
 
 </details>
 
@@ -503,8 +488,8 @@ proj = { package = "proj-rs-georust", git = "https://github.com/RandazzoMaxime/p
 The examples of the `proj` 0.31 documentation compile and run as tests of that crate
 ([`georust/tests/proj_031_docs.rs`](georust/tests/proj_031_docs.rs)), on top of
 [`tests/georust_parity.rs`](tests/georust_parity.rs) (see the [parity
-status](#how-the-port-is-done): one pair still fails to create where PROJ creates it,
-`EPSG:4326+5773` to `EPSG:4326+5782`, see the georust gaps list). The `network`, `tiff`,
+status](#how-the-port-was-done)), and georust's own tests run against it
+([`docs/CLIENTS-georust.md`](docs/CLIENTS-georust.md)). The `network`, `tiff`,
 `bundled_proj` and `pkg_config` features of `proj` exist and change nothing: the grid
 reader is always built in. `network` turns on the HTTP(S) client, as in `proj`. See
 [`georust/examples/quickstart.rs`](georust/examples/quickstart.rs).

@@ -29,7 +29,8 @@ MACHINE_NOTES = {
 PATH_NOTES = {
     "avx2": (
         "The batch kernels take the AVX2 path, which every x86-64 CPU has since 2013 (Intel) "
-        "and 2015 (AMD); AVX-512 is not used."
+        "and 2015 (AMD). An AVX-512 path, behind the opt-in `avx512` Cargo feature (PR #356), "
+        "is not in these numbers."
     ),
     "neon": "The batch kernels take the NEON path, which every aarch64 CPU has.",
 }
@@ -135,22 +136,18 @@ def body(row):
         f"These numbers are proj-rs {version}'s, measured by the CI.",
         "",
         f"On {where}, proj-rs is {than(geomean([c[4] for c in cases]))} PROJ 9.9.0's `libproj` on "
-        f"average over the ten cases below (geometric mean of the ratios; {extremes_text(ratios)}). "
+        f"average over the ten cases of the cards above (geometric mean of the ratios; {extremes_text(ratios)}). "
         f"One point at a time, proj-rs is {spread_text(single)}. On a slice of points, it is "
         f"{spread_text(array)}. "
         "This is one machine: the ratios on another CPU, or on a build of libproj with other "
         "flags, will differ. " + path,
-        "",
-        "| Conversion | Call | PROJ 9.9.0 | proj-rs |",
-        "|---|---|---:|---:|",
     ]
-    for pair, calls, theirs, ours, ratio in cases:
-        lines.append(f"| {label(pair)} | {calls} | {ns(theirs)} | {ns(ours)} ({speedup_text(ratio)}) |")
     when = history.day_time(row["date"])
     best = f", the best of {rounds} runs for each case" if rounds > 1 else ""
     lines += [
         "",
-        f"Nanoseconds per point; lower is faster. Line of {when} UTC at commit `{row['commit']}`{best}. "
+        "The two cards above show the ten cases, case by case. "
+        f"Line of {when} UTC at commit `{row['commit']}`{best}. "
         "Both sides convert the same points, and the bench stops if their outputs differ. "
         "With no grid, NAD27 → WGS 84 is PROJ's ballpark offset on both sides, a change of units and "
         "axis order with no datum shift, which proj-rs applies as one step. "
